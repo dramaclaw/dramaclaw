@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import ky from "ky";
 import type { ReactNode } from "react";
@@ -13,9 +13,11 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import {
+  useAssetReferenceCounts,
   useAssetReferences,
   type AssetRef,
 } from "@/lib/queries/asset-references";
+import { useUpdateCharacter } from "@/lib/queries/characters";
 // The shared server from `__tests__/setup.ts`, not a second `setupServer()`.
 // Two listening MSW instances both dispatch every request, which silently
 // doubles any handler-side call counter — and counting requests is the whole
@@ -187,5 +189,113 @@ describe("useAssetReferences id round-trip", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(calls).toBe(0);
     expect(result.current.referencesFor("prop", "anything")).toEqual([]);
+  });
+});
+
+
+// Renaming a character is not just a characters-table edit: the backend's
+// `_cascade_character_rename` runs `UPDATE beats SET detected_identities_json,
+// visual_description` across the project, remapping every embedded identity id
+// and inline marker. Those two columns are precisely what the reference scan
+// reads, so a rename moves the whole index. The counts live under their own
+// project-wide key, which a `characters` invalidation never reaches — the
+// grid's "used in N beats" badges keep the pre-rename numbers, and the renamed
+// identity's card reads 0, until something forces a remount.
+describe("asset reference counts across a character rename", () => {
+  function makeStableWrapper() {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    return function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+    };
+  }
+
+  it("refetches counts after a rename, without a remount", async () => {
+    let counts: Record<string, number> = { "identity:lin_young": 4 };
+    server.use(
+      http.get(
+        "http://localhost:3000/api/v1/projects/demo/assets/references",
+        () =>
+          HttpResponse.json({
+            ok: true,
+            data: { counts, references: {}, scene_co_occurrence: {} },
+          }),
+      ),
+      http.patch("http://localhost:3000/api/v1/projects/demo/characters/lin", () => {
+        counts = { "identity:shen_young": 4 };
+        return HttpResponse.json({
+          ok: true,
+          data: { name: "shen", updated_fields: ["name"], renamed_from: "lin" },
+        });
+      }),
+    );
+
+    const { result } = renderHook(
+      () => ({
+        refs: useAssetReferenceCounts("demo"),
+        rename: useUpdateCharacter("demo", "lin"),
+      }),
+      { wrapper: makeStableWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.refs.isLoading).toBe(false));
+    expect(result.current.refs.countFor("identity", "lin_young")).toBe(4);
+    expect(result.current.refs.countFor("identity", "shen_young")).toBe(0);
+
+    await act(async () => {
+      await result.current.rename.mutateAsync({ name: "shen" });
+    });
+
+    await waitFor(() =>
+      expect(result.current.refs.countFor("identity", "shen_young")).toBe(4),
+    );
+    expect(result.current.refs.countFor("identity", "lin_young")).toBe(0);
+  });
+
+  // Reverse sentinel: an edit the backend did NOT treat as a rename leaves
+  // `renamed_from` unset, no cascade ran, and the index is still correct —
+  // refetching it would be waste on every appearance tweak.
+  it("leaves the counts alone for an edit that is not a rename", async () => {
+    let referenceRequests = 0;
+    server.use(
+      http.get(
+        "http://localhost:3000/api/v1/projects/demo/assets/references",
+        () => {
+          referenceRequests += 1;
+          return HttpResponse.json({
+            ok: true,
+            data: {
+              counts: { "identity:lin_young": 4 },
+              references: {},
+              scene_co_occurrence: {},
+            },
+          });
+        },
+      ),
+      http.patch("http://localhost:3000/api/v1/projects/demo/characters/lin", () =>
+        HttpResponse.json({
+          ok: true,
+          data: { name: "lin", updated_fields: ["description"] },
+        }),
+      ),
+    );
+
+    const { result } = renderHook(
+      () => ({
+        refs: useAssetReferenceCounts("demo"),
+        update: useUpdateCharacter("demo", "lin"),
+      }),
+      { wrapper: makeStableWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.refs.isLoading).toBe(false));
+    expect(referenceRequests).toBe(1);
+
+    await act(async () => {
+      await result.current.update.mutateAsync({ description: "换了个设定" });
+    });
+
+    expect(referenceRequests).toBe(1);
   });
 });

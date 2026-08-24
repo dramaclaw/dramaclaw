@@ -16,6 +16,7 @@ import {
   useCreateIdentity,
   useDeleteIdentity,
   useIdentityOwnerIndex,
+  useUpdateIdentity,
 } from "@/lib/queries/characters";
 // Shared server, not a second `setupServer()` — two listening instances dispatch
 // every request twice, which doubles the request counters these tests assert on.
@@ -201,5 +202,89 @@ describe("owner index freshness across identity mutations", () => {
     // The surviving identity must still resolve — a blanket cache reset would
     // pass the assertion above for the wrong reason.
     expect(result.current.index.ownerOf("lin_young")).toBe("lin");
+  });
+  // `identity_id` is derived, not a stable handle: renaming an identity makes
+  // the backend rebuild it as `${char.name}_${new_iname}` and cascade the swap.
+  // The old id stops existing, so a character list that still names it leaves
+  // every deep link to the NEW id unresolvable for as long as the page is up.
+  it("resolves the owner of a renamed identity without a remount", async () => {
+    let owned = ["lin_young"];
+    serveCharacters(() => owned);
+    server.use(
+      http.patch(
+        "http://localhost:3000/api/v1/projects/demo/characters/lin/identities/lin_young",
+        () => {
+          owned = ["lin_grown"];
+          return HttpResponse.json({
+            ok: true,
+            data: { identity_id: "lin_grown" },
+          });
+        },
+      ),
+    );
+
+    const { result } = renderHook(
+      () => ({
+        index: useIdentityOwnerIndex("demo"),
+        update: useUpdateIdentity("demo", "lin"),
+      }),
+      { wrapper: makeStableWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.index.isLoading).toBe(false));
+    expect(result.current.index.ownerOf("lin_young")).toBe("lin");
+    expect(result.current.index.ownerOf("lin_grown")).toBeNull();
+
+    await act(async () => {
+      await result.current.update.mutateAsync({
+        identityId: "lin_young",
+        data: { identity_name: "grown" },
+      });
+    });
+
+    await waitFor(() =>
+      expect(result.current.index.ownerOf("lin_grown")).toBe("lin"),
+    );
+    expect(result.current.index.ownerOf("lin_young")).toBeNull();
+  });
+
+  // Reverse sentinel: don't turn "rename invalidates the list" into "every
+  // identity edit refetches it". Appearance/face/age edits leave the id alone,
+  // so the character list is already correct and refetching it is pure waste.
+  it("does not refetch the character list for an edit that keeps the id", async () => {
+    let characterListRequests = 0;
+    server.use(
+      http.get("http://localhost:3000/api/v1/projects/demo/characters", () => {
+        characterListRequests += 1;
+        return HttpResponse.json({
+          ok: true,
+          data: [{ name: "lin", identity_ids: ["lin_young"] }],
+        });
+      }),
+      http.patch(
+        "http://localhost:3000/api/v1/projects/demo/characters/lin/identities/lin_young",
+        () => HttpResponse.json({ ok: true, data: { identity_id: "lin_young" } }),
+      ),
+    );
+
+    const { result } = renderHook(
+      () => ({
+        index: useIdentityOwnerIndex("demo"),
+        update: useUpdateIdentity("demo", "lin"),
+      }),
+      { wrapper: makeStableWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.index.isLoading).toBe(false));
+    expect(characterListRequests).toBe(1);
+
+    await act(async () => {
+      await result.current.update.mutateAsync({
+        identityId: "lin_young",
+        data: { appearance_details: "换了件外套" },
+      });
+    });
+
+    expect(characterListRequests).toBe(1);
   });
 });

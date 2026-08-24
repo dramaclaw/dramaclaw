@@ -6,6 +6,7 @@ import { jsonWithBackendError } from "@/lib/api-errors";
 import { api, uploadApi } from "@/lib/api";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
+import { invalidateAssetReferences } from "@/lib/queries/asset-references";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type {
   Character,
@@ -63,7 +64,18 @@ export function useUpdateCharacter(project: string, name: string) {
       api
         .patch(p`api/v1/projects/${project}/characters/${name}`, { json: data })
         .json<OkResponse<CharacterUpdateResponse>>(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.characters(project) }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: queryKeys.characters(project) });
+      // 改名走 _cascade_character_rename，它 UPDATE beats 的
+      // detected_identities_json 和 visual_description——也就是反向引用索引的两个
+      // 来源。资产引用有自己的 project 级 key，characters 的失效碰不到它，卡片会
+      // 拿着旧 identity id 的计数继续显示。episodes 前缀顺带覆盖 beats，那些行确
+      // 实被重写了。后端用 renamed_from 明确告诉我们级联跑没跑，就按它判。
+      if (res.data?.renamed_from) {
+        invalidateAssetReferences(qc, project);
+        qc.invalidateQueries({ queryKey: queryKeys.episodes(project) });
+      }
+    },
   });
 }
 
@@ -424,9 +436,16 @@ export function useIdentityOwnerIndex(project: string) {
  * that no longer matches, so a link to a just-created identity resolves to no
  * owner while the page stays mounted.
  *
- * Mutations that edit an existing identity in place (rename, appearance, image
- * generation) do not go through here: they never add or remove an id, so the
- * character list stays correct and refetching it would be waste.
+ * Rename counts as a membership change too, even though it neither adds nor
+ * removes an entry. `identity_id` is a derived key, not a stable handle:
+ * `update_character_identity` rebuilds it as `${char.name}_${new_iname}`
+ * whenever `identity_name` is in the payload. The old id therefore stops
+ * existing and the list's `identity_ids` still names it, so a deep link to the
+ * new id resolves to no owner until the page remounts.
+ *
+ * Edits that genuinely leave the id alone (appearance, face prompt, age, body
+ * type, image generation) do not come through here — refetching the character
+ * list for those would be waste.
  */
 function invalidateIdentityMembership(
   qc: ReturnType<typeof useQueryClient>,
@@ -463,7 +482,16 @@ export function useUpdateIdentity(project: string, name: string) {
       };
     }) =>
       api.patch(p`api/v1/projects/${project}/characters/${name}/identities/${identityId}`, { json: data }).json<OkResponse<Identity>>(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.identities(project, name) }),
+    onSuccess: (_res, { data }) => {
+      // A rename rewrites identity_id, so the character list's identity_ids
+      // goes stale with it. Anything else edits in place and the list is
+      // already correct.
+      if (data.identity_name !== undefined) {
+        invalidateIdentityMembership(qc, project, name);
+        return;
+      }
+      qc.invalidateQueries({ queryKey: queryKeys.identities(project, name) });
+    },
   });
 }
 
