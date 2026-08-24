@@ -8,7 +8,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from novelvideo.graph_preview import delete_graph_preview, write_graph_preview
+from novelvideo.graph_preview import (
+    delete_graph_preview,
+    load_graph_preview,
+    write_graph_preview,
+)
 from novelvideo.models import CharacterIdentity, NovelCharacter, NovelEpisode, NovelProp, NovelScene
 from novelvideo.project_context import ProjectContext
 
@@ -465,17 +469,11 @@ def test_m06_ingest_ignores_stale_graph_preview_without_success_marker(
     m06_client_factory,
     monkeypatch,
 ):
-    from novelvideo.api.routes import ingest
 
     client, _backend, _task_manager, project_dir, _assets, _store = m06_client_factory(
         "inline"
     )
     (project_dir / "novel.txt").unlink()
-
-    async def fail_if_opened(_ctx):
-        raise AssertionError("an incomplete import must not open Cognee")
-
-    monkeypatch.setattr(ingest, "make_cognee_store_for_context", fail_if_opened)
 
     response = client.get(f"/api/v1/projects/{_PROJECT}/ingest/graph")
     payload = _assert_ok(response)
@@ -484,10 +482,18 @@ def test_m06_ingest_ignores_stale_graph_preview_without_success_marker(
     assert payload["data"]["total_edges"] == 0
 
 
-def test_m06_legacy_graph_is_materialized_once(
+def test_m06_a_missing_graph_preview_reads_as_empty(
     m06_client_factory,
     monkeypatch,
 ):
+    """A project without the sidecar gets no preview, and nothing is built.
+
+    Backfilling on read meant a viewer-role GET opening Ladybug from an API
+    worker and waiting on the project graph lock with no timeout — during a
+    rebuild, for the length of the rebuild, and then returning the empty
+    preview anyway because the rebuild had removed novel.txt. Nothing
+    downstream reads this file; it is one picture on the import page.
+    """
     from novelvideo.api.routes import ingest
 
     client, _backend, _task_manager, project_dir, assets, _store = m06_client_factory(
@@ -495,29 +501,32 @@ def test_m06_legacy_graph_is_materialized_once(
     )
     delete_graph_preview(assets.ctx.state_dir)
     (project_dir / "novel.txt").write_text("已导入小说", encoding="utf-8")
-    calls: list[str] = []
 
-    class LegacyStore:
-        async def materialize_graph_preview(self):
-            calls.append("materialize")
-            snapshot = _graph_snapshot_payload()
-            write_graph_preview(assets.ctx.state_dir, snapshot)
-            return snapshot
+    assert not hasattr(ingest, "make_cognee_store_for_context"), (
+        "the graph route must not be able to construct a Cognee store"
+    )
 
-        async def close(self):
-            calls.append("close")
+    payload = _assert_ok(client.get(f"/api/v1/projects/{_PROJECT}/ingest/graph"))
 
-    async def make_legacy_store(_ctx):
-        return LegacyStore()
+    assert payload["data"]["total_nodes"] == 0
+    assert payload["data"]["total_edges"] == 0
+    # Still absent afterwards: the read is a read.
+    assert load_graph_preview(assets.ctx.state_dir) is None
 
-    monkeypatch.setattr(ingest, "make_cognee_store_for_context", make_legacy_store)
 
-    first = client.get(f"/api/v1/projects/{_PROJECT}/ingest/graph")
-    second = client.get(f"/api/v1/projects/{_PROJECT}/ingest/graph")
+def test_m06_a_written_graph_preview_is_served_from_the_sidecar(
+    m06_client_factory,
+):
+    """The normal path: import writes it, reads never open the graph."""
+    client, _backend, _task_manager, project_dir, assets, _store = m06_client_factory(
+        "inline"
+    )
+    (project_dir / "novel.txt").write_text("已导入小说", encoding="utf-8")
+    write_graph_preview(assets.ctx.state_dir, _graph_snapshot_payload())
 
-    assert _assert_ok(first)["data"]["total_nodes"] == 2
-    assert _assert_ok(second)["data"]["total_nodes"] == 2
-    assert calls == ["materialize", "close"]
+    payload = _assert_ok(client.get(f"/api/v1/projects/{_PROJECT}/ingest/graph"))
+
+    assert payload["data"]["total_nodes"] == 2
 
 
 @pytest.mark.parametrize("backend", ["inline", "celery"])
