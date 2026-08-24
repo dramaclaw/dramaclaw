@@ -103,6 +103,50 @@ def interrupt_live_codex_turn(thread_id: str, turn_id: str) -> bool:
     return True
 
 
+def control_codex_runtime(
+    *,
+    codex_bin: Path,
+    cwd: Path,
+    env: dict[str, str],
+    config_overrides: tuple[str, ...],
+    operation: Literal["interrupt", "archive", "delete"],
+    thread_id: str,
+    turn_id: str | None = None,
+) -> bool:
+    """Send lifecycle RPCs through the shared home-node App Server.
+
+    Unlike the in-process turn-handle fast path, this works when the HTTP
+    request lands on a different Gunicorn worker from the streaming request.
+    """
+
+    from openai_codex import CodexConfig
+    from novelvideo.chat.codex_app_server import shared_codex
+
+    config = CodexConfig(
+        codex_bin=str(codex_bin),
+        cwd=str(cwd),
+        env=env,
+        config_overrides=config_overrides,
+    )
+    with shared_codex(config) as codex:
+        client = codex._client
+        if operation == "interrupt":
+            if not turn_id:
+                return False
+            client.turn_interrupt(thread_id, turn_id)
+        elif operation == "archive":
+            client.thread_archive(thread_id)
+        else:
+            from openai_codex.generated.v2_all import ThreadDeleteResponse
+
+            client.request(
+                "thread/delete",
+                {"threadId": thread_id},
+                response_model=ThreadDeleteResponse,
+            )
+    return True
+
+
 def consume_interrupted_codex_turn(thread_id: str, turn_id: str) -> bool:
     key = (str(thread_id or "").strip(), str(turn_id or "").strip())
     if not key[0] or not key[1]:
@@ -1201,7 +1245,6 @@ class CodexThread:
                 ModelReroutedNotification,
                 PlanDeltaNotification,
                 ReasoningSummaryTextDeltaNotification,
-                ReasoningTextDeltaNotification,
                 ItemStartedNotification,
                 TerminalInteractionNotification,
                 ThreadTokenUsageUpdatedNotification,
@@ -1327,19 +1370,6 @@ class CodexThread:
                                     turn_id=turn.id,
                                     text=payload.delta,
                                     name="reasoning_summary",
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if isinstance(payload, ReasoningTextDeltaNotification) and payload.turn_id == turn.id and payload.delta:
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="thought_delta",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    text=payload.delta,
-                                    name="reasoning",
                                     raw=raw,
                                 ),
                             )
@@ -1632,6 +1662,16 @@ class CodexThread:
                 if event.type == "complete":
                     break
         finally:
+            current_task = asyncio.current_task()
+            if (
+                current_task is not None
+                and current_task.cancelling()
+                and self.id
+                and current_turn_id
+            ):
+                await asyncio.to_thread(
+                    interrupt_live_codex_turn, self.id, current_turn_id
+                )
             await worker_task
 
     async def run(self, prompt: str) -> ChatRunResult:

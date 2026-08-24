@@ -7,6 +7,21 @@ import pytest
 from novelvideo.chat import dramaclaw_mcp
 
 
+def test_plugin_reads_turn_token_file_lazily(monkeypatch, tmp_path):
+    token_file = tmp_path / "turn.token"
+    token_file.write_text("first-token", encoding="utf-8")
+    monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN_FILE", str(token_file))
+    monkeypatch.delenv("DRAMACLAW_AGENT_TOKEN", raising=False)
+
+    assert dramaclaw_mcp.PLUGIN._request_headers("test")["Authorization"] == (
+        "Bearer first-token"
+    )
+    token_file.write_text("second-token", encoding="utf-8")
+    assert dramaclaw_mcp.PLUGIN._request_headers("test")["Authorization"] == (
+        "Bearer second-token"
+    )
+
+
 @pytest.mark.asyncio
 async def test_list_tools_exposes_only_progressive_bridge(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
@@ -28,12 +43,42 @@ def test_home_scope_only_discovers_project_collection_tools(monkeypatch):
 
 def test_project_scope_can_discover_production_tools(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.delenv("DRAMACLAW_TOOL_MODE", raising=False)
 
     available = dramaclaw_mcp._available_tools()
     matches = dramaclaw_mcp._search_tools("首帧生成", 6)
 
     assert set(available) == set(dramaclaw_mcp.TOOLS)
     assert "dramaclaw_render_first_frames" in {match["name"] for match in matches}
+
+
+def test_freezone_scope_hides_mainline_write_tools(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+
+    available = dramaclaw_mcp._available_tools()
+    denied = dramaclaw_mcp.PLUGIN.FREEZONE_DENIED_MAINLINE_WRITE_TOOLS
+
+    assert set(available).isdisjoint(denied)
+    assert "dramaclaw_save_freezone_canvas" in available
+
+
+@pytest.mark.asyncio
+async def test_freezone_scope_rejects_direct_mainline_write_call(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+
+    result = await dramaclaw_mcp.call_tool(
+        dramaclaw_mcp.TOOL_CALL_NAME,
+        {
+            "tool_name": "dramaclaw_render_first_frames",
+            "arguments": {"episode": 1},
+        },
+    )
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"] == "tool_not_available_in_scope"
 
 
 @pytest.mark.asyncio

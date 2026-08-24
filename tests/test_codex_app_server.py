@@ -10,12 +10,55 @@ from novelvideo.chat.backend_sdk import (
     CodexThread,
     _start_codex_turn,
     _start_or_resume_codex_thread,
+    control_codex_runtime,
 )
 
 
 def test_runtime_rejects_sdk_bundled_binary():
     with pytest.raises(RuntimeError, match="DramaClaw-patched Codex runtime"):
         codex_app_server._resolve_codex_bin(SimpleNamespace(codex_bin=None))
+
+
+def test_control_rpc_uses_shared_app_server_for_lifecycle(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeClient:
+        def turn_interrupt(self, thread_id, turn_id):
+            calls.append(("interrupt", thread_id, turn_id))
+
+        def thread_archive(self, thread_id):
+            calls.append(("archive", thread_id))
+
+        def request(self, method, payload, *, response_model):
+            calls.append((method, payload, response_model.__name__))
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield SimpleNamespace(_client=FakeClient())
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    common = {
+        "codex_bin": tmp_path / "codex",
+        "cwd": tmp_path,
+        "env": {},
+        "config_overrides": (),
+        "thread_id": "thread-a",
+    }
+
+    assert control_codex_runtime(
+        **common, operation="interrupt", turn_id="turn-a"
+    )
+    assert control_codex_runtime(**common, operation="archive")
+    assert control_codex_runtime(**common, operation="delete")
+    assert calls == [
+        ("interrupt", "thread-a", "turn-a"),
+        ("archive", "thread-a"),
+        (
+            "thread/delete",
+            {"threadId": "thread-a"},
+            "ThreadDeleteResponse",
+        ),
+    ]
 
 
 def test_legacy_log_sanitizer_removes_turn_secrets_from_sqlite(tmp_path):
@@ -292,6 +335,18 @@ async def test_codex_stream_maps_structured_runtime_events(monkeypatch, tmp_path
                     "itemId": "reasoning-1",
                     "summaryIndex": 0,
                     "delta": "Checking available projects",
+                }
+            ),
+        ),
+        Notification(
+            method="item/reasoning/textDelta",
+            payload=v2.ReasoningTextDeltaNotification.model_validate(
+                {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "reasoning-1",
+                    "contentIndex": 0,
+                    "delta": "private chain of thought",
                 }
             ),
         ),

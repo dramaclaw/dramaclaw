@@ -114,6 +114,11 @@ def _scope_kind() -> str:
 def _available_tools() -> dict[str, tuple[dict[str, Any], Any]]:
     if _scope_kind() == "home":
         return {name: TOOLS[name] for name in sorted(HOME_TOOL_NAMES) if name in TOOLS}
+    if os.environ.get("DRAMACLAW_TOOL_MODE", "").strip() == "freezone_canvas":
+        denied = frozenset(
+            getattr(PLUGIN, "FREEZONE_DENIED_MAINLINE_WRITE_TOOLS", ())
+        )
+        return {name: item for name, item in TOOLS.items() if name not in denied}
     return dict(TOOLS)
 
 

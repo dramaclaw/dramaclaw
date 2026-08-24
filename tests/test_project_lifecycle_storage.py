@@ -141,14 +141,23 @@ async def test_purge_detaches_files_before_releasing_project_name(monkeypatch, t
     async def emit_audit(**_kwargs):
         calls.append("audit")
 
+    async def delete_codex_threads(*_args, **_kwargs):
+        calls.append("codex")
+        return 1
+
     monkeypatch.setattr(projects, "resolve_project_context", resolve_context)
     monkeypatch.setattr(projects, "get_project_registry", lambda: Registry())
     monkeypatch.setattr(projects, "emit_project_audit", emit_audit)
+    monkeypatch.setattr(
+        projects.chat_service,
+        "delete_codex_project_threads",
+        delete_codex_threads,
+    )
 
     result = await projects.purge_project("01PROJECT", user={"username": "alice"})
 
     assert result["ok"] is True
-    assert calls == ["purged", "home", "audit"]
+    assert calls == ["codex", "purged", "home", "audit"]
     for raw_path in (record.output_dir, record.state_dir, record.runtime_dir):
         path = projects.Path(raw_path)
         assert not path.exists()

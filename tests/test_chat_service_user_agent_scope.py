@@ -827,6 +827,72 @@ def test_codex_main_thread_key_stays_backward_compatible():
 
 
 @pytest.mark.anyio
+async def test_codex_canvas_archive_removes_only_matching_scope(monkeypatch, tmp_path):
+    project_state = tmp_path / "project-state"
+    sessions = project_state / "agents" / "codex" / "sessions.json"
+    sessions.parent.mkdir(parents=True)
+    canvas_a = chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
+    )
+    canvas_b = chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:main", canvas_id="canvas-b"
+    )
+    sessions.write_text(
+        json.dumps({canvas_a: "thread-a", canvas_b: "thread-b"}),
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setattr(
+        chat_service,
+        "_control_codex_thread",
+        lambda operation, thread_id, turn_id=None: calls.append(
+            (operation, thread_id, turn_id)
+        )
+        or True,
+    )
+
+    count = await chat_service.archive_codex_canvas_threads(
+        "admin", "project-a", "canvas-a", project_state_dir=project_state
+    )
+
+    assert count == 1
+    assert calls == [("archive", "thread-a", None)]
+    assert json.loads(sessions.read_text(encoding="utf-8")) == {
+        canvas_b: "thread-b"
+    }
+
+
+@pytest.mark.anyio
+async def test_codex_project_delete_covers_unique_threads(monkeypatch, tmp_path):
+    project_state = tmp_path / "project-state"
+    sessions = project_state / "agents" / "codex" / "sessions.json"
+    sessions.parent.mkdir(parents=True)
+    sessions.write_text(
+        json.dumps({"one": "thread-a", "two": "thread-a", "three": "thread-b"}),
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setattr(
+        chat_service,
+        "_control_codex_thread",
+        lambda operation, thread_id, turn_id=None: calls.append(
+            (operation, thread_id, turn_id)
+        )
+        or True,
+    )
+
+    count = await chat_service.delete_codex_project_threads(
+        "admin", "project-a", project_state_dir=project_state
+    )
+
+    assert count == 2
+    assert calls == [
+        ("delete", "thread-a", None),
+        ("delete", "thread-b", None),
+    ]
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("tool_mode", "store_scope", "expected_profile", "expected_canvas"),
     [
@@ -855,6 +921,11 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     captured: dict[str, object] = {}
+    revoked: list[str] = []
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, token):
+            revoked.append(token)
 
     async def fake_create_token(*args, **kwargs):  # noqa: ARG001
         return "agent-token"
@@ -923,6 +994,9 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
 
     def fake_build_thread(*args, **kwargs):
         captured.update(kwargs)
+        token_file = Path(kwargs["agent_token_file"])
+        assert token_file.read_text(encoding="utf-8") == "agent-token"
+        assert token_file.stat().st_mode & 0o777 == 0o600
         return FakeThread()
 
     monkeypatch.setattr(
@@ -931,6 +1005,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         fake_create_token,
     )
     monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
     monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **kwargs: None)
 
     events = []
@@ -945,12 +1020,23 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         collect_event,
         project_state_dir=tmp_path / "state" / "admin" / "project-a",
         tool_mode=tool_mode,
+        surface_context={"freezone_canvas_id": "canvas-a"},
         store_scope=store_scope,
         turn_id="business-turn",
+        route_prompt="hello",
     )
 
     assert captured["agent_profile"] == expected_profile
+    assert captured["tool_mode"] == tool_mode
     assert captured["canvas_id"] == expected_canvas
+    assert not Path(captured["agent_token_file"]).exists()
+    assert revoked == ["agent-token"]
+    if tool_mode == "freezone_canvas":
+        assert "[FREEZONE_CANVAS_ASSISTANT]" in captured["prompt"]
+        assert "[FREEZONE_CANVAS_CONTEXT]" in captured["prompt"]
+        assert "canvas_id: canvas-a" in captured["prompt"]
+    else:
+        assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
     assert [event["type"] for event in events] == [
         "thread_started",
         "turn_started",
@@ -1013,8 +1099,10 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
     assert servers["dramaclaw"]["args"] == ["-m", "novelvideo.chat.dramaclaw_mcp"]
     assert servers["dramaclaw"]["env_vars"] == [
         "DRAMACLAW_API_URL",
-        "DRAMACLAW_AGENT_TOKEN",
+        "DRAMACLAW_AGENT_TOKEN_FILE",
+        "DRAMACLAW_CANVAS_ID",
         "DRAMACLAW_PROJECT_ID",
+        "DRAMACLAW_TOOL_MODE",
         "DRAMACLAW_USERNAME",
     ]
 
@@ -1040,7 +1128,8 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
     assert 'mcp_servers.dramaclaw.args=["-m","novelvideo.chat.dramaclaw_mcp"]' in overrides
     assert (
         'mcp_servers.dramaclaw.env_vars=["DRAMACLAW_API_URL",'
-        '"DRAMACLAW_AGENT_TOKEN","DRAMACLAW_PROJECT_ID","DRAMACLAW_USERNAME"]'
+        '"DRAMACLAW_AGENT_TOKEN_FILE","DRAMACLAW_CANVAS_ID","DRAMACLAW_PROJECT_ID",'
+        '"DRAMACLAW_TOOL_MODE","DRAMACLAW_USERNAME"]'
         in overrides
     )
     assert "mcp_servers.dramaclaw.required=true" in overrides
@@ -1049,7 +1138,7 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
     client = backend_sdk.CodexClient(
         codex_bin=Path("/usr/local/bin/codex"),
         cwd=tmp_path,
-        env={"DRAMACLAW_AGENT_TOKEN": "token"},
+        env={"DRAMACLAW_AGENT_TOKEN_FILE": "/tmp/turn.token"},
         model="DC-codex-agent-LLM",
         model_provider="dramaclaw_gateway",
         developer_instructions="Use DramaClaw MCP only.",
@@ -1060,11 +1149,38 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
 
     assert thread._config_overrides == overrides
     assert thread._thread_config["mcp_servers.dramaclaw.env"] == {
-        "DRAMACLAW_AGENT_TOKEN": "token"
+        "DRAMACLAW_AGENT_TOKEN_FILE": "/tmp/turn.token"
     }
     assert "mcp_servers.dramaclaw.env_vars" not in thread._thread_config
     assert thread._model == "DC-codex-agent-LLM"
     assert thread._model_provider == "dramaclaw_gateway"
+
+
+def test_codex_client_carries_freezone_scope_into_mcp_process(tmp_path):
+    overrides = chat_service._codex_mcp_config_overrides(
+        chat_service._dramaclaw_mcp_servers()
+    )
+    client = backend_sdk.CodexClient(
+        codex_bin=Path("/usr/local/bin/codex"),
+        cwd=tmp_path,
+        env={
+            "DRAMACLAW_AGENT_TOKEN_FILE": "/tmp/turn.token",
+            "DRAMACLAW_CANVAS_ID": "canvas-a",
+            "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+        },
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions="Use DramaClaw MCP only.",
+        config_overrides=overrides,
+    )
+
+    thread = client.thread_start()
+
+    assert thread._thread_config["mcp_servers.dramaclaw.env"] == {
+        "DRAMACLAW_AGENT_TOKEN_FILE": "/tmp/turn.token",
+        "DRAMACLAW_CANVAS_ID": "canvas-a",
+        "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+    }
 
 
 def test_codex_client_keeps_gateway_credentials_in_turn_metadata(tmp_path):
@@ -1074,7 +1190,7 @@ def test_codex_client_keeps_gateway_credentials_in_turn_metadata(tmp_path):
     client = backend_sdk.CodexClient(
         codex_bin=Path("/usr/local/bin/codex"),
         cwd=tmp_path,
-        env={"DRAMACLAW_AGENT_TOKEN": "agent-turn-secret"},
+        env={"DRAMACLAW_AGENT_TOKEN_FILE": "/tmp/turn.token"},
         model="DC-codex-agent-LLM",
         model_provider="dramaclaw_gateway",
         developer_instructions="Use DramaClaw MCP only.",
@@ -1090,7 +1206,7 @@ def test_codex_client_keeps_gateway_credentials_in_turn_metadata(tmp_path):
 
     thread = client.thread_start()
     assert thread._thread_config["mcp_servers.dramaclaw.env"] == {
-        "DRAMACLAW_AGENT_TOKEN": "agent-turn-secret"
+        "DRAMACLAW_AGENT_TOKEN_FILE": "/tmp/turn.token"
     }
     assert thread._turn_metadata == {
         "dramaclaw_gateway_api_key": "turn-secret",
@@ -1142,17 +1258,33 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
         "project-a",
         "agent-token",
         project_state_dir=project_state,
+        agent_token_file=project_state / "turn.token",
     )
 
     assert env["CODEX_HOME"] == str(tmp_path / "state" / ".codex-app-server")
     assert env["DRAMACLAW_AGENT_SCOPE"] == "project"
     assert env["SUPERTALE_AGENT_SCOPE"] == "project"
+    assert env["DRAMACLAW_TOOL_MODE"] == "default"
+    assert "DRAMACLAW_AGENT_TOKEN" not in env
+    assert env["DRAMACLAW_AGENT_TOKEN_FILE"] == str(project_state / "turn.token")
+    assert "DRAMACLAW_CANVAS_ID" not in env
     assert "DRAMACLAW_CODEX_GATEWAY_API_KEY" not in env
     assert "NEWAPI_API_KEY" not in env
     assert "OPENAI_API_KEY" not in env
     assert env["DRAMACLAW_CODEX_GATEWAY_BASE_URL"] == (
         "https://gateway.example/v1"
     )
+
+    freezone_env = chat_service._build_codex_env(
+        "admin",
+        "project-a",
+        "agent-token",
+        tool_mode="freezone_canvas",
+        canvas_id="canvas-a",
+        project_state_dir=project_state,
+    )
+    assert freezone_env["DRAMACLAW_TOOL_MODE"] == "freezone_canvas"
+    assert freezone_env["DRAMACLAW_CANVAS_ID"] == "canvas-a"
 
 
 def test_codex_turn_gateway_credentials_reject_foreign_origin(monkeypatch):
@@ -1347,6 +1479,27 @@ async def test_cancel_interrupts_only_the_users_active_codex_turns(monkeypatch):
     finally:
         with chat_service._ACTIVE_CODEX_TURNS_LOCK:
             chat_service._ACTIVE_CODEX_TURNS.clear()
+
+
+@pytest.mark.asyncio
+async def test_cancel_reads_active_codex_turns_from_other_worker(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    chat_service._set_active_codex_turn(
+        "alice", "project:project-a", ("thread-a", "turn-a")
+    )
+    calls = []
+    monkeypatch.setattr(chat_service, "interrupt_live_codex_turn", lambda *_: False)
+    monkeypatch.setattr(
+        chat_service,
+        "_control_codex_thread",
+        lambda operation, thread_id, turn_id=None: calls.append(
+            (operation, thread_id, turn_id)
+        )
+        or True,
+    )
+
+    assert await chat_service.interrupt_active_codex_turns("alice") is True
+    assert calls == [("interrupt", "thread-a", "turn-a")]
 
 
 def test_chat_run_lock_is_user_scoped(monkeypatch, tmp_path):
@@ -2297,6 +2450,46 @@ async def test_freezone_history_reads_project_name_storage_scope(monkeypatch, tm
         / "canvas-a"
         / "agents"
         / "agent-2"
+        / "chat.db"
+    ).exists()
+
+
+def test_freezone_chat_store_uses_authoritative_project_state_and_migrates_legacy(
+    monkeypatch, tmp_path
+):
+    state_root = tmp_path / "state"
+    authoritative = tmp_path / "mounted-project-state"
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_root))
+    legacy_scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="main",
+    )
+    chat_store.append_message("admin", legacy_scope, "user", "legacy history")
+    authoritative_scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="main",
+        state_dir=str(authoritative),
+    )
+
+    chat_store.append_message("admin", authoritative_scope, "assistant", "new reply")
+
+    assert [
+        item["content"]
+        for item in chat_store.list_messages("admin", authoritative_scope)
+    ] == ["legacy history", "new reply"]
+    assert (
+        authoritative
+        / "_chat"
+        / "freezone"
+        / "canvas-a"
+        / "agents"
+        / "main"
         / "chat.db"
     ).exists()
 

@@ -298,6 +298,7 @@ def _available() -> bool:
         os.environ.get("DRAMACLAW_API_URL")
         and (
             os.environ.get("DRAMACLAW_AGENT_TOKEN")
+            or os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE")
             or _local_agent_trust_enabled()
             or _ce_owner_mode()
         )
@@ -312,10 +313,22 @@ def _base_url() -> str:
 
 
 def _token() -> str:
-    value = os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+    value = _current_agent_token()
     if not value:
         raise ValueError("DRAMACLAW_AGENT_TOKEN is not set")
     return value
+
+
+def _current_agent_token() -> str:
+    """Read a turn token lazily so resumed Codex MCP processes stay safe."""
+
+    token_file = os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+    if token_file:
+        try:
+            return Path(token_file).read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+    return os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
 
 
 def _ce_owner_mode() -> bool:
@@ -358,7 +371,7 @@ def _request_headers(user_agent: str) -> dict[str, str]:
         "Accept": "application/json",
         "User-Agent": user_agent,
     }
-    token = os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+    token = _current_agent_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
     elif _ce_owner_mode():

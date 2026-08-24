@@ -28,6 +28,7 @@ from fastapi import (
 from fastapi.responses import FileResponse
 
 from novelvideo.api.auth import get_api_user
+from novelvideo.chat import service as chat_service
 from novelvideo.api.deps import (
     make_cognee_store_for_context,
     make_sqlite_store,
@@ -13152,12 +13153,18 @@ async def put_canvas(
 async def delete_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_user)):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project,
         user,
         require_home_node=False,
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
+    await chat_service.archive_codex_canvas_threads(
+        username,
+        project_name,
+        canvas_id,
+        project_state_dir=ctx.state_dir,
+    )
     try:
         deleted_canvas = canvas_store.soft_delete_canvas(
             canvas_project_dir,

@@ -214,6 +214,27 @@ def test_freezone_profile_uses_isolated_workspace(
     assert (hw.freezone_python_hook_dir(home) / "sitecustomize.py").is_file()
 
 
+def test_freezone_workspace_preserves_learned_identity_and_memory(
+    isolated_workspace, repo_skills, repo_plugins
+):
+    home = hw.ensure_user_hermes_workspace("admin", profile="freezone")
+    soul_file = home / "SOUL.md"
+    memory_file = home / "memories" / "MEMORY.md"
+    soul_file.write_text(
+        soul_file.read_text(encoding="utf-8") + "\n用户偏好简洁沟通。\n",
+        encoding="utf-8",
+    )
+    memory_file.write_text(
+        memory_file.read_text(encoding="utf-8") + "\n项目使用暖色电影感。\n",
+        encoding="utf-8",
+    )
+
+    hw.ensure_user_hermes_workspace("admin", profile="freezone")
+
+    assert "用户偏好简洁沟通" in soul_file.read_text(encoding="utf-8")
+    assert "项目使用暖色电影感" in memory_file.read_text(encoding="utf-8")
+
+
 def test_freezone_sitecustomize_disables_only_skill_manage(
     isolated_workspace,
     repo_skills,

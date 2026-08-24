@@ -29,6 +29,7 @@ from novelvideo.api.schemas import (
     ProjectUpdate,
 )
 from novelvideo.config import ensure_project_dirs_at_paths
+from novelvideo.chat import service as chat_service
 from novelvideo.embedding_models import (
     PROJECT_EMBEDDING_DIMENSION_KEY,
     PROJECT_EMBEDDING_MODEL_KEY,
@@ -952,6 +953,13 @@ async def purge_project(
         )
     if record.purged_at:
         raise HTTPException(status_code=400, detail="Project has already been purged.")
+    # Codex rollouts live under the home-node CODEX_HOME, outside the project
+    # directories quarantined below. Delete them before releasing the project.
+    await chat_service.delete_codex_project_threads(
+        str(user["username"]),
+        ctx.project_name,
+        project_state_dir=ctx.state_dir,
+    )
     try:
         quarantined_dirs = _quarantine_project_dirs(
             record,

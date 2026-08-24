@@ -17,7 +17,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
@@ -28,6 +28,7 @@ from novelvideo.chat.backend_sdk import (
     _codex_item_completed_trace,
     _codex_item_started_trace,
     _codex_unwrap_item,
+    control_codex_runtime,
     interrupt_live_claude_client,
     interrupt_live_codex_turn,
 )
@@ -3862,6 +3863,138 @@ def _set_codex_thread_id(
         )
 
 
+def _active_codex_turns_path(username: str) -> Path:
+    return _user_state_dir(username) / "active_codex_turns.json"
+
+
+def _load_active_codex_turns(username: str) -> dict[str, dict[str, str]]:
+    path = _active_codex_turns_path(username)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(key): {str(k): str(v) for k, v in value.items()}
+        for key, value in payload.items()
+        if isinstance(value, dict)
+    }
+
+
+def _set_active_codex_turn(
+    username: str,
+    scope_key: str,
+    value: tuple[str, str] | None,
+) -> None:
+    from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
+
+    path = _active_codex_turns_path(username)
+    with index_file_lock(path):
+        payload = _load_active_codex_turns(username)
+        if value is None:
+            payload.pop(scope_key, None)
+        else:
+            payload[scope_key] = {"thread_id": value[0], "turn_id": value[1]}
+        write_json_atomic(path, payload)
+
+
+def _control_codex_thread(
+    operation: Literal["interrupt", "archive", "delete"],
+    thread_id: str,
+    turn_id: str | None = None,
+) -> bool:
+    codex_bin = _codex_bin_path()
+    if codex_bin is None:
+        return False
+    from novelvideo.chat.hermes_workspace import effective_gateway_credentials
+
+    _key, base_url = effective_gateway_credentials()
+    normalized_base_url = str(base_url or "").strip().rstrip("/")
+    if not normalized_base_url:
+        return False
+    codex_home = _codex_node_home()
+    env = os.environ.copy()
+    env["CODEX_HOME"] = str(codex_home)
+    env[_CODEX_GATEWAY_BASE_URL_ENV] = normalized_base_url
+    return control_codex_runtime(
+        codex_bin=codex_bin,
+        cwd=codex_home,
+        env=env,
+        config_overrides=_codex_gateway_config_overrides(normalized_base_url),
+        operation=operation,
+        thread_id=thread_id,
+        turn_id=turn_id,
+    )
+
+
+async def archive_codex_canvas_threads(
+    username: str,
+    project: str,
+    canvas_id: str,
+    *,
+    project_state_dir: str | Path | None = None,
+) -> int:
+    """Archive and forget every Codex agent thread attached to one canvas."""
+
+    state = _load_codex_session_state(
+        username, project, project_state_dir=project_state_dir
+    )
+    matches: dict[str, str] = {}
+    for key, value in state.items():
+        try:
+            scope_parts = json.loads(key)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(scope_parts, list)
+            and len(scope_parts) == 4
+            and str(scope_parts[0]).startswith("freezone")
+            and scope_parts[3] == canvas_id
+        ):
+            matches[key] = value
+    for thread_id in sorted(set(matches.values())):
+        archived = await asyncio.to_thread(
+            _control_codex_thread, "archive", thread_id
+        )
+        if not archived:
+            raise RuntimeError(f"Codex thread could not be archived: {thread_id}")
+    if matches:
+        state_path = _codex_session_state_path(
+            username, project, project_state_dir=project_state_dir
+        )
+        from novelvideo.utils.state_index_files import index_file_lock
+
+        with index_file_lock(state_path):
+            latest = _load_codex_session_state(
+                username, project, project_state_dir=project_state_dir
+            )
+            for key, thread_id in matches.items():
+                if latest.get(key) == thread_id:
+                    latest.pop(key, None)
+            _save_codex_session_state(
+                username, project, latest, project_state_dir=project_state_dir
+            )
+    return len(set(matches.values()))
+
+
+async def delete_codex_project_threads(
+    username: str,
+    project: str,
+    *,
+    project_state_dir: str | Path | None = None,
+) -> int:
+    state = _load_codex_session_state(
+        username, project, project_state_dir=project_state_dir
+    )
+    threads = sorted(set(state.values()))
+    for thread_id in threads:
+        deleted = await asyncio.to_thread(_control_codex_thread, "delete", thread_id)
+        if not deleted:
+            raise RuntimeError(f"Codex thread could not be deleted: {thread_id}")
+    return len(threads)
+
+
 def _load_api_url() -> str:
     explicit = os.environ.get("DRAMACLAW_API_URL", "").strip()
     if explicit:
@@ -3896,6 +4029,7 @@ PAGE_AGENT_SCOPES = [
     "assets:read",
 ]
 PAGE_AGENT_SESSION_TTL_SECONDS = 24 * 3600
+CODEX_AGENT_SESSION_TTL_SECONDS = 2 * 3600
 
 
 async def _create_page_agent_session_token(
@@ -3903,11 +4037,12 @@ async def _create_page_agent_session_token(
     project: str,
     *,
     agent_kind: str,
+    ttl_seconds: int = PAGE_AGENT_SESSION_TTL_SECONDS,
 ) -> str:
     token = await get_auth_session_port().create_agent_session(
         username=username,
         scopes=PAGE_AGENT_SCOPES,
-        ttl_seconds=PAGE_AGENT_SESSION_TTL_SECONDS,
+        ttl_seconds=ttl_seconds,
         agent_kind=agent_kind,
         worker_id=f"page-agent:{agent_kind}:{username}",
         current_scope_kind="project" if project else "home",
@@ -4067,7 +4202,10 @@ def _build_codex_env(
     *,
     egress_context=None,
     authorization=None,
+    tool_mode: str = "default",
+    canvas_id: str | None = None,
     project_state_dir: str | Path | None = None,
+    agent_token_file: str | Path | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
     agent_scope = "project" if project else "user"
@@ -4080,8 +4218,16 @@ def _build_codex_env(
         env["SUPERTALE_PROJECT_ID"] = project
     env["DRAMACLAW_API_URL"] = _load_api_url()
     env["SUPERTALE_API_URL"] = _load_api_url()
-    env["DRAMACLAW_AGENT_TOKEN"] = agent_token
-    env["SUPERTALE_AGENT_TOKEN"] = agent_token
+    env.pop("DRAMACLAW_AGENT_TOKEN", None)
+    env.pop("SUPERTALE_AGENT_TOKEN", None)
+    if agent_token_file is not None:
+        env["DRAMACLAW_AGENT_TOKEN_FILE"] = str(agent_token_file)
+    env["DRAMACLAW_TOOL_MODE"] = str(tool_mode or "default").strip() or "default"
+    normalized_canvas_id = str(canvas_id or "").strip()
+    if normalized_canvas_id:
+        env["DRAMACLAW_CANVAS_ID"] = normalized_canvas_id
+    else:
+        env.pop("DRAMACLAW_CANVAS_ID", None)
     _workspace, codex_home = ensure_user_codex_workspace(
         username, project, agent_token, project_state_dir=project_state_dir
     )
@@ -4353,8 +4499,10 @@ def _dramaclaw_mcp_servers() -> dict[str, dict[str, Any]]:
             "args": ["-m", "novelvideo.chat.dramaclaw_mcp"],
             "env_vars": [
                 "DRAMACLAW_API_URL",
-                "DRAMACLAW_AGENT_TOKEN",
+                "DRAMACLAW_AGENT_TOKEN_FILE",
+                "DRAMACLAW_CANVAS_ID",
                 "DRAMACLAW_PROJECT_ID",
+                "DRAMACLAW_TOOL_MODE",
                 "DRAMACLAW_USERNAME",
             ],
         }
@@ -4446,8 +4594,10 @@ def _build_codex_thread(
     authorization=None,
     control_capability: str | None = None,
     agent_profile: str = "main",
+    tool_mode: str = "default",
     canvas_id: str | None = None,
     project_state_dir: str | Path | None = None,
+    agent_token_file: str | Path | None = None,
 ) -> AgentRuntimeThreadPort:
     workspace, _codex_home = ensure_user_codex_workspace(
         username,
@@ -4461,7 +4611,10 @@ def _build_codex_thread(
         agent_token,
         egress_context=egress_context,
         authorization=authorization,
+        tool_mode=tool_mode,
+        canvas_id=canvas_id,
         project_state_dir=project_state_dir,
+        agent_token_file=agent_token_file,
     )
     gateway_api_key, gateway_base_url = _codex_turn_gateway_credentials(authorization)
     node_config_overrides = _codex_gateway_config_overrides(gateway_base_url)
@@ -4511,8 +4664,13 @@ async def interrupt_chat_turn(
         if not thread_id or not turn_id:
             return False
         try:
-            return await asyncio.to_thread(
+            interrupted = await asyncio.to_thread(
                 interrupt_live_codex_turn, thread_id, turn_id
+            )
+            if interrupted:
+                return True
+            return await asyncio.to_thread(
+                _control_codex_thread, "interrupt", thread_id, turn_id
             )
         except Exception as exc:
             if "app-server closed stdout" in str(exc):
@@ -4533,9 +4691,25 @@ async def interrupt_active_codex_turns(username: str) -> bool:
             for (turn_username, _project), value in _ACTIVE_CODEX_TURNS.items()
             if turn_username == normalized
         ]
+    turns.extend(
+        (entry.get("thread_id", ""), entry.get("turn_id", ""))
+        for entry in _load_active_codex_turns(normalized).values()
+    )
+    turns = list({turn for turn in turns if turn[0] and turn[1]})
+
+    async def interrupt_pair(thread_id: str, turn_id: str) -> bool:
+        local = await asyncio.to_thread(
+            interrupt_live_codex_turn, thread_id, turn_id
+        )
+        if local:
+            return True
+        return await asyncio.to_thread(
+            _control_codex_thread, "interrupt", thread_id, turn_id
+        )
+
     results = await asyncio.gather(
         *(
-            asyncio.to_thread(interrupt_live_codex_turn, thread_id, turn_id)
+            interrupt_pair(thread_id, turn_id)
             for thread_id, turn_id in turns
         ),
         return_exceptions=True,
@@ -4602,8 +4776,10 @@ async def stream_assistant_reply(
                 requester_user_id=requester_user_id,
                 egress_project_id=egress_project_id,
                 tool_mode=tool_mode,
+                surface_context=surface_context,
                 store_scope=store_scope,
                 turn_id=turn_id,
+                route_prompt=route_prompt,
             )
         if backend == "hermes":
             return await _stream_assistant_reply_hermes(
@@ -5557,8 +5733,10 @@ async def _stream_assistant_reply_codex(
     requester_user_id: str | None = None,
     egress_project_id: str | None = None,
     tool_mode: str = "default",
+    surface_context: dict[str, Any] | None = None,
     store_scope: Any | None = None,
     turn_id: str | None = None,
+    route_prompt: str | None = None,
 ) -> dict[str, Any]:
     assistant_text = ""
     tool_text = ""
@@ -5594,12 +5772,29 @@ async def _stream_assistant_reply_codex(
     )
     active_turn_key = (username, codex_scope_key)
     active_turn_value: tuple[str, str] | None = None
+    agent_token: str | None = None
+    token_file: Path | None = None
     try:
         agent_token = await _create_page_agent_session_token(
             username,
             project,
             agent_kind="codex",
+            ttl_seconds=CODEX_AGENT_SESSION_TTL_SECONDS,
         )
+        token_root = (
+            Path(project_state_dir)
+            if project_state_dir is not None
+            else _project_state_dir(username, project)
+            if project
+            else _user_state_dir(username)
+        ) / "agents" / "codex" / "turn_tokens"
+        token_root.mkdir(parents=True, exist_ok=True)
+        token_name = hashlib.sha256(codex_scope_key.encode("utf-8")).hexdigest()
+        token_file = token_root / f"{token_name}.token"
+        temporary_token_file = token_file.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        temporary_token_file.write_text(agent_token, encoding="utf-8")
+        temporary_token_file.chmod(0o600)
+        temporary_token_file.replace(token_file)
         thread = _build_codex_thread(
             username,
             project,
@@ -5608,14 +5803,33 @@ async def _stream_assistant_reply_codex(
             authorization=authorization,
             control_capability=control_capability,
             agent_profile=agent_profile,
+            tool_mode=tool_mode,
             canvas_id=canvas_id,
             project_state_dir=project_state_dir,
+            agent_token_file=token_file,
         )
     except Exception:
         if turn_operation is not None:
             await turn_operation.finish(turn_disposition)
+        if token_file is not None:
+            try:
+                token_file.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("failed to remove failed Codex token file", exc_info=True)
+        if agent_token:
+            try:
+                await get_auth_session_port().revoke_agent_session(agent_token)
+            except Exception:
+                logger.warning("failed to revoke failed Codex launch token", exc_info=True)
         raise
-    agent_prompt = _prompt_with_user_context(username, project, prompt)
+    agent_prompt = _prompt_with_user_context(
+        username,
+        project,
+        prompt,
+        tool_mode=tool_mode,
+        surface_context=surface_context,
+        route_prompt=route_prompt,
+    )
     try:
         async for event in thread.stream(agent_prompt):
             if event.type == "egress_submitted":
@@ -5641,6 +5855,9 @@ async def _stream_assistant_reply_codex(
                     active_turn_value = (codex_thread_id, codex_turn_id)
                     with _ACTIVE_CODEX_TURNS_LOCK:
                         _ACTIVE_CODEX_TURNS[active_turn_key] = active_turn_value
+                    _set_active_codex_turn(
+                        username, codex_scope_key, active_turn_value
+                    )
                 await on_event(
                     {
                         "type": "thread_started",
@@ -5750,8 +5967,19 @@ async def _stream_assistant_reply_codex(
             with _ACTIVE_CODEX_TURNS_LOCK:
                 if _ACTIVE_CODEX_TURNS.get(active_turn_key) == active_turn_value:
                     _ACTIVE_CODEX_TURNS.pop(active_turn_key, None)
+            _set_active_codex_turn(username, codex_scope_key, None)
         if turn_operation is not None:
             await turn_operation.finish(turn_disposition)
+        if token_file is not None:
+            try:
+                token_file.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("failed to remove Codex turn token file", exc_info=True)
+        if agent_token:
+            try:
+                await get_auth_session_port().revoke_agent_session(agent_token)
+            except Exception:
+                logger.warning("failed to revoke Codex turn token", exc_info=True)
 
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
     assistant_text = _normalize_json_render_reply(assistant_text)
