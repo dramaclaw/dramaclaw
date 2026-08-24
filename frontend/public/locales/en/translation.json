@@ -35,14 +35,7 @@
       "unread": "{{n}} unread",
       "pinned": "Pinned",
       "expand": "Expand this announcement",
-      "collapse": "Collapse this announcement",
-      "empty": "No announcements yet",
-      "items": {
-        "channel-release-2026-08": {
-          "title": "Channel release update",
-          "body": "A <hl>channel release</hl> is going live between <time>18:00 and 19:00</time>. Please avoid using the product during that window. Stay tuned!"
-        }
-      }
+      "collapse": "Collapse this announcement"
     }
   },
   "downloadPage": {

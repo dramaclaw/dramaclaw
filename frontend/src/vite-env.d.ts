@@ -10,6 +10,7 @@ interface ImportMetaEnv {
   readonly VITE_SUPERCHAT_WS_URL?: string;
   readonly VITE_CLUSTER_MODE?: "none" | "multi-region";
   readonly VITE_CLUSTER_REGIONS_URL?: string;
+  readonly VITE_LOGIN_ANNOUNCEMENTS_URL?: string;
 }
 
 interface ImportMeta {

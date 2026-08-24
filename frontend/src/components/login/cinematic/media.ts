@@ -1,6 +1,7 @@
 const CDN_BASE = "https://nfg-web-assets.cdnfg.com/dramaclaw";
 
-const cdn = (path: string) => encodeURI(`${CDN_BASE}/${path}`);
+/** 登录页所有外链资源的唯一拼装口子 —— 换 CDN 只改 `CDN_BASE` 一处。 */
+export const cdn = (path: string) => encodeURI(`${CDN_BASE}/${path}`);
 
 export const businessWechatQrUrl = cdn("contact/wechat.png");
 

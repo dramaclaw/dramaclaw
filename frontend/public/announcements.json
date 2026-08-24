@@ -1,0 +1,19 @@
+{
+  "announcements": [
+    {
+      "id": "channel-release-2026-08",
+      "publishedAt": "2026-08-24T10:00:00+08:00",
+      "pinned": false,
+      "i18n": {
+        "zh": {
+          "title": "渠道版本更新",
+          "body": "<hl>渠道版本</hl>即将上线，更新时间在 <time>18:00-19:00</time> 点，请避开这个时间段使用。敬请期待！"
+        },
+        "en": {
+          "title": "Channel release update",
+          "body": "A <hl>channel release</hl> is going live between <time>18:00 and 19:00</time>. Please avoid using the product during that window. Stay tuned!"
+        }
+      }
+    }
+  ]
+}

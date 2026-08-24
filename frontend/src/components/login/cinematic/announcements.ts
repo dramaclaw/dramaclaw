@@ -1,22 +1,48 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { z } from "zod";
+
+import { cdn } from "./media";
 
 /**
  * 登录页公告中心的数据层。
  *
- * 目前是前端静态清单：条目的元数据（id / 发布时间 / 是否置顶）写在下面的
- * `ANNOUNCEMENTS` 里，标题和正文走 i18n
- * （`loginCinematic.announcement.items.<id>.title` / `.body`），
- * 改文案只动翻译文件，不用碰这里。
+ * 公告不再写死在前端：内容是 OSS 上的一份 JSON，运营改公告 = 覆盖那个对象，
+ * 不用发版、不用动翻译文件。默认地址是 `DEFAULT_ANNOUNCEMENTS_URL`，本地或
+ * 私有化部署用 `VITE_LOGIN_ANNOUNCEMENTS_URL` 覆盖（dev 下指到
+ * `/announcements.json` 就会读仓库里 `frontend/public/announcements.json`
+ * 那份，内容跟线上那份保持一致，改公告时两边一起改）。
  *
- * 加一条公告 = 在 `ANNOUNCEMENTS` 里加一项 + 在 zh/en 两个 translation.json 的
- * `items` 下按同一个 id 补 title/body。正文支持 <hl>…</hl> 标重点、<time>…</time>
- * 标时间窗，两个标记由 `<Trans>` 换成带样式的 span。
+ * JSON 形状（`announcements` 数组，也接受最外层直接是数组）：
  *
- * 之后要换成后端下发，只需要把 `loadAnnouncements()` 换成一个请求，
- * `Announcement` 的形状保持不变，UI 层一行都不用改。
+ * ```json
+ * {
+ *   "announcements": [
+ *     {
+ *       "id": "channel-release-2026-08",
+ *       "publishedAt": "2026-08-24T10:00:00+08:00",
+ *       "pinned": false,
+ *       "i18n": {
+ *         "zh": { "title": "渠道版本更新", "body": "<hl>渠道版本</hl>即将上线…" },
+ *         "en": { "title": "Channel release update", "body": "A <hl>channel release</hl>…" }
+ *       }
+ *     }
+ *   ]
+ * }
+ * ```
+ *
+ * 正文里的 `<hl>…</hl>` 标重点、`<time>…</time>` 标时间窗，由
+ * `parseAnnouncementBody` 切成 token、UI 层换成带样式的 span。**只认这两个标记**，
+ * 其余尖括号一律当普通文本，所以远端文案改坏了最多是显示成字面量，注不进 HTML。
+ *
+ * 拉不到（对象没传上去 / 断网 / 新域名没配 CORS）时不做本地缓存也不回落写死内容，就是「没有公告」：
+ * 公告是拿来传达当下状态的，宁可空着也不要拿旧的糊弄人。
  */
+
+/** 单条公告在某一种语言下的文案。 */
+export type AnnouncementText = { title: string; body: string };
+
 export type Announcement = {
   /**
    * 已读状态的主键。它会被写进 localStorage，所以**改 id 等于让这条公告对
@@ -27,21 +53,154 @@ export type Announcement = {
   publishedAt: string;
   /** 置顶的排在最前面，且带一枚「置顶」角标。 */
   pinned?: boolean;
+  /** 语言码（`zh` / `en` / `zh-CN` 都行，大小写不敏感）→ 该语言的文案。 */
+  i18n: Record<string, AnnouncementText>;
 };
 
-const ANNOUNCEMENTS: readonly Announcement[] = [
-  { id: "channel-release-2026-08", publishedAt: "2026-08-24T10:00:00+08:00" },
-];
+const AnnouncementTextSchema = z.object({
+  title: z.string().trim().min(1),
+  body: z.string().trim().min(1),
+});
+
+const AnnouncementSchema = z.object({
+  id: z.string().trim().min(1),
+  publishedAt: z
+    .string()
+    .refine((value) => Number.isFinite(Date.parse(value)), "publishedAt 必须是可解析的 ISO 8601"),
+  pinned: z.boolean().optional(),
+  // 至少得有一种语言，否则这条公告渲染出来是张空卡。
+  i18n: z.record(z.string(), AnnouncementTextSchema).refine((map) => Object.keys(map).length > 0),
+});
+
+// 最外层写成 `{ "announcements": [...] }` 或者直接一个数组都收 —— 传错外壳是
+// 手工维护 JSON 最容易犯的错，为此让整页公告消失不值得。
+const PayloadSchema = z.union([
+  z.object({ announcements: z.array(AnnouncementSchema) }),
+  z.array(AnnouncementSchema),
+]);
 
 /**
- * 置顶优先，其余按发布时间倒序。排序放在数据层而不是组件里，是为了让「换成
- * 后端下发」那天，前后端对顺序的定义只有一处。
+ * 跟登录页的二维码、片花走同一个 CDN 前缀（`media.ts` 的 `cdn()`），换域名只改那一处。
+ *
+ * 注意它跟那些图片视频有一点关键差别：`<img>`/`<video>` 是浏览器自己加载、JS 读不到内容，
+ * 不查 CORS；公告要 `fetch()` 把 JSON 交给 JS，**必须**这个域名回 `Access-Control-Allow-Origin`。
+ * 少了那个头，对象本身 200、地址栏也能打开，但页面上就是静默的「没有公告」。
  */
-export function loadAnnouncements(): Announcement[] {
-  return [...ANNOUNCEMENTS].sort((left, right) => {
+export const DEFAULT_ANNOUNCEMENTS_URL = cdn("announcements.json");
+
+export function announcementsUrl(): string {
+  const override = import.meta.env.VITE_LOGIN_ANNOUNCEMENTS_URL?.trim();
+  return override ? override : DEFAULT_ANNOUNCEMENTS_URL;
+}
+
+/**
+ * 置顶优先，其余按发布时间倒序。排序放在数据层而不是组件里，是为了让前后端
+ * 对顺序的定义只有一处 —— JSON 里怎么排都不影响最终展示。
+ */
+function sortAnnouncements(items: Announcement[]): Announcement[] {
+  return [...items].sort((left, right) => {
     if (Boolean(left.pinned) !== Boolean(right.pinned)) return left.pinned ? -1 : 1;
     return Date.parse(right.publishedAt) - Date.parse(left.publishedAt);
   });
+}
+
+export async function fetchAnnouncements(signal?: AbortSignal): Promise<Announcement[]> {
+  const url = announcementsUrl();
+  // `no-cache` 是「带 ETag 回源校验」而不是「不缓存」：公告改完刷新就能看到新的，
+  // 又不至于每次登录页都全量重下。前提是那个对象带短 Cache-Control，
+  // 否则改完公告要等 CDN 边缘缓存自己过期。
+  const res = await fetch(url, { credentials: "omit", cache: "no-cache", signal });
+  if (!res.ok) throw new Error(`GET ${url} → ${res.status}`);
+
+  const parsed = PayloadSchema.safeParse(await res.json());
+  if (!parsed.success) throw new Error(`invalid announcements payload: ${parsed.error.message}`);
+
+  const items = Array.isArray(parsed.data) ? parsed.data : parsed.data.announcements;
+  return sortAnnouncements(items);
+}
+
+/**
+ * 按界面语言挑一份文案：先精确匹配（`zh-CN`），再退到主语言（`zh`），最后退到
+ * JSON 里的第一份。**永远返回一份**而不是 null —— 少一种翻译不该让整条公告消失，
+ * 显示成另一种语言至少信息还在。
+ */
+export function pickAnnouncementText(item: Announcement, language: string): AnnouncementText {
+  const byLowerKey = new Map(
+    Object.entries(item.i18n).map(([key, value]) => [key.toLowerCase(), value]),
+  );
+  const tag = language.toLowerCase();
+  const candidates = [tag, tag.split("-")[0], "zh", "en"];
+
+  for (const candidate of candidates) {
+    const hit = byLowerKey.get(candidate);
+    if (hit) return hit;
+  }
+  // schema 保证至少有一项，这里的 ?? 只是让类型收敛。
+  return Object.values(item.i18n)[0] ?? { title: "", body: "" };
+}
+
+export type AnnouncementBodyToken = { kind: "text" | "hl" | "time"; text: string };
+
+const BODY_MARKUP_RE = /<(hl|time)>([\s\S]*?)<\/\1>/g;
+
+/**
+ * 把正文切成「普通文本 / 高亮 / 时间窗」三种 token。
+ *
+ * 远端文案是不受信任的输入，所以这里既不 `dangerouslySetInnerHTML` 也不走
+ * i18next 的 HTML 解析：只认 `<hl>` 和 `<time>` 这两个闭合标记，其它尖括号原样
+ * 当文本输出。文案里写了别的标签，看到的就是标签本身，不会变成 DOM。
+ */
+export function parseAnnouncementBody(body: string): AnnouncementBodyToken[] {
+  const tokens: AnnouncementBodyToken[] = [];
+  let cursor = 0;
+
+  for (const match of body.matchAll(BODY_MARKUP_RE)) {
+    const start = match.index ?? 0;
+    if (start > cursor) tokens.push({ kind: "text", text: body.slice(cursor, start) });
+    tokens.push({ kind: match[1] as "hl" | "time", text: match[2] });
+    cursor = start + match[0].length;
+  }
+  if (cursor < body.length) tokens.push({ kind: "text", text: body.slice(cursor) });
+
+  return tokens;
+}
+
+/**
+ * 拉公告。挂载时拉一次，拉不到就是空数组 —— 调用方据此把整个入口收起来。
+ *
+ * 没有 loading / error 态：调用方对「还没拉到」「拉失败」「本来就没有」的处理
+ * 完全一样（都不显示），多分一层状态只会让 UI 多几条走不到的分支。
+ *
+ * 请求在组件卸载时 abort：登录页的公告入口会随着登录成功一起卸载，让一个已经
+ * 没人看的请求继续 setState 只会换来 React 的警告。
+ */
+export function useAnnouncements(): Announcement[] {
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let alive = true;
+
+    fetchAnnouncements(controller.signal)
+      .then((items) => {
+        if (alive) setAnnouncements(items);
+      })
+      .catch((error: unknown) => {
+        if (!alive || controller.signal.aborted) return;
+        // 只留一条日志：登录页拿不到公告不是用户能处理的问题，界面上安静地少一个入口，
+        // 排查时靠这行知道是 CDN/CORS 还是 JSON 写坏了。
+        // eslint-disable-next-line no-console
+        console.warn("[announcements] load failed:", error);
+        setAnnouncements([]);
+      });
+
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, []);
+
+  return announcements;
 }
 
 const READ_STORAGE_KEY = "dramaclaw.login.announcements.read";
