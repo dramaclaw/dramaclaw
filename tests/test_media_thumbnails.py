@@ -589,6 +589,32 @@ def test_a_cold_variant_request_redirects_to_the_stable_original_url(
     assert not (tmp_path / thumbnails.THUMB_ROOT).exists()
 
 
+def test_a_variant_deleted_before_stat_still_redirects_to_the_original_url(
+    monkeypatch, tmp_path
+):
+    """A thumbnail cleanup race must not put original bytes on the variant URL."""
+
+    from novelvideo.api.routes import files
+
+    _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
+    missing_thumb = tmp_path / "_thumbs" / "thumb" / "deleted.webp"
+    monkeypatch.setattr(files, "fresh_thumbnail", lambda *_args: missing_thumb)
+    client = _client(monkeypatch, tmp_path)
+    url = "/projects/demo/media/freezone/_outputs/big.png"
+
+    response = client.get(
+        f"{url}?keep=first&st_thumb=invalid&v=1787194176036036558"
+        "&st_thumb=thumb&keep=second",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["location"] == (
+        f"{url}?keep=first&v=1787194176036036558&keep=second"
+    )
+
+
 def test_an_identical_prewarm_job_is_not_queued_twice(tmp_path, monkeypatch):
     """One paint of a cold canvas offers the same job once per visible node.
 

@@ -115,7 +115,9 @@ def _maybe_thumbnail_response(
     cache_control = _variant_cache_control(request)
     try:
         stat_result = thumb.stat()
-    except OSError:  # raced with a rewrite; fall back to the original
+    except OSError:  # raced with a rewrite; move the fallback off the variant URL
+        if request is not None:
+            return _redirect_to_original_url(request)
         return None
     # Passing the stat makes FileResponse compute etag/last-modified now rather
     # than mid-send, so the value is available to answer a conditional request.
