@@ -3,10 +3,22 @@ import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("organization brand asset deployment contract", () => {
-  it("uses the built-in Vite proxy for the exact fixed public path", () => {
+  it("keeps the whole organization brand namespace out of the SPA fallback", () => {
     const config = readFileSync("vite.config.ts", "utf8");
+    const context = config.match(/"(\^\/assets\/org-brand[^\"]+)": \{/)?.[1];
 
-    expect(config).toContain('"^/assets/org-brand/[A-Za-z0-9_-]{1,64}/logo$"');
+    expect(context).toBeDefined();
+    const matchesBrandProxy = new RegExp(context!);
+    for (const path of [
+      "/assets/org-brand/org_a/logo",
+      `/assets/org-brand/${"a".repeat(65)}/logo`,
+      "/assets/org-brand/org_a/logo/extra",
+      "/assets/org-brand/org_a/logo?download=1",
+      "/assets/org-brand",
+    ]) {
+      expect(matchesBrandProxy.test(path), path).toBe(true);
+    }
+    expect(matchesBrandProxy.test("/assets/org-branding/org_a/logo")).toBe(false);
     expect(config).toContain("target: apiTarget");
     expect(config).toContain('path.replace("/assets/org-brand/", "/api/v1/org-brand/")');
     expect(config).toContain('proxyReq.removeHeader("cookie")');

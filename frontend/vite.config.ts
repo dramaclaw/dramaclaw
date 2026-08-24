@@ -128,7 +128,7 @@ export default defineConfig(({ mode }) => {
       host: true,
       port: 5173,
       proxy: {
-        "^/assets/org-brand/[A-Za-z0-9_-]{1,64}/logo$": {
+        "^/assets/org-brand(?:/|$)": {
           target: apiTarget,
           changeOrigin: true,
           rewrite: (path) => path.replace("/assets/org-brand/", "/api/v1/org-brand/"),
