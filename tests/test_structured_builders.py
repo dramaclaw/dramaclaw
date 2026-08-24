@@ -2601,3 +2601,33 @@ async def test_two_batches_nominating_do_not_overwrite_each_other():
     ) != narrator_vote_key(
         cast_key, character_appearance_cache_key(_cast_member("林某"))
     )
+
+
+async def test_a_resumed_build_keeps_the_narrator_the_first_attempt_nominated(
+    monkeypatch,
+):
+    """A replayed character abstains in memory however loudly it once nominated."""
+    from novelvideo import structured_extraction
+    from novelvideo.structured_extraction import enrich_character_appearances
+
+    monkeypatch.setattr(structured_extraction, "_APPEARANCE_BATCH_SIZE", 1)
+    cache = RecordingCache()
+    cast = [_cast_member("郑家悦"), _cast_member("林某")]
+
+    # First attempt gets through 郑家悦 and stops before 林某 is answered.
+    stopped = FakeAppearanceAgent({"郑家悦": _appearance("郑家悦", is_main=True)})
+    first = await enrich_character_appearances(
+        cast, agent=stopped, cache=cache, concurrency=1
+    )
+    assert [n for n, a in first.items() if a.is_main] == ["郑家悦"]
+    assert "林某" not in first
+
+    # The retry replays 郑家悦 from cache — silently — and answers 林某 fresh,
+    # who nominates himself. Cast order still decides.
+    resumed = FakeAppearanceAgent({"林某": _appearance("林某", is_main=True)})
+    second = await enrich_character_appearances(
+        cast, agent=resumed, cache=cache, concurrency=1
+    )
+
+    assert set(second) == {"郑家悦", "林某"}
+    assert [n for n, a in second.items() if a.is_main] == ["郑家悦"]

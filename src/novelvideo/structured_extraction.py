@@ -1192,15 +1192,28 @@ async def _record_narrator_votes(
 
 
 async def _recover_narrator(
-    cache: Any, cast_key: str, keys: dict[str, str], order: list[str]
+    cache: Any,
+    cast_key: str,
+    keys: dict[str, str],
+    order: list[str],
+    answered: dict[str, CharacterAppearance],
 ) -> str:
-    """The earliest nominee in cast order that any batch ever recorded."""
-    by_name = {name: narrator_vote_key(cast_key, keys[name]) for name in order}
+    """The earliest nominee in cast order that any attempt ever recorded.
+
+    Restricted to characters this run actually has an appearance for: a vote
+    for somebody adjudication has since merged away, or whose own row failed
+    this time, must not resurrect them.
+    """
+    by_name = {
+        name: narrator_vote_key(cast_key, keys[name])
+        for name in order
+        if name in answered
+    }
     stored = await _maybe_await(
         cache.get(CHARACTER_NARRATOR_CACHE_TYPE, list(by_name.values()))
     )
     for name in order:
-        if by_name[name] in (stored or {}):
+        if name in by_name and by_name[name] in (stored or {}):
             return name
     return ""
 
@@ -1212,24 +1225,29 @@ async def _settle_narrator_nomination(
     cast_key: str,
     keys: dict[str, str],
 ) -> None:
-    """Reduce to one nomination, recovering it from disk when this run has none.
+    """Decide the narrator from every vote this cast has ever attracted.
 
-    Nominations are not kept in the per-character rows, so a build interrupted
-    after those rows were written but before the characters were published
-    would replay every character as an abstention on retry and leave the
-    project with no narrator at all — the very failure this field exists to
-    prevent.  The votes recorded per batch survive that gap, and reducing them
-    here in cast order yields the same answer the uninterrupted run would have
-    reached, whatever order the batches finished in.
+    Nominations are not kept in the per-character rows, so a character
+    replayed from the cache abstains in memory however loudly an earlier
+    attempt nominated it.  Reading the votes only when this run happens to
+    nominate nobody is therefore not enough: a build stopped partway records
+    an early character's vote and its row, and the retry pairs that silent
+    replay with a freshly nominated later character.  Taking the in-memory
+    answer there would hand a resumed build a different narrator from an
+    uninterrupted one, for no reason the source text supports.
+
+    Batches write their votes ahead of the rows that make them look finished,
+    so by the time this runs the votes are a superset of what is in memory.
+    Reducing over them in cast order — the same rule ``_enforce_single_main``
+    applies — is what makes the answer independent of where a build was
+    interrupted, and of the order its batches happened to finish in.
     """
     _enforce_single_main(appearances, order)
-    if cache is None or not order or _nominee(appearances, order):
+    if cache is None or not order:
         return
-    recovered = appearances.get(await _recover_narrator(cache, cast_key, keys, order))
-    # Only a name still in this cast, and still answered for: a nomination for
-    # somebody adjudication has since merged away must not resurrect them.
-    if recovered is not None:
-        recovered.is_main = True
+    winner = await _recover_narrator(cache, cast_key, keys, order, appearances)
+    for name, appearance in appearances.items():
+        appearance.is_main = name == winner
 
 
 def _enforce_single_main(
