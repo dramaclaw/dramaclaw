@@ -133,7 +133,14 @@ async def test_hermes_thread_serializes_concurrent_prompt_streams(tmp_path, monk
     first_entered = asyncio.Event()
     release_first = asyncio.Event()
 
-    async def fake_stream_turn(prompt: str, *, current_project=None):  # noqa: ARG001
+    async def fake_stream_turn(
+        prompt: str,
+        *,
+        current_project=None,  # noqa: ARG001
+        trajectory_id=None,  # noqa: ARG001
+        project_id=None,  # noqa: ARG001
+        gateway_api_key=None,  # noqa: ARG001
+    ):
         entered.append(prompt)
         if prompt == "first":
             first_entered.set()
@@ -688,7 +695,7 @@ async def test_fallback_display_groups_all_final_videos_into_one_spec(monkeypatc
     ]
 
 
-def test_claude_and_codex_sessions_are_scope_scoped(monkeypatch, tmp_path):
+def test_codex_sessions_are_project_scoped_and_backend_independent(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
 
@@ -697,11 +704,282 @@ def test_claude_and_codex_sessions_are_scope_scoped(monkeypatch, tmp_path):
     assert chat_service._get_codex_thread_id("admin", "project-b") is None
 
     chat_service._set_codex_thread_id("admin", "project-a", "codex-thread-1")
-    assert chat_service._get_claude_session_id("admin", "project-b") is None
-    assert chat_service._get_codex_thread_id("admin", "project-b") == "codex-thread-1"
+    assert chat_service._get_claude_session_id("admin", "project-b") == (
+        "claude-session-1"
+    )
+    assert chat_service._get_codex_thread_id("admin", "project-a") == (
+        "codex-thread-1"
+    )
+    assert chat_service._get_codex_thread_id("admin", "project-b") is None
+
+    chat_service._set_codex_thread_id("admin", "project-b", "codex-thread-2")
+    chat_service._set_codex_thread_id("admin", "", "codex-home-thread")
+    assert chat_service._get_codex_thread_id("admin", "project-a") == (
+        "codex-thread-1"
+    )
+    assert chat_service._get_codex_thread_id("admin", "project-b") == (
+        "codex-thread-2"
+    )
+    assert chat_service._get_codex_thread_id("admin", "") == "codex-home-thread"
 
     state_file = tmp_path / "state" / "admin" / "agent_sessions.json"
     assert state_file.exists()
+    home_state_file = tmp_path / "state" / "admin" / "codex_sessions.json"
+    assert json.loads(home_state_file.read_text(encoding="utf-8")) == {
+        "home": "codex-home-thread",
+    }
+    for project, thread_id in (
+        ("project-a", "codex-thread-1"),
+        ("project-b", "codex-thread-2"),
+    ):
+        project_state_file = (
+            tmp_path
+            / "state"
+            / "admin"
+            / project
+            / "agents"
+            / "codex"
+            / "sessions.json"
+        )
+        assert json.loads(project_state_file.read_text(encoding="utf-8")) == {
+            f"project:{project}": thread_id,
+        }
+
+
+def test_codex_freezone_threads_are_canvas_and_agent_scoped(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+
+    scope = {
+        "agent_profile": "freezone:agent-1",
+        "canvas_id": "canvas-a",
+    }
+    chat_service._set_codex_thread_id(
+        "admin", "project-a", "thread-canvas-a", **scope
+    )
+    chat_service._set_codex_thread_id(
+        "admin",
+        "project-a",
+        "thread-canvas-b",
+        agent_profile="freezone:agent-1",
+        canvas_id="canvas-b",
+    )
+    chat_service._set_codex_thread_id(
+        "admin",
+        "project-a",
+        "thread-agent-2",
+        agent_profile="freezone:agent-2",
+        canvas_id="canvas-a",
+    )
+
+    assert (
+        chat_service._get_codex_thread_id("admin", "project-a", **scope)
+        == "thread-canvas-a"
+    )
+    assert (
+        chat_service._get_codex_thread_id(
+            "admin",
+            "project-a",
+            agent_profile="freezone:agent-1",
+            canvas_id="canvas-b",
+        )
+        == "thread-canvas-b"
+    )
+    assert (
+        chat_service._get_codex_thread_id(
+            "admin",
+            "project-a",
+            agent_profile="freezone:agent-2",
+            canvas_id="canvas-a",
+        )
+        == "thread-agent-2"
+    )
+    assert chat_service._get_codex_thread_id("admin", "project-a") is None
+
+    state_file = (
+        tmp_path
+        / "state"
+        / "admin"
+        / "project-a"
+        / "agents"
+        / "codex"
+        / "sessions.json"
+    )
+    assert json.loads(state_file.read_text(encoding="utf-8")) == {
+        '["freezone:agent-1","project","project-a","canvas-a"]': (
+            "thread-canvas-a"
+        ),
+        '["freezone:agent-1","project","project-a","canvas-b"]': (
+            "thread-canvas-b"
+        ),
+        '["freezone:agent-2","project","project-a","canvas-a"]': (
+            "thread-agent-2"
+        ),
+    }
+
+
+def test_codex_main_thread_key_stays_backward_compatible():
+    assert chat_service._codex_scope_key("project-a") == "project:project-a"
+    assert (
+        chat_service._codex_scope_key("project-a", canvas_id="ignored-canvas")
+        == "project:project-a"
+    )
+    assert chat_service._codex_scope_key("") == "home"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool_mode", "store_scope", "expected_profile", "expected_canvas"),
+    [
+        ("default", None, "main", None),
+        (
+            "freezone_canvas",
+            ChatScope(
+                kind="project",
+                id="project-a",
+                surface="freezone",
+                canvas_id="canvas-a",
+                agent_id="agent-2",
+            ),
+            "freezone:agent-2",
+            "canvas-a",
+        ),
+    ],
+)
+async def test_codex_stream_passes_conversation_scope_to_thread_builder(
+    monkeypatch,
+    tmp_path,
+    tool_mode,
+    store_scope,
+    expected_profile,
+    expected_canvas,
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    captured: dict[str, object] = {}
+
+    async def fake_create_token(*args, **kwargs):  # noqa: ARG001
+        return "agent-token"
+
+    class FakeThread:
+        async def stream(self, prompt):
+            captured["prompt"] = prompt
+            yield SimpleNamespace(
+                type="thread_started",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+            )
+            yield SimpleNamespace(
+                type="turn_started",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+                status="inProgress",
+                raw={"runtime": "codex", "method": "turn/started"},
+            )
+            yield SimpleNamespace(
+                type="plan_update",
+                text="Inspect the project",
+                entries=[{"step": "List projects", "status": "inProgress"}],
+                raw={"runtime": "codex", "method": "turn/plan/updated"},
+            )
+            yield SimpleNamespace(
+                type="thought_delta",
+                text="Checking projects",
+                name="reasoning_summary",
+                raw={
+                    "runtime": "codex",
+                    "method": "item/reasoning/summaryTextDelta",
+                },
+            )
+            yield SimpleNamespace(
+                type="tool_started",
+                text="",
+                name="dramaclaw.list_projects",
+                call_id="call-1",
+                status="running",
+                input={"limit": 1},
+                output=None,
+                error=None,
+                structured=None,
+                raw={"runtime": "codex", "method": "item/started"},
+            )
+            yield SimpleNamespace(
+                type="usage_update",
+                usage={"last": {"inputTokens": 10}},
+                raw={"runtime": "codex", "method": "thread/tokenUsage/updated"},
+            )
+            yield SimpleNamespace(
+                type="turn_completed",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+                status="completed",
+                disposition="completed",
+                error=None,
+                raw={"runtime": "codex", "method": "turn/completed"},
+            )
+            yield SimpleNamespace(
+                type="complete",
+                thread_id="codex-thread",
+                text="done",
+            )
+
+    def fake_build_thread(*args, **kwargs):
+        captured.update(kwargs)
+        return FakeThread()
+
+    monkeypatch.setattr(
+        chat_service,
+        "_create_page_agent_session_token",
+        fake_create_token,
+    )
+    monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **kwargs: None)
+
+    events = []
+
+    async def collect_event(event):
+        events.append(event)
+
+    await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        "hello",
+        collect_event,
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        tool_mode=tool_mode,
+        store_scope=store_scope,
+        turn_id="business-turn",
+    )
+
+    assert captured["agent_profile"] == expected_profile
+    assert captured["canvas_id"] == expected_canvas
+    assert [event["type"] for event in events] == [
+        "thread_started",
+        "turn_started",
+        "plan_update",
+        "thought_delta",
+        "tool_started",
+        "usage_update",
+        "turn_completed",
+        "done",
+    ]
+    assert events[2] == {
+        "type": "plan_update",
+        "text": "Inspect the project",
+        "entries": [{"step": "List projects", "status": "inProgress"}],
+    }
+    assert events[3] == {
+        "type": "thought_delta",
+        "text": "Checking projects",
+        "source": "reasoning_summary",
+    }
+    assert events[4]["name"] == "dramaclaw.list_projects"
+    assert events[4]["result_json"] is None
+    assert events[5] == {
+        "type": "usage_update",
+        "usage": {"last": {"inputTokens": 10}},
+    }
+    assert all("raw" not in event for event in events)
+    assert all("method" not in event for event in events)
+    assert events[-1]["type"] == "done"
 
 
 def test_user_agent_workspace_is_not_project_workspace(monkeypatch, tmp_path):
@@ -709,13 +987,19 @@ def test_user_agent_workspace_is_not_project_workspace(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
 
     chat_service.ensure_user_claude_workspace("admin", "project-a")
-    chat_service.ensure_user_codex_workspace("admin", "project-a")
+    codex_workspace, codex_home = chat_service.ensure_user_codex_workspace(
+        "admin", "project-a"
+    )
 
     workspace = chat_service._user_agent_workspace("admin")
     assert workspace == tmp_path / "state" / "admin" / ".chat_agents"
     assert (workspace / ".claude" / "settings.local.json").exists()
     assert (workspace / ".claude" / "skills").is_dir()
-    assert (workspace / ".codex" / "skills").is_dir()
+    project_agent_root = tmp_path / "state" / "admin" / "project-a" / "agents" / "codex"
+    assert codex_workspace == project_agent_root / "workspace"
+    assert codex_home == tmp_path / "state" / ".codex-app-server"
+    assert (codex_workspace / ".agents" / "skills").is_dir()
+    assert codex_home.is_dir()
 
     project_workspace = Path(tmp_path / "output" / "admin" / "project-a")
     assert not (project_workspace / ".claude").exists()
@@ -727,6 +1011,25 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
 
     assert servers["dramaclaw"]["type"] == "stdio"
     assert servers["dramaclaw"]["args"] == ["-m", "novelvideo.chat.dramaclaw_mcp"]
+    assert servers["dramaclaw"]["env_vars"] == [
+        "DRAMACLAW_API_URL",
+        "DRAMACLAW_AGENT_TOKEN",
+        "DRAMACLAW_PROJECT_ID",
+        "DRAMACLAW_USERNAME",
+    ]
+
+
+def test_chat_agent_api_url_defaults_to_rest_listener(monkeypatch):
+    for name in (
+        "DRAMACLAW_API_URL",
+        "NOVELVIDEO_API_URL",
+        "NOVELVIDEO_API_PORT",
+        "SUPERTALE_API_URL",
+        "NOVELVIDEO_UI_PORT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    assert chat_service._load_api_url() == "http://127.0.0.1:8780"
 
 
 def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
@@ -735,18 +1038,254 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
     expected_command = json.dumps(__import__("sys").executable, ensure_ascii=False)
     assert f"mcp_servers.dramaclaw.command={expected_command}" in overrides
     assert 'mcp_servers.dramaclaw.args=["-m","novelvideo.chat.dramaclaw_mcp"]' in overrides
+    assert (
+        'mcp_servers.dramaclaw.env_vars=["DRAMACLAW_API_URL",'
+        '"DRAMACLAW_AGENT_TOKEN","DRAMACLAW_PROJECT_ID","DRAMACLAW_USERNAME"]'
+        in overrides
+    )
+    assert "mcp_servers.dramaclaw.required=true" in overrides
+    assert 'mcp_servers.dramaclaw.default_tools_approval_mode="approve"' in overrides
 
     client = backend_sdk.CodexClient(
         codex_bin=Path("/usr/local/bin/codex"),
         cwd=tmp_path,
         env={"DRAMACLAW_AGENT_TOKEN": "token"},
-        model="gpt-5.4",
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions="Use DramaClaw MCP only.",
         config_overrides=overrides,
     )
 
     thread = client.thread_start()
 
     assert thread._config_overrides == overrides
+    assert thread._thread_config["mcp_servers.dramaclaw.env"] == {
+        "DRAMACLAW_AGENT_TOKEN": "token"
+    }
+    assert "mcp_servers.dramaclaw.env_vars" not in thread._thread_config
+    assert thread._model == "DC-codex-agent-LLM"
+    assert thread._model_provider == "dramaclaw_gateway"
+
+
+def test_codex_client_keeps_gateway_credentials_in_turn_metadata(tmp_path):
+    mcp_overrides = chat_service._codex_mcp_config_overrides(
+        chat_service._dramaclaw_mcp_servers()
+    )
+    client = backend_sdk.CodexClient(
+        codex_bin=Path("/usr/local/bin/codex"),
+        cwd=tmp_path,
+        env={"DRAMACLAW_AGENT_TOKEN": "agent-turn-secret"},
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions="Use DramaClaw MCP only.",
+        config_overrides=chat_service._codex_gateway_config_overrides(
+            "https://gateway.example/v1"
+        ),
+        thread_config_overrides=mcp_overrides,
+        turn_metadata={
+            "dramaclaw_gateway_api_key": "turn-secret",
+            "dramaclaw_control_context_capability": "turn-capability",
+        },
+    )
+
+    thread = client.thread_start()
+    assert thread._thread_config["mcp_servers.dramaclaw.env"] == {
+        "DRAMACLAW_AGENT_TOKEN": "agent-turn-secret"
+    }
+    assert thread._turn_metadata == {
+        "dramaclaw_gateway_api_key": "turn-secret",
+        "dramaclaw_control_context_capability": "turn-capability",
+    }
+    assert "turn-secret" not in "\n".join(thread._config_overrides)
+    assert "turn-capability" not in "\n".join(thread._config_overrides)
+
+
+def test_codex_gateway_overrides_use_responses_without_embedding_secret():
+    overrides = chat_service._codex_gateway_config_overrides(
+        "https://gateway.example/v1/"
+    )
+    rendered = "\n".join(overrides)
+
+    assert (
+        'model_providers.dramaclaw_gateway.base_url="https://gateway.example/v1"'
+        in overrides
+    )
+    assert 'model_providers.dramaclaw_gateway.wire_api="responses"' in overrides
+    assert (
+        'model_providers.dramaclaw_gateway.experimental_bearer_token='
+        '"dramaclaw-codex-per-turn-placeholder"' in overrides
+    )
+    assert "features.apps=false" in overrides
+    assert "features.hooks=false" in overrides
+    assert "features.memories=false" in overrides
+    assert "features.multi_agent=false" in overrides
+    assert "features.plugins=false" in overrides
+    assert "features.shell_tool=false" in overrides
+    assert "memories.generate_memories=false" in overrides
+    assert "memories.use_memories=false" in overrides
+    assert 'web_search="disabled"' in overrides
+    assert "secret-value" not in rendered
+
+
+def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        "novelvideo.chat.hermes_workspace.effective_gateway_credentials",
+        lambda: ("secret-value", "https://gateway.example/v1"),
+    )
+
+    project_state = tmp_path / "ee-project-state"
+    env = chat_service._build_codex_env(
+        "admin",
+        "project-a",
+        "agent-token",
+        project_state_dir=project_state,
+    )
+
+    assert env["CODEX_HOME"] == str(tmp_path / "state" / ".codex-app-server")
+    assert env["DRAMACLAW_AGENT_SCOPE"] == "project"
+    assert env["SUPERTALE_AGENT_SCOPE"] == "project"
+    assert "DRAMACLAW_CODEX_GATEWAY_API_KEY" not in env
+    assert "NEWAPI_API_KEY" not in env
+    assert "OPENAI_API_KEY" not in env
+    assert env["DRAMACLAW_CODEX_GATEWAY_BASE_URL"] == (
+        "https://gateway.example/v1"
+    )
+
+
+def test_codex_turn_gateway_credentials_reject_foreign_origin(monkeypatch):
+    monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: False
+    )
+    monkeypatch.setattr(
+        "novelvideo.chat.hermes_workspace.effective_gateway_credentials",
+        lambda: ("node-key", "https://gateway.example/v1"),
+    )
+    authorization = SimpleNamespace(
+        credential=SimpleNamespace(
+            api_key="turn-key",
+            base_url="https://foreign.example/v1",
+        )
+    )
+
+    from novelvideo.chat.hermes_pool import GatewayOriginMismatch
+
+    with pytest.raises(GatewayOriginMismatch, match="different gateway origin"):
+        chat_service._codex_turn_gateway_credentials(authorization)
+
+
+def test_codex_turn_gateway_credentials_use_authorized_key(monkeypatch):
+    monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: False
+    )
+    monkeypatch.setattr(
+        "novelvideo.chat.hermes_workspace.effective_gateway_credentials",
+        lambda: ("node-key", "https://gateway.example/v1"),
+    )
+    authorization = SimpleNamespace(
+        credential=SimpleNamespace(
+            api_key="turn-key",
+            base_url="https://gateway.example/another-path",
+        )
+    )
+
+    assert chat_service._codex_turn_gateway_credentials(authorization) == (
+        "turn-key",
+        "https://gateway.example/v1",
+    )
+
+
+def test_ce_codex_turn_gateway_credentials_use_current_sqlite_config(monkeypatch):
+    monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: True
+    )
+    monkeypatch.setattr(
+        "novelvideo.chat.hermes_workspace.effective_gateway_credentials",
+        lambda: ("sqlite-key", "https://ce-gateway.example/v1"),
+    )
+    stale_ee_authorization = SimpleNamespace(
+        credential=SimpleNamespace(
+            api_key="stale-channel-key",
+            base_url="https://foreign.example/v1",
+        )
+    )
+
+    assert chat_service._codex_turn_gateway_credentials(stale_ee_authorization) == (
+        "sqlite-key",
+        "https://ce-gateway.example/v1",
+    )
+
+
+def test_codex_node_runtime_does_not_inherit_project_authority():
+    from novelvideo.chat.codex_app_server import _node_process_env
+
+    node_env = _node_process_env(
+        {
+            "CODEX_HOME": "/state/.codex-app-server",
+            "DRAMACLAW_AGENT_TOKEN": "project-token",
+            "DRAMACLAW_PROJECT_ID": "project-a",
+            "DRAMACLAW_PROJECT_STATE_DIR": "/state/project-a",
+            "ST_ORG_GATEWAY_API_KEY": "organization-token",
+            "DRAMACLAW_CODEX_GATEWAY_API_KEY": "node-gateway-token",
+            "NEWAPI_API_KEY": "newapi-token",
+            "OPENAI_API_KEY": "openai-token",
+            "UNLISTED_PROVIDER_SECRET": "must-not-cross-node-boundary",
+            "PATH": "/usr/local/bin:/usr/bin",
+            "DRAMACLAW_CODEX_GATEWAY_BASE_URL": "https://gateway.example/v1",
+        }
+    )
+
+    assert node_env == {
+        "CODEX_HOME": "/state/.codex-app-server",
+        "DRAMACLAW_CODEX_GATEWAY_BASE_URL": "https://gateway.example/v1",
+        "PATH": "/usr/local/bin:/usr/bin",
+    }
+
+
+def test_codex_model_defaults_to_gateway_alias(monkeypatch):
+    monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: False
+    )
+    monkeypatch.delenv("CODEX_MODEL", raising=False)
+
+    assert chat_service._codex_model() == "DC-codex-agent-LLM"
+
+
+def test_ce_codex_model_follows_sqlite_brainclaw_mode(monkeypatch):
+    monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: True
+    )
+    monkeypatch.setattr(
+        "novelvideo.model_gateway_settings.get_effective_llm_config",
+        lambda: SimpleNamespace(is_brainclaw=True),
+    )
+    monkeypatch.setenv("CODEX_MODEL", "must-not-control-ce")
+
+    assert chat_service._codex_model() == "brainclaw"
+
+
+def test_ce_codex_model_keeps_dc_alias_in_sqlite_advanced_mode(monkeypatch):
+    monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: True
+    )
+    monkeypatch.setattr(
+        "novelvideo.model_gateway_settings.get_effective_llm_config",
+        lambda: SimpleNamespace(is_brainclaw=False),
+    )
+    monkeypatch.setenv("CODEX_MODEL", "must-not-control-ce")
+
+    assert chat_service._codex_model() == "DC-codex-agent-LLM"
+
+
+def test_ee_codex_model_uses_environment(monkeypatch):
+    monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: False
+    )
+    monkeypatch.setenv("CODEX_MODEL", "DC-ee-codex-LLM")
+
+    assert chat_service._codex_model() == "DC-ee-codex-LLM"
 
 
 def test_explicit_codex_does_not_fallback_when_unavailable(monkeypatch):
@@ -760,7 +1299,7 @@ def test_explicit_codex_does_not_fallback_when_unavailable(monkeypatch):
         chat_service._chat_backend()
 
 
-def test_codex_backend_uses_sdk_runtime_by_default(monkeypatch):
+def test_codex_backend_rejects_unsafe_sdk_runtime_by_default(monkeypatch):
     monkeypatch.delenv("CODEX_BIN", raising=False)
     monkeypatch.setattr(
         chat_service.importlib.util,
@@ -769,7 +1308,7 @@ def test_codex_backend_uses_sdk_runtime_by_default(monkeypatch):
     )
 
     assert chat_service._codex_bin_path() is None
-    assert chat_service.is_codex_backend_available() is True
+    assert chat_service.is_codex_backend_available() is False
 
 
 def test_codex_backend_validates_explicit_binary(monkeypatch, tmp_path):
@@ -783,6 +1322,31 @@ def test_codex_backend_validates_explicit_binary(monkeypatch, tmp_path):
 
     assert chat_service._codex_bin_path() == missing_bin
     assert chat_service.is_codex_backend_available() is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_interrupts_only_the_users_active_codex_turns(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        chat_service,
+        "interrupt_live_codex_turn",
+        lambda thread_id, turn_id: calls.append((thread_id, turn_id)) or True,
+    )
+    with chat_service._ACTIVE_CODEX_TURNS_LOCK:
+        chat_service._ACTIVE_CODEX_TURNS.clear()
+        chat_service._ACTIVE_CODEX_TURNS.update(
+            {
+                ("alice", "project-a"): ("thread-a", "turn-a"),
+                ("alice", "project-b"): ("thread-b", "turn-b"),
+                ("bob", "project-c"): ("thread-c", "turn-c"),
+            }
+        )
+    try:
+        assert await chat_service.interrupt_active_codex_turns("alice") is True
+        assert sorted(calls) == [("thread-a", "turn-a"), ("thread-b", "turn-b")]
+    finally:
+        with chat_service._ACTIVE_CODEX_TURNS_LOCK:
+            chat_service._ACTIVE_CODEX_TURNS.clear()
 
 
 def test_chat_run_lock_is_user_scoped(monkeypatch, tmp_path):
@@ -1838,6 +2402,7 @@ def test_freezone_canvas_agent_summaries_tie_break_same_millisecond(monkeypatch,
 async def test_freezone_hermes_assistant_message_keeps_turn_id(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -1849,7 +2414,7 @@ async def test_freezone_hermes_assistant_message_keeps_turn_id(monkeypatch, tmp_
     events = []
 
     class FakeThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(type="thread_started", thread_id="thread-a", turn_id="turn-a")
             yield backend_sdk.ChatBackendEvent(type="assistant_delta", text="你好")
             yield backend_sdk.ChatBackendEvent(type="complete", text="")
@@ -1889,6 +2454,7 @@ async def test_freezone_hermes_retries_once_when_cached_session_is_unavailable(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -1900,12 +2466,12 @@ async def test_freezone_hermes_retries_once_when_cached_session_is_unavailable(
     events = []
 
     class StaleThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             raise hermes_sdk.HermesSessionUnavailableError("session stale not found")
             yield  # pragma: no cover
 
     class FreshThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(
                 type="thread_started",
                 thread_id="fresh-thread",
@@ -1960,6 +2526,7 @@ async def test_freezone_hermes_retries_once_when_prompt_completion_reports_stale
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -1970,7 +2537,7 @@ async def test_freezone_hermes_retries_once_when_prompt_completion_reports_stale
     )
 
     class StaleThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(
                 type="thread_started",
                 thread_id="stale-thread",
@@ -1982,7 +2549,7 @@ async def test_freezone_hermes_retries_once_when_prompt_completion_reports_stale
             )
 
     class FreshThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(
                 type="thread_started",
                 thread_id="fresh-thread",
@@ -2030,6 +2597,7 @@ async def test_freezone_hermes_retries_once_when_stream_ends_before_completion(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -2040,7 +2608,7 @@ async def test_freezone_hermes_retries_once_when_stream_ends_before_completion(
     )
 
     class BrokenThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(
                 type="thread_started",
                 thread_id="broken-thread",
@@ -2048,7 +2616,7 @@ async def test_freezone_hermes_retries_once_when_stream_ends_before_completion(
             )
 
     class FreshThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(
                 type="thread_started",
                 thread_id="fresh-thread",
@@ -2098,6 +2666,7 @@ async def test_freezone_hermes_recovers_once_from_repeated_read(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -2110,7 +2679,7 @@ async def test_freezone_hermes_recovers_once_from_repeated_read(
     events = []
 
     class GuardedThread:
-        async def stream(self, prompt, *, current_project=None):
+        async def stream(self, prompt, *, current_project=None, **_kwargs):
             prompts.append(prompt)
             yield backend_sdk.ChatBackendEvent(
                 type="complete",
@@ -2124,7 +2693,7 @@ async def test_freezone_hermes_recovers_once_from_repeated_read(
             )
 
     class RecoveredThread:
-        async def stream(self, prompt, *, current_project=None):
+        async def stream(self, prompt, *, current_project=None, **_kwargs):
             prompts.append(prompt)
             yield backend_sdk.ChatBackendEvent(type="assistant_delta", text="工作流草稿已创建")
             yield backend_sdk.ChatBackendEvent(type="complete", text="")
@@ -2177,6 +2746,7 @@ async def test_freezone_hermes_does_not_replay_failed_workflow_draft_operation(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -2187,7 +2757,7 @@ async def test_freezone_hermes_does_not_replay_failed_workflow_draft_operation(
     )
 
     class GuardedThread:
-        async def stream(self, prompt, *, current_project=None):
+        async def stream(self, prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(
                 type="complete",
                 text="本轮操作已停止：工作流草稿操作重复失败。",
@@ -2260,7 +2830,7 @@ async def test_freezone_hermes_drops_mainline_media_ui_specs(monkeypatch, tmp_pa
     }
 
     class FakeThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(type="thread_started", thread_id="thread-a", turn_id="turn-a")
             yield backend_sdk.ChatBackendEvent(
                 type="assistant_delta",

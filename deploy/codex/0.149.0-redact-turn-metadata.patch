@@ -1,0 +1,408 @@
+diff --git a/codex-rs/protocol/src/turn_input.rs b/codex-rs/protocol/src/turn_input.rs
+index bc5adbe8b504..568b544ceb 100644
+--- a/codex-rs/protocol/src/turn_input.rs
++++ b/codex-rs/protocol/src/turn_input.rs
+@@ -12,6 +12,7 @@ use serde::Serialize;
+ use serde_json::Value;
+ use std::collections::BTreeMap;
+ use std::collections::HashMap;
++use std::fmt;
+
+ /// Input consumed by a regular turn.
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+@@ -28,7 +29,7 @@ pub enum TurnInput {
+ ///
+ /// Callers choose start-or-steer, idle-start, or steer-only behavior through
+ /// the corresponding `CodexThread` method.
+-#[derive(Clone, Debug)]
++#[derive(Clone)]
+ pub struct TurnInputRequest {
+     pub input: TurnInput,
+     pub thread_settings: ThreadSettingsOverrides,
+@@ -38,6 +39,29 @@ pub struct TurnInputRequest {
+     pub trace: Option<W3cTraceContext>,
+ }
+
++impl fmt::Debug for TurnInputRequest {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_struct("TurnInputRequest")
++            .field("input", &self.input)
++            .field("thread_settings", &self.thread_settings)
++            .field("start", &self.start)
++            .field("additional_context", &self.additional_context)
++            // App-server clients can use this extension to carry short-lived
++            // authorization material to the Responses API. The request still
++            // receives the original values, but Debug output feeds local logs
++            // and must never persist bearer credentials.
++            .field(
++                "responsesapi_client_metadata",
++                &self
++                    .responsesapi_client_metadata
++                    .as_ref()
++                    .map(|_| "<redacted>"),
++            )
++            .field("trace", &self.trace)
++            .finish()
++    }
++}
++
+ /// Request to resume sampling for an interrupted regular turn.
+ ///
+ /// Sampling restarts under `turn_id`, which must be the ID already recorded
+@@ -112,6 +136,24 @@ impl TurnInputRequest {
+     }
+ }
+
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn debug_redacts_responses_api_client_metadata_values() {
++        let secret = "test-gateway-token";
++        let request = TurnInputRequest::user_input(Vec::new()).with_responses_metadata(Some(
++            HashMap::from([("dramaclaw_gateway_api_key".to_string(), secret.to_string())]),
++        ));
++
++        let rendered = format!("{request:?}");
++
++        assert!(!rendered.contains(secret));
++        assert!(rendered.contains("responsesapi_client_metadata: Some(\"<redacted>\")"));
++    }
++}
++
+ /// How Core should route submitted turn input.
+ #[derive(Clone, Debug, Eq, PartialEq)]
+ pub enum TurnInputMode {
+diff --git a/codex-rs/core/src/client.rs b/codex-rs/core/src/client.rs
+index f26d41955e..ada76da255 100644
+--- a/codex-rs/core/src/client.rs
++++ b/codex-rs/core/src/client.rs
+@@ -125,6 +125,7 @@ use codex_login::auth::AgentIdentityAuthPolicy;
+ use codex_login::auth_env_telemetry::AuthEnvTelemetry;
+ use codex_login::auth_env_telemetry::collect_auth_env_telemetry;
+ use codex_model_provider::AgentIdentitySessionFallback;
++use codex_model_provider::BearerAuthProvider;
+ use codex_model_provider::ProviderAuthScope;
+ use codex_model_provider::ProviderUnauthorizedRecovery;
+ use codex_model_provider::SharedModelProvider;
+@@ -148,6 +149,17 @@ pub const X_CODEX_TURN_METADATA_HEADER: &str = "x-codex-turn-metadata";
+ pub const X_CODEX_PARENT_THREAD_ID_HEADER: &str = "x-codex-parent-thread-id";
+ pub const X_CODEX_WINDOW_ID_HEADER: &str = "x-codex-window-id";
+ pub const X_OPENAI_MEMGEN_REQUEST_HEADER: &str = "x-openai-memgen-request";
++
++fn turn_scoped_responses_auth(
++    default_auth: SharedAuthProvider,
++    responses_metadata: &CodexResponsesMetadata,
++) -> SharedAuthProvider {
++    responses_metadata
++        .per_turn_bearer_token()
++        .map_or(default_auth, |token| {
++            Arc::new(BearerAuthProvider::new(token.to_string())) as SharedAuthProvider
++        })
++}
+ pub const X_OPENAI_SUBAGENT_HEADER: &str = "x-openai-subagent";
+ pub const X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER: &str =
+     "x-responsesapi-include-timing-metrics";
+@@ -564,13 +576,14 @@ impl ModelClient {
+             return Ok(Vec::new());
+         }
+         let client_setup = self.current_client_setup().await?;
++        let api_auth = turn_scoped_responses_auth(client_setup.api_auth, responses_metadata);
+         let transport =
+             self.build_api_transport(&client_setup.api_provider, RESPONSES_COMPACT_ENDPOINT)?;
+         let request_telemetry = Self::build_request_telemetry(
+             session_telemetry,
+             AuthRequestTelemetryContext::new(
+                 client_setup.auth.as_ref().map(CodexAuth::auth_mode),
+-                client_setup.api_auth.as_ref(),
++                api_auth.as_ref(),
+                 client_setup.agent_identity_telemetry.clone(),
+                 PendingUnauthorizedRetry::default(),
+             ),
+@@ -639,9 +652,8 @@ impl ModelClient {
+             .api_provider
+             .stream_idle_timeout
+             .saturating_mul(COMPACT_REQUEST_TIMEOUT_IDLE_MULTIPLIER);
+-        let client =
+-            ApiCompactClient::new(transport, client_setup.api_provider, client_setup.api_auth)
+-                .with_telemetry(Some(request_telemetry));
++        let client = ApiCompactClient::new(transport, client_setup.api_provider, api_auth)
++            .with_telemetry(Some(request_telemetry));
+         let trace_attempt = compaction_trace.start_attempt(&payload);
+         let result = client
+             .compact_input(
+@@ -1317,9 +1329,10 @@ impl ModelClientSession {
+                 "failed to build websocket prewarm client setup: {err}"
+             ))
+         })?;
++        let api_auth = turn_scoped_responses_auth(client_setup.api_auth, responses_metadata);
+         let auth_context = AuthRequestTelemetryContext::new(
+             client_setup.auth.as_ref().map(CodexAuth::auth_mode),
+-            client_setup.api_auth.as_ref(),
++            api_auth.as_ref(),
+             client_setup.agent_identity_telemetry.clone(),
+             PendingUnauthorizedRetry::default(),
+         );
+@@ -1328,7 +1341,7 @@ impl ModelClientSession {
+             .connect_websocket(
+                 session_telemetry,
+                 client_setup.api_provider,
+-                client_setup.api_auth,
++                api_auth,
+                 responses_metadata,
+                 auth_context,
+                 RequestRouteTelemetry::for_endpoint(RESPONSES_ENDPOINT),
+@@ -1456,12 +1469,13 @@ impl ModelClientSession {
+         let mut pending_retry = PendingUnauthorizedRetry::default();
+         loop {
+             let client_setup = self.client.current_client_setup().await?;
++            let api_auth = turn_scoped_responses_auth(client_setup.api_auth, responses_metadata);
+             let transport = self
+                 .client
+                 .build_api_transport(&client_setup.api_provider, RESPONSES_ENDPOINT)?;
+             let request_auth_context = AuthRequestTelemetryContext::new(
+                 client_setup.auth.as_ref().map(CodexAuth::auth_mode),
+-                client_setup.api_auth.as_ref(),
++                api_auth.as_ref(),
+                 client_setup.agent_identity_telemetry.clone(),
+                 pending_retry,
+             );
+@@ -1504,12 +1518,8 @@ impl ModelClientSession {
+             let inference_trace_attempt = inference_trace.start_attempt();
+             inference_trace_attempt.add_request_headers(&mut options.extra_headers);
+             inference_trace_attempt.record_started(&request);
+-            let client = ApiResponsesClient::new(
+-                transport,
+-                client_setup.api_provider,
+-                client_setup.api_auth,
+-            )
+-            .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
++            let client = ApiResponsesClient::new(transport, client_setup.api_provider, api_auth)
++                .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
+             let stream_result = client.stream_request(request, options).await;
+ 
+             match stream_result {
+@@ -1601,9 +1611,10 @@ impl ModelClientSession {
+         let mut pending_retry = PendingUnauthorizedRetry::default();
+         loop {
+             let client_setup = self.client.current_client_setup().await?;
++            let api_auth = turn_scoped_responses_auth(client_setup.api_auth, responses_metadata);
+             let request_auth_context = AuthRequestTelemetryContext::new(
+                 client_setup.auth.as_ref().map(CodexAuth::auth_mode),
+-                client_setup.api_auth.as_ref(),
++                api_auth.as_ref(),
+                 client_setup.agent_identity_telemetry.clone(),
+                 pending_retry,
+             );
+@@ -1637,7 +1648,7 @@ impl ModelClientSession {
+                 .websocket_connection(WebsocketConnectParams {
+                     session_telemetry,
+                     api_provider: client_setup.api_provider,
+-                    api_auth: client_setup.api_auth,
++                    api_auth,
+                     responses_metadata: &websocket_metadata,
+                     auth_context: request_auth_context,
+                     request_route_telemetry: RequestRouteTelemetry::for_endpoint(
+diff --git a/codex-rs/core/src/client_tests.rs b/codex-rs/core/src/client_tests.rs
+index 58f2f5f72e..4feec68849 100644
+--- a/codex-rs/core/src/client_tests.rs
++++ b/codex-rs/core/src/client_tests.rs
+@@ -9,6 +9,7 @@ use super::X_CODEX_PARENT_THREAD_ID_HEADER;
+ use super::X_CODEX_TURN_METADATA_HEADER;
+ use super::X_CODEX_WINDOW_ID_HEADER;
+ use super::X_OPENAI_SUBAGENT_HEADER;
++use super::turn_scoped_responses_auth;
+ use crate::AttestationContext;
+ use crate::AttestationProvider;
+ use crate::GenerateAttestationFuture;
+@@ -873,6 +874,31 @@ fn auth_request_telemetry_context_tracks_attached_auth_and_retry_phase() {
+     assert_eq!(auth_context.recovery_phase, Some("refresh_token"));
+ }
+ 
++#[test]
++fn turn_scoped_responses_auth_replaces_the_provider_placeholder() {
++    let default_auth = Arc::new(BearerAuthProvider::new("placeholder".to_string()))
++        as codex_api::SharedAuthProvider;
++    let metadata = CodexResponsesMetadata {
++        per_turn_bearer_token: Some("turn-secret".to_string()),
++        ..CodexResponsesMetadata::new(
++            "installation-a".to_string(),
++            "session-a".to_string(),
++            "thread-a".to_string(),
++            "window-a".to_string(),
++        )
++    };
++
++    let auth = turn_scoped_responses_auth(default_auth, &metadata);
++    let headers = auth.to_auth_headers();
++
++    assert_eq!(
++        headers
++            .get(http::header::AUTHORIZATION)
++            .and_then(|value| value.to_str().ok()),
++        Some("Bearer turn-secret")
++    );
++}
++
+ #[test]
+ fn auth_request_telemetry_context_tracks_agent_identity_ids() {
+     let auth_context = AuthRequestTelemetryContext::new(
+diff --git a/codex-rs/core/src/responses_metadata.rs b/codex-rs/core/src/responses_metadata.rs
+index 64264c2599..a8f87701f2 100644
+--- a/codex-rs/core/src/responses_metadata.rs
++++ b/codex-rs/core/src/responses_metadata.rs
+@@ -35,6 +35,10 @@ pub(crate) const COMPACTION_KEY: &str = "compaction";
+ pub(crate) const LEGACY_CODE_MODE_TOOL_NAMES_KEY: &str = "code_mode_tool_names";
+ pub(crate) const TOOL_NAMESPACES_INFO_KEY: &str = "tool_namespaces_info";
+ pub(crate) const TURN_STARTED_AT_UNIX_MS_KEY: &str = "turn_started_at_unix_ms";
++pub(crate) const DRAMACLAW_GATEWAY_API_KEY: &str = "dramaclaw_gateway_api_key";
++pub(crate) const DRAMACLAW_CONTROL_CONTEXT_CAPABILITY: &str =
++    "dramaclaw_control_context_capability";
++pub(crate) const X_DRAMACLAW_CONTROL_CAPABILITY_HEADER: &str = "x-dramaclaw-control-capability";
+ 
+ pub(crate) const FORKED_FROM_THREAD_ID_KEY: &str = "forked_from_thread_id";
+ pub(crate) const PARENT_THREAD_ID_KEY: &str = "parent_thread_id";
+@@ -226,6 +230,8 @@ pub struct CodexResponsesMetadata {
+     pub(crate) tool_namespaces_info: Option<TurnToolNamespacesInfo>,
+     pub(crate) turn_started_at_unix_ms: Option<i64>,
+     pub(crate) extra: BTreeMap<String, String>,
++    pub(crate) per_turn_bearer_token: Option<String>,
++    pub(crate) per_turn_control_capability: Option<String>,
+ }
+ 
+ impl CodexResponsesMetadata {
+@@ -260,9 +266,15 @@ impl CodexResponsesMetadata {
+             tool_namespaces_info: None,
+             turn_started_at_unix_ms: None,
+             extra: BTreeMap::new(),
++            per_turn_bearer_token: None,
++            per_turn_control_capability: None,
+         }
+     }
+ 
++    pub(crate) fn per_turn_bearer_token(&self) -> Option<&str> {
++        self.per_turn_bearer_token.as_deref()
++    }
++
+     pub(crate) fn has_turn_metadata(&self) -> bool {
+         self.request_kind.is_some()
+     }
+@@ -341,6 +353,13 @@ impl CodexResponsesMetadata {
+         if let Some(subagent_header) = &self.subagent_header {
+             insert_header(&mut headers, X_OPENAI_SUBAGENT_HEADER, subagent_header);
+         }
++        if let Some(capability) = &self.per_turn_control_capability {
++            insert_header(
++                &mut headers,
++                X_DRAMACLAW_CONTROL_CAPABILITY_HEADER,
++                capability,
++            );
++        }
+         headers
+     }
+ 
+diff --git a/codex-rs/core/src/turn_metadata.rs b/codex-rs/core/src/turn_metadata.rs
+index 81d4912327..72f1ffb0ef 100644
+--- a/codex-rs/core/src/turn_metadata.rs
++++ b/codex-rs/core/src/turn_metadata.rs
+@@ -15,6 +15,8 @@ use tokio::task::JoinHandle;
+ use crate::responses_metadata::AGENT_NAME_KEY;
+ use crate::responses_metadata::CodexResponsesMetadata;
+ use crate::responses_metadata::CodexResponsesRequestKind;
++use crate::responses_metadata::DRAMACLAW_GATEWAY_API_KEY;
++use crate::responses_metadata::DRAMACLAW_CONTROL_CONTEXT_CAPABILITY;
+ use crate::responses_metadata::PARENT_TURN_ID_KEY;
+ use crate::responses_metadata::ROOT_TURN_ID_KEY;
+ use crate::responses_metadata::TurnMetadataWorkspace;
+@@ -350,6 +352,11 @@ impl TurnMetadataState {
+         {
+             extra.remove(key);
+         }
++        // This app-server extension is request authority, not telemetry. Keep
++        // it out of client_metadata and the x-codex-turn-metadata header so a
++        // gateway key is never forwarded as observable metadata.
++        let per_turn_bearer_token = extra.remove(DRAMACLAW_GATEWAY_API_KEY);
++        let per_turn_control_capability = extra.remove(DRAMACLAW_CONTROL_CONTEXT_CAPABILITY);
+         CodexResponsesMetadata {
+             turn_id: Some(self.turn_id.clone()),
+             agent_name: Some(self.agent_name.clone()),
+@@ -373,6 +380,8 @@ impl TurnMetadataState {
+                 .clone(),
+             turn_started_at_unix_ms: self.current_turn_started_at_unix_ms(),
+             extra,
++            per_turn_bearer_token,
++            per_turn_control_capability,
+             ..CodexResponsesMetadata::new(
+                 String::new(),
+                 self.session_id.clone(),
+diff --git a/codex-rs/core/src/turn_metadata_tests.rs b/codex-rs/core/src/turn_metadata_tests.rs
+index 8ede6e492d..26a7eb2c85 100644
+--- a/codex-rs/core/src/turn_metadata_tests.rs
++++ b/codex-rs/core/src/turn_metadata_tests.rs
+@@ -3,6 +3,8 @@ use super::*;
+ use crate::responses_metadata::AUTO_REVIEW_ENABLED_KEY;
+ use crate::responses_metadata::CodexResponsesRequestKind;
+ use crate::responses_metadata::CompactionTurnMetadata;
++use crate::responses_metadata::DRAMACLAW_GATEWAY_API_KEY;
++use crate::responses_metadata::DRAMACLAW_CONTROL_CONTEXT_CAPABILITY;
+ use crate::responses_metadata::INSTALLATION_ID_KEY;
+ use crate::responses_metadata::LEGACY_CODE_MODE_TOOL_NAMES_KEY;
+ use crate::responses_metadata::NODE_REPL_AUTO_REVIEW_REQUIRED_KEY;
+@@ -651,6 +653,56 @@ fn turn_metadata_state_ignores_client_reserved_metadata_before_start() {
+     assert_eq!(json[NODE_REPL_DISABLED_KEY].as_bool(), Some(false));
+ }
+ 
++#[test]
++fn turn_metadata_extracts_dramaclaw_gateway_key_without_serializing_it() {
++    let temp_dir = TempDir::new().expect("temp dir");
++    let cwd = temp_dir.path().abs();
++    let permission_profile = PermissionProfile::read_only();
++    let state = TurnMetadataState::new(
++        "session-a".to_string(),
++        "thread-a".to_string(),
++        /*forked_from_thread_id*/ None,
++        /*parent_thread_id*/ None,
++        &SessionSource::Exec,
++        /*thread_source*/ None,
++        "turn-a".to_string(),
++        cwd,
++        &permission_profile,
++        WindowsSandboxLevel::Disabled,
++        /*enforce_managed_network*/ false,
++        /*auto_review_enabled*/ false,
++        &model_info_from_slug("gpt-5.4"),
++    );
++    state.set_responsesapi_client_metadata(HashMap::from([
++        (
++            DRAMACLAW_GATEWAY_API_KEY.to_string(),
++            "turn-secret".to_string(),
++        ),
++        (
++            DRAMACLAW_CONTROL_CONTEXT_CAPABILITY.to_string(),
++            "t1.capability".to_string(),
++        ),
++        ("origin".to_string(), "dramaclaw".to_string()),
++    ]));
++
++    let metadata = state.responses_metadata_template();
++    let serialized = metadata.turn_metadata_json().expect("turn metadata json");
++
++    assert_eq!(metadata.per_turn_bearer_token(), Some("turn-secret"));
++    assert!(!serialized.contains(DRAMACLAW_GATEWAY_API_KEY));
++    assert!(!serialized.contains("turn-secret"));
++    assert!(!serialized.contains(DRAMACLAW_CONTROL_CONTEXT_CAPABILITY));
++    assert!(!serialized.contains("t1.capability"));
++    assert_eq!(
++        metadata
++            .compatibility_headers()
++            .get("x-dramaclaw-control-capability")
++            .and_then(|value| value.to_str().ok()),
++        Some("t1.capability")
++    );
++    assert!(serialized.contains("dramaclaw"));
++}
++
+ #[test]
+ fn turn_metadata_state_merges_client_metadata_without_replacing_reserved_fields() {
+     let temp_dir = TempDir::new().expect("temp dir");

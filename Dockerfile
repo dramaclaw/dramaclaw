@@ -1,3 +1,33 @@
+FROM rust:1.95-bookworm AS codex-builder
+
+# The Codex 0.149 runtime logs the full turn metadata map
+# to logs_2.sqlite. DramaClaw carries per-turn gateway credentials and control
+# capabilities there, so the stock binary is not safe for a shared home-node
+# App Server. Build the official 0.149.0 tagged runtime, redact Debug/log
+# output, and consume the per-turn gateway key as Responses bearer auth.
+ARG CODEX_REPO="https://github.com/openai/codex.git"
+ARG CODEX_REF="758ef40f50c1a458425c7cfbf1eb12cbc07af0b0"
+WORKDIR /opt/codex-src
+RUN git init \
+    && git remote add origin "$CODEX_REPO" \
+    && git fetch --depth 1 origin "$CODEX_REF" \
+    && git checkout --detach FETCH_HEAD \
+    && git rev-parse HEAD > /opt/codex-runtime.sha
+COPY deploy/codex/0.149.0-redact-turn-metadata.patch /tmp/codex-turn-metadata.patch
+# The official release tag changes workspace.package.version to 0.149.0
+# without rewriting Cargo.lock's local workspace package versions. Cargo must
+# perform that metadata-only lock refresh; external dependency pins remain
+# those committed in the release tag.
+RUN git apply --check /tmp/codex-turn-metadata.patch \
+    && git apply /tmp/codex-turn-metadata.patch \
+    && cd codex-rs \
+    && cargo test -p codex-protocol debug_redacts_responses_api_client_metadata_values \
+    && cargo test -p codex-core turn_metadata_extracts_dramaclaw_gateway_key_without_serializing_it \
+    && cargo test -p codex-core turn_scoped_responses_auth_replaces_the_provider_placeholder \
+    && cargo build --release -p codex-cli --bin codex \
+    && strip target/release/codex \
+    && target/release/codex --version
+
 FROM python:3.12-slim
 
 # 项目全程用 uv 管理(与 host 一致)。Dockerfile 也用 uv,使 uv.lock 锁版本 +
@@ -16,7 +46,11 @@ ENV ST_EDITION=ce \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     HERMES_CLI_PATH=/usr/local/bin/hermes \
+    CODEX_BIN=/usr/local/bin/codex-dramaclaw \
     HOME=/home/dramaclaw
+
+COPY --from=codex-builder /opt/codex-src/codex-rs/target/release/codex /usr/local/bin/codex-dramaclaw
+COPY --from=codex-builder /opt/codex-runtime.sha /opt/codex-runtime.sha
 
 # ffmpeg for media; bubblewrap (`bwrap`) for the Hermes Linux sandbox — the
 # vendored codex-linux-sandbox binary's default pipeline execs system bwrap
@@ -32,7 +66,7 @@ RUN groupadd --system --gid 10001 dramaclaw \
 COPY pyproject.toml uv.lock README.md ./
 # license 正文按 REUSE 惯例只存于 LICENSES/(pyproject license-files 指向它),
 # hatchling 构建 wheel 时需要这份文件在上下文中。
-COPY LICENSES ./LICENSES
+COPY LICENSES NOTICE ./
 COPY src ./src
 COPY .hermes ./.hermes
 COPY deploy ./deploy
@@ -66,17 +100,26 @@ RUN test -f src/novelvideo/assets/login_bgm.mp3 \
 # 模型权重不烤进镜像:运行时自动下载到可写卷(Apple 研究许可,绝不再分发)。
 # 注:slim base 为 CPU;GPU 加速需 CUDA base + nvidia runtime。
 ARG INSTALL_WORLD=0
+# The SDK declares its stock runtime as a dependency. Remove that unused
+# binary so an operator cannot bypass CODEX_BIN and re-enable metadata logs.
+# uv.lock contains the pinned Codex Python SDK as a Git source. Keep git in
+# this build layer only; it is not needed by the running application.
 RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends git; \
     if [ "$INSTALL_WORLD" = "1" ]; then \
-        apt-get update; \
-        apt-get install -y --no-install-recommends git nodejs npm; \
-        rm -rf /var/lib/apt/lists/*; \
+        apt-get install -y --no-install-recommends nodejs npm; \
         npm install -g @playcanvas/splat-transform; \
-        uv sync --frozen --no-dev --extra world; \
+        uv sync --frozen --no-dev --extra world \
+          --no-install-package openai-codex-cli-bin; \
     else \
-        uv sync --frozen --no-dev; \
+        uv sync --frozen --no-dev \
+          --no-install-package openai-codex-cli-bin; \
     fi; \
-    mkdir -p /data
+    mkdir -p /data; \
+    apt-get purge -y git; \
+    apt-get autoremove -y; \
+    rm -rf /var/lib/apt/lists/*
 
 # Hermes comes from this project's own fork, always. A PyPI release cannot
 # serve this image: it keeps the same version string as the fork and then drops

@@ -1,3 +1,4 @@
+import json
 import os
 import time
 from pathlib import Path
@@ -49,6 +50,38 @@ class _FakeThread:
         return self.closed
 
 
+def test_hermes_session_pointer_is_durable_in_runtime_home(tmp_path: Path) -> None:
+    from novelvideo.chat.hermes_pool import HermesPool
+
+    home = tmp_path / "project-state" / "agents" / "hermes" / "director"
+    home.mkdir(parents=True)
+    HermesPool._persist_session_id(
+        home,
+        "project",
+        "project_a",
+        "main",
+        None,
+        "session-123",
+    )
+
+    restarted_pool = HermesPool(max_workers=1)
+    assert restarted_pool._persisted_session_id_for(
+        home, "project", "project_a", "main", None
+    ) == "session-123"
+
+    restarted_pool._forget_session(
+        "alice",
+        "project",
+        "project_a",
+        "main",
+        None,
+        home=home,
+    )
+    assert restarted_pool._persisted_session_id_for(
+        home, "project", "project_a", "main", None
+    ) is None
+
+
 def _write_fake_hermes_cli(path: Path) -> None:
     """A stand-in CLI. The version it reports no longer matters.
 
@@ -96,10 +129,11 @@ def _patch_fake_hermes_pool(
     monkeypatch.setattr(registry, "_PORTS", dict(registry._PORTS))
     registry.register_port("auth_session", fake_auth)
     monkeypatch.setattr(hermes_pool, "_hermes_cli_path", lambda: fake_cli)
+    monkeypatch.setattr(hermes_pool, "require_hermes_fork", lambda _path: None)
     monkeypatch.setattr(
         hermes_pool,
         "ensure_user_hermes_workspace",
-        lambda _user, profile="director": tmp_path,
+        lambda _user, profile="director", **_kwargs: tmp_path,
     )
     monkeypatch.setattr(
         hermes_pool,
@@ -112,7 +146,7 @@ def _patch_fake_hermes_pool(
     pool = hermes_pool.HermesPool(max_workers=5)
 
     async def fake_project_env(*_args, **_kwargs):
-        return {}
+        return {"DRAMACLAW_PROJECT_STATE_DIR": str(tmp_path / "project-state")}
 
     monkeypatch.setattr(pool, "_project_env", fake_project_env)
     return pool, calls, fake_auth, gateway
@@ -324,7 +358,7 @@ async def test_hermes_pool_freezone_profile_uses_isolated_home_and_canvas_env(
     fake_auth = _FakeAuthService()
     fake_cli = tmp_path / "hermes"
     _write_fake_hermes_cli(fake_cli)
-    workspaces: list[tuple[str, str]] = []
+    workspaces: list[tuple[str, str, str | None]] = []
     client_kwargs: list[dict] = []
 
     class FakeHermesSdkClient:
@@ -337,10 +371,14 @@ async def test_hermes_pool_freezone_profile_uses_isolated_home_and_canvas_env(
         def thread_resume(self, session_id: str) -> _FakeThread:
             return _FakeThread(session_id)
 
-    def fake_workspace(username: str, *, profile: str = "director") -> Path:
-        workspaces.append((username, profile))
-        home_name = ".hermes-freezone" if profile == "freezone" else ".hermes"
-        home = tmp_path / username / home_name
+    def fake_workspace(
+        username: str,
+        *,
+        profile: str = "director",
+        project_state_dir=None,
+    ) -> Path:
+        workspaces.append((username, profile, project_state_dir))
+        home = Path(project_state_dir) / "agents" / "hermes" / profile
         (home / "tmp").mkdir(parents=True, exist_ok=True)
         return home
 
@@ -354,7 +392,7 @@ async def test_hermes_pool_freezone_profile_uses_isolated_home_and_canvas_env(
     pool = hermes_pool.HermesPool(max_workers=5)
 
     async def fake_project_env(*_args, **_kwargs):
-        return {}
+        return {"DRAMACLAW_PROJECT_STATE_DIR": str(tmp_path / "project-state")}
 
     monkeypatch.setattr(pool, "_project_env", fake_project_env)
 
@@ -371,13 +409,21 @@ async def test_hermes_pool_freezone_profile_uses_isolated_home_and_canvas_env(
         await pool.close_all()
 
     assert thread.id == "session-freezone"
-    assert workspaces == [("alice", "freezone")]
-    assert client_kwargs[0]["cwd"] == tmp_path / "alice" / ".hermes-freezone"
+    project_state = tmp_path / "project-state"
+    expected_home = project_state / "agents" / "hermes" / "freezone"
+    assert workspaces == [("alice", "freezone", str(project_state))]
+    assert client_kwargs[0]["cwd"] == expected_home
     env = client_kwargs[0]["env"]
-    assert env["HERMES_HOME"] == str(tmp_path / "alice" / ".hermes-freezone")
+    assert env["HERMES_HOME"] == str(expected_home)
     assert env["DRAMACLAW_CANVAS_ID"] == "canvas_123"
     assert env["SUPERTALE_CANVAS_ID"] == "canvas_123"
     assert env["DRAMACLAW_CHAT_SURFACE"] == "freezone"
+    persisted_sessions = json.loads(
+        (expected_home / "dramaclaw_sessions.json").read_text(encoding="utf-8")
+    )
+    assert persisted_sessions == {
+        '["freezone","project","project_a","canvas_123"]': "session-freezone"
+    }
 
 
 @pytest.mark.asyncio
@@ -440,7 +486,7 @@ async def test_hermes_pool_starts_fresh_session_when_resume_fails(
     monkeypatch.setattr(
         hermes_pool,
         "ensure_user_hermes_workspace",
-        lambda _user, profile="director": tmp_path,
+        lambda _user, profile="director", **_kwargs: tmp_path,
     )
     monkeypatch.setattr(
         hermes_pool,
@@ -458,7 +504,7 @@ async def test_hermes_pool_starts_fresh_session_when_resume_fails(
     }
 
     async def fake_project_env(*_args, **_kwargs):
-        return {}
+        return {"DRAMACLAW_PROJECT_STATE_DIR": str(tmp_path / "project-state")}
 
     monkeypatch.setattr(pool, "_project_env", fake_project_env)
 
@@ -504,7 +550,7 @@ async def test_hermes_pool_surfaces_error_when_resume_and_fresh_start_fail(
     monkeypatch.setattr(
         hermes_pool,
         "ensure_user_hermes_workspace",
-        lambda _user, profile="director": tmp_path,
+        lambda _user, profile="director", **_kwargs: tmp_path,
     )
     monkeypatch.setattr(
         hermes_pool,
@@ -522,7 +568,7 @@ async def test_hermes_pool_surfaces_error_when_resume_and_fresh_start_fail(
     }
 
     async def fake_project_env(*_args, **_kwargs):
-        return {}
+        return {"DRAMACLAW_PROJECT_STATE_DIR": str(tmp_path / "project-state")}
 
     monkeypatch.setattr(pool, "_project_env", fake_project_env)
 
@@ -568,7 +614,7 @@ async def test_hermes_pool_does_not_restore_stale_session_after_rotation_fallbac
     monkeypatch.setattr(
         hermes_pool,
         "ensure_user_hermes_workspace",
-        lambda _user, profile="director": tmp_path,
+        lambda _user, profile="director", **_kwargs: tmp_path,
     )
     monkeypatch.setattr(
         hermes_pool,
@@ -581,7 +627,7 @@ async def test_hermes_pool_does_not_restore_stale_session_after_rotation_fallbac
     pool = hermes_pool.HermesPool(max_workers=5)
 
     async def fake_project_env(*_args, **_kwargs):
-        return {}
+        return {"DRAMACLAW_PROJECT_STATE_DIR": str(tmp_path / "project-state")}
 
     monkeypatch.setattr(pool, "_project_env", fake_project_env)
 

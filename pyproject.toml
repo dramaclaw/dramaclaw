@@ -23,6 +23,10 @@ dependencies = [
     # on 1.x until a deliberate output_retries -> retries={'output':N} migration.
     "pydantic-ai-slim[anthropic,google,openai,openrouter]==1.107.0",
     "openai>=2.29.0",
+    # Codex CLI/runtime 0.149.0 is released, while its stable Python SDK has
+    # not reached PyPI yet. Pin the official 0.149.0 SDK release commit so the
+    # generated App Server protocol stays aligned with the runtime built below.
+    "openai-codex @ git+https://github.com/openai/codex.git@25b5957f0e263fbf48e0b8844ba764a9841162c4#subdirectory=sdk/python",
     "pydantic>=2.0.0",
     "psycopg[binary]>=3.2.0",
     "pymysql>=1.1.0",
@@ -43,6 +47,7 @@ dependencies = [
     "nest-asyncio>=1.5.0",
     "claude-agent-sdk>=0.1.72",
     "mcp>=1.19.0",
+    "jsonschema>=4.20.0",
     "celery>=5.4.0",
     "pypinyin>=0.55.0",
     "oss2>=2.19.1",
@@ -53,6 +58,7 @@ dependencies = [
     "asyncpg>=0.30.0",
     "packaging>=24.0",
     "portalocker>=3.2.0",
+    "websockets>=15.0.0,<16.0.0",
 ]
 
 [project.scripts]

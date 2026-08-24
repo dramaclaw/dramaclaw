@@ -40,6 +40,7 @@ import pytest
 
 from novelvideo import ports
 from novelvideo.chat.hermes_egress import HOME_SCOPE_EGRESS_PROJECT_ID
+from novelvideo.chat.store import ChatScope
 from novelvideo.model_gateway_runtime import current_model_gateway_context
 from novelvideo.ports.auth_contract import AgentSessionToken
 from novelvideo.ports.authz import AdmissionContext, AuthzError, BillingPrincipal
@@ -287,13 +288,14 @@ def harness(monkeypatch, tmp_path):
             return self._thread(session_id)
 
     monkeypatch.setattr(hermes_pool, "_hermes_cli_path", lambda: fake_cli)
+    monkeypatch.setattr(hermes_pool, "require_hermes_fork", lambda _path: None)
     monkeypatch.setattr(
-        hermes_pool, "ensure_user_hermes_workspace", lambda _u: workspace
+        hermes_pool, "ensure_user_hermes_workspace", lambda _u, **_kwargs: workspace
     )
     monkeypatch.setattr(hermes_pool, "HermesSdkClient", FakeHermesSdkClient)
     monkeypatch.setattr(hermes_pool, "get_auth_session_port", lambda: auth_sessions)
     monkeypatch.setattr(
-        hermes_pool, "effective_gateway_fingerprint", lambda: "gateway-1"
+        hermes_pool, "gateway_origin_fingerprint", lambda: "gateway-1"
     )
     monkeypatch.setattr(
         hermes_pool,
@@ -679,6 +681,52 @@ def test_c2_09_scope_does_not_leak_out_of_the_turn(harness):
     assert frames[-1]["type"] == "chat.done", frames
     assert harness.observed[0] is not None
     assert current_model_gateway_context() is None
+
+
+def test_home_codex_uses_backend_neutral_service_without_hermes_worker(harness):
+    captured: dict[str, object] = {}
+
+    async def fake_stream(username, project, prompt, on_event, **kwargs):
+        captured.update(
+            username=username,
+            project=project,
+            prompt=prompt,
+            egress_project_id=kwargs.get("egress_project_id"),
+            store_scope=kwargs.get("store_scope"),
+        )
+        await on_event(
+            {"type": "thread_started", "thread_id": "codex-thread", "turn_id": "turn-1"}
+        )
+        await on_event({"type": "assistant_delta", "text": "codex says hello"})
+        message = {
+            "id": 1,
+            "role": "assistant",
+            "content": "codex says hello",
+            "media": [],
+        }
+        await on_event({"type": "done", "message": message})
+        return message
+
+    harness.monkeypatch.setattr(
+        harness.chat_service, "get_chat_backend_name", lambda: "codex"
+    )
+    harness.monkeypatch.setattr(
+        harness.chat_service, "stream_assistant_reply", fake_stream
+    )
+    _use_authz(harness.monkeypatch, _Authz(kind="platform"))
+
+    frames = _send_home_turn(harness)
+
+    assert [frame for frame in frames if frame.get("type") == "error"] == []
+    assert any(frame.get("type") == "thread.started" for frame in frames)
+    assert any(frame.get("type") == "assistant.delta" for frame in frames)
+    assert any(frame.get("type") == "assistant.message" for frame in frames)
+    assert any(frame.get("type") == "chat.done" for frame in frames)
+    assert captured["username"] == _USERNAME
+    assert captured["project"] == ""
+    assert captured["egress_project_id"] == HOME_SCOPE_EGRESS_PROJECT_ID
+    assert captured["store_scope"] == ChatScope(kind="home")
+    assert harness.envs == []
 
 
 def test_c2_09b_scope_does_not_leak_on_the_exception_path(harness):

@@ -172,6 +172,15 @@ export type ServerFrame =
       turn_id?: string;
     }
   | {
+      type: "agent.turn.started" | "agent.turn.completed";
+      scope?: ChatScope;
+      thread_id?: string | null;
+      turn_id?: string;
+      status?: string | null;
+      disposition?: string | null;
+      error?: unknown;
+    }
+  | {
       type: "assistant.delta";
       scope?: ChatScope;
       text?: string;
@@ -189,11 +198,13 @@ export type ServerFrame =
       scope?: ChatScope;
       turn_id?: string;
       text?: string;
+      source?: string | null;
     }
   | {
       type: "agent.plan.update";
       scope?: ChatScope;
       turn_id?: string;
+      text?: string;
       entries?: AgentPlanEntry[];
     }
   | {

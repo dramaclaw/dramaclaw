@@ -2305,6 +2305,30 @@ wheels = [
 ]
 
 [[package]]
+name = "openai-codex"
+version = "0.0.0.dev0"
+source = { git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython&rev=25b5957f0e263fbf48e0b8844ba764a9841162c4#25b5957f0e263fbf48e0b8844ba764a9841162c4" }
+dependencies = [
+    { name = "openai-codex-cli-bin" },
+    { name = "pydantic" },
+]
+
+[[package]]
+name = "openai-codex-cli-bin"
+version = "0.149.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/47/2bc9a23d0d2dbcf515287b51719de3731c45c54708d31825da72e4bfb2ab/openai_codex_cli_bin-0.149.0-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:75d6cc460928053d7cf4ab7311529b62c9c023abef2887f1da2de0bbda04d9a0", size = 120217719, upload-time = "2026-08-21T05:42:17.253Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/ad/208c83aa56532a41fe1a5895dc27191f95b9fcd6d3e2b027031e6b527c01/openai_codex_cli_bin-0.149.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:2a6865f3d827a2f010983753add06cb7eacd8e135679da5c6b2ee0f8a4c7e594", size = 110399883, upload-time = "2026-08-21T05:42:29.583Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/6f/f35f5c15ea8e2a2136b1577dd2998ff535eaec31678131146b742e3621e9/openai_codex_cli_bin-0.149.0-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:986ee1c12f04065a390ab46f92c7f7561aea29c136872a65e834d58ecf43eb4f", size = 114097934, upload-time = "2026-08-21T05:42:40.977Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/99/b5eb1f18ee446996dc1622bd1cd484e90f91c187ab0d66516064ae8abf06/openai_codex_cli_bin-0.149.0-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:8134aa26af0eb8ac87793058ae1b83621e5d8458a4e664502f0647742499f2c1", size = 123378423, upload-time = "2026-08-21T05:42:52.626Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/4a/ec1b95fb43b2553be4b396999146c9f70fb1e06f16651aa96d6365d43c98/openai_codex_cli_bin-0.149.0-py3-none-musllinux_1_1_aarch64.whl", hash = "sha256:6730ea9b54e00cd4576ddfc8fe3338ec41c24d327a2861240ecd79deab2b889a", size = 114097931, upload-time = "2026-08-21T05:43:03.362Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/6f/0650fcfaefd6bbea6764e10fa19512fa13b418936674ba238b747dafc930/openai_codex_cli_bin-0.149.0-py3-none-musllinux_1_1_x86_64.whl", hash = "sha256:620c53b4a3ce635fa8585659ea0af08c8c4ce49705ef30bb06f269d0b53fbd52", size = 123378421, upload-time = "2026-08-21T05:43:13.773Z" },
+    { url = "https://files.pythonhosted.org/packages/68/89/d9f436c049c67a8c92eaca2407a2d13f8c74e69dcb27560633b878986f2d/openai_codex_cli_bin-0.149.0-py3-none-win_amd64.whl", hash = "sha256:fc1a9981b76a93d9375f0ed567768798a6f236f47d8026e3dca83bfa4eff0e1b", size = 135361508, upload-time = "2026-08-21T05:43:23.785Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/69/9c0030b9531e47a9fe6d9d4da6b154aef7340d9b053b7fa3dd1a2fe8f90d/openai_codex_cli_bin-0.149.0-py3-none-win_arm64.whl", hash = "sha256:05bc14a86033f4edf4e703be72d3d36372582d681c7dbbfdef15e9f0561774ec", size = 125269074, upload-time = "2026-08-21T05:43:31.612Z" },
+]
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.42.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3433,11 +3457,13 @@ dependencies = [
     { name = "fastapi" },
     { name = "gunicorn" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "litellm" },
     { name = "mcp" },
     { name = "nest-asyncio" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "openai-codex" },
     { name = "oss2" },
     { name = "packaging" },
     { name = "pillow" },
@@ -3454,6 +3480,7 @@ dependencies = [
     { name = "sse-starlette" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -3503,12 +3530,14 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'world'", specifier = ">=0.35.0,<1.0.0" },
     { name = "imageio", marker = "extra == 'world'", specifier = ">=2.37.0" },
     { name = "jaxtyping", marker = "extra == 'world'", specifier = ">=0.3.0" },
+    { name = "jsonschema", specifier = ">=4.20.0" },
     { name = "litellm", specifier = ">=1.85.0.dev1" },
     { name = "matplotlib", marker = "extra == 'world'", specifier = ">=3.10.0" },
     { name = "mcp", specifier = ">=1.19.0" },
     { name = "nest-asyncio", specifier = ">=1.5.0" },
     { name = "numpy", specifier = ">=1.24.0,<2.0.0" },
     { name = "openai", specifier = ">=2.29.0" },
+    { name = "openai-codex", git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython&rev=25b5957f0e263fbf48e0b8844ba764a9841162c4" },
     { name = "oss2", specifier = ">=2.19.1" },
     { name = "packaging", specifier = ">=24.0" },
     { name = "pillow", specifier = ">=10.0.0" },
@@ -3534,6 +3563,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'world'", specifier = ">=4.57.0,<5.0.0" },
     { name = "typer", specifier = ">=0.9.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
+    { name = "websockets", specifier = ">=15.0.0,<16.0.0" },
 ]
 provides-extras = ["world"]
 

@@ -2280,6 +2280,7 @@ export function useSuperChat({
         }
         break;
       }
+      case "agent.turn.started":
       case "thread.started":
         if (!frameMatchesCurrentScope(frame, desiredScopeRef.current)) {
           const remoteScopeKey = frameScopeSessionKey(frame);
@@ -2299,6 +2300,10 @@ export function useSuperChat({
           markTurnActive(activeTurnIdRef.current);
         }
         recentlyCompletedTurnIdRef.current = null;
+        break;
+      case "agent.turn.completed":
+        // The terminal `done` frame still owns transcript finalization and busy
+        // state. This lifecycle frame carries runtime status for observability.
         break;
       case "assistant.delta": {
         if (!frameMatchesCurrentScope(frame, desiredScopeRef.current)) {

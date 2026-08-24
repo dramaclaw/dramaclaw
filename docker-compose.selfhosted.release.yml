@@ -40,7 +40,7 @@ services:
       HF_HOME: /data/cache/huggingface
       TORCH_HOME: /data/cache/torch
       XDG_CACHE_HOME: /data/cache
-      DRAMACLAW_CHAT_BACKEND: hermes
+      DRAMACLAW_CHAT_BACKEND: "${DRAMACLAW_CHAT_BACKEND:-codex}"
       HERMES_CLI_PATH: /usr/local/bin/hermes
       # CE 单租户自托管的沙箱降级阀门。镜像已按 TARGETARCH 装好 codex-linux-sandbox
       # + bubblewrap,但 Linux 沙箱**默认不激活**:codex 的 managed profile 无法在

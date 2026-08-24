@@ -1,4 +1,4 @@
-"""AI chat service with project-scoped history and user-level agent sessions."""
+"""AI chat service with project-scoped history and agent runtime state."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
 from novelvideo.chat.backend_sdk import (
+    AgentRuntimeThreadPort,
     ClaudeSdkClient,
     CodexClient,
     _codex_item_completed_trace,
@@ -73,6 +75,22 @@ _CHAT_RUN_LOCK_TTL_SECONDS = 10 * 60
 _CHAT_RUN_LOCK_MAX_SECONDS = 60 * 60
 _CHAT_RUN_LOCK_HEARTBEAT_SECONDS = 30.0
 _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS = 5.0
+_CODEX_MODEL_PROVIDER = "dramaclaw_gateway"
+_DEFAULT_CODEX_MODEL = "DC-codex-agent-LLM"
+_CODEX_GATEWAY_BASE_URL_ENV = "DRAMACLAW_CODEX_GATEWAY_BASE_URL"
+_CODEX_PER_TURN_CREDENTIAL_PLACEHOLDER = "dramaclaw-codex-per-turn-placeholder"
+_CODEX_GATEWAY_KEY_METADATA = "dramaclaw_gateway_api_key"
+_CODEX_CONTROL_CAPABILITY_METADATA = "dramaclaw_control_context_capability"
+_ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str]] = {}
+_ACTIVE_CODEX_TURNS_LOCK = threading.Lock()
+_CODEX_DEVELOPER_INSTRUCTIONS = (
+    "You are the DramaClaw creative assistant. Use the required dramaclaw MCP "
+    "server for all DramaClaw data reads and writes. Its business tools use progressive "
+    "disclosure: search with dramaclaw_tool_search, inspect an unfamiliar tool with "
+    "dramaclaw_tool_describe, then execute it with dramaclaw_tool_call. Never guess a "
+    "tool name or argument schema. Do not use shell commands, "
+    "local file editing, web search, or other external tools."
+)
 _REINGEST_CONFIRMATION_BLOCK_RE = re.compile(
     r"\[DRAMACLAW_REINGEST_CONFIRMATION\](.*?)\[/DRAMACLAW_REINGEST_CONFIRMATION\]",
     re.DOTALL,
@@ -234,6 +252,13 @@ def _state_root() -> Path:
     if configured:
         return Path(configured).expanduser()
     return _repo_root() / "state"
+
+
+def _codex_node_home() -> Path:
+    configured = os.environ.get("DRAMACLAW_CODEX_HOME", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return _state_root() / ".codex-app-server"
 
 
 def _json_render_error_log_path() -> Path:
@@ -743,7 +768,24 @@ def _codex_bin_path() -> Path | None:
 
 
 def _codex_model() -> str:
-    return os.environ.get("CODEX_MODEL", "gpt-5.4").strip() or "gpt-5.4"
+    from novelvideo.shared.runtime_env import is_ce_effective
+
+    if is_ce_effective():
+        from novelvideo.model_gateway_settings import get_effective_llm_config
+
+        # CE is configured interactively and SQLite is authoritative. The
+        # BrainClaw choice is a direct model route; Advanced mode keeps using
+        # DramaClaw's logical Codex alias on the user-selected NewAPI gateway.
+        gateway = get_effective_llm_config()
+        return "brainclaw" if gateway.is_brainclaw else _DEFAULT_CODEX_MODEL
+
+    # EE/SaaS is deployment-configured. The gateway address and logical model
+    # come from env, while an organization channel's key is authorized and
+    # injected separately for each turn.
+    return (
+        os.environ.get("CODEX_MODEL", _DEFAULT_CODEX_MODEL).strip()
+        or _DEFAULT_CODEX_MODEL
+    )
 
 
 def _claude_model() -> str | None:
@@ -761,7 +803,10 @@ def is_claude_backend_available() -> bool:
 
 def is_codex_backend_available() -> bool:
     codex_bin = _codex_bin_path()
-    return (codex_bin is None or codex_bin.exists()) and importlib.util.find_spec(
+    # Per-turn gateway credentials travel in App Server metadata. The SDK's
+    # bundled 0.147 runtime logs that metadata verbatim, so only the explicitly
+    # configured, DramaClaw-patched runtime is safe to start.
+    return codex_bin is not None and codex_bin.exists() and importlib.util.find_spec(
         "openai_codex"
     ) is not None
 
@@ -3399,28 +3444,43 @@ def _extract_codex_history_trace(item: Any) -> str:
     return (started + body + completed).strip()
 
 
-def _load_codex_thread_history(username: str, project: str) -> list[dict[str, Any]]:
-    from openai_codex import Codex, CodexConfig
+def _load_codex_thread_history(
+    username: str,
+    project: str,
+    *,
+    project_state_dir: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    from openai_codex import CodexConfig
     from openai_codex.generated.v2_all import (
         AgentMessageThreadItem,
         UserMessageThreadItem,
     )
+    from novelvideo.chat.codex_app_server import shared_codex
 
-    thread_id = _get_codex_thread_id(username, project)
+    thread_id = _get_codex_thread_id(
+        username, project, project_state_dir=project_state_dir
+    )
     if not thread_id:
         return []
 
-    ensure_user_codex_workspace(username, project)
-    workspace = _user_agent_workspace(username)
+    workspace, _codex_home = ensure_user_codex_workspace(
+        username, project, project_state_dir=project_state_dir
+    )
     codex_bin = _codex_bin_path()
+    env = _build_codex_env(
+        username, project, project_state_dir=project_state_dir
+    )
     config = CodexConfig(
         codex_bin=str(codex_bin) if codex_bin is not None else None,
         cwd=str(workspace),
-        env=_build_codex_env(username, project),
-        config_overrides=_codex_mcp_config_overrides(_dramaclaw_mcp_servers()),
+        env=env,
+        config_overrides=(
+            *_codex_gateway_config_overrides(env[_CODEX_GATEWAY_BASE_URL_ENV]),
+            *_codex_mcp_config_overrides(_dramaclaw_mcp_servers()),
+        ),
     )
 
-    with Codex(config=config) as codex:
+    with shared_codex(config) as codex:
         read_response = codex._client.thread_read(thread_id, include_turns=True)
         thread = read_response.thread
         turns = list(getattr(thread, "turns", []) or [])
@@ -3430,6 +3490,7 @@ def _load_codex_thread_history(username: str, project: str) -> list[dict[str, An
                 {
                     "cwd": str(workspace),
                     "model": _codex_model(),
+                    "modelProvider": _CODEX_MODEL_PROVIDER,
                 },
             )
             turns = list(getattr(resumed.thread, "turns", []) or [])
@@ -3494,7 +3555,9 @@ def _sync_codex_history_cache(
 ) -> None:
     history = [
         message
-        for message in _load_codex_thread_history(username, project)
+        for message in _load_codex_thread_history(
+            username, project, project_state_dir=project_state_dir
+        )
         if message.get("role") == "trace"
     ]
     if not history:
@@ -3693,12 +3756,137 @@ def _set_claude_session_id(username: str, project: str, session_id: str) -> None
     _set_active_agent_session_id(username, "claude", session_id)
 
 
-def _get_codex_thread_id(username: str, project: str) -> str | None:
-    return _get_active_agent_session_id(username, "codex")
+def _codex_session_state_path(
+    username: str,
+    project: str = "",
+    *,
+    project_state_dir: str | Path | None = None,
+) -> Path:
+    if project:
+        state_dir = (
+            Path(project_state_dir)
+            if project_state_dir is not None
+            else _project_state_dir(username, project)
+        )
+        return state_dir / "agents" / "codex" / "sessions.json"
+    return _user_state_dir(username) / "codex_sessions.json"
 
 
-def _set_codex_thread_id(username: str, project: str, thread_id: str) -> None:
-    _set_active_agent_session_id(username, "codex", thread_id)
+def _codex_scope_key(
+    project: str,
+    *,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
+) -> str:
+    normalized_project = str(project or "").strip()
+    profile = str(agent_profile or "main").strip() or "main"
+    if profile == "main":
+        # Preserve the original key so existing Director threads keep resuming.
+        return f"project:{normalized_project}" if normalized_project else "home"
+    scoped_canvas = str(canvas_id or "").strip() or None
+    if not profile.startswith("freezone"):
+        scoped_canvas = None
+    scope = (
+        profile,
+        "project" if normalized_project else "home",
+        normalized_project or None,
+        scoped_canvas,
+    )
+    return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
+
+
+def _load_codex_session_state(
+    username: str,
+    project: str = "",
+    *,
+    project_state_dir: str | Path | None = None,
+) -> dict[str, str]:
+    path = _codex_session_state_path(
+        username, project, project_state_dir=project_state_dir
+    )
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(key): str(value).strip()
+        for key, value in payload.items()
+        if str(key).strip() and str(value or "").strip()
+    }
+
+
+def _save_codex_session_state(
+    username: str,
+    project: str,
+    payload: dict[str, str],
+    *,
+    project_state_dir: str | Path | None = None,
+) -> None:
+    from novelvideo.utils.state_index_files import write_json_atomic
+
+    path = _codex_session_state_path(
+        username, project, project_state_dir=project_state_dir
+    )
+    write_json_atomic(path, payload)
+
+
+def _get_codex_thread_id(
+    username: str,
+    project: str,
+    *,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
+    project_state_dir: str | Path | None = None,
+) -> str | None:
+    return _load_codex_session_state(
+        username, project, project_state_dir=project_state_dir
+    ).get(
+        _codex_scope_key(
+            project,
+            agent_profile=agent_profile,
+            canvas_id=canvas_id,
+        )
+    )
+
+
+def _set_codex_thread_id(
+    username: str,
+    project: str,
+    thread_id: str,
+    *,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
+    project_state_dir: str | Path | None = None,
+) -> None:
+    normalized = str(thread_id or "").strip()
+    if not normalized:
+        return
+    from novelvideo.utils.state_index_files import index_file_lock
+
+    state_path = _codex_session_state_path(
+        username, project, project_state_dir=project_state_dir
+    )
+    with index_file_lock(state_path):
+        payload = _load_codex_session_state(
+            username, project, project_state_dir=project_state_dir
+        )
+        payload[
+            _codex_scope_key(
+                project,
+                agent_profile=agent_profile,
+                canvas_id=canvas_id,
+            )
+        ] = normalized
+        _save_codex_session_state(
+            username,
+            project,
+            payload,
+            project_state_dir=project_state_dir,
+        )
 
 
 def _load_api_url() -> str:
@@ -3721,8 +3909,9 @@ def _load_api_url() -> str:
     if legacy:
         return legacy.rstrip("/")
 
-    ui_port = os.environ.get("NOVELVIDEO_UI_PORT", "7870").strip() or "7870"
-    return f"http://127.0.0.1:{ui_port}"
+    # Chat agents call the REST API, not the legacy NiceGUI listener. Keep the
+    # same self-container default used by the Hermes worker pool.
+    return "http://127.0.0.1:8780"
 
 
 PAGE_AGENT_SCOPES = [
@@ -3802,14 +3991,28 @@ def ensure_user_claude_workspace(
 
 
 def ensure_user_codex_workspace(
-    username: str, project: str, agent_token: str = ""
-) -> None:
-    workspace = _user_agent_workspace(username)
-    codex_dir = workspace / ".codex"
-    skills_dir = codex_dir / "skills"
+    username: str,
+    project: str,
+    agent_token: str = "",
+    *,
+    project_state_dir: str | Path | None = None,
+) -> tuple[Path, Path]:
+    if project:
+        state_dir = (
+            Path(project_state_dir)
+            if project_state_dir is not None
+            else _project_state_dir(username, project)
+        )
+        agent_root = state_dir / "agents" / "codex"
+        workspace = agent_root / "workspace"
+    else:
+        workspace = _user_agent_workspace(username)
+    codex_dir = _codex_node_home()
+    skills_dir = workspace / ".agents" / "skills"
     codex_dir.mkdir(parents=True, exist_ok=True)
     skills_dir.mkdir(parents=True, exist_ok=True)
     _sync_project_skills(skills_dir)
+    return workspace, codex_dir
 
 
 def _build_claude_env(
@@ -3836,18 +4039,69 @@ def _build_claude_env(
     return build_model_child_env(env, egress_context=egress_context)
 
 
+def _codex_turn_gateway_credentials(authorization=None) -> tuple[str, str]:
+    """Resolve one turn's NewAPI token without crossing CE/EE config boundaries."""
+
+    from novelvideo.chat.hermes_workspace import effective_gateway_credentials
+    from novelvideo.shared.runtime_env import is_ce_effective
+
+    configured_key, configured_base_url = effective_gateway_credentials()
+    configured_base_url = str(configured_base_url or "").strip().rstrip("/")
+    if not configured_base_url:
+        raise RuntimeError("Codex requires a configured DramaClaw model gateway URL")
+
+    if is_ce_effective():
+        # CE owns a local SQLite settings database. UI changes to endpoint/key
+        # must take effect on the next turn and must never be shadowed by the
+        # EE request-authorization path.
+        api_key = str(configured_key or "").strip()
+    elif authorization is None:
+        # EE platform traffic uses its deployment credential.
+        api_key = str(configured_key or "").strip()
+    else:
+        # EE organization traffic uses the key belonging to that request's
+        # selected channel. Only the shared gateway origin comes from env.
+        credential = authorization.credential
+        credential_base_url = str(credential.base_url or "").strip().rstrip("/")
+        configured_origin = urlparse(configured_base_url)
+        credential_origin = urlparse(credential_base_url)
+        if (
+            configured_origin.scheme.lower(),
+            configured_origin.netloc.lower(),
+        ) != (
+            credential_origin.scheme.lower(),
+            credential_origin.netloc.lower(),
+        ):
+            from novelvideo.chat import evidence_metrics
+            from novelvideo.chat.hermes_pool import GatewayOriginMismatch
+
+            evidence_metrics.observe("foreign_endpoint_refused")
+            raise GatewayOriginMismatch(
+                "the Codex turn credential targets a different gateway origin "
+                "than the shared App Server"
+            )
+        api_key = str(credential.api_key or "").strip()
+
+    if not api_key:
+        raise RuntimeError("Codex requires a per-turn DramaClaw model gateway key")
+    return api_key, configured_base_url
+
+
 def _build_codex_env(
     username: str,
     project: str,
     agent_token: str = "",
     *,
     egress_context=None,
+    authorization=None,
+    project_state_dir: str | Path | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
+    agent_scope = "project" if project else "user"
     env["DRAMACLAW_USERNAME"] = username
-    env["DRAMACLAW_AGENT_SCOPE"] = "user"
+    env["DRAMACLAW_AGENT_SCOPE"] = agent_scope
     env["SUPERTALE_USERNAME"] = username
-    env["SUPERTALE_AGENT_SCOPE"] = "user"
+    env["SUPERTALE_AGENT_SCOPE"] = agent_scope
     if project:
         env["DRAMACLAW_PROJECT_ID"] = project
         env["SUPERTALE_PROJECT_ID"] = project
@@ -3855,9 +4109,37 @@ def _build_codex_env(
     env["SUPERTALE_API_URL"] = _load_api_url()
     env["DRAMACLAW_AGENT_TOKEN"] = agent_token
     env["SUPERTALE_AGENT_TOKEN"] = agent_token
+    _workspace, codex_home = ensure_user_codex_workspace(
+        username, project, agent_token, project_state_dir=project_state_dir
+    )
+    env["CODEX_HOME"] = str(codex_home)
     from novelvideo.task_backend.subprocesses import build_model_child_env
 
-    return build_model_child_env(env, egress_context=egress_context)
+    _api_key, base_url = _codex_turn_gateway_credentials(authorization)
+    child_env = build_model_child_env(
+        env,
+        egress_context=egress_context,
+        gateway_credential=(
+            authorization.credential if authorization is not None else None
+        ),
+    )
+    # The App Server is shared across projects and organizations. No usable
+    # model credential may survive into its process environment; authentication
+    # is supplied in the thread configuration for one turn only.
+    for name in (
+        "ANTHROPIC_API_KEY",
+        "DRAMACLAW_CODEX_GATEWAY_API_KEY",
+        "FAL_KEY",
+        "MODEL_API_KEY",
+        "NEWAPI_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "ST_ORG_GATEWAY_API_KEY",
+        "VOLCENGINE_API_KEY",
+    ):
+        child_env.pop(name, None)
+    child_env[_CODEX_GATEWAY_BASE_URL_ENV] = base_url
+    return child_env
 
 
 def _extract_media(
@@ -4096,6 +4378,12 @@ def _dramaclaw_mcp_servers() -> dict[str, dict[str, Any]]:
             "type": "stdio",
             "command": sys.executable,
             "args": ["-m", "novelvideo.chat.dramaclaw_mcp"],
+            "env_vars": [
+                "DRAMACLAW_API_URL",
+                "DRAMACLAW_AGENT_TOKEN",
+                "DRAMACLAW_PROJECT_ID",
+                "DRAMACLAW_USERNAME",
+            ],
         }
     }
 
@@ -4115,30 +4403,119 @@ def _codex_mcp_config_overrides(
         args = server.get("args") or []
         if not isinstance(args, list):
             raise ValueError(f"Codex MCP server {name} args must be a list")
+        env_vars = server.get("env_vars") or []
+        if not isinstance(env_vars, list):
+            raise ValueError(f"Codex MCP server {name} env_vars must be a list")
         prefix = f"mcp_servers.{name}"
         overrides.append(f"{prefix}.command={json.dumps(command, ensure_ascii=False)}")
         overrides.append(
             f"{prefix}.args={json.dumps([str(arg) for arg in args], ensure_ascii=False, separators=(',', ':'))}"
         )
+        overrides.append(
+            f"{prefix}.env_vars={json.dumps([str(var) for var in env_vars], ensure_ascii=False, separators=(',', ':'))}"
+        )
         overrides.append(f"{prefix}.enabled=true")
+        overrides.append(f"{prefix}.required=true")
+        # DramaClaw MCP is the sole business write boundary. Its short-lived,
+        # project-scoped bearer token remains the authority for every call;
+        # pre-approving this server avoids a separate Guardian model request
+        # that cannot inherit per-turn NewAPI credentials.
+        overrides.append(f'{prefix}.default_tools_approval_mode="approve"')
     return tuple(overrides)
 
 
+def _codex_gateway_provider_overrides(
+    base_url: str,
+) -> tuple[str, ...]:
+    normalized_base_url = str(base_url or "").strip().rstrip("/")
+    if not normalized_base_url:
+        raise RuntimeError("Codex requires a configured DramaClaw model gateway URL")
+    prefix = f"model_providers.{_CODEX_MODEL_PROVIDER}"
+    return (
+        f"{prefix}.name={json.dumps('DramaClaw Gateway')}",
+        f"{prefix}.base_url={json.dumps(normalized_base_url)}",
+        f"{prefix}.experimental_bearer_token={json.dumps(_CODEX_PER_TURN_CREDENTIAL_PLACEHOLDER)}",
+        f'{prefix}.wire_api="responses"',
+        f"{prefix}.requires_openai_auth=false",
+        f"{prefix}.supports_websockets=false",
+    )
+
+
+def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
+    """Node-safe Codex config containing no usable Gateway credential."""
+
+    return (
+        *_codex_gateway_provider_overrides(
+            base_url,
+        ),
+        'web_search="disabled"',
+        "features.apps=false",
+        "features.hooks=false",
+        # Native memories are CODEX_HOME-global. The shared node runtime must
+        # not let one project's learned preferences bleed into another; the
+        # project thread and DramaClaw project state remain authoritative.
+        "features.memories=false",
+        "features.multi_agent=false",
+        "features.plugins=false",
+        "features.shell_tool=false",
+        "features.view_image=false",
+        "memories.generate_memories=false",
+        "memories.use_memories=false",
+    )
+
+
 def _build_codex_thread(
-    username: str, project: str, agent_token: str, *, egress_context=None
-):
-    ensure_user_codex_workspace(username, project, agent_token)
-    workspace = _user_agent_workspace(username)
+    username: str,
+    project: str,
+    agent_token: str,
+    *,
+    egress_context=None,
+    authorization=None,
+    control_capability: str | None = None,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
+    project_state_dir: str | Path | None = None,
+) -> AgentRuntimeThreadPort:
+    workspace, _codex_home = ensure_user_codex_workspace(
+        username,
+        project,
+        agent_token,
+        project_state_dir=project_state_dir,
+    )
+    env = _build_codex_env(
+        username,
+        project,
+        agent_token,
+        egress_context=egress_context,
+        authorization=authorization,
+        project_state_dir=project_state_dir,
+    )
+    gateway_api_key, gateway_base_url = _codex_turn_gateway_credentials(authorization)
+    node_config_overrides = _codex_gateway_config_overrides(gateway_base_url)
+    thread_config_overrides = _codex_mcp_config_overrides(
+        _dramaclaw_mcp_servers()
+    )
+    turn_metadata = {_CODEX_GATEWAY_KEY_METADATA: gateway_api_key}
+    if control_capability:
+        turn_metadata[_CODEX_CONTROL_CAPABILITY_METADATA] = control_capability
     client = CodexClient(
         codex_bin=_codex_bin_path(),
         cwd=workspace,
-        env=_build_codex_env(
-            username, project, agent_token, egress_context=egress_context
-        ),
+        env=env,
         model=_codex_model(),
-        config_overrides=_codex_mcp_config_overrides(_dramaclaw_mcp_servers()),
+        model_provider=_CODEX_MODEL_PROVIDER,
+        developer_instructions=_CODEX_DEVELOPER_INSTRUCTIONS,
+        config_overrides=node_config_overrides,
+        thread_config_overrides=thread_config_overrides,
+        turn_metadata=turn_metadata,
     )
-    thread_id = _get_codex_thread_id(username, project)
+    thread_id = _get_codex_thread_id(
+        username,
+        project,
+        agent_profile=agent_profile,
+        canvas_id=canvas_id,
+        project_state_dir=project_state_dir,
+    )
     return client.thread_resume(thread_id) if thread_id else client.thread_start()
 
 
@@ -4171,6 +4548,28 @@ async def interrupt_chat_turn(
     return False
 
 
+async def interrupt_active_codex_turns(username: str) -> bool:
+    """Interrupt every live Codex turn owned by one logged-in user."""
+
+    normalized = str(username or "").strip()
+    if not normalized:
+        return False
+    with _ACTIVE_CODEX_TURNS_LOCK:
+        turns = [
+            value
+            for (turn_username, _project), value in _ACTIVE_CODEX_TURNS.items()
+            if turn_username == normalized
+        ]
+    results = await asyncio.gather(
+        *(
+            asyncio.to_thread(interrupt_live_codex_turn, thread_id, turn_id)
+            for thread_id, turn_id in turns
+        ),
+        return_exceptions=True,
+    )
+    return any(result is True for result in results)
+
+
 async def stream_assistant_reply(
     username: str,
     project: str,
@@ -4186,6 +4585,7 @@ async def stream_assistant_reply(
     route_prompt: str | None = None,
     egress_context=None,
     requester_user_id: str | None = None,
+    egress_project_id: str | None = None,
 ) -> dict[str, Any]:
     tool_mode = _tool_mode_for_surface(
         surface,
@@ -4226,6 +4626,11 @@ async def stream_assistant_reply(
                 project_dir=project_dir,
                 project_state_dir=project_state_dir,
                 egress_context=egress_context,
+                requester_user_id=requester_user_id,
+                egress_project_id=egress_project_id,
+                tool_mode=tool_mode,
+                store_scope=store_scope,
+                turn_id=turn_id,
             )
         if backend == "hermes":
             return await _stream_assistant_reply_hermes(
@@ -4437,10 +4842,9 @@ async def _stream_assistant_reply_hermes(
 ) -> dict[str, Any]:
     """Stream via Hermes ACP subprocess (per-user, sandboxed).
 
-    Differs from claude/codex paths:
-    - Hermes is per-USER not per-(user, project). Project context is injected
-      as a prompt prefix via `current_project=project`.
-    - No per-project chat.db session id; HermesPool owns the thread lifecycle.
+    HermesPool owns the native thread lifecycle. The live worker cache remains
+    per user/profile, while project sessions and memory are persisted below the
+    authoritative project state directory.
     """
     from novelvideo.chat.hermes_pool import pool as _hermes_pool
 
@@ -4451,7 +4855,6 @@ async def _stream_assistant_reply_hermes(
         egress_project_id=project,
         prompt=prompt,
     )
-
     store_agent_id = str(getattr(store_scope, "agent_id", "") or "").strip()
     agent_profile = f"freezone:{store_agent_id or 'main'}" if tool_mode == "freezone_canvas" else "main"
     surface = "freezone" if tool_mode == "freezone_canvas" else None
@@ -4768,6 +5171,31 @@ async def _stream_assistant_reply_hermes(
                     },
                 )
                 continue
+            if event.type == "turn_started":
+                await on_event(
+                    {
+                        "type": "turn_started",
+                        "thread_id": str(event.thread_id or "").strip() or None,
+                        "turn_id": str(event.turn_id or "").strip() or None,
+                        "status": event.status or "in_progress",
+                    }
+                )
+                continue
+            if event.type == "turn_completed":
+                turn_disposition = str(
+                    event.disposition or event.status or turn_disposition
+                )
+                await on_event(
+                    {
+                        "type": "turn_completed",
+                        "thread_id": str(event.thread_id or "").strip() or None,
+                        "turn_id": str(event.turn_id or "").strip() or None,
+                        "status": event.status or "completed",
+                        "error": event.error,
+                        "disposition": event.disposition,
+                    }
+                )
+                continue
             if event.type == "assistant_delta":
                 assistant_text = _merge_stream_text(assistant_text, event.text)
                 streamed_text = _strip_replayed_chat_response(
@@ -5057,6 +5485,47 @@ async def _stream_assistant_reply_claude(
                     }
                 )
                 continue
+            if event.type == "thought_delta":
+                await on_event(
+                    {
+                        "type": "thought_delta",
+                        "text": str(event.text or ""),
+                        "source": event.name,
+                    }
+                )
+                continue
+            if event.type == "plan_update":
+                await on_event(
+                    {
+                        "type": "plan_update",
+                        "text": str(event.text or ""),
+                        "entries": event.entries or [],
+                    }
+                )
+                continue
+            if event.type == "usage_update":
+                await on_event(
+                    {"type": "usage_update", "usage": event.usage or {}}
+                )
+                continue
+            if event.type in {"tool_started", "tool_updated"}:
+                event_tool_text = str(event.text or "")
+                if event_tool_text:
+                    tool_text += event_tool_text
+                await on_event(
+                    {
+                        "type": event.type,
+                        "text": event_tool_text.strip(),
+                        "name": event.name,
+                        "call_id": event.call_id,
+                        "status": event.status,
+                        "input": event.input,
+                        "output": event.output,
+                        "error": event.error,
+                        "result_json": event.structured,
+                    }
+                )
+                continue
             if event.type == "tool_update":
                 tool_text = str(event.text or "")
                 await on_event(
@@ -5112,70 +5581,242 @@ async def _stream_assistant_reply_codex(
     project_dir: str | Path | None = None,
     project_state_dir: str | Path | None = None,
     egress_context=None,
+    requester_user_id: str | None = None,
+    egress_project_id: str | None = None,
+    tool_mode: str = "default",
+    store_scope: Any | None = None,
+    turn_id: str | None = None,
 ) -> dict[str, Any]:
     assistant_text = ""
     tool_text = ""
-    agent_token = await _create_page_agent_session_token(
-        username,
+    authorization = await authorize_hermes_launch(
+        egress_context=egress_context,
+        username=username,
+        requester_user_id=requester_user_id,
+        egress_project_id=egress_project_id or project,
+        prompt=prompt,
+    )
+    turn_operation = _turn_operation_finalizer(authorization)
+    turn_disposition = _DEFAULT_TURN_DISPOSITION
+    store_agent_id = str(getattr(store_scope, "agent_id", "") or "").strip()
+    agent_profile = (
+        f"freezone:{store_agent_id or 'main'}"
+        if tool_mode == "freezone_canvas"
+        else "main"
+    )
+    canvas_id = str(getattr(store_scope, "canvas_id", "") or "").strip() or None
+    business_turn_id = str(turn_id or "").strip() or uuid.uuid4().hex
+    evidence_identity = _evidence_identity(project, store_scope, agent_profile)
+    from novelvideo.chat.hermes_sdk import _issue_turn_capability
+
+    control_capability = _issue_turn_capability(
+        trajectory_id=evidence_identity["trajectory_id"],
+        project_id=evidence_identity["project_id"],
+        turn_id=business_turn_id,
+    )
+    codex_scope_key = _codex_scope_key(
         project,
-        agent_kind="codex",
+        agent_profile=agent_profile,
+        canvas_id=canvas_id,
     )
-    thread = _build_codex_thread(
-        username, project, agent_token, egress_context=egress_context
-    )
+    active_turn_key = (username, codex_scope_key)
+    active_turn_value: tuple[str, str] | None = None
+    try:
+        agent_token = await _create_page_agent_session_token(
+            username,
+            project,
+            agent_kind="codex",
+        )
+        thread = _build_codex_thread(
+            username,
+            project,
+            agent_token,
+            egress_context=egress_context,
+            authorization=authorization,
+            control_capability=control_capability,
+            agent_profile=agent_profile,
+            canvas_id=canvas_id,
+            project_state_dir=project_state_dir,
+        )
+    except Exception:
+        if turn_operation is not None:
+            await turn_operation.finish(turn_disposition)
+        raise
     agent_prompt = _prompt_with_user_context(username, project, prompt)
-    async for event in thread.stream(agent_prompt):
-        if event.type == "thread_started":
-            thread_id = str(event.thread_id or "").strip() or None
-            if thread_id:
-                _set_codex_thread_id(username, project, thread_id)
-            await on_event(
-                {
-                    "type": "thread_started",
-                    "thread_id": thread_id,
-                    "turn_id": str(event.turn_id or "").strip() or None,
-                }
-            )
-            continue
-        if event.type == "assistant_delta":
-            assistant_text = _merge_stream_text(assistant_text, event.text)
-            streamed_text = _redact_local_filesystem_paths(assistant_text)
-            await on_event(
-                {
-                    "type": "assistant_delta",
-                    "text": streamed_text,
-                }
-            )
-            continue
-        if event.type == "tool_update":
-            tool_text += str(event.text or "")
-            await on_event({"type": "tool_update", "text": tool_text})
-            continue
-        if event.type == "complete":
-            thread_id = str(event.thread_id or "").strip() or None
-            if thread_id:
-                _set_codex_thread_id(username, project, thread_id)
-            assistant_text = _completion_text_or_existing(event.text, assistant_text)
+    try:
+        async for event in thread.stream(agent_prompt):
+            if event.type == "egress_submitted":
+                if turn_operation is not None:
+                    await turn_operation.submitted_to_agent()
+                continue
+            if event.type == "egress_disposition":
+                turn_disposition = str(event.disposition or _DEFAULT_TURN_DISPOSITION)
+                continue
+            if event.type == "thread_started":
+                codex_thread_id = str(event.thread_id or "").strip() or None
+                codex_turn_id = str(event.turn_id or "").strip() or None
+                if codex_thread_id:
+                    _set_codex_thread_id(
+                        username,
+                        project,
+                        codex_thread_id,
+                        agent_profile=agent_profile,
+                        canvas_id=canvas_id,
+                        project_state_dir=project_state_dir,
+                    )
+                if codex_thread_id and codex_turn_id:
+                    active_turn_value = (codex_thread_id, codex_turn_id)
+                    with _ACTIVE_CODEX_TURNS_LOCK:
+                        _ACTIVE_CODEX_TURNS[active_turn_key] = active_turn_value
+                await on_event(
+                    {
+                        "type": "thread_started",
+                        "thread_id": codex_thread_id,
+                        "turn_id": codex_turn_id,
+                    }
+                )
+                continue
+            if event.type == "turn_started":
+                await on_event(
+                    {
+                        "type": "turn_started",
+                        "thread_id": str(event.thread_id or "").strip() or None,
+                        "turn_id": str(event.turn_id or "").strip() or None,
+                        "status": event.status or "in_progress",
+                    }
+                )
+                continue
+            if event.type == "turn_completed":
+                turn_disposition = str(
+                    event.disposition or event.status or turn_disposition
+                )
+                await on_event(
+                    {
+                        "type": "turn_completed",
+                        "thread_id": str(event.thread_id or "").strip() or None,
+                        "turn_id": str(event.turn_id or "").strip() or None,
+                        "status": event.status or "completed",
+                        "error": event.error,
+                        "disposition": event.disposition,
+                    }
+                )
+                continue
+            if event.type == "assistant_delta":
+                assistant_text = _merge_stream_text(assistant_text, event.text)
+                streamed_text = _redact_local_filesystem_paths(assistant_text)
+                await on_event(
+                    {
+                        "type": "assistant_delta",
+                        "text": streamed_text,
+                    }
+                )
+                continue
+            if event.type == "thought_delta":
+                await on_event(
+                    {
+                        "type": "thought_delta",
+                        "text": str(event.text or ""),
+                        "source": event.name,
+                    }
+                )
+                continue
+            if event.type == "plan_update":
+                await on_event(
+                    {
+                        "type": "plan_update",
+                        "text": str(event.text or ""),
+                        "entries": event.entries or [],
+                    }
+                )
+                continue
+            if event.type == "usage_update":
+                await on_event(
+                    {"type": "usage_update", "usage": event.usage or {}}
+                )
+                continue
+            if event.type in {"tool_started", "tool_updated"}:
+                event_tool_text = str(event.text or "")
+                if event_tool_text:
+                    tool_text += event_tool_text
+                await on_event(
+                    {
+                        "type": event.type,
+                        "text": event_tool_text.strip(),
+                        "name": event.name,
+                        "call_id": event.call_id,
+                        "status": event.status,
+                        "input": event.input,
+                        "output": event.output,
+                        "error": event.error,
+                        "result_json": event.structured,
+                    }
+                )
+                continue
+            if event.type == "tool_update":
+                tool_text += str(event.text or "")
+                await on_event({"type": "tool_update", "text": tool_text})
+                continue
+            if event.type == "complete":
+                codex_thread_id = str(event.thread_id or "").strip() or None
+                if codex_thread_id:
+                    _set_codex_thread_id(
+                        username,
+                        project,
+                        codex_thread_id,
+                        agent_profile=agent_profile,
+                        canvas_id=canvas_id,
+                        project_state_dir=project_state_dir,
+                    )
+                assistant_text = _completion_text_or_existing(
+                    event.text, assistant_text
+                )
+                if turn_disposition == _DEFAULT_TURN_DISPOSITION:
+                    turn_disposition = "completed"
+    finally:
+        if active_turn_value is not None:
+            with _ACTIVE_CODEX_TURNS_LOCK:
+                if _ACTIVE_CODEX_TURNS.get(active_turn_key) == active_turn_value:
+                    _ACTIVE_CODEX_TURNS.pop(active_turn_key, None)
+        if turn_operation is not None:
+            await turn_operation.finish(turn_disposition)
 
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
     assistant_text = _normalize_json_render_reply(assistant_text)
     if tool_text.strip():
-        add_trace_messages(
+        if store_scope is not None:
+            from novelvideo.chat.store import chat_store
+
+            for trace_content in _split_trace_contents(tool_text):
+                chat_store.append_message(username, store_scope, "trace", trace_content)
+        else:
+            add_trace_messages(
+                username,
+                project,
+                _split_trace_contents(tool_text),
+                project_dir=project_dir,
+                project_state_dir=project_state_dir,
+            )
+    media = _extract_media(assistant_text, username, project, project_dir=project_dir)
+    if store_scope is not None:
+        from novelvideo.chat.store import chat_store
+
+        result_message = chat_store.append_message(
+            username,
+            store_scope,
+            "assistant",
+            assistant_text,
+            media=media,
+            turn_id=turn_id,
+        )
+    else:
+        result_message = add_assistant_message(
             username,
             project,
-            _split_trace_contents(tool_text),
+            assistant_text,
+            media,
             project_dir=project_dir,
             project_state_dir=project_state_dir,
         )
-    media = _extract_media(assistant_text, username, project, project_dir=project_dir)
-    result_message = add_assistant_message(
-        username,
-        project,
-        assistant_text,
-        media,
-        project_dir=project_dir,
-        project_state_dir=project_state_dir,
-    )
     await on_event({"type": "done", "message": result_message})
     return result_message
 

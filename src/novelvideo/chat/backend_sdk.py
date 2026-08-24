@@ -3,15 +3,18 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Literal, Protocol, runtime_checkable
 
 
 @dataclass(slots=True)
 class ChatBackendEvent:
     type: Literal[
         "thread_started",
+        "turn_started",
+        "turn_completed",
         "assistant_delta",
         "thought_delta",
         "plan_update",
@@ -52,6 +55,15 @@ class ChatBackendEvent:
 class ChatRunResult:
     thread_id: str
     text: str
+
+
+@runtime_checkable
+class AgentRuntimeThreadPort(Protocol):
+    """Stable DramaClaw boundary implemented by Codex, Hermes, and Claude."""
+
+    id: str | None
+
+    def stream(self, prompt: str) -> AsyncIterator[ChatBackendEvent]: ...
 
 
 _LIVE_CODEX_TURNS: dict[tuple[str, str], Any] = {}
@@ -214,6 +226,159 @@ def _codex_final_response_from_items(items: list[Any]) -> str | None:
 
 def _codex_unwrap_item(item: Any) -> Any:
     return item.root if hasattr(item, "root") else item
+
+
+def _codex_jsonable(value: Any) -> Any:
+    """Return a JSON-safe SDK payload without leaking SDK model types outward."""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return model_dump(mode="json", by_alias=True, warnings=False)
+        except (TypeError, ValueError):
+            return model_dump(by_alias=True)
+    if isinstance(value, dict):
+        return {str(key): _codex_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_codex_jsonable(item) for item in value]
+    enum_value = getattr(value, "value", None)
+    if isinstance(enum_value, (str, int, float, bool)):
+        return enum_value
+    return str(value)
+
+
+def _codex_raw_notification(event: Any) -> dict[str, Any]:
+    """Keep Codex-specific wire data server-side for diagnostics and evidence."""
+
+    return {
+        "runtime": "codex",
+        "method": str(getattr(event, "method", "") or ""),
+        "params": _codex_jsonable(getattr(event, "payload", None)),
+    }
+
+
+def _codex_tool_event(
+    item: Any,
+    *,
+    phase: Literal["started", "completed"],
+    thread_id: str,
+    turn_id: str,
+    raw: dict[str, Any],
+) -> ChatBackendEvent | None:
+    """Map Codex tool-like ThreadItems onto the runtime-neutral lifecycle."""
+
+    thread_item = _codex_unwrap_item(item)
+    item_type = str(getattr(thread_item, "type", "") or "")
+    if item_type not in {
+        "collabAgentToolCall",
+        "commandExecution",
+        "dynamicToolCall",
+        "fileChange",
+        "imageGeneration",
+        "imageView",
+        "mcpToolCall",
+        "sleep",
+        "webSearch",
+    }:
+        return None
+
+    call_id = str(getattr(thread_item, "id", "") or "").strip() or None
+    status_obj = getattr(thread_item, "status", None)
+    status = str(getattr(status_obj, "value", status_obj or "") or "").strip()
+    if not status:
+        status = "pending" if phase == "started" else "completed"
+
+    name = item_type
+    tool_input: Any = None
+    output: Any = None
+    error: Any = None
+    structured: Any = None
+    if item_type == "mcpToolCall":
+        name = ".".join(
+            part
+            for part in [
+                str(getattr(thread_item, "server", "") or "").strip(),
+                str(getattr(thread_item, "tool", "") or "").strip(),
+            ]
+            if part
+        ) or item_type
+        tool_input = _codex_jsonable(getattr(thread_item, "arguments", None))
+        result = getattr(thread_item, "result", None)
+        output = _codex_jsonable(result)
+        structured = _codex_jsonable(getattr(result, "structured_content", None))
+        error = _codex_jsonable(getattr(thread_item, "error", None))
+    elif item_type == "dynamicToolCall":
+        name = str(getattr(thread_item, "tool", "") or item_type)
+        tool_input = _codex_jsonable(getattr(thread_item, "arguments", None))
+        output = _codex_jsonable(getattr(thread_item, "content_items", None))
+        if getattr(thread_item, "success", None) is False:
+            error = {"message": "dynamic tool call failed"}
+    elif item_type == "collabAgentToolCall":
+        tool = getattr(thread_item, "tool", None)
+        name = f"collab.{getattr(tool, 'value', tool or 'agent')}"
+        tool_input = {
+            "prompt": getattr(thread_item, "prompt", None),
+            "model": getattr(thread_item, "model", None),
+        }
+        output = _codex_jsonable(getattr(thread_item, "agents_states", None))
+    elif item_type == "commandExecution":
+        name = "command_execution"
+        tool_input = {
+            "command": getattr(thread_item, "command", None),
+            "cwd": _codex_jsonable(getattr(thread_item, "cwd", None)),
+        }
+        output = {
+            "aggregated_output": getattr(thread_item, "aggregated_output", None),
+            "exit_code": getattr(thread_item, "exit_code", None),
+        }
+        if getattr(thread_item, "exit_code", None) not in (None, 0):
+            error = {"exit_code": getattr(thread_item, "exit_code", None)}
+    elif item_type == "fileChange":
+        name = "file_change"
+        output = _codex_jsonable(getattr(thread_item, "changes", None))
+    elif item_type == "webSearch":
+        name = "web_search"
+        tool_input = {"query": getattr(thread_item, "query", None)}
+        output = _codex_jsonable(getattr(thread_item, "results", None))
+    elif item_type == "imageView":
+        name = "view_image"
+        tool_input = {"path": _codex_jsonable(getattr(thread_item, "path", None))}
+    elif item_type == "imageGeneration":
+        name = "image_generation"
+        output = {
+            "result": getattr(thread_item, "result", None),
+            "saved_path": _codex_jsonable(getattr(thread_item, "saved_path", None)),
+            "revised_prompt": getattr(thread_item, "revised_prompt", None),
+        }
+        error = _codex_jsonable(getattr(thread_item, "failure", None))
+    elif item_type == "sleep":
+        name = "sleep"
+        tool_input = {"duration_ms": getattr(thread_item, "duration_ms", None)}
+
+    trace = (
+        _codex_item_started_trace(thread_item)
+        if phase == "started"
+        else _codex_item_completed_trace(thread_item)
+    )
+    if not trace:
+        verb = "Running" if phase == "started" else status
+        trace = f"\x1b[90m[{verb}]\x1b[0m {name}\n"
+    return ChatBackendEvent(
+        type="tool_started" if phase == "started" else "tool_updated",
+        thread_id=thread_id,
+        turn_id=turn_id,
+        text=trace,
+        name=name,
+        call_id=call_id,
+        status=status,
+        input=tool_input,
+        output=output,
+        error=error,
+        structured=structured,
+        raw=raw,
+    )
 
 
 def _codex_item_started_trace(item: Any) -> str | None:
@@ -843,6 +1008,87 @@ class ClaudeCliThread:
         return ChatRunResult(thread_id=self.id, text=text or "已执行，但没有返回正文。")
 
 
+def _codex_thread_config(
+    config_overrides: tuple[str, ...], env: dict[str, str]
+) -> dict[str, Any]:
+    """Convert CLI overrides to thread-local config and bind MCP identity."""
+
+    config: dict[str, Any] = {}
+    for override in config_overrides:
+        key, separator, raw_value = override.partition("=")
+        if not separator or not key.strip():
+            continue
+        try:
+            value = tomllib.loads(f"value = {raw_value}")["value"]
+        except tomllib.TOMLDecodeError:
+            value = raw_value
+        config[key.strip()] = value
+
+    mcp_env_names = config.pop("mcp_servers.dramaclaw.env_vars", [])
+    if isinstance(mcp_env_names, list):
+        mcp_env = {
+            str(name): env[str(name)]
+            for name in mcp_env_names
+            if isinstance(name, str) and env.get(name)
+        }
+        if mcp_env:
+            config["mcp_servers.dramaclaw.env"] = mcp_env
+    return config
+
+
+def _start_or_resume_codex_thread(
+    codex: Any,
+    thread_id: str | None,
+    thread_options: dict[str, Any],
+) -> Any:
+    """Resume a persisted thread, replacing only a provably stale pointer."""
+
+    if not thread_id:
+        return codex.thread_start(**thread_options)
+
+    from openai_codex.errors import InvalidRequestError
+
+    try:
+        return codex.thread_resume(thread_id, **thread_options)
+    except InvalidRequestError as exc:
+        message = str(getattr(exc, "message", exc) or "").lower()
+        stale_pointer = "no rollout found for thread id" in message or (
+            "thread" in message and "not found" in message
+        )
+        if not stale_pointer:
+            raise
+        return codex.thread_start(**thread_options)
+
+
+def _start_codex_turn(
+    thread: Any,
+    prompt: str,
+    turn_metadata: dict[str, str],
+) -> Any:
+    """Start a turn with metadata omitted by the 0.147 generated facade.
+
+    App Server 0.147 already accepts ``responsesapiClientMetadata``; only the
+    generated Python convenience method lagged behind the protocol. Sending a
+    raw params mapping keeps the credential scoped to the turn context instead
+    of the long-lived thread configuration.
+    """
+
+    if not turn_metadata:
+        from openai_codex import TextInput
+
+        return thread.turn(TextInput(prompt))
+
+    from openai_codex._inputs import TextInput, _normalize_run_input, _to_wire_input
+    from openai_codex.api import TurnHandle
+
+    wire_input = _to_wire_input(_normalize_run_input(TextInput(prompt)))
+    started = thread._client.turn_start(
+        thread.id,
+        wire_input,
+        params={"responsesapiClientMetadata": dict(turn_metadata)},
+    )
+    return TurnHandle(thread._client, thread.id, started.turn.id)
+
 class CodexClient:
     def __init__(
         self,
@@ -851,13 +1097,26 @@ class CodexClient:
         cwd: Path,
         env: dict[str, str],
         model: str,
+        model_provider: str,
+        developer_instructions: str,
         config_overrides: tuple[str, ...] = (),
+        thread_config_overrides: tuple[str, ...] | None = None,
+        turn_metadata: dict[str, str] | None = None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
         self._env = env
         self._model = model
+        self._model_provider = model_provider
+        self._developer_instructions = developer_instructions
         self._config_overrides = tuple(config_overrides)
+        effective_thread_overrides = (
+            self._config_overrides
+            if thread_config_overrides is None
+            else tuple(thread_config_overrides)
+        )
+        self._thread_config = _codex_thread_config(effective_thread_overrides, env)
+        self._turn_metadata = dict(turn_metadata or {})
 
     def thread_start(self) -> "CodexThread":
         return CodexThread(
@@ -865,7 +1124,11 @@ class CodexClient:
             cwd=self._cwd,
             env=self._env,
             model=self._model,
+            model_provider=self._model_provider,
+            developer_instructions=self._developer_instructions,
             config_overrides=self._config_overrides,
+            thread_config=self._thread_config,
+            turn_metadata=self._turn_metadata,
             thread_id=None,
         )
 
@@ -875,7 +1138,11 @@ class CodexClient:
             cwd=self._cwd,
             env=self._env,
             model=self._model,
+            model_provider=self._model_provider,
+            developer_instructions=self._developer_instructions,
             config_overrides=self._config_overrides,
+            thread_config=self._thread_config,
+            turn_metadata=self._turn_metadata,
             thread_id=thread_id,
         )
 
@@ -888,14 +1155,22 @@ class CodexThread:
         cwd: Path,
         env: dict[str, str],
         model: str,
+        model_provider: str,
+        developer_instructions: str,
         config_overrides: tuple[str, ...],
+        thread_config: dict[str, Any],
+        turn_metadata: dict[str, str],
         thread_id: str | None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
         self._env = env
         self._model = model
+        self._model_provider = model_provider
+        self._developer_instructions = developer_instructions
         self._config_overrides = tuple(config_overrides)
+        self._thread_config = dict(thread_config)
+        self._turn_metadata = dict(turn_metadata)
         self.id = thread_id
 
     async def stream(self, prompt: str) -> AsyncIterator[ChatBackendEvent]:
@@ -907,7 +1182,12 @@ class CodexThread:
             loop.call_soon_threadsafe(queue.put_nowait, (kind, payload))
 
         def worker() -> None:
-            from openai_codex import Codex, CodexConfig, TextInput
+            from openai_codex import (
+                ApprovalMode,
+                CodexConfig,
+                Sandbox,
+            )
+            from novelvideo.chat.codex_app_server import shared_codex
             from openai_codex.generated.v2_all import (
                 AgentMessageDeltaNotification,
                 ConfigWarningNotification,
@@ -928,6 +1208,7 @@ class CodexThread:
                 TurnDiffUpdatedNotification,
                 TurnCompletedNotification,
                 TurnPlanUpdatedNotification,
+                TurnStartedNotification,
                 TurnStatus,
             )
 
@@ -942,15 +1223,32 @@ class CodexThread:
             )
 
             items: list[Any] = []
+            tool_calls: dict[str, ChatBackendEvent] = {}
             assistant_parts: list[str] = []
+            final_response: str | None = None
+            final_disposition: str | None = None
 
-            with Codex(config=config) as codex:
-                if self.id:
-                    thread = codex.thread_resume(self.id, cwd=str(self._cwd), model=self._model)
-                else:
-                    thread = codex.thread_start(model=self._model, cwd=str(self._cwd))
+            with shared_codex(config) as codex:
+                thread_options = {
+                    # The only pre-approved tools belong to DramaClaw's
+                    # project-scoped MCP server. Keep the global policy at
+                    # deny-all so shell/filesystem/network escalation cannot
+                    # trigger a second, credential-less Guardian model call.
+                    "approval_mode": ApprovalMode.deny_all,
+                    "config": self._thread_config,
+                    "cwd": str(self._cwd),
+                    "developer_instructions": self._developer_instructions,
+                    "model": self._model,
+                    "model_provider": self._model_provider,
+                    "sandbox": Sandbox.read_only,
+                }
+                thread = _start_or_resume_codex_thread(
+                    codex,
+                    self.id,
+                    thread_options,
+                )
                 self.id = thread.id
-                turn = thread.turn(TextInput(prompt))
+                turn = _start_codex_turn(thread, prompt, self._turn_metadata)
                 nonlocal current_turn_id
                 current_turn_id = turn.id
                 register_live_codex_turn(self.id, turn.id, turn)
@@ -958,9 +1256,31 @@ class CodexThread:
                     "event",
                     ChatBackendEvent(type="thread_started", thread_id=self.id, turn_id=turn.id),
                 )
+                emit(
+                    "event",
+                    ChatBackendEvent(
+                        type="egress_submitted", thread_id=self.id, turn_id=turn.id
+                    ),
+                )
                 try:
                     for event in turn.stream():
                         payload = event.payload
+                        raw = _codex_raw_notification(event)
+                        if (
+                            isinstance(payload, TurnStartedNotification)
+                            and payload.turn.id == turn.id
+                        ):
+                            emit(
+                                "event",
+                                ChatBackendEvent(
+                                    type="turn_started",
+                                    thread_id=self.id,
+                                    turn_id=turn.id,
+                                    status=str(payload.turn.status.value),
+                                    raw=raw,
+                                ),
+                            )
+                            continue
                         if isinstance(payload, AgentMessageDeltaNotification) and payload.turn_id == turn.id:
                             assistant_parts.append(payload.delta)
                             emit(
@@ -969,6 +1289,7 @@ class CodexThread:
                                     type="assistant_delta",
                                     thread_id=self.id,
                                     text="".join(assistant_parts),
+                                    raw=raw,
                                 ),
                             )
                             continue
@@ -976,31 +1297,37 @@ class CodexThread:
                             emit(
                                 "event",
                                 ChatBackendEvent(
-                                    type="tool_update",
+                                    type="plan_update",
                                     thread_id=self.id,
-                                    text=f"\x1b[95m[plan]\x1b[0m {payload.delta}",
+                                    turn_id=turn.id,
+                                    text=payload.delta,
+                                    raw=raw,
                                 ),
                             )
                             continue
                         if isinstance(payload, TurnPlanUpdatedNotification) and payload.turn_id == turn.id:
-                            trace = _codex_plan_trace(payload.explanation, payload.plan)
-                            if trace:
-                                emit(
-                                    "event",
-                                    ChatBackendEvent(
-                                        type="tool_update",
-                                        thread_id=self.id,
-                                        text=trace,
-                                    ),
-                                )
+                            emit(
+                                "event",
+                                ChatBackendEvent(
+                                    type="plan_update",
+                                    thread_id=self.id,
+                                    turn_id=turn.id,
+                                    text=payload.explanation,
+                                    entries=[_codex_jsonable(step) for step in payload.plan],
+                                    raw=raw,
+                                ),
+                            )
                             continue
                         if isinstance(payload, ReasoningSummaryTextDeltaNotification) and payload.turn_id == turn.id and payload.delta:
                             emit(
                                 "event",
                                 ChatBackendEvent(
-                                    type="tool_update",
+                                    type="thought_delta",
                                     thread_id=self.id,
-                                    text=f"\x1b[90m[summary]\x1b[0m {payload.delta}",
+                                    turn_id=turn.id,
+                                    text=payload.delta,
+                                    name="reasoning_summary",
+                                    raw=raw,
                                 ),
                             )
                             continue
@@ -1008,31 +1335,42 @@ class CodexThread:
                             emit(
                                 "event",
                                 ChatBackendEvent(
-                                    type="tool_update",
+                                    type="thought_delta",
                                     thread_id=self.id,
-                                    text=f"\x1b[90m[reasoning]\x1b[0m {payload.delta}",
+                                    turn_id=turn.id,
+                                    text=payload.delta,
+                                    name="reasoning",
+                                    raw=raw,
                                 ),
                             )
                             continue
                         if isinstance(payload, ItemStartedNotification) and payload.turn_id == turn.id:
-                            trace = _codex_item_started_trace(payload.item)
-                            if trace:
-                                emit(
-                                    "event",
-                                    ChatBackendEvent(
-                                        type="tool_update",
-                                        thread_id=self.id,
-                                        text=trace,
-                                    ),
+                            tool_event = _codex_tool_event(
+                                payload.item,
+                                phase="started",
+                                thread_id=self.id,
+                                turn_id=turn.id,
+                                raw=raw,
                             )
+                            if tool_event is not None:
+                                if tool_event.call_id:
+                                    tool_calls[tool_event.call_id] = tool_event
+                                emit("event", tool_event)
                             continue
                         if isinstance(payload, McpToolCallProgressNotification) and payload.turn_id == turn.id and payload.message:
+                            prior = tool_calls.get(payload.item_id)
                             emit(
                                 "event",
                                 ChatBackendEvent(
-                                    type="tool_update",
+                                    type="tool_updated",
                                     thread_id=self.id,
+                                    turn_id=turn.id,
                                     text=f"\x1b[90m[mcp]\x1b[0m {payload.message}\n",
+                                    name=prior.name if prior is not None else None,
+                                    call_id=payload.item_id,
+                                    status="running",
+                                    input=prior.input if prior is not None else None,
+                                    raw=raw,
                                 ),
                             )
                             continue
@@ -1046,7 +1384,9 @@ class CodexThread:
                                 ChatBackendEvent(
                                     type="tool_update",
                                     thread_id=self.id,
+                                    turn_id=turn.id,
                                     text=f"\x1b[90m[stdin]\x1b[0m {payload.stdin}\n",
+                                    raw=raw,
                                 ),
                             )
                             continue
@@ -1060,7 +1400,9 @@ class CodexThread:
                                 ChatBackendEvent(
                                     type="tool_update",
                                     thread_id=self.id,
+                                    turn_id=turn.id,
                                     text=str(payload.delta),
+                                    raw=raw,
                                 ),
                             )
                             continue
@@ -1071,24 +1413,37 @@ class CodexThread:
                                 ChatBackendEvent(
                                     type="tool_update",
                                     thread_id=self.id,
+                                    turn_id=turn.id,
                                     text=f"\x1b[95m[diff]\x1b[0m\n{colored_diff}\n",
+                                    raw=raw,
                                 ),
                             )
                             continue
                         if isinstance(payload, ItemCompletedNotification) and payload.turn_id == turn.id:
                             items.append(payload.item)
-                            trace = _codex_item_completed_trace(payload.item)
-                            if trace:
-                                emit(
-                                    "event",
-                                    ChatBackendEvent(
-                                        type="tool_update",
-                                        thread_id=self.id,
-                                        text=trace,
-                                    ),
-                                )
+                            tool_event = _codex_tool_event(
+                                payload.item,
+                                phase="completed",
+                                thread_id=self.id,
+                                turn_id=turn.id,
+                                raw=raw,
+                            )
+                            if tool_event is not None:
+                                if tool_event.call_id:
+                                    tool_calls.pop(tool_event.call_id, None)
+                                emit("event", tool_event)
                             continue
                         if isinstance(payload, ThreadTokenUsageUpdatedNotification) and payload.turn_id == turn.id:
+                            emit(
+                                "event",
+                                ChatBackendEvent(
+                                    type="usage_update",
+                                    thread_id=self.id,
+                                    turn_id=turn.id,
+                                    usage=_codex_jsonable(payload.token_usage),
+                                    raw=raw,
+                                ),
+                            )
                             continue
                         if isinstance(payload, ModelReroutedNotification) and payload.turn_id == turn.id:
                             reason = getattr(getattr(payload, "reason", None), "value", str(getattr(payload, "reason", "") or "")).strip()
@@ -1100,7 +1455,9 @@ class CodexThread:
                                 ChatBackendEvent(
                                     type="tool_update",
                                     thread_id=self.id,
+                                    turn_id=turn.id,
                                     text=text + "\n",
+                                    raw=raw,
                                 ),
                             )
                             continue
@@ -1115,7 +1472,9 @@ class CodexThread:
                                 ChatBackendEvent(
                                     type="tool_update",
                                     thread_id=self.id,
+                                    turn_id=turn.id,
                                     text=text + "\n",
+                                    raw=raw,
                                 ),
                             )
                             continue
@@ -1125,7 +1484,9 @@ class CodexThread:
                                 ChatBackendEvent(
                                     type="tool_update",
                                     thread_id=self.id,
+                                    turn_id=turn.id,
                                     text="\x1b[90m[context]\x1b[0m compacted\n",
+                                    raw=raw,
                                 ),
                             )
                             continue
@@ -1141,7 +1502,11 @@ class CodexThread:
                                 ChatBackendEvent(
                                     type="tool_update",
                                     thread_id=self.id,
+                                    turn_id=turn.id,
                                     text=text + "\n",
+                                    error=_codex_jsonable(payload.error),
+                                    status="retrying" if payload.will_retry else "failed",
+                                    raw=raw,
                                 ),
                             )
                             continue
@@ -1153,7 +1518,9 @@ class CodexThread:
                                     ChatBackendEvent(
                                         type="tool_update",
                                         thread_id=self.id,
+                                        turn_id=turn.id,
                                         text=trace,
+                                        raw=raw,
                                     ),
                                 )
                             continue
@@ -1165,11 +1532,30 @@ class CodexThread:
                                     ChatBackendEvent(
                                         type="tool_update",
                                         thread_id=self.id,
+                                        turn_id=turn.id,
                                         text=trace,
+                                        raw=raw,
                                     ),
                                 )
                             continue
                     if isinstance(payload, TurnCompletedNotification) and payload.turn.id == turn.id:
+                        turn_status = str(payload.turn.status.value)
+                        emit(
+                            "event",
+                            ChatBackendEvent(
+                                type="turn_completed",
+                                thread_id=self.id,
+                                turn_id=turn.id,
+                                status=turn_status,
+                                error=_codex_jsonable(payload.turn.error),
+                                disposition=(
+                                    "cancelled"
+                                    if payload.turn.status == TurnStatus.interrupted
+                                    else turn_status
+                                ),
+                                raw=raw,
+                            ),
+                        )
                         if payload.turn.status == TurnStatus.failed:
                             message = None
                             if payload.turn.error is not None:
@@ -1177,31 +1563,37 @@ class CodexThread:
                             raise RuntimeError(message or f"Codex turn failed with status {payload.turn.status.value}")
                         if payload.turn.status == TurnStatus.interrupted:
                             final_response = "".join(assistant_parts).strip() or "已中断。"
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="complete",
-                                    thread_id=self.id,
-                                    text=final_response,
-                                ),
+                            final_disposition = "cancelled"
+                        else:
+                            final_response = (
+                                _codex_final_response_from_items(items)
+                                or "".join(assistant_parts).strip()
+                                or "已执行，但没有返回正文。"
                             )
-                            return
-                        final_response = (
-                            _codex_final_response_from_items(items)
-                            or "".join(assistant_parts).strip()
-                            or "已执行，但没有返回正文。"
-                        )
-                        emit(
-                            "event",
-                            ChatBackendEvent(
-                                type="complete",
-                                thread_id=self.id,
-                                text=final_response,
-                            ),
-                        )
-                        return
+                            final_disposition = "completed"
                 finally:
                     unregister_live_codex_turn(self.id, turn.id)
+
+                if final_response is not None and final_disposition is not None:
+                    emit(
+                        "event",
+                        ChatBackendEvent(
+                            type="egress_disposition",
+                            thread_id=self.id,
+                            turn_id=turn.id,
+                            disposition=final_disposition,
+                        ),
+                    )
+                    emit(
+                        "event",
+                        ChatBackendEvent(
+                            type="complete",
+                            thread_id=self.id,
+                            turn_id=turn.id,
+                            text=final_response,
+                        ),
+                    )
+                    return
 
             raise RuntimeError("Codex turn completed event not received")
 
