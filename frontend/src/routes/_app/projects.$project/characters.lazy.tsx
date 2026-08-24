@@ -3386,7 +3386,10 @@ function CharactersPageContent() {
   );
 }
 
-function CharactersPage() {
+// 导出只为页面级网络合同测试（``characters-identities-contract.test.tsx``）：那条断言
+// 要的是"整页渲染出来一共发了哪些请求"，hook 单测覆盖不到组合层重新接回全角色
+// identities 扇出的情况。路由本身仍只用下面那个 ``Route``。
+export function CharactersPage() {
   const { project } = Route.useParams();
   // `TaskControllerProvider` wraps the page so `useTaskController` on
   // character-scoped tasks (e.g. character_portrait) can resolve a registry.
