@@ -250,18 +250,15 @@ export function withImageCacheBust(imageUrl: string, token: string | number | nu
 // 元素已经没有新东西可教我们，调用方改从记录里读（见 nodeBodyImageMeasurement）。
 // 尺寸未知的节点照旧加载原图、照旧测量、照旧落库，下次挂载自然就用上变体了。
 //
-// 挑哪一档不能写死。同一个 1280px 副本，画进 580 CSS px 的默认节点里绰绰有余，
-// 画进用户拉到 1600px 的节点里就是 1.25 倍放大糊；Retina 上这两个数还要各乘 2。
-// 所以按「这一格到底要多少设备像素」来挑：displayEdge × zoom × devicePixelRatio，
-// 交给 pickMediaVariant 在阶梯上找最便宜的那一档，一档都盖不住就回原图——放大糊
-// 是唯一不能接受的结果，而需要那么多像素的节点本来就没几个能同屏。
+// 前端只请求生产会预热的 320px thumb。按 displayEdge × zoom × devicePixelRatio
+// 算出这一格需要的设备像素；thumb 盖不住就回原图，避免放大模糊。
 //
-// 用 zoom 但不怕抖：pickMediaVariant 的输出只有三个值加一个 null，节点订阅的是这
-// 个结果而不是 zoom 本身，缩放过程中最多换两次 src，且都命中缓存。
+// 用 zoom 但不怕抖：pickMediaVariant 的输出只有 thumb 和 null，节点订阅的是这个
+// 量化结果而不是 zoom 本身，只在跨过 320px 阈值时切换 src。
 //
 // 全屏查看器 / 下载 / 导出 / 各类编辑器一律仍然拿原图，见各调用点的
 // viewerSourceUrl。
-export const NODE_BODY_VARIANT_MAX_EDGE = MEDIA_VARIANT_MAX_EDGE.card;
+export const NODE_BODY_VARIANT_MAX_EDGE = MEDIA_VARIANT_MAX_EDGE.thumb;
 
 /**
  * 节点主体图这一格需要多少设备像素（长边）。
@@ -342,9 +339,10 @@ export function nodeBodyImageSrc(
  * 记录描述的是另一张图。
  *
  * 反过来不成立，这一点必须说清楚：对得上只说明比例对得上。副本的长边被钉死在预
- * 算上，原图有多大这个信息在降采样时就丢了，所以 5504x3072 和 2752x1536 的 card
- * 副本都是 1280x714，拿旧记录去比一样能过。换图时的那条线因此不能只靠这里——各
- * 节点在主图地址变了的当下就直接不信任记录（见 distrustRecord），这里只当兜底：
+ * 算上，原图有多大这个信息在降采样时就丢了，所以 5504x3072 和 2752x1536 的
+ * thumb 副本都是 320x179，拿旧记录去比一样能过。换图时的那条线因此不能只靠
+ * 这里——各节点在主图地址变了的当下就直接不信任记录（见 distrustRecord），
+ * 这里只当兜底：
  * 管挂载时就已经存歪了的旧数据，那种情况没有「上一张」可比。
  */
 export function nodeBodyRecordDescribesImage(

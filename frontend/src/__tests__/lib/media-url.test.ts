@@ -168,19 +168,14 @@ describe("resolveMediaUrl variants", () => {
     expect(resolveMediaUrl(path, undefined)).toBe(resolveMediaUrl(path));
   });
 
-  it("carries the card variant used by canvas node bodies", () => {
-    expect(
-      resolveMediaUrl("/static/projects/proj/images/a.png", { variant: "card" }),
-    ).toBe("/static/projects/proj/images/a.png?st_thumb=card");
-  });
 });
 
 // Canvas nodes resolve their URL through resolveImageDisplayUrl +
 // withImageCacheBust, so they need the variant step on its own.
 describe("withMediaVariant", () => {
   it("appends the variant to a protected project image", () => {
-    expect(withMediaVariant("/static/projects/proj/images/a.png", "card")).toBe(
-      "/static/projects/proj/images/a.png?st_thumb=card",
+    expect(withMediaVariant("/static/projects/proj/images/a.png", "thumb")).toBe(
+      "/static/projects/proj/images/a.png?st_thumb=thumb",
     );
   });
 
@@ -193,18 +188,18 @@ describe("withMediaVariant", () => {
   // split(sep, 2) truncates instead of splitting once, so a second separator
   // silently disappears from the URL the backend receives.
   it("keeps everything after the first separator", () => {
-    expect(withMediaVariant("/static/projects/p/a.png#x#y", "card")).toBe(
-      "/static/projects/p/a.png?st_thumb=card#x#y",
+    expect(withMediaVariant("/static/projects/p/a.png#x#y", "thumb")).toBe(
+      "/static/projects/p/a.png?st_thumb=thumb#x#y",
     );
-    expect(withMediaVariant("/static/projects/p/a.png?v=1?z=2", "card")).toBe(
-      "/static/projects/p/a.png?v=1%3Fz%3D2&st_thumb=card",
+    expect(withMediaVariant("/static/projects/p/a.png?v=1?z=2", "thumb")).toBe(
+      "/static/projects/p/a.png?v=1%3Fz%3D2&st_thumb=thumb",
     );
   });
 
   it("replaces a variant rather than stacking a second one", () => {
     expect(
-      withMediaVariant("/static/projects/proj/images/a.png?st_thumb=thumb", "card"),
-    ).toBe("/static/projects/proj/images/a.png?st_thumb=card");
+      withMediaVariant("/static/projects/proj/images/a.png?st_thumb=card", "thumb"),
+    ).toBe("/static/projects/proj/images/a.png?st_thumb=thumb");
   });
 
   // Identity is how callers detect "no downscaled copy was actually requested".
@@ -217,7 +212,7 @@ describe("withMediaVariant", () => {
       "/static/projects/proj/videos/clip.mp4",
       "/static/projects/proj/audio/voice.wav",
     ]) {
-      expect(withMediaVariant(url, "card")).toBe(url);
+      expect(withMediaVariant(url, "thumb")).toBe(url);
     }
   });
 });

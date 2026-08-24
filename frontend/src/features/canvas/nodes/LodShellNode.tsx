@@ -94,10 +94,9 @@ type ShellData = {
  * 个。解码成本只看源图像素数，所以原图在这里是纯浪费：一张 5504x3072 要付
  * 16.9MP，换成 320px 变体是 0.06MP。
  *
- * 但 320 是个 1x 预算：Retina 上那 315 CSS px 要的是 630 设备像素，喂 320 就只有
- * 一半分辨率，糊得看得出来。所以这里不写死档位，交给 useNodeBodyVariant 按
- * 显示尺寸 × zoom × DPR 去挑——1x 屏照旧落在 320，2x 屏落到 640（0.25MP，相对
- * 16.9MP 的原图仍然可以忽略）。
+ * 前端只请求生产会预热的 320px thumb。超过预算的节点主体会使用原图；LOD shell
+ * 仍固定回落 thumb，因为它只在低缩放、大量节点同时出现时使用，避免同时解码几十
+ * 上百张完整原图。
  *
  * 变体不适用时（blob: 预览、遗留路径、抓帧 data:）withMediaVariant 原样返回，
  * 行为与改动前一致。shell 不接 onLoad、不测尺寸、不进查看器/导出，所以这里
@@ -140,9 +139,8 @@ function LodShell({ type, id, data, selected, width, height }: {
   const fallback = SHELL_FALLBACK_SIZES[type] ?? DEFAULT_SHELL_SIZE;
   const w = width ?? fallback.width;
   const h = height ?? fallback.height;
-  // 一格都盖不住的巨型节点在这一档几乎不存在（zoom<0.35 下要 3600 CSS px 才够
-  // 得着），真出现也宁可喂顶档副本：shell 的整个前提就是节点太多、不能解原图。
-  const variant = useNodeBodyVariant({ width: w, height: h }) ?? 'card';
+  // 一格盖不住时也继续喂 thumb：shell 的整个前提就是节点太多、不能同时解原图。
+  const variant = useNodeBodyVariant({ width: w, height: h }) ?? 'thumb';
 
   // 视频缩略图：订阅模块级抓帧缓存；节点从未挂载过完整组件时（首屏即低缩放），
   // 这里负责把抓帧任务排进空闲队列，不依赖完整组件出现过。

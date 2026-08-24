@@ -31,35 +31,28 @@ export function resolveMediaUrl(
   return withMediaVariant(resolved, options.variant);
 }
 
-// A ladder of downscaled copies, keyed by the longest edge each one fits into.
-// Keep in sync with VARIANTS in novelvideo/utils/thumbnails.py — an unknown
-// name is ignored by the backend and the original is served, so a mismatch
-// degrades rather than breaks.
-export type MediaVariant = "thumb" | "thumb2x" | "card";
+// The single downscaled copy the frontend may request.
+// The frontend intentionally requests only the variant prewarmed by the
+// production history write path. Larger display budgets use the original.
+export type MediaVariant = "thumb";
 
 export const MEDIA_VARIANT_MAX_EDGE: Record<MediaVariant, number> = {
   thumb: 320,
-  thumb2x: 640,
-  card: 1280,
 };
 
-// Ascending, so the first match is the cheapest one that still covers the box.
-const MEDIA_VARIANT_LADDER: MediaVariant[] = ["thumb", "thumb2x", "card"];
+const MEDIA_VARIANT_LADDER: MediaVariant[] = ["thumb"];
 
 /**
- * The cheapest variant that can fill a box `requiredEdge` device pixels on its
- * long side, or `null` when none can.
+ * Return ``thumb`` when its 320px edge can fill the requested device pixels,
+ * or ``null`` so the caller uses the original.
  *
  * Device pixels, not CSS pixels: a 320px copy in a 315 CSS px box is crisp on a
  * 1x display and visibly soft on a 2x one, and that difference is exactly what
  * a fixed budget per call site cannot express. Callers compute the requirement
  * as `displayEdge * zoom * devicePixelRatio` and let this pick.
  *
- * `null` means "serve the original". Upscaling a variant is the one outcome
- * worth avoiding outright: the decode saving is real but so is the blur, and a
- * box that wants more than the top of the ladder belongs to a deliberately
- * enlarged node — there are only ever a few of those on screen, which is
- * precisely when decode cost stops being the bottleneck.
+ * `null` means "serve the original". Upscaling the 320px thumbnail is avoided
+ * because its decode saving would come with visible blur.
  */
 export function pickMediaVariant(requiredEdge: number): MediaVariant | null {
   if (!Number.isFinite(requiredEdge) || requiredEdge <= 0) return null;

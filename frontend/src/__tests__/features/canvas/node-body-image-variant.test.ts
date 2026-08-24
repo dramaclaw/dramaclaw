@@ -45,12 +45,12 @@ describe("nodeBodyImageSrc", () => {
     window.history.pushState(null, "", "/");
   });
 
-  it("asks for the card variant once the source's real size is known", () => {
-    expect(nodeBodyImageSrc(URL, BIG)).toEqual({
-      src: `${URL}?st_thumb=card`,
+  it("asks only for thumb when the display fits the 320px budget", () => {
+    expect(nodeBodyImageSrc(URL, BIG, { requiredEdge: 320 })).toEqual({
+      src: `${URL}?st_thumb=thumb`,
       original: URL,
       downscaled: true,
-      maxEdge: 1280,
+      maxEdge: 320,
     });
   });
 
@@ -71,7 +71,6 @@ describe("nodeBodyImageSrc", () => {
       { width: edge, height: edge },
       { width: edge, height: 100 },
       { width: 100, height: edge },
-      { width: 640, height: 480 },
     ]) {
       expect(nodeBodyImageSrc(URL, natural)).toEqual({
         src: URL,
@@ -95,7 +94,9 @@ describe("nodeBodyImageSrc", () => {
   });
 
   it("keeps an existing cache-bust token", () => {
-    expect(nodeBodyImageSrc(`${URL}?st_v=17`, BIG).src).toBe(`${URL}?st_v=17&st_thumb=card`);
+    expect(nodeBodyImageSrc(`${URL}?st_v=17`, BIG, { requiredEdge: 320 }).src).toBe(
+      `${URL}?st_v=17&st_thumb=thumb`,
+    );
   });
 
   it("reports downscaled:false whenever the variant cannot apply", () => {
@@ -203,13 +204,13 @@ describe("按显示尺寸 x zoom x DPR 挑档", () => {
     expect(nodeBodyRequiredEdge({ width: 580, height: 326 }, Number.NaN, 0)).toBe(580);
   });
 
-  it("pickMediaVariant 取阶梯上最便宜的那一档", () => {
+  it("pickMediaVariant 只保留 thumb，超过 320px 就回原图", () => {
     expect(pickMediaVariant(315)).toBe("thumb");
     expect(pickMediaVariant(320)).toBe("thumb");
-    expect(pickMediaVariant(321)).toBe("thumb2x");
-    expect(pickMediaVariant(630)).toBe("thumb2x");
-    expect(pickMediaVariant(1160)).toBe("card");
-    expect(pickMediaVariant(1280)).toBe("card");
+    expect(pickMediaVariant(321)).toBeNull();
+    expect(pickMediaVariant(630)).toBeNull();
+    expect(pickMediaVariant(1160)).toBeNull();
+    expect(pickMediaVariant(1280)).toBeNull();
   });
 
   // 放大糊是唯一不能接受的结果：宁可付原图的解码，也不给一张要放大 2.5 倍的副本。
@@ -229,19 +230,15 @@ describe("按显示尺寸 x zoom x DPR 挑档", () => {
     });
   });
 
-  it("默认尺寸的节点在 Retina 上仍然吃到 card", () => {
+  it("默认尺寸的节点在 Retina 上直接使用原图", () => {
     const required = nodeBodyRequiredEdge({ width: 580, height: 326 }, 1, 2);
-    expect(nodeBodyImageSrc(URL, BIG, { requiredEdge: required }).src).toBe(
-      `${URL}?st_thumb=card`,
-    );
+    expect(nodeBodyImageSrc(URL, BIG, { requiredEdge: required }).src).toBe(URL);
   });
 
-  // LOD 最宽的那一档：1x 屏落在 320，2x 屏落到 640——改前两者都是 320，Retina 上
-  // 只有需要的一半分辨率。
-  it("LOD 外壳按 DPR 分档", () => {
+  it("LOD 外壳只有 1x 尺寸落在 thumb 预算内", () => {
     const shell = { width: 900, height: 900 };
     expect(pickMediaVariant(nodeBodyRequiredEdge(shell, 0.35, 1))).toBe("thumb");
-    expect(pickMediaVariant(nodeBodyRequiredEdge(shell, 0.35, 2))).toBe("thumb2x");
+    expect(pickMediaVariant(nodeBodyRequiredEdge(shell, 0.35, 2))).toBeNull();
   });
 
   it("挑到的那一档不比源图小时仍然回原图", () => {
@@ -250,7 +247,8 @@ describe("按显示尺寸 x zoom x DPR 挑档", () => {
     ).toBe(false);
   });
 
-  it("不传 requiredEdge 时维持原来的 card 预算", () => {
+  it("不传 requiredEdge 时只使用 thumb 预算", () => {
     expect(nodeBodyImageSrc(URL, BIG).maxEdge).toBe(NODE_BODY_VARIANT_MAX_EDGE);
+    expect(nodeBodyImageSrc(URL, BIG).maxEdge).toBe(320);
   });
 });

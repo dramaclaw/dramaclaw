@@ -9,13 +9,13 @@ import { useDevicePixelRatio } from '@/lib/useDevicePixelRatio';
 /**
  * 这个节点的主体图该按多大的长边预算去挑副本。
  *
- * 返回的不是「需要多少像素」的原始值，而是它落在阶梯上的那一档（320 / 640 /
- * 1280），一档都盖不住时返回 Infinity——nodeBodyImageSrc 拿到它会交回原图。
+ * 返回的不是「需要多少像素」的原始值，而是 320px thumb 或 Infinity；thumb
+ * 盖不住时 nodeBodyImageSrc 会交回原图。
  *
  * 之所以先量化再返回：原始值随 zoom 每一帧都在变，而节点订阅的是这个 selector
- * 的结果。量化之后取值只有四个，缩放全程最多重渲染两次、换两次 src，且两次都命
- * 中缓存。这条线原本就是节点为了躲开「平移每帧重渲染」而只订阅布尔值的那条线，
- * 沿用同一个手法。
+ * 的结果。量化之后取值只有两个，缩放跨过 320px 阈值时才重渲染、切换 src。这条
+ * 线原本就是节点为了躲开「平移每帧重渲染」而只订阅布尔值的那条线，沿用同一个
+ * 手法。
  */
 export function useNodeBodyVariant(display: {
   width: number;
