@@ -3899,6 +3899,38 @@ def _set_active_codex_turn(
         write_json_atomic(path, payload)
 
 
+def _write_codex_turn_token(
+    token_root: Path,
+    *,
+    scope_key: str,
+    business_turn_id: str,
+    token: str,
+) -> Path:
+    """Atomically create one credential file owned by exactly one Codex turn."""
+
+    token_root.mkdir(parents=True, exist_ok=True)
+    scope_digest = hashlib.sha256(scope_key.encode("utf-8")).hexdigest()
+    normalized_turn_id = str(business_turn_id or "").strip() or "turn"
+    turn_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", normalized_turn_id).strip(
+        "-._"
+    )
+    turn_digest = hashlib.sha256(normalized_turn_id.encode("utf-8")).hexdigest()[:12]
+    unique_suffix = uuid.uuid4().hex
+    token_file = token_root / (
+        f"{scope_digest}.{(turn_slug or 'turn')[:40]}.{turn_digest}.{unique_suffix}.token"
+    )
+    temporary_token_file = token_root / f".{token_file.name}.{uuid.uuid4().hex}.tmp"
+    try:
+        temporary_token_file.touch(mode=0o600, exist_ok=False)
+        temporary_token_file.write_text(token, encoding="utf-8")
+        temporary_token_file.chmod(0o600)
+        temporary_token_file.replace(token_file)
+    except Exception:
+        temporary_token_file.unlink(missing_ok=True)
+        raise
+    return token_file
+
+
 def _control_codex_thread(
     operation: Literal["interrupt", "archive", "delete"],
     thread_id: str,
@@ -5809,13 +5841,12 @@ async def _stream_assistant_reply_codex(
             if project
             else _user_state_dir(username)
         ) / "agents" / "codex" / "turn_tokens"
-        token_root.mkdir(parents=True, exist_ok=True)
-        token_name = hashlib.sha256(codex_scope_key.encode("utf-8")).hexdigest()
-        token_file = token_root / f"{token_name}.token"
-        temporary_token_file = token_file.with_suffix(f".{uuid.uuid4().hex}.tmp")
-        temporary_token_file.write_text(agent_token, encoding="utf-8")
-        temporary_token_file.chmod(0o600)
-        temporary_token_file.replace(token_file)
+        token_file = _write_codex_turn_token(
+            token_root,
+            scope_key=codex_scope_key,
+            business_turn_id=business_turn_id,
+            token=agent_token,
+        )
         thread = _build_codex_thread(
             username,
             project,

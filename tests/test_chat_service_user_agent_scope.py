@@ -1097,6 +1097,47 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
     assert events[-1]["type"] == "done"
 
 
+@pytest.mark.asyncio
+async def test_codex_turn_token_files_are_unique_and_cleanup_is_turn_local(
+    tmp_path,
+):
+    token_root = tmp_path / "turn_tokens"
+    scope_key = chat_service._codex_scope_key(
+        "project-a",
+        agent_profile="freezone:agent-2",
+        canvas_id="canvas-a",
+    )
+
+    first, second = await asyncio.gather(
+        asyncio.to_thread(
+            chat_service._write_codex_turn_token,
+            token_root,
+            scope_key=scope_key,
+            business_turn_id="retry-turn",
+            token="token-first",
+        ),
+        asyncio.to_thread(
+            chat_service._write_codex_turn_token,
+            token_root,
+            scope_key=scope_key,
+            business_turn_id="retry-turn",
+            token="token-second",
+        ),
+    )
+
+    assert first != second
+    assert first.read_text(encoding="utf-8") == "token-first"
+    assert second.read_text(encoding="utf-8") == "token-second"
+    assert first.stat().st_mode & 0o777 == 0o600
+    assert second.stat().st_mode & 0o777 == 0o600
+
+    first.unlink()
+    assert not first.exists()
+    assert second.read_text(encoding="utf-8") == "token-second"
+    second.unlink()
+    assert list(token_root.iterdir()) == []
+
+
 def test_user_agent_workspace_is_not_project_workspace(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
