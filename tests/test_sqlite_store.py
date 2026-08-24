@@ -660,6 +660,44 @@ async def test_episode_and_beats(tmp_project):
 
 
 @pytest.mark.asyncio
+async def test_count_beats_by_episode_groups_in_one_query(tmp_project):
+    """分集列表的镜头数走一次分组查询，未拆镜的集不出现在结果里。
+
+    这个方法存在的意义就是替掉「前端逐集拉完整 beats 再取 len()」。
+    """
+    from novelvideo.cognee.pipeline import NovelEpisode, NovelVisualBeat
+
+    store = tmp_project
+    await store._ensure_db()
+    await store.add_episodes([NovelEpisode(number=n, title=f"第{n}集") for n in (1, 2, 3)])
+
+    await store.add_visual_beats(
+        [
+            NovelVisualBeat(beat_number=i, episode_number=1, narration="", visual_description="")
+            for i in range(3)
+        ]
+        + [
+            NovelVisualBeat(beat_number=i, episode_number=3, narration="", visual_description="")
+            for i in range(5)
+        ]
+    )
+
+    counts = await store.count_beats_by_episode()
+
+    assert counts == {1: 3, 3: 5}
+    # 第 2 集还没拆镜——缺席而不是 0，路由层用 .get(number, 0) 补齐。
+    assert 2 not in counts
+
+
+@pytest.mark.asyncio
+async def test_count_beats_by_episode_on_empty_project(tmp_project):
+    store = tmp_project
+    await store._ensure_db()
+
+    assert await store.count_beats_by_episode() == {}
+
+
+@pytest.mark.asyncio
 async def test_replace_episodes_rolls_back_delete_when_new_plan_write_fails(
     tmp_path,
     monkeypatch,

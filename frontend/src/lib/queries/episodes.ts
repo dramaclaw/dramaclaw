@@ -359,6 +359,8 @@ export function useInsertManualShot(project: string, episode: number) {
       });
       // A new beat can reference assets, which shifts every usage count.
       invalidateAssetReferences(queryClient, project);
+      // ...and it moves this episode's beat_count, which the list badge reads.
+      queryClient.invalidateQueries({ queryKey: queryKeys.episodes(project) });
     },
   });
 }
@@ -387,6 +389,8 @@ export function useDeleteManualShot(project: string, episode: number) {
       });
       // Removing a beat removes every reference it carried.
       invalidateAssetReferences(queryClient, project);
+      // ...and it moves this episode's beat_count, which the list badge reads.
+      queryClient.invalidateQueries({ queryKey: queryKeys.episodes(project) });
     },
   });
 }

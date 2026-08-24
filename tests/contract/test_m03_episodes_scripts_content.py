@@ -109,6 +109,9 @@ class _M03Store:
     def get_all_characters(self):
         return []
 
+    async def count_beats_by_episode(self):
+        return {self.episode.number: len(self.beats)} if self.beats else {}
+
     async def get_beats_as_dicts(self, episode_num: int):
         if episode_num != self.episode.number:
             return []

@@ -563,10 +563,11 @@ function EpisodeListItem({
   propPromotion?: CreditPromotionDisplay | null;
 }) {
   const { t } = useTranslation();
-  // 镜头数量 = 该集 beats 数。复用既有的 beats 查询（无需后端新增字段）；react-query
-  // 会缓存，进入该集详情时本就要拉这份数据。未就绪时不显示，避免闪烁。
-  const { data: beatsRes } = useEpisodeBeats(project, episode.number);
-  const shotCount = beatsRes?.data.length;
+  // 镜头数直接读列表接口带出的 beat_count。这里曾经是 useEpisodeBeats(episode.number)
+  // ——每张卡片自己拉一次该集的完整 beats 载荷，只为取 .length。列表有几集就发几个
+  // 请求，每个都要解析项目上下文、开库、给每个 beat 拼 sketch/frame/video URL 并对
+  // 每条音频 fork 一次 ffprobe。改成后端一次 GROUP BY 带出来，这一页的扇出归零。
+  const shotCount = episode.beat_count;
   const planIdentities = usePlanIdentities(project);
   const identityTask = useStageTask({
     taskType: "identity_planner",

@@ -2243,6 +2243,10 @@ class CogneeStore:
         """从 SQLite 获取剧集（兼容旧接口名）。"""
         return await self.sqlite_store.get_episode_from_graph(number)
 
+    async def count_beats_by_episode(self) -> Dict[int, int]:
+        """每集的 Beat 数（一次分组查询，不构造 Beat 对象）。"""
+        return await self.sqlite_store.count_beats_by_episode()
+
     async def get_beats_for_episode(self, number: int) -> List[NovelVisualBeat]:
         """获取指定剧集的所有 Beat。"""
         return await self.sqlite_store.get_beats_for_episode(number)

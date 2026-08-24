@@ -35,6 +35,8 @@ export interface Episode {
   identity_default_map?: Record<string, string>;
   scene_menu?: EpisodeSceneMenuItem[];
   prop_menu?: EpisodePropMenuItem[];
+  /** 该集已拆出的镜头数，由列表接口一次分组查询带出。未拆镜为 0。 */
+  beat_count?: number;
 }
 
 export interface Chapter {

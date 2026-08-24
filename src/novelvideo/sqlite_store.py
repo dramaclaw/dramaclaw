@@ -2385,6 +2385,21 @@ class SQLiteStore:
             rows = await cursor.fetchall()
         return [self._row_to_visual_beat(row) for row in rows]
 
+    async def count_beats_by_episode(self) -> Dict[int, int]:
+        """每集的 beat 数，一次分组查询。
+
+        分集列表要在每张卡片上显示镜头数。前端此前是逐集调
+        ``GET /episodes/{n}/beats`` 再取 ``len()``——有几集就发几个请求，每个都要
+        解析项目上下文、开库、构造完整 beat 载荷（含 sketch/frame/video URL 与
+        每条音频一次 ffprobe），只为了拿一个整数。
+        """
+        db = await self._ensure_db()
+        async with db.execute(
+            "SELECT episode_number, COUNT(*) AS n FROM beats GROUP BY episode_number"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return {int(row["episode_number"]): int(row["n"]) for row in rows}
+
     async def get_beats_for_episode(self, number: int) -> List[NovelVisualBeat]:
         db = await self._ensure_db()
         async with db.execute(

@@ -31,9 +31,15 @@ def test_episode_asset_task_scope_is_stable_per_episode_and_kind():
 
 
 class _EpisodeStore:
-    def __init__(self, episode: NovelEpisode):
+    def __init__(self, episode: NovelEpisode, beat_counts: dict[int, int] | None = None):
         self.episode = episode
         self.updates: list[tuple[int, dict]] = []
+        self.beat_counts = beat_counts or {}
+        self.count_calls = 0
+
+    async def count_beats_by_episode(self):
+        self.count_calls += 1
+        return dict(self.beat_counts)
 
     def get_episode(self, number: int):
         if number == self.episode.number:
@@ -344,8 +350,44 @@ async def test_list_episodes_returns_fields_needed_by_react_workbench(tmp_path, 
                     "marker_color": "",
                 }
             ],
+            "beat_count": 0,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_list_episodes_carries_beat_count_from_one_grouped_query(tmp_path, monkeypatch):
+    """分集列表自带镜头数，前端不必逐集去拉完整 beats 再取长度。
+
+    这是分集页扇出的根因：列表有几集，前端就发几个
+    ``GET /episodes/{n}/beats``，每个都要解析项目上下文、开库、给每个 beat 拼
+    sketch/frame/video URL 并对每条音频 fork 一次 ffprobe——只为了拿一个整数。
+    """
+    from novelvideo.api.routes import episodes
+
+    episode = NovelEpisode(number=1, title="第一集")
+    store = _EpisodeStore(episode, beat_counts={1: 7})
+    _patch_project_and_store(monkeypatch, episodes, tmp_path, store)
+
+    response = await episodes.list_episodes(project="demo", user={"username": "admin"})
+
+    assert response["data"][0]["beat_count"] == 7
+    # 一次分组查询覆盖整张列表，不是每集一次。
+    assert store.count_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_list_episodes_reports_zero_for_unsplit_episode(tmp_path, monkeypatch):
+    """还没拆镜的集要报 0，而不是缺字段——角标读到 undefined 就不渲染了。"""
+    from novelvideo.api.routes import episodes
+
+    episode = NovelEpisode(number=2, title="第二集")
+    store = _EpisodeStore(episode, beat_counts={1: 7})
+    _patch_project_and_store(monkeypatch, episodes, tmp_path, store)
+
+    response = await episodes.list_episodes(project="demo", user={"username": "admin"})
+
+    assert response["data"][0]["beat_count"] == 0
 
 
 @pytest.mark.asyncio

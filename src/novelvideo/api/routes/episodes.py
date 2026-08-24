@@ -245,18 +245,23 @@ async def list_episodes(project: str, user: dict = Depends(get_api_user)):
         else await make_sqlite_store(resolved.username, resolved.project_name)
     )
     episodes = store.get_all_episodes()
+    # 每张分集卡片都要显示镜头数。一次分组查询带上，前端就不必逐集去拉完整
+    # beats 载荷再数长度——那是「有几集发几个请求」，且每个请求都远比这个整数贵。
+    beat_counts = await store.count_beats_by_episode()
 
     data = []
     for ep in episodes:
+        number = ep.number if hasattr(ep, "number") else 0
         data.append(
             {
-                "number": ep.number if hasattr(ep, "number") else 0,
+                "number": number,
                 "title": ep.title if hasattr(ep, "title") else "",
                 "summary": (getattr(ep, "content_summary", "") or getattr(ep, "summary", "") or ""),
                 "identity_ids": list(getattr(ep, "identity_ids", []) or []),
                 "key_events": list(getattr(ep, "key_events", []) or []),
                 "scene_menu": _dump_episode_items(getattr(ep, "scene_menu", []) or []),
                 "prop_menu": _dump_episode_items(getattr(ep, "prop_menu", []) or []),
+                "beat_count": beat_counts.get(number, 0),
             }
         )
 

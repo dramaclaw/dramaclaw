@@ -141,6 +141,8 @@ function ScriptTabContent() {
     invalidateKeys: [
       queryKeys.script(project, epNum),
       queryKeys.beats(project, epNum),
+      // 拆镜改变 beat_count，分集列表的镜头数角标读它。
+      queryKeys.episodes(project),
       queryKeys.pipelineStatus(project),
     ],
     showCompleteToast: false,

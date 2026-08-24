@@ -62,6 +62,8 @@ function invalidateCompletedAssetQueries(
       queryClient.invalidateQueries({
         queryKey: queryKeys.beats(projectId, task.episode),
       });
+      // 拆镜是 beat_count 从 0 变成 N 的那一步，分集列表的镜头数角标读它。
+      queryClient.invalidateQueries({ queryKey: queryKeys.episodes(projectId) });
       queryClient.invalidateQueries({
         queryKey: queryKeys.pipelineStatus(projectId),
       });
