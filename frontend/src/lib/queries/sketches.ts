@@ -9,6 +9,7 @@ import { api, uploadApi } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
+import { invalidateAssetReferences } from "@/lib/queries/asset-references";
 import type { ApiResponse, ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { Beat } from "@/types/episode";
 import type { RejectedDispatch } from "@/types/render-plan";
@@ -500,6 +501,9 @@ export function useAssignColors(project: string, episode: number) {
       qc.invalidateQueries({
         queryKey: queryKeys.episodeDetail(project, episode),
       });
+      // Colour binding is what writes detected_identities / detected_props,
+      // i.e. exactly the fields the asset usage counts are built from.
+      invalidateAssetReferences(qc, project);
     },
   });
 }
@@ -534,6 +538,7 @@ export function useDetectIdentities(project: string, episode: number) {
       if (!res.ok) return;
       qc.invalidateQueries({ queryKey: queryKeys.beats(project, episode) });
       qc.invalidateQueries({ queryKey: queryKeys.script(project, episode) });
+      invalidateAssetReferences(qc, project);
     },
   });
 }

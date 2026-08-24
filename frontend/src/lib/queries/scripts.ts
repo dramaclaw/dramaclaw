@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
+import { invalidateAssetReferences } from "@/lib/queries/asset-references";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { Script, BeatUpdate } from "@/types/script";
 import type { Beat } from "@/types/episode";
@@ -95,6 +96,9 @@ export function useUpdateBeat(project: string, episode: number) {
       // Script view derives its text from the aggregated script payload; a
       // beat edit can change that, so keep it in sync lazily.
       qc.invalidateQueries({ queryKey: queryKeys.script(project, episode) });
+      // A beat edit can add/remove [[prop]] markers or repoint scene_ref, so
+      // the assets page's usage counts are no longer trustworthy.
+      invalidateAssetReferences(qc, project);
     },
   });
 }
@@ -110,6 +114,7 @@ export function useSaveScript(project: string, episode: number) {
         .json<OkResponse<{ episode: number; beats_count: number }>>(),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.script(project, episode) });
+      invalidateAssetReferences(qc, project);
     },
   });
 }

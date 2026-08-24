@@ -10,6 +10,7 @@ import { api } from "@/lib/api";
 import { p } from "@/lib/api-path";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { queryKeys } from "@/lib/query-keys";
+import { invalidateAssetReferences } from "@/lib/queries/asset-references";
 import type { ApiResponse, ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type {
   Episode,
@@ -356,6 +357,8 @@ export function useInsertManualShot(project: string, episode: number) {
       queryClient.invalidateQueries({
         queryKey: queryKeys.script(project, episode),
       });
+      // A new beat can reference assets, which shifts every usage count.
+      invalidateAssetReferences(queryClient, project);
     },
   });
 }
@@ -382,6 +385,8 @@ export function useDeleteManualShot(project: string, episode: number) {
       queryClient.invalidateQueries({
         queryKey: queryKeys.script(project, episode),
       });
+      // Removing a beat removes every reference it carried.
+      invalidateAssetReferences(queryClient, project);
     },
   });
 }

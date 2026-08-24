@@ -37,6 +37,7 @@ export const queryKeys = {
     ["projects", p, "characters", name, "asset-history", url] as const,
   identities: (p: string, name: string) =>
     ["projects", p, "characters", name, "identities"] as const,
+  assetReferences: (p: string) => ["projects", p, "asset-references"] as const,
   scenes: (p: string) => ["projects", p, "scenes"] as const,
   scenePlatePreview: (
     p: string,
