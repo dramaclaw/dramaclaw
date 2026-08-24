@@ -258,8 +258,31 @@ async def _make_sqlite_store_scope(username: str, project: str) -> AsyncIterator
             await close()
 
 
+async def _make_sqlite_store_for_context_scope(
+    ctx: ProjectContext,
+    *,
+    load_graph_state: bool = True,
+) -> AsyncIterator["SQLiteStore"]:
+    store = await make_sqlite_store_for_context(ctx, load_graph_state=load_graph_state)
+    try:
+        yield store
+    finally:
+        close = getattr(store, "close", None)
+        if close:
+            await close()
+
+
 sqlite_store_scope = asynccontextmanager(_make_sqlite_store_scope)
 cognee_store_scope = asynccontextmanager(_make_cognee_store_scope)
+
+#: ``async with`` 作用域版的 :func:`make_sqlite_store_for_context`。
+#:
+#: 裸 factory 把关闭的责任丢给每个调用点，路由里于是散落着一遍遍手抄的
+#: ``try/finally`` + ``getattr(store, "close", None)``——抄漏一处就是一条泄漏的
+#: SQLite 连接，而且是静默的。已解析出 ``ProjectContext`` 的读取路径应该用这个，
+#: 它同时透传 ``load_graph_state``：只读 beats 的路径传 ``False``，省掉三次整表
+#: 读出来的角色/分集/道具缓存水合。
+sqlite_store_for_context_scope = asynccontextmanager(_make_sqlite_store_for_context_scope)
 
 
 async def get_sqlite_store(

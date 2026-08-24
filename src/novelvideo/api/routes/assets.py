@@ -7,7 +7,7 @@ import json
 from fastapi import APIRouter, Depends, Query
 
 from novelvideo.api.auth import get_api_user
-from novelvideo.api.deps import make_sqlite_store_for_context, resolve_project_scope
+from novelvideo.api.deps import resolve_project_scope, sqlite_store_for_context_scope
 from novelvideo.models import (
     beat_scene_id,
     extract_prop_ids_from_markers,
@@ -65,13 +65,8 @@ async def _load_beat_asset_refs(ctx):
     columns per beat, while the latter selects every column and constructs a
     validated ``NovelVisualBeat`` for each row.
     """
-    store = await make_sqlite_store_for_context(ctx, load_graph_state=False)
-    try:
+    async with sqlite_store_for_context_scope(ctx, load_graph_state=False) as store:
         return await store.list_beat_asset_refs()
-    finally:
-        close = getattr(store, "close", None)
-        if close:
-            await close()
 
 
 @router.get("/projects/{project}/assets/references")

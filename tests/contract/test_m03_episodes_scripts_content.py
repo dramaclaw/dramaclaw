@@ -202,6 +202,7 @@ def m03_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     (tmp_path / "novel.txt").write_text("测试原文", encoding="utf-8")
 
     from novelvideo.api import auth as api_auth
+    from novelvideo.api import deps
     from novelvideo.api.deps import ProjectResolution
     from novelvideo.api.routes import content, episodes, scripts
     from novelvideo.ports.local.usage import NoOpUsageMeter
@@ -249,6 +250,13 @@ def m03_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "get_task_backend",
             lambda: SimpleNamespace(enqueue_project_task=enqueue_project_task),
         )
+
+    # ``/beats`` opens its store through ``sqlite_store_for_context_scope`` /
+    # ``sqlite_store_scope``, and those wrappers resolve the factory as a ``deps``
+    # global when they run — so the per-module patches above never reach that one
+    # route, and it would fall through to the real factory.
+    monkeypatch.setattr(deps, "make_sqlite_store_for_context", make_store_for_context)
+    monkeypatch.setattr(deps, "make_sqlite_store", make_store)
 
     monkeypatch.setattr(content, "resolve_project_scope", resolve_project_scope)
     monkeypatch.setattr(content, "get_usage_meter", NoOpUsageMeter)

@@ -416,12 +416,33 @@ export function useIdentityOwnerIndex(project: string) {
   };
 }
 
+/**
+ * Identity create/delete changes which ids a character owns, and that set is
+ * also projected into the character list payload as `identity_ids` — which is
+ * what `useIdentityOwnerIndex` resolves `?type=identity&id=` deep links
+ * against. Invalidating only the identities key leaves that map holding a set
+ * that no longer matches, so a link to a just-created identity resolves to no
+ * owner while the page stays mounted.
+ *
+ * Mutations that edit an existing identity in place (rename, appearance, image
+ * generation) do not go through here: they never add or remove an id, so the
+ * character list stays correct and refetching it would be waste.
+ */
+function invalidateIdentityMembership(
+  qc: ReturnType<typeof useQueryClient>,
+  project: string,
+  name: string,
+): void {
+  qc.invalidateQueries({ queryKey: queryKeys.identities(project, name) });
+  qc.invalidateQueries({ queryKey: queryKeys.characters(project) });
+}
+
 export function useCreateIdentity(project: string, name: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: { identity_name: string; age_group?: string; appearance_details?: string }) =>
       api.post(p`api/v1/projects/${project}/characters/${name}/identities`, { json: data }).json<OkResponse<Identity>>(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.identities(project, name) }),
+    onSuccess: () => invalidateIdentityMembership(qc, project, name),
   });
 }
 
@@ -451,7 +472,7 @@ export function useDeleteIdentity(project: string, name: string) {
   return useMutation({
     mutationFn: (identityId: string) =>
       api.delete(p`api/v1/projects/${project}/characters/${name}/identities/${identityId}`).json<OkResponse<unknown>>(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.identities(project, name) }),
+    onSuccess: () => invalidateIdentityMembership(qc, project, name),
   });
 }
 

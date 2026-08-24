@@ -4,9 +4,13 @@ Reading one episode's beats probes every audio clip for its duration. Issued as
 one unbounded ``gather``, a long episode forks one ffprobe per beat at once —
 and since the probes run on the default thread pool, the burst also stalls every
 other blocking call in the process until it drains.
+
+The cap alone is not enough, so the timeout is pinned here too: a gate only
+limits how many probes may hang at once, it cannot make a hung one let go.
 """
 
 import asyncio
+import subprocess
 import weakref
 
 import pytest
@@ -113,3 +117,63 @@ def test_each_event_loop_gets_its_own_gate():
     asyncio.run(scenario())
 
     assert seen[0] is not seen[1]
+
+
+def test_the_probe_passes_a_finite_timeout_to_ffprobe(monkeypatch):
+    """没有 timeout 的 ffprobe 在网络盘上可以永远挂着，闸门位置全被占死。"""
+    seen: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, "3.5\n", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert media_io.get_audio_duration("/tmp/beat.mp3") == 3.5
+    timeout = seen.get("timeout")
+    assert timeout is not None, "ffprobe 必须带超时"
+    assert 0 < timeout < 60
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_probe_reports_none_rather_than_a_made_up_duration(
+    monkeypatch,
+):
+    """超时走批量接口的失败语义（None），而不是那个看起来很真的 5.0。"""
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 0))
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert await media_io.get_audio_durations_async(["/tmp/stalled.mp3"]) == [None]
+
+
+def test_a_timed_out_probe_raises_instead_of_returning_the_fallback(monkeypatch):
+    """单文件接口把超时抛出去：调用方要能区分"探测失败"和"探测到了但读不出来"。"""
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 0))
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        media_io.get_audio_duration("/tmp/stalled.mp3")
+
+
+def test_an_unreadable_answer_still_falls_back(monkeypatch):
+    """5.0 的语义没变：ffprobe 答了、但答案解析不出来时仍然回落。"""
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, "N/A\n", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert media_io.get_audio_duration("/tmp/weird.mp3") == 5.0
+
+
+def test_the_worst_case_wall_time_is_bounded():
+    """闸门 × 超时决定了一集 beats 最坏要等多久；两个都得是有限小值。"""
+    assert 0 < media_io._PROBE_TIMEOUT_SECONDS <= 30
+    worst_case = -(-40 // media_io._PROBE_CONCURRENCY) * media_io._PROBE_TIMEOUT_SECONDS
+    assert worst_case <= 60

@@ -909,13 +909,23 @@ def _merge_seedance2_request_config(
 
 
 async def _api_audio_duration_seconds(output_dir: str | Path, episode: int, beat_num: int):
+    """Duration of one beat's audio, or ``None`` if there isn't one to report.
+
+    ``None`` already means "no duration for this beat" here (the file may simply
+    not have been generated yet), so a probe that fails or times out reports the
+    same thing rather than failing the whole beat list. On network storage an
+    unreadable file is a routine condition, not a request-level error.
+    """
     from novelvideo.utils.media_io import get_audio_duration_async
     from novelvideo.utils.path_resolver import PathResolver
 
     audio_path = PathResolver(output_dir, episode).audio(beat_num)
     if not audio_path.exists():
         return None
-    return await get_audio_duration_async(str(audio_path))
+    try:
+        return await get_audio_duration_async(str(audio_path))
+    except Exception:
+        return None
 
 
 async def _prepare_seedance2_api_beat(

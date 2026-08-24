@@ -117,6 +117,8 @@ function AssetImageSlot({
                 src={resolved}
                 alt=""
                 aria-hidden="true"
+                loading="lazy"
+                decoding="async"
                 className="absolute inset-0 h-full w-full scale-110 object-cover opacity-50 blur-md"
               />
             )}

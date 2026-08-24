@@ -1783,6 +1783,7 @@ async def test_list_props_scope_local_only_returns_episode_local_props(
 
 @pytest.mark.asyncio
 async def test_asset_references_match_beat_asset_ids(monkeypatch, tmp_path):
+    from novelvideo.api import deps
     from novelvideo.api.routes import assets
 
     class Store:
@@ -1843,8 +1844,13 @@ async def test_asset_references_match_beat_asset_ids(monkeypatch, tmp_path):
         return Store()
 
     monkeypatch.setattr(assets, "resolve_project_scope", fake_resolve_project_scope)
+    # Patched on ``deps``, not on the route module: the route now opens the store
+    # through ``sqlite_store_for_context_scope``, and that wrapper resolves the
+    # factory as a ``deps`` global when it runs. Patching the route module would
+    # leave the real factory in play and, worse, would skip the scope's
+    # ``finally`` close — the one thing the wrapper exists to guarantee.
     monkeypatch.setattr(
-        assets, "make_sqlite_store_for_context", fake_make_sqlite_store_for_context
+        deps, "make_sqlite_store_for_context", fake_make_sqlite_store_for_context
     )
 
     res = await assets.get_asset_references(
@@ -1873,6 +1879,7 @@ def _patch_asset_references(monkeypatch, tmp_path, beats):
     Returns ``(module, store_kwargs)``; ``store_kwargs`` records how the route
     opened the store, so a test can assert the graph-state hydration is skipped.
     """
+    from novelvideo.api import deps
     from novelvideo.api.routes import assets
 
     class Store:
@@ -1899,8 +1906,9 @@ def _patch_asset_references(monkeypatch, tmp_path, beats):
         return Store()
 
     monkeypatch.setattr(assets, "resolve_project_scope", fake_resolve_project_scope)
+    # On ``deps`` — see the note in ``test_asset_references_match_beat_asset_ids``.
     monkeypatch.setattr(
-        assets, "make_sqlite_store_for_context", fake_make_sqlite_store_for_context
+        deps, "make_sqlite_store_for_context", fake_make_sqlite_store_for_context
     )
     return assets, store_kwargs
 

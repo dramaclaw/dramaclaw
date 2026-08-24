@@ -1,6 +1,9 @@
 """分集列表 & 规划 & 身份端点。"""
 
+import asyncio
 import logging
+import os
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends
@@ -14,6 +17,8 @@ from novelvideo.api.deps import (
     make_sqlite_store_for_context,
     make_static_url_for_context,
     resolve_project_scope,
+    sqlite_store_for_context_scope,
+    sqlite_store_scope,
 )
 from novelvideo.api.schemas import EpisodePlanRequest, EpisodeUpdate, InsertManualShotRequest
 from novelvideo.novel_source import (
@@ -44,6 +49,14 @@ logger = logging.getLogger("novelvideo.api.episodes")
 
 router = APIRouter()
 AssetCompiler = None
+
+
+def _dir_entry_names(directory: "Path") -> set[str]:
+    """目录里的文件名集合；目录不存在/不可读时当空。"""
+    try:
+        return set(os.listdir(directory))
+    except OSError:
+        return set()
 
 _EPISODE_ASSET_PLANNER_TASKS = {
     "scene": ("episode_scene_planner", "场景"),
@@ -346,17 +359,13 @@ async def get_beats(project: str, episode_num: int, user: dict = Depends(get_api
     # 从图谱读取 beats（统一数据源）。
     # get_beats_as_dicts 只读 beats 表，不碰 store 的角色/集/道具内存缓存，
     # 所以跳过 load_graph_state()——那是三次全表读，比这里的查询本身还贵。
-    store = (
-        await make_sqlite_store_for_context(resolved.ctx, load_graph_state=False)
+    store_scope = (
+        sqlite_store_for_context_scope(resolved.ctx, load_graph_state=False)
         if resolved.ctx
-        else await make_sqlite_store(resolved.username, resolved.project_name)
+        else sqlite_store_scope(resolved.username, resolved.project_name)
     )
-    try:
+    async with store_scope as store:
         beats = await store.get_beats_as_dicts(episode_num)
-    finally:
-        close = getattr(store, "close", None)
-        if close:
-            await close()
 
     # 为每个 beat 附加 sketch_url / frame_url / video_url / audio_url.
     # Asset files are named by beat_number. Do not use enumerate index here:
@@ -365,56 +374,76 @@ async def get_beats(project: str, episode_num: int, user: dict = Depends(get_api
     frames_dir = project_dir / "frames" / f"ep{episode_num:03d}"
     videos_dir = project_dir / "videos" / "beats" / f"ep{episode_num:03d}"
     audio_dir = project_dir / "audio" / f"ep{episode_num:03d}"
-    # 收集已存在的音频，循环后并发探测时长，供前端时长控件做默认值/下限（视频时长须 >= 音频）。
-    audio_duration_jobs: list[tuple[dict, str]] = []
-    for beat in beats:
-        beat["audio_duration_seconds"] = None
-        beat_num = int(beat.get("beat_number", 0) or 0)
-        if beat_num <= 0:
-            beat["sketch_url"] = ""
-            beat["frame_url"] = ""
-            beat["video_url"] = ""
-            beat["audio_url"] = ""
-            continue
-        # sketch
-        sketch_file = f"beat_{beat_num:02d}.png"
-        if (sketches_dir / sketch_file).exists():
-            rel = f"sketches/ep{episode_num:03d}/{sketch_file}"
-            beat["sketch_url"] = make_static_url_for_context(
-                resolved.ctx,
-                rel,
-                local_path=sketches_dir / sketch_file,
-            )
-        else:
-            beat["sketch_url"] = ""
-        # frame
-        frame_file = f"beat_{beat_num:02d}.png"
-        if (frames_dir / frame_file).exists():
-            rel = f"frames/ep{episode_num:03d}/{frame_file}"
-            beat["frame_url"] = make_static_url_for_context(
-                resolved.ctx, rel, local_path=frames_dir / frame_file
-            )
-        else:
-            beat["frame_url"] = ""
-        # video
-        video_file = f"beat_{beat_num:02d}.mp4"
-        if (videos_dir / video_file).exists():
-            rel = f"videos/beats/ep{episode_num:03d}/{video_file}"
-            beat["video_url"] = make_static_url_for_context(
-                resolved.ctx, rel, local_path=videos_dir / video_file
-            )
-        else:
-            beat["video_url"] = ""
-        # audio
-        audio_file = f"beat_{beat_num:02d}.mp3"
-        if (audio_dir / audio_file).exists():
-            rel = f"audio/ep{episode_num:03d}/{audio_file}"
-            beat["audio_url"] = make_static_url_for_context(
-                resolved.ctx, rel, local_path=audio_dir / audio_file
-            )
-            audio_duration_jobs.append((beat, str(audio_dir / audio_file)))
-        else:
-            beat["audio_url"] = ""
+    # 整段文件存在性探测 + URL 组装一次性搬进线程，事件循环上不留同步 syscall。
+    # 原先是逐 beat 做的：4 次 Path.exists() 找文件，命中后 project_static_url 再各
+    # 做一次 exists()+stat()——静态 URL 尾巴上的 ?v=mtime 要靠 stat 拿。一集 20 个
+    # beat 就是约 160 次 exists 加 80 次 stat，全在 async handler 里同步执行。本地
+    # SSD 上无感；OSSFS/网络盘上每次都是一个网络往返，一旦卡顿，单个 /beats 请求就
+    # 能把 Uvicorn worker 的心跳按住，同进程的其他请求跟着一起等。
+    #
+    # 现在：每个目录列一次（4 次 listdir 取代 4N 次 exists），剩下的 stat 仍是每个
+    # 命中文件一次，但整段都发生在线程里，事件循环随时可以调度别的请求。
+    def _attach_asset_urls() -> list[tuple[dict, str]]:
+        sketch_names = _dir_entry_names(sketches_dir)
+        frame_names = _dir_entry_names(frames_dir)
+        video_names = _dir_entry_names(videos_dir)
+        audio_names = _dir_entry_names(audio_dir)
+
+        # 收集已存在的音频交回给调用方并发探测时长，供前端时长控件做默认值/下限
+        # （视频时长须 >= 音频）。探测不在这个线程里做：它要 fork ffprobe，得走
+        # media_io 里那道有界并发闸门。
+        jobs: list[tuple[dict, str]] = []
+        for beat in beats:
+            beat["audio_duration_seconds"] = None
+            beat_num = int(beat.get("beat_number", 0) or 0)
+            if beat_num <= 0:
+                beat["sketch_url"] = ""
+                beat["frame_url"] = ""
+                beat["video_url"] = ""
+                beat["audio_url"] = ""
+                continue
+            # sketch
+            sketch_file = f"beat_{beat_num:02d}.png"
+            if sketch_file in sketch_names:
+                rel = f"sketches/ep{episode_num:03d}/{sketch_file}"
+                beat["sketch_url"] = make_static_url_for_context(
+                    resolved.ctx,
+                    rel,
+                    local_path=sketches_dir / sketch_file,
+                )
+            else:
+                beat["sketch_url"] = ""
+            # frame
+            frame_file = f"beat_{beat_num:02d}.png"
+            if frame_file in frame_names:
+                rel = f"frames/ep{episode_num:03d}/{frame_file}"
+                beat["frame_url"] = make_static_url_for_context(
+                    resolved.ctx, rel, local_path=frames_dir / frame_file
+                )
+            else:
+                beat["frame_url"] = ""
+            # video
+            video_file = f"beat_{beat_num:02d}.mp4"
+            if video_file in video_names:
+                rel = f"videos/beats/ep{episode_num:03d}/{video_file}"
+                beat["video_url"] = make_static_url_for_context(
+                    resolved.ctx, rel, local_path=videos_dir / video_file
+                )
+            else:
+                beat["video_url"] = ""
+            # audio
+            audio_file = f"beat_{beat_num:02d}.mp3"
+            if audio_file in audio_names:
+                rel = f"audio/ep{episode_num:03d}/{audio_file}"
+                beat["audio_url"] = make_static_url_for_context(
+                    resolved.ctx, rel, local_path=audio_dir / audio_file
+                )
+                jobs.append((beat, str(audio_dir / audio_file)))
+            else:
+                beat["audio_url"] = ""
+        return jobs
+
+    audio_duration_jobs = await asyncio.to_thread(_attach_asset_urls)
 
     if audio_duration_jobs:
         from novelvideo.utils.media_io import get_audio_durations_async

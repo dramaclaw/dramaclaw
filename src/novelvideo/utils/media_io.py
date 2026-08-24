@@ -10,8 +10,26 @@ from pathlib import Path
 from novelvideo.utils.async_ops import call_blocking
 
 
-def get_audio_duration(audio_path: str) -> float:
-    """Return audio duration in seconds using ffprobe."""
+# ffprobe only reads the format header, which is milliseconds of work on a
+# healthy file — this ceiling exists for the unhealthy one. On network-backed
+# storage (OSSFS) a read can stall indefinitely, and without a timeout the probe
+# stalls with it: the worker thread never returns, so the concurrency gate below
+# fills up with processes that will never exit and every later probe queues
+# behind them. Ten seconds is ~1000x the honest cost of the call.
+_PROBE_TIMEOUT_SECONDS = 10.0
+
+
+def get_audio_duration(audio_path: str, *, timeout: float | None = _PROBE_TIMEOUT_SECONDS) -> float:
+    """Return audio duration in seconds using ffprobe.
+
+    Raises ``subprocess.TimeoutExpired`` when the probe outlives ``timeout``;
+    the child is killed first. This deliberately does not fall back to the 5.0
+    below: that value means "ffprobe answered, and the answer was unusable",
+    and handing it back for a probe that never answered would let a stalled
+    mount quietly become a plausible-looking duration. Callers that want a
+    total instead of an exception map it to ``None``; see
+    :func:`get_audio_durations_async`.
+    """
     import subprocess
 
     cmd = [
@@ -24,7 +42,7 @@ def get_audio_duration(audio_path: str) -> float:
         "default=noprint_wrappers=1:nokey=1",
         audio_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     try:
         return float(result.stdout.strip())
     except Exception:
@@ -32,7 +50,12 @@ def get_audio_duration(audio_path: str) -> float:
 
 
 async def get_audio_duration_async(audio_path: str) -> float:
-    """Return audio duration without blocking the event loop."""
+    """Return audio duration without blocking the event loop.
+
+    Propagates the timeout from :func:`get_audio_duration` rather than
+    swallowing it — an API handler that awaits this wants to know the probe
+    never answered, not to receive a made-up number.
+    """
     return await call_blocking(get_audio_duration, audio_path)
 
 
@@ -65,7 +88,11 @@ async def get_audio_durations_async(paths: "Sequence[str]") -> "list[float | Non
     """Probe many audio files with bounded concurrency.
 
     Returns one entry per input, positionally aligned; ``None`` where the probe
-    failed, so a single unreadable file cannot fail the batch.
+    failed or timed out, so a single unreadable file cannot fail the batch.
+
+    Worst-case wall time is bounded: ``ceil(len(paths) / _PROBE_CONCURRENCY) *
+    _PROBE_TIMEOUT_SECONDS``. Before the timeout existed there was no such
+    bound — one stalled file held its semaphore slot forever.
     """
     if not paths:
         return []

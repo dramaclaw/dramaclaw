@@ -271,6 +271,7 @@ frontend/src/__tests__/api/style-templates-shape.test.ts,Elastic-2.0,2026 SuperT
 frontend/src/__tests__/api/task-poll-timeout.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/account/avatar-upload-dialog.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/assets/asset-panels-rename.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/components/assets/asset-tabs-beats-contract.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/assets/character-image-source-select.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/assets/character-search.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/assets/character-stats-strip.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

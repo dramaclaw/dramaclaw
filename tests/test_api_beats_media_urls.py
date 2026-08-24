@@ -9,6 +9,7 @@ pytestmark = pytest.mark.m03
 
 
 def _client(monkeypatch, tmp_path):
+    from novelvideo.api import deps
     from novelvideo.api.routes import episodes
     from novelvideo.api.deps import ProjectResolution
 
@@ -45,7 +46,9 @@ def _client(monkeypatch, tmp_path):
     async def fake_make_sqlite_store(username: str, project: str):
         return FakeStore()
 
-    monkeypatch.setattr(episodes, "make_sqlite_store", fake_make_sqlite_store)
+    # On ``deps``, not on the route module: ``/beats`` opens the store through
+    # ``sqlite_store_scope``, which looks the factory up as a ``deps`` global.
+    monkeypatch.setattr(deps, "make_sqlite_store", fake_make_sqlite_store)
 
     app = FastAPI()
     app.include_router(episodes.router, prefix="/api/v1")

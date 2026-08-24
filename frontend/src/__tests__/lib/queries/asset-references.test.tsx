@@ -3,10 +3,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { setupServer } from "msw/node";
 import ky from "ky";
 import type { ReactNode } from "react";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
@@ -17,12 +16,11 @@ import {
   useAssetReferences,
   type AssetRef,
 } from "@/lib/queries/asset-references";
-
-const server = setupServer();
-
-beforeAll(() => server.listen());
-afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
+// The shared server from `__tests__/setup.ts`, not a second `setupServer()`.
+// Two listening MSW instances both dispatch every request, which silently
+// doubles any handler-side call counter — and counting requests is the whole
+// point of the dedup assertions below.
+import { server } from "@/__mocks__/msw/server";
 
 // The client is created per-test and held outside the component, not built in
 // the wrapper body: these tests re-render, and a fresh QueryClient per render
@@ -117,10 +115,6 @@ describe("useAssetReferences id round-trip", () => {
     expect(result.current.referencesFor("scene", "hall / lobby")).toHaveLength(1);
   });
 
-  // Dedup is asserted on the query cache and the distinct URL set, not on a
-  // handler call counter: this file runs its own `setupServer` alongside the
-  // global one in `__tests__/setup.ts`, so both interceptors dispatch each
-  // request and any raw counter reads double.
   it("reuses one cache entry for the same set regardless of order or duplicates", async () => {
     const urls: string[] = [];
     server.use(
@@ -167,7 +161,7 @@ describe("useAssetReferences id round-trip", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(new Set(urls).size).toBe(1);
+    expect(urls).toHaveLength(1);
     expect(qc.getQueryCache().getAll()).toHaveLength(1);
   });
 

@@ -7,6 +7,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_asset_references_resolves_project_id_before_opening_store(monkeypatch, tmp_path):
+    from novelvideo.api import deps
     from novelvideo.api.routes import assets
     from novelvideo.models import NovelVisualBeat
 
@@ -59,11 +60,15 @@ async def test_asset_references_resolves_project_id_before_opening_store(monkeyp
         raise AssertionError("route must not treat project_id as a filesystem project name")
 
     monkeypatch.setattr(assets, "resolve_project_scope", fake_resolve_project_scope, raising=False)
+    # Patched on ``deps``, not on the route module: the route opens the store via
+    # ``sqlite_store_for_context_scope``, and that wrapper resolves the factory as
+    # a ``deps`` global when it runs. Note there is no ``raising=False`` here —
+    # the attribute genuinely exists, and asserting on it is what makes this test
+    # fail loudly instead of silently patching a name nobody reads.
     monkeypatch.setattr(
-        assets,
+        deps,
         "make_sqlite_store_for_context",
         fake_make_sqlite_store_for_context,
-        raising=False,
     )
     monkeypatch.setattr(assets, "get_project_dir", legacy_get_project_dir, raising=False)
 
