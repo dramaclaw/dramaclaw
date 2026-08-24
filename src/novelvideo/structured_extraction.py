@@ -999,8 +999,7 @@ def _create_character_appearance_agent(agent: Any = None):
 # turned into stored fields changes.  It is part of every cache key, so a bump
 # retires stored results rather than mixing two contracts.
 #
-# 2: ``is_main`` left the payload.  Rows written under 1 carry it, and this
-# bump is what stops them from being read back.
+# 2: ``is_main`` left the payload for the cast-level key below.
 CHARACTER_APPEARANCE_CACHE_VERSION = 2
 
 CHARACTER_APPEARANCE_CACHE_TYPE = "character_appearance"
@@ -1112,15 +1111,77 @@ def appearance_from_cache_payload(payload: str) -> CharacterAppearance | None:
     appearance = CharacterAppearance(
         name=str(data.get("name") or ""),
         role=str(data.get("role") or ""),
-        # Never read back, whatever a row written under an older contract
-        # happens to carry: a replayed nomination is exactly the failure the
-        # payload docstring describes.
+        # Stated rather than left to a missing key: a nomination never comes
+        # from a per-character row, for the reason the payload docstring gives.
         is_main=False,
         age_group=normalize_age_group(data.get("age_group", "")),
         body_type=str(data.get("body_type") or ""),
         face_prompt=str(data.get("face_prompt") or ""),
     )
     return appearance if is_usable_appearance(appearance) else None
+
+
+CHARACTER_NARRATOR_CACHE_TYPE = "character_narrator"
+
+
+def narrator_cache_key(order: list[str]) -> str:
+    """Hash the whole cast, because that is what the answer depends on.
+
+    Deliberately not the per-character key.  Who narrates is a ranking over the
+    cast, so it is stored once per cast and retired the moment the cast changes
+    — which is exactly the invalidation a per-character key could not express.
+    """
+    payload = {"v": CHARACTER_APPEARANCE_CACHE_VERSION, "cast": list(order)}
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+async def _settle_narrator_nomination(
+    appearances: dict[str, CharacterAppearance],
+    order: list[str],
+    cache: Any,
+) -> None:
+    """Reduce to one nomination, then remember it against this exact cast.
+
+    Storing it is what makes the stage recoverable.  Nominations are not kept
+    in the per-character rows, so a build interrupted after those rows were
+    written but before the characters were published would replay every
+    character as an abstention on retry and leave the project with no narrator
+    at all — the very failure this field exists to prevent.  The cast-level
+    entry survives that gap; a changed cast retires it and the question is put
+    to the model again.
+    """
+    _enforce_single_main(appearances, order)
+    if cache is None or not order:
+        return
+    key = narrator_cache_key(order)
+    chosen = ""
+    for name in order:
+        appearance = appearances.get(name)
+        if appearance is not None and appearance.is_main:
+            chosen = name
+            break
+    if chosen:
+        await _maybe_await(
+            cache.save(
+                CHARACTER_NARRATOR_CACHE_TYPE,
+                {key: json.dumps({"name": chosen}, ensure_ascii=False)},
+            )
+        )
+        return
+    stored = await _maybe_await(cache.get(CHARACTER_NARRATOR_CACHE_TYPE, [key]))
+    payload = (stored or {}).get(key)
+    if not payload:
+        return
+    try:
+        remembered = str((json.loads(payload) or {}).get("name") or "")
+    except (TypeError, ValueError):
+        return
+    # Only a name still in this cast, and still answered for: a nomination for
+    # somebody adjudication has since merged away must not resurrect them.
+    appearance = appearances.get(remembered)
+    if appearance is not None:
+        appearance.is_main = True
 
 
 def _enforce_single_main(
@@ -1192,7 +1253,7 @@ async def enrich_character_appearances(
 
     pending = [item for item in merged if item.name not in results]
     if not pending:
-        _enforce_single_main(results, order)
+        await _settle_narrator_nomination(results, order, cache)
         return results
 
     llm = _create_character_appearance_agent(agent)
@@ -1280,7 +1341,7 @@ async def enrich_character_appearances(
         log(f"⚠️ {len(missing)} 个角色未取得形象设定，面部提示词留空：{'、'.join(missing[:5])}")
     log(f"形象设定完成: {len(results)}/{len(merged)} 个角色")
 
-    _enforce_single_main(results, order)
+    await _settle_narrator_nomination(results, order, cache)
     return results
 
 
