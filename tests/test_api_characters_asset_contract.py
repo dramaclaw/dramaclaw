@@ -14,6 +14,9 @@ pytestmark = pytest.mark.m04
 class _CharacterStore:
     def __init__(self, characters: list[NovelCharacter] | None = None):
         self.characters = {character.name: character for character in characters or []}
+        # 真 SQLiteStore 背后是一条 aiosqlite 连接加一个后台线程，路由漏关就是漏一条。
+        # 这里记账，下面的用例据此断言"路由确实收口了"，而不是只断言返回码。
+        self.close_calls = 0
 
     def get_all_characters(self):
         return list(self.characters.values())
@@ -44,24 +47,42 @@ class _CharacterStore:
         # 这里的名字都是干净的，list 接口上那道存量自愈是空跑。
         return {}
 
+    async def close(self):
+        self.close_calls += 1
+
 
 def _client(monkeypatch, tmp_path, store: _CharacterStore):
+    from novelvideo.api import deps
     from novelvideo.api.routes import characters
 
     project_dir = tmp_path / "output" / "admin" / "demo"
     project_dir.mkdir(parents=True)
+    ctx = SimpleNamespace(project_id="proj_demo", output_dir=project_dir, is_home_node=True)
 
-    async def fake_resolve_project(project: str, user: dict, *, required_role: str = "editor"):
-        return (
-            SimpleNamespace(project_id="proj_demo", output_dir=project_dir, is_home_node=True),
-            "admin",
-            "demo",
-            project_dir,
-            str(project_dir),
-            store,
+    # 打在解析层而不是 ``_resolve_character_project`` 上：后者只是裸版本，读取路径
+    # 走的是 ``_character_project_scope``。把假货塞在这一层，两条路上的
+    # ``async with`` / ``try/finally`` 都是真代码在跑，``store.close()`` 才是被生产
+    # 代码调用的，用例里那些 ``close_calls`` 断言才有意义。
+    async def fake_resolve_project_scope(project: str, user: dict, *, required_role: str = "viewer"):
+        return SimpleNamespace(
+            ctx=ctx,
+            username="admin",
+            project_name="demo",
+            project_dir=project_dir,
+            output_dir=str(project_dir),
+            state_dir=str(project_dir),
+            runtime_dir=str(project_dir),
         )
 
-    monkeypatch.setattr(characters, "_resolve_character_project", fake_resolve_project)
+    async def fake_make_store_for_context(_ctx, *, load_graph_state: bool = True):
+        return store
+
+    monkeypatch.setattr(characters, "resolve_project_scope", fake_resolve_project_scope)
+    # 两处都要打。裸 ``_resolve_character_project`` 用的是 ``characters`` 上 import
+    # 进来的名字；scope 里的 ``sqlite_store_for_context_scope`` 是在 ``deps`` 上按
+    # 模块全局解析工厂的，只打 route 模块会打空——本轮修的正是这个坑。
+    monkeypatch.setattr(characters, "make_sqlite_store_for_context", fake_make_store_for_context)
+    monkeypatch.setattr(deps, "make_sqlite_store_for_context", fake_make_store_for_context)
     monkeypatch.setattr(
         characters,
         "make_static_url_for_context",
@@ -289,3 +310,87 @@ def test_delete_character_route_removes_character(monkeypatch, tmp_path):
         "data": {"name": "秦昭", "deleted": True},
     }
     assert store.get_character("秦昭") is None
+
+
+# 角色页的两条实际读取路径：进页面打角色列表，选中角色打 identities。它们此前拿到的是
+# ``_resolve_character_project()`` 返回的裸 store，正常返回、"角色不存在" 的提前返回、
+# 中途抛错三条路都没人调 ``close()``——每个请求留下一条 aiosqlite 连接加一个后台线程，
+# 指望 GC 收既不及时也不保证。下面按这三条路各钉一条。
+def test_list_characters_closes_the_store_on_the_normal_path(monkeypatch, tmp_path):
+    store = _CharacterStore([NovelCharacter(name="秦昭", role="主角")])
+    client = _client(monkeypatch, tmp_path, store)
+
+    response = client.get("/projects/demo/characters")
+
+    assert response.status_code == 200
+    assert store.close_calls == 1
+
+
+def test_identities_closes_the_store_on_the_normal_path(monkeypatch, tmp_path):
+    store = _CharacterStore(
+        [
+            NovelCharacter(
+                name="秦昭",
+                role="主角",
+                identities=[
+                    CharacterIdentity(
+                        character_name="秦昭",
+                        identity_name="青年",
+                        identity_id="秦昭_青年",
+                    )
+                ],
+            )
+        ]
+    )
+    client = _client(monkeypatch, tmp_path, store)
+
+    response = client.get("/projects/demo/characters/秦昭/identities")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert store.close_calls == 1
+
+
+def test_identities_closes_the_store_before_the_character_not_found_return(
+    monkeypatch, tmp_path
+):
+    """提前返回那条路最容易漏：函数在中途 ``return``，收口代码在下面永远够不着。"""
+    store = _CharacterStore([NovelCharacter(name="秦昭", role="主角")])
+    client = _client(monkeypatch, tmp_path, store)
+
+    response = client.get("/projects/demo/characters/查无此人/identities")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert store.close_calls == 1
+
+
+def test_list_characters_closes_the_store_when_the_handler_raises(monkeypatch, tmp_path):
+    """异常路径：读库炸了，连接更得关——这正是重试风暴把连接数堆上去的那条路。"""
+    store = _CharacterStore([NovelCharacter(name="秦昭", role="主角")])
+
+    def boom():
+        raise RuntimeError("store read blew up")
+
+    monkeypatch.setattr(store, "get_all_characters", boom)
+    client = _client(monkeypatch, tmp_path, store)
+
+    with pytest.raises(RuntimeError, match="store read blew up"):
+        client.get("/projects/demo/characters")
+
+    assert store.close_calls == 1
+
+
+def test_identities_closes_the_store_when_the_handler_raises(monkeypatch, tmp_path):
+    store = _CharacterStore([NovelCharacter(name="秦昭", role="主角")])
+
+    def boom():
+        raise RuntimeError("store read blew up")
+
+    monkeypatch.setattr(store, "get_all_characters", boom)
+    client = _client(monkeypatch, tmp_path, store)
+
+    with pytest.raises(RuntimeError, match="store read blew up"):
+        client.get("/projects/demo/characters/秦昭/identities")
+
+    assert store.close_calls == 1

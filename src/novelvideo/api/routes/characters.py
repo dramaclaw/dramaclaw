@@ -4,8 +4,10 @@ import io
 import logging
 import re
 import shutil
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import AsyncIterator
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, UploadFile, File
@@ -21,6 +23,8 @@ from novelvideo.api.deps import (
     make_sqlite_store_for_context,
     make_static_url_for_context,
     resolve_project_scope,
+    sqlite_store_for_context_scope,
+    sqlite_store_scope,
 )
 from novelvideo.project_context import ProjectContext
 from novelvideo.novel_source import has_imported_novel, novel_import_required_response
@@ -119,6 +123,40 @@ async def _resolve_character_project(
         resolved.output_dir,
         store,
     )
+
+
+@asynccontextmanager
+async def _character_project_scope(
+    project: str,
+    user: dict,
+    *,
+    required_role: str = "editor",
+) -> "AsyncIterator[tuple[ProjectContext | None, str, str, Path, str, SQLiteStore]]":
+    """``_resolve_character_project`` 的作用域版：出了 ``async with`` 一定关连接。
+
+    裸版本把 store 直接返回给路由，而路由从头到尾没有一处 ``close()``——正常返回、
+    "角色不存在" 这类提前返回、以及中途抛错，三条路都不关。每个 SQLiteStore 背后是
+    一条 aiosqlite 连接加一个后台线程，指望 GC 回收既不及时也不保证。角色页一进去
+    就打列表、选中角色再打 identities，这两条正是资产页的常规加载路径，泄漏是按请
+    求数累积的。
+
+    元组形状与裸版本一致，改造路由只需要把赋值换成 ``async with``。
+    """
+    resolved = await resolve_project_scope(project, user, required_role=required_role)
+    store_scope = (
+        sqlite_store_for_context_scope(resolved.ctx)
+        if resolved.ctx
+        else sqlite_store_scope(resolved.username, resolved.project_name)
+    )
+    async with store_scope as store:
+        yield (
+            resolved.ctx,
+            resolved.username,
+            resolved.project_name,
+            resolved.project_dir,
+            resolved.output_dir,
+            store,
+        )
 
 
 def _character_image_selection_payload(username: str, project: str) -> dict:
@@ -578,15 +616,14 @@ async def list_characters(
     user: dict = Depends(get_api_user),
 ):
     """获取项目角色列表。"""
-    ctx, _username, _project_name, project_dir, _output_dir, store = (
-        await _resolve_character_project(project, user, required_role="viewer")
-    )
-
-    if may_run_asset_repair(ctx):
-        await _heal_path_unsafe_character_names(store, project_dir)
-    characters = await _repair_duplicate_main_characters(
-        store, store.get_all_characters()
-    )
+    async with _character_project_scope(
+        project, user, required_role="viewer"
+    ) as (ctx, _username, _project_name, project_dir, _output_dir, store):
+        if may_run_asset_repair(ctx):
+            await _heal_path_unsafe_character_names(store, project_dir)
+        characters = await _repair_duplicate_main_characters(
+            store, store.get_all_characters()
+        )
 
     data = []
     asset_project = getattr(ctx, "project_id", "") or project
@@ -846,11 +883,12 @@ async def get_character_identities(
     user: dict = Depends(get_api_user),
 ):
     """获取角色全部身份及图片。"""
-    ctx, _username, _project_name, project_dir, _output_dir, store = (
-        await _resolve_character_project(project, user, required_role="viewer")
-    )
-
-    characters = store.get_all_characters()
+    # store 只用来取角色，取完就关：后面拼载荷读的是已经在内存里的模型对象和
+    # 文件系统，不再需要连接。"角色不存在" 的提前返回因此也发生在关闭之后。
+    async with _character_project_scope(
+        project, user, required_role="viewer"
+    ) as (ctx, _username, _project_name, project_dir, _output_dir, store):
+        characters = store.get_all_characters()
 
     target = None
     for c in characters:

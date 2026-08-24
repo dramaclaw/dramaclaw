@@ -1861,6 +1861,7 @@ tests/test_api_seedance2_prompt_route.py,Elastic-2.0,2026 SuperTale contributors
 tests/test_api_sketch_ai_detection.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_sketch_pose_editor.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_sketch_regenerate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_api_store_scope_lifecycle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_style_analysis_billing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_styles.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_asset_compiler_prop_planning.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

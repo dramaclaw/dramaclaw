@@ -41,17 +41,34 @@ def _patch_project(
     project_dir: Path,
     store: _CharacterStore,
 ) -> None:
-    async def fake_resolve_project(project: str, user: dict, *, required_role: str = "editor"):
-        return (
-            SimpleNamespace(project_id="proj_demo", output_dir=project_dir, is_home_node=True),
-            "admin",
-            "demo",
-            project_dir,
-            str(project_dir),
-            store,
+    # 函数内 import：``tests/contract/test_m01_auth.py`` 会把 ``novelvideo.api.*``
+    # 整片从 ``sys.modules`` 里弹掉重建 app，模块级绑定到那时是死对象，patch 会落空。
+    from novelvideo.api import deps
+
+    ctx = SimpleNamespace(project_id="proj_demo", output_dir=project_dir, is_home_node=True)
+
+    # 打在解析层，不打 ``_resolve_character_project``：角色列表和 identities 两条读取
+    # 路径走的是 ``_character_project_scope``，只打裸版本会打空。塞在这一层，两条路上
+    # 的 ``async with`` / ``try/finally`` 跑的都是真代码。
+    async def fake_resolve_project_scope(project: str, user: dict, *, required_role: str = "viewer"):
+        return SimpleNamespace(
+            ctx=ctx,
+            username="admin",
+            project_name="demo",
+            project_dir=project_dir,
+            output_dir=str(project_dir),
+            state_dir=str(project_dir),
+            runtime_dir=str(project_dir),
         )
 
-    monkeypatch.setattr(module, "_resolve_character_project", fake_resolve_project)
+    async def fake_make_store_for_context(_ctx, *, load_graph_state: bool = True):
+        return store
+
+    monkeypatch.setattr(module, "resolve_project_scope", fake_resolve_project_scope)
+    # 裸 helper 用 ``characters`` 上 import 进来的名字；scope 里的
+    # ``sqlite_store_for_context_scope`` 是在 ``deps`` 上按模块全局解析工厂的。两处都要打。
+    monkeypatch.setattr(module, "make_sqlite_store_for_context", fake_make_store_for_context)
+    monkeypatch.setattr(deps, "make_sqlite_store_for_context", fake_make_store_for_context)
     monkeypatch.setattr(
         module,
         "make_static_url_for_context",

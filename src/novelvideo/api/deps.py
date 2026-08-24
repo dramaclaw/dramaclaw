@@ -4,11 +4,12 @@
 项目级 API 必须先解析为 ProjectContext；username/project 只保留给路径显示与脚本工具。
 """
 
+import contextlib
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from fastapi import Depends, HTTPException
 
@@ -166,6 +167,33 @@ def get_runtime_dir(username: str, project: str) -> str:
     return str(Path(RUNTIME_DIR) / username / project)
 
 
+async def _close_on_init_failure(store: "Any", *steps: "Any") -> "Any":
+    """Run a freshly constructed store's init steps, closing it if one raises.
+
+    ``SQLiteStore.initialize()`` opens the aiosqlite connection and starts its
+    background thread; ``load_graph_state()`` runs after that and can fail on a
+    corrupt or half-migrated database. Between those two points the store is
+    live but has never been handed to anyone — the ``*_scope`` wrappers below
+    only take ownership of what the factory *returns*, so their ``finally`` never
+    sees a store whose init blew up. Raising without closing here therefore
+    leaks the connection and its thread for the rest of the process, silently.
+
+    Errors from ``close()`` are swallowed on purpose: the init failure is the
+    one worth reporting, and a close that fails on a store that never finished
+    opening tells the caller nothing useful.
+    """
+    try:
+        for step in steps:
+            await step()
+    except BaseException:
+        close = getattr(store, "close", None)
+        if close is not None:
+            with contextlib.suppress(Exception):
+                await close()
+        raise
+    return store
+
+
 async def make_cognee_store(username: str, project: str) -> "CogneeStore":
     """按请求创建 CogneeStore 实例。
 
@@ -178,8 +206,7 @@ async def make_cognee_store(username: str, project: str) -> "CogneeStore":
     output_dir = get_output_dir(username, project)
     state_dir = get_state_dir(username, project)
     store = CogneeStore(project_name, output_dir=output_dir, state_dir=state_dir)
-    await store.initialize()
-    return store
+    return await _close_on_init_failure(store, store.initialize)
 
 
 async def make_sqlite_store(username: str, project: str) -> "SQLiteStore":
@@ -190,9 +217,7 @@ async def make_sqlite_store(username: str, project: str) -> "SQLiteStore":
     output_dir = get_output_dir(username, project)
     state_dir = get_state_dir(username, project)
     store = SQLiteStore(project_name, output_dir=output_dir, state_dir=state_dir)
-    await store.initialize()
-    await store.load_graph_state()
-    return store
+    return await _close_on_init_failure(store, store.initialize, store.load_graph_state)
 
 
 async def make_sqlite_store_for_context(
@@ -218,10 +243,10 @@ async def make_sqlite_store_for_context(
         output_dir=str(ctx.output_dir),
         state_dir=str(ctx.state_dir),
     )
-    await store.initialize()
+    steps = [store.initialize]
     if load_graph_state:
-        await store.load_graph_state()
-    return store
+        steps.append(store.load_graph_state)
+    return await _close_on_init_failure(store, *steps)
 
 
 async def make_cognee_store_for_context(ctx: ProjectContext) -> "CogneeStore":
@@ -234,8 +259,7 @@ async def make_cognee_store_for_context(ctx: ProjectContext) -> "CogneeStore":
         output_dir=str(ctx.output_dir),
         state_dir=str(ctx.state_dir),
     )
-    await store.initialize()
-    return store
+    return await _close_on_init_failure(store, store.initialize)
 
 
 async def _make_cognee_store_scope(username: str, project: str) -> AsyncIterator["CogneeStore"]:
