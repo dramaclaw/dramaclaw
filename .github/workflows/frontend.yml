@@ -42,3 +42,5 @@ jobs:
         run: pnpm build
       - name: Unit tests (vitest)
         run: pnpm test
+      - name: Validate rendered Nginx configuration
+        run: docker build --target nginx-config-test --file Dockerfile .

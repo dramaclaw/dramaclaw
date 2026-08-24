@@ -32,7 +32,7 @@ describe("organization brand asset deployment contract", () => {
   it("routes only the exact fixed logo path directly to the existing backend", () => {
     const config = readFileSync("docker/nginx.conf.template", "utf8");
     const block = config.match(
-      /location ~ \^\/assets\/org-brand([\s\S]*?)\n    \}/,
+      /location ~ "\^\/assets\/org-brand([\s\S]*?)\n    \}/,
     )?.[1];
 
     expect(block).toContain("/([A-Za-z0-9_-]{1,64})/logo$");
@@ -41,7 +41,7 @@ describe("organization brand asset deployment contract", () => {
     expect(block).toContain("proxy_pass http://supertale_backend/api/v1/org-brand/$1/logo");
     expect(block).toContain("proxy_pass_request_headers off");
     expect(block).not.toContain("127.0.0.1:3001");
-    expect(config.indexOf("location ~ ^/assets/org-brand")).toBeLessThan(
+    expect(config.indexOf('location ~ "^/assets/org-brand')).toBeLessThan(
       config.indexOf("location /assets/"),
     );
   });
