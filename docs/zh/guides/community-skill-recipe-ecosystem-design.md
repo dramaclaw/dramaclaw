@@ -194,7 +194,13 @@ Freezone Memory 覆盖问题已经修复：`_ensure_freezone_identity_context()`
 
 当前只剩一个版本收口问题：`.hermes-version` 已经是 `0.19.0`，但 `hermes_pool.py` 的缺文件 fallback 仍是 `0.18.0`。正式发布前应让 `.hermes-version` 成为唯一版本来源，避免非 Docker 安装出现漂移。
 
-`preferences.md` 是旧的用户偏好兼容层。Freezone 2.0 不继续扩展它，也不围绕它建设新的 Memory 产品；虾画助手优先使用 Hermes Memory。主线虾导是否继续兼容 `preferences.md` 可以单独处理。
+旧的用户级 `preferences.md` 兼容层已经移除。创作偏好和项目事实都应留在项目作用域，由项目内的 Agent Memory 与会话承载，避免电影、广告、电商等不同项目之间互相污染。
+
+对用户可见的变化是：`state/<user>/preferences.md` 旧格式不再受支持，运行时不会创建、读取、注入或迁移其中的内容，也不会自动跨项目继承偏好。用户若希望某项偏好生效，需要在相关项目中重新说明或写入项目记忆。
+
+Codex 的 thread rollout 位于 Home Node 的共享 `CODEX_HOME`，不随项目目录一起自然删除。因此生命周期操作采用 fail-closed：删除画布前必须成功归档该画布的 Codex thread，永久清理项目前必须成功删除对应 rollout；App Server 不可用且确实存在待处理 thread 时，删除请求会失败并保留画布/项目，待运行时恢复后重试。没有 Codex thread 的项目不受影响。
+
+一个 Home Node 只运行一个共享 Codex App Server，不为 Director 与 Freezone 重复常驻运行时。两种 Profile 通过独立 workspace、独立 thread/session key、thread-local MCP 环境、短期 token 和带 `project + canvas + profile` 的 active-turn key 隔离；共享 `CODEX_HOME` 中的原生 Memory、Plugin 与 Multi-agent 均关闭，避免节点级状态跨 Profile 泄漏。
 
 ### 2.2 Skill Studio 已经能让用户创建 Skill
 

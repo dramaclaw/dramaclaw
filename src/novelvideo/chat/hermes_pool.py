@@ -1198,6 +1198,27 @@ class HermesPool:
             await self._close_slot(slot)
             return True
 
+    async def close_user_thread(
+        self,
+        username: str,
+        agent_profile: str,
+        thread_id: str,
+    ) -> bool:
+        """Close only the exact Hermes session that owned a disconnected turn."""
+
+        profile = (agent_profile or "main").strip() or "main"
+        expected_thread_id = str(thread_id or "").strip()
+        if not expected_thread_id:
+            return False
+        async with self._lock:
+            key = self._slot_key(username, profile)
+            slot = self._slots.get(key)
+            if slot is None or str(slot.thread.id or "").strip() != expected_thread_id:
+                return False
+            self._slots.pop(key, None)
+            await self._close_slot(slot)
+            return True
+
     async def resolve_permission(
         self,
         username: str,

@@ -2608,6 +2608,17 @@ async def test_delete_canvas_soft_deletes_and_hides_tombstone_from_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    archived = []
+
+    async def archive_threads(username, project, canvas_id, **kwargs):
+        archived.append((username, project, canvas_id, kwargs["project_state_dir"]))
+        return 1
+
+    monkeypatch.setattr(
+        freezone_routes.chat_service,
+        "archive_codex_canvas_threads",
+        archive_threads,
+    )
     state_dir = _canvas_state_dir(tmp_path)
     canvas_file = state_dir / "freezone" / "canvases" / "experiment.json"
     canvas_file.parent.mkdir(parents=True)
@@ -2630,6 +2641,7 @@ async def test_delete_canvas_soft_deletes_and_hides_tombstone_from_list(
     )
 
     assert deleted["data"]["deleted"] is True
+    assert archived == [("admin", "58", "experiment", state_dir)]
     assert not canvas_file.exists()
     tombstone = canvas_file.with_name("experiment.deleted.json")
     assert tombstone.exists()

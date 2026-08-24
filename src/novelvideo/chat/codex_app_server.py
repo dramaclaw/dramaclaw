@@ -8,7 +8,6 @@ WebSocket connection over its private Unix socket.
 
 from __future__ import annotations
 
-import atexit
 import hashlib
 import json
 import os
@@ -311,7 +310,6 @@ class _SharedCodexRuntime:
 
 
 _RUNTIME = _SharedCodexRuntime()
-atexit.register(_RUNTIME.stop)
 
 
 def stop_shared_codex_runtime() -> None:

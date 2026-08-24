@@ -72,6 +72,9 @@ class ChatScope:
     surface: str | None = None
     canvas_id: str | None = None
     agent_id: str | None = None
+    # Server-resolved project state root. This is deliberately omitted from
+    # ``to_dict`` so filesystem topology never becomes a browser contract.
+    state_dir: str | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any] | None) -> "ChatScope":
@@ -123,19 +126,23 @@ class ChatScope:
 
 
 class ChatStore:
+    @staticmethod
+    def _project_root(username: str, scope: ChatScope) -> Path:
+        if scope.state_dir:
+            return Path(scope.state_dir)
+        return _state_root() / username / str(scope.id)
+
     def db_for(self, username: str, scope: ChatScope) -> Path:
         if scope.kind == "home":
             return _state_root() / username / "_home" / "chat.db"
         if scope.kind == "project":
             if (scope.surface or "director") == "director" and not scope.canvas_id:
-                return _state_root() / username / str(scope.id) / "chat.db"
+                return self._project_root(username, scope) / "chat.db"
             surface = scope.surface or "director"
             if surface == "freezone" and scope.canvas_id:
                 agent_id = scope.agent_id or "main"
                 return (
-                    _state_root()
-                    / username
-                    / str(scope.id)
+                    self._project_root(username, scope)
                     / "_chat"
                     / surface
                     / str(scope.canvas_id)
@@ -143,13 +150,18 @@ class ChatStore:
                     / agent_id
                     / "chat.db"
                 )
-            return _state_root() / username / str(scope.id) / "_chat" / surface / "chat.db"
+            return self._project_root(username, scope) / "_chat" / surface / "chat.db"
         if scope.kind == "freezone":
             return _state_root() / username / "_freezone" / str(scope.id) / "chat.db"
         return _state_root() / username / f"_{scope.kind}" / str(scope.id) / "chat.db"
 
     def _legacy_freezone_canvas_db_for(self, username: str, scope: ChatScope) -> Path | None:
-        if scope.kind != "project" or scope.surface != "freezone" or not scope.canvas_id:
+        if (
+            scope.state_dir
+            or scope.kind != "project"
+            or scope.surface != "freezone"
+            or not scope.canvas_id
+        ):
             return None
         if scope.agent_id not in {None, "", "main"}:
             return None
@@ -176,11 +188,15 @@ class ChatStore:
         *,
         project_id: str,
         canvas_id: str,
+        project_state_dir: str | Path | None = None,
     ) -> Path:
+        project_root = (
+            Path(project_state_dir)
+            if project_state_dir is not None
+            else _state_root() / username / str(project_id)
+        )
         return (
-            _state_root()
-            / username
-            / str(project_id)
+            project_root
             / "_chat"
             / "freezone"
             / str(canvas_id)
@@ -267,11 +283,13 @@ class ChatStore:
         project_id: str,
         canvas_id: str,
         limit: int = 20,
+        project_state_dir: str | Path | None = None,
     ) -> list[dict[str, Any]]:
         agents_dir = self._freezone_canvas_agents_dir(
             username,
             project_id=project_id,
             canvas_id=canvas_id,
+            project_state_dir=project_state_dir,
         )
         candidates: list[tuple[str, Path]] = []
         if agents_dir.exists():
@@ -280,13 +298,17 @@ class ChatStore:
                 for path in agents_dir.glob("*/chat.db")
                 if path.parent.name
             )
-        legacy_db = self._freezone_canvas_legacy_db(
-            username,
-            project_id=project_id,
-            canvas_id=canvas_id,
+        legacy_db = (
+            self._freezone_canvas_legacy_db(
+                username,
+                project_id=project_id,
+                canvas_id=canvas_id,
+            )
+            if project_state_dir is None
+            else None
         )
         main_db = agents_dir / "main" / "chat.db"
-        if legacy_db.exists() and not main_db.exists():
+        if legacy_db is not None and legacy_db.exists() and not main_db.exists():
             candidates.append(("main", legacy_db))
 
         summaries: list[dict[str, Any]] = []

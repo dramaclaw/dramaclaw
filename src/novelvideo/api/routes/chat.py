@@ -108,10 +108,6 @@ async def cancel_chat_turn(user: dict = Depends(get_api_user)) -> dict[str, Any]
             cancelled = await hermes_pool.close_user(username)
     except Exception:
         cancelled = False
-    try:
-        chat_service.force_release_chat_run_lock(username, "")
-    except Exception:
-        pass
     return {"ok": True, "data": {"cancelled": cancelled}}
 
 
@@ -435,7 +431,9 @@ async def resolve_agent_permission(
         raise HTTPException(status_code=400, detail="option_id is required")
     from novelvideo.chat.hermes_pool import pool as hermes_pool
 
-    agent_profile = _freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main"
+    agent_profile = (
+        _freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main"
+    )
     resolved = await hermes_pool.resolve_permission(
         str(user["username"]),
         agent_profile,
@@ -470,6 +468,7 @@ async def list_freezone_canvas_agents(
         str(user["username"]),
         project_id=project_ctx.project_name if project_ctx is not None else project_id,
         canvas_id=canvas_id,
+        project_state_dir=project_ctx.state_dir if project_ctx is not None else None,
     )
     return {"ok": True, "data": {"agents": agents}}
 
@@ -490,7 +489,15 @@ def _chat_store_scope_for_project_context(
 ) -> ChatScope:
     if not _is_freezone_scope(scope) or project_ctx is None:
         return scope
-    return replace(scope, id=project_ctx.project_name)
+    return replace(
+        scope,
+        id=project_ctx.project_name,
+        state_dir=(
+            str(project_ctx.state_dir)
+            if getattr(project_ctx, "state_dir", None) is not None
+            else None
+        ),
+    )
 
 
 def _canvas_bridge_profile_for_scope(scope: ChatScope) -> str:
@@ -1754,6 +1761,7 @@ async def _chat_heartbeat(
     scope: ChatScope,
     turn_id: str,
     send_lock: asyncio.Lock,
+    disconnected: asyncio.Event | None = None,
     interval_seconds: float = 10.0,
 ) -> None:
     while True:
@@ -1764,7 +1772,51 @@ async def _chat_heartbeat(
             send_lock,
         )
         if not sent:
+            if disconnected is not None:
+                disconnected.set()
             return
+
+
+async def _interrupt_agent_on_disconnect(
+    disconnected: asyncio.Event,
+    *,
+    runtime_backend: str,
+    username: str,
+    project: str,
+    agent_profile: str,
+    runtime_ids: dict[str, str | None],
+) -> None:
+    await disconnected.wait()
+    # A socket can disappear while the runtime is still starting. Give the
+    # matching turn a short window to publish its IDs, but never fall back to
+    # a username-wide shutdown.
+    for _attempt in range(100):
+        thread_id = str(runtime_ids.get("thread_id") or "").strip()
+        turn_id = str(runtime_ids.get("turn_id") or "").strip()
+        if thread_id and (runtime_backend == "hermes" or turn_id):
+            break
+        await asyncio.sleep(0.05)
+    else:
+        return
+    try:
+        if runtime_backend == "hermes":
+            from novelvideo.chat.hermes_pool import pool as hermes_pool
+
+            await hermes_pool.close_user_thread(
+                username,
+                agent_profile,
+                thread_id,
+            )
+        else:
+            await chat_service.interrupt_chat_turn(
+                username,
+                project,
+                thread_id,
+                turn_id,
+                backend=runtime_backend,
+            )
+    except Exception:
+        logger.warning("failed to interrupt disconnected chat turn", exc_info=True)
 
 
 async def _sync_running_agent_scope(username: str, scope: ChatScope) -> None:
@@ -2452,8 +2504,28 @@ async def _stream_project_turn(
             project_state_dir=project_state_dir,
         )
     send_lock = asyncio.Lock()
+    disconnected = asyncio.Event()
+    runtime_backend = chat_service.get_chat_backend_name()
+    runtime_ids: dict[str, str | None] = {"thread_id": None, "turn_id": None}
+    agent_profile = _freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main"
     heartbeat_task = asyncio.create_task(
-        _chat_heartbeat(websocket, scope=scope, turn_id=turn_id, send_lock=send_lock)
+        _chat_heartbeat(
+            websocket,
+            scope=scope,
+            turn_id=turn_id,
+            send_lock=send_lock,
+            disconnected=disconnected,
+        )
+    )
+    disconnect_task = asyncio.create_task(
+        _interrupt_agent_on_disconnect(
+            disconnected,
+            runtime_backend=runtime_backend,
+            username=username,
+            project=project,
+            agent_profile=agent_profile,
+            runtime_ids=runtime_ids,
+        )
     )
     bridge_result_receive_task = asyncio.create_task(
         _receive_bridge_results_during_turn(websocket=websocket, user=user, username=username)
@@ -2520,6 +2592,8 @@ async def _stream_project_turn(
         nonlocal assistant_sent_text, done_sent
         event_type = event.get("type")
         if event_type == "thread_started":
+            runtime_ids["thread_id"] = str(event.get("thread_id") or "").strip() or None
+            runtime_ids["turn_id"] = str(event.get("turn_id") or "").strip() or None
             await _send_json_best_effort(
                 websocket,
                 {
@@ -2727,9 +2801,11 @@ async def _stream_project_turn(
                 store_scope=storage_scope,
                 turn_id=turn_id,
                 route_prompt=display_text,
+                backend=runtime_backend,
             )
     finally:
         heartbeat_task.cancel()
+        disconnect_task.cancel()
         bridge_result_receive_task.cancel()
         pending_canvas_task.cancel()
         pending_canvas_context_task.cancel()
@@ -2737,6 +2813,8 @@ async def _stream_project_turn(
         pending_clarification_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await disconnect_task
         with contextlib.suppress(asyncio.CancelledError):
             await bridge_result_receive_task
         with contextlib.suppress(asyncio.CancelledError):
@@ -2780,8 +2858,26 @@ async def _stream_home_turn_codex(
         turn_id=turn_id,
     )
     send_lock = asyncio.Lock()
+    disconnected = asyncio.Event()
+    runtime_ids: dict[str, str | None] = {"thread_id": None, "turn_id": None}
     heartbeat_task = asyncio.create_task(
-        _chat_heartbeat(websocket, scope=scope, turn_id=turn_id, send_lock=send_lock)
+        _chat_heartbeat(
+            websocket,
+            scope=scope,
+            turn_id=turn_id,
+            send_lock=send_lock,
+            disconnected=disconnected,
+        )
+    )
+    disconnect_task = asyncio.create_task(
+        _interrupt_agent_on_disconnect(
+            disconnected,
+            runtime_backend="codex",
+            username=username,
+            project="",
+            agent_profile="main",
+            runtime_ids=runtime_ids,
+        )
     )
     done_sent = False
     assistant_sent_text = ""
@@ -2790,6 +2886,8 @@ async def _stream_home_turn_codex(
         nonlocal assistant_sent_text, done_sent
         event_type = str(event.get("type") or "")
         if event_type == "thread_started":
+            runtime_ids["thread_id"] = str(event.get("thread_id") or "").strip() or None
+            runtime_ids["turn_id"] = str(event.get("turn_id") or "").strip() or None
             await _send_json_best_effort(
                 websocket,
                 {
@@ -2933,6 +3031,7 @@ async def _stream_home_turn_codex(
                 egress_project_id=HOME_SCOPE_EGRESS_PROJECT_ID,
                 store_scope=scope,
                 turn_id=turn_id,
+                backend="codex",
             )
         after_projects = set(list_user_projects(username))
         for project in sorted(after_projects - before_projects):
@@ -2950,8 +3049,11 @@ async def _stream_home_turn_codex(
             )
     finally:
         heartbeat_task.cancel()
+        disconnect_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await disconnect_task
         if not done_sent:
             await _send_json_best_effort(
                 websocket,
@@ -3051,8 +3153,29 @@ async def _stream_home_turn(
     tool_name = ""
     persisted = False
     send_lock = asyncio.Lock()
+    disconnected = asyncio.Event()
+    runtime_ids: dict[str, str | None] = {
+        "thread_id": str(getattr(thread, "id", "") or "").strip() or None,
+        "turn_id": None,
+    }
     heartbeat_task = asyncio.create_task(
-        _chat_heartbeat(websocket, scope=scope, turn_id=turn_id, send_lock=send_lock)
+        _chat_heartbeat(
+            websocket,
+            scope=scope,
+            turn_id=turn_id,
+            send_lock=send_lock,
+            disconnected=disconnected,
+        )
+    )
+    disconnect_task = asyncio.create_task(
+        _interrupt_agent_on_disconnect(
+            disconnected,
+            runtime_backend="hermes",
+            username=username,
+            project="",
+            agent_profile="main",
+            runtime_ids=runtime_ids,
+        )
     )
     done_sent = False
 
@@ -3143,6 +3266,10 @@ async def _stream_home_turn(
     try:
         async for event in hermes_events_with_session_retry():
             if event.type == "thread_started":
+                runtime_ids["thread_id"] = (
+                    str(event.thread_id or "").strip() or None
+                )
+                runtime_ids["turn_id"] = str(event.turn_id or "").strip() or None
                 await _send_json_best_effort(
                     websocket,
                     {
@@ -3343,8 +3470,11 @@ async def _stream_home_turn(
         )
     finally:
         heartbeat_task.cancel()
+        disconnect_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await disconnect_task
         persist_partial_reply()
         if not done_sent:
             await _send_json_best_effort(

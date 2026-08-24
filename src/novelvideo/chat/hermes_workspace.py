@@ -687,14 +687,17 @@ def _ensure_freezone_identity_context(home: Path) -> None:
     """Keep the Freezone assistant identity separate from the director profile."""
     soul_file = home / "SOUL.md"
     try:
-        soul_file.write_text(_FREEZONE_SOUL_MD, encoding="utf-8")
+        if not soul_file.exists():
+            soul_file.write_text(_FREEZONE_SOUL_MD, encoding="utf-8")
     except OSError:
         _log.warning("failed to ensure freezone hermes SOUL.md at %s", soul_file)
 
     memories_dir = home / "memories"
     try:
         memories_dir.mkdir(exist_ok=True)
-        (memories_dir / "MEMORY.md").write_text(_FREEZONE_MEMORY_MD, encoding="utf-8")
+        memory_file = memories_dir / "MEMORY.md"
+        if not memory_file.exists():
+            memory_file.write_text(_FREEZONE_MEMORY_MD, encoding="utf-8")
     except OSError:
         _log.warning(
             "failed to ensure freezone hermes MEMORY.md under %s", memories_dir
