@@ -51,7 +51,10 @@ export function useScenes(project: string) {
     queryKey: queryKeys.scenes(project),
     queryFn: ({ signal }) =>
       api
-        .get(p`api/v1/projects/${project}/scenes`, { signal })
+        .get(p`api/v1/projects/${project}/scenes`, {
+          signal,
+          searchParams: { summary: "true" },
+        })
         .json<OkResponse<SceneAsset[]>>(),
     enabled: !!project,
   });

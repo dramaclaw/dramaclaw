@@ -301,7 +301,6 @@ async def test_list_scenes_returns_master_reverse_and_pano_urls(tmp_path, monkey
 
     res = await scenes.list_scenes(
         project="demo",
-        summary=False,
         user={"username": "admin"},
     )
 
@@ -365,6 +364,7 @@ async def test_list_scenes_summary_never_builds_filesystem_payload(
 
     response = await scenes.list_scenes(
         project="demo",
+        summary=True,
         names=None,
         user={"username": "admin"},
     )
@@ -372,7 +372,11 @@ async def test_list_scenes_summary_never_builds_filesystem_payload(
     assert [item["name"] for item in response["data"]] == ["故宫", "故宫_雪夜"]
     assert response["data"][1]["derived_from_scene"] == "故宫"
     assert response["data"][1]["effective_environment_prompt"]
-    assert "master_url" not in response["data"][0]
+    assert response["data"][0]["master_url"].endswith(
+        "/assets/scenes/%E6%95%85%E5%AE%AB/master.png"
+    ) or response["data"][0]["master_url"].endswith(
+        "/assets/scenes/故宫/master.png"
+    )
     assert "stage_3gs" not in response["data"][0]
 
 
@@ -1740,13 +1744,13 @@ async def test_list_props_returns_convention_url_without_filesystem_probes(
 
     res = await props.list_props(
         project="demo",
+        summary=True,
         user={"username": "admin"},
     )
 
     asset = res["data"][0]
-    assert (
-        asset["reference_url"]
-        == "/static/projects/demo/assets/props/Sword/reference_3view.png"
+    assert asset["reference_url"].startswith(
+        "/static/projects/demo/assets/props/Sword/reference_3view.png?v="
     )
     assert asset["scope"] == "global"
     assert asset["updated_at"] == "2026-08-24T01:02:03+00:00"

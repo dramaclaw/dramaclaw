@@ -66,12 +66,20 @@ export function PropAssetCard({
   const resolvedReferenceUrl = resolveMediaUrl(prop.reference_url);
   const [failedReferenceUrl, setFailedReferenceUrl] = useState("");
   const wasGenerating = useRef(generating);
+  const wasUploading = useRef(uploading);
   useEffect(() => {
-    if (wasGenerating.current && !generating) {
+    if (
+      (wasGenerating.current && !generating) ||
+      (wasUploading.current && !uploading)
+    ) {
       setFailedReferenceUrl("");
     }
     wasGenerating.current = generating;
-  }, [generating]);
+    wasUploading.current = uploading;
+  }, [generating, uploading]);
+  useEffect(() => {
+    setFailedReferenceUrl("");
+  }, [resolvedReferenceUrl]);
   const referenceUrl =
     resolvedReferenceUrl && failedReferenceUrl !== resolvedReferenceUrl
       ? resolvedReferenceUrl

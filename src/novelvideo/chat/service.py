@@ -2262,7 +2262,9 @@ async def _fallback_display_tool_ui_specs(
             )
 
         if tool_name == "dramaclaw_get_scene_images":
-            resp = _backend_api_get(f"/api/v1/projects/{project_q}/scenes", token)
+            resp = _backend_api_get(
+                f"/api/v1/projects/{project_q}/scenes?summary=false", token
+            )
             media_items = []
             include_reverse = bool(args.get("include_reverse", True))
             include_pano = bool(args.get("include_pano", False))
@@ -2310,7 +2312,9 @@ async def _fallback_display_tool_ui_specs(
             )
 
         if tool_name == "dramaclaw_get_character_media":
-            resp = _backend_api_get(f"/api/v1/projects/{project_q}/characters", token)
+            resp = _backend_api_get(
+                f"/api/v1/projects/{project_q}/characters?summary=false", token
+            )
             media_kind = (
                 str(args.get("media_kind") or args.get("kind") or "all").strip().lower()
             )

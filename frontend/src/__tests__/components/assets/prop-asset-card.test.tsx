@@ -125,6 +125,42 @@ describe("PropAssetCard", () => {
     expect(screen.getByRole("button", { name: "生成参考图" })).toBeInTheDocument();
   });
 
+  it("retries the convention URL after an upload finishes", () => {
+    const prop: PropAsset = {
+      name: "密信",
+      aliases: [],
+      prop_type: "document",
+      visual_prompt: "",
+      description: "折叠的牛皮纸密信",
+      owner: "",
+      notes: "",
+      reference_url: "/static/projects/demo/assets/props/密信/reference_3view.png",
+    };
+    const handlers = {
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      onGenerateReference: vi.fn(),
+      onUploadReference: vi.fn(),
+      onOpenFreezone: vi.fn(),
+    };
+    const view = render(
+      <I18nextProvider i18n={i18n}>
+        <PropAssetCard prop={prop} uploading {...handlers} />
+      </I18nextProvider>,
+    );
+
+    fireEvent.error(screen.getByAltText("密信 参考图"));
+    expect(screen.getByText("未生成参考图")).toBeInTheDocument();
+
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <PropAssetCard prop={prop} uploading={false} {...handlers} />
+      </I18nextProvider>,
+    );
+
+    expect(screen.getByAltText("密信 参考图")).toBeInTheDocument();
+  });
+
   it("renders NiceGUI prop type labels instead of raw prop type codes", () => {
     renderCard({
       name: "TOKEN",

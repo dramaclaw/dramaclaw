@@ -90,6 +90,7 @@ async def _run_prop_reference_asset(
             )
         if not result_path:
             raise RuntimeError("图像 API 未返回有效图像")
+        await store.sqlite_store.touch_prop_asset(prop.name)
         return {"prop_name": prop.name, "path": str(result_path), "style": style}
     finally:
         await store.close()

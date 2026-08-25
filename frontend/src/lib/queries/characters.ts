@@ -30,7 +30,10 @@ export function useCharacters(project: string, enabled = true) {
     queryKey: queryKeys.characters(project),
     queryFn: ({ signal }) =>
       api
-        .get(p`api/v1/projects/${project}/characters`, { signal })
+        .get(p`api/v1/projects/${project}/characters`, {
+          signal,
+          searchParams: { summary: "true" },
+        })
         .json<OkResponse<Character[]>>(),
     enabled: enabled && !!project,
   });

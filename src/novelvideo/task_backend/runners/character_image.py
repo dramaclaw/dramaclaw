@@ -190,6 +190,8 @@ async def _run_character_image(
             )
         else:
             raise RuntimeError(f"未知角色图像生成模式: {mode}")
+        if mode == "portrait":
+            await store.sqlite_store.touch_character_asset(character.name)
         return {
             "mode": mode,
             "character_name": character.name,

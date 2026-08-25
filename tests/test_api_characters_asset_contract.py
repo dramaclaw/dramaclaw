@@ -189,7 +189,7 @@ def test_list_characters_repairs_duplicate_narrator_main(monkeypatch, tmp_path):
     )
     client = _client(monkeypatch, tmp_path, store)
 
-    response = client.get("/projects/demo/characters")
+    response = client.get("/projects/demo/characters?summary=true")
 
     assert response.status_code == 200
     mains = [item["name"] for item in response.json()["data"] if item["is_main"]]
@@ -243,7 +243,7 @@ def test_list_characters_carries_identity_ids_for_deep_link_resolution(
         assert identity_detail_keys.isdisjoint(item.keys())
 
 
-def test_list_characters_defaults_to_convention_urls_without_filesystem_probes(
+def test_list_characters_summary_uses_convention_urls_without_filesystem_probes(
     monkeypatch, tmp_path
 ):
     from novelvideo.api.routes import characters
@@ -258,7 +258,7 @@ def test_list_characters_defaults_to_convention_urls_without_filesystem_probes(
     monkeypatch.setattr(characters, "tree_updated_at", fail_probe)
     monkeypatch.setattr(characters, "_asset_url", fail_probe)
 
-    response = client.get("/projects/demo/characters")
+    response = client.get("/projects/demo/characters?summary=true")
 
     assert response.status_code == 200
     asset = response.json()["data"][0]

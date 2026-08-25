@@ -130,6 +130,8 @@ async def _run_scene_reference_asset(
         if kind == "spatial_layout":
             rel_path = str(Path(output_path).relative_to(output_dir))
             await store.sqlite_store.update_scene(scene_name, spatial_layout_image=rel_path)
+        else:
+            await store.sqlite_store.touch_scene_asset(scene_name)
         return {
             "scene_name": scene_name,
             "kind": kind,

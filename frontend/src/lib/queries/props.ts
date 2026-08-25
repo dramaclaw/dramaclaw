@@ -24,7 +24,10 @@ export function useProps(project: string) {
     queryKey: queryKeys.props(project),
     queryFn: ({ signal }) =>
       api
-        .get(p`api/v1/projects/${project}/props`, { signal })
+        .get(p`api/v1/projects/${project}/props`, {
+          signal,
+          searchParams: { summary: "true" },
+        })
         .json<OkResponse<PropAsset[]>>(),
     enabled: !!project,
   });

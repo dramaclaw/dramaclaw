@@ -83,6 +83,9 @@ class _M04Store:
         for key, value in updates.items():
             setattr(character, key, value)
 
+    async def touch_character_asset(self, name: str):
+        return name in self.characters
+
     async def rename_character(self, old_name: str, new_name: str):
         character = self.characters.pop(old_name)
         character.name = new_name

@@ -130,7 +130,7 @@ describe("asset tabs do not read the beats table", () => {
     renderWithProviders(<ScenesPanel project="demo" />);
 
     await waitFor(() => expect(requests.length).toBe(2));
-    expect(requests[0].searchParams.get("summary")).toBeNull();
+    expect(requests[0].searchParams.get("summary")).toBe("true");
     expect(requests[0].searchParams.getAll("names")).toEqual([]);
     expect(requests[1].searchParams.get("summary")).toBe("false");
     expect(requests[1].searchParams.getAll("names").sort()).toEqual([

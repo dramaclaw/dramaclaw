@@ -1121,6 +1121,12 @@ function SceneGroupListItem({
 }) {
   const { t } = useTranslation();
   const previewUrl = sceneGroupPreviewUrl(group);
+  const [failedPreviewUrl, setFailedPreviewUrl] = useState("");
+  useEffect(() => {
+    setFailedPreviewUrl("");
+  }, [previewUrl]);
+  const visiblePreviewUrl =
+    previewUrl && failedPreviewUrl !== previewUrl ? previewUrl : "";
   return (
     <button
       type="button"
@@ -1138,13 +1144,14 @@ function SceneGroupListItem({
       ].join(" ")}
     >
       <div className="relative flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-white/[0.08] bg-black/20">
-        {previewUrl ? (
+        {visiblePreviewUrl ? (
           <img
-            src={previewUrl}
+            src={visiblePreviewUrl}
             alt=""
             aria-hidden="true"
             loading="lazy"
             decoding="async"
+            onError={() => setFailedPreviewUrl(previewUrl)}
             className="h-full w-full object-cover"
           />
         ) : (

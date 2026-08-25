@@ -1,5 +1,6 @@
 """角色列表 & 肖像/身份图生成端点。"""
 
+import asyncio
 import io
 import logging
 import re
@@ -458,7 +459,12 @@ def _voice_sample_url(
 
 
 def _convention_asset_url(
-    ctx: ProjectContext, project_dir: Path, path: str | Path
+    ctx: ProjectContext | None,
+    project_dir: Path,
+    path: str | Path,
+    *,
+    version: str = "",
+    project_id: str = "",
 ) -> str:
     """Build a canonical asset URL without probing OSSFS.
 
@@ -472,7 +478,9 @@ def _convention_asset_url(
         rel_path = asset_path.relative_to(project_dir).as_posix()
     except ValueError:
         return ""
-    return project_static_url(ctx.project_id, rel_path)
+    asset_project = str(getattr(ctx, "project_id", "") or project_id).strip()
+    url = project_static_url(asset_project, rel_path)
+    return f"{url}?v={quote(version, safe='')}" if version else url
 
 
 def _voice_slot_payload(
@@ -620,7 +628,17 @@ async def _repair_duplicate_main_characters(
             seen_main = True
             repaired.append(character)
             continue
-        await store.update_character(character.name, is_main=False)
+        set_main = getattr(store, "set_character_main", None)
+        if set_main is not None:
+            if not await set_main(character.name, False):
+                raise RuntimeError(
+                    f"Failed to repair duplicate main character: {character.name}"
+                )
+        else:
+            # Store test doubles and older compatible facades retain the
+            # object-merge operation. Real SQLiteStore uses the cache-free,
+            # column-level branch above.
+            await store.update_character(character.name, is_main=False)
         character.is_main = False
         repaired.append(character)
     return repaired
@@ -648,20 +666,20 @@ async def _heal_path_unsafe_character_names(
 @router.get("/projects/{project}/characters")
 async def list_characters(
     project: str,
-    summary: bool = True,
+    summary: bool = False,
     names: Annotated[list[str] | None, Query()] = None,
     user: dict = Depends(get_api_user),
 ):
-    """获取角色列表；默认不探测资产文件，详情请求显式关闭 summary。"""
+    """获取角色列表；资产工作台可显式使用 summary 跳过文件探测。"""
     async with _character_project_scope(
         project,
         user,
         required_role="viewer",
         load_graph_state=False,
     ) as (ctx, _username, _project_name, project_dir, _output_dir, store):
-        characters = await store.list_characters()
         if may_run_asset_repair(ctx):
             await _heal_path_unsafe_character_names(store, project_dir)
+        characters = await store.list_characters()
         characters = await _repair_duplicate_main_characters(
             store, characters
         )
@@ -672,16 +690,13 @@ async def list_characters(
     if requested_names:
         characters = [c for c in characters if c.name in requested_names]
 
-    data = []
     asset_project = getattr(ctx, "project_id", "") or project
-    for c in characters:
+    def build_item(c) -> dict:
         canonical_portrait = canonical_portrait_path(project_dir, c.name)
-        abs_portrait = (
-            str(canonical_portrait)
-            if summary
-            else compute_portrait_path(project_dir, c.name)
+        abs_portrait = str(canonical_portrait) if summary else compute_portrait_path(
+            project_dir, c.name
         )
-        item = {
+        item: dict = {
             "name": c.name,
             "aliases": c.aliases if hasattr(c, "aliases") else [],
             "description": c.description if hasattr(c, "description") else "",
@@ -693,7 +708,13 @@ async def list_characters(
             "is_main": c.is_main if hasattr(c, "is_main") else False,
             "portrait_path": abs_portrait,
             "portrait_url": (
-                _convention_asset_url(ctx, project_dir, canonical_portrait)
+                _convention_asset_url(
+                    ctx,
+                    project_dir,
+                    canonical_portrait,
+                    version=getattr(c, "updated_at", "") or "",
+                    project_id=project,
+                )
                 if summary
                 else _asset_url(ctx, project_dir, abs_portrait)
                 if abs_portrait
@@ -732,7 +753,11 @@ async def list_characters(
                 ctx, project_dir, c, probe_files=not summary
             )
         )
-        data.append(item)
+        return item
+
+    # Full details still perform authoritative filesystem checks. Keep those
+    # blocking OSSFS operations away from the API worker's event loop.
+    data = await asyncio.to_thread(lambda: [build_item(c) for c in characters])
 
     return {"ok": True, "data": data}
 
@@ -1614,6 +1639,9 @@ async def generate_single_portrait(
     char_dir.mkdir(parents=True, exist_ok=True)
     final_path = char_dir / "portrait.png"
     shutil.copy(paths[0], final_path)
+    # Canonical URLs in the lightweight list are versioned by the SQLite row,
+    # so publishing a new file must advance that revision as part of the write.
+    await store.touch_character_asset(name)
 
     portrait_url = _asset_url(ctx, project_dir, final_path)
 
@@ -1653,6 +1681,7 @@ async def upload_portrait(
         shutil.copy(portrait_path, backup)
 
     img.save(str(portrait_path), format="PNG")
+    await store.touch_character_asset(name)
 
     portrait_url = _asset_url(ctx, project_dir, portrait_path)
 

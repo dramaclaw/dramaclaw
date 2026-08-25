@@ -128,6 +128,7 @@ async def test_list_characters_returns_indextts2_voice_fields(tmp_path, monkeypa
 
     response = await characters.list_characters(
         project="demo",
+        summary=True,
         user={"username": "admin"},
     )
 

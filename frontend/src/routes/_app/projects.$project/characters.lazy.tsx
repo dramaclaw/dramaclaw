@@ -502,6 +502,9 @@ function CharacterAvatar({
   const textSize = size === "lg" ? "text-xl" : "text-sm";
   const portraitUrl = character.portrait_url ?? "";
   const [failedPortraitUrl, setFailedPortraitUrl] = useState("");
+  useEffect(() => {
+    setFailedPortraitUrl("");
+  }, [portraitUrl]);
   if (portraitUrl && failedPortraitUrl !== portraitUrl) {
     return (
       <img
@@ -3232,8 +3235,9 @@ function CharactersPageContent() {
     selectedSummaryChar?.name ?? null,
     assetTab === "characters",
   );
-  const selectedChar =
-    selectedCharacterDetail.data?.data?.[0] ?? selectedSummaryChar;
+  const selectedChar = selectedCharacterDetail.data
+    ? (selectedCharacterDetail.data.data[0] ?? null)
+    : selectedSummaryChar;
 
   // Auto-select first character when nothing is selected
   useEffect(() => {

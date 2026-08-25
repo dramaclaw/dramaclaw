@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query
 
@@ -55,6 +57,7 @@ def _convention_asset_url(
     path: str | Path,
     *,
     project_id: str,
+    version: str = "",
 ) -> str:
     """Project-static URL for a canonical slot, without an OSSFS probe."""
 
@@ -64,7 +67,8 @@ def _convention_asset_url(
     except ValueError:
         return ""
     asset_project = str(getattr(ctx, "project_id", "") or project_id).strip()
-    return project_static_url(asset_project, rel_path)
+    url = project_static_url(asset_project, rel_path)
+    return f"{url}?v={quote(version, safe='')}" if version else url
 
 
 def _prop_payload(
@@ -109,6 +113,7 @@ def _prop_payload(
                 project_dir,
                 canonical_reference,
                 project_id=project_id,
+                version=getattr(prop, "updated_at", "") or "",
             )
         ),
     }
@@ -189,6 +194,7 @@ async def _heal_path_unsafe_prop_names(store: SQLiteStore, project_dir: Path) ->
 async def list_props(
     project: str,
     scope: Annotated[str, Query(pattern="^(global|local|all)$")] = "global",
+    summary: bool = False,
     user: dict = Depends(get_api_user),
 ):
     resolved = await resolve_project_scope(project, user, required_role="viewer")
@@ -204,16 +210,19 @@ async def list_props(
     global_names = {prop.name for prop in props}
     data: list[dict[str, Any]] = []
     if scope in {"global", "all"}:
-        data.extend(
-            _prop_payload(
-                prop,
-                ctx=resolved.ctx,
-                project_dir=project_dir,
-                probe_files=False,
-                project_id=project,
-            )
-            for prop in props
+        global_payloads = await asyncio.to_thread(
+            lambda: [
+                _prop_payload(
+                    prop,
+                    ctx=resolved.ctx,
+                    project_dir=project_dir,
+                    probe_files=not summary,
+                    project_id=project,
+                )
+                for prop in props
+            ]
         )
+        data.extend(global_payloads)
     if scope in {"local", "all"}:
         data.extend(await _local_episode_prop_payloads(store=store, global_prop_names=global_names))
     return {
