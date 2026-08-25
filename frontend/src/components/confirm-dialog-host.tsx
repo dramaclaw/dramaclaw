@@ -61,7 +61,7 @@ export function ConfirmDialogHost() {
 
   return (
     <AlertDialog open={pending !== null} onOpenChange={(open) => !open && settle(false)}>
-      <AlertDialogContent className="top-24 w-[min(calc(100vw-2rem),440px)] translate-y-0">
+      <AlertDialogContent className="w-[min(calc(100vw-2rem),440px)]">
         <AlertDialogHeader>
           <AlertDialogTitle>{pending?.title ?? t("common.confirm")}</AlertDialogTitle>
           <AlertDialogDescription>{pending?.description}</AlertDialogDescription>

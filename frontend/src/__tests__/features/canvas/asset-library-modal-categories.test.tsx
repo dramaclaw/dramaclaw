@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 //
-// 资产库弹窗：「全部」只列文件夹、类目 tab 按标签平铺，右上角统一放批量操作与
-// 新建（新建文件夹 / 上传资产）。
+// 资产库弹窗：「全部」只列文件夹、类目 tab 按标签平铺，右上角直接提供建夹与上传。
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
@@ -110,9 +109,10 @@ describe("AssetLibraryModal 类目与文件夹", () => {
     // 顶层看不到条目本身，得点进文件夹。
     expect(screen.queryByText("厨房")).toBeNull();
     expect(screen.queryByText("参考图A")).toBeNull();
-    // 写操作统一收在右上角，网格里不再有上传卡片。
+    // 高频写操作直接放在右上角，不再藏进只有两个选项的「新建」菜单。
     expect(screen.getByRole("button", { name: "批量操作" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "新建" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建文件夹" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "上传资产" })).toBeInTheDocument();
   });
 
   it("点进主线文件夹只看到同步来的条目，面包屑能退回全部", async () => {
@@ -176,7 +176,6 @@ describe("AssetLibraryModal 新建", () => {
     renderModal();
     await screen.findByRole("button", { name: "文件夹 主线" });
 
-    fireEvent.click(screen.getByRole("button", { name: "新建" }));
     fireEvent.click(screen.getByRole("button", { name: "新建文件夹" }));
 
     const input = screen.getByPlaceholderText("请输入文件夹名称");
@@ -201,11 +200,10 @@ describe("AssetLibraryModal 新建", () => {
     renderModal();
     await screen.findByRole("button", { name: "文件夹 主线" });
 
-    fireEvent.click(screen.getByRole("button", { name: "新建" }));
     fireEvent.click(screen.getByRole("button", { name: "上传资产" }));
 
     // 没选文件、没选保存位置，保存不可用。
-    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "上传" })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "选择保存位置" }));
     expect(screen.getByRole("button", { name: "待分类资产" })).toBeInTheDocument();
@@ -447,12 +445,23 @@ describe("AssetLibraryModal 批量操作", () => {
     deleteFreezoneVideoCharacterLibraryItem.mockResolvedValue({ ok: true });
   });
 
+  it("文件夹总览禁用批量操作，进入资产视图后启用", async () => {
+    renderModal();
+
+    const bulkButton = await screen.findByRole("button", { name: "批量操作" });
+    expect(bulkButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "文件夹 待分类资产" }));
+    expect(bulkButton).toBeEnabled();
+  });
+
   it("批量态下能删掉本地上传的素材，主线素材不可选", async () => {
     renderModal();
     await screen.findByRole("button", { name: "文件夹 主线" });
 
-    fireEvent.click(screen.getByRole("button", { name: "批量操作" }));
+    expect(screen.getByRole("button", { name: "批量操作" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "文件夹 待分类资产" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量操作" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "选中待删除" }));
     expect(screen.getByText("1")).toBeInTheDocument();
@@ -496,8 +505,8 @@ describe("AssetLibraryModal 批量操作", () => {
     renderModal();
     await screen.findByRole("button", { name: "文件夹 主线" });
 
-    fireEvent.click(screen.getByRole("button", { name: "批量操作" }));
     fireEvent.click(screen.getByRole("button", { name: "文件夹 待分类资产" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量操作" }));
 
     fireEvent.click(
       (await screen.findAllByRole("button", { name: "选中待删除" }))[0],
@@ -522,8 +531,8 @@ describe("AssetLibraryModal 批量操作", () => {
     renderModal();
     await screen.findByRole("button", { name: "文件夹 主线" });
 
-    fireEvent.click(screen.getByRole("button", { name: "批量操作" }));
     fireEvent.click(screen.getByRole("button", { name: "文件夹 主线" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量操作" }));
 
     const checkbox = await screen.findByRole("button", {
       name: "主线同步来的素材不能删除",

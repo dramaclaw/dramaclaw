@@ -52,9 +52,9 @@
   background: rgba(3, 5, 10, 0);
   border-bottom: 1px solid rgba(255, 255, 255, 0);
   opacity: var(--stage-header-opacity, 1);
-  filter: blur(var(--stage-header-blur, 0px));
-  backdrop-filter: blur(0) saturate(100%);
-  -webkit-backdrop-filter: blur(0) saturate(100%);
+  /* Keep the resting header out of a filter/backdrop root so its child
+     popovers can sample and blur the cinematic scene behind them. */
+  filter: none;
   transform: translateY(var(--stage-header-offset, 0px));
   transition:
     background-color 260ms ease,
@@ -69,14 +69,12 @@
 .pageScrolled .stageTopBar {
   background: transparent;
   border-bottom-color: rgba(255, 255, 255, 0);
-  backdrop-filter: blur(0) saturate(100%);
-  -webkit-backdrop-filter: blur(0) saturate(100%);
 }
 
 .stageActions {
   display: flex;
   align-items: center;
-  gap: 28px;
+  gap: 24px;
 }
 
 /* 安装包下载：与「商务联系」同一套 hover 浮层结构，只是面板里换成两个平台条目。
@@ -195,7 +193,7 @@
   opacity: 0.9;
 }
 
-/* 公告：顶栏里唯一的纯图标入口，尺寸对齐「商务联系」的文字视觉高度。 */
+/* 公告、商务、更多统一为图标 + 两字标签；完整动作名称保留在 aria-label。 */
 .announcement {
   position: relative;
   display: inline-flex;
@@ -209,11 +207,15 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 5px;
   padding: 0;
   border: 0;
   background: transparent;
   color: rgba(246, 248, 255, 0.72);
   cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 440;
   line-height: 1;
   transition: color 160ms ease;
 }
@@ -232,15 +234,22 @@
 }
 
 .announcementTrigger svg {
-  width: 17px;
-  height: 17px;
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.8;
+}
+
+.announcementIcon {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
 }
 
 .announcementTrigger:hover {
   color: rgba(255, 255, 255, 0.94);
 }
 
-/* 有公告才打点，且不跟已读联动 —— 看过一次就熄灭等于白挂。
+/* 仅有未读公告时打点；打开公告中心后熄灭，新公告到达时重新出现。
    外圈描边压在深色顶栏上，滚动到浅色画面时也不会糊掉。 */
 .announcementDot {
   position: absolute;
@@ -261,9 +270,9 @@
   position: fixed;
   inset: 0;
   z-index: 45;
-  background: rgba(2, 3, 8, 0.64);
-  backdrop-filter: blur(18px) saturate(120%);
-  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  background: rgba(3, 4, 10, 0.5);
+  backdrop-filter: blur(20px) saturate(112%);
+  -webkit-backdrop-filter: blur(20px) saturate(112%);
   transition: opacity 180ms ease;
 }
 
@@ -279,17 +288,17 @@
   z-index: 46;
   display: flex;
   flex-direction: column;
-  width: min(420px, calc(100vw - 48px));
-  /* 撑一个下限高度：只有一两条公告时不至于缩成一张小卡片，看着像个提示条而不是
-     公告中心。列表区 flex:1，多出来的空间留在下面，条目照旧顶对齐。
-     下限用 dvh 兜住，保证任何视口下都低于上面那条 max-height。 */
-  min-height: min(440px, 68dvh);
-  max-height: min(76dvh, 620px);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 16px;
-  background: rgba(9, 10, 16, 0.72);
-  backdrop-filter: blur(22px) saturate(128%);
-  -webkit-backdrop-filter: blur(22px) saturate(128%);
+  width: min(440px, calc(100vw - 32px));
+  /* Height follows the number of announcements. The body becomes the scroll
+     region only after content reaches this ceiling, so a single item does not
+     leave a large dead zone below it. */
+  max-height: min(80dvh, 640px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  background: rgba(12, 13, 18, 0.72);
+  box-shadow:
+    0 28px 90px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
   overflow: hidden;
   transform: translate(-50%, -50%);
   transition:
@@ -308,35 +317,27 @@
 .announcementHeader {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 16px 16px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 10px;
+  padding: 18px 20px 10px;
   color: rgba(255, 255, 255, 0.92);
-}
-
-.announcementHeader svg {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  opacity: 0.86;
 }
 
 .announcementHeading {
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 14px;
-  font-weight: 560;
+  font-size: 16px;
+  font-weight: 600;
   line-height: 1.2;
 }
 
 .announcementCount {
   flex-shrink: 0;
-  padding: 1px 7px;
+  padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(255, 77, 79, 0.18);
-  color: rgba(255, 145, 147, 0.96);
-  font-size: 10px;
+  background: rgba(255, 77, 79, 0.15);
+  color: rgba(255, 153, 155, 0.94);
+  font-size: 11px;
   font-weight: 560;
   font-variant-numeric: tabular-nums;
   line-height: 1.6;
@@ -347,223 +348,62 @@
   -webkit-appearance: none;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: 9px;
   background: transparent;
   color: rgba(255, 255, 255, 0.32);
   cursor: pointer;
-  transition: color 160ms ease;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
 }
 
 .announcementClose:hover {
   color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .announcementClose svg {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
 }
 
 .announcementBody {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px;
+  padding: 6px 16px 14px;
   overscroll-behavior: contain;
 }
 
 .announcementList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 16px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-/* 一条公告一张卡：铃铛 + 未读点 / 正文 / 展开收起，两侧定宽，正文吃掉剩下的宽度。 */
-.announcementItem {
-  display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) 26px;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.announcementItemIcon {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  background: rgba(21, 215, 232, 0.1);
-  color: rgba(120, 238, 248, 0.9);
-}
-
-.announcementItemIcon svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* 每条自己的未读点，跟顶栏那颗常驻红点不是一回事：这颗看过就灭。 */
-.announcementItemDot {
-  position: absolute;
-  top: -1px;
-  right: -1px;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: #ff4d4f;
-  box-shadow: 0 0 0 1.5px rgba(9, 10, 16, 0.92);
-}
-
-.announcementItemMain {
-  min-width: 0;
-}
-
-.announcementItemTop {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.announcementItemTitle {
-  min-width: 0;
-  margin: 0;
-  color: rgba(255, 255, 255, 0.94);
-  font-size: 13px;
-  font-weight: 560;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-/* 置顶角标特意做成中性色：这一屏的高饱和名额已经给了未读红点和时间窗胶囊。 */
-.announcementPinned {
-  flex-shrink: 0;
-  padding: 1px 6px;
-  border-radius: 5px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1.6;
-}
-
-.announcementItemBody {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  margin: 6px 0 0;
-  overflow: hidden;
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 12.5px;
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-}
-
-/* 展开只是把行数夹子拿掉，不做高度动画 —— 省掉一整套 reduced-motion 的例外，
-   也不用去猜内容高度。 */
-.announcementItemBodyOpen {
-  display: block;
-  overflow: visible;
-  -webkit-line-clamp: unset;
-}
-
-.announcementItemMeta {
-  display: block;
-  margin-top: 8px;
-  color: rgba(255, 255, 255, 0.52);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.4;
-}
-
-.announcementItemToggle {
-  appearance: none;
-  -webkit-appearance: none;
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.44);
-  cursor: pointer;
-  transition: color 160ms ease;
-}
-
-.announcementItemToggle:hover {
-  color: rgba(255, 255, 255, 0.86);
-}
-
-.announcementItemToggle svg {
-  width: 15px;
-  height: 15px;
-  transition: transform 180ms ease;
-}
-
-.announcementItemToggle[aria-expanded="true"] svg {
-  transform: rotate(180deg);
-}
-
-/* 这个模块不许用 index.css 的全局工具类（见 DESIGN.md 的登录页例外条款），
-   所以视觉隐藏的文本在这儿自带一份。 */
-.announcementSrOnly {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  border: 0;
-  clip-path: inset(50%);
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-/* 时间窗是公告里唯一要照着做的信息，做成胶囊让它从整段里跳出来。 */
-.announcementTime {
-  margin: 0 2px;
-  padding: 1px 6px;
-  border-radius: 6px;
-  border: 1px solid rgba(21, 215, 232, 0.28);
-  background: rgba(21, 215, 232, 0.12);
-  color: rgba(120, 238, 248, 0.96);
-  font-weight: 560;
-  font-variant-numeric: tabular-nums;
-  /* 时间不能被断成两行，否则「18:00-」和「19:00」各挂一行就没法读了。 */
-  white-space: nowrap;
-}
-
-.announcementHighlight {
-  color: rgba(120, 238, 248, 0.92);
-  font-weight: 560;
-}
-
 .announcementFooter {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
-  padding: 12px 16px 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 6px 16px 16px;
 }
 
 .announcementMarkAll {
   appearance: none;
   -webkit-appearance: none;
-  flex-shrink: 0;
-  height: 38px;
-  padding: 0 14px;
+  flex: 0 0 112px;
+  height: 40px;
+  padding: 0 16px;
   border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 9px;
+  border-radius: 10px;
   background: transparent;
   color: rgba(255, 255, 255, 0.78);
   cursor: pointer;
@@ -589,10 +429,10 @@
 .announcementConfirm {
   appearance: none;
   -webkit-appearance: none;
-  flex: 1;
-  height: 38px;
+  flex: 0 0 112px;
+  height: 40px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 10px;
   background: rgba(246, 248, 255, 0.94);
   color: #181820;
   cursor: pointer;
@@ -647,6 +487,7 @@
 .businessWechatTrigger svg {
   width: 15px;
   height: 15px;
+  stroke-width: 1.8;
 }
 
 .businessWechatTrigger:hover,
@@ -661,22 +502,13 @@
   z-index: 40;
   width: min(232px, calc(100vw - 48px));
   padding: 0;
-  opacity: 0;
-  visibility: hidden;
   pointer-events: none;
-  transform: translate(50%, -6px);
-  transition:
-    opacity 160ms ease,
-    transform 180ms ease,
-    visibility 160ms ease;
+  transform: translateX(50%);
 }
 
 .businessWechat:hover .businessWechatPopover,
 .businessWechat:focus-within .businessWechatPopover {
-  opacity: 1;
-  visibility: visible;
   pointer-events: auto;
-  transform: translate(50%, 0);
 }
 
 .businessWechatPopover img {
@@ -696,6 +528,22 @@
   padding: 12px 12px 14px;
   backdrop-filter: blur(22px) saturate(135%);
   -webkit-backdrop-filter: blur(22px) saturate(135%);
+}
+
+.businessWechatPopover > .businessWechatPanel {
+  opacity: 0;
+  transform: translate3d(0, -6px, 0);
+  will-change: opacity, transform;
+  backface-visibility: hidden;
+  transition:
+    opacity 160ms ease,
+    transform 180ms ease;
+}
+
+.businessWechat:hover .businessWechatPopover > .businessWechatPanel,
+.businessWechat:focus-within .businessWechatPopover > .businessWechatPanel {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
 }
 
 .businessWechatText {
@@ -757,13 +605,15 @@
   cursor: pointer;
   font: inherit;
   font-size: 13px;
+  font-weight: 440;
   line-height: 1;
   transition: color 160ms ease;
 }
 
 .moreInfoTrigger svg {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.8;
 }
 
 .moreInfo:hover .moreInfoTrigger,
@@ -779,13 +629,9 @@
   z-index: 50;
   display: flex;
   align-items: flex-start;
-  width: 146px;
+  width: max-content;
   max-width: calc(100vw - 32px);
-  opacity: 0;
-  visibility: hidden;
   pointer-events: none;
-  transform: translateY(-6px);
-  transition: opacity 160ms ease, transform 180ms ease, visibility 160ms ease;
 }
 
 .moreInfoPopover::before {
@@ -799,43 +645,54 @@
 
 .moreInfo:hover .moreInfoPopover,
 .moreInfo:focus-within .moreInfoPopover {
-  opacity: 1;
-  visibility: visible;
   pointer-events: auto;
-  transform: translateY(0);
 }
 
 .moreInfoMenu,
 .moreInfoContent {
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(28, 30, 34, 0.78);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(20px) saturate(125%);
-  -webkit-backdrop-filter: blur(20px) saturate(125%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(32, 34, 38, 0.38);
+  box-shadow: none;
+  backdrop-filter: blur(22px) saturate(135%);
+  -webkit-backdrop-filter: blur(22px) saturate(135%);
 }
 
 .moreInfoMenu {
-  width: 146px;
-  flex: 0 0 146px;
+  width: max-content;
+  min-width: 124px;
+  max-width: min(220px, calc(100vw - 32px));
+  flex: 0 0 auto;
   max-height: min(70dvh, 520px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  padding: 7px;
-  border-radius: 10px;
+  padding: 6px;
+  border-radius: 9px;
+  opacity: 0;
+  transform: translate3d(0, -6px, 0);
+  will-change: opacity, transform;
+  backface-visibility: hidden;
+  transition:
+    opacity 160ms ease,
+    transform 180ms ease;
+}
+
+.moreInfo:hover .moreInfoMenu,
+.moreInfo:focus-within .moreInfoMenu {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
 }
 
 .moreInfoItem {
   appearance: none;
   display: flex;
   width: 100%;
-  min-height: 36px;
+  min-height: 38px;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 8px 9px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
   color: rgba(255, 255, 255, 0.86);
   cursor: pointer;
@@ -855,11 +712,6 @@
   color: #fff;
 }
 
-.moreInfoLinkItem:hover,
-.moreInfoLinkItem:focus-visible {
-  background: transparent;
-}
-
 .moreInfoItem svg {
   width: 12px;
   height: 12px;
@@ -876,7 +728,7 @@
   overflow: auto;
   scrollbar-gutter: stable;
   touch-action: pan-y;
-  border-radius: 10px;
+  border-radius: 9px;
   padding: 14px;
   overscroll-behavior: contain;
 }
@@ -995,11 +847,16 @@
 }
 
 .githubStars {
+  display: inline-block;
+  flex: 0 0 4ch;
+  width: 4ch;
   color: rgba(246, 248, 255, 0.72);
   font-size: 15px;
   font-weight: 520;
   font-variant-numeric: tabular-nums;
   line-height: 1;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .brand {
@@ -1348,51 +1205,199 @@
   z-index: 40;
   display: grid;
   place-items: center;
-  padding: 24px;
-  background: rgba(2, 3, 8, 0.64);
-  backdrop-filter: blur(18px) saturate(120%);
-  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  padding: clamp(16px, 3vw, 36px);
+  background: rgba(3, 4, 10, 0.5);
+  backdrop-filter: blur(20px) saturate(112%);
+  -webkit-backdrop-filter: blur(20px) saturate(112%);
   pointer-events: auto;
 }
 
 .loginDialog {
   position: relative;
-  width: min(320px, calc(100vw - 48px));
+  display: grid;
+  grid-template-columns: minmax(0, 1.34fr) minmax(380px, 0.86fr);
+  width: min(1120px, calc(100vw - 48px));
+  height: min(680px, calc(100dvh - 48px));
+  min-height: 560px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 24px;
+  background: rgba(12, 13, 18, 0.72);
+  box-shadow:
+    0 32px 110px rgba(0, 0, 0, 0.52),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
 }
 
 .loginClose {
   position: absolute;
-  top: -20px;
-  right: -24px;
-  z-index: 5;
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
+  top: 20px;
+  right: 20px;
+  z-index: 8;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
   border: none;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.055);
+  color: rgba(255, 255, 255, 0.52);
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: color 160ms;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    transform 160ms ease;
 }
 
 .loginClose:hover {
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.03);
 }
 
 .loginClose svg {
-  width: 13px;
-  height: 13px;
+  width: 18px;
+  height: 18px;
+}
+
+.loginMedia {
+  position: relative;
+  justify-self: start;
+  align-self: center;
+  width: auto;
+  height: calc(100% - 20px);
+  aspect-ratio: 1 / 1;
+  min-width: 0;
+  margin: 10px 0 10px 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 16px;
+  background: #08090d;
+}
+
+.loginMediaVideo,
+.loginMediaShade {
+  position: absolute;
+  inset: 0;
+}
+
+.loginMediaVideo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  filter: saturate(0.9) contrast(1.04) brightness(0.82);
+}
+
+.loginMediaVideoIncoming {
+  animation: loginMediaCrossfadeIn 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.loginMediaVideoOutgoing {
+  animation: loginMediaCrossfadeOut 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes loginMediaCrossfadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes loginMediaCrossfadeOut {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+.loginMediaShade {
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(4, 5, 9, 0.34) 0%, transparent 34%, rgba(4, 5, 9, 0.86) 100%),
+    linear-gradient(90deg, rgba(3, 4, 7, 0.08), transparent 56%, rgba(3, 4, 7, 0.28));
+}
+
+.loginMediaCopy {
+  position: absolute;
+  left: 34px;
+  right: 34px;
+  bottom: 34px;
+  z-index: 2;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.loginMediaCopy h2 {
+  margin: 0;
+  font-size: clamp(22px, 1.55vw, 28px);
+  font-weight: 560;
+  line-height: 1.14;
+  letter-spacing: -0.02em;
+}
+
+.loginMediaCopy > span {
+  display: block;
+  max-width: 520px;
+  margin-top: 12px;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.loginPanel {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 72px clamp(34px, 4vw, 54px) 42px;
+  background: transparent;
+}
+
+.loginPanelInner {
+  width: 100%;
+  max-width: 380px;
+  margin: auto;
+}
+
+.loginPanelHeader {
+  margin-bottom: 30px;
+}
+
+.loginPanelBrand {
+  display: block;
+  width: 102px;
+  height: auto;
+  margin: 0 0 22px -5px;
+}
+
+.loginPanelTitle {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 30px;
+  font-weight: 570;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.loginPanelSubtitle {
+  margin: 10px 0 0;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .card {
   position: relative;
   width: 100%;
-  padding: 20px 16px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 16px;
-  background: rgba(7, 8, 14, 0.30);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   box-shadow: none;
   overflow: visible;
 }
@@ -1400,13 +1405,13 @@
 .form {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .fieldRow {
@@ -1416,9 +1421,9 @@
 }
 
 .label {
-  font-size: 13px;
-  font-weight: 510;
-  color: rgba(235, 238, 247, 0.50);
+  font-size: 12px;
+  font-weight: 520;
+  color: rgba(235, 238, 247, 0.58);
   letter-spacing: 0;
 }
 
@@ -1432,18 +1437,18 @@
   appearance: none;
   -webkit-appearance: none;
   width: 100%;
-  height: 36px;
-  padding: 0 10px 0 14px;
-  background-color: rgba(255, 255, 255, 0.05);
+  height: 48px;
+  padding: 0 14px;
+  background-color: rgba(255, 255, 255, 0.035);
   background-image: none;
   background-clip: padding-box;
   color: rgba(246, 248, 255, 0.86);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 12px;
   box-shadow: none;
   color-scheme: dark;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   letter-spacing: 0;
   outline: none;
   transition:
@@ -1452,15 +1457,15 @@
 }
 
 .input:hover {
-  border-color: rgba(255, 255, 255, 0.14);
-  background-color: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+  background-color: rgba(255, 255, 255, 0.045);
 }
 
 .input:focus,
 .input:focus-visible {
-  border-color: rgba(255, 255, 255, 0.28);
+  border-color: rgba(125, 232, 242, 0.48);
   background-color: rgba(255, 255, 255, 0.05);
-  box-shadow: none;
+  box-shadow: 0 0 0 3px rgba(21, 215, 232, 0.07);
 }
 
 .input::placeholder {
@@ -1485,13 +1490,13 @@
 
 .eyeBtn {
   position: absolute;
-  right: 8px;
+  right: 10px;
   appearance: none;
   background: transparent;
   border: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 5px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   color: rgba(246, 248, 255, 0.42);
   cursor: pointer;
   display: grid;
@@ -1514,17 +1519,17 @@
 .btn {
   appearance: none;
   width: 100%;
-  height: 38px;
-  margin-top: 10px;
+  height: 48px;
+  margin-top: 8px;
   border: 0;
-  border-radius: 6px;
-  background: linear-gradient(92deg, #15d7e8 0%, #6ea2ff 100%);
-  color: #07131f;
+  border-radius: 12px;
+  background: rgba(246, 248, 255, 0.96);
+  color: #15161c;
   box-shadow: none;
   cursor: pointer;
   font: inherit;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 620;
   letter-spacing: 0;
   display: inline-flex;
   align-items: center;
@@ -1537,7 +1542,89 @@
 }
 
 .btn:hover {
-  filter: brightness(1.035);
+  filter: brightness(1.04);
+}
+
+.loginApplyRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 20px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.loginApplyAccount {
+  position: relative;
+  display: inline-flex;
+}
+
+.loginApplyAccount::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  right: -12px;
+  bottom: 100%;
+  height: 16px;
+}
+
+.loginApplyTrigger {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(125, 232, 242, 0.82);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 560;
+  line-height: inherit;
+  text-decoration: none;
+  transition: color 160ms ease;
+}
+
+.loginApplyTrigger:hover,
+.loginApplyTrigger:focus-visible {
+  color: rgba(150, 245, 252, 1);
+  outline: none;
+}
+
+.loginApplyPopover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 14px);
+  z-index: 10;
+  width: 232px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition:
+    opacity 160ms ease,
+    transform 180ms ease,
+    visibility 160ms ease;
+}
+
+.loginApplyAccount:hover .loginApplyPopover,
+.loginApplyAccount:focus-within .loginApplyPopover {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.loginApplyPopover .businessWechatPanel {
+  background: rgba(20, 22, 28, 0.86);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
+}
+
+.loginApplyPopover img {
+  display: block;
+  width: 68%;
+  height: auto;
+  margin: 0 auto;
+  border-radius: 8px;
 }
 
 .btn:active {
@@ -1587,6 +1674,53 @@
   border-color: var(--destructive) !important;
 }
 
+@media (max-width: 900px) {
+  .loginDialog {
+    grid-template-columns: 1fr;
+    grid-template-rows: 190px minmax(0, 1fr);
+    width: min(560px, calc(100vw - 32px));
+    height: min(780px, calc(100dvh - 32px));
+    min-height: 0;
+  }
+
+  .loginMediaCopy {
+    left: 28px;
+    right: 28px;
+    bottom: 22px;
+  }
+
+  .loginMediaCopy > span {
+    display: none;
+  }
+
+  .loginMediaCopy h2 {
+    font-size: 25px;
+  }
+
+  .loginMedia {
+    justify-self: stretch;
+    align-self: stretch;
+    width: auto;
+    height: auto;
+    aspect-ratio: auto;
+    margin: 8px 8px 0;
+    border-radius: 14px;
+  }
+
+  .loginPanel {
+    padding: 38px 54px 34px;
+  }
+
+  .loginPanelBrand {
+    width: 94px;
+    margin: 0 0 18px -4px;
+  }
+
+  .loginPanelHeader {
+    margin-bottom: 24px;
+  }
+}
+
 @media (max-width: 640px) {
   .stageInner {
     --stage-x: 24px;
@@ -1599,26 +1733,25 @@
   }
 
   .stageActions {
-    gap: 18px;
+    gap: 16px;
   }
 
   .businessWechatTrigger {
     font-size: 12px;
   }
 
+  .announcementTrigger {
+    font-size: 12px;
+  }
+
   .announcementTrigger svg {
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
   }
 
   .announcementDialog {
     width: min(420px, calc(100vw - 32px));
-    min-height: min(400px, 62dvh);
-    max-height: min(82dvh, 620px);
-  }
-
-  .announcementItem {
-    padding: 11px 10px;
+    max-height: min(86dvh, 620px);
   }
 
   .moreInfoTrigger {
@@ -1661,12 +1794,7 @@
   .businessWechatPopover {
     right: 0;
     width: min(216px, calc(100vw - 40px));
-    transform: translate(0, -6px);
-  }
-
-  .businessWechat:hover .businessWechatPopover,
-  .businessWechat:focus-within .businessWechatPopover {
-    transform: translate(0, 0);
+    transform: translateX(0);
   }
 
   .hero {
@@ -1729,9 +1857,65 @@
     font-size: 12px;
   }
 
+  .loginOverlay {
+    padding: 12px;
+  }
+
+  .loginDialog {
+    display: block;
+    width: min(460px, calc(100vw - 24px));
+    height: auto;
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    border-radius: 20px;
+  }
+
+  .loginMedia {
+    display: none;
+  }
+
+  .loginPanel {
+    overflow: visible;
+    padding: 56px 22px 28px;
+  }
+
+  .loginPanelInner {
+    max-width: 380px;
+  }
+
+  .loginPanelBrand {
+    width: 90px;
+    margin-left: -3px;
+  }
+
+  .loginPanelHeader {
+    margin-bottom: 24px;
+  }
+
+  .loginPanelTitle {
+    font-size: 27px;
+  }
+
   .loginClose {
-    top: -34px;
-    right: 0;
+    position: fixed;
+    top: max(24px, env(safe-area-inset-top));
+    right: 24px;
+  }
+
+  .loginApplyPopover {
+    right: 50%;
+    width: min(232px, calc(100vw - 48px));
+    transform: translate(50%, 6px);
+  }
+
+  .loginApplyAccount:hover .loginApplyPopover,
+  .loginApplyAccount:focus-within .loginApplyPopover {
+    transform: translate(50%, 0);
+  }
+
+  .loginClose {
+    width: 36px;
+    height: 36px;
   }
 }
 
@@ -1753,6 +1937,10 @@
     animation: none;
   }
 
+  .loginMediaVideo {
+    animation: none;
+  }
+
   .heroPrimary:hover::before,
   .heroSecondary:hover::before {
     transform: none;
@@ -1766,8 +1954,7 @@
      CSS 过渡，所以这里关掉过渡就真的不动了。注意别把 .announcementDialog 的
      transform 整个清成 none —— translate(-50%, -50%) 是它的居中方式，不是动效。 */
   .announcementOverlay,
-  .announcementDialog,
-  .announcementItemToggle svg {
+  .announcementDialog {
     transition: none;
   }
 

@@ -3,8 +3,17 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Megaphone, Sparkles, X } from "lucide-react";
+import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  AnnouncementCard as SharedAnnouncementCard,
+  type AnnouncementCardBodyToken,
+} from "@/components/notifications/announcement-card";
+import {
+  type Announcement,
+  parseAnnouncementBody,
+  pickAnnouncementText,
+} from "@/components/login/cinematic/announcements";
 import { useReleaseNotifications } from "@/lib/queries/release-notifications";
 import type { ReleaseItem } from "@/lib/queries/release-notifications";
 import {
@@ -12,14 +21,12 @@ import {
   markUpgradeSkipped,
 } from "@/lib/release-notification-state";
 
-type NotificationTone = "update" | "notice";
-
 interface NotificationItem {
   id: string;
   title: string;
   body: string;
-  time?: string;
-  tone: NotificationTone;
+  bodyTokens?: AnnouncementCardBodyToken[];
+  publishedAt?: string | null;
   actions?: React.ReactNode;
 }
 
@@ -29,10 +36,12 @@ export function NotificationDrawer({
   open,
   onOpenChange,
   onUpgradeStateChange,
+  announcements = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onUpgradeStateChange?: () => void;
+  announcements?: Announcement[];
 }) {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language;
@@ -41,6 +50,7 @@ export function NotificationDrawer({
   const [shouldRender, setShouldRender] = useState(open);
   const [visible, setVisible] = useState(false);
   const notifications = buildNotifications({
+    announcements,
     currentItems: feed?.current_items ?? [],
     latestTag: feed?.latest_tag ?? null,
     updateAvailable: feed?.update_available ?? false,
@@ -128,10 +138,12 @@ export function NotificationDrawer({
           </Button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pb-3 pl-2 pr-4 pt-1">
-          <div className="space-y-1">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-3 pt-1">
+          <div className="space-y-4">
             {notifications.length > 0 ? (
-              notifications.map((item) => <NotificationRow key={item.id} item={item} />)
+              notifications.map((item) => (
+                <NotificationRow key={item.id} item={item} locale={locale} />
+              ))
             ) : (
               <p className="px-2 py-6 text-[13px] leading-5 text-slate-400">
                 {t("notifications.empty")}
@@ -145,31 +157,21 @@ export function NotificationDrawer({
   );
 }
 
-function NotificationRow({ item }: { item: NotificationItem }) {
-  const Icon = item.tone === "update" ? Sparkles : Megaphone;
-
+function NotificationRow({ item, locale }: { item: NotificationItem; locale: string }) {
   return (
-    <article className="group grid grid-cols-[38px_minmax(0,1fr)] gap-3 rounded-[12px] px-2 py-3 transition-colors duration-150 hover:bg-white/[0.045]">
-      <div className="flex size-[38px] items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.035] text-cyan-200/90">
-        <Icon className="size-[18px]" />
-      </div>
-      <div className="min-w-0">
-        <h3 className="truncate text-[14px] font-medium leading-5 text-slate-50">
-          {item.title}
-        </h3>
-        <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-slate-400">
-          {item.body}
-        </p>
-        {item.time ? (
-          <p className="mt-1 text-[11px] leading-4 text-slate-500">{item.time}</p>
-        ) : null}
-        {item.actions ? <div className="mt-2 flex items-center gap-2">{item.actions}</div> : null}
-      </div>
-    </article>
+    <SharedAnnouncementCard
+      title={item.title}
+      body={item.body}
+      bodyTokens={item.bodyTokens}
+      publishedAt={item.publishedAt}
+      locale={locale}
+      actions={item.actions}
+    />
   );
 }
 
 function buildNotifications({
+  announcements,
   currentItems,
   latestTag,
   updateAvailable,
@@ -180,6 +182,7 @@ function buildNotifications({
   onSkip,
   onOpenRelease,
 }: {
+  announcements: Announcement[];
   currentItems: ReleaseItem[];
   latestTag: string | null;
   updateAvailable: boolean;
@@ -191,13 +194,24 @@ function buildNotifications({
   onOpenRelease: () => void;
 }): NotificationItem[] {
   const rows: NotificationItem[] = [];
+  for (const announcement of announcements) {
+    const text = pickAnnouncementText(announcement, locale);
+    const bodyTokens = parseAnnouncementBody(text.body);
+    rows.push({
+      id: `announcement:${announcement.id}`,
+      title: text.title,
+      body: bodyTokens.map((token) => token.text).join(""),
+      bodyTokens,
+      publishedAt: announcement.publishedAt,
+    });
+  }
+
   if (updateAvailable && latestTag) {
     rows.push({
       id: `release-upgrade:${latestTag}`,
-      tone: "notice",
       title: t("notifications.upgrade.title", { version: latestTag }),
       body: t("notifications.upgrade.body"),
-      time: formatReleaseTime(publishedAt, locale),
+      publishedAt,
       actions: (
         <>
           {releaseUrl ? (
@@ -226,28 +240,9 @@ function buildNotifications({
   for (const item of currentItems) {
     rows.push({
       id: item.id,
-      tone: "update",
       title: item.title,
       body: item.body,
     });
   }
   return rows;
-}
-
-function formatReleaseTime(value: string | null, locale: string): string | undefined {
-  if (!value) return undefined;
-  const published = new Date(value);
-  if (Number.isNaN(published.getTime())) return undefined;
-  const diffMs = published.getTime() - Date.now();
-  const absMs = Math.abs(diffMs);
-  const rtf = new Intl.RelativeTimeFormat(locale.startsWith("zh") ? "zh" : "en", {
-    numeric: "auto",
-  });
-  if (absMs < 60 * 60 * 1000) {
-    return rtf.format(Math.round(diffMs / (60 * 1000)), "minute");
-  }
-  if (absMs < 24 * 60 * 60 * 1000) {
-    return rtf.format(Math.round(diffMs / (60 * 60 * 1000)), "hour");
-  }
-  return rtf.format(Math.round(diffMs / (24 * 60 * 60 * 1000)), "day");
 }

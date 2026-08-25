@@ -77,4 +77,15 @@ describe("ConfirmDialogHost", () => {
       expect(Number(match![1])).toBeGreaterThan(HIGHEST_OVERLAY_Z);
     }
   });
+
+  it("keeps confirmation dialogs vertically centered", async () => {
+    render(<ConfirmDialogHost />);
+    void confirmDialog({ description: "删除画布？" });
+
+    await screen.findByText("删除画布？");
+    const content = document.querySelector('[data-slot="alert-dialog-content"]');
+
+    expect(content).toHaveClass("top-1/2", "-translate-y-1/2");
+    expect(content).not.toHaveClass("top-24", "translate-y-0");
+  });
 });

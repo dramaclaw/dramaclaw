@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, Download, MessageCircle, Mouse } from "lucide-react";
+import { ChevronDown, Download, MessageSquareQuote, Mouse } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { Brand } from "@/components/login/login-stage";
@@ -122,6 +122,7 @@ export function LoginCinematicHeader({
 }) {
   const { t } = useTranslation();
   const stars = useGithubStars(GITHUB_REPO);
+  const [businessOpen, setBusinessOpen] = useState(false);
 
   return (
     <div
@@ -133,19 +134,33 @@ export function LoginCinematicHeader({
         {/* 桌面端下载入口暂时隐藏，改回 true 即可恢复（组件代码保留）。 */}
         {SHOW_DESKTOP_DOWNLOAD && <DesktopDownload />}
         <AnnouncementEntry />
-        <div className={styles.businessWechat}>
+        <div
+          className={styles.businessWechat}
+          onPointerEnter={() => setBusinessOpen(true)}
+          onPointerLeave={() => setBusinessOpen(false)}
+          onFocusCapture={() => setBusinessOpen(true)}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setBusinessOpen(false);
+            }
+          }}
+        >
           <button
             type="button"
             className={styles.businessWechatTrigger}
             aria-label={t("auth.businessWechat.open")}
+            aria-haspopup="dialog"
+            aria-expanded={businessOpen}
           >
-            <MessageCircle aria-hidden="true" />
-            {t("auth.businessWechat.label")}
+            <MessageSquareQuote aria-hidden="true" />
+            {t("auth.businessWechat.shortLabel")}
           </button>
           <div
             className={styles.businessWechatPopover}
             role="dialog"
             aria-label={t("auth.businessWechat.qrAlt")}
+            aria-hidden={!businessOpen}
+            inert={!businessOpen}
           >
             <div className={styles.businessWechatPanel}>
               <img
@@ -204,7 +219,7 @@ export function LoginCinematicHero({
       ? ({
           "--stage-header-opacity": Math.max(0, 1 - heroExitProgress * 3.2),
           "--stage-header-offset": `${heroExitProgress * -18}px`,
-          "--stage-header-blur": `${heroExitProgress * 8}px`,
+          filter: `blur(${heroExitProgress * 8}px)`,
           pointerEvents: heroExitProgress < 0.22 ? "auto" : "none",
         } as CSSProperties)
       : undefined;

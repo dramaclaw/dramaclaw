@@ -2,8 +2,10 @@
 // Copyright (c) 2026 ClaymoreLab
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useReducedMotion } from "@/hooks/use-reduced-motion";
+import { businessWechatQrUrl, loginModalShowcaseVideos } from "./cinematic/media";
 import { LoginCard } from "./login-card";
 import styles from "./login.module.css";
 
@@ -12,8 +14,68 @@ type LoginModalProps = {
   onClose: () => void;
 };
 
+const SHOWCASE_CLIP_DURATION_SECONDS = 18;
+const SHOWCASE_CROSSFADE_DURATION_MS = 720;
+
 export function LoginModal({ open, onClose }: LoginModalProps) {
   const { t } = useTranslation();
+  const reducedMotion = useReducedMotion();
+  const [showcaseIndex, setShowcaseIndex] = useState(0);
+  const [outgoingShowcaseIndex, setOutgoingShowcaseIndex] = useState<number | null>(null);
+  const showcaseTransitionTimer = useRef<number | null>(null);
+  const showcaseTransitioning = useRef(false);
+  const activeShowcase = loginModalShowcaseVideos[showcaseIndex] ?? loginModalShowcaseVideos[0];
+  const outgoingShowcase =
+    outgoingShowcaseIndex === null ? null : loginModalShowcaseVideos[outgoingShowcaseIndex];
+  const visibleShowcases = outgoingShowcase
+    ? [
+        { item: outgoingShowcase, outgoing: true },
+        { item: activeShowcase, outgoing: false },
+      ]
+    : [{ item: activeShowcase, outgoing: false }];
+
+  const showNextShowcase = () => {
+    if (showcaseTransitioning.current) return;
+
+    const nextIndex = (showcaseIndex + 1) % loginModalShowcaseVideos.length;
+    if (reducedMotion) {
+      setShowcaseIndex(nextIndex);
+      return;
+    }
+
+    showcaseTransitioning.current = true;
+    setOutgoingShowcaseIndex(showcaseIndex);
+    setShowcaseIndex(nextIndex);
+
+    if (showcaseTransitionTimer.current !== null) {
+      window.clearTimeout(showcaseTransitionTimer.current);
+    }
+    showcaseTransitionTimer.current = window.setTimeout(() => {
+      setOutgoingShowcaseIndex(null);
+      showcaseTransitioning.current = false;
+      showcaseTransitionTimer.current = null;
+    }, SHOWCASE_CROSSFADE_DURATION_MS);
+  };
+
+  useEffect(() => {
+    if (showcaseTransitionTimer.current !== null) {
+      window.clearTimeout(showcaseTransitionTimer.current);
+      showcaseTransitionTimer.current = null;
+    }
+    showcaseTransitioning.current = false;
+    setOutgoingShowcaseIndex(null);
+    if (!open) return;
+    setShowcaseIndex(0);
+  }, [open]);
+
+  useEffect(
+    () => () => {
+      if (showcaseTransitionTimer.current !== null) {
+        window.clearTimeout(showcaseTransitionTimer.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -56,7 +118,93 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
             >
               <X strokeWidth={1.8} aria-hidden="true" />
             </button>
-            <LoginCard />
+
+            <section className={styles.loginMedia} aria-label={t("auth.modal.showcaseLabel")}>
+              {visibleShowcases.map(({ item, outgoing }) => (
+                <video
+                  key={item.id}
+                  className={`${styles.loginMediaVideo} ${
+                    outgoing
+                      ? styles.loginMediaVideoOutgoing
+                      : styles.loginMediaVideoIncoming
+                  }`}
+                  src={item.video}
+                  muted
+                  playsInline
+                  autoPlay={!reducedMotion}
+                  preload="metadata"
+                  onTimeUpdate={
+                    outgoing
+                      ? undefined
+                      : (event) => {
+                          if (event.currentTarget.currentTime >= SHOWCASE_CLIP_DURATION_SECONDS) {
+                            showNextShowcase();
+                          }
+                        }
+                  }
+                  onEnded={outgoing ? undefined : showNextShowcase}
+                  onError={outgoing ? undefined : showNextShowcase}
+                  data-showcase-id={item.id}
+                  data-showcase-phase={outgoing ? "outgoing" : "incoming"}
+                  aria-hidden="true"
+                />
+              ))}
+              <div className={styles.loginMediaShade} aria-hidden="true" />
+              <div className={styles.loginMediaCopy}>
+                <h2>{t("auth.modal.showcaseTitle")}</h2>
+                <span>{t("auth.modal.showcaseDescription")}</span>
+              </div>
+            </section>
+
+            <section className={styles.loginPanel}>
+              <div className={styles.loginPanelInner}>
+                <header className={styles.loginPanelHeader}>
+                  <img
+                    className={styles.loginPanelBrand}
+                    src="/brand/dramaclaw-wordmark.png"
+                    alt="DramaClaw"
+                  />
+                  <h2 className={styles.loginPanelTitle}>{t("auth.modal.title")}</h2>
+                  <p className={styles.loginPanelSubtitle}>{t("auth.modal.subtitle")}</p>
+                </header>
+
+                <LoginCard />
+
+                <div className={styles.loginApplyRow}>
+                  <span>{t("auth.modal.noAccount")}</span>
+                  <div className={styles.loginApplyAccount}>
+                    <button
+                      type="button"
+                      className={styles.loginApplyTrigger}
+                      aria-describedby="login-apply-account-popover"
+                    >
+                      {t("auth.modal.applyAccount")}
+                    </button>
+                    <div
+                      id="login-apply-account-popover"
+                      className={styles.loginApplyPopover}
+                      role="tooltip"
+                    >
+                      <div className={styles.businessWechatPanel}>
+                        <img
+                          src={businessWechatQrUrl}
+                          alt={t("auth.businessWechat.qrAlt")}
+                          draggable={false}
+                        />
+                        <div className={styles.businessWechatText}>
+                          <p className={styles.businessWechatTitle}>
+                            {t("auth.businessWechat.title")}
+                          </p>
+                          <p className={styles.businessWechatSubtitle}>
+                            {t("auth.businessWechat.subtitle")}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
           </motion.div>
         </motion.div>
       ) : null}

@@ -9,12 +9,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  AlertCircle,
+  Check,
   ChevronDown,
   ChevronUp,
-  Image as ImageIcon,
+  FolderPlus,
   Music,
   Plus,
-  Video as VideoIcon,
+  UploadCloud,
   X,
 } from 'lucide-react';
 
@@ -69,12 +71,6 @@ const MEDIA_HINT: Record<AssetLibraryMedia, string> = {
   video: 'mp4',
   audio: 'mp3/wav',
 };
-const MEDIA_ICON = {
-  image: ImageIcon,
-  video: VideoIcon,
-  audio: Music,
-} as const;
-
 function pickId(): string {
   return `pick_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -98,6 +94,8 @@ export function AssetLibraryUploadDialog({
   const [folderOpen, setFolderOpen] = useState(false);
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const media = useMemo<AssetLibraryMedia[]>(
     () => allowedMedia ?? ['image', 'video', 'audio'],
@@ -112,6 +110,9 @@ export function AssetLibraryUploadDialog({
     setCategory(null);
     setFolderOpen(false);
     setCategoryOpen(false);
+    setNewFolderOpen(false);
+    setIsDragging(false);
+    setFileError(null);
   }, [open, defaultFolderKey]);
 
   useEffect(() => {
@@ -127,12 +128,39 @@ export function AssetLibraryUploadDialog({
     [],
   );
 
+  useEffect(() => {
+    if (!open || newFolderOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (folderOpen || categoryOpen) {
+        setFolderOpen(false);
+        setCategoryOpen(false);
+      } else {
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [categoryOpen, folderOpen, newFolderOpen, onClose, open]);
+
   const addFiles = useCallback(
     (files: FileList | File[]) => {
       const next: PickedFile[] = [];
+      let rejected = 0;
+      const known = new Set(
+        pickedRef.current.map(
+          (pick) => `${pick.file.name}:${pick.file.size}:${pick.file.lastModified}`,
+        ),
+      );
       Array.from(files).forEach((file) => {
         const kind = mediaOfFile(file);
-        if (!kind || !media.includes(kind)) return;
+        const signature = `${file.name}:${file.size}:${file.lastModified}`;
+        if (!kind || !media.includes(kind)) {
+          rejected += 1;
+          return;
+        }
+        if (known.has(signature)) return;
+        known.add(signature);
         next.push({
           id: pickId(),
           file,
@@ -141,6 +169,11 @@ export function AssetLibraryUploadDialog({
         });
       });
       if (next.length > 0) setPicked((prev) => [...prev, ...next]);
+      setFileError(
+        rejected > 0
+          ? `${rejected} 个文件格式不受支持，已自动忽略`
+          : null,
+      );
     },
     [media],
   );
@@ -170,247 +203,313 @@ export function AssetLibraryUploadDialog({
   };
 
   const fieldButtonClass =
-    'flex h-9 w-full items-center justify-between rounded-[6px] border border-white/[0.10] bg-white/[0.04] px-3 text-xs transition-colors hover:border-white/[0.20]';
+    'flex h-10 w-full items-center justify-between rounded-sm border border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.5)] px-3 text-xs transition-[border-color,background-color] hover:border-[var(--ui-border-strong)] hover:bg-[rgba(var(--bg-rgb)/0.65)]';
 
   return createPortal(
     <div
       className="fixed inset-0 z-[310] flex items-center justify-center"
       role="dialog"
+      aria-modal="true"
       aria-label="上传资产"
     >
-      <div className="absolute inset-0 bg-black/55" onClick={onClose} />
-      <div className="relative flex w-[min(940px,92vw)] flex-col overflow-hidden rounded-[10px] border border-white/[0.12] bg-[#1b1c22] shadow-[0_18px_48px_rgba(0,0,0,0.5)]">
-        <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-3.5">
-          <h3 className="text-sm font-semibold text-text-dark">上传资产</h3>
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="ui-scrollbar relative flex max-h-[88vh] w-[min(860px,92vw)] flex-col overflow-y-auto rounded-xl border border-[var(--ui-border-strong)] bg-[var(--ui-surface-modal)] shadow-[0_18px_48px_rgba(0,0,0,0.5)]">
+        <div className="flex items-start justify-between gap-4 px-5 pb-3 pt-5">
+          <div>
+            <h3 className="text-lg font-semibold text-foreground">上传资产</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              选择文件并设置保存位置，上传后可在项目中重复使用
+            </p>
+          </div>
           <button
             type="button"
             onClick={onClose}
             title="关闭"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted/90 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
+            aria-label="关闭"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-[rgba(var(--bg-rgb)/0.5)] hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="flex gap-6 px-5 py-4">
+        <div className="grid grid-cols-1 gap-4 px-5 pb-4 md:grid-cols-[minmax(0,1fr)_260px]">
           {/* ── 左：选文件 ── */}
           <div
-            className="ui-scrollbar h-[320px] flex-1 overflow-y-auto rounded-md border border-white/[0.08] bg-white/[0.02] p-4"
-            onDragOver={(event) => event.preventDefault()}
+            className={`ui-scrollbar flex h-[260px] min-w-0 flex-col overflow-y-auto rounded-lg border bg-[rgba(var(--bg-rgb)/0.36)] transition-[border-color,background-color] md:h-[340px] ${
+              isDragging
+                ? 'border-primary bg-primary/5'
+                : 'border-[var(--ui-border-soft)]'
+            }`}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={(event) => {
+              if (event.currentTarget === event.target) setIsDragging(false);
+            }}
             onDrop={(event) => {
               event.preventDefault();
+              setIsDragging(false);
               if (event.dataTransfer?.files?.length) {
                 addFiles(event.dataTransfer.files);
               }
             }}
           >
-            <div className="flex flex-wrap gap-3">
+            <input
+              ref={fileInputRef}
+              type="file"
+              aria-label="选择本地文件"
+              accept={accept}
+              multiple
+              className="hidden"
+              onChange={(event) => {
+                if (event.target.files) addFiles(event.target.files);
+                event.target.value = '';
+              }}
+            />
+            {picked.length === 0 ? (
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 aria-label="选择文件"
-                className="flex h-[120px] w-[120px] items-center justify-center rounded-md border border-dashed border-white/[0.16] text-text-muted/60 transition-colors hover:border-white/[0.30] hover:text-text-dark"
+                className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground transition-colors hover:text-foreground"
               >
-                <Plus className="h-7 w-7" strokeWidth={1.5} />
+                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[rgba(var(--bg-rgb)/0.55)] text-primary">
+                  <UploadCloud className="h-5 w-5" />
+                </span>
+                <span>
+                  <span className="block text-sm font-medium text-foreground">
+                    拖放文件到这里，或点击选择
+                  </span>
+                  <span className="mt-1.5 block text-xs text-muted-foreground">
+                    支持 {media.map((kind) => MEDIA_HINT[kind]).join('、')}
+                  </span>
+                </span>
               </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={accept}
-                multiple
-                className="hidden"
-                onChange={(event) => {
-                  if (event.target.files) addFiles(event.target.files);
-                  event.target.value = '';
-                }}
-              />
-              {picked.map((p) => (
-                <div
-                  key={p.id}
-                  className="group relative h-[120px] w-[120px] overflow-hidden rounded-md border border-white/[0.10] bg-white/[0.04]"
-                  title={p.file.name}
-                >
-                  {p.media === 'image' ? (
-                    <img
-                      src={p.previewUrl}
-                      alt=""
-                      className="h-full w-full object-cover"
-                      draggable={false}
-                    />
-                  ) : p.media === 'video' ? (
-                    <video
-                      src={p.previewUrl}
-                      className="h-full w-full object-cover"
-                      muted
-                      playsInline
-                      preload="metadata"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-text-muted/60">
-                      <Music className="h-8 w-8" />
-                    </div>
-                  )}
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-black/65 px-1.5 py-1 text-[10px] text-white/85">
-                    {p.file.name}
-                  </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-3">
+                  <span className="text-xs text-muted-foreground">
+                    已选择{' '}
+                    <span className="font-medium text-foreground">
+                      {picked.length}
+                    </span>{' '}
+                    项
+                  </span>
                   <button
                     type="button"
-                    onClick={() => removePicked(p.id)}
-                    aria-label={`移除 ${p.file.name}`}
-                    className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded bg-black/60 text-white opacity-0 transition-opacity hover:bg-black/80 group-hover:opacity-100"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-xs text-primary transition-colors hover:bg-secondary"
                   >
-                    <X className="h-3 w-3" />
+                    <Plus className="h-3.5 w-3.5" />
+                    继续添加
                   </button>
                 </div>
-              ))}
-            </div>
+                <div className="flex flex-wrap gap-2.5 px-4 pb-4">
+                  {picked.map((p) => (
+                    <div
+                      key={p.id}
+                      className="group relative h-[104px] w-[104px] overflow-hidden rounded-sm border border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.55)]"
+                      title={p.file.name}
+                    >
+                      {p.media === 'image' ? (
+                        <img
+                          src={p.previewUrl}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          draggable={false}
+                        />
+                      ) : p.media === 'video' ? (
+                        <video
+                          src={p.previewUrl}
+                          className="h-full w-full object-cover"
+                          muted
+                          playsInline
+                          preload="metadata"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+                          <Music className="h-8 w-8" />
+                        </div>
+                      )}
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/85 to-black/30 px-2 pb-1.5 pt-5 text-xs text-white/90">
+                        {p.file.name}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removePicked(p.id)}
+                        aria-label={`移除 ${p.file.name}`}
+                        className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity hover:bg-black/80 group-hover:opacity-100 focus:opacity-100"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {fileError ? (
+              <div
+                role="alert"
+                className="mx-4 mb-3 flex items-center gap-1.5 text-xs text-destructive"
+              >
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                {fileError}
+              </div>
+            ) : null}
           </div>
 
           {/* ── 右：保存位置 + 标签 ── */}
-          <div className="w-[240px] shrink-0 space-y-4">
-            <div className="relative">
-              <div className="mb-1.5 text-xs text-text-muted/90">
-                保存位置 <span className="text-red-400">*</span>
-              </div>
-              <button
-                type="button"
-                aria-label="选择保存位置"
-                onClick={() => {
-                  setFolderOpen((prev) => !prev);
-                  setCategoryOpen(false);
-                }}
-                className={fieldButtonClass}
-              >
-                <span
-                  className={
-                    selectedFolder ? 'text-text-dark' : 'text-text-muted/55'
-                  }
+          <div className="rounded-lg border border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.28)] p-4">
+            <h4 className="text-sm font-semibold text-foreground">上传设置</h4>
+            <p className="mt-1 text-xs text-muted-foreground">
+              保存位置必选，标签可稍后补充
+            </p>
+            <div className="mt-4 space-y-4">
+              <div className="relative">
+                <div className="mb-1.5 text-xs font-medium text-foreground">
+                  保存位置 <span className="text-destructive">*</span>
+                </div>
+                <button
+                  type="button"
+                  aria-label="选择保存位置"
+                  onClick={() => {
+                    setFolderOpen((prev) => !prev);
+                    setCategoryOpen(false);
+                  }}
+                  className={fieldButtonClass}
                 >
-                  {selectedFolder?.label ?? '请选择文件夹'}
-                </span>
-                {folderOpen ? (
-                  <ChevronUp className="h-3.5 w-3.5 text-text-muted/70" />
-                ) : (
-                  <ChevronDown className="h-3.5 w-3.5 text-text-muted/70" />
-                )}
-              </button>
-              {folderOpen && (
-                <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-[6px] border border-white/[0.12] bg-[#232429] py-1 shadow-[0_12px_28px_rgba(0,0,0,0.45)]">
-                  <div className="flex items-center justify-between border-b border-white/[0.08] px-3 py-1.5 text-xs text-text-dark">
-                    项目资产库
-                    <button
-                      type="button"
-                      aria-label="新建文件夹"
-                      title="新建文件夹"
-                      onClick={() => setNewFolderOpen(true)}
-                      className="inline-flex h-5 w-5 items-center justify-center rounded text-text-muted/80 transition-colors hover:bg-white/[0.10] hover:text-text-dark"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <div className="ui-scrollbar max-h-[180px] overflow-y-auto">
-                    {folders.map((folder) => (
+                  <span
+                    className={
+                      selectedFolder
+                        ? 'text-foreground'
+                        : 'text-muted-foreground'
+                    }
+                  >
+                    {selectedFolder?.label ?? '请选择文件夹'}
+                  </span>
+                  {folderOpen ? (
+                    <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                  )}
+                </button>
+                {folderOpen && (
+                  <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.99)] py-1 shadow-[0_12px_28px_rgba(0,0,0,0.45)]">
+                    <div className="flex items-center justify-between px-3 py-2 text-xs font-medium text-foreground">
+                      项目资产库
                       <button
-                        key={folder.key}
+                        type="button"
+                        aria-label="新建文件夹"
+                        title="新建文件夹"
+                        onClick={() => setNewFolderOpen(true)}
+                        className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-primary transition-colors hover:bg-secondary"
+                      >
+                        <FolderPlus className="h-3.5 w-3.5" />
+                        <span>新建</span>
+                      </button>
+                    </div>
+                    <div className="ui-scrollbar max-h-[180px] overflow-y-auto">
+                      {folders.map((folder) => (
+                        <button
+                          key={folder.key}
+                          type="button"
+                          onClick={() => {
+                            setFolderKey(folder.key);
+                            setFolderOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-accent ${
+                            folder.key === folderKey
+                              ? 'text-foreground'
+                              : 'text-muted-foreground'
+                          }`}
+                        >
+                          <span className="truncate">{folder.label}</span>
+                          {folder.key === folderKey ? (
+                            <Check className="h-3.5 w-3.5 shrink-0 text-primary" />
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="relative">
+                <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-foreground">
+                  标签{' '}
+                  <span className="font-normal text-muted-foreground">可选</span>
+                </div>
+                <button
+                  type="button"
+                  aria-label="选择标签"
+                  onClick={() => {
+                    setCategoryOpen((prev) => !prev);
+                    setFolderOpen(false);
+                  }}
+                  className={fieldButtonClass}
+                >
+                  <span
+                    className={
+                      selectedCategory
+                        ? 'text-foreground'
+                        : 'text-muted-foreground'
+                    }
+                  >
+                    {selectedCategory?.label ?? '请选择'}
+                  </span>
+                  {categoryOpen ? (
+                    <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                  )}
+                </button>
+                {categoryOpen && (
+                  <div className="ui-scrollbar absolute z-10 mt-1 max-h-[180px] w-full overflow-y-auto rounded-lg border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.99)] py-1 shadow-[0_12px_28px_rgba(0,0,0,0.45)]">
+                    {categories.map((item) => (
+                      <button
+                        key={item.key}
                         type="button"
                         onClick={() => {
-                          setFolderKey(folder.key);
-                          setFolderOpen(false);
+                          setCategory(item.key);
+                          setCategoryOpen(false);
                         }}
-                        className={`block w-full truncate px-5 py-1.5 text-left text-xs transition-colors hover:bg-white/[0.08] ${
-                          folder.key === folderKey
-                            ? 'text-text-dark'
-                            : 'text-text-muted/85'
+                        className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-accent ${
+                          item.key === category
+                            ? 'text-foreground'
+                            : 'text-muted-foreground'
                         }`}
                       >
-                        {folder.label}
+                        <span>{item.label}</span>
+                        {item.key === category ? (
+                          <Check className="h-3.5 w-3.5 text-primary" />
+                        ) : null}
                       </button>
                     ))}
                   </div>
-                </div>
-              )}
-            </div>
-
-            <div className="relative">
-              <div className="mb-1.5 text-xs text-text-muted/90">标签</div>
-              <button
-                type="button"
-                aria-label="选择标签"
-                onClick={() => {
-                  setCategoryOpen((prev) => !prev);
-                  setFolderOpen(false);
-                }}
-                className={fieldButtonClass}
-              >
-                <span
-                  className={
-                    selectedCategory ? 'text-text-dark' : 'text-text-muted/55'
-                  }
-                >
-                  {selectedCategory?.label ?? '请选择'}
-                </span>
-                {categoryOpen ? (
-                  <ChevronUp className="h-3.5 w-3.5 text-text-muted/70" />
-                ) : (
-                  <ChevronDown className="h-3.5 w-3.5 text-text-muted/70" />
                 )}
-              </button>
-              {categoryOpen && (
-                <div className="ui-scrollbar absolute z-10 mt-1 max-h-[180px] w-full overflow-y-auto rounded-[6px] border border-white/[0.12] bg-[#232429] py-1 shadow-[0_12px_28px_rgba(0,0,0,0.45)]">
-                  {categories.map((item) => (
-                    <button
-                      key={item.key}
-                      type="button"
-                      onClick={() => {
-                        setCategory(item.key);
-                        setCategoryOpen(false);
-                      }}
-                      className={`block w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-white/[0.08] ${
-                        item.key === category
-                          ? 'text-text-dark'
-                          : 'text-text-muted/85'
-                      }`}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-              )}
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="flex items-end justify-between gap-4 px-5 pb-4">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted/60">
-            <span>支持的文件格式</span>
-            {media.map((kind) => {
-              const Icon = MEDIA_ICON[kind];
-              return (
-                <span key={kind} className="inline-flex items-center gap-1">
-                  <Icon className="h-3.5 w-3.5" />
-                  {MEDIA_HINT[kind]}
-                </span>
-              );
-            })}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              className="px-4 text-text-muted hover:text-text-dark"
-              onClick={onClose}
-            >
-              取消
-            </Button>
-            <Button
-              size="sm"
-              className="bg-white px-4 text-[#15161b] hover:bg-white/90"
-              disabled={!canSubmit}
-              onClick={handleSubmit}
-            >
-              保存
-            </Button>
-          </div>
+        <div className="flex items-center justify-end gap-2 px-5 pb-5">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="px-4 text-muted-foreground hover:text-foreground"
+            onClick={onClose}
+          >
+            取消
+          </Button>
+          <Button
+            size="sm"
+            className="bg-primary px-4 text-primary-foreground hover:bg-primary/90"
+            disabled={!canSubmit}
+            onClick={handleSubmit}
+          >
+            {picked.length > 0 ? `上传 ${picked.length} 项` : '上传'}
+          </Button>
         </div>
       </div>
 

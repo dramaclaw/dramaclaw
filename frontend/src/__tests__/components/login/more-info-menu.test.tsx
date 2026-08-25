@@ -88,7 +88,8 @@ describe("MoreInfoMenu", () => {
     mockResponse({ ok: true, items: validItems });
     render(<MoreInfoMenu />);
 
-    expect(await screen.findByRole("button", { name: "更多信息" })).toBeInTheDocument();
+    const trigger = await screen.findByRole("button", { name: "更多信息" });
+    fireEvent.focus(trigger);
     const helpItem = screen.getByRole("menuitem", { name: "帮助中心" });
     expect(helpItem.tagName).toBe("A");
     expect(helpItem).toHaveAttribute("href", "https://example.com/docs");
@@ -129,7 +130,8 @@ describe("MoreInfoMenu", () => {
   it("updates the trigger and menu label when the language changes", async () => {
     mockResponse({ ok: true, items: validItems });
     const { rerender } = render(<MoreInfoMenu />);
-    expect(await screen.findByRole("button", { name: "更多信息" })).toBeInTheDocument();
+    const trigger = await screen.findByRole("button", { name: "更多信息" });
+    fireEvent.focus(trigger);
 
     translationState.language = "en";
     rerender(<MoreInfoMenu />);
