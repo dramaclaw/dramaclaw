@@ -57,6 +57,18 @@ describe("organization brand asset deployment contract", () => {
     expect(packageJson).not.toContain("build:org-brand-proxy");
   });
 
+  it("uses a resolvable loopback upstream when validating the Nginx template", () => {
+    const dockerfile = readFileSync("Dockerfile", "utf8");
+    const configTest = dockerfile.match(
+      /FROM nginx:1\.27-alpine AS nginx-config-test([\s\S]*?)FROM nginx:1\.27-alpine AS runtime/,
+    )?.[1];
+
+    expect(configTest).toBeDefined();
+    expect(configTest).toContain("BACKEND_HOST=127.0.0.1");
+    expect(configTest).not.toContain("backend.invalid");
+    expect(dockerfile).toContain("BACKEND_HOST=novelvideo-ui-staging");
+  });
+
   it("does not retain the removed companion implementation", () => {
     for (const file of [
       "docker/org-brand-assets.ts",
