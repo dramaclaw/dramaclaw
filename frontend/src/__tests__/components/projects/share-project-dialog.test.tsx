@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ShareProjectDialog } from "@/components/projects/share-project-dialog";
@@ -25,6 +25,8 @@ const SHARE_DIALOG_ZH: Record<string, string> = {
   "project.shareDialog.roleViewer": "只读查看",
   "project.shareDialog.roleEditor": "可编辑与运行任务",
   "project.shareDialog.roleAdmin": "可管理共享成员",
+  "project.shareDialog.inactive": "已失效",
+  "project.shareDialog.inactiveScopeChanged": "用户作用域已变化",
   "common.close": "关闭",
 };
 
@@ -43,21 +45,31 @@ vi.mock("react-i18next", () => ({
 }));
 
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: false }));
-const queryMocks = vi.hoisted(() => ({ useUserSearch: vi.fn() }));
+const queryMocks = vi.hoisted(() => ({
+  grants: [] as Array<Record<string, unknown>>,
+  deleteGrant: vi.fn(),
+  useUserSearch: vi.fn(),
+}));
 
 vi.mock("@/lib/runtime-config", () => ({
   isCeRuntime: () => runtimeState.isCeRuntime,
 }));
 
 vi.mock("@/lib/queries/projects", () => ({
-  useProjectGrants: () => ({ data: { data: [] } }),
+  useProjectGrants: () => ({
+    data: { data: queryMocks.grants },
+    isLoading: false,
+  }),
   useUserSearch: (...args: unknown[]) => {
     queryMocks.useUserSearch(...args);
     return { data: { data: [] } };
   },
   useAddProjectGrant: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateProjectGrant: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useDeleteProjectGrant: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteProjectGrant: () => ({
+    mutateAsync: queryMocks.deleteGrant,
+    isPending: false,
+  }),
 }));
 
 const project = {
@@ -76,6 +88,8 @@ function renderDialog() {
 describe("ShareProjectDialog (edition gating)", () => {
   beforeEach(() => {
     runtimeState.isCeRuntime = false;
+    queryMocks.grants = [];
+    queryMocks.deleteGrant.mockReset();
     queryMocks.useUserSearch.mockClear();
   });
 
@@ -90,5 +104,51 @@ describe("ShareProjectDialog (edition gating)", () => {
     const { container } = renderDialog();
     expect(container.firstChild).toBeNull();
     expect(screen.queryByText("共享项目")).not.toBeInTheDocument();
+  });
+
+  it("marks scope-invalid grants inactive while keeping removal available", () => {
+    queryMocks.grants = [
+      {
+        id: "g1",
+        project_id: "p1",
+        principal_type: "user",
+        principal_id: "u9",
+        principal_username: "dev09",
+        role: "editor",
+        effective: false,
+        inactive_reason: "principal_scope_changed",
+      },
+    ];
+
+    renderDialog();
+
+    expect(screen.getByText("已失效")).toBeInTheDocument();
+    expect(screen.getByText("用户作用域已变化")).toBeInTheDocument();
+    const memberRow = screen.getByText("dev09").parentElement?.parentElement;
+    expect(memberRow).toBeInstanceOf(HTMLElement);
+    expect(within(memberRow as HTMLElement).getByRole("combobox")).toBeDisabled();
+    expect(
+      within(memberRow as HTMLElement).getByRole("button", { name: "移除成员" }),
+    ).toBeEnabled();
+  });
+
+  it("treats grants without effective as active during rolling deploys", () => {
+    queryMocks.grants = [
+      {
+        id: "g1",
+        project_id: "p1",
+        principal_type: "user",
+        principal_id: "u9",
+        principal_username: "dev09",
+        role: "editor",
+      },
+    ];
+
+    renderDialog();
+
+    expect(screen.queryByText("已失效")).not.toBeInTheDocument();
+    const memberRow = screen.getByText("dev09").parentElement?.parentElement;
+    expect(memberRow).toBeInstanceOf(HTMLElement);
+    expect(within(memberRow as HTMLElement).getByRole("combobox")).toBeEnabled();
   });
 });

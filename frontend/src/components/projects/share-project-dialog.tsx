@@ -43,6 +43,10 @@ function grantDisplayName(grant: ProjectGrant): string {
   return grant.principal_username || grant.principal_id;
 }
 
+function grantIsEffective(grant: ProjectGrant): boolean {
+  return grant.effective !== false;
+}
+
 function roleCaption(role: GrantRole, t: (key: string) => string): string {
   switch (role) {
     case "viewer":
@@ -239,42 +243,54 @@ export function ShareProjectDialog({
                   {t("project.shareDialog.loadingMembers")}
                 </div>
               )}
-              {!grants.isLoading && grantRows.map((grant) => (
-                <div key={grant.id} className="flex items-center gap-3 rounded-[10px] border border-border/60 bg-background/45 px-3 py-2.5">
-                  <Users className="size-4 text-muted-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{grantDisplayName(grant)}</div>
-                    <div className="text-xs text-muted-foreground">{roleCaption(grant.role, t)}</div>
+              {!grants.isLoading && grantRows.map((grant) => {
+                const effective = grantIsEffective(grant);
+                return (
+                  <div key={grant.id} className="flex items-center gap-3 rounded-[10px] border border-border/60 bg-background/45 px-3 py-2.5">
+                    <Users className="size-4 text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{grantDisplayName(grant)}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {effective
+                          ? roleCaption(grant.role, t)
+                          : t("project.shareDialog.inactiveScopeChanged")}
+                      </div>
+                    </div>
+                    {!effective ? (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                        {t("project.shareDialog.inactive")}
+                      </span>
+                    ) : null}
+                    <Select
+                      value={grant.role}
+                      onValueChange={(value) => void handleRoleChange(grant, value as GrantRole)}
+                      disabled={!effective || updateGrant.isPending}
+                    >
+                      <SelectTrigger size="sm" className="w-24 rounded-[8px]">
+                        <SelectValue>
+                          {(value: string) => projectRoleLabel(value as ProjectRole)}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent alignItemWithTrigger={false}>
+                        {GRANT_ROLES.map((item) => (
+                          <SelectItem key={item} value={item}>
+                            {projectRoleLabel(item)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => void handleRevoke(grant)}
+                      disabled={deleteGrant.isPending}
+                      aria-label={t("project.shareDialog.removeMember")}
+                    >
+                      <Trash2 className="size-4 text-destructive" />
+                    </Button>
                   </div>
-                  <Select
-                    value={grant.role}
-                    onValueChange={(value) => void handleRoleChange(grant, value as GrantRole)}
-                    disabled={updateGrant.isPending}
-                  >
-                    <SelectTrigger size="sm" className="w-24 rounded-[8px]">
-                      <SelectValue>
-                        {(value: string) => projectRoleLabel(value as ProjectRole)}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      {GRANT_ROLES.map((item) => (
-                        <SelectItem key={item} value={item}>
-                          {projectRoleLabel(item)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => void handleRevoke(grant)}
-                    disabled={deleteGrant.isPending}
-                    aria-label={t("project.shareDialog.removeMember")}
-                  >
-                    <Trash2 className="size-4 text-destructive" />
-                  </Button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         </div>

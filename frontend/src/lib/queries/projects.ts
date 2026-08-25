@@ -185,6 +185,8 @@ export interface ProjectGrant {
   principal_username?: string | null;
   role: Exclude<ProjectRole, "owner">;
   created_at?: string | null;
+  effective?: boolean;
+  inactive_reason?: "principal_scope_changed" | null;
 }
 
 export interface UserSearchResult {
