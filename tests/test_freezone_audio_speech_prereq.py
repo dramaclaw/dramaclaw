@@ -177,7 +177,7 @@ async def test_explicit_voice_read_error_is_a_structured_prerequisite_error(
     character = SimpleNamespace(
         name="主角",
         reference_audio_path=voice_file.name,
-        reference_audio_sha256="",
+        reference_audio_sha256="cached-sha",
     )
     store = SimpleNamespace(
         state_dir=tmp_path,
@@ -186,10 +186,10 @@ async def test_explicit_voice_read_error_is_a_structured_prerequisite_error(
 
     leaked_path = tmp_path / "private" / "voice.wav"
 
-    def unreadable(_path: Path) -> str:
+    def unreadable(_path: Path) -> bool:
         raise PermissionError(f"permission denied: {leaked_path}")
 
-    monkeypatch.setattr(audio_node, "file_sha256", unreadable)
+    monkeypatch.setattr(audio_node, "is_readable_audio_file", unreadable)
 
     with pytest.raises(audio_node.VoicePrerequisiteError) as exc_info:
         await audio_node.resolve_speech_voice(
@@ -198,6 +198,44 @@ async def test_explicit_voice_read_error_is_a_structured_prerequisite_error(
             project="demo",
             project_dir=tmp_path,
             voice_ref={"scope": "character_default", "character_name": "主角"},
+        )
+
+    assert str(exc_info.value) == "声线文件无法读取，请重新选择或检查文件是否完整"
+    assert str(leaked_path) not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_user_custom_cached_sha_still_probes_file_readability(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novelvideo.freezone import audio_node
+
+    monkeypatch.setattr(audio_node, "OUTPUT_DIR", str(tmp_path))
+    voice_id = "fv_unreadable"
+    relative_path = "_account/freezone/audio/voices/fv_unreadable/reference.wav"
+    voice_file = tmp_path / "viewer" / relative_path
+    voice_file.parent.mkdir(parents=True)
+    voice_file.write_bytes(b"voice")
+    audio_node._write_user_voice_records(
+        "viewer",
+        [{"voice_id": voice_id, "path": relative_path, "sha256": "cached-sha"}],
+    )
+    leaked_path = tmp_path / "private" / "account-voice.wav"
+
+    def unreadable(_path: Path) -> bool:
+        raise PermissionError(f"permission denied: {leaked_path}")
+
+    monkeypatch.setattr(audio_node, "is_readable_audio_file", unreadable)
+    store = SimpleNamespace(state_dir=tmp_path, list_characters=AsyncMock())
+
+    with pytest.raises(audio_node.VoicePrerequisiteError) as exc_info:
+        await audio_node.resolve_speech_voice(
+            store=store,
+            username="viewer",
+            project="demo",
+            project_dir=tmp_path,
+            voice_ref={"scope": "user_custom", "voice_id": voice_id},
         )
 
     assert str(exc_info.value) == "声线文件无法读取，请重新选择或检查文件是否完整"

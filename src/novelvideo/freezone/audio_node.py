@@ -194,12 +194,24 @@ def _user_voice_abs_path(username: str, record: dict) -> Path:
     return Path(OUTPUT_DIR) / username / str(record.get("path") or "")
 
 
+def is_readable_audio_file(path: Path) -> bool:
+    """Return whether ``path`` is a regular file that can actually be opened."""
+    if not path.is_file():
+        return False
+    with path.open("rb") as stream:
+        stream.read(1)
+    return True
+
+
 def public_user_voice_payload(username: str, record: dict) -> dict:
     voice_id = str(record.get("voice_id") or "")
     label = str(record.get("name") or record.get("label") or voice_id or "未命名音色")
     path = str(record.get("path") or "")
     abs_path = _user_voice_abs_path(username, record)
-    exists = bool(path and abs_path.exists())
+    try:
+        exists = bool(path and is_readable_audio_file(abs_path))
+    except OSError:
+        exists = False
     return {
         "scope": USER_VOICE_SCOPE,
         "voice_id": voice_id,
@@ -269,7 +281,7 @@ def resolve_user_audio_voice(
         if str(record.get("voice_id") or "") != target:
             continue
         path = _user_voice_abs_path(username, record)
-        if not path.is_file():
+        if not is_readable_audio_file(path):
             raise RuntimeError(f"用户音色文件不存在: {target}")
         sha = str(record.get("sha256") or "") or file_sha256(path)
         return FreezoneVoiceRefResolution(path, sha, USER_VOICE_SCOPE)
@@ -305,7 +317,7 @@ async def _project_path(project_dir: Path, stored_path: str) -> Path | None:
     path = Path(value)
     if not path.is_absolute():
         path = project_dir / path
-    return path if await asyncio.to_thread(path.is_file) else None
+    return path if await asyncio.to_thread(is_readable_audio_file, path) else None
 
 
 @dataclass(frozen=True)
@@ -445,6 +457,8 @@ async def _resolve_voice_ref(
         )
         if resolved.audio_path is None:
             raise RuntimeError(f"身份实际声线不可用: {identity_id}")
+        if not await asyncio.to_thread(is_readable_audio_file, resolved.audio_path):
+            raise RuntimeError(f"身份实际声线不可用: {identity_id}")
         return FreezoneVoiceRefResolution(
             resolved.audio_path,
             resolved.sha256
@@ -527,6 +541,16 @@ async def resolve_speech_voice(
             )
         except OSError as exc:
             raise VoicePrerequisiteError(VOICE_FILE_UNREADABLE_MESSAGE) from exc
+        if voice.audio_path is not None:
+            try:
+                readable = await asyncio.to_thread(
+                    is_readable_audio_file,
+                    voice.audio_path,
+                )
+            except OSError as exc:
+                raise VoicePrerequisiteError(VOICE_FILE_UNREADABLE_MESSAGE) from exc
+            if not readable:
+                raise VoicePrerequisiteError(VOICE_FILE_UNREADABLE_MESSAGE)
         if voice.audio_path is None:
             if voice.source == "project_narrator":
                 message = (

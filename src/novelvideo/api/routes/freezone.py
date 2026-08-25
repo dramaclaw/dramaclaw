@@ -110,6 +110,7 @@ from novelvideo.freezone.audio_node import (
     freezone_audio_eleven_music_output_path,
     freezone_audio_speech_output_path,
     generate_freezone_audio_speech,
+    is_readable_audio_file,
     list_user_audio_voices,
     resolve_speech_voice,
     resolve_user_audio_voice,
@@ -6781,7 +6782,10 @@ def _freezone_audio_ref_payload(
     if rel_path and not abs_path.is_absolute():
         abs_path = project_dir / rel_path
 
-    exists = bool(rel_path and abs_path.exists())
+    try:
+        exists = bool(rel_path and is_readable_audio_file(abs_path))
+    except OSError:
+        exists = False
     url = ""
     if exists:
         try:
@@ -6961,7 +6965,7 @@ async def freezone_audio_references(
     requester_username = ctx.requester_username or username
     user_voices = _attach_user_voice_media_urls(
         project,
-        list_user_audio_voices(requester_username),
+        await asyncio.to_thread(list_user_audio_voices, requester_username),
     )
 
     store = (
@@ -6976,7 +6980,8 @@ async def freezone_audio_references(
         if close:
             await close()
 
-    narrator = _freezone_audio_ref_payload(
+    narrator = await asyncio.to_thread(
+        _freezone_audio_ref_payload,
         username=username,
         project=project_name,
         project_id=ctx.project_id,
@@ -6987,16 +6992,21 @@ async def freezone_audio_references(
         sha256=narrator_descriptor.get("sha256", ""),
         updated_at=narrator_descriptor.get("updated_at", ""),
     )
-    character_payloads = [
-        _freezone_character_audio_refs(
-            username=username,
-            project=project_name,
-            project_id=ctx.project_id,
-            project_dir=project_dir,
-            character=character,
+    character_payloads = list(
+        await asyncio.gather(
+            *(
+                asyncio.to_thread(
+                    _freezone_character_audio_refs,
+                    username=username,
+                    project=project_name,
+                    project_id=ctx.project_id,
+                    project_dir=project_dir,
+                    character=character,
+                )
+                for character in characters
+            )
         )
-        for character in characters
-    ]
+    )
     available = [narrator] if narrator["exists"] else []
     available.extend(item for item in user_voices if item["exists"])
     for character in character_payloads:

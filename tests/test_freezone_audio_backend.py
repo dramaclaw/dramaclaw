@@ -303,6 +303,63 @@ async def test_user_custom_voice_generation_uses_requester_account(
 
 
 @pytest.mark.asyncio
+async def test_audio_references_exclude_user_voice_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(audio_node, "OUTPUT_DIR", str(tmp_path))
+    relative_path = "_account/freezone/audio/voices/fv_directory/reference.wav"
+    (tmp_path / "viewer" / relative_path).mkdir(parents=True)
+    audio_node._write_user_voice_records(
+        "viewer",
+        [{"voice_id": "fv_directory", "path": relative_path, "sha256": "cached-sha"}],
+    )
+    ctx = SimpleNamespace(
+        project_id="proj_demo",
+        requester_username="viewer",
+        state_dir=tmp_path / "state" / "owner" / "demo",
+    )
+
+    async def fake_resolve(*_args, **_kwargs):
+        return ctx, "owner", "demo", tmp_path, str(tmp_path)
+
+    class Store:
+        async def list_characters(self):
+            return []
+
+        async def close(self):
+            return None
+
+    async def fake_store(_ctx):
+        return Store()
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_resolve)
+    monkeypatch.setattr(
+        freezone_routes,
+        "make_sqlite_store_for_context",
+        fake_store,
+    )
+    monkeypatch.setattr(
+        freezone_routes,
+        "load_narrator_reference_audio_from_state_dir",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        freezone_routes,
+        "load_effective_narration_style_for_voice_from_state_dir",
+        lambda *_args, **_kwargs: "third_person",
+    )
+
+    result = await freezone_routes.freezone_audio_references(
+        "proj_demo",
+        user={"username": "viewer"},
+    )
+
+    assert result["data"]["user_voices"][0]["exists"] is False
+    assert result["data"]["available"] == []
+
+
+@pytest.mark.asyncio
 async def test_resolve_speech_voice_reports_missing_project_narrator(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
