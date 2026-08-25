@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -357,6 +358,43 @@ async def test_audio_references_exclude_user_voice_directory(
 
     assert result["data"]["user_voices"][0]["exists"] is False
     assert result["data"]["available"] == []
+
+
+@pytest.mark.asyncio
+async def test_user_voice_media_resolves_off_loop_and_hides_read_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from fastapi import HTTPException
+
+    ctx = SimpleNamespace(requester_username="viewer")
+
+    async def fake_resolve(*_args, **_kwargs):
+        return ctx, "owner", "demo", tmp_path, str(tmp_path)
+
+    event_loop_thread = threading.get_ident()
+    resolver_threads: list[int] = []
+    leaked_path = tmp_path / "private" / "account-voice.wav"
+
+    def unreadable(_username: str, _voice_id: str):
+        resolver_threads.append(threading.get_ident())
+        raise PermissionError(f"permission denied: {leaked_path}")
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_resolve)
+    monkeypatch.setattr(freezone_routes, "resolve_user_audio_voice", unreadable)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.get_freezone_audio_voice_media(
+            "proj_demo",
+            "fv_unreadable",
+            user={"username": "viewer"},
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "声线文件无法读取，请重新选择或检查文件是否完整"
+    assert str(leaked_path) not in str(exc_info.value.detail)
+    assert resolver_threads
+    assert all(thread_id != event_loop_thread for thread_id in resolver_threads)
 
 
 @pytest.mark.asyncio

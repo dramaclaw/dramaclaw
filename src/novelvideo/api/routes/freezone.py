@@ -105,6 +105,7 @@ from novelvideo.media_model_request_schema import (
 )
 from novelvideo.ports.authz import find_authz_error
 from novelvideo.freezone.audio_node import (
+    VOICE_FILE_UNREADABLE_MESSAGE,
     VoicePrerequisiteError,
     create_user_audio_voice,
     freezone_audio_eleven_music_output_path,
@@ -7080,7 +7081,9 @@ async def get_freezone_audio_voice_media(
     )
     username = ctx.requester_username if ctx is not None and ctx.requester_username else username
     try:
-        resolved = resolve_user_audio_voice(username, voice_id)
+        resolved = await asyncio.to_thread(resolve_user_audio_voice, username, voice_id)
+    except OSError as exc:
+        raise HTTPException(404, VOICE_FILE_UNREADABLE_MESSAGE) from exc
     except RuntimeError as exc:
         raise HTTPException(404, str(exc)) from exc
     return FileResponse(path=str(resolved.audio_path))
