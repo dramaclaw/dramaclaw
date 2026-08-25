@@ -115,8 +115,7 @@ export function CanvasesTab({
 
   // 我自己在这个项目里建了几张、还能不能再建。上限是产品配额，后端不拦（见
   // lib/limits.ts），所以拦截只能落在这里。
-  const myCanvasCount = countCanvasesCreatedBy(items, username);
-  const canvasLimitReached = myCanvasCount >= MAX_USER_CREATED_CANVASES_PER_PROJECT;
+  const canvasLimitReached = hasReachedCanvasCreationLimit(items, username);
 
   const showCanvasLimitNotice = () =>
     void alertDialog({
@@ -704,10 +703,16 @@ export function countCanvasesCreatedBy(
   ).length;
 }
 
+/**
+ * 还能不能再建。登录态未落地（username 还是 null）时一律放行：这时候数出来的是
+ * 匿名桶，拿它拦人会让真正的作者被自己没建过的老画布挡在门外。真超了，等 username
+ * 到位后这里自然会拦，再不济提交那一下还有一道。
+ */
 export function hasReachedCanvasCreationLimit(
   items: FreezoneCanvasSummary[],
   username?: string | null,
 ): boolean {
+  if (!username?.trim()) return false;
   return countCanvasesCreatedBy(items, username) >= MAX_USER_CREATED_CANVASES_PER_PROJECT;
 }
 

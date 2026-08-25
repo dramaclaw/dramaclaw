@@ -700,6 +700,17 @@ describe("freezone canvas creation limit", () => {
     expect(hasReachedCanvasCreationLimit(mine.slice(0, -1), "alice")).toBe(false);
   });
 
+  it("never reports the quota as reached before the username has loaded", () => {
+    // 登录态还没落地时 username 是 null，此时所有缺 creator_username 的老画布都会
+    // 归到匿名桶里。拿这个数去拦人，等于让真正的作者被自己没建过的画布挡住。
+    const orphans = Array.from({ length: MAX_USER_CREATED_CANVASES_PER_PROJECT }, (_unused, index) =>
+      myCanvas(index, null),
+    );
+
+    expect(hasReachedCanvasCreationLimit(orphans, null)).toBe(false);
+    expect(hasReachedCanvasCreationLimit(orphans, "   ")).toBe(false);
+  });
+
   it("keeps another user's quota independent", () => {
     const mine = Array.from({ length: MAX_USER_CREATED_CANVASES_PER_PROJECT }, (_unused, index) =>
       myCanvas(index),
