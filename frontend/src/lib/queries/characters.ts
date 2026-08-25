@@ -427,14 +427,7 @@ export function useCharacterIdentities(project: string, name: string) {
  * ride along with the list.
  */
 export function useIdentityOwnerIndex(project: string, enabled = true) {
-  const charactersRes = useQuery({
-    queryKey: queryKeys.characters(project),
-    queryFn: ({ signal }) =>
-      api
-        .get(p`api/v1/projects/${project}/characters`, { signal })
-        .json<OkResponse<Character[]>>(),
-    enabled: enabled && !!project,
-  });
+  const charactersRes = useCharacters(project, enabled);
 
   const characters = charactersRes.data?.data;
 

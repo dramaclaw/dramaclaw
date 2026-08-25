@@ -13,11 +13,13 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import {
+  useCharacters,
   useCreateIdentity,
   useDeleteIdentity,
   useIdentityOwnerIndex,
   useUpdateIdentity,
 } from "@/lib/queries/characters";
+import { queryKeys } from "@/lib/query-keys";
 // Shared server, not a second `setupServer()` — two listening instances dispatch
 // every request twice, which doubles the request counters these tests assert on.
 import { server } from "@/__mocks__/msw/server";
@@ -46,17 +48,22 @@ describe("useIdentityOwnerIndex", () => {
   // 100 requests on every visit to the assets page, to build a lookup table
   // that is only read when an `?type=identity&id=` deep link is present.
   it("resolves owners from the character list without per-character requests", async () => {
+    const characterUrls: URL[] = [];
     const identityPaths: string[] = [];
     server.use(
-      http.get("http://localhost:3000/api/v1/projects/demo/characters", () =>
-        HttpResponse.json({
-          ok: true,
-          data: [
-            { name: "林昭", identity_ids: ["林昭_青年", "林昭_少年"] },
-            { name: "苏清晏", identity_ids: ["苏清晏_少女"] },
-            { name: "路人", identity_ids: [] },
-          ],
-        }),
+      http.get(
+        "http://localhost:3000/api/v1/projects/demo/characters",
+        ({ request }) => {
+          characterUrls.push(new URL(request.url));
+          return HttpResponse.json({
+            ok: true,
+            data: [
+              { name: "林昭", identity_ids: ["林昭_青年", "林昭_少年"] },
+              { name: "苏清晏", identity_ids: ["苏清晏_少女"] },
+              { name: "路人", identity_ids: [] },
+            ],
+          });
+        },
       ),
       http.get(
         "http://localhost:3000/api/v1/projects/demo/characters/:name/identities",
@@ -78,6 +85,48 @@ describe("useIdentityOwnerIndex", () => {
     expect(result.current.ownerOf("不存在的身份")).toBeNull();
     // The whole point: the owner index costs the character list and nothing else.
     expect(identityPaths).toEqual([]);
+    expect(characterUrls.map((url) => url.searchParams.get("summary"))).toEqual([
+      "true",
+    ]);
+  });
+
+  it("keeps the shared character query lightweight after invalidation", async () => {
+    const summaryValues: Array<string | null> = [];
+    server.use(
+      http.get(
+        "http://localhost:3000/api/v1/projects/demo/characters",
+        ({ request }) => {
+          summaryValues.push(new URL(request.url).searchParams.get("summary"));
+          return HttpResponse.json({
+            ok: true,
+            data: [{ name: "林昭", identity_ids: ["林昭_青年"] }],
+          });
+        },
+      ),
+    );
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const stableWrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(
+      () => ({
+        characters: useCharacters("demo"),
+        index: useIdentityOwnerIndex("demo"),
+      }),
+      { wrapper: stableWrapper },
+    );
+
+    await waitFor(() => expect(result.current.characters.isSuccess).toBe(true));
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: queryKeys.characters("demo") });
+    });
+    await waitFor(() => expect(summaryValues.length).toBe(2));
+
+    expect(summaryValues).toEqual(["true", "true"]);
+    expect(result.current.index.ownerOf("林昭_青年")).toBe("林昭");
   });
 
   it("reports no owner while the character list is still loading", async () => {
