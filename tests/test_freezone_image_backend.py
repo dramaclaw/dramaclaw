@@ -126,6 +126,25 @@ class _FakeContextBeatStore:
         ]
 
 
+class _FakeAssetRevisionStore:
+    def __init__(self) -> None:
+        self.characters: list[str] = []
+        self.scenes: list[str] = []
+        self.props: list[str] = []
+
+    async def touch_character_asset(self, name: str) -> bool:
+        self.characters.append(name)
+        return True
+
+    async def touch_scene_asset(self, name: str) -> bool:
+        self.scenes.append(name)
+        return True
+
+    async def touch_prop_asset(self, name: str) -> bool:
+        self.props.append(name)
+        return True
+
+
 def _patch_freezone_project(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1821,6 +1840,97 @@ async def test_freezone_push_can_commit_beat_audio(
     target = project_dir / "audio" / "ep001" / "beat_02.mp3"
     assert target.read_bytes() == b"candidate-audio"
     assert result["data"]["target_path"] == str(target)
+
+
+@pytest.mark.parametrize(
+    ("target", "revision_bucket", "entity_name"),
+    [
+        ({"kind": "portrait", "character": "秦"}, "characters", "秦"),
+        ({"kind": "scene_master", "scene_id": "兰州拉面馆"}, "scenes", "兰州拉面馆"),
+        ({"kind": "prop_ref", "prop_id": "账单"}, "props", "账单"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_freezone_push_advances_canonical_summary_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: dict,
+    revision_bucket: str,
+    entity_name: str,
+) -> None:
+    """Freezone push and skill auto-commit share this publication boundary."""
+
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    source = project_dir / "freezone" / "_outputs" / "candidate.png"
+    _write_image(source)
+    store = _FakeAssetRevisionStore()
+
+    async def fake_make_store(_ctx):
+        return store
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "make_sqlite_store_for_context",
+        fake_make_store,
+    )
+    result = await freezone_routes.freezone_push(
+        project="proj_freezone",
+        body=PushRequest(
+            source_url="freezone/_outputs/candidate.png",
+            target=target,
+        ),
+        user={"username": "admin", "id": "owner_1"},
+    )
+
+    assert Path(result["data"]["target_path"]).is_file()
+    assert result["data"]["target_url"]
+    assert getattr(store, revision_bucket) == [entity_name]
+
+
+@pytest.mark.asyncio
+async def test_skill_auto_commit_advances_canonical_summary_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    source = project_dir / "freezone" / "_outputs" / "candidate.png"
+    _write_image(source)
+    store = _FakeAssetRevisionStore()
+
+    async def fake_make_store(_ctx):
+        return store
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "make_sqlite_store_for_context",
+        fake_make_store,
+    )
+
+    finalized = await freezone_routes._finalize_skill_run_outputs(
+        project="proj_freezone",
+        project_dir=project_dir,
+        ctx=_project_ctx(tmp_path),
+        metadata={
+            "run_id": "run_auto_commit",
+            "skill_id": "skill_demo",
+            "skill_node_id": "skill_node",
+            "canvas_id": "canvas_demo",
+            "status": "running",
+        },
+        outputs=[
+            {
+                "role": "scene_master",
+                "image_url": "freezone/_outputs/candidate.png",
+                "pushable": True,
+                "auto_commit": True,
+                "slot_target": {"kind": "scene_master", "scene_id": "兰州拉面馆"},
+            }
+        ],
+        user={"username": "admin", "id": "owner_1"},
+    )
+
+    assert finalized[0]["committed"] is True
+    assert store.scenes == ["兰州拉面馆"]
 
 
 def test_resolve_outpaint_aspect_ratio_supports_original(tmp_path: Path) -> None:

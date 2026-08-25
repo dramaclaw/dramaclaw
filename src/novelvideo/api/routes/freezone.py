@@ -237,6 +237,7 @@ from novelvideo.freezone.skill_registry import (
     list_skills,
 )
 from novelvideo.freezone.slots import (
+    SCENE_ASSET_KINDS,
     IdentityTarget,
     PushTarget,
     backup_slot_if_exists,
@@ -4218,7 +4219,30 @@ def _parse_skill_output_push_target(output: dict) -> PushTarget | None:
         return None
 
 
-def _copy_skill_output_to_slot(
+async def _touch_canonical_slot_revision(
+    ctx: ProjectContext,
+    target: PushTarget,
+) -> None:
+    """Advance the owning entity revision after a canonical asset write.
+
+    Canonical paths remain a PathResolver convention. The database timestamp
+    is only the cache-busting revision used by lightweight asset summaries.
+    Keeping this beside the shared Freezone slot writer prevents push and skill
+    auto-commit paths from publishing new bytes under an unchanged URL.
+    """
+
+    if target.kind not in {"portrait", "prop_ref", *SCENE_ASSET_KINDS}:
+        return
+    store = await make_sqlite_store_for_context(ctx)
+    if target.kind == "portrait":
+        await store.touch_character_asset(target.character)
+    elif target.kind == "prop_ref":
+        await store.touch_prop_asset(target.prop_id)
+    else:
+        await store.touch_scene_asset(target.scene_id)
+
+
+async def _copy_skill_output_to_slot(
     *,
     project_dir: Path,
     ctx: ProjectContext,
@@ -4251,6 +4275,7 @@ def _copy_skill_output_to_slot(
         image_adaptation = {"adapted": False}
         shutil.copy2(source_path, target_path)
     sync_slot_after_write(project_dir, target, target_path)
+    await _touch_canonical_slot_revision(ctx, target)
     rel = target_path.relative_to(project_dir).as_posix()
     return (
         target_path,
@@ -4280,7 +4305,7 @@ async def _finalize_skill_run_outputs(
                 source_path = resolve_static_url_to_path(image_url, project_dir)
                 if not source_path.exists() or not source_path.is_file():
                     raise FileNotFoundError(source_path)
-                target_path, target_url, backup, image_adaptation = _copy_skill_output_to_slot(
+                target_path, target_url, backup, image_adaptation = await _copy_skill_output_to_slot(
                     project_dir=project_dir,
                     ctx=ctx,
                     source_path=source_path,
@@ -13242,33 +13267,12 @@ async def freezone_push(project: str, body: PushRequest, user: dict = Depends(ge
         raise HTTPException(400, str(exc)) from exc
     if not source_path.exists():
         raise HTTPException(404, f"source file not found: {source_path}")
-    validate_source_for_slot(source_path, body.target)
-
-    target = slot_target_path(project_dir, body.target)
-    if body.target.kind == "scene_3gs_custom_scene":
-        target = target.with_suffix(source_path.suffix.lower())
-    target.parent.mkdir(parents=True, exist_ok=True)
-    same_file = False
-    try:
-        same_file = source_path.resolve() == target.resolve()
-    except OSError:
-        same_file = False
-    should_match_existing_size = (
-        target.exists()
-        and not same_file
-        and body.target.kind in {"frame", "sketch", "director_render"}
-        and source_path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
-        and target.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+    target, target_url, backup, image_adaptation = await _copy_skill_output_to_slot(
+        project_dir=project_dir,
+        ctx=ctx,
+        source_path=source_path,
+        target=body.target,
     )
-    backup = None if same_file else backup_slot_if_exists(target)
-    if same_file:
-        image_adaptation = {"adapted": False, "same_file": True}
-    elif should_match_existing_size:
-        image_adaptation = _copy_image_matching_existing_target(source_path, target)
-    else:
-        image_adaptation = {"adapted": False}
-        shutil.copy2(source_path, target)
-    sync_slot_after_write(project_dir, body.target, target)
     if body.target.kind == "selected_background":
         await _persist_freezone_selected_background_scene_ref(
             ctx=ctx,
@@ -13327,7 +13331,6 @@ async def freezone_push(project: str, body: PushRequest, user: dict = Depends(ge
         except Exception as exc:
             logger.warning("identity cognee sync best-effort failed: %s", exc)
 
-    rel = target.relative_to(project_dir).as_posix()
     _append_canvas_event(
         project_dir=project_dir,
         project_id=project,
@@ -13338,7 +13341,7 @@ async def freezone_push(project: str, body: PushRequest, user: dict = Depends(ge
             "source_url": body.source_url,
             "target": body.target.model_dump(mode="json"),
             "target_path": str(target),
-            "target_url": make_static_url_for_context(ctx, rel, local_path=target),
+            "target_url": target_url,
             "backup": str(backup) if backup else None,
             "stale_marked": stale_marked,
             "affected_count": len(impacted),
@@ -13348,7 +13351,7 @@ async def freezone_push(project: str, body: PushRequest, user: dict = Depends(ge
         "ok": True,
         "data": {
             "target_path": str(target),
-            "target_url": make_static_url_for_context(ctx, rel, local_path=target),
+            "target_url": target_url,
             "backup": str(backup) if backup else None,
             "image_adaptation": image_adaptation,
             "stale_marked": stale_marked,

@@ -1156,6 +1156,8 @@ async def restore_character_asset_history(
     backup = _backup_character_asset(target)
     shutil.copy2(source, target)
     await _sync_restored_identity_asset(store, name, identity, kind, target)
+    if kind == "portrait":
+        await store.touch_character_asset(name)
 
     return {
         "ok": True,

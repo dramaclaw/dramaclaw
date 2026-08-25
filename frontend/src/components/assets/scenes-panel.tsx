@@ -1084,6 +1084,15 @@ interface SceneGroup {
   scenes: SceneAsset[];
 }
 
+export function selectAuthoritativeSceneDetails(
+  summaryScenes: SceneAsset[],
+  details: SceneAsset[] | undefined,
+  detailSucceeded: boolean,
+): SceneAsset[] | null {
+  if (!detailSucceeded) return summaryScenes;
+  return details?.length ? details : null;
+}
+
 const SCENE_GROUP_SELECTION_STORAGE_KEY_PREFIX = "supertale-scene-group:";
 
 function sceneGroupSelectionStorageKey(project: string): string {
@@ -1301,15 +1310,20 @@ export function ScenesPanel({
     [selectedSummaryGroup],
   );
   const selectedSceneDetails = useSceneDetails(project, selectedSceneNames);
-  const selectedGroup = selectedSummaryGroup
-    ? {
-        baseName: selectedSummaryGroup.baseName,
-        scenes:
-          selectedSceneDetails.data?.data?.length
-            ? selectedSceneDetails.data.data
-            : selectedSummaryGroup.scenes,
-      }
+  const selectedSceneAssets = selectedSummaryGroup
+    ? selectAuthoritativeSceneDetails(
+        selectedSummaryGroup.scenes,
+        selectedSceneDetails.data?.data,
+        selectedSceneDetails.isSuccess,
+      )
     : null;
+  const selectedGroup =
+    selectedSummaryGroup && selectedSceneAssets
+      ? {
+          baseName: selectedSummaryGroup.baseName,
+          scenes: selectedSceneAssets,
+        }
+      : null;
   const selectedBaseScene =
     selectedGroup?.scenes.find((scene) => scene.name === selectedGroup.baseName) ??
     selectedGroup?.scenes[0] ??
