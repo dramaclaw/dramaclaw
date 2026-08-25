@@ -131,6 +131,7 @@ class _FakeAssetRevisionStore:
         self.characters: list[str] = []
         self.scenes: list[str] = []
         self.props: list[str] = []
+        self.closed = False
 
     async def touch_character_asset(self, name: str) -> bool:
         self.characters.append(name)
@@ -143,6 +144,9 @@ class _FakeAssetRevisionStore:
     async def touch_prop_asset(self, name: str) -> bool:
         self.props.append(name)
         return True
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 def _patch_freezone_project(
@@ -1865,11 +1869,16 @@ async def test_freezone_push_advances_canonical_summary_revision(
     _write_image(source)
     store = _FakeAssetRevisionStore()
 
-    async def fake_make_store(_ctx):
+    from novelvideo.api import deps
+
+    scope_calls: list[bool] = []
+
+    async def fake_make_store(_ctx, *, load_graph_state=True):
+        scope_calls.append(load_graph_state)
         return store
 
     monkeypatch.setattr(
-        freezone_routes,
+        deps,
         "make_sqlite_store_for_context",
         fake_make_store,
     )
@@ -1885,6 +1894,8 @@ async def test_freezone_push_advances_canonical_summary_revision(
     assert Path(result["data"]["target_path"]).is_file()
     assert result["data"]["target_url"]
     assert getattr(store, revision_bucket) == [entity_name]
+    assert scope_calls == [False]
+    assert store.closed is True
 
 
 @pytest.mark.asyncio
@@ -1897,11 +1908,16 @@ async def test_skill_auto_commit_advances_canonical_summary_revision(
     _write_image(source)
     store = _FakeAssetRevisionStore()
 
-    async def fake_make_store(_ctx):
+    from novelvideo.api import deps
+
+    scope_calls: list[bool] = []
+
+    async def fake_make_store(_ctx, *, load_graph_state=True):
+        scope_calls.append(load_graph_state)
         return store
 
     monkeypatch.setattr(
-        freezone_routes,
+        deps,
         "make_sqlite_store_for_context",
         fake_make_store,
     )
@@ -1931,6 +1947,8 @@ async def test_skill_auto_commit_advances_canonical_summary_revision(
 
     assert finalized[0]["committed"] is True
     assert store.scenes == ["兰州拉面馆"]
+    assert scope_calls == [False]
+    assert store.closed is True
 
 
 def test_resolve_outpaint_aspect_ratio_supports_original(tmp_path: Path) -> None:

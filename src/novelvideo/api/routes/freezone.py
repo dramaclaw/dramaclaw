@@ -33,6 +33,7 @@ from novelvideo.api.deps import (
     make_sqlite_store,
     make_sqlite_store_for_context,
     make_static_url_for_context,
+    sqlite_store_for_context_scope,
 )
 from novelvideo.api.schemas import (
     CanvasPayload,
@@ -4233,13 +4234,13 @@ async def _touch_canonical_slot_revision(
 
     if target.kind not in {"portrait", "prop_ref", *SCENE_ASSET_KINDS}:
         return
-    store = await make_sqlite_store_for_context(ctx)
-    if target.kind == "portrait":
-        await store.touch_character_asset(target.character)
-    elif target.kind == "prop_ref":
-        await store.touch_prop_asset(target.prop_id)
-    else:
-        await store.touch_scene_asset(target.scene_id)
+    async with sqlite_store_for_context_scope(ctx, load_graph_state=False) as store:
+        if target.kind == "portrait":
+            await store.touch_character_asset(target.character)
+        elif target.kind == "prop_ref":
+            await store.touch_prop_asset(target.prop_id)
+        else:
+            await store.touch_scene_asset(target.scene_id)
 
 
 async def _copy_skill_output_to_slot(

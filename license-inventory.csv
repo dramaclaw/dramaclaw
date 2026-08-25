@@ -288,6 +288,7 @@ frontend/src/__tests__/components/assets/props-panel.ce.test.tsx,Elastic-2.0,202
 frontend/src/__tests__/components/assets/scene-asset-card.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/assets/scene-environment-prompt.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/assets/scenes-panel-build-visibility.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/components/assets/scenes-panel-detail-authority.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/confirm-dialog-host.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/credit-cost-inline.ce.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/credit-promotion-coverage.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
