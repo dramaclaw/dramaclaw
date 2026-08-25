@@ -120,7 +120,9 @@ async def test_hermes_session_load_result_keeps_resumed_session(tmp_path, monkey
 
 
 @pytest.mark.anyio
-async def test_hermes_thread_serializes_concurrent_prompt_streams(tmp_path, monkeypatch):
+async def test_hermes_thread_serializes_concurrent_prompt_streams(
+    tmp_path, monkeypatch
+):
     thread = hermes_sdk.HermesSdkThread(
         cli_path=tmp_path / "hermes",
         cwd=tmp_path,
@@ -169,7 +171,9 @@ async def test_hermes_thread_serializes_concurrent_prompt_streams(tmp_path, monk
 
 def test_completion_notice_appends_without_replacing_existing_reply():
     existing = "我已经检查完前置条件，下一步会启动第 1 个任务。"
-    notice = "当前任务已开始处理。请稍后让我查看当前任务进度，或在任务完成后再继续下一步。"
+    notice = (
+        "当前任务已开始处理。请稍后让我查看当前任务进度，或在任务完成后再继续下一步。"
+    )
 
     merged = chat_service._completion_text_or_existing(notice, existing)
 
@@ -342,7 +346,9 @@ def test_hermes_tool_call_update_attaches_recent_freezone_structured_result(tmp_
                     "sessionUpdate": "tool_call_update",
                     "toolCallId": "tc-list",
                     "status": "completed",
-                    "content": {"text": "freezone_get_workflow_skill result\n- **count:** 1"},
+                    "content": {
+                        "text": "freezone_get_workflow_skill result\n- **count:** 1"
+                    },
                 }
             },
         },
@@ -354,7 +360,9 @@ def test_hermes_tool_call_update_attaches_recent_freezone_structured_result(tmp_
     assert result.type == "tool_updated"
     assert result.name == "freezone_get_workflow_skill"
     assert result.status == "completed"
-    assert result.output == {"text": "freezone_get_workflow_skill result\n- **count:** 1"}
+    assert result.output == {
+        "text": "freezone_get_workflow_skill result\n- **count:** 1"
+    }
     assert result.structured == {"ok": True, "skills": [{"id": "pixar-ip-brand-ad"}]}
 
 
@@ -373,7 +381,11 @@ def test_anonymous_hermes_tool_call_update_is_not_user_visible():
 
 def test_hermes_lifecycle_tool_updates_are_not_user_visible():
     events = [
-        SimpleNamespace(name="freezone_get_workflow_skill", text="", raw={"sessionUpdate": "tool_call"}),
+        SimpleNamespace(
+            name="freezone_get_workflow_skill",
+            text="",
+            raw={"sessionUpdate": "tool_call"},
+        ),
         SimpleNamespace(
             name="freezone_get_workflow_skill",
             text="completed",
@@ -511,12 +523,16 @@ def test_backend_api_get_ignores_stale_legacy_supertale_url(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_append_chat_notification_persists_project_assistant_message(monkeypatch, tmp_path):
+async def test_append_chat_notification_persists_project_assistant_message(
+    monkeypatch, tmp_path
+):
     seen = {}
 
     async def fake_project_context(user, scope):
         seen["scope"] = scope
-        return SimpleNamespace(output_dir=tmp_path / "out", state_dir=tmp_path / "state")
+        return SimpleNamespace(
+            output_dir=tmp_path / "out", state_dir=tmp_path / "state"
+        )
 
     def fake_add_assistant_message(
         username,
@@ -654,7 +670,10 @@ async def test_fallback_display_prefers_api_project_id(monkeypatch):
     assert len(specs) == 1
     root = specs[0]["root"]
     first_child = specs[0]["elements"][root]["children"][0]
-    assert specs[0]["elements"][first_child]["props"]["src"] == "/static/projects/api-project/sketch.png?v=1"
+    assert (
+        specs[0]["elements"][first_child]["props"]["src"]
+        == "/static/projects/api-project/sketch.png?v=1"
+    )
 
 
 @pytest.mark.anyio
@@ -695,31 +714,29 @@ async def test_fallback_display_groups_all_final_videos_into_one_spec(monkeypatc
     ]
 
 
-def test_codex_sessions_are_project_scoped_and_backend_independent(monkeypatch, tmp_path):
+def test_codex_sessions_are_project_scoped_and_backend_independent(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
 
     chat_service._set_claude_session_id("admin", "project-a", "claude-session-1")
-    assert chat_service._get_claude_session_id("admin", "project-b") == "claude-session-1"
+    assert (
+        chat_service._get_claude_session_id("admin", "project-b") == "claude-session-1"
+    )
     assert chat_service._get_codex_thread_id("admin", "project-b") is None
 
     chat_service._set_codex_thread_id("admin", "project-a", "codex-thread-1")
     assert chat_service._get_claude_session_id("admin", "project-b") == (
         "claude-session-1"
     )
-    assert chat_service._get_codex_thread_id("admin", "project-a") == (
-        "codex-thread-1"
-    )
+    assert chat_service._get_codex_thread_id("admin", "project-a") == ("codex-thread-1")
     assert chat_service._get_codex_thread_id("admin", "project-b") is None
 
     chat_service._set_codex_thread_id("admin", "project-b", "codex-thread-2")
     chat_service._set_codex_thread_id("admin", "", "codex-home-thread")
-    assert chat_service._get_codex_thread_id("admin", "project-a") == (
-        "codex-thread-1"
-    )
-    assert chat_service._get_codex_thread_id("admin", "project-b") == (
-        "codex-thread-2"
-    )
+    assert chat_service._get_codex_thread_id("admin", "project-a") == ("codex-thread-1")
+    assert chat_service._get_codex_thread_id("admin", "project-b") == ("codex-thread-2")
     assert chat_service._get_codex_thread_id("admin", "") == "codex-home-thread"
 
     state_file = tmp_path / "state" / "admin" / "agent_sessions.json"
@@ -753,9 +770,7 @@ def test_codex_freezone_threads_are_canvas_and_agent_scoped(monkeypatch, tmp_pat
         "agent_profile": "freezone:agent-1",
         "canvas_id": "canvas-a",
     }
-    chat_service._set_codex_thread_id(
-        "admin", "project-a", "thread-canvas-a", **scope
-    )
+    chat_service._set_codex_thread_id("admin", "project-a", "thread-canvas-a", **scope)
     chat_service._set_codex_thread_id(
         "admin",
         "project-a",
@@ -804,17 +819,54 @@ def test_codex_freezone_threads_are_canvas_and_agent_scoped(monkeypatch, tmp_pat
         / "codex"
         / "sessions.json"
     )
+    protocol = chat_service._CODEX_FREEZONE_THREAD_PROTOCOL_VERSION
     assert json.loads(state_file.read_text(encoding="utf-8")) == {
-        '["freezone:agent-1","project","project-a","canvas-a"]': (
+        f'["freezone:agent-1","project","project-a","canvas-a","{protocol}"]': (
             "thread-canvas-a"
         ),
-        '["freezone:agent-1","project","project-a","canvas-b"]': (
+        f'["freezone:agent-1","project","project-a","canvas-b","{protocol}"]': (
             "thread-canvas-b"
         ),
-        '["freezone:agent-2","project","project-a","canvas-a"]': (
+        f'["freezone:agent-2","project","project-a","canvas-a","{protocol}"]': (
             "thread-agent-2"
         ),
     }
+
+
+def test_codex_freezone_protocol_upgrade_does_not_resume_legacy_thread(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    state_file = (
+        tmp_path
+        / "state"
+        / "admin"
+        / "project-a"
+        / "agents"
+        / "codex"
+        / "sessions.json"
+    )
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text(
+        json.dumps(
+            {
+                '["freezone:main","project","project-a","canvas-a"]': (
+                    "legacy-thread"
+                )
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        chat_service._get_codex_thread_id(
+            "admin",
+            "project-a",
+            agent_profile="freezone:main",
+            canvas_id="canvas-a",
+        )
+        is None
+    )
 
 
 def test_codex_main_thread_key_stays_backward_compatible():
@@ -1064,8 +1116,20 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "[FREEZONE_CANVAS_ASSISTANT]" in captured["prompt"]
         assert "[FREEZONE_CANVAS_CONTEXT]" in captured["prompt"]
         assert "canvas_id: canvas-a" in captured["prompt"]
+        assert "references/custom-topology.md" in captured["prompt"]
+        assert "Do not use freezone_emit_canvas_command for a workflow" in captured["prompt"]
+        developer_instructions = chat_service._codex_developer_instructions(tool_mode)
+        assert "concrete tools currently listed" in developer_instructions
+        assert "dramaclaw_tool_search/describe/call" in developer_instructions
+        assert "do not look for" in developer_instructions
+        assert "custom-topology reference" in developer_instructions
+        assert "freezone_create_workflow_graph once" in developer_instructions
     else:
         assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
+        assert (
+            "search with dramaclaw_tool_search"
+            in chat_service._codex_developer_instructions(tool_mode)
+        )
     assert [event["type"] for event in events] == [
         "thread_started",
         "turn_started",
@@ -1095,6 +1159,135 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
     assert all("raw" not in event for event in events)
     assert all("method" not in event for event in events)
     assert events[-1]["type"] == "done"
+
+
+def test_codex_freezone_write_request_detection_ignores_injected_context_and_questions():
+    assert chat_service._freezone_canvas_write_requested("创建一个图片节点") is True
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "创建一个图片节点\n[SUPERTALE_CANVAS_ROUTING] canvas edits"
+        )
+        is True
+    )
+    assert chat_service._freezone_canvas_write_requested("怎么创建图片节点？") is False
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "生成下这个\n[SUPERTALE_CANVAS_NODE_REFERENCES] node_id: image-a"
+        )
+        is True
+    )
+    assert chat_service._freezone_canvas_write_requested("清空一下") is True
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "你好\n[SUPERTALE_CANVAS_ROUTING] For canvas edits, use Freezone tools"
+        )
+        is False
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("with_successful_tool", [False, True])
+async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
+    monkeypatch,
+    tmp_path,
+    with_successful_tool,
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    events = []
+    revoked = []
+
+    async def fake_authorize(**_kwargs):
+        return None
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, token):
+            revoked.append(token)
+
+    class FakeThread:
+        async def stream(self, _prompt):
+            yield SimpleNamespace(
+                type="thread_started",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+            )
+            if with_successful_tool:
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_emit_canvas_command",
+                    name="dramaclaw.freezone_emit_canvas_command",
+                    call_id="call-1",
+                    status="completed",
+                    input={"commands": [{"type": "create_node"}]},
+                    output={
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(
+                                    {"ok": True, "canvas_apply_status": "applied"}
+                                ),
+                            }
+                        ]
+                    },
+                    error=None,
+                    structured=None,
+                )
+            yield SimpleNamespace(
+                type="assistant_delta", text="好的，已创建一个图片节点。"
+            )
+            yield SimpleNamespace(
+                type="complete",
+                thread_id="codex-thread",
+                text="",
+            )
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
+    monkeypatch.setattr(
+        chat_service, "_create_page_agent_session_token", fake_create_token
+    )
+    monkeypatch.setattr(
+        chat_service, "_build_codex_thread", lambda *_args, **_kwargs: FakeThread()
+    )
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    async def collect_event(event):
+        events.append(event)
+
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="main",
+        state_dir=str(tmp_path / "state" / "admin" / "project-a"),
+    )
+    result = await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        "创建一个图片节点",
+        collect_event,
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+        store_scope=scope,
+        turn_id="business-turn",
+        route_prompt="创建一个图片节点",
+    )
+
+    assistant_deltas = [
+        event["text"] for event in events if event["type"] == "assistant_delta"
+    ]
+    if with_successful_tool:
+        assert result["content"] == "好的，已创建一个图片节点。"
+        assert assistant_deltas == ["好的，已创建一个图片节点。"]
+    else:
+        assert "已创建" not in result["content"]
+        assert result["content"] == "画布操作未完成：本轮没有执行画布写入，请重试。"
+        assert assistant_deltas == [result["content"]]
+    assert revoked == ["agent-token"]
 
 
 @pytest.mark.asyncio
@@ -1209,6 +1402,9 @@ async def test_codex_turn_token_files_are_unique_and_cleanup_is_turn_local(
 def test_user_agent_workspace_is_not_project_workspace(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv(
+        "DRAMACLAW_CODEX_HOME", str(tmp_path / "state" / ".codex-app-server")
+    )
 
     chat_service.ensure_user_claude_workspace("admin", "project-a")
     codex_workspace, codex_home = chat_service.ensure_user_codex_workspace(
@@ -1234,6 +1430,20 @@ def test_user_agent_workspace_is_not_project_workspace(monkeypatch, tmp_path):
     assert freezone_home == codex_home
     assert (codex_workspace / ".agents" / "skills").is_dir()
     assert (freezone_workspace / ".agents" / "skills").is_dir()
+    assert (
+        codex_workspace
+        / ".agents"
+        / "skills"
+        / "dramaclaw-workflows"
+        / "SKILL.md"
+    ).is_file()
+    assert (
+        freezone_workspace
+        / ".agents"
+        / "skills"
+        / "dramaclaw-workflows"
+        / "SKILL.md"
+    ).is_file()
     assert codex_home.is_dir()
 
     project_workspace = Path(tmp_path / "output" / "admin" / "project-a")
@@ -1250,11 +1460,30 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_API_URL",
         "DRAMACLAW_AGENT_TOKEN_FILE",
         "DRAMACLAW_CANVAS_ID",
+        "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",
+        "DRAMACLAW_CHAT_SURFACE",
+        "DRAMACLAW_EXTERNAL_MCP",
+        "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
         "DRAMACLAW_AGENT_PROFILE",
         "DRAMACLAW_PROJECT_ID",
+        "DRAMACLAW_SKILLS_DIR",
         "DRAMACLAW_TOOL_MODE",
         "DRAMACLAW_USERNAME",
     ]
+
+
+def test_freezone_adds_independent_workflow_mcp_without_changing_default():
+    default_servers = chat_service._dramaclaw_mcp_servers()
+    freezone_servers = chat_service._dramaclaw_mcp_servers("freezone_canvas")
+
+    assert set(default_servers) == {"dramaclaw"}
+    assert freezone_servers["dramaclaw"] == default_servers["dramaclaw"]
+    assert freezone_servers["dramaclaw_workflows"] == {
+        "type": "stdio",
+        "command": __import__("sys").executable,
+        "args": ["-m", "novelvideo.chat.workflow_mcp"],
+        "env_vars": ["DRAMACLAW_USERNAME"],
+    }
 
 
 def test_chat_agent_api_url_defaults_to_rest_listener(monkeypatch):
@@ -1271,17 +1500,24 @@ def test_chat_agent_api_url_defaults_to_rest_listener(monkeypatch):
 
 
 def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
-    overrides = chat_service._codex_mcp_config_overrides(chat_service._dramaclaw_mcp_servers())
+    overrides = chat_service._codex_mcp_config_overrides(
+        chat_service._dramaclaw_mcp_servers()
+    )
 
     expected_command = json.dumps(__import__("sys").executable, ensure_ascii=False)
     assert f"mcp_servers.dramaclaw.command={expected_command}" in overrides
-    assert 'mcp_servers.dramaclaw.args=["-m","novelvideo.chat.dramaclaw_mcp"]' in overrides
+    assert (
+        'mcp_servers.dramaclaw.args=["-m","novelvideo.chat.dramaclaw_mcp"]' in overrides
+    )
     assert (
         'mcp_servers.dramaclaw.env_vars=["DRAMACLAW_API_URL",'
         '"DRAMACLAW_AGENT_TOKEN_FILE","DRAMACLAW_CANVAS_ID",'
+        '"DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR","DRAMACLAW_CHAT_SURFACE",'
+        '"DRAMACLAW_EXTERNAL_MCP",'
+        '"DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",'
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
-        '"DRAMACLAW_TOOL_MODE","DRAMACLAW_USERNAME"]'
-        in overrides
+        '"DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
+        '"DRAMACLAW_USERNAME"]' in overrides
     )
     assert "mcp_servers.dramaclaw.required=true" in overrides
     assert 'mcp_servers.dramaclaw.default_tools_approval_mode="approve"' in overrides
@@ -1342,6 +1578,31 @@ def test_codex_client_carries_freezone_scope_into_mcp_process(tmp_path):
     }
 
 
+def test_codex_client_binds_declared_env_for_independent_mcp(tmp_path):
+    overrides = chat_service._codex_mcp_config_overrides(
+        chat_service._dramaclaw_mcp_servers("freezone_canvas")
+    )
+    client = backend_sdk.CodexClient(
+        codex_bin=Path("/usr/local/bin/codex"),
+        cwd=tmp_path,
+        env={
+            "DRAMACLAW_USERNAME": "agent-a",
+            "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+        },
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions="Use workflow MCP.",
+        config_overrides=overrides,
+    )
+
+    thread = client.thread_start()
+
+    assert thread._thread_config["mcp_servers.dramaclaw_workflows.env"] == {
+        "DRAMACLAW_USERNAME": "agent-a"
+    }
+    assert "mcp_servers.dramaclaw_workflows.env_vars" not in thread._thread_config
+
+
 def test_codex_client_keeps_gateway_credentials_in_turn_metadata(tmp_path):
     mcp_overrides = chat_service._codex_mcp_config_overrides(
         chat_service._dramaclaw_mcp_servers()
@@ -1387,7 +1648,7 @@ def test_codex_gateway_overrides_use_responses_without_embedding_secret():
     )
     assert 'model_providers.dramaclaw_gateway.wire_api="responses"' in overrides
     assert (
-        'model_providers.dramaclaw_gateway.experimental_bearer_token='
+        "model_providers.dramaclaw_gateway.experimental_bearer_token="
         '"dramaclaw-codex-per-turn-placeholder"' in overrides
     )
     assert "features.apps=false" in overrides
@@ -1406,6 +1667,9 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DRAMACLAW_CODEX_HOME", str(tmp_path / "state" / ".codex-app-server")
+    )
     monkeypatch.setattr(
         "novelvideo.chat.hermes_workspace.effective_gateway_credentials",
         lambda: ("secret-value", "https://gateway.example/v1"),
@@ -1425,15 +1689,16 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     assert env["SUPERTALE_AGENT_SCOPE"] == "project"
     assert env["DRAMACLAW_AGENT_PROFILE"] == "main"
     assert env["DRAMACLAW_TOOL_MODE"] == "default"
+    assert env["DRAMACLAW_SKILLS_DIR"].endswith(
+        "/agents/codex/workspaces/main-0d6e4079e367/.agents/skills"
+    )
     assert "DRAMACLAW_AGENT_TOKEN" not in env
     assert env["DRAMACLAW_AGENT_TOKEN_FILE"] == str(project_state / "turn.token")
     assert "DRAMACLAW_CANVAS_ID" not in env
     assert "DRAMACLAW_CODEX_GATEWAY_API_KEY" not in env
     assert "NEWAPI_API_KEY" not in env
     assert "OPENAI_API_KEY" not in env
-    assert env["DRAMACLAW_CODEX_GATEWAY_BASE_URL"] == (
-        "https://gateway.example/v1"
-    )
+    assert env["DRAMACLAW_CODEX_GATEWAY_BASE_URL"] == ("https://gateway.example/v1")
 
     freezone_env = chat_service._build_codex_env(
         "admin",
@@ -1447,12 +1712,36 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     assert freezone_env["DRAMACLAW_TOOL_MODE"] == "freezone_canvas"
     assert freezone_env["DRAMACLAW_CANVAS_ID"] == "canvas-a"
     assert freezone_env["DRAMACLAW_AGENT_PROFILE"] == "freezone:agent-2"
+    assert freezone_env["DRAMACLAW_EXTERNAL_MCP"] == "1"
+    assert freezone_env["DRAMACLAW_MCP_DIRECT_CANVAS_APPLY"] == "0"
+    assert freezone_env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"].endswith(
+        "supertale_canvas_command_bridge/freezone_agent-2"
+    )
+
+
+def test_codex_freezone_env_fails_closed_when_canvas_bridge_is_unavailable(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        "novelvideo.chat.hermes_workspace.ensure_user_hermes_workspace",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("bridge unavailable")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="bridge unavailable"):
+        chat_service._build_codex_env(
+            "admin",
+            "project-a",
+            agent_profile="freezone:agent-2",
+            tool_mode="freezone_canvas",
+            canvas_id="canvas-a",
+        )
 
 
 def test_codex_turn_gateway_credentials_reject_foreign_origin(monkeypatch):
-    monkeypatch.setattr(
-        "novelvideo.shared.runtime_env.is_ce_effective", lambda: False
-    )
+    monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: False)
     monkeypatch.setattr(
         "novelvideo.chat.hermes_workspace.effective_gateway_credentials",
         lambda: ("node-key", "https://gateway.example/v1"),
@@ -1471,9 +1760,7 @@ def test_codex_turn_gateway_credentials_reject_foreign_origin(monkeypatch):
 
 
 def test_codex_turn_gateway_credentials_use_authorized_key(monkeypatch):
-    monkeypatch.setattr(
-        "novelvideo.shared.runtime_env.is_ce_effective", lambda: False
-    )
+    monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: False)
     monkeypatch.setattr(
         "novelvideo.chat.hermes_workspace.effective_gateway_credentials",
         lambda: ("node-key", "https://gateway.example/v1"),
@@ -1492,9 +1779,7 @@ def test_codex_turn_gateway_credentials_use_authorized_key(monkeypatch):
 
 
 def test_ce_codex_turn_gateway_credentials_use_current_sqlite_config(monkeypatch):
-    monkeypatch.setattr(
-        "novelvideo.shared.runtime_env.is_ce_effective", lambda: True
-    )
+    monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: True)
     monkeypatch.setattr(
         "novelvideo.chat.hermes_workspace.effective_gateway_credentials",
         lambda: ("sqlite-key", "https://ce-gateway.example/v1"),
@@ -1539,18 +1824,14 @@ def test_codex_node_runtime_does_not_inherit_project_authority():
 
 
 def test_codex_model_defaults_to_gateway_alias(monkeypatch):
-    monkeypatch.setattr(
-        "novelvideo.shared.runtime_env.is_ce_effective", lambda: False
-    )
+    monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: False)
     monkeypatch.delenv("CODEX_MODEL", raising=False)
 
     assert chat_service._codex_model() == "DC-codex-agent-LLM"
 
 
 def test_ce_codex_model_follows_sqlite_brainclaw_mode(monkeypatch):
-    monkeypatch.setattr(
-        "novelvideo.shared.runtime_env.is_ce_effective", lambda: True
-    )
+    monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: True)
     monkeypatch.setattr(
         "novelvideo.model_gateway_settings.get_effective_llm_config",
         lambda: SimpleNamespace(is_brainclaw=True),
@@ -1561,9 +1842,7 @@ def test_ce_codex_model_follows_sqlite_brainclaw_mode(monkeypatch):
 
 
 def test_ce_codex_model_keeps_dc_alias_in_sqlite_advanced_mode(monkeypatch):
-    monkeypatch.setattr(
-        "novelvideo.shared.runtime_env.is_ce_effective", lambda: True
-    )
+    monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: True)
     monkeypatch.setattr(
         "novelvideo.model_gateway_settings.get_effective_llm_config",
         lambda: SimpleNamespace(is_brainclaw=False),
@@ -1574,9 +1853,7 @@ def test_ce_codex_model_keeps_dc_alias_in_sqlite_advanced_mode(monkeypatch):
 
 
 def test_ee_codex_model_uses_environment(monkeypatch):
-    monkeypatch.setattr(
-        "novelvideo.shared.runtime_env.is_ce_effective", lambda: False
-    )
+    monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: False)
     monkeypatch.setenv("CODEX_MODEL", "DC-ee-codex-LLM")
 
     assert chat_service._codex_model() == "DC-ee-codex-LLM"
@@ -1717,9 +1994,7 @@ async def test_disconnect_interrupts_only_its_exact_codex_turn(monkeypatch):
         runtime_ids={"thread_id": "thread-a", "turn_id": "turn-a"},
     )
 
-    assert calls == [
-        ("alice", "project-a", "thread-a", "turn-a", "codex")
-    ]
+    assert calls == [("alice", "project-a", "thread-a", "turn-a", "codex")]
 
 
 @pytest.mark.asyncio
@@ -1815,8 +2090,12 @@ def test_freezone_chat_run_lock_is_agent_scoped(monkeypatch, tmp_path):
 
     first_lock_id = chat_service._acquire_chat_run_lock("admin", first_lock_project)
     try:
-        second_lock_id = chat_service._acquire_chat_run_lock("admin", second_lock_project)
-        chat_service._release_chat_run_lock("admin", second_lock_project, second_lock_id)
+        second_lock_id = chat_service._acquire_chat_run_lock(
+            "admin", second_lock_project
+        )
+        chat_service._release_chat_run_lock(
+            "admin", second_lock_project, second_lock_id
+        )
     finally:
         chat_service._release_chat_run_lock("admin", first_lock_project, first_lock_id)
 
@@ -1930,13 +2209,15 @@ def test_chat_run_lock_heartbeat_refreshes_updated_at(monkeypatch, tmp_path):
         atomic_writes.append((path, payload))
         original_atomic_write(path, payload)
 
-    monkeypatch.setattr(chat_service, "_atomic_write_chat_run_lock_file", spy_atomic_write)
+    monkeypatch.setattr(
+        chat_service, "_atomic_write_chat_run_lock_file", spy_atomic_write
+    )
 
     lock_id = chat_service._acquire_chat_run_lock("admin", "project-a")
     lock_path = chat_service._chat_run_lock_path("admin", "project-a")
     try:
-        _current_lock_id, _owner_pid, started_at, updated_at = chat_service._read_chat_run_lock_file(
-            lock_path
+        _current_lock_id, _owner_pid, started_at, updated_at = (
+            chat_service._read_chat_run_lock_file(lock_path)
         )
         assert started_at is not None
         assert updated_at is not None
@@ -1953,7 +2234,9 @@ def test_chat_run_lock_heartbeat_refreshes_updated_at(monkeypatch, tmp_path):
             encoding="utf-8",
         )
 
-        assert chat_service._heartbeat_chat_run_lock("admin", "project-a", lock_id) is True
+        assert (
+            chat_service._heartbeat_chat_run_lock("admin", "project-a", lock_id) is True
+        )
         assert len(atomic_writes) == 1
         assert atomic_writes[0][0] == lock_path
         assert json.loads(atomic_writes[0][1])["lock_id"] == lock_id
@@ -1999,7 +2282,9 @@ def test_chat_run_lock_removes_old_invalid_lock(monkeypatch, tmp_path):
 
 
 @pytest.mark.anyio
-async def test_reingest_confirmation_reply_bypasses_agent_backend(monkeypatch, tmp_path):
+async def test_reingest_confirmation_reply_bypasses_agent_backend(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(
         chat_service,
@@ -2031,7 +2316,9 @@ filename: novel.docx
 
 
 @pytest.mark.anyio
-async def test_reingest_final_confirmation_reply_bypasses_agent_backend(monkeypatch, tmp_path):
+async def test_reingest_final_confirmation_reply_bypasses_agent_backend(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(
         chat_service,
@@ -2081,7 +2368,10 @@ def test_prompt_injects_json_render_contract(monkeypatch, tmp_path):
     assert "dramaclaw_get_sketches" in prompt
     assert "dramaclaw_get_scene_images" in prompt
     assert "dramaclaw_get_episode_media" in prompt
-    assert "只有在回复需要展示图片、肖像、身份图、草图、首帧、视频、音频等可视/可播放媒体时" in prompt
+    assert (
+        "只有在回复需要展示图片、肖像、身份图、草图、首帧、视频、音频等可视/可播放媒体时"
+        in prompt
+    )
     assert "media_json" in prompt
     assert "不要猜测、拼接或改写静态资源路径" in prompt
     assert "禁止自行编造 /static/projects/{project_id}/..." in prompt
@@ -2090,7 +2380,10 @@ def test_prompt_injects_json_render_contract(monkeypatch, tmp_path):
     assert "video_url" in prompt
     assert "不要使用 *_path" in prompt
     assert "发送前自检" in prompt
-    assert "角色列表、剧集规划、项目进度、任务状态、脚本/beat 摘要、表格、长篇正文、普通结构化说明默认使用 markdown" in prompt
+    assert (
+        "角色列表、剧集规划、项目进度、任务状态、脚本/beat 摘要、表格、长篇正文、普通结构化说明默认使用 markdown"
+        in prompt
+    )
     assert "不要为纯文本、进度、脚本、表格、角色/剧集清单调用媒体展示工具" in prompt
     assert "[USER_PREFERENCES]" not in prompt
     assert "reused across projects" not in prompt
@@ -2171,7 +2464,8 @@ def test_freezone_prompt_allows_creative_ideation_canvas_framework_without_mainl
     assert "matching single-operation write tool" in prompt
     assert "successful same-turn frontend write result" in prompt
     assert "Validate" in prompt
-    assert "command batch for multiple changes" in prompt
+    assert "batch only for several ordinary non-workflow" in prompt
+    assert "freezone_create_workflow_graph once" in prompt
     assert "canvas video/audio/composition nodes" in prompt
     assert "videoComposeNode is terminal" in prompt
     assert "never connect planning text or prompts to it" in prompt
@@ -2182,7 +2476,9 @@ def test_freezone_prompt_allows_creative_ideation_canvas_framework_without_mainl
     assert "do not generate/plan scripts" not in prompt
 
 
-def test_freezone_prompt_omits_skill_studio_contract_for_normal_canvas_requests(monkeypatch, tmp_path):
+def test_freezone_prompt_omits_skill_studio_contract_for_normal_canvas_requests(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
 
     prompt = chat_service._prompt_with_user_context(
@@ -2197,7 +2493,9 @@ def test_freezone_prompt_omits_skill_studio_contract_for_normal_canvas_requests(
     assert "freezone_present_agent_catalog_draft" not in prompt
 
 
-def test_freezone_prompt_routes_skill_studio_by_user_text_not_canvas_context(monkeypatch, tmp_path):
+def test_freezone_prompt_routes_skill_studio_by_user_text_not_canvas_context(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
 
     prompt = chat_service._prompt_with_user_context(
@@ -2246,7 +2544,9 @@ def test_prompt_keeps_transport_context_out_of_user_message(monkeypatch, tmp_pat
     assert prompt.count(transport_context) == 1
 
 
-def test_prompt_preserves_legacy_full_message_without_route_prompt(monkeypatch, tmp_path):
+def test_prompt_preserves_legacy_full_message_without_route_prompt(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     legacy_prompt = "你是谁？\n\n[LEGACY_CONTEXT]\nlarge transport context"
 
@@ -2275,7 +2575,9 @@ def test_freezone_prompt_includes_clarification_card_rule_for_interactive_questi
 
     assert "Clarification:" in prompt
     assert "freezone_request_user_clarification" in prompt
-    assert "not tool fields, node types, link_type, schema, or model parameters" in prompt
+    assert (
+        "not tool fields, node types, link_type, schema, or model parameters" in prompt
+    )
     assert "[FREEZONE_SKILL_STUDIO]" not in prompt
     assert "freezone_present_agent_catalog_draft" not in prompt
 
@@ -2301,7 +2603,10 @@ def test_freezone_prompt_includes_skill_studio_contract_only_for_catalog_intent(
     assert "freezone_finish_agent_catalog_draft" in prompt
     assert "For local edits, prefer freezone_patch_agent_catalog_draft" in prompt
     assert "Do not regenerate unchanged Recipes" in prompt
-    assert "The top-level parameter is patch, not operation, operations, or patches" in prompt
+    assert (
+        "The top-level parameter is patch, not operation, operations, or patches"
+        in prompt
+    )
     assert 'patch=[{"op":"remove","path":""}]' in prompt
     assert "expected_recipe_count" in prompt
     assert "Use 0 when every Recipe is reused" in prompt
@@ -2313,17 +2618,25 @@ def test_freezone_prompt_includes_skill_studio_contract_only_for_catalog_intent(
     assert "prompt/instruction generator" in prompt
     assert "不要直接生成最终内容" in prompt
     assert "送入对应节点" in prompt
-    assert "planning.planning_notes must start with an executable path summary" in prompt
+    assert (
+        "planning.planning_notes must start with an executable path summary" in prompt
+    )
     assert "planning.conduct_rules must include hard execution rules" in prompt
     assert "Do not include workflow_templates" in prompt
     assert "complete dynamic freezone_workflow_plan.v1" in prompt
     assert "dynamic dependency rules" in prompt
-    assert "Recipe system_prompt must never be the final downstream prompt itself" in prompt
+    assert (
+        "Recipe system_prompt must never be the final downstream prompt itself"
+        in prompt
+    )
     assert "重要：你的输出是一条提示词/指令" in prompt
     assert "终端生成型" not in prompt
     assert "不要把所有 Recipe 都写成 prompt compiler" not in prompt
     assert "must not emit Freezone canvas commands" in prompt
-    assert "All user-visible Skill Studio text must follow the user's current language" in prompt
+    assert (
+        "All user-visible Skill Studio text must follow the user's current language"
+        in prompt
+    )
     assert "Do not mix languages casually" in prompt
 
 
@@ -2344,7 +2657,10 @@ def test_freezone_prompt_separates_new_skill_from_current_canvas_context(
     assert "new_from_user_brief" in prompt
     assert "current canvas is ambient context, not source evidence" in prompt
     assert "Do not ask whether to preserve current project details" in prompt
-    assert "topic/domain, audience/context, artifact scope, style/tone, and workflow granularity" in prompt
+    assert (
+        "topic/domain, audience/context, artifact scope, style/tone, and workflow granularity"
+        in prompt
+    )
     assert "distill_from_canvas" in prompt
 
 
@@ -2363,9 +2679,15 @@ def test_freezone_prompt_requires_summary_confirmation_for_canvas_workflow_skill
 
     assert "[FREEZONE_SKILL_STUDIO]" in prompt
     assert "distill_from_canvas" in prompt
-    assert "current canvas, current flow, selected nodes, this project, this workflow, or existing workflow" in prompt
+    assert (
+        "current canvas, current flow, selected nodes, this project, this workflow, or existing workflow"
+        in prompt
+    )
     assert "call freezone_get_canvas_ontology before asking any question" in prompt
-    assert "Do not use canvas summary as the evidence source for Skill Studio questions" in prompt
+    assert (
+        "Do not use canvas summary as the evidence source for Skill Studio questions"
+        in prompt
+    )
     assert "fetch only a few key node details with freezone_get_node_detail" in prompt
     assert "ask 2-4 high-quality confirmation questions first" in prompt
     assert "infer the reusable workflow and current production style" in prompt
@@ -2373,17 +2695,28 @@ def test_freezone_prompt_requires_summary_confirmation_for_canvas_workflow_skill
     assert "decision matrix" in prompt
     assert "Do not merge these layers into one question" in prompt
     assert "Do not over-infer visual style from node names" in prompt
-    assert "Never present a vague phrase such as \"光影风格广告\"" in prompt
-    assert "The first question for canvas distillation should usually be about what workflow method to preserve" in prompt
+    assert 'Never present a vague phrase such as "光影风格广告"' in prompt
+    assert (
+        "The first question for canvas distillation should usually be about what workflow method to preserve"
+        in prompt
+    )
     assert "Each confirmation question must ask one decision only" in prompt
     assert "what style or quality rules must stay" in prompt
-    assert "Before showing a clarification card, briefly state the canvas evidence in plain user language" in prompt
-    assert "Translate internal analysis labels into user-facing question titles" in prompt
+    assert (
+        "Before showing a clarification card, briefly state the canvas evidence in plain user language"
+        in prompt
+    )
+    assert (
+        "Translate internal analysis labels into user-facing question titles" in prompt
+    )
     assert "下次主要复用什么？" in prompt
     assert "下次可以替换哪些内容？" in prompt
     assert "哪些效果必须保持？" in prompt
     assert "每次开始前要确认什么？" in prompt
-    assert "Option text should describe the effect of choosing it, not the implementation" in prompt
+    assert (
+        "Option text should describe the effect of choosing it, not the implementation"
+        in prompt
+    )
     assert "Do not always ask the same two questions" in prompt
     assert "do not expose internal terms such as Recipe, Recipes, 配方" in prompt
     assert "freezone_request_user_clarification" in prompt
@@ -2404,8 +2737,14 @@ def test_freezone_prompt_requires_canvas_workflow_distillation_rules(
 
     assert "skill-studio-authoring-guide.md" in prompt
     assert "canvas_workflow_analysis" in prompt
-    assert "based on freezone_get_canvas_ontology evidence or key node detail evidence" in prompt
-    assert "Do not call freezone_request_user_clarification for canvas distillation until you have canvas evidence" in prompt
+    assert (
+        "based on freezone_get_canvas_ontology evidence or key node detail evidence"
+        in prompt
+    )
+    assert (
+        "Do not call freezone_request_user_clarification for canvas distillation until you have canvas evidence"
+        in prompt
+    )
     assert "production_method" in prompt
     assert "visual_language" in prompt
     assert "case_variables" in prompt
@@ -2413,7 +2752,9 @@ def test_freezone_prompt_requires_canvas_workflow_distillation_rules(
     assert "hard_constraints" in prompt
     assert "start_options" in prompt
     assert "applicability_scope" in prompt
-    assert "Only mention a concrete visual style when it is actually supported" in prompt
+    assert (
+        "Only mention a concrete visual style when it is actually supported" in prompt
+    )
     assert "not on the user's short request or canvas summary" in prompt
     assert "Do not read every node detail one by one" in prompt
     assert "Do not treat tool schemas as authoring guidance" in prompt
@@ -2427,24 +2768,50 @@ def test_freezone_prompt_requires_canvas_workflow_distillation_rules(
     assert "Every Skill must include allowed_recipe_ids" in prompt
     assert "videoCompose may appear only as a terminal node" in prompt
     assert "Do not create a Recipe for videoCompose" in prompt
-    assert "Do not present videoCompose, final media composition, or final synthesis as a user-facing granularity option" in prompt
-    assert "do not count the terminal composition step in the user-facing step count" in prompt
+    assert (
+        "Do not present videoCompose, final media composition, or final synthesis as a user-facing granularity option"
+        in prompt
+    )
+    assert (
+        "do not count the terminal composition step in the user-facing step count"
+        in prompt
+    )
     assert "textGeneration Recipe for a compose/timeline plan" in prompt
     assert "Extract hard constraints from repeated prompt text" in prompt
     assert "perform prompt_evidence_analysis before topology summarization" in prompt
     assert "domain_contract or creative_contract" in prompt
-    assert "repeated prompt phrases, media facts, source filenames, references, and edges" in prompt
+    assert (
+        "repeated prompt phrases, media facts, source filenames, references, and edges"
+        in prompt
+    )
     assert "not from displayName or node type alone" in prompt
-    assert "Write the domain_contract or creative_contract into existing fields: planning_notes, conduct_rules, evaluation.domain_constraints, and Recipe quality standards" in prompt
+    assert (
+        "Write the domain_contract or creative_contract into existing fields: planning_notes, conduct_rules, evaluation.domain_constraints, and Recipe quality standards"
+        in prompt
+    )
     assert "perform skill_identity_analysis after prompt_evidence_analysis" in prompt
-    assert "case_variables, reusable_protocol_terms, output_format_terms, use_case_terms, and workflow_method_terms" in prompt
+    assert (
+        "case_variables, reusable_protocol_terms, output_format_terms, use_case_terms, and workflow_method_terms"
+        in prompt
+    )
     assert "Skill name, id, description, and triggers.keywords" in prompt
     assert "remove case_variables but preserve reusable_protocol_terms" in prompt
-    assert "Do not let workflow_method_terms alone dominate the Skill identity" in prompt
-    assert "keywords must cover protocol, output format, use case, and workflow method" in prompt
+    assert (
+        "Do not let workflow_method_terms alone dominate the Skill identity" in prompt
+    )
+    assert (
+        "keywords must cover protocol, output format, use case, and workflow method"
+        in prompt
+    )
     assert "Express it in generic layers first" in prompt
-    assert "global creative language, stage-specific exceptions, and inheritance rules" in prompt
-    assert "For non-visual domains, the same contract may capture metric definitions, legal jurisdiction, teaching level, voice persona, or gameplay rules" in prompt
+    assert (
+        "global creative language, stage-specific exceptions, and inheritance rules"
+        in prompt
+    )
+    assert (
+        "For non-visual domains, the same contract may capture metric definitions, legal jurisdiction, teaching level, voice persona, or gameplay rules"
+        in prompt
+    )
     assert "Do not derive Recipes only from node types" in prompt
 
 
@@ -2570,13 +2937,17 @@ def test_project_history_hides_trace_messages(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
 
     chat_service.add_user_message("admin", "project-a", "你好")
-    chat_service.add_trace_message("admin", "project-a", "→ dramaclaw_pipeline_status\ncompleted")
+    chat_service.add_trace_message(
+        "admin", "project-a", "→ dramaclaw_pipeline_status\ncompleted"
+    )
     chat_service.add_assistant_message("admin", "project-a", "你好！")
 
     messages = chat_service.list_messages("admin", "project-a")
 
     assert [message["role"] for message in messages] == ["user", "assistant"]
-    assert all("dramaclaw_pipeline_status" not in message["content"] for message in messages)
+    assert all(
+        "dramaclaw_pipeline_status" not in message["content"] for message in messages
+    )
 
 
 def test_project_history_defaults_to_last_50_messages(monkeypatch, tmp_path):
@@ -2598,27 +2969,42 @@ def test_home_history_hides_trace_messages(monkeypatch, tmp_path):
     scope = ChatScope(kind="home")
 
     chat_store.append_message("admin", scope, "user", "你好")
-    chat_store.append_message("admin", scope, "trace", "→ dramaclaw_pipeline_status\ncompleted")
+    chat_store.append_message(
+        "admin", scope, "trace", "→ dramaclaw_pipeline_status\ncompleted"
+    )
     chat_store.append_message("admin", scope, "assistant", "你好！")
 
     messages = chat_store.list_messages("admin", scope)
 
     assert [message["role"] for message in messages] == ["user", "assistant"]
-    assert all("dramaclaw_pipeline_status" not in message["content"] for message in messages)
+    assert all(
+        "dramaclaw_pipeline_status" not in message["content"] for message in messages
+    )
 
 
-def test_chat_history_keeps_repeated_assistant_replies_across_turns(monkeypatch, tmp_path):
+def test_chat_history_keeps_repeated_assistant_replies_across_turns(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     scope = ChatScope(kind="home")
 
     chat_store.append_message("admin", scope, "user", "你好", turn_id="turn-1")
-    chat_store.append_message("admin", scope, "assistant", "你好！有什么可以帮你？", turn_id="turn-1")
+    chat_store.append_message(
+        "admin", scope, "assistant", "你好！有什么可以帮你？", turn_id="turn-1"
+    )
     chat_store.append_message("admin", scope, "user", "你好", turn_id="turn-2")
-    chat_store.append_message("admin", scope, "assistant", "你好！有什么可以帮你？", turn_id="turn-2")
+    chat_store.append_message(
+        "admin", scope, "assistant", "你好！有什么可以帮你？", turn_id="turn-2"
+    )
 
     messages = chat_store.list_messages("admin", scope)
 
-    assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant"]
+    assert [message["role"] for message in messages] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
     assert messages[1]["content"] == "你好！有什么可以帮你？"
     assert messages[3]["content"] == "你好！有什么可以帮你？"
 
@@ -2628,7 +3014,9 @@ def test_freezone_history_uses_separate_project_chat_db(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_root))
 
     chat_service.add_user_message("admin", "project-a", "mainline")
-    scope = ChatScope(kind="project", id="project-a", surface="freezone", canvas_id="canvas-a")
+    scope = ChatScope(
+        kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
+    )
     chat_store.append_message("admin", scope, "user", "canvas")
 
     assert chat_service.list_messages("admin", "project-a")[0]["content"] == "mainline"
@@ -2670,7 +3058,9 @@ def test_freezone_agent_history_uses_separate_chat_db(monkeypatch, tmp_path):
     chat_store.append_message("admin", second_scope, "user", "second agent")
 
     assert chat_store.list_messages("admin", main_scope)[0]["content"] == "main agent"
-    assert chat_store.list_messages("admin", second_scope)[0]["content"] == "second agent"
+    assert (
+        chat_store.list_messages("admin", second_scope)[0]["content"] == "second agent"
+    )
     assert (
         state_root
         / "admin"
@@ -2704,9 +3094,13 @@ async def test_freezone_history_reads_project_name_storage_scope(monkeypatch, tm
         agent_id="agent-2",
     )
 
-    chat_store.append_message("admin", storage_scope, "user", "stored under project name")
+    chat_store.append_message(
+        "admin", storage_scope, "user", "stored under project name"
+    )
 
-    messages = await chat_routes._history("admin", request_scope, project_ctx=project_ctx)
+    messages = await chat_routes._history(
+        "admin", request_scope, project_ctx=project_ctx
+    )
 
     assert [message["content"] for message in messages] == ["stored under project name"]
     assert not (
@@ -2762,7 +3156,9 @@ def test_freezone_chat_store_uses_only_authoritative_project_state(
     ).exists()
 
 
-def test_freezone_canvas_agent_summaries_pick_recent_server_agent(monkeypatch, tmp_path):
+def test_freezone_canvas_agent_summaries_pick_recent_server_agent(
+    monkeypatch, tmp_path
+):
     state_root = tmp_path / "state"
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_root))
 
@@ -2790,7 +3186,9 @@ def test_freezone_canvas_agent_summaries_pick_recent_server_agent(monkeypatch, t
 
     chat_store.append_message("admin", main_scope, "user", "主会话")
     chat_store.append_message("admin", other_canvas_scope, "user", "别的画布")
-    chat_store.append_message("admin", second_scope, "user", "最近的服务端会话标题很长需要截断")
+    chat_store.append_message(
+        "admin", second_scope, "user", "最近的服务端会话标题很长需要截断"
+    )
     chat_store.append_message("admin", second_scope, "assistant", "agent-2 reply")
 
     summaries = chat_store.list_freezone_canvas_agent_summaries(
@@ -2804,7 +3202,9 @@ def test_freezone_canvas_agent_summaries_pick_recent_server_agent(monkeypatch, t
     assert summaries[0]["lastActiveAt"] > summaries[1]["lastActiveAt"]
 
 
-def test_freezone_canvas_agent_summaries_default_to_latest_twenty(monkeypatch, tmp_path):
+def test_freezone_canvas_agent_summaries_default_to_latest_twenty(
+    monkeypatch, tmp_path
+):
     state_root = tmp_path / "state"
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_root))
 
@@ -2829,7 +3229,9 @@ def test_freezone_canvas_agent_summaries_default_to_latest_twenty(monkeypatch, t
     assert summaries[-1]["id"] == "agent-6"
 
 
-def test_freezone_canvas_agent_summaries_tie_break_same_millisecond(monkeypatch, tmp_path):
+def test_freezone_canvas_agent_summaries_tie_break_same_millisecond(
+    monkeypatch, tmp_path
+):
     state_root = tmp_path / "state"
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_root))
 
@@ -2851,7 +3253,9 @@ def test_freezone_canvas_agent_summaries_tie_break_same_millisecond(monkeypatch,
             "lastActiveAt": 1000,
         }
 
-    monkeypatch.setattr(chat_store, "_freezone_agent_summary_from_db", same_time_summary)
+    monkeypatch.setattr(
+        chat_store, "_freezone_agent_summary_from_db", same_time_summary
+    )
 
     summaries = chat_store.list_freezone_canvas_agent_summaries(
         "admin",
@@ -2859,7 +3263,9 @@ def test_freezone_canvas_agent_summaries_tie_break_same_millisecond(monkeypatch,
         canvas_id="canvas-a",
     )
 
-    assert [summary["id"] for summary in summaries] == [f"agent-{index}" for index in range(25, 5, -1)]
+    assert [summary["id"] for summary in summaries] == [
+        f"agent-{index}" for index in range(25, 5, -1)
+    ]
 
 
 @pytest.mark.anyio
@@ -2879,7 +3285,9 @@ async def test_freezone_hermes_assistant_message_keeps_turn_id(monkeypatch, tmp_
 
     class FakeThread:
         async def stream(self, _prompt, *, current_project=None, **_kwargs):
-            yield backend_sdk.ChatBackendEvent(type="thread_started", thread_id="thread-a", turn_id="turn-a")
+            yield backend_sdk.ChatBackendEvent(
+                type="thread_started", thread_id="thread-a", turn_id="turn-a"
+            )
             yield backend_sdk.ChatBackendEvent(type="assistant_delta", text="你好")
             yield backend_sdk.ChatBackendEvent(type="complete", text="")
 
@@ -2891,7 +3299,9 @@ async def test_freezone_hermes_assistant_message_keeps_turn_id(monkeypatch, tmp_
         events.append(event)
 
     monkeypatch.setattr(chat_service, "is_hermes_backend_available", lambda: True)
-    monkeypatch.setattr(chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr("novelvideo.chat.hermes_pool.pool", FakePool())
 
     result = await chat_service.stream_assistant_reply(
@@ -2963,7 +3373,9 @@ async def test_freezone_hermes_retries_once_when_cached_session_is_unavailable(
         events.append(event)
 
     monkeypatch.setattr(chat_service, "is_hermes_backend_available", lambda: True)
-    monkeypatch.setattr(chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr("novelvideo.chat.hermes_pool.pool", fake_pool)
 
     result = await chat_service.stream_assistant_reply(
@@ -3036,7 +3448,9 @@ async def test_freezone_hermes_retries_once_when_prompt_completion_reports_stale
     fake_pool = FakePool()
 
     monkeypatch.setattr(chat_service, "is_hermes_backend_available", lambda: True)
-    monkeypatch.setattr(chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr("novelvideo.chat.hermes_pool.pool", fake_pool)
 
     result = await chat_service.stream_assistant_reply(
@@ -3103,7 +3517,9 @@ async def test_freezone_hermes_retries_once_when_stream_ends_before_completion(
     fake_pool = FakePool()
 
     monkeypatch.setattr(chat_service, "is_hermes_backend_available", lambda: True)
-    monkeypatch.setattr(chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr("novelvideo.chat.hermes_pool.pool", fake_pool)
 
     result = await chat_service.stream_assistant_reply(
@@ -3159,7 +3575,9 @@ async def test_freezone_hermes_recovers_once_from_repeated_read(
     class RecoveredThread:
         async def stream(self, prompt, *, current_project=None, **_kwargs):
             prompts.append(prompt)
-            yield backend_sdk.ChatBackendEvent(type="assistant_delta", text="工作流草稿已创建")
+            yield backend_sdk.ChatBackendEvent(
+                type="assistant_delta", text="工作流草稿已创建"
+            )
             yield backend_sdk.ChatBackendEvent(type="complete", text="")
 
     class FakePool:
@@ -3179,7 +3597,9 @@ async def test_freezone_hermes_recovers_once_from_repeated_read(
         events.append(event)
 
     monkeypatch.setattr(chat_service, "is_hermes_backend_available", lambda: True)
-    monkeypatch.setattr(chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr("novelvideo.chat.hermes_pool.pool", fake_pool)
 
     result = await chat_service.stream_assistant_reply(
@@ -3246,7 +3666,9 @@ async def test_freezone_hermes_does_not_replay_failed_workflow_draft_operation(
 
     fake_pool = FakePool()
     monkeypatch.setattr(chat_service, "is_hermes_backend_available", lambda: True)
-    monkeypatch.setattr(chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr("novelvideo.chat.hermes_pool.pool", fake_pool)
 
     result = await chat_service.stream_assistant_reply(
@@ -3295,7 +3717,9 @@ async def test_freezone_hermes_drops_mainline_media_ui_specs(monkeypatch, tmp_pa
 
     class FakeThread:
         async def stream(self, _prompt, *, current_project=None, **_kwargs):
-            yield backend_sdk.ChatBackendEvent(type="thread_started", thread_id="thread-a", turn_id="turn-a")
+            yield backend_sdk.ChatBackendEvent(
+                type="thread_started", thread_id="thread-a", turn_id="turn-a"
+            )
             yield backend_sdk.ChatBackendEvent(
                 type="assistant_delta",
                 text=(
@@ -3325,8 +3749,12 @@ async def test_freezone_hermes_drops_mainline_media_ui_specs(monkeypatch, tmp_pa
         return None
 
     monkeypatch.setattr(chat_service, "is_hermes_backend_available", lambda: True)
-    monkeypatch.setattr(chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(chat_service, "_fallback_display_tool_ui_specs", unexpected_fallback)
+    monkeypatch.setattr(
+        chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        chat_service, "_fallback_display_tool_ui_specs", unexpected_fallback
+    )
     monkeypatch.setattr("novelvideo.chat.hermes_pool.pool", FakePool())
 
     result = await chat_service.stream_assistant_reply(
@@ -3359,7 +3787,15 @@ def test_freezone_main_agent_reads_legacy_canvas_chat_db(monkeypatch, tmp_path):
         canvas_id="canvas-a",
         agent_id="main",
     )
-    legacy_db = state_root / "admin" / "project-a" / "_chat" / "freezone" / "canvas-a" / "chat.db"
+    legacy_db = (
+        state_root
+        / "admin"
+        / "project-a"
+        / "_chat"
+        / "freezone"
+        / "canvas-a"
+        / "chat.db"
+    )
     conn = chat_store.connect("admin", scope, db_path=legacy_db)
     try:
         conn.execute(
@@ -3367,7 +3803,14 @@ def test_freezone_main_agent_reads_legacy_canvas_chat_db(monkeypatch, tmp_path):
             INSERT INTO chat_messages (role, content, media_json, turn_id, metadata_json, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            ("user", "legacy canvas", "[]", None, "{}", datetime.now(timezone.utc).isoformat()),
+            (
+                "user",
+                "legacy canvas",
+                "[]",
+                None,
+                "{}",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
         conn.commit()
     finally:
@@ -3410,9 +3853,13 @@ def test_director_history_path_ignores_agent_id(monkeypatch, tmp_path):
     assert not (state_root / "admin" / "project-a" / "_chat").exists()
 
 
-def test_chat_ui_events_attach_to_user_message_when_turn_has_no_assistant(monkeypatch, tmp_path):
+def test_chat_ui_events_attach_to_user_message_when_turn_has_no_assistant(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    scope = ChatScope(kind="project", id="project-a", surface="freezone", canvas_id="canvas-a")
+    scope = ChatScope(
+        kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
+    )
 
     chat_store.append_message("admin", scope, "user", "加个视频节点", turn_id="turn-a")
     chat_store.append_ui_event(
@@ -3434,9 +3881,13 @@ def test_chat_ui_events_attach_to_user_message_when_turn_has_no_assistant(monkey
     assert messages[0]["ui_events"][0]["type"] == "canvas_command_approval"
 
 
-def test_chat_message_parts_keep_canvas_feedback_after_stale_snapshot(monkeypatch, tmp_path):
+def test_chat_message_parts_keep_canvas_feedback_after_stale_snapshot(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    scope = ChatScope(kind="project", id="project-a", surface="freezone", canvas_id="canvas-a")
+    scope = ChatScope(
+        kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
+    )
 
     chat_store.append_message("admin", scope, "user", "生成下分镜", turn_id="turn-a")
     chat_store.append_message("admin", scope, "assistant", "", turn_id="turn-a")
@@ -3489,19 +3940,29 @@ def test_chat_message_parts_keep_canvas_feedback_after_stale_snapshot(monkeypatc
     messages = chat_store.list_messages("admin", scope)
     assistant = next(message for message in messages if message["role"] == "assistant")
     part_types = [part["type"] for part in assistant["parts"]]
-    feedback = next(part for part in assistant["parts"] if part["type"] == "canvas_feedback")
+    feedback = next(
+        part for part in assistant["parts"] if part["type"] == "canvas_feedback"
+    )
 
     assert "canvas_feedback" in part_types
     assert "canvas_approval" not in part_types
     assert feedback["event"]["errors"] == ["节点动作完成但未产出 imageUrl。"]
 
 
-def test_chat_message_parts_drop_stale_skill_studio_status_snapshot(monkeypatch, tmp_path):
+def test_chat_message_parts_drop_stale_skill_studio_status_snapshot(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    scope = ChatScope(kind="project", id="project-a", surface="freezone", canvas_id="canvas-a")
+    scope = ChatScope(
+        kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
+    )
 
-    chat_store.append_message("admin", scope, "user", "做一个公益短片 skill", turn_id="turn-a")
-    chat_store.append_message("admin", scope, "assistant", "草稿已生成。", turn_id="turn-a")
+    chat_store.append_message(
+        "admin", scope, "user", "做一个公益短片 skill", turn_id="turn-a"
+    )
+    chat_store.append_message(
+        "admin", scope, "assistant", "草稿已生成。", turn_id="turn-a"
+    )
     question_part = {
         "id": "skill_studio.questions:question-key",
         "type": "skill_studio",
@@ -3540,17 +4001,25 @@ def test_chat_message_parts_drop_stale_skill_studio_status_snapshot(monkeypatch,
     assistant = next(message for message in messages if message["role"] == "assistant")
 
     assert [part["type"] for part in assistant["parts"]] == ["skill_studio", "text"]
-    assert [part.get("event", {}).get("type") for part in assistant["parts"] if part["type"] == "skill_studio"] == [
-        "skill_studio.questions"
-    ]
+    assert [
+        part.get("event", {}).get("type")
+        for part in assistant["parts"]
+        if part["type"] == "skill_studio"
+    ] == ["skill_studio.questions"]
 
 
-def test_chat_history_does_not_restore_orphan_parts_outside_message_limit(monkeypatch, tmp_path):
+def test_chat_history_does_not_restore_orphan_parts_outside_message_limit(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    scope = ChatScope(kind="project", id="project-a", surface="freezone", canvas_id="canvas-a")
+    scope = ChatScope(
+        kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
+    )
 
     chat_store.append_message("admin", scope, "user", "旧请求", turn_id="turn-old")
-    chat_store.append_message("admin", scope, "assistant", "完整旧回复", turn_id="turn-old")
+    chat_store.append_message(
+        "admin", scope, "assistant", "完整旧回复", turn_id="turn-old"
+    )
     chat_store.append_ui_event(
         "admin",
         scope,
@@ -3561,7 +4030,9 @@ def test_chat_history_does_not_restore_orphan_parts_outside_message_limit(monkey
         },
     )
     chat_store.append_message("admin", scope, "user", "新请求", turn_id="turn-new")
-    chat_store.append_message("admin", scope, "assistant", "完整新回复", turn_id="turn-new")
+    chat_store.append_message(
+        "admin", scope, "assistant", "完整新回复", turn_id="turn-new"
+    )
 
     messages = chat_store.list_messages("admin", scope, limit=2)
 
@@ -3613,8 +4084,15 @@ def test_chat_scope_defaults_freezone_agent_to_main() -> None:
 def test_hermes_workspace_profile_treats_freezone_agent_profiles_as_freezone() -> None:
     from novelvideo.chat import hermes_pool
 
-    assert hermes_pool._workspace_profile_for_agent("freezone:agent-2", "freezone_canvas", "freezone") == "freezone"
-    assert hermes_pool._workspace_profile_for_agent("main", "default", None) == "director"
+    assert (
+        hermes_pool._workspace_profile_for_agent(
+            "freezone:agent-2", "freezone_canvas", "freezone"
+        )
+        == "freezone"
+    )
+    assert (
+        hermes_pool._workspace_profile_for_agent("main", "default", None) == "director"
+    )
 
 
 def test_legacy_freezone_scope_still_uses_legacy_chat_db(monkeypatch, tmp_path):
@@ -3743,7 +4221,7 @@ def test_json_render_reply_normalizer_accepts_media_bundle_array():
             },
         },
     }
-    content = f"<ui-spec type=\"media_bundle\">{json.dumps([spec_a, spec_b])}</ui-spec>"
+    content = f'<ui-spec type="media_bundle">{json.dumps([spec_a, spec_b])}</ui-spec>'
 
     normalized = chat_service._normalize_json_render_reply(content)
 
@@ -3767,7 +4245,9 @@ def test_json_render_reply_normalizer_wraps_embedded_canonical_json():
             },
         },
     }
-    content = f"已加载草图：\n\n{json.dumps(spec, ensure_ascii=False)}\n\n继续查看请告诉我。"
+    content = (
+        f"已加载草图：\n\n{json.dumps(spec, ensure_ascii=False)}\n\n继续查看请告诉我。"
+    )
 
     normalized = chat_service._normalize_json_render_reply(content)
 
@@ -3845,7 +4325,10 @@ def test_extract_tool_ui_specs_parses_json_string_tool_result():
 
     assert len(specs) == 1
     assert specs[0]["type"] == "sketch_gallery"
-    assert specs[0]["elements"]["image_1"]["props"]["src"] == "/static/projects/demo/sketch.png?v=1"
+    assert (
+        specs[0]["elements"]["image_1"]["props"]["src"]
+        == "/static/projects/demo/sketch.png?v=1"
+    )
 
 
 def test_extract_tool_chat_error_from_nested_tool_result_string():
@@ -4005,14 +4488,20 @@ def test_freezone_keeps_tool_lifecycle_failure_with_business_payload():
 def test_freezone_strips_status_only_lifecycle_failure_prefix():
     text = "任务执行失败：当前状态为 failed。\n\n已触发「Sketch from selected background」技能。"
 
-    assert chat_service._strip_freezone_tool_lifecycle_failure_text(
-        text,
-        tool_mode="freezone_canvas",
-    ) == "已触发「Sketch from selected background」技能。"
-    assert chat_service._strip_freezone_tool_lifecycle_failure_text(
-        text,
-        tool_mode="default",
-    ) == text
+    assert (
+        chat_service._strip_freezone_tool_lifecycle_failure_text(
+            text,
+            tool_mode="freezone_canvas",
+        )
+        == "已触发「Sketch from selected background」技能。"
+    )
+    assert (
+        chat_service._strip_freezone_tool_lifecycle_failure_text(
+            text,
+            tool_mode="default",
+        )
+        == text
+    )
 
 
 def test_freezone_hides_generic_tool_lifecycle_failure_error():
@@ -4040,7 +4529,10 @@ def test_append_tool_ui_specs_adds_block_when_model_did_not_write_one():
             "root": {"type": "Stack", "props": {}, "children": ["portrait"]},
             "portrait": {
                 "type": "Image",
-                "props": {"src": "/static/projects/demo/portrait.png?v=1", "alt": "肖像"},
+                "props": {
+                    "src": "/static/projects/demo/portrait.png?v=1",
+                    "alt": "肖像",
+                },
                 "children": [],
             },
         },
@@ -4061,7 +4553,10 @@ def test_append_tool_ui_specs_ignores_placeholder_ui_spec_chatter():
             "root": {"type": "Stack", "props": {}, "children": ["portrait"]},
             "portrait": {
                 "type": "Image",
-                "props": {"src": "/static/projects/demo/portrait.png?v=1", "alt": "肖像"},
+                "props": {
+                    "src": "/static/projects/demo/portrait.png?v=1",
+                    "alt": "肖像",
+                },
                 "children": [],
             },
         },
@@ -4125,7 +4620,10 @@ def test_ui_spec_json_is_generated_before_wrapping_tags():
             "root": {"type": "Stack", "props": {}, "children": ["portrait"]},
             "portrait": {
                 "type": "Image",
-                "props": {"src": "/static/projects/demo/portrait.png?v=1", "alt": "肖像"},
+                "props": {
+                    "src": "/static/projects/demo/portrait.png?v=1",
+                    "alt": "肖像",
+                },
                 "children": [],
             },
         },
@@ -4175,7 +4673,9 @@ def test_append_tool_ui_specs_keeps_image_specs_separate_and_ordered():
         },
     }
 
-    content = chat_service._append_tool_ui_specs("已展示媒体。", [portrait_spec, sketch_spec])
+    content = chat_service._append_tool_ui_specs(
+        "已展示媒体。", [portrait_spec, sketch_spec]
+    )
 
     assert content.count("<ui-spec") == 2
     assert '<ui-spec type="character_showcase">' in content
@@ -4224,7 +4724,9 @@ def test_append_tool_ui_specs_merges_adjacent_character_showcase_specs():
         },
     }
 
-    content = chat_service._append_tool_ui_specs("已展示角色。", [first_spec, second_spec])
+    content = chat_service._append_tool_ui_specs(
+        "已展示角色。", [first_spec, second_spec]
+    )
 
     assert content.count('<ui-spec type="character_showcase">') == 1
     assert "/static/projects/demo/jiang-nian.png?v=1" in content
@@ -4285,7 +4787,9 @@ def test_append_tool_ui_specs_merges_same_category_video_and_audio_specs():
         },
     }
 
-    content = chat_service._append_tool_ui_specs("已展示媒体。", [video_a, video_b, audio_a, audio_b])
+    content = chat_service._append_tool_ui_specs(
+        "已展示媒体。", [video_a, video_b, audio_a, audio_b]
+    )
 
     assert content.count('<ui-spec type="keyframe_video">') == 1
     assert content.count('<ui-spec type="audio_list">') == 1
@@ -4327,7 +4831,9 @@ def test_append_tool_ui_specs_keeps_same_src_across_different_categories():
         },
     }
 
-    content = chat_service._append_tool_ui_specs("已展示媒体。", [portrait_spec, sketch_spec])
+    content = chat_service._append_tool_ui_specs(
+        "已展示媒体。", [portrait_spec, sketch_spec]
+    )
 
     assert content.count("<ui-spec") == 2
     assert content.count(shared_src) == 2

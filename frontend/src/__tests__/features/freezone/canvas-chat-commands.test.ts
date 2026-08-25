@@ -222,15 +222,15 @@ describe("canvas chat commands", () => {
 
     expect(
       canvasCommandApprovalKeyForTest("bridge-a", "turn-a", envelopes),
-    ).toBe("bridge:bridge-a:turn:turn-a");
+    ).toBe("bridge:bridge-a");
     expect(
       canvasCommandApprovalKeyForTest("bridge-a", "turn-b", envelopes),
-    ).toBe("bridge:bridge-a:turn:turn-b");
+    ).toBe("bridge:bridge-a");
     expect(canvasCommandFeedbackKeyForTest("bridge-a", "turn-a")).toBe(
-      "bridge:bridge-a:turn:turn-a",
+      "bridge:bridge-a",
     );
     expect(canvasCommandFeedbackKeyForTest("bridge-a", "turn-b")).toBe(
-      "bridge:bridge-a:turn:turn-b",
+      "bridge:bridge-a",
     );
   });
 
@@ -406,10 +406,10 @@ describe("canvas chat commands", () => {
     const second = applyCanvasChatCommands(envelopes);
 
     expect(first.errors).toEqual([]);
-    expect(first.createdNodeIds).toHaveLength(2);
+    expect(first.createdNodeIds).toHaveLength(3);
     expect(second.errors).toEqual([]);
     expect(second.createdNodeIds).toEqual([]);
-    expect(useCanvasStore.getState().nodes).toHaveLength(2);
+    expect(useCanvasStore.getState().nodes).toHaveLength(3);
     expect(useCanvasStore.getState().edges).toHaveLength(1);
     expect(second.commandResults).toEqual(
       expect.arrayContaining([
@@ -2069,7 +2069,7 @@ describe("canvas chat commands", () => {
     expect(payload.edges).toEqual([]);
   });
 
-  it("partitions destructive and large layout commands for explicit approval", () => {
+  it("partitions node creation and destructive commands for explicit approval", () => {
     const envelopes = extractCanvasChatCommandEnvelopes([
       {
         schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
@@ -2098,14 +2098,11 @@ describe("canvas chat commands", () => {
 
     const partitioned = partitionCanvasChatCommandEnvelopes(envelopes);
 
-    expect(partitioned.immediate).toHaveLength(1);
-    expect(
-      partitioned.immediate[0]?.commands.map((command) => command.type),
-    ).toEqual(["create_node"]);
+    expect(partitioned.immediate).toHaveLength(0);
     expect(partitioned.requiresApproval).toHaveLength(1);
     expect(
       partitioned.requiresApproval[0]?.commands.map((command) => command.type),
-    ).toEqual(["delete_nodes", "delete_edges", "layout_nodes"]);
+    ).toEqual(["create_node", "delete_nodes", "delete_edges", "layout_nodes"]);
   });
 
   it("moves existing and newly created nodes to exact coordinates", () => {
@@ -2259,7 +2256,7 @@ describe("canvas chat commands", () => {
     expect(positions.get(thirdId)?.y).toBe(0);
   });
 
-  it("uses the node group menu layout for a grouped workflow grid", () => {
+  it("uses the Hermes-compatible 2×2 grid for a grouped workflow", () => {
     const store = useCanvasStore.getState();
     store.setCanvasData(
       [
@@ -2306,12 +2303,66 @@ describe("canvas chat commands", () => {
     const [a, b, c, d] = ["a", "b", "c", "d"].map(
       (nodeId) => positions.get(nodeId)!,
     );
-    expect(a.x).toBeLessThan(b.x);
-    expect(b.x).toBeLessThan(c.x);
-    expect(c.x).toBeLessThan(d.x);
-    expect(new Set([a.y, b.y, c.y, d.y]).size).toBe(1);
-    expect(Math.min(a.x, b.x, c.x, d.x)).toBe(20);
-    expect(a.y).toBe(34);
+    expect(a).toEqual({ x: 20, y: 34 });
+    expect(b).toEqual({ x: 252, y: 34 });
+    expect(c).toEqual({ x: 20, y: 216 });
+    expect(d).toEqual({ x: 252, y: 216 });
+  });
+
+  it("uses the exact legacy Hermes grid geometry for external MCP workflows", () => {
+    useCanvasStore.getState().setCanvasData(
+      [
+        { id: "a", position: { x: 0, y: 0 } },
+        { id: "b", position: { x: 400, y: 0 } },
+        { id: "c", position: { x: 0, y: 300 } },
+        { id: "d", position: { x: 400, y: 300 } },
+      ].map((node) => ({
+        ...node,
+        type: CANVAS_NODE_TYPES.imageEdit,
+        width: 200,
+        height: 150,
+        style: { width: 200, height: 150 },
+        data: { imageUrl: `${node.id}.png` },
+      })),
+      [],
+    );
+
+    const envelopes = extractCanvasChatCommandEnvelopes([
+      {
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        external_mcp_command: true,
+        commands: [
+          {
+            type: "group_nodes",
+            node_ids: ["d", "b", "a", "c"],
+            label: "Codex 工作流",
+          },
+          {
+            type: "layout_nodes",
+            node_ids: ["d", "b", "a", "c"],
+            mode: "grid",
+          },
+        ],
+      },
+    ]);
+    expect(envelopes[0]?.external_mcp_command).toBe(true);
+    const partition = partitionCanvasChatCommandEnvelopes(envelopes);
+    expect(partition.immediate[0]?.external_mcp_command).toBe(true);
+    expect(partition.requiresApproval[0]?.external_mcp_command).toBe(true);
+
+    const result = applyCanvasChatCommands(envelopes);
+
+    expect(result.errors).toEqual([]);
+    const nodes = useCanvasStore.getState().nodes;
+    const positions = new Map(nodes.map((node) => [node.id, node.position]));
+    expect(positions.get("d")).toEqual({ x: 60, y: 80 });
+    expect(positions.get("b")).toEqual({ x: 580, y: 80 });
+    expect(positions.get("a")).toEqual({ x: 60, y: 440 });
+    expect(positions.get("c")).toEqual({ x: 580, y: 440 });
+
+    const group = nodes.find((node) => node.type === CANVAS_NODE_TYPES.group);
+    expect(group?.style?.width).toBe(720);
+    expect(group?.style?.height).toBe(610);
   });
 
   it("treats an immediate unknown select_nodes id as an implicit client id for a created node", () => {

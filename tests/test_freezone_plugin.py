@@ -50,7 +50,13 @@ def _load_plugin_module():
     sys.modules["tools"] = tools_module
     sys.modules["tools.registry"] = registry_module
 
-    path = Path(__file__).resolve().parents[1] / ".hermes" / "plugins" / "freezone" / "__init__.py"
+    path = (
+        Path(__file__).resolve().parents[1]
+        / ".hermes"
+        / "plugins"
+        / "freezone"
+        / "__init__.py"
+    )
     spec = importlib.util.spec_from_file_location("test_freezone_plugin", path)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
@@ -62,13 +68,23 @@ def _load_plugin_module():
 def _load_plugin_module_with_registry_result(registry_result):
     tools_module = types.ModuleType("tools")
     registry_module = types.ModuleType("tools.registry")
-    registry_module.tool_error = lambda value: json.dumps({"ok": False, "error": str(value)}, ensure_ascii=False)
+    registry_module.tool_error = lambda value: json.dumps(
+        {"ok": False, "error": str(value)}, ensure_ascii=False
+    )
     registry_module.tool_result = registry_result
     sys.modules["tools"] = tools_module
     sys.modules["tools.registry"] = registry_module
 
-    path = Path(__file__).resolve().parents[1] / ".hermes" / "plugins" / "freezone" / "__init__.py"
-    spec = importlib.util.spec_from_file_location("test_freezone_plugin_structured", path)
+    path = (
+        Path(__file__).resolve().parents[1]
+        / ".hermes"
+        / "plugins"
+        / "freezone"
+        / "__init__.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "test_freezone_plugin_structured", path
+    )
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -79,12 +95,15 @@ def _load_plugin_module_with_registry_result(registry_result):
 def _load_catalog_module():
     path = (
         Path(__file__).resolve().parents[1]
-        / ".hermes"
-        / "plugins"
+        / "src"
+        / "novelvideo"
         / "freezone"
-        / "json_workflow_catalog.py"
+        / "agent_workflows"
+        / "catalog.py"
     )
-    spec = importlib.util.spec_from_file_location("test_freezone_json_workflow_catalog", path)
+    spec = importlib.util.spec_from_file_location(
+        "test_freezone_json_workflow_catalog", path
+    )
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -269,12 +288,16 @@ def test_validation_payload_uses_only_the_declared_commands_contract():
 
 def test_validation_payload_rejects_removed_wrapper_only_contracts():
     plugin = _load_plugin_module()
-    assert plugin._validation_payload(
-        {"body": {"commands": [{"type": "create_node"}]}}
-    ) == {}
-    assert plugin._validation_payload(
-        {"envelope": {"commands": [{"type": "create_node"}]}}
-    ) == {}
+    assert (
+        plugin._validation_payload({"body": {"commands": [{"type": "create_node"}]}})
+        == {}
+    )
+    assert (
+        plugin._validation_payload(
+            {"envelope": {"commands": [{"type": "create_node"}]}}
+        )
+        == {}
+    )
 
 
 def test_validate_canvas_commands_rejects_empty_required_data():
@@ -330,7 +353,9 @@ def test_freezone_run_workflow_emits_one_deterministic_runner_command(monkeypatc
 def test_freezone_agent_rules_bound_content_policy_remediation() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     skill = (repo_root / ".hermes/skills/freezone/SKILL.md").read_text(encoding="utf-8")
-    plugin = (repo_root / ".hermes/plugins/freezone/__init__.py").read_text(encoding="utf-8")
+    plugin = (repo_root / ".hermes/plugins/freezone/__init__.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "内容安全失败不是提示词诊断" in skill
     assert "禁止靠猜词反复改写提示词" in skill
@@ -376,7 +401,10 @@ def test_fixed_workflow_creation_is_rejected_before_canvas_bridge():
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
 
     result = handlers["freezone_create_workflow_graph"](
-        {"workflow_type": "catalog.ecommerce_product.ecommerce_scene_images", "count": 3}
+        {
+            "workflow_type": "catalog.ecommerce_product.ecommerce_scene_images",
+            "count": 3,
+        }
     )
 
     assert result["ok"] is False
@@ -416,7 +444,9 @@ def test_dynamic_workflow_creation_reaches_canvas_bridge(monkeypatch):
     commands = [{"type": "create_node", "node_type": "textAnnotationNode"}]
     captured = {}
 
-    monkeypatch.setattr(plugin, "validate_agent_workflow_plan", lambda value: {"ok": value is plan})
+    monkeypatch.setattr(
+        plugin, "validate_agent_workflow_plan", lambda value: {"ok": value is plan}
+    )
     monkeypatch.setattr(
         plugin,
         "build_workflow_graph_commands",
@@ -425,7 +455,12 @@ def test_dynamic_workflow_creation_reaches_canvas_bridge(monkeypatch):
 
     def fake_emit(project, canvas, emitted, **kwargs):
         captured.update(
-            {"project": project, "canvas": canvas, "commands": emitted, "kwargs": kwargs}
+            {
+                "project": project,
+                "canvas": canvas,
+                "commands": emitted,
+                "kwargs": kwargs,
+            }
         )
         return "created"
 
@@ -460,7 +495,12 @@ def test_compact_workflow_intent_compiles_before_canvas_bridge(monkeypatch):
 
     def fake_emit(project, canvas, emitted, **kwargs):
         captured.update(
-            {"project": project, "canvas": canvas, "commands": emitted, "kwargs": kwargs}
+            {
+                "project": project,
+                "canvas": canvas,
+                "commands": emitted,
+                "kwargs": kwargs,
+            }
         )
         return "created-from-intent"
 
@@ -475,7 +515,9 @@ def test_compact_workflow_intent_compiles_before_canvas_bridge(monkeypatch):
     assert captured["kwargs"]["allow_dynamic_workflow_batch"] is True
 
 
-def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(monkeypatch, tmp_path):
+def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
+    monkeypatch, tmp_path
+):
     plugin = _load_plugin_module()
     _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
     emitted = []
@@ -609,7 +651,13 @@ def test_workflow_draft_normalizes_json_intent_string(monkeypatch, tmp_path):
         "ok": True,
         "skill_id": "video-ad",
         "edge_count": 0,
-        "plan": {"summary": "广告", "inputs": {}, "phases": [], "nodes": [], "edges": []},
+        "plan": {
+            "summary": "广告",
+            "inputs": {},
+            "phases": [],
+            "nodes": [],
+            "edges": [],
+        },
     }
     monkeypatch.setattr(plugin, "compile_workflow_intent", lambda intent: compiled)
     serialized = json.dumps(
@@ -665,7 +713,13 @@ def test_workflow_draft_tolerates_common_model_argument_shapes(monkeypatch, tmp_
         "ok": True,
         "skill_id": "video-ad",
         "edge_count": 0,
-        "plan": {"summary": "广告", "inputs": {}, "phases": [], "nodes": [], "edges": []},
+        "plan": {
+            "summary": "广告",
+            "inputs": {},
+            "phases": [],
+            "nodes": [],
+            "edges": [],
+        },
     }
     monkeypatch.setattr(
         plugin,
@@ -1017,9 +1071,9 @@ def test_workflow_graph_can_run_validated_nodes_after_create():
         "brief",
         "image",
     ]
-    assert {
-        command["data"]["workflowInstanceId"] for command in create_commands
-    } == {built["workflow_instance_id"]}
+    assert {command["data"]["workflowInstanceId"] for command in create_commands} == {
+        built["workflow_instance_id"]
+    }
     layout_command = next(
         command for command in built["commands"] if command["type"] == "layout_nodes"
     )
@@ -1048,7 +1102,11 @@ def test_workflow_graph_leaves_mixed_text_edge_roles_for_per_edge_inference():
                     {"id": "image", "node_type": "imageGenNode"},
                 ],
                 "edges": [
-                    {"source": "input", "target": "outline", "link_type": "context_for"},
+                    {
+                        "source": "input",
+                        "target": "outline",
+                        "link_type": "context_for",
+                    },
                     {"source": "input", "target": "image", "link_type": "prompt_for"},
                 ],
             }
@@ -1113,9 +1171,7 @@ def test_freezone_get_workflow_skill_accepts_native_skill_id(monkeypatch):
     plugin = _load_plugin_module_with_registry_result(lambda value: "summarized")
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
 
-    loaded = handlers["freezone_get_workflow_skill"](
-        {"skill_id": "ecommerce-ad"}
-    )
+    loaded = handlers["freezone_get_workflow_skill"]({"skill_id": "ecommerce-ad"})
 
     decoded = json.loads(loaded)
     assert decoded["ok"] is True
@@ -1138,7 +1194,9 @@ def test_freezone_get_workflow_skill_compact_omits_recipe_definitions(monkeypatc
     assert decoded["planning_contract"]["mode"] == "dynamic_only"
 
 
-def test_freezone_get_workflow_skill_records_structured_result_side_channel(monkeypatch, tmp_path):
+def test_freezone_get_workflow_skill_records_structured_result_side_channel(
+    monkeypatch, tmp_path
+):
     result_dir = tmp_path / "freezone-tool-results"
     monkeypatch.setenv("DRAMACLAW_FREEZONE_TOOL_RESULT_DIR", str(result_dir))
     catalog = _load_catalog_module()
@@ -1176,7 +1234,10 @@ def test_freezone_plugin_reads_saved_skill_and_recipe(monkeypatch):
             return {
                 "ok": True,
                 "data": [
-                    {"id": "home-culture-poster-image", "system_prompt": "完整 Recipe 配置"},
+                    {
+                        "id": "home-culture-poster-image",
+                        "system_prompt": "完整 Recipe 配置",
+                    },
                 ],
             }
         raise AssertionError(path)
@@ -1184,7 +1245,9 @@ def test_freezone_plugin_reads_saved_skill_and_recipe(monkeypatch):
     monkeypatch.setattr(plugin, "_request", fake_request)
 
     skill = handlers["freezone_get_saved_skill"]({"skill_id": "home-culture-poster"})
-    recipe = handlers["freezone_get_saved_recipe"]({"recipe_id": "home-culture-poster-image"})
+    recipe = handlers["freezone_get_saved_recipe"](
+        {"recipe_id": "home-culture-poster-image"}
+    )
 
     assert skill["ok"] is True
     assert skill["kind"] == "skills"
@@ -1229,7 +1292,9 @@ def test_freezone_plugin_lists_agent_catalog_summaries(monkeypatch):
 
     monkeypatch.setattr(plugin, "_request", fake_request)
 
-    listed = handlers["freezone_list_agent_catalog"]({"kind": "recipes", "query": "角色"})
+    listed = handlers["freezone_list_agent_catalog"](
+        {"kind": "recipes", "query": "角色"}
+    )
 
     assert listed["ok"] is True
     assert listed["kind"] == "recipes"
@@ -1254,7 +1319,9 @@ def test_freezone_plugin_lists_agent_catalog_summaries(monkeypatch):
     assert "system_prompt" not in listed["items"][0]
 
 
-def test_freezone_plugin_list_agent_catalog_token_search_ranks_partial_matches(monkeypatch):
+def test_freezone_plugin_list_agent_catalog_token_search_ranks_partial_matches(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
 
@@ -1317,7 +1384,9 @@ def test_freezone_plugin_list_agent_catalog_token_search_ranks_partial_matches(m
     ]
 
 
-def test_freezone_plugin_list_agent_catalog_returns_fallback_summaries_when_query_misses(monkeypatch):
+def test_freezone_plugin_list_agent_catalog_returns_fallback_summaries_when_query_misses(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
 
@@ -1327,8 +1396,16 @@ def test_freezone_plugin_list_agent_catalog_returns_fallback_summaries_when_quer
             return {
                 "ok": True,
                 "data": [
-                    {"id": "video-storyboard-grid", "name": "多宫格分镜图", "enabled": True},
-                    {"id": "storyboard-shot-video", "name": "分镜单段视频", "enabled": True},
+                    {
+                        "id": "video-storyboard-grid",
+                        "name": "多宫格分镜图",
+                        "enabled": True,
+                    },
+                    {
+                        "id": "storyboard-shot-video",
+                        "name": "分镜单段视频",
+                        "enabled": True,
+                    },
                 ],
             }
         raise AssertionError(path)
@@ -1341,7 +1418,9 @@ def test_freezone_plugin_list_agent_catalog_returns_fallback_summaries_when_quer
 
     assert listed["ok"] is True
     assert listed["count"] == 0
-    assert [item["id"] for item in listed["fallback_items"]] == ["video-storyboard-grid"]
+    assert [item["id"] for item in listed["fallback_items"]] == [
+        "video-storyboard-grid"
+    ]
 
 
 def test_freezone_plugin_lists_agent_catalog_reports_available_ids(monkeypatch):
@@ -1362,7 +1441,9 @@ def test_freezone_plugin_lists_agent_catalog_reports_available_ids(monkeypatch):
 
     monkeypatch.setattr(plugin, "_request", fake_request)
 
-    listed = handlers["freezone_list_agent_catalog"]({"kind": "skills", "query": "不存在"})
+    listed = handlers["freezone_list_agent_catalog"](
+        {"kind": "skills", "query": "不存在"}
+    )
 
     assert listed["ok"] is True
     assert listed["kind"] == "skills"
@@ -1398,7 +1479,9 @@ def test_freezone_plugin_clarification_tool_waits_for_frontend_result(monkeypatc
         }
 
     monkeypatch.setattr(plugin, "clarification_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_clarification_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_clarification_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_clarification_result", fake_wait_result)
 
     result = handlers["freezone_request_user_clarification"](
@@ -1455,7 +1538,9 @@ def test_freezone_plugin_clarification_tool_generates_missing_id(monkeypatch):
         }
 
     monkeypatch.setattr(plugin, "clarification_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_clarification_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_clarification_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_clarification_result", fake_wait_result)
 
     result = handlers["freezone_request_user_clarification"](
@@ -1508,7 +1593,9 @@ def test_freezone_plugin_skill_studio_draft_tool_waits_for_frontend_result(monke
         }
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_skill_studio_result", fake_wait_result)
 
     draft = handlers["freezone_present_agent_catalog_draft"](
@@ -1533,7 +1620,9 @@ def test_freezone_plugin_skill_studio_draft_tool_waits_for_frontend_result(monke
     assert wait_keys[0][0] == "skill-studio-1"
 
 
-def test_freezone_plugin_skill_studio_chunked_draft_tools_emit_progress_and_finish(monkeypatch):
+def test_freezone_plugin_skill_studio_chunked_draft_tools_emit_progress_and_finish(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     pending_events = []
@@ -1560,7 +1649,9 @@ def test_freezone_plugin_skill_studio_chunked_draft_tools_emit_progress_and_fini
         }
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_skill_studio_result", fake_wait_result)
 
     outline = handlers["freezone_put_agent_catalog_draft_outline"](
@@ -1569,21 +1660,21 @@ def test_freezone_plugin_skill_studio_chunked_draft_tools_emit_progress_and_fini
             "canvas_id": "canvas-a",
             "skill_studio_session_id": "skill_studio_01",
             "mode": "create",
-                "reuse_goal": "公益短片工作流",
-                "stages": [
-                    {
-                        "id": "story-outline",
-                        "recipe_id": "story-outline",
-                        "reuse": "new",
-                        "new_recipe_craft_gap": "现有 Recipe 缺少公益故事的输入结构和输出结构。",
-                    },
-                    {
-                        "id": "video-render",
-                        "recipe_id": "video-render",
-                        "reuse": "new",
-                        "new_recipe_craft_gap": "现有 Recipe 缺少公益视频生成的质量检查和失败边界。",
-                    },
-                ],
+            "reuse_goal": "公益短片工作流",
+            "stages": [
+                {
+                    "id": "story-outline",
+                    "recipe_id": "story-outline",
+                    "reuse": "new",
+                    "new_recipe_craft_gap": "现有 Recipe 缺少公益故事的输入结构和输出结构。",
+                },
+                {
+                    "id": "video-render",
+                    "recipe_id": "video-render",
+                    "reuse": "new",
+                    "new_recipe_craft_gap": "现有 Recipe 缺少公益视频生成的质量检查和失败边界。",
+                },
+            ],
             "expected_recipe_count": 2,
             "catalog_checked": True,
         }
@@ -1635,18 +1726,28 @@ def test_freezone_plugin_skill_studio_chunked_draft_tools_emit_progress_and_fini
     assert outline["ok"] is True
     assert begin["ok"] is True
     assert skill["ok"] is True
-    assert skill["agent_instruction"].startswith("下一步必须调用 freezone_put_agent_catalog_recipe")
+    assert skill["agent_instruction"].startswith(
+        "下一步必须调用 freezone_put_agent_catalog_recipe"
+    )
     assert "剩余 2 个" in skill["agent_instruction"]
-    assert "下一步必须调用 freezone_put_agent_catalog_recipe" in skill["agent_instruction"]
+    assert (
+        "下一步必须调用 freezone_put_agent_catalog_recipe" in skill["agent_instruction"]
+    )
     assert "index=0" in skill["agent_instruction"]
     assert "中性工艺级 recipe_id" in skill["agent_instruction"]
     assert "不要把 Skill 的风格" in skill["agent_instruction"]
-    assert "现在不要调用 freezone_finish_agent_catalog_draft" in skill["agent_instruction"]
+    assert (
+        "现在不要调用 freezone_finish_agent_catalog_draft" in skill["agent_instruction"]
+    )
     assert recipe_1["ok"] is True
-    assert recipe_1["agent_instruction"].startswith("下一步必须调用 freezone_put_agent_catalog_recipe")
+    assert recipe_1["agent_instruction"].startswith(
+        "下一步必须调用 freezone_put_agent_catalog_recipe"
+    )
     assert "中性工艺级 recipe_id" in recipe_1["agent_instruction"]
     assert recipe_2["ok"] is True
-    assert recipe_2["agent_instruction"].startswith("下一步必须调用 freezone_finish_agent_catalog_draft")
+    assert recipe_2["agent_instruction"].startswith(
+        "下一步必须调用 freezone_finish_agent_catalog_draft"
+    )
     assert finished["ok"] is True
     assert wait_keys == [("skill-studio-6", 600)]
     event_types = [item["event"]["type"] for item in pending_events]
@@ -1665,14 +1766,22 @@ def test_freezone_plugin_skill_studio_chunked_draft_tools_emit_progress_and_fini
         pending_events[2]["event"]["debug"]["agent_instruction"]
     )
     assert pending_events[3]["event"]["message"] == "已生成 Recipe 1 / 2"
-    assert "不要把工具调用、参数块或代码块写进聊天内容" in pending_events[3]["event"]["debug"]["agent_instruction"]
+    assert (
+        "不要把工具调用、参数块或代码块写进聊天内容"
+        in pending_events[3]["event"]["debug"]["agent_instruction"]
+    )
     assert pending_events[4]["event"]["message"] == "已生成 Recipe 2 / 2"
     draft_event = pending_events[-1]["event"]
     assert draft_event["skill"]["id"] == "public-service-video"
-    assert [recipe["id"] for recipe in draft_event["recipes"]] == ["story-outline", "video-render"]
+    assert [recipe["id"] for recipe in draft_event["recipes"]] == [
+        "story-outline",
+        "video-render",
+    ]
 
 
-def test_freezone_plugin_begin_agent_catalog_draft_requires_outline_for_create(monkeypatch):
+def test_freezone_plugin_begin_agent_catalog_draft_requires_outline_for_create(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
 
@@ -1691,7 +1800,9 @@ def test_freezone_plugin_begin_agent_catalog_draft_requires_outline_for_create(m
     assert "freezone_put_agent_catalog_draft_outline" in result["agent_instruction"]
 
 
-def test_freezone_plugin_begin_agent_catalog_draft_inherits_outline_expected_count(monkeypatch):
+def test_freezone_plugin_begin_agent_catalog_draft_inherits_outline_expected_count(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     pending_events = []
@@ -1703,7 +1814,9 @@ def test_freezone_plugin_begin_agent_catalog_draft_inherits_outline_expected_cou
         pending_events.append(kwargs)
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
 
     base_args = {
         "project_id": "project-a",
@@ -1728,7 +1841,9 @@ def test_freezone_plugin_begin_agent_catalog_draft_inherits_outline_expected_cou
         }
     )
 
-    begin = handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "create"})
+    begin = handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "create"}
+    )
     recipe = handlers["freezone_put_agent_catalog_recipe"](
         {**base_args, "index": 0, "recipe": {"id": "ad-storyboard", "name": "广告分镜"}}
     )
@@ -1741,11 +1856,16 @@ def test_freezone_plugin_begin_agent_catalog_draft_inherits_outline_expected_cou
     assert pending_events[2]["event"]["message"] == "已生成 Recipe 1 / 1"
     assert skill["ok"] is True
     assert "Recipe 已提交 1 / 1" in skill["agent_instruction"]
-    assert "下一步必须调用 freezone_finish_agent_catalog_draft" in skill["agent_instruction"]
+    assert (
+        "下一步必须调用 freezone_finish_agent_catalog_draft"
+        in skill["agent_instruction"]
+    )
     assert "本次不需要提交 Recipe" not in skill["agent_instruction"]
 
 
-def test_freezone_plugin_draft_outline_allows_create_flow_and_reaches_final_draft(monkeypatch):
+def test_freezone_plugin_draft_outline_allows_create_flow_and_reaches_final_draft(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     pending_events = []
@@ -1760,7 +1880,9 @@ def test_freezone_plugin_draft_outline_allows_create_flow_and_reaches_final_draf
         return {"ok": True, "bridge_key": key, "skill_studio_status": "answered"}
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_skill_studio_result", fake_wait_result)
 
     base_args = {
@@ -1773,26 +1895,34 @@ def test_freezone_plugin_draft_outline_allows_create_flow_and_reaches_final_draf
             **base_args,
             "mode": "create",
             "reuse_goal": "把当前广告短片流程沉淀成可复用 Skill",
-                "skill_level_constraints": ["皮克斯 3D 风格放在 Skill"],
-                "stages": [
-                    {
-                        "id": "story-outline",
-                        "recipe_id": "story-outline",
-                        "reuse": "new",
-                        "new_recipe_craft_gap": "现有 Recipe 缺少广告短片故事大纲的输入结构和输出结构。",
-                    },
-                ],
+            "skill_level_constraints": ["皮克斯 3D 风格放在 Skill"],
+            "stages": [
+                {
+                    "id": "story-outline",
+                    "recipe_id": "story-outline",
+                    "reuse": "new",
+                    "new_recipe_craft_gap": "现有 Recipe 缺少广告短片故事大纲的输入结构和输出结构。",
+                },
+            ],
             "expected_recipe_count": 1,
             "catalog_checked": True,
         }
     )
-    begin = handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "create", "expected_recipe_count": 1})
-    handlers["freezone_put_agent_catalog_skill"]({**base_args, "skill": {"id": "ad-video"}})
+    begin = handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "create", "expected_recipe_count": 1}
+    )
+    handlers["freezone_put_agent_catalog_skill"](
+        {**base_args, "skill": {"id": "ad-video"}}
+    )
     handlers["freezone_put_agent_catalog_recipe"](
         {
             **base_args,
             "index": 0,
-            "recipe": {"id": "story-outline", "name": "故事大纲", "output_kind": "text"},
+            "recipe": {
+                "id": "story-outline",
+                "name": "故事大纲",
+                "output_kind": "text",
+            },
         }
     )
     handlers["freezone_finish_agent_catalog_draft"](base_args)
@@ -1800,7 +1930,9 @@ def test_freezone_plugin_draft_outline_allows_create_flow_and_reaches_final_draf
     assert outline["ok"] is True
     assert begin["ok"] is True
     draft_event = pending_events[-1]["event"]
-    assert draft_event["outline"]["reuse_goal"] == "把当前广告短片流程沉淀成可复用 Skill"
+    assert (
+        draft_event["outline"]["reuse_goal"] == "把当前广告短片流程沉淀成可复用 Skill"
+    )
     assert draft_event["outline"]["expected_recipe_count"] == 1
 
 
@@ -1816,7 +1948,9 @@ def test_freezone_plugin_draft_outline_counts_only_new_recipe_chunks(monkeypatch
         pending_events.append(kwargs)
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
 
     base_args = {
         "project_id": "project-a",
@@ -1827,30 +1961,46 @@ def test_freezone_plugin_draft_outline_counts_only_new_recipe_chunks(monkeypatch
         {
             **base_args,
             "mode": "create",
-                "reuse_goal": "复用广告短片制作流程",
-                "stages": [
-                    {
-                        "id": "character-anchor",
-                        "recipe_id": "pixar-character-anchor",
-                        "reuse": "new",
-                        "new_recipe_craft_gap": "现有 Recipe 缺少广告 IP 角色锚点的输入结构和失败边界。",
-                    },
-                    {
-                        "id": "prop-anchor",
-                        "recipe_id": "brand-prop-anchor",
-                        "reuse": "new",
-                        "new_recipe_craft_gap": "现有 Recipe 缺少品牌道具植入的输出结构和质量检查。",
-                    },
-                    {"id": "storyboard", "recipe_id": "video-storyboard-grid", "reuse": "existing"},
-                    {"id": "shot-video", "recipe_id": "storyboard-shot-video", "reuse": "existing"},
-                    {"id": "audio-layer", "recipe_id": "video-audio-layer", "reuse": "existing"},
+            "reuse_goal": "复用广告短片制作流程",
+            "stages": [
+                {
+                    "id": "character-anchor",
+                    "recipe_id": "pixar-character-anchor",
+                    "reuse": "new",
+                    "new_recipe_craft_gap": "现有 Recipe 缺少广告 IP 角色锚点的输入结构和失败边界。",
+                },
+                {
+                    "id": "prop-anchor",
+                    "recipe_id": "brand-prop-anchor",
+                    "reuse": "new",
+                    "new_recipe_craft_gap": "现有 Recipe 缺少品牌道具植入的输出结构和质量检查。",
+                },
+                {
+                    "id": "storyboard",
+                    "recipe_id": "video-storyboard-grid",
+                    "reuse": "existing",
+                },
+                {
+                    "id": "shot-video",
+                    "recipe_id": "storyboard-shot-video",
+                    "reuse": "existing",
+                },
+                {
+                    "id": "audio-layer",
+                    "recipe_id": "video-audio-layer",
+                    "reuse": "existing",
+                },
             ],
             "expected_recipe_count": 5,
             "catalog_checked": True,
         }
     )
-    begin = handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "create", "expected_recipe_count": 5})
-    skill = handlers["freezone_put_agent_catalog_skill"]({**base_args, "skill": {"id": "pixar-ad-video"}})
+    begin = handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "create", "expected_recipe_count": 5}
+    )
+    skill = handlers["freezone_put_agent_catalog_skill"](
+        {**base_args, "skill": {"id": "pixar-ad-video"}}
+    )
 
     assert outline["ok"] is True
     assert outline["agent_instruction"].count("expected_recipe_count=2") == 1
@@ -1907,7 +2057,9 @@ def test_freezone_plugin_draft_outline_accepts_new_recipe_with_craft_gap(monkeyp
         pending_events.append(kwargs)
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
 
     result = handlers["freezone_put_agent_catalog_draft_outline"](
         {
@@ -1946,7 +2098,9 @@ def test_freezone_plugin_draft_outline_accepts_new_recipe_with_craft_gap(monkeyp
     assert outline_event["outline"]["recipe_chunk_count"] == 1
 
 
-def test_freezone_plugin_finish_agent_catalog_draft_warns_structural_recipe_issues(monkeypatch):
+def test_freezone_plugin_finish_agent_catalog_draft_warns_structural_recipe_issues(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     pending_events = []
@@ -1961,7 +2115,9 @@ def test_freezone_plugin_finish_agent_catalog_draft_warns_structural_recipe_issu
         return {"ok": True, "bridge_key": key, "skill_studio_status": "answered"}
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_skill_studio_result", fake_wait_result)
 
     base_args = {
@@ -1969,14 +2125,18 @@ def test_freezone_plugin_finish_agent_catalog_draft_warns_structural_recipe_issu
         "canvas_id": "canvas-a",
         "skill_studio_session_id": "skill_studio_lint",
     }
-    handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "create", "expected_recipe_count": 3})
+    handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "create", "expected_recipe_count": 3}
+    )
     handlers["freezone_put_agent_catalog_skill"](
         {
             **base_args,
             "skill": {
                 "id": "light-shadow-ad-video",
                 "name": "光影广告短片",
-                "input_parameters": [{"id": "shot_count", "type": "number", "default": 6}],
+                "input_parameters": [
+                    {"id": "shot_count", "type": "number", "default": 6}
+                ],
             },
         }
     )
@@ -2025,7 +2185,9 @@ def test_freezone_plugin_finish_agent_catalog_draft_warns_structural_recipe_issu
     assert any("音频输出" in warning and "最终合成" in warning for warning in warnings)
 
 
-def test_freezone_plugin_chunked_draft_skill_result_directs_first_recipe_before_finish(monkeypatch):
+def test_freezone_plugin_chunked_draft_skill_result_directs_first_recipe_before_finish(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     pending_events = []
@@ -2037,7 +2199,9 @@ def test_freezone_plugin_chunked_draft_skill_result_directs_first_recipe_before_
         pending_events.append(kwargs)
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
 
     handlers["freezone_put_agent_catalog_draft_outline"](
         {
@@ -2089,7 +2253,9 @@ def test_freezone_plugin_chunked_draft_skill_result_directs_first_recipe_before_
     assert "现在不要调用 freezone_finish_agent_catalog_draft" in instruction
 
 
-def test_freezone_plugin_chunked_draft_skill_without_recipes_directs_finish(monkeypatch):
+def test_freezone_plugin_chunked_draft_skill_without_recipes_directs_finish(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     pending_events = []
@@ -2101,7 +2267,9 @@ def test_freezone_plugin_chunked_draft_skill_without_recipes_directs_finish(monk
         pending_events.append(kwargs)
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
 
     handlers["freezone_put_agent_catalog_draft_outline"](
         {
@@ -2146,7 +2314,9 @@ def test_freezone_plugin_chunked_draft_skill_without_recipes_directs_finish(monk
     assert "freezone_put_agent_catalog_recipe" not in instruction
 
 
-def test_freezone_plugin_chunked_draft_recipe_progress_without_expected_count_avoids_fake_total(monkeypatch):
+def test_freezone_plugin_chunked_draft_recipe_progress_without_expected_count_avoids_fake_total(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     pending_events = []
@@ -2161,7 +2331,9 @@ def test_freezone_plugin_chunked_draft_recipe_progress_without_expected_count_av
         return {"ok": True, "bridge_key": key, "skill_studio_status": "answered"}
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_skill_studio_result", fake_wait_result)
 
     handlers["freezone_begin_agent_catalog_draft"](
@@ -2186,7 +2358,9 @@ def test_freezone_plugin_chunked_draft_recipe_progress_without_expected_count_av
     assert "recipe_count" not in pending_events[-1]["event"]
 
 
-def test_freezone_plugin_chunked_draft_recipe_result_directs_next_recipe_before_finish(monkeypatch):
+def test_freezone_plugin_chunked_draft_recipe_result_directs_next_recipe_before_finish(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     pending_events = []
@@ -2198,7 +2372,9 @@ def test_freezone_plugin_chunked_draft_recipe_result_directs_next_recipe_before_
         pending_events.append(kwargs)
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
 
     handlers["freezone_put_agent_catalog_draft_outline"](
         {
@@ -2261,7 +2437,9 @@ def test_freezone_plugin_chunked_draft_recipe_result_directs_next_recipe_before_
     assert "现在不要调用 freezone_finish_agent_catalog_draft" in instruction
 
 
-def test_freezone_plugin_chunked_draft_revision_preserves_unchanged_recipes(monkeypatch):
+def test_freezone_plugin_chunked_draft_revision_preserves_unchanged_recipes(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     pending_events = []
@@ -2282,7 +2460,9 @@ def test_freezone_plugin_chunked_draft_revision_preserves_unchanged_recipes(monk
         }
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_skill_studio_result", fake_wait_result)
 
     base_args = {
@@ -2290,19 +2470,33 @@ def test_freezone_plugin_chunked_draft_revision_preserves_unchanged_recipes(monk
         "canvas_id": "canvas-a",
         "skill_studio_session_id": "skill_studio_01",
     }
-    handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "create", "expected_recipe_count": 2})
-    handlers["freezone_put_agent_catalog_skill"]({**base_args, "skill": {"id": "public-service-video"}})
-    handlers["freezone_put_agent_catalog_recipe"]({**base_args, "index": 0, "recipe": {"id": "story-outline"}})
-    handlers["freezone_put_agent_catalog_recipe"]({**base_args, "index": 1, "recipe": {"id": "video-render"}})
+    handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "create", "expected_recipe_count": 2}
+    )
+    handlers["freezone_put_agent_catalog_skill"](
+        {**base_args, "skill": {"id": "public-service-video"}}
+    )
+    handlers["freezone_put_agent_catalog_recipe"](
+        {**base_args, "index": 0, "recipe": {"id": "story-outline"}}
+    )
+    handlers["freezone_put_agent_catalog_recipe"](
+        {**base_args, "index": 1, "recipe": {"id": "video-render"}}
+    )
     handlers["freezone_finish_agent_catalog_draft"](base_args)
 
-    handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "edit", "expected_recipe_count": 2})
+    handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "edit", "expected_recipe_count": 2}
+    )
     handlers["freezone_put_agent_catalog_recipe"](
         {**base_args, "index": 1, "recipe": {"id": "video-render-v2"}}
     )
     handlers["freezone_finish_agent_catalog_draft"](base_args)
 
-    draft_events = [item["event"] for item in pending_events if item["event"]["type"] == "skill_studio.draft"]
+    draft_events = [
+        item["event"]
+        for item in pending_events
+        if item["event"]["type"] == "skill_studio.draft"
+    ]
     assert [recipe["id"] for recipe in draft_events[-1]["recipes"]] == [
         "story-outline",
         "video-render-v2",
@@ -2324,7 +2518,9 @@ def test_freezone_plugin_patch_draft_skill_keywords_preserves_recipes(monkeypatc
         return {"ok": True, "bridge_key": key, "skill_studio_status": "answered"}
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_skill_studio_result", fake_wait_result)
 
     base_args = {
@@ -2332,7 +2528,9 @@ def test_freezone_plugin_patch_draft_skill_keywords_preserves_recipes(monkeypatc
         "canvas_id": "canvas-a",
         "skill_studio_session_id": "skill_studio_patch",
     }
-    handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "create", "expected_recipe_count": 2})
+    handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "create", "expected_recipe_count": 2}
+    )
     handlers["freezone_put_agent_catalog_skill"](
         {
             **base_args,
@@ -2342,11 +2540,17 @@ def test_freezone_plugin_patch_draft_skill_keywords_preserves_recipes(monkeypatc
             },
         }
     )
-    handlers["freezone_put_agent_catalog_recipe"]({**base_args, "index": 0, "recipe": {"id": "story-outline"}})
-    handlers["freezone_put_agent_catalog_recipe"]({**base_args, "index": 1, "recipe": {"id": "video-render"}})
+    handlers["freezone_put_agent_catalog_recipe"](
+        {**base_args, "index": 0, "recipe": {"id": "story-outline"}}
+    )
+    handlers["freezone_put_agent_catalog_recipe"](
+        {**base_args, "index": 1, "recipe": {"id": "video-render"}}
+    )
     handlers["freezone_finish_agent_catalog_draft"](base_args)
 
-    handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "edit", "expected_recipe_count": 2})
+    handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "edit", "expected_recipe_count": 2}
+    )
     patched = handlers["freezone_patch_agent_catalog_draft"](
         {
             **base_args,
@@ -2364,15 +2568,27 @@ def test_freezone_plugin_patch_draft_skill_keywords_preserves_recipes(monkeypatc
 
     assert patched["ok"] is True
     assert patched["status"] == "draft_patch_applied"
-    assert patched["agent_instruction"].startswith("下一步必须调用 freezone_finish_agent_catalog_draft")
-    assert "更新后的完整草稿必须通过 finish 工具重新展示给用户" in patched["agent_instruction"]
+    assert patched["agent_instruction"].startswith(
+        "下一步必须调用 freezone_finish_agent_catalog_draft"
+    )
+    assert (
+        "更新后的完整草稿必须通过 finish 工具重新展示给用户"
+        in patched["agent_instruction"]
+    )
     assert pending_events[-2]["event"]["message"] == "已更新 Skill 触发关键词"
     assert pending_events[-2]["event"]["debug"]["agent_instruction"].startswith(
         "下一步必须调用 freezone_finish_agent_catalog_draft"
     )
-    draft_events = [item["event"] for item in pending_events if item["event"]["type"] == "skill_studio.draft"]
+    draft_events = [
+        item["event"]
+        for item in pending_events
+        if item["event"]["type"] == "skill_studio.draft"
+    ]
     assert draft_events[-1]["skill"]["triggers"]["keywords"] == ["公益短片", "公益视频"]
-    assert [recipe["id"] for recipe in draft_events[-1]["recipes"]] == ["story-outline", "video-render"]
+    assert [recipe["id"] for recipe in draft_events[-1]["recipes"]] == [
+        "story-outline",
+        "video-render",
+    ]
 
 
 def test_freezone_plugin_patch_draft_recipe_system_prompt_by_recipe_id(monkeypatch):
@@ -2390,7 +2606,9 @@ def test_freezone_plugin_patch_draft_recipe_system_prompt_by_recipe_id(monkeypat
         return {"ok": True, "bridge_key": key, "skill_studio_status": "answered"}
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_skill_studio_result", fake_wait_result)
 
     base_args = {
@@ -2398,30 +2616,50 @@ def test_freezone_plugin_patch_draft_recipe_system_prompt_by_recipe_id(monkeypat
         "canvas_id": "canvas-a",
         "skill_studio_session_id": "skill_studio_patch_recipe",
     }
-    handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "create", "expected_recipe_count": 2})
-    handlers["freezone_put_agent_catalog_skill"]({**base_args, "skill": {"id": "public-service-video"}})
-    handlers["freezone_put_agent_catalog_recipe"](
-        {**base_args, "index": 0, "recipe": {"id": "story-outline", "system_prompt": "旧大纲提示词"}}
+    handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "create", "expected_recipe_count": 2}
+    )
+    handlers["freezone_put_agent_catalog_skill"](
+        {**base_args, "skill": {"id": "public-service-video"}}
     )
     handlers["freezone_put_agent_catalog_recipe"](
-        {**base_args, "index": 1, "recipe": {"id": "video-script", "system_prompt": "旧脚本提示词"}}
+        {
+            **base_args,
+            "index": 0,
+            "recipe": {"id": "story-outline", "system_prompt": "旧大纲提示词"},
+        }
+    )
+    handlers["freezone_put_agent_catalog_recipe"](
+        {
+            **base_args,
+            "index": 1,
+            "recipe": {"id": "video-script", "system_prompt": "旧脚本提示词"},
+        }
     )
     handlers["freezone_finish_agent_catalog_draft"](base_args)
 
-    handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "edit", "expected_recipe_count": 2})
+    handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "edit", "expected_recipe_count": 2}
+    )
     patched = handlers["freezone_patch_agent_catalog_draft"](
         {
             **base_args,
             "target": "recipe",
             "recipe_id": "video-script",
-            "patch": [{"op": "replace", "path": "/system_prompt", "value": "新脚本提示词"}],
+            "patch": [
+                {"op": "replace", "path": "/system_prompt", "value": "新脚本提示词"}
+            ],
         }
     )
     handlers["freezone_finish_agent_catalog_draft"](base_args)
 
     assert patched["ok"] is True
     assert pending_events[-2]["event"]["message"] == "已更新 Recipe：video-script"
-    draft_events = [item["event"] for item in pending_events if item["event"]["type"] == "skill_studio.draft"]
+    draft_events = [
+        item["event"]
+        for item in pending_events
+        if item["event"]["type"] == "skill_studio.draft"
+    ]
     assert [recipe["system_prompt"] for recipe in draft_events[-1]["recipes"]] == [
         "旧大纲提示词",
         "新脚本提示词",
@@ -2443,7 +2681,9 @@ def test_freezone_plugin_patch_draft_removes_entire_recipe_by_recipe_id(monkeypa
         return {"ok": True, "bridge_key": key, "skill_studio_status": "answered"}
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_skill_studio_result", fake_wait_result)
 
     base_args = {
@@ -2451,10 +2691,18 @@ def test_freezone_plugin_patch_draft_removes_entire_recipe_by_recipe_id(monkeypa
         "canvas_id": "canvas-a",
         "skill_studio_session_id": "skill_studio_patch_remove_recipe",
     }
-    handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "create", "expected_recipe_count": 2})
-    handlers["freezone_put_agent_catalog_skill"]({**base_args, "skill": {"id": "public-service-video"}})
-    handlers["freezone_put_agent_catalog_recipe"]({**base_args, "index": 0, "recipe": {"id": "story-outline"}})
-    handlers["freezone_put_agent_catalog_recipe"]({**base_args, "index": 1, "recipe": {"id": "video-script"}})
+    handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "create", "expected_recipe_count": 2}
+    )
+    handlers["freezone_put_agent_catalog_skill"](
+        {**base_args, "skill": {"id": "public-service-video"}}
+    )
+    handlers["freezone_put_agent_catalog_recipe"](
+        {**base_args, "index": 0, "recipe": {"id": "story-outline"}}
+    )
+    handlers["freezone_put_agent_catalog_recipe"](
+        {**base_args, "index": 1, "recipe": {"id": "video-script"}}
+    )
 
     result = handlers["freezone_patch_agent_catalog_draft"](
         {
@@ -2469,7 +2717,11 @@ def test_freezone_plugin_patch_draft_removes_entire_recipe_by_recipe_id(monkeypa
     assert result["ok"] is True
     assert result["removed"] is True
     assert pending_events[-2]["event"]["message"] == "已移除 Recipe：video-script"
-    draft_events = [item["event"] for item in pending_events if item["event"]["type"] == "skill_studio.draft"]
+    draft_events = [
+        item["event"]
+        for item in pending_events
+        if item["event"]["type"] == "skill_studio.draft"
+    ]
     assert [recipe["id"] for recipe in draft_events[-1]["recipes"]] == ["story-outline"]
 
 
@@ -2488,7 +2740,9 @@ def test_freezone_plugin_patch_draft_invalid_path_does_not_mutate(monkeypatch):
         return {"ok": True, "bridge_key": key, "skill_studio_status": "answered"}
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_skill_studio_result", fake_wait_result)
 
     base_args = {
@@ -2496,7 +2750,9 @@ def test_freezone_plugin_patch_draft_invalid_path_does_not_mutate(monkeypatch):
         "canvas_id": "canvas-a",
         "skill_studio_session_id": "skill_studio_patch_invalid",
     }
-    handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "create", "expected_recipe_count": 0})
+    handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "create", "expected_recipe_count": 0}
+    )
     handlers["freezone_put_agent_catalog_skill"](
         {
             **base_args,
@@ -2511,7 +2767,9 @@ def test_freezone_plugin_patch_draft_invalid_path_does_not_mutate(monkeypatch):
         {
             **base_args,
             "target": "skill",
-            "patch": [{"op": "replace", "path": "/triggers/missing/0", "value": "公益视频"}],
+            "patch": [
+                {"op": "replace", "path": "/triggers/missing/0", "value": "公益视频"}
+            ],
         }
     )
     finished = handlers["freezone_finish_agent_catalog_draft"](base_args)
@@ -2519,11 +2777,17 @@ def test_freezone_plugin_patch_draft_invalid_path_does_not_mutate(monkeypatch):
     assert result["ok"] is False
     assert result["status"] == "draft_patch_failed"
     assert finished["ok"] is True
-    draft_events = [item["event"] for item in pending_events if item["event"]["type"] == "skill_studio.draft"]
+    draft_events = [
+        item["event"]
+        for item in pending_events
+        if item["event"]["type"] == "skill_studio.draft"
+    ]
     assert draft_events[-1]["skill"]["triggers"]["keywords"] == ["公益短片", "公益广告"]
 
 
-def test_freezone_plugin_patch_draft_rejects_recipe_root_path_with_guidance(monkeypatch):
+def test_freezone_plugin_patch_draft_rejects_recipe_root_path_with_guidance(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     pending_events = []
@@ -2538,7 +2802,9 @@ def test_freezone_plugin_patch_draft_rejects_recipe_root_path_with_guidance(monk
         return {"ok": True, "bridge_key": key, "skill_studio_status": "answered"}
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_skill_studio_result", fake_wait_result)
 
     base_args = {
@@ -2546,8 +2812,12 @@ def test_freezone_plugin_patch_draft_rejects_recipe_root_path_with_guidance(monk
         "canvas_id": "canvas-a",
         "skill_studio_session_id": "skill_studio_patch_recipe_path",
     }
-    handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "create", "expected_recipe_count": 1})
-    handlers["freezone_put_agent_catalog_skill"]({**base_args, "skill": {"id": "public-service-video"}})
+    handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "create", "expected_recipe_count": 1}
+    )
+    handlers["freezone_put_agent_catalog_skill"](
+        {**base_args, "skill": {"id": "public-service-video"}}
+    )
     handlers["freezone_put_agent_catalog_recipe"](
         {
             **base_args,
@@ -2579,8 +2849,14 @@ def test_freezone_plugin_patch_draft_rejects_recipe_root_path_with_guidance(monk
     assert result["status"] == "draft_patch_failed"
     assert "target=recipe" in result["error"]
     assert "/must_have_items" in result["error"]
-    assert "/recipes/public-welfare-storyboard-images/must_have_items" in result["error"]
-    draft_events = [item["event"] for item in pending_events if item["event"]["type"] == "skill_studio.draft"]
+    assert (
+        "/recipes/public-welfare-storyboard-images/must_have_items" in result["error"]
+    )
+    draft_events = [
+        item["event"]
+        for item in pending_events
+        if item["event"]["type"] == "skill_studio.draft"
+    ]
     assert draft_events[-1]["recipes"][0]["must_have_items"] == ["旧字段"]
 
 
@@ -2599,7 +2875,9 @@ def test_freezone_plugin_patch_draft_removes_keyword_list_item(monkeypatch):
         return {"ok": True, "bridge_key": key, "skill_studio_status": "answered"}
 
     monkeypatch.setattr(plugin, "skill_studio_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_skill_studio_event", fake_put_pending_event)
+    monkeypatch.setattr(
+        plugin, "put_pending_skill_studio_event", fake_put_pending_event
+    )
     monkeypatch.setattr(plugin, "wait_skill_studio_result", fake_wait_result)
 
     base_args = {
@@ -2607,7 +2885,9 @@ def test_freezone_plugin_patch_draft_removes_keyword_list_item(monkeypatch):
         "canvas_id": "canvas-a",
         "skill_studio_session_id": "skill_studio_patch_remove",
     }
-    handlers["freezone_begin_agent_catalog_draft"]({**base_args, "mode": "create", "expected_recipe_count": 0})
+    handlers["freezone_begin_agent_catalog_draft"](
+        {**base_args, "mode": "create", "expected_recipe_count": 0}
+    )
     handlers["freezone_put_agent_catalog_skill"](
         {
             **base_args,
@@ -2627,7 +2907,11 @@ def test_freezone_plugin_patch_draft_removes_keyword_list_item(monkeypatch):
     handlers["freezone_finish_agent_catalog_draft"](base_args)
 
     assert result["ok"] is True
-    draft_events = [item["event"] for item in pending_events if item["event"]["type"] == "skill_studio.draft"]
+    draft_events = [
+        item["event"]
+        for item in pending_events
+        if item["event"]["type"] == "skill_studio.draft"
+    ]
     assert draft_events[-1]["skill"]["triggers"]["keywords"] == ["公益短片", "纪录片"]
 
 
@@ -2636,9 +2920,15 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
     schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
 
     clarification_schema = schemas["freezone_request_user_clarification"]["parameters"]
-    clarification_description = schemas["freezone_request_user_clarification"]["description"]
-    clarification_question_item = clarification_schema["properties"]["questions"]["items"]
-    clarification_option_item = clarification_question_item["properties"]["options"]["items"]
+    clarification_description = schemas["freezone_request_user_clarification"][
+        "description"
+    ]
+    clarification_question_item = clarification_schema["properties"]["questions"][
+        "items"
+    ]
+    clarification_option_item = clarification_question_item["properties"]["options"][
+        "items"
+    ]
     draft_schema = schemas["freezone_present_agent_catalog_draft"]["parameters"]
     begin_schema = schemas["freezone_begin_agent_catalog_draft"]["parameters"]
     put_recipe_schema = schemas["freezone_put_agent_catalog_recipe"]["parameters"]
@@ -2653,11 +2943,20 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
 
     assert "including Skill Studio setup questions" in clarification_description
     assert "decide the next step from the current context" in clarification_description
-    assert "Ask only the questions needed for the next decision" in clarification_schema["properties"]["questions"]["description"]
-    assert "exactly one question" not in clarification_schema["properties"]["questions"]["description"]
+    assert (
+        "Ask only the questions needed for the next decision"
+        in clarification_schema["properties"]["questions"]["description"]
+    )
+    assert (
+        "exactly one question"
+        not in clarification_schema["properties"]["questions"]["description"]
+    )
     assert "freezone_present_skill_studio_questions" not in schemas
     assert clarification_schema["required"] == ["questions"]
-    assert "Freezone will generate it automatically" in clarification_schema["properties"]["clarification_id"]["description"]
+    assert (
+        "Freezone will generate it automatically"
+        in clarification_schema["properties"]["clarification_id"]["description"]
+    )
     assert "skill_studio_session_id" in clarification_schema["properties"]
     assert clarification_question_item["required"] == ["id", "title", "options"]
     assert clarification_option_item["required"] == ["id", "label"]
@@ -2666,27 +2965,74 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
     assert "Top-level field name must be patch" in patch_field_description
     assert "do not use operation, operations, or patches" in patch_field_description
     assert 'patch=[{"op":"remove","path":""}]' in patch_field_description
-    assert "top-level recipes parameter" in draft_schema["properties"]["recipes"]["description"]
+    assert (
+        "top-level recipes parameter"
+        in draft_schema["properties"]["recipes"]["description"]
+    )
     outline_stage_schema = outline_schema["properties"]["stages"]["items"]
-    assert "neutral craft/stage id" in outline_stage_schema["properties"]["id"]["description"]
-    assert "operation or output shape only" in outline_stage_schema["properties"]["name"]["description"]
-    assert "reusable craft-level Recipe id" in outline_stage_schema["properties"]["recipe_id"]["description"]
-    assert "same input object, processing action, output shape" in outline_stage_schema["properties"]["reuse"]["description"]
-    assert "workflow responsibility" in outline_stage_schema["properties"]["reuse"]["description"]
-    assert "output_kind matches" in outline_stage_schema["properties"]["reuse"]["description"]
-    assert "Do not cite style/theme/brand/aesthetic difference" in outline_stage_schema["properties"]["reason"]["description"]
-    assert "Do not write only 'same craft'" in outline_stage_schema["properties"]["reason"]["description"]
-    assert "Do not include the current Skill's visual style" in outline_stage_schema["properties"]["new_recipe_craft_gap"]["description"]
-    assert "generic generation/enhancement Recipe is insufficient" in outline_stage_schema["properties"]["new_recipe_craft_gap"]["description"]
-    assert begin_schema["required"] == ["skill_studio_session_id", "mode", "expected_recipe_count"]
+    assert (
+        "neutral craft/stage id"
+        in outline_stage_schema["properties"]["id"]["description"]
+    )
+    assert (
+        "operation or output shape only"
+        in outline_stage_schema["properties"]["name"]["description"]
+    )
+    assert (
+        "reusable craft-level Recipe id"
+        in outline_stage_schema["properties"]["recipe_id"]["description"]
+    )
+    assert (
+        "same input object, processing action, output shape"
+        in outline_stage_schema["properties"]["reuse"]["description"]
+    )
+    assert (
+        "workflow responsibility"
+        in outline_stage_schema["properties"]["reuse"]["description"]
+    )
+    assert (
+        "output_kind matches"
+        in outline_stage_schema["properties"]["reuse"]["description"]
+    )
+    assert (
+        "Do not cite style/theme/brand/aesthetic difference"
+        in outline_stage_schema["properties"]["reason"]["description"]
+    )
+    assert (
+        "Do not write only 'same craft'"
+        in outline_stage_schema["properties"]["reason"]["description"]
+    )
+    assert (
+        "Do not include the current Skill's visual style"
+        in outline_stage_schema["properties"]["new_recipe_craft_gap"]["description"]
+    )
+    assert (
+        "generic generation/enhancement Recipe is insufficient"
+        in outline_stage_schema["properties"]["new_recipe_craft_gap"]["description"]
+    )
+    assert begin_schema["required"] == [
+        "skill_studio_session_id",
+        "mode",
+        "expected_recipe_count",
+    ]
     assert put_recipe_schema["required"] == ["skill_studio_session_id", "recipe"]
     assert patch_schema["required"] == ["skill_studio_session_id", "target", "patch"]
     assert patch_schema["properties"]["target"]["enum"] == ["skill", "recipe"]
     assert "local edits" in patch_description
     assert "recipe_id" in patch_schema["properties"]
     assert "target=recipe" in patch_schema["properties"]["patch"]["description"]
-    assert "/system_prompt" in patch_schema["properties"]["patch"]["items"]["properties"]["path"]["description"]
-    assert "/recipes/" in patch_schema["properties"]["patch"]["items"]["properties"]["path"]["description"]
+    assert (
+        "/system_prompt"
+        in patch_schema["properties"]["patch"]["items"]["properties"]["path"][
+            "description"
+        ]
+    )
+    assert (
+        "/recipes/"
+        in patch_schema["properties"]["patch"]["items"]["properties"]["path"][
+            "description"
+        ]
+    )
     assert "Do not pass the full Skill/Recipe catalog" in finish_description
     assert "skill" not in finish_schema["properties"]
     assert "recipes" not in finish_schema["properties"]
@@ -2710,28 +3056,49 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
         "number",
         "boolean",
     ]
-    assert skill_schema["properties"]["triggers"]["required"] == ["keywords", "node_scopes"]
-    assert skill_schema["properties"]["triggers"]["properties"]["node_scopes"]["items"]["enum"] == [
+    assert skill_schema["properties"]["triggers"]["required"] == [
+        "keywords",
+        "node_scopes",
+    ]
+    assert skill_schema["properties"]["triggers"]["properties"]["node_scopes"]["items"][
+        "enum"
+    ] == [
         "textGeneration",
         "imageGeneration",
         "videoGeneration",
         "audioGeneration",
     ]
     assert "workflow_templates" not in skill_schema["properties"]
-    assert "videoCompose" not in skill_schema["properties"]["triggers"]["properties"]["node_scopes"]["items"]["enum"]
+    assert (
+        "videoCompose"
+        not in skill_schema["properties"]["triggers"]["properties"]["node_scopes"][
+            "items"
+        ]["enum"]
+    )
     assert skill_schema["properties"]["planning"]["required"] == [
         "planning_notes",
         "prompt_guide",
         "conduct_rules",
     ]
-    assert "executable path summary" in skill_schema["properties"]["planning"]["properties"][
-        "planning_notes"
-    ]["description"]
-    assert "hard execution rules" in skill_schema["properties"]["planning"]["properties"][
-        "conduct_rules"
-    ]["description"]
-    assert "model_preferences" not in skill_schema["properties"]["planning"]["properties"]
-    assert "default_aspect_ratios" not in skill_schema["properties"]["planning"]["properties"]
+    assert (
+        "executable path summary"
+        in skill_schema["properties"]["planning"]["properties"]["planning_notes"][
+            "description"
+        ]
+    )
+    assert (
+        "hard execution rules"
+        in skill_schema["properties"]["planning"]["properties"]["conduct_rules"][
+            "description"
+        ]
+    )
+    assert (
+        "model_preferences" not in skill_schema["properties"]["planning"]["properties"]
+    )
+    assert (
+        "default_aspect_ratios"
+        not in skill_schema["properties"]["planning"]["properties"]
+    )
     assert skill_schema["properties"]["evaluation"]["required"] == [
         "rating_bands",
         "quality_threshold",
@@ -2750,10 +3117,20 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
         "result_summary",
         "requires_source_media",
     ]
-    recipe_system_prompt_description = recipe_item["properties"]["system_prompt"]["description"]
-    assert "must never be the final downstream prompt itself" in recipe_system_prompt_description
+    recipe_system_prompt_description = recipe_item["properties"]["system_prompt"][
+        "description"
+    ]
+    assert (
+        "must never be the final downstream prompt itself"
+        in recipe_system_prompt_description
+    )
     assert "重要：你的输出是一条提示词/指令" in recipe_system_prompt_description
-    assert recipe_item["properties"]["output_kind"]["enum"] == ["text", "image", "video", "audio"]
+    assert recipe_item["properties"]["output_kind"]["enum"] == [
+        "text",
+        "image",
+        "video",
+        "audio",
+    ]
     legacy_system_prompt_key = "system" + "Prompt"
     assert legacy_system_prompt_key not in json.dumps(recipe_item, ensure_ascii=False)
     legacy_recipe_keys = [
@@ -2764,7 +3141,9 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
     ]
     for legacy_key in legacy_recipe_keys:
         assert legacy_key not in recipe_item["properties"]
-    system_prompt_description = recipe_item["properties"]["system_prompt"]["description"]
+    system_prompt_description = recipe_item["properties"]["system_prompt"][
+        "description"
+    ]
     assert "节点" in system_prompt_description
     assert "提示词/指令" in system_prompt_description
     assert "不要直接生成最终内容" in system_prompt_description
@@ -2774,8 +3153,12 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
     assert "角色设定" in system_prompt_description
     assert "输出结构" in system_prompt_description
     assert "禁止事项" in system_prompt_description
-    planning_prompt_description = recipe_item["properties"]["planning_prompt"]["description"]
-    result_summary_description = recipe_item["properties"]["result_summary"]["description"]
+    planning_prompt_description = recipe_item["properties"]["planning_prompt"][
+        "description"
+    ]
+    result_summary_description = recipe_item["properties"]["result_summary"][
+        "description"
+    ]
     assert "short business description" in planning_prompt_description
     assert "根据 X" in planning_prompt_description
     assert "Do not describe scheduling mechanics" in planning_prompt_description
@@ -2812,7 +3195,9 @@ def test_freezone_get_workflow_skill_includes_current_user_agent_config(monkeypa
             ]
         raise AssertionError(kind)
 
-    monkeypatch.setattr(catalog, "list_user_agent_config_items", fake_list_user_agent_config_items)
+    monkeypatch.setattr(
+        catalog, "list_user_agent_config_items", fake_list_user_agent_config_items
+    )
 
     package = catalog.get_workflow_skill({"skill_id": "custom-fruit-ad"})
 
@@ -3079,19 +3464,35 @@ def test_freezone_delete_nodes_clear_canvas_is_idempotent(monkeypatch):
 def test_freezone_plugin_create_node_schema_hides_internal_node_types():
     plugin = _load_plugin_module()
     create_node_tool = next(
-        (schema for name, schema, _handler in plugin.TOOLS if name == "freezone_create_node"),
+        (
+            schema
+            for name, schema, _handler in plugin.TOOLS
+            if name == "freezone_create_node"
+        ),
         None,
     )
     add_next_tool = next(
-        (schema for name, schema, _handler in plugin.TOOLS if name == "freezone_add_next_node"),
+        (
+            schema
+            for name, schema, _handler in plugin.TOOLS
+            if name == "freezone_add_next_node"
+        ),
         None,
     )
     emit_tool = next(
-        (schema for name, schema, _handler in plugin.TOOLS if name == "freezone_emit_canvas_command"),
+        (
+            schema
+            for name, schema, _handler in plugin.TOOLS
+            if name == "freezone_emit_canvas_command"
+        ),
         None,
     )
     group_tool = next(
-        (schema for name, schema, _handler in plugin.TOOLS if name == "freezone_group_nodes"),
+        (
+            schema
+            for name, schema, _handler in plugin.TOOLS
+            if name == "freezone_group_nodes"
+        ),
         None,
     )
 
@@ -3100,8 +3501,12 @@ def test_freezone_plugin_create_node_schema_hides_internal_node_types():
     assert emit_tool is not None
     assert group_tool is not None
     enum_values = create_node_tool["parameters"]["properties"]["node_type"]["enum"]
-    add_next_enum_values = add_next_tool["parameters"]["properties"]["node_type"]["enum"]
-    command_variants = emit_tool["parameters"]["properties"]["commands"]["items"]["oneOf"]
+    add_next_enum_values = add_next_tool["parameters"]["properties"]["node_type"][
+        "enum"
+    ]
+    command_variants = emit_tool["parameters"]["properties"]["commands"]["items"][
+        "oneOf"
+    ]
     create_command = next(
         variant
         for variant in command_variants
@@ -3122,7 +3527,9 @@ def test_freezone_plugin_create_node_schema_hides_internal_node_types():
     assert "exportImageNode" not in enum_values
     assert "videoStoryNode" not in enum_values
     assert "skillNode" in enum_values
-    assert enum_values == create_node_tool["parameters"]["properties"]["nodeType"]["enum"]
+    assert (
+        enum_values == create_node_tool["parameters"]["properties"]["nodeType"]["enum"]
+    )
     assert add_next_enum_values == enum_values
     assert set(emit_enum_values) == set(enum_values)
 
@@ -3141,12 +3548,10 @@ def test_canvas_command_tools_expose_discriminated_minimal_schema():
     assert set(emit["properties"]) == {"project_id", "canvas_id", "commands"}
 
     variants = emit["properties"]["commands"]["items"]["oneOf"]
-    assert len(variants) == 16
+    assert len(variants) == 17
     by_type = {}
     for variant in variants:
-        by_type.setdefault(variant["properties"]["type"]["enum"][0], []).append(
-            variant
-        )
+        by_type.setdefault(variant["properties"]["type"]["enum"][0], []).append(variant)
     assert set(by_type) == plugin._COMMAND_TYPES
     assert all(variant["additionalProperties"] is False for variant in variants)
     create_annotation, create_other = by_type["create_node"]
@@ -3161,8 +3566,10 @@ def test_canvas_command_tools_expose_discriminated_minimal_schema():
     assert create_annotation["properties"]["node_type"]["enum"] == [
         "textAnnotationNode"
     ]
-    assert create_annotation["properties"]["data"]["required"] == [
-        "title", "content"
+    assert create_annotation["properties"]["data"]["required"] == ["content"]
+    assert create_annotation["properties"]["data"]["anyOf"] == [
+        {"required": ["title"]},
+        {"required": ["displayName"]},
     ]
     assert "textAnnotationNode" not in create_other["properties"]["node_type"]["enum"]
     assert [set(item["properties"]) for item in by_type["delete_edges"]] == [
@@ -3192,9 +3599,12 @@ def test_canvas_command_tools_and_handlers_share_one_contract():
     assert "body" not in emit_properties
     assert "envelope" not in validate_properties
 
-    assert plugin._validation_payload(
-        {"canvasId": "old", "body": {"commands": [{"type": "x"}]}}
-    ) == {}
+    assert (
+        plugin._validation_payload(
+            {"canvasId": "old", "body": {"commands": [{"type": "x"}]}}
+        )
+        == {}
+    )
 
 
 def test_canvas_command_handlers_reject_legacy_scope_instead_of_using_defaults():
@@ -3244,9 +3654,7 @@ def test_update_node_data_rejects_aliases_and_empty_payloads():
     assert alias_result["ok"] is False
     assert alias_result["status"] == "legacy_tool_argument_rejected"
 
-    empty_result = plugin._handle_update_node_data(
-        {"node_id": "node-a", "data": {}}
-    )
+    empty_result = plugin._handle_update_node_data({"node_id": "node-a", "data": {}})
     assert empty_result["ok"] is False
     assert empty_result["status"] == "data_required"
 
@@ -3265,6 +3673,14 @@ def test_canvas_command_schema_accepts_minimal_variants_and_rejects_union_shell(
             "type": "create_node",
             "node_type": "textAnnotationNode",
             "data": {"title": "Fix", "content": "Apply the validated repair."},
+        },
+        {
+            "type": "create_node",
+            "node_type": "textAnnotationNode",
+            "data": {
+                "displayName": "Fix",
+                "content": "Apply the validated repair.",
+            },
         },
         {"type": "create_node", "node_type": "imageGenNode"},
         {"type": "add_next_node", "source_node_id": "node-1"},
@@ -3343,7 +3759,9 @@ def test_freezone_mcp_default_create_node_uses_frontend_bridge(monkeypatch):
     plugin = _load_plugin_module()
     pending_commands = []
 
-    monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "/tmp/dramaclaw-test-bridge")
+    monkeypatch.setenv(
+        "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "/tmp/dramaclaw-test-bridge"
+    )
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
     monkeypatch.delenv("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", raising=False)
 
@@ -3369,8 +3787,12 @@ def test_freezone_mcp_default_create_node_uses_frontend_bridge(monkeypatch):
         }
 
     monkeypatch.setattr(plugin, "canvas_command_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_canvas_command", fake_put_pending_canvas_command)
-    monkeypatch.setattr(plugin, "wait_canvas_command_result", fake_wait_canvas_command_result)
+    monkeypatch.setattr(
+        plugin, "put_pending_canvas_command", fake_put_pending_canvas_command
+    )
+    monkeypatch.setattr(
+        plugin, "wait_canvas_command_result", fake_wait_canvas_command_result
+    )
 
     result = plugin._handle_create_node(
         {
@@ -3385,10 +3807,11 @@ def test_freezone_mcp_default_create_node_uses_frontend_bridge(monkeypatch):
     assert result["canvas_apply_status"] == "applied"
     assert pending_commands
     envelope = pending_commands[0]["envelope"]
-    assert envelope["auto_apply_after_mcp_approval"] is True
+    assert "auto_apply_after_mcp_approval" not in envelope
     assert envelope["agent_id"] == "main"
+    assert envelope["external_mcp_command"] is True
     assert envelope["commands"][0]["type"] == "create_node"
-    assert str(pending_commands[0]["bridge_dir"]).endswith("freezone_main")
+    assert str(pending_commands[0]["bridge_dir"]) == "/tmp/dramaclaw-test-bridge"
 
 
 def test_freezone_hermes_bridge_does_not_auto_apply_mcp_marker(monkeypatch):
@@ -3418,8 +3841,12 @@ def test_freezone_hermes_bridge_does_not_auto_apply_mcp_marker(monkeypatch):
         }
 
     monkeypatch.setattr(plugin, "canvas_command_bridge_key", fake_bridge_key)
-    monkeypatch.setattr(plugin, "put_pending_canvas_command", fake_put_pending_canvas_command)
-    monkeypatch.setattr(plugin, "wait_canvas_command_result", fake_wait_canvas_command_result)
+    monkeypatch.setattr(
+        plugin, "put_pending_canvas_command", fake_put_pending_canvas_command
+    )
+    monkeypatch.setattr(
+        plugin, "wait_canvas_command_result", fake_wait_canvas_command_result
+    )
 
     result = plugin._handle_create_node(
         {
@@ -3433,13 +3860,53 @@ def test_freezone_hermes_bridge_does_not_auto_apply_mcp_marker(monkeypatch):
     envelope = pending_commands[0]["envelope"]
     assert "auto_apply_after_mcp_approval" not in envelope
     assert "agent_id" not in envelope
+    assert "external_mcp_command" not in envelope
+
+
+def test_freezone_codex_bridge_preserves_non_main_agent_scope(monkeypatch):
+    plugin = _load_plugin_module()
+    pending_commands = []
+
+    monkeypatch.setenv(
+        "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "/tmp/dramaclaw-test-bridge"
+    )
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.setenv("DRAMACLAW_AGENT_PROFILE", "freezone:agent-2")
+    monkeypatch.setattr(
+        plugin, "canvas_command_bridge_key", lambda **_kwargs: "bridge-agent-2"
+    )
+    monkeypatch.setattr(
+        plugin,
+        "put_pending_canvas_command",
+        lambda **kwargs: pending_commands.append(kwargs),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "wait_canvas_command_result",
+        lambda *_args, **_kwargs: {"ok": True, "canvas_apply_status": "applied"},
+    )
+
+    result = plugin._handle_create_node(
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "node_type": "videoNode",
+        }
+    )
+
+    assert result["ok"] is True
+    assert pending_commands[0]["envelope"]["agent_id"] == "agent-2"
+    assert pending_commands[0]["envelope"]["external_mcp_command"] is True
 
 
 def test_freezone_plugin_uses_frontend_link_type_catalog_values():
     plugin = _load_plugin_module()
 
     for tool_name in ("freezone_create_edge", "freezone_emit_canvas_command"):
-        tool = next((schema for name, schema, _handler in plugin.TOOLS if name == tool_name), None)
+        tool = next(
+            (schema for name, schema, _handler in plugin.TOOLS if name == tool_name),
+            None,
+        )
         assert tool is not None
         schema_text = json.dumps(tool, ensure_ascii=False)
         assert "media_input_for" in schema_text
@@ -3450,7 +3917,11 @@ def test_freezone_plugin_uses_frontend_link_type_catalog_values():
 def test_freezone_plugin_mainline_projection_assets_schema_is_directional():
     plugin = _load_plugin_module()
     asset_tool = next(
-        (schema for name, schema, _handler in plugin.TOOLS if name == "freezone_get_mainline_projection_assets"),
+        (
+            schema
+            for name, schema, _handler in plugin.TOOLS
+            if name == "freezone_get_mainline_projection_assets"
+        ),
         None,
     )
 
@@ -3468,7 +3939,9 @@ def test_freezone_plugin_mainline_projection_assets_schema_is_directional():
     assert "portrait" not in enum_values
 
 
-def test_freezone_plugin_mainline_projection_assets_normalizes_people_to_character(monkeypatch):
+def test_freezone_plugin_mainline_projection_assets_normalizes_people_to_character(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
     captured: dict[str, object] = {}
 
@@ -3482,7 +3955,9 @@ def test_freezone_plugin_mainline_projection_assets_normalizes_people_to_charact
         fake_request_canvas_context_from_frontend,
     )
     asset_handler = next(
-        handler for name, _schema, handler in plugin.TOOLS if name == "freezone_get_mainline_projection_assets"
+        handler
+        for name, _schema, handler in plugin.TOOLS
+        if name == "freezone_get_mainline_projection_assets"
     )
     result = asset_handler(
         {

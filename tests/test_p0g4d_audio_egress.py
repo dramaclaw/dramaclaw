@@ -282,6 +282,58 @@ async def test_eg15a_organization_uses_exact_gateway_credential_after_claim(
 
 
 @pytest.mark.asyncio
+async def test_freezone_newapi_audio_treats_trusted_platform_context_as_platform_egress(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from novelvideo.freezone import audio_node
+
+    events: list[str] = []
+    captured: dict = {}
+    monkeypatch.setattr(
+        "novelvideo.config.get_newapi_runtime_credentials",
+        lambda **_kwargs: ("platform-secret", "https://platform.example/v1"),
+    )
+    monkeypatch.setattr(
+        "httpx.AsyncClient",
+        lambda **_kwargs: _AsyncClient(events, [_Response()], captured),
+    )
+
+    output_path = tmp_path / "platform-music.mp3"
+    await audio_node._write_newapi_audio_speech(
+        output_path=output_path,
+        model="LingShan-MU-11",
+        input_text="quiet piano",
+        egress_context=_context("platform"),
+        business_task_id="music-1",
+    )
+
+    assert output_path.read_bytes() == b"audio"
+    assert events == ["post"]
+    assert captured["endpoint"] == "https://platform.example/v1/audio/speech"
+    assert captured["headers"]["Authorization"] == "Bearer platform-secret"
+
+
+@pytest.mark.asyncio
+async def test_freezone_newapi_audio_still_rejects_untrusted_egress_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from novelvideo.freezone import audio_node
+
+    monkeypatch.setattr(
+        "httpx.AsyncClient",
+        lambda **_kwargs: pytest.fail("untrusted context must not reach transport"),
+    )
+
+    with pytest.raises(RuntimeError, match="ORG_EGRESS_DENIED"):
+        await audio_node._write_newapi_audio_speech(
+            output_path=tmp_path / "forged.mp3",
+            model="LingShan-MU-11",
+            input_text="quiet piano",
+            egress_context=SimpleNamespace(is_organization=False),
+        )
+
+
+@pytest.mark.asyncio
 async def test_eg15a_missing_exact_credential_has_no_fal_or_env_fallback(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

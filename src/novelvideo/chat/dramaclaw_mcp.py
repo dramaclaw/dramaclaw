@@ -10,18 +10,22 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import logging
 import os
 import re
 import sys
 import types as py_types
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+
+logger = logging.getLogger("novelvideo.chat.dramaclaw_mcp")
 
 
 def _repo_root() -> Path:
@@ -48,33 +52,41 @@ def _install_hermes_registry_shim() -> None:
     sys.modules["tools.registry"] = registry
 
 
-def _load_dramaclaw_plugin() -> Any:
+def _load_plugin(plugin_name: str) -> Any:
     _install_hermes_registry_shim()
-    plugin_path = _repo_root() / ".hermes" / "plugins" / "dramaclaw" / "__init__.py"
+    plugin_path = _repo_root() / ".hermes" / "plugins" / plugin_name / "__init__.py"
     spec = importlib.util.spec_from_file_location(
-        "_dramaclaw_hermes_plugin_for_mcp",
+        f"_dramaclaw_{plugin_name}_hermes_plugin_for_mcp",
         plugin_path,
     )
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load DramaClaw plugin from {plugin_path}")
+        raise RuntimeError(f"cannot load {plugin_name} plugin from {plugin_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def _tool_index(plugin: Any) -> dict[str, tuple[dict[str, Any], Any]]:
+def _tool_index(*plugins: Any) -> dict[str, tuple[dict[str, Any], Any]]:
     index: dict[str, tuple[dict[str, Any], Any]] = {}
-    for entry in getattr(plugin, "TOOLS", ()):
-        if not isinstance(entry, tuple) or len(entry) != 3:
-            continue
-        name, schema, handler = entry
-        if isinstance(name, str) and isinstance(schema, dict) and callable(handler):
-            index[name] = (schema, handler)
+    for plugin in plugins:
+        for entry in getattr(plugin, "TOOLS", ()):
+            if not isinstance(entry, tuple) or len(entry) != 3:
+                continue
+            name, schema, handler = entry
+            if isinstance(name, str) and isinstance(schema, dict) and callable(handler):
+                if name in index:
+                    raise RuntimeError(f"duplicate MCP tool name: {name}")
+                index[name] = (schema, handler)
     return index
 
 
-PLUGIN = _load_dramaclaw_plugin()
-TOOLS = _tool_index(PLUGIN)
+# Hermes registers both the core DramaClaw tools and the Freezone canvas
+# tools. Loading only the core plugin here bypasses the browser bridge, so
+# Codex can mutate canvas state without producing the Hermes approval card.
+PLUGINS = (_load_plugin("dramaclaw"), _load_plugin("freezone"))
+# Backwards-compatible alias for callers/tests that inspect the core plugin.
+PLUGIN = PLUGINS[0]
+TOOLS = _tool_index(*PLUGINS)
 SERVER = Server("dramaclaw", version="0.1.0")
 
 TOOL_SEARCH_NAME = "dramaclaw_tool_search"
@@ -111,12 +123,22 @@ def _scope_kind() -> str:
     return "project" if os.environ.get("DRAMACLAW_PROJECT_ID", "").strip() else "home"
 
 
+def _freezone_canvas_mode() -> bool:
+    """Detect Freezone even when a shared App Server drops one env flag."""
+    if os.environ.get("DRAMACLAW_TOOL_MODE", "").strip() == "freezone_canvas":
+        return True
+    return bool(
+        os.environ.get("DRAMACLAW_CANVAS_ID", "").strip()
+        and os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip().startswith("freezone")
+    ) or os.environ.get("DRAMACLAW_CHAT_SURFACE", "").strip() == "freezone"
+
+
 def _available_tools() -> dict[str, tuple[dict[str, Any], Any]]:
     if _scope_kind() == "home":
         return {name: TOOLS[name] for name in sorted(HOME_TOOL_NAMES) if name in TOOLS}
-    if os.environ.get("DRAMACLAW_TOOL_MODE", "").strip() == "freezone_canvas":
-        denied = frozenset(
-            getattr(PLUGIN, "FREEZONE_DENIED_MAINLINE_WRITE_TOOLS", ())
+    if _freezone_canvas_mode():
+        denied = frozenset().union(
+            *(getattr(plugin, "FREEZONE_DENIED_MAINLINE_WRITE_TOOLS", ()) for plugin in PLUGINS)
         )
         return {name: item for name, item in TOOLS.items() if name not in denied}
     return dict(TOOLS)
@@ -229,12 +251,167 @@ def _json_text(payload: Any) -> list[types.TextContent]:
 
 @SERVER.list_tools()
 async def list_tools() -> list[types.Tool]:
+    # In Freezone, expose the same concrete Hermes tool names. The previous
+    # search/describe/call indirection made Codex spend an extra turn choosing
+    # a tool and could cause it to retry after the browser had already applied
+    # the command. All handlers still execute through the same Freezone bridge.
+    if _scope_kind() == "project" and _freezone_canvas_mode():
+        result: list[types.Tool] = []
+        for name, (schema, _handler) in sorted(_available_tools().items()):
+            parameters = schema.get("parameters") if isinstance(schema, dict) else None
+            result.append(
+                types.Tool(
+                    name=name,
+                    description=str(schema.get("description") or ""),
+                    inputSchema=parameters if isinstance(parameters, dict) else {"type": "object"},
+                )
+            )
+        return result
     return _bridge_tools()
+
+
+def _skill_resource_path(uri: str) -> Path:
+    """Resolve only Markdown files below an agent ``.agents/skills`` root.
+
+    Codex can send either a standards-based ``file://`` URI or the resource's
+    absolute/agent-root-relative path while progressively loading a skill.
+    Both forms are constrained and then remapped to the current thread root.
+    """
+    raw_uri = str(uri or "").strip()
+    parsed = urlparse(raw_uri)
+    if parsed.scheme == "file":
+        if parsed.netloc:
+            raise ValueError("remote file skill resources are not supported")
+        raw_path = unquote(parsed.path)
+    elif not parsed.scheme and not parsed.netloc:
+        raw_path = unquote(parsed.path)
+    else:
+        raise ValueError("only local skill resources are supported")
+    if not raw_path:
+        raise ValueError("skill resource path is required")
+    target = Path(raw_path).resolve()
+    parts = target.parts
+    skills_root: Path | None = None
+    for index in range(len(parts) - 1):
+        if parts[index] == ".agents" and parts[index + 1] == "skills":
+            skills_root = Path(*parts[: index + 2]).resolve()
+            break
+    if skills_root is None:
+        raise ValueError("resource is outside the agent skills directory")
+    try:
+        relative = target.relative_to(skills_root)
+    except ValueError as exc:
+        raise ValueError("resource is outside the agent skills directory") from exc
+    if target.suffix.lower() != ".md":
+        raise ValueError("only Markdown skill resources are supported")
+    relative_parts = relative.parts
+    if len(relative_parts) < 2 or (
+        relative_parts[-1] != "SKILL.md" and "references" not in relative_parts[1:-1]
+    ):
+        raise ValueError("resource is not a skill document")
+    if target.is_file():
+        return target
+    # Persisted Codex threads can retain a file URI from an older workspace.
+    # Resolve the same skill-relative path against the current thread's
+    # explicitly scoped skills root; never search arbitrary host directories.
+    for root in _skill_resource_roots():
+        candidate = (root / relative).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        if candidate.is_file():
+            return candidate
+    return target
+
+
+def _skill_resource_roots() -> list[Path]:
+    candidates: list[Path] = []
+    configured = os.environ.get("DRAMACLAW_SKILLS_DIR", "").strip()
+    if configured:
+        candidates.append(Path(configured))
+    candidates.append(Path.cwd() / ".agents" / "skills")
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        try:
+            root = candidate.expanduser().resolve()
+        except OSError:
+            continue
+        if root in seen or not root.is_dir():
+            continue
+        seen.add(root)
+        roots.append(root)
+    return roots
+
+
+@SERVER.list_resources()
+async def list_resources() -> list[types.Resource]:
+    """Advertise readable skill Markdown resources to MCP clients."""
+    resources: list[types.Resource] = []
+    seen: set[Path] = set()
+    for root in _skill_resource_roots():
+        for target in sorted(root.rglob("*.md")):
+            if not target.is_file() or target in seen:
+                continue
+            try:
+                _skill_resource_path(target.as_uri())
+            except ValueError:
+                continue
+            seen.add(target)
+            resources.append(
+                types.Resource(
+                    name=target.relative_to(root).as_posix(),
+                    uri=target.as_uri(),
+                    description="DramaClaw agent skill resource",
+                    mimeType="text/markdown",
+                    size=target.stat().st_size,
+                )
+            )
+    logger.info("mcp resources/list scope=%s count=%d", _scope_kind(), len(resources))
+    return resources
+
+
+@SERVER.list_resource_templates()
+async def list_resource_templates() -> list[types.ResourceTemplate]:
+    """DramaClaw exposes concrete skill files, not parameterized resources."""
+    logger.info("mcp resources/templates/list scope=%s count=0", _scope_kind())
+    return []
+
+
+@SERVER.read_resource()
+async def read_resource(uri: Any) -> str:
+    """Read a referenced SKILL.md or references/*.md file only."""
+    target = _skill_resource_path(str(uri))
+    logger.info("mcp resources/read scope=%s resource=%s", _scope_kind(), target.name)
+    try:
+        return target.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError("skill resource is unavailable") from exc
 
 
 @SERVER.call_tool(validate_input=True)
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
     arguments = arguments or {}
+    logger.info(
+        "mcp call scope=%s bridge=%s tool=%s", _scope_kind(), name, arguments.get("tool_name")
+    )
+    if name in _available_tools() and name not in BRIDGE_TOOL_NAMES:
+        schema, handler = _available_tools()[name]
+        parameters = schema.get("parameters") if isinstance(schema, dict) else None
+        input_schema = parameters if isinstance(parameters, dict) else {"type": "object"}
+        try:
+            Draft202012Validator.check_schema(input_schema)
+            Draft202012Validator(input_schema).validate(arguments)
+        except (SchemaError, ValidationError) as exc:
+            return _json_text({
+                "ok": False,
+                "error": "tool_arguments_invalid",
+                "tool_name": name,
+                "message": getattr(exc, "message", str(exc)),
+            })
+        return [types.TextContent(type="text", text=str(handler(arguments) or ""))]
+
     if name == TOOL_SEARCH_NAME:
         try:
             limit = max(1, min(12, int(arguments.get("limit", 6))))

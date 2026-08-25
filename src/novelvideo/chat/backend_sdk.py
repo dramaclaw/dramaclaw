@@ -2,11 +2,30 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal, Protocol, runtime_checkable
+
+_log = logging.getLogger(__name__)
+
+# Codex App Server may keep a turn open indefinitely when its upstream model
+# request never produces a notification. Hermes already has idle and total
+# stream deadlines; keep the same lifecycle guarantee here, with a tighter
+# first-progress deadline so an upstream request that never emits its first
+# model/tool event cannot leave the UI spinning for minutes.
+CODEX_STREAM_FIRST_PROGRESS_TIMEOUT = 120.0
+CODEX_STREAM_IDLE_TIMEOUT = 300.0
+CODEX_STREAM_TOTAL_TIMEOUT = max(1800.0, CODEX_STREAM_IDLE_TIMEOUT)
+CODEX_INTERRUPT_GRACE_TIMEOUT = 5.0
+
+_CODEX_LIFECYCLE_ONLY_EVENTS = {
+    "thread_started",
+    "turn_started",
+    "egress_submitted",
+}
 
 
 @dataclass(slots=True)
@@ -340,14 +359,17 @@ def _codex_tool_event(
     error: Any = None
     structured: Any = None
     if item_type == "mcpToolCall":
-        name = ".".join(
-            part
-            for part in [
-                str(getattr(thread_item, "server", "") or "").strip(),
-                str(getattr(thread_item, "tool", "") or "").strip(),
-            ]
-            if part
-        ) or item_type
+        name = (
+            ".".join(
+                part
+                for part in [
+                    str(getattr(thread_item, "server", "") or "").strip(),
+                    str(getattr(thread_item, "tool", "") or "").strip(),
+                ]
+                if part
+            )
+            or item_type
+        )
         tool_input = _codex_jsonable(getattr(thread_item, "arguments", None))
         result = getattr(thread_item, "result", None)
         output = _codex_jsonable(result)
@@ -528,7 +550,11 @@ def _codex_plan_trace(explanation: str | None, plan: list[Any]) -> str | None:
     else:
         lines.append("\x1b[95m[plan]\x1b[0m")
     for step in plan:
-        status = getattr(getattr(step, "status", None), "value", str(getattr(step, "status", "") or "")).strip()
+        status = getattr(
+            getattr(step, "status", None),
+            "value",
+            str(getattr(step, "status", "") or ""),
+        ).strip()
         step_text = str(getattr(step, "step", "") or "").strip()
         if not step_text:
             continue
@@ -542,10 +568,16 @@ def _codex_plan_trace(explanation: str | None, plan: list[Any]) -> str | None:
 
 
 def _codex_guardian_review_trace(label: str, review: Any) -> str | None:
-    status = getattr(getattr(review, "status", None), "value", str(getattr(review, "status", "") or "")).strip()
+    status = getattr(
+        getattr(review, "status", None),
+        "value",
+        str(getattr(review, "status", "") or ""),
+    ).strip()
     score = getattr(review, "risk_score", None)
     rationale = str(getattr(review, "rationale", "") or "").strip()
-    parts = [part for part in [status, f"risk={score}" if score is not None else ""] if part]
+    parts = [
+        part for part in [status, f"risk={score}" if score is not None else ""] if part
+    ]
     text = f"\x1b[91m[{label}]\x1b[0m {' '.join(parts)}".rstrip()
     if rationale:
         text += f" — {rationale}"
@@ -619,7 +651,9 @@ def _format_claude_tool_result_block(block: Any) -> tuple[str, str] | None:
     elif isinstance(content, list) and content:
         first = content[0]
         if isinstance(first, dict):
-            summary = str(first.get("text", "") or first.get("content", "") or "").strip()
+            summary = str(
+                first.get("text", "") or first.get("content", "") or ""
+            ).strip()
     if summary:
         summary = summary.splitlines()[0].strip()
         if len(summary) > 120:
@@ -682,7 +716,14 @@ def _format_claude_system_trace(message: Any) -> str | None:
             return f"[tool] {last_tool_name}\n"
         return None
     if subtype == "task_notification":
-        status = str(getattr(getattr(message, "status", None), "value", getattr(message, "status", "")) or "").strip()
+        status = str(
+            getattr(
+                getattr(message, "status", None),
+                "value",
+                getattr(message, "status", ""),
+            )
+            or ""
+        ).strip()
         summary = str(getattr(message, "summary", "") or "").strip()
         output_file = str(getattr(message, "output_file", "") or "").strip()
         text = f"[task:{status or 'update'}]"
@@ -709,7 +750,9 @@ def _format_claude_system_trace(message: Any) -> str | None:
 
 
 class ClaudeSdkClient:
-    def __init__(self, *, cli_path: Path, cwd: Path, env: dict[str, str], model: str | None) -> None:
+    def __init__(
+        self, *, cli_path: Path, cwd: Path, env: dict[str, str], model: str | None
+    ) -> None:
         self._cli_path = cli_path
         self._cwd = cwd
         self._env = env
@@ -806,7 +849,9 @@ class ClaudeSdkThread:
 
             async for message in client.receive_response():
                 if isinstance(message, StreamEvent):
-                    stream_event = _parse_claude_stream_event(getattr(message, "event", None) or {})
+                    stream_event = _parse_claude_stream_event(
+                        getattr(message, "event", None) or {}
+                    )
                     if stream_event:
                         if stream_event["type"] == "text_delta":
                             assistant_parts.append(stream_event["text"])
@@ -833,7 +878,12 @@ class ClaudeSdkThread:
 
                 if isinstance(
                     message,
-                    (TaskStartedMessage, TaskProgressMessage, TaskNotificationMessage, SystemMessage),
+                    (
+                        TaskStartedMessage,
+                        TaskProgressMessage,
+                        TaskNotificationMessage,
+                        SystemMessage,
+                    ),
                 ):
                     trace = _format_claude_system_trace(message)
                     if trace:
@@ -846,7 +896,9 @@ class ClaudeSdkThread:
                     continue
 
                 if isinstance(message, AssistantMessage):
-                    for trace_key, trace_text in _collect_claude_message_traces(message):
+                    for trace_key, trace_text in _collect_claude_message_traces(
+                        message
+                    ):
                         if trace_key in seen_tool_traces:
                             continue
                         seen_tool_traces.add(trace_key)
@@ -862,7 +914,9 @@ class ClaudeSdkThread:
                     continue
 
                 if isinstance(message, UserMessage):
-                    for trace_key, trace_text in _collect_claude_message_traces(message):
+                    for trace_key, trace_text in _collect_claude_message_traces(
+                        message
+                    ):
                         if trace_key in seen_tool_traces:
                             continue
                         seen_tool_traces.add(trace_key)
@@ -887,12 +941,17 @@ class ClaudeSdkThread:
                         yield ChatBackendEvent(
                             type="complete",
                             thread_id=self.id,
-                            text=(final_result or "".join(assistant_parts)).strip() or "已中断。",
+                            text=(final_result or "".join(assistant_parts)).strip()
+                            or "已中断。",
                         )
                         return
 
-            assistant_text = (final_result or "".join(assistant_parts)).strip() or "已执行，但没有返回正文。"
-            yield ChatBackendEvent(type="complete", thread_id=self.id, text=assistant_text)
+            assistant_text = (
+                final_result or "".join(assistant_parts)
+            ).strip() or "已执行，但没有返回正文。"
+            yield ChatBackendEvent(
+                type="complete", thread_id=self.id, text=assistant_text
+            )
         finally:
             unregister_live_claude_client(self.id or provisional_id)
             try:
@@ -1026,16 +1085,26 @@ class ClaudeCliThread:
 
             stderr_text = ""
             if process.stderr is not None:
-                stderr_text = (await process.stderr.read()).decode("utf-8", errors="replace").strip()
+                stderr_text = (
+                    (await process.stderr.read())
+                    .decode("utf-8", errors="replace")
+                    .strip()
+                )
             return_code = await process.wait()
 
             if return_code != 0:
-                raise RuntimeError(stderr_text or final_result or f"Claude exited with code {return_code}")
+                raise RuntimeError(
+                    stderr_text
+                    or final_result
+                    or f"Claude exited with code {return_code}"
+                )
 
             assistant_text = (
                 final_result or "".join(assistant_parts)
             ).strip() or "已执行，但没有返回正文。"
-            yield ChatBackendEvent(type="complete", thread_id=self.id, text=assistant_text)
+            yield ChatBackendEvent(
+                type="complete", thread_id=self.id, text=assistant_text
+            )
         finally:
             if process.returncode is None:
                 try:
@@ -1068,15 +1137,24 @@ def _codex_thread_config(
             value = raw_value
         config[key.strip()] = value
 
-    mcp_env_names = config.pop("mcp_servers.dramaclaw.env_vars", [])
-    if isinstance(mcp_env_names, list):
+    # Resolve declared environment variables for every MCP server instead of
+    # special-casing the original DramaClaw adapter. This keeps independently
+    # packaged, standards-based MCP servers usable without exposing unrelated
+    # process environment values.
+    env_var_suffix = ".env_vars"
+    for key in list(config):
+        if not key.startswith("mcp_servers.") or not key.endswith(env_var_suffix):
+            continue
+        mcp_env_names = config.pop(key, [])
+        if not isinstance(mcp_env_names, list):
+            continue
         mcp_env = {
             str(name): env[str(name)]
             for name in mcp_env_names
             if isinstance(name, str) and env.get(name)
         }
         if mcp_env:
-            config["mcp_servers.dramaclaw.env"] = mcp_env
+            config[f"{key[:-len(env_var_suffix)]}.env"] = mcp_env
     return config
 
 
@@ -1132,6 +1210,7 @@ def _start_codex_turn(
         params={"responsesapiClientMetadata": dict(turn_metadata)},
     )
     return TurnHandle(thread._client, thread.id, started.turn.id)
+
 
 class CodexClient:
     def __init__(
@@ -1297,7 +1376,9 @@ class CodexThread:
                 register_live_codex_turn(self.id, turn.id, turn)
                 emit(
                     "event",
-                    ChatBackendEvent(type="thread_started", thread_id=self.id, turn_id=turn.id),
+                    ChatBackendEvent(
+                        type="thread_started", thread_id=self.id, turn_id=turn.id
+                    ),
                 )
                 emit(
                     "event",
@@ -1324,7 +1405,10 @@ class CodexThread:
                                 ),
                             )
                             continue
-                        if isinstance(payload, AgentMessageDeltaNotification) and payload.turn_id == turn.id:
+                        if (
+                            isinstance(payload, AgentMessageDeltaNotification)
+                            and payload.turn_id == turn.id
+                        ):
                             assistant_parts.append(payload.delta)
                             emit(
                                 "event",
@@ -1336,7 +1420,11 @@ class CodexThread:
                                 ),
                             )
                             continue
-                        if isinstance(payload, PlanDeltaNotification) and payload.turn_id == turn.id and payload.delta:
+                        if (
+                            isinstance(payload, PlanDeltaNotification)
+                            and payload.turn_id == turn.id
+                            and payload.delta
+                        ):
                             emit(
                                 "event",
                                 ChatBackendEvent(
@@ -1348,7 +1436,10 @@ class CodexThread:
                                 ),
                             )
                             continue
-                        if isinstance(payload, TurnPlanUpdatedNotification) and payload.turn_id == turn.id:
+                        if (
+                            isinstance(payload, TurnPlanUpdatedNotification)
+                            and payload.turn_id == turn.id
+                        ):
                             emit(
                                 "event",
                                 ChatBackendEvent(
@@ -1356,12 +1447,18 @@ class CodexThread:
                                     thread_id=self.id,
                                     turn_id=turn.id,
                                     text=payload.explanation,
-                                    entries=[_codex_jsonable(step) for step in payload.plan],
+                                    entries=[
+                                        _codex_jsonable(step) for step in payload.plan
+                                    ],
                                     raw=raw,
                                 ),
                             )
                             continue
-                        if isinstance(payload, ReasoningSummaryTextDeltaNotification) and payload.turn_id == turn.id and payload.delta:
+                        if (
+                            isinstance(payload, ReasoningSummaryTextDeltaNotification)
+                            and payload.turn_id == turn.id
+                            and payload.delta
+                        ):
                             emit(
                                 "event",
                                 ChatBackendEvent(
@@ -1374,7 +1471,10 @@ class CodexThread:
                                 ),
                             )
                             continue
-                        if isinstance(payload, ItemStartedNotification) and payload.turn_id == turn.id:
+                        if (
+                            isinstance(payload, ItemStartedNotification)
+                            and payload.turn_id == turn.id
+                        ):
                             tool_event = _codex_tool_event(
                                 payload.item,
                                 phase="started",
@@ -1387,7 +1487,11 @@ class CodexThread:
                                     tool_calls[tool_event.call_id] = tool_event
                                 emit("event", tool_event)
                             continue
-                        if isinstance(payload, McpToolCallProgressNotification) and payload.turn_id == turn.id and payload.message:
+                        if (
+                            isinstance(payload, McpToolCallProgressNotification)
+                            and payload.turn_id == turn.id
+                            and payload.message
+                        ):
                             prior = tool_calls.get(payload.item_id)
                             emit(
                                 "event",
@@ -1436,7 +1540,11 @@ class CodexThread:
                                 ),
                             )
                             continue
-                        if isinstance(payload, TurnDiffUpdatedNotification) and payload.turn_id == turn.id and payload.diff:
+                        if (
+                            isinstance(payload, TurnDiffUpdatedNotification)
+                            and payload.turn_id == turn.id
+                            and payload.diff
+                        ):
                             colored_diff = _colorize_unified_diff(payload.diff)
                             emit(
                                 "event",
@@ -1449,7 +1557,10 @@ class CodexThread:
                                 ),
                             )
                             continue
-                        if isinstance(payload, ItemCompletedNotification) and payload.turn_id == turn.id:
+                        if (
+                            isinstance(payload, ItemCompletedNotification)
+                            and payload.turn_id == turn.id
+                        ):
                             items.append(payload.item)
                             tool_event = _codex_tool_event(
                                 payload.item,
@@ -1463,7 +1574,10 @@ class CodexThread:
                                     tool_calls.pop(tool_event.call_id, None)
                                 emit("event", tool_event)
                             continue
-                        if isinstance(payload, ThreadTokenUsageUpdatedNotification) and payload.turn_id == turn.id:
+                        if (
+                            isinstance(payload, ThreadTokenUsageUpdatedNotification)
+                            and payload.turn_id == turn.id
+                        ):
                             emit(
                                 "event",
                                 ChatBackendEvent(
@@ -1475,8 +1589,15 @@ class CodexThread:
                                 ),
                             )
                             continue
-                        if isinstance(payload, ModelReroutedNotification) and payload.turn_id == turn.id:
-                            reason = getattr(getattr(payload, "reason", None), "value", str(getattr(payload, "reason", "") or "")).strip()
+                        if (
+                            isinstance(payload, ModelReroutedNotification)
+                            and payload.turn_id == turn.id
+                        ):
+                            reason = getattr(
+                                getattr(payload, "reason", None),
+                                "value",
+                                str(getattr(payload, "reason", "") or ""),
+                            ).strip()
                             text = f"\x1b[93m[model]\x1b[0m {payload.from_model} → {payload.to_model}"
                             if reason:
                                 text += f" ({reason})"
@@ -1508,7 +1629,10 @@ class CodexThread:
                                 ),
                             )
                             continue
-                        if isinstance(payload, ContextCompactedNotification) and payload.turn_id == turn.id:
+                        if (
+                            isinstance(payload, ContextCompactedNotification)
+                            and payload.turn_id == turn.id
+                        ):
                             emit(
                                 "event",
                                 ChatBackendEvent(
@@ -1520,9 +1644,16 @@ class CodexThread:
                                 ),
                             )
                             continue
-                        if isinstance(payload, ErrorNotification) and payload.turn_id == turn.id:
-                            message = str(getattr(payload.error, "message", "") or "").strip()
-                            extra = str(getattr(payload.error, "additional_details", "") or "").strip()
+                        if (
+                            isinstance(payload, ErrorNotification)
+                            and payload.turn_id == turn.id
+                        ):
+                            message = str(
+                                getattr(payload.error, "message", "") or ""
+                            ).strip()
+                            extra = str(
+                                getattr(payload.error, "additional_details", "") or ""
+                            ).strip()
                             retry = " retrying" if payload.will_retry else ""
                             text = f"\x1b[91m[error{retry}]\x1b[0m {message}".rstrip()
                             if extra:
@@ -1535,13 +1666,22 @@ class CodexThread:
                                     turn_id=turn.id,
                                     text=text + "\n",
                                     error=_codex_jsonable(payload.error),
-                                    status="retrying" if payload.will_retry else "failed",
+                                    status=(
+                                        "retrying" if payload.will_retry else "failed"
+                                    ),
                                     raw=raw,
                                 ),
                             )
                             continue
-                        if isinstance(payload, ItemGuardianApprovalReviewStartedNotification) and payload.turn_id == turn.id:
-                            trace = _codex_guardian_review_trace("guardian:start", payload.review)
+                        if (
+                            isinstance(
+                                payload, ItemGuardianApprovalReviewStartedNotification
+                            )
+                            and payload.turn_id == turn.id
+                        ):
+                            trace = _codex_guardian_review_trace(
+                                "guardian:start", payload.review
+                            )
                             if trace:
                                 emit(
                                     "event",
@@ -1554,8 +1694,15 @@ class CodexThread:
                                     ),
                                 )
                             continue
-                        if isinstance(payload, ItemGuardianApprovalReviewCompletedNotification) and payload.turn_id == turn.id:
-                            trace = _codex_guardian_review_trace("guardian:done", payload.review)
+                        if (
+                            isinstance(
+                                payload, ItemGuardianApprovalReviewCompletedNotification
+                            )
+                            and payload.turn_id == turn.id
+                        ):
+                            trace = _codex_guardian_review_trace(
+                                "guardian:done", payload.review
+                            )
                             if trace:
                                 emit(
                                     "event",
@@ -1568,7 +1715,10 @@ class CodexThread:
                                     ),
                                 )
                             continue
-                    if isinstance(payload, TurnCompletedNotification) and payload.turn.id == turn.id:
+                    if (
+                        isinstance(payload, TurnCompletedNotification)
+                        and payload.turn.id == turn.id
+                    ):
                         turn_status = str(payload.turn.status.value)
                         emit(
                             "event",
@@ -1590,9 +1740,14 @@ class CodexThread:
                             message = None
                             if payload.turn.error is not None:
                                 message = payload.turn.error.message
-                            raise RuntimeError(message or f"Codex turn failed with status {payload.turn.status.value}")
+                            raise RuntimeError(
+                                message
+                                or f"Codex turn failed with status {payload.turn.status.value}"
+                            )
                         if payload.turn.status == TurnStatus.interrupted:
-                            final_response = "".join(assistant_parts).strip() or "已中断。"
+                            final_response = (
+                                "".join(assistant_parts).strip() or "已中断。"
+                            )
                             final_disposition = "cancelled"
                         else:
                             final_response = (
@@ -1651,13 +1806,95 @@ class CodexThread:
                 await queue.put(("error", str(exc)))
 
         worker_task = asyncio.create_task(run_worker())
+        started_at = loop.time()
+        first_progress_deadline = started_at + CODEX_STREAM_FIRST_PROGRESS_TIMEOUT
+        idle_deadline = started_at + CODEX_STREAM_IDLE_TIMEOUT
+        total_deadline = started_at + CODEX_STREAM_TOTAL_TIMEOUT
+        saw_runtime_progress = False
+        timed_out = False
 
         try:
             while True:
-                kind, payload = await queue.get()
+                deadline = min(
+                    total_deadline,
+                    idle_deadline if saw_runtime_progress else first_progress_deadline,
+                )
+                remaining = deadline - loop.time()
+                try:
+                    if remaining <= 0:
+                        raise asyncio.TimeoutError
+                    kind, payload = await asyncio.wait_for(
+                        queue.get(), timeout=remaining
+                    )
+                except asyncio.TimeoutError:
+                    timed_out = True
+                    now = loop.time()
+                    if now >= total_deadline:
+                        timeout_kind = "total"
+                    elif saw_runtime_progress:
+                        timeout_kind = "idle"
+                    else:
+                        timeout_kind = "first-progress"
+                    _log.warning(
+                        "Codex App Server stream timed out: kind=%s thread=%s turn=%s",
+                        timeout_kind,
+                        self.id,
+                        current_turn_id,
+                    )
+                    if self.id and current_turn_id:
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    interrupt_live_codex_turn,
+                                    self.id,
+                                    current_turn_id,
+                                ),
+                                timeout=CODEX_INTERRUPT_GRACE_TIMEOUT,
+                            )
+                        except Exception:  # noqa: BLE001 - still close the UI turn
+                            _log.warning(
+                                "Failed to interrupt timed-out Codex turn: thread=%s turn=%s",
+                                self.id,
+                                current_turn_id,
+                                exc_info=True,
+                            )
+
+                    timeout_error = {
+                        "message": "Codex App Server 响应超时，请重试。",
+                        "kind": timeout_kind,
+                    }
+                    yield ChatBackendEvent(
+                        type="turn_completed",
+                        thread_id=self.id,
+                        turn_id=current_turn_id,
+                        status="timeout",
+                        disposition="timeout",
+                        error=timeout_error,
+                    )
+                    yield ChatBackendEvent(
+                        type="egress_disposition",
+                        thread_id=self.id,
+                        turn_id=current_turn_id,
+                        disposition="timeout",
+                    )
+                    yield ChatBackendEvent(
+                        type="complete",
+                        thread_id=self.id,
+                        turn_id=current_turn_id,
+                        disposition="timeout",
+                        text="Codex App Server 响应超时，请重试。",
+                        error=timeout_error,
+                    )
+                    break
                 if kind == "error":
                     raise RuntimeError(str(payload))
                 event = payload
+                if event.type not in _CODEX_LIFECYCLE_ONLY_EVENTS:
+                    saw_runtime_progress = True
+                    idle_deadline = min(
+                        total_deadline,
+                        loop.time() + CODEX_STREAM_IDLE_TIMEOUT,
+                    )
                 yield event
                 if event.type == "complete":
                     break
@@ -1672,7 +1909,22 @@ class CodexThread:
                 await asyncio.to_thread(
                     interrupt_live_codex_turn, self.id, current_turn_id
                 )
-            await worker_task
+            if timed_out:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(worker_task),
+                        timeout=CODEX_INTERRUPT_GRACE_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    # Cancelling a to_thread wrapper cannot stop the underlying
+                    # thread, but it prevents this request from waiting forever.
+                    # The App Server interrupt above owns terminating the turn.
+                    worker_task.cancel()
+                finally:
+                    if self.id and current_turn_id:
+                        consume_interrupted_codex_turn(self.id, current_turn_id)
+            else:
+                await worker_task
 
     async def run(self, prompt: str) -> ChatRunResult:
         text = ""

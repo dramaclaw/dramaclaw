@@ -32,6 +32,85 @@ async def test_list_tools_exposes_only_progressive_bridge(monkeypatch):
     assert len(tools) == 3
 
 
+@pytest.mark.asyncio
+async def test_freezone_lists_concrete_hermes_tools(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+
+    tools = await dramaclaw_mcp.list_tools()
+    names = {tool.name for tool in tools}
+
+    assert "freezone_create_node" in names
+    assert "freezone_emit_canvas_command" in names
+    assert "dramaclaw_tool_call" not in names
+
+
+def test_freezone_profile_defaults_tool_mode(monkeypatch):
+    monkeypatch.delenv("DRAMACLAW_TOOL_MODE", raising=False)
+    monkeypatch.setenv("DRAMACLAW_AGENT_PROFILE", "freezone:main")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "default")
+    monkeypatch.delenv("DRAMACLAW_CHAT_SURFACE", raising=False)
+    assert dramaclaw_mcp._freezone_canvas_mode()
+
+
+@pytest.mark.asyncio
+async def test_list_resources_exposes_only_skill_markdown(monkeypatch, tmp_path):
+    skills = tmp_path / ".agents" / "skills" / "workflows"
+    (skills / "references").mkdir(parents=True)
+    (skills / "SKILL.md").write_text("# Workflow\n", encoding="utf-8")
+    (skills / "references" / "guide.md").write_text("# Guide\n", encoding="utf-8")
+    (skills / "secret.txt").write_text("no", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DRAMACLAW_SKILLS_DIR", raising=False)
+
+    resources = await dramaclaw_mcp.list_resources()
+
+    assert {resource.name for resource in resources} == {
+        "workflows/SKILL.md",
+        "workflows/references/guide.md",
+    }
+
+
+@pytest.mark.asyncio
+async def test_read_resource_remaps_stale_workspace_uri_to_current_skills_root(
+    monkeypatch, tmp_path
+):
+    current_root = tmp_path / "current" / ".agents" / "skills"
+    current_skill = current_root / "dramaclaw-workflows" / "SKILL.md"
+    current_skill.parent.mkdir(parents=True)
+    current_skill.write_text("# Current workflow skill\n", encoding="utf-8")
+    stale_skill = (
+        tmp_path
+        / "retired"
+        / ".agents"
+        / "skills"
+        / "dramaclaw-workflows"
+        / "SKILL.md"
+    )
+    monkeypatch.setenv("DRAMACLAW_SKILLS_DIR", str(current_root))
+
+    content = await dramaclaw_mcp.read_resource(stale_skill.as_uri())
+
+    assert content == "# Current workflow skill\n"
+
+
+@pytest.mark.asyncio
+async def test_read_resource_accepts_codex_agent_root_relative_skill_path(
+    monkeypatch, tmp_path
+):
+    current_root = tmp_path / "current" / ".agents" / "skills"
+    current_skill = current_root / "dramaclaw-workflows" / "SKILL.md"
+    current_skill.parent.mkdir(parents=True)
+    current_skill.write_text("# Current workflow skill\n", encoding="utf-8")
+    monkeypatch.setenv("DRAMACLAW_SKILLS_DIR", str(current_root))
+
+    content = await dramaclaw_mcp.read_resource(
+        "/.agents/skills/dramaclaw-workflows/SKILL.md"
+    )
+
+    assert content == "# Current workflow skill\n"
+
+
 def test_home_scope_only_discovers_project_collection_tools(monkeypatch):
     monkeypatch.delenv("DRAMACLAW_PROJECT_ID", raising=False)
 
@@ -60,7 +139,8 @@ def test_freezone_scope_hides_mainline_write_tools(monkeypatch):
     denied = dramaclaw_mcp.PLUGIN.FREEZONE_DENIED_MAINLINE_WRITE_TOOLS
 
     assert set(available).isdisjoint(denied)
-    assert "dramaclaw_save_freezone_canvas" in available
+    assert "dramaclaw_save_freezone_canvas" not in available
+    assert "freezone_emit_canvas_command" in available
 
 
 @pytest.mark.asyncio

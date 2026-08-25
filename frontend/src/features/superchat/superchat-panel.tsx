@@ -182,6 +182,7 @@ import {
   workflowVideoNodeIdsForPreflight,
 } from "@/features/freezone/canvasChatCommands";
 import { FREEZONE_CANVAS_WRITE_TOOL_NAME_SET } from "@/features/freezone/canvasCommandTools";
+import { flushFreezoneCanvasRuntime } from "@/features/freezone/canvasSyncRuntime";
 import { canvasCommandUserMessageFromResult } from "@/features/freezone/canvasCommandUserMessages";
 import {
   FREEZONE_CANVAS_CONTEXT_ACTIVITY_EVENT,
@@ -379,6 +380,10 @@ const FREEZONE_TOOL_DISPLAY: Record<string, { title: string; description: string
   freezone_delete_nodes: {
     title: "删除节点",
     description: "准备删除画布节点",
+  },
+  freezone_clear_canvas: {
+    title: "清空画布",
+    description: "准备清空普通画布节点和连接",
   },
   freezone_delete_edges: {
     title: "断开连线",
@@ -3860,10 +3865,61 @@ function visibleAssistantOrderedPartsForMessage(message: ChatMessage): ChatMessa
     const event = part.event as SkillStudioUiEvent;
     return event.type !== "skill_studio.status";
   });
-  return reorderAssistantInteractionParts(visibleParts, message.text);
+  return orderExternalMcpCanvasParts(
+    reorderAssistantInteractionParts(visibleParts, message.text),
+  );
 }
 
 export const visibleAssistantOrderedPartsForMessageForTest = visibleAssistantOrderedPartsForMessage;
+
+function partIsExternalMcpCanvasTimelineEvent(part: ChatMessagePart): boolean {
+  if (part.type !== "canvas_context" && part.type !== "canvas_approval") return false;
+  if (
+    !("event" in part)
+    || !part.event
+    || typeof part.event !== "object"
+    || Array.isArray(part.event)
+  ) return false;
+  const event = part.event as Record<string, unknown>;
+  return event.externalMcpCommand === true || event.external_mcp_command === true;
+}
+
+function externalMcpCanvasPartOrder(part: ChatMessagePart, fallback: number): number {
+  if (
+    !("event" in part)
+    || !part.event
+    || typeof part.event !== "object"
+    || Array.isArray(part.event)
+  ) return fallback;
+  const event = part.event as Record<string, unknown>;
+  const order = event.surfaceOrder ?? event.surface_order ?? event.receivedAt ?? event.received_at;
+  return typeof order === "number" && Number.isFinite(order) ? order : fallback;
+}
+
+function orderExternalMcpCanvasParts(parts: ChatMessagePart[]): ChatMessagePart[] {
+  const externalParts = parts
+    .map((part, index) => ({ part, index }))
+    .filter(({ part }) => partIsExternalMcpCanvasTimelineEvent(part));
+  if (externalParts.length === 0) return parts;
+
+  const externalIds = new Set(externalParts.map(({ part }) => part.id));
+  const remaining = parts.filter((part) => !externalIds.has(part.id));
+  const firstTextIndex = remaining.findIndex((part) => part.type === "text");
+  const insertionIndex = firstTextIndex >= 0 ? firstTextIndex : remaining.length;
+  const orderedExternalParts = externalParts
+    .sort((left, right) =>
+      externalMcpCanvasPartOrder(left.part, left.index)
+      - externalMcpCanvasPartOrder(right.part, right.index),
+    )
+    .map(({ part }) => part);
+  return [
+    ...remaining.slice(0, insertionIndex),
+    ...orderedExternalParts,
+    ...remaining.slice(insertionIndex),
+  ];
+}
+
+export const orderExternalMcpCanvasPartsForTest = orderExternalMcpCanvasParts;
 
 function reorderAssistantInteractionParts(parts: ChatMessagePart[], text: string): ChatMessagePart[] {
   if (!text.trim()) return parts;
@@ -9639,6 +9695,7 @@ type CanvasContextActivity = {
   repeatCount?: number;
   anchorTextPrefix?: string | null;
   surfaceOrder?: number;
+  externalMcpCommand?: boolean;
 };
 
 type CanvasCommandPlan = {
@@ -9708,6 +9765,7 @@ type PendingCanvasCommandApproval = {
   envelopes: CanvasChatCommandEnvelope[];
   commandCount: number;
   plans: CanvasCommandPlan[];
+  externalMcpCommand?: boolean;
 };
 
 type CanvasApprovalImageParams = {
@@ -10142,6 +10200,7 @@ function canvasContextActivityFromUiEvent(event: unknown, fallbackIndex = 0): Ca
     labels: canvasContextLabelsFromResponses(responses),
     errors,
     surfaceOrder: canvasSurfaceEventOrder(value, fallbackIndex),
+    externalMcpCommand: value.external_mcp_command === true || value.externalMcpCommand === true,
     anchorTextPrefix: typeof value.anchor_text_prefix === "string"
       ? value.anchor_text_prefix
       : typeof value.anchorTextPrefix === "string"
@@ -10669,6 +10728,7 @@ function canvasCommandApprovalDetailsFromUiEvents(events: unknown[] | undefined)
       envelopes: value.envelopes as CanvasChatCommandEnvelope[],
       receivedAt,
       autoExpires: true,
+      externalMcpCommand: value.external_mcp_command === true || value.externalMcpCommand === true,
     });
   }
   return approvals;
@@ -10832,7 +10892,6 @@ function canvasCommandApprovalKey(
   envelopes: unknown[],
   receivedAt?: number,
 ): string {
-  if (bridgeKey && turnId) return `bridge:${bridgeKey}:turn:${turnId}`;
   if (bridgeKey) return `bridge:${bridgeKey}`;
   try {
     return `local:${turnId ?? "no-turn"}:${JSON.stringify(envelopes)}`;
@@ -10847,7 +10906,6 @@ function canvasCommandFeedbackKey(
   receivedAt?: number,
   fallback?: string,
 ): string {
-  if (bridgeKey && turnId) return `bridge:${bridgeKey}:turn:${turnId}`;
   if (bridgeKey) return `bridge:${bridgeKey}`;
   if (receivedAt != null) return `received:${receivedAt}`;
   return fallback ?? `local:${turnId ?? "no-turn"}:${Date.now()}`;
@@ -10857,7 +10915,6 @@ export const canvasCommandApprovalKeyForTest = canvasCommandApprovalKey;
 export const canvasCommandFeedbackKeyForTest = canvasCommandFeedbackKey;
 
 function canvasCommandApprovalApplyKey(approval: PendingCanvasCommandApproval): string {
-  if (approval.bridgeKey && approval.turnId) return `bridge:${approval.bridgeKey}:turn:${approval.turnId}`;
   if (approval.bridgeKey) return `bridge:${approval.bridgeKey}`;
   try {
     return `local:${approval.turnId ?? "no-turn"}:${JSON.stringify(approval.envelopes)}`;
@@ -10905,12 +10962,17 @@ function mergePendingCanvasCommandApproval(
   if (index < 0) return [...current, approval];
   const next = [...current];
   const previous = next[index];
+  const previousTurnIsSynthetic = previous.turnId?.startsWith("external-agent:") === true;
+  const approvalTurnIsSynthetic = approval.turnId?.startsWith("external-agent:") === true;
+  const preferredTurnId = approvalTurnIsSynthetic && !previousTurnIsSynthetic
+    ? previous.turnId
+    : approval.turnId ?? previous.turnId;
   next[index] = {
     ...previous,
     ...approval,
     id: previous.id,
     messageId: approval.messageId || previous.messageId,
-    turnId: approval.turnId ?? previous.turnId,
+    turnId: preferredTurnId,
     bridgeKey: approval.bridgeKey ?? previous.bridgeKey,
     anchorTextPrefix: previous.anchorTextPrefix ?? approval.anchorTextPrefix,
     surfaceOrder: previous.surfaceOrder ?? approval.surfaceOrder,
@@ -11827,14 +11889,28 @@ export function SuperChatPanel({
       envelopes: detail.envelopes,
       commandCount,
       plans: canvasCommandPlansFromEnvelopes(detail.envelopes),
+      externalMcpCommand: detail.externalMcpCommand === true,
     };
   }, [activeMessages, effectiveFreezoneCanvasId, freezoneAgentMatches, latestAssistantMessageId, variant]);
 
   const handleCanvasCommandApproval = useCallback((detail: CanvasCommandApprovalEventDetail) => {
     const approval = buildApprovalFromDetail(detail);
     if (!approval) return false;
+    // A bridge frame can be replayed after the websocket reconnects or while
+    // the pending-file poll catches up. If its result was already persisted,
+    // never resurrect an actionable approval card for the same command.
+    if (canvasCommandApprovalHasCompletedFeedback(
+      approval,
+      canvasCommandFeedbackByMessageId,
+      persistedCanvasCommandFeedbackByMessageId,
+    )) return true;
     const resolvedKeys = resolvedCanvasCommandApprovalKeysRef.current;
-    if (resolvedKeys.has(approval.key) || resolvedKeys.has(canvasCommandApprovalApplyKey(approval))) return true;
+    const applyKey = canvasCommandApprovalApplyKey(approval);
+    if (
+      resolvedKeys.has(approval.key) ||
+      resolvedKeys.has(applyKey) ||
+      appliedCanvasCommandApprovalKeysRef.current.has(applyKey)
+    ) return true;
     setPendingCanvasCommandApprovals((current) => mergePendingCanvasCommandApproval(current, approval));
     chat.upsertAssistantMessagePart(
       { messageId: approval.messageId, turnId: approval.turnId },
@@ -11845,7 +11921,12 @@ export function SuperChatPanel({
       },
     );
     return true;
-  }, [buildApprovalFromDetail, chat]);
+  }, [
+    buildApprovalFromDetail,
+    canvasCommandFeedbackByMessageId,
+    chat,
+    persistedCanvasCommandFeedbackByMessageId,
+  ]);
 
   useEffect(
     () => subscribeCanvasCommandApprovals((detail) => handleCanvasCommandApproval({ ...detail, autoExpires: true })),
@@ -12073,6 +12154,7 @@ export function SuperChatPanel({
         errors: detail.errors,
         anchorTextPrefix: detail.anchor_text_prefix,
         surfaceOrder: detail.surface_order ?? detail.received_at,
+        externalMcpCommand: detail.external_mcp_command === true,
       };
       setCanvasContextActivitiesByMessageId((current) => ({
         ...current,
@@ -12304,6 +12386,13 @@ export function SuperChatPanel({
               },
             ],
           };
+        }
+
+        // Apply the local store mutation first, then flush the registered
+        // canvas sync runtime so the server snapshot cannot lag behind the
+        // approval result and overwrite the just-created/deleted nodes.
+        if (result.errors.length === 0 && params.project && effectiveFreezoneCanvasId) {
+          await flushFreezoneCanvasRuntime(params.project, effectiveFreezoneCanvasId);
         }
 
         if (!backgroundAccepted) {

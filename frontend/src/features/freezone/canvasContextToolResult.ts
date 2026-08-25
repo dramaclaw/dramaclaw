@@ -9,6 +9,7 @@ export type CanvasContextActivityPayload = {
   anchor_text_prefix?: string | null;
   received_at?: number;
   surface_order?: number;
+  external_mcp_command?: boolean;
   bridge_key: string;
   canvas_id: string | null;
   agent_id?: string | null;
@@ -45,6 +46,7 @@ export function emitCanvasContextActivity({
   errors = [],
   receivedAt,
   surfaceOrder,
+  externalMcpCommand,
 }: {
   turnId?: string | null;
   anchorTextPrefix?: string | null;
@@ -56,6 +58,7 @@ export function emitCanvasContextActivity({
   errors?: string[];
   receivedAt?: number;
   surfaceOrder?: number;
+  externalMcpCommand?: boolean;
 }) {
   const payload: CanvasContextActivityPayload = {
     type: "canvas.context.activity",
@@ -63,6 +66,7 @@ export function emitCanvasContextActivity({
     anchor_text_prefix: anchorTextPrefix ?? null,
     received_at: receivedAt ?? Date.now(),
     surface_order: surfaceOrder ?? receivedAt ?? Date.now(),
+    ...(externalMcpCommand === true ? { external_mcp_command: true } : {}),
     bridge_key: bridgeKey,
     canvas_id: canvasId ?? null,
     agent_id: agentId ?? null,

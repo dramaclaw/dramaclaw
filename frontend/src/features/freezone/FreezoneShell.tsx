@@ -93,6 +93,7 @@ import { prefetchFreezoneVideoModels } from "@/features/canvas/hooks/useFreezone
 import { prefetchFreezoneCameraOptions } from "@/features/canvas/hooks/useFreezoneCameraOptions";
 import { prefetchFreezoneStyleTemplates } from "@/features/canvas/hooks/useFreezoneStyleTemplates";
 import { prefetchFreezoneVideoCameraTemplates } from "@/features/canvas/hooks/useFreezoneVideoCameraTemplates";
+import { claimExternalCanvasCommand } from "./externalCanvasCommandDedupe";
 import {
   normalizePresetProjectionRequest,
   projectionMetadataWithRequest,
@@ -122,14 +123,11 @@ import type { CanvasEdge, CanvasNode } from "@/stores/canvasStore";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import {
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
-  applyCanvasChatCommandsAsync,
   canvasCommandEnvelopeMatchesCanvas,
-  canvasCommandEnvelopesRunInBackground,
   emitCanvasCommandApproval,
   extractCanvasChatCommandEnvelopes,
   FREEZONE_CANVAS_COMMAND_RESULT_EVENT,
   normalizeCanvasChatCommandEnvelopesForValidation,
-  waitForImmediateCanvasCommandResult,
   type CanvasChatCommandApplyResult,
 } from "@/features/freezone/canvasChatCommands";
 import {
@@ -285,19 +283,19 @@ async function listServerFreezoneCanvasAgents(
 async function listPendingCanvasCommandFrames({
   projectId,
   canvasId,
-  agentId,
+  agentIds,
   seenKeys,
 }: {
   projectId: string;
   canvasId: string;
-  agentId: string;
+  agentIds: string[];
   seenKeys: string[];
 }): Promise<ServerFrame[]> {
   const response = await api.post("api/v1/chat/pending-canvas-commands", {
     json: {
       project_id: projectId,
       canvas_id: canvasId,
-      agent_id: agentId,
+      agent_ids: agentIds,
       seen_keys: seenKeys,
     },
   }).json<{
@@ -459,6 +457,7 @@ function persistCanvasCommandApproval({
   envelopes,
   anchorTextPrefix,
   receivedAt,
+  externalMcpCommand,
   bridgeKey,
 }: {
   projectId: string;
@@ -467,6 +466,7 @@ function persistCanvasCommandApproval({
   envelopes: ReturnType<typeof extractCanvasChatCommandEnvelopes>;
   anchorTextPrefix?: string | null;
   receivedAt?: number;
+  externalMcpCommand?: boolean;
   bridgeKey?: string | null;
 }) {
   if (!turnId) return;
@@ -487,6 +487,7 @@ function persistCanvasCommandApproval({
         envelopes,
         anchor_text_prefix: anchorTextPrefix ?? null,
         received_at: receivedAt ?? Date.now(),
+        ...(externalMcpCommand === true ? { external_mcp_command: true } : {}),
       },
     },
   }).catch((error) => {
@@ -507,6 +508,7 @@ function persistCanvasCommandValidationActivity({
   errors,
   anchorTextPrefix,
   receivedAt,
+  externalMcpCommand,
 }: {
   projectId: string;
   canvasId: string;
@@ -516,6 +518,7 @@ function persistCanvasCommandValidationActivity({
   errors: string[];
   anchorTextPrefix?: string | null;
   receivedAt?: number;
+  externalMcpCommand?: boolean;
 }) {
   if (!turnId) return;
   void api.post("api/v1/chat/ui-events", {
@@ -539,6 +542,7 @@ function persistCanvasCommandValidationActivity({
         },
         anchor_text_prefix: anchorTextPrefix ?? null,
         received_at: receivedAt ?? Date.now(),
+        ...(externalMcpCommand === true ? { external_mcp_command: true } : {}),
       },
     },
   }).catch((error) => {
@@ -1468,9 +1472,15 @@ export function FreezoneShell({
       }>).detail;
       const frame = detail?.frame;
       if (!frame || frame.type !== "canvas.command") return;
-      const isExternalMcpCommand = detail?.externalMcpCommand === true;
+      const claim = claimExternalCanvasCommand(
+        emittedExternalCanvasCommandKeysRef.current,
+        frame,
+        detail?.externalMcpCommand === true,
+      );
+      if (!claim.accepted) return;
+      const isExternalMcpCommand = claim.externalMcpCommand;
       const turnId = typeof frame.turn_id === "string" ? frame.turn_id : null;
-      const bridgeKey = typeof frame.bridge_key === "string" ? frame.bridge_key : null;
+      const bridgeKey = claim.bridgeKey;
       const agentId =
         typeof frame.agent_id === "string"
           ? frame.agent_id
@@ -1491,6 +1501,7 @@ export function FreezoneShell({
         labels: ["命令校验"],
         receivedAt: eventReceivedAt,
         surfaceOrder: eventReceivedAt,
+        externalMcpCommand: isExternalMcpCommand,
       });
       const candidates = canvasCommandCandidatesFromFrame(frame);
       const envelopes = extractCanvasChatCommandEnvelopes(candidates)
@@ -1512,6 +1523,7 @@ export function FreezoneShell({
           errors,
           receivedAt: eventReceivedAt + 1,
           surfaceOrder: eventReceivedAt + 1,
+          externalMcpCommand: isExternalMcpCommand,
         });
         persistCanvasCommandValidationActivity({
           projectId,
@@ -1522,6 +1534,7 @@ export function FreezoneShell({
           errors,
           anchorTextPrefix: detail?.anchorTextPrefix ?? null,
           receivedAt: eventReceivedAt + 1,
+          externalMcpCommand: isExternalMcpCommand,
         });
         const result: CanvasChatCommandApplyResult = {
           applied: 0,
@@ -1600,6 +1613,7 @@ export function FreezoneShell({
           errors,
           receivedAt: eventReceivedAt + 1,
           surfaceOrder: eventReceivedAt + 1,
+          externalMcpCommand: isExternalMcpCommand,
         });
         persistCanvasCommandValidationActivity({
           projectId,
@@ -1610,6 +1624,7 @@ export function FreezoneShell({
           errors,
           anchorTextPrefix: detail?.anchorTextPrefix ?? null,
           receivedAt: eventReceivedAt + 1,
+          externalMcpCommand: isExternalMcpCommand,
         });
         const result = canvasCommandValidationFailureResult(errors);
         reportCanvasCommandToolResult({
@@ -1658,6 +1673,7 @@ export function FreezoneShell({
         labels: ["命令校验"],
         receivedAt: eventReceivedAt + 1,
         surfaceOrder: eventReceivedAt + 1,
+        externalMcpCommand: isExternalMcpCommand,
       });
       persistCanvasCommandValidationActivity({
         projectId,
@@ -1668,145 +1684,8 @@ export function FreezoneShell({
         errors: [],
         anchorTextPrefix: detail?.anchorTextPrefix ?? null,
         receivedAt: eventReceivedAt + 1,
+        externalMcpCommand: isExternalMcpCommand,
       });
-      const autoApplyAfterMcpApproval =
-        normalizedEnvelopes.some((envelope) => envelope.auto_apply_after_mcp_approval === true) ||
-        normalizedEnvelopes.some((envelope) => envelope.autoApplyAfterMcpApproval === true);
-      if (autoApplyAfterMcpApproval) {
-        void (async () => {
-          let result: CanvasChatCommandApplyResult;
-          let backgroundAccepted = false;
-          try {
-            const execution = applyCanvasChatCommandsAsync(normalizedEnvelopes, {
-              projectId,
-              canvasId,
-            });
-            if (canvasCommandEnvelopesRunInBackground(normalizedEnvelopes)) {
-              const immediateResult = await waitForImmediateCanvasCommandResult(execution);
-              if (immediateResult) {
-                result = immediateResult;
-              } else {
-                backgroundAccepted = true;
-                reportCanvasCommandToolResult({
-                  bridgeKey,
-                  turnId,
-                  anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-                  projectId,
-                  canvasId,
-                  agentId,
-                  accepted: true,
-                });
-                result = await execution;
-              }
-            } else {
-              result = await execution;
-            }
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            result = {
-              applied: 0,
-              openedUiActions: 0,
-              createdNodeIds: [],
-              errors: [message],
-              commandResults: [
-                {
-                  commandIndex: -1,
-                  type: "run_node_action",
-                  status: "error",
-                  label: "执行节点动作",
-                  error: message,
-                },
-              ],
-            };
-          }
-          if (!backgroundAccepted) {
-            reportCanvasCommandToolResult({
-              bridgeKey,
-              turnId,
-              anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-              projectId,
-              canvasId,
-              agentId,
-              result,
-            });
-          }
-          persistCanvasCommandResult({
-            projectId,
-            canvasId,
-            turnId,
-            envelopes: normalizedEnvelopes,
-            result,
-            anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-            receivedAt: detail?.receivedAt,
-            bridgeKey,
-          });
-          window.dispatchEvent(new CustomEvent(FREEZONE_CANVAS_COMMAND_RESULT_EVENT, {
-            detail: {
-              canvasId,
-              agentId,
-              turnId,
-              bridgeKey,
-              anchorMessageId: null,
-              envelopes: normalizedEnvelopes,
-              result,
-              anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-              receivedAt: eventReceivedAt + 2,
-            },
-          }));
-        })();
-        return;
-      }
-      if (isExternalMcpCommand) {
-        const result: CanvasChatCommandApplyResult = {
-          applied: 0,
-          openedUiActions: 0,
-          createdNodeIds: [],
-          errors: ["外部 MCP 画布命令缺少自动执行标记，前端不会打开聊天审批。"],
-          commandResults: [
-            {
-              commandIndex: -1,
-              type: "validate",
-              status: "error",
-              label: "MCP 画布命令无效",
-              error: "外部 MCP 画布命令缺少 auto_apply_after_mcp_approval。",
-            },
-          ],
-        };
-        reportCanvasCommandToolResult({
-          bridgeKey,
-          turnId,
-          anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-          projectId,
-          canvasId,
-          agentId,
-          result,
-        });
-        persistCanvasCommandResult({
-          projectId,
-          canvasId,
-          turnId,
-          envelopes: normalizedEnvelopes,
-          result,
-          anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-          receivedAt: detail?.receivedAt,
-          bridgeKey,
-        });
-        window.dispatchEvent(new CustomEvent(FREEZONE_CANVAS_COMMAND_RESULT_EVENT, {
-          detail: {
-            canvasId,
-            agentId,
-            turnId,
-            bridgeKey,
-            anchorMessageId: null,
-            envelopes: normalizedEnvelopes,
-            result,
-            anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-            receivedAt: eventReceivedAt + 2,
-          },
-        }));
-        return;
-      }
-
       persistCanvasCommandApproval({
         projectId,
         canvasId,
@@ -1815,6 +1694,7 @@ export function FreezoneShell({
         anchorTextPrefix: detail?.anchorTextPrefix ?? null,
         receivedAt: eventReceivedAt + 2,
         bridgeKey,
+        externalMcpCommand: isExternalMcpCommand,
       });
       setChatOpen(true);
       window.setTimeout(() => emitCanvasCommandApproval({
@@ -1826,6 +1706,7 @@ export function FreezoneShell({
         bridgeKey,
         envelopes: normalizedEnvelopes,
         receivedAt: eventReceivedAt + 2,
+        externalMcpCommand: isExternalMcpCommand,
       }), 0);
     };
 
@@ -1847,10 +1728,12 @@ export function FreezoneShell({
       if (cancelled) return;
       try {
         const seenKeys = Array.from(emittedExternalCanvasCommandKeysRef.current).slice(-200);
+        const agentIds = loadFreezoneCanvasAgentsWithSource(projectId, canvasId).state.agents
+          .map((agent) => agent.id);
         const frames = await listPendingCanvasCommandFrames({
           projectId,
           canvasId,
-          agentId: "main",
+          agentIds,
           seenKeys,
         });
         const now = Date.now();
@@ -1863,7 +1746,6 @@ export function FreezoneShell({
                 ? frameRecord.bridgeKey
                 : null;
           if (!bridgeKey || emittedExternalCanvasCommandKeysRef.current.has(bridgeKey)) return;
-          emittedExternalCanvasCommandKeysRef.current.add(bridgeKey);
           window.dispatchEvent(new CustomEvent(SUPERCHAT_CANVAS_COMMAND_EVENT, {
             detail: {
               frame,

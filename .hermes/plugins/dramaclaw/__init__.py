@@ -78,6 +78,12 @@ FREEZONE_DENIED_MAINLINE_WRITE_TOOLS = {
     "dramaclaw_generate_identity_image",
     "dramaclaw_start_single_video",
     "dramaclaw_start_video_batch",
+    # Freezone canvas mutations must go through the Freezone plugin's
+    # canvas-command bridge so the browser can show approval and refresh the
+    # live canvas. These REST-style whole-canvas writes bypass that flow.
+    "dramaclaw_save_freezone_canvas",
+    "dramaclaw_delete_freezone_canvas",
+    "dramaclaw_create_freezone_canvas_from_preset",
 }
 
 
@@ -277,7 +283,9 @@ def _deny_freezone_mainline_write(tool_name: str) -> str | None:
             "chat_error": FREEZONE_MAINLINE_WRITE_DENIED_MESSAGE,
             "agent_instruction": (
                 "Reply in natural Chinese. Explain that Xi画's assistant can query project state "
-                "or operate canvas nodes, but cannot start mainline video-generation tasks here."
+                "or operate canvas nodes, but cannot start mainline video-generation tasks here. "
+                "For canvas changes, use the Freezone canvas command tools so the user can review "
+                "and approve them; do not call whole-canvas save/delete endpoints."
             ),
         }
     )

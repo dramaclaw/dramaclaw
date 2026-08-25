@@ -60,7 +60,7 @@ const MULTI_TOOLBAR_SEPARATOR_CLASS =
 const MULTI_TOOLBAR_MENU_ITEM_CLASS =
   'flex h-11 w-full items-center gap-2.5 rounded-[10px] px-3 text-left text-sm text-text-dark transition-colors hover:bg-[rgba(255,255,255,0.075)]';
 
-type ArrangeMode = 'graph' | 'horizontal' | 'vertical';
+type ArrangeMode = 'grid' | 'graph' | 'horizontal' | 'vertical';
 
 type MultiSelectionToolbarProps = {
   projectId?: string;
@@ -199,6 +199,17 @@ export const MultiSelectionToolbar = memo(({
           targets.set(item.node.id, { x: minX, y: cursorY });
           cursorY += item.size.height + ARRANGE_GAP;
         }
+      } else if (mode === 'grid') {
+        // 与 Hermes 以及分组工具条一致：宫格是几何布局，不受节点连线影响。
+        const columns = Math.max(1, Math.ceil(Math.sqrt(items.length)));
+        const cellWidth = Math.max(...items.map((item) => item.size.width)) + ARRANGE_GAP;
+        const cellHeight = Math.max(...items.map((item) => item.size.height)) + ARRANGE_GAP;
+        items.forEach((item, index) => {
+          targets.set(item.node.id, {
+            x: minX + (index % columns) * cellWidth,
+            y: minY + Math.floor(index / columns) * cellHeight,
+          });
+        });
       } else {
         // 按连线排列：复用画布「整理」用的 Sugiyama 分层算法（computeAutoLayout），
         // 但只喂选中的这批节点 + 它们之间的连线，让父→子沿边方向左→右分层、纵向
@@ -615,10 +626,18 @@ export const MultiSelectionToolbar = memo(({
             <button
               type="button"
               className={MULTI_TOOLBAR_MENU_ITEM_CLASS}
+              onClick={() => handleArrange('grid')}
+            >
+              <LayoutGrid className="h-4 w-4 text-text-muted" />
+              <span>宫格排列</span>
+            </button>
+            <button
+              type="button"
+              className={MULTI_TOOLBAR_MENU_ITEM_CLASS}
               onClick={() => handleArrange('graph')}
             >
               <Workflow className="h-4 w-4 text-text-muted" />
-              <span>宫格排列</span>
+              <span>按连线排列</span>
             </button>
             <button
               type="button"

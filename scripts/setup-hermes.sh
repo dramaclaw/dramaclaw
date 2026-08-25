@@ -17,13 +17,16 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "$0")/.." && pwd)"
 mode="${1:-install}"
 
-HERMES_REPO="${HERMES_REPO:-https://github.com/dramaclaw/hermes-agent.git}"
+# Prefer SSH for the developer installer so GitHub HTTPS rate limits do not
+# block local setup. Docker builds keep their HTTPS default because an image
+# build does not have access to the host SSH agent/keys.
+HERMES_REPO="${HERMES_REPO:-git@github.com:dramaclaw/hermes-agent.git}"
 HERMES_REF="${HERMES_REF:-brainclaw/evidence-plane}"
 HERMES_SOURCE_DIR="${HERMES_SOURCE_DIR:-$root_dir/.cache/hermes-agent}"
-HERMES_PYTHON="${HERMES_PYTHON:-$root_dir/.venv/bin/python}"
-if [ ! -x "$HERMES_PYTHON" ]; then
-  HERMES_PYTHON="$(command -v python3)"
-fi
+HERMES_ENV_DIR="${HERMES_ENV_DIR:-$root_dir/.cache/hermes-venv}"
+HERMES_PYTHON="${HERMES_PYTHON:-$HERMES_ENV_DIR/bin/python}"
+HERMES_BASE_PYTHON="${HERMES_BASE_PYTHON:-$root_dir/.venv/bin/python}"
+HERMES_CLI_PATH="${HERMES_CLI_PATH:-$HERMES_ENV_DIR/bin/hermes}"
 
 # The property this deployment actually depends on: does `_meta` survive the
 # ACP router? Probed in the interpreter that will run the worker.
@@ -41,13 +44,27 @@ except Exception:
 PY
 }
 
+if [ ! -x "$HERMES_PYTHON" ]; then
+  if [ "$mode" = "--check" ] || [ "$mode" = "check" ]; then
+    echo "Hermes isolated environment is not installed: $HERMES_ENV_DIR" >&2
+    exit 1
+  fi
+  command -v uv >/dev/null 2>&1 || {
+    echo "uv is required: https://docs.astral.sh/uv/" >&2; exit 2; }
+  if [ ! -x "$HERMES_BASE_PYTHON" ]; then
+    HERMES_BASE_PYTHON="$(command -v python3)"
+  fi
+  echo "Creating isolated Hermes environment at $HERMES_ENV_DIR ..."
+  uv venv --python "$HERMES_BASE_PYTHON" "$HERMES_ENV_DIR"
+fi
+
 if fork_is_installed; then
-  echo "Hermes fork is installed ($(hermes --version 2>/dev/null | head -n 1))."
+  echo "Hermes fork is installed ($("$HERMES_CLI_PATH" --version 2>/dev/null | head -n 1))."
   exit 0
 fi
 
 if [ "$mode" = "--check" ] || [ "$mode" = "check" ]; then
-  if command -v hermes >/dev/null 2>&1; then
+  if [ -x "$HERMES_CLI_PATH" ]; then
     echo "A Hermes is installed, but it is not the fork: it drops the _meta" >&2
     echo "extension the per-turn credential travels in, so every turn would" >&2
     echo "fail closed. Run: scripts/setup-hermes.sh" >&2
@@ -82,4 +99,4 @@ if ! fork_is_installed; then
   exit 1
 fi
 
-echo "Hermes fork ready: ${installed_sha:0:12} ($(hermes --version 2>/dev/null | head -n 1))"
+echo "Hermes fork ready: ${installed_sha:0:12} ($("$HERMES_CLI_PATH" --version 2>/dev/null | head -n 1))"

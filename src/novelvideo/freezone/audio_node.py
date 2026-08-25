@@ -711,14 +711,11 @@ async def _write_newapi_audio_speech(
     import httpx
 
     lease = None
+    if egress_context is not None and type(egress_context) is not TrustedEgressContext:
+        raise RuntimeError("ORG_EGRESS_DENIED")
     if egress_context is None:
         egress_context = ambient_organization_egress_context()
-    if egress_context is not None:
-        if (
-            type(egress_context) is not TrustedEgressContext
-            or not egress_context.is_organization
-        ):
-            raise RuntimeError("ORG_EGRESS_DENIED")
+    if egress_context is not None and egress_context.is_organization:
         lease = await claim_audio_operation(
             egress_context,
             capability="audio.tts.gateway",

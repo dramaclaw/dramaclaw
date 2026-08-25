@@ -66,14 +66,14 @@ if _REPO_SRC.exists() and str(_REPO_SRC) not in sys.path:
 
 _WORKFLOW_GRAPH_IMPORT_ERROR: Exception | None = None
 try:
-    from workflow_graph import build_workflow_graph_commands
+    from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
 except Exception as exc:
     _WORKFLOW_GRAPH_IMPORT_ERROR = exc
     build_workflow_graph_commands = None
 
 _WORKFLOW_DRAFT_IMPORT_ERROR: Exception | None = None
 try:
-    from workflow_drafts import (
+    from novelvideo.freezone.agent_workflows.drafts import (
         build_workflow_draft_patch,
         public_workflow_draft,
     )
@@ -84,7 +84,7 @@ except Exception as exc:
 
 _JSON_WORKFLOW_CATALOG_IMPORT_ERROR: Exception | None = None
 try:
-    from json_workflow_catalog import (
+    from novelvideo.freezone.agent_workflows.catalog import (
         compile_workflow_intent,
         get_workflow_skill,
         validate_agent_workflow_plan,
@@ -94,6 +94,7 @@ except Exception as exc:
     compile_workflow_intent = None
     get_workflow_skill = None
     validate_agent_workflow_plan = None
+
 
 _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR: Exception | None = None
 try:
@@ -2106,6 +2107,7 @@ _COMMAND_TYPES = {
     "add_next_node",
     "update_node_data",
     "delete_nodes",
+    "clear_canvas",
     "delete_edges",
     "create_edge",
     "layout_nodes",
@@ -2403,9 +2405,22 @@ def _approval_required_for_commands(commands: list[Any]) -> tuple[bool, list[str
         if isinstance(command, dict)
     ]
     destructive = {"delete_nodes", "delete_edges"}
+    mutating = {
+        "create_node",
+        "add_next_node",
+        "update_node_data",
+        "create_edge",
+        "layout_nodes",
+        "group_nodes",
+        "move_nodes",
+        "select_nodes",
+        "clear_canvas",
+    }
     costly_or_ui = {"run_node_action", "run_workflow", "open_mainline_projection"}
     if any(command_type in destructive for command_type in command_types):
         reasons.append("包含删除类画布操作")
+    if any(command_type in mutating for command_type in command_types):
+        reasons.append("包含画布结构或内容变更")
     if any(command_type in costly_or_ui for command_type in command_types):
         reasons.append("包含运行节点动作、生成任务或打开/映射主线内容")
     if command_count > 1:
@@ -2536,17 +2551,28 @@ def _dispatch_mcp_approved_frontend_commands(
             "Canvas command bridge is unavailable; cannot dispatch frontend node action. "
             f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
         )
+    external_mcp = os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
+    profile = os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip()
+    agent_id = profile.removeprefix("freezone:").strip() if profile.startswith("freezone:") else "main"
     envelope = {
         "schema_version": "canvas_chat_commands.v1",
         "project_id": project,
         "canvas_id": canvas,
-        "agent_id": "main",
-        "auto_apply_after_mcp_approval": True,
         "commands": commands,
     }
+    # Only Codex/external MCP commands need the reconnect polling fallback.
+    # Hermes keeps its original websocket-only delivery path and envelope shape.
+    if external_mcp:
+        envelope["agent_id"] = agent_id or "main"
+        envelope["external_mcp_command"] = True
     key = canvas_command_bridge_key(project_id=project, canvas_id=canvas, commands=commands)
     bridge_root = os.environ.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "").strip()
-    bridge_dir = (Path(bridge_root) / "freezone_main") if bridge_root else None
+    # The worker launcher already gives each Hermes/Codex profile its
+    # profile-scoped bridge directory (``.../freezone_freezone_main``). Do not
+    # append another ``freezone_main`` here: that creates a nested directory
+    # which the API's candidate-path resolver never polls, so the approval card
+    # and the browser refresh both disappear.
+    bridge_dir = Path(bridge_root) if bridge_root else None
     put_pending_canvas_command(
         key=key,
         project_id=project,
@@ -3202,15 +3228,11 @@ def _emit_canvas_commands(
             slim_result=slim_result,
         )
     if _external_mcp_agent_enabled():
-        needs_approval, approval_reasons = _approval_required_for_commands(commands)
-        if _mcp_canvas_approval_enabled() and needs_approval:
-            return _create_mcp_canvas_approval(
-                project=project,
-                canvas=canvas,
-                commands=commands,
-                slim_result=slim_result,
-                reasons=approval_reasons,
-            )
+        # Codex/Claude/OpenClaw external MCP uses the same browser bridge as
+        # Hermes. Do not return a second tool-level approval_id here: that
+        # approval lives inside the agent conversation and never reaches the
+        # Freezone chat approval card. The pending bridge frame is consumed by
+        # FreezoneShell, which displays the card and applies after confirmation.
         return _dispatch_mcp_approved_frontend_commands(
             project=project,
             canvas=canvas,
@@ -5279,9 +5301,11 @@ _TEXT_ANNOTATION_DATA_SCHEMA = {
     "type": "object",
     "properties": {
         "title": _NON_EMPTY_STRING,
+        "displayName": _NON_EMPTY_STRING,
         "content": _NON_EMPTY_STRING,
     },
-    "required": ["title", "content"],
+    "required": ["content"],
+    "anyOf": [{"required": ["title"]}, {"required": ["displayName"]}],
 }
 _OTHER_AGENT_CREATABLE_NODE_TYPE_VALUES = [
     value for value in _AGENT_CREATABLE_NODE_TYPE_VALUES if value != "textAnnotationNode"
@@ -5340,6 +5364,7 @@ _CANVAS_COMMAND_ITEM_SCHEMA = {
             ["node_id", "data"],
         ),
         _command_variant("delete_nodes", {"node_ids": _NODE_IDS_SCHEMA}, ["node_ids"]),
+        _command_variant("clear_canvas", {}, []),
         _command_variant(
             "delete_edges",
             {"edge_ids": _NODE_IDS_SCHEMA},

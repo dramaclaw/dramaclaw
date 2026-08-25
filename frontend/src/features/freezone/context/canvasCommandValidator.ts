@@ -190,6 +190,10 @@ export function validateCanvasChatCommandEnvelopes(
     envelope.commands.forEach((command, commandIndex) => {
       const path = commandPath(envelopeIndex, commandIndex);
       switch (command.type) {
+        case "clear_canvas":
+          // The executor resolves the current canvas contents at approval
+          // time, so there are no ids to validate in the command payload.
+          break;
         case "create_node": {
           const data = normalizeCanvasCommandCreateNodeData(command.node_type, command.data);
           const virtualNode = makeVirtualNode({

@@ -59,10 +59,11 @@ _MINIMAL_ECOMMERCE_RECIPES = [
 def _load_catalog_module():
     path = (
         Path(__file__).resolve().parents[1]
-        / ".hermes"
-        / "plugins"
+        / "src"
+        / "novelvideo"
         / "freezone"
-        / "json_workflow_catalog.py"
+        / "agent_workflows"
+        / "catalog.py"
     )
     spec = importlib.util.spec_from_file_location("test_dynamic_workflow_catalog", path)
     assert spec is not None

@@ -5,12 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 
-/**
- * 分组工具条「排列」三档。核心回归点：「宫格排列」必须与多选工具条
- * （MultiSelectionToolbar.handleArrange 的 'graph' 档）走同一套 computeAutoLayout
- * ——有连线就沿边方向左→右分层，而不是旧的 ceil(sqrt(n)) 等宽格子。两个工具条上
- * 同名的菜单项以前会给出不同结果。
- */
+/** 分组工具条「排列」三档。宫格语义与 Hermes 保持一致，不受工作流连线影响。 */
 describe("arrangeGroupChildren", () => {
   const SIDE_PAD = 20;
   const TOP_PAD = 34;
@@ -50,9 +45,7 @@ describe("arrangeGroupChildren", () => {
     return useCanvasStore.getState().nodes.find((n) => n.id === id)!.position;
   }
 
-  it("宫格排列：有连线时按连线左→右分层，而不是 2×2 方阵", () => {
-    // a→b→c→d 一条链：分层布局应把四个节点摊成一排（四层），x 严格递增、
-    // 全部同一层高。旧的 ceil(sqrt(4))=2 列实现会摆成 2×2，c/d 换行。
+  it("宫格排列：四个节点即使存在链式连线也排成 2×2", () => {
     const groupId = makeGroup([
       ["a", "b"],
       ["b", "c"],
@@ -61,11 +54,10 @@ describe("arrangeGroupChildren", () => {
     useCanvasStore.getState().arrangeGroupChildren(groupId, "grid");
 
     const [a, b, c, d] = ["a", "b", "c", "d"].map(posOf);
-    expect(a.x).toBeLessThan(b.x);
-    expect(b.x).toBeLessThan(c.x);
-    expect(c.x).toBeLessThan(d.x);
-    // 链上节点按重心对齐到同一行——这是分层布局的特征，方阵实现给不出。
-    expect(new Set([a.y, b.y, c.y, d.y]).size).toBe(1);
+    expect(a).toEqual({ x: SIDE_PAD, y: TOP_PAD });
+    expect(b).toEqual({ x: SIDE_PAD + 232, y: TOP_PAD });
+    expect(c).toEqual({ x: SIDE_PAD, y: TOP_PAD + 182 });
+    expect(d).toEqual({ x: SIDE_PAD + 232, y: TOP_PAD + 182 });
   });
 
   it("宫格排列：结果锚在组内边距上，与 horizontal/vertical 起点一致", () => {
@@ -111,5 +103,14 @@ describe("arrangeGroupChildren", () => {
     // 单列：宽 = 边距 + 200 + 边距；高 = 顶距 + 4*150 + 3*32 + 边距
     expect(g.style?.width).toBe(SIDE_PAD * 2 + 200);
     expect(g.style?.height).toBe(TOP_PAD + 150 * 4 + 32 * 3 + SIDE_PAD);
+  });
+
+  it("宫格排列后组框完整包住 2×2 子节点", () => {
+    const groupId = makeGroup();
+    useCanvasStore.getState().arrangeGroupChildren(groupId, "grid");
+
+    const g = useCanvasStore.getState().nodes.find((n) => n.id === groupId)!;
+    expect(g.style?.width).toBe(SIDE_PAD + 200 * 2 + 32 + SIDE_PAD);
+    expect(g.style?.height).toBe(TOP_PAD + 150 * 2 + 32 + SIDE_PAD);
   });
 });

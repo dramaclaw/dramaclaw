@@ -21,7 +21,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-
 _CONNECT_TIMEOUT_SECONDS = 10.0
 _MAX_MESSAGE_BYTES = 128 << 20
 _NODE_ENV_ALLOWLIST = {
@@ -57,6 +56,21 @@ _ESCAPED_JSON_METADATA_RE = re.compile(
 )
 
 
+def _deny_unexpected_approval(method: str, _params: dict | None) -> dict:
+    """Fail closed if the runtime asks for authority outside approved MCP tools.
+
+    Canvas mutations use DramaClaw's business approval bridge. Native command
+    and file approvals are deliberately not a second way around that contract.
+    """
+
+    if method in {
+        "item/commandExecution/requestApproval",
+        "item/fileChange/requestApproval",
+    }:
+        return {"decision": "decline"}
+    return {}
+
+
 def _control_dir() -> Path:
     """Return a short, private directory for the home-node control socket."""
 
@@ -74,7 +88,9 @@ def _control_dir() -> Path:
 
 
 def _control_paths(codex_home: Path) -> tuple[Path, Path, Path]:
-    identity = hashlib.sha256(str(codex_home.resolve()).encode("utf-8")).hexdigest()[:20]
+    identity = hashlib.sha256(str(codex_home.resolve()).encode("utf-8")).hexdigest()[
+        :20
+    ]
     control_dir = _control_dir()
     return (
         control_dir / f"{identity}.sock",
@@ -100,8 +116,8 @@ def _redact_legacy_log_body(body: str) -> str:
         'responsesapi_client_metadata: Some({"<redacted>": "<redacted>"})',
         body,
     )
-    redacted = _JSON_METADATA_RE.sub(r'\1<redacted>\2', redacted)
-    return _ESCAPED_JSON_METADATA_RE.sub(r'\1<redacted>\2', redacted)
+    redacted = _JSON_METADATA_RE.sub(r"\1<redacted>\2", redacted)
+    return _ESCAPED_JSON_METADATA_RE.sub(r"\1<redacted>\2", redacted)
 
 
 def _sanitize_legacy_turn_metadata(codex_home: Path) -> int:
@@ -125,9 +141,7 @@ def _sanitize_legacy_turn_metadata(codex_home: Path) -> int:
         ).fetchone()
         if table is None:
             return 0
-        columns = {
-            str(row[1]) for row in connection.execute("PRAGMA table_info(logs)")
-        }
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(logs)")}
         if "feedback_log_body" not in columns:
             return 0
         for row_id, body in connection.execute(
@@ -206,13 +220,14 @@ class _SharedCodexRuntime:
                 if self._socket_accepting(socket_path):
                     existing_digest = ""
                     try:
-                        existing_digest = signature_path.read_text(encoding="ascii").strip()
+                        existing_digest = signature_path.read_text(
+                            encoding="ascii"
+                        ).strip()
                     except OSError:
                         pass
                     if (
-                        (self._signature is not None and self._signature != signature)
-                        or (existing_digest and existing_digest != signature_digest)
-                    ):
+                        self._signature is not None and self._signature != signature
+                    ) or (existing_digest and existing_digest != signature_digest):
                         raise RuntimeError(
                             "Codex App Server is already running with different node-level "
                             "gateway configuration; restart the API before using the new configuration"
@@ -277,7 +292,8 @@ class _SharedCodexRuntime:
                         except OSError:
                             pass
                         raise RuntimeError(
-                            detail or "Codex App Server exited before its socket was ready"
+                            detail
+                            or "Codex App Server exited before its socket was ready"
                         )
                     time.sleep(0.05)
 
@@ -341,7 +357,12 @@ class _UnixSocketCodexClient:
 
         class Client(SdkCodexClient):
             def __init__(self) -> None:
-                super().__init__(config=config)
+                # The upstream SDK defaults to accepting native command/file
+                # approvals. Always override it, even though current threads
+                # also run with approval_mode=deny_all and a read-only sandbox.
+                super().__init__(
+                    config=config, approval_handler=_deny_unexpected_approval
+                )
                 self._socket_path = socket_path
                 self._websocket = None
 
@@ -377,7 +398,9 @@ class _UnixSocketCodexClient:
             def _write_message(self, payload) -> None:
                 websocket = self._websocket
                 if websocket is None:
-                    raise TransportClosedError("Codex App Server connection is not running")
+                    raise TransportClosedError(
+                        "Codex App Server connection is not running"
+                    )
                 with self._lock:
                     try:
                         websocket.send(json.dumps(payload))
@@ -389,7 +412,9 @@ class _UnixSocketCodexClient:
             def _read_message(self):
                 websocket = self._websocket
                 if websocket is None:
-                    raise TransportClosedError("Codex App Server connection is not running")
+                    raise TransportClosedError(
+                        "Codex App Server connection is not running"
+                    )
                 try:
                     raw = websocket.recv()
                 except ConnectionClosed as exc:
@@ -403,7 +428,9 @@ class _UnixSocketCodexClient:
                 except json.JSONDecodeError as exc:
                     raise CodexError("Codex App Server sent invalid JSON-RPC") from exc
                 if not isinstance(message, dict):
-                    raise CodexError("Codex App Server sent an invalid JSON-RPC payload")
+                    raise CodexError(
+                        "Codex App Server sent an invalid JSON-RPC payload"
+                    )
                 return message
 
         return Client()

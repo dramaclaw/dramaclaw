@@ -170,7 +170,12 @@ class FreezoneCanvasAgentsIn(BaseModel):
 class PendingCanvasCommandsIn(BaseModel):
     project_id: str
     canvas_id: str
-    agent_id: str | None = Field(default=None, validation_alias=AliasChoices("agent_id", "agentId"))
+    agent_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("agent_id", "agentId")
+    )
+    agent_ids: list[str] = Field(
+        default_factory=list, validation_alias=AliasChoices("agent_ids", "agentIds")
+    )
     seen_keys: list[str] = []
 
 
@@ -179,7 +184,9 @@ class CanvasCommandToolResultIn(BaseModel):
     bridge_key: str
     project_id: str | None = None
     canvas_id: str | None = None
-    agent_id: str | None = Field(default=None, validation_alias=AliasChoices("agent_id", "agentId"))
+    agent_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("agent_id", "agentId")
+    )
     tool_call_status: str = "completed"
     canvas_apply_status: str
     applied: bool = False
@@ -200,7 +207,9 @@ class CanvasContextToolResultIn(BaseModel):
     bridge_key: str
     project_id: str | None = None
     canvas_id: str | None = None
-    agent_id: str | None = Field(default=None, validation_alias=AliasChoices("agent_id", "agentId"))
+    agent_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("agent_id", "agentId")
+    )
     tool_call_status: str = "completed"
     canvas_context_status: str | None = None
     ok: bool = True
@@ -214,7 +223,9 @@ class SkillStudioToolResultIn(BaseModel):
     bridge_key: str
     project_id: str | None = None
     canvas_id: str | None = None
-    agent_id: str | None = Field(default=None, validation_alias=AliasChoices("agent_id", "agentId"))
+    agent_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("agent_id", "agentId")
+    )
     tool_call_status: str = "completed"
     skill_studio_status: str = "answered"
     ok: bool = True
@@ -237,7 +248,9 @@ class ClarificationToolResultIn(BaseModel):
     bridge_key: str
     project_id: str | None = None
     canvas_id: str | None = None
-    agent_id: str | None = Field(default=None, validation_alias=AliasChoices("agent_id", "agentId"))
+    agent_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("agent_id", "agentId")
+    )
     tool_call_status: str = "completed"
     clarification_status: str = "answered"
     ok: bool = True
@@ -282,7 +295,9 @@ async def get_director_auto_run(
     project: str,
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
-    ctx = await resolve_project_context(user=user, project_id=project, required_role="viewer")
+    ctx = await resolve_project_context(
+        user=user, project_id=project, required_role="viewer"
+    )
     run = await director_auto_coordinator.get(
         username=str(user["username"]),
         project_id=ctx.project_id,
@@ -296,7 +311,9 @@ async def start_director_auto_run(
     payload: DirectorAutoStartIn,
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
-    ctx = await resolve_project_context(user=user, project_id=project, required_role="editor")
+    ctx = await resolve_project_context(
+        user=user, project_id=project, required_role="editor"
+    )
     run = await director_auto_coordinator.start(
         username=str(user["username"]),
         ctx=ctx,
@@ -311,7 +328,9 @@ async def pause_director_auto_run(
     project: str,
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
-    ctx = await resolve_project_context(user=user, project_id=project, required_role="editor")
+    ctx = await resolve_project_context(
+        user=user, project_id=project, required_role="editor"
+    )
     run = await director_auto_coordinator.pause(
         username=str(user["username"]),
         project_id=ctx.project_id,
@@ -326,7 +345,9 @@ async def suspend_director_auto_run(
     payload: DirectorAutoSuspendIn,
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
-    ctx = await resolve_project_context(user=user, project_id=project, required_role="editor")
+    ctx = await resolve_project_context(
+        user=user, project_id=project, required_role="editor"
+    )
     try:
         run = await director_auto_coordinator.suspend_for_confirmation(
             username=str(user["username"]),
@@ -343,7 +364,9 @@ async def resume_director_auto_run(
     project: str,
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
-    ctx = await resolve_project_context(user=user, project_id=project, required_role="editor")
+    ctx = await resolve_project_context(
+        user=user, project_id=project, required_role="editor"
+    )
     try:
         run = await director_auto_coordinator.resume_suspended(
             username=str(user["username"]),
@@ -441,7 +464,9 @@ async def resolve_agent_permission(
         option_id,
     )
     if not resolved:
-        raise HTTPException(status_code=404, detail="permission request is no longer pending")
+        raise HTTPException(
+            status_code=404, detail="permission request is no longer pending"
+        )
     return {"ok": True, "data": {"resolved": True}}
 
 
@@ -480,7 +505,9 @@ def _canvas_bridge_dir(username: str, *, profile: str = "director") -> Any:
 
 
 def _is_freezone_scope(scope: ChatScope) -> bool:
-    return scope.kind == "freezone" or (scope.kind == "project" and scope.surface == "freezone")
+    return scope.kind == "freezone" or (
+        scope.kind == "project" and scope.surface == "freezone"
+    )
 
 
 def _chat_store_scope_for_project_context(
@@ -506,7 +533,9 @@ def _canvas_bridge_profile_for_scope(scope: ChatScope) -> str:
     return "director"
 
 
-def _candidate_canvas_bridge_dirs_for_scope(username: str, scope: ChatScope) -> list[Any]:
+def _candidate_canvas_bridge_dirs_for_scope(
+    username: str, scope: ChatScope
+) -> list[Any]:
     if not _is_freezone_scope(scope):
         return [_canvas_bridge_dir(username, profile="director")]
     dirs = [
@@ -539,10 +568,7 @@ def _chat_run_lock_project_for_scope(scope: ChatScope) -> str:
 
 
 def _freezone_agent_id_from_payload(payload: Any) -> str:
-    agent_id = str(
-        getattr(payload, "agent_id", None)
-        or "main"
-    ).strip()
+    agent_id = str(getattr(payload, "agent_id", None) or "main").strip()
     return agent_id or "main"
 
 
@@ -636,21 +662,31 @@ async def _close_freezone_agent_worker(username: str, agent_id: str | None) -> b
     try:
         from novelvideo.chat.hermes_pool import pool as hermes_pool
 
-        return await hermes_pool.close_user_profile(username, f"freezone:{agent_id or 'main'}")
+        return await hermes_pool.close_user_profile(
+            username, f"freezone:{agent_id or 'main'}"
+        )
     except Exception:
-        logger.exception("failed to close freezone hermes worker after canvas command cancellation")
+        logger.exception(
+            "failed to close freezone hermes worker after canvas command cancellation"
+        )
         return False
 
 
-async def _close_canvas_command_worker(username: str, payload: CanvasCommandToolResultIn) -> bool:
+async def _close_canvas_command_worker(
+    username: str, payload: CanvasCommandToolResultIn
+) -> bool:
     if payload.canvas_id:
-        return await _close_freezone_agent_worker(username, _freezone_agent_id_from_payload(payload))
+        return await _close_freezone_agent_worker(
+            username, _freezone_agent_id_from_payload(payload)
+        )
     try:
         from novelvideo.chat.hermes_pool import pool as hermes_pool
 
         return await hermes_pool.close_user(username)
     except Exception:
-        logger.exception("failed to close hermes worker after canvas command cancellation")
+        logger.exception(
+            "failed to close hermes worker after canvas command cancellation"
+        )
         return False
 
 
@@ -682,9 +718,15 @@ def _resolve_canvas_command_tool_result_payload(
     )
     if payload.canvas_apply_status == "cancelled_by_user":
         message = "User cancelled the canvas command before execution."
-        agent_instruction = "Do not claim the canvas change was applied; ask the user before retrying."
+        agent_instruction = (
+            "Do not claim the canvas change was applied; ask the user before retrying."
+        )
     elif not command_ok:
-        message = payload.user_message or payload.message or "Frontend executor reported that the canvas command failed."
+        message = (
+            payload.user_message
+            or payload.message
+            or "Frontend executor reported that the canvas command failed."
+        )
         agent_instruction = (
             payload.agent_hint
             or "Do not claim success. Read errors and command_results, then fix the command before trying again. Do not expose raw canvas protocol details to the user."
@@ -747,7 +789,11 @@ def _resolve_canvas_context_tool_result_payload(
         "ok": payload.ok and payload.tool_call_status == "completed",
         "tool_call_status": payload.tool_call_status,
         "canvas_context_status": payload.canvas_context_status
-        or ("resolved" if payload.ok and payload.tool_call_status == "completed" else "failed"),
+        or (
+            "resolved"
+            if payload.ok and payload.tool_call_status == "completed"
+            else "failed"
+        ),
         "responses": payload.responses,
         "errors": payload.errors,
         "project_id": payload.project_id,
@@ -761,7 +807,9 @@ def _resolve_canvas_context_tool_result_payload(
     )
 
 
-def _skill_studio_draft_catalog_ids(draft: dict[str, Any] | None) -> tuple[list[str], list[str]]:
+def _skill_studio_draft_catalog_ids(
+    draft: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
     if not isinstance(draft, dict):
         return [], []
     skill = draft.get("skill")
@@ -797,7 +845,9 @@ def _save_skill_studio_draft_catalog(
             if not isinstance(recipe, dict) or not str(recipe.get("id") or "").strip():
                 continue
             try:
-                saved = save_user_agent_config_item(username=username, kind="recipes", payload=recipe)
+                saved = save_user_agent_config_item(
+                    username=username, kind="recipes", payload=recipe
+                )
                 saved_recipe_ids.append(str(saved.get("id") or recipe.get("id")))
             except Exception as exc:
                 recipe_id = str(recipe.get("id") or f"#{index + 1}")
@@ -806,7 +856,9 @@ def _save_skill_studio_draft_catalog(
     skill = draft.get("skill")
     if isinstance(skill, dict) and str(skill.get("id") or "").strip():
         try:
-            saved = save_user_agent_config_item(username=username, kind="skills", payload=skill)
+            saved = save_user_agent_config_item(
+                username=username, kind="skills", payload=skill
+            )
             saved_skill_ids.append(str(saved.get("id") or skill.get("id")))
         except Exception as exc:
             errors.append(f"Failed to save Skill: {exc}")
@@ -826,22 +878,25 @@ def _resolve_skill_studio_tool_result_payload(
         raise HTTPException(status_code=400, detail="bridge_key is required")
     ok = payload.ok and payload.tool_call_status == "completed" and not payload.errors
     draft_skill_ids, draft_recipe_ids = _skill_studio_draft_catalog_ids(payload.draft)
-    saved_to_catalog = payload.saved_to_catalog or payload.skill_studio_status == "catalog_saved"
+    saved_to_catalog = (
+        payload.saved_to_catalog or payload.skill_studio_status == "catalog_saved"
+    )
     saved_skill_ids = payload.saved_skill_ids or draft_skill_ids
     saved_recipe_ids = payload.saved_recipe_ids or draft_recipe_ids
     errors = list(payload.errors)
     cancelled = (
-        payload.action == "cancel"
-        or payload.skill_studio_status == "catalog_cancelled"
+        payload.action == "cancel" or payload.skill_studio_status == "catalog_cancelled"
     )
     revision_started = (
         payload.action == "start_revision"
         or payload.skill_studio_status == "revision_started"
     )
     if ok and saved_to_catalog:
-        saved_skill_ids, saved_recipe_ids, catalog_errors = _save_skill_studio_draft_catalog(
-            username=username,
-            draft=payload.draft,
+        saved_skill_ids, saved_recipe_ids, catalog_errors = (
+            _save_skill_studio_draft_catalog(
+                username=username,
+                draft=payload.draft,
+            )
         )
         if catalog_errors:
             errors.extend(catalog_errors)
@@ -853,7 +908,9 @@ def _resolve_skill_studio_tool_result_payload(
 
                 hermes_pool.mark_user_freezone_profiles_dirty(username)
             except Exception:
-                logger.exception("failed to mark Freezone Hermes worker dirty after Skill Studio save")
+                logger.exception(
+                    "failed to mark Freezone Hermes worker dirty after Skill Studio save"
+                )
     if ok:
         if saved_to_catalog:
             agent_instruction = (
@@ -864,7 +921,10 @@ def _resolve_skill_studio_tool_result_payload(
                 "Do not ask the user to save it again, do not analyze the draft, do not start another Skill Studio step, "
                 "and do not include hidden reasoning. Reply briefly in Chinese only that it has been saved to Xi画 Skills / Recipes."
             )
-            message = payload.message or "Frontend saved the Skill/Recipe draft to the Freezone catalog."
+            message = (
+                payload.message
+                or "Frontend saved the Skill/Recipe draft to the Freezone catalog."
+            )
         elif cancelled:
             agent_instruction = (
                 "The user cancelled saving this Skill/Recipe draft. "
@@ -873,7 +933,10 @@ def _resolve_skill_studio_tool_result_payload(
                 "Do not call any Skill Studio creation, patch, finish, or save tools. "
                 "Acknowledge the cancellation and stop unless the user explicitly asks for a next step."
             )
-            message = payload.message or "Frontend reported that the user cancelled saving the Skill/Recipe draft."
+            message = (
+                payload.message
+                or "Frontend reported that the user cancelled saving the Skill/Recipe draft."
+            )
         elif revision_started:
             agent_instruction = (
                 "The user started revising the Skill Studio draft. "
@@ -881,14 +944,26 @@ def _resolve_skill_studio_tool_result_payload(
                 "Do not infer concrete edits from the existing draft or conversation history. "
                 "Ask one clarification question for the user's exact revision direction before patching or resubmitting draft content."
             )
-            message = payload.message or "Frontend reported that the user started revising the Skill/Recipe draft."
+            message = (
+                payload.message
+                or "Frontend reported that the user started revising the Skill/Recipe draft."
+            )
         else:
-            agent_instruction = "Continue the Skill Studio flow using the frontend response."
-            message = payload.message or "Frontend returned the user's Skill Studio response."
+            agent_instruction = (
+                "Continue the Skill Studio flow using the frontend response."
+            )
+            message = (
+                payload.message or "Frontend returned the user's Skill Studio response."
+            )
     else:
         agent_instruction = "Do not continue the Skill Studio flow; handle the frontend error or ask the user to retry."
-        message = payload.message or "Frontend reported that the Skill Studio interaction failed."
-    agent_visible_draft = None if saved_to_catalog or cancelled or revision_started else payload.draft
+        message = (
+            payload.message
+            or "Frontend reported that the Skill Studio interaction failed."
+        )
+    agent_visible_draft = (
+        None if saved_to_catalog or cancelled or revision_started else payload.draft
+    )
     result = {
         "ok": ok,
         "turn_id": payload.turn_id,
@@ -913,9 +988,11 @@ def _resolve_skill_studio_tool_result_payload(
         result,
         bridge_dir=_canvas_bridge_dir(
             username,
-            profile=f"freezone:{_freezone_agent_id_from_payload(payload)}"
-            if result.get("canvas_id")
-            else "director",
+            profile=(
+                f"freezone:{_freezone_agent_id_from_payload(payload)}"
+                if result.get("canvas_id")
+                else "director"
+            ),
         ),
     )
 
@@ -955,10 +1032,17 @@ def _resolve_clarification_tool_result_payload(
     ok = payload.ok and payload.tool_call_status == "completed" and not payload.errors
     if ok:
         agent_instruction = "Continue using the frontend clarification response."
-        message = payload.message or "Frontend returned the user's clarification response."
+        message = (
+            payload.message or "Frontend returned the user's clarification response."
+        )
     else:
-        agent_instruction = "Do not continue; handle the clarification error or ask the user to retry."
-        message = payload.message or "Frontend reported that the clarification interaction failed."
+        agent_instruction = (
+            "Do not continue; handle the clarification error or ask the user to retry."
+        )
+        message = (
+            payload.message
+            or "Frontend reported that the clarification interaction failed."
+        )
     result = {
         "ok": ok,
         "turn_id": payload.turn_id,
@@ -979,14 +1063,18 @@ def _resolve_clarification_tool_result_payload(
         result,
         bridge_dir=_canvas_bridge_dir(
             username,
-            profile=f"freezone:{_freezone_agent_id_from_payload(payload)}"
-            if result.get("canvas_id")
-            else "director",
+            profile=(
+                f"freezone:{_freezone_agent_id_from_payload(payload)}"
+                if result.get("canvas_id")
+                else "director"
+            ),
         ),
     )
 
 
-def _scope_from_interaction_payload(payload: SkillStudioToolResultIn | ClarificationToolResultIn) -> ChatScope | None:
+def _scope_from_interaction_payload(
+    payload: SkillStudioToolResultIn | ClarificationToolResultIn,
+) -> ChatScope | None:
     project_id = str(payload.project_id or "").strip()
     canvas_id = str(payload.canvas_id or "").strip()
     if not project_id or not canvas_id:
@@ -1010,7 +1098,9 @@ async def _project_context_for_interaction_result(
             return await result
         return result
     except Exception:
-        logger.debug("failed to resolve project context for interaction result", exc_info=True)
+        logger.debug(
+            "failed to resolve project context for interaction result", exc_info=True
+        )
         return None
 
 
@@ -1025,13 +1115,17 @@ async def _persist_skill_studio_result_ui_event(
     scope = _scope_from_interaction_payload(payload)
     if not turn_id or scope is None:
         return
-    if resolved is not None and resolved.get("ok") is False and (
-        payload.saved_to_catalog or payload.skill_studio_status == "catalog_saved"
+    if (
+        resolved is not None
+        and resolved.get("ok") is False
+        and (payload.saved_to_catalog or payload.skill_studio_status == "catalog_saved")
     ):
         return
     project_ctx = await _project_context_for_interaction_result(user, scope)
     event: dict[str, Any] = {
-        "type": "skill_studio.questions" if payload.draft is None else "skill_studio.draft",
+        "type": (
+            "skill_studio.questions" if payload.draft is None else "skill_studio.draft"
+        ),
         "bridge_key": payload.bridge_key,
         "project_id": payload.project_id,
         "canvas_id": payload.canvas_id,
@@ -1044,16 +1138,23 @@ async def _persist_skill_studio_result_ui_event(
         event["selections"] = payload.selections
     if payload.draft is not None:
         event["draft"] = payload.draft
-    if payload.action == "start_revision" or payload.skill_studio_status == "revision_started":
+    if (
+        payload.action == "start_revision"
+        or payload.skill_studio_status == "revision_started"
+    ):
         event["revision_pending"] = True
     saved_to_catalog = (
         bool(resolved.get("saved_to_catalog"))
         if resolved is not None
-        else (payload.saved_to_catalog or payload.skill_studio_status == "catalog_saved")
+        else (
+            payload.saved_to_catalog or payload.skill_studio_status == "catalog_saved"
+        )
     )
     if saved_to_catalog:
         event["saved_to_catalog"] = True
-        draft_skill_ids, draft_recipe_ids = _skill_studio_draft_catalog_ids(payload.draft)
+        draft_skill_ids, draft_recipe_ids = _skill_studio_draft_catalog_ids(
+            payload.draft
+        )
         if resolved is not None:
             event["saved_skill_ids"] = list(resolved.get("saved_skill_ids") or [])
             event["saved_recipe_ids"] = list(resolved.get("saved_recipe_ids") or [])
@@ -1221,7 +1322,9 @@ async def resolve_skill_studio_tool_result(
     )
     reservations: list[tuple[str, dict[str, Any]]] = []
     if should_charge:
-        draft_skill_ids, draft_recipe_ids = _skill_studio_draft_catalog_ids(payload.draft)
+        draft_skill_ids, draft_recipe_ids = _skill_studio_draft_catalog_ids(
+            payload.draft
+        )
         skill_ids = list(dict.fromkeys(payload.saved_skill_ids or draft_skill_ids))
         recipe_ids = list(dict.fromkeys(payload.saved_recipe_ids or draft_recipe_ids))
         charges = [
@@ -1244,7 +1347,11 @@ async def resolve_skill_studio_tool_result(
         user_id = await _requester_user_id_for_chat(user, scope)
         for charge, artifact_id in charges:
             metadata = {
-                "deliverable": "skill" if charge.feature_key == SKILL_DESIGN_FEATURE_KEY else "recipe",
+                "deliverable": (
+                    "skill"
+                    if charge.feature_key == SKILL_DESIGN_FEATURE_KEY
+                    else "recipe"
+                ),
                 "artifact_id": artifact_id,
                 "bridge_key": payload.bridge_key,
                 "turn_id": payload.turn_id,
@@ -1267,7 +1374,10 @@ async def resolve_skill_studio_tool_result(
                     await settle_agent_capability_charge(
                         reserved_id,
                         confirmed=False,
-                        metadata={**reserved_metadata, "reason": "subsequent_reservation_failed"},
+                        metadata={
+                            **reserved_metadata,
+                            "reason": "subsequent_reservation_failed",
+                        },
                     )
                 raise
             reservations.append((str(reservation.get("id") or ""), metadata))
@@ -1348,7 +1458,9 @@ async def resolve_clarification_tool_result(
     username = str(user["username"])
     resolved = _resolve_clarification_tool_result_payload(payload, username=username)
     try:
-        await _persist_clarification_result_ui_event(user=user, username=username, payload=payload)
+        await _persist_clarification_result_ui_event(
+            user=user, username=username, payload=payload
+        )
     except Exception:
         logger.exception("failed to persist clarification result ui event")
     return {"ok": True, "data": resolved}
@@ -1358,7 +1470,8 @@ def _is_websocket_disconnected_runtime_error(exc: RuntimeError) -> bool:
     message = str(exc)
     return (
         "WebSocket is not connected" in message
-        or 'Cannot call "receive" once a disconnect message has been received.' in message
+        or 'Cannot call "receive" once a disconnect message has been received.'
+        in message
     )
 
 
@@ -1395,7 +1508,9 @@ async def _receive_bridge_results_during_turn(
 
         if event_type == "skill_studio.result":
             payload = SkillStudioToolResultIn.model_validate(raw)
-            resolved = _resolve_skill_studio_tool_result_payload(payload, username=username)
+            resolved = _resolve_skill_studio_tool_result_payload(
+                payload, username=username
+            )
             try:
                 await _persist_skill_studio_result_ui_event(
                     user=user,
@@ -1411,7 +1526,9 @@ async def _receive_bridge_results_during_turn(
             payload = ClarificationToolResultIn.model_validate(raw)
             _resolve_clarification_tool_result_payload(payload, username=username)
             try:
-                await _persist_clarification_result_ui_event(user=user, username=username, payload=payload)
+                await _persist_clarification_result_ui_event(
+                    user=user, username=username, payload=payload
+                )
             except Exception:
                 logger.exception("failed to persist clarification result ui event")
             continue
@@ -1595,7 +1712,9 @@ def _tool_display_payload(text: object, name: object = None) -> tuple[str, str]:
     return tool_name or "agent.tool", body
 
 
-def _tool_result_payload(text: object, structured: object | None = None) -> dict[str, Any]:
+def _tool_result_payload(
+    text: object, structured: object | None = None
+) -> dict[str, Any]:
     body = str(text or "")
     payload: dict[str, Any] = {"text": body}
     if structured is not None:
@@ -1643,11 +1762,7 @@ async def _assistant_surface_access(
     surface_code = _assistant_surface_code(scope)
     items = await get_product_surface_access().get_effective_access(user_id)
     return next(
-        (
-            item
-            for item in items
-            if str(item.get("surface_code") or "") == surface_code
-        ),
+        (item for item in items if str(item.get("surface_code") or "") == surface_code),
         None,
     )
 
@@ -1668,10 +1783,7 @@ async def _require_ai_assistant_access(
 ) -> None:
     access = await _assistant_surface_access(user=user, scope=scope)
     if not access or access.get("available") is not True:
-        message = str(
-            (access or {}).get("unavailable_message")
-            or "虾导功能暂未开放"
-        )
+        message = str((access or {}).get("unavailable_message") or "虾导功能暂未开放")
         raise HTTPException(status_code=403, detail=message)
     user_id = await _requester_user_id_for_chat(user, scope)
     await get_usage_meter().require_feature_credit_balance(
@@ -1825,7 +1937,9 @@ async def _sync_running_agent_scope(username: str, scope: ChatScope) -> None:
 
         await hermes_pool.set_scope_for_user(
             username,
-            agent_profile=_freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main",
+            agent_profile=(
+                _freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main"
+            ),
             scope_kind="project" if _is_freezone_scope(scope) else scope.kind,
             project_id=scope.id if scope.kind in {"project", "freezone"} else None,
         )
@@ -1862,10 +1976,10 @@ def _load_pending_canvas_command(path: Any) -> dict[str, Any] | None:
 
 
 def _pending_canvas_command_allows_external_poll(envelope: dict[str, Any]) -> bool:
-    return bool(
-        envelope.get("auto_apply_after_mcp_approval") is True
-        or envelope.get("autoApplyAfterMcpApproval") is True
-    )
+    # Polling is a reconnect fallback for Codex/external MCP commands only.
+    # Hermes already streams the same bridge item over its live websocket;
+    # admitting every envelope here would duplicate the established Hermes path.
+    return envelope.get("external_mcp_command") is True
 
 
 @router.post("/chat/pending-canvas-commands")
@@ -1881,17 +1995,31 @@ async def list_pending_canvas_commands(
     if not canvas_id:
         raise HTTPException(status_code=400, detail="canvas_id is required")
 
-    agent_id = str(payload.agent_id or "main").strip() or "main"
+    requested_agent_ids = [
+        str(value).strip() for value in payload.agent_ids if str(value).strip()
+    ]
+    if not requested_agent_ids:
+        requested_agent_ids = [str(payload.agent_id or "main").strip() or "main"]
+    agent_ids = list(dict.fromkeys(requested_agent_ids))[:50]
     seen_keys = {str(key) for key in payload.seen_keys if str(key).strip()}
-    scope = ChatScope(
-        kind="project",
-        id=project_id,
-        surface="freezone",
-        canvas_id=canvas_id,
-        agent_id=agent_id,
-    )
     frames: list[dict[str, Any]] = []
-    for bridge_dir in _candidate_canvas_bridge_dirs_for_scope(username, scope):
+    bridge_targets: list[tuple[str, Any]] = []
+    seen_bridge_dirs: set[str] = set()
+    for agent_id in agent_ids:
+        scope = ChatScope(
+            kind="project",
+            id=project_id,
+            surface="freezone",
+            canvas_id=canvas_id,
+            agent_id=agent_id,
+        )
+        for bridge_dir in _candidate_canvas_bridge_dirs_for_scope(username, scope):
+            marker = str(bridge_dir)
+            if marker in seen_bridge_dirs:
+                continue
+            seen_bridge_dirs.add(marker)
+            bridge_targets.append((agent_id, bridge_dir))
+    for agent_id, bridge_dir in bridge_targets:
         try:
             pending_paths = sorted(
                 bridge_dir.glob("*.pending.json"),
@@ -1903,6 +2031,16 @@ async def list_pending_canvas_commands(
             key = path.name.removesuffix(".pending.json")
             if key in seen_keys:
                 continue
+            # A result file is authoritative. The browser may have applied the
+            # command just before a reconnect, while this polling endpoint is
+            # still scanning the old pending file. Never re-emit that command
+            # as a fresh approval card.
+            if _drop_resolved_pending_bridge_file(
+                bridge_dir=bridge_dir,
+                key=key,
+                pending_path=path,
+            ):
+                continue
             pending = _load_pending_canvas_command(path)
             if pending is None:
                 continue
@@ -1911,9 +2049,8 @@ async def list_pending_canvas_commands(
             if pending.get("canvas_id") and pending.get("canvas_id") != canvas_id:
                 continue
             envelope = pending["envelope"]
-            # Commands created inside an active chat turn are delivered by that
-            # turn's websocket. Exposing them through the external poller races
-            # the websocket and can report a false failure before user approval.
+            # The canvas UI consumes bridge frames through the same approval
+            # path as websocket commands. Dedupe is handled by seen_keys.
             if not _pending_canvas_command_allows_external_poll(envelope):
                 continue
             frames.append(
@@ -1921,7 +2058,7 @@ async def list_pending_canvas_commands(
                     "type": "canvas.command",
                     "turn_id": f"external-agent:{key}",
                     "canvas_id": envelope.get("canvas_id") or canvas_id,
-                    "agent_id": agent_id,
+                    "agent_id": str(envelope.get("agent_id") or agent_id),
                     "bridge_key": key,
                     "envelope": envelope,
                     "source": "pending_canvas_bridge",
@@ -1965,14 +2102,18 @@ _PENDING_CANVAS_COMMAND_STALE_SECONDS = 75.0
 _PENDING_CANVAS_CONTEXT_STALE_SECONDS = 45.0
 
 
-def _pending_canvas_command_timed_out(path: Any, *, stale_seconds: float = 45.0) -> bool:
+def _pending_canvas_command_timed_out(
+    path: Any, *, stale_seconds: float = 45.0
+) -> bool:
     try:
         return (time.time() - path.stat().st_mtime) >= stale_seconds
     except Exception:
         return False
 
 
-def _drop_resolved_pending_bridge_file(*, bridge_dir: Any, key: str, pending_path: Any) -> bool:
+def _drop_resolved_pending_bridge_file(
+    *, bridge_dir: Any, key: str, pending_path: Any
+) -> bool:
     if not (bridge_dir / f"{key}.result.json").exists():
         return False
     with contextlib.suppress(FileNotFoundError):
@@ -2088,7 +2229,11 @@ def _load_pending_skill_studio_event(path: Any) -> dict[str, Any] | None:
     if not isinstance(event, dict):
         return None
     event_type = str(event.get("type") or "").strip()
-    if event_type not in {"skill_studio.questions", "skill_studio.draft", "skill_studio.status"}:
+    if event_type not in {
+        "skill_studio.questions",
+        "skill_studio.draft",
+        "skill_studio.status",
+    }:
         return None
     if not str(event.get("skill_studio_session_id") or "").strip():
         return None
@@ -2140,7 +2285,9 @@ async def _watch_pending_canvas_commands(
         pending_items = []
         for bridge_dir in bridge_dirs:
             try:
-                pending_items.extend((bridge_dir, path) for path in bridge_dir.glob("*.pending.json"))
+                pending_items.extend(
+                    (bridge_dir, path) for path in bridge_dir.glob("*.pending.json")
+                )
             except Exception:
                 continue
         pending_items = sorted(pending_items, key=lambda item: item[1].stat().st_mtime)
@@ -2211,7 +2358,9 @@ async def _watch_pending_skill_studio_events(
 ) -> None:
     if not _is_freezone_scope(scope):
         return
-    bridge_dir = _canvas_bridge_dir(username, profile=_canvas_bridge_profile_for_scope(scope))
+    bridge_dir = _canvas_bridge_dir(
+        username, profile=_canvas_bridge_profile_for_scope(scope)
+    )
     while True:
         await asyncio.sleep(0.4)
         try:
@@ -2251,7 +2400,9 @@ async def _watch_pending_skill_studio_events(
                 "turn_id": turn_id,
             }
             try:
-                chat_store.append_ui_event(username, store_scope or scope, turn_id, ui_event)
+                chat_store.append_ui_event(
+                    username, store_scope or scope, turn_id, ui_event
+                )
             except Exception:
                 logger.exception("failed to persist skill_studio.event ui event")
             logger.info(
@@ -2290,7 +2441,9 @@ async def _watch_pending_clarification_events(
 ) -> None:
     if not _is_freezone_scope(scope):
         return
-    bridge_dir = _canvas_bridge_dir(username, profile=_canvas_bridge_profile_for_scope(scope))
+    bridge_dir = _canvas_bridge_dir(
+        username, profile=_canvas_bridge_profile_for_scope(scope)
+    )
     while True:
         await asyncio.sleep(0.4)
         try:
@@ -2330,7 +2483,9 @@ async def _watch_pending_clarification_events(
                 "turn_id": turn_id,
             }
             try:
-                chat_store.append_ui_event(username, store_scope or scope, turn_id, ui_event)
+                chat_store.append_ui_event(
+                    username, store_scope or scope, turn_id, ui_event
+                )
             except Exception:
                 logger.exception("failed to persist assistant.clarification ui event")
             logger.info(
@@ -2373,7 +2528,9 @@ async def _watch_pending_canvas_context_requests(
         pending_items = []
         for bridge_dir in bridge_dirs:
             try:
-                pending_items.extend((bridge_dir, path) for path in bridge_dir.glob("*.pending.json"))
+                pending_items.extend(
+                    (bridge_dir, path) for path in bridge_dir.glob("*.pending.json")
+                )
             except Exception:
                 continue
         pending_items = sorted(pending_items, key=lambda item: item[1].stat().st_mtime)
@@ -2507,7 +2664,9 @@ async def _stream_project_turn(
     disconnected = asyncio.Event()
     runtime_backend = chat_service.get_chat_backend_name()
     runtime_ids: dict[str, str | None] = {"thread_id": None, "turn_id": None}
-    agent_profile = _freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main"
+    agent_profile = (
+        _freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main"
+    )
     heartbeat_task = asyncio.create_task(
         _chat_heartbeat(
             websocket,
@@ -2528,7 +2687,9 @@ async def _stream_project_turn(
         )
     )
     bridge_result_receive_task = asyncio.create_task(
-        _receive_bridge_results_during_turn(websocket=websocket, user=user, username=username)
+        _receive_bridge_results_during_turn(
+            websocket=websocket, user=user, username=username
+        )
     )
     emitted_bridge_keys: set[str] = set()
     pending_canvas_task = asyncio.create_task(
@@ -2685,10 +2846,13 @@ async def _stream_project_turn(
                 send_lock,
             )
         elif event_type in {"tool_started", "tool_updated", "tool_update"}:
-            tool_name, tool_body = _tool_display_payload(event.get("text"), event.get("name"))
-            status = str(event.get("status") or (
-                "pending" if event_type == "tool_started" else "completed"
-            ))
+            tool_name, tool_body = _tool_display_payload(
+                event.get("text"), event.get("name")
+            )
+            status = str(
+                event.get("status")
+                or ("pending" if event_type == "tool_started" else "completed")
+            )
             await _send_json_best_effort(
                 websocket,
                 {
@@ -2768,7 +2932,9 @@ async def _stream_project_turn(
                     "type": "chat.done",
                     "turn_id": turn_id,
                     "scope": scope.to_dict(),
-                    "message": final_message if isinstance(final_message, dict) else None,
+                    "message": (
+                        final_message if isinstance(final_message, dict) else None
+                    ),
                 },
                 send_lock,
             )
@@ -3208,6 +3374,7 @@ async def _stream_home_turn(
         },
         send_lock,
     )
+
     async def hermes_events_with_session_retry():
         nonlocal thread
         from novelvideo.chat.hermes_sdk import (
@@ -3218,7 +3385,9 @@ async def _stream_home_turn(
         retried = False
         while True:
             try:
-                async for stream_event in thread.stream(agent_text, current_project=None):
+                async for stream_event in thread.stream(
+                    agent_text, current_project=None
+                ):
                     if (
                         not retried
                         and stream_event.type == "complete"
@@ -3266,9 +3435,7 @@ async def _stream_home_turn(
     try:
         async for event in hermes_events_with_session_retry():
             if event.type == "thread_started":
-                runtime_ids["thread_id"] = (
-                    str(event.thread_id or "").strip() or None
-                )
+                runtime_ids["thread_id"] = str(event.thread_id or "").strip() or None
                 runtime_ids["turn_id"] = str(event.turn_id or "").strip() or None
                 await _send_json_best_effort(
                     websocket,
@@ -3310,7 +3477,9 @@ async def _stream_home_turn(
                 )
                 display_text = chat_service._strip_freezone_tool_lifecycle_failure_text(
                     display_text,
-                    tool_mode="freezone_canvas" if _is_freezone_scope(scope) else "default",
+                    tool_mode=(
+                        "freezone_canvas" if _is_freezone_scope(scope) else "default"
+                    ),
                 )
                 assistant_sent_text = display_text
                 await _send_json_best_effort(
@@ -3390,9 +3559,8 @@ async def _stream_home_turn(
                         "turn_id": turn_id,
                         "call_id": event.call_id,
                         "name": display_name,
-                        "status": event.status or (
-                            "pending" if event.type == "tool_started" else "completed"
-                        ),
+                        "status": event.status
+                        or ("pending" if event.type == "tool_started" else "completed"),
                         "text": display_body,
                         "input": event.input,
                         "output": event.output,
@@ -3416,7 +3584,9 @@ async def _stream_home_turn(
             tool_mode="freezone_canvas" if _is_freezone_scope(scope) else "default",
         )
         assistant_text = assistant_text.strip() or EMPTY_AGENT_REPLY_MESSAGE
-        message = chat_store.append_message(username, scope, "assistant", assistant_text)
+        message = chat_store.append_message(
+            username, scope, "assistant", assistant_text
+        )
         persisted = True
         await _send_json_best_effort(
             websocket,
@@ -3491,7 +3661,9 @@ async def chat_ws(websocket: WebSocket) -> None:
     try:
         user = await _authenticate_ws(websocket)
     except Exception:
-        logger.warning("chat websocket authentication failed client=%s", websocket.client)
+        logger.warning(
+            "chat websocket authentication failed client=%s", websocket.client
+        )
         await _close_ws_unauthorized(websocket)
         return
 
@@ -3517,10 +3689,9 @@ async def chat_ws(websocket: WebSocket) -> None:
     # Do not pre-warm the default home scope on connect. The React client often
     # immediately sends scope.set for the active project; warming home first
     # creates a worker that is then rotated and logs a noisy initialize timeout.
-    if (
-        _should_prewarm_on_ws_connect(current_scope)
-        and await _assistant_surface_available(user=user, scope=current_scope)
-    ):
+    if _should_prewarm_on_ws_connect(
+        current_scope
+    ) and await _assistant_surface_available(user=user, scope=current_scope):
         await chat_service.prewarm_chat_backend(
             username,
             project=current_scope.id if current_scope.kind == "project" else None,
@@ -3535,7 +3706,9 @@ async def chat_ws(websocket: WebSocket) -> None:
                     return
                 raise
             event_type = str(raw.get("type") or "")
-            logger.info("chat websocket received type=%s username=%s", event_type, username)
+            logger.info(
+                "chat websocket received type=%s username=%s", event_type, username
+            )
             if event_type == "scope.set":
                 msg = ScopeSetIn.model_validate(raw)
                 requested_scope = _scope_from_model(msg.scope)
@@ -3570,7 +3743,9 @@ async def chat_ws(websocket: WebSocket) -> None:
                             if current_scope.kind in {"project", "freezone"}
                             else None
                         ),
-                        surface="freezone" if _is_freezone_scope(current_scope) else None,
+                        surface=(
+                            "freezone" if _is_freezone_scope(current_scope) else None
+                        ),
                         agent_id=(
                             current_scope.agent_id
                             if _is_freezone_scope(current_scope)
@@ -3582,7 +3757,10 @@ async def chat_ws(websocket: WebSocket) -> None:
             if event_type == "canvas.command.result":
                 payload = CanvasCommandToolResultIn.model_validate(raw)
                 _resolve_canvas_command_tool_result_payload(payload, username=username)
-                if payload.cancelled or payload.canvas_apply_status == "cancelled_by_user":
+                if (
+                    payload.cancelled
+                    or payload.canvas_apply_status == "cancelled_by_user"
+                ):
                     await _close_canvas_command_worker(username, payload)
                 continue
 
@@ -3597,7 +3775,9 @@ async def chat_ws(websocket: WebSocket) -> None:
                     "received skill_studio.result via ws %s",
                     _skill_studio_result_log_fields(payload, username=username),
                 )
-                resolved = _resolve_skill_studio_tool_result_payload(payload, username=username)
+                resolved = _resolve_skill_studio_tool_result_payload(
+                    payload, username=username
+                )
                 logger.info(
                     "resolved skill_studio.result via ws bridge_key=%s action=%s status=%s ok=%s saved=%s",
                     payload.bridge_key,
@@ -3621,7 +3801,9 @@ async def chat_ws(websocket: WebSocket) -> None:
                 payload = ClarificationToolResultIn.model_validate(raw)
                 _resolve_clarification_tool_result_payload(payload, username=username)
                 try:
-                    await _persist_clarification_result_ui_event(user=user, username=username, payload=payload)
+                    await _persist_clarification_result_ui_event(
+                        user=user, username=username, payload=payload
+                    )
                 except Exception:
                     logger.exception("failed to persist clarification result ui event")
                 continue
@@ -3676,8 +3858,12 @@ async def chat_ws(websocket: WebSocket) -> None:
                         attachments=msg.attachments,
                         turn_id=turn_id,
                         user_text=user_text,
-                        surface="freezone" if _is_freezone_scope(scope) else msg.surface,
-                        surface_context=msg.context if _is_freezone_scope(scope) else None,
+                        surface=(
+                            "freezone" if _is_freezone_scope(scope) else msg.surface
+                        ),
+                        surface_context=(
+                            msg.context if _is_freezone_scope(scope) else None
+                        ),
                         store_scope=scope if _is_freezone_scope(scope) else None,
                     )
                 elif scope.kind == "home":
@@ -3756,6 +3942,18 @@ async def chat_ws(websocket: WebSocket) -> None:
                         },
                     )
                     continue
+                logger.error(
+                    "sending chat error username=%s turn_id=%s scope=%s backend=%s message=%s",
+                    username,
+                    turn_id,
+                    scope.to_dict(),
+                    (
+                        chat_service.get_chat_backend_name()
+                        if chat_service.is_chat_backend_available()
+                        else "unavailable"
+                    ),
+                    message,
+                )
                 await _send_json_best_effort(
                     websocket, {"type": "error", "turn_id": turn_id, "message": message}
                 )

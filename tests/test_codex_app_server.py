@@ -1,11 +1,12 @@
 from pathlib import Path
 from contextlib import contextmanager
 import sqlite3
+import threading
 from types import SimpleNamespace
 
 import pytest
 
-from novelvideo.chat import codex_app_server
+from novelvideo.chat import backend_sdk, codex_app_server
 from novelvideo.chat.backend_sdk import (
     CodexThread,
     _start_codex_turn,
@@ -45,9 +46,7 @@ def test_control_rpc_uses_shared_app_server_for_lifecycle(monkeypatch, tmp_path)
         "thread_id": "thread-a",
     }
 
-    assert control_codex_runtime(
-        **common, operation="interrupt", turn_id="turn-a"
-    )
+    assert control_codex_runtime(**common, operation="interrupt", turn_id="turn-a")
     assert control_codex_runtime(**common, operation="archive")
     assert control_codex_runtime(**common, operation="delete")
     assert calls == [
@@ -74,8 +73,8 @@ def test_legacy_log_sanitizer_removes_turn_secrets_from_sqlite(tmp_path):
                 '"capability-secret"}), additional_context: {}',
             ),
             (
-                r'client-metadata: {\"dramaclaw_gateway_api_key\":\"gateway-secret\",'
-                r'\"dramaclaw_control_context_capability\":\"capability-secret\"}',
+                r"client-metadata: {\"dramaclaw_gateway_api_key\":\"gateway-secret\","
+                r"\"dramaclaw_control_context_capability\":\"capability-secret\"}",
             ),
             ("unrelated log row",),
         ],
@@ -122,7 +121,7 @@ def test_runtime_signature_digest_does_not_embed_gateway_secret():
     signature = (
         "/usr/local/bin/codex",
         "/data/state/.codex-app-server",
-        ("model_providers.dramaclaw_gateway.wire_api=\"responses\"",),
+        ('model_providers.dramaclaw_gateway.wire_api="responses"',),
         "super-secret-key",
         "http://gateway:3000/v1",
     )
@@ -166,7 +165,9 @@ def test_resume_does_not_hide_non_stale_invalid_request():
             raise InvalidRequestError(-32600, "permission profile is invalid")
 
         def thread_start(self, **options):
-            raise AssertionError("must not replace a valid thread on configuration errors")
+            raise AssertionError(
+                "must not replace a valid thread on configuration errors"
+            )
 
     with pytest.raises(InvalidRequestError, match="permission profile is invalid"):
         _start_or_resume_codex_thread(FakeCodex(), "thread-1", {})
@@ -210,7 +211,9 @@ def test_codex_149_sdk_exposes_required_runtime_notifications():
 
     # shared_codex() intentionally bridges onto these SDK internals so a
     # persistent App Server can serve lightweight per-turn client connections.
-    assert all(hasattr(Codex, name) for name in ("metadata", "thread_start", "thread_resume"))
+    assert all(
+        hasattr(Codex, name) for name in ("metadata", "thread_start", "thread_resume")
+    )
     assert all(
         hasattr(CodexClient, name)
         for name in ("initialize", "thread_start", "turn_start")
@@ -227,6 +230,16 @@ def test_codex_149_sdk_exposes_required_runtime_notifications():
         "turn/plan/updated",
         "turn/started",
     } <= NOTIFICATION_MODELS.keys()
+
+
+def test_codex_native_approval_handler_fails_closed():
+    assert codex_app_server._deny_unexpected_approval(
+        "item/commandExecution/requestApproval", {"command": "echo unsafe"}
+    ) == {"decision": "decline"}
+    assert codex_app_server._deny_unexpected_approval(
+        "item/fileChange/requestApproval", {"changes": []}
+    ) == {"decision": "decline"}
+    assert codex_app_server._deny_unexpected_approval("unknown/request", {}) == {}
 
 
 def test_shared_codex_private_sdk_bridge_is_compatible(monkeypatch, tmp_path):
@@ -491,3 +504,246 @@ async def test_codex_stream_maps_structured_runtime_events(monkeypatch, tmp_path
     assert turn_completed.status == "completed"
     assert turn_completed.raw["method"] == "turn/completed"
     assert events[-1].text == "Done"
+
+
+@pytest.mark.asyncio
+async def test_codex_stream_times_out_before_first_runtime_progress(
+    monkeypatch, tmp_path
+):
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+
+    released = threading.Event()
+    interrupt_calls = []
+    turn_started = Notification(
+        method="turn/started",
+        payload=v2.TurnStartedNotification.model_validate(
+            {
+                "threadId": "thread-timeout",
+                "turn": {"id": "turn-timeout", "items": [], "status": "inProgress"},
+            }
+        ),
+    )
+
+    class FakeTurn:
+        id = "turn-timeout"
+
+        def stream(self):
+            yield turn_started
+            released.wait(timeout=2)
+
+        def interrupt(self):
+            interrupt_calls.append(self.id)
+            released.set()
+
+    class FakeThread:
+        id = "thread-timeout"
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield object()
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_or_resume_codex_thread",
+        lambda *_args, **_kwargs: FakeThread(),
+    )
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_codex_turn",
+        lambda *_args, **_kwargs: FakeTurn(),
+    )
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 0.05)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 1.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 1.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
+
+    thread = CodexThread(
+        codex_bin=None,
+        cwd=tmp_path,
+        env={},
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions="Use DramaClaw MCP only.",
+        config_overrides=(),
+        thread_config={},
+        turn_metadata={},
+        thread_id=None,
+    )
+    events = [event async for event in thread.stream("Create workflow")]
+
+    assert interrupt_calls == ["turn-timeout"]
+    assert [event.type for event in events[-3:]] == [
+        "turn_completed",
+        "egress_disposition",
+        "complete",
+    ]
+    assert events[-3].status == "timeout"
+    assert events[-3].error["kind"] == "first-progress"
+    assert events[-2].disposition == "timeout"
+    assert events[-1].disposition == "timeout"
+    assert events[-1].text == "Codex App Server 响应超时，请重试。"
+
+
+@pytest.mark.asyncio
+async def test_codex_stream_times_out_after_runtime_becomes_idle(monkeypatch, tmp_path):
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+
+    released = threading.Event()
+    interrupt_calls = []
+    notifications = [
+        Notification(
+            method="turn/started",
+            payload=v2.TurnStartedNotification.model_validate(
+                {
+                    "threadId": "thread-idle",
+                    "turn": {"id": "turn-idle", "items": [], "status": "inProgress"},
+                }
+            ),
+        ),
+        Notification(
+            method="item/agentMessage/delta",
+            payload=v2.AgentMessageDeltaNotification.model_validate(
+                {
+                    "threadId": "thread-idle",
+                    "turnId": "turn-idle",
+                    "itemId": "message-idle",
+                    "delta": "处理中",
+                }
+            ),
+        ),
+    ]
+
+    class FakeTurn:
+        id = "turn-idle"
+
+        def stream(self):
+            yield from notifications
+            released.wait(timeout=2)
+
+        def interrupt(self):
+            interrupt_calls.append(self.id)
+            released.set()
+
+    class FakeThread:
+        id = "thread-idle"
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield object()
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_or_resume_codex_thread",
+        lambda *_args, **_kwargs: FakeThread(),
+    )
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_codex_turn",
+        lambda *_args, **_kwargs: FakeTurn(),
+    )
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 0.05)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 1.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
+
+    thread = CodexThread(
+        codex_bin=None,
+        cwd=tmp_path,
+        env={},
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions="Use DramaClaw MCP only.",
+        config_overrides=(),
+        thread_config={},
+        turn_metadata={},
+        thread_id=None,
+    )
+    events = [event async for event in thread.stream("Create workflow")]
+
+    assert interrupt_calls == ["turn-idle"]
+    assert any(event.type == "assistant_delta" for event in events)
+    assert events[-3].error["kind"] == "idle"
+    assert events[-2].disposition == "timeout"
+    assert events[-1].type == "complete"
+    assert events[-1].disposition == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_codex_stream_enforces_total_deadline_despite_continuous_progress(
+    monkeypatch, tmp_path
+):
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+
+    released = threading.Event()
+    interrupt_calls = []
+    progress = Notification(
+        method="item/agentMessage/delta",
+        payload=v2.AgentMessageDeltaNotification.model_validate(
+            {
+                "threadId": "thread-total",
+                "turnId": "turn-total",
+                "itemId": "message-total",
+                "delta": ".",
+            }
+        ),
+    )
+
+    class FakeTurn:
+        id = "turn-total"
+
+        def stream(self):
+            while not released.wait(timeout=0.005):
+                yield progress
+
+        def interrupt(self):
+            interrupt_calls.append(self.id)
+            released.set()
+
+    class FakeThread:
+        id = "thread-total"
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield object()
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_or_resume_codex_thread",
+        lambda *_args, **_kwargs: FakeThread(),
+    )
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_codex_turn",
+        lambda *_args, **_kwargs: FakeTurn(),
+    )
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 1.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 0.05)
+    monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
+
+    thread = CodexThread(
+        codex_bin=None,
+        cwd=tmp_path,
+        env={},
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions="Use DramaClaw MCP only.",
+        config_overrides=(),
+        thread_config={},
+        turn_metadata={},
+        thread_id=None,
+    )
+    events = [event async for event in thread.stream("Create workflow")]
+
+    assert interrupt_calls == ["turn-total"]
+    assert sum(event.type == "assistant_delta" for event in events) > 1
+    assert events[-3].error["kind"] == "total"
+    assert events[-2].disposition == "timeout"
+    assert events[-1].type == "complete"
+    assert events[-1].disposition == "timeout"

@@ -108,6 +108,9 @@ export type CanvasChatCommand =
       node_ids: string[];
     }
   | {
+      type: "clear_canvas";
+    }
+  | {
       type: "delete_edges";
       edge_ids?: string[];
       pairs?: Array<{ source: string; target: string }>;
@@ -161,6 +164,7 @@ export type CanvasChatCommandEnvelope = {
   schema_version: typeof CANVAS_CHAT_COMMANDS_SCHEMA_VERSION;
   project_id?: string;
   canvas_id?: string;
+  external_mcp_command?: boolean;
   auto_apply_after_mcp_approval?: boolean;
   autoApplyAfterMcpApproval?: boolean;
   commands: CanvasChatCommand[];
@@ -176,6 +180,7 @@ export type CanvasCommandApprovalEventDetail = {
   envelopes: CanvasChatCommandEnvelope[];
   receivedAt?: number;
   autoExpires?: boolean;
+  externalMcpCommand?: boolean;
 };
 
 export type CanvasCommandResultEventDetail = {
@@ -881,10 +886,20 @@ function parseCommand(value: unknown): CanvasChatCommand | null {
       };
     case "delete_nodes":
       if (!Array.isArray(value.node_ids)) return null;
-      return {
+      {
+        const nodeIds = value.node_ids.filter(
+          (id): id is string => typeof id === "string" && id.trim().length > 0,
+        );
+        // An empty delete request is not a "clear canvas" operation. Reject it
+        // so the agent must first read the canvas and provide concrete ids.
+        if (nodeIds.length === 0) return null;
+        return {
         type: "delete_nodes",
-        node_ids: value.node_ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0),
-      };
+          node_ids: nodeIds,
+        };
+      }
+    case "clear_canvas":
+      return { type: "clear_canvas" };
     case "delete_edges": {
       const edgeIds = Array.isArray(value.edge_ids)
         ? value.edge_ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
@@ -1064,6 +1079,8 @@ function parseEnvelope(value: unknown): CanvasChatCommandEnvelope | null {
         : typeof value.canvasId === "string"
           ? value.canvasId
           : undefined,
+    external_mcp_command:
+      value.external_mcp_command === true || value.externalMcpCommand === true,
     auto_apply_after_mcp_approval: value.auto_apply_after_mcp_approval === true,
     autoApplyAfterMcpApproval: value.autoApplyAfterMcpApproval === true,
     commands,
@@ -1084,6 +1101,12 @@ export function extractCanvasChatCommandEnvelopes(values: unknown[]): CanvasChat
 }
 
 function commandRequiresApproval(command: CanvasChatCommand): boolean {
+  // Creating a node changes the user's canvas and can trigger generation or
+  // billing once the node is run. Keep it behind the same confirmation card
+  // as other mutating workflow operations. Legacy envelopes may still contain
+  // an auto-apply field, but interactive Freezone never bypasses confirmation.
+  if (command.type === "create_node" || command.type === "add_next_node") return true;
+  if (command.type === "clear_canvas") return true;
   if (command.type === "delete_nodes") return command.node_ids.length > 0;
   if (command.type === "delete_edges") return (command.edge_ids?.length ?? 0) > 0 || (command.pairs?.length ?? 0) > 0;
   if (command.type === "layout_nodes") return !command.node_ids || command.node_ids.length === 0 || command.node_ids.length >= 4;
@@ -1092,9 +1115,13 @@ function commandRequiresApproval(command: CanvasChatCommand): boolean {
   return false;
 }
 
-function envelopeWithCommands(commands: CanvasChatCommand[]): CanvasChatCommandEnvelope | null {
+function envelopeWithCommands(
+  commands: CanvasChatCommand[],
+  source?: CanvasChatCommandEnvelope,
+): CanvasChatCommandEnvelope | null {
   if (commands.length === 0) return null;
   return {
+    ...source,
     schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
     commands,
   };
@@ -1123,8 +1150,8 @@ export function partitionCanvasChatCommandEnvelopes(
         safeCommands.push(command);
       }
     }
-    const safeEnvelope = envelopeWithCommands(safeCommands);
-    const approvalEnvelope = envelopeWithCommands(approvalCommands);
+    const safeEnvelope = envelopeWithCommands(safeCommands, envelope);
+    const approvalEnvelope = envelopeWithCommands(approvalCommands, envelope);
     if (safeEnvelope) immediate.push(safeEnvelope);
     if (approvalEnvelope) requiresApproval.push(approvalEnvelope);
   }
@@ -1337,8 +1364,14 @@ function deleteEdges(
   }
 }
 
-function deleteNodesOrEdges(rawIds: string[], clientIdMap: Map<string, string>): void {
+function deleteNodesOrEdges(
+  rawIds: string[],
+  clientIdMap: Map<string, string>,
+): { removedNodeCount: number; removedEdgeCount: number; projectionRemovalCount: number } {
   const store = useCanvasStore.getState();
+  if (rawIds.length === 0) throw new Error("delete_nodes requires at least one node or edge id");
+  const beforeNodeIds = new Set(store.nodes.map((node) => node.id));
+  const beforeEdgeIds = new Set(store.edges.map((edge) => edge.id));
   const edgeIds = new Set(store.edges.map((edge) => edge.id));
   const nodesById = new Map(store.nodes.map((node) => [node.id, node] as const));
   const nodeIds: string[] = [];
@@ -1385,6 +1418,26 @@ function deleteNodesOrEdges(rawIds: string[], clientIdMap: Map<string, string>):
   for (const projectionKey of projectionNodeIdsByKey.keys()) {
     canvasEventBus.publish("freezone/projection-remove", { projectionKey });
   }
+
+  const after = useCanvasStore.getState();
+  const removedNode = [...beforeNodeIds].some(
+    (id) => !after.nodes.some((node) => node.id === id),
+  );
+  const removedEdge = [...beforeEdgeIds].some(
+    (id) => !after.edges.some((edge) => edge.id === id),
+  );
+  if (!removedNode && !removedEdge && projectionNodeIdsByKey.size === 0) {
+    throw new Error("没有删除任何节点或连接；请确认节点 id 正确且节点允许删除");
+  }
+  return {
+    removedNodeCount: [...beforeNodeIds].filter(
+      (id) => !after.nodes.some((node) => node.id === id),
+    ).length,
+    removedEdgeCount: [...beforeEdgeIds].filter(
+      (id) => !after.edges.some((edge) => edge.id === id),
+    ).length,
+    projectionRemovalCount: projectionNodeIdsByKey.size,
+  };
 }
 
 function isMainlineProjectionManagedNode(node: CanvasNode): boolean {
@@ -1401,6 +1454,7 @@ function projectionKeyFromNode(node: CanvasNode): string | null {
 function scheduleMeasuredLayout(
   nodeIds: string[],
   mode: "horizontal" | "vertical" | "grid",
+  hermesLegacy = false,
 ): void {
   if (typeof window === "undefined") return;
   const schedule = typeof window.requestAnimationFrame === "function"
@@ -1408,7 +1462,7 @@ function scheduleMeasuredLayout(
     : (callback: FrameRequestCallback) => window.setTimeout(callback, 16);
   schedule(() => {
     schedule(() => {
-      layoutNodes(nodeIds, mode, false);
+      layoutNodes(nodeIds, mode, false, hermesLegacy);
     });
   });
 }
@@ -1417,6 +1471,7 @@ function layoutNodes(
   nodeIds: string[],
   mode: "horizontal" | "vertical" | "grid",
   refineAfterMeasurement = true,
+  hermesLegacy = false,
 ): void {
   const store = useCanvasStore.getState();
   const nodesById = new Map(store.nodes.map((node) => [node.id, node] as const));
@@ -1425,12 +1480,35 @@ function layoutNodes(
     .filter((node): node is CanvasNode => Boolean(node));
   if (nodes.length < 2) return;
   const needsMeasuredRefinement =
+    !hermesLegacy &&
     refineAfterMeasurement &&
     nodes.some(
       (node) =>
         typeof node.measured?.width !== "number" ||
         typeof node.measured?.height !== "number",
     );
+
+  // External MCP workflows use the exact legacy Hermes geometry and preserve
+  // the node_ids command order. Hermes websocket commands keep the existing
+  // adaptive frontend layout path below.
+  if (hermesLegacy) {
+    const minX = Math.min(...nodes.map((node) => node.position.x));
+    const minY = Math.min(...nodes.map((node) => node.position.y));
+    const columns = Math.max(1, Math.ceil(Math.sqrt(nodes.length)));
+    store.setNodePositions(Object.fromEntries(nodes.map((node, index) => {
+      if (mode === "vertical") {
+        return [node.id, { x: minX, y: minY + index * 320 }];
+      }
+      if (mode === "grid") {
+        return [node.id, {
+          x: minX + (index % columns) * 520,
+          y: minY + Math.floor(index / columns) * 360,
+        }];
+      }
+      return [node.id, { x: minX + index * 520, y: minY }];
+    })));
+    return;
+  }
 
   const parentIds = new Set(nodes.map((node) => node.parentId).filter(Boolean));
   if (parentIds.size === 1) {
@@ -1447,7 +1525,7 @@ function layoutNodes(
     if (targetsWholePlainGroup) {
       store.arrangeGroupChildren(groupId, mode);
       if (needsMeasuredRefinement) {
-        scheduleMeasuredLayout(nodeIds, mode);
+        scheduleMeasuredLayout(nodeIds, mode, hermesLegacy);
       }
       return;
     }
@@ -1477,7 +1555,7 @@ function layoutNodes(
   }
   store.setNodePositions(positions);
   if (needsMeasuredRefinement) {
-    scheduleMeasuredLayout(nodeIds, mode);
+    scheduleMeasuredLayout(nodeIds, mode, hermesLegacy);
   }
 }
 
@@ -3256,6 +3334,8 @@ function commandLabel(command: CanvasChatCommand): string {
       return "更新节点";
     case "delete_nodes":
       return "删除节点";
+    case "clear_canvas":
+      return "清空画布";
     case "delete_edges":
       return "断开连接";
     case "create_edge":
@@ -3331,6 +3411,8 @@ function commandPrimaryNodeId(command: CanvasChatCommand): string | undefined {
       return command.node_id;
     case "run_workflow":
       return command.node_ids?.[0];
+    case "clear_canvas":
+      return undefined;
     case "add_next_node":
       return command.source_node_id;
     case "delete_nodes":
@@ -3371,6 +3453,8 @@ function commandNodeRefs(command: CanvasChatCommand): string[] {
       return [command.node_id];
     case "run_workflow":
       return command.node_ids ?? [];
+    case "clear_canvas":
+      return [];
     case "delete_nodes":
     case "layout_nodes":
     case "group_nodes":
@@ -3662,7 +3746,7 @@ function applyCanvasChatCommandsInternal(
             break;
           }
           case "delete_nodes": {
-            deleteNodesOrEdges(
+            const deletion = deleteNodesOrEdges(
               command.node_ids.map((nodeId) => resolveNodeId(nodeId, clientIdMap)),
               clientIdMap,
             );
@@ -3673,6 +3757,30 @@ function applyCanvasChatCommandsInternal(
               status: "success",
               label: commandLabel(command),
               nodeId: command.node_ids[0],
+              output: deletion,
+            });
+            break;
+          }
+          case "clear_canvas": {
+            const store = useCanvasStore.getState();
+            const deletableNodeIds = store.nodes
+              .filter((node) => !isMainlineProjectionManagedNode(node))
+              .map((node) => node.id);
+            const edgeIds = store.edges.map((edge) => edge.id);
+            if (deletableNodeIds.length === 0 && edgeIds.length === 0) {
+              throw new Error("画布中没有可清空的普通节点或连接");
+            }
+            const deletion = deleteNodesOrEdges(
+              [...deletableNodeIds, ...edgeIds],
+              clientIdMap,
+            );
+            result.applied += 1;
+            result.commandResults.push({
+              commandIndex: currentCommandIndex,
+              type: command.type,
+              status: "success",
+              label: commandLabel(command),
+              output: deletion,
             });
             break;
           }
@@ -3721,7 +3829,12 @@ function applyCanvasChatCommandsInternal(
             const targetNodeIds = (command.node_ids && command.node_ids.length > 0)
               ? command.node_ids.map((nodeId) => resolveNodeId(nodeId, clientIdMap))
               : useCanvasStore.getState().nodes.map((node) => node.id);
-            layoutNodes(targetNodeIds, command.mode);
+            layoutNodes(
+              targetNodeIds,
+              command.mode,
+              true,
+              envelope.external_mcp_command === true,
+            );
             result.applied += 1;
             result.commandResults.push({
               commandIndex: currentCommandIndex,
@@ -3737,7 +3850,9 @@ function applyCanvasChatCommandsInternal(
             const targetNodeIds = command.node_ids.map((nodeId) => resolveNodeId(nodeId, clientIdMap));
             const groupId = useCanvasStore.getState().groupNodes(targetNodeIds, {
               label: command.label,
-              extraPadding: 20,
+              ...(envelope.external_mcp_command === true
+                ? { padding: { side: 60, top: 80, bottom: 80 } }
+                : { extraPadding: 20 }),
             });
             if (!groupId) throw new Error("group requires at least two existing nodes");
             result.applied += 1;
@@ -3983,12 +4098,10 @@ function applyCanvasChatCommandsInternal(
     if (
       !envelopeHasExplicitGroupNodes &&
       !envelopeHasAddNextNode &&
-      envelopeConnectionCount === 0 &&
       result.errors.length === envelopeErrorStart &&
-      envelopeCreatedNodeIds.length >= 3 &&
+      envelopeCreatedNodeIds.length >= 2 &&
       envelope.commands.some((command) =>
-        command.type === "create_node" &&
-        WORKFLOW_LIKE_CREATE_NODE_TYPES.has(command.node_type),
+        command.type === "create_node" && WORKFLOW_LIKE_CREATE_NODE_TYPES.has(command.node_type),
       )
     ) {
       const targetNodeIds = [...new Set(envelopeCreatedNodeIds)];

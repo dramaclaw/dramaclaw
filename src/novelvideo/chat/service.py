@@ -92,6 +92,40 @@ _CODEX_DEVELOPER_INSTRUCTIONS = (
     "tool name or argument schema. Do not use shell commands, "
     "local file editing, web search, or other external tools."
 )
+_CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
+    "You are the DramaClaw creative assistant inside the Xi画/Freezone canvas. "
+    "Use the concrete tools currently listed by the required dramaclaw MCP server. "
+    "Freezone tools are exposed directly with names such as freezone_emit_canvas_command; "
+    "do not look for the progressive dramaclaw_tool_search/describe/call bridge in this mode. "
+    "For any workflow, several connected nodes, grouped stages, storyboard, or media pipeline, "
+    "load and follow the project Agent Skill named dramaclaw-workflows. Use the high-level "
+    "workflow draft/graph tools; never use freezone_emit_canvas_command for a workflow and never "
+    "fall back to repeated single-node or single-edge tools after an error. "
+    "For a normal workflow request, follow that Skill's discovery, draft, preview, and confirmation "
+    "sequence. When the user explicitly specifies exact nodes and dependencies, follow the Skill's "
+    "custom-topology reference and call freezone_create_workflow_graph once instead. For a "
+    "standalone canvas mutation, your first assistant action must be the matching "
+    "freezone write tool call. Never claim that a canvas operation succeeded unless that same "
+    "tool call returned a successful frontend canvas result. The built-in update_plan tool only "
+    "records an internal plan and never changes the canvas: do not call it for canvas mutations "
+    "and never treat it as completion. Do not use shell commands, local file editing, web search, "
+    "or other external tools."
+)
+
+# A resumed App Server thread retains the MCP tool catalog and environment from
+# when it was created. Bump this value whenever the Freezone MCP exposure or
+# browser-bridge contract changes so canvas turns cannot silently resume a
+# thread that predates the required concrete write tools. Mainline thread keys
+# intentionally remain unchanged.
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v4"
+
+
+def _codex_developer_instructions(tool_mode: str | None) -> str:
+    if str(tool_mode or "").strip() == "freezone_canvas":
+        return _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS
+    return _CODEX_DEVELOPER_INSTRUCTIONS
+
+
 _REINGEST_CONFIRMATION_BLOCK_RE = re.compile(
     r"\[DRAMACLAW_REINGEST_CONFIRMATION\](.*?)\[/DRAMACLAW_REINGEST_CONFIRMATION\]",
     re.DOTALL,
@@ -117,7 +151,9 @@ _STYLE_SHORT_DRAMA_REQUEST_RE = re.compile(
     r"[\s\S]{0,30}(?:短剧|短片剧本|短视频剧本|网剧)",
     re.IGNORECASE,
 )
-_CONTINUE_PIPELINE_RE = re.compile(r"(?:继续|恢复|接着|下一步|当前|已有|已上传|刚才上传)")
+_CONTINUE_PIPELINE_RE = re.compile(
+    r"(?:继续|恢复|接着|下一步|当前|已有|已上传|刚才上传)"
+)
 _EXPLICIT_PIPELINE_CONTINUATION_RE = re.compile(
     r"(?:继续|恢复|接着(?:做|生成|制作)?|下一步|继续跑|继续做)",
     re.IGNORECASE,
@@ -277,6 +313,8 @@ Scope:
 - Turn creative ideas into working canvas material only when the user asks to create or land it.
 - Keep image, audio, video, and composition work inside Freezone. Do not start, mutate, or use
   DramaClaw mainline production tools unless the user explicitly asks for the main project pipeline.
+- Freezone accepts creative instructions directly in chat. Do not require the user to save or upload
+  a `.txt` screenplay, and do not apply the mainline NovelVideo ingest/upload prerequisite here.
 
 Clarification:
 - Use freezone_request_user_clarification when several user-facing choices are required. Ask about
@@ -289,13 +327,20 @@ Canvas write contract:
   multi-step or edge-creating commands before writing.
 - For create/add/delete/update/connect/move/layout/select/open/run/apply/execute requests, you MUST
   call a Freezone write tool. The first assistant output MUST be that write tool call; do not emit
-  prose first. Use the matching single-operation write tool for exactly one operation and one
-  command batch for multiple changes, frameworks, workflows, storyboards, or short-video plans.
+  prose first. Use the matching single-operation write tool for exactly one operation.
+- For any workflow, several connected nodes, grouped stages, storyboard, or media pipeline, load
+  and follow the dramaclaw-workflows Agent Skill. For an exact user-specified topology, read its
+  references/custom-topology.md and call freezone_create_workflow_graph once with one complete
+  freezone_workflow_plan.v1. Do not use freezone_emit_canvas_command for a workflow.
 - Use freezone_create_node only for exactly one standalone textAnnotationNode when the user asks for
-  one text node; otherwise use one freezone_emit_canvas_command batch. Use FREEZONE_CANVAS_CONTEXT's
-  canvas_id. Do not precheck pipeline failure unless the user asks about status.
+  one text node. Use one freezone_emit_canvas_command batch only for several ordinary non-workflow
+  canvas edits. Use FREEZONE_CANVAS_CONTEXT's canvas_id. Do not precheck pipeline failure unless the
+  user asks about status.
 - Never claim any canvas change succeeded without a successful same-turn frontend write result. If
   it fails or is absent, say the change could not be confirmed.
+- In interactive Xi画 chat, never set auto_apply_after_mcp_approval; canvas writes must produce an
+  approval card. Use clear_canvas for “清空画布/全部删除”, and never encode that intent as an empty
+  delete_nodes command.
 - Complete short videos with canvas video/audio/composition nodes. videoComposeNode is terminal:
   connect video/audio outputs as composition inputs; never connect planning text or prompts to it.
 
@@ -304,6 +349,104 @@ Skill Studio continuation:
   edit instead of writing canvas commands. Use the saved draft when available; otherwise read the
   saved Skill/Recipe. Clarify underspecified changes, then present a complete edit draft.
 [/FREEZONE_CANVAS_ASSISTANT]"""
+
+_FREEZONE_CANVAS_WRITE_ACTION_RE = re.compile(
+    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|向[上下左右]移|再移|布局|选择|打开|运行|执行|生成|"
+    r"create|add|insert|delete|remove|clear|update|connect|move|layout|select|open|run|execute|generate)",
+    re.IGNORECASE,
+)
+_FREEZONE_CANVAS_WRITE_OBJECT_RE = re.compile(
+    r"(?:节点|画布|工作流|连线|边|图片|视频|音频|合成|"
+    r"node|canvas|workflow|edge|image|video|audio|compose)",
+    re.IGNORECASE,
+)
+_FREEZONE_CANVAS_QUESTION_RE = re.compile(
+    r"(?:如何|怎么|为什么|为何|是否|能否|可不可以|是什么|what|why|how|can\s+i)",
+    re.IGNORECASE,
+)
+_FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
+    {
+        "freezone_create_node",
+        "freezone_add_next_node",
+        "freezone_emit_canvas_command",
+        "freezone_update_node_data",
+        "freezone_delete_nodes",
+        "freezone_delete_edges",
+        "freezone_create_edge",
+        "freezone_layout_nodes",
+        "freezone_group_nodes",
+        "freezone_move_nodes",
+        "freezone_select_nodes",
+        "freezone_open_mainline_projection",
+        "freezone_run_node_action",
+        "freezone_run_workflow",
+        "freezone_create_workflow_graph",
+        "freezone_create_workflow_from_intent",
+        "freezone_confirm_workflow_draft",
+        "freezone_confirm_canvas_action",
+    }
+)
+
+
+def _freezone_canvas_write_requested(prompt: str | None) -> bool:
+    """Recognize explicit user canvas mutations without matching injected context."""
+
+    raw_prompt = str(prompt or "")
+    user_text = raw_prompt.split("[SUPERTALE_", 1)[0].strip()
+    if not user_text or _FREEZONE_CANVAS_QUESTION_RE.search(user_text):
+        return False
+    has_action = bool(_FREEZONE_CANVAS_WRITE_ACTION_RE.search(user_text))
+    has_canvas_object = bool(_FREEZONE_CANVAS_WRITE_OBJECT_RE.search(user_text))
+    has_node_reference = "[SUPERTALE_CANVAS_NODE_REFERENCES]" in raw_prompt
+    standalone_clear = bool(re.search(r"(?:清空|clear)", user_text, re.IGNORECASE))
+    return has_action and (has_canvas_object or has_node_reference or standalone_clear)
+
+
+def _codex_freezone_tool_name(event: Any) -> str:
+    name = str(getattr(event, "name", "") or "").rsplit(".", 1)[-1].strip()
+    if name == "dramaclaw_tool_call":
+        tool_input = getattr(event, "input", None)
+        if isinstance(tool_input, dict):
+            name = str(tool_input.get("tool_name") or "").strip()
+    return name
+
+
+def _json_objects_from_codex_tool_value(value: Any) -> list[dict[str, Any]]:
+    objects: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        objects.append(value)
+        for nested in value.values():
+            objects.extend(_json_objects_from_codex_tool_value(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            objects.extend(_json_objects_from_codex_tool_value(nested))
+    elif isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return objects
+        objects.extend(_json_objects_from_codex_tool_value(parsed))
+    return objects
+
+
+def _codex_freezone_write_result_succeeded(event: Any) -> bool:
+    if _codex_freezone_tool_name(event) not in _FREEZONE_CANVAS_WRITE_TOOLS:
+        return False
+    status = str(getattr(event, "status", "") or "").strip().lower()
+    if status not in {"completed", "success", "succeeded"} or getattr(
+        event, "error", None
+    ):
+        return False
+    values = [getattr(event, "structured", None), getattr(event, "output", None)]
+    for value in values:
+        for payload in _json_objects_from_codex_tool_value(value):
+            if payload.get("ok") is not True:
+                continue
+            apply_status = str(payload.get("canvas_apply_status") or "").strip().lower()
+            if apply_status in {"applied", "accepted", "direct_applied"}:
+                return True
+    return False
+
 
 _FREEZONE_SKILL_STUDIO_TRIGGER_RE = re.compile(
     r"(?:"
@@ -467,6 +610,7 @@ Draft rules:
 - Manual card edits are the source of truth after the draft is shown; later natural-language changes must be based on the current draft.
 [/FREEZONE_SKILL_STUDIO]"""
 
+
 def _freezone_skill_studio_requested(prompt: str | None) -> bool:
     text = str(prompt or "").strip()
     if not text:
@@ -487,7 +631,11 @@ def _freezone_agent_catalog_summary(username: str, *, limit: int = 40) -> str:
         except Exception:
             lines.append(f"{kind}: unavailable")
             continue
-        visible = [item for item in items if item.get("enabled") is not False and item.get("hidden") is not True]
+        visible = [
+            item
+            for item in items
+            if item.get("enabled") is not False and item.get("hidden") is not True
+        ]
         lines.append(f"{kind}:")
         if not visible:
             lines.append("- none")
@@ -497,9 +645,19 @@ def _freezone_agent_catalog_summary(username: str, *, limit: int = 40) -> str:
             if item.get("_catalog_base_source") == "builtin":
                 source = "customized"
             if kind == "skills":
-                triggers = item.get("triggers") if isinstance(item.get("triggers"), dict) else {}
-                keywords = triggers.get("keywords") if isinstance(triggers, dict) else []
-                keyword_text = ", ".join(str(value) for value in keywords[:6]) if isinstance(keywords, list) else ""
+                triggers = (
+                    item.get("triggers")
+                    if isinstance(item.get("triggers"), dict)
+                    else {}
+                )
+                keywords = (
+                    triggers.get("keywords") if isinstance(triggers, dict) else []
+                )
+                keyword_text = (
+                    ", ".join(str(value) for value in keywords[:6])
+                    if isinstance(keywords, list)
+                    else ""
+                )
                 lines.append(
                     "- "
                     f"id={item.get('id')}; source={source}; category={item.get('category')}; "
@@ -507,7 +665,11 @@ def _freezone_agent_catalog_summary(username: str, *, limit: int = 40) -> str:
                 )
             else:
                 action_keys = item.get("action_keys")
-                action_text = ", ".join(str(value) for value in action_keys[:6]) if isinstance(action_keys, list) else ""
+                action_text = (
+                    ", ".join(str(value) for value in action_keys[:6])
+                    if isinstance(action_keys, list)
+                    else ""
+                )
                 lines.append(
                     "- "
                     f"id={item.get('id')}; source={source}; name={item.get('name')}; "
@@ -543,7 +705,9 @@ def _prompt_has_freezone_canvas_context(prompt: str | None) -> bool:
     return any(marker in text for marker in _FREEZONE_CANVAS_PROMPT_MARKERS)
 
 
-def _surface_context_has_freezone_canvas(surface_context: dict[str, Any] | None) -> bool:
+def _surface_context_has_freezone_canvas(
+    surface_context: dict[str, Any] | None,
+) -> bool:
     return bool(str((surface_context or {}).get("freezone_canvas_id") or "").strip())
 
 
@@ -563,7 +727,10 @@ def _tool_mode_for_surface(
 
 
 def _freezone_canvas_id_from_context(surface_context: dict[str, Any] | None) -> str:
-    return str((surface_context or {}).get("freezone_canvas_id") or "default").strip() or "default"
+    return (
+        str((surface_context or {}).get("freezone_canvas_id") or "default").strip()
+        or "default"
+    )
 
 
 def _write_hermes_tool_mode(username: str, *, mode: str) -> None:
@@ -581,7 +748,12 @@ def _write_hermes_tool_mode(username: str, *, mode: str) -> None:
             encoding="utf-8",
         )
     except Exception as exc:  # noqa: BLE001 - tool mode is defense-in-depth.
-        logger.warning("failed to write hermes tool mode for user=%s mode=%s: %s", username, mode, exc)
+        logger.warning(
+            "failed to write hermes tool mode for user=%s mode=%s: %s",
+            username,
+            mode,
+            exc,
+        )
 
 
 def _route_prompt_with_execution_context(
@@ -649,7 +821,9 @@ def _prompt_with_user_context(
         tool_mode=tool_mode,
     )
     rendering_instructions = (
-        "" if tool_mode == "freezone_canvas" else f"{_JSON_RENDER_CHAT_INSTRUCTIONS}\n\n"
+        ""
+        if tool_mode == "freezone_canvas"
+        else f"{_JSON_RENDER_CHAT_INSTRUCTIONS}\n\n"
     )
     execution_context_block = (
         "[DRAMACLAW_EXECUTION_CONTEXT]\n"
@@ -780,9 +954,11 @@ def is_codex_backend_available() -> bool:
     # Per-turn gateway credentials travel in App Server metadata. The SDK's
     # bundled 0.147 runtime logs that metadata verbatim, so only the explicitly
     # configured, DramaClaw-patched runtime is safe to start.
-    return codex_bin is not None and codex_bin.exists() and importlib.util.find_spec(
-        "openai_codex"
-    ) is not None
+    return (
+        codex_bin is not None
+        and codex_bin.exists()
+        and importlib.util.find_spec("openai_codex") is not None
+    )
 
 
 def is_hermes_backend_available() -> bool:
@@ -817,6 +993,7 @@ def get_chat_backend_name() -> str:
 def _repo_skill_roots() -> list[Path]:
     root = _repo_root()
     return [
+        root / "src" / "novelvideo" / "agent_skills",
         root / ".claude" / "skills",
         root / ".codex" / "skills",
     ]
@@ -829,8 +1006,8 @@ def _skill_sources() -> list[tuple[str, Path]]:
             continue
         for child in sorted(repo_skills_root.iterdir()):
             if child.is_dir() and (child / "SKILL.md").exists():
-                # Keep the first matching skill name so .claude/skills remains the default
-                # source when both locations expose the same skill.
+                # Keep the first matching skill name. Public agent skills are
+                # preferred, followed by optional host-specific overlays.
                 sources.setdefault(child.name, child)
 
     configured = (
@@ -844,8 +1021,16 @@ def _skill_sources() -> list[tuple[str, Path]]:
     return [(name, path) for name, path in sorted(sources.items()) if path.exists()]
 
 
-def _sync_project_skills(skills_dir: Path) -> None:
+def _sync_project_skills(skills_dir: Path, *, agent_profile: str = "main") -> None:
+    profile = str(agent_profile or "main").strip() or "main"
+    allowed = (
+        {"freezone", "workflows", "dramaclaw-workflows"}
+        if profile.startswith("freezone")
+        else None
+    )
     for skill_name, src in _skill_sources():
+        if allowed is not None and skill_name not in allowed:
+            continue
         dst = skills_dir / skill_name
         if not dst.exists():
             shutil.copytree(src, dst)
@@ -1331,7 +1516,11 @@ def _evidence_identity(
 
     project_id = (project or "").strip() or HOME_SCOPE_EGRESS_PROJECT_ID
     canvas_id = str(getattr(store_scope, "canvas_id", "") or "").strip()
-    trajectory_id = f"canvas:{canvas_id}" if canvas_id else f"conversation:{project_id}:{agent_profile}"
+    trajectory_id = (
+        f"canvas:{canvas_id}"
+        if canvas_id
+        else f"conversation:{project_id}:{agent_profile}"
+    )
     return {"trajectory_id": trajectory_id, "project_id": project_id}
 
 
@@ -1395,7 +1584,9 @@ def _is_anonymous_hermes_tool_call_update(event: Any) -> bool:
     raw = getattr(event, "raw", None)
     if getattr(event, "name", None) is not None or not isinstance(raw, dict):
         return False
-    return raw.get("sessionUpdate") == "tool_call_update" and bool(str(raw.get("toolCallId") or "").strip())
+    return raw.get("sessionUpdate") == "tool_call_update" and bool(
+        str(raw.get("toolCallId") or "").strip()
+    )
 
 
 def _is_hermes_lifecycle_tool_update(event: Any) -> bool:
@@ -1486,7 +1677,9 @@ def _is_truncated_assistant_replay(content: str, candidates: list[str]) -> bool:
     compact_candidates = {"".join(candidate.split()) for candidate in candidates}
     if compact_content in compact_candidates:
         return False
-    return any(candidate.startswith(compact_content) for candidate in compact_candidates)
+    return any(
+        candidate.startswith(compact_content) for candidate in compact_candidates
+    )
 
 
 def _strip_replayed_assistant_prefix(
@@ -2104,7 +2297,9 @@ def _contains_freezone_canvas_bridge_result(value: Any) -> bool:
     if has_bridge_status and has_bridge_body:
         return True
 
-    return any(_contains_freezone_canvas_bridge_result(child) for child in value.values())
+    return any(
+        _contains_freezone_canvas_bridge_result(child) for child in value.values()
+    )
 
 
 def _suppress_freezone_tool_lifecycle_error(value: Any, *, tool_mode: str) -> bool:
@@ -2147,7 +2342,9 @@ def _strip_freezone_tool_lifecycle_failure_text(text: str, *, tool_mode: str) ->
     ).lstrip()
 
 
-def _visible_tool_chat_error_for_mode(text: str | None, *, tool_mode: str) -> str | None:
+def _visible_tool_chat_error_for_mode(
+    text: str | None, *, tool_mode: str
+) -> str | None:
     if not text:
         return None
     visible = _strip_freezone_tool_lifecycle_failure_text(text, tool_mode=tool_mode)
@@ -2379,7 +2576,9 @@ def _is_frame_image_element(element: Any) -> bool:
     )
 
 
-def _filter_tool_ui_specs_for_prompt(prompt: str, specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _filter_tool_ui_specs_for_prompt(
+    prompt: str, specs: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     if not specs:
         return specs
 
@@ -3336,14 +3535,12 @@ def _store_history_contents(username: str, store_scope: Any, role: str) -> list[
         if role == "trace":
             conn = chat_store.connect(username, store_scope)
             try:
-                rows = conn.execute(
-                    """
+                rows = conn.execute("""
                     SELECT content
                       FROM chat_messages
                      WHERE role = 'trace'
                      ORDER BY id ASC
-                    """
-                ).fetchall()
+                    """).fetchall()
             finally:
                 conn.close()
             return [str(row["content"] or "") for row in rows]
@@ -3356,7 +3553,9 @@ def _store_history_contents(username: str, store_scope: Any, role: str) -> list[
         return []
 
 
-def _replace_trace_messages(conn: sqlite3.Connection, messages: list[dict[str, Any]]) -> None:
+def _replace_trace_messages(
+    conn: sqlite3.Connection, messages: list[dict[str, Any]]
+) -> None:
     conn.execute("DELETE FROM chat_messages WHERE role = 'trace'")
     for message in messages:
         conn.execute(
@@ -3441,9 +3640,7 @@ def _load_codex_thread_history(
         username, project, project_state_dir=project_state_dir
     )
     codex_bin = _codex_bin_path()
-    env = _build_codex_env(
-        username, project, project_state_dir=project_state_dir
-    )
+    env = _build_codex_env(username, project, project_state_dir=project_state_dir)
     config = CodexConfig(
         codex_bin=str(codex_bin) if codex_bin is not None else None,
         cwd=str(workspace),
@@ -3765,6 +3962,7 @@ def _codex_scope_key(
         "project" if normalized_project else "home",
         normalized_project or None,
         scoped_canvas,
+        _CODEX_FREEZONE_THREAD_PROTOCOL_VERSION,
     )
     return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
 
@@ -3911,9 +4109,7 @@ def _write_codex_turn_token(
     token_root.mkdir(parents=True, exist_ok=True)
     scope_digest = hashlib.sha256(scope_key.encode("utf-8")).hexdigest()
     normalized_turn_id = str(business_turn_id or "").strip() or "turn"
-    turn_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", normalized_turn_id).strip(
-        "-._"
-    )
+    turn_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", normalized_turn_id).strip("-._")
     turn_digest = hashlib.sha256(normalized_turn_id.encode("utf-8")).hexdigest()[:12]
     unique_suffix = uuid.uuid4().hex
     token_file = token_root / (
@@ -3980,15 +4176,13 @@ async def archive_codex_canvas_threads(
             continue
         if (
             isinstance(scope_parts, list)
-            and len(scope_parts) == 4
+            and len(scope_parts) in {4, 5}
             and str(scope_parts[0]).startswith("freezone")
             and scope_parts[3] == canvas_id
         ):
             matches[key] = value
     for thread_id in sorted(set(matches.values())):
-        archived = await asyncio.to_thread(
-            _control_codex_thread, "archive", thread_id
-        )
+        archived = await asyncio.to_thread(_control_codex_thread, "archive", thread_id)
         if not archived:
             raise RuntimeError(f"Codex thread could not be archived: {thread_id}")
     if matches:
@@ -4156,7 +4350,7 @@ def ensure_user_codex_workspace(
     skills_dir = workspace / ".agents" / "skills"
     codex_dir.mkdir(parents=True, exist_ok=True)
     skills_dir.mkdir(parents=True, exist_ok=True)
-    _sync_project_skills(skills_dir)
+    _sync_project_skills(skills_dir, agent_profile=agent_profile)
     return workspace, codex_dir
 
 
@@ -4263,18 +4457,33 @@ def _build_codex_env(
     if agent_token_file is not None:
         env["DRAMACLAW_AGENT_TOKEN_FILE"] = str(agent_token_file)
     env["DRAMACLAW_TOOL_MODE"] = str(tool_mode or "default").strip() or "default"
+    if str(tool_mode or "").strip() == "freezone_canvas":
+        # Keep Codex MCP on the same per-user/per-profile bridge directory as
+        # Hermes. Without this, the MCP process writes pending commands into a
+        # generic /tmp directory that the Freezone frontend never polls.
+        from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
+        from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
+
+        hermes_home = ensure_user_hermes_workspace(username, profile="freezone")
+        env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"] = str(
+            canvas_bridge_dir_for_profile(hermes_home, profile)
+        )
+        env["DRAMACLAW_EXTERNAL_MCP"] = "1"
+        env["DRAMACLAW_MCP_DIRECT_CANVAS_APPLY"] = "0"
+        env["DRAMACLAW_CHAT_SURFACE"] = "freezone"
     normalized_canvas_id = str(canvas_id or "").strip()
     if normalized_canvas_id:
         env["DRAMACLAW_CANVAS_ID"] = normalized_canvas_id
     else:
         env.pop("DRAMACLAW_CANVAS_ID", None)
-    _workspace, codex_home = ensure_user_codex_workspace(
+    workspace, codex_home = ensure_user_codex_workspace(
         username,
         project,
         agent_token,
         agent_profile=profile,
         project_state_dir=project_state_dir,
     )
+    env["DRAMACLAW_SKILLS_DIR"] = str(workspace / ".agents" / "skills")
     env["CODEX_HOME"] = str(codex_home)
     from novelvideo.task_backend.subprocesses import build_model_child_env
 
@@ -4535,8 +4744,10 @@ def _build_claude_thread(
     return client.thread_resume(session_id) if session_id else client.thread_start()
 
 
-def _dramaclaw_mcp_servers() -> dict[str, dict[str, Any]]:
-    return {
+def _dramaclaw_mcp_servers(
+    tool_mode: str = "default",
+) -> dict[str, dict[str, Any]]:
+    servers: dict[str, dict[str, Any]] = {
         "dramaclaw": {
             "type": "stdio",
             "command": sys.executable,
@@ -4545,13 +4756,29 @@ def _dramaclaw_mcp_servers() -> dict[str, dict[str, Any]]:
                 "DRAMACLAW_API_URL",
                 "DRAMACLAW_AGENT_TOKEN_FILE",
                 "DRAMACLAW_CANVAS_ID",
+                "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",
+                "DRAMACLAW_CHAT_SURFACE",
+                "DRAMACLAW_EXTERNAL_MCP",
+                "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
                 "DRAMACLAW_AGENT_PROFILE",
                 "DRAMACLAW_PROJECT_ID",
+                "DRAMACLAW_SKILLS_DIR",
                 "DRAMACLAW_TOOL_MODE",
                 "DRAMACLAW_USERNAME",
             ],
         }
     }
+    if str(tool_mode or "").strip() == "freezone_canvas":
+        # The shared Workflow MCP owns portable discovery and deterministic
+        # compilation only. Protected canvas writes stay on the existing
+        # DramaClaw MCP server, preserving the Hermes approval boundary.
+        servers["dramaclaw_workflows"] = {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": ["-m", "novelvideo.chat.workflow_mcp"],
+            "env_vars": ["DRAMACLAW_USERNAME"],
+        }
+    return servers
 
 
 def _codex_mcp_config_overrides(
@@ -4666,7 +4893,7 @@ def _build_codex_thread(
     gateway_api_key, gateway_base_url = _codex_turn_gateway_credentials(authorization)
     node_config_overrides = _codex_gateway_config_overrides(gateway_base_url)
     thread_config_overrides = _codex_mcp_config_overrides(
-        _dramaclaw_mcp_servers()
+        _dramaclaw_mcp_servers(tool_mode)
     )
     turn_metadata = {_CODEX_GATEWAY_KEY_METADATA: gateway_api_key}
     if control_capability:
@@ -4677,7 +4904,7 @@ def _build_codex_thread(
         env=env,
         model=_codex_model(),
         model_provider=_CODEX_MODEL_PROVIDER,
-        developer_instructions=_CODEX_DEVELOPER_INSTRUCTIONS,
+        developer_instructions=_codex_developer_instructions(tool_mode),
         config_overrides=node_config_overrides,
         thread_config_overrides=thread_config_overrides,
         turn_metadata=turn_metadata,
@@ -4750,9 +4977,7 @@ async def interrupt_active_codex_turns(username: str) -> bool:
     turns = list({turn for turn in turns if turn[0] and turn[1]})
 
     async def interrupt_pair(thread_id: str, turn_id: str) -> bool:
-        local = await asyncio.to_thread(
-            interrupt_live_codex_turn, thread_id, turn_id
-        )
+        local = await asyncio.to_thread(interrupt_live_codex_turn, thread_id, turn_id)
         if local:
             return True
         return await asyncio.to_thread(
@@ -4760,10 +4985,7 @@ async def interrupt_active_codex_turns(username: str) -> bool:
         )
 
     results = await asyncio.gather(
-        *(
-            interrupt_pair(thread_id, turn_id)
-            for thread_id, turn_id in turns
-        ),
+        *(interrupt_pair(thread_id, turn_id) for thread_id, turn_id in turns),
         return_exceptions=True,
     )
     return any(result is True for result in results)
@@ -4813,8 +5035,7 @@ async def stream_assistant_reply(
                 project_state_dir=project_state_dir,
             )
         model_prompt = (
-            _script_creation_model_reply_prompt(prompt, tool_mode=tool_mode)
-            or prompt
+            _script_creation_model_reply_prompt(prompt, tool_mode=tool_mode) or prompt
         )
         backend = str(backend or "").strip() or _chat_backend()
         if backend == "codex":
@@ -4962,7 +5183,11 @@ async def prewarm_chat_backend(
         from novelvideo.chat.hermes_pool import pool as _hermes_pool
 
         tool_mode = _tool_mode_for_surface(surface)
-        agent_profile = f"freezone:{agent_id or 'main'}" if tool_mode == "freezone_canvas" else "main"
+        agent_profile = (
+            f"freezone:{agent_id or 'main'}"
+            if tool_mode == "freezone_canvas"
+            else "main"
+        )
         await _hermes_pool.prewarm(
             username,
             agent_profile=agent_profile,
@@ -5058,9 +5283,17 @@ async def _stream_assistant_reply_hermes(
         prompt=prompt,
     )
     store_agent_id = str(getattr(store_scope, "agent_id", "") or "").strip()
-    agent_profile = f"freezone:{store_agent_id or 'main'}" if tool_mode == "freezone_canvas" else "main"
+    agent_profile = (
+        f"freezone:{store_agent_id or 'main'}"
+        if tool_mode == "freezone_canvas"
+        else "main"
+    )
     surface = "freezone" if tool_mode == "freezone_canvas" else None
-    canvas_id = _freezone_canvas_id_from_context(surface_context) if surface == "freezone" else None
+    canvas_id = (
+        _freezone_canvas_id_from_context(surface_context)
+        if surface == "freezone"
+        else None
+    )
     _write_hermes_tool_mode(username, mode=tool_mode)
     agent_prompt = _prompt_with_user_context(
         username,
@@ -5086,24 +5319,32 @@ async def _stream_assistant_reply_hermes(
         authorization=authorization,
     )
     previous_assistant = (
-        _store_history_contents(username, store_scope, "assistant") if store_scope is not None else _assistant_history_contents(
-            username,
-            project,
-            project_dir=project_dir,
-            project_state_dir=project_state_dir,
+        _store_history_contents(username, store_scope, "assistant")
+        if store_scope is not None
+        else (
+            _assistant_history_contents(
+                username,
+                project,
+                project_dir=project_dir,
+                project_state_dir=project_state_dir,
+            )
+            if project
+            else []
         )
-        if project
-        else []
     )
     previous_trace = (
-        _store_history_contents(username, store_scope, "trace") if store_scope is not None else _trace_history_contents(
-            username,
-            project,
-            project_dir=project_dir,
-            project_state_dir=project_state_dir,
+        _store_history_contents(username, store_scope, "trace")
+        if store_scope is not None
+        else (
+            _trace_history_contents(
+                username,
+                project,
+                project_dir=project_dir,
+                project_state_dir=project_state_dir,
+            )
+            if project
+            else []
         )
-        if project
-        else []
     )
     assistant_text = ""
     tool_text = ""
@@ -5169,7 +5410,8 @@ async def _stream_assistant_reply_hermes(
                         turn_disposition = _turn_disposition_for(stream_event)
                     guard_details = (
                         stream_event.raw
-                        if stream_event.type == "complete" and isinstance(stream_event.raw, dict)
+                        if stream_event.type == "complete"
+                        and isinstance(stream_event.raw, dict)
                         else {}
                     )
                     if (
@@ -5186,7 +5428,9 @@ async def _stream_assistant_reply_hermes(
                         }
                         and not guard_details.get("had_write")
                     ):
-                        guard_tool_name = str(guard_details.get("tool_name") or "").strip()
+                        guard_tool_name = str(
+                            guard_details.get("tool_name") or ""
+                        ).strip()
                         logger.warning(
                             "hermes repeated freezone read; resetting and recovering once "
                             "user=%s project=%s agent_profile=%s canvas=%s tool=%s",
@@ -5313,8 +5557,12 @@ async def _stream_assistant_reply_hermes(
             assistant_text, previous_assistant, prompt
         ).strip()
         if _allows_mainline_media_ui_specs(tool_mode):
-            all_tool_ui_specs = _dedupe_tool_ui_specs([*tool_ui_specs, *fallback_tool_ui_specs])
-            all_tool_ui_specs = _filter_tool_ui_specs_for_prompt(prompt, all_tool_ui_specs)
+            all_tool_ui_specs = _dedupe_tool_ui_specs(
+                [*tool_ui_specs, *fallback_tool_ui_specs]
+            )
+            all_tool_ui_specs = _filter_tool_ui_specs_for_prompt(
+                prompt, all_tool_ui_specs
+            )
             final_text = _append_tool_ui_specs(final_text, all_tool_ui_specs)
         else:
             final_text, _discarded_ui_specs = _split_ui_specs_from_text(final_text)
@@ -5329,7 +5577,9 @@ async def _stream_assistant_reply_hermes(
                 from novelvideo.chat.store import chat_store
 
                 for trace_content in _split_trace_contents(final_tool_text):
-                    chat_store.append_message(username, store_scope, "trace", trace_content)
+                    chat_store.append_message(
+                        username, store_scope, "trace", trace_content
+                    )
             else:
                 add_trace_messages(
                     username,
@@ -5526,16 +5776,22 @@ async def _stream_assistant_reply_hermes(
                             )
                 if event.name:
                     current_tool_name = event.name
-                    current_tool_hidden = _is_hidden_chat_tool_event(event.name, event.text)
+                    current_tool_hidden = _is_hidden_chat_tool_event(
+                        event.name, event.text
+                    )
                 elif _is_anonymous_hermes_tool_call_update(event):
                     continue
                 if _is_hermes_lifecycle_tool_update(event):
                     continue
-                if current_tool_hidden or _is_hidden_chat_tool_event(current_tool_name, event.text):
+                if current_tool_hidden or _is_hidden_chat_tool_event(
+                    current_tool_name, event.text
+                ):
                     continue
                 event_tool_text = str(event.text or "")
                 tool_text += event_tool_text + "\n"
-                display_tool_text = _strip_replayed_assistant_prefix(event_tool_text, previous_trace)
+                display_tool_text = _strip_replayed_assistant_prefix(
+                    event_tool_text, previous_trace
+                )
                 if display_tool_text.strip():
                     await _emit_chat_event_best_effort(
                         on_event,
@@ -5548,8 +5804,11 @@ async def _stream_assistant_reply_hermes(
                             "text": str(event.text or "").strip(),
                             "name": current_tool_name,
                             "call_id": event.call_id,
-                            "status": event.status or (
-                                "pending" if event.type == "tool_started" else "completed"
+                            "status": event.status
+                            or (
+                                "pending"
+                                if event.type == "tool_started"
+                                else "completed"
                             ),
                             "input": event.input,
                             "output": event.output,
@@ -5706,9 +5965,7 @@ async def _stream_assistant_reply_claude(
                 )
                 continue
             if event.type == "usage_update":
-                await on_event(
-                    {"type": "usage_update", "usage": event.usage or {}}
-                )
+                await on_event({"type": "usage_update", "usage": event.usage or {}})
                 continue
             if event.type in {"tool_started", "tool_updated"}:
                 event_tool_text = str(event.text or "")
@@ -5793,6 +6050,11 @@ async def _stream_assistant_reply_codex(
 ) -> dict[str, Any]:
     assistant_text = ""
     tool_text = ""
+    requires_canvas_write_receipt = str(
+        tool_mode or ""
+    ).strip() == "freezone_canvas" and _freezone_canvas_write_requested(prompt)
+    canvas_write_attempted = False
+    canvas_write_succeeded = False
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
         username=username,
@@ -5827,6 +6089,15 @@ async def _stream_assistant_reply_codex(
     active_turn_value: tuple[str, str] | None = None
     agent_token: str | None = None
     token_file: Path | None = None
+    logger.info(
+        "codex turn start user=%s project=%s profile=%s tool_mode=%s canvas=%s turn=%s",
+        username,
+        project or "<home>",
+        agent_profile,
+        tool_mode,
+        canvas_id or "-",
+        business_turn_id,
+    )
     try:
         agent_token = await _create_page_agent_session_token(
             username,
@@ -5835,12 +6106,19 @@ async def _stream_assistant_reply_codex(
             ttl_seconds=CODEX_AGENT_SESSION_TTL_SECONDS,
         )
         token_root = (
-            Path(project_state_dir)
-            if project_state_dir is not None
-            else _project_state_dir(username, project)
-            if project
-            else _user_state_dir(username)
-        ) / "agents" / "codex" / "turn_tokens"
+            (
+                Path(project_state_dir)
+                if project_state_dir is not None
+                else (
+                    _project_state_dir(username, project)
+                    if project
+                    else _user_state_dir(username)
+                )
+            )
+            / "agents"
+            / "codex"
+            / "turn_tokens"
+        )
         token_file = _write_codex_turn_token(
             token_root,
             scope_key=codex_scope_key,
@@ -5869,6 +6147,15 @@ async def _stream_assistant_reply_codex(
             route_prompt=route_prompt,
         )
         async for event in thread.stream(agent_prompt):
+            logger.debug(
+                "codex event user=%s project=%s profile=%s type=%s thread=%s turn=%s",
+                username,
+                project or "<home>",
+                agent_profile,
+                event.type,
+                str(getattr(event, "thread_id", "") or "") or "-",
+                str(getattr(event, "turn_id", "") or "") or "-",
+            )
             if event.type == "egress_submitted":
                 if turn_operation is not None:
                     await turn_operation.submitted_to_agent()
@@ -5892,9 +6179,7 @@ async def _stream_assistant_reply_codex(
                     active_turn_value = (codex_thread_id, codex_turn_id)
                     with _ACTIVE_CODEX_TURNS_LOCK:
                         _ACTIVE_CODEX_TURNS[active_turn_key] = active_turn_value
-                    _set_active_codex_turn(
-                        username, codex_scope_key, active_turn_value
-                    )
+                    _set_active_codex_turn(username, codex_scope_key, active_turn_value)
                 await on_event(
                     {
                         "type": "thread_started",
@@ -5930,13 +6215,14 @@ async def _stream_assistant_reply_codex(
                 continue
             if event.type == "assistant_delta":
                 assistant_text = _merge_stream_text(assistant_text, event.text)
-                streamed_text = _redact_local_filesystem_paths(assistant_text)
-                await on_event(
-                    {
-                        "type": "assistant_delta",
-                        "text": streamed_text,
-                    }
-                )
+                if not requires_canvas_write_receipt:
+                    streamed_text = _redact_local_filesystem_paths(assistant_text)
+                    await on_event(
+                        {
+                            "type": "assistant_delta",
+                            "text": streamed_text,
+                        }
+                    )
                 continue
             if event.type == "thought_delta":
                 await on_event(
@@ -5957,11 +6243,16 @@ async def _stream_assistant_reply_codex(
                 )
                 continue
             if event.type == "usage_update":
-                await on_event(
-                    {"type": "usage_update", "usage": event.usage or {}}
-                )
+                await on_event({"type": "usage_update", "usage": event.usage or {}})
                 continue
             if event.type in {"tool_started", "tool_updated"}:
+                if _codex_freezone_tool_name(event) in _FREEZONE_CANVAS_WRITE_TOOLS:
+                    canvas_write_attempted = True
+                    if (
+                        event.type == "tool_updated"
+                        and _codex_freezone_write_result_succeeded(event)
+                    ):
+                        canvas_write_succeeded = True
                 event_tool_text = str(event.text or "")
                 if event_tool_text:
                     tool_text += event_tool_text
@@ -5999,7 +6290,23 @@ async def _stream_assistant_reply_codex(
                 )
                 if turn_disposition == _DEFAULT_TURN_DISPOSITION:
                     turn_disposition = "completed"
+                if not str(event.text or assistant_text or "").strip():
+                    logger.warning(
+                        "codex completed without assistant text user=%s project=%s profile=%s",
+                        username,
+                        project or "<home>",
+                        agent_profile,
+                    )
     finally:
+        logger.info(
+            "codex turn cleanup user=%s project=%s profile=%s disposition=%s had_text=%s had_tool=%s",
+            username,
+            project or "<home>",
+            agent_profile,
+            turn_disposition,
+            bool(assistant_text.strip()),
+            bool(tool_text.strip()),
+        )
         if active_turn_value is not None:
             with _ACTIVE_CODEX_TURNS_LOCK:
                 if _ACTIVE_CODEX_TURNS.get(active_turn_key) == active_turn_value:
@@ -6024,8 +6331,21 @@ async def _stream_assistant_reply_codex(
         if turn_operation is not None:
             await turn_operation.finish(turn_disposition)
 
+    if requires_canvas_write_receipt and not canvas_write_succeeded:
+        assistant_text = "画布操作未完成：" + (
+            "没有收到成功的画布写入回执，请重试。"
+            if canvas_write_attempted
+            else "本轮没有执行画布写入，请重试。"
+        )
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
     assistant_text = _normalize_json_render_reply(assistant_text)
+    if requires_canvas_write_receipt:
+        await on_event(
+            {
+                "type": "assistant_delta",
+                "text": _redact_local_filesystem_paths(assistant_text),
+            }
+        )
     if tool_text.strip():
         if store_scope is not None:
             from novelvideo.chat.store import chat_store

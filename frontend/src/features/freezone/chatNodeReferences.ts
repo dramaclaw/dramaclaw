@@ -982,7 +982,20 @@ function buildCanvasCommandCatalog(canvasId: string): Record<string, unknown> {
       typed_tool: "freezone_delete_nodes",
       required: ["type", "node_ids"],
       optional: [],
+      field_notes: {
+        node_ids:
+          "必须先读取当前画布节点并填写实际节点 id；不能为空。删除全部节点时逐个列出可删除节点，不能用空数组代替清空画布。",
+      },
       example: { type: "delete_nodes", node_ids: ["node_a", "node_b"] },
+    },
+    {
+      type: "clear_canvas",
+      typed_tool: "freezone_clear_canvas",
+      required: ["type"],
+      optional: [],
+      description:
+        "清空当前画布中的普通节点和连接。必须走审批；不要把‘清空画布’转换为空的 delete_nodes。主线投影/系统管理节点会保留并明确报告。",
+      example: { type: "clear_canvas" },
     },
     {
       type: "delete_edges",

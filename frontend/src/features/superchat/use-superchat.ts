@@ -2728,11 +2728,26 @@ export function useSuperChat({
         setMessages((current) => [...current, buildToolMessage(frame.type, frame)]);
         break;
       case "error":
-        setError(typeof frame.message === "string" ? frame.message : "Unknown chat error");
-        if (typeof frame.message === "string" && frame.message.includes("当前用户已有 AI 对话正在处理中")) {
-          setBusy(true);
-          break;
-        }
+        {
+          const errorMessage = typeof frame.message === "string" && frame.message.trim()
+            ? frame.message.trim()
+            : "Unknown chat error";
+          setError(errorMessage);
+          if (errorMessage.includes("当前用户已有 AI 对话正在处理中")) {
+            setBusy(true);
+            break;
+          }
+          const failedTurnId =
+            (typeof frame.turn_id === "string" && frame.turn_id.trim() ? frame.turn_id : null)
+            ?? activeTurnIdRef.current
+            ?? pendingClientTurnIdRef.current
+            ?? `turn-${Date.now()}`;
+          const persistedErrorText = `本轮处理失败：${errorMessage}\n\n请根据错误提示处理后重试。`;
+          setMessages((current) => {
+            const next = upsertAssistantMessage(current, failedTurnId, persistedErrorText);
+            saveCachedMessages(scopeKey, next);
+            return next;
+          });
         if (frame.message === "unauthorized") {
           authRejectedRef.current = true;
           closedRef.current = true;
@@ -2741,6 +2756,7 @@ export function useSuperChat({
         markTurnInactive(activeTurnIdRef.current ?? pendingClientTurnIdRef.current);
         setConnecting(false);
         break;
+        }
       default:
         break;
     }

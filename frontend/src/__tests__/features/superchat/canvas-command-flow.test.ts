@@ -10,6 +10,7 @@ import {
   mergeCanvasContextActivitiesForTest,
   mergeCanvasCommandFeedbacksForTest,
   mergePendingCanvasCommandApprovalForTest,
+  orderExternalMcpCanvasPartsForTest,
   resolveCanvasCommandFeedbackMessageIdForTest,
 } from "@/features/superchat/superchat-panel";
 import { looksLikeCanvasExecutionNarration } from "@/features/superchat/canvas-execution-narration";
@@ -42,6 +43,49 @@ describe("assistant success summary", () => {
 });
 
 describe("canvas command flow placement", () => {
+  it("places Codex MCP validation and approval before the final reply by event order", () => {
+    const parts = orderExternalMcpCanvasPartsForTest([
+      {
+        id: "thought-1",
+        type: "agent_thought",
+        seq: 1,
+        event: { status: "completed", text: "调用画布工具" },
+      },
+      { id: "text-1", type: "text", text: "图片节点已创建。" },
+      {
+        id: "approval-1",
+        type: "canvas_approval",
+        event: { externalMcpCommand: true, surfaceOrder: 102 },
+      },
+      {
+        id: "validation-1",
+        type: "canvas_context",
+        event: { externalMcpCommand: true, surfaceOrder: 101 },
+      },
+    ]);
+
+    expect(parts.map((part) => part.id)).toEqual([
+      "thought-1",
+      "validation-1",
+      "approval-1",
+      "text-1",
+    ]);
+  });
+
+  it("does not reorder the original Hermes canvas parts", () => {
+    const parts = [
+      { id: "text-1", type: "text" as const, text: "Hermes 回复" },
+      { id: "approval-1", type: "canvas_approval" as const, event: { surfaceOrder: 102 } },
+      { id: "validation-1", type: "canvas_context" as const, event: { surfaceOrder: 101 } },
+    ];
+
+    expect(orderExternalMcpCanvasPartsForTest(parts).map((part) => part.id)).toEqual([
+      "text-1",
+      "approval-1",
+      "validation-1",
+    ]);
+  });
+
   it("orders Skill Studio cards with later canvas approvals in the same message", () => {
     const items = buildCanvasCommandFlowItemsForTest(
       "我会先创建 Skill 草稿，然后再创建一个示例节点。",
@@ -482,6 +526,35 @@ describe("canvas command flow placement", () => {
       messageId: second.messageId,
       turnId: "turn-a",
     });
+  });
+
+  it("keeps the websocket turn when a reconnect poll repeats the same bridge command", () => {
+    const live = {
+      id: "canvas-command-approval:assistant-turn-a:bridge:bridge-a",
+      key: "bridge:bridge-a",
+      messageId: "assistant-turn-a",
+      turnId: "turn-a",
+      bridgeKey: "bridge-a",
+      anchorTextPrefix: null,
+      surfaceOrder: 1,
+      envelopes: [],
+      commandCount: 1,
+      plans: [],
+    };
+    const polled = {
+      ...live,
+      messageId: "assistant-external-agent:bridge-a",
+      turnId: "external-agent:bridge-a",
+      surfaceOrder: 2,
+    };
+
+    const merged = mergePendingCanvasCommandApprovalForTest(
+      mergePendingCanvasCommandApprovalForTest([], live as any),
+      polled as any,
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].turnId).toBe("turn-a");
   });
 
   it("merges persisted and live canvas context activities without losing the live anchor", () => {
