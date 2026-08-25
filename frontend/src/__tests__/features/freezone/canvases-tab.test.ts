@@ -8,9 +8,12 @@ import {
   buildCanvasBrowserSections,
   canDeleteCanvasSummary,
   canvasKindFromSummary,
+  countCanvasesCreatedBy,
   findDuplicateCanvasName,
+  hasReachedCanvasCreationLimit,
   userCreatedCanvasId,
 } from "@/features/freezone/CanvasesTab";
+import { MAX_USER_CREATED_CANVASES_PER_PROJECT } from "@/lib/limits";
 import {
   hasLegacyPresetCanvasMetadata,
   nodeDataPatchAfterCommittedTarget,
@@ -643,5 +646,65 @@ describe("freezone conflict copy helpers", () => {
       canvas_origin: "conflict_copy",
       source_canvas_id: "user_admin_en845w",
     });
+  });
+});
+
+describe("freezone canvas creation limit", () => {
+  function myCanvas(index: number, creator: string | null = "alice"): FreezoneCanvasSummary {
+    return canvas(`canvas_mine_${index}`, undefined, "2026-06-03T00:00:00Z", {
+      metadata: {
+        canvas_origin: "user_created",
+        display_name: `我的画布 ${index}`,
+        ...(creator === null ? {} : { creator_username: creator }),
+      },
+    });
+  }
+
+  it("counts only the canvases the given user created", () => {
+    const items = [
+      canvas("default", "default"),
+      canvas("user_alice_ab12"),
+      myCanvas(1),
+      myCanvas(2),
+      myCanvas(3, "bob"),
+    ];
+
+    expect(countCanvasesCreatedBy(items, "alice")).toBe(2);
+    expect(countCanvasesCreatedBy(items, "bob")).toBe(1);
+  });
+
+  it("does not count preset, personal or projection canvases toward the quota", () => {
+    const items = [
+      canvas("default", "default"),
+      canvas("ep_1", "episode"),
+      canvas("beat_1_2", "beat"),
+      canvas("user_alice_ab12"),
+    ];
+
+    expect(countCanvasesCreatedBy(items, "alice")).toBe(0);
+  });
+
+  it("attributes canvases with no creator metadata to the anonymous bucket", () => {
+    const items = [myCanvas(1, null), myCanvas(2, "alice")];
+
+    expect(countCanvasesCreatedBy(items, null)).toBe(1);
+    expect(countCanvasesCreatedBy(items, "alice")).toBe(1);
+  });
+
+  it("blocks creation once the user owns the maximum number of canvases", () => {
+    const mine = Array.from({ length: MAX_USER_CREATED_CANVASES_PER_PROJECT }, (_unused, index) =>
+      myCanvas(index),
+    );
+
+    expect(hasReachedCanvasCreationLimit(mine, "alice")).toBe(true);
+    expect(hasReachedCanvasCreationLimit(mine.slice(0, -1), "alice")).toBe(false);
+  });
+
+  it("keeps another user's quota independent", () => {
+    const mine = Array.from({ length: MAX_USER_CREATED_CANVASES_PER_PROJECT }, (_unused, index) =>
+      myCanvas(index),
+    );
+
+    expect(hasReachedCanvasCreationLimit(mine, "bob")).toBe(false);
   });
 });

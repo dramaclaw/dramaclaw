@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { confirmDialog } from "@/components/confirm-dialog-host";
+import { alertDialog, confirmDialog } from "@/components/confirm-dialog-host";
 import { CanvasOutlineList } from "./CanvasOutlineList";
 import {
   createBlankFreezoneCanvas,
@@ -24,6 +24,7 @@ import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth-store";
 import { personalCanvasIdForUsername } from "@/features/freezone/projections";
 import { useFreezoneCanvases } from "@/lib/queries/freezone";
+import { MAX_USER_CREATED_CANVASES_PER_PROJECT } from "@/lib/limits";
 import { BackendStatusError } from "@/lib/api-errors";
 
 const PERSONAL_CANVAS_DISPLAY_NAME = "__personal_canvas__";
@@ -112,6 +113,29 @@ export function CanvasesTab({
     }
   };
 
+  // 我自己在这个项目里建了几张、还能不能再建。上限是产品配额，后端不拦（见
+  // lib/limits.ts），所以拦截只能落在这里。
+  const myCanvasCount = countCanvasesCreatedBy(items, username);
+  const canvasLimitReached = myCanvasCount >= MAX_USER_CREATED_CANVASES_PER_PROJECT;
+
+  const showCanvasLimitNotice = () =>
+    void alertDialog({
+      title: t("freezone.canvases.createLimitTitle"),
+      description: t("freezone.canvases.createLimitReached", {
+        limit: MAX_USER_CREATED_CANVASES_PER_PROJECT,
+      }),
+    });
+
+  // 入口一直可点：置灰的菜单项只会让人反复点一个死掉的按钮，还得自己猜为什么。
+  // 到了上限就在点的那一下把话说清楚，再决定要不要开新建表单。
+  const handleRequestCreateForm = () => {
+    if (canvasLimitReached) {
+      showCanvasLimitNotice();
+      return;
+    }
+    setShowCreateForm(true);
+  };
+
   const sections = buildCanvasBrowserSections(items, currentCanvasId, username);
   // 下拉里的一条列表：我的画布在最前，其余按最近修改排在后面。
   const canvasOptions = flattenCanvasBrowserSections(sections);
@@ -119,6 +143,11 @@ export function CanvasesTab({
 
   const handleCreateCanvas = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    // 表单可能是超限之前就开着的（别处又建了一张），提交这一下再兜一次。
+    if (canvasLimitReached) {
+      showCanvasLimitNotice();
+      return;
+    }
     const name = newCanvasName.trim();
     if (!name) {
       setLocalError(t("freezone.canvases.createNameRequired"));
@@ -256,7 +285,7 @@ export function CanvasesTab({
             deletingCanvasId={deletingCanvasId}
             canRestoreMainline={showRestoreMainlineAction}
             onSwitch={switchTo}
-            onCreate={() => setShowCreateForm(true)}
+            onCreate={handleRequestCreateForm}
             onRestoreMainline={() => void handleRestoreMainline()}
             onDelete={handleDeleteCanvas}
           />
@@ -267,7 +296,7 @@ export function CanvasesTab({
 }
 
 const CANVAS_MENU_CONTENT_CLASS =
-  "z-[120] max-h-[320px] min-w-[212px] max-w-[280px] overflow-y-auto border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.95)] text-text-dark shadow-none backdrop-blur-3xl";
+  "z-[120] flex max-h-[320px] min-w-[212px] max-w-[280px] flex-col overflow-y-hidden border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.95)] text-text-dark shadow-none backdrop-blur-3xl";
 const CANVAS_MENU_ITEM_CLASS =
   "gap-2 rounded-[var(--ui-radius-lg)] text-xs text-text-dark focus:bg-[rgb(var(--text-rgb)/0.075)] focus:text-text-dark";
 const CANVAS_MENU_RADIO_CLASS =
@@ -356,74 +385,80 @@ function CanvasSelect({
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent className={CANVAS_MENU_CONTENT_CLASS} align="start">
-        <DropdownMenuRadioGroup value={currentCanvasId} onValueChange={onSwitch}>
-          {items.map((item) => (
-            <DropdownMenuRadioItem
-              key={item.id}
-              value={item.id}
-              // base-ui 的单选项默认不关菜单，选完就该收起来
-              closeOnClick
-              className={CANVAS_MENU_RADIO_CLASS}
+        {/* 只让画布列表滚。整块菜单一起滚的话，画布一多，「新建/删除」就被推到
+            滚动区末尾，每次要用都得先把列表拖到底。 */}
+        <div className="-mr-1 min-h-0 flex-1 overflow-y-auto pr-1">
+          <DropdownMenuRadioGroup value={currentCanvasId} onValueChange={onSwitch}>
+            {items.map((item) => (
+              <DropdownMenuRadioItem
+                key={item.id}
+                value={item.id}
+                // base-ui 的单选项默认不关菜单，选完就该收起来
+                closeOnClick
+                className={CANVAS_MENU_RADIO_CLASS}
+              >
+                <span className="min-w-0 truncate">{canvasSelectLabel(item, t)}</span>
+                {/* 同名画布不少（同一条主线的副本），靠这个时间戳分辨哪张是刚动过的 */}
+                {item.modified_at && (
+                  <span className="ml-auto shrink-0 pl-2 text-xs tabular-nums text-text-muted/70">
+                    {formatRelative(item.modified_at, t)}
+                  </span>
+                )}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </div>
+
+        <div className="shrink-0">
+          <DropdownMenuSeparator className="bg-[var(--ui-border-soft)]" />
+
+          <DropdownMenuItem className={CANVAS_MENU_ITEM_CLASS} onClick={onCreate}>
+            <Plus className="h-3.5 w-3.5" />
+            <span>{t("freezone.canvases.createTitle")}</span>
+          </DropdownMenuItem>
+          {showSourceShortcut && (
+            <DropdownMenuItem
+              className={CANVAS_MENU_ITEM_CLASS}
+              onClick={() => onSwitch(currentSourceCanvasId)}
             >
-              <span className="min-w-0 truncate">{canvasSelectLabel(item, t)}</span>
-              {/* 同名画布不少（同一条主线的副本），靠这个时间戳分辨哪张是刚动过的 */}
-              {item.modified_at && (
-                <span className="ml-auto shrink-0 pl-2 text-xs tabular-nums text-text-muted/70">
-                  {formatRelative(item.modified_at, t)}
-                </span>
-              )}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-
-        <DropdownMenuSeparator className="bg-[var(--ui-border-soft)]" />
-
-        <DropdownMenuItem className={CANVAS_MENU_ITEM_CLASS} onClick={onCreate}>
-          <Plus className="h-3.5 w-3.5" />
-          <span>{t("freezone.canvases.createTitle")}</span>
-        </DropdownMenuItem>
-        {showSourceShortcut && (
-          <DropdownMenuItem
-            className={CANVAS_MENU_ITEM_CLASS}
-            onClick={() => onSwitch(currentSourceCanvasId)}
-          >
-            <CornerUpLeft className="h-3.5 w-3.5" />
-            <span>{t("freezone.canvases.backToSource")}</span>
-          </DropdownMenuItem>
-        )}
-        {showRestore && (
-          <DropdownMenuItem
-            className={CANVAS_MENU_ITEM_CLASS}
-            disabled={restoringMainline}
-            onClick={() => {
-              pendingRef.current = onRestoreMainline;
-            }}
-          >
-            <RotateCcw className={"h-3.5 w-3.5 " + (restoringMainline ? "animate-spin" : "")} />
-            <span>
-              {restoringMainline
-                ? t("freezone.canvases.restoreBusy")
-                : t("freezone.canvases.restoreMenu")}
-            </span>
-          </DropdownMenuItem>
-        )}
-        {canDeleteCurrent && (
-          <DropdownMenuItem
-            variant="destructive"
-            className={CANVAS_MENU_ITEM_CLASS}
-            disabled={deletingCurrent}
-            onClick={() => {
-              pendingRef.current = () => void onDelete(currentItem);
-            }}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            <span>
-              {deletingCurrent
-                ? t("freezone.canvases.deleteBusy")
-                : t("freezone.canvases.deleteCurrent")}
-            </span>
-          </DropdownMenuItem>
-        )}
+              <CornerUpLeft className="h-3.5 w-3.5" />
+              <span>{t("freezone.canvases.backToSource")}</span>
+            </DropdownMenuItem>
+          )}
+          {showRestore && (
+            <DropdownMenuItem
+              className={CANVAS_MENU_ITEM_CLASS}
+              disabled={restoringMainline}
+              onClick={() => {
+                pendingRef.current = onRestoreMainline;
+              }}
+            >
+              <RotateCcw className={"h-3.5 w-3.5 " + (restoringMainline ? "animate-spin" : "")} />
+              <span>
+                {restoringMainline
+                  ? t("freezone.canvases.restoreBusy")
+                  : t("freezone.canvases.restoreMenu")}
+              </span>
+            </DropdownMenuItem>
+          )}
+          {canDeleteCurrent && (
+            <DropdownMenuItem
+              variant="destructive"
+              className={CANVAS_MENU_ITEM_CLASS}
+              disabled={deletingCurrent}
+              onClick={() => {
+                pendingRef.current = () => void onDelete(currentItem);
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>
+                {deletingCurrent
+                  ? t("freezone.canvases.deleteBusy")
+                  : t("freezone.canvases.deleteCurrent")}
+              </span>
+            </DropdownMenuItem>
+          )}
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -649,6 +684,31 @@ export function findDuplicateCanvasName(
   t: Translate,
 ): FreezoneCanvasSummary | null {
   return items.find((item) => compareCanvasName(item, name, t)) ?? null;
+}
+
+/**
+ * 本人在这个项目里建了几张画布。只数 `canvas_origin === "user_created"` 的空白
+ * 画布 —— 预设画布（default/episode/beat/asset）和个人画布是系统投影出来的，
+ * 不占用户配额。
+ *
+ * 没有 `creator_username` 的老画布归到匿名桶：传 `null` 时数的就是它们，所以
+ * 匿名创建者同样受限，不会因为缺元数据绕过配额。
+ */
+export function countCanvasesCreatedBy(
+  items: FreezoneCanvasSummary[],
+  username?: string | null,
+): number {
+  const owner = username?.trim() || null;
+  return items.filter(
+    (item) => isUserCreatedCanvas(item) && creatorUsernameFromSummary(item) === owner,
+  ).length;
+}
+
+export function hasReachedCanvasCreationLimit(
+  items: FreezoneCanvasSummary[],
+  username?: string | null,
+): boolean {
+  return countCanvasesCreatedBy(items, username) >= MAX_USER_CREATED_CANVASES_PER_PROJECT;
 }
 
 export function userCreatedCanvasId(name: string, username?: string | null): string {

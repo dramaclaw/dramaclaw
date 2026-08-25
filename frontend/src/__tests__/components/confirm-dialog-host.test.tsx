@@ -10,7 +10,7 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-import { ConfirmDialogHost, confirmDialog } from "@/components/confirm-dialog-host";
+import { ConfirmDialogHost, alertDialog, confirmDialog } from "@/components/confirm-dialog-host";
 
 describe("ConfirmDialogHost", () => {
   it("resolves true when the user confirms", async () => {
@@ -55,6 +55,20 @@ describe("ConfirmDialogHost", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "common.confirm" }));
     await expect(second).resolves.toBe(true);
+  });
+
+  it("drops the cancel button for notice-only dialogs", async () => {
+    const user = userEvent.setup();
+    render(<ConfirmDialogHost />);
+
+    const pending = alertDialog({ title: "画布已达上限", description: "删掉一些再新建" });
+
+    expect(await screen.findByText("删掉一些再新建")).toBeInTheDocument();
+    // 没有第二条路可选，留个「取消」只会让人以为还能反悔。
+    expect(screen.queryByRole("button", { name: "common.cancel" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "common.ok" }));
+
+    await expect(pending).resolves.toBeUndefined();
   });
 
   // 回归位：确认框曾经停在 shadcn 原版的 z-50，而素材库弹窗是 z-[300]、画布书签菜单
