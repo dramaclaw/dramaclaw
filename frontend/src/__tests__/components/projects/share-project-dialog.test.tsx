@@ -26,7 +26,7 @@ const SHARE_DIALOG_ZH: Record<string, string> = {
   "project.shareDialog.roleEditor": "可编辑与运行任务",
   "project.shareDialog.roleAdmin": "可管理共享成员",
   "project.shareDialog.inactive": "已失效",
-  "project.shareDialog.inactiveScopeChanged": "用户作用域已变化",
+  "project.shareDialog.inactiveAccessChanged": "用户当前无法访问此项目",
   "common.close": "关闭",
 };
 
@@ -106,7 +106,7 @@ describe("ShareProjectDialog (edition gating)", () => {
     expect(screen.queryByText("共享项目")).not.toBeInTheDocument();
   });
 
-  it("marks scope-invalid grants inactive while keeping removal available", () => {
+  it("marks ineffective grants inactive while keeping removal available", () => {
     queryMocks.grants = [
       {
         id: "g1",
@@ -116,14 +116,14 @@ describe("ShareProjectDialog (edition gating)", () => {
         principal_username: "dev09",
         role: "editor",
         effective: false,
-        inactive_reason: "principal_scope_changed",
+        inactive_reason: "principal_access_changed",
       },
     ];
 
     renderDialog();
 
     expect(screen.getByText("已失效")).toBeInTheDocument();
-    expect(screen.getByText("用户作用域已变化")).toBeInTheDocument();
+    expect(screen.getByText("用户当前无法访问此项目")).toBeInTheDocument();
     const memberRow = screen.getByText("dev09").parentElement?.parentElement;
     expect(memberRow).toBeInstanceOf(HTMLElement);
     expect(within(memberRow as HTMLElement).getByRole("combobox")).toBeDisabled();

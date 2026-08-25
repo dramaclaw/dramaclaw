@@ -1387,7 +1387,7 @@
       "loadingMembers": "Loading members",
       "removeMember": "Remove member",
       "inactive": "Inactive",
-      "inactiveScopeChanged": "User scope has changed",
+      "inactiveAccessChanged": "User currently cannot access this project",
       "roleViewer": "View only",
       "roleEditor": "Can edit and run tasks",
       "roleAdmin": "Can manage shared members",

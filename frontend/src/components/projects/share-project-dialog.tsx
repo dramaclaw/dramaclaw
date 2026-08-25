@@ -253,7 +253,7 @@ export function ShareProjectDialog({
                       <div className="text-xs text-muted-foreground">
                         {effective
                           ? roleCaption(grant.role, t)
-                          : t("project.shareDialog.inactiveScopeChanged")}
+                          : t("project.shareDialog.inactiveAccessChanged")}
                       </div>
                     </div>
                     {!effective ? (

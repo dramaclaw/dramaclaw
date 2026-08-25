@@ -80,7 +80,7 @@ class ProjectGrantSummary(BaseModel):
     role: str
     created_at: Optional[str] = None
     effective: bool = True
-    inactive_reason: Literal["principal_scope_changed"] | None = None
+    inactive_reason: Literal["principal_access_changed"] | None = None
 
 
 class ProjectUpdate(BaseModel):
