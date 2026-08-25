@@ -41,6 +41,7 @@ from novelvideo.freezone.paths import outputs_dir
 
 USER_VOICE_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".webm"}
 USER_VOICE_SCOPE = "user_custom"
+VOICE_FILE_UNREADABLE_MESSAGE = "声线文件无法读取，请重新选择或检查文件是否完整"
 
 
 @dataclass
@@ -268,7 +269,7 @@ def resolve_user_audio_voice(
         if str(record.get("voice_id") or "") != target:
             continue
         path = _user_voice_abs_path(username, record)
-        if not path.exists():
+        if not path.is_file():
             raise RuntimeError(f"用户音色文件不存在: {target}")
         sha = str(record.get("sha256") or "") or file_sha256(path)
         return FreezoneVoiceRefResolution(path, sha, USER_VOICE_SCOPE)
@@ -356,7 +357,8 @@ async def _resolve_voice_ref(
     slot = str(voice_ref.get("slot") or "").strip()
 
     if scope == USER_VOICE_SCOPE:
-        return resolve_user_audio_voice(
+        return await asyncio.to_thread(
+            resolve_user_audio_voice,
             account_voice_username or username,
             str(voice_ref.get("voice_id") or ""),
         )
@@ -497,7 +499,9 @@ async def resolve_speech_voice(
             voice_ref=voice_ref,
             characters=voice_characters,
         )
-    except (OSError, RuntimeError) as exc:
+    except OSError as exc:
+        raise VoicePrerequisiteError(VOICE_FILE_UNREADABLE_MESSAGE) from exc
+    except RuntimeError as exc:
         raise VoicePrerequisiteError(str(exc)) from exc
     if selected_voice is None:
         if projection is None:
@@ -522,7 +526,7 @@ async def resolve_speech_voice(
                 characters=characters,
             )
         except OSError as exc:
-            raise VoicePrerequisiteError(str(exc)) from exc
+            raise VoicePrerequisiteError(VOICE_FILE_UNREADABLE_MESSAGE) from exc
         if voice.audio_path is None:
             if voice.source == "project_narrator":
                 message = (

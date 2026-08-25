@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -183,12 +184,14 @@ async def test_explicit_voice_read_error_is_a_structured_prerequisite_error(
         list_characters=AsyncMock(return_value=[character]),
     )
 
+    leaked_path = tmp_path / "private" / "voice.wav"
+
     def unreadable(_path: Path) -> str:
-        raise PermissionError("permission denied")
+        raise PermissionError(f"permission denied: {leaked_path}")
 
     monkeypatch.setattr(audio_node, "file_sha256", unreadable)
 
-    with pytest.raises(audio_node.VoicePrerequisiteError, match="permission denied"):
+    with pytest.raises(audio_node.VoicePrerequisiteError) as exc_info:
         await audio_node.resolve_speech_voice(
             store=store,
             username="owner",
@@ -196,3 +199,47 @@ async def test_explicit_voice_read_error_is_a_structured_prerequisite_error(
             project_dir=tmp_path,
             voice_ref={"scope": "character_default", "character_name": "主角"},
         )
+
+    assert str(exc_info.value) == "声线文件无法读取，请重新选择或检查文件是否完整"
+    assert str(leaked_path) not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_user_custom_directory_is_rejected_off_the_event_loop_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novelvideo.freezone import audio_node
+
+    monkeypatch.setattr(audio_node, "OUTPUT_DIR", str(tmp_path))
+    voice_id = "fv_directory"
+    relative_path = "_account/freezone/audio/voices/fv_directory/reference.wav"
+    voice_directory = tmp_path / "viewer" / relative_path
+    voice_directory.mkdir(parents=True)
+    audio_node._write_user_voice_records(
+        "viewer",
+        [{"voice_id": voice_id, "path": relative_path, "sha256": "recorded-sha"}],
+    )
+
+    event_loop_thread = threading.get_ident()
+    resolver_threads: list[int] = []
+    original_resolver = audio_node.resolve_user_audio_voice
+
+    def tracked_resolver(username: str, selected_voice_id: str):
+        resolver_threads.append(threading.get_ident())
+        return original_resolver(username, selected_voice_id)
+
+    monkeypatch.setattr(audio_node, "resolve_user_audio_voice", tracked_resolver)
+    store = SimpleNamespace(state_dir=tmp_path, list_characters=AsyncMock())
+
+    with pytest.raises(audio_node.VoicePrerequisiteError, match="用户音色文件不存在"):
+        await audio_node.resolve_speech_voice(
+            store=store,
+            username="viewer",
+            project="demo",
+            project_dir=tmp_path,
+            voice_ref={"scope": "user_custom", "voice_id": voice_id},
+        )
+
+    assert resolver_threads
+    assert all(thread_id != event_loop_thread for thread_id in resolver_threads)
