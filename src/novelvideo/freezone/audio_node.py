@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import subprocess
@@ -296,14 +297,14 @@ def _duration_ms(audio_path: Path) -> int:
         return 0
 
 
-def _project_path(project_dir: Path, stored_path: str) -> Path | None:
+async def _project_path(project_dir: Path, stored_path: str) -> Path | None:
     value = str(stored_path or "").strip()
     if not value:
         return None
     path = Path(value)
     if not path.is_absolute():
         path = project_dir / path
-    return path if path.exists() else None
+    return path if await asyncio.to_thread(path.is_file) else None
 
 
 @dataclass(frozen=True)
@@ -377,7 +378,7 @@ async def _resolve_voice_ref(
 
     if scope == "character_default":
         character = _find_character()
-        path = _project_path(
+        path = await _project_path(
             project_dir,
             getattr(character, "reference_audio_path", "") if character else "",
         )
@@ -385,7 +386,7 @@ async def _resolve_voice_ref(
             raise RuntimeError(f"角色默认声线不可用: {character_name or '<空>'}")
         sha = str(
             getattr(character, "reference_audio_sha256", "") or ""
-        ) or file_sha256(path)
+        ) or await asyncio.to_thread(file_sha256, path)
         return FreezoneVoiceRefResolution(path, sha, "character_default")
 
     if scope == "character_age_group":
@@ -396,7 +397,7 @@ async def _resolve_voice_ref(
             else {}
         )
         entry = samples.get(slot) if isinstance(samples, dict) else None
-        path = _project_path(
+        path = await _project_path(
             project_dir, entry.get("path", "") if isinstance(entry, dict) else ""
         )
         if path is None:
@@ -405,7 +406,7 @@ async def _resolve_voice_ref(
             )
         sha = str(entry.get("sha256", "") or "") if isinstance(entry, dict) else ""
         return FreezoneVoiceRefResolution(
-            path, sha or file_sha256(path), "character_age_group"
+            path, sha or await asyncio.to_thread(file_sha256, path), "character_age_group"
         )
 
     if scope in {"identity", "identity_resolved"}:
@@ -425,16 +426,17 @@ async def _resolve_voice_ref(
                 f"身份声线不可用: {character_name or '<空>'}/{identity_id or '<空>'}"
             )
         if scope == "identity":
-            path = _project_path(
+            path = await _project_path(
                 project_dir, getattr(identity, "reference_audio_path", "")
             )
             if path is None:
                 raise RuntimeError(f"身份声线未配置: {identity_id}")
             sha = str(
                 getattr(identity, "reference_audio_sha256", "") or ""
-            ) or file_sha256(path)
+            ) or await asyncio.to_thread(file_sha256, path)
             return FreezoneVoiceRefResolution(path, sha, "identity")
-        resolved = resolve_character_voice(
+        resolved = await asyncio.to_thread(
+            resolve_character_voice,
             project_dir=project_dir,
             character=character,
             identity=identity,
@@ -443,7 +445,8 @@ async def _resolve_voice_ref(
             raise RuntimeError(f"身份实际声线不可用: {identity_id}")
         return FreezoneVoiceRefResolution(
             resolved.audio_path,
-            resolved.sha256 or file_sha256(resolved.audio_path),
+            resolved.sha256
+            or await asyncio.to_thread(file_sha256, resolved.audio_path),
             f"identity_resolved:{resolved.tier or 'unknown'}",
         )
 
@@ -494,7 +497,7 @@ async def resolve_speech_voice(
             voice_ref=voice_ref,
             characters=voice_characters,
         )
-    except RuntimeError as exc:
+    except (OSError, RuntimeError) as exc:
         raise VoicePrerequisiteError(str(exc)) from exc
     if selected_voice is None:
         if projection is None:
@@ -510,12 +513,16 @@ async def resolve_speech_voice(
                 else None
             )
         narrator_descriptor_present = bool(str(descriptor.get("path") or "").strip())
-        voice = resolve_narrator_source(
-            store=narrator_store,
-            narration_style=narration_style,
-            project_narrator_stored_path=descriptor.get("path", ""),
-            characters=characters,
-        )
+        try:
+            voice = await asyncio.to_thread(
+                resolve_narrator_source,
+                store=narrator_store,
+                narration_style=narration_style,
+                project_narrator_stored_path=descriptor.get("path", ""),
+                characters=characters,
+            )
+        except OSError as exc:
+            raise VoicePrerequisiteError(str(exc)) from exc
         if voice.audio_path is None:
             if voice.source == "project_narrator":
                 message = (

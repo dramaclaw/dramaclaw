@@ -131,3 +131,68 @@ async def test_valid_voice_is_resolved_before_job_allocation_and_enqueue(
         "voice_id": "fv_viewer",
     }
     store.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_explicit_voice_directory_is_a_structured_prerequisite_error(
+    tmp_path: Path,
+) -> None:
+    from novelvideo.freezone.audio_node import (
+        VoicePrerequisiteError,
+        resolve_speech_voice,
+    )
+
+    voice_directory = tmp_path / "voice-directory"
+    voice_directory.mkdir()
+    character = SimpleNamespace(
+        name="主角",
+        reference_audio_path=voice_directory.name,
+        reference_audio_sha256="",
+    )
+    store = SimpleNamespace(
+        state_dir=tmp_path,
+        list_characters=AsyncMock(return_value=[character]),
+    )
+
+    with pytest.raises(VoicePrerequisiteError, match="角色默认声线不可用"):
+        await resolve_speech_voice(
+            store=store,
+            username="owner",
+            project="demo",
+            project_dir=tmp_path,
+            voice_ref={"scope": "character_default", "character_name": "主角"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_explicit_voice_read_error_is_a_structured_prerequisite_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novelvideo.freezone import audio_node
+
+    voice_file = tmp_path / "voice.wav"
+    voice_file.write_bytes(b"voice")
+    character = SimpleNamespace(
+        name="主角",
+        reference_audio_path=voice_file.name,
+        reference_audio_sha256="",
+    )
+    store = SimpleNamespace(
+        state_dir=tmp_path,
+        list_characters=AsyncMock(return_value=[character]),
+    )
+
+    def unreadable(_path: Path) -> str:
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(audio_node, "file_sha256", unreadable)
+
+    with pytest.raises(audio_node.VoicePrerequisiteError, match="permission denied"):
+        await audio_node.resolve_speech_voice(
+            store=store,
+            username="owner",
+            project="demo",
+            project_dir=tmp_path,
+            voice_ref={"scope": "character_default", "character_name": "主角"},
+        )

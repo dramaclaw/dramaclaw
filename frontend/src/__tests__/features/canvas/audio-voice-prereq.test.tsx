@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import type { AudioNodeData } from "@/features/canvas/domain/canvasNodes";
 import { AudioOperationsPanel } from "@/features/canvas/nodes/AudioOperationsPanel";
+import { createInFlightRequestCache } from "@/features/canvas/nodes/inFlightRequestCache";
 import { useCanvasStore } from "@/stores/canvasStore";
 
 vi.mock("@/lib/queries/generation-credit-cost", () => ({
@@ -44,6 +45,17 @@ function renderPanel(data: Partial<AudioNodeData>) {
 describe("AudioOperationsPanel voice prerequisite", () => {
   beforeEach(() => {
     useCanvasStore.getState().setCanvasData([], []);
+  });
+
+  it("reloads references after an empty request has settled", async () => {
+    let available: string[] = [];
+    const load = vi.fn(async () => ({ available: [...available] }));
+    const getReferences = createInFlightRequestCache(load);
+
+    expect(await getReferences("project-1")).toEqual({ available: [] });
+    available = ["new-voice"];
+    expect(await getReferences("project-1")).toEqual({ available: ["new-voice"] });
+    expect(load).toHaveBeenCalledTimes(2);
   });
 
   it("disables speech generation after references confirm no usable voice", () => {

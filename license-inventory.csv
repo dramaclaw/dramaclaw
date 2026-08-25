@@ -971,6 +971,7 @@ frontend/src/features/canvas/nodes/VoiceSelectionModal.tsx,Elastic-2.0,2026 Supe
 frontend/src/features/canvas/nodes/config.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/contextPromptPalette.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/imageGenPrompt.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/nodes/inFlightRequestCache.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/index.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/referenceMentions.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/referenceOrdering.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

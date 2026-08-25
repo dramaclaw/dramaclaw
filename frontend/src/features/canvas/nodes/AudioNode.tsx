@@ -37,6 +37,7 @@ import { CANVAS_NODE_PANEL_SURFACE_CLASS, canvasNodeFrameClass } from '@/feature
 import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
 import { AudioOperationsPanel } from '@/features/canvas/nodes/AudioOperationsPanel';
 import { useAudioGeneration } from '@/features/canvas/nodes/useAudioGeneration';
+import { createInFlightRequestCache } from '@/features/canvas/nodes/inFlightRequestCache';
 import { RegenerateButton } from '@/features/canvas/ui/RegenerateButton';
 import {
   hasMainlineContexts,
@@ -72,26 +73,10 @@ function isAudioFile(file: File): boolean {
   return AUDIO_UPLOAD_EXTENSIONS.has(ext);
 }
 
-// 模块级 references 缓存：同一 project 下所有音频节点共享一次拉取。
-// 用 Promise 而不是 result，保证多个节点同时挂载时也只发一次请求
-// （都 await 同一个 in-flight promise），不会出现并发风暴。
-const audioReferencesPromiseCache = new Map<
-  string,
-  Promise<Awaited<ReturnType<typeof fetchFreezoneAudioReferences>>>
->();
-
-function getCachedAudioReferences(project: string) {
-  let p = audioReferencesPromiseCache.get(project);
-  if (!p) {
-    p = fetchFreezoneAudioReferences(project).catch((err) => {
-      // 失败时把 promise 从缓存里清掉，下一次挂载有机会重试。
-      audioReferencesPromiseCache.delete(project);
-      throw err;
-    });
-    audioReferencesPromiseCache.set(project, p);
-  }
-  return p;
-}
+// 只合并同时发生的请求；settled 后立即失效，避免空结果在上传声线后仍被复用。
+const getCachedAudioReferences = createInFlightRequestCache(
+  fetchFreezoneAudioReferences,
+);
 
 export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeProps) => {
   const { t } = useTranslation();
