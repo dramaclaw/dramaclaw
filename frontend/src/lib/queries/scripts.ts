@@ -97,7 +97,7 @@ export function useUpdateBeat(project: string, episode: number) {
       // beat edit can change that, so keep it in sync lazily.
       qc.invalidateQueries({ queryKey: queryKeys.script(project, episode) });
       // A beat edit can add/remove [[prop]] markers or repoint scene_ref, so
-      // the assets page's usage counts are no longer trustworthy.
+      // an already-open asset usage list is no longer trustworthy.
       invalidateAssetReferences(qc, project);
     },
   });

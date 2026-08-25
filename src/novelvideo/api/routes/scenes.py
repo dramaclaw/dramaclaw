@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from urllib.parse import quote
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 
@@ -62,6 +64,7 @@ from novelvideo.utils.path_resolver import (
     compute_scene_master_path,
     compute_scene_reverse_master_path,
 )
+from novelvideo.utils.static_urls import project_static_url
 
 router = APIRouter()
 logger = logging.getLogger("novelvideo.api.scenes")
@@ -110,7 +113,10 @@ async def _resolve_scene_project(
         project_id=project,
         required_role=required_role,
     )
-    store = await make_sqlite_store_for_context(ctx)
+    # Scene routes use SQLite's direct async methods. Hydrating the legacy
+    # character/episode/prop caches here adds three unrelated full-table reads
+    # to every scene request and was especially visible on OSS-backed homes.
+    store = await make_sqlite_store_for_context(ctx, load_graph_state=False)
     return (
         ctx,
         ctx.owner_username,
@@ -516,6 +522,55 @@ def _scene_payload(
     }
 
 
+def _scene_summary_payload(
+    scene: NovelScene,
+    *,
+    ctx: ProjectContext | None,
+    project_dir: Path,
+    project_id: str = "",
+    base_scene: NovelScene | None = None,
+) -> dict[str, Any]:
+    """Return the SQLite-only fields needed to group/search the scene list.
+
+    The full payload probes master/reverse/pano files, loads several manifests,
+    and recursively walks asset directories. Doing that for every scene before
+    the first paint makes list latency scale with OSSFS round trips rather than
+    the tiny scenes table. Full payloads are fetched for the selected group.
+    """
+
+    base_scene_id = str(getattr(scene, "base_scene_id", "") or "").strip()
+    updated_at = str(getattr(scene, "updated_at", "") or "")
+    master_path = canonical_scene_master_path(project_dir, scene.name)
+    master_rel = master_path.relative_to(project_dir).as_posix()
+    asset_project = str(getattr(ctx, "project_id", "") or project_id).strip()
+    master_url = project_static_url(asset_project, master_rel)
+    if updated_at:
+        master_url = f"{master_url}?v={quote(updated_at, safe='')}"
+    return {
+        "name": scene.name,
+        "aliases": scene.aliases,
+        "scene_type": scene.scene_type,
+        "base_scene_id": base_scene_id,
+        "variant_id": str(getattr(scene, "variant_id", "") or "").strip(),
+        "time_of_day": str(getattr(scene, "time_of_day", "") or "").strip(),
+        "environment_prompt": scene.environment_prompt,
+        "variant_prompt": getattr(scene, "variant_prompt", ""),
+        "effective_environment_prompt": build_scene_effective_prompt(
+            scene, base_scene
+        ),
+        "description": scene.description,
+        "derived_from_scene": base_scene_id,
+        "spatial_layout_image": scene.spatial_layout_image,
+        "notes": scene.notes,
+        "updated_at": updated_at,
+        # The canonical preview slot is a projection, not proof that the file
+        # exists. The browser loads it lazily; authoritative state remains in
+        # the selected-scene detail response.
+        "master_path": str(master_path),
+        "master_url": master_url,
+    }
+
+
 async def _require_scene(store: SQLiteStore, name: str) -> NovelScene | None:
     return await store.get_scene(name)
 
@@ -644,6 +699,8 @@ async def _heal_path_unsafe_scene_names(store: SQLiteStore, project_dir: Path) -
 @router.get("/projects/{project}/scenes")
 async def list_scenes(
     project: str,
+    summary: bool = False,
+    names: Annotated[list[str] | None, Query()] = None,
     user: dict = Depends(get_api_user),
 ):
     ctx, _username, _project_name, project_dir, _output_dir, store = (
@@ -655,9 +712,29 @@ async def list_scenes(
     scenes_by_name = {
         scene.name: scene for scene in scenes if str(scene.name or "").strip()
     }
-    return {
-        "ok": True,
-        "data": [
+    requested_names = {
+        str(name or "").strip() for name in (names or []) if str(name or "").strip()
+    }
+    if requested_names:
+        scenes = [scene for scene in scenes if scene.name in requested_names]
+    if summary:
+        return {
+            "ok": True,
+            "data": [
+                _scene_summary_payload(
+                    scene,
+                    ctx=ctx,
+                    project_dir=project_dir,
+                    project_id=project,
+                    base_scene=scenes_by_name.get(
+                        str(getattr(scene, "base_scene_id", "") or "")
+                    ),
+                )
+                for scene in scenes
+            ],
+        }
+    data = await asyncio.to_thread(
+        lambda: [
             _scene_payload(
                 scene,
                 ctx=ctx,
@@ -670,8 +747,9 @@ async def list_scenes(
                 ),
             )
             for scene in scenes
-        ],
-    }
+        ]
+    )
+    return {"ok": True, "data": data}
 
 
 @router.get("/projects/{project}/scenes/plate-preview")
@@ -1111,6 +1189,8 @@ async def upload_scene_master(
     if master_path.exists():
         master_path.replace(master_path.parent / f"master_{int(time.time())}.png")
     img.save(master_path, format="PNG")
+    await store.touch_scene_asset(scene.name)
+    scene = await _require_scene(store, scene.name) or scene
 
     return {
         "ok": True,
@@ -1139,6 +1219,7 @@ async def delete_scene_master(
     if master_path:
         Path(master_path).unlink(missing_ok=True)
         deleted = True
+        await store.touch_scene_asset(scene.name)
     return {"ok": True, "data": {"deleted": deleted}}
 
 

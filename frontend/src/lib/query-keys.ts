@@ -27,6 +27,8 @@ export const queryKeys = {
     ["users", "search", project, q] as const,
   pipelineStatus: (p: string) => ["projects", p, "pipeline-status"] as const,
   characters: (p: string) => ["projects", p, "characters"] as const,
+  characterDetails: (p: string, name: string) =>
+    ["projects", p, "characters", "details", name] as const,
   character: (p: string, name: string) =>
     ["projects", p, "characters", name] as const,
   characterVoiceSamples: (p: string, name: string) =>
@@ -38,11 +40,13 @@ export const queryKeys = {
   identities: (p: string, name: string) =>
     ["projects", p, "characters", name, "identities"] as const,
   assetReferences: (p: string) => ["projects", p, "asset-references"] as const,
-  // Nested under assetReferences so one prefix invalidation drops both the
-  // project-wide counts and every per-asset detail slice.
+  // Nested under assetReferences so one prefix invalidation drops every
+  // per-asset detail slice that is currently cached.
   assetReferenceDetail: (p: string, signature: string) =>
     ["projects", p, "asset-references", "detail", signature] as const,
   scenes: (p: string) => ["projects", p, "scenes"] as const,
+  sceneDetails: (p: string, signature: string) =>
+    ["projects", p, "scenes", "details", signature] as const,
   scenePlatePreview: (
     p: string,
     sceneId: string,

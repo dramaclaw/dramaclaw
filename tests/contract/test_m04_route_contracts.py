@@ -65,6 +65,9 @@ class _M04Store:
     def get_all_characters(self):
         return list(self.characters.values())
 
+    async def list_characters(self):
+        return list(self.characters.values())
+
     async def repair_path_unsafe_asset_names(self, kind: str, move_assets=None):
         # 这里的名字都是干净的，list 接口上那道存量自愈是空跑。
         return {}
@@ -79,6 +82,9 @@ class _M04Store:
         character = self.characters[name]
         for key, value in updates.items():
             setattr(character, key, value)
+
+    async def touch_character_asset(self, name: str):
+        return name in self.characters
 
     async def rename_character(self, old_name: str, new_name: str):
         character = self.characters.pop(old_name)

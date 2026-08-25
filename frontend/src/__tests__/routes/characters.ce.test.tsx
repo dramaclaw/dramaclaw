@@ -116,7 +116,6 @@ vi.mock("@/lib/queries/generation-credit-cost", () => ({
 }));
 
 vi.mock("@/lib/queries/asset-references", () => ({
-  useAssetReferenceCounts: () => ({ countFor: () => 0, isLoading: false }),
   useAssetReferences: () => ({
     referencesFor: () => [],
     coOccurrenceForScene: () => ({ identities: [], props: [] }),
@@ -126,6 +125,26 @@ vi.mock("@/lib/queries/asset-references", () => ({
 
 vi.mock("@/lib/queries/characters", () => ({
   useCharacters: () => ({
+    isLoading: false,
+    data: {
+      ok: true,
+      data: [
+        {
+          name: "Li Qing",
+          aliases: [],
+          role: "主角",
+          gender: "男",
+          age_group: "middle",
+          is_main: true,
+          description: "Lead character",
+          face_prompt: "sharp eyes",
+          body_type: "slim",
+          portrait_url: "",
+        },
+      ],
+    },
+  }),
+  useCharacterDetails: () => ({
     isLoading: false,
     data: {
       ok: true,

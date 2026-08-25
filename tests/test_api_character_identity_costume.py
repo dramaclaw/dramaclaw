@@ -16,6 +16,7 @@ class _CharacterStore:
         self.character = character
         self.identity_updates: list[tuple[str, str, dict]] = []
         self.added_identities: list[CharacterIdentity] = []
+        self.touched_character_assets: list[str] = []
 
     def get_character(self, name: str):
         if name == self.character.name:
@@ -35,6 +36,10 @@ class _CharacterStore:
         identities = self.character.identities
         identities.append(identity)
         self.character.identities = identities
+        return True
+
+    async def touch_character_asset(self, name: str):
+        self.touched_character_assets.append(name)
         return True
 
 
@@ -368,3 +373,32 @@ async def test_restore_character_asset_history_backs_up_current_and_restores_bac
     ]
     assert len(new_backups) == 1
     assert new_backups[0].read_bytes() == current_bytes
+
+
+@pytest.mark.asyncio
+async def test_restore_character_portrait_advances_summary_revision(tmp_path, monkeypatch):
+    from novelvideo.api.routes import characters
+
+    character = NovelCharacter(name="秦")
+    store = _CharacterStore(character)
+    _patch_character_project(monkeypatch, characters, tmp_path, store)
+
+    target = tmp_path / "assets" / "characters" / "秦" / "portrait.png"
+    _write_png(target, (200, 20, 30))
+    backup = target.parent / "portrait_20260603112233.png"
+    restored_bytes = _write_png(backup, (10, 20, 30))
+
+    response = await characters.restore_character_asset_history(
+        project="demo",
+        name="秦",
+        body=SimpleNamespace(
+            kind="portrait",
+            identity_id="",
+            history_id=backup.name,
+        ),
+        user={"username": "admin"},
+    )
+
+    assert response["ok"] is True
+    assert target.read_bytes() == restored_bytes
+    assert store.touched_character_assets == ["秦"]

@@ -17,8 +17,12 @@ class _CharacterStore:
         # 真 SQLiteStore 背后是一条 aiosqlite 连接加一个后台线程，路由漏关就是漏一条。
         # 这里记账，下面的用例据此断言"路由确实收口了"，而不是只断言返回码。
         self.close_calls = 0
+        self.load_graph_state_flags: list[bool] = []
 
     def get_all_characters(self):
+        return list(self.characters.values())
+
+    async def list_characters(self):
         return list(self.characters.values())
 
     def get_character(self, name: str):
@@ -75,6 +79,7 @@ def _client(monkeypatch, tmp_path, store: _CharacterStore):
         )
 
     async def fake_make_store_for_context(_ctx, *, load_graph_state: bool = True):
+        store.load_graph_state_flags.append(load_graph_state)
         return store
 
     monkeypatch.setattr(characters, "resolve_project_scope", fake_resolve_project_scope)
@@ -184,7 +189,7 @@ def test_list_characters_repairs_duplicate_narrator_main(monkeypatch, tmp_path):
     )
     client = _client(monkeypatch, tmp_path, store)
 
-    response = client.get("/projects/demo/characters")
+    response = client.get("/projects/demo/characters?summary=true")
 
     assert response.status_code == 200
     mains = [item["name"] for item in response.json()["data"] if item["is_main"]]
@@ -232,11 +237,56 @@ def test_list_characters_carries_identity_ids_for_deep_link_resolution(
     assert by_name["苏清晏"]["identity_ids"] == ["苏清晏_少女"]
     # 没有身份的角色出空列表而不是缺字段，前端不必区分「没有」和「没带」。
     assert by_name["路人"]["identity_ids"] == []
-
     # 只有 id。身份详情仍走按需的 identities 接口，别让列表载荷跟着长。
     identity_detail_keys = {"identity_name", "image_url", "appearance_details"}
     for item in by_name.values():
         assert identity_detail_keys.isdisjoint(item.keys())
+
+
+def test_list_characters_summary_uses_convention_urls_without_filesystem_probes(
+    monkeypatch, tmp_path
+):
+    from novelvideo.api.routes import characters
+
+    store = _CharacterStore([NovelCharacter(name="林昭", role="主角")])
+    client = _client(monkeypatch, tmp_path, store)
+
+    def fail_probe(*_args, **_kwargs):
+        raise AssertionError("the character summary must not probe asset files")
+
+    monkeypatch.setattr(characters, "compute_portrait_path", fail_probe)
+    monkeypatch.setattr(characters, "tree_updated_at", fail_probe)
+    monkeypatch.setattr(characters, "_asset_url", fail_probe)
+
+    response = client.get("/projects/demo/characters?summary=true")
+
+    assert response.status_code == 200
+    asset = response.json()["data"][0]
+    assert asset["portrait_url"].endswith(
+        "/assets/characters/%E6%9E%97%E6%98%AD/portrait.png"
+    ) or asset["portrait_url"].endswith("/assets/characters/林昭/portrait.png")
+    assert store.load_graph_state_flags == [False]
+
+
+def test_character_details_probe_only_the_requested_character(monkeypatch, tmp_path):
+    store = _CharacterStore(
+        [NovelCharacter(name="林昭"), NovelCharacter(name="苏清晏")]
+    )
+    client = _client(monkeypatch, tmp_path, store)
+    project_dir = tmp_path / "output" / "admin" / "demo"
+    portrait = project_dir / "assets" / "characters" / "苏清晏" / "portrait.png"
+    portrait.parent.mkdir(parents=True)
+    portrait.write_bytes(b"portrait")
+
+    response = client.get(
+        "/projects/demo/characters",
+        params={"summary": "false", "names": "苏清晏"},
+    )
+
+    assert response.status_code == 200
+    assert [item["name"] for item in response.json()["data"]] == ["苏清晏"]
+    assert response.json()["data"][0]["portrait_url"]
+    assert store.load_graph_state_flags == [False]
 
 
 def test_character_and_identity_lists_expose_asset_history_links(monkeypatch, tmp_path):
@@ -369,10 +419,10 @@ def test_list_characters_closes_the_store_when_the_handler_raises(monkeypatch, t
     """异常路径：读库炸了，连接更得关——这正是重试风暴把连接数堆上去的那条路。"""
     store = _CharacterStore([NovelCharacter(name="秦昭", role="主角")])
 
-    def boom():
+    async def boom():
         raise RuntimeError("store read blew up")
 
-    monkeypatch.setattr(store, "get_all_characters", boom)
+    monkeypatch.setattr(store, "list_characters", boom)
     client = _client(monkeypatch, tmp_path, store)
 
     with pytest.raises(RuntimeError, match="store read blew up"):
@@ -384,10 +434,10 @@ def test_list_characters_closes_the_store_when_the_handler_raises(monkeypatch, t
 def test_identities_closes_the_store_when_the_handler_raises(monkeypatch, tmp_path):
     store = _CharacterStore([NovelCharacter(name="秦昭", role="主角")])
 
-    def boom():
+    async def boom():
         raise RuntimeError("store read blew up")
 
-    monkeypatch.setattr(store, "get_all_characters", boom)
+    monkeypatch.setattr(store, "list_characters", boom)
     client = _client(monkeypatch, tmp_path, store)
 
     with pytest.raises(RuntimeError, match="store read blew up"):

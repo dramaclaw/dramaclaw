@@ -32,7 +32,7 @@ describe("organization brand asset deployment contract", () => {
   it("routes only the exact fixed logo path directly to the existing backend", () => {
     const config = readFileSync("docker/nginx.conf.template", "utf8");
     const block = config.match(
-      /location ~ \^\/assets\/org-brand([\s\S]*?)\n    \}/,
+      /location ~ "\^\/assets\/org-brand([\s\S]*?)\n    \}/,
     )?.[1];
 
     expect(block).toContain("/([A-Za-z0-9_-]{1,64})/logo$");
@@ -41,7 +41,7 @@ describe("organization brand asset deployment contract", () => {
     expect(block).toContain("proxy_pass http://supertale_backend/api/v1/org-brand/$1/logo");
     expect(block).toContain("proxy_pass_request_headers off");
     expect(block).not.toContain("127.0.0.1:3001");
-    expect(config.indexOf("location ~ ^/assets/org-brand")).toBeLessThan(
+    expect(config.indexOf('location ~ "^/assets/org-brand')).toBeLessThan(
       config.indexOf("location /assets/"),
     );
   });
@@ -55,6 +55,18 @@ describe("organization brand asset deployment contract", () => {
     expect(dockerfile).not.toContain("org-brand-proxy-server.mjs");
     expect(dockerfile).not.toContain("docker/start.sh");
     expect(packageJson).not.toContain("build:org-brand-proxy");
+  });
+
+  it("uses a resolvable loopback upstream when validating the Nginx template", () => {
+    const dockerfile = readFileSync("Dockerfile", "utf8");
+    const configTest = dockerfile.match(
+      /FROM nginx:1\.27-alpine AS nginx-config-test([\s\S]*?)FROM nginx:1\.27-alpine AS runtime/,
+    )?.[1];
+
+    expect(configTest).toBeDefined();
+    expect(configTest).toContain("BACKEND_HOST=127.0.0.1");
+    expect(configTest).not.toContain("backend.invalid");
+    expect(dockerfile).toContain("BACKEND_HOST=novelvideo-ui-staging");
   });
 
   it("does not retain the removed companion implementation", () => {

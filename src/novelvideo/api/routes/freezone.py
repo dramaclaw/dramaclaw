@@ -25,7 +25,7 @@ from urllib.parse import quote, unquote, urlencode, urlsplit
 from fastapi import (
     APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import (
@@ -33,6 +33,7 @@ from novelvideo.api.deps import (
     make_sqlite_store,
     make_sqlite_store_for_context,
     make_static_url_for_context,
+    sqlite_store_for_context_scope,
 )
 from novelvideo.api.schemas import (
     CanvasPayload,
@@ -104,11 +105,15 @@ from novelvideo.media_model_request_schema import (
 )
 from novelvideo.ports.authz import find_authz_error
 from novelvideo.freezone.audio_node import (
+    VOICE_FILE_UNREADABLE_MESSAGE,
+    VoicePrerequisiteError,
     create_user_audio_voice,
     freezone_audio_eleven_music_output_path,
     freezone_audio_speech_output_path,
     generate_freezone_audio_speech,
+    is_readable_audio_file,
     list_user_audio_voices,
+    resolve_speech_voice,
     resolve_user_audio_voice,
 )
 from novelvideo.freezone.canvas_lock import CanvasLockBusy
@@ -237,6 +242,7 @@ from novelvideo.freezone.skill_registry import (
     list_skills,
 )
 from novelvideo.freezone.slots import (
+    SCENE_ASSET_KINDS,
     IdentityTarget,
     PushTarget,
     backup_slot_if_exists,
@@ -4218,7 +4224,30 @@ def _parse_skill_output_push_target(output: dict) -> PushTarget | None:
         return None
 
 
-def _copy_skill_output_to_slot(
+async def _touch_canonical_slot_revision(
+    ctx: ProjectContext,
+    target: PushTarget,
+) -> None:
+    """Advance the owning entity revision after a canonical asset write.
+
+    Canonical paths remain a PathResolver convention. The database timestamp
+    is only the cache-busting revision used by lightweight asset summaries.
+    Keeping this beside the shared Freezone slot writer prevents push and skill
+    auto-commit paths from publishing new bytes under an unchanged URL.
+    """
+
+    if target.kind not in {"portrait", "prop_ref", *SCENE_ASSET_KINDS}:
+        return
+    async with sqlite_store_for_context_scope(ctx, load_graph_state=False) as store:
+        if target.kind == "portrait":
+            await store.touch_character_asset(target.character)
+        elif target.kind == "prop_ref":
+            await store.touch_prop_asset(target.prop_id)
+        else:
+            await store.touch_scene_asset(target.scene_id)
+
+
+async def _copy_skill_output_to_slot(
     *,
     project_dir: Path,
     ctx: ProjectContext,
@@ -4251,6 +4280,7 @@ def _copy_skill_output_to_slot(
         image_adaptation = {"adapted": False}
         shutil.copy2(source_path, target_path)
     sync_slot_after_write(project_dir, target, target_path)
+    await _touch_canonical_slot_revision(ctx, target)
     rel = target_path.relative_to(project_dir).as_posix()
     return (
         target_path,
@@ -4280,7 +4310,7 @@ async def _finalize_skill_run_outputs(
                 source_path = resolve_static_url_to_path(image_url, project_dir)
                 if not source_path.exists() or not source_path.is_file():
                     raise FileNotFoundError(source_path)
-                target_path, target_url, backup, image_adaptation = _copy_skill_output_to_slot(
+                target_path, target_url, backup, image_adaptation = await _copy_skill_output_to_slot(
                     project_dir=project_dir,
                     ctx=ctx,
                     source_path=source_path,
@@ -6753,7 +6783,10 @@ def _freezone_audio_ref_payload(
     if rel_path and not abs_path.is_absolute():
         abs_path = project_dir / rel_path
 
-    exists = bool(rel_path and abs_path.exists())
+    try:
+        exists = bool(rel_path and is_readable_audio_file(abs_path))
+    except OSError:
+        exists = False
     url = ""
     if exists:
         try:
@@ -6933,7 +6966,7 @@ async def freezone_audio_references(
     requester_username = ctx.requester_username or username
     user_voices = _attach_user_voice_media_urls(
         project,
-        list_user_audio_voices(requester_username),
+        await asyncio.to_thread(list_user_audio_voices, requester_username),
     )
 
     store = (
@@ -6948,7 +6981,8 @@ async def freezone_audio_references(
         if close:
             await close()
 
-    narrator = _freezone_audio_ref_payload(
+    narrator = await asyncio.to_thread(
+        _freezone_audio_ref_payload,
         username=username,
         project=project_name,
         project_id=ctx.project_id,
@@ -6959,16 +6993,21 @@ async def freezone_audio_references(
         sha256=narrator_descriptor.get("sha256", ""),
         updated_at=narrator_descriptor.get("updated_at", ""),
     )
-    character_payloads = [
-        _freezone_character_audio_refs(
-            username=username,
-            project=project_name,
-            project_id=ctx.project_id,
-            project_dir=project_dir,
-            character=character,
+    character_payloads = list(
+        await asyncio.gather(
+            *(
+                asyncio.to_thread(
+                    _freezone_character_audio_refs,
+                    username=username,
+                    project=project_name,
+                    project_id=ctx.project_id,
+                    project_dir=project_dir,
+                    character=character,
+                )
+                for character in characters
+            )
         )
-        for character in characters
-    ]
+    )
     available = [narrator] if narrator["exists"] else []
     available.extend(item for item in user_voices if item["exists"])
     for character in character_payloads:
@@ -7042,7 +7081,9 @@ async def get_freezone_audio_voice_media(
     )
     username = ctx.requester_username if ctx is not None and ctx.requester_username else username
     try:
-        resolved = resolve_user_audio_voice(username, voice_id)
+        resolved = await asyncio.to_thread(resolve_user_audio_voice, username, voice_id)
+    except OSError as exc:
+        raise HTTPException(404, VOICE_FILE_UNREADABLE_MESSAGE) from exc
     except RuntimeError as exc:
         raise HTTPException(404, str(exc)) from exc
     return FileResponse(path=str(resolved.audio_path))
@@ -9340,6 +9381,43 @@ async def freezone_audio_speech(
     billable_chars = count_billable_text_chars(body.text)
 
     voice_ref_payload = body.voice_ref.model_dump() if body.voice_ref else None
+    store = await make_sqlite_store_for_context(ctx)
+    try:
+        narration_style, speech_voice = await resolve_speech_voice(
+            store=store,
+            username=username,
+            project=project_name,
+            account_voice_username=account_voice_username,
+            project_dir=project_dir,
+            voice_ref=voice_ref_payload,
+        )
+    except VoicePrerequisiteError as exc:
+        logger.info(
+            "freezone_audio_speech_voice_prereq_failed",
+            extra={
+                "project_id": ctx.project_id,
+                "voice_ref_present": body.voice_ref is not None,
+                "voice_ref_scope": str((voice_ref_payload or {}).get("scope") or "default"),
+                "error_code": exc.error_code,
+            },
+        )
+        return JSONResponse(
+            status_code=409,
+            content={"ok": False, "code": exc.error_code, "error": str(exc)},
+        )
+    finally:
+        await store.close()
+
+    logger.info(
+        "freezone_audio_speech_voice_resolved",
+        extra={
+            "project_id": ctx.project_id,
+            "narration_style": narration_style,
+            "voice_ref_present": body.voice_ref is not None,
+            "voice_ref_scope": str((voice_ref_payload or {}).get("scope") or "default"),
+            "speech_voice_source": speech_voice.source,
+        },
+    )
 
     try:
         job_id = _new_job_id()
@@ -13242,33 +13320,12 @@ async def freezone_push(project: str, body: PushRequest, user: dict = Depends(ge
         raise HTTPException(400, str(exc)) from exc
     if not source_path.exists():
         raise HTTPException(404, f"source file not found: {source_path}")
-    validate_source_for_slot(source_path, body.target)
-
-    target = slot_target_path(project_dir, body.target)
-    if body.target.kind == "scene_3gs_custom_scene":
-        target = target.with_suffix(source_path.suffix.lower())
-    target.parent.mkdir(parents=True, exist_ok=True)
-    same_file = False
-    try:
-        same_file = source_path.resolve() == target.resolve()
-    except OSError:
-        same_file = False
-    should_match_existing_size = (
-        target.exists()
-        and not same_file
-        and body.target.kind in {"frame", "sketch", "director_render"}
-        and source_path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
-        and target.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+    target, target_url, backup, image_adaptation = await _copy_skill_output_to_slot(
+        project_dir=project_dir,
+        ctx=ctx,
+        source_path=source_path,
+        target=body.target,
     )
-    backup = None if same_file else backup_slot_if_exists(target)
-    if same_file:
-        image_adaptation = {"adapted": False, "same_file": True}
-    elif should_match_existing_size:
-        image_adaptation = _copy_image_matching_existing_target(source_path, target)
-    else:
-        image_adaptation = {"adapted": False}
-        shutil.copy2(source_path, target)
-    sync_slot_after_write(project_dir, body.target, target)
     if body.target.kind == "selected_background":
         await _persist_freezone_selected_background_scene_ref(
             ctx=ctx,
@@ -13327,7 +13384,6 @@ async def freezone_push(project: str, body: PushRequest, user: dict = Depends(ge
         except Exception as exc:
             logger.warning("identity cognee sync best-effort failed: %s", exc)
 
-    rel = target.relative_to(project_dir).as_posix()
     _append_canvas_event(
         project_dir=project_dir,
         project_id=project,
@@ -13338,7 +13394,7 @@ async def freezone_push(project: str, body: PushRequest, user: dict = Depends(ge
             "source_url": body.source_url,
             "target": body.target.model_dump(mode="json"),
             "target_path": str(target),
-            "target_url": make_static_url_for_context(ctx, rel, local_path=target),
+            "target_url": target_url,
             "backup": str(backup) if backup else None,
             "stale_marked": stale_marked,
             "affected_count": len(impacted),
@@ -13348,7 +13404,7 @@ async def freezone_push(project: str, body: PushRequest, user: dict = Depends(ge
         "ok": True,
         "data": {
             "target_path": str(target),
-            "target_url": make_static_url_for_context(ctx, rel, local_path=target),
+            "target_url": target_url,
             "backup": str(backup) if backup else None,
             "image_adaptation": image_adaptation,
             "stale_marked": stale_marked,

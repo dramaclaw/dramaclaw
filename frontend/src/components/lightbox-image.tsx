@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { useEscapeToClose } from "@/hooks/use-escape-to-close";
 import { cn } from "@/lib/utils";
+import { ViewportLazyImage } from "@/components/viewport-lazy-image";
 
 export function LightboxImage({
   src,
@@ -13,6 +14,7 @@ export function LightboxImage({
   fluid = false,
   fit = "cover",
   blurBackdrop = true,
+  onError,
 }: {
   src: string;
   alt: string;
@@ -20,6 +22,7 @@ export function LightboxImage({
   fluid?: boolean;
   fit?: "cover" | "contain";
   blurBackdrop?: boolean;
+  onError?: React.ReactEventHandler<HTMLImageElement>;
 }) {
   const [open, setOpen] = useState(false);
   useEscapeToClose(open, () => setOpen(false));
@@ -36,20 +39,17 @@ export function LightboxImage({
         )}
       >
         {!fluid && fit === "contain" && blurBackdrop && (
-          <img
+          <ViewportLazyImage
             src={src}
             alt=""
             aria-hidden="true"
-            loading="lazy"
-            decoding="async"
             className="absolute inset-0 h-full w-full scale-110 object-cover opacity-20 blur-md"
           />
         )}
-        <img
+        <ViewportLazyImage
           src={src}
           alt={alt}
-          loading="lazy"
-          decoding="async"
+          onError={onError}
           className={cn(
             "relative z-10",
             fluid

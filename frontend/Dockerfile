@@ -26,6 +26,14 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
 
+# Parse the rendered runtime template in CI without building the SPA image.
+FROM nginx:1.27-alpine AS nginx-config-test
+ENV BACKEND_HOST=127.0.0.1 \
+    BACKEND_PORT=8780 \
+    NGINX_ENVSUBST_FILTER="^(BACKEND_HOST|BACKEND_PORT)$"
+COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
+RUN /docker-entrypoint.sh nginx -t
+
 # Stage 2: serve via nginx + reverse-proxy /api /static to the backend Service.
 FROM nginx:1.27-alpine AS runtime
 

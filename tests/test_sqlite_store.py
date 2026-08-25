@@ -432,6 +432,35 @@ async def test_scene_round_trip_and_update_with_structured_scene_axes(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_duplicate_main_repair_works_without_graph_cache(tmp_path):
+    """The lightweight character list must be able to repair legacy rows."""
+
+    from novelvideo.api.routes.characters import _repair_duplicate_main_characters
+    from novelvideo.models import NovelCharacter
+    from novelvideo.sqlite_store import SQLiteStore
+
+    store = SQLiteStore(
+        "admin/demo",
+        output_dir=str(tmp_path / "output"),
+        state_dir=str(tmp_path / "state"),
+    )
+    try:
+        await store.add_character(NovelCharacter(name="甲", is_main=True))
+        await store.add_character(NovelCharacter(name="乙", is_main=True))
+        store._characters.clear()
+
+        rows = await store.list_characters()
+        repaired = await _repair_duplicate_main_characters(store, rows)
+
+        assert [row.name for row in repaired if row.is_main] == ["甲"]
+        persisted = {row.name: row for row in await store.list_characters()}
+        assert persisted["甲"].is_main is True
+        assert persisted["乙"].is_main is False
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_add_scene_is_idempotent_by_scene_name(tmp_path):
     from novelvideo.models import NovelScene
     from novelvideo.sqlite_store import SQLiteStore

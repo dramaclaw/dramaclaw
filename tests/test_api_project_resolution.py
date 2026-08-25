@@ -91,8 +91,11 @@ async def test_scene_project_resolution_does_not_use_legacy_fallback(monkeypatch
     async def fake_resolve_project_context(**kwargs):
         return ctx
 
-    async def fake_make_sqlite_store_for_context(resolved_ctx):
+    async def fake_make_sqlite_store_for_context(
+        resolved_ctx, *, load_graph_state=True
+    ):
         assert resolved_ctx is ctx
+        assert load_graph_state is False
         return store
 
     def fail_legacy_project_dir(username: str, project: str) -> Path:

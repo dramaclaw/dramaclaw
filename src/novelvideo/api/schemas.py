@@ -79,6 +79,8 @@ class ProjectGrantSummary(BaseModel):
     principal_username: Optional[str] = None
     role: str
     created_at: Optional[str] = None
+    effective: bool = True
+    inactive_reason: Literal["principal_access_changed"] | None = None
 
 
 class ProjectUpdate(BaseModel):

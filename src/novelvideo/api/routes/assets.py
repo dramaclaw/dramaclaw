@@ -75,19 +75,12 @@ async def get_project_asset_references(
     ids: list[str] = Query(default=[]),
     user: dict = Depends(get_api_user),
 ):
-    """Whole-project reverse index: which beats reference each asset.
+    """On-demand reverse index: which beats reference the named assets.
 
-    Two shapes, one scan, because the assets workbench needs two different
-    things and paying for the second everywhere is what made this slow:
-
-    - ``counts`` is always returned — one integer per asset. Every card in every
-      grid shows a usage badge, and the panels sort/sum by it, so this has to
-      cover the whole project. It stays small: one int per asset, not one entry
-      per reference.
-    - ``references`` (and ``scene_co_occurrence``) are returned only for the
-      assets named in ``ids``, i.e. the ones whose beat list is actually on
-      screen. Passing every id back would make the response grow with total
-      references — the dimension that grows without bound as episodes pile up.
+    An empty ``ids`` list performs no beats scan. Asset grids no longer display
+    global usage counts, because doing so made every page visit walk the whole
+    project for non-essential decoration. Callers name only the asset usage
+    surface the user opened; response work and payload are limited to those ids.
 
     Callers pass ``?ids=identity:foo&ids=scene:bar``; keys are ``"{type}:{id}"``
     throughout so a client can look one up without walking the map. Id semantics
@@ -95,19 +88,22 @@ async def get_project_asset_references(
     scene → ``scene_ref.scene_id``, prop → prop name.
     """
     resolved = await resolve_project_scope(project, user, required_role="viewer")
-    beats = await _load_beat_asset_refs(resolved.ctx)
-
     wanted = {key for key in (str(item or "").strip() for item in ids) if key}
+    if not wanted:
+        return {
+            "ok": True,
+            "data": {"references": {}, "scene_co_occurrence": {}},
+        }
+
+    beats = await _load_beat_asset_refs(resolved.ctx)
     wanted_scenes = {
         key.split(":", 1)[1] for key in wanted if key.startswith("scene:") and ":" in key
     }
 
-    counts: dict[str, int] = {}
     references: dict[str, list[dict[str, int]]] = {}
     scene_co: dict[str, dict[str, set[str]]] = {}
 
     def _record(key: str, ref: dict[str, int]) -> None:
-        counts[key] = counts.get(key, 0) + 1
         if key in wanted:
             references.setdefault(key, []).append(ref)
 
@@ -135,7 +131,6 @@ async def get_project_asset_references(
     return {
         "ok": True,
         "data": {
-            "counts": counts,
             "references": references,
             "scene_co_occurrence": {
                 scene_id: {

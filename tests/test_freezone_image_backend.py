@@ -126,6 +126,29 @@ class _FakeContextBeatStore:
         ]
 
 
+class _FakeAssetRevisionStore:
+    def __init__(self) -> None:
+        self.characters: list[str] = []
+        self.scenes: list[str] = []
+        self.props: list[str] = []
+        self.closed = False
+
+    async def touch_character_asset(self, name: str) -> bool:
+        self.characters.append(name)
+        return True
+
+    async def touch_scene_asset(self, name: str) -> bool:
+        self.scenes.append(name)
+        return True
+
+    async def touch_prop_asset(self, name: str) -> bool:
+        self.props.append(name)
+        return True
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 def _patch_freezone_project(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1021,8 +1044,19 @@ async def test_freezone_audio_generation_enqueues_two_feature_billings(
     tmp_path: Path,
 ) -> None:
     from novelvideo.config import INDEXTTS2_RECORD_MODEL
+    from novelvideo.project_config import set_narrator_reference_audio_in_state_dir
+    from novelvideo.seedance2_i2v.voice_clone import file_sha256
 
     _patch_freezone_project(monkeypatch, tmp_path)
+    ctx = _project_ctx(tmp_path)
+    narrator = ctx.output_dir / "assets" / "narrator" / "voice.wav"
+    narrator.parent.mkdir(parents=True, exist_ok=True)
+    narrator.write_bytes(b"narrator-voice")
+    set_narrator_reference_audio_in_state_dir(
+        ctx.state_dir,
+        relative_path=narrator.relative_to(ctx.output_dir).as_posix(),
+        sha256=file_sha256(narrator),
+    )
     captured: list[dict] = []
 
     async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
@@ -1821,6 +1855,111 @@ async def test_freezone_push_can_commit_beat_audio(
     target = project_dir / "audio" / "ep001" / "beat_02.mp3"
     assert target.read_bytes() == b"candidate-audio"
     assert result["data"]["target_path"] == str(target)
+
+
+@pytest.mark.parametrize(
+    ("target", "revision_bucket", "entity_name"),
+    [
+        ({"kind": "portrait", "character": "秦"}, "characters", "秦"),
+        ({"kind": "scene_master", "scene_id": "兰州拉面馆"}, "scenes", "兰州拉面馆"),
+        ({"kind": "prop_ref", "prop_id": "账单"}, "props", "账单"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_freezone_push_advances_canonical_summary_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: dict,
+    revision_bucket: str,
+    entity_name: str,
+) -> None:
+    """Freezone push and skill auto-commit share this publication boundary."""
+
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    source = project_dir / "freezone" / "_outputs" / "candidate.png"
+    _write_image(source)
+    store = _FakeAssetRevisionStore()
+
+    from novelvideo.api import deps
+
+    scope_calls: list[bool] = []
+
+    async def fake_make_store(_ctx, *, load_graph_state=True):
+        scope_calls.append(load_graph_state)
+        return store
+
+    monkeypatch.setattr(
+        deps,
+        "make_sqlite_store_for_context",
+        fake_make_store,
+    )
+    result = await freezone_routes.freezone_push(
+        project="proj_freezone",
+        body=PushRequest(
+            source_url="freezone/_outputs/candidate.png",
+            target=target,
+        ),
+        user={"username": "admin", "id": "owner_1"},
+    )
+
+    assert Path(result["data"]["target_path"]).is_file()
+    assert result["data"]["target_url"]
+    assert getattr(store, revision_bucket) == [entity_name]
+    assert scope_calls == [False]
+    assert store.closed is True
+
+
+@pytest.mark.asyncio
+async def test_skill_auto_commit_advances_canonical_summary_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    source = project_dir / "freezone" / "_outputs" / "candidate.png"
+    _write_image(source)
+    store = _FakeAssetRevisionStore()
+
+    from novelvideo.api import deps
+
+    scope_calls: list[bool] = []
+
+    async def fake_make_store(_ctx, *, load_graph_state=True):
+        scope_calls.append(load_graph_state)
+        return store
+
+    monkeypatch.setattr(
+        deps,
+        "make_sqlite_store_for_context",
+        fake_make_store,
+    )
+
+    finalized = await freezone_routes._finalize_skill_run_outputs(
+        project="proj_freezone",
+        project_dir=project_dir,
+        ctx=_project_ctx(tmp_path),
+        metadata={
+            "run_id": "run_auto_commit",
+            "skill_id": "skill_demo",
+            "skill_node_id": "skill_node",
+            "canvas_id": "canvas_demo",
+            "status": "running",
+        },
+        outputs=[
+            {
+                "role": "scene_master",
+                "image_url": "freezone/_outputs/candidate.png",
+                "pushable": True,
+                "auto_commit": True,
+                "slot_target": {"kind": "scene_master", "scene_id": "兰州拉面馆"},
+            }
+        ],
+        user={"username": "admin", "id": "owner_1"},
+    )
+
+    assert finalized[0]["committed"] is True
+    assert store.scenes == ["兰州拉面馆"]
+    assert scope_calls == [False]
+    assert store.closed is True
 
 
 def test_resolve_outpaint_aspect_ratio_supports_original(tmp_path: Path) -> None:

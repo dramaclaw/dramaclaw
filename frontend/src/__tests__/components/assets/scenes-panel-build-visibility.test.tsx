@@ -32,6 +32,11 @@ vi.mock("@/lib/queries/projects", () => ({
 
 vi.mock("@/lib/queries/scenes", () => ({
   useScenes: () => ({ isLoading: false, data: { ok: true, data: [] }, refetch: vi.fn() }),
+  useSceneDetails: () => ({
+    isLoading: false,
+    data: { ok: true, data: [] },
+    refetch: vi.fn(),
+  }),
   useBuildScenes: mutation,
   useCreateScene: mutation,
   useDeleteScene: mutation,
@@ -62,7 +67,6 @@ vi.mock("@/lib/queries/character-image-selection", () => ({
 }));
 
 vi.mock("@/lib/queries/asset-references", () => ({
-  useAssetReferenceCounts: () => ({ countFor: () => 0, isLoading: false }),
   useAssetReferences: () => ({
     referencesFor: () => [],
     coOccurrenceForScene: () => ({ identities: [], props: [] }),

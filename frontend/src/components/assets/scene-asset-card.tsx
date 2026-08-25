@@ -32,10 +32,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { UsageCountBadge } from "@/components/assets/usage-count-badge";
 import { ASSET_CARD_META_BADGE_CLASS } from "@/components/assets/asset-card-styles";
 import { CopyAssetLinkButton } from "@/components/assets/copy-asset-link-button";
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import { ViewportLazyImage } from "@/components/viewport-lazy-image";
 import type { CreditPromotionDisplay } from "@/components/credits/credit-visual";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { sceneTypeLabel } from "@/lib/scene-type";
@@ -49,7 +49,6 @@ import type {
 
 interface SceneAssetCardProps {
   scene: SceneAsset;
-  referenceCount?: number;
   masterRunning?: boolean;
   reverseRunning?: boolean;
   panoRunning?: boolean;
@@ -113,12 +112,10 @@ function AssetImageSlot({
           <>
             {/* Blurred background fill for contain mode */}
             {fit === "contain" && (
-              <img
+              <ViewportLazyImage
                 src={resolved}
                 alt=""
                 aria-hidden="true"
-                loading="lazy"
-                decoding="async"
                 className="absolute inset-0 h-full w-full scale-110 object-cover opacity-50 blur-md"
               />
             )}
@@ -131,11 +128,9 @@ function AssetImageSlot({
                 onPreview ? "cursor-zoom-in" : "cursor-default",
               )}
             >
-              <img
+              <ViewportLazyImage
                 src={resolved}
                 alt={label}
-                loading="lazy"
-                decoding="async"
                 className={cn(
                   "h-full w-full",
                   fit === "contain" ? "object-contain" : "object-cover",
@@ -181,7 +176,6 @@ function StagePlyBadge({
 
 export function SceneAssetCard({
   scene,
-  referenceCount = 0,
   masterRunning = false,
   reverseRunning = false,
   panoRunning = false,
@@ -290,7 +284,6 @@ export function SceneAssetCard({
                   {t("assets.scenes.pano")}{" "}
                   {hasPano ? t("assets.common.generated") : t("assets.common.missing")}
                 </span>
-                <UsageCountBadge count={referenceCount} />
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1">

@@ -313,6 +313,36 @@ async def test_fallback_display_prefers_api_project_id(monkeypatch):
     assert specs[0]["elements"][first_child]["props"]["src"] == "/static/projects/api-project/sketch.png?v=1"
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool_name", "asset_path"),
+    [
+        ("dramaclaw_get_scene_images", "scenes"),
+        ("dramaclaw_get_character_media", "characters"),
+    ],
+)
+async def test_asset_display_tools_request_authoritative_media_details(
+    monkeypatch, tool_name, asset_path
+):
+    seen_paths = []
+
+    def fake_backend_api_get(path, token):
+        seen_paths.append(path)
+        return {"ok": True, "data": []}
+
+    monkeypatch.setattr(chat_service, "_backend_api_get", fake_backend_api_get)
+
+    await chat_service._fallback_display_tool_ui_specs(
+        "admin",
+        "project-a",
+        tool_name,
+        {},
+        token="token",
+    )
+
+    assert seen_paths == [f"/api/v1/projects/project-a/{asset_path}?summary=false"]
+
+
 def test_claude_and_codex_sessions_are_scope_scoped(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))

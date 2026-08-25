@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { AssetHeaderActions } from "@/components/assets/asset-header-actions-slot";
 import { CharacterImageSourceSelect } from "@/components/assets/character-image-source-select";
 import { SceneAssetCard } from "@/components/assets/scene-asset-card";
+import { ViewportLazyImage } from "@/components/viewport-lazy-image";
 import { AssetBeatReferences } from "@/components/assets/asset-beat-references";
 import {
   SceneEnvironmentPromptFields,
@@ -22,13 +23,9 @@ import { ThreeDDirectorDialog } from "@/features/viewer-kit/three-d/ThreeDDirect
 import type { ThreeDSceneSnapshot } from "@/features/viewer-kit/three-d/engine/viewerApp";
 import {
   AssetSearchBox,
-  AssetSortSelect,
   filterBySearch,
-  sortAssets,
-  type AssetSortKey,
 } from "@/components/assets/asset-search-box";
 import {
-  useAssetReferenceCounts,
   useAssetReferences,
   type BeatReference,
   type SceneCoOccurrence,
@@ -97,6 +94,7 @@ import {
   useClearSceneDirectorWorld,
   useSaveSceneDirectorWorld,
   useSceneDirectorStageManifest,
+  useSceneDetails,
   useScenePanoManifest,
   useScenes,
   useUpdateScene,
@@ -577,14 +575,12 @@ function SceneAssetCardController({
   project,
   scene,
   imageSourceSelection,
-  referenceCount,
   onEdit,
   onDelete,
 }: {
   project: string;
   scene: SceneAsset;
   imageSourceSelection: string;
-  referenceCount: number;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -976,7 +972,6 @@ function SceneAssetCardController({
     <>
       <SceneAssetCard
         scene={scene}
-        referenceCount={referenceCount}
         masterRunning={generateMaster.isPending || masterTask.started}
         reverseRunning={generateReverse.isPending || reverseTask.started}
         panoRunning={generatePano.isPending || panoTask.started}
@@ -1090,6 +1085,15 @@ interface SceneGroup {
   scenes: SceneAsset[];
 }
 
+export function selectAuthoritativeSceneDetails(
+  summaryScenes: SceneAsset[],
+  details: SceneAsset[] | undefined,
+  detailSucceeded: boolean,
+): SceneAsset[] | null {
+  if (!detailSucceeded) return summaryScenes;
+  return details?.length ? details : null;
+}
+
 const SCENE_GROUP_SELECTION_STORAGE_KEY_PREFIX = "supertale-scene-group:";
 
 function sceneGroupSelectionStorageKey(project: string): string {
@@ -1119,16 +1123,20 @@ function sceneGroupPreviewUrl(group: SceneGroup): string {
 function SceneGroupListItem({
   group,
   selected,
-  referenceCount,
   onSelect,
 }: {
   group: SceneGroup;
   selected: boolean;
-  referenceCount: number;
   onSelect: () => void;
 }) {
   const { t } = useTranslation();
   const previewUrl = sceneGroupPreviewUrl(group);
+  const [failedPreviewUrl, setFailedPreviewUrl] = useState("");
+  useEffect(() => {
+    setFailedPreviewUrl("");
+  }, [previewUrl]);
+  const visiblePreviewUrl =
+    previewUrl && failedPreviewUrl !== previewUrl ? previewUrl : "";
   return (
     <button
       type="button"
@@ -1146,13 +1154,12 @@ function SceneGroupListItem({
       ].join(" ")}
     >
       <div className="relative flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-white/[0.08] bg-black/20">
-        {previewUrl ? (
-          <img
-            src={previewUrl}
+        {visiblePreviewUrl ? (
+          <ViewportLazyImage
+            src={visiblePreviewUrl}
             alt=""
             aria-hidden="true"
-            loading="lazy"
-            decoding="async"
+            onError={() => setFailedPreviewUrl(previewUrl)}
             className="h-full w-full object-cover"
           />
         ) : (
@@ -1167,14 +1174,6 @@ function SceneGroupListItem({
               {t("assets.scenes.variantCount", {
                 count: group.scenes.length,
                 defaultValue: "{{count}} 个变体",
-              })}
-            </span>
-          ) : null}
-          {referenceCount > 0 ? (
-            <span>
-              {t("assets.scenes.referenceCount", {
-                count: referenceCount,
-                defaultValue: "{{count}} 次使用",
               })}
             </span>
           ) : null}
@@ -1224,10 +1223,8 @@ export function ScenesPanel({
     (buildScenesCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
-  // Counts feed every card's badge and the usage sort, so they cover the whole
-  // project. The beat list is only rendered inside the edit dialog, so it is
-  // fetched for that one scene instead of for all of them.
-  const refCounts = useAssetReferenceCounts(project);
+  // Beat references are edit-only: opening the asset page must not scan every
+  // beat merely to decorate cards with a usage count.
   const refDetail = useAssetReferences(
     project,
     useMemo(
@@ -1238,7 +1235,6 @@ export function ScenesPanel({
 
   const allItems = scenes.data?.data ?? [];
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortKey, setSortKey] = useState<AssetSortKey>("name");
   const allSceneGroups = useMemo<SceneGroup[]>(() => {
     const groups = new globalThis.Map<string, SceneAsset[]>();
     for (const scene of allItems) {
@@ -1276,17 +1272,8 @@ export function ScenesPanel({
         ...(scene.aliases ?? []),
       ]),
     ]);
-    return sortAssets(
-      filtered,
-      sortKey,
-      (group) => group.baseName,
-      (group) =>
-        group.scenes.reduce(
-          (sum, scene) => sum + refCounts.countFor("scene", scene.name),
-          0,
-        ),
-    );
-  }, [allSceneGroups, searchQuery, sortKey, refCounts]);
+    return filtered.sort((a, b) => a.baseName.localeCompare(b.baseName));
+  }, [allSceneGroups, searchQuery]);
   useEffect(() => {
     if (scenes.isLoading) {
       return;
@@ -1315,8 +1302,27 @@ export function ScenesPanel({
     sceneGroups,
     selectedBaseName,
   ]);
-  const selectedGroup =
+  const selectedSummaryGroup =
     sceneGroups.find((group) => group.baseName === selectedBaseName) ?? null;
+  const selectedSceneNames = useMemo(
+    () => selectedSummaryGroup?.scenes.map((scene) => scene.name) ?? [],
+    [selectedSummaryGroup],
+  );
+  const selectedSceneDetails = useSceneDetails(project, selectedSceneNames);
+  const selectedSceneAssets = selectedSummaryGroup
+    ? selectAuthoritativeSceneDetails(
+        selectedSummaryGroup.scenes,
+        selectedSceneDetails.data?.data,
+        selectedSceneDetails.isSuccess,
+      )
+    : null;
+  const selectedGroup =
+    selectedSummaryGroup && selectedSceneAssets
+      ? {
+          baseName: selectedSummaryGroup.baseName,
+          scenes: selectedSceneAssets,
+        }
+      : null;
   const selectedBaseScene =
     selectedGroup?.scenes.find((scene) => scene.name === selectedGroup.baseName) ??
     selectedGroup?.scenes[0] ??
@@ -1402,8 +1408,13 @@ export function ScenesPanel({
         <HeaderRefreshButton
           label={t("common.refresh")}
           onRefresh={async () => {
-            const result = await scenes.refetch();
-            if (result.isError) {
+            const [listResult, detailResult] = await Promise.all([
+              scenes.refetch(),
+              selectedSceneNames.length
+                ? selectedSceneDetails.refetch()
+                : Promise.resolve(null),
+            ]);
+            if (listResult.isError || detailResult?.isError) {
               toast.error(t("common.error"));
               return false;
             }
@@ -1508,9 +1519,6 @@ export function ScenesPanel({
                   ariaLabel={t("assets.common.searchScenes")}
                   className="min-w-0 flex-1"
                 />
-                <div className="shrink-0">
-                  <AssetSortSelect value={sortKey} onValueChange={setSortKey} />
-                </div>
               </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-2">
@@ -1528,10 +1536,6 @@ export function ScenesPanel({
                       key={group.baseName}
                       group={group}
                       selected={selectedBaseName === group.baseName}
-                      referenceCount={group.scenes.reduce(
-                        (sum, scene) => sum + refCounts.countFor("scene", scene.name),
-                        0,
-                      )}
                       onSelect={() => rememberSelectedBaseName(group.baseName)}
                     />
                   ))}
@@ -1543,6 +1547,23 @@ export function ScenesPanel({
             {!selectedGroup ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 {t("assets.common.noMatch")}
+              </div>
+            ) : selectedSceneDetails.isLoading ? (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                <Loader2 className="mr-2 size-4 animate-spin" />
+                {t("common.loading")}
+              </div>
+            ) : selectedSceneDetails.isError ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+                <span>{t("common.error")}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void selectedSceneDetails.refetch()}
+                >
+                  {t("common.refresh")}
+                </Button>
               </div>
             ) : (
               <div className="@container h-full overflow-y-auto px-4 py-3">
@@ -1610,7 +1631,6 @@ export function ScenesPanel({
                         project={project}
                         scene={scene}
                         imageSourceSelection={imageSourceSelection}
-                        referenceCount={refCounts.countFor("scene", scene.name)}
                         onEdit={() => {
                           setEditing(scene);
                           setDraftSeed(null);

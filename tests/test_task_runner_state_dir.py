@@ -306,6 +306,9 @@ async def test_prop_reference_passes_context_state_dir_to_generator(
         async def get_prop(self, name: str):
             return SimpleNamespace(name=name, visual_prompt="brass key", description="")
 
+        async def touch_prop_asset(self, name: str):
+            return True
+
     class FakeStore:
         def __init__(self, *args, **kwargs) -> None:
             self.sqlite_store = FakeSQLiteStore()
@@ -474,7 +477,12 @@ async def test_character_image_passes_context_state_to_generation(
 
     class FakeStore:
         def __init__(self, *args, **kwargs) -> None:
-            pass
+            self.sqlite_store = SimpleNamespace(
+                touch_character_asset=self.touch_character_asset
+            )
+
+        async def touch_character_asset(self, name: str):
+            return True
 
         async def initialize(self) -> None:
             pass

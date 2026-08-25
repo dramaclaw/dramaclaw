@@ -23,6 +23,9 @@ class _CharacterStore:
     def get_all_characters(self):
         return list(self.characters.values())
 
+    async def list_characters(self):
+        return list(self.characters.values())
+
     async def update_character(self, name: str, **updates):
         self.updates.append((name, updates))
         character = self.characters[name]
@@ -125,6 +128,7 @@ async def test_list_characters_returns_indextts2_voice_fields(tmp_path, monkeypa
 
     response = await characters.list_characters(
         project="demo",
+        summary=True,
         user={"username": "admin"},
     )
 
@@ -133,7 +137,7 @@ async def test_list_characters_returns_indextts2_voice_fields(tmp_path, monkeypa
     assert "fish_voice_id" not in asset
     assert asset["reference_audio_path"] == "assets/characters/秦/voices/voice_default.wav"
     assert asset["reference_audio_url"] == (
-        "/static/projects/proj_demo/assets/characters/秦/voices/voice_default.wav"
+        "/static/projects/proj_demo/assets/characters/%E7%A7%A6/voices/voice_default.wav"
     )
     assert asset["reference_audio_sha256"] == "default-sha"
     assert asset["reference_audio_updated_at"] == "2026-05-13T00:00:00+00:00"

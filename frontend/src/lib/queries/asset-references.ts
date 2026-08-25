@@ -12,29 +12,25 @@ import type { OkResponse } from "@/types/api";
 /**
  * Cross-asset reference index ("which beats use this asset").
  *
- * Both hooks here are served by `GET /projects/{p}/assets/references`, which
- * makes a single pass over the beats table. This used to be derived on the
- * client by fetching every episode's beats and scanning them here — one request
- * per episode, each carrying the full beat payload (sketch/frame/video URLs
- * plus an ffprobe per audio clip) so the FE could read three fields per beat.
+ * References are served by `GET /projects/{p}/assets/references`, which makes
+ * a single pass over the beats table only after the caller names an asset. This
+ * used to be derived on the client by fetching every episode's beats and
+ * scanning them here — one request per episode, each carrying the full beat
+ * payload (sketch/frame/video URLs plus an ffprobe per audio clip) so the FE
+ * could read three fields per beat.
  * That cost grew with episode count and is why opening the assets page fired
  * dozens of `beats` requests.
  *
- * The split into two hooks is deliberate, because the two things the workbench
- * needs scale differently:
- *
- *   - `useAssetReferenceCounts` — every card in every grid shows a usage badge,
- *     and the panels sort/sum by it, so counts must cover the whole project.
- *     One integer per asset keeps that bounded by asset count.
- *   - `useAssetReferences` — the beat list for specific assets, requested only
- *     for what is actually on screen. Fetching every asset's list up front is
- *     what makes the payload grow with total references, the one dimension that
- *     grows without bound as episodes pile up.
+ * `useAssetReferences` requests the beat list only for assets whose usage
+ * surface the user actually opened. Asset grids deliberately show no global
+ * usage badges: even a compact count response requires scanning every beat on
+ * every visit, while the count is neither core workflow data nor an
+ * authoritative deletion guard.
  *
  * Reference keys are `"{type}:{id}"`. Id semantics follow the persisted beat
  * contract: identity → `identity_id`, scene → `scene_ref.scene_id`, prop →
  * prop name. Matching happens server-side, at the source of those ids, so a
- * backend rename can no longer silently zero out every usage count.
+ * backend rename can no longer silently detach a requested usage list.
  */
 
 export type AssetRefType = "identity" | "scene" | "prop";
@@ -55,12 +51,6 @@ export interface SceneCoOccurrence {
   props: string[];
 }
 
-export interface AssetReferenceCounts {
-  /** Usage count for one asset. 0 when unreferenced / still loading. */
-  countFor: (type: AssetRefType, id: string) => number;
-  isLoading: boolean;
-}
-
 export interface AssetReferences {
   /** Beat list for one of the requested assets. Empty when not requested. */
   referencesFor: (type: AssetRefType, id: string) => BeatReference[];
@@ -70,7 +60,6 @@ export interface AssetReferences {
 }
 
 interface AssetReferencesPayload {
-  counts: Record<string, number>;
   references: Record<string, { episode: number; beat_number: number }[]>;
   scene_co_occurrence: Record<string, { identities: string[]; props: string[] }>;
 }
@@ -86,12 +75,12 @@ function refKey(type: AssetRefType, id: string): string {
  * already do; the index lives under its own project-wide key, so invalidating a
  * single episode's beats no longer reaches it.
  *
- * The per-asset detail key nests under the counts key, so this one prefix
- * invalidation covers both hooks.
+ * Per-asset detail keys share this project prefix, so one invalidation covers
+ * every usage surface that is currently open.
  *
  * Do not treat the 30s staleTime as a safety net: staleTime only marks an entry
  * stale, it never schedules a refetch. A page that stays mounted keeps showing
- * the old counts indefinitely. Only a remount (or an explicit invalidation)
+ * old references indefinitely. Only a remount (or an explicit invalidation)
  * refetches — so every mutation that moves a beat/asset relation must call this.
  */
 export function invalidateAssetReferences(
@@ -103,28 +92,6 @@ export function invalidateAssetReferences(
 
 const EMPTY: BeatReference[] = [];
 const EMPTY_CO: SceneCoOccurrence = { identities: [], props: [] };
-
-/** Whole-project usage counts — one integer per asset. */
-export function useAssetReferenceCounts(project: string): AssetReferenceCounts {
-  const { data, isLoading } = useQuery({
-    queryKey: queryKeys.assetReferences(project),
-    queryFn: ({ signal }) =>
-      api
-        .get(p`api/v1/projects/${project}/assets/references`, { signal })
-        .json<OkResponse<AssetReferencesPayload>>(),
-    enabled: !!project,
-  });
-
-  const counts = data?.data?.counts;
-
-  return useMemo(
-    () => ({
-      countFor: (type, id) => counts?.[refKey(type, id)] ?? 0,
-      isLoading,
-    }),
-    [counts, isLoading],
-  );
-}
 
 /**
  * Beat lists for a specific set of assets — pass only what is rendered.

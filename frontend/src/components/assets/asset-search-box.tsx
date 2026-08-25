@@ -1,17 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { ArrowUpDown, Search, X } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { Search, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-} from "@/components/ui/select";
 
 type Searchable = (string | null | undefined)[];
 
@@ -27,58 +20,6 @@ export function filterBySearch<T>(
     fields(item)
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(needle)),
-  );
-}
-
-export type AssetSortKey = "name" | "usage";
-
-/** Shared sort: by name (A→Z) or by usage count (desc, name tiebreak). */
-export function sortAssets<T>(
-  items: readonly T[],
-  sortKey: AssetSortKey,
-  nameOf: (item: T) => string,
-  countOf: (item: T) => number,
-): T[] {
-  const copy = [...items];
-  if (sortKey === "usage") {
-    copy.sort(
-      (a, b) => countOf(b) - countOf(a) || nameOf(a).localeCompare(nameOf(b)),
-    );
-  } else {
-    copy.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
-  }
-  return copy;
-}
-
-export function AssetSortSelect({
-  value,
-  onValueChange,
-}: {
-  value: AssetSortKey;
-  onValueChange: (value: AssetSortKey) => void;
-}) {
-  const { t } = useTranslation();
-  const label =
-    value === "usage"
-      ? t("assets.common.sortByUsage")
-      : t("assets.common.sortByName");
-  return (
-    <Select
-      value={value}
-      onValueChange={(next) => onValueChange(next as AssetSortKey)}
-    >
-      <SelectTrigger
-        aria-label={t("assets.common.sortLabel")}
-        className="h-8 min-w-[104px] gap-1.5 rounded-[8px] border-white/10 bg-white/[0.025] px-2.5 text-xs shadow-none hover:border-white/16 hover:bg-white/[0.045]"
-      >
-        <ArrowUpDown className="size-3.5 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="name">{t("assets.common.sortByName")}</SelectItem>
-        <SelectItem value="usage">{t("assets.common.sortByUsage")}</SelectItem>
-      </SelectContent>
-    </Select>
   );
 }
 

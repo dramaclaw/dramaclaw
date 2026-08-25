@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Edit3,
   ExternalLink,
@@ -15,7 +15,6 @@ import { useTranslation } from "react-i18next";
 
 import { LightboxImage } from "@/components/lightbox-image";
 import { ASSET_CARD_META_BADGE_CLASS } from "@/components/assets/asset-card-styles";
-import { UsageCountBadge } from "@/components/assets/usage-count-badge";
 import { CopyAssetLinkButton } from "@/components/assets/copy-asset-link-button";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import type { CreditPromotionDisplay } from "@/components/credits/credit-visual";
@@ -33,7 +32,6 @@ interface PropAssetCardProps {
   prop: PropAsset;
   generating?: boolean;
   uploading?: boolean;
-  referenceCount?: number;
   referenceCost?: string;
   referencePromotion?: CreditPromotionDisplay | null;
   onEdit: () => void;
@@ -48,7 +46,6 @@ export function PropAssetCard({
   prop,
   generating = false,
   uploading = false,
-  referenceCount = 0,
   referenceCost,
   referencePromotion,
   onEdit,
@@ -66,7 +63,27 @@ export function PropAssetCard({
     if (file) onUploadReference(file);
     event.target.value = "";
   }
-  const referenceUrl = resolveMediaUrl(prop.reference_url);
+  const resolvedReferenceUrl = resolveMediaUrl(prop.reference_url);
+  const [failedReferenceUrl, setFailedReferenceUrl] = useState("");
+  const wasGenerating = useRef(generating);
+  const wasUploading = useRef(uploading);
+  useEffect(() => {
+    if (
+      (wasGenerating.current && !generating) ||
+      (wasUploading.current && !uploading)
+    ) {
+      setFailedReferenceUrl("");
+    }
+    wasGenerating.current = generating;
+    wasUploading.current = uploading;
+  }, [generating, uploading]);
+  useEffect(() => {
+    setFailedReferenceUrl("");
+  }, [resolvedReferenceUrl]);
+  const referenceUrl =
+    resolvedReferenceUrl && failedReferenceUrl !== resolvedReferenceUrl
+      ? resolvedReferenceUrl
+      : null;
   const referenceAlt = `${prop.name} ${t("assets.props.reference")}`;
   const description =
     prop.description?.trim() || prop.visual_prompt?.trim() || t("assets.props.noDescription");
@@ -91,7 +108,6 @@ export function PropAssetCard({
                 {t("assets.props.reference")}{" "}
                 {referenceUrl ? t("assets.common.generated") : t("assets.common.missing")}
               </span>
-              <UsageCountBadge count={referenceCount} />
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -153,6 +169,7 @@ export function PropAssetCard({
             alt={referenceAlt}
             fit="contain"
             blurBackdrop={false}
+            onError={() => setFailedReferenceUrl(referenceUrl)}
             className="aspect-[16/9] w-full rounded-[8px]"
           />
         ) : (

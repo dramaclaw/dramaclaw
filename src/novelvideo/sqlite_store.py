@@ -915,6 +915,32 @@ class SQLiteStore:
         await self.add_character(char)
         console.print(f"[green]已更新角色: {name}[/green]")
 
+    async def set_character_main(self, name: str, is_main: bool) -> bool:
+        """Update only the narrator-main flag without requiring the graph cache.
+
+        Lightweight asset-list requests intentionally skip ``load_graph_state``.
+        Repairs discovered by that list must therefore use a column-level write,
+        not ``update_character()``, whose object merge contract is cache-backed.
+        """
+
+        updated = await self._update_character_field(name, "is_main", 1 if is_main else 0)
+        cached = self._characters.get(name)
+        if updated and cached is not None:
+            cached.is_main = is_main
+        return updated
+
+    async def touch_character_asset(self, name: str) -> bool:
+        """Advance the row revision after publishing a convention-path asset."""
+
+        db = await self._ensure_db()
+        cursor = await db.execute(
+            "UPDATE characters SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+            "WHERE name = ?",
+            (name,),
+        )
+        await db.commit()
+        return (cursor.rowcount or 0) > 0
+
     async def delete_all_characters(self) -> int:
         try:
             db = await self._ensure_db()
@@ -1387,6 +1413,18 @@ class SQLiteStore:
         await db.commit()
         return (cursor.rowcount or 0) > 0
 
+    async def touch_scene_asset(self, name: str) -> bool:
+        """Advance the row revision after publishing a convention-path asset."""
+
+        db = await self._ensure_db()
+        cursor = await db.execute(
+            "UPDATE scenes SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+            "WHERE name = ?",
+            (name,),
+        )
+        await db.commit()
+        return (cursor.rowcount or 0) > 0
+
     async def rename_scene(self, old_name: str, new_name: str) -> bool:
         """重命名场景记录。资源目录迁移由调用方处理。"""
         old_name = str(old_name or "").strip()
@@ -1520,6 +1558,18 @@ class SQLiteStore:
                     prop.aliases = value
                 elif hasattr(prop, key):
                     setattr(prop, key, value)
+        return (cursor.rowcount or 0) > 0
+
+    async def touch_prop_asset(self, name: str) -> bool:
+        """Advance the row revision after publishing a convention-path asset."""
+
+        db = await self._ensure_db()
+        cursor = await db.execute(
+            "UPDATE props SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+            "WHERE name = ?",
+            (name,),
+        )
+        await db.commit()
         return (cursor.rowcount or 0) > 0
 
     async def rename_prop(self, old_name: str, new_name: str) -> bool:

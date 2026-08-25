@@ -1386,6 +1386,8 @@
       "projectOwner": "项目所有者",
       "loadingMembers": "加载成员",
       "removeMember": "移除成员",
+      "inactive": "已失效",
+      "inactiveAccessChanged": "用户当前无法访问此项目",
       "roleViewer": "只读查看",
       "roleEditor": "可编辑与运行任务",
       "roleAdmin": "可管理共享成员",

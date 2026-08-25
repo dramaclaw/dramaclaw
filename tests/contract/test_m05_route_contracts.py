@@ -227,6 +227,9 @@ class _M05Store:
             setattr(scene, key, value)
         return True
 
+    async def touch_scene_asset(self, name: str):
+        return name in self.scenes
+
     async def rename_scene(self, old_name: str, new_name: str):
         scene = self.scenes.pop(old_name)
         scene.name = new_name

@@ -51,9 +51,32 @@ export function useScenes(project: string) {
     queryKey: queryKeys.scenes(project),
     queryFn: ({ signal }) =>
       api
-        .get(p`api/v1/projects/${project}/scenes`, { signal })
+        .get(p`api/v1/projects/${project}/scenes`, {
+          signal,
+          searchParams: { summary: "true" },
+        })
         .json<OkResponse<SceneAsset[]>>(),
     enabled: !!project,
+  });
+}
+
+/** Full file/manifests payload for only the scene group currently on screen. */
+export function useSceneDetails(project: string, names: string[]) {
+  const signature = JSON.stringify(
+    [...new Set(names.map((name) => name.trim()).filter(Boolean))].sort(),
+  );
+  const requestedNames = JSON.parse(signature) as string[];
+  return useQuery({
+    queryKey: queryKeys.sceneDetails(project, signature),
+    queryFn: ({ signal }) => {
+      const searchParams = new URLSearchParams();
+      searchParams.set("summary", "false");
+      for (const name of requestedNames) searchParams.append("names", name);
+      return api
+        .get(p`api/v1/projects/${project}/scenes`, { signal, searchParams })
+        .json<OkResponse<SceneAsset[]>>();
+    },
+    enabled: !!project && requestedNames.length > 0,
   });
 }
 

@@ -1,5 +1,6 @@
 """角色列表 & 肖像/身份图生成端点。"""
 
+import asyncio
 import io
 import logging
 import re
@@ -7,10 +8,10 @@ import shutil
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Annotated, AsyncIterator
 from urllib.parse import quote, urlencode
 
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, UploadFile, File, Query
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger("novelvideo.api.characters")
@@ -67,6 +68,7 @@ from novelvideo.utils.path_resolver import (
     canonical_identity_costume_path,
     canonical_identity_portrait_path,
 )
+from novelvideo.utils.static_urls import project_static_url
 from novelvideo.seedance2_i2v.character_voice_storage import (
     AGE_GROUP_SLOTS as VOICE_AGE_GROUP_SLOTS,
     ALL_SLOTS as VOICE_SAMPLE_SLOTS,
@@ -131,6 +133,7 @@ async def _character_project_scope(
     user: dict,
     *,
     required_role: str = "editor",
+    load_graph_state: bool = True,
 ) -> "AsyncIterator[tuple[ProjectContext | None, str, str, Path, str, SQLiteStore]]":
     """``_resolve_character_project`` 的作用域版：出了 ``async with`` 一定关连接。
 
@@ -144,9 +147,16 @@ async def _character_project_scope(
     """
     resolved = await resolve_project_scope(project, user, required_role=required_role)
     store_scope = (
-        sqlite_store_for_context_scope(resolved.ctx)
+        sqlite_store_for_context_scope(
+            resolved.ctx,
+            load_graph_state=load_graph_state,
+        )
         if resolved.ctx
-        else sqlite_store_scope(resolved.username, resolved.project_name)
+        else sqlite_store_scope(
+            resolved.username,
+            resolved.project_name,
+            load_graph_state=load_graph_state,
+        )
     )
     async with store_scope as store:
         yield (
@@ -448,6 +458,31 @@ def _voice_sample_url(
     return _asset_url(ctx, project_dir, project_dir / rel_path)
 
 
+def _convention_asset_url(
+    ctx: ProjectContext | None,
+    project_dir: Path,
+    path: str | Path,
+    *,
+    version: str = "",
+    project_id: str = "",
+) -> str:
+    """Build a canonical asset URL without probing OSSFS.
+
+    Asset slots are convention-based. List views can let the browser lazily
+    request the URL and fall back on image error; only selected-asset detail
+    needs authoritative file-existence checks.
+    """
+
+    asset_path = Path(path)
+    try:
+        rel_path = asset_path.relative_to(project_dir).as_posix()
+    except ValueError:
+        return ""
+    asset_project = str(getattr(ctx, "project_id", "") or project_id).strip()
+    url = project_static_url(asset_project, rel_path)
+    return f"{url}?v={quote(version, safe='')}" if version else url
+
+
 def _voice_slot_payload(
     *,
     ctx: ProjectContext,
@@ -496,14 +531,22 @@ def _voice_samples_payload(
     }
 
 
-def _character_voice_fields(ctx: ProjectContext, project_dir: Path, character) -> dict:
+def _character_voice_fields(
+    ctx: ProjectContext,
+    project_dir: Path,
+    character,
+    *,
+    probe_files: bool = True,
+) -> dict:
     rel_path = getattr(character, "reference_audio_path", "") or ""
     return {
         "reference_audio_path": rel_path,
-        "reference_audio_url": _voice_sample_url(
-            ctx=ctx,
-            project_dir=project_dir,
-            rel_path=rel_path,
+        "reference_audio_url": (
+            _voice_sample_url(ctx=ctx, project_dir=project_dir, rel_path=rel_path)
+            if probe_files
+            else _convention_asset_url(ctx, project_dir, project_dir / rel_path)
+            if rel_path
+            else ""
         ),
         "reference_audio_sha256": getattr(character, "reference_audio_sha256", "")
         or "",
@@ -585,7 +628,17 @@ async def _repair_duplicate_main_characters(
             seen_main = True
             repaired.append(character)
             continue
-        await store.update_character(character.name, is_main=False)
+        set_main = getattr(store, "set_character_main", None)
+        if set_main is not None:
+            if not await set_main(character.name, False):
+                raise RuntimeError(
+                    f"Failed to repair duplicate main character: {character.name}"
+                )
+        else:
+            # Store test doubles and older compatible facades retain the
+            # object-merge operation. Real SQLiteStore uses the cache-free,
+            # column-level branch above.
+            await store.update_character(character.name, is_main=False)
         character.is_main = False
         repaired.append(character)
     return repaired
@@ -613,23 +666,37 @@ async def _heal_path_unsafe_character_names(
 @router.get("/projects/{project}/characters")
 async def list_characters(
     project: str,
+    summary: bool = False,
+    names: Annotated[list[str] | None, Query()] = None,
     user: dict = Depends(get_api_user),
 ):
-    """获取项目角色列表。"""
+    """获取角色列表；资产工作台可显式使用 summary 跳过文件探测。"""
     async with _character_project_scope(
-        project, user, required_role="viewer"
+        project,
+        user,
+        required_role="viewer",
+        load_graph_state=False,
     ) as (ctx, _username, _project_name, project_dir, _output_dir, store):
         if may_run_asset_repair(ctx):
             await _heal_path_unsafe_character_names(store, project_dir)
+        characters = await store.list_characters()
         characters = await _repair_duplicate_main_characters(
-            store, store.get_all_characters()
+            store, characters
         )
 
-    data = []
+    requested_names = {
+        str(name or "").strip() for name in (names or []) if str(name or "").strip()
+    }
+    if requested_names:
+        characters = [c for c in characters if c.name in requested_names]
+
     asset_project = getattr(ctx, "project_id", "") or project
-    for c in characters:
-        abs_portrait = compute_portrait_path(project_dir, c.name)
-        item = {
+    def build_item(c) -> dict:
+        canonical_portrait = canonical_portrait_path(project_dir, c.name)
+        abs_portrait = str(canonical_portrait) if summary else compute_portrait_path(
+            project_dir, c.name
+        )
+        item: dict = {
             "name": c.name,
             "aliases": c.aliases if hasattr(c, "aliases") else [],
             "description": c.description if hasattr(c, "description") else "",
@@ -641,11 +708,27 @@ async def list_characters(
             "is_main": c.is_main if hasattr(c, "is_main") else False,
             "portrait_path": abs_portrait,
             "portrait_url": (
-                _asset_url(ctx, project_dir, abs_portrait) if abs_portrait else ""
+                _convention_asset_url(
+                    ctx,
+                    project_dir,
+                    canonical_portrait,
+                    version=getattr(c, "updated_at", "") or "",
+                    project_id=project,
+                )
+                if summary
+                else _asset_url(ctx, project_dir, abs_portrait)
+                if abs_portrait
+                else ""
             ),
-            "updated_at": newest_updated_at(
-                getattr(c, "updated_at", ""),
-                tree_updated_at(project_dir / "assets" / "characters" / c.name),
+            "updated_at": (
+                getattr(c, "updated_at", "")
+                if summary
+                else newest_updated_at(
+                    getattr(c, "updated_at", ""),
+                    tree_updated_at(
+                        project_dir / "assets" / "characters" / c.name
+                    ),
+                )
             ),
             # 只出 id，不出身份详情。资产页要把 ``?type=identity&id=`` 深链解析到
             # 拥有它的角色，此前是遍历每个角色各调一次 ``/characters/{name}/identities``
@@ -665,8 +748,16 @@ async def list_characters(
                 kind="portrait",
             )
         )
-        item.update(_character_voice_fields(ctx, project_dir, c))
-        data.append(item)
+        item.update(
+            _character_voice_fields(
+                ctx, project_dir, c, probe_files=not summary
+            )
+        )
+        return item
+
+    # Full details still perform authoritative filesystem checks. Keep those
+    # blocking OSSFS operations away from the API worker's event loop.
+    data = await asyncio.to_thread(lambda: [build_item(c) for c in characters])
 
     return {"ok": True, "data": data}
 
@@ -886,9 +977,12 @@ async def get_character_identities(
     # store 只用来取角色，取完就关：后面拼载荷读的是已经在内存里的模型对象和
     # 文件系统，不再需要连接。"角色不存在" 的提前返回因此也发生在关闭之后。
     async with _character_project_scope(
-        project, user, required_role="viewer"
+        project,
+        user,
+        required_role="viewer",
+        load_graph_state=False,
     ) as (ctx, _username, _project_name, project_dir, _output_dir, store):
-        characters = store.get_all_characters()
+        characters = await store.list_characters()
 
     target = None
     for c in characters:
@@ -1062,6 +1156,8 @@ async def restore_character_asset_history(
     backup = _backup_character_asset(target)
     shutil.copy2(source, target)
     await _sync_restored_identity_asset(store, name, identity, kind, target)
+    if kind == "portrait":
+        await store.touch_character_asset(name)
 
     return {
         "ok": True,
@@ -1545,6 +1641,9 @@ async def generate_single_portrait(
     char_dir.mkdir(parents=True, exist_ok=True)
     final_path = char_dir / "portrait.png"
     shutil.copy(paths[0], final_path)
+    # Canonical URLs in the lightweight list are versioned by the SQLite row,
+    # so publishing a new file must advance that revision as part of the write.
+    await store.touch_character_asset(name)
 
     portrait_url = _asset_url(ctx, project_dir, final_path)
 
@@ -1584,6 +1683,7 @@ async def upload_portrait(
         shutil.copy(portrait_path, backup)
 
     img.save(str(portrait_path), format="PNG")
+    await store.touch_character_asset(name)
 
     portrait_url = _asset_url(ctx, project_dir, portrait_path)
 
