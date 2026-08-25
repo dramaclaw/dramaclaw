@@ -7,10 +7,10 @@ import * as freezoneShellModule from "@/features/freezone/FreezoneShell";
 import {
   buildCanvasBrowserSections,
   canDeleteCanvasSummary,
+  canvasCreationQuotaStatus,
   canvasKindFromSummary,
   countCanvasesCreatedBy,
   findDuplicateCanvasName,
-  hasReachedCanvasCreationLimit,
   userCreatedCanvasId,
 } from "@/features/freezone/CanvasesTab";
 import { MAX_USER_CREATED_CANVASES_PER_PROJECT } from "@/lib/limits";
@@ -696,19 +696,8 @@ describe("freezone canvas creation limit", () => {
       myCanvas(index),
     );
 
-    expect(hasReachedCanvasCreationLimit(mine, "alice")).toBe(true);
-    expect(hasReachedCanvasCreationLimit(mine.slice(0, -1), "alice")).toBe(false);
-  });
-
-  it("never reports the quota as reached before the username has loaded", () => {
-    // 登录态还没落地时 username 是 null，此时所有缺 creator_username 的老画布都会
-    // 归到匿名桶里。拿这个数去拦人，等于让真正的作者被自己没建过的画布挡住。
-    const orphans = Array.from({ length: MAX_USER_CREATED_CANVASES_PER_PROJECT }, (_unused, index) =>
-      myCanvas(index, null),
-    );
-
-    expect(hasReachedCanvasCreationLimit(orphans, null)).toBe(false);
-    expect(hasReachedCanvasCreationLimit(orphans, "   ")).toBe(false);
+    expect(canvasCreationQuotaStatus(mine, "alice")).toBe("reached");
+    expect(canvasCreationQuotaStatus(mine.slice(0, -1), "alice")).toBe("available");
   });
 
   it("keeps another user's quota independent", () => {
@@ -716,6 +705,24 @@ describe("freezone canvas creation limit", () => {
       myCanvas(index),
     );
 
-    expect(hasReachedCanvasCreationLimit(mine, "bob")).toBe(false);
+    expect(canvasCreationQuotaStatus(mine, "bob")).toBe("available");
+  });
+
+  it("reports the quota as unknown until the canvas list has loaded", () => {
+    // 列表还没回来时手上是空数组，按它算出来的「还没超」是假的：后端不数个数，
+    // 放行等于真的多建一张。
+    expect(canvasCreationQuotaStatus(undefined, "alice")).toBe("unknown");
+  });
+
+  it("reports the quota as unknown until the username has loaded", () => {
+    // 登录态还没落地时 username 是 null，此时数出来的是「缺 creator_username 的
+    // 老画布」这个匿名桶——既不能拿它拦真作者，也不能当成还有余量。
+    const orphans = Array.from({ length: MAX_USER_CREATED_CANVASES_PER_PROJECT }, (_unused, index) =>
+      myCanvas(index, null),
+    );
+
+    expect(canvasCreationQuotaStatus(orphans, null)).toBe("unknown");
+    expect(canvasCreationQuotaStatus(orphans, "   ")).toBe("unknown");
+    expect(canvasCreationQuotaStatus([], null)).toBe("unknown");
   });
 });

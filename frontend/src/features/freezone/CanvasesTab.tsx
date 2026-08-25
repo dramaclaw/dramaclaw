@@ -115,21 +115,33 @@ export function CanvasesTab({
 
   // 我自己在这个项目里建了几张、还能不能再建。上限是产品配额，后端不拦（见
   // lib/limits.ts），所以拦截只能落在这里。
-  const canvasLimitReached = hasReachedCanvasCreationLimit(items, username);
+  // 只有列表真的回来了才拿它算配额：`items` 在加载中是空数组，按它判定等于把
+  // 「不知道」当成「还有余量」。
+  const canvasQuota = canvasCreationQuotaStatus(
+    canvasesQuery.data ? items : undefined,
+    username,
+  );
 
-  const showCanvasLimitNotice = () =>
-    void alertDialog({
-      title: t("freezone.canvases.createLimitTitle"),
-      description: t("freezone.canvases.createLimitReached", {
-        limit: MAX_USER_CREATED_CANVASES_PER_PROJECT,
-      }),
-    });
+  const showCanvasQuotaNotice = (status: Exclude<CanvasQuotaStatus, "available">) =>
+    void alertDialog(
+      status === "reached"
+        ? {
+            title: t("freezone.canvases.createLimitTitle"),
+            description: t("freezone.canvases.createLimitReached", {
+              limit: MAX_USER_CREATED_CANVASES_PER_PROJECT,
+            }),
+          }
+        : {
+            title: t("freezone.canvases.createQuotaUnknownTitle"),
+            description: t("freezone.canvases.createQuotaUnknown"),
+          },
+    );
 
   // 入口一直可点：置灰的菜单项只会让人反复点一个死掉的按钮，还得自己猜为什么。
-  // 到了上限就在点的那一下把话说清楚，再决定要不要开新建表单。
+  // 点的那一下把话说清楚，再决定要不要开新建表单。
   const handleRequestCreateForm = () => {
-    if (canvasLimitReached) {
-      showCanvasLimitNotice();
+    if (canvasQuota !== "available") {
+      showCanvasQuotaNotice(canvasQuota);
       return;
     }
     setShowCreateForm(true);
@@ -143,8 +155,8 @@ export function CanvasesTab({
   const handleCreateCanvas = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     // 表单可能是超限之前就开着的（别处又建了一张），提交这一下再兜一次。
-    if (canvasLimitReached) {
-      showCanvasLimitNotice();
+    if (canvasQuota !== "available") {
+      showCanvasQuotaNotice(canvasQuota);
       return;
     }
     const name = newCanvasName.trim();
@@ -703,17 +715,26 @@ export function countCanvasesCreatedBy(
   ).length;
 }
 
+/** 配额判定的三态。`unknown` 是前置状态还没齐，不是「还有余量」。 */
+export type CanvasQuotaStatus = "unknown" | "available" | "reached";
+
 /**
- * 还能不能再建。登录态未落地（username 还是 null）时一律放行：这时候数出来的是
- * 匿名桶，拿它拦人会让真正的作者被自己没建过的老画布挡在门外。真超了，等 username
- * 到位后这里自然会拦，再不济提交那一下还有一道。
+ * 还能不能再建。
+ *
+ * 画布列表没回来（`items` 是 undefined）或身份没恢复（username 还是 null）时返回
+ * `unknown`，调用方必须当成「不确定」处理而不是放行：后端不数个数，这个窗口里放过
+ * 去的就是真的多出来一张，而且身份没恢复时建的画布会带着 `creatorUsername: null`
+ * 落库，事后谁的配额都不算。反过来也不能拿匿名桶的数去拦人——那会把真作者挡在自己
+ * 没建过的老画布后面。
  */
-export function hasReachedCanvasCreationLimit(
-  items: FreezoneCanvasSummary[],
+export function canvasCreationQuotaStatus(
+  items: FreezoneCanvasSummary[] | undefined,
   username?: string | null,
-): boolean {
-  if (!username?.trim()) return false;
-  return countCanvasesCreatedBy(items, username) >= MAX_USER_CREATED_CANVASES_PER_PROJECT;
+): CanvasQuotaStatus {
+  if (!items || !username?.trim()) return "unknown";
+  return countCanvasesCreatedBy(items, username) >= MAX_USER_CREATED_CANVASES_PER_PROJECT
+    ? "reached"
+    : "available";
 }
 
 export function userCreatedCanvasId(name: string, username?: string | null): string {

@@ -13,6 +13,8 @@ import { useAuthStore } from "@/stores/auth-store";
 const CANVASES_ZH: Record<string, string> = {
   "freezone.canvases.createTitle": "新建项目画布",
   "freezone.canvases.createLimitTitle": "画布已达上限",
+  "freezone.canvases.createQuotaUnknownTitle": "还确认不了画布数量",
+  "freezone.canvases.createQuotaUnknown": "画布列表还没加载出来，等一下再新建",
   "freezone.canvases.createLimitReached": "每人在一个项目里最多创建 {{limit}} 张画布，删掉一些再新建",
   "freezone.canvases.createPlaceholder": "新画布名称",
   "freezone.canvases.switcher": "切换画布",
@@ -31,10 +33,12 @@ vi.mock("react-i18next", () => ({
 }));
 
 const listFreezoneCanvases = vi.fn();
+const createBlankFreezoneCanvas = vi.fn();
 
 vi.mock("@/api/canvas", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/canvas")>()),
   listFreezoneCanvases: (...args: unknown[]) => listFreezoneCanvases(...args),
+  createBlankFreezoneCanvas: (...args: unknown[]) => createBlankFreezoneCanvas(...args),
 }));
 
 type NoticeOptions = { title?: string; description: string };
@@ -128,6 +132,48 @@ describe("CanvasesTab canvas quota", () => {
     expect(scroller).not.toBeNull();
     expect(scroller!.querySelector('[data-slot="dropdown-menu-radio-item"]')).not.toBeNull();
     expect(scroller!.contains(createItem)).toBe(false);
+  });
+
+  it("refuses to create while the canvas list is still loading", async () => {
+    // 列表没回来之前手上是空数组。按它放行，用户就能在这个窗口里多建一张——
+    // 后端不数个数，多出来的那张是真的。
+    listFreezoneCanvases.mockReturnValue(new Promise(() => {}));
+
+    render(
+      <CanvasesTab project="demo" currentCanvasId="canvas_mine_0" hasPresetLabel={false} />,
+      { wrapper },
+    );
+
+    const user = await openCanvasMenu();
+    await user.click(await screen.findByText("新建项目画布"));
+
+    expect(screen.queryByPlaceholderText("新画布名称")).toBeNull();
+    expect(createBlankFreezoneCanvas).not.toHaveBeenCalled();
+    expect(alertDialog).toHaveBeenCalledTimes(1);
+    expect(alertDialog.mock.calls[0][0]).toMatchObject({
+      title: "还确认不了画布数量",
+      description: "画布列表还没加载出来，等一下再新建",
+    });
+  });
+
+  it("refuses to create before the username has been restored", async () => {
+    // 身份没恢复时数出来的是匿名桶，既拦不住真作者，也不能当成还有余量；
+    // 真放过去，这张画布会带着 creatorUsername: null 落库，谁的配额都不算。
+    useAuthStore.setState({ username: null, role: null });
+    listFreezoneCanvases.mockResolvedValue([myCanvas(0)]);
+
+    render(
+      <CanvasesTab project="demo" currentCanvasId="canvas_mine_0" hasPresetLabel={false} />,
+      { wrapper },
+    );
+
+    const user = await openCanvasMenu();
+    await user.click(await screen.findByText("新建项目画布"));
+
+    expect(screen.queryByPlaceholderText("新画布名称")).toBeNull();
+    expect(createBlankFreezoneCanvas).not.toHaveBeenCalled();
+    expect(alertDialog).toHaveBeenCalledTimes(1);
+    expect(alertDialog.mock.calls[0][0]).toMatchObject({ title: "还确认不了画布数量" });
   });
 
   it("opens the create form without a dialog below the quota", async () => {

@@ -92,11 +92,21 @@ export function ShareProjectDialog({
     [grantRows],
   );
   // 项目最多分享给固定人数（所有者不占名额）。后端不数人头，这里是唯一拦截点。
-  const shareLimitReached = grantRows.length >= MAX_PROJECT_GRANTS;
+  // 名单没回来之前 `grantRows` 是空的，那不是「零个人」而是「不知道几个人」——
+  // 按它放行，这一下加进去的可能就是真的第 26 个。
+  const grantsReady = !grants.isLoading && grants.data !== undefined;
+  const shareLimitReached = grantsReady && grantRows.length >= MAX_PROJECT_GRANTS;
   const shareLimitHint = t("project.shareDialog.limitReached", { limit: MAX_PROJECT_GRANTS });
 
   const handleAdd = async () => {
     // 按钮不置灰：点得到，才有地方把「为什么加不进去」说清楚。
+    if (!grantsReady) {
+      void alertDialog({
+        title: t("project.shareDialog.quotaUnknownTitle"),
+        description: t("project.shareDialog.quotaUnknown"),
+      });
+      return;
+    }
     if (shareLimitReached) {
       void alertDialog({
         title: t("project.shareDialog.limitTitle"),
@@ -252,17 +262,20 @@ export function ShareProjectDialog({
               <span className="text-sm font-medium text-foreground">
                 {t("project.shareDialog.members")}
               </span>
-              <span
-                className={cn(
-                  "text-xs tabular-nums",
-                  shareLimitReached ? "text-destructive" : "text-muted-foreground",
-                )}
-              >
-                {t("project.shareDialog.memberCount", {
-                  count: grantRows.length,
-                  limit: MAX_PROJECT_GRANTS,
-                })}
-              </span>
+              {/* 名单没回来之前不报数：显示 0/25 等于给了一个假的余量。 */}
+              {grantsReady && (
+                <span
+                  className={cn(
+                    "text-xs tabular-nums",
+                    shareLimitReached ? "text-destructive" : "text-muted-foreground",
+                  )}
+                >
+                  {t("project.shareDialog.memberCount", {
+                    count: grantRows.length,
+                    limit: MAX_PROJECT_GRANTS,
+                  })}
+                </span>
+              )}
             </div>
             <div className="space-y-2">
               {project && (

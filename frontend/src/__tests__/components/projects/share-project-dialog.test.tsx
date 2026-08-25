@@ -31,6 +31,8 @@ const SHARE_DIALOG_ZH: Record<string, string> = {
   "project.shareDialog.inactiveAccessChanged": "用户当前无法访问此项目",
   "project.shareDialog.limitReached": "最多只能分享给 {{limit}} 人",
   "project.shareDialog.limitTitle": "分享人数已达上限",
+  "project.shareDialog.quotaUnknownTitle": "还确认不了成员数量",
+  "project.shareDialog.quotaUnknown": "成员列表还没加载出来，等它加载完再添加",
   "project.shareDialog.memberCount": "{{count}}/{{limit}}",
   "common.close": "关闭",
 };
@@ -63,6 +65,7 @@ vi.mock("@/components/confirm-dialog-host", () => ({
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: false }));
 const queryMocks = vi.hoisted(() => ({
   grants: [] as Array<Record<string, unknown>>,
+  grantsLoading: false,
   deleteGrant: vi.fn(),
   useUserSearch: vi.fn(),
 }));
@@ -73,10 +76,10 @@ vi.mock("@/lib/runtime-config", () => ({
 }));
 
 vi.mock("@/lib/queries/projects", () => ({
-  useProjectGrants: () => ({
-    data: { data: queryMocks.grants },
-    isLoading: false,
-  }),
+  useProjectGrants: () =>
+    queryMocks.grantsLoading
+      ? { data: undefined, isLoading: true }
+      : { data: { data: queryMocks.grants }, isLoading: false },
   useUserSearch: (...args: unknown[]) => {
     queryMocks.useUserSearch(...args);
     return { data: { data: [] } };
@@ -106,6 +109,7 @@ describe("ShareProjectDialog (edition gating)", () => {
   beforeEach(() => {
     runtimeState.isCeRuntime = false;
     queryMocks.grants = [];
+    queryMocks.grantsLoading = false;
     queryMocks.deleteGrant.mockReset();
     queryMocks.useUserSearch.mockClear();
     addGrantMock.mockClear();
@@ -184,6 +188,7 @@ describe("ShareProjectDialog (share quota)", () => {
   beforeEach(() => {
     runtimeState.isCeRuntime = false;
     queryMocks.grants = [];
+    queryMocks.grantsLoading = false;
     addGrantMock.mockClear();
     alertDialogMock.mockClear();
   });
@@ -216,6 +221,23 @@ describe("ShareProjectDialog (share quota)", () => {
       description: `最多只能分享给 ${MAX_PROJECT_GRANTS} 人`,
     });
     expect(screen.getByText(`最多只能分享给 ${MAX_PROJECT_GRANTS} 人`)).toBeInTheDocument();
+  });
+
+  it("refuses to add while the member list is still loading", async () => {
+    // 名单没回来时手上是空的，按它放行等于把「不知道几个人」当成「一个都没有」。
+    // grants 端点不数人头，这一下加进去的就是真的第 26 个。
+    queryMocks.grantsLoading = true;
+    renderDialog();
+
+    await userEvent.type(screen.getByPlaceholderText("搜索用户名"), "carol");
+    await userEvent.click(screen.getByRole("button", { name: /添加/ }));
+
+    expect(addGrantMock).not.toHaveBeenCalled();
+    expect(alertDialogMock).toHaveBeenCalledTimes(1);
+    expect(alertDialogMock.mock.calls[0][0]).toMatchObject({
+      title: "还确认不了成员数量",
+      description: "成员列表还没加载出来，等它加载完再添加",
+    });
   });
 
   it("shows how many of the allowed slots are used", () => {
