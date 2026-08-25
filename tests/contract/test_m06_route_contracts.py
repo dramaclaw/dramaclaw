@@ -228,6 +228,8 @@ def m06_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from novelvideo.api.deps import ProjectResolution
     from novelvideo.api.routes import freezone, ingest
     from novelvideo.freezone.paths import uploads_dir
+    from novelvideo.project_config import set_narrator_reference_audio_in_state_dir
+    from novelvideo.seedance2_i2v.voice_clone import file_sha256
     from novelvideo.utils.path_resolver import (
         canonical_beat_director_env_only_path,
         canonical_beat_selected_background_path,
@@ -251,6 +253,13 @@ def m06_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     mask_image = _write_png(uploads_dir(project_dir) / "mask.png")
     video_file = _write_media(uploads_dir(project_dir) / "clip.mp4", b"video")
     audio_file = _write_media(uploads_dir(project_dir) / "voice.mp3", b"audio")
+    store.project_dir = str(project_dir)
+    store.state_dir = str(state_dir)
+    set_narrator_reference_audio_in_state_dir(
+        state_dir,
+        relative_path=audio_file.relative_to(project_dir).as_posix(),
+        sha256=file_sha256(audio_file),
+    )
     scene_master = _write_png(canonical_scene_master_path(project_dir, _SCENE))
     scene_reverse = _write_png(canonical_scene_reverse_master_path(project_dir, _SCENE))
     selected_background = _write_png(canonical_beat_selected_background_path(project_dir, 1, 1))

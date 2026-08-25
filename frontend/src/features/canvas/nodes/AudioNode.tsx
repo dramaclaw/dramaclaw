@@ -216,7 +216,13 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
         const res = await getCachedAudioReferences(project);
         if (cancelled) return;
         const first = (res.available ?? [])[0];
-        if (!first) return;
+        if (!first) {
+          updateNodeData(id, {
+            voiceAvailable: false,
+            voiceLabel: '未配置可用声线',
+          });
+          return;
+        }
         const fresh = useCanvasStore.getState().nodes.find((n) => n.id === id);
         if (!fresh) return;
         const freshData = fresh.data as AudioNodeData;
@@ -256,6 +262,7 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
         }
         updateNodeData(id, {
           voiceRef: ref,
+          voiceAvailable: true,
           voiceLabel: nextLabel,
           voiceLanguage: nextLanguage,
         });

@@ -303,6 +303,93 @@ async def test_user_custom_voice_generation_uses_requester_account(
 
 
 @pytest.mark.asyncio
+async def test_resolve_speech_voice_reports_missing_project_narrator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        audio_node,
+        "load_effective_narration_style_for_voice_from_state_dir",
+        lambda *_args: "third_person",
+    )
+    monkeypatch.setattr(
+        audio_node,
+        "load_narrator_reference_audio_from_state_dir",
+        lambda *_args: {},
+    )
+
+    with pytest.raises(audio_node.VoicePrerequisiteError) as caught:
+        await audio_node.resolve_speech_voice(
+            store=FakeProjectStore(tmp_path),
+            username="alice",
+            project="demo",
+            project_dir=tmp_path,
+            voice_ref={"scope": "project_narrator"},
+        )
+
+    assert caught.value.error_code == "voice_prereq_required"
+    assert str(caught.value) == "项目解说人声线未配置，请上传或录制解说人音频"
+
+
+@pytest.mark.asyncio
+async def test_resolve_speech_voice_reports_unreadable_project_narrator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        audio_node,
+        "load_effective_narration_style_for_voice_from_state_dir",
+        lambda *_args: "third_person",
+    )
+    monkeypatch.setattr(
+        audio_node,
+        "load_narrator_reference_audio_from_state_dir",
+        lambda *_args: {"path": "assets/narrator/missing.wav"},
+    )
+
+    with pytest.raises(audio_node.VoicePrerequisiteError) as caught:
+        await audio_node.resolve_speech_voice(
+            store=FakeProjectStore(tmp_path),
+            username="alice",
+            project="demo",
+            project_dir=tmp_path,
+            voice_ref={"scope": "project_narrator"},
+        )
+
+    assert str(caught.value) == "解说人声线文件无法读取，请检查文件是否完整"
+
+
+@pytest.mark.asyncio
+async def test_resolve_speech_voice_returns_explicit_user_voice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = audio_node.FreezoneVoiceRefResolution(
+        tmp_path / "voice.mp3",
+        "sha",
+        USER_VOICE_SCOPE,
+    )
+    monkeypatch.setattr(audio_node, "resolve_user_audio_voice", lambda *_args: expected)
+    monkeypatch.setattr(
+        audio_node,
+        "load_effective_narration_style_for_voice_from_state_dir",
+        lambda *_args: "third_person",
+    )
+
+    narration_style, resolved = await audio_node.resolve_speech_voice(
+        store=SimpleNamespace(state_dir=str(tmp_path)),
+        username="owner",
+        account_voice_username="viewer",
+        project="demo",
+        project_dir=tmp_path,
+        voice_ref={"scope": USER_VOICE_SCOPE, "voice_id": "fv_viewer"},
+    )
+
+    assert narration_style == "third_person"
+    assert resolved is expected
+
+
+@pytest.mark.asyncio
 async def test_freezone_audio_speech_drama_first_person_uses_project_narrator(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

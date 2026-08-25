@@ -59,6 +59,10 @@ class FreezoneVoiceRefResolution:
     source: str
 
 
+class VoicePrerequisiteError(RuntimeError):
+    error_code = "voice_prereq_required"
+
+
 def freezone_audio_speech_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_audio_speech") / f"{job_id}.mp3"
 
@@ -481,14 +485,17 @@ async def resolve_speech_voice(
         voice_characters = _projected_character_rows(projection.require("voice_character"))
         narrator_store = _PathOnlyStore(str(project_dir))
 
-    selected_voice = await _resolve_voice_ref(
-        store=store,
-        username=username,
-        account_voice_username=account_voice_username,
-        project_dir=project_dir,
-        voice_ref=voice_ref,
-        characters=voice_characters,
-    )
+    try:
+        selected_voice = await _resolve_voice_ref(
+            store=store,
+            username=username,
+            account_voice_username=account_voice_username,
+            project_dir=project_dir,
+            voice_ref=voice_ref,
+            characters=voice_characters,
+        )
+    except RuntimeError as exc:
+        raise VoicePrerequisiteError(str(exc)) from exc
     if selected_voice is None:
         if projection is None:
             descriptor = load_narrator_reference_audio_from_state_dir(store.state_dir)
@@ -502,6 +509,7 @@ async def resolve_speech_voice(
                 if narration_style == "first_person"
                 else None
             )
+        narrator_descriptor_present = bool(str(descriptor.get("path") or "").strip())
         voice = resolve_narrator_source(
             store=narrator_store,
             narration_style=narration_style,
@@ -509,7 +517,15 @@ async def resolve_speech_voice(
             characters=characters,
         )
         if voice.audio_path is None:
-            raise RuntimeError(voice.error or "解说声线缺失")
+            if voice.source == "project_narrator":
+                message = (
+                    "解说人声线文件无法读取，请检查文件是否完整"
+                    if narrator_descriptor_present
+                    else "项目解说人声线未配置，请上传或录制解说人音频"
+                )
+            else:
+                message = voice.error or "解说声线缺失"
+            raise VoicePrerequisiteError(message)
         selected_voice = FreezoneVoiceRefResolution(
             voice.audio_path,
             voice.sha256,

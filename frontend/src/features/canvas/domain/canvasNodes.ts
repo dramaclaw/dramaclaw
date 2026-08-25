@@ -496,6 +496,8 @@ export interface AudioNodeData extends NodeDisplayData {
   emotionPrompt?: string;
   /** 选中的声线引用（freezone-audio references 接口里的一条记录）。 */
   voiceRef?: AudioVoiceRef | null;
+  /** 最近一次声线列表加载是否确认至少存在一条可用声线；缺省表示尚未确认。 */
+  voiceAvailable?: boolean;
   /** 当前声线的展示名（缓存自 references 接口，避免每次选完都要重新拉列表）。 */
   voiceLabel?: string;
   /** 当前声线的语言标签（来自 references；可空）。 */

@@ -25,7 +25,7 @@ from urllib.parse import quote, unquote, urlencode, urlsplit
 from fastapi import (
     APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import (
@@ -105,11 +105,13 @@ from novelvideo.media_model_request_schema import (
 )
 from novelvideo.ports.authz import find_authz_error
 from novelvideo.freezone.audio_node import (
+    VoicePrerequisiteError,
     create_user_audio_voice,
     freezone_audio_eleven_music_output_path,
     freezone_audio_speech_output_path,
     generate_freezone_audio_speech,
     list_user_audio_voices,
+    resolve_speech_voice,
     resolve_user_audio_voice,
 )
 from novelvideo.freezone.canvas_lock import CanvasLockBusy
@@ -9366,6 +9368,43 @@ async def freezone_audio_speech(
     billable_chars = count_billable_text_chars(body.text)
 
     voice_ref_payload = body.voice_ref.model_dump() if body.voice_ref else None
+    store = await make_sqlite_store_for_context(ctx)
+    try:
+        narration_style, speech_voice = await resolve_speech_voice(
+            store=store,
+            username=username,
+            project=project_name,
+            account_voice_username=account_voice_username,
+            project_dir=project_dir,
+            voice_ref=voice_ref_payload,
+        )
+    except VoicePrerequisiteError as exc:
+        logger.info(
+            "freezone_audio_speech_voice_prereq_failed",
+            extra={
+                "project_id": ctx.project_id,
+                "voice_ref_present": body.voice_ref is not None,
+                "voice_ref_scope": str((voice_ref_payload or {}).get("scope") or "default"),
+                "error_code": exc.error_code,
+            },
+        )
+        return JSONResponse(
+            status_code=409,
+            content={"ok": False, "code": exc.error_code, "error": str(exc)},
+        )
+    finally:
+        await store.close()
+
+    logger.info(
+        "freezone_audio_speech_voice_resolved",
+        extra={
+            "project_id": ctx.project_id,
+            "narration_style": narration_style,
+            "voice_ref_present": body.voice_ref is not None,
+            "voice_ref_scope": str((voice_ref_payload or {}).get("scope") or "default"),
+            "speech_voice_source": speech_voice.source,
+        },
+    )
 
     try:
         job_id = _new_job_id()
