@@ -25,6 +25,8 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
   const showcaseTransitionTimer = useRef<number | null>(null);
   const showcaseTransitioning = useRef(false);
   const failedShowcaseIds = useRef<Set<string>>(new Set());
+  const showcaseIndexRef = useRef(0);
+  const pendingShowcaseAdvance = useRef(false);
   const [showcaseUnavailable, setShowcaseUnavailable] = useState(false);
   const activeShowcase = loginModalShowcaseVideos[showcaseIndex] ?? loginModalShowcaseVideos[0];
   const outgoingShowcase =
@@ -36,18 +38,32 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
       ]
     : [{ item: activeShowcase, outgoing: false }];
 
-  const showNextShowcase = () => {
-    if (showcaseTransitioning.current) return;
+  const goToShowcase = (nextIndex: number) => {
+    showcaseIndexRef.current = nextIndex;
+    setShowcaseIndex(nextIndex);
+  };
 
-    const nextIndex = (showcaseIndex + 1) % loginModalShowcaseVideos.length;
+  const showNextShowcase = () => {
+    if (showcaseTransitioning.current) {
+      // 过渡期内的推进请求不能丢。CDN 整体不可用时，incoming 片源会在锁释放前
+      // 就报错，而 error 对同一个元素只发一次 —— 直接 return 会永久停在这个失败
+      // 片源上，既不继续尝试剩余片源，也走不到静态兜底。记下来，过渡结束后补。
+      pendingShowcaseAdvance.current = true;
+      return;
+    }
+
+    // 读 ref 而非闭包：补偿推进是在过渡计时器回调里发起的，那个闭包捕获的
+    // showcaseIndex 已经过期了。
+    const currentIndex = showcaseIndexRef.current;
+    const nextIndex = (currentIndex + 1) % loginModalShowcaseVideos.length;
     if (reducedMotion) {
-      setShowcaseIndex(nextIndex);
+      goToShowcase(nextIndex);
       return;
     }
 
     showcaseTransitioning.current = true;
-    setOutgoingShowcaseIndex(showcaseIndex);
-    setShowcaseIndex(nextIndex);
+    setOutgoingShowcaseIndex(currentIndex);
+    goToShowcase(nextIndex);
 
     if (showcaseTransitionTimer.current !== null) {
       window.clearTimeout(showcaseTransitionTimer.current);
@@ -56,19 +72,30 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
       setOutgoingShowcaseIndex(null);
       showcaseTransitioning.current = false;
       showcaseTransitionTimer.current = null;
+      if (pendingShowcaseAdvance.current) {
+        pendingShowcaseAdvance.current = false;
+        showNextShowcase();
+      }
     }, SHOWCASE_CROSSFADE_DURATION_MS);
   };
 
-  // reducedMotion 下 autoPlay 关闭，onEnded/onTimeUpdate 都不会触发，轮换的唯一
-  // 驱动就剩 onError；而该分支不上过渡锁。CDN 整体不可用时会一直卸载/重建
-  // <video> 并重复发请求。逐个记下失败项，全部失败就停在 .loginMedia 的静态底色上。
+  // 轮换在 reducedMotion 下的唯一驱动就是 onError（此时 autoPlay 关闭，
+  // onEnded/onTimeUpdate 都不触发）。逐个记下失败片源，全部失败就停在
+  // .loginMedia 的静态底色上，不再卸载/重建 <video> 反复发请求。
   const handleShowcaseError = (id: string) => {
     failedShowcaseIds.current.add(id);
-    if (failedShowcaseIds.current.size >= loginModalShowcaseVideos.length) {
-      setShowcaseUnavailable(true);
+    if (failedShowcaseIds.current.size < loginModalShowcaseVideos.length) {
+      showNextShowcase();
       return;
     }
-    showNextShowcase();
+    pendingShowcaseAdvance.current = false;
+    if (showcaseTransitionTimer.current !== null) {
+      window.clearTimeout(showcaseTransitionTimer.current);
+      showcaseTransitionTimer.current = null;
+    }
+    showcaseTransitioning.current = false;
+    setOutgoingShowcaseIndex(null);
+    setShowcaseUnavailable(true);
   };
 
   useEffect(() => {
@@ -79,9 +106,10 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
     showcaseTransitioning.current = false;
     setOutgoingShowcaseIndex(null);
     failedShowcaseIds.current.clear();
+    pendingShowcaseAdvance.current = false;
     setShowcaseUnavailable(false);
     if (!open) return;
-    setShowcaseIndex(0);
+    goToShowcase(0);
   }, [open]);
 
   useEffect(
