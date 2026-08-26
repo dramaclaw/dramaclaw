@@ -21,6 +21,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from novelvideo.shared.provider_errors import (
+    classify_provider_video_task_error,
+    provider_video_error_code_from_text,
+)
+
 import aiohttp
 import websockets
 from dotenv import load_dotenv
@@ -115,6 +120,10 @@ def _safe_video_error_code(exc: BaseException, fallback: str) -> str:
         "EGRESS_OPERATION_REPLAYED",
     }:
         return code
+    # 网关用 VIDEO_* 枚举码打回（尺寸/审核）时放行该码；原文本身不回传。
+    provider_code = provider_video_error_code_from_text(str(exc))
+    if provider_code:
+        return provider_code
     return fallback
 
 
@@ -3579,7 +3588,10 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                         or "DramaClawAPI video task failed"
                     )
                     safe_task_error = (
-                        "EGRESS_OPERATION_UNKNOWN"
+                        (
+                            classify_provider_video_task_error(task)
+                            or "EGRESS_OPERATION_UNKNOWN"
+                        )
                         if organization_request
                         else str(error)
                     )

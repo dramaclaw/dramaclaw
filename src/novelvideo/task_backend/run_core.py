@@ -633,6 +633,19 @@ def _project_task_failure_for_exception(
     except Exception:
         pass
 
+    try:
+        from novelvideo.shared.provider_errors import provider_video_error_payload
+
+        provider_payload = provider_video_error_payload(exc)
+        if provider_payload is not None:
+            return (
+                str(provider_payload.get("message") or ""),
+                provider_payload,
+                True,
+            )
+    except Exception:
+        pass
+
     if not isinstance(exc, Exception):
         raise exc
     from novelvideo.utils.error_redaction import safe_exception_message
