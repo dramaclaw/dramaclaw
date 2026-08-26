@@ -469,7 +469,10 @@ async def _start_or_enqueue_freezone_video_gen(
             and str(item.get("path") or "").strip()
         ]
         if last_frame_path:
-            image_input_paths.append(str(last_frame_path))
+            image_input_paths.append(str(last_frame_path).strip())
+        # 关键帧路由把尾帧同时放进 reference_items 和 last_frame_path，去重后
+        # 同一文件只读一次头、报错也只列一次。
+        image_input_paths = list(dict.fromkeys(path for path in image_input_paths if path))
         if image_input_paths:
             try:
                 # 读文件头走线程：/data/output 在 s3fs 上，同步 IO 会卡住事件循环。

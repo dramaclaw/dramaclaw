@@ -9514,3 +9514,47 @@ async def test_freezone_video_generation_skips_dimension_gate_for_non_seedance_b
 
     assert result["data"]["task_type"] == "freezone_video_gen"
     assert captured["task_type"] == "freezone_video_gen"
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_generation_reports_duplicate_last_frame_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """关键帧路由会把尾帧同时放进 reference_items 和 last_frame_path，预检要去重。"""
+
+    async def unexpected_enqueue(*_args, **_kwargs):
+        raise AssertionError("image validation must happen before enqueue")
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=unexpected_enqueue),
+    )
+    small = tmp_path / "last.png"
+    Image.new("RGB", (338, 191), (255, 255, 255)).save(small, format="PNG")
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes._start_or_enqueue_freezone_video_gen(
+            ctx=_project_ctx(tmp_path),
+            username="admin",
+            project="demo",
+            project_dir=tmp_path / "project",
+            output_dir=str(tmp_path / "output"),
+            job_id="job_dup_last_frame",
+            prompt="首尾帧生成",
+            reference_items=[{"type": "image", "path": str(small), "role": "尾帧"}],
+            aspect_ratio="16:9",
+            resolution="720p",
+            duration_seconds=6,
+            generate_audio=False,
+            human_review=False,
+            scene_optimize=None,
+            backend="newapi_seedance-2.0",
+            last_frame_path=str(small),
+            gen_mode="keyframe",
+            capabilities={},
+        )
+
+    assert exc.value.status_code == 400
+    assert str(exc.value.detail).count("last.png (338x191)") == 1
