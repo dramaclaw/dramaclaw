@@ -290,6 +290,58 @@ describe("freezone preset auto refresh guard", () => {
     ).toBe(true);
   });
 
+  // 个人画布 id 由用户名推出（personalCanvasIdForUsername），A、B 两个项目下是
+  // 同一个 canvasId；freezone 换项目又不再 remount，所以这几个判定必须带上项目。
+  it("treats a same-id canvas in another project as not hydrated", () => {
+    expect(
+      shouldClearProjectionStatuses({
+        canvasId: "user_eric",
+        hydratedCanvasId: "user_eric",
+        projectionKeyCount: 2,
+        project: "proj_b",
+        hydratedProject: "proj_a",
+      }),
+    ).toBe(true);
+    expect(
+      shouldFetchProjectionStatuses({
+        canvasId: "user_eric",
+        hydratedCanvasId: "user_eric",
+        projectionKeyCount: 2,
+        revision: 8,
+        syncStatus: "ready",
+        project: "proj_b",
+        hydratedProject: "proj_a",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not reuse another project's projection revision check", () => {
+    const lastChecked = {
+      canvasId: "user_eric",
+      revision: 5,
+      refreshToken: 0,
+      project: "proj_a",
+    };
+    expect(
+      shouldSkipProjectionStatusRevision({
+        canvasId: "user_eric",
+        revision: 5,
+        refreshToken: 0,
+        lastChecked,
+        project: "proj_b",
+      }),
+    ).toBe(false);
+    expect(
+      shouldSkipProjectionStatusRevision({
+        canvasId: "user_eric",
+        revision: 5,
+        refreshToken: 0,
+        lastChecked,
+        project: "proj_a",
+      }),
+    ).toBe(true);
+  });
+
   it("does not restart projection status requests after session expiry", () => {
     expect(
       shouldFetchProjectionStatuses({

@@ -189,11 +189,18 @@ export function shouldClearProjectionStatuses({
   canvasId,
   hydratedCanvasId,
   projectionKeyCount,
+  project,
+  hydratedProject,
 }: {
   canvasId: string;
   hydratedCanvasId: string | null;
   projectionKeyCount: number;
+  /** 省略即不校验项目（旧调用方 / 单画布场景）。 */
+  project?: string;
+  hydratedProject?: string | null;
 }): boolean {
+  // 个人画布跨项目同 id，只比 canvasId 认不出「还停在上一个项目的数据上」。
+  if (project !== undefined && hydratedProject !== project) return true;
   return hydratedCanvasId !== canvasId || projectionKeyCount === 0;
 }
 
@@ -204,6 +211,8 @@ export function shouldFetchProjectionStatuses({
   revision,
   sessionExpired = false,
   syncStatus,
+  project,
+  hydratedProject,
 }: {
   canvasId: string;
   hydratedCanvasId: string | null;
@@ -211,9 +220,17 @@ export function shouldFetchProjectionStatuses({
   revision: number | null;
   sessionExpired?: boolean;
   syncStatus: CanvasSyncStatus;
+  project?: string;
+  hydratedProject?: string | null;
 }): boolean {
   if (sessionExpired) return false;
-  if (shouldClearProjectionStatuses({ canvasId, hydratedCanvasId, projectionKeyCount })) {
+  if (shouldClearProjectionStatuses({
+    canvasId,
+    hydratedCanvasId,
+    projectionKeyCount,
+    project,
+    hydratedProject,
+  })) {
     return false;
   }
   return syncStatus === "ready" && revision != null;
@@ -224,13 +241,23 @@ export function shouldSkipProjectionStatusRevision({
   revision,
   refreshToken,
   lastChecked,
+  project,
 }: {
   canvasId: string;
   revision: number;
   refreshToken: number;
-  lastChecked: { canvasId: string; revision: number; refreshToken: number } | null;
+  lastChecked: {
+    canvasId: string;
+    revision: number;
+    refreshToken: number;
+    project?: string;
+  } | null;
+  project?: string;
 }): boolean {
   if (lastChecked?.canvasId !== canvasId) return false;
+  // revision 是每张画布自己的小整数，跨项目撞号是常事；不比项目就会把「上一个
+  // 项目已经查过 rev 5」当成「这个项目的 rev 5 也查过」，真正的拉取被跳掉。
+  if (project !== undefined && lastChecked.project !== project) return false;
   return lastChecked.revision === revision && lastChecked.refreshToken === refreshToken;
 }
 
@@ -436,7 +463,17 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
     canvasId: string;
     revision: number;
     refreshToken: number;
+    project: string;
   } | null>(null);
+  // 这三处 projection 状态本来靠「换项目必然 remount」复位；_app.tsx 把项目 id 从
+  // routeTransitionKey 里摘掉之后 freezone 不再重挂，只能自己按 项目+画布 复位。
+  const [projectionScopeKey, setProjectionScopeKey] = useState(currentCanvasKey);
+  if (projectionScopeKey !== currentCanvasKey) {
+    setProjectionScopeKey(currentCanvasKey);
+    setProjectionStatusRefreshToken(0);
+    setProjectionMonitoringExpired(false);
+    lastProjectionStatusRevisionRef.current = null;
+  }
 
   const invalidateCommittedTargetQueries = useCallback((target: PushTarget) => {
     if (isDirectorWorldSourceSlotTarget(target) || target.kind === "scene_director_world") {
@@ -483,11 +520,20 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
   }, [canvasId, projectId]);
 
   useEffect(() => {
-    if (sync.status === "ready" && sync.hydratedCanvasId === canvasId) {
+    // 必须连 hydratedProject 一起比：个人画布 id 由用户名推出，跨项目是同一个
+    // canvasId，而换项目那一次提交里 sync.* 还是上一个项目的值（useCanvasSync 的
+    // hydrate effect 只是「排队」把 status 改成 loading，闭包里读到的仍是 ready）。
+    // 少比这一项，换项目时会被当成「新画布已经画出来了」，全屏 loading 直接不出现，
+    // 露给用户的是刚被清空的画布加一层半透明遮罩。
+    if (
+      sync.status === "ready" &&
+      sync.hydratedCanvasId === canvasId &&
+      sync.hydratedProject === projectId
+    ) {
       lastRenderedCanvasKey = canvasKey(projectId, canvasId);
       setRenderedCanvasKey(lastRenderedCanvasKey);
     }
-  }, [canvasId, projectId, sync.hydratedCanvasId, sync.status]);
+  }, [canvasId, projectId, sync.hydratedCanvasId, sync.hydratedProject, sync.status]);
 
   const projectionKeys = useMemo(
     () => projectionKeysFromMetadata(sync.metadata),
@@ -502,6 +548,8 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
       revision: sync.revision,
       sessionExpired: projectionMonitoringExpired,
       syncStatus: sync.status,
+      project: projectId,
+      hydratedProject: sync.hydratedProject,
     })) {
       return;
     }
@@ -511,9 +559,11 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
     });
   }, [
     canvasId,
+    projectId,
     projectionMonitoringExpired,
     projectionKeys.length,
     sync.hydratedCanvasId,
+    sync.hydratedProject,
     sync.revision,
     sync.status,
   ]);
@@ -523,6 +573,8 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
       canvasId,
       hydratedCanvasId: sync.hydratedCanvasId,
       projectionKeyCount: projectionKeys.length,
+      project: projectId,
+      hydratedProject: sync.hydratedProject,
     })) {
       clearCanvasProjectionStatuses();
       return;
@@ -535,6 +587,8 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
       revision,
       sessionExpired: projectionMonitoringExpired,
       syncStatus: sync.status,
+      project: projectId,
+      hydratedProject: sync.hydratedProject,
     })) {
       return;
     }
@@ -548,6 +602,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
       revision,
       refreshToken: projectionStatusRefreshToken,
       lastChecked: lastProjectionStatusRevisionRef.current,
+      project: projectId,
     })) {
       return;
     }
@@ -560,6 +615,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
             canvasId,
             revision,
             refreshToken: projectionStatusRefreshToken,
+            project: projectId,
           };
           setCanvasProjectionStatuses(result.projections);
         }
@@ -579,6 +635,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
     projectionKeys,
     projectionStatusRefreshToken,
     sync.hydratedCanvasId,
+    sync.hydratedProject,
     sync.revision,
     sync.status,
   ]);
