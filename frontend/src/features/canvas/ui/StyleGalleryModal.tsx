@@ -100,9 +100,9 @@ export function StyleGalleryModal({
         aria-label={detail ? `风格 ${detail.label}` : '风格图墙'}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/[0.08] px-4">
-          <div className="flex items-center gap-2">
-            {detail && (
+        {detail ? (
+          <div className="flex h-12 shrink-0 items-center justify-between px-4">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => setDetailId(null)}
@@ -111,21 +111,8 @@ export function StyleGalleryModal({
               >
                 <ArrowLeft className="size-4" />
               </button>
-            )}
-            <span className="text-sm font-medium text-text-dark">
-              {detail ? detail.label : '风格'}
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            {!detail && selectedId && (
-              <button
-                type="button"
-                onClick={() => onSelect(null)}
-                className="h-7 rounded-md px-2 text-[11px] font-medium text-text-dark/78 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
-              >
-                清除风格
-              </button>
-            )}
+              <span className="text-sm font-medium text-text-dark">{detail.label}</span>
+            </div>
             <button
               type="button"
               onClick={onClose}
@@ -135,7 +122,7 @@ export function StyleGalleryModal({
               <X className="size-4" />
             </button>
           </div>
-        </div>
+        ) : null}
 
         {detail ? (
           <div className="flex flex-1 gap-4 overflow-hidden p-4">
@@ -153,42 +140,65 @@ export function StyleGalleryModal({
                 />
               ))}
             </div>
-            <div className="flex w-[320px] shrink-0 flex-col gap-3">
-              <p className="ui-scrollbar flex-1 overflow-y-auto whitespace-pre-line rounded-[8px] border border-white/[0.08] bg-white/[0.03] p-3 text-xs leading-relaxed text-text-dark/80">
-                {detail.style_prompt}
-              </p>
-              <button
-                type="button"
-                onClick={() => onSelect(detail.id)}
-                className="h-9 shrink-0 rounded-md bg-white/[0.92] text-sm font-medium text-black transition-colors hover:bg-white"
-              >
-                使用
-              </button>
+            <div className="w-[320px] shrink-0">
+              <div className="flex max-h-[min(420px,calc(82vh-96px))] flex-col gap-4 rounded-[8px] border border-white/[0.08] bg-white/[0.03] p-3">
+                <p className="ui-scrollbar min-h-0 overflow-y-auto whitespace-pre-line text-xs leading-relaxed text-text-dark/80">
+                  {detail.style_prompt}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => onSelect(detail.id)}
+                  className="h-8 shrink-0 rounded-[6px] bg-white/[0.92] text-sm font-medium text-black transition-colors hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent-rgb))]"
+                >
+                  使用
+                </button>
+              </div>
             </div>
           </div>
         ) : (
           <div className="flex flex-1 flex-col overflow-hidden">
-            {categories.length > 1 && (
-              <div className="ui-scrollbar flex shrink-0 items-center gap-1.5 overflow-x-auto px-4 pt-3">
-                {[{ key: ALL_CATEGORIES, label: '全部' }, ...categories].map((entry) => {
-                  const isActive = entry.key === category;
-                  return (
-                    <button
-                      key={entry.key}
-                      type="button"
-                      onClick={() => setCategory(entry.key)}
-                      className={`h-7 shrink-0 rounded-[6px] px-2.5 text-xs font-medium transition-colors ${
-                        isActive
-                          ? 'bg-white/[0.14] text-text-dark'
-                          : 'text-text-dark/62 hover:bg-white/[0.08] hover:text-text-dark'
-                      }`}
-                    >
-                      {entry.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            <div className="flex shrink-0 items-center gap-2 px-4 pb-2 pr-12 pt-4">
+              {categories.length > 1 ? (
+                <div className="ui-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+                  {[{ key: ALL_CATEGORIES, label: '全部' }, ...categories].map((entry) => {
+                    const isActive = entry.key === category;
+                    return (
+                      <button
+                        key={entry.key}
+                        type="button"
+                        onClick={() => setCategory(entry.key)}
+                        className={`h-7 shrink-0 rounded-[6px] px-2.5 text-xs font-medium transition-colors ${
+                          isActive
+                            ? 'bg-white/[0.14] text-text-dark'
+                            : 'text-text-dark/62 hover:bg-white/[0.08] hover:text-text-dark'
+                        }`}
+                      >
+                        {entry.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex-1" />
+              )}
+              {selectedId ? (
+                <button
+                  type="button"
+                  onClick={() => onSelect(null)}
+                  className="h-7 shrink-0 rounded-md px-2 text-[11px] font-medium text-text-dark/78 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
+                >
+                  清除风格
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="关闭"
+                className="absolute right-4 top-2.5 flex size-7 items-center justify-center rounded-md text-text-muted/90 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
             {/* 空态和网格是二选一：以前两块都挂 flex-1 同时渲染，
                 「加载中」被挤到上半屏，下半屏是一片空白网格。 */}
             {templates.length === 0 ? (
@@ -196,7 +206,7 @@ export function StyleGalleryModal({
                 {isLoading ? '加载中…' : '暂无风格模板'}
               </div>
             ) : (
-              <div className="ui-scrollbar flex-1 overflow-y-auto p-4">
+              <div className="ui-scrollbar flex-1 overflow-y-auto p-4 [scrollbar-gutter:stable]">
                 <div className="grid grid-cols-4 gap-3">
                   {visible.map((item) => {
                     const isActive = item.id === selectedId;
@@ -224,10 +234,11 @@ export function StyleGalleryModal({
                             loading="lazy"
                             className="aspect-video w-full object-cover"
                           />
-                          <div className="truncate px-2.5 py-2 pr-16 text-xs font-medium text-text-dark/86">
-                            {item.label}
-                          </div>
                         </button>
+                        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[48%] bg-gradient-to-t from-black/85 via-black/45 to-transparent" />
+                        <div className="pointer-events-none absolute bottom-2.5 left-3 right-16 truncate text-xs font-medium text-white/92">
+                          {item.label}
+                        </div>
                         {isActive && (
                           <Check className="pointer-events-none absolute right-2 top-2 size-4 text-[rgb(var(--accent-rgb))]" />
                         )}
@@ -239,7 +250,7 @@ export function StyleGalleryModal({
                           type="button"
                           onClick={() => onSelect(item.id)}
                           aria-label={`使用${item.label}`}
-                          className="absolute bottom-1.5 right-2 h-6 rounded-md bg-white/[0.12] px-2 text-[11px] font-medium text-text-dark transition-colors hover:bg-white/[0.24] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent-rgb))]"
+                          className="absolute bottom-2 right-2 h-6 rounded-[6px] bg-white/[0.16] px-2 text-[11px] font-medium text-white transition-colors hover:bg-white/[0.28] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent-rgb))]"
                         >
                           使用
                         </button>

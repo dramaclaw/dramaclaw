@@ -10,7 +10,7 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-import { ConfirmDialogHost, confirmDialog } from "@/components/confirm-dialog-host";
+import { ConfirmDialogHost, alertDialog, confirmDialog } from "@/components/confirm-dialog-host";
 
 describe("ConfirmDialogHost", () => {
   it("resolves true when the user confirms", async () => {
@@ -57,6 +57,20 @@ describe("ConfirmDialogHost", () => {
     await expect(second).resolves.toBe(true);
   });
 
+  it("drops the cancel button for notice-only dialogs", async () => {
+    const user = userEvent.setup();
+    render(<ConfirmDialogHost />);
+
+    const pending = alertDialog({ title: "画布已达上限", description: "删掉一些再新建" });
+
+    expect(await screen.findByText("删掉一些再新建")).toBeInTheDocument();
+    // 没有第二条路可选，留个「取消」只会让人以为还能反悔。
+    expect(screen.queryByRole("button", { name: "common.cancel" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "common.ok" }));
+
+    await expect(pending).resolves.toBeUndefined();
+  });
+
   // 回归位：确认框曾经停在 shadcn 原版的 z-50，而素材库弹窗是 z-[300]、画布书签菜单
   // 是 z-[10010]。结果是从素材库里点「删除」，确认框弹在弹窗背后——删不掉也退不出。
   // jsdom 量不了层叠顺序（Tailwind 的类没编译成 CSS），所以这里直接把类名里的 z 值
@@ -76,5 +90,16 @@ describe("ConfirmDialogHost", () => {
       expect(match, `${slot} 身上没有 z-[N]，很可能被改回了 z-50`).not.toBeNull();
       expect(Number(match![1])).toBeGreaterThan(HIGHEST_OVERLAY_Z);
     }
+  });
+
+  it("keeps confirmation dialogs vertically centered", async () => {
+    render(<ConfirmDialogHost />);
+    void confirmDialog({ description: "删除画布？" });
+
+    await screen.findByText("删除画布？");
+    const content = document.querySelector('[data-slot="alert-dialog-content"]');
+
+    expect(content).toHaveClass("top-1/2", "-translate-y-1/2");
+    expect(content).not.toHaveClass("top-24", "translate-y-0");
   });
 });

@@ -72,6 +72,14 @@ export const cinematicVideoLibrary = [
   },
 ] as const;
 
+/** 登录弹窗轮播只选取节奏和画面差异足够明显的作品，避免连续镜头同质化。 */
+export const loginModalShowcaseVideos = [
+  cinematicVideoLibrary[4],
+  cinematicVideoLibrary[1],
+  cinematicVideoLibrary[0],
+  cinematicVideoLibrary[5],
+] as const;
+
 export const cinematicVideos = {
   cs: cinematicVideoLibrary[7].video,
   jqr: cinematicVideoLibrary[1].video,

@@ -26,16 +26,16 @@
   },
   "loginCinematic": {
     "moreInfo": "更多信息",
+    "moreInfoShort": "更多",
     "announcement": {
       "open": "查看公告",
+      "label": "公告",
       "title": "公告中心",
       "close": "关闭公告",
       "confirm": "确认",
       "markAllRead": "全部已读",
       "unread": "{{n}} 条未读",
-      "pinned": "置顶",
-      "expand": "展开这条公告",
-      "collapse": "收起这条公告"
+      "pinned": "置顶"
     }
   },
   "downloadPage": {
@@ -185,7 +185,7 @@
     "settingsWithWarning": "设置，有未配置项",
     "settingsWarningBubble": "有未配置项",
     "dismissSettingsWarningBubble": "关闭未配置提醒",
-    "notifications": "通知",
+    "notifications": "公告中心",
     "account": {
       "open": "打开个人信息",
       "changeAvatar": "更换头像",
@@ -227,9 +227,9 @@
     }
   },
   "notifications": {
-    "title": "通知中心",
-    "close": "关闭通知中心",
-    "empty": "暂无通知",
+    "title": "公告中心",
+    "close": "关闭公告中心",
+    "empty": "暂无公告",
     "upgrade": {
       "title": "有新版本 {{version}} 可用",
       "body": "上游已发布新版本，可打开发布页查看并升级。",
@@ -271,6 +271,8 @@
       "selected": "已选",
       "search": "搜索宠物名称…",
       "loading": "加载中…",
+      "officialGroup": "官方搭子",
+      "peripheralGroup": "周边搭子",
       "empty": "没有匹配的宠物",
       "emptyMine": "还没有导入宠物，点「导入」添加"
     },
@@ -295,6 +297,7 @@
       },
       "accessories": {
         "none": "皇帝的新衣",
+        "niulai": "牛来",
         "goldenHoopStaff": "齐天大圣",
         "littleKing": "小小国王",
         "bubbleBalloon": "泡泡",
@@ -331,6 +334,7 @@
       },
       "accessoryFeedback": {
         "none": "盛装出席！",
+        "niulai": "妈妈！",
         "goldenHoopStaff": "俺老孙来也！",
         "littleKing": "国王驾到！",
         "bubbleBalloon": "去公园吧",
@@ -590,13 +594,17 @@
       "emptyRecent": "暂无最近画布",
       "loading": "加载中...",
       "switcher": "切换画布",
-      "create": "新建",
+      "create": "点击新建",
       "createTitle": "新建项目画布",
       "createBusy": "新建中",
       "createPlaceholder": "新画布名称",
       "createNameRequired": "请输入画布名称",
       "createDuplicate": "已存在名为「{{name}}」的画布",
       "createFailed": "新建画布失败：{{message}}",
+      "createLimitTitle": "画布已达上限",
+      "createLimitReached": "每人在一个项目里最多创建 {{limit}} 张画布，删掉一些再新建",
+      "createQuotaUnknownTitle": "还确认不了画布数量",
+      "createQuotaUnknown": "画布列表还没加载出来，等它加载完再新建",
       "userCreatedName": "{{user}} · {{name}}",
       "restoreConfirm": "同步主线视图会按当前项目事实重建这张主线画布的 preset 层；你手动添加的节点和普通连线会保留。继续？",
       "restoreTitle": "按当前主流程事实重建这张主线画布的 preset 层",
@@ -1136,6 +1144,17 @@
     "openManual": "打开使用手册",
     "learnMoreToast": "官方手册制定中，敬请期待",
     "closeLogin": "关闭登录弹窗",
+    "modal": {
+      "title": "账号登录",
+      "subtitle": "继续推进你的故事、资产与镜头",
+      "noAccount": "还没有账号？",
+      "applyAccount": "申请账号",
+      "showcaseLabel": "DramaClaw 作品展示",
+      "showcaseEyebrow": "MADE WITH DRAMACLAW",
+      "showcaseMeta": "创作现场",
+      "showcaseTitle": "想象力，全速开拍",
+      "showcaseDescription": "角色、分镜、声音与镜头，在同一条制作线上持续推进"
+    },
     "privacy": "隐私",
     "terms": "条款",
     "docs": "文档",
@@ -1144,7 +1163,7 @@
       "star": "Star"
     },
     "businessWechat": {
-      "label": "商务联系",
+      "shortLabel": "商务",
       "open": "查看商务微信二维码",
       "qrAlt": "商务微信二维码",
       "title": "添加商务微信",
@@ -1380,6 +1399,11 @@
       "copyLink": "复制链接",
       "searchPlaceholder": "搜索用户名",
       "alreadyInProject": "已在项目中",
+      "limitTitle": "分享人数已达上限",
+      "quotaUnknownTitle": "还确认不了成员数量",
+      "quotaUnknown": "成员列表还没加载出来，等它加载完再添加",
+      "limitReached": "一个项目最多分享给 {{limit}} 人",
+      "memberCount": "{{count}}/{{limit}}",
       "add": "添加",
       "members": "成员",
       "owner": "所有者",

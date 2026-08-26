@@ -199,6 +199,9 @@ interface AssetLibraryPanelProps {
   reloadToken?: number;
 }
 
+const FLOATING_PANEL_CONTROL_SURFACE_CLASS =
+  "flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/[0.10] bg-[rgb(var(--surface-rgb)/0.78)] shadow-[0_10px_28px_rgba(0,0,0,0.30)] backdrop-blur-[20px] transition-[background-color,border-color,box-shadow] duration-200 group-hover/btn:border-white/[0.16] group-hover/btn:bg-[rgb(var(--surface-rgb)/0.86)]";
+
 /* ─────────────────── 资产缩略图卡片 ─────────────────── */
 
 function MiniThumb({
@@ -732,50 +735,63 @@ export function AssetLibraryPanel({
   return (
     <AssetReplaceContext.Provider value={replaceContextValue}>
       <aside
-        className="pointer-events-none absolute inset-y-0 left-0 z-30 overflow-visible"
+        className="pointer-events-none absolute inset-y-3 left-3 z-30 overflow-visible"
       >
-        {/* 折叠/展开胶囊 — 停在卡片右侧的画布上 */}
+        {/* 面板外控制栏：折叠与资产管理保持同尺寸、同材质，并随面板一起移动。 */}
         <div
-          className="group/handle pointer-events-auto absolute top-3 z-30 flex h-10 w-10 items-center justify-center transition-[left] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
-          style={{ left: collapsed ? 16 : 312 }}
+          className="pointer-events-auto absolute top-3 z-30 flex flex-col gap-2 transition-[left] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
+          style={{ left: collapsed ? 0 : 312 }}
         >
-          <button
-            type="button"
-            onClick={() => setCollapsed(!collapsed)}
-            aria-label={collapsed ? "展开素材抽屉" : "收起素材抽屉"}
-            aria-expanded={!collapsed}
-            className={`group/btn relative flex h-10 w-10 items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 ${
-              collapsed
-                ? "text-white/82 hover:text-white"
-                : "text-white/68 hover:text-white/92"
-            }`}
-          >
-            <span
-              className={`flex h-9 w-9 items-center justify-center rounded-[10px] border shadow-[0_10px_28px_rgba(0,0,0,0.30)] backdrop-blur-xl transition-[background-color,border-color,box-shadow] duration-200 ${
+          <div className="group/handle relative flex h-10 w-10 items-center justify-center">
+            <button
+              type="button"
+              onClick={() => setCollapsed(!collapsed)}
+              aria-label={collapsed ? "展开素材抽屉" : "收起素材抽屉"}
+              aria-expanded={!collapsed}
+              className={`group/btn relative flex h-10 w-10 items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 ${
                 collapsed
-                  ? "border-white/18 bg-white/[0.09] group-hover/btn:border-white/26 group-hover/btn:bg-white/[0.13]"
-                  : "border-white/10 bg-white/[0.05] group-hover/btn:border-white/15 group-hover/btn:bg-white/[0.08]"
+                  ? "text-white/82 hover:text-white"
+                  : "text-white/68 hover:text-white/92"
               }`}
             >
-              {collapsed ? (
-                <ChevronRight className="h-4 w-4" />
-              ) : (
-                <ChevronLeft className="h-4 w-4" />
-              )}
+              <span className={FLOATING_PANEL_CONTROL_SURFACE_CLASS}>
+                {collapsed ? (
+                  <ChevronRight className="h-4 w-4" />
+                ) : (
+                  <ChevronLeft className="h-4 w-4" />
+                )}
+              </span>
+            </button>
+            <span
+              className="pointer-events-none absolute left-11 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md border border-white/10 bg-[#101116]/95 px-2 py-1 text-[11px] font-medium text-white/75 opacity-0 shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-md transition-opacity duration-150 group-hover/handle:opacity-100"
+            >
+              {collapsed ? "展开" : "收起"}
             </span>
-          </button>
-          <span
-            className="pointer-events-none absolute left-11 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md border border-white/10 bg-[#101116]/95 px-2 py-1 text-[11px] font-medium text-white/75 opacity-0 shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-md transition-opacity duration-150 group-hover/handle:opacity-100"
-          >
-            {collapsed ? "展开" : "收起"}
-          </span>
+          </div>
+
+          <div className="group/assets relative flex h-10 w-10 items-center justify-center">
+            <button
+              type="button"
+              onClick={() => setAssetManagerOpen(true)}
+              aria-label="资产管理"
+              title="资产管理"
+              className="group/btn relative flex h-10 w-10 items-center justify-center rounded-full text-white/68 transition-colors hover:text-white/92 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20"
+            >
+              <span className={FLOATING_PANEL_CONTROL_SURFACE_CLASS}>
+                <BookOpen className="h-4 w-4" />
+              </span>
+            </button>
+            <span className="pointer-events-none absolute left-11 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md border border-white/10 bg-[#101116]/95 px-2 py-1 text-[11px] font-medium text-white/75 opacity-0 shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-md transition-opacity duration-150 group-hover/assets:opacity-100">
+              资产管理
+            </span>
+          </div>
         </div>
 
-        {/* 贴左边直出的抽屉：满高、不留外边距，收起时整块滑到屏幕外 */}
+        {/* 画布内悬浮的玻璃面板：四周留出画布间距，收起时连同左侧间距完整滑出。 */}
         <div
-          className={`flex h-full flex-col min-h-0 overflow-hidden rounded-r-2xl border-r border-[rgb(var(--border-rgb))] bg-[rgb(var(--surface-rgb))] transition-transform duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
+          className={`flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--ui-radius-lg)] border border-white/[0.10] bg-[rgb(var(--surface-rgb)/0.78)] shadow-[0_18px_52px_rgba(0,0,0,0.34)] backdrop-blur-[20px] transition-transform duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
             collapsed
-              ? "pointer-events-none -translate-x-full"
+              ? "pointer-events-none -translate-x-[calc(100%+12px)]"
               : "pointer-events-auto translate-x-0"
           }`}
           style={{ width: 300 }}
@@ -785,38 +801,21 @@ export function AssetLibraryPanel({
           <Tabs
             value={panelTab}
             onValueChange={(value) => setPanelTab(value as PanelTab)}
-            className="shrink-0 gap-0 px-3 pt-3"
+            className="shrink-0 gap-0 px-2 pb-1 pt-2"
           >
-            {/* 整行共用一条基线，选中 tab 的下划线正好压在上面 */}
-            <div className="flex items-center gap-1 border-b border-white/[0.07]">
-              <TabsList variant="line" className="gap-0 p-0">
+            <div className="flex items-center gap-1">
+              <TabsList variant="line" className="gap-4 p-0">
                 {panelTabItems.map((item) => (
                   <TabsTrigger
                     key={item.id}
                     value={item.id}
-                    // after:bottom-0 让下划线落在整行的基线上，而不是浮在下面 5px。
-                    // 文字一律纯白（组件默认给未选中 tab 压了透明度），选中与否只靠
-                    // 下划线区分——300px 的侧栏里三个 tab 挨着，灰字读起来太吃力。
-                    // 下划线用 accent 而不是白：全白标签 + 白下划线，选中态几乎不成立；
-                    // 顺便这也是整块侧栏里唯一的品牌色落点。
-                    className="h-full flex-none rounded-none px-2.5 text-xs text-white after:bg-[rgb(var(--accent-rgb))] hover:text-white data-active:text-white dark:text-white dark:hover:text-white dark:data-active:text-white group-data-horizontal/tabs:after:bottom-0"
+                    // 文本起点与下方画布选择器对齐；下划线只覆盖文字宽度，颜色走语义主色。
+                    className="h-full flex-none rounded-none px-0.5 text-xs text-white/45 after:inset-x-0.5 after:!h-px after:bg-primary hover:text-white/75 data-active:text-white dark:text-white/45 dark:hover:text-white/75 dark:data-active:text-white group-data-horizontal/tabs:after:bottom-0"
                   >
                     {item.label}
                   </TabsTrigger>
                 ))}
               </TabsList>
-              <button
-                type="button"
-                onClick={() => setAssetManagerOpen(true)}
-                aria-label="资产管理"
-                title="资产管理"
-                className="group/assets relative ml-auto mb-1.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-white/[0.10] text-white/60 transition-colors hover:border-white/[0.22] hover:bg-white/[0.06] hover:text-white/90"
-              >
-                <BookOpen className="h-3.5 w-3.5" />
-                <span className="pointer-events-none absolute right-0 top-8 z-20 whitespace-nowrap rounded-[6px] border border-white/10 bg-[#101116]/95 px-2 py-1 text-[11px] font-medium text-white/75 opacity-0 shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-md transition-opacity duration-150 group-hover/assets:opacity-100">
-                  资产管理
-                </span>
-              </button>
             </div>
           </Tabs>
 
@@ -824,13 +823,13 @@ export function AssetLibraryPanel({
             <>
               {/* ── 分类标签 + 搜索（固定头部） ── */}
               <div className="sticky top-0 z-10">
-                <div className="ui-scrollbar-hidden flex items-center gap-1 overflow-x-auto px-3 pt-2.5 pb-2">
+                <div className="ui-scrollbar-hidden flex items-center gap-4 overflow-x-auto px-2 pt-2.5 pb-2">
                   {tabCounts.map((item) => (
                     <button
                       key={item.id}
                       type="button"
                       onClick={() => setTab(item.id)}
-                      className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] transition-colors ${
+                      className={`shrink-0 px-0.5 py-0.5 text-[11px] transition-colors ${
                         tab === item.id
                           ? "text-white"
                           : "text-white/35 hover:text-white/60"

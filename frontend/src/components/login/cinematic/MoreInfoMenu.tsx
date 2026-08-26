@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { ExternalLink, MoreHorizontal } from "lucide-react";
+import { BookOpenText, ExternalLink } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";
@@ -56,6 +56,7 @@ type MoreInfoItem = z.infer<typeof MoreInfoItemSchema>;
 export function MoreInfoMenu() {
   const { t } = useTranslation();
   const [items, setItems] = useState<MoreInfoItem[]>([]);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeTop, setActiveTop] = useState(7);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -124,19 +125,32 @@ export function MoreInfoMenu() {
   return (
     <div
       className={styles.moreInfo}
-      onMouseEnter={clearActive}
-      onMouseLeave={clearActive}
+      onPointerEnter={() => {
+        clearActive();
+        setMenuOpen(true);
+      }}
+      onPointerLeave={() => {
+        clearActive();
+        setMenuOpen(false);
+      }}
+      onFocusCapture={() => setMenuOpen(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setMenuOpen(false);
+        }
+      }}
     >
       <button
         type="button"
         className={styles.moreInfoTrigger}
         aria-haspopup="menu"
+        aria-expanded={menuOpen}
         onFocus={clearActive}
       >
-        <MoreHorizontal aria-hidden="true" />
-        <span>{t("loginCinematic.moreInfo")}</span>
+        <BookOpenText aria-hidden="true" />
+        <span>{t("loginCinematic.moreInfoShort")}</span>
       </button>
-      <div className={styles.moreInfoPopover}>
+      <div className={styles.moreInfoPopover} aria-hidden={!menuOpen} inert={!menuOpen}>
         <div
           className={styles.moreInfoMenu}
           role="menu"
@@ -146,7 +160,7 @@ export function MoreInfoMenu() {
             item.content_type === "link" ? (
               <a
                 key={item.id}
-                className={`${styles.moreInfoItem} ${styles.moreInfoLinkItem}`}
+                className={styles.moreInfoItem}
                 href={item.url}
                 target="_blank"
                 rel="noopener noreferrer"

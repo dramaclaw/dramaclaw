@@ -25,6 +25,8 @@ export interface ConfirmDialogOptions {
   confirmText?: string;
   cancelText?: string;
   confirmVariant?: React.ComponentProps<typeof Button>["variant"];
+  /** 只是通知一件事、没有第二条路可选时，把取消键收掉，别让人以为还能反悔。 */
+  hideCancel?: boolean;
 }
 
 interface PendingConfirm extends ConfirmDialogOptions {
@@ -48,6 +50,13 @@ export function confirmDialog(options: ConfirmDialogOptions): Promise<boolean> {
   });
 }
 
+/** 只通知、不询问的那一档：单个「好的」按钮，await 它等的是「看到了」。 */
+export function alertDialog(
+  options: Omit<ConfirmDialogOptions, "cancelText" | "hideCancel">,
+): Promise<void> {
+  return confirmDialog({ ...options, hideCancel: true }).then(() => undefined);
+}
+
 function settle(confirmed: boolean) {
   const { pending } = useConfirmDialogStore.getState();
   if (!pending) return;
@@ -61,26 +70,28 @@ export function ConfirmDialogHost() {
 
   return (
     <AlertDialog open={pending !== null} onOpenChange={(open) => !open && settle(false)}>
-      <AlertDialogContent className="top-24 w-[min(calc(100vw-2rem),440px)] translate-y-0">
+      <AlertDialogContent className="w-[min(calc(100vw-2rem),440px)]">
         <AlertDialogHeader>
           <AlertDialogTitle>{pending?.title ?? t("common.confirm")}</AlertDialogTitle>
           <AlertDialogDescription>{pending?.description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel
-            size="sm"
-            className="h-7 min-w-0 rounded-md px-4 text-[0.8rem]"
-            onClick={() => settle(false)}
-          >
-            {pending?.cancelText ?? t("common.cancel")}
-          </AlertDialogCancel>
+          {!pending?.hideCancel && (
+            <AlertDialogCancel
+              size="sm"
+              className="h-7 min-w-0 rounded-md px-4 text-[0.8rem]"
+              onClick={() => settle(false)}
+            >
+              {pending?.cancelText ?? t("common.cancel")}
+            </AlertDialogCancel>
+          )}
           <AlertDialogAction
             variant={pending?.confirmVariant}
             size="sm"
             className="h-7 min-w-0 rounded-md px-4 text-[0.8rem]"
             onClick={() => settle(true)}
           >
-            {pending?.confirmText ?? t("common.confirm")}
+            {pending?.confirmText ?? (pending?.hideCancel ? t("common.ok") : t("common.confirm"))}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -204,9 +204,9 @@ export function AssetLibraryBrowser({
                   type="button"
                   onClick={() => setOpenKey(folder.key)}
                   aria-label={`文件夹 ${folder.label}`}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-white/[0.06]"
+                  className="flex w-full items-center gap-2.5 rounded-[8px] px-1.5 py-1.5 text-left transition-colors hover:bg-primary/[0.10] focus-visible:bg-primary/[0.10] focus-visible:outline-none"
                 >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[4px] bg-white/[0.06]">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[8px] bg-white/[0.06] ring-1 ring-inset ring-white/[0.06]">
                     {cover ? (
                       <img
                         src={resolveImageDisplayUrl(cover)}
@@ -240,12 +240,12 @@ export function AssetLibraryBrowser({
         {openFolder?.items.map((entry, idx) => (
           <div
             key={entry.id ?? `idx-${idx}`}
-            className={`group flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-white/[0.06] ${
+            className={`group flex w-full items-center gap-2.5 rounded-[8px] px-1.5 py-1.5 transition-colors hover:bg-primary/[0.10] ${
               busyId && entry.id === busyId ? "opacity-40" : ""
             }`}
             title={entry.name || "(未命名)"}
           >
-            <span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[4px] bg-white/[0.06]">
+            <span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px] bg-white/[0.06] ring-1 ring-inset ring-white/[0.06]">
               {entry.media === "image" ? (
                 <img
                   src={resolveImageDisplayUrl(entry.url)}

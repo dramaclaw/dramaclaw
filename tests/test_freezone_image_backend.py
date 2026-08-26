@@ -9415,3 +9415,146 @@ async def test_reverse_prompt_uses_shared_freezone_vision_model(
         captured["timeout_seconds"]
         == image_node.FREEZONE_IMAGE_REVERSE_PROMPT_TIMEOUT_SECONDS
     )
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_generation_rejects_small_reference_image_before_billing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """参考图小于 300px 在入队前就 400，不预扣积分、不送厂商（3060 2026-08-26 实例）。"""
+
+    async def unexpected_enqueue(*_args, **_kwargs):
+        raise AssertionError("image validation must happen before enqueue")
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=unexpected_enqueue),
+    )
+    small = tmp_path / "logo.png"
+    Image.new("RGB", (338, 191), (255, 255, 255)).save(small, format="PNG")
+    ok = tmp_path / "frame.png"
+    Image.new("RGB", (1280, 720), (255, 255, 255)).save(ok, format="PNG")
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes._start_or_enqueue_freezone_video_gen(
+            ctx=_project_ctx(tmp_path),
+            username="admin",
+            project="demo",
+            project_dir=tmp_path / "project",
+            output_dir=str(tmp_path / "output"),
+            job_id="job_small_image",
+            prompt="参考图生成",
+            reference_items=[
+                {"type": "image", "path": str(ok), "role": "图片1"},
+                {"type": "image", "path": str(small), "role": "图片2"},
+            ],
+            aspect_ratio="16:9",
+            resolution="720p",
+            duration_seconds=6,
+            generate_audio=False,
+            human_review=False,
+            scene_optimize=None,
+            backend="newapi_seedance-2.0",
+            gen_mode="allReference",
+            capabilities={},
+        )
+
+    assert exc.value.status_code == 400
+    detail = str(exc.value.detail)
+    assert "logo.png" in detail
+    assert "338x191" in detail
+    assert "300" in detail
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_generation_skips_dimension_gate_for_non_seedance_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """300~6000px 是火山 Seedance 的规则，别的模型不能拿它凭空 400。"""
+    captured: dict[str, object] = {}
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_video"),
+            backend="celery",
+            queue="node.node_a.video",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+    small = tmp_path / "logo.png"
+    Image.new("RGB", (338, 191), (255, 255, 255)).save(small, format="PNG")
+
+    result = await freezone_routes._start_or_enqueue_freezone_video_gen(
+        ctx=_project_ctx(tmp_path),
+        username="admin",
+        project="demo",
+        project_dir=tmp_path / "project",
+        output_dir=str(tmp_path / "output"),
+        job_id="job_other_model",
+        prompt="参考图生成",
+        reference_items=[{"type": "image", "path": str(small), "role": "图片1"}],
+        aspect_ratio="16:9",
+        resolution="720p",
+        duration_seconds=6,
+        generate_audio=False,
+        human_review=False,
+        scene_optimize=None,
+        backend="newapi_happyhorse-1.0",
+        gen_mode="allReference",
+        capabilities={},
+    )
+
+    assert result["data"]["task_type"] == "freezone_video_gen"
+    assert captured["task_type"] == "freezone_video_gen"
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_generation_reports_duplicate_last_frame_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """关键帧路由会把尾帧同时放进 reference_items 和 last_frame_path，预检要去重。"""
+
+    async def unexpected_enqueue(*_args, **_kwargs):
+        raise AssertionError("image validation must happen before enqueue")
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=unexpected_enqueue),
+    )
+    small = tmp_path / "last.png"
+    Image.new("RGB", (338, 191), (255, 255, 255)).save(small, format="PNG")
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes._start_or_enqueue_freezone_video_gen(
+            ctx=_project_ctx(tmp_path),
+            username="admin",
+            project="demo",
+            project_dir=tmp_path / "project",
+            output_dir=str(tmp_path / "output"),
+            job_id="job_dup_last_frame",
+            prompt="首尾帧生成",
+            reference_items=[{"type": "image", "path": str(small), "role": "尾帧"}],
+            aspect_ratio="16:9",
+            resolution="720p",
+            duration_seconds=6,
+            generate_audio=False,
+            human_review=False,
+            scene_optimize=None,
+            backend="newapi_seedance-2.0",
+            last_frame_path=str(small),
+            gen_mode="keyframe",
+            capabilities={},
+        )
+
+    assert exc.value.status_code == 400
+    assert str(exc.value.detail).count("last.png (338x191)") == 1

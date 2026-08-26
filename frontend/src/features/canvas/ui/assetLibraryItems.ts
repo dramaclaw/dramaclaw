@@ -12,9 +12,9 @@ import type {
 } from '@/api/ops';
 
 export const ASSET_LIBRARY_CARD_CLASS =
-  'overflow-hidden rounded-[12px] border border-white/[0.10] bg-white/[0.04] transition-colors';
+  'overflow-hidden rounded-sm border border-border bg-muted/30 transition-colors';
 export const ASSET_LIBRARY_CARD_HOVER_CLASS =
-  'hover:border-white/[0.18] hover:bg-white/[0.06]';
+  'hover:border-primary/35 hover:bg-accent';
 
 export type AssetLibraryMedia = FreezoneAssetLibraryMedia;
 

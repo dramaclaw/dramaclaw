@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Link, useParams } from "@tanstack/react-router";
@@ -40,6 +40,10 @@ import { resetUserSessionState } from "@/lib/reset-region-state";
 import { useModelGatewayConfig } from "@/lib/queries/model-gateway";
 import { useOrgBranding } from "@/lib/queries/org-branding";
 import { useReleaseNotifications } from "@/lib/queries/release-notifications";
+import {
+  useAnnouncementReadState,
+  useAnnouncements,
+} from "@/components/login/cinematic/announcements";
 import {
   markUpgradeSeen,
   shouldShowUpgradeNudge,
@@ -104,8 +108,16 @@ export function Header() {
   const modelGatewayConfig = useModelGatewayConfig(ceRuntime);
   const releaseNotifications = useReleaseNotifications(i18n.resolvedLanguage ?? i18n.language);
   const releaseFeed = releaseNotifications.data?.data;
+  const announcements = useAnnouncements();
+  const announcementIds = useMemo(
+    () => announcements.map((announcement) => announcement.id),
+    [announcements],
+  );
+  const { markAllRead: markAllAnnouncementsRead, unreadCount: announcementUnreadCount } =
+    useAnnouncementReadState();
   void releaseNotificationStateVersion;
-  const hasUnreadNotification = shouldShowUpgradeNudge(releaseFeed);
+  const hasUnreadNotification =
+    shouldShowUpgradeNudge(releaseFeed) || announcementUnreadCount(announcementIds) > 0;
   const gatewayConfig = modelGatewayConfig.data?.data;
   const hasSettingsWarning = Boolean(
     ceRuntime &&
@@ -133,6 +145,10 @@ export function Header() {
       setSettingsWarningBubbleDismissed(false);
     }
   }, [hasSettingsWarning]);
+
+  useEffect(() => {
+    if (notificationOpen) markAllAnnouncementsRead(announcementIds);
+  }, [announcementIds, markAllAnnouncementsRead, notificationOpen]);
 
   const handleCompanionConfirm = (
     selection: CompanionSelection,
@@ -208,6 +224,7 @@ export function Header() {
   const openNotifications = () => {
     closeAccountPanelNow();
     markUpgradeSeen(releaseFeed?.latest_tag);
+    markAllAnnouncementsRead(announcementIds);
     setReleaseNotificationStateVersion((version) => version + 1);
     setNotificationOpen(true);
   };
@@ -377,6 +394,7 @@ export function Header() {
         open={notificationOpen}
         onOpenChange={setNotificationOpen}
         onUpgradeStateChange={handleUpgradeStateChange}
+        announcements={announcements}
       />
       <AvatarUploadDialog
         avatarInitial={avatarInitial}

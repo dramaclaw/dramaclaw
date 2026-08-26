@@ -5,6 +5,7 @@ import { Copy, Loader2, ShieldCheck, Trash2, UserPlus, Users } from "lucide-reac
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
+import { alertDialog } from "@/components/confirm-dialog-host";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -30,6 +31,7 @@ import {
   type ProjectGrant,
   type UserSearchResult,
 } from "@/lib/queries/projects";
+import { MAX_PROJECT_GRANTS } from "@/lib/limits";
 import { projectRoleLabel } from "@/lib/project-permissions";
 import { isCeRuntime } from "@/lib/runtime-config";
 import { cn } from "@/lib/utils";
@@ -89,8 +91,31 @@ export function ShareProjectDialog({
     () => new Set(grantRows.map((grant) => grant.principal_id)),
     [grantRows],
   );
+  // 项目最多分享给固定人数（所有者不占名额）。后端不数人头，这里是唯一拦截点。
+  // 名单没回来之前 `grantRows` 是空的，那不是「零个人」而是「不知道几个人」——
+  // 按它放行，这一下加进去的可能就是真的第 26 个。
+  // 刷新失败时 React Query 会把上一份名单留着（status 走到 error、data 不清空），
+  // 那份数字已经不能拿来放行了——同样归到「不知道几个人」。
+  const grantsReady = !grants.isLoading && !grants.isError && grants.data !== undefined;
+  const shareLimitReached = grantsReady && grantRows.length >= MAX_PROJECT_GRANTS;
+  const shareLimitHint = t("project.shareDialog.limitReached", { limit: MAX_PROJECT_GRANTS });
 
   const handleAdd = async () => {
+    // 按钮不置灰：点得到，才有地方把「为什么加不进去」说清楚。
+    if (!grantsReady) {
+      void alertDialog({
+        title: t("project.shareDialog.quotaUnknownTitle"),
+        description: t("project.shareDialog.quotaUnknown"),
+      });
+      return;
+    }
+    if (shareLimitReached) {
+      void alertDialog({
+        title: t("project.shareDialog.limitTitle"),
+        description: shareLimitHint,
+      });
+      return;
+    }
     const username = selectedUser?.username || query.trim();
     if (!username || username.length < 3) return;
     try {
@@ -160,7 +185,14 @@ export function ShareProjectDialog({
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-medium text-foreground">{t("project.shareDialog.addMember")}</div>
-                <div className="mt-1 text-xs text-muted-foreground">{t("project.shareDialog.addMemberHint")}</div>
+                <div
+                  className={cn(
+                    "mt-1 text-xs",
+                    shareLimitReached ? "text-destructive" : "text-muted-foreground",
+                  )}
+                >
+                  {shareLimitReached ? shareLimitHint : t("project.shareDialog.addMemberHint")}
+                </div>
               </div>
               <Button variant="outline" size="sm" onClick={handleCopyLink} disabled={!project}>
                 <Copy className="size-3.5" />
@@ -217,7 +249,10 @@ export function ShareProjectDialog({
                   ))}
                 </SelectContent>
               </Select>
-              <Button onClick={handleAdd} disabled={addGrant.isPending || query.trim().length < 3}>
+              <Button
+                onClick={handleAdd}
+                disabled={addGrant.isPending || query.trim().length < 3}
+              >
                 {addGrant.isPending ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
                 {t("project.shareDialog.add")}
               </Button>
@@ -225,7 +260,25 @@ export function ShareProjectDialog({
           </section>
 
           <section className="rounded-[12px] border border-border/70 bg-card/45 p-4">
-            <div className="mb-3 text-sm font-medium text-foreground">{t("project.shareDialog.members")}</div>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <span className="text-sm font-medium text-foreground">
+                {t("project.shareDialog.members")}
+              </span>
+              {/* 名单没回来之前不报数：显示 0/25 等于给了一个假的余量。 */}
+              {grantsReady && (
+                <span
+                  className={cn(
+                    "text-xs tabular-nums",
+                    shareLimitReached ? "text-destructive" : "text-muted-foreground",
+                  )}
+                >
+                  {t("project.shareDialog.memberCount", {
+                    count: grantRows.length,
+                    limit: MAX_PROJECT_GRANTS,
+                  })}
+                </span>
+              )}
+            </div>
             <div className="space-y-2">
               {project && (
                 <div className="flex items-center gap-3 rounded-[10px] border border-border/60 bg-background/45 px-3 py-2.5">

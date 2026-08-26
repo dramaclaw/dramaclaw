@@ -74,6 +74,7 @@
   --text-muted-rgb: 102 102 102;
   --accent-rgb: 59 130 246;
   --ui-surface-panel: rgba(255, 255, 255, 0.96);
+  --ui-surface-modal: rgba(255, 255, 255, 0.98);
   --ui-surface-field: rgba(248, 250, 252, 0.95);
   --ui-border-soft: rgba(15, 23, 42, 0.12);
   --ui-border-strong: rgba(15, 23, 42, 0.2);
@@ -146,6 +147,7 @@
   --text-muted-rgb: 111 112 121;
   --accent-rgb: 91 160 255;
   --ui-surface-panel: rgba(21, 22, 29, 0.78);
+  --ui-surface-modal: rgba(27, 28, 35, 0.98);
   --ui-surface-field: rgba(13, 14, 20, 0.85);
   --ui-border-soft: rgba(255, 255, 255, 0.05);
   --ui-border-strong: rgba(255, 255, 255, 0.12);

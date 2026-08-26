@@ -1463,3 +1463,150 @@ async def test_freezone_platform_context_preserves_legacy_leaf(
 
     assert len(calls) == 1
     assert "egress_context" not in calls[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("poll_response", "expected_error"),
+    [
+        (
+            {
+                "status": "failed",
+                "error": {
+                    "code": "VIDEO_MEDIA_DIMENSIONS_INVALID",
+                    "message": "素材尺寸不符合要求 secret-canary",
+                },
+            },
+            "VIDEO_MEDIA_DIMENSIONS_INVALID",
+        ),
+        (
+            {
+                "status": "failed",
+                "error_message": (
+                    "素材审核失败（共 1 个素材）：\n\n[1] 素材：https://relay.example/"
+                    "a.jpg?OSSAccessKeyId=secret-canary\n    原因：[InvalidParameter."
+                    "HeightTooSmall] Height must be between 300px and 6000px."
+                ),
+            },
+            "VIDEO_MEDIA_DIMENSIONS_INVALID",
+        ),
+        (
+            {
+                "status": "failed",
+                "error": {"code": "weird secret-canary", "message": "x"},
+            },
+            "EGRESS_OPERATION_UNKNOWN",
+        ),
+    ],
+)
+async def test_newapi_organization_failures_keep_safe_provider_error_codes(
+    monkeypatch,
+    tmp_path: Path,
+    poll_response: dict,
+    expected_error: str,
+) -> None:
+    """厂商明确打回（尺寸/审核）时，组织账号要拿到可读的错误码而不是一律 UNKNOWN。
+
+    2026-08-26 3060 上 creator02-zhu 的参考图 338x191 被火山 HeightTooSmall 拒了 8 次，
+    用户只看到 `EGRESS_OPERATION_UNKNOWN`。放行的只能是 `VIDEO_*` 这种枚举码，
+    厂商原文（含带签名的 relay URL）依旧不能进 result。
+    """
+    from novelvideo.generators.video_generator import (
+        NewApiVideoGenerator,
+        VideoGenStatus,
+    )
+
+    context = _context()
+    operation_port = _OperationPort()
+    events: list[str] = []
+    _install_newapi_ports(monkeypatch, context, operation_port, events)
+    generator = NewApiVideoGenerator(
+        model="seedance-2.0", egress_context=context
+    )
+    refund_errors: list[str] = []
+
+    async def post(*_args, **_kwargs):
+        return {"id": "provider-job-1"}
+
+    async def poll(*_args, **_kwargs):
+        return poll_response
+
+    async def capture_refund(*_args, **kwargs):
+        refund_errors.append(str(kwargs.get("error") or ""))
+
+    monkeypatch.setattr(generator, "_post_json", post)
+    monkeypatch.setattr(generator, "_get_json", poll)
+    monkeypatch.setattr(
+        generator, "_revalidate_organization", lambda _context: _async_none()
+    )
+    monkeypatch.setattr(
+        "novelvideo.generators.video_generator._refund_video_model_call",
+        capture_refund,
+    )
+
+    result = await generator.generate(
+        image_path=None,
+        prompt="prompt",
+        output_path=str(tmp_path / "video.mp4"),
+        episode=1,
+        beat_num=2,
+        scope="beat",
+        task_type="single_video",
+        max_polls=1,
+    )
+
+    assert result.status is VideoGenStatus.FAILED
+    assert result.error == expected_error
+    assert "secret-canary" not in repr(result)
+    assert refund_errors == [expected_error]
+    assert [name for name, _ in operation_port.events] == [
+        "claim",
+        "accepted",
+        "unknown",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_newapi_organization_submit_rejection_keeps_safe_provider_error_code(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """网关在提交阶段就用 `VIDEO_*` 码打回时，组织账号同样拿到该码，不泄漏响应原文。"""
+    from novelvideo.generators.video_generator import (
+        NewApiVideoError,
+        NewApiVideoGenerator,
+        VideoGenStatus,
+    )
+
+    context = _context()
+    operation_port = _OperationPort()
+    events: list[str] = []
+    _install_newapi_ports(monkeypatch, context, operation_port, events)
+    generator = NewApiVideoGenerator(model="seedance-2.0", egress_context=context)
+
+    async def rejected(*_args, **_kwargs):
+        raise NewApiVideoError(
+            'DramaClawAPI submit failed: HTTP 400 - {"error": {"code": '
+            '"VIDEO_MEDIA_DIMENSIONS_INVALID", "message": "secret-canary"}}',
+            request_id="req-1",
+            status_code=400,
+        )
+
+    monkeypatch.setattr(generator, "_post_json", rejected)
+    monkeypatch.setattr(
+        generator, "_revalidate_organization", lambda _context: _async_none()
+    )
+
+    result = await generator.generate(
+        image_path=None,
+        prompt="prompt",
+        output_path=str(tmp_path / "video.mp4"),
+        episode=1,
+        beat_num=2,
+        scope="beat",
+        task_type="single_video",
+    )
+
+    assert result.status is VideoGenStatus.FAILED
+    assert result.error == "VIDEO_MEDIA_DIMENSIONS_INVALID"
+    assert "secret-canary" not in repr(result)
+    assert [name for name, _ in operation_port.events] == ["claim", "unknown"]

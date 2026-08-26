@@ -7,10 +7,13 @@ import * as freezoneShellModule from "@/features/freezone/FreezoneShell";
 import {
   buildCanvasBrowserSections,
   canDeleteCanvasSummary,
+  canvasCreationQuotaStatus,
   canvasKindFromSummary,
+  countCanvasesCreatedBy,
   findDuplicateCanvasName,
   userCreatedCanvasId,
 } from "@/features/freezone/CanvasesTab";
+import { MAX_USER_CREATED_CANVASES_PER_PROJECT } from "@/lib/limits";
 import {
   hasLegacyPresetCanvasMetadata,
   nodeDataPatchAfterCommittedTarget,
@@ -643,5 +646,83 @@ describe("freezone conflict copy helpers", () => {
       canvas_origin: "conflict_copy",
       source_canvas_id: "user_admin_en845w",
     });
+  });
+});
+
+describe("freezone canvas creation limit", () => {
+  function myCanvas(index: number, creator: string | null = "alice"): FreezoneCanvasSummary {
+    return canvas(`canvas_mine_${index}`, undefined, "2026-06-03T00:00:00Z", {
+      metadata: {
+        canvas_origin: "user_created",
+        display_name: `我的画布 ${index}`,
+        ...(creator === null ? {} : { creator_username: creator }),
+      },
+    });
+  }
+
+  it("counts only the canvases the given user created", () => {
+    const items = [
+      canvas("default", "default"),
+      canvas("user_alice_ab12"),
+      myCanvas(1),
+      myCanvas(2),
+      myCanvas(3, "bob"),
+    ];
+
+    expect(countCanvasesCreatedBy(items, "alice")).toBe(2);
+    expect(countCanvasesCreatedBy(items, "bob")).toBe(1);
+  });
+
+  it("does not count preset, personal or projection canvases toward the quota", () => {
+    const items = [
+      canvas("default", "default"),
+      canvas("ep_1", "episode"),
+      canvas("beat_1_2", "beat"),
+      canvas("user_alice_ab12"),
+    ];
+
+    expect(countCanvasesCreatedBy(items, "alice")).toBe(0);
+  });
+
+  it("attributes canvases with no creator metadata to the anonymous bucket", () => {
+    const items = [myCanvas(1, null), myCanvas(2, "alice")];
+
+    expect(countCanvasesCreatedBy(items, null)).toBe(1);
+    expect(countCanvasesCreatedBy(items, "alice")).toBe(1);
+  });
+
+  it("blocks creation once the user owns the maximum number of canvases", () => {
+    const mine = Array.from({ length: MAX_USER_CREATED_CANVASES_PER_PROJECT }, (_unused, index) =>
+      myCanvas(index),
+    );
+
+    expect(canvasCreationQuotaStatus(mine, "alice")).toBe("reached");
+    expect(canvasCreationQuotaStatus(mine.slice(0, -1), "alice")).toBe("available");
+  });
+
+  it("keeps another user's quota independent", () => {
+    const mine = Array.from({ length: MAX_USER_CREATED_CANVASES_PER_PROJECT }, (_unused, index) =>
+      myCanvas(index),
+    );
+
+    expect(canvasCreationQuotaStatus(mine, "bob")).toBe("available");
+  });
+
+  it("reports the quota as unknown until the canvas list has loaded", () => {
+    // 列表还没回来时手上是空数组，按它算出来的「还没超」是假的：后端不数个数，
+    // 放行等于真的多建一张。
+    expect(canvasCreationQuotaStatus(undefined, "alice")).toBe("unknown");
+  });
+
+  it("reports the quota as unknown until the username has loaded", () => {
+    // 登录态还没落地时 username 是 null，此时数出来的是「缺 creator_username 的
+    // 老画布」这个匿名桶——既不能拿它拦真作者，也不能当成还有余量。
+    const orphans = Array.from({ length: MAX_USER_CREATED_CANVASES_PER_PROJECT }, (_unused, index) =>
+      myCanvas(index, null),
+    );
+
+    expect(canvasCreationQuotaStatus(orphans, null)).toBe("unknown");
+    expect(canvasCreationQuotaStatus(orphans, "   ")).toBe("unknown");
+    expect(canvasCreationQuotaStatus([], null)).toBe("unknown");
   });
 });

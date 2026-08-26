@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ShareProjectDialog } from "@/components/projects/share-project-dialog";
+import { MAX_PROJECT_GRANTS } from "@/lib/limits";
 import type { ProjectSummary } from "@/types/project";
 
 const SHARE_DIALOG_ZH: Record<string, string> = {
@@ -27,6 +29,11 @@ const SHARE_DIALOG_ZH: Record<string, string> = {
   "project.shareDialog.roleAdmin": "可管理共享成员",
   "project.shareDialog.inactive": "已失效",
   "project.shareDialog.inactiveAccessChanged": "用户当前无法访问此项目",
+  "project.shareDialog.limitReached": "最多只能分享给 {{limit}} 人",
+  "project.shareDialog.limitTitle": "分享人数已达上限",
+  "project.shareDialog.quotaUnknownTitle": "还确认不了成员数量",
+  "project.shareDialog.quotaUnknown": "成员列表还没加载出来，等它加载完再添加",
+  "project.shareDialog.memberCount": "{{count}}/{{limit}}",
   "common.close": "关闭",
 };
 
@@ -44,27 +51,46 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+type NoticeOptions = { title?: string; description: string };
+
+const alertDialogMock = vi.hoisted(() =>
+  vi.fn((_options: { title?: string; description: string }) => Promise.resolve()),
+);
+
+vi.mock("@/components/confirm-dialog-host", () => ({
+  alertDialog: (options: NoticeOptions) => alertDialogMock(options),
+  confirmDialog: vi.fn(() => Promise.resolve(false)),
+}));
+
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: false }));
 const queryMocks = vi.hoisted(() => ({
   grants: [] as Array<Record<string, unknown>>,
+  grantsLoading: false,
+  grantsError: false,
   deleteGrant: vi.fn(),
   useUserSearch: vi.fn(),
 }));
+const addGrantMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runtime-config", () => ({
   isCeRuntime: () => runtimeState.isCeRuntime,
 }));
 
 vi.mock("@/lib/queries/projects", () => ({
-  useProjectGrants: () => ({
-    data: { data: queryMocks.grants },
-    isLoading: false,
-  }),
+  useProjectGrants: () =>
+    queryMocks.grantsLoading
+      ? { data: undefined, isLoading: true, isError: false }
+      : {
+          data: { data: queryMocks.grants },
+          isLoading: false,
+          // 刷新失败时 React Query 把上一份名单留着，status 走到 error。
+          isError: queryMocks.grantsError,
+        },
   useUserSearch: (...args: unknown[]) => {
     queryMocks.useUserSearch(...args);
     return { data: { data: [] } };
   },
-  useAddProjectGrant: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useAddProjectGrant: () => ({ mutateAsync: addGrantMock, isPending: false }),
   useUpdateProjectGrant: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteProjectGrant: () => ({
     mutateAsync: queryMocks.deleteGrant,
@@ -89,8 +115,11 @@ describe("ShareProjectDialog (edition gating)", () => {
   beforeEach(() => {
     runtimeState.isCeRuntime = false;
     queryMocks.grants = [];
+    queryMocks.grantsLoading = false;
+    queryMocks.grantsError = false;
     queryMocks.deleteGrant.mockReset();
     queryMocks.useUserSearch.mockClear();
+    addGrantMock.mockClear();
   });
 
   it("renders the share dialog in EE runtime", () => {
@@ -150,5 +179,94 @@ describe("ShareProjectDialog (edition gating)", () => {
     const memberRow = screen.getByText("dev09").parentElement?.parentElement;
     expect(memberRow).toBeInstanceOf(HTMLElement);
     expect(within(memberRow as HTMLElement).getByRole("combobox")).toBeEnabled();
+  });
+});
+
+function grantRows(count: number) {
+  return Array.from({ length: count }, (_unused, index) => ({
+    id: `g${index}`,
+    principal_id: `u${index}`,
+    principal_username: `user${index}`,
+    role: "editor",
+  }));
+}
+
+describe("ShareProjectDialog (share quota)", () => {
+  beforeEach(() => {
+    runtimeState.isCeRuntime = false;
+    queryMocks.grants = [];
+    queryMocks.grantsLoading = false;
+    queryMocks.grantsError = false;
+    addGrantMock.mockClear();
+    alertDialogMock.mockClear();
+  });
+
+  it("keeps the add button usable below the limit", async () => {
+    queryMocks.grants = grantRows(MAX_PROJECT_GRANTS - 1);
+    renderDialog();
+
+    await userEvent.type(screen.getByPlaceholderText("搜索用户名"), "carol");
+
+    expect(screen.getByRole("button", { name: /添加/ })).toBeEnabled();
+    expect(screen.queryByText(`最多只能分享给 ${MAX_PROJECT_GRANTS} 人`)).not.toBeInTheDocument();
+  });
+
+  it("keeps the add button clickable at the limit and explains itself in a dialog", async () => {
+    queryMocks.grants = grantRows(MAX_PROJECT_GRANTS);
+    renderDialog();
+
+    await userEvent.type(screen.getByPlaceholderText("搜索用户名"), "carol");
+    const addButton = screen.getByRole("button", { name: /添加/ });
+
+    // 死按钮说不出理由，点得动才有地方解释。
+    expect(addButton).toBeEnabled();
+    await userEvent.click(addButton);
+
+    expect(addGrantMock).not.toHaveBeenCalled();
+    expect(alertDialogMock).toHaveBeenCalledTimes(1);
+    expect(alertDialogMock.mock.calls[0][0]).toMatchObject({
+      title: "分享人数已达上限",
+      description: `最多只能分享给 ${MAX_PROJECT_GRANTS} 人`,
+    });
+    expect(screen.getByText(`最多只能分享给 ${MAX_PROJECT_GRANTS} 人`)).toBeInTheDocument();
+  });
+
+  it("refuses to add while the member list is still loading", async () => {
+    // 名单没回来时手上是空的，按它放行等于把「不知道几个人」当成「一个都没有」。
+    // grants 端点不数人头，这一下加进去的就是真的第 26 个。
+    queryMocks.grantsLoading = true;
+    renderDialog();
+
+    await userEvent.type(screen.getByPlaceholderText("搜索用户名"), "carol");
+    await userEvent.click(screen.getByRole("button", { name: /添加/ }));
+
+    expect(addGrantMock).not.toHaveBeenCalled();
+    expect(alertDialogMock).toHaveBeenCalledTimes(1);
+    expect(alertDialogMock.mock.calls[0][0]).toMatchObject({
+      title: "还确认不了成员数量",
+      description: "成员列表还没加载出来，等它加载完再添加",
+    });
+  });
+
+  it("refuses to add when the last member refresh failed", async () => {
+    // 刷新失败时旧名单还在（React Query 保留 data，status 走到 error）。
+    // 拿这份可能已经过期的人数继续放行，加进去的就可能是第 26 个。
+    queryMocks.grants = grantRows(MAX_PROJECT_GRANTS - 1);
+    queryMocks.grantsError = true;
+    renderDialog();
+
+    await userEvent.type(screen.getByPlaceholderText("搜索用户名"), "carol");
+    await userEvent.click(screen.getByRole("button", { name: /添加/ }));
+
+    expect(addGrantMock).not.toHaveBeenCalled();
+    expect(alertDialogMock).toHaveBeenCalledTimes(1);
+    expect(alertDialogMock.mock.calls[0][0]).toMatchObject({ title: "还确认不了成员数量" });
+  });
+
+  it("shows how many of the allowed slots are used", () => {
+    queryMocks.grants = grantRows(3);
+    renderDialog();
+
+    expect(screen.getByText(`3/${MAX_PROJECT_GRANTS}`)).toBeInTheDocument();
   });
 });
