@@ -59,10 +59,30 @@ function AppLayout() {
     ? canonicalProjectRouteParam(routeProject, projectSummaries.data)
     : null;
   const reducedMotion = useReducedMotion();
+  // This key is a remount switch for everything under <Outlet/>, so the freezone
+  // canvas deliberately drops the project id from it.
+  //
+  // With the project in the key, "project A canvas -> project B canvas" tears
+  // down and rebuilds the whole freezone subtree (ReactFlowProvider + Canvas +
+  // every node). Measured on two 350-node canvases that remount alone cost a
+  // 1.27s blocking task: the fresh ReactFlow instance re-mounts the *outgoing*
+  // canvas's nodes — the store still holds them, and a brand new instance has no
+  // viewport yet, so nothing is culled — only to throw them away a beat later.
+  // Dropping the id took the switch from 3148ms of total blocking time to
+  // 1547ms; it buys nothing in return, because FreezoneShell already keys its
+  // hydrate on project + canvas and `initial={false}` leaves the motion.div with
+  // no enter animation to replay.
+  //
+  // The other sections keep the id: several of them hold per-project state in
+  // plain useState (ingest's submitted/started flags, for one) and rely on the
+  // remount to reset it. They mount far less DOM, so there is nothing to win.
   const routeTransitionKey = (() => {
     const match = pathname.match(/^\/projects\/([^/]+)(?:\/([^/]+))?/);
     if (!match) return pathname;
-    return `/projects/${match[1]}/${match[2] ?? ""}`;
+    const section = match[2] ?? "";
+    return section === "freezone"
+      ? "/projects/freezone"
+      : `/projects/${match[1]}/${section}`;
   })();
   const isAssistantPage = /^\/projects\/[^/]+\/assistant$/.test(pathname);
   const productSurfaces = useProductSurfaces(Boolean(username && validated));

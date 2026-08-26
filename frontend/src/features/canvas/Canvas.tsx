@@ -77,6 +77,7 @@ import {
   CANVAS_PANNING_CLASS,
   PANNING_CLASS_RELEASE_DELAY_MS,
   isLowDetailZoom,
+  onCanvasHydrateViewport,
   setCanvasGestureActive,
   setCanvasLowDetail,
 } from '@/features/canvas/application/canvasLod';
@@ -1973,6 +1974,17 @@ export function Canvas({
     onPanEnd: handleMinimapPanEnd,
     onViewportSettled: handleMinimapViewportSettled,
   });
+
+  // 换画布同样不触发 onMove/onMoveEnd（程序化 setViewport 的事件慢一拍），由
+  // hydrate 在同一个事件里直接喂过来，好让裁剪开关与节点挂载落在同一次提交。
+  useEffect(
+    () =>
+      onCanvasHydrateViewport((zoom) => {
+        applyLowDetailClass(zoom);
+        setLowDetailActive(isLowDetailZoom(zoom));
+      }),
+    [applyLowDetailClass]
+  );
 
   // 首屏恢复的视口不会触发 onMove/onMoveEnd，低缩放档要在这里补一次。
   useEffect(() => {

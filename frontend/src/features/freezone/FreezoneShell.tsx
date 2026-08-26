@@ -412,11 +412,24 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
   // 如果这里从 false 起步，回到虾画就会先把画面换成「正在加载画布…」，等 hydrate 回来
   // 才重新画出来 —— 看着就是卡。同一个画布重进时直接渲染 store 里的既有内容，
   // hydrate 期间只叠一层轻量 overlay。
-  const [hasRenderedCanvas, setHasRenderedCanvas] = useState(
-    () =>
-      lastRenderedCanvasKey === canvasKey(projectId, canvasId) &&
-      useCanvasStore.getState().nodes.length > 0,
+  //
+  // 存的是「已经画出来的是哪一张」而不是一个 boolean：本组件没有 key，换画布走的是
+  // 同一个实例重跑 effect，用 boolean 的话它一旦为 true 就再也回不去，于是切到新画布
+  // 时旧画布的几百个节点会一直挂在屏幕上（只蒙一层半透明遮罩），直到新内容替换上来
+  // ——「卸旧的」和「挂新的」并进同一次提交，这正是切换卡顿的主因。按画布记之后，
+  // 换画布这一帧立刻回到全屏 loading，卸载与挂载被拆成两次提交。
+  const currentCanvasKey = canvasKey(projectId, canvasId);
+  const [renderedCanvasKey, setRenderedCanvasKey] = useState<string | null>(() =>
+    lastRenderedCanvasKey === currentCanvasKey &&
+    useCanvasStore.getState().nodes.length > 0
+      ? currentCanvasKey
+      : null,
   );
+  if (renderedCanvasKey !== null && renderedCanvasKey !== currentCanvasKey) {
+    // render 阶段同组件 setState 是 React 认可的「派生状态」写法，本次提交即生效。
+    setRenderedCanvasKey(null);
+  }
+  const hasRenderedCanvas = renderedCanvasKey === currentCanvasKey;
   const [projectionStatusRefreshToken, setProjectionStatusRefreshToken] = useState(0);
   const [projectionMonitoringExpired, setProjectionMonitoringExpired] = useState(false);
   const lastProjectionStatusRevisionRef = useRef<{
@@ -472,7 +485,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
   useEffect(() => {
     if (sync.status === "ready" && sync.hydratedCanvasId === canvasId) {
       lastRenderedCanvasKey = canvasKey(projectId, canvasId);
-      setHasRenderedCanvas(true);
+      setRenderedCanvasKey(lastRenderedCanvasKey);
     }
   }, [canvasId, projectId, sync.hydratedCanvasId, sync.status]);
 
@@ -825,21 +838,22 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
     void DEFAULT_NODE_WIDTH; // unused but keep import alive
   };
 
-  const showBlockingLoading = sync.status === "loading" && !hasRenderedCanvas;
+  // 不用 status === "loading" 判定：换画布那一帧 status 还停在旧画布的 "ready"，
+  // 等 hydrate effect 跑完才翻成 loading，中间那一帧会露出旧画布。改成「只要还没画
+  // 出当前这张就挡着」，失败态除外——那两层遮罩要能被看见和点。
+  const showBlockingLoading =
+    !hasRenderedCanvas && sync.status !== "error" && sync.status !== "conflict";
   const showLoadingOverlay = sync.status === "loading" && hasRenderedCanvas;
 
   return (
     <div className="relative w-full h-full flex flex-col overflow-hidden">
       <div className="relative flex flex-1 min-h-0">
         <main className="relative h-full min-w-0 flex-1">
-          {showBlockingLoading ? (
-            <CanvasLoadingScreen />
-          ) : (
-            <Canvas
-              onBlankPaneClick={handleBlankPaneClick}
-              controlsPlacement="bottom-right"
-            />
-          )}
+          <Canvas
+            onBlankPaneClick={handleBlankPaneClick}
+            controlsPlacement="bottom-right"
+          />
+          {showBlockingLoading && <CanvasLoadingScreen />}
           {showLoadingOverlay && <CanvasLoadingOverlay />}
           {sync.status === "error" && (
             <CanvasErrorOverlay error={sync.error} onRetry={sync.retry} />
@@ -1534,9 +1548,17 @@ function BackupStatusIndicator({
   );
 }
 
+/**
+ * 换画布期间的全屏遮挡层。
+ *
+ * 刻意做成盖在 Canvas 之上的不透明层，而不是把 Canvas 换掉：ReactFlow 实例必须
+ * 一直活着，hydrate 才能在挂节点之前先把相机摆到新画布的位置（见 useCanvasSync
+ * 的 savedViewport 一段）。同时它也吃掉指针事件——底下的画布这会儿是空的，任何
+ * 落到它身上的操作都会被随后的 setCanvasData 盖掉。
+ */
 function CanvasLoadingScreen() {
   return (
-    <div className="w-full h-full flex items-center justify-center text-text-muted text-sm">
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-bg-dark cursor-wait text-text-muted text-sm">
       正在加载画布...
     </div>
   );
