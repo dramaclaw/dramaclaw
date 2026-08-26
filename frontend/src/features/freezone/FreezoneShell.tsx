@@ -474,6 +474,19 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
     setProjectionMonitoringExpired(false);
     lastProjectionStatusRevisionRef.current = null;
   }
+  // 上面这些弹窗/浮层状态装的是「项目 A 的某个素材」，同样靠 remount 复位。不再
+  // 重挂之后，如果开着提交 / 建身份 / 蒙版面板用浏览器前进后退切到项目 B，面板
+  // 会继续摆着 A 的素材，可提交按钮拿到的却是新的 projectId —— 等于把 A 的资源
+  // 写进 B。换项目就一律关掉，换画布不动（换画布本来就不重挂，行为没变）。
+  const [projectScopeId, setProjectScopeId] = useState(projectId);
+  if (projectScopeId !== projectId) {
+    setProjectScopeId(projectId);
+    setPushState(null);
+    setComparePair(null);
+    setCreateIdentitySource(null);
+    setMaskTarget(null);
+    setToast(null);
+  }
 
   const invalidateCommittedTargetQueries = useCallback((target: PushTarget) => {
     if (isDirectorWorldSourceSlotTarget(target) || target.kind === "scene_director_world") {
