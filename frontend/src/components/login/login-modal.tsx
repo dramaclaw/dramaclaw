@@ -24,6 +24,8 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
   const [outgoingShowcaseIndex, setOutgoingShowcaseIndex] = useState<number | null>(null);
   const showcaseTransitionTimer = useRef<number | null>(null);
   const showcaseTransitioning = useRef(false);
+  const failedShowcaseIds = useRef<Set<string>>(new Set());
+  const [showcaseUnavailable, setShowcaseUnavailable] = useState(false);
   const activeShowcase = loginModalShowcaseVideos[showcaseIndex] ?? loginModalShowcaseVideos[0];
   const outgoingShowcase =
     outgoingShowcaseIndex === null ? null : loginModalShowcaseVideos[outgoingShowcaseIndex];
@@ -57,6 +59,18 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
     }, SHOWCASE_CROSSFADE_DURATION_MS);
   };
 
+  // reducedMotion 下 autoPlay 关闭，onEnded/onTimeUpdate 都不会触发，轮换的唯一
+  // 驱动就剩 onError；而该分支不上过渡锁。CDN 整体不可用时会一直卸载/重建
+  // <video> 并重复发请求。逐个记下失败项，全部失败就停在 .loginMedia 的静态底色上。
+  const handleShowcaseError = (id: string) => {
+    failedShowcaseIds.current.add(id);
+    if (failedShowcaseIds.current.size >= loginModalShowcaseVideos.length) {
+      setShowcaseUnavailable(true);
+      return;
+    }
+    showNextShowcase();
+  };
+
   useEffect(() => {
     if (showcaseTransitionTimer.current !== null) {
       window.clearTimeout(showcaseTransitionTimer.current);
@@ -64,6 +78,8 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
     }
     showcaseTransitioning.current = false;
     setOutgoingShowcaseIndex(null);
+    failedShowcaseIds.current.clear();
+    setShowcaseUnavailable(false);
     if (!open) return;
     setShowcaseIndex(0);
   }, [open]);
@@ -120,35 +136,36 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
             </button>
 
             <section className={styles.loginMedia} aria-label={t("auth.modal.showcaseLabel")}>
-              {visibleShowcases.map(({ item, outgoing }) => (
-                <video
-                  key={item.id}
-                  className={`${styles.loginMediaVideo} ${
-                    outgoing
-                      ? styles.loginMediaVideoOutgoing
-                      : styles.loginMediaVideoIncoming
-                  }`}
-                  src={item.video}
-                  muted
-                  playsInline
-                  autoPlay={!reducedMotion}
-                  preload="metadata"
-                  onTimeUpdate={
-                    outgoing
-                      ? undefined
-                      : (event) => {
-                          if (event.currentTarget.currentTime >= SHOWCASE_CLIP_DURATION_SECONDS) {
-                            showNextShowcase();
+              {!showcaseUnavailable &&
+                visibleShowcases.map(({ item, outgoing }) => (
+                  <video
+                    key={item.id}
+                    className={`${styles.loginMediaVideo} ${
+                      outgoing
+                        ? styles.loginMediaVideoOutgoing
+                        : styles.loginMediaVideoIncoming
+                    }`}
+                    src={item.video}
+                    muted
+                    playsInline
+                    autoPlay={!reducedMotion}
+                    preload="metadata"
+                    onTimeUpdate={
+                      outgoing
+                        ? undefined
+                        : (event) => {
+                            if (event.currentTarget.currentTime >= SHOWCASE_CLIP_DURATION_SECONDS) {
+                              showNextShowcase();
+                            }
                           }
-                        }
-                  }
-                  onEnded={outgoing ? undefined : showNextShowcase}
-                  onError={outgoing ? undefined : showNextShowcase}
-                  data-showcase-id={item.id}
-                  data-showcase-phase={outgoing ? "outgoing" : "incoming"}
-                  aria-hidden="true"
-                />
-              ))}
+                    }
+                    onEnded={outgoing ? undefined : showNextShowcase}
+                    onError={outgoing ? undefined : () => handleShowcaseError(item.id)}
+                    data-showcase-id={item.id}
+                    data-showcase-phase={outgoing ? "outgoing" : "incoming"}
+                    aria-hidden="true"
+                  />
+                ))}
               <div className={styles.loginMediaShade} aria-hidden="true" />
               <div className={styles.loginMediaCopy}>
                 <h2>{t("auth.modal.showcaseTitle")}</h2>

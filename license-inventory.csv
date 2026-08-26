@@ -331,6 +331,7 @@ frontend/src/__tests__/components/layout/region-badge.test.tsx,Elastic-2.0,2026 
 frontend/src/__tests__/components/login/announcement-dialog-layout-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/login/announcement-entry.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/login/login-modal-layout-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/components/login/login-modal-showcase-fallback.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/login/more-info-menu.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/login/popover-backdrop-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/login/poster-wall.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

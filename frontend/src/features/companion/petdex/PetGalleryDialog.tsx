@@ -94,6 +94,13 @@ const PIKO_ACCESSORY_FEEDBACK_KEYS: Record<PikoAccessoryDisplayId, string> = {
 
 const OFFICIAL_COMPANION_SLUGS = new Set(["zhizhi"]);
 
+// 只看 slug 会把导入项误判为官方：导入允许任意 slug（文件名或 JSON 的 id），
+// 用户传一个叫 zhizhi 的精灵图就会落进官方分组，而官方分组不给 onDelete，
+// 于是这只宠物再也删不掉。官方 = 内置且 slug 命中。
+function isOfficialPet(pet: PetdexCatalogEntry): boolean {
+  return !pet.imported && OFFICIAL_COMPANION_SLUGS.has(pet.slug);
+}
+
 const PIKO_ACCESSORY_MENU_GROUPS = [
   [
     "none",
@@ -568,14 +575,8 @@ export function PetGalleryDialog({
   );
 
   const pets = useMemo(() => [...localPets, ...importedPets], [localPets, importedPets]);
-  const officialPets = useMemo(
-    () => pets.filter((pet) => OFFICIAL_COMPANION_SLUGS.has(pet.slug)),
-    [pets],
-  );
-  const peripheralPets = useMemo(
-    () => pets.filter((pet) => !OFFICIAL_COMPANION_SLUGS.has(pet.slug)),
-    [pets],
-  );
+  const officialPets = useMemo(() => pets.filter(isOfficialPet), [pets]);
+  const peripheralPets = useMemo(() => pets.filter((pet) => !isOfficialPet(pet)), [pets]);
 
   const handleAccessorySelect = useCallback(
     (accessory: PikoAccessoryDisplayId) => {
