@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { AssetHeaderActions } from "@/components/assets/asset-header-actions-slot";
 import { CharacterImageSourceSelect } from "@/components/assets/character-image-source-select";
 import { SceneAssetCard } from "@/components/assets/scene-asset-card";
+import { ViewportLazyImage } from "@/components/viewport-lazy-image";
 import { AssetBeatReferences } from "@/components/assets/asset-beat-references";
 import {
   SceneEnvironmentPromptFields,
@@ -1154,12 +1155,10 @@ function SceneGroupListItem({
     >
       <div className="relative flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-white/[0.08] bg-black/20">
         {visiblePreviewUrl ? (
-          <img
+          <ViewportLazyImage
             src={visiblePreviewUrl}
             alt=""
             aria-hidden="true"
-            loading="lazy"
-            decoding="async"
             onError={() => setFailedPreviewUrl(previewUrl)}
             className="h-full w-full object-cover"
           />

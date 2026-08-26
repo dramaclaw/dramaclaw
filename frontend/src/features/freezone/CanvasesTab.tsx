@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ChevronDown, CornerUpLeft, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, CornerUpLeft, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -244,7 +242,7 @@ export function CanvasesTab({
       {/* 新建表单默认收起，从画布选择器的菜单里点「新建项目画布」才展开 */}
       {showCreateForm && (
         <form onSubmit={handleCreateCanvas} className="shrink-0 px-3 pb-1 pt-2.5">
-          <div className="flex items-center gap-1 rounded-lg border border-white/[0.08] bg-white/[0.03] p-1.5">
+          <div className="flex items-center gap-1 rounded-[8px] border border-white/[0.08] bg-white/[0.03] p-1.5">
             <input
               ref={createInputRef}
               value={newCanvasName}
@@ -263,7 +261,7 @@ export function CanvasesTab({
             <button
               type="submit"
               disabled={creatingCanvas || !newCanvasName.trim()}
-              className="inline-flex h-6 shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/[0.045] px-2 text-[11px] font-medium text-white/72 transition hover:border-white/18 hover:bg-white/[0.075] hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
+              className="inline-flex h-6 shrink-0 items-center justify-center px-2 text-[11px] font-medium text-white/72 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:text-white/30"
               title={t("freezone.canvases.createTitle")}
             >
               {creatingCanvas ? t("freezone.canvases.createBusy") : t("freezone.canvases.create")}
@@ -307,11 +305,9 @@ export function CanvasesTab({
 }
 
 const CANVAS_MENU_CONTENT_CLASS =
-  "z-[120] flex max-h-[320px] min-w-[212px] max-w-[280px] flex-col overflow-y-hidden border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.95)] text-text-dark shadow-none backdrop-blur-3xl";
+  "z-[120] flex max-h-[320px] min-w-[212px] max-w-[280px] flex-col overflow-y-hidden rounded-[12px] border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.95)] text-text-dark shadow-none backdrop-blur-3xl";
 const CANVAS_MENU_ITEM_CLASS =
-  "gap-2 rounded-[var(--ui-radius-lg)] text-xs text-text-dark focus:bg-[rgb(var(--text-rgb)/0.075)] focus:text-text-dark";
-const CANVAS_MENU_RADIO_CLASS =
-  "rounded-[var(--ui-radius-lg)] text-xs text-text-dark focus:bg-[rgb(var(--text-rgb)/0.075)] focus:text-text-dark";
+  "gap-2 rounded-[8px] text-xs text-text-dark focus:bg-[rgb(var(--text-rgb)/0.075)] focus:text-text-dark";
 
 /**
  * 画布选择器。原来这里是一条横向 tab 条，自己占满一行。
@@ -355,8 +351,6 @@ function CanvasSelect({
   const currentSourceCanvasId = currentItem ? sourceCanvasIdFromSummary(currentItem) : null;
   const showSourceShortcut = !!currentSourceCanvasId && currentSourceCanvasId !== currentCanvasId;
   const showRestore = canRestoreMainline && !!currentItem;
-  const canDeleteCurrent = !!currentItem && canDeleteCanvasSummary(currentItem, username);
-  const deletingCurrent = deletingCanvasId === currentCanvasId;
   const label = currentItem
     ? canvasSelectLabel(currentItem, t)
     : loading
@@ -364,7 +358,7 @@ function CanvasSelect({
       : currentCanvasId;
   // 同步/删除都是点完菜单就关，转圈要是画在菜单里就等于没画。
   // 顶掉触发器上的那个箭头：位置一样大，行内一格都不用动。
-  const busy = restoringMainline || deletingCurrent;
+  const busy = restoringMainline || deletingCanvasId !== null;
 
   return (
     <DropdownMenu
@@ -396,28 +390,63 @@ function CanvasSelect({
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent className={CANVAS_MENU_CONTENT_CLASS} align="start">
-        {/* 只让画布列表滚。整块菜单一起滚的话，画布一多，「新建/删除」就被推到
+        {/* 只让画布列表滚。整块菜单一起滚的话，画布一多，「新建 / 回到来源」就被推到
             滚动区末尾，每次要用都得先把列表拖到底。 */}
         <div className="-mr-1 min-h-0 flex-1 overflow-y-auto pr-1">
-          <DropdownMenuRadioGroup value={currentCanvasId} onValueChange={onSwitch}>
-            {items.map((item) => (
-              <DropdownMenuRadioItem
-                key={item.id}
-                value={item.id}
-                // base-ui 的单选项默认不关菜单，选完就该收起来
-                closeOnClick
-                className={CANVAS_MENU_RADIO_CLASS}
-              >
-                <span className="min-w-0 truncate">{canvasSelectLabel(item, t)}</span>
-                {/* 同名画布不少（同一条主线的副本），靠这个时间戳分辨哪张是刚动过的 */}
-                {item.modified_at && (
-                  <span className="ml-auto shrink-0 pl-2 text-xs tabular-nums text-text-muted/70">
-                    {formatRelative(item.modified_at, t)}
-                  </span>
+          {items.map((item) => {
+            const itemLabel = canvasSelectLabel(item, t);
+            const selected = item.id === currentCanvasId;
+            const canDelete = canDeleteCanvasSummary(item, username);
+            const deleting = deletingCanvasId === item.id;
+
+            return (
+              <div key={item.id} className="group/canvas-row relative">
+                <DropdownMenuItem
+                  closeOnClick
+                  onClick={() => onSwitch(item.id)}
+                  className={`${CANVAS_MENU_ITEM_CLASS} min-h-8 pr-8 ${
+                    selected ? "bg-primary/[0.10] focus:bg-primary/[0.14]" : ""
+                  }`}
+                >
+                  <span className="min-w-0 truncate">{itemLabel}</span>
+                  {/* 同名画布靠修改时间区分；选中勾与删除入口共用行尾位置。 */}
+                  {item.modified_at && (
+                    <span className="ml-auto shrink-0 pl-2 text-xs tabular-nums text-text-muted/70">
+                      {formatRelative(item.modified_at, t)}
+                    </span>
+                  )}
+                  {selected && (
+                    <Check
+                      aria-hidden
+                      className={`absolute right-2 h-3.5 w-3.5 text-primary transition-opacity ${
+                        canDelete ? "group-hover/canvas-row:opacity-0 group-focus-within/canvas-row:opacity-0" : ""
+                      }`}
+                    />
+                  )}
+                </DropdownMenuItem>
+                {canDelete && (
+                  <button
+                    type="button"
+                    aria-label={`${t("common.delete")} ${itemLabel}`}
+                    disabled={deleting}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      pendingRef.current = () => void onDelete(item);
+                      setOpen(false);
+                    }}
+                    className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[6px] text-text-muted opacity-0 transition hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-destructive/35 group-hover/canvas-row:opacity-100 disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    {deleting ? (
+                      <RotateCcw className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    )}
+                  </button>
                 )}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
+              </div>
+            );
+          })}
         </div>
 
         <div className="shrink-0">
@@ -449,23 +478,6 @@ function CanvasSelect({
                 {restoringMainline
                   ? t("freezone.canvases.restoreBusy")
                   : t("freezone.canvases.restoreMenu")}
-              </span>
-            </DropdownMenuItem>
-          )}
-          {canDeleteCurrent && (
-            <DropdownMenuItem
-              variant="destructive"
-              className={CANVAS_MENU_ITEM_CLASS}
-              disabled={deletingCurrent}
-              onClick={() => {
-                pendingRef.current = () => void onDelete(currentItem);
-              }}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span>
-                {deletingCurrent
-                  ? t("freezone.canvases.deleteBusy")
-                  : t("freezone.canvases.deleteCurrent")}
               </span>
             </DropdownMenuItem>
           )}

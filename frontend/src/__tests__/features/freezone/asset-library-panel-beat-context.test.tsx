@@ -592,7 +592,9 @@ describe("AssetLibraryPanel beat context", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "资产管理" }));
 
-    expect(await screen.findByRole("button", { name: "新建" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "新建文件夹" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "批量操作" })).toBeInTheDocument();
   });
 });

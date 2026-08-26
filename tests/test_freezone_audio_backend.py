@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -300,6 +301,187 @@ async def test_user_custom_voice_generation_uses_requester_account(
     assert seen == [("viewer", "fv_viewer")]
     assert resolved is not None
     assert resolved.source == USER_VOICE_SCOPE
+
+
+@pytest.mark.asyncio
+async def test_audio_references_exclude_user_voice_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(audio_node, "OUTPUT_DIR", str(tmp_path))
+    relative_path = "_account/freezone/audio/voices/fv_directory/reference.wav"
+    (tmp_path / "viewer" / relative_path).mkdir(parents=True)
+    audio_node._write_user_voice_records(
+        "viewer",
+        [{"voice_id": "fv_directory", "path": relative_path, "sha256": "cached-sha"}],
+    )
+    ctx = SimpleNamespace(
+        project_id="proj_demo",
+        requester_username="viewer",
+        state_dir=tmp_path / "state" / "owner" / "demo",
+    )
+
+    async def fake_resolve(*_args, **_kwargs):
+        return ctx, "owner", "demo", tmp_path, str(tmp_path)
+
+    class Store:
+        async def list_characters(self):
+            return []
+
+        async def close(self):
+            return None
+
+    async def fake_store(_ctx):
+        return Store()
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_resolve)
+    monkeypatch.setattr(
+        freezone_routes,
+        "make_sqlite_store_for_context",
+        fake_store,
+    )
+    monkeypatch.setattr(
+        freezone_routes,
+        "load_narrator_reference_audio_from_state_dir",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        freezone_routes,
+        "load_effective_narration_style_for_voice_from_state_dir",
+        lambda *_args, **_kwargs: "third_person",
+    )
+
+    result = await freezone_routes.freezone_audio_references(
+        "proj_demo",
+        user={"username": "viewer"},
+    )
+
+    assert result["data"]["user_voices"][0]["exists"] is False
+    assert result["data"]["available"] == []
+
+
+@pytest.mark.asyncio
+async def test_user_voice_media_resolves_off_loop_and_hides_read_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from fastapi import HTTPException
+
+    ctx = SimpleNamespace(requester_username="viewer")
+
+    async def fake_resolve(*_args, **_kwargs):
+        return ctx, "owner", "demo", tmp_path, str(tmp_path)
+
+    event_loop_thread = threading.get_ident()
+    resolver_threads: list[int] = []
+    leaked_path = tmp_path / "private" / "account-voice.wav"
+
+    def unreadable(_username: str, _voice_id: str):
+        resolver_threads.append(threading.get_ident())
+        raise PermissionError(f"permission denied: {leaked_path}")
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_resolve)
+    monkeypatch.setattr(freezone_routes, "resolve_user_audio_voice", unreadable)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.get_freezone_audio_voice_media(
+            "proj_demo",
+            "fv_unreadable",
+            user={"username": "viewer"},
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "声线文件无法读取，请重新选择或检查文件是否完整"
+    assert str(leaked_path) not in str(exc_info.value.detail)
+    assert resolver_threads
+    assert all(thread_id != event_loop_thread for thread_id in resolver_threads)
+
+
+@pytest.mark.asyncio
+async def test_resolve_speech_voice_reports_missing_project_narrator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        audio_node,
+        "load_effective_narration_style_for_voice_from_state_dir",
+        lambda *_args: "third_person",
+    )
+    monkeypatch.setattr(
+        audio_node,
+        "load_narrator_reference_audio_from_state_dir",
+        lambda *_args: {},
+    )
+
+    with pytest.raises(audio_node.VoicePrerequisiteError) as caught:
+        await audio_node.resolve_speech_voice(
+            store=FakeProjectStore(tmp_path),
+            username="alice",
+            project="demo",
+            project_dir=tmp_path,
+            voice_ref={"scope": "project_narrator"},
+        )
+
+    assert caught.value.error_code == "voice_prereq_required"
+    assert str(caught.value) == "项目解说人声线未配置，请上传或录制解说人音频"
+
+
+@pytest.mark.asyncio
+async def test_resolve_speech_voice_reports_unreadable_project_narrator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        audio_node,
+        "load_effective_narration_style_for_voice_from_state_dir",
+        lambda *_args: "third_person",
+    )
+    monkeypatch.setattr(
+        audio_node,
+        "load_narrator_reference_audio_from_state_dir",
+        lambda *_args: {"path": "assets/narrator/missing.wav"},
+    )
+
+    with pytest.raises(audio_node.VoicePrerequisiteError) as caught:
+        await audio_node.resolve_speech_voice(
+            store=FakeProjectStore(tmp_path),
+            username="alice",
+            project="demo",
+            project_dir=tmp_path,
+            voice_ref={"scope": "project_narrator"},
+        )
+
+    assert str(caught.value) == "解说人声线文件无法读取，请检查文件是否完整"
+
+
+@pytest.mark.asyncio
+async def test_resolve_speech_voice_returns_explicit_user_voice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = audio_node.FreezoneVoiceRefResolution(
+        tmp_path / "voice.mp3",
+        "sha",
+        USER_VOICE_SCOPE,
+    )
+    monkeypatch.setattr(audio_node, "resolve_user_audio_voice", lambda *_args: expected)
+    monkeypatch.setattr(
+        audio_node,
+        "load_effective_narration_style_for_voice_from_state_dir",
+        lambda *_args: "third_person",
+    )
+
+    narration_style, resolved = await audio_node.resolve_speech_voice(
+        store=SimpleNamespace(state_dir=str(tmp_path)),
+        username="owner",
+        account_voice_username="viewer",
+        project="demo",
+        project_dir=tmp_path,
+        voice_ref={"scope": USER_VOICE_SCOPE, "voice_id": "fv_viewer"},
+    )
+
+    assert narration_style == "third_person"
+    assert resolved is expected
 
 
 @pytest.mark.asyncio

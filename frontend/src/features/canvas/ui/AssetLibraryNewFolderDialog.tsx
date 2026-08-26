@@ -44,6 +44,7 @@ export function AssetLibraryNewFolderDialog({
 }: AssetLibraryNewFolderDialogProps) {
   // 素材改名弹窗和文件夹弹窗可能同时挂在树上，写死 id 会重复。
   const inputId = useId();
+  const errorId = useId();
   const [name, setName] = useState(initialName);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -55,6 +56,15 @@ export function AssetLibraryNewFolderDialog({
       setSubmitting(false);
     }
   }, [open, initialName]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !submitting) onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [open, onClose, submitting]);
 
   if (typeof document === 'undefined' || !open) return null;
 
@@ -82,32 +92,50 @@ export function AssetLibraryNewFolderDialog({
       className="fixed inset-0 flex items-center justify-center"
       style={{ zIndex: z }}
       role="dialog"
+      aria-modal="true"
       aria-label={title}
     >
-      <div className="absolute inset-0 bg-black/55" onClick={onClose} />
-      <div className="relative w-[min(600px,90vw)] overflow-hidden rounded-[10px] border border-white/[0.12] bg-[#1b1c22] shadow-[0_18px_48px_rgba(0,0,0,0.5)]">
-        <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-3.5">
-          <h3 className="text-sm font-semibold text-text-dark">{title}</h3>
+      <div
+        className="absolute inset-0 bg-black/60"
+        onClick={() => {
+          if (!submitting) onClose();
+        }}
+      />
+      <div className="relative w-[min(420px,90vw)] overflow-hidden rounded-xl border border-[var(--ui-border-strong)] bg-[var(--ui-surface-modal)] shadow-[0_18px_48px_rgba(0,0,0,0.5)]">
+        <div className="flex items-start justify-between gap-4 px-5 pb-2 pt-5">
+          <div>
+            <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {title === '新建文件夹'
+                ? '创建后可立即用于归档和上传资产'
+                : '修改后会同步更新资产库中的显示名称'}
+            </p>
+          </div>
           <button
             type="button"
             onClick={onClose}
             title="关闭"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted/90 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
+            aria-label="关闭"
+            disabled={submitting}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-[rgba(var(--bg-rgb)/0.5)] hover:text-foreground disabled:opacity-40"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="px-5 py-4">
-          <label
-            htmlFor={inputId}
-            className="mb-2 block text-xs text-text-muted/90"
-          >
-            {fieldLabel} <span className="text-red-400">*</span>
-          </label>
-          {/* 全局 --radius 是 1rem，rounded-md 落在 36px 高的输入框上会圆成胶囊，
-              所以这里按项目里输入类控件的惯例写死 6px。 */}
-          <div className="flex items-center rounded-[6px] border border-white/[0.10] bg-white/[0.04] px-3 focus-within:border-white/[0.22]">
+        <div className="px-5 pb-4 pt-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <label
+              htmlFor={inputId}
+              className="text-xs font-medium text-foreground"
+            >
+              {fieldLabel} <span className="text-destructive">*</span>
+            </label>
+            <span className="text-xs text-muted-foreground">
+              {name.length}/{maxLength}
+            </span>
+          </div>
+          <div className="flex items-center rounded-sm border border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.5)] px-3 transition-[border-color,box-shadow] focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
             <input
               id={inputId}
               value={name}
@@ -118,29 +146,34 @@ export function AssetLibraryNewFolderDialog({
               onKeyDown={(event) => {
                 if (event.key === 'Enter') void handleSubmit();
               }}
-              className="h-9 flex-1 bg-transparent text-sm text-text-dark outline-none placeholder:text-text-muted/50"
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? errorId : undefined}
+              className="h-10 min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/60"
             />
-            <span className="ml-2 shrink-0 text-[11px] text-text-muted/60">
-              {name.length}/{maxLength}
-            </span>
           </div>
           {error && (
-            <div className="mt-2 text-[11px] text-red-400">{error}</div>
+            <div
+              id={errorId}
+              role="alert"
+              className="mt-2 text-xs text-destructive"
+            >
+              {error}
+            </div>
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-5 pb-4">
+        <div className="flex items-center justify-end gap-2 px-5 pb-5">
           <Button
             size="sm"
             variant="ghost"
-            className="px-4 text-text-muted hover:text-text-dark"
+            className="px-4 text-muted-foreground hover:text-foreground"
             onClick={onClose}
           >
             取消
           </Button>
           <Button
             size="sm"
-            className="bg-white px-4 text-[#15161b] hover:bg-white/90"
+            className="bg-primary px-4 text-primary-foreground hover:bg-primary/90"
             disabled={!canSubmit}
             onClick={() => void handleSubmit()}
           >

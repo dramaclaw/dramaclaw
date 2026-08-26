@@ -82,6 +82,7 @@ import { NarratorVoicePanel } from "@/components/assets/narrator-voice-panel";
 import { ProjectStyleChip } from "@/components/assets/project-style-chip";
 import { ScenesPanel } from "@/components/assets/scenes-panel";
 import { PropsPanel } from "@/components/assets/props-panel";
+import { ViewportLazyImage } from "@/components/viewport-lazy-image";
 import { CopyAssetLinkButton } from "@/components/assets/copy-asset-link-button";
 import { LazyAssetBeatReferences } from "@/components/assets/asset-beat-references";
 import type { AssetRefType } from "@/lib/queries/asset-references";
@@ -507,11 +508,9 @@ function CharacterAvatar({
   }, [portraitUrl]);
   if (portraitUrl && failedPortraitUrl !== portraitUrl) {
     return (
-      <img
+      <ViewportLazyImage
         src={resolveMediaUrl(portraitUrl) ?? ""}
         alt={character.name}
-        loading="lazy"
-        decoding="async"
         onError={() => setFailedPortraitUrl(portraitUrl)}
         className={cn(
           "shrink-0 rounded-full border border-border object-cover",

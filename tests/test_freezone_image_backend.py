@@ -1044,8 +1044,19 @@ async def test_freezone_audio_generation_enqueues_two_feature_billings(
     tmp_path: Path,
 ) -> None:
     from novelvideo.config import INDEXTTS2_RECORD_MODEL
+    from novelvideo.project_config import set_narrator_reference_audio_in_state_dir
+    from novelvideo.seedance2_i2v.voice_clone import file_sha256
 
     _patch_freezone_project(monkeypatch, tmp_path)
+    ctx = _project_ctx(tmp_path)
+    narrator = ctx.output_dir / "assets" / "narrator" / "voice.wav"
+    narrator.parent.mkdir(parents=True, exist_ok=True)
+    narrator.write_bytes(b"narrator-voice")
+    set_narrator_reference_audio_in_state_dir(
+        ctx.state_dir,
+        relative_path=narrator.relative_to(ctx.output_dir).as_posix(),
+        sha256=file_sha256(narrator),
+    )
     captured: list[dict] = []
 
     async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):

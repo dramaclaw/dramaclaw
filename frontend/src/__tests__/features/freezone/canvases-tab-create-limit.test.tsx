@@ -112,7 +112,7 @@ describe("CanvasesTab canvas quota", () => {
     expect(screen.queryByPlaceholderText("新画布名称")).toBeNull();
   });
 
-  it("keeps the create and delete entries out of the scrolling canvas list", async () => {
+  it("keeps the bottom actions out of the scrolling canvas list", async () => {
     listFreezoneCanvases.mockResolvedValue(
       Array.from({ length: MAX_USER_CREATED_CANVASES_PER_PROJECT }, (_unused, i) => myCanvas(i)),
     );
@@ -130,7 +130,10 @@ describe("CanvasesTab canvas quota", () => {
 
     // 画布多到要滚时，滚的只能是列表本身；动作跟着列表滚就等于每次都要先拖到底。
     expect(scroller).not.toBeNull();
-    expect(scroller!.querySelector('[data-slot="dropdown-menu-radio-item"]')).not.toBeNull();
+    // 25 张自建 + 1 张个人画布投影，整份列表都在滚动区里。
+    expect(scroller!.querySelectorAll('[data-slot="dropdown-menu-item"]').length).toBe(
+      MAX_USER_CREATED_CANVASES_PER_PROJECT + 1,
+    );
     expect(scroller!.contains(createItem)).toBe(false);
   });
 

@@ -26,16 +26,16 @@
   },
   "loginCinematic": {
     "moreInfo": "More information",
+    "moreInfoShort": "More",
     "announcement": {
       "open": "View announcements",
+      "label": "Notices",
       "title": "Announcements",
       "close": "Close announcements",
       "confirm": "Confirm",
       "markAllRead": "Mark all read",
       "unread": "{{n}} unread",
-      "pinned": "Pinned",
-      "expand": "Expand this announcement",
-      "collapse": "Collapse this announcement"
+      "pinned": "Pinned"
     }
   },
   "downloadPage": {
@@ -185,7 +185,7 @@
     "settingsWithWarning": "Settings, missing configuration",
     "settingsWarningBubble": "Missing setup",
     "dismissSettingsWarningBubble": "Dismiss missing setup reminder",
-    "notifications": "Notifications",
+    "notifications": "Announcement Center",
     "account": {
       "open": "Open account menu",
       "changeAvatar": "Change avatar",
@@ -227,9 +227,9 @@
     }
   },
   "notifications": {
-    "title": "Notification Center",
-    "close": "Close notification center",
-    "empty": "No notifications",
+    "title": "Announcement Center",
+    "close": "Close announcement center",
+    "empty": "No announcements",
     "upgrade": {
       "title": "New version {{version}} available",
       "body": "A newer upstream release is available. Open the release page to review and upgrade.",
@@ -271,6 +271,8 @@
       "selected": "Selected",
       "search": "Search pet name…",
       "loading": "Loading…",
+      "officialGroup": "Official companions",
+      "peripheralGroup": "Companion collection",
       "empty": "No matching pets",
       "emptyMine": "No imported pets yet — click Import to add"
     },
@@ -295,6 +297,7 @@
       },
       "accessories": {
         "none": "Emperor's New Clothes",
+        "niulai": "Niu Lai",
         "goldenHoopStaff": "Great Sage Equal to Heaven",
         "littleKing": "Little King",
         "bubbleBalloon": "Bubble",
@@ -331,6 +334,7 @@
       },
       "accessoryFeedback": {
         "none": "Dressed to impress!",
+        "niulai": "Mom!",
         "goldenHoopStaff": "Sage mode!",
         "littleKing": "The king arrives!",
         "bubbleBalloon": "Let's go to the park",
@@ -1140,6 +1144,17 @@
     "openManual": "Open user manual",
     "learnMoreToast": "Official handbook is being crafted — stay tuned!",
     "closeLogin": "Close login dialog",
+    "modal": {
+      "title": "Sign in",
+      "subtitle": "Continue your stories, assets, and shots",
+      "noAccount": "Need an account?",
+      "applyAccount": "Request access",
+      "showcaseLabel": "DramaClaw showcase",
+      "showcaseEyebrow": "MADE WITH DRAMACLAW",
+      "showcaseMeta": "Production in motion",
+      "showcaseTitle": "Imagination, rolling at full speed",
+      "showcaseDescription": "Characters, storyboards, sound, and shots move forward in one production line"
+    },
     "privacy": "Privacy",
     "terms": "Terms",
     "docs": "Docs",
@@ -1148,7 +1163,7 @@
       "star": "Star"
     },
     "businessWechat": {
-      "label": "Business Contact",
+      "shortLabel": "Business",
       "open": "View business WeChat QR code",
       "qrAlt": "Business WeChat QR code",
       "title": "Add Business WeChat",

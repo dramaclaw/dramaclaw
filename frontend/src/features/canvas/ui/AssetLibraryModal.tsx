@@ -8,13 +8,14 @@ import {
   ChevronRight,
   ChevronsUpDown,
   Folder,
+  FolderPlus,
   Loader2,
   MoreHorizontal,
   Music,
-  Plus,
   RefreshCw,
   Send,
   Trash2,
+  Upload,
   Video as VideoIcon,
   X,
 } from 'lucide-react';
@@ -66,7 +67,7 @@ import {
 const ASSET_LIBRARY_PAGE_SIZES = [20, 40, 80, 100] as const;
 
 const ASSET_LIBRARY_MODAL_CLASS =
-  'relative flex h-[min(880px,90vh)] w-[min(1440px,94vw)] flex-col overflow-hidden rounded-[10px] border border-white/[0.12] bg-[#15161b]/96 shadow-[0_18px_48px_rgba(0,0,0,0.45)] backdrop-blur-md';
+  'relative flex h-[min(780px,88vh)] w-[min(1180px,94vw)] flex-col overflow-hidden rounded-xl border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.96)] shadow-[0_18px_48px_rgba(0,0,0,0.45)]';
 
 export type { AssetLibraryMedia };
 
@@ -154,7 +155,6 @@ export function AssetLibraryModal({
   // 「全部」下先看文件夹，点进去才看条目；非空即当前打开的文件夹。选中状态跨层级
   // 保留（selectedKeys 与视图无关），所以进出文件夹不会掉勾。
   const [openFolderKey, setOpenFolderKey] = useState<AssetFolderKey | null>(null);
-  const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   // 批量操作 = 管理态：卡片上的勾选改为「选中待删除」，底部换成删除条。平时的勾选
@@ -175,6 +175,30 @@ export function AssetLibraryModal({
   // 改每页条数都回到第一页——留在第 3 页看一个只有 2 页的目录没有意义。
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(ASSET_LIBRARY_PAGE_SIZES[0]);
+
+  useEffect(() => {
+    if (
+      !open ||
+      newFolderOpen ||
+      uploadOpen ||
+      renameFolderKey ||
+      coverFolderKey
+    ) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [
+    coverFolderKey,
+    newFolderOpen,
+    onClose,
+    open,
+    renameFolderKey,
+    uploadOpen,
+  ]);
 
   useEffect(() => {
     setPage(1);
@@ -274,7 +298,6 @@ export function AssetLibraryModal({
       setSelectedKeys([]);
       setActiveTabKey(ALL_CATEGORY_KEY);
       setOpenFolderKey(null);
-      setCreateMenuOpen(false);
       setNewFolderOpen(false);
       setUploadOpen(false);
       setBulkMode(false);
@@ -534,6 +557,14 @@ export function AssetLibraryModal({
   // 「全部」且没点进文件夹时是文件夹视图，此时不列条目。
   const showFolders = activeTabKey === ALL_CATEGORY_KEY && !openFolder;
 
+  // 批量能力处理的是资产，不是文件夹。从资产视图退回文件夹总览时同步退出，避免
+  // 出现按钮已禁用、底部却仍保留批量删除栏的矛盾状态。
+  useEffect(() => {
+    if (!showFolders || !bulkMode) return;
+    setBulkMode(false);
+    setBulkIds([]);
+  }, [bulkMode, showFolders]);
+
   // 直接往弹窗里拖文件的落点：进了可写文件夹就放那儿(不打标签)，在某个类目 tab 下
   // 就放进该类目的同名系统文件夹并打上该标签。文件夹视图和主线文件夹不接受拖入。
   const dropTarget = useMemo<
@@ -673,14 +704,18 @@ export function AssetLibraryModal({
     })),
   ];
 
-  const headerButtonClass =
-    'inline-flex h-8 items-center gap-1.5 rounded-md bg-white/[0.08] px-3 text-xs font-medium text-text-dark transition-colors hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-50';
+  const headerButtonLayout =
+    'inline-flex h-7 items-center gap-1.5 rounded-[8px] px-2.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40';
+  const headerButtonClass = `${headerButtonLayout} border border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.34)] font-medium text-foreground hover:border-[var(--ui-border-strong)] hover:bg-[rgba(var(--surface-rgb)/0.88)]`;
 
   return createPortal(
     <div className="fixed inset-0 z-[300] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
         className={ASSET_LIBRARY_MODAL_CLASS}
+        role="dialog"
+        aria-modal="true"
+        aria-label="资产库"
         onClick={(event) => event.stopPropagation()}
         onDragOver={(event) => {
           event.preventDefault();
@@ -691,12 +726,15 @@ export function AssetLibraryModal({
         }}
         onDrop={handleDrop}
       >
-        {/* Title bar：批量操作 / 新建 统一收在右上角 */}
-        <div className="flex shrink-0 items-center justify-between px-5 py-4">
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold text-text-dark">资产库</h2>
+        {/* 标题与高频操作同层：上传和建夹直接暴露，避免为了两个选项再开一层菜单。 */}
+        <div className="flex shrink-0 flex-col items-stretch justify-between gap-3 px-5 pb-3 pt-5 sm:flex-row sm:items-center sm:gap-4">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-foreground">资产库</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              整理、复用并上传项目素材
+            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="ui-scrollbar-hidden flex shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:pb-0">
             <button
               type="button"
               onClick={() => void handleSyncFromMainline()}
@@ -709,68 +747,49 @@ export function AssetLibraryModal({
               ) : (
                 <RefreshCw className="h-3.5 w-3.5" />
               )}
-              重新同步
+              同步主线
             </button>
             <button
               type="button"
               onClick={() => {
                 setBulkMode((prev) => !prev);
                 setBulkIds([]);
-                setCreateMenuOpen(false);
               }}
+              disabled={showFolders}
               className={`${headerButtonClass} ${
                 bulkMode ? 'bg-white/[0.18] text-text-dark' : ''
               }`}
-              title="进入批量删除模式"
+              title={
+                showFolders
+                  ? '进入文件夹或分类资产列表后可使用批量操作'
+                  : '进入批量删除模式'
+              }
             >
               {bulkMode ? '退出批量' : '批量操作'}
             </button>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setCreateMenuOpen((prev) => !prev)}
-                disabled={!project}
-                className={headerButtonClass}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                新建
-              </button>
-              {createMenuOpen && (
-                <>
-                  {/* 点空白处收起菜单 */}
-                  <div
-                    className="fixed inset-0 z-10"
-                    onClick={() => setCreateMenuOpen(false)}
-                  />
-                  <div className="absolute right-0 top-9 z-20 w-28 overflow-hidden rounded-md border border-white/[0.12] bg-[#232429] py-1 shadow-[0_12px_28px_rgba(0,0,0,0.45)]">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCreateMenuOpen(false);
-                        setNewFolderOpen(true);
-                      }}
-                      className="block w-full px-3 py-1.5 text-left text-xs text-text-muted/85 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
-                    >
-                      新建文件夹
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCreateMenuOpen(false);
-                        setUploadOpen(true);
-                      }}
-                      className="block w-full px-3 py-1.5 text-left text-xs text-text-muted/85 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
-                    >
-                      上传资产
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => setNewFolderOpen(true)}
+              disabled={!project}
+              className={headerButtonClass}
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+              新建文件夹
+            </button>
+            <button
+              type="button"
+              onClick={() => setUploadOpen(true)}
+              disabled={!project}
+              className={`${headerButtonLayout} bg-primary font-semibold text-primary-foreground hover:bg-primary/90`}
+            >
+              <Upload className="h-3.5 w-3.5" />
+              上传资产
+            </button>
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted/90 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
+              aria-label="关闭"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-[rgba(var(--surface-rgb)/0.88)] hover:text-foreground"
               title="关闭"
             >
               <X className="h-4 w-4" />
@@ -778,9 +797,9 @@ export function AssetLibraryModal({
           </div>
         </div>
 
-        {/* Tabs + counter */}
-        <div className="flex shrink-0 items-center justify-between px-5 pb-4">
-          <div className="flex items-center gap-1 rounded-lg bg-white/[0.04] p-0.5">
+        {/* 类目是浏览导航，不再套一层分段控件底板。 */}
+        <div className="flex shrink-0 items-center justify-between px-5 pb-4 pt-1">
+          <div className="ui-scrollbar-hidden flex min-w-0 items-center gap-1 overflow-x-auto">
             {tabs.map((tab) => (
               <button
                 key={tab.key}
@@ -790,10 +809,10 @@ export function AssetLibraryModal({
                   // 换 tab 一律退回文件夹层，免得「全部」里还留着上次点进去的目录。
                   setOpenFolderKey(null);
                 }}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
                   tab.key === activeTabKey
-                    ? 'bg-white/[0.12] text-text-dark'
-                    : 'text-text-muted/80 hover:text-text-dark'
+                    ? 'bg-secondary text-primary'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
                 }`}
               >
                 {tab.label}
@@ -828,9 +847,9 @@ export function AssetLibraryModal({
         )}
 
         {/* Grid */}
-        <div className="ui-scrollbar relative flex-1 overflow-y-auto px-5 pb-2">
+        <div className="ui-scrollbar relative flex-1 overflow-y-auto px-5 pb-2 [scrollbar-gutter:stable]">
           {isDragging && dropTarget && (
-            <div className="pointer-events-none absolute inset-x-5 inset-y-0 z-10 flex items-center justify-center rounded-[8px] border border-dashed border-accent/60 bg-accent/10 text-sm text-text-dark">
+            <div className="pointer-events-none absolute inset-x-5 inset-y-0 z-10 flex items-center justify-center rounded-sm border border-dashed border-primary/60 bg-primary/10 text-sm text-foreground">
               松开以上传到「{dropTarget.label}」
             </div>
           )}
@@ -960,7 +979,7 @@ export function AssetLibraryModal({
                     selected
                       ? bulkMode
                         ? 'border-red-400/70 ring-1 ring-red-400/45'
-                        : 'border-accent/70 ring-1 ring-accent/45'
+                        : 'border-primary/70 ring-1 ring-primary/45'
                       : ASSET_LIBRARY_CARD_HOVER_CLASS
                   } ${disabledSelect ? 'cursor-default' : 'cursor-pointer'}`}
                   onClick={activate}
@@ -992,7 +1011,7 @@ export function AssetLibraryModal({
                       selected
                         ? bulkMode
                           ? 'border-red-400 bg-red-500 text-white'
-                          : 'border-accent bg-accent text-white'
+                          : 'border-primary bg-primary text-primary-foreground'
                         : 'border-white/70 bg-black/35 text-transparent hover:border-white'
                     } ${disabledSelect ? 'cursor-not-allowed opacity-40' : ''}`}
                   >
@@ -1040,8 +1059,22 @@ export function AssetLibraryModal({
             visibleItems.length === 0 &&
             visiblePending.length === 0 &&
             !libraryError && (
-              <div className="mt-3 text-center text-[11px] text-text-muted/70">
-                这里暂无素材，可点右上角「新建 → 上传资产」添加；主线资产已自动同步，也可点「重新同步」。
+              <div className="absolute inset-0 flex -translate-y-[56px] flex-col items-center justify-center gap-3 text-center">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                  <Upload className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">这里还没有素材</p>
+                  <p className="mt-1 text-xs text-muted-foreground">上传文件，或同步主线中的人物、场景和道具</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setUploadOpen(true)}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  上传第一个资产
+                </button>
               </div>
             )}
         </div>
@@ -1190,102 +1223,108 @@ function FolderCard({
   return (
     // 外壳平时不画边框/底色，hover 才浮出来。border 常在只是透明，免得 hover
     // 时多出 1px 把卡片顶动。
-    <div className="flex flex-col overflow-hidden rounded-[12px] border border-transparent p-2 transition-colors hover:border-white/[0.14] hover:bg-white/[0.05]">
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          onOpen();
-        }
-      }}
-      // 类目 tab 和文件夹同名（如「风格」），加个前缀让两者可区分。
-      aria-label={`文件夹 ${folder.label}`}
-      className="group relative flex aspect-square cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-[8px] bg-white/[0.03]"
-    >
-      {cover ? (
-        <img
-          src={resolveImageDisplayUrl(cover)}
-          alt=""
-          className="absolute inset-0 h-full w-full object-cover"
-          draggable={false}
-        />
-      ) : (
-        <Folder className="h-11 w-11 text-text-muted/55 transition-colors group-hover:text-text-muted/80" />
-      )}
+    <div className="relative flex flex-col rounded-[12px] border border-transparent p-2 transition-colors hover:border-white/[0.14] hover:bg-white/[0.05]">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onOpen}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onOpen();
+          }
+        }}
+        // 类目 tab 和文件夹同名（如「风格」），加个前缀让两者可区分。
+        aria-label={`文件夹 ${folder.label}`}
+        className="group relative flex aspect-square cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-[8px] bg-white/[0.05]"
+      >
+        {cover ? (
+          <img
+            src={resolveImageDisplayUrl(cover)}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+            draggable={false}
+          />
+        ) : (
+          <Folder className="h-11 w-11 text-text-muted/55 transition-colors group-hover:text-text-muted/80" />
+        )}
 
-      {/* 悬停才出现：整柜发到画布。缩到右下角一个小图标——原先是横在封面正中
+        {/* 悬停才出现：整柜发到画布。缩到右下角一个小图标——原先是横在封面正中
           的一条文字按钮，鼠标从上往下移到卡片就正好压在上面，很容易误触。 */}
-      {onSend && folder.items.length > 0 && (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onSend();
-          }}
-          aria-label="发送到画布"
-          title="发送到画布"
-          className="absolute bottom-2 right-2 hidden h-7 w-7 items-center justify-center rounded-[6px] bg-black/70 text-white transition-colors hover:bg-black/90 group-hover:inline-flex"
-        >
-          <Send className="h-3.5 w-3.5" />
-        </button>
-      )}
-    </div>
-
-      {/* 名字挪到方块外面，封面就不用被文字压掉一条；条数不显示，进去就知道 */}
-      <div className="mt-2 flex items-center gap-1 px-0.5">
-        <div className="min-w-0 flex-1 truncate text-xs text-text-dark" title={folder.label}>
-          {folder.label}
-        </div>
-        {/* 系统文件夹是按标签派生的，没有实体记录，改名/删除/封面都无从谈起 */}
-        {!folder.system && (
-          <div className="relative shrink-0">
-            <button
-              type="button"
-              onClick={onToggleMenu}
-              aria-label={`${folder.label} 更多操作`}
-              className="inline-flex h-5 w-5 items-center justify-center rounded-[4px] text-text-muted/70 transition-colors hover:bg-white/[0.10] hover:text-text-dark"
-            >
-              <MoreHorizontal className="h-3.5 w-3.5" />
-            </button>
-            {menuOpen && (
-              <>
-                {/* 点空白处收起菜单 */}
-                <div className="fixed inset-0 z-10" onClick={onToggleMenu} />
-                {/* 卡片在网格最下一行时菜单要往上开，否则会被列表的滚动容器裁掉 */}
-                <div className="absolute bottom-6 right-0 z-20 w-[112px] overflow-hidden rounded-[6px] border border-white/[0.12] bg-[#232429] py-1 shadow-[0_12px_28px_rgba(0,0,0,0.45)]">
-                  <button
-                    type="button"
-                    onClick={onEditCover}
-                    className="block w-full px-3 py-1.5 text-left text-xs text-text-dark transition-colors hover:bg-white/[0.08]"
-                  >
-                    修改封面
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onRename}
-                    className="block w-full px-3 py-1.5 text-left text-xs text-text-dark transition-colors hover:bg-white/[0.08]"
-                  >
-                    重命名
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onDelete}
-                    className="block w-full px-3 py-1.5 text-left text-xs text-red-400 transition-colors hover:bg-white/[0.08]"
-                  >
-                    删除
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+        {onSend && folder.items.length > 0 && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onSend();
+            }}
+            aria-label="发送到画布"
+            title="发送到画布"
+            className="absolute bottom-2 right-2 hidden h-7 w-7 items-center justify-center rounded-[6px] bg-black/70 text-white transition-colors hover:bg-black/90 group-hover:inline-flex"
+          >
+            <Send className="h-3.5 w-3.5" />
+          </button>
         )}
       </div>
 
+      {/* 文件夹级操作属于封面，不与名称争夺横向空间；固定在封面右上角也更符合
+          图片卡片的操作心智。系统文件夹没有可编辑实体，因此不显示。 */}
+      {!folder.system && (
+        <div className="absolute right-4 top-4 z-[2]">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleMenu();
+            }}
+            aria-label={`${folder.label} 更多操作`}
+            className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/35 text-white/60 transition-colors hover:bg-black/55 hover:text-white"
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </button>
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={onToggleMenu} />
+              <div className="absolute right-0 top-8 z-20 w-[112px] overflow-hidden rounded-sm border border-border bg-popover py-1 text-popover-foreground shadow-[0_12px_28px_rgba(0,0,0,0.45)]">
+                <button
+                  type="button"
+                  onClick={onEditCover}
+                  className="block w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+                >
+                  修改封面
+                </button>
+                <button
+                  type="button"
+                  onClick={onRename}
+                  className="block w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+                >
+                  重命名
+                </button>
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  className="block w-full px-3 py-1.5 text-left text-xs text-destructive transition-colors hover:bg-accent"
+                >
+                  删除
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* 名字挪到方块外面，封面就不用被文字压掉一条；条数不显示，进去就知道 */}
+      <div className="mt-2 px-0.5">
+        <div
+          className="min-w-0 flex-1 truncate text-xs text-text-dark"
+          title={folder.label}
+        >
+          {folder.label}
+        </div>
+      </div>
+
       {/* 建夹日期。系统文件夹没有这个字段，留一行等高的空位让网格对齐。 */}
-      <div className="mt-1 h-4 px-0.5 text-right text-[11px] text-text-muted/60">
+      <div className="mt-1 h-4 px-0.5 text-left text-[11px] text-text-muted/60">
         {created}
       </div>
     </div>

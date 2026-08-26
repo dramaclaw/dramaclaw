@@ -40,6 +40,7 @@ class _FakeCharacterStore:
 
     def __init__(self, characters) -> None:
         self.state_dir = "/state/alice/demo"
+        self.project_dir = "/output/alice/demo"
         self._characters = list(characters)
         self.list_characters_calls = 0
 
@@ -74,6 +75,11 @@ def speech_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             _character("路人甲"),
         ]
     )
+    store.project_dir = str(project_dir)
+    store.state_dir = str(tmp_path / "state" / "alice" / "demo")
+    voice_path = project_dir / "assets" / "voices" / "小明.wav"
+    voice_path.parent.mkdir(parents=True, exist_ok=True)
+    voice_path.write_bytes(b"voice")
     ctx = SimpleNamespace(
         project_id="proj",
         project_name="demo",
@@ -180,7 +186,7 @@ async def test_speech_projection_carries_only_the_characters_actually_consulted(
     blob = json.dumps(payload["projection"], ensure_ascii=False)
     assert "路人甲" not in blob
     assert blob.count("小明") >= 1
-    assert speech_harness.store.list_characters_calls == 1
+    assert speech_harness.store.list_characters_calls == 2
 
 
 @pytest.mark.asyncio
@@ -201,8 +207,9 @@ async def test_speech_payload_is_unchanged_when_no_projector_is_installed(
         "target_beat",
         "billing",
     }
-    # Rollback also means no extra project store is opened on the enqueue side.
-    assert speech_harness.store.list_characters_calls == 0
+    # Even without a projector, the enqueue-side prerequisite check resolves
+    # the selected voice once before allocating the job.
+    assert speech_harness.store.list_characters_calls == 1
 
 
 @pytest.mark.asyncio

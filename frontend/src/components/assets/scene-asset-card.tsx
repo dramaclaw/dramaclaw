@@ -35,6 +35,7 @@ import {
 import { ASSET_CARD_META_BADGE_CLASS } from "@/components/assets/asset-card-styles";
 import { CopyAssetLinkButton } from "@/components/assets/copy-asset-link-button";
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import { ViewportLazyImage } from "@/components/viewport-lazy-image";
 import type { CreditPromotionDisplay } from "@/components/credits/credit-visual";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { sceneTypeLabel } from "@/lib/scene-type";
@@ -111,12 +112,10 @@ function AssetImageSlot({
           <>
             {/* Blurred background fill for contain mode */}
             {fit === "contain" && (
-              <img
+              <ViewportLazyImage
                 src={resolved}
                 alt=""
                 aria-hidden="true"
-                loading="lazy"
-                decoding="async"
                 className="absolute inset-0 h-full w-full scale-110 object-cover opacity-50 blur-md"
               />
             )}
@@ -129,11 +128,9 @@ function AssetImageSlot({
                 onPreview ? "cursor-zoom-in" : "cursor-default",
               )}
             >
-              <img
+              <ViewportLazyImage
                 src={resolved}
                 alt={label}
-                loading="lazy"
-                decoding="async"
                 className={cn(
                   "h-full w-full",
                   fit === "contain" ? "object-contain" : "object-cover",

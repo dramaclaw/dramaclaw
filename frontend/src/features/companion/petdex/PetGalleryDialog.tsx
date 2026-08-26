@@ -56,6 +56,7 @@ function getAccessoryPreviewSrc(accessory: PikoAccessoryDisplayId) {
 
 const PIKO_ACCESSORY_FEEDBACK_KEYS: Record<PikoAccessoryDisplayId, string> = {
   none: "myBuddy.debug.accessoryFeedback.none",
+  "piko-accessory-niulai": "myBuddy.debug.accessoryFeedback.niulai",
   "piko-accessory-golden-hoop-staff": "myBuddy.debug.accessoryFeedback.goldenHoopStaff",
   "piko-accessory-little-king": "myBuddy.debug.accessoryFeedback.littleKing",
   "piko-accessory-bubble-balloon": "myBuddy.debug.accessoryFeedback.bubbleBalloon",
@@ -91,9 +92,19 @@ const PIKO_ACCESSORY_FEEDBACK_KEYS: Record<PikoAccessoryDisplayId, string> = {
   "piko-accessory-ghost-pet": "myBuddy.debug.accessoryFeedback.ghostPet",
 };
 
+const OFFICIAL_COMPANION_SLUGS = new Set(["zhizhi"]);
+
+// 只看 slug 会把导入项误判为官方：导入允许任意 slug（文件名或 JSON 的 id），
+// 用户传一个叫 zhizhi 的精灵图就会落进官方分组，而官方分组不给 onDelete，
+// 于是这只宠物再也删不掉。官方 = 内置且 slug 命中。
+function isOfficialPet(pet: PetdexCatalogEntry): boolean {
+  return !pet.imported && OFFICIAL_COMPANION_SLUGS.has(pet.slug);
+}
+
 const PIKO_ACCESSORY_MENU_GROUPS = [
   [
     "none",
+    "piko-accessory-niulai",
     "piko-accessory-golden-hoop-staff",
     "piko-accessory-little-king",
     "piko-accessory-bubble-balloon",
@@ -564,6 +575,8 @@ export function PetGalleryDialog({
   );
 
   const pets = useMemo(() => [...localPets, ...importedPets], [localPets, importedPets]);
+  const officialPets = useMemo(() => pets.filter(isOfficialPet), [pets]);
+  const peripheralPets = useMemo(() => pets.filter((pet) => !isOfficialPet(pet)), [pets]);
 
   const handleAccessorySelect = useCallback(
     (accessory: PikoAccessoryDisplayId) => {
@@ -619,7 +632,7 @@ export function PetGalleryDialog({
       onClick={handleRequestClose}
     >
       <div
-        className="relative flex max-h-[88vh] w-full max-w-[760px] flex-col rounded-[12px] border border-white/[0.08] bg-[#121212]/82 shadow-[0_18px_58px_rgba(0,0,0,0.56)] backdrop-blur-2xl"
+        className="relative flex max-h-[88vh] w-full max-w-[568px] flex-col rounded-[12px] border border-white/[0.08] bg-[#121212]/82 shadow-[0_18px_58px_rgba(0,0,0,0.56)] backdrop-blur-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         {mode === "gallery" ? (
@@ -693,100 +706,146 @@ export function PetGalleryDialog({
 
         {mode === "gallery" ? (
           <div className="ui-scrollbar min-h-0 overflow-y-auto px-5 pb-4 pt-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              <CompanionCard
-                title="Piko"
-                selected={draftSelection.kind === PIKO_COMPANION_KIND}
-                contentClassName="pt-1"
-                onSelect={() => setDraftSelection({ kind: PIKO_COMPANION_KIND, pet: null })}
-                accessoryControl={
-                  <div
-                    className="relative"
-                    onClick={(event) => event.stopPropagation()}
-                    onPointerDown={(event) => event.stopPropagation()}
+            <div className="space-y-5">
+              <section aria-labelledby="official-companions-heading">
+                <div className="mb-2.5">
+                  <h3
+                    id="official-companions-heading"
+                    className="shrink-0 text-[11px] font-medium text-text-muted"
                   >
-                    <button
-                      ref={accessoryButtonRef}
-                      type="button"
-                      className="flex h-5 max-w-[76px] items-center gap-1 rounded-full border border-white/[0.1] bg-white/[0.08] px-1.5 text-[10px] leading-none text-text-dark transition-colors hover:border-white/[0.2] hover:bg-white/[0.12] hover:text-white"
-                      aria-label={t("myBuddy.debug.accessoryPreview")}
-                      aria-expanded={accessoryMenuOpen}
-                      aria-controls={accessoryMenuOpen ? "piko-accessory-menu" : undefined}
-                      onClick={() => {
-                        updateAccessoryMenuPosition();
-                        setAccessoryMenuOpen((value) => !value);
-                      }}
+                    {t("myBuddy.gallery.officialGroup")}
+                  </h3>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <CompanionCard
+                    title="Piko"
+                    selected={draftSelection.kind === PIKO_COMPANION_KIND}
+                    contentClassName="pt-1"
+                    onSelect={() => setDraftSelection({ kind: PIKO_COMPANION_KIND, pet: null })}
+                    accessoryControl={
+                      <div
+                        className="relative"
+                        onClick={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                      >
+                        <button
+                          ref={accessoryButtonRef}
+                          type="button"
+                          className="flex h-5 max-w-[76px] items-center gap-1 rounded-full border border-white/[0.1] bg-white/[0.08] px-1.5 text-[10px] leading-none text-text-dark transition-colors hover:border-white/[0.2] hover:bg-white/[0.12] hover:text-white"
+                          aria-label={t("myBuddy.debug.accessoryPreview")}
+                          aria-expanded={accessoryMenuOpen}
+                          aria-controls={accessoryMenuOpen ? "piko-accessory-menu" : undefined}
+                          onClick={() => {
+                            updateAccessoryMenuPosition();
+                            setAccessoryMenuOpen((value) => !value);
+                          }}
+                        >
+                          <span className="truncate">{t(accessoryLabel)}</span>
+                          <ChevronRight className="size-3 shrink-0 text-text-muted" />
+                        </button>
+                      </div>
+                    }
+                  >
+                    <div className="petdex-piko-accessory-feedback">
+                      <PikoActionFigure
+                        action="idle"
+                        accessory={draftAccessory}
+                        className="mybuddy-companion-anchor--preview"
+                        style={{ transform: "translateY(20px)" }}
+                      />
+                      {accessoryFeedback ? (
+                        <>
+                          <div
+                            key={`burst-${accessoryFeedback.id}`}
+                            className="petdex-piko-accessory-flash"
+                            aria-hidden="true"
+                          >
+                            <span />
+                            <span />
+                            <span />
+                            <span />
+                          </div>
+                          <div
+                            key={`bubble-${accessoryFeedback.id}`}
+                            className="petdex-piko-accessory-bubble"
+                          >
+                            {t(accessoryFeedback.textKey)}
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
+                  </CompanionCard>
+
+                  {officialPets.map((pet) => (
+                    <CompanionCard
+                      key={pet.slug}
+                      title={pet.displayName}
+                      selected={draftSelection.kind === pet.slug}
+                      onSelect={() => setDraftSelection({ kind: pet.slug, pet })}
                     >
-                      <span className="truncate">{t(accessoryLabel)}</span>
-                      <ChevronRight className="size-3 shrink-0 text-text-muted" />
-                    </button>
-                  </div>
-                }
-              >
-                <div className="petdex-piko-accessory-feedback">
-                  <PikoActionFigure
-                    action="idle"
-                    accessory={draftAccessory}
-                    className="mybuddy-companion-anchor--preview"
-                    style={{ transform: "translateY(20px)" }}
-                  />
-                  {accessoryFeedback ? (
-                    <>
-                      <div
-                        key={`burst-${accessoryFeedback.id}`}
-                        className="petdex-piko-accessory-flash"
-                        aria-hidden="true"
-                      >
-                        <span />
-                        <span />
-                        <span />
-                        <span />
-                      </div>
-                      <div
-                        key={`bubble-${accessoryFeedback.id}`}
-                        className="petdex-piko-accessory-bubble"
-                      >
-                        {t(accessoryFeedback.textKey)}
-                      </div>
-                    </>
+                      <SpritePetCompanion
+                        pet={pet}
+                        action="idle"
+                        style={{
+                          position: "relative",
+                          top: "auto",
+                          left: "auto",
+                          transform: "translateY(-2px) scale(0.86)",
+                          transformOrigin: "center center",
+                        }}
+                      />
+                    </CompanionCard>
+                  ))}
+
+                  {loading ? (
+                    <div className="flex h-[132px] items-center justify-center gap-2 rounded-[8px] border border-dashed border-white/[0.08] text-[12px] text-text-muted">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {t("myBuddy.gallery.loading")}
+                    </div>
                   ) : null}
                 </div>
-              </CompanionCard>
+              </section>
 
-              {loading && (
-                <div className="col-span-full flex items-center justify-center gap-2 py-12 text-[13px] text-text-muted">
-                  <Loader2 className="h-4 w-4 animate-spin" /> {t("myBuddy.gallery.loading")}
-                </div>
-              )}
-
-              {!loading &&
-                pets.map((pet) => (
-                  <CompanionCard
-                    key={pet.slug}
-                    title={pet.displayName}
-                    selected={draftSelection.kind === pet.slug}
-                    onSelect={() => setDraftSelection({ kind: pet.slug, pet })}
-                    onDelete={pet.imported ? () => void handleDelete(pet.slug) : undefined}
+              <section aria-labelledby="peripheral-companions-heading">
+                <div className="mb-2.5">
+                  <h3
+                    id="peripheral-companions-heading"
+                    className="shrink-0 text-[11px] font-medium text-text-muted"
                   >
-                    <SpritePetCompanion
-                      pet={pet}
-                      action="idle"
-                      style={{
-                        position: "relative",
-                        top: "auto",
-                        left: "auto",
-                        transform: "translateY(-2px) scale(0.86)",
-                        transformOrigin: "center center",
-                      }}
-                    />
-                  </CompanionCard>
-                ))}
-
-              {!loading && pets.length === 0 && (
-                <div className="col-span-full flex items-center justify-center py-12 text-center text-[13px] text-text-muted">
-                  {t("myBuddy.gallery.empty")}
+                    {t("myBuddy.gallery.peripheralGroup")}
+                  </h3>
                 </div>
-              )}
+                <div className="grid grid-cols-2 gap-3">
+                  {!loading &&
+                    peripheralPets.map((pet) => (
+                      <CompanionCard
+                        key={pet.slug}
+                        title={pet.displayName}
+                        selected={draftSelection.kind === pet.slug}
+                        onSelect={() => setDraftSelection({ kind: pet.slug, pet })}
+                        onDelete={pet.imported ? () => void handleDelete(pet.slug) : undefined}
+                      >
+                        <SpritePetCompanion
+                          pet={pet}
+                          action="idle"
+                          style={{
+                            position: "relative",
+                            top: "auto",
+                            left: "auto",
+                            transform: "translateY(-2px) scale(0.86)",
+                            transformOrigin: "center center",
+                          }}
+                        />
+                      </CompanionCard>
+                    ))}
+
+                  {!loading && peripheralPets.length === 0 ? (
+                    <div className="col-span-full flex h-[96px] items-center justify-center text-center text-[12px] text-text-muted">
+                      {t("myBuddy.gallery.empty")}
+                    </div>
+                  ) : null}
+                </div>
+              </section>
             </div>
           </div>
         ) : (

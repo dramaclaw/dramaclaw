@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { MessageCircle } from "lucide-react";
+import { MessageSquareQuote } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CommunityShowcase } from "./community-showcase";
 import LightRays from "./light-rays";
@@ -44,6 +45,7 @@ export function LoginStageContent({
 }) {
   const { t } = useTranslation();
   const stars = useGithubStars(GITHUB_REPO);
+  const [businessOpen, setBusinessOpen] = useState(false);
 
   return (
     <>
@@ -68,19 +70,33 @@ export function LoginStageContent({
         <div className={styles.stageTopBar}>
           <Brand />
           <div className={styles.stageActions}>
-            <div className={styles.businessWechat}>
+            <div
+              className={styles.businessWechat}
+              onPointerEnter={() => setBusinessOpen(true)}
+              onPointerLeave={() => setBusinessOpen(false)}
+              onFocusCapture={() => setBusinessOpen(true)}
+              onBlurCapture={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setBusinessOpen(false);
+                }
+              }}
+            >
               <button
                 type="button"
                 className={styles.businessWechatTrigger}
                 aria-label={t("auth.businessWechat.open")}
+                aria-haspopup="dialog"
+                aria-expanded={businessOpen}
               >
-                <MessageCircle aria-hidden="true" />
-                {t("auth.businessWechat.label")}
+                <MessageSquareQuote aria-hidden="true" />
+                {t("auth.businessWechat.shortLabel")}
               </button>
               <div
                 className={styles.businessWechatPopover}
                 role="dialog"
                 aria-label={t("auth.businessWechat.qrAlt")}
+                aria-hidden={!businessOpen}
+                inert={!businessOpen}
               >
                 <div className={styles.businessWechatPanel}>
                   <img
@@ -111,14 +127,12 @@ export function LoginStageContent({
               aria-label="GitHub"
             >
               <GithubMark />
-              {stars !== null && (
-                <>
-                  <span className={styles.githubStarLabel}>
-                    {t("auth.github.star")}
-                  </span>
-                  <span className={styles.githubStars}>{formatStars(stars)}</span>
-                </>
-              )}
+              <span className={styles.githubStarLabel}>
+                {t("auth.github.star")}
+              </span>
+              <span className={styles.githubStars} aria-live="polite">
+                {stars === null ? "—" : formatStars(stars)}
+              </span>
             </a>
           </div>
         </div>

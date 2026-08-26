@@ -4,6 +4,7 @@ import type { MyBuddyAction } from "@/features/companion/mybuddy-actions";
 
 export type PikoAccessoryId =
   | "none"
+  | "piko-accessory-niulai"
   | "piko-accessory-golden-hoop-staff"
   | "piko-accessory-little-king"
   | "piko-accessory-bubble-balloon"
@@ -55,6 +56,10 @@ export type PikoAccessoryConfig = PikoAccessoryLayer & {
 
 export const PIKO_ACCESSORY_DISPLAY_OPTIONS = [
   { id: "none", labelKey: "myBuddy.debug.accessories.none" },
+  {
+    id: "piko-accessory-niulai",
+    labelKey: "myBuddy.debug.accessories.niulai",
+  },
   {
     id: "piko-accessory-golden-hoop-staff",
     labelKey: "myBuddy.debug.accessories.goldenHoopStaff",
@@ -156,6 +161,14 @@ export const PIKO_ACCESSORY_DISPLAY_OPTIONS = [
 export type PikoAccessoryDisplayId = (typeof PIKO_ACCESSORY_DISPLAY_OPTIONS)[number]["id"];
 
 export const PIKO_ACCESSORIES = {
+  "piko-accessory-niulai": {
+    src: "/piko/accessories/niulai.png",
+    slot: "front",
+    x: -42,
+    y: 0,
+    size: 42,
+    disabledActions: ["count-stars", "watch-meteor", "fish", "blow-bubbles", "flag", "repair"],
+  },
   "piko-accessory-golden-hoop-staff": {
     src: "/piko/accessories/staff-golden-hoop.png",
     slot: "hand",

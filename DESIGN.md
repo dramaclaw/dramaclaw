@@ -9,6 +9,7 @@ colors:
   background: "#0a0c12"
   surface: "#15161d"
   surface-panel: "#13141b"
+  surface-modal: "#1b1c23"
   surface-field: "#0d0e14"
   border-soft: "#1f2026"
   border-strong: "#2f3036"
@@ -125,6 +126,11 @@ spacing:
   button-x: 11px
   node-gutter: 12px
 components:
+  modal:
+    backgroundColor: "{colors.surface-modal}"
+    textColor: "{colors.text}"
+    rounded: "{rounded.xl}"
+    padding: "{spacing.xl}"
   panel:
     backgroundColor: "{colors.surface-panel}"
     textColor: "{colors.text}"
@@ -348,7 +354,8 @@ DramaClaw（虾导）是一个专业 AIGC 视频工作台：节点画布、故�
   `--ui-shadow-panel` = `0 14px 34px rgba(0,0,0,0.5)` 加一道
   `0 1px 0 rgba(255,255,255,0.03) inset` 顶部高光。压在画布上时配 `.backdrop-blur-tap`
   （`saturate(180%) blur(18px)`）。
-- **Level 3 — 弹窗 / popover：** 不透明的 `card` #1f2c34 配 `ui-border`。
+- **Level 3 — 弹窗 / popover：** 产品工作台里的决策弹窗使用中性
+  `surface-modal` #1b1c23 配 `ui-border`；通用 shadcn popover 继续使用 `card`。
   模态不模糊——它是要你做决定的。
 - **焦点与选中用发光，不用阴影：** hover-primary 用 `--ui-glow-accent` =
   `0 0 24px rgb(var(--accent-rgb) / 0.25)`；聚焦输入框用

@@ -718,10 +718,10 @@ function OutlineTypeFilter({
             aria-label={t("freezone.canvasOutline.filter")}
             title={compact ? `${t("freezone.canvasOutline.filter")}：${label}` : undefined}
             className={
-              "inline-flex h-6 shrink-0 items-center gap-1 rounded-md border px-1.5 text-[11px] transition hover:bg-[rgb(var(--text-rgb)/0.1)] hover:text-text-dark " +
+              "inline-flex h-6 shrink-0 items-center gap-1 px-1 text-[11px] transition-colors hover:text-text-dark " +
               (active
-                ? "border-[var(--ui-border-strong)] bg-[rgb(var(--text-rgb)/0.08)] text-text-dark"
-                : "border-[var(--ui-border-soft)] bg-[rgb(var(--text-rgb)/0.03)] text-text-muted")
+                ? "text-primary"
+                : "text-text-muted")
             }
           />
         }
@@ -811,7 +811,7 @@ const ROW_INSET_PX = 4;
 
 const THUMB_CLASS =
   // ring 而不是 border：border 会把 36px 撑成 38px，和空缩略图的图标框对不齐。
-  "relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[rgb(var(--text-rgb)/0.05)] ring-1 ring-inset ring-[rgb(var(--text-rgb)/0.09)]";
+  "relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-[8px] bg-[rgb(var(--text-rgb)/0.05)] ring-1 ring-inset ring-[rgb(var(--text-rgb)/0.09)]";
 
 /** 缩略图本身就是内容的类型，再叠一个「图片」角标纯属噪音。 */
 const PLAIN_IMAGE_TYPES: ReadonlySet<CanvasNodeType> = new Set([
@@ -843,10 +843,10 @@ const CanvasOutlineRow = memo(function CanvasOutlineRow(props: OutlineRowProps) 
     // h-11 / mb-px 必须和 OUTLINE_ROW_STRIDE_PX 对上：虚拟化不量高度，直接按 stride 定位。
     // 这里不能写 `h-[${...}px]` 之类的模板串——Tailwind 扫的是源码里的字面量，
     // 运行时拼出来的类名不会进产物（和 mask-image 那次同一个坑）。
-    "ui-outline-row group/row relative mb-px flex h-11 w-full items-center gap-2 rounded-lg pr-1.5 transition-colors duration-150 " +
-    // 选中走 accent、hover 走中性灰：原来两者只差 3% 的白，鼠标一挪开就找不到自己点的是哪行。
+    "ui-outline-row group/row relative mb-px flex h-11 w-full items-center gap-2 rounded-[8px] pr-1.5 transition-colors duration-150 " +
+    // 选中使用产品主色的低透明度层，hover 保持中性，不用额外竖线重复表达状态。
     (selected
-      ? "bg-[rgb(var(--accent-rgb)/0.16)]"
+      ? "bg-primary/[0.14] ring-1 ring-inset ring-primary/20"
       : "hover:bg-[rgb(var(--text-rgb)/0.05)]");
   const leadClass = "flex h-full min-w-0 flex-1 items-center gap-2 text-left";
 
@@ -923,13 +923,6 @@ const CanvasOutlineRow = memo(function CanvasOutlineRow(props: OutlineRowProps) 
 
   const row = (
     <div style={indent} className={rowClass}>
-      {/* 选中的竖条画在最左，缩进多深都对齐面板边——整行被选中是行的属性，不是层级的属性 */}
-      {selected && (
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-y-1 left-0 w-[2px] rounded-full bg-[rgb(var(--accent-rgb))]"
-        />
-      )}
       {body}
       {item.kind === "group" && !renaming && (
         <span className="pointer-events-none absolute right-2 text-[10px] tabular-nums text-text-muted/70 transition-opacity group-hover/row:opacity-0">

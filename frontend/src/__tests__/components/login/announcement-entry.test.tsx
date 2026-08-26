@@ -9,6 +9,7 @@ import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 
 import { AnnouncementEntry } from "@/components/login/cinematic/AnnouncementEntry";
+import styles from "@/components/login/login.module.css";
 
 // 用真实译文跑，而不是 mock 掉 react-i18next —— 界面词也是文案的一部分，
 // 只有真 i18next 才能验出「新加的 key 忘了补翻译」。
@@ -48,6 +49,10 @@ afterEach(() => {
 
 const DIALOG = { name: "公告中心" };
 
+function findAnnouncementDot(trigger: HTMLElement) {
+  return trigger.querySelector(`.${styles.announcementDot}`);
+}
+
 async function openCenter() {
   const user = userEvent.setup();
   render(<AnnouncementEntry />);
@@ -80,14 +85,32 @@ describe("AnnouncementEntry", () => {
     expect(init).toMatchObject({ credentials: "omit", cache: "no-cache" });
   });
 
-  it("keeps the red dot on the trigger even after everything was marked read", async () => {
-    const { user, trigger } = await openLoadedCenter();
+  it("clears the trigger dot after the announcement center is opened", async () => {
+    const { trigger, dialog } = await openLoadedCenter();
 
-    await user.click(screen.getByRole("button", { name: "全部已读" }));
-    await user.click(screen.getByRole("button", { name: "确认" }));
+    await waitFor(() => expect(findAnnouncementDot(trigger)).toBeNull());
+    expect(within(dialog).queryByText("1 条未读")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("dramaclaw.login.announcements.read")).toContain(
+      "channel-release-2026-08",
+    );
+  });
 
-    // 公告是拿来拦人的：全部已读了，顶栏这颗也不熄。
-    expect(trigger.querySelector("span")).not.toBeNull();
+  it("preserves read ids that are not in the current remote payload", async () => {
+    window.localStorage.setItem(
+      "dramaclaw.login.announcements.read",
+      JSON.stringify(["retired-announcement"]),
+    );
+
+    await openLoadedCenter();
+
+    await waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem("dramaclaw.login.announcements.read") ?? "[]",
+      ) as string[];
+      expect(stored).toEqual(
+        expect.arrayContaining(["retired-announcement", "channel-release-2026-08"]),
+      );
+    });
   });
 
   it("lists each announcement as its own card and closes from the confirm button", async () => {
@@ -101,6 +124,9 @@ describe("AnnouncementEntry", () => {
     await user.click(screen.getByRole("button", { name: "确认" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog", DIALOG)).not.toBeInTheDocument());
+    expect(window.localStorage.getItem("dramaclaw.login.announcements.read")).toContain(
+      "channel-release-2026-08",
+    );
   });
 
   it("renders the subject and the time window as separate highlight spans", async () => {
@@ -184,51 +210,20 @@ describe("AnnouncementEntry", () => {
     expect(titles).toEqual(["置顶公告", "新公告", "旧公告"]);
   });
 
-  it("expands and collapses a single announcement", async () => {
-    const { user } = await openLoadedCenter();
+  it("shows the complete announcement without an expand control", async () => {
+    const { dialog } = await openLoadedCenter();
 
-    const toggle = screen.getByRole("button", { name: "展开这条公告" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-
-    await user.click(toggle);
-    const collapse = await screen.findByRole("button", { name: "收起这条公告" });
-    expect(collapse).toHaveAttribute("aria-expanded", "true");
-    // 展开的那段正文得真的被按钮指向，否则读屏用户不知道展开的是哪一块。
-    const bodyId = collapse.getAttribute("aria-controls");
-    expect(bodyId).toBeTruthy();
-    expect(document.getElementById(bodyId!)).toHaveTextContent("渠道版本即将上线");
-
-    await user.click(collapse);
-    expect(await screen.findByRole("button", { name: "展开这条公告" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    expect(dialog).toHaveTextContent("渠道版本即将上线");
+    expect(screen.queryByRole("button", { name: "展开这条公告" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "收起这条公告" })).not.toBeInTheDocument();
   });
 
-  it("clears a card's unread dot once it is expanded, and remembers it across mounts", async () => {
-    const { user, dialog } = await openLoadedCenter();
+  it("disables mark-all after opening has acknowledged the visible list", async () => {
+    await openLoadedCenter();
 
-    expect(within(dialog).getByText("1 条未读")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "展开这条公告" }));
-
-    await waitFor(() => expect(screen.queryByText("1 条未读")).not.toBeInTheDocument());
-    // 已读要落盘，否则刷一次登录页所有公告又变回未读。
-    expect(window.localStorage.getItem("dramaclaw.login.announcements.read")).toContain(
-      "channel-release-2026-08",
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "全部已读" })).toBeDisabled(),
     );
-  });
-
-  it("marks everything read from the footer", async () => {
-    const { user } = await openLoadedCenter();
-
-    const markAll = screen.getByRole("button", { name: "全部已读" });
-    expect(markAll).toBeEnabled();
-
-    await user.click(markAll);
-
-    await waitFor(() => expect(screen.queryByText("1 条未读")).not.toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "全部已读" })).toBeDisabled();
   });
 
   it("keeps the trigger but drops the dot and the list when the json cannot be loaded", async () => {
@@ -241,7 +236,7 @@ describe("AnnouncementEntry", () => {
 
     // 拉不到就是「没有公告」：喇叭照常在，只是不打红点、点开是空的。
     // 不摆「重新加载」——刷新登录页本来就会重来一次。
-    await waitFor(() => expect(trigger.querySelector("span")).toBeNull());
+    await waitFor(() => expect(findAnnouncementDot(trigger)).toBeNull());
     expect(within(dialog).queryAllByRole("listitem")).toHaveLength(0);
     expect(within(dialog).getByRole("button", { name: "全部已读" })).toBeDisabled();
   });
@@ -254,7 +249,7 @@ describe("AnnouncementEntry", () => {
 
     const { dialog, trigger } = await openCenter();
 
-    await waitFor(() => expect(trigger.querySelector("span")).toBeNull());
+    await waitFor(() => expect(findAnnouncementDot(trigger)).toBeNull());
     expect(within(dialog).queryAllByRole("listitem")).toHaveLength(0);
   });
 

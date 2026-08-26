@@ -31,6 +31,13 @@ describe("locale translation files", () => {
     expect([...enKeys].filter((key) => !zhKeys.has(key)).sort()).toEqual([]);
   });
 
+  it("defines the Niu Lai accessory name and selection feedback", () => {
+    const zh = JSON.parse(readFileSync("public/locales/zh/translation.json", "utf8"));
+
+    expect(zh.myBuddy.debug.accessories.niulai).toBe("牛来");
+    expect(zh.myBuddy.debug.accessoryFeedback.niulai).toBe("妈妈！");
+  });
+
   it("uses the requested custom prompt label for Seedance2 guidance in Chinese", () => {
     const content = readFileSync("public/locales/zh/translation.json", "utf8");
     const translations = JSON.parse(content);
