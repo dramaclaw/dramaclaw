@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,8 @@ const CANVASES_ZH: Record<string, string> = {
   "freezone.canvases.createQuotaUnknown": "画布列表还没加载出来，等一下再新建",
   "freezone.canvases.createLimitReached": "每人在一个项目里最多创建 {{limit}} 张画布，删掉一些再新建",
   "freezone.canvases.createPlaceholder": "新画布名称",
+  "freezone.canvases.create": "创建",
+  "freezone.canvases.createBusy": "创建中",
   "freezone.canvases.switcher": "切换画布",
 };
 
@@ -175,6 +177,41 @@ describe("CanvasesTab canvas quota", () => {
 
     expect(screen.queryByPlaceholderText("新画布名称")).toBeNull();
     expect(createBlankFreezoneCanvas).not.toHaveBeenCalled();
+    expect(alertDialog).toHaveBeenCalledTimes(1);
+    expect(alertDialog.mock.calls[0][0]).toMatchObject({ title: "还确认不了画布数量" });
+  });
+
+  it("stops trusting the old count when the post-create refresh fails", async () => {
+    // 建到第 25 张之后列表刷新失败：React Query 会把上一份 24 张的数据留着，
+    // refetch() 本身也不抛。照着这份旧数据算，第 26 张就能建出来——后端不数
+    // 个数，多出来的那张是真的。刷不动的时候只能当成「不知道」。
+    const below = Array.from(
+      { length: MAX_USER_CREATED_CANVASES_PER_PROJECT - 1 },
+      (_unused, i) => myCanvas(i),
+    );
+    listFreezoneCanvases.mockResolvedValueOnce(below).mockRejectedValue(new Error("boom"));
+    createBlankFreezoneCanvas.mockResolvedValue(undefined);
+
+    render(
+      <CanvasesTab project="demo" currentCanvasId="canvas_mine_0" hasPresetLabel={false} />,
+      { wrapper },
+    );
+
+    const user = await openCanvasMenu();
+    await user.click(await screen.findByText("新建项目画布"));
+    await user.type(await screen.findByPlaceholderText("新画布名称"), "第二十五张");
+    await user.click(screen.getByRole("button", { name: "创建" }));
+
+    await waitFor(() => expect(createBlankFreezoneCanvas).toHaveBeenCalledTimes(1));
+    // 刷新失败，手上还是那份 24 张的旧列表。
+    await waitFor(() => expect(listFreezoneCanvases.mock.calls.length).toBeGreaterThan(1));
+
+    alertDialog.mockClear();
+    const user2 = await openCanvasMenu();
+    await user2.click(await screen.findByText("新建项目画布"));
+
+    expect(screen.queryByPlaceholderText("新画布名称")).toBeNull();
+    expect(createBlankFreezoneCanvas).toHaveBeenCalledTimes(1);
     expect(alertDialog).toHaveBeenCalledTimes(1);
     expect(alertDialog.mock.calls[0][0]).toMatchObject({ title: "还确认不了画布数量" });
   });

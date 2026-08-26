@@ -115,8 +115,10 @@ export function CanvasesTab({
   // lib/limits.ts），所以拦截只能落在这里。
   // 只有列表真的回来了才拿它算配额：`items` 在加载中是空数组，按它判定等于把
   // 「不知道」当成「还有余量」。
+  // 刷新失败也算「不知道」：refetch() 不抛，失败后 React Query 留着上一份列表，
+  // 拿它接着数，刚建成的那张就不在账上，下一张能照建。
   const canvasQuota = canvasCreationQuotaStatus(
-    canvasesQuery.data ? items : undefined,
+    canvasesQuery.data && !canvasesQuery.isError ? items : undefined,
     username,
   );
 

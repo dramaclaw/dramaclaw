@@ -66,6 +66,7 @@ const runtimeState = vi.hoisted(() => ({ isCeRuntime: false }));
 const queryMocks = vi.hoisted(() => ({
   grants: [] as Array<Record<string, unknown>>,
   grantsLoading: false,
+  grantsError: false,
   deleteGrant: vi.fn(),
   useUserSearch: vi.fn(),
 }));
@@ -78,8 +79,13 @@ vi.mock("@/lib/runtime-config", () => ({
 vi.mock("@/lib/queries/projects", () => ({
   useProjectGrants: () =>
     queryMocks.grantsLoading
-      ? { data: undefined, isLoading: true }
-      : { data: { data: queryMocks.grants }, isLoading: false },
+      ? { data: undefined, isLoading: true, isError: false }
+      : {
+          data: { data: queryMocks.grants },
+          isLoading: false,
+          // 刷新失败时 React Query 把上一份名单留着，status 走到 error。
+          isError: queryMocks.grantsError,
+        },
   useUserSearch: (...args: unknown[]) => {
     queryMocks.useUserSearch(...args);
     return { data: { data: [] } };
@@ -110,6 +116,7 @@ describe("ShareProjectDialog (edition gating)", () => {
     runtimeState.isCeRuntime = false;
     queryMocks.grants = [];
     queryMocks.grantsLoading = false;
+    queryMocks.grantsError = false;
     queryMocks.deleteGrant.mockReset();
     queryMocks.useUserSearch.mockClear();
     addGrantMock.mockClear();
@@ -189,6 +196,7 @@ describe("ShareProjectDialog (share quota)", () => {
     runtimeState.isCeRuntime = false;
     queryMocks.grants = [];
     queryMocks.grantsLoading = false;
+    queryMocks.grantsError = false;
     addGrantMock.mockClear();
     alertDialogMock.mockClear();
   });
@@ -238,6 +246,21 @@ describe("ShareProjectDialog (share quota)", () => {
       title: "还确认不了成员数量",
       description: "成员列表还没加载出来，等它加载完再添加",
     });
+  });
+
+  it("refuses to add when the last member refresh failed", async () => {
+    // 刷新失败时旧名单还在（React Query 保留 data，status 走到 error）。
+    // 拿这份可能已经过期的人数继续放行，加进去的就可能是第 26 个。
+    queryMocks.grants = grantRows(MAX_PROJECT_GRANTS - 1);
+    queryMocks.grantsError = true;
+    renderDialog();
+
+    await userEvent.type(screen.getByPlaceholderText("搜索用户名"), "carol");
+    await userEvent.click(screen.getByRole("button", { name: /添加/ }));
+
+    expect(addGrantMock).not.toHaveBeenCalled();
+    expect(alertDialogMock).toHaveBeenCalledTimes(1);
+    expect(alertDialogMock.mock.calls[0][0]).toMatchObject({ title: "还确认不了成员数量" });
   });
 
   it("shows how many of the allowed slots are used", () => {

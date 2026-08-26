@@ -94,7 +94,9 @@ export function ShareProjectDialog({
   // 项目最多分享给固定人数（所有者不占名额）。后端不数人头，这里是唯一拦截点。
   // 名单没回来之前 `grantRows` 是空的，那不是「零个人」而是「不知道几个人」——
   // 按它放行，这一下加进去的可能就是真的第 26 个。
-  const grantsReady = !grants.isLoading && grants.data !== undefined;
+  // 刷新失败时 React Query 会把上一份名单留着（status 走到 error、data 不清空），
+  // 那份数字已经不能拿来放行了——同样归到「不知道几个人」。
+  const grantsReady = !grants.isLoading && !grants.isError && grants.data !== undefined;
   const shareLimitReached = grantsReady && grantRows.length >= MAX_PROJECT_GRANTS;
   const shareLimitHint = t("project.shareDialog.limitReached", { limit: MAX_PROJECT_GRANTS });
 
