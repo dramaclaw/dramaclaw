@@ -8,12 +8,25 @@ const MEDIA_TYPES = [
   { label: '音频', icon: Music2 },
 ] as const;
 
-/** 画布接收到可用拖拽载荷时的居中落点提示。 */
+/**
+ * 画布接收到可用拖拽载荷时的居中落点提示。
+ *
+ * 为了做淡入淡出，本组件常驻挂载、只切透明度——但卡片带 `backdrop-blur-lg` 和大
+ * 面积投影，而它是 `.dc-canvas` 的直接子节点，**不在** `.react-flow__viewport` 里，
+ * 所以 LOD 那两条降级规则（`.dc-canvas--panning/-low-detail .react-flow__viewport *`
+ * 关 backdrop-filter/box-shadow，见 index.css「画布 LOD」段）一条都命中不了它。
+ * 单靠 `opacity: 0` 不保证浏览器跳过绘制：backdrop-filter 会强制建独立合成层，
+ * 每帧重采样背景的成本可能照付，正好是 #241 实测里最贵的那一项。
+ *
+ * 因此隐藏态额外挂 `visibility: hidden` —— 该状态下元素完全不参与绘制，合成层
+ * 不成立。visibility 的插值规则天然配合淡出：hidden→visible 立刻生效（淡入正常
+ * 起步），visible→hidden 要等整段 transition 结束才翻转（淡出不会被截断）。
+ */
 export function CanvasFileDropOverlay({ isVisible }: { isVisible: boolean }) {
   return (
     <div
-      className={`pointer-events-none absolute inset-0 z-[120] flex items-center justify-center overflow-hidden transition-opacity duration-[220ms] ease-[var(--ease-out-quint)] motion-reduce:transition-none ${
-        isVisible ? 'opacity-100' : 'opacity-0'
+      className={`pointer-events-none absolute inset-0 z-[120] flex items-center justify-center overflow-hidden transition-[opacity,visibility] duration-[220ms] ease-[var(--ease-out-quint)] motion-reduce:transition-none ${
+        isVisible ? 'visible opacity-100' : 'invisible opacity-0'
       }`}
       role="status"
       aria-live="polite"
