@@ -178,8 +178,9 @@ export function TaskStatusBar({ onOpenPikoStation }: TaskStatusBarProps) {
         {onOpenPikoStation ? (
           <button
             type="button"
-            className="inline-flex h-6 items-center gap-1.5 rounded-full px-2 text-[11px] text-muted-foreground/82 transition-colors hover:bg-white/[0.07] hover:text-cyan-100"
+            className="group inline-flex h-8 items-center px-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-200/55 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             title={t("pikoMiniGame.statusTooltip")}
+            aria-label={t("pikoMiniGame.statusTooltip")}
             onClick={(event) => {
               event.stopPropagation();
               onOpenPikoStation();
@@ -188,12 +189,13 @@ export function TaskStatusBar({ onOpenPikoStation }: TaskStatusBarProps) {
               event.stopPropagation();
             }}
           >
-            <span className="text-cyan-200/85" aria-hidden>
-              ✦
-            </span>
-            <span className="bg-gradient-to-r from-cyan-200 via-violet-200 to-rose-200 bg-clip-text font-medium text-transparent opacity-90">
-              {t("pikoMiniGame.statusEntry")}
-            </span>
+            <img
+              src="/piko/entry/piko-game-launcher.png"
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              className="h-[30px] w-auto -translate-y-px select-none opacity-90 transition-[filter,opacity] duration-[var(--duration-fast)] group-hover:brightness-110 group-hover:opacity-100 group-focus-visible:brightness-110 group-focus-visible:opacity-100"
+            />
           </button>
         ) : null}
         <span className="ml-1.5 flex items-center gap-1">

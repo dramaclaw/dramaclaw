@@ -2330,6 +2330,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         />
       )}
       <AssetLibraryModal
+        mode="pick"
         open={isAssetLibraryOpen}
         project={readUrl().project ?? null}
         allowedMedia={['image']}

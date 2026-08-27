@@ -71,7 +71,7 @@ function renderModal(props: Partial<React.ComponentProps<typeof AssetLibraryModa
   return render(
     <>
       <ConfirmDialogHost />
-      <AssetLibraryModal open project="demo" onClose={() => {}} {...props} />
+      <AssetLibraryModal mode="manage" open project="demo" onClose={() => {}} {...props} />
     </>,
   );
 }
@@ -113,7 +113,7 @@ describe("AssetLibraryModal 类目与文件夹", () => {
     expect(await screen.findByText("厨房")).toBeInTheDocument();
     expect(screen.getByText("参考图A")).toBeInTheDocument();
     // 高频写操作直接放在右上角，不再藏进只有两个选项的「新建」菜单。
-    expect(screen.getByRole("button", { name: "批量操作" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批量删除" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "新建文件夹" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上传资产" })).toBeInTheDocument();
   });
@@ -270,7 +270,7 @@ describe("AssetLibraryModal 底部分页", () => {
   });
 
   it("挑素材给节点用时「确定」还在", async () => {
-    renderModal({ onConfirm: vi.fn() });
+    renderModal({ mode: "pick", onConfirm: vi.fn() });
 
     expect(await screen.findByRole("button", { name: "确定" })).toBeInTheDocument();
   });
@@ -490,12 +490,38 @@ describe("AssetLibraryModal 批量操作", () => {
     deleteFreezoneVideoCharacterLibraryItem.mockResolvedValue({ ok: true });
   });
 
-  it("全部资产默认就是资产视图，批量操作无需先进入文件夹", async () => {
+  it("全部资产默认就是资产视图，批量删除无需先进入文件夹", async () => {
     renderModal();
 
-    const bulkButton = await screen.findByRole("button", { name: "批量操作" });
+    const bulkButton = await screen.findByRole("button", { name: "批量删除" });
     expect(bulkButton).toBeEnabled();
     expect(await screen.findByText("参考图A")).toBeInTheDocument();
+  });
+
+  it("管理态点击卡片进入详情并提供明确后续操作，不再产生无结果选择", async () => {
+    const onSendItemToCanvas = vi.fn();
+    renderModal({ onSendItemToCanvas });
+
+    expect(screen.queryByRole("button", { name: "选择" })).toBeNull();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "查看 参考图A 详情" }),
+    );
+
+    const details = screen.getByRole("dialog", { name: "资产详情" });
+    expect(within(details).getByRole("button", { name: "下载" })).toBeEnabled();
+    expect(within(details).getByRole("button", { name: "删除" })).toBeEnabled();
+    fireEvent.click(within(details).getByRole("button", { name: "发送到画布" }));
+    expect(onSendItemToCanvas).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "up-1" }),
+    );
+  });
+
+  it("选材态保留选择确认，但不暴露批量删除", async () => {
+    renderModal({ mode: "pick", onConfirm: vi.fn() });
+
+    expect((await screen.findAllByRole("button", { name: "选择" })).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "批量删除" })).toBeNull();
+    expect(screen.getByRole("button", { name: "确定" })).toBeDisabled();
   });
 
   it("批量态下能删掉本地上传的素材，主线素材不可选", async () => {
@@ -503,7 +529,7 @@ describe("AssetLibraryModal 批量操作", () => {
     await screen.findByRole("button", { name: "文件夹 主线" });
 
     fireEvent.click(screen.getByRole("button", { name: "文件夹 待分类资产" }));
-    fireEvent.click(screen.getByRole("button", { name: "批量操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量删除" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "选中待删除" }));
     expect(screen.getByText(/只能删除本地上传的素材/)).toHaveTextContent(
@@ -550,7 +576,7 @@ describe("AssetLibraryModal 批量操作", () => {
     await screen.findByRole("button", { name: "文件夹 主线" });
 
     fireEvent.click(screen.getByRole("button", { name: "文件夹 待分类资产" }));
-    fireEvent.click(screen.getByRole("button", { name: "批量操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量删除" }));
 
     fireEvent.click(
       (await screen.findAllByRole("button", { name: "选中待删除" }))[0],
@@ -571,16 +597,18 @@ describe("AssetLibraryModal 批量操作", () => {
     );
   });
 
-  it("批量态下主线素材的勾选框禁用", async () => {
+  it("批量态下主线素材不显示删除勾选，但仍能打开详情", async () => {
     renderModal();
     await screen.findByRole("button", { name: "文件夹 主线" });
 
     fireEvent.click(screen.getByRole("button", { name: "文件夹 主线" }));
-    fireEvent.click(screen.getByRole("button", { name: "批量操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量删除" }));
 
-    const checkbox = await screen.findByRole("button", {
-      name: "主线同步来的素材不能删除",
-    });
-    expect(checkbox).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "主线同步来的素材不能删除" }),
+    ).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "查看 厨房 详情" }));
+    expect(screen.getByRole("dialog", { name: "资产详情" })).toBeInTheDocument();
+    expect(screen.getByText("主线同步资产需回到对应主线内容中维护")).toBeInTheDocument();
   });
 });

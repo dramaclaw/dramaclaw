@@ -903,11 +903,13 @@ export function AssetLibraryPanel({
         </div>
       </aside>
 
-      {/* 纯管理态：不传 onConfirm，弹窗里选中只是浏览，「确定」等同关闭。关掉后把
-          资产库的两个查询作废，新建的文件夹/上传的素材立刻反映到侧栏。 */}
+      {/* 纯管理态：卡片进入详情并承接单项操作，不复用节点选材的勾选/确认语义。
+          关掉后让侧栏重拉，新建文件夹、上传或删除会立即反映出来。 */}
       <AssetLibraryModal
+        mode="manage"
         open={assetManagerOpen}
         project={project}
+        onSendItemToCanvas={(entry) => void sendLibraryItemToCanvas(entry)}
         onSendFolderToCanvas={(folder) => void sendAssetFolderToCanvas(folder)}
         onClose={() => {
           setAssetManagerOpen(false);

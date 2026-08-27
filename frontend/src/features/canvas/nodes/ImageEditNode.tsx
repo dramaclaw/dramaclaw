@@ -1555,6 +1555,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         keepAspectRatio
       />
       <AssetLibraryModal
+        mode="pick"
         open={isAssetLibraryOpen}
         project={readUrl().project ?? null}
         allowedMedia={['image']}

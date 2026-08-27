@@ -888,6 +888,7 @@ export function VideoOperationsPanel({
         />
 
         <AssetLibraryModal
+          mode="pick"
           open={isCharacterLibraryOpen}
           project={readUrl().project ?? null}
           onClose={() => setIsCharacterLibraryOpen(false)}

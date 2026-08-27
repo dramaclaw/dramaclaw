@@ -10,16 +10,17 @@ import {
   Folder,
   FolderPlus,
   Loader2,
+  Maximize2,
   MoreHorizontal,
   Music,
   RefreshCw,
   Search,
   Send,
-  Trash2,
   Upload,
   Video as VideoIcon,
   X,
 } from 'lucide-react';
+import { toast } from 'sonner';
 
 import {
   createFreezoneAssetLibraryFolder,
@@ -35,7 +36,9 @@ import {
   type FreezoneAssetLibraryFolder,
 } from '@/api/ops';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
+import { downloadUrlAsFile } from '@/lib/browserDownload';
 import { AssetLibraryItemMedia } from './AssetLibraryItemMedia';
+import { AssetLibraryPreviewDialog } from './AssetLibraryPreviewDialog';
 import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/confirm-dialog-host';
 import { AssetLibraryFolderCoverDialog } from './AssetLibraryFolderCoverDialog';
@@ -54,6 +57,7 @@ import {
   buildAssetFolders,
   folderCoverUrl,
   formatFolderDate,
+  libraryItemDownloadFilename,
   normalizeLibraryList,
   systemFolderLabel,
   type AssetCategory,
@@ -91,11 +95,15 @@ export interface AssetLibrarySelection {
 }
 
 export interface AssetLibraryModalProps {
+  /** 管理态负责查看/维护资产；选材态只负责把素材交给节点。 */
+  mode: 'manage' | 'pick';
   open: boolean;
   project: string | null;
   onClose: () => void;
   onSuccess?: () => void;
   onConfirm?: (selections: AssetLibrarySelection[]) => void;
+  /** 管理态下把单条素材发送到当前画布。 */
+  onSendItemToCanvas?: (entry: LibraryItem) => void;
   maxSelectable?: number;
   /** 允许的媒介类型；缺省三类都开。生图/图片编辑节点只传 ['image']。 */
   allowedMedia?: AssetLibraryMedia[];
@@ -116,11 +124,13 @@ function stripExtension(name: string): string {
 }
 
 export function AssetLibraryModal({
+  mode,
   open,
   project,
   onClose,
   onSuccess,
   onConfirm,
+  onSendItemToCanvas,
   maxSelectable = 9,
   allowedMedia,
   onSendFolderToCanvas,
@@ -145,12 +155,12 @@ export function AssetLibraryModal({
   const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const pendingRef = useRef<PendingUpload[]>([]);
   pendingRef.current = pendingUploads;
   const [isDragging, setIsDragging] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [previewEntry, setPreviewEntry] = useState<LibraryItem | null>(null);
   // 文件夹是资产的存放范围，类目是当前范围内的筛选条件：两个维度分别存状态，
   // 避免把「全部资产」和「人物 / 场景」伪装成同级 Tab。
   const [activeCategoryKey, setActiveCategoryKey] =
@@ -160,8 +170,7 @@ export function AssetLibraryModal({
     useState<AssetFolderKey | null>(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
-  // 批量操作 = 管理态：卡片上的勾选改为「选中待删除」，底部换成删除条。平时的勾选
-  // 是「挑素材给节点用」，两者各存各的，互不影响。
+  // 批量删除只属于管理态；选材态的选择只服务于节点确认，两种任务不复用状态。
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkIds, setBulkIds] = useState<string[]>([]);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
@@ -191,7 +200,12 @@ export function AssetLibraryModal({
       return;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Escape') return;
+      if (previewEntry) {
+        setPreviewEntry(null);
+        return;
+      }
+      onClose();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
@@ -200,6 +214,7 @@ export function AssetLibraryModal({
     newFolderOpen,
     onClose,
     open,
+    previewEntry,
     renameFolderKey,
     uploadOpen,
   ]);
@@ -296,10 +311,10 @@ export function AssetLibraryModal({
       setLibrary([]);
       setCustomFolders([]);
       setLibraryError(null);
-      setDeletingId(null);
       setIsDragging(false);
       setIsSyncing(false);
       setSelectedKeys([]);
+      setPreviewEntry(null);
       setActiveCategoryKey(ALL_CATEGORY_KEY);
       setActiveFolderKey(null);
       setNewFolderOpen(false);
@@ -310,6 +325,15 @@ export function AssetLibraryModal({
     }, 240);
     return () => window.clearTimeout(timer);
   }, [open]);
+
+  useEffect(() => {
+    if (mode === 'manage') {
+      setSelectedKeys([]);
+      return;
+    }
+    setBulkMode(false);
+    setBulkIds([]);
+  }, [mode]);
 
   useEffect(() => {
     return () => {
@@ -426,19 +450,27 @@ export function AssetLibraryModal({
         confirmVariant: 'destructive',
       });
       if (!confirmed) return;
-      setDeletingId(entry.id);
       try {
         await deleteFreezoneVideoCharacterLibraryItem(project, entry.id);
         await refreshLibrary();
       } catch (err) {
         console.error('[asset-library] delete failed', err);
         setLibraryError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setDeletingId(null);
       }
     },
     [project, refreshLibrary],
   );
+
+  const handleDownloadEntry = useCallback(async (entry: LibraryItem) => {
+    try {
+      await downloadUrlAsFile(
+        resolveImageDisplayUrl(entry.url),
+        libraryItemDownloadFilename(entry),
+      );
+    } catch (err) {
+      toast.error(`下载失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, []);
 
   const handleBulkDelete = useCallback(async () => {
     if (!project || bulkIds.length === 0 || isBulkDeleting) return;
@@ -760,19 +792,21 @@ export function AssetLibraryModal({
               )}
               同步主线
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setBulkMode((prev) => !prev);
-                setBulkIds([]);
-              }}
-              className={`${headerButtonClass} ${
-                bulkMode ? 'bg-white/[0.18] text-text-dark' : ''
-              }`}
-              title="进入批量删除模式"
-            >
-              {bulkMode ? '退出批量' : '批量操作'}
-            </button>
+            {mode === 'manage' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkMode((prev) => !prev);
+                  setBulkIds([]);
+                }}
+                className={`${headerButtonClass} ${
+                  bulkMode ? 'bg-white/[0.18] text-text-dark' : ''
+                }`}
+                title={bulkMode ? '退出批量删除' : '选择多个本地上传资产进行删除'}
+              >
+                {bulkMode ? '退出批量删除' : '批量删除'}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setNewFolderOpen(true)}
@@ -1006,23 +1040,24 @@ export function AssetLibraryModal({
 
             {/* Existing items */}
             {pagedItems.map((entry, idx) => {
-              const isDeleting = deletingId != null && entry.id === deletingId;
               const key = selectionKey(entry);
-              // 批量态下只有本地上传的条目可选——主线条目删了也会被下次同步拉回来。
-              const bulkEligible = bulkMode && entry.source === 'upload' && !!entry.id;
-              const selected = bulkMode
-                ? Boolean(entry.id && bulkIds.includes(entry.id))
-                : isSelected(key);
-              const disabledSelect = bulkMode
-                ? !bulkEligible
-                : !selected && selectedCountOf(entry.media) >= maxSelectable;
-              const activate = () => {
-                if (disabledSelect) return;
-                if (bulkMode) {
-                  if (entry.id) toggleBulk(entry.id);
-                } else {
-                  toggleSelect(key);
+              const pickMode = mode === 'pick';
+              // 批量删除只给本地上传资产显示复选框；主线资产仍保持可查看，不伪装成
+              // 一张“坏掉、点不了”的卡片。
+              const bulkEligible =
+                mode === 'manage' && bulkMode && entry.source === 'upload' && !!entry.id;
+              const selected = pickMode
+                ? isSelected(key)
+                : Boolean(bulkEligible && entry.id && bulkIds.includes(entry.id));
+              const disabledPick =
+                pickMode && !selected && selectedCountOf(entry.media) >= maxSelectable;
+              const openDetails = () => setPreviewEntry(entry);
+              const activateCard = () => {
+                if (pickMode) {
+                  if (!disabledPick) toggleSelect(key);
+                  return;
                 }
+                openDetails();
               };
               return (
                 <div
@@ -1033,42 +1068,63 @@ export function AssetLibraryModal({
                         ? 'border-red-400/70 ring-1 ring-red-400/45'
                         : 'border-primary/70 ring-1 ring-primary/45'
                       : ASSET_LIBRARY_CARD_HOVER_CLASS
-                  } ${disabledSelect ? 'cursor-default' : 'cursor-pointer'}`}
-                  onClick={activate}
+                  } ${disabledPick ? 'cursor-default' : 'cursor-pointer'}`}
+                  onClick={activateCard}
+                  title={pickMode ? undefined : '打开资产详情'}
                 >
                   <AssetLibraryItemMedia entry={entry} />
 
-                  {/* Checkbox top-left */}
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      activate();
-                    }}
-                    disabled={disabledSelect}
-                    title={
-                      bulkMode
-                        ? bulkEligible
+                  {(pickMode || bulkEligible) && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (bulkEligible && entry.id) {
+                          toggleBulk(entry.id);
+                        } else if (pickMode && !disabledPick) {
+                          toggleSelect(key);
+                        }
+                      }}
+                      disabled={disabledPick}
+                      title={
+                        bulkEligible
                           ? selected
                             ? '取消选择'
                             : '选中待删除'
-                          : '主线同步来的素材不能删除'
-                        : disabledSelect
-                          ? `最多可选 ${maxSelectable} 个`
-                          : selected
-                            ? '取消选择'
-                            : '选择'
-                    }
-                    className={`absolute left-2 top-2 inline-flex h-5 w-5 items-center justify-center rounded-full border transition-colors ${
-                      selected
-                        ? bulkMode
-                          ? 'border-red-400 bg-red-500 text-white'
-                          : 'border-primary bg-primary text-primary-foreground'
-                        : 'border-white/70 bg-black/35 text-transparent hover:border-white'
-                    } ${disabledSelect ? 'cursor-not-allowed opacity-40' : ''}`}
-                  >
-                    <Check className="h-3 w-3" strokeWidth={3} />
-                  </button>
+                          : disabledPick
+                            ? `最多可选 ${maxSelectable} 个`
+                            : selected
+                              ? '取消选择'
+                              : '选择'
+                      }
+                      className={`absolute left-2 top-2 z-10 inline-flex h-5 w-5 items-center justify-center rounded-full border transition-colors ${
+                        selected
+                          ? bulkMode
+                            ? 'border-red-400 bg-red-500 text-white'
+                            : 'border-primary bg-primary text-primary-foreground'
+                          : 'border-white/70 bg-black/35 text-transparent hover:border-white'
+                      } ${disabledPick ? 'cursor-not-allowed opacity-40' : ''}`}
+                    >
+                      <Check className="h-3 w-3" strokeWidth={3} />
+                    </button>
+                  )}
+
+                  {mode === 'manage' && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openDetails();
+                      }}
+                      className={`absolute top-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded-md border border-white/15 bg-black/45 text-white/80 transition-colors hover:bg-black/65 hover:text-white ${
+                        bulkEligible ? 'right-2' : 'left-2'
+                      }`}
+                      title="查看资产详情"
+                      aria-label={`查看 ${entry.name || '资产'} 详情`}
+                    >
+                      <Maximize2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
 
                   {/* Source badge top-right */}
                   {entry.source !== 'upload' && (
@@ -1080,27 +1136,6 @@ export function AssetLibraryModal({
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2 text-xs text-white">
                     <div className="truncate">{entry.name || '(未命名)'}</div>
                   </div>
-                  {/* 只有本地上传的条目可删；主线同步来的条目删了也会在下次打开自动同步时
-                      重新出现，所以不提供删除入口，避免「删不掉」的误导。批量态下走
-                      底部的「删除所选」，卡片上不再摆单删按钮。 */}
-                  {!bulkMode && entry.source === 'upload' && (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleDeleteEntry(entry);
-                      }}
-                      disabled={!entry.id || isDeleting}
-                      className="absolute right-2 bottom-2 inline-flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white opacity-0 transition-[opacity,background-color] hover:bg-black/80 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
-                      title={entry.id ? '删除' : '该条目缺少 id，无法删除'}
-                    >
-                      {isDeleting ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                  )}
                 </div>
               );
             })}
@@ -1169,7 +1204,7 @@ export function AssetLibraryModal({
                   setBulkIds([]);
                 }}
               >
-                退出批量
+                退出批量删除
               </Button>
               <Button
                 size="sm"
@@ -1194,7 +1229,7 @@ export function AssetLibraryModal({
               />
               {/* 「确定」只在挑素材给节点用时才有意义；侧栏点开的资产管理态没有
                   接收方，那儿的底部就只剩分页。 */}
-              {onConfirm && (
+              {mode === 'pick' && onConfirm && (
                 <Button
                   size="sm"
                   className="bg-white px-4 text-[#15161b] hover:bg-white/90"
@@ -1210,6 +1245,32 @@ export function AssetLibraryModal({
           </section>
         </div>
       </div>
+
+      {previewEntry && (
+        <AssetLibraryPreviewDialog
+          entry={previewEntry}
+          onClose={() => setPreviewEntry(null)}
+          onDownload={() => void handleDownloadEntry(previewEntry)}
+          onSend={
+            onSendItemToCanvas
+              ? () => {
+                  onSendItemToCanvas(previewEntry);
+                  setPreviewEntry(null);
+                  onClose();
+                }
+              : undefined
+          }
+          onDelete={
+            previewEntry.source === 'upload' && previewEntry.id
+              ? () => {
+                  const entry = previewEntry;
+                  setPreviewEntry(null);
+                  void handleDeleteEntry(entry);
+                }
+              : undefined
+          }
+        />
+      )}
 
       <AssetLibraryNewFolderDialog
         open={newFolderOpen}
