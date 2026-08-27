@@ -88,7 +88,7 @@ export function ReferenceTextChip({
               left: previewAnchor.left,
               transform: 'translateY(-100%)',
             }}
-            className="pointer-events-none z-[2000] w-max max-w-[280px] rounded-lg bg-black px-3 py-2.5 text-xs leading-relaxed text-white shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
+            className="canvas-node-transient-ui pointer-events-none z-[2000] w-max max-w-[280px] rounded-lg bg-black px-3 py-2.5 text-xs leading-relaxed text-white shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
           >
             <div className="max-h-[220px] overflow-y-auto whitespace-pre-wrap break-words">
               {trimmed}

@@ -8,6 +8,7 @@ import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import type { CanvasNode } from "@/features/canvas/domain/canvasNodes";
 
 const translations: Record<string, string> = {
+  "canvas.history.title": "历史资产",
   "canvas.history.tabs.image": "图片历史",
   "canvas.history.tabs.video": "视频历史",
   "canvas.history.tabs.audio": "音频历史",
@@ -18,6 +19,8 @@ const translations: Record<string, string> = {
   "canvas.history.deleteConfirmTitle": "删除这条历史资产？",
   "canvas.history.deleteConfirmDescription": "删除后将不再出现在历史资产中，且无法恢复。画布中已使用的内容不会受影响。",
   "canvas.history.deleteConfirmAction": "删除",
+  "canvas.history.promptTitle": "提示词",
+  "canvas.history.viewFullPrompt": "查看完整提示词",
   "common.cancel": "取消",
 };
 
@@ -135,6 +138,74 @@ describe("CanvasHistoryAssetsModal 删除确认", () => {
       within(screen.getByRole("alertdialog")).getByRole("button", { name: "删除" }),
     );
     expect(historyState.removeRecord).toHaveBeenCalledWith("n1", "image:r1");
+  });
+});
+
+describe("CanvasHistoryAssetsModal 提示词渐进展示", () => {
+  it("卡片只显示两行摘要，单击后打开完整提示词", async () => {
+    const user = userEvent.setup();
+    const prompt = "为小游戏设计一张横版海报，主角正在不同高度的平台之间跳跃。";
+    historyState.records = [
+      {
+        schema_version: 1,
+        canvas_id: "default",
+        node_id: "n1",
+        recorded_at: "2026-08-27T00:00:00Z",
+        id: "image:prompt",
+        task_type: "image",
+        task_key: "image",
+        job_id: "prompt",
+        status: "completed",
+        media_type: "image",
+        prompt,
+        result: { output_url: "/static/demo/history-prompt.png" },
+      },
+    ];
+    renderModal(vi.fn(), "generation-history");
+
+    const caption = screen.getByRole("button", { name: "查看完整提示词" });
+    expect(caption).toHaveClass("h-12");
+    expect(caption.querySelector("span")).toHaveClass("line-clamp-2");
+    expect(caption).toHaveAttribute("title", "查看完整提示词");
+    expect(caption.querySelector("svg")).toHaveClass("lucide-maximize-2");
+    const hoverLayer = caption.closest(".group")?.querySelector('[class*="backdrop-blur"]');
+    expect(hoverLayer).toHaveClass("bg-black/50", "backdrop-blur-[10px]");
+    expect(hoverLayer?.parentElement).toHaveClass("isolate", "rounded-t-md");
+    expect(hoverLayer?.parentElement).toHaveStyle({
+      clipPath: "inset(0 round var(--radius-md) var(--radius-md) 0 0)",
+    });
+
+    await user.click(caption);
+    expect(screen.getByRole("heading", { name: "提示词" })).toBeInTheDocument();
+    expect(screen.getAllByText(prompt)).toHaveLength(2);
+  });
+});
+
+describe("CanvasHistoryAssetsModal 固定五列布局", () => {
+  it("移除比例调节并让每个日期分组固定为五列网格", () => {
+    historyState.records = Array.from({ length: 7 }, (_, index) => ({
+      schema_version: 1,
+      canvas_id: "default",
+      node_id: `n${index}`,
+      recorded_at: "2026-08-27T00:00:00Z",
+      id: `image:${index}`,
+      task_type: "image",
+      task_key: "image",
+      job_id: `job-${index}`,
+      status: "completed",
+      media_type: "image",
+      result: { output_url: `/static/demo/history-${index}.png` },
+    }));
+    renderModal(vi.fn(), "generation-history");
+
+    const dialog = screen.getByRole("dialog", { name: "历史资产" });
+    const assetGrid = dialog.querySelector(".grid-cols-5");
+
+    expect(dialog).toHaveClass("w-[min(1200px,94vw)]");
+    expect(assetGrid).toHaveClass("grid", "grid-cols-5", "gap-3");
+    expect(assetGrid?.children).toHaveLength(7);
+    expect(screen.queryByLabelText("canvas.toolbar.zoomOut")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("canvas.toolbar.zoomIn")).not.toBeInTheDocument();
   });
 });
 

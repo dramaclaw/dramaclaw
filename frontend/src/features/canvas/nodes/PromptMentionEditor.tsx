@@ -698,7 +698,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           && createPortal(
             <div
               ref={popoverRef}
-              className="ui-scrollbar fixed z-[10000] flex min-w-[200px] max-w-[280px] flex-col overflow-y-auto rounded-lg border border-white/10 bg-surface-dark/95 shadow-xl backdrop-blur-sm"
+              className="canvas-node-transient-ui ui-scrollbar fixed z-[10000] flex min-w-[200px] max-w-[280px] flex-col overflow-y-auto rounded-lg border border-white/10 bg-surface-dark/95 shadow-xl backdrop-blur-sm"
               style={{
                 ...popoverStyle,
                 maxHeight: POPOVER_MAX_VISIBLE * POPOVER_ROW_PX,
@@ -757,7 +757,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
         {hover && previewStyle
           && createPortal(
             <div
-              className="pointer-events-none fixed z-[10001] -translate-y-full overflow-hidden rounded-lg border border-white/15 bg-surface-dark/95 shadow-xl"
+              className="canvas-node-transient-ui pointer-events-none fixed z-[10001] -translate-y-full overflow-hidden rounded-lg border border-white/15 bg-surface-dark/95 shadow-xl"
               style={{
                 left: previewStyle.left,
                 top: previewStyle.top,

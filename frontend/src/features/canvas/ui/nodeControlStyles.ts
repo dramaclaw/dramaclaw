@@ -35,7 +35,7 @@ export const NODE_INLINE_ICON_BUTTON_CLASS =
 export const NODE_INLINE_ICON_BUTTON_ACTIVE_CLASS = 'bg-white/[0.12] text-text-dark';
 
 export const NODE_FLOATING_PANEL_SURFACE_CLASS =
-  'rounded-[10px] border border-white/[0.12] bg-[#282828]/96 shadow-[0_14px_34px_rgba(0,0,0,0.42)] backdrop-blur-md';
+  'canvas-node-transient-ui rounded-[10px] border border-white/[0.12] bg-[#282828]/96 shadow-[0_14px_34px_rgba(0,0,0,0.42)] backdrop-blur-md';
 
 export const NODE_COUNT_POPOVER_CLASS =
   `nodrag nowheel absolute bottom-full right-0 z-50 mb-2 w-[88px] overflow-hidden p-1 ${NODE_FLOATING_PANEL_SURFACE_CLASS}`;

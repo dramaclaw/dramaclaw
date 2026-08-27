@@ -552,6 +552,24 @@
   cursor: grabbing;
 }
 
+/* 节点拖动专注模式：只隐藏临时操作 chrome，不卸载组件、不清空 selection，
+   因此输入草稿、面板展开状态和松手后的工具栏恢复都不受影响。吸附引导线不在
+   此列表中，会继续提供必要的对齐反馈。body 级选择器同时覆盖 portal 到 body 的
+   下拉面板和提示层。 */
+body.canvas-node-drag-focus .react-flow__node-toolbar,
+body.canvas-node-drag-focus .react-flow__resize-control,
+body.canvas-node-drag-focus .react-flow__handle,
+body.canvas-node-drag-focus .react-flow__nodesselection-rect,
+body.canvas-node-drag-focus .canvas-node-transient-ui,
+body.canvas-node-drag-focus [role="tooltip"],
+body.canvas-node-drag-focus [role="menu"],
+body.canvas-node-drag-focus [role="listbox"] {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transition: none !important;
+}
+
 .react-flow__node.canvas-node-placement-confirm {
   overflow: visible;
 }

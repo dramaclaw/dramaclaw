@@ -3318,6 +3318,7 @@
       "deleteConfirmAction": "删除",
       "deleteFailed": "删除失败，请稍后重试",
       "promptTitle": "提示词",
+      "viewFullPrompt": "查看完整提示词",
       "batchDownload": "批量下载",
       "batchUse": "批量使用",
       "selectAll": "全选",

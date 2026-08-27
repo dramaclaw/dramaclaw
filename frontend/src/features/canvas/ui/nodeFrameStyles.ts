@@ -23,7 +23,7 @@ export const CANVAS_NODE_INPUT_PLACEHOLDER_CLASS =
 // (CANVAS_NODE_INPUT_SURFACE_CLASS + CANVAS_NODE_INPUT_FRAME_CLASS) instead of the
 // bluish `bg-surface-dark/95`. Already includes the `border` width/style keyword,
 // so apply it as a drop-in replacement for `border ... bg-surface-dark/95 shadow-*`.
-export const CANVAS_NODE_OPS_PANEL_CLASS = `border ${CANVAS_NODE_INPUT_SURFACE_CLASS} ${CANVAS_NODE_INPUT_FRAME_CLASS}`;
+export const CANVAS_NODE_OPS_PANEL_CLASS = `canvas-node-transient-ui border ${CANVAS_NODE_INPUT_SURFACE_CLASS} ${CANVAS_NODE_INPUT_FRAME_CLASS}`;
 export const CANVAS_NODE_TOOLBAR_SURFACE_CLASS = CANVAS_NODE_OPS_PANEL_CLASS;
 export const CANVAS_NODE_TOOLBAR_PILL_CLASS =
   `rounded-full ${CANVAS_NODE_TOOLBAR_SURFACE_CLASS} p-1.5`;
