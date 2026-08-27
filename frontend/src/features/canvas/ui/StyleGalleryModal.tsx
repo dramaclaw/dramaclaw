@@ -8,7 +8,9 @@ import type { FreezoneStyleTemplate } from '@/api/ops';
 import { StyleAssetImage } from '@/features/canvas/ui/StyleAssetImage';
 
 const STYLE_GALLERY_MODAL_CLASS =
-  'relative flex h-[min(720px,82vh)] w-[min(1120px,92vw)] flex-col overflow-hidden rounded-[10px] border border-white/[0.12] bg-[#15161b]/96 shadow-[0_18px_48px_rgba(0,0,0,0.45)] backdrop-blur-md';
+  'relative flex w-[min(1120px,92vw)] flex-col overflow-hidden rounded-[10px] border border-white/[0.12] bg-[#15161b]/96 shadow-[0_18px_48px_rgba(0,0,0,0.45)] backdrop-blur-md';
+const STYLE_GALLERY_LIST_SIZE_CLASS = 'h-[min(720px,82vh)]';
+const STYLE_GALLERY_DETAIL_SIZE_CLASS = 'max-h-[82vh]';
 
 const ALL_CATEGORIES = '__all__';
 const OTHER_CATEGORY = '__other__';
@@ -94,7 +96,9 @@ export function StyleGalleryModal({
       }}
     >
       <div
-        className={STYLE_GALLERY_MODAL_CLASS}
+        className={`${STYLE_GALLERY_MODAL_CLASS} ${
+          detail ? STYLE_GALLERY_DETAIL_SIZE_CLASS : STYLE_GALLERY_LIST_SIZE_CLASS
+        }`}
         role="dialog"
         aria-modal="true"
         aria-label={detail ? `风格 ${detail.label}` : '风格图墙'}
@@ -125,8 +129,8 @@ export function StyleGalleryModal({
         ) : null}
 
         {detail ? (
-          <div className="flex flex-1 gap-4 overflow-hidden p-4">
-            <div className="ui-scrollbar grid flex-1 grid-cols-2 content-start gap-2 overflow-y-auto">
+          <div className="flex min-h-0 gap-4 overflow-hidden p-4">
+            <div className="ui-scrollbar grid min-h-0 flex-1 grid-cols-2 content-start gap-2 overflow-y-auto">
               {/* 同一条风格里出现两张同名示例图并非不可能（外部清单是运维自己写的），
                   用路径当 key 会撞车，索引才是这里稳定的身份。 */}
               {detail.samples.map((sample, index) => (
@@ -136,7 +140,7 @@ export function StyleGalleryModal({
                   assetBase={assetBase}
                   alt={`${detail.label} 示例 ${index + 1}`}
                   loading="lazy"
-                  className="w-full rounded-[8px] border border-white/[0.08] object-cover"
+                  className="aspect-video w-full rounded-[8px] border border-white/[0.08] object-cover"
                 />
               ))}
             </div>
@@ -213,10 +217,10 @@ export function StyleGalleryModal({
                     return (
                       <div
                         key={item.id}
-                        className={`relative overflow-hidden rounded-[12px] border bg-white/[0.04] transition-colors ${
+                        className={`group relative overflow-hidden rounded-[12px] border bg-white/[0.04] shadow-[0_14px_34px_rgba(0,0,0,0.22)] transition-[border-color,box-shadow] duration-300 ease-out hover:border-cyan-100/40 hover:shadow-[0_20px_44px_rgba(0,0,0,0.34),0_0_24px_rgba(103,232,249,0.08)] focus-within:border-cyan-100/40 ${
                           isActive
                             ? 'border-white/[0.30] ring-1 ring-white/24'
-                            : 'border-white/[0.10] hover:border-white/[0.18] hover:bg-white/[0.06]'
+                            : 'border-white/[0.10]'
                         }`}
                       >
                         {/* 卡片主体进详情：一张封面看不出这套风格怎么处理不同年龄性别的
@@ -232,10 +236,10 @@ export function StyleGalleryModal({
                             assetBase={assetBase}
                             alt={item.label}
                             loading="lazy"
-                            className="aspect-video w-full object-cover"
+                            className="aspect-video w-full origin-top object-cover transition-transform duration-300 ease-out will-change-transform group-hover:scale-[1.02] group-focus-within:scale-[1.02]"
                           />
                         </button>
-                        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[48%] bg-gradient-to-t from-black/85 via-black/45 to-transparent" />
+                        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-white/[0.04] opacity-80 transition-opacity duration-300 group-hover:opacity-100 group-focus-within:opacity-100" />
                         <div className="pointer-events-none absolute bottom-2.5 left-3 right-16 truncate text-xs font-medium text-white/92">
                           {item.label}
                         </div>

@@ -14,6 +14,7 @@ import pytest
 
 from novelvideo.freezone.history import (
     append_generation_history,
+    delete_generation_history_record,
     generation_history_path,
     read_canvas_generation_history,
 )
@@ -25,6 +26,7 @@ def _append(project_dir: Path, node_id: str, job_id: str, recorded_at: str) -> N
         canvas_id="default",
         node_id=node_id,
         record={
+            "id": f"video:{job_id}",
             "job_id": job_id,
             "status": "completed",
             "media_type": "video",
@@ -81,3 +83,44 @@ def test_canvas_history_rejects_bad_canvas_id(tmp_path: Path) -> None:
         read_canvas_generation_history(
             project_dir=tmp_path / "proj", canvas_id="../escape"
         )
+
+
+def test_delete_history_record_hides_only_target_and_keeps_append_only_file(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "proj"
+    _append(project_dir, "node_a", "job_keep", "2026-06-10T00:00:00Z")
+    path = generation_history_path(project_dir, "default", "node_a")
+    append_generation_history(
+        project_dir=project_dir,
+        canvas_id="default",
+        node_id="node_a",
+        record={
+            "id": "video:job_delete",
+            "job_id": "job_delete",
+            "status": "completed",
+            "media_type": "video",
+            "result": {"output_url": "/static/job_delete.mp4"},
+        },
+    )
+    size_before = path.stat().st_size
+
+    assert delete_generation_history_record(
+        project_dir=project_dir,
+        canvas_id="default",
+        node_id="node_a",
+        record_id="video:job_delete",
+    )
+    assert path.stat().st_size > size_before
+    assert [
+        record["job_id"]
+        for record in read_canvas_generation_history(
+            project_dir=project_dir, canvas_id="default"
+        )
+    ] == ["job_keep"]
+    assert not delete_generation_history_record(
+        project_dir=project_dir,
+        canvas_id="default",
+        node_id="node_a",
+        record_id="video:job_delete",
+    )

@@ -173,6 +173,7 @@ def _read_history_file(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     records: list[dict[str, Any]] = []
+    deleted_record_ids: set[str] = set()
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -180,9 +181,52 @@ def _read_history_file(path: Path) -> list[dict[str, Any]]:
             value = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(value, dict):
-            records.append(value)
-    return records
+        if not isinstance(value, dict):
+            continue
+        deleted_record_id = value.get("_deleted_record_id")
+        if isinstance(deleted_record_id, str) and deleted_record_id:
+            deleted_record_ids.add(deleted_record_id)
+            continue
+        records.append(value)
+    if not deleted_record_ids:
+        return records
+    return [record for record in records if record.get("id") not in deleted_record_ids]
+
+
+def delete_generation_history_record(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    node_id: str,
+    record_id: str,
+) -> bool:
+    """Hide one history record by appending an audit-friendly tombstone.
+
+    History files are append-only. Rewriting a JSONL file while a generation job
+    appends to it can lose the new record, so deletion uses a tombstone that all
+    readers apply instead. The generated media itself is deliberately retained:
+    another canvas node may still reference the same output URL.
+    """
+
+    normalized_record_id = str(record_id or "").strip()
+    if not normalized_record_id:
+        raise ValueError("record_id is required")
+    path = generation_history_path(project_dir, canvas_id, node_id)
+    if not any(
+        record.get("id") == normalized_record_id
+        for record in _read_history_file(path)
+    ):
+        return False
+    with path.open("a", encoding="utf-8") as f:
+        f.write(
+            json.dumps(
+                {"_deleted_record_id": normalized_record_id},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+    return True
 
 
 def read_generation_history(

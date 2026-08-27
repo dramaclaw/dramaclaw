@@ -124,6 +124,7 @@ from novelvideo.freezone.canvas_static_urls import (
 from novelvideo.freezone.history import (
     append_generation_history,
     build_node_history_record,
+    delete_generation_history_record,
     read_canvas_generation_history,
     read_generation_history,
 )
@@ -12335,6 +12336,40 @@ async def get_node_generation_history(
         for record in records
     ]
     return {"ok": True, "data": {"records": records}}
+
+
+@router.delete(
+    "/projects/{project}/freezone/canvases/{canvas_id}/nodes/{node_id}/generation-history",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def delete_node_generation_history_record(
+    project: str,
+    canvas_id: str,
+    node_id: str,
+    record_id: str = Query(..., min_length=1, max_length=512),
+    user: dict = Depends(get_api_user),
+):
+    """Remove one entry from the history browser without deleting its media."""
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project,
+        user,
+        required_role="editor",
+        require_home_node=False,
+    )
+    try:
+        deleted = delete_generation_history_record(
+            project_dir=project_dir,
+            canvas_id=canvas_id,
+            node_id=node_id,
+            record_id=record_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "generation history record not found")
+    return {"ok": True, "data": {"deleted": True}}
 
 
 @router.get(

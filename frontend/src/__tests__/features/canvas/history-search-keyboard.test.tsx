@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -14,6 +14,11 @@ const translations: Record<string, string> = {
   "canvas.history.tabs.world": "世界历史",
   "canvas.history.noMatch": "没有匹配的历史资产",
   "canvas.history.noMatchOtherTabs": "当前分类没有匹配项，试试{{tabs}}",
+  "canvas.history.delete": "删除",
+  "canvas.history.deleteConfirmTitle": "删除这条历史资产？",
+  "canvas.history.deleteConfirmDescription": "删除后将不再出现在历史资产中，且无法恢复。画布中已使用的内容不会受影响。",
+  "canvas.history.deleteConfirmAction": "删除",
+  "common.cancel": "取消",
 };
 
 const enTranslations: Record<string, string> = {
@@ -27,6 +32,10 @@ const enTranslations: Record<string, string> = {
 
 const i18nState = vi.hoisted(() => ({ language: "zh" }));
 const canvasState = vi.hoisted(() => ({ nodes: [] as unknown[] }));
+const historyState = vi.hoisted(() => ({
+  records: [] as Record<string, unknown>[],
+  removeRecord: vi.fn(),
+}));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -48,7 +57,11 @@ vi.mock("@/stores/canvasStore", () => ({
 // 只测搜索框键盘行为与空态文案,把生成历史/查看器/导演台整条依赖图挡在门外
 // (viewer-kit 那条会把 three.js 拖进 jsdom)。
 vi.mock("@/features/canvas/hooks/useCanvasGenerationHistory", () => ({
-  useCanvasGenerationHistory: () => ({ records: [], isLoading: false }),
+  useCanvasGenerationHistory: () => ({
+    records: historyState.records,
+    isLoading: false,
+    removeRecord: historyState.removeRecord,
+  }),
 }));
 vi.mock("@/features/canvas/ui/ImageViewerModal", () => ({ ImageViewerModal: () => null }));
 vi.mock("@/features/canvas/ui/VideoViewerModal", () => ({ VideoViewerModal: () => null }));
@@ -60,19 +73,26 @@ vi.mock("@/features/viewer-kit/three-d/directorManifest", () => ({
 }));
 
 import { CanvasHistoryAssetsModal } from "@/features/canvas/ui/CanvasHistoryAssetsModal";
+import { ConfirmDialogHost } from "@/components/confirm-dialog-host";
 
 function node(type: string, id: string, data: Record<string, unknown>) {
   return { id, type, position: { x: 0, y: 0 }, data } as unknown as CanvasNode;
 }
 
-function renderModal(onClose = vi.fn()) {
+function renderModal(
+  onClose = vi.fn(),
+  assetSource: "generation-history" | "live-canvas" = "live-canvas",
+) {
   render(
-    <CanvasHistoryAssetsModal
-      onClose={onClose}
-      onUseAsset={vi.fn()}
-      onDeleteNode={vi.fn()}
-      assetSource="live-canvas"
-    />,
+    <>
+      <CanvasHistoryAssetsModal
+        onClose={onClose}
+        onUseAsset={vi.fn()}
+        onDeleteNode={vi.fn()}
+        assetSource={assetSource}
+      />
+      <ConfirmDialogHost />
+    </>,
   );
   return { onClose, input: screen.getByRole("searchbox") as HTMLInputElement };
 }
@@ -80,6 +100,42 @@ function renderModal(onClose = vi.fn()) {
 afterEach(() => {
   i18nState.language = "zh";
   canvasState.nodes = [];
+  historyState.records = [];
+  historyState.removeRecord.mockReset();
+});
+
+describe("CanvasHistoryAssetsModal 删除确认", () => {
+  it("取消时不删除，确认后删除对应历史记录", async () => {
+    const user = userEvent.setup();
+    historyState.records = [
+      {
+        schema_version: 1,
+        canvas_id: "default",
+        node_id: "n1",
+        recorded_at: "2026-07-17T00:00:00Z",
+        id: "image:r1",
+        task_type: "image",
+        task_key: "image",
+        job_id: "r1",
+        status: "completed",
+        media_type: "image",
+        result: { output_url: "/static/demo/history.png" },
+      },
+    ];
+    historyState.removeRecord.mockResolvedValue(true);
+    renderModal(vi.fn(), "generation-history");
+
+    await user.click(screen.getByRole("button", { name: "删除" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("删除这条历史资产？");
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    expect(historyState.removeRecord).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "删除" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "删除" }),
+    );
+    expect(historyState.removeRecord).toHaveBeenCalledWith("n1", "image:r1");
+  });
 });
 
 describe("CanvasHistoryAssetsModal 搜索框 Escape", () => {

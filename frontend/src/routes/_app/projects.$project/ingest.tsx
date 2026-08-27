@@ -18,7 +18,6 @@ import {
   Info,
   Loader2,
   Play,
-  Plus,
   RefreshCw,
   Square,
   X,
@@ -444,8 +443,15 @@ function UploadZone({
         className,
       )}
     >
-      <div className="flex h-[72px] w-14 -rotate-[6deg] items-center justify-center rounded-[10px] bg-white/[0.08] text-muted-foreground transition-all duration-300 ease-out group-hover:rotate-0 group-hover:bg-white/[0.1]">
-        <Plus className="size-7 stroke-[1.25px]" />
+      <div className="relative h-[72px] w-14 -rotate-[6deg] transform-gpu overflow-hidden rounded-[10px] transition-transform duration-[var(--duration-slow)] ease-[var(--ease-out-quint)] will-change-transform group-hover:rotate-0">
+        <img
+          src="/images/ingest-add.png"
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          className="h-full w-full select-none object-cover"
+        />
+        <span className="pointer-events-none absolute inset-0 bg-white/0 transition-colors duration-[var(--duration-slow)] ease-[var(--ease-out-quint)] group-hover:bg-white/[0.04]" />
       </div>
       <div className="space-y-1.5 sm:-mt-1">
         <p className="text-lg font-medium tracking-tight text-foreground">

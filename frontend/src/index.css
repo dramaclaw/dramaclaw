@@ -716,15 +716,17 @@
   inset: 0;
   border-radius: inherit;
   padding: 1.5px;
-  /* 光线颜色与自绘连线一致，用白色（连线 stroke = rgba(255,255,255,0.9)）。 */
+  /* 白色核心负责清晰度，前后用画布主题色过渡；压低峰值与光晕，避免在暗色画布上刺眼。 */
   background: conic-gradient(
     from var(--canvas-node-flow-angle),
-    rgba(255, 255, 255, 0) 0deg,
-    rgba(255, 255, 255, 0) 180deg,
-    rgba(255, 255, 255, 0.85) 260deg,
-    rgba(255, 255, 255, 1) 300deg,
-    rgba(255, 255, 255, 0.85) 340deg,
-    rgba(255, 255, 255, 0) 360deg
+    transparent 0deg,
+    transparent 246deg,
+    color-mix(in oklch, var(--primary) 16%, transparent) 262deg,
+    color-mix(in oklch, var(--primary) 52%, transparent) 286deg,
+    rgb(var(--text-rgb) / 0.74) 306deg,
+    color-mix(in oklch, var(--primary) 42%, transparent) 330deg,
+    transparent 350deg,
+    transparent 360deg
   );
   /* 把 conic 渐变裁成一圈「描边」：content-box 层与整框层做差集（exclude/xor），
      只留 padding 那 1.5px 的边环，其余镂空。必须同时给 -webkit- 和标准两套：
@@ -738,12 +740,12 @@
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
   mask-composite: exclude;
-  box-shadow: 0 0 12px rgba(255, 255, 255, 0.28);
+  box-shadow: 0 0 8px color-mix(in oklch, var(--primary) 16%, transparent);
   pointer-events: none;
   transform-origin: center;
   /* 边框环与卡片本体 `> *` 跑同一份 nudge，确保放大时两者始终重合、描边贴边不漂移。 */
   animation:
-    canvas-node-border-flow 1.4s linear infinite,
+    canvas-node-border-flow 1.8s linear infinite,
     canvas-node-droptarget-nudge 240ms var(--ease-out-quint) forwards;
 }
 
@@ -820,13 +822,13 @@
 /* 生成/上传中角标：低缩放下节点本体只有几十像素，用醒目的呼吸圆点表达状态。 */
 .dc-lod-shell__busy {
   position: absolute;
-  top: 8%;
-  right: 8%;
+  top: 20px;
+  right: 20px;
   width: 18%;
   max-width: 28px;
   aspect-ratio: 1;
   border-radius: 9999px;
-  background: rgba(96, 165, 250, 0.9);
+  background: var(--primary);
   animation: dc-lod-busy-pulse 1.2s ease-in-out infinite;
 }
 

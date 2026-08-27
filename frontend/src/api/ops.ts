@@ -93,6 +93,21 @@ export async function fetchCanvasGenerationHistory(
   return data?.records ?? [];
 }
 
+/** Remove one entry from the history browser; the underlying media is retained. */
+export async function deleteNodeGenerationHistoryRecord(
+  project: string,
+  canvasId: string,
+  nodeId: string,
+  recordId: string,
+): Promise<{ deleted: boolean }> {
+  return await apiCall<{ deleted: boolean }>(
+    `projects/${encodeURIComponent(project)}/freezone/canvases/${encodeURIComponent(
+      canvasId,
+    )}/nodes/${encodeURIComponent(nodeId)}/generation-history?record_id=${encodeURIComponent(recordId)}`,
+    { method: "DELETE" },
+  );
+}
+
 // /freezone/gen ----------------------------------------------------------- //
 
 export type FreezoneProvider =

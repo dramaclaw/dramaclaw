@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { Building2, ChevronLeft, ChevronRight, Clock3, Sparkles } from "lucide-react";
+import { Building2, ChevronLeft, ChevronRight, Clock3, Sparkles, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -19,9 +19,7 @@ import {
 import {
   type CreditTransaction,
   type CreditTransactionCategory,
-  creditOrgOf,
   creditScopeOf,
-  dormantPersonalBalanceOf,
   lowBalanceThresholdOf,
   promotionScopeOf,
   useCreditFilterOptions,
@@ -82,7 +80,7 @@ const QUIET_BUTTON = cn(
 );
 // Field: 12px radius, quiet at rest, brighter edge + 3px halo on focus.
 const FIELD = cn(
-  "h-9 rounded-sm border px-3 text-xs text-foreground outline-none",
+  "h-8 rounded-sm border px-2.5 text-xs text-foreground outline-none",
   HAIRLINE,
   SURFACE_NESTED,
   // Same reasoning as QUIET_BUTTON: focus is transient, `primary` means
@@ -164,7 +162,7 @@ function FilterSelect({
         aria-label={ariaLabel}
         className={cn(
           FIELD,
-          "min-w-36 justify-between gap-2",
+          "min-w-28 justify-between gap-2",
           "dark:bg-foreground/10 dark:hover:bg-foreground/15",
           "focus-visible:border-foreground/30 focus-visible:ring-foreground/10",
         )}
@@ -237,8 +235,6 @@ export function CreditsPage() {
   // read off `promotionScopeOf` below.
   const scope = creditScopeOf(summary);
   const isOrgScope = scope === "org_member";
-  const org = creditOrgOf(summary);
-  const dormantPersonalBalance = dormantPersonalBalanceOf(summary);
   const lowBalanceThreshold = lowBalanceThresholdOf(summary);
   // Carries both figures rather than a boolean so the copy below can name them
   // without re-narrowing a `number | null` that the guard already settled.
@@ -286,60 +282,40 @@ export function CreditsPage() {
     void navigate({ to: "/" });
   };
 
-  // The layout's <main> already scrolls; this page opts out of that (h-full +
-  // min-h-0) and hands the overflow to the table instead, so the filters and
-  // the pager stay put while only the rows move.
+  // Auto block margins center a short credit view without stretching any
+  // panel. If the content grows beyond the viewport, they collapse to zero and
+  // the layout's <main> resumes normal scrolling from the top.
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-[1500px] flex-col gap-3">
-      <section className={PANEL}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            {/* Chromeless: no border, no fill. A back affordance above the title
-                is navigation, not an action — it earns presence on hover only. */}
+    <div className="fixed inset-0 z-[60] flex min-h-0 w-full flex-col gap-3 overflow-y-auto bg-black/35 px-6 py-10 backdrop-blur-md">
+      <section className={cn(PANEL, "mx-auto mt-auto w-full max-w-6xl")}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h1 className="text-lg font-semibold text-foreground">{t("credits.centerTitle")}</h1>
+            {isOrgScope ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary/12 px-2.5 py-0.5 text-xs font-medium text-primary">
+                <Building2 className="size-3.5" strokeWidth={1.75} />
+                {t("credits.orgScopeBadge")}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {summary && summary.pending > 0 ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full py-1 text-xs font-medium text-warning">
+                <Clock3 className="size-3.5" strokeWidth={1.75} />
+                {t("credits.pendingAmount", {
+                  amount: formatNumber(summary.pending, language),
+                })}
+              </span>
+            ) : null}
             <button
               type="button"
               onClick={goBack}
-              className={cn(
-                QUIET_BUTTON,
-                "mb-3 border-transparent bg-transparent pl-2",
-                "hover:border-transparent hover:bg-transparent",
-              )}
+              className="inline-flex size-7 items-center justify-center rounded-full text-muted-foreground/70 outline-none transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)] hover:bg-foreground/[0.06] hover:text-foreground focus-visible:ring-2 focus-visible:ring-foreground/15"
+              aria-label={t("common.close")}
             >
-              <ChevronLeft className="size-3.5" strokeWidth={1.75} />
-              {t("credits.back")}
+              <X className="size-4" strokeWidth={1.75} />
             </button>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold text-foreground">{t("credits.centerTitle")}</h1>
-              {/* An unlabelled number was the defect: an org member saw a
-                  balance with no hint that it belongs to the org rather than
-                  to him. The chip names the account, the note below names the
-                  org itself. */}
-              {isOrgScope ? (
-                <span className="inline-flex items-center gap-1 rounded-full bg-primary/12 px-2.5 py-0.5 text-xs font-medium text-primary">
-                  <Building2 className="size-3.5" strokeWidth={1.75} />
-                  {t("credits.orgScopeBadge")}
-                </span>
-              ) : null}
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t(isOrgScope ? "credits.orgCenterDescription" : "credits.centerDescription")}
-            </p>
-            {org ? (
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t("credits.orgScopeNotice", { name: org.name })}
-              </p>
-            ) : null}
           </div>
-          {/* Unfilled too — it reads as a status note next to the title, and
-              `text-warning` already carries the whole signal. */}
-          {summary && summary.pending > 0 ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full py-1 pr-1 text-xs font-medium text-warning">
-              <Clock3 className="size-3.5" strokeWidth={1.75} />
-              {t("credits.pendingAmount", {
-                amount: formatNumber(summary.pending, language),
-              })}
-            </span>
-          ) : null}
         </div>
 
         {summaryQuery.isError ? (
@@ -351,22 +327,27 @@ export function CreditsPage() {
           </div>
         ) : null}
 
-        {/* Hierarchy comes from size, not hue: one saturated element per screen,
-            so the balance tile is ringed in `primary` while all four figures
-            stay `foreground`. */}
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           {SUMMARY_TILES.map((key) => {
             const value = summaryValues[key];
             const isBalance = key === "balance";
             return (
               <div
                 key={key}
-                className={cn(TILE, isBalance && "ring-1 ring-inset ring-primary/25")}
+                className={cn(
+                  "rounded-md px-3.5 py-3",
+                  isBalance ? "bg-foreground/10" : "bg-foreground/[0.055]",
+                )}
               >
                 <div className="text-xs font-medium text-muted-foreground">
                   {t(isBalance && isOrgScope ? "credits.orgBalance" : `credits.${key}`)}
                 </div>
-                <div className="mt-1.5 flex items-center gap-1.5 text-2xl font-semibold text-foreground">
+                <div
+                  className={cn(
+                    "mt-1.5 flex items-center gap-1.5 font-semibold text-foreground",
+                    isBalance ? "text-2xl" : "text-xl",
+                  )}
+                >
                   {isBalance ? <CreditSparkIcon className="size-5" /> : null}
                   <span className="tabular-nums">
                     {typeof value === "number" ? formatNumber(value, language) : "--"}
@@ -377,12 +358,8 @@ export function CreditsPage() {
           })}
         </div>
 
-        {/* Sits above the dormant-balance note on purpose: this one is about
-            the account being spent from right now, the one below is a fact
-            about a different account. An org member cannot top his allocation
-            up himself, so the only action the copy can point at is the org
-            admin who set the threshold. `text-warning` unfilled, same as the
-            pending note beside the title. */}
+        {/* A member cannot top up this allocation directly, so the only useful
+            low-balance action is asking an admin — see credits.lowBalanceNotice. */}
         {lowBalance ? (
           <p className="mt-3 text-xs font-medium text-warning">
             {t("credits.lowBalanceNotice", {
@@ -391,31 +368,10 @@ export function CreditsPage() {
             })}
           </p>
         ) : null}
-
-        {/* Only rendered when the user actually still holds personal credits
-            (the backend sends the key as null otherwise). It is deliberately
-            outside the tile grid and typeset in muted text at a smaller size:
-            it is a fact about another account, not a figure you can spend
-            here, and it is never added into the balance above. */}
-        {dormantPersonalBalance !== null ? (
-          <div className={cn(TILE, "mt-3 flex flex-wrap items-start justify-between gap-2")}>
-            <div className="min-w-0">
-              <div className="text-xs font-medium text-muted-foreground">
-                {t("credits.dormantPersonalBalance")}
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t("credits.dormantPersonalHint")}
-              </p>
-            </div>
-            <span className="tabular-nums text-lg font-semibold text-muted-foreground">
-              {formatNumber(dormantPersonalBalance, language)}
-            </span>
-          </div>
-        ) : null}
       </section>
 
       {promotions.length > 0 ? (
-        <section className={PANEL}>
+        <section className={cn(PANEL, "mx-auto w-full max-w-6xl")}>
           <div className="flex items-center gap-1.5">
             <Sparkles className="size-4 text-primary" strokeWidth={1.75} />
             <h2 className="text-base font-semibold text-foreground">
@@ -467,8 +423,8 @@ export function CreditsPage() {
         </section>
       ) : null}
 
-      <section className={cn(PANEL, "flex min-h-0 flex-1 flex-col")}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <section className={cn(PANEL, "mx-auto mb-auto flex min-h-0 w-full max-w-6xl flex-col")}>
+        <div className="flex flex-wrap items-center gap-2">
           {/* Pill filters — the signature shape for "clickable but not submit".
               Active state rides `data-state` so portalled copies match. */}
           <div className="flex flex-wrap items-center gap-1">
@@ -493,18 +449,13 @@ export function CreditsPage() {
               </button>
             ))}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-xs text-muted-foreground">
-              {transactionsQuery.isFetching
-                ? t("credits.filtering")
-                : t("credits.filteredRecords", { count: transactions?.total ?? 0 })}
-            </span>
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             <input
               type="date"
               value={startDate}
               onChange={(event) => resetPage(() => setStartDate(event.target.value))}
               aria-label={t("credits.startDate")}
-              className={FIELD}
+              className={cn(FIELD, "w-[132px]")}
             />
             <input
               type="date"
@@ -512,7 +463,7 @@ export function CreditsPage() {
               min={startDate || undefined}
               onChange={(event) => resetPage(() => setEndDate(event.target.value))}
               aria-label={t("credits.endDate")}
-              className={FIELD}
+              className={cn(FIELD, "w-[132px]")}
             />
             <FilterSelect
               value={projectId}
@@ -536,20 +487,25 @@ export function CreditsPage() {
               ariaLabel={t("credits.modelFilter")}
             />
           </div>
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            {transactionsQuery.isFetching
+              ? t("credits.filtering")
+              : t("credits.filteredRecords", { count: transactions?.total ?? 0 })}
+          </span>
         </div>
 
-        <div className="ui-scrollbar mt-3 min-h-0 flex-1 overflow-auto">
+        <div className="ui-scrollbar mt-3 max-h-[min(54vh,560px)] min-h-0 overflow-auto">
           <table className="w-full min-w-[920px] border-collapse text-left">
             <thead>
               <tr className="text-xs font-medium text-muted-foreground">
-                <th className={cn(STICKY_HEAD, "px-3 py-2.5 font-medium")}>{t("credits.columns.time")}</th>
-                <th className={cn(STICKY_HEAD, "px-3 py-2.5 font-medium")}>{t("credits.columns.feature")}</th>
-                <th className={cn(STICKY_HEAD, "px-3 py-2.5 font-medium")}>{t("credits.columns.project")}</th>
-                <th className={cn(STICKY_HEAD, "px-3 py-2.5 font-medium")}>{t("credits.columns.status")}</th>
-                <th className={cn(STICKY_HEAD, "px-3 py-2.5 text-right font-medium")}>
+                <th className={cn(STICKY_HEAD, "px-3 py-2 font-medium")}>{t("credits.columns.time")}</th>
+                <th className={cn(STICKY_HEAD, "px-3 py-2 font-medium")}>{t("credits.columns.feature")}</th>
+                <th className={cn(STICKY_HEAD, "px-3 py-2 font-medium")}>{t("credits.columns.project")}</th>
+                <th className={cn(STICKY_HEAD, "px-3 py-2 font-medium")}>{t("credits.columns.status")}</th>
+                <th className={cn(STICKY_HEAD, "px-3 py-2 text-right font-medium")}>
                   {t("credits.columns.change")}
                 </th>
-                <th className={cn(STICKY_HEAD, "px-3 py-2.5 text-right font-medium")}>
+                <th className={cn(STICKY_HEAD, "px-3 py-2 text-right font-medium")}>
                   {t("credits.columns.balance")}
                 </th>
               </tr>
@@ -568,10 +524,10 @@ export function CreditsPage() {
                     className={cn("border-b border-foreground/8 text-sm hover:bg-foreground/6", MOTION)}
                   >
                     {/* mono-sm is reserved for IDs, paths, seeds and timecodes. */}
-                    <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-muted-foreground">
+                    <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-muted-foreground">
                       {formatDate(item.occurred_at, language)}
                     </td>
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-2.5">
                       <div className="font-medium text-foreground">
                         {item.feature_label || t("credits.adjustment")}
                       </div>
@@ -588,22 +544,22 @@ export function CreditsPage() {
                         ) : null}
                       </div>
                     </td>
-                    <td className="px-3 py-3 text-muted-foreground">
+                    <td className="px-3 py-2.5 text-muted-foreground">
                       {item.project_name || item.project_id || "--"}
                     </td>
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-2.5">
                       <TransactionStatus item={item} />
                     </td>
                     <td
                       className={cn(
-                        "px-3 py-3 text-right font-medium tabular-nums",
+                        "px-3 py-2.5 text-right font-medium tabular-nums",
                         item.delta > 0 ? "text-success" : "text-destructive",
                       )}
                     >
                       {item.delta > 0 ? "+" : ""}
                       {formatNumber(item.delta, language)}
                     </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">
+                    <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
                       {formatNumber(item.balance_after, language)}
                     </td>
                   </tr>

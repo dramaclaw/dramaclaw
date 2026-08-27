@@ -31,7 +31,7 @@ import {
 } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { MousePointerClick, Upload } from 'lucide-react';
+import { MousePointerClick } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 
 import { useShallow } from 'zustand/react/shallow';
@@ -123,6 +123,7 @@ import {
 } from './ui/MultiSelectionConnectButton';
 import { NodeSpawnPlusOverlay } from './ui/NodeSpawnPlusOverlay';
 import { CanvasContextMenu } from './ui/CanvasContextMenu';
+import { CanvasFileDropOverlay } from './ui/CanvasFileDropOverlay';
 import { NodeToolDialog } from './ui/NodeToolDialog';
 import { ImageViewerModal } from './ui/ImageViewerModal';
 import { VideoViewerModal } from './ui/VideoViewerModal';
@@ -4995,16 +4996,7 @@ export function Canvas({
 
       {nodes.length === 0 && emptyHint}
 
-      {isFileDropActive && (
-        <div className="pointer-events-none absolute inset-0 z-[120] flex items-center justify-center">
-          <div className="absolute inset-3 rounded-2xl border-2 border-dashed border-accent/70 bg-accent/[0.06]" />
-          <div className="relative flex flex-col items-center gap-3 rounded-2xl bg-surface-dark/90 px-8 py-6 text-center shadow-2xl ring-1 ring-white/10">
-            <Upload className="h-8 w-8 text-accent" />
-            <div className="text-sm font-medium text-text-dark">释放以添加到画布</div>
-            <div className="text-xs text-text-muted">支持图片、视频、音频，自动生成对应节点</div>
-          </div>
-        </div>
-      )}
+      <CanvasFileDropOverlay isVisible={isFileDropActive} />
 
       <CanvasMinimapButton
         pinned={minimapPinned}

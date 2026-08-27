@@ -25,6 +25,7 @@ import { useAllProjectSummaries } from "@/lib/queries/projects";
 import { getProjectCover } from "@/lib/project-cover";
 import { cn } from "@/lib/utils";
 import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
+import { SlidingTabs, type SlidingTabItem } from "@/components/nav/sliding-tabs";
 
 const XIAJI_DEFAULT_ROUTE = PROJECT_SECTION_ROUTES.ingest;
 
@@ -189,7 +190,7 @@ export function ProjectXiajiMenu({ project }: { project: string }) {
     <div className="flex justify-center px-4 pb-2">
       <nav
         aria-label={t("nav.xiajiMenu")}
-        className="flex items-center gap-3 whitespace-nowrap rounded-full border border-white/[0.08] bg-white/[0.04] px-3.5 py-0.5 text-sidebar-foreground"
+        className="flex items-center gap-3 whitespace-nowrap rounded-full border border-white/[0.08] bg-white/[0.04] px-3.5 py-px text-sidebar-foreground"
       >
         {visibleMenuItems.map((item) => {
           const target =
@@ -281,41 +282,36 @@ export function ProjectHeaderNavigation({ project }: { project: string }) {
 
   if (!mainlineAvailable && !freezoneAvailable) return null;
 
+  const creationModes: SlidingTabItem<"xiahua" | "xiaji">[] = [
+    ...(freezoneAvailable
+      ? [{
+          value: "xiahua" as const,
+          label: t("nav.freezone"),
+          icon: Sparkles,
+        }]
+      : []),
+    ...(mainlineAvailable
+      ? [{
+          value: "xiaji" as const,
+          label: t("nav.xiaji"),
+          icon: Clapperboard,
+        }]
+      : []),
+  ];
+
   return (
     <nav
       aria-label={t("nav.creationMode")}
       className="absolute left-1/2 top-1/2 z-30 flex -translate-x-1/2 -translate-y-1/2 items-center"
     >
-      <div className="relative flex h-8 items-center rounded-full bg-white/[0.07]">
-        {freezoneAvailable ? <button
-          type="button"
-          onClick={() => changeMode("xiahua")}
-          className={cn(
-            "relative z-10 inline-flex h-8 w-[74px] items-center justify-center gap-1.5 rounded-full text-xs font-semibold transition-colors",
-            activeMode === "xiahua"
-              ? "bg-foreground text-background"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-          aria-pressed={activeMode === "xiahua"}
-        >
-          <Sparkles className="size-3.5" />
-          {t("nav.freezone")}
-        </button> : null}
-        {mainlineAvailable ? <button
-          type="button"
-          onClick={() => changeMode("xiaji")}
-          className={cn(
-            "relative z-10 inline-flex h-8 w-[74px] items-center justify-center gap-1.5 rounded-full text-xs font-semibold transition-colors",
-            activeMode === "xiaji"
-              ? "bg-foreground text-background"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-          aria-pressed={activeMode === "xiaji"}
-        >
-          <Clapperboard className="size-3.5" />
-          {t("nav.xiaji")}
-        </button> : null}
-      </div>
+      <SlidingTabs
+        items={creationModes}
+        value={activeMode}
+        onValueChange={changeMode}
+        className="sliding-tabs--project-modes"
+        animateActiveIcon
+        aria-label={t("nav.creationMode")}
+      />
     </nav>
   );
 }

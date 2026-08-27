@@ -83,9 +83,11 @@ export const ASSET_CATEGORIES: AssetCategoryDef[] = [
   { key: 'audio', label: '音效', media: ['audio'] },
 ];
 
-/** 「全部」页签的 key，和类目 key 同处一个 tab 条上，所以单独留一个字面量。 */
+/** 类目筛选器的「全部类别」key。文件夹范围由独立导航控制，不再混入同一排。 */
 export const ALL_CATEGORY_KEY = 'all';
-export type AssetLibraryTabKey = typeof ALL_CATEGORY_KEY | AssetCategory;
+export type AssetLibraryCategoryFilterKey =
+  | typeof ALL_CATEGORY_KEY
+  | AssetCategory;
 
 /** 从 File 的 MIME 判断它属于哪种媒介；认不出来返回 null（直接丢弃该文件）。 */
 export function mediaOfFile(file: File): AssetLibraryMedia | null {
