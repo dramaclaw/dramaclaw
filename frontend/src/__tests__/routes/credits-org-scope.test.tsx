@@ -374,15 +374,22 @@ describe("credits page — organization member", () => {
     expect(container.textContent ?? "").not.toContain(LOW_BALANCE_ANCHOR);
   });
 
-  it("keeps a dormant personal balance out of this focused transaction view", () => {
+  // The compact layer dropped the page descriptions and the scope notice —
+  // both restatements of what the labels already say. A balance the user still
+  // owns is not in that category: hiding it reads as the money having vanished,
+  // so this assertion survives the redesign unchanged.
+  it("shows a non-zero dormant personal balance and marks it unusable here", () => {
     queryState.summary = { ...ORG_SUMMARY, dormant_personal_balance: 1200 };
 
     const { container } = render(<CreditsPage />);
     const text = container.textContent ?? "";
 
-    expect(text).not.toContain("个人积分余额（此处不可用）");
-    expect(text).not.toContain("不会动用个人积分");
-    expect(text).not.toContain("1,200");
+    expect(text).toContain("个人积分余额（此处不可用）");
+    expect(text).toContain(
+      "这笔积分仍保留在你的个人账户中。当前账号按组织额度结算，不会动用个人积分。",
+    );
+    expect(text).toContain("1,200");
+    // It is reported beside the balance, never folded into it.
     expect(text).toContain("5,000");
   });
 

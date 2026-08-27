@@ -20,6 +20,7 @@ import {
   type CreditTransaction,
   type CreditTransactionCategory,
   creditScopeOf,
+  dormantPersonalBalanceOf,
   lowBalanceThresholdOf,
   promotionScopeOf,
   useCreditFilterOptions,
@@ -235,6 +236,7 @@ export function CreditsPage() {
   // read off `promotionScopeOf` below.
   const scope = creditScopeOf(summary);
   const isOrgScope = scope === "org_member";
+  const dormantPersonalBalance = dormantPersonalBalanceOf(summary);
   const lowBalanceThreshold = lowBalanceThresholdOf(summary);
   // Carries both figures rather than a boolean so the copy below can name them
   // without re-narrowing a `number | null` that the guard already settled.
@@ -367,6 +369,32 @@ export function CreditsPage() {
               threshold: formatNumber(lowBalance.threshold, language),
             })}
           </p>
+        ) : null}
+
+        {/* Only rendered when the user actually still holds personal credits
+            (the backend sends the key as null otherwise). Deliberately outside
+            the tile grid and typeset muted: it is a fact about another account,
+            not a figure you can spend here, and it is never added into the
+            balance above.
+
+            The compact layer shrank the surrounding chrome — descriptions,
+            scope notice — but not this. Those were restatements of what the
+            labels already say; this is a balance the user still owns, and
+            dropping it reads as the money having vanished. */}
+        {dormantPersonalBalance !== null ? (
+          <div className="mt-3 flex flex-wrap items-start justify-between gap-2 rounded-md bg-foreground/[0.055] px-3.5 py-3">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-muted-foreground">
+                {t("credits.dormantPersonalBalance")}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("credits.dormantPersonalHint")}
+              </p>
+            </div>
+            <span className="tabular-nums text-lg font-semibold text-muted-foreground">
+              {formatNumber(dormantPersonalBalance, language)}
+            </span>
+          </div>
         ) : null}
       </section>
 
