@@ -17,7 +17,10 @@ import {
   useGenerateBeatVideoPrompt,
   useGenerateSeedance2Prompt,
 } from "@/lib/queries/video";
-import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
+import {
+  BackendStatusError,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import { useAppStore } from "@/stores/app-store";
 
 const server = setupServer();
@@ -212,5 +215,33 @@ describe("1.x beat video prompt generation query", () => {
 
     await waitFor(() => expect(result.current.error).toBeDefined());
     expect(result.current.error).toBeInstanceOf(BillingRuleNotConfiguredError);
+  });
+
+  it("preserves the structured prerequisite message from the 1.x endpoint", async () => {
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/projects/demo/episodes/1/beats/2/video-prompt/generate",
+        () =>
+          HttpResponse.json(
+            {
+              ok: false,
+              code: "VIDEO_PROMPT_PREREQUISITE_REQUIRED",
+              error: "Beat 2 缺少草图或首帧，请先生成草图或预览",
+            },
+            { status: 409 },
+          ),
+      ),
+    );
+
+    const { result } = renderHook(() => useGenerateBeatVideoPrompt("demo", 1), {
+      wrapper,
+    });
+    result.current.mutate({ beatNum: 2 });
+
+    await waitFor(() => expect(result.current.error).toBeDefined());
+    expect(result.current.error).toBeInstanceOf(BackendStatusError);
+    expect(result.current.error?.message).toBe(
+      "Beat 2 缺少草图或首帧，请先生成草图或预览",
+    );
   });
 });

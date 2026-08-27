@@ -555,6 +555,7 @@ def _project_task_failure_for_exception(
     from novelvideo.identity_prerequisites import IdentityPlanningPrerequisiteError
     from novelvideo.novel_source import NovelImportRequiredError
     from novelvideo.scene_prerequisites import ScenePlanningPrerequisiteError
+    from novelvideo.video_prompt_prerequisite import VideoPromptPrerequisiteError
 
     if isinstance(exc, VoicePrerequisiteError):
         return str(exc), {"error_code": exc.error_code}, True
@@ -566,6 +567,9 @@ def _project_task_failure_for_exception(
         return str(exc), {"error_code": exc.error_code}, True
 
     if isinstance(exc, NovelImportRequiredError):
+        return str(exc), {"error_code": exc.error_code}, True
+
+    if isinstance(exc, VideoPromptPrerequisiteError):
         return str(exc), {"error_code": exc.error_code}, True
 
     if isinstance(exc, TaskTimedOut):

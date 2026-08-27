@@ -160,6 +160,11 @@ def _project_ctx(tmp_path: Path) -> ProjectContext:
     )
 
 
+def _write_test_image(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (8, 8), "white").save(path)
+
+
 def test_generate_seedance2_prompt_updates_config_json(monkeypatch, tmp_path):
     from novelvideo.seedance2_i2v import panel_service
 
@@ -424,6 +429,10 @@ def test_generate_beat_video_prompt_updates_first_frame_video_prompt(
         ],
     )
 
+    from novelvideo.utils.path_resolver import PathResolver
+
+    _write_test_image(PathResolver(str(tmp_path), 1).sketch(1))
+
     response = client.post(
         "/projects/demo/episodes/1/beats/1/video-prompt/generate",
         json={"language": "en"},
@@ -503,6 +512,10 @@ def test_generate_beat_video_prompt_enqueues_project_task_in_celery_mode(
     app.dependency_overrides[scripts.get_api_user] = lambda: {"username": "admin"}
     client = TestClient(app)
 
+    from novelvideo.utils.path_resolver import PathResolver
+
+    _write_test_image(PathResolver(str(tmp_path), 1).sketch(1))
+
     response = client.post(
         "/projects/demo/episodes/1/beats/1/video-prompt/generate",
         json={"language": "en"},
@@ -528,6 +541,82 @@ def test_generate_beat_video_prompt_enqueues_project_task_in_celery_mode(
         "display_name": "生成提示词 · EP1 / Beat 1",
     }
     assert store.updates == []
+
+
+def test_generate_beat_video_prompt_rejects_missing_media_before_enqueue(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    from novelvideo.api.deps import ProjectResolution
+    from novelvideo.api.routes import scripts
+
+    ctx = _project_ctx(tmp_path)
+    store = DummySqliteStore(
+        [
+            {
+                "beat_number": 1,
+                "video_mode": "first_frame",
+                "video_prompt": "",
+            },
+            {"beat_number": 2},
+        ]
+    )
+    enqueue_calls = 0
+
+    async def fake_resolve_project_scope(project, user, *, required_role="viewer"):
+        return ProjectResolution(
+            ctx=ctx,
+            username="admin",
+            project_name="demo",
+            project_dir=tmp_path,
+            output_dir=str(tmp_path),
+            state_dir=str(tmp_path / "state"),
+            runtime_dir=str(tmp_path / "runtime"),
+        )
+
+    async def fake_make_sqlite_store_for_context(ctx_arg):
+        assert ctx_arg is ctx
+        return store
+
+    async def fake_enqueue_project_task(ctx_arg, **kwargs):
+        nonlocal enqueue_calls
+        enqueue_calls += 1
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="must_not_enqueue"),
+            backend="celery",
+            queue="queue:default",
+        )
+
+    monkeypatch.setattr(scripts, "resolve_project_scope", fake_resolve_project_scope)
+    monkeypatch.setattr(
+        scripts,
+        "make_sqlite_store_for_context",
+        fake_make_sqlite_store_for_context,
+    )
+    monkeypatch.setattr(
+        scripts,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+
+    app = FastAPI()
+    app.include_router(scripts.router)
+    app.dependency_overrides[scripts.get_api_user] = lambda: {"username": "admin"}
+    client = TestClient(app)
+
+    response = client.post(
+        "/projects/demo/episodes/1/beats/1/video-prompt/generate",
+        json={"language": "zh"},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "ok": False,
+        "code": "VIDEO_PROMPT_PREREQUISITE_REQUIRED",
+        "error": "Beat 1 缺少草图或首帧，请先生成草图或预览",
+    }
+    assert enqueue_calls == 0
 
 
 @pytest.mark.asyncio
@@ -703,6 +792,12 @@ def test_generate_beat_video_prompt_updates_keyframe_prompt(monkeypatch, tmp_pat
             {"beat_number": 2},
         ],
     )
+
+    from novelvideo.utils.path_resolver import PathResolver
+
+    paths = PathResolver(str(tmp_path), 1)
+    _write_test_image(paths.frame(1))
+    _write_test_image(paths.frame(2))
 
     response = client.post(
         "/projects/demo/episodes/1/beats/1/video-prompt/generate",

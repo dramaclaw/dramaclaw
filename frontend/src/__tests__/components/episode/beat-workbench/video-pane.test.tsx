@@ -11,6 +11,7 @@ import {
   shouldDisableDialogueOnlyBackendForBeat,
   VideoPane,
 } from "@/components/episode/beat-workbench/video-pane";
+import { BackendStatusError } from "@/lib/api-errors";
 import { useAspectRatioStore } from "@/stores/aspect-ratio-store";
 import type { Beat } from "@/types/episode";
 
@@ -820,6 +821,27 @@ describe("VideoPane Seedance2 inspector", () => {
     expect(toast.error).not.toHaveBeenCalledWith(
       "本 Beat 视频提示词生成失败",
     );
+  });
+
+  it("shows a missing-media prerequisite without starting task tracking", async () => {
+    const user = userEvent.setup();
+    const message = "Beat 1 缺少草图或首帧，请先生成草图或预览";
+    generateBeatVideoPromptMock.mockRejectedValueOnce(
+      new BackendStatusError(message, 409, {
+        ok: false,
+        code: "VIDEO_PROMPT_PREREQUISITE_REQUIRED",
+        error: message,
+      }),
+    );
+    renderPane(
+      makeBeat({ video_mode: "first_frame", video_prompt: "" }),
+      { defaultBackend: "newapi_seedance-1.0-pro-fast" },
+    );
+
+    await user.click(screen.getByRole("button", { name: "生成本 Beat 提示词" }));
+
+    expect(toast.error).toHaveBeenCalledWith(message);
+    expect(taskStartMock).not.toHaveBeenCalled();
   });
 
   it("renders keyframe prompt editing for 1.x keyframe beats", () => {

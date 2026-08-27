@@ -358,6 +358,12 @@ def test_script_and_video_prompt_tasks_complete_with_sorted_persisted_beats(m03_
         (20, 3),
     ]
 
+    from novelvideo.utils.path_resolver import PathResolver
+
+    sketch_path = PathResolver(str(ctx.output_dir), 1).sketch(1)
+    sketch_path.parent.mkdir(parents=True, exist_ok=True)
+    sketch_path.write_bytes(b"sketch")
+
     video_prompt_response = client.post(
         "/api/v1/projects/proj_m03_completion/episodes/1/beats/1/video-prompt/generate",
         json={},

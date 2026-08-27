@@ -32,6 +32,10 @@ from novelvideo.shared.provider_errors import (
     VIDEO_MEDIA_DIMENSIONS_INVALID_CODE,
     VIDEO_MEDIA_DIMENSIONS_INVALID_MESSAGE,
 )
+from novelvideo.video_prompt_prerequisite import (
+    VIDEO_PROMPT_PREREQUISITE_REQUIRED_CODE,
+    VideoPromptPrerequisiteError,
+)
 
 pytestmark = pytest.mark.m07
 
@@ -83,6 +87,19 @@ def test_task_failure_maps_novel_import_prerequisite(monkeypatch) -> None:
     assert handled is True
     assert error == NOVEL_IMPORT_REQUIRED_MESSAGE
     assert metadata == {"error_code": NOVEL_IMPORT_REQUIRED_CODE}
+
+
+def test_task_failure_maps_video_prompt_prerequisite(monkeypatch) -> None:
+    celery_tasks = _import_celery_tasks(monkeypatch)
+    message = "Beat 1 缺少草图或首帧，请先生成草图或预览"
+
+    error, metadata, handled = celery_tasks._project_task_failure_for_exception(
+        VideoPromptPrerequisiteError(message)
+    )
+
+    assert handled is True
+    assert error == message
+    assert metadata == {"error_code": VIDEO_PROMPT_PREREQUISITE_REQUIRED_CODE}
 
 
 def test_task_failure_maps_identity_character_prerequisite(monkeypatch) -> None:
