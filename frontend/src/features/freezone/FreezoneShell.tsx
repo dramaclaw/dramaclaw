@@ -189,11 +189,18 @@ export function shouldClearProjectionStatuses({
   canvasId,
   hydratedCanvasId,
   projectionKeyCount,
+  project,
+  hydratedProject,
 }: {
   canvasId: string;
   hydratedCanvasId: string | null;
   projectionKeyCount: number;
+  /** 省略即不校验项目（旧调用方 / 单画布场景）。 */
+  project?: string;
+  hydratedProject?: string | null;
 }): boolean {
+  // 个人画布跨项目同 id，只比 canvasId 认不出「还停在上一个项目的数据上」。
+  if (project !== undefined && hydratedProject !== project) return true;
   return hydratedCanvasId !== canvasId || projectionKeyCount === 0;
 }
 
@@ -204,6 +211,8 @@ export function shouldFetchProjectionStatuses({
   revision,
   sessionExpired = false,
   syncStatus,
+  project,
+  hydratedProject,
 }: {
   canvasId: string;
   hydratedCanvasId: string | null;
@@ -211,9 +220,17 @@ export function shouldFetchProjectionStatuses({
   revision: number | null;
   sessionExpired?: boolean;
   syncStatus: CanvasSyncStatus;
+  project?: string;
+  hydratedProject?: string | null;
 }): boolean {
   if (sessionExpired) return false;
-  if (shouldClearProjectionStatuses({ canvasId, hydratedCanvasId, projectionKeyCount })) {
+  if (shouldClearProjectionStatuses({
+    canvasId,
+    hydratedCanvasId,
+    projectionKeyCount,
+    project,
+    hydratedProject,
+  })) {
     return false;
   }
   return syncStatus === "ready" && revision != null;
@@ -224,13 +241,23 @@ export function shouldSkipProjectionStatusRevision({
   revision,
   refreshToken,
   lastChecked,
+  project,
 }: {
   canvasId: string;
   revision: number;
   refreshToken: number;
-  lastChecked: { canvasId: string; revision: number; refreshToken: number } | null;
+  lastChecked: {
+    canvasId: string;
+    revision: number;
+    refreshToken: number;
+    project?: string;
+  } | null;
+  project?: string;
 }): boolean {
   if (lastChecked?.canvasId !== canvasId) return false;
+  // revision 是每张画布自己的小整数，跨项目撞号是常事；不比项目就会把「上一个
+  // 项目已经查过 rev 5」当成「这个项目的 rev 5 也查过」，真正的拉取被跳掉。
+  if (project !== undefined && lastChecked.project !== project) return false;
   return lastChecked.revision === revision && lastChecked.refreshToken === refreshToken;
 }
 
@@ -412,18 +439,54 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
   // 如果这里从 false 起步，回到虾画就会先把画面换成「正在加载画布…」，等 hydrate 回来
   // 才重新画出来 —— 看着就是卡。同一个画布重进时直接渲染 store 里的既有内容，
   // hydrate 期间只叠一层轻量 overlay。
-  const [hasRenderedCanvas, setHasRenderedCanvas] = useState(
-    () =>
-      lastRenderedCanvasKey === canvasKey(projectId, canvasId) &&
-      useCanvasStore.getState().nodes.length > 0,
+  //
+  // 存的是「已经画出来的是哪一张」而不是一个 boolean：本组件没有 key，换画布走的是
+  // 同一个实例重跑 effect，用 boolean 的话它一旦为 true 就再也回不去，于是切到新画布
+  // 时旧画布的几百个节点会一直挂在屏幕上（只蒙一层半透明遮罩），直到新内容替换上来
+  // ——「卸旧的」和「挂新的」并进同一次提交，这正是切换卡顿的主因。按画布记之后，
+  // 换画布这一帧立刻回到全屏 loading，卸载与挂载被拆成两次提交。
+  const currentCanvasKey = canvasKey(projectId, canvasId);
+  const [renderedCanvasKey, setRenderedCanvasKey] = useState<string | null>(() =>
+    lastRenderedCanvasKey === currentCanvasKey &&
+    useCanvasStore.getState().nodes.length > 0
+      ? currentCanvasKey
+      : null,
   );
+  if (renderedCanvasKey !== null && renderedCanvasKey !== currentCanvasKey) {
+    // render 阶段同组件 setState 是 React 认可的「派生状态」写法，本次提交即生效。
+    setRenderedCanvasKey(null);
+  }
+  const hasRenderedCanvas = renderedCanvasKey === currentCanvasKey;
   const [projectionStatusRefreshToken, setProjectionStatusRefreshToken] = useState(0);
   const [projectionMonitoringExpired, setProjectionMonitoringExpired] = useState(false);
   const lastProjectionStatusRevisionRef = useRef<{
     canvasId: string;
     revision: number;
     refreshToken: number;
+    project: string;
   } | null>(null);
+  // 这三处 projection 状态本来靠「换项目必然 remount」复位；_app.tsx 把项目 id 从
+  // routeTransitionKey 里摘掉之后 freezone 不再重挂，只能自己按 项目+画布 复位。
+  const [projectionScopeKey, setProjectionScopeKey] = useState(currentCanvasKey);
+  if (projectionScopeKey !== currentCanvasKey) {
+    setProjectionScopeKey(currentCanvasKey);
+    setProjectionStatusRefreshToken(0);
+    setProjectionMonitoringExpired(false);
+    lastProjectionStatusRevisionRef.current = null;
+  }
+  // 上面这些弹窗/浮层状态装的是「项目 A 的某个素材」，同样靠 remount 复位。不再
+  // 重挂之后，如果开着提交 / 建身份 / 蒙版面板用浏览器前进后退切到项目 B，面板
+  // 会继续摆着 A 的素材，可提交按钮拿到的却是新的 projectId —— 等于把 A 的资源
+  // 写进 B。换项目就一律关掉，换画布不动（换画布本来就不重挂，行为没变）。
+  const [projectScopeId, setProjectScopeId] = useState(projectId);
+  if (projectScopeId !== projectId) {
+    setProjectScopeId(projectId);
+    setPushState(null);
+    setComparePair(null);
+    setCreateIdentitySource(null);
+    setMaskTarget(null);
+    setToast(null);
+  }
 
   const invalidateCommittedTargetQueries = useCallback((target: PushTarget) => {
     if (isDirectorWorldSourceSlotTarget(target) || target.kind === "scene_director_world") {
@@ -470,11 +533,20 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
   }, [canvasId, projectId]);
 
   useEffect(() => {
-    if (sync.status === "ready" && sync.hydratedCanvasId === canvasId) {
+    // 必须连 hydratedProject 一起比：个人画布 id 由用户名推出，跨项目是同一个
+    // canvasId，而换项目那一次提交里 sync.* 还是上一个项目的值（useCanvasSync 的
+    // hydrate effect 只是「排队」把 status 改成 loading，闭包里读到的仍是 ready）。
+    // 少比这一项，换项目时会被当成「新画布已经画出来了」，全屏 loading 直接不出现，
+    // 露给用户的是刚被清空的画布加一层半透明遮罩。
+    if (
+      sync.status === "ready" &&
+      sync.hydratedCanvasId === canvasId &&
+      sync.hydratedProject === projectId
+    ) {
       lastRenderedCanvasKey = canvasKey(projectId, canvasId);
-      setHasRenderedCanvas(true);
+      setRenderedCanvasKey(lastRenderedCanvasKey);
     }
-  }, [canvasId, projectId, sync.hydratedCanvasId, sync.status]);
+  }, [canvasId, projectId, sync.hydratedCanvasId, sync.hydratedProject, sync.status]);
 
   const projectionKeys = useMemo(
     () => projectionKeysFromMetadata(sync.metadata),
@@ -489,6 +561,8 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
       revision: sync.revision,
       sessionExpired: projectionMonitoringExpired,
       syncStatus: sync.status,
+      project: projectId,
+      hydratedProject: sync.hydratedProject,
     })) {
       return;
     }
@@ -498,9 +572,11 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
     });
   }, [
     canvasId,
+    projectId,
     projectionMonitoringExpired,
     projectionKeys.length,
     sync.hydratedCanvasId,
+    sync.hydratedProject,
     sync.revision,
     sync.status,
   ]);
@@ -510,6 +586,8 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
       canvasId,
       hydratedCanvasId: sync.hydratedCanvasId,
       projectionKeyCount: projectionKeys.length,
+      project: projectId,
+      hydratedProject: sync.hydratedProject,
     })) {
       clearCanvasProjectionStatuses();
       return;
@@ -522,6 +600,8 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
       revision,
       sessionExpired: projectionMonitoringExpired,
       syncStatus: sync.status,
+      project: projectId,
+      hydratedProject: sync.hydratedProject,
     })) {
       return;
     }
@@ -535,6 +615,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
       revision,
       refreshToken: projectionStatusRefreshToken,
       lastChecked: lastProjectionStatusRevisionRef.current,
+      project: projectId,
     })) {
       return;
     }
@@ -547,6 +628,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
             canvasId,
             revision,
             refreshToken: projectionStatusRefreshToken,
+            project: projectId,
           };
           setCanvasProjectionStatuses(result.projections);
         }
@@ -566,6 +648,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
     projectionKeys,
     projectionStatusRefreshToken,
     sync.hydratedCanvasId,
+    sync.hydratedProject,
     sync.revision,
     sync.status,
   ]);
@@ -825,21 +908,22 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
     void DEFAULT_NODE_WIDTH; // unused but keep import alive
   };
 
-  const showBlockingLoading = sync.status === "loading" && !hasRenderedCanvas;
+  // 不用 status === "loading" 判定：换画布那一帧 status 还停在旧画布的 "ready"，
+  // 等 hydrate effect 跑完才翻成 loading，中间那一帧会露出旧画布。改成「只要还没画
+  // 出当前这张就挡着」，失败态除外——那两层遮罩要能被看见和点。
+  const showBlockingLoading =
+    !hasRenderedCanvas && sync.status !== "error" && sync.status !== "conflict";
   const showLoadingOverlay = sync.status === "loading" && hasRenderedCanvas;
 
   return (
     <div className="relative w-full h-full flex flex-col overflow-hidden">
       <div className="relative flex flex-1 min-h-0">
         <main className="relative h-full min-w-0 flex-1">
-          {showBlockingLoading ? (
-            <CanvasLoadingScreen />
-          ) : (
-            <Canvas
-              onBlankPaneClick={handleBlankPaneClick}
-              controlsPlacement="bottom-right"
-            />
-          )}
+          <Canvas
+            onBlankPaneClick={handleBlankPaneClick}
+            controlsPlacement="bottom-right"
+          />
+          {showBlockingLoading && <CanvasLoadingScreen />}
           {showLoadingOverlay && <CanvasLoadingOverlay />}
           {sync.status === "error" && (
             <CanvasErrorOverlay error={sync.error} onRetry={sync.retry} />
@@ -1534,9 +1618,17 @@ function BackupStatusIndicator({
   );
 }
 
+/**
+ * 换画布期间的全屏遮挡层。
+ *
+ * 刻意做成盖在 Canvas 之上的不透明层，而不是把 Canvas 换掉：ReactFlow 实例必须
+ * 一直活着，hydrate 才能在挂节点之前先把相机摆到新画布的位置（见 useCanvasSync
+ * 的 savedViewport 一段）。同时它也吃掉指针事件——底下的画布这会儿是空的，任何
+ * 落到它身上的操作都会被随后的 setCanvasData 盖掉。
+ */
 function CanvasLoadingScreen() {
   return (
-    <div className="w-full h-full flex items-center justify-center text-text-muted text-sm">
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-bg-dark cursor-wait text-text-muted text-sm">
       正在加载画布...
     </div>
   );

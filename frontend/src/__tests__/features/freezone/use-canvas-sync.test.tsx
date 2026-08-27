@@ -36,9 +36,11 @@ vi.mock("@/api/canvas", async (importOriginal) => {
   };
 });
 
+const setViewportSpy = vi.hoisted(() => vi.fn());
+
 vi.mock("@xyflow/react", () => ({
   useReactFlow: () => ({
-    setViewport: vi.fn(),
+    setViewport: setViewportSpy,
   }),
 }));
 
@@ -51,10 +53,50 @@ describe("useCanvasSync hydrate lifecycle", () => {
       saved: true,
       revision: 2,
     });
+    setViewportSpy.mockClear();
     vi.unstubAllGlobals();
     window.localStorage.clear();
     useCanvasStore.getState().setCanvasData([], []);
     useShotMetadataStore.getState().hydrate({});
+  });
+
+  // Canvas 现在跨项目常驻（_app.tsx 不再按项目重挂 freezone），所以 hydrate 必须
+  // 显式落相机 —— 新建画布存的就是 viewport: null，不落位就沿用上一张画布的坐标
+  // 和缩放，节点可能整个飘出屏幕，lowDetail 档也是错的。
+  it("resets the camera to the default when the canvas has no saved viewport", async () => {
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 1,
+      viewport: null,
+    } as unknown as Awaited<ReturnType<typeof getFreezoneCanvas>>);
+
+    renderHook(() => useCanvasSync("project-a", "user_no_viewport"));
+
+    await waitFor(() => {
+      expect(setViewportSpy).toHaveBeenCalledWith(
+        { x: 0, y: 0, zoom: 1 },
+        { duration: 0 },
+      );
+    });
+  });
+
+  it("still restores a saved viewport when the canvas has one", async () => {
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 1,
+      viewport: { x: 12, y: 34, zoom: 0.4 },
+    } as unknown as Awaited<ReturnType<typeof getFreezoneCanvas>>);
+
+    renderHook(() => useCanvasSync("project-a", "user_with_viewport"));
+
+    await waitFor(() => {
+      expect(setViewportSpy).toHaveBeenCalledWith(
+        { x: 12, y: 34, zoom: 0.4 },
+        { duration: 0 },
+      );
+    });
   });
 
   it("aborts the in-flight hydrate request after the release grace when unmounted", async () => {

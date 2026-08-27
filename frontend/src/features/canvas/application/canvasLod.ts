@@ -140,6 +140,67 @@ export function isCanvasGestureActive(): boolean {
 }
 
 /* ------------------------------------------------------------------------- *
+ * 换画布时的「首帧全 shell」窗口
+ *
+ * 切画布会把几百个节点一次性挂上去。哪怕相机已经先摆好（见 useCanvasSync 的
+ * hydrate），视口内仍可能有几十个完整组件要在同一次提交里挂完，实测就是那一下
+ * 几百毫秒的冻结。这里给 hydrate 开一个短窗口：窗口内挂载的节点一律先出 shell
+ * （~4 个元素），随后交给上面的升级队列每帧 3 个补成完整组件——一次长帧被摊成
+ * 几十个短帧，用户看到的是「先出灰块、逐个填充」而不是「白屏一下」。
+ *
+ * 用两个 rAF 关窗而不是计时器：第一个 rAF 后挂载提交已完成，第二个覆盖
+ * ReactFlow 应用视口后重算裁剪带来的第二波挂载。之后新进视口的节点走原来的
+ * 手势规则，与本窗口无关。
+ * ------------------------------------------------------------------------- */
+
+let hydrateBurstActive = false;
+
+/** hydrate 首帧窗口是否开着。节点挂载时据此决定要不要从 shell 起步。 */
+export function isCanvasHydrateBurstActive(): boolean {
+  return hydrateBurstActive;
+}
+
+/** 在 setCanvasData 之前调用，开启「本次挂载全部先出 shell」的窗口。 */
+export function beginCanvasHydrateBurst(): void {
+  hydrateBurstActive = true;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      hydrateBurstActive = false;
+    });
+  });
+}
+
+/* ------------------------------------------------------------------------- *
+ * 换画布时的缩放档同步
+ *
+ * 相机在挂节点之前就用 reactFlow.setViewport 摆好了，但 Canvas 的
+ * lowDetailActive（驱动 onlyRenderVisibleElements）只由 onMove/onMoveEnd 更新，
+ * 而 ReactFlow 的程序化 setViewport 要到下一拍才派发这些事件。于是新画布的节点
+ * 是按「上一张画布的缩放档」挂载的：0.6 → 0.2 会先按裁剪只挂十几个再翻成全量，
+ * 0.2 → 0.6 会先全量挂 354 个再裁回十几个——两个方向都白挂一整波。
+ *
+ * 这里给 hydrate 一条直达通道：在同一个事件里同步喂给 Canvas 目标缩放，React 会
+ * 把它和 setCanvasData 批进同一次提交，节点一次就按最终档挂好。
+ * ------------------------------------------------------------------------- */
+
+const hydrateViewportListeners = new Set<(zoom: number) => void>();
+
+/** Canvas 订阅换画布的目标缩放；返回取消订阅函数。 */
+export function onCanvasHydrateViewport(
+  listener: (zoom: number) => void,
+): () => void {
+  hydrateViewportListeners.add(listener);
+  return () => {
+    hydrateViewportListeners.delete(listener);
+  };
+}
+
+/** hydrate 时调用，必须与 setCanvasData 在同一个事件里，才能批进同一次提交。 */
+export function notifyCanvasHydrateViewport(zoom: number): void {
+  for (const listener of hydrateViewportListeners) listener(zoom);
+}
+
+/* ------------------------------------------------------------------------- *
  * shell → 完整组件的分批升级队列
  *
  * 完整节点组件的挂载很贵（VideoNode 一次 ~5ms：上百个 hook + handle 测量回流 +
