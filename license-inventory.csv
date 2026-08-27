@@ -1813,6 +1813,7 @@ src/novelvideo/verification/utils.py,Elastic-2.0,2026 SuperTale contributors,REU
 src/novelvideo/verification/version_hash.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/video_billing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/video_duration.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/video_prompt_prerequisite.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/video_request_usage.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/workflows/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/workflows/literal_script_writing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
