@@ -17,11 +17,9 @@ const freezoneAgentConfigMocks = vi.hoisted(() => ({
   delete: vi.fn(),
   exportBundle: vi.fn(),
   installBundle: vi.fn(),
-  installCommunityBundle: vi.fn(),
   items: [] as Array<Record<string, unknown>>,
   itemsByKind: {} as Record<string, Array<Record<string, unknown>>>,
   refetch: vi.fn(),
-  refetchCommunityCatalog: vi.fn(),
   save: vi.fn(),
 }));
 
@@ -55,17 +53,6 @@ vi.mock("@/lib/queries/freezone-agent-config", () => ({
   useExportFreezoneAgentBundle: () => ({
     mutateAsync: freezoneAgentConfigMocks.exportBundle,
     isPending: false,
-  }),
-  useFreezoneCommunityCatalog: () => ({
-    data: { schema_version: "dramaclaw.community-catalog.v1", items: [] },
-    isLoading: false,
-    isError: false,
-    refetch: freezoneAgentConfigMocks.refetchCommunityCatalog,
-  }),
-  useInstallFreezoneCommunityBundle: () => ({
-    mutateAsync: freezoneAgentConfigMocks.installCommunityBundle,
-    isPending: false,
-    variables: undefined,
   }),
 }));
 
@@ -193,7 +180,6 @@ vi.mock("react-i18next", () => ({
         "settings.freezoneCatalog.importBundle": "导入 Skill",
         "settings.freezoneCatalog.export": "导出",
         "settings.freezoneCatalog.exportBundle": "导出 Skill",
-        "settings.freezoneCatalog.community.open": "社区 Skill",
         "settings.freezoneCatalog.community.filters.all": "全部",
         "settings.freezoneCatalog.new": "新增",
         "settings.freezoneCatalog.selectAll": "全选",
@@ -363,11 +349,9 @@ beforeEach(() => {
   freezoneAgentConfigMocks.delete.mockReset();
   freezoneAgentConfigMocks.exportBundle.mockReset();
   freezoneAgentConfigMocks.installBundle.mockReset();
-  freezoneAgentConfigMocks.installCommunityBundle.mockReset();
   freezoneAgentConfigMocks.items = [];
   freezoneAgentConfigMocks.itemsByKind = {};
   freezoneAgentConfigMocks.refetch.mockReset();
-  freezoneAgentConfigMocks.refetchCommunityCatalog.mockReset();
   freezoneAgentConfigMocks.save.mockReset();
   freezoneAgentConfigMocks.exportBundle.mockImplementation(
     async ({ bundle }: { bundle: Record<string, unknown> }) => bundle,
@@ -375,11 +359,6 @@ beforeEach(() => {
   freezoneAgentConfigMocks.installBundle.mockResolvedValue({
     bundle_id: "test-bundle",
     installed_skill: "test-skill",
-    installed_recipes: [],
-  });
-  freezoneAgentConfigMocks.installCommunityBundle.mockResolvedValue({
-    bundle_id: "community-bundle",
-    installed_skill: "community-skill",
     installed_recipes: [],
   });
 });

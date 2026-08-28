@@ -436,7 +436,7 @@ async def append_chat_notification(
 
     if _is_freezone_scope(scope):
         project_ctx = await _project_context_for_scope(user, scope)
-        message = chat_store.append_message(
+        message = await chat_store.append_message_async(
             username,
             _chat_store_scope_for_project_context(scope, project_ctx),
             "assistant",
@@ -446,7 +446,8 @@ async def append_chat_notification(
         project_ctx = await _project_context_for_scope(user, scope)
         if not scope.id:
             raise HTTPException(status_code=400, detail="project scope id is required")
-        message = chat_service.add_assistant_message(
+        message = await asyncio.to_thread(
+            chat_service.add_assistant_message,
             username,
             str(scope.id),
             text,
@@ -456,7 +457,9 @@ async def append_chat_notification(
             ),
         )
     else:
-        message = chat_store.append_message(username, scope, "assistant", text)
+        message = await chat_store.append_message_async(
+            username, scope, "assistant", text
+        )
     return {"ok": True, "data": message}
 
 
@@ -474,7 +477,7 @@ async def append_chat_ui_event(
     if not turn_id:
         raise HTTPException(status_code=400, detail="turn_id is required")
     try:
-        event = chat_store.append_ui_event(
+        event = await chat_store.append_ui_event_async(
             username,
             _chat_store_scope_for_project_context(scope, project_ctx),
             turn_id,
@@ -533,7 +536,7 @@ async def list_freezone_canvas_agents(
         agent_id="main",
     )
     project_ctx = await _project_context_for_scope(user, scope)
-    agents = chat_store.list_freezone_canvas_agent_summaries(
+    agents = await chat_store.list_freezone_canvas_agent_summaries_async(
         str(user["username"]),
         project_id=project_ctx.project_name if project_ctx is not None else project_id,
         canvas_id=canvas_id,
@@ -600,13 +603,14 @@ async def _persist_chat_turn_error(
                 state_dir=str(project_ctx.state_dir),
             )
 
-        for existing in reversed(chat_store.list_messages(username, storage_scope)):
+        existing_messages = await chat_store.list_messages_async(username, storage_scope)
+        for existing in reversed(existing_messages):
             if (
                 str(existing.get("turn_id") or "") == turn_id
                 and existing.get("chat_error") is True
             ):
                 return existing
-        return chat_store.append_message(
+        return await chat_store.append_message_async(
             username,
             storage_scope,
             "assistant",
@@ -1258,7 +1262,7 @@ async def _persist_skill_studio_result_ui_event(
         else:
             event["saved_skill_ids"] = payload.saved_skill_ids or draft_skill_ids
             event["saved_recipe_ids"] = payload.saved_recipe_ids or draft_recipe_ids
-    chat_store.append_ui_event(
+    await chat_store.append_ui_event_async(
         username,
         _chat_store_scope_for_project_context(scope, project_ctx),
         turn_id,
@@ -1277,7 +1281,7 @@ async def _persist_clarification_result_ui_event(
     if not turn_id or scope is None:
         return
     project_ctx = await _project_context_for_interaction_result(user, scope)
-    chat_store.append_ui_event(
+    await chat_store.append_ui_event_async(
         username,
         _chat_store_scope_for_project_context(scope, project_ctx),
         turn_id,
@@ -1390,7 +1394,7 @@ async def resolve_canvas_context_tool_result(
                 agent_id=_freezone_agent_id_from_payload(payload),
             )
             project_ctx = await _project_context_for_scope(user, scope)
-            chat_store.append_ui_event(
+            await chat_store.append_ui_event_async(
                 username,
                 _chat_store_scope_for_project_context(scope, project_ctx),
                 context_turn_id,
@@ -1927,7 +1931,8 @@ async def _history(
     project_ctx: ProjectContext | None = None,
 ) -> list[dict[str, Any]]:
     if scope.kind == "project" and (scope.surface or "director") == "director":
-        return chat_service.list_messages(
+        return await asyncio.to_thread(
+            chat_service.list_messages,
             username,
             str(scope.id),
             project_dir=project_ctx.output_dir if project_ctx is not None else None,
@@ -1936,11 +1941,11 @@ async def _history(
             ),
         )
     if _is_freezone_scope(scope):
-        return chat_store.list_messages(
+        return await chat_store.list_messages_async(
             username,
             _chat_store_scope_for_project_context(scope, project_ctx),
         )
-    return chat_store.list_messages(username, scope)
+    return await chat_store.list_messages_async(username, scope)
 
 
 async def _send_scope_changed(
@@ -2525,8 +2530,11 @@ async def _watch_pending_skill_studio_events(
                 "turn_id": turn_id,
             }
             try:
-                chat_store.append_ui_event(
-                    username, store_scope or scope, turn_id, ui_event
+                await chat_store.append_ui_event_async(
+                    username,
+                    store_scope or scope,
+                    turn_id,
+                    ui_event,
                 )
             except Exception:
                 logger.exception("failed to persist skill_studio.event ui event")
@@ -2608,8 +2616,11 @@ async def _watch_pending_clarification_events(
                 "turn_id": turn_id,
             }
             try:
-                chat_store.append_ui_event(
-                    username, store_scope or scope, turn_id, ui_event
+                await chat_store.append_ui_event_async(
+                    username,
+                    store_scope or scope,
+                    turn_id,
+                    ui_event,
                 )
             except Exception:
                 logger.exception("failed to persist assistant.clarification ui event")
@@ -2769,7 +2780,7 @@ async def _stream_project_turn(
     agent_text = _text_with_attachment_context(text, attachments)
     display_text = str(user_text or text).strip()
     if storage_scope is not None:
-        chat_store.append_message(
+        await chat_store.append_message_async(
             username,
             storage_scope,
             "user",
@@ -2778,7 +2789,8 @@ async def _stream_project_turn(
             turn_id=turn_id,
         )
     else:
-        chat_service.add_user_message(
+        await asyncio.to_thread(
+            chat_service.add_user_message,
             username,
             project,
             display_text,
@@ -3140,7 +3152,7 @@ async def _stream_home_turn_codex(
 
     before_projects = set(list_user_projects(username))
     agent_text = _text_with_attachment_context(text, attachments)
-    chat_store.append_message(
+    await chat_store.append_message_async(
         username,
         scope,
         "user",
@@ -3327,7 +3339,7 @@ async def _stream_home_turn_codex(
         after_projects = set(list_user_projects(username))
         for project in sorted(after_projects - before_projects):
             project_scope = ChatScope(kind="project", id=project)
-            chat_store.append_message(
+            await chat_store.append_message_async(
                 username,
                 project_scope,
                 "system",
@@ -3379,16 +3391,17 @@ async def _stream_home_turn(
     from novelvideo.chat.hermes_pool import pool as hermes_pool
 
     before_projects = set(list_user_projects(username))
+    home_messages = await chat_store.list_messages_async(username, scope)
     previous_assistant = next(
         (
             str(message.get("content") or "")
-            for message in reversed(chat_store.list_messages(username, scope))
+            for message in reversed(home_messages)
             if message.get("role") == "assistant"
         ),
         "",
     )
     agent_text = _text_with_attachment_context(text, attachments)
-    chat_store.append_message(
+    await chat_store.append_message_async(
         username,
         scope,
         "user",
@@ -3470,7 +3483,7 @@ async def _stream_home_turn(
     )
     done_sent = False
 
-    def persist_partial_reply() -> dict[str, Any] | None:
+    async def persist_partial_reply() -> dict[str, Any] | None:
         nonlocal persisted, assistant_text
         if persisted:
             return None
@@ -3485,7 +3498,14 @@ async def _stream_home_turn(
         ).strip()
         if not final_text:
             return None
-        message = chat_store.append_message(username, scope, "assistant", final_text)
+        message = await chat_store.append_message_async(
+            username,
+            scope,
+            "assistant",
+            final_text,
+            turn_id=turn_id,
+            idempotency_key=f"assistant:{turn_id}",
+        )
         persisted = True
         return message
 
@@ -3709,8 +3729,13 @@ async def _stream_home_turn(
             tool_mode="freezone_canvas" if _is_freezone_scope(scope) else "default",
         )
         assistant_text = assistant_text.strip() or EMPTY_AGENT_REPLY_MESSAGE
-        message = chat_store.append_message(
-            username, scope, "assistant", assistant_text
+        message = await chat_store.append_message_async(
+            username,
+            scope,
+            "assistant",
+            assistant_text,
+            turn_id=turn_id,
+            idempotency_key=f"assistant:{turn_id}",
         )
         persisted = True
         await _send_json_best_effort(
@@ -3741,7 +3766,7 @@ async def _stream_home_turn(
         after_projects = set(list_user_projects(username))
         for project in sorted(after_projects - before_projects):
             project_scope = ChatScope(kind="project", id=project)
-            chat_store.append_message(
+            await chat_store.append_message_async(
                 username,
                 project_scope,
                 "system",
@@ -3770,7 +3795,7 @@ async def _stream_home_turn(
             await heartbeat_task
         with contextlib.suppress(asyncio.CancelledError):
             await disconnect_task
-        persist_partial_reply()
+        await persist_partial_reply()
         if not done_sent:
             await _send_json_best_effort(
                 websocket,

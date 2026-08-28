@@ -111,10 +111,6 @@ from novelvideo.freezone.agent_bundle_store import (
     install_agent_bundle,
     validate_agent_bundle,
 )
-from novelvideo.freezone.agent_community_catalog import (
-    install_community_bundle,
-    list_community_catalog,
-)
 from novelvideo.freezone.agent_config_store import (
     delete_user_agent_config_item,
     list_user_agent_config_items,
@@ -4558,32 +4554,6 @@ async def export_freezone_agent_bundle(
     return {"ok": True, "data": bundle}
 
 
-@router.get("/freezone/agent-config/community/catalog", tags=[TAG_FREEZONE_AGENT_CONFIG])
-async def list_freezone_community_catalog(user: dict = Depends(get_api_user)):
-    username = str(user.get("username") or "")
-    try:
-        catalog = list_community_catalog(username=username)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, "data": catalog}
-
-
-@router.post("/freezone/agent-config/community/bundles:install", tags=[TAG_FREEZONE_AGENT_CONFIG])
-async def install_freezone_community_bundle(
-    payload: Annotated[dict, Body()],
-    user: dict = Depends(get_api_user),
-):
-    username = str(user.get("username") or "")
-    try:
-        result = install_community_bundle(
-            username=username,
-            bundle_url=str(payload.get("bundle_url") or ""),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, "data": result}
-
-
 @router.get("/freezone/agent-config/{kind}", tags=[TAG_FREEZONE_AGENT_CONFIG])
 async def list_freezone_agent_config(kind: str, user: dict = Depends(get_api_user)):
     username = str(user.get("username") or "")
@@ -4717,7 +4687,8 @@ async def _charge_workflow_draft_planning(
         metadata={**metadata, "outcome": "planning_delivered"},
     )
     billing = draft.get("billing") if isinstance(draft.get("billing"), dict) else {}
-    persisted = set_workflow_draft_billing(
+    persisted = await asyncio.to_thread(
+        set_workflow_draft_billing,
         project_dir=state_dir,
         canvas_id=canvas_id,
         draft_id=str(draft.get("draft_id") or ""),
@@ -12763,8 +12734,13 @@ async def create_canvas_workflow_draft(
     )
     state_dir = _canvas_state_project_dir(ctx, project_dir)
     try:
-        prune_expired_workflow_drafts(project_dir=state_dir, canvas_id=canvas_id)
-        draft = create_workflow_draft(
+        await asyncio.to_thread(
+            prune_expired_workflow_drafts,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+        )
+        draft = await asyncio.to_thread(
+            create_workflow_draft,
             project_dir=state_dir,
             project_id=ctx.project_id,
             canvas_id=canvas_id,
@@ -12801,7 +12777,8 @@ async def get_canvas_workflow_draft(
         project, user, required_role="viewer"
     )
     try:
-        draft, error = read_workflow_draft(
+        draft, error = await asyncio.to_thread(
+            read_workflow_draft,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=canvas_id,
             draft_id=draft_id,
@@ -12843,7 +12820,8 @@ async def patch_canvas_workflow_draft(
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, "expected_revision must be an integer") from exc
     try:
-        draft, error = patch_workflow_draft(
+        draft, error = await asyncio.to_thread(
+            patch_workflow_draft,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=canvas_id,
             draft_id=draft_id,
@@ -12895,7 +12873,8 @@ async def claim_canvas_workflow_draft(
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, "revision must be an integer") from exc
     try:
-        draft, error = claim_workflow_draft_confirmation(
+        draft, error = await asyncio.to_thread(
+            claim_workflow_draft_confirmation,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=canvas_id,
             draft_id=draft_id,
@@ -12933,7 +12912,8 @@ async def claim_canvas_workflow_draft(
             metadata=billing_metadata,
         )
     except Exception:
-        finish_workflow_draft_confirmation(
+        await asyncio.to_thread(
+            finish_workflow_draft_confirmation,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=canvas_id,
             draft_id=draft_id,
@@ -12945,7 +12925,8 @@ async def claim_canvas_workflow_draft(
         existing_billing = (
             draft.get("billing") if isinstance(draft.get("billing"), dict) else {}
         )
-        persisted = set_workflow_draft_billing(
+        persisted = await asyncio.to_thread(
+            set_workflow_draft_billing,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=canvas_id,
             draft_id=draft_id,
@@ -12963,7 +12944,8 @@ async def claim_canvas_workflow_draft(
             confirmed=False,
             metadata={**billing_metadata, "reason": "draft_billing_persist_failed"},
         )
-        finish_workflow_draft_confirmation(
+        await asyncio.to_thread(
+            finish_workflow_draft_confirmation,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=canvas_id,
             draft_id=draft_id,
@@ -13002,7 +12984,8 @@ async def finish_canvas_workflow_draft(
         project, user
     )
     try:
-        draft = finish_workflow_draft_confirmation(
+        draft = await asyncio.to_thread(
+            finish_workflow_draft_confirmation,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=canvas_id,
             draft_id=draft_id,
@@ -13041,7 +13024,8 @@ async def finish_canvas_workflow_draft(
             )
         else:
             billing["status"] = "confirmed" if confirmed else "refunded"
-            persisted = set_workflow_draft_billing(
+            persisted = await asyncio.to_thread(
+                set_workflow_draft_billing,
                 project_dir=_canvas_state_project_dir(ctx, project_dir),
                 canvas_id=canvas_id,
                 draft_id=draft_id,
@@ -13068,7 +13052,8 @@ async def create_canvas_workflow_run(
         project, user
     )
     try:
-        run = create_workflow_run(
+        run = await asyncio.to_thread(
+            create_workflow_run,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             project_id=ctx.project_id,
             canvas_id=canvas_id,
@@ -13110,7 +13095,8 @@ async def get_canvas_workflow_runs(
     except ValueError:
         stale_after_seconds = 300
     try:
-        interrupt_stale_workflow_runs(
+        await asyncio.to_thread(
+            interrupt_stale_workflow_runs,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
             stale_after_seconds=stale_after_seconds,
@@ -13118,8 +13104,11 @@ async def get_canvas_workflow_runs(
     except CanvasLockBusy:
         pass
     try:
-        canvas_payload = canvas_store.read_canvas(canvas_project_dir, canvas_id)
-        reconcile_workflow_runs_with_canvas_nodes(
+        canvas_payload = await asyncio.to_thread(
+            canvas_store.read_canvas, canvas_project_dir, canvas_id
+        )
+        await asyncio.to_thread(
+            reconcile_workflow_runs_with_canvas_nodes,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
             existing_node_ids={
@@ -13156,15 +13145,18 @@ async def get_canvas_workflow_runs(
                 "result": task.result,
                 "error": task.error,
             }
-        reconcile_workflow_runs_with_tasks(
+        generation_history = await asyncio.to_thread(
+            read_canvas_generation_history,
+            project_dir=project_dir,
+            canvas_id=canvas_id,
+            limit=1000,
+        )
+        await asyncio.to_thread(
+            reconcile_workflow_runs_with_tasks,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
             tasks_by_key=tasks_by_key,
-            generation_history=read_canvas_generation_history(
-                project_dir=project_dir,
-                canvas_id=canvas_id,
-                limit=1000,
-            ),
+            generation_history=generation_history,
         )
     except Exception as exc:
         # Task reconciliation is best-effort and must not block canvas loading.
@@ -13175,7 +13167,8 @@ async def get_canvas_workflow_runs(
             int(os.getenv("ST_WORKFLOW_RUN_MAX_TERMINAL_RECORDS", "200")),
             1,
         )
-        prune_workflow_runs(
+        await asyncio.to_thread(
+            prune_workflow_runs,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
             retention_days=retention_days,
@@ -13183,8 +13176,11 @@ async def get_canvas_workflow_runs(
         )
     except (CanvasLockBusy, OSError, ValueError):
         pass
-    runs = list_workflow_runs(
-        project_dir=canvas_project_dir, canvas_id=canvas_id, limit=limit
+    runs = await asyncio.to_thread(
+        list_workflow_runs,
+        project_dir=canvas_project_dir,
+        canvas_id=canvas_id,
+        limit=limit,
     )
     return {"ok": True, "data": {"runs": runs}}
 
@@ -13205,7 +13201,8 @@ async def get_canvas_workflow_run(
         project, user, required_role="viewer"
     )
     try:
-        run = read_workflow_run(
+        run = await asyncio.to_thread(
+            read_workflow_run,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=canvas_id,
             run_id=run_id,
@@ -13234,7 +13231,8 @@ async def patch_canvas_workflow_run(
         project, user
     )
     try:
-        run = update_workflow_run(
+        run = await asyncio.to_thread(
+            update_workflow_run,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=canvas_id,
             run_id=run_id,
@@ -13506,7 +13504,8 @@ async def put_canvas(
         _raise_canvas_store_http(exc)
     payload = saved_canvas.payload
     try:
-        reconcile_workflow_runs_with_canvas_nodes(
+        await asyncio.to_thread(
+            reconcile_workflow_runs_with_canvas_nodes,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
             existing_node_ids={
@@ -13571,7 +13570,8 @@ async def delete_canvas(project: str, canvas_id: str, user: dict = Depends(get_a
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
     try:
-        reconcile_workflow_runs_with_canvas_nodes(
+        await asyncio.to_thread(
+            reconcile_workflow_runs_with_canvas_nodes,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
             existing_node_ids=set(),

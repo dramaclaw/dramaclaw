@@ -7,7 +7,7 @@
 - 那一行（集成线上已漂到 `:331`，在 `_resolve_freezone_project` 内）
   **不是画布路由的守卫，是 freezone 全部路由的守卫** —— 本文件
   `test_only_canvas_routes_opt_out_of_the_home_node_guard` 现场点数：
-  `@router.` 当前共 100 条，其中 `tags=[TAG_FREEZONE_CANVAS]` 只有 24 条。
+  `@router.` 当前共 98 条，其中 `tags=[TAG_FREEZONE_CANVAS]` 只有 24 条。
 - 删那一行 ＝ 一次性放开另外 76 条读写 `Path(ctx.output_dir)` 本地项目文件、
   **既没有租约也没有共享存储交代**的路由，与 §6.3 的「逐个撤、不批量撤」直接冲突。
 
@@ -287,8 +287,8 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
         and _opts_out_of_the_guard(call)
     }
 
-    # 取证口径（`TCP-P60`）：当前 freezone 100 条路由中，画布只占 24 条。
-    assert router_decorators == 100
+    # 取证口径（`TCP-P60`）：当前 freezone 98 条路由中，画布只占 24 条。
+    assert router_decorators == 98
     assert len(canvas_routes) == 24
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES

@@ -85,38 +85,6 @@ def bundle_client(monkeypatch, tmp_path) -> TestClient:
     return TestClient(app)
 
 
-@pytest.fixture()
-def mocked_community_catalog(monkeypatch):
-    from novelvideo.freezone import agent_community_catalog
-
-    catalog = {
-        "schema_version": "dramaclaw.community-catalog.v1",
-        "items": [
-            {
-                "id": "community-video",
-                "name": "社区视频 Skill",
-                "version": "1.0.0",
-                "description": "社区视频动态工作流。",
-                "author": "DramaClaw",
-                "license": "CC-BY-4.0",
-                "min_dramaclaw_version": "1.0.0",
-                "tags": ["video"],
-                "bundle_url": "https://raw.githubusercontent.com/dramaclaw/dramaclaw-skills/main/skills/community-video/bundle.json",
-            }
-        ],
-    }
-
-    def fake_fetch_json(url: str) -> dict:
-        if url.endswith("/catalog.json"):
-            return catalog
-        if url.endswith("/skills/community-video/bundle.json"):
-            return _bundle_payload()
-        raise AssertionError(f"unexpected community catalog URL: {url}")
-
-    monkeypatch.setattr(agent_community_catalog, "_fetch_json", fake_fetch_json)
-    return catalog
-
-
 def test_validate_bundle_api_does_not_install(bundle_client: TestClient) -> None:
     response = bundle_client.post(
         "/api/v1/freezone/agent-config/bundles:validate",
@@ -180,40 +148,12 @@ def test_export_bundle_api_returns_skill_with_recipes(bundle_client: TestClient)
     assert [recipe["id"] for recipe in bundle["recipes"]] == ["community-brief"]
 
 
-def test_community_catalog_api_lists_remote_items(
-    bundle_client: TestClient,
-    mocked_community_catalog,
-) -> None:
-    response = bundle_client.get("/api/v1/freezone/agent-config/community/catalog")
-
-    assert response.status_code == 200, response.text
-    body = response.json()["data"]
-    assert body["schema_version"] == "dramaclaw.community-catalog.v1"
-    assert [item["id"] for item in body["items"]] == ["community-video"]
-
-
-def test_install_community_bundle_api_downloads_and_installs(
-    bundle_client: TestClient,
-    mocked_community_catalog,
-) -> None:
-    response = bundle_client.post(
+def test_community_catalog_endpoints_are_not_exposed(bundle_client: TestClient) -> None:
+    catalog = bundle_client.get("/api/v1/freezone/agent-config/community/catalog")
+    install = bundle_client.post(
         "/api/v1/freezone/agent-config/community/bundles:install",
-        json={
-            "bundle_url": "https://raw.githubusercontent.com/dramaclaw/dramaclaw-skills/main/skills/community-video/bundle.json",
-        },
+        json={"bundle_url": "https://example.com/bundle.json"},
     )
 
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["installed_skill"] == "community-video"
-    skills = bundle_client.get("/api/v1/freezone/agent-config/skills").json()["data"]
-    assert [item["id"] for item in skills] == ["community-video"]
-
-
-def test_install_community_bundle_api_rejects_untrusted_urls(bundle_client: TestClient) -> None:
-    response = bundle_client.post(
-        "/api/v1/freezone/agent-config/community/bundles:install",
-        json={"bundle_url": "https://example.com/skills/community-video/bundle.json"},
-    )
-
-    assert response.status_code == 400
-    assert "untrusted" in response.json()["detail"]
+    assert catalog.status_code in {404, 405}
+    assert install.status_code in {404, 405}

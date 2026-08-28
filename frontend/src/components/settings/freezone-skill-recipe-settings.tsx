@@ -35,9 +35,7 @@ import {
   useDeleteFreezoneAgentConfigItem,
   useExportFreezoneAgentBundle,
   useFreezoneAgentConfigItems,
-  useFreezoneCommunityCatalog,
   useInstallFreezoneAgentBundle,
-  useInstallFreezoneCommunityBundle,
   useSaveFreezoneAgentConfigItem,
   type FreezoneCommunityCatalogItem,
   type FreezoneAgentBundlePayload,
@@ -149,8 +147,6 @@ export function FreezoneSkillRecipeSettings({
   const [editingSkill, setEditingSkill] = useState<FreezoneAgentConfigPayload | null>(null);
   const [editingRecipe, setEditingRecipe] = useState<FreezoneAgentConfigPayload | null>(null);
   const [skillDeleteCandidate, setSkillDeleteCandidate] = useState<SkillDeleteCandidate | null>(null);
-  const [communityCatalogOpen, setCommunityCatalogOpen] = useState(false);
-  const [communityCatalogMode, setCommunityCatalogMode] = useState<"community" | "mine">("community");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [showBackToTop, setShowBackToTop] = useState(false);
   const sectionRef = useRef<HTMLElement | null>(null);
@@ -162,8 +158,6 @@ export function FreezoneSkillRecipeSettings({
   const isSkills = kind === "skills";
   const exportBundle = useExportFreezoneAgentBundle();
   const installBundle = useInstallFreezoneAgentBundle();
-  const communityCatalogQuery = useFreezoneCommunityCatalog(isSkills && communityCatalogOpen);
-  const installCommunityBundle = useInstallFreezoneCommunityBundle();
   const saveCatalogItem = useSaveFreezoneAgentConfigItem();
   const deleteCatalogItem = useDeleteFreezoneAgentConfigItem();
   const catalogItems = useMemo(() => {
@@ -177,19 +171,6 @@ export function FreezoneSkillRecipeSettings({
   const recipeItems = useMemo(
     () => (recipesCatalogQuery.data ?? []).map((item) => toManagedCatalogItem(item, "recipes")),
     [recipesCatalogQuery.data],
-  );
-  const dialogLocalSkillItems = useMemo(
-    () =>
-      (catalogQuery.data ?? [])
-        .map((item) => toManagedCatalogItem(item, "skills"))
-        .filter((item) => item.enabled)
-        .map((item) => ({
-          id: item.id,
-          label: item.title,
-          category: item.tags[0],
-          description: item.description,
-        })),
-    [catalogQuery.data],
   );
   const itemCount = catalogItems.length;
   const selectedItems = catalogItems.filter((item) => selectedIds.has(item.id));
@@ -445,21 +426,6 @@ export function FreezoneSkillRecipeSettings({
     }
   };
 
-  const installCommunityCatalogItem = async (item: FreezoneCommunityCatalogItem) => {
-    try {
-      const result = await installCommunityBundle.mutateAsync({ bundleUrl: item.bundle_url });
-      toast.success(
-        t("settings.freezoneCatalog.community.installed", {
-          skill: result.installed_skill,
-          recipeCount: result.installed_recipes.length,
-        }),
-      );
-    } catch (error) {
-      const message = error instanceof Error && error.message ? `：${error.message}` : "";
-      toast.error(`${t("settings.freezoneCatalog.community.installFailed")}${message}`);
-    }
-  };
-
   return (
     <>
       <section ref={sectionRef} className="px-5 py-5">
@@ -477,20 +443,6 @@ export function FreezoneSkillRecipeSettings({
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {isSkills ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="border-white/[0.08] bg-white/[0.02] text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
-                onClick={() => {
-                  setCommunityCatalogMode("community");
-                  setCommunityCatalogOpen(true);
-                }}
-              >
-                {t("settings.freezoneCatalog.community.open")}
-              </Button>
-            ) : null}
             {isSkills && onOpenRecipes ? (
               <Button
                 type="button"
@@ -659,28 +611,6 @@ export function FreezoneSkillRecipeSettings({
         deleting={deleteCatalogItem.isPending}
         onCancel={() => setSkillDeleteCandidate(null)}
         onConfirm={(deleteRecipes) => void deleteSkillCandidate(deleteRecipes)}
-      />
-      <CommunitySkillDialog
-        mode={communityCatalogMode}
-        open={communityCatalogOpen}
-        items={communityCatalogQuery.data?.items ?? []}
-        localItems={dialogLocalSkillItems}
-        installedSkillIds={new Set((catalogQuery.data ?? []).map((item) => getString(item.id)))}
-        loading={communityCatalogMode === "community" ? communityCatalogQuery.isLoading : catalogQuery.isLoading}
-        error={communityCatalogMode === "community" ? communityCatalogQuery.isError : catalogQuery.isError}
-        installingBundleUrl={installCommunityBundle.variables?.bundleUrl}
-        installing={installCommunityBundle.isPending}
-        onModeChange={setCommunityCatalogMode}
-        onOpenChange={setCommunityCatalogOpen}
-        onRetry={() => {
-          if (communityCatalogMode === "mine") {
-            void catalogQuery.refetch();
-          } else {
-            void communityCatalogQuery.refetch();
-          }
-        }}
-        onInstall={(item) => void installCommunityCatalogItem(item)}
-        onSelectLocalSkill={() => setCommunityCatalogOpen(false)}
       />
     </>
   );

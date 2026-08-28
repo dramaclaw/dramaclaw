@@ -10,6 +10,7 @@ NiceGUI history remains readable by the future React UI.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -19,7 +20,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from novelvideo.sqlite_pragmas import configure_sqlite_connection
+import aiosqlite
+
+from novelvideo.sqlite_pragmas import (
+    configure_sqlite_connection,
+    configure_sqlite_connection_async,
+)
 
 
 def _assistant_prefix_candidates(previous_assistant: object) -> list[str]:
@@ -327,6 +333,119 @@ class ChatStore:
             reverse=True,
         )[:bounded_limit]
 
+    async def _freezone_agent_summary_from_db_async(
+        self,
+        agent_id: str,
+        db_path: Path,
+    ) -> dict[str, Any] | None:
+        if not db_path.exists():
+            return None
+        db = await aiosqlite.connect(db_path, timeout=10)
+        db.row_factory = aiosqlite.Row
+        try:
+            cursor = await db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='chat_messages'"
+            )
+            if await cursor.fetchone() is None:
+                return None
+            cursor = await db.execute(
+                """
+                SELECT content, created_at
+                  FROM chat_messages
+                 WHERE role <> 'trace'
+                 ORDER BY id DESC
+                 LIMIT 1
+                """
+            )
+            latest = await cursor.fetchone()
+            if latest is None:
+                return None
+            cursor = await db.execute(
+                """
+                SELECT content
+                  FROM chat_messages
+                 WHERE role = 'user'
+                 ORDER BY id ASC
+                 LIMIT 1
+                """
+            )
+            first_user = await cursor.fetchone()
+        finally:
+            await db.close()
+        title = str(
+            first_user["content"] if first_user is not None else latest["content"] or ""
+        ).strip()
+        title = re.sub(r"\s+", " ", title) or agent_id
+        if len(title) > 32:
+            title = f"{title[:31]}…"
+        timestamp = self._timestamp_ms(str(latest["created_at"] or ""))
+        return {
+            "id": agent_id,
+            "name": title,
+            "createdAt": timestamp,
+            "lastActiveAt": timestamp,
+        }
+
+    async def list_freezone_canvas_agent_summaries_async(
+        self,
+        username: str,
+        *,
+        project_id: str,
+        canvas_id: str,
+        limit: int = 20,
+        project_state_dir: str | Path | None = None,
+    ) -> list[dict[str, Any]]:
+        agents_dir = self._freezone_canvas_agents_dir(
+            username,
+            project_id=project_id,
+            canvas_id=canvas_id,
+            project_state_dir=project_state_dir,
+        )
+        bounded_limit = max(1, min(int(limit), 100))
+
+        def candidate_paths() -> list[tuple[str, Path]]:
+            candidates: list[tuple[str, Path]] = []
+            if agents_dir.exists():
+                candidates.extend(
+                    (path.parent.name, path)
+                    for path in agents_dir.glob("*/chat.db")
+                    if path.parent.name
+                )
+            legacy_db = (
+                self._freezone_canvas_legacy_db(
+                    username,
+                    project_id=project_id,
+                    canvas_id=canvas_id,
+                )
+                if project_state_dir is None
+                else None
+            )
+            main_db = agents_dir / "main" / "chat.db"
+            if legacy_db is not None and legacy_db.exists() and not main_db.exists():
+                candidates.append(("main", legacy_db))
+            return candidates
+
+        candidates = await asyncio.to_thread(candidate_paths)
+
+        semaphore = asyncio.Semaphore(8)
+
+        async def load_summary(agent_id: str, db_path: Path) -> dict[str, Any] | None:
+            async with semaphore:
+                return await self._freezone_agent_summary_from_db_async(agent_id, db_path)
+
+        raw_summaries = await asyncio.gather(
+            *(
+                load_summary(agent_id, db_path)
+                for agent_id, db_path in candidates
+            )
+        )
+        summaries = [summary for summary in raw_summaries if summary is not None]
+        return sorted(
+            summaries,
+            key=self._freezone_agent_summary_sort_key,
+            reverse=True,
+        )[:bounded_limit]
+
     @staticmethod
     def _freezone_agent_summary_sort_key(summary: dict[str, Any]) -> tuple[int, int, str]:
         agent_id = str(summary.get("id") or "")
@@ -349,6 +468,7 @@ class ChatStore:
               media_json TEXT NOT NULL DEFAULT '[]',
               turn_id TEXT,
               metadata_json TEXT NOT NULL DEFAULT '{}',
+              idempotency_key TEXT,
               created_at TEXT NOT NULL
             )
             """
@@ -361,6 +481,15 @@ class ChatStore:
             conn.execute("ALTER TABLE chat_messages ADD COLUMN turn_id TEXT")
         if "metadata_json" not in columns:
             conn.execute("ALTER TABLE chat_messages ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'")
+        if "idempotency_key" not in columns:
+            conn.execute("ALTER TABLE chat_messages ADD COLUMN idempotency_key TEXT")
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_idempotency_key
+              ON chat_messages(idempotency_key)
+             WHERE idempotency_key IS NOT NULL AND idempotency_key <> ''
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS chat_ui_events (
@@ -390,6 +519,124 @@ class ChatStore:
         conn.commit()
         return conn
 
+    async def connect_async(
+        self,
+        username: str,
+        scope: ChatScope,
+        *,
+        db_path: Path | None = None,
+        _schema_attempt: int = 0,
+    ) -> aiosqlite.Connection:
+        resolved_path = db_path or self.db_for(username, scope)
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+        db = await aiosqlite.connect(resolved_path, timeout=10)
+        db.row_factory = aiosqlite.Row
+        try:
+            await self._initialize_connection_async(db)
+        except sqlite3.OperationalError as exc:
+            await db.close()
+            if "locked" not in str(exc).lower() or _schema_attempt >= 5:
+                raise
+            await asyncio.sleep(0.05 * (_schema_attempt + 1))
+            return await self.connect_async(
+                username,
+                scope,
+                db_path=resolved_path,
+                _schema_attempt=_schema_attempt + 1,
+            )
+        except BaseException:
+            await db.close()
+            raise
+        return db
+
+    @staticmethod
+    async def _initialize_connection_async(db: aiosqlite.Connection) -> None:
+        await configure_sqlite_connection_async(db)
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_messages (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              role TEXT NOT NULL,
+              content TEXT NOT NULL,
+              media_json TEXT NOT NULL DEFAULT '[]',
+              turn_id TEXT,
+              metadata_json TEXT NOT NULL DEFAULT '{}',
+              idempotency_key TEXT,
+              created_at TEXT NOT NULL
+            )
+            """
+        )
+        cursor = await db.execute("PRAGMA table_info(chat_messages)")
+        columns = {str(row["name"]) for row in await cursor.fetchall()}
+        if "turn_id" not in columns:
+            await db.execute("ALTER TABLE chat_messages ADD COLUMN turn_id TEXT")
+        if "metadata_json" not in columns:
+            await db.execute(
+                "ALTER TABLE chat_messages ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"
+            )
+        if "idempotency_key" not in columns:
+            await db.execute("ALTER TABLE chat_messages ADD COLUMN idempotency_key TEXT")
+        await db.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_idempotency_key
+              ON chat_messages(idempotency_key)
+             WHERE idempotency_key IS NOT NULL AND idempotency_key <> ''
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_ui_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              turn_id TEXT NOT NULL,
+              event_type TEXT NOT NULL,
+              payload_json TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_chat_ui_events_turn_id
+              ON chat_ui_events(turn_id, id)
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_settings (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        await db.commit()
+
+    @staticmethod
+    def _message_from_row(row: sqlite3.Row | aiosqlite.Row) -> dict[str, Any]:
+        try:
+            media = json.loads(row["media_json"] or "[]")
+        except json.JSONDecodeError:
+            media = []
+        if not isinstance(media, list):
+            media = []
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        turn_id = str(row["turn_id"] or "").strip()
+        return {
+            "id": int(row["id"]),
+            "role": str(row["role"]),
+            "content": str(row["content"]),
+            "media": media,
+            "attachments": media,
+            **({"turn_id": turn_id} if turn_id else {}),
+            **({"metadata": metadata} if metadata else {}),
+            "created_at": str(row["created_at"]),
+        }
+
     def append_message(
         self,
         username: str,
@@ -400,6 +647,7 @@ class ChatStore:
         *,
         turn_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         media = media or []
         metadata = metadata or {}
@@ -408,8 +656,10 @@ class ChatStore:
         try:
             cursor = conn.execute(
                 """
-                INSERT INTO chat_messages(role, content, media_json, turn_id, metadata_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO chat_messages(
+                    role, content, media_json, turn_id, metadata_json,
+                    idempotency_key, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     role,
@@ -417,10 +667,22 @@ class ChatStore:
                     json.dumps(media, ensure_ascii=False),
                     turn_id,
                     json.dumps(metadata, ensure_ascii=False),
+                    idempotency_key,
                     created_at,
                 ),
             )
             conn.commit()
+            if cursor.rowcount == 0 and idempotency_key:
+                existing = conn.execute(
+                    """
+                    SELECT id, role, content, media_json, turn_id, metadata_json, created_at
+                      FROM chat_messages
+                     WHERE idempotency_key = ?
+                    """,
+                    (idempotency_key,),
+                ).fetchone()
+                if existing is not None:
+                    return self._message_from_row(existing)
             return {
                 "id": int(cursor.lastrowid),
                 "role": role,
@@ -433,6 +695,96 @@ class ChatStore:
             }
         finally:
             conn.close()
+
+    async def append_message_async(
+        self,
+        username: str,
+        scope: ChatScope,
+        role: str,
+        content: str,
+        media: list[dict[str, Any]] | None = None,
+        *,
+        turn_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        task = asyncio.create_task(
+            self._append_message_async(
+                username,
+                scope,
+                role,
+                content,
+                media,
+                turn_id=turn_id,
+                metadata=metadata,
+                idempotency_key=idempotency_key,
+            )
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
+    async def _append_message_async(
+        self,
+        username: str,
+        scope: ChatScope,
+        role: str,
+        content: str,
+        media: list[dict[str, Any]] | None = None,
+        *,
+        turn_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        media = media or []
+        metadata = metadata or {}
+        created_at = datetime.now(timezone.utc).isoformat()
+        db = await self.connect_async(username, scope)
+        try:
+            cursor = await db.execute(
+                """
+                INSERT OR IGNORE INTO chat_messages(
+                    role, content, media_json, turn_id, metadata_json,
+                    idempotency_key, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    role,
+                    content,
+                    json.dumps(media, ensure_ascii=False),
+                    turn_id,
+                    json.dumps(metadata, ensure_ascii=False),
+                    idempotency_key,
+                    created_at,
+                ),
+            )
+            await db.commit()
+            if cursor.rowcount == 0 and idempotency_key:
+                existing_cursor = await db.execute(
+                    """
+                    SELECT id, role, content, media_json, turn_id, metadata_json, created_at
+                      FROM chat_messages
+                     WHERE idempotency_key = ?
+                    """,
+                    (idempotency_key,),
+                )
+                existing = await existing_cursor.fetchone()
+                if existing is not None:
+                    return self._message_from_row(existing)
+            return {
+                "id": int(cursor.lastrowid),
+                "role": role,
+                "content": content,
+                "media": media,
+                "attachments": media,
+                **({"turn_id": turn_id} if turn_id else {}),
+                **({"metadata": metadata} if metadata else {}),
+                "created_at": created_at,
+            }
+        finally:
+            await db.close()
 
     def append_ui_event(
         self,
@@ -465,6 +817,71 @@ class ChatStore:
             }
         finally:
             conn.close()
+
+    async def append_ui_event_async(
+        self,
+        username: str,
+        scope: ChatScope,
+        turn_id: str,
+        event: dict[str, Any],
+    ) -> dict[str, Any]:
+        turn_id = str(turn_id or "").strip()
+        if not turn_id:
+            raise ValueError("turn_id is required")
+        event_type = str(event.get("type") or event.get("event_type") or "ui_event").strip()
+        created_at = datetime.now(timezone.utc).isoformat()
+        db = await self.connect_async(username, scope)
+        try:
+            cursor = await db.execute(
+                """
+                INSERT INTO chat_ui_events(turn_id, event_type, payload_json, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (turn_id, event_type, json.dumps(event, ensure_ascii=False), created_at),
+            )
+            await db.commit()
+            return {
+                "id": int(cursor.lastrowid),
+                "turn_id": turn_id,
+                "type": event_type,
+                "payload": event,
+                "created_at": created_at,
+            }
+        finally:
+            await db.close()
+
+    async def _load_ui_events_async(
+        self,
+        db: aiosqlite.Connection,
+    ) -> dict[str, list[dict[str, Any]]]:
+        cursor = await db.execute(
+            """
+            SELECT id, turn_id, event_type, payload_json, created_at
+              FROM chat_ui_events
+             ORDER BY id ASC
+            """
+        )
+        rows = await cursor.fetchall()
+        events_by_turn: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            turn_id = str(row["turn_id"] or "").strip()
+            if not turn_id:
+                continue
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except json.JSONDecodeError:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {"value": payload}
+            payload = {
+                "id": int(row["id"]),
+                "type": str(row["event_type"] or payload.get("type") or "ui_event"),
+                "turn_id": turn_id,
+                "created_at": str(row["created_at"]),
+                **payload,
+            }
+            events_by_turn.setdefault(turn_id, []).append(payload)
+        return events_by_turn
 
     def _load_ui_events(self, conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
         rows = conn.execute(
@@ -705,6 +1122,96 @@ class ChatStore:
             },
         )
         return messages
+
+    async def list_messages_async(
+        self,
+        username: str,
+        scope: ChatScope,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        db = await self.connect_async(
+            username,
+            scope,
+            db_path=self.read_db_for(username, scope),
+        )
+        try:
+            cursor = await db.execute(
+                """
+                SELECT id, role, content, media_json, turn_id, metadata_json, created_at
+                  FROM chat_messages
+                 WHERE role <> 'trace'
+                 ORDER BY id DESC
+                 LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = await cursor.fetchall()
+            events_by_turn = await self._load_ui_events_async(db)
+        finally:
+            await db.close()
+        messages: list[dict[str, Any]] = []
+        previous_assistants: list[str] = []
+        for row in reversed(rows):
+            message = self._message_from_row(row)
+            role = str(message["role"])
+            content = str(message["content"])
+            if role == "assistant":
+                raw_content = content
+                message["content"] = _strip_replayed_assistant_prefix(
+                    content,
+                    previous_assistants,
+                )
+                previous_assistants.append(raw_content)
+            else:
+                previous_assistants = []
+            metadata = message.pop("metadata", {})
+            if isinstance(metadata, dict):
+                message.update(metadata)
+            messages.append(message)
+        visible_turn_ids = {
+            str(message.get("turn_id") or "").strip()
+            for message in messages
+            if str(message.get("turn_id") or "").strip()
+        }
+        self._attach_ui_events_to_messages(
+            messages,
+            {
+                turn_id: events
+                for turn_id, events in events_by_turn.items()
+                if turn_id in visible_turn_ids
+            },
+        )
+        return messages
+
+    async def history_contents_async(
+        self,
+        username: str,
+        scope: ChatScope,
+        role: str,
+        *,
+        limit: int,
+    ) -> list[str]:
+        db = await self.connect_async(
+            username,
+            scope,
+            db_path=self.read_db_for(username, scope),
+        )
+        try:
+            cursor = await db.execute(
+                """
+                SELECT content
+                  FROM chat_messages
+                 WHERE role = ?
+                 ORDER BY id DESC
+                 LIMIT ?
+                """,
+                (role, limit),
+            )
+            rows = await cursor.fetchall()
+        finally:
+            await db.close()
+        return [str(row["content"] or "") for row in reversed(rows)]
 
 
 chat_store = ChatStore()

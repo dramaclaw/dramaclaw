@@ -3830,27 +3830,21 @@ def _trace_history_contents(
     )
 
 
-def _store_history_contents(username: str, store_scope: Any, role: str) -> list[str]:
+async def _store_history_contents_async(
+    username: str,
+    store_scope: Any,
+    role: str,
+) -> list[str]:
     try:
         from novelvideo.chat.store import chat_store
 
-        conn = chat_store.connect(username, store_scope)
-        try:
-            rows = conn.execute(
-                """
-                SELECT content
-                  FROM chat_messages
-                 WHERE role = ?
-                 ORDER BY id DESC
-                 LIMIT ?
-                """,
-                (role, _HERMES_REPLAY_HISTORY_MESSAGES),
-            ).fetchall()
-        finally:
-            conn.close()
-        return _bounded_replay_history(
-            [str(row["content"] or "") for row in reversed(rows)]
+        contents = await chat_store.history_contents_async(
+            username,
+            store_scope,
+            role,
+            limit=_HERMES_REPLAY_HISTORY_MESSAGES,
         )
+        return _bounded_replay_history(contents)
     except Exception:
         return []
 
@@ -5458,7 +5452,8 @@ async def _stream_deterministic_assistant_reply(
     project_state_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     content = _redact_local_filesystem_paths(content)
-    message = add_assistant_message(
+    message = await asyncio.to_thread(
+        add_assistant_message,
         username,
         project,
         content,
@@ -5628,34 +5623,35 @@ async def _stream_assistant_reply_hermes(
         requester_user_id=requester_user_id,
         authorization=authorization,
     )
-    previous_assistant = (
-        _store_history_contents(username, store_scope, "assistant")
-        if store_scope is not None
-        else (
-            _assistant_history_contents(
-                username,
-                project,
-                project_dir=project_dir,
-                project_state_dir=project_state_dir,
-            )
-            if project
-            else []
+    if store_scope is not None:
+        previous_assistant = await _store_history_contents_async(
+            username,
+            store_scope,
+            "assistant",
         )
-    )
-    previous_trace = (
-        _store_history_contents(username, store_scope, "trace")
-        if store_scope is not None
-        else (
-            _trace_history_contents(
-                username,
-                project,
-                project_dir=project_dir,
-                project_state_dir=project_state_dir,
-            )
-            if project
-            else []
+        previous_trace = await _store_history_contents_async(
+            username,
+            store_scope,
+            "trace",
         )
-    )
+    elif project:
+        previous_assistant = await asyncio.to_thread(
+            _assistant_history_contents,
+            username,
+            project,
+            project_dir=project_dir,
+            project_state_dir=project_state_dir,
+        )
+        previous_trace = await asyncio.to_thread(
+            _trace_history_contents,
+            username,
+            project,
+            project_dir=project_dir,
+            project_state_dir=project_state_dir,
+        )
+    else:
+        previous_assistant = []
+        previous_trace = []
     assistant_prefix_candidates = _assistant_prefix_candidates(previous_assistant)
     trace_prefix_candidates = _assistant_prefix_candidates(previous_trace)
     assistant_text = ""
@@ -5861,7 +5857,7 @@ async def _stream_assistant_reply_hermes(
                 continue
             return
 
-    def persist_partial_reply() -> dict[str, Any] | None:
+    async def persist_partial_reply() -> dict[str, Any] | None:
         nonlocal persisted_message, assistant_text, tool_text
         if persisted_message is not None:
             return persisted_message
@@ -5895,12 +5891,22 @@ async def _stream_assistant_reply_hermes(
             if store_scope is not None:
                 from novelvideo.chat.store import chat_store
 
-                for trace_content in _split_trace_contents(final_tool_text):
-                    chat_store.append_message(
-                        username, store_scope, "trace", trace_content
+                for trace_index, trace_content in enumerate(
+                    _split_trace_contents(final_tool_text)
+                ):
+                    await chat_store.append_message_async(
+                        username,
+                        store_scope,
+                        "trace",
+                        trace_content,
+                        turn_id=turn_id,
+                        idempotency_key=(
+                            f"trace:{turn_id}:{trace_index}" if turn_id else None
+                        ),
                     )
             else:
-                add_trace_messages(
+                await asyncio.to_thread(
+                    add_trace_messages,
                     username,
                     project,
                     _split_trace_contents(final_tool_text),
@@ -5911,16 +5917,18 @@ async def _stream_assistant_reply_hermes(
         if store_scope is not None:
             from novelvideo.chat.store import chat_store
 
-            persisted_message = chat_store.append_message(
+            persisted_message = await chat_store.append_message_async(
                 username,
                 store_scope,
                 "assistant",
                 final_text,
                 media=media,
                 turn_id=turn_id,
+                idempotency_key=f"assistant:{turn_id}" if turn_id else None,
             )
         else:
-            persisted_message = add_assistant_message(
+            persisted_message = await asyncio.to_thread(
+                add_assistant_message,
                 username,
                 project,
                 final_text,
@@ -6180,21 +6188,23 @@ async def _stream_assistant_reply_hermes(
                         project_dir=project_dir,
                     )
                 )
-        result_message = persist_partial_reply()
+        result_message = await persist_partial_reply()
         if result_message is None:
             if store_scope is not None:
                 from novelvideo.chat.store import chat_store
 
-                result_message = chat_store.append_message(
+                result_message = await chat_store.append_message_async(
                     username,
                     store_scope,
                     "assistant",
                     "这轮操作没有收到虾导的有效回复，请稍后重试。",
                     media=[],
                     turn_id=turn_id,
+                    idempotency_key=f"assistant:{turn_id}" if turn_id else None,
                 )
             else:
-                result_message = add_assistant_message(
+                result_message = await asyncio.to_thread(
+                    add_assistant_message,
                     username,
                     project,
                     "这轮操作没有收到虾导的有效回复，请稍后重试。",
@@ -6220,7 +6230,7 @@ async def _stream_assistant_reply_hermes(
         try:
             await _settle_turn_operation()
         finally:
-            persist_partial_reply()
+            await persist_partial_reply()
 
 
 async def _stream_assistant_reply_claude(
@@ -6329,7 +6339,8 @@ async def _stream_assistant_reply_claude(
         assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
         assistant_text = _normalize_json_render_reply(assistant_text)
         if tool_text.strip():
-            add_trace_messages(
+            await asyncio.to_thread(
+                add_trace_messages,
                 username,
                 project,
                 _split_trace_contents(tool_text),
@@ -6339,7 +6350,8 @@ async def _stream_assistant_reply_claude(
         media = _extract_media(
             assistant_text, username, project, project_dir=project_dir
         )
-        result_message = add_assistant_message(
+        result_message = await asyncio.to_thread(
+            add_assistant_message,
             username,
             project,
             assistant_text,
@@ -6676,10 +6688,18 @@ async def _stream_assistant_reply_codex(
         if store_scope is not None:
             from novelvideo.chat.store import chat_store
 
-            for trace_content in _split_trace_contents(tool_text):
-                chat_store.append_message(username, store_scope, "trace", trace_content)
+            for trace_index, trace_content in enumerate(_split_trace_contents(tool_text)):
+                await chat_store.append_message_async(
+                    username,
+                    store_scope,
+                    "trace",
+                    trace_content,
+                    turn_id=turn_id,
+                    idempotency_key=(f"trace:{turn_id}:{trace_index}" if turn_id else None),
+                )
         else:
-            add_trace_messages(
+            await asyncio.to_thread(
+                add_trace_messages,
                 username,
                 project,
                 _split_trace_contents(tool_text),
@@ -6690,16 +6710,18 @@ async def _stream_assistant_reply_codex(
     if store_scope is not None:
         from novelvideo.chat.store import chat_store
 
-        result_message = chat_store.append_message(
+        result_message = await chat_store.append_message_async(
             username,
             store_scope,
             "assistant",
             assistant_text,
             media=media,
             turn_id=turn_id,
+            idempotency_key=f"assistant:{turn_id}" if turn_id else None,
         )
     else:
-        result_message = add_assistant_message(
+        result_message = await asyncio.to_thread(
+            add_assistant_message,
             username,
             project,
             assistant_text,
