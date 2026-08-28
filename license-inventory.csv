@@ -69,6 +69,7 @@ docker-compose.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate 
 docs/README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/adr/0002-ffmpeg-system-dependency.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/changes/2026-08-26.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/changes/2026-08-27.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/compliance/copyleft-deps.csv,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/compliance/npm-dependency-licenses.csv,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/compliance/python-dependency-licenses.csv,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -442,6 +443,8 @@ frontend/src/__tests__/features/canvas/skill-i18n.test.ts,Elastic-2.0,2026 Super
 frontend/src/__tests__/features/canvas/skill-node-director-world.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/skill-node-parameters.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/snap-align-index.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/snap-align-integration-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/snap-align-store.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/snap-aspect-ratio.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/spawn-external-assets.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/style-asset-image.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1016,6 +1019,7 @@ frontend/src/features/canvas/pricing/types.ts,Elastic-2.0,2026 SuperTale contrib
 frontend/src/features/canvas/snap-align/CanvasSnapAlignButton.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/snap-align/SnapAlignGuides.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/snap-align/computeSnapAlign.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/snap-align/resolveSnapAlignDrag.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/snap-align/snapAlignStore.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/tools/annotation/codec.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/tools/annotation/draw.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1031,6 +1035,7 @@ frontend/src/features/canvas/ui/AssetLibraryFolderCoverDialog.tsx,Elastic-2.0,20
 frontend/src/features/canvas/ui/AssetLibraryItemMedia.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/AssetLibraryModal.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/AssetLibraryNewFolderDialog.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/ui/AssetLibraryPreviewDialog.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/AssetLibraryUploadDialog.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/AudioWaveformPlayer.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/BackToNodesHint.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
