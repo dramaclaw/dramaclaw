@@ -2075,6 +2075,7 @@ tests/test_project_dependencies.py,Elastic-2.0,2026 SuperTale contributors,REUSE
 tests/test_project_embedding_models.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_id_route_paths.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_spine_template.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_project_static_auth.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_static_media.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_task_routes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_prompt_style_ethnicity_layering.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
