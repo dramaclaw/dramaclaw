@@ -25,6 +25,7 @@ import type {
   ReferenceMaterialOption,
   ReferenceMediaKind,
 } from '@/features/canvas/application/referencePick';
+import { placeAnchoredMenu } from '@/features/canvas/nodes/shared/anchoredMenuPlacement';
 
 import { mentionChipLabel, type MentionCandidate } from './PromptMentionEditor';
 
@@ -33,6 +34,9 @@ const SUBMENU_WIDTH = 208;
 const LIST_MAX_HEIGHT = 268;
 const SUBMENU_MAX_HEIGHT = 300;
 const EDGE_GAP = 8;
+const ANCHOR_GAP = 4;
+/** 搜索框那一行（含选单自身的 padding 与它下方的间距）占掉的高度。 */
+const SEARCH_ROW_HEIGHT = 46;
 
 const KIND_ORDER: readonly ReferenceMediaKind[] = ['image', 'video', 'audio'];
 const KIND_LABEL: Record<ReferenceMediaKind, string> = {
@@ -172,11 +176,16 @@ export function MentionReplacePopover({
   // 搜索时不再分组：这时用户是在按名字找一个具体的东西，多一层展开只是挡路。
   const flattenMaterials = q.length > 0;
 
-  const left = Math.max(
-    EDGE_GAP,
-    Math.min(anchorRect.left, window.innerWidth - POPOVER_WIDTH - EDGE_GAP),
-  );
-  const top = anchorRect.bottom + 4;
+  // chip 常常就在贴着视口下沿的操作面板里：只往下开的话整个选单落到屏幕外，用户
+  // 看到的是「点了替换没反应」。空间不够就翻到 chip 上方，仍然不够就收缩内部滚动。
+  const { top, left, maxHeight } = placeAnchoredMenu({
+    anchorRect,
+    width: POPOVER_WIDTH,
+    preferredHeight: SEARCH_ROW_HEIGHT + LIST_MAX_HEIGHT,
+    gap: ANCHOR_GAP,
+    edgeGap: EDGE_GAP,
+  });
+  const listMaxHeight = Math.max(72, maxHeight - SEARCH_ROW_HEIGHT);
 
   const openGroupItems =
     openGroup === null
@@ -187,7 +196,7 @@ export function MentionReplacePopover({
     <>
       <div
         className="canvas-node-transient-ui fixed z-[10000] flex flex-col rounded-lg border border-white/10 bg-surface-dark/95 p-1 shadow-xl backdrop-blur-sm"
-        style={{ top, left, width: POPOVER_WIDTH }}
+        style={{ top, left, width: POPOVER_WIDTH, maxHeight }}
         onKeyDown={handleKeyDown}
       >
         <div className="flex items-center gap-1.5 rounded-md bg-white/[0.06] px-2 py-1.5">
@@ -208,8 +217,8 @@ export function MentionReplacePopover({
         </div>
 
         <div
-          className="ui-scrollbar mt-1 overflow-y-auto"
-          style={{ maxHeight: LIST_MAX_HEIGHT }}
+          className="ui-scrollbar mt-1 min-h-0 overflow-y-auto"
+          style={{ maxHeight: listMaxHeight }}
           onScroll={() => setOpenGroup(null)}
         >
           {matchedReferenced.length > 0 && (

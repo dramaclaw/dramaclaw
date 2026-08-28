@@ -368,6 +368,7 @@ frontend/src/__tests__/components/themed-toaster.test.tsx,Elastic-2.0,2026 Super
 frontend/src/__tests__/components/ui/header-refresh-button.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/viewport-lazy-image.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/deployment/org-brand-assets.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/anchored-menu-placement.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/asset-drag-director-bundle.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/asset-drag-hydrate.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/asset-library-modal-categories.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1023,6 +1024,7 @@ frontend/src/features/canvas/nodes/shared/ReferenceMentionButton.tsx,Elastic-2.0
 frontend/src/features/canvas/nodes/shared/ReferencePickChip.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/shared/ReferenceTextChip.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/shared/albumPendingTotals.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/nodes/shared/anchoredMenuPlacement.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/shared/videoModelCapabilities.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/skillNodeParameters.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/styleAssetUrl.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1914,9 +1916,9 @@ tests/test_api_novel_prerequisites.py,Elastic-2.0,2026 SuperTale contributors,RE
 tests/test_api_pipeline_manual_shots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_project_resolution.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_project_summary_paths.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-tests/test_api_request_body_limit.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_render_regenerate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_render_settings.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_api_request_body_limit.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_scripts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_seedance2_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_seedance2_prompt_route.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

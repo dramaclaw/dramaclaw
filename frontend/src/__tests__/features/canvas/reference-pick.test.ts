@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   collectReferenceCandidates,
+  collectReferenceMaterials,
   collectReferencePickTargets,
   supportsReferencePick,
 } from '@/features/canvas/application/referencePick';
@@ -111,6 +112,17 @@ describe('reference pick candidates', () => {
           CANVAS_NODE_TYPES.imageGen,
         ).keys(),
       ].sort(),
+    ).toEqual(['upload-image']);
+
+    // 同一个上传节点在视频节点那边是合法的视频参考——不是「谁都不能选」。
+    expect(
+      [
+        ...collectReferenceCandidates(
+          [TARGET_VIDEO, uploadVideo, uploadImage],
+          TARGET_VIDEO.id,
+          CANVAS_NODE_TYPES.video,
+        ).keys(),
+      ].sort(),
     ).toEqual(['upload-image', 'upload-video']);
   });
 
@@ -190,6 +202,30 @@ describe('reference pick rejections', () => {
     expect(candidates.size).toBe(0);
     expect(rejections.get('style')).toBe('这个节点不能作为参考');
     expect(rejections.has('group')).toBe(false);
+  });
+
+  it('装视频的上传节点进得了视频节点的「素材引用」，并带上视频缩略图', () => {
+    const materials = collectReferenceMaterials(
+      [
+        TARGET_VIDEO,
+        node('upload-video', CANVAS_NODE_TYPES.upload, {
+          videoUrl: 'https://x/a.mp4',
+          // 海报只是封面，不该让它被当成一张图片素材。
+          previewImageUrl: 'https://x/poster.png',
+        }),
+      ],
+      TARGET_VIDEO.id,
+      CANVAS_NODE_TYPES.video,
+      new Set<string>(),
+    );
+
+    expect(materials).toHaveLength(1);
+    expect(materials[0]).toMatchObject({
+      nodeId: 'upload-video',
+      kind: 'video',
+      videoUrl: 'https://x/a.mp4',
+    });
+    expect(materials[0].imageUrl).toBeUndefined();
   });
 
   it('自己不进拒绝表', () => {

@@ -23,6 +23,7 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import type { CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 import { collectReferencePickTargets } from '@/features/canvas/application/referencePick';
 import { useReferencePickStore } from '@/features/canvas/application/referencePickStore';
+import { placeAnchoredMenu } from '@/features/canvas/nodes/shared/anchoredMenuPlacement';
 import {
   NODE_FLOATING_PANEL_SURFACE_CLASS,
   NODE_TEXT_CONTROL_ICON_CLASS,
@@ -31,6 +32,8 @@ import {
 
 const MENU_WIDTH = 208;
 const MENU_GAP = 6;
+/** 两条固定菜单项撑满时的高度，用来判断下方放不放得下。 */
+const MENU_HEIGHT = 108;
 
 /**
  * 进入画布拾取态。可选目标为空时不进入——拾取态下整张画布都会变样，
@@ -96,7 +99,11 @@ export function ReferencePickChip({
   const active = useReferencePickStore((state) => state.request?.targetNodeId === nodeId);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
+  const [anchor, setAnchor] = useState<{
+    left: number;
+    top: number;
+    maxHeight: number;
+  } | null>(null);
 
   // 菜单走 portal + fixed，理由同 CameraMovementChip：chip 所在的那行是
   // overflow-x-auto（纵向也会跟着裁），而且节点自带 transform 会把 absolute 浮层
@@ -119,10 +126,15 @@ export function ReferencePickChip({
   const openMenu = () => {
     const rect = triggerRef.current?.getBoundingClientRect();
     if (!rect) return;
-    setAnchor({
-      left: Math.max(8, Math.min(rect.left, window.innerWidth - MENU_WIDTH - 8)),
-      top: rect.bottom + MENU_GAP,
+    // 操作面板常年贴在视口下沿，这颗 chip 离底边往往只剩几十像素：只往下开会把整个
+    // 菜单顶到视口外，看起来就像点了没反应。见 [[placeAnchoredMenu]]。
+    const { top, left, maxHeight } = placeAnchoredMenu({
+      anchorRect: rect,
+      width: MENU_WIDTH,
+      preferredHeight: MENU_HEIGHT,
+      gap: MENU_GAP,
     });
+    setAnchor({ left, top, maxHeight });
   };
 
   const handleClick = (event: MouseEvent) => {
@@ -172,8 +184,13 @@ export function ReferencePickChip({
         createPortal(
           <div
             ref={menuRef}
-            style={{ left: anchor.left, top: anchor.top, width: MENU_WIDTH }}
-            className={`nodrag nowheel fixed z-[10000] p-1 ${NODE_FLOATING_PANEL_SURFACE_CLASS}`}
+            style={{
+              left: anchor.left,
+              top: anchor.top,
+              width: MENU_WIDTH,
+              maxHeight: anchor.maxHeight,
+            }}
+            className={`nodrag nowheel ui-scrollbar fixed z-[10000] overflow-y-auto p-1 ${NODE_FLOATING_PANEL_SURFACE_CLASS}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
           >
