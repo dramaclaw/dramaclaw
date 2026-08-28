@@ -20,7 +20,6 @@ import {
   Loader2,
   Music,
   Pause,
-  Plus,
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -49,6 +48,11 @@ import { canvasEventBus } from "@/features/canvas/application/canvasServices";
 import type { UpstreamContent } from "@/features/canvas/application/ports";
 import { ReferenceTextChip } from "@/features/canvas/nodes/shared/ReferenceTextChip";
 import { ReferenceDetachButton } from "@/features/canvas/nodes/shared/ReferenceDetachButton";
+import { ReferencePickChip } from "@/features/canvas/nodes/shared/ReferencePickChip";
+import { ReferenceMentionButton } from "@/features/canvas/nodes/shared/ReferenceMentionButton";
+import { focusReferenceNode } from "@/features/canvas/application/viewportReturnStore";
+import { collectReferenceMaterials } from "@/features/canvas/application/referencePick";
+import { attachReferenceEdge } from "@/features/canvas/application/attachReference";
 import {
   PromptMentionEditor,
   type MentionCandidate,
@@ -458,6 +462,50 @@ export function VideoOperationsPanel({
       [id, deleteEdge],
     );
 
+    // 引用缩略图右下角的 @ 按钮：把这条引用按它当前的编号插进提示词。编号是
+    // mentionCandidates 算好的（图片 / 视频 / 音频各自计数），用户不必自己数。
+    const mentionNameByNodeId = useMemo(() => {
+      const map = new Map<string, string>();
+      for (const candidate of mentionCandidates) map.set(candidate.key, candidate.name);
+      return map;
+    }, [mentionCandidates]);
+    const handleMentionReference = useCallback(
+      (nodeId: string) => {
+        const candidate = mentionCandidates.find((item) => item.key === nodeId);
+        if (!candidate) return;
+        promptEditorRef.current?.insertMentionAtCursor(candidate);
+      },
+      [mentionCandidates],
+    );
+    // 双击引用 → 视口跳到那个上游节点，并在底部留下「返回节点」。
+    const handleJumpToReference = useCallback(
+      (nodeId: string) => {
+        focusReferenceNode(nodeId, id);
+      },
+      [id],
+    );
+
+    // 替换选单的「素材引用」段：画布上还没连过来的素材。已引用的排除掉——它们
+    // 已经在上面那段里了，同一条出现两次只会让人以为是两个东西。按**边**排除，
+    // 连着但还没出内容的上游节点也算已引用（否则选中它只是对同一条边再建一次）。
+    //
+    // 打开选单时才算：这份清单要扫全画布，常驻订阅的话画布上拖任何一个节点都会
+    // 让这个面板每帧重算一遍。
+    const getMentionMaterials = useCallback(() => {
+      const store = useCanvasStore.getState();
+      const attached = new Set(
+        store.edges.filter((edge) => edge.target === id).map((edge) => edge.source),
+      );
+      return collectReferenceMaterials(store.nodes, id, CANVAS_NODE_TYPES.video, attached);
+    }, [id]);
+    // 选中一条画布素材：连成上游即可——引用行、@ 候选编号都由上游推导链路跟上，
+    // 编辑器那边等它出现在候选里再把 @ 换过去。被拒（素材上限）时
+    // attachReferenceEdge 已经弹过原因，这里把结果回给编辑器，让它别空等。
+    const handleAttachMaterial = useCallback(
+      (sourceNodeId: string) => attachReferenceEdge(sourceNodeId, id),
+      [id],
+    );
+
     const upstreamTextContents = useMemo(
       () =>
         upstreamContents.filter(
@@ -625,6 +673,11 @@ export function VideoOperationsPanel({
               />
               <div className="flex shrink-0 items-center overflow-x-auto px-3 pb-2 pr-10 pt-3">
                 <div className="flex shrink-0 items-center gap-2">
+                  <ReferencePickChip
+                    nodeId={id}
+                    nodeType={CANVAS_NODE_TYPES.video}
+                    onPickExternal={() => externalAssetInputRef.current?.click()}
+                  />
                   <CameraMovementChip
                     templates={cameraTemplates}
                     isLoading={cameraTemplatesLoading}
@@ -635,9 +688,6 @@ export function VideoOperationsPanel({
                   />
                   <CharacterLibraryChip
                     onOpen={() => setIsCharacterLibraryOpen(true)}
-                  />
-                  <ExternalAssetChip
-                    onOpen={() => externalAssetInputRef.current?.click()}
                   />
                 </div>
                 <div className="ml-3 flex shrink-0 items-center gap-3">
@@ -665,6 +715,12 @@ export function VideoOperationsPanel({
                     nodeId={id}
                     onInsert={insertContextPaletteEntry}
                   />
+                </div>
+              </div>
+
+              {/* 引用素材单独占一行：顶排功能 chip 已经排满，素材再挤进去会顶掉输入区。 */}
+              {(upstreamTextContents.length > 0 || referenceMedia.length > 0) && (
+                <div className="nowheel flex shrink-0 items-center gap-3 overflow-x-auto px-3 pb-2">
                   {upstreamTextContents.map((content) => (
                     <ReferenceTextChip
                       key={`upstream-text-${content.nodeId}`}
@@ -672,22 +728,26 @@ export function VideoOperationsPanel({
                       text={content.text ?? ""}
                       sourceLabel={content.displayName ?? content.nodeType}
                       onDetach={handleDetachUpstream}
+                      onJump={handleJumpToReference}
                     />
                   ))}
+                  {referenceMedia.length > 0 && (
+                    <ReferenceMediaRow
+                      items={referenceMediaCapInfo}
+                      caps={referenceCaps}
+                      genMode={genMode}
+                      mentionNames={mentionNameByNodeId}
+                      onFocus={(nodeId) => setSelectedNode(nodeId)}
+                      onMention={handleMentionReference}
+                      onJump={handleJumpToReference}
+                      onDetach={handleDetachUpstream}
+                      onReorder={(ids) =>
+                        updateNodeData(id, { referenceOrder: ids })
+                      }
+                    />
+                  )}
                 </div>
-                {referenceMedia.length > 0 && (
-                  <ReferenceMediaRow
-                    items={referenceMediaCapInfo}
-                    caps={referenceCaps}
-                    genMode={genMode}
-                    onFocus={(nodeId) => setSelectedNode(nodeId)}
-                    onDetach={handleDetachUpstream}
-                    onReorder={(ids) =>
-                      updateNodeData(id, { referenceOrder: ids })
-                    }
-                  />
-                )}
-              </div>
+              )}
 
               <PromptMentionEditor
                 ref={promptEditorRef}
@@ -708,6 +768,8 @@ export function VideoOperationsPanel({
                 }}
                 onKeyDown={(event) => event.stopPropagation()}
                 candidates={mentionCandidates}
+                getMaterials={getMentionMaterials}
+                onAttachMaterial={handleAttachMaterial}
                 placeholder={
                   upstreamTextJoined.length > 0
                     ? "上游内容已自动接入，可继续补充提示词…"
@@ -1583,26 +1645,6 @@ function CharacterLibraryChip({ onOpen }: CharacterLibraryChipProps) {
   );
 }
 
-interface ExternalAssetChipProps {
-  onOpen: () => void;
-}
-
-function ExternalAssetChip({ onOpen }: ExternalAssetChipProps) {
-  return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation();
-        onOpen();
-      }}
-      className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} group/external px-1.5`}
-    >
-      <Plus className={`${NODE_TEXT_CONTROL_ICON_CLASS} group-hover/external:text-text-dark`} />
-      <span>外部素材</span>
-    </button>
-  );
-}
-
 interface CountPickerProps {
   value: VideoGenCount;
   onChange: (next: VideoGenCount) => void;
@@ -1689,7 +1731,17 @@ interface ReferenceMediaRowProps {
   caps: { image: number; video: number; audio: number } | null;
   /** 当前 genMode；用来决定 firstLastFrame 模式下给前两张图片打 首帧/尾帧 角标。 */
   genMode: VideoGenMode;
+  /**
+   * nodeId → 这条引用在提示词里的名字（图片1 / 视频2 …）。不在表里的没有 @ 按钮
+   * ——超出当前模式上限的素材本来就进不了 @ 候选，给它一个按钮只会插进一个后端
+   * 会丢掉的编号。
+   */
+  mentionNames: ReadonlyMap<string, string>;
   onFocus: (nodeId: string) => void;
+  /** 点右下角 @：把这条引用插进提示词。 */
+  onMention: (nodeId: string) => void;
+  /** 双击 chip：视口跳到该素材在画布上的位置。 */
+  onJump: (nodeId: string) => void;
   onDetach: (nodeId: string) => void;
   // 拖动 chip 换位后，回传新的「按可视顺序排列的上游节点 id 列表」。
   onReorder: (orderedNodeIds: string[]) => void;
@@ -1699,7 +1751,10 @@ function ReferenceMediaRow({
   items,
   caps,
   genMode,
+  mentionNames,
   onFocus,
+  onMention,
+  onJump,
   onDetach,
   onReorder,
 }: ReferenceMediaRowProps) {
@@ -1734,7 +1789,7 @@ function ReferenceMediaRow({
   );
 
   return (
-    <div className="ml-4 flex shrink-0 items-center gap-1.5">
+    <div className="flex shrink-0 items-center gap-1.5">
       {items.map((entry) => {
         const { item, typeIndex, withinCap } = entry;
         // 「超出当前模式上限」只在 REFERENCE_CAPS_BY_MODE 里登记过的模式生效。
@@ -1781,7 +1836,10 @@ function ReferenceMediaRow({
               item={item}
               index={typeIndex - 1}
               slotLabel={slotLabel}
+              mentionName={mentionNames.get(item.nodeId) ?? null}
               onFocus={onFocus}
+              onMention={onMention}
+              onJump={onJump}
               onDetach={onDetach}
             />
           );
@@ -1790,7 +1848,10 @@ function ReferenceMediaRow({
             <ReferenceVideoChip
               item={item}
               index={typeIndex - 1}
+              mentionName={mentionNames.get(item.nodeId) ?? null}
               onFocus={onFocus}
+              onMention={onMention}
+              onJump={onJump}
               onDetach={onDetach}
             />
           );
@@ -1803,7 +1864,10 @@ function ReferenceMediaRow({
               onToggle={(playing) =>
                 setPlayingAudioNodeId(playing ? item.nodeId : null)
               }
+              mentionName={mentionNames.get(item.nodeId) ?? null}
               onFocus={onFocus}
+              onMention={onMention}
+              onJump={onJump}
               onDetach={onDetach}
             />
           );
@@ -1894,7 +1958,11 @@ interface ReferenceImageChipProps {
   index: number;
   /** 给角标显示自定义文案（如「首帧」「尾帧」）。未设置时使用数字角标。 */
   slotLabel?: string;
+  /** 这条引用在提示词里的名字；null 表示它不在 @ 候选里，不显示 @ 按钮。 */
+  mentionName: string | null;
   onFocus: (nodeId: string) => void;
+  onMention: (nodeId: string) => void;
+  onJump: (nodeId: string) => void;
   onDetach: (nodeId: string) => void;
 }
 
@@ -1902,7 +1970,10 @@ function ReferenceImageChip({
   item,
   index,
   slotLabel,
+  mentionName,
   onFocus,
+  onMention,
+  onJump,
   onDetach,
 }: ReferenceImageChipProps) {
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -1919,6 +1990,11 @@ function ReferenceImageChip({
         onClick={(event) => {
           event.stopPropagation();
           onFocus(item.nodeId);
+        }}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          hide();
+          onJump(item.nodeId);
         }}
         onMouseEnter={show}
         onMouseLeave={hide}
@@ -1941,6 +2017,15 @@ function ReferenceImageChip({
           >
             {slotLabel}
           </span>
+        ) : null}
+        {mentionName ? (
+          <ReferenceMentionButton
+            mentionName={mentionName}
+            onInsert={() => {
+              hide();
+              onMention(item.nodeId);
+            }}
+          />
         ) : null}
         <ReferenceDetachButton
           nodeId={item.nodeId}
@@ -1973,11 +2058,23 @@ function ReferenceImageChip({
 interface ReferenceVideoChipProps {
   item: Extract<ReferenceMediaItem, { kind: "video" }>;
   index: number;
+  /** 这条引用在提示词里的名字；null 表示它不在 @ 候选里，不显示 @ 按钮。 */
+  mentionName: string | null;
   onFocus: (nodeId: string) => void;
+  onMention: (nodeId: string) => void;
+  onJump: (nodeId: string) => void;
   onDetach: (nodeId: string) => void;
 }
 
-function ReferenceVideoChip({ item, index, onFocus, onDetach }: ReferenceVideoChipProps) {
+function ReferenceVideoChip({
+  item,
+  index,
+  mentionName,
+  onFocus,
+  onMention,
+  onJump,
+  onDetach,
+}: ReferenceVideoChipProps) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const PREVIEW_W = 140;
   const { pos, show, hide } = useHoverPreviewPos(buttonRef, PREVIEW_W);
@@ -2012,12 +2109,26 @@ function ReferenceVideoChip({ item, index, onFocus, onDetach }: ReferenceVideoCh
           event.stopPropagation();
           onFocus(item.nodeId);
         }}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          hide();
+          onJump(item.nodeId);
+        }}
         onMouseEnter={show}
         onMouseLeave={hide}
         className={`nodrag ${NODE_REFERENCE_MEDIA_CHIP_CLASS}`}
         title={label}
       >
         {thumb}
+        {mentionName ? (
+          <ReferenceMentionButton
+            mentionName={mentionName}
+            onInsert={() => {
+              hide();
+              onMention(item.nodeId);
+            }}
+          />
+        ) : null}
         <ReferenceDetachButton
           nodeId={item.nodeId}
           onDetach={onDetach}
@@ -2055,7 +2166,11 @@ interface ReferenceAudioChipProps {
   index: number;
   isPlaying: boolean;
   onToggle: (playing: boolean) => void;
+  /** 这条引用在提示词里的名字；null 表示它不在 @ 候选里，不显示 @ 按钮。 */
+  mentionName: string | null;
   onFocus: (nodeId: string) => void;
+  onMention: (nodeId: string) => void;
+  onJump: (nodeId: string) => void;
   onDetach: (nodeId: string) => void;
 }
 
@@ -2064,7 +2179,10 @@ function ReferenceAudioChip({
   index,
   isPlaying,
   onToggle,
+  mentionName,
   onFocus,
+  onMention,
+  onJump,
   onDetach,
 }: ReferenceAudioChipProps) {
   // 用 ref 持有一个 HTMLAudioElement —— 比挂在 DOM 上的 <audio> 简单：可以
@@ -2126,6 +2244,12 @@ function ReferenceAudioChip({
         onFocus(item.nodeId);
         onToggle(!isPlaying);
       }}
+      onDoubleClick={(event) => {
+        // 双击跳到画布上那个音频节点。播放开关被这两下点成了「开了又关」，
+        // 正好回到双击前的状态，不用额外去抑制它。
+        event.stopPropagation();
+        onJump(item.nodeId);
+      }}
       className={`group/refmedia nodrag relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border transition-colors ${
         isPlaying
           ? "border-accent/60 bg-[rgb(var(--accent-rgb)/0.15)]"
@@ -2138,6 +2262,12 @@ function ReferenceAudioChip({
       ) : (
         <Music className="h-4 w-4 text-text-dark/90" />
       )}
+      {mentionName ? (
+        <ReferenceMentionButton
+          mentionName={mentionName}
+          onInsert={() => onMention(item.nodeId)}
+        />
+      ) : null}
       <ReferenceDetachButton
         nodeId={item.nodeId}
         onDetach={onDetach}

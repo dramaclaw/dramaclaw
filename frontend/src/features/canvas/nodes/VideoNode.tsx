@@ -237,7 +237,8 @@ const MAX_HEIGHT = 1000;
 const IMAGE_GEN_NODE_WIDTH = 580;
 const IMAGE_GEN_NODE_HEIGHT = 360;
 
-export const OPERATIONS_PANEL_HEIGHT = 280;
+// 与图片节点同理：参考素材那一行落地后，提示词的可写高度被压得偏小，往上加一截。
+export const OPERATIONS_PANEL_HEIGHT = 328;
 export const OPERATIONS_PANEL_GAP = 12;
 // Extend the ops panel beyond the node's left/right edges so the textarea +
 // chips have more room than the video frame itself.

@@ -134,6 +134,10 @@ import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImage
 import { useNodeGenerationHistory } from '@/features/canvas/hooks/useNodeGenerationHistory';
 import { MediaModelParameterChip } from '@/features/canvas/ui/MediaModelParameterChip';
 import { ReferenceTextChip } from '@/features/canvas/nodes/shared/ReferenceTextChip';
+import { ReferenceMentionButton } from '@/features/canvas/nodes/shared/ReferenceMentionButton';
+import { focusReferenceNode } from '@/features/canvas/application/viewportReturnStore';
+import { collectReferenceMaterials } from '@/features/canvas/application/referencePick';
+import { attachReferenceEdge } from '@/features/canvas/application/attachReference';
 import {
   AssetLibraryModal,
   type AssetLibrarySelection,
@@ -214,6 +218,7 @@ import {
   NodeSideActionRail,
 } from '@/features/canvas/ui/NodeSideActionRail';
 import { NodeContextPromptPaletteButton } from '@/features/canvas/nodes/ContextPromptPaletteButton';
+import { ReferencePickChip } from '@/features/canvas/nodes/shared/ReferencePickChip';
 import {
   contextPromptPaletteInsertionText,
   type ContextPromptPaletteEntry,
@@ -235,7 +240,9 @@ const MIN_HEIGHT = 260;
 const MAX_WIDTH = 1100;
 const MAX_HEIGHT = 1000;
 
-const OPERATIONS_PANEL_HEIGHT = 232;
+// 面板高度。参考素材独占一行（缩略图 48px + 间距）之后，232px 只给提示词剩下两行
+// 多一点，写长一点就要在窄缝里滚——加高到给提示词留出四五行的程度。
+const OPERATIONS_PANEL_HEIGHT = 288;
 const OPERATIONS_PANEL_GAP = 12;
 const OPERATIONS_PANEL_MIN_WIDTH = 720;
 // 「放大」后的操作区尺寸：给提示词编辑区更舒适的高度与宽度。
@@ -706,6 +713,49 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         index: index + 1,
       })),
     [orderedReferenceUrls, upstreamImageContents],
+  );
+
+  // 引用缩略图右下角的 @ 按钮：按这张图当前的编号插进提示词，用户不必自己数第几张。
+  // key 就是 mentionCandidates 里的 key（上游 nodeId），所以直接查表即可。
+  const handleMentionReference = useCallback(
+    (nodeId: string) => {
+      const candidate = mentionCandidates.find((item) => item.key === nodeId);
+      if (!candidate) return;
+      promptEditorRef.current?.insertMentionAtCursor(candidate);
+    },
+    [mentionCandidates],
+  );
+  // 双击引用 → 视口跳到那个上游节点，并在底部留下「返回节点」。
+  const handleJumpToReference = useCallback(
+    (nodeId: string) => {
+      focusReferenceNode(nodeId, id);
+    },
+    [id],
+  );
+
+  // 替换选单的「素材引用」段：画布上还没连过来、可以当参考图的素材（图片节点只
+  // 收图片，collectReferenceMaterials 已按同一套规则筛过）。已经连着的按**边**排除，
+  // 不按已有参考图排除——连着但还没出图的上游节点同样不该再被当成「还没引用」。
+  //
+  // 打开选单时才算：这份清单要扫全画布，做成常驻订阅等于让每个图片节点都跟着
+  // 整个 nodes 数组重渲染，拖一个节点就是一次全画布 O(N²)。
+  const getMentionMaterials = useCallback(() => {
+    const store = useCanvasStore.getState();
+    const attached = new Set(
+      store.edges.filter((edge) => edge.target === id).map((edge) => edge.source),
+    );
+    return collectReferenceMaterials(
+      store.nodes,
+      id,
+      CANVAS_NODE_TYPES.imageGen,
+      attached,
+    );
+  }, [id]);
+  // 选中一条画布素材：连成上游即可，参考图行与 @ 编号都由上游推导链路跟上。
+  // 被拒（素材上限等）时 attachReferenceEdge 已经把原因弹出来了，这里只回结果。
+  const handleAttachMaterial = useCallback(
+    (sourceNodeId: string) => attachReferenceEdge(sourceNodeId, id),
+    [id],
   );
 
   // 让 prompt 里的 @图片N 始终跟随参考图引用编号：删除 / 重排 / 新增引用连线、
@@ -2023,6 +2073,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             className="absolute right-2 top-2 z-20"
           />
           <div className="flex shrink-0 items-center gap-2 pl-3 pr-10 pt-3">
+            <ReferencePickChip
+              nodeId={id}
+              nodeType={CANVAS_NODE_TYPES.imageGen}
+              onPickExternal={handlePickFile}
+            />
             {styleSelectionState !== 'ready' && (
               <StyleTriggerChip
                 state={styleSelectionState}
@@ -2045,59 +2100,85 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               <Library className={`${NODE_TEXT_CONTROL_ICON_CLASS} group-hover/asset:text-text-dark`} />
               <span>资产库</span>
             </button>
-            {upstreamTextContents.map((content) => (
-              <ReferenceTextChip
-                key={content.nodeId}
-                nodeId={content.nodeId}
-                text={content.text ?? ''}
-                sourceLabel={content.displayName ?? content.nodeType}
-                onDetach={handleDetachUpstream}
-              />
-            ))}
-            {upstreamImageContents.length > 0 && (
-              <div className="ml-3 flex shrink-0 items-center gap-1.5">
-                {upstreamImageContents.map((content) => {
-                  const url = resolveImageDisplayUrl(content.imageUrl as string);
-                  return (
-                    <div
-                      key={`upstream-image-${content.nodeId}`}
-                      className={NODE_REFERENCE_MEDIA_CHIP_CLASS}
-                      title={`来自上游 · ${content.displayName ?? content.nodeType}`}
-                      onMouseEnter={(event) => {
-                        setRefHover({
-                          imageUrl: url,
-                          rect: event.currentTarget.getBoundingClientRect(),
-                        });
-                      }}
-                      onMouseLeave={() => setRefHover(null)}
-                    >
-                      <img
-                        src={url}
-                        alt=""
-                        className="h-full w-full object-cover"
-                        draggable={false}
-                      />
-                      {/* 前端按产品要求不再显示「图片N」数字角标——引用统一呈现为
-                          「图片」，序号只存在于提交给后端的 prompt（@图片N）里。 */}
-                      <button
-                        type="button"
-                        title="取消引用此素材"
-                        className={NODE_REFERENCE_MEDIA_DETACH_CLASS}
-                        onMouseDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
+          </div>
+
+          {/* 引用素材单独占一行：顶排功能 chip 已经排满，参考图再挤进去会顶掉输入区。 */}
+          {(upstreamTextContents.length > 0 || upstreamImageContents.length > 0) && (
+            <div className="nowheel flex shrink-0 items-center gap-2 overflow-x-auto px-3 pt-2">
+              {upstreamTextContents.map((content) => (
+                <ReferenceTextChip
+                  key={content.nodeId}
+                  nodeId={content.nodeId}
+                  text={content.text ?? ''}
+                  sourceLabel={content.displayName ?? content.nodeType}
+                  onDetach={handleDetachUpstream}
+                  onJump={handleJumpToReference}
+                />
+              ))}
+              {upstreamImageContents.length > 0 && (
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {upstreamImageContents.map((content) => {
+                    const url = resolveImageDisplayUrl(content.imageUrl as string);
+                    // 不在候选里（自身参考图占位、URL 对不上）就不显示 @ 按钮：
+                    // 与其给一个编号错的 mention，不如让用户自己打。
+                    const mentionName =
+                      mentionCandidates.find((item) => item.key === content.nodeId)?.name ??
+                      null;
+                    return (
+                      <div
+                        key={`upstream-image-${content.nodeId}`}
+                        className={NODE_REFERENCE_MEDIA_CHIP_CLASS}
+                        title={`来自上游 · ${content.displayName ?? content.nodeType}`}
+                        onMouseEnter={(event) => {
+                          setRefHover({
+                            imageUrl: url,
+                            rect: event.currentTarget.getBoundingClientRect(),
+                          });
+                        }}
+                        onMouseLeave={() => setRefHover(null)}
+                        onDoubleClick={(event) => {
                           event.stopPropagation();
                           setRefHover(null);
-                          handleDetachUpstream(content.nodeId);
+                          handleJumpToReference(content.nodeId);
                         }}
                       >
-                        <X className="h-3 w-3" strokeWidth={2.5} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                        <img
+                          src={url}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          draggable={false}
+                        />
+                        {/* 前端按产品要求不再显示「图片N」数字角标——引用统一呈现为
+                            「图片」，序号只存在于提交给后端的 prompt（@图片N）里。 */}
+                        {mentionName ? (
+                          <ReferenceMentionButton
+                            mentionName={mentionName}
+                            onInsert={() => {
+                              setRefHover(null);
+                              handleMentionReference(content.nodeId);
+                            }}
+                          />
+                        ) : null}
+                        <button
+                          type="button"
+                          title="取消引用此素材"
+                          className={NODE_REFERENCE_MEDIA_DETACH_CLASS}
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setRefHover(null);
+                            handleDetachUpstream(content.nodeId);
+                          }}
+                        >
+                          <X className="h-3 w-3" strokeWidth={2.5} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* 选中的风格单独占一行，贴着输入区顶部，和顶排的功能 chip 分开。 */}
           {selectedStyle && (
@@ -2128,6 +2209,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
 
           <PromptMentionEditor
             ref={promptEditorRef}
+            getMaterials={getMentionMaterials}
+            onAttachMaterial={handleAttachMaterial}
             value={prompt}
             onChange={(next) => {
               hasUserEditedPromptRef.current = hasImageGenPromptOverride(next);
