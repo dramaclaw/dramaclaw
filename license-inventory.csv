@@ -497,6 +497,7 @@ frontend/src/__tests__/features/freezone/projections.test.ts,Elastic-2.0,2026 Su
 frontend/src/__tests__/features/freezone/scene-director-world-commit.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/skill-node-inputs.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/use-canvas-sync.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/piko-hover-video-load-recovery.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/piko-mini-game-design-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/piko-mini-game-library-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/rewards/reward-events-store.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

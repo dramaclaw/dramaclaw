@@ -221,6 +221,18 @@ function PikoGamePosterCard({
         // 5.9MiB 视频——用户一次都没 hover 也照付。首帧封面已由 poster 承担，
         // 真正的加载推迟到 playHoverPreview 里显式 load()。
         preload="none"
+        onError={(event) => {
+          // 这次加载已经终止，守卫必须放行，否则这张卡后续所有 hover 都会跳过
+          // load()，只能靠关掉弹窗重新挂载才能恢复。
+          //
+          // 只挂 error，不挂 abort/emptied：preload="none" 下元素停在
+          // NETWORK_IDLE，我们自己调 load() 就会先排一个 abort 任务，挂上去等于
+          // 在加载刚开始时把守卫清掉，退回到「鼠标来回蹭就反复打断」的老问题。
+          hoverVideoLoadStartedRef.current = false;
+          hoverVideoPreparedRef.current = false;
+          // 首帧已经不可用了，把封面装回去，别留一块黑图。
+          event.currentTarget.setAttribute("poster", game.posterSrc);
+        }}
         onLoadedData={(event) => {
           const video = event.currentTarget;
           video.pause();
