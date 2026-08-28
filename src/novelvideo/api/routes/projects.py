@@ -32,7 +32,7 @@ from novelvideo.knowledge_pipeline import KNOWLEDGE_PIPELINE_KEY, KNOWLEDGE_PIPE
 from novelvideo.novel_source import has_imported_novel
 from novelvideo.ports import get_project_access, get_project_registry
 from novelvideo.scene_prerequisites import scene_build_applies
-from novelvideo.ports.project import ProjectRecord
+from novelvideo.ports.project import ProjectRecord, require_role_value
 from novelvideo.project_config import (
     default_aspect_ratio_for_spine_template,
     load_effective_narration_style_for_voice_from_state_dir,
@@ -523,7 +523,11 @@ async def get_project(project: str, user: dict = Depends(get_api_user)):
 
 @router.get("/projects/{project}/static-auth", include_in_schema=False)
 async def authorize_project_static_media(project: str, user: dict = Depends(get_api_user)):
-    await resolve_project_context(user=user, project_id=project, required_role="viewer")
+    requester_user_id = await user_id_from_api_user(user)
+    access = get_project_access()
+    principals = await access.resolve_requester_principals(requester_user_id)
+    role = await access.effective_project_role_by_id(project, principals)
+    require_role_value(role, "viewer")
     return Response(status_code=204)
 
 
