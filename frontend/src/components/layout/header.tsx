@@ -55,7 +55,7 @@ import {
 } from "@/components/layout/project-header-navigation";
 const ACCOUNT_PANEL_TRANSITION_MS = 350;
 
-export function Header() {
+export function Header({ ambientBackground = false }: { ambientBackground?: boolean }) {
   const { t, i18n } = useTranslation();
   const params = useParams({ strict: false }) as { project?: string };
   const [companionOpen, setCompanionOpen] = useState(false);
@@ -239,7 +239,11 @@ export function Header() {
   };
 
   return (
-    <div className="relative z-20 shrink-0 bg-background/58 text-sidebar-foreground backdrop-blur-xl">
+    <div
+      className={`relative z-20 shrink-0 text-sidebar-foreground ${
+        ambientBackground ? "bg-transparent" : "bg-background/58 backdrop-blur-xl"
+      }`}
+    >
       <header className="relative flex h-[48px] items-center justify-between gap-3 px-4">
         <div className="flex min-w-0 flex-1 items-center">
           <TooltipProvider delay={80}>
@@ -301,28 +305,11 @@ export function Header() {
             </div>
           ) : null}
           <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="group/notification relative size-[32px] text-sidebar-foreground/82 transition-colors duration-150 ease-[var(--ease-out-quint)] hover:bg-white/[0.05] hover:text-white aria-expanded:bg-white/[0.05] aria-expanded:text-white"
-            aria-label={t("header.notifications")}
-            aria-expanded={notificationOpen}
-            onClick={openNotifications}
-          >
-            <Bell className="size-[17px]" />
-            {hasUnreadNotification ? (
-              <span
-                className="absolute right-[8px] top-[8px] size-1 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.72)]"
-                aria-hidden="true"
-              />
-            ) : null}
-          </Button>
-          <Button
             id="mybuddy-companion-entry"
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="companion-capsule-entry -ml-0.5 -mr-0.5 size-[32px] transition-colors duration-150 ease-[var(--ease-out-quint)] hover:bg-white/[0.06] aria-expanded:bg-white/[0.06]"
+            className="companion-capsule-entry -ml-0.5 -mr-0.5 size-[32px]"
             onClick={() => setCompanionOpen(true)}
             aria-label={t("myBuddy.companion.entry")}
           >
@@ -348,7 +335,7 @@ export function Header() {
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="size-[28px] rounded-full p-0 hover:bg-transparent"
+              className="relative size-[28px] rounded-full p-0 hover:bg-transparent"
               aria-label={t("header.account.open")}
             >
               <span className="flex size-[26px] items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-[11px] font-normal text-white/72">
@@ -358,6 +345,12 @@ export function Header() {
                   avatarInitial
                 )}
               </span>
+              {hasUnreadNotification ? (
+                <span
+                  className="absolute right-0 top-0 size-1.5 rounded-full border border-background bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.72)]"
+                  aria-hidden="true"
+                />
+              ) : null}
             </Button>
           </div>
         </div>
@@ -370,8 +363,10 @@ export function Header() {
               avatarInitial={avatarInitial}
               avatarUrl={avatarUrl}
               displayName={displayName}
+              hasUnreadNotification={hasUnreadNotification}
               onChangeAvatar={openAvatarDialog}
               onLanguageChange={switchLanguage}
+              onNotifications={openNotifications}
               onClose={scheduleCloseAccountPanel}
               onEnter={openAccountPanel}
               onLogout={showLogout ? () => void handleLogout() : undefined}
@@ -483,8 +478,10 @@ function AccountPanel({
   avatarInitial,
   avatarUrl,
   displayName,
+  hasUnreadNotification,
   onChangeAvatar,
   onLanguageChange,
+  onNotifications,
   onClose,
   onEnter,
   onLogout,
@@ -496,8 +493,10 @@ function AccountPanel({
   avatarInitial: string;
   avatarUrl: string | null;
   displayName: string;
+  hasUnreadNotification: boolean;
   onChangeAvatar: () => void;
   onLanguageChange: (lang: "zh" | "en") => void;
+  onNotifications: () => void;
   onClose: () => void;
   onEnter: () => void;
   onLogout?: () => void;
@@ -533,6 +532,12 @@ function AccountPanel({
           </span>
         </div>
         <div className="space-y-0.5">
+          <AccountMenuRow
+            icon={<Bell className="size-3.5" />}
+            label={t("header.notifications")}
+            unread={hasUnreadNotification}
+            onClick={onNotifications}
+          />
           <AccountMenuRow
             icon={<Camera className="size-3.5" />}
             label={t("header.account.changeAvatar")}
@@ -577,12 +582,14 @@ function AccountMenuRow({
   icon,
   label,
   meta,
+  unread = false,
   onClick,
 }: {
   active?: boolean;
   icon: ReactNode;
   label: string;
   meta?: string;
+  unread?: boolean;
   onClick?: () => void;
 }) {
   const content = (
@@ -593,6 +600,12 @@ function AccountMenuRow({
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {meta ? (
         <span className="max-w-16 truncate text-[11px] text-slate-400">{meta}</span>
+      ) : null}
+      {unread ? (
+        <span
+          className="size-1.5 shrink-0 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.62)]"
+          aria-hidden="true"
+        />
       ) : null}
       <ChevronRight
         className={`mr-1 size-3.5 shrink-0 text-slate-100/88 transition-transform duration-150 ${

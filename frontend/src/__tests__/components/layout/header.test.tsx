@@ -59,6 +59,7 @@ vi.mock("react-i18next", () => ({
       ({
         "app.logoHomeTooltip": "Home",
         "header.account.open": "Open account",
+        "header.notifications": "Announcement Center",
         "header.account.changeAvatar": "Change avatar",
         "header.account.selectLanguage": "Select language",
         "header.account.languageChinese": "Chinese",
@@ -174,6 +175,18 @@ describe("Header runtime gating", () => {
     fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
 
     expect(await screen.findByText("Log out")).toBeInTheDocument();
+  });
+
+  it("moves the announcement entry from the header actions into the account panel", async () => {
+    renderHeader();
+
+    expect(screen.queryByRole("button", { name: "Announcement Center" })).not.toBeInTheDocument();
+
+    fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
+
+    expect(
+      await screen.findByRole("button", { name: "Announcement Center" }),
+    ).toBeInTheDocument();
   });
 
   it("hides logout when runtime does not require auth while keeping the local identity", async () => {

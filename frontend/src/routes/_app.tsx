@@ -31,6 +31,7 @@ import { AccessoryUnlockPrompt } from "@/features/rewards/AccessoryUnlockPrompt"
 import { VersionUpdateDialog } from "@/features/version-update/VersionUpdateDialog";
 import { PikoInspirationStation } from "@/features/piko-mini-game/PikoInspirationStation";
 import { ProductSurfaceUnavailable } from "@/components/product-surface-unavailable";
+import { CinematicSideRays } from "@/components/login/cinematic/CinematicSideRays";
 import {
   surfaceAccess,
   useProductSurfaces,
@@ -54,6 +55,7 @@ function AppLayout() {
   const params = useParams({ strict: false }) as { project?: string };
   const routeProject = params.project ?? null;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isProjectDashboard = pathname === "/";
   const projectSummaries = useAllProjectSummaries();
   const canonicalProject = routeProject
     ? canonicalProjectRouteParam(routeProject, projectSummaries.data)
@@ -208,8 +210,16 @@ function AppLayout() {
     <TaskCenterProvider projectId={canonicalProject}>
       <div className="flex h-dvh flex-col overflow-hidden">
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-            <Header />
+          <div className="relative isolate flex min-w-0 flex-1 flex-col overflow-hidden">
+            {isProjectDashboard ? (
+              <div
+                className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
+                aria-hidden="true"
+              >
+                <CinematicSideRays className="absolute inset-0 opacity-[0.46]" />
+              </div>
+            ) : null}
+            <Header ambientBackground={isProjectDashboard} />
             <MyBuddyCompanion />
             <AccessoryUnlockPrompt />
             <VersionUpdateDialog />

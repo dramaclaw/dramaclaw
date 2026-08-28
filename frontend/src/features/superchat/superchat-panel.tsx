@@ -4,8 +4,10 @@ import {
   ArrowDown,
   ArrowUp,
   Braces,
+  Check,
   Copy,
   Download,
+  Ellipsis,
   File,
   Image,
   ListTree,
@@ -18,12 +20,16 @@ import {
   PinOff,
   Search,
   ShieldAlert,
-  Wrench,
   X,
   Volume2,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import type {
+  ComponentProps,
+  DragEvent as ReactDragEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import { useTranslation } from "react-i18next";
@@ -49,6 +55,13 @@ import {
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/shadcn/dropdown-menu";
 import { useAuthStore } from "@/stores/auth-store";
 import { cn } from "@/lib/utils";
 import { resolveMediaUrl } from "@/lib/media-url";
@@ -56,10 +69,10 @@ import { api, uploadApi } from "@/lib/api";
 import { backendErrorToastMessage, jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { useSuperChat } from "@/features/superchat/use-superchat";
-import { useAiAvatarUrl } from "@/features/superchat/ai-avatar";
 import { buildChatTaskLabel } from "@/features/superchat/task-notification-label";
 import { ComposerWaitingStatus } from "@/features/superchat/composer-waiting-status";
 import { calculateTimelineContextDelta } from "@/features/superchat/timeline-scroll";
+import { resolveMessagePresentation } from "@/features/superchat/message-presentation";
 import { useEventBus } from "@/task-center/event-bus-context";
 import {
   extractStructuredBlocks,
@@ -264,6 +277,8 @@ const ASSISTANT_ERROR_TEXT_PATTERNS: RegExp[] = [
   /请先根据返回的错误/u,
   /content filter triggered/i,
   /finish reason:\s*['"]?content_filter/i,
+  /returned no content/i,
+  /未返回(?:任何)?内容/u,
 ];
 
 function isAssistantErrorReply(message: ChatMessage): boolean {
@@ -340,56 +355,6 @@ function DotsIndicator({ label, dotClassName = "size-1.5" }: { label?: string; d
         <span className={cn(dotClassName, "rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:300ms]")} />
       </span>
       {label && <span className="sr-only">{label}</span>}
-    </div>
-  );
-}
-
-function ChatAvatarFrame({
-  role,
-  label,
-  streaming: _streaming = false,
-}: {
-  role: ChatMessage["role"];
-  label?: string;
-  streaming?: boolean;
-}) {
-  const isAssistant = role === "assistant";
-  const isTool = role === "tool";
-  const initial = label?.trim().charAt(0).toUpperCase() || (isAssistant ? "虾" : isTool ? "" : "U");
-  // Shared, fetch-once avatar source (see ai-avatar.ts) — null until ready so we
-  // don't kick off a raw-path request from every avatar before the blob lands.
-  const avatarUrl = useAiAvatarUrl();
-
-  return (
-    <div
-      className={cn(
-        "relative flex shrink-0 select-none items-center justify-center overflow-hidden rounded-full border text-xs font-medium shadow-sm",
-        isAssistant ? "size-11" : "size-10",
-        isAssistant
-          ? "border-transparent bg-transparent text-muted-foreground shadow-none"
-          : isTool
-            ? "border-amber-500/30 bg-amber-500/10 text-amber-500"
-            : "border-primary/20 bg-primary text-primary-foreground",
-      )}
-      aria-hidden="true"
-    >
-      {isAssistant ? (
-        avatarUrl && (
-          <video
-            className="size-full object-cover"
-            src={avatarUrl}
-            autoPlay
-            loop
-            muted
-            playsInline
-            aria-hidden="true"
-          />
-        )
-      ) : isTool ? (
-        <Wrench className="size-4" />
-      ) : (
-        initial
-      )}
     </div>
   );
 }
@@ -642,7 +607,7 @@ function KeyframeVideoPreviewCard({ item }: { item: KeyframeVideoPreviewItem }) 
 
   return (
     <>
-      <div style={{ perspective: 800, ...cardStyle }} className="shrink-0">
+      <div style={{ perspective: 800, ...cardStyle }} className="st-ai-media-card shrink-0">
         <div className="relative h-full w-full overflow-hidden rounded-2xl bg-white/5 p-[1.5px]">
           <div className="relative z-10 h-full w-full overflow-hidden rounded-[14px] bg-zinc-950">
             <button
@@ -736,7 +701,7 @@ function UnifiedMediaCard({
 
   return (
     <>
-      <div className="st-unified-media-card">
+      <div className="st-ai-media-card st-unified-media-card">
         <div className="relative h-full w-full overflow-hidden rounded-2xl bg-white/5 p-[1.5px]">
           <div className="relative z-10 h-full w-full overflow-hidden rounded-[14px] bg-zinc-950">
             {item.kind === "audio" ? (
@@ -1055,12 +1020,12 @@ function SpecMediaDetailModal({
         </div>
 
         {detail && (
-          <div className="flex h-full w-full max-w-7xl items-center justify-center p-6">
-            <div className="grid h-full w-full grid-cols-1 items-center gap-8 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-10">
-              <div className="relative mx-auto flex max-h-[82vh] max-w-full items-center justify-center overflow-hidden rounded-[28px] bg-black/45 shadow-[0_30px_80px_rgba(0,0,0,0.45)]">
+          <div className="flex h-full w-full max-w-[1440px] items-center justify-center p-6 lg:p-8">
+            <div className="inline-flex max-h-full max-w-full flex-col items-center justify-center gap-6 lg:flex-row lg:gap-12">
+              <div className="relative flex w-fit min-w-0 max-w-full shrink items-center justify-center overflow-hidden rounded-[28px] bg-black/45 shadow-[0_30px_80px_rgba(0,0,0,0.45)] lg:max-w-[min(56vw,720px)]">
                 {detail.kind === "video" ? (
                   <video
-                    className="block max-h-[82vh] max-w-full object-contain"
+                    className="block max-h-[72vh] max-w-full object-contain"
                     src={src}
                     poster={poster || undefined}
                     controls
@@ -1068,14 +1033,14 @@ function SpecMediaDetailModal({
                   />
                 ) : (
                   <img
-                    className="block max-h-[82vh] max-w-full object-contain"
+                    className="block max-h-[72vh] max-w-full object-contain"
                     src={src}
                     alt={detail.title || "image"}
                   />
                 )}
               </div>
 
-              <div className="flex min-w-0 flex-col justify-center self-center">
+              <div className="flex w-full min-w-0 flex-col justify-center self-center lg:w-[360px] lg:shrink-0">
                 {detail.title && (
                   <h2 className="text-[34px] font-semibold tracking-tight text-white/95">
                     {detail.title}
@@ -1156,7 +1121,7 @@ function SpecMediaDetailModal({
   );
 }
 
-const MessageBubble = memo(function MessageBubble({
+export const MessageBubble = memo(function MessageBubble({
   message,
   variant = "default",
   onOpenDetail,
@@ -1183,74 +1148,160 @@ const MessageBubble = memo(function MessageBubble({
   const isFreezoneLayout = variant === "freezone";
   const isErrorReply = isAssistantErrorReply(message);
   const isCompletionNotice = isAssistantCompletionNotice(message);
+  const presentation = resolveMessagePresentation({
+    role: message.role,
+    tool: isTool,
+    error: isErrorReply,
+    streaming,
+  });
   const { t } = useTranslation();
   const shouldWaitForStructuredRender =
     deferStructuredRender && !isUser && !isTool && looksLikeStructuredRenderText(message.text);
   const { displayText, blocks } = extractStructuredBlocks(message);
+  const [copied, setCopied] = useState(false);
+  const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+  }, []);
   const copyText = async () => {
-    await navigator.clipboard?.writeText(message.text).catch(() => undefined);
+    if (!navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(message.text);
+    } catch {
+      return;
+    }
+    setCopied(true);
+    if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+    copyResetTimerRef.current = setTimeout(() => setCopied(false), 1_500);
   };
+  const canSpeak = typeof window !== "undefined" && "speechSynthesis" in window;
   const speak = () => {
-    if (!("speechSynthesis" in window)) return;
+    if (!canSpeak) return;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(message.text));
   };
   const userActionButtonClass =
     "size-7 rounded-md text-foreground/70 opacity-100 hover:bg-white/[0.1] hover:text-foreground";
   const userActionIconClass = "size-3.5 stroke-[2.25]";
-  const actions = (
+  const actionButtonClass =
+    "size-7 rounded-md text-muted-foreground/70 opacity-80 transition-colors hover:bg-white/[0.06] hover:text-foreground hover:opacity-100";
+  const userActions = (
+    <div className="pointer-events-none absolute right-[calc(100%+8px)] top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 whitespace-nowrap rounded-full border border-border/70 bg-background/85 px-1 py-0.5 text-foreground/75 opacity-0 shadow-sm backdrop-blur transition-opacity after:absolute after:-right-2 after:top-0 after:h-full after:w-2 after:content-[''] group-hover/message-actions:pointer-events-auto group-hover/message-actions:opacity-100 group-focus-within/message-actions:pointer-events-auto group-focus-within/message-actions:opacity-100">
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className={userActionButtonClass}
+        onClick={copyText}
+        aria-label={t(copied ? "aiAssistant.actions.copied" : "aiAssistant.actions.copy")}
+        title={t(copied ? "aiAssistant.actions.copied" : "aiAssistant.actions.copy")}
+      >
+        {copied ? <Check className={userActionIconClass} /> : <Copy className={userActionIconClass} />}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className={userActionButtonClass}
+        onClick={speak}
+        disabled={!canSpeak}
+        aria-label={t("aiAssistant.actions.readAloud")}
+        title={t("aiAssistant.actions.readAloud")}
+      >
+        <Volume2 className={userActionIconClass} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className={userActionButtonClass}
+        onClick={() => onOpenDetail(message)}
+        aria-label={t("aiAssistant.actions.details")}
+        title={t("aiAssistant.actions.details")}
+      >
+        <Maximize2 className={userActionIconClass} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className={userActionButtonClass}
+        onClick={() => onTogglePin(message.id)}
+        aria-label={t(pinned ? "aiAssistant.actions.unpin" : "aiAssistant.actions.pin")}
+        title={t(pinned ? "aiAssistant.actions.unpin" : "aiAssistant.actions.pin")}
+      >
+        {pinned ? <PinOff className={userActionIconClass} /> : <Pin className={userActionIconClass} />}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className={userActionButtonClass}
+        onClick={() => onDelete(message.id)}
+        aria-label={t("aiAssistant.actions.delete")}
+        title={t("aiAssistant.actions.delete")}
+      >
+        <X className={userActionIconClass} />
+      </Button>
+    </div>
+  );
+  const assistantActions = presentation.showAssistantActions && (
     <div
-      className={cn(
-        isUser
-          ? "pointer-events-none absolute right-[calc(100%+8px)] top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 whitespace-nowrap rounded-full border border-border/70 bg-background/85 px-1 py-0.5 text-foreground/75 opacity-0 shadow-sm backdrop-blur transition-opacity after:absolute after:-right-2 after:top-0 after:h-full after:w-2 after:content-[''] group-hover/message-actions:pointer-events-auto group-hover/message-actions:opacity-100 group-focus-within/message-actions:pointer-events-auto group-focus-within/message-actions:opacity-100"
-          : "mt-2 flex items-center gap-1 text-muted-foreground/70",
-      )}
+      className="-ml-1 mt-1.5 flex h-7 items-center gap-0.5 text-muted-foreground"
+      role="group"
+      aria-label={t("aiAssistant.actions.label")}
     >
       <Button
         variant="ghost"
         size="icon-xs"
-        className={cn("opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100", isUser && userActionButtonClass)}
+        className={actionButtonClass}
         onClick={copyText}
-        aria-label="Copy"
+        aria-label={t(copied ? "aiAssistant.actions.copied" : "aiAssistant.actions.copy")}
+        title={t(copied ? "aiAssistant.actions.copied" : "aiAssistant.actions.copy")}
       >
-        <Copy className={cn("size-3.5", isUser && userActionIconClass)} />
+        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
       </Button>
       <Button
         variant="ghost"
         size="icon-xs"
-        className={cn("opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100", isUser && userActionButtonClass)}
+        className={actionButtonClass}
         onClick={speak}
-        aria-label="Speak"
+        disabled={!canSpeak}
+        aria-label={t("aiAssistant.actions.readAloud")}
+        title={t("aiAssistant.actions.readAloud")}
       >
-        <Volume2 className={cn("size-3.5", isUser && userActionIconClass)} />
+        <Volume2 className="size-3.5" />
       </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        className={cn("opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100", isUser && userActionButtonClass)}
-        onClick={() => onOpenDetail(message)}
-        aria-label="Details"
-      >
-        <Maximize2 className={cn("size-3.5", isUser && userActionIconClass)} />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        className={cn("opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100", isUser && userActionButtonClass)}
-        onClick={() => onTogglePin(message.id)}
-        aria-label={pinned ? "Unpin" : "Pin"}
-      >
-        {pinned ? <PinOff className={cn("size-3.5", isUser && userActionIconClass)} /> : <Pin className={cn("size-3.5", isUser && userActionIconClass)} />}
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        className={cn("opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100", isUser && userActionButtonClass)}
-        onClick={() => onDelete(message.id)}
-        aria-label="Delete"
-      >
-        <X className={cn("size-3.5", isUser && userActionIconClass)} />
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className={actionButtonClass}
+            aria-label={t("aiAssistant.actions.more")}
+            title={t("aiAssistant.actions.more")}
+          >
+            <Ellipsis className="size-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          sideOffset={4}
+          className="min-w-40 border-border/80 bg-popover/95 p-1 shadow-xl backdrop-blur-xl"
+        >
+          <DropdownMenuItem onSelect={() => onOpenDetail(message)}>
+            <Maximize2 />
+            {t("aiAssistant.actions.details")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onTogglePin(message.id)}>
+            {pinned ? <PinOff /> : <Pin />}
+            {t(pinned ? "aiAssistant.actions.unpin" : "aiAssistant.actions.pin")}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+            onSelect={() => onDelete(message.id)}
+          >
+            <X />
+            {t("aiAssistant.actions.delete")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 
@@ -1261,10 +1312,10 @@ const MessageBubble = memo(function MessageBubble({
           <div className="group/message-actions">
             <div
               className={cn(
-                "relative rounded-[14px] border-0 bg-white/[0.12] px-4 py-2.5 text-sm leading-6 text-foreground shadow-none",
+                "relative rounded-[14px] border-0 bg-white/[0.07] px-4 py-2.5 text-sm leading-6 text-foreground shadow-none",
               )}
             >
-              {actions}
+              {userActions}
               <AttachmentList attachments={message.attachments} align="end" />
               {displayText && (
                 <div className="whitespace-pre-wrap break-words">{displayText}</div>
@@ -1278,114 +1329,54 @@ const MessageBubble = memo(function MessageBubble({
   }
 
   return (
-    <div className={cn("flex items-start gap-3", isUser ? "justify-end" : "justify-start")}>
-      {!isUser && (
-        <ChatAvatarFrame
-          role={message.role}
-          label={message.displayName || t("aiAssistant.title")}
-          streaming={streaming}
-        />
-      )}
-      <div className={cn("flex min-w-0 flex-1", isUser ? "justify-end" : "justify-start")}>
+    <div className="flex items-start justify-start">
+      <div className="flex min-w-0 flex-1 flex-col items-start">
         <article
           className={cn(
-            "group relative text-sm leading-6 shadow-none",
-            blocks.length > 0 && !isUser && !isTool
-              ? "w-full min-w-0 overflow-visible"
-              : "w-fit overflow-hidden",
-            isTool
+            "relative w-full min-w-0 text-sm leading-6 shadow-none",
+            presentation.surface === "tool"
               ? "max-w-[86%] rounded-[14px] border border-amber-500/20 bg-amber-500/8 px-4 pb-3 pt-2 text-card-foreground"
-              : isUser
-                ? "max-w-[86%] rounded-[14px] bg-muted px-4 pb-3 pt-2 text-foreground"
-                : "max-w-full rounded-[14px] border border-white/[0.08] bg-transparent px-4 pb-3 pt-2 text-foreground",
+              : presentation.surface === "system"
+                ? "max-w-[86%] rounded-[12px] border border-border/70 bg-muted/25 px-3 py-2 text-muted-foreground"
+                : presentation.surface === "error"
+                  ? "max-w-full rounded-[12px] border border-red-400/20 bg-red-400/[0.06] px-3 py-2.5 text-foreground"
+                  : "max-w-full text-foreground",
           )}
         >
-        <div className="pointer-events-none absolute right-1.5 top-1.5 z-10 flex translate-y-0.5 items-center gap-0.5 rounded-full border border-border/70 bg-background/85 px-1 py-0.5 opacity-0 shadow-sm backdrop-blur transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="opacity-70 hover:opacity-100"
-            onClick={copyText}
-            aria-label="Copy"
-          >
-            <Copy className="size-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="opacity-70 hover:opacity-100"
-            onClick={speak}
-            aria-label="Speak"
-          >
-            <Volume2 className="size-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="opacity-70 hover:opacity-100"
-            onClick={() => onOpenDetail(message)}
-            aria-label="Details"
-          >
-            <Maximize2 className="size-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="opacity-70 hover:opacity-100"
-            onClick={() => onTogglePin(message.id)}
-            aria-label={pinned ? "Unpin" : "Pin"}
-          >
-            {pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="opacity-70 hover:opacity-100"
-            onClick={() => onDelete(message.id)}
-            aria-label="Delete"
-          >
-            <X className="size-3" />
-          </Button>
-        </div>
-        {(isTool || (message.displayName && !isUser)) && (
-          <div className="mb-1 flex items-center gap-2 pr-28">
-            {isTool ? (
-              <Badge variant="outline" className="h-5 rounded-md px-1.5 text-[10px] uppercase">
-                {isHistoricalTool ? t("aiAssistant.historyTool") : t("aiAssistant.tool")}
-              </Badge>
-            ) : message.displayName && !isUser ? (
-              <div className="text-[11px] font-medium text-muted-foreground">
-                {message.displayName}
-              </div>
-            ) : null}
-          </div>
-        )}
-        <AttachmentList attachments={message.attachments} />
-        {shouldWaitForStructuredRender ? (
-          <div className="flex items-center gap-2 py-1 text-sm text-muted-foreground" aria-live="polite">
-            <span>{t("aiAssistant.waitingStructuredRender")}</span>
-            <DotsIndicator />
-          </div>
-        ) : (
-          <>
-            {displayText && (
-              isErrorReply && !isUser && !isTool
-                ? <HighlightedErrorText text={displayText} />
-                : isCompletionNotice && !isUser && !isTool
-                  ? <HighlightedCompletionText text={displayText} />
-                  : <MessageText text={displayText} markdown={!isUser && !isTool} />
-            )}
-            <StructuredRenderer blocks={blocks} onOpenMedia={onOpenMedia} />
-          </>
-        )}
+          {(isTool || (message.displayName && !isUser)) && (
+            <div className="mb-1 flex items-center gap-2">
+              {isTool ? (
+                <Badge variant="outline" className="h-5 rounded-md px-1.5 text-[10px] uppercase">
+                  {isHistoricalTool ? t("aiAssistant.historyTool") : t("aiAssistant.tool")}
+                </Badge>
+              ) : message.displayName && !isUser ? (
+                <div className="text-[11px] font-medium text-muted-foreground">
+                  {message.displayName}
+                </div>
+              ) : null}
+            </div>
+          )}
+          <AttachmentList attachments={message.attachments} />
+          {shouldWaitForStructuredRender ? (
+            <div className="flex items-center gap-2 py-1 text-sm text-muted-foreground" aria-live="polite">
+              <span>{t("aiAssistant.waitingStructuredRender")}</span>
+              <DotsIndicator />
+            </div>
+          ) : (
+            <>
+              {displayText && (
+                isErrorReply && !isUser && !isTool
+                  ? <HighlightedErrorText text={displayText} />
+                  : isCompletionNotice && !isUser && !isTool
+                    ? <HighlightedCompletionText text={displayText} />
+                    : <MessageText text={displayText} markdown={!isUser && !isTool} />
+              )}
+              <StructuredRenderer blocks={blocks} onOpenMedia={onOpenMedia} />
+            </>
+          )}
         </article>
+        {assistantActions}
       </div>
-      {isUser && (
-        <ChatAvatarFrame
-          role="user"
-          label={message.displayName}
-        />
-      )}
     </div>
   );
 });
@@ -1884,8 +1875,11 @@ function SearchBar({
   }, []);
 
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-4 py-2">
-      <Search className="size-4 shrink-0 text-muted-foreground" />
+    <div
+      role="search"
+      className="backdrop-blur-tap pointer-events-auto flex h-10 w-[min(420px,calc(100vw-32px))] max-w-full items-center gap-2 rounded-xl border border-[var(--ui-border-soft)] bg-[var(--ui-surface-panel)] px-2.5 shadow-[var(--ui-shadow-panel)] transition-[border-color,background-color,box-shadow] duration-[var(--duration-fast)] ease-[var(--ease-out-quint)] focus-within:border-[var(--ui-border-strong)]"
+    >
+      <Search className="size-4 shrink-0 text-muted-foreground/80" aria-hidden="true" />
       <Input
         ref={inputRef}
         value={query}
@@ -1894,17 +1888,65 @@ function SearchBar({
           if (event.key === "Escape") onClose();
         }}
         placeholder={t("aiAssistant.search")}
-        className="h-7 border-0 bg-transparent text-sm shadow-none focus-visible:ring-0"
+        aria-label={t("aiAssistant.search")}
+        className="h-8 border-0 bg-transparent px-0 text-sm shadow-none placeholder:text-muted-foreground/65 focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
       />
-      {query && (
-        <Button variant="ghost" size="icon" className="size-6" onClick={() => onChange("")}>
-          <X className="size-3" />
-        </Button>
-      )}
-      <Button variant="ghost" size="icon" className="size-6" onClick={onClose}>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7 shrink-0 rounded-md text-muted-foreground hover:bg-white/[0.07] hover:text-foreground"
+        onClick={onClose}
+        aria-label={t("aiAssistant.closeSearch")}
+        title={t("aiAssistant.closeSearch")}
+      >
         <X className="size-4" />
       </Button>
     </div>
+  );
+}
+
+function SearchBarPortal({
+  anchorId,
+  ...props
+}: ComponentProps<typeof SearchBar> & { anchorId: string }) {
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const anchor = document.getElementById(anchorId);
+    if (!anchor) return undefined;
+
+    const updatePosition = () => {
+      const rect = anchor.getBoundingClientRect();
+      setPosition((current) => {
+        const next = { left: rect.left, top: rect.top };
+        return current?.left === next.left && current.top === next.top ? current : next;
+      });
+    };
+
+    updatePosition();
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(updatePosition);
+    resizeObserver?.observe(anchor);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchorId]);
+
+  if (!position) return null;
+  return createPortal(
+    <div
+      className="pointer-events-none fixed z-40 -translate-x-1/2"
+      style={{ left: position.left, top: position.top }}
+    >
+      <SearchBar {...props} />
+    </div>,
+    document.body,
   );
 }
 
@@ -2578,18 +2620,13 @@ export function SuperChatPanel({
     ),
   );
   const currentStreamingAssistantId =
-    deferStructuredRender && lastConversationalMessage?.role === "assistant"
+    chat.busy
+    && lastConversationalMessage?.role === "assistant"
+    && (!chat.activeTurnId || lastConversationalMessage.turnId === chat.activeTurnId)
       ? lastConversationalMessage.id
       : null;
   const isCurrentStreamingAssistantMessage = (message: ChatMessage): boolean =>
     message.role === "assistant" && message.id === currentStreamingAssistantId;
-  const isStreamingAssistantMessage = (message: ChatMessage): boolean =>
-    chat.busy
-    && message.role === "assistant"
-    && (
-      message.id === currentStreamingAssistantId
-      || (lastConversationalMessage?.role === "assistant" && message.id === lastConversationalMessage.id)
-    );
   const showWaitingIndicator =
     chat.busy
     && !chat.streamText.trim()
@@ -3134,6 +3171,17 @@ export function SuperChatPanel({
   };
 
   const isFreezoneLayout = variant === "freezone";
+  const closeMessageSearch = useCallback(() => {
+    setSearch("");
+    setSearchOpen(false);
+  }, []);
+  const toggleMessageSearch = useCallback(() => {
+    if (searchOpen) {
+      closeMessageSearch();
+      return;
+    }
+    setSearchOpen(true);
+  }, [closeMessageSearch, searchOpen]);
 
   return (
     <div className={cn("relative flex h-full min-h-0 overflow-hidden bg-background", isFreezoneLayout && "bg-transparent")}>
@@ -3141,12 +3189,12 @@ export function SuperChatPanel({
         <HeaderControlPortal
           chat={chat}
           searchOpen={searchOpen}
-          onToggleSearch={() => setSearchOpen((value) => !value)}
+          onToggleSearch={toggleMessageSearch}
         />
       )}
       <section className="relative z-10 flex min-w-0 flex-1 flex-col">
         {isFreezoneLayout && (
-          <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-white/[0.06] bg-black/[0.16] px-3 py-1 backdrop-blur-xl">
+          <div className="relative flex min-h-9 shrink-0 items-center gap-2 border-b border-white/[0.06] bg-black/[0.16] px-3 py-1 backdrop-blur-xl">
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <div className="truncate text-sm font-medium text-foreground">
                 {t("freezone.chat.title")}
@@ -3172,7 +3220,7 @@ export function SuperChatPanel({
               chat={chat}
               compact
               searchOpen={searchOpen}
-              onToggleSearch={() => setSearchOpen((value) => !value)}
+              onToggleSearch={toggleMessageSearch}
             />
             {onRequestClose && (
               <Button
@@ -3187,6 +3235,10 @@ export function SuperChatPanel({
                 <X className="size-4" />
               </Button>
             )}
+            <div
+              id="freezone-superchat-search-anchor"
+              className="pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2"
+            />
           </div>
         )}
         {chat.error && (
@@ -3210,11 +3262,21 @@ export function SuperChatPanel({
         />
 
         {searchOpen && (
-          <SearchBar
-            query={search}
-            onChange={setSearch}
-            onClose={() => setSearchOpen(false)}
-          />
+          isFreezoneLayout ? (
+            <SearchBarPortal
+              anchorId="freezone-superchat-search-anchor"
+              query={search}
+              onChange={setSearch}
+              onClose={closeMessageSearch}
+            />
+          ) : (
+            <SearchBarPortal
+              anchorId="superchat-search-anchor"
+              query={search}
+              onChange={setSearch}
+              onClose={closeMessageSearch}
+            />
+          )
         )}
 
         <div className="relative min-h-0 flex-1">
@@ -3222,7 +3284,7 @@ export function SuperChatPanel({
             ref={scrollRef}
             className={cn(
               "h-full overflow-y-auto px-3 py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-              isFreezoneLayout && "px-2.5 py-3",
+              isFreezoneLayout && "px-4 py-3",
             )}
           >
             {isChatInitializing ? (
@@ -3261,7 +3323,7 @@ export function SuperChatPanel({
                       onDelete={chat.deleteMessage}
                       onTogglePin={chat.togglePin}
                       deferStructuredRender={deferStructuredRender && isCurrentStreamingAssistantMessage(message)}
-                      streaming={isStreamingAssistantMessage(message)}
+                      streaming={isCurrentStreamingAssistantMessage(message)}
                     />
                   </div>
                 ))}
@@ -3280,7 +3342,7 @@ export function SuperChatPanel({
                     onDelete={() => undefined}
                     onTogglePin={() => undefined}
                     deferStructuredRender={deferStructuredRender}
-                    streaming={chat.busy}
+                    streaming
                   />
                 )}
               </div>

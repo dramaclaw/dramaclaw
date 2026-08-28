@@ -1180,6 +1180,34 @@ body.canvas-node-drag-focus [role="listbox"] {
   perspective: 800px;
 }
 
+.st-ai-media-card > div,
+.st-ai-media-card > div > div {
+  transition:
+    background-color var(--duration-fast) var(--ease-out-quint),
+    box-shadow var(--duration-fast) var(--ease-out-quint);
+}
+
+.st-ai-media-card img {
+  transition: filter var(--duration-fast) var(--ease-out-quint);
+}
+
+@media (hover: hover) {
+  .st-ai-media-card:hover > div,
+  .st-ai-media-card:focus-within > div {
+    background-color: var(--ui-border-strong);
+  }
+
+  .st-ai-media-card:hover > div > div,
+  .st-ai-media-card:focus-within > div > div {
+    box-shadow: inset 0 0 0 1px var(--ui-border-soft);
+  }
+
+  .st-ai-media-card:hover img,
+  .st-ai-media-card:focus-within img {
+    filter: brightness(1.09) saturate(1.04) contrast(1.01);
+  }
+}
+
 .st-unified-media-audio {
   height: 36px;
   color-scheme: dark;
@@ -1269,6 +1297,15 @@ button:hover .st-keyframe-video-play {
 @media (prefers-reduced-motion: reduce) {
   .canvas-spawn-plus-magnetic-button {
     transition-property: border-color, color, box-shadow;
+  }
+
+  .st-ai-media-card > div,
+  .st-ai-media-card > div > div {
+    transition: none;
+  }
+
+  .st-ai-media-card img {
+    transition: none;
   }
 }
 
