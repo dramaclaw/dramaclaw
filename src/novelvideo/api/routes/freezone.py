@@ -4483,22 +4483,40 @@ async def freezone_skills(user: dict = Depends(get_api_user)):
 # 图片处理：上传
 # ============================================================
 
+REFERENCE_FILE_MAX_BYTES = 100 * 1024 * 1024
+_UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 
-@router.post("/projects/{project}/freezone/upload", tags=[TAG_FREEZONE_MEDIA])
-async def freezone_upload(
+
+async def _read_upload_contents(
+    file: UploadFile,
+    *,
+    max_bytes: int | None = None,
+) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(_UPLOAD_READ_CHUNK_BYTES):
+        total += len(chunk)
+        if max_bytes is not None and total > max_bytes:
+            raise HTTPException(413, "reference file must be 100 MB or smaller")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _save_freezone_upload(
     project: str,
-    file: Annotated[UploadFile, File()],
-    user: dict = Depends(get_api_user),
-):
-    """把外部资源上传保存到 `freezone/_uploads/`。"""
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+    file: UploadFile,
+    user: dict,
+    *,
+    max_bytes: int | None = None,
+) -> dict[str, Any]:
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user
     )
     target_dir = uploads_dir(project_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_upload_filename(file.filename)
     target = target_dir / filename
-    contents = await file.read()
+    contents = await _read_upload_contents(file, max_bytes=max_bytes)
     target.write_bytes(contents)
     rel = target.relative_to(project_dir).as_posix()
     return {
@@ -4509,6 +4527,31 @@ async def freezone_upload(
             "size": len(contents),
         },
     }
+
+
+@router.post("/projects/{project}/freezone/upload", tags=[TAG_FREEZONE_MEDIA])
+async def freezone_upload(
+    project: str,
+    file: Annotated[UploadFile, File()],
+    user: dict = Depends(get_api_user),
+):
+    """把外部资源上传保存到 `freezone/_uploads/`。"""
+    return await _save_freezone_upload(project, file, user)
+
+
+@router.post("/projects/{project}/freezone/reference-file-upload", tags=[TAG_FREEZONE_MEDIA])
+async def freezone_reference_file_upload(
+    project: str,
+    file: Annotated[UploadFile, File()],
+    user: dict = Depends(get_api_user),
+):
+    """保存视频模型参考文件，并限制为不超过 100 MB。"""
+    return await _save_freezone_upload(
+        project,
+        file,
+        user,
+        max_bytes=REFERENCE_FILE_MAX_BYTES,
+    )
 
 
 @router.post("/projects/{project}/freezone/three-d-viewer/screenshot", tags=[TAG_FREEZONE_MEDIA])
@@ -7804,6 +7847,8 @@ def _catalog_reference_limits(
     image_default: int,
     video_default: int,
     audio_default: int,
+    file_default: int = 0,
+    link_default: int = 0,
 ) -> dict[str, int]:
     def _limit(key: str, default: int) -> int:
         value = capabilities.get(key) if capabilities else None
@@ -7813,6 +7858,8 @@ def _catalog_reference_limits(
         "image": _limit("referenceImageMax", image_default),
         "video": _limit("referenceVideoMax", video_default),
         "audio": _limit("referenceAudioMax", audio_default),
+        "file": _limit("referenceFileMax", file_default),
+        "link": _limit("referenceLinkMax", link_default),
     }
 
 
@@ -8901,7 +8948,7 @@ async def freezone_video_omni_gen(
 ):
     """视频处理：全能参考文生视频。
 
-    支持文本、图像、视频、音频混合输入，当前默认走 Seedance 2.0。
+    支持文本、图像、视频、音频、文件和公开网页链接混合输入。
     """
     ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
         project, user
@@ -8943,6 +8990,8 @@ async def freezone_video_omni_gen(
         image_default=9,
         video_default=3,
         audio_default=3,
+        file_default=0,
+        link_default=0,
     )
     try:
         validate_omni_reference_limits(
@@ -8950,6 +8999,8 @@ async def freezone_video_omni_gen(
             image_max=reference_limits["image"],
             video_max=reference_limits["video"],
             audio_max=reference_limits["audio"],
+            file_max=reference_limits["file"],
+            link_max=reference_limits["link"],
             total_max=(
                 sum(reference_limits.values())
                 if capabilities
@@ -8959,6 +9010,8 @@ async def freezone_video_omni_gen(
                         "referenceImageMax",
                         "referenceVideoMax",
                         "referenceAudioMax",
+                        "referenceFileMax",
+                        "referenceLinkMax",
                     )
                 )
                 else 12
@@ -8968,13 +9021,45 @@ async def freezone_video_omni_gen(
         raise HTTPException(400, str(exc)) from exc
     reference_items: list[dict[str, str]] = []
     for item in raw_reference_items:
-        path_list = _resolve_url_list(project_dir, [str(item.get("url") or "")])
-        if not path_list:
+        reference_type = str(item.get("type") or "image")
+        reference_url = str(item.get("url") or "").strip()
+        if not reference_url:
             raise HTTPException(400, "reference url is required")
+        if reference_type == "link":
+            parsed = urlsplit(reference_url)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+            ):
+                raise HTTPException(400, "reference link must be a public HTTP/HTTPS URL")
+            resolved_reference = reference_url
+        elif reference_type == "file" and reference_url.startswith(("http://", "https://")):
+            resolved_reference = reference_url
+        else:
+            path_list = _resolve_url_list(project_dir, [reference_url])
+            if not path_list:
+                raise HTTPException(400, "reference url is required")
+            resolved_reference = path_list[0]
+
+        if reference_type == "file":
+            allowed_types = capabilities.get("referenceFileTypes") if capabilities else None
+            if isinstance(allowed_types, list) and allowed_types:
+                extension = Path(unquote(urlsplit(reference_url).path)).suffix.lower().lstrip(".")
+                normalized_types = {
+                    str(value).strip().lower().lstrip(".") for value in allowed_types
+                }
+                if extension not in normalized_types:
+                    raise HTTPException(
+                        400,
+                        "reference file type is not supported; expected one of: "
+                        + ", ".join(str(value) for value in allowed_types),
+                    )
         reference_items.append(
             {
-                "type": str(item.get("type") or "image"),
-                "path": path_list[0],
+                "type": reference_type,
+                "path": resolved_reference,
                 "role": str(item.get("role") or ""),
             }
         )

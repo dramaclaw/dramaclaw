@@ -3863,6 +3863,17 @@
         "videoEdit": "视频编辑"
       },
       "placeholder": "根据文字描述生成视频。",
+      "referenceDocument": {
+        "file": "参考文件",
+        "removeFile": "移除参考文件",
+        "linkPlaceholder": "公网 URL",
+        "unsupportedType": "文件类型不受支持，可选：{{types}}",
+        "fileTooLarge": "参考文件不能超过 100MB（当前 {{size}}MB）",
+        "fileUnsupported": "该模型不支持文件参考",
+        "linkUnsupported": "该模型不支持网页链接参考",
+        "invalidLink": "请输入有效的 HTTP/HTTPS 公开网页链接",
+        "fileLinkConflict": "参考文件和网页链接不能同时使用"
+      },
       "submit": "提交",
       "submitBusy": "生成中，请稍候",
       "partialBatchFailed": "已生成 {{ok}}/{{total}} 条，其余生成失败",
@@ -4575,6 +4586,9 @@
         "referenceImageMax": "参考图片上限",
         "referenceVideoMax": "参考视频上限",
         "referenceAudioMax": "参考音频上限",
+        "referenceFileMax": "参考文件上限",
+        "referenceLinkMax": "参考链接上限",
+        "referenceFileTypes": "文件类型（逗号分隔）",
         "referenceAudioMinSeconds": "单条音频最短（秒）",
         "referenceAudioMaxSeconds": "单条音频最长（秒）",
         "referenceAudioTotalMinSeconds": "音频合计最短（秒）",

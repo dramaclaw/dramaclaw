@@ -436,6 +436,30 @@ function hasConfiguredReferenceCaps(model: ModelOption | null | undefined): bool
   );
 }
 
+function referenceFileExtension(value: string): string {
+  try {
+    const origin = typeof window === "undefined" ? "http://localhost" : window.location.origin;
+    const pathname = new URL(value, origin).pathname;
+    return pathname.split(".").pop()?.toLowerCase() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function isValidReferenceLink(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      Boolean(parsed.hostname) &&
+      !parsed.username &&
+      !parsed.password
+    );
+  } catch {
+    return false;
+  }
+}
+
 function sceneOptimizeOptionsForModel(
   model: {
     id?: string;
@@ -1938,7 +1962,8 @@ export const VideoNode = memo(
       genMode === "videoEdit"
         ? upstreamCounts.videos > 0
         : genMode === "allReference"
-          ? upstreamCounts.images + upstreamCounts.videos + upstreamCounts.audios > 0
+          ? upstreamCounts.images + upstreamCounts.videos + upstreamCounts.audios > 0 ||
+            Boolean(data.referenceFileUrl || data.referenceLink?.trim())
           : upstreamCounts.images > 0;
     // 提交前守卫：当前模型/模式无法消费已接入素材（视频/音频被静默丢、非 2.0 非
     // HappyHorse 多图会被后端 400）时给出理由并禁用提交，替代静默丢素材 / 提交 400。
@@ -1947,11 +1972,37 @@ export const VideoNode = memo(
       selectedVideoModel,
       upstreamCounts,
     );
-    const selectedModelReferenceError = selectedVideoModelReferenceDisabledReason(
+    const upstreamReferenceError = selectedVideoModelReferenceDisabledReason(
       selectedVideoModel,
       upstreamCounts,
       genMode,
     );
+    const selectedModelReferenceError = (() => {
+      if (upstreamReferenceError || genMode !== "allReference") return upstreamReferenceError;
+      const fileUrl = data.referenceFileUrl?.trim() ?? "";
+      const link = data.referenceLink?.trim() ?? "";
+      if (fileUrl && link) return t("node.videoNode.referenceDocument.fileLinkConflict");
+      if (fileUrl && (selectedVideoModel?.referenceFileMax ?? 0) < 1) {
+        return t("node.videoNode.referenceDocument.fileUnsupported");
+      }
+      if (link && (selectedVideoModel?.referenceLinkMax ?? 0) < 1) {
+        return t("node.videoNode.referenceDocument.linkUnsupported");
+      }
+      if (link && !isValidReferenceLink(link)) {
+        return t("node.videoNode.referenceDocument.invalidLink");
+      }
+      const allowedTypes = selectedVideoModel?.referenceFileTypes ?? [];
+      if (
+        fileUrl &&
+        allowedTypes.length > 0 &&
+        !allowedTypes.includes(referenceFileExtension(fileUrl))
+      ) {
+        return t("node.videoNode.referenceDocument.unsupportedType", {
+          types: allowedTypes.join(", "),
+        });
+      }
+      return null;
+    })();
     // 错误态重试的计费闸门。估价链随操作面板下沉后（选中才挂载、未选中不发请求），
     // 失败态的 RegenerateButton 成了唯一在未选中时也能提交的入口——若不在主体拦截，
     // 计费规则未配置时重试会放行一次注定被后端拒绝的请求。这里用一个仅错误态启用
@@ -2414,6 +2465,20 @@ export const VideoNode = memo(
               }
             }
           }
+          if (data.referenceFileUrl?.trim()) {
+            references.push({
+              type: "file",
+              url: data.referenceFileUrl.trim(),
+              role: "文件参考",
+              label: data.referenceFileName ?? "",
+            });
+          } else if (data.referenceLink?.trim()) {
+            references.push({
+              type: "link",
+              url: data.referenceLink.trim(),
+              role: "网页参考",
+            });
+          }
           if (references.length === 0) {
             console.warn("[video-node] omni-gen submit without any reference");
             updateNodeData(id, {
@@ -2644,6 +2709,11 @@ export const VideoNode = memo(
       cameraMovementId,
       cameraMovementPreset,
       count,
+      data.modelParams,
+      data.referenceFileName,
+      data.referenceFileUrl,
+      data.referenceLink,
+      data.referenceOrder,
       durationBounds,
       durationSec,
       generateAudio,
