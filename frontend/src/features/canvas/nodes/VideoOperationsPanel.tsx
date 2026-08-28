@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -15,15 +16,19 @@ import {
   ChevronDown,
   ChevronUp,
   Film,
+  FileText,
   Languages,
   Library,
+  Link as LinkIcon,
   Loader2,
   Music,
   Pause,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
 import {
   CANVAS_NODE_TYPES,
@@ -101,6 +106,7 @@ import { useCanvasStore } from "@/stores/canvasStore";
 import {
   fetchFreezoneTextTranslateResult,
   submitFreezoneTextTranslate,
+  uploadFreezoneReferenceFile,
   type FreezoneVideoAspectRatio,
 } from "@/api/ops";
 import { awaitTaskCompletion } from "@/api/tasks";
@@ -290,6 +296,11 @@ export function VideoOperationsPanel({
     // 与 inputRef 分开:那个是「替换本节点自身的视频」(单选、只收视频),
     // 这个是「添加上游外部素材」(多选、收图片/视频/音频)。
     const externalAssetInputRef = useRef<HTMLInputElement>(null);
+    const referenceFileInputRef = useRef<HTMLInputElement>(null);
+    const toolbarContentRef = useRef<HTMLDivElement>(null);
+    const [isUploadingReferenceFile, setIsUploadingReferenceFile] = useState(false);
+    const [referenceLinkDraft, setReferenceLinkDraft] = useState(data.referenceLink ?? "");
+    const [referencePanelWidth, setReferencePanelWidth] = useState<number | null>(null);
     const [isTranslatingPrompt, setIsTranslatingPrompt] = useState(false);
     const [isCharacterLibraryOpen, setIsCharacterLibraryOpen] = useState(false);
     // Local draft + composition guard so IME (中文输入法) candidates stop being
@@ -302,6 +313,60 @@ export function VideoOperationsPanel({
       if (isComposingRef.current) return;
       setPromptDraft(prompt);
     }, [prompt]);
+    useEffect(() => {
+      setReferenceLinkDraft(data.referenceLink ?? "");
+    }, [data.referenceLink]);
+
+    const supportsReferenceFile = (selectedVideoModel?.referenceFileMax ?? 0) > 0;
+    const supportsReferenceLink = (selectedVideoModel?.referenceLinkMax ?? 0) > 0;
+    const referenceFileTypes = selectedVideoModel?.referenceFileTypes ?? [];
+    const referenceFileAccept = referenceFileTypes.length > 0
+      ? referenceFileTypes.map((extension) => `.${extension.replace(/^\./, "")}`).join(",")
+      : undefined;
+
+    const handleReferenceFile = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file || isUploadingReferenceFile) return;
+      const maxReferenceFileBytes = 100 * 1024 * 1024;
+      if (file.size > maxReferenceFileBytes) {
+        toast.error(t("node.videoNode.referenceDocument.fileTooLarge", {
+          size: (file.size / 1024 / 1024).toFixed(1),
+        }));
+        return;
+      }
+      const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+      if (referenceFileTypes.length > 0 && !referenceFileTypes.includes(extension)) {
+        toast.error(t("node.videoNode.referenceDocument.unsupportedType", {
+          types: referenceFileTypes.join(", "),
+        }));
+        return;
+      }
+      const project = readUrl().project;
+      if (!project) return;
+      setIsUploadingReferenceFile(true);
+      try {
+        const uploaded = await uploadFreezoneReferenceFile(project, file);
+        updateNodeData(id, {
+          referenceFileUrl: uploaded.url,
+          referenceFileName: uploaded.filename || file.name,
+          referenceLink: null,
+        });
+        setReferenceLinkDraft("");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : t("common.error"));
+      } finally {
+        setIsUploadingReferenceFile(false);
+      }
+    }, [id, isUploadingReferenceFile, referenceFileTypes, t, updateNodeData]);
+
+    const commitReferenceLink = useCallback(() => {
+      const value = referenceLinkDraft.trim();
+      updateNodeData(id, {
+        referenceLink: value || null,
+        ...(value ? { referenceFileUrl: null, referenceFileName: null } : {}),
+      });
+    }, [id, referenceLinkDraft, updateNodeData]);
     // 卸载前的 IME 合成兜底：合成进行中取消选中会直接卸载本面板，
     // onCompositionEnd 再也没有机会触发，最新草稿只存在于本地 state。
     // 用 ref 镜像 draft，卸载 cleanup 里发现仍在合成就把它落回 data.prompt。
@@ -648,6 +713,43 @@ export function VideoOperationsPanel({
     // 收起态浮动面板固定基础尺寸；放大用居中弹窗（见下方 OperationPanelShell）。
     const panelHeight = OPERATIONS_PANEL_HEIGHT;
     const panelOverhang = OPERATIONS_PANEL_OVERHANG;
+    const showReferenceDocumentControls =
+      genMode === "allReference" &&
+      (supportsReferenceFile ||
+        supportsReferenceLink ||
+        Boolean(data.referenceFileUrl) ||
+        Boolean(referenceLinkDraft.trim()));
+    useLayoutEffect(() => {
+      if (!showReferenceDocumentControls) {
+        setReferencePanelWidth(null);
+        return;
+      }
+      // The same toolbar is portalled into a constrained modal while expanded.
+      // Measuring there overwrites the inline panel's natural width with the
+      // modal layout width; on collapse that stale value can shrink the panel
+      // to only a few controls. Re-measure after it is back under the node.
+      if (expanded) return;
+      const content = toolbarContentRef.current;
+      if (!content) return;
+      const updateWidth = () => {
+        const contentWidth = content.scrollWidth;
+        if (contentWidth <= 0) return;
+        // Include toolbar padding plus a small buffer for borders and fractional
+        // canvas scaling, otherwise an exact fit can still show a scrollbar.
+        // scrollWidth is intentional: offsetWidth reports the width imposed by
+        // the current panel and can feed a collapsed width back into itself.
+        const nextWidth = Math.ceil(contentWidth + 76);
+        setReferencePanelWidth((current) => current === nextWidth ? current : nextWidth);
+      };
+      updateWidth();
+      if (typeof ResizeObserver === "undefined") return;
+      const observer = new ResizeObserver(updateWidth);
+      observer.observe(content);
+      return () => observer.disconnect();
+    }, [expanded, showReferenceDocumentControls]);
+    const adaptivePanelWidth = referencePanelWidth == null
+      ? "min(1040px, calc(100vw - 48px))"
+      : `min(${referencePanelWidth}px, calc(100vw - 48px))`;
 
     return (
       <>
@@ -657,8 +759,11 @@ export function VideoOperationsPanel({
               inlineClassName={`nodrag absolute z-30 flex flex-col rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS}`}
               inlineStyle={{
                 top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)`,
-                left: -panelOverhang,
-                right: -panelOverhang,
+                left: showReferenceDocumentControls
+                  ? `calc((100% - ${adaptivePanelWidth}) / 2)`
+                  : -panelOverhang,
+                right: showReferenceDocumentControls ? "auto" : -panelOverhang,
+                width: showReferenceDocumentControls ? adaptivePanelWidth : undefined,
                 height: panelHeight,
               }}
               modalStyle={{
@@ -672,6 +777,7 @@ export function VideoOperationsPanel({
                 className="absolute right-2 top-2 z-20"
               />
               <div className="flex shrink-0 items-center overflow-x-auto px-3 pb-2 pr-10 pt-3">
+                <div ref={toolbarContentRef} className="flex w-max shrink-0 items-center">
                 <div className="flex shrink-0 items-center gap-2">
                   <ReferencePickChip
                     nodeId={id}
@@ -715,6 +821,78 @@ export function VideoOperationsPanel({
                     nodeId={id}
                     onInsert={insertContextPaletteEntry}
                   />
+                </div>
+                {showReferenceDocumentControls && (
+                  <div className="ml-3 flex shrink-0 items-center gap-1.5">
+                    {(supportsReferenceFile || data.referenceFileUrl) && (
+                      <>
+                        <button
+                          type="button"
+                          title={t("node.videoNode.referenceDocument.file")}
+                          disabled={!supportsReferenceFile || isUploadingReferenceFile}
+                          onClick={() => referenceFileInputRef.current?.click()}
+                          className={NODE_CONTEXT_CONTROL_TRIGGER_CLASS}
+                        >
+                          {isUploadingReferenceFile ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <FileText className="h-3.5 w-3.5" />
+                          )}
+                          <span className="max-w-32 truncate">
+                            {data.referenceFileName || t("node.videoNode.referenceDocument.file")}
+                          </span>
+                        </button>
+                        {data.referenceFileUrl && (
+                          <button
+                            type="button"
+                            title={t("node.videoNode.referenceDocument.removeFile")}
+                            onClick={() => updateNodeData(id, { referenceFileUrl: null, referenceFileName: null })}
+                            className={NODE_INLINE_ICON_BUTTON_CLASS}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {(supportsReferenceLink || referenceLinkDraft.trim()) && (
+                      <label className="flex h-7 w-44 items-center gap-1.5 rounded border border-white/15 bg-black/20 px-2 text-xs text-text-dark">
+                        <LinkIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                        <input
+                          type="url"
+                          value={referenceLinkDraft}
+                          placeholder={t("node.videoNode.referenceDocument.linkPlaceholder")}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setReferenceLinkDraft(value);
+                            updateNodeData(
+                              id,
+                              {
+                                referenceLink: value,
+                                ...(value.trim()
+                                  ? { referenceFileUrl: null, referenceFileName: null }
+                                  : {}),
+                              },
+                              { recordHistory: false },
+                            );
+                          }}
+                          onBlur={commitReferenceLink}
+                          onKeyDown={(event) => {
+                            event.stopPropagation();
+                            if (event.key === "Enter") event.currentTarget.blur();
+                          }}
+                          className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-text-muted/60"
+                        />
+                      </label>
+                    )}
+                    <input
+                      ref={referenceFileInputRef}
+                      type="file"
+                      accept={referenceFileAccept}
+                      className="hidden"
+                      onChange={handleReferenceFile}
+                    />
+                  </div>
+                )}
                 </div>
               </div>
 

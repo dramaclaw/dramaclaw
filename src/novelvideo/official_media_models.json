@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "catalogVersion": "2026.08.14.1",
+  "catalogVersion": "2026.08.27.1",
   "name": "DramaClaw CE official media models",
   "mediaModels": {
     "LingShan-G2": {
@@ -92,6 +92,80 @@
         "request": {"endpoint": "images/generations", "parameters": []},
         "ratioOptions": ["1:1", "9:16", "16:9", "4:3", "3:4", "2:3", "3:2", "5:4", "4:5", "21:9"],
         "resolutionOptions": ["1K", "2K", "4K"]
+      }
+    },
+    "wan3.0-video-prime": {
+      "provider": "newapi",
+      "upstreamModel": "wan3.0-video-prime",
+      "mediaType": "video",
+      "label": "Wan 3.0 Video Prime",
+      "enabled": true,
+      "sortOrder": 5,
+      "aliases": [],
+      "config": {
+        "request": {
+          "endpoint": "video/generations",
+          "parameters": [
+            {"key": "prompt_extend", "label": "智能改写", "control": "switch", "default": true, "requestPath": "metadata.prompt_extend"},
+            {"key": "seed", "label": "随机种子", "control": "number", "min": 0, "max": 2147483647, "requestPath": "metadata.seed"},
+            {"key": "watermark", "label": "生成水印", "control": "switch", "default": false, "requestPath": "metadata.watermark"}
+          ]
+        },
+        "minDuration": 2,
+        "maxDuration": 30,
+        "ratioOptions": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "resolutionOptions": ["480P", "720P", "1080P"],
+        "supportedModes": ["text_to_video", "image_to_video", "first_frame", "first_last_frame", "image_reference", "all_reference", "video_edit"],
+        "referenceImageMax": 10,
+        "referenceVideoMax": 5,
+        "referenceAudioMax": 5,
+        "referenceVideoMinSeconds": 1,
+        "referenceVideoMaxSeconds": 15,
+        "referenceVideoTotalMaxSeconds": 15,
+        "referenceAudioMinSeconds": 1,
+        "referenceAudioMaxSeconds": 15,
+        "referenceAudioTotalMaxSeconds": 15,
+        "referenceFileMax": 1,
+        "referenceLinkMax": 1,
+        "referenceFileTypes": ["docx", "doc", "xlsx", "xls", "pptx", "ppt", "pdf", "txt", "key", "pages", "numbers", "md"],
+        "supportsGenerateAudio": true
+      }
+    },
+    "wan3.0-video": {
+      "provider": "newapi",
+      "upstreamModel": "wan3.0-video",
+      "mediaType": "video",
+      "label": "Wan 3.0 Video",
+      "enabled": true,
+      "sortOrder": 6,
+      "aliases": [],
+      "config": {
+        "request": {
+          "endpoint": "video/generations",
+          "parameters": [
+            {"key": "prompt_extend", "label": "智能改写", "control": "switch", "default": true, "requestPath": "metadata.prompt_extend"},
+            {"key": "seed", "label": "随机种子", "control": "number", "min": 0, "max": 2147483647, "requestPath": "metadata.seed"},
+            {"key": "watermark", "label": "生成水印", "control": "switch", "default": false, "requestPath": "metadata.watermark"}
+          ]
+        },
+        "minDuration": 2,
+        "maxDuration": 30,
+        "ratioOptions": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "resolutionOptions": ["480P", "720P", "1080P"],
+        "supportedModes": ["text_to_video", "image_to_video", "first_frame", "first_last_frame", "image_reference", "all_reference", "video_edit"],
+        "referenceImageMax": 10,
+        "referenceVideoMax": 5,
+        "referenceAudioMax": 5,
+        "referenceVideoMinSeconds": 1,
+        "referenceVideoMaxSeconds": 15,
+        "referenceVideoTotalMaxSeconds": 15,
+        "referenceAudioMinSeconds": 1,
+        "referenceAudioMaxSeconds": 15,
+        "referenceAudioTotalMaxSeconds": 15,
+        "referenceFileMax": 1,
+        "referenceLinkMax": 1,
+        "referenceFileTypes": ["docx", "doc", "xlsx", "xls", "pptx", "ppt", "pdf", "txt", "key", "pages", "numbers", "md"],
+        "supportsGenerateAudio": true
       }
     },
     "seedance-2.0-fast": {

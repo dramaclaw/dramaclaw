@@ -681,6 +681,8 @@ def test_validate_omni_reference_limits_and_summary() -> None:
         "image_count": 9,
         "video_count": 3,
         "audio_count": 0,
+        "file_count": 0,
+        "link_count": 0,
         "total_count": 12,
     }
 
@@ -709,6 +711,32 @@ def test_validate_omni_reference_limits_and_summary() -> None:
             image_max=1,
             video_max=0,
             audio_max=0,
+            total_max=2,
+        )
+
+    validate_omni_reference_limits(
+        [
+            {"type": "image", "url": "/static/a.png"},
+            {"type": "file", "url": "/static/brief.pdf"},
+        ],
+        image_max=1,
+        video_max=0,
+        audio_max=0,
+        file_max=1,
+        link_max=1,
+        total_max=2,
+    )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        validate_omni_reference_limits(
+            [
+                {"type": "file", "url": "/static/brief.pdf"},
+                {"type": "link", "url": "https://example.com/brief"},
+            ],
+            image_max=0,
+            video_max=0,
+            audio_max=0,
+            file_max=1,
+            link_max=1,
             total_max=2,
         )
 
