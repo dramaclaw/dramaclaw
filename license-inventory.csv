@@ -442,6 +442,7 @@ frontend/src/__tests__/features/canvas/skill-connection-edges.test.ts,Elastic-2.
 frontend/src/__tests__/features/canvas/skill-i18n.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/skill-node-director-world.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/skill-node-parameters.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/snap-align-drag-frame-ordering.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/snap-align-index.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/snap-align-integration-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/snap-align-store.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

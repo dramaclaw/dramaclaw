@@ -99,7 +99,14 @@ describe("Piko 游戏中心", () => {
     expect(posterCardSource).not.toContain("hoverVideoVisible");
     expect(posterCardSource).toContain("onPointerEnter={playHoverPreview}");
     expect(posterCardSource).toContain("onPointerLeave={stopHoverPreview}");
-    expect(posterCardSource).toContain('preload="auto"');
+    // hover 视频是按需资源：打开游戏库会一次挂满六张卡，preload 必须是 none，
+    // 否则未 hover 也会预取约 5.9MiB。首帧由 poster 承担，加载交给 load()。
+    expect(posterCardSource).toContain('preload="none"');
+    expect(posterCardSource).not.toContain('preload="auto"');
+    expect(posterCardSource).not.toContain('preload="metadata"');
+    // load() 只在首次 hover 触发一次，重复 hover 不得打断进行中的加载。
+    expect(posterCardSource).toContain("hoverVideoLoadStartedRef");
+    expect(posterCardSource.match(/video\.load\(\)/g)).toHaveLength(1);
     expect(posterCardSource).toContain("video.currentTime = HOVER_VIDEO_FIRST_FRAME");
     expect(posterCardSource).not.toContain("group-hover:scale");
     expect(posterCardSource).not.toContain("group-focus-visible:scale");

@@ -162,6 +162,7 @@ function PikoGamePosterCard({
   const hoverVideoRef = useRef<HTMLVideoElement>(null);
   const hoverPreviewRequestedRef = useRef(false);
   const hoverVideoPreparedRef = useRef(false);
+  const hoverVideoLoadStartedRef = useRef(false);
 
   useEffect(
     () => () => {
@@ -175,7 +176,12 @@ function PikoGamePosterCard({
     if (!video) return;
     hoverPreviewRequestedRef.current = true;
     if (!hoverVideoPreparedRef.current) {
-      video.load();
+      // preload="none" 下首帧要等这次 load()。同一张卡反复进出只 load 一次——
+      // 重复调用会把正在进行的加载打断重来，鼠标来回蹭就永远备不好首帧。
+      if (!hoverVideoLoadStartedRef.current) {
+        hoverVideoLoadStartedRef.current = true;
+        video.load();
+      }
       return;
     }
     void video.play().catch(() => undefined);
@@ -211,7 +217,10 @@ function PikoGamePosterCard({
         muted
         loop
         playsInline
-        preload="auto"
+        // 六张卡在打开游戏库时一起挂载，激进的 preload 会让浏览器立刻预取约
+        // 5.9MiB 视频——用户一次都没 hover 也照付。首帧封面已由 poster 承担，
+        // 真正的加载推迟到 playHoverPreview 里显式 load()。
+        preload="none"
         onLoadedData={(event) => {
           const video = event.currentTarget;
           video.pause();
