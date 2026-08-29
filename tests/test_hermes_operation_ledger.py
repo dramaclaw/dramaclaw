@@ -265,7 +265,7 @@ def test_the_turn_settles_from_the_existing_finally() -> None:
 def test_persisting_and_settling_cannot_block_each_other() -> None:
     """A transcript failure must not strand the ledger, and vice versa."""
     source = _service_source()
-    assert "try:\n            await _settle_turn_operation()\n        finally:\n            persist_partial_reply()" in source, (
+    assert "try:\n            await _settle_turn_operation()\n        finally:\n            await persist_partial_reply()" in source, (
         "the two cleanup steps are not nested, so one failing skips the other"
     )
 
