@@ -1,373 +1,375 @@
-<div align="center">
-
-<!-- TBD: replace with official logo assets/logo.svg -->
-<h1>DramaClaw</h1>
-
-## Make Your Own DC.
-
-<p align="left">
-
-They say you're obsolete.<br/>
-Maybe it's the whole idea of "working for someone else" that's obsolete.<br/>
-<br/>
-In the age of AI, the real question isn't whether machines replace people.<br/>
-The real question is:<br/>
-Who owns the machines?<br/>
-Who owns the pipeline?<br/>
-Who owns industrialized productivity?<br/>
-<br/>
-If the answer is always Big Tech,<br/>
-then AI isn't empowerment.<br/>
-It's just a new wall.<br/>
-<br/>
-I'm Eric.<br/>
-<br/>
-This isn't a demo.<br/>
-Not a toy.<br/>
-Not a crippled edition.<br/>
-<br/>
-This is the industrialized drama-production line our own team runs every day.<br/>
-From script to storyboard, from assets to finished film — the whole chain.<br/>
-<br/>
-Because people aren't beasts of burden.<br/>
-Because creativity is humanity's last line of defense.<br/>
-<br/>
-What DramaClaw sets out to do is simple:<br/>
-<br/>
-<strong>Tear down the wall.</strong><br/>
-<br/>
-Put the industrialized drama-production power that only Big Tech had<br/>
-into the hands of ordinary creators.<br/>
-<br/>
-The code is here.<br/>
-If this resonates, leave a ⭐.<br/>
-We'll keep tearing down walls.
-
-</p>
-
-<br/>
-
-[![License](https://img.shields.io/badge/License-Elastic_2.0-blue.svg)](./LICENSES/Elastic-2.0.txt)
-[![GitHub stars](https://img.shields.io/github/stars/dramaclaw/dramaclaw?style=social)](https://github.com/dramaclaw/dramaclaw/stargazers)
-[![Release](https://img.shields.io/github/v/release/dramaclaw/dramaclaw?include_prereleases&sort=semver)](https://github.com/dramaclaw/dramaclaw/releases)
-[![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](#quick-start)
-
-**English** &nbsp;|&nbsp; [简体中文](./readme/README_zh.md) &nbsp;|&nbsp; [Website](https://dramaclaw.ai) &nbsp;|&nbsp; [Docs](./docs/en/README.md) &nbsp;|&nbsp; [Quick Start](./docs/en/getting-started/quickstart.md)
-
-</div>
-
-<br/>
-
-<p align="center">
-  <img src="./assets/hero.png" alt="DramaClaw — storytellers, back in front of the camera" width="820"/>
-</p>
-
-<!--
-  Demo video — after uploading, paste the user-attachments link on its own line below.
-  How to upload: open a new Issue on github.com (don't submit it), drag the demo
-  video into the body, wait for it to finish uploading and auto-generate a
-  https://github.com/user-attachments/assets/...mp4 link, copy it here, then
-  discard the Issue. GitHub renders a URL on its own line as an inline player.
-
-  https://github.com/user-attachments/assets/REPLACE-AFTER-UPLOAD
--->
-
-<p align="center">
-  <sub>🎬 Trailer: <a href="https://www.bilibili.com/video/BV1iQV26cE4S">Bilibili</a> &nbsp;·&nbsp; <a href="https://www.youtube.com/watch?v=64apa3maxK0">YouTube</a></sub>
-</p>
-
-<br/>
-
-<div align="center">
-
-## 🎬 Made with DramaClaw
-
-<sub>Real short dramas our team produced on this very pipeline &mdash; click a link to play.</sub>
-
-<table>
-  <tr>
-    <td align="center" width="205" valign="top">
-      <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/guilingsi/guilingsi-cover.png?v=2" width="185" alt="归灵司"/><br/>
-      <b>归灵司</b><br/>
-      <a href="https://nfg-web-assets.cdnfg.com/dramaclaw/guilingsi/guilingsi-ep01.mp4">▶ 第 1 集</a>
-    </td>
-    <td align="center" width="205" valign="top">
-      <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/luban/luban-cover.png?v=2" width="185" alt="鲁班"/><br/>
-      <b>鲁班</b><br/>
-      <a href="https://nfg-web-assets.cdnfg.com/dramaclaw/luban/luban-ep01.mp4">▶ 第 1 集</a>
-    </td>
-    <td align="center" width="205" valign="top">
-      <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/shixiong-butianle/shixiong-butianle-cover.png?v=2" width="185" alt="师兄你怎么不舔了"/><br/>
-      <b>师兄你怎么不舔了</b><br/>
-      <a href="https://nfg-web-assets.cdnfg.com/dramaclaw/shixiong-butianle/shixiong-butianle-ep01.mp4">▶ 第 1 集</a>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="205" valign="top">
-      <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/tianmingbukeqi/tianmingbukeqi-cover.png?v=2" width="185" alt="天命不可欺"/><br/>
-      <b>天命不可欺</b><br/>
-      <a href="https://nfg-web-assets.cdnfg.com/dramaclaw/tianmingbukeqi/tianmingbukeqi-ep02.mp4">▶ 第 02 集</a> &nbsp;·&nbsp; <a href="https://nfg-web-assets.cdnfg.com/dramaclaw/tianmingbukeqi/tianmingbukeqi-ep58.mp4">第 58 集</a>
-    </td>
-    <td align="center" width="205" valign="top">
-      <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/wulongxiantu/wulongxiantu-cover.png?v=2" width="185" alt="乌龙仙途"/><br/>
-      <b>乌龙仙途</b><br/>
-      <a href="https://nfg-web-assets.cdnfg.com/dramaclaw/wulongxiantu/wulongxiantu-ep01.mp4">▶ 第 1 集</a>
-    </td>
-    <td align="center" width="205" valign="top">
-      <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/feiyi-zhouwu/feiyi-zhouwu-cover.png?v=2" width="185" alt="非遗㑇舞"/><br/>
-      <b>非遗㑇舞</b><br/>
-      <a href="https://nfg-web-assets.cdnfg.com/dramaclaw/feiyi-zhouwu/feiyi-zhouwu.mp4">▶ 播放</a>
-    </td>
-  </tr>
-</table>
+WHEN THE CHERRY BLOSSOMS BLOOM AGAIN
 
-<sub>More clips:
-<a href="https://nfg-web-assets.cdnfg.com/dramaclaw/3d-anime-montage-demo/3d-anime-montage-demo.mp4">3D 动漫混剪 demo</a> &nbsp;·&nbsp;
-<a href="https://nfg-web-assets.cdnfg.com/dramaclaw/dongtai-dadou/dongtai-dadou.mp4">动态打斗</a></sub>
+Chapter 1 — हमेशा साथ रहने का वादा
 
-</div>
+[OPENING — TOKYO, EARLY MORNING]
 
-<br/>
+हल्की बारिश के बाद टोक्यो की सड़कें चमक रही थीं।
 
-## What is DramaClaw?
+दूर से आती ट्रेन की आवाज़, सड़क किनारे खुलती छोटी-छोटी दुकानें और हवा में घुली कॉफी की खुशबू।
 
-DramaClaw is an industrialized drama-production line whose **source is available**. Drop in a manuscript and DramaClaw takes over all the heavy lifting: extracting characters, planning episodes, generating scripts, drawing storyboards and first frames, synthesizing voice-over, and cutting the final film.
+एक छोटे से अपार्टमेंट की खिड़की के पास 28 साल का REN TAKAHASHI खड़ा था।
 
-It's built for creators, indie studios, and creative engineers — letting you run the whole "drama factory" on your own infrastructure, without stitching together a dozen disconnected tools or handing your material to an opaque black-box cloud service.
+उसके हाथ में कॉफी का कप था।
 
-And although it's built around drama production, the same pipeline — characters, assets, scripts, storyboards, voice-over, and compositing — carries just as well to other visual-content formats: short-form ads, e-commerce product videos, and interactive otome (romance) games.
+वह बाहर देख रहा था।
 
-<br/>
+आज उसकी शादी की तीसरी सालगिरह थी।
 
-## Core Capabilities
+REN:
+“आज जल्दी घर आऊँगा।”
 
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/oss-launch.jpg?v=2" width="760" alt="DramaClaw 源码发布 · source-available launch"/>
-</p>
+पीछे से AIKO की आवाज़ आई।
 
-- **Novel parsing & story graph** &mdash; parse the manuscript into a queryable graph of characters, relationships, and timeline
-- **Asset Library & identity consistency** &mdash; unified management of characters, scenes, props and voices; keep stable identities across episodes, generate character portraits and per-episode variants
-- **Episode planning & narrative pacing** &mdash; automatic chapter segmentation, beat planning, multi-episode arcs
-- **Script generation** &mdash; multiple modes (adaptive, literal, staged) with review / repair loops
-- **Storyboards & first frames** &mdash; beat-driven stylized image generation, grid splitting, image-pool selection<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/storyboard-sketch.jpg?v=2" width="600" alt="独家线稿草图系统 · Line-art Storyboard System"/>
-- **Voice-over synthesis** &mdash; emotion-aware speech synthesis, switchable across providers
-- **Video composition & export** &mdash; assemble episodes, export video + subtitle files and the full asset pack
-- **Freezone (infinite canvas)** &mdash; node-based visual workbench: drag in project assets to generate images / video / audio, promote satisfying candidates back to the main line; the main pipeline and canvas exploration run as dual tracks<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/dual-mode-workflow.jpg?v=2" width="600" alt="双模式工作流 · Dual-mode Workflow"/>
-- **Director World / 3GS (scene variants)** &mdash; a framable virtual set that locks spatial structure, character blocking and camera placement to keep the same location consistent across shots<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/world-model.jpg?v=2" width="600" alt="世界模型 · World Model (3GS)"/>
-- **Xia Director (AI assistant)** &mdash; conversational production assistant that checks project progress, advances script / shot tasks, audits deliverable completeness and suggests next steps<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/director-agent.jpg?v=2" width="600" alt="导演智能体 · Director Agent"/>
-- **Visual Style (style templates)** &mdash; upload a reference image to auto-extract style parameters and apply them across the whole project for a consistent look
-- **Task Center** &mdash; status, progress, logs and cancel / retry for background generation tasks, with resume-from-checkpoint for long runs
+AIKO:
+“सच?”
 
-<br/>
+Ren मुस्कुराया।
 
-## Pipeline at a Glance
+REN:
+“इस बार सच में। मैंने तुम्हारे लिए कुछ खास plan किया है।”
 
-<p align="center">
-  <img src="./assets/pipeline.png" alt="DramaClaw pipeline — Ingest, Plan, Produce, Deliver" width="900"/>
-</p>
+Aiko कमरे से बाहर आई।
 
-Every step has its own interface — run them in order, skip steps, resume from any checkpoint, or even plug in your own orchestrator.
+उसके चेहरे पर हल्की मुस्कान थी।
 
-<br/>
+AIKO:
+“फिर से कोई महंगा gift तो नहीं खरीदा?”
 
-## System Requirements
+REN:
+“Gift से ज्यादा जरूरी है कि तुम खुश रहो।”
 
-DramaClaw runs all inference through a **remote OpenAI-compatible gateway** — nothing runs models on your machine — so the local footprint is light. An ordinary laptop or a small VPS is enough.
+Aiko ने उसे देखा।
 
-| Item | Requirement |
-|---|---|
-| **CPU / RAM** | ≥ 2 vCPU / 4 GB recommended (excludes model inference — that runs on the gateway) |
-| **GPU** | Not required for the standard pipeline. Only the optional `world` extra (voxel / panorama-to-3D) needs a GPU + CUDA image |
-| **Disk** | A few GB for images plus generated media/state under the `ce-data` volume (no hard minimum) |
-| **OS** | macOS (Apple Silicon / Intel), Windows (Docker Desktop + WSL2 backend), Linux (Docker Engine + compose plugin) |
-| **Docker** | Docker + `docker compose` |
-| **Ports** | `8080` web UI · `8780` REST API · `3000` bundled gateway (self-hosted variant only) |
-| **Datastores** | None required — no Postgres, Redis, Celery or Ray. Tasks run in-process; state lives on the local filesystem (SQLite + files) |
-| **Network** | Outbound access to the model gateway (official `relayclaw.cdnfg.com`, or your own BYO endpoint) |
+कुछ सेकंड के लिए दोनों की आंखें मिलीं।
 
-> Local development (non-Docker) additionally needs Python 3.11–3.12 + [`uv`](https://docs.astral.sh/uv/) + `ffmpeg`. Full prerequisites in the [Self-hosting guide](docs/en/guides/self-hosting.md).
+तीन साल पहले यही लड़की Ren की पूरी दुनिया थी।
 
-<br/>
+और Ren को अभी बिल्कुल अंदाज़ा नहीं था कि कुछ महीनों बाद यही रिश्ता उसकी जिंदगी का सबसे दर्दनाक हिस्सा बनने वाला है।
 
-## <a name="quick-start"></a>Quick Start
+---
 
-### Docker (recommended)
+[SCENE 2 — REN'S OFFICE]
 
-```bash
-git clone https://github.com/dramaclaw/dramaclaw.git
-cd dramaclaw
+Ren एक छोटी लेकिन तेजी से बढ़ती Tokyo design company में काम करता था।
 
-cp .env.example .env
-# Edit .env — set PROMPT_EXPORT_PASSWORD to a non-default value.
-# NEWAPI_BASE_URL defaults to the official gateway; add your DC key here or paste it in the UI next.
+वह बहुत ज्यादा बोलने वाला इंसान नहीं था।
 
-docker compose up -d --build   # starts two services: api / web
-```
+लेकिन अपने काम को लेकर बेहद गंभीर था।
 
-Open the app at <http://localhost:8080>; the REST API is at <http://localhost:8780>. In **Settings → Model Config → Official**, paste your DC key (get one at <https://relayclaw.cdnfg.com>) and you're ready — no model mapping needed. Full steps in the [Quick Start](docs/en/getting-started/quickstart.md).
+उसका सहकर्मी KENJI उसके पास आया।
 
-**No build needed** — every GitHub Release publishes multi-arch (amd64/arm64) images to Docker Hub, so a single file is enough to run:
+KENJI:
+“Ren! आज overtime मत करना।”
 
-```bash
-curl -LO https://raw.githubusercontent.com/dramaclaw/dramaclaw/main/docker-compose.release.yml
-docker compose -f docker-compose.release.yml up -d
-# Pin a version (defaults to latest): DRAMACLAW_VERSION=1.0.1 docker compose -f docker-compose.release.yml up -d
-```
+REN:
+“क्यों?”
 
-### Local development (uv + Python 3.11+)
+KENJI:
+“क्योंकि आज anniversary है, genius.”
 
-```bash
-git clone https://github.com/dramaclaw/dramaclaw.git
-cd dramaclaw
+Ren हंस पड़ा।
 
-uv sync
-cp .env.example .env && $EDITOR .env
+REN:
+“याद है मुझे।”
 
-uv run novelvideo api --port 8780   # start the REST API (CE defaults to inline tasks, no Ray/Redis)
-```
+KENJI:
+“तुम्हारी पत्नी lucky है।”
 
-<br/>
+Ren कुछ पल चुप रहा।
 
-## Supported Models & Providers
+फिर उसने अपने फोन में Aiko की तस्वीर देखी।
 
-DramaClaw stays model-neutral — all text/image/video/audio models connect through a single **OpenAI-compatible gateway**, in two ways:
+REN:
+“नहीं... lucky तो मैं हूं।”
 
-- **DramaClaw official key (recommended)**: `docker compose up`, open <http://localhost:8080> → Settings → Model Config → Official, paste your DC key, save. Works instantly — no model mapping needed. Get a key at <https://relayclaw.cdnfg.com>.
-- **Bring your own gateway (BYO)**: point `NEWAPI_BASE_URL` at your own OpenAI-compatible endpoint and map model names (see [Configuring Models](docs/en/getting-started/configuring-models.md)).
+---
 
-> Prefer fully local? Run `docker compose -f docker-compose.selfhosted.yml up` for a bundled `newapi` gateway you configure yourself (prebuilt-image variant: `docker-compose.selfhosted.release.yml`).
+[SCENE 3 — EVENING]
 
-| Stage                | Connected via gateway                                               |
-|----------------------|---------------------------------------------------------------------|
-| **Text / LLM**       | via OpenAI-compatible gateway (DramaClaw official key, or BYO)      |
-| **Image**            | gpt-image · nano-banana                                             |
-| **Video**            | Seedance 1.0 / 1.5 / 2.0 series · happyhorse                        |
-| **Voice-over**       | IndexTTS2                                                           |
-| **Story graph**      | Cognee                                                             |
-| **Task runtime**     | in-process inline (no Ray / Redis / Celery)                        |
-| **Storage**          | local filesystem                                                   |
+शाम के करीब सात बजे Ren एक restaurant के बाहर खड़ा था।
 
-<br/>
+उसके हाथ में फूलों का छोटा सा bouquet था।
 
-## Why DramaClaw?
+वह बार-बार घड़ी देख रहा था।
 
-**Built for novel-to-short-drama.** General workflow tools can wire nodes together, but they don't know what an "episode beat" is, don't understand why a character's cross-scene identity consistency matters, and won't guard a chapter's emotional arc across image + voice + editing. DramaClaw builds all that judgment into the tool.
+7:10.
 
-**Every step is decomposable.** Each stage is an independent async task with its own interface. Run sequentially, skip steps, resume mid-way — the toolchain itself is the product, with no hidden black box.
+7:25.
 
-**Self-hostable, model-neutral.** Your manuscript, your characters, your models, your servers. Use closed-source frontier models when you want the best results; switch to open-weight models when you want full control. DramaClaw won't lock you into any single vendor.
+7:40.
 
-### How DramaClaw compares
+Aiko नहीं आई।
 
-The edge isn't "more generation" — it's organizing the whole short-drama production loop (script → assets → shots → canvas → final cut) into something reusable, collaborative and scalable.
+Ren ने फोन किया।
 
-<sub>Legend: ✅ Full · ◐ Partial · ○ Planned · ❌ None — competitor names partially masked; comparison based on publicly available product docs and positioning.</sub>
+कोई जवाब नहीं।
 
-| Capability | L\*TV | R\*Hub | T\*Now | S\*ko | U\*dream | O\*II | J\*/K\* | **DramaClaw** |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Storyboard preview (script→shots, boards) | ◐ | ✅ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
-| Interactive series (multi-episode, branching, IP) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
-| Asset library (characters/scenes/props/voices) | ◐ | ❌ | ◐ | ✅ | ◐ | ○ | ❌ | ✅ |
-| Scene consistency (variants, 360°, multi-state) | ✅ | ◐ | ❌ | ❌ | ○ | ❌ | ❌ | ✅ |
-| Director's world (360°/3D set, camera, framing) | ✅ | ◐ | ❌ | ❌ | ◐ | ❌ | ❌ | ✅ |
-| Final delivery (multi-shot, subtitles/SRT, pack) | ✅ | ○ | ○ | ✅ | ✅ | ❌ | ❌ | ✅ |
-| Team production (sharing, roles, tasks, cost) | ✅ | ✅ | ○ | ✅ | ○ | ○ | ○ | ✅ |
-| Infinite canvas (node-based, free exploration) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
-| Dual-track (main pipeline + canvas exploration) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Custom style (templates, prompts, negatives) | ✅ | ◐ | ○ | ✅ | ◐ | ○ | ◐ | ✅ |
-| Built-in agent (assistant, skills, suggestions) | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
-| Creative companion (persona, nudges, feedback) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Source-available (self-host, fork, customize) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+उसने message किया।
 
-<br/>
+“तुम कहाँ हो?”
 
-## <a name="documentation"></a>Documentation
+कुछ मिनट बाद reply आया।
 
-- [**Product user manual**](https://neo-flying.feishu.cn/docx/JGNTdsjJuo748TxJkxecoYs2nth) — full UI walkthrough (Feishu)
-- [Feature overview](./docs/en/concepts/features.md)
-- [Architecture](./docs/en/concepts/architecture.md)
-- [Quick Start](./docs/en/getting-started/quickstart.md)
-- [Self-hosting guide](./docs/en/guides/self-hosting.md)
-- [Configuring model providers](./docs/en/getting-started/configuring-models.md)
-- [More docs &rarr;](./docs/en/README.md)
+AIKO:
+“Sorry. काम में फंस गई हूं। तुम घर चले जाओ।”
 
-<br/>
+Ren के चेहरे की मुस्कान थोड़ी फीकी पड़ गई।
 
-## Join the Community / Contribute
+उसने bouquet को देखा।
 
-- [Report a Bug](https://github.com/dramaclaw/dramaclaw/issues/new?template=bug_report.yml)
-- [Request a Feature](https://github.com/dramaclaw/dramaclaw/issues/new?template=feature_request.yml)
-- [Join the Discussion](https://github.com/dramaclaw/dramaclaw/discussions)
-- [Contributing Guide](./CONTRIBUTING.md)
-- [Security Policy](./SECURITY.md)
+फिर धीरे से कहा—
 
-We continuously curate and label [`good first issue`](https://github.com/dramaclaw/dramaclaw/labels/good%20first%20issue) — a great place to start.
+REN:
+“ठीक है...”
 
-<br/>
+वह अकेला restaurant से वापस चला गया।
 
-## Contributors
+---
 
-The people building DramaClaw — thank you. 💜
+[SCENE 4 — APARTMENT]
 
-<table>
-  <tr>
-    <td align="center"><a href="https://github.com/bopy-zou"><img src="https://github.com/bopy-zou.png?size=100" width="72" alt="bopy-zou"/><br/><sub>bopy-zou</sub></a></td>
-    <td align="center"><a href="https://github.com/Handanhhhy"><img src="https://github.com/Handanhhhy.png?size=100" width="72" alt="Handanhhhy"/><br/><sub>Handanhhhy</sub></a></td>
-    <td align="center"><a href="https://github.com/Hanlin-Gabriel"><img src="https://github.com/Hanlin-Gabriel.png?size=100" width="72" alt="Hanlin-Gabriel"/><br/><sub>Hanlin-Gabriel</sub></a></td>
-    <td align="center"><a href="https://github.com/ryanhuang-duat"><img src="https://github.com/ryanhuang-duat.png?size=100" width="72" alt="ryanhuang-duat"/><br/><sub>ryanhuang-duat</sub></a></td>
-    <td align="center"><a href="https://github.com/lywaterman"><img src="https://github.com/lywaterman.png?size=100" width="72" alt="lywaterman"/><br/><sub>lywaterman</sub></a></td>
-    <td align="center"><a href="https://github.com/n7s4"><img src="https://github.com/n7s4.png?size=100" width="72" alt="n7s4"/><br/><sub>n7s4</sub></a></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://github.com/NewYuee"><img src="https://github.com/NewYuee.png?size=100" width="72" alt="NewYuee"/><br/><sub>NewYuee</sub></a></td>
-    <td align="center"><a href="https://github.com/SimonRen"><img src="https://github.com/SimonRen.png?size=100" width="72" alt="SimonRen"/><br/><sub>SimonRen</sub></a></td>
-    <td align="center"><a href="https://github.com/vkiki"><img src="https://github.com/vkiki.png?size=100" width="72" alt="vkiki"/><br/><sub>vkiki</sub></a></td>
-    <td align="center"><a href="https://github.com/wangwenqq"><img src="https://github.com/wangwenqq.png?size=100" width="72" alt="wangwenqq"/><br/><sub>wangwenqq</sub></a></td>
-    <td align="center"><a href="https://github.com/zhen2025109"><img src="https://github.com/zhen2025109.png?size=100" width="72" alt="zhen2025109"/><br/><sub>zhen2025109</sub></a></td>
-  </tr>
-</table>
+रात करीब 10:30 बजे दरवाजा खुला।
 
-<br/>
+Aiko अंदर आई।
 
-## Produced By
+REN:
+“तुमने खाना खाया?”
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/partners/neoflying-lab-dark.png">
-    <img src="./assets/partners/neoflying-lab.png" alt="Neo Flying AI Laboratory" height="48">
-  </picture>
-</p>
+AIKO:
+“हाँ।”
 
-<p align="center"><sub>Logo is a trademark of its respective owner, shown with permission.</sub></p>
+REN:
+“मेरे लिए जो cake था—”
 
-<br/>
+AIKO:
+“Ren, please. आज बहुत थक गई हूं।”
 
-## License
+Ren चुप हो गया।
 
-[Elastic License 2.0](./LICENSES/Elastic-2.0.txt). Free to use, modify, and redistribute — the only restriction is that you may not resell the software as a hosted service. See the [license explainer](./docs/en/license.md).
+उसने cake वापस refrigerator में रख दिया।
 
-<br/>
+कुछ पल बाद उसने पूछा—
 
-## Star History
+REN:
+“कल छुट्टी है। कहीं बाहर चलें?”
 
-<a href="https://www.star-history.com/?repos=dramaclaw%2Fdramaclaw&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=dramaclaw/dramaclaw&type=date&theme=dark&legend=top-left&sealed_token=CWTXgm9EqgQmnSFWk0inuf_iZSml5r1nclyIsUyisWgYhUzFVJdI8G61vyFACIQe14weeMtjWSxpkzWdtFqyb93uV4uaRElaXWQv2kFxFFyL8KbUQBCOBUWXDtZc81J8YlaSiBVVXeOygLYZliOK4VQo4i1Ioqkxn5js-Bq0gbqVOH_wF3GCQ_EnMGLy" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=dramaclaw/dramaclaw&type=date&legend=top-left&sealed_token=CWTXgm9EqgQmnSFWk0inuf_iZSml5r1nclyIsUyisWgYhUzFVJdI8G61vyFACIQe14weeMtjWSxpkzWdtFqyb93uV4uaRElaXWQv2kFxFFyL8KbUQBCOBUWXDtZc81J8YlaSiBVVXeOygLYZliOK4VQo4i1Ioqkxn5js-Bq0gbqVOH_wF3GCQ_EnMGLy" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=dramaclaw/dramaclaw&type=date&legend=top-left&sealed_token=CWTXgm9EqgQmnSFWk0inuf_iZSml5r1nclyIsUyisWgYhUzFVJdI8G61vyFACIQe14weeMtjWSxpkzWdtFqyb93uV4uaRElaXWQv2kFxFFyL8KbUQBCOBUWXDtZc81J8YlaSiBVVXeOygLYZliOK4VQo4i1Ioqkxn5js-Bq0gbqVOH_wF3GCQ_EnMGLy" />
- </picture>
-</a>
+AIKO:
+“देखेंगे।”
 
-<br/><br/>
+REN:
+“ठीक है।”
 
-<div align="center">
-  <sub>Built for storytellers. Source, open to all.</sub>
-</div>
+Aiko bedroom में चली गई।
 
-## Notices
+Ren अकेला living room में बैठा रहा।
 
-See `NOTICE` for required branding and third-party attribution notices.
+उसकी नजर table पर रखी शादी की तस्वीर पर पड़ी।
+
+उस तस्वीर में दोनों हंस रहे थे।
+
+Ren ने तस्वीर उठाई।
+
+REN:
+“हम इतने बदल कब गए?”
+
+---
+
+[SCENE 5 — A FEW WEEKS LATER]
+
+समय गुजरता गया।
+
+Ren ने महसूस किया कि Aiko पहले जैसी नहीं रही।
+
+वह अक्सर फोन को Ren से दूर रखती।
+
+Messages आते ही दूसरे कमरे में चली जाती।
+
+कभी-कभी रात में बाहर जाने के बहाने बनाती।
+
+Ren ने कई बार सवाल पूछना चाहा।
+
+लेकिन हर बार खुद को रोक लिया।
+
+उसे लगता था—
+
+शायद Aiko किसी मुश्किल दौर से गुजर रही है।
+
+एक रात Ren kitchen में पानी लेने उठा।
+
+Living room खाली था।
+
+Aiko का फोन sofa पर पड़ा था।
+
+अचानक screen पर एक message आया।
+
+नाम देखकर Ren रुक गया।
+
+“DAICHI”
+
+Message छोटा था।
+
+“आज तुमसे मिलकर अच्छा लगा। अगली बार थोड़ा और समय साथ बिताएंगे।”
+
+Ren की उंगलियां ठंडी पड़ गईं।
+
+उसने फोन को छुआ तक नहीं।
+
+कुछ सेकंड तक वह वहीं खड़ा रहा।
+
+फिर फोन वापस उसी जगह रख दिया।
+
+---
+
+[SCENE 6 — THE CONFRONTATION]
+
+अगली सुबह।
+
+Ren ने breakfast बनाया।
+
+Aiko table पर बैठी थी।
+
+REN:
+“Aiko... क्या मैं तुमसे कुछ पूछ सकता हूं?”
+
+AIKO:
+“क्या?”
+
+REN:
+“Daichi कौन है?”
+
+Aiko का चेहरा अचानक बदल गया।
+
+कुछ सेकंड तक कमरे में सिर्फ घड़ी की आवाज़ सुनाई दी।
+
+AIKO:
+“तुमने मेरा फोन देखा?”
+
+REN:
+“नहीं। Message खुद screen पर आया था।”
+
+AIKO:
+“तुम मुझ पर शक कर रहे हो?”
+
+REN:
+“मैं सिर्फ सच जानना चाहता हूं।”
+
+Aiko खड़ी हो गई।
+
+AIKO:
+“तुम्हें मुझ पर भरोसा नहीं है?”
+
+Ren की आंखों में दर्द था।
+
+REN:
+“इसीलिए तो पूछ रहा हूं।”
+
+Aiko कुछ नहीं बोली।
+
+वह अपना bag उठाकर घर से निकल गई।
+
+दरवाजा बंद हुआ।
+
+Ren कुर्सी पर अकेला बैठा रहा।
+
+उसके सामने breakfast रखा था।
+
+लेकिन अब उसे भूख नहीं थी।
+
+---
+
+[SCENE 7 — THE TRUTH]
+
+दो दिन बाद Ren ने Aiko से फिर बात करने की कोशिश की।
+
+इस बार Aiko ने खुद कहा—
+
+AIKO:
+“Ren... हमें बात करनी है।”
+
+Ren का दिल बैठ गया।
+
+दोनों आमने-सामने बैठे।
+
+Aiko की आंखें नीचे थीं।
+
+AIKO:
+“मैंने तुम्हें धोखा दिया है।”
+
+Ren कुछ नहीं बोला।
+
+AIKO:
+“मैं Daichi से मिल रही थी।”
+
+Ren ने आंखें बंद कर लीं।
+
+उसके लिए दुनिया जैसे कुछ सेकंड के लिए शांत हो गई।
+
+REN:
+“कब से?”
+
+AIKO:
+“कुछ महीनों से।”
+
+REN:
+“और हमारी शादी?”
+
+Aiko चुप रही।
+
+REN:
+“क्या तुमने कभी मुझसे प्यार किया था?”
+
+Aiko की आंखों में आंसू आ गए।
+
+लेकिन Ren का चेहरा बिल्कुल शांत था।
+
+REN:
+“बस इसका जवाब दो।”
+
+AIKO:
+“किया था।”
+
+REN:
+“और अब?”
+
+Aiko ने धीरे से कहा—
+
+AIKO:
+“मुझे नहीं पता।”
+
+Ren ने सिर झुका लिया।
+
+कुछ देर बाद उसने अपनी शादी की ring उतारकर table पर रख दी।
+
+REN:
+“अगर तुम्हें नहीं पता कि तुम मेरे साथ रहना चाहती हो या नहीं...”
+
+वह रुका।
+
+REN:
+“तो मैं तुम्हें मजबूर नहीं करूंगा।”
+
+Aiko ने उसकी तरफ देखा।
+
+REN:
+“हम divorce कर लेते हैं।”
+
+AIKO:
+“Ren...”
+
+REN:
+“इस बार मैं तुम्हें रोकूंगा नहीं।”
+
+कमरे में सन्नाटा छा गया।
+
+बाहर हल्की बारिश शुरू हो चुकी थी।
+
+Ren खिड़की की तरफ देखने लगा।
+
+उसे लगा जैसे उसकी जिंदगी का एक पूरा अध्याय उसी पल खत्म हो गया।
+
+लेकिन उसे यह नहीं पता था—
+
+कि यह अंत नहीं था।
+
+यह उसकी जिंदगी की नई शुरुआत थी।
