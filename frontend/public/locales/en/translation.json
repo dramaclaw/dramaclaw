@@ -2048,6 +2048,12 @@
       "toastPermissionUpdateFailed": "Failed to update permission",
       "toastMemberRemoved": "Shared member removed",
       "toastRemoveFailed": "Failed to remove"
+    },
+    "role": {
+      "viewer": "Viewer",
+      "editor": "Editor",
+      "admin": "Admin",
+      "owner": "Owner"
     }
   },
   "assets": {
@@ -4313,7 +4319,9 @@
       "sourceCanvas": "From canvas",
       "sourceCanvasHint": "Click a node on the canvas",
       "sourceExternal": "From file",
-      "sourceExternalHint": "Upload an asset file from this device"
+      "sourceExternalHint": "Upload an asset file from this device",
+      "bannerTitle": "Pick a reference on the canvas",
+      "exit": "Exit selection"
     },
     "capabilities": {
       "candidateResultTitle": "{{name}} · candidate",
@@ -4837,6 +4845,10 @@
       "group": "Group {{index}}",
       "storyboardGroup": "Storyboard group {{index}}",
       "storyboardFrame": "Storyboard frame"
+    },
+    "viewportHint": {
+      "focused": "Focused on the selected node",
+      "returnToNode": "Back to node"
     }
   },
   "tool": {
@@ -5698,7 +5710,11 @@
       "promptPlaceholder": "Describe the story, or add character / video references, and we’ll build the storyboard",
       "translate": "Translate (Chinese ↔ English)",
       "generate": "Generate",
-      "referenceFallback": "Reference {{index}}"
+      "referenceFallback": "Reference {{index}}",
+      "uploadImage": "Click to upload an image",
+      "replaceImage": "Replace image",
+      "removeImage": "Remove image",
+      "closePreview": "Close preview"
     },
     "audioPanel": {
       "musicLength": {

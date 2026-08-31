@@ -2048,6 +2048,12 @@
       "toastPermissionUpdateFailed": "更新权限失败",
       "toastMemberRemoved": "已移除共享成员",
       "toastRemoveFailed": "移除失败"
+    },
+    "role": {
+      "viewer": "查看者",
+      "editor": "编辑者",
+      "admin": "管理员",
+      "owner": "所有者"
     }
   },
   "assets": {
@@ -4313,7 +4319,9 @@
       "sourceCanvas": "画布参考",
       "sourceCanvasHint": "在画布上点选一个节点",
       "sourceExternal": "外部参考",
-      "sourceExternalHint": "从本地上传素材文件"
+      "sourceExternalHint": "从本地上传素材文件",
+      "bannerTitle": "从画布选择参考",
+      "exit": "退出选择"
     },
     "capabilities": {
       "candidateResultTitle": "{{name}} · 候选",
@@ -4837,6 +4845,10 @@
       "group": "组 {{index}}",
       "storyboardGroup": "分镜组 {{index}}",
       "storyboardFrame": "分镜"
+    },
+    "viewportHint": {
+      "focused": "已聚焦到所选节点",
+      "returnToNode": "返回节点"
     }
   },
   "tool": {
@@ -5698,7 +5710,11 @@
       "promptPlaceholder": "描述剧情或添加角色参考、视频参考等，为你生成分镜脚本",
       "translate": "翻译（中英文互译）",
       "generate": "生成",
-      "referenceFallback": "引用 {{index}}"
+      "referenceFallback": "引用 {{index}}",
+      "uploadImage": "点击上传图片",
+      "replaceImage": "替换图片",
+      "removeImage": "删除图片",
+      "closePreview": "关闭预览"
     },
     "audioPanel": {
       "musicLength": {

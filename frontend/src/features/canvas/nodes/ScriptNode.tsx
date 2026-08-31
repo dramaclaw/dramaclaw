@@ -1011,7 +1011,7 @@ function ScriptImageCell({ url, onCommit }: ScriptImageCellProps) {
           type="button"
           onClick={openPicker}
           disabled={uploading}
-          title="点击上传图片"
+          title={t('node.scriptNode.uploadImage')}
           className="flex h-14 w-14 items-center justify-center rounded border border-dashed border-[rgba(255,255,255,0.14)] text-text-muted/50 transition-colors hover:border-[rgb(var(--accent-rgb)/0.6)] hover:text-text-dark/80 disabled:cursor-wait"
         >
           {uploading ? (
@@ -1044,7 +1044,7 @@ function ScriptImageCell({ url, onCommit }: ScriptImageCellProps) {
               type="button"
               onClick={openPicker}
               disabled={uploading}
-              title="替换图片"
+              title={t('node.scriptNode.replaceImage')}
               className="rounded p-1 text-white/85 transition-colors hover:bg-white/15 hover:text-white disabled:cursor-wait"
             >
               {uploading ? (
@@ -1056,7 +1056,7 @@ function ScriptImageCell({ url, onCommit }: ScriptImageCellProps) {
             <button
               type="button"
               onClick={() => onCommit?.('')}
-              title="删除图片"
+              title={t('node.scriptNode.removeImage')}
               className="rounded p-1 text-white/85 transition-colors hover:bg-white/15 hover:text-white"
             >
               <X className="h-3.5 w-3.5" />
@@ -1084,7 +1084,7 @@ function ScriptImageCell({ url, onCommit }: ScriptImageCellProps) {
               <button
                 type="button"
                 onClick={() => setPreviewOpen(false)}
-                title="关闭预览"
+                title={t('node.scriptNode.closePreview')}
                 className="absolute right-6 top-6 rounded p-2 text-white/80 transition-colors hover:bg-white/15 hover:text-white"
               >
                 <X className="h-5 w-5" />

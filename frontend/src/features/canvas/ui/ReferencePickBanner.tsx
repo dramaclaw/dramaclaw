@@ -8,6 +8,7 @@
  * 不自动退出——一个节点常常要连好几个参考。
  */
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useReactFlow } from '@xyflow/react';
 import { Send, X } from 'lucide-react';
 
@@ -16,6 +17,7 @@ import { selectNodeExclusively } from '@/features/canvas/application/nodeSelecti
 import { useReferencePickStore } from '@/features/canvas/application/referencePickStore';
 
 export function ReferencePickBanner() {
+  const { t } = useTranslation();
   const request = useReferencePickStore((state) => state.request);
   const stop = useReferencePickStore((state) => state.stop);
   const reactFlowInstance = useReactFlow();
@@ -63,19 +65,19 @@ export function ReferencePickBanner() {
     <div className="pointer-events-none absolute left-1/2 top-4 z-[140] -translate-x-1/2">
       <div className="pointer-events-auto flex items-center gap-2 rounded-lg bg-[rgb(var(--accent-rgb))] py-1.5 pl-3 pr-1.5 text-[13px] leading-5 text-white shadow-[0_14px_34px_rgba(0,0,0,0.45)]">
         <Send className="h-4 w-4 shrink-0" aria-hidden="true" />
-        <span className="font-medium">从画布选择参考</span>
+        <span className="font-medium">{t("canvas.referencePick.bannerTitle")}</span>
         <button
           type="button"
           onClick={handleReturn}
           className="ml-1 inline-flex h-7 items-center rounded-md bg-white/[0.18] px-3 text-[12px] font-medium text-white transition-colors hover:bg-white/[0.3]"
         >
-          返回节点
+          {t("canvas.viewportHint.returnToNode")}
         </button>
         <button
           type="button"
           onClick={stop}
-          title="退出选择"
-          aria-label="退出选择"
+          title={t("canvas.referencePick.exit")}
+          aria-label={t("canvas.referencePick.exit")}
           className="inline-flex h-7 w-7 items-center justify-center rounded-md text-white/75 transition-colors hover:bg-white/[0.18] hover:text-white"
         >
           <X className="h-4 w-4" aria-hidden="true" />
