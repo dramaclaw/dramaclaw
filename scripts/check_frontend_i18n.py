@@ -15,6 +15,9 @@
 
 allowlist 是棘轮：文件里已有的条数只许减不许增，新文件一旦命中直接失败。
 个别确实要保留中文的行（如语言切换里的「中文」）可在行尾加 `// i18n-exempt`。
+
+存量已清零，所以仓库里没有 allowlist 文件——缺文件等于空 allowlist，任何命中都失败。
+真要临时放行才用 `--write` 生成它，别顺手跑。
 """
 from __future__ import annotations
 
