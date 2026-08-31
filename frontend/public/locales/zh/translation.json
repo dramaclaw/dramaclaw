@@ -2311,7 +2311,9 @@
     "success": "成功",
     "search": "搜索",
     "play": "播放",
-    "pause": "暂停"
+    "pause": "暂停",
+    "retry": "重试",
+    "requestId": "请求ID"
   },
   "ingest": {
     "title": "虾料",
@@ -4321,7 +4323,9 @@
       "sourceExternal": "外部参考",
       "sourceExternalHint": "从本地上传素材文件",
       "bannerTitle": "从画布选择参考",
-      "exit": "退出选择"
+      "exit": "退出选择",
+      "deselect": "取消选择",
+      "select": "选择 {{label}}"
     },
     "capabilities": {
       "candidateResultTitle": "{{name}} · 候选",
@@ -4849,6 +4853,44 @@
     "viewportHint": {
       "focused": "已聚焦到所选节点",
       "returnToNode": "返回节点"
+    },
+    "controls": {
+      "snapAlignOn": "开启对齐吸附",
+      "snapAlignOff": "关闭对齐吸附",
+      "fpsOn": "开启 FPS 显示",
+      "fpsOff": "关闭 FPS 显示",
+      "minimap": "画布缩略图"
+    },
+    "assetReplace": {
+      "dropToReplace": "松开替换该素材",
+      "dragHint": "拖到左侧同类型素材上替换",
+      "handleHint": "按住拖到左侧素材库,替换同类型素材",
+      "handleLabel": "替换素材"
+    },
+    "reference": {
+      "detach": "取消引用此素材",
+      "mention": "在提示词中引用「{{name}}」"
+    },
+    "common": {
+      "regenerate": "重新生成"
+    },
+    "modelParams": {
+      "title": "模型参数",
+      "defaultOption": "默认"
+    },
+    "multiConnect": {
+      "label": "批量连线",
+      "hint": "批量连线：点击新建下游节点并把选中节点都连进去，或拖动连到已有节点"
+    },
+    "spawnPlus": {
+      "referenceThisNode": "引用该节点生成",
+      "connectIntoThisNode": "连入该节点"
+    },
+    "edge": {
+      "disconnect": "断开连线"
+    },
+    "addNodePanel": {
+      "skillCount": "{{count}} 个技能"
     }
   },
   "tool": {
@@ -5859,7 +5901,9 @@
       "upscale": "高清放大"
     },
     "audioNode": {
-      "empty": "暂无音频"
+      "empty": "暂无音频",
+      "noVoiceConfigured": "未配置可用声线",
+      "generateFailed": "生成失败"
     },
     "videoStory": {
       "columns": {

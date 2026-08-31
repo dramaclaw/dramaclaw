@@ -78,9 +78,12 @@ export interface ModelOption {
   request?: MediaModelRequestSchema;
 }
 
+// 服务商品牌名，不跟界面语言走。
+// i18n-exempt-start
 export const SHARED_PROVIDERS: ProviderOption[] = [
   { id: 'newapi', label: '虾驿 / NewAPI' },
   { id: 'huimeng', label: '绘梦 / HuiMeng' },
+// i18n-exempt-end
   { id: 'openrouter', label: 'OpenRouter' },
   { id: 'openai', label: 'OpenAI' },
 ];
@@ -122,7 +125,7 @@ export const DEFAULT_SHARED_MODEL_ID = 'huimeng/gpt-image-2';
 // /freezone/video/gen so we don't need a separate apiModel mapping.
 export const VIDEO_PROVIDERS: ProviderOption[] = [
   { id: 'seedance', label: 'Seedance' },
-  { id: 'huimeng', label: '绘梦 / HuiMeng' },
+  { id: 'huimeng', label: '绘梦 / HuiMeng' }, // i18n-exempt —— 服务商品牌名
 ];
 
 // 兜底视频模型列表。同 SHARED_MODELS：仅在 /freezone/video/models 拉取失败时

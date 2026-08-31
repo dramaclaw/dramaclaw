@@ -29,8 +29,7 @@ function valuesToLabels(values: unknown, options: CapabilityParamOption[]): stri
   const labels = raw
     .map((value) => options.find((option) => option.value === value)?.promptLabel ?? String(value))
     .filter(Boolean);
-  // i18n-exempt —— 拼进提示词的文案，不跟界面语言走
-  return labels.length > 0 ? labels.join("；") : "保持当前画面核心结构";
+  return labels.length > 0 ? labels.join("；") : "保持当前画面核心结构"; // i18n-exempt —— 拼进提示词
 }
 
 function readBeatText(metadata: Record<string, unknown> | null | undefined): string {

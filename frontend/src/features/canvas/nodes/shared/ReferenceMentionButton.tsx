@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { AtSign } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import { NODE_REFERENCE_MEDIA_MENTION_CLASS } from '@/features/canvas/ui/nodeControlStyles';
 
@@ -25,11 +26,12 @@ export function ReferenceMentionButton({
   onInsert,
   className,
 }: ReferenceMentionButtonProps) {
+  const { t } = useTranslation();
   return (
     <span
       role="button"
       tabIndex={-1}
-      title={`在提示词中引用「${mentionName}」`}
+      title={t('canvas.reference.mention', { name: mentionName })}
       className={className ?? NODE_REFERENCE_MEDIA_MENTION_CLASS}
       onMouseDown={(event) => {
         event.preventDefault();

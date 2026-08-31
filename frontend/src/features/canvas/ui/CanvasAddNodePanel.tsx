@@ -172,7 +172,7 @@ export function CanvasAddNodePanel({
                           {translateSkillProviderLabel(group.provider, t)}
                         </div>
                         <div className="text-[11px] leading-4 text-white/35">
-                          {group.items.length} 个技能
+                          {t('canvas.addNodePanel.skillCount', { count: group.items.length })}
                         </div>
                       </div>
                       <ChevronRight

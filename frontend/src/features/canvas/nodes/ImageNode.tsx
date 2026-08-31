@@ -376,7 +376,7 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
             </span>
             {generationErrorRequestId && (
               <div className="flex w-full max-w-[240px] items-center gap-1 rounded bg-red-500/10 px-2 py-1">
-                <span className="shrink-0 text-[10px] text-red-300/70">请求ID</span>
+                <span className="shrink-0 text-[10px] text-red-300/70">{t('common.requestId')}</span>
                 <code
                   className="min-w-0 flex-1 truncate font-mono text-[10px] text-red-200"
                   title={generationErrorRequestId}

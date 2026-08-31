@@ -2311,7 +2311,9 @@
     "success": "Success",
     "search": "Search",
     "play": "Play",
-    "pause": "Pause"
+    "pause": "Pause",
+    "retry": "Retry",
+    "requestId": "Request ID"
   },
   "ingest": {
     "title": "Story Source",
@@ -4321,7 +4323,9 @@
       "sourceExternal": "From file",
       "sourceExternalHint": "Upload an asset file from this device",
       "bannerTitle": "Pick a reference on the canvas",
-      "exit": "Exit selection"
+      "exit": "Exit selection",
+      "deselect": "Deselect",
+      "select": "Select {{label}}"
     },
     "capabilities": {
       "candidateResultTitle": "{{name}} · candidate",
@@ -4849,6 +4853,44 @@
     "viewportHint": {
       "focused": "Focused on the selected node",
       "returnToNode": "Back to node"
+    },
+    "controls": {
+      "snapAlignOn": "Enable snap alignment",
+      "snapAlignOff": "Disable snap alignment",
+      "fpsOn": "Show FPS",
+      "fpsOff": "Hide FPS",
+      "minimap": "Canvas minimap"
+    },
+    "assetReplace": {
+      "dropToReplace": "Release to replace this asset",
+      "dragHint": "Drag onto a same-type asset on the left to replace it",
+      "handleHint": "Hold and drag onto the asset library to replace a same-type asset",
+      "handleLabel": "Replace asset"
+    },
+    "reference": {
+      "detach": "Detach this reference",
+      "mention": "Reference \"{{name}}\" in the prompt"
+    },
+    "common": {
+      "regenerate": "Regenerate"
+    },
+    "modelParams": {
+      "title": "Model parameters",
+      "defaultOption": "Default"
+    },
+    "multiConnect": {
+      "label": "Connect selection",
+      "hint": "Connect selection: click to spawn a downstream node wired to every selected node, or drag onto an existing node"
+    },
+    "spawnPlus": {
+      "referenceThisNode": "Generate from this node",
+      "connectIntoThisNode": "Connect into this node"
+    },
+    "edge": {
+      "disconnect": "Disconnect"
+    },
+    "addNodePanel": {
+      "skillCount": "{{count}} skills"
     }
   },
   "tool": {
@@ -5859,7 +5901,9 @@
       "upscale": "Upscaled"
     },
     "audioNode": {
-      "empty": "No audio yet"
+      "empty": "No audio yet",
+      "noVoiceConfigured": "No voice configured",
+      "generateFailed": "Generation failed"
     },
     "videoStory": {
       "columns": {

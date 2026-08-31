@@ -60,7 +60,7 @@ export const displayLabel = (t: TaskState, tFn: TFn): string => {
  * 前端原样回显就成了英文界面里的一处中文。终态只认状态词条，别回显这几个哨兵值；
  * 其余进度文案仍是后端实时给的内容，照原样显示。
  */
-const TERMINAL_CURRENT_TASK_SENTINELS = new Set(["完成", "completed", "done"]);
+const TERMINAL_CURRENT_TASK_SENTINELS = new Set(["完成", "completed", "done"]); // i18n-exempt —— 后端哨兵值
 
 export const currentTaskText = (
   t: { status: TaskStatus; current_task?: string | null },

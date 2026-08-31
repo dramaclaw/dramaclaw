@@ -32,11 +32,13 @@ CJK = re.compile(r"[一-鿿]")
 # 这种 MIME 通配符会被当成注释起点，把后面几百行真命中一起吃掉。
 BLOCK_COMMENT = re.compile(r"(?<![\w'\"/])/\*.*?\*/", re.S)
 COMMENT_LINE = re.compile(r"^\s*(//|\*)")
-EXEMPT = re.compile(r"//\s*i18n-exempt(?!-)")
+# 标记既认 `// i18n-exempt`，也认 JSX 里只能写成块注释的 `{/* i18n-exempt */}`——
+# 后者会被 BLOCK_COMMENT 抹掉，所以标记一律在原文上找（见 scan()）。
+EXEMPT = re.compile(r"(?://|/\*)\s*i18n-exempt(?!-)")
 # 协议值表（后端逐字对应的枚举、会写进存档 JSON 的规范默认值）整块保留中文，
 # 逐行贴 `// i18n-exempt` 只会把表读糊，所以给一对区间标记。
-EXEMPT_START = re.compile(r"//\s*i18n-exempt-start")
-EXEMPT_END = re.compile(r"//\s*i18n-exempt-end")
+EXEMPT_START = re.compile(r"(?://|/\*)\s*i18n-exempt-start")
+EXEMPT_END = re.compile(r"(?://|/\*)\s*i18n-exempt-end")
 # t(key, { defaultValue: "中文" })：key 已存在，中文只是兜底。
 DEFAULT_VALUE = re.compile(r"defaultValue:\s*([\"'])(?:(?!\1).)*\1")
 
@@ -60,16 +62,19 @@ def scan() -> dict[str, list[tuple[int, str]]]:
             source = BLOCK_COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), raw)
             found: list[tuple[int, str]] = []
             in_exempt_block = False
-            for lineno, line in enumerate(source.split("\n"), 1):
-                if EXEMPT_START.search(line):
+            # 标记在原文里找、命中在剥注释后的文本里找：两边行号一一对应。
+            for lineno, (raw_line, line) in enumerate(
+                zip(raw.split("\n"), source.split("\n")), 1
+            ):
+                if EXEMPT_START.search(raw_line):
                     in_exempt_block = True
                     continue
-                if EXEMPT_END.search(line):
+                if EXEMPT_END.search(raw_line):
                     in_exempt_block = False
                     continue
                 if in_exempt_block:
                     continue
-                if COMMENT_LINE.match(line) or EXEMPT.search(line):
+                if COMMENT_LINE.match(line) or EXEMPT.search(raw_line):
                     continue
                 # 去掉行尾行注释，避免注释里的中文误报（`://` 这类 URL 不切）。
                 stripped = re.sub(r"(?<![:\"'])//[^\"']*$", "", line)

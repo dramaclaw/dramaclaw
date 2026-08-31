@@ -29,7 +29,7 @@ export function installDomReconciliationGuard(): void {
       // 节点已被翻译器搬到别的父节点下,原生调用必抛。当作删除已完成,把 child
       // 还回去:React 会丢弃对它的引用,残留节点随翻译器容器一起被清理。
       if (typeof console !== "undefined") {
-        console.warn("[dom-guard] removeChild 目标节点的父节点已变更,跳过", child);
+        console.warn("[dom-guard] removeChild 目标节点的父节点已变更,跳过", child); // i18n-exempt —— 开发日志
       }
       return child;
     }
@@ -46,7 +46,7 @@ export function installDomReconciliationGuard(): void {
       // 参照节点已被翻译器搬走,无法在它前面插入。退化为追加(insertBefore(node, null)
       // 等价于 appendChild),保证新节点仍进入 DOM,React 下一轮协调会自行纠正顺序。
       if (typeof console !== "undefined") {
-        console.warn("[dom-guard] insertBefore 参照节点的父节点已变更,改为追加", newNode);
+        console.warn("[dom-guard] insertBefore 参照节点的父节点已变更,改为追加", newNode); // i18n-exempt —— 开发日志
       }
       return originalInsertBefore.call(this, newNode, null) as T;
     }

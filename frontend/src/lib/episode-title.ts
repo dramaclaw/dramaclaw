@@ -8,7 +8,7 @@ import type { TFn } from "@/lib/i18n-types";
  * 会原样漏出中文，所以渲染时按集号重新本地化 —— 只认与集号对得上的那一条，用户手写
  * 的「第3集：雨夜」之类不动。
  */
-const AUTO_EPISODE_TITLE = /^第\s*(\d+)\s*集$/;
+const AUTO_EPISODE_TITLE = /^第\s*(\d+)\s*集$/; // i18n-exempt —— 比对后端回填的原文
 
 export function isAutoEpisodeTitle(title: string | null | undefined, num: number): boolean {
   const matched = AUTO_EPISODE_TITLE.exec(String(title ?? "").trim());
