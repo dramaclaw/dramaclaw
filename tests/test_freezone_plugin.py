@@ -275,7 +275,11 @@ def test_freezone_plugin_registers_canvas_command_tools():
     workflow_catalog = recipe_variant["properties"]["data"]["properties"][
         "workflowCatalog"
     ]
-    assert recipe_variant["required"] == ["id", "node_type", "data"]
+    assert recipe_variant["required"] == ["id", "data"]
+    assert {tuple(option["required"]) for option in recipe_variant["anyOf"]} == {
+        ("node_type",),
+        ("type",),
+    }
     assert workflow_catalog["required"] == ["recipeId"]
     assert set(workflow_catalog["properties"]) >= {
         "skillId",
@@ -285,11 +289,12 @@ def test_freezone_plugin_registers_canvas_command_tools():
         "recipePipeline",
     }
     assert recipe_variant["properties"]["prompt"] == {"type": "string"}
-    assert plan_schema["properties"]["edges"]["items"]["required"] == [
-        "source",
-        "target",
-        "link_type",
-    ]
+    edge_schema = plan_schema["properties"]["edges"]["items"]
+    assert edge_schema["required"] == ["source", "target"]
+    assert {tuple(option["required"]) for option in edge_schema["anyOf"]} == {
+        ("link_type",),
+        ("type",),
+    }
     assert plan_schema["properties"]["edges"]["maxItems"] == MAX_WORKFLOW_EDGES
     assert set(
         plan_schema["properties"]["edges"]["items"]["properties"]["link_type"][
@@ -1897,9 +1902,10 @@ def test_workflow_graph_defaults_speech_audio_to_preset_voice():
         command for command in built["commands"] if command["type"] == "create_node"
     )
     assert create_command["data"]["audioKind"] == "speech"
-    assert create_command["data"]["speechMode"] == "preset"
-    assert create_command["data"]["presetModel"] == "edge-tts"
-    assert create_command["data"]["presetVoice"] == "Serena"
+    assert create_command["data"]["speechMode"] == "clone"
+    assert create_command["data"]["voiceAvailable"] is False
+    assert "presetModel" not in create_command["data"]
+    assert "presetVoice" not in create_command["data"]
 
 
 def test_freezone_get_workflow_skill_returns_json_when_registry_summarizes(monkeypatch):

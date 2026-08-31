@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
 from novelvideo.freezone.workflow_plan import validate_workflow_plan
 
 _MINIMAL_ECOMMERCE_SKILL = {
@@ -130,9 +131,7 @@ def test_social_content_campaign_builtin_skill_is_loadable(monkeypatch):
 
     assert package["ok"] is True
     assert package["input_contract"]["resolved"]["aspect_ratio"] == "3:4"
-    assert {
-        recipe["id"] for recipe in package["available_recipes"]
-    } == {
+    assert {recipe["id"] for recipe in package["available_recipes"]} == {
         "social-copywriting",
         "social-content-image",
         "social-xiaohongshu-image",
@@ -416,17 +415,17 @@ def test_standard_audio_planner_rejects_missing_or_placeholder_narration(monkeyp
         if narration is not None:
             unit["narration"] = narration
         result = catalog.compile_workflow_intent(
-                {
-                    "skill_id": "short-drama-quick",
-                    "user_goal": "制作短剧",
+            {
+                "skill_id": "short-drama-quick",
+                "user_goal": "制作短剧",
+                "include_audio": True,
+                "planner": {
+                    "mode": "standard",
+                    "item_count": 1,
                     "include_audio": True,
-                    "planner": {
-                        "mode": "standard",
-                        "item_count": 1,
-                        "include_audio": True,
-                        "units": [unit],
-                    },
-                }
+                    "units": [unit],
+                },
+            }
         )
         assert result["ok"] is False
         assert result["errors"][0]["path"] == "planner.units.0.narration"
@@ -719,8 +718,10 @@ def test_compiler_defers_model_dependent_generation_values_to_live_schema(
 
     assert compiled["ok"] is True, compiled
     node_type = "imageGenNode" if parameter_id.startswith("image_") else "videoNode"
-    data_key = "aspectRatio" if parameter_id.endswith("aspect_ratio") else (
-        "size" if node_type == "imageGenNode" else "quality"
+    data_key = (
+        "aspectRatio"
+        if parameter_id.endswith("aspect_ratio")
+        else ("size" if node_type == "imageGenNode" else "quality")
     )
     media_nodes = [
         node for node in compiled["plan"]["nodes"] if node["node_type"] == node_type
@@ -1193,9 +1194,7 @@ def test_compiler_propagates_portable_video_generation_inputs(monkeypatch):
 
     assert compiled["ok"] is True
     video = next(
-        node
-        for node in compiled["plan"]["nodes"]
-        if node["node_type"] == "videoNode"
+        node for node in compiled["plan"]["nodes"] if node["node_type"] == "videoNode"
     )
     assert {
         key: video["data"].get(key)
@@ -1373,9 +1372,7 @@ def test_compiler_replaces_recipe_backed_final_compose_with_compose_node(monkeyp
     assert compiled["ok"] is True
     plan = compiled["plan"]
     assert not any(node["id"] == "final-compose" for node in plan["nodes"])
-    assert sum(
-        node["node_type"] == "videoComposeNode" for node in plan["nodes"]
-    ) == 1
+    assert sum(node["node_type"] == "videoComposeNode" for node in plan["nodes"]) == 1
 
 
 def test_compiler_respects_explicit_audio_kind_for_ambiguous_general_audio(monkeypatch):
@@ -1522,6 +1519,102 @@ def test_dynamic_workflow_plan_accepts_different_node_counts(monkeypatch):
     assert six["node_count"] == 7
 
 
+def test_workflow_plan_accepts_canvas_type_alias_and_counts_it():
+    plan = _dynamic_plan(image_count=1)
+    for node in plan["nodes"]:
+        node["type"] = node.pop("node_type")
+
+    result = validate_workflow_plan(plan)
+
+    assert result["ok"] is True, result
+    assert result["preflight"]["counts"] == {
+        "text": 1,
+        "image": 1,
+        "video": 0,
+        "audio": 0,
+        "compose": 0,
+    }
+
+
+def test_workflow_plan_rejects_conflicting_node_type_alias():
+    plan = _dynamic_plan(image_count=1)
+    plan["nodes"][1]["type"] = "audioNode"
+
+    result = validate_workflow_plan(plan)
+
+    assert result["ok"] is False
+    assert {
+        "path": "nodes[1].type",
+        "message": "conflicts with node_type: imageGenNode",
+    } in result["errors"]
+
+
+def test_workflow_plan_accepts_data_stage_and_edge_type_aliases():
+    plan = _dynamic_plan(image_count=1)
+    input_node = plan["nodes"][0]
+    input_node["data"]["stage"] = input_node.pop("stage")
+    for edge in plan["edges"]:
+        edge["type"] = edge.pop("link_type")
+
+    result = validate_workflow_plan(plan)
+
+    assert result["ok"] is True, result
+
+
+def test_workflow_plan_rejects_conflicting_edge_type_alias():
+    plan = _dynamic_plan(image_count=1)
+    plan["edges"][0]["type"] = "dependency_for"
+
+    result = validate_workflow_plan(plan)
+
+    assert result["ok"] is False
+    assert {
+        "path": "edges[0].type",
+        "message": "conflicts with link_type: prompt_for",
+    } in result["errors"]
+
+
+def test_workflow_plan_rejects_invalid_runtime_catalog_shapes_before_canvas_apply():
+    plan = _dynamic_plan()
+    catalog = plan["nodes"][1]["data"]["workflowCatalog"]
+    catalog.update(
+        {
+            "confirmedInputs": ["brief"],
+            "promptStrategy": "ambient_bgm",
+            "inputStrategy": "script_to_bgm",
+            "promptBuilder": "episode_bgm",
+        }
+    )
+
+    result = validate_workflow_plan(plan)
+
+    assert result["ok"] is False
+    errors = {error["path"]: error["message"] for error in result["errors"]}
+    catalog_path = "nodes[1].data.workflowCatalog"
+    assert errors[f"{catalog_path}.confirmedInputs"] == "must be an object"
+    assert errors[f"{catalog_path}.inputStrategy"] == "must be an object"
+    assert errors[f"{catalog_path}.promptBuilder"] == "must be an object"
+    assert errors[f"{catalog_path}.promptStrategy"].startswith("must be one of:")
+
+
+def test_workflow_plan_rejects_recipe_backed_user_input_node():
+    plan = _dynamic_plan()
+    plan["nodes"][0]["data"]["workflowCatalog"] = {
+        "skillId": "ecommerce-product",
+        "recipeId": "general-text",
+        "stepId": "user_requirement",
+    }
+
+    result = validate_workflow_plan(plan)
+
+    assert result["ok"] is False
+    assert any(
+        error["path"] == "nodes[0].data.workflowCatalog.recipeId"
+        and "must not execute a Recipe" in error["message"]
+        for error in result["errors"]
+    )
+
+
 def test_workflow_plan_reports_deterministic_preflight_summary():
     result = validate_workflow_plan(_dynamic_plan(image_count=3))
 
@@ -1535,6 +1628,174 @@ def test_workflow_plan_reports_deterministic_preflight_summary():
         "audio": 0,
         "compose": 0,
     }
+
+
+def test_exact_short_drama_plan_supports_24_beats_and_exact_count_guards(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    skill_id = "short-drama-quick"
+    nodes = [
+        {
+            "id": "request",
+            "node_type": "textAnnotationNode",
+            "stage": "input",
+            "data": {"displayName": "用户需求", "content": "固定生成24个视觉Beat"},
+        },
+        {
+            "id": "script",
+            "node_type": "textAnnotationNode",
+            "stage": "story",
+            "data": {
+                "displayName": "第1集完整分集剧本",
+                "content": "Beat 01—Beat 24",
+                "workflowCatalog": {
+                    "skillId": skill_id,
+                    "recipeId": "general-text",
+                },
+            },
+        },
+    ]
+    edges = [{"source": "request", "target": "script", "link_type": "context_for"}]
+    for beat in range(1, 25):
+        suffix = f"{beat:02d}"
+        frame_id = f"beat_{suffix}_frame"
+        video_id = f"beat_{suffix}_video"
+        nodes.extend(
+            [
+                {
+                    "id": frame_id,
+                    "node_type": "imageGenNode",
+                    "stage": "image",
+                    "data": {
+                        "displayName": f"Beat {suffix} 首帧",
+                        "workflowCatalog": {
+                            "skillId": skill_id,
+                            "recipeId": "general-image",
+                        },
+                    },
+                },
+                {
+                    "id": video_id,
+                    "node_type": "videoNode",
+                    "stage": "video",
+                    "data": {
+                        "displayName": f"Beat {suffix} 视频",
+                        "workflowCatalog": {
+                            "skillId": skill_id,
+                            "recipeId": "general-video",
+                        },
+                    },
+                },
+            ]
+        )
+        edges.extend(
+            [
+                {"source": "script", "target": frame_id, "link_type": "prompt_for"},
+                {
+                    "source": frame_id,
+                    "target": video_id,
+                    "link_type": "media_input_for",
+                },
+            ]
+        )
+
+    nodes.extend(
+        [
+            {
+                "id": "voiceover",
+                "node_type": "audioNode",
+                "stage": "audio",
+                "data": {
+                    "displayName": "第1集旁白",
+                    "audioKind": "speech",
+                    "workflowCatalog": {
+                        "skillId": skill_id,
+                        "recipeId": "drama-shot-voice",
+                    },
+                },
+            },
+            {
+                "id": "background_music",
+                "node_type": "audioNode",
+                "stage": "audio",
+                "data": {
+                    "displayName": "第1集背景音乐",
+                    "audioKind": "music",
+                    "workflowCatalog": {
+                        "skillId": skill_id,
+                        "recipeId": "drama-background-music",
+                    },
+                },
+            },
+            {
+                "id": "final_compose",
+                "node_type": "videoComposeNode",
+                "stage": "compose",
+                "data": {"displayName": "第1集最终成片"},
+            },
+        ]
+    )
+    edges.extend(
+        [
+            {"source": "script", "target": "voiceover", "link_type": "prompt_for"},
+            {
+                "source": "script",
+                "target": "background_music",
+                "link_type": "prompt_for",
+            },
+            {
+                "source": "voiceover",
+                "target": "final_compose",
+                "link_type": "composition_input_for",
+            },
+            {
+                "source": "background_music",
+                "target": "final_compose",
+                "link_type": "composition_input_for",
+            },
+            *[
+                {
+                    "source": f"beat_{beat:02d}_video",
+                    "target": "final_compose",
+                    "link_type": "composition_input_for",
+                }
+                for beat in range(1, 25)
+            ],
+        ]
+    )
+    node_ids = [node["id"] for node in nodes]
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "workflow_type": "dynamic.short-drama-episode",
+        "skill": {"id": skill_id, "version": 1},
+        "expected_node_count": 53,
+        "expected_node_counts": {
+            "textAnnotationNode": 2,
+            "imageGenNode": 24,
+            "videoNode": 24,
+            "audioNode": 2,
+            "videoComposeNode": 1,
+        },
+        "nodes": nodes,
+        "edges": edges,
+        "group": {"label": "第1集制作工作流", "node_ids": node_ids},
+        "layout": {"mode": "grid", "direction": "left_to_right"},
+    }
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True, validated
+    assert validated["node_count"] == 53
+    graph = build_workflow_graph_commands({"plan": plan, "run_after_create": False})
+    assert graph["ok"] is True, graph
+    assert sum(command["type"] == "create_node" for command in graph["commands"]) == 53
+    assert sum(command["type"] == "group_nodes" for command in graph["commands"]) == 1
+
+    truncated = {**plan, "nodes": plan["nodes"][:-1]}
+    rejected = validate_workflow_plan(truncated)
+    assert rejected["ok"] is False
+    assert any(issue["path"] == "expected_node_count" for issue in rejected["errors"])
 
 
 def _video_compose_plan() -> dict:
@@ -1553,6 +1814,45 @@ def _video_compose_plan() -> dict:
             }
         ],
     }
+
+
+@pytest.mark.parametrize(
+    ("requested_model", "canvas_model"),
+    [
+        ("seedance-2.0-fast", "seedance-2.0-fast"),
+        ("newapi_seedance-2.0-fast", "seedance-2.0-fast"),
+        ("newapi_seedance-2.0", "seedance-2.0"),
+        ("huimeng_seedance-1.5-pro", "seedance-1.5-pro"),
+    ],
+)
+def test_workflow_graph_normalizes_video_provider_names_to_canvas_model_ids(
+    requested_model,
+    canvas_model,
+):
+    graph = build_workflow_graph_commands(
+        {
+            "plan": {
+                "schema_version": "freezone_workflow_plan.v1",
+                "workflow_type": "dynamic.video",
+                "nodes": [
+                    {
+                        "id": "clip",
+                        "node_type": "videoNode",
+                        "stage": "video",
+                        "data": {"model": requested_model},
+                    }
+                ],
+                "edges": [],
+            },
+            "run_after_create": False,
+        }
+    )
+
+    assert graph["ok"] is True
+    create_command = next(
+        command for command in graph["commands"] if command["type"] == "create_node"
+    )
+    assert create_command["data"]["model"] == canvas_model
 
 
 def test_workflow_plan_rejects_duplicate_or_non_terminal_compose_nodes():
@@ -1574,8 +1874,12 @@ def test_workflow_plan_rejects_duplicate_or_non_terminal_compose_nodes():
     result = validate_workflow_plan(plan)
 
     assert result["ok"] is False
-    assert any("at most one videoComposeNode" in issue["message"] for issue in result["errors"])
-    assert any("must be a terminal node" in issue["message"] for issue in result["errors"])
+    assert any(
+        "at most one videoComposeNode" in issue["message"] for issue in result["errors"]
+    )
+    assert any(
+        "must be a terminal node" in issue["message"] for issue in result["errors"]
+    )
 
 
 def test_workflow_plan_rejects_composition_edge_to_regular_video_node():
@@ -2212,7 +2516,9 @@ def test_outdoor_stage_duel_skill_keeps_global_spec_in_skill(monkeypatch):
     assert "Audio_VO" in recipe_text
 
 
-def test_ling_cage_skill_keeps_style_while_recipes_are_survival_sci_fi_stages(monkeypatch):
+def test_ling_cage_skill_keeps_style_while_recipes_are_survival_sci_fi_stages(
+    monkeypatch,
+):
     catalog = _load_catalog_module()
     monkeypatch.setattr(catalog, "list_user_agent_config_items", None)
 
@@ -2394,9 +2700,10 @@ def test_japanese_anime_drama_skill_locks_language_and_continuity(monkeypatch):
     assert "voiceRef" not in planning_text
     assert "speechMode" not in planning_text
     assert "音频节点连接关系" not in planning_text
-    assert "最终组装、混音、4K 超分和导出交给画布合成节点处理" in planning[
-        "planning_notes"
-    ]
+    assert (
+        "最终组装、混音、4K 超分和导出交给画布合成节点处理"
+        in planning["planning_notes"]
+    )
     assert "<<<image_" not in planning_text
     assert "<<<video_" not in planning_text
     assert "<<<audio_" not in planning_text
@@ -2499,7 +2806,8 @@ def test_project_catalog_skills_compile_dynamic_multi_item_workflows(monkeypatch
                 "schema_version": "freezone_workflow_intent.v1",
                 "skill_id": skill_id,
                 "user_goal": f"测试 {skill_id}",
-                "items": anchor_items + [
+                "items": anchor_items
+                + [
                     {
                         "id": f"shot_{index}",
                         "title": f"镜头 {index}",
@@ -2578,7 +2886,8 @@ def test_short_drama_quick_expands_shot_voice_and_background_music(monkeypatch):
     bgm_nodes = [
         node
         for node in plan["nodes"]
-        if node["data"].get("workflowCatalog", {}).get("timelineRole") == "background_music"
+        if node["data"].get("workflowCatalog", {}).get("timelineRole")
+        == "background_music"
     ]
     assert [node["data"]["text"] for node in voice_nodes] == [
         "深夜的便利店，只有他一个人。",

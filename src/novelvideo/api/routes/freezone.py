@@ -4838,9 +4838,36 @@ async def generate_freezone_recipe_text(
     except RecipeRuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        if _is_recipe_text_generation_timeout(exc):
+            logger.warning("freezone Recipe text generation timed out")
+            raise HTTPException(
+                status_code=504,
+                detail=(
+                    "Recipe 文本生成超时：模型在规定时间内未返回结果，请稍后重试。"
+                    "本轮未继续执行下游节点。"
+                ),
+            ) from exc
         logger.exception("freezone Recipe text generation failed")
         raise HTTPException(status_code=503, detail="Recipe text generation failed") from exc
     return {"ok": True, "data": {"content": content}}
+
+
+def _is_recipe_text_generation_timeout(exc: BaseException) -> bool:
+    """Recognize timeout wrappers without exposing provider internals to clients."""
+
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, TimeoutError):
+            return True
+        class_name = type(current).__name__.lower()
+        message = str(current).strip().lower()
+        if "timeout" in class_name or "timed out" in message or "timeout" in message:
+            return True
+        cause = current.__cause__
+        current = cause if cause is not None else current.__context__
+    return False
 
 
 # ============================================================
@@ -9779,32 +9806,39 @@ async def freezone_audio_speech(
     billable_chars = count_billable_text_chars(body.text)
 
     voice_ref_payload = body.voice_ref.model_dump() if body.voice_ref else None
-    store = await make_sqlite_store_for_context(ctx)
-    try:
-        narration_style, speech_voice = await resolve_speech_voice(
-            store=store,
-            username=username,
-            project=project_name,
-            account_voice_username=account_voice_username,
-            project_dir=project_dir,
-            voice_ref=voice_ref_payload,
-        )
-    except VoicePrerequisiteError as exc:
-        logger.info(
-            "freezone_audio_speech_voice_prereq_failed",
-            extra={
-                "project_id": ctx.project_id,
-                "voice_ref_present": body.voice_ref is not None,
-                "voice_ref_scope": str((voice_ref_payload or {}).get("scope") or "default"),
-                "error_code": exc.error_code,
-            },
-        )
-        return JSONResponse(
-            status_code=409,
-            content={"ok": False, "code": exc.error_code, "error": str(exc)},
-        )
-    finally:
-        await store.close()
+    if body.speech_mode == "preset":
+        # System voices are zero-config and must never be gated by project/custom
+        # reference audio. The worker handles the preset model and voice directly.
+        narration_style = ""
+        speech_voice_source = f"preset:{body.preset_voice}"
+    else:
+        store = await make_sqlite_store_for_context(ctx)
+        try:
+            narration_style, speech_voice = await resolve_speech_voice(
+                store=store,
+                username=username,
+                project=project_name,
+                account_voice_username=account_voice_username,
+                project_dir=project_dir,
+                voice_ref=voice_ref_payload,
+            )
+            speech_voice_source = speech_voice.source
+        except VoicePrerequisiteError as exc:
+            logger.info(
+                "freezone_audio_speech_voice_prereq_failed",
+                extra={
+                    "project_id": ctx.project_id,
+                    "voice_ref_present": body.voice_ref is not None,
+                    "voice_ref_scope": str((voice_ref_payload or {}).get("scope") or "default"),
+                    "error_code": exc.error_code,
+                },
+            )
+            return JSONResponse(
+                status_code=409,
+                content={"ok": False, "code": exc.error_code, "error": str(exc)},
+            )
+        finally:
+            await store.close()
 
     logger.info(
         "freezone_audio_speech_voice_resolved",
@@ -9813,7 +9847,7 @@ async def freezone_audio_speech(
             "narration_style": narration_style,
             "voice_ref_present": body.voice_ref is not None,
             "voice_ref_scope": str((voice_ref_payload or {}).get("scope") or "default"),
-            "speech_voice_source": speech_voice.source,
+            "speech_voice_source": speech_voice_source,
         },
     )
 

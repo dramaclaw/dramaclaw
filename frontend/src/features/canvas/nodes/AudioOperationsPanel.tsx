@@ -52,6 +52,7 @@ import {
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { VoiceSelectionModal } from './VoiceSelectionModal';
+import { requiresCustomVoiceSelection } from './audioVoicePolicy';
 
 const PANEL_GAP_PX = 12;
 const PANEL_OVERHANG_PX = 60;
@@ -102,10 +103,12 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
   const [panelExpanded, setPanelExpanded] = useState(false);
   // 音色设置默认收起，参考 libtv：控制行的设置按钮点开后才展示音色卡。
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [voicePickerOpen, setVoicePickerOpen] = useState(false);
   // music 模式：高级设置（音乐时长等）默认收起，点底部设置按钮展开。
   const [showMusicSettings, setShowMusicSettings] = useState(false);
   // 'music'：文字生成音乐(走 /freezone/audio/eleven-music)；缺省/'speech'：克隆音频(TTS)。
   const isMusic = data.audioKind === 'music';
+  const voiceMissing = requiresCustomVoiceSelection(data);
   // 生成逻辑(含失败重试)抽到 useAudioGeneration，与节点本体的重试共用同一实现。
   const {
     generate: handleSubmit,
@@ -222,10 +225,9 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
   }, [handleTextChange, isGenerating, isTranslating, modelTaskAccess.blocked, t, text]);
 
   // 文本框为空但引用了非空文本时也允许提交（effectivePrompt 会回退到上游引用）。
-  const voiceMissing = !isMusic && data.voiceAvailable === false;
   const submitDisabled =
     isGenerating || billingRuleMissing || modelTaskAccess.blocked ||
-    effectivePrompt.length === 0 || voiceMissing;
+    effectivePrompt.length === 0;
 
   return (
     <OperationPanelShell
@@ -331,9 +333,16 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
       )}
 
       {voiceMissing ? (
-        <p className="px-3 pb-2 text-[12px] text-amber-300">
-          请先配置或选择声线
-        </p>
+        <div className="flex items-center justify-between gap-3 px-3 pb-2 text-[12px] text-amber-300">
+          <span>尚未选中可用的自定义声线</span>
+          <button
+            type="button"
+            onClick={() => setVoicePickerOpen(true)}
+            className="rounded-full border border-amber-300/30 px-2.5 py-1 text-[11px] text-amber-200 hover:bg-amber-300/10"
+          >
+            选择声线
+          </button>
+        </div>
       ) : null}
 
       <div className="flex shrink-0 items-center justify-end gap-2 px-3 pb-3 pt-1">
@@ -382,9 +391,9 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
           type="button"
           disabled={submitDisabled}
           title={
-            modelTaskAccess.message ?? (voiceMissing ? '请先配置或选择声线' : '生成')
+            modelTaskAccess.message ?? (voiceMissing ? '生成（未选择自定义声线时跳过）' : '生成')
           }
-          onClick={handleSubmit}
+          onClick={() => void handleSubmit()}
           className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${
             submitDisabled
               ? NODE_GENERATE_BUTTON_DISABLED_CLASS
@@ -405,6 +414,26 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
 
       {isMusic && showMusicSettings && (
         <AudioMusicSettingsPanel nodeId={nodeId} data={data} />
+      )}
+      {!isMusic && (
+        <VoiceSelectionModal
+          open={voicePickerOpen}
+          initialTab="mine"
+          currentRef={data.voiceRef ?? { scope: 'project_narrator' }}
+          onClose={() => setVoicePickerOpen(false)}
+          onPick={({ ref, label, language }) => {
+            updateNodeData(nodeId, {
+              speechMode: 'clone',
+              voicePolicyConfirmed: true,
+              voiceRef: ref,
+              voiceAvailable: true,
+              voiceLabel: label,
+              voiceLanguage: language ?? '',
+              generationError: null,
+            });
+            setVoicePickerOpen(false);
+          }}
+        />
       )}
     </OperationPanelShell>
   );
@@ -673,10 +702,12 @@ function AudioVoiceSettingsPanel({ nodeId, data }: AudioVoiceSettingsPanelProps)
         currentRef={currentRef}
         onPick={({ ref, label, language }) => {
           updateNodeData(nodeId, {
+            speechMode: 'clone',
             voiceRef: ref,
             voiceAvailable: true,
             voiceLabel: label,
             voiceLanguage: language ?? '',
+            generationError: null,
           });
           setModalOpen(false);
         }}

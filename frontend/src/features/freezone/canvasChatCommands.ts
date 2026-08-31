@@ -181,6 +181,8 @@ export type CanvasCommandApprovalEventDetail = {
   receivedAt?: number;
   autoExpires?: boolean;
   externalMcpCommand?: boolean;
+  /** 必须由用户在聊天卡片中明确选择，自动执行模式也不能跳过。 */
+  requiresUserChoice?: boolean;
 };
 
 export type CanvasCommandResultEventDetail = {
@@ -1703,6 +1705,7 @@ function expandWorkflowNodeIds(
 }
 
 function defaultWorkflowActionForNode(node: CanvasNode): string | null {
+  if (isWorkflowUserInputNode(node)) return null;
   const preferredActions = WORKFLOW_GENERATE_ACTION_BY_NODE_TYPE[node.type] ?? [];
   if (preferredActions.length === 0) return null;
   const state = useCanvasStore.getState();
@@ -1717,6 +1720,21 @@ function defaultWorkflowActionForNode(node: CanvasNode): string | null {
     return action;
   }
   return null;
+}
+
+function isWorkflowUserInputNode(node: CanvasNode | undefined): boolean {
+  if (!node) return false;
+  const data = node.data as Record<string, unknown>;
+  if (data.workflowCatalogRole === "user_input") return true;
+  const catalog = data.workflowCatalog && typeof data.workflowCatalog === "object"
+    && !Array.isArray(data.workflowCatalog)
+    ? data.workflowCatalog as Record<string, unknown>
+    : null;
+  const stepId = String(catalog?.stepId ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, "_");
+  return ["workflow_input", "user_input", "user_requirement"].includes(stepId);
 }
 
 function isRedundantLegacyComposeGenerator(
@@ -1826,9 +1844,7 @@ function normalizeWorkflowStartNodeIds(nodeIds: string[]): string[] {
   const nodeByIdMap = new Map(state.nodes.map((node) => [node.id, node] as const));
   return [...new Set(nodeIds.map((nodeId) => {
     const node = nodeByIdMap.get(nodeId);
-    const workflowRole = (node?.data as { workflowCatalogRole?: unknown } | undefined)
-      ?.workflowCatalogRole;
-    if (workflowRole !== "user_input" || !node?.parentId) return nodeId;
+    if (!isWorkflowUserInputNode(node) || !node?.parentId) return nodeId;
     return nodeByIdMap.get(node.parentId)?.type === CANVAS_NODE_TYPES.group
       ? node.parentId
       : nodeId;
@@ -3281,11 +3297,13 @@ async function executeQueuedNodeActions(
               isRecord(actionResult.output) &&
               (actionResult.output.openedUiAction === true ||
                 actionResult.output.requires_user_action === true);
+            const actionWasSkipped =
+              isRecord(actionResult.output) && actionResult.output.skipped === true;
             const failed = actionResult.status === "error"
               ? actionResult.error || "节点动作执行失败"
               : outputIssue
                 ? outputIssue
-              : !actionOpenedUserUi && !hasRequiredOutput
+              : !actionOpenedUserUi && !actionWasSkipped && !hasRequiredOutput
                 ? nodeGenerationError(action.nodeId) ??
                   `节点动作完成但未产出 ${mediaRequirementLabel(action.action)}。`
                 : null;
@@ -3328,7 +3346,9 @@ async function executeQueuedNodeActions(
             ? settled.failed === WORKFLOW_STOPPED_MESSAGE
               ? "skipped"
               : settled.failed.startsWith("跳过 ") ? "blocked" : "failed"
-            : "completed",
+            : isRecord(settled.output) && settled.output.skipped === true
+              ? "skipped"
+              : "completed",
           ...(settled.failed ? { error: settled.failed } : {}),
           retry_count: settled.retryCount ?? 0,
           ...workflowTaskReference(settled.output),

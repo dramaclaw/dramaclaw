@@ -78,6 +78,41 @@ describe('workflowRecipeRuntime', () => {
     });
   });
 
+  it('does not forward legacy dependency arrays as confirmed Skill inputs', async () => {
+    compileMock.mockResolvedValue('compiled background music prompt');
+
+    await compileWorkflowNodePrompt({
+      nodeData: {
+        workflowCatalog: {
+          skillId: 'short-drama-quick',
+          confirmedInputs: ['n_script'],
+          recipeId: 'drama-background-music',
+          promptStrategy: 'ambient_bgm',
+          inputStrategy: 'script_to_bgm',
+          promptBuilder: 'episode_bgm',
+        },
+      },
+      nodeKind: 'audio',
+      nodePrompt: '冷灰海浪氛围配乐',
+      upstreamText: '第1集剧本',
+      fallbackPrompt: '第1集剧本\n\n冷灰海浪氛围配乐',
+    });
+
+    expect(compileMock).toHaveBeenCalledWith({
+      recipeId: 'drama-background-music',
+      recipeVersion: '',
+      skillId: 'short-drama-quick',
+      skillVersion: '',
+      confirmedInputs: {},
+      nodeKind: 'audio',
+      promptStrategy: 'llm_refine',
+      nodePrompt: '冷灰海浪氛围配乐',
+      upstreamText: '第1集剧本',
+      userGoal: '',
+      referenceMedia: undefined,
+    });
+  });
+
   it('reports Recipe compilation and task submission phases', async () => {
     compileMock.mockResolvedValue('compiled prompt');
     const phases: string[] = [];

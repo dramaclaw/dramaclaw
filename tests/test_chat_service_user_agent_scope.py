@@ -1147,6 +1147,9 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "[FREEZONE_CANVAS_ASSISTANT]" in captured["prompt"]
         assert "[FREEZONE_CANVAS_CONTEXT]" in captured["prompt"]
         assert "canvas_id: canvas-a" in captured["prompt"]
+        assert "generation_parameter_round: business-turn" in captured["prompt"]
+        assert "Historical clarification answers" in captured["prompt"]
+        assert "they never count as confirmation for this round" in captured["prompt"]
         assert "references/custom-topology.md" in captured["prompt"]
         assert (
             "Do not use freezone_emit_canvas_command for a workflow"
@@ -1158,6 +1161,9 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "do not look for" in developer_instructions
         assert "custom-topology reference" in developer_instructions
         assert "freezone_create_workflow_graph once" in developer_instructions
+        assert "expected_node_count" in developer_instructions
+        assert "placeholder graph such as A/B" in developer_instructions
+        assert "short-drama production Skill" in developer_instructions
         assert "not a Workflow catalog skill_id" in developer_instructions
         assert (
             "never pass dramaclaw-workflows to workflow_skill_get"
@@ -2870,6 +2876,34 @@ def test_freezone_prompt_injects_auto_execute_parameter_policy(monkeypatch, tmp_
     assert "frontend auto-applies it" in prompt
     assert "without asking for another create/run confirmation" in prompt
     assert "never built-in request_user_input" in prompt
+
+
+def test_codex_freezone_prompt_requires_fresh_parameter_selection_for_each_turn(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+
+    prompt = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "继续生成视频",
+        tool_mode="freezone_canvas",
+        surface_context={
+            "freezone_canvas_id": "canvas-a",
+            "canvas_command_execution_mode": "manual_confirm",
+        },
+        turn_id="turn-current-123",
+        require_generation_parameter_preflight=True,
+    )
+
+    assert "generation_parameter_round: turn-current-123" in prompt
+    assert "For every new request in this round" in prompt
+    assert "Historical clarification answers" in prompt
+    assert "they never count as confirmation for this round" in prompt
+    assert "never add a system-voice/custom-voice choice" in prompt
+    assert "do not ask the user to choose system voice versus custom voice" in prompt
+    assert "The normal approval card is still shown" in prompt
+    assert "Do not ask a preliminary image/video parameter clarification" not in prompt
 
 
 def test_freezone_prompt_omits_skill_studio_contract_for_normal_canvas_requests(

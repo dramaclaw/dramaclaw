@@ -235,6 +235,14 @@ def _validate_published_skill(report: DiagnosticReport, root: Path) -> None:
         "run_after_create" in skill_text,
         "published Skill does not describe run_after_create behavior",
     )
+    report.check(
+        "expected_node_count" in skill_text,
+        "published Skill does not preserve explicit workflow node totals",
+    )
+    report.check(
+        "Never write placeholder or diagnostic nodes" in skill_text,
+        "published Skill does not forbid diagnostic canvas writes",
+    )
 
 
 def _anchor_for_recipe(

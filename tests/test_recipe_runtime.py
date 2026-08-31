@@ -553,7 +553,7 @@ async def test_generate_recipe_text_executes_compiled_instruction(monkeypatch):
     monkeypatch.setattr(recipe_runtime, "Agent", FakeAgent)
     monkeypatch.setattr(
         "novelvideo.config.get_newapi_text_pydantic_model",
-        lambda *_args, **kwargs: captured.update(kwargs) or object(),
+        lambda *args, **kwargs: captured.update(model_env=args[0], **kwargs) or object(),
     )
 
     result = await recipe_runtime.generate_recipe_text(
@@ -564,6 +564,9 @@ async def test_generate_recipe_text_executes_compiled_instruction(monkeypatch):
     )
 
     assert result == "# 详情页方案"
+    assert captured["model_env"] == "FREEZONE_TEXT_WRITER_MODEL"
+    assert captured["timeout_seconds_override"] == 300.0
+    assert captured["capability"] == "freezone.text.generate"
     assert captured["brainclaw_profile"] is (
         BrainClawProfile.FREEZONE_RECIPE_TEXT_GENERATION
     )

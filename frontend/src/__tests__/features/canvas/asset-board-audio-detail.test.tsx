@@ -148,6 +148,9 @@ describe('AssetBoard 音频进主从详情', () => {
       displayName: '旁白',
       audioUrl: null,
       text: '【时长】79s\n【旁白】（低沉）真正的旁白。\n【音效】雷声',
+      speechMode: 'clone',
+      voiceAvailable: true,
+      voiceRef: { scope: 'user_custom', voiceId: 'voice-1' },
     })]);
     render(<AssetBoardView visible onLocateNode={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: '旁白' }));

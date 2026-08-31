@@ -872,6 +872,12 @@ export function FreezoneShell({
   const [chatOpen, setChatOpen] = useState(loadChatOpen);
   const [pendingChatAttachments, setPendingChatAttachments] = useState<ChatAttachment[]>([]);
   const [pendingChatNodeMentions, setPendingChatNodeMentions] = useState<string[]>([]);
+  const handlePendingChatAttachmentsConsumed = useCallback(() => {
+    setPendingChatAttachments([]);
+  }, []);
+  const handlePendingChatNodeMentionsConsumed = useCallback(() => {
+    setPendingChatNodeMentions([]);
+  }, []);
   const productSurfaces = useProductSurfaces();
   const showChatDock = Boolean(
     surfaceAccess(productSurfaces.data, "freezone_assistant")?.available,
@@ -2078,9 +2084,9 @@ export function FreezoneShell({
             currentCanvasSelection={currentCanvasSelection}
             currentCanvasOntologyContext={currentCanvasOntologyContext}
             pendingAttachments={pendingChatAttachments}
-            onPendingAttachmentsConsumed={() => setPendingChatAttachments([])}
+            onPendingAttachmentsConsumed={handlePendingChatAttachmentsConsumed}
             pendingNodeMentions={pendingChatNodeMentions}
-            onPendingNodeMentionsConsumed={() => setPendingChatNodeMentions([])}
+            onPendingNodeMentionsConsumed={handlePendingChatNodeMentionsConsumed}
             open={chatOpen}
             onOpenChange={handleChatOpenChange}
             // 抽屉会往 <html> 上广播 --freezone-dock-width，顶栏 / 任务状态条 / 任务

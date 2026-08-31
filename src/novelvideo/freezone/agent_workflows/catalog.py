@@ -1994,12 +1994,8 @@ def _intent_item_node(
                 data["musicLengthMs"] = music_length_ms
         else:
             data["audioKind"] = "speech"
-            data["speechMode"] = "preset"
-            data["presetModel"] = (
-                "edge-tts" if model in {"LingShan-TTS-2", "qwen3-tts-flash"} else model
-            )
-            data["presetVoice"] = "Serena"
-            data["voice"] = "Serena"
+            data["speechMode"] = "clone"
+            data["voiceAvailable"] = False
             data["languageType"] = "Chinese"
     return {
         "id": item_id,
@@ -2078,7 +2074,11 @@ def validate_agent_workflow_plan(plan: Any) -> dict[str, Any]:
         for parameter_id in input_contract["missing_required"]
     )
     for index, node in enumerate(plan.get("nodes") or []):
-        node_type = _text(node.get("node_type")) if isinstance(node, dict) else ""
+        node_type = (
+            _text(node.get("node_type") or node.get("type"))
+            if isinstance(node, dict)
+            else ""
+        )
         if node_type not in allowed_node_types:
             errors.append(
                 {
@@ -2092,7 +2092,14 @@ def validate_agent_workflow_plan(plan: Any) -> dict[str, Any]:
         recipe_pipeline = (
             (catalog.get("recipePipeline") or []) if isinstance(catalog, dict) else []
         )
-        stage = _text(node.get("stage")) if isinstance(node, dict) else ""
+        stage = (
+            _text(
+                node.get("stage")
+                or (data.get("stage") if isinstance(data, dict) else "")
+            )
+            if isinstance(node, dict)
+            else ""
+        )
         requires_recipe = node_type in {
             "imageGenNode",
             "videoNode",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from novelvideo.chat import workflow_mcp
 from novelvideo.freezone.agent_workflows import registry
@@ -28,16 +29,91 @@ async def test_standalone_workflow_mcp_exposes_portable_tools_and_resources():
     }
 
     schemas = {tool.name: tool.inputSchema for tool in tools}
+    assert schemas["workflow_skill_get"]["properties"]["compact"]["type"] == "boolean"
     plan_schema = schemas["workflow_graph_compile"]["properties"]["plan"]
     intent_schema = schemas["workflow_intent_compile"]["properties"]["intent"]
     assert plan_schema["properties"]["schema_version"]["enum"] == [
         "freezone_workflow_plan.v1"
     ]
     assert plan_schema["properties"]["nodes"]["items"]["anyOf"]
+    recipe_node_schema = plan_schema["properties"]["nodes"]["items"]["anyOf"][0]
+    assert recipe_node_schema["properties"]["type"]["enum"] == [
+        "textAnnotationNode",
+        "scriptNode",
+        "beatContextNode",
+        "imageGenNode",
+        "videoNode",
+        "audioNode",
+    ]
+    assert {tuple(option["required"]) for option in recipe_node_schema["anyOf"]} == {
+        ("node_type",),
+        ("type",),
+    }
     assert "groups" in plan_schema["properties"]
+    assert plan_schema["properties"]["expected_node_count"]["maximum"] == 200
+    assert (
+        "videoNode" in plan_schema["properties"]["expected_node_counts"]["properties"]
+    )
+    catalog_schema = plan_schema["properties"]["nodes"]["items"]["anyOf"][0][
+        "properties"
+    ]["data"]["properties"]["workflowCatalog"]
+    assert catalog_schema["properties"]["confirmedInputs"]["type"] == "object"
+    assert catalog_schema["properties"]["inputStrategy"]["type"] == "object"
+    assert catalog_schema["properties"]["promptBuilder"]["type"] == "object"
+    assert catalog_schema["properties"]["promptStrategy"]["enum"] == [
+        "template",
+        "user_message",
+        "previous_output",
+        "llm_refine",
+    ]
     assert intent_schema["properties"]["schema_version"]["enum"] == [
         "freezone_workflow_intent.v1"
     ]
+
+
+@pytest.mark.asyncio
+async def test_graph_compile_accepts_canvas_type_alias():
+    arguments = {
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "skill": {"id": "video-tutorial", "version": 1},
+            "nodes": [
+                {
+                    "id": "input",
+                    "type": "textAnnotationNode",
+                    "data": {
+                        "stage": "input",
+                        "text": "用户提供的固定文案",
+                    },
+                },
+                {
+                    "id": "image",
+                    "type": "imageGenNode",
+                    "data": {
+                        "prompt": "未来城市雨夜",
+                        "workflowCatalog": {"recipeId": "general-image"},
+                    },
+                }
+            ],
+            "edges": [
+                {"source": "input", "target": "image", "type": "prompt_for"}
+            ],
+        }
+    }
+    graph_tool = next(
+        tool
+        for tool in await workflow_mcp.list_tools()
+        if tool.name == "workflow_graph_compile"
+    )
+    Draft202012Validator(graph_tool.inputSchema).validate(arguments)
+
+    result = await workflow_mcp.call_tool("workflow_graph_compile", arguments)
+
+    payload = json.loads(result[0].text)
+    assert payload["ok"] is True, payload
+    assert payload["commands"][0]["node_type"] == "textAnnotationNode"
+    assert payload["commands"][1]["node_type"] == "imageGenNode"
+    assert payload["commands"][2]["link_type"] == "prompt_for"
 
 
 @pytest.mark.asyncio
@@ -127,7 +203,11 @@ def test_graph_compiler_emits_one_grouped_canvas_batch():
                 ],
                 "edges": [
                     {"source": "prompt", "target": "frame", "link_type": "prompt_for"},
-                    {"source": "frame", "target": "video", "link_type": "media_input_for"},
+                    {
+                        "source": "frame",
+                        "target": "video",
+                        "link_type": "media_input_for",
+                    },
                 ],
                 "group": {
                     "label": "文生视频测试工作流",
@@ -200,3 +280,25 @@ def test_graph_compiler_replaces_empty_nested_prompt_with_portable_prompt():
 
     assert result["ok"] is True
     assert result["commands"][0]["data"]["prompt"] == "未来城市首帧"
+
+
+def test_graph_compiler_marks_portable_input_nodes_as_non_executable():
+    result = build_workflow_graph_commands(
+        {
+            "plan": {
+                "schema_version": "freezone_workflow_plan.v1",
+                "nodes": [
+                    {
+                        "id": "request",
+                        "node_type": "textAnnotationNode",
+                        "stage": "input",
+                        "data": {"content": "用户提供的剧本事实"},
+                    }
+                ],
+                "edges": [],
+            }
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["commands"][0]["data"]["workflowCatalogRole"] == "user_input"

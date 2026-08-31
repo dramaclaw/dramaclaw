@@ -39,7 +39,6 @@ import { CANVAS_NODE_PANEL_SURFACE_CLASS, canvasNodeFrameClass } from '@/feature
 import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
 import { AudioOperationsPanel } from '@/features/canvas/nodes/AudioOperationsPanel';
 import { deriveAudioText, useAudioGeneration } from '@/features/canvas/nodes/useAudioGeneration';
-import { createInFlightRequestCache } from '@/features/canvas/nodes/inFlightRequestCache';
 import { translateNodeText } from '@/features/canvas/application/translateText';
 import {
   publishNodeActionAccepted,
@@ -52,7 +51,7 @@ import {
   hasMainlineContexts,
   NodeContextBadges,
 } from '@/features/freezone/context/NodeContextBadges';
-import { fetchFreezoneAudioReferences, uploadFreezoneImage } from '@/api/ops';
+import { uploadFreezoneImage } from '@/api/ops';
 import { readUrl } from '@/lib/url-params';
 import { VoiceSelectionModal } from './VoiceSelectionModal';
 
@@ -83,10 +82,10 @@ function isAudioFile(file: File): boolean {
   return AUDIO_UPLOAD_EXTENSIONS.has(ext);
 }
 
-// 只合并同时发生的请求；settled 后立即失效，避免空结果在上传声线后仍被复用。
-const getCachedAudioReferences = createInFlightRequestCache(
-  fetchFreezoneAudioReferences,
-);
+function isVoicePrerequisiteError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:声线未配置|缺少.*声线|请先配置或选择声线|上传或录制.*音频)/u.test(message);
+}
 
 export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeProps) => {
   const { t } = useTranslation();
@@ -96,15 +95,20 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const { isGenerating, task } = useNodeGenerationTaskState(data);
   const [voicePickerOpen, setVoicePickerOpen] = useState(false);
+  const [voicePickerInitialTab, setVoicePickerInitialTab] = useState<'library' | 'mine'>('library');
   // 重试用与面板提交同一套生成逻辑（hook）。
   const { generate } = useAudioGeneration(id, data);
   useEffect(() => {
-    return subscribeNodeAction(({ nodeId, action, requestId }) => {
+    return subscribeNodeAction(({ nodeId, action, parameters, requestId }) => {
       if (nodeId !== id) return;
       if (action === 'generate_audio') {
         publishNodeActionAccepted(requestId, id, action);
         void generate()
           .then((output) => {
+            if (output.skipped) {
+              publishNodeActionSuccess(requestId, id, action, output);
+              return;
+            }
             const latest = useCanvasStore.getState().nodes.find((node) => node.id === id);
             const latestAudioUrl = latest?.type === CANVAS_NODE_TYPES.audio
               && typeof latest.data.audioUrl === 'string'
@@ -115,7 +119,23 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
               ...(latestAudioUrl ? { audioUrl: latestAudioUrl } : {}),
             });
           })
-          .catch((error) => publishNodeActionError(requestId, id, action, error));
+          .catch((error) => {
+            if (isVoicePrerequisiteError(error)) {
+              updateNodeData(id, {
+                isGenerating: false,
+                generationStartedAt: null,
+                voiceAvailable: false,
+                generationError: '未选择可用自定义声线，已跳过生成',
+              });
+              publishNodeActionSuccess(requestId, id, action, {
+                skipped: true,
+                reason: 'missing_custom_voice',
+                agent_instruction: '未选择自定义声线，本音频节点已跳过，继续其它工作流节点。',
+              });
+              return;
+            }
+            publishNodeActionError(requestId, id, action, error);
+          });
         return;
       }
       if (action === 'translate_text') {
@@ -141,6 +161,7 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
       }
       if (action === 'open_voice_picker') {
         publishNodeActionAccepted(requestId, id, action);
+        setVoicePickerInitialTab(parameters?.initialTab === 'mine' ? 'mine' : 'library');
         setVoicePickerOpen(true);
         publishNodeActionSuccess(requestId, id, action, { openedUiAction: true });
       }
@@ -182,8 +203,6 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
     (data as { mainline_context?: unknown }).mainline_context,
   );
   const currentVoiceRef: AudioVoiceRef = data.voiceRef ?? { scope: 'project_narrator' };
-  const speechMode = data.speechMode ?? 'clone';
-
   // 上传一份本地音频到后端 freezone — 复用通用 upload 端点（后端不区分 mime）。
   // 上传成功后落 audioUrl/sourceFileName 进 store，AudioOperationsPanel 那边
   // 也会自动 pick 到这份音频做后续处理。
@@ -231,97 +250,6 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, resolvedHeight, resolvedWidth, updateNodeInternals]);
-
-  // 节点挂载后若没有显式音色，则拉一次音色库 references 并落到第一条。
-  // 放在 AudioNode 而非 AudioOperationsPanel 里，是因为 panel 只在
-  // `selected && !audioUrl` 才挂载——新建后若没立刻被点中，panel 不会渲染，
-  // 初始化 effect 永远跑不到。AudioNode 一进画布就 mount，能稳定触发。
-  //
-  // "没有显式音色" = voiceRef 缺失 *或* 仍是历史工厂兜底（纯
-  // `{ scope: 'project_narrator' }`，无 characterName/identityId/slot/voiceId），
-  // 兼容 2026-05-19 之前持久化的旧节点。
-  //
-  // 不要在外面拿 useRef 守"只跑一次"——StrictMode 下第一遍 effect 起 fetch、
-  // cleanup 把 cancelled 翻 true，第二遍 effect 见 ref 已置位直接 bail，第一遍
-  // 闭包等回来又被 cancelled 挡住，结果谁都写不进 store。请求级去重交给
-  // `getCachedAudioReferences` 的 promise cache。
-  useEffect(() => {
-    if (data.audioKind === 'music' || speechMode !== 'clone') return;
-    const v = data.voiceRef;
-    const isFactoryFallback =
-      v != null &&
-      v.scope === 'project_narrator' &&
-      !v.characterName &&
-      !v.identityId &&
-      !v.slot &&
-      !v.voiceId;
-    if (v != null && !isFactoryFallback) return;
-    const project = readUrl().project;
-    if (!project) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await getCachedAudioReferences(project);
-        if (cancelled) return;
-        const first = (res.available ?? [])[0];
-        if (!first) {
-          updateNodeData(id, {
-            voiceAvailable: false,
-            voiceLabel: '未配置可用声线',
-          });
-          return;
-        }
-        const fresh = useCanvasStore.getState().nodes.find((n) => n.id === id);
-        if (!fresh) return;
-        const freshData = fresh.data as AudioNodeData;
-        const cur = freshData.voiceRef;
-        const curIsFactory =
-          cur != null &&
-          cur.scope === 'project_narrator' &&
-          !cur.characterName &&
-          !cur.identityId &&
-          !cur.slot &&
-          !cur.voiceId;
-        if (cur != null && !curIsFactory) return;
-        const ref: AudioVoiceRef = {
-          scope: first.scope,
-          characterName: first.character_name ?? undefined,
-          identityId: first.identity_id ?? undefined,
-          slot: first.slot ?? undefined,
-          voiceId: first.voice_id ?? undefined,
-        };
-        const nextLabel = first.label ?? '';
-        const nextLanguage = first.language ?? '';
-        // 若算出来的默认音色跟当前已经一致就跳过：当首条 reference 本身就是裸
-        // project_narrator（与"工厂兜底"同形）时，写入会再次触发本 effect，而两道
-        // 守卫都把这种形状当成"仍需初始化"，于是每次渲染都写一个新对象 →
-        // 无限重渲染把浏览器卡死。这道相等性判断是断开死循环的关键。
-        if (
-          cur != null &&
-          cur.scope === ref.scope &&
-          cur.characterName === ref.characterName &&
-          cur.identityId === ref.identityId &&
-          cur.slot === ref.slot &&
-          cur.voiceId === ref.voiceId &&
-          freshData.voiceLabel === nextLabel &&
-          freshData.voiceLanguage === nextLanguage
-        ) {
-          return;
-        }
-        updateNodeData(id, {
-          voiceRef: ref,
-          voiceAvailable: true,
-          voiceLabel: nextLabel,
-          voiceLanguage: nextLanguage,
-        });
-      } catch (err) {
-        console.warn('[audio-node] init default voice failed', err);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [data.audioKind, data.voiceRef, id, speechMode, updateNodeData]);
 
   const cardToneClass = canvasNodeFrameClass({
     selected,
@@ -428,12 +356,15 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
           open={voicePickerOpen}
           onClose={() => setVoicePickerOpen(false)}
           currentRef={currentVoiceRef}
+          initialTab={voicePickerInitialTab}
           onPick={({ ref, label, language }) => {
             updateNodeData(id, {
               speechMode: 'clone',
               voiceRef: ref,
+              voiceAvailable: true,
               voiceLabel: label,
               voiceLanguage: language ?? '',
+              generationError: null,
             });
             setVoicePickerOpen(false);
           }}

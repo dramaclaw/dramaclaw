@@ -151,6 +151,7 @@ import type { CanvasOntologyContext } from "@/features/canvas/ontology/canvasOnt
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import { useCanvasStore, type CanvasNode } from "@/stores/canvasStore";
 import type {
+  AudioVoiceRef,
   CanvasEdge,
   CanvasNodeType,
   VideoGenQuality,
@@ -163,6 +164,7 @@ import {
 } from "@/features/canvas/application/videoUpscale";
 import { useFreezoneImageModels } from "@/features/canvas/hooks/useFreezoneImageModels";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
+import { VoiceSelectionModal } from "@/features/canvas/nodes/VoiceSelectionModal";
 import type {
   CanvasChatCommand,
   CanvasChatCommandApplyStep,
@@ -2753,13 +2755,17 @@ function audioApprovalInitialParams(
       nodeId,
       nodeIds: [nodeId],
       audioKind,
-      speechMode: nodeData.speechMode === "clone" ? "clone" : "preset",
+      speechMode: "clone",
       presetVoice: typeof nodeData.presetVoice === "string" && nodeData.presetVoice.trim()
         ? nodeData.presetVoice.trim()
         : "Serena",
       voiceLabel: typeof nodeData.voiceLabel === "string" && nodeData.voiceLabel.trim()
         ? nodeData.voiceLabel.trim()
         : "项目默认声线",
+      voiceRef: nodeData.voiceRef && typeof nodeData.voiceRef === "object"
+        ? nodeData.voiceRef as AudioVoiceRef
+        : null,
+      voiceAvailable: nodeData.voiceAvailable === true,
       emotionPrompt: typeof nodeData.emotionPrompt === "string" ? nodeData.emotionPrompt : "",
       musicLengthSec: Math.max(3, Math.round(
         typeof nodeData.musicLengthMs === "number" ? nodeData.musicLengthMs / 1000 : 30,
@@ -2772,6 +2778,8 @@ function audioApprovalInitialParams(
       speechMode: params.speechMode,
       presetVoice: params.presetVoice,
       voiceLabel: params.voiceLabel,
+      voiceRef: params.voiceRef,
+      voiceAvailable: params.voiceAvailable,
       emotionPrompt: params.emotionPrompt,
       musicLengthSec: params.musicLengthSec,
       forceInstrumental: params.forceInstrumental,
@@ -2830,6 +2838,22 @@ function canvasApprovalRequiresHumanReviewConfirmation(
   return canvasApprovalHumanReviewNodeIds(approval, canvasNodes, canvasEdges).length > 0;
 }
 
+function canvasApprovalRequiresAudioVoiceChoice(
+  _approval: PendingCanvasCommandApproval,
+  _canvasNodes: CanvasNode[],
+): boolean {
+  // Missing custom voice is an intentional skip, not an approval blocker.
+  return false;
+}
+
+function canvasApprovalRequiresManualUiAction(
+  approval: PendingCanvasCommandApproval,
+): boolean {
+  return approval.envelopes.some((envelope) => envelope.commands.some((command) => (
+    command.type === "run_node_action" && command.action === "open_voice_picker"
+  )));
+}
+
 function amendCanvasApprovalWithGenerationData(
   approval: PendingCanvasCommandApproval,
   nodeIds: string[],
@@ -2838,9 +2862,30 @@ function amendCanvasApprovalWithGenerationData(
 ): PendingCanvasCommandApproval {
   const remaining = new Set(nodeIds);
   if (remaining.size === 0) return approval;
-  return {
+  const withCreatedNodeData: PendingCanvasCommandApproval = {
     ...approval,
     envelopes: approval.envelopes.map((envelope) => ({
+      ...envelope,
+      commands: envelope.commands.map((command) => {
+        if (
+          command.type === "create_node"
+          && command.client_id
+          && remaining.has(command.client_id)
+        ) {
+          remaining.delete(command.client_id);
+          return {
+            ...command,
+            data: { ...(command.data ?? {}), ...data },
+          };
+        }
+        return command;
+      }),
+    })),
+  };
+  if (remaining.size === 0) return withCreatedNodeData;
+  return {
+    ...withCreatedNodeData,
+    envelopes: withCreatedNodeData.envelopes.map((envelope) => ({
       ...envelope,
       commands: envelope.commands.flatMap((command) => {
         const isExecutionCommand = command.type === "run_workflow" || (
@@ -2918,10 +2963,21 @@ function amendCanvasApprovalWithAudioParams(
     }
     : {
       audioKind: "speech",
-      speechMode: params.speechMode,
-      presetModel: "edge-tts",
-      presetVoice: params.presetVoice,
+      speechMode: "clone",
+      voicePolicyConfirmed: true,
       emotionPrompt: params.emotionPrompt,
+      ...(params.voiceRef
+        ? {
+          voiceRef: params.voiceRef,
+          voiceAvailable: params.voiceAvailable === true,
+          voiceLabel: params.voiceLabel,
+        }
+        : {
+          voiceRef: null,
+          voiceAvailable: false,
+          voiceLabel: "未选择自定义声线",
+          voiceLanguage: "",
+        }),
     };
   return amendCanvasApprovalWithGenerationData(
     approval,
@@ -3011,6 +3067,10 @@ export const audioApprovalInitialParamsForTest = audioApprovalInitialParams;
 export const amendCanvasApprovalWithHumanReviewForTest = amendCanvasApprovalWithHumanReview;
 export const canvasApprovalRequiresHumanReviewConfirmationForTest =
   canvasApprovalRequiresHumanReviewConfirmation;
+export const canvasApprovalRequiresAudioVoiceChoiceForTest =
+  canvasApprovalRequiresAudioVoiceChoice;
+export const canvasApprovalRequiresManualUiActionForTest =
+  canvasApprovalRequiresManualUiAction;
 
 function CanvasApprovalImageParamSelect({
   ariaLabel,
@@ -3258,11 +3318,17 @@ function CanvasCommandApprovalCard({
     () => videoUpscaleApprovalInitialParams(approval, canvasNodes),
     [approval, canvasNodes],
   );
+  const initialAudioParams = useMemo(
+    () => audioApprovalInitialParams(approval, canvasNodes),
+    [approval, canvasNodes],
+  );
   const [imageParams, setImageParams] = useState<CanvasApprovalImageParams[]>(() => initialImageParams);
   const [videoParams, setVideoParams] = useState<CanvasApprovalVideoParams[]>(() => initialVideoParams);
   const [videoUpscaleParams, setVideoUpscaleParams] = useState<CanvasApprovalVideoUpscaleParams | null>(
     () => initialVideoUpscaleParams,
   );
+  const [audioParams, setAudioParams] = useState<CanvasApprovalAudioParams[]>(() => initialAudioParams);
+  const [voicePickerAudioIndex, setVoicePickerAudioIndex] = useState<number | null>(null);
   const humanReviewNodeIds = useMemo(
     () => canvasApprovalHumanReviewNodeIds(approval, canvasNodes, canvasEdges),
     [approval, canvasEdges, canvasNodes],
@@ -3284,6 +3350,10 @@ function CanvasCommandApprovalCard({
   useEffect(() => {
     setVideoUpscaleParams(initialVideoUpscaleParams);
   }, [initialVideoUpscaleParams]);
+
+  useEffect(() => {
+    setAudioParams(initialAudioParams);
+  }, [initialAudioParams]);
 
   useEffect(() => {
     setHumanReviewEnabled(true);
@@ -3315,12 +3385,16 @@ function CanvasCommandApprovalCard({
       withVideoParams,
       videoUpscaleParams,
     );
-    return amendCanvasApprovalWithHumanReview(
+    const withAudioParams = audioParams.reduce(
+      (current, params) => amendCanvasApprovalWithAudioParams(current, params),
       withVideoUpscaleParams,
+    );
+    return amendCanvasApprovalWithHumanReview(
+      withAudioParams,
       humanReviewNodeIds,
       humanReviewEnabled,
     );
-  }, [approval, humanReviewEnabled, humanReviewNodeIds, imageParams, videoParams, videoUpscaleParams]);
+  }, [approval, audioParams, humanReviewEnabled, humanReviewNodeIds, imageParams, videoParams, videoUpscaleParams]);
   const imageModelOptionsFor = useCallback((params: CanvasApprovalImageParams) => {
     const options = imageModels.models.map((model) => ({ value: model.id, label: model.label ?? model.id }));
     if (params.model && !options.some((option) => option.value === params.model)) {
@@ -3365,18 +3439,32 @@ function CanvasCommandApprovalCard({
       };
     });
   }, []);
+  const updateAudioParams = useCallback((index: number, patch: Partial<CanvasApprovalAudioParams>) => {
+    setAudioParams((current) => current.map((params, paramsIndex) => (
+      paramsIndex === index ? { ...params, ...patch } : params
+    )));
+  }, []);
+  const voicePickerAudioParams = voicePickerAudioIndex == null
+    ? null
+    : audioParams[voicePickerAudioIndex] ?? null;
   return (
     <div className="mt-3 w-full min-w-0 overflow-hidden rounded-xl border border-amber-400/25 bg-background/95 text-xs text-muted-foreground shadow-lg backdrop-blur-sm">
       <div className="flex items-start gap-2 border-b border-amber-400/15 px-3 py-2">
         <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-foreground">待确认的画布操作</div>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">Agent 计划执行 {approval.commandCount} 个操作，确认后才会应用到画布。</p>
+          <div className="text-sm font-medium text-foreground">
+            {approval.requiresUserChoice ? "请选择旁白声线" : "待确认的画布操作"}
+          </div>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {approval.requiresUserChoice
+              ? "请选择自定义声线；如果暂不选择，本次将跳过旁白生成。"
+              : `Agent 计划执行 ${approval.commandCount} 个操作，确认后才会应用到画布。`}
+          </p>
         </div>
         <Badge variant="outline" className="rounded-md uppercase">{isExecuting ? "执行中" : "确认"}</Badge>
       </div>
       <CanvasCommandPlanList plans={approval.plans} />
-      {(imageParams.length > 0 || videoParams.length > 0) && (
+      {(imageParams.length > 0 || videoParams.length > 0 || audioParams.length > 0) && (
         <div className="flex items-center gap-2 border-t border-amber-400/10 bg-white/[0.025] px-3 py-1.5 text-[11px] font-medium text-foreground/90">
           <SlidersHorizontal className="size-3.5 text-muted-foreground" />
           生成设置
@@ -3537,6 +3625,39 @@ function CanvasCommandApprovalCard({
           </div>
         </div>
       )}
+      {audioParams.map((audioParam, audioParamIndex) => (
+        <div key={`${audioParam.nodeId}:${audioParam.audioKind}`} className="border-t border-amber-400/10 px-3 py-1.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground">
+              <Volume2 className="size-3" />
+              {audioParam.audioKind === "music" ? "音乐" : "旁白"}
+              {(audioParam.nodeIds?.length ?? 1) > 1 ? ` ×${audioParam.nodeIds?.length}` : ""}
+            </span>
+            <span className="h-4 w-px bg-white/[0.12]" />
+            {audioParam.audioKind === "speech" ? (
+              <>
+                <button
+                  type="button"
+                  disabled={isExecuting}
+                  onClick={() => setVoicePickerAudioIndex(audioParamIndex)}
+                  className="inline-flex h-7 items-center rounded-full border border-white/[0.16] bg-white/[0.065] px-2.5 text-[11px] font-medium text-foreground hover:border-white/30 hover:bg-white/[0.1] disabled:opacity-60"
+                >
+                  {audioParam.voiceAvailable === true ? "更换自定义声线" : "选择自定义声线"}
+                </button>
+                <span className="text-[10px] text-muted-foreground">
+                  {audioParam.voiceAvailable === true
+                    ? `已选择：${audioParam.voiceLabel.trim() || "自定义声线"}`
+                    : "未选择，本次将跳过旁白生成"}
+                </span>
+              </>
+            ) : (
+              <span className="text-[10px] text-muted-foreground">
+                {audioParam.musicLengthSec} 秒 · {audioParam.forceInstrumental ? "纯音乐" : "允许人声"}
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-amber-400/15 px-3 py-2.5">
         {remaining !== null && !isExecuting ? (
           <span className="mr-auto text-[11px] leading-4 text-amber-500">
@@ -3544,8 +3665,33 @@ function CanvasCommandApprovalCard({
           </span>
         ) : null}
         <Button size="xs" variant="outline" disabled={isExecuting} onClick={() => onCancel(approval)}>取消</Button>
-        <Button size="xs" disabled={isExecuting} onClick={() => onApply(amendedApproval)}>{isExecuting ? "执行中..." : "确认执行"}</Button>
+        <Button
+          size="xs"
+          disabled={isExecuting}
+          onClick={() => onApply(amendedApproval)}
+        >
+          {isExecuting ? "执行中..." : approval.requiresUserChoice ? "使用所选声线继续" : "确认执行"}
+        </Button>
       </div>
+      {voicePickerAudioParams && (
+        <VoiceSelectionModal
+          open
+          initialTab="mine"
+          currentRef={voicePickerAudioParams.voiceRef ?? { scope: "project_narrator" }}
+          onClose={() => setVoicePickerAudioIndex(null)}
+          onPick={({ ref, label }) => {
+            if (voicePickerAudioIndex != null) {
+              updateAudioParams(voicePickerAudioIndex, {
+                speechMode: "clone",
+                voiceRef: ref,
+                voiceAvailable: true,
+                voiceLabel: label,
+              });
+            }
+            setVoicePickerAudioIndex(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -9953,6 +10099,7 @@ type PendingCanvasCommandApproval = {
   commandCount: number;
   plans: CanvasCommandPlan[];
   externalMcpCommand?: boolean;
+  requiresUserChoice?: boolean;
 };
 
 type CanvasApprovalImageParams = {
@@ -9996,6 +10143,8 @@ type CanvasApprovalAudioParams = {
   speechMode: "preset" | "clone";
   presetVoice: string;
   voiceLabel: string;
+  voiceRef?: AudioVoiceRef | null;
+  voiceAvailable?: boolean;
   emotionPrompt: string;
   musicLengthSec: number;
   forceInstrumental: boolean;
@@ -11405,6 +11554,9 @@ export function SuperChatPanel({
   const composerBeamRef = useRef<BorderBeamController | null>(null);
   const skillStudioDraftPersistTimerRef = useRef<number | null>(null);
   const onFreezoneUserMessageRef = useRef(onFreezoneUserMessage);
+  const onConnectionStateChangeRef = useRef(onConnectionStateChange);
+  const consumedPendingAttachmentsKeyRef = useRef<string | null>(null);
+  const consumedPendingNodeMentionsKeyRef = useRef<string | null>(null);
   const notifiedTaskKeysRef = useRef<Set<string>>(new Set());
   const directorAutoTerminalTaskIdsRef = useRef<Set<string>>(new Set());
   const taskEventBus = useEventBus();
@@ -11442,12 +11594,16 @@ export function SuperChatPanel({
   }, [onFreezoneUserMessage]);
 
   useEffect(() => {
-    onConnectionStateChange?.({
+    onConnectionStateChangeRef.current = onConnectionStateChange;
+  }, [onConnectionStateChange]);
+
+  useEffect(() => {
+    onConnectionStateChangeRef.current?.({
       busy: chat.busy,
       connected: chat.connected,
       connecting: chat.connecting,
     });
-  }, [chat.busy, chat.connected, chat.connecting, onConnectionStateChange]);
+  }, [chat.busy, chat.connected, chat.connecting]);
 
   const setDraftInputElement = useCallback((element: HTMLElement | null) => {
     draftInputRef.current = element;
@@ -12058,6 +12214,7 @@ export function SuperChatPanel({
       commandCount,
       plans: canvasCommandPlansFromEnvelopes(detail.envelopes),
       externalMcpCommand: detail.externalMcpCommand === true,
+      requiresUserChoice: detail.requiresUserChoice === true,
     };
   }, [activeMessages, effectiveFreezoneCanvasId, freezoneAgentMatches, latestAssistantMessageId, variant]);
 
@@ -12760,6 +12917,11 @@ export function SuperChatPanel({
   useEffect(() => {
     if (canvasCommandExecutionMode !== "auto_execute") return;
     for (const approval of pendingCanvasCommandApprovals) {
+      if (approval.requiresUserChoice) continue;
+      // manual_ui 动作必须由用户主动确认。自动模式不能把“重试生成”擅自
+      // 解释成“打开声线选择并改用自定义声线”。
+      if (canvasApprovalRequiresManualUiAction(approval)) continue;
+      if (canvasApprovalRequiresAudioVoiceChoice(approval, canvasNodes)) continue;
       if (
         canvasApprovalRequiresHumanReviewConfirmation(
           approval,
@@ -13161,7 +13323,26 @@ export function SuperChatPanel({
   }, [chatScopeKey, params.project]);
 
   useEffect(() => {
-    if (pendingAttachments.length === 0) return;
+    if (pendingAttachments.length === 0) {
+      consumedPendingAttachmentsKeyRef.current = null;
+      return;
+    }
+    const pendingAttachmentsKey = JSON.stringify(
+      pendingAttachments.map((attachment) => [
+        attachment.id,
+        attachment.type,
+        attachment.kind,
+        attachment.mimeType,
+        attachment.fileName,
+        attachment.fileSize,
+        attachment.content,
+        attachment.url,
+        attachment.path,
+        attachment.label,
+      ]),
+    );
+    if (consumedPendingAttachmentsKeyRef.current === pendingAttachmentsKey) return;
+    consumedPendingAttachmentsKeyRef.current = pendingAttachmentsKey;
     setAttachments((current) => {
       const pendingCanvasReferenceIds = new Set(
         pendingAttachments
@@ -13195,7 +13376,13 @@ export function SuperChatPanel({
   // 「添加到对话」：把待处理的 nodeId drain 成 draft 里的行内 mention chip，
   // 标题从画布节点解析（与 @ 菜单同源）。挂载后 pendingNodeMentions 已就位即抽干。
   useEffect(() => {
-    if (pendingNodeMentions.length === 0) return;
+    if (pendingNodeMentions.length === 0) {
+      consumedPendingNodeMentionsKeyRef.current = null;
+      return;
+    }
+    const pendingNodeMentionsKey = JSON.stringify(pendingNodeMentions);
+    if (consumedPendingNodeMentionsKeyRef.current === pendingNodeMentionsKey) return;
+    consumedPendingNodeMentionsKeyRef.current = pendingNodeMentionsKey;
     const titleLookup = new Map(
       buildFreezoneNodeSuggestions(buildAssetBoard(canvasNodes, canvasEdges)).map(
         (suggestion) => [suggestion.nodeId, suggestion.title] as const,

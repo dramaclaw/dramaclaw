@@ -49,6 +49,8 @@ import {
   amendCanvasApprovalWithHumanReviewForTest,
   amendCanvasApprovalWithVideoParamsForTest,
   audioApprovalInitialParamsForTest,
+  canvasApprovalRequiresAudioVoiceChoiceForTest,
+  canvasApprovalRequiresManualUiActionForTest,
   canvasApprovalRequiresHumanReviewConfirmationForTest,
   imageApprovalInitialParamsForTest,
   imageApprovalParamGroupsForTest,
@@ -3193,6 +3195,56 @@ describe("Canvas command approval image params", () => {
     });
   });
 
+  it("merges image settings into a node created by the same workflow batch", () => {
+    const approval = {
+      id: "approval-created-image",
+      key: "approval-created-image",
+      messageId: "assistant-created-image",
+      receivedAt: 1,
+      commandCount: 2,
+      plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          {
+            type: "create_node" as const,
+            client_id: "image-a",
+            node_type: "imageGenNode" as const,
+            data: { prompt: "城市雨夜", model: "recommended" },
+          },
+          { type: "run_workflow" as const, node_ids: ["image-a"], scope: "selection" as const },
+        ],
+      }],
+    };
+
+    const amended = amendCanvasApprovalWithImageParamsForTest(approval as never, {
+      nodeId: "image-a",
+      nodeIds: ["image-a"],
+      model: "seedream-4.5",
+      aspectRatio: "16:9",
+      size: "2K",
+      quality: "low",
+      count: 1,
+    });
+
+    expect(amended.envelopes[0].commands).toEqual([
+      {
+        type: "create_node",
+        client_id: "image-a",
+        node_type: "imageGenNode",
+        data: {
+          prompt: "城市雨夜",
+          model: "seedream-4.5",
+          aspectRatio: "16:9",
+          size: "2K",
+          quality: "low",
+          count: 1,
+        },
+      },
+      { type: "run_workflow", node_ids: ["image-a"], scope: "selection" },
+    ]);
+  });
+
   it("keeps intentionally different image and video settings in separate rows", () => {
     const approval = {
       id: "approval-distinct-settings",
@@ -3225,6 +3277,267 @@ describe("Canvas command approval image params", () => {
 });
 
 describe("Canvas command approval audio params", () => {
+  it("does not block auto execution when missing custom voice will be skipped", () => {
+    const approval = {
+      id: "approval-voice-choice",
+      key: "approval-voice-choice",
+      messageId: "assistant-voice-choice",
+      receivedAt: 1,
+      commandCount: 1,
+      plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [{ type: "run_node_action" as const, node_id: "speech-a", action: "generate_audio" }],
+      }],
+    };
+    const speechNode = {
+      id: "speech-a",
+      type: "audioNode",
+      position: { x: 0, y: 0 },
+      data: { audioKind: "speech", speechMode: "preset" },
+    };
+    expect(canvasApprovalRequiresAudioVoiceChoiceForTest(
+      approval as never,
+      [speechNode] as never,
+    )).toBe(false);
+    expect(canvasApprovalRequiresAudioVoiceChoiceForTest(
+      approval as never,
+      [{ ...speechNode, data: { ...speechNode.data, voicePolicyConfirmed: true } }] as never,
+    )).toBe(false);
+  });
+
+  it("does not block auto execution when a speech node has no custom voice", () => {
+    const approval = {
+      id: "approval-agent-voice-switch",
+      key: "approval-agent-voice-switch",
+      messageId: "assistant-agent-voice-switch",
+      receivedAt: 1,
+      commandCount: 2,
+      plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          {
+            type: "update_node_data" as const,
+            node_id: "speech-a",
+            data: {
+              speechMode: "clone",
+              voicePolicyConfirmed: true,
+              voiceAvailable: false,
+            },
+          },
+          { type: "run_node_action" as const, node_id: "speech-a", action: "generate_audio" },
+        ],
+      }],
+    };
+    const speechNode = {
+      id: "speech-a",
+      type: "audioNode",
+      position: { x: 0, y: 0 },
+      data: {
+        audioKind: "speech",
+        speechMode: "preset",
+        voicePolicyConfirmed: true,
+      },
+    };
+
+    expect(canvasApprovalRequiresAudioVoiceChoiceForTest(
+      approval as never,
+      [speechNode] as never,
+    )).toBe(false);
+  });
+
+  it("allows an unchanged confirmed system voice retry in auto mode", () => {
+    const approval = {
+      id: "approval-system-retry",
+      key: "approval-system-retry",
+      messageId: "assistant-system-retry",
+      receivedAt: 1,
+      commandCount: 1,
+      plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          { type: "run_node_action" as const, node_id: "speech-a", action: "generate_audio" },
+        ],
+      }],
+    };
+    const speechNode = {
+      id: "speech-a",
+      type: "audioNode",
+      position: { x: 0, y: 0 },
+      data: {
+        audioKind: "speech",
+        speechMode: "preset",
+        voicePolicyConfirmed: true,
+        generationError: "ORG_SERVICE_EGRESS_DENIED",
+      },
+    };
+
+    expect(canvasApprovalRequiresAudioVoiceChoiceForTest(
+      approval as never,
+      [speechNode] as never,
+    )).toBe(false);
+  });
+
+  it("never auto executes the manual voice picker action", () => {
+    const approval = {
+      id: "approval-open-picker",
+      key: "approval-open-picker",
+      messageId: "assistant-open-picker",
+      receivedAt: 1,
+      commandCount: 1,
+      plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          { type: "run_node_action" as const, node_id: "speech-a", action: "open_voice_picker" },
+        ],
+      }],
+    };
+
+    expect(canvasApprovalRequiresManualUiActionForTest(approval as never)).toBe(true);
+  });
+
+  it("persists the selected uploaded voice before generation", () => {
+    const approval = {
+      id: "approval-custom-speech",
+      key: "approval-custom-speech",
+      messageId: "assistant-custom-speech",
+      receivedAt: 1,
+      commandCount: 1,
+      plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [{ type: "run_node_action" as const, node_id: "speech-a", action: "generate_audio" }],
+      }],
+    };
+    const amended = amendCanvasApprovalWithAudioParamsForTest(approval as never, {
+      nodeId: "speech-a",
+      nodeIds: ["speech-a"],
+      audioKind: "speech",
+      speechMode: "clone",
+      presetVoice: "Serena",
+      voiceLabel: "我的旁白",
+      voiceRef: { scope: "user_custom", voiceId: "fv_voice_1" },
+      voiceAvailable: true,
+      emotionPrompt: "",
+      musicLengthSec: 30,
+      forceInstrumental: true,
+      respectSectionsDurations: true,
+    });
+    expect(amended.envelopes[0].commands[0]).toEqual({
+      type: "update_node_data",
+      node_id: "speech-a",
+      data: expect.objectContaining({
+        speechMode: "clone",
+        voiceRef: { scope: "user_custom", voiceId: "fv_voice_1" },
+        voiceAvailable: true,
+        voiceLabel: "我的旁白",
+      }),
+    });
+  });
+
+  it("coerces a legacy system selection to custom mode and skips when unselected", () => {
+    const approval = {
+      id: "approval-speech",
+      key: "approval-speech",
+      messageId: "assistant-speech",
+      receivedAt: 1,
+      commandCount: 1,
+      plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [{ type: "run_workflow" as const, scope: "canvas" as const }],
+      }],
+    };
+    const amended = amendCanvasApprovalWithAudioParamsForTest(approval as never, {
+      nodeId: "speech-a",
+      nodeIds: ["speech-a"],
+      audioKind: "speech",
+      speechMode: "preset",
+      presetVoice: "Serena",
+      voiceLabel: "系统女声",
+      emotionPrompt: "克制",
+      musicLengthSec: 30,
+      forceInstrumental: true,
+      respectSectionsDurations: true,
+    });
+    expect(amended.envelopes[0].commands).toEqual([
+      {
+        type: "update_node_data",
+        node_id: "speech-a",
+        data: {
+          audioKind: "speech",
+          speechMode: "clone",
+          voicePolicyConfirmed: true,
+          emotionPrompt: "克制",
+          voiceRef: null,
+          voiceAvailable: false,
+          voiceLabel: "未选择自定义声线",
+          voiceLanguage: "",
+        },
+      },
+      { type: "run_workflow", scope: "canvas" },
+    ]);
+  });
+
+  it("merges custom-only skip metadata into a newly created speech node", () => {
+    const approval = {
+      id: "approval-created-speech",
+      key: "approval-created-speech",
+      messageId: "assistant-created-speech",
+      receivedAt: 1,
+      commandCount: 2,
+      plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          {
+            type: "create_node" as const,
+            client_id: "speech-a",
+            node_type: "audioNode" as const,
+            data: { audioKind: "speech", prompt: "雨停以后" },
+          },
+          { type: "run_workflow" as const, node_ids: ["speech-a"], scope: "selection" as const },
+        ],
+      }],
+    };
+
+    const amended = amendCanvasApprovalWithAudioParamsForTest(approval as never, {
+      nodeId: "speech-a",
+      nodeIds: ["speech-a"],
+      audioKind: "speech",
+      speechMode: "preset",
+      presetVoice: "Serena",
+      voiceLabel: "系统女声",
+      emotionPrompt: "克制",
+      musicLengthSec: 30,
+      forceInstrumental: true,
+      respectSectionsDurations: true,
+    });
+
+    expect(amended.envelopes[0].commands).toEqual([
+      {
+        type: "create_node",
+        client_id: "speech-a",
+        node_type: "audioNode",
+        data: {
+          audioKind: "speech",
+          prompt: "雨停以后",
+          speechMode: "clone",
+          voicePolicyConfirmed: true,
+          emotionPrompt: "克制",
+          voiceRef: null,
+          voiceAvailable: false,
+          voiceLabel: "未选择自定义声线",
+          voiceLanguage: "",
+        },
+      },
+      { type: "run_workflow", node_ids: ["speech-a"], scope: "selection" },
+    ]);
+  });
+
   it("writes music settings before the workflow run", () => {
     const approval = {
       id: "approval-music",

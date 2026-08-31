@@ -820,9 +820,9 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
         speechMode: {
           type: "enum",
           label: "语音模式",
-          options: ["preset", "clone"],
+          options: ["clone"],
           description:
-            "仅 audioKind=speech 时生效。默认 preset 使用系统音色且无需上传；只有用户明确要求克隆或指定声线时才使用 clone。",
+            "仅 audioKind=speech 时生效。虾画只使用自定义声线；未选择有效 voiceRef 时跳过语音生成。",
         },
         text: { type: "string", label: "文本" },
         emotionPrompt: { type: "string", label: "情绪提示" },
@@ -1287,7 +1287,7 @@ function addFrontendNodeActions(
       action: "generate_audio",
       execution: "frontend_node",
       command_type: "run_node_action",
-      description: "Submit this audio node using its current text/upstream text and audioKind. speech defaults to a preset system voice with no upload required; an explicitly selected voice uses cloning. music uses the text-to-music flow. If the node already has uploaded or generated audio, the new result replaces it.",
+      description: "Submit this audio node using its current text/upstream text and audioKind. Speech uses only an explicitly selected custom/reference voice; when none is selected, skip this node without failing the remaining workflow. Music uses the text-to-music flow. If the node already has uploaded or generated audio, the new result replaces it.",
       parameters: { node_id: node.id },
     });
     if ((node.data as { audioKind?: unknown }).audioKind !== "music") {
@@ -1296,7 +1296,7 @@ function addFrontendNodeActions(
         execution: "manual_ui",
         command_type: "run_node_action",
         description:
-          "Open the voice picker on the My Voices upload/clone tab for this speech audio node. Use this when the user asks to upload, clone, add, or upload another voice. The voice picker is not persistent; call this action again every time the user asks to upload another voice. Frontend writes the selected voiceRef back to this node after the user chooses a voice.",
+          "Open the custom voice picker only when the user explicitly asks to upload, clone, add, switch, or choose another voice. Never select the first available voice automatically and never call it merely because the canvas runs in auto-execute mode. Missing voice is handled by skipping speech generation. The voice picker is not persistent; call this action again every time the user explicitly asks to upload another voice. Frontend writes the selected voiceRef back to this node after the user chooses a voice.",
         parameters: {
           node_id: node.id,
           supports_upload: true,

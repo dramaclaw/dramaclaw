@@ -125,7 +125,20 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "For a normal workflow request, follow that Skill's discovery, draft, preview, and confirmation "
     "sequence. When the user explicitly specifies exact nodes and dependencies, follow the Skill's "
     "custom-topology reference and call freezone_create_workflow_graph once instead; do not route "
-    "that request through the normal draft flow merely because a production Skill matches. The "
+    "that request through the normal draft flow or compact Intent compiler merely because a "
+    "production Skill matches. Explicit Beat, shot, node-count, or dependency requirements must "
+    "remain one complete WorkflowPlan even when they exceed the compact planner limit. Copy exact "
+    "user totals into expected_node_count and expected_node_counts. For episodic short-drama, Beat, "
+    "voice-over, or background-music workflows, prefer the short-drama production Skill over the "
+    "generic text-to-image-video Skill. After any validation error, never submit a reduced sample, "
+    "smoke test, or placeholder graph such as A/B or T1/T2 to the real canvas; diagnose with the "
+    "read-only compiler only by compiling that same complete graph, preserving all nodes and "
+    "dependency edges. Never compile reduced probe nodes or use edges=[] for a multi-node plan. "
+    "Correct the same complete plan once, then report the blocking error. The "
+    "failure result must come from the current turn: historical failures are diagnostic context, "
+    "not proof that the current adapter remains blocked. When the user repeats the create/run "
+    "request or asks to retry after a restart, submit the same complete workflow write once in "
+    "that turn instead of repeating an old blocking conclusion. The "
     "user's explicit imperative to create or run is authorization to submit the protected canvas "
     "write and display its approval surface. Never ask for a duplicate 'create and run' confirmation, "
     "and never claim that the environment cannot display an approval card: the Freezone write tool "
@@ -137,17 +150,22 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "the one and only run request. If its result says accepted or reports a run_workflow command, "
     "never call freezone_run_workflow again in the same turn. "
     "Only a later explicit user retry after a terminal failure may start another run. For a "
+    "Freezone speech uses custom/reference voices only and must never use a preset/system voice. "
+    "Preserve a valid voiceRef. If no valid custom voice is selected, skip that audio node without "
+    "submitting TTS and continue the remaining workflow. Never choose the first available voice or "
+    "call open_voice_picker unless the user explicitly requests voice selection. "
     "request whose actual next step will generate image or video media, inspect the user's message, "
     "the selected Recipe, and existing target-node data before any canvas write. Obey the injected "
-    "FREEZONE_CANVAS_EXECUTION_MODE contract. In manual_confirm mode, do not ask a preliminary "
-    "generation-parameter clarification: inspect the live schema and populate missing fields with "
-    "supported defaults or symbolic recommended values so the approval card is the final parameter "
-    "editor. In auto_execute mode, if relevant image or video generation choices are still missing, "
-    "call freezone_request_user_clarification once and ask only for the missing user-facing choices. "
+    "FREEZONE_CANVAS_EXECUTION_MODE contract for whether a fresh preliminary parameter selection is "
+    "required; do not infer that policy from conversation history. When that contract requires a "
+    "selection, call freezone_request_user_clarification once for the current request. "
     "Image choices are model preference, aspect "
     "ratio, resolution/quality, and variants per node. Video choices are model or generation mode, aspect "
     "ratio, resolution, duration, sound generation, and variants per node. Offer a recommended/default "
-    "choice instead of forcing technical knowledge. Never bundle these fields into one preset such "
+    "choice for each relevant field. Never include an audio voice-source question in this preliminary "
+    "clarification: do not ask the user to choose system voice versus custom voice. Freezone speech "
+    "uses an already selected custom voiceRef or skips generation when none is selected. "
+    "Never bundle these fields into one preset such "
     "as 'recommended settings'. Use one clarification question per missing field with the portable "
     "field name as its question id. Before asking, inspect the live node create schema once for each "
     "relevant image/video type and use its exact options; video_resolution must show every supported "
@@ -161,12 +179,11 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "video_aspect_ratio, video_resolution, video_duration_seconds, video_generate_audio, and "
     "video_variants_per_node keys. The Skill-specific image_count/video_count fields describe "
     "workflow deliverable or node counts and must never be copied to a node's data.count. If a "
-    "canvas write returns code=generation_parameters_required, never retry "
-    "unchanged. In manual_confirm mode, fill the returned fields from the live schema/defaults and "
-    "retry the same plan so the approval card can expose them. In auto_execute mode, call the "
-    "clarification tool once for all returned missing choices and retry with the answers. A "
+    "canvas write returns code=generation_parameters_required, never retry unchanged. Follow the "
+    "injected execution-mode contract to collect or populate the returned fields, then retry the "
+    "same plan. A "
     "recommended/default model choice is symbolic: serialize "
-    "it as model=\"recommended\" (or the matching portable intent input), not as an invented model "
+    'it as model="recommended" (or the matching portable intent input), not as an invented model '
     "id. The authorized adapter resolves it through the live frontend default. If a complete graph "
     "write fails, do not regenerate or truncate the whole plan merely to replace that sentinel. "
     "For a "
@@ -411,7 +428,11 @@ Canvas write contract:
   and follow the dramaclaw-workflows Agent Skill. For an exact user-specified topology, read its
   references/custom-topology.md and call freezone_create_workflow_graph once with one complete
   freezone_workflow_plan.v1. Exact means the user names the nodes and their dependency order; do not
-  route it through the normal draft flow merely because a production Skill matches.
+  route it through the normal draft flow or compact Intent compiler merely because a production
+  Skill matches. Explicit Beat, shot, or node totals must be copied into expected_node_count and
+  expected_node_counts and must remain unchanged during recovery. Episodic short-drama, Beat,
+  voice-over, or background-music workflows should use the short-drama production Skill rather than
+  the generic text-to-image-video Skill.
   Do not use freezone_emit_canvas_command for a workflow.
 - `dramaclaw-workflows` is the Agent Skill package name, not a Workflow catalog `skill_id`. Never
   pass it to workflow_skill_get/freezone_get_workflow_skill or use it as intent.skill_id. Select the
@@ -423,6 +444,14 @@ Canvas write contract:
   user asks about status.
 - Never claim any canvas change succeeded without a successful same-turn frontend write result. If
   it fails or is absent, say the change could not be confirmed.
+- Never submit reduced sample, smoke-test, or placeholder nodes such as A/B, T1/T2, or “测试节点” to
+  the user's canvas while recovering from a workflow error. Use the read-only workflow compiler
+  only with that same complete graph, preserving all nodes, edges, groups, and exact counts. Never
+  compile reduced probe nodes or use edges=[] for a multi-node plan. Correct the same complete plan
+  once, and then report the blocking validation detail.
+- Historical failures are diagnostic context only. If the user repeats the create/run request or
+  retries after a restart, perform one same-turn write with the complete plan. Never declare the
+  current adapter blocked unless the same failure is returned by that current-turn write.
 - The user's explicit request to create or run is authorization to submit the protected canvas write
   and show its approval card. Do not ask for a second “创建并运行” confirmation and do not say the
   environment cannot display the card; the write tool creates it. In auto_execute, submit the write
@@ -967,6 +996,8 @@ def _prompt_with_user_context(
     tool_mode: str = "default",
     surface_context: dict[str, Any] | None = None,
     route_prompt: str | None = None,
+    turn_id: str | None = None,
+    require_generation_parameter_preflight: bool = False,
 ) -> str:
     user_message, execution_context = _route_prompt_with_execution_context(
         prompt,
@@ -977,6 +1008,38 @@ def _prompt_with_user_context(
     canvas_execution_mode = _freezone_canvas_execution_mode_from_context(
         surface_context
     )
+    generation_parameter_round = str(turn_id or "current_request").strip()
+    if require_generation_parameter_preflight:
+        generation_parameter_policy = (
+            f"generation_parameter_round: {generation_parameter_round}\n"
+            "For every new request in this round that will actually generate image or video media, "
+            "show one preliminary structured generation-parameter clarification before any canvas "
+            "write in both manual_confirm and auto_execute. Historical clarification answers, "
+            "existing node data, Recipe defaults, and parameters from an earlier turn may only "
+            "prefill recommended choices; they never count as confirmation for this round. Do not "
+            "ask again after the clarification tool returns answers for this same round. This card "
+            "covers image/video parameters only; never add a system-voice/custom-voice choice and "
+            "do not ask the user to choose system voice versus custom voice.\n"
+            "manual_confirm: After the preliminary parameter answers return, put them into the plan "
+            "and submit the protected write. The normal approval card is still shown and remains the "
+            "final parameter editor before execution.\n"
+            "auto_execute: After the preliminary parameter answers return, submit the protected canvas "
+            "write immediately without asking for another create/run confirmation. A normal approval "
+            "event is still emitted and the frontend auto-applies it; explicit human-review requirements "
+            "may pause. Use the MCP clarification tool, never built-in request_user_input.\n"
+        )
+    else:
+        generation_parameter_policy = (
+            "manual_confirm: Do not ask a preliminary image/video parameter clarification. Read the "
+            "live schema and put supported defaults or symbolic recommended values into the plan; the "
+            "approval card is where the user reviews and adjusts final generation parameters.\n"
+            "auto_execute: If image/video parameters needed for generation are missing, ask once before "
+            "the canvas write, with one structured question per missing field. A normal approval event "
+            "is still emitted and the frontend auto-applies it; explicit human-review requirements may "
+            "pause. After the answers return, submit the protected canvas write immediately without "
+            "asking for another create/run confirmation. Use the MCP clarification tool, never built-in "
+            "request_user_input.\n"
+        )
     canvas_context = (
         "\n\n[FREEZONE_CANVAS_CONTEXT]\n"
         f"canvas_id: {canvas_id}\n"
@@ -984,15 +1047,7 @@ def _prompt_with_user_context(
         "[/FREEZONE_CANVAS_CONTEXT]\n\n"
         "[FREEZONE_CANVAS_EXECUTION_MODE]\n"
         f"mode: {canvas_execution_mode}\n"
-        "manual_confirm: Do not ask a preliminary image/video parameter clarification. Read the live "
-        "schema and put supported defaults or symbolic recommended values into the plan; the approval "
-        "card is where the user reviews and adjusts final generation parameters.\n"
-        "auto_execute: If image/video parameters needed for generation are missing, ask once before "
-        "the canvas write, with one structured question per missing field. A normal approval event is "
-        "still emitted and the frontend auto-applies it; explicit human-review requirements may pause. "
-        "After the answers return, submit the protected canvas write immediately without asking for "
-        "another create/run confirmation. Use the MCP clarification tool, never built-in "
-        "request_user_input.\n"
+        f"{generation_parameter_policy}"
         "If the mode is absent or invalid, use manual_confirm. The mode changes parameter collection "
         "only; it does not bypass validation, approval events, or the authorized canvas write path.\n"
         "[/FREEZONE_CANVAS_EXECUTION_MODE]"
@@ -6507,6 +6562,8 @@ async def _stream_assistant_reply_codex(
             tool_mode=tool_mode,
             surface_context=surface_context,
             route_prompt=route_prompt,
+            turn_id=business_turn_id,
+            require_generation_parameter_preflight=tool_mode == "freezone_canvas",
         )
         async for event in thread.stream(agent_prompt):
             logger.debug(
@@ -6734,14 +6791,18 @@ async def _stream_assistant_reply_codex(
         if store_scope is not None:
             from novelvideo.chat.store import chat_store
 
-            for trace_index, trace_content in enumerate(_split_trace_contents(tool_text)):
+            for trace_index, trace_content in enumerate(
+                _split_trace_contents(tool_text)
+            ):
                 await chat_store.append_message_async(
                     username,
                     store_scope,
                     "trace",
                     trace_content,
                     turn_id=turn_id,
-                    idempotency_key=(f"trace:{turn_id}:{trace_index}" if turn_id else None),
+                    idempotency_key=(
+                        f"trace:{turn_id}:{trace_index}" if turn_id else None
+                    ),
                 )
         else:
             await asyncio.to_thread(

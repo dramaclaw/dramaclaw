@@ -47,7 +47,9 @@ def _text(payload: dict[str, Any]) -> list[types.TextContent]:
     ]
 
 
-def _object_schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
+def _object_schema(
+    properties: dict[str, Any], required: list[str] | None = None
+) -> dict[str, Any]:
     return {
         "type": "object",
         "properties": properties,
@@ -116,7 +118,12 @@ async def list_tools() -> list[types.Tool]:
                 {
                     "kind": {"type": "string", "enum": ["skills", "recipes"]},
                     "query": {"type": "string", "default": ""},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 12},
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50,
+                        "default": 12,
+                    },
                 },
                 ["kind"],
             ),
@@ -132,6 +139,13 @@ async def list_tools() -> list[types.Tool]:
                     "skill_id": {"type": "string", "minLength": 1},
                     "user_goal": {"type": "string"},
                     "inputs": {"type": "object"},
+                    "compact": {
+                        "type": "boolean",
+                        "description": (
+                            "Compatibility flag accepted by every host. This standalone "
+                            "reader always returns the compact planning package."
+                        ),
+                    },
                 },
                 ["skill_id"],
             ),
@@ -163,7 +177,9 @@ async def list_tools() -> list[types.Tool]:
             name="workflow_graph_compile",
             description=(
                 "Validate one freezone_workflow_plan.v1 and deterministically compile a single "
-                "canvas batch containing nodes, edges, grouping, layout, and selection. Read-only."
+                "canvas batch containing nodes, edges, grouping, layout, and selection. Read-only. "
+                "For recovery, compile the same complete user workflow; never construct reduced "
+                "probe nodes or pass an empty edges array for a multi-node plan."
             ),
             inputSchema=_object_schema(
                 {

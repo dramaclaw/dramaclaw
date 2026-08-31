@@ -67,6 +67,33 @@ def _catalog_schema(*, recipe_required: bool = False) -> dict[str, Any]:
                     ]
                 },
             },
+            "confirmedInputs": {
+                "type": "object",
+                "description": (
+                    "Confirmed Skill input values keyed by input id. Workflow node "
+                    "dependencies belong in plan edges, never in this object."
+                ),
+                "additionalProperties": True,
+            },
+            "promptStrategy": {
+                "type": "string",
+                "enum": ["template", "user_message", "previous_output", "llm_refine"],
+            },
+            "inputStrategy": {
+                "type": "object",
+                "additionalProperties": True,
+            },
+            "promptBuilder": {
+                "type": "object",
+                "properties": {
+                    "userGoal": {"type": "string"},
+                    "inputStrategy": {
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
+                },
+                "additionalProperties": True,
+            },
         },
         "additionalProperties": True,
     }
@@ -90,6 +117,7 @@ def _node_data_schema(*, recipe_required: bool = False) -> dict[str, Any]:
             "text": {"type": "string"},
             "prompt": {"type": "string"},
             "description": {"type": "string"},
+            "stage": {"type": "string"},
             "model": {"type": "string"},
             "aspectRatio": {"type": "string"},
             "size": {"type": "string"},
@@ -119,6 +147,14 @@ def _node_common_properties() -> dict[str, Any]:
         "text": {"type": "string"},
         "prompt": {"type": "string"},
         "description": {"type": "string"},
+        "type": {
+            "type": "string",
+            "enum": NODE_TYPE_VALUES,
+            "description": (
+                "Compatibility alias for node_type used by canvas-oriented agents. "
+                "Prefer node_type in portable plans."
+            ),
+        },
         "position": {
             "type": "object",
             "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
@@ -137,13 +173,18 @@ def _recipe_node_schema() -> dict[str, Any]:
                 "type": "string",
                 "enum": NODE_TYPE_VALUES[:-1],
             },
+            "type": {
+                "type": "string",
+                "enum": NODE_TYPE_VALUES[:-1],
+            },
             "data": _node_data_schema(recipe_required=True),
         }
     )
     return {
         "type": "object",
         "properties": properties,
-        "required": ["id", "node_type", "data"],
+        "required": ["id", "data"],
+        "anyOf": [{"required": ["node_type"]}, {"required": ["type"]}],
         "additionalProperties": True,
     }
 
@@ -153,13 +194,31 @@ def _resource_text_node_schema() -> dict[str, Any]:
     properties.update(
         {
             "node_type": {"type": "string", "enum": ["textAnnotationNode"]},
+            "type": {"type": "string", "enum": ["textAnnotationNode"]},
             "stage": {"type": "string", "enum": ["input", "resource", "asset"]},
         }
     )
     return {
         "type": "object",
         "properties": properties,
-        "required": ["id", "node_type", "stage"],
+        "required": ["id"],
+        "allOf": [
+            {"anyOf": [{"required": ["node_type"]}, {"required": ["type"]}]},
+            {
+                "anyOf": [
+                    {"required": ["stage"]},
+                    {
+                        "properties": {
+                            "data": {
+                                "type": "object",
+                                "required": ["stage"],
+                            }
+                        },
+                        "required": ["data"],
+                    },
+                ]
+            },
+        ],
         "additionalProperties": True,
     }
 
@@ -167,10 +226,12 @@ def _resource_text_node_schema() -> dict[str, Any]:
 def _compose_node_schema() -> dict[str, Any]:
     properties = _node_common_properties()
     properties["node_type"] = {"type": "string", "enum": ["videoComposeNode"]}
+    properties["type"] = {"type": "string", "enum": ["videoComposeNode"]}
     return {
         "type": "object",
         "properties": properties,
-        "required": ["id", "node_type"],
+        "required": ["id"],
+        "anyOf": [{"required": ["node_type"]}, {"required": ["type"]}],
         "additionalProperties": True,
     }
 
@@ -233,6 +294,24 @@ def workflow_plan_json_schema() -> dict[str, Any]:
             "expansion_rules": {"type": "object"},
             "execution_policy": {"type": "object"},
             "inputs": {"type": "object"},
+            "expected_node_count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 200,
+                "description": (
+                    "Optional exact business-node count stated by the user. Validation fails "
+                    "before approval when nodes does not contain exactly this many entries."
+                ),
+            },
+            "expected_node_counts": {
+                "type": "object",
+                "description": "Optional exact node counts keyed by portable node_type.",
+                "properties": {
+                    node_type: {"type": "integer", "minimum": 0, "maximum": 200}
+                    for node_type in NODE_TYPE_VALUES
+                },
+                "additionalProperties": False,
+            },
             "skill": {
                 "type": "object",
                 "properties": {
@@ -259,7 +338,9 @@ def workflow_plan_json_schema() -> dict[str, Any]:
                 "maxItems": 400,
                 "description": (
                     "Dependency edges for one connected workflow graph. Use prompt_for from "
-                    "text to generated media and media_input_for only from media nodes."
+                    "text to generated media and media_input_for only from media nodes. A plan "
+                    "with two or more nodes must include at least one edge; never use an empty "
+                    "edge array as a diagnostic probe."
                 ),
                 "items": {
                     "type": "object",
@@ -267,8 +348,20 @@ def workflow_plan_json_schema() -> dict[str, Any]:
                         "source": {"type": "string", "minLength": 1},
                         "target": {"type": "string", "minLength": 1},
                         "link_type": {"type": "string", "enum": LINK_TYPE_VALUES},
+                        "type": {
+                            "type": "string",
+                            "enum": LINK_TYPE_VALUES,
+                            "description": (
+                                "Compatibility alias for link_type used by canvas-oriented "
+                                "agents. Prefer link_type in portable plans."
+                            ),
+                        },
                     },
-                    "required": ["source", "target", "link_type"],
+                    "required": ["source", "target"],
+                    "anyOf": [
+                        {"required": ["link_type"]},
+                        {"required": ["type"]},
+                    ],
                     "additionalProperties": True,
                 },
             },
@@ -356,7 +449,10 @@ def workflow_intent_json_schema() -> dict[str, Any]:
                 "type": "object",
                 "properties": {
                     "mode": {"type": "string", "enum": ["standard"]},
-                    "deliverable": {"type": "string", "enum": ["images", "video", "mixed"]},
+                    "deliverable": {
+                        "type": "string",
+                        "enum": ["images", "video", "mixed"],
+                    },
                     "item_count": {"type": "integer", "minimum": 1, "maximum": 12},
                     "total_duration_seconds": {
                         "type": "integer",

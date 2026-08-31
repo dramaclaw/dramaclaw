@@ -25,6 +25,11 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   `freezone_create_edge`, `freezone_group_nodes`, or other single-operation tools.
 - Never fall back to repeated single-operation writes after a workflow validation or schema error.
   Correct the workflow intent/plan or report the blocking error.
+- A failure from an earlier chat turn is diagnostic history, not proof that the current adapter is
+  still blocked. When the user repeats the original create/run request, explicitly asks to retry,
+  or has restarted the service, retry the same complete workflow write once in the current turn.
+  Never declare the current environment blocked without a same-turn write result showing the same
+  failure.
 - A confirmed workflow must be committed as one operation and must produce one approval surface.
 - The deterministic workflow compiler owns node IDs, same-batch references, grouping, layout,
   selection, and the final `canvas_chat_commands.v1` batch.
@@ -39,15 +44,18 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
 
 Before creating a draft or graph that will actually run image or video generation, inspect the
 user request, selected Recipe input contract, existing target-node data, and the host-provided
-canvas execution mode:
+canvas execution mode. For every new generation request, call
+`freezone_request_user_clarification` exactly once before any canvas write in both
+`manual_confirm` and `auto_execute`. Historical clarification answers, prior-turn parameters,
+existing node values, and Recipe defaults may prefill recommended choices, but never count as the
+user's selection for the current request. After the clarification result returns for that request,
+do not ask again.
 
-- In `manual_confirm`, do not ask a preliminary generation-parameter question. Read the live node
-  schema and populate missing fields with supported defaults or symbolic `"recommended"` model
-  values. The approval card is the final parameter editor before the canvas write is applied.
-- In `auto_execute`, if relevant choices are missing, call
-  `freezone_request_user_clarification` once and ask only for the missing user-facing choices before
-  any canvas write. A normal approval event is still emitted after the plan is ready; the host may
-  auto-apply it. Explicit human-review requirements may still pause execution.
+- In `manual_confirm`, apply the preliminary answers to the plan, then submit the protected write.
+  The normal approval card is still shown and remains the final parameter editor.
+- In `auto_execute`, apply the preliminary answers and submit the protected write immediately. A
+  normal approval event is still emitted and may be auto-applied. Explicit human-review
+  requirements may still pause execution.
 - If the host does not provide a valid mode, treat it as `manual_confirm`.
 
 The image/video choices are:
@@ -56,13 +64,19 @@ The image/video choices are:
 - Video: model or generation mode, aspect ratio, resolution, duration, sound generation, and output
   variants per node.
 
+Do not include audio voice-source selection in this preliminary clarification. Never ask the user
+to choose system voice versus custom voice. A speech node uses an already selected custom
+`voiceRef`; if none is selected, its generation is skipped as defined under Execution and
+completion.
+
 Offer a recommended/default option so the user does not need to understand provider-specific
-fields. In `auto_execute`, do not draft, commit, approve, or run until the required clarification
-result returns. This is an explicit exception to a host's general rule not to ask about model
+fields. In either execution mode, do not draft, commit, approve, or run until the required
+clarification result returns. This is an explicit exception to a host's general rule not to ask about model
 parameters. It applies only to image and video generation for now, and only when the operation will
 generate media (including `run_after_create=true`); do not ask when the user only wants empty nodes,
-connections, grouping, layout, or edits without generation. Do not ask again for choices already
-explicit in the user request, Recipe, or existing node data.
+connections, grouping, layout, or edits without generation. Choices explicit in the current user
+request, Recipe, existing node data, or history should be preselected in the card, not used to skip
+the card.
 
 The portable workflow intent carries confirmed shared choices in `inputs`:
 
@@ -89,10 +103,10 @@ portable supported values are `1`, `2`, and `4`.
 
 Use only the image or video keys relevant to the selected plan. For an exact custom topology, put
 the equivalent canvas fields directly in every generated node's `data`. If a write returns
-`code="generation_parameters_required"`, do not retry unchanged. In `manual_confirm`, fill the
-returned fields from live schema/default values and retry the same intent/plan so the approval card
-can expose them. In `auto_execute`, call `freezone_request_user_clarification` once for all returned
-missing choices, apply the answers to the same intent/plan, and retry the same operation.
+`code="generation_parameters_required"`, do not retry unchanged. Call
+`freezone_request_user_clarification` once for all returned missing choices, apply the current
+request's answers to the same intent/plan, and retry the same operation. Approval behavior remains
+controlled by the execution mode.
 
 If the user selects a recommended/default image or video model, use the symbolic value
 `"recommended"` in the portable intent input or the media node's `data.model`. It is a user
@@ -134,6 +148,10 @@ When packaging this Skill for another agent host, read
   turn. Start another run only after a terminal failure and a later explicit user retry.
 - To continue or resume an existing workflow, call `freezone_run_workflow`; do not traverse and run
   nodes individually.
+- Freezone speech uses custom/reference voices only; never select or generate with a preset/system
+  voice. Preserve an existing valid `voiceRef`. If no valid custom voice is selected, skip that
+  audio node without submitting TTS and continue the remaining workflow. Never select the first
+  available voice automatically or open `open_voice_picker` unless the user explicitly requests it.
 - Treat `awaiting_approval`, `accepted`, and `running` as non-final states. Do not claim that canvas
   creation or generation completed until the corresponding result says it did.
 - Use `operation_id`, `draft_id`, `revision`, and returned idempotency identifiers unchanged on

@@ -121,6 +121,15 @@ def _recipe_compiler_timeout_seconds() -> float:
     return min(max(value, 0.1), 120.0)
 
 
+def _recipe_text_generation_timeout_seconds() -> float:
+    """Allow long Recipe text deliverables without changing global model timeouts."""
+    try:
+        value = float(os.getenv("FREEZONE_RECIPE_TEXT_TIMEOUT_SECONDS", "300"))
+    except (TypeError, ValueError):
+        value = 300.0
+    return min(max(value, 30.0), 540.0)
+
+
 def recipe_compiler_batch_concurrency() -> int:
     try:
         value = int(os.getenv("FREEZONE_RECIPE_COMPILER_BATCH_CONCURRENCY", "3"))
@@ -701,13 +710,17 @@ async def generate_recipe_text(**compile_args: Any) -> str:
 
     from novelvideo.config import get_newapi_text_pydantic_model
 
+    # Prompt compilation and final text generation are separate workloads.
+    # Screenplay-sized output must not occupy the short compiler route.
     model = get_newapi_text_pydantic_model(
-        "FREEZONE_RECIPE_COMPILER_MODEL",
+        "FREEZONE_TEXT_WRITER_MODEL",
+        timeout_seconds_override=_recipe_text_generation_timeout_seconds(),
         brainclaw_profile=BrainClawProfile.FREEZONE_RECIPE_TEXT_GENERATION,
         brainclaw_profile_variant=builtin_text_recipe_profile_variant(
             recipe,
             has_supplemental_recipes=len(recipes) > 1,
         ),
+        capability="freezone.text.generate",
     )
     agent = Agent(
         model,

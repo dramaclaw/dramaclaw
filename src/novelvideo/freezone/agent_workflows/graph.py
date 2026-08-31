@@ -65,10 +65,20 @@ MODEL_ALIASES_BY_NODE_TYPE = {
         "openai/gpt-image-2": "newapi_gpt_image2",
     },
     "videoNode": {
-        "omni-flash": "newapi_seedance-2.0-fast",
-        "omni_flash": "newapi_seedance-2.0-fast",
-        "seedance-2.0-fast": "newapi_seedance-2.0-fast",
-        "seedance_2_0_fast": "newapi_seedance-2.0-fast",
+        # Workflow/canvas plans use the public model ids exposed by the node
+        # schema. Provider routing prefixes belong to the backend generation
+        # request and must never leak into canvas node data.
+        "omni-flash": "seedance-2.0-fast",
+        "omni_flash": "seedance-2.0-fast",
+        "seedance_2_0_fast": "seedance-2.0-fast",
+        "newapi_seedance-2.0-fast": "seedance-2.0-fast",
+        "newapi_seedance-2.0": "seedance-2.0",
+        "newapi_seedance-1.5-pro": "seedance-1.5-pro",
+        "newapi_seedance-1.0-pro-fast": "seedance-1.0-pro-fast",
+        "huimeng_seedance-2.0-fast": "seedance-2.0-fast",
+        "huimeng_seedance-2.0": "seedance-2.0",
+        "huimeng_seedance-1.5-pro": "seedance-1.5-pro",
+        "huimeng_seedance-1.0-pro-fast": "seedance-1.0-pro-fast",
     },
 }
 
@@ -90,6 +100,8 @@ STAGE_ORDER = {
     "quality": 7,
     "review": 7,
 }
+
+USER_INPUT_STAGES = {"input", "resource", "asset"}
 
 def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
     """Convert a workflow plan/graph payload into canvas_chat_commands.v1 commands.
@@ -238,6 +250,10 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             node["node_type"],
             audio_uses_upstream_text=node["plan_id"] in audio_prompt_target_plan_ids,
         )
+        raw_data = raw_node.get("data") if isinstance(raw_node.get("data"), dict) else {}
+        raw_stage = str(raw_node.get("stage") or raw_data.get("stage") or "").strip().lower()
+        if node["node_type"] in TEXTUAL_NODE_TYPES and raw_stage in USER_INPUT_STAGES:
+            data.setdefault("workflowCatalogRole", "user_input")
         if (
             node["plan_id"] in prompt_source_plan_ids
             and node["plan_id"] not in context_source_plan_ids
@@ -486,9 +502,8 @@ def _node_data(
     if node_type == "audioNode":
         result.setdefault("audioKind", "speech")
         if result.get("audioKind") == "speech":
-            result.setdefault("speechMode", "preset")
-            result.setdefault("presetModel", "edge-tts")
-            result.setdefault("presetVoice", "Serena")
+            result["speechMode"] = "clone"
+            result.setdefault("voiceAvailable", False)
         result.setdefault("audioUrl", None)
         result.setdefault("sourceFileName", None)
         result.setdefault("durationMs", None)
@@ -533,7 +548,9 @@ def _edge_pairs(raw_edges: Any) -> list[tuple[str, str, str | None]]:
             target = (
                 raw.get("target") or raw.get("to") or raw.get("target_id") or raw.get("targetId")
             )
-            link_type_value = raw.get("link_type") or raw.get("linkType")
+            link_type_value = (
+                raw.get("link_type") or raw.get("linkType") or raw.get("type")
+            )
             if isinstance(link_type_value, str) and link_type_value.strip():
                 requested_link_type = link_type_value.strip()
             else:

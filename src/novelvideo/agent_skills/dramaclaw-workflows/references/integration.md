@@ -28,11 +28,12 @@ The host's authorized adapter must expose the high-level write contract used by 
 Keep the portable MCP read/compile-only. This ensures every host can reuse the same Skill and Recipe
 plans while retaining its own identity, authorization, approval UI, idempotency, and delivery path.
 
-For image/video execution, the authorized adapter must fail closed before its approval or commit
-boundary when required generation choices are absent. Return
-`status="clarification_required"`, `code="generation_parameters_required"`, the affected nodes,
-and their missing fields. The host must collect all missing user-facing choices in one structured
-clarification, then retry the same idempotent draft/plan with the answers. Shared workflow answers
+For image/video execution, the host must collect one current-request parameter selection before the
+approval or commit boundary. Historical selections and persisted node values may prefill the UI but
+must not suppress it. The authorized adapter must also fail closed when required generation choices
+are absent. Return `status="clarification_required"`, `code="generation_parameters_required"`, the
+affected nodes, and their missing fields. The host must collect all relevant user-facing choices in
+one structured clarification, then retry the same idempotent draft/plan with the answers. Shared workflow answers
 use the portable `intent.inputs` keys documented in the main Skill; exact custom plans put the
 equivalent fields directly in each media node's `data`. This rule does not apply to empty-node
 creation, layout, grouping, connections, text, or standalone audio settings.
