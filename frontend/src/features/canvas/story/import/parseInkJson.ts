@@ -69,13 +69,20 @@ function parseChoiceBody(body: InkVal[], link: ImportedLink, knotNames: Set<stri
 }
 
 /** 解析条件分支嵌套数组 → 一条 autoConditional link。 */
-function parseConditional(el: InkVal[], knot: ImportedKnot, knotNames: Set<string>): void {
+function parseConditional(
+  el: InkVal[],
+  knot: ImportedKnot,
+  knotNames: Set<string>,
+  hoistedCondition?: string,
+): void {
   const { items, named } = splitContainer(el);
-  // ev ... /ev 之间的条件 RPN
+  // ev ... /ev 之间的条件 RPN。单行内联写法会把它提升到 knot 层,则用 hoistedCondition。
   const evStart = items.indexOf('ev');
   const evEnd = items.indexOf('/ev');
   const condition =
-    evStart >= 0 && evEnd > evStart ? rpnToInfix(items.slice(evStart + 1, evEnd)) : undefined;
+    evStart >= 0 && evEnd > evStart
+      ? rpnToInfix(items.slice(evStart + 1, evEnd))
+      : hoistedCondition;
   // b 子容器里的第一个真实目标
   const body = named && Array.isArray(named['b']) ? (named['b'] as InkVal[]) : [];
   let target = '';
@@ -96,7 +103,17 @@ function parseConditional(el: InkVal[], knot: ImportedKnot, knotNames: Set<strin
   });
 }
 
-function handleTag(knot: ImportedKnot, tagText: string): void {
+/**
+ * 处理 knot 上的标签。口径与 ink 源码一致:
+ * video / choiceTime / timeout / default 为元数据(消费掉,不进 tags);
+ * ending 既标结局也保留在 tags 里。
+ * `# default: N` 出现在选项之前,先记进 pendingDefault,待 walk 结束后按序号落位。
+ */
+function handleTag(
+  knot: ImportedKnot,
+  tagText: string,
+  pendingDefault: Map<ImportedKnot, number>,
+): void {
   const tag = tagText.trim();
   if (!tag) return;
   const video = tag.match(/^video:\s*(.+)$/);
@@ -104,14 +121,42 @@ function handleTag(knot: ImportedKnot, tagText: string): void {
     knot.videoHint = video[1].trim();
     return;
   }
-  if (/^ending:/.test(tag)) knot.isEnding = true;
+  // 限时元数据:choiceTime 优先于 timeout。
+  const choiceTime = tag.match(/^choiceTime:\s*(\d+)/);
+  if (choiceTime) {
+    knot.choiceTimeLimitSec = Number(choiceTime[1]);
+    return;
+  }
+  const timeout = tag.match(/^timeout:\s*(\d+)/);
+  if (timeout) {
+    if (knot.choiceTimeLimitSec === undefined) knot.choiceTimeLimitSec = Number(timeout[1]);
+    return;
+  }
+  const defaultTag = tag.match(/^default:\s*(\d+)/);
+  if (defaultTag) {
+    pendingDefault.set(knot, Number(defaultTag[1]));
+    return;
+  }
+  const ending = tag.match(/^ending:\s*(.+)$/);
+  if (ending) {
+    knot.isEnding = true;
+    knot.endingLabel = ending[1].trim();
+  }
   knot.tags.push(tag);
 }
 
 /** 递归处理容器内容,把片段并入同一 knot。 */
-function walk(arr: InkVal[], knot: ImportedKnot, knotNames: Set<string>): void {
+function walk(
+  arr: InkVal[],
+  knot: ImportedKnot,
+  knotNames: Set<string>,
+  pendingDefault: Map<ImportedKnot, number>,
+): void {
   const { items, named } = splitContainer(arr);
   let lastChoiceText: string | null = null;
+  // 单行内联条件 `{ cond: -> a | -> b }` 会把条件 RPN 提升到分支容器外面,
+  // 这里记下来喂给紧随其后那条 if 分支(带 "c":true);else 分支保持无条件。
+  let hoistedCondition: string | undefined;
 
   for (let i = 0; i < items.length; i++) {
     const el = items[i];
@@ -125,7 +170,7 @@ function walk(arr: InkVal[], knot: ImportedKnot, knotNames: Set<string>): void {
         if (typeof t === 'string' && t.startsWith('^')) texts.push(t.slice(1));
         j++;
       }
-      handleTag(knot, texts.join('').trim());
+      handleTag(knot, texts.join('').trim(), pendingDefault);
       i = j;
       continue;
     }
@@ -137,6 +182,18 @@ function walk(arr: InkVal[], knot: ImportedKnot, knotNames: Set<string>): void {
       let j = i + 1;
       while (j < items.length && items[j] !== '/str') j++;
       i = j;
+      continue;
+    }
+
+    if (el === 'ev') {
+      let j = i + 1;
+      while (j < items.length && items[j] !== '/ev') j++;
+      const block = items.slice(i + 1, j);
+      // 含 str 的 ev 块是选项文案,交给下面的 "str" 分支处理,别在这里吞掉。
+      if (!block.includes('str')) {
+        hoistedCondition = rpnToInfix(block);
+        i = j;
+      }
       continue;
     }
 
@@ -152,14 +209,20 @@ function walk(arr: InkVal[], knot: ImportedKnot, knotNames: Set<string>): void {
     }
 
     if (Array.isArray(el)) {
-      if (isConditional(el)) parseConditional(el, knot, knotNames);
-      else walk(el, knot, knotNames); // 嵌套容器(如带选项的 knot 包一层)
+      if (isConditional(el)) {
+        // 只有 if 分支(容器内 {"->":".^.b","c":true})适用提升上来的条件。
+        const isIfBranch = el.some((b) => isObj(b) && b['c'] === true);
+        parseConditional(el, knot, knotNames, isIfBranch ? hoistedCondition : undefined);
+        if (isIfBranch) hoistedCondition = undefined;
+      }
+      else walk(el, knot, knotNames, pendingDefault); // 嵌套容器(如带选项的 knot 包一层)
       continue;
     }
 
     if (isObj(el)) {
       // 选项声明 {"*":".^.c-0"}
       if ('*' in el) {
+        hoistedCondition = undefined;
         const path = String(el['*']);
         const key = path.split('.').pop() ?? '';
         const body = named && Array.isArray(named[key]) ? (named[key] as InkVal[]) : [];
@@ -243,6 +306,7 @@ export function parseInkJson(text: string): ImportedStory {
   }
 
   const knots: ImportedKnot[] = [];
+  const pendingDefault = new Map<ImportedKnot, number>();
   for (const name of knotNames) {
     const container = knotMap[name];
     if (!Array.isArray(container)) continue;
@@ -254,8 +318,15 @@ export function parseInkJson(text: string): ImportedStory {
       outgoing: [],
       warnings: [],
     };
-    walk(container as InkVal[], knot, knotNames);
+    walk(container as InkVal[], knot, knotNames, pendingDefault);
     knots.push(knot);
+  }
+
+  // 落位默认选项:# default: N(1-based)→ 第 N 条出向选项 isDefault。出界则忽略 + warning。
+  for (const [knot, n] of pendingDefault) {
+    const link = knot.outgoing[n - 1];
+    if (link) link.isDefault = true;
+    else warnings.push(`${knot.name}: # default ${n} 超出选项数,已忽略`);
   }
 
   if (!startKnot && knots.length) startKnot = knots[0].name;

@@ -3387,6 +3387,7 @@
       "importDone": "Interactive story imported",
       "importPartial": "Imported; some parts need manual review (see ⚠)",
       "importFailed": "Import failed: could not parse file",
+      "importSyntaxError": "ink syntax error; import cancelled",
       "importClipHint": "Awaiting video: {{file}}",
       "importClipPending": "Awaiting video",
       "editNarrationHint": "Double-click to edit narration",

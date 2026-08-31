@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseInkSource } from '@/features/canvas/story/import/parseInkSource';
+import { InkCompileError, parseStory } from '@/features/canvas/story/import';
 
 const INK = `
 VAR favor = 0
@@ -49,9 +49,9 @@ VAR trust = 0
 -> END
 `;
 
-describe('parseInkSource', () => {
+describe('ink 源码导入(inkjs 编译 → JSON 解析)', () => {
   it('解析变量、起点、knot、视频提示', () => {
-    const story = parseInkSource(INK);
+    const story = parseStory(INK);
     expect(story.variables).toEqual([{ name: 'favor', initial: 0 }, { name: 'trust', initial: 0 }]);
     expect(story.startKnot).toBe('start');
     const start = story.knots.find((k) => k.name === 'start')!;
@@ -60,7 +60,7 @@ describe('parseInkSource', () => {
   });
 
   it('解析选项的文案、效果、目标', () => {
-    const start = parseInkSource(INK).knots.find((k) => k.name === 'start')!;
+    const start = parseStory(INK).knots.find((k) => k.name === 'start')!;
     expect(start.outgoing[0]).toMatchObject({ kind: 'choice', text: '接受召见', target: 'palace' });
     expect(start.outgoing[0].effects).toEqual([{ var: 'favor', delta: 5 }, { var: 'trust', delta: 1 }]);
     expect(start.outgoing[1]).toMatchObject({ kind: 'choice', text: '称病推辞', target: 'sick' });
@@ -68,12 +68,12 @@ describe('parseInkSource', () => {
   });
 
   it('解析直接跳转 divert', () => {
-    const palace = parseInkSource(INK).knots.find((k) => k.name === 'palace')!;
+    const palace = parseStory(INK).knots.find((k) => k.name === 'palace')!;
     expect(palace.outgoing).toEqual([expect.objectContaining({ kind: 'divert', target: 'judge' })]);
   });
 
   it('条件块解析成 autoConditional 并打 needsReview(else 分支也解析)', () => {
-    const judge = parseInkSource(INK).knots.find((k) => k.name === 'judge')!;
+    const judge = parseStory(INK).knots.find((k) => k.name === 'judge')!;
     const auto = judge.outgoing.filter((l) => l.kind === 'autoConditional');
     expect(auto.length).toBe(3);
     auto.forEach((l) => expect(l.needsReview).toBe(true));
@@ -83,14 +83,14 @@ describe('parseInkSource', () => {
   });
 
   it('结局 knot 标 isEnding + endingLabel', () => {
-    const ge = parseInkSource(INK).knots.find((k) => k.name === 'ge')!;
+    const ge = parseStory(INK).knots.find((k) => k.name === 'ge')!;
     expect(ge.isEnding).toBe(true);
     expect(ge.tags).toContain('ending: GE');
     expect(ge.endingLabel).toBe('GE');
   });
 
   it('解析限时:# choiceTime → choiceTimeLimitSec,# default 标默认选项', () => {
-    const start = parseInkSource(INK).knots.find((k) => k.name === 'start')!;
+    const start = parseStory(INK).knots.find((k) => k.name === 'start')!;
     // choiceTime 优先于 timeout
     expect(start.choiceTimeLimitSec).toBe(4);
     // # default: 1 → 1-based → 第一条选项(接受召见)为默认
@@ -99,7 +99,7 @@ describe('parseInkSource', () => {
   });
 
   it('无 timing tag 的 knot 不带 choiceTimeLimitSec / isDefault', () => {
-    const palace = parseInkSource(INK).knots.find((k) => k.name === 'palace')!;
+    const palace = parseStory(INK).knots.find((k) => k.name === 'palace')!;
     expect(palace.choiceTimeLimitSec).toBeUndefined();
     expect(palace.outgoing.every((l) => !l.isDefault)).toBe(true);
   });
@@ -114,12 +114,13 @@ describe('parseInkSource', () => {
 B # ending: X
 -> END
 `;
-    const a = parseInkSource(ink).knots.find((k) => k.name === 'a')!;
+    const a = parseStory(ink).knots.find((k) => k.name === 'a')!;
     expect(a.choiceTimeLimitSec).toBe(6);
   });
 
   it('单行内联条件跳转 { cond: -> target } 解析成 autoConditional(不当成 narration)', () => {
     const ink = `
+VAR trust = 0
 -> final_choice
 === final_choice ===
 { trust >= 3: -> high_trust }
@@ -131,7 +132,7 @@ B # ending: X
 输了
 -> END
 `;
-    const fc = parseInkSource(ink).knots.find((k) => k.name === 'final_choice')!;
+    const fc = parseStory(ink).knots.find((k) => k.name === 'final_choice')!;
     const auto = fc.outgoing.find((l) => l.kind === 'autoConditional');
     expect(auto).toMatchObject({ kind: 'autoConditional', target: 'high_trust', condition: 'trust >= 3' });
     expect(fc.outgoing.find((l) => l.kind === 'divert')).toMatchObject({ target: 'low_trust' });
@@ -140,6 +141,7 @@ B # ending: X
 
   it('单行内联 if/else { cond: -> a | -> b } 解析成两条分支', () => {
     const ink = `
+VAR trust = 0
 -> fc
 === fc ===
 { trust >= 3: -> a | -> b }
@@ -150,10 +152,54 @@ A
 B
 -> END
 `;
-    const fc = parseInkSource(ink).knots.find((k) => k.name === 'fc')!;
+    const fc = parseStory(ink).knots.find((k) => k.name === 'fc')!;
     const auto = fc.outgoing.filter((l) => l.kind === 'autoConditional');
     expect(auto.map((l) => l.target)).toEqual(['a', 'b']);
     expect(auto.find((l) => l.target === 'a')!.condition).toBe('trust >= 3');
     expect(auto.find((l) => l.target === 'b')!.condition).toBeUndefined();
+  });
+  it('语法错误由 inkjs 编译器拦下,抛 InkCompileError 并带行号', () => {
+    // `~` 只能独占一行,inklecate 会报错;旧的手写解析器会静默接受并产出错误图。
+    const ink = `-> a
+=== a ===
+文本
++ [走] ~ x += 1
+-> b
+`;
+    let caught: unknown;
+    try {
+      parseStory(ink);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(InkCompileError);
+    expect((caught as InkCompileError).errors.join('\n')).toMatch(/line 4/);
+  });
+
+  it('未声明变量会被编译器拦下', () => {
+    const ink = `-> a
+=== a ===
+{ trust >= 3: -> a }
+-> END
+`;
+    expect(() => parseStory(ink)).toThrow(InkCompileError);
+  });
+
+  it('编译告警与 TODO 进入 story.warnings', () => {
+    const ink = `-> a
+=== a ===
+TODO 这里要补分支
+文本
+-> END
+`;
+    const story = parseStory(ink);
+    expect(story.warnings.some((w) => w.includes('这里要补分支'))).toBe(true);
+  });
+
+  it('.json 输入不走编译,仍按 story JSON 解析', () => {
+    const story = parseStory(INK);
+    const json = JSON.stringify({ inkVersion: 21, root: [], listDefs: {} });
+    expect(parseStory(json, 'x.json').knots).toEqual([]);
+    expect(story.knots.length).toBeGreaterThan(0);
   });
 });

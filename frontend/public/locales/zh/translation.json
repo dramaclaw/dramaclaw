@@ -3387,6 +3387,7 @@
       "importDone": "已导入互动影游",
       "importPartial": "已导入,部分结构需手动处理(见 ⚠)",
       "importFailed": "导入失败:文件解析出错",
+      "importSyntaxError": "ink 语法错误,导入已取消",
       "importClipHint": "待填视频:{{file}}",
       "importClipPending": "待填视频",
       "editNarrationHint": "双击编辑旁白",

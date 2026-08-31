@@ -3387,7 +3387,15 @@ export function Canvas({
         }
       } catch (error) {
         console.error('[canvas] import story failed', error);
-        toast.error(t('canvas.story.importFailed'));
+        // ink 源码由 inkjs 编译,语法错误带 inklecate 的行号,直接透给用户比笼统提示有用。
+        const compileErrors = (error as { errors?: unknown })?.errors;
+        if (Array.isArray(compileErrors) && compileErrors.length) {
+          toast.error(t('canvas.story.importSyntaxError'), {
+            description: compileErrors.slice(0, 3).join('\n'),
+          });
+        } else {
+          toast.error(t('canvas.story.importFailed'));
+        }
       }
     },
     [addStoryImport, scheduleCanvasPersist, spawnAtViewportCenter, t],
