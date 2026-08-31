@@ -53,8 +53,14 @@ describe("ImageGenNode director combined world entry", () => {
     );
 
     expect(source).toContain("meta.captureBundle");
-    expect(source).toContain("label: '导演合成图'");
-    expect(source).toContain("label: '纯背景图'");
+    // 文案已搬进词条，源码里只剩 key；措辞本身对着 locale 查。
+    expect(source).toContain("label: t('node.threeDWorld.combinedLabel')");
+    expect(source).toContain("label: t('node.threeDWorld.envOnlyLabel')");
+    const zh = JSON.parse(
+      readFileSync(resolve(process.cwd(), "public/locales/zh/translation.json"), "utf8"),
+    );
+    expect(zh.node.threeDWorld.combinedLabel).toBe("导演合成图");
+    expect(zh.node.threeDWorld.envOnlyLabel).toBe("纯背景图");
     expect(source).toContain("director_control_bundle");
   });
 

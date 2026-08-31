@@ -36,6 +36,249 @@
       "markAllRead": "Mark all read",
       "unread": "{{n}} unread",
       "pinned": "Pinned"
+    },
+    "testimonials": {
+      "heading": "No more blank pages",
+      "subheading": "Concept shorts, character tests and continuous clips — going from a one-line premise straight into the pipeline.",
+      "quotes": {
+        "shortFilmDirector": {
+          "name": "Short-film director",
+          "tag": "Concept previz",
+          "text": "No more starting from a blank timeline. See the conflict and the shots first, then decide which branch is worth producing."
+        },
+        "aiCreator": {
+          "name": "AI video creator",
+          "tag": "Continuous clips",
+          "text": "The useful part isn't generating one image — it's pushing a clip forward."
+        },
+        "screenwriter": {
+          "name": "Screenwriter",
+          "tag": "Character tests",
+          "text": "Once characters, conflict and setting are broken apart, I can tell much faster whether a story is worth writing."
+        },
+        "animationTeam": {
+          "name": "Animation team",
+          "tag": "Pacing checks",
+          "text": "We use it for concept previz first — check the pacing and the shots — then decide whether to go into production."
+        },
+        "indieProducer": {
+          "name": "Independent producer",
+          "tag": "Trailer builds",
+          "text": "It compresses an idea into something watchable, so the discussion no longer stops at written notes."
+        },
+        "visualDirector": {
+          "name": "Visual director",
+          "tag": "World expansion",
+          "text": "One world keeps growing new branches. The wildness stays, but the direction is still steerable."
+        },
+        "storyPlanner": {
+          "name": "Story planner",
+          "tag": "Branch selection",
+          "text": "I use it to rule out dead branches fast and spend the time on the one with real tension."
+        },
+        "creativeStudio": {
+          "name": "Creative studio",
+          "tag": "Pitch samples",
+          "text": "From a one-line premise to a watchable clip — enough to carry a much more concrete creative discussion."
+        },
+        "directorAssistant": {
+          "name": "Director's assistant",
+          "tag": "Shot wrangling",
+          "text": "Shots stop scattering. Every generation lands back on a track you can keep pushing."
+        }
+      }
+    },
+    "faq": {
+      "heading": "Questions, answered straight",
+      "subheading": "On generation, control, collaboration and business enquiries — only the questions that actually change a decision.",
+      "contactPrompt": "Have a specific partnership question?",
+      "contactOpen": "Open business contact",
+      "contactCta": "Contact sales",
+      "contactLabel": "Business contact",
+      "qrAlt": "Business WeChat QR code",
+      "items": {
+        "difference": {
+          "question": "How is DramaClaw different from an ordinary AI video generator?",
+          "answer": "Ordinary tools work around a single prompt, a single clip, or a single image. DramaClaw is built around a complete project: text import, asset build-up, episode planning, shot production and final compositing — a traceable, collaborative, reusable production loop."
+        },
+        "gettingStarted": {
+          "question": "Where should I start the first time?",
+          "answer": "Follow the main workflow: import your text in Shrimp Feed, confirm characters / scenes / props / voices in Shrimp Pond, plan episodes and generate scripts and shots in Shrimp Lens, then export the cut from the compositing page. The first goal isn't perfection — it's getting one episode all the way through."
+        },
+        "mirrorVsCanvas": {
+          "question": "What are Shrimp Lens and Shrimp Canvas each good for?",
+          "answer": "Shrimp Lens is the main production line: batch work, stability, episode-by-episode progress. Shrimp Canvas is the director's workbench: polishing key shots, exploring versions, finalising assets and heavier video work. On a real project, ordinary shots run through Shrimp Lens and the hard ones go to Shrimp Canvas."
+        },
+        "canvasOverwrite": {
+          "question": "Do results in Shrimp Canvas overwrite my mainline assets automatically?",
+          "answer": "No. Anything generated or uploaded in Shrimp Canvas is a candidate by default. It only enters the project mainline once you explicitly commit it and pick a target slot — character, scene, prop, beat sketch, first frame or video."
+        },
+        "whyAssetsFirst": {
+          "question": "Why organise characters, scenes, props and voices first?",
+          "answer": "The usual cause of rework in AI video isn't the final generation step — it's unstable characters, vague scenes, props without references and inconsistent voices upstream. Turning those into assets in Shrimp Pond removes a lot of chaos from the shot stage."
+        },
+        "contentTypes": {
+          "question": "What kinds of content is DramaClaw suited to?",
+          "answer": "AI short dramas, comic dramas, novel promos, commentary shows, ads, and training videos — plus team projects that maintain IP characters and serialised content over time. Solo creators can run the whole pipeline; teams can produce collaboratively."
+        },
+        "teamRoles": {
+          "question": "How should a team divide the work?",
+          "answer": "Split it by stage: the owner manages the project, cost and QA; the writer handles text and scripts; the art lead maintains characters, scenes and props; the storyboard/director owns shot performance; the video operator handles first frames, video and compositing. Permissions map to viewer, editor, admin and owner."
+        },
+        "unstableResults": {
+          "question": "What should I check first when results are inconsistent?",
+          "answer": "Find the stage that's failing: is the text clear, is the character identity right, do the scene and props have references, does the sketch describe the shot, is the first frame stable, does the audio match? Don't start by regenerating video over and over — fix the upstream assets and the shot description first."
+        },
+        "dcUniverse": {
+          "question": "What does “Make Your DC Universe.” mean?",
+          "answer": "DC isn't only short for DramaClaw — it also stands for each creator's own content universe. DramaClaw is meant to help you start from one story and build up characters, world, scene assets and the ability to produce a series."
+        },
+        "afterLogin": {
+          "question": "Where do I land after logging in?",
+          "answer": "In the project hub. You can open an existing project or create a new one to start a new series. Each project is its own space, holding text, assets, episodes, shots, video, tasks and composited results."
+        }
+      }
+    },
+    "fourth": {
+      "sets": {
+        "s1": {
+          "titleTop": "Your story enters",
+          "titleBottom": "production",
+          "lead": "Start from one line. Characters, conflict, settings and shots are broken into creative assets you can keep pushing."
+        },
+        "s2": {
+          "titleTop": "One world,",
+          "titleBottom": "one cold light",
+          "lead": "Characters hold together, shots stay on course. Every generation returns to the same narrative direction."
+        },
+        "s3": {
+          "titleTop": "Ideas pushed",
+          "titleBottom": "into images",
+          "lead": "Not one picture and done — it keeps growing into boards, clips, trailers and work you can publish."
+        }
+      },
+      "cards": {
+        "breakdown": {
+          "title": "Story breakdown",
+          "body": "Cut an idea into characters, conflict, settings and shots so the story doesn't stall at one sentence."
+        },
+        "lock": {
+          "title": "Visual lock",
+          "body": "Keep characters, settings and shots in one register, so random generation feels far less out of control."
+        },
+        "advance": {
+          "title": "Image advance",
+          "body": "Push a single idea forward into clips, trailers and more complete work."
+        }
+      }
+    },
+    "fifth": {
+      "heading": "Turn a thousand ideas into assets",
+      "lead1": "DramaClaw organises them into a project asset library,",
+      "lead2": "so later shot generation can reference them, maintain them in one place, and roll back a version when needed."
+    },
+    "seventh": {
+      "heading": "From gacha pulls to a real pipeline",
+      "lead": "DramaClaw breaks the uncertainty of AI video down across text, assets, shots and task flow",
+      "steps": {
+        "01": {
+          "title": "Premise in",
+          "body": "One opening line becomes characters, settings and narrative constraints."
+        },
+        "02": {
+          "title": "Character breakdown",
+          "body": "Identity, motive and relationships get locked first, so later generations stop drifting."
+        },
+        "03": {
+          "title": "Conflict",
+          "body": "Push events to the point where someone has to choose, and let the story heat itself."
+        },
+        "04": {
+          "title": "Shot planning",
+          "body": "Perspective, pacing and framing move onto one controllable track."
+        },
+        "05": {
+          "title": "Clips take shape",
+          "body": "A single idea keeps going — into scenes, trailers and continuous clips."
+        },
+        "06": {
+          "title": "Work expands",
+          "body": "Every result can go back into the pipeline and grow a new branch."
+        }
+      }
+    },
+    "eighth": {
+      "heading": "Built for complete productions",
+      "lead": "DramaClaw is about how a series keeps getting made: text in, character consistency, scene reuse, shot progress, team delivery.",
+      "statementTitle": "Night Passage Protocol · Shot sequence 08",
+      "statementBody": "An unregistered freighter drags the whole city's secret down into the night layer.",
+      "decisions": {
+        "KEEP": {
+          "title": "Keep",
+          "body": "Lock the current character, shot or clip and make it the baseline for what follows."
+        },
+        "REWRITE": {
+          "title": "Rewrite",
+          "body": "Swap the conflict, dialogue or shot direction without tearing down a world that already works."
+        },
+        "EXTEND": {
+          "title": "Extend",
+          "body": "Carry on from the current clip into the next scene, a trailer, or a full branch."
+        },
+        "REJECT": {
+          "title": "Reject",
+          "body": "Go back a node, take another narrative path, and put the story back on the line."
+        }
+      }
+    },
+    "ninth": {
+      "headingTop": "One line, straight into",
+      "headingAccent": "shots",
+      "lead": "You don't need a finished script. Give a direction and DramaClaw breaks it into characters, conflict, settings and a shot chain you can keep pushing.",
+      "featuredWork": "Luban's Craft",
+      "steps": {
+        "01": {
+          "title": "One premise",
+          "body": "A city that went dark lights up again, and every survivor hears the same countdown."
+        },
+        "02": {
+          "title": "Into structure",
+          "body": "Characters, conflict, settings and narrative limits split apart into nodes you can push forward."
+        },
+        "03": {
+          "title": "Into shots",
+          "body": "Shot order, scene register and pacing get locked, and the clip starts to have a direction to watch."
+        },
+        "04": {
+          "title": "Clip out",
+          "body": "A story clip you can extend, recut, or send to the work wall."
+        }
+      }
+    },
+    "sixth": {
+      "heading": "Episode by episode, all the way to the cut",
+      "lead": "The infinite canvas supports multi-reference, multi-node, multi-version exploration — and commits the result back to the main flow once you confirm, leaving room to create freely"
+    },
+    "twelfth": {
+      "heading": "Push one line into a universe you can watch",
+      "lead": "Give it a character conflict or a world, and let DramaClaw break it into shot nodes and keep extending",
+      "primaryCta": "Start creating",
+      "secondaryCta": "Request an account"
+    },
+    "watchCommunity": "Watch community work now",
+    "watchNow": "Watch now",
+    "backToTop": "Back to top",
+    "hero": {
+      "headline": "Make ideas happen",
+      "scrollHint": "Scroll down"
+    },
+    "second": {
+      "title": "From idea to project",
+      "subtitle": "In DramaClaw, creating no longer stops at one prompt and one result"
+    },
+    "third": {
+      "title": "Let the story be the starting point",
+      "subtitle": "Import a novel, script or per-episode text and the system parses it automatically, laying the groundwork for asset extraction, episode planning and shot breakdown."
     }
   },
   "downloadPage": {
