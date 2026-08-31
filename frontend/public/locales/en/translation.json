@@ -4499,7 +4499,33 @@
       "resultTitle": "Result Image",
       "promptPlaceholder": "Describe anything you want to generate or edit",
       "noModelAvailable": "No image model has been configured by the administrator yet",
-      "tryLabel": "Try:"
+      "tryLabel": "Try:",
+      "referenceGroupLabel": "Asset reference group",
+      "imageNodeBadge": "Image nodes",
+      "moreRefs": "+{{count}} more references",
+      "connectRefTitle": "Drag an image in from the asset library, or click AI Edit on an image node to connect it automatically",
+      "connectRef": "Connect a reference image",
+      "suggest": {
+        "img2imgPrompt": "Generate a cleaner, more refined version based on the reference image, keeping the subject identity and composition.",
+        "img2img": "Image to image",
+        "upscalePrompt": "Restore the reference image in high definition — sharpen detail, edges and texture while keeping the content unchanged.",
+        "upscale": "Upscale",
+        "cameraPrompt": "Camera movement: a slow push-in, subject held steady, cinematic quality."
+      },
+      "focusPrompt": "Focus the prompt",
+      "modes": {
+        "text_to_image": "Text to image",
+        "all_reference": "All-purpose reference",
+        "image_reference": "Image reference",
+        "image_to_image": "Image to image",
+        "image_to_video": "Image to video",
+        "first_last_frame": "First & last frame"
+      },
+      "markButton": "Mark",
+      "cameraButton": "Camera",
+      "assetLibraryTitle": "Pick a reference from the asset library (characters / scenes / props)",
+      "assetLibrary": "Asset library",
+      "insertRef": "Insert {{label}}"
     },
     "imageGen": {
       "contextPalette": {
@@ -5174,6 +5200,33 @@
         "videoFallback": "Video reference {{index}}",
         "audioFallback": "Audio reference {{index}}"
       }
+    },
+    "threeDWorld": {
+      "upstreamNodeFallback": "Upstream node",
+      "directorWorld": "Director world",
+      "captureReadFailed": "Could not read the 3GS capture",
+      "captureSizeFailed": "Could not read the 3GS capture dimensions",
+      "refImageTitle": "Referenced upstream image",
+      "refImageAlt": "Upstream image reference",
+      "refImagePreviewAlt": "Upstream image reference preview",
+      "refImageFallback": "Image {{index}}",
+      "noProject": "Could not determine the current project",
+      "textTo3dUnsupported": "Text-to-3D is not wired up yet — connect an image node",
+      "pano360Label": "360 image",
+      "pano3dgsLabel": "360 3DGS",
+      "image3dgsLabel": "Image 3DGS",
+      "worldUrlMissing": "No 3D world URL found in task.result",
+      "generateFailed": "Generation failed: {{message}}",
+      "notInBeatContext": "Not in a shot context — cannot set the current background",
+      "combinedNoProject": "No project — cannot save the canvas director composite",
+      "combinedBundleMissing": "Director composite is missing combined/env_only/frame_meta",
+      "combinedUrlMissing": "Canvas director composite is missing its image URL",
+      "combinedLabel": "Director composite",
+      "envOnlyLabel": "Background only",
+      "captureGroupName": "Director world output",
+      "captureOutputFailed": "Failed to output the director world capture to the canvas",
+      "captureLabel": "Director world {{kind}}",
+      "thumbAlt": "Director world thumbnail"
     }
   },
   "viewer": {

@@ -4499,7 +4499,33 @@
       "resultTitle": "结果图片",
       "promptPlaceholder": "描述任何你想要生成或编辑的内容",
       "noModelAvailable": "管理员尚未配置任何图片模型，暂时无法生成",
-      "tryLabel": "试试："
+      "tryLabel": "试试：",
+      "referenceGroupLabel": "资产参考组",
+      "imageNodeBadge": "图片节点",
+      "moreRefs": "+{{count}} 张引用图",
+      "connectRefTitle": "从素材库拖入图片，或从图片节点点击 AI 改图自动连接",
+      "connectRef": "连接参考图",
+      "suggest": {
+        "img2imgPrompt": "基于参考图生成一个更稳定、更精细的版本，保持主体身份和构图。",
+        "img2img": "图生图",
+        "upscalePrompt": "对参考图做高清修复，提升细节、边缘和质感，保持原图内容不变。",
+        "upscale": "图片高清",
+        "cameraPrompt": "镜头运动：轻微推进，保持主体稳定，电影级质感。"
+      },
+      "focusPrompt": "聚焦 prompt",
+      "modes": {
+        "text_to_image": "文生图",
+        "all_reference": "全能参考",
+        "image_reference": "图片参考",
+        "image_to_image": "图生图",
+        "image_to_video": "图生视频",
+        "first_last_frame": "首尾帧"
+      },
+      "markButton": "标记",
+      "cameraButton": "运镜",
+      "assetLibraryTitle": "从资产库选择参考图（人物 / 场景 / 道具）",
+      "assetLibrary": "资产库",
+      "insertRef": "插入 {{label}}"
     },
     "imageGen": {
       "contextPalette": {
@@ -5174,6 +5200,33 @@
         "videoFallback": "视频引用 {{index}}",
         "audioFallback": "音频引用 {{index}}"
       }
+    },
+    "threeDWorld": {
+      "upstreamNodeFallback": "上游节点",
+      "directorWorld": "导演世界",
+      "captureReadFailed": "无法读取 3GS 截图",
+      "captureSizeFailed": "无法解析 3GS 截图尺寸",
+      "refImageTitle": "引用上游图片",
+      "refImageAlt": "上游图片引用",
+      "refImagePreviewAlt": "上游图片引用预览",
+      "refImageFallback": "图片 {{index}}",
+      "noProject": "无法识别当前项目",
+      "textTo3dUnsupported": "文生 3D 模型尚未对接，请连接图片节点",
+      "pano360Label": "360 图",
+      "pano3dgsLabel": "360 3DGS",
+      "image3dgsLabel": "图片 3DGS",
+      "worldUrlMissing": "未能在 task.result 中找到 3D 世界地址",
+      "generateFailed": "生成失败: {{message}}",
+      "notInBeatContext": "当前不在镜头上下文中，不能设置当前背景",
+      "combinedNoProject": "缺少项目，无法保存画布导演合成图",
+      "combinedBundleMissing": "导演合成图缺少 combined/env_only/frame_meta",
+      "combinedUrlMissing": "画布导演合成图缺少图片地址",
+      "combinedLabel": "导演合成图",
+      "envOnlyLabel": "纯背景图",
+      "captureGroupName": "导演世界输出",
+      "captureOutputFailed": "导演世界截图输出到画布失败",
+      "captureLabel": "导演世界 {{kind}}",
+      "thumbAlt": "导演世界缩略图"
     }
   },
   "viewer": {
