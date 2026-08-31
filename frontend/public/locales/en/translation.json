@@ -704,6 +704,105 @@
         "canvases": "Project canvases",
         "library": "Mainline assets",
         "assets": "Asset library"
+      },
+      "roles": {
+        "current_sketch": "Sketch",
+        "current_frame": "Frame",
+        "current_video": "Video",
+        "current_audio": "Audio",
+        "selected_background": "Background",
+        "director_combined": "Director render"
+      },
+      "tabs": {
+        "beatAll": "All beats",
+        "beatEpisode": "Episode beats",
+        "beatCurrent": "Current beat",
+        "characters": "Characters",
+        "scenes": "Scenes",
+        "props": "Props"
+      },
+      "groups": {
+        "outputs": "Current outputs",
+        "director": "3GS / control images",
+        "characters": "Character refs",
+        "scenes": "Scene refs",
+        "props": "Prop refs",
+        "other": "Other context"
+      },
+      "empty": {
+        "beatContext": "No shot-context assets yet",
+        "category": "No assets in this category",
+        "noBeatContext": "This canvas has no shot context",
+        "beatAssets": "No context assets for this shot"
+      },
+      "episodeTitle": "Episode {{episode}}",
+      "episodeUnknown": "Episode ?",
+      "beatUnknown": "Beat ?",
+      "expandDrawer": "Expand asset drawer",
+      "collapseDrawer": "Collapse asset drawer",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "assetManager": "Asset manager",
+      "searchPlaceholder": "Search assets...",
+      "loadFailed": "Failed to load project assets: {{error}}",
+      "addToCanvas": "Add to canvas",
+      "add": "Add",
+      "replaceConfirm": "Replace “{{label}}” with the canvas node?",
+      "replacing": "Replacing…",
+      "replace": "Replace",
+      "cancel": "Cancel",
+      "currentFrame": "Current frame",
+      "sentToCanvas": "Sent to canvas: {{name}}",
+      "unnamedAsset": "asset",
+      "replaceTargetUnknown": "Can't resolve a commit target for “{{label}}” (kind={{kind}} / role={{role}})",
+      "replaceCommitted": "Committed to “{{label}}”",
+      "replaceDone": "Replaced “{{label}}” with the canvas node",
+      "replaceFailed": "Failed to replace “{{label}}”: {{error}}",
+      "directorWorld": {
+        "label": "{{scene}} / Director world",
+        "sublabel": "Contains {{count}} director sources",
+        "sourceKind": {
+          "pano360": "360 image",
+          "master": "Front world",
+          "reverse": "Reverse world",
+          "pano": "360 world",
+          "custom": "Custom world",
+          "fallback": "Director world"
+        }
+      },
+      "sceneBadge": {
+        "scene_master": {
+          "label": "Front view",
+          "title": "Scene front view"
+        },
+        "scene_reverse_master": {
+          "label": "Reverse view",
+          "title": "Scene reverse view"
+        },
+        "scene_director_pano_360": {
+          "label": "360 image",
+          "title": "360 panorama"
+        },
+        "scene_director_world": {
+          "label": "Director world",
+          "title": "Scene director world"
+        },
+        "scene_3gs_master_ply": {
+          "label": "Front world",
+          "title": "3D director world (front)"
+        },
+        "scene_3gs_reverse_ply": {
+          "label": "Reverse world",
+          "title": "3D director world (reverse)"
+        },
+        "scene_3gs_pano_ply": {
+          "label": "360 world",
+          "title": "3D director world (360)"
+        },
+        "scene_3gs_custom_scene": {
+          "label": "Custom world",
+          "title": "3D director world (custom)"
+        }
       }
     },
     "nodeContext": {

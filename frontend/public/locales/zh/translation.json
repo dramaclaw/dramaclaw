@@ -704,6 +704,105 @@
         "canvases": "项目画布",
         "library": "主线资产",
         "assets": "资产库"
+      },
+      "roles": {
+        "current_sketch": "草图",
+        "current_frame": "分镜",
+        "current_video": "视频",
+        "current_audio": "音频",
+        "selected_background": "背景",
+        "director_combined": "导演合成图"
+      },
+      "tabs": {
+        "beatAll": "全部Beat",
+        "beatEpisode": "本集Beat",
+        "beatCurrent": "当前Beat",
+        "characters": "人物",
+        "scenes": "场景",
+        "props": "道具"
+      },
+      "groups": {
+        "outputs": "当前产物",
+        "director": "3GS / 控制图",
+        "characters": "角色参考",
+        "scenes": "场景参考",
+        "props": "道具参考",
+        "other": "其他上下文"
+      },
+      "empty": {
+        "beatContext": "暂无镜头上下文素材",
+        "category": "当前分类没有可用素材",
+        "noBeatContext": "当前画布没有镜头上下文",
+        "beatAssets": "当前镜头没有可用上下文素材"
+      },
+      "episodeTitle": "第{{episode}}集",
+      "episodeUnknown": "第?集",
+      "beatUnknown": "Beat ?",
+      "expandDrawer": "展开素材抽屉",
+      "collapseDrawer": "收起素材抽屉",
+      "expand": "展开",
+      "collapse": "收起",
+      "assetManager": "资产管理",
+      "searchPlaceholder": "搜索素材...",
+      "loadFailed": "项目素材加载失败：{{error}}",
+      "addToCanvas": "加入画布",
+      "add": "加入",
+      "replaceConfirm": "用画布节点替换「{{label}}」？",
+      "replacing": "替换中…",
+      "replace": "替换",
+      "cancel": "取消",
+      "currentFrame": "当前分镜",
+      "sentToCanvas": "已发送到画布：{{name}}",
+      "unnamedAsset": "素材",
+      "replaceTargetUnknown": "无法识别「{{label}}」的提交目标（kind={{kind}} / role={{role}}）",
+      "replaceCommitted": "已提交到「{{label}}」",
+      "replaceDone": "已用画布节点替换「{{label}}」",
+      "replaceFailed": "替换「{{label}}」失败：{{error}}",
+      "directorWorld": {
+        "label": "{{scene}} / 导演世界",
+        "sublabel": "包含 {{count}} 个导演源",
+        "sourceKind": {
+          "pano360": "360图",
+          "master": "正面世界",
+          "reverse": "背面世界",
+          "pano": "360世界",
+          "custom": "自定义世界",
+          "fallback": "导演世界"
+        }
+      },
+      "sceneBadge": {
+        "scene_master": {
+          "label": "正面图",
+          "title": "场景正面图"
+        },
+        "scene_reverse_master": {
+          "label": "背面图",
+          "title": "场景背面图"
+        },
+        "scene_director_pano_360": {
+          "label": "360图",
+          "title": "360 全景图"
+        },
+        "scene_director_world": {
+          "label": "导演世界",
+          "title": "场景导演世界"
+        },
+        "scene_3gs_master_ply": {
+          "label": "正面世界",
+          "title": "3D 导演世界（正面）"
+        },
+        "scene_3gs_reverse_ply": {
+          "label": "背面世界",
+          "title": "3D 导演世界（背面）"
+        },
+        "scene_3gs_pano_ply": {
+          "label": "360世界",
+          "title": "3D 导演世界（360）"
+        },
+        "scene_3gs_custom_scene": {
+          "label": "自定义世界",
+          "title": "3D 导演世界（自定义）"
+        }
       }
     },
     "nodeContext": {

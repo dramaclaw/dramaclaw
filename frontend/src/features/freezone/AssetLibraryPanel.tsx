@@ -22,6 +22,8 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+
+import i18n from "@/i18n";
 import { toast } from "sonner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AssetLibraryModal } from "@/features/canvas/ui/AssetLibraryModal";
@@ -309,13 +311,15 @@ function MiniThumb({
 
 /* ─────────────────── Beat 行（可折叠） ─────────────────── */
 
-const ROLE_LABELS: Record<string, string> = {
-  current_sketch: "草图",
-  current_frame: "分镜",
-  current_video: "视频",
-  current_audio: "音频",
-  selected_background: "背景",
-  director_combined: "导演合成图",
+const A = "freezone.assetPanel";
+
+const ROLE_LABEL_KEYS: Record<string, string> = {
+  current_sketch: `${A}.roles.current_sketch`,
+  current_frame: `${A}.roles.current_frame`,
+  current_video: `${A}.roles.current_video`,
+  current_audio: `${A}.roles.current_audio`,
+  selected_background: `${A}.roles.selected_background`,
+  director_combined: `${A}.roles.director_combined`,
 };
 
 const ROLE_ORDER = [
@@ -346,14 +350,14 @@ function BeatSectionHeader({
   );
 }
 
-function beatAssetItems(assets: LibraryAsset[]): { role: string; label: string; asset: LibraryAsset }[] {
+function beatAssetItems(assets: LibraryAsset[]): { role: string; labelKey: string; asset: LibraryAsset }[] {
   const map = new Map<string, LibraryAsset>();
   for (const a of assets) {
-    if (ROLE_LABELS[a.role]) map.set(a.role, a);
+    if (ROLE_LABEL_KEYS[a.role]) map.set(a.role, a);
   }
   return ROLE_ORDER
     .filter((role) => map.has(role))
-    .map((role) => ({ role, label: ROLE_LABELS[role], asset: map.get(role)! }));
+    .map((role) => ({ role, labelKey: ROLE_LABEL_KEYS[role], asset: map.get(role)! }));
 }
 
 function BeatRow({
@@ -367,6 +371,7 @@ function BeatRow({
   allAssets: LibraryAsset[];
   cacheToken: string;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const items = beatAssetItems(assets);
 
@@ -389,7 +394,7 @@ function BeatRow({
       </button>
       {open && (
         <div className="grid grid-cols-3 gap-1.5 pt-1.5">
-          {items.map(({ role, label, asset }) => (
+          {items.map(({ role, labelKey, asset }) => (
             <div key={role} className="space-y-1.5">
               <MiniThumb
                 asset={asset}
@@ -397,7 +402,7 @@ function BeatRow({
                 onAdd={() => addAssetToCanvas(asset, allAssets.indexOf(asset))}
                 cacheToken={cacheToken}
               />
-              <span className="block text-left text-[12px] text-white/70">{label}</span>
+              <span className="block text-left text-[12px] text-white/70">{t(labelKey)}</span>
             </div>
           ))}
         </div>
@@ -419,6 +424,7 @@ function EpisodeSection({
   allAssets: LibraryAsset[];
   cacheToken: string;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(true);
 
   // Group by beat
@@ -444,7 +450,7 @@ function EpisodeSection({
         className="w-full text-left transition-colors hover:[&_span:first-child]:text-white/75"
       >
         <BeatSectionHeader
-          primary={`第${episode}集`}
+          primary={t(`${A}.episodeTitle`, { episode })}
           secondary={`${beats.length} Beat`}
           action={(
             <ChevronDown
@@ -481,12 +487,13 @@ function DefaultCanvasBeatPanel({
   assets: LibraryAsset[];
   cacheToken: string;
 }) {
+  const { t } = useTranslation();
   const episodes = beatContext?.episodes ?? [];
 
   if (assets.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center px-6 py-12 text-center text-xs text-white/25">
-        暂无镜头上下文素材
+        {t(`${A}.empty.beatContext`)}
       </div>
     );
   }
@@ -528,15 +535,15 @@ export function AssetLibraryPanel({
   const canvasKind = resolveCanvasKind(metadata);
   const beatTabLabel =
     canvasKind === "default" || canvasKind === "blank"
-      ? "全部Beat"
+      ? t(`${A}.tabs.beatAll`)
       : canvasKind === "episode"
-        ? "本集Beat"
-        : "当前Beat";
+        ? t(`${A}.tabs.beatEpisode`)
+        : t(`${A}.tabs.beatCurrent`);
   const tabs: Array<{ id: AssetTab; label: string }> = [
     { id: "beat", label: beatTabLabel },
-    { id: "characters", label: "人物" },
-    { id: "scenes", label: "场景" },
-    { id: "props", label: "道具" },
+    { id: "characters", label: t(`${A}.tabs.characters`) },
+    { id: "scenes", label: t(`${A}.tabs.scenes`) },
+    { id: "props", label: t(`${A}.tabs.props`) },
   ];
 
   const [panelTab, setPanelTab] = useState<PanelTab>("canvases");
@@ -634,7 +641,9 @@ export function AssetLibraryPanel({
 
   const assets = useMemo(
     () => buildLibraryAssets({ project, metadata, projectAssets, beatContext, canvasKind }),
-    [project, metadata, projectAssets, beatContext, canvasKind],
+    // 素材 label 是在这里拼好的（见 normalizeMainlineAssetLabel / 导演世界打包），
+    // 所以切语言后要重算，否则列表还挂着上一门语言的标题。
+    [project, metadata, projectAssets, beatContext, canvasKind, i18n.language],
   );
   const assetPreviewCacheToken = `${internalReloadToken}:${reloadToken ?? 0}`;
   const assetImageCacheToken = assetPreviewCacheToken;
@@ -671,10 +680,15 @@ export function AssetLibraryPanel({
       const target = assetToPushTarget(asset.source);
       if (!target) {
         const src = asset.source as Record<string, unknown>;
+        // i18n-exempt —— 开发者日志，不进界面
         console.warn("[freezone] 无法推断替换目标", asset.label, asset.source);
         onReplaced?.(
           null,
-          `无法识别「${asset.label}」的提交目标（kind=${String(src.kind)} / role=${String(src.role)}）`,
+          t(`${A}.replaceTargetUnknown`, {
+            label: asset.label,
+            kind: String(src.kind),
+            role: String(src.role),
+          }),
         );
         clearPendingReplace();
         return;
@@ -689,11 +703,11 @@ export function AssetLibraryPanel({
         })
           .then((result) => {
             setInternalReloadToken((t) => t + 1);
-            onReplaced?.({ target, result }, `已提交到「${asset.label}」`);
+            onReplaced?.({ target, result }, t(`${A}.replaceCommitted`, { label: asset.label }));
           })
           .catch((err) => {
             const msg = err instanceof Error ? err.message : String(err);
-            onReplaced?.(null, `替换「${asset.label}」失败：${msg}`);
+            onReplaced?.(null, t(`${A}.replaceFailed`, { label: asset.label, error: msg }));
           })
           .finally(() => {
             setReplaceBusyId(null);
@@ -707,11 +721,11 @@ export function AssetLibraryPanel({
         .then((result) => {
           // 重新拉取素材列表,让左侧缩略图同步成最新资产。
           setInternalReloadToken((t) => t + 1);
-          onReplaced?.({ target, result }, `已用画布节点替换「${asset.label}」`);
+          onReplaced?.({ target, result }, t(`${A}.replaceDone`, { label: asset.label }));
         })
         .catch((err) => {
           const msg = err instanceof Error ? err.message : String(err);
-          onReplaced?.(null, `替换「${asset.label}」失败：${msg}`);
+          onReplaced?.(null, t(`${A}.replaceFailed`, { label: asset.label, error: msg }));
         })
         .finally(() => {
           setReplaceBusyId(null);
@@ -750,7 +764,7 @@ export function AssetLibraryPanel({
             <button
               type="button"
               onClick={() => setCollapsed(!collapsed)}
-              aria-label={collapsed ? "展开素材抽屉" : "收起素材抽屉"}
+              aria-label={collapsed ? t(`${A}.expandDrawer`) : t(`${A}.collapseDrawer`)}
               aria-expanded={!collapsed}
               className={`group/btn relative flex h-10 w-10 items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 ${
                 collapsed
@@ -769,7 +783,7 @@ export function AssetLibraryPanel({
             <span
               className="pointer-events-none absolute left-11 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md border border-white/10 bg-[#101116]/95 px-2 py-1 text-[11px] font-medium text-white/75 opacity-0 shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-md transition-opacity duration-150 group-hover/handle:opacity-100"
             >
-              {collapsed ? "展开" : "收起"}
+              {collapsed ? t(`${A}.expand`) : t(`${A}.collapse`)}
             </span>
           </div>
 
@@ -777,8 +791,8 @@ export function AssetLibraryPanel({
             <button
               type="button"
               onClick={() => setAssetManagerOpen(true)}
-              aria-label="资产管理"
-              title="资产管理"
+              aria-label={t(`${A}.assetManager`)}
+              title={t(`${A}.assetManager`)}
               className="group/btn relative flex h-10 w-10 items-center justify-center rounded-full text-white/68 transition-colors hover:text-white/92 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20"
             >
               <span className={FLOATING_PANEL_CONTROL_SURFACE_CLASS}>
@@ -786,7 +800,7 @@ export function AssetLibraryPanel({
               </span>
             </button>
             <span className="pointer-events-none absolute left-11 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md border border-white/10 bg-[#101116]/95 px-2 py-1 text-[11px] font-medium text-white/75 opacity-0 shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-md transition-opacity duration-150 group-hover/assets:opacity-100">
-              资产管理
+              {t(`${A}.assetManager`)}
             </span>
           </div>
         </div>
@@ -851,7 +865,7 @@ export function AssetLibraryPanel({
                     <input
                       value={query}
                       onChange={(event) => setQuery(event.target.value)}
-                      placeholder="搜索素材..."
+                      placeholder={t(`${A}.searchPlaceholder`)}
                       className="w-full h-7 rounded-md border border-white/[0.06] bg-white/[0.03] px-2.5 text-[11px] text-white/80 placeholder:text-white/40 focus:outline-none focus:border-white/[0.12] transition-colors"
                     />
                   </div>
@@ -861,7 +875,7 @@ export function AssetLibraryPanel({
               {/* ─ 列表内容 ── */}
               {error ? (
                 <div className="mx-3 mt-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-400">
-                  项目素材加载失败：{error}
+                  {t(`${A}.loadFailed`, { error })}
                 </div>
               ) : tab === "beat" ? (
                 <BeatContextPanel
@@ -873,7 +887,7 @@ export function AssetLibraryPanel({
                 />
               ) : filtered.length === 0 ? (
                 <div className="flex flex-1 items-center justify-center px-6 py-12 text-center text-xs text-white/25">
-                  当前分类没有可用素材
+                  {t(`${A}.empty.category`)}
                 </div>
               ) : (
                 <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-1.5">
@@ -944,6 +958,7 @@ function BeatContextPanel({
   beatContext: FreezoneBeatContextResponse | null;
   cacheToken: string;
 }) {
+  const { t } = useTranslation();
   if (canvasKind === "default" || canvasKind === "blank" || canvasKind === "episode") {
     return (
       <DefaultCanvasBeatPanel beatContext={beatContext} assets={assets} cacheToken={cacheToken} />
@@ -952,7 +967,7 @@ function BeatContextPanel({
   if (canvasKind !== "beat") {
     return (
       <div className="flex flex-1 items-center justify-center px-6 py-12 text-center text-xs text-white/25">
-        当前画布没有镜头上下文
+        {t(`${A}.empty.noBeatContext`)}
       </div>
     );
   }
@@ -968,6 +983,7 @@ function PresetBeatPanel({
   assets: LibraryAsset[];
   cacheToken: string;
 }) {
+  const { t } = useTranslation();
   const groups = groupBeatAssets(assets);
   const preset = (metadata?.preset ?? {}) as Record<string, unknown>;
   const defaultTarget = (metadata?.default_push_target ?? null) as
@@ -989,19 +1005,19 @@ function PresetBeatPanel({
   return (
     <div className="min-h-0 overflow-y-auto px-3 pt-1 pb-3 space-y-3">
       <BeatSectionHeader
-        primary={episode !== null ? `第${episode}集` : "第?集"}
-        secondary={beatNum !== null ? `Beat ${beatNum}` : "Beat ?"}
+        primary={episode !== null ? t(`${A}.episodeTitle`, { episode }) : t(`${A}.episodeUnknown`)}
+        secondary={beatNum !== null ? `Beat ${beatNum}` : t(`${A}.beatUnknown`)}
       />
 
       {assets.length === 0 ? (
         <div className="flex items-center justify-center py-12 text-xs text-white/25">
-          当前镜头没有可用上下文素材
+          {t(`${A}.empty.beatAssets`)}
         </div>
       ) : (
         groups.map((group) => (
           <div key={group.id}>
             <div className="text-[10px] font-semibold uppercase tracking-wide text-white/30 mb-1.5">
-              {group.label}
+              {t(group.labelKey)}
             </div>
             <div className="grid grid-cols-3 gap-1.5">
               {group.assets.map((asset) => (
@@ -1034,6 +1050,7 @@ function AssetCard({
   cacheToken: string;
   onAdd: () => void;
 }) {
+  const { t } = useTranslation();
   const isThreeD = isThreeDAsset(asset);
   const isAudio = asset.mediaType === "audio";
   const isVideo = asset.mediaType === "video";
@@ -1153,15 +1170,15 @@ function AssetCard({
         type="button"
         className="tap-button h-6 px-2 text-[11px] opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100 hover:border-white/20 hover:text-white/90 disabled:opacity-40 text-white/50 border border-white/10 rounded"
         onClick={(e) => { e.stopPropagation(); onAdd(); }}
-        title="加入画布"
+        title={t(`${A}.addToCanvas`)}
         disabled={disabled}
       >
-        加入
+        {t(`${A}.add`)}
       </button>
       {isConfirming && (
         <div className="absolute inset-0 z-10 flex flex-col justify-center gap-1.5 rounded-lg bg-[#0c0c0e]/95 px-2.5 backdrop-blur-sm">
           <div className="line-clamp-2 text-[11px] leading-snug text-white/80">
-            用画布节点替换「{asset.label}」？
+            {t(`${A}.replaceConfirm`, { label: asset.label })}
           </div>
           <div className="flex gap-1.5">
             <button
@@ -1170,7 +1187,7 @@ function AssetCard({
               onClick={() => replaceCtx?.onConfirm(asset)}
               disabled={isReplacing}
             >
-              {isReplacing ? "替换中…" : "替换"}
+              {isReplacing ? t(`${A}.replacing`) : t(`${A}.replace`)}
             </button>
             <button
               type="button"
@@ -1178,7 +1195,7 @@ function AssetCard({
               onClick={() => replaceCtx?.onCancel()}
               disabled={isReplacing}
             >
-              取消
+              {t(`${A}.cancel`)}
             </button>
           </div>
         </div>
@@ -1412,13 +1429,15 @@ function createSceneDirectorWorldAsset(
     source_count: sources.length,
   };
 
+  const worldLabel = i18n.t(`${A}.directorWorld.label`, { scene: sceneLabel });
+
   return {
     id: `scene-director-world:${sceneId}`,
     tab: "scenes",
     kind: "director",
     role: SCENE_DIRECTOR_WORLD_ROLE,
-    label: `${sceneLabel} / 导演世界`,
-    sublabel: `包含 ${sources.length} 个导演源`,
+    label: worldLabel,
+    sublabel: i18n.t(`${A}.directorWorld.sublabel`, { count: sources.length }),
     url: directorWorldSourceUrl(activeSource) ?? representative.url,
     aspectRatio: "1:1",
     mediaType: "file",
@@ -1428,7 +1447,7 @@ function createSceneDirectorWorldAsset(
       ...representative.source,
       kind: "director",
       role: SCENE_DIRECTOR_WORLD_ROLE,
-      label: `${sceneLabel} / 导演世界`,
+      label: worldLabel,
       meta,
       media_type: "file",
       rel_path: undefined,
@@ -1531,12 +1550,13 @@ function directorWorldSourceUrl(source: DirectorWorldSource | undefined): string
 }
 
 function sourceKindLabel(source: Pick<DirectorWorldSource, "source_kind" | "source_type">): string {
-  if (source.source_type === "pano360") return "360图";
-  if (source.source_kind === "master") return "正面世界";
-  if (source.source_kind === "reverse") return "背面世界";
-  if (source.source_kind === "pano") return "360世界";
-  if (source.source_kind === "custom") return "自定义世界";
-  return "导演世界";
+  const K = `${A}.directorWorld.sourceKind`;
+  if (source.source_type === "pano360") return i18n.t(`${K}.pano360`);
+  if (source.source_kind === "master") return i18n.t(`${K}.master`);
+  if (source.source_kind === "reverse") return i18n.t(`${K}.reverse`);
+  if (source.source_kind === "pano") return i18n.t(`${K}.pano`);
+  if (source.source_kind === "custom") return i18n.t(`${K}.custom`);
+  return i18n.t(`${K}.fallback`);
 }
 
 function isUsableAsset(asset: FreezoneProjectAsset): boolean {
@@ -1600,67 +1620,28 @@ function isSceneAssetRole(role: string | undefined): boolean {
   );
 }
 
+const SCENE_BADGE_CLASSNAMES: Record<string, string> = {
+  scene_master: "border-sky-300/25 bg-sky-300/10 text-sky-100/90",
+  scene_reverse_master: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100/90",
+  scene_director_pano_360: "border-amber-300/30 bg-amber-300/10 text-amber-100/90",
+  [SCENE_DIRECTOR_WORLD_ROLE]: "border-violet-300/30 bg-violet-300/10 text-violet-100/90",
+  scene_3gs_master_ply: "border-violet-300/30 bg-violet-300/10 text-violet-100/90",
+  scene_3gs_reverse_ply: "border-fuchsia-300/30 bg-fuchsia-300/10 text-fuchsia-100/90",
+  scene_3gs_pano_ply: "border-violet-300/30 bg-violet-300/10 text-violet-100/90",
+  scene_3gs_custom_scene: "border-rose-300/30 bg-rose-300/10 text-rose-100/90",
+};
+
 function sceneAssetTypeBadge(
   asset: LibraryAsset,
 ): { label: string; title: string; className: string } | null {
   if (asset.tab !== "scenes") return null;
-  if (asset.role === "scene_master") {
-    return {
-      label: "正面图",
-      title: "场景正面图",
-      className: "border-sky-300/25 bg-sky-300/10 text-sky-100/90",
-    };
-  }
-  if (asset.role === "scene_reverse_master") {
-    return {
-      label: "背面图",
-      title: "场景背面图",
-      className: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100/90",
-    };
-  }
-  if (asset.role === "scene_director_pano_360") {
-    return {
-      label: "360图",
-      title: "360 全景图",
-      className: "border-amber-300/30 bg-amber-300/10 text-amber-100/90",
-    };
-  }
-  if (asset.role === SCENE_DIRECTOR_WORLD_ROLE) {
-    return {
-      label: "导演世界",
-      title: "场景导演世界",
-      className: "border-violet-300/30 bg-violet-300/10 text-violet-100/90",
-    };
-  }
-  if (asset.role === "scene_3gs_master_ply") {
-    return {
-      label: "正面世界",
-      title: "3D 导演世界（正面）",
-      className: "border-violet-300/30 bg-violet-300/10 text-violet-100/90",
-    };
-  }
-  if (asset.role === "scene_3gs_reverse_ply") {
-    return {
-      label: "背面世界",
-      title: "3D 导演世界（背面）",
-      className: "border-fuchsia-300/30 bg-fuchsia-300/10 text-fuchsia-100/90",
-    };
-  }
-  if (asset.role === "scene_3gs_pano_ply") {
-    return {
-      label: "360世界",
-      title: "3D 导演世界（360）",
-      className: "border-violet-300/30 bg-violet-300/10 text-violet-100/90",
-    };
-  }
-  if (asset.role === "scene_3gs_custom_scene") {
-    return {
-      label: "自定义世界",
-      title: "3D 导演世界（自定义）",
-      className: "border-rose-300/30 bg-rose-300/10 text-rose-100/90",
-    };
-  }
-  return null;
+  const className = SCENE_BADGE_CLASSNAMES[asset.role ?? ""];
+  if (!className) return null;
+  return {
+    label: i18n.t(`${A}.sceneBadge.${asset.role}.label`),
+    title: i18n.t(`${A}.sceneBadge.${asset.role}.title`),
+    className,
+  };
 }
 
 function isMainlinePresetReference(ref: PresetReference): boolean {
@@ -1789,8 +1770,14 @@ function fromPresetReference(ref: PresetReference): LibraryAsset {
   };
 }
 
+/**
+ * 后端下发的资产 label 里还留着「成图/首帧」这一代旧措辞，这里统一改口成「分镜」。
+ * 被搜的是后端字符串本身，不是界面文案，所以这几处保持中文；等后端也改成稳定 code
+ * 之后整个函数就可以撤掉。
+ */
 function normalizeMainlineAssetLabel(label: string, role: string | undefined): string {
-  if (role === "current_frame") return "当前分镜";
+  if (role === "current_frame") return i18n.t(`${A}.currentFrame`);
+  // i18n-exempt-start
   return replaceText(
     replaceText(
       replaceText(
@@ -1808,6 +1795,7 @@ function normalizeMainlineAssetLabel(label: string, role: string | undefined): s
     "成图候选",
     "分镜候选",
   );
+  // i18n-exempt-end
 }
 
 function replaceText(value: string, search: string, replacement: string): string {
@@ -1903,25 +1891,17 @@ function aspectForRef(ref: PresetReference): string {
 
 function groupBeatAssets(assets: LibraryAsset[]): Array<{
   id: string;
-  label: string;
+  labelKey: string;
   assets: LibraryAsset[];
 }> {
   const order = ["outputs", "director", "characters", "scenes", "props", "other"];
-  const labels: Record<string, string> = {
-    outputs: "当前产物",
-    director: "3GS / 控制图",
-    characters: "角色参考",
-    scenes: "场景参考",
-    props: "道具参考",
-    other: "其他上下文",
-  };
   const buckets = new Map<string, LibraryAsset[]>();
   for (const asset of assets) {
     const group = beatGroupForAsset(asset);
     buckets.set(group, [...(buckets.get(group) ?? []), asset]);
   }
   return order
-    .map((id) => ({ id, label: labels[id], assets: buckets.get(id) ?? [] }))
+    .map((id) => ({ id, labelKey: `${A}.groups.${id}`, assets: buckets.get(id) ?? [] }))
     .filter((group) => group.assets.length > 0);
 }
 
@@ -2270,7 +2250,7 @@ async function sendAssetFolderToCanvas(folder: AssetFolder): Promise<void> {
   const groupId =
     ids.length >= 2 ? store.groupNodes(ids, { label: folder.label }) : null;
   store.requestFocusNode(groupId ?? ids[0]);
-  toast.success(`已发送到画布：${folder.label}`);
+  toast.success(i18n.t(`${A}.sentToCanvas`, { name: folder.label }));
 }
 
 /**
@@ -2288,7 +2268,7 @@ async function sendLibraryItemToCanvas(entry: LibraryItem): Promise<void> {
   const store = useCanvasStore.getState();
   const newId = spawnAssetNode(store, sized, viewportCenteredPosition(store, 0, width, height));
   store.requestFocusNode(newId);
-  toast.success(`已发送到画布：${entry.name || "素材"}`);
+  toast.success(i18n.t(`${A}.sentToCanvas`, { name: entry.name || i18n.t(`${A}.unnamedAsset`) }));
 }
 
 function addAssetToCanvas(asset: LibraryAsset, index: number): void {

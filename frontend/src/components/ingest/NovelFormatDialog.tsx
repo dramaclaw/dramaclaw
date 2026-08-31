@@ -15,6 +15,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
  * 精品剧（drama）的导入标准格式与示例。逐行写死而不是塞进 i18n 的长字符串：
  * 这是要按原样展示的样例，任何换行/空格都有意义，不该被译者改动。
  */
+// i18n-exempt-start —— 样例本身就是解析器认的中文制片格式，翻译过去就不是那个格式了
 const DRAMA_FORMAT_SPEC = [
   "中文制片格式（任选一种）",
   "1-1 苏鸾寝殿 深夜 内",
@@ -64,6 +65,7 @@ const DRAMA_FORMAT_EXAMPLE = [
   "锦绣（头埋得极低，声音恭顺）：回公主，三更。公主噩梦惊醒，奴婢炖了安神汤。",
   "△苏糖的眼神骤然锐利，随即立刻垂下眼帘，露出一副困倦不堪的模样。",
 ].join("\n");
+// i18n-exempt-end
 
 export function NovelFormatDialog({
   open,
