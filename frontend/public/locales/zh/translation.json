@@ -815,7 +815,11 @@
     "settingsHint": "账号和登录由 SuperTale 管理。这里的设置只控制聊天展示和附件行为。",
     "tool": "工具",
     "historyTool": "历史工具",
-    "showStructuredSourceWhileStreaming": "流式显示 JSON 原文"
+    "showStructuredSourceWhileStreaming": "流式显示 JSON 原文",
+    "scrollToBottom": "回到底部",
+    "taskCompleteNotice": "✅ {{label}}已完成。你可以让我查看结果，或继续下一步。",
+    "taskFailedNotice": "{{label}}失败：{{reason}}\n请根据错误处理前置条件后再继续。",
+    "taskFailedUnknownReason": "未提供具体错误原因"
   },
   "freezone": {
     "chat": {

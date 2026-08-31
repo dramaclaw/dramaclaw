@@ -815,7 +815,11 @@
     "ingestAutomationMissingFile": "Could not read the uploaded novel file. Select it again.",
     "attachmentOnlyPrompt": "Please analyze the file I uploaded.",
     "attachmentAnalysisUploading": "Uploading file for analysis: {{filename}}",
-    "settingsHint": "Account and login are managed by SuperTale. These settings only control chat display and attachment behavior."
+    "settingsHint": "Account and login are managed by SuperTale. These settings only control chat display and attachment behavior.",
+    "scrollToBottom": "Back to bottom",
+    "taskCompleteNotice": "✅ {{label}} is complete. Ask me to show the result, or move on to the next step.",
+    "taskFailedNotice": "{{label}} failed: {{reason}}\nFix what the error points at before continuing.",
+    "taskFailedUnknownReason": "no specific reason was returned"
   },
   "freezone": {
     "chat": {

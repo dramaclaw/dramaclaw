@@ -269,6 +269,9 @@ function MessageText({
     : <PlainMessageText text={text} />;
 }
 
+// 这一组匹配的是模型/后端返回的正文，不是界面文案，因此不进词条。中英两侧
+// 都要列：英文界面下失败通知是我们自己按英文词条拼的。
+// i18n-exempt-start
 const ASSISTANT_ERROR_TEXT_PATTERNS: RegExp[] = [
   /模型内容安全过滤拦截/u,
   /Render 任务没有生成可用图片/u,
@@ -281,7 +284,9 @@ const ASSISTANT_ERROR_TEXT_PATTERNS: RegExp[] = [
   /finish reason:\s*['"]?content_filter/i,
   /returned no content/i,
   /未返回(?:任何)?内容/u,
+  /failed[:：]/i,
 ];
+// i18n-exempt-end
 
 function isAssistantErrorReply(message: ChatMessage): boolean {
   if (message.role !== "assistant") return false;
@@ -292,7 +297,8 @@ function isAssistantErrorReply(message: ChatMessage): boolean {
 
 function isAssistantCompletionNotice(message: ChatMessage): boolean {
   if (message.role !== "assistant") return false;
-  return /^✅ .+已完成。/u.test(message.text.trim());
+  // 认 ✅ 前缀而不是「已完成。」这几个字：通知正文本身是按语言取的词条。
+  return /^✅ \S/u.test(message.text.trim());
 }
 
 function errorTextRanges(text: string): Array<[number, number]> {
@@ -337,7 +343,8 @@ function HighlightedErrorText({ text }: { text: string }) {
 }
 
 function HighlightedCompletionText({ text }: { text: string }) {
-  const match = /^✅ .+?已完成。/u.exec(text);
+  // 高亮到第一个句末为止 —— 中文是「。」，英文是「. 」。
+  const match = /^✅ [^\n]+?(?:。|！|\.(?=\s|$)|!(?=\s|$))/u.exec(text);
   if (!match) return <MessageText text={text} markdown />;
   const end = match[0].length;
   return (
@@ -2059,10 +2066,13 @@ function createSpeechRecognition(): SpeechRecognitionLike | null {
   return Ctor ? new Ctor() : null;
 }
 
+// 意图识别匹配的是用户手打的话，中英两套并列，不是界面文案。
+// i18n-exempt-start
 const VIDEO_CREATION_RE =
   /(生成|创建|制作|开始|做|转|剪|出).{0,12}(视频|短剧|短片|成片|影片)|(?:视频|短剧|短片|成片|影片).{0,12}(生成|创建|制作|开始|做|转)|create.{0,16}video|make.{0,16}video|generate.{0,16}video|story.{0,12}video/i;
 const UPLOADED_FILES_QUERY_RE =
   /(当前|现在|刚才|我)?\s*(上传|传了|传过|已上传).{0,12}(哪些|什么|列表|文件|剧本|小说)|(?:what|which|list|show).{0,20}uploaded.{0,10}(files?|scripts?)/i;
+// i18n-exempt-end
 
 const NOVEL_ATTACHMENT_EXTENSIONS = new Set([".txt", ".md", ".doc", ".docx"]);
 const INLINE_TEXT_ATTACHMENT_EXTENSIONS = new Set([".txt", ".md"]);
@@ -2155,13 +2165,17 @@ function shouldReportUploadedFiles(text: string): boolean {
   return UPLOADED_FILES_QUERY_RE.test(text);
 }
 
+// 用户手打的确认词，不是界面文案：中英两套都要认，否则英文界面下这道确认
+// 永远过不去。
+// i18n-exempt-start
 function isOverwriteChoice(text: string): boolean {
-  return /^覆盖[。.!！?？\s]*$/.test(text.trim());
+  return /^(覆盖|overwrite)[。.!！?？\s]*$/iu.test(text.trim());
 }
 
 function isFinalOverwriteConfirmation(text: string): boolean {
-  return /^(确定|继续)[。.!！?？\s]*$/.test(text.trim());
+  return /^(确定|继续|confirm|continue|yes)[。.!！?？\s]*$/iu.test(text.trim());
 }
+// i18n-exempt-end
 
 function uploadedFileFromPrepared(item: PreparedIngestAttachment): UploadedIngestFile | null {
   if (!item.upload) return null;
@@ -2215,7 +2229,8 @@ function buildReingestConfirmationContext(
     `filename: ${pending.filename}`,
     pending.stage === "choose_overwrite"
       ? "The current project has already ingested a script. Do not call ingest/start yet. Tell the user the current project is not empty and ask only whether they want to overwrite this project. Do not recommend creating a new project, and do not offer to create another project from the current project flow."
-      : "The user chose overwrite. Do not call ingest/start yet. Ask the second confirmation and warn that overwrite/rebuild will clear existing characters, episodes, scripts, sketches, audio, videos, and other pipeline outputs. Only an exact user reply of 确定 or 继续 may proceed.",
+      // 这句是发给模型的英文指令，里面的中文是「用户要原样打出来的词」。
+      : "The user chose overwrite. Do not call ingest/start yet. Ask the second confirmation and warn that overwrite/rebuild will clear existing characters, episodes, scripts, sketches, audio, videos, and other pipeline outputs. Only an exact user reply of 确定 / 继续 (or confirm / continue / yes) may proceed.", // i18n-exempt
     "[/DRAMACLAW_REINGEST_CONFIRMATION]",
   ].join("\n");
 }
@@ -2570,8 +2585,14 @@ export function SuperChatPanel({
       const label = buildChatTaskLabel(event.task, t);
       const text =
         event.type === "task_complete"
-          ? `✅ ${label}已完成。你可以让我查看结果，或继续下一步。`
-          : `${label}失败：${event.task.error || event.task.current_task || "未提供具体错误原因"}\n请根据错误处理前置条件后再继续。`;
+          ? t("aiAssistant.taskCompleteNotice", { label })
+          : t("aiAssistant.taskFailedNotice", {
+              label,
+              reason:
+                event.task.error ||
+                event.task.current_task ||
+                t("aiAssistant.taskFailedUnknownReason"),
+            });
       void chat.appendNotification(text);
     });
   }, [chat.appendNotification, params.project, t, taskEventBus]);
@@ -3363,8 +3384,8 @@ export function SuperChatPanel({
                 "absolute bottom-4 left-1/2 z-30 h-9 w-9 -translate-x-1/2 rounded-full border border-white/12 bg-background/88 text-foreground shadow-lg backdrop-blur transition hover:bg-background",
                 isFreezoneLayout && "bottom-3",
               )}
-              title="回到底部"
-              aria-label="回到底部"
+              title={t("aiAssistant.scrollToBottom")}
+              aria-label={t("aiAssistant.scrollToBottom")}
               onClick={() => scrollToChatBottom("auto")}
             >
               <ArrowDown className="h-4 w-4" />
