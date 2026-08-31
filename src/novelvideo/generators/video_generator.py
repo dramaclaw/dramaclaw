@@ -2800,26 +2800,62 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         if context is None or not context.is_organization:
             return
         from novelvideo.ports import get_authz_port
+        from novelvideo.ports.authz import AuthzError
+
+        authz = get_authz_port()
 
         async def read_current():
-            return await get_authz_port().admit_model_task(
+            return await authz.admit_model_task(
                 user_id=context.requester_user_id,
                 root_task_id=context.root_task_id,
             )
 
-        current = await retry_authz_read(
-            read_current,
-            max_retries=_POST_ACCEPT_AUTHZ_MAX_RETRIES,
-            base_delay=_POST_ACCEPT_AUTHZ_RETRY_BASE_SECONDS,
-            cap_delay=_POST_ACCEPT_AUTHZ_RETRY_CAP_SECONDS,
-            sleep=_POST_ACCEPT_AUTHZ_RETRY_SLEEP,
-            random=_POST_ACCEPT_AUTHZ_RETRY_RANDOM,
-            call_site="video_post_accept_revalidation",
-        )
+        try:
+            current = await retry_authz_read(
+                read_current,
+                max_retries=_POST_ACCEPT_AUTHZ_MAX_RETRIES,
+                base_delay=_POST_ACCEPT_AUTHZ_RETRY_BASE_SECONDS,
+                cap_delay=_POST_ACCEPT_AUTHZ_RETRY_CAP_SECONDS,
+                sleep=_POST_ACCEPT_AUTHZ_RETRY_SLEEP,
+                random=_POST_ACCEPT_AUTHZ_RETRY_RANDOM,
+                call_site="video_post_accept_revalidation",
+            )
+        except AuthzError as exc:
+            if exc.code not in {
+                "ORG_CREDENTIAL_MISSING",
+                "ORG_CREDENTIAL_DISABLED",
+                "ORG_CREDENTIAL_VERSION_MISMATCH",
+            }:
+                raise
+
+            async def read_authority():
+                return await authz.snapshot(user_id=context.requester_user_id)
+
+            snapshot = await retry_authz_read(
+                read_authority,
+                max_retries=_POST_ACCEPT_AUTHZ_MAX_RETRIES,
+                base_delay=_POST_ACCEPT_AUTHZ_RETRY_BASE_SECONDS,
+                cap_delay=_POST_ACCEPT_AUTHZ_RETRY_CAP_SECONDS,
+                sleep=_POST_ACCEPT_AUTHZ_RETRY_SLEEP,
+                random=_POST_ACCEPT_AUTHZ_RETRY_RANDOM,
+                call_site="video_post_accept_revalidation",
+            )
+            snapshot.require_active(expected_authz_version=context.authz_version)
+            if (
+                snapshot.requester_user_id != context.requester_user_id
+                or snapshot.org_id != context.billing_principal.id
+                or snapshot.membership_id != context.membership_id
+                or snapshot.authz_version != context.authz_version
+            ):
+                raise AuthzError("ORG_AUTHZ_STALE") from None
+            return
+        # The provider job is already bound to the exact credential resolved before
+        # submit. A later active-Key rotation is not an authorization change: keep
+        # polling with the frozen request headers while still enforcing every other
+        # organization, membership, and authz-version boundary below.
         if (
             current.requester_user_id != context.requester_user_id
             or current.billing_principal != context.billing_principal
-            or current.credential != context.credential
             or current.membership_id != context.membership_id
             or current.authz_version != context.authz_version
         ):
@@ -3387,6 +3423,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     transition_token=operation_claim.transition_token,
                     expected_version=operation_version,
                     provider_job_id=task_id,
+                    requester_user_id=egress_context.requester_user_id,
+                    membership_id=egress_context.membership_id,
+                    authz_version=egress_context.authz_version,
                 )
                 operation_version = accepted.version
             try:

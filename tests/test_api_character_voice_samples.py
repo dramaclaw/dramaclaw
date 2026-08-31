@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import hashlib
 import io
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -262,6 +265,37 @@ async def test_upload_character_voice_sample_persists_default_slot(tmp_path, mon
 
 
 @pytest.mark.asyncio
+async def test_upload_character_voice_sample_reads_and_writes_off_event_loop(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import characters
+
+    character = NovelCharacter(name="秦")
+    store = _CharacterStore([character])
+    _patch_project(monkeypatch, characters, tmp_path, store)
+    event_loop_thread = threading.get_ident()
+    worker_threads: list[int] = []
+    original_persist = characters.persist_character_voice_file
+
+    def recording_persist(**kwargs):
+        worker_threads.append(threading.get_ident())
+        return original_persist(**kwargs)
+
+    monkeypatch.setattr(characters, "persist_character_voice_file", recording_persist)
+
+    response = await characters.upload_character_voice_sample(
+        project="demo",
+        name="秦",
+        slot="default",
+        file=UploadFile(file=io.BytesIO(b"default voice"), filename="voice.wav"),
+        user={"username": "admin"},
+    )
+
+    assert response["ok"] is True
+    assert worker_threads and worker_threads[0] != event_loop_thread
+
+
+@pytest.mark.asyncio
 async def test_upload_character_voice_sample_rejects_unsupported_format(tmp_path, monkeypatch):
     from novelvideo.api.routes import characters
 
@@ -290,8 +324,23 @@ async def test_record_character_voice_sample_persists_age_slot(tmp_path, monkeyp
     character = NovelCharacter(name="秦")
     store = _CharacterStore([character])
     _patch_project(monkeypatch, characters, tmp_path, store)
+    event_loop_thread_id = threading.get_ident()
+    worker_thread_ids: list[int] = []
     payload = base64.b64encode(b"recorded voice").decode("ascii")
     body = SimpleNamespace(data_url=f"data:audio/wav;base64,{payload}")
+
+    def fake_decode(_data_url):
+        worker_thread_ids.append(threading.get_ident())
+        return b"recorded voice", ".wav"
+
+    original_persist = characters.persist_character_voice_file
+
+    def recording_persist(**kwargs):
+        worker_thread_ids.append(threading.get_ident())
+        return original_persist(**kwargs)
+
+    monkeypatch.setattr(characters, "decode_recorded_audio_data_url", fake_decode)
+    monkeypatch.setattr(characters, "persist_character_voice_file", recording_persist)
 
     response = await characters.record_character_voice_sample(
         project="demo",
@@ -307,6 +356,9 @@ async def test_record_character_voice_sample_persists_age_slot(tmp_path, monkeyp
     assert data["path"].endswith("voice_youth.wav")
     assert data["sha256"]
     assert (tmp_path / data["path"]).exists()
+    assert len(worker_thread_ids) == 2
+    assert len(set(worker_thread_ids)) == 1
+    assert event_loop_thread_id not in worker_thread_ids
     assert store.updates[-1][1]["voice_samples_by_age_group"]["youth"]["path"] == data["path"]
     assert store.updates[-1][1]["voice_samples_by_age_group"]["youth"]["sha256"] == data["sha256"]
 
@@ -326,9 +378,12 @@ async def test_trim_character_voice_sample_updates_default_slot(tmp_path, monkey
     )
     store = _CharacterStore([character])
     _patch_project(monkeypatch, characters, tmp_path, store)
+    event_loop_thread_id = threading.get_ident()
     calls: list[dict] = []
+    worker_thread_ids: list[int] = []
 
     def fake_trim_existing_character_voice_file(**kwargs):
+        worker_thread_ids.append(threading.get_ident())
         calls.append(kwargs)
         rel_path = "assets/characters/秦/voices/voice_default.wav"
         (tmp_path / rel_path).write_bytes(b"trimmed voice")
@@ -370,8 +425,86 @@ async def test_trim_character_voice_sample_updates_default_slot(tmp_path, monkey
             "duration_seconds": 4.0,
         }
     ]
+    assert worker_thread_ids
+    assert event_loop_thread_id not in worker_thread_ids
     assert store.updates[-1][1]["reference_audio_sha256"] == "trimmed-sha"
     assert store.updates[-1][1]["reference_audio_updated_at"] == "2026-05-13T00:00:03+00:00"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["upload", "record", "trim"])
+async def test_cancelled_voice_publish_finishes_sqlite_metadata(
+    tmp_path, monkeypatch, operation
+):
+    import asyncio
+
+    from novelvideo.api.routes import characters
+
+    character = NovelCharacter(name="秦")
+    store = _CharacterStore([character])
+    _patch_project(monkeypatch, characters, tmp_path, store)
+    loop = asyncio.get_running_loop()
+    published = asyncio.Event()
+    release = threading.Event()
+    rel_path = "assets/characters/秦/voices/voice_default.wav"
+
+    def publish(*_args, **_kwargs):
+        target = tmp_path / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"voice")
+        loop.call_soon_threadsafe(published.set)
+        assert release.wait(timeout=5)
+        return rel_path, "voice-sha", "2026-08-28T00:00:00+00:00"
+
+    if operation == "upload":
+        monkeypatch.setattr(characters, "_persist_uploaded_character_voice", publish)
+        route_call = characters.upload_character_voice_sample(
+            project="demo",
+            name="秦",
+            slot="default",
+            file=UploadFile(file=io.BytesIO(b"voice"), filename="voice.wav"),
+            user={"username": "admin"},
+        )
+    elif operation == "record":
+        monkeypatch.setattr(characters, "_persist_recorded_character_voice", publish)
+        route_call = characters.record_character_voice_sample(
+            project="demo",
+            name="秦",
+            slot="default",
+            body=SimpleNamespace(data_url="data:audio/wav;base64,dm9pY2U="),
+            user={"username": "admin"},
+        )
+    else:
+        monkeypatch.setattr(
+            characters, "trim_existing_character_voice_file", publish
+        )
+        route_call = characters.trim_character_voice_sample(
+            project="demo",
+            name="秦",
+            slot="default",
+            body=SimpleNamespace(
+                source_path=rel_path,
+                start_seconds=0.0,
+                duration_seconds=1.0,
+            ),
+            user={"username": "admin"},
+        )
+
+    task = asyncio.create_task(route_call)
+    try:
+        await asyncio.wait_for(published.wait(), timeout=1)
+        task.cancel(f"cancel-voice-{operation}")
+        await asyncio.sleep(0)
+    finally:
+        release.set()
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        await task
+
+    assert raised.value.args == (f"cancel-voice-{operation}",)
+    assert (tmp_path / rel_path).exists()
+    assert store.updates[-1][1]["reference_audio_path"] == rel_path
+    assert store.updates[-1][1]["reference_audio_sha256"] == "voice-sha"
 
 
 @pytest.mark.asyncio
@@ -408,3 +541,240 @@ async def test_delete_character_voice_sample_clears_age_slot(tmp_path, monkeypat
     assert response["data"]["slot"] == "child"
     assert response["data"]["path"] == ""
     assert "child" not in store.updates[-1][1]["voice_samples_by_age_group"]
+
+
+@pytest.mark.asyncio
+async def test_upload_then_delete_same_voice_slot_cannot_resurrect_file(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import characters
+
+    character = NovelCharacter(name="秦")
+    store = _CharacterStore([character])
+    _patch_project(monkeypatch, characters, tmp_path, store)
+    upload_started = threading.Event()
+    release_upload = threading.Event()
+    delete_started = threading.Event()
+    real_upload = characters._persist_uploaded_character_voice
+    real_clear = characters.clear_character_voice_file
+
+    def blocking_upload(*args, **kwargs):
+        upload_started.set()
+        assert release_upload.wait(timeout=3)
+        return real_upload(*args, **kwargs)
+
+    def tracking_clear(**kwargs):
+        delete_started.set()
+        return real_clear(**kwargs)
+
+    monkeypatch.setattr(characters, "_persist_uploaded_character_voice", blocking_upload)
+    monkeypatch.setattr(characters, "clear_character_voice_file", tracking_clear)
+    upload = asyncio.create_task(
+        characters.upload_character_voice_sample(
+            project="demo",
+            name="秦",
+            slot="default",
+            file=UploadFile(file=io.BytesIO(b"new voice"), filename="voice.wav"),
+            user={"username": "admin"},
+        )
+    )
+    assert await asyncio.to_thread(upload_started.wait, 1)
+    delete = asyncio.create_task(
+        characters.delete_character_voice_sample(
+            project="demo",
+            name="秦",
+            slot="default",
+            user={"username": "admin"},
+        )
+    )
+    await asyncio.sleep(0)
+    assert not delete_started.is_set()
+
+    release_upload.set()
+    upload_response, delete_response = await asyncio.gather(upload, delete)
+
+    assert upload_response["ok"] is True
+    assert delete_response["ok"] is True
+    assert delete_started.is_set()
+    assert character.reference_audio_path == ""
+    assert character.reference_audio_sha256 == ""
+    assert not (tmp_path / "assets/characters/秦/voices/voice_default.wav").exists()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_character_voice_delete_finishes_file_and_metadata(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import characters
+
+    rel_path = "assets/characters/秦/voices/voice_default.wav"
+    target = tmp_path / rel_path
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"voice")
+    character = NovelCharacter(
+        name="秦",
+        reference_audio_path=rel_path,
+        reference_audio_sha256="old-sha",
+        reference_audio_updated_at="2026-08-28T00:00:00+00:00",
+    )
+    store = _CharacterStore([character])
+    _patch_project(monkeypatch, characters, tmp_path, store)
+    clear_started = threading.Event()
+    release_clear = threading.Event()
+    real_clear = characters.clear_character_voice_file
+
+    def blocking_clear(**kwargs):
+        clear_started.set()
+        assert release_clear.wait(timeout=3)
+        return real_clear(**kwargs)
+
+    monkeypatch.setattr(characters, "clear_character_voice_file", blocking_clear)
+    task = asyncio.create_task(
+        characters.delete_character_voice_sample(
+            project="demo",
+            name="秦",
+            slot="default",
+            user={"username": "admin"},
+        )
+    )
+    assert await asyncio.to_thread(clear_started.wait, 1)
+    task.cancel("cancel-delete")
+    release_clear.set()
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        await task
+
+    assert raised.value.args == ("cancel-delete",)
+    assert not target.exists()
+    assert character.reference_audio_path == ""
+    assert character.reference_audio_sha256 == ""
+
+
+@pytest.mark.asyncio
+async def test_two_uploads_same_voice_slot_publish_in_request_order(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import characters
+
+    character = NovelCharacter(name="秦")
+    store = _CharacterStore([character])
+    _patch_project(monkeypatch, characters, tmp_path, store)
+    first_started = threading.Event()
+    release_first = threading.Event()
+    second_started = threading.Event()
+    real_upload = characters._persist_uploaded_character_voice
+    calls = 0
+    calls_guard = threading.Lock()
+
+    def ordered_upload(*args, **kwargs):
+        nonlocal calls
+        with calls_guard:
+            calls += 1
+            call_number = calls
+        if call_number == 1:
+            first_started.set()
+            assert release_first.wait(timeout=3)
+        else:
+            second_started.set()
+        return real_upload(*args, **kwargs)
+
+    monkeypatch.setattr(characters, "_persist_uploaded_character_voice", ordered_upload)
+    first = asyncio.create_task(
+        characters.upload_character_voice_sample(
+            project="demo",
+            name="秦",
+            slot="default",
+            file=UploadFile(file=io.BytesIO(b"first"), filename="voice.wav"),
+            user={"username": "admin"},
+        )
+    )
+    assert await asyncio.to_thread(first_started.wait, 1)
+    second = asyncio.create_task(
+        characters.upload_character_voice_sample(
+            project="demo",
+            name="秦",
+            slot="default",
+            file=UploadFile(file=io.BytesIO(b"second"), filename="voice.wav"),
+            user={"username": "admin"},
+        )
+    )
+    await asyncio.sleep(0)
+    assert not second_started.is_set()
+
+    release_first.set()
+    await asyncio.gather(first, second)
+
+    target = tmp_path / "assets/characters/秦/voices/voice_default.wav"
+    assert second_started.is_set()
+    assert target.read_bytes() == b"second"
+    assert character.reference_audio_sha256 == hashlib.sha256(b"second").hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_upload_then_trim_same_voice_slot_uses_uploaded_file(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import characters
+
+    rel_path = "assets/characters/秦/voices/voice_default.wav"
+    character = NovelCharacter(name="秦")
+    store = _CharacterStore([character])
+    _patch_project(monkeypatch, characters, tmp_path, store)
+    upload_started = threading.Event()
+    release_upload = threading.Event()
+    trim_started = threading.Event()
+    real_upload = characters._persist_uploaded_character_voice
+
+    def blocking_upload(*args, **kwargs):
+        upload_started.set()
+        assert release_upload.wait(timeout=3)
+        return real_upload(*args, **kwargs)
+
+    def trim_uploaded(**kwargs):
+        trim_started.set()
+        source = tmp_path / kwargs["source_path"]
+        assert source.read_bytes() == b"uploaded"
+        content = b"trimmed-uploaded"
+        source.write_bytes(content)
+        return (
+            rel_path,
+            hashlib.sha256(content).hexdigest(),
+            "2026-08-28T00:00:00+00:00",
+        )
+
+    monkeypatch.setattr(characters, "_persist_uploaded_character_voice", blocking_upload)
+    monkeypatch.setattr(characters, "trim_existing_character_voice_file", trim_uploaded)
+    upload = asyncio.create_task(
+        characters.upload_character_voice_sample(
+            project="demo",
+            name="秦",
+            slot="default",
+            file=UploadFile(file=io.BytesIO(b"uploaded"), filename="voice.wav"),
+            user={"username": "admin"},
+        )
+    )
+    assert await asyncio.to_thread(upload_started.wait, 1)
+    trim = asyncio.create_task(
+        characters.trim_character_voice_sample(
+            project="demo",
+            name="秦",
+            slot="default",
+            body=SimpleNamespace(
+                source_path=rel_path,
+                start_seconds=0.0,
+                duration_seconds=1.0,
+            ),
+            user={"username": "admin"},
+        )
+    )
+    await asyncio.sleep(0)
+    assert not trim_started.is_set()
+
+    release_upload.set()
+    await asyncio.gather(upload, trim)
+
+    assert trim_started.is_set()
+    assert (tmp_path / rel_path).read_bytes() == b"trimmed-uploaded"
+    assert character.reference_audio_sha256 == hashlib.sha256(
+        b"trimmed-uploaded"
+    ).hexdigest()
