@@ -8,6 +8,7 @@
 // 执行（进度条和失败重试都在那边的卡片上）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import {
   AlertCircle,
   Check,
@@ -94,6 +95,7 @@ export function AssetLibraryUploadDialog({
   const [folderOpen, setFolderOpen] = useState(false);
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const { t } = useTranslation();
   const [isDragging, setIsDragging] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
 
@@ -171,7 +173,7 @@ export function AssetLibraryUploadDialog({
       if (next.length > 0) setPicked((prev) => [...prev, ...next]);
       setFileError(
         rejected > 0
-          ? `${rejected} 个文件格式不受支持，已自动忽略`
+          ? t('canvas.assetLibrary.upload.unsupportedRejected', { count: rejected })
           : null,
       );
     },
@@ -210,22 +212,22 @@ export function AssetLibraryUploadDialog({
       className="fixed inset-0 z-[310] flex items-center justify-center"
       role="dialog"
       aria-modal="true"
-      aria-label="上传资产"
+      aria-label={t('canvas.assetLibrary.upload.title')}
     >
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div className="ui-scrollbar relative flex max-h-[88vh] w-[min(860px,92vw)] flex-col overflow-y-auto rounded-xl border border-[var(--ui-border-strong)] bg-[var(--ui-surface-modal)] shadow-[0_18px_48px_rgba(0,0,0,0.5)]">
         <div className="flex items-start justify-between gap-4 px-5 pb-3 pt-5">
           <div>
-            <h3 className="text-lg font-semibold text-foreground">上传资产</h3>
+            <h3 className="text-lg font-semibold text-foreground">{t('canvas.assetLibrary.upload.title')}</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              选择文件并设置保存位置，上传后可在项目中重复使用
+              {t('canvas.assetLibrary.upload.subtitle')}
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            title="关闭"
-            aria-label="关闭"
+            title={t('canvas.assetLibrary.close')}
+            aria-label={t('canvas.assetLibrary.close')}
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-[rgba(var(--bg-rgb)/0.5)] hover:text-foreground"
           >
             <X className="h-4 w-4" />
@@ -258,7 +260,7 @@ export function AssetLibraryUploadDialog({
             <input
               ref={fileInputRef}
               type="file"
-              aria-label="选择本地文件"
+              aria-label={t('canvas.assetLibrary.upload.pickLocalFiles')}
               accept={accept}
               multiple
               className="hidden"
@@ -271,7 +273,7 @@ export function AssetLibraryUploadDialog({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                aria-label="选择文件"
+                aria-label={t('canvas.assetLibrary.upload.pickFiles')}
                 className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground transition-colors hover:text-foreground"
               >
                 <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[rgba(var(--bg-rgb)/0.55)] text-primary">
@@ -279,10 +281,10 @@ export function AssetLibraryUploadDialog({
                 </span>
                 <span>
                   <span className="block text-sm font-medium text-foreground">
-                    拖放文件到这里，或点击选择
+                    {t('canvas.assetLibrary.upload.dropHint')}
                   </span>
                   <span className="mt-1.5 block text-xs text-muted-foreground">
-                    支持 {media.map((kind) => MEDIA_HINT[kind]).join('、')}
+                    {t('canvas.assetLibrary.upload.supports', { list: media.map((kind) => MEDIA_HINT[kind]).join(t('canvas.assetLibrary.upload.listSeparator')) })}
                   </span>
                 </span>
               </button>
@@ -290,11 +292,7 @@ export function AssetLibraryUploadDialog({
               <>
                 <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-3">
                   <span className="text-xs text-muted-foreground">
-                    已选择{' '}
-                    <span className="font-medium text-foreground">
-                      {picked.length}
-                    </span>{' '}
-                    项
+                    {t('canvas.assetLibrary.upload.selectedCount', { count: picked.length })}
                   </span>
                   <button
                     type="button"
@@ -302,7 +300,7 @@ export function AssetLibraryUploadDialog({
                     className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-xs text-primary transition-colors hover:bg-secondary"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    继续添加
+                    {t('canvas.assetLibrary.upload.addMore')}
                   </button>
                 </div>
                 <div className="flex flex-wrap gap-2.5 px-4 pb-4">
@@ -338,7 +336,7 @@ export function AssetLibraryUploadDialog({
                       <button
                         type="button"
                         onClick={() => removePicked(p.id)}
-                        aria-label={`移除 ${p.file.name}`}
+                        aria-label={t('canvas.assetLibrary.upload.removeFile', { name: p.file.name })}
                         className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity hover:bg-black/80 group-hover:opacity-100 focus:opacity-100"
                       >
                         <X className="h-3 w-3" />
@@ -361,18 +359,18 @@ export function AssetLibraryUploadDialog({
 
           {/* ── 右：保存位置 + 标签 ── */}
           <div className="rounded-lg border border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.28)] p-4">
-            <h4 className="text-sm font-semibold text-foreground">上传设置</h4>
+            <h4 className="text-sm font-semibold text-foreground">{t('canvas.assetLibrary.upload.settings')}</h4>
             <p className="mt-1 text-xs text-muted-foreground">
-              保存位置必选，标签可稍后补充
+              {t('canvas.assetLibrary.upload.settingsHint')}
             </p>
             <div className="mt-4 space-y-4">
               <div className="relative">
                 <div className="mb-1.5 text-xs font-medium text-foreground">
-                  保存位置 <span className="text-destructive">*</span>
+                  {t('canvas.assetLibrary.upload.destination')} <span className="text-destructive">*</span>
                 </div>
                 <button
                   type="button"
-                  aria-label="选择保存位置"
+                  aria-label={t('canvas.assetLibrary.upload.pickDestination')}
                   onClick={() => {
                     setFolderOpen((prev) => !prev);
                     setCategoryOpen(false);
@@ -386,7 +384,7 @@ export function AssetLibraryUploadDialog({
                         : 'text-muted-foreground'
                     }
                   >
-                    {selectedFolder?.label ?? '请选择文件夹'}
+                    {selectedFolder?.label ?? t('canvas.assetLibrary.upload.chooseFolder')}
                   </span>
                   {folderOpen ? (
                     <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
@@ -397,16 +395,16 @@ export function AssetLibraryUploadDialog({
                 {folderOpen && (
                   <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.99)] py-1 shadow-[0_12px_28px_rgba(0,0,0,0.45)]">
                     <div className="flex items-center justify-between px-3 py-2 text-xs font-medium text-foreground">
-                      项目资产库
+                      {t('canvas.assetLibrary.upload.projectLibrary')}
                       <button
                         type="button"
-                        aria-label="新建文件夹"
-                        title="新建文件夹"
+                        aria-label={t('canvas.assetLibrary.newFolder')}
+                        title={t('canvas.assetLibrary.newFolder')}
                         onClick={() => setNewFolderOpen(true)}
                         className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-primary transition-colors hover:bg-secondary"
                       >
                         <FolderPlus className="h-3.5 w-3.5" />
-                        <span>新建</span>
+                        <span>{t('canvas.assetLibrary.upload.create')}</span>
                       </button>
                     </div>
                     <div className="ui-scrollbar max-h-[180px] overflow-y-auto">
@@ -437,12 +435,12 @@ export function AssetLibraryUploadDialog({
 
               <div className="relative">
                 <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-foreground">
-                  标签{' '}
-                  <span className="font-normal text-muted-foreground">可选</span>
+                  {t('canvas.assetLibrary.upload.tag')}{' '}
+                  <span className="font-normal text-muted-foreground">{t('canvas.assetLibrary.upload.optional')}</span>
                 </div>
                 <button
                   type="button"
-                  aria-label="选择标签"
+                  aria-label={t('canvas.assetLibrary.upload.pickTag')}
                   onClick={() => {
                     setCategoryOpen((prev) => !prev);
                     setFolderOpen(false);
@@ -456,7 +454,7 @@ export function AssetLibraryUploadDialog({
                         : 'text-muted-foreground'
                     }
                   >
-                    {selectedCategory?.label ?? '请选择'}
+                    {selectedCategory?.label ?? t('canvas.assetLibrary.upload.choose')}
                   </span>
                   {categoryOpen ? (
                     <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
@@ -500,7 +498,7 @@ export function AssetLibraryUploadDialog({
             className="px-4 text-muted-foreground hover:text-foreground"
             onClick={onClose}
           >
-            取消
+            {t('common.cancel')}
           </Button>
           <Button
             size="sm"
@@ -508,7 +506,7 @@ export function AssetLibraryUploadDialog({
             disabled={!canSubmit}
             onClick={handleSubmit}
           >
-            {picked.length > 0 ? `上传 ${picked.length} 项` : '上传'}
+            {picked.length > 0 ? t('canvas.assetLibrary.upload.submitCount', { count: picked.length }) : t('canvas.assetLibrary.upload.submit')}
           </Button>
         </div>
       </div>

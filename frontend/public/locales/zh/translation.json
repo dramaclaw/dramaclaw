@@ -1238,6 +1238,19 @@
       "loading": "正在加载画布...",
       "syncFailed": "画布同步失败",
       "retry": "重试"
+    },
+    "assetBrowser": {
+      "loading": "加载中…",
+      "loadFailed": "资产库加载失败：{{detail}}",
+      "empty": "资产库还是空的。上传素材或从主线同步，请在节点上打开「资产库」。",
+      "backToRoot": "返回资产库根目录",
+      "folderEmpty": "「{{name}}」暂无素材。",
+      "download": "下载",
+      "deleted": "已删除：{{name}}",
+      "deleteFailed": "删除失败：{{detail}}",
+      "itemFallbackName": "素材",
+      "assetName": "资产名称",
+      "assetNamePlaceholder": "请输入资产名称"
     }
   },
   "theme": {
@@ -4152,7 +4165,33 @@
       "pageAria": "第 {{page}} 页",
       "perPage": "{{size}}条/页",
       "itemCount_one": "{{count}} 项资产",
-      "itemCount_other": "{{count}} 项资产"
+      "itemCount_other": "{{count}} 项资产",
+      "upload": {
+        "title": "上传资产",
+        "subtitle": "选择文件并设置保存位置，上传后可在项目中重复使用",
+        "pickLocalFiles": "选择本地文件",
+        "pickFiles": "选择文件",
+        "dropHint": "拖放文件到这里，或点击选择",
+        "supports": "支持 {{list}}",
+        "listSeparator": "、",
+        "unsupportedRejected": "{{count}} 个文件格式不受支持，已自动忽略",
+        "selectedCount": "已选择 {{count}} 项",
+        "addMore": "继续添加",
+        "removeFile": "移除 {{name}}",
+        "settings": "上传设置",
+        "settingsHint": "保存位置必选，标签可稍后补充",
+        "destination": "保存位置",
+        "pickDestination": "选择保存位置",
+        "chooseFolder": "请选择文件夹",
+        "projectLibrary": "项目资产库",
+        "create": "新建",
+        "tag": "标签",
+        "optional": "可选",
+        "pickTag": "选择标签",
+        "choose": "请选择",
+        "submit": "上传",
+        "submitCount": "上传 {{count}} 项"
+      }
     },
     "referencePick": {
       "kind": {

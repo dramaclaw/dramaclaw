@@ -28,7 +28,9 @@ FRONTEND_SRC = os.path.join("frontend", "src")
 ALLOWLIST = os.path.join("scripts", "frontend_i18n_allowlist.json")
 
 CJK = re.compile(r"[一-鿿]")
-BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+# `/*` 只有在前面不是标识符/引号/斜杠时才是块注释开头——否则 `'image/*'`
+# 这种 MIME 通配符会被当成注释起点，把后面几百行真命中一起吃掉。
+BLOCK_COMMENT = re.compile(r"(?<![\w'\"/])/\*.*?\*/", re.S)
 COMMENT_LINE = re.compile(r"^\s*(//|\*)")
 EXEMPT = re.compile(r"//\s*i18n-exempt(?!-)")
 # 协议值表（后端逐字对应的枚举、会写进存档 JSON 的规范默认值）整块保留中文，

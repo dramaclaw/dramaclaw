@@ -1238,6 +1238,19 @@
       "loading": "Loading canvas...",
       "syncFailed": "Canvas sync failed",
       "retry": "Retry"
+    },
+    "assetBrowser": {
+      "loading": "Loading…",
+      "loadFailed": "Failed to load the asset library: {{detail}}",
+      "empty": "The asset library is empty. To upload or sync from the mainline, open “Asset library” on a node.",
+      "backToRoot": "Back to the asset library root",
+      "folderEmpty": "“{{name}}” has no assets yet.",
+      "download": "Download",
+      "deleted": "Deleted {{name}}",
+      "deleteFailed": "Delete failed: {{detail}}",
+      "itemFallbackName": "asset",
+      "assetName": "Asset name",
+      "assetNamePlaceholder": "Enter an asset name"
     }
   },
   "theme": {
@@ -4152,7 +4165,33 @@
       "pageAria": "Page {{page}}",
       "perPage": "{{size}} / page",
       "itemCount_one": "{{count}} asset",
-      "itemCount_other": "{{count}} assets"
+      "itemCount_other": "{{count}} assets",
+      "upload": {
+        "title": "Upload assets",
+        "subtitle": "Pick files and a destination — uploaded assets can be reused across the project",
+        "pickLocalFiles": "Choose local files",
+        "pickFiles": "Choose files",
+        "dropHint": "Drop files here, or click to choose",
+        "supports": "Supports {{list}}",
+        "listSeparator": ", ",
+        "unsupportedRejected": "{{count}} file(s) in unsupported formats were ignored",
+        "selectedCount": "{{count}} selected",
+        "addMore": "Add more",
+        "removeFile": "Remove {{name}}",
+        "settings": "Upload settings",
+        "settingsHint": "A destination is required; tags can be added later",
+        "destination": "Destination",
+        "pickDestination": "Choose a destination",
+        "chooseFolder": "Choose a folder",
+        "projectLibrary": "Project asset library",
+        "create": "New",
+        "tag": "Tag",
+        "optional": "optional",
+        "pickTag": "Choose a tag",
+        "choose": "Choose",
+        "submit": "Upload",
+        "submitCount": "Upload {{count}}"
+      }
     },
     "referencePick": {
       "kind": {
