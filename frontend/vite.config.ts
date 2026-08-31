@@ -111,6 +111,12 @@ export default defineConfig(({ mode }) => {
             if (id.includes("react-hook-form") || id.includes("@hookform") || id.includes("/zod/")) return "forms";
             if (id.includes("i18next") || id.includes("react-i18next")) return "i18n";
             if (id.includes("lucide-react")) return "icons";
+            // three 在本仓有两份且永不去重：预演台 pin 的 0.185.1，以及
+            // @photo-sphere-viewer/core 硬依赖的 0.179.1（^0.179.0 收不下 0.185）。
+            // 按 pnpm 解析出的版本目录分流，否则两份会挤进同一个 chunk，
+            // 打开任一功能都要下载另一份的 three。
+            const threeVersion = /\/\.pnpm\/three@(\d+\.\d+)\./.exec(id)?.[1];
+            if (threeVersion) return `three-${threeVersion}`;
             if (id.includes("/three/")) return "three";
           },
         },
