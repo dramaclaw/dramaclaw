@@ -6,6 +6,7 @@ import type {
   DirectorObjectLayer,
   DirectorWorldSource,
 } from '@/features/viewer-kit/three-d/directorManifest';
+import type { PrevizNodeSummary, PrevizScene } from '@/features/previz/domain/scene';
 
 export const CANVAS_NODE_TYPES = {
   upload: 'uploadNode',
@@ -24,6 +25,7 @@ export const CANVAS_NODE_TYPES = {
   script: 'scriptNode',
   pano360Viewer: 'pano360ViewerNode',
   threeDWorld: 'threeDWorldNode',
+  previz: 'previzNode',
   skill: 'skillNode',
   style: 'styleNode',
 } as const;
@@ -666,6 +668,19 @@ export interface ThreeDWorldNodeData extends NodeDisplayData {
   [key: string]: unknown;
 }
 
+/**
+ * 预演台节点。场景是纯数值 JSON，直接内联在 node.data 里随整画布持久化；
+ * 体积护栏见 features/previz/domain/limits.ts。
+ */
+export interface PrevizNodeData extends NodeDisplayData {
+  /** 场景数据；节点从未打开过时为 null。 */
+  scene?: PrevizScene | null;
+  /** 卡片摘要，免得为了看规模而打开编辑器。 */
+  summary?: PrevizNodeSummary | null;
+  /** 节点封面，P2 截图闭环写入。 */
+  previewImageUrl?: string | null;
+}
+
 export interface SkillNodeData extends NodeDisplayData {
   skill_id: string;
   skill_schema_version?: string;
@@ -708,6 +723,7 @@ export type CanvasNodeData =
   | ScriptNodeData
   | Pano360ViewerNodeData
   | ThreeDWorldNodeData
+  | PrevizNodeData
   | SkillNodeData
   | StyleNodeData;
 
@@ -872,6 +888,12 @@ export function isThreeDWorldNode(
   node: CanvasNode | null | undefined
 ): node is Node<ThreeDWorldNodeData, typeof CANVAS_NODE_TYPES.threeDWorld> {
   return node?.type === CANVAS_NODE_TYPES.threeDWorld;
+}
+
+export function isPrevizNode(
+  node: CanvasNode | null | undefined
+): node is Node<PrevizNodeData, typeof CANVAS_NODE_TYPES.previz> {
+  return node?.type === CANVAS_NODE_TYPES.previz;
 }
 
 export function nodeHasImage(node: CanvasNode | null | undefined): boolean {

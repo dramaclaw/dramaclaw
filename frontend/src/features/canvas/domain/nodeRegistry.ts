@@ -14,6 +14,7 @@ import {
   type ImageEditNodeData,
   type ImageGenNodeData,
   type Pano360ViewerNodeData,
+  type PrevizNodeData,
   type ScriptNodeData,
   type SkillNodeData,
   type StoryboardSplitNodeData,
@@ -35,7 +36,7 @@ import {
 } from '../ui/ProviderModelPicker';
 import { readLastVideoModel } from './lastVideoModel';
 
-export type MenuIconKey = 'upload' | 'sparkles' | 'layout' | 'text' | 'video' | 'audio' | 'script' | 'pano360' | 'threeDWorld' | 'videoCompose';
+export type MenuIconKey = 'upload' | 'sparkles' | 'layout' | 'text' | 'video' | 'audio' | 'script' | 'pano360' | 'threeDWorld' | 'videoCompose' | 'previz';
 
 export interface CanvasNodeCapabilities {
   toolbar: boolean;
@@ -593,6 +594,31 @@ const threeDWorldNodeDefinition: CanvasNodeDefinition<ThreeDWorldNodeData> = {
   }),
 };
 
+const previzNodeDefinition: CanvasNodeDefinition<PrevizNodeData> = {
+  type: CANVAS_NODE_TYPES.previz,
+  menuLabelKey: 'node.menu.previz',
+  menuIcon: 'previz',
+  visibleInMenu: true,
+  capabilities: {
+    toolbar: false,
+    promptInput: false,
+  },
+  connectivity: {
+    sourceHandle: true,
+    targetHandle: true,
+    connectMenu: {
+      fromSource: true,
+      fromTarget: true,
+    },
+  },
+  createDefaultData: () => ({
+    displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.previz],
+    scene: null,
+    summary: null,
+    previewImageUrl: null,
+  }),
+};
+
 const skillNodeDefinition: CanvasNodeDefinition<SkillNodeData> = {
   type: CANVAS_NODE_TYPES.skill,
   menuLabelKey: 'node.menu.skill',
@@ -660,6 +686,7 @@ export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition>
   [CANVAS_NODE_TYPES.script]: scriptNodeDefinition,
   [CANVAS_NODE_TYPES.pano360Viewer]: pano360ViewerNodeDefinition,
   [CANVAS_NODE_TYPES.threeDWorld]: threeDWorldNodeDefinition,
+  [CANVAS_NODE_TYPES.previz]: previzNodeDefinition,
   [CANVAS_NODE_TYPES.skill]: skillNodeDefinition,
   [CANVAS_NODE_TYPES.style]: styleNodeDefinition,
 };
@@ -815,6 +842,14 @@ export const DOWNSTREAM_SPAWN_WHITELIST: Partial<
     CANVAS_NODE_TYPES.imageEdit,
     CANVAS_NODE_TYPES.exportImage,
     CANVAS_NODE_TYPES.upload,
+  ],
+  // 预演台：产物是截图与录制，下游只接图片与视频类节点。
+  [CANVAS_NODE_TYPES.previz]: [
+    CANVAS_NODE_TYPES.imageGen,
+    CANVAS_NODE_TYPES.imageEdit,
+    CANVAS_NODE_TYPES.exportImage,
+    CANVAS_NODE_TYPES.upload,
+    CANVAS_NODE_TYPES.video,
   ],
   [CANVAS_NODE_TYPES.upload]: IMAGE_DOWNSTREAM_SPAWN_TYPES,
   [CANVAS_NODE_TYPES.imageEdit]: IMAGE_DOWNSTREAM_SPAWN_TYPES,
