@@ -86,4 +86,52 @@ describe("previz store", () => {
     usePrevizStore.getState().undo();
     expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(59);
   });
+
+  // redo 必须把当前场景压回 past，否则「redo 之后再 undo」会静默失灵——而这条
+  // 路径只有折返才可观测：用例 2 是 undo 到底再 redo 回顶的单向走法，抓不到。
+  it("keeps undo working after a redo", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(200));
+    usePrevizStore.getState().applyScene(sceneWithDuration(300));
+
+    usePrevizStore.getState().undo();
+    usePrevizStore.getState().undo();
+    usePrevizStore.getState().redo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(200);
+
+    usePrevizStore.getState().undo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
+  });
+
+  // markSaved 只该动 dirty。历史一起清掉的实现能通过其余所有用例，但用户一保存
+  // 就丢光 undo 历史。
+  it("markSaved clears only the dirty flag", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(200));
+    const before = usePrevizStore.getState();
+
+    usePrevizStore.getState().markSaved();
+
+    const after = usePrevizStore.getState();
+    expect(after.dirty).toBe(false);
+    expect(after.scene).toBe(before.scene);
+    expect(after.past).toBe(before.past);
+    expect(after.future).toBe(before.future);
+
+    usePrevizStore.getState().undo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
+  });
+
+  // undo / redo 无条件置脏是刻意的保守选择（宁可多存不可少存），必须有测试钉住，
+  // 否则被误删没人发现，将来真要改成与保存点比对时也没有红线提示边界在哪。
+  it("marks the scene dirty again when undo or redo moves it", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(200));
+    usePrevizStore.getState().markSaved();
+    expect(usePrevizStore.getState().dirty).toBe(false);
+
+    usePrevizStore.getState().undo();
+    expect(usePrevizStore.getState().dirty).toBe(true);
+
+    usePrevizStore.getState().markSaved();
+    usePrevizStore.getState().redo();
+    expect(usePrevizStore.getState().dirty).toBe(true);
+  });
 });
