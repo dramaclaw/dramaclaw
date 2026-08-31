@@ -13,7 +13,6 @@ export const PREVIZ_DEFAULT_DURATION_FRAMES = 120;
 export type BodyType = 'slim' | 'average' | 'heavy';
 export type DisplayMode = 'solid' | 'translucent' | 'clay';
 export type OutputAspect = '16:9' | '9:16' | '1:1' | '4:3';
-export type PrevizObjectKind = 'character' | 'camera' | 'light' | 'prop';
 export type RigMotion = 'static' | 'orbit' | 'push' | 'pull';
 
 export interface PrevizTransform {
@@ -60,6 +59,9 @@ export interface PrevizProp extends PrevizObjectBase {
 
 export type PrevizObject = PrevizCharacter | PrevizCamera | PrevizLight | PrevizProp;
 
+/** 派生自 PrevizObject 的 kind 字面量集合，避免和四个具体类型的 `kind` 字段维护两份真相。 */
+export type PrevizObjectKind = PrevizObject['kind'];
+
 /** 路径点的 u 是片段内归一化参数；rotationEdited 标记用户显式改过朝向的点。 */
 export interface PrevizPathPoint {
   id: string;
@@ -69,21 +71,36 @@ export interface PrevizPathPoint {
   rotationEdited?: boolean;
 }
 
-export type PrevizClip =
-  | { id: string; kind: 'path'; startFrame: number; endFrame: number; points: PrevizPathPoint[] }
-  | { id: string; kind: 'action'; startFrame: number; endFrame: number; poseId: string }
-  | {
-      id: string;
-      kind: 'rig';
-      startFrame: number;
-      endFrame: number;
-      anchorObjectId: string;
-      aimObjectId: string | null;
-      azimuth: number;
-      elevation: number;
-      distance: number;
-      motion: RigMotion;
-    };
+export interface PrevizPathClip {
+  id: string;
+  kind: 'path';
+  startFrame: number;
+  endFrame: number;
+  points: PrevizPathPoint[];
+}
+
+export interface PrevizActionClip {
+  id: string;
+  kind: 'action';
+  startFrame: number;
+  endFrame: number;
+  poseId: string;
+}
+
+export interface PrevizRigClip {
+  id: string;
+  kind: 'rig';
+  startFrame: number;
+  endFrame: number;
+  anchorObjectId: string;
+  aimObjectId: string | null;
+  azimuth: number;
+  elevation: number;
+  distance: number;
+  motion: RigMotion;
+}
+
+export type PrevizClip = PrevizPathClip | PrevizActionClip | PrevizRigClip;
 
 export interface PrevizTrack {
   id: string;
@@ -145,10 +162,20 @@ function clampDuration(value: unknown): number {
   return Math.min(PREVIZ_MAX_DURATION_FRAMES, Math.max(PREVIZ_MIN_DURATION_FRAMES, frames));
 }
 
+const DISPLAY_MODES: readonly DisplayMode[] = ['solid', 'translucent', 'clay'];
+function isDisplayMode(value: unknown): value is DisplayMode {
+  return typeof value === 'string' && (DISPLAY_MODES as readonly string[]).includes(value);
+}
+
+const OUTPUT_ASPECTS: readonly OutputAspect[] = ['16:9', '9:16', '1:1', '4:3'];
+function isOutputAspect(value: unknown): value is OutputAspect {
+  return typeof value === 'string' && (OUTPUT_ASPECTS as readonly string[]).includes(value);
+}
+
 /**
- * 把 node.data.scene 这类不可信 JSON 读成 PrevizScene：缺字段回落默认值，
- * 版本过新抛 PrevizSceneVersionError。objects / tracks 只校验是不是数组——
- * 逐对象校验留到 P1 真正有对象编辑时再补，现在做只会是空转。
+ * 把 node.data.scene 这类不可信 JSON 读成 PrevizScene：缺字段或非法枚举回落默认值，
+ * 版本过新抛 PrevizSceneVersionError。objects / tracks 只校验是不是数组（并做浅拷贝以
+ * 免和调用方共享可变引用）——逐对象校验留到 P1 真正有对象编辑时再补，现在做只会是空转。
  */
 export function parseScene(raw: unknown): PrevizScene {
   if (raw === null || typeof raw !== 'object') return createDefaultScene();
@@ -166,12 +193,16 @@ export function parseScene(raw: unknown): PrevizScene {
     settings: {
       fps: PREVIZ_FPS,
       durationFrames: clampDuration(settings.durationFrames),
-      displayMode: settings.displayMode ?? fallback.settings.displayMode,
-      outputAspect: settings.outputAspect ?? fallback.settings.outputAspect,
+      displayMode: isDisplayMode(settings.displayMode)
+        ? settings.displayMode
+        : fallback.settings.displayMode,
+      outputAspect: isOutputAspect(settings.outputAspect)
+        ? settings.outputAspect
+        : fallback.settings.outputAspect,
     },
-    objects: Array.isArray(source.objects) ? source.objects : [],
+    objects: Array.isArray(source.objects) ? [...source.objects] : [],
     timeline: {
-      tracks: Array.isArray(source.timeline?.tracks) ? source.timeline.tracks : [],
+      tracks: Array.isArray(source.timeline?.tracks) ? [...source.timeline.tracks] : [],
     },
   };
 }
