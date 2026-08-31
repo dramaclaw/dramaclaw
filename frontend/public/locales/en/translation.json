@@ -4682,6 +4682,17 @@
       "typed": "EP{{episode}} / beat {{beat}} · {{candidate}} candidate · lands on this node, promoted to {{promoted}} on commit",
       "untyped": "Mainline candidate · bound to EP{{episode}} / beat {{beat}} · lands on this node, slot matched by context on commit",
       "free": "Free candidate · lands on this node, you pick the target asset on commit"
+    },
+    "cameraPicker": {
+      "title": "Camera",
+      "body": "Body",
+      "lens": "Lens",
+      "focal": "Focal length",
+      "aperture": "Aperture",
+      "clear": "Clear",
+      "prev": "Previous",
+      "next": "Next",
+      "loading": "Loading…"
     }
   },
   "tool": {
@@ -6164,7 +6175,17 @@
         "interacting": "Interacting",
         "fighting": "Fighting",
         "sword": "Armed"
-      }
+      },
+      "skillMissingBeatContext": "Missing shot context",
+      "skillNoSelectedBackgroundOutput": "No current-background output node found",
+      "skillMissingProjectOrBeat": "Missing project or shot context",
+      "skillSelectedBackgroundOutputUnavailable": "The current-background output node is unavailable",
+      "skillNoMasterImage": "This scene has no master image",
+      "skillNoReverseImage": "This scene has no reverse image",
+      "skillNoDirectorBackground": "This beat has no director background yet",
+      "skillFallbackTitle": "Skill",
+      "skillLoading": "Loading skill…",
+      "skillUnknown": "Unknown skill"
     },
     "purpose": {
       "freezone": "Freezone",

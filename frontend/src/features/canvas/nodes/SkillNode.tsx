@@ -821,7 +821,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
     const episode = numericField(target.episode);
     const beat = numericField(target.beat);
     if (episode === null || beat === null) {
-      setSourcePickerError('缺少镜头上下文');
+      setSourcePickerError(t('viewer.threeD.skillMissingBeatContext'));
       return null;
     }
     const outputNodeId = stageSelectedBackgroundOutputForSkill(
@@ -834,7 +834,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
       },
     );
     if (!outputNodeId) {
-      setSourcePickerError('没有找到当前背景输出节点');
+      setSourcePickerError(t('viewer.threeD.skillNoSelectedBackgroundOutput'));
       return null;
     }
     if (mainlineManaged && !extraData?.committed_at) {
@@ -850,12 +850,12 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
   const uploadAndStageSelectedBackground = async (blob: Blob, filename: string, label?: string) => {
     const projectId = readUrl().project;
     if (!projectId || !beatTarget) {
-      throw new Error('缺少项目或镜头上下文');
+      throw new Error(t('viewer.threeD.skillMissingProjectOrBeat'));
     }
     const uploaded = await uploadFreezoneImage(projectId, blob, filename, { timeoutMs: false });
     const nodeId = stageSelectedBackground(beatTarget, uploaded.url, label);
     if (!nodeId) {
-      throw new Error('当前背景输出节点不可用');
+      throw new Error(t('viewer.threeD.skillSelectedBackgroundOutputUnavailable'));
     }
   };
 
@@ -868,7 +868,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
     }
     const projectId = readUrl().project;
     if (!projectId || !beatTarget) {
-      setSourcePickerError('缺少项目或镜头上下文');
+      setSourcePickerError(t('viewer.threeD.skillMissingProjectOrBeat'));
       return null;
     }
     setSourcePickerBusy(true);
@@ -1210,10 +1210,10 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
     if (!url) {
       setSourcePickerError(
         kind === 'master'
-          ? '当前场景没有 master 图'
+          ? t('viewer.threeD.skillNoMasterImage')
           : kind === 'reverse'
-            ? '当前场景没有 reverse 图'
-            : '当前 Beat 还没有导演背景图',
+            ? t('viewer.threeD.skillNoReverseImage')
+            : t('viewer.threeD.skillNoDirectorBackground'),
       );
       return;
     }
@@ -1223,7 +1223,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
   const openContextDirectorWorld = async (destination: DirectorWorldDestination) => {
     const projectId = readUrl().project;
     if (!projectId || !beatTarget) {
-      setSourcePickerError('缺少项目或镜头上下文');
+      setSourcePickerError(t('viewer.threeD.skillMissingProjectOrBeat'));
       return;
     }
     setSourcePickerBusy(true);
@@ -1432,7 +1432,9 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
       <NodeHeader
         className={NODE_HEADER_FLOATING_POSITION_CLASS}
         icon={<Boxes className="h-4 w-4" />}
-        titleText={localizedSkillName ?? data.displayName ?? '技能'}
+        titleText={
+          localizedSkillName ?? data.displayName ?? t('viewer.threeD.skillFallbackTitle')
+        }
         editable={false}
       />
 
@@ -1441,7 +1443,10 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-white">
-                {localizedSkillName ?? (isLoading ? '加载技能...' : '未知技能')}
+                {localizedSkillName ??
+                  (isLoading
+                    ? t('viewer.threeD.skillLoading')
+                    : t('viewer.threeD.skillUnknown'))}
               </div>
               <div className="mt-1 line-clamp-2 text-xs leading-5 text-text-muted">
                 {localizedSkillDescription ?? loadError ?? data.skill_id}

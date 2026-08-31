@@ -4682,6 +4682,17 @@
       "typed": "EP{{episode}}/镜头 {{beat}} · {{candidate}}候选 · 生成后落本节点,commit 后晋升为 {{promoted}}",
       "untyped": "主线候选 · 已绑定 EP{{episode}}/镜头 {{beat}} · 生成后落本节点,commit 时按上下文匹配槽位",
       "free": "自由候选 · 生成后落本节点,commit 时需手动选择目标资产"
+    },
+    "cameraPicker": {
+      "title": "摄像机",
+      "body": "相机",
+      "lens": "镜头",
+      "focal": "焦距",
+      "aperture": "光圈",
+      "clear": "清除",
+      "prev": "上一项",
+      "next": "下一项",
+      "loading": "加载中…"
     }
   },
   "tool": {
@@ -6164,7 +6175,17 @@
         "interacting": "操作 / 互动",
         "fighting": "格斗",
         "sword": "持械"
-      }
+      },
+      "skillMissingBeatContext": "缺少镜头上下文",
+      "skillNoSelectedBackgroundOutput": "没有找到当前背景输出节点",
+      "skillMissingProjectOrBeat": "缺少项目或镜头上下文",
+      "skillSelectedBackgroundOutputUnavailable": "当前背景输出节点不可用",
+      "skillNoMasterImage": "当前场景没有 master 图",
+      "skillNoReverseImage": "当前场景没有 reverse 图",
+      "skillNoDirectorBackground": "当前 Beat 还没有导演背景图",
+      "skillFallbackTitle": "技能",
+      "skillLoading": "加载技能...",
+      "skillUnknown": "未知技能"
     },
     "purpose": {
       "freezone": "自由世界",
