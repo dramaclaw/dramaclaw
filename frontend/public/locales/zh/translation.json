@@ -5060,7 +5060,10 @@
     },
     "upload": {
       "uploadedAlt": "已上传资源",
-      "hint": "拖拽到此或点击右上角上传资源"
+      "hint": "拖拽到此或点击右上角上传资源",
+      "uploadImage": "上传图片",
+      "uploading": "上传中",
+      "uploadAsset": "上传资源"
     },
     "audio": {
       "uploadTypeError": "请上传音频文件",
@@ -5673,7 +5676,11 @@
       "captureGroupName": "导演世界输出",
       "captureOutputFailed": "导演世界截图输出到画布失败",
       "captureLabel": "导演世界 {{kind}}",
-      "thumbAlt": "导演世界缩略图"
+      "thumbAlt": "导演世界缩略图",
+      "directorCaptureReadFailed": "无法读取导演世界截图",
+      "directorCaptureSizeFailed": "无法解析导演世界截图尺寸",
+      "directorElement": "导演元素",
+      "directorExportLabel": "导演世界导出"
     }
   },
   "viewer": {

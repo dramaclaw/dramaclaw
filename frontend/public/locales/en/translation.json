@@ -5060,7 +5060,10 @@
     },
     "upload": {
       "uploadedAlt": "Uploaded resource",
-      "hint": "Drag here or click upload to add an image or video"
+      "hint": "Drag here or click upload to add an image or video",
+      "uploadImage": "Upload image",
+      "uploading": "Uploading",
+      "uploadAsset": "Upload asset"
     },
     "audio": {
       "uploadTypeError": "Please upload an audio file",
@@ -5673,7 +5676,11 @@
       "captureGroupName": "Director world output",
       "captureOutputFailed": "Failed to output the director world capture to the canvas",
       "captureLabel": "Director world {{kind}}",
-      "thumbAlt": "Director world thumbnail"
+      "thumbAlt": "Director world thumbnail",
+      "directorCaptureReadFailed": "Could not read the director world capture",
+      "directorCaptureSizeFailed": "Could not read the director world capture dimensions",
+      "directorElement": "Director element",
+      "directorExportLabel": "Director world export"
     }
   },
   "viewer": {

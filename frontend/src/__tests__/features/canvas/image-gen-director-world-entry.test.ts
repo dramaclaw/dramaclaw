@@ -39,8 +39,9 @@ describe("ImageGenNode director combined world entry", () => {
     expect(source).toContain("onCaptureCanvasNode={handleDirectorOutputCanvasNode}");
     expect(source).not.toContain("autoCommitDirectorCombined");
     expect(source).toContain("meta.captureBundle");
-    expect(source).toContain("label: '导演合成图'");
-    expect(source).toContain("label: '纯背景图'");
+    // 文案已搬进词条，源码里只剩 key；措辞本身对着 locale 查（见下一个用例）。
+    expect(source).toContain("label: t('node.threeDWorld.combinedLabel')");
+    expect(source).toContain("label: t('node.threeDWorld.envOnlyLabel')");
     expect(source).toContain("addPanoCaptureGroup");
     expect(source).toContain("kind: 'director_render'");
     expect(source).not.toContain("freezone/assets-updated");

@@ -20,6 +20,7 @@ import {
 } from '@xyflow/react';
 import { Camera, Image as ImageIcon, Loader2, Upload } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import i18n from '@/i18n';
 import { toast } from 'sonner';
 
 import {
@@ -134,9 +135,10 @@ function blobToDataUrl(blob: Blob): Promise<string> {
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') resolve(reader.result);
-      else reject(new Error('无法读取导演世界截图'));
+      else reject(new Error(i18n.t('node.threeDWorld.directorCaptureReadFailed')));
     };
-    reader.onerror = () => reject(reader.error ?? new Error('无法读取导演世界截图'));
+    reader.onerror = () =>
+      reject(reader.error ?? new Error(i18n.t('node.threeDWorld.directorCaptureReadFailed')));
     reader.readAsDataURL(blob);
   });
 }
@@ -145,7 +147,7 @@ function imageSize(dataUrl: string): Promise<{ width: number; height: number }> 
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve({ width: image.naturalWidth || 1, height: image.naturalHeight || 1 });
-    image.onerror = () => reject(new Error('无法解析导演世界截图尺寸'));
+    image.onerror = () => reject(new Error(i18n.t('node.threeDWorld.directorCaptureSizeFailed')));
     image.src = dataUrl;
   });
 }
@@ -189,7 +191,7 @@ function snapshotMarkerFromDirectorLayerItem(item: unknown): ThreeDSceneSnapshot
       };
   const position = placement.space === 'world' ? placement.position : [0, 0, 0] as [number, number, number];
   return {
-    label: typeof data.label === 'string' ? data.label : '导演元素',
+    label: typeof data.label === 'string' ? data.label : i18n.t('node.threeDWorld.directorElement'),
     color: typeof data.color === 'string' ? data.color : '#38bdf8',
     placement,
     position,
@@ -308,7 +310,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
     }
 
     if (imageOnly && isNodeUsingDefaultDisplayName(CANVAS_NODE_TYPES.upload, data)) {
-      return '上传图片';
+      return t('node.upload.uploadImage');
     }
     return localizeNodeDisplayName(CANVAS_NODE_TYPES.upload, data, t);
   }, [data, imageOnly, t, useUploadFilenameAsNodeTitle]);
@@ -660,14 +662,14 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
     async (_blob: Blob, meta: ThreeDDirectorCaptureMeta) => {
       const projectId = readUrl().project;
       if (!meta.captureBundle) {
-        throw new Error('导演合成图缺少 combined/env_only/frame_meta');
+        throw new Error(t('node.threeDWorld.combinedBundleMissing'));
       }
       if (!projectId) {
-        throw new Error('缺少项目，无法保存画布导演合成图');
+        throw new Error(t('node.threeDWorld.combinedNoProject'));
       }
       const bundle = await uploadDirectorCaptureBundle(projectId, id, meta.captureBundle);
       const imageUrl = bundle.urls?.combined ?? '';
-      if (!imageUrl) throw new Error('画布导演合成图缺少图片地址');
+      if (!imageUrl) throw new Error(t('node.threeDWorld.combinedUrlMissing'));
       updateNodeData(id, {
         imageUrl,
         previewImageUrl: withImageCacheBust(imageUrl, Date.now()),
@@ -680,7 +682,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
         uploadError: null,
       });
     },
-    [id, sourceBeat, sourceEpisode, updateNodeData],
+    [id, sourceBeat, sourceEpisode, t, updateNodeData],
   );
 
   const handleDirectorOutputCanvasNode = useCallback(
@@ -713,7 +715,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
                 uploadedUrl: bundle.urls?.combined ?? '',
                 width: combinedSize.width,
                 height: combinedSize.height,
-                label: '导演合成图',
+                label: t('node.threeDWorld.combinedLabel'),
                 metadata: {
                   ...baseMetadata,
                   render_mode: 'combined',
@@ -724,17 +726,17 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
                 uploadedUrl: bundle.urls?.env_only ?? '',
                 width: envOnlySize.width,
                 height: envOnlySize.height,
-                label: '纯背景图',
+                label: t('node.threeDWorld.envOnlyLabel'),
                 metadata: {
                   ...baseMetadata,
                   render_mode: 'env_only',
                 },
               },
             ],
-            { cols: 2, groupName: '导演世界输出' },
+            { cols: 2, groupName: t('node.threeDWorld.captureGroupName') },
           );
           updateNodeData(id, {
-            uploadError: groupId ? null : '导演世界截图输出到画布失败',
+            uploadError: groupId ? null : t('node.threeDWorld.captureOutputFailed'),
           });
           if (groupId) {
             toast.success(t('viewer.threeD.outputToCanvasNodeSuccess'));
@@ -753,7 +755,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
             uploadedUrl,
             width: size.width,
             height: size.height,
-            label: '导演世界导出',
+            label: t('node.threeDWorld.directorExportLabel'),
             metadata: {
               viewer: 'director_world',
               render_mode: meta.kind,
@@ -763,7 +765,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
           },
         ]);
         updateNodeData(id, {
-          uploadError: groupId ? null : '导演世界截图输出到画布失败',
+          uploadError: groupId ? null : t('node.threeDWorld.captureOutputFailed'),
         });
         if (groupId) {
           toast.success(t('viewer.threeD.outputToCanvasNodeSuccess'));
@@ -919,7 +921,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
               handlePickFile();
             }}
             onPointerDown={(event) => event.stopPropagation()}
-            title={imageOnly ? '上传图片' : (t('node.upload.hint') ?? '上传资源')}
+            title={imageOnly ? t('node.upload.uploadImage') : t('node.upload.hint')}
             className={NODE_SIDE_ACTION_BUTTON_CLASS}
           >
             {data.isUploading ? (
@@ -927,7 +929,13 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
             ) : (
               <Upload className={NODE_SIDE_ACTION_ICON_CLASS} />
             )}
-            <span>{data.isUploading ? '上传中' : imageOnly ? '上传图片' : '上传资源'}</span>
+            <span>
+              {data.isUploading
+                ? t('node.upload.uploading')
+                : imageOnly
+                  ? t('node.upload.uploadImage')
+                  : t('node.upload.uploadAsset')}
+            </span>
           </button>
         </NodeSideActionRail>
       )}
