@@ -665,7 +665,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     const generationDurationMs = selectedModel.expectedDurationMs ?? 60000;
     const generationStartedAt = Date.now();
     const resultNodeTitle = capability
-      ? `${capability.shortName} · 候选`
+      ? t('canvas.capabilities.candidateResultTitle', { name: t(capability.shortNameKey) })
       : buildAiResultNodeTitle(prompt, t('node.imageEdit.resultTitle'));
     const runtimeDiagnostics = await getRuntimeDiagnostics();
     const { nodes: currentNodes, edges: currentEdges } = useCanvasStore.getState();
@@ -1241,7 +1241,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                   onClick={(event) => {
                     event.stopPropagation();
                     updateNodeData(id, {
-                      displayName: capability.name,
+                      displayName: t(capability.nameKey),
                       generationMode: 'image_reference',
                       model: capability.model,
                       size: capability.imageSize as ImageEditNodeData['size'],
@@ -1253,7 +1253,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                     });
                   }}
                 >
-                  {capability.shortName}⚙
+                  {t(capability.shortNameKey)}⚙
                 </button>
               );
             })}
@@ -1264,10 +1264,10 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <div className="truncate text-xs font-medium text-text-dark">
-                    {capability.name}
+                    {t(capability.nameKey)}
                   </div>
                   <div className="truncate text-[10px] text-text-muted">
-                    候选图能力 · Commit 后才成为资产
+                    {t('canvas.capabilities.candidateHint')}
                   </div>
                 </div>
                 <button
@@ -1286,7 +1286,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                     });
                   }}
                 >
-                  自由提示词
+                  {t('canvas.capabilities.freePrompt')}
                 </button>
               </div>
               <div
@@ -1575,10 +1575,12 @@ function InlineCapabilityParamControl({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
+  const { t } = useTranslation();
+
   if (param.type === 'enum') {
     return (
       <label className="nodrag block min-w-0 text-[10px] text-text-muted">
-        <span className="mb-1 block truncate">{param.label}</span>
+        <span className="mb-1 block truncate">{t(param.labelKey)}</span>
         <select
           value={stringifyParamValue(value ?? param.defaultValue)}
           onChange={(event) => onChange(event.target.value)}
@@ -1587,7 +1589,7 @@ function InlineCapabilityParamControl({
         >
           {(param.options ?? []).map((option) => (
             <option key={option.value} value={option.value}>
-              {option.label}
+              {t(option.labelKey)}
             </option>
           ))}
         </select>
@@ -1599,7 +1601,7 @@ function InlineCapabilityParamControl({
     const selected = new Set(Array.isArray(value) ? value.map(String) : []);
     return (
       <div className="nodrag col-span-2 text-[10px] text-text-muted">
-        <div className="mb-1">{param.label}</div>
+        <div className="mb-1">{t(param.labelKey)}</div>
         <div className="flex flex-wrap gap-1">
           {(param.options ?? []).map((option) => {
             const active = selected.has(option.value);
@@ -1620,7 +1622,7 @@ function InlineCapabilityParamControl({
                   onChange([...next]);
                 }}
               >
-                {option.label}
+                {t(option.labelKey)}
               </button>
             );
           })}
@@ -1639,7 +1641,7 @@ function InlineCapabilityParamControl({
           onMouseDown={(event) => event.stopPropagation()}
           className="accent-accent"
         />
-        <span>{param.label}</span>
+        <span>{t(param.labelKey)}</span>
       </label>
     );
   }
@@ -1650,7 +1652,7 @@ function InlineCapabilityParamControl({
     return (
       <label className="nodrag col-span-2 block text-[10px] text-text-muted">
         <span className="mb-1 flex justify-between">
-          <span>{param.label}</span>
+          <span>{t(param.labelKey)}</span>
           <span>{numericValue}</span>
         </span>
         <input
@@ -1669,13 +1671,13 @@ function InlineCapabilityParamControl({
 
   return (
     <label className="nodrag col-span-2 block text-[10px] text-text-muted">
-      <span className="mb-1 block">{param.label}</span>
+      <span className="mb-1 block">{t(param.labelKey)}</span>
       <textarea
         value={stringifyParamValue(value ?? param.defaultValue)}
         onChange={(event) => onChange(event.target.value)}
         onMouseDown={(event) => event.stopPropagation()}
         className="ui-scrollbar min-h-12 w-full resize-y rounded-lg border border-[rgba(255,255,255,0.1)] bg-bg-dark px-2 py-1.5 text-xs text-text-dark outline-none"
-        placeholder={param.description}
+        placeholder={param.descriptionKey ? t(param.descriptionKey) : undefined}
       />
     </label>
   );

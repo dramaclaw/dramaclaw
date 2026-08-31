@@ -2,8 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { displayLabel } from "@/task-center/derivations";
 import type { TaskState } from "@/task-center/types";
-
-type TFn = (key: string, options?: Record<string, unknown>) => string;
+import type { TFn } from "@/lib/i18n-types";
 
 function stringRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)

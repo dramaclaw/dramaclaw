@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import type { PushResult, PushTarget } from "@/api/push";
+import type { TFn } from "@/lib/i18n-types";
 import {
   isDirectorWorldSourceSlotTarget,
   nodeDataAfterDirectorWorldSourceSlotCommit,
@@ -108,27 +109,33 @@ function targetScopeMeta(target: PushTarget): Record<string, unknown> {
   return {};
 }
 
-function targetLabel(target: PushTarget): string {
-  if (target.kind === "frame") return `EP${target.episode} / Beat ${target.beat} / 分镜`;
-  if (target.kind === "sketch") return `EP${target.episode} / Beat ${target.beat} / 草图`;
-  if (target.kind === "director_render") return `EP${target.episode} / Beat ${target.beat} / 导演合成图`;
-  if (target.kind === "selected_background") return `EP${target.episode} / Beat ${target.beat} / 当前背景`;
-  if (target.kind === "video") return `EP${target.episode} / Beat ${target.beat} / 视频`;
-  if (target.kind === "beat_audio") return `EP${target.episode} / Beat ${target.beat} / 音频`;
-  if (target.kind === "identity") return `${target.character} / ${target.identity_id} / 身份`;
-  if (target.kind === "identity_costume") return `${target.character} / ${target.identity_id} / 服装`;
-  if (target.kind === "identity_portrait") return `${target.character} / ${target.identity_id} / 身份头像`;
-  if (target.kind === "portrait") return `${target.character} / 角色头像`;
-  if (target.kind === "scene_master") return `${target.scene_id} / 正面图`;
-  if (target.kind === "scene_reverse_master") return `${target.scene_id} / 背面图`;
-  if (target.kind === "scene_spatial_layout") return `${target.scene_id} / 空间布局图`;
-  if (target.kind === "scene_director_pano_360") return `${target.scene_id} / 360图`;
-  if (target.kind === "scene_3gs_master_ply") return `${target.scene_id} / 正面世界`;
-  if (target.kind === "scene_3gs_reverse_ply") return `${target.scene_id} / 背面世界`;
-  if (target.kind === "scene_3gs_pano_ply") return `${target.scene_id} / 360世界`;
-  if (target.kind === "scene_3gs_custom_scene") return `${target.scene_id} / 自定义世界`;
-  if (target.kind === "prop_ref") return `${target.prop_id} / 道具`;
-  return target.kind;
+/**
+ * 提交后写回节点的标题。文案跟着界面语言走，槽位后缀查词条；
+ * EP/Beat、角色名、scene_id 这些是业务标识，原样拼。
+ */
+function targetLabel(target: PushTarget, t: TFn): string {
+  const suffix = t(`freezone.commit.nodeLabels.${target.kind}`, { defaultValue: "" });
+  if (!suffix) return target.kind;
+  if (
+    target.kind === "frame" ||
+    target.kind === "sketch" ||
+    target.kind === "director_render" ||
+    target.kind === "selected_background" ||
+    target.kind === "video" ||
+    target.kind === "beat_audio"
+  ) {
+    return `EP${target.episode} / Beat ${target.beat} / ${suffix}`;
+  }
+  if (
+    target.kind === "identity" ||
+    target.kind === "identity_costume" ||
+    target.kind === "identity_portrait"
+  ) {
+    return `${target.character} / ${target.identity_id} / ${suffix}`;
+  }
+  if (target.kind === "portrait") return `${target.character} / ${suffix}`;
+  if (target.kind === "prop_ref") return `${target.prop_id} / ${suffix}`;
+  return `${(target as unknown as Record<string, unknown>).scene_id} / ${suffix}`;
 }
 
 function contextForTarget(
@@ -238,7 +245,8 @@ export function nodeDataAfterCommittedSlot(
   nodeData: Record<string, unknown>,
   target: PushTarget,
   result: Pick<PushResult, "target_path" | "target_url">,
-  projectId?: string,
+  projectId: string | undefined,
+  t: TFn,
 ): Record<string, unknown> | null {
   if (target.kind === "scene_director_world") return null;
   if (isDirectorWorldSourceSlotTarget(target)) {
@@ -246,7 +254,7 @@ export function nodeDataAfterCommittedSlot(
   }
   const targetUrl = stringValue(result.target_url);
   if (!targetUrl) return null;
-  const label = targetLabel(target);
+  const label = targetLabel(target, t);
   const isCandidate = nodeData.user_spawned === true;
   const effectiveProjectId = projectIdFromNodeData(nodeData, projectId);
   const context = contextForTarget(target, effectiveProjectId, targetUrl, label);
@@ -260,7 +268,7 @@ export function nodeDataAfterCommittedSlot(
   return {
     ...nodeData,
     ...mediaPatchForTarget(target, targetUrl),
-    displayName: isCandidate ? `已提交 · ${label}` : label,
+    displayName: isCandidate ? t("freezone.commit.committedNodeLabel", { label }) : label,
     sourceFileName: sourceFilename(result),
     slot_target: target,
     committed_slot_url: targetUrl,

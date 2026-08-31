@@ -23,6 +23,7 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 import { currentCanvasParam } from "@/lib/app-router";
 import { rememberLastCanvas, writeUrl } from "@/lib/url-params";
 import { cn } from "@/lib/utils";
+import type { TFn } from "@/lib/i18n-types";
 import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
 import { SuperChatPanel } from "@/features/superchat/superchat-panel";
 import { CommitDialog } from "./commit/CommitDialog";
@@ -124,23 +125,24 @@ export function startProjectionStatusRefresh(
   return stop;
 }
 
-function renderCommitSuccessMessage(target: PushTarget, result: PushResult): string {
+function renderCommitSuccessMessage(target: PushTarget, result: PushResult, t: TFn): string {
   if (target.kind === "director_render") {
-    return `已提交导演合成资产：${result.target_path}（含纯背景和元数据）`;
+    return t("freezone.commit.success.directorRender", { path: result.target_path });
   }
   if (target.kind === "scene_director_world") {
-    return `已提交导演世界：${result.target_path}`;
+    return t("freezone.commit.success.directorWorld", { path: result.target_path });
   }
-  return `已提交到 ${result.target_path}`;
+  return t("freezone.commit.success.default", { path: result.target_path });
 }
 
 function sceneDirectorWorldDataForManifest(
   nodeData: Record<string, unknown>,
   target: PushTarget,
   result: PushResult,
-  projectId?: string,
+  projectId: string | undefined,
+  t: TFn,
 ): Record<string, unknown> | null {
-  const manifestNodeData = nodeDataPatchAfterCommittedSourceSlot(nodeData, target, result, projectId);
+  const manifestNodeData = nodeDataPatchAfterCommittedSourceSlot(nodeData, target, result, projectId, t);
   return hasDirectorWorldSceneState(manifestNodeData) ? manifestNodeData : null;
 }
 
@@ -148,20 +150,22 @@ export function nodeDataPatchAfterCommittedSourceSlot(
   nodeData: Record<string, unknown>,
   target: PushTarget,
   result: PushResult,
-  projectId?: string,
+  projectId: string | undefined,
+  t: TFn,
 ): Record<string, unknown> | null {
   if (!isDirectorWorldSourceSlotTarget(target)) return null;
-  return nodeDataAfterCommittedSlot(nodeData, target, result, projectId);
+  return nodeDataAfterCommittedSlot(nodeData, target, result, projectId, t);
 }
 
 export function nodeDataPatchAfterCommittedTarget(
   nodeData: Record<string, unknown>,
   target: PushTarget,
   result: PushResult,
-  projectId?: string,
+  projectId: string | undefined,
+  t: TFn,
 ): Record<string, unknown> | null {
   if (isDirectorWorldSourceSlotTarget(target)) return null;
-  return nodeDataAfterCommittedSlot(nodeData, target, result, projectId);
+  return nodeDataAfterCommittedSlot(nodeData, target, result, projectId, t);
 }
 
 function latestCanvasNodeData(nodeId: string): Record<string, unknown> | null {
@@ -713,13 +717,13 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
     return canvasEventBus.subscribe("freezone/commit-node", ({ nodeId, auto, successMessage }) => {
       const node = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
       if (!node) {
-        setToast("当前节点没有可提交的内容");
+        setToast(t("freezone.shell.nodeNoCommittable"));
         return;
       }
       // 泛化:不再只认 imageUrl,而是按节点类型推断媒体 url(图像/视频/音频/3GS)。
       const info = deriveNodeDropInfo(node);
       if (!info?.sourceUrl) {
-        setToast("当前节点没有可提交的内容");
+        setToast(t("freezone.shell.nodeNoCommittable"));
         return;
       }
       const sourceUrl = info.sourceUrl;
@@ -743,17 +747,17 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
             if (savedOpenScene) {
               const flushed = await sync.flush();
               if (!flushed) {
-                throw new Error("当前画布未保存成功，处理冲突后再提交");
+                throw new Error(t("freezone.shell.canvasSaveBlocked"));
               }
             }
             const latestNode = useCanvasStore.getState().nodes.find((candidate) => candidate.id === nodeId);
             if (!latestNode) {
-              setToast("当前节点没有可提交的内容");
+              setToast(t("freezone.shell.nodeNoCommittable"));
               return;
             }
             const latestInfo = deriveNodeDropInfo(latestNode);
             if (!latestInfo?.sourceUrl) {
-              setToast("当前节点没有可提交的内容");
+              setToast(t("freezone.shell.nodeNoCommittable"));
               return;
             }
             const latestData = (latestNode.data ?? {}) as Record<string, unknown>;
@@ -785,15 +789,15 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
         return;
       }
       if (!defaultTarget) {
-        setToast("当前节点没有可自动提交的主线目标");
+        setToast(t("freezone.shell.noAutoCommitTarget"));
         return;
       }
       void (async () => {
-        setToast("正在写入当前背景…");
+        setToast(t("freezone.shell.writingBackground"));
         try {
           const flushed = await sync.flush();
           if (!flushed) {
-            throw new Error("当前画布未保存成功，处理冲突后再提交");
+            throw new Error(t("freezone.shell.canvasSaveBlocked"));
           }
           const latestData = resolveSubmitNodeData(latestCanvasNodeData(nodeId), data) ?? data;
           const latestSourceUrl =
@@ -814,13 +818,13 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
               : await promoteToAsset(projectId, latestSourceUrl, target, {
                 mark_stale: false,
               });
-          const nodeDataPatch = nodeDataPatchAfterCommittedTarget(latestData, target, result, projectId);
+          const nodeDataPatch = nodeDataPatchAfterCommittedTarget(latestData, target, result, projectId, t);
           if (nodeDataPatch) {
             useCanvasStore.getState().updateNodeData(nodeId, nodeDataPatch);
           }
           const manifestNodeData = nodeDataPatch && hasDirectorWorldSceneState(nodeDataPatch)
             ? nodeDataPatch
-            : sceneDirectorWorldDataForManifest(latestData, target, result, projectId);
+            : sceneDirectorWorldDataForManifest(latestData, target, result, projectId, t);
           if (manifestNodeData && isDirectorWorldSourceSlotTarget(target)) {
             await commitSceneDirectorWorldFromCanvasNode(projectId, {
               kind: "scene_director_world",
@@ -833,8 +837,8 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
           setAssetLibraryReloadToken((token) => token + 1);
           setToast(
             successMessage ??
-              `${renderCommitSuccessMessage(target, result)}${
-                manifestNodeData ? "；已同步导演世界状态" : ""
+              `${renderCommitSuccessMessage(target, result, t)}${
+                manifestNodeData ? t("freezone.commit.success.directorWorldSynced") : ""
               }`,
           );
           void sync.flush();
@@ -843,7 +847,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
         }
       })();
     });
-  }, [projectId, sync]);
+  }, [projectId, sync, t]);
 
   useEffect(() => {
     const unsubscribeSync = canvasEventBus.subscribe(
@@ -904,7 +908,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
         sourceFileName: `${baseLabel}-mask`,
       } as Record<string, unknown>,
     );
-    setToast(`Mask edit 完成 — 新图已入画布`);
+    setToast(t("freezone.shell.maskEditDone"));
     void DEFAULT_NODE_WIDTH; // unused but keep import alive
   };
 
@@ -966,7 +970,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
             onRestoreMainlineDefault={async () => {
               try {
                 await sync.restoreMainlineDefault();
-                setToast("已按当前主流程事实同步主线视图");
+                setToast(t("freezone.shell.mainlineRestored"));
               } catch (err) {
                 setToast(err instanceof Error ? err.message : String(err));
               }
@@ -1529,13 +1533,13 @@ function CanvasConflictOverlay({
   return (
     <div className="absolute inset-0 bg-bg-dark/60 flex items-center justify-center">
       <div className="px-4 py-3 rounded-lg bg-surface border border-amber-400/50 text-sm text-amber-100 max-w-md flex flex-col gap-3">
-        <div className="font-medium">画布保存冲突</div>
+        <div className="font-medium">{t("freezone.shell.conflict.title")}</div>
         <div className="text-text-muted">
-          {error ?? "画布已被其他窗口或用户修改。刷新会丢弃当前本地未保存修改，另存为副本会保留当前画布。"}
+          {error ?? t("freezone.shell.conflict.detail")}
         </div>
         {snapshot && (
           <div className="text-[11px] text-text-muted/80">
-            本地未保存修改已暂存到浏览器，可下载备份后再决定是否刷新。
+            {t("freezone.shell.conflict.snapshotHint")}
           </div>
         )}
         <div className="flex flex-wrap gap-2">
@@ -1544,7 +1548,7 @@ function CanvasConflictOverlay({
             onClick={onRefresh}
             className="px-3 py-1 rounded-md border border-amber-400/40 text-amber-100 hover:bg-amber-400/10 transition-colors"
           >
-            刷新
+            {t("freezone.shell.conflict.refresh")}
           </button>
           <button
             type="button"
@@ -1561,16 +1565,16 @@ function CanvasConflictOverlay({
             className="px-3 py-1 rounded-md border border-cyan-300/45 bg-cyan-400/18 text-cyan-50 shadow-[0_0_18px_rgba(34,211,238,0.12)] transition-colors hover:border-cyan-200/70 hover:bg-cyan-400/28 disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-white/30 disabled:shadow-none"
             title={snapshot ? undefined : t("freezone.canvases.noConflictSnapshot")}
           >
-            {savingCopy ? "保存中..." : "另存为副本"}
+            {savingCopy ? t("freezone.shell.conflict.savingCopy") : t("freezone.shell.conflict.saveCopy")}
           </button>
           {snapshot && (
             <button
               type="button"
               onClick={handleDownload}
               className="px-3 py-1 rounded-md border border-[var(--ui-border-soft)] text-text hover:bg-bg-dark/50 transition-colors"
-              title={`下载本地修改快照（${snapshot.nodes.length} 节点 · ${snapshot.edges.length} 连线）`}
+              title={t("freezone.shell.conflict.downloadTitle", { nodes: snapshot.nodes.length, edges: snapshot.edges.length })}
             >
-              下载本地 JSON
+              {t("freezone.shell.conflict.download")}
             </button>
           )}
         </div>
@@ -1599,14 +1603,15 @@ function BackupStatusIndicator({
 }: {
   status: import("@/api/canvas").CanvasBackupStatus | null;
 }) {
+  const { t } = useTranslation();
   if (status !== "pending" && status !== "failed") {
     return null;
   }
   const isFailed = status === "failed";
-  const label = isFailed ? "云端备份失败" : "云端备份中";
+  const label = isFailed ? t("freezone.shell.backup.failedLabel") : t("freezone.shell.backup.pendingLabel");
   const detail = isFailed
-    ? "本地修改已保存，但云端备份未完成。请保留页面，稍后会自动重试。"
-    : "本地修改已保存，云端备份还在同步中。可以继续编辑。";
+    ? t("freezone.shell.backup.failedDetail")
+    : t("freezone.shell.backup.pendingDetail");
   const palette = isFailed
     ? "border-red-500/45 bg-red-500/10 text-red-200"
     : "border-amber-300/40 bg-amber-300/10 text-amber-100";
@@ -1632,9 +1637,10 @@ function BackupStatusIndicator({
  * 落到它身上的操作都会被随后的 setCanvasData 盖掉。
  */
 function CanvasLoadingScreen() {
+  const { t } = useTranslation();
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-bg-dark cursor-wait text-text-muted text-sm">
-      正在加载画布...
+      {t("freezone.shell.loading")}
     </div>
   );
 }
@@ -1657,10 +1663,11 @@ function CanvasErrorOverlay({
   error: string | null;
   onRetry: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-bg-dark/45 px-6">
       <div className="flex w-full max-w-2xl flex-col gap-3 rounded-xl border border-red-400/25 bg-red-950/[0.14] px-4 py-3 text-sm shadow-[0_18px_60px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-        <div className="font-medium text-red-200">画布同步失败</div>
+        <div className="font-medium text-red-200">{t("freezone.shell.syncFailed")}</div>
         <div className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2 text-xs leading-5 text-red-100/75">
           {error}
         </div>
@@ -1669,7 +1676,7 @@ function CanvasErrorOverlay({
           onClick={onRetry}
           className="self-start rounded-lg border border-red-300/25 bg-red-950/20 px-3 py-1.5 text-xs font-medium text-red-100/80 transition-colors hover:border-red-200/40 hover:bg-red-500/10 hover:text-red-50"
         >
-          重试
+          {t("freezone.shell.retry")}
         </button>
       </div>
     </div>

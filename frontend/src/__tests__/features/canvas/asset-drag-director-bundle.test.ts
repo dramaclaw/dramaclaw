@@ -167,9 +167,10 @@ describe("director bundle canvas assets", () => {
       "utf8",
     );
 
-    expect(dialog).toContain("导演合成资产");
-    expect(shell).toContain("导演合成资产");
-    expect(zh).toContain("导演合成资产");
+    // 文案已搬进词条，源码里只剩 key；措辞本身对着 locale 查。
+    expect(dialog).toContain('t("freezone.commit.success.directorRender"');
+    expect(shell).toContain('t("freezone.commit.success.directorRender"');
+    expect(JSON.parse(zh).freezone.commit.success.directorRender).toContain("导演合成资产");
     expect(dialog).not.toContain("导演合成 bundle");
     expect(shell).not.toContain("导演合成 bundle");
     expect(zh).not.toContain("导演合成 bundle");

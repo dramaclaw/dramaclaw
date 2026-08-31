@@ -14,6 +14,8 @@ import {
 import { promoteToAsset } from "@/features/freezone/commit/promoteToAsset";
 import { assetToPushTarget, completeTarget, inferDefaultTarget } from "@/features/freezone/commit/pushTarget";
 
+import { zhT } from "../../helpers/i18n-fixtures";
+
 describe("CommitDialog target kinds", () => {
   it("hides deprecated and auxiliary scene asset kinds from user selection", () => {
     expect(isUserSelectableCommitKind("scene_360")).toBe(false);
@@ -65,8 +67,9 @@ describe("CommitDialog target kinds", () => {
 
     expect(source).toContain("commitSourceTitle");
     expect(source).toContain('target?.kind === "scene_director_world"');
-    expect(source).toContain("导演世界状态");
-    expect(source).toContain("提交当前导演世界 manifest");
+    // 文案已搬进词条，源码里只剩 key；词条内容由 locale 对齐测试兜底。
+    expect(source).toContain('t("freezone.commit.directorWorldState")');
+    expect(source).toContain('t("freezone.commit.directorWorldManifestHint")');
   });
 
   it("shows model scene targets as scene selection instead of a raw scene_id-only field", () => {
@@ -76,7 +79,7 @@ describe("CommitDialog target kinds", () => {
     );
 
     expect(source).toContain("listScenes(project)");
-    expect(source).toContain('aria-label="场景"');
+    expect(source).toContain('aria-label={t("freezone.commit.sections.scene")}');
     expect(source).toContain("sceneOptionLabel(scene)");
   });
 
@@ -103,6 +106,7 @@ describe("CommitDialog target kinds", () => {
       },
       "/static/u/p/freezone/generated/master_sharp.sog",
       "master_sharp.sog",
+      zhT,
     )).toBe("自定义 3D 世界");
   });
 

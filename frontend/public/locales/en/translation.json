@@ -708,6 +708,167 @@
     },
     "nodeContext": {
       "mainlineAsset": "Mainline asset"
+    },
+    "commit": {
+      "title": "Commit to mainline asset",
+      "projectLine": "Project: {{project}}",
+      "submit": "Commit",
+      "submitting": "Committing",
+      "targetIncomplete": "Target incomplete",
+      "directorWorldState": "Director world state",
+      "directorWorldManifestHint": "Commit the current director world manifest",
+      "modelCommitHint": "Commit the current 3D world to the mainline scene",
+      "loadingBeats": "Loading beats…",
+      "noBeats": "No beats",
+      "loadingIdentities": "Loading identity_id…",
+      "noIdentities": "This character has no identity_id",
+      "sceneIdPlaceholder": "scene_id, e.g. Lanzhou noodle shop",
+      "sceneSlotHint": "Will be written to this scene's asset slot.",
+      "propIdPlaceholder": "prop_id, e.g. cardboard box",
+      "propSlotHint": "Will be written to this prop reference asset slot.",
+      "impactCalculating": "Calculating impact…",
+      "impactCount": "Affects {{count}} shots",
+      "impactMore": "{{count}} more not shown",
+      "markStaleHint": "Mark these shots as needing regeneration after committing; the main pipeline can regenerate them from the mark",
+      "overwriteWarning": "This overwrites the existing asset at “{{target}}”; the original file is kept in history.",
+      "sections": {
+        "targetKind": "Target kind",
+        "targetLocation": "Target location",
+        "impact": "Impact preview",
+        "episode": "Episode",
+        "character": "Character",
+        "scene": "Scene"
+      },
+      "errors": {
+        "loadOptions": "Failed to load options",
+        "loadIdentities": "Failed to load identity_id",
+        "incompleteTarget": "Incomplete target",
+        "noWorldSource": "The “no source” view has no 3D world asset to commit; switch to a concrete world source before committing to a mainline slot.",
+        "noSlotSource": "The current 3D world has no asset for this slot.",
+        "needCanvasNodeState": "Committing a director world requires canvas node state"
+      },
+      "success": {
+        "directorRender": "Committed director composite asset: {{path}} (with clean background and metadata)",
+        "directorWorld": "Committed director world: {{path}}",
+        "default": "Committed to {{path}}",
+        "backupSuffix": " (previous file backed up to {{path}})",
+        "staleSuffix": "; marked {{count}} shots for regeneration",
+        "directorWorldSynced": "; director world state synced"
+      },
+      "mediaKinds": {
+        "image": "Image",
+        "video": "Video",
+        "audio": "Audio",
+        "model": "3D model"
+      },
+      "worldSources": {
+        "master": "Front 3D world",
+        "reverse": "Reverse 3D world",
+        "pano": "360 3D world",
+        "pano360": "360 image",
+        "custom": "Custom 3D world",
+        "uploaded": "Uploaded 3D world",
+        "generic": "3D world"
+      },
+      "kinds": {
+        "frame": "First frame",
+        "sketch": "Sketch",
+        "director_render": "Director composite asset",
+        "selected_background": "Current background",
+        "identity": "Character identity image",
+        "identity_costume": "Identity costume image",
+        "identity_portrait": "Age identity portrait",
+        "portrait": "Character portrait",
+        "scene_master": "Scene master",
+        "scene_reverse_master": "Reverse scene image",
+        "scene_spatial_layout": "Scene Spatial Layout",
+        "scene_360": "Scene 360 (DEPRECATED — use Director Pano 360)",
+        "scene_director_world": "Director world",
+        "scene_director_pano_360": "Director Pano 360 (3GS panorama)",
+        "scene_3gs_active_ply": "3D world (current entry)",
+        "scene_3gs_master_ply": "3D world (front)",
+        "scene_3gs_reverse_ply": "3D world (back)",
+        "scene_3gs_pano_ply": "3D world (360)",
+        "scene_3gs_custom_scene": "3D world (custom scene)",
+        "scene_3gs_collision_glb": "3D world collider",
+        "prop_ref": "Prop Reference",
+        "video": "Video (beat video)",
+        "beat_audio": "Audio (beat audio)"
+      },
+      "shortKinds": {
+        "frame": "First frame",
+        "sketch": "Sketch",
+        "director_render": "Director composite",
+        "selected_background": "Current background",
+        "video": "Video",
+        "beat_audio": "Audio",
+        "identity": "Identity image",
+        "identity_costume": "Identity costume",
+        "identity_portrait": "Age portrait",
+        "portrait": "Portrait",
+        "scene_master": "Scene master",
+        "scene_reverse_master": "Reverse scene",
+        "scene_spatial_layout": "Scene Spatial Layout",
+        "scene_360": "Scene 360",
+        "scene_director_world": "Director world",
+        "scene_director_pano_360": "Director Pano 360",
+        "scene_3gs_active_ply": "3D world (current entry)",
+        "scene_3gs_master_ply": "3D world (front)",
+        "scene_3gs_reverse_ply": "3D world (back)",
+        "scene_3gs_pano_ply": "3D world (360)",
+        "scene_3gs_custom_scene": "3D world (custom scene)",
+        "scene_3gs_collision_glb": "3D world collider",
+        "prop_ref": "Prop reference"
+      },
+      "nodeLabels": {
+        "frame": "Frame",
+        "sketch": "Sketch",
+        "director_render": "Director render",
+        "selected_background": "Current background",
+        "video": "Video",
+        "beat_audio": "Audio",
+        "identity": "Identity",
+        "identity_costume": "Costume",
+        "identity_portrait": "Identity portrait",
+        "portrait": "Character portrait",
+        "scene_master": "Front view",
+        "scene_reverse_master": "Reverse view",
+        "scene_spatial_layout": "Spatial layout",
+        "scene_director_pano_360": "360 image",
+        "scene_3gs_master_ply": "Front world",
+        "scene_3gs_reverse_ply": "Reverse world",
+        "scene_3gs_pano_ply": "360 world",
+        "scene_3gs_custom_scene": "Custom world",
+        "prop_ref": "Prop"
+      },
+      "committedNodeLabel": "Committed · {{label}}"
+    },
+    "shell": {
+      "nodeNoCommittable": "This node has nothing to commit",
+      "canvasSaveBlocked": "The canvas hasn't been saved. Resolve the conflict, then commit again.",
+      "noAutoCommitTarget": "This node has no mainline target to auto-commit to",
+      "writingBackground": "Writing the current background…",
+      "maskEditDone": "Mask edit done — the new image is on the canvas",
+      "mainlineRestored": "Mainline view synced to the current pipeline state",
+      "conflict": {
+        "title": "Canvas save conflict",
+        "detail": "This canvas was changed in another window or by another user. Refreshing discards your unsaved local changes; saving a copy keeps the current canvas.",
+        "snapshotHint": "Your unsaved local changes are stashed in the browser — you can download a backup before deciding whether to refresh.",
+        "refresh": "Refresh",
+        "saveCopy": "Save as copy",
+        "savingCopy": "Saving...",
+        "downloadTitle": "Download local change snapshot ({{nodes}} nodes · {{edges}} edges)",
+        "download": "Download local JSON"
+      },
+      "backup": {
+        "failedLabel": "Cloud backup failed",
+        "pendingLabel": "Backing up to cloud",
+        "failedDetail": "Your changes are saved locally, but the cloud backup didn't finish. Keep this page open — it will retry automatically.",
+        "pendingDetail": "Your changes are saved locally and the cloud backup is still syncing. You can keep editing."
+      },
+      "loading": "Loading canvas...",
+      "syncFailed": "Canvas sync failed",
+      "retry": "Retry"
     }
   },
   "theme": {
@@ -3641,6 +3802,250 @@
       "sourceCanvasHint": "Click a node on the canvas",
       "sourceExternal": "From file",
       "sourceExternalHint": "Upload an asset file from this device"
+    },
+    "capabilities": {
+      "candidateResultTitle": "{{name}} · candidate",
+      "candidateHint": "Candidate generator · becomes an asset only after Commit",
+      "freePrompt": "Free prompt",
+      "common": {
+        "inputs": {
+          "base_ref": {
+            "label": "Primary reference",
+            "description": "The first connected image is used as the edit base; with no image it falls back to text-to-image."
+          },
+          "extra_refs": {
+            "label": "Extra references"
+          }
+        },
+        "params": {
+          "style": {
+            "label": "Style",
+            "options": {
+              "supertale_production": "SuperTale production",
+              "cinematic_realistic": "Cinematic realistic",
+              "clean_sketch": "Clean sketch",
+              "spiderverse_mixed": "Mixed media"
+            }
+          },
+          "notes": {
+            "label": "Extra notes"
+          },
+          "scene_id": {
+            "label": "Scene ID"
+          },
+          "prop_id": {
+            "label": "Prop ID"
+          }
+        }
+      },
+      "real_scene_sketch_repair": {
+        "name": "Real-scene sketch repair",
+        "shortName": "Scene sketch",
+        "description": "Repair the current beat's real-scene sketch using the director-world control frame plus scene/identity references.",
+        "inputs": {
+          "3gs_combined": {
+            "label": "3GS director composite",
+            "description": "The first connected image is the base and controls camera, space and composition."
+          },
+          "scene_refs": {
+            "label": "Scene / identity / prop refs",
+            "description": "Later connected images serve as repair and semantic references."
+          }
+        },
+        "preserve": {
+          "camera": "Original camera / composition",
+          "layout": "Furniture, walls, doors and windows",
+          "identity": "Character identity colors",
+          "props": "Prop colors and placement",
+          "street_mood": "Street-life atmosphere"
+        },
+        "modify": {
+          "deblur": "Fix blur / smeared background",
+          "distortion": "Fix 3GS distortion / stretching",
+          "furniture_detail": "Clean up furniture structure",
+          "actor_blocks": "Blocky actors → clean character line art",
+          "staging_blocks": "Staging blocks → real objects"
+        },
+        "params": {
+          "shot_type": {
+            "label": "Shot size",
+            "options": {
+              "closeup": "Close-up",
+              "medium_closeup": "Medium close-up",
+              "medium": "Medium",
+              "wide": "Wide"
+            }
+          },
+          "angle": {
+            "label": "Angle",
+            "options": {
+              "eye_level": "Eye level",
+              "high": "High angle",
+              "low": "Low angle",
+              "over_shoulder": "Over the shoulder",
+              "reverse": "Reverse"
+            }
+          },
+          "lens": {
+            "label": "Lens",
+            "options": {
+              "24mm": "24mm wide",
+              "35mm": "35mm natural",
+              "50mm": "50mm standard",
+              "85mm": "85mm compressed"
+            }
+          },
+          "lighting": {
+            "label": "Lighting",
+            "options": {
+              "dim_street_warm": "Dim warm street light",
+              "mixed_neon": "Mixed warm/cool neon",
+              "window_daylight": "Natural window light",
+              "hard_toplight": "Hard toplight"
+            }
+          },
+          "preserve": {
+            "label": "Must preserve"
+          },
+          "modify": {
+            "label": "Repair focus"
+          },
+          "notes": {
+            "label": "Extra requirements",
+            "description": "e.g. color the grey background figures too; keep the table's wooden structure."
+          }
+        }
+      },
+      "portrait_from_ref": {
+        "name": "Character identity from reference",
+        "shortName": "Identity",
+        "description": "Generate a portrait / identity candidate from one reference image, then Commit it to the character asset.",
+        "inputs": {
+          "ref_image": {
+            "label": "Reference image",
+            "description": "Reference used to extract face shape, temperament, outfit or pose."
+          },
+          "identity_ref": {
+            "label": "Existing identity image",
+            "description": "When editing an existing identity, connect the canonical identity as a consistency reference."
+          }
+        },
+        "params": {
+          "character": {
+            "label": "Character",
+            "description": "Used only to build the prompt; the write-back target is confirmed at Commit time."
+          },
+          "age_band": {
+            "label": "Age band",
+            "options": {
+              "young": "Young",
+              "middle": "Middle-aged",
+              "old": "Elderly"
+            }
+          },
+          "portrait_style": {
+            "label": "Asset style",
+            "options": {
+              "clean_production_portrait": "Clean production portrait",
+              "cinematic_identity": "Cinematic identity shot",
+              "character_reference_sheet": "Character reference sheet"
+            }
+          },
+          "preserve": {
+            "label": "Preserve",
+            "options": {
+              "face": "Face and features",
+              "hair": "Hairstyle",
+              "temperament": "Temperament",
+              "outfit": "Outfit direction"
+            }
+          },
+          "outfit": {
+            "label": "Outfit notes"
+          },
+          "notes": {
+            "label": "Extra requirements"
+          }
+        }
+      },
+      "character_multi_view_candidate": {
+        "name": "Character multi-view",
+        "shortName": "Multi-view",
+        "description": "Generate a 3-view / 4-view / 9-grid candidate from a character image, then Commit it to an identity or portrait asset.",
+        "inputs": {
+          "character_ref": {
+            "label": "Character reference",
+            "description": "Keeps face shape, hairstyle, outfit and temperament consistent."
+          },
+          "style_ref": {
+            "label": "Style / pose reference",
+            "description": "Optional, adds art style, pose or outfit detail."
+          }
+        },
+        "params": {
+          "character": {
+            "label": "Character",
+            "description": "The target character's name."
+          },
+          "layout": {
+            "label": "Layout",
+            "options": {
+              "three_view": "3-view",
+              "four_view": "4-view",
+              "nine_grid": "9-grid"
+            }
+          },
+          "view_focus": {
+            "label": "Views",
+            "options": {
+              "front": "Front",
+              "side": "Side",
+              "back": "Back",
+              "expression": "Expression",
+              "pose": "Pose",
+              "outfit": "Outfit detail"
+            }
+          },
+          "notes": {
+            "label": "Extra requirements"
+          }
+        }
+      },
+      "scene_master_candidate": {
+        "name": "Scene master candidate",
+        "shortName": "Scene master",
+        "description": "Generate or repair a scene master candidate, then Commit it to the scene_master slot."
+      },
+      "scene_360_candidate": {
+        "name": "Scene 360 candidate",
+        "shortName": "Scene 360",
+        "description": "Generate a 2:1 panorama candidate, then Commit it to the Director Pano 360 slot."
+      },
+      "prop_ref_candidate": {
+        "name": "Prop reference candidate",
+        "shortName": "Prop ref",
+        "description": "Generate a prop reference_3view candidate, then Commit it to the prop_ref slot."
+      },
+      "render_repair_candidate": {
+        "name": "Render repair candidate",
+        "shortName": "Render repair",
+        "description": "Repair the current beat render / director render candidate, then Commit it to the beat slot.",
+        "params": {
+          "repair_focus": {
+            "label": "Repair focus"
+          }
+        }
+      },
+      "video_start_frame_candidate": {
+        "name": "Video start-frame candidate",
+        "shortName": "Start frame",
+        "description": "Generate a video first-frame candidate from a render / extracted frame / reference, then Commit it to the frame slot (the video start frame and the beat first frame are the same file).",
+        "params": {
+          "motion_setup": {
+            "label": "Motion setup"
+          }
+        }
+      }
     }
   },
   "tool": {

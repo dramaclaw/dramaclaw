@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { TFn } from "@/lib/i18n-types";
 
 /**
  * 剧集没有 LLM 标题时，后端回填 `第N集` 当兜底（sqlite_store.py / cognee/store.py
@@ -13,8 +14,6 @@ export function isAutoEpisodeTitle(title: string | null | undefined, num: number
   const matched = AUTO_EPISODE_TITLE.exec(String(title ?? "").trim());
   return matched !== null && Number(matched[1]) === num;
 }
-
-type TFn = (key: string, options?: Record<string, unknown>) => string;
 
 export function episodeDisplayTitle(
   num: number,

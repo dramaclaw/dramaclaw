@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { TFn } from "@/lib/i18n-types";
 
 /**
  * 后端（identity_planner._normalize_age_group_value）把年龄段归一成这四个 code，
@@ -20,8 +21,6 @@ const AGE_GROUP_LABEL_KEYS: Record<AgeGroupCode, string> = {
 export function isAgeGroupCode(value: string | null | undefined): value is AgeGroupCode {
   return AGE_GROUP_CODES.includes(String(value ?? "") as AgeGroupCode);
 }
-
-type TFn = (key: string, options?: Record<string, unknown>) => string;
 
 /** 认得的 code 返回本地化标签；认不得（老数据里直接存了中文）就原样回显。 */
 export function ageGroupLabel(value: string | null | undefined, t: TFn): string {

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { TaskState, TaskStatus } from "./types";
 import { stageForTaskType } from "@/lib/episode-stage-registry";
+import type { TFn } from "@/lib/i18n-types";
 
 export const isTerminal = (t: TaskState): boolean =>
   t.status === "completed" || t.status === "failed" || t.status === "cancelled";
@@ -15,8 +16,6 @@ export const isActive = (t: TaskState): boolean =>
 
 export const ageMs = (t: TaskState, now: number = Date.now()): number =>
   now - Date.parse(t.updated_at);
-
-type TFn = (key: string, options?: Record<string, unknown>) => string;
 
 function isInternalRunScope(scope: string | null | undefined): boolean {
   return /^scene_run_[a-z0-9]+$/i.test(scope ?? "") || /^prop_run_[a-z0-9]+$/i.test(scope ?? "");

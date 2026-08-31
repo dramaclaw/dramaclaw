@@ -708,6 +708,167 @@
     },
     "nodeContext": {
       "mainlineAsset": "主线资产"
+    },
+    "commit": {
+      "title": "提交到主线资产",
+      "projectLine": "项目：{{project}}",
+      "submit": "提交",
+      "submitting": "提交中",
+      "targetIncomplete": "目标未完整",
+      "directorWorldState": "导演世界状态",
+      "directorWorldManifestHint": "提交当前导演世界 manifest",
+      "modelCommitHint": "提交当前 3D 世界到主线场景",
+      "loadingBeats": "加载 beat…",
+      "noBeats": "无 beat",
+      "loadingIdentities": "加载 identity_id…",
+      "noIdentities": "当前角色没有 identity_id",
+      "sceneIdPlaceholder": "scene_id，例如：兰州拉面馆",
+      "sceneSlotHint": "将写入该场景资产槽位。",
+      "propIdPlaceholder": "prop_id，例如：办公纸箱",
+      "propSlotHint": "将写入该道具参考资产槽位。",
+      "impactCalculating": "正在计算影响范围…",
+      "impactCount": "将影响 {{count}} 个镜头",
+      "impactMore": "还有 {{count}} 个未显示",
+      "markStaleHint": "提交后把这些镜头标记为需重生，后续主流程可按标记重生",
+      "overwriteWarning": "将覆盖「{{target}}」已有资产；原文件会保留在历史记录中。",
+      "sections": {
+        "targetKind": "目标类型",
+        "targetLocation": "目标位置",
+        "impact": "影响预览",
+        "episode": "集数",
+        "character": "角色",
+        "scene": "场景"
+      },
+      "errors": {
+        "loadOptions": "加载选项失败",
+        "loadIdentities": "加载 identity_id 失败",
+        "incompleteTarget": "目标不完整",
+        "noWorldSource": "无来源没有可提交的 3D 世界素材；请切换到具体世界来源后再提交到主线槽位。",
+        "noSlotSource": "当前 3D 世界没有可提交到该槽位的素材。",
+        "needCanvasNodeState": "导演世界提交需要画布节点状态"
+      },
+      "success": {
+        "directorRender": "已提交导演合成资产：{{path}}（含纯背景和元数据）",
+        "directorWorld": "已提交导演世界：{{path}}",
+        "default": "已提交到 {{path}}",
+        "backupSuffix": "（旧文件 backup 至 {{path}}）",
+        "staleSuffix": "；已标记 {{count}} 个镜头需重生",
+        "directorWorldSynced": "；已同步导演世界状态"
+      },
+      "mediaKinds": {
+        "image": "图片",
+        "video": "视频",
+        "audio": "音频",
+        "model": "3D 模型"
+      },
+      "worldSources": {
+        "master": "正面 3D 世界",
+        "reverse": "背面 3D 世界",
+        "pano": "360 3D 世界",
+        "pano360": "360 图",
+        "custom": "自定义 3D 世界",
+        "uploaded": "上传 3D 世界",
+        "generic": "3D 世界"
+      },
+      "kinds": {
+        "frame": "首帧",
+        "sketch": "草图",
+        "director_render": "导演合成资产",
+        "selected_background": "当前背景",
+        "identity": "角色身份图",
+        "identity_costume": "身份服装图",
+        "identity_portrait": "年龄身份肖像",
+        "portrait": "角色肖像",
+        "scene_master": "场景主图",
+        "scene_reverse_master": "反面场景图",
+        "scene_spatial_layout": "Scene Spatial Layout（空间布局图）",
+        "scene_360": "Scene 360（已废弃 — 请用 Director Pano 360）",
+        "scene_director_world": "导演世界",
+        "scene_director_pano_360": "Director Pano 360（3GS 全景图）",
+        "scene_3gs_active_ply": "3D 世界（当前入口）",
+        "scene_3gs_master_ply": "3D 世界（正面）",
+        "scene_3gs_reverse_ply": "3D 世界（背面）",
+        "scene_3gs_pano_ply": "3D 世界（360）",
+        "scene_3gs_custom_scene": "3D 世界（自定义场景）",
+        "scene_3gs_collision_glb": "3D 世界碰撞体",
+        "prop_ref": "Prop Reference（道具参考）",
+        "video": "Video（beat 视频）",
+        "beat_audio": "Audio（beat 音频）"
+      },
+      "shortKinds": {
+        "frame": "首帧",
+        "sketch": "草图",
+        "director_render": "导演合成资产",
+        "selected_background": "当前背景",
+        "video": "视频",
+        "beat_audio": "音频",
+        "identity": "角色身份图",
+        "identity_costume": "身份服装图",
+        "identity_portrait": "年龄身份肖像",
+        "portrait": "角色肖像",
+        "scene_master": "场景主图",
+        "scene_reverse_master": "反面场景图",
+        "scene_spatial_layout": "Scene Spatial Layout",
+        "scene_360": "Scene 360",
+        "scene_director_world": "导演世界",
+        "scene_director_pano_360": "Director Pano 360",
+        "scene_3gs_active_ply": "3D 世界（当前入口）",
+        "scene_3gs_master_ply": "3D 世界（正面）",
+        "scene_3gs_reverse_ply": "3D 世界（背面）",
+        "scene_3gs_pano_ply": "3D 世界（360）",
+        "scene_3gs_custom_scene": "3D 世界（自定义场景）",
+        "scene_3gs_collision_glb": "3D 世界碰撞体",
+        "prop_ref": "道具参考"
+      },
+      "nodeLabels": {
+        "frame": "分镜",
+        "sketch": "草图",
+        "director_render": "导演合成图",
+        "selected_background": "当前背景",
+        "video": "视频",
+        "beat_audio": "音频",
+        "identity": "身份",
+        "identity_costume": "服装",
+        "identity_portrait": "身份头像",
+        "portrait": "角色头像",
+        "scene_master": "正面图",
+        "scene_reverse_master": "背面图",
+        "scene_spatial_layout": "空间布局图",
+        "scene_director_pano_360": "360图",
+        "scene_3gs_master_ply": "正面世界",
+        "scene_3gs_reverse_ply": "背面世界",
+        "scene_3gs_pano_ply": "360世界",
+        "scene_3gs_custom_scene": "自定义世界",
+        "prop_ref": "道具"
+      },
+      "committedNodeLabel": "已提交 · {{label}}"
+    },
+    "shell": {
+      "nodeNoCommittable": "当前节点没有可提交的内容",
+      "canvasSaveBlocked": "当前画布未保存成功，处理冲突后再提交",
+      "noAutoCommitTarget": "当前节点没有可自动提交的主线目标",
+      "writingBackground": "正在写入当前背景…",
+      "maskEditDone": "Mask edit 完成 — 新图已入画布",
+      "mainlineRestored": "已按当前主流程事实同步主线视图",
+      "conflict": {
+        "title": "画布保存冲突",
+        "detail": "画布已被其他窗口或用户修改。刷新会丢弃当前本地未保存修改，另存为副本会保留当前画布。",
+        "snapshotHint": "本地未保存修改已暂存到浏览器，可下载备份后再决定是否刷新。",
+        "refresh": "刷新",
+        "saveCopy": "另存为副本",
+        "savingCopy": "保存中...",
+        "downloadTitle": "下载本地修改快照（{{nodes}} 节点 · {{edges}} 连线）",
+        "download": "下载本地 JSON"
+      },
+      "backup": {
+        "failedLabel": "云端备份失败",
+        "pendingLabel": "云端备份中",
+        "failedDetail": "本地修改已保存，但云端备份未完成。请保留页面，稍后会自动重试。",
+        "pendingDetail": "本地修改已保存，云端备份还在同步中。可以继续编辑。"
+      },
+      "loading": "正在加载画布...",
+      "syncFailed": "画布同步失败",
+      "retry": "重试"
     }
   },
   "theme": {
@@ -3641,6 +3802,250 @@
       "sourceCanvasHint": "在画布上点选一个节点",
       "sourceExternal": "外部参考",
       "sourceExternalHint": "从本地上传素材文件"
+    },
+    "capabilities": {
+      "candidateResultTitle": "{{name}} · 候选",
+      "candidateHint": "候选图能力 · Commit 后才成为资产",
+      "freePrompt": "自由提示词",
+      "common": {
+        "inputs": {
+          "base_ref": {
+            "label": "主参考图",
+            "description": "第一张连入图会作为 edit base；不连图时走 text-to-image。"
+          },
+          "extra_refs": {
+            "label": "辅助参考"
+          }
+        },
+        "params": {
+          "style": {
+            "label": "风格",
+            "options": {
+              "supertale_production": "SuperTale 生产风格",
+              "cinematic_realistic": "影视写实",
+              "clean_sketch": "干净线稿",
+              "spiderverse_mixed": "混合媒介"
+            }
+          },
+          "notes": {
+            "label": "补充要求"
+          },
+          "scene_id": {
+            "label": "场景 ID"
+          },
+          "prop_id": {
+            "label": "道具 ID"
+          }
+        }
+      },
+      "real_scene_sketch_repair": {
+        "name": "实景草图修复",
+        "shortName": "实景草图",
+        "description": "用导演世界 control frame 和场景/身份参考修复当前 beat 的实景草图。",
+        "inputs": {
+          "3gs_combined": {
+            "label": "3GS 导演合成图",
+            "description": "第一张连入图会作为 base，控制机位、空间和构图。"
+          },
+          "scene_refs": {
+            "label": "场景/身份/道具参考",
+            "description": "后续连入图作为修复和语义参考。"
+          }
+        },
+        "preserve": {
+          "camera": "原始机位 / 构图",
+          "layout": "桌椅 / 墙面 / 门窗位置",
+          "identity": "人物身份颜色",
+          "props": "道具颜色和位置",
+          "street_mood": "市井氛围"
+        },
+        "modify": {
+          "deblur": "修复模糊 / 糊成一片的背景",
+          "distortion": "修复 3GS 畸变 / 拉伸",
+          "furniture_detail": "补清桌椅结构",
+          "actor_blocks": "方块人转干净角色线稿",
+          "staging_blocks": "占位块转真实物体"
+        },
+        "params": {
+          "shot_type": {
+            "label": "景别",
+            "options": {
+              "closeup": "特写",
+              "medium_closeup": "近景",
+              "medium": "中景",
+              "wide": "全景"
+            }
+          },
+          "angle": {
+            "label": "角度",
+            "options": {
+              "eye_level": "平视",
+              "high": "俯拍",
+              "low": "仰拍",
+              "over_shoulder": "过肩",
+              "reverse": "反打"
+            }
+          },
+          "lens": {
+            "label": "镜头",
+            "options": {
+              "24mm": "24mm 广角",
+              "35mm": "35mm 自然",
+              "50mm": "50mm 标准",
+              "85mm": "85mm 压缩"
+            }
+          },
+          "lighting": {
+            "label": "光线",
+            "options": {
+              "dim_street_warm": "昏暗市井暖光",
+              "mixed_neon": "冷暖混合霓虹",
+              "window_daylight": "自然窗光",
+              "hard_toplight": "顶灯硬光"
+            }
+          },
+          "preserve": {
+            "label": "必须保持"
+          },
+          "modify": {
+            "label": "重点修复"
+          },
+          "notes": {
+            "label": "补充要求",
+            "description": "例如：后排灰色人物也要上色，桌子必须保持木质结构。"
+          }
+        }
+      },
+      "portrait_from_ref": {
+        "name": "从参考图生成角色身份",
+        "shortName": "角色身份",
+        "description": "基于一张参考图生成角色 portrait / identity 候选，输出后再 Commit 到角色资产。",
+        "inputs": {
+          "ref_image": {
+            "label": "参考图",
+            "description": "用于提取人物脸型、气质、服饰或姿态的参考图。"
+          },
+          "identity_ref": {
+            "label": "已有身份图",
+            "description": "如果是修改已有角色身份，可额外接入 canonical identity 作为一致性参考。"
+          }
+        },
+        "params": {
+          "character": {
+            "label": "角色",
+            "description": "例如：杜晨。这里只用于生成提示词；写回目标在 Commit 时确认。"
+          },
+          "age_band": {
+            "label": "年龄阶段",
+            "options": {
+              "young": "青年",
+              "middle": "中年",
+              "old": "老年"
+            }
+          },
+          "portrait_style": {
+            "label": "资产风格",
+            "options": {
+              "clean_production_portrait": "干净生产 portrait",
+              "cinematic_identity": "影视身份照",
+              "character_reference_sheet": "角色参考图"
+            }
+          },
+          "preserve": {
+            "label": "保留",
+            "options": {
+              "face": "脸型五官",
+              "hair": "发型",
+              "temperament": "气质",
+              "outfit": "服装方向"
+            }
+          },
+          "outfit": {
+            "label": "服装补充"
+          },
+          "notes": {
+            "label": "额外要求"
+          }
+        }
+      },
+      "character_multi_view_candidate": {
+        "name": "角色多视图生成",
+        "shortName": "角色多视图",
+        "description": "基于角色图生成三视图/四视图/九宫格候选，满意后 Commit 到 identity 或 portrait 资产。",
+        "inputs": {
+          "character_ref": {
+            "label": "角色参考图",
+            "description": "用于保持角色脸型、发型、服装和气质一致。"
+          },
+          "style_ref": {
+            "label": "风格/姿态参考",
+            "description": "可选，用于补充画风、姿态或服装细节。"
+          }
+        },
+        "params": {
+          "character": {
+            "label": "角色",
+            "description": "例如：杜晨。"
+          },
+          "layout": {
+            "label": "布局",
+            "options": {
+              "three_view": "三视图",
+              "four_view": "四视图",
+              "nine_grid": "九宫格"
+            }
+          },
+          "view_focus": {
+            "label": "视图内容",
+            "options": {
+              "front": "正面",
+              "side": "侧面",
+              "back": "背面",
+              "expression": "表情",
+              "pose": "动作姿态",
+              "outfit": "服装细节"
+            }
+          },
+          "notes": {
+            "label": "额外要求"
+          }
+        }
+      },
+      "scene_master_candidate": {
+        "name": "场景主图候选",
+        "shortName": "场景主图",
+        "description": "生成或修复 scene master 候选图，满意后 Commit 到 scene_master slot。"
+      },
+      "scene_360_candidate": {
+        "name": "场景 360 候选",
+        "shortName": "场景360",
+        "description": "生成 2:1 场景全景候选图，满意后 Commit 到 Director Pano 360 slot。"
+      },
+      "prop_ref_candidate": {
+        "name": "道具参考候选",
+        "shortName": "道具参考",
+        "description": "生成道具 reference_3view 候选图，满意后 Commit 到 prop_ref slot。"
+      },
+      "render_repair_candidate": {
+        "name": "Render 修复候选",
+        "shortName": "Render修复",
+        "description": "修复当前 beat render / director render 候选图，满意后 Commit 到 beat slot。",
+        "params": {
+          "repair_focus": {
+            "label": "修复重点"
+          }
+        }
+      },
+      "video_start_frame_candidate": {
+        "name": "视频起手帧候选",
+        "shortName": "起手帧",
+        "description": "从 render / 抽帧 / 参考图生成视频首帧候选，满意后 Commit 到 frame slot（视频起手帧 = beat 首帧，同一份文件）。",
+        "params": {
+          "motion_setup": {
+            "label": "运动起势"
+          }
+        }
+      }
     }
   },
   "tool": {
