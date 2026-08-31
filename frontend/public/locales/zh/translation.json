@@ -4224,6 +4224,48 @@
         "choose": "请选择",
         "submit": "上传",
         "submitCount": "上传 {{count}} 项"
+      },
+      "category": {
+        "other": "其它",
+        "character": "人物",
+        "scene": "场景",
+        "prop": "物品",
+        "style": "风格",
+        "audio": "音效"
+      },
+      "source": {
+        "upload": "上传",
+        "character": "人物",
+        "scene": "场景",
+        "prop": "道具"
+      },
+      "folder": {
+        "mainline": "主线"
+      },
+      "media": {
+        "image": "图片",
+        "video": "视频",
+        "audio": "音频"
+      },
+      "preview": {
+        "closeAria": "关闭资产详情",
+        "dialogAria": "资产详情",
+        "mainlineHint": "主线同步资产需回到对应主线内容中维护"
+      },
+      "cover": {
+        "title": "修改封面",
+        "titleWithFolder": "修改封面 · {{name}}",
+        "empty": "这个文件夹里还没有图片素材，先上传一张再来设封面。",
+        "pickAria": "选择封面 {{name}}"
+      },
+      "audioPlay": "播放",
+      "audioPause": "暂停",
+      "audioProgress": "播放进度",
+      "folderDialog": {
+        "fieldLabel": "文件夹名称",
+        "placeholder": "请输入文件夹名称",
+        "createHint": "创建后可立即用于归档和上传资产",
+        "renameHint": "修改后会同步更新资产库中的显示名称"
       }
     },
     "referencePick": {

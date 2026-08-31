@@ -80,8 +80,8 @@ export function AssetLibraryBrowser({
   const foldersQuery = useFreezoneAssetLibraryFolders(project);
   const items = useMemo(() => libraryQuery.data ?? [], [libraryQuery.data]);
   const folders = useMemo(
-    () => buildAssetFolders(items, foldersQuery.data ?? []),
-    [items, foldersQuery.data],
+    () => buildAssetFolders(items, t, foldersQuery.data ?? []),
+    [items, t, foldersQuery.data],
   );
   const openFolder = openKey
     ? (folders.find((folder) => folder.key === openKey) ?? null)
@@ -301,6 +301,7 @@ export function AssetLibraryBrowser({
       <AssetLibraryNewFolderDialog
         open={Boolean(renameEntry)}
         title={t("canvas.assetLibrary.rename")}
+        mode="rename"
         fieldLabel={t("freezone.assetBrowser.assetName")}
         placeholder={t("freezone.assetBrowser.assetNamePlaceholder")}
         maxLength={LIBRARY_ITEM_NAME_MAX_LEN}

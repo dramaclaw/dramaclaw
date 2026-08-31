@@ -680,8 +680,8 @@ export function AssetLibraryPanel({
       const target = assetToPushTarget(asset.source);
       if (!target) {
         const src = asset.source as Record<string, unknown>;
-        // i18n-exempt —— 开发者日志，不进界面
-        console.warn("[freezone] 无法推断替换目标", asset.label, asset.source);
+        // 开发者日志，不进界面
+        console.warn("[freezone] 无法推断替换目标", asset.label, asset.source); // i18n-exempt
         onReplaced?.(
           null,
           t(`${A}.replaceTargetUnknown`, {

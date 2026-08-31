@@ -454,7 +454,9 @@ export function AssetLibraryUploadDialog({
                         : 'text-muted-foreground'
                     }
                   >
-                    {selectedCategory?.label ?? t('canvas.assetLibrary.upload.choose')}
+                    {selectedCategory
+                      ? t(selectedCategory.labelKey)
+                      : t('canvas.assetLibrary.upload.choose')}
                   </span>
                   {categoryOpen ? (
                     <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
@@ -478,7 +480,7 @@ export function AssetLibraryUploadDialog({
                             : 'text-muted-foreground'
                         }`}
                       >
-                        <span>{item.label}</span>
+                        <span>{t(item.labelKey)}</span>
                         {item.key === category ? (
                           <Check className="h-3.5 w-3.5 text-primary" />
                         ) : null}

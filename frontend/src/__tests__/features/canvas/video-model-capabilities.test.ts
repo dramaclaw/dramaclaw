@@ -478,8 +478,18 @@ describe("HappyHorse 单图默认模式", () => {
       "src/features/canvas/nodes/VideoOperationsPanel.tsx",
       "utf8",
     );
-    expect(source).toContain('if (images === 0) return "需要连接图片节点（1~9个）";');
-    expect(source).toContain('if (images > 9) return "「图片参考」最多支持 9 张图片";');
+    // 文案已入词条，所以这里认 key；措辞另从 zh 词条里对，两头都不会悄悄漂。
+    expect(source).toContain(
+      'if (images === 0) return t("node.videoOps.modeDisabled.needImages1to9");',
+    );
+    expect(source).toContain(
+      'if (images > 9) return t("node.videoOps.modeDisabled.imageReferenceMax9");',
+    );
+    const zh = JSON.parse(readFileSync("public/locales/zh/translation.json", "utf8"));
+    expect(zh.node.videoOps.modeDisabled.needImages1to9).toBe("需要连接图片节点（1~9个）");
+    expect(zh.node.videoOps.modeDisabled.imageReferenceMax9).toBe(
+      "「图片参考」最多支持 9 张图片",
+    );
   });
 });
 

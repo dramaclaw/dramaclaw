@@ -4224,6 +4224,48 @@
         "choose": "Choose",
         "submit": "Upload",
         "submitCount": "Upload {{count}}"
+      },
+      "category": {
+        "other": "Other",
+        "character": "Characters",
+        "scene": "Scenes",
+        "prop": "Props",
+        "style": "Styles",
+        "audio": "Audio"
+      },
+      "source": {
+        "upload": "Upload",
+        "character": "Character",
+        "scene": "Scene",
+        "prop": "Prop"
+      },
+      "folder": {
+        "mainline": "Mainline"
+      },
+      "media": {
+        "image": "Image",
+        "video": "Video",
+        "audio": "Audio"
+      },
+      "preview": {
+        "closeAria": "Close asset details",
+        "dialogAria": "Asset details",
+        "mainlineHint": "Assets synced from the mainline must be edited in the mainline content they come from"
+      },
+      "cover": {
+        "title": "Change cover",
+        "titleWithFolder": "Change cover · {{name}}",
+        "empty": "This folder has no images yet — upload one first, then set a cover.",
+        "pickAria": "Use {{name}} as cover"
+      },
+      "audioPlay": "Play",
+      "audioPause": "Pause",
+      "audioProgress": "Playback progress",
+      "folderDialog": {
+        "fieldLabel": "Folder name",
+        "placeholder": "Enter a folder name",
+        "createHint": "Ready to use for filing and uploading assets as soon as it exists",
+        "renameHint": "The new name shows up across the asset library"
       }
     },
     "referencePick": {

@@ -54,13 +54,13 @@ import {
   ASSET_CATEGORIES,
   ASSET_LIBRARY_CARD_CLASS,
   ASSET_LIBRARY_CARD_HOVER_CLASS,
-  SOURCE_LABEL,
+  SOURCE_LABEL_KEYS,
   buildAssetFolders,
   folderCoverUrl,
   formatFolderDate,
   libraryItemDownloadFilename,
   normalizeLibraryList,
-  systemFolderLabel,
+  systemFolderLabelKey,
   type AssetCategory,
   type AssetFolder,
   type AssetFolderKey,
@@ -538,8 +538,8 @@ export function AssetLibraryModal({
 
   // 左侧文件夹导航与常驻面板「资产库」tab 共用同一套分法（见 buildAssetFolders）。
   const folders = useMemo(
-    () => buildAssetFolders(allowedItems, customFolders),
-    [allowedItems, customFolders],
+    () => buildAssetFolders(allowedItems, t, customFolders),
+    [allowedItems, t, customFolders],
   );
   const uploadableFolders = useMemo(
     () => folders.filter((folder) => folder.uploadable),
@@ -558,7 +558,9 @@ export function AssetLibraryModal({
     if (!pendingUploads.some((p) => p.folder === activeFolderKey)) return null;
     const placeholder: AssetFolder = {
       key: activeFolderKey,
-      label: systemFolderLabel(activeFolderKey) ?? activeFolderKey,
+      label: systemFolderLabelKey(activeFolderKey)
+        ? t(systemFolderLabelKey(activeFolderKey) as string)
+        : activeFolderKey,
       items: [],
       system: true,
       uploadable: true,
@@ -627,7 +629,7 @@ export function AssetLibraryModal({
     }
     if (activeFolder) return null;
     if (category) {
-      return { folder: category.key, category: category.key, label: category.label };
+      return { folder: category.key, category: category.key, label: t(category.labelKey) };
     }
     return {
       folder: 'other',
@@ -764,7 +766,7 @@ export function AssetLibraryModal({
     { key: ALL_CATEGORY_KEY, label: t('canvas.assetLibrary.allCategories') },
     ...categories.map((category) => ({
       key: category.key,
-      label: category.label,
+      label: t(category.labelKey),
     })),
   ];
   const activeScopeLabel = activeFolder?.label ?? t('canvas.assetLibrary.allAssets');
@@ -1167,7 +1169,7 @@ export function AssetLibraryModal({
                   {/* Source badge top-right */}
                   {entry.source !== 'upload' && (
                     <span className="pointer-events-none absolute right-2 top-2 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white/90">
-                      {SOURCE_LABEL[entry.source]}
+                      {t(SOURCE_LABEL_KEYS[entry.source])}
                     </span>
                   )}
 
@@ -1341,6 +1343,7 @@ export function AssetLibraryModal({
       <AssetLibraryNewFolderDialog
         open={Boolean(renameFolder)}
         title={t('canvas.assetLibrary.rename')}
+        mode="rename"
         initialName={renameFolder?.label ?? ''}
         onClose={() => setRenameFolderKey(null)}
         onSubmit={async (name) => {
