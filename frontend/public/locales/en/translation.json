@@ -5391,7 +5391,8 @@
       "placeholderAudio": "Audio",
       "placeholderScript": "Script",
       "betaTag": "Beta",
-      "videoCompose": "Video Compose"
+      "videoCompose": "Video Compose",
+      "previz": "Previz Stage"
     },
     "imageNode": {
       "title": "Image Node",
@@ -7402,5 +7403,21 @@
     "reload": "Reload",
     "statusUnknown": "Can't confirm feature availability right now. Please try again later.",
     "unavailableTitle": "Feature unavailable"
+  },
+  "previz": {
+    "node": {
+      "open": "Open Previz Stage",
+      "hint": "Block out a scene in 3D and capture it from multiple angles",
+      "empty": "No scene yet",
+      "summary": "{{objects}} objects · {{frames}} frames",
+      "versionTooNew": "This scene was written by a newer version. Update before opening it."
+    },
+    "editor": {
+      "title": "Previz Stage",
+      "description": "Block out a scene in 3D, place cameras, and capture multiple angles",
+      "close": "Close previz stage",
+      "duration": "{{frames}} frames",
+      "sceneTooLarge": "The scene is too large to save. Remove some objects and try again."
+    }
   }
 }
