@@ -43,12 +43,19 @@ describe("previz store", () => {
     expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(300);
   });
 
+  // 栈空时必须是「引用恒等的真空操作」：不止场景没变，dirty / past / future 也
+  // 一个都不许动。只断言 durationFrames 的话，`set({ dirty: true })` 后再 return
+  // 的实现照样全绿——用例名也就名不副实了。
   it("ignores undo and redo when there is nothing to move to", () => {
+    const before = usePrevizStore.getState();
+
     usePrevizStore.getState().undo();
     expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
 
     usePrevizStore.getState().redo();
     expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
+
+    expect(usePrevizStore.getState()).toBe(before);
   });
 
   it("drops the redo stack after a new edit", () => {
