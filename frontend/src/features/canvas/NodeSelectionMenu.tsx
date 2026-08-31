@@ -90,7 +90,7 @@ export function NodeSelectionMenu({
     const items: ReferenceGenerateAction[] = [
       {
         key: 'text',
-        label: '文本',
+        label: t('node.menu.textAnnotation'),
         Icon: Type,
         type: allowedTypeSet.has(CANVAS_NODE_TYPES.textAnnotation)
           ? CANVAS_NODE_TYPES.textAnnotation
@@ -99,7 +99,7 @@ export function NodeSelectionMenu({
       },
       {
         key: 'image',
-        label: '图片',
+        label: t('node.menu.image'),
         Icon: Image,
         // 创建顺序：imageGen（默认生成节点） → imageEdit（编辑节点） →
         // upload（纯上传节点，目标端创建参考图时用）。
@@ -117,7 +117,7 @@ export function NodeSelectionMenu({
       },
       {
         key: 'video',
-        label: '视频',
+        label: t('node.menu.video'),
         Icon: Video,
         type: allowedTypeSet.has(CANVAS_NODE_TYPES.video)
           ? CANVAS_NODE_TYPES.video
@@ -126,7 +126,7 @@ export function NodeSelectionMenu({
       },
       {
         key: 'audio',
-        label: '音频',
+        label: t('node.menu.audio'),
         Icon: Music,
         type: allowedTypeSet.has(CANVAS_NODE_TYPES.audio)
           ? CANVAS_NODE_TYPES.audio
@@ -135,7 +135,7 @@ export function NodeSelectionMenu({
       },
       {
         key: 'script',
-        label: '脚本',
+        label: t('node.menu.script'),
         Icon: FileText,
         type: allowedTypeSet.has(CANVAS_NODE_TYPES.script)
           ? CANVAS_NODE_TYPES.script
@@ -144,7 +144,7 @@ export function NodeSelectionMenu({
       },
       {
         key: 'pano360',
-        label: '360° 全景',
+        label: t('node.menu.pano360Viewer'),
         Icon: Globe,
         type: allowedTypeSet.has(CANVAS_NODE_TYPES.pano360Viewer)
           ? CANVAS_NODE_TYPES.pano360Viewer
@@ -153,7 +153,7 @@ export function NodeSelectionMenu({
       },
       {
         key: 'threeDWorld',
-        label: '3D 世界',
+        label: t('node.displayName.threeDWorldNode'),
         Icon: Orbit,
         type: allowedTypeSet.has(CANVAS_NODE_TYPES.threeDWorld)
           ? CANVAS_NODE_TYPES.threeDWorld
@@ -165,7 +165,7 @@ export function NodeSelectionMenu({
 
     const enabled = items.filter((item) => !item.disabled && item.type);
     return enabled.length > 0 ? enabled : null;
-  }, [allowedTypeSet]);
+  }, [allowedTypeSet, t]);
 
   const skillGroups = useMemo(() => {
     if (!skillItems || skillItems.length === 0) {
@@ -346,7 +346,7 @@ export function NodeSelectionMenu({
         <div className="ui-scrollbar max-h-[min(560px,70vh)] overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
         {referenceGenerateItems ? (
           <>
-            <CanvasMenuSectionHeader label="引用该节点生成" className="pb-4" />
+            <CanvasMenuSectionHeader label={t('canvas.nodeMenu.referenceGenerate')} className="pb-4" />
             <div className="grid grid-cols-4 justify-items-center gap-x-2 gap-y-5">
               {referenceGenerateItems.map((item, index) => {
                 const Icon = item.Icon;
@@ -420,7 +420,7 @@ export function NodeSelectionMenu({
                           {translateSkillProviderLabel(group.provider, t)}
                         </div>
                         <div className="text-[11px] leading-4 text-white/35">
-                          {group.items.length} 个技能
+                          {t('canvas.nodeMenu.skillCount', { count: group.items.length })}
                         </div>
                       </div>
                       <ChevronRight className="h-4 w-4 shrink-0 text-white/35" />

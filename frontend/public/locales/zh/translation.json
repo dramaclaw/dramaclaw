@@ -4535,6 +4535,42 @@
       "fitWindow": "适应窗口",
       "color": "颜色",
       "clear": "清空"
+    },
+    "nodeMenu": {
+      "referenceGenerate": "引用该节点生成",
+      "skillCount": "{{count}} 个技能"
+    },
+    "multiSelect": {
+      "arrange": "排列",
+      "duplicate": "创建副本",
+      "batchDownload": "批量下载",
+      "group": "打组",
+      "mergeStoryboard": "合并分镜组",
+      "mergeStoryboardHint": "分镜组仅支持图片节点，且组内节点数量不可超过25个",
+      "deleteAllLocked": "所选节点均为主线锁定节点，不可删除",
+      "deleteCount": "删除 {{count}} 个节点",
+      "batchDelete": "批量删除",
+      "arrangeGrid": "宫格排列",
+      "arrangeHorizontal": "水平排列",
+      "arrangeVertical": "垂直排列"
+    },
+    "nodeToolbar": {
+      "mainlineLocked": "主线投影 · 锁定",
+      "openWorkbench": "打开工作台",
+      "openingWorkbench": "打开中...",
+      "beatContext": "镜头上下文",
+      "beatContextHint": "创建或定位这个素材对应的镜头上下文节点；不会自动连线",
+      "beatContextName": "镜头上下文 · EP{{episode}}/B{{beat}}",
+      "audioSuffix": "背景音",
+      "silentSuffix": "无声",
+      "groupBackground": "组背景色",
+      "backgroundColor": "背景色",
+      "noColor": "无",
+      "arrangeMode": "排列方式",
+      "arrangeGrid": "网格",
+      "arrangeHorizontal": "横向排列",
+      "arrangeVertical": "纵向排列",
+      "commitHint": "把当前节点的内容写回主流程资产"
     }
   },
   "tool": {

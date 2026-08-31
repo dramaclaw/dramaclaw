@@ -4535,6 +4535,42 @@
       "fitWindow": "Fit to window",
       "color": "Color",
       "clear": "Clear"
+    },
+    "nodeMenu": {
+      "referenceGenerate": "Generate from this node",
+      "skillCount": "{{count}} skills"
+    },
+    "multiSelect": {
+      "arrange": "Arrange",
+      "duplicate": "Duplicate",
+      "batchDownload": "Download all",
+      "group": "Group",
+      "mergeStoryboard": "Merge into storyboard",
+      "mergeStoryboardHint": "Storyboard groups take image nodes only, and at most 25 of them",
+      "deleteAllLocked": "Every selected node is mainline-locked and cannot be deleted",
+      "deleteCount": "Delete {{count}} nodes",
+      "batchDelete": "Delete all",
+      "arrangeGrid": "Grid layout",
+      "arrangeHorizontal": "Horizontal layout",
+      "arrangeVertical": "Vertical layout"
+    },
+    "nodeToolbar": {
+      "mainlineLocked": "Mainline projection · locked",
+      "openWorkbench": "Open workbench",
+      "openingWorkbench": "Opening...",
+      "beatContext": "Shot context",
+      "beatContextHint": "Create or focus the shot-context node for this asset; no edge is drawn automatically",
+      "beatContextName": "Shot context · EP{{episode}}/B{{beat}}",
+      "audioSuffix": "audio",
+      "silentSuffix": "silent",
+      "groupBackground": "Group background",
+      "backgroundColor": "Background",
+      "noColor": "None",
+      "arrangeMode": "Arrangement",
+      "arrangeGrid": "Grid",
+      "arrangeHorizontal": "Horizontal",
+      "arrangeVertical": "Vertical",
+      "commitHint": "Write this node's content back to the mainline asset"
     }
   },
   "tool": {
