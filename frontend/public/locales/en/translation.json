@@ -4571,6 +4571,34 @@
       "arrangeHorizontal": "Horizontal",
       "arrangeVertical": "Vertical",
       "commitHint": "Write this node's content back to the mainline asset"
+    },
+    "style": {
+      "chip": "Style",
+      "chipLoading": "Style · loading",
+      "chipLoadingTitle": "Loading the style list",
+      "chipFailed": "Style · load failed",
+      "chipFailedTitle": "The style list did not load — click to retry. Any style you already picked is still sent with the generation.",
+      "chipMissing": "Style · unavailable",
+      "chipMissingTitle": "This style has been retired — click to pick another one.",
+      "thumbAria": "Style {{label}}",
+      "clear": "Clear style",
+      "select": "Select a style",
+      "change": "Change style",
+      "placeholderNone": "No style selected",
+      "placeholderLoading": "Loading…",
+      "placeholderFailed": "Failed to load the style list — click to retry",
+      "placeholderMissing": "This style is unavailable — click to pick another",
+      "noImageUpstream": "No image node connected"
+    },
+    "styleGallery": {
+      "title": "Style gallery",
+      "all": "All",
+      "other": "Other",
+      "sampleAlt": "{{label}} sample {{index}}",
+      "detailAria": "View {{label}} details",
+      "useAria": "Use {{label}}",
+      "loading": "Loading…",
+      "empty": "No style templates yet"
     }
   },
   "tool": {

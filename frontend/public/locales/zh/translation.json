@@ -4571,6 +4571,34 @@
       "arrangeHorizontal": "横向排列",
       "arrangeVertical": "纵向排列",
       "commitHint": "把当前节点的内容写回主流程资产"
+    },
+    "style": {
+      "chip": "风格",
+      "chipLoading": "风格 · 加载中",
+      "chipLoadingTitle": "风格清单加载中",
+      "chipFailed": "风格 · 加载失败",
+      "chipFailedTitle": "风格清单没拉到,点一下重试;已选的风格仍会随生成提交",
+      "chipMissing": "风格 · 已失效",
+      "chipMissingTitle": "这个风格已经下线了,点一下重新选一个",
+      "thumbAria": "风格 {{label}}",
+      "clear": "清除风格",
+      "select": "选择风格",
+      "change": "更换风格",
+      "placeholderNone": "未选择风格",
+      "placeholderLoading": "加载中…",
+      "placeholderFailed": "风格清单加载失败，点一下重试",
+      "placeholderMissing": "风格已失效，点一下重选",
+      "noImageUpstream": "未连接图片节点"
+    },
+    "styleGallery": {
+      "title": "风格图墙",
+      "all": "全部",
+      "other": "其他",
+      "sampleAlt": "{{label}} 示例 {{index}}",
+      "detailAria": "查看{{label}}详情",
+      "useAria": "使用{{label}}",
+      "loading": "加载中…",
+      "empty": "暂无风格模板"
     }
   },
   "tool": {
