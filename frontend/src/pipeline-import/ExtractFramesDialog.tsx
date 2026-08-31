@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { Clapperboard, FileVideo, Loader2, Upload, X } from "lucide-react";
 
 import {
@@ -58,6 +59,7 @@ export function ExtractFramesDialog({
   onDone,
   onFramesReady,
 }: ExtractFramesDialogProps) {
+  const { t } = useTranslation();
   const [file, setFile] = useState<File | null>(null);
   const [maxFrames, setMaxFrames] = useState(20);
   const [sceneThreshold, setSceneThreshold] = useState(0.3);
@@ -81,17 +83,17 @@ export function ExtractFramesDialog({
 
   const handleSubmit = async () => {
     if (!file) {
-      setError("请先选择视频文件");
+      setError(t("pipelineImport.extractFrames.errors.noFile"));
       return;
     }
     setError(null);
     try {
-      setProgress({ stage: "uploading", message: "上传视频...", progress: 0.1 });
+      setProgress({ stage: "uploading", message: t("pipelineImport.extractFrames.progress.uploading"), progress: 0.1 });
       const upload = await uploadFreezoneImage(project, file, file.name);
 
       setProgress({
         stage: "extracting",
-        message: "ffmpeg 抽帧（最多 60 秒）...",
+        message: t("pipelineImport.extractFrames.progress.extracting"),
         progress: 0.3,
       });
       const extractRef = await submitFreezoneExtract(project, {
@@ -102,14 +104,14 @@ export function ExtractFramesDialog({
       const extractTask = await awaitTaskCompletion(extractRef.task_key, project, { taskType: extractRef.task_type });
       const frameUrls = extractFrameUrls(extractTask);
       if (frameUrls.length === 0) {
-        throw new Error("抽帧返回了空结果，可能视频太短或格式不支持");
+        throw new Error(t("pipelineImport.extractFrames.errors.emptyResult"));
       }
 
       let analyses: ShotAnalysis[] = [];
       if (analyzeShots) {
         setProgress({
           stage: "analyzing",
-          message: `Vision 分析 ${frameUrls.length} 帧...`,
+          message: t("pipelineImport.extractFrames.progress.analyzing", { count: frameUrls.length }),
           progress: 0.7,
         });
         try {
@@ -132,15 +134,17 @@ export function ExtractFramesDialog({
       onFramesReady(frames);
       setProgress({
         stage: "done",
-        message: `已抽 ${frames.length} 帧${analyses.length > 0 ? "，并完成镜头分析" : ""}`,
+        message: analyses.length > 0
+          ? t("pipelineImport.extractFrames.progress.doneAnalyzed", { count: frames.length })
+          : t("pipelineImport.extractFrames.progress.done", { count: frames.length }),
         progress: 1,
       });
-      onDone(`拉片完成：${frames.length} 帧已加入画布`);
+      onDone(t("pipelineImport.extractFrames.doneToast", { count: frames.length }));
       setTimeout(onClose, 600);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
-      setProgress({ stage: "error", message: "失败", progress: 0 });
+      setProgress({ stage: "error", message: t("pipelineImport.extractFrames.progress.failed"), progress: 0 });
     }
   };
 
@@ -166,9 +170,9 @@ export function ExtractFramesDialog({
             <Clapperboard className="h-[18px] w-[18px]" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-[15px] font-semibold leading-tight text-text-dark">拉片分析</h2>
+            <h2 className="text-[15px] font-semibold leading-tight text-text-dark">{t("pipelineImport.extractFrames.title")}</h2>
             <p className="mt-1 text-xs leading-relaxed text-text-muted">
-              视频 → ffmpeg 抽关键帧 →（可选）后端 Vision 分析镜头语言
+              {t("pipelineImport.extractFrames.subtitle")}
             </p>
           </div>
           <button
@@ -176,14 +180,14 @@ export function ExtractFramesDialog({
             onClick={requestClose}
             disabled={submitting}
             className="text-text-muted hover:text-text-dark transition disabled:opacity-30"
-            aria-label="关闭"
+            aria-label={t("common.close")}
           >
             <X className="h-4 w-4" />
           </button>
         </header>
 
         <div className="px-5 py-4 space-y-5">
-          <Section title="视频文件">
+          <Section title={t("pipelineImport.extractFrames.sections.videoFile")}>
             <FilePicker
               file={file}
               disabled={submitting}
@@ -192,9 +196,9 @@ export function ExtractFramesDialog({
             />
           </Section>
 
-          <Section title="抽帧参数">
+          <Section title={t("pipelineImport.extractFrames.sections.params")}>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="最大帧数" hint="3 - 50">
+              <Field label={t("pipelineImport.extractFrames.fields.maxFrames")} hint="3 - 50">
                 <UiInput
                   type="number"
                   min={3}
@@ -204,7 +208,7 @@ export function ExtractFramesDialog({
                   disabled={submitting}
                 />
               </Field>
-              <Field label="场景阈值" hint="0 - 1">
+              <Field label={t("pipelineImport.extractFrames.fields.sceneThreshold")} hint="0 - 1">
                 <UiInput
                   type="number"
                   min={0.1}
@@ -217,11 +221,11 @@ export function ExtractFramesDialog({
               </Field>
             </div>
             <p className="mt-2 text-[11px] leading-relaxed text-text-muted/80">
-              阈值越高 = 只在画面突变大时采样（长镜头视频选 0.2-0.3，快剪 MV 选 0.5+）
+              {t("pipelineImport.extractFrames.thresholdHint")}
             </p>
           </Section>
 
-          <Section title="后续处理">
+          <Section title={t("pipelineImport.extractFrames.sections.postProcess")}>
             <label
               className={`flex w-full items-start gap-3 rounded-lg border border-[color:var(--ui-border-soft)] bg-[var(--ui-surface-field)] px-3 py-2.5 text-left transition-colors hover:border-[color:var(--ui-border-strong)] ${
                 submitting ? "cursor-not-allowed opacity-60" : "cursor-pointer"
@@ -240,9 +244,9 @@ export function ExtractFramesDialog({
                 </svg>
               </span>
               <div className="min-w-0 flex-1">
-                <div className="text-sm text-text-dark">用 Vision 分析每帧的镜头语言</div>
+                <div className="text-sm text-text-dark">{t("pipelineImport.extractFrames.analyzeShots.label")}</div>
                 <div className="mt-0.5 text-[11px] text-text-muted">
-                  景别 / 角度 / 运镜 / 氛围 / 色调 · 使用后端默认 Vision capability
+                  {t("pipelineImport.extractFrames.analyzeShots.hint")}
                 </div>
               </div>
             </label>
@@ -261,7 +265,7 @@ export function ExtractFramesDialog({
 
         <footer className="flex items-center justify-end gap-2 border-t border-[color:var(--ui-border-soft)] px-5 py-3.5">
           <UiButton variant="ghost" size="sm" onClick={requestClose} disabled={submitting}>
-            取消
+            {t("common.cancel")}
           </UiButton>
           <UiButton
             variant="primary"
@@ -272,10 +276,10 @@ export function ExtractFramesDialog({
             {submitting ? (
               <>
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                处理中
+                {t("pipelineImport.extractFrames.submitting")}
               </>
             ) : (
-              "开始拉片"
+              t("pipelineImport.extractFrames.submit")
             )}
           </UiButton>
         </footer>
@@ -324,6 +328,7 @@ interface FilePickerProps {
 }
 
 function FilePicker({ file, disabled, inputRef, onChange }: FilePickerProps) {
+  const { t } = useTranslation();
   return (
     <div
       className={`flex items-center gap-3 rounded-lg border border-dashed px-3 py-3 transition-colors ${
@@ -345,8 +350,8 @@ function FilePicker({ file, disabled, inputRef, onChange }: FilePickerProps) {
           </>
         ) : (
           <>
-            <div className="text-sm text-text-dark">选择视频文件</div>
-            <div className="mt-0.5 text-[11px] text-text-muted">支持 mp4 / mov / webm 等格式</div>
+            <div className="text-sm text-text-dark">{t("pipelineImport.extractFrames.picker.choose")}</div>
+            <div className="mt-0.5 text-[11px] text-text-muted">{t("pipelineImport.extractFrames.picker.formats")}</div>
           </>
         )}
       </div>
@@ -356,7 +361,7 @@ function FilePicker({ file, disabled, inputRef, onChange }: FilePickerProps) {
         disabled={disabled}
         onClick={() => inputRef.current?.click()}
       >
-        {file ? "更换" : "浏览"}
+        {file ? t("pipelineImport.extractFrames.picker.replace") : t("pipelineImport.extractFrames.picker.browse")}
       </UiButton>
       <input
         ref={inputRef}
@@ -371,6 +376,7 @@ function FilePicker({ file, disabled, inputRef, onChange }: FilePickerProps) {
 }
 
 function ProgressBar({ progress }: { progress: ProgressState }) {
+  const { t } = useTranslation();
   const pct = Math.round(progress.progress * 100);
   const isDone = progress.stage === "done";
   return (
@@ -381,7 +387,7 @@ function ProgressBar({ progress }: { progress: ProgressState }) {
           {progress.message}
         </span>
         <span className="text-[11px] tabular-nums text-text-muted">
-          {isDone ? "完成" : `${pct}%`}
+          {isDone ? t("pipelineImport.extractFrames.progress.completed") : `${pct}%`}
         </span>
       </div>
       <div className="h-1 overflow-hidden rounded-full bg-[rgba(255,255,255,0.06)]">

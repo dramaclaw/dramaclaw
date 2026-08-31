@@ -95,6 +95,7 @@ import {
 } from "@/features/canvas/ui/nodeControlStyles";
 import { CameraMovementPickerPopover } from "@/features/canvas/nodes/CameraMovementPickerPopover";
 import {
+  cameraMovementPresetLabel,
   findCameraMovementPreset,
   type CameraMovementPreset,
 } from "@/features/canvas/domain/cameraMovementPresets";
@@ -1708,6 +1709,7 @@ function CameraMovementChip({
 }: CameraMovementChipProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(
     null,
@@ -1766,7 +1768,7 @@ function CameraMovementChip({
   }, [isOpen]);
 
   const selectedPreset = findCameraMovementPreset(templates, selectedId);
-  const label = selectedPreset?.label ?? "运镜";
+  const label = selectedPreset ? cameraMovementPresetLabel(selectedPreset, t) : t("canvas.cameraMovement.title");
   const isActive = Boolean(selectedPreset);
 
   return (

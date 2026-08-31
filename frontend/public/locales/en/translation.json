@@ -1049,7 +1049,34 @@
       }
     },
     "nodeContext": {
-      "mainlineAsset": "Mainline asset"
+      "mainlineAsset": "Mainline asset",
+      "kind": {
+        "identity": "Identity",
+        "voice": "Voice",
+        "narrator_voice": "Narrator voice",
+        "bgm": "BGM",
+        "sfx": "SFX",
+        "ambient_audio": "Ambience",
+        "scene": "Scene",
+        "prop": "Prop",
+        "beat": "Beat",
+        "sketch": "Sketch",
+        "frame": "Frame",
+        "video": "Video",
+        "audio": "Audio",
+        "director_combined": "Director composite",
+        "selected_background": "Current background"
+      },
+      "binding": {
+        "background_candidate": "Background candidate",
+        "sketch_candidate": "Sketch candidate",
+        "frame_candidate": "Frame candidate",
+        "selected_background": "Current background",
+        "current_sketch": "Current sketch",
+        "current_frame": "Current frame"
+      },
+      "withEpisodeBeat": "{{label}} · EP{{episode}}/B{{beat}}",
+      "withName": "{{label}} · {{name}}"
     },
     "commit": {
       "title": "Commit to mainline asset",
@@ -4388,6 +4415,39 @@
           }
         }
       }
+    },
+    "cameraMovement": {
+      "title": "Camera move",
+      "loading": "Loading…",
+      "empty": "No camera-move templates available",
+      "noPreview": "No preview",
+      "presets": {
+        "fixed": "Static",
+        "follow": "Follow",
+        "spiral-up": "Spiral up",
+        "spiral-down": "Spiral down",
+        "tilt-up": "Tilt up",
+        "tilt-down": "Tilt down",
+        "pan-left": "Pan left",
+        "pan-right": "Pan right",
+        "crane-up": "Crane up",
+        "crane-down": "Crane down",
+        "truck-left": "Truck left",
+        "truck-right": "Truck right",
+        "dolly-in": "Dolly in",
+        "dolly-out": "Dolly out",
+        "zoom-in": "Zoom in",
+        "zoom-out": "Zoom out",
+        "dolly-zoom": "Dolly zoom",
+        "orbit": "Orbit",
+        "roll": "Roll",
+        "fpv": "FPV",
+        "drone": "Drone",
+        "aerial": "Aerial",
+        "handheld": "Handheld"
+      },
+      "clear": "Clear",
+      "apply": "Apply"
     }
   },
   "tool": {
@@ -5846,6 +5906,39 @@
       "asset": "Mainline asset shoot",
       "beat": "Mainline beat production",
       "mainline": "Mainline pipeline"
+    },
+    "pano": {
+      "dialogTitle": "360 framing",
+      "dialogDescription": "Pick an aspect ratio and viewing angle, then write the capture to its destination.",
+      "capture": "Capture",
+      "captureNoun": "capture",
+      "resetView": "Reset",
+      "notReady": "The 360 viewer isn't ready yet",
+      "contextSaveTarget": "Saves to selected_background",
+      "contextDownloadOnly": "Scene entry downloads only, never writes latest",
+      "fovPresets": {
+        "fisheye": "Fisheye 160°",
+        "wide": "Wide 120°",
+        "standard": "Standard 70°",
+        "tele": "Telephoto 8°"
+      },
+      "lockCurrentView": "Correct to current view",
+      "enterPlanet": "Little planet",
+      "exitPlanet": "Exit little planet",
+      "copyParamsJson": "Copy params JSON",
+      "saving": "Saving",
+      "saveCorrection": "Save correction",
+      "showGuides": "Show guides",
+      "hideGuides": "Hide guides",
+      "resetCropFrame": "Reset capture frame",
+      "setFrontFromView": "Set current as front",
+      "resetCorrection": "Reset correction",
+      "saved": "Saved {{name}}",
+      "noPathReturned": "No path returned",
+      "captureList": "Captures",
+      "clearCaptureList": "Clear captures",
+      "captureN": "Capture {{id}}",
+      "downloadCaptureN": "Download capture {{id}}"
     }
   },
   "split": {
@@ -6479,5 +6572,47 @@
     "dusk": "Dusk",
     "night": "Night",
     "scriptOriginal": "{{value}} (as written in the script)"
+  },
+  "pipelineImport": {
+    "extractFrames": {
+      "title": "Shot Breakdown",
+      "subtitle": "Video → ffmpeg keyframe extraction → (optional) backend Vision shot-language analysis",
+      "sections": {
+        "videoFile": "Video file",
+        "params": "Extraction settings",
+        "postProcess": "Post-processing"
+      },
+      "fields": {
+        "maxFrames": "Max frames",
+        "sceneThreshold": "Scene threshold"
+      },
+      "thresholdHint": "Higher threshold = sample only on big visual changes (long takes: 0.2–0.3; fast-cut MVs: 0.5+)",
+      "analyzeShots": {
+        "label": "Analyze each frame's shot language with Vision",
+        "hint": "Shot size / angle / camera move / mood / palette · uses the backend's default Vision capability"
+      },
+      "submit": "Start breakdown",
+      "submitting": "Processing",
+      "doneToast": "Breakdown complete: {{count}} frames added to the canvas",
+      "picker": {
+        "choose": "Choose a video file",
+        "formats": "Supports mp4 / mov / webm and more",
+        "replace": "Replace",
+        "browse": "Browse"
+      },
+      "progress": {
+        "uploading": "Uploading video…",
+        "extracting": "ffmpeg extracting frames (up to 60s)…",
+        "analyzing": "Vision analyzing {{count}} frames…",
+        "done": "Extracted {{count}} frames",
+        "doneAnalyzed": "Extracted {{count}} frames and finished shot analysis",
+        "failed": "Failed",
+        "completed": "Done"
+      },
+      "errors": {
+        "noFile": "Choose a video file first",
+        "emptyResult": "Frame extraction returned nothing — the video may be too short or in an unsupported format"
+      }
+    }
   }
 }

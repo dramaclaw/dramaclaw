@@ -1049,7 +1049,34 @@
       }
     },
     "nodeContext": {
-      "mainlineAsset": "主线资产"
+      "mainlineAsset": "主线资产",
+      "kind": {
+        "identity": "身份",
+        "voice": "声线",
+        "narrator_voice": "解说声线",
+        "bgm": "BGM",
+        "sfx": "音效",
+        "ambient_audio": "环境音",
+        "scene": "场景",
+        "prop": "道具",
+        "beat": "Beat",
+        "sketch": "草图",
+        "frame": "分镜",
+        "video": "视频",
+        "audio": "音频",
+        "director_combined": "导演合成图",
+        "selected_background": "当前背景"
+      },
+      "binding": {
+        "background_candidate": "背景候选",
+        "sketch_candidate": "草图候选",
+        "frame_candidate": "分镜候选",
+        "selected_background": "当前背景",
+        "current_sketch": "当前草图",
+        "current_frame": "当前分镜"
+      },
+      "withEpisodeBeat": "{{label}} · EP{{episode}}/B{{beat}}",
+      "withName": "{{label}} · {{name}}"
     },
     "commit": {
       "title": "提交到主线资产",
@@ -4388,6 +4415,39 @@
           }
         }
       }
+    },
+    "cameraMovement": {
+      "title": "运镜",
+      "loading": "加载中…",
+      "empty": "暂无可用运镜模板",
+      "noPreview": "无预览",
+      "presets": {
+        "fixed": "固定镜头",
+        "follow": "跟随拍摄",
+        "spiral-up": "盘旋抬升",
+        "spiral-down": "盘旋下降",
+        "tilt-up": "镜头上摇",
+        "tilt-down": "镜头下摇",
+        "pan-left": "镜头左摇",
+        "pan-right": "镜头右摇",
+        "crane-up": "镜头上升",
+        "crane-down": "镜头下降",
+        "truck-left": "镜头左移",
+        "truck-right": "镜头右移",
+        "dolly-in": "镜头前推",
+        "dolly-out": "镜头后移",
+        "zoom-in": "变焦推进",
+        "zoom-out": "变焦拉远",
+        "dolly-zoom": "柯克变焦",
+        "orbit": "环绕拍摄",
+        "roll": "滚筒旋转",
+        "fpv": "第一视角",
+        "drone": "无人机",
+        "aerial": "高空航拍",
+        "handheld": "手持拍摄"
+      },
+      "clear": "清除",
+      "apply": "使用"
     }
   },
   "tool": {
@@ -5846,6 +5906,39 @@
       "asset": "主线资产取景",
       "beat": "主线 Beat 制作",
       "mainline": "主线 pipeline"
+    },
+    "pano": {
+      "dialogTitle": "360 取景",
+      "dialogDescription": "选择比例和视角，截图后写入目标位置。",
+      "capture": "截图",
+      "captureNoun": "截图",
+      "resetView": "重置",
+      "notReady": "360 viewer 尚未准备好",
+      "contextSaveTarget": "保存目标 selected_background",
+      "contextDownloadOnly": "场景入口只下载，不写 latest",
+      "fovPresets": {
+        "fisheye": "鱼眼 160°",
+        "wide": "广角 120°",
+        "standard": "标准 70°",
+        "tele": "长焦 8°"
+      },
+      "lockCurrentView": "当前视角矫正",
+      "enterPlanet": "小行星视角",
+      "exitPlanet": "退出小行星",
+      "copyParamsJson": "复制参数 JSON",
+      "saving": "保存中",
+      "saveCorrection": "保存校正",
+      "showGuides": "显示辅助线",
+      "hideGuides": "隐藏辅助线",
+      "resetCropFrame": "重置截图框",
+      "setFrontFromView": "当前设为正面",
+      "resetCorrection": "重置校正",
+      "saved": "已保存 {{name}}",
+      "noPathReturned": "未返回路径",
+      "captureList": "截图列表",
+      "clearCaptureList": "清空截图列表",
+      "captureN": "截图 {{id}}",
+      "downloadCaptureN": "下载截图 {{id}}"
     }
   },
   "split": {
@@ -6479,5 +6572,47 @@
     "dusk": "黄昏",
     "night": "夜晚",
     "scriptOriginal": "{{value}}（剧本原值）"
+  },
+  "pipelineImport": {
+    "extractFrames": {
+      "title": "拉片分析",
+      "subtitle": "视频 → ffmpeg 抽关键帧 →（可选）后端 Vision 分析镜头语言",
+      "sections": {
+        "videoFile": "视频文件",
+        "params": "抽帧参数",
+        "postProcess": "后续处理"
+      },
+      "fields": {
+        "maxFrames": "最大帧数",
+        "sceneThreshold": "场景阈值"
+      },
+      "thresholdHint": "阈值越高 = 只在画面突变大时采样（长镜头视频选 0.2-0.3，快剪 MV 选 0.5+）",
+      "analyzeShots": {
+        "label": "用 Vision 分析每帧的镜头语言",
+        "hint": "景别 / 角度 / 运镜 / 氛围 / 色调 · 使用后端默认 Vision capability"
+      },
+      "submit": "开始拉片",
+      "submitting": "处理中",
+      "doneToast": "拉片完成：{{count}} 帧已加入画布",
+      "picker": {
+        "choose": "选择视频文件",
+        "formats": "支持 mp4 / mov / webm 等格式",
+        "replace": "更换",
+        "browse": "浏览"
+      },
+      "progress": {
+        "uploading": "上传视频...",
+        "extracting": "ffmpeg 抽帧（最多 60 秒）...",
+        "analyzing": "Vision 分析 {{count}} 帧...",
+        "done": "已抽 {{count}} 帧",
+        "doneAnalyzed": "已抽 {{count}} 帧，并完成镜头分析",
+        "failed": "失败",
+        "completed": "完成"
+      },
+      "errors": {
+        "noFile": "请先选择视频文件",
+        "emptyResult": "抽帧返回了空结果，可能视频太短或格式不支持"
+      }
+    }
   }
 }

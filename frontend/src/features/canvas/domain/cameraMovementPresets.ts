@@ -7,9 +7,15 @@
 // each entry ships with a short .mp4 preview at `public/video/camera-presets/`.
 
 import type { FreezoneVideoCameraTemplate } from "@/api/ops";
+import type { TFn } from "@/lib/i18n-types";
 
 export type CameraMovementPreset = FreezoneVideoCameraTemplate;
 
+// 这张表是后端 `/freezone/video/camera-templates` 返回结构的本地兜底副本：
+// label 要和后端返回的中文标签逐字对上(下面的反查表按 label/promptFragment
+// 匹配本地 mp4)，promptFragment 又是拼进提示词、由模型读的内容。两者都不能
+// 翻译；界面显示的文案走 cameraMovementPresetLabel() 按 id 查词条。
+// i18n-exempt-start
 export const CAMERA_MOVEMENT_PRESETS: ReadonlyArray<CameraMovementPreset> = [
   { id: 'fixed', label: '固定镜头', videoUrl: '/video/camera-presets/fixed.mp4', promptFragment: '固定镜头' },
   { id: 'follow', label: '跟随拍摄', videoUrl: '/video/camera-presets/follow.mp4', promptFragment: '跟随拍摄' },
@@ -35,6 +41,15 @@ export const CAMERA_MOVEMENT_PRESETS: ReadonlyArray<CameraMovementPreset> = [
   { id: 'aerial', label: '高空航拍', videoUrl: '/video/camera-presets/aerial.mp4', promptFragment: '高空航拍' },
   { id: 'handheld', label: '手持拍摄', videoUrl: '/video/camera-presets/handheld.mp4', promptFragment: '手持拍摄' },
 ];
+// i18n-exempt-end
+
+/**
+ * Display label for a camera preset. Locale entry keyed by preset id; the
+ * backend-supplied `label` stays the fallback for templates we don't ship.
+ */
+export function cameraMovementPresetLabel(preset: CameraMovementPreset, t: TFn): string {
+  return t(`canvas.cameraMovement.presets.${preset.id}`, { defaultValue: preset.label });
+}
 
 export function findCameraMovementPreset(
   templates: ReadonlyArray<CameraMovementPreset>,
