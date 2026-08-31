@@ -6702,25 +6702,117 @@
       "submit": "Start breakdown",
       "submitting": "Processing",
       "doneToast": "Breakdown complete: {{count}} frames added to the canvas",
-      "picker": {
-        "choose": "Choose a video file",
-        "formats": "Supports mp4 / mov / webm and more",
-        "replace": "Replace",
-        "browse": "Browse"
-      },
       "progress": {
         "uploading": "Uploading video…",
         "extracting": "ffmpeg extracting frames (up to 60s)…",
         "analyzing": "Vision analyzing {{count}} frames…",
         "done": "Extracted {{count}} frames",
-        "doneAnalyzed": "Extracted {{count}} frames and finished shot analysis",
-        "failed": "Failed",
-        "completed": "Done"
+        "doneAnalyzed": "Extracted {{count}} frames and finished shot analysis"
       },
       "errors": {
-        "noFile": "Choose a video file first",
         "emptyResult": "Frame extraction returned nothing — the video may be too short or in an unsupported format"
       }
+    },
+    "picker": {
+      "choose": "Choose a video file",
+      "formats": "Supports mp4 / mov / webm and more",
+      "replace": "Replace",
+      "browse": "Browse"
+    },
+    "progress": {
+      "failed": "Failed",
+      "completed": "Done"
+    },
+    "errors": {
+      "noFile": "Choose a video file first"
+    },
+    "videoReference": {
+      "title": "Video Reference",
+      "subtitleLine1": "Upload a film / short clip → extract 3-5 key frames as style / composition / color references,",
+      "subtitleLine2": "then wire them into a GenNode as reference images so the AI can echo that visual language.",
+      "sections": {
+        "video": "Reference video",
+        "frameCount": "Frames to extract"
+      },
+      "frameCount": "{{count}} frames",
+      "frameCountHint": "5-7 frames is usually enough (more and the model loses the style focus)",
+      "submit": "Import reference",
+      "doneToast": "Video reference: {{count}} frames added to the canvas",
+      "progress": {
+        "uploading": "Uploading video...",
+        "extracting": "Extracting {{count}} key frames (composition / color reference)...",
+        "done": "Done — {{count}} frames added to the canvas as references"
+      },
+      "errors": {
+        "emptyResult": "Frame extraction returned an empty result"
+      }
+    },
+    "maskEditor": {
+      "title": "✏️ Mask editor",
+      "brush": "🖌 Brush",
+      "eraser": "🧽 Eraser",
+      "size": "Size",
+      "loadBaseFailed": "Failed to load the base image (the cookie may have expired)",
+      "loadingBase": "Loading base image...",
+      "needPrompt": "Write a prompt describing what the masked area should become",
+      "needPaint": "Paint an area first (whatever the red brush covers gets edited)",
+      "promptPlaceholder": "What should the masked area become? e.g. long blue hair / add a sunbeam / remove the passer-by...",
+      "hint": "Red = area to edit · LingShan-G2 · may take 30-60s",
+      "submit": "Apply",
+      "submitting": "Working...",
+      "progress": {
+        "building": "Building the mask file...",
+        "uploading": "Uploading the mask...",
+        "submitting": "Submitting the inpaint job...",
+        "running": "Working (30-60s)..."
+      }
+    },
+    "compare": {
+      "title": "🔄 A/B compare",
+      "position": "Drag the divider to compare; position {{percent}}%",
+      "dragHandle": "Drag to compare",
+      "hint": "Tip: drag the divider, or hold ← / → for fine adjustment"
+    },
+    "createIdentity": {
+      "title": "Create new identity",
+      "subtitle": "Create a new global character identity from the selected image; the existing canonical identity is left untouched.",
+      "noPreview": "No preview",
+      "character": "Character",
+      "identityName": "Identity name",
+      "identityNamePlaceholder": "e.g. elderly years, work outfit, battle-damaged",
+      "ageGroup": "Age group",
+      "ageUnspecified": "Unspecified age",
+      "appearance": "Outfit / styling description",
+      "appearancePlaceholder": "Outfit, accessories and hairstyle for this identity — no actions.",
+      "facePrompt": "Identity-level face prompt (optional)",
+      "facePromptPlaceholder": "Only fill this in for a big age change; otherwise the character portrait is reused.",
+      "submit": "Create identity",
+      "submitting": "Creating...",
+      "created": "Identity created: {{character}} / {{identity}}"
+    },
+    "import": {
+      "title": "Import assets to canvas",
+      "project": "Project: {{project}}",
+      "loadFailed": "Failed to load",
+      "assetKinds": "Asset types",
+      "kind": {
+        "identity": "🎭 Identity (character identity image)",
+        "portrait": "🖼 Portrait (character portrait)",
+        "frame": "🎬 Frame (beat first frame)",
+        "sketch": "✏️ Sketch",
+        "directorRender": "📐 Director composite asset"
+      },
+      "noCharacters": "This project has no characters",
+      "episodeBeat": "Episode / Beat",
+      "episodeLabel": "Episode:",
+      "selectAll": "Select all",
+      "selectNone": "Select none",
+      "willImport": "Importing {{count}} images",
+      "submit": "Import",
+      "submitting": "Importing...",
+      "identityFallbackLabel": "identity",
+      "portraitLabel": "portrait",
+      "directorRenderLabel": "director render"
     }
   }
 }

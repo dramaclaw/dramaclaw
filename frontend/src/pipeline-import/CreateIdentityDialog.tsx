@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { createIdentityAsset } from "@/api/assets";
 import { listCharacters, type SupertaleCharacter } from "@/api/projects";
 
@@ -13,13 +14,8 @@ interface CreateIdentityDialogProps {
   onSuccess: (message: string) => void;
 }
 
-const AGE_OPTIONS = [
-  { value: "", label: "不指定年龄" },
-  { value: "child", label: "child" },
-  { value: "youth", label: "youth" },
-  { value: "middle", label: "middle" },
-  { value: "elder", label: "elder" },
-];
+// age_group 的取值是后端存的枚举，直接当英文标签显示；只有空值那档需要文案。
+const AGE_OPTIONS = ["", "child", "youth", "middle", "elder"];
 
 export function CreateIdentityDialog({
   project,
@@ -61,6 +57,8 @@ export function CreateIdentityDialog({
     };
   }, [project]);
 
+  const { t } = useTranslation();
+
   const canSubmit = useMemo(
     () => !!character.trim() && !!identityName.trim() && !submitting,
     [character, identityName, submitting],
@@ -79,7 +77,12 @@ export function CreateIdentityDialog({
         face_prompt: facePrompt.trim(),
         age_group: ageGroup,
       });
-      onSuccess(`已创建身份 ${result.character} / ${result.identity_name}`);
+      onSuccess(
+        t("pipelineImport.createIdentity.created", {
+          character: result.character,
+          identity: result.identity_name,
+        }),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -92,9 +95,11 @@ export function CreateIdentityDialog({
       <div className="w-full max-w-2xl rounded-xl border border-border-default bg-surface shadow-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border-default flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-text">创建新 Identity</h2>
+            <h2 className="text-sm font-semibold text-text">
+              {t("pipelineImport.createIdentity.title")}
+            </h2>
             <p className="text-xs text-text-muted mt-0.5">
-              从当前选中图片创建新的全局角色身份，不覆盖已有 canonical identity。
+              {t("pipelineImport.createIdentity.subtitle")}
             </p>
           </div>
           <button
@@ -116,7 +121,7 @@ export function CreateIdentityDialog({
               />
             ) : (
               <div className="h-40 flex items-center justify-center text-xs text-text-muted">
-                无预览
+                {t("pipelineImport.createIdentity.noPreview")}
               </div>
             )}
             <div className="text-[11px] text-text-muted mt-2 break-all">
@@ -126,7 +131,7 @@ export function CreateIdentityDialog({
 
           <div className="space-y-3">
             <label className="block">
-              <span className="text-xs text-text-muted">角色</span>
+              <span className="text-xs text-text-muted">{t("pipelineImport.createIdentity.character")}</span>
               <select
                 value={character}
                 onChange={(e) => setCharacter(e.target.value)}
@@ -145,48 +150,50 @@ export function CreateIdentityDialog({
             </label>
 
             <label className="block">
-              <span className="text-xs text-text-muted">身份名</span>
+              <span className="text-xs text-text-muted">{t("pipelineImport.createIdentity.identityName")}</span>
               <input
                 value={identityName}
                 onChange={(e) => setIdentityName(e.target.value)}
-                placeholder="例如：老年时期、工装时期、战损时期"
+                placeholder={t("pipelineImport.createIdentity.identityNamePlaceholder")}
                 className="mt-1 w-full rounded-md border border-border-default bg-bg-dark px-3 py-2 text-sm text-text"
               />
             </label>
 
             <label className="block">
-              <span className="text-xs text-text-muted">年龄段</span>
+              <span className="text-xs text-text-muted">{t("pipelineImport.createIdentity.ageGroup")}</span>
               <select
                 value={ageGroup}
                 onChange={(e) => setAgeGroup(e.target.value)}
                 className="mt-1 w-full rounded-md border border-border-default bg-bg-dark px-3 py-2 text-sm text-text"
               >
                 {AGE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
+                  <option key={option} value={option}>
+                    {option || t("pipelineImport.createIdentity.ageUnspecified")}
                   </option>
                 ))}
               </select>
             </label>
 
             <label className="block">
-              <span className="text-xs text-text-muted">服装/造型描述</span>
+              <span className="text-xs text-text-muted">{t("pipelineImport.createIdentity.appearance")}</span>
               <textarea
                 value={appearanceDetails}
                 onChange={(e) => setAppearanceDetails(e.target.value)}
                 rows={3}
-                placeholder="该身份的服装、配饰、发型造型，不写动作。"
+                placeholder={t("pipelineImport.createIdentity.appearancePlaceholder")}
                 className="mt-1 w-full rounded-md border border-border-default bg-bg-dark px-3 py-2 text-sm text-text"
               />
             </label>
 
             <label className="block">
-              <span className="text-xs text-text-muted">身份级脸部提示词（可选）</span>
+              <span className="text-xs text-text-muted">
+                {t("pipelineImport.createIdentity.facePrompt")}
+              </span>
               <textarea
                 value={facePrompt}
                 onChange={(e) => setFacePrompt(e.target.value)}
                 rows={2}
-                placeholder="只有年龄变化很大时才填；默认复用角色 portrait。"
+                placeholder={t("pipelineImport.createIdentity.facePromptPlaceholder")}
                 className="mt-1 w-full rounded-md border border-border-default bg-bg-dark px-3 py-2 text-sm text-text"
               />
             </label>
@@ -205,7 +212,7 @@ export function CreateIdentityDialog({
             onClick={onClose}
             className="px-3 py-1.5 rounded-md border border-border-default text-xs text-text-muted hover:text-text"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -213,7 +220,9 @@ export function CreateIdentityDialog({
             disabled={!canSubmit}
             className="px-3 py-1.5 rounded-md bg-accent text-bg-dark text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {submitting ? "创建中..." : "创建 Identity"}
+            {submitting
+              ? t("pipelineImport.createIdentity.submitting")
+              : t("pipelineImport.createIdentity.submit")}
           </button>
         </div>
       </div>

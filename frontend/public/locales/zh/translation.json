@@ -6702,25 +6702,117 @@
       "submit": "开始拉片",
       "submitting": "处理中",
       "doneToast": "拉片完成：{{count}} 帧已加入画布",
-      "picker": {
-        "choose": "选择视频文件",
-        "formats": "支持 mp4 / mov / webm 等格式",
-        "replace": "更换",
-        "browse": "浏览"
-      },
       "progress": {
         "uploading": "上传视频...",
         "extracting": "ffmpeg 抽帧（最多 60 秒）...",
         "analyzing": "Vision 分析 {{count}} 帧...",
         "done": "已抽 {{count}} 帧",
-        "doneAnalyzed": "已抽 {{count}} 帧，并完成镜头分析",
-        "failed": "失败",
-        "completed": "完成"
+        "doneAnalyzed": "已抽 {{count}} 帧，并完成镜头分析"
       },
       "errors": {
-        "noFile": "请先选择视频文件",
         "emptyResult": "抽帧返回了空结果，可能视频太短或格式不支持"
       }
+    },
+    "picker": {
+      "choose": "选择视频文件",
+      "formats": "支持 mp4 / mov / webm 等格式",
+      "replace": "更换",
+      "browse": "浏览"
+    },
+    "progress": {
+      "failed": "失败",
+      "completed": "完成"
+    },
+    "errors": {
+      "noFile": "请先选择视频文件"
+    },
+    "videoReference": {
+      "title": "影像参照",
+      "subtitleLine1": "上传一段电影 / 短片 → 抽 3-5 关键帧作为 style / 构图 / 色调参考，",
+      "subtitleLine2": "连进 GenNode 作为 reference image，让 AI 复刻视觉语言。",
+      "sections": {
+        "video": "参考视频",
+        "frameCount": "抽帧数量"
+      },
+      "frameCount": "{{count}} 帧",
+      "frameCountHint": "5-7 帧通常够（多了模型反而抓不住 style 重点）",
+      "submit": "导入参考",
+      "doneToast": "影像参照：{{count}} 帧已入画布",
+      "progress": {
+        "uploading": "上传视频...",
+        "extracting": "抽 {{count}} 关键帧（构图 / 色调参考）...",
+        "done": "完成 — {{count}} 帧已加入画布作为 reference"
+      },
+      "errors": {
+        "emptyResult": "抽帧返回了空结果"
+      }
+    },
+    "maskEditor": {
+      "title": "✏️ Mask 蒙版编辑",
+      "brush": "🖌 笔刷",
+      "eraser": "🧽 橡皮",
+      "size": "大小",
+      "loadBaseFailed": "无法加载基底图（cookie 可能过期）",
+      "loadingBase": "加载基底图...",
+      "needPrompt": "写一句 prompt 描述要把蒙版区域改成什么",
+      "needPaint": "先涂个区域吧（红色画笔涂哪改哪）",
+      "promptPlaceholder": "蒙版区域改成什么？例：改成蓝色长发 / 加一束阳光 / 移除背景路人...",
+      "hint": "红色 = 待编辑区域 · LingShan-G2 · 可能 30-60 秒",
+      "submit": "Apply",
+      "submitting": "处理中...",
+      "progress": {
+        "building": "生成 mask 文件...",
+        "uploading": "上传 mask...",
+        "submitting": "提交局部重绘...",
+        "running": "处理中（30-60s）..."
+      }
+    },
+    "compare": {
+      "title": "🔄 AB 对比",
+      "position": "拖动中线对比；位置 {{percent}}%",
+      "dragHandle": "拖动对比",
+      "hint": "提示：拖动中线，按住 ← / → 微调位置"
+    },
+    "createIdentity": {
+      "title": "创建新 Identity",
+      "subtitle": "从当前选中图片创建新的全局角色身份，不覆盖已有 canonical identity。",
+      "noPreview": "无预览",
+      "character": "角色",
+      "identityName": "身份名",
+      "identityNamePlaceholder": "例如：老年时期、工装时期、战损时期",
+      "ageGroup": "年龄段",
+      "ageUnspecified": "不指定年龄",
+      "appearance": "服装/造型描述",
+      "appearancePlaceholder": "该身份的服装、配饰、发型造型，不写动作。",
+      "facePrompt": "身份级脸部提示词（可选）",
+      "facePromptPlaceholder": "只有年龄变化很大时才填；默认复用角色 portrait。",
+      "submit": "创建 Identity",
+      "submitting": "创建中...",
+      "created": "已创建身份 {{character}} / {{identity}}"
+    },
+    "import": {
+      "title": "导入资产到画布",
+      "project": "项目: {{project}}",
+      "loadFailed": "加载失败",
+      "assetKinds": "资产类型",
+      "kind": {
+        "identity": "🎭 Identity (角色身份图)",
+        "portrait": "🖼 Portrait (角色肖像)",
+        "frame": "🎬 Frame (beat 首帧)",
+        "sketch": "✏️ Sketch (草图)",
+        "directorRender": "📐 导演合成资产"
+      },
+      "noCharacters": "该项目没有角色",
+      "episodeBeat": "集 / Beat",
+      "episodeLabel": "集:",
+      "selectAll": "全选",
+      "selectNone": "全不选",
+      "willImport": "将导入 {{count}} 张图",
+      "submit": "导入",
+      "submitting": "导入中...",
+      "identityFallbackLabel": "身份图",
+      "portraitLabel": "肖像",
+      "directorRenderLabel": "导演渲染"
     }
   }
 }

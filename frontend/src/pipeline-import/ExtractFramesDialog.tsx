@@ -83,7 +83,7 @@ export function ExtractFramesDialog({
 
   const handleSubmit = async () => {
     if (!file) {
-      setError(t("pipelineImport.extractFrames.errors.noFile"));
+      setError(t("pipelineImport.errors.noFile"));
       return;
     }
     setError(null);
@@ -144,7 +144,7 @@ export function ExtractFramesDialog({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
-      setProgress({ stage: "error", message: t("pipelineImport.extractFrames.progress.failed"), progress: 0 });
+      setProgress({ stage: "error", message: t("pipelineImport.progress.failed"), progress: 0 });
     }
   };
 
@@ -350,8 +350,8 @@ function FilePicker({ file, disabled, inputRef, onChange }: FilePickerProps) {
           </>
         ) : (
           <>
-            <div className="text-sm text-text-dark">{t("pipelineImport.extractFrames.picker.choose")}</div>
-            <div className="mt-0.5 text-[11px] text-text-muted">{t("pipelineImport.extractFrames.picker.formats")}</div>
+            <div className="text-sm text-text-dark">{t("pipelineImport.picker.choose")}</div>
+            <div className="mt-0.5 text-[11px] text-text-muted">{t("pipelineImport.picker.formats")}</div>
           </>
         )}
       </div>
@@ -361,7 +361,7 @@ function FilePicker({ file, disabled, inputRef, onChange }: FilePickerProps) {
         disabled={disabled}
         onClick={() => inputRef.current?.click()}
       >
-        {file ? t("pipelineImport.extractFrames.picker.replace") : t("pipelineImport.extractFrames.picker.browse")}
+        {file ? t("pipelineImport.picker.replace") : t("pipelineImport.picker.browse")}
       </UiButton>
       <input
         ref={inputRef}
@@ -387,7 +387,7 @@ function ProgressBar({ progress }: { progress: ProgressState }) {
           {progress.message}
         </span>
         <span className="text-[11px] tabular-nums text-text-muted">
-          {isDone ? t("pipelineImport.extractFrames.progress.completed") : `${pct}%`}
+          {isDone ? t("pipelineImport.progress.completed") : `${pct}%`}
         </span>
       </div>
       <div className="h-1 overflow-hidden rounded-full bg-[rgba(255,255,255,0.06)]">
