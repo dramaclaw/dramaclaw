@@ -1600,8 +1600,7 @@ async def run_freezone_analyze_shots(
     from novelvideo.freezone import vision_gateway
     from novelvideo.freezone.vision_gateway import (
         FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
-        VisionInput,
-        image_media_type,
+        load_compact_vision_inputs,
         resolve_freezone_vision_model,
     )
 
@@ -1633,25 +1632,22 @@ async def run_freezone_analyze_shots(
     )
 
     del api_key
-    frame_bytes = [
-        (Path(path).read_bytes(), image_media_type(path))
-        for path in frame_paths
-        if Path(path).exists()
-    ]
+    frame_inputs = await load_compact_vision_inputs(
+        [path for path in frame_paths if Path(path).exists()]
+    )
+    if not frame_inputs:
+        raise ValueError("no readable frames to analyze")
     vision_egress = await prepare_freezone_vision_egress(
         egress_context=egress_context,
         model_name=resolve_freezone_vision_model(model),
         prompt=prompt,
-        images=[data for data, _ in frame_bytes],
+        images=[image.data for image in frame_inputs],
         timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
     )
     try:
         vision_model, text = await vision_gateway.call_freezone_vision_model(
             prompt=prompt,
-            images=[
-                VisionInput(data=data, media_type=media_type)
-                for data, media_type in frame_bytes
-            ],
+            images=frame_inputs,
             model_override=model,
             timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
             transport_context=(
