@@ -845,7 +845,7 @@ function ThreeDDirectorSurface({
   const [error, setError] = useState<string | null>(null);
   const [sceneBusy, setSceneBusy] = useState(false);
   const [sceneStatus, setSceneStatus] = useState<string | null>(
-    initialScene ? "已恢复上次保存的场景" : null,
+    initialScene ? t("viewer.threeD.sceneRestored") : null,
   );
   const lastRestoredSourceIdRef = useRef<string | null>(null);
   const initialSceneRef = useRef(initialScene);

@@ -1408,6 +1408,11 @@
       "status": "状态",
       "change": "积分变动",
       "balance": "变动后余额"
+    },
+    "promotion": {
+      "active": "促销中",
+      "discount": "{{discount}} 折优惠",
+      "limitedDiscount": "限时 {{discount}} 折"
     }
   },
   "nav": {
@@ -2313,7 +2318,8 @@
     "play": "播放",
     "pause": "暂停",
     "retry": "重试",
-    "requestId": "请求ID"
+    "requestId": "请求ID",
+    "listSeparator": "、"
   },
   "ingest": {
     "title": "虾料",
@@ -2666,7 +2672,8 @@
       "title": "终止任务",
       "fallbackMessage": "任务已开始执行。现在终止不会退还积分，是否确认终止？",
       "confirm": "确认终止",
-      "keepRunning": "继续执行"
+      "keepRunning": "继续执行",
+      "continued": "已继续执行任务"
     },
     "stageAssetSteps": {
       "pano_from_master": "Master 生成全景",
@@ -3068,8 +3075,9 @@
       "scriptReviewPassed": "脚本生成完成",
       "scriptReviewFailed": "脚本审核未通过，请重新生成: {{summary}}",
       "modeLabel": "当前模式：",
-      "modeLiteral": "模式: 一行一个 Beat",
-      "sourceWorkbenchHint": "右侧源文本自动保存"
+      "modeLiteral": "一行一个 Beat",
+      "sourceWorkbenchHint": "右侧源文本自动保存",
+      "reviewIssuesFallback": "存在未修复问题"
     },
     "beat": {
       "badge": "Beat {{n}}",
@@ -3881,6 +3889,12 @@
       "aspectRatio": "画幅",
       "wide16x9": "16:9",
       "aspectChangeHint": "切换画幅只影响新生成的内容，已生成的资产需重新生成才会更新为新比例。"
+    },
+    "sketches": {
+      "selectFailed": "选择失败"
+    },
+    "video": {
+      "switchFailed": "切换视频失败"
     }
   },
   "audioType": {
@@ -4848,7 +4862,8 @@
       "panoCaptureGroup": "全景截图组 ({{total}} 张)",
       "group": "组 {{index}}",
       "storyboardGroup": "分镜组 {{index}}",
-      "storyboardFrame": "分镜"
+      "storyboardFrame": "分镜",
+      "externalAssetGroup": "外部素材组"
     },
     "viewportHint": {
       "focused": "已聚焦到所选节点",
@@ -4891,6 +4906,27 @@
     },
     "addNodePanel": {
       "skillCount": "{{count}} 个技能"
+    },
+    "generation": {
+      "missingProjectParam": "当前 URL 缺少 project 参数",
+      "missingProjectRetry": "当前 URL 没有 project，无法重试"
+    },
+    "imageModel": {
+      "modeEdit": "编辑",
+      "modeGenerate": "生成",
+      "noneAvailable": "无可用模型"
+    },
+    "skillParams": {
+      "aspectRatio": "比例",
+      "quality": "质量"
+    },
+    "mainline": {
+      "chainAlreadyBound": "该链路已绑定 {{bound}}，不能再接入 {{incoming}}",
+      "imageRoleTaken": "该图片已有主线角色 {{existing}}，不能再绑定 {{candidate}}",
+      "roleBoundElsewhere": "{{role}} 已绑定到另一张图，请先断开原绑定"
+    },
+    "assetDrop": {
+      "fallbackNodeLabel": "节点"
     }
   },
   "tool": {
@@ -5903,7 +5939,8 @@
     "audioNode": {
       "empty": "暂无音频",
       "noVoiceConfigured": "未配置可用声线",
-      "generateFailed": "生成失败"
+      "generateFailed": "生成失败",
+      "selectVoiceFirst": "请先配置或选择声线"
     },
     "videoStory": {
       "columns": {
@@ -6402,7 +6439,8 @@
       "skillNoDirectorBackground": "当前 Beat 还没有导演背景图",
       "skillFallbackTitle": "技能",
       "skillLoading": "加载技能...",
-      "skillUnknown": "未知技能"
+      "skillUnknown": "未知技能",
+      "sceneRestored": "已恢复上次保存的场景"
     },
     "purpose": {
       "freezone": "自由世界",
@@ -7216,5 +7254,11 @@
       "roleLabel": "角色",
       "descriptionLabel": "描述"
     }
+  },
+  "productSurface": {
+    "misconfigured": "功能开放配置不完整，请联系管理员。",
+    "reload": "重新加载",
+    "statusUnknown": "暂时无法确认功能开放状态，请稍后重试。",
+    "unavailableTitle": "功能未开放"
   }
 }

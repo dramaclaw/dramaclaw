@@ -422,10 +422,7 @@ function SceneDialog({
                 className={SCENE_DIALOG_INPUT_CLASS}
               />
               <p className="text-xs leading-5 text-muted-foreground">
-                {t("assets.scenes.fields.nameRule", {
-                  defaultValue:
-                    "普通独立场景只填名称；不要在这里填写变体或时间。需要状态/时间版时，在场景详情里添加变体。",
-                })}
+                {t("assets.scenes.fields.nameRule")}
               </p>
             </div>
           )}
@@ -449,10 +446,7 @@ function SceneDialog({
                     variant_prompt: event.target.value,
                   }))
                 }
-                placeholder={t("assets.scenes.fields.variantPromptPlaceholder", {
-                  defaultValue:
-                    "只写和基础场景不同的部分，例如积水反光、焦黑墙面、节日装饰。",
-                })}
+                placeholder={t("assets.scenes.fields.variantPromptPlaceholder")}
                 className={SCENE_DIALOG_TEXTAREA_CLASS}
               />
             </div>
@@ -1600,10 +1594,7 @@ export function ScenesPanel({
                               });
                               setDialogOpen(true);
                             }}
-                            title={t("assets.scenes.newPlateHint", {
-                              defaultValue:
-                                "场景变体即「同一个地点的不同状态」",
-                            })}
+                            title={t("assets.scenes.newPlateHint")}
                             className="h-8 gap-1 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none hover:bg-white/[0.04] dark:bg-transparent"
                           />
                         }

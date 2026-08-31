@@ -1408,6 +1408,11 @@
       "status": "Status",
       "change": "Change",
       "balance": "Balance after"
+    },
+    "promotion": {
+      "active": "Promotion",
+      "discount": "{{percentOff}}% off",
+      "limitedDiscount": "{{percentOff}}% off, limited time"
     }
   },
   "nav": {
@@ -2313,7 +2318,8 @@
     "play": "Play",
     "pause": "Pause",
     "retry": "Retry",
-    "requestId": "Request ID"
+    "requestId": "Request ID",
+    "listSeparator": ", "
   },
   "ingest": {
     "title": "Story Source",
@@ -2666,7 +2672,8 @@
       "title": "Stop task",
       "fallbackMessage": "The task has already started. Stopping now will not refund the spent credits. Stop anyway?",
       "confirm": "Stop task",
-      "keepRunning": "Keep running"
+      "keepRunning": "Keep running",
+      "continued": "Task kept running"
     },
     "stageAssetSteps": {
       "pano_from_master": "Panorama from master",
@@ -3068,8 +3075,9 @@
       "scriptReviewPassed": "Script generation completed",
       "scriptReviewFailed": "Script review failed. Regenerate: {{summary}}",
       "modeLabel": "Current mode:",
-      "modeLiteral": "Mode: one line per Beat",
-      "sourceWorkbenchHint": "Source text auto-saves on the right"
+      "modeLiteral": "One line per Beat",
+      "sourceWorkbenchHint": "Source text auto-saves on the right",
+      "reviewIssuesFallback": "Unresolved issues remain"
     },
     "beat": {
       "badge": "Beat {{n}}",
@@ -3881,6 +3889,12 @@
       "aspectRatio": "Aspect",
       "wide16x9": "16:9",
       "aspectChangeHint": "Switching aspect ratio only affects newly generated content; existing assets must be regenerated to update to the new ratio."
+    },
+    "sketches": {
+      "selectFailed": "Selection failed"
+    },
+    "video": {
+      "switchFailed": "Failed to switch video"
     }
   },
   "audioType": {
@@ -4848,7 +4862,8 @@
       "panoCaptureGroup": "Panorama captures ({{total}})",
       "group": "Group {{index}}",
       "storyboardGroup": "Storyboard group {{index}}",
-      "storyboardFrame": "Storyboard frame"
+      "storyboardFrame": "Storyboard frame",
+      "externalAssetGroup": "External assets"
     },
     "viewportHint": {
       "focused": "Focused on the selected node",
@@ -4891,6 +4906,27 @@
     },
     "addNodePanel": {
       "skillCount": "{{count}} skills"
+    },
+    "generation": {
+      "missingProjectParam": "The current URL has no project parameter",
+      "missingProjectRetry": "The current URL has no project, so this can't be retried"
+    },
+    "imageModel": {
+      "modeEdit": "Edit",
+      "modeGenerate": "Generate",
+      "noneAvailable": "No model available"
+    },
+    "skillParams": {
+      "aspectRatio": "Aspect ratio",
+      "quality": "Quality"
+    },
+    "mainline": {
+      "chainAlreadyBound": "This chain is already bound to {{bound}} and can't also take {{incoming}}",
+      "imageRoleTaken": "This image is already bound to mainline role {{existing}} and can't also take {{candidate}}",
+      "roleBoundElsewhere": "{{role}} is already bound to another image. Disconnect that binding first."
+    },
+    "assetDrop": {
+      "fallbackNodeLabel": "Node"
     }
   },
   "tool": {
@@ -5903,7 +5939,8 @@
     "audioNode": {
       "empty": "No audio yet",
       "noVoiceConfigured": "No voice configured",
-      "generateFailed": "Generation failed"
+      "generateFailed": "Generation failed",
+      "selectVoiceFirst": "Configure or pick a voice first"
     },
     "videoStory": {
       "columns": {
@@ -6402,7 +6439,8 @@
       "skillNoDirectorBackground": "This beat has no director background yet",
       "skillFallbackTitle": "Skill",
       "skillLoading": "Loading skill…",
-      "skillUnknown": "Unknown skill"
+      "skillUnknown": "Unknown skill",
+      "sceneRestored": "Restored the last saved scene"
     },
     "purpose": {
       "freezone": "Freezone",
@@ -7216,5 +7254,11 @@
       "roleLabel": "Role",
       "descriptionLabel": "Description"
     }
+  },
+  "productSurface": {
+    "misconfigured": "Feature availability is not fully configured. Please contact an administrator.",
+    "reload": "Reload",
+    "statusUnknown": "Can't confirm feature availability right now. Please try again later.",
+    "unavailableTitle": "Feature unavailable"
   }
 }

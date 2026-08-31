@@ -257,7 +257,8 @@ const groupNodeDefinition: CanvasNodeDefinition<GroupNodeData> = {
   },
   createDefaultData: () => ({
     displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.group],
-    label: '组',
+    // 与 displayName 同为写进画布 JSON 的规范默认值，标题显示走 headerTitle
+    label: '组', // i18n-exempt
   }),
 };
 
