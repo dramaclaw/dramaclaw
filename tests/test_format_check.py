@@ -106,6 +106,27 @@ def test_headerless_short_drama_is_blocking_when_scene_headers_are_required():
     assert "missing_scene_headers" in _codes(result)
 
 
+def test_explicit_english_scene_markers_are_repairable_not_missing():
+    text = """Episode 1
+SCENE 1 — THE EMPTY PLATFORM
+Location: Seoul Subway Station
+Time: 11:47 PM
+JI-WON: Hello?
+SCENE 2 — THE LAST TRAIN
+The train stops.
+"""
+
+    result = build_import_format_check(
+        text,
+        has_chapters=True,
+        require_scene_headers=True,
+    )
+
+    assert result["level"] != "blocking"
+    assert result["scene_header_status"] == "repairable"
+    assert "missing_scene_headers" not in _codes(result)
+
+
 @pytest.mark.parametrize(
     "action_line",
     [

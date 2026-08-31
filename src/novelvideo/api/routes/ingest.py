@@ -343,6 +343,30 @@ async def start_ingest(
             require_scene_headers=True,
         )
         if format_check["level"] == "blocking":
+            issue_codes = sorted(
+                {
+                    str(issue.get("code") or "").strip()
+                    for issue in format_check.get("issues", [])
+                    if str(issue.get("code") or "").strip()
+                }
+            )
+            numeric_metrics = {
+                str(key): value
+                for key, value in format_check.get("metrics", {}).items()
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            }
+            logger.warning(
+                "screenplay_format_blocked project=%s filename=%s "
+                "spine_template=%s level=%s issue_codes=%s metrics=%s "
+                "scene_header_status=%s",
+                project,
+                safe_name,
+                effective_spine_template,
+                format_check.get("level", ""),
+                issue_codes,
+                numeric_metrics,
+                format_check.get("scene_header_status", ""),
+            )
             return {
                 "ok": False,
                 "error": format_check["summary"],

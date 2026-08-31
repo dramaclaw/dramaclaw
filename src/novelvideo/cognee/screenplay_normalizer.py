@@ -274,6 +274,7 @@ SCREENPLAY_NORMALIZER_SYSTEM_PROMPT = """你是剧本场景头标准化分析师
 - location 是稳定物理地点，只保留地点本身，不包含时间、内/外、镜头词、闪回、特写、情绪或事件。
 - episode_number 必须从原始场次号回填，例如“3-1”对应 3；没有场次号时才填 0。
 - time_of_day 只能输出：无、清晨、上午、正午、午后、白天、黄昏、夜晚。遇到“日/昼”输出“白天”；“夜/深夜/三更/亥时”输出“夜晚”；无明确时间时输出“无”；不要输出原始时辰词或空字符串。
+- 英文时间也映射到同一组选项：day/daytime 输出“白天”，night/nighttime 或 PM 深夜钟点输出“夜晚”，morning 输出“上午”，afternoon 输出“午后”，dawn 输出“清晨”，dusk/evening 输出“黄昏”。
 - interior_exterior 只能是 内、外 或无。
 - scene_type 只能是 interior、exterior、nature。
 - aliases 只能放场景头中明确出现的地点别名；没有就输出空列表。

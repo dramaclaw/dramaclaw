@@ -294,6 +294,100 @@ LUCY: WAIT FOR ME.
     ]
 
 
+def test_parse_explicit_english_scene_markers_and_metadata():
+    text = """Episode 1
+SCENE 1 — THE EMPTY PLATFORM
+Location: Seoul Subway Station
+Time: 11:47 PM
+Characters: Ji-won, Old Woman
+JI-WON: Hello?
+SCENE 2 — THE LAST TRAIN
+The train stops.
+"""
+
+    blocks = [block for block in parse_scene_blocks(text) if block.header_line]
+
+    assert len(blocks) == 2
+    assert blocks[0].episode == 1
+    assert blocks[0].scene_no == "1"
+    assert blocks[0].location == "Seoul Subway Station"
+    assert blocks[0].time_of_day == "11:47 PM"
+    assert blocks[0].characters == ["Ji-won", "Old Woman"]
+    assert blocks[0].lines == ["JI-WON: Hello?"]
+    assert blocks[1].scene_no == "2"
+    assert blocks[1].lines == ["The train stops."]
+
+
+def test_parse_numbered_english_scene_and_constrained_sense_compatibility():
+    text = """Episode 1
+1-1 Scene: Living room at home, daytime
+Characters: Me, Father, Mother
+ME: Stop.
+1-2 Sense: Brother's bedroom, nighttime
+Characters: Sister, Brother
+SISTER: Listen.
+"""
+
+    blocks = [block for block in parse_scene_blocks(text) if block.header_line]
+
+    assert [block.scene_no for block in blocks] == ["1", "2"]
+    assert [block.location for block in blocks] == [
+        "Living room at home",
+        "Brother's bedroom",
+    ]
+    assert [block.time_of_day for block in blocks] == ["daytime", "nighttime"]
+    assert blocks[0].characters == ["Me", "Father", "Mother"]
+    assert blocks[1].characters == ["Sister", "Brother"]
+
+
+def test_parse_bare_sense_only_with_structured_location_and_time():
+    text = """Episode 1
+Sense: Living room at home, daytime
+Time: First Grade
+Characters: Me, Father, Mother
+ME: Stop.
+1-2 Sense: Brother's bedroom, nighttime
+Characters: Sister, Brother
+SISTER: Listen.
+"""
+
+    blocks = [block for block in parse_scene_blocks(text) if block.header_line]
+
+    assert len(blocks) == 2
+    assert blocks[0].location == "Living room at home"
+    assert blocks[0].time_of_day == "daytime"
+    assert blocks[0].characters == ["Me", "Father", "Mother"]
+    assert blocks[0].lines == ["Time: First Grade", "ME: Stop."]
+    assert blocks[1].scene_no == "2"
+
+
+def test_bare_sense_and_production_labels_remain_body_content():
+    text = """SCENE 1 — PLATFORM
+Sense: something is wrong.
+Sense 2 people entered.
+NARRATOR:
+The station is empty.
+SFX:
+Metal scraping.
+VISUAL PROMPT:
+Dark tunnel.
+"""
+
+    blocks = [block for block in parse_scene_blocks(text) if block.header_line]
+
+    assert len(blocks) == 1
+    assert blocks[0].lines == [
+        "Sense: something is wrong.",
+        "Sense 2 people entered.",
+        "NARRATOR:",
+        "The station is empty.",
+        "SFX:",
+        "Metal scraping.",
+        "VISUAL PROMPT:",
+        "Dark tunnel.",
+    ]
+
+
 def test_parse_chinese_fountain_heading_without_space_after_dot():
     blocks = parse_scene_blocks(
         "内景.咖啡馆 - 日\n张三：你好。\n内景茶室 - 夜\n李四：请坐。"

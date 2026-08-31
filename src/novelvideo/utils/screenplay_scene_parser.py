@@ -60,6 +60,10 @@ ROOM_TYPES = {
 }
 
 EPISODE_HEADER_RE = re.compile(r"^第([一二三四五六七八九十百千万\d]+)集")
+ENGLISH_EPISODE_HEADER_RE = re.compile(
+    r"^(?:EPISODE|CHAPTER)\s*(?P<episode>\d+)\b",
+    re.IGNORECASE,
+)
 SCENE_MARKER_RE = re.compile(
     r"^(?:(?:场次|场)\s*|第\s*)?[（(]?(?P<scene_no>\d+)[）)]?"
     r"(?:\s*场)?(?:\s*[:：])?\s*$"
@@ -74,14 +78,57 @@ INSERT_SCENE_RE = re.compile(
     r"(?:\s*[（(]?(?P<scene_no>\d+)[）)]?)?"
     r"(?:\s*[:：])?\s*(?P<rest>.*)$"
 )
-LABELED_LOCATION_RE = re.compile(r"^(?:地点|环境|场景)[：:]\s*(?P<location>.+)$")
+LABELED_LOCATION_RE = re.compile(
+    r"^(?:地点|环境|场景|Location)[：:]\s*(?P<location>.+)$",
+    re.IGNORECASE,
+)
 LABELED_TIME_RE = re.compile(
     rf"^(?:时间|时段)[：:]\s*(?P<time>{TIME_TOKEN_RE})\s*$"
 )
 LABELED_INTERIOR_EXTERIOR_RE = re.compile(
     r"^(?:内外景|场景类型)[：:]\s*(?P<interior>内|外)\s*$"
 )
-LABELED_CHARACTER_RE = re.compile(r"^(?:人物|出场人物|角色)[：:]\s*(?P<characters>.+)$")
+LABELED_CHARACTER_RE = re.compile(
+    r"^(?:人物|出场人物|角色|Characters?)[：:]\s*(?P<characters>.+)$",
+    re.IGNORECASE,
+)
+ENGLISH_LABELED_TIME_RE = re.compile(
+    r"^Time[：:]\s*(?P<time>.+)$",
+    re.IGNORECASE,
+)
+ENGLISH_SCENE_MARKER_RE = re.compile(
+    r"^SCENE\s+(?P<scene_no>\d+[A-Za-z]?)\b"
+    r"(?:\s*[:：.\-–—]\s*|\s+)?(?P<title>.*)$",
+    re.IGNORECASE,
+)
+ENGLISH_SENSE_MARKER_RE = re.compile(
+    r"^SENSE\s+(?P<scene_no>\d+[A-Za-z]?)\s*"
+    r"[:：\-–—]\s*(?P<title>.*)$",
+    re.IGNORECASE,
+)
+NUMBERED_ENGLISH_SCENE_RE = re.compile(
+    r"^(?P<episode>\d+)\s*[-－.．]\s*(?P<scene>\d+)\s+"
+    r"(?:SCENE|SENSE)\s*[:：]\s*(?P<rest>.+)$",
+    re.IGNORECASE,
+)
+ENGLISH_DESCRIPTIVE_TIME_PATTERN = (
+    r"daytime|nighttime|day|night|morning|afternoon|evening|dawn|dusk|midnight|noon"
+)
+ENGLISH_DESCRIPTIVE_TIME_RE = re.compile(
+    r"^(?P<location>.+?)\s*[,，]\s*"
+    rf"(?P<time>{ENGLISH_DESCRIPTIVE_TIME_PATTERN})$",
+    re.IGNORECASE,
+)
+BARE_ENGLISH_SENSE_SCENE_RE = re.compile(
+    r"^SENSE\s*[:：]\s*(?P<rest>.+?\s*[,，]\s*"
+    rf"(?:{ENGLISH_DESCRIPTIVE_TIME_PATTERN}))$",
+    re.IGNORECASE,
+)
+ENGLISH_CLOCK_TIME_RE = re.compile(
+    r"^(?:\d{1,2}(?::\d{2})?\s*(?:AM|PM)|\d{1,2}:\d{2}|"
+    rf"{ENGLISH_DESCRIPTIVE_TIME_PATTERN})$",
+    re.IGNORECASE,
+)
 INLINE_LABELED_SCENE_RE = re.compile(
     r"^(?:场次|第)?[（(]?(?P<scene_no>\d+)[）)]?(?:\s*场)?"
     r"(?:\s*[:：])?.*?地点[：:]\s*(?P<location>.+?)"
@@ -184,6 +231,50 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
             current_episode = chinese_to_int(episode_match.group(1))
             if current.header_line or current.lines:
                 current.episode = current.episode or current_episode
+            continue
+
+        english_episode_match = ENGLISH_EPISODE_HEADER_RE.match(line)
+        if english_episode_match:
+            current_episode = int(english_episode_match.group("episode"))
+            if current.header_line or current.lines:
+                current.episode = current.episode or current_episode
+            continue
+
+        bare_english_sense = BARE_ENGLISH_SENSE_SCENE_RE.fullmatch(line)
+        if bare_english_sense:
+            if current_episode <= 0:
+                current_episode = 1
+            start_block(line)
+            _apply_english_inline_location(
+                current,
+                bare_english_sense.group("rest") or "",
+            )
+            continue
+
+        numbered_english = NUMBERED_ENGLISH_SCENE_RE.fullmatch(line)
+        if numbered_english:
+            current_episode = int(numbered_english.group("episode"))
+            start_block(
+                line,
+                scene_no=numbered_english.group("scene") or "",
+            )
+            _apply_english_inline_location(
+                current,
+                numbered_english.group("rest") or "",
+            )
+            continue
+
+        english_scene_marker = (
+            ENGLISH_SCENE_MARKER_RE.fullmatch(line)
+            or ENGLISH_SENSE_MARKER_RE.fullmatch(line)
+        )
+        if english_scene_marker:
+            if current_episode <= 0:
+                current_episode = 1
+            start_block(
+                line,
+                scene_no=english_scene_marker.group("scene_no") or "",
+            )
             continue
 
         bracketed_labeled = BRACKETED_LABELED_SCENE_RE.fullmatch(line)
@@ -292,6 +383,21 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
             collecting_header = True
             continue
 
+        english_labeled_time = ENGLISH_LABELED_TIME_RE.match(line)
+        if (
+            english_labeled_time
+            and current.header_line
+            and (collecting_header or not current.lines)
+        ):
+            time_hint = (english_labeled_time.group("time") or "").strip()
+            if _is_english_time_hint(time_hint):
+                current.time_of_day = time_hint
+                current.time_inferred = False
+            else:
+                current.lines.append(line)
+            collecting_header = True
+            continue
+
         labeled_interior_exterior = LABELED_INTERIOR_EXTERIOR_RE.match(line)
         if (
             labeled_interior_exterior
@@ -330,6 +436,14 @@ def is_scene_start_line(line: str) -> bool:
     if not stripped:
         return False
     if BRACKETED_LABELED_SCENE_RE.fullmatch(stripped):
+        return True
+    if NUMBERED_ENGLISH_SCENE_RE.fullmatch(stripped):
+        return True
+    if BARE_ENGLISH_SENSE_SCENE_RE.fullmatch(stripped):
+        return True
+    if ENGLISH_SCENE_MARKER_RE.fullmatch(stripped):
+        return True
+    if ENGLISH_SENSE_MARKER_RE.fullmatch(stripped):
         return True
     if _parse_international_scene_header(stripped):
         return True
@@ -509,6 +623,20 @@ def _apply_partial_location(block: ParsedSceneBlock, location_line: str) -> None
         block.location = text
 
 
+def _apply_english_inline_location(
+    block: ParsedSceneBlock,
+    location_line: str,
+) -> None:
+    text = (location_line or "").strip()
+    descriptive_time = ENGLISH_DESCRIPTIVE_TIME_RE.fullmatch(text)
+    if descriptive_time:
+        block.location = (descriptive_time.group("location") or "").strip()
+        block.time_of_day = (descriptive_time.group("time") or "").strip()
+        block.time_inferred = False
+        return
+    block.location = text
+
+
 def _extend_unique(items: list[str], new_items: list[str]) -> None:
     for item in new_items:
         if item and item not in items:
@@ -617,6 +745,10 @@ def _parse_international_scene_header(line: str) -> tuple[str, str, str] | None:
 
 def _is_time_token(text: str) -> bool:
     return bool(re.fullmatch(TIME_TOKEN_RE, (text or "").strip()))
+
+
+def _is_english_time_hint(text: str) -> bool:
+    return bool(ENGLISH_CLOCK_TIME_RE.fullmatch((text or "").strip()))
 
 
 def _inherit_building_prefix(parts: list[str]) -> list[str]:
