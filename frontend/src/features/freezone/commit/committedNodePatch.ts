@@ -250,7 +250,7 @@ export function nodeDataAfterCommittedSlot(
 ): Record<string, unknown> | null {
   if (target.kind === "scene_director_world") return null;
   if (isDirectorWorldSourceSlotTarget(target)) {
-    return nodeDataAfterDirectorWorldSourceSlotCommit(nodeData, target, result, projectId);
+    return nodeDataAfterDirectorWorldSourceSlotCommit(nodeData, target, result, t, projectId);
   }
   const targetUrl = stringValue(result.target_url);
   if (!targetUrl) return null;

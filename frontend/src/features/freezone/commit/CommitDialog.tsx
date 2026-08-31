@@ -577,7 +577,7 @@ export function CommitDialog({
         if (!latestNodeData) {
           throw new Error(t("freezone.commit.errors.needCanvasNodeState"));
         }
-        const result = await commitSceneDirectorWorldFromCanvasNode(project, target, latestNodeData);
+        const result = await commitSceneDirectorWorldFromCanvasNode(project, target, latestNodeData, t);
         onSuccess(renderCommitSuccessMessage(target, result, t), result, target);
         onClose();
         return;
@@ -606,6 +606,7 @@ export function CommitDialog({
             project,
             { kind: "scene_director_world", scene_id: target.scene_id },
             directorWorldManifestData,
+            t,
             { pruneStale: false },
           );
           message += t("freezone.commit.success.directorWorldSynced");

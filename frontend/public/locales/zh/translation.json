@@ -1118,7 +1118,9 @@
         "incompleteTarget": "目标不完整",
         "noWorldSource": "无来源没有可提交的 3D 世界素材；请切换到具体世界来源后再提交到主线槽位。",
         "noSlotSource": "当前 3D 世界没有可提交到该槽位的素材。",
-        "needCanvasNodeState": "导演世界提交需要画布节点状态"
+        "needCanvasNodeState": "导演世界提交需要画布节点状态",
+        "noDirectorWorldState": "当前导演世界没有可提交的场景状态",
+        "commitWorldSourceFirst": "先把当前世界来源提交到主线槽位，再提交导演世界状态"
       },
       "success": {
         "directorRender": "已提交导演合成资产：{{path}}（含纯背景和元数据）",
@@ -1214,7 +1216,34 @@
         "scene_3gs_custom_scene": "自定义世界",
         "prop_ref": "道具"
       },
-      "committedNodeLabel": "已提交 · {{label}}"
+      "committedNodeLabel": "已提交 · {{label}}",
+      "batch": {
+        "title": "📤 批量提交到主线资产",
+        "subtitle": "项目: {{project}} · {{total}} 张图（可推 {{sendable}} 张 / 跳过 {{skipped}} 张）",
+        "hint": "每张图自动提交回它的来源资产槽位（来自主流程导入的图按原槽位写回；上传 / 生成 / 编辑产出的图没有来源信息会跳过 — 用单图提交选择目标）。",
+        "noProvenance": "无来源信息（跳过）",
+        "summaryReady": "准备提交 {{count}} 张",
+        "summaryDone": "{{succeeded}} 成功 · {{failed}} 失败 · {{skipped}} 跳过",
+        "doneMessage": "批量提交完成：{{succeeded}} 成功 / {{failed}} 失败 / {{skipped}} 跳过",
+        "done": "完成",
+        "submit": "提交 {{count}} 张",
+        "submitting": "提交中 ({{current}}/{{total}})...",
+        "retryFailed": "重试失败 {{count}} 张",
+        "status": {
+          "pending": "待提交",
+          "running": "提交中...",
+          "ok": "✓ 完成",
+          "skipped": "跳过",
+          "failed": "✗ 失败"
+        }
+      },
+      "worldSource": {
+        "front": "正面世界",
+        "back": "背面世界",
+        "pano": "360世界",
+        "custom": "自定义世界",
+        "pano360Image": "360图"
+      }
     },
     "shell": {
       "nodeNoCommittable": "当前节点没有可提交的内容",
@@ -4603,6 +4632,14 @@
       "useAria": "使用{{label}}",
       "loading": "加载中…",
       "empty": "暂无风格模板"
+    },
+    "commitHint": {
+      "title": "生成后的产物在 commit 时如何写回主线槽位",
+      "sketch": "草图",
+      "frame": "分镜",
+      "typed": "EP{{episode}}/镜头 {{beat}} · {{candidate}}候选 · 生成后落本节点,commit 后晋升为 {{promoted}}",
+      "untyped": "主线候选 · 已绑定 EP{{episode}}/镜头 {{beat}} · 生成后落本节点,commit 时按上下文匹配槽位",
+      "free": "自由候选 · 生成后落本节点,commit 时需手动选择目标资产"
     }
   },
   "tool": {

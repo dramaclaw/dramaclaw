@@ -1118,7 +1118,9 @@
         "incompleteTarget": "Incomplete target",
         "noWorldSource": "The “no source” view has no 3D world asset to commit; switch to a concrete world source before committing to a mainline slot.",
         "noSlotSource": "The current 3D world has no asset for this slot.",
-        "needCanvasNodeState": "Committing a director world requires canvas node state"
+        "needCanvasNodeState": "Committing a director world requires canvas node state",
+        "noDirectorWorldState": "This director world has no scene state to commit",
+        "commitWorldSourceFirst": "Commit the current world source to its mainline slot first, then commit the director world state"
       },
       "success": {
         "directorRender": "Committed director composite asset: {{path}} (with clean background and metadata)",
@@ -1214,7 +1216,34 @@
         "scene_3gs_custom_scene": "Custom world",
         "prop_ref": "Prop"
       },
-      "committedNodeLabel": "Committed · {{label}}"
+      "committedNodeLabel": "Committed · {{label}}",
+      "batch": {
+        "title": "📤 Batch commit to mainline assets",
+        "subtitle": "Project: {{project}} · {{total}} images ({{sendable}} can be pushed / {{skipped}} skipped)",
+        "hint": "Each image goes back to the asset slot it came from (images imported from the main pipeline are written back to their original slot; uploaded / generated / edited images carry no origin and are skipped — use single-image commit to pick a target).",
+        "noProvenance": "No origin information (skipped)",
+        "summaryReady": "Ready to commit {{count}}",
+        "summaryDone": "{{succeeded}} succeeded · {{failed}} failed · {{skipped}} skipped",
+        "doneMessage": "Batch commit finished: {{succeeded}} succeeded / {{failed}} failed / {{skipped}} skipped",
+        "done": "Done",
+        "submit": "Commit {{count}}",
+        "submitting": "Committing ({{current}}/{{total}})...",
+        "retryFailed": "Retry {{count}} failed",
+        "status": {
+          "pending": "Pending",
+          "running": "Committing...",
+          "ok": "✓ Done",
+          "skipped": "Skipped",
+          "failed": "✗ Failed"
+        }
+      },
+      "worldSource": {
+        "front": "Front world",
+        "back": "Back world",
+        "pano": "360 world",
+        "custom": "Custom world",
+        "pano360Image": "360 image"
+      }
     },
     "shell": {
       "nodeNoCommittable": "This node has nothing to commit",
@@ -4603,6 +4632,14 @@
       "useAria": "Use {{label}}",
       "loading": "Loading…",
       "empty": "No style templates yet"
+    },
+    "commitHint": {
+      "title": "How this output is written back to a mainline slot on commit",
+      "sketch": "sketch",
+      "frame": "frame",
+      "typed": "EP{{episode}} / beat {{beat}} · {{candidate}} candidate · lands on this node, promoted to {{promoted}} on commit",
+      "untyped": "Mainline candidate · bound to EP{{episode}} / beat {{beat}} · lands on this node, slot matched by context on commit",
+      "free": "Free candidate · lands on this node, you pick the target asset on commit"
     }
   },
   "tool": {

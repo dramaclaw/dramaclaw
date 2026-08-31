@@ -814,7 +814,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
                 label: typeof latestData.displayName === "string" ? latestData.displayName : undefined,
               })
             : target.kind === "scene_director_world"
-              ? await commitSceneDirectorWorldFromCanvasNode(projectId, target, latestData)
+              ? await commitSceneDirectorWorldFromCanvasNode(projectId, target, latestData, t)
               : await promoteToAsset(projectId, latestSourceUrl, target, {
                 mark_stale: false,
               });
@@ -829,7 +829,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
             await commitSceneDirectorWorldFromCanvasNode(projectId, {
               kind: "scene_director_world",
               scene_id: target.scene_id,
-            }, manifestNodeData, { pruneStale: false });
+            }, manifestNodeData, t, { pruneStale: false });
           }
           refreshCommittedTargetNodes(target, result);
           invalidateCommittedTargetQueries(target);
