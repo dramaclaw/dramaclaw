@@ -790,8 +790,8 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
 class ShotReference:
     """Seedance 2.0 素材引用。"""
 
-    type: str  # "image" / "video" / "audio"
-    path: str  # 本地文件路径
+    type: str  # "image" / "video" / "audio" / "file" / "link"
+    path: str  # 本地文件路径或公开 URL
     role: str  # "首帧" / "角色参考" / "场景参考" / "配乐" / "音色参考"
 
 
@@ -2253,7 +2253,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             media_type = str(getattr(ref, "type", "") or "image").strip().lower()
             path = str(getattr(ref, "path", "") or "").strip()
             role = str(getattr(ref, "role", "") or "").strip()
-            if path and media_type in {"image", "video", "audio"}:
+            if path and media_type in {"image", "video", "audio", "file", "link"}:
                 raw_items.append((media_type, path, role))
 
         seen: set[tuple[str, str]] = set()
@@ -2261,6 +2261,8 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             "image": [],
             "video": [],
             "audio": [],
+            "file": [],
+            "link": [],
         }
         for media_type, path, role in raw_items:
             identity = (media_type, path)
@@ -2269,11 +2271,18 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             seen.add(identity)
             if media_type == "image":
                 url = await self._relay_frame_input(path)
+            elif media_type == "link":
+                parsed = urllib.parse.urlsplit(path)
+                if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                    raise ValueError("reference link must be an HTTP/HTTPS URL")
+                url = path
             else:
                 url = await self._relay_media_input(
                     path,
-                    default_ext="mp4" if media_type == "video" else "mp3",
-                    resource_type="video",
+                    default_ext=(
+                        "mp4" if media_type == "video" else "mp3" if media_type == "audio" else "bin"
+                    ),
+                    resource_type="raw" if media_type == "file" else "video",
                 )
             if not path.startswith(("http://", "https://")):
                 log(f"{media_type} 参考素材已上传到媒体中转")
@@ -2282,6 +2291,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         image_urls = [url for url, _role in relayed["image"]]
         video_urls = [url for url, _role in relayed["video"]]
         audio_urls = [url for url, _role in relayed["audio"]]
+        file_urls = [url for url, _role in relayed["file"]]
+        link_urls = [url for url, _role in relayed["link"]]
+
+        if file_urls and link_urls:
+            raise ValueError("reference_file and reference_link are mutually exclusive")
 
         if normalized_mode in {"image_reference", "all_reference", "video_edit"}:
             if image_urls:
@@ -2290,6 +2304,10 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 metadata["reference_videos"] = video_urls
             if audio_urls:
                 metadata["reference_audios"] = audio_urls
+            if file_urls:
+                metadata["reference_file"] = file_urls[0]
+            if link_urls:
+                metadata["reference_link"] = link_urls[0]
             return
 
         raise ValueError(f"unsupported video generation mode: {normalized_mode}")

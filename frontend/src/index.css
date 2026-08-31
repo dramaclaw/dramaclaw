@@ -493,6 +493,41 @@
   background: rgba(255, 255, 255, 0.14);
 }
 
+/* hover 时把缩略图换成替换按钮：@ 引用能改指向这件事，藏在双击里没人找得到。
+   音频 chip 的缩略图位置被播放键占着，替换键排在标签后面（见 buildChipElement）。 */
+.mention-chip-swap {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgb(var(--text-rgb));
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mention-chip-swap::before {
+  content: '\21C4';
+}
+
+.mention-chip-swap:hover {
+  background: rgb(var(--accent-rgb));
+  color: #fff;
+}
+
+.mention-chip:hover > img,
+.mention-chip:hover > video {
+  display: none;
+}
+
+.mention-chip:hover > .mention-chip-swap {
+  display: inline-flex;
+}
+
 /* 音频引用：可点击的 ▶ / ⏸ 播放按钮（无缩略图）。 */
 .mention-chip-audio-play {
   display: inline-flex;

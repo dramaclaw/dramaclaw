@@ -66,6 +66,17 @@ from novelvideo.newapi_provisioner import (
 )
 
 
+def _newer_bundled_catalog_version(offset: int = 1) -> str:
+    bundled = json.loads(
+        Path(model_gateway_settings.__file__)
+        .with_name("official_media_models.json")
+        .read_text(encoding="utf-8")
+    )
+    parts = str(bundled["catalogVersion"]).split(".")
+    parts[-1] = str(int(parts[-1]) + offset)
+    return ".".join(parts)
+
+
 def test_generic_comfyui_i2v_defaults_to_widescreen():
     config = model_gateway._default_comfyui_media_model_config("wan-i2v")
 
@@ -1739,9 +1750,10 @@ def test_official_media_catalog_preferences_and_remote_update(monkeypatch, tmp_p
     _isolate_settings_db(monkeypatch, tmp_path)
     source_url = "https://catalog.example.test/official_media_models.json"
     monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_URL", source_url)
+    remote_version = _newer_bundled_catalog_version()
     payload = {
         "version": 1,
-        "catalogVersion": "2026.08.14.2",
+        "catalogVersion": remote_version,
         "name": "Test official media models",
         "mediaModels": {
             "test-video": {
@@ -1781,7 +1793,7 @@ def test_official_media_catalog_preferences_and_remote_update(monkeypatch, tmp_p
     assert checked.status_code == 200, checked.text
     assert checked.json()["data"]["updated"] is True
     assert current.json()["data"]["source"] == "remote"
-    assert current.json()["data"]["catalogVersion"] == "2026.08.14.2"
+    assert current.json()["data"]["catalogVersion"] == remote_version
     assert current.json()["data"]["modelCount"] == 1
 
 
@@ -1804,7 +1816,7 @@ def test_official_media_catalog_manifest_verifies_hash_and_revalidates_etag(
     monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_MANIFEST_URL", manifest_url)
     payload = {
         "version": 1,
-        "catalogVersion": "2026.08.14.3",
+        "catalogVersion": _newer_bundled_catalog_version(2),
         "name": "Test official media models",
         "mediaModels": {
             "test-video": {
@@ -3312,11 +3324,15 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     videos = get_official_media_model_catalog("video")
 
     assert len(images) == 6
-    assert len(videos) == 8
+    assert len(videos) == 10
     assert [entry["id"] for entry in videos[:2]] == [
-        "seedance-2.0-fast",
-        "seedance-2.0",
+        "wan3.0-video-prime",
+        "wan3.0-video",
     ]
+    wan = videos[0]
+    assert wan["referenceFileMax"] == 1
+    assert wan["referenceLinkMax"] == 1
+    assert "pdf" in wan["referenceFileTypes"]
     seedream = next(entry for entry in images if entry["id"] == "seedream-5.0-pro")
     assert seedream["gatewayModel"] == "seedream-5.0-pro"
     assert seedream["resolutionOptions"] == ["1k", "2k"]

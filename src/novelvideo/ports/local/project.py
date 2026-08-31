@@ -312,6 +312,13 @@ class AllowAllProjectAccess:
     ) -> str | None:
         return "owner"
 
+    async def effective_project_role_by_id(
+        self,
+        project_id: str,
+        principals: list[Principal],
+    ) -> str | None:
+        return "owner"
+
     async def count_project_task_eligible_users(
         self,
         *,
