@@ -1237,6 +1237,16 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
         )
         is False
     )
+    assert chat_service._freezone_canvas_write_requested("生成一张图片") is True
+    assert chat_service._freezone_canvas_write_requested("生成一张赛博朋克风格的图片") is True
+    assert chat_service._freezone_canvas_write_requested("生成一段视频") is True
+    assert chat_service._freezone_canvas_write_requested("做一个女总裁复仇短视频") is True
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "请生成本集完整剧本。输出 20—25 个视觉 Beat，并描述旧图片与视频质感。"
+        )
+        is False
+    )
 
 
 def test_codex_freezone_instructions_forbid_invented_resource_uris():
@@ -1285,7 +1295,9 @@ def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("tool_outcome", ["missing", "success", "failure", "blocked"])
+@pytest.mark.parametrize(
+    "tool_outcome", ["missing", "success", "failure", "blocked", "draft_ready"]
+)
 async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     monkeypatch,
     tmp_path,
@@ -1313,7 +1325,33 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 thread_id="codex-thread",
                 turn_id="codex-turn",
             )
-            if tool_outcome not in {"missing", "blocked"}:
+            if tool_outcome == "draft_ready":
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_prepare_workflow_draft",
+                    name="dramaclaw.freezone_prepare_workflow_draft",
+                    call_id="call-draft",
+                    status="completed",
+                    input={"planning_confirmed": True},
+                    output={
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(
+                                    {
+                                        "ok": True,
+                                        "status": "workflow_draft_ready",
+                                        "draft_id": "draft-a",
+                                        "revision": 1,
+                                    }
+                                ),
+                            }
+                        ]
+                    },
+                    error=None,
+                    structured=None,
+                )
+            elif tool_outcome not in {"missing", "blocked"}:
                 result_payload = (
                     {"ok": True, "canvas_apply_status": "applied"}
                     if tool_outcome == "success"
@@ -1399,6 +1437,11 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     elif tool_outcome == "missing":
         assert "已创建" not in result["content"]
         assert result["content"] == "画布操作未完成：本轮没有执行画布写入，请重试。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "draft_ready":
+        assert result["content"] == (
+            "画布操作未完成：工作流草稿已准备完成，但本轮未提交确认创建，请重试。"
+        )
         assert assistant_deltas == [result["content"]]
     else:
         assert result["content"] == (
@@ -2756,6 +2799,12 @@ def test_freezone_prompt_allows_creative_ideation_canvas_framework_without_mainl
     )
 
     assert "creative ideas into working canvas material" in prompt
+    assert "answer in chat" in chat_service._CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS
+    assert (
+        "do not call a canvas write tool merely because"
+        in chat_service._CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS
+    )
+    assert "answer in chat" not in chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS
     assert "command catalog" in prompt
     assert "node create schema" in prompt
     assert "link type catalog" in prompt

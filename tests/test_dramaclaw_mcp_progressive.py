@@ -8,6 +8,29 @@ import pytest
 from novelvideo.chat import dramaclaw_mcp
 
 
+def test_external_mcp_ready_draft_honors_explicit_create_without_changing_plugin():
+    original = {
+        "ok": True,
+        "status": "workflow_draft_ready",
+        "draft_id": "draft-a",
+        "revision": 1,
+        "agent_instruction": "Wait for user confirmation.",
+    }
+
+    adapted = json.loads(
+        dramaclaw_mcp._adapt_external_agent_tool_result(
+            "freezone_prepare_workflow_draft",
+            json.dumps(original),
+        )
+    )
+
+    assert original["agent_instruction"] == "Wait for user confirmation."
+    assert "call freezone_confirm_workflow_draft exactly once now" in adapted[
+        "agent_instruction"
+    ]
+    assert "without asking for another confirmation" in adapted["agent_instruction"]
+
+
 def test_plugin_reads_turn_token_file_lazily(monkeypatch, tmp_path):
     token_file = tmp_path / "turn.token"
     token_file.write_text("first-token", encoding="utf-8")

@@ -89,6 +89,39 @@ PLUGIN = PLUGINS[0]
 TOOLS = _tool_index(*PLUGINS)
 SERVER = Server("dramaclaw", version="0.1.0")
 
+
+def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
+    """Resolve legacy workflow instructions at the external MCP boundary.
+
+    Hermes consumes the plugin result directly and keeps its existing flow. External
+    MCP agents receive an instruction that distinguishes an already-authorized create
+    imperative from a draft that genuinely still needs confirmation.
+    """
+
+    raw = str(value or "")
+    if name != "freezone_prepare_workflow_draft":
+        return raw
+    try:
+        payload = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return raw
+    if not isinstance(payload, dict) or not (
+        payload.get("ok") is True
+        and str(payload.get("status") or "") == "workflow_draft_ready"
+    ):
+        return raw
+    payload["agent_instruction"] = (
+        "Present the exact preview in product language, including each node's "
+        "preview.recipe_pipelines order as 主 Recipe → 补充 Recipe. Do not mention credits, "
+        "billing, pricing, or editions. If the current user message explicitly asks to create "
+        "or run the workflow and all required clarification answers are available, that "
+        "imperative is authorization: call freezone_confirm_workflow_draft exactly once now "
+        "with this draft_id and revision, without asking for another confirmation. Otherwise "
+        "wait for explicit user confirmation. For adjustments, patch this draft instead of "
+        "rebuilding the intent."
+    )
+    return json.dumps(payload, ensure_ascii=False)
+
 TOOL_SEARCH_NAME = "dramaclaw_tool_search"
 TOOL_DESCRIBE_NAME = "dramaclaw_tool_describe"
 TOOL_CALL_NAME = "dramaclaw_tool_call"
@@ -420,7 +453,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 "tool_name": name,
                 "message": getattr(exc, "message", str(exc)),
             })
-        return [types.TextContent(type="text", text=str(handler(arguments) or ""))]
+        result = handler(arguments)
+        return [
+            types.TextContent(
+                type="text",
+                text=_adapt_external_agent_tool_result(name, result),
+            )
+        ]
 
     if name == TOOL_SEARCH_NAME:
         try:

@@ -101,6 +101,10 @@ _CODEX_DEVELOPER_INSTRUCTIONS = (
 )
 _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant inside the Xi画/Freezone canvas. "
+    "If the user asks you to write or return text, copy, a screenplay, or Beats but does not "
+    "explicitly ask to create/add/land nodes or a workflow on the canvas, answer in chat. Do not "
+    "search Workflow Skills and do not call a canvas write tool merely because the requested "
+    "content mentions images, audio, or video. "
     "Use the concrete tools currently listed by the required dramaclaw MCP server. "
     "Freezone tools are exposed directly with names such as freezone_emit_canvas_command; "
     "do not look for the progressive dramaclaw_tool_search/describe/call bridge in this mode. "
@@ -179,7 +183,7 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # browser-bridge contract changes so canvas turns cannot silently resume a
 # thread that predates the required concrete write tools. Mainline thread keys
 # intentionally remain unchanged.
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v13"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v15"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -438,13 +442,23 @@ Skill Studio continuation:
 [/FREEZONE_CANVAS_ASSISTANT]"""
 
 _FREEZONE_CANVAS_WRITE_ACTION_RE = re.compile(
-    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|向[上下左右]移|再移|布局|选择|打开|运行|执行|生成|"
+    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|向[上下左右]移|再移|布局|选择|打开|运行|执行|生成|制作|做|"
     r"create|add|insert|delete|remove|clear|update|connect|move|layout|select|open|run|execute|generate)",
     re.IGNORECASE,
 )
 _FREEZONE_CANVAS_WRITE_OBJECT_RE = re.compile(
-    r"(?:节点|画布|工作流|连线|边|图片|视频|音频|合成|"
-    r"node|canvas|workflow|edge|image|video|audio|compose)",
+    r"(?:节点|画布|工作流|连线|边|合成节点|"
+    r"node|canvas|workflow|edge|compose\s+node)",
+    re.IGNORECASE,
+)
+_FREEZONE_DIRECT_MEDIA_WRITE_RE = re.compile(
+    r"(?:"
+    r"(?:生成|创建|新建|添加|制作|做|运行|执行)"
+    r"(?:(?!(?:剧本|文案|提示词|分析|说明|教程|beats?))[^。！？!?\n]){0,32}"
+    r"(?:图片|图像|视频|音频|音乐|配音|旁白|成片)"
+    r"|(?:generate|create|add|make|run|execute)\s+(?:an?\s+|some\s+)?"
+    r"(?:image|video|audio|music|voiceover|composition)"
+    r")",
     re.IGNORECASE,
 )
 _FREEZONE_CANVAS_KNOWLEDGE_QUESTION_RE = re.compile(
@@ -489,11 +503,17 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
         return False
     has_action = bool(_FREEZONE_CANVAS_WRITE_ACTION_RE.search(user_text))
     has_canvas_object = bool(_FREEZONE_CANVAS_WRITE_OBJECT_RE.search(user_text))
+    has_direct_media_write = bool(_FREEZONE_DIRECT_MEDIA_WRITE_RE.search(user_text))
     has_node_reference = "[SUPERTALE_CANVAS_NODE_REFERENCES]" in raw_prompt
     standalone_clear = bool(re.search(r"(?:清空|clear)", user_text, re.IGNORECASE))
     if _FREEZONE_CANVAS_KNOWLEDGE_QUESTION_RE.search(user_text):
         return False
-    return has_action and (has_canvas_object or has_node_reference or standalone_clear)
+    return has_action and (
+        has_canvas_object
+        or has_direct_media_write
+        or has_node_reference
+        or standalone_clear
+    )
 
 
 def _codex_freezone_tool_name(event: Any) -> str:
@@ -572,6 +592,25 @@ def _codex_freezone_write_result_error(event: Any) -> str:
     if isinstance(raw_error, str) and raw_error.strip():
         return raw_error.strip()[:1000]
     return ""
+
+
+def _codex_freezone_ready_workflow_draft(event: Any) -> dict[str, Any] | None:
+    """Return a successfully prepared workflow draft carried by a Codex event."""
+
+    if _codex_freezone_tool_name(event) != "freezone_prepare_workflow_draft":
+        return None
+    status = str(getattr(event, "status", "") or "").strip().lower()
+    if status not in {"completed", "success", "succeeded"}:
+        return None
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            if (
+                payload.get("ok") is True
+                and str(payload.get("status") or "") == "workflow_draft_ready"
+                and str(payload.get("draft_id") or "").strip()
+            ):
+                return payload
+    return None
 
 
 _FREEZONE_SKILL_STUDIO_TRIGGER_RE = re.compile(
@@ -6390,6 +6429,7 @@ async def _stream_assistant_reply_codex(
     canvas_write_attempted = False
     canvas_write_succeeded = False
     canvas_write_failure = ""
+    ready_workflow_draft: dict[str, Any] | None = None
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
         username=username,
@@ -6568,6 +6608,10 @@ async def _stream_assistant_reply_codex(
                 await on_event({"type": "usage_update", "usage": event.usage or {}})
                 continue
             if event.type in {"tool_started", "tool_updated"}:
+                if event.type == "tool_updated":
+                    prepared_draft = _codex_freezone_ready_workflow_draft(event)
+                    if prepared_draft is not None:
+                        ready_workflow_draft = prepared_draft
                 if _codex_freezone_tool_name(event) in _FREEZONE_CANVAS_WRITE_TOOLS:
                     canvas_write_attempted = True
                     if (
@@ -6672,6 +6716,8 @@ async def _stream_assistant_reply_codex(
             )
         elif _FREEZONE_CANVAS_NO_WRITE_FAILURE_RE.search(assistant_text):
             failure_detail = assistant_text.strip()
+        elif ready_workflow_draft is not None:
+            failure_detail = "工作流草稿已准备完成，但本轮未提交确认创建，请重试。"
         else:
             failure_detail = "本轮没有执行画布写入，请重试。"
         assistant_text = "画布操作未完成：" + failure_detail
