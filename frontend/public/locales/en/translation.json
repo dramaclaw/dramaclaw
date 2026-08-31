@@ -4819,6 +4819,24 @@
       "missingProject": "Missing project",
       "candidateCreateFailed": "Failed to create the current background candidate node",
       "commitSuccess": "Current background set"
+    },
+    "videoReference": {
+      "limitImage": "A video node can reference at most {{limit}} images",
+      "limitVideo": "A video node can reference at most {{limit}} videos",
+      "limitAudio": "A video node can reference at most {{limit}} audio clips",
+      "limitTotal": "A video node can reference at most {{limit}} assets"
+    },
+    "mentionChip": {
+      "doubleClickReplace": "Double-click to replace this reference",
+      "clickToPlay": "{{label}} · click to play",
+      "replace": "Replace reference"
+    },
+    "naming": {
+      "copySuffix": "{{name}} - Copy",
+      "panoCaptureGroup": "Panorama captures ({{total}})",
+      "group": "Group {{index}}",
+      "storyboardGroup": "Storyboard group {{index}}",
+      "storyboardFrame": "Storyboard frame"
     }
   },
   "tool": {
@@ -5367,7 +5385,14 @@
       "generateText": "Generate text with AI",
       "modelPickerHint": "Pick a model",
       "submit": "Submit",
-      "translate": "Translate (zh ↔ en)"
+      "translate": "Translate (zh ↔ en)",
+      "group": {
+        "textToVideo": "Text-to-video group",
+        "imageToPrompt": "Image-to-prompt group",
+        "textToMusic": "Text-to-music group",
+        "cloneAudio": "Voice clone group"
+      },
+      "detachUpstreamImage": "Detach this reference"
     },
     "videoUpscale": {
       "title": "Video Upscale",
@@ -7123,6 +7148,13 @@
       "identityFallbackLabel": "identity",
       "portraitLabel": "portrait",
       "directorRenderLabel": "director render"
+    }
+  },
+  "superchat": {
+    "spec": {
+      "characterFallback": "Character {{index}}",
+      "roleLabel": "Role",
+      "descriptionLabel": "Description"
     }
   }
 }

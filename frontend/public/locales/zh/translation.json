@@ -4819,6 +4819,24 @@
       "missingProject": "缺少项目",
       "candidateCreateFailed": "无法创建当前背景候选节点",
       "commitSuccess": "已设置当前背景"
+    },
+    "videoReference": {
+      "limitImage": "视频节点最多引用 {{limit}} 张图片",
+      "limitVideo": "视频节点最多引用 {{limit}} 个视频",
+      "limitAudio": "视频节点最多引用 {{limit}} 个音频",
+      "limitTotal": "视频节点最多引用 {{limit}} 个素材"
+    },
+    "mentionChip": {
+      "doubleClickReplace": "双击替换引用",
+      "clickToPlay": "{{label}} · 点击播放",
+      "replace": "替换引用"
+    },
+    "naming": {
+      "copySuffix": "{{name}} - 副本",
+      "panoCaptureGroup": "全景截图组 ({{total}} 张)",
+      "group": "组 {{index}}",
+      "storyboardGroup": "分镜组 {{index}}",
+      "storyboardFrame": "分镜"
     }
   },
   "tool": {
@@ -5367,7 +5385,14 @@
       "generateText": "AI 生成文本",
       "modelPickerHint": "选择模型",
       "submit": "提交",
-      "translate": "翻译（中英文互译）"
+      "translate": "翻译（中英文互译）",
+      "group": {
+        "textToVideo": "文生视频组",
+        "imageToPrompt": "图片反推提示词组",
+        "textToMusic": "文字生成音乐组",
+        "cloneAudio": "克隆音频组"
+      },
+      "detachUpstreamImage": "取消引用此素材"
     },
     "videoUpscale": {
       "title": "视频高清",
@@ -7123,6 +7148,13 @@
       "identityFallbackLabel": "身份图",
       "portraitLabel": "肖像",
       "directorRenderLabel": "导演渲染"
+    }
+  },
+  "superchat": {
+    "spec": {
+      "characterFallback": "角色 {{index}}",
+      "roleLabel": "角色",
+      "descriptionLabel": "描述"
     }
   }
 }
