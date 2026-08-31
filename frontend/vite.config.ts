@@ -111,6 +111,7 @@ export default defineConfig(({ mode }) => {
             if (id.includes("react-hook-form") || id.includes("@hookform") || id.includes("/zod/")) return "forms";
             if (id.includes("i18next") || id.includes("react-i18next")) return "i18n";
             if (id.includes("lucide-react")) return "icons";
+            if (id.includes("/three/")) return "three";
           },
         },
       },
