@@ -3875,6 +3875,17 @@
         "videoEdit": "Video Edit"
       },
       "placeholder": "Describe the video to generate.",
+      "referenceDocument": {
+        "file": "Reference file",
+        "removeFile": "Remove reference file",
+        "linkPlaceholder": "Public URL",
+        "unsupportedType": "Unsupported file type. Allowed: {{types}}",
+        "fileTooLarge": "Reference files must be 100MB or smaller (current: {{size}}MB)",
+        "fileUnsupported": "This model does not support file references",
+        "linkUnsupported": "This model does not support web link references",
+        "invalidLink": "Enter a valid public HTTP/HTTPS URL",
+        "fileLinkConflict": "A reference file and web link cannot be used together"
+      },
       "submit": "Submit",
       "submitBusy": "Generating, please wait",
       "partialBatchFailed": "Generated {{ok}}/{{total}}, the rest failed",
@@ -4587,6 +4598,9 @@
         "referenceImageMax": "Reference image limit",
         "referenceVideoMax": "Reference video limit",
         "referenceAudioMax": "Reference audio limit",
+        "referenceFileMax": "Reference file limit",
+        "referenceLinkMax": "Reference link limit",
+        "referenceFileTypes": "File types (comma-separated)",
         "referenceAudioMinSeconds": "Minimum per audio clip (seconds)",
         "referenceAudioMaxSeconds": "Maximum per audio clip (seconds)",
         "referenceAudioTotalMinSeconds": "Minimum total audio (seconds)",

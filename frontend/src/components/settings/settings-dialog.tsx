@@ -4228,6 +4228,26 @@ function LocalMediaModelEditor({
                 min={0}
                 onChange={(value) => setCapability("referenceAudioMax", value)}
               />
+              <CatalogNumberField
+                label={t("settings.modelConfig.mediaModels.referenceFileMax")}
+                value={parsedConfig?.referenceFileMax}
+                min={0}
+                max={1}
+                onChange={(value) => setCapability("referenceFileMax", value)}
+              />
+              <CatalogNumberField
+                label={t("settings.modelConfig.mediaModels.referenceLinkMax")}
+                value={parsedConfig?.referenceLinkMax}
+                min={0}
+                max={1}
+                onChange={(value) => setCapability("referenceLinkMax", value)}
+              />
+              <CatalogListField
+                label={t("settings.modelConfig.mediaModels.referenceFileTypes")}
+                value={stringOptions("referenceFileTypes")}
+                onChange={(value) => setCapability("referenceFileTypes", value)}
+                placeholder="pdf, docx, xlsx, pptx, txt, md"
+              />
               {[
                 "referenceAudioMinSeconds",
                 "referenceAudioMaxSeconds",
@@ -4451,12 +4471,14 @@ function CatalogNumberField({
   label,
   value,
   min = 1,
+  max,
   step = 1,
   onChange,
 }: {
   label: string;
   value: unknown;
   min?: number;
+  max?: number;
   step?: number;
   onChange: (value: number | undefined) => void;
 }) {
@@ -4468,6 +4490,7 @@ function CatalogNumberField({
       <Input
         type="number"
         min={min}
+        max={max}
         step={step}
         value={typeof value === "number" ? value : ""}
         onChange={(event) =>

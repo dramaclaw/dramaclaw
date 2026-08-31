@@ -123,6 +123,8 @@ import {
   type BatchConnectParams,
 } from './ui/MultiSelectionConnectButton';
 import { NodeSpawnPlusOverlay } from './ui/NodeSpawnPlusOverlay';
+import { ReferencePickBanner } from './ui/ReferencePickBanner';
+import { ViewportReturnHint } from './ui/ViewportReturnHint';
 import { CanvasContextMenu } from './ui/CanvasContextMenu';
 import { CanvasFileDropOverlay } from './ui/CanvasFileDropOverlay';
 import { NodeToolDialog } from './ui/NodeToolDialog';
@@ -4916,6 +4918,9 @@ export function Canvas({
         />
         <SnapAlignGuides />
       </ReactFlow>
+
+      <ReferencePickBanner />
+      <ViewportReturnHint />
 
       {marqueeSelectionRect && (
         <div

@@ -63,6 +63,9 @@ export interface ModelOption {
   referenceImageMax?: number | null;
   referenceVideoMax?: number | null;
   referenceAudioMax?: number | null;
+  referenceFileMax?: number | null;
+  referenceLinkMax?: number | null;
+  referenceFileTypes?: string[];
   referenceAudioMinSeconds?: number | null;
   referenceAudioMaxSeconds?: number | null;
   referenceAudioTotalMinSeconds?: number | null;
