@@ -4487,6 +4487,54 @@
       },
       "clear": "清除",
       "apply": "使用"
+    },
+    "paintTools": {
+      "brush": "画笔",
+      "rect": "矩形",
+      "eraser": "橡皮擦",
+      "brushSize": "画笔粗细",
+      "thickness": "粗细",
+      "undo": "上一步",
+      "redo": "下一步",
+      "undoShort": "撤销",
+      "redoShort": "重做",
+      "reset": "重置",
+      "loadSourceFailed": "无法加载源图",
+      "loadingSource": "加载源图...",
+      "noProject": "当前 URL 没有 project，无法提交",
+      "aspect": "比例",
+      "aspectOriginal": "原图",
+      "resolution": "分辨率",
+      "count": "张数",
+      "countValue": "{{n}}张"
+    },
+    "eraseOverlay": {
+      "displayName": "擦除",
+      "close": "关闭擦除",
+      "needMask": "请先在图上涂抹出要擦除的区域",
+      "submit": "提交擦除"
+    },
+    "redrawOverlay": {
+      "displayName": "重绘",
+      "maskedDisplayName": "局部重绘",
+      "submitMasked": "局部重绘",
+      "submitWhole": "整体重绘",
+      "needPromptOrMask": "请输入提示词，或在图上画出局部重绘区域",
+      "clearMask": "清空蒙版",
+      "exit": "退出重绘",
+      "promptPlaceholderMasked": "描述蒙版区域要变成什么，例：把这块背景改成黄昏天空",
+      "promptPlaceholderWhole": "描述要如何重新设计这张图，例：保留构图，把背景改成黄昏沙漠",
+      "targetAspect": "目标比例"
+    },
+    "annotateEditor": {
+      "ellipse": "圆形",
+      "arrow": "箭头",
+      "text": "文本",
+      "pan": "移动",
+      "panHint": "移动图片（也可按住空格拖拽）",
+      "fitWindow": "适应窗口",
+      "color": "颜色",
+      "clear": "清空"
     }
   },
   "tool": {

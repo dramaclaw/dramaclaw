@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowRight,
   Brush,
@@ -78,7 +79,7 @@ type DraftState = {
   points?: number[];
 };
 
-type ToolButton = { type: AnnotationToolType; label: string; icon: typeof Square };
+type ToolButton = { type: AnnotationToolType; labelKey: string; icon: typeof Square };
 
 interface TextEditorState {
   annotationId: string | null;
@@ -88,11 +89,11 @@ interface TextEditorState {
 }
 
 const TOOL_BUTTONS: ToolButton[] = [
-  { type: 'rect', label: '矩形', icon: Square },
-  { type: 'ellipse', label: '圆形', icon: Circle },
-  { type: 'arrow', label: '箭头', icon: ArrowRight },
-  { type: 'pen', label: '画笔', icon: Brush },
-  { type: 'text', label: '文本', icon: Type },
+  { type: 'rect', labelKey: 'canvas.paintTools.rect', icon: Square },
+  { type: 'ellipse', labelKey: 'canvas.annotateEditor.ellipse', icon: Circle },
+  { type: 'arrow', labelKey: 'canvas.annotateEditor.arrow', icon: ArrowRight },
+  { type: 'pen', labelKey: 'canvas.paintTools.brush', icon: Brush },
+  { type: 'text', labelKey: 'canvas.annotateEditor.text', icon: Type },
 ];
 
 function toNumber(value: unknown, fallback: number): number {
@@ -229,6 +230,7 @@ function pruneUndefinedToolOptionsPatch(patch: Partial<ToolOptions>): Partial<To
 }
 
 export function AnnotateToolEditor({ options, onOptionsChange, sourceImageUrl }: VisualToolEditorProps) {
+  const { t } = useTranslation();
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [tool, setTool] = useState<AnnotationToolType>('rect');
   const [annotations, setAnnotations] = useState<AnnotationItem[]>(() =>
@@ -1150,13 +1152,13 @@ export function AnnotateToolEditor({ options, onOptionsChange, sourceImageUrl }:
                 }`}
               >
                 <Icon className="h-3.5 w-3.5" />
-                {button.label}
+                {t(button.labelKey)}
               </button>
             );
           })}
           <button
             type="button"
-            title="移动图片（也可按住空格拖拽）"
+            title={t('canvas.annotateEditor.panHint')}
             onClick={() => {
               setHandTool(true);
               setTextEditorState(null);
@@ -1167,14 +1169,14 @@ export function AnnotateToolEditor({ options, onOptionsChange, sourceImageUrl }:
             }`}
           >
             <Hand className="h-3.5 w-3.5" />
-            移动
+            {t('canvas.annotateEditor.pan')}
           </button>
         </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
-            title="缩小"
-            aria-label="缩小"
+            title={t('canvas.zoom.zoomOut')}
+            aria-label={t('canvas.zoom.zoomOut')}
             className={`${ANNOTATE_TOOL_BUTTON_BASE_CLASS} text-text-muted/82 hover:text-text-dark/95`}
             onClick={() => zoomByStep(1 / ZOOM_BUTTON_STEP)}
             disabled={!canZoomOut}
@@ -1186,8 +1188,8 @@ export function AnnotateToolEditor({ options, onOptionsChange, sourceImageUrl }:
           </span>
           <button
             type="button"
-            title="放大"
-            aria-label="放大"
+            title={t('canvas.zoom.zoomIn')}
+            aria-label={t('canvas.zoom.zoomIn')}
             className={`${ANNOTATE_TOOL_BUTTON_BASE_CLASS} text-text-muted/82 hover:text-text-dark/95`}
             onClick={() => zoomByStep(ZOOM_BUTTON_STEP)}
             disabled={!canZoomIn}
@@ -1196,8 +1198,8 @@ export function AnnotateToolEditor({ options, onOptionsChange, sourceImageUrl }:
           </button>
           <button
             type="button"
-            title="适应窗口"
-            aria-label="适应窗口"
+            title={t('canvas.annotateEditor.fitWindow')}
+            aria-label={t('canvas.annotateEditor.fitWindow')}
             className={`${ANNOTATE_TOOL_BUTTON_BASE_CLASS} text-text-muted/82 hover:text-text-dark/95`}
             onClick={resetZoom}
             disabled={!canResetZoom}
@@ -1214,7 +1216,7 @@ export function AnnotateToolEditor({ options, onOptionsChange, sourceImageUrl }:
                   style={{ backgroundColor: color }}
                   aria-hidden="true"
                 />
-                <span>颜色</span>
+                <span>{t('canvas.annotateEditor.color')}</span>
                 <input
                   type="color"
                   value={color}
@@ -1261,7 +1263,7 @@ export function AnnotateToolEditor({ options, onOptionsChange, sourceImageUrl }:
             disabled={!canUndo}
           >
             <Undo2 className="h-3.5 w-3.5" />
-            撤销
+            {t('canvas.paintTools.undoShort')}
           </button>
           <button
             type="button"
@@ -1273,7 +1275,7 @@ export function AnnotateToolEditor({ options, onOptionsChange, sourceImageUrl }:
               <path d="M3 7v6h6" />
               <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
             </svg>
-            重做
+            {t('canvas.paintTools.redoShort')}
           </button>
           <button
             type="button"
@@ -1282,7 +1284,7 @@ export function AnnotateToolEditor({ options, onOptionsChange, sourceImageUrl }:
             disabled={!canDeleteSelected}
           >
             <Trash2 className="h-3.5 w-3.5" />
-            删除选中
+            {t('viewer.threeD.deleteSelected')}
           </button>
           <button
             type="button"
@@ -1296,7 +1298,7 @@ export function AnnotateToolEditor({ options, onOptionsChange, sourceImageUrl }:
             disabled={!canClear}
           >
             <Trash2 className="h-3.5 w-3.5" />
-            清空
+            {t('canvas.annotateEditor.clear')}
           </button>
         </div>
       </div>
@@ -1419,14 +1421,14 @@ export function AnnotateToolEditor({ options, onOptionsChange, sourceImageUrl }:
                   className="rounded border border-[rgba(255,255,255,0.22)] px-2 py-1 text-xs text-text-muted hover:bg-bg-dark"
                   onClick={handleCancelTextEditor}
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button
                   type="button"
                   className="rounded border border-accent/45 bg-accent/20 px-2 py-1 text-xs text-text-dark hover:bg-accent/30"
                   onClick={handleCommitTextEditor}
                 >
-                  确认
+                  {t('common.confirm')}
                 </button>
               </div>
             </div>

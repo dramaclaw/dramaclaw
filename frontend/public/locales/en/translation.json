@@ -4487,6 +4487,54 @@
       },
       "clear": "Clear",
       "apply": "Apply"
+    },
+    "paintTools": {
+      "brush": "Brush",
+      "rect": "Rectangle",
+      "eraser": "Eraser",
+      "brushSize": "Brush size",
+      "thickness": "Size",
+      "undo": "Undo",
+      "redo": "Redo",
+      "undoShort": "Undo",
+      "redoShort": "Redo",
+      "reset": "Reset",
+      "loadSourceFailed": "Failed to load the source image",
+      "loadingSource": "Loading source image...",
+      "noProject": "No project in the current URL, cannot submit",
+      "aspect": "Ratio",
+      "aspectOriginal": "Original",
+      "resolution": "Resolution",
+      "count": "Count",
+      "countValue": "{{n}}"
+    },
+    "eraseOverlay": {
+      "displayName": "Erase",
+      "close": "Close erase",
+      "needMask": "Paint over the area you want to erase first",
+      "submit": "Submit erase"
+    },
+    "redrawOverlay": {
+      "displayName": "Redraw",
+      "maskedDisplayName": "Inpaint",
+      "submitMasked": "Inpaint",
+      "submitWhole": "Redraw all",
+      "needPromptOrMask": "Enter a prompt, or paint the area to inpaint",
+      "clearMask": "Clear mask",
+      "exit": "Exit redraw",
+      "promptPlaceholderMasked": "Describe what the masked area should become, e.g. turn this background into a dusk sky",
+      "promptPlaceholderWhole": "Describe how to redesign this image, e.g. keep the composition, change the background to a dusk desert",
+      "targetAspect": "Target ratio"
+    },
+    "annotateEditor": {
+      "ellipse": "Ellipse",
+      "arrow": "Arrow",
+      "text": "Text",
+      "pan": "Pan",
+      "panHint": "Pan the image (or hold Space and drag)",
+      "fitWindow": "Fit to window",
+      "color": "Color",
+      "clear": "Clear"
     }
   },
   "tool": {
