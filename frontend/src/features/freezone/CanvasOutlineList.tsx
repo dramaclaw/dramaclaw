@@ -7,6 +7,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AudioLines,
   Box,
+  Camera,
   ChevronDown,
   ChevronRight,
   Clapperboard,
@@ -96,7 +97,7 @@ const NODE_TYPE_ICON: Record<CanvasNodeType, LucideIcon> = {
   [CANVAS_NODE_TYPES.script]: ScrollText,
   [CANVAS_NODE_TYPES.pano360Viewer]: Globe,
   [CANVAS_NODE_TYPES.threeDWorld]: Box,
-  [CANVAS_NODE_TYPES.previz]: Clapperboard,
+  [CANVAS_NODE_TYPES.previz]: Camera,
   [CANVAS_NODE_TYPES.skill]: Sparkles,
   [CANVAS_NODE_TYPES.style]: Palette,
 };

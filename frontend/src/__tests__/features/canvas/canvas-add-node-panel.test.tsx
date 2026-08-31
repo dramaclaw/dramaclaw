@@ -80,9 +80,11 @@ function lookupString(root: unknown, path: string): string | null {
   return typeof cursor === "string" ? cursor : null;
 }
 
-// 菜单文案漏进 locale 是静默故障：i18next 找不到键就把原始 key 字符串直接渲染出来，
-// 运行时永远不报错。src/__tests__/i18n/locales-json.test.ts 只校验 zh/en 两边键集
-// 「互相对齐」，两边都漏也算对齐，所以那条棘轮盖不住这里。
+// 菜单文案漏进 locale 是静默故障：zh 缺键时 i18next 直接把原始 key 渲染出来；
+// en 缺键时被 i18n/index.ts 的 fallbackLng: "zh" 兜住，在英文界面里渲染出中文
+// ——两种都不抛错，后者还更隐蔽（看着像「没翻译完」而不是「键没配」）。
+// 而 src/__tests__/i18n/locales-json.test.ts 只校验 zh/en 两边键集「互相对齐」，
+// 两边都漏也算对齐，盖不住这里。
 describe("canvas menu labels and icons", () => {
   const locales = (["zh", "en"] as const).map((language) => ({
     language,
@@ -106,10 +108,11 @@ describe("canvas menu labels and icons", () => {
     }
 
     expect(missing.sort()).toEqual([]);
-    // 防空转：上面的循环体一次没跑也会得到空数组，所以钉一下被检查的集合本身。
+    // 防空转：双重循环任一侧为空都会得到空数组，所以两侧被遍历的集合各钉一下。
     expect(menuDefinitions.map((definition) => definition.type)).toContain(
       CANVAS_NODE_TYPES.previz,
     );
+    expect(locales.map(({ language }) => language)).toEqual(["zh", "en"]);
   });
 
   it("maps every menu-visible node type to a known icon", () => {
