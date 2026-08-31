@@ -3,7 +3,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  PREVIZ_LIMITS,
+  PREVIZ_OBJECT_LIMITS,
+  PREVIZ_SCENE_BYTE_LIMITS,
   canAddObject,
   classifySceneSize,
   countObjects,
@@ -40,17 +41,29 @@ describe("previz limits", () => {
   });
 
   it("blocks creation once a kind reaches its limit", () => {
-    expect(canAddObject(sceneWithLights(PREVIZ_LIMITS.light - 1), "light")).toBe(true);
-    expect(canAddObject(sceneWithLights(PREVIZ_LIMITS.light), "light")).toBe(false);
-    expect(canAddObject(sceneWithLights(PREVIZ_LIMITS.light), "camera")).toBe(true);
+    expect(canAddObject(createDefaultScene(), "light")).toBe(true);
+    expect(canAddObject(sceneWithLights(PREVIZ_OBJECT_LIMITS.light - 1), "light")).toBe(true);
+    expect(canAddObject(sceneWithLights(PREVIZ_OBJECT_LIMITS.light), "light")).toBe(false);
+    expect(canAddObject(sceneWithLights(PREVIZ_OBJECT_LIMITS.light), "camera")).toBe(true);
   });
 
   it("classifies scene size at the warn and offload thresholds", () => {
     expect(classifySceneSize(0)).toBe("ok");
-    expect(classifySceneSize(PREVIZ_LIMITS.sceneWarnBytes - 1)).toBe("ok");
-    expect(classifySceneSize(PREVIZ_LIMITS.sceneWarnBytes)).toBe("warn");
-    expect(classifySceneSize(PREVIZ_LIMITS.sceneOffloadBytes - 1)).toBe("warn");
-    expect(classifySceneSize(PREVIZ_LIMITS.sceneOffloadBytes)).toBe("offload");
+    expect(classifySceneSize(PREVIZ_SCENE_BYTE_LIMITS.warn - 1)).toBe("ok");
+    expect(classifySceneSize(PREVIZ_SCENE_BYTE_LIMITS.warn)).toBe("warn");
+    expect(classifySceneSize(PREVIZ_SCENE_BYTE_LIMITS.offload - 1)).toBe("warn");
+    expect(classifySceneSize(PREVIZ_SCENE_BYTE_LIMITS.offload)).toBe("offload");
+  });
+
+  it("treats non-finite input as the strictest tier", () => {
+    // 判错的代价是丢掉整张画布的自动保存，所以脏输入必须往严的方向倒。
+    expect(classifySceneSize(Number.NaN)).toBe("offload");
+    expect(classifySceneSize(Number.POSITIVE_INFINITY)).toBe("offload");
+    expect(classifySceneSize(-1)).toBe("ok");
+  });
+
+  it("feeds its own byte estimate into the size verdict", () => {
+    expect(classifySceneSize(estimateSceneBytes(createDefaultScene()))).toBe("ok");
   });
 
   it("measures UTF-8 bytes, not JS string length", () => {
