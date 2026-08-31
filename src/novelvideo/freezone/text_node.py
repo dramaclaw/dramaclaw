@@ -640,7 +640,7 @@ async def generate_freezone_story_script_with_vision(
     """
     from pydantic_ai import BinaryContent
 
-    from novelvideo.freezone.vision_gateway import image_media_type
+    from novelvideo.freezone.vision_gateway import load_compact_vision_inputs
 
     frames = [Path(path) for path in (frame_paths or []) if Path(path).exists()]
     character_images = [
@@ -668,9 +668,10 @@ async def generate_freezone_story_script_with_vision(
             character_refs=character_refs,
         )
 
+    vision_inputs = await load_compact_vision_inputs((*frames, *character_images))
     attachments: list[Any] = [
-        BinaryContent(data=path.read_bytes(), media_type=image_media_type(str(path)))
-        for path in (*frames, *character_images)
+        BinaryContent(data=image.data, media_type=image.media_type)
+        for image in vision_inputs
     ]
     from novelvideo.model_gateway_runtime import model_gateway_request_scope
 

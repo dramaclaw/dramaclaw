@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import io
 import os
+from pathlib import Path
 
 import pytest
+from PIL import Image
 from pydantic_ai.models.test import TestModel
 
 from novelvideo import config
@@ -12,6 +15,7 @@ from novelvideo.freezone.vision_gateway import (
     VisionTransportContext,
     call_freezone_vision_model,
     image_media_type,
+    load_compact_vision_inputs,
 )
 
 
@@ -111,3 +115,57 @@ async def test_vision_gateway_uses_pydantic_agent_and_logical_model(
 )
 def test_image_media_type(path: str, expected: str) -> None:
     assert image_media_type(path) == expected
+
+
+@pytest.mark.asyncio
+async def test_compact_vision_inputs_resize_to_1280_jpeg_without_touching_source(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "frame.png"
+    Image.new("RGB", (3840, 2160), (32, 64, 96)).save(source_path)
+    source_bytes = source_path.read_bytes()
+
+    inputs = await load_compact_vision_inputs([source_path])
+
+    assert len(inputs) == 1
+    assert inputs[0].media_type == "image/jpeg"
+    assert inputs[0].data.startswith(b"\xff\xd8")
+    with Image.open(io.BytesIO(inputs[0].data)) as compacted:
+        assert compacted.mode == "RGB"
+        assert compacted.size == (1280, 720)
+    assert source_path.read_bytes() == source_bytes
+
+
+@pytest.mark.asyncio
+async def test_compact_vision_inputs_do_not_upscale_and_flatten_alpha(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "transparent.png"
+    source = Image.new("RGBA", (640, 360), (0, 0, 0, 0))
+    source.putpixel((320, 180), (255, 0, 0, 255))
+    source.save(source_path)
+
+    inputs = await load_compact_vision_inputs([source_path])
+
+    with Image.open(io.BytesIO(inputs[0].data)) as compacted:
+        assert compacted.size == (640, 360)
+        assert compacted.mode == "RGB"
+        background = compacted.getpixel((0, 0))
+        assert all(channel >= 245 for channel in background)
+
+
+@pytest.mark.asyncio
+async def test_compact_vision_inputs_keep_batch_order(tmp_path: Path) -> None:
+    paths: list[Path] = []
+    for index, color in enumerate(((240, 20, 20), (20, 20, 240))):
+        path = tmp_path / f"frame_{index}.png"
+        Image.new("RGB", (320, 180), color).save(path)
+        paths.append(path)
+
+    inputs = await load_compact_vision_inputs(paths)
+
+    assert len(inputs) == 2
+    with Image.open(io.BytesIO(inputs[0].data)) as first:
+        assert first.getpixel((160, 90))[0] > first.getpixel((160, 90))[2]
+    with Image.open(io.BytesIO(inputs[1].data)) as second:
+        assert second.getpixel((160, 90))[2] > second.getpixel((160, 90))[0]

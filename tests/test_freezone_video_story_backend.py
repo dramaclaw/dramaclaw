@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.freezone import vision_gateway
@@ -136,7 +138,7 @@ async def test_video_story_analysis_uses_shared_freezone_vision_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     frame = tmp_path / "frame.png"
-    frame.write_bytes(b"png")
+    Image.new("RGB", (1920, 1080), (24, 48, 96)).save(frame)
     captured: dict[str, object] = {}
 
     async def fake_call_freezone_vision_model(**kwargs):
@@ -160,6 +162,10 @@ async def test_video_story_analysis_uses_shared_freezone_vision_model(
     assert result["model"] == "DC-freezone-vision-LLM"
     assert result["video_story"] == {"shots": []}
     assert len(captured["images"]) == 1
+    image = captured["images"][0]
+    assert image.media_type == "image/jpeg"
+    with Image.open(io.BytesIO(image.data)) as compacted:
+        assert compacted.size == (1280, 720)
     assert captured["timeout_seconds"] == FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS
 
 
