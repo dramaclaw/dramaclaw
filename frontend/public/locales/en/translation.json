@@ -7415,8 +7415,8 @@
     "editor": {
       "title": "Previz Stage",
       "description": "Block out a scene in 3D, place cameras, and capture multiple angles",
-      "close": "Close previz stage",
-      "duration": "{{frames}} frames",
+      "close": "Close Previz Stage",
+      "duration": "Duration {{frames}} frames",
       "sceneTooLarge": "The scene is too large to save. Remove some objects and try again."
     }
   }
