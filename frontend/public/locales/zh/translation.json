@@ -5138,6 +5138,42 @@
       "fullscreen": "全屏",
       "close": "关闭",
       "unknownError": "未知错误"
+    },
+    "videoOps": {
+      "referenceGroupLabel": "资产参考组",
+      "upstreamPlaceholder": "上游内容已自动接入，可继续补充提示词…",
+      "humanReviewTitle": "素材含真实人脸时开启，可能增加审核时间，不保证通过。",
+      "humanReviewLabel": "真人验证",
+      "translateTitle": "翻译提示词（中英文互译）",
+      "modes": {
+        "textToVideo": "文生视频",
+        "firstFrame": "首帧",
+        "imageToVideo": "图生视频",
+        "imageReference": "多图参考",
+        "firstLastFrame": "首尾帧",
+        "videoEdit": "视频编辑",
+        "allReference": "全能参考",
+        "current": "当前模式"
+      },
+      "refKind": {
+        "image": "图片",
+        "video": "视频",
+        "audio": "音频"
+      },
+      "refUnit": {
+        "image": "张",
+        "video": "段"
+      },
+      "overCap": "{{kind}}引用超出{{mode}}上限（{{cap}}{{unit}}），本次生成不会使用该素材",
+      "slot": {
+        "firstFrame": "首帧",
+        "lastFrame": "尾帧"
+      },
+      "chip": {
+        "imageFallback": "引用 {{index}}",
+        "videoFallback": "视频引用 {{index}}",
+        "audioFallback": "音频引用 {{index}}"
+      }
     }
   },
   "viewer": {

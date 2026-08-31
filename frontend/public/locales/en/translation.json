@@ -5138,6 +5138,42 @@
       "fullscreen": "Fullscreen",
       "close": "Close",
       "unknownError": "Unknown error"
+    },
+    "videoOps": {
+      "referenceGroupLabel": "Asset reference group",
+      "upstreamPlaceholder": "Upstream content attached automatically — add more prompt details…",
+      "humanReviewTitle": "Enable when the material contains real faces. Review may take longer and approval is not guaranteed.",
+      "humanReviewLabel": "Human review",
+      "translateTitle": "Translate prompt (Chinese ⇄ English)",
+      "modes": {
+        "textToVideo": "Text to video",
+        "firstFrame": "First frame",
+        "imageToVideo": "Image to video",
+        "imageReference": "Multi-image reference",
+        "firstLastFrame": "First & last frame",
+        "videoEdit": "Video editing",
+        "allReference": "All-purpose reference",
+        "current": "the current mode"
+      },
+      "refKind": {
+        "image": "Image",
+        "video": "Video",
+        "audio": "Audio"
+      },
+      "refUnit": {
+        "image": "images",
+        "video": "clips"
+      },
+      "overCap": "{{kind}} references exceed the {{mode}} limit ({{cap}} {{unit}}); this asset will not be used in this generation.",
+      "slot": {
+        "firstFrame": "First frame",
+        "lastFrame": "Last frame"
+      },
+      "chip": {
+        "imageFallback": "Reference {{index}}",
+        "videoFallback": "Video reference {{index}}",
+        "audioFallback": "Audio reference {{index}}"
+      }
     }
   },
   "viewer": {

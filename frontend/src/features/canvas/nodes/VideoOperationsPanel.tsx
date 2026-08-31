@@ -474,6 +474,8 @@ export function VideoOperationsPanel({
     //
     // 在 REFERENCE_CAPS_BY_MODE 表里有条目的模式，超过 cap 的条目不能进
     // @ 候选 —— 服务端会直接丢弃，留在候选里只会让用户选了之后被静默忽略。
+    // i18n-exempt-start —— 「图片N / 视频N / 音频N」是写进提示词、由后端解析
+    // 的引用 token，翻译掉后端就对不上了。
     const mentionCandidates = useMemo<MentionCandidate[]>(() => {
       const out: MentionCandidate[] = [];
       let imageIdx = 0;
@@ -516,6 +518,7 @@ export function VideoOperationsPanel({
       }
       return out;
     }, [referenceCaps, referenceMediaCapInfo]);
+    // i18n-exempt-end
 
     // 取消关联某个上游素材：删掉「该上游节点 → 本节点」的连线。collectInputContents
     // 只走一跳，item.nodeId 就是直接相连的上游节点，可精确定位要删的边。
@@ -640,9 +643,11 @@ export function VideoOperationsPanel({
           addEdge(newId, id);
           newIds.push(newId);
         });
-        state.autoGroupSpawn(id, newIds, { label: '资产参考组' });
+        state.autoGroupSpawn(id, newIds, {
+          label: t("node.videoOps.referenceGroupLabel"),
+        });
       },
-      [addEdge, addNode, data.aspectRatio, id],
+      [addEdge, addNode, data.aspectRatio, id, t],
     );
 
     const handleExternalAssetFiles = useCallback(
@@ -952,7 +957,7 @@ export function VideoOperationsPanel({
                 onAttachMaterial={handleAttachMaterial}
                 placeholder={
                   upstreamTextJoined.length > 0
-                    ? "上游内容已自动接入，可继续补充提示词…"
+                    ? t("node.videoOps.upstreamPlaceholder")
                     : t("node.videoNode.placeholder")
                 }
                 className={`nodrag nowheel min-h-0 w-full flex-1 overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent px-3 py-2 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
@@ -1031,7 +1036,7 @@ export function VideoOperationsPanel({
                       type="button"
                       role="switch"
                       aria-checked={humanReview}
-                      title="素材含真实人脸时开启，可能增加审核时间，不保证通过。"
+                      title={t("node.videoOps.humanReviewTitle")}
                       onClick={(event) => {
                         event.stopPropagation();
                         updateNodeData(id, { humanReview: !humanReview });
@@ -1042,7 +1047,7 @@ export function VideoOperationsPanel({
                           : "text-text-dark/72 hover:text-text-dark"
                       }`}
                     >
-                      <span>真人验证</span>
+                      <span>{t("node.videoOps.humanReviewLabel")}</span>
                       <span
                         className={`relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition-colors ${
                           humanReview
@@ -1066,7 +1071,7 @@ export function VideoOperationsPanel({
                   />
                   <button
                     type="button"
-                    title="翻译提示词（中英文互译）"
+                    title={t("node.videoOps.translateTitle")}
                     disabled={
                       isTranslatingPrompt ||
                       isGenerating ||
@@ -1938,6 +1943,7 @@ function ReferenceMediaRow({
   onDetach,
   onReorder,
 }: ReferenceMediaRowProps) {
+  const { t } = useTranslation();
   // 同时管理整行音频的「当前播放节点」—— 同一时间只允许一个 audio chip 在
   // 播放。点击另一个会切换；再点同一个会暂停。
   const [playingAudioNodeId, setPlayingAudioNodeId] = useState<string | null>(
@@ -1975,26 +1981,18 @@ function ReferenceMediaRow({
         // 「超出当前模式上限」只在 REFERENCE_CAPS_BY_MODE 里登记过的模式生效。
         const overCap = caps != null && !withinCap;
         const modeCap = caps?.[item.kind] ?? 0;
-        const modeLabel =
-          {
-            textToVideo: "文生视频",
-            firstFrame: "首帧",
-            imageToVideo: "图生视频",
-            imageReference: "多图参考",
-            firstLastFrame: "首尾帧",
-            videoEdit: "视频编辑",
-            allReference: "全能参考",
-          }[genMode] ?? "当前模式";
+        const modeLabel = t(`node.videoOps.modes.${genMode}`, {
+          defaultValue: t("node.videoOps.modes.current"),
+        });
         const overCapTitle = overCap
-          ? `${
-              item.kind === "image"
-                ? "图片"
-                : item.kind === "video"
-                  ? "视频"
-                  : "音频"
-            }引用超出${modeLabel}上限（${modeCap}${
-              item.kind === "image" ? "张" : "段"
-            }），本次生成不会使用该素材`
+          ? t("node.videoOps.overCap", {
+              kind: t(`node.videoOps.refKind.${item.kind}`),
+              mode: modeLabel,
+              cap: modeCap,
+              unit: t(
+                `node.videoOps.refUnit.${item.kind === "image" ? "image" : "video"}`,
+              ),
+            })
           : undefined;
         // 首尾帧模式下，前两张图片打 首帧/尾帧 角标；超出 cap 的图片就回退到
         // 数字角标，让用户看到「这张图被忽略」的同时仍能在 prompt 里通过原序号
@@ -2004,9 +2002,9 @@ function ReferenceMediaRow({
           item.kind === "image" &&
           withinCap
             ? typeIndex === 1
-              ? "首帧"
+              ? t("node.videoOps.slot.firstFrame")
               : typeIndex === 2
-                ? "尾帧"
+                ? t("node.videoOps.slot.lastFrame")
                 : undefined
             : undefined;
         let chip: ReactNode;
@@ -2156,11 +2154,14 @@ function ReferenceImageChip({
   onJump,
   onDetach,
 }: ReferenceImageChipProps) {
+  const { t } = useTranslation();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const PREVIEW_W = 140;
   const { pos, show, hide } = useHoverPreviewPos(buttonRef, PREVIEW_W);
   const label =
-    item.displayName?.trim() || slotLabel || `引用 ${index + 1}`;
+    item.displayName?.trim()
+    || slotLabel
+    || t("node.videoOps.chip.imageFallback", { index: index + 1 });
 
   return (
     <>
@@ -2255,10 +2256,13 @@ function ReferenceVideoChip({
   onJump,
   onDetach,
 }: ReferenceVideoChipProps) {
+  const { t } = useTranslation();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const PREVIEW_W = 140;
   const { pos, show, hide } = useHoverPreviewPos(buttonRef, PREVIEW_W);
-  const label = item.displayName?.trim() || `视频引用 ${index + 1}`;
+  const label =
+    item.displayName?.trim()
+    || t("node.videoOps.chip.videoFallback", { index: index + 1 });
 
   // chip 缩略图：有 previewImageUrl 用静态图；否则用一个 muted 静止 <video>
   // 显示首帧。preload=metadata 让 Safari/Chrome 自动定位到首帧。
@@ -2365,6 +2369,7 @@ function ReferenceAudioChip({
   onJump,
   onDetach,
 }: ReferenceAudioChipProps) {
+  const { t } = useTranslation();
   // 用 ref 持有一个 HTMLAudioElement —— 比挂在 DOM 上的 <audio> 简单：可以
   // 直接 .play()/.pause()，也方便处理同时只放一个的逻辑（父层告诉这个
   // chip 它不再是当前正在播的）。
@@ -2413,7 +2418,9 @@ function ReferenceAudioChip({
     };
   }, []);
 
-  const label = item.displayName?.trim() || `音频引用 ${index + 1}`;
+  const label =
+    item.displayName?.trim()
+    || t("node.videoOps.chip.audioFallback", { index: index + 1 });
 
   return (
     <button
