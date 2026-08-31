@@ -34,34 +34,38 @@ describe("previz canvas node registration", () => {
     const other = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.textAnnotation, { x: 0, y: 0 });
 
     expect(isPrevizNode(other)).toBe(false);
-    // 这两行在运行时是恒真的（`null?.type` 无论签名怎么写都是 undefined），
-    // 真正钉住签名的是 tsc：旧签名 `Node | undefined` 下它们是编译错误，而
-    // tsconfig.app.json 的 include: ["src"] 覆盖了 src/__tests__。
-    // 也就是说只跑 vitest 不跑 tsc，签名回退不会被发现。
+    // 下面两行在运行时是恒真的——`null?.type` 无论签名怎么写都是 undefined。
+    // 真正钉住签名的是 tsc，而且是各钉一半：签名收窄成 `CanvasNode | undefined`
+    // 只有 null 那行报 TS2345，收窄成 `CanvasNode | null` 只有 undefined 那行报。
+    // tsconfig.app.json 的 include: ["src"] 覆盖了 src/__tests__，所以它们确实会被
+    // 检查到；反过来说，只跑 vitest 不跑 tsc，签名收窄不会被发现。
     expect(isPrevizNode(null)).toBe(false);
     expect(isPrevizNode(undefined)).toBe(false);
   });
 
-  // 定义登记进表里，不等于用户点得到：visibleInMenu 一关，节点就从添加面板消失；
-  // connectMenu / handle 一关，就从 handle 上拖不出来。这两种错法都不会让上面
-  // 两条用例变红——它们只看 createNode 的产物。
-  it("exposes the previz node in the add menu and on both handles", () => {
+  // 定义登记进表里，不等于连得上：connectMenu / handle 任一关掉，预演台就从连线
+  // 菜单里消失。这些错法都不会让上面两条用例变红——它们只看 createNode 的产物。
+  //
+  // 注意本用例**不覆盖添加面板**：面板 map 的是 canvas-node-menu-shared.tsx 里手写的
+  // CANVAS_ADD_NODE_TYPES，而 getMenuNodeDefinitions 在生产代码里没有调用方。
+  // 面板里点得到预演台由 Task 6 的 canvas-add-node-panel.test.tsx 保证。
+  it("registers the previz node in the menu registry and on both handles", () => {
     const definition = canvasNodeDefinitions[CANVAS_NODE_TYPES.previz];
 
     expect(definition.menuLabelKey).toBe("node.menu.previz");
     expect(definition.connectivity.sourceHandle).toBe(true);
     expect(definition.connectivity.targetHandle).toBe(true);
 
-    // 走 getMenuNodeDefinitions 而不是直接断言 visibleInMenu：后者被前者蕴含，
-    // 而前者才是菜单真正读的那条路径。
+    // 走 getMenuNodeDefinitions 而不是直接断言 visibleInMenu：后者被前者蕴含。
     expect(getMenuNodeDefinitions().map((entry) => entry.type)).toContain(
       CANVAS_NODE_TYPES.previz,
     );
 
-    // connectMenu.fromSource / fromTarget 与上面两个 handle 开关管的是正交的事：
-    // handle 决定卡片自己画不画把手，connectMenu 决定 previz 会不会作为候选出现在
-    // **别人**的连线菜单里。少了下面两条，把 connectMenu 两个开关都关掉的实现
-    // 照样全绿——而那时预演台从任何 handle 都拖不出来。
+    // 下面两条钉的是 connectMenu 那对开关，它们与 handle 开关是 AND 关系、不是正交：
+    // getConnectMenuNodeTypes 对每个候选算的是「下游菜单 = fromSource && targetHandle，
+    // 上游菜单 = fromTarget && sourceHandle」。所以 56/57 行与这两条在「菜单候选」
+    // 这一维上重叠，这两条额外覆盖的是 connectMenu 那一半——少了它们，把 connectMenu
+    // 两个开关都关掉的实现照样全绿，而那时预演台从任何 handle 都拖不出来。
     expect(getDownstreamSpawnTypes(CANVAS_NODE_TYPES.textAnnotation)).toContain(
       CANVAS_NODE_TYPES.previz,
     );
