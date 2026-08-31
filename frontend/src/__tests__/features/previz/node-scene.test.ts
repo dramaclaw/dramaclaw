@@ -10,8 +10,7 @@ describe("previz node scene adapter", () => {
   it("loads a default scene when the node has never been opened", () => {
     const result = loadNodeScene(undefined);
 
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.scene).toEqual(createDefaultScene());
+    expect(result).toEqual({ ok: true, scene: createDefaultScene() });
   });
 
   it("reports a version mismatch instead of throwing", () => {
@@ -34,11 +33,14 @@ describe("previz node scene adapter", () => {
       assetFormat: "glb",
     });
 
+    // 先快照再调用：期望值若直接复用 scene 引用，就是自己和自己比，
+    // 实现哪怕把 displayMode / 时间轴改花了也照样绿。
+    const expected = structuredClone(scene);
     const result = buildNodeScenePatch(scene);
 
     expect(result).toEqual({
       ok: true,
-      patch: { scene, summary: { objectCount: 1, durationFrames: 240 } },
+      patch: { scene: expected, summary: { objectCount: 1, durationFrames: 240 } },
     });
   });
 
@@ -63,5 +65,20 @@ describe("previz node scene adapter", () => {
       expect(result.reason).toBe("too-large");
       expect(result.bytes).toBeGreaterThanOrEqual(PREVIZ_SCENE_BYTE_LIMITS.offload);
     }
+  });
+
+  // 钉住「catch 是选择性的」这个契约：只有版本错误该被收成返回值，别的必须继续抛。
+  // 若有人把它改成 catch-all 返回 { ok:false, reason:'version' }，真 bug 会被静默
+  // 吞成一条「版本过新」的 UI 提示。构造的对象是合成的，但契约是真的，别删。
+  it("lets non-version failures escape instead of masking them as a version mismatch", () => {
+    const hostile = {};
+    Object.defineProperty(hostile, "schemaVersion", {
+      get() {
+        throw new TypeError("boom");
+      },
+      enumerable: true,
+    });
+
+    expect(() => loadNodeScene(hostile)).toThrow(TypeError);
   });
 });
