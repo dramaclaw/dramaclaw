@@ -5541,6 +5541,27 @@
         "imageFallback": "Reference {{index}}",
         "videoFallback": "Video reference {{index}}",
         "audioFallback": "Audio reference {{index}}"
+      },
+      "modeDisabled": {
+        "hasVideoUseVideoEdit": "A video node is connected — use “Video edit”",
+        "hasImagePickMode": "An image node is connected — pick “First frame”, “Image to video” or “Image reference”",
+        "hasVideoNoFirstFrame": "A video node is connected — “First frame” is unavailable",
+        "hasVideoNoImageToVideo": "A video node is connected — “Image to video” is unavailable",
+        "needOneImage": "Connect an image node (exactly 1)",
+        "firstFrameSingleImage": "“First frame” takes a single image only",
+        "imageToVideoSingleImage": "“Image to video” takes a single image only",
+        "imageToVideoSingleImageUseRef": "“Image to video” takes a single image only — use “Image reference” instead",
+        "hasVideoNoImageReference": "A video node is connected — “Image reference” is unavailable",
+        "needImages1to9": "Connect image nodes (1–9)",
+        "imageReferenceMax9": "“Image reference” supports at most 9 images",
+        "needOneVideo": "Connect a video node (exactly 1)",
+        "videoEditSingleVideo": "“Video edit” supports exactly 1 connected video node",
+        "happyHorseUnsupported": "HappyHorse doesn't support this mode",
+        "modelNoVideoEdit": "This model doesn't support “Video edit”",
+        "videoUpstreamAllRefOrEdit": "With video upstream, only “All reference” or “Video edit” are available",
+        "videoUpstreamAllRefOnly": "With video upstream, only “All reference” is available",
+        "hasImageOrAudioRefs": "Unavailable while image/audio assets are referenced",
+        "moreThanTwoImages": "Unavailable with more than 2 upstream images"
       }
     },
     "threeDWorld": {

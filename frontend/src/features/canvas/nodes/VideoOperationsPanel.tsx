@@ -28,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import type { TFn } from "@/lib/i18n-types";
 import { toast } from "sonner";
 
 import {
@@ -1160,6 +1161,7 @@ export function videoModeDisabledReason(
   mode: VideoGenMode,
   modelId: string | null | undefined,
   upstreamCounts: { videos: number; images: number; audios: number },
+  t: TFn,
   supportedModes?: string[],
 ): string | null {
   // HappyHorse 的模式可用性完全由上游节点类型决定（文档 4 大功能）：
@@ -1172,34 +1174,34 @@ export function videoModeDisabledReason(
     const { images, videos } = upstreamCounts;
     switch (mode) {
       case "textToVideo":
-        if (videos > 0) return "已连接视频节点，请使用「视频编辑」";
-        if (images > 0) return "已连接图片节点，请选择「首帧」「图生视频」或「图片参考」";
+        if (videos > 0) return t("node.videoOps.modeDisabled.hasVideoUseVideoEdit");
+        if (images > 0) return t("node.videoOps.modeDisabled.hasImagePickMode");
         return null;
       case "imageToVideo":
       case "firstFrame":
         if (videos > 0) {
           return mode === "firstFrame"
-            ? "已连接视频节点，「首帧」不可用"
-            : "已连接视频节点，「图生视频」不可用";
+            ? t("node.videoOps.modeDisabled.hasVideoNoFirstFrame")
+            : t("node.videoOps.modeDisabled.hasVideoNoImageToVideo");
         }
-        if (images === 0) return "需要连接图片节点（1个）";
+        if (images === 0) return t("node.videoOps.modeDisabled.needOneImage");
         if (images > 1) {
           return mode === "firstFrame"
-            ? "「首帧」仅支持单张图片"
-            : "「图生视频」仅支持单张图片，请用「图片参考」";
+            ? t("node.videoOps.modeDisabled.firstFrameSingleImage")
+            : t("node.videoOps.modeDisabled.imageToVideoSingleImageUseRef");
         }
         return null;
       case "imageReference": // 图片参考 (r2v)
-        if (videos > 0) return "已连接视频节点，「图片参考」不可用";
-        if (images === 0) return "需要连接图片节点（1~9个）";
-        if (images > 9) return "「图片参考」最多支持 9 张图片";
+        if (videos > 0) return t("node.videoOps.modeDisabled.hasVideoNoImageReference");
+        if (images === 0) return t("node.videoOps.modeDisabled.needImages1to9");
+        if (images > 9) return t("node.videoOps.modeDisabled.imageReferenceMax9");
         return null;
       case "videoEdit":
-        if (videos === 0) return "需要连接视频节点（1个）";
-        if (videos > 1) return "「视频编辑」仅支持连接 1 个视频节点";
+        if (videos === 0) return t("node.videoOps.modeDisabled.needOneVideo");
+        if (videos > 1) return t("node.videoOps.modeDisabled.videoEditSingleVideo");
         return null;
       default:
-        return "HappyHorse 不支持该模式";
+        return t("node.videoOps.modeDisabled.happyHorseUnsupported");
     }
   }
   // 「视频编辑」以上游视频**为输入**，不能被下面那条「有视频就只剩全能参考」连坐。
@@ -1214,27 +1216,29 @@ export function videoModeDisabledReason(
     : modelId;
   const supportsVideoEdit = isVideoModeSupportedByModel("videoEdit", model);
   if (mode === "videoEdit") {
-    if (!supportsVideoEdit) return "该模型不支持「视频编辑」";
-    if (upstreamCounts.videos === 0) return "需要连接视频节点（1个）";
-    if (upstreamCounts.videos > 1) return "「视频编辑」仅支持连接 1 个视频节点";
+    if (!supportsVideoEdit) return t("node.videoOps.modeDisabled.modelNoVideoEdit");
+    if (upstreamCounts.videos === 0) return t("node.videoOps.modeDisabled.needOneVideo");
+    if (upstreamCounts.videos > 1) return t("node.videoOps.modeDisabled.videoEditSingleVideo");
     return null;
   }
   if (upstreamCounts.videos > 0 && mode !== "allReference") {
     return supportsVideoEdit
-      ? "上游含视频素材时只能用「全能参考」或「视频编辑」"
-      : "上游含视频素材时只能用「全能参考」";
+      ? t("node.videoOps.modeDisabled.videoUpstreamAllRefOrEdit")
+      : t("node.videoOps.modeDisabled.videoUpstreamAllRefOnly");
   }
   if (
     mode === "textToVideo" &&
     (upstreamCounts.images > 0 || upstreamCounts.audios > 0)
   ) {
-    return "已引用图片/音频素材时不可用";
+    return t("node.videoOps.modeDisabled.hasImageOrAudioRefs");
   }
   if ((mode === "firstFrame" || mode === "imageToVideo") && upstreamCounts.images > 1) {
-    return mode === "firstFrame" ? "「首帧」仅支持单张图片" : "「图生视频」仅支持单张图片";
+    return mode === "firstFrame"
+      ? t("node.videoOps.modeDisabled.firstFrameSingleImage")
+      : t("node.videoOps.modeDisabled.imageToVideoSingleImage");
   }
   if (mode === "firstLastFrame" && upstreamCounts.images > 2) {
-    return "上游图片超过 2 张时不可用";
+    return t("node.videoOps.modeDisabled.moreThanTwoImages");
   }
   return null;
 }
@@ -1342,6 +1346,7 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
               tab.key,
               modelId,
               upstreamCounts,
+              t,
               supportedModes,
             );
             const isDisabled = disabledReason != null && !isActive;
@@ -1817,6 +1822,7 @@ interface CharacterLibraryChipProps {
 }
 
 function CharacterLibraryChip({ onOpen }: CharacterLibraryChipProps) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
@@ -1827,7 +1833,7 @@ function CharacterLibraryChip({ onOpen }: CharacterLibraryChipProps) {
       className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} group/asset px-1.5`}
     >
       <Library className={`${NODE_TEXT_CONTROL_ICON_CLASS} group-hover/asset:text-text-dark`} />
-      <span>资产库</span>
+      <span>{t("canvas.assetLibrary.title")}</span>
     </button>
   );
 }

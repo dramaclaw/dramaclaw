@@ -5541,6 +5541,27 @@
         "imageFallback": "引用 {{index}}",
         "videoFallback": "视频引用 {{index}}",
         "audioFallback": "音频引用 {{index}}"
+      },
+      "modeDisabled": {
+        "hasVideoUseVideoEdit": "已连接视频节点，请使用「视频编辑」",
+        "hasImagePickMode": "已连接图片节点，请选择「首帧」「图生视频」或「图片参考」",
+        "hasVideoNoFirstFrame": "已连接视频节点，「首帧」不可用",
+        "hasVideoNoImageToVideo": "已连接视频节点，「图生视频」不可用",
+        "needOneImage": "需要连接图片节点（1个）",
+        "firstFrameSingleImage": "「首帧」仅支持单张图片",
+        "imageToVideoSingleImage": "「图生视频」仅支持单张图片",
+        "imageToVideoSingleImageUseRef": "「图生视频」仅支持单张图片，请用「图片参考」",
+        "hasVideoNoImageReference": "已连接视频节点，「图片参考」不可用",
+        "needImages1to9": "需要连接图片节点（1~9个）",
+        "imageReferenceMax9": "「图片参考」最多支持 9 张图片",
+        "needOneVideo": "需要连接视频节点（1个）",
+        "videoEditSingleVideo": "「视频编辑」仅支持连接 1 个视频节点",
+        "happyHorseUnsupported": "HappyHorse 不支持该模式",
+        "modelNoVideoEdit": "该模型不支持「视频编辑」",
+        "videoUpstreamAllRefOrEdit": "上游含视频素材时只能用「全能参考」或「视频编辑」",
+        "videoUpstreamAllRefOnly": "上游含视频素材时只能用「全能参考」",
+        "hasImageOrAudioRefs": "已引用图片/音频素材时不可用",
+        "moreThanTwoImages": "上游图片超过 2 张时不可用"
       }
     },
     "threeDWorld": {
