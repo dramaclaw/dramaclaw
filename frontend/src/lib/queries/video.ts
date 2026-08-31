@@ -40,8 +40,11 @@ export interface NarratorVoiceStatusData {
   reference_url?: string;
   reference_sha256?: string;
   heading: string;
+  /** 展示文案的稳定 code；前端按它查词条，heading/explanation 只作兜底。 */
+  heading_code?: string;
   detail: string;
   explanation: string;
+  explanation_code?: string;
   character_name?: string;
   identity_id?: string;
   identity_name?: string;

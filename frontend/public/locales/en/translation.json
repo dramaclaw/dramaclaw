@@ -1612,6 +1612,16 @@
         "owner": "Owner",
         "visualPrompt": "Visual prompt"
       }
+    },
+    "narratorVoice": {
+      "heading": {
+        "firstPerson": "First-person narrator voice",
+        "thirdPerson": "Third-person project narration voice"
+      },
+      "explanation": {
+        "firstPerson": "First-person narration uses the narrating character's voice; third-person narration uses the project narration voice.",
+        "thirdPerson": "Third-person narration uses one project-level voice for every non-dialogue beat."
+      }
     }
   },
   "time": {
@@ -2008,13 +2018,75 @@
       "global_optimize_video": "Global optimize video",
       "selected_regen": "Selected regen",
       "compose_episode": "Video compose",
-      "freezone_image_reverse_prompt": "Image reverse prompt"
+      "freezone_image_reverse_prompt": "Image reverse prompt",
+      "build_scenes": "Build scenes",
+      "build_props": "Build props",
+      "beat_video_prompt": "Generate prompt",
+      "scene_reference_asset": "Scene reference image",
+      "prop_reference_asset": "Prop reference image",
+      "director_control_to_sketch": "Director stage to sketch",
+      "sketch_grid_generation": "Generate sketch grid",
+      "mainline_sketch_from_context": "Generate sketch",
+      "mainline_frame_from_context": "Render storyboard frame",
+      "indextts2_audio_generation": "Generate audio",
+      "freezone_video_gen": "Freezone video",
+      "stage_asset": "Scene asset",
+      "freezone_gen": "Freezone generate",
+      "freezone_edit": "Freezone edit",
+      "freezone_mask_edit": "Masked edit",
+      "freezone_extract": "Extract frames",
+      "freezone_analyze": "Analyze video",
+      "freezone_video_story": "Read video",
+      "freezone_video_erase": "Erase from video",
+      "freezone_video_upscale": "Upscale video",
+      "freezone_audio_separate": "Separate audio",
+      "freezone_video_compose": "Compose video",
+      "freezone_text_translate": "Translate subtitles",
+      "freezone_text_generate": "AI text generation",
+      "freezone_story_script": "Generate story script",
+      "freezone_script_to_video_plan": "Script to video plan",
+      "freezone_audio_speech": "Generate speech",
+      "freezone_audio_eleven_music": "Generate music",
+      "freezone_image_to_3gs": "Image to 3D world"
     },
     "cancelRunning": {
       "title": "Stop task",
       "fallbackMessage": "The task has already started. Stopping now will not refund the spent credits. Stop anyway?",
       "confirm": "Stop task",
       "keepRunning": "Keep running"
+    },
+    "stageAssetSteps": {
+      "pano_from_master": "Panorama from master",
+      "pano_from_text": "Panorama from text",
+      "pano_sharp": "Panorama to SOG",
+      "single_face_sharp": "Single face to SOG",
+      "voxel_world_from_360": "Panorama to voxels",
+      "scene_360": "Generate 360 panorama",
+      "upload_package": "Upload scene package",
+      "splat_collision": "Generate collision mesh"
+    },
+    "chatLabel": {
+      "sceneKind": {
+        "master": "master reference",
+        "spatial_layout": "spatial layout reference",
+        "reverse_master": "reverse-angle reference",
+        "fallback": "scene reference",
+        "named": "{{scene}} — {{kind}}"
+      },
+      "beatRange": "Beat {{ranges}}",
+      "sketchGrid": "Sketch grid {{index}}/{{total}}",
+      "sketch": "Sketch",
+      "episodePrefixed": "Ep {{episode}} · {{label}}",
+      "withBeats": "{{label}} ({{beats}})",
+      "identityPortraitNamed": "{{character}} — “{{identity}}” identity portrait",
+      "identityPortrait": "{{name}} identity portrait",
+      "characterPortraitNamed": "{{character}} portrait",
+      "characterPortrait": "Character portrait",
+      "identityImageNamed": "{{character}} — “{{identity}}” identity image",
+      "identityImage": "{{name}} identity image",
+      "unknownCharacter": "Character",
+      "withEpisodeBeat": "{{label}} (Ep {{episode}}, Beat {{beat}})",
+      "withEpisode": "{{label}} (Ep {{episode}})"
     }
   },
   "taskCenter": {

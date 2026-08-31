@@ -265,6 +265,9 @@ def _serialize_task(t: TaskState, *, ctx: ProjectContext | None = None) -> dict:
         "task_key": key,
         "task_type_label": task_type_label,
         "display_name": display_name,
+        # display_name 是我们按 task_type 拼出来的中文，前端在英文界面下要自己按
+        # task_type / metadata 重拼；调用方自带的 display_name 属于业务内容，原样透传。
+        "display_name_localizable": not metadata_display_name,
     }
 
 

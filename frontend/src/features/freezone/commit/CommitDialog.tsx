@@ -33,6 +33,7 @@ import {
   isDirectorWorldSourceSlotTarget,
 } from "./sceneDirectorWorldCommit";
 import { nodeDataAfterCommittedSlot } from "./committedNodePatch";
+import { isAutoEpisodeTitle } from "@/lib/episode-title";
 
 // CommitDialog 显示给用户的 slot 选项。已隐藏:
 // - scene_360       — 已 deprecate (presets.py:703-710 注释),被 scene_director_pano_360 取代
@@ -742,7 +743,9 @@ export function CommitDialog({
                     {episodes.map((ep) => (
                       <option key={ep.episode_num} value={ep.episode_num}>
                         ep{ep.episode_num}
-                        {ep.title ? ` · ${ep.title}` : ""}
+                        {ep.title && !isAutoEpisodeTitle(ep.title, ep.episode_num)
+                          ? ` · ${ep.title}`
+                          : ""}
                       </option>
                     ))}
                   </UiSelect>

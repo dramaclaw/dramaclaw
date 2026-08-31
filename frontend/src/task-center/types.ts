@@ -30,6 +30,8 @@ export interface TaskState {
   logs: string[];
   task_type_label?: string;
   display_name?: string;
+  /** false = display_name 是调用方自带的业务名；true/缺省 = 后端按 task_type 拼的中文，前端重拼。 */
+  display_name_localizable?: boolean;
   created_at: string;
   updated_at: string;
   completed_at: string;

@@ -191,12 +191,16 @@ def _narrator_voice_display_lines(
     resolution,
     project_dir: str | Path,
 ) -> dict[str, str]:
+    # heading / explanation 是展示文案，前端按 *_code 查词条渲染，中文串只当兜底
+    # （前端还没补词条、或老客户端）。detail 里混着路径和后端报错，保持原样。
     if style == "first_person":
         detail = _narrator_identity_detail(resolution)
         return {
             "heading": "第一人称解说主角声线",
+            "heading_code": "assets.narratorVoice.heading.firstPerson",
             "detail": f"当前为第一人称：使用 {detail}",
             "explanation": NARRATOR_VOICE_MODE_EXPLANATION,
+            "explanation_code": "assets.narratorVoice.explanation.firstPerson",
         }
 
     if resolution.audio_path:
@@ -205,8 +209,10 @@ def _narrator_voice_display_lines(
         detail = resolution.error or "第三人称项目解说声线未配置"
     return {
         "heading": "第三人称项目解说声线",
+        "heading_code": "assets.narratorVoice.heading.thirdPerson",
         "detail": detail,
         "explanation": "第三人称解说使用项目级声线；所有非对白 Beat 使用同一声线。",
+        "explanation_code": "assets.narratorVoice.explanation.thirdPerson",
     }
 
 
@@ -248,8 +254,10 @@ def _narrator_voice_payload(ctx: ProjectContext, store) -> dict:
         "reference_sha256": reference_sha256,
         "reference_updated_at": stored.get("updated_at", ""),
         "heading": display["heading"],
+        "heading_code": display["heading_code"],
         "detail": display["detail"],
         "explanation": display["explanation"],
+        "explanation_code": display["explanation_code"],
         "character_name": resolution.character_name,
         "identity_id": resolution.identity_id,
         "identity_name": resolution.identity_name,

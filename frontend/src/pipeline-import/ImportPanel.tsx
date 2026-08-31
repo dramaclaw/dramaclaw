@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useState } from "react";
+import { isAutoEpisodeTitle } from "@/lib/episode-title";
 import {
   listCharacters,
   listEpisodes,
@@ -350,7 +351,10 @@ function EpisodePicker({
         >
           {episodes.map((ep) => (
             <option key={ep.episode_num} value={ep.episode_num}>
-              ep{ep.episode_num} {ep.title ? `- ${ep.title}` : ""}
+              ep{ep.episode_num}{" "}
+              {ep.title && !isAutoEpisodeTitle(ep.title, ep.episode_num)
+                ? `- ${ep.title}`
+                : ""}
             </option>
           ))}
         </UiSelect>

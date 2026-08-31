@@ -7,7 +7,7 @@ import { TaskLogs } from "./task-logs";
 import { TaskActions } from "./task-actions";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { displayLabel } from "@/task-center/derivations";
+import { currentTaskText, displayLabel } from "@/task-center/derivations";
 import { taskErrorMessage } from "@/task-center/task-errors";
 import type { TaskState } from "@/task-center/types";
 
@@ -213,7 +213,7 @@ export function TaskDetail() {
               <div className="text-muted-foreground">
                 {t("taskCenter.detail.currentStatus")}
               </div>
-              <div className="mt-1">{task.current_task || t(`taskCenter.status.${task.status}`)}</div>
+              <div className="mt-1">{currentTaskText(task, t) || t(`taskCenter.status.${task.status}`)}</div>
               <div className="mt-1 font-mono text-[11px] text-muted-foreground">
                 {Math.round(task.progress * 100)}%
               </div>

@@ -1612,6 +1612,16 @@
         "owner": "所属角色",
         "visualPrompt": "视觉 提示词"
       }
+    },
+    "narratorVoice": {
+      "heading": {
+        "firstPerson": "第一人称解说主角声线",
+        "thirdPerson": "第三人称项目解说声线"
+      },
+      "explanation": {
+        "firstPerson": "第一人称解说使用解说主角声线；第三人称解说使用项目解说声线。",
+        "thirdPerson": "第三人称解说使用项目级声线；所有非对白 Beat 使用同一声线。"
+      }
     }
   },
   "time": {
@@ -2008,13 +2018,75 @@
       "global_optimize_video": "全局优化",
       "selected_regen": "选中重生成",
       "compose_episode": "视频合成",
-      "freezone_image_reverse_prompt": "图片反推提示词"
+      "freezone_image_reverse_prompt": "图片反推提示词",
+      "build_scenes": "构建场景",
+      "build_props": "构建道具",
+      "beat_video_prompt": "生成提示词",
+      "scene_reference_asset": "场景参考图",
+      "prop_reference_asset": "道具参考图",
+      "director_control_to_sketch": "导演台转草图",
+      "sketch_grid_generation": "生成草图网格",
+      "mainline_sketch_from_context": "生成草图",
+      "mainline_frame_from_context": "渲染分镜",
+      "indextts2_audio_generation": "生成音频",
+      "freezone_video_gen": "自由区视频",
+      "stage_asset": "场景资产",
+      "freezone_gen": "虾画生成",
+      "freezone_edit": "虾画编辑",
+      "freezone_mask_edit": "局部编辑",
+      "freezone_extract": "视频抽帧",
+      "freezone_analyze": "视频分析",
+      "freezone_video_story": "视频解读",
+      "freezone_video_erase": "视频擦除",
+      "freezone_video_upscale": "视频放大",
+      "freezone_audio_separate": "音频分离",
+      "freezone_video_compose": "视频合成",
+      "freezone_text_translate": "字幕翻译",
+      "freezone_text_generate": "AI 文本生成",
+      "freezone_story_script": "生成故事脚本",
+      "freezone_script_to_video_plan": "脚本转视频计划",
+      "freezone_audio_speech": "生成语音",
+      "freezone_audio_eleven_music": "生成音乐",
+      "freezone_image_to_3gs": "图片转世界"
     },
     "cancelRunning": {
       "title": "终止任务",
       "fallbackMessage": "任务已开始执行。现在终止不会退还积分，是否确认终止？",
       "confirm": "确认终止",
       "keepRunning": "继续执行"
+    },
+    "stageAssetSteps": {
+      "pano_from_master": "Master 生成全景",
+      "pano_from_text": "文生全景",
+      "pano_sharp": "全景转 SOG",
+      "single_face_sharp": "单面转 SOG",
+      "voxel_world_from_360": "全景转体素",
+      "scene_360": "生成 360 全景",
+      "upload_package": "上传场景包",
+      "splat_collision": "生成碰撞体"
+    },
+    "chatLabel": {
+      "sceneKind": {
+        "master": "主场景参考图",
+        "spatial_layout": "空间布局参考图",
+        "reverse_master": "反推场景参考图",
+        "fallback": "场景参考图",
+        "named": "{{scene}}{{kind}}"
+      },
+      "beatRange": "Beat {{ranges}}",
+      "sketchGrid": "草图网格 {{index}}/{{total}}",
+      "sketch": "草图",
+      "episodePrefixed": "第 {{episode}} 集{{label}}",
+      "withBeats": "{{label}}（{{beats}}）",
+      "identityPortraitNamed": "{{character}}「{{identity}}」身份肖像",
+      "identityPortrait": "{{name}}身份肖像",
+      "characterPortraitNamed": "{{character}}肖像",
+      "characterPortrait": "角色肖像",
+      "identityImageNamed": "{{character}}「{{identity}}」身份图",
+      "identityImage": "{{name}}身份图",
+      "unknownCharacter": "角色",
+      "withEpisodeBeat": "{{label}}（第 {{episode}} 集 Beat {{beat}}）",
+      "withEpisode": "{{label}}（第 {{episode}} 集）"
     }
   },
   "taskCenter": {

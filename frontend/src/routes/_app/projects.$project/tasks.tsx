@@ -27,6 +27,7 @@ import { Progress } from "@/components/ui/progress";
 import { TaskListSkeleton } from "@/components/skeletons";
 import { cn } from "@/lib/utils";
 import { stageForTaskType } from "@/lib/episode-stage-registry";
+import { currentTaskText } from "@/task-center/derivations";
 import { TASK_TYPES } from "@/lib/task-types";
 import type { Task, TaskStatus } from "@/types/task";
 
@@ -168,7 +169,7 @@ function TaskRow({
           {task.status === "running" ? (
             <div className="mt-1 flex items-center gap-4">
               <span className="shrink-0 truncate text-[11px] text-muted-foreground/80">
-                {task.current_task}
+                {currentTaskText(task, t)}
               </span>
               <Progress value={task.progress * 100} className="shrink-0 w-28 h-[3px] [&>div]:h-[3px] [&>div]:gap-0" />
               <span className="shrink-0 font-mono text-[11px] text-muted-foreground/70">
@@ -178,7 +179,7 @@ function TaskRow({
           ) : task.current_task ? (
             <div className="mt-1">
               <span className="truncate text-[11px] text-muted-foreground/70">
-                {task.current_task}
+                {currentTaskText(task, t)}
               </span>
             </div>
           ) : task.error ? (
