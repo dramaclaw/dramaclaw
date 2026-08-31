@@ -1284,6 +1284,24 @@
       "itemFallbackName": "asset",
       "assetName": "Asset name",
       "assetNamePlaceholder": "Enter an asset name"
+    },
+    "canvasSync": {
+      "backupFailed": "Cloud backup failed. Please try again later.",
+      "backupPending": "Saved locally; the cloud backup will retry.",
+      "bodyOverLimit": "Canvas data is {{actual}} KB, over the {{limit}} KB limit. Saving is paused.",
+      "dangerousEmpty": "The local canvas is empty but the server still has nodes — refresh before editing.",
+      "dangerousEmptyBlocked": "The local canvas is empty but the server still has nodes. Auto-save is paused to avoid overwriting it. Refresh before editing.",
+      "edgesOverLimit": "Edge count {{actual}} exceeds the limit of {{limit}}. Saving is paused — remove some connections to continue.",
+      "idempotencyConflict": "The same save was submitted twice with different content. Refresh and try again.",
+      "localDraftStale": "There is an unsynced local canvas draft, but the server version has changed. Save a copy or discard the local draft to continue.",
+      "lockBusy": "The canvas is locked by another write. Please try again shortly.",
+      "mainlineUpdatedElsewhere": "The mainline view was updated in another window. Refresh and try again.",
+      "needsMigration": "The backend canvas data needs migration. Please contact an administrator.",
+      "nodesOverLimit": "Node count {{actual}} exceeds the limit of {{limit}}. Saving is paused — delete some nodes to continue.",
+      "notRestorablePreset": "This canvas is not a restorable mainline preset.",
+      "payloadTooLarge": "Canvas data exceeds the backend limit.",
+      "revisionConflict": "This canvas was modified by another window or user.",
+      "unsavedConflictBeforeSync": "This canvas still has unsaved conflicts. Resolve them before syncing the mainline view."
     }
   },
   "theme": {

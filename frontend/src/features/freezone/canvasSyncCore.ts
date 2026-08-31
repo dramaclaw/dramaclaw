@@ -20,6 +20,7 @@ import type {
   FreezoneCanvasPayload,
 } from "@/api/canvas";
 import type { CanvasMutationSource } from "@/stores/canvasStore";
+import type { TFn } from "@/lib/i18n-types";
 
 /**
  * Caps on canvas payload size. Mirror of the backend's Pydantic / body
@@ -330,14 +331,17 @@ export function checkPayloadLimits(
  * set the conflict / error string. Kept here so the test asserts the wording
  * once instead of testing the hook indirectly.
  */
-export function describePayloadViolation(v: PayloadLimitViolation): string {
+export function describePayloadViolation(v: PayloadLimitViolation, t: TFn): string {
   if (v.field === "nodes") {
-    return `节点数量 ${v.actual} 超出上限 ${v.limit}，已暂停保存。请删除部分节点后再继续。`;
+    return t("freezone.canvasSync.nodesOverLimit", { actual: v.actual, limit: v.limit });
   }
   if (v.field === "edges") {
-    return `连线数量 ${v.actual} 超出上限 ${v.limit}，已暂停保存。请精简连接后再继续。`;
+    return t("freezone.canvasSync.edgesOverLimit", { actual: v.actual, limit: v.limit });
   }
-  return `画布数据 ${Math.round(v.actual / 1024)} KB 超出 ${Math.round(v.limit / 1024)} KB 上限，已暂停保存。`;
+  return t("freezone.canvasSync.bodyOverLimit", {
+    actual: Math.round(v.actual / 1024),
+    limit: Math.round(v.limit / 1024),
+  });
 }
 
 export interface SaveErrorBody {
@@ -370,6 +374,7 @@ export function classifySaveError(
   status: number | null,
   body: SaveErrorBody | undefined,
   fallbackMessage: string,
+  t: TFn,
 ): SaveResponseOutcome {
   const code = typeof body?.detail?.code === "string" ? body.detail.code : null;
 
@@ -385,18 +390,18 @@ export function classifySaveError(
     if (code === "canvas_idempotency_conflict") {
       return {
         kind: "conflict",
-        message: "同一次保存被重复提交且内容不一致，请刷新后重试",
+        message: t("freezone.canvasSync.idempotencyConflict"),
       };
     }
     return {
       kind: "conflict",
-      message: "画布已被其他窗口或用户修改",
+      message: t("freezone.canvasSync.revisionConflict"),
     };
   }
   if (status === 400 && code === "dangerous_empty_canvas_overwrite") {
     return {
       kind: "dangerous_empty",
-      message: "本地画布为空，但服务器还有节点 — 请刷新后再编辑",
+      message: t("freezone.canvasSync.dangerousEmpty"),
     };
   }
   if (status === 503 && code === "canvas_lock_busy") {
@@ -407,14 +412,14 @@ export function classifySaveError(
       kind: "ok_with_warning",
       revision: null,
       backupStatus: "pending",
-      message: "本地已保存，云端备份待重试",
+      message: t("freezone.canvasSync.backupPending"),
     };
   }
   if (status === 413 || (status === 422 && code === "canvas_payload_too_large")) {
     return {
       kind: "fatal",
       code: code ?? "canvas_payload_too_large",
-      message: "画布数据量超出后端上限",
+      message: t("freezone.canvasSync.payloadTooLarge"),
     };
   }
   if (
@@ -426,8 +431,8 @@ export function classifySaveError(
       code,
       message:
         code === "canvas_needs_migration"
-          ? "后端画布数据需要迁移，请联系管理员"
-          : "云端备份失败，请稍后再试",
+          ? t("freezone.canvasSync.needsMigration")
+          : t("freezone.canvasSync.backupFailed"),
     };
   }
   return { kind: "error", message: fallbackMessage };

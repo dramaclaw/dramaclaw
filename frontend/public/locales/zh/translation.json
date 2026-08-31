@@ -1284,6 +1284,24 @@
       "itemFallbackName": "素材",
       "assetName": "资产名称",
       "assetNamePlaceholder": "请输入资产名称"
+    },
+    "canvasSync": {
+      "backupFailed": "云端备份失败，请稍后再试",
+      "backupPending": "本地已保存，云端备份待重试",
+      "bodyOverLimit": "画布数据 {{actual}} KB 超出 {{limit}} KB 上限，已暂停保存。",
+      "dangerousEmpty": "本地画布为空，但服务器还有节点 — 请刷新后再编辑",
+      "dangerousEmptyBlocked": "本地画布为空但服务器还有节点，已暂停自动保存以避免覆盖。请刷新后再编辑。",
+      "edgesOverLimit": "连线数量 {{actual}} 超出上限 {{limit}}，已暂停保存。请精简连接后再继续。",
+      "idempotencyConflict": "同一次保存被重复提交且内容不一致，请刷新后重试",
+      "localDraftStale": "本地有未同步的画布草稿，但服务器版本已经变化。请保存副本或丢弃本地草稿后继续。",
+      "lockBusy": "画布写入被锁占用，请稍后重试",
+      "mainlineUpdatedElsewhere": "主线视图已被其他窗口更新,请刷新后重试",
+      "needsMigration": "后端画布数据需要迁移，请联系管理员",
+      "nodesOverLimit": "节点数量 {{actual}} 超出上限 {{limit}}，已暂停保存。请删除部分节点后再继续。",
+      "notRestorablePreset": "当前画布不是可恢复的主线 preset",
+      "payloadTooLarge": "画布数据量超出后端上限",
+      "revisionConflict": "画布已被其他窗口或用户修改",
+      "unsavedConflictBeforeSync": "当前画布还有未保存冲突，处理后再同步主线视图"
     }
   },
   "theme": {
