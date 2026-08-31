@@ -5201,7 +5201,10 @@
       "overallAspectRatio": "整体比例",
       "requestAspectRatio": "请求比例",
       "framePlaceholder": "候选 {{index}} 描述",
-      "gridPreviewTitle": "网格预览"
+      "gridPreviewTitle": "网格预览",
+      "noImageModelConfigured": "管理员尚未配置任何图片模型，暂时无法生成",
+      "needOneFrameDescription": "请填写至少一个宫格候选描述",
+      "generateFailed": "生成失败"
     },
     "operationPanel": {
       "expand": "放大",

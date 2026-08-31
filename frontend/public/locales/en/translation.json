@@ -5201,7 +5201,10 @@
       "overallAspectRatio": "Overall ratio",
       "requestAspectRatio": "Request ratio",
       "framePlaceholder": "Variant {{index}} description",
-      "gridPreviewTitle": "Grid Preview"
+      "gridPreviewTitle": "Grid Preview",
+      "noImageModelConfigured": "No image model has been configured by an administrator yet, so generation is unavailable",
+      "needOneFrameDescription": "Describe at least one candidate cell",
+      "generateFailed": "Generation failed"
     },
     "operationPanel": {
       "expand": "Expand",

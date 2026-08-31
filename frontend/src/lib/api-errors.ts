@@ -83,6 +83,11 @@ export class BillingRuleNotConfiguredError extends BackendStatusError {
   }
 }
 
+// 下面这两段合成的是 Error 对象自带的 message，只在拿不到 t 的地方兜底；界面上
+// 真正显示的是 backendErrorToastMessage()，它按同样的措辞查 common.*QueueFull 词条。
+// api-errors 位于 api/client 的依赖里，把 @/i18n 拉进来会在测试里二次 init i18next，
+// 所以这里保留中文兜底，不入词条。
+// i18n-exempt-start
 function queueLabelForPlainMessage(queueKind: string): string {
   if (queueKind === "default") return "默认";
   if (queueKind === "video") return "视频";
@@ -109,6 +114,7 @@ function taskQueueLimitPlainMessage(
       return `当前项目${queueLabel}队列已满`;
   }
 }
+// i18n-exempt-end
 
 function taskLaneLimitScope(value: unknown): TaskLaneLimitScope | null {
   if (
