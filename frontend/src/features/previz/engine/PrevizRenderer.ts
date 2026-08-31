@@ -5,6 +5,7 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 
 const GROUND_SIZE_METERS = 20;
 const GROUND_DIVISIONS = 20;
+// 上限 2：3x DPR 设备按原生比例渲染是 9 倍像素，收益远小于开销。
 const MAX_PIXEL_RATIO = 2;
 
 /**
@@ -15,6 +16,7 @@ const MAX_PIXEL_RATIO = 2;
 export class PrevizRenderer {
   private rafHandle = 0;
   private disposed = false;
+  private needsRender = true;
 
   private constructor(
     private readonly renderer: THREE.WebGLRenderer,
@@ -47,7 +49,8 @@ export class PrevizRenderer {
 
     const controls = new controlsModule.OrbitControls(camera, canvas);
     controls.enableDamping = true;
-    // 视线落在成人胸口高度，而不是地面 —— 空场景里对着原点会让网格贴着屏幕底边。
+    // 轨道中心抬到地面之上 1 米，给后续落在网格上的主体留出视觉空间；
+    // 代价是网格整体下移约 1/5 屏高。
     controls.target.set(0, 1, 0);
     controls.update();
 
@@ -60,19 +63,37 @@ export class PrevizRenderer {
   /** 跟随容器尺寸重设画布与相机宽高比；ResizeObserver 回调直接调它。 */
   resize(): void {
     if (this.disposed) return;
+    // `|| 1`：容器尚未布局时 clientWidth 为 0，0/0 会把 aspect 变成 NaN，
+    // 进而毒掉整个投影矩阵。别顺手精简掉。
     const width = this.canvas.clientWidth || 1;
     const height = this.canvas.clientHeight || 1;
+    // devicePixelRatio 会变（拖到外接 1x 屏、浏览器缩放），这两种情况都会触发
+    // ResizeObserver，所以每次 resize 都要重设，不能只在 create() 设一次。
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
     // updateStyle=false：尺寸由 CSS 决定，渲染器只跟随，别反过来写死 style。
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    this.needsRender = true;
+  }
+
+  /**
+   * 场景内容变化后调用，请求下一帧重绘。相机自身的移动不需要调它——
+   * tick 里 `controls.update()` 的返回值已经覆盖了那条路径。
+   */
+  requestRender(): void {
+    this.needsRender = true;
   }
 
   private start(): void {
     const tick = () => {
       if (this.disposed) return;
-      this.controls.update();
-      this.renderer.render(this.scene, this.camera);
+      // update() 返回 true 表示相机确实动了（阻尼余速也算）。静止时跳过 render，
+      // 否则一个只有网格和两盏灯的静态场景会在全屏里 60fps 空烧 GPU。
+      if (this.controls.update() || this.needsRender) {
+        this.needsRender = false;
+        this.renderer.render(this.scene, this.camera);
+      }
       this.rafHandle = window.requestAnimationFrame(tick);
     };
     this.rafHandle = window.requestAnimationFrame(tick);

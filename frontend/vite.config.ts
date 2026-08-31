@@ -117,7 +117,10 @@ export default defineConfig(({ mode }) => {
             // 打开任一功能都要下载另一份的 three。
             const threeVersion = /\/\.pnpm\/three@(\d+\.\d+)\./.exec(id)?.[1];
             if (threeVersion) return `three-${threeVersion}`;
-            if (id.includes("/three/")) return "three";
+            // 兜底：非 pnpm 布局（hoisted / npm / yarn）下命中，此时两份 three 会重新
+            // 挤进同一个 chunk。名字起得刺眼，好让它在构建日志里一眼可见，
+            // 而不是伪装成正常的 "three" 静默退回 1.2 MB 合并态。
+            if (id.includes("/three/")) return "three-unpinned";
           },
         },
       },
