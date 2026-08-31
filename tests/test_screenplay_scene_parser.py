@@ -1,3 +1,5 @@
+import pytest
+
 from novelvideo.cognee.script_parser import parse_scenes
 from novelvideo.utils.screenplay_quality import check_screenplay_import_quality
 from novelvideo.utils.screenplay_scene_parser import parse_scene_blocks
@@ -316,6 +318,21 @@ The train stops.
     assert blocks[0].lines == ["JI-WON: Hello?"]
     assert blocks[1].scene_no == "2"
     assert blocks[1].lines == ["The train stops."]
+
+
+@pytest.mark.parametrize(
+    "prose_line",
+    [
+        "Scene 2 was rewritten yesterday.",
+        "Chapter 2 explains why the train stopped.",
+    ],
+)
+def test_numbered_english_prose_is_preserved_as_body_content(prose_line):
+    blocks = parse_scene_blocks(prose_line)
+
+    assert len(blocks) == 1
+    assert blocks[0].header_line == ""
+    assert blocks[0].lines == [prose_line]
 
 
 def test_parse_numbered_english_scene_and_constrained_sense_compatibility():

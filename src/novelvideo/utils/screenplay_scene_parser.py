@@ -61,7 +61,8 @@ ROOM_TYPES = {
 
 EPISODE_HEADER_RE = re.compile(r"^第([一二三四五六七八九十百千万\d]+)集")
 ENGLISH_EPISODE_HEADER_RE = re.compile(
-    r"^(?:EPISODE|CHAPTER)\s*(?P<episode>\d+)\b",
+    r"^(?:EPISODE|CHAPTER)\s*(?P<episode>\d+)"
+    r"(?:\s*[:：.\-–—]\s*.*)?\s*$",
     re.IGNORECASE,
 )
 SCENE_MARKER_RE = re.compile(
@@ -97,8 +98,8 @@ ENGLISH_LABELED_TIME_RE = re.compile(
     re.IGNORECASE,
 )
 ENGLISH_SCENE_MARKER_RE = re.compile(
-    r"^SCENE\s+(?P<scene_no>\d+[A-Za-z]?)\b"
-    r"(?:\s*[:：.\-–—]\s*|\s+)?(?P<title>.*)$",
+    r"^SCENE\s+(?P<scene_no>\d+[A-Za-z]?)"
+    r"(?:\s*[:：.\-–—]\s*(?P<title>.*))?\s*$",
     re.IGNORECASE,
 )
 ENGLISH_SENSE_MARKER_RE = re.compile(

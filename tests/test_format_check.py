@@ -128,6 +128,25 @@ The train stops.
 
 
 @pytest.mark.parametrize(
+    "prose_line",
+    [
+        "Scene 2 was rewritten yesterday.",
+        "Chapter 2 explains why the train stopped.",
+    ],
+)
+def test_numbered_english_prose_does_not_bypass_required_scene_headers(prose_line):
+    result = build_import_format_check(
+        prose_line,
+        has_chapters=True,
+        require_scene_headers=True,
+    )
+
+    assert result["level"] == "blocking"
+    assert result["scene_header_status"] == "missing"
+    assert "missing_scene_headers" in _codes(result)
+
+
+@pytest.mark.parametrize(
     "action_line",
     [
         "孙悟空快步走到门外",
