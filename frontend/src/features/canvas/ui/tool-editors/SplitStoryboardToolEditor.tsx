@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { UiInput } from '@/components/ui';
@@ -225,6 +226,7 @@ function NumberStepper({ label, value, min, max, onChange }: NumberStepperProps)
 }
 
 export function SplitStoryboardToolEditor({ sourceImageUrl, options, onOptionsChange }: VisualToolEditorProps) {
+  const { t } = useTranslation();
   const imageRef = useRef<HTMLImageElement | null>(null);
   const previewAreaRef = useRef<HTMLDivElement | null>(null);
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
@@ -482,18 +484,18 @@ export function SplitStoryboardToolEditor({ sourceImageUrl, options, onOptionsCh
       </div>
 
       <div className="h-full space-y-4 rounded-[10px] border border-white/[0.10] bg-[#111214]/72 p-3.5">
-        <div className="text-sm font-medium text-text-dark">分格参数</div>
+        <div className="text-sm font-medium text-text-dark">{t('canvas.splitEditor.params')}</div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
           <NumberStepper
-            label="行数"
+            label={t('canvas.splitEditor.rows')}
             value={rows}
             min={MIN_GRID_SIZE}
             max={MAX_GRID_SIZE}
             onChange={(value) => updateOptions({ rows: value })}
           />
           <NumberStepper
-            label="列数"
+            label={t('canvas.splitEditor.cols')}
             value={cols}
             min={MIN_GRID_SIZE}
             max={MAX_GRID_SIZE}
@@ -503,7 +505,7 @@ export function SplitStoryboardToolEditor({ sourceImageUrl, options, onOptionsCh
 
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs text-text-muted">
-            <span>分隔线粗细</span>
+            <span>{t('canvas.splitEditor.lineThickness')}</span>
             <span>
               {formatPercent(lineThicknessPercent)}
               {naturalSize ? ` (${lineThicknessPx}px)` : ''}
@@ -542,17 +544,17 @@ export function SplitStoryboardToolEditor({ sourceImageUrl, options, onOptionsCh
 
         <div className="rounded-[8px] border border-white/[0.10] bg-bg-dark/42 px-3 py-2 text-xs text-text-muted">
           <div className="flex items-center justify-between">
-            <span>输出小格数量</span>
+            <span>{t('canvas.splitEditor.cellCount')}</span>
             <span className="font-medium text-text-dark">{rows * cols}</span>
           </div>
           {layout && (
             <>
               <div className="mt-1 flex items-center justify-between">
-                <span>单格宽度(px)</span>
+                <span>{t('canvas.splitEditor.cellWidth')}</span>
                 <span>{splitSizeLabel(layout.minCellWidth, layout.maxCellWidth)}</span>
               </div>
               <div className="mt-1 flex items-center justify-between">
-                <span>单格高度(px)</span>
+                <span>{t('canvas.splitEditor.cellHeight')}</span>
                 <span>{splitSizeLabel(layout.minCellHeight, layout.maxCellHeight)}</span>
               </div>
             </>
@@ -561,7 +563,7 @@ export function SplitStoryboardToolEditor({ sourceImageUrl, options, onOptionsCh
 
         {hasLayoutError && (
           <div className="rounded-[8px] border border-red-400/35 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-            当前分隔线过粗，导致可抽取区域不足。请减少线宽或降低行列数。
+            {t('canvas.splitEditor.layoutError')}
           </div>
         )}
       </div>

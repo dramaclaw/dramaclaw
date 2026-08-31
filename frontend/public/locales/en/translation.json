@@ -2294,7 +2294,8 @@
     },
     "edit": "Edit",
     "close": "Close",
-    "success": "Success"
+    "success": "Success",
+    "search": "Search"
   },
   "ingest": {
     "title": "Story Source",
@@ -4734,6 +4735,22 @@
       "loopTodo": "Loop (not implemented yet)",
       "submitting": "Trimming…",
       "submit": "Apply trim"
+    },
+    "mentionReplace": {
+      "empty": "No assets available to swap in",
+      "kindMaterialsAria": "{{kind}} assets",
+      "materials": "Canvas assets",
+      "referenced": "Referenced"
+    },
+    "splitEditor": {
+      "cellCount": "Cells produced",
+      "cellHeight": "Cell height (px)",
+      "cellWidth": "Cell width (px)",
+      "cols": "Columns",
+      "layoutError": "The gutter is too wide, leaving too little to extract. Reduce the gutter or use fewer rows/columns.",
+      "lineThickness": "Gutter width",
+      "params": "Grid settings",
+      "rows": "Rows"
     }
   },
   "tool": {
@@ -5212,13 +5229,19 @@
         "unknownError": "Unknown error",
         "syncing": "Syncing to mainline...",
         "stale": "Local changes are not synced to mainline; skills use this node.",
-        "fresh": "Context is synced; skills use this node."
+        "fresh": "Context is synced; skills use this node.",
+        "missingTargetForSync": "Missing project/episode/beat — cannot sync to the mainline.",
+        "missingTargetForLocal": "Missing project/episode/beat — cannot update the local context."
       },
       "palette": {
         "identityColor": "Identity color",
         "propColor": "Prop color",
         "actorColors": "Actor colors",
         "propColors": "Prop colors"
+      },
+      "mention": {
+        "identity": "Character",
+        "prop": "Prop"
       }
     },
     "upload": {

@@ -114,6 +114,18 @@ import {
 const SEEDANCE2_REFERENCE_DRAG_TYPE =
   "application/x-supertale-seedance2-reference";
 const BEAT_VIDEO_GENERATION_FEATURE_KEY = "mainline.beat_video_generation";
+/**
+ * 后端在没把某个素材当参考发出去时给的 reference_label 哨兵值。真正发出去的
+ * 素材拿到的是 `图片1` / `音频2` 这种编号——那是提示词里模型认的引用 token，
+ * 跟界面语言无关，所以这里比对的也只能是后端那份原文。
+ */
+const SEEDANCE2_UNSENT_REFERENCE_LABEL = "未发送"; // i18n-exempt —— 后端契约值
+
+/**
+ * 点一下就往「补充说明」里追加一句的模板。label 走词条，text 是拼进提示词发给
+ * 模型的内容——跟着界面语言走会让出图不稳，所以锁中文。
+ */
+// i18n-exempt-start
 const SEEDANCE2_PROMPT_GUIDANCE_TEMPLATES = [
   {
     key: "subject",
@@ -146,6 +158,7 @@ const SEEDANCE2_PROMPT_GUIDANCE_TEMPLATES = [
     text: "无字幕：避免生成任何文字或字幕，保持画面纯净。",
   },
 ] as const;
+// i18n-exempt-end
 const VIDEO_GRID_CLASS =
   "grid grid-cols-[auto_minmax(260px,1fr)] items-start gap-x-4 gap-y-3";
 const VIDEO_PREVIEW_CLASS =
@@ -507,7 +520,7 @@ export function VideoPane({
       modelReferenceAssetItems.filter(
         (asset) =>
           asset.reference_label &&
-          asset.reference_label !== "未发送" &&
+          asset.reference_label !== SEEDANCE2_UNSENT_REFERENCE_LABEL &&
           asset.exists !== false,
     ),
     [modelReferenceAssetItems],
@@ -1965,7 +1978,8 @@ export function VideoPane({
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(6.75rem,6.75rem))] gap-2">
                     {modelReferenceAssetItems.map((asset) => {
                       const referenceLabel =
-                        asset.reference_label && asset.reference_label !== "未发送"
+                        asset.reference_label &&
+                        asset.reference_label !== SEEDANCE2_UNSENT_REFERENCE_LABEL
                           ? asset.reference_label
                           : "";
                       const canInsertReference =
@@ -1975,7 +1989,7 @@ export function VideoPane({
                       const displayReferenceLabel = referenceLabel || (
                         isMissingImage
                           ? t("episode.workbench.video.seedance2ReferenceImage")
-                          : asset.reference_label
+                          : t("episode.workbench.video.seedance2ReferenceUnused")
                       );
                       const assetImageSrc =
                         asset.media_type === "image" &&
@@ -3187,9 +3201,12 @@ function defaultSeedance2Config(
       enabled: textOverlay.enabled === true,
       kind: normalizeSeedance2TextOverlayKind(textOverlay.kind),
       content: String(textOverlay.content ?? ""),
+      // 这三项直接进提示词里的字幕规格，模型按中文描述执行，不跟界面语言走。
+      // i18n-exempt-start
       placement: String(textOverlay.placement ?? "画面下方居中"),
       timing: String(textOverlay.timing ?? "全片持续"),
       style: String(textOverlay.style ?? "干净易读"),
+      // i18n-exempt-end
       speaker: String(textOverlay.speaker ?? ""),
     },
   };

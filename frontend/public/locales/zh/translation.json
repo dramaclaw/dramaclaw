@@ -2294,7 +2294,8 @@
     },
     "edit": "编辑",
     "close": "关闭",
-    "success": "成功"
+    "success": "成功",
+    "search": "搜索"
   },
   "ingest": {
     "title": "虾料",
@@ -4734,6 +4735,22 @@
       "loopTodo": "循环（待实现）",
       "submitting": "剪辑中…",
       "submit": "提交剪辑"
+    },
+    "mentionReplace": {
+      "empty": "没有可替换的素材",
+      "kindMaterialsAria": "{{kind}}素材",
+      "materials": "素材引用",
+      "referenced": "已引用"
+    },
+    "splitEditor": {
+      "cellCount": "输出小格数量",
+      "cellHeight": "单格高度(px)",
+      "cellWidth": "单格宽度(px)",
+      "cols": "列数",
+      "layoutError": "当前分隔线过粗，导致可抽取区域不足。请减少线宽或降低行列数。",
+      "lineThickness": "分隔线粗细",
+      "params": "分格参数",
+      "rows": "行数"
     }
   },
   "tool": {
@@ -5212,13 +5229,19 @@
         "unknownError": "未知错误",
         "syncing": "正在同步到主线...",
         "stale": "本地已修改，未同步主线；技能会使用当前节点。",
-        "fresh": "上下文已同步；技能会使用当前节点。"
+        "fresh": "上下文已同步；技能会使用当前节点。",
+        "missingTargetForSync": "缺少 project/episode/beat，无法同步到主线",
+        "missingTargetForLocal": "缺少 project/episode/beat，无法更新本地上下文"
       },
       "palette": {
         "identityColor": "身份颜色",
         "propColor": "道具颜色",
         "actorColors": "人物颜色",
         "propColors": "道具颜色"
+      },
+      "mention": {
+        "identity": "人物",
+        "prop": "道具"
       }
     },
     "upload": {
