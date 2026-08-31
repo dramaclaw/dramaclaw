@@ -21,6 +21,7 @@ import {
   Video,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AssetLibraryModal } from "@/features/canvas/ui/AssetLibraryModal";
@@ -523,6 +524,7 @@ export function AssetLibraryPanel({
   onRestoreMainlineDefault,
   reloadToken,
 }: AssetLibraryPanelProps) {
+  const { t } = useTranslation();
   const canvasKind = resolveCanvasKind(metadata);
   const beatTabLabel =
     canvasKind === "default" || canvasKind === "blank"
@@ -548,9 +550,11 @@ export function AssetLibraryPanel({
     if (!mainlineAvailable) setPanelTab("canvases");
   }, [mainlineAvailable]);
   const panelTabItems: Array<{ id: PanelTab; label: string }> = [
-    { id: "canvases", label: "项目画布" },
-    ...(mainlineAvailable ? [{ id: "library" as const, label: "主线资产" }] : []),
-    { id: "assets", label: "资产库" },
+    { id: "canvases", label: t("freezone.assetPanel.tab.canvases") },
+    ...(mainlineAvailable
+      ? [{ id: "library" as const, label: t("freezone.assetPanel.tab.library") }]
+      : []),
+    { id: "assets", label: t("freezone.assetPanel.tab.assets") },
   ];
   const [tab, setTab] = useState<AssetTab>("beat");
   const [query, setQuery] = useState("");

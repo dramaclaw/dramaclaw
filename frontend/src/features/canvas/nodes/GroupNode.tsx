@@ -33,7 +33,7 @@ import {
   type CanvasNode,
   type GroupNodeData,
 } from '@/features/canvas/domain/canvasNodes';
-import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import {
   computeSnapAlign,
   SNAP_ALIGN_SCREEN_THRESHOLD,
@@ -379,8 +379,8 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
   }, [childGeometrySignature, isStoryboard, isInteracting, fitGroupToChildren, id]);
 
   const resolvedTitle = useMemo(
-    () => resolveNodeDisplayName(CANVAS_NODE_TYPES.group, data),
-    [data]
+    () => localizeNodeDisplayName(CANVAS_NODE_TYPES.group, data, t),
+    [data, t]
   );
   const headerTitle = isStoryboard
     ? t('canvas.storyboardGroup.headerCount', { count: childCount })

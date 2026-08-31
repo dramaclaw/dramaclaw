@@ -46,7 +46,7 @@ import { cn } from "@/lib/utils";
 import { SidebarListSkeleton, DetailPaneSkeleton } from "@/components/skeletons";
 import type { Style } from "@/types/style";
 import { stylePreviewUrl } from "@/lib/style-preview-url";
-import { BUILTIN_STYLE_LABEL_KEYS } from "@/components/assets/project-style-chip";
+import { BUILTIN_STYLE_LABEL_KEYS } from "@/lib/visual-styles";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import {
   backendErrorToastMessage,
@@ -119,14 +119,24 @@ function extractConfig(style: Style | undefined | null): StyleConfig {
 }
 
 /** Build a POST /styles payload preserving any extra unknown fields the
- * server returned (so we don't drop `base`, `created_by`, etc on save). */
+ * server returned (so we don't drop `base`, `created_by`, etc on save).
+ *
+ * `presetLabel` 是内置 preset 在当前语言下的显示名。表单里 label 显示的是它，但
+ * 用户没动过就得写回原始 label —— 否则在英文界面按一次保存，就把项目里这条 style
+ * 的中文标签覆盖成英文，中文界面跟着一起变。 */
 function buildSavePayload(
   fields: StyleConfig,
   original: Style | null,
+  presetLabel?: string,
 ): Record<string, unknown> {
+  const storedLabel = extractConfig(original).label;
   const out: Record<string, unknown> = {};
   for (const k of CONFIG_KEYS) {
-    if (fields[k]) out[k] = fields[k];
+    const value =
+      k === "label" && presetLabel && fields.label === presetLabel
+        ? storedLabel
+        : fields[k];
+    if (value) out[k] = value;
   }
   if (original) {
     for (const [k, v] of Object.entries(
@@ -156,10 +166,13 @@ function Field({
 }) {
   return (
     <div className="flex flex-col gap-3.5">
-      <Label className="text-xs font-medium leading-4 text-muted-foreground">
-        {label}
+      {/* 输入框套在 <label> 里做隐式关联：这里六处 Field 包的都是单个 Input/Textarea，
+          原来 Label 只是块文字，读屏念到输入框时没有名字。hint 留在 label 外，
+          否则会被拼进无障碍名。 */}
+      <Label className="flex flex-col items-stretch gap-3.5 text-xs font-medium leading-4 text-muted-foreground">
+        <span>{label}</span>
+        {children}
       </Label>
-      {children}
       {hint && (
         <p className="-mt-0.5 text-xs leading-4 text-muted-foreground/70">
           {hint}
@@ -386,7 +399,17 @@ function StyleDetailPanel({
   const updateProject = useUpdateProject(project);
 
   const preset = isPreset(style);
-  const original = useMemo(() => extractConfig(style), [style]);
+  // 内置 preset 的 label 是中文单语（src/novelvideo/styles/presets/*.json）。左侧
+  // 列表早就按 id 查 i18n 了（见 StyleListItem），详情页这个输入框却还在显示原始
+  // 中文，英文界面里就成了「UI Label: 动漫风格」。这里也走 i18n，保存时再由
+  // buildSavePayload 换回原始 label。
+  const presetLabelKey = preset ? BUILTIN_STYLE_LABEL_KEYS[style.id] : undefined;
+  const presetLabel = presetLabelKey ? t(presetLabelKey) : "";
+  const stored = useMemo(() => extractConfig(style), [style]);
+  const original = useMemo(
+    () => (presetLabel ? { ...stored, label: presetLabel } : stored),
+    [presetLabel, stored],
+  );
   const [fields, setFields] = useState<StyleConfig>(original);
   const [editingName, setEditingName] = useState(style.name);
   const [nameEditOpen, setNameEditOpen] = useState(false);
@@ -403,16 +426,16 @@ function StyleDetailPanel({
     setNameEditValue(style.name);
     setShowJson(false);
     setJsonError(null);
-    setJsonText(JSON.stringify(buildSavePayload(original, style), null, 2));
-  }, [style, original]);
+    setJsonText(JSON.stringify(buildSavePayload(original, style, presetLabel), null, 2));
+  }, [style, original, presetLabel]);
 
   const dirty = useMemo(() => {
     if (editingName !== style.name) return true;
     if (showJson) {
-      return jsonText !== JSON.stringify(buildSavePayload(original, style), null, 2);
+      return jsonText !== JSON.stringify(buildSavePayload(original, style, presetLabel), null, 2);
     }
     return CONFIG_KEYS.some((k) => fields[k] !== original[k]);
-  }, [editingName, style.name, showJson, jsonText, original, style, fields]);
+  }, [editingName, style.name, showJson, jsonText, original, presetLabel, style, fields]);
 
   const updateField = (k: keyof StyleConfig, v: string) =>
     setFields((prev) => ({ ...prev, [k]: v }));
@@ -428,7 +451,7 @@ function StyleDetailPanel({
       }
       setJsonError(null);
     } else {
-      configPayload = buildSavePayload(fields, style);
+      configPayload = buildSavePayload(fields, style, presetLabel);
     }
 
     try {
@@ -468,11 +491,11 @@ function StyleDetailPanel({
     if (nextOpen === showJson) return;
 
     if (nextOpen) {
-      setJsonText(JSON.stringify(buildSavePayload(fields, style), null, 2));
+      setJsonText(JSON.stringify(buildSavePayload(fields, style, presetLabel), null, 2));
       setJsonError(null);
     } else {
       try {
-        const changed = jsonText !== JSON.stringify(buildSavePayload(fields, style), null, 2);
+        const changed = jsonText !== JSON.stringify(buildSavePayload(fields, style, presetLabel), null, 2);
         const parsed = JSON.parse(jsonText) as Record<string, unknown>;
         const next = { ...EMPTY_CONFIG } as StyleConfig;
         for (const k of CONFIG_KEYS) {
@@ -498,7 +521,7 @@ function StyleDetailPanel({
         id: style.id,
         name: trimmed,
         project,
-        config: buildSavePayload(fields, style),
+        config: buildSavePayload(fields, style, presetLabel),
       });
       setEditingName(trimmed);
       toast.success(t("styles.styleSaved"));

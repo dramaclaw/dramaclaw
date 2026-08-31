@@ -193,9 +193,13 @@ describe("director bundle canvas assets", () => {
       "utf8",
     );
 
-    expect(panel).toContain("主线资产");
-    expect(badges).toContain("主线资产");
-    expect(`${panel}\n${badges}`).not.toContain("主线素材");
+    // 文案搬进 i18n 之后这两处只剩 key，中文在词条表里；"主线素材" 这个旧叫法
+    // 三个文件都不该再出现。
+    expect(panel).toContain("freezone.assetPanel.tab.library");
+    expect(badges).toContain("freezone.nodeContext.mainlineAsset");
+    expect(zh).toContain('"library": "主线资产"');
+    expect(zh).toContain('"mainlineAsset": "主线资产"');
+    expect(`${panel}\n${badges}\n${zh}`).not.toContain("主线素材");
     expect(panel).not.toContain(">素材库<");
     expect(selectedBackgroundSlot).not.toContain("当前背景 · EP");
     expect(selectedBackgroundSlot).not.toContain("已设置 EP");

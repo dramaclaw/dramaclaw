@@ -66,7 +66,6 @@ import {
 import type {
   SkillDefinition,
   SkillInputRole,
-  SkillProvider,
 } from '@/features/freezone/context/skillRoles';
 import {
   translateSkillDescription,
@@ -77,6 +76,7 @@ import {
   translateSkillParameterLabel,
   translateSkillParameterOption,
   translateSkillRequirement,
+  translateSkillProviderLabel,
 } from '@/features/freezone/context/skillI18n';
 import type { MainlineContext } from '@/features/freezone/context/mainlineContext';
 import { readUrl } from '@/lib/url-params';
@@ -101,13 +101,6 @@ const RESULT_POLL_DELAY_MS = 700;
 const RESULT_POLL_ATTEMPTS = 30;
 const TASK_RECORD_GRACE_MS = 5000;
 const SELECTED_BACKGROUND_CROP_ASPECT_OPTIONS = ['2:3', '16:9'] as const;
-const PROVIDER_LABELS: Record<SkillProvider, string> = {
-  freezone_mainline: '主线技能',
-  agent: 'Agent 技能',
-  tool: '工具技能',
-  workflow: '工作流技能',
-};
-
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value);
@@ -1455,7 +1448,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
               </div>
             </div>
             <div className="shrink-0 rounded-full border border-cyan-200/20 bg-cyan-300/10 px-2 py-1 text-[10px] font-medium text-cyan-100">
-              {skill ? PROVIDER_LABELS[skill.provider] : 'skill'}
+              {skill ? translateSkillProviderLabel(skill.provider, t) : 'skill'}
             </div>
           </div>
         </div>

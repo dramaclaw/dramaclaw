@@ -698,6 +698,16 @@
       "removing": "移除中",
       "removeSuccess": "已移除主线投影",
       "removeBlocked": "当前画布未保存成功，处理冲突后再移除投影"
+    },
+    "assetPanel": {
+      "tab": {
+        "canvases": "项目画布",
+        "library": "主线资产",
+        "assets": "资产库"
+      }
+    },
+    "nodeContext": {
+      "mainlineAsset": "主线资产"
     }
   },
   "theme": {
@@ -1556,6 +1566,12 @@
         "light": "光源描述",
         "material": "材质/风格",
         "forbidden": "禁止元素"
+      },
+      "types": {
+        "interior": "室内",
+        "exterior": "室外",
+        "mixed": "室内外",
+        "other": "其他"
       }
     },
     "props": {
@@ -1829,7 +1845,84 @@
       "western": "西方人",
       "mixed": "混血"
     },
-    "stopped": "已停止"
+    "stopped": "已停止",
+    "formatCheck": {
+      "slot": {
+        "location": "地点",
+        "time": "时间",
+        "interiorExterior": "内/外"
+      },
+      "slotSeparator": "、",
+      "placeholder": {
+        "location": "[地点]",
+        "time": "[日/夜]",
+        "interiorExterior": "[内/外]"
+      },
+      "suggestionLabeled": "{{header}}；地点：{{location}}，{{time}}，{{interiorExterior}}",
+      "untitledChapter": "未命名章节",
+      "summary": {
+        "missingSceneHeaders": "精品剧必须包含场景头：系统没有识别到每个场景从哪里开始，请补充后重新导入。",
+        "noChapters": "未检测到有效章节或可识别正文，无法用于剧本结构化。",
+        "repairableSceneHeaders": "已识别场景边界；缺失的场景元数据将在场景规划时补齐。",
+        "formatRisks_one": "上传成功，但检测到 {{count}} 个格式风险，可能影响场景识别。",
+        "formatRisks_other": "上传成功，但检测到 {{count}} 个格式风险，可能影响场景识别。",
+        "passed": "上传成功，剧本格式校验通过。"
+      },
+      "issue": {
+        "sceneHeaderMissingSlots": {
+          "message": "场景头“{{header}}”缺少{{missing}}。",
+          "fix": "请按实际场景补充，可参考“{{suggestion}}”。"
+        },
+        "missingSceneHeaders": {
+          "message": "没有识别到场景头，系统无法判断每个场景从哪里开始。",
+          "fix": "请按标准格式编写：每集先写“第N集”，每个场景再单独写“场号 地点 时间 内/外”，然后依次填写人物、动作和对白。例如：第一集 / 1-1 城市咖啡馆 日 内。"
+        },
+        "nonstandardSceneHeaders": {
+          "message": "已识别场景边界，但部分场景元数据不完整。",
+          "fix": "系统已识别场景边界，并会在场景规划时补齐或规范化缺失的地点、时间和内外景。"
+        },
+        "sceneHeadersMissingTime": {
+          "message": "检测到缺少明确时间锚点的场景头/场次头；后续 time_of_day 与 scene variant 继承可能不稳定。",
+          "fix": "建议在场景头中补充明确时间，如“日/夜/深夜”；系统仍会保留场景边界并在后续规范化。"
+        },
+        "missingInteriorExterior": {
+          "message": "场景头缺少“内/外”。",
+          "fix": "建议补上“内/外”，如“地点 时间 内/外”。"
+        },
+        "sparseSceneHeaders": {
+          "message": "场景头偏少，连续场景和时间继承可能不稳定。",
+          "fix": "建议按场景补充分场头（每场一个场景头）。"
+        },
+        "tooFewDialogueLines": {
+          "message": "有效对白行较少；如果这是无对白或动作主导场景，可以继续导入。",
+          "fix": "建议补充可识别对白行，格式如“角色：台词”。"
+        },
+        "multiSpeakerLines": {
+          "message": "存在多行“同一行混多个说话人/多个冒号”的对白格式，系统会尝试按 B 档剧本规范化，但建议先整理成一句台词一行。",
+          "fix": "建议整理为一句台词一行，每行只保留一个说话人。"
+        },
+        "ambiguousSpeakers": {
+          "message": "存在较多模糊 speaker（如“他/她/对方/电话那头”），后续 identity 归一会不稳定。",
+          "fix": "建议把“他/她/对方”等模糊说话人改为具体角色名。"
+        },
+        "manyLongDialogues": {
+          "message": "超长单句台词较多，后续容易产生单 unit 长对白问题。",
+          "fix": "建议拆分超长台词，减少单行对白长度。"
+        },
+        "duplicateChapterNumber": {
+          "message": "检测到重复章节序号 {{number}}：{{title}}。",
+          "fix": "建议检查正文中疑似章节标题的句子，避免同一章节号被切成多个章节。"
+        },
+        "nonIncreasingChapterNumber": {
+          "message": "章节序号从 {{previous_number}} 跳回或重复为 {{number}}。",
+          "fix": "建议检查章节序号是否递增，或确认正文中的章节字样不是误切标题。"
+        },
+        "notScreenplayLike": {
+          "message": "文本整体更像小说正文而不是分场剧本，本预检不会阻断导入，但后续结构化效果可能较差。",
+          "fix": "如果这是小说原文，请把项目类型切换为“旁白解说”；如果是剧本，请补齐分场头。"
+        }
+      }
+    }
   },
   "video": {
     "voiceSelect": "语音选择",
@@ -3383,6 +3476,99 @@
       "keys": {
         "space": "空格"
       }
+    },
+    "contextMenu": {
+      "upload": "上传",
+      "addNode": "添加节点",
+      "undo": "撤销",
+      "redo": "重做",
+      "paste": "粘贴"
+    },
+    "assetLibrary": {
+      "title": "资产库",
+      "resyncTitle": "打开时已自动同步；如主线新增了人物 / 场景 / 道具，可点此重新同步",
+      "close": "关闭",
+      "allAssets": "全部资产",
+      "searchAssets": "搜索资产",
+      "searchPlaceholder": "搜索当前范围",
+      "clearSearch": "清空搜索",
+      "categories": "资产分类",
+      "uploading": "上传中…",
+      "uploadFailed": "上传失败",
+      "remove": "移除",
+      "viewDetails": "查看资产详情",
+      "bulkSelected_one": "已选 {{count}} 项（只能删除本地上传的素材）",
+      "bulkSelected_other": "已选 {{count}} 项（只能删除本地上传的素材）",
+      "rename": "重命名",
+      "sendToCanvas": "发送到画布",
+      "prevPage": "上一页",
+      "nextPage": "下一页",
+      "pageSize": "每页条数",
+      "projectNotReady": "项目未就绪",
+      "deleteEntryTitle": "删除素材",
+      "deleteEntryDescription": "确定要删除「{{name}}」？删了找不回来。",
+      "delete": "删除",
+      "downloadFailed": "下载失败：{{detail}}",
+      "bulkDeleteTitle": "批量删除",
+      "bulkDeleteDescription": "确定要删除选中的 {{count}} 项素材？删了找不回来。",
+      "bulkDeleteFailed": "{{count}} 项删除失败：{{detail}}",
+      "deleteFolderTitle": "删除文件夹",
+      "deleteFolderDescriptionWithItems": "确定要删除文件夹「{{name}}」？里面的 {{count}} 项素材会一起删掉，删了找不回来。",
+      "deleteFolderDescription": "确定要删除文件夹「{{name}}」？",
+      "uncategorized": "待分类资产",
+      "allCategories": "全部类别",
+      "subtitle": "整理、复用并上传项目素材",
+      "syncMainline": "同步主线",
+      "exitBulkDelete": "退出批量删除",
+      "bulkDeleteHint": "选择多个本地上传资产进行删除",
+      "newFolder": "新建文件夹",
+      "uploadAssets": "上传资产",
+      "folders": "文件夹",
+      "categoryAria": "分类 {{label}}",
+      "dropToUpload": "松开以上传到「{{label}}」",
+      "loadFailed": "加载失败：{{detail}}",
+      "openDetails": "打开资产详情",
+      "deselect": "取消选择",
+      "markForDelete": "选中待删除",
+      "maxSelectable": "最多可选 {{count}} 个",
+      "select": "选择",
+      "viewDetailsAria": "查看 {{name}} 详情",
+      "assetFallbackName": "资产",
+      "unnamed": "(未命名)",
+      "emptySearchTitle": "没有匹配的资产",
+      "emptyAllTitle": "这里还没有素材",
+      "emptyCategoryTitle": "当前分类下没有素材",
+      "emptySearchHint": "尝试更换关键词，或清空搜索查看全部资产",
+      "emptyAllHint": "上传文件，或同步主线中的人物、场景和道具",
+      "emptyCategoryHint": "切换分类，或上传符合当前分类的资产",
+      "uploadFirst": "上传第一个资产",
+      "deleteSelected": "删除所选",
+      "confirm": "确定",
+      "folderAria": "文件夹 {{label}}",
+      "folderMoreAria": "{{label}} 更多操作",
+      "changeCover": "修改封面",
+      "pageAria": "第 {{page}} 页",
+      "perPage": "{{size}}条/页",
+      "itemCount_one": "{{count}} 项资产",
+      "itemCount_other": "{{count}} 项资产"
+    },
+    "referencePick": {
+      "kind": {
+        "text": "文本",
+        "image": "图片",
+        "video": "视频",
+        "audio": "音频"
+      },
+      "rejectKind": "{{kind}}暂不支持作为参考",
+      "rejectGeneric": "这个节点不能作为参考",
+      "noTargets": "画布上还没有可以作为参考的节点",
+      "chip": "参考",
+      "chipTitleWithExternal": "添加参考：画布上的节点，或本地文件",
+      "chipTitleCanvasOnly": "在画布上选择一个节点作为参考",
+      "sourceCanvas": "画布参考",
+      "sourceCanvasHint": "在画布上点选一个节点",
+      "sourceExternal": "外部参考",
+      "sourceExternalHint": "从本地上传素材文件"
     }
   },
   "tool": {
@@ -3736,7 +3922,8 @@
       "apiKeyRequired": "后端 provider 未配置",
       "resultTitle": "结果图片",
       "promptPlaceholder": "描述任何你想要生成或编辑的内容",
-      "noModelAvailable": "管理员尚未配置任何图片模型，暂时无法生成"
+      "noModelAvailable": "管理员尚未配置任何图片模型，暂时无法生成",
+      "tryLabel": "试试："
     },
     "imageGen": {
       "contextPalette": {
@@ -3744,7 +3931,58 @@
         "actors": "人物颜色",
         "props": "道具颜色",
         "empty": "当前节点没有可用的镜头颜色上下文"
-      }
+      },
+      "aspect": {
+        "auto": "自适应"
+      },
+      "quality": {
+        "low": "低画质",
+        "medium": "标准画质",
+        "high": "高画质"
+      },
+      "assetReferenceGroup": "资产参考组",
+      "missingContext": "缺少项目或镜头上下文",
+      "album": {
+        "expand": "展开画册",
+        "expandCount": "展开 {{count}} 张生成结果",
+        "heading": "画册 · {{count}} 张",
+        "setAsMain": "点击设为主图",
+        "applyToCanvas": "把这张图作为独立图片节点放到画布上",
+        "applyToCanvasLabel": "应用到画布",
+        "download": "下载这张图片",
+        "mainImage": "主图",
+        "generating": "生成中…"
+      },
+      "upload": "上传图片",
+      "uploading": "上传中",
+      "uploadingEllipsis": "上传中…",
+      "removeReference": "移除参考图",
+      "history": {
+        "generatingNew": "新图片生成中…",
+        "back": "返回"
+      },
+      "emptyState": {
+        "tryLabel": "试试：",
+        "imageToImageTitle": "新建一个上游图片节点用作参考",
+        "imageToImage": "图生图"
+      },
+      "cropBackgroundTitle": "从 {{source}} 选一个 16:9 区域写入本 beat 的 selected_background.png",
+      "cropBackground": "📐 截取背景",
+      "assetLibraryTitle": "从资产库选择参考图（人物 / 场景 / 道具）",
+      "assetLibrary": "资产库",
+      "fromUpstream": "来自上游 · {{name}}",
+      "dropReference": "取消引用此素材",
+      "promptPlaceholderUpstream": "上游内容已自动接入，可继续补充提示词…",
+      "promptPlaceholder": "描述你想要生成的画面内容，@引用素材",
+      "translatePrompt": "翻译提示词（中英文互译）",
+      "generate": "生成",
+      "param": {
+        "quality": "画质",
+        "resolution": "分辨率",
+        "aspect": "比例"
+      },
+      "camera": "摄像机",
+      "countValue": "{{count}}张"
     },
     "beatContextNode": {
       "heading": "镜头上下文",
@@ -3960,7 +4198,339 @@
         "pause": "暂停",
         "mute": "静音",
         "unmute": "取消静音"
+      },
+      "cta": {
+        "allReference": "全能参考",
+        "imageReference": "图片参考",
+        "firstFrame": "首帧生成视频",
+        "imageToVideo": "图生视频",
+        "firstLastFrame": "首尾帧生成视频"
+      },
+      "spawn": {
+        "firstFrame": "首帧",
+        "lastFrame": "尾帧",
+        "referenceImage": "参考图",
+        "imageReferenceGroup": "图片参考组",
+        "firstFrameGroup": "首帧生成视频组",
+        "imageToVideoGroup": "图生视频组",
+        "allReferenceGroup": "全能参考组",
+        "firstLastFrameGroup": "首尾帧生成视频组"
+      },
+      "clip": {
+        "displayName": "剪辑",
+        "noUrl": "剪辑完成但未返回视频地址",
+        "failed": "剪辑失败：{{detail}}"
+      },
+      "videoEdit": {
+        "imageLimit": "视频编辑最多支持 {{limit}} 张参考图，已使用前 {{limit}} 张（忽略其余 {{ignored}} 张）"
+      },
+      "allReference": {
+        "happyHorseUnsupported": "HappyHorse 不支持全能参考模式，请切换为文生视频或图生视频。",
+        "modelUnsupported": "当前模型不支持全能参考，请切换模型或改用其它生成模式。"
+      },
+      "generation": {
+        "noResult": "视频生成未返回结果",
+        "failed": "视频生成失败",
+        "faceBlockedMessage": "素材包含真实人脸，已被内容安全策略拦截。请在下方打开「真人素材审核」开关后重试（可能增加审核时间，不保证通过）。",
+        "faceBlockedTitle": "素材被拦截"
+      },
+      "album": {
+        "expand": "展开画册",
+        "expandCount": "展开 {{count}} 条生成结果",
+        "heading": "画册 · {{count}} 条",
+        "setAsMain": "点击设为主视频",
+        "applyToCanvas": "把这条视频作为独立视频节点放到画布上",
+        "applyToCanvasLabel": "应用到画布",
+        "download": "下载这条视频",
+        "mainVideo": "主视频",
+        "generating": "生成中…"
+      },
+      "history": {
+        "generatingNew": "新视频生成中…",
+        "back": "返回"
+      },
+      "error": {
+        "requestId": "请求ID"
+      },
+      "emptyState": {
+        "tryLabel": "试试："
+      },
+      "videoLoadFailed": "视频加载失败"
+    },
+    "pano360": {
+      "captureGroup2x2": "全景截图组 (4 张)",
+      "captureGroup4x3": "全景截图组 (12 张)",
+      "snapCurrent": "当前视角截图",
+      "snap2x2": "4 大视角截图",
+      "snap4x3": "12 大视角截图",
+      "useAsBackground": "用作背景源(写入本 beat selected_background)",
+      "resetView": "复位视角",
+      "zoomOut": "缩小",
+      "zoomIn": "放大",
+      "panLeft": "向左",
+      "panRight": "向右",
+      "panUp": "向上",
+      "panDown": "向下",
+      "enterFullscreen": "进入全屏",
+      "fov": "视场角 FOV",
+      "sphereCorrection": "球面校正",
+      "lockViewTitle": "把当前视角烘焙进校正参数",
+      "lockView": "锁定当前视角",
+      "front": "正前方",
+      "setFrontYawTitle": "把当前视角的 yaw 设为正前",
+      "effectsAndExport": "效果与导出",
+      "planetMode": "小行星模式",
+      "copyCorrectionJsonTitle": "把当前 frontYaw / 校正参数 / FOV 复制为 JSON",
+      "copyCorrectionJson": "复制校正 JSON",
+      "dir": {
+        "front": "前方",
+        "right": "右侧",
+        "back": "后方",
+        "left": "左侧"
+      },
+      "pitch": {
+        "up": "上",
+        "level": "平",
+        "down": "下"
+      },
+      "status": {
+        "initFailed": "Photo Sphere Viewer 初始化失败: {{detail}}",
+        "ready": "就绪",
+        "loaded": "已加载",
+        "loadFailed": "加载失败",
+        "loadFailedDetail": "加载失败: {{detail}}",
+        "loading": "加载中...",
+        "frontSet": "已设当前视角为 Front: {{yaw}}°",
+        "jsonCopied": "校正 JSON 已复制到剪贴板",
+        "jsonNoClipboard": "已生成校正 JSON（剪贴板不可用，见控制台）",
+        "snapDone": "已生成当前视角截图",
+        "snapFailed": "截图失败",
+        "snapFailedDetail": "截图失败: {{detail}}",
+        "notInShotContext": "当前不在镜头上下文中,无法设为背景源",
+        "backgroundSet": "已设置当前背景",
+        "backgroundSubmitted": "已生成当前背景候选并提交",
+        "setFailedDetail": "设置失败: {{detail}}",
+        "capturing": "截图中（{{count}} 张）…",
+        "uploadingCount": "上传中（{{count}} 张）…",
+        "capturedCount": "已生成 {{count}} 张截图"
+      },
+      "currentView": "当前视角",
+      "currentBackground": "当前背景",
+      "metaViewer": "360 自由画布查看器",
+      "metaWaiting": "等待上游连接全景图",
+      "connectUpstream": "连接上游图片节点开始浏览全景",
+      "collapsePanel": "收起控制面板",
+      "expandPanel": "展开控制面板",
+      "reset": "重置",
+      "setAsCurrentView": "设为当前视角",
+      "exitPlanet": "退出小行星"
+    },
+    "videoModel": {
+      "reason": {
+        "videoUnsupported": "该模型不支持视频素材",
+        "audioUnsupported": "该模型不支持音频素材",
+        "singleImageOnly": "该模型单次仅支持 1 张图片",
+        "imagesOnly": "该模型仅支持图片素材",
+        "grokImagesOnly": "Grok Video Channel 仅支持图片素材",
+        "grokImageLimit": "Grok Video Channel 最多支持 1 张首帧和 7 张参考图",
+        "maxImages": "该模型最多支持 {{count}} 张图片素材",
+        "maxVideos": "该模型最多支持 {{count}} 个视频素材",
+        "maxAudios": "该模型最多支持 {{count}} 个音频素材"
       }
+    },
+    "scriptNode": {
+      "action": {
+        "fromScript": "剧本生成分镜脚本",
+        "fromVideoRef": "视频参考生成分镜脚本",
+        "fromCharacter": "角色生成分镜脚本"
+      },
+      "actionGroup": "{{action}}组",
+      "column": {
+        "shot_no": "镜号",
+        "duration": "时长",
+        "visual_description": "画面描述",
+        "character_1": "角色1",
+        "character_description_1": "角色描述1",
+        "character_image_1": "角色图1",
+        "character_2": "角色2",
+        "character_description_2": "角色描述2",
+        "character_image_2": "角色图2",
+        "reference": "参考",
+        "shot": "景别",
+        "character_action": "角色动作",
+        "emotion": "情绪",
+        "scene_tags": "场景标签",
+        "lighting_mood": "光影氛围",
+        "sound": "音效",
+        "dialogue": "对白",
+        "shot_prompt": "分镜提示词",
+        "video_motion_prompt": "视频运动提示词"
+      },
+      "error": {
+        "missingProject": "缺少 project 参数",
+        "missingInput": "请输入提示词描述剧情，或连接视频 / 角色图片节点"
+      },
+      "spawn": {
+        "screenplay": "剧本",
+        "character": "角色 {{index}}"
+      },
+      "retry": "重试",
+      "tryLabel": "试试：",
+      "shotCount": "共 {{count}} 个分镜",
+      "close": "关闭",
+      "defaultTitle": "分镜脚本",
+      "scriptView": "脚本视图",
+      "fullscreen": "全屏",
+      "uploadFailed": "上传失败",
+      "promptPlaceholder": "描述剧情或添加角色参考、视频参考等，为你生成分镜脚本",
+      "translate": "翻译（中英文互译）",
+      "generate": "生成",
+      "referenceFallback": "引用 {{index}}"
+    },
+    "audioPanel": {
+      "musicLength": {
+        "30s": "30秒",
+        "1m": "1分钟",
+        "2m": "2分钟",
+        "3m": "3分钟",
+        "4m": "4分钟",
+        "5m": "5分钟",
+        "10m": "10分钟"
+      },
+      "promptLabel": {
+        "music": "输入音乐描述",
+        "speech": "输入要合成的文本"
+      },
+      "promptPlaceholder": {
+        "music": "描述想要的音乐：风格、乐器、节奏、氛围…",
+        "speech": "输入要合成的文本"
+      },
+      "emotionLabel": "语气词",
+      "emotionOptional": "（可选，自由输入）",
+      "emotionPlaceholder": "如：紧张、压低声音、带一点恐惧感",
+      "voiceMissing": "请先配置或选择声线",
+      "translate": "翻译（中英文互译）",
+      "voiceSettings": "音色设置",
+      "advancedSettings": "高级设置",
+      "generate": "生成",
+      "help": "说明",
+      "musicDuration": "音乐时长",
+      "musicDurationHelp": "设定歌曲长度。自动模式下优先保证歌词完整；指定时长后则优先匹配时长。",
+      "forceInstrumental": "强制纯音乐",
+      "forceInstrumentalHelp": "是否强制纯音乐（不含人声）。",
+      "respectSections": "遵守段落时长",
+      "respectSectionsHelp": "是否严格遵守音乐段落时长策略。",
+      "voiceLoading": "加载中…",
+      "copied": "已复制",
+      "copyFailed": "复制失败",
+      "copyVoiceRef": "复制声线引用",
+      "switchVoice": "切换音色"
+    },
+    "voiceRef": {
+      "projectNarrator": "项目解说人",
+      "userCustom": "自定义音色",
+      "characterDefault": "{{name}}（默认声线）",
+      "characterAgeGroup": "{{name}}（{{slot}}）",
+      "identity": "{{id}}（自有声线）",
+      "identityResolved": "{{id}}（解析后）",
+      "character": "角色",
+      "ageGroup": "年龄段",
+      "identityFallback": "身份"
+    },
+    "voiceModal": {
+      "title": "音色选择",
+      "close": "关闭",
+      "tab": {
+        "library": "音色库",
+        "mine": "我的音色"
+      },
+      "searchLibrary": "搜索音色库",
+      "searchMine": "搜索我的音色",
+      "loading": "加载中…",
+      "empty": "暂无可用音色",
+      "emptyMine": "暂无可用音色，快去克隆你的新音色吧～",
+      "clone": "克隆新音色",
+      "uploading": "上传中…",
+      "selected": "已选",
+      "select": "选择",
+      "missingProject": "当前 URL 缺少 project 参数",
+      "loadFailed": "加载声线失败",
+      "pickAudioFile": "请选择音频文件（mp3 / wav / m4a / aac / ogg / webm）",
+      "fileTooLarge": "参考音频不能超过 {{limit}}MB（当前 {{size}}MB），请压缩或裁剪后重试",
+      "uploadNetworkError": "上传失败：网络中断（音频过大可能被中途断开，请确认不超过 {{limit}}MB 后重试）",
+      "uploadFailed": "上传失败",
+      "perPage": "{{count}} 条/页",
+      "jumpTo": "跳至",
+      "pageSuffix": "页",
+      "totalCount": "共 {{count}} 条"
+    },
+    "storyboard": {
+      "exportCanvasInitFailed": "导出画布初始化失败",
+      "emptyCell": "空格",
+      "editCell": "单独编辑此格",
+      "replaceFromInput": "从输入图片替换",
+      "cellNotePlaceholder": "格 {{no}} 描述",
+      "inputImageLabel": "图{{index}}",
+      "noEditableImage": "该格没有可编辑图片",
+      "cellTitle": "格 {{index}}",
+      "createEditNodeFailed": "创建编辑节点失败",
+      "noExportableImages": "没有可导出的图片",
+      "exportFailed": "导出失败",
+      "cellNoExportableImage": "该格没有可导出的图片",
+      "untitledProject": "未命名项目",
+      "projectFallback": "项目",
+      "packFailed": "打包下载失败",
+      "noInputImages": "暂无输入图片",
+      "showFrameIndex": "显示格序号",
+      "showFrameNote": "显示格描述",
+      "imageFit": "图片填充",
+      "imageFitCover": "填充满格子",
+      "imageFitContain": "完整显示",
+      "notePlacement": "描述位置",
+      "notePlacementOverlay": "图上遮罩",
+      "notePlacementBottom": "图下文字",
+      "frameIndexPrefix": "序号前缀",
+      "cellGap": "间距",
+      "fontSize": "字号(%)",
+      "backgroundColor": "背景",
+      "textColor": "文字",
+      "exportSettings": "导出设置",
+      "gridSummary": "{{rows}} x {{cols}} | {{count}} 格",
+      "packing": "打包中...",
+      "pack": "打包下载",
+      "exporting": "导出中...",
+      "mergeGrid": "合并宫格"
+    },
+    "displayName": {
+      "uploadNode": "上传资源",
+      "imageNode": "AI 图片",
+      "imageGenNode": "图片节点",
+      "exportImageNode": "结果图片",
+      "beatContextNode": "镜头上下文",
+      "textAnnotationNode": "文本",
+      "groupNode": "分组",
+      "storyboardNode": "分格抽取结果",
+      "storyboardGenNode": "多版本宫格",
+      "videoNode": "视频",
+      "audioNode": "音频",
+      "videoStoryNode": "视频故事",
+      "videoComposeNode": "视频合成",
+      "scriptNode": "脚本生成器",
+      "pano360ViewerNode": "360° 全景查看器",
+      "threeDWorldNode": "3D 世界",
+      "skillNode": "技能",
+      "styleNode": "风格"
+    },
+    "exportResult": {
+      "generic": "结果图片",
+      "storyboardGenOutput": "宫格输出",
+      "storyboardSplitExport": "分格导出",
+      "storyboardFrameEdit": "单格结果",
+      "matte": "抠图结果",
+      "upscale": "高清放大"
+    },
+    "audioNode": {
+      "empty": "暂无音频"
     }
   },
   "viewer": {
@@ -4268,7 +4838,28 @@
         "aiStagingSelected": "已选中 AI 占位",
         "sceneSaved": "已保存导演世界场景",
         "sceneCleared": "已清空保存的场景",
-        "deleteNeedsShift": "按 Shift+Delete 删除选中对象"
+        "deleteNeedsShift": "按 Shift+Delete 删除选中对象",
+        "engine": {
+          "splatCorrupt": "3D 世界文件无法解析（.sog 包损坏，或资源地址返回了非文件内容）。请确认地址可访问、文件完整后重试。",
+          "splatUnreachable": "3D 世界资源加载失败（地址不可达或已过期）。请刷新或重新生成后重试。",
+          "splatDecode": "3D 世界文件解码失败（格式不支持或文件损坏）。",
+          "splatGeneric": "3D 世界加载失败，请重试。",
+          "ready": "PlayCanvas ready。等待 3D 世界...",
+          "emptyWorld": "空白导演世界 · 可在水平地板上摆放",
+          "noWorldSource": "未提供 3D 世界资源。",
+          "loadingWorld": "加载 3D 世界...",
+          "loadingWorldPercent": "加载 3D 世界... {{percent}}%",
+          "worldLoaded": "已加载 3D 世界",
+          "worldLoadedGaussians": "已加载 3D 世界 · {{count}} 高斯",
+          "panoCleared": "已清除 360 环境。",
+          "panoLoading": "加载 360 环境...",
+          "panoFailed": "360 环境加载失败：{{message}}",
+          "panoLoaded": "已加载 360 环境 · 可在球内导演摆放",
+          "collisionLoading": "加载 collision GLB：{{url}}",
+          "collisionFailed": "collision 加载失败，已降级到 y=0：{{message}}",
+          "collisionMissingApi": "collision 资源缺少 instantiateRenderEntity，跳过",
+          "collisionLoaded": "已加载 collision GLB（调试线框），meshInstances={{count}}"
+        }
       },
       "skillStatus": {
         "generating": "生成中...",
@@ -4286,7 +4877,36 @@
         "prop": "道具",
         "staging": "占位"
       },
-      "actorColor": "人物颜色"
+      "actorColor": "人物颜色",
+      "skillProviderLabels": {
+        "freezone_mainline": "主线技能",
+        "agent": "Agent 技能",
+        "tool": "工具技能",
+        "workflow": "工作流技能"
+      },
+      "poses": {
+        "standing": "站立",
+        "talking": "交谈",
+        "arms_crossed": "抱臂",
+        "sitting": "坐下",
+        "eating": "进食",
+        "crouching": "蹲伏",
+        "kneeling": "下跪",
+        "lying": "躺 / 倒地",
+        "walking": "行走",
+        "running": "奔跑",
+        "pointing": "指向",
+        "holding": "持物",
+        "interacting": "操作 / 互动",
+        "fighting": "格斗",
+        "sword": "持械"
+      }
+    },
+    "purpose": {
+      "freezone": "自由世界",
+      "asset": "主线资产取景",
+      "beat": "主线 Beat 制作",
+      "mainline": "主线 pipeline"
     }
   },
   "split": {
@@ -4891,5 +5511,34 @@
       "ORG_AUTHZ_STALE": "访问状态已变化，请刷新后重试。",
       "generic": "当前无法发起生成，请刷新或联系组织管理员。"
     }
+  },
+  "character": {
+    "main": {
+      "drama": {
+        "label": "主角",
+        "makeMain": "设为主角",
+        "unsetMain": "取消主角",
+        "mainSet": "已设为主角",
+        "mainUnset": "已取消主角"
+      },
+      "narrated": {
+        "label": "解说主角",
+        "makeMain": "设为解说主角",
+        "unsetMain": "取消解说主角",
+        "mainSet": "已设为解说主角",
+        "mainUnset": "已取消解说主角"
+      }
+    }
+  },
+  "timeOfDay": {
+    "none": "无（保持场景图光线，不重打光）",
+    "dawn": "清晨",
+    "forenoon": "上午",
+    "noon": "正午",
+    "afternoon": "午后",
+    "day": "白天",
+    "dusk": "黄昏",
+    "night": "夜晚",
+    "scriptOriginal": "{{value}}（剧本原值）"
   }
 }

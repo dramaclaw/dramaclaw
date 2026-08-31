@@ -26,7 +26,7 @@ import {
   type StoryboardRatioControlMode,
   type StoryboardGenNodeData,
 } from '@/features/canvas/domain/canvasNodes';
-import { EXPORT_RESULT_DISPLAY_NAME, resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import { EXPORT_RESULT_DISPLAY_NAME, localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { canvasAiGateway } from '@/features/canvas/application/canvasServices';
@@ -614,8 +614,8 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
   );
   const frameDescriptionDraftsRef = useRef(frameDescriptionDrafts);
   const resolvedTitle = useMemo(
-    () => resolveNodeDisplayName(CANVAS_NODE_TYPES.storyboardGen, nodeData),
-    [nodeData]
+    () => localizeNodeDisplayName(CANVAS_NODE_TYPES.storyboardGen, nodeData, t),
+    [nodeData, t]
   );
 
   const incomingImages = useUpstreamImages(id);

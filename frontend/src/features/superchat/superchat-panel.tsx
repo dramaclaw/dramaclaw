@@ -34,6 +34,8 @@ import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
+
+import { localizeFormatCheck } from "@/lib/format-check-copy";
 import { useParams } from "@tanstack/react-router";
 import { attachBorderBeam, type BorderBeamController } from "border-beam-vanilla";
 import {
@@ -2273,6 +2275,7 @@ function dataUrlToText(attachment: ChatAttachment): string | null {
 async function uploadNovelForIngest(
   project: string,
   file: AttachmentBlob,
+  t: TFunction,
 ): Promise<IngestUploadResult> {
   const formData = new FormData();
   formData.append("file", file.blob, file.filename);
@@ -2280,7 +2283,10 @@ async function uploadNovelForIngest(
     uploadApi.post(p`api/v1/projects/${project}/ingest/upload`, { body: formData }),
   );
   if (!response.ok) {
-    const fc = (response as ErrorResponse & { format_check?: FormatCheck }).format_check;
+    const fc = localizeFormatCheck(
+      (response as ErrorResponse & { format_check?: FormatCheck }).format_check,
+      t,
+    );
     throw new Error(fc?.summary || response.error);
   }
   return response.data;
@@ -2295,7 +2301,7 @@ function surfaceFormatCheckWarnings(
   onViewDetails: (fc: FormatCheck, filename: string) => void,
 ): void {
   for (const item of prepared) {
-    const fc = item.upload?.format_check;
+    const fc = localizeFormatCheck(item.upload?.format_check, t);
     if (!fc || fc.level !== "warning") continue;
     const filename = item.upload?.filename || item.original.fileName || "";
     toast.warning(fc.summary, {
@@ -2326,7 +2332,7 @@ async function uploadAttachmentsForIngest(
 
     try {
       toast.info(t("aiAssistant.attachmentAnalysisUploading", { filename: file.filename }));
-      const upload = await uploadNovelForIngest(project, file);
+      const upload = await uploadNovelForIngest(project, file, t);
       const { content: _content, path: _path, url: _url, ...attachmentMetadata } = attachment;
       prepared.push({
         upload,

@@ -23,7 +23,7 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { useExternalFileHandoff } from '@/features/canvas/hooks/useExternalFileHandoff';
-import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import {
   NodeHeader,
   NODE_HEADER_FLOATING_POSITION_CLASS,
@@ -108,8 +108,8 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
     !isGenerating && !data.audioUrl && generationError.length > 0;
 
   const resolvedTitle = useMemo(
-    () => resolveNodeDisplayName(CANVAS_NODE_TYPES.audio, data),
-    [data],
+    () => localizeNodeDisplayName(CANVAS_NODE_TYPES.audio, data, t),
+    [data, t],
   );
   const resolvedWidth = Math.max(MIN_WIDTH, Math.round(width ?? DEFAULT_WIDTH));
   const resolvedHeight = Math.max(MIN_HEIGHT, Math.round(height ?? DEFAULT_HEIGHT));
@@ -348,7 +348,7 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
         ) : (
           <div className="flex flex-col items-center gap-2 text-text-muted/70">
             <Music2 className="h-7 w-7 opacity-60" />
-            <span className="text-[12px]">暂无音频</span>
+            <span className="text-[12px]">{t('node.audioNode.empty')}</span>
           </div>
         )}
       </div>

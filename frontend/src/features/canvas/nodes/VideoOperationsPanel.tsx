@@ -285,6 +285,8 @@ export function VideoOperationsPanel({
   onSubmit,
 }: VideoOperationsPanelProps) {
     const { t } = useTranslation();
+    // 能力守卫返回的是 i18n key（见 videoModelCapabilities.ts），选择器要的是文案。
+    const translateDisabledReason = (key: string | null) => (key ? t(key) : null);
     // `submitDisabled` already carries the org admission block from VideoNode;
     // this is only for the button's title, so a blocked member is told why.
     const modelTaskAccess = useModelTaskAccess();
@@ -561,8 +563,8 @@ export function VideoOperationsPanel({
       const attached = new Set(
         store.edges.filter((edge) => edge.target === id).map((edge) => edge.source),
       );
-      return collectReferenceMaterials(store.nodes, id, CANVAS_NODE_TYPES.video, attached);
-    }, [id]);
+      return collectReferenceMaterials(store.nodes, id, CANVAS_NODE_TYPES.video, attached, t);
+    }, [id, t]);
     // 选中一条画布素材：连成上游即可——引用行、@ 候选编号都由上游推导链路跟上，
     // 编辑器那边等它出现在候选里再把 @ 换过去。被拒（素材上限）时
     // attachReferenceEdge 已经弹过原因，这里把结果回给编辑器，让它别空等。
@@ -993,14 +995,14 @@ export function VideoOperationsPanel({
                       // 改动整个丢掉(例如后台下掉 HappyHorse 的视频编辑后,它在这里
                       // 依然可选,选进去所有模式都是灰的、提交也被拦)。与 VideoNode
                       // 的提交守卫同源。
-                      videoModelReferenceDisabledReason(model, {
+                      translateDisabledReason(videoModelReferenceDisabledReason(model, {
                         images: upstreamCounts.images,
                         // 视频 / 音频必须和自动切模型的 effect 同一口径（按节点类型，
                         // 空节点也算）。若这里用「已解析 URL」口径，连着空视频节点时
                         // 1.x 不置灰、用户能选回去，又被 effect 立刻切走，来回打架。
                         videos: upstreamTypeCounts.videos,
                         audios: upstreamTypeCounts.audios,
-                      })
+                      }))
                     }
                   />
                   <VideoConfigChip

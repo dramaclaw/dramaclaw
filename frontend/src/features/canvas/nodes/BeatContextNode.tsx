@@ -1346,11 +1346,11 @@ export const BeatContextNode = memo(
                       }}
                     >
                       <option value={NONE_SENTINEL}>
-                        {timeOfDayLabel("")}
+                        {timeOfDayLabel("", t)}
                       </option>
                       {timeOptions.map((timeOfDay) => (
                         <option key={timeOfDay} value={timeOfDay}>
-                          {timeOfDayLabel(timeOfDay)}
+                          {timeOfDayLabel(timeOfDay, t)}
                         </option>
                       ))}
                     </UiSelect>

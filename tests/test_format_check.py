@@ -459,3 +459,42 @@ async def test_upload_empty_preview_includes_blocking_format_check_at_top_level(
     assert response["ok"] is False
     assert response["format_check"]["level"] == "blocking"
     assert "format_check" not in response.get("data", {})
+
+
+# 前端按 code + params 查 i18n（frontend/src/lib/format-check-copy.ts），中文 summary/
+# message/fix 只当兜底。少了 summary_code 或 params，英文界面就会漏中文。
+def test_format_check_carries_machine_readable_codes_for_i18n():
+    result = build_import_format_check(
+        "1-1 城市咖啡馆\n" + _dialogue_lines(30),
+        has_chapters=True,
+    )
+
+    assert result["summary_code"]
+    assert isinstance(result["summary_params"], dict)
+    assert result["issues"]
+    for issue in result["issues"]:
+        assert issue["code"]
+        assert isinstance(issue.get("params"), dict), issue["code"]
+
+
+def test_line_aware_scene_header_issue_exposes_slots_not_chinese_words():
+    result = build_import_format_check(
+        "1-1 城市咖啡馆\n" + _dialogue_lines(30),
+        has_chapters=True,
+    )
+    issue = next(i for i in result["issues"] if i["params"].get("header"))
+
+    assert issue["params"]["header"] == "1-1 城市咖啡馆"
+    assert set(issue["params"]["missing_slots"]) <= {
+        "location",
+        "time",
+        "interior_exterior",
+    }
+    assert issue["params"]["missing_slots"]
+
+
+def test_blocking_summary_code_is_reported_for_missing_scene_headers():
+    result = build_import_format_check("", has_chapters=False)
+
+    assert result["summary_code"] == "no_chapters"
+    assert result["summary_params"] == {}

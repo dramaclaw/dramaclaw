@@ -35,7 +35,7 @@ import {
 } from '@/features/canvas/application/imageNodeSizing';
 import {
   isNodeUsingDefaultDisplayName,
-  resolveNodeDisplayName,
+  localizeNodeDisplayName,
 } from '@/features/canvas/domain/nodeDisplay';
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { stashExternalFile } from '@/features/canvas/application/pendingExternalFiles';
@@ -310,8 +310,8 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
     if (imageOnly && isNodeUsingDefaultDisplayName(CANVAS_NODE_TYPES.upload, data)) {
       return '上传图片';
     }
-    return resolveNodeDisplayName(CANVAS_NODE_TYPES.upload, data);
-  }, [data, imageOnly, useUploadFilenameAsNodeTitle]);
+    return localizeNodeDisplayName(CANVAS_NODE_TYPES.upload, data, t);
+  }, [data, imageOnly, t, useUploadFilenameAsNodeTitle]);
   const hasMainlineContext = hasMainlineContexts(
     (data as { mainline_context?: unknown }).mainline_context,
   );

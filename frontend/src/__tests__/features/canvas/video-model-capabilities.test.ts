@@ -567,7 +567,7 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
     };
     expect(
       videoModelReferenceDisabledReason(withoutVideoEdit, { ...none, videos: 1 }),
-    ).toBe("该模型不支持视频素材");
+    ).toBe("node.videoModel.reason.videoUnsupported");
     // 目录里还留着 video_edit 的话照旧放行，别把整个模型误伤掉。
     expect(
       videoModelReferenceDisabledReason(

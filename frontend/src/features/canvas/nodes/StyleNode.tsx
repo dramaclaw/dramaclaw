@@ -3,6 +3,7 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Images, Palette } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import {
   CANVAS_NODE_TYPES,
@@ -10,8 +11,8 @@ import {
   type StyleNodeData,
 } from '@/features/canvas/domain/canvasNodes';
 import {
-  DEFAULT_NODE_DISPLAY_NAME,
-  resolveNodeDisplayName,
+  localizeDefaultNodeDisplayName,
+  localizeNodeDisplayName,
 } from '@/features/canvas/domain/nodeDisplay';
 import {
   NodeHeader,
@@ -54,6 +55,7 @@ const STYLE_NODE_PLACEHOLDER_TEXT: Record<StyleSelectionState, string> = {
 };
 
 export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
+  const { t } = useTranslation();
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const [galleryOpen, setGalleryOpen] = useState(false);
@@ -100,15 +102,15 @@ export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
     const customTitle =
       typeof data.displayName === 'string' ? data.displayName.trim() : '';
     if (customTitle) return customTitle;
-    if (!template) return resolveNodeDisplayName(CANVAS_NODE_TYPES.style, data);
+    if (!template) return localizeNodeDisplayName(CANVAS_NODE_TYPES.style, data, t);
     return [
-      DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.style],
+      localizeDefaultNodeDisplayName(CANVAS_NODE_TYPES.style, data, t),
       template.category,
       template.label,
     ]
       .filter((part) => typeof part === 'string' && part.trim().length > 0)
       .join(' · ');
-  }, [data, template]);
+  }, [data, t, template]);
   const cardToneClass = canvasNodeFrameClass({ selected });
 
   const handleSelectStyle = useCallback(

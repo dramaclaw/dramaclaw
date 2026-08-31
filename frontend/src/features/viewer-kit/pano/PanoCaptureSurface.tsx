@@ -12,6 +12,7 @@ import {
 import { Viewer, CONSTANTS } from "@photo-sphere-viewer/core";
 import "@photo-sphere-viewer/core/index.css";
 import { Camera, Loader2, RotateCcw, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -213,6 +214,7 @@ export function PanoCaptureSurface({
   onSaveCorrection,
   onClose,
 }: PanoCaptureSurfaceProps) {
+  const { t } = useTranslation();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const cropFrameElementRef = useRef<HTMLDivElement | null>(null);
@@ -723,7 +725,7 @@ export function PanoCaptureSurface({
     manifest.beat_context
       ? `EP ${manifest.beat_context.episode} / Beat ${manifest.beat_context.beat}`
       : null,
-    viewerPurposeLabel(viewerPurpose ?? (manifest.mode === "beat" ? "beat" : "asset")),
+    viewerPurposeLabel(viewerPurpose ?? (manifest.mode === "beat" ? "beat" : "asset"), t),
     "canonical pano",
     manifest.allowed_destinations.includes("beat_selected_background")
       ? "保存目标 selected_background"

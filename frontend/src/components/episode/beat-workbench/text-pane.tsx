@@ -621,7 +621,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
                 <SelectValue
                   placeholder={t("episode.workbench.text.timeOfDayPlaceholder")}
                 >
-                  {timeOfDayLabel(timeOfDay)}
+                  {timeOfDayLabel(timeOfDay, t)}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent
@@ -633,11 +633,11 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
                   value={NO_TIME_OF_DAY_MARKER}
                   className={SELECT_ITEM_CLASS}
                 >
-                  {timeOfDayLabel("")}
+                  {timeOfDayLabel("", t)}
                 </SelectItem>
                 {timeOfDayChoices.map((value) => (
                   <SelectItem key={value} value={value} className={SELECT_ITEM_CLASS}>
-                    {timeOfDayLabel(value)}
+                    {timeOfDayLabel(value, t)}
                   </SelectItem>
                 ))}
               </SelectContent>

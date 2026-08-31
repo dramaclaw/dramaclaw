@@ -9,6 +9,7 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import { AlertTriangle, Expand, FileVideo2, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import {
   CANVAS_NODE_TYPES,
@@ -16,7 +17,7 @@ import {
   type VideoStoryRow,
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
-import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import {
   NodeHeader,
   NODE_HEADER_FLOATING_POSITION_CLASS,
@@ -199,14 +200,15 @@ function ErrorStoryState({ message }: { message: string }) {
 }
 
 export const VideoStoryNode = memo(({ id, data, selected, width, height }: VideoStoryNodeProps) => {
+  const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const resolvedTitle = useMemo(
-    () => resolveNodeDisplayName(CANVAS_NODE_TYPES.videoStory, data),
-    [data],
+    () => localizeNodeDisplayName(CANVAS_NODE_TYPES.videoStory, data, t),
+    [data, t],
   );
   const resolvedWidth = Math.max(MIN_WIDTH, Math.round(width ?? DEFAULT_WIDTH));
   const resolvedHeight = Math.max(MIN_HEIGHT, Math.round(height ?? DEFAULT_HEIGHT));

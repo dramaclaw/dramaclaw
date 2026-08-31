@@ -23,7 +23,7 @@ import {
   type ImageEditNodeData,
   type ImageSize,
 } from '@/features/canvas/domain/canvasNodes';
-import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { coerceSlotTarget } from '@/features/canvas/domain/mainlineNodeTypes';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
@@ -524,8 +524,8 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   );
 
   const resolvedTitle = useMemo(
-    () => resolveNodeDisplayName(CANVAS_NODE_TYPES.imageEdit, data),
-    [data]
+    () => localizeNodeDisplayName(CANVAS_NODE_TYPES.imageEdit, data, t),
+    [data, t]
   );
   const capability = useMemo(() => getCapability(data.capabilityId), [data.capabilityId]);
   const structuredCapabilities = useMemo(() => listCapabilities(), []);
@@ -1145,7 +1145,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                 连接参考图
               </button>
               <div className="flex items-center gap-3 text-xs">
-                <span className="text-[var(--canvas-node-input-helper)]">试试：</span>
+                <span className="text-[var(--canvas-node-input-helper)]">{t('node.imageEdit.tryLabel')}</span>
                 <button
                   type="button"
                   className="nodrag rounded-full bg-white/8 px-2 py-1 text-text-dark transition hover:bg-white/12"

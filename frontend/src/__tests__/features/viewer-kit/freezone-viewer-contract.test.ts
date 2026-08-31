@@ -22,7 +22,12 @@ describe("freezone viewer contracts", () => {
     expect(node).toContain("snap4x3");
     expect(node).toContain("sphere_correction_deg");
     expect(node).toContain("selected_background");
-    expect(node).toContain("360 自由画布查看器");
+    // 文案搬进 i18n 之后，节点文件里只剩 key，中文落在词条表里 —— 两头都钉住，
+    // 免得改了其中一边契约就悄悄断掉。
+    expect(node).toContain("node.pano360.metaViewer");
+    expect(read("public/locales/zh/translation.json")).toContain(
+      '"metaViewer": "360 自由画布查看器"',
+    );
     expect(node).not.toContain("PanoCaptureDialog");
     expect(canvasNodes).toContain("pano360Viewer");
     expect(canvasNodes).toContain("Pano360ViewerNodeData");

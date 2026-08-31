@@ -698,6 +698,16 @@
       "removing": "Removing",
       "removeSuccess": "Mainline projection removed",
       "removeBlocked": "Canvas was not saved. Resolve conflicts before removing the projection."
+    },
+    "assetPanel": {
+      "tab": {
+        "canvases": "Project canvases",
+        "library": "Mainline assets",
+        "assets": "Asset library"
+      }
+    },
+    "nodeContext": {
+      "mainlineAsset": "Mainline asset"
     }
   },
   "theme": {
@@ -1556,6 +1566,12 @@
         "light": "Lighting",
         "material": "Material / style",
         "forbidden": "Forbidden elements"
+      },
+      "types": {
+        "interior": "Interior",
+        "exterior": "Exterior",
+        "mixed": "Interior & exterior",
+        "other": "Other"
       }
     },
     "props": {
@@ -1829,7 +1845,84 @@
       "western": "Western",
       "mixed": "Mixed"
     },
-    "stopped": "Stopped"
+    "stopped": "Stopped",
+    "formatCheck": {
+      "slot": {
+        "location": "a location",
+        "time": "a time of day",
+        "interiorExterior": "an INT/EXT marker"
+      },
+      "slotSeparator": ", ",
+      "placeholder": {
+        "location": "[LOCATION]",
+        "time": "[DAY/NIGHT]",
+        "interiorExterior": "[INT/EXT]"
+      },
+      "suggestionLabeled": "{{header}}; Location: {{location}}, {{time}}, {{interiorExterior}}",
+      "untitledChapter": "Untitled chapter",
+      "summary": {
+        "missingSceneHeaders": "Premium drama requires scene headings: the system cannot tell where each scene begins. Add them and import again.",
+        "noChapters": "No usable chapters or recognizable body text were found, so the script cannot be structured.",
+        "repairableSceneHeaders": "Scene boundaries were recognized; the missing scene metadata will be filled in during scene planning.",
+        "formatRisks_one": "Upload succeeded, but {{count}} formatting risk was detected that may affect scene recognition.",
+        "formatRisks_other": "Upload succeeded, but {{count}} formatting risks were detected that may affect scene recognition.",
+        "passed": "Upload succeeded and the script passed the format check."
+      },
+      "issue": {
+        "sceneHeaderMissingSlots": {
+          "message": "Scene heading “{{header}}” is missing {{missing}}.",
+          "fix": "Fill in the missing values from the actual scene — for example “{{suggestion}}”."
+        },
+        "missingSceneHeaders": {
+          "message": "No scene headings were recognized, so the system cannot tell where each scene begins.",
+          "fix": "Follow the standard format: start every episode with “Episode N”, give each scene its own “scene number, location, time, INT/EXT” heading, then list characters, action, and dialogue. For example: Episode 1 / 1-1 City Cafe DAY INT."
+        },
+        "nonstandardSceneHeaders": {
+          "message": "Scene boundaries were recognized, but some scene metadata is incomplete.",
+          "fix": "The system recognized the scene boundaries and will complete or normalize the missing location, time, and INT/EXT values during scene planning."
+        },
+        "sceneHeadersMissingTime": {
+          "message": "Some scene headings have no explicit time anchor, so time_of_day and scene variant inheritance may be unstable.",
+          "fix": "Add an explicit time to the scene heading, such as DAY, NIGHT, or LATE NIGHT. Scene boundaries are kept either way and normalized later."
+        },
+        "missingInteriorExterior": {
+          "message": "The scene heading has no INT/EXT marker.",
+          "fix": "Add INT or EXT, as in “location time INT/EXT”."
+        },
+        "sparseSceneHeaders": {
+          "message": "There are few scene headings, so continuous scenes and time inheritance may be unstable.",
+          "fix": "Add one scene heading per scene."
+        },
+        "tooFewDialogueLines": {
+          "message": "Few usable dialogue lines were found. If this is a silent or action-driven passage, you can still import it.",
+          "fix": "Add recognizable dialogue lines in the form “Character: line”."
+        },
+        "multiSpeakerLines": {
+          "message": "Several lines pack multiple speakers or colons onto one line. The system will try to normalize them as a B-grade script, but one line per spoken line is better.",
+          "fix": "Rewrite so each line holds a single spoken line from a single speaker."
+        },
+        "ambiguousSpeakers": {
+          "message": "Many speakers are ambiguous (“he”, “she”, “the other party”, “the voice on the phone”), so identity resolution may be unstable.",
+          "fix": "Replace vague speakers such as “he” or “she” with the actual character names."
+        },
+        "manyLongDialogues": {
+          "message": "There are many very long single dialogue lines, which tend to produce over-long single-unit dialogue later.",
+          "fix": "Split the longest lines to reduce the length of a single dialogue line."
+        },
+        "duplicateChapterNumber": {
+          "message": "Duplicate chapter number {{number}}: {{title}}.",
+          "fix": "Check for sentences in the body that look like chapter titles, so one chapter number is not split into several chapters."
+        },
+        "nonIncreasingChapterNumber": {
+          "message": "The chapter number goes from {{previous_number}} back to or repeats {{number}}.",
+          "fix": "Check that chapter numbers increase, or confirm that chapter-like wording in the body was not mistaken for a title."
+        },
+        "notScreenplayLike": {
+          "message": "The text reads more like novel prose than a scene-based script. This check does not block the import, but the structured result may be weaker.",
+          "fix": "If this is novel prose, switch the project type to Narrated. If it is a script, add the scene headings."
+        }
+      }
+    }
   },
   "video": {
     "voiceSelect": "Voice",
@@ -3383,6 +3476,99 @@
       "keys": {
         "space": "Space"
       }
+    },
+    "contextMenu": {
+      "upload": "Upload",
+      "addNode": "Add Node",
+      "undo": "Undo",
+      "redo": "Redo",
+      "paste": "Paste"
+    },
+    "assetLibrary": {
+      "title": "Asset Library",
+      "resyncTitle": "Synced automatically when opened. If the mainline added characters, scenes, or props, click to resync.",
+      "close": "Close",
+      "allAssets": "All assets",
+      "searchAssets": "Search assets",
+      "searchPlaceholder": "Search the current scope",
+      "clearSearch": "Clear search",
+      "categories": "Asset categories",
+      "uploading": "Uploading…",
+      "uploadFailed": "Upload failed",
+      "remove": "Remove",
+      "viewDetails": "View asset details",
+      "bulkSelected_one": "{{count}} selected (only locally uploaded assets can be deleted)",
+      "bulkSelected_other": "{{count}} selected (only locally uploaded assets can be deleted)",
+      "rename": "Rename",
+      "sendToCanvas": "Send to canvas",
+      "prevPage": "Previous page",
+      "nextPage": "Next page",
+      "pageSize": "Items per page",
+      "projectNotReady": "Project is not ready",
+      "deleteEntryTitle": "Delete asset",
+      "deleteEntryDescription": "Delete “{{name}}”? This cannot be undone.",
+      "delete": "Delete",
+      "downloadFailed": "Download failed: {{detail}}",
+      "bulkDeleteTitle": "Bulk delete",
+      "bulkDeleteDescription": "Delete the {{count}} selected assets? This cannot be undone.",
+      "bulkDeleteFailed": "{{count}} item(s) failed to delete: {{detail}}",
+      "deleteFolderTitle": "Delete folder",
+      "deleteFolderDescriptionWithItems": "Delete the folder “{{name}}”? The {{count}} assets inside will be deleted too. This cannot be undone.",
+      "deleteFolderDescription": "Delete the folder “{{name}}”?",
+      "uncategorized": "Uncategorized",
+      "allCategories": "All categories",
+      "subtitle": "Organize, reuse and upload project assets",
+      "syncMainline": "Sync mainline",
+      "exitBulkDelete": "Exit bulk delete",
+      "bulkDeleteHint": "Select multiple uploaded assets to delete",
+      "newFolder": "New folder",
+      "uploadAssets": "Upload assets",
+      "folders": "Folders",
+      "categoryAria": "Category {{label}}",
+      "dropToUpload": "Release to upload to “{{label}}”",
+      "loadFailed": "Failed to load: {{detail}}",
+      "openDetails": "Open asset details",
+      "deselect": "Deselect",
+      "markForDelete": "Mark for deletion",
+      "maxSelectable": "You can select at most {{count}}",
+      "select": "Select",
+      "viewDetailsAria": "View details for {{name}}",
+      "assetFallbackName": "asset",
+      "unnamed": "(Untitled)",
+      "emptySearchTitle": "No matching assets",
+      "emptyAllTitle": "No assets yet",
+      "emptyCategoryTitle": "No assets in this category",
+      "emptySearchHint": "Try different keywords, or clear the search to see everything",
+      "emptyAllHint": "Upload files, or sync characters, scenes and props from the mainline",
+      "emptyCategoryHint": "Switch category, or upload assets that fit this one",
+      "uploadFirst": "Upload your first asset",
+      "deleteSelected": "Delete selected",
+      "confirm": "Confirm",
+      "folderAria": "Folder {{label}}",
+      "folderMoreAria": "More actions for {{label}}",
+      "changeCover": "Change cover",
+      "pageAria": "Page {{page}}",
+      "perPage": "{{size}} / page",
+      "itemCount_one": "{{count}} asset",
+      "itemCount_other": "{{count}} assets"
+    },
+    "referencePick": {
+      "kind": {
+        "text": "text",
+        "image": "image",
+        "video": "video",
+        "audio": "audio"
+      },
+      "rejectKind": "A {{kind}} node can't be used as a reference yet",
+      "rejectGeneric": "This node can't be used as a reference",
+      "noTargets": "No node on the canvas can be used as a reference yet",
+      "chip": "Reference",
+      "chipTitleWithExternal": "Add a reference: a node on the canvas, or a local file",
+      "chipTitleCanvasOnly": "Pick a node on the canvas as a reference",
+      "sourceCanvas": "From canvas",
+      "sourceCanvasHint": "Click a node on the canvas",
+      "sourceExternal": "From file",
+      "sourceExternalHint": "Upload an asset file from this device"
     }
   },
   "tool": {
@@ -3736,7 +3922,8 @@
       "apiKeyRequired": "Backend provider is not configured",
       "resultTitle": "Result Image",
       "promptPlaceholder": "Describe anything you want to generate or edit",
-      "noModelAvailable": "No image model has been configured by the administrator yet"
+      "noModelAvailable": "No image model has been configured by the administrator yet",
+      "tryLabel": "Try:"
     },
     "imageGen": {
       "contextPalette": {
@@ -3744,7 +3931,58 @@
         "actors": "Actor colors",
         "props": "Prop colors",
         "empty": "No shot color context is available for this node"
-      }
+      },
+      "aspect": {
+        "auto": "Auto"
+      },
+      "quality": {
+        "low": "Low",
+        "medium": "Standard",
+        "high": "High"
+      },
+      "assetReferenceGroup": "Asset reference group",
+      "missingContext": "Missing project or shot context",
+      "album": {
+        "expand": "Open album",
+        "expandCount": "Open {{count}} generated images",
+        "heading": "Album · {{count}}",
+        "setAsMain": "Click to set as the main image",
+        "applyToCanvas": "Place this image on the canvas as its own image node",
+        "applyToCanvasLabel": "Add to canvas",
+        "download": "Download this image",
+        "mainImage": "Main image",
+        "generating": "Generating…"
+      },
+      "upload": "Upload image",
+      "uploading": "Uploading",
+      "uploadingEllipsis": "Uploading…",
+      "removeReference": "Remove reference image",
+      "history": {
+        "generatingNew": "Generating a new image…",
+        "back": "Back"
+      },
+      "emptyState": {
+        "tryLabel": "Try:",
+        "imageToImageTitle": "Add an upstream image node to use as a reference",
+        "imageToImage": "Image to image"
+      },
+      "cropBackgroundTitle": "Pick a 16:9 region from {{source}} and write it to this beat’s selected_background.png",
+      "cropBackground": "📐 Crop background",
+      "assetLibraryTitle": "Pick a reference image from the asset library (characters / scenes / props)",
+      "assetLibrary": "Asset library",
+      "fromUpstream": "From upstream · {{name}}",
+      "dropReference": "Stop referencing this asset",
+      "promptPlaceholderUpstream": "Upstream content is wired in — add more prompt detail…",
+      "promptPlaceholder": "Describe the image you want, use @ to reference assets",
+      "translatePrompt": "Translate prompt (Chinese ↔ English)",
+      "generate": "Generate",
+      "param": {
+        "quality": "Quality",
+        "resolution": "Resolution",
+        "aspect": "Aspect ratio"
+      },
+      "camera": "Camera",
+      "countValue": "×{{count}}"
     },
     "beatContextNode": {
       "heading": "Shot Context",
@@ -3960,7 +4198,339 @@
         "pause": "Pause",
         "mute": "Mute",
         "unmute": "Unmute"
+      },
+      "cta": {
+        "allReference": "Omni reference",
+        "imageReference": "Image reference",
+        "firstFrame": "Video from first frame",
+        "imageToVideo": "Image to video",
+        "firstLastFrame": "Video from first & last frame"
+      },
+      "spawn": {
+        "firstFrame": "First frame",
+        "lastFrame": "Last frame",
+        "referenceImage": "Reference image",
+        "imageReferenceGroup": "Image reference group",
+        "firstFrameGroup": "First-frame video group",
+        "imageToVideoGroup": "Image-to-video group",
+        "allReferenceGroup": "Omni reference group",
+        "firstLastFrameGroup": "First & last frame video group"
+      },
+      "clip": {
+        "displayName": "Clip",
+        "noUrl": "Clip finished but returned no video URL",
+        "failed": "Clip failed: {{detail}}"
+      },
+      "videoEdit": {
+        "imageLimit": "Video editing supports at most {{limit}} reference images; the first {{limit}} were used ({{ignored}} ignored)"
+      },
+      "allReference": {
+        "happyHorseUnsupported": "HappyHorse doesn’t support omni reference. Switch to text-to-video or image-to-video.",
+        "modelUnsupported": "This model doesn’t support omni reference. Switch models or pick another generation mode."
+      },
+      "generation": {
+        "noResult": "Video generation returned no result",
+        "failed": "Video generation failed",
+        "faceBlockedMessage": "The assets contain a real human face and were blocked by the content-safety policy. Turn on “Real-person asset review” below and retry (review may take longer and is not guaranteed to pass).",
+        "faceBlockedTitle": "Assets blocked"
+      },
+      "album": {
+        "expand": "Open album",
+        "expandCount": "Open {{count}} generated results",
+        "heading": "Album · {{count}}",
+        "setAsMain": "Click to set as the main video",
+        "applyToCanvas": "Place this video on the canvas as its own video node",
+        "applyToCanvasLabel": "Add to canvas",
+        "download": "Download this video",
+        "mainVideo": "Main video",
+        "generating": "Generating…"
+      },
+      "history": {
+        "generatingNew": "Generating a new video…",
+        "back": "Back"
+      },
+      "error": {
+        "requestId": "Request ID"
+      },
+      "emptyState": {
+        "tryLabel": "Try:"
+      },
+      "videoLoadFailed": "Video failed to load"
+    },
+    "pano360": {
+      "captureGroup2x2": "Panorama capture set (4)",
+      "captureGroup4x3": "Panorama capture set (12)",
+      "snapCurrent": "Capture current view",
+      "snap2x2": "Capture 4 views",
+      "snap4x3": "Capture 12 views",
+      "useAsBackground": "Use as background source (writes this beat's selected_background)",
+      "resetView": "Reset view",
+      "zoomOut": "Zoom out",
+      "zoomIn": "Zoom in",
+      "panLeft": "Pan left",
+      "panRight": "Pan right",
+      "panUp": "Pan up",
+      "panDown": "Pan down",
+      "enterFullscreen": "Enter fullscreen",
+      "fov": "Field of view",
+      "sphereCorrection": "Sphere correction",
+      "lockViewTitle": "Bake the current view into the correction parameters",
+      "lockView": "Lock current view",
+      "front": "Front",
+      "setFrontYawTitle": "Set the current view's yaw as front",
+      "effectsAndExport": "Effects & export",
+      "planetMode": "Little planet",
+      "copyCorrectionJsonTitle": "Copy the current frontYaw, correction parameters, and FOV as JSON",
+      "copyCorrectionJson": "Copy correction JSON",
+      "dir": {
+        "front": "Front",
+        "right": "Right",
+        "back": "Back",
+        "left": "Left"
+      },
+      "pitch": {
+        "up": "Up",
+        "level": "Level",
+        "down": "Down"
+      },
+      "status": {
+        "initFailed": "Photo Sphere Viewer failed to initialize: {{detail}}",
+        "ready": "Ready",
+        "loaded": "Loaded",
+        "loadFailed": "Load failed",
+        "loadFailedDetail": "Load failed: {{detail}}",
+        "loading": "Loading…",
+        "frontSet": "Current view set as front: {{yaw}}°",
+        "jsonCopied": "Correction JSON copied to clipboard",
+        "jsonNoClipboard": "Correction JSON generated (clipboard unavailable — see console)",
+        "snapDone": "Captured the current view",
+        "snapFailed": "Capture failed",
+        "snapFailedDetail": "Capture failed: {{detail}}",
+        "notInShotContext": "Not in a shot context — cannot set as background source",
+        "backgroundSet": "Current background set",
+        "backgroundSubmitted": "Background candidate generated and submitted",
+        "setFailedDetail": "Could not set: {{detail}}",
+        "capturing": "Capturing ({{count}})…",
+        "uploadingCount": "Uploading ({{count}})…",
+        "capturedCount": "Captured {{count}} images"
+      },
+      "currentView": "Current view",
+      "currentBackground": "Current background",
+      "metaViewer": "360° free-view viewer",
+      "metaWaiting": "Waiting for an upstream panorama",
+      "connectUpstream": "Connect an upstream image node to explore the panorama",
+      "collapsePanel": "Collapse controls",
+      "expandPanel": "Expand controls",
+      "reset": "Reset",
+      "setAsCurrentView": "Set as current view",
+      "exitPlanet": "Exit little planet"
+    },
+    "videoModel": {
+      "reason": {
+        "videoUnsupported": "This model doesn’t accept video assets",
+        "audioUnsupported": "This model doesn’t accept audio assets",
+        "singleImageOnly": "This model accepts only 1 image per run",
+        "imagesOnly": "This model accepts image assets only",
+        "grokImagesOnly": "Grok Video Channel accepts image assets only",
+        "grokImageLimit": "Grok Video Channel supports at most 1 first frame and 7 reference images",
+        "maxImages": "This model supports at most {{count}} image assets",
+        "maxVideos": "This model supports at most {{count}} video assets",
+        "maxAudios": "This model supports at most {{count}} audio assets"
       }
+    },
+    "scriptNode": {
+      "action": {
+        "fromScript": "Storyboard from screenplay",
+        "fromVideoRef": "Storyboard from video reference",
+        "fromCharacter": "Storyboard from characters"
+      },
+      "actionGroup": "{{action}} group",
+      "column": {
+        "shot_no": "Shot #",
+        "duration": "Duration",
+        "visual_description": "Visual description",
+        "character_1": "Character 1",
+        "character_description_1": "Character 1 description",
+        "character_image_1": "Character 1 image",
+        "character_2": "Character 2",
+        "character_description_2": "Character 2 description",
+        "character_image_2": "Character 2 image",
+        "reference": "Reference",
+        "shot": "Shot size",
+        "character_action": "Character action",
+        "emotion": "Emotion",
+        "scene_tags": "Scene tags",
+        "lighting_mood": "Lighting & mood",
+        "sound": "Sound",
+        "dialogue": "Dialogue",
+        "shot_prompt": "Shot prompt",
+        "video_motion_prompt": "Video motion prompt"
+      },
+      "error": {
+        "missingProject": "Missing the project parameter",
+        "missingInput": "Describe the story in the prompt, or connect a video / character image node"
+      },
+      "spawn": {
+        "screenplay": "Screenplay",
+        "character": "Character {{index}}"
+      },
+      "retry": "Retry",
+      "tryLabel": "Try:",
+      "shotCount": "{{count}} shots",
+      "close": "Close",
+      "defaultTitle": "Storyboard script",
+      "scriptView": "Script view",
+      "fullscreen": "Fullscreen",
+      "uploadFailed": "Upload failed",
+      "promptPlaceholder": "Describe the story, or add character / video references, and we’ll build the storyboard",
+      "translate": "Translate (Chinese ↔ English)",
+      "generate": "Generate",
+      "referenceFallback": "Reference {{index}}"
+    },
+    "audioPanel": {
+      "musicLength": {
+        "30s": "30s",
+        "1m": "1 min",
+        "2m": "2 min",
+        "3m": "3 min",
+        "4m": "4 min",
+        "5m": "5 min",
+        "10m": "10 min"
+      },
+      "promptLabel": {
+        "music": "Describe the music",
+        "speech": "Text to synthesize"
+      },
+      "promptPlaceholder": {
+        "music": "Describe the music you want: style, instruments, tempo, mood…",
+        "speech": "Text to synthesize"
+      },
+      "emotionLabel": "Delivery cues",
+      "emotionOptional": "(optional, free text)",
+      "emotionPlaceholder": "e.g. tense, hushed, a little fearful",
+      "voiceMissing": "Configure or pick a voice first",
+      "translate": "Translate (Chinese ⇄ English)",
+      "voiceSettings": "Voice settings",
+      "advancedSettings": "Advanced settings",
+      "generate": "Generate",
+      "help": "Help",
+      "musicDuration": "Music length",
+      "musicDurationHelp": "Sets the song length. In auto mode the lyrics are kept intact; once a length is set, matching that length takes priority.",
+      "forceInstrumental": "Instrumental only",
+      "forceInstrumentalHelp": "Force an instrumental track with no vocals.",
+      "respectSections": "Respect section lengths",
+      "respectSectionsHelp": "Strictly follow the music section duration strategy.",
+      "voiceLoading": "Loading…",
+      "copied": "Copied",
+      "copyFailed": "Copy failed",
+      "copyVoiceRef": "Copy voice reference",
+      "switchVoice": "Switch voice"
+    },
+    "voiceRef": {
+      "projectNarrator": "Project narrator",
+      "userCustom": "Custom voice",
+      "characterDefault": "{{name}} (default voice)",
+      "characterAgeGroup": "{{name}} ({{slot}})",
+      "identity": "{{id}} (own voice)",
+      "identityResolved": "{{id}} (resolved)",
+      "character": "Character",
+      "ageGroup": "Age group",
+      "identityFallback": "Identity"
+    },
+    "voiceModal": {
+      "title": "Pick a voice",
+      "close": "Close",
+      "tab": {
+        "library": "Voice library",
+        "mine": "My voices"
+      },
+      "searchLibrary": "Search the voice library",
+      "searchMine": "Search my voices",
+      "loading": "Loading…",
+      "empty": "No voices available",
+      "emptyMine": "No voices yet — clone one to get started.",
+      "clone": "Clone a voice",
+      "uploading": "Uploading…",
+      "selected": "Selected",
+      "select": "Select",
+      "missingProject": "The current URL is missing the project parameter",
+      "loadFailed": "Failed to load voices",
+      "pickAudioFile": "Pick an audio file (mp3 / wav / m4a / aac / ogg / webm)",
+      "fileTooLarge": "The reference audio must be under {{limit}}MB (currently {{size}}MB) — compress or trim it and try again",
+      "uploadNetworkError": "Upload failed: the connection dropped (large audio can be cut off — keep it under {{limit}}MB and try again)",
+      "uploadFailed": "Upload failed",
+      "perPage": "{{count}} / page",
+      "jumpTo": "Go to",
+      "pageSuffix": "page",
+      "totalCount": "{{count}} total"
+    },
+    "storyboard": {
+      "exportCanvasInitFailed": "Failed to initialize the export canvas",
+      "emptyCell": "Empty",
+      "editCell": "Edit this cell",
+      "replaceFromInput": "Replace from input images",
+      "cellNotePlaceholder": "Cell {{no}} description",
+      "inputImageLabel": "Image {{index}}",
+      "noEditableImage": "This cell has no editable image",
+      "cellTitle": "Cell {{index}}",
+      "createEditNodeFailed": "Failed to create the edit node",
+      "noExportableImages": "No images to export",
+      "exportFailed": "Export failed",
+      "cellNoExportableImage": "This cell has no image to export",
+      "untitledProject": "Untitled project",
+      "projectFallback": "project",
+      "packFailed": "Bundle download failed",
+      "noInputImages": "No input images",
+      "showFrameIndex": "Show cell numbers",
+      "showFrameNote": "Show cell descriptions",
+      "imageFit": "Image fit",
+      "imageFitCover": "Fill the cell",
+      "imageFitContain": "Fit entire image",
+      "notePlacement": "Caption position",
+      "notePlacementOverlay": "Overlay on image",
+      "notePlacementBottom": "Below image",
+      "frameIndexPrefix": "Number prefix",
+      "cellGap": "Gap",
+      "fontSize": "Font size (%)",
+      "backgroundColor": "Background",
+      "textColor": "Text",
+      "exportSettings": "Export settings",
+      "gridSummary": "{{rows}} x {{cols}} | {{count}} cells",
+      "packing": "Bundling…",
+      "pack": "Download bundle",
+      "exporting": "Exporting…",
+      "mergeGrid": "Merge grid"
+    },
+    "displayName": {
+      "uploadNode": "Uploaded asset",
+      "imageNode": "AI image",
+      "imageGenNode": "Image node",
+      "exportImageNode": "Result image",
+      "beatContextNode": "Shot context",
+      "textAnnotationNode": "Text",
+      "groupNode": "Group",
+      "storyboardNode": "Extracted frames",
+      "storyboardGenNode": "Storyboard variants",
+      "videoNode": "Video",
+      "audioNode": "Audio",
+      "videoStoryNode": "Video story",
+      "videoComposeNode": "Video compose",
+      "scriptNode": "Script generator",
+      "pano360ViewerNode": "360° panorama viewer",
+      "threeDWorldNode": "3D world",
+      "skillNode": "Skill",
+      "styleNode": "Style"
+    },
+    "exportResult": {
+      "generic": "Result image",
+      "storyboardGenOutput": "Storyboard output",
+      "storyboardSplitExport": "Frame export",
+      "storyboardFrameEdit": "Single frame result",
+      "matte": "Cutout result",
+      "upscale": "Upscaled"
+    },
+    "audioNode": {
+      "empty": "No audio yet"
     }
   },
   "viewer": {
@@ -3993,7 +4563,7 @@
       "openDirectorWorldTitle": "Open Director World",
       "openingDirectorWorld": "Opening...",
       "directorWorld": "Director World",
-      "enterDirectorWorld": "Enter Director World",
+      "enterDirectorWorld": "Enter director world",
       "quickActions": "Quick Actions",
       "emptyWorldReady": "Blank director world",
       "sceneDirectorWorldDescription": "Load scene Director World assets from the same-origin manifest.",
@@ -4268,7 +4838,28 @@
         "aiStagingSelected": "AI staging selected",
         "sceneSaved": "Director World scene saved",
         "sceneCleared": "Saved scene cleared",
-        "deleteNeedsShift": "Press Shift+Delete to delete the selected object"
+        "deleteNeedsShift": "Press Shift+Delete to delete the selected object",
+        "engine": {
+          "splatCorrupt": "Could not parse the 3D world file (the .sog bundle is corrupt, or the URL returned something that isn't a file). Check that the URL is reachable and the file is intact, then retry.",
+          "splatUnreachable": "Failed to load the 3D world asset (the URL is unreachable or has expired). Refresh or regenerate it, then retry.",
+          "splatDecode": "Failed to decode the 3D world file (unsupported format or corrupt file).",
+          "splatGeneric": "Failed to load the 3D world. Please retry.",
+          "ready": "PlayCanvas ready. Waiting for the 3D world…",
+          "emptyWorld": "Empty director world · place objects on the horizontal floor",
+          "noWorldSource": "No 3D world asset provided.",
+          "loadingWorld": "Loading the 3D world…",
+          "loadingWorldPercent": "Loading the 3D world… {{percent}}%",
+          "worldLoaded": "3D world loaded",
+          "worldLoadedGaussians": "3D world loaded · {{count}} gaussians",
+          "panoCleared": "360 environment cleared.",
+          "panoLoading": "Loading the 360 environment…",
+          "panoFailed": "Failed to load the 360 environment: {{message}}",
+          "panoLoaded": "360 environment loaded · direct from inside the sphere",
+          "collisionLoading": "Loading collision GLB: {{url}}",
+          "collisionFailed": "Collision load failed, falling back to y=0: {{message}}",
+          "collisionMissingApi": "Collision asset has no instantiateRenderEntity, skipping",
+          "collisionLoaded": "Collision GLB loaded (debug wireframe), meshInstances={{count}}"
+        }
       },
       "skillStatus": {
         "generating": "Generating...",
@@ -4286,7 +4877,36 @@
         "prop": "Prop",
         "staging": "Staging"
       },
-      "actorColor": "Actor color"
+      "actorColor": "Actor color",
+      "skillProviderLabels": {
+        "freezone_mainline": "Mainline skills",
+        "agent": "Agent skills",
+        "tool": "Tool skills",
+        "workflow": "Workflow skills"
+      },
+      "poses": {
+        "standing": "Standing",
+        "talking": "Talking",
+        "arms_crossed": "Arms crossed",
+        "sitting": "Sitting",
+        "eating": "Eating",
+        "crouching": "Crouching",
+        "kneeling": "Kneeling",
+        "lying": "Lying / down",
+        "walking": "Walking",
+        "running": "Running",
+        "pointing": "Pointing",
+        "holding": "Holding",
+        "interacting": "Interacting",
+        "fighting": "Fighting",
+        "sword": "Armed"
+      }
+    },
+    "purpose": {
+      "freezone": "Freezone",
+      "asset": "Mainline asset shoot",
+      "beat": "Mainline beat production",
+      "mainline": "Mainline pipeline"
     }
   },
   "split": {
@@ -4891,5 +5511,34 @@
       "ORG_AUTHZ_STALE": "Your access changed. Refresh before trying again.",
       "generic": "Generation is unavailable right now. Refresh or contact your organization administrator."
     }
+  },
+  "character": {
+    "main": {
+      "drama": {
+        "label": "Main character",
+        "makeMain": "Set as main",
+        "unsetMain": "Unset main",
+        "mainSet": "Set as main character",
+        "mainUnset": "Main character unset"
+      },
+      "narrated": {
+        "label": "Narration lead",
+        "makeMain": "Set as narration lead",
+        "unsetMain": "Unset narration lead",
+        "mainSet": "Set as narration lead",
+        "mainUnset": "Narration lead unset"
+      }
+    }
+  },
+  "timeOfDay": {
+    "none": "None (keep the scene's lighting, no relight)",
+    "dawn": "Early morning",
+    "forenoon": "Morning",
+    "noon": "Midday",
+    "afternoon": "Afternoon",
+    "day": "Daytime",
+    "dusk": "Dusk",
+    "night": "Night",
+    "scriptOriginal": "{{value}} (as written in the script)"
   }
 }

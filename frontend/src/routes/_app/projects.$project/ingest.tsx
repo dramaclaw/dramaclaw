@@ -32,6 +32,13 @@ import {
   type FormatCheck,
   type UploadResult,
 } from "@/lib/queries/ingest";
+import type { TFunction } from "i18next";
+
+import { localizeFormatCheck } from "@/lib/format-check-copy";
+import {
+  BUILTIN_STYLE_LABEL_KEYS,
+  BUILTIN_VISUAL_STYLES,
+} from "@/lib/visual-styles";
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import { NovelFormatDialog } from "@/components/ingest/NovelFormatDialog";
 import { KnowledgeGraphVisualization } from "@/components/ingest/KnowledgeGraphVisualization";
@@ -98,26 +105,7 @@ const SPINE_TEMPLATE_OPTIONS: { value: "drama" | "narrated"; labelKey: string }[
   { value: "narrated", labelKey: "ingest.projectTypes.narrated" },
 ];
 
-const VISUAL_STYLE_OPTIONS: { value: string; labelKey: string }[] = [
-  {
-    value: "chinese_period_drama",
-    labelKey: "ingest.visualStyles.chinesePeriodDrama",
-  },
-  { value: "anime", labelKey: "ingest.visualStyles.anime" },
-  {
-    value: "guoman_fantasy",
-    labelKey: "ingest.visualStyles.guomanFantasy",
-  },
-  {
-    value: "post_apocalyptic",
-    labelKey: "ingest.visualStyles.postApocalyptic",
-  },
-  { value: "realistic", labelKey: "ingest.visualStyles.realistic" },
-  {
-    value: "republican_era_drama",
-    labelKey: "ingest.visualStyles.republicanEraDrama",
-  },
-];
+const VISUAL_STYLE_OPTIONS = BUILTIN_VISUAL_STYLES;
 
 function chapterContentSlice(
   chapter: Chapter,
@@ -308,10 +296,13 @@ function countBillableNovelChars(text: string): number {
 }
 
 function resolveFormatCheckForSpineTemplate(
-  formatCheck: FormatCheck | null | undefined,
+  rawFormatCheck: FormatCheck | null | undefined,
   spineTemplate: IngestSettingsValues["spine_template"],
-  t: (key: string) => string,
+  t: TFunction,
 ): FormatCheck | null {
+  // 先把后端的中文 summary/message/fix 换成当前语言，再走 spine_template 的裁剪，
+  // 否则英文界面下这些字段会原样漏出中文。
+  const formatCheck = localizeFormatCheck(rawFormatCheck, t);
   if (!formatCheck) return null;
 
   if (spineTemplate === "narrated") {
@@ -1270,9 +1261,18 @@ export function IngestPageContent({ project }: { project: string }) {
   const visualStyleOptions = useMemo(() => {
     const styles = stylesRes?.data ?? [];
     if (styles.length > 0) {
+      // 内置 preset 的 `label` 是中文单语（见 src/novelvideo/styles/presets/*.json），
+      // 直接用会让英文界面出现「写实古装剧」。preset id 与 i18n key 一一对应，先查
+      // i18n；用户自建的风格查不到 key，再退回后端的 name/label。
       return styles.map((style) => ({
         value: style.id,
-        label: style.label || style.name || style.id,
+        label:
+          (BUILTIN_STYLE_LABEL_KEYS[style.id]
+            ? t(BUILTIN_STYLE_LABEL_KEYS[style.id])
+            : "") ||
+          style.label ||
+          style.name ||
+          style.id,
       }));
     }
     return VISUAL_STYLE_OPTIONS.map((option) => ({

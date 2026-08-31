@@ -78,7 +78,10 @@ import {
   type CanvasNode,
   type ThreeDWorldNodeData,
 } from '@/features/canvas/domain/canvasNodes';
-import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import {
+  isNodeUsingDefaultDisplayName,
+  localizeNodeDisplayName,
+} from '@/features/canvas/domain/nodeDisplay';
 import {
   NodeHeader,
   NODE_HEADER_FLOATING_POSITION_CLASS,
@@ -884,10 +887,11 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
   );
 
   const resolvedTitle = useMemo(
-    () => resolveNodeDisplayName(CANVAS_NODE_TYPES.threeDWorld, data),
-    [data],
+    () => localizeNodeDisplayName(CANVAS_NODE_TYPES.threeDWorld, data, t),
+    [data, t],
   );
-  const headerTitle = resolvedTitle === '3D 世界'
+  // 没改过名就显示「导演世界」这个更贴切的叫法；用户自己起的名一律照原样。
+  const headerTitle = isNodeUsingDefaultDisplayName(CANVAS_NODE_TYPES.threeDWorld, data)
     ? t('viewer.threeD.directorWorld')
     : resolvedTitle;
 
@@ -1453,7 +1457,7 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
           aria-label={directorBusy ? t('viewer.threeD.openingDirectorWorld') : t('viewer.threeD.enterDirectorWorld')}
         >
           {directorBusy ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
-          <span>进入导演世界</span>
+          <span>{t('viewer.threeD.enterDirectorWorld')}</span>
         </button>
       )}
 

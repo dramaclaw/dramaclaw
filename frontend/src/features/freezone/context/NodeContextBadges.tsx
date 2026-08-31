@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { isMainlineContext, type MainlineContext } from "./mainlineContext";
+import { useTranslation } from "react-i18next";
 import type { CandidateBindingRole } from "./mainlineContext";
 
 interface NodeContextBadgesProps {
@@ -98,6 +99,7 @@ export function hasMainlineContexts(contexts?: unknown): boolean {
 }
 
 export function NodeContextBadges({ contexts, variant = "floating" }: NodeContextBadgesProps) {
+  const { t } = useTranslation();
   const valid = validMainlineContexts(contexts);
   if (!valid.length) return null;
 
@@ -110,7 +112,7 @@ export function NodeContextBadges({ contexts, variant = "floating" }: NodeContex
       <div className="flex max-w-full flex-wrap items-center gap-1">
         <div className="inline-flex max-w-full items-center gap-1 rounded-full border border-amber-200/18 bg-amber-200/8 px-2 py-0.5 text-[10px] font-medium leading-none tracking-wide text-amber-100/78 backdrop-blur">
           <LinkIconDot />
-          <span className="shrink-0">主线资产</span>
+          <span className="shrink-0">{t("freezone.nodeContext.mainlineAsset")}</span>
           <span className="min-w-0 truncate text-amber-100/72">{badgeText(primary)}</span>
         </div>
         {visible.map((ctx, index) => (
@@ -140,7 +142,7 @@ export function NodeContextBadges({ contexts, variant = "floating" }: NodeContex
     <div className="pointer-events-none absolute left-2 top-9 z-20 flex max-w-[calc(100%-16px)] flex-col items-start gap-1.5">
       <div className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-cyan-200/50 bg-cyan-950/80 px-2.5 py-1 text-[10px] font-semibold tracking-wide text-cyan-50 shadow-[0_0_18px_rgba(34,211,238,0.22)] backdrop-blur">
         <span className="h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.9)]" />
-        <span className="shrink-0">主线资产</span>
+        <span className="shrink-0">{t("freezone.nodeContext.mainlineAsset")}</span>
         <span className="min-w-0 truncate text-cyan-100/85">{badgeText(primary)}</span>
       </div>
       <div className="flex max-w-full flex-wrap gap-1">

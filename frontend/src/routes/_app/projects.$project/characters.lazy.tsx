@@ -3205,6 +3205,7 @@ function CharactersPageContent() {
     projectConfig?.narration_style === "first_person";
   const mainCopy = characterMainCopyForSpineTemplate(
     projectConfig?.spine_template,
+    t,
   );
   const filteredCharacters = useMemo(
     () => filterCharacters(characters, searchQuery),

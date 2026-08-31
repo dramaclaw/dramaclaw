@@ -29,7 +29,7 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { isSystemManagedNodeData } from '@/features/canvas/domain/mainlineNodeFlags';
-import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { NodeGenerationOverlay } from '@/features/canvas/ui/NodeGenerationOverlay';
@@ -235,7 +235,7 @@ export const TextAnnotationNode = memo(({
   const isCompactView = isReferenceOnly || COMPACT_MODES.has(mode);
   const [isEditingContent, setIsEditingContent] = useState(false);
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const resolvedTitle = resolveNodeDisplayName(CANVAS_NODE_TYPES.textAnnotation, data);
+  const resolvedTitle = localizeNodeDisplayName(CANVAS_NODE_TYPES.textAnnotation, data, t);
   const minHeightForView = isCompactView ? COMPACT_MIN_HEIGHT : MIN_HEIGHT;
   const defaultHeightForView = isCompactView ? COMPACT_DEFAULT_HEIGHT : DEFAULT_HEIGHT;
   const resolvedWidth = Math.max(MIN_WIDTH, Math.round(width ?? DEFAULT_WIDTH));
