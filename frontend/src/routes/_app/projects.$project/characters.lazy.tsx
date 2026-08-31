@@ -173,6 +173,8 @@ const AGE_GROUP_OPTIONS = [
   { value: "elder", labelKey: "characters.ageGroups.elder" },
 ] as const;
 
+// value 是存进角色档案、后端和提示词都认的原值，只有 labelKey 跟界面语言走。
+// i18n-exempt-start
 const GENDER_OPTIONS = [
   { value: "男", labelKey: "characters.genders.male" },
   { value: "女", labelKey: "characters.genders.female" },
@@ -183,6 +185,7 @@ const ROLE_OPTIONS = [
   { value: "配角", labelKey: "characters.roles.supporting" },
   { value: "反派", labelKey: "characters.roles.villain" },
 ] as const;
+// i18n-exempt-end
 
 const ATTEMPT_WARN_THRESHOLD = 3;
 const CHARACTER_SELECT_CONTENT_CLASS =
@@ -813,12 +816,15 @@ function CharacterHeaderRow({
   return (
     <div className="flex items-start gap-2">
       <div className="min-w-0 flex-1 flex flex-wrap items-center gap-2">
+        {/* 比的是档案里存的原值，见 GENDER_OPTIONS。 */}
+        {/* i18n-exempt-start */}
         {character.gender === "男" && (
           <Mars className="size-4 text-sky-400" aria-hidden />
         )}
         {character.gender === "女" && (
           <Venus className="size-4 text-pink-400" aria-hidden />
         )}
+        {/* i18n-exempt-end */}
         <h2 className="truncate text-[19px] font-semibold tracking-tight text-foreground">
           {character.name}
         </h2>

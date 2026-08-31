@@ -1302,6 +1302,14 @@
       "payloadTooLarge": "Canvas data exceeds the backend limit.",
       "revisionConflict": "This canvas was modified by another window or user.",
       "unsavedConflictBeforeSync": "This canvas still has unsaved conflicts. Resolve them before syncing the mainline view."
+    },
+    "directorCommit": {
+      "layerFetchFailed": "Failed to read the director layer: {{status}}",
+      "layerNotImage": "The director layer is not an image data URL",
+      "layerReadFailed": "Failed to read the director layer",
+      "metaFetchFailed": "Failed to read the director metadata: {{status}}",
+      "metaInvalid": "The director metadata is malformed",
+      "missingTargetPath": "The director composite was written but has no target path"
     }
   },
   "theme": {
@@ -4751,6 +4759,37 @@
       "lineThickness": "Gutter width",
       "params": "Grid settings",
       "rows": "Rows"
+    },
+    "nodeHistory": {
+      "current": "Current",
+      "daysAgo_one": "{{count}}d ago",
+      "daysAgo_other": "{{count}}d ago",
+      "hoursAgo_one": "{{count}}h ago",
+      "hoursAgo_other": "{{count}}h ago",
+      "minutesAgo_one": "{{count}}m ago",
+      "minutesAgo_other": "{{count}}m ago",
+      "refresh": "Refresh history",
+      "secondsAgo_one": "{{count}}s ago",
+      "secondsAgo_other": "{{count}}s ago",
+      "title": "History"
+    },
+    "imagePipeline": {
+      "convertFailed": "Image conversion failed",
+      "downloadFailed": "Could not download the image data",
+      "emptyResult": "No usable image was returned",
+      "fileReadFailed": "Failed to read the file",
+      "loadFailed": "Failed to load the image",
+      "localReadFailed": "Could not read the local image data",
+      "unparsableResult": "The result could not be parsed as an image"
+    },
+    "resumeGeneration": {
+      "failedWithMessage": "Generation failed: {{message}}",
+      "imageFailed": "Image generation failed",
+      "noImageResult": "The generation returned no result",
+      "noVideoResult": "The video generation returned no result",
+      "noWorldUrl": "Generation failed: no 3D world URL found in task.result",
+      "taskGone": "The generation task has finished or no longer exists",
+      "videoFailed": "Video generation failed"
     }
   },
   "tool": {

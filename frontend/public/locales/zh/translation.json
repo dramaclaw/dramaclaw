@@ -1302,6 +1302,14 @@
       "payloadTooLarge": "画布数据量超出后端上限",
       "revisionConflict": "画布已被其他窗口或用户修改",
       "unsavedConflictBeforeSync": "当前画布还有未保存冲突，处理后再同步主线视图"
+    },
+    "directorCommit": {
+      "layerFetchFailed": "读取导演图层失败：{{status}}",
+      "layerNotImage": "导演图层不是图片 data URL",
+      "layerReadFailed": "读取导演图层失败",
+      "metaFetchFailed": "读取导演元数据失败：{{status}}",
+      "metaInvalid": "导演元数据格式无效",
+      "missingTargetPath": "导演合成图写入后缺少目标路径"
     }
   },
   "theme": {
@@ -4751,6 +4759,33 @@
       "lineThickness": "分隔线粗细",
       "params": "分格参数",
       "rows": "行数"
+    },
+    "nodeHistory": {
+      "current": "当前",
+      "daysAgo": "{{count}}天前",
+      "hoursAgo": "{{count}}小时前",
+      "minutesAgo": "{{count}}分钟前",
+      "refresh": "刷新历史",
+      "secondsAgo": "{{count}}秒前",
+      "title": "历史记录"
+    },
+    "imagePipeline": {
+      "convertFailed": "图片转换失败",
+      "downloadFailed": "无法下载图片数据",
+      "emptyResult": "未获取到可用图片结果",
+      "fileReadFailed": "文件读取失败",
+      "loadFailed": "图片加载失败",
+      "localReadFailed": "无法读取本地图片数据",
+      "unparsableResult": "生成结果无法解析为图片"
+    },
+    "resumeGeneration": {
+      "failedWithMessage": "生成失败: {{message}}",
+      "imageFailed": "图像生成失败",
+      "noImageResult": "生成未返回结果",
+      "noVideoResult": "视频生成未返回结果",
+      "noWorldUrl": "生成失败: 未能在 task.result 中找到 3D 世界地址",
+      "taskGone": "生成任务已结束或不存在",
+      "videoFailed": "视频生成失败"
     }
   },
   "tool": {
