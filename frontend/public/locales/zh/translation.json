@@ -2303,7 +2303,9 @@
     "edit": "编辑",
     "close": "关闭",
     "success": "成功",
-    "search": "搜索"
+    "search": "搜索",
+    "play": "播放",
+    "pause": "暂停"
   },
   "ingest": {
     "title": "虾料",
@@ -4786,6 +4788,37 @@
       "noWorldUrl": "生成失败: 未能在 task.result 中找到 3D 世界地址",
       "taskGone": "生成任务已结束或不存在",
       "videoFailed": "视频生成失败"
+    },
+    "fileDrop": {
+      "aria": "释放文件以添加到画布",
+      "hint": "将在当前位置自动创建对应节点",
+      "title": "释放到画布"
+    },
+    "tools": {
+      "annotate": "标注",
+      "crop": "裁剪",
+      "splitStoryboard": "分格抽取"
+    },
+    "cropTool": {
+      "ratioCustom": "自定义",
+      "ratioEmpty": "请输入比例，例如 3:2 或 1.5",
+      "ratioFree": "自由",
+      "ratioInvalid": "比例格式无效",
+      "ratioOriginal": "原图",
+      "ratioPlaceholder": "输入比例，如 3:2 或 1.5",
+      "targetRatio": "目标比例"
+    },
+    "toolProcessor": {
+      "unsupportedTool": "不支持的工具类型",
+      "canvasInitFailed": "无法初始化画布",
+      "gridSizeInvalid": "宫格行列必须大于 0",
+      "lineTooThick": "分隔线过粗，无法完成分格抽取"
+    },
+    "selectedBackground": {
+      "candidateEdgeLabel": "当前背景候选",
+      "missingProject": "缺少项目",
+      "candidateCreateFailed": "无法创建当前背景候选节点",
+      "commitSuccess": "已设置当前背景"
     }
   },
   "tool": {

@@ -2303,7 +2303,9 @@
     "edit": "Edit",
     "close": "Close",
     "success": "Success",
-    "search": "Search"
+    "search": "Search",
+    "play": "Play",
+    "pause": "Pause"
   },
   "ingest": {
     "title": "Story Source",
@@ -4762,15 +4764,11 @@
     },
     "nodeHistory": {
       "current": "Current",
-      "daysAgo_one": "{{count}}d ago",
-      "daysAgo_other": "{{count}}d ago",
-      "hoursAgo_one": "{{count}}h ago",
-      "hoursAgo_other": "{{count}}h ago",
-      "minutesAgo_one": "{{count}}m ago",
-      "minutesAgo_other": "{{count}}m ago",
+      "daysAgo": "{{count}}d ago",
+      "hoursAgo": "{{count}}h ago",
+      "minutesAgo": "{{count}}m ago",
       "refresh": "Refresh history",
-      "secondsAgo_one": "{{count}}s ago",
-      "secondsAgo_other": "{{count}}s ago",
+      "secondsAgo": "{{count}}s ago",
       "title": "History"
     },
     "imagePipeline": {
@@ -4790,6 +4788,37 @@
       "noWorldUrl": "Generation failed: no 3D world URL found in task.result",
       "taskGone": "The generation task has finished or no longer exists",
       "videoFailed": "Video generation failed"
+    },
+    "fileDrop": {
+      "aria": "Drop files to add them to the canvas",
+      "hint": "Matching nodes are created at this position",
+      "title": "Drop onto the canvas"
+    },
+    "tools": {
+      "annotate": "Annotate",
+      "crop": "Crop",
+      "splitStoryboard": "Split storyboard"
+    },
+    "cropTool": {
+      "ratioCustom": "Custom",
+      "ratioEmpty": "Enter a ratio, e.g. 3:2 or 1.5",
+      "ratioFree": "Free",
+      "ratioInvalid": "Invalid ratio format",
+      "ratioOriginal": "Original",
+      "ratioPlaceholder": "Enter a ratio, e.g. 3:2 or 1.5",
+      "targetRatio": "Target ratio"
+    },
+    "toolProcessor": {
+      "unsupportedTool": "Unsupported tool type",
+      "canvasInitFailed": "Failed to initialize canvas",
+      "gridSizeInvalid": "Grid rows and columns must be greater than 0",
+      "lineTooThick": "Divider lines are too thick to split the storyboard"
+    },
+    "selectedBackground": {
+      "candidateEdgeLabel": "Current background candidate",
+      "missingProject": "Missing project",
+      "candidateCreateFailed": "Failed to create the current background candidate node",
+      "commitSuccess": "Current background set"
     }
   },
   "tool": {
