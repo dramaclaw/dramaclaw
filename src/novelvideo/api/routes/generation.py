@@ -5,11 +5,12 @@ import io
 import logging
 import os
 import re
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from novelvideo.api.auth import get_api_user, require_scope
 from novelvideo.api.deps import (
@@ -88,6 +89,17 @@ from novelvideo.services.background_anchor_service import (
     select_background_anchor,
 )
 from novelvideo.utils.path_resolver import PathResolver, compute_identity_path, compute_portrait_path
+
+
+class _TemporaryFileResponse(FileResponse):
+    """Delete the response file after ASGI delivery, including failed or cancelled sends."""
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            with suppress(OSError):
+                Path(self.path).unlink(missing_ok=True)
 
 router = APIRouter()
 
@@ -1498,17 +1510,16 @@ async def upload_seedance2_asset(
         user=user,
     )
     from novelvideo.seedance2_i2v.panel_service import (
-        save_seedance2_uploaded_asset,
+        save_seedance2_uploaded_file,
     )
 
-    content = await file.read()
-    target = await save_seedance2_uploaded_asset(
+    target = await save_seedance2_uploaded_file(
         store=ctx["store"],
         episode=episode_num,
         beat=ctx["beat"],
         project_dir=ctx["output_dir"],
         filename=file.filename or "seedance2_asset",
-        content=content,
+        upload_stream=file.file,
         content_type=file.content_type or "",
     )
     if target is None:
@@ -1544,6 +1555,7 @@ async def delete_seedance2_asset(
         store=ctx["store"],
         episode=episode_num,
         beat=ctx["beat"],
+        project_dir=ctx["output_dir"],
         media_kind=body.media_kind,
         path=body.path,
     )
@@ -5893,11 +5905,12 @@ async def cut_grid(
 @router.post("/projects/{project}/episodes/{episode_num}/export/zip")
 async def export_zip(project: str, episode_num: int, user: dict = Depends(get_api_user)):
     """打包指定集的所有资源为 ZIP 文件下载。"""
+    import asyncio
     import zipfile
     import tempfile
 
-    from fastapi.responses import FileResponse
     from novelvideo.export.episode_export import build_srt_content
+    from novelvideo.utils.async_ops import call_blocking, wait_for_task_completion
     from novelvideo.utils.path_resolver import PathResolver
 
     resolved = await _resolve_generation_project(project, user, required_role="viewer")
@@ -5944,21 +5957,41 @@ async def export_zip(project: str, episode_num: int, user: dict = Depends(get_ap
 
     srt_content = await build_srt_content(project_dir, episode_num, beats)
 
-    # 创建临时 ZIP 文件
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-    tmp.close()
+    def build_zip_file() -> str:
+        tmp_path = ""
+        try:
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+            tmp_path = tmp.name
+            tmp.close()
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_STORED) as zf:
+                for file_path, arc_name in files_to_pack:
+                    zf.write(file_path, arc_name)
+                if srt_content:
+                    zf.writestr(
+                        f"{ep_tag}.srt",
+                        srt_content,
+                        compress_type=zipfile.ZIP_DEFLATED,
+                    )
+            return tmp_path
+        except Exception:
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
+            raise
 
-    with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file_path, arc_name in files_to_pack:
-            zf.write(file_path, arc_name)
-        if srt_content:
-            zf.writestr(f"{ep_tag}.srt", srt_content)
-
-    return FileResponse(
-        path=tmp.name,
-        filename=f"{project_name}_{ep_tag}.zip",
-        media_type="application/zip",
-    )
+    build_task = asyncio.create_task(call_blocking(build_zip_file))
+    tmp_path, cancellation = await wait_for_task_completion(build_task)
+    if cancellation is not None:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise cancellation
+    try:
+        return _TemporaryFileResponse(
+            path=tmp_path,
+            filename=f"{project_name}_{ep_tag}.zip",
+            media_type="application/zip",
+        )
+    except Exception:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
 
 
 # ---------------------------------------------------------------------------
