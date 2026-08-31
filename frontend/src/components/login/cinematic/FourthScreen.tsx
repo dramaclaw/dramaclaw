@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import SideRays from "@/components/react-bits/side-rays";
+import { CinematicSideRays } from "./CinematicSideRays";
 import styles from "./fourth-screen.module.css";
 
 const copySets = [
@@ -48,20 +48,7 @@ export function FourthScreen({
   return (
     <section className={styles.layer} style={sceneStyle}>
       {raysActive ? (
-        <SideRays
-          className={styles.rays}
-          speed={2.5}
-          rayColor1="#eab308"
-          rayColor2="#96c8ff"
-          intensity={2}
-          spread={2}
-          origin="top-right"
-          tilt={0}
-          saturation={1.5}
-          blend={0.75}
-          falloff={1.6}
-          opacity={1}
-        />
+        <CinematicSideRays className={styles.rays} />
       ) : null}
       <div className={styles.inner}>
         <div className={styles.copyArea}>

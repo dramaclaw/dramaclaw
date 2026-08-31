@@ -187,7 +187,7 @@ export function ProjectXiajiMenu({ project }: { project: string }) {
   );
 
   return (
-    <div className="flex justify-center px-4 pb-2">
+    <div className="relative flex justify-center px-4 pb-2">
       <nav
         aria-label={t("nav.xiajiMenu")}
         className="flex items-center gap-3 whitespace-nowrap rounded-full border border-white/[0.08] bg-white/[0.04] px-3.5 py-px text-sidebar-foreground"
@@ -217,6 +217,10 @@ export function ProjectXiajiMenu({ project }: { project: string }) {
           );
         })}
       </nav>
+      <div
+        id="superchat-search-anchor"
+        className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 -translate-x-1/2"
+      />
     </div>
   );
 }

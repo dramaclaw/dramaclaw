@@ -345,6 +345,9 @@ async def test_newapi_submit_poll_fetch_use_exact_credential_and_transitions(
     accepted = operation_port.events[1][1]
     completed = operation_port.events[2][1]
     assert accepted["provider_job_id"] == "provider-job-1"
+    assert accepted["requester_user_id"] == context.requester_user_id
+    assert accepted["membership_id"] == context.membership_id
+    assert accepted["authz_version"] == context.authz_version
     assert completed["result_ref"].startswith("video:sha256:")
     assert "result.example" not in completed["result_ref"]
     assert str(tmp_path) not in completed["result_ref"]
@@ -997,6 +1000,246 @@ async def test_newapi_post_accept_authz_recovers_without_resubmitting_provider(
     )
 
     assert calls == {"authz": 3, "submit": 1, "poll": 1}
+
+
+@pytest.mark.asyncio
+async def test_newapi_post_accept_key_rotation_keeps_frozen_credential(
+    monkeypatch,
+) -> None:
+    import novelvideo.ports as ports
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    context = _context()
+    generator = NewApiVideoGenerator(
+        model="seedance-1.0-pro-fast", egress_context=context
+    )
+    rotated = generator._admission_from_egress_context(context)
+    rotated = replace(
+        rotated,
+        credential=replace(
+            context.credential,
+            credential_id="credential-2",
+            key_version=8,
+        ),
+    )
+
+    class Authz:
+        async def admit_model_task(self, **_kwargs):
+            return rotated
+
+    monkeypatch.setattr(ports, "get_authz_port", lambda: Authz())
+
+    await generator._revalidate_organization(context)
+
+
+@pytest.mark.asyncio
+async def test_newapi_post_accept_unbind_revalidates_authority_without_active_key(
+    monkeypatch,
+) -> None:
+    import novelvideo.ports as ports
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+    from novelvideo.ports.authz import AuthzError, AuthzSnapshot
+
+    context = _context()
+    generator = NewApiVideoGenerator(
+        model="seedance-1.0-pro-fast", egress_context=context
+    )
+    calls = {"admit": 0, "snapshot": 0}
+
+    class Authz:
+        async def admit_model_task(self, **_kwargs):
+            calls["admit"] += 1
+            raise AuthzError("ORG_CREDENTIAL_DISABLED")
+
+        async def snapshot(self, *, user_id):
+            calls["snapshot"] += 1
+            assert user_id == context.requester_user_id
+            return AuthzSnapshot(
+                requester_user_id=context.requester_user_id,
+                org_id=context.billing_principal.id,
+                membership_id=context.membership_id,
+                role="member",
+                membership_status="active",
+                org_status="active",
+                authz_version=context.authz_version,
+            )
+
+    monkeypatch.setattr(ports, "get_authz_port", lambda: Authz())
+
+    await generator._revalidate_organization(context)
+
+    assert calls == {"admit": 1, "snapshot": 1}
+
+
+@pytest.mark.asyncio
+async def test_newapi_post_accept_unbind_still_rejects_inactive_membership(
+    monkeypatch,
+) -> None:
+    import novelvideo.ports as ports
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+    from novelvideo.ports.authz import AuthzError, AuthzSnapshot
+
+    context = _context()
+    generator = NewApiVideoGenerator(
+        model="seedance-1.0-pro-fast", egress_context=context
+    )
+
+    class Authz:
+        async def admit_model_task(self, **_kwargs):
+            raise AuthzError("ORG_CREDENTIAL_DISABLED")
+
+        async def snapshot(self, *, user_id):
+            return AuthzSnapshot(
+                requester_user_id=user_id,
+                org_id=context.billing_principal.id,
+                membership_id=context.membership_id,
+                role="member",
+                membership_status="suspended",
+                org_status="active",
+                authz_version=context.authz_version,
+            )
+
+    monkeypatch.setattr(ports, "get_authz_port", lambda: Authz())
+
+    with pytest.raises(AuthzError) as captured:
+        await generator._revalidate_organization(context)
+
+    assert captured.value.code == "ORG_MEMBERSHIP_INACTIVE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("requester_user_id", "user-2"),
+        ("billing_principal", BillingPrincipal(kind="organization", id="org-2")),
+        ("membership_id", "membership-2"),
+        ("authz_version", 12),
+    ],
+)
+async def test_newapi_post_accept_noncredential_authority_drift_still_fails(
+    monkeypatch,
+    field: str,
+    value: object,
+) -> None:
+    import novelvideo.ports as ports
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+    from novelvideo.ports.authz import AuthzError
+
+    context = _context()
+    generator = NewApiVideoGenerator(
+        model="seedance-1.0-pro-fast", egress_context=context
+    )
+    current = generator._admission_from_egress_context(context)
+    if field == "billing_principal":
+        current = replace(
+            current,
+            billing_principal=value,
+            credential=replace(current.credential, org_id=value.id),
+        )
+    else:
+        current = replace(current, **{field: value})
+
+    class Authz:
+        async def admit_model_task(self, **_kwargs):
+            return current
+
+    monkeypatch.setattr(ports, "get_authz_port", lambda: Authz())
+
+    with pytest.raises(AuthzError) as captured:
+        await generator._revalidate_organization(context)
+    assert captured.value.code == "ORG_AUTHZ_STALE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unbind", [False, True])
+async def test_newapi_key_rotation_after_acceptance_keeps_old_key_for_poll(
+    monkeypatch,
+    tmp_path: Path,
+    unbind: bool,
+) -> None:
+    import novelvideo.ports as ports
+    from novelvideo.generators.video_generator import (
+        NewApiVideoGenerator,
+        VideoGenStatus,
+    )
+    from novelvideo.ports.authz import AuthzError, AuthzSnapshot
+
+    context = _context()
+    operation_port = _OperationPort()
+    events: list[str] = []
+    _install_newapi_ports(monkeypatch, context, operation_port, events)
+    generator = NewApiVideoGenerator(
+        model="seedance-1.0-pro-fast", egress_context=context
+    )
+    rotated = replace(
+        generator._admission_from_egress_context(context),
+        credential=replace(
+            context.credential,
+            credential_id="credential-2",
+            key_version=8,
+        ),
+    )
+    calls = {"submit": 0, "poll": 0, "fetch": 0}
+
+    class Authz:
+        async def admit_model_task(self, **_kwargs):
+            if unbind:
+                raise AuthzError("ORG_CREDENTIAL_DISABLED")
+            return rotated
+
+        async def snapshot(self, *, user_id):
+            assert unbind
+            return AuthzSnapshot(
+                requester_user_id=user_id,
+                org_id=context.billing_principal.id,
+                membership_id=context.membership_id,
+                role="member",
+                membership_status="active",
+                org_status="active",
+                authz_version=context.authz_version,
+            )
+
+    async def submit(_url, _payload, *, headers):
+        calls["submit"] += 1
+        assert headers["Authorization"] == "Bearer organization-secret"
+        return {"id": "provider-job-1"}
+
+    async def poll(_url, *, headers):
+        calls["poll"] += 1
+        assert headers["Authorization"] == "Bearer organization-secret"
+        assert "new-key-canary" not in headers.values()
+        return {"status": "completed", "video_url": "https://result.example/video"}
+
+    async def fetch(_url, output_path):
+        calls["fetch"] += 1
+        Path(output_path).write_bytes(b"video-result")
+        return b"video-result"
+
+    monkeypatch.setattr(ports, "get_authz_port", lambda: Authz())
+    monkeypatch.setattr(generator, "_post_json", submit)
+    monkeypatch.setattr(generator, "_get_json", poll)
+    monkeypatch.setattr(generator, "_download_video", fetch)
+
+    result = await generator.generate(
+        image_path=None,
+        prompt="prompt",
+        output_path=str(tmp_path / "video.mp4"),
+        episode=1,
+        beat_num=2,
+        scope="beat",
+        task_type="single_video",
+        poll_interval=0,
+        max_polls=1,
+    )
+
+    assert result.status is VideoGenStatus.DONE
+    assert calls == {"submit": 1, "poll": 1, "fetch": 1}
+    assert [name for name, _ in operation_port.events] == [
+        "claim",
+        "accepted",
+        "completed",
+    ]
 
 
 @pytest.mark.asyncio

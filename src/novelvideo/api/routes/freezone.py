@@ -26,7 +26,6 @@ from fastapi import (
     APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile,
 )
 from fastapi.responses import FileResponse, JSONResponse
-from starlette.concurrency import run_in_threadpool
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import (
@@ -9854,23 +9853,11 @@ async def freezone_job_result(
     ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user, required_role="viewer"
     )
-    if ctx is not None:
-        task = await run_in_threadpool(
-            get_task_manager().get_task_for_project,
-            ctx,
-            task_type,
-            0,
-            scope=job_id,
-        )
-    else:
-        task = await run_in_threadpool(
-            get_task_manager().get_task,
-            task_type,
-            username,
-            project_name,
-            0,
-            scope=job_id,
-        )
+    task = (
+        get_task_manager().get_task_for_project(ctx, task_type, 0, scope=job_id)
+        if ctx is not None
+        else get_task_manager().get_task(task_type, username, project_name, 0, scope=job_id)
+    )
     if task_type == "freezone_image_to_3gs":
         if task is not None:
             if task.status == "failed":
@@ -10121,18 +10108,16 @@ async def freezone_skill_run_result(
         task_beat_num = int(task_beat_num_raw) if task_beat_num_raw is not None else None
     except (TypeError, ValueError):
         task_beat_num = None
-    if ctx is not None:
-        task = await run_in_threadpool(
-            get_task_manager().get_task_for_project,
+    task = (
+        get_task_manager().get_task_for_project(
             ctx,
             task_type,
             task_episode,
             beat_num=task_beat_num,
             scope=task_scope,
         )
-    else:
-        task = await run_in_threadpool(
-            get_task_manager().get_task,
+        if ctx is not None
+        else get_task_manager().get_task(
             task_type,
             username,
             project_name,
@@ -10140,6 +10125,7 @@ async def freezone_skill_run_result(
             beat_num=task_beat_num,
             scope=task_scope,
         )
+    )
     task_status = getattr(task, "status", None)
     if task is not None and task_status == "failed":
         return SkillRunResult(

@@ -55,7 +55,7 @@ import {
 } from "@/components/layout/project-header-navigation";
 const ACCOUNT_PANEL_TRANSITION_MS = 350;
 
-export function Header() {
+export function Header({ ambientBackground = false }: { ambientBackground?: boolean }) {
   const { t, i18n } = useTranslation();
   const params = useParams({ strict: false }) as { project?: string };
   const [companionOpen, setCompanionOpen] = useState(false);
@@ -74,6 +74,10 @@ export function Header() {
   const accountUnmountTimerRef = useRef<number | null>(null);
   const accountOpenFrameRef = useRef<number | null>(null);
   const accountAnchorRef = useRef<HTMLDivElement | null>(null);
+  const accountTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const accountPanelRef = useRef<HTMLDivElement | null>(null);
+  // 面板由点击/键盘打开时「钉住」：此时鼠标移开不再收走它。悬停打开的面板不钉。
+  const accountPanelPinnedRef = useRef(false);
   const settingsAnchorRef = useRef<HTMLDivElement | null>(null);
   const { username, logout } = useAuthStore();
   const queryClient = useQueryClient();
@@ -178,6 +182,7 @@ export function Header() {
   };
 
   const closeAccountPanelNow = () => {
+    accountPanelPinnedRef.current = false;
     clearAccountCloseTimer();
     clearAccountOpenFrame();
     clearAccountUnmountTimer();
@@ -204,6 +209,9 @@ export function Header() {
   };
 
   const scheduleCloseAccountPanel = () => {
+    // 钉住的面板只由 Escape、面板外交互或选中某一项关闭 —— 鼠标掠过就收走的话,
+    // 触屏和键盘用户点开后根本读不完里面的内容(公告中心现在只在这儿)。
+    if (accountPanelPinnedRef.current) return;
     clearAccountCloseTimer();
     accountCloseTimerRef.current = window.setTimeout(() => {
       setAccountPanelVisible(false);
@@ -215,6 +223,57 @@ export function Header() {
       accountCloseTimerRef.current = null;
     }, 120);
   };
+
+  const toggleAccountPanel = () => {
+    if (accountPanelOpen && accountPanelPinnedRef.current) {
+      closeAccountPanelNow();
+      return;
+    }
+    accountPanelPinnedRef.current = true;
+    openAccountPanel();
+  };
+
+  // 账号面板是 header 里唯一的公告中心入口,必须在指针、触屏和键盘下都能开关。
+  // 面板 portal 到 body,不在触发器的 DOM 子树里,所以「点到外面」「焦点移到外面」
+  // 只能在 document 上判定。
+  useEffect(() => {
+    if (!accountPanelOpen) return;
+    const isInsideAccountUi = (target: EventTarget | null) =>
+      target instanceof Node
+      && (Boolean(accountAnchorRef.current?.contains(target))
+        || Boolean(accountPanelRef.current?.contains(target)));
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      closeAccountPanelNow();
+      accountTriggerRef.current?.focus();
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      if (isInsideAccountUi(event.target)) return;
+      closeAccountPanelNow();
+    };
+    const handleFocusIn = (event: FocusEvent) => {
+      if (isInsideAccountUi(event.target)) return;
+      closeAccountPanelNow();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("focusin", handleFocusIn);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("focusin", handleFocusIn);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountPanelOpen]);
+
+  // 面板挂在 body 末尾,Tab 不会从触发器走进去。点击/键盘打开时把焦点送进第一项,
+  // 否则键盘用户能打开面板却够不到里面的公告中心。悬停打开的面板不抢焦点。
+  useEffect(() => {
+    if (!accountPanelOpen || !accountPanelPinnedRef.current) return;
+    accountPanelRef.current
+      ?.querySelector<HTMLElement>('button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')
+      ?.focus();
+  }, [accountPanelOpen]);
 
   const switchLanguage = (lang: "zh" | "en") => {
     void i18n.changeLanguage(lang);
@@ -239,7 +298,11 @@ export function Header() {
   };
 
   return (
-    <div className="relative z-20 shrink-0 bg-background/58 text-sidebar-foreground backdrop-blur-xl">
+    <div
+      className={`relative z-20 shrink-0 text-sidebar-foreground ${
+        ambientBackground ? "bg-transparent" : "bg-background/58 backdrop-blur-xl"
+      }`}
+    >
       <header className="relative flex h-[48px] items-center justify-between gap-3 px-4">
         <div className="flex min-w-0 flex-1 items-center">
           <TooltipProvider delay={80}>
@@ -301,28 +364,11 @@ export function Header() {
             </div>
           ) : null}
           <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="group/notification relative size-[32px] text-sidebar-foreground/82 transition-colors duration-150 ease-[var(--ease-out-quint)] hover:bg-white/[0.05] hover:text-white aria-expanded:bg-white/[0.05] aria-expanded:text-white"
-            aria-label={t("header.notifications")}
-            aria-expanded={notificationOpen}
-            onClick={openNotifications}
-          >
-            <Bell className="size-[17px]" />
-            {hasUnreadNotification ? (
-              <span
-                className="absolute right-[8px] top-[8px] size-1 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.72)]"
-                aria-hidden="true"
-              />
-            ) : null}
-          </Button>
-          <Button
             id="mybuddy-companion-entry"
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="companion-capsule-entry -ml-0.5 -mr-0.5 size-[32px] transition-colors duration-150 ease-[var(--ease-out-quint)] hover:bg-white/[0.06] aria-expanded:bg-white/[0.06]"
+            className="companion-capsule-entry -ml-0.5 -mr-0.5 size-[32px]"
             onClick={() => setCompanionOpen(true)}
             aria-label={t("myBuddy.companion.entry")}
           >
@@ -345,11 +391,16 @@ export function Header() {
             onMouseLeave={scheduleCloseAccountPanel}
           >
             <Button
+              ref={accountTriggerRef}
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="size-[28px] rounded-full p-0 hover:bg-transparent"
+              className="relative size-[28px] rounded-full p-0 hover:bg-transparent"
               aria-label={t("header.account.open")}
+              aria-haspopup="true"
+              aria-expanded={accountPanelOpen}
+              aria-controls={accountPanelOpen ? "header-account-panel" : undefined}
+              onClick={toggleAccountPanel}
             >
               <span className="flex size-[26px] items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-[11px] font-normal text-white/72">
                 {avatarUrl ? (
@@ -358,6 +409,12 @@ export function Header() {
                   avatarInitial
                 )}
               </span>
+              {hasUnreadNotification ? (
+                <span
+                  className="absolute right-0 top-0 size-1.5 rounded-full border border-background bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.72)]"
+                  aria-hidden="true"
+                />
+              ) : null}
             </Button>
           </div>
         </div>
@@ -370,11 +427,14 @@ export function Header() {
               avatarInitial={avatarInitial}
               avatarUrl={avatarUrl}
               displayName={displayName}
+              hasUnreadNotification={hasUnreadNotification}
               onChangeAvatar={openAvatarDialog}
               onLanguageChange={switchLanguage}
+              onNotifications={openNotifications}
               onClose={scheduleCloseAccountPanel}
               onEnter={openAccountPanel}
               onLogout={showLogout ? () => void handleLogout() : undefined}
+              panelRef={accountPanelRef}
               position={accountPanelPosition}
               visible={accountPanelVisible}
               t={t}
@@ -483,11 +543,14 @@ function AccountPanel({
   avatarInitial,
   avatarUrl,
   displayName,
+  hasUnreadNotification,
   onChangeAvatar,
   onLanguageChange,
+  onNotifications,
   onClose,
   onEnter,
   onLogout,
+  panelRef,
   position,
   visible,
   t,
@@ -496,11 +559,14 @@ function AccountPanel({
   avatarInitial: string;
   avatarUrl: string | null;
   displayName: string;
+  hasUnreadNotification: boolean;
   onChangeAvatar: () => void;
   onLanguageChange: (lang: "zh" | "en") => void;
+  onNotifications: () => void;
   onClose: () => void;
   onEnter: () => void;
   onLogout?: () => void;
+  panelRef: RefObject<HTMLDivElement | null>;
   position: { top: number; right: number };
   visible: boolean;
   t: (key: string) => string;
@@ -512,6 +578,9 @@ function AccountPanel({
 
   return (
     <div
+      ref={panelRef}
+      id="header-account-panel"
+      aria-label={t("header.account.open")}
       className={`fixed z-[80] w-[216px] transition-opacity duration-[350ms] ease-[var(--ease-out-quint)] ${
         visible ? "opacity-100" : "opacity-0"
       }`}
@@ -533,6 +602,12 @@ function AccountPanel({
           </span>
         </div>
         <div className="space-y-0.5">
+          <AccountMenuRow
+            icon={<Bell className="size-3.5" />}
+            label={t("header.notifications")}
+            unread={hasUnreadNotification}
+            onClick={onNotifications}
+          />
           <AccountMenuRow
             icon={<Camera className="size-3.5" />}
             label={t("header.account.changeAvatar")}
@@ -577,12 +652,14 @@ function AccountMenuRow({
   icon,
   label,
   meta,
+  unread = false,
   onClick,
 }: {
   active?: boolean;
   icon: ReactNode;
   label: string;
   meta?: string;
+  unread?: boolean;
   onClick?: () => void;
 }) {
   const content = (
@@ -593,6 +670,12 @@ function AccountMenuRow({
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {meta ? (
         <span className="max-w-16 truncate text-[11px] text-slate-400">{meta}</span>
+      ) : null}
+      {unread ? (
+        <span
+          className="size-1.5 shrink-0 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.62)]"
+          aria-hidden="true"
+        />
       ) : null}
       <ChevronRight
         className={`mr-1 size-3.5 shrink-0 text-slate-100/88 transition-transform duration-150 ${

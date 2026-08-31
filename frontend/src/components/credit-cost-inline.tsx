@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import {
-  CREDIT_VALUE_CLASS,
   CreditSparkIcon,
   formatCreditPromotionLabel,
   type CreditPromotionDisplay,
@@ -47,10 +46,7 @@ export function CreditCostInline({
         </span>
       )}
       <span
-        className={cn(
-          "inline-flex items-center gap-0.5 text-[11px] font-medium",
-          CREDIT_VALUE_CLASS,
-        )}
+        className="inline-flex items-center gap-0.5 text-[11px] font-medium tabular-nums text-inherit"
       >
         <CreditSparkIcon className={cn("size-3", iconClassName)} />
         {originalDisplay && (
