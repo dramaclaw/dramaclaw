@@ -74,6 +74,10 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   const accountUnmountTimerRef = useRef<number | null>(null);
   const accountOpenFrameRef = useRef<number | null>(null);
   const accountAnchorRef = useRef<HTMLDivElement | null>(null);
+  const accountTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const accountPanelRef = useRef<HTMLDivElement | null>(null);
+  // 面板由点击/键盘打开时「钉住」：此时鼠标移开不再收走它。悬停打开的面板不钉。
+  const accountPanelPinnedRef = useRef(false);
   const settingsAnchorRef = useRef<HTMLDivElement | null>(null);
   const { username, logout } = useAuthStore();
   const queryClient = useQueryClient();
@@ -178,6 +182,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   };
 
   const closeAccountPanelNow = () => {
+    accountPanelPinnedRef.current = false;
     clearAccountCloseTimer();
     clearAccountOpenFrame();
     clearAccountUnmountTimer();
@@ -204,6 +209,9 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   };
 
   const scheduleCloseAccountPanel = () => {
+    // 钉住的面板只由 Escape、面板外交互或选中某一项关闭 —— 鼠标掠过就收走的话,
+    // 触屏和键盘用户点开后根本读不完里面的内容(公告中心现在只在这儿)。
+    if (accountPanelPinnedRef.current) return;
     clearAccountCloseTimer();
     accountCloseTimerRef.current = window.setTimeout(() => {
       setAccountPanelVisible(false);
@@ -215,6 +223,57 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
       accountCloseTimerRef.current = null;
     }, 120);
   };
+
+  const toggleAccountPanel = () => {
+    if (accountPanelOpen && accountPanelPinnedRef.current) {
+      closeAccountPanelNow();
+      return;
+    }
+    accountPanelPinnedRef.current = true;
+    openAccountPanel();
+  };
+
+  // 账号面板是 header 里唯一的公告中心入口,必须在指针、触屏和键盘下都能开关。
+  // 面板 portal 到 body,不在触发器的 DOM 子树里,所以「点到外面」「焦点移到外面」
+  // 只能在 document 上判定。
+  useEffect(() => {
+    if (!accountPanelOpen) return;
+    const isInsideAccountUi = (target: EventTarget | null) =>
+      target instanceof Node
+      && (Boolean(accountAnchorRef.current?.contains(target))
+        || Boolean(accountPanelRef.current?.contains(target)));
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      closeAccountPanelNow();
+      accountTriggerRef.current?.focus();
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      if (isInsideAccountUi(event.target)) return;
+      closeAccountPanelNow();
+    };
+    const handleFocusIn = (event: FocusEvent) => {
+      if (isInsideAccountUi(event.target)) return;
+      closeAccountPanelNow();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("focusin", handleFocusIn);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("focusin", handleFocusIn);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountPanelOpen]);
+
+  // 面板挂在 body 末尾,Tab 不会从触发器走进去。点击/键盘打开时把焦点送进第一项,
+  // 否则键盘用户能打开面板却够不到里面的公告中心。悬停打开的面板不抢焦点。
+  useEffect(() => {
+    if (!accountPanelOpen || !accountPanelPinnedRef.current) return;
+    accountPanelRef.current
+      ?.querySelector<HTMLElement>('button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')
+      ?.focus();
+  }, [accountPanelOpen]);
 
   const switchLanguage = (lang: "zh" | "en") => {
     void i18n.changeLanguage(lang);
@@ -332,11 +391,16 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
             onMouseLeave={scheduleCloseAccountPanel}
           >
             <Button
+              ref={accountTriggerRef}
               type="button"
               variant="ghost"
               size="icon-sm"
               className="relative size-[28px] rounded-full p-0 hover:bg-transparent"
               aria-label={t("header.account.open")}
+              aria-haspopup="true"
+              aria-expanded={accountPanelOpen}
+              aria-controls={accountPanelOpen ? "header-account-panel" : undefined}
+              onClick={toggleAccountPanel}
             >
               <span className="flex size-[26px] items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-[11px] font-normal text-white/72">
                 {avatarUrl ? (
@@ -370,6 +434,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               onClose={scheduleCloseAccountPanel}
               onEnter={openAccountPanel}
               onLogout={showLogout ? () => void handleLogout() : undefined}
+              panelRef={accountPanelRef}
               position={accountPanelPosition}
               visible={accountPanelVisible}
               t={t}
@@ -485,6 +550,7 @@ function AccountPanel({
   onClose,
   onEnter,
   onLogout,
+  panelRef,
   position,
   visible,
   t,
@@ -500,6 +566,7 @@ function AccountPanel({
   onClose: () => void;
   onEnter: () => void;
   onLogout?: () => void;
+  panelRef: RefObject<HTMLDivElement | null>;
   position: { top: number; right: number };
   visible: boolean;
   t: (key: string) => string;
@@ -511,6 +578,9 @@ function AccountPanel({
 
   return (
     <div
+      ref={panelRef}
+      id="header-account-panel"
+      aria-label={t("header.account.open")}
       className={`fixed z-[80] w-[216px] transition-opacity duration-[350ms] ease-[var(--ease-out-quint)] ${
         visible ? "opacity-100" : "opacity-0"
       }`}
