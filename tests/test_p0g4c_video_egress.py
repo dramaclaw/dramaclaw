@@ -345,6 +345,9 @@ async def test_newapi_submit_poll_fetch_use_exact_credential_and_transitions(
     accepted = operation_port.events[1][1]
     completed = operation_port.events[2][1]
     assert accepted["provider_job_id"] == "provider-job-1"
+    assert accepted["requester_user_id"] == context.requester_user_id
+    assert accepted["membership_id"] == context.membership_id
+    assert accepted["authz_version"] == context.authz_version
     assert completed["result_ref"].startswith("video:sha256:")
     assert "result.example" not in completed["result_ref"]
     assert str(tmp_path) not in completed["result_ref"]

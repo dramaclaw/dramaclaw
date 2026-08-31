@@ -3423,6 +3423,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     transition_token=operation_claim.transition_token,
                     expected_version=operation_version,
                     provider_job_id=task_id,
+                    requester_user_id=egress_context.requester_user_id,
+                    membership_id=egress_context.membership_id,
+                    authz_version=egress_context.authz_version,
                 )
                 operation_version = accepted.version
             try:
