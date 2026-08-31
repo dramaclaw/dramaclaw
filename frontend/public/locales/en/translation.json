@@ -4693,6 +4693,29 @@
       "prev": "Previous",
       "next": "Next",
       "loading": "Loading…"
+    },
+    "groupColor": {
+      "red": "Red",
+      "orange": "Orange",
+      "yellow": "Yellow",
+      "green": "Green",
+      "cyan": "Cyan",
+      "blue": "Blue",
+      "purple": "Purple",
+      "pink": "Pink",
+      "gray": "Gray"
+    },
+    "videoClip": {
+      "exit": "Exit trimming",
+      "subtitleTodo": "Subtitles (not implemented yet)",
+      "extractingFrames": "Extracting frames…",
+      "framesFailed": "Failed to load frames",
+      "dragStart": "Drag to move the in point",
+      "dragEnd": "Drag to move the out point",
+      "muteTodo": "Mute (not implemented yet)",
+      "loopTodo": "Loop (not implemented yet)",
+      "submitting": "Trimming…",
+      "submit": "Apply trim"
     }
   },
   "tool": {

@@ -4693,6 +4693,29 @@
       "prev": "上一项",
       "next": "下一项",
       "loading": "加载中…"
+    },
+    "groupColor": {
+      "red": "红",
+      "orange": "橙",
+      "yellow": "黄",
+      "green": "绿",
+      "cyan": "青",
+      "blue": "蓝",
+      "purple": "紫",
+      "pink": "粉",
+      "gray": "灰"
+    },
+    "videoClip": {
+      "exit": "退出剪辑",
+      "subtitleTodo": "字幕（待实现）",
+      "extractingFrames": "提取画面帧中…",
+      "framesFailed": "画面帧加载失败",
+      "dragStart": "拖动以调整起点",
+      "dragEnd": "拖动以调整终点",
+      "muteTodo": "静音（待实现）",
+      "loopTodo": "循环（待实现）",
+      "submitting": "剪辑中…",
+      "submit": "提交剪辑"
     }
   },
   "tool": {

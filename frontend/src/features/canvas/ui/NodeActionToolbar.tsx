@@ -2392,7 +2392,7 @@ export const NodeActionToolbar = memo(
                           <button
                             key={preset.key}
                             type="button"
-                            title={preset.label}
+                            title={t(preset.labelKey)}
                             onClick={() =>
                               updateNodeData(nodeId, { backgroundColor: preset.value })
                             }
