@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useTranslation } from "react-i18next";
 import {
-  Clapperboard,
+  Camera,
   FileText,
   Film,
   Globe,
@@ -35,7 +35,7 @@ export const canvasMenuIconMap: Record<MenuIconKey, LucideIcon> = {
   pano360: Globe,
   threeDWorld: Orbit,
   videoCompose: Film,
-  previz: Clapperboard,
+  previz: Camera,
 };
 
 export const CANVAS_ADD_NODE_TYPES: readonly CanvasNodeType[] = [
