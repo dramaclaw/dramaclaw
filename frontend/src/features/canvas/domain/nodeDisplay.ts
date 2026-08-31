@@ -36,6 +36,7 @@ export const DEFAULT_NODE_DISPLAY_NAME: Record<CanvasNodeType, string> = {
   [CANVAS_NODE_TYPES.script]: '脚本生成器',
   [CANVAS_NODE_TYPES.pano360Viewer]: '360° 全景查看器',
   [CANVAS_NODE_TYPES.threeDWorld]: '3D 世界',
+  [CANVAS_NODE_TYPES.previz]: '预演台',
   [CANVAS_NODE_TYPES.skill]: '技能',
   [CANVAS_NODE_TYPES.style]: '风格',
 };
