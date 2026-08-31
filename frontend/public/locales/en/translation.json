@@ -5107,6 +5107,37 @@
     },
     "audioNode": {
       "empty": "No audio yet"
+    },
+    "videoStory": {
+      "columns": {
+        "shotNumber": "Shot #",
+        "startTime": "Start",
+        "endTime": "End",
+        "duration": "Duration",
+        "visualDescription": "Visual description",
+        "narrative": "Narrative",
+        "shotSize": "Shot size",
+        "cameraAngle": "Camera angle",
+        "cameraMovement": "Camera movement",
+        "focalAndDof": "Focal length & DoF",
+        "lighting": "Lighting",
+        "backgroundMusic": "Background music",
+        "voiceAndSfx": "Voice / SFX",
+        "imagePrompt": "Image prompt",
+        "videoMotionPrompt": "Video motion prompt",
+        "keyframeUrl": "Keyframe"
+      },
+      "emptyTitle": "No shots detected",
+      "emptyDetail": "The response contained no usable shot rows. The raw response is kept below so you can inspect what the API returned.",
+      "viewRaw": "View raw response",
+      "rawEmpty": "(empty)",
+      "parseFailed": "Parse failed",
+      "parsing": "Parsing…",
+      "rowCount": "{{count}} shots",
+      "rowCountTotal": "{{count}} shots total",
+      "fullscreen": "Fullscreen",
+      "close": "Close",
+      "unknownError": "Unknown error"
     }
   },
   "viewer": {

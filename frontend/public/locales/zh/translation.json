@@ -5107,6 +5107,37 @@
     },
     "audioNode": {
       "empty": "暂无音频"
+    },
+    "videoStory": {
+      "columns": {
+        "shotNumber": "镜号",
+        "startTime": "开始时间",
+        "endTime": "结束时间",
+        "duration": "时长",
+        "visualDescription": "画面描述",
+        "narrative": "叙事内容",
+        "shotSize": "景别",
+        "cameraAngle": "摄影机角度",
+        "cameraMovement": "摄影机运动",
+        "focalAndDof": "焦距与景深",
+        "lighting": "光线",
+        "backgroundMusic": "背景音乐",
+        "voiceAndSfx": "人声/音效",
+        "imagePrompt": "图像生成提示词",
+        "videoMotionPrompt": "视频运动提示词",
+        "keyframeUrl": "关键帧"
+      },
+      "emptyTitle": "未识别出分镜",
+      "emptyDetail": "返回内容中没有可用分镜行。原始返回已保留为辅助信息，可用于排查接口结果。",
+      "viewRaw": "查看原始返回",
+      "rawEmpty": "(空)",
+      "parseFailed": "解析失败",
+      "parsing": "解析中…",
+      "rowCount": "{{count}} 条分镜",
+      "rowCountTotal": "共 {{count}} 条分镜",
+      "fullscreen": "全屏",
+      "close": "关闭",
+      "unknownError": "未知错误"
     }
   },
   "viewer": {
