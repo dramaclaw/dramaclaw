@@ -11,6 +11,8 @@ from pydantic_ai.models.test import TestModel
 from novelvideo import config
 from novelvideo.freezone.vision_gateway import (
     FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
+    FREEZONE_VISION_IMAGE_MAX_SOURCE_BYTES,
+    FREEZONE_VISION_IMAGE_MAX_SOURCE_PIXELS,
     VisionInput,
     VisionTransportContext,
     call_freezone_vision_model,
@@ -169,3 +171,48 @@ async def test_compact_vision_inputs_keep_batch_order(tmp_path: Path) -> None:
         assert first.getpixel((160, 90))[0] > first.getpixel((160, 90))[2]
     with Image.open(io.BytesIO(inputs[1].data)) as second:
         assert second.getpixel((160, 90))[2] > second.getpixel((160, 90))[0]
+
+
+@pytest.mark.asyncio
+async def test_compact_vision_inputs_reject_compressed_large_image_before_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import ImageOps
+
+    source_path = tmp_path / "compressed-large.png"
+    Image.new("RGB", (8000, 8000), (7, 7, 7)).save(source_path)
+    assert source_path.stat().st_size < FREEZONE_VISION_IMAGE_MAX_SOURCE_BYTES
+    assert 8000 * 8000 > FREEZONE_VISION_IMAGE_MAX_SOURCE_PIXELS
+
+    monkeypatch.setattr(
+        ImageOps,
+        "exif_transpose",
+        lambda *_args, **_kwargs: pytest.fail(
+            "oversized source reached full-decode path"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="exceeds pixel limit"):
+        await load_compact_vision_inputs([source_path])
+
+
+@pytest.mark.asyncio
+async def test_compact_vision_inputs_reject_large_file_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "oversized.bin"
+    with source_path.open("wb") as source_file:
+        source_file.truncate(FREEZONE_VISION_IMAGE_MAX_SOURCE_BYTES + 1)
+
+    monkeypatch.setattr(
+        Image,
+        "open",
+        lambda *_args, **_kwargs: pytest.fail(
+            "oversized source reached image header parsing"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="exceeds source byte limit"):
+        await load_compact_vision_inputs([source_path])

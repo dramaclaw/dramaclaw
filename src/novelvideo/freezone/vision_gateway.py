@@ -20,6 +20,8 @@ FREEZONE_MARK_TIMEOUT_SECONDS = 90.0
 FREEZONE_VISION_IMAGE_MAX_EDGE = 1280
 FREEZONE_VISION_IMAGE_JPEG_QUALITY = 92
 FREEZONE_VISION_IMAGE_COMPACT_CONCURRENCY = 1
+FREEZONE_VISION_IMAGE_MAX_SOURCE_BYTES = 64 * 1024 * 1024
+FREEZONE_VISION_IMAGE_MAX_SOURCE_PIXELS = 40_000_000
 
 logger = logging.getLogger(__name__)
 _VISION_IMAGE_COMPACTION_SLOTS = threading.BoundedSemaphore(
@@ -55,9 +57,30 @@ def _compact_vision_images(
 
     for raw_path in paths:
         path = Path(raw_path)
-        original_bytes += path.stat().st_size
+        source_bytes = path.stat().st_size
+        if source_bytes > FREEZONE_VISION_IMAGE_MAX_SOURCE_BYTES:
+            raise ValueError(
+                f"vision image exceeds source byte limit: {source_bytes} > "
+                f"{FREEZONE_VISION_IMAGE_MAX_SOURCE_BYTES}"
+            )
+        original_bytes += source_bytes
         with ExitStack() as stack:
             source = stack.enter_context(Image.open(path))
+
+            # Image.open only reads the header. Validate the dimensions before
+            # exif_transpose, convert, resize, or any other operation that can
+            # allocate the full decoded bitmap. Highly compressible PNGs can be
+            # tiny on disk while expanding to hundreds of MiB in memory.
+            source_width, source_height = source.size
+            if source_width <= 0 or source_height <= 0:
+                raise ValueError("vision image dimensions must be positive")
+            source_pixels = source_width * source_height
+            if source_pixels > FREEZONE_VISION_IMAGE_MAX_SOURCE_PIXELS:
+                raise ValueError(
+                    f"vision image exceeds pixel limit: {source_pixels} > "
+                    f"{FREEZONE_VISION_IMAGE_MAX_SOURCE_PIXELS}"
+                )
+
             image = ImageOps.exif_transpose(source)
             if image is not source:
                 stack.callback(image.close)
