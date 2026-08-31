@@ -18,6 +18,16 @@ InteriorExterior = Literal["内", "外", "无"]
 # Scene headings are ~14 characters each, so many fit comfortably in one call.
 _NORMALIZER_BATCH_SIZE = 20
 
+ENGLISH_TIME_SUFFIX_RE = re.compile(
+    r"^(?P<location>.+?)(?:\s*[-–—,，]\s*|\s+)"
+    r"(?P<time>"
+    r"\d{1,2}(?::\d{2})?\s*(?:AM|PM)|\d{1,2}:\d{2}|"
+    r"daytime|nighttime|day|night|morning|afternoon|evening|"
+    r"dawn|dusk|midnight|noon"
+    r")$",
+    re.IGNORECASE,
+)
+
 ATTACHED_SINGLE_CHAR_TIME_TOKENS = {"日", "夜", "晨", "午", "晚"}
 LOCATION_SUFFIXES_FOR_ATTACHED_TIME = {
     "仓",
@@ -77,12 +87,19 @@ def clean_scene_name_and_time(location: str, time_of_day: str = "") -> tuple[str
     name = re.sub(r"^(?:地点|场景)\s*[:：]\s*", "", name).strip()
     name = re.sub(r"\s+(?:内|外|室内|室外)$", "", name).strip()
 
-    time_match = re.search(rf"\s+(?P<time>{TIME_TOKEN_RE})$", name)
-    if time_match:
+    english_time_match = ENGLISH_TIME_SUFFIX_RE.fullmatch(name)
+    time_match = None
+    if english_time_match:
+        if not tod:
+            tod = normalize_time_of_day(english_time_match.group("time"))
+        name = english_time_match.group("location").strip()
+    else:
+        time_match = re.search(rf"\s+(?P<time>{TIME_TOKEN_RE})$", name)
+    if not english_time_match and time_match:
         if not tod:
             tod = normalize_time_of_day(time_match.group("time"))
         name = name[: time_match.start()].strip()
-    else:
+    elif not english_time_match:
         separated_time_match = re.search(
             rf"[·・,，、]\s*(?P<time>{TIME_TOKEN_RE})$", name
         )
