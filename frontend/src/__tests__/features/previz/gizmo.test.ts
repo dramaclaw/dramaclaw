@@ -8,7 +8,7 @@ class FakeTransformControls implements TransformControlsLike {
   enabled = true;
   object: unknown = null;
   private readonly listeners: Record<string, Array<(event: { value?: boolean }) => void>> = {};
-  readonly helper = { name: "gizmo-helper" };
+  readonly helper = { name: "gizmo-helper", visible: true };
 
   attach = vi.fn((object: unknown) => {
     this.object = object;
@@ -161,6 +161,19 @@ describe("PrevizGizmo", () => {
 
     expect(onCommit).not.toHaveBeenCalled();
     expect(orbit.enabled).toBe(true);
+  });
+
+  // 手柄的箭头进了截图就毁了整张参考图。
+  it("can hide its helper for a capture", () => {
+    const { gizmo, controls } = setup();
+
+    // 断言读 controls.helper 而不是 getHelper() 的返回值：假控件把它声明成 never
+    // 好塞进 THREE.Object3D 的位置，取属性过不了 tsc。两者本来就是同一个对象。
+    gizmo.setHelperVisible(false);
+    expect(controls.helper.visible).toBe(false);
+
+    gizmo.setHelperVisible(true);
+    expect(controls.helper.visible).toBe(true);
   });
 
   it("forwards the mode and cleans up on dispose", () => {

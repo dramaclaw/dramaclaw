@@ -15,7 +15,10 @@ import {
 } from "@/components/ui/dialog";
 import { useViewerImmersiveBody } from "@/features/viewer-kit/useViewerImmersiveBody";
 import { readUrl } from "@/lib/url-params";
+import { useCanvasStore } from "@/stores/canvasStore";
+import { uploadFreezoneImage } from "@/api/ops";
 
+import { publishCapture } from "./capture/publishCapture";
 import { PrevizRenderer } from "./engine/PrevizRenderer";
 import type { GizmoMode } from "./engine/gizmo";
 import { canAddObject } from "./domain/limits";
@@ -29,6 +32,8 @@ import type { PrevizObjectKind, PrevizScene } from "./domain/scene";
 
 interface PrevizEditorProps {
   open: boolean;
+  /** 预演台节点自己的 id；截图要挂在它右边。 */
+  nodeId: string;
   initialScene: PrevizScene;
   onOpenChange: (open: boolean) => void;
   /** 关闭时把当前场景交回节点落盘；编辑期不逐帧写 node.data。 */
@@ -38,7 +43,13 @@ interface PrevizEditorProps {
 /** 按下与抬起之间超过这个像素就算在转视角，不是在点选。 */
 const CLICK_SLOP_PX = 4;
 
-export function PrevizEditor({ open, initialScene, onOpenChange, onFlush }: PrevizEditorProps) {
+export function PrevizEditor({
+  open,
+  nodeId,
+  initialScene,
+  onOpenChange,
+  onFlush,
+}: PrevizEditorProps) {
   const { t } = useTranslation();
   // 不能用 useRef：base-ui 的 Dialog.Portal 靠 store 里的 `mounted` 决定是否渲染子树，
   // 而 `mounted` 是在 open 生效之后的一次提交里才置上的，所以本组件第一次跑 effect 时
@@ -49,6 +60,7 @@ export function PrevizEditor({ open, initialScene, onOpenChange, onFlush }: Prev
   // 渲染器也进 state 而不是 ref：面板的回调要在它就绪后重新绑定，ref 变化不会触发重渲染。
   const [renderer, setRenderer] = useState<PrevizRenderer | null>(null);
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
+  const [capturing, setCapturing] = useState(false);
   const pointerDownAt = useRef<{ x: number; y: number } | null>(null);
 
   const scene = usePrevizStore((state) => state.scene);
@@ -66,6 +78,8 @@ export function PrevizEditor({ open, initialScene, onOpenChange, onFlush }: Prev
   const setOutputAspect = usePrevizStore((state) => state.setOutputAspect);
   const undo = usePrevizStore((state) => state.undo);
   const redo = usePrevizStore((state) => state.redo);
+  const addDerivedUploadNode = useCanvasStore((state) => state.addDerivedUploadNode);
+  const addEdge = useCanvasStore((state) => state.addEdge);
 
   const selectedObject = useMemo(
     () => scene.objects.find((object) => object.id === selectedObjectId) ?? null,
@@ -186,6 +200,35 @@ export function PrevizEditor({ open, initialScene, onOpenChange, onFlush }: Prev
     },
     [addObject, t],
   );
+
+  const handleCapture = useCallback(async () => {
+    if (!renderer || capturing) return;
+    const project = readUrl().project;
+    if (!project) {
+      toast.error(t("previz.editor.noProject"));
+      return;
+    }
+    setCapturing(true);
+    try {
+      const blob = await renderer.capture();
+      if (!blob) return;
+      const result = await publishCapture({
+        project,
+        sourceNodeId: nodeId,
+        aspect: usePrevizStore.getState().scene.settings.outputAspect,
+        blob,
+        uploadImage: (targetProject, file, filename) =>
+          uploadFreezoneImage(targetProject, file, filename),
+        addDerivedUploadNode,
+        addEdge,
+      });
+      if (result.ok) toast.success(t("previz.editor.captureDone"));
+      else if (result.reason === "node") toast.error(t("previz.editor.captureNoNode"));
+      else toast.error(t("previz.editor.captureFailed"));
+    } finally {
+      setCapturing(false);
+    }
+  }, [addDerivedUploadNode, addEdge, capturing, nodeId, renderer, t]);
 
   const handleOpenChange = useCallback(
     (next: boolean) => {
@@ -318,6 +361,16 @@ export function PrevizEditor({ open, initialScene, onOpenChange, onFlush }: Prev
             <div className="pointer-events-none absolute bottom-4 left-4 rounded-lg bg-black/45 px-3 py-1.5 text-xs text-white/80">
               {t("previz.editor.duration", { frames: scene.settings.durationFrames })}
             </div>
+
+            <Button
+              variant="ghost"
+              aria-label={t("previz.editor.capture")}
+              disabled={capturing}
+              className="absolute right-16 top-4 z-10 h-8 rounded-lg bg-white/10 px-3 text-[12px] text-white/85 hover:bg-white/20"
+              onClick={() => void handleCapture()}
+            >
+              {capturing ? t("previz.editor.capturing") : t("previz.editor.capture")}
+            </Button>
 
             <Button
               variant="ghost"
