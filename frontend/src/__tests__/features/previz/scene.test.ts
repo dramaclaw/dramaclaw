@@ -99,3 +99,72 @@ describe("previz scene schema", () => {
     expect(parsed.timeline.tracks).not.toBe(rawTracks);
   });
 });
+
+describe("parseScene object validation", () => {
+  it("drops objects with an unknown kind", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [
+        { id: "a", kind: "hologram", name: "x" },
+        {
+          id: "b",
+          kind: "camera",
+          name: "机位 1",
+          transform: { position: [0, 1, 2], rotation: [0, 0, 0], scale: [1, 1, 1] },
+          visible: true,
+          locked: false,
+          focalMm: 35,
+          aperture: 2,
+          sensor: "s35",
+        },
+      ],
+    });
+
+    expect(parsed.objects).toHaveLength(1);
+    expect(parsed.objects[0]?.id).toBe("b");
+  });
+
+  it("repairs malformed transforms instead of dropping the object", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [
+        {
+          id: "a",
+          kind: "light",
+          name: "灯光 1",
+          transform: { position: [1, "two", 3], rotation: null, scale: [1, 1] },
+          visible: "yes",
+          locked: false,
+          lightType: "spot",
+          color: "#ff0000",
+          intensity: 2,
+        },
+      ],
+    });
+
+    const light = parsed.objects[0];
+    expect(light).toBeDefined();
+    expect(light?.transform.position).toEqual([1, 0, 3]);
+    expect(light?.transform.rotation).toEqual([0, 0, 0]);
+    expect(light?.transform.scale).toEqual([1, 1, 1]);
+    expect(light?.visible).toBe(true);
+  });
+
+  it("drops objects that have no usable id", () => {
+    const parsed = parseScene({ schemaVersion: 1, objects: [{ kind: "camera" }, { id: "", kind: "camera" }] });
+
+    expect(parsed.objects).toEqual([]);
+  });
+
+  // 轨道指向已经不存在的对象时，求值器（P3）会拿到一个悬空引用。P1 还没有求值器，
+  // 但让脏数据在这里就地消失比留到那时候再排查便宜得多。
+  it("drops tracks whose object is gone", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [],
+      timeline: { tracks: [{ id: "t1", objectId: "missing", clips: [] }] },
+    });
+
+    expect(parsed.timeline.tracks).toEqual([]);
+  });
+});
