@@ -124,6 +124,9 @@ describe("PrevizToolbar", () => {
     await user.upload(input, file);
 
     expect(props.onImportProp).toHaveBeenCalledWith(file);
+    // toHaveBeenCalledWith 对 File 走结构化相等，换成另一个 File 照样绿。要锁住「转发的
+    // 是用户挑的那一个」，只能比引用同一性。
+    expect(props.onImportProp.mock.calls[0]?.[0]).toBe(file);
     // value 必须被清空，否则用户第二次挑同一个文件浏览器不会再发 change。
     expect(input).toHaveValue("");
   });
