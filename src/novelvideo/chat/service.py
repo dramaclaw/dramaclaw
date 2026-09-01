@@ -482,9 +482,9 @@ _FREEZONE_CANVAS_WRITE_OBJECT_RE = re.compile(
 )
 _FREEZONE_DIRECT_MEDIA_WRITE_RE = re.compile(
     r"(?:"
-    r"(?:生成|创建|新建|添加|制作|做|运行|执行)"
-    r"(?:(?!(?:剧本|文案|提示词|分析|说明|教程|beats?))[^。！？!?\n]){0,32}"
-    r"(?:图片|图像|视频|音频|音乐|配音|旁白|成片)"
+    r"(?:生成|创建|新建|添加|制作|做|运行|执行|用|根据|按照|基于)"
+    r"[^。！？!?\n]{0,32}"
+    r"(?:图片|图像|图|视频|音频|音乐|配音|旁白|成片)"
     r"|(?:generate|create|add|make|run|execute)\s+(?:an?\s+|some\s+)?"
     r"(?:image|video|audio|music|voiceover|composition)"
     r")",
@@ -499,8 +499,11 @@ _FREEZONE_CANVAS_NO_WRITE_FAILURE_RE = re.compile(
     r"(?:未能|无法|失败|找不到|不可用|未创建|没有创建|未执行|没有执行|不能)",
     re.IGNORECASE,
 )
-_FREEZONE_TEXT_ARTIFACT_RE = re.compile(
-    r"(?:剧本|脚本|文案|提示词|解说词|描述|script|screenplay|prompt|copy|copywriting|description)",
+_FREEZONE_TEXT_ONLY_REQUEST_RE = re.compile(
+    r"(?:生成|创建|编写|撰写|整理|generate|create|write|draft)"
+    r"(?:(?!\n).){0,40}"
+    r"(?:剧本|脚本|文案|提示词|解说词|screenplay|script|copy|copywriting|prompt)"
+    r"\s*[。！？!?．.]?\s*$",
     re.IGNORECASE,
 )
 _FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
@@ -545,8 +548,14 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     # prompt” must remain a chat response unless the user explicitly names a
     # canvas/node mutation. Otherwise the post-turn adapter may replace the
     # generated text with a misleading canvas-write failure.
-    if _FREEZONE_TEXT_ARTIFACT_RE.search(user_text) and not re.search(
-        r"(?:节点|画布|连线|node|canvas|edge)", user_text, re.IGNORECASE
+    # Only suppress an explicit text-artifact request.  Media requests may
+    # legitimately contain the same words (for example “根据这个提示词生成
+    # 一张图” or “生成一张带文案的图片”), so do not use a broad keyword
+    # exclusion here.
+    if (
+        _FREEZONE_TEXT_ONLY_REQUEST_RE.search(user_text)
+        and not re.search(r"(?:根据|用|按照|基于|带|包含|from|using|based\s+on|with)", user_text, re.IGNORECASE)
+        and not re.search(r"(?:节点|画布|连线|node|canvas|edge)", user_text, re.IGNORECASE)
     ):
         return False
     return has_action and (

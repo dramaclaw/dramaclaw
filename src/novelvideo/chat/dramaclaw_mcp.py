@@ -160,6 +160,24 @@ TOOL_CALL_NAME = "dramaclaw_tool_call"
 BRIDGE_TOOL_NAMES = frozenset(
     {TOOL_SEARCH_NAME, TOOL_DESCRIBE_NAME, TOOL_CALL_NAME}
 )
+_WORKFLOW_DRAFT_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "status": {"type": "string"},
+        "code": {"type": ["string", "null"]},
+        "draft_id": {"type": ["string", "null"]},
+        "revision": {"type": ["integer", "null"]},
+        "preview": {"type": ["object", "array", "null"]},
+        "agent_planning_charge": {"type": ["object", "number", "string", "null"]},
+        "agent_credit_estimate": {"type": ["object", "number", "string", "null"]},
+        "confirmation_required": {"type": "boolean"},
+        "next_action": {"type": ["string", "null"]},
+        "agent_instruction": {"type": ["string", "null"]},
+    },
+    "required": ["ok", "status", "confirmation_required", "next_action"],
+    "additionalProperties": True,
+}
 
 # Home turns have no bound project and should only manage the project
 # collection. Project-scoped tokens remain the authority for every underlying
@@ -329,6 +347,11 @@ async def list_tools() -> list[types.Tool]:
                     name=name,
                     description=str(schema.get("description") or ""),
                     inputSchema=parameters if isinstance(parameters, dict) else {"type": "object"},
+                    outputSchema=(
+                        _WORKFLOW_DRAFT_OUTPUT_SCHEMA
+                        if name == "freezone_prepare_workflow_draft"
+                        else None
+                    ),
                 )
             )
         return result
@@ -486,10 +509,21 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 "message": getattr(exc, "message", str(exc)),
             })
         result = handler(arguments)
+        adapted = _adapt_external_agent_tool_result(name, result)
+        if name == "freezone_prepare_workflow_draft":
+            try:
+                structured = json.loads(adapted)
+            except (TypeError, json.JSONDecodeError):
+                structured = {"ok": False, "status": "invalid_tool_result", "next_action": None}
+            if isinstance(structured, dict):
+                return types.CallToolResult(
+                    content=[types.TextContent(type="text", text=adapted)],
+                    structuredContent=structured,
+                )
         return [
             types.TextContent(
                 type="text",
-                text=_adapt_external_agent_tool_result(name, result),
+                text=adapted,
             )
         ]
 
@@ -559,6 +593,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         )
 
     text = handler(underlying_arguments)
+    if tool_name == "freezone_prepare_workflow_draft":
+        adapted = _adapt_external_agent_tool_result(tool_name, text)
+        try:
+            structured = json.loads(adapted)
+        except (TypeError, json.JSONDecodeError):
+            structured = None
+        if isinstance(structured, dict):
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=adapted)],
+                structuredContent=structured,
+            )
+        return [types.TextContent(type="text", text=adapted)]
     return [types.TextContent(type="text", text=str(text or ""))]
 
 
