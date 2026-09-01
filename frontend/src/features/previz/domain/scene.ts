@@ -18,6 +18,20 @@ export const PREVIZ_MIN_DURATION_FRAMES = 1;
 export const PREVIZ_MAX_DURATION_FRAMES = 360;
 export const PREVIZ_DEFAULT_DURATION_FRAMES = 120;
 
+/**
+ * 灯光强度区间，属性面板的滑杆与 parseScene 的夹取共用同一份边界。强度必须非负：
+ * 负值在 three 里等于从场景里反向减光，画面会出现无解的黑块。上限取 10 是为了让滑杆
+ * 整条行程都有用——P1 没有任何东西要把灯推到 10 倍以上，真存了更大值的场景是少数，
+ * 夹回来是老实的做法；反过来做一条四分之三行程都用不到的滑杆，是天天都在的别扭。
+ */
+export const PREVIZ_INTENSITY_RANGE = { min: 0, max: 10, default: 1 } as const;
+
+/**
+ * 缩放分量区间。为 0 会压出退化几何（法线全零、包围盒没厚度），手柄跟着抓不住；
+ * 负值翻转面朝向、打乱光照，而 P1 没有镜像需求。两头都挡在正区间内。
+ */
+export const PREVIZ_SCALE_RANGE = { min: 0.01, max: 100, default: 1 } as const;
+
 export type BodyType = 'slim' | 'average' | 'heavy';
 export type DisplayMode = 'solid' | 'translucent' | 'clay';
 export type OutputAspect = '16:9' | '9:16' | '1:1' | '4:3';
@@ -215,24 +229,18 @@ function clamp(value: unknown, min: number, max: number, fallback: number): numb
   return Math.min(max, Math.max(min, value));
 }
 
-/** 强度必须非负：负值在 three 里等于从场景里反向减光，画面会出现无解的黑块。上限
- *  只是挡住手改坏的天文数字，再亮也只是过曝，取一个够用的软顶。 */
-const INTENSITY_RANGE = { min: 0, max: 20, default: 1 } as const;
-/** 缩放分量为 0 会压出退化几何（法线全零、包围盒没厚度），手柄跟着抓不住；负值翻转
- *  面朝向、打乱光照，而 P1 没有镜像需求。两头都挡在正区间内。 */
-const SCALE_RANGE = { min: 0.01, max: 100, default: 1 } as const;
-
 function vec3(value: unknown, fallback: Vec3): Vec3 {
   if (!Array.isArray(value) || value.length !== 3) return [...fallback];
   return [num(value[0], fallback[0]), num(value[1], fallback[1]), num(value[2], fallback[2])];
 }
 
 function scaleVec3(value: unknown): Vec3 {
-  const raw = vec3(value, [SCALE_RANGE.default, SCALE_RANGE.default, SCALE_RANGE.default]);
+  const { min, max, default: fallback } = PREVIZ_SCALE_RANGE;
+  const raw = vec3(value, [fallback, fallback, fallback]);
   return [
-    clamp(raw[0], SCALE_RANGE.min, SCALE_RANGE.max, SCALE_RANGE.default),
-    clamp(raw[1], SCALE_RANGE.min, SCALE_RANGE.max, SCALE_RANGE.default),
-    clamp(raw[2], SCALE_RANGE.min, SCALE_RANGE.max, SCALE_RANGE.default),
+    clamp(raw[0], min, max, fallback),
+    clamp(raw[1], min, max, fallback),
+    clamp(raw[2], min, max, fallback),
   ];
 }
 
@@ -321,9 +329,9 @@ function parseObject(raw: unknown): PrevizObject | null {
         color: typeof source.color === 'string' ? source.color : '#ffffff',
         intensity: clamp(
           source.intensity,
-          INTENSITY_RANGE.min,
-          INTENSITY_RANGE.max,
-          INTENSITY_RANGE.default,
+          PREVIZ_INTENSITY_RANGE.min,
+          PREVIZ_INTENSITY_RANGE.max,
+          PREVIZ_INTENSITY_RANGE.default,
         ),
       };
     case 'prop':
