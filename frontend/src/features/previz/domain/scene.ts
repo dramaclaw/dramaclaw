@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { PREVIZ_APERTURE, PREVIZ_FOCAL_MM, clampToRange, type PrevizRange } from './camera';
-import {
-  PREVIZ_DEFAULT_HEIGHT_CM,
-  PREVIZ_MAX_HEIGHT_CM,
-  PREVIZ_MIN_HEIGHT_CM,
-  PREVIZ_OBJECT_BASE_NAME,
-} from './objects';
+import { PREVIZ_HEIGHT_CM_RANGE, PREVIZ_OBJECT_BASE_NAME } from './objects';
 import { PREVIZ_DEFAULT_POSE_ID } from './poses';
 
 /** 预演台里所有三元组的统一形状，顺序恒为 [x, y, z]，单位米 / 度。 */
@@ -260,13 +255,6 @@ function clampRange(value: unknown, range: PrevizRange): number {
   return typeof value === 'number' ? clampToRange(value, range) : range.default;
 }
 
-/** 身高的三个常量在 objects.ts 各有各的调用方，这里只是拼成 `clampRange` 要的形状。 */
-const HEIGHT_CM_RANGE: PrevizRange = {
-  min: PREVIZ_MIN_HEIGHT_CM,
-  max: PREVIZ_MAX_HEIGHT_CM,
-  default: PREVIZ_DEFAULT_HEIGHT_CM,
-};
-
 function vec3(value: unknown, fallback: Vec3): Vec3 {
   if (!Array.isArray(value) || value.length !== 3) return [...fallback];
   return [num(value[0], fallback[0]), num(value[1], fallback[1]), num(value[2], fallback[2])];
@@ -302,10 +290,12 @@ function parseTransform(value: unknown): PrevizTransform {
 }
 
 /**
- * 把一条不可信的对象记录读成 `PrevizObject`。**只有两种情况返回 null**：没有可用的
- * id，或者 kind 不认识——这两样都没法修，留着只会在场景图同步时变成幽灵条目。
- * 其余字段一律就地修复回默认值或夹回合法区间：用户手改坏一个数字，不该让整个人物
- * 凭空消失，但也不能让 `focalMm: 0` 这种值把 three 的投影矩阵算成 NaN。
+ * 把一条不可信的对象记录读成 `PrevizObject`。**只有三种情况返回 null**：记录本身不是
+ * 对象、没有可用的 id（缺失、不是字符串，或者是空串）、kind 不认识——这三样都没法修，
+ * 留着只会在场景图同步时变成幽灵条目（空串 id 尤其毒：`nodes` 那张按 id 索引的 Map 会
+ * 让所有空 id 的对象互相覆盖成同一个节点）。其余字段一律就地修复回默认值或夹回合法
+ * 区间：用户手改坏一个数字，不该让整个人物凭空消失，但也不能让 `focalMm: 0` 这种值把
+ * three 的投影矩阵算成 NaN。
  */
 function parseObject(raw: unknown): PrevizObject | null {
   if (raw === null || typeof raw !== 'object') return null;
@@ -340,7 +330,7 @@ function parseObject(raw: unknown): PrevizObject | null {
         ...base,
         kind: 'character',
         bodyType: isMember(BODY_TYPES, source.bodyType) ? source.bodyType : 'average',
-        heightCm: clampRange(source.heightCm, HEIGHT_CM_RANGE),
+        heightCm: clampRange(source.heightCm, PREVIZ_HEIGHT_CM_RANGE),
         basePoseId:
           typeof source.basePoseId === 'string' ? source.basePoseId : PREVIZ_DEFAULT_POSE_ID,
         poseAdjust: parsePoseAdjust(source.poseAdjust),
