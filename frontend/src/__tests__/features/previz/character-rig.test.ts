@@ -337,3 +337,63 @@ describe('CharacterRigFactory', () => {
     expect(rig.userData.previzRig).toBe(true);
   });
 });
+
+describe('CharacterRigFactory.applyCharacter', () => {
+  it('re-poses a rig that is already in the scene', async () => {
+    const factory = factoryWith(['Idle_Loop', 'Walk_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+    clipActions = [];
+    setTime.mockClear();
+
+    factory.applyCharacter(rig!, character({ basePoseId: 'walking' }));
+
+    // 模型是在第一次 sync 时按当时的姿势定格的。之后只重新缩放的话，属性面板的
+    // 「基础姿势」下拉框对已加载的人物完全失效——改成抱臂，人还站着。
+    expect(clipActions.map((clip) => clip.name)).toEqual(['Walk_Loop']);
+    expect(setTime).toHaveBeenCalledWith(0.35);
+  });
+
+  it('re-applies the pose adjust angles and the body scale', async () => {
+    const factory = factoryWith(['Idle_Loop']);
+    const rig = await factory.build(character({ heightCm: 150 }));
+
+    factory.applyCharacter(
+      rig!,
+      character({ heightCm: 200, bodyType: 'heavy', poseAdjust: { pitch: 30, turn: -45, lean: 10 } }),
+    );
+
+    expect(viewOf(rig).rotation.x).toBeCloseTo(Math.PI / 6, 6);
+    expect(viewOf(rig).rotation.y).toBeCloseTo(-Math.PI / 4, 6);
+    expect(viewOf(rig).rotation.z).toBeCloseTo(Math.PI / 18, 6);
+    expect(viewOf(rig).scale.y).toBeCloseTo(1, 6);
+    expect(viewOf(rig).scale.x).toBeCloseTo(1.15, 6);
+  });
+
+  it('does not rebuild the mixer when the pose has not changed', async () => {
+    const factory = factoryWith(['Idle_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+    clipActions = [];
+    mixerRoots = [];
+
+    factory.applyCharacter(rig!, character({ basePoseId: 'standing', heightCm: 200 }));
+
+    // sync 每次编辑都跑。姿势没变还建一个 AnimationMixer、把整副骨架重推一遍，
+    // 是拖身高滑杆时每一帧都要付的钱。
+    expect(mixerRoots).toHaveLength(0);
+    expect(clipActions).toHaveLength(0);
+    expect(viewOf(rig).scale.y).toBeCloseTo(1, 6);
+  });
+
+  it('keeps the rig posed when the new pose resolves to nothing', async () => {
+    const factory = factoryWith(['Idle_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+    clipActions = [];
+
+    factory.applyCharacter(rig!, character({ basePoseId: 'sword', heightCm: 200 }));
+
+    // 模型里没有 sword 的候选 clip：保持现有姿势，绝不拿别的 clip 顶上。
+    // 缩放照常生效——姿势解不出来不该连身高一起放弃。
+    expect(clipActions).toHaveLength(0);
+    expect(viewOf(rig).scale.y).toBeCloseTo(1, 6);
+  });
+});
