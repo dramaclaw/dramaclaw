@@ -7,6 +7,7 @@ import { PREVIZ_HEIGHT_CM_RANGE } from '../domain/objects';
 import {
   PREVIZ_SCALE_RANGE,
   type DisplayMode,
+  type PrevizCharacter,
   type PrevizObject,
   type PrevizScene,
   type Vec3,
@@ -29,8 +30,9 @@ export const PREVIZ_TRANSLUCENT_OPACITY = 0.35;
  * 细到不至于把相邻的两个人物粘在一起。
  *
  * 它同时是一条尺寸约束：胶囊中段长度是「身高 − 2 × 半径」，必须为正。身高先夹进
- * `PREVIZ_HEIGHT_CM_RANGE`，其下界是 120 cm，减掉 0.44 m 还剩 0.76 m，
- * 离退化很远。改大这个半径前先算一遍这笔账。
+ * `PREVIZ_HEIGHT_CM_RANGE` 再相减，具体余量归 `domain/objects.ts` 的下界管，这里不复述。
+ * 改大这个半径前先跑 scene-graph 测试里的「clamps heightCm so the capsule never degenerates」，
+ * 那条用例锁的就是这条不变式。
  */
 export const PREVIZ_PLACEHOLDER_RADIUS = 0.22;
 
@@ -88,7 +90,8 @@ export class PrevizSceneGraph {
     this.displayMode = mode;
 
     const seen = new Set<string>();
-    const created: THREE.Object3D[] = [];
+    // 这一帧新建或重建了材质、因而还停在实心态的子树。模式没变时它们要单独补一次。
+    const pending: THREE.Object3D[] = [];
 
     for (const object of scene.objects) {
       seen.add(object.id);
@@ -97,7 +100,14 @@ export class PrevizSceneGraph {
         node = this.createNode(object);
         this.nodes.set(object.id, node);
         this.root.add(node);
-        created.push(node);
+        pending.push(node);
+      }
+
+      // 身高是唯一一个会改变占位几何的用户输入（`PrevizObjectPatch` 只排除了 id 与
+      // kind，属性面板的身高滑杆直接接在它上面）。几何体建好就不会自己跟着变，
+      // 这里显式重建，否则拖完滑杆得到的是一个尺寸与站位都错的胶囊。
+      if (object.kind === 'character' && this.resizePlaceholder(node, object)) {
+        pending.push(node);
       }
 
       node.name = object.name;
@@ -113,8 +123,7 @@ export class PrevizSceneGraph {
       const [rx, ry, rz] = finiteVec3(rotation);
       node.rotation.set(rx * DEG_TO_RAD, ry * DEG_TO_RAD, rz * DEG_TO_RAD);
       // 零与负的缩放压出退化几何（法线全零、包围盒没厚度），手柄抓不住，
-      // `view.ts` 的取景距离也跟着算不出来。凡是有现成区间常量的字段，预演台一律走
-      // `domain/camera.ts` 的 `clampToRange`，不在这里另写一份 Math.min/Math.max。
+      // `view.ts` 的取景距离也跟着算不出来。
       node.scale.set(
         clampToRange(scale[0], PREVIZ_SCALE_RANGE),
         clampToRange(scale[1], PREVIZ_SCALE_RANGE),
@@ -122,7 +131,8 @@ export class PrevizSceneGraph {
       );
     }
 
-    for (const [id, node] of [...this.nodes]) {
+    // 遍历 Map 的过程中删掉当前项在 JS 里是有定义的行为，不需要先复制一份。
+    for (const [id, node] of this.nodes) {
       if (seen.has(id)) continue;
       this.root.remove(node);
       disposeSubtree(node);
@@ -132,12 +142,12 @@ export class PrevizSceneGraph {
     // 模式没变时，这一帧新建的节点仍然要单独吃一次：它们的材质是按「实心」建出来的，
     // 少了这一步，半透明场景里后加的对象会一直停在实心态。
     if (modeChanged) this.applyDisplayMode(this.root);
-    else for (const node of created) this.applyDisplayMode(node);
+    else for (const node of pending) this.applyDisplayMode(node);
   }
 
   /** 新挂进来的模型（GLB）也要吃到当前显示模式，加载完调这个。 */
   refreshDisplayMode(): void {
-    if (this.displayMode) this.applyDisplayMode(this.root);
+    this.applyDisplayMode(this.root);
   }
 
   dispose(): void {
@@ -155,15 +165,38 @@ export class PrevizSceneGraph {
     return group;
   }
 
+  /**
+   * 身高变了就把人物占位胶囊换一个。返回是否真的换过，换过的话调用方要给它补一次显示模式
+   * ——新材质是按「实心」建出来的。
+   *
+   * 只在高度真的变了时重建：胶囊的其余输入（半径、分段数）都是常量，白拆一次等于每帧
+   * 扔掉一对 geometry / material。反过来，重建时那句 `disposeSubtree` 是承重的——少了它，
+   * 拖一次身高滑杆就按帧泄漏几何体与材质。
+   *
+   * 找不到占位体时什么都不做：那说明 Task 8 的 GLB 已经把它顶掉了，身高归角色 rig 的缩放管。
+   */
+  private resizePlaceholder(node: THREE.Object3D, object: PrevizCharacter): boolean {
+    const existing = node.children.find((child) => child.userData.previzPlaceholder);
+    if (!existing) return false;
+    const heightCm = clampToRange(object.heightCm, PREVIZ_HEIGHT_CM_RANGE);
+    if (existing.userData.previzPlaceholderHeightCm === heightCm) return false;
+    node.remove(existing);
+    disposeSubtree(existing);
+    node.add(this.createPlaceholder(object));
+    return true;
+  }
+
   /** 占位几何体。人物胶囊、机位锥体、灯球、物件方块——形状不同是为了一眼分得清。 */
   private createPlaceholder(object: PrevizObject): THREE.Mesh {
     const three = this.three;
     let geometry: THREE.BufferGeometry;
     let yOffset = 0;
+    let heightCm: number | undefined;
 
     switch (object.kind) {
       case 'character': {
-        const height = clampToRange(object.heightCm, PREVIZ_HEIGHT_CM_RANGE) / 100;
+        heightCm = clampToRange(object.heightCm, PREVIZ_HEIGHT_CM_RANGE);
+        const height = heightCm / 100;
         // CapsuleGeometry(radius, height, …)：第二参数是两个半球之间那段柱体的高度
         // （three 0.185 的形参名就叫 height），胶囊总高是它加上两个半径，所以先减掉。
         const radius = PREVIZ_PLACEHOLDER_RADIUS;
@@ -191,20 +224,29 @@ export class PrevizSceneGraph {
     const mesh = new three.Mesh(geometry, material);
     mesh.position.set(0, yOffset, 0);
     mesh.userData.previzPlaceholder = true;
+    // 占位体自己记住本色，`applyDisplayMode` 从全灰切回来时就地读它。反过来往父节点上
+    // 找 kind 的写法会把「占位体永远是对象组的直接子节点」写死进显示模式逻辑，而
+    // Task 8 / Task 9 把模型嵌进来时正要打破它；顺带那条写法还要一次 `any` 断言，
+    // 因为 three 的 `userData` 是 `Record<string, any>`，拿它当 `KIND_COLOR` 的键会被
+    // TS7053 挡下来。
+    mesh.userData.previzPlaceholderColor = KIND_COLOR[object.kind];
+    // 建这个胶囊时用的是哪个身高。`resizePlaceholder` 靠它判断要不要重建。
+    if (heightCm !== undefined) mesh.userData.previzPlaceholderHeightCm = heightCm;
     return mesh;
   }
 
   /**
    * 把当前显示模式刷到 `target` 子树的每份材质上。
    *
-   * 从全灰切回来时只有占位体能恢复本色——它的颜色由 `KIND_COLOR` 决定，重算得出来。
+   * 从全灰切回来时只有占位体能恢复本色——它建出来时就把本色记在了自己的 userData 上。
    * Task 8 / Task 9 挂进来的 GLB 材质各有各的贴图与颜色，被染灰之后无从还原，那时要么
-   * 给它们单独记一份原色，要么换成整体覆盖材质（`Scene.overrideMaterial`）；在只有占位体
-   * 的当下，这个分支覆盖了全部情况。
+   * 照这里的办法逐份材质记一份原色，要么换成整体覆盖材质（`Scene.overrideMaterial`）；
+   * 在只有占位体的当下，这个分支覆盖了全部情况。
    */
   private applyDisplayMode(target: THREE.Object3D): void {
     const mode = this.displayMode;
     if (!mode) return;
+    const transparent = mode === 'translucent';
     target.traverse((object) => {
       const mesh = object as THREE.Mesh;
       const material = mesh.material;
@@ -212,16 +254,20 @@ export class PrevizSceneGraph {
       const list = Array.isArray(material) ? material : [material];
       for (const entry of list) {
         const standard = entry as THREE.MeshStandardMaterial;
-        standard.transparent = mode === 'translucent';
-        standard.opacity = mode === 'translucent' ? PREVIZ_TRANSLUCENT_OPACITY : 1;
+        // 只有 `transparent` 参与 three 的着色程序缓存键（`WebGLPrograms` 的 opaque 项），
+        // 所以只有它翻转时才需要让程序失效；`opacity` 与 `color` 是 uniform，改了直接生效。
+        // 无条件置 needsUpdate 的代价在 Task 8 / Task 9 才现形：那时每个异步到位的模型都会
+        // 调一次 `refreshDisplayMode()`，而它遍历整个 root——N 个模型就是 N 次全场景着色器
+        // 重编译，那是 three 里最典型的掉帧来源。
+        if (standard.transparent !== transparent) {
+          standard.transparent = transparent;
+          standard.needsUpdate = true;
+        }
+        standard.opacity = transparent ? PREVIZ_TRANSLUCENT_OPACITY : 1;
         if (mode === 'clay') standard.color?.set(CLAY_COLOR);
         else if (mesh.userData.previzPlaceholder) {
-          const kind = (mesh.parent?.userData.previzKind ?? 'prop') as PrevizObject['kind'];
-          standard.color?.set(KIND_COLOR[kind]);
+          standard.color?.set(mesh.userData.previzPlaceholderColor);
         }
-        // `transparent` 参与 three 的着色程序缓存键（`WebGLPrograms` 的 opaque 项），
-        // 不置 needsUpdate 就还在用旧程序，材质改了画面不跟着变。
-        standard.needsUpdate = true;
       }
     });
   }
