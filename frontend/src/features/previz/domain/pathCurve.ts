@@ -66,5 +66,50 @@ export function samplePathPosition(points: readonly PrevizPathPoint[], u: number
   ];
 }
 
+
+/**
+ * 把「未标记的点朝向由前一个已标记点向后传播」解开成逐点朝向。
+ *
+ * 首个已编辑点之前的点保留自己的朝向：那些是绘制时由切线推出来的值，用户一次都没动过，
+ * 没有任何「前一个已编辑点」可以传播给它们。参照实现的滑杆 tooltip 说的也是这条：
+ * 「该朝向沿用至下一个手动调整过朝向的点」——向后，不向前。
+ */
+export function resolvePathRotations(points: readonly PrevizPathPoint[]): Vec3[] {
+  let carry: Vec3 | null = null;
+  return points.map((point) => {
+    if (point.rotationEdited) carry = point.rotation;
+    return carry ?? point.rotation;
+  });
+}
+
+/**
+ * 度数的最短弧插值。359 → 1 走 +2°，不走 -358°。
+ * 角度用线性插值而不是 Catmull-Rom：样条会冲出两个端点之间的区间，而角度一旦冲过
+ * ±180 就在最短弧的另一侧了，表现是转弯时人物突然反向甩头——一个位置上看不出来、
+ * 只在朝向上炸的 bug。
+ */
+export function lerpAngleDeg(from: number, to: number, t: number): number {
+  let delta = (to - from) % 360;
+  if (delta > 180) delta -= 360;
+  if (delta < -180) delta += 360;
+  return from + delta * t;
+}
+
+export function samplePathRotation(points: readonly PrevizPathPoint[], u: number): Vec3 {
+  const sorted = sortedPathPoints(points);
+  if (sorted.length === 0) return [0, 0, 0];
+  const rotations = resolvePathRotations(sorted);
+  if (sorted.length === 1) return [...rotations[0]];
+
+  const { index, local } = locate(sorted, u);
+  const a = rotations[index];
+  const b = rotations[index + 1];
+  return [
+    lerpAngleDeg(a[0], b[0], local),
+    lerpAngleDeg(a[1], b[1], local),
+    lerpAngleDeg(a[2], b[2], local),
+  ];
+}
+
 /** 内部定位函数导出给同模块的朝向采样用，不对外。 */
 export { locate as locatePathSegment };
