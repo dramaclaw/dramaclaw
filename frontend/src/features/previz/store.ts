@@ -121,6 +121,8 @@ interface PrevizStoreState {
   clearPath: (clipId: string) => void;
   moveClipBy: (clipId: string, deltaFrames: number) => void;
   trimClipToPlayhead: (clipId: string, edge: 'start' | 'end') => void;
+  /** 直接改片段终点（改长度，不是平移）。 */
+  setClipEnd: (clipId: string, endFrame: number) => void;
   splitClipAtPlayhead: (clipId: string) => void;
   removeClipById: (clipId: string) => void;
   removeTrackFor: (objectId: string) => void;
@@ -388,6 +390,12 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   trimClipToPlayhead: (clipId, edge) => {
     const { scene, applyScene, timelineFrame } = get();
     applyScene(trimClip(scene, clipId, edge, timelineFrame));
+  },
+
+  setClipEnd: (clipId, endFrame) => {
+    const { scene, applyScene } = get();
+    // 复用 trimClip 的夹取：最小长度与时间轴上下界只有一处真相。
+    applyScene(trimClip(scene, clipId, 'end', Math.round(endFrame)));
   },
 
   splitClipAtPlayhead: (clipId) => {
