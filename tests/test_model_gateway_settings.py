@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 
+import httpx
 import pytest
 import respx
 from fastapi import FastAPI
@@ -63,6 +64,7 @@ from novelvideo.newapi_provisioner import (
     require_provisioner_enabled,
     update_provider_channel_credentials,
     upsert_channel,
+    wait_for_newapi,
 )
 
 
@@ -104,6 +106,54 @@ def test_comfyui_channel_update_replaces_removed_workflow_models():
 
     assert merged["models"] == "kept"
     assert json.loads(merged["model_mapping"]) == {"kept": "kept"}
+
+
+def _provisioner_cfg(**overrides) -> NewApiProvisionerConfig:
+    base = {
+        "admin_base_url": "http://new-api:3000",
+        "sql_dsn": "local",
+        "sqlite_path": "/tmp/one-api.db",
+        "admin_username": "root",
+        "init_timeout_ms": 60000,
+        "relay_token_name": "dramaclaw-ce-runtime",
+    }
+    base.update(overrides)
+    return NewApiProvisionerConfig(**base)
+
+
+@respx.mock
+def test_wait_for_newapi_fails_fast_when_nothing_is_listening():
+    """官方渠道 Compose 不含 NewAPI：必须在 connect_timeout_ms 内放弃并给出排查指引。
+
+    回归 #281：过去要等满 init_timeout_ms(默认 120s)，而前端 60s 就超时了，
+    用户只能看到一句无指向性的 Request timed out。
+    """
+    respx.get("http://new-api:3000/api/setup").mock(
+        side_effect=httpx.ConnectError("Connection refused")
+    )
+    cfg = _provisioner_cfg(init_timeout_ms=60000, connect_timeout_ms=0)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        wait_for_newapi(cfg)
+
+    message = str(excinfo.value)
+    # 指向真实原因和可执行的下一步，而不是只抛底层连接错误。
+    assert "http://new-api:3000" in message
+    assert "docker-compose.selfhosted.yml" in message
+    assert "Connection refused" in message
+
+
+@respx.mock
+def test_wait_for_newapi_keeps_waiting_while_service_is_booting():
+    """启动中的容器会先绑端口再就绪(HTTP 5xx)，这种情况不能按「没部署」提前放弃。"""
+    route = respx.get("http://new-api:3000/api/setup").mock(
+        side_effect=[Response(503), Response(200, json={"success": True})]
+    )
+    cfg = _provisioner_cfg(init_timeout_ms=60000, connect_timeout_ms=0)
+
+    wait_for_newapi(cfg)
+
+    assert route.call_count == 2
 
 
 @respx.mock

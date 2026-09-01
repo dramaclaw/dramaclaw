@@ -173,6 +173,10 @@ class NewApiProvisionerConfig:
     admin_username: str
     init_timeout_ms: int
     relay_token_name: str
+    # 端口完全没人监听时的放弃时限，独立于 init_timeout_ms。容器启动中至少会
+    # 绑上端口（此时是 HTTP 5xx 而非连接失败），所以持续连不上基本只有一种解释：
+    # 这套部署里没有 NewAPI 服务。见 wait_for_newapi。
+    connect_timeout_ms: int = 20000
 
 
 @dataclass(frozen=True)
@@ -501,6 +505,9 @@ def get_provisioner_config(
         init_timeout_ms=int(
             os.environ.get("NEWAPI_PROVISIONER_INIT_TIMEOUT_MS", "120000")
         ),
+        connect_timeout_ms=int(
+            os.environ.get("NEWAPI_PROVISIONER_CONNECT_TIMEOUT_MS", "20000")
+        ),
         relay_token_name=(
             os.environ.get("NEWAPI_RELAY_TOKEN_NAME", "dramaclaw-ce-runtime").strip()
             or "dramaclaw-ce-runtime"
@@ -570,21 +577,49 @@ def wait_for_db(cfg: NewApiProvisionerConfig) -> NewApiDB:
     raise RuntimeError(f"database not ready: {last_error}")
 
 
+def _newapi_unreachable_error(
+    cfg: NewApiProvisionerConfig,
+    last_error: Exception | None,
+) -> RuntimeError:
+    """连不上 NewAPI 时给出可执行的提示，而不是只抛底层连接错误。
+
+    最常见的原因是启动了不含 NewAPI 的官方渠道 Compose，然后在设置里切到
+    「自定义」。这种情况下原始报错（Connection refused）对用户毫无指向性。
+    """
+    return RuntimeError(
+        f"无法连接 NewAPI（{cfg.admin_base_url}）：{last_error}。"
+        "自定义模型渠道需要本地 NewAPI 服务；官方渠道的 docker-compose.yml 不包含它。"
+        "请改用 docker-compose.selfhosted.yml 启动，"
+        "或把 NEWAPI_ADMIN_BASE_URL 指向已有的 NewAPI 实例。"
+    )
+
+
 def wait_for_newapi(cfg: NewApiProvisionerConfig) -> None:
     if not cfg.admin_base_url:
         raise RuntimeError("NEWAPI_ADMIN_BASE_URL is required")
-    deadline = time.monotonic() + cfg.init_timeout_ms / 1000
+    started_at = time.monotonic()
+    deadline = started_at + cfg.init_timeout_ms / 1000
+    # 端口没人监听 ≠ 服务正在启动：启动中的容器会先绑端口再就绪，表现为 HTTP 5xx。
+    # 所以「一次 HTTP 响应都没拿到」持续过久时提前放弃，否则要等满 init_timeout_ms，
+    # 前端早已超时，用户只会看到一句无指向性的 Request timed out。
+    connect_deadline = started_at + cfg.connect_timeout_ms / 1000
     last_error: Exception | None = None
+    responded = False
     while time.monotonic() < deadline:
         try:
             with httpx.Client(timeout=5) as client:
                 res = client.get(f"{cfg.admin_base_url}/api/setup")
+            responded = True
             if res.status_code < 500:
                 return
             last_error = RuntimeError(f"HTTP {res.status_code}")
         except Exception as exc:
             last_error = exc
+            if not responded and time.monotonic() >= connect_deadline:
+                raise _newapi_unreachable_error(cfg, last_error) from last_error
         time.sleep(1.5)
+    if not responded:
+        raise _newapi_unreachable_error(cfg, last_error)
     raise RuntimeError(f"NewAPI not ready: {last_error}")
 
 
