@@ -6,7 +6,6 @@ import { PREVIZ_OBJECT_LIMITS } from "@/features/previz/domain/limits";
 import {
   PREVIZ_DEFAULT_HEIGHT_CM,
   PREVIZ_MAX_HEIGHT_CM,
-  PREVIZ_OBJECT_BASE_NAME,
   createPrevizObject,
 } from "@/features/previz/domain/objects";
 import { createDefaultScene, type PrevizScene } from "@/features/previz/domain/scene";
@@ -238,12 +237,17 @@ describe("previz store object editing", () => {
 
   // 名字清空后落回类型基名，而不是留一个空串：图层面板按名字列条目，空串就是一行
   // 看不见的东西。这条与 parseScene 读盘时的兜底是同一个答案，不是 store 另立的规矩。
+  //
+  // 期望值写字面量而不是 `PREVIZ_OBJECT_BASE_NAME.light`：后者两边同源，改了那张表
+  // 断言跟着一起动，永远不会红。实测过——把 `PREVIZ_OBJECT_BASE_NAME.prop` 从「物件」
+  // 改成「道具」，整个 `__tests__/features/previz/` 目录零新增失败。这三处
+  // （本条与下面新建编号那条）是那张表在测试里仅有的锚点。
   it("falls back to the kind base name when a rename blanks it out", () => {
     const id = usePrevizStore.getState().addObject("light")!;
 
     usePrevizStore.getState().updateObject(id, { name: "   " });
 
-    expect(usePrevizStore.getState().scene.objects[0].name).toBe(PREVIZ_OBJECT_BASE_NAME.light);
+    expect(usePrevizStore.getState().scene.objects[0].name).toBe("灯光");
   });
 
   // 属性面板的 patch 是「有就带上」拼出来的，`{ name: maybeName }`（string | undefined）
@@ -275,6 +279,23 @@ describe("previz store object editing", () => {
     expect(patched.locked).toBe(true);
     expect(patched.kind === "character" && patched.heightCm).toBe(200);
     expect(patched.transform.position).toEqual([1, 2, 3]);
+  });
+
+  // updateObject 是唯一一个改场景、却没有任何用例盯着它的历史行为的 CRUD 方法：把它
+  // 改成直接 `set({ scene })`（很可能是为了「一次改名不该压满 50 步历史」而绕开
+  // applyScene）能让整份用例全绿，用户看到的却是「改完属性 Ctrl+Z 撤不回来」。
+  // 任务卡的「一律经过 applyScene」是条不变式，不变式要有红线。
+  it("routes an object patch through the history too", () => {
+    const id = usePrevizStore.getState().addObject("camera")!;
+    const past = usePrevizStore.getState().past.length;
+
+    usePrevizStore.getState().updateObject(id, { focalMm: 85 });
+    expect(usePrevizStore.getState().past).toHaveLength(past + 1);
+
+    usePrevizStore.getState().undo();
+
+    const restored = usePrevizStore.getState().scene.objects[0];
+    expect(restored.kind === "camera" && restored.focalMm).toBe(50);
   });
 
   it("ignores a patch for an unknown id", () => {
@@ -351,6 +372,21 @@ describe("previz store object editing", () => {
     expect(usePrevizStore.getState().activeCameraId).toBeNull();
   });
 
+  // 退出监看走的就是 `setActiveCamera(null)`，和 `selectObject(null)` 一样得先钉住
+  // 「传 null 真的清空」。上面那条只覆盖「机位被删掉时顺带清」，下面那条只覆盖
+  // 「整场重载时清」，都不经过这个 setter 的 null 入参。缺了这条，将来给
+  // setActiveCamera 补一条「只收场景里真实存在的机位 id」守卫时会把 null 一起挡掉——
+  // 表现是退出监看的按钮点了没反应、视口永远卡在机位视角，而用例全绿。
+  it("switches monitoring off when the active camera is set to null", () => {
+    const id = usePrevizStore.getState().addObject("camera")!;
+    usePrevizStore.getState().setActiveCamera(id);
+    expect(usePrevizStore.getState().activeCameraId).toBe(id);
+
+    usePrevizStore.getState().setActiveCamera(null);
+
+    expect(usePrevizStore.getState().activeCameraId).toBeNull();
+  });
+
   // 删掉的不是当前选中项 / 不是监看机位时，两者都不许被顺手清掉。
   it("leaves the selection and active camera alone when another object is removed", () => {
     const camera = usePrevizStore.getState().addObject("camera")!;
@@ -401,6 +437,26 @@ describe("previz store object editing", () => {
     expect(state.selectedObjectId).toBe(kept);
   });
 
+  // 撤销一次「新建」之后，选中 id 仍指着一个已经不在场景里的对象。这是「undo 不碰
+  // 会话态」的直接后果，而且是想要的：redo 把同一个 id 放回来时，选中态自己就接回去了
+  // （下面半条断言就是在钉这个来回）。代价是消费者不能假设 `selectedObjectId` 一定能在
+  // `scene.objects` 里找得到——属性面板那边写 `objects.find(…)!` 会在这一步拿到 undefined。
+  // 把这条契约钉在这里，免得日后有人把它当 bug「修」成「undo 顺手清空选中」，那等于
+  // 让撤销去动会话态，正是规范禁止的。
+  it("leaves the selection pointing at an object undo has taken away", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+
+    usePrevizStore.getState().undo();
+
+    const state = usePrevizStore.getState();
+    expect(state.scene.objects).toHaveLength(0);
+    expect(state.selectedObjectId).toBe(id);
+
+    usePrevizStore.getState().redo();
+    expect(usePrevizStore.getState().scene.objects[0]?.id).toBe(id);
+    expect(usePrevizStore.getState().selectedObjectId).toBe(id);
+  });
+
   it("routes settings changes through the history too", () => {
     usePrevizStore.getState().setDisplayMode("clay");
     usePrevizStore.getState().setOutputAspect("9:16");
@@ -435,13 +491,13 @@ describe("previz store object editing", () => {
     // 工厂本身仍要被用到，而且要拿到**当前场景的对象列表**：编号是照着已有同类对象算
     // 出来的，实现里把 `scene.objects` 换成 `[]` 的话第二个物件也会叫「物件 1」。
     // 拿 `createPrevizObject("prop", [])` 的名字来比就抓不到这条——两边同源，恒等成立。
-    expect(created?.name).toBe(`${PREVIZ_OBJECT_BASE_NAME.prop} 1`);
+    expect(created?.name).toBe("物件 1");
 
     const second = usePrevizStore
       .getState()
       .addObject("prop", { assetUrl: "/static/y.glb", assetFormat: "glb" })!;
     const next = usePrevizStore.getState().scene.objects.find((object) => object.id === second);
-    expect(next?.name).toBe(`${PREVIZ_OBJECT_BASE_NAME.prop} 2`);
+    expect(next?.name).toBe("物件 2");
   });
 
   // overrides 按 kind 收窄，写错 kind 的字段要在编译期就红——store 的 addObject 是
