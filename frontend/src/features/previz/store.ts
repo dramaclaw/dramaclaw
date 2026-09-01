@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { create } from 'zustand';
 
+import { clampToRange } from './domain/camera';
 import { canAddObject } from './domain/limits';
 import {
   createPrevizObject,
@@ -9,8 +10,10 @@ import {
   type PrevizObjectOverrides,
   type PrevizObjectPatch,
 } from './domain/objects';
+import { PREVIZ_PATH_SPACING_M } from './domain/pathDraw';
 import {
   createDefaultScene,
+  PREVIZ_FPS,
   parseObject,
   type DisplayMode,
   type OutputAspect,
@@ -21,6 +24,9 @@ import {
 
 /** 场景是纯数值 JSON，整份快照很便宜；50 步够覆盖一次连续编辑。 */
 export const PREVIZ_HISTORY_LIMIT = 50;
+
+/** 播放倍速下拉框的档位。照抄参照实现的 0.25×–2×。 */
+export const PREVIZ_PLAYBACK_RATES = [0.25, 0.5, 1, 1.5, 2] as const;
 
 /**
  * 把一条刚编辑过的记录重新过一遍读盘时的逐字段校验：越界值夹回区间，非有限值回落
@@ -54,6 +60,28 @@ interface PrevizStoreState {
    */
   selectedObjectId: string | null;
   activeCameraId: string | null;
+  /**
+   * 时间轴会话态。和 `selectedObjectId` 同一类：刻意不进 `PrevizScene`、不进 undo 栈。
+   * 播放头进了场景，每拖一格就是一次 `dirty`，关窗时会把一次纯浏览写回 `node.data`；
+   * 进了 undo 栈则更糟——撤销一次删除会顺带把播放头拽回删除前的位置。
+   */
+  timelineFrame: number;
+  timelinePlaying: boolean;
+  timelineRate: number;
+  selectedClipId: string | null;
+  selectedPointId: string | null;
+  /** 绘制轨迹时的轨迹点间距，单位米。 */
+  pathSpacingM: number;
+  setTimelineFrame: (frame: number) => void;
+  setTimelinePlaying: (playing: boolean) => void;
+  /** 停止：回到第 0 帧。参照实现的「停止」按钮就是这个语义，不是暂停。 */
+  stopPlayback: () => void;
+  /** 推进播放头；走到末尾就停住，不循环。入参是这一帧的真实耗时，单位秒。 */
+  tickPlayback: (deltaSeconds: number) => void;
+  setTimelineRate: (rate: number) => void;
+  selectClip: (id: string | null) => void;
+  selectPathPoint: (id: string | null) => void;
+  setPathSpacing: (metres: number) => void;
   /** 打开编辑器时灌入初始场景，同时清空历史——上一次会话的 undo 不该跨节点串。 */
   loadScene: (scene: PrevizScene) => void;
   /** 场景改动的唯一入口：压历史、清 redo、置脏。 */
@@ -81,6 +109,12 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   future: [],
   selectedObjectId: null,
   activeCameraId: null,
+  timelineFrame: 0,
+  timelinePlaying: false,
+  timelineRate: 1,
+  selectedClipId: null,
+  selectedPointId: null,
+  pathSpacingM: PREVIZ_PATH_SPACING_M.default,
 
   loadScene: (scene) =>
     set({
@@ -90,6 +124,10 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       future: [],
       selectedObjectId: null,
       activeCameraId: null,
+      timelineFrame: 0,
+      timelinePlaying: false,
+      selectedClipId: null,
+      selectedPointId: null,
     }),
 
   applyScene: (next) => {
@@ -123,7 +161,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
 
   markSaved: () => set({ dirty: false }),
 
-  selectObject: (id) => set({ selectedObjectId: id }),
+  selectObject: (id) => set({ selectedObjectId: id, selectedClipId: null, selectedPointId: null }),
 
   setActiveCamera: (id) => set({ activeCameraId: id }),
 
@@ -185,4 +223,42 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     const { scene, applyScene } = get();
     applyScene({ ...scene, settings: { ...scene.settings, outputAspect: aspect } });
   },
+
+  setTimelineFrame: (frame) => {
+    const { scene } = get();
+    // 四舍五入到整帧：小数帧在刻度尺上落在两格之间，读数也会抖。
+    const clamped = Math.min(scene.settings.durationFrames, Math.max(0, Math.round(frame)));
+    set({ timelineFrame: Number.isFinite(clamped) ? clamped : 0 });
+  },
+
+  setTimelinePlaying: (playing) => set({ timelinePlaying: playing }),
+
+  stopPlayback: () => set({ timelinePlaying: false, timelineFrame: 0 }),
+
+  tickPlayback: (deltaSeconds) => {
+    const { timelinePlaying, timelineFrame, timelineRate, scene } = get();
+    if (!timelinePlaying) return;
+    const last = scene.settings.durationFrames;
+    const next = timelineFrame + deltaSeconds * PREVIZ_FPS * timelineRate;
+    // 停在最后一帧，不回零、不循环——实测参照实现就是这样（循环默认关）。
+    if (next >= last) {
+      set({ timelineFrame: last, timelinePlaying: false });
+      return;
+    }
+    set({ timelineFrame: Math.round(next) });
+  },
+
+  setTimelineRate: (rate) => {
+    // 下拉框只给这五档，其它值一律夹到最近的一档：99 倍速一帧就跑完整条时间轴。
+    const nearest = PREVIZ_PLAYBACK_RATES.reduce((best, option) =>
+      Math.abs(option - rate) < Math.abs(best - rate) ? option : best,
+    );
+    set({ timelineRate: nearest });
+  },
+
+  selectClip: (id) => set({ selectedClipId: id, selectedPointId: null }),
+
+  selectPathPoint: (id) => set({ selectedPointId: id }),
+
+  setPathSpacing: (metres) => set({ pathSpacingM: clampToRange(metres, PREVIZ_PATH_SPACING_M) }),
 }));
