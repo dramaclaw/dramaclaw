@@ -1,6 +1,8 @@
 import pytest
 
 from novelvideo.cognee.script_parser import parse_scenes
+from novelvideo.time_of_day import normalize_time_of_day
+from novelvideo.utils.screenplay_quality import assess_screenplay_scene_headers
 from novelvideo.utils.screenplay_quality import check_screenplay_import_quality
 from novelvideo.utils.screenplay_scene_parser import parse_scene_blocks
 from novelvideo.utils.screenplay_scene_parser import is_scene_start_line
@@ -557,3 +559,134 @@ def test_parse_classical_hour_with_quarter_scene_header():
     assert scenes[0].name == "演武场外墙"
     assert scenes[0].time_of_day == "亥时三刻"
     assert scenes[0].interior is False
+
+
+# 下面这段与 frontend/src/components/ingest/NovelFormatDialog.tsx 里
+# DRAMA_FORMAT_EXAMPLE_EN 逐字相同。那是英文界面「照着抄」的模板，
+# 抄出来必须是解析器认的标准格式——否则文档就在教人写导入失败的剧本。
+DOCUMENTED_ENGLISH_FORMAT_EXAMPLE = """EPISODE 1
+
+INT. SEOUL SUBWAY STATION - NIGHT
+Characters: Ji-won, Old Woman
+
+△ Rainwater drips from the ceiling. The platform is completely empty.
+
+JI-WON: Is anyone here?
+
+OLD WOMAN: You should not have come this late.
+
+
+INT. SUBWAY CAR - NIGHT
+Characters: Ji-won, Old Woman, Boy
+
+△ The train doors close. The lights flicker above the empty seats.
+
+JI-WON: Where is this train going?
+
+OLD WOMAN: To the last station.
+
+
+EXT. SEOUL STREET - DAWN
+Characters: Ji-won
+
+△ Ji-won steps onto the deserted street as the first morning light appears.
+
+JI-WON: I made it back.
+"""
+
+
+def test_documented_english_format_example_parses_as_standard():
+    blocks = parse_scene_blocks(DOCUMENTED_ENGLISH_FORMAT_EXAMPLE)
+
+    assert [
+        (b.episode, b.location, b.time_of_day, b.interior_exterior, b.characters)
+        for b in blocks
+    ] == [
+        (1, "SEOUL SUBWAY STATION", "夜", "内", ["Ji-won", "Old Woman"]),
+        (1, "SUBWAY CAR", "夜", "内", ["Ji-won", "Old Woman", "Boy"]),
+        (1, "SEOUL STREET", "清晨", "外", ["Ji-won"]),
+    ]
+    # 时间是原文写出来的，不是兜底推断的；推断出来的时间不会继承给场景变体。
+    assert not any(b.time_inferred for b in blocks)
+
+    assessment = assess_screenplay_scene_headers(DOCUMENTED_ENGLISH_FORMAT_EXAMPLE)
+    assert assessment.status == "standard"
+    assert assessment.standard_headers == 3
+
+    report = check_screenplay_import_quality(DOCUMENTED_ENGLISH_FORMAT_EXAMPLE)
+    assert report.blocking_issues == []
+    assert report.warnings == []
+
+
+def test_documented_english_time_line_keeps_clock_out_of_the_location():
+    """文档承诺：钟点写成独立的 `Time:` 行，地点不受污染，时间归一化成「夜晚」。"""
+    text = (
+        "EPISODE 1\n"
+        "INT. SEOUL SUBWAY STATION - NIGHT\n"
+        "Time: 11:47 PM\n"
+        "Characters: Ji-won, Old Woman\n"
+        "△ Rainwater drips from the ceiling.\n"
+        "JI-WON: Is anyone here?\n"
+    )
+
+    (block,) = parse_scene_blocks(text)
+
+    assert block.location == "SEOUL SUBWAY STATION"
+    assert block.time_of_day == "11:47 PM"
+    assert normalize_time_of_day(block.time_of_day) == "夜晚"
+    assert assess_screenplay_scene_headers(text).status == "standard"
+
+
+def test_documented_english_repairable_format_is_warned_not_blocked():
+    """文档把 `SCENE 1 - TITLE` 标成「可修复」：能定边界，但缺时间，只警告不阻断。"""
+    text = (
+        "EPISODE 1\n"
+        "\n"
+        "SCENE 1 - SEOUL SUBWAY STATION\n"
+        "Characters: Ji-won, Old Woman\n"
+        "△ Rainwater drips from the ceiling.\n"
+        "JI-WON: Is anyone here?\n"
+    )
+
+    assessment = assess_screenplay_scene_headers(text)
+    assert assessment.status == "repairable"
+    assert assessment.detected_headers == 1
+    assert assessment.standard_headers == 0
+
+    report = check_screenplay_import_quality(text)
+    assert report.blocking_issues == []
+    assert "scene_headers_missing_time" in {w.code for w in report.warnings}
+
+
+@pytest.mark.parametrize("bad_time", ["MIDNIGHT", "LATE NIGHT", "11:47 PM"])
+def test_undocumented_english_time_tokens_lose_the_scene_boundary(bad_time):
+    """文档只列 7 个时间词，是因为写别的会整行识别不出来，不只是丢时间。
+
+    如果解析器以后支持了更多时间词，这条会转红——那时要同步放宽
+    `ingest.novelFormat.ruleTimeTokens` 里给用户的清单，而不是删掉这条。
+    """
+    text = (
+        "EPISODE 1\n"
+        f"INT. SEOUL SUBWAY STATION - {bad_time}\n"
+        "Characters: Ji-won\n"
+        "△ Rainwater drips from the ceiling.\n"
+        "JI-WON: Is anyone here?\n"
+    )
+
+    assert assess_screenplay_scene_headers(text).status == "missing"
+
+
+def test_clock_time_inside_the_location_name_pollutes_the_location():
+    """文档禁止把钟点写进地点名：预检不会报错，但地点会带着钟点一路传下去。"""
+    text = (
+        "EPISODE 1\n"
+        "INT. SEOUL SUBWAY STATION 11:47 PM - NIGHT\n"
+        "Characters: Ji-won\n"
+        "△ Rainwater drips from the ceiling.\n"
+        "JI-WON: Is anyone here?\n"
+    )
+
+    (block,) = parse_scene_blocks(text)
+
+    assert block.location == "SEOUL SUBWAY STATION 11:47 PM"
+    assert assess_screenplay_scene_headers(text).status == "standard"
