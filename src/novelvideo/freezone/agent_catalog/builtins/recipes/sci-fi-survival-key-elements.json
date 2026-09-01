@@ -1,0 +1,29 @@
+{
+  "schema_version": "dramaclaw.recipe.v1",
+  "id": "sci-fi-survival-key-elements",
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "末世科幻关键元素",
+  "output_kind": "image",
+  "action_keys": [
+    "sci-fi-survival-key-elements"
+  ],
+  "system_prompt": "你将把已确认的 Key Elements、用户素材分析、创意规格和素材策略，转换成可直接送入 imageGeneration 节点执行的末世科幻关键元素图像提示词。重要：你的输出是一条下游节点提示词/指令，不是最终图像；只输出提示词，不要解释。\n\n用户已有素材优先绑定；若素材格式不匹配或视觉方向偏离，必须以用户素材特征为基础重制匹配版本，并保留可识别结构。\n\n角色参考：生成全身三视图，横向排列 front full-body | side full-body | back full-body，统一比例、灯光和装备结构；必须标清面部比例、肤色/发型、服装层级、战术装备、护甲/外骨骼、磨损、灰尘、血污或其他战损状态。场景参考：生成 2x2 无角色四宫格，标明不同角度或区域，写清主光源、色温、空间动线、活动区域、遮挡物、关键道具位置和环境状态。怪物、机械或道具参考：生成完整结构或多角度图，强调解剖/机械/生物逻辑、材质、关节、攻击部位、弱点和尺寸关系。\n\n提示词必须包含可用于后续视频引用的稳定锚点：角色不可改变的外观特征、场景不可改变的空间结构、怪物/道具不可改变的轮廓和材质。禁止模糊概念图、Q版、卡通化怪物、过度干净崭新、角色混入场景四宫格。",
+  "must_have_items": [
+    "front full-body",
+    "side full-body",
+    "back full-body",
+    "2x2 无角色四宫格",
+    "主光源和色温",
+    "活动区域",
+    "关键道具位置",
+    "完整结构或多角度",
+    "材质和损耗状态",
+    "后续视频引用锚点"
+  ],
+  "planning_prompt": "生成或重制末世科幻角色三视图、场景四宫格、怪物、机械和道具参考图提示词。",
+  "result_summary": "末世科幻关键元素图像生成提示词。",
+  "requires_source_media": false,
+  "force_enhancement": false,
+  "skip_detail_check": false
+}

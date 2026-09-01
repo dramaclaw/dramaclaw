@@ -63,7 +63,10 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         "Acceptance-script scratch env passed inside test commands.",
     ),
-    (re.compile(r"^(?:ST_API_COVERAGE_FILE|PYTEST_ADDOPTS|PYTEST_CURRENT_TEST)$"), "Pytest runner env."),
+    (
+        re.compile(r"^(?:PYTHONPATH|ST_API_COVERAGE_FILE|PYTEST_ADDOPTS|PYTEST_CURRENT_TEST)$"),
+        "Test runner or child-process bootstrap env, not operator template config.",
+    ),
     (re.compile(r"^(?:LANG|LC_ALL)$"), "Process locale env, not app configuration."),
     (
         re.compile(r"^(?:BASH_SOURCE|ROOT_DIR)$"),
@@ -103,12 +106,14 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(
-            r"^(?:CHARACTER_IMAGE|DIRECTOR_CONTROL|FREEZONE_IMAGE_REVERSE_PROMPT|GLOBAL_VIDEO|"
+            r"^(?:CHARACTER_IMAGE|DIRECTOR_CONTROL|FREEZONE_IMAGE_REVERSE_PROMPT|"
+            r"FREEZONE_RECIPE_COMPILER_TIMEOUT_SECONDS|GLOBAL_VIDEO|"
             r"KEYFRAME_PROMPT|SCENE_ASSET|SCENE_360|SEEDANCE|SEEDREAM|SEEDEDIT|VIDEO_PROMPT|"
             r"TTS|MIGRATE_LEGACY|ML_SHARP|KEEP_RAW|DOWNLOAD_VIA_OSS|STATIC_VIA_OSS|"
             r"DISABLE_RENDER_PLAN|GRID_MODE|JR_ERROR_LOG|VIDEO_RESOLUTION|"
             r"SCENE_SPATIAL_CONTRACT|BLOCK_WORLD_|"
-            r"OSS_|SUPERTALE_|DRAMACLAW_|HERMES_|CLAUDE_|CODEX_|SUPERPOWER_).*"
+            r"OSS_|SUPERTALE_|DRAMACLAW_|HERMES_|BRAINCLAW_|FREEZONE_USER|"
+            r"CLAUDE_|CODEX_|SUPERPOWER_).*"
         ),
         "Legacy/internal feature flag or integration env outside the current public template contract.",
     ),
@@ -126,7 +131,8 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
             r"NOVELVIDEO_VERBOSE|NOVELVIDEO_ENABLE_LOGFIRE|"
             r"NOVELVIDEO_LOGFIRE_SERVICE|ST_CANVAS_LOCK_TIMING|ST_HERMES_.*|"
             r"ST_LITESTREAM_ENABLED|ST_LOCAL_USERNAME|"
-            r"ST_PROJECT_TASK_TIMEOUT_S|ST_SPLAT_TRANSFORM_BIN)$"
+            r"ST_PROJECT_TASK_TIMEOUT_S|ST_SPLAT_TRANSFORM_BIN|"
+            r"ST_WORKFLOW_RUN_MAX_TERMINAL_RECORDS|ST_WORKFLOW_RUN_RETENTION_DAYS)$"
         ),
         "Local runtime/dev override with code default; not required in committed templates.",
     ),

@@ -291,7 +291,7 @@ class VideoPromptBuilder:
 
         dialogue_hint = ""
         if audio_type == "dialogue" and dialogue_line:
-            dialogue_hint = f'\n⚠️ This Beat is DIALOGUE — speaking is the primary motion. Describe lips moving, gestures while talking. Dialogue text is appended by the system; only describe physical action.\n'
+            dialogue_hint = '\n⚠️ This Beat is DIALOGUE — speaking is the primary motion. Describe lips moving, gestures while talking. Dialogue text is appended by the system; only describe physical action.\n'
 
         if has_image and color_map_text:
             return f"""Generate I2V motion prompt in Chinese (target: {word_target}, 4-6 句):

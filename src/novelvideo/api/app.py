@@ -51,6 +51,24 @@ _RESOURCE_REQUEST_TOTAL = 0
 _RESOURCE_REQUEST_LOCK = threading.Lock()
 
 
+async def _resume_director_auto_best_effort(application: FastAPI) -> None:
+    """Keep the additive Auto coordinator outside the core API startup boundary."""
+
+    try:
+        from novelvideo.chat.director_auto import (
+            coordinator as director_auto_coordinator,
+        )
+
+        await director_auto_coordinator.resume()
+    except Exception as exc:
+        application.state.director_auto_available = False
+        application.state.director_auto_startup_error = str(exc)
+        logger.exception("Director Auto recovery failed (non-fatal)")
+    else:
+        application.state.director_auto_available = True
+        application.state.director_auto_startup_error = ""
+
+
 def _request_body_limit(request: Request) -> int:
     content_type = request.headers.get("content-type", "").lower()
     if (
@@ -398,9 +416,12 @@ def create_app() -> FastAPI:
                         name="official-media-catalog-updater",
                     )
                 )
+
         except Exception:
             logger.exception("API startup failed while connecting to control-plane")
             raise
+
+        await _resume_director_auto_best_effort(application)
 
     @application.on_event("shutdown")
     async def shutdown() -> None:
@@ -411,6 +432,10 @@ def create_app() -> FastAPI:
             updater.cancel()
             with suppress(asyncio.CancelledError):
                 await updater
+
+        from novelvideo.chat.director_auto import coordinator as director_auto_coordinator
+
+        await director_auto_coordinator.shutdown()
 
         try:
             lifecycle = get_port("lifecycle")

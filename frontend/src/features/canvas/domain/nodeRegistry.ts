@@ -830,7 +830,13 @@ export function getDownstreamSpawnTypes(
   // 建出来了、边被建边收口拒掉，画布上留下一个孤立节点（如脚本 → 音频）。
   const connectable = base.filter((type) => isManualConnectionAllowed(originType, type));
   const allowed = DOWNSTREAM_SPAWN_WHITELIST[originType];
-  return allowed ? connectable.filter((type) => allowed.includes(type)) : connectable;
+  if (allowed) {
+    return connectable.filter((type) => allowed.includes(type));
+  }
+  if (originType === CANVAS_NODE_TYPES.textAnnotation || originType === CANVAS_NODE_TYPES.script) {
+    return connectable.filter((type) => type !== CANVAS_NODE_TYPES.videoCompose);
+  }
+  return connectable;
 }
 
 // 「从左侧 target handle 出发能创建哪些上游节点」的产品白名单 —— 上面那张表的

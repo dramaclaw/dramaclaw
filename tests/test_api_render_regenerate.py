@@ -183,6 +183,8 @@ def test_render_selected_regen_returns_scope_and_passes_render_settings(
             "mode_key": "1x1_2-3",
             "image_generation_selection": "newapi_nanobanana2",
             "sketch_aspect_padding": True,
+            "batch_id": "first-frame-batch-1",
+            "batch_size": 2,
         },
     )
 
@@ -195,6 +197,8 @@ def test_render_selected_regen_returns_scope_and_passes_render_settings(
     assert calls[0]["payload"]["mode_key"] == "1x1_2-3"
     assert calls[0]["payload"]["config"]["image_generation_selection"] == "newapi_nanobanana2"
     assert calls[0]["payload"]["config"]["sketch_aspect_padding"] is True
+    assert calls[0]["payload"]["batch_id"] == "first-frame-batch-1"
+    assert calls[0]["payload"]["batch_size"] == 2
     assert "force_half_k" not in calls[0]["payload"]["config"]
     billing = calls[0]["payload"]["billing"]
     assert billing["image_selection"] == "newapi_nanobanana2"

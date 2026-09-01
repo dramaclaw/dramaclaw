@@ -274,6 +274,7 @@ def test_c1_05b_platform_passes_the_real_gate(client, monkeypatch) -> None:
     from novelvideo.director_world import staging_prop_ai
 
     _use_authz(monkeypatch, _StubAuthz(kind="platform"))
+    monkeypatch.setenv("ST_EDITION", "ee")
     monkeypatch.setenv("MODEL_API_KEY", "platform-key")
     monkeypatch.setenv("NEWAPI_API_KEY", "platform-key")
 

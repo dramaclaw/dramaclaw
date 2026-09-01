@@ -8,6 +8,7 @@ import {
   createBlankFreezoneCanvas,
   getFreezoneCanvas,
   getProjectionStatuses,
+  listFreezoneWorkflowRuns,
   putFreezoneCanvas,
 } from "@/api/canvas";
 
@@ -154,5 +155,43 @@ describe("canvas projection api", () => {
         }),
       },
     ]);
+  });
+
+  it("coalesces concurrent workflow-run polling for the same canvas", async () => {
+    let resolveRequest: (value: { runs: [] }) => void = () => {
+      throw new Error("workflow-run request resolver was not initialized");
+    };
+    vi.mocked(apiCall).mockImplementationOnce(
+      () =>
+        new Promise<{ runs: [] }>((resolve) => {
+          resolveRequest = resolve;
+        }),
+    );
+
+    const first = listFreezoneWorkflowRuns("project-a", "canvas-a");
+    const second = listFreezoneWorkflowRuns("project-a", "canvas-a");
+
+    expect(first).toBe(second);
+    expect(apiCall).toHaveBeenCalledTimes(1);
+
+    resolveRequest({ runs: [] });
+    await first;
+
+    vi.mocked(apiCall).mockResolvedValueOnce({ runs: [] });
+    await listFreezoneWorkflowRuns("project-a", "canvas-a");
+    expect(apiCall).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the workflow-run request lock after a failed request", async () => {
+    vi.mocked(apiCall)
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce({ runs: [] });
+
+    await expect(
+      listFreezoneWorkflowRuns("project-b", "canvas-b"),
+    ).rejects.toThrow("timeout");
+    await listFreezoneWorkflowRuns("project-b", "canvas-b");
+
+    expect(apiCall).toHaveBeenCalledTimes(2);
   });
 });

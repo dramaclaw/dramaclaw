@@ -937,7 +937,7 @@ function PurgeDialog({
   name: string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
 }) {
   const { t } = useTranslation();
   const [input, setInput] = useState("");
@@ -979,7 +979,7 @@ function PurgeDialog({
             disabled={!canConfirm}
             className="min-w-24"
             onClick={() => {
-              onConfirm();
+              void onConfirm();
               handleOpenChange(false);
             }}
           >
@@ -1265,7 +1265,7 @@ function ProjectDashboard() {
     }
   };
 
-  const confirmPending = () => {
+  const confirmPending = async () => {
     if (!pending) return;
     const { kind, project, name } = pending;
     if (kind === "archive") {
@@ -1283,8 +1283,12 @@ function ProjectDashboard() {
         "project.toasts.deleted",
       );
     } else if (kind === "purge") {
-      purge.mutate(project);
-      toast.success(t("project.toasts.purged", { name }));
+      try {
+        await purge.mutateAsync(project);
+        toast.success(t("project.toasts.purged", { name }));
+      } catch {
+        toast.error(t("project.toasts.purgeFailed", { name }));
+      }
     }
     setPending(null);
   };

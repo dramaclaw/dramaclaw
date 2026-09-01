@@ -8,15 +8,10 @@ import { useTranslation } from 'react-i18next';
 import { type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
-  fetchFreezoneJobResult,
-  submitFreezoneVideoUpscale,
   type FreezoneVideoUpscaleDenoise,
   type FreezoneVideoUpscaleResolution,
 } from '@/api/ops';
-import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
-import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
-import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
-import { readUrl } from '@/lib/url-params';
+import { submitVideoUpscale } from '@/features/canvas/application/videoUpscale';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
 import { CANVAS_NODE_OPS_PANEL_CLASS } from './nodeFrameStyles';
 import { ZoomScaledToolbar } from './ZoomScaledToolbar';
@@ -95,69 +90,20 @@ export const VideoUpscaleEditorOverlay = memo(
       setSelectedNode(null);
     }, [deleteNode, node.id, setSelectedNode]);
 
+    // 提交编排移到 application/videoUpscale（故事板详情工具条共用），语义零变化。
     const handleSubmit = useCallback(async () => {
       if (isSubmitting) return;
       if (!sourceUrl) {
         console.error('[video-upscale] missing upscaleSourceUrl on node.data — cannot submit');
         return;
       }
-      const project = readUrl().project;
-      if (!project) {
-        console.error('[video-upscale] no project in URL — cannot submit');
-        return;
-      }
-      const canvasId = readUrl().canvas ?? 'default';
-
       setIsSubmitting(true);
-      updateNodeData(node.id, {
-        isGenerating: true,
-        generationStartedAt: Date.now(),
-        generationError: null,
-      });
-
       try {
-        const ref = await submitFreezoneVideoUpscale(project, {
-          sourceUrl: sourceUrl.split('?')[0],
-          resolution,
-          frameInterpolation: 'none',
-          denoiseStrength: denoise,
-          canvasId,
-          nodeId: node.id,
-        });
-        updateNodeData(node.id, generationTaskDescriptor(ref));
-        const completed = await awaitTaskCompletion(ref.task_key, project, {
-          taskType: ref.task_type,
-        });
-        const directUrl = completed.result?.['output_url'] as string | undefined;
-        let url = directUrl;
-        if (!url) {
-          const fallback = await fetchFreezoneJobResult(project, ref.task_type, ref.job_id);
-          url = fallback.url;
-        }
-        updateNodeData(node.id, {
-          videoUrl: url,
-          isGenerating: false,
-          generationStartedAt: null,
-          generationError: null,
-        });
-      } catch (err) {
-        // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接。
-        // 写错误横幅会把一个还活着的任务标成失败，并清掉句柄。
-        if (isTaskPollTimeoutError(err)) {
-          notifyTaskStillRunning(t);
-          return;
-        }
-        const message = err instanceof Error ? err.message : String(err);
-        console.error('[video-upscale] generation failed', err);
-        updateNodeData(node.id, {
-          isGenerating: false,
-          generationStartedAt: null,
-          generationError: message,
-        });
+        await submitVideoUpscale(node.id, { sourceUrl, resolution, denoise });
       } finally {
         setIsSubmitting(false);
       }
-    }, [denoise, isSubmitting, node.id, resolution, sourceUrl, t, updateNodeData]);
+    }, [denoise, isSubmitting, node.id, resolution, sourceUrl]);
 
     return (
       <ReactFlowNodeToolbar

@@ -70,7 +70,7 @@ async def test_vision_gateway_uses_pydantic_agent_and_logical_model(
 ) -> None:
     captured: dict[str, object] = {}
 
-    def fake_get_model(model_env, default_model, **kwargs):
+    def fake_get_model(model_env, default_model=None, **kwargs):
         captured.update(
             {
                 "model_env": model_env,
@@ -81,6 +81,11 @@ async def test_vision_gateway_uses_pydantic_agent_and_logical_model(
         return TestModel(custom_output_text="视觉解析结果")
 
     monkeypatch.setattr(config, "get_newapi_text_pydantic_model", fake_get_model)
+    monkeypatch.setattr(
+        config,
+        "get_effective_newapi_text_model_name",
+        lambda *_args, **_kwargs: "custom-vision-model",
+    )
     monkeypatch.setenv("FREEZONE_VISION_MODEL", "custom-vision-model")
 
     model, output = await call_freezone_vision_model(

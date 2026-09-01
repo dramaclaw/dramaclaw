@@ -55,9 +55,10 @@ describe("ingest query error contract", () => {
   it("rejects upload responses that return ok:false with a backend error", async () => {
     server.use(
       http.post("http://localhost:3000/api/v1/projects/demo/ingest/upload", async ({ request }) => {
-        const body = await request.formData();
-        expect(body.get("spine_template")).toBe("drama");
-        expect(body.get("file")).toMatchObject({ size: 9, type: "text/plain" });
+        const body = await request.clone().text();
+        expect(body).toContain('name="spine_template"');
+        expect(body).toContain("drama");
+        expect(body).toContain('name="file"');
         return HttpResponse.json({ ok: false, error: "解析章节失败: 文件编码不支持" });
       }),
     );

@@ -1,0 +1,50 @@
+SuperTale CE NOTICE
+
+NOTICE-branding
+SuperTale, DramaClaw, DramaClawAPI, and related product names, logos,
+service names, and visual brand assets are brand identifiers of their
+respective owners. The Elastic License 2.0 grant for this repository does
+not grant trademark rights or permission to remove product attribution,
+branding notices, or other reserved-rights notices from distributed copies.
+
+Partner and sponsor logos shown in the project README (including Claymore AI
+Lab, 新飞翔科技 / Neo Flying Technology, 灵山 / L.Shan AI, and 钦新控股 / K-NOVA
+Holding Group) are trademarks of their respective owners, displayed with
+permission for attribution purposes only. No trademark rights in those marks
+are granted by the Elastic License 2.0.
+
+Project License
+This repository is licensed under the Elastic License 2.0. See LICENSE.
+
+Third-Party Notices
+This product depends on third-party software. The machine-readable
+dependency evidence is in docs/compliance/python-dependency-licenses.csv,
+docs/compliance/npm-dependency-licenses.csv, and docs/compliance/system-deps.csv.
+
+Selected runtime dependencies requiring attribution:
+- OpenAI Codex (modified runtime based on commit
+  025a88adbd7ae4d448fc938b28d0446eb1753317): Apache-2.0. Copyright 2025
+  OpenAI. Includes code derived from Ratatui under MIT; Copyright 2016-2022
+  Florian Dehau and 2023-2025 The Ratatui Developers.
+- certifi 2026.6.17: MPL-2.0
+- cognee 1.0.5: Apache-2.0
+- da2 0.1.0: Apache-2.0
+- edge-tts 7.2.8: LGPL-3.0-only
+- fastapi 0.138.0: MIT
+- openai 2.43.0: Apache-2.0
+- pillow 11.3.0: MIT-CMU
+- pydantic 2.13.4: MIT
+- sharp 0.1: LicenseRef-Apple-Sample-Code AND LicenseRef-Apple-ML-Research-Model
+- typer 0.26.7: MIT
+- uvicorn 0.49.0: BSD-3-Clause
+- @playcanvas/splat-transform ^2.0.3: MIT; optional world asset conversion tool
+- ffmpeg/ffprobe: external system executables; license depends on the user's system build
+
+Restricted Optional Components
+The optional world feature can use apple/ml-sharp and its model assets. The source
+package includes Apple software and model license files in upstream distributions.
+CE source releases and Docker images must not bundle Apple model weights.
+
+Generated Evidence
+Regenerate these files with:
+  uv run python scripts/compliance/generate_p0b_artifacts.py

@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import time
 import tempfile
 import threading
 from dataclasses import dataclass
@@ -29,13 +30,19 @@ from novelvideo.official_media_catalog_schema import (
     catalog_version as _catalog_version,
     validate_official_media_catalog as _validate_official_media_catalog,
 )
-from novelvideo.shared.runtime_env import is_ce_effective
+from novelvideo.shared.runtime_env import uses_local_ce_runtime
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 MODE_OFFICIAL = "official"
 MODE_CUSTOM = "custom"
 MODE_HYBRID = "hybrid"
 VALID_MODES = {MODE_OFFICIAL, MODE_CUSTOM, MODE_HYBRID}
+CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW = "relayclaw_brainclaw"
+CUSTOM_LLM_MODE_ADVANCED = "advanced"
+VALID_CUSTOM_LLM_MODES = {
+    CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
+    CUSTOM_LLM_MODE_ADVANCED,
+}
 PLACEHOLDER_API_KEYS = {
     "your_newapi_token",
     "your_model_api_key",
@@ -59,6 +66,16 @@ class EffectiveNewApiConfig:
     source: str
     base_url: str
     api_key: str
+
+
+@dataclass(frozen=True)
+class EffectiveLlmConfig:
+    mode: str
+    source: str
+    base_url: str
+    api_key: str
+    model: str
+    is_brainclaw: bool
 
 
 @dataclass(frozen=True)
@@ -113,6 +130,11 @@ def normalize_gateway_mode(value: str | None) -> str:
     return mode if mode in VALID_MODES else MODE_OFFICIAL
 
 
+def normalize_custom_llm_mode(value: str | None) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode in VALID_CUSTOM_LLM_MODES else CUSTOM_LLM_MODE_ADVANCED
+
+
 def normalize_relay_base_url(value: str | None) -> str:
     base = str(value or "").strip().rstrip("/")
     if not base:
@@ -135,18 +157,40 @@ def _settings_db_path() -> Path:
 def _connect() -> sqlite3.Connection:
     path = _settings_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), timeout=10, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    configure_sqlite_connection(conn)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS runtime_settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """)
-    conn.commit()
-    return conn
+    for attempt in range(3):
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(str(path), timeout=10, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            configure_sqlite_connection(conn)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS runtime_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """)
+            conn.commit()
+            return conn
+        except sqlite3.OperationalError as exc:
+            if conn is not None:
+                conn.close()
+            retryable = any(
+                marker in str(exc).lower()
+                for marker in (
+                    "disk i/o error",
+                    "database is locked",
+                    "database is busy",
+                )
+            )
+            if not retryable or attempt == 2:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+        except Exception:
+            if conn is not None:
+                conn.close()
+            raise
+    raise RuntimeError("failed to open model gateway settings database")
 
 
 def _read_all() -> dict[str, str]:
@@ -160,7 +204,7 @@ def _read_all() -> dict[str, str]:
 
 def _uses_ce_gateway_settings() -> bool:
     """Return whether this process owns the CE-local gateway settings database."""
-    return is_ce_effective()
+    return uses_local_ce_runtime()
 
 
 def _write_many(values: dict[str, str]) -> None:
@@ -189,6 +233,35 @@ def _write_many(values: dict[str, str]) -> None:
 
 def set_model_gateway_mode(mode: str) -> None:
     _write_many({"model_gateway_mode": normalize_gateway_mode(mode)})
+
+
+def set_custom_llm_mode(mode: str) -> None:
+    normalized = normalize_custom_llm_mode(mode)
+    _write_many(
+        {
+            "custom_llm_mode": normalized,
+            "model_gateway_mode": MODE_CUSTOM,
+        }
+    )
+
+
+def save_relayclaw_brainclaw_key(
+    *,
+    api_key: str = "",
+    base_url: str = "",
+    activate: bool = True,
+) -> None:
+    """Persist the BrainClaw LLM endpoint without changing official credentials."""
+    values = {"custom_llm_mode": CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW}
+    clean_api_key = str(api_key or "").strip()
+    clean_base_url = normalize_relay_base_url(base_url)
+    if clean_api_key:
+        values["brainclaw_newapi_api_key"] = clean_api_key
+    if clean_base_url:
+        values["brainclaw_newapi_base_url"] = clean_base_url
+    if activate:
+        values["model_gateway_mode"] = MODE_CUSTOM
+    _write_many(values)
 
 
 def save_official_newapi_key(
@@ -940,6 +1013,8 @@ def save_media_relay_config(
 def get_model_gateway_settings() -> dict[str, str]:
     data = _read_all() if _uses_ce_gateway_settings() else {}
     data.setdefault("model_gateway_mode", MODE_OFFICIAL)
+    if _uses_ce_gateway_settings():
+        data.setdefault("custom_llm_mode", CUSTOM_LLM_MODE_ADVANCED)
     return data
 
 
@@ -1001,6 +1076,86 @@ def get_ce_newapi_config_for_mode(mode: str) -> EffectiveNewApiConfig:
         source="hybrid" if mode == MODE_HYBRID else "official",
         base_url=normalize_relay_base_url(OFFICIAL_NEWAPI_BASE_URL),
         api_key=db_official_api_key,
+    )
+
+
+def _is_official_relay_url(base_url: str) -> bool:
+    """Whether a base URL is the official RelayClaw endpoint.
+
+    Compared after normalisation so a trailing slash or a missing /v1 does not
+    decide whether a credential may travel.
+    """
+    return normalize_relay_base_url(base_url or "") == normalize_relay_base_url(
+        OFFICIAL_NEWAPI_BASE_URL
+    )
+
+
+def get_effective_llm_config() -> EffectiveLlmConfig:
+    """Resolve LLM independently from media and embedding gateways."""
+    if not _uses_ce_gateway_settings():
+        base_url = normalize_relay_base_url(
+            os.environ.get("NEWAPI_BASE_URL", "") or OFFICIAL_NEWAPI_BASE_URL
+        )
+        api_key = normalize_api_key(os.environ.get("NEWAPI_API_KEY", ""))
+        is_brainclaw = base_url == normalize_relay_base_url(OFFICIAL_NEWAPI_BASE_URL)
+        return EffectiveLlmConfig(
+            mode=MODE_OFFICIAL if is_brainclaw else MODE_CUSTOM,
+            source="environment",
+            base_url=base_url,
+            api_key=api_key,
+            model="brainclaw" if is_brainclaw else "",
+            is_brainclaw=is_brainclaw,
+        )
+
+    settings = get_model_gateway_settings()
+    gateway_mode = normalize_gateway_mode(settings.get("model_gateway_mode"))
+    custom_llm_mode = normalize_custom_llm_mode(settings.get("custom_llm_mode"))
+    if gateway_mode in {MODE_OFFICIAL, MODE_HYBRID}:
+        return EffectiveLlmConfig(
+            mode=gateway_mode,
+            source="hybrid" if gateway_mode == MODE_HYBRID else "official",
+            base_url=normalize_relay_base_url(OFFICIAL_NEWAPI_BASE_URL),
+            api_key=normalize_api_key(settings.get("official_newapi_api_key", "")),
+            model="brainclaw",
+            is_brainclaw=True,
+        )
+    if custom_llm_mode == CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW:
+        brainclaw_base_url = normalize_relay_base_url(
+            settings.get("brainclaw_newapi_base_url", "")
+            or OFFICIAL_NEWAPI_BASE_URL
+        )
+        # The official key may only be reused when the endpoint is the official
+        # one. Falling back unconditionally sends a RelayClaw credential to
+        # whatever host the operator typed — a third party, or a local gateway
+        # that logs it — and nothing in the request looks wrong: billing,
+        # audit and tenant attribution all follow a key the operator never
+        # meant to expose there.
+        brainclaw_api_key = normalize_api_key(
+            settings.get("brainclaw_newapi_api_key", "")
+            or (settings.get("official_newapi_api_key", "")
+                if _is_official_relay_url(brainclaw_base_url) else "")
+        )
+        return EffectiveLlmConfig(
+            mode=CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
+            source=(
+                "custom"
+                if settings.get("brainclaw_newapi_base_url", "")
+                or settings.get("brainclaw_newapi_api_key", "")
+                else "official"
+            ),
+            base_url=brainclaw_base_url,
+            api_key=brainclaw_api_key,
+            model="brainclaw",
+            is_brainclaw=True,
+        )
+    custom = get_ce_newapi_config_for_mode(MODE_CUSTOM)
+    return EffectiveLlmConfig(
+        mode=CUSTOM_LLM_MODE_ADVANCED,
+        source=custom.source,
+        base_url=custom.base_url,
+        api_key=custom.api_key,
+        model="",
+        is_brainclaw=False,
     )
 
 
@@ -1232,6 +1387,19 @@ def build_model_gateway_status(
         official_base_url=official_base_url,
         official_api_key=official_api_key,
     )
+    effective_llm = get_effective_llm_config()
+    custom_llm_mode = normalize_custom_llm_mode(settings.get("custom_llm_mode"))
+    brainclaw_base_url = normalize_relay_base_url(
+        settings.get("brainclaw_newapi_base_url", "") or OFFICIAL_NEWAPI_BASE_URL
+    )
+    # Same rule as the effective config: the official key is only shown as the
+    # BrainClaw key when the endpoint is the official one.
+    dedicated_brainclaw_key = normalize_api_key(
+        settings.get("brainclaw_newapi_api_key", "")
+    )
+    brainclaw_api_key = dedicated_brainclaw_key or (
+        official_api_key_value if _is_official_relay_url(brainclaw_base_url) else ""
+    )
     return {
         "mode": effective.mode,
         "effective": {
@@ -1239,6 +1407,15 @@ def build_model_gateway_status(
             "baseUrl": effective.base_url,
             "apiKeyPreview": mask_secret(effective.api_key),
             "configured": bool(effective.base_url and effective.api_key),
+        },
+        "llmEffective": {
+            "mode": effective_llm.mode,
+            "source": effective_llm.source,
+            "baseUrl": effective_llm.base_url,
+            "apiKeyPreview": mask_secret(effective_llm.api_key),
+            "configured": bool(effective_llm.base_url and effective_llm.api_key),
+            "model": effective_llm.model,
+            "brainclaw": effective_llm.is_brainclaw,
         },
         "official": {
             "baseUrl": official_base_url_value,
@@ -1251,7 +1428,19 @@ def build_model_gateway_status(
                 "configured": bool(official_base_url_value and env_official_api_key),
             },
         },
+        "brainclaw": {
+            "baseUrl": brainclaw_base_url,
+            "apiKeyPreview": mask_secret(brainclaw_api_key),
+            # Distinct from apiKeyPreview, which is non-empty even when it is
+            # only the official key showing through. A caller asking "is a
+            # BrainClaw key configured?" must read this: the preview answers a
+            # different question and treating it as this one is what allowed a
+            # custom endpoint to be saved with no dedicated key at all.
+            "dedicatedKeyConfigured": bool(dedicated_brainclaw_key),
+            "configured": bool(brainclaw_base_url and brainclaw_api_key),
+        },
         "custom": {
+            "llmMode": custom_llm_mode,
             "baseUrl": custom_base_url,
             "apiKeyPreview": mask_secret(custom_api_key),
             "configured": bool(custom_base_url and custom_api_key),

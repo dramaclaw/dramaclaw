@@ -32,6 +32,12 @@ import { awaitTaskCompletion, isTaskPollTimeoutError, type TaskState } from '@/a
 import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import {
+  publishNodeActionAccepted,
+  publishNodeActionError,
+  publishNodeActionSuccess,
+  subscribeNodeAction,
+} from '@/features/canvas/application/nodeActionResult';
+import {
   uploadAndAutoCommitSelectedBackgroundCandidate,
 } from '@/features/canvas/application/selectedBackgroundSlot';
 import {
@@ -971,7 +977,7 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
 
   const handleOpenDirector = useCallback(async () => {
     const projectId = readUrl().project;
-    if (!projectId) return;
+    if (!projectId) return false;
     setDirectorBusy(true);
     try {
       let manifest: DirectorStageManifest | null = null;
@@ -1004,8 +1010,10 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
       });
       setDirectorManifest(manifest);
       setDirectorDialogOpen(Boolean(manifest));
+      return Boolean(manifest);
     } catch (err) {
       console.error('[3d-world] director dialog open failed', err);
+      return false;
     } finally {
       setDirectorBusy(false);
     }
@@ -1025,25 +1033,25 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
       ? data.plyKind
       : inferredImageSourceKind;
 
-  const handleSubmit = useCallback(async () => {
-    if (modelTaskAccess.blocked) return;
+  const handleSubmit = useCallback(async (): Promise<{ plyUrl?: string; panoUrl?: string }> => {
+    if (modelTaskAccess.blocked) return {};
     const projectId = readUrl().project;
     const sourceNode = sourceNodeForGeneration;
     if (!projectId) {
       updateNodeData(id, { errorMessage: '无法识别当前项目' });
-      return;
+      return {};
     }
-    if (!upstream) return;
-    if (isGenerating) return;
+    if (!upstream) return {};
+    if (isGenerating) return {};
     if (upstream.kind === 'text') {
       updateNodeData(id, {
         errorMessage: '文生 3D 模型尚未对接，请连接图片节点',
       });
-      return;
+      return {};
     }
-    if (!sourceNode) return;
+    if (!sourceNode) return {};
     const sourceUrl = imageUrlFromCanvasNode(sourceNode);
-    if (!sourceUrl) return;
+    if (!sourceUrl) return {};
 
     const sourceKind = imageTo3gsKindForSource(sourceNode, selectedImageSourceKind);
     const rawPanoSource = sourceKind === 'pano'
@@ -1099,30 +1107,38 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
       const currentSources = (
         (currentWorld?.data as { sources?: DirectorWorldSource[] } | undefined)?.sources ?? []
       );
+      const nextPlyUrl = generatedSource.ply_url ?? generatedSource.url ?? null;
+      const nextPanoUrl = rawPanoSource?.pano_url ?? rawPanoSource?.url ?? null;
       updateNodeData(id, {
         sources: mergeDirectorWorldSources(currentSources, rawPanoSource, generatedSource),
         activeSourceId: generatedSource.id ?? null,
-        plyUrl: generatedSource.ply_url ?? generatedSource.url ?? null,
-        panoUrl: rawPanoSource?.pano_url ?? rawPanoSource?.url ?? null,
+        plyUrl: nextPlyUrl,
+        panoUrl: nextPanoUrl,
         isGenerating: false,
         taskKey: null,
         errorMessage: null,
       });
+      return {
+        ...(nextPlyUrl ? { plyUrl: nextPlyUrl } : {}),
+        ...(nextPanoUrl ? { panoUrl: nextPanoUrl } : {}),
+      };
     } catch (error) {
       // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接。
       // 写错误横幅会把一个还活着的任务标成失败，并清掉句柄。
       if (isTaskPollTimeoutError(error)) {
         notifyTaskStillRunning(t);
-        return;
+        return {};
       }
       updateNodeData(id, {
         isGenerating: false,
         taskKey: null,
         errorMessage: `生成失败: ${error instanceof Error ? error.message : String(error)}`,
       });
+      throw error;
     } finally {
       void refreshHistory();
     }
+    return {};
   }, [
     data.sources,
     id,
@@ -1135,6 +1151,41 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
     updateNodeData,
     upstream,
   ]);
+
+  useEffect(() => {
+    return subscribeNodeAction(({ nodeId, action, requestId }) => {
+      if (nodeId !== id) return;
+      if (action === 'open_director_world') {
+        publishNodeActionAccepted(requestId, id, action);
+        void handleOpenDirector()
+          .then((opened) => {
+            if (!opened) {
+              publishNodeActionError(requestId, id, action, '无法打开导演世界');
+              return;
+            }
+            publishNodeActionSuccess(requestId, id, action, { openedUiAction: true });
+          })
+          .catch((error) => publishNodeActionError(requestId, id, action, error));
+        return;
+      }
+      if (action !== 'generate_3gs_world') return;
+      publishNodeActionAccepted(requestId, id, action);
+      void handleSubmit()
+        .then((output) => {
+          const latest = useCanvasStore.getState().nodes.find((node) => node.id === id);
+          const latestData = latest?.type === CANVAS_NODE_TYPES.threeDWorld ? latest.data : null;
+          const latestPlyUrl = typeof latestData?.plyUrl === 'string' ? latestData.plyUrl : undefined;
+          const latestPanoUrl = typeof latestData?.panoUrl === 'string' ? latestData.panoUrl : undefined;
+          publishNodeActionSuccess(requestId, id, action, {
+            ...(output.plyUrl ? { plyUrl: output.plyUrl } : {}),
+            ...(output.panoUrl ? { panoUrl: output.panoUrl } : {}),
+            ...(latestPlyUrl ? { plyUrl: latestPlyUrl } : {}),
+            ...(latestPanoUrl ? { panoUrl: latestPanoUrl } : {}),
+          });
+        })
+        .catch((error) => publishNodeActionError(requestId, id, action, error));
+    });
+  }, [handleOpenDirector, handleSubmit, id]);
 
   const handleCaptureSelectedBackground = useCallback(
     async (blob: Blob) => {

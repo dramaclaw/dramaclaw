@@ -10,6 +10,13 @@ function read(path: string) {
 }
 
 describe("freezone viewer contracts", () => {
+  it("gates the Xiadao chat dock through the server product surface", () => {
+    const shell = read("src/features/freezone/FreezoneShell.tsx");
+
+    expect(shell).toContain('surfaceAccess(productSurfaces.data, "freezone_assistant")');
+    expect(shell).not.toContain("XIADAO_ENABLED");
+  });
+
   it("keeps Pano360ViewerNode as a compatible freezone canvas tool", () => {
     const node = read("src/features/canvas/nodes/Pano360ViewerNode.tsx");
     const canvasNodes = read("src/features/canvas/domain/canvasNodes.ts");
@@ -461,11 +468,16 @@ describe("freezone viewer contracts", () => {
   });
 
   it("auto-commits present image generation nodes when requested by the preset", () => {
-    const imageGenNode = read("src/features/canvas/nodes/ImageGenNode.tsx");
+    // 生成编排住在共用 hook 里：工作流的 ImageGenNode 和故事板的
+    // AssetBoardImageGenForm 都挂它，自动落库一处口径两个视图同行为。
+    // 扫宿主只会扫到一个 spread，扫不到真正的自动提交逻辑。
+    const imageGenForm = read(
+      "src/features/canvas/nodes/shared/useImageGenerationForm.ts",
+    );
 
-    expect(imageGenNode).toContain("autoCommitOnGenerate");
-    expect(imageGenNode).toContain("canvasEventBus.publish('freezone/commit-node'");
-    expect(imageGenNode).toContain("auto: true");
+    expect(imageGenForm).toContain("autoCommitOnGenerate");
+    expect(imageGenForm).toContain("canvasEventBus.publish('freezone/commit-node'");
+    expect(imageGenForm).toContain("auto: true");
   });
 
   it("routes projection group toolbar actions through projection sync and remove events", () => {

@@ -15,6 +15,7 @@ import {
   type CanvasNodeType,
 } from '../domain/canvasNodes';
 import type { GraphContentResolver, UpstreamContent } from './ports';
+import { isExecutionDependencyEdge } from '../nodes/referenceOrdering';
 
 /**
  * 通用的「下游节点 → 上游节点内容」遍历器。一跳深度，按 edges 找出所有
@@ -32,7 +33,7 @@ export class DefaultGraphContentResolver implements GraphContentResolver {
   ): UpstreamContent[] {
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const sourceIds = edges
-      .filter((edge) => edge.target === nodeId)
+      .filter((edge) => edge.target === nodeId && !isExecutionDependencyEdge(edge))
       .map((edge) => edge.source);
 
     return sourceIds
@@ -49,12 +50,20 @@ export class DefaultGraphContentResolver implements GraphContentResolver {
  */
 export function extractUpstreamContent(node: CanvasNode): UpstreamContent {
   const displayNameRaw = (node.data as { displayName?: unknown } | undefined)?.displayName;
+  const workflowCatalog = (node.data as { workflowCatalog?: unknown } | undefined)?.workflowCatalog;
+  const workflowStepIdRaw = workflowCatalog && typeof workflowCatalog === 'object'
+    ? (workflowCatalog as { stepId?: unknown }).stepId
+    : undefined;
   const base: UpstreamContent = {
     nodeId: node.id,
     nodeType: node.type as CanvasNodeType,
     displayName:
       typeof displayNameRaw === 'string' && displayNameRaw.length > 0
         ? displayNameRaw
+        : undefined,
+    workflowStepId:
+      typeof workflowStepIdRaw === 'string' && workflowStepIdRaw.length > 0
+        ? workflowStepIdRaw
         : undefined,
   };
 

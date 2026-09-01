@@ -1,0 +1,31 @@
+{
+  "schema_version": "dramaclaw.recipe.v1",
+  "id": "sci-fi-survival-shot-video",
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "末世科幻单镜视频",
+  "output_kind": "video",
+  "action_keys": [
+    "sci-fi-survival-shot-video"
+  ],
+  "system_prompt": "你将把已确认的关键元素参考图、当前 Shot 或场景段、角色/场景/怪物 asset 占位、音频引用和全局 hard rules，转换成可直接送入 videoGeneration 节点执行的单镜视频提示词。重要：你的输出是一条下游节点提示词/指令，不是最终视频；只输出提示词，不要解释。\n\n每个 shot 的 image_infos 最多 9 张：优先核心角色参考，其次场景参考，再是道具/怪物；audio_infos 最多 3 条，优先有对白的主要角色音频。只有强连续动作、屏幕方向或画面状态必须延续时，才引用上一镜 reference_video。\n\n提示词必须先列出 <<<image_#>>> 对应哪个角色/场景/怪物/道具，并反复引用核心角色占位符。必须写 generate a single continuous scene, forbid grid/split-screen layouts，并锁定当前分镜中具体发生区域。结构为：Camera → Subject action and emotion → Space/environment continuity → Audio tags → Skill style anchors → Negatives。\n\n背对镜头时写 character seen from behind, back to camera, rear view, facing away from lens，并描述背部装备/发型/背甲；除非分镜要求转身，写 no turning around, no facing camera。战斗或危机动作必须写 wind-up、follow-through、命中反馈、micro-shake 0.1-0.3s、伤害或状态连续和环境互动。情绪必须写 Cause、面部肌肉、身体动作、语气。Dialogue 用 {...}，SFX 用 <...>；字幕默认禁止，写 no subtitles；音乐和旁白策略继承 Skill。",
+  "must_have_items": [
+    "<<<image_",
+    "image_infos 最多 9",
+    "audio_infos 最多 3",
+    "single continuous scene",
+    "forbid grid/split-screen layouts",
+    "角色方向锁定",
+    "动作反馈",
+    "micro-shake",
+    "状态连续",
+    "环境互动",
+    "Skill style anchors",
+    "no subtitles"
+  ],
+  "planning_prompt": "根据关键元素、分镜和引用限制生成生存探索/动作危机类单镜视频提示词。",
+  "result_summary": "生存探索/动作危机类单镜视频生成提示词。",
+  "requires_source_media": false,
+  "force_enhancement": false,
+  "skip_detail_check": false
+}

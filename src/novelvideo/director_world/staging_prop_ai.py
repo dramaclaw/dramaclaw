@@ -232,6 +232,11 @@ def resolve_model_config(
 
     require_direct_model_egress_allowed(egress_context)
     from novelvideo.config import get_newapi_runtime_credentials
+    from novelvideo.model_gateway_settings import get_effective_llm_config
+
+    llm_config = get_effective_llm_config()
+    if llm_config.is_brainclaw and llm_config.api_key:
+        return "brainclaw", llm_config.api_key, llm_config.base_url
 
     model = (
         str(request.get("model") or "").strip()
@@ -261,7 +266,19 @@ def create_staging_prop_agent(
         _newapi_text_openai_model,
         get_newapi_structured_output_model_settings,
     )
+    from novelvideo.brainclaw_contract import (
+        BrainClawProfile,
+        brainclaw_profile_headers,
+    )
+    from novelvideo.official_defaults import OFFICIAL_NEWAPI_BASE_URL
 
+    brainclaw_headers = brainclaw_profile_headers(
+        BrainClawProfile.STAGING_PROP_PLANNING,
+        brainclaw_active=(
+            model == "brainclaw"
+            and base_url.rstrip("/") == OFFICIAL_NEWAPI_BASE_URL.rstrip("/")
+        ),
+    )
     return Agent(
         _newapi_text_openai_model(
             model,
@@ -269,6 +286,7 @@ def create_staging_prop_agent(
             base_url=base_url,
             timeout_seconds=_env_float("STAGING_PROP_TIMEOUT_SECONDS", 120.0),
             profile=_get_newapi_text_model_profile(model),
+            **({"default_headers": brainclaw_headers} if brainclaw_headers else {}),
         ),
         system_prompt=SYSTEM_PROMPT,
         model_settings=get_newapi_structured_output_model_settings(),

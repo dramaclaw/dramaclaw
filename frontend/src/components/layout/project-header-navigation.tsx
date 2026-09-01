@@ -23,6 +23,7 @@ import { normalizeLastEpisodeLocation, useEpisodeWorkbenchStore } from "@/stores
 import { isRememberedSection, useProjectNavStore } from "@/stores/project-nav-store";
 import { useAllProjectSummaries } from "@/lib/queries/projects";
 import { getProjectCover } from "@/lib/project-cover";
+import { beginRouteSwitch } from "@/lib/route-switch-transition";
 import { cn } from "@/lib/utils";
 import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
 import { SlidingTabs, type SlidingTabItem } from "@/components/nav/sliding-tabs";
@@ -172,6 +173,7 @@ export function ProjectSwitcher({ current }: { current: string }) {
  */
 export function ProjectXiajiMenu({ project }: { project: string }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const rememberedEpisodeLocation = useEpisodeWorkbenchStore(
     (state) => state.lastEpisodeLocationByProject[project],
@@ -211,6 +213,23 @@ export function ProjectXiajiMenu({ project }: { project: string }) {
                 active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
               )}
               aria-current={active ? "page" : undefined}
+              // 保留 <Link> 是为了留住 href（中键 / ⌘ 点开新标签页、右键复制链接），
+              // 只把普通左键那一条接管过来，先亮 loading 再跳 —— 换页是同步长任务，
+              // 不这样切一刀的话中间一帧都画不出来。
+              onClick={(event) => {
+                if (active || event.defaultPrevented) return;
+                if (
+                  event.button !== 0 ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.shiftKey ||
+                  event.altKey
+                ) {
+                  return;
+                }
+                event.preventDefault();
+                beginRouteSwitch(() => navigate({ to: target, params: { project } }));
+              }}
             >
               {t(item.labelKey)}
             </Link>
@@ -266,7 +285,9 @@ export function ProjectHeaderNavigation({ project }: { project: string }) {
     }
     if (mode === activeMode) return;
     if (mode === "xiahua") {
-      navigate({ to: PROJECT_SECTION_ROUTES.freezone, params: { project } });
+      beginRouteSwitch(() =>
+        navigate({ to: PROJECT_SECTION_ROUTES.freezone, params: { project } }),
+      );
       return;
     }
     // 切「虾集」时回到上次停留的子页（默认虾料）；上次在虾镜且有剧集深链则直达。
@@ -277,7 +298,7 @@ export function ProjectHeaderNavigation({ project }: { project: string }) {
       target =
         normalizeLastEpisodeLocation(project, rememberedEpisodeLocation) ?? target;
     }
-    navigate({ to: target, params: { project } });
+    beginRouteSwitch(() => navigate({ to: target, params: { project } }));
   };
 
   if (!mainlineAvailable && !freezoneAvailable) return null;

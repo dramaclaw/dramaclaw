@@ -41,6 +41,11 @@ from novelvideo.freezone.paths import outputs_dir
 
 USER_VOICE_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".webm"}
 USER_VOICE_SCOPE = "user_custom"
+DEFAULT_PRESET_TTS_MODEL = "edge-tts"
+LEGACY_PRESET_TTS_MODELS = {"qwen3-tts-flash", "LingShan-TTS-2"}
+EDGE_PRESET_VOICE_ALIASES = {
+    "Serena": "zh-CN-XiaoxiaoNeural",
+}
 VOICE_FILE_UNREADABLE_MESSAGE = "声线文件无法读取，请重新选择或检查文件是否完整"
 
 
@@ -580,10 +585,13 @@ async def generate_freezone_audio_speech(
     text: str,
     emotion_prompt: str = "",
     voice_ref: dict | None = None,
+    speech_mode: str = "clone",
+    preset_model: str = DEFAULT_PRESET_TTS_MODEL,
+    preset_voice: str = "Serena",
     projection: Any = None,
     egress_context: TrustedEgressContext | None = None,
 ) -> FreezoneAudioSpeechResult:
-    """Generate standalone Freezone speech using the project narrator reference.
+    """Generate speech with either a zero-config preset or a cloned reference voice.
 
     ``projection`` is the payload projection pinned when the task was submitted
     (``task_backend.projection.read_projection``). When it is supplied nothing
@@ -593,6 +601,50 @@ async def generate_freezone_audio_speech(
     clean_text = str(text or "").strip()
     if not clean_text:
         raise ValueError("text is required")
+
+    if egress_context is None:
+        egress_context = ambient_organization_egress_context()
+
+    mode = str(speech_mode or "clone").strip().lower()
+    output_path = freezone_audio_speech_output_path(project_dir, job_id)
+    if mode == "preset":
+        model_name = str(preset_model or DEFAULT_PRESET_TTS_MODEL).strip()
+        if not model_name or model_name in LEGACY_PRESET_TTS_MODELS:
+            model_name = DEFAULT_PRESET_TTS_MODEL
+        voice_name = str(preset_voice or "Serena").strip() or "Serena"
+        if model_name == DEFAULT_PRESET_TTS_MODEL:
+            await _write_edge_tts_speech(
+                output_path=output_path,
+                input_text=clean_text,
+                voice=EDGE_PRESET_VOICE_ALIASES.get(voice_name, voice_name),
+                egress_context=egress_context,
+            )
+        else:
+            await _write_newapi_audio_speech(
+                output_path=output_path,
+                model=model_name,
+                input_text=clean_text,
+                response_format="mp3",
+                voice=voice_name,
+                metadata={
+                    "speech_mode": "preset",
+                    "emotion_prompt": str(emotion_prompt or "").strip(),
+                },
+                egress_context=egress_context,
+                business_task_id=f"freezone-audio-speech:{job_id}",
+            )
+        if not output_path.exists() or output_path.stat().st_size <= 0:
+            raise RuntimeError("NewAPI preset speech audio file was not created")
+        return FreezoneAudioSpeechResult(
+            audio_path=output_path,
+            duration_ms=_duration_ms(output_path),
+            mime_type="audio/mpeg",
+            model=model_name,
+            voice_source=f"preset:{voice_name}",
+            voice_sha256="",
+        )
+    if mode != "clone":
+        raise ValueError(f"unsupported speech_mode: {speech_mode}")
 
     narration_style, selected_voice = await resolve_speech_voice(
         store=store,
@@ -604,9 +656,6 @@ async def generate_freezone_audio_speech(
         projection=projection,
     )
 
-    output_path = freezone_audio_speech_output_path(project_dir, job_id)
-    if egress_context is None:
-        egress_context = ambient_organization_egress_context()
     if egress_context is None:
         generator = IndexTTS2FalClient()
     else:
@@ -635,6 +684,27 @@ async def generate_freezone_audio_speech(
         voice_source=selected_voice.source,
         voice_sha256=selected_voice.sha256,
     )
+
+
+async def _write_edge_tts_speech(
+    *,
+    output_path: Path,
+    input_text: str,
+    voice: str,
+    egress_context: TrustedEgressContext | None = None,
+) -> None:
+    from novelvideo.generators.tts_generator import EdgeTTSGenerator
+
+    result = await EdgeTTSGenerator(
+        voice=voice,
+        egress_context=egress_context,
+    ).generate(
+        text=input_text,
+        output_path=str(output_path),
+        generate_subtitle=False,
+    )
+    if not result.success:
+        raise RuntimeError(result.error or "Edge TTS generation failed")
 
 
 def _newapi_audio_endpoint(base_url: str | None = None) -> str:
@@ -691,14 +761,11 @@ async def _write_newapi_audio_speech(
     import httpx
 
     lease = None
+    if egress_context is not None and type(egress_context) is not TrustedEgressContext:
+        raise RuntimeError("ORG_EGRESS_DENIED")
     if egress_context is None:
         egress_context = ambient_organization_egress_context()
-    if egress_context is not None:
-        if (
-            type(egress_context) is not TrustedEgressContext
-            or not egress_context.is_organization
-        ):
-            raise RuntimeError("ORG_EGRESS_DENIED")
+    if egress_context is not None and egress_context.is_organization:
         lease = await claim_audio_operation(
             egress_context,
             capability="audio.tts.gateway",
@@ -754,15 +821,37 @@ async def _write_newapi_audio_speech(
         ) as client:
             endpoint = _newapi_audio_endpoint(resolved_base_url)
             transport_started = True
-            response = await client.post(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": "application/json",
-                },
-                json=body,
-            )
-            response.raise_for_status()
+            response = None
+            max_attempts = 1 if lease is not None else 3
+            for attempt in range(max_attempts):
+                try:
+                    response = await client.post(
+                        endpoint,
+                        headers={
+                            "Authorization": f"Bearer {key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=body,
+                    )
+                    response.raise_for_status()
+                    break
+                except httpx.HTTPStatusError as exc:
+                    if (
+                        exc.response.status_code in {408, 425, 429, 500, 502, 503, 504}
+                        and attempt < max_attempts - 1
+                    ):
+                        await asyncio.sleep(2**attempt)
+                        continue
+                    raise
+                except (httpx.TransportError, httpx.TimeoutException) as exc:
+                    if attempt < max_attempts - 1:
+                        await asyncio.sleep(2**attempt)
+                        continue
+                    raise RuntimeError(
+                        f"NewAPI audio request failed after {max_attempts} attempts: {exc}"
+                    ) from exc
+            if response is None:
+                raise RuntimeError("NewAPI audio request failed without a response")
             content_type = str(response.headers.get("content-type") or "").lower()
             if "application/json" not in content_type:
                 response_log_payload = {
@@ -811,8 +900,28 @@ async def _write_newapi_audio_speech(
                         "NewAPI audio response missing audio bytes or URL"
                     )
                 if result_url:
-                    audio_response = await client.get(result_url)
-                    audio_response.raise_for_status()
+                    audio_response = None
+                    for attempt in range(max_attempts):
+                        try:
+                            audio_response = await client.get(result_url)
+                            audio_response.raise_for_status()
+                            break
+                        except (httpx.TransportError, httpx.TimeoutException):
+                            if attempt >= max_attempts - 1:
+                                raise
+                            await asyncio.sleep(2**attempt)
+                        except httpx.HTTPStatusError as exc:
+                            if (
+                                exc.response.status_code
+                                not in {408, 425, 429, 500, 502, 503, 504}
+                                or attempt >= max_attempts - 1
+                            ):
+                                raise
+                            await asyncio.sleep(2**attempt)
+                    if audio_response is None:
+                        raise RuntimeError(
+                            "NewAPI audio download failed without a response"
+                        )
                     output_path.write_bytes(audio_response.content)
         if lease is not None:
             await complete_audio_operation(lease, result_ref="audio:newapi:completed")

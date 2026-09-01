@@ -445,7 +445,10 @@ describe("videoMultiImageAutoSwitchMode — 首帧接多图时的自动改模式
   // effect 还没跑、或将来又有人加了 bail 条件），提交也只能带 1 张图，绝不能靠
   // 张数悄悄变成图片参考。这条上限是结构性的，不接受媒体目录 referenceImageMax 覆盖。
   it("首帧和单图图生视频的图片上限锁死在 1，且不被媒体目录配置覆盖", () => {
-    const source = readFileSync("src/features/canvas/nodes/VideoNode.tsx", "utf8");
+    const source = readFileSync(
+      "src/features/canvas/nodes/shared/videoFormOptions.ts",
+      "utf8",
+    );
     expect(source).toContain("firstFrame: { image: 1, video: 0, audio: 0 }");
     expect(source).toContain("imageToVideo: { image: 1, video: 0, audio: 0 }");
     expect(source).toContain("const FIXED_IMAGE_CAP_BY_MODE");
@@ -475,7 +478,7 @@ describe("HappyHorse 单图默认模式", () => {
   // 默认值必须真的可用，否则一连图就顶进一个 hover 提示写着「不可用」的 tab。
   it("图片参考在 1~9 张图时都可用", () => {
     const source = readFileSync(
-      "src/features/canvas/nodes/VideoOperationsPanel.tsx",
+      "src/features/canvas/nodes/shared/VideoGenerationForm.tsx",
       "utf8",
     );
     expect(source).toContain('if (images === 0) return "需要连接图片节点（1~9个）";');
@@ -583,10 +586,12 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
   // 死胡同。这里锁住「传整个 ModelOption」，与 VideoNode 的提交守卫同源。
   it("模型选择器必须把整个 ModelOption 传给置灰守卫（而非只传 id）", () => {
     const source = readFileSync(
-      "src/features/canvas/nodes/VideoOperationsPanel.tsx",
+      "src/features/canvas/nodes/shared/VideoGenerationForm.tsx",
       "utf8",
     );
-    expect(source).toContain("videoModelReferenceDisabledReason(model, {");
+    expect(source).toMatch(
+      /videoModelReferenceDisabledReason\(\s*model,\s*modelUpstreamCounts/,
+    );
     expect(source).not.toContain(
       "videoModelReferenceDisabledReason(model.apiModel ?? model.id",
     );

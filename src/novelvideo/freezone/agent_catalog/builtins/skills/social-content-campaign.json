@@ -1,0 +1,121 @@
+{
+  "schema_version": "dramaclaw.workflow-skill.v1",
+  "id": "social-content-campaign",
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "社交内容套图",
+  "description": "根据品牌、产品或活动目标，动态规划社交平台文案、通用视觉和各平台适配图片。",
+  "category": "social",
+  "triggers": {
+    "keywords": [
+      "社交媒体内容",
+      "社媒套图",
+      "小红书配图",
+      "抖音封面",
+      "微博配图",
+      "微信公众号配图",
+      "Instagram 帖子",
+      "多平台内容"
+    ],
+    "node_scopes": [
+      "textGeneration",
+      "imageGeneration"
+    ]
+  },
+  "input_parameters": [
+    {
+      "id": "platforms",
+      "label": "发布平台",
+      "type": "multi_select",
+      "required": false,
+      "default": [
+        "小红书"
+      ],
+      "options": [
+        "小红书",
+        "抖音",
+        "微博/微信",
+        "Instagram"
+      ]
+    },
+    {
+      "id": "image_count",
+      "label": "图片数量",
+      "type": "number",
+      "required": false,
+      "default": 3,
+      "options": []
+    },
+    {
+      "id": "aspect_ratio",
+      "label": "图片比例",
+      "type": "single_select",
+      "required": false,
+      "default": "3:4",
+      "options": [
+        "3:4",
+        "1:1",
+        "16:9",
+        "9:16"
+      ]
+    }
+  ],
+  "allowed_recipe_ids": [
+    "social-copywriting",
+    "social-content-image",
+    "social-xiaohongshu-image",
+    "social-douyin-cover",
+    "social-weibo-wechat-image",
+    "social-ig-post"
+  ],
+  "planning": {
+    "planning_notes": "先根据用户目标生成一份核心文案，再按用户选择的平台和数量动态创建图片计划项；只创建实际需要的平台版本。",
+    "prompt_guide": "所有平台版本共享品牌事实和核心信息，但构图、文字密度、比例和视觉节奏应符合对应平台。",
+    "conduct_rules": [
+      "根据 platforms 和 image_count 动态决定节点数量",
+      "同一套内容必须保持品牌、商品和核心卖点一致",
+      "每个平台只使用与其交付格式匹配的 Recipe",
+      "创建画布节点前先生成并确认动态计划"
+    ]
+  },
+  "evaluation": {
+    "rating_bands": [
+      {
+        "score": 10,
+        "description": "品牌信息一致，平台适配准确，文案和图片均可直接使用"
+      },
+      {
+        "score": 7,
+        "description": "核心内容完整，少量平台格式需要调整"
+      },
+      {
+        "score": 4,
+        "description": "平台适配错误或不同版本的品牌信息不一致"
+      }
+    ],
+    "visual_review_items": [
+      {
+        "name": "品牌一致性",
+        "description": "不同平台图片中的主体、品牌和卖点保持一致",
+        "weight": 0.5
+      },
+      {
+        "name": "平台适配",
+        "description": "构图、比例和信息密度符合目标平台",
+        "weight": 0.5
+      }
+    ],
+    "text_review_items": [
+      {
+        "name": "核心信息一致",
+        "description": "各平台文案不改变品牌事实和核心卖点",
+        "weight": 1
+      }
+    ],
+    "quality_threshold": 7,
+    "domain_constraints": [
+      "不得虚构产品功能、价格、资质或活动信息",
+      "不同平台版本必须共享同一套已确认品牌事实"
+    ]
+  }
+}

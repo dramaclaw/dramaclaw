@@ -5,6 +5,7 @@ import io
 import logging
 import os
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from novelvideo.api.schemas import (
     VideoComposeRequest,
     TTSGenerateRequest,
     TTSPreviewRequest,
+    SystemVoicePrepareRequest,
     SketchGenerateRequest,
     GridRegenerateRequest,
     BeatsRegenerateRequest,
@@ -2195,6 +2197,12 @@ async def generate_sketches(
 
     dispatch_grid_indices = list(range(len(grid_plan))) if generate_all_grids else [body.grid_index]
     if ctx is not None:
+        batch_size = len(dispatch_grid_indices)
+        batch_id = (
+            f"sketch-grid-{episode_num}-{uuid.uuid4().hex}"
+            if generate_all_grids and batch_size > 1
+            else ""
+        )
         queued_tasks = []
         rejected: list[dict[str, Any]] = []
         for position, grid_index in enumerate(dispatch_grid_indices):
@@ -2216,6 +2224,15 @@ async def generate_sketches(
                         "output_dir": output_dir,
                         "config": {**base_config, "grid_index": grid_index},
                         "billing": billing,
+                        **(
+                            {
+                                "batch_id": batch_id,
+                                "batch_size": batch_size,
+                                "display_name": f"第 {episode_num} 集草图批次",
+                            }
+                            if batch_id
+                            else {}
+                        ),
                     },
                 )
             except _FANOUT_ACTIVE_LIMIT_ERRORS as exc:
@@ -2394,6 +2411,59 @@ def _voice_prereq_error_response(errors: list[str]) -> dict:
         "ok": False,
         "code": "voice_prereq_required",
         "error": f"{preview}{suffix}",
+    }
+
+
+@router.post("/projects/{project}/episodes/{episode_num}/audio/system-voices/prepare")
+async def prepare_system_voices_for_agent(
+    project: str,
+    episode_num: int,
+    body: SystemVoicePrepareRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Prepare missing system voice references for the outer Hermes assistant only."""
+
+    agent_kind = str(user.get("agent_kind") or "").strip()
+    if agent_kind not in {"hermes", "local_mcp"}:
+        raise HTTPException(status_code=403, detail="system voice setup is agent-only")
+    if not body.confirmed:
+        return {
+            "ok": False,
+            "code": "system_voice_confirmation_required",
+            "error": "使用系统声线前需要用户明确确认",
+        }
+
+    resolved = await _resolve_generation_project(project, user, required_role="editor")
+    ctx = resolved.ctx
+    if ctx is None:
+        return {
+            "ok": False,
+            "code": "project_context_required",
+            "error": "系统声线准备需要 project context",
+        }
+
+    queued = await get_task_backend().enqueue_project_task(
+        ctx,
+        product_surface="mainline",
+        task_type="system_voice_setup",
+        queue_kind="default",
+        episode=episode_num,
+        payload={
+            "episode": episode_num,
+            "output_dir": resolved.output_dir,
+            "state_dir": resolved.state_dir,
+        },
+    )
+    return {
+        "ok": True,
+        "task_type": "system_voice_setup",
+        "task_id": queued.task_state.task_id,
+        "task_key": project_task_state_key(
+            "system_voice_setup", ctx.project_id, episode_num
+        ),
+        "backend": queued.backend,
+        "queue": queued.queue,
+        "message": f"第 {episode_num} 集系统声线准备已进入队列",
     }
 
 
@@ -3336,6 +3406,8 @@ async def regenerate_beats(
                 "output_dir": output_dir,
                 "config": {**config, "mode_key": mode_key},
                 "billing": billing,
+                **({"batch_id": body.batch_id} if body.batch_id else {}),
+                **({"batch_size": body.batch_size} if body.batch_size else {}),
             },
         )
         return {
@@ -4905,7 +4977,13 @@ async def generate_single_video(
             queue_kind="video",
             episode=episode_num,
             beat_num=beat_num,
-            payload={"config": config, "output_dir": output_dir, "billing": billing},
+            payload={
+                "config": config,
+                "output_dir": output_dir,
+                "billing": billing,
+                **({"batch_id": body.batch_id} if body.batch_id else {}),
+                **({"batch_size": body.batch_size} if body.batch_size else {}),
+            },
         )
         return {
             "ok": True,

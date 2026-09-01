@@ -95,6 +95,7 @@ _PROJECT_TASK_RESOURCE_KINDS = {
     "audio_generation": "tts",
     "indextts2_audio_generation": "tts",
     "audio_generation_indextts2": "tts",
+    "system_voice_setup": "tts",
     "freezone_video_gen": "video",
     "freezone_analyze": "video",
     "freezone_video_story": "video",

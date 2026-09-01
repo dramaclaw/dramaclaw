@@ -1,0 +1,27 @@
+# Example Codex MCP configuration for a local DramaClaw CE checkout.
+#
+# Copy this block into ~/.codex/config.toml and replace /path/to/dramaclaw-ce
+# with your own local repository path. Do not commit your real ~/.codex/config.toml
+# or any machine-specific paths/tokens to this repository.
+
+[mcp_servers.dramaclaw]
+command = "/path/to/dramaclaw-ce/.venv/bin/python"
+args = ["-m", "novelvideo.chat.agent_mcp"]
+cwd = "/path/to/dramaclaw-ce"
+
+[mcp_servers.dramaclaw.env]
+DRAMACLAW_API_URL = "http://127.0.0.1:8780"
+DRAMACLAW_LOCAL_AGENT_TRUST = "1"
+DRAMACLAW_EXTERNAL_MCP = "1"
+DRAMACLAW_MCP_DIRECT_CANVAS_APPLY = "0"
+DRAMACLAW_USER = "local"
+
+# Optional Freezone context. Prefer passing project_id/canvas_id in tool calls
+# or letting the MCP server resolve the active canvas when possible.
+# DRAMACLAW_CHAT_SURFACE = "freezone"
+# DRAMACLAW_PROJECT_ID = "your-project-id"
+# DRAMACLAW_CANVAS_ID = "your-canvas-id"
+
+# Headless fallback only. Set this to "1" if you intentionally want MCP to
+# write canvas payloads directly without the Freezone frontend bridge.
+# DRAMACLAW_MCP_DIRECT_CANVAS_APPLY = "1"

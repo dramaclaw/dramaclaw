@@ -606,6 +606,14 @@ async def _run_selected_regen_async(
     )
 
     log(f"生成 {mode_key} {'草图' if is_sketch else '网格'}...", progress=0.2)
+
+    def report_generation_progress(completed: int, total: int) -> None:
+        ratio = completed / max(total, 1)
+        log(
+            f"已生成 {completed}/{total} 张{'草图' if is_sketch else '网格'}",
+            progress=0.2 + 0.45 * ratio,
+        )
+
     results = await regenerate_selected_beats(
         selected_beats=selected_beats,
         mode_key=mode_key,
@@ -618,6 +626,7 @@ async def _run_selected_regen_async(
         ethnicity=ethnicity,
         is_sketch=is_sketch,
         generator_config=generator_config,
+        progress_callback=report_generation_progress,
         **force_kwargs,
     )
 

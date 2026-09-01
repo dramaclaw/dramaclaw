@@ -537,6 +537,78 @@
   color: var(--canvas-node-input-placeholder);
 }
 
+/* 输入框内的前置 chip（故事板功能 chip）的宿主：contenteditable=false 的内联块，
+   跟文字同一行排版，光标能越过它、退格能删掉它（删除由 JS 拦截后回调宿主）。 */
+.prompt-lead-chip {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: 6px;
+  user-select: none;
+}
+
+/* 功能 chip 本体：尺寸/圆角/字号与同处一个输入框的 @ 引用 chip（.mention-chip）
+   对齐，只把左边换成一枚实心品牌色图标徽标——对标 liblib。 */
+.prompt-op-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  max-width: 200px;
+  padding: 0 5px 0 3px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgb(var(--text-rgb));
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.prompt-op-chip:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.prompt-op-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.prompt-op-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: rgb(var(--accent-rgb));
+  color: #fff;
+}
+
+.prompt-op-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-op-chip-switch {
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* 有前置 chip 时编辑器不是 :empty，上面那两条占位符规则不生效。改用 ::after，
+   占位文案就接在 chip 右边同一行——和 liblib 的「chip + 功能说明」一致。 */
+.prompt-mention-editor[data-text-empty]::after {
+  content: attr(data-placeholder);
+  color: rgba(160, 160, 170, 0.7);
+  pointer-events: none;
+}
+
+.canvas-node-input-placeholder[data-text-empty]::after {
+  color: var(--canvas-node-input-placeholder);
+}
+
 .react-flow__node {
   border-radius: var(--node-radius);
   /* 整块节点都可拖（主体没有 nodrag，drag 从任意处都能起手），但过去只有标题栏

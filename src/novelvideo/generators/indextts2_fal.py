@@ -26,7 +26,6 @@ from novelvideo.generators.tts_generator import (
 )
 from novelvideo.ports.model_credentials import ModelCredentialError
 
-
 async def _reserve_tts_model_call(model: str, *, source: str) -> str:
     return await get_usage_meter().reserve_current_model_call_credit(
         model=model,
@@ -454,6 +453,11 @@ class IndexTTS2FalClient:
         except Exception as exc:
             if is_fatal_billing_error(exc):
                 raise
+            if isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
+                return TTSResult(
+                    success=False,
+                    error=f"{exc.__class__.__name__}: {exc}",
+                )
             return TTSResult(
                 success=False, error=f"{exc.__class__.__name__}: NewAPI audio failed"
             )

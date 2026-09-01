@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/shadcn/dropdown-menu";
 import {
+  AlertTriangle,
   Boxes,
   ChevronDown,
   Copy,
@@ -37,6 +38,7 @@ import {
   Lightbulb,
   Loader2,
   Maximize2,
+  Mountain,
   Package,
   Palette,
   PenLine,
@@ -46,23 +48,26 @@ import {
   Scissors,
   Send,
   Sparkles,
+  CirclePause,
+  StretchHorizontal,
+  StretchVertical,
   Trash2,
   Unlink2,
   User,
   Users,
   Video as VideoIcon,
   Wand2,
+  Workflow,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { toast } from "sonner";
 
-import { downloadBlobAsFile, downloadUrlAsFile } from "@/lib/browserDownload";
+import { downloadUrlAsFile } from "@/lib/browserDownload";
 import {
   AUDIO_DOWNLOAD_FORMATS,
   canProduceFormat,
   getAudioExtFromUrl,
-  transcodeAudio,
   type AudioDownloadFormat,
 } from "@/lib/audioTranscode";
 import { nodeMainlineFlags } from "@/features/canvas/domain/mainlineNodeFlags";
@@ -77,8 +82,6 @@ import {
   NODE_TOOL_TYPES,
   CANVAS_NODE_TYPES,
   DEFAULT_NODE_WIDTH,
-  EXPORT_RESULT_NODE_DEFAULT_WIDTH,
-  EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
   isAudioNode,
   isExportImageNode,
   isGroupNode,
@@ -98,11 +101,26 @@ import {
 import { GROUP_COLOR_PRESETS } from "@/features/canvas/domain/groupColors";
 import { StoryboardGroupToolbar } from "@/features/canvas/ui/StoryboardGroupToolbar";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
-import { useCanvasProjectionStatus } from "@/features/freezone/projectionStatusStore";
 import {
-  matteInWorker,
-  preloadMatteWorker,
-} from "@/features/canvas/application/matteClient";
+  publishNodeActionAccepted,
+  publishNodeActionError,
+  publishNodeActionSuccess,
+  subscribeNodeAction,
+} from "@/features/canvas/application/nodeActionResult";
+import { useCanvasProjectionStatus } from "@/features/freezone/projectionStatusStore";
+import { preloadMatteWorker } from "@/features/canvas/application/matteClient";
+import { matteImage } from "@/features/canvas/application/matteImage";
+import { downloadAudioAs } from "@/features/canvas/application/audioDownload";
+import {
+  createVideoUpscaleResultNode,
+  VIDEO_UPSCALE_DENOISE_OPTIONS,
+  VIDEO_UPSCALE_RESOLUTIONS,
+  VIDEO_UPSCALE_RESOLUTION_LABEL,
+} from "@/features/canvas/application/videoUpscale";
+import type {
+  FreezoneVideoUpscaleDenoise,
+  FreezoneVideoUpscaleResolution,
+} from "@/api/ops";
 import { getNodeToolPlugins } from "@/features/canvas/tools";
 import type { ToolIconKey } from "@/features/canvas/tools";
 import { UiChipButton, UiPanel } from "@/components/ui";
@@ -111,32 +129,38 @@ import { copyImageSourceToClipboard } from "@/commands/image";
 import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useCanvasStore } from "@/stores/canvasStore";
-import {
-  fetchFreezoneAudioSeparateResult,
-  submitFreezoneAnalyzeVideoStory,
-  submitFreezoneAudioSeparate,
-  uploadFreezoneImage,
-} from "@/api/ops";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
-import { awaitTaskCompletion, isTaskPollTimeoutError } from "@/api/tasks";
-import { notifyTaskStillRunning } from "@/features/canvas/application/errorDialog";
-import { normalizeVideoStoryRows } from "@/features/canvas/application/videoStoryNormalizer";
+import { analyzeVideoStory } from "@/features/canvas/application/videoAnalyzeStory";
+import { separateVideoAudio } from "@/features/canvas/application/videoSeparateAudio";
 import { readUrl } from "@/lib/url-params";
 import { sanitizeStoryboardText } from "@/features/canvas/application/storyboardText";
 import { buildGenerationErrorReport } from "@/features/canvas/application/generationErrorReport";
+import { workflowGroupState } from "@/features/canvas/domain/workflowGroupState";
 import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { CreditCostPill } from "@/components/credits/credit-visual";
+import {
+  applyCanvasChatCommandsAsync,
+  CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+  cancelCanvasWorkflowExecution,
+} from "@/features/freezone/canvasChatCommands";
 import {
   NODE_TOOLBAR_ALIGN,
   NODE_TOOLBAR_CLASS,
   NODE_TOOLBAR_OFFSET,
   NODE_TOOLBAR_POSITION,
 } from "./nodeToolbarConfig";
-import type {
-  GridActionKey,
-  GridActionRequest,
-} from "./GridActionConfirmOverlay";
+import type { GridActionKey } from "@/features/canvas/application/gridTemplateAction";
+
+/**
+ * 「九宫格」下拉选中某一项时抛给宿主的请求。宿主据此在源节点下游建一个功能节点
+ * （空的图片生成节点，节点名 = 功能名），用户在那个节点的输入框里按 ↑ 才提交
+ * ——所以这里除了「哪个节点、哪个功能」之外不需要别的信息。
+ */
+export interface GridActionRequest {
+  nodeId: string;
+  key: GridActionKey;
+}
 
 interface NodeActionToolbarProps {
   node: CanvasNode;
@@ -145,7 +169,7 @@ interface NodeActionToolbarProps {
   onOpenScene360: (nodeId: string) => void;
   onOpenUpscale: (nodeId: string) => void;
   onOpenOutpaint: (nodeId: string) => void;
-  onOpenGridAction: (request: GridActionRequest) => void;
+  onSpawnGridActionNode: (request: GridActionRequest) => void;
   onOpenRedraw: (nodeId: string) => void;
   onOpenErase: (nodeId: string) => void;
   onOpenRotate: (nodeId: string) => void;
@@ -458,7 +482,7 @@ export const NodeActionToolbar = memo(
     onOpenScene360,
     onOpenUpscale,
     onOpenOutpaint,
-    onOpenGridAction,
+    onSpawnGridActionNode,
     onOpenRedraw,
     onOpenErase,
     onOpenRotate,
@@ -498,6 +522,18 @@ export const NodeActionToolbar = memo(
     const isStoryboardSplit = isStoryboardSplitNode(node);
     const canCopyStoryboardText = isStoryboardGen || isStoryboardSplit;
     const tools = useMemo(() => getNodeToolPlugins(node), [node]);
+    const nodes = useCanvasStore((state) => state.nodes);
+    const groupWorkflowNodes = useMemo(
+      () =>
+        isUngroupableGroup
+          ? nodes.filter((candidate) => candidate.parentId === nodeId)
+          : [],
+      [isUngroupableGroup, nodeId, nodes],
+    );
+    const groupWorkflowState = useMemo(
+      () => workflowGroupState(groupWorkflowNodes),
+      [groupWorkflowNodes],
+    );
     const deleteNode = useCanvasStore((state) => state.deleteNode);
     const addNode = useCanvasStore((state) => state.addNode);
     const addEdge = useCanvasStore((state) => state.addEdge);
@@ -509,7 +545,6 @@ export const NodeActionToolbar = memo(
       (state) => state.arrangeGroupChildren,
     );
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
-    const findNodePosition = useCanvasStore((state) => state.findNodePosition);
     const canReupload = isUploadNode(node) && Boolean(node.data.imageUrl);
     const ignoreAtTagWhenCopyingAndGenerating = useSettingsStore(
       (state) => state.ignoreAtTagWhenCopyingAndGenerating,
@@ -517,11 +552,11 @@ export const NodeActionToolbar = memo(
     const [activeEditAction, setActiveEditAction] = useState<
       "repaint" | "erase" | "matting" | "crop" | "hd" | "outpaint"
     >("matting");
-    const [activeGridAction, setActiveGridAction] =
-      useState<GridActionKey | null>(null);
     const [isCopySuccess, setIsCopySuccess] = useState(false);
     const [isCopyTextSuccess, setIsCopyTextSuccess] = useState(false);
     const [isCopyErrorSuccess, setIsCopyErrorSuccess] = useState(false);
+    const [isRunningGroupWorkflow, setIsRunningGroupWorkflow] = useState(false);
+    const [groupWorkflowStopRequested, setGroupWorkflowStopRequested] = useState(false);
     const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
       null,
     );
@@ -549,6 +584,18 @@ export const NodeActionToolbar = memo(
     // 用统一 helper 解析节点当前图片源，避免每种图片节点各写一套判断。
     const imageSource = useMemo(() => resolveNodeSourceImageUrl(node), [node]);
     const canHandleImage = Boolean(imageSource);
+    const videoUrl = useMemo(() => {
+      if (!isVideoNode(node)) return null;
+      return typeof node.data.videoUrl === "string" && node.data.videoUrl.length > 0
+        ? node.data.videoUrl
+        : null;
+    }, [node]);
+    const audioUrl = useMemo(() => {
+      if (!isAudioNode(node)) return null;
+      return typeof node.data.audioUrl === "string" && node.data.audioUrl.length > 0
+        ? node.data.audioUrl
+        : null;
+    }, [node]);
     // commit 按钮现在覆盖所有媒体节点(图像/视频/音频/3GS)——只要能从节点推断出
     // 可提交的媒体 url 就显示。具体提交目标在 CommitDialog 里按 mediaType 处理。
     const canCommitNode = useMemo(
@@ -603,6 +650,64 @@ export const NodeActionToolbar = memo(
     );
 
     const closeDownloadMenu = useCallback(() => {}, []);
+
+    const handleRunGroupWorkflow = useCallback(async (regenerate: boolean) => {
+      if (isRunningGroupWorkflow) {
+        return;
+      }
+      setGroupWorkflowStopRequested(false);
+      setIsRunningGroupWorkflow(true);
+      try {
+        const { project: projectId, canvas: canvasId } = readUrl();
+        const result = await applyCanvasChatCommandsAsync(
+          [
+            {
+              schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+              ...(projectId ? { project_id: projectId } : {}),
+              ...(canvasId ? { canvas_id: canvasId } : {}),
+              commands: [
+                {
+                  type: "run_workflow",
+                  node_ids: [nodeId],
+                  direction: "connected",
+                  regenerate,
+                },
+              ],
+            },
+          ],
+          {
+            projectId: projectId ?? undefined,
+            canvasId: canvasId ?? undefined,
+          },
+        );
+        if (result.errors.length > 0) {
+          toast.error(result.errors[0] ?? "工作流执行失败");
+          return;
+        }
+        if (result.openedUiActions > 0 || result.applied > 0) {
+          toast.success("已开始运行工作流");
+        } else {
+          toast.info("这个工作流没有需要继续执行的节点");
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error));
+      } finally {
+        setIsRunningGroupWorkflow(false);
+      }
+    }, [isRunningGroupWorkflow, nodeId]);
+
+    const handleStopGroupWorkflow = useCallback(() => {
+      const { canvas: canvasId } = readUrl();
+      cancelCanvasWorkflowExecution(canvasId ?? undefined);
+      setGroupWorkflowStopRequested(true);
+      toast.info("已停止启动后续节点");
+    }, []);
+
+    useEffect(() => {
+      if (groupWorkflowState.status !== "running") {
+        setGroupWorkflowStopRequested(false);
+      }
+    }, [groupWorkflowState.status]);
 
     const resolveToolLabel = useCallback(
       (toolType: NodeToolType) => {
@@ -787,7 +892,7 @@ export const NodeActionToolbar = memo(
 
     const handleDownloadSaveAs = useCallback(async () => {
       if (!imageSource) {
-        return;
+        throw new Error("当前节点没有可下载图片");
       }
       try {
         await downloadUrlAsFile(
@@ -797,8 +902,205 @@ export const NodeActionToolbar = memo(
         closeDownloadMenu();
       } catch (error) {
         console.error("Failed to download image", error);
+        throw error;
       }
     }, [closeDownloadMenu, imageSource, resolveImageDownloadFilename]);
+
+    const resolveVideoDownloadFilename = useCallback(() => {
+      const data = node.data as Record<string, unknown>;
+      const sourceFileName =
+        typeof data.sourceFileName === "string" && data.sourceFileName.trim().length > 0
+          ? data.sourceFileName.trim()
+          : "";
+      if (sourceFileName) return sourceFileName;
+      const displayName =
+        typeof data.displayName === "string" && data.displayName.trim().length > 0
+          ? data.displayName.trim()
+          : "";
+      return displayName ? `${displayName}.mp4` : `video-${node.id}.mp4`;
+    }, [node.data, node.id]);
+
+    const requireVideoUrl = useCallback(() => {
+      if (!isVideoNode(node) || !videoUrl) {
+        throw new Error("当前节点没有可操作的视频");
+      }
+      return videoUrl;
+    }, [node, videoUrl]);
+
+    const handleOpenVideoClip = useCallback(() => {
+      requireVideoUrl();
+      updateNodeData(node.id, {
+        isClipMode: true,
+      });
+      setSelectedNode(node.id);
+    }, [node.id, requireVideoUrl, setSelectedNode, updateNodeData]);
+
+    const handleOpenVideoViewer = useCallback(() => {
+      const url = requireVideoUrl();
+      canvasEventBus.publish("video-viewer/open", {
+        videoUrl: url,
+        title:
+          typeof node.data.displayName === "string"
+            ? node.data.displayName
+            : undefined,
+      });
+    }, [node.data, requireVideoUrl]);
+
+    const handleDownloadVideo = useCallback(async () => {
+      const url = requireVideoUrl();
+      try {
+        await downloadUrlAsFile(
+          resolveImageDisplayUrl(url),
+          resolveVideoDownloadFilename(),
+        );
+      } catch (error) {
+        console.error("[video-download] failed", error);
+        throw error;
+      }
+    }, [requireVideoUrl, resolveVideoDownloadFilename]);
+
+    const resolveAudioDownloadBaseFileName = useCallback(() => {
+      const data = node.data as Record<string, unknown>;
+      const raw =
+        typeof data.sourceFileName === "string" && data.sourceFileName.trim().length > 0
+          ? data.sourceFileName.trim()
+          : typeof data.displayName === "string" && data.displayName.trim().length > 0
+            ? data.displayName.trim()
+            : `audio-${node.id}`;
+      return raw.replace(
+        /\.(mp3|m4a|aac|wav|flac|ogg|opus|mp4|m4b)$/i,
+        "",
+      );
+    }, [node.data, node.id]);
+
+    const resolveAudioDownloadFormat = useCallback((): AudioDownloadFormat => {
+      if (!audioUrl) return "mp3";
+      const sourceExt = getAudioExtFromUrl(audioUrl);
+      if (sourceExt === "mp3" || sourceExt === "m4a" || sourceExt === "wav") {
+        return sourceExt;
+      }
+      return "mp3";
+    }, [audioUrl]);
+
+    const handleDownloadAudioNode = useCallback(async () => {
+      if (!isAudioNode(node) || !audioUrl) {
+        throw new Error("当前节点没有可下载音频");
+      }
+      const format = resolveAudioDownloadFormat();
+      const sourceExt = getAudioExtFromUrl(audioUrl);
+      if (!canProduceFormat(format, sourceExt)) {
+        throw new Error("当前音频格式不支持该下载格式");
+      }
+      try {
+        await downloadAudioAs(format, {
+          audioUrl,
+          baseFileName: resolveAudioDownloadBaseFileName(),
+          onConvertingChange: (converting) =>
+            updateNodeData(node.id, {
+              convertingAudioFormat: converting,
+            }),
+        });
+      } catch (error) {
+        console.error("[audio-download] failed", error);
+        throw error;
+      }
+    }, [
+      audioUrl,
+      node,
+      resolveAudioDownloadBaseFileName,
+      resolveAudioDownloadFormat,
+      updateNodeData,
+    ]);
+
+    const resolveVideoUpscaleParams = useCallback((parameters?: Record<string, unknown>) => {
+      const resolution =
+        typeof parameters?.resolution === "string" &&
+        VIDEO_UPSCALE_RESOLUTIONS.includes(parameters.resolution as FreezoneVideoUpscaleResolution)
+          ? (parameters.resolution as FreezoneVideoUpscaleResolution)
+          : "1080p";
+      const denoise =
+        typeof parameters?.denoise === "string" &&
+        VIDEO_UPSCALE_DENOISE_OPTIONS.includes(parameters.denoise as FreezoneVideoUpscaleDenoise)
+          ? (parameters.denoise as FreezoneVideoUpscaleDenoise)
+          : "1x";
+      return { resolution, denoise };
+    }, []);
+
+    const handleOpenVideoUpscale = useCallback((parameters?: Record<string, unknown>) => {
+      const url = requireVideoUrl();
+      const { resolution, denoise } = resolveVideoUpscaleParams(parameters);
+      const upscaleNodeId = createVideoUpscaleResultNode(node.id, {
+        sourceUrl: url,
+        displayName: `${t("node.videoUpscale.nodeTitle")}（${VIDEO_UPSCALE_RESOLUTION_LABEL[resolution]}）`,
+        resolution,
+        denoise,
+      });
+      if (!upscaleNodeId) {
+        throw new Error("无法创建视频高清节点");
+      }
+      onNodesChange([
+        { id: node.id, type: "select", selected: false },
+        { id: upscaleNodeId, type: "select", selected: true },
+      ]);
+      setSelectedNode(upscaleNodeId);
+      requestFocusNode(upscaleNodeId);
+    }, [
+      node.id,
+      onNodesChange,
+      requestFocusNode,
+      requireVideoUrl,
+      resolveVideoUpscaleParams,
+      setSelectedNode,
+      t,
+    ]);
+
+    const handleAnalyzeVideo = useCallback(() => {
+      const url = requireVideoUrl();
+      const videoData = node.data as Record<string, unknown>;
+      const durationSec =
+        typeof videoData.durationMs === "number" && videoData.durationMs > 0
+          ? videoData.durationMs / 1000
+          : undefined;
+      const result = analyzeVideoStory(node.id, { videoUrl: url, durationSec });
+      if (!result) {
+        throw new Error("无法启动视频解析");
+      }
+      onNodesChange([
+        { id: node.id, type: "select", selected: false },
+        { id: result.nodeId, type: "select", selected: true },
+      ]);
+      setSelectedNode(result.nodeId);
+      requestFocusNode(result.nodeId);
+      return result;
+    }, [node.data, node.id, onNodesChange, requestFocusNode, requireVideoUrl, setSelectedNode]);
+
+    const handleSeparateVideoAudio = useCallback(async () => {
+      const url = requireVideoUrl();
+      const result = await separateVideoAudio(node.id, { sourceUrl: url });
+      const focusNodeId = result.videoNodeId ?? result.audioNodeId ?? null;
+      if (focusNodeId) {
+        onNodesChange([
+          { id: node.id, type: "select", selected: false },
+          { id: focusNodeId, type: "select", selected: true },
+        ]);
+        setSelectedNode(focusNodeId);
+        requestFocusNode(focusNodeId);
+      }
+      return result;
+    }, [node.id, onNodesChange, requestFocusNode, requireVideoUrl, setSelectedNode]);
+
+    const handleOpenVideoSubtitleErase = useCallback(
+      (mode: "smart" | "box") => {
+        requireVideoUrl();
+        updateNodeData(node.id, {
+          subtitleEraseMode: mode,
+          subtitleEraseBox: null,
+          isClipMode: false,
+        });
+        setSelectedNode(node.id);
+      },
+      [node.id, requireVideoUrl, setSelectedNode, updateNodeData],
+    );
 
     // 以下符号被暂时隐藏的 toolbar 按钮使用，保留代码不删除：
     // - Sparkles 图标用于 AI 改图按钮
@@ -899,98 +1201,133 @@ export const NodeActionToolbar = memo(
     // 保留此 helper 以便将来其它预设改图入口复用。
     void handleCreatePresetEditNode;
 
-    const handleMatteImage = useCallback(() => {
+    // 抠图编排移到 application/matteImage（故事板详情工具条共用），语义零变化。
+    const handleMatteImage = useCallback(async (): Promise<Record<string, unknown>> => {
       if (!imageSource) {
-        return;
-      }
-      const projectId = readUrl().project;
-      if (!projectId) {
-        console.warn(
-          "[matte] no project_id in URL (?p=<project_id>) — cannot persist matted PNG",
-        );
-        return;
+        throw new Error("当前节点没有可抠图图片");
       }
       closeDownloadMenu();
+      const result = matteImage(node.id, imageSource, { displayName: t("nodeToolbar.matting") });
+      if (!result) {
+        throw new Error("[matte] no project_id in URL (?p=<project_id>) — cannot persist matted PNG");
+      }
+      await result.completion;
+      const data = useCanvasStore.getState().nodes.find((item) => item.id === result.nodeId)?.data;
+      const generationError =
+        typeof data?.generationError === "string" && data.generationError.length > 0
+          ? data.generationError
+          : null;
+      if (generationError) {
+        throw new Error(generationError);
+      }
+      return {
+        nodeId: result.nodeId,
+        imageUrl: data?.imageUrl,
+        previewImageUrl: data?.previewImageUrl,
+        resultKind: "matte",
+      };
+    }, [closeDownloadMenu, imageSource, node.id, t]);
 
-      const sourceAspectRatio =
-        typeof (node.data as { aspectRatio?: unknown }).aspectRatio === "string"
-          ? ((node.data as { aspectRatio?: string }).aspectRatio ?? "1:1")
-          : "1:1";
-      const position = findNodePosition(
-        node.id,
-        EXPORT_RESULT_NODE_DEFAULT_WIDTH,
-        EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
-      );
-      // Same inheritance contract as the spawn-style overlays — matting
-      // produces a user_spawned exportImage child that still represents
-      // the same canonical slot at Push time.
-      const matteInitialData = inheritMainlineFields(
-        { data: node.data as Record<string, unknown> },
-        {
-          displayName: t("nodeToolbar.matting"),
-          imageUrl: null,
-          previewImageUrl: null,
-          aspectRatio: sourceAspectRatio,
-          resultKind: "matte",
-          isGenerating: true,
-          generationStartedAt: Date.now(),
-        },
-      );
-      const nextNodeId = addNode(
-        CANVAS_NODE_TYPES.exportImage,
-        position,
-        matteInitialData as unknown as Parameters<typeof addNode>[2],
-      );
-      addEdge(node.id, nextNodeId);
-      setSelectedNode(nextNodeId);
-
-      const sourceUrl = imageSource;
-      void (async () => {
-        try {
-          const sourceResp = await fetch(sourceUrl);
-          if (!sourceResp.ok) {
-            throw new Error(`fetch source failed: ${sourceResp.status}`);
-          }
-          const sourceBlob = await sourceResp.blob();
-          // 整段去背在自建 Worker 内执行(见 matteClient / matteWorker):无论 WebGPU
-          // 是否可用,主线程都不阻塞,点击抠图后画布保持流畅。
-          const mattedBlob = await matteInWorker(sourceBlob);
-          const filename = `matte-${node.id}-${Date.now()}.png`;
-          const uploaded = await uploadFreezoneImage(
-            projectId,
-            mattedBlob,
-            filename,
-          );
-          updateNodeData(nextNodeId, {
-            imageUrl: uploaded.url,
-            previewImageUrl: uploaded.url,
-            isGenerating: false,
-            generationStartedAt: null,
-            generationError: null,
-            generationErrorDetails: null,
-          });
-        } catch (error) {
-          console.error("[matte] failed", error);
-          const message =
-            error instanceof Error ? error.message : String(error);
-          updateNodeData(nextNodeId, {
-            isGenerating: false,
-            generationStartedAt: null,
-            generationError: message,
-            generationErrorDetails: message,
-          });
+    useEffect(() => {
+      return subscribeNodeAction(({ nodeId, action, requestId, parameters }) => {
+        if (nodeId !== node.id) return;
+        if (action === "run_matting_tool") {
+          publishNodeActionAccepted(requestId, node.id, action);
+          void handleMatteImage()
+            .then((output) => publishNodeActionSuccess(requestId, node.id, action, output))
+            .catch((error) => publishNodeActionError(requestId, node.id, action, error));
+          return;
         }
-      })();
+        if (action === "download_image") {
+          publishNodeActionAccepted(requestId, node.id, action);
+          void handleDownloadSaveAs()
+            .then(() => publishNodeActionSuccess(requestId, node.id, action, { downloaded: true }))
+            .catch((error) => publishNodeActionError(requestId, node.id, action, error));
+          return;
+        }
+        if (action === "open_video_clip_tool") {
+          try {
+            publishNodeActionAccepted(requestId, node.id, action);
+            handleOpenVideoClip();
+            publishNodeActionSuccess(requestId, node.id, action, { openedUiAction: true });
+          } catch (error) {
+            publishNodeActionError(requestId, node.id, action, error);
+          }
+          return;
+        }
+        if (action === "open_video_viewer") {
+          try {
+            publishNodeActionAccepted(requestId, node.id, action);
+            handleOpenVideoViewer();
+            publishNodeActionSuccess(requestId, node.id, action, { openedUiAction: true });
+          } catch (error) {
+            publishNodeActionError(requestId, node.id, action, error);
+          }
+          return;
+        }
+        if (action === "download_video") {
+          publishNodeActionAccepted(requestId, node.id, action);
+          void handleDownloadVideo()
+            .then(() => publishNodeActionSuccess(requestId, node.id, action, { downloaded: true }))
+            .catch((error) => publishNodeActionError(requestId, node.id, action, error));
+          return;
+        }
+        if (action === "download_audio") {
+          publishNodeActionAccepted(requestId, node.id, action);
+          void handleDownloadAudioNode()
+            .then(() => publishNodeActionSuccess(requestId, node.id, action, { downloaded: true }))
+            .catch((error) => publishNodeActionError(requestId, node.id, action, error));
+          return;
+        }
+        if (action === "open_video_upscale_tool") {
+          try {
+            publishNodeActionAccepted(requestId, node.id, action);
+            handleOpenVideoUpscale(parameters);
+            publishNodeActionSuccess(requestId, node.id, action, { openedUiAction: true });
+          } catch (error) {
+            publishNodeActionError(requestId, node.id, action, error);
+          }
+          return;
+        }
+        if (action === "run_video_analyze_story") {
+          try {
+            publishNodeActionAccepted(requestId, node.id, action);
+            const result = handleAnalyzeVideo();
+            publishNodeActionSuccess(requestId, node.id, action, { nodeId: result.nodeId });
+          } catch (error) {
+            publishNodeActionError(requestId, node.id, action, error);
+          }
+          return;
+        }
+        if (action === "run_audio_separate") {
+          publishNodeActionAccepted(requestId, node.id, action);
+          void handleSeparateVideoAudio()
+            .then((output) => publishNodeActionSuccess(requestId, node.id, action, { ...output }))
+            .catch((error) => publishNodeActionError(requestId, node.id, action, error));
+          return;
+        }
+        if (action === "open_video_subtitle_erase_smart" || action === "open_video_subtitle_erase_box") {
+          try {
+            publishNodeActionAccepted(requestId, node.id, action);
+            handleOpenVideoSubtitleErase(action === "open_video_subtitle_erase_smart" ? "smart" : "box");
+            publishNodeActionSuccess(requestId, node.id, action, { openedUiAction: true });
+          } catch (error) {
+            publishNodeActionError(requestId, node.id, action, error);
+          }
+        }
+      });
     }, [
-      addEdge,
-      addNode,
-      closeDownloadMenu,
-      findNodePosition,
-      imageSource,
-      node,
-      setSelectedNode,
-      t,
-      updateNodeData,
+      handleAnalyzeVideo,
+      handleDownloadAudioNode,
+      handleDownloadSaveAs,
+      handleDownloadVideo,
+      handleMatteImage,
+      handleOpenVideoClip,
+      handleOpenVideoSubtitleErase,
+      handleOpenVideoUpscale,
+      handleOpenVideoViewer,
+      handleSeparateVideoAudio,
+      node.id,
     ]);
 
     const handleOpenWorkbench = useCallback(() => {
@@ -1077,6 +1414,8 @@ export const NodeActionToolbar = memo(
     // missing.
     const _toolbarFlags = nodeMainlineFlags(node);
     const isPresetLocked = _toolbarFlags.isPresetManaged;
+    const recipeCompileFellBack =
+      node.data.workflowRecipeCompileMode === "timeout_fallback";
 
     // 分镜组 has its own dedicated toolbar (aspect / grid / index / convert /
     // ungroup) — render it instead of the generic node toolbar.
@@ -1110,6 +1449,16 @@ export const NodeActionToolbar = memo(
                 className="rounded-full bg-amber-500/15 px-3 py-1.5 text-sm text-amber-100"
               >
                 主线投影 · 锁定
+              </span>
+            )}
+            {recipeCompileFellBack && (
+              <span
+                key="recipe-compile-fallback"
+                className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-3 py-1.5 text-sm text-amber-100"
+                title="Recipe 模型编译超时，本次已使用稳定降级提示词继续生成"
+              >
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Recipe 已降级编译
               </span>
             )}
             {isPresetLocked && workbenchTarget && (
@@ -1218,7 +1567,12 @@ export const NodeActionToolbar = memo(
                     key: "matting" as const,
                     icon: Scissors,
                     label: t("nodeToolbar.matting"),
-                    run: () => handleMatteImage(),
+                    run: () => {
+                      void handleMatteImage().catch((error) => {
+                        console.error("[matte] failed", error);
+                        toast.error("抠图失败");
+                      });
+                    },
                   },
                   {
                     key: "crop" as const,
@@ -1303,81 +1657,63 @@ export const NodeActionToolbar = memo(
             {!isImageEdit &&
               canHandleImage &&
               (() => {
+                // 点某一项 = 在源节点下游建一个「功能节点」（空的图片生成节点，
+                // 节点名 = 功能名），提示词/参考图/比例都在那个节点上改，按 ↑ 才
+                // 提交——与故事板详情工具条同一条交互。
                 const gridActions: Array<{
                   key: GridActionKey;
                   icon: typeof Crop;
                   label: string;
-                  prompt: string;
-                  cost: number;
                 }> = [
                   {
                     key: "multiCameraGrid",
                     icon: Grid3x3,
                     label: t("nodeToolbar.gridMenu.multiCameraGrid"),
-                    prompt: t("nodeToolbar.gridMenu.multiCameraGridPrompt"),
-                    cost: 14,
                   },
                   {
                     key: "plotFourGrid",
                     icon: Grid2x2,
                     label: t("nodeToolbar.gridMenu.plotFourGrid"),
-                    prompt: t("nodeToolbar.gridMenu.plotFourGridPrompt"),
-                    cost: 8,
                   },
                   {
                     key: "faceThreeView",
                     icon: User,
                     label: t("nodeToolbar.gridMenu.faceThreeView"),
-                    prompt: t("nodeToolbar.gridMenu.faceThreeViewPrompt"),
-                    cost: 6,
                   },
                   {
                     key: "productThreeView",
                     icon: Package,
                     label: t("nodeToolbar.gridMenu.productThreeView"),
-                    prompt: t("nodeToolbar.gridMenu.productThreeViewPrompt"),
-                    cost: 6,
                   },
                   {
                     key: "serialStoryboard25",
                     icon: LayoutDashboard,
                     label: t("nodeToolbar.gridMenu.serialStoryboard25"),
-                    prompt: t("nodeToolbar.gridMenu.serialStoryboard25Prompt"),
-                    cost: 32,
                   },
                   {
                     key: "cinematicLightCorrection",
                     icon: Film,
                     label: t("nodeToolbar.gridMenu.cinematicLightCorrection"),
-                    prompt: t(
-                      "nodeToolbar.gridMenu.cinematicLightCorrectionPrompt",
-                    ),
-                    cost: 4,
                   },
                   {
                     key: "characterThreeView",
                     icon: Users,
                     label: t("nodeToolbar.gridMenu.characterThreeView"),
-                    prompt: t("nodeToolbar.gridMenu.characterThreeViewPrompt"),
-                    cost: 6,
+                  },
+                  {
+                    key: "sceneSettingSheet",
+                    icon: Mountain,
+                    label: t("nodeToolbar.gridMenu.sceneSettingSheet"),
                   },
                   {
                     key: "frameProjection3sLater",
                     icon: FastForward,
                     label: t("nodeToolbar.gridMenu.frameProjection3sLater"),
-                    prompt: t(
-                      "nodeToolbar.gridMenu.frameProjection3sLaterPrompt",
-                    ),
-                    cost: 4,
                   },
                   {
                     key: "frameProjection5sEarlier",
                     icon: Rewind,
                     label: t("nodeToolbar.gridMenu.frameProjection5sEarlier"),
-                    prompt: t(
-                      "nodeToolbar.gridMenu.frameProjection5sEarlierPrompt",
-                    ),
-                    cost: 4,
                   },
                 ];
                 return (
@@ -1403,23 +1739,14 @@ export const NodeActionToolbar = memo(
                     >
                       {gridActions.map((action) => {
                         const Icon = action.icon;
-                        const isActive = action.key === activeGridAction;
                         return (
                           <DropdownMenuItem
                             key={action.key}
-                            className={
-                              isActive
-                                ? "gap-2 bg-[rgb(var(--accent-rgb)/0.18)] text-accent focus:bg-[rgb(var(--accent-rgb)/0.28)] focus:text-accent"
-                                : TOOLBAR_MENU_ITEM_CLASS
-                            }
+                            className={TOOLBAR_MENU_ITEM_CLASS}
                             onSelect={() => {
-                              setActiveGridAction(action.key);
-                              onOpenGridAction({
+                              onSpawnGridActionNode({
                                 nodeId: node.id,
                                 key: action.key,
-                                label: action.label,
-                                prompt: action.prompt,
-                                cost: action.cost,
                               });
                             }}
                           >
@@ -1585,106 +1912,17 @@ export const NodeActionToolbar = memo(
                   );
                 };
 
-                const handleVideoAnalyze = async () => {
+                const handleVideoAnalyze = () => {
                   if (!hasVideo || !videoUrl || isAnalyzing) {
                     return;
                   }
-                  const projectId = readUrl().project;
-                  if (!projectId) {
-                    console.error("[video-analyze] no project in URL");
-                    return;
-                  }
-                  updateNodeData(node.id, {
-                    isAnalyzing: true,
-                    analysisError: null,
-                  });
-
-                  // 立即在下游建一个 loading 态的视频故事节点 —— 不等后端返回。
-                  // 数据回来后再 updateNodeData 把分镜填进去；失败则把错误写到该节点。
-                  const storyPosition = findNodePosition(node.id, 720, 360);
-                  const storyNodeId = addNode(
-                    CANVAS_NODE_TYPES.videoStory,
-                    storyPosition,
-                    {
-                      sourceVideoUrl: videoUrl,
-                      rows: [],
-                      rawResult: null,
-                      isAnalyzing: true,
-                      analysisStartedAt: Date.now(),
-                      analysisError: null,
-                    },
-                  );
-                  addEdge(node.id, storyNodeId);
-
-                  try {
-                    const durationSec =
-                      typeof videoData.durationMs === "number" && videoData.durationMs > 0
-                        ? videoData.durationMs / 1000
-                        : undefined;
-                    const submitResp = (await submitFreezoneAnalyzeVideoStory(
-                      projectId,
-                      { videoUrl, durationSec },
-                    )) as unknown;
-                    console.info("[video-analyze] submit response", submitResp);
-
-                    const submitRecord =
-                      submitResp && typeof submitResp === "object"
-                        ? (submitResp as Record<string, unknown>)
-                        : {};
-                    const taskKey =
-                      typeof submitRecord.task_key === "string"
-                        ? submitRecord.task_key
-                        : null;
-
-                    let rawResult: Record<string, unknown>;
-                    if (taskKey) {
-                      const completed = await awaitTaskCompletion(taskKey, projectId);
-                      console.info(
-                        "[video-analyze] task completed",
-                        completed.result,
-                      );
-                      rawResult = (completed.result ?? {}) as Record<string, unknown>;
-                    } else {
-                      // Endpoint returned the result synchronously (OpenAPI 200 is `{}` —
-                      // not guaranteed to be the async FreezoneJobAcceptedResponse).
-                      console.info(
-                        "[video-analyze] no task_key, treating response as inline result",
-                      );
-                      rawResult = submitRecord;
-                    }
-
-                    const rows = normalizeVideoStoryRows(rawResult);
-                    console.info(
-                      "[video-analyze] normalized rows",
-                      rows.length,
-                      rows,
-                    );
-
-                    // 把解析结果回填到先前创建的 loading 故事节点。
-                    updateNodeData(storyNodeId, {
-                      rows,
-                      rawResult,
-                      isAnalyzing: false,
-                      analysisError: null,
-                    });
-                    updateNodeData(node.id, {
-                      isAnalyzing: false,
-                      analysisError: null,
-                    });
-                  } catch (error) {
-                    const message =
-                      error instanceof Error ? error.message : String(error);
-                    console.error("[video-analyze] failed", error);
-                    // 把错误写到下游故事节点,清掉它的 loading 态。
-                    updateNodeData(storyNodeId, {
-                      isAnalyzing: false,
-                      analysisError: message,
-                    });
-                    updateNodeData(node.id, {
-                      isAnalyzing: false,
-                      analysisError: message,
-                    });
-                  }
+                  // 编排在 application/videoAnalyzeStory（故事板详情「解析」共用）：
+                  // 同步建 loading 故事节点 → 提交 → 归一化回填 / 写错。
+                  const durationSec =
+                    typeof videoData.durationMs === "number" && videoData.durationMs > 0
+                      ? videoData.durationMs / 1000
+                      : undefined;
+                  analyzeVideoStory(node.id, { videoUrl, durationSec });
                 };
 
                 const handleVideoDownload = async () => {
@@ -1723,33 +1961,21 @@ export const NodeActionToolbar = memo(
                 // 「高清」：在下游建一个视频节点（复用 video 节点的播放器/角标/尺寸，
                 // 与普通视频节点一致），以本视频为源、打 isUpscaleNode 标记 —— 选中后在
                 // 其下方展开 VideoUpscaleEditorOverlay 配置面板，提交走 /freezone/video/upscale。
+                // 节点创建走 application/videoUpscale 的共享函数（故事板详情同源）；
+                // 选中态切换是工作流入口特有的（为了展开配置面板），留在这里。
                 const handleVideoUpscale = () => {
                   if (!hasVideo || !videoUrl) {
                     return;
                   }
-                  const position = findNodePosition(node.id, 580, 380);
-                  const upscaleNodeId = addNode(
-                    CANVAS_NODE_TYPES.video,
-                    position,
-                    {
-                      displayName: `${t("node.videoUpscale.nodeTitle")}（1080P）`,
-                      videoUrl: null,
-                      previewImageUrl:
-                        typeof videoData.previewImageUrl === "string"
-                          ? videoData.previewImageUrl
-                          : null,
-                      aspectRatio:
-                        typeof videoData.aspectRatio === "string"
-                          ? videoData.aspectRatio
-                          : "16:9",
-                      isUpscaleNode: true,
-                      upscaleSourceUrl: videoUrl,
-                      upscaleResolution: "1080p",
-                      upscaleDenoise: "1x",
-                      isGenerating: false,
-                    } as unknown as Parameters<typeof addNode>[2],
-                  );
-                  addEdge(node.id, upscaleNodeId);
+                  const upscaleNodeId = createVideoUpscaleResultNode(node.id, {
+                    sourceUrl: videoUrl,
+                    displayName: `${t("node.videoUpscale.nodeTitle")}（1080P）`,
+                    resolution: "1080p",
+                    denoise: "1x",
+                  });
+                  if (!upscaleNodeId) {
+                    return;
+                  }
                   onNodesChange([
                     { id: node.id, type: "select", selected: false },
                     { id: upscaleNodeId, type: "select", selected: true },
@@ -1759,245 +1985,13 @@ export const NodeActionToolbar = memo(
 
                 const isSeparatingAv = Boolean(videoData.isSeparatingAv);
 
-                const handleAudioSeparate = async () => {
+                const handleAudioSeparate = () => {
                   if (!hasVideo || !videoUrl || isSeparatingAv) {
                     return;
                   }
-                  const projectId = readUrl().project;
-                  if (!projectId) {
-                    console.error("[audio-separate] no project in URL");
-                    return;
-                  }
-                  updateNodeData(node.id, { isSeparatingAv: true });
-                  try {
-                    const ref = await submitFreezoneAudioSeparate(
-                      projectId,
-                      { sourceUrl: videoUrl },
-                    );
-                    const completed = await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
-                    console.info(
-                      "[audio-separate] task completed",
-                      completed.result,
-                    );
-
-                    // Walk an arbitrary JSON tree and pull every string that
-                    // looks like a URL/path. Backend hasn't typed the result
-                    // schema, so we can't rely on key names alone.
-                    const collectStrings = (
-                      value: unknown,
-                      out: string[],
-                    ): void => {
-                      if (typeof value === "string") {
-                        if (value.length > 0) out.push(value);
-                        return;
-                      }
-                      if (Array.isArray(value)) {
-                        for (const item of value) collectStrings(item, out);
-                        return;
-                      }
-                      if (value && typeof value === "object") {
-                        for (const item of Object.values(
-                          value as Record<string, unknown>,
-                        )) {
-                          collectStrings(item, out);
-                        }
-                      }
-                    };
-
-                    // Fallback only: some legacy results carry a backend
-                    // filesystem path (e.g. `/data/output/<user>/<project>/...`)
-                    // instead of a servable URL. Rewriting `<...>/output/` into
-                    // `/static/<user>/<project>/...` yields the LEGACY scheme,
-                    // which production now rejects with 410 — so this is used
-                    // strictly as a last resort when no `*_url` field exists.
-                    const toStaticUrl = (raw: string): string => {
-                      if (!raw) return raw;
-                      if (
-                        raw.startsWith("/static/") ||
-                        raw.startsWith("http://") ||
-                        raw.startsWith("https://") ||
-                        raw.startsWith("blob:") ||
-                        raw.startsWith("data:")
-                      ) {
-                        return raw;
-                      }
-                      const outputIdx = raw.lastIndexOf("/output/");
-                      if (outputIdx >= 0) {
-                        return `/static/${raw.slice(outputIdx + "/output/".length)}`;
-                      }
-                      return raw;
-                    };
-
-                    const pickUrlField = (
-                      source: Record<string, unknown>,
-                      keys: string[],
-                    ): string | null => {
-                      for (const key of keys) {
-                        const value = source[key];
-                        if (typeof value === "string" && value.length > 0) {
-                          return value;
-                        }
-                      }
-                      return null;
-                    };
-
-                    const classify = (
-                      source: Record<string, unknown> | null | undefined,
-                    ): { audio: string | null; video: string | null } => {
-                      if (!source)
-                        return { audio: null, video: null };
-
-                      // Prefer the backend-provided canonical URLs. The result
-                      // carries BOTH a filesystem `*_path`
-                      // (`/data/output/<user>/<project>/...`) and a
-                      // ready-to-serve `*_url` (`/static/projects/<project_id>/...`).
-                      // Only the `*_url` form is reachable online — OpenResty
-                      // returns 410 for legacy `/static/<user>/<project>/...`.
-                      // Never derive a URL from `*_path`.
-                      let audio = pickUrlField(source, ["audio_url", "audioUrl"]);
-                      let video = pickUrlField(source, [
-                        "mute_video_url",
-                        "muteVideoUrl",
-                      ]);
-
-                      // Fallback heuristic for results that don't carry explicit
-                      // URL fields: walk the tree and pick by extension,
-                      // preferring already-servable `/static`/http URLs over raw
-                      // filesystem paths so we never reconstruct a legacy URL.
-                      if (!audio || !video) {
-                        const strings: string[] = [];
-                        collectStrings(source, strings);
-                        const isServable = (s: string) =>
-                          s.startsWith("/static/") ||
-                          s.startsWith("http://") ||
-                          s.startsWith("https://");
-                        strings.sort(
-                          (a, b) =>
-                            Number(isServable(b)) - Number(isServable(a)),
-                        );
-                        const audioExt =
-                          /\.(mp3|m4a|aac|wav|flac|ogg|opus)(\?|$)/i;
-                        const videoExt =
-                          /\.(mp4|mov|webm|mkv|avi|m4v)(\?|$)/i;
-                        for (const s of strings) {
-                          if (
-                            !audio &&
-                            (audioExt.test(s) || /audio|sound/i.test(s))
-                          ) {
-                            audio = s;
-                          } else if (
-                            !video &&
-                            (videoExt.test(s) ||
-                              /silent|mute|no[_-]?audio|video/i.test(s))
-                          ) {
-                            video = s;
-                          }
-                          if (audio && video) break;
-                        }
-                      }
-
-                      return {
-                        audio: audio ? toStaticUrl(audio) : null,
-                        video: video ? toStaticUrl(video) : null,
-                      };
-                    };
-
-                    let { audio: audioOutputUrl, video: silentVideoOutputUrl } =
-                      classify(
-                        (completed.result ?? null) as Record<
-                          string,
-                          unknown
-                        > | null,
-                      );
-
-                    // Fallback: hit the dedicated job-result endpoint when SSE
-                    // result didn't carry the URLs (some freezone task types
-                    // surface artifacts only via /jobs/.../result).
-                    if (!audioOutputUrl || !silentVideoOutputUrl) {
-                      try {
-                        const jobResult =
-                          await fetchFreezoneAudioSeparateResult(
-                            projectId,
-                            ref.job_id,
-                          );
-                        console.info(
-                          "[audio-separate] job result",
-                          jobResult,
-                        );
-                        const classified = classify(jobResult);
-                        audioOutputUrl = audioOutputUrl ?? classified.audio;
-                        silentVideoOutputUrl =
-                          silentVideoOutputUrl ?? classified.video;
-                      } catch (jobErr) {
-                        console.warn(
-                          "[audio-separate] job result fetch failed",
-                          jobErr,
-                        );
-                      }
-                    }
-
-                    if (!audioOutputUrl || !silentVideoOutputUrl) {
-                      console.warn(
-                        "[audio-separate] could not resolve audio/video urls",
-                        { sseResult: completed.result },
-                      );
-                      return;
-                    }
-                    console.info("[audio-separate] resolved urls", {
-                      audioOutputUrl,
-                      silentVideoOutputUrl,
-                    });
-                    const rawName =
-                      typeof videoData.sourceFileName === "string" &&
-                      videoData.sourceFileName.trim().length > 0
-                        ? videoData.sourceFileName
-                        : typeof videoData.displayName === "string" &&
-                            videoData.displayName.trim().length > 0
-                          ? videoData.displayName
-                          : "video";
-                    const baseName = rawName.replace(/\.[^/.]+$/, "");
-                    const audioTitle = `${baseName}_背景音`;
-                    const silentTitle = `${baseName}_无声`;
-
-                    const audioPos = findNodePosition(node.id, 480, 180);
-                    const audioNodeId = addNode(
-                      CANVAS_NODE_TYPES.audio,
-                      audioPos,
-                      {
-                        audioUrl: audioOutputUrl,
-                        sourceFileName: audioTitle,
-                        displayName: audioTitle,
-                      },
-                    );
-                    addEdge(node.id, audioNodeId);
-
-                    const silentPos = findNodePosition(node.id, 480, 270);
-                    const silentNodeId = addNode(
-                      CANVAS_NODE_TYPES.video,
-                      silentPos,
-                      {
-                        videoUrl: silentVideoOutputUrl,
-                        sourceFileName: `${silentTitle}.mp4`,
-                        displayName: silentTitle,
-                      },
-                    );
-                    addEdge(node.id, silentNodeId);
-                  } catch (error) {
-                    // 脱离监听 ≠ 分离失败。音视频分离不落节点句柄（结果是两个
-                    // 新节点，没有承载 taskKey 的宿主），所以这里只能明确告诉
-                    // 用户任务还在后台跑、结果去任务中心取，而不是静默收场。
-                    if (isTaskPollTimeoutError(error)) {
-                      console.warn("[audio-separate] detached from a still-running job", {
-                        taskKey: error.taskKey,
-                        idleMs: error.idleMs,
-                      });
-                      notifyTaskStillRunning(t);
-                    } else {
-                      console.error("[audio-separate] failed", error);
-                    }
-                  } finally {
-                    updateNodeData(node.id, { isSeparatingAv: false });
-                  }
+                  // 编排在 application/videoSeparateAudio（故事板详情「分离音视频」
+                  // 共用）：提交 → 挑音频/静音视频地址 → 各建一个下游节点。
+                  void separateVideoAudio(node.id, { sourceUrl: videoUrl });
                 };
 
                 return (
@@ -2049,12 +2043,12 @@ export const NodeActionToolbar = memo(
                           ? t("nodeToolbar.video.requiresVideo")
                           : videoAnalyzeBillingRuleMissing
                             ? t("common.billingRuleNotConfiguredShort")
-                          : undefined
+                            : undefined
                       }
                       onClick={(event) => {
                         event.stopPropagation();
                         if (videoAnalyzeBillingRuleMissing) return;
-                        void handleVideoAnalyze();
+                        handleVideoAnalyze();
                       }}
                     >
                       {isAnalyzing ? (
@@ -2066,7 +2060,9 @@ export const NodeActionToolbar = memo(
                       <CreditCostPill
                         display={videoAnalyzeCreditCostDisplay}
                         promotion={videoAnalyzeCreditCost.data?.data.promotion}
-                        disabled={!hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing}
+                        disabled={
+                          !hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing
+                        }
                       />
                     </UiChipButton>
                     <DropdownMenu
@@ -2144,7 +2140,7 @@ export const NodeActionToolbar = memo(
                       }
                       onClick={(event) => {
                         event.stopPropagation();
-                        void handleAudioSeparate();
+                        handleAudioSeparate();
                       }}
                     >
                       {isSeparatingAv ? (
@@ -2222,6 +2218,8 @@ export const NodeActionToolbar = memo(
                   );
                 })();
 
+                // 透传/转码下载核心移到 application/audioDownload（故事板音频
+                // chip 共用）；可用性守卫与 toast 留在这里，转码态仍写 node data。
                 const handleAudioDownload = async (
                   format: AudioDownloadFormat,
                 ) => {
@@ -2232,41 +2230,18 @@ export const NodeActionToolbar = memo(
                     toast.error(t("nodeToolbar.audio.m4aSourceOnly"));
                     return;
                   }
-                  const filename = `${baseFileName}.${format}`;
-                  const resolvedUrl = resolveImageDisplayUrl(audioUrl);
-                  // Passthrough (target container == source): download original
-                  // bytes via downloadUrlAsFile (robust cross-origin fallback +
-                  // correct extension), no lossy re-encode.
-                  const passthrough =
-                    format === sourceExt ||
-                    (format === "m4a" && canProduceFormat("m4a", sourceExt));
-                  if (passthrough) {
-                    try {
-                      await downloadUrlAsFile(resolvedUrl, filename);
-                    } catch (error) {
-                      console.error("[audio-download] passthrough failed", error);
-                      toast.error(t("nodeToolbar.audio.downloadFailed"));
-                    }
-                    return;
-                  }
-                  updateNodeData(node.id, { convertingAudioFormat: format });
                   try {
-                    const resp = await fetch(resolvedUrl);
-                    if (!resp.ok) {
-                      throw new Error(`fetch failed: ${resp.status}`);
-                    }
-                    const srcBlob = await resp.blob();
-                    const outBlob = await transcodeAudio(
-                      srcBlob,
-                      sourceExt,
-                      format,
-                    );
-                    downloadBlobAsFile(outBlob, filename);
+                    await downloadAudioAs(format, {
+                      audioUrl,
+                      baseFileName,
+                      onConvertingChange: (converting) =>
+                        updateNodeData(node.id, {
+                          convertingAudioFormat: converting,
+                        }),
+                    });
                   } catch (error) {
-                    console.error("[audio-download] transcode failed", error);
+                    console.error("[audio-download] failed", error);
                     toast.error(t("nodeToolbar.audio.downloadFailed"));
-                  } finally {
-                    updateNodeData(node.id, { convertingAudioFormat: null });
                   }
                 };
 
@@ -2341,6 +2316,85 @@ export const NodeActionToolbar = memo(
               const groupColor = groupBackgroundColor;
               return (
                 <>
+                  {groupWorkflowState.status !== "none" && (
+                    groupWorkflowState.status === "running" ? (
+                      <>
+                        <UiChipButton
+                          key="group-workflow-running"
+                          className={TOOLBAR_TEXT_BUTTON_CLASS}
+                          title="工作流正在运行"
+                          disabled
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {groupWorkflowStopRequested ? (
+                            <CirclePause className="h-3.5 w-3.5" />
+                          ) : (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          )}
+                          {groupWorkflowStopRequested ? "已停止后续" : "运行中"}
+                        </UiChipButton>
+                        <UiChipButton
+                          key="group-stop-workflow"
+                          className={TOOLBAR_TEXT_BUTTON_CLASS}
+                          title="停止启动后续工作流节点"
+                          disabled={groupWorkflowStopRequested}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            closeDownloadMenu();
+                            handleStopGroupWorkflow();
+                          }}
+                        >
+                          {groupWorkflowStopRequested ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <CirclePause className="h-3.5 w-3.5" />
+                          )}
+                          {groupWorkflowStopRequested ? "等待当前节点" : "停止后续"}
+                        </UiChipButton>
+                      </>
+                    ) : (
+                      <>
+                        <UiChipButton
+                          key="group-run-workflow"
+                          className={TOOLBAR_TEXT_BUTTON_CLASS}
+                          title={
+                            groupWorkflowState.status === "completed"
+                              ? "工作流已完成"
+                              : "运行工作流"
+                          }
+                          disabled={isRunningGroupWorkflow || !groupWorkflowState.canContinue}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            closeDownloadMenu();
+                            void handleRunGroupWorkflow(false);
+                          }}
+                        >
+                          {isRunningGroupWorkflow ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Workflow className="h-3.5 w-3.5" />
+                          )}
+                          {isRunningGroupWorkflow ? "运行中" : groupWorkflowState.primaryLabel}
+                        </UiChipButton>
+                        {groupWorkflowState.canRegenerate && (
+                          <UiChipButton
+                            key="group-rerun-workflow"
+                            className={TOOLBAR_TEXT_BUTTON_CLASS}
+                            title="重新运行全部工作流节点"
+                            disabled={isRunningGroupWorkflow}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              closeDownloadMenu();
+                              void handleRunGroupWorkflow(true);
+                            }}
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            重新运行全部
+                          </UiChipButton>
+                        )}
+                      </>
+                    )
+                  )}
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <UiChipButton
@@ -2413,26 +2467,33 @@ export const NodeActionToolbar = memo(
                     <DropdownMenuContent
                       align="start"
                       sideOffset={6}
-                      className={`${TOOLBAR_MENU_CONTENT_CLASS} min-w-[120px]`}
+                      // 150px 同多选工具条：加了图标后 120px 会把「宫格排列」挤折行。
+                      className={`${TOOLBAR_MENU_CONTENT_CLASS} min-w-[150px]`}
                       onClick={(event) => event.stopPropagation()}
                     >
+                      {/* 文案与图标跟多选工具条（MultiSelectionToolbar）那份排列菜单
+                          逐字对齐：宫格/水平/垂直。这里原来照 mode key 直译成
+                          「网格/横向/纵向」，同一个产品出现两套说法。 */}
                       <DropdownMenuItem
                         className={TOOLBAR_MENU_ITEM_CLASS}
                         onSelect={() => arrangeGroupChildren(nodeId, 'grid')}
                       >
-                        网格
+                        <Workflow className="h-4 w-4 text-text-muted" />
+                        宫格排列
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className={TOOLBAR_MENU_ITEM_CLASS}
                         onSelect={() => arrangeGroupChildren(nodeId, 'horizontal')}
                       >
-                        横向排列
+                        <StretchHorizontal className="h-4 w-4 text-text-muted" />
+                        水平排列
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className={TOOLBAR_MENU_ITEM_CLASS}
                         onSelect={() => arrangeGroupChildren(nodeId, 'vertical')}
                       >
-                        纵向排列
+                        <StretchVertical className="h-4 w-4 text-text-muted" />
+                        垂直排列
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>

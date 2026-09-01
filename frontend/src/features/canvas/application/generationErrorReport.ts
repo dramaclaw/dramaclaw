@@ -48,8 +48,36 @@ function toStringSafe(value: unknown): string {
 // failure UI — it's the single most useful handle for diagnosing a bad run.
 export function extractRequestId(message: string | null | undefined): string | null {
   if (!message) return null;
-  const match = message.match(/request_id=([^;,\s]+)/i);
-  return match ? match[1] : null;
+  const match = message.match(
+    /(?:request[_\s-]*id\s*[=:]\s*|request\s+id\s*:\s*)([a-zA-Z0-9._:-]+)/i,
+  );
+  return match ? match[1].replace(/[)}\]]+$/, '') : null;
+}
+
+export function generationErrorFingerprint(
+  message: string | null | undefined,
+): string {
+  const value = String(message ?? '').trim();
+  if (!value) return '';
+  const requestId = extractRequestId(value);
+  if (requestId) return `request:${requestId.toLowerCase()}`;
+  return `message:${value.toLowerCase().replace(/\s+/g, ' ')}`;
+}
+
+export function dedupeGenerationErrors(
+  messages: readonly (string | null | undefined)[],
+): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of messages) {
+    const message = String(raw ?? '').trim();
+    if (!message) continue;
+    const fingerprint = generationErrorFingerprint(message);
+    if (!fingerprint || seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    result.push(message);
+  }
+  return result;
 }
 
 export interface GenerationErrorDiagnostics {

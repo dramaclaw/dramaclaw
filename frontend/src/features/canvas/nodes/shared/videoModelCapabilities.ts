@@ -367,6 +367,61 @@ export const MIN_AUDIO_REFERENCE_DURATION_MS = 1_800;
 export const MAX_AUDIO_REFERENCE_DURATION_MS = 15_200;
 export const MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS = 15_200;
 
+const COMPOSITION_TIMELINE_AUDIO_ROLES = new Set([
+  "voiceover",
+  "narration",
+  "shot_voice",
+  "music",
+  "bgm",
+  "background_music",
+]);
+const COMPOSITION_TIMELINE_AUDIO_INTENT =
+  /(?:旁白|配音|解说|背景音乐|配乐|纯音乐|(?:^|[\s_-])bgm(?:$|[\s_-])|background[_\s-]*music|voice[_\s-]*over|narration)/i;
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/**
+ * Detect full-length narration/music tracks that belong on the compose
+ * timeline. New workflows carry an explicit timelineRole; legacy workflows
+ * are recovered from their catalog item identity without classifying manually
+ * connected audio uploads as timeline tracks.
+ */
+export function isCompositionTimelineAudioData(data: unknown): boolean {
+  const source = recordValue(data);
+  if (!source) return false;
+  const catalog = recordValue(source.workflowCatalog);
+  const promptBuilder = recordValue(catalog?.promptBuilder);
+  const planItem = recordValue(promptBuilder?.planItem);
+  const explicitRole = [
+    catalog?.timelineRole,
+    catalog?.timeline_role,
+    source.timelineRole,
+    source.timeline_role,
+    planItem?.timelineRole,
+    planItem?.timeline_role,
+  ]
+    .map((value) => String(value ?? "").trim().toLowerCase())
+    .find(Boolean);
+  if (explicitRole) return COMPOSITION_TIMELINE_AUDIO_ROLES.has(explicitRole);
+  if (!catalog) return false;
+  const searchable = [
+    source.displayName,
+    source.title,
+    catalog.stepId,
+    catalog.operationType,
+    catalog.recipeId,
+    planItem?.id,
+    planItem?.title,
+    planItem?.audio_kind,
+    planItem?.audioKind,
+  ].filter(Boolean).join(" ");
+  return COMPOSITION_TIMELINE_AUDIO_INTENT.test(searchable);
+}
+
 /** 媒体目录里与音频时长相关的那个字段（`ModelOption` 的子集）。 */
 export interface AudioDurationLimitModel {
   referenceAudioMinSeconds?: number | null;

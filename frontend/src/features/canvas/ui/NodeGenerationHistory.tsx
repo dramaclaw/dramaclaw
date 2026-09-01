@@ -345,6 +345,8 @@ interface NodeGenerationHistoryProps {
    */
   fallbackThumbnailUrl?: string | null;
   className?: string;
+  /** true 时整条禁用（如生成中不可恢复）：条带变暗、光标 not-allowed，行按钮原生 disabled。 */
+  disabled?: boolean;
 }
 
 /**
@@ -361,6 +363,7 @@ export function NodeGenerationHistory({
   isActive,
   fallbackThumbnailUrl,
   className,
+  disabled = false,
 }: NodeGenerationHistoryProps) {
   // Only successful generations belong in the history strip — failed / pending
   // / running attempts are noise here. Newest first; the backend already sorts,
@@ -380,7 +383,9 @@ export function NodeGenerationHistory({
   if (!isLoading && sorted.length === 0) return null;
 
   return (
-    <div className={`flex flex-col gap-1.5 ${className ?? ''}`}>
+    <div
+      className={`flex flex-col gap-1.5 ${disabled ? 'cursor-not-allowed opacity-50' : ''} ${className ?? ''}`}
+    >
       <div className="flex items-center justify-between px-0.5">
         <span className="inline-flex items-center gap-1 text-[11px] font-medium text-text-muted">
           <History className="h-3 w-3" />
@@ -432,11 +437,11 @@ export function NodeGenerationHistory({
             <button
               key={record.id}
               type="button"
-              disabled={!restorable}
+              disabled={disabled || !restorable}
               aria-pressed={active}
               onClick={(event) => {
                 event.stopPropagation();
-                if (restorable) onRestore(record);
+                if (!disabled && restorable) onRestore(record);
               }}
               title={`${formatRelativeTime(record.recorded_at)}${
                 completed ? '' : ` · ${record.status}`
@@ -447,7 +452,7 @@ export function NodeGenerationHistory({
                   : completed
                     ? 'border-white/10 hover:border-[rgb(var(--accent-rgb))]'
                     : 'border-rose-500/40'
-              } ${restorable ? 'cursor-pointer' : 'cursor-default'}`}
+              } ${restorable && !disabled ? 'cursor-pointer' : 'cursor-not-allowed'}`}
             >
               {isImage ? (
                 <img

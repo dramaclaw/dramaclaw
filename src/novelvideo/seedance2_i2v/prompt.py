@@ -8,7 +8,12 @@ import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from novelvideo.models import beat_scene_ref, real_detected_identities, real_detected_props
+from novelvideo.brainclaw_contract import BrainClawProfile
+from novelvideo.models import (
+    beat_scene_ref,
+    real_detected_identities,
+    real_detected_props,
+)
 from novelvideo.seedance2_i2v.models import Seedance2I2VMode
 from novelvideo.seedance2_i2v.spoken_dialogue import speaker_display_name
 
@@ -256,7 +261,9 @@ def _beat_spoken_prompt_fragment(beat: dict[str, Any], assets: list[Any] | None)
             continue
         identity_id = _text(_asset_value(asset, "identity_id"))
         title = speaker_display_name(identity_id) or _text(_asset_value(asset, "label"))
-        voice_references.append(f"{title}参考{label}声线" if title else f"参考{label}声线")
+        voice_references.append(
+            f"{title}参考{label}声线" if title else f"参考{label}声线"
+        )
 
     speaker = speaker_display_name(_text(beat.get("speaker")))
     context: list[str] = []
@@ -566,7 +573,7 @@ def create_seedance2_prompt_composer_agent():
     return Agent(
         get_newapi_text_pydantic_model(
             "SEEDANCE2_PROMPT_COMPOSER_MODEL",
-            "gemini-3.5-flash",
+            brainclaw_profile=BrainClawProfile.SEEDANCE2_PROMPT_COMPOSITION,
             capability="text.generate.workflow",
         ),
         system_prompt=SEEDANCE2_COMPOSER_SYSTEM_PROMPT,

@@ -20,6 +20,10 @@ import { isTerminal, displayLabel } from "./derivations";
 import { taskErrorMessage } from "./task-errors";
 import type { TaskState } from "./types";
 import type { OkResponse } from "@/types/api";
+import {
+  publishTaskSnapshot,
+  publishTaskState,
+} from "@/api/tasks";
 
 const PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 const POLLING_FALLBACK_INTERVAL_MS = 5000;
@@ -255,6 +259,7 @@ export function TaskCenterProvider({
         });
         if (!cancelled) {
           useTaskCenterStore.getState().hydrate(res.data);
+          publishTaskSnapshot(res.data);
         }
       } catch (err) {
         if (isHydrateCancelledError(err)) return;
@@ -307,6 +312,7 @@ export function TaskCenterProvider({
         },
         onEvent: (task, source) => {
           const prev = useTaskCenterStore.getState().upsert(task);
+          publishTaskState(task);
 
           // Push-through cache update (not invalidate) to keep legacy `useTasks()` consumers
           // in sync without hammering the backend.

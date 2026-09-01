@@ -11,6 +11,7 @@ from typing import Optional
 from pydantic_ai import Agent, BinaryContent
 from PIL import Image as PILImage
 
+from novelvideo.brainclaw_contract import BrainClawProfile
 from novelvideo.utils.logging import log_agent_start, log_agent_end
 
 # 首尾帧过渡提示词生成器指令（英文版 SuperPower）
@@ -66,11 +67,9 @@ Output ONLY the transition prompt in Chinese. 4–6 句, ~50–90 字.
 def create_keyframe_prompt_builder_agent(language: str = "en") -> Agent:
     """创建首尾帧过渡提示词生成 Agent。"""
     from novelvideo.config import get_newapi_text_pydantic_model
-    from novelvideo.official_defaults import DEFAULT_VIDEO_PROMPT_OPTIMIZER_MODEL
-
     model = get_newapi_text_pydantic_model(
         "KEYFRAME_PROMPT_MODEL",
-        DEFAULT_VIDEO_PROMPT_OPTIMIZER_MODEL,
+        brainclaw_profile=BrainClawProfile.KEYFRAME_TRANSITION_PROMPT_GENERATION,
         capability="text.generate.agent",
     )
     return Agent(
@@ -135,7 +134,7 @@ class KeyframePromptBuilder:
         ratio = (1 - compressed_size / original_size) * 100
         print(
             f"[KeyframePromptBuilder] 压缩图片: {os.path.basename(image_path)}: "
-            f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
+            f"{original_size / 1024:.0f}KB → {compressed_size / 1024:.0f}KB "
             f"({ratio:.0f}% 压缩)"
         )
 
@@ -185,7 +184,7 @@ class KeyframePromptBuilder:
         # 构建 dialogue 提示
         dialogue_hint = ""
         if audio_type == "dialogue" and dialogue_line:
-            dialogue_hint = f"\n⚠️ This Beat is DIALOGUE — speaking is the primary motion. Describe lips moving, gestures while talking. Dialogue text is appended by the system; only describe physical action.\n"
+            dialogue_hint = "\n⚠️ This Beat is DIALOGUE — speaking is the primary motion. Describe lips moving, gestures while talking. Dialogue text is appended by the system; only describe physical action.\n"
 
         # 构建任务提示
         if color_map_text:

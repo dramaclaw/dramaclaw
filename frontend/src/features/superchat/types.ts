@@ -5,14 +5,105 @@ export type ClientFrame =
       type: "chat.message";
       scope?: ChatScope;
       text: string;
+      user_text?: string;
       turn_id?: string;
       attachments?: ChatAttachment[];
+      surface?: "freezone";
+      context?: {
+        freezone_canvas_id?: string | null;
+        canvas_command_execution_mode?: "manual_confirm" | "auto_execute";
+      };
     }
-  | { type: "scope.set"; scope: ChatScope };
+  | {
+      type: "scope.set";
+      scope: ChatScope;
+      history_limit?: number;
+      history_before?: string | null;
+    }
+  | {
+      type: "canvas.context.result";
+      turn_id?: string | null;
+      bridge_key: string;
+      project_id?: string | null;
+      canvas_id?: string | null;
+      agent_id?: string | null;
+      agentId?: string | null;
+      tool_call_status?: "completed" | "cancelled" | "failed";
+      canvas_context_status?: "resolved" | "failed" | string;
+      ok: boolean;
+      responses?: Array<Record<string, unknown>>;
+      errors?: string[];
+      message?: string | null;
+    }
+  | {
+      type: "canvas.command.result";
+      turn_id?: string | null;
+      bridge_key: string;
+      project_id?: string | null;
+      canvas_id?: string | null;
+      agent_id?: string | null;
+      agentId?: string | null;
+      tool_call_status?: "completed" | "cancelled" | "failed";
+      canvas_apply_status: "accepted" | "applied" | "partially_applied" | "failed" | "cancelled_by_user";
+      applied?: boolean;
+      cancelled?: boolean;
+      errors?: string[];
+      applied_count?: number;
+      opened_ui_actions?: number;
+      created_node_ids?: string[];
+      command_results?: Array<Record<string, unknown>>;
+      message?: string | null;
+      user_message?: string | null;
+      agent_hint?: string | null;
+	    }
+	  | {
+	      type: "skill_studio.result";
+	      turn_id?: string | null;
+	      bridge_key: string;
+	      project_id?: string | null;
+	      canvas_id?: string | null;
+	      agent_id?: string | null;
+      agentId?: string | null;
+      tool_call_status?: "completed" | "cancelled" | "failed";
+      skill_studio_status?: string;
+      ok?: boolean;
+      action?: string;
+      selections?: Record<string, unknown>;
+      draft?: Record<string, unknown> | null;
+      draft_ref?: Record<string, unknown> | null;
+      saved_to_catalog?: boolean;
+	      saved_skill_ids?: string[];
+      saved_recipe_ids?: string[];
+      errors?: string[];
+      message?: string | null;
+      agent_instruction?: string | null;
+      client_debug?: Record<string, unknown>;
+	    }
+	  | {
+	      type: "assistant.clarification.result";
+	      turn_id?: string | null;
+	      bridge_key: string;
+	      project_id?: string | null;
+	      canvas_id?: string | null;
+	      agent_id?: string | null;
+	      agentId?: string | null;
+	      tool_call_status?: "completed" | "cancelled" | "failed";
+	      clarification_status?: string;
+	      ok?: boolean;
+	      action?: string;
+	      answers?: Record<string, unknown>;
+	      skipped?: boolean;
+	      used_recommended?: boolean;
+	      errors?: string[];
+	      message?: string | null;
+	    };
 
 export type ChatScope = {
-  kind: "home" | "project" | "asset" | "task";
+  kind: "home" | "project" | "freezone" | "asset" | "task";
   id?: string | null;
+  surface?: "director" | "freezone" | null;
+  canvasId?: string | null;
+  agentId?: string | null;
 };
 
 export type RelayInstanceInfo = {
@@ -28,6 +119,22 @@ export type ModelEntry = {
   label: string;
   reasoning?: boolean;
 };
+
+export type AgentPlanEntry = {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  priority?: "low" | "medium" | "high" | string;
+};
+
+export type AgentToolStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "canceled"
+  | "error"
+  | string;
 
 export type SessionControlCommand =
   | "agents"
@@ -66,23 +173,78 @@ export type ServerFrame =
       turn_id?: string;
     }
   | {
+      type: "agent.turn.started" | "agent.turn.completed";
+      scope?: ChatScope;
+      thread_id?: string | null;
+      turn_id?: string;
+      status?: string | null;
+      disposition?: string | null;
+      error?: unknown;
+    }
+  | {
       type: "assistant.delta";
+      scope?: ChatScope;
       text?: string;
       turn_id?: string;
       accumulated?: boolean;
     }
   | {
       type: "assistant.message";
+      scope?: ChatScope;
       message?: unknown;
       turn_id?: string;
     }
   | {
+      type: "agent.thought.delta";
+      scope?: ChatScope;
+      turn_id?: string;
+      text?: string;
+      source?: string | null;
+    }
+  | {
+      type: "agent.plan.update";
+      scope?: ChatScope;
+      turn_id?: string;
+      text?: string;
+      entries?: AgentPlanEntry[];
+    }
+  | {
+      type: "agent.usage.update";
+      scope?: ChatScope;
+      turn_id?: string;
+      usage?: Record<string, unknown>;
+    }
+  | {
+      type: "agent.permission.requested";
+      scope?: ChatScope;
+      turn_id?: string;
+      request_id?: string | number;
+      text?: string;
+      options?: AgentPermissionOption[];
+      tool_call?: unknown;
+    }
+  | {
+      type: "agent.tool.started" | "agent.tool.updated";
+      scope?: ChatScope;
+      turn_id?: string;
+      call_id?: string | null;
+      name?: string;
+      status?: AgentToolStatus;
+      text?: string;
+      input?: unknown;
+      output?: unknown;
+      error?: unknown;
+      raw?: unknown;
+    }
+  | {
       type: "tool.result";
+      scope?: ChatScope;
       turn_id?: string;
       name?: string;
       success?: boolean;
       result?: unknown;
       error?: unknown;
+      bridge_key?: string;
     }
   | {
       type: "tool.call";
@@ -90,13 +252,118 @@ export type ServerFrame =
       name?: string;
       input?: unknown;
       raw?: unknown;
+      bridge_key?: string;
     }
-  | { type: "chat.done"; turn_id?: string; scope?: ChatScope }
+  | {
+      type: "history.page";
+      scope?: ChatScope;
+      history: unknown[];
+      before?: string | null;
+      has_more?: boolean;
+    }
+  | {
+      type: "canvas.command";
+      turn_id?: string;
+      bridge_key?: string;
+      project_id?: string | null;
+      canvas_id?: string | null;
+      agent_id?: string | null;
+      agentId?: string | null;
+      envelope?: unknown;
+      envelopes?: unknown[];
+      command?: unknown;
+      commands?: unknown[];
+      anchor_text_prefix?: string | null;
+      received_at?: number;
+    }
+  | {
+      type: "canvas.context.request";
+      turn_id?: string;
+      bridge_key?: string;
+      project_id?: string | null;
+      canvas_id?: string | null;
+      agent_id?: string | null;
+      agentId?: string | null;
+      envelope?: unknown;
+      envelopes?: unknown[];
+      request?: unknown;
+      requests?: unknown[];
+      anchor_text_prefix?: string | null;
+      received_at?: number;
+    }
+  | {
+      type: "stop_reason";
+      reason?: string;
+      turn_id?: string;
+    }
+  | { type: "chat.done"; turn_id?: string; scope?: ChatScope; message?: unknown }
+  | {
+      type: "skill_studio.event";
+      turn_id?: string;
+      scope?: ChatScope;
+      bridge_key?: string;
+      project_id?: string | null;
+      canvas_id?: string | null;
+      agent_id?: string | null;
+      agentId?: string | null;
+      event?: unknown;
+    }
+  | {
+      type: "assistant.clarification.event";
+      turn_id?: string;
+      scope?: ChatScope;
+      bridge_key?: string;
+      project_id?: string | null;
+      canvas_id?: string | null;
+      agent_id?: string | null;
+      agentId?: string | null;
+      event?: unknown;
+    }
+  | {
+      type: "skill_studio.status";
+      turn_id?: string;
+      scope?: ChatScope;
+      status?: string;
+      message?: string;
+    }
+  | {
+      type: "director.auto.status";
+      scope?: ChatScope;
+      status: "running" | "awaiting_confirmation" | "paused" | "completed";
+      episode?: number;
+      run_id?: string;
+      message?: string | null;
+      terminal_task_id?: string | null;
+      voice_policy?: "system" | "custom" | null;
+    }
   | { type: "project.created"; project: string }
   | { type: "error"; message: string; turn_id?: string }
   | { type: string; [key: string]: unknown };
 
 export type ChatRole = "user" | "assistant" | "system" | "tool";
+
+export type ChatMessagePart =
+  | {
+      id: string;
+      type: "text";
+      text: string;
+      seq?: number;
+    }
+  | {
+      id: string;
+      type:
+        | "skill_studio"
+        | "clarification"
+        | "canvas_approval"
+        | "canvas_feedback"
+        | "canvas_context"
+        | "tool_status"
+        | "agent_plan"
+        | "agent_thought"
+        | "agent_usage";
+      event: unknown;
+      seq?: number;
+    };
 
 export type ChatAttachment = {
   id?: string;
@@ -118,13 +385,15 @@ export type ChatMessage = {
   turnId?: string;
   displayName?: string;
   attachments?: ChatAttachment[];
+  parts?: ChatMessagePart[];
+  uiEvents?: unknown[];
   timestamp: number;
   raw?: unknown;
 };
 
 export type ApprovalRequest = {
   id: string;
-  kind: "exec" | "plugin";
+  kind: "exec" | "plugin" | "agent";
   title: string;
   command?: string;
   description?: string;
@@ -134,6 +403,23 @@ export type ApprovalRequest = {
   agentId?: string | null;
   sessionKey?: string | null;
   expiresAtMs?: number;
+  requestId?: string | number;
+  turnId?: string;
+  scope?: ChatScope;
+  options?: AgentPermissionOption[];
+};
+
+export type ApprovalDecision =
+  | "allow-once"
+  | "allow-always"
+  | "deny"
+  | { optionId: string };
+
+export type AgentPermissionOption = {
+  optionId?: string;
+  option_id?: string;
+  kind?: string;
+  name?: string;
 };
 
 export type SuperChatSettings = {

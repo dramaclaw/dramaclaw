@@ -25,6 +25,7 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { coerceSlotTarget } from '@/features/canvas/domain/mainlineNodeTypes';
+import { AddNodeToChatButton } from '@/features/canvas/ui/AddNodeToChatButton';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { ReferenceDetachButton } from '@/features/canvas/nodes/shared/ReferenceDetachButton';
@@ -38,6 +39,7 @@ import { readUrl } from '@/lib/url-params';
 import { useDetachUpstream } from '@/features/canvas/hooks/useDetachUpstream';
 import { useReferenceMentionSync } from '@/features/canvas/nodes/useReferenceMentionSync';
 import { canvasAiGateway } from '@/features/canvas/application/canvasServices';
+import { compileWorkflowNodePrompt } from '@/features/canvas/application/workflowRecipeRuntime';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import {
   collectUpstreamReferenceUrls,
@@ -652,16 +654,36 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     const ownPrompt = promptDraft.replace(/@(?=图\d+)/g, '').trim();
     // 「实时读取上游」：上游 text 节点（文本/脚本/图生 prompt 等）的内容
     // 在每次 submit 时自动前置到 prompt，用户不必手动复制。
-    const prompt = [upstreamTextJoined, ownPrompt]
+    const fallbackPrompt = [upstreamTextJoined, ownPrompt]
       .filter((s) => s.length > 0)
       .join('\n\n');
-    if (!prompt && !capability) {
+    if (!fallbackPrompt && !capability) {
       const errorMessage = t('node.imageEdit.promptRequired');
       setError(errorMessage);
       void showErrorDialog(errorMessage, t('common.error'));
       return;
     }
 
+    const prompt = await compileWorkflowNodePrompt({
+      nodeId: id,
+      nodeData: data,
+      nodeKind: 'image',
+      nodePrompt: ownPrompt,
+      upstreamText: upstreamTextJoined,
+      upstreamContents,
+      fallbackPrompt,
+      referenceMedia: [...incomingImages, ...upstreamReferenceUrls].map((_, index) => ({
+        kind: 'image',
+        label: `reference-${index + 1}`,
+      })),
+      onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => updateNodeData(id, {
+        workflowRecipeCompileMode: mode,
+        workflowRecipeCompiledAt: new Date().toISOString(),
+        workflowRecipeCompiledPrompt: compiledPrompt,
+        prompt: compiledPrompt,
+        workflowRecipeIds: recipeIds,
+      }),
+    });
     const generationDurationMs = selectedModel.expectedDurationMs ?? 60000;
     const generationStartedAt = Date.now();
     const resultNodeTitle = capability
@@ -837,6 +859,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     id,
     incomingImages,
     requestResolution.requestModel,
+    data,
     data.capabilityDefaultPushTarget,
     data.capabilityId,
     data.capabilityInputs,
@@ -854,6 +877,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     supportedAspectRatioValues,
     t,
     updateNodeData,
+    upstreamContents,
     upstreamReferenceUrls,
     upstreamTextJoined,
   ]);
@@ -1088,6 +1112,9 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         editable
         onTitleChange={(nextTitle) => updateNodeData(id, { displayName: nextTitle })}
       />
+
+      {/* 根容器有 p-2，往里挪一格才落在图片区里而不是压在卡片边框上。 */}
+      <AddNodeToChatButton nodeId={id} className="right-3 top-3" />
 
       <div className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border ${CANVAS_NODE_INPUT_SURFACE_CLASS} ${CANVAS_NODE_INPUT_FRAME_CLASS}`}>
         <div className="relative min-h-[190px] flex-[1.25] border-b border-[rgba(255,255,255,0.08)] bg-black/20">

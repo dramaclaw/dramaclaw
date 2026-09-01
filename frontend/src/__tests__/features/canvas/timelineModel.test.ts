@@ -213,8 +213,14 @@ describe("timelineModel", () => {
         { id: "track_audio", kind: "audio", clips: [] }, // empty → dropped
       ],
     };
-    const payload = buildComposePayload(state, { title: "T", canvasId: "cv", fps: 24 });
+    const payload = buildComposePayload(state, {
+      title: "T",
+      canvasId: "cv",
+      nodeId: "compose-a",
+      fps: 24,
+    });
     expect(payload.resolution).toBe("720p");
+    expect(payload.nodeId).toBe("compose-a");
     expect(payload.fps).toBe(24);
     expect(payload.tracks).toHaveLength(1);
     expect(payload.tracks[0]).toMatchObject({ trackId: "track_video", kind: "video" });

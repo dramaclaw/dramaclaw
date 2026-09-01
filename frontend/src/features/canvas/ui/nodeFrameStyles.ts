@@ -25,8 +25,11 @@ export const CANVAS_NODE_INPUT_PLACEHOLDER_CLASS =
 // so apply it as a drop-in replacement for `border ... bg-surface-dark/95 shadow-*`.
 export const CANVAS_NODE_OPS_PANEL_CLASS = `border ${CANVAS_NODE_INPUT_SURFACE_CLASS} ${CANVAS_NODE_INPUT_FRAME_CLASS}`;
 export const CANVAS_NODE_TOOLBAR_SURFACE_CLASS = CANVAS_NODE_OPS_PANEL_CLASS;
+// 圆角 12px 而不是 rounded-full：这些工具条有 36~40px 高，全胶囊的两头圆得过分
+// （用户反馈「圆角太大了」，裁剪 / 旋转 / 视频详情三处同一个观感问题）。
+// 12px 落在 --radius-sm 上，读起来是「圆角矩形」而不是药丸。
 export const CANVAS_NODE_TOOLBAR_PILL_CLASS =
-  `rounded-full ${CANVAS_NODE_TOOLBAR_SURFACE_CLASS} p-1.5`;
+  `rounded-[12px] ${CANVAS_NODE_TOOLBAR_SURFACE_CLASS} p-1.5`;
 export const CANVAS_NODE_TOOLBAR_CARD_CLASS =
   `rounded-2xl ${CANVAS_NODE_TOOLBAR_SURFACE_CLASS}`;
 

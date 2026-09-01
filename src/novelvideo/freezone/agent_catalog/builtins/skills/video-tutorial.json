@@ -1,0 +1,62 @@
+{
+  "id": "video-tutorial",
+  "name": "视频解说教程",
+  "enabled": true,
+  "version": 1,
+  "description": "把知识点、操作步骤或产品使用方法转换为分段解说教程视频。",
+  "category": "education",
+  "triggers": {
+    "keywords": [
+      "视频解说教程",
+      "教程视频",
+      "操作教程",
+      "知识讲解",
+      "步骤演示"
+    ],
+    "node_scopes": [
+      "textGeneration",
+      "imageGeneration",
+      "videoGeneration",
+      "audioGeneration"
+    ]
+  },
+  "planning": {
+    "planning_notes": "按照用户提供的步骤或主题动态展开教学段落，每个段落对应画面和视频片段。",
+    "prompt_guide": "内容准确、步骤清晰、画面与解说一一对应，避免虚构未提供的产品功能。",
+    "conduct_rules": [
+      "根据用户目标动态决定节点数量和依赖关系",
+      "仅使用 allowed_recipe_ids 中声明的能力",
+      "创建画布节点前先生成并确认动态计划"
+    ]
+  },
+  "schema_version": "dramaclaw.workflow-skill.v1",
+  "allowed_recipe_ids": [
+    "general-text",
+    "general-image",
+    "general-video",
+    "general-audio"
+  ],
+  "input_parameters": [],
+  "evaluation": {
+    "rating_bands": [
+      {
+        "score": 10,
+        "description": "完整满足用户目标且工作流可以执行"
+      },
+      {
+        "score": 7,
+        "description": "核心流程完整，允许少量非关键调整"
+      },
+      {
+        "score": 4,
+        "description": "缺少关键阶段或依赖关系不完整"
+      }
+    ],
+    "visual_review_items": [],
+    "text_review_items": [],
+    "quality_threshold": 7,
+    "domain_constraints": [
+      "工作流必须符合用户目标并保持输入素材一致性"
+    ]
+  }
+}

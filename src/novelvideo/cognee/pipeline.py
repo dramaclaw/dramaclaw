@@ -1714,11 +1714,12 @@ async def extract_scenes_from_script(
         log("⚠️ 场景规范化后为空")
         return []
 
-    enrichment_agent = None
-    if (
+    enrichment_is_default = (
         enrich_scene_environment_from_context
         is _DEFAULT_ENRICH_SCENE_ENVIRONMENT_FROM_CONTEXT
-    ):
+    )
+    enrichment_agent = None
+    if enrichment_is_default:
         enrichment_agent = _create_scene_build_agent(
             SCENE_ENRICHMENT_SYSTEM_PROMPT,
             SceneEnrichmentList,
@@ -1744,15 +1745,34 @@ async def extract_scenes_from_script(
         )
         log(f"  ✓ {cand['name']}: environment_prompt={len(scene.environment_prompt)}字")
 
-    scenes.extend(
-        await enrich_scene_environments_batched(
-            normalized_scene_candidates,
-            synopsis=synopsis,
-            enrichment_agent=enrichment_agent,
-            cache=cache,
-            on_scene=note_progress,
+    if enrichment_is_default:
+        scenes.extend(
+            await enrich_scene_environments_batched(
+                normalized_scene_candidates,
+                synopsis=synopsis,
+                enrichment_agent=enrichment_agent,
+                cache=cache,
+                on_scene=note_progress,
+            )
         )
-    )
+    else:
+        # Preserve the long-standing injection seam used by embedders and unit
+        # tests. The batching implementation owns the default model path, but a
+        # replaced enrichment callable must remain authoritative.
+        for candidate in normalized_scene_candidates:
+            scene = await enrich_scene_environment_from_context(
+                scene_name=candidate["name"],
+                aliases=candidate.get("aliases") or [],
+                scene_type=candidate.get("scene_type") or "",
+                time_of_day=candidate.get("time_of_day") or "",
+                interior=bool(candidate.get("interior", True)),
+                episodes=candidate.get("episodes") or [],
+                characters=candidate.get("characters") or [],
+                context_lines=candidate.get("context_lines") or [],
+                synopsis=synopsis,
+            )
+            note_progress(candidate, scene)
+            scenes.append(scene)
 
     log(f"场景提取完成: {len(scenes)} 个")
     report(1.0, "完成")

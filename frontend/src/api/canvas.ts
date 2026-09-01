@@ -75,6 +75,133 @@ export interface FreezoneCanvasSaveResult {
   backup_status?: CanvasBackupStatus;
 }
 
+export type WorkflowRunStatus = "running" | "completed" | "failed" | "cancelled" | "interrupted";
+export type WorkflowRunActionStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "skipped";
+export type WorkflowRunActionPhase =
+  | "waiting_dependencies"
+  | "waiting_slot"
+  | "waiting_capacity"
+  | "preparing"
+  | "compiling_recipe"
+  | "submitting"
+  | "generating"
+  | "syncing_result"
+  | "retrying";
+
+export interface FreezoneWorkflowRunAction {
+  node_id: string;
+  action: string;
+  status: WorkflowRunActionStatus;
+  phase?: WorkflowRunActionPhase | null;
+  updated_at?: string | null;
+  error?: string | null;
+  task_key?: string | null;
+  task_type?: string | null;
+  job_id?: string | null;
+  error_category?: string | null;
+  error_request_id?: string | null;
+  error_fingerprint?: string | null;
+  user_error?: string | null;
+  retryable?: boolean | null;
+  artifact_status?: "valid" | "missing" | "unverified" | "not_required" | null;
+  retry_count?: number;
+}
+
+export interface FreezoneWorkflowRun {
+  schema_version: "freezone_workflow_run.v1";
+  run_id: string;
+  project_id: string;
+  canvas_id: string;
+  status: WorkflowRunStatus;
+  resumable: boolean;
+  created_at: string;
+  started_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+  runner_id?: string | null;
+  lease_expires_at?: string | null;
+  actions: FreezoneWorkflowRunAction[];
+  metadata?: Record<string, unknown>;
+}
+
+export async function createFreezoneWorkflowRun(
+  projectId: string,
+  canvasId: string,
+  actions: Array<{ node_id: string; action: string }>,
+  idempotencyKey?: string,
+  runnerId?: string,
+): Promise<FreezoneWorkflowRun> {
+  return await apiCall<FreezoneWorkflowRun>(
+    `projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(canvasId)}/workflow-runs`,
+    {
+      method: "POST",
+      json: {
+        actions,
+        ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
+        ...(runnerId ? { runner_id: runnerId } : {}),
+      },
+    },
+  );
+}
+
+export async function updateFreezoneWorkflowRun(
+  projectId: string,
+  canvasId: string,
+  runId: string,
+  payload: {
+    status?: WorkflowRunStatus;
+    action_updates?: Array<{
+      node_id: string;
+      action: string;
+      status: WorkflowRunActionStatus;
+      phase?: WorkflowRunActionPhase | null;
+      error?: string | null;
+      task_key?: string | null;
+      task_type?: string | null;
+      job_id?: string | null;
+      retry_count?: number;
+    }>;
+    runner_id?: string;
+  },
+): Promise<FreezoneWorkflowRun> {
+  return await apiCall<FreezoneWorkflowRun>(
+    `projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(canvasId)}/workflow-runs/${encodeURIComponent(runId)}`,
+    { method: "PATCH", json: payload },
+  );
+}
+
+const workflowRunsInFlight = new Map<
+  string,
+  Promise<{ runs: FreezoneWorkflowRun[] }>
+>();
+
+export function listFreezoneWorkflowRuns(
+  projectId: string,
+  canvasId: string,
+): Promise<{ runs: FreezoneWorkflowRun[] }> {
+  const key = `${projectId}\u0000${canvasId}`;
+  const existing = workflowRunsInFlight.get(key);
+  if (existing) return existing;
+
+  const request = apiCall<{ runs: FreezoneWorkflowRun[] }>(
+    `projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(
+      canvasId,
+    )}/workflow-runs`,
+  ).finally(() => {
+    if (workflowRunsInFlight.get(key) === request) {
+      workflowRunsInFlight.delete(key);
+    }
+  });
+  workflowRunsInFlight.set(key, request);
+  return request;
+}
+
 /**
  * Mint an idempotency token for a single canvas save attempt. Callers should
  * reuse the same id across retries of the same logical save (network blip,

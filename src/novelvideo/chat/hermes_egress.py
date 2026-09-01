@@ -20,6 +20,22 @@ from novelvideo.ports.egress_operations import (
 from novelvideo.ports.model_credentials import CredentialReference, RequestCredential
 from novelvideo.task_backend.subprocesses import EgressBoundaryError
 
+#: Stands in for the model-gateway key in a worker's environment. It is not a
+#: credential and must never authenticate anything; Hermes refuses to send it
+#: because the same environment sets DRAMACLAW_GATEWAY_CREDENTIAL_MODE.
+PER_TURN_CREDENTIAL_PLACEHOLDER = "dramaclaw-per-turn-placeholder"
+
+#: Every worker this module launches authenticates per turn. Declared here
+#: rather than read back from the environment because the workers' environment
+#: is written by this module: a reader in the parent process — the workspace
+#: writer, for one — would find the variable absent and conclude the opposite.
+PER_TURN_CREDENTIAL_MODE = "per_turn_required"
+
+#: The only way to opt out. Stated explicitly so an unrecognised value can be
+#: rejected instead of silently selecting the mode that keeps a key on disk.
+LEGACY_ENVIRONMENT_CREDENTIAL_MODE = "legacy_environment"
+GATEWAY_CREDENTIAL_MODE_ENV = "DRAMACLAW_GATEWAY_CREDENTIAL_MODE"
+
 HOME_SCOPE_EGRESS_PROJECT_ID = "__home__"
 """home 态出网身份用的 project 哨兵值（本模块只定义，暂无产品代码消费）。
 
@@ -36,8 +52,8 @@ project 记录。真实 project id 是 ULID（26 位 Crockford base32），取�
 
 
 @dataclass(frozen=True, slots=True)
-class HermesLaunchAuthorization:
-    """Secret-bearing authorization kept only for one child launch."""
+class HermesTurnAuthorization:
+    """Secret-bearing authorization kept only for one agent turn."""
 
     context: TrustedEgressContext
     credential: RequestCredential
@@ -49,7 +65,7 @@ class HermesLaunchAuthorization:
         *,
         context: TrustedEgressContext,
         credential: RequestCredential,
-    ) -> "HermesLaunchAuthorization":
+    ) -> "HermesTurnAuthorization":
         snapshot = OperationSnapshot(
             operation_id="test-operation",
             operation_key="test-operation-key",
@@ -108,7 +124,7 @@ async def authorize_credentialed_hermes(
     prompt: str,
     credential_resolver: Any,
     operation_port: Any,
-) -> HermesLaunchAuthorization:
+) -> HermesTurnAuthorization:
     """Claim the operation, then resolve the exact frozen Gateway reference.
 
     ``username`` is the login name and is kept for the caller's workspace/env
@@ -149,7 +165,7 @@ async def authorize_credentialed_hermes(
         raise EgressBoundaryError("ORG_CREDENTIAL_DECRYPT_FAILED") from None
     if type(resolved) is not RequestCredential or resolved.reference != credential:
         raise EgressBoundaryError("ORG_CREDENTIAL_VERSION_MISMATCH")
-    return HermesLaunchAuthorization(context=context, credential=resolved, claim=claim)
+    return HermesTurnAuthorization(context=context, credential=resolved, claim=claim)
 
 
 def build_hermes_child_env(
@@ -162,7 +178,7 @@ def build_hermes_child_env(
     project_id: str | None,
     egress_project_id: str,
     project_env: dict[str, str] | None,
-    authorization: HermesLaunchAuthorization,
+    authorization: HermesTurnAuthorization,
 ) -> dict[str, str]:
     """Build a minimal child env without consulting workspace/process credentials.
 
@@ -185,8 +201,16 @@ def build_hermes_child_env(
         "TMPDIR": str(home / "tmp"),
         "DRAMACLAW_USER": username,
         "DRAMACLAW_API_URL": api_url,
-        "NEWAPI_API_KEY": authorization.credential.api_key,
+        # The real key no longer travels in the environment. A worker is pooled
+        # per user and serves many tenants' turns concurrently, so an
+        # environment key is whichever tenant happened to start it — which is
+        # why an organisation request used to cost a worker rollout. The key now
+        # arrives with each turn; this placeholder exists only so the OpenAI SDK
+        # can construct a client, and the latch below guarantees it can never
+        # authenticate a request.
+        "NEWAPI_API_KEY": PER_TURN_CREDENTIAL_PLACEHOLDER,
         "NEWAPI_BASE_URL": authorization.credential.base_url,
+        GATEWAY_CREDENTIAL_MODE_ENV: PER_TURN_CREDENTIAL_MODE,
     }
     env.update(
         {
@@ -210,7 +234,7 @@ def build_hermes_child_env(
 __all__ = [
     "HOME_SCOPE_EGRESS_PROJECT_ID",
     "EgressBoundaryError",
-    "HermesLaunchAuthorization",
+    "HermesTurnAuthorization",
     "authorize_credentialed_hermes",
     "build_hermes_child_env",
 ]

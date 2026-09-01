@@ -1035,63 +1035,6 @@ class CogneeStore:
         await self._ensure_db()
         return await self.sqlite_store.delete_all_characters()
 
-    async def build_episodes(
-        self,
-        target_episodes: int = 10,
-        on_progress: Optional[Callable[[float, str], None]] = None,
-        on_log: Optional[Callable[[str], None]] = None,
-    ) -> List[NovelEpisode]:
-        """规划剧集（分阶段架构第三步）。"""
-        from .pipeline import extract_episodes_with_characters
-
-        def report(progress: float, task: str):
-            if on_progress:
-                on_progress(progress, task)
-
-        def log(message: str):
-            if on_log:
-                on_log(message)
-            console.print(f"[dim]{message}[/dim]")
-
-        # 获取原文内容
-        log("从文件加载原文...")
-        novel_content = require_imported_novel(self.project_dir)
-        log(f"原文加载完成: {len(novel_content)} 字符")
-
-        # 获取已确认的角色列表
-        character_names = list(self._characters.keys())
-        log(f"已知角色: {len(character_names)} 个")
-
-        # P1: 规划
-        report(0.1, "规划剧集...")
-        log(f"开始规划 {target_episodes} 集...")
-
-        episodes = await extract_episodes_with_characters(
-            novel_content,
-            target_episodes=target_episodes,
-            known_characters=character_names,
-            dataset_name=self.dataset_name,
-            project_name=self.project_name,
-        )
-
-        log(f"LLM 返回 {len(episodes)} 集")
-
-        # P2: 原子替换旧规划。删除和写入必须在同一事务中完成，避免任务
-        # 取消或 Worker 退出后只剩一张空 episodes 表。
-        old_episode_count = len(self._episodes)
-        report(0.85, "保存新剧集...")
-        log("保存新剧集到数据库...")
-        await self.replace_episodes(episodes)
-        log(f"已原子替换 {old_episode_count} 个旧剧集")
-
-        if len(self._episodes) != len(episodes):
-            log(f"⚠️ 警告：内存缓存 ({len(self._episodes)}) 与返回结果 ({len(episodes)}) 不一致")
-
-        report(1.0, "剧集规划完成")
-        log(f"剧集规划完成: {len(episodes)} 集，编号: {list(self._episodes.keys())}")
-
-        return episodes
-
     async def build_episodes_from_chapters(
         self,
         novel_text: str = None,
@@ -1346,10 +1289,14 @@ class CogneeStore:
 
         report(0.6, "规划剧集...")
         console.print("[bold]Step 3/3: 规划剧集...[/bold]")
-        episodes = await self.build_episodes(
+        from novelvideo.agents.episode_planner import EpisodePlannerAgent
+
+        planner = EpisodePlannerAgent(self)
+        episodes = await planner.plan_episodes(
             target_episodes=target_episodes,
             on_progress=lambda p, t: report(0.6 + p * 0.4, t),
         )
+        await self.replace_episodes(episodes)
 
         report(1.0, "导入完成")
 

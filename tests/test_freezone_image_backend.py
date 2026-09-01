@@ -1129,6 +1129,7 @@ async def test_freezone_image_reverse_prompt_enqueues_feature_billing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("ST_EDITION", "ee")
     monkeypatch.setenv("FREEZONE_VISION_MODEL", "freezone-vision-model")
     project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
     source = project_dir / "freezone" / "_uploads" / "source.png"
@@ -1983,6 +1984,7 @@ def test_template_edit_aspect_ratio_maps_modes() -> None:
     assert _template_edit_aspect_ratio("character_face_three_view") == "3:2"
     assert _template_edit_aspect_ratio("storyboard_25_grid") == "original"
     assert _template_edit_aspect_ratio("cinematic_light_correction") == "original"
+    assert _template_edit_aspect_ratio("scene_setting_sheet") == "16:9"
 
 
 @pytest.mark.asyncio
@@ -2747,6 +2749,17 @@ async def test_delete_canvas_soft_deletes_and_hides_tombstone_from_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    archived = []
+
+    async def archive_threads(username, project, canvas_id, **kwargs):
+        archived.append((username, project, canvas_id, kwargs["project_state_dir"]))
+        return 1
+
+    monkeypatch.setattr(
+        freezone_routes.chat_service,
+        "archive_codex_canvas_threads",
+        archive_threads,
+    )
     state_dir = _canvas_state_dir(tmp_path)
     canvas_file = state_dir / "freezone" / "canvases" / "experiment.json"
     canvas_file.parent.mkdir(parents=True)
@@ -2769,6 +2782,7 @@ async def test_delete_canvas_soft_deletes_and_hides_tombstone_from_list(
     )
 
     assert deleted["data"]["deleted"] is True
+    assert archived == [("admin", "58", "experiment", state_dir)]
     assert not canvas_file.exists()
     tombstone = canvas_file.with_name("experiment.deleted.json")
     assert tombstone.exists()
@@ -3174,6 +3188,36 @@ def test_storyboard_25_grid_prompt_preserves_cell_aspect_ratio() -> None:
     assert "Use OTS only when the source contains" in prompt
     assert "Do not crop each storyboard frame into a different ratio" in prompt
     assert "5x5 grid with thin dividers" in prompt
+
+
+def test_scene_setting_sheet_prompt_lists_all_eight_blocks() -> None:
+    prompt = _build_template_edit_prompt(
+        freezone_routes.FreezoneTemplateEditRequest(
+            source_url="/static/admin/59/freezone/_uploads/source.png",
+            mode="scene_setting_sheet",
+            prompt="遗忘的悬浮神庙",
+        )
+    )
+
+    assert "libtv-style scene setting sheet" in prompt
+    assert "one single landscape design sheet" in prompt
+    assert "dark neutral background" in prompt
+    # 八个板块缺一不可——少一块产出就退化成普通概念图，跟角色三视图撞脸。
+    for block in (
+        "1 scene key visual",
+        "2 mood concept sketches",
+        "3 color and material reference",
+        "4 scene viewpoint reference",
+        "5 architecture and structure design",
+        "6 set prop design",
+        "7 vegetation and nature design",
+        "8 atmosphere variants",
+    ):
+        assert block in prompt
+    assert "short title block" in prompt
+    assert "same language as the user prompt" in prompt
+    # 用户补充提示词照旧拼在模板后面。
+    assert prompt.endswith("User prompt:\n遗忘的悬浮神庙")
 
 
 def test_template_edit_projection_prompt_requires_visible_time_change() -> None:

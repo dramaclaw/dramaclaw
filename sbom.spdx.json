@@ -7,7 +7,7 @@
     ]
   },
   "dataLicense": "CC0-1.0",
-  "documentNamespace": "https://supertale.local/spdx/supertale-ce/a8ebf133a3364a49",
+  "documentNamespace": "https://supertale.local/spdx/supertale-ce/00348a1ddba9b99c",
   "name": "supertale-ce-p0b-sbom",
   "packages": [
     {
@@ -1409,6 +1409,26 @@
       "licenseDeclared": "Apache-2.0",
       "name": "openai",
       "versionInfo": "2.43.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-openai-codex",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "name": "openai-codex",
+      "versionInfo": "0.147.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-openai-codex-cli-bin",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "name": "openai-codex-cli-bin",
+      "versionInfo": "0.147.0"
     },
     {
       "SPDXID": "SPDXRef-Package-opentelemetry-api",
@@ -3084,6 +3104,16 @@
     },
     {
       "relatedSpdxElement": "SPDXRef-Package-openai",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-supertale-ce"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-openai-codex",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-supertale-ce"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-openai-codex-cli-bin",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Package-supertale-ce"
     },

@@ -28,6 +28,15 @@ import {
   type VideoNodeData,
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
+import { joinUpstreamText } from '@/features/canvas/application/graphContentResolver';
+import {
+  publishNodeActionAccepted,
+  publishNodeActionError,
+  publishNodeActionSuccess,
+  subscribeNodeAction,
+} from '@/features/canvas/application/nodeActionResult';
+import { useUpstreamContents } from '@/features/canvas/application/useUpstreamGraph';
+import { generateWorkflowText } from '@/features/canvas/application/workflowRecipeRuntime';
 import { isSystemManagedNodeData } from '@/features/canvas/domain/mainlineNodeFlags';
 import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
@@ -170,6 +179,8 @@ export const TextAnnotationNode = memo(({
   const addEdge = useCanvasStore((state) => state.addEdge);
   const findNodePosition = useCanvasStore((state) => state.findNodePosition);
   const content = typeof data.content === 'string' ? data.content : '';
+  const upstreamContents = useUpstreamContents(id);
+  const upstreamTextJoined = joinUpstreamText(upstreamContents);
   const instruction = typeof data.instruction === 'string' ? data.instruction : '';
   const mode: TextNodeMode = data.mode && REAL_MODES.has(data.mode) ? data.mode : 'writing';
   // 已从能力 picker 选过一次(如「文字生成音乐」)：恒为纯文本编辑区,空内容也不再弹「试试」。
@@ -502,6 +513,45 @@ export const TextAnnotationNode = memo(({
       setIsTranslating(false);
     }
   }, [content, id, isGenerating, isTranslating, modelTaskAccess.blocked, updateNodeData]);
+
+  const runRecipeText = useCallback(async (): Promise<{ content: string }> => {
+    updateNodeData(id, {
+      isGenerating: true,
+      generationStartedAt: Date.now(),
+      generationError: null,
+    });
+    try {
+      const generated = await generateWorkflowText({
+        nodeId: id,
+        nodeData: data,
+        nodePrompt: content,
+        upstreamText: upstreamTextJoined,
+        upstreamContents,
+      });
+      updateNodeData(id, {
+        content: generated,
+        workflowTextGenerated: true,
+        isGenerating: false,
+        generationStartedAt: null,
+      });
+      return { content: generated };
+    } catch (error) {
+      updateNodeData(id, {
+        isGenerating: false,
+        generationStartedAt: null,
+        generationError: error instanceof Error ? error.message : '文本生成失败',
+      });
+      throw error;
+    }
+  }, [content, data, id, updateNodeData, upstreamContents, upstreamTextJoined]);
+
+  useEffect(() => subscribeNodeAction(({ nodeId, action, requestId }) => {
+    if (nodeId !== id || action !== 'generate_text') return;
+    publishNodeActionAccepted(requestId, id, action);
+    void runRecipeText()
+      .then((output) => publishNodeActionSuccess(requestId, id, action, output))
+      .catch((error) => publishNodeActionError(requestId, id, action, error));
+  }), [id, runRecipeText]);
 
   const textPlaceholder = t('node.textNode.placeholder');
   const hasUserContent = content.trim().length > 0 && content.trim() !== textPlaceholder.trim();

@@ -8,6 +8,7 @@ export const RuntimeConfigResponse = z.object({
     edition: z.enum(["ce", "ee"]),
     auth_required: z.boolean(),
     instance_id: z.string().optional(),
+    mcp_direct_canvas_apply: z.boolean().optional(),
   }),
 });
 
@@ -15,17 +16,19 @@ export interface RuntimeConfig {
   edition: "ce" | "ee";
   authRequired: boolean;
   instanceId?: string;
+  mcpDirectCanvasApply: boolean;
 }
 
 let runtimeConfig: RuntimeConfig = {
   edition: "ee",
   authRequired: true,
+  mcpDirectCanvasApply: false,
 };
 
 function fallbackRuntimeConfig(): RuntimeConfig {
   return import.meta.env.VITE_EDITION === "ce"
-    ? { edition: "ce", authRequired: false }
-    : { edition: "ee", authRequired: true };
+    ? { edition: "ce", authRequired: false, mcpDirectCanvasApply: false }
+    : { edition: "ee", authRequired: true, mcpDirectCanvasApply: false };
 }
 
 export async function loadRuntimeConfig(): Promise<void> {
@@ -38,6 +41,7 @@ export async function loadRuntimeConfig(): Promise<void> {
       edition: parsed.data.edition,
       authRequired: parsed.data.auth_required,
       instanceId: parsed.data.instance_id,
+      mcpDirectCanvasApply: parsed.data.mcp_direct_canvas_apply ?? false,
     };
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -52,4 +56,8 @@ export function isCeRuntime(): boolean {
 
 export function authRequired(): boolean {
   return runtimeConfig.authRequired;
+}
+
+export function mcpDirectCanvasApplyEnabled(): boolean {
+  return runtimeConfig.mcpDirectCanvasApply;
 }

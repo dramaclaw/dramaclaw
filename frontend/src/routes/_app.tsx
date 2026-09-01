@@ -8,14 +8,20 @@ import {
   useParams,
   useRouterState,
 } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import { useTranslation } from "react-i18next";
 import { Header } from "@/components/layout/header";
+import {
+  endRouteSwitch,
+  useRouteSwitchPending,
+} from "@/lib/route-switch-transition";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { ensureAuthenticatedForAppRoute } from "@/lib/auth-mode";
 import { useAllProjectSummaries } from "@/lib/queries/projects";
+import { FreezoneCanvasHost } from "@/features/freezone/FreezoneCanvasHost";
 import { canonicalProjectRouteParam } from "@/lib/project-route";
 import { useRegionStore } from "@/stores/region-store";
 import { clusterConfig } from "@/lib/cluster-config";
@@ -85,6 +91,19 @@ function AppLayout() {
       : `/projects/${match[1]}/${section}`;
   })();
   const isAssistantPage = /^\/projects\/[^/]+\/assistant$/.test(pathname);
+  const { t } = useTranslation();
+  const routeSwitchPending = useRouteSwitchPending();
+  // 撤遮罩要认 resolvedLocation 而不是 location：后者在 beforeLoad 里就变了，
+  // 那时候渲染出来的还是旧页面，照它撤等于遮罩白挂。resolvedLocation 是路由在
+  // 新页面 commit 之后的 layout effect 里才写的，正好是「新页面已经在屏幕上」。
+  const resolvedPathname = useRouterState({
+    select: (s) => s.resolvedLocation?.pathname ?? "",
+  });
+  // useLayoutEffect 而不是 useEffect：passive effect 可能排到绘制之后，遮罩会
+  // 在新页面上多留一帧。
+  useLayoutEffect(() => {
+    endRouteSwitch();
+  }, [resolvedPathname]);
   const productSurfaces = useProductSurfaces(Boolean(username && validated));
   const requiredSurfaceCode: ProductSurfaceCode | null = routeProject
     ? isAssistantPage
@@ -217,7 +236,7 @@ function AppLayout() {
               open={pikoStationOpen}
               onClose={() => setPikoStationOpen(false)}
             />
-            <div className="flex min-h-0 flex-1 overflow-hidden">
+            <div className="relative flex min-h-0 flex-1 overflow-hidden">
               <main
                 id="main-content"
                 tabIndex={-1}
@@ -251,6 +270,29 @@ function AppLayout() {
                   )}
                 </motion.div>
               </main>
+              {/* 必须挂在被 re-key 的 motion.div 外面：key 里带着 $section，
+                  放进去就等于每次切换重建一遍画布，保活也就没了意义。作为
+                  <main> 的后继兄弟绝对定位，在虾画时正好盖住它。 */}
+              <FreezoneCanvasHost />
+              {routeSwitchPending ? (
+                <div
+                  role="status"
+                  className="animate-in fade-in-0 absolute inset-0 z-30 flex items-center justify-center bg-background/75"
+                  // 延迟 150ms 才开始淡入：换得快的页面在这之前就好了，遮罩全程
+                  // 透明，不会闪一下。fill-mode both 是让延迟期间保持在 opacity:0，
+                  // 否则默认 fill-mode:none 会先按 1 画出来。
+                  // 写成内联而不是 delay-150 / fill-mode-both 类，是为了压过
+                  // animate-in 的 animation 简写，不用管 @utility 的入层顺序。
+                  style={{
+                    animationDelay: "150ms",
+                    animationDuration: "200ms",
+                    animationFillMode: "both",
+                  }}
+                >
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                  <span className="sr-only">{t("common.loading")}</span>
+                </div>
+              ) : null}
             </div>
             <TaskPanel />
             <TaskStatusBar onOpenPikoStation={() => setPikoStationOpen(true)} />

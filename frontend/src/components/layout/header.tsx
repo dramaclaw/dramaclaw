@@ -48,6 +48,7 @@ import {
   markUpgradeSeen,
   shouldShowUpgradeNudge,
 } from "@/lib/release-notification-state";
+import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from "@/features/freezone/dockOffset";
 import {
   ProjectHeaderNavigation,
   ProjectSwitcher,
@@ -239,7 +240,13 @@ export function Header() {
   };
 
   return (
-    <div className="relative z-20 shrink-0 bg-background/58 text-sidebar-foreground backdrop-blur-xl">
+    // marginRight：自由画布的虾导抽屉打开时是一块通屏高的浮层，会盖住顶栏右侧。
+    // 顶栏整条往左收，右上角那组入口（设置/通知/伙伴/算力/头像）与中间的 虾画/虾集
+    // 就跟着往左靠，仍然可见可点（对标 liblib）。抽屉没开时变量不存在 → 0px，原样。
+    <div
+      className="relative z-20 shrink-0 bg-background/58 text-sidebar-foreground backdrop-blur-xl"
+      style={FREEZONE_DOCK_OFFSET_ANIMATED_STYLE}
+    >
       <header className="relative flex h-[48px] items-center justify-between gap-3 px-4">
         <div className="flex min-w-0 flex-1 items-center">
           <TooltipProvider delay={80}>
@@ -274,7 +281,7 @@ export function Header() {
 
         {/* Actions */}
         <div className="flex min-w-0 flex-1 shrink-0 items-center justify-end gap-1">
-          {/* 设置仅在 CE 版显示,EE 版隐藏 */}
+          {/* 设置仅在 CE 版显示，EE 版隐藏。 */}
           {ceRuntime ? (
             <div ref={settingsAnchorRef} className="relative">
               <Button

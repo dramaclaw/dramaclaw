@@ -20,6 +20,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 import aiosqlite
 from rich.console import Console
 
+from novelvideo.freezone.workflow_drafts import WORKFLOW_DRAFT_SCHEMA_SQL
+from novelvideo.freezone.workflow_runs import WORKFLOW_RUN_SCHEMA_SQL
 from novelvideo.models import (
     BeatAssetRefRow,
     build_prop_menu,
@@ -532,6 +534,8 @@ class SQLiteStore:
         def initialize(db: sqlite3.Connection) -> None:
             db.row_factory = sqlite3.Row
             db.executescript(SQLITE_SCHEMA_SQL)
+            db.executescript(WORKFLOW_DRAFT_SCHEMA_SQL)
+            db.executescript(WORKFLOW_RUN_SCHEMA_SQL)
             self._ensure_episode_planning_columns(db)
             self._ensure_beat_current_columns(db)
             self._ensure_scene_columns(db)

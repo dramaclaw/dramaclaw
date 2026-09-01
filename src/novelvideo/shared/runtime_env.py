@@ -29,6 +29,15 @@ def is_ce_effective() -> bool:
     return edition() == "ce" and not os.environ.get("ST_CONTROL_PLANE_DSN", "").strip()
 
 
+def uses_local_ce_runtime() -> bool:
+    """Return whether local CE-owned settings should back the current process.
+
+    The CE checkout historically runs without requiring ``ST_EDITION=ce``.
+    An explicit EE edition or a control-plane DSN selects the EE boundary.
+    """
+    return edition() != "ee" and not os.environ.get("ST_CONTROL_PLANE_DSN", "").strip()
+
+
 def _env_bool(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name)
     if raw is None:

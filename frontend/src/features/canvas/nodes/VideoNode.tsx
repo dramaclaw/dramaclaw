@@ -68,6 +68,12 @@ import {
 } from "@/features/canvas/domain/canvasNodes";
 import { isNodeStoryClip } from "@/features/canvas/story/storySelectors";
 import {
+  publishNodeActionAccepted,
+  publishNodeActionError,
+  publishNodeActionSuccess,
+  subscribeNodeAction,
+} from "@/features/canvas/application/nodeActionResult";
+import {
   audioReferenceDurationRejection,
   formatAudioDurationClips,
   formatAudioDurationSeconds,
@@ -176,6 +182,11 @@ import {
 } from "@/features/canvas/ui/NodeSideActionRail";
 import { VideoClipPanel } from "@/features/canvas/nodes/VideoClipPanel";
 import {
+  submitVideoUpscale,
+  VIDEO_UPSCALE_DENOISE_OPTIONS,
+  VIDEO_UPSCALE_RESOLUTIONS,
+} from "@/features/canvas/application/videoUpscale";
+import {
   CAMERA_MOVEMENT_PRESETS,
   findCameraMovementPreset,
   type CameraMovementPreset,
@@ -198,6 +209,8 @@ import {
   type FreezoneVideoAspectRatio,
   type FreezoneVideoReferenceItem,
   type FreezoneVideoResolution,
+  type FreezoneVideoUpscaleDenoise,
+  type FreezoneVideoUpscaleResolution,
 } from "@/api/ops";
 import {
   awaitTaskCompletion,
@@ -2683,6 +2696,64 @@ export const VideoNode = memo(
       updateNodeData,
       upstreamTextJoined,
     ]);
+
+    useEffect(() => {
+      return subscribeNodeAction(({ nodeId, action, executionMode, requestId }) => {
+        if (nodeId !== id || action !== "generate_video") return;
+        publishNodeActionAccepted(requestId, id, action);
+        const latest = useCanvasStore.getState().nodes.find((node) => node.id === id);
+        const latestData = isVideoNode(latest) ? latest.data : data;
+        if (latestData.isUpscaleNode === true) {
+          const sourceUrl =
+            typeof latestData.upscaleSourceUrl === "string" ? latestData.upscaleSourceUrl : "";
+          const resolution =
+            typeof latestData.upscaleResolution === "string" &&
+            VIDEO_UPSCALE_RESOLUTIONS.includes(
+              latestData.upscaleResolution as FreezoneVideoUpscaleResolution,
+            )
+              ? (latestData.upscaleResolution as FreezoneVideoUpscaleResolution)
+              : "1080p";
+          const denoise =
+            typeof latestData.upscaleDenoise === "string" &&
+            VIDEO_UPSCALE_DENOISE_OPTIONS.includes(
+              latestData.upscaleDenoise as FreezoneVideoUpscaleDenoise,
+            )
+              ? (latestData.upscaleDenoise as FreezoneVideoUpscaleDenoise)
+              : "1x";
+          if (!sourceUrl) {
+            publishNodeActionError(requestId, id, action, new Error("缺少高清视频源"));
+            return;
+          }
+          void submitVideoUpscale(id, { sourceUrl, resolution, denoise })
+            .then(() => {
+              const finished = useCanvasStore.getState().nodes.find((node) => node.id === id);
+              const videoUrl =
+                isVideoNode(finished) && typeof finished.data.videoUrl === "string"
+                  ? finished.data.videoUrl
+                  : undefined;
+              publishNodeActionSuccess(requestId, id, action, {
+                ...(videoUrl ? { videoUrl } : {}),
+                ...(executionMode === "single" ? { submitted: true } : {}),
+              });
+            })
+            .catch((error) => publishNodeActionError(requestId, id, action, error));
+          return;
+        }
+        void handleSubmit()
+          .then(() => {
+            const finished = useCanvasStore.getState().nodes.find((node) => node.id === id);
+            const videoUrl =
+              isVideoNode(finished) && typeof finished.data.videoUrl === "string"
+                ? finished.data.videoUrl
+                : undefined;
+            publishNodeActionSuccess(requestId, id, action, {
+              ...(videoUrl ? { videoUrl } : {}),
+              ...(executionMode === "single" ? { submitted: true } : {}),
+            });
+          })
+          .catch((error) => publishNodeActionError(requestId, id, action, error));
+      });
+    }, [data, handleSubmit, id]);
 
     const hasMainlineContext = hasMainlineContexts(
       (data as { mainline_context?: unknown }).mainline_context,

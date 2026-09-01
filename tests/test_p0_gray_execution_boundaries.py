@@ -214,14 +214,14 @@ def test_c1_eg07_child_env_is_minimal_and_ignores_process_provider_secrets(
     monkeypatch, tmp_path
 ):
     from novelvideo.chat.hermes_egress import (
-        HermesLaunchAuthorization,
+        HermesTurnAuthorization,
         build_hermes_child_env,
     )
 
     monkeypatch.setenv("OPENAI_API_KEY", "process-openai-secret")
     monkeypatch.setenv("OPENROUTER_API_KEY", "process-openrouter-secret")
     monkeypatch.setenv("MODEL_API_KEY", "process-model-secret")
-    authorization = HermesLaunchAuthorization.for_test(
+    authorization = HermesTurnAuthorization.for_test(
         context=_context(),
         credential=RequestCredential(
             reference=_context().credential,
@@ -242,7 +242,7 @@ def test_c1_eg07_child_env_is_minimal_and_ignores_process_provider_secrets(
         authorization=authorization,
     )
 
-    assert env["NEWAPI_API_KEY"] == "gw-request-secret"
+    assert env["NEWAPI_API_KEY"] == "dramaclaw-per-turn-placeholder"
     assert env["NEWAPI_BASE_URL"] == "https://gateway.example/v1"
     assert "OPENAI_API_KEY" not in env
     assert "OPENROUTER_API_KEY" not in env
@@ -261,6 +261,7 @@ def test_c1_eg07_child_env_is_minimal_and_ignores_process_provider_secrets(
         "DRAMACLAW_PROJECT_OUTPUT_DIR",
         "NEWAPI_API_KEY",
         "NEWAPI_BASE_URL",
+        "DRAMACLAW_GATEWAY_CREDENTIAL_MODE",
     }
 
 
@@ -422,7 +423,7 @@ def test_c1_eg07_pool_build_env_consumes_authorization_not_workspace_gateway(
     monkeypatch, tmp_path
 ):
     from novelvideo.chat import hermes_pool
-    from novelvideo.chat.hermes_egress import HermesLaunchAuthorization
+    from novelvideo.chat.hermes_egress import HermesTurnAuthorization
     from novelvideo.ports.auth_contract import AgentSessionToken
 
     monkeypatch.setattr(
@@ -430,7 +431,7 @@ def test_c1_eg07_pool_build_env_consumes_authorization_not_workspace_gateway(
         "effective_gateway_credentials",
         lambda: pytest.fail("workspace gateway fallback must not be read"),
     )
-    authorization = HermesLaunchAuthorization.for_test(
+    authorization = HermesTurnAuthorization.for_test(
         context=_context(),
         credential=RequestCredential(
             reference=_context().credential,
@@ -457,7 +458,7 @@ def test_c1_eg07_pool_build_env_consumes_authorization_not_workspace_gateway(
         authorization=authorization,
     )
 
-    assert env["NEWAPI_API_KEY"] == "gw-request-secret"
+    assert env["NEWAPI_API_KEY"] == "dramaclaw-per-turn-placeholder"
     assert "OPENAI_API_KEY" not in env
 
 
@@ -560,9 +561,9 @@ async def test_c1_eg20a_freezone_runner_uses_restricted_subprocess(
 
 
 def _authorization():
-    from novelvideo.chat.hermes_egress import HermesLaunchAuthorization
+    from novelvideo.chat.hermes_egress import HermesTurnAuthorization
 
-    return HermesLaunchAuthorization.for_test(
+    return HermesTurnAuthorization.for_test(
         context=_context(),
         credential=RequestCredential(
             reference=_context().credential,
@@ -653,7 +654,7 @@ def test_c1_s3_04_home_scope_env_has_no_project_id_but_egress_identity_matches(
     )
 
     assert "DRAMACLAW_PROJECT_ID" not in env
-    assert env["NEWAPI_API_KEY"] == "gw-request-secret"
+    assert env["NEWAPI_API_KEY"] == "dramaclaw-per-turn-placeholder"
 
 
 def test_c1_s3_05_project_scope_env_keeps_project_id_and_minimal_allowlist(tmp_path):
@@ -686,6 +687,7 @@ def test_c1_s3_05_project_scope_env_keeps_project_id_and_minimal_allowlist(tmp_p
         "DRAMACLAW_PROJECT_OUTPUT_DIR",
         "NEWAPI_API_KEY",
         "NEWAPI_BASE_URL",
+        "DRAMACLAW_GATEWAY_CREDENTIAL_MODE",
     }
 
 
@@ -791,4 +793,4 @@ def test_c1_s3_04b_pool_build_env_home_scope_keeps_the_two_project_ids_apart(tmp
     )
 
     assert "DRAMACLAW_PROJECT_ID" not in env
-    assert env["NEWAPI_API_KEY"] == "gw-request-secret"
+    assert env["NEWAPI_API_KEY"] == "dramaclaw-per-turn-placeholder"

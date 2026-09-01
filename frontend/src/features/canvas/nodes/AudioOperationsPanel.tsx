@@ -62,7 +62,7 @@ const AUDIO_INPUT_FIELD_CLASS =
   'nodrag nowheel w-full rounded-[10px] border border-white/[0.08] bg-transparent px-3 text-[13px] text-text-dark outline-none transition-colors placeholder:text-text-muted/70 hover:border-white/[0.12] focus:border-white/20';
 
 // music 模式时长默认 30s（对齐后端 music_length_ms 默认 30000）。
-const DEFAULT_MUSIC_LENGTH_MS = 30000;
+export const DEFAULT_MUSIC_LENGTH_MS = 30000;
 const AUDIO_SPEECH_FEATURE_KEY = 'freezone.audio_speech';
 const AUDIO_MUSIC_FEATURE_KEY = 'freezone.audio_music';
 // 音乐时长下拉样式：暗色画布风格 + min-width 兜底,避免画布缩放/窄触发器时
@@ -72,7 +72,7 @@ const MUSIC_LENGTH_SELECT_CLASS =
 const MUSIC_LENGTH_SELECT_MENU_CLASS =
   '!z-[260] !min-w-[140px] !border-white/10 !bg-[#202024] !text-text-dark shadow-[0_14px_34px_rgba(0,0,0,0.5)]';
 // 音乐时长预设（毫秒）。后端范围 3000–600000，这里给常用档位。
-const MUSIC_LENGTH_PRESETS: ReadonlyArray<{ ms: number; label: string }> = [
+export const MUSIC_LENGTH_PRESETS: ReadonlyArray<{ ms: number; label: string }> = [
   { ms: 30000, label: '30秒' },
   { ms: 60000, label: '1分钟' },
   { ms: 120000, label: '2分钟' },
@@ -82,7 +82,7 @@ const MUSIC_LENGTH_PRESETS: ReadonlyArray<{ ms: number; label: string }> = [
   { ms: 600000, label: '10分钟' },
 ];
 
-function musicBillingSecondsFromMs(ms: number): number {
+export function musicBillingSecondsFromMs(ms: number): number {
   return Math.max(Math.ceil(Math.max(ms, 0) / 1000), 1);
 }
 

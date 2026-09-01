@@ -247,7 +247,7 @@ function pickPlyUrlFromResult(result: TaskState['result'] | undefined): string |
 }
 
 /** Fields cleared on every settle so the node leaves the 生成中 state cleanly. */
-const CLEARED_TASK_FIELDS = {
+export const CLEARED_GENERATION_TASK_FIELDS = {
   isGenerating: false,
   generationStartedAt: null,
   generationTaskKey: null,
@@ -269,9 +269,9 @@ async function buildSuccessPatch(
         url = await fetchFreezoneJobResult(projectId, taskType, jobId).then((r) => r.url).catch(() => null);
       }
       if (!url) {
-        return { ...CLEARED_TASK_FIELDS, generationError: '生成未返回结果' };
+        return { ...CLEARED_GENERATION_TASK_FIELDS, generationError: '生成未返回结果' };
       }
-      return { ...CLEARED_TASK_FIELDS, imageUrl: url, previewImageUrl: url, generationError: null };
+      return { ...CLEARED_GENERATION_TASK_FIELDS, imageUrl: url, previewImageUrl: url, generationError: null };
     }
     case 'video': {
       let url = resolveUrlFromResult(completed.result, ['video_url', 'output_url', 'url']);
@@ -279,10 +279,10 @@ async function buildSuccessPatch(
         url = await fetchFreezoneJobResult(projectId, taskType, jobId).then((r) => r.url).catch(() => null);
       }
       if (!url) {
-        return { ...CLEARED_TASK_FIELDS, generationError: '视频生成未返回结果' };
+        return { ...CLEARED_GENERATION_TASK_FIELDS, generationError: '视频生成未返回结果' };
       }
       return {
-        ...CLEARED_TASK_FIELDS,
+        ...CLEARED_GENERATION_TASK_FIELDS,
         videoUrl: url,
         sourceFileName: null,
         generationError: null,
@@ -296,58 +296,58 @@ async function buildSuccessPatch(
         url = await fetchFreezoneJobResult(projectId, taskType, jobId).then((r) => r.url).catch(() => null);
       }
       if (!url) {
-        return { ...CLEARED_TASK_FIELDS };
+        return { ...CLEARED_GENERATION_TASK_FIELDS };
       }
-      return { ...CLEARED_TASK_FIELDS, audioUrl: url, durationMs: null };
+      return { ...CLEARED_GENERATION_TASK_FIELDS, audioUrl: url, durationMs: null };
     }
     case 'ply': {
       const plyUrl = pickPlyUrlFromResult(completed.result);
       if (!plyUrl) {
-        return { ...CLEARED_TASK_FIELDS, taskKey: null, errorMessage: '生成失败: 未能在 task.result 中找到 3D 世界地址' };
+        return { ...CLEARED_GENERATION_TASK_FIELDS, taskKey: null, errorMessage: '生成失败: 未能在 task.result 中找到 3D 世界地址' };
       }
-      return { ...CLEARED_TASK_FIELDS, plyUrl, taskKey: null, errorMessage: null };
+      return { ...CLEARED_GENERATION_TASK_FIELDS, plyUrl, taskKey: null, errorMessage: null };
     }
     case 'script': {
       const result = await fetchFreezoneStoryScriptResult(projectId, jobId);
-      return { ...CLEARED_TASK_FIELDS, scriptResult: result, scriptTitle: result.title ?? null };
+      return { ...CLEARED_GENERATION_TASK_FIELDS, scriptResult: result, scriptTitle: result.title ?? null };
     }
     case 'reverse-prompt': {
       const { prompt } = await fetchFreezoneReversePromptResult(projectId, jobId);
       if (prompt && prompt.trim().length > 0) {
-        return { ...CLEARED_TASK_FIELDS, content: prompt };
+        return { ...CLEARED_GENERATION_TASK_FIELDS, content: prompt };
       }
-      return { ...CLEARED_TASK_FIELDS };
+      return { ...CLEARED_GENERATION_TASK_FIELDS };
     }
     case 'text-generate': {
       const result = await fetchFreezoneTextGenerateResult(projectId, jobId);
       if (!result.generated_text.trim()) {
-        return { ...CLEARED_TASK_FIELDS };
+        return { ...CLEARED_GENERATION_TASK_FIELDS };
       }
       return {
-        ...CLEARED_TASK_FIELDS,
+        ...CLEARED_GENERATION_TASK_FIELDS,
         content: result.generated_text,
         model: result.model,
       };
     }
     default:
-      return { ...CLEARED_TASK_FIELDS };
+      return { ...CLEARED_GENERATION_TASK_FIELDS };
   }
 }
 
 function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unknown> {
   if (isTaskCancelledError(error)) {
     // 用户主动终止过的任务恢复时只清理生成态，不当错误展示。
-    return { ...CLEARED_TASK_FIELDS };
+    return { ...CLEARED_GENERATION_TASK_FIELDS };
   }
   if (kind === 'ply') {
     const message = error instanceof Error ? error.message : String(error);
-    return { ...CLEARED_TASK_FIELDS, taskKey: null, errorMessage: `生成失败: ${message}` };
+    return { ...CLEARED_GENERATION_TASK_FIELDS, taskKey: null, errorMessage: `生成失败: ${message}` };
   }
   if (kind === 'image' || kind === 'video') {
     const resolved = resolveErrorContent(error, kind === 'video' ? '视频生成失败' : '图像生成失败');
     const rawMessage = resolved.message;
     return {
-      ...CLEARED_TASK_FIELDS,
+      ...CLEARED_GENERATION_TASK_FIELDS,
       generationError: providerErrorMessage(rawMessage) ?? rawMessage,
       generationErrorDetails: resolved.details ?? rawMessage,
       generationErrorRequestId:
@@ -356,7 +356,7 @@ function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unkno
   }
   // audio / script / reverse-prompt / text-generate surface their own inline errors elsewhere;
   // just leave the 生成中 state.
-  return { ...CLEARED_TASK_FIELDS };
+  return { ...CLEARED_GENERATION_TASK_FIELDS };
 }
 
 /**
@@ -427,7 +427,7 @@ export async function resumeNodeGeneration(params: {
         return;
       }
       if (!shouldWriteGenerationError({ nodeData: latestNodeData, taskKey, error })) {
-        updateNodeData(node.id, { ...CLEARED_TASK_FIELDS });
+        updateNodeData(node.id, { ...CLEARED_GENERATION_TASK_FIELDS });
         return;
       }
     }

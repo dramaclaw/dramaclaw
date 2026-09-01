@@ -10,10 +10,13 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import threading
+import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 from tools.registry import tool_error, tool_result
 
@@ -36,12 +39,71 @@ TEXT_CONTENT_FILTER_CHAT_ERROR = (
 )
 VOICE_PREREQ_CHAT_PREFIX = (
     "配音任务没有成功启动：当前缺少声线前置。请到「虾塘」上传或录制缺失的"
-    "项目解说人声线/角色声线后，再回来继续生成配音。"
+    "项目解说人声线/角色声线，或明确同意由虾导准备系统声线后，再继续生成配音。"
 )
 RENDER_PREREQ_CHAT_PREFIX = (
     "Render 任务没有生成可用图片：当前缺少必要草图前置。请先在「虾塘」生成或确认对应 "
     "Beat 的草图后，再重新生成 Render。"
 )
+FIRST_FRAME_BATCH_SIZE = 9
+AGENT_BATCH_POLL_SECONDS = 2.0
+_AGENT_BATCH_DISPATCHERS: dict[str, threading.Thread] = {}
+_AGENT_BATCH_DISPATCHERS_LOCK = threading.Lock()
+FREEZONE_MAINLINE_WRITE_DENIED_MESSAGE = (
+    "当前虾导运行在虾画画布中，只能查询项目状态或操作画布节点；"
+    "不能从这里启动主线视频生成、分集/脚本规划、草图、首帧、配音、成片或单 Beat 视频任务。"
+)
+FREEZONE_DENIED_MAINLINE_WRITE_TOOLS = {
+    "dramaclaw_control_episode_auto",
+    "dramaclaw_post",
+    "dramaclaw_patch",
+    "dramaclaw_delete",
+    "dramaclaw_build_characters",
+    "dramaclaw_plan_episodes",
+    "dramaclaw_generate_script",
+    "dramaclaw_update_character_face_prompt",
+    "dramaclaw_plan_identities",
+    "dramaclaw_plan_scenes",
+    "dramaclaw_plan_props",
+    "dramaclaw_generate_scene_master",
+    "dramaclaw_generate_scene_reverse",
+    "dramaclaw_generate_sketches",
+    "dramaclaw_detect_sketch_identities",
+    "dramaclaw_optimize_video_global",
+    "dramaclaw_generate_audio",
+    "dramaclaw_prepare_system_voices",
+    "dramaclaw_render_first_frames",
+    "dramaclaw_compose_episode",
+    "dramaclaw_generate_portrait",
+    "dramaclaw_generate_identity_image",
+    "dramaclaw_start_single_video",
+    "dramaclaw_start_video_batch",
+    # Freezone canvas mutations must go through the Freezone plugin's
+    # canvas-command bridge so the browser can show approval and refresh the
+    # live canvas. These REST-style whole-canvas writes bypass that flow.
+    "dramaclaw_save_freezone_canvas",
+    "dramaclaw_delete_freezone_canvas",
+    "dramaclaw_create_freezone_canvas_from_preset",
+}
+
+
+def _agent_token_configured() -> bool:
+    return bool(
+        os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+        or os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+    )
+
+
+def _current_agent_token() -> str:
+    """Read a turn token lazily without depending on the CE application venv."""
+
+    token_file = os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+    if token_file:
+        try:
+            return Path(token_file).read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+    return os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
 
 
 def _has_text_content_filter(value: Any) -> bool:
@@ -86,6 +148,18 @@ def _voice_prereq_error_text(value: Any) -> str:
     return ""
 
 
+def _voice_setup_prerequisites(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    candidate = value
+    if value.get("next_step") != "voice_setup" and isinstance(value.get("data"), dict):
+        candidate = value["data"]
+    prerequisites = candidate.get("audio_prerequisites")
+    if candidate.get("next_step") != "voice_setup" or not isinstance(prerequisites, dict):
+        return None
+    return prerequisites
+
+
 def _render_prereq_error_text(value: Any) -> str:
     if isinstance(value, str):
         text = value.strip()
@@ -115,8 +189,35 @@ def _with_chat_error_hints(value: Any) -> Any:
     if not isinstance(value, dict):
         return value
 
-    result = {key: _with_chat_error_hints(item) for key, item in value.items()}
-    voice_error = _voice_prereq_error_text(value)
+    result = {
+        key: item if key == "audio_prerequisites" else _with_chat_error_hints(item)
+        for key, item in value.items()
+    }
+    audio_prerequisites = _voice_setup_prerequisites(value)
+    if audio_prerequisites is not None:
+        raw_errors = audio_prerequisites.get("errors")
+        errors = [str(item).strip() for item in raw_errors or [] if str(item).strip()]
+        detail = "；".join(errors[:5]) or "配音所需声线尚未准备好"
+        result.setdefault(
+            "chat_notice",
+            (
+                f"下一步需要先准备配音声线。缺失项：{detail}。请选择："
+                "1）到「虾塘」上传或录制声线；2）确认由虾导匹配系统声线。"
+            ),
+        )
+        result.setdefault(
+            "agent_instruction",
+            (
+                "Tell the user in natural Chinese that first-frame generation is complete, but "
+                "audio generation cannot start yet. Offer two choices: upload or record the listed "
+                "voices in 虾塘, or explicitly approve system voices. Do not prepare system voices "
+                "without explicit approval. Do not claim TTS started and do not call "
+                "dramaclaw_generate_audio in this turn. The final question MUST explicitly contain "
+                "both Chinese choices: ‘到虾塘上传或录制声线’ and ‘由虾导匹配系统声线’. Never "
+                "describe system voices as unavailable, an external alternative, or ‘换别的方向’."
+            ),
+        )
+    voice_error = "" if audio_prerequisites is not None else _voice_prereq_error_text(value)
     if voice_error:
         result.setdefault(
             "chat_error",
@@ -126,8 +227,12 @@ def _with_chat_error_hints(value: Any) -> Any:
             "agent_instruction",
             (
                 "Reply to the user with chat_error in natural Chinese. Make clear the audio task "
-                "was not started. Tell the user they can go to 虾塘 to upload or record the missing "
-                "voice lines, then continue. Do not start another tool in this turn."
+                "was not started. Offer two choices: go to 虾塘 to upload or record the missing "
+                "voice lines, or explicitly approve system voices. Do not prepare system voices "
+                "until the user explicitly chooses that option. Do not start another tool in this turn."
+                " The final question MUST explicitly contain both Chinese choices: ‘到虾塘上传或录制声线’ "
+                "and ‘由虾导匹配系统声线’. Never describe system voices as unavailable, an external "
+                "alternative, or ‘换别的方向’."
             ),
         )
     render_error = _render_prereq_error_text(value)
@@ -157,65 +262,73 @@ def _with_chat_error_hints(value: Any) -> Any:
     return result
 
 
-def _ce_owner_mode() -> bool:
-    """CE single-user mode: authenticate as the local owner without a token.
-
-    A DramaClaw CE instance trusts local requests as the owner (no
-    ``Authorization`` header required), so an external MCP client such as
-    Claude Code can call the API on the same machine without minting an
-    agent-session token. This is opt-in via ``DRAMACLAW_CE_OWNER`` so it can
-    never silently drop auth against an EE deployment.
-    """
-    raw = os.environ.get("DRAMACLAW_CE_OWNER", "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+def _tool_mode_path() -> Path | None:
+    explicit = os.environ.get("DRAMACLAW_TOOL_MODE_FILE", "").strip()
+    if explicit:
+        return Path(explicit)
+    home = os.environ.get("HERMES_HOME", "").strip()
+    if home:
+        return Path(home) / "tmp" / "dramaclaw_tool_mode.json"
+    return None
 
 
-# Hosts trusted as the local CE owner in tokenless owner mode. ``urlparse``
-# lowercases the hostname and strips the brackets from ``[::1]``, so the bare
-# forms below cover the bracketed IPv6 literal too.
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+def _current_tool_mode() -> str:
+    env_mode = os.environ.get("DRAMACLAW_TOOL_MODE", "").strip()
+    if env_mode:
+        return env_mode
+    path = _tool_mode_path()
+    if path is None:
+        return "default"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return "default"
+    if not isinstance(data, dict):
+        return "default"
+    mode = str(data.get("mode") or "").strip()
+    return mode or "default"
 
 
-def _ce_owner_allow_remote() -> bool:
-    """Explicit, separately-named unsafe override for CE-owner mode.
-
-    Tokenless CE-owner mode drops the ``Authorization`` header entirely, so it
-    must only target a local CE the caller controls. Pointing it at a remote
-    host would send owner-level, unauthenticated requests across the network;
-    that is refused unless the operator opts in via
-    ``DRAMACLAW_CE_OWNER_ALLOW_REMOTE`` (deliberately a different variable from
-    ``DRAMACLAW_CE_OWNER`` so it cannot be enabled by accident).
-    """
-    raw = os.environ.get("DRAMACLAW_CE_OWNER_ALLOW_REMOTE", "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
-
-
-def _enforce_ce_owner_target(url: str) -> None:
-    """Require a loopback ``DRAMACLAW_API_URL`` in tokenless CE-owner mode.
-
-    Called only when owner mode is active and no bearer token is present. The
-    host must be a loopback address (``localhost``/``127.0.0.1``/``::1``/
-    ``[::1]``) unless the operator has set the explicit unsafe override
-    ``DRAMACLAW_CE_OWNER_ALLOW_REMOTE=1``.
-    """
-    if _ce_owner_allow_remote():
-        return
-    host = (urlparse(url).hostname or "").strip().lower()
-    if host in _LOOPBACK_HOSTS:
-        return
-    raise ValueError(
-        "DRAMACLAW_CE_OWNER=1 refuses non-loopback DRAMACLAW_API_URL "
-        f"(host {host!r}): tokenless owner mode sends unauthenticated, "
-        "owner-level requests and must point at a local CE "
-        "(localhost, 127.0.0.1, ::1). Set DRAMACLAW_CE_OWNER_ALLOW_REMOTE=1 "
-        "to override (unsafe), or provide DRAMACLAW_AGENT_TOKEN."
+def _deny_freezone_mainline_write(tool_name: str) -> str | None:
+    if tool_name not in FREEZONE_DENIED_MAINLINE_WRITE_TOOLS:
+        return None
+    if _current_tool_mode() != "freezone_canvas":
+        return None
+    return tool_error(
+        {
+            "ok": False,
+            "code": "freezone_mainline_write_denied",
+            "tool": tool_name,
+            "chat_error": FREEZONE_MAINLINE_WRITE_DENIED_MESSAGE,
+            "agent_instruction": (
+                "Reply in natural Chinese. Explain that Xi画's assistant can query project state "
+                "or operate canvas nodes, but cannot start mainline video-generation tasks here. "
+                "For canvas changes, use the Freezone canvas command tools so the user can review "
+                "and approve them; do not call whole-canvas save/delete endpoints."
+            ),
+        }
     )
 
 
+def _guard_freezone_mainline_write(tool_name: str, handler):
+    def wrapped(args: dict[str, Any], **kwargs: Any) -> str:
+        denied = _deny_freezone_mainline_write(tool_name)
+        if denied is not None:
+            return denied
+        return handler(args, **kwargs)
+
+    return wrapped
+
+
 def _available() -> bool:
-    if not os.environ.get("DRAMACLAW_API_URL"):
-        return False
-    return bool(os.environ.get("DRAMACLAW_AGENT_TOKEN")) or _ce_owner_mode()
+    return bool(
+        os.environ.get("DRAMACLAW_API_URL")
+        and (
+            _agent_token_configured()
+            or _local_agent_trust_enabled()
+            or _ce_owner_mode()
+        )
+    )
 
 
 def _base_url() -> str:
@@ -226,10 +339,60 @@ def _base_url() -> str:
 
 
 def _token() -> str:
-    value = os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+    value = _current_agent_token()
     if not value:
         raise ValueError("DRAMACLAW_AGENT_TOKEN is not set")
     return value
+
+
+def _ce_owner_mode() -> bool:
+    raw = os.environ.get("DRAMACLAW_CE_OWNER", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _ce_owner_allow_remote() -> bool:
+    raw = os.environ.get("DRAMACLAW_CE_OWNER_ALLOW_REMOTE", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _enforce_ce_owner_target(url: str | None = None) -> None:
+    if _ce_owner_allow_remote():
+        return
+    parsed = urlparse(url or os.environ.get("DRAMACLAW_API_URL", "").strip())
+    if (parsed.hostname or "").lower() in {"127.0.0.1", "::1", "localhost"}:
+        return
+    raise ValueError(
+        "DRAMACLAW_CE_OWNER=1 requires a loopback DRAMACLAW_API_URL; "
+        "set DRAMACLAW_CE_OWNER_ALLOW_REMOTE=1 to override (unsafe), "
+        "or provide DRAMACLAW_AGENT_TOKEN"
+    )
+
+
+def _local_agent_trust_enabled() -> bool:
+    if os.environ.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    parsed = urlparse(os.environ.get("DRAMACLAW_API_URL", "").strip())
+    return (parsed.hostname or "").lower() in {"127.0.0.1", "::1", "localhost"}
+
+
+def _request_headers(user_agent: str) -> dict[str, str]:
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": user_agent,
+    }
+    token = _current_agent_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    elif _ce_owner_mode():
+        _enforce_ce_owner_target()
+    elif not _local_agent_trust_enabled():
+        raise ValueError("DRAMACLAW_AGENT_TOKEN is not set")
+    return headers
 
 
 def _default_project_id() -> str:
@@ -311,19 +474,7 @@ def _request(method: str, path: str, *, query: Any = None, body: Any = None) -> 
     api_path = _normalize_api_path(path)
     url = f"{_base_url()}{api_path}{_query_string(query)}"
     payload = None
-    headers = {
-        "Accept": "application/json",
-        "User-Agent": "dramaclaw-plugin/0.1.0",
-    }
-    token = os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
-    if not token:
-        if not _ce_owner_mode():
-            _token()  # raise the standard "DRAMACLAW_AGENT_TOKEN is not set" error
-        # Tokenless owner mode drops Authorization entirely, so it must only
-        # ever target a loopback CE unless explicitly overridden.
-        _enforce_ce_owner_target(_base_url())
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    headers = _request_headers("dramaclaw-plugin/0.1.0")
     if body is not None:
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -343,6 +494,107 @@ def _request(method: str, path: str, *, query: Any = None, body: Any = None) -> 
         })
     except URLError as exc:
         return {"ok": False, "error": f"network_error: {exc.reason}"}
+
+
+def _batch_available_slots(project: str, queue_kind: str) -> int:
+    """Return currently available project/user slots without changing queue limits."""
+    response = _request("GET", f"/api/v1/projects/{project}/tasks/limits")
+    data = response.get("data") if isinstance(response, dict) else None
+    lane = data.get(queue_kind) if isinstance(data, dict) else None
+    if not isinstance(lane, dict):
+        return 0
+
+    remaining: list[int] = []
+    for key in ("remaining", "user_remaining"):
+        value = lane.get(key)
+        if value is None:
+            continue
+        try:
+            remaining.append(max(int(value), 0))
+        except (TypeError, ValueError):
+            continue
+    return min(remaining) if remaining else 0
+
+
+def _is_capacity_error(result: dict[str, Any]) -> bool:
+    if int(result.get("status_code") or 0) == 429:
+        return True
+    data = result.get("data")
+    if isinstance(data, dict):
+        detail = data.get("data")
+        if isinstance(detail, dict) and detail.get("limit_scope"):
+            return True
+    return False
+
+
+def _submit_batch_items(
+    *,
+    pending: list[int],
+    slots: int,
+    submit_item: Any,
+) -> tuple[list[dict[str, Any]], list[int]]:
+    """Submit only items that fit the existing queue and retain the rest."""
+    submitted: list[dict[str, Any]] = []
+    hard_failed: list[int] = []
+    while pending and slots > 0:
+        beat = pending[0]
+        result = submit_item(beat)
+        if result.get("ok") is False:
+            if _is_capacity_error(result):
+                break
+            hard_failed.append(beat)
+            pending.pop(0)
+            continue
+        pending.pop(0)
+        submitted.append({"beat": beat, "result": result})
+        slots -= 1
+    return submitted, hard_failed
+
+
+def _launch_capacity_aware_batch_dispatcher(
+    *,
+    batch_id: str,
+    project: str,
+    queue_kind: str,
+    pending: list[int],
+    submit_item: Any,
+) -> None:
+    """Refill an agent batch as existing queue capacity becomes available.
+
+    This is orchestration only: every child still enters through the normal API
+    admission checks, so the dispatcher cannot bypass project/user/lane limits.
+    """
+    if not pending:
+        return
+
+    def run() -> None:
+        try:
+            while pending:
+                slots = _batch_available_slots(project, queue_kind)
+                if slots > 0:
+                    _submitted, hard_failed = _submit_batch_items(
+                        pending=pending,
+                        slots=slots,
+                        submit_item=submit_item,
+                    )
+                    if hard_failed:
+                        # Invalid requests cannot become queue tasks. Stop instead of
+                        # repeatedly calling a known-bad endpoint forever.
+                        break
+                if pending:
+                    time.sleep(AGENT_BATCH_POLL_SECONDS)
+        finally:
+            with _AGENT_BATCH_DISPATCHERS_LOCK:
+                _AGENT_BATCH_DISPATCHERS.pop(batch_id, None)
+
+    thread = threading.Thread(
+        target=run,
+        name=f"dramaclaw-batch-{batch_id[-12:]}",
+        daemon=True,
+    )
+    with _AGENT_BATCH_DISPATCHERS_LOCK:
+        _AGENT_BATCH_DISPATCHERS[batch_id] = thread
+    thread.start()
 
 
 def _decode_response(status_code: int, text: str) -> dict[str, Any]:
@@ -596,6 +848,208 @@ def _handle_delete(args: dict[str, Any], **_: Any) -> str:
         return tool_error(str(exc))
 
 
+def _require_text_arg(args: dict[str, Any], *names: str) -> str:
+    for name in names:
+        value = str(args.get(name) or "").strip()
+        if value:
+            return value
+    raise ValueError(f"{names[0]} is required")
+
+
+def _handle_list_freezone_skills(args: dict[str, Any], **_: Any) -> str:
+    """List runnable Freezone / canvas skill definitions."""
+    try:
+        return tool_result(_request("GET", "/api/v1/freezone/skills"))
+    except Exception as exc:
+        return tool_error(str(exc))
+
+
+def _handle_run_freezone_skill(args: dict[str, Any], **_: Any) -> str:
+    """Run one Freezone SkillNode through the typed skill-run API."""
+    try:
+        project = _project_from_args(args)
+        skill_id = _require_text_arg(args, "skill_id")
+        if "request" in args or "schema_version" in args:
+            raise ValueError(
+                "request/schema_version wrappers are not supported; pass the canonical skill fields"
+            )
+        parameters = args.get("parameters") or {}
+        resolved_inputs = args.get("resolved_inputs") or []
+        if not isinstance(parameters, dict):
+            raise ValueError("parameters must be an object")
+        if not isinstance(resolved_inputs, list):
+            raise ValueError("resolved_inputs must be an array")
+        body = {
+            "schema_version": "skill.v1",
+            "skill_node_id": args.get("skill_node_id") or "",
+            "canvas_id": args.get("canvas_id") or "",
+            "idempotency_key": args.get("idempotency_key"),
+            "parameters": parameters,
+            "resolved_inputs": resolved_inputs,
+        }
+        return tool_result(
+            _request(
+                "POST",
+                f"/api/v1/projects/{project}/freezone/skills/{quote(skill_id, safe='')}/run",
+                body=body,
+            )
+        )
+    except Exception as exc:
+        return tool_error(str(exc))
+
+
+def _handle_get_freezone_skill_result(args: dict[str, Any], **_: Any) -> str:
+    """Read the current status and outputs for one Freezone skill run."""
+    try:
+        project = _project_from_args(args)
+        run_id = _require_text_arg(args, "run_id")
+        return tool_result(
+            _request(
+                "GET",
+                f"/api/v1/projects/{project}/freezone/skills/runs/{quote(run_id, safe='')}/result",
+            )
+        )
+    except Exception as exc:
+        return tool_error(str(exc))
+
+
+def _handle_list_freezone_canvases(args: dict[str, Any], **_: Any) -> str:
+    """List canvases available for the current project."""
+    try:
+        project = _project_from_args(args)
+        return tool_result(
+            _request("GET", f"/api/v1/projects/{project}/freezone/canvases")
+        )
+    except Exception as exc:
+        return tool_error(str(exc))
+
+
+def _handle_get_freezone_canvas(args: dict[str, Any], **_: Any) -> str:
+    """Read one persisted Freezone canvas payload."""
+    try:
+        project = _project_from_args(args)
+        canvas_id = _require_text_arg(args, "canvas_id")
+        return tool_result(
+            _request(
+                "GET",
+                f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
+            )
+        )
+    except Exception as exc:
+        return tool_error(str(exc))
+
+
+def _handle_save_freezone_canvas(args: dict[str, Any], **_: Any) -> str:
+    """Persist a complete Freezone canvas payload."""
+    try:
+        project = _project_from_args(args)
+        canvas_id = _require_text_arg(args, "canvas_id")
+        payload = args.get("payload")
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be a complete canvas object")
+        payload = dict(payload)
+        allowed_payload_keys = {
+            "nodes",
+            "edges",
+            "viewport",
+            "metadata",
+            "base_revision",
+            "client_save_id",
+            "save_source",
+            "allow_empty_overwrite",
+        }
+        unknown_payload_keys = sorted(set(payload) - allowed_payload_keys)
+        if unknown_payload_keys:
+            raise ValueError(
+                "payload contains unsupported fields: "
+                + ", ".join(unknown_payload_keys)
+            )
+        if not isinstance(payload.get("nodes"), list) or not isinstance(
+            payload.get("edges"), list
+        ):
+            raise ValueError("payload.nodes and payload.edges are required arrays")
+        if "viewport" not in payload or "metadata" not in payload:
+            raise ValueError("payload.viewport and payload.metadata are required")
+        if payload["viewport"] is not None and not isinstance(payload["viewport"], dict):
+            raise ValueError("payload.viewport must be an object or null")
+        if payload["metadata"] is not None and not isinstance(payload["metadata"], dict):
+            raise ValueError("payload.metadata must be an object or null")
+        if not isinstance(payload.get("base_revision"), int):
+            raise ValueError("payload.base_revision is required and must be an integer")
+        if not str(payload.get("client_save_id") or "").strip():
+            raise ValueError("payload.client_save_id is required")
+        payload.setdefault("canvas_id", canvas_id)
+        payload.setdefault("project_id", project)
+        payload.setdefault("save_source", "manual_save")
+        return tool_result(
+            _request(
+                "PUT",
+                f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
+                body=payload,
+            )
+        )
+    except Exception as exc:
+        return tool_error(str(exc))
+
+
+def _handle_delete_freezone_canvas(args: dict[str, Any], **_: Any) -> str:
+    """Delete one Freezone canvas by id."""
+    try:
+        project = _project_from_args(args)
+        canvas_id = _require_text_arg(args, "canvas_id")
+        return tool_result(
+            _request(
+                "DELETE",
+                f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
+            )
+        )
+    except Exception as exc:
+        return tool_error(str(exc))
+
+
+def _handle_create_freezone_canvas_from_preset(args: dict[str, Any], **_: Any) -> str:
+    """Create or open a Freezone canvas from a beat/episode/asset preset."""
+    try:
+        project = _project_from_args(args)
+        body = args.get("preset")
+        if not isinstance(body, dict):
+            raise ValueError("preset is required and must match one canonical scope variant")
+        body = dict(body)
+        scope = str(body.get("scope") or "").strip()
+        common = {"scope", "canvas_id", "overwrite_existing", "base_revision"}
+        allowed_by_scope = {
+            "blank": common,
+            "episode": common | {"episode"},
+            "beat": common | {"episode", "beat", "primary_slot"},
+            "asset": common
+            | {"asset_kind", "character", "identity_id", "asset_id"},
+        }
+        if scope not in allowed_by_scope:
+            raise ValueError("preset scope must be blank, episode, beat, or asset")
+        unknown = sorted(set(body) - allowed_by_scope[scope])
+        if unknown:
+            raise ValueError(
+                f"preset scope {scope} does not accept fields: " + ", ".join(unknown)
+            )
+        if scope == "episode" and not isinstance(body.get("episode"), int):
+            raise ValueError("episode preset requires episode")
+        if scope == "beat" and not all(
+            isinstance(body.get(key), int) for key in ("episode", "beat")
+        ):
+            raise ValueError("beat preset requires episode and beat")
+        if scope == "asset" and not str(body.get("asset_kind") or "").strip():
+            raise ValueError("asset preset requires asset_kind")
+        return tool_result(
+            _request(
+                "POST",
+                f"/api/v1/projects/{project}/freezone/canvases:from-preset",
+                body=body,
+            )
+        )
+    except Exception as exc:
+        return tool_error(str(exc))
+
+
 def _handle_pipeline_status(args: dict[str, Any], **_: Any) -> str:
     try:
         project = _project_from_args(args)
@@ -758,6 +1212,40 @@ def _handle_plan_episodes(args: dict[str, Any], **_: Any) -> str:
         return tool_error(str(exc))
 
 
+def _handle_control_episode_auto(args: dict[str, Any], **_: Any) -> str:
+    """Suspend, resume, or stop the durable outer-director episode auto run."""
+
+    try:
+        project = _project_from_args(args)
+        action = str(args.get("action") or "").strip().lower()
+        if action == "suspend":
+            reason = str(args.get("reason") or "等待用户确认是否修改").strip()
+            return tool_result(
+                _request(
+                    "POST",
+                    f"/api/v1/projects/{project}/chat/director-auto/suspend",
+                    body={"reason": reason[:500]},
+                )
+            )
+        if action == "resume":
+            return tool_result(
+                _request(
+                    "POST",
+                    f"/api/v1/projects/{project}/chat/director-auto/resume",
+                )
+            )
+        if action == "pause":
+            return tool_result(
+                _request(
+                    "POST",
+                    f"/api/v1/projects/{project}/chat/director-auto/pause",
+                )
+            )
+        raise ValueError("action must be one of: suspend, resume, pause")
+    except Exception as exc:
+        return tool_error(str(exc))
+
+
 def _handle_generate_script(args: dict[str, Any], **_: Any) -> str:
     """Generate the screenplay for one episode (脚本生成, script_writer task).
 
@@ -900,8 +1388,10 @@ def _handle_generate_sketches(args: dict[str, Any], **_: Any) -> str:
             "sketch_scene_grouping": True,
             "aspect_ratio": "2:3",
         }
-        if isinstance(args.get("body"), dict):
-            body.update({key: value for key, value in args["body"].items() if value is not None})
+        if "body" in args:
+            raise ValueError(
+                "body overrides are not supported; pass the canonical sketch fields"
+            )
         for key in (
             "style",
             "model",
@@ -987,8 +1477,30 @@ def _handle_generate_audio(args: dict[str, Any], **_: Any) -> str:
         return tool_error(str(exc))
 
 
-def _resolve_episode_beats(project: str, episode: int) -> list[int]:
-    """Fetch the episode's beat numbers via GET /episodes/{ep}/beats."""
+def _handle_prepare_system_voices(args: dict[str, Any], **_: Any) -> str:
+    """Prepare system-generated references after explicit user confirmation."""
+    try:
+        if args.get("confirmed") is not True:
+            return tool_error(
+                {
+                    "ok": False,
+                    "code": "system_voice_confirmation_required",
+                    "error": "使用系统声线前需要用户明确确认",
+                }
+            )
+        return tool_result(
+            _episode_post(
+                args,
+                "audio/system-voices/prepare",
+                body={"confirmed": True},
+            )
+        )
+    except Exception as exc:
+        return tool_error(str(exc))
+
+
+def _resolve_episode_beat_items(project: str, episode: int) -> list[dict[str, Any]]:
+    """Fetch normalized episode beat items via GET /episodes/{ep}/beats."""
     resp = _request("GET", f"/api/v1/projects/{project}/episodes/{episode}/beats")
     items: Any = None
     if isinstance(resp, dict):
@@ -999,10 +1511,36 @@ def _resolve_episode_beats(project: str, episode: int) -> list[int]:
                 break
         if items is None and isinstance(resp.get("data"), dict):
             items = resp["data"].get("beats")
+    return [item for item in (items or []) if isinstance(item, dict)]
+
+
+def _resolve_episode_beats(project: str, episode: int) -> list[int]:
+    """Fetch the episode's beat numbers via GET /episodes/{ep}/beats."""
     return [
         int(b["beat_number"])
-        for b in (items or [])
-        if isinstance(b, dict) and b.get("beat_number") is not None
+        for b in _resolve_episode_beat_items(project, episode)
+        if b.get("beat_number") is not None
+    ]
+
+
+def _resolve_missing_first_frame_beats(project: str, episode: int) -> list[int]:
+    """Return beat numbers whose promoted first-frame asset is still missing."""
+    return [
+        int(beat["beat_number"])
+        for beat in _resolve_episode_beat_items(project, episode)
+        if beat.get("beat_number") is not None
+        and not str(beat.get("frame_url") or "").strip()
+    ]
+
+
+def _resolve_ready_video_beats(project: str, episode: int) -> list[int]:
+    """Return unfinished beats that have a promoted first frame ready for video."""
+    return [
+        int(beat["beat_number"])
+        for beat in _resolve_episode_beat_items(project, episode)
+        if beat.get("beat_number") is not None
+        and str(beat.get("frame_url") or "").strip()
+        and not str(beat.get("video_url") or "").strip()
     ]
 
 
@@ -1530,32 +2068,95 @@ def _handle_render_first_frames(args: dict[str, Any], **_: Any) -> str:
     """Generate first frames for an episode (首帧生成, selected_regen task).
 
     Wraps POST /projects/{project}/episodes/{episode}/beats/regenerate with
-    ``{"beat_indices": [...]}``. If ``beat_indices`` is omitted, ALL beats of the
-    episode are resolved automatically (GET /episodes/{ep}/beats). Requires sketches
-    to exist first. Poll dramaclaw_get_task(task_type="selected_regen", episode=N).
+    ``{"beat_indices": [beat]}``. One tool call registers up to nine independent
+    selected_regen tasks, submits only what fits the existing queue, and refills capacity
+    as tasks finish. If ``beat_indices`` is omitted, the next nine beats without promoted
+    first frames are resolved automatically. Requires sketches to exist first.
     """
     try:
         project = _project_from_args(args)
         episode = _require_episode(args)
-        beats = args.get("beat_indices") or args.get("beats")
-        if not isinstance(beats, list) or not beats:
-            beats = _resolve_episode_beats(project, episode)
-            if not beats:
-                raise ValueError(
-                    "could not resolve beats for this episode; generate sketches first "
-                    "or pass beat_indices explicitly"
+        requested = sorted(_requested_beats(args) or set())
+        remaining_after_batch: int | None = None
+        if not requested:
+            missing = _resolve_missing_first_frame_beats(project, episode)
+            if not missing:
+                return tool_result(
+                    {
+                        "ok": True,
+                        "code": "first_frames_complete",
+                        "episode": episode,
+                        "requested": [],
+                        "started": [],
+                        "remaining": 0,
+                        "message": f"第 {episode} 集首帧已全部生成完成",
+                    }
                 )
-        body: dict[str, Any] = {"beat_indices": [int(b) for b in beats]}
+            requested = missing[:FIRST_FRAME_BATCH_SIZE]
+            remaining_after_batch = max(len(missing) - len(requested), 0)
+        if len(requested) > FIRST_FRAME_BATCH_SIZE:
+            raise ValueError(
+                f"at most {FIRST_FRAME_BATCH_SIZE} first-frame beats can be started in one batch"
+            )
+
+        batch_id = f"first-frame-{uuid4().hex}"
+        common_body: dict[str, Any] = {
+            "batch_id": batch_id,
+            "batch_size": len(requested),
+        }
         if args.get("style"):
-            body["style"] = str(args["style"])
+            common_body["style"] = str(args["style"])
         if args.get("model"):
-            body["model"] = str(args["model"])
-        return tool_result(
-            _request(
+            common_body["model"] = str(args["model"])
+
+        def submit_item(beat: int) -> dict[str, Any]:
+            return _request(
                 "POST",
                 f"/api/v1/projects/{project}/episodes/{episode}/beats/regenerate",
-                body=body,
+                body={**common_body, "beat_indices": [beat]},
             )
+
+        pending = list(requested)
+        slots = _batch_available_slots(project, "default")
+        items, failed = _submit_batch_items(
+            pending=pending,
+            slots=slots,
+            submit_item=submit_item,
+        )
+        started = [int(item["beat"]) for item in items]
+        waiting = list(pending)
+        _launch_capacity_aware_batch_dispatcher(
+            batch_id=batch_id,
+            project=project,
+            queue_kind="default",
+            pending=pending,
+            submit_item=submit_item,
+        )
+
+        return tool_result(
+            {
+                "ok": not failed,
+                "episode": episode,
+                "batch_id": batch_id,
+                "requested": requested,
+                "started": started,
+                "waiting": waiting,
+                "failed": failed,
+                "items": items,
+                **(
+                    {"remaining": remaining_after_batch}
+                    if remaining_after_batch is not None
+                    else {}
+                ),
+                "message": (
+                    f"第 {episode} 集首帧批次已登记：运行 {len(started)} 个，等待 {len(waiting)} 个"
+                    if not failed
+                    else (
+                        f"第 {episode} 集首帧批次已登记：运行 {len(started)} 个，"
+                        f"等待 {len(waiting)} 个，{len(failed)} 个提交失败"
+                    )
+                ),
+            }
         )
     except Exception as exc:
         return tool_error(str(exc))
@@ -1568,32 +2169,106 @@ def _handle_compose_episode(args: dict[str, Any], **_: Any) -> str:
     Poll task_type="compose_episode", episode=N.
     """
     try:
-        return tool_result(_episode_post(args, "videos/compose"))
+        return tool_result(
+            _episode_post(
+                args,
+                "videos/compose",
+                body={"add_subtitles": True, "add_bgm": False},
+            )
+        )
     except Exception as exc:
         return tool_error(str(exc))
 
 
 def _handle_get_final_video(args: dict[str, Any], **_: Any) -> str:
-    """Get and display the composed final episode video when it exists."""
+    """Get and display one or more composed final episode videos."""
     try:
         project = _project_from_args(args)
-        episode = _require_episode(args)
-        result = _request("GET", f"/api/v1/projects/{project}/episodes/{episode}/final")
-        data = result.get("data") if isinstance(result, dict) else None
-        video_url = ""
-        if isinstance(data, dict) and data.get("exists"):
+        raw_episode_indices = args.get("episode_indices")
+        if args.get("episode") is not None and not raw_episode_indices:
+            episode = _require_episode(args)
+            result = _request("GET", f"/api/v1/projects/{project}/episodes/{episode}/final")
+            data = result.get("data") if isinstance(result, dict) else None
+            video_url = ""
+            if isinstance(data, dict) and data.get("exists"):
+                video_url = str(data.get("video_url") or "").strip()
+            if video_url and isinstance(result, dict):
+                result["ui_spec"] = _video_ui_spec(
+                    [
+                        {
+                            "src": video_url,
+                            "title": f"第 {episode} 集成片",
+                            "description": "最终合成视频",
+                        }
+                    ]
+                )
+            return tool_result(result)
+
+        episode_indices: list[int] = []
+        if isinstance(raw_episode_indices, list):
+            for value in raw_episode_indices:
+                try:
+                    episode = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if episode > 0 and episode not in episode_indices:
+                    episode_indices.append(episode)
+        if not episode_indices:
+            episodes_result = _request("GET", f"/api/v1/projects/{project}/episodes")
+            episodes_data = episodes_result.get("data") if isinstance(episodes_result, dict) else None
+            if isinstance(episodes_data, list):
+                for item in episodes_data:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        episode = int(item.get("number") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if episode > 0 and episode not in episode_indices:
+                        episode_indices.append(episode)
+
+        try:
+            offset = max(0, int(args.get("offset") or 0))
+        except (TypeError, ValueError):
+            offset = 0
+        try:
+            limit = max(1, min(6, int(args.get("limit") or 6)))
+        except (TypeError, ValueError):
+            limit = 6
+
+        media_items: list[dict[str, Any]] = []
+        found_episodes: list[int] = []
+        for episode in sorted(episode_indices):
+            result = _request("GET", f"/api/v1/projects/{project}/episodes/{episode}/final")
+            data = result.get("data") if isinstance(result, dict) else None
+            if not isinstance(data, dict) or not data.get("exists"):
+                continue
             video_url = str(data.get("video_url") or "").strip()
-        if video_url and isinstance(result, dict):
-            result["ui_spec"] = _video_ui_spec(
-                [
-                    {
-                        "src": video_url,
-                        "title": f"第 {episode} 集成片",
-                        "description": "最终合成视频",
-                    }
-                ]
+            if not video_url:
+                continue
+            found_episodes.append(episode)
+            media_items.append(
+                {
+                    "src": video_url,
+                    "title": f"第 {episode} 集成片",
+                    "description": "最终合成视频",
+                }
             )
-        return tool_result(result)
+
+        page_items = media_items[offset : offset + limit]
+        page_episodes = found_episodes[offset : offset + limit]
+        return tool_result(
+            {
+                "ok": True,
+                "project_id": project,
+                "count": len(found_episodes),
+                "episodes": page_episodes,
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset + limit < len(found_episodes),
+                **({"ui_spec": _video_ui_spec(page_items)} if page_items else {}),
+            }
+        )
     except Exception as exc:
         return tool_error(str(exc))
 
@@ -1662,6 +2337,87 @@ def _handle_start_single_video(args: dict[str, Any], **_: Any) -> str:
         return tool_error(str(exc))
 
 
+def _handle_start_video_batch(args: dict[str, Any], **_: Any) -> str:
+    """Register up to nine videos and refill them through the existing queue limits."""
+    try:
+        project = _project_from_args(args)
+        episode = int(args.get("episode") or 1)
+        beats = sorted(_requested_beats(args) or set())
+        if args.get("auto_fill") is not False and len(beats) < 9:
+            ready = _resolve_ready_video_beats(project, episode)
+            beats.extend(beat for beat in ready if beat not in beats)
+            beats = sorted(beats[:9])
+        if not beats:
+            return tool_result(
+                {
+                    "ok": True,
+                    "code": "video_batch_empty",
+                    "episode": episode,
+                    "requested": [],
+                    "started": [],
+                    "message": f"第 {episode} 集没有可提交的视频任务",
+                }
+            )
+        if len(beats) > 9:
+            raise ValueError("at most 9 beats can be started in one batch")
+
+        batch_id = f"video-{uuid4().hex}"
+        body: dict[str, Any] = {
+            "batch_id": batch_id,
+            "batch_size": len(beats),
+        }
+        for key in ("video_backend", "duration", "resolution", "mode"):
+            if args.get(key) is not None:
+                body[key] = args[key]
+
+        def submit_item(beat: int) -> dict[str, Any]:
+            return _request(
+                "POST",
+                f"/api/v1/projects/{project}/episodes/{episode}/beats/{beat}/video",
+                body=body,
+            )
+
+        pending = list(beats)
+        slots = _batch_available_slots(project, "video")
+        items, failed = _submit_batch_items(
+            pending=pending,
+            slots=slots,
+            submit_item=submit_item,
+        )
+        started = [int(item["beat"]) for item in items]
+        waiting = list(pending)
+        _launch_capacity_aware_batch_dispatcher(
+            batch_id=batch_id,
+            project=project,
+            queue_kind="video",
+            pending=pending,
+            submit_item=submit_item,
+        )
+
+        return tool_result(
+            {
+                "ok": not failed,
+                "episode": episode,
+                "batch_id": batch_id,
+                "requested": beats,
+                "started": started,
+                "waiting": waiting,
+                "failed": failed,
+                "items": items,
+                "message": (
+                    f"第 {episode} 集视频批次已登记：运行 {len(started)} 个，等待 {len(waiting)} 个"
+                    if not failed
+                    else (
+                        f"第 {episode} 集视频批次已登记：运行 {len(started)} 个，"
+                        f"等待 {len(waiting)} 个，{len(failed)} 个提交失败"
+                    )
+                ),
+            }
+        )
+    except Exception as exc:
+        return tool_error(str(exc))
+
+
 _PATH_PROPS = {
     "path": {
         "type": "string",
@@ -1676,19 +2432,179 @@ _PATH_PROPS = {
 }
 
 
-def _schema(name: str, description: str, properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
+def _schema(
+    name: str,
+    description: str,
+    properties: dict[str, Any],
+    required: list[str] | None = None,
+    *,
+    additional_properties: bool = True,
+) -> dict[str, Any]:
+    parameters = {
+        "type": "object",
+        "properties": properties,
+        "required": required or [],
+    }
+    if not additional_properties:
+        parameters["additionalProperties"] = False
     return {
         "name": name,
         "description": description,
-        "parameters": {
-            "type": "object",
-            "properties": properties,
-            "required": required or [],
-        },
+        "parameters": parameters,
     }
 
 
+_RESOLVED_SKILL_INPUT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "role": {"type": "string"},
+        "node_id": {"type": "string"},
+        "node_type": {"type": "string"},
+        "beat_context": {"type": "object"},
+        "image_url": {"type": "string"},
+        "text": {"type": "string"},
+        "slot_target": {"type": "object"},
+        "reference_target": {"type": "object"},
+        "candidate_origin": {"type": "object"},
+        "media_kind": {"type": "string"},
+    },
+    "required": ["role"],
+}
+
+_CANVAS_NODE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "type": {"type": "string"},
+        "position": {"type": "object"},
+        "data": {"type": "object"},
+    },
+    "required": ["id", "type", "data"],
+}
+
+_CANVAS_EDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "source": {"type": "string"},
+        "target": {"type": "string"},
+        "type": {"type": "string"},
+        "data": {"type": "object"},
+    },
+    "required": ["id", "source", "target"],
+}
+
+_CANVAS_SAVE_PAYLOAD_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "nodes": {"type": "array", "items": _CANVAS_NODE_SCHEMA},
+        "edges": {"type": "array", "items": _CANVAS_EDGE_SCHEMA},
+        "viewport": {"type": ["object", "null"]},
+        "metadata": {"type": ["object", "null"]},
+        "base_revision": {"type": "integer", "minimum": 0},
+        "client_save_id": {"type": "string", "minLength": 1},
+        "save_source": {
+            "type": "string",
+            "enum": ["manual_save", "manual_clear", "restore", "import"],
+        },
+        "allow_empty_overwrite": {"type": "boolean"},
+    },
+    "required": [
+        "nodes",
+        "edges",
+        "viewport",
+        "metadata",
+        "base_revision",
+        "client_save_id",
+    ],
+}
+
+_PRESET_REFRESH_PROPERTIES = {
+    "canvas_id": {"type": "string"},
+    "overwrite_existing": {"type": "boolean"},
+    "base_revision": {"type": "integer", "minimum": 0},
+}
+
+_PRESET_CANVAS_SCHEMA = {
+    "oneOf": [
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "scope": {"const": "blank"},
+                **_PRESET_REFRESH_PROPERTIES,
+            },
+            "required": ["scope"],
+        },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "scope": {"const": "episode"},
+                "episode": {"type": "integer", "minimum": 1},
+                **_PRESET_REFRESH_PROPERTIES,
+            },
+            "required": ["scope", "episode"],
+        },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "scope": {"const": "beat"},
+                "episode": {"type": "integer", "minimum": 1},
+                "beat": {"type": "integer", "minimum": 1},
+                "primary_slot": {"type": "string"},
+                **_PRESET_REFRESH_PROPERTIES,
+            },
+            "required": ["scope", "episode", "beat"],
+        },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "scope": {"const": "asset"},
+                "asset_kind": {"type": "string", "minLength": 1},
+                "character": {"type": "string"},
+                "identity_id": {"type": "string"},
+                "asset_id": {"type": "string"},
+                **_PRESET_REFRESH_PROPERTIES,
+            },
+            "required": ["scope", "asset_kind"],
+        },
+    ]
+}
+
+
 TOOLS = (
+    (
+        "dramaclaw_control_episode_auto",
+        _schema(
+            "dramaclaw_control_episode_auto",
+            "Control the durable 本集自动 session in the outer 虾导. Use action='suspend' before "
+            "asking the user to confirm a possible modification; this pauses only future automatic "
+            "steps and never cancels queued/running media tasks. Use action='resume' when the user "
+            "declines the modification and wants automatic production to continue. Use action='pause' "
+            "only when the user explicitly asks to stop or switch to manual mode.",
+            {
+                "project_id": {
+                    "type": "string",
+                    "description": "Defaults to DRAMACLAW_PROJECT_ID.",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["suspend", "resume", "pause"],
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Short reason shown while awaiting modification confirmation.",
+                },
+            },
+            ["action"],
+        ),
+        _handle_control_episode_auto,
+    ),
     (
         "dramaclaw_get",
         _schema("dramaclaw_get", "Call a DramaClaw GET API path without using curl.", _PATH_PROPS, ["path"]),
@@ -1708,6 +2624,125 @@ TOOLS = (
         "dramaclaw_delete",
         _schema("dramaclaw_delete", "Call a DramaClaw DELETE API path without using curl.", {**_PATH_PROPS, "body": {"type": "object"}}, ["path"]),
         _handle_delete,
+    ),
+    (
+        "dramaclaw_list_freezone_skills",
+        _schema(
+            "dramaclaw_list_freezone_skills",
+            "List Freezone canvas SkillNode definitions. Use this before running a canvas skill instead of guessing skill ids or roles.",
+            {
+                "project_id": {
+                    "type": "string",
+                    "description": "Unused; accepted for symmetry with other DramaClaw tools.",
+                },
+            },
+        ),
+        _handle_list_freezone_skills,
+    ),
+    (
+        "dramaclaw_run_freezone_skill",
+        _schema(
+            "dramaclaw_run_freezone_skill",
+            "Run a Freezone canvas SkillNode through /freezone/skills/{skill_id}/run. Pass only the canonical fields below; do not wrap them in request. Use this for canvas graph skills such as sketch_from_context, sketch_from_director_combined, frame_from_context, set_selected_background, and scene_360.",
+            {
+                "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
+                "skill_id": {"type": "string", "description": "Skill id from dramaclaw_list_freezone_skills, e.g. freezone.sketch_from_context."},
+                "skill_node_id": {"type": "string", "description": "Canvas skill node id."},
+                "canvas_id": {"type": "string", "description": "Canvas id, usually default or a preset canvas id."},
+                "idempotency_key": {"type": "string", "description": "Optional idempotency key for retries."},
+                "parameters": {
+                    "type": "object",
+                    "description": "Skill-specific values from dramaclaw_list_freezone_skills.",
+                },
+                "resolved_inputs": {
+                    "type": "array",
+                    "items": _RESOLVED_SKILL_INPUT_SCHEMA,
+                    "description": "Resolved skill input bindings from the canvas.",
+                },
+            },
+            ["skill_id"],
+            additional_properties=False,
+        ),
+        _handle_run_freezone_skill,
+    ),
+    (
+        "dramaclaw_get_freezone_skill_result",
+        _schema(
+            "dramaclaw_get_freezone_skill_result",
+            "Get status and outputs for one Freezone skill run. Use after dramaclaw_run_freezone_skill returns a run_id.",
+            {
+                "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
+                "run_id": {"type": "string", "description": "Run id returned by dramaclaw_run_freezone_skill."},
+            },
+            ["run_id"],
+        ),
+        _handle_get_freezone_skill_result,
+    ),
+    (
+        "dramaclaw_list_freezone_canvases",
+        _schema(
+            "dramaclaw_list_freezone_canvases",
+            "List Freezone canvases for the project.",
+            {
+                "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
+            },
+        ),
+        _handle_list_freezone_canvases,
+    ),
+    (
+        "dramaclaw_get_freezone_canvas",
+        _schema(
+            "dramaclaw_get_freezone_canvas",
+            "Read one Freezone canvas payload, including nodes, edges, viewport, revision, and metadata.",
+            {
+                "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
+                "canvas_id": {"type": "string", "description": "Canvas id."},
+            },
+            ["canvas_id"],
+        ),
+        _handle_get_freezone_canvas,
+    ),
+    (
+        "dramaclaw_save_freezone_canvas",
+        _schema(
+            "dramaclaw_save_freezone_canvas",
+            "Save a complete Freezone canvas payload. Read the canvas first, preserve viewport/metadata, modify nodes/edges locally, then save with the current base_revision and a unique client_save_id.",
+            {
+                "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
+                "canvas_id": {"type": "string", "description": "Canvas id."},
+                "payload": _CANVAS_SAVE_PAYLOAD_SCHEMA,
+            },
+            ["canvas_id", "payload"],
+            additional_properties=False,
+        ),
+        _handle_save_freezone_canvas,
+    ),
+    (
+        "dramaclaw_delete_freezone_canvas",
+        _schema(
+            "dramaclaw_delete_freezone_canvas",
+            "Delete one Freezone canvas by id. Use only when the user explicitly asks to delete a canvas.",
+            {
+                "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
+                "canvas_id": {"type": "string", "description": "Canvas id to delete."},
+            },
+            ["canvas_id"],
+        ),
+        _handle_delete_freezone_canvas,
+    ),
+    (
+        "dramaclaw_create_freezone_canvas_from_preset",
+        _schema(
+            "dramaclaw_create_freezone_canvas_from_preset",
+            "Create or open a Freezone canvas from exactly one typed preset variant. Put scope-specific fields inside preset; top-level scope/episode/beat fields are rejected.",
+            {
+                "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
+                "preset": _PRESET_CANVAS_SCHEMA,
+            },
+            ["preset"],
+            additional_properties=False,
+        ),
+        _handle_create_freezone_canvas_from_preset,
     ),
     (
         "dramaclaw_pipeline_status",
@@ -2001,12 +3036,9 @@ TOOLS = (
                     "type": "boolean",
                     "description": "Run /sketches/assign-colors before generation. Default: true.",
                 },
-                "body": {
-                    "type": "object",
-                    "description": "Advanced override merged into the canonical generate body.",
-                },
             },
             ["episode"],
+            additional_properties=False,
         ),
         _handle_generate_sketches,
     ),
@@ -2241,16 +3273,20 @@ TOOLS = (
         _schema(
             "dramaclaw_render_first_frames",
             "Generate first frames for an episode (首帧生成, selected_regen task). Real endpoint POST "
-            "/projects/{project}/episodes/{episode}/beats/regenerate with {beat_indices:[...]}. Omit "
-            "beat_indices to render ALL beats of the episode (resolved automatically). Requires sketches "
-            "first. Poll dramaclaw_get_task(task_type='selected_regen', episode=N).",
+            "/projects/{project}/episodes/{episode}/beats/regenerate. One call registers up to nine "
+            "independent beat tasks; only available queue slots start immediately and waiting Beats "
+            "are submitted automatically as capacity opens. Omit beat_indices to render the next "
+            "nine missing first frames. "
+            "Requires sketches first. Poll dramaclaw_list_tasks(task_type='selected_regen', episode=N).",
             {
                 "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
                 "episode": {"type": "integer", "description": "Episode number (required)."},
                 "beat_indices": {
                     "type": "array",
                     "items": {"type": "integer"},
-                    "description": "Beat numbers to render. Omit to render all beats of the episode.",
+                    "minItems": 1,
+                    "maxItems": 9,
+                    "description": "One to nine beat numbers. Omit to render the next nine missing first frames.",
                 },
                 "style": {"type": "string", "description": "Optional visual style override."},
             },
@@ -2289,6 +3325,29 @@ TOOLS = (
         _handle_generate_audio,
     ),
     (
+        "dramaclaw_prepare_system_voices",
+        _schema(
+            "dramaclaw_prepare_system_voices",
+            "Prepare missing narrator and character reference voices from system presets. "
+            "This starts the agent-only system_voice_setup background task and does not start "
+            "episode TTS. Call only after the user explicitly agrees to use system voices. Poll "
+            "dramaclaw_get_task(task_type='system_voice_setup', episode=N) before starting TTS.",
+            {
+                "project_id": {
+                    "type": "string",
+                    "description": "Defaults to DRAMACLAW_PROJECT_ID.",
+                },
+                "episode": {"type": "integer", "description": "Episode number (required)."},
+                "confirmed": {
+                    "type": "boolean",
+                    "description": "Must be true after explicit user confirmation.",
+                },
+            },
+            ["episode", "confirmed"],
+        ),
+        _handle_prepare_system_voices,
+    ),
+    (
         "dramaclaw_optimize_video_global",
         _schema(
             "dramaclaw_optimize_video_global",
@@ -2322,15 +3381,28 @@ TOOLS = (
         "dramaclaw_get_final_video",
         _schema(
             "dramaclaw_get_final_video",
-            "Get and display the composed final episode video (最终成片展示). Real endpoint GET "
-            "/projects/{project}/episodes/{episode}/final. Use this after compose_episode completes "
-            "or when the user asks for the final video. If no final video exists, report that state; "
-            "do not synthesize file URLs.",
+            "Get and display composed final episode videos (最终成片展示). Pass episode for one "
+            "episode, episode_indices for selected episodes, or omit both to display all existing "
+            "final videos in one tool call with offset/limit pagination. Use this after compose_episode "
+            "completes or when the user asks for final videos. If no final video exists, report that "
+            "state; do not synthesize file URLs.",
             {
                 "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
-                "episode": {"type": "integer", "description": "Episode number (required)."},
+                "episode": {"type": "integer", "description": "One episode number."},
+                "episode_indices": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "maxItems": 12,
+                    "description": "Selected episode numbers. Omit with episode to show all finals.",
+                },
+                "offset": {"type": "integer", "minimum": 0},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 6,
+                    "description": "Maximum final videos to display. Default 6.",
+                },
             },
-            ["episode"],
         ),
         _handle_get_final_video,
     ),
@@ -2355,17 +3427,52 @@ TOOLS = (
         ),
         _handle_start_single_video,
     ),
+    (
+        "dramaclaw_start_video_batch",
+        _schema(
+            "dramaclaw_start_video_batch",
+            "Generate videos for up to nine ready beats in one write operation. Each beat uses its "
+            "stored video_prompt and must already have a first frame. Use this instead of repeated "
+            "dramaclaw_start_single_video calls when two to nine beats are ready. Tasks remain "
+            "independent, continue to obey the existing video queue limits, and waiting Beats are "
+            "submitted automatically as capacity opens. By default, a short beats "
+            "list is automatically filled with the next ready unfinished beats up to nine.",
+            {
+                "project_id": {"type": "string"},
+                "episode": {"type": "integer"},
+                "beats": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 1,
+                    "maxItems": 9,
+                    "description": "One to nine ready beat numbers.",
+                },
+                "auto_fill": {
+                    "type": "boolean",
+                    "description": (
+                        "Default true: fill a short beats list with the next ready unfinished beats "
+                        "up to nine. Set false only when the user explicitly requests an exact subset."
+                    ),
+                },
+                "video_backend": {"type": "string", "description": "Optional backend override."},
+                "duration": {"type": "number", "description": "Optional seconds."},
+            },
+            ["episode", "beats"],
+        ),
+        _handle_start_video_batch,
+    ),
 )
 
 
 def register(ctx) -> None:
     for name, schema, handler in TOOLS:
+        guarded_handler = _guard_freezone_mainline_write(name, handler)
         for toolset in REGISTER_TOOLSETS:
             ctx.register_tool(
                 name=name,
                 toolset=toolset,
                 schema=schema,
-                handler=handler,
+                handler=guarded_handler,
                 check_fn=_available,
                 requires_env=["DRAMACLAW_API_URL", "DRAMACLAW_AGENT_TOKEN"],
                 description=schema["description"],

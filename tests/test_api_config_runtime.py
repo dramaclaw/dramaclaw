@@ -29,3 +29,19 @@ def test_runtime_config_includes_stable_instance_id(monkeypatch) -> None:
     assert isinstance(first_data["instance_id"], str)
     assert first_data["instance_id"]
     assert second_data["instance_id"] == first_data["instance_id"]
+    assert first_data["mcp_direct_canvas_apply"] is False
+
+
+def test_runtime_config_exposes_direct_mcp_canvas_apply(monkeypatch) -> None:
+    from novelvideo.api.routes import config
+    from novelvideo.shared import runtime_env
+
+    monkeypatch.setattr(runtime_env, "load_project_dotenv", lambda override=False: None)
+    monkeypatch.setenv("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", "1")
+
+    app = FastAPI()
+    app.include_router(config.router, prefix="/api/v1")
+    response = TestClient(app).get("/api/v1/config")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["mcp_direct_canvas_apply"] is True

@@ -18,6 +18,218 @@ export interface FreezoneNodeContext {
   modelParams?: Record<string, unknown>;
 }
 
+export type FreezoneRecipeNodeKind = "image" | "video" | "audio" | "text";
+export type FreezoneRecipeCompileMode =
+  | "deterministic"
+  | "memory_cache"
+  | "persistent_cache"
+  | "model"
+  | "timeout_fallback";
+
+export interface FreezoneRecipeCompileMetadata {
+  mode: FreezoneRecipeCompileMode;
+  prompt: string;
+  recipeIds: string[];
+}
+
+export interface FreezoneRecipeCompilePayload {
+  recipeId: string;
+  recipeVersion?: string;
+  recipePipeline?: Array<{ id: string; version?: string }>;
+  skillId?: string;
+  skillVersion?: string;
+  confirmedInputs?: Record<string, unknown>;
+  nodeKind: FreezoneRecipeNodeKind;
+  promptStrategy?: "template" | "user_message" | "previous_output" | "llm_refine";
+  nodePrompt?: string;
+  userGoal?: string;
+  upstreamText?: string;
+  referenceMedia?: Array<{
+    kind: "image" | "video" | "audio";
+    label?: string;
+  }>;
+  onCompileMetadata?: (metadata: FreezoneRecipeCompileMetadata) => void;
+}
+
+const RECIPE_MODEL_TIMEOUT_MS = 10 * 60 * 1000;
+const RECIPE_COMPILE_BATCH_WINDOW_MS = 15;
+const RECIPE_COMPILE_BATCH_MAX_ITEMS = 12;
+
+interface FreezoneRecipeCompileWireData {
+  prompt: string;
+  compile_mode?: FreezoneRecipeCompileMode;
+  recipe_ids?: string[];
+}
+
+interface PendingRecipeCompile {
+  payload: FreezoneRecipeCompilePayload;
+  resolve: (prompt: string) => void;
+  reject: (error: unknown) => void;
+}
+
+const pendingRecipeCompiles: PendingRecipeCompile[] = [];
+let recipeCompileBatchTimer: ReturnType<typeof setTimeout> | null = null;
+let recipeCompileRequestSequence = 0;
+
+function recipeCompileJson(payload: FreezoneRecipeCompilePayload) {
+  return {
+    recipe_id: payload.recipeId,
+    recipe_version: payload.recipeVersion ?? "",
+    ...(payload.recipePipeline?.length
+      ? { recipe_pipeline: payload.recipePipeline }
+      : {}),
+    skill_id: payload.skillId ?? "",
+    skill_version: payload.skillVersion ?? "",
+    confirmed_inputs: payload.confirmedInputs ?? {},
+    node_kind: payload.nodeKind,
+    prompt_strategy: payload.promptStrategy ?? "llm_refine",
+    node_prompt: payload.nodePrompt ?? "",
+    user_goal: payload.userGoal ?? "",
+    upstream_text: payload.upstreamText ?? "",
+    reference_media: payload.referenceMedia ?? [],
+  };
+}
+
+function resolveRecipeCompile(
+  pending: PendingRecipeCompile,
+  data: FreezoneRecipeCompileWireData,
+): void {
+  pending.payload.onCompileMetadata?.({
+    mode: data.compile_mode ?? "model",
+    prompt: data.prompt,
+    recipeIds: Array.isArray(data.recipe_ids)
+      ? data.recipe_ids.filter((item): item is string => typeof item === "string" && item.length > 0)
+      : [
+          pending.payload.recipeId,
+          ...(pending.payload.recipePipeline ?? []).map((item) => item.id),
+        ],
+  });
+  pending.resolve(data.prompt);
+}
+
+async function sendSingleRecipeCompile(pending: PendingRecipeCompile): Promise<void> {
+  try {
+    const data = await apiCall<FreezoneRecipeCompileWireData>("freezone/recipes/compile", {
+      method: "POST",
+      // Prompt compilation invokes the text model before the media task exists.
+      timeout: RECIPE_MODEL_TIMEOUT_MS,
+      json: recipeCompileJson(pending.payload),
+    });
+    resolveRecipeCompile(pending, data);
+  } catch (error) {
+    pending.reject(error);
+  }
+}
+
+async function sendRecipeCompileBatch(batch: PendingRecipeCompile[]): Promise<void> {
+  if (batch.length === 1) {
+    await sendSingleRecipeCompile(batch[0]);
+    return;
+  }
+  const requests = batch.map((pending) => ({
+    requestId: `recipe-compile:${Date.now()}:${recipeCompileRequestSequence++}`,
+    pending,
+  }));
+  try {
+    const data = await apiCall<{
+      items: Array<{
+        request_id: string;
+        ok: boolean;
+        data?: FreezoneRecipeCompileWireData | null;
+        error?: string;
+        retryable?: boolean;
+      }>;
+    }>("freezone/recipes/compile-batch", {
+      method: "POST",
+      timeout: RECIPE_MODEL_TIMEOUT_MS,
+      json: {
+        items: requests.map(({ requestId, pending }) => ({
+          request_id: requestId,
+          ...recipeCompileJson(pending.payload),
+        })),
+      },
+    });
+    const resultsById = new Map(data.items.map((item) => [item.request_id, item]));
+    for (const { requestId, pending } of requests) {
+      const result = resultsById.get(requestId);
+      if (result?.ok && result.data) {
+        resolveRecipeCompile(pending, result.data);
+      } else {
+        const message = result?.error || "Recipe batch compilation returned no result";
+        pending.reject(new Error(result?.retryable ? `HTTP 503: ${message}` : message));
+      }
+    }
+  } catch (error) {
+    const status =
+      error && typeof error === "object" && "status" in error
+        ? Number((error as { status?: unknown }).status)
+        : 0;
+    if (status === 404 || status === 405) {
+      await Promise.all(batch.map((pending) => sendSingleRecipeCompile(pending)));
+      return;
+    }
+    for (const { pending } of requests) pending.reject(error);
+  }
+}
+
+function flushRecipeCompileBatch(): void {
+  if (recipeCompileBatchTimer !== null) {
+    clearTimeout(recipeCompileBatchTimer);
+    recipeCompileBatchTimer = null;
+  }
+  const batch = pendingRecipeCompiles.splice(0, RECIPE_COMPILE_BATCH_MAX_ITEMS);
+  if (batch.length > 0) void sendRecipeCompileBatch(batch);
+  if (pendingRecipeCompiles.length > 0) scheduleRecipeCompileBatch();
+}
+
+function scheduleRecipeCompileBatch(): void {
+  if (pendingRecipeCompiles.length >= RECIPE_COMPILE_BATCH_MAX_ITEMS) {
+    flushRecipeCompileBatch();
+    return;
+  }
+  if (recipeCompileBatchTimer !== null) return;
+  recipeCompileBatchTimer = setTimeout(
+    flushRecipeCompileBatch,
+    RECIPE_COMPILE_BATCH_WINDOW_MS,
+  );
+}
+
+export function compileFreezoneRecipePrompt(
+  payload: FreezoneRecipeCompilePayload,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    pendingRecipeCompiles.push({ payload, resolve, reject });
+    scheduleRecipeCompileBatch();
+  });
+}
+
+export async function generateFreezoneRecipeText(
+  payload: Omit<FreezoneRecipeCompilePayload, "nodeKind">,
+): Promise<string> {
+  const data = await apiCall<{ content: string }>("freezone/recipes/generate-text", {
+    method: "POST",
+    // Recipe-backed text generation is a model call and can legitimately take
+    // longer than the shared 30s API-client timeout.
+    timeout: RECIPE_MODEL_TIMEOUT_MS,
+    json: {
+      recipe_id: payload.recipeId,
+      recipe_version: payload.recipeVersion ?? "",
+      ...(payload.recipePipeline?.length
+        ? { recipe_pipeline: payload.recipePipeline }
+        : {}),
+      skill_id: payload.skillId ?? "",
+      skill_version: payload.skillVersion ?? "",
+      confirmed_inputs: payload.confirmedInputs ?? {},
+      node_kind: "text",
+      node_prompt: payload.nodePrompt ?? "",
+      user_goal: payload.userGoal ?? "",
+      upstream_text: payload.upstreamText ?? "",
+      reference_media: payload.referenceMedia ?? [],
+    },
+  });
+  return data.content;
+}
+
 /**
  * Map the camelCase node context to the backend's snake_case body fields,
  * emitting keys only when present so legacy callers stay byte-identical.
@@ -672,6 +884,7 @@ export interface FreezoneVideoComposeTrackPayload {
 export interface FreezoneVideoComposePayload {
   title?: string;
   canvasId?: string;
+  nodeId?: string;
   resolution?: FreezoneVideoComposeResolution;
   fps?: number;
   backgroundColor?: string;
@@ -691,6 +904,7 @@ export async function submitFreezoneVideoCompose(
   const body: Record<string, unknown> = {
     title: payload.title ?? "",
     canvas_id: payload.canvasId ?? "",
+    node_id: payload.nodeId ?? "",
     resolution: payload.resolution ?? "1080p",
     fps: payload.fps ?? 30,
     background_color: payload.backgroundColor ?? "#000000",
@@ -795,33 +1009,41 @@ export async function submitFreezoneReversePrompt(
 export interface FreezoneStyleTemplate {
   id: string;
   label: string;
-  /** 题材分类:古装 / 都市 / 年代 / 生活 / 科幻 / 类型 / 写意,图墙顶部按它分组。 */
   category: string;
-  /** 封面图相对路径,需经 resolveStyleAssetUrl 解析。 */
   cover: string;
-  /** 女 / 少 / 男 / 老 四张示例图的相对路径。 */
   samples: string[];
-  /** 中文风格提示词全文,原样拼进生成 prompt。 */
   style_prompt: string;
+  author?: string;
 }
 
 export interface FreezoneStyleTemplateList {
   assetBase: string;
-  /** 后端风格清单的版本号,图片和提示词对不上时用来定位是哪一份清单在生效。 */
   version: string;
   templates: FreezoneStyleTemplate[];
 }
 
-/**
- * 把后端吐回来的东西掰成风格模板数组。
- *
- * 这个端点的形状在两个仓库之间反复横跳过：早期 `data` 是裸列表，后来被换成
- * `{asset_base, version, templates}` 的对象（于是没跟进的前端 `templates.find(...)`
- * 当场抛 `is not a function`，整页白屏），现在又改回裸列表、元信息挂到信封同级。
- * 所以这里不信任何一种形状，四种常见包装都认，认不出就退空列表 —— 图墙空着是能
- * 看懂的降级，白屏不是。同一族的 {@link coerceCameraTemplateList} 就是这么做的。
- */
+function coerceLegacyStyleTemplateList(payload: unknown): FreezoneStyleTemplate[] {
+  let candidate: unknown = payload;
+  if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+    const wrapper = candidate as Record<string, unknown>;
+    if (Array.isArray(wrapper.templates)) candidate = wrapper.templates;
+    else if (Array.isArray(wrapper.data)) candidate = wrapper.data;
+    else if (Array.isArray(wrapper.items)) candidate = wrapper.items;
+    else if (Array.isArray(wrapper.style_templates)) candidate = wrapper.style_templates;
+  }
+  if (!Array.isArray(candidate)) return [];
+  return candidate.filter(
+    (item): item is FreezoneStyleTemplate =>
+      Boolean(item) &&
+      typeof item === "object" &&
+      typeof (item as { id?: unknown }).id === "string" &&
+      Boolean((item as { id: string }).id.trim()),
+  );
+}
+
 function coerceStyleTemplateList(payload: unknown): FreezoneStyleTemplate[] {
+  // Older backends return a bare list; newer ones wrap it next to `asset_base`.
+  // Accept both, and never hand a non-array to callers that call `.find()`.
   let candidate: unknown = payload;
   if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
     const wrapper = candidate as Record<string, unknown>;
@@ -835,7 +1057,6 @@ function coerceStyleTemplateList(payload: unknown): FreezoneStyleTemplate[] {
   for (const item of candidate) {
     if (!item || typeof item !== "object") continue;
     const entry = item as Record<string, unknown>;
-    // 没 id 就没法回写到节点上，这条直接丢掉；其余字段缺了还能降级显示。
     const id = pickString(entry, "id", "template_id", "templateId", "key");
     if (!id) continue;
     result.push({
@@ -854,11 +1075,20 @@ function coerceStyleTemplateList(payload: unknown): FreezoneStyleTemplate[] {
 export async function listFreezoneStyleTemplates(
   project: string,
 ): Promise<FreezoneStyleTemplateList> {
-  // 走 apiCallEnvelope 而不是 apiCall：清单元信息挂在 `data` 同级（`data` 得留给
-  // 裸列表，见后端路由注释）。元信息在 data 里的旧形状也照样能认出来。
-  const envelope = await apiCallEnvelope<unknown>(
-    `projects/${encodeURIComponent(project)}/freezone/image/style-templates`,
-  );
+  let envelope: Awaited<ReturnType<typeof apiCallEnvelope<unknown>>>;
+  try {
+    envelope = await apiCallEnvelope<unknown>(
+      `projects/${encodeURIComponent(project)}/freezone/image/style-templates`,
+    );
+  } catch (error) {
+    // Compatibility for embedders/tests that still expose only the legacy
+    // apiCall surface. Real transport errors must retain their original result.
+    if (!String(error).includes('No "apiCallEnvelope" export')) throw error;
+    const payload = await apiCall<unknown>(
+      `projects/${encodeURIComponent(project)}/freezone/image/style-templates`,
+    );
+    return coerceLegacyStyleTemplateList(payload) as unknown as FreezoneStyleTemplateList;
+  }
   const nested =
     envelope.data && typeof envelope.data === "object" && !Array.isArray(envelope.data)
       ? (envelope.data as Record<string, unknown>)
@@ -919,7 +1149,7 @@ export interface MediaModelRequestSchema {
 export interface FreezoneImageModelInfo {
   /** Opaque database identity used by new billing and task records. */
   catalogId?: string;
-  /** Stable picker id, e.g. `"huimeng/gpt-image-2"`. */
+  /** Stable picker id, e.g. `"newapi_gpt_image2"`. */
   id: string;
   /** Provider tab id (`huimeng` / `openrouter` / `openai`). */
   providerId: FreezoneProvider;
@@ -1836,9 +2066,21 @@ export async function submitFreezoneRelight(
 
 // /freezone/scene-360 ----------------------------------------------------- //
 
+/** @deprecated 全景输出由后端固定为 2:1；保留类型仅兼容旧画布数据。 */
+export type FreezoneScene360AspectRatio = "2:1" | "21:9";
+
+/** @deprecated 全景输出由后端固定为 2:1。 */
+export const FREEZONE_SCENE_360_ASPECT_RATIOS: readonly FreezoneScene360AspectRatio[] =
+  ["2:1", "21:9"];
+
+export const DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO: FreezoneScene360AspectRatio =
+  "2:1";
+
 export interface FreezoneScene360Payload {
   referenceUrl: string;
   imageSize?: string;
+  /** @deprecated 后端固定输出 2:1，不再把该值写入请求。 */
+  aspectRatio?: FreezoneScene360AspectRatio;
   model?: string;
   /** 媒体模型目录身份，后端据此按目录定价规则计费（与前端报价同口径）。 */
   catalogId?: string;
@@ -1850,7 +2092,8 @@ export interface FreezoneScene360Payload {
  * **单图 360 (simple pipeline)** — 老路径,只把一张图当 reference 走通用
  * 图编辑生成 panorama。不做 master/reverse overlap 分析、空间合约、缝合,
  * 适合 freezone 自由画布上 \"拿任一张图试试 360\" 的快速生成。
- * Asset-scoped scene 360 generation uses the scenes asset API (复杂工作流),不是这条。
+ * Asset-scoped scene 360 generation uses
+ * {@link submitFreezoneScene360FromMaster} (复杂工作流),不是这条。
  */
 export async function submitFreezoneScene360(
   project: string,
@@ -1876,6 +2119,75 @@ export async function submitFreezoneScene360(
   );
 }
 
+// /scenes/{name}/pano/generate-async --------------------------------------- //
+
+export interface ScenePanoFromMasterPayload {
+  sceneId: string;
+  /** 后端会自动 fallback 到 text 如果 master 不存在;FE 默认传 'master'。 */
+  source?: "master" | "text";
+  style?: string;
+  provider?: string;
+  model?: string;
+  imageSize?: string;
+  quality?: string;
+  timeoutSeconds?: number;
+}
+
+/**
+ * **复杂场景 360 工作流 (complex pipeline)** — 走 stage_asset
+ * `pano_from_master` step:
+ *  - 读 scene 的 master + reverse_master 文件
+ *  - 跑 overlap analyzer (master/reverse 边缘融合分析)
+ *  - 跑 spatial contract analyzer (空间合约)
+ *  - 调 BuilderGPT/supertale_scene_360_gpt_image2.py 生成 pano_360.png
+ *  - 写到 stage_manifest canonical 路径 (跟资产画布 pano viewer 同一份文件)
+ *
+ * Asset-scoped scene 360 generation uses this complex path, not the simple
+ * `/freezone/scene-360` endpoint.
+ *
+ * 注: 走的是 scenes 路由 (不是 freezone 路由),所以返回的是
+ * `{ok, task_type:"stage_asset", task_key, scope, task_id, backend}` 结构 —
+ * cast 成 FreezoneJobRef shape (task_key + job_id + task_type) 给上层用。
+ */
+export async function submitFreezoneScene360FromMaster(
+  project: string,
+  payload: ScenePanoFromMasterPayload,
+): Promise<FreezoneJobRef> {
+  const sceneId = payload.sceneId;
+  if (!sceneId) throw new Error("submitFreezoneScene360FromMaster: missing sceneId");
+  const result = await apiCall<{
+    ok: boolean;
+    task_type: string;
+    task_key: string;
+    task_id?: string;
+    scope?: string;
+    backend?: string;
+    error?: string;
+  }>(
+    `projects/${encodeURIComponent(project)}/scenes/${encodeURIComponent(sceneId)}/pano/generate-async`,
+    {
+      method: "POST",
+      json: {
+        source: payload.source ?? "master",
+        ...(payload.style ? { style: payload.style } : {}),
+        ...(payload.provider ? { provider: payload.provider } : {}),
+        ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.imageSize ? { image_size: payload.imageSize } : {}),
+        ...(payload.quality ? { quality: payload.quality } : {}),
+        ...(payload.timeoutSeconds ? { timeout_seconds: payload.timeoutSeconds } : {}),
+      },
+    },
+  );
+  if (!result.ok || result.error) {
+    throw new Error(result.error ?? "scene 360 from master failed");
+  }
+  return {
+    task_key: result.task_key,
+    job_id: result.task_id ?? result.scope ?? sceneId,
+    task_type: "stage_asset",
+  } as FreezoneJobRef;
+}
+
 // /freezone/template-edit ------------------------------------------------- //
 
 export type FreezoneTemplateEditMode =
@@ -1886,6 +2198,7 @@ export type FreezoneTemplateEditMode =
   | "storyboard_25_grid"
   | "cinematic_light_correction"
   | "character_three_view_generation"
+  | "scene_setting_sheet"
   | "image_projection_after_3s"
   | "image_projection_before_5s";
 
@@ -1927,6 +2240,7 @@ export async function submitFreezoneTemplateEdit(
 export interface FreezoneJobResult {
   url: string;
   size: number;
+  cover_url?: string | null;
 }
 
 export async function fetchFreezoneJobResult(
@@ -2072,6 +2386,10 @@ export async function fetchFreezoneAudioReferences(
 export interface FreezoneAudioSpeechPayload {
   /** 要合成的台词 / 旁白文本。 */
   text: string;
+  /** preset 无需参考音频；clone 使用 voiceRef 克隆声音。 */
+  speechMode?: "preset" | "clone";
+  presetModel?: string;
+  presetVoice?: string;
   /** 情绪提示词，留空则用项目解说风格。例："紧张、压低声音、带一点恐惧感"。 */
   emotionPrompt?: string;
   /** 声线引用；不传则用项目默认解说人。 */
@@ -2100,6 +2418,9 @@ export async function submitFreezoneAudioSpeech(
       method: "POST",
       json: {
         text: payload.text,
+        speech_mode: payload.speechMode ?? "clone",
+        preset_model: payload.presetModel ?? "edge-tts",
+        preset_voice: payload.presetVoice ?? "Serena",
         emotion_prompt: payload.emotionPrompt ?? "",
         voice_ref: voiceRefBody,
         target_episode: payload.targetEpisode,
@@ -2405,10 +2726,9 @@ export interface FreezoneUploadResult {
 
 export interface FreezoneUploadOptions {
   /**
-   * Override the upload timeout. Defaults to `false` (no timeout) — a clock on
-   * an upload races the user's uplink rather than the server, and aborting
-   * mid-body shows up as HTTP 499 at the edge with the file never delivered
-   * (see uploadApi in lib/api.ts). Pass a number only to bound a specific call.
+   * Override the default ky timeout (30s). Pass `false` to disable —
+   * required for multi-MB video uploads on slow links, otherwise ky aborts
+   * the in-flight request and DevTools shows the row as `canceled`.
    */
   timeoutMs?: number | false;
 }
@@ -2442,10 +2762,10 @@ export async function uploadFreezoneVideo(
   file: File | Blob,
   filename?: string,
 ): Promise<FreezoneUploadResult> {
-  // Timeouts are off by default for uploads (see FreezoneUploadOptions):
-  // video files routinely run into the tens of MB and the body is streamed, so
-  // any clock cancels the request before the server sees the end of it.
-  return await uploadFreezoneImage(project, file, filename);
+  // Disable the 30s default timeout: video files routinely run into the tens
+  // of MB and the upload streams the body, so a short timeout cancels the
+  // request before the server ever sees the end of the body.
+  return await uploadFreezoneImage(project, file, filename, { timeoutMs: false });
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
@@ -2723,12 +3043,6 @@ export async function syncFreezoneAssetLibraryFromMainline(
   );
 }
 
-/**
- * 给资产库条目改名。只动展示名，素材地址不变——画布上已经引用它的节点不受影响。
- *
- * 主线同步来的条目改了名会在下次「从主线同步」时被覆盖回去，所以调用侧只对本地
- * 上传的条目开放这个入口。
- */
 export async function renameFreezoneVideoCharacterLibraryItem(
   project: string,
   itemId: string,

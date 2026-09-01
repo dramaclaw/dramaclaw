@@ -1,0 +1,51 @@
+{
+  "schema_version": "dramaclaw.agent-kit.v1",
+  "name": "dramaclaw-agent-kit",
+  "version": "0.1.0",
+  "license": "Elastic-2.0",
+  "requires": {
+    "dramaclaw_ce": {
+      "compatibility": "capability_contract",
+      "contract_file": "src/novelvideo/chat/agent_kit_contract.json",
+      "contract_schema": "dramaclaw.agent-kit-contract.v1",
+      "minimum_contract_version": 1,
+      "required_capabilities": [
+        "agent-token-file-rotation.v1",
+        "dramaclaw-mcp-progressive-tools.v1",
+        "freezone-canvas-approval-bridge.v1",
+        "local-agent-trust.v1",
+        "workflow-mcp-read-compile.v1"
+      ],
+      "required_files": [
+        "src/novelvideo/chat/agent_kit_contract.json",
+        "src/novelvideo/chat/dramaclaw_mcp.py",
+        "src/novelvideo/chat/workflow_mcp.py",
+        ".hermes/plugins/dramaclaw/__init__.py",
+        ".hermes/plugins/freezone/__init__.py"
+      ]
+    },
+    "python": ">=3.11,<3.13",
+    "mcp_transport": "stdio"
+  },
+  "skills": [
+    "skills/dramaclaw-workflows"
+  ],
+  "mcp_servers": {
+    "dramaclaw-workflows": {
+      "launcher_mode": "workflows",
+      "access": "read_compile"
+    },
+    "dramaclaw": {
+      "launcher_mode": "tools",
+      "access": "authorized_local_write"
+    }
+  },
+  "supported_hosts": [
+    "codex",
+    "claude-code",
+    "hermes",
+    "openclaw",
+    "workbuddy",
+    "generic-mcp"
+  ]
+}

@@ -44,6 +44,7 @@ import {
 
 import { useCanvasStore } from "@/stores/canvasStore";
 import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
+import { resolveAudioKind } from "@/features/canvas/application/audioSpeechText";
 import {
   isAudioNode,
   isVideoNode,
@@ -88,6 +89,8 @@ import {
 import { CoverEditor } from "./CoverEditor";
 import { useComposePlayback } from "./useComposePlayback";
 import { getFilmstrip, pickFrame, type FilmstripFrame } from "./filmstrip";
+
+const BACKGROUND_MUSIC_TRACK_ID = `${AUDIO_TRACK_ID}_background_music`;
 
 export interface VideoComposeModalProps {
   project: string;
@@ -188,14 +191,28 @@ function probeMediaDuration(
 }
 
 /** Seed an initial timeline from the selected video/audio canvas nodes. */
-function buildInitialTimeline(seedNodeIds: string[]): ComposeTimelineState {
+export function buildInitialTimeline(seedNodeIds: string[]): ComposeTimelineState {
   const nodes = useCanvasStore.getState().nodes;
   const byId = new Map(nodes.map((node) => [node.id, node] as const));
   const videoClips: ComposeClip[] = [];
   const audioClips: ComposeClip[] = [];
+  const backgroundMusicClips: ComposeClip[] = [];
   // 初始把同种类片段顺序首尾相接摆放（与旧行为一致）；之后可自由拖动。
   let videoCursor = 0;
   let audioCursor = 0;
+  const videoStartByWorkflowInstance = new Map<string, number>();
+
+  for (const nodeId of seedNodeIds) {
+    const node = byId.get(nodeId);
+    if (!node || !isVideoNode(node) || !node.data.videoUrl) continue;
+    const durationMs =
+      typeof node.data.durationMs === "number" ? node.data.durationMs : null;
+    const key = workflowTimelineInstanceKey(node.data);
+    if (key) videoStartByWorkflowInstance.set(key, videoCursor);
+    videoCursor += durationMs ?? FALLBACK_CLIP_MS;
+  }
+  const totalVideoDurationMs = videoCursor;
+  videoCursor = 0;
 
   for (const nodeId of seedNodeIds) {
     const node = byId.get(nodeId);
@@ -224,7 +241,12 @@ function buildInitialTimeline(seedNodeIds: string[]): ComposeTimelineState {
       const durationMs =
         typeof node.data.durationMs === "number" ? node.data.durationMs : null;
       const len = durationMs ?? FALLBACK_CLIP_MS;
-      audioClips.push({
+      const timelineRole = workflowTimelineRole(node.data);
+      const alignedStart =
+        timelineRole === "shot_voice"
+          ? videoStartByWorkflowInstance.get(workflowTimelineInstanceKey(node.data) ?? "")
+          : undefined;
+      const clip: ComposeClip = {
         id: makeClipId(),
         nodeId,
         kind: "audio",
@@ -232,14 +254,23 @@ function buildInitialTimeline(seedNodeIds: string[]): ComposeTimelineState {
         displayName: node.data.displayName ?? null,
         thumbUrl: null,
         durationMs,
-        timelineStartMs: audioCursor,
+        timelineStartMs:
+          timelineRole === "background_music" ? 0 : alignedStart ?? audioCursor,
         trimStartMs: 0,
-        trimEndMs: len,
-        volume: 1,
+        trimEndMs:
+          timelineRole === "background_music" && totalVideoDurationMs > 0
+            ? Math.min(len, totalVideoDurationMs)
+            : len,
+        volume: timelineRole === "background_music" ? 0.25 : 1,
         muted: false,
         speed: 1,
-      });
-      audioCursor += len;
+      };
+      if (timelineRole === "background_music") {
+        backgroundMusicClips.push(clip);
+      } else {
+        audioClips.push(clip);
+        audioCursor = Math.max(audioCursor, clip.timelineStartMs + len);
+      }
     }
   }
 
@@ -249,7 +280,56 @@ function buildInitialTimeline(seedNodeIds: string[]): ComposeTimelineState {
   if (audioClips.length > 0) {
     tracks.push({ id: AUDIO_TRACK_ID, kind: "audio", clips: audioClips });
   }
+  if (backgroundMusicClips.length > 0) {
+    tracks.push({
+      id: BACKGROUND_MUSIC_TRACK_ID,
+      kind: "audio",
+      clips: backgroundMusicClips,
+    });
+  }
   return { tracks, resolution: "1080p" };
+}
+
+function workflowTimelineCatalog(data: unknown): Record<string, unknown> | null {
+  if (!data || typeof data !== "object") return null;
+  const catalog = (data as { workflowCatalog?: unknown }).workflowCatalog;
+  return catalog && typeof catalog === "object"
+    ? catalog as Record<string, unknown>
+    : null;
+}
+
+function workflowTimelineRole(data: unknown): string {
+  const catalog = workflowTimelineCatalog(data);
+  if (!catalog) return "";
+  const value = catalog.timelineRole;
+  if (typeof value === "string" && value) {
+    const normalized = value.trim().toLowerCase();
+    if (["music", "bgm", "background_music"].includes(normalized)) {
+      return "background_music";
+    }
+    if (["voiceover", "narration", "shot_voice"].includes(normalized)) {
+      return "shot_voice";
+    }
+    return normalized;
+  }
+  const source = data as Parameters<typeof resolveAudioKind>[0];
+  return resolveAudioKind({
+    audioKind: source.audioKind,
+    workflowCatalog: source.workflowCatalog,
+  }) === "music"
+    ? "background_music"
+    : "";
+}
+
+function workflowTimelineInstanceKey(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as { workflowInstanceId?: unknown };
+  const catalog = workflowTimelineCatalog(data);
+  const workflowInstanceId =
+    typeof record.workflowInstanceId === "string" ? record.workflowInstanceId : "";
+  const stepInstance = catalog?.stepInstance;
+  if (!workflowInstanceId || typeof stepInstance !== "number") return null;
+  return `${workflowInstanceId}:${stepInstance}`;
 }
 
 /**
@@ -260,17 +340,45 @@ function buildInitialTimeline(seedNodeIds: string[]): ComposeTimelineState {
  * 这样合成节点的输入永远 = 画布上当前连着的素材，不会出现「连了却不显示」。
  * 代价：删掉某个仍连着的片段，重开会被补回来——要彻底移除请在画布上断开该节点。
  */
-function reconcileDraftWithUpstream(
+export function reconcileDraftWithUpstream(
   draft: ComposeTimelineState,
   seedNodeIds: string[],
 ): ComposeTimelineState {
   const connected = new Set(seedNodeIds);
+  const nodeById = new Map(
+    useCanvasStore.getState().nodes.map((node) => [node.id, node] as const),
+  );
   // 1) 丢弃上游已断开的片段（外部素材 nodeId 为空时保留）。
   const tracks: ComposeTrack[] = draft.tracks.map((track) => ({
     ...track,
-    clips: track.clips.filter(
-      (clip) => clip.nodeId == null || connected.has(clip.nodeId),
-    ),
+    clips: track.clips
+      .filter((clip) => clip.nodeId == null || connected.has(clip.nodeId))
+      .map((clip) => {
+        if (!clip.nodeId) return clip;
+        const node = nodeById.get(clip.nodeId);
+        const sourceUrl =
+          clip.kind === "video" && node && isVideoNode(node)
+            ? node.data.videoUrl
+            : clip.kind === "audio" && node && isAudioNode(node)
+              ? node.data.audioUrl
+              : null;
+        if (!sourceUrl || sourceUrl === clip.sourceUrl) return clip;
+
+        const durationMs =
+          typeof node?.data.durationMs === "number" ? node.data.durationMs : null;
+        return {
+          ...clip,
+          sourceUrl,
+          displayName: node?.data.displayName ?? clip.displayName,
+          thumbUrl:
+            clip.kind === "video" && node && isVideoNode(node)
+              ? node.data.previewImageUrl ?? null
+              : null,
+          durationMs,
+          trimStartMs: 0,
+          trimEndMs: durationMs ?? FALLBACK_CLIP_MS,
+        };
+      }),
   }));
   // 2) 已连接但草稿里没有片段的上游 → 用初始摆放生成并追加到对应种类轨道末尾。
   const present = new Set(
@@ -283,7 +391,9 @@ function reconcileDraftWithUpstream(
     const fresh = buildInitialTimeline(missing);
     for (const freshTrack of fresh.tracks) {
       if (freshTrack.clips.length === 0) continue;
-      const target = tracks.find((track) => track.kind === freshTrack.kind);
+      const target =
+        tracks.find((track) => track.id === freshTrack.id)
+        ?? tracks.find((track) => track.kind === freshTrack.kind);
       if (!target) {
         tracks.push(freshTrack);
         continue;
@@ -421,6 +531,20 @@ function useTrackMediaSync<T extends HTMLMediaElement>(
   }, [ref]);
 }
 
+function SyncedAudioTrack({
+  track,
+  playheadMs,
+  isPlaying,
+}: {
+  track: ComposeTrack;
+  playheadMs: number;
+  isPlaying: boolean;
+}) {
+  const ref = useRef<HTMLAudioElement | null>(null);
+  useTrackMediaSync(ref, track, playheadMs, isPlaying, false);
+  return <audio ref={ref} className="hidden" />;
+}
+
 export function VideoComposeModal({
   project,
   canvasId,
@@ -477,7 +601,6 @@ export function VideoComposeModal({
   const [coverEditorOpen, setCoverEditorOpen] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const trackScrollRef = useRef<HTMLDivElement | null>(null);
   // 当前正在进行的拖动（clip 移动 / trim / scrub）的清理函数。用于：① 同一时刻只允许
   // 一个拖动（多指/多触点防重复挂监听）；② 组件卸载（关弹窗）时清掉残留的 window 监听，
@@ -622,8 +745,8 @@ export function VideoComposeModal({
     if (!isPlaying) positionPlayhead(playheadMs);
   }, [playheadMs, pxPerSec, isPlaying, positionPlayhead]);
 
-  // 多轨预览：单个 <video>/<audio> 无法合成多轨，预览取「播放头处有片段」的最上层
-  // （数组靠后）轨道；无则取第一条该种类轨道。最终导出由后端按全部轨道合成。
+  // 视频预览取播放头处有片段的最上层轨道；音频轨分别挂载播放器，以便旁白和背景乐
+  // 按时间线同时预览。最终导出仍由后端按全部轨道合成。
   const videoTrack = useMemo(() => {
     const vids = timeline.tracks.filter((track) => track.kind === "video");
     for (let i = vids.length - 1; i >= 0; i -= 1) {
@@ -631,23 +754,23 @@ export function VideoComposeModal({
     }
     return vids[0] ?? null;
   }, [timeline, playheadMs]);
-  const audioTrack = useMemo(() => {
-    const auds = timeline.tracks.filter((track) => track.kind === "audio");
-    for (let i = auds.length - 1; i >= 0; i -= 1) {
-      if (activeClipAt(auds[i], playheadMs)) return auds[i];
-    }
-    return auds[0] ?? null;
-  }, [timeline, playheadMs]);
-  const hasAudioTrack = useMemo(
+  const audioTracks = useMemo(
     () =>
-      timeline.tracks.some(
+      timeline.tracks.filter(
         (track) => track.kind === "audio" && track.clips.length > 0,
       ),
     [timeline],
   );
+  const primaryAudioTrack = useMemo(
+    () =>
+      audioTracks.find((track) => track.id === AUDIO_TRACK_ID) ??
+      audioTracks[0] ??
+      null,
+    [audioTracks],
+  );
+  const hasAudioTrack = audioTracks.length > 0;
 
   useTrackMediaSync(videoRef, videoTrack, playheadMs, isPlaying, hasAudioTrack);
-  useTrackMediaSync(audioRef, audioTrack, playheadMs, isPlaying, false);
 
   // ── history (undo / redo) ────────────────────────────────────────────────
   const pushHistory = useCallback(() => {
@@ -1247,14 +1370,15 @@ export function VideoComposeModal({
     const src = clipboardRef.current;
     if (!src) return;
     // 落到同类型的默认轨；当前选中片段也在该轨时紧跟其后插入，否则追加。
-    const targetTrackId = src.kind === "video" ? videoTrack?.id : audioTrack?.id;
+    const targetTrackId =
+      src.kind === "video" ? videoTrack?.id : primaryAudioTrack?.id;
     if (!targetTrackId) return;
     const afterId =
       selectedClip && selectedClip.track.id === targetTrackId
         ? selectedClip.clip.id
         : null;
     insertDuplicate(src, targetTrackId, afterId);
-  }, [audioTrack, insertDuplicate, selectedClip, videoTrack]);
+  }, [insertDuplicate, primaryAudioTrack, selectedClip, videoTrack]);
 
   // 批量删除当前所有选中片段（含主选中），删后视频轨补位、清空选择。
   const removeSelected = useCallback(() => {
@@ -1495,14 +1619,14 @@ export function VideoComposeModal({
 
   // 导出到画布：先把合成视频经 upload 接口落成稳定素材，再回显到本节点的合成结果上。
   const exportToCanvas = useCallback(
-    async (url: string) => {
+    async (url: string, coverUrl?: string | null) => {
       const blob = await fetchComposedBlob(url);
       const uploaded = await uploadFreezoneVideo(
         project,
         blob,
         composedFileName(url),
       );
-      onComposed(uploaded.url, timelineRef.current.cover?.url ?? null);
+      onComposed(uploaded.url, coverUrl ?? timelineRef.current.cover?.url ?? null);
     },
     [composedFileName, fetchComposedBlob, onComposed, project],
   );
@@ -1539,7 +1663,7 @@ export function VideoComposeModal({
           return;
         }
         if (target === "local") await exportToLocal(result.url);
-        else await exportToCanvas(result.url);
+        else await exportToCanvas(result.url, result.cover_url);
       } catch (error) {
         // 脱离监听 ≠ 合成失败：不写红色错误区，改中性提示，并把任务句柄留在
         // 任务中心可查（合成没有节点可挂句柄，这里只能提示用户稍后取回）。
@@ -1895,7 +2019,14 @@ export function VideoComposeModal({
             {t("videoCompose.emptyPreview")}
           </div>
         )}
-        <audio ref={audioRef} className="hidden" />
+        {audioTracks.map((track) => (
+          <SyncedAudioTrack
+            key={track.id}
+            track={track}
+            playheadMs={playheadMs}
+            isPlaying={isPlaying}
+          />
+        ))}
       </div>
 
       {/* Toolbar */}
@@ -2783,4 +2914,3 @@ function TrackRow({
     </div>
   );
 }
-

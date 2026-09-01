@@ -10,7 +10,10 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterator, TypeVar
 
-from novelvideo.model_gateway_settings import get_effective_newapi_config
+from novelvideo.model_gateway_settings import (
+    get_effective_llm_config,
+    get_effective_newapi_config,
+)
 from novelvideo.egress_context import (
     TRUSTED_EGRESS_CONTEXT_KEY,
     TrustedEgressContext,
@@ -207,6 +210,7 @@ def create_request_scoped_gateway_model(
     profile: Any,
     delegate_factory: Callable[..., Any],
     platform_credential_factory: Callable[[], tuple[str, str]],
+    default_headers: dict[str, str] | None = None,
 ):
     """Create a stateless model facade that resolves credentials per submit."""
 
@@ -229,13 +233,15 @@ def create_request_scoped_gateway_model(
             return None
 
         def _delegate(self, credential: RequestCredential):
-            return delegate_factory(
-                model_name,
-                api_key=credential.api_key,
-                base_url=credential.base_url,
-                timeout_seconds=timeout_seconds,
-                profile=profile,
-            )
+            kwargs = {
+                "api_key": credential.api_key,
+                "base_url": credential.base_url,
+                "timeout_seconds": timeout_seconds,
+                "profile": profile,
+            }
+            if default_headers:
+                kwargs["default_headers"] = default_headers
+            return delegate_factory(model_name, **kwargs)
 
         async def request(
             self,
@@ -587,9 +593,13 @@ def refresh_model_gateway_runtime() -> dict[str, Any]:
         official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
         official_api_key=app_config.NEWAPI_API_KEY,
     )
+    llm_gateway = get_effective_llm_config()
     api_key = str(gateway.api_key or "").strip()
     base_url = str(gateway.base_url or "").strip().rstrip("/")
-    version = _runtime_version(api_key, base_url)
+    version = _runtime_version(
+        f"{api_key}\n{llm_gateway.api_key}\n{llm_gateway.mode}",
+        f"{base_url}\n{llm_gateway.base_url}",
+    )
 
     cleared = _clear_agent_singletons()
 
@@ -597,6 +607,13 @@ def refresh_model_gateway_runtime() -> dict[str, Any]:
         "mode": gateway.mode,
         "source": gateway.source,
         "configured": bool(api_key and base_url),
+        "llm": {
+            "mode": llm_gateway.mode,
+            "source": llm_gateway.source,
+            "configured": bool(llm_gateway.api_key and llm_gateway.base_url),
+            "model": llm_gateway.model,
+            "brainclaw": llm_gateway.is_brainclaw,
+        },
         "runtimeVersion": version,
         "clearedCaches": cleared,
         "cognee": _cognee_runtime_status(),

@@ -8,6 +8,8 @@ import {
 import {
   LayoutGrid,
   Workflow,
+  RefreshCw,
+  CirclePause,
   StretchHorizontal,
   StretchVertical,
   Copy,
@@ -27,6 +29,13 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { computeAutoLayout } from '@/features/canvas/application/autoLayout';
 import { collectBatchDeletableIds } from '@/features/canvas/domain/groupSelectionDelete';
+import { workflowGroupState } from '@/features/canvas/domain/workflowGroupState';
+import {
+  applyCanvasChatCommandsAsync,
+  CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+  cancelCanvasWorkflowExecution,
+} from '@/features/freezone/canvasChatCommands';
+import { toast } from 'sonner';
 import { collectDuplicableIds } from '@/features/canvas/domain/groupSelectionDuplicate';
 
 // 合并分镜组只接受图片类节点。
@@ -51,7 +60,12 @@ const MULTI_TOOLBAR_SEPARATOR_CLASS =
 const MULTI_TOOLBAR_MENU_ITEM_CLASS =
   'flex h-11 w-full items-center gap-2.5 rounded-[10px] px-3 text-left text-sm text-text-dark transition-colors hover:bg-[rgba(255,255,255,0.075)]';
 
-type ArrangeMode = 'graph' | 'horizontal' | 'vertical';
+type ArrangeMode = 'grid' | 'graph' | 'horizontal' | 'vertical';
+
+type MultiSelectionToolbarProps = {
+  projectId?: string;
+  canvasId?: string;
+};
 
 function getNodeSize(node: CanvasNode): { width: number; height: number } {
   return {
@@ -70,7 +84,10 @@ function getNodeSize(node: CanvasNode): { width: number; height: number } {
   };
 }
 
-export const MultiSelectionToolbar = memo(() => {
+export const MultiSelectionToolbar = memo(({
+  projectId,
+  canvasId,
+}: MultiSelectionToolbarProps) => {
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
   const setNodePositions = useCanvasStore((state) => state.setNodePositions);
@@ -84,6 +101,8 @@ export const MultiSelectionToolbar = memo(() => {
   const [arrangeMenuOpen, setArrangeMenuOpen] = useState(false);
   const [groupMenuOpen, setGroupMenuOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isRunningWorkflow, setIsRunningWorkflow] = useState(false);
+  const [workflowStopRequested, setWorkflowStopRequested] = useState(false);
   const arrangeMenuRef = useRef<HTMLDivElement>(null);
   const groupMenuRef = useRef<HTMLDivElement>(null);
   const arrangeMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -101,6 +120,11 @@ export const MultiSelectionToolbar = memo(() => {
   const selectedIds = useMemo(
     () => selectedNodes.map((node) => node.id),
     [selectedNodes]
+  );
+
+  const workflowState = useMemo(
+    () => workflowGroupState(selectedNodes),
+    [selectedNodes],
   );
 
   // 合并分镜组：仅图片节点、且数量不超过上限。
@@ -175,6 +199,17 @@ export const MultiSelectionToolbar = memo(() => {
           targets.set(item.node.id, { x: minX, y: cursorY });
           cursorY += item.size.height + ARRANGE_GAP;
         }
+      } else if (mode === 'grid') {
+        // 与 Hermes 以及分组工具条一致：宫格是几何布局，不受节点连线影响。
+        const columns = Math.max(1, Math.ceil(Math.sqrt(items.length)));
+        const cellWidth = Math.max(...items.map((item) => item.size.width)) + ARRANGE_GAP;
+        const cellHeight = Math.max(...items.map((item) => item.size.height)) + ARRANGE_GAP;
+        items.forEach((item, index) => {
+          targets.set(item.node.id, {
+            x: minX + (index % columns) * cellWidth,
+            y: minY + Math.floor(index / columns) * cellHeight,
+          });
+        });
       } else {
         // 按连线排列：复用画布「整理」用的 Sugiyama 分层算法（computeAutoLayout），
         // 但只喂选中的这批节点 + 它们之间的连线，让父→子沿边方向左→右分层、纵向
@@ -248,6 +283,59 @@ export const MultiSelectionToolbar = memo(() => {
     }
     duplicateNodesAsSiblings(collectDuplicableIds(nodes, selectedIds));
   }, [duplicateNodesAsSiblings, nodes, selectedIds]);
+
+  const handleRunWorkflow = useCallback(async (regenerate: boolean) => {
+    if (isRunningWorkflow || selectedIds.length === 0) {
+      return;
+    }
+    setWorkflowStopRequested(false);
+    setIsRunningWorkflow(true);
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        [
+          {
+            schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+            ...(projectId ? { project_id: projectId } : {}),
+            ...(canvasId ? { canvas_id: canvasId } : {}),
+            commands: [
+                {
+                  type: 'run_workflow',
+                  node_ids: selectedIds,
+                  direction: 'connected',
+                  regenerate,
+                },
+            ],
+          },
+        ],
+        { projectId, canvasId },
+      );
+      if (result.errors.length > 0) {
+        toast.error(result.errors[0] ?? '工作流执行失败');
+        return;
+      }
+      if (result.openedUiActions > 0 || result.applied > 0) {
+        toast.success('已开始运行工作流');
+      } else {
+        toast.info('所选工作流没有需要继续执行的节点');
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsRunningWorkflow(false);
+    }
+  }, [canvasId, isRunningWorkflow, projectId, selectedIds]);
+
+  const handleStopWorkflow = useCallback(() => {
+    cancelCanvasWorkflowExecution(canvasId);
+    setWorkflowStopRequested(true);
+    toast.info('已停止启动后续节点');
+  }, [canvasId]);
+
+  useEffect(() => {
+    if (workflowState.status !== 'running') {
+      setWorkflowStopRequested(false);
+    }
+  }, [workflowState.status]);
 
   const handleBatchDownload = useCallback(async () => {
     if (isDownloading) {
@@ -356,6 +444,73 @@ export const MultiSelectionToolbar = memo(() => {
       <ZoomScaledToolbar origin="bottom left" mode="counter" counterMax={1}>
       <div ref={arrangeMenuRef} className="relative" onClick={(event) => event.stopPropagation()}>
         <div className="flex items-center gap-1.5 rounded-[18px] border border-white/10 bg-[#242426]/95 px-2 py-1.5 text-sm shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl [&_svg]:h-4 [&_svg]:w-4">
+          {workflowState.status !== 'none' && (
+            <>
+              {workflowState.status === 'running' ? (
+                <>
+                  <button
+                    type="button"
+                    disabled
+                    className={`${MULTI_TOOLBAR_BUTTON_CLASS} cursor-not-allowed opacity-70`}
+                    title="工作流正在运行"
+                  >
+                    {workflowStopRequested ? (
+                      <CirclePause className="h-4 w-4 text-text-muted" />
+                    ) : (
+                      <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
+                    )}
+                    <span>{workflowStopRequested ? '已停止后续' : '运行中'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={workflowStopRequested}
+                    className={`${MULTI_TOOLBAR_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
+                    onClick={handleStopWorkflow}
+                    title="停止启动后续工作流节点"
+                  >
+                    {workflowStopRequested ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
+                    ) : (
+                      <CirclePause className="h-4 w-4 text-text-muted" />
+                    )}
+                    <span>{workflowStopRequested ? '等待当前节点' : '停止后续'}</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={isRunningWorkflow || !workflowState.canContinue}
+                    className={`${MULTI_TOOLBAR_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
+                    onClick={() => void handleRunWorkflow(false)}
+                    title={workflowState.status === 'completed' ? '工作流已完成' : '运行工作流'}
+                  >
+                    {isRunningWorkflow ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
+                    ) : (
+                      <Workflow className="h-4 w-4 text-text-muted" />
+                    )}
+                    <span>{isRunningWorkflow ? '运行中' : workflowState.primaryLabel}</span>
+                  </button>
+                  {workflowState.canRegenerate && (
+                    <button
+                      type="button"
+                      disabled={isRunningWorkflow}
+                      className={`${MULTI_TOOLBAR_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
+                      onClick={() => void handleRunWorkflow(true)}
+                      title="重新运行全部工作流节点"
+                    >
+                      <RefreshCw className="h-4 w-4 text-text-muted" />
+                      <span>重新运行全部</span>
+                    </button>
+                  )}
+                </>
+              )}
+
+              <div className={MULTI_TOOLBAR_SEPARATOR_CLASS} />
+            </>
+          )}
+
           <button
             type="button"
             className={MULTI_TOOLBAR_BUTTON_CLASS}
@@ -471,10 +626,18 @@ export const MultiSelectionToolbar = memo(() => {
             <button
               type="button"
               className={MULTI_TOOLBAR_MENU_ITEM_CLASS}
+              onClick={() => handleArrange('grid')}
+            >
+              <LayoutGrid className="h-4 w-4 text-text-muted" />
+              <span>宫格排列</span>
+            </button>
+            <button
+              type="button"
+              className={MULTI_TOOLBAR_MENU_ITEM_CLASS}
               onClick={() => handleArrange('graph')}
             >
               <Workflow className="h-4 w-4 text-text-muted" />
-              <span>宫格排列</span>
+              <span>按连线排列</span>
             </button>
             <button
               type="button"

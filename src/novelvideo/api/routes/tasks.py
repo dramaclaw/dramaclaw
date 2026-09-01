@@ -65,6 +65,7 @@ _TASK_TYPE_LABELS = {
     "audio_generation": "生成音频",
     "indextts2_audio_generation": "生成音频",
     "audio_generation_indextts2": "生成音频",
+    "system_voice_setup": "准备系统声线",
     "freezone_video_gen": "自由区视频",
     "stage_asset": "场景资产",
     "freezone_gen": "虾画生成",

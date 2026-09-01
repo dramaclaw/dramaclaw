@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from "vitest";
 
-import { videoModeDisabledReason } from "@/features/canvas/nodes/VideoOperationsPanel";
+import { videoModeDisabledReason } from "@/features/canvas/nodes/shared/VideoGenerationForm";
 
 const NONE = { videos: 0, images: 0, audios: 0 };
 

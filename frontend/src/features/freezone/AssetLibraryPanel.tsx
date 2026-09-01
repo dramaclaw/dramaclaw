@@ -737,10 +737,11 @@ export function AssetLibraryPanel({
       <aside
         className="pointer-events-none absolute inset-y-3 left-3 z-30 overflow-visible"
       >
-        {/* 面板外控制栏：折叠与资产管理保持同尺寸、同材质，并随面板一起移动。 */}
+        {/* 面板外控制栏：保留 main 的折叠/资产管理入口，同时让开 Freezone
+            左上角固定的「工作流/故事板」视图切换开关。 */}
         <div
-          className="pointer-events-auto absolute top-3 z-30 flex flex-col gap-2 transition-[left] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
-          style={{ left: collapsed ? 0 : 312 }}
+          className="pointer-events-auto absolute top-[52px] z-30 flex flex-col gap-2 transition-[left] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
+          style={{ left: collapsed ? 16 : 316 }}
         >
           <div className="group/handle relative flex h-10 w-10 items-center justify-center">
             <button
@@ -794,7 +795,9 @@ export function AssetLibraryPanel({
               ? "pointer-events-none -translate-x-[calc(100%+12px)]"
               : "pointer-events-auto translate-x-0"
           }`}
-          style={{ width: 300 }}
+          // marginTop 56：同上，给左上角那颗视图切换开关让出顶部窄带（把手在 52，卡片
+          // 比它再低 4px，沿用原来「把手比卡片高 4px」的相对关系）。
+          style={{ width: 288, marginLeft: 16, marginTop: 56, marginBottom: 16, height: 'calc(100% - 72px)' }}
         >
           {/* ─ 面板 Tab 栏 ── 与下面的画布条同一种下划线 tab，后续加新 tab 只往
               panelTabItems 里塞一项即可 */}

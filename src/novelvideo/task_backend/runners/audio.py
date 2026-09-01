@@ -17,6 +17,71 @@ from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_state import get_task_manager
 
 INDEXTTS2_AUDIO_TASK_TYPE = "audio_generation_indextts2"
+SYSTEM_VOICE_SETUP_TASK_TYPE = "system_voice_setup"
+
+
+def run_system_voice_setup(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+    return asyncio.run(
+        await_envelope_with_cancel_watch(
+            _run_system_voice_setup(envelope, ctx),
+            envelope,
+            task_type=SYSTEM_VOICE_SETUP_TASK_TYPE,
+        )
+    )
+
+
+async def _run_system_voice_setup(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.audio.system_voice_setup import prepare_missing_system_voices
+    from novelvideo.sqlite_store import SQLiteStore
+
+    payload = envelope.get("payload") or {}
+    episode = int(envelope.get("episode") or payload.get("episode") or 0)
+    manager = get_task_manager()
+    store = SQLiteStore(
+        ctx.owner_project_label,
+        output_dir=str(ctx.output_dir),
+        state_dir=str(ctx.state_dir),
+    )
+    await store.initialize()
+    # ``prepare_missing_system_voices`` reads characters from SQLite and then
+    # persists the selected voice through ``update_character``.  The latter
+    # resolves characters from the store's in-memory index, so a fresh task
+    # worker must hydrate that index before attempting the update.
+    await store.load_graph_state()
+    manager.update_progress_for_project(
+        ctx,
+        SYSTEM_VOICE_SETUP_TASK_TYPE,
+        episode,
+        progress=0.05,
+        current_task="正在匹配系统声线",
+        logs=["开始准备缺失的系统声线"],
+    )
+    try:
+        result = await prepare_missing_system_voices(
+            store=store,
+            username=ctx.owner_username,
+            project=ctx.project_name,
+            project_dir=ctx.output_dir,
+            episode=episode,
+        )
+        if not result.get("ready"):
+            errors = list(result.get("remaining_errors") or [])
+            detail = "；".join(str(error) for error in errors[:5])
+            raise RuntimeError(detail or "系统声线准备后仍有缺失项")
+        manager.update_progress_for_project(
+            ctx,
+            SYSTEM_VOICE_SETUP_TASK_TYPE,
+            episode,
+            progress=1.0,
+            current_task="系统声线准备完成",
+            logs=[f"已准备 {int(result.get('prepared_count') or 0)} 项系统声线"],
+        )
+        return result
+    finally:
+        await store.close()
 
 
 def _extract_trusted_egress_context(
@@ -128,3 +193,4 @@ async def _run_indextts2_audio(
 
 
 register_project_task_runner(INDEXTTS2_AUDIO_TASK_TYPE, run_indextts2_audio)
+register_project_task_runner(SYSTEM_VOICE_SETUP_TASK_TYPE, run_system_voice_setup)

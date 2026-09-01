@@ -504,7 +504,11 @@ async def test_seedance2_single_video_passes_prepared_config_and_duration(
         project="demo",
         episode_num=3,
         beat_num=2,
-        body=SingleVideoRequest(video_backend="huimeng_seedance-2.0-fast"),
+        body=SingleVideoRequest(
+            video_backend="huimeng_seedance-2.0-fast",
+            batch_id="video-batch-1",
+            batch_size=3,
+        ),
         user={"username": "alice"},
     )
 
@@ -536,6 +540,8 @@ async def test_seedance2_single_video_passes_prepared_config_and_duration(
         "video_input_present": False,
         "input_video_duration_seconds": 0.0,
     }
+    assert calls[0]["payload"]["batch_id"] == "video-batch-1"
+    assert calls[0]["payload"]["batch_size"] == 3
 
 
 @pytest.mark.parametrize(

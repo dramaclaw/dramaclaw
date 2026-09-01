@@ -173,8 +173,8 @@ class PackageLicense:
 
 
 def run_git_ls_files() -> list[str]:
-    output = subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True)
-    return [line for line in output.splitlines() if line]
+    output = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT)
+    return [path.decode("utf-8") for path in output.split(b"\0") if path]
 
 
 def write_text(path: Path, text: str) -> None:

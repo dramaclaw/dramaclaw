@@ -1,0 +1,5 @@
+name: freezone
+version: 0.1.0
+description: "Placeholder Freezone canvas tools for 虾画. Provides stable injectable tool contracts with direct HTTP wrappers where backend endpoints already exist."
+author: "Freezone"
+kind: backend

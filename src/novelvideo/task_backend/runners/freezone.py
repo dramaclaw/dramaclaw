@@ -923,6 +923,7 @@ async def _run_freezone_video_compose_async(
     payload = envelope.get("payload") or {}
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    cover_url = str(payload.get("cover_url") or payload.get("coverUrl") or "").strip()
     ensure_freezone_dirs(project_dir)
     _update(ctx, "freezone_video_compose", job_id, 0.1, "开始合成视频时间线...")
     output_path = await _call_freezone_leaf(
@@ -940,12 +941,26 @@ async def _run_freezone_video_compose_async(
         tracks=list(payload.get("tracks") or []),
     )
     rel = output_path.relative_to(project_dir).as_posix()
-    return {
+    result = {
         "job_id": job_id,
         "output_format": "mp4",
         "output_path": str(output_path),
         "output_url": make_static_url_for_context(ctx, rel),
     }
+    if cover_url:
+        result["cover_url"] = cover_url
+    history_record = _append_node_history(
+        ctx=ctx,
+        project_dir=project_dir,
+        payload=payload,
+        task_type="freezone_video_compose",
+        job_id=job_id,
+        media_type="video",
+        result=result,
+    )
+    if history_record:
+        result["generation_history_record"] = history_record
+    return result
 
 
 def run_freezone_video_erase(
@@ -1319,6 +1334,9 @@ async def _run_freezone_audio_speech_async(
             text=str(payload.get("text") or ""),
             emotion_prompt=str(payload.get("emotion_prompt") or ""),
             voice_ref=payload.get("voice_ref"),
+            speech_mode=str(payload.get("speech_mode") or "clone"),
+            preset_model=str(payload.get("preset_model") or "edge-tts"),
+            preset_voice=str(payload.get("preset_voice") or "Serena"),
             projection=projection,
         )
     finally:

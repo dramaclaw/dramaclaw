@@ -73,6 +73,13 @@ export NOVELVIDEO_API_PORT="$api_port"
 export NOVELVIDEO_API_URL="http://127.0.0.1:${api_port}"
 export DRAMACLAW_API_URL="$NOVELVIDEO_API_URL"
 export SUPERTALE_API_URL="$NOVELVIDEO_API_URL"
+# Make the local CE storage roots explicit so Hermes does not emit a fallback
+# warning on every first chat turn. These are the same paths derived from the
+# repository root when no overrides are provided.
+export NOVELVIDEO_DATA_ROOT="${NOVELVIDEO_DATA_ROOT:-$root_dir}"
+export NOVELVIDEO_STATE_DIR="${NOVELVIDEO_STATE_DIR:-$NOVELVIDEO_DATA_ROOT/state}"
+export NOVELVIDEO_OUTPUT_DIR="${NOVELVIDEO_OUTPUT_DIR:-$NOVELVIDEO_DATA_ROOT/output}"
+export NOVELVIDEO_RUNTIME_DIR="${NOVELVIDEO_RUNTIME_DIR:-$NOVELVIDEO_DATA_ROOT/runtime}"
 
 if [ "${NEWAPI_API_KEY:-}" = "your_newapi_token" ] || [ -z "${NEWAPI_API_KEY:-}" ]; then
   echo "Warning: NEWAPI_API_KEY is not configured. API can start, but AI generation will fail." >&2
@@ -82,10 +89,20 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "Warning: ffmpeg is not on PATH. Video/audio processing may fail." >&2
 fi
 
-if [ ! -d ".venv" ]; then
-  echo "Installing dependencies with uv sync --group dev ..."
-  uv sync --group dev
-fi
+echo "Checking/installing dependencies with uv sync --group dev ..."
+uv sync --group dev
+
+# Keep the Hermes fork in its own environment. The fork currently pins an
+# older OpenAI SDK than pydantic-ai requires for Recipe text execution; putting
+# both in the application .venv makes setup-hermes silently downgrade the API
+# runtime and every generate_text action fails before its model request starts.
+hermes_env_dir="${HERMES_ENV_DIR:-$root_dir/.cache/hermes-venv}"
+export HERMES_ENV_DIR="$hermes_env_dir"
+export HERMES_CLI_PATH="${HERMES_CLI_PATH:-$hermes_env_dir/bin/hermes}"
+export HERMES_PYTHON="${HERMES_PYTHON:-$hermes_env_dir/bin/python}"
+export HERMES_BASE_PYTHON="${HERMES_BASE_PYTHON:-$root_dir/.venv/bin/python}"
+echo "Checking Hermes CLI version ..."
+scripts/setup-hermes.sh
 
 if [ ! -d "frontend/node_modules" ]; then
   echo "Installing frontend dependencies with pnpm install ..."
@@ -94,7 +111,10 @@ fi
 
 echo "Starting SuperTale CE API at http://${api_host}:${api_port}/api/v1"
 echo "Health check: http://127.0.0.1:${api_port}/api/v1/config"
-uv run novelvideo api --host "$api_host" --port "$api_port" &
+# Dependencies are synchronized explicitly above.  `uv run` otherwise performs
+# an implicit sync in this background process, which can download the 100+ MiB
+# Codex binary while the readiness timeout is already counting down.
+uv run --no-sync novelvideo api --host "$api_host" --port "$api_port" &
 api_pid="$!"
 
 echo "Waiting for API readiness..."

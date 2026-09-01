@@ -79,6 +79,18 @@ def _candidate(name, *, quotes=(), aliases=(), gender="", description=""):
     )
 
 
+def _disable_appearance_enrichment(monkeypatch) -> None:
+    """Keep extraction/run-state tests independent from the appearance model."""
+
+    async def no_appearance_enrichment(*_args, **_kwargs):
+        return {}
+
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction.enrich_character_appearances",
+        no_appearance_enrichment,
+    )
+
+
 # ── name normalization ──────────────────────────────────────────────────────
 
 
@@ -552,6 +564,7 @@ async def test_prop_build_reports_deferral_rather_than_a_silent_zero(structured_
 async def test_character_build_publishes_and_records_evidence(
     structured_store, monkeypatch
 ):
+    _disable_appearance_enrichment(monkeypatch)
     from novelvideo import structured_builders
     from novelvideo.structured_ingest import ingest_source_text_structured
 
@@ -629,6 +642,7 @@ async def test_completed_chunks_are_replayed_instead_of_re_billed(
     structured_store, monkeypatch
 ):
     """A retry or a second click must not pay for every chunk again."""
+    _disable_appearance_enrichment(monkeypatch)
     from novelvideo import structured_builders
     from novelvideo.structured_extraction import extract_characters_from_chunks
     from novelvideo.structured_ingest import ingest_source_text_structured
@@ -674,6 +688,7 @@ async def test_completed_chunks_are_replayed_instead_of_re_billed(
 
 async def test_a_failed_chunk_leaves_the_run_partial(structured_store, monkeypatch):
     """A partial run must not look finished to the next build."""
+    _disable_appearance_enrichment(monkeypatch)
     from novelvideo import structured_builders
     from novelvideo.structured_extraction import extract_characters_from_chunks
     from novelvideo.structured_ingest import ingest_source_text_structured
@@ -725,6 +740,7 @@ async def test_a_failed_chunk_leaves_the_run_partial(structured_store, monkeypat
 async def test_a_partial_run_never_stores_its_cast_as_the_final_result(
     structured_store, monkeypatch
 ):
+    _disable_appearance_enrichment(monkeypatch)
     """The replay guard only checks that nothing is still pending.
 
     So once the failed chunks succeed on a later attempt, an artifact written by
@@ -841,6 +857,7 @@ async def test_reuse_key_separates_drama_from_narrated(structured_store, tmp_pat
 async def test_evidence_is_backfilled_when_the_characters_already_exist(
     structured_store, monkeypatch
 ):
+    _disable_appearance_enrichment(monkeypatch)
     """Publishing characters and writing evidence are two steps.
 
     If the first succeeds and the second fails, a retry finds the characters
@@ -1259,6 +1276,9 @@ def _patched_extract(monkeypatch, agent):
         "novelvideo.structured_extraction.extract_characters_from_chunks", fake
     )
 
+    # These tests exercise extraction, evidence, replay, and run-state
+    # behavior. Character appearance enrichment has focused tests below.
+    _disable_appearance_enrichment(monkeypatch)
 
 async def test_a_chunk_that_failed_is_retried_while_others_are_not(
     structured_store, monkeypatch
@@ -1545,6 +1565,14 @@ async def test_a_completed_build_replays_without_any_model_call(
         "novelvideo.structured_extraction.extract_characters_from_chunks", fake
     )
 
+    async def no_appearance_enrichment(*_args, **_kwargs):
+        return {}
+
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction.enrich_character_appearances",
+        no_appearance_enrichment,
+    )
+
     await structured_builders.build_characters_structured(store)
     assert extraction.calls, "the first build should have done real work"
     assert adjudicator.calls == 1
@@ -1611,6 +1639,14 @@ async def test_replaying_a_build_cannot_split_an_alias_back_into_a_character(
 
     monkeypatch.setattr(
         "novelvideo.structured_extraction.extract_characters_from_chunks", fake
+    )
+
+    async def no_appearance_enrichment(*_args, **_kwargs):
+        return {}
+
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction.enrich_character_appearances",
+        no_appearance_enrichment,
     )
 
     await structured_builders.build_characters_structured(store)

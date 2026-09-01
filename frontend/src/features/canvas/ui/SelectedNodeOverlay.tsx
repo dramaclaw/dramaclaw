@@ -1,10 +1,33 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { useReactFlow } from '@xyflow/react';
+import {
+  NodeToolbar as ReactFlowNodeToolbar,
+  Position,
+  useReactFlow,
+} from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 
 import { useCanvasStore } from '@/stores/canvasStore';
+import {
+  DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO,
+  fetchFreezoneJobResult,
+  submitFreezoneOutpaint,
+  submitFreezoneScene360,
+  submitFreezoneTemplateEdit,
+  submitFreezoneUpscale,
+  type FreezoneOutpaintAspectRatio,
+  type FreezoneTemplateEditMode,
+} from '@/api/ops';
+import { awaitTaskCompletion } from '@/api/tasks';
+import { canvasEventBus } from '@/features/canvas/application/canvasServices';
+import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
+import {
+  publishNodeActionAccepted,
+  publishNodeActionError,
+  publishNodeActionSuccess,
+  subscribeNodeAction,
+} from '@/features/canvas/application/nodeActionResult';
 import {
   CANVAS_NODE_TYPES,
   DEFAULT_ASPECT_RATIO,
@@ -17,26 +40,40 @@ import {
   isPano360ViewerNode,
   isUploadNode,
   isVideoNode,
+  NODE_TOOL_TYPES,
+  type NodeToolType,
   resolveNodeSourceImageUrl,
   type CanvasNode,
   type ExportImageNodeResultKind,
 } from '@/features/canvas/domain/canvasNodes';
 import { isNodeStoryClip } from '@/features/canvas/story/storySelectors';
+import { createUpscaleResultNode } from '@/features/canvas/application/imageUpscale';
+import {
+  createRotateResultNode,
+  discardRotateResultNode,
+} from '@/features/canvas/application/imageRotate';
 import { NodeActionToolbar } from './NodeActionToolbar';
+import { NodeIdBadge } from './NodeIdBadge';
 import { AssetCommitHandle } from './AssetCommitHandle';
 import { MultiAngleEditorOverlay } from './MultiAngleEditorOverlay';
-import { LightEditorOverlay } from './LightEditorOverlay';
 import { RedrawOverlay } from './RedrawOverlay';
 import { EraseOverlay } from './EraseOverlay';
 import { Scene360Overlay } from './Scene360Overlay';
 import { UpscaleEditorOverlay } from './UpscaleEditorOverlay';
 import { VideoUpscaleEditorOverlay } from './VideoUpscaleEditorOverlay';
+import { getFreezoneImageModelsSnapshot } from '@/features/canvas/hooks/useFreezoneImageModels';
+import {
+  DEFAULT_SHARED_MODEL_ID,
+  DEFAULT_UPSCALE_MODEL_ID,
+  SHARED_MODELS,
+} from '@/features/canvas/ui/ProviderModelPicker';
 import { OutpaintEditorOverlay } from './OutpaintEditorOverlay';
 import { RotateEditorOverlay } from './RotateEditorOverlay';
-import {
-  GridActionConfirmOverlay,
-  type GridActionRequest,
-} from './GridActionConfirmOverlay';
+import type { GridActionKey } from '@/features/canvas/application/gridTemplateAction';
+import type { GridActionRequest } from './NodeActionToolbar';
+import { spawnAssetBoardImageOpNode } from '@/features/canvas/application/assetBoardImageOps';
+import { readUrl } from '@/lib/url-params';
+import { inheritMainlineFields } from '../domain/inheritMainlineFields';
 
 // Image/video nodes only need the floating action toolbar once they actually
 // have a resource to act on. While the node is empty (no upload, no generated
@@ -71,12 +108,77 @@ function nodeHasResourceForToolbar(node: CanvasNode): boolean {
   return true;
 }
 
-const GRID_ACTION_FOCUS_ZOOM = 1.2;
-const GRID_ACTION_FOCUS_DURATION = 320;
-const GRID_ACTION_DEFAULT_NODE_HEIGHT = 320;
 const SCENE_360_FOCUS_ZOOM = 1.2;
 const SCENE_360_FOCUS_DURATION = 320;
 const SCENE_360_DEFAULT_NODE_HEIGHT = 320;
+const PANO_VIEWER_LAYOUT_WIDTH = 720;
+const PANO_VIEWER_LAYOUT_HEIGHT = 420;
+const NODE_ID_BADGE_OFFSET = 88;
+const DEFAULT_OUTPAINT_ASPECT_RATIO: FreezoneOutpaintAspectRatio = 'original';
+const DEFAULT_OUTPAINT_IMAGE_SIZE = '2K';
+
+const GRID_RUN_ACTIONS: Record<string, {
+  key: GridActionKey;
+  i18nKey: string;
+  mode: FreezoneTemplateEditMode;
+}> = {
+  run_grid_multi_camera: {
+    key: 'multiCameraGrid',
+    i18nKey: 'nodeToolbar.gridMenu.multiCameraGrid',
+    mode: 'multi_camera_nine_grid',
+  },
+  run_grid_plot_four: {
+    key: 'plotFourGrid',
+    i18nKey: 'nodeToolbar.gridMenu.plotFourGrid',
+    mode: 'story_pitch_four_grid',
+  },
+  run_grid_face_three_view: {
+    key: 'faceThreeView',
+    i18nKey: 'nodeToolbar.gridMenu.faceThreeView',
+    mode: 'character_face_three_view',
+  },
+  run_grid_product_three_view: {
+    key: 'productThreeView',
+    i18nKey: 'nodeToolbar.gridMenu.productThreeView',
+    mode: 'product_three_view',
+  },
+  run_grid_serial_storyboard_25: {
+    key: 'serialStoryboard25',
+    i18nKey: 'nodeToolbar.gridMenu.serialStoryboard25',
+    mode: 'storyboard_25_grid',
+  },
+  run_grid_cinematic_light_correction: {
+    key: 'cinematicLightCorrection',
+    i18nKey: 'nodeToolbar.gridMenu.cinematicLightCorrection',
+    mode: 'cinematic_light_correction',
+  },
+  run_grid_character_three_view: {
+    key: 'characterThreeView',
+    i18nKey: 'nodeToolbar.gridMenu.characterThreeView',
+    mode: 'character_three_view_generation',
+  },
+  run_grid_scene_setting_sheet: {
+    key: 'sceneSettingSheet',
+    i18nKey: 'nodeToolbar.gridMenu.sceneSettingSheet',
+    mode: 'scene_setting_sheet',
+  },
+  run_grid_frame_projection_3s_later: {
+    key: 'frameProjection3sLater',
+    i18nKey: 'nodeToolbar.gridMenu.frameProjection3sLater',
+    mode: 'image_projection_after_3s',
+  },
+  run_grid_frame_projection_5s_earlier: {
+    key: 'frameProjection5sEarlier',
+    i18nKey: 'nodeToolbar.gridMenu.frameProjection5sEarlier',
+    mode: 'image_projection_before_5s',
+  },
+};
+
+const NODE_TOOL_DIALOG_ACTIONS: Record<string, NodeToolType> = {
+  open_crop_tool: NODE_TOOL_TYPES.crop,
+  open_annotate_tool: NODE_TOOL_TYPES.annotate,
+  open_split_storyboard_tool: NODE_TOOL_TYPES.splitStoryboard,
+};
 
 export const SelectedNodeOverlay = memo(() => {
   const { t } = useTranslation();
@@ -87,7 +189,6 @@ export const SelectedNodeOverlay = memo(() => {
   const onNodesChange = useCanvasStore((state) => state.onNodesChange);
   const addNode = useCanvasStore((state) => state.addNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
-  const deleteNode = useCanvasStore((state) => state.deleteNode);
   const findNodePosition = useCanvasStore((state) => state.findNodePosition);
   const reactFlow = useReactFlow();
 
@@ -104,14 +205,30 @@ export const SelectedNodeOverlay = memo(() => {
       ids.map((id) => ({ id, type: 'select' as const, selected: false })),
     );
   }, [nodes, onNodesChange]);
+
+  const selectAndFocusCanvasNode = useCallback(
+    (nodeId: string) => {
+      const currentNodes = useCanvasStore.getState().nodes;
+      onNodesChange(
+        currentNodes.map((node) => ({
+          id: node.id,
+          type: 'select' as const,
+          selected: node.id === nodeId,
+        })),
+      );
+      setSelectedNode(nodeId);
+      useCanvasStore.getState().requestFocusNode(nodeId);
+    },
+    [onNodesChange, setSelectedNode],
+  );
   const [multiAngleNodeId, setMultiAngleNodeId] = useState<string | null>(null);
-  const [lightEditorNodeId, setLightEditorNodeId] = useState<string | null>(null);
+  const activeLightEditorNodeId = useCanvasStore((state) => state.activeLightEditorNodeId);
+  const setLightEditorNodeId = useCanvasStore((state) => state.setActiveLightEditorNodeId);
   const [scene360NodeId, setScene360NodeId] = useState<string | null>(null);
   const [redrawNodeId, setRedrawNodeId] = useState<string | null>(null);
   const [eraseNodeId, setEraseNodeId] = useState<string | null>(null);
   const [outpaintNodeId, setOutpaintNodeId] = useState<string | null>(null);
   const [rotateNodeId, setRotateNodeId] = useState<string | null>(null);
-  const [gridActionRequest, setGridActionRequest] = useState<GridActionRequest | null>(null);
 
   const selectedNode = useMemo(() => {
     if (!selectedNodeId) {
@@ -133,13 +250,6 @@ export const SelectedNodeOverlay = memo(() => {
     [multiAngleNode]
   );
 
-  const lightEditorNode = useMemo(() => {
-    if (!lightEditorNodeId) {
-      return null;
-    }
-    return nodes.find((node) => node.id === lightEditorNodeId) ?? null;
-  }, [nodes, lightEditorNodeId]);
-
   const redrawNode = useMemo(() => {
     if (!redrawNodeId) {
       return null;
@@ -150,11 +260,6 @@ export const SelectedNodeOverlay = memo(() => {
   const redrawImageSource = useMemo(
     () => resolveNodeSourceImageUrl(redrawNode),
     [redrawNode]
-  );
-
-  const lightEditorImageSource = useMemo(
-    () => resolveNodeSourceImageUrl(lightEditorNode),
-    [lightEditorNode]
   );
 
   const scene360Node = useMemo(() => {
@@ -169,17 +274,6 @@ export const SelectedNodeOverlay = memo(() => {
     [scene360Node]
   );
 
-  const gridActionNode = useMemo(() => {
-    if (!gridActionRequest) {
-      return null;
-    }
-    return nodes.find((node) => node.id === gridActionRequest.nodeId) ?? null;
-  }, [gridActionRequest, nodes]);
-
-  const gridActionImageSource = useMemo(
-    () => resolveNodeSourceImageUrl(gridActionNode),
-    [gridActionNode]
-  );
 
   const handleOpenMultiAngleEditor = useCallback(
     (nodeId: string) => {
@@ -202,10 +296,6 @@ export const SelectedNodeOverlay = memo(() => {
     },
     [clearFlowSelection, setSelectedNode]
   );
-
-  const handleCloseLightEditor = useCallback(() => {
-    setLightEditorNodeId(null);
-  }, []);
 
   const handleOpenRedraw = useCallback(
     (nodeId: string) => {
@@ -336,47 +426,15 @@ export const SelectedNodeOverlay = memo(() => {
 
   const handleOpenRotate = useCallback(
     (sourceNodeId: string) => {
-      const sourceNode = nodes.find((n) => n.id === sourceNodeId);
-      if (!sourceNode) return;
-      if (
-        !isUploadNode(sourceNode)
-        && !isImageEditNode(sourceNode)
-        && !isImageGenNode(sourceNode)
-        && !isExportImageNode(sourceNode)
-      ) {
-        return;
-      }
-      const sourceImageUrl =
-        sourceNode.data.imageUrl || sourceNode.data.previewImageUrl || null;
-      if (!sourceImageUrl) return;
-
-      const sourceAspectRatio =
-        typeof (sourceNode.data as { aspectRatio?: unknown }).aspectRatio === 'string'
-          ? ((sourceNode.data as { aspectRatio?: string }).aspectRatio ?? DEFAULT_ASPECT_RATIO)
-          : DEFAULT_ASPECT_RATIO;
-      const position = findNodePosition(
-        sourceNode.id,
-        EXPORT_RESULT_NODE_DEFAULT_WIDTH,
-        EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
-      );
-      const newNodeId = addNode(
-        CANVAS_NODE_TYPES.exportImage,
-        position,
-        {
-          displayName: t('rotateEditor.resultTitle'),
-          imageUrl: null,
-          previewImageUrl: sourceImageUrl,
-          aspectRatio: sourceAspectRatio,
-          resultKind: 'generic',
-          isGenerating: false,
-        },
-      );
-      addEdge(sourceNode.id, newNodeId);
+      const newNodeId = createRotateResultNode(sourceNodeId, {
+        displayName: t('rotateEditor.resultTitle'),
+      });
+      if (!newNodeId) return;
       setRotateNodeId(newNodeId);
       clearFlowSelection();
       setSelectedNode(null);
     },
-    [addEdge, addNode, clearFlowSelection, findNodePosition, nodes, setSelectedNode, t]
+    [clearFlowSelection, setSelectedNode, t]
   );
 
   // 旋转结果节点可能被用户用键盘直接删掉（绕过编辑器的关闭流程）。此时
@@ -394,58 +452,22 @@ export const SelectedNodeOverlay = memo(() => {
       // 进入旋转时会预创建一个「旋转结果」节点。用户退出 / 按 Esc / 没做任何
       // 变换就关闭（committed=false）时，把它删掉，否则会凭空多出一个节点。
       if (!committed && rotateNodeId) {
-        deleteNode(rotateNodeId);
+        discardRotateResultNode(rotateNodeId);
       }
       setRotateNodeId(null);
     },
-    [deleteNode, rotateNodeId]
+    [rotateNodeId]
   );
 
   const handleOpenUpscale = useCallback(
     (sourceNodeId: string) => {
-      const sourceNode = nodes.find((n) => n.id === sourceNodeId);
-      if (!sourceNode) return;
-      if (
-        !isUploadNode(sourceNode)
-        && !isImageEditNode(sourceNode)
-        && !isExportImageNode(sourceNode)
-      ) {
-        return;
-      }
-      const sourceImageUrl =
-        sourceNode.data.imageUrl || sourceNode.data.previewImageUrl || null;
-      if (!sourceImageUrl) return;
-
-      const sourceAspectRatio =
-        typeof (sourceNode.data as { aspectRatio?: unknown }).aspectRatio === 'string'
-          ? ((sourceNode.data as { aspectRatio?: string }).aspectRatio ?? DEFAULT_ASPECT_RATIO)
-          : DEFAULT_ASPECT_RATIO;
-      const position = findNodePosition(
-        sourceNode.id,
-        EXPORT_RESULT_NODE_DEFAULT_WIDTH,
-        EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
-      );
-      const placeholderNodeId = addNode(
-        CANVAS_NODE_TYPES.exportImage,
-        position,
-        {
-          displayName: t('upscaleEditor.title'),
-          imageUrl: null,
-          previewImageUrl: sourceImageUrl,
-          aspectRatio: sourceAspectRatio,
-          resultKind: 'upscale',
-          isGenerating: false,
-          // Persist enough to (re-)run the upscale and to drive the always-attached panel.
-          upscaleSourceUrl: sourceImageUrl,
-          upscaleModelId: 'huimeng/gpt-image-2',
-          upscaleImageSize: '2K',
-          upscaleScaleFactor: 2,
-        },
-      );
-      addEdge(sourceNode.id, placeholderNodeId);
-      setSelectedNode(placeholderNodeId);
+      const placeholderNodeId = createUpscaleResultNode(sourceNodeId, {
+        displayName: t('upscaleEditor.title'),
+      });
+      if (!placeholderNodeId) return;
+      selectAndFocusCanvasNode(placeholderNodeId);
     },
-    [addEdge, addNode, findNodePosition, nodes, setSelectedNode, t],
+    [selectAndFocusCanvasNode, t],
   );
 
   const upscalePanelNode = useMemo(() => {
@@ -466,43 +488,446 @@ export const SelectedNodeOverlay = memo(() => {
     return selectedNode.data.isUpscaleNode ? selectedNode : null;
   }, [selectedNode]);
 
-  const handleOpenGridAction = useCallback(
+  /**
+   * 「九宫格」下拉点某一项：**只在源节点下游建一个功能节点，不提交**——节点名 =
+   * 功能名，功能 chip 落在它的提示词输入框里，用户改完提示词/参考图/比例按 ↑ 才
+   * 真正下发（与故事板详情工具条同一条交互，同一个 spawn/run）。
+   *
+   * 建完就选中并聚焦过去：功能节点的生成表单是跟着 React Flow 的 `selected` 渲染的，
+   * 不选中就看不见输入框，也就没地方按 ↑。
+   */
+  const handleSpawnGridActionNode = useCallback(
     (request: GridActionRequest) => {
-      const targetNode = nodes.find((node) => node.id === request.nodeId);
-      if (targetNode) {
-        const width =
-          typeof targetNode.measured?.width === 'number'
-            ? targetNode.measured.width
-            : typeof targetNode.width === 'number'
-              ? targetNode.width
-              : DEFAULT_NODE_WIDTH;
-        const height =
-          typeof targetNode.measured?.height === 'number'
-            ? targetNode.measured.height
-            : typeof targetNode.height === 'number'
-              ? targetNode.height
-              : GRID_ACTION_DEFAULT_NODE_HEIGHT;
-        // 组内成员的 position 是相对父组坐标；setCenter 需要绝对坐标，否则视野跳偏。
-        const absolute =
-          reactFlow.getInternalNode(request.nodeId)?.internals.positionAbsolute ??
-          targetNode.position;
-        const centerX = absolute.x + width / 2;
-        const centerY = absolute.y + height / 2;
-        reactFlow.setCenter(centerX, centerY, {
-          zoom: GRID_ACTION_FOCUS_ZOOM,
-          duration: GRID_ACTION_FOCUS_DURATION,
-        });
+      const sourceNode = nodes.find((node) => node.id === request.nodeId) ?? null;
+      const imageSource = resolveNodeSourceImageUrl(sourceNode);
+      if (!sourceNode || !imageSource) {
+        return;
       }
-      setGridActionRequest(request);
-      clearFlowSelection();
-      setSelectedNode(null);
+      const nextNodeId = spawnAssetBoardImageOpNode(sourceNode.id, imageSource, request.key);
+      if (!nextNodeId) {
+        return;
+      }
+      selectAndFocusCanvasNode(nextNodeId);
     },
-    [clearFlowSelection, nodes, reactFlow, setSelectedNode]
+    [nodes, selectAndFocusCanvasNode]
   );
 
-  const handleCloseGridAction = useCallback(() => {
-    setGridActionRequest(null);
-  }, []);
+  useEffect(() => {
+    return subscribeNodeAction(({ nodeId, action, requestId }) => {
+      const toolType = NODE_TOOL_DIALOG_ACTIONS[action];
+      if (toolType) {
+        canvasEventBus.publish("tool-dialog/open", {
+          nodeId,
+          toolType,
+        });
+        publishNodeActionSuccess(requestId, nodeId, action, { openedUiAction: true });
+        return;
+      }
+
+      switch (action) {
+        case 'open_multi_angle_tool':
+          handleOpenMultiAngleEditor(nodeId);
+          publishNodeActionSuccess(requestId, nodeId, action, { openedUiAction: true });
+          return;
+        case 'open_light_tool':
+          handleOpenLightEditor(nodeId);
+          publishNodeActionSuccess(requestId, nodeId, action, { openedUiAction: true });
+          return;
+        case 'open_scene360_tool':
+          handleOpenScene360(nodeId);
+          publishNodeActionSuccess(requestId, nodeId, action, { openedUiAction: true });
+          return;
+        case 'open_redraw_tool':
+          handleOpenRedraw(nodeId);
+          publishNodeActionSuccess(requestId, nodeId, action, { openedUiAction: true });
+          return;
+        case 'open_erase_tool':
+          handleOpenErase(nodeId);
+          publishNodeActionSuccess(requestId, nodeId, action, { openedUiAction: true });
+          return;
+        case 'open_outpaint_tool':
+          handleOpenOutpaint(nodeId);
+          publishNodeActionSuccess(requestId, nodeId, action, { openedUiAction: true });
+          return;
+        case 'open_rotate_tool': {
+          const beforeNodeIds = new Set(useCanvasStore.getState().nodes.map((node) => node.id));
+          handleOpenRotate(nodeId);
+          const created = useCanvasStore
+            .getState()
+            .nodes.some((node) => !beforeNodeIds.has(node.id));
+          if (!created) {
+            publishNodeActionError(requestId, nodeId, action, "目标节点没有可用于旋转的图片");
+            return;
+          }
+          publishNodeActionSuccess(requestId, nodeId, action, { openedUiAction: true });
+          return;
+        }
+        case 'open_upscale_tool':
+          handleOpenUpscale(nodeId);
+          publishNodeActionSuccess(requestId, nodeId, action, { openedUiAction: true });
+          return;
+        default:
+          return;
+      }
+    });
+  }, [
+    handleOpenErase,
+    handleOpenLightEditor,
+    handleOpenMultiAngleEditor,
+    handleOpenOutpaint,
+    handleOpenRedraw,
+    handleOpenRotate,
+    handleOpenScene360,
+    handleOpenUpscale,
+  ]);
+
+  useEffect(() => {
+    return subscribeNodeAction(({ nodeId, action, requestId }) => {
+      if (action === 'run_outpaint_tool') {
+        const sourceNode = nodes.find((node) => node.id === nodeId) ?? null;
+        const imageSource = resolveNodeSourceImageUrl(sourceNode);
+        if (!sourceNode || !imageSource) {
+          publishNodeActionError(requestId, nodeId, action, "目标节点没有可用于扩图的图片");
+          return;
+        }
+        const project = readUrl().project;
+        if (!project) {
+          publishNodeActionError(requestId, nodeId, action, "当前 URL 缺少 project，无法提交生成");
+          return;
+        }
+
+        publishNodeActionAccepted(requestId, nodeId, action);
+        const sourceAspectRatio =
+          typeof (sourceNode.data as { aspectRatio?: unknown }).aspectRatio === 'string'
+            ? ((sourceNode.data as { aspectRatio?: string }).aspectRatio ?? DEFAULT_ASPECT_RATIO)
+            : DEFAULT_ASPECT_RATIO;
+        const position = findNodePosition(
+          sourceNode.id,
+          EXPORT_RESULT_NODE_DEFAULT_WIDTH,
+          EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
+        );
+        const initialData = inheritMainlineFields(
+          { data: sourceNode.data as Record<string, unknown> },
+          {
+            displayName: t('outpaintEditor.title'),
+            imageUrl: null,
+            previewImageUrl: null,
+            aspectRatio: sourceAspectRatio,
+            resultKind: 'generic',
+            isGenerating: true,
+            generationStartedAt: Date.now(),
+          },
+        );
+        const nextNodeId = addNode(
+          CANVAS_NODE_TYPES.exportImage,
+          position,
+          initialData as unknown as Parameters<typeof addNode>[2],
+        );
+        addEdge(sourceNode.id, nextNodeId);
+        selectAndFocusCanvasNode(nextNodeId);
+
+        void (async () => {
+          try {
+            const imageModels = getFreezoneImageModelsSnapshot(project).models;
+            const selectedModel =
+              imageModels.find((model) => model.id === DEFAULT_SHARED_MODEL_ID)
+              ?? imageModels[0]
+              ?? SHARED_MODELS.find((model) => model.id === DEFAULT_SHARED_MODEL_ID);
+            const ref = await submitFreezoneOutpaint(project, {
+              sourceUrl: imageSource.split('?')[0],
+              targetAspectRatio: DEFAULT_OUTPAINT_ASPECT_RATIO,
+              numImages: 1,
+              imageSize: DEFAULT_OUTPAINT_IMAGE_SIZE,
+              model: selectedModel?.apiModel ?? DEFAULT_SHARED_MODEL_ID,
+            });
+            useCanvasStore.getState().updateNodeData(nextNodeId, generationTaskDescriptor(ref));
+            const completed = await awaitTaskCompletion(ref.task_key, project);
+            const directUrl = completed.result?.['output_url'] as string | undefined;
+            const url = directUrl
+              ?? (await fetchFreezoneJobResult(project, ref.task_type, ref.job_id)).url;
+            useCanvasStore.getState().updateNodeData(nextNodeId, {
+              imageUrl: url,
+              previewImageUrl: url,
+              isGenerating: false,
+              generationStartedAt: null,
+              generationError: null,
+            });
+            publishNodeActionSuccess(requestId, nodeId, action, {
+              nodeId: nextNodeId,
+              imageUrl: url,
+              previewImageUrl: url,
+              task_key: ref.task_key,
+              job_id: ref.job_id,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            useCanvasStore.getState().updateNodeData(nextNodeId, {
+              isGenerating: false,
+              generationStartedAt: null,
+              generationError: message,
+            });
+            publishNodeActionError(requestId, nodeId, action, error);
+          }
+        })();
+        return;
+      }
+
+      if (action === 'run_upscale_tool') {
+        const sourceNode = nodes.find((node) => node.id === nodeId) ?? null;
+        const imageSource = resolveNodeSourceImageUrl(sourceNode);
+        if (!sourceNode || !imageSource) {
+          publishNodeActionError(requestId, nodeId, action, "目标节点没有可用于高清放大的图片");
+          return;
+        }
+        const project = readUrl().project;
+        if (!project) {
+          publishNodeActionError(requestId, nodeId, action, "当前 URL 缺少 project，无法提交生成");
+          return;
+        }
+
+        publishNodeActionAccepted(requestId, nodeId, action);
+        const sourceAspectRatio =
+          typeof (sourceNode.data as { aspectRatio?: unknown }).aspectRatio === 'string'
+            ? ((sourceNode.data as { aspectRatio?: string }).aspectRatio ?? DEFAULT_ASPECT_RATIO)
+            : DEFAULT_ASPECT_RATIO;
+        const position = findNodePosition(
+          sourceNode.id,
+          EXPORT_RESULT_NODE_DEFAULT_WIDTH,
+          EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
+        );
+        const nextNodeId = addNode(
+          CANVAS_NODE_TYPES.exportImage,
+          position,
+          {
+            displayName: t('upscaleEditor.title'),
+            imageUrl: null,
+            previewImageUrl: imageSource,
+            aspectRatio: sourceAspectRatio,
+            resultKind: 'upscale',
+            isGenerating: true,
+            generationStartedAt: Date.now(),
+            upscaleSourceUrl: imageSource,
+            upscaleModelId: DEFAULT_UPSCALE_MODEL_ID,
+            upscaleImageSize: '2K',
+            upscaleScaleFactor: 2,
+          },
+        );
+        addEdge(sourceNode.id, nextNodeId);
+        selectAndFocusCanvasNode(nextNodeId);
+
+        void (async () => {
+          try {
+            const imageModels = getFreezoneImageModelsSnapshot(project).models;
+            const selectedModel =
+              imageModels.find((model) => model.id === DEFAULT_UPSCALE_MODEL_ID)
+              ?? imageModels[0];
+            const ref = await submitFreezoneUpscale(project, {
+              sourceUrl: imageSource.split('?')[0],
+              scaleFactor: 2,
+              imageSize: '2K',
+              model: selectedModel?.apiModel ?? DEFAULT_UPSCALE_MODEL_ID,
+            });
+            useCanvasStore.getState().updateNodeData(nextNodeId, generationTaskDescriptor(ref));
+            const completed = await awaitTaskCompletion(ref.task_key, project);
+            const directUrl = completed.result?.['output_url'] as string | undefined;
+            const url = directUrl
+              ?? (await fetchFreezoneJobResult(project, ref.task_type, ref.job_id)).url;
+            useCanvasStore.getState().updateNodeData(nextNodeId, {
+              imageUrl: url,
+              previewImageUrl: url,
+              isGenerating: false,
+              generationStartedAt: null,
+              generationError: null,
+            });
+            publishNodeActionSuccess(requestId, nodeId, action, {
+              nodeId: nextNodeId,
+              imageUrl: url,
+              previewImageUrl: url,
+              task_key: ref.task_key,
+              job_id: ref.job_id,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            useCanvasStore.getState().updateNodeData(nextNodeId, {
+              isGenerating: false,
+              generationStartedAt: null,
+              generationError: message,
+            });
+            publishNodeActionError(requestId, nodeId, action, error);
+          }
+        })();
+        return;
+      }
+
+      if (action === 'run_scene360_tool') {
+        const sourceNode = nodes.find((node) => node.id === nodeId) ?? null;
+        const imageSource = resolveNodeSourceImageUrl(sourceNode);
+        if (!sourceNode || !imageSource) {
+          publishNodeActionError(requestId, nodeId, action, "目标节点没有可用于生成的图片");
+          return;
+        }
+        const project = readUrl().project;
+        if (!project) {
+          publishNodeActionError(requestId, nodeId, action, "当前 URL 缺少 project，无法提交生成");
+          return;
+        }
+
+        publishNodeActionAccepted(requestId, nodeId, action);
+        const aspectRatio = DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO;
+        const position = findNodePosition(
+          sourceNode.id,
+          EXPORT_RESULT_NODE_DEFAULT_WIDTH,
+          EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
+        );
+        const nextNodeId = addNode(
+          CANVAS_NODE_TYPES.exportImage,
+          position,
+          {
+            displayName: t('scene360.label'),
+            imageUrl: null,
+            previewImageUrl: null,
+            aspectRatio,
+            resultKind: 'generic',
+            output_role: 'scene_360_candidate',
+            media_kind: 'pano360',
+            isGenerating: true,
+            generationStartedAt: Date.now(),
+          },
+        );
+        addEdge(sourceNode.id, nextNodeId);
+        selectAndFocusCanvasNode(nextNodeId);
+
+        void (async () => {
+          try {
+            const ref = await submitFreezoneScene360(project, {
+              referenceUrl: imageSource.split('?')[0],
+              aspectRatio,
+            });
+            useCanvasStore.getState().updateNodeData(nextNodeId, generationTaskDescriptor(ref));
+            const completed = await awaitTaskCompletion(ref.task_key, project);
+            const directUrl = completed.result?.['output_url'] as string | undefined;
+            const url = directUrl
+              ?? (await fetchFreezoneJobResult(project, ref.task_type, ref.job_id)).url;
+            useCanvasStore.getState().updateNodeData(nextNodeId, {
+              imageUrl: url,
+              previewImageUrl: url,
+              aspectRatio,
+              output_role: 'scene_360_candidate',
+              media_kind: 'pano360',
+              isGenerating: false,
+              generationStartedAt: null,
+              generationError: null,
+            });
+
+            const viewerPosition = findNodePosition(
+              nextNodeId,
+              PANO_VIEWER_LAYOUT_WIDTH,
+              PANO_VIEWER_LAYOUT_HEIGHT,
+            );
+            const viewerNodeId = addNode(CANVAS_NODE_TYPES.pano360Viewer, viewerPosition);
+            addEdge(nextNodeId, viewerNodeId);
+            selectAndFocusCanvasNode(viewerNodeId);
+            publishNodeActionSuccess(requestId, nodeId, action, {
+              nodeId: nextNodeId,
+              viewerNodeId,
+              imageUrl: url,
+              previewImageUrl: url,
+              task_key: ref.task_key,
+              job_id: ref.job_id,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            useCanvasStore.getState().updateNodeData(nextNodeId, {
+              isGenerating: false,
+              generationStartedAt: null,
+              generationError: message,
+            });
+            publishNodeActionError(requestId, nodeId, action, error);
+          }
+        })();
+        return;
+      }
+
+      const runAction = GRID_RUN_ACTIONS[action];
+      if (!runAction) return;
+
+      const sourceNode = nodes.find((node) => node.id === nodeId) ?? null;
+      const imageSource = resolveNodeSourceImageUrl(sourceNode);
+      if (!sourceNode || !imageSource) {
+        publishNodeActionError(requestId, nodeId, action, "目标节点没有可用于生成的图片");
+        return;
+      }
+      const project = readUrl().project;
+      if (!project) {
+        publishNodeActionError(requestId, nodeId, action, "当前 URL 缺少 project，无法提交生成");
+        return;
+      }
+
+      publishNodeActionAccepted(requestId, nodeId, action);
+      const label = t(runAction.i18nKey);
+      const sourceAspectRatio =
+        typeof (sourceNode.data as { aspectRatio?: unknown }).aspectRatio === 'string'
+          ? ((sourceNode.data as { aspectRatio?: string }).aspectRatio ?? DEFAULT_ASPECT_RATIO)
+          : DEFAULT_ASPECT_RATIO;
+      const position = findNodePosition(
+        sourceNode.id,
+        EXPORT_RESULT_NODE_DEFAULT_WIDTH,
+        EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
+      );
+      const nextNodeId = addNode(
+        CANVAS_NODE_TYPES.exportImage,
+        position,
+        {
+          displayName: label,
+          imageUrl: null,
+          previewImageUrl: null,
+          aspectRatio: sourceAspectRatio,
+          resultKind: 'generic',
+          isGenerating: true,
+          generationStartedAt: Date.now(),
+        },
+      );
+      addEdge(sourceNode.id, nextNodeId);
+      selectAndFocusCanvasNode(nextNodeId);
+
+      void (async () => {
+        try {
+          const ref = await submitFreezoneTemplateEdit(project, {
+            sourceUrl: imageSource.split('?')[0],
+            mode: runAction.mode,
+            prompt: label,
+          });
+          useCanvasStore.getState().updateNodeData(nextNodeId, generationTaskDescriptor(ref));
+          const completed = await awaitTaskCompletion(ref.task_key, project);
+          const directUrl = completed.result?.['output_url'] as string | undefined;
+          const url = directUrl
+            ?? (await fetchFreezoneJobResult(project, ref.task_type, ref.job_id)).url;
+          useCanvasStore.getState().updateNodeData(nextNodeId, {
+            imageUrl: url,
+            previewImageUrl: url,
+            isGenerating: false,
+            generationStartedAt: null,
+            generationError: null,
+          });
+          publishNodeActionSuccess(requestId, nodeId, action, {
+            nodeId: nextNodeId,
+            imageUrl: url,
+            previewImageUrl: url,
+            task_key: ref.task_key,
+            job_id: ref.job_id,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          useCanvasStore.getState().updateNodeData(nextNodeId, {
+            isGenerating: false,
+            generationStartedAt: null,
+            generationError: message,
+          });
+          publishNodeActionError(requestId, nodeId, action, error);
+        }
+      })();
+    });
+  }, [addEdge, addNode, findNodePosition, nodes, selectAndFocusCanvasNode, t]);
 
   // 任意二级功能浮层（全景 / 多角度 / 打光 / 重绘 / 扩图 / 旋转 / 九宫格）打开时，
   // 记录它的目标节点 id。节点自身的 `selected` 操作面板会据此让位，避免和浮层
@@ -510,13 +935,12 @@ export const SelectedNodeOverlay = memo(() => {
   // 展开面板，不参与此互斥。)
   const activeOverlayNodeId =
     multiAngleNodeId
-    ?? lightEditorNodeId
+    ?? activeLightEditorNodeId
     ?? scene360NodeId
     ?? redrawNodeId
     ?? eraseNodeId
     ?? outpaintNodeId
     ?? rotateNodeId
-    ?? gridActionRequest?.nodeId
     ?? null;
 
   useEffect(() => {
@@ -550,6 +974,21 @@ export const SelectedNodeOverlay = memo(() => {
     <>
       {selectedNode
         && !rotateNodeId
+        && !effectiveOverlayNodeId && (
+        <ReactFlowNodeToolbar
+          nodeId={selectedNode.id}
+          isVisible
+          position={Position.Top}
+          align={
+            nodeHasResourceForToolbar(selectedNode) ? "center" : "start"
+          }
+          offset={NODE_ID_BADGE_OFFSET}
+        >
+          <NodeIdBadge nodeId={selectedNode.id} />
+        </ReactFlowNodeToolbar>
+      )}
+      {selectedNode
+        && !rotateNodeId
         && !effectiveOverlayNodeId
         && !selectedIsStoryPlayer
         && nodeHasResourceForToolbar(selectedNode) && (
@@ -563,7 +1002,7 @@ export const SelectedNodeOverlay = memo(() => {
           onOpenScene360={handleOpenScene360}
           onOpenUpscale={handleOpenUpscale}
           onOpenOutpaint={handleOpenOutpaint}
-          onOpenGridAction={handleOpenGridAction}
+          onSpawnGridActionNode={handleSpawnGridActionNode}
           onOpenRedraw={handleOpenRedraw}
           onOpenErase={handleOpenErase}
           onOpenRotate={handleOpenRotate}
@@ -577,13 +1016,6 @@ export const SelectedNodeOverlay = memo(() => {
           node={multiAngleNode}
           imageSource={multiAngleImageSource}
           onClose={handleCloseMultiAngleEditor}
-        />
-      )}
-      {lightEditorNode && lightEditorImageSource && (
-        <LightEditorOverlay
-          node={lightEditorNode}
-          imageSource={lightEditorImageSource}
-          onClose={handleCloseLightEditor}
         />
       )}
       {redrawNode && redrawImageSource && (
@@ -625,14 +1057,6 @@ export const SelectedNodeOverlay = memo(() => {
           node={rotateNode}
           imageSource={rotateImageSource}
           onClose={handleCloseRotate}
-        />
-      )}
-      {gridActionRequest && gridActionNode && gridActionImageSource && (
-        <GridActionConfirmOverlay
-          node={gridActionNode}
-          imageSource={gridActionImageSource}
-          request={gridActionRequest}
-          onClose={handleCloseGridAction}
         />
       )}
     </>

@@ -75,7 +75,9 @@ class EventExtractor:
         log(f"开始提取第 {chapter_num} 章事件...")
 
         # 如果章节内容过长，截取
-        truncated = chapter_content[:12000] if len(chapter_content) > 12000 else chapter_content
+        truncated = (
+            chapter_content[:12000] if len(chapter_content) > 12000 else chapter_content
+        )
         if len(chapter_content) > 12000:
             log(f"章节内容过长 ({len(chapter_content)} 字)，已截取前 12000 字")
 
@@ -145,7 +147,7 @@ class EventExtractor:
             event_content = chapter_content[start_pos:end_pos]
 
             event = NovelEvent(
-                event_id=f"ch{chapter_num}_e{i+1}",
+                event_id=f"ch{chapter_num}_e{i + 1}",
                 chapter_num=chapter_num,
                 description=e.description,
                 location=e.location,

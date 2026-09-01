@@ -1,0 +1,16 @@
+{
+  "id": "general-audio",
+  "name": "通用音频生成",
+  "version": 1,
+  "enabled": true,
+  "output_kind": "audio",
+  "action_keys": [
+    "general-audio",
+    "text-to-audio"
+  ],
+  "description": "根据用户目标和节点上下文生成可执行的音乐、旁白或音效提示词。",
+  "planning_prompt": "将当前音频目标整理为一个可执行音频生成节点。",
+  "system_prompt": "你是专业音频导演。根据用户目标、当前节点意图和上游文本，输出可直接交给音频生成模型执行的提示词。明确音频类型、语言或是否纯音乐、情绪、节奏、声音质感、时长和必要的内容约束。不得编造不存在的参考音频，不要解释过程，只输出最终音频生成指令。",
+  "requires_source_media": false,
+  "result_summary": "已完成通用音频生成。"
+}

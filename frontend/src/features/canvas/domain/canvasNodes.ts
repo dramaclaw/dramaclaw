@@ -6,6 +6,7 @@ import type {
   DirectorObjectLayer,
   DirectorWorldSource,
 } from '@/features/viewer-kit/three-d/directorManifest';
+import type { KeyElementCategory } from './keyElements';
 
 export const CANVAS_NODE_TYPES = {
   upload: 'uploadNode',
@@ -61,6 +62,20 @@ export type ImageQuality = string;
 
 export interface NodeDisplayData {
   displayName?: string;
+  /**
+   * The workflow runner has scheduled this node action. This is deliberately
+   * separate from `isGenerating`, which is owned by the node after it accepts
+   * and submits the generation request.
+   */
+  workflowActionRunning?: boolean;
+  workflowActionStartedAt?: number | null;
+  /** 关键元素分类：用户把该节点标记为关键元素并归类（见 domain/keyElements）。
+   *  纯展示元数据、画布级持久化、工作流侧不读——未标记为 undefined/null。 */
+  keyElementCategory?: KeyElementCategory | null;
+  /** 未命名节点的自动序号：新建时写入，默认名后拼上它（「文本1」「文本2」…），
+   *  避免同类型节点重名。用户改了 displayName 后这个序号就不再露出。
+   *  见 domain/nodeDisplay 的 getDefaultNodeDisplayName / nextAutoTitleIndex。 */
+  autoTitleIndex?: number;
   /**
    * 节点被创建出来的时刻（epoch ms），由 nodeFactory 落，之后没人改。
    *
@@ -198,6 +213,12 @@ export interface VideoNodeData extends NodeDisplayData {
   importNeedsReview?: boolean;
   /** needsReview 的说明文字。 */
   importReviewNote?: string;
+  /**
+   * 故事板详情「剪辑」为该视频节点自身打开合成时间线时的草稿（关闭弹窗时写回，
+   * 重开/刷新后恢复）。语义与 {@link VideoComposeNodeData.draftTimeline} 一致，
+   * 结构为 `ComposeTimelineState`，这里存 unknown 以免领域层反向依赖 compose 特性层。
+   */
+  draftTimeline?: unknown;
   [key: string]: unknown;
 }
 
@@ -218,6 +239,11 @@ export interface VideoComposeNodeData extends NodeDisplayData {
    * `ComposeTimelineState`，这里存 unknown 以免领域层反向依赖 compose 特性层。
    */
   draftTimeline?: unknown;
+  /**
+   * 动态工作流声明的合成输入顺序。值为 workflowPlanNodeId，而非画布 UUID；
+   * 前端据此恢复镜头语义顺序，避免把布局位置当作播放顺序。
+   */
+  compositionInputOrder?: string[];
   [key: string]: unknown;
 }
 
@@ -388,6 +414,16 @@ export interface ImageGenNodeData extends NodeImageData {
   cameraSelection?: ImageGenCameraSelection | null;
   /** User-uploaded reference image, fed into the generation request. */
   referenceImageUrl?: string | null;
+  /**
+   * 故事板「功能」节点：在图片详情里点了某个一图流功能（宫格模板 / 全景 /
+   * 多角度 / 打光）后建出来的空节点带这个 key，输入框里显示成可关闭的功能 chip，
+   * ↑ 提交时走对应能力而不是常规文生图。值域见 application/assetBoardImageOps 的
+   * `AssetBoardImageOpKey`（这里不 import，domain 不依赖 application）。
+   * 清空（关掉 chip）后节点退化为普通图片生成节点。
+   */
+  imageOpKey?: string | null;
+  /** 功能节点的源图 URL（= 点功能时那张图），提交时作为 source_url 下发。 */
+  imageOpSourceUrl?: string | null;
   /** Present/mainline workflow nodes can auto-commit their generated image to slot_target. */
   autoCommitOnGenerate?: boolean;
   /** Local-only marks/annotations placed on upstream image. */
@@ -499,6 +535,14 @@ export interface AudioNodeData extends NodeDisplayData {
    * - 'music'：文字生成音乐(/freezone/audio/eleven-music),用 text 作为音乐描述 prompt。
    */
   audioKind?: 'speech' | 'music';
+  /**
+   * speech 模式的音色来源：
+   * - preset：系统音色，直接文生语音，不需要参考音频。
+   * - clone：项目/角色/账号声线，需要已有参考音频。
+   */
+  speechMode?: 'preset' | 'clone';
+  presetVoice?: string;
+  presetModel?: string;
   /** music 模式：生成长度(毫秒),范围 3000–600000,缺省按后端默认 30000。 */
   musicLengthMs?: number;
   /** music 模式：是否强制纯音乐(force_instrumental),缺省 true。 */
@@ -785,6 +829,20 @@ export function isExportImageNode(
   node: CanvasNode | null | undefined
 ): node is Node<ExportImageNodeData, typeof CANVAS_NODE_TYPES.exportImage> {
   return node?.type === CANVAS_NODE_TYPES.exportImage;
+}
+
+/**
+ * 「还没出图的高清放大结果节点」：`createUpscaleResultNode` 预建、用户还没按 ↑ 提交
+ * （或任务尚未回填）的那种。
+ *
+ * 这类节点的 `previewImageUrl` 存的是**待放大的源图**，用来给编辑器当参照；但它不是
+ * 这个节点的内容。谁把它当缩略图渲染出来，用户就会以为那已经是放大后的效果——所以
+ * 凡是「这个节点长什么样 / 有没有素材可操作」的判断都要先问过这里，答案是没有。
+ */
+export function isPendingUpscaleNode(node: CanvasNode | null | undefined): boolean {
+  if (!isExportImageNode(node)) return false;
+  const data = node.data as { resultKind?: unknown; imageUrl?: unknown };
+  return data.resultKind === 'upscale' && !data.imageUrl;
 }
 
 export function isStyleNode(

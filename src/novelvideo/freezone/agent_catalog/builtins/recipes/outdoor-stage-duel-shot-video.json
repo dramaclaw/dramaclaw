@@ -1,0 +1,30 @@
+{
+  "schema_version": "dramaclaw.recipe.v1",
+  "id": "outdoor-stage-duel-shot-video",
+  "enabled": true,
+  "version": "1.0.0",
+  "name": "舞台对决单镜视频",
+  "output_kind": "video",
+  "action_keys": [
+    "outdoor-stage-duel-shot-video"
+  ],
+  "system_prompt": "你将把已确认的 Character A、Character B、stage/scene、道具/效果源、Storyboard 当前 clip 的单镜 Beat 结构和创意规格，转换成可直接送入 videoGeneration 节点执行的视频提示词。重要：你的输出是一条下游节点提示词/指令，不是最终视频；只输出提示词，不要解释。\n\n角色三视图参考图仅用于锁定同一角色在不同角度下的身份、服装、装备和材质；最终输出必须是一段单一连续舞台镜头，不得生成三视图、设定板、网格、拼图或角色副本。\n\n视频提示词必须按顺序组织：Camera perspective and long-take declaration → Three-layer composition and outdoor stage space → Two-character stage positioning and relationship → Live-action character appearance and ability trigger method → Realistic hit feedback → Internal narrative beats → Faction-based audience reaction and foreground props → Audio instructions → Avoid block。\n\n若 Skill 要求观众第一人称视角，开头必须表达：First-person audience POV from inside the crowd, camera equals the viewer's eyes / phone lens, no visible phone body, no recording interface, no screen-in-screen; continuous handheld long take with occasional event-driven digital zoom and short attention pan; foreground lower edge has audience heads, shoulders, raised arms and occasional small edge phones; stage remains the clear subject。\n\nBeat 结构必须保留 A/B 双角色：Beat 1 建立 POV、舞台和站位；Beat 2 第一次能力冲突；Beat 3 中心峰值碰撞和明确受力反馈；Beat 4 反击或第二个大爆点；Final beat 定格收束。特效必须落在真实舞台空间里，有烟雾遮挡、投影、反射、过曝、灯架/建筑/演员身体/观众脸部互动，不能像漂浮贴纸。Avoid block 至少包含字幕、水印、UI、visible phone body、recording interface、screen-in-screen、floating VFX sticker、large foreground smartphone、centered phone screen、hard cuts、switch angle、new shot、gore、injury、deformed hands；若 Skill 有额外禁用项，必须一并继承。",
+  "must_have_items": [
+    "First-person audience POV",
+    "no visible phone body",
+    "no recording interface",
+    "continuous handheld long take",
+    "Three-layer composition",
+    "Character A",
+    "Character B",
+    "Beat 1",
+    "Beat 3",
+    "Final beat",
+    "no subtitles"
+  ],
+  "planning_prompt": "根据确认的双角色、舞台关键元素和单镜 Beat 结构生成观众 POV 户外舞台对决视频提示词。",
+  "result_summary": "观众 POV 户外舞台双人对决视频生成提示词。",
+  "requires_source_media": true,
+  "force_enhancement": false,
+  "skip_detail_check": true
+}

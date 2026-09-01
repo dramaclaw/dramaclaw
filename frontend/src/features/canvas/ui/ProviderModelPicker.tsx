@@ -44,7 +44,6 @@ export interface ProviderOption {
 }
 
 export interface ModelOption {
-  /** Opaque database identity used by new billing and task records. */
   catalogId?: string;
   id: string;
   providerId: ProviderId;
@@ -76,7 +75,7 @@ export interface ModelOption {
 }
 
 export const SHARED_PROVIDERS: ProviderOption[] = [
-  { id: 'newapi', label: '虾驿 / NewAPI' },
+  { id: 'newapi', label: 'DramaClawAPI' },
   { id: 'huimeng', label: '绘梦 / HuiMeng' },
   { id: 'openrouter', label: 'OpenRouter' },
   { id: 'openai', label: 'OpenAI' },
@@ -86,6 +85,18 @@ export const SHARED_PROVIDERS: ProviderOption[] = [
 // 及其能力全部来自后台「媒体模型」配置。这里的能力字段跟着一起给，是为了让
 // 兜底状态下的尺寸 / 比例选择器仍有可用档位，而不是散落回各个面板里去硬编码。
 export const SHARED_MODELS: ModelOption[] = [
+  {
+    id: 'newapi_gpt_image2',
+    providerId: 'newapi',
+    apiModel: 'newapi_gpt_image2',
+    label: 'LingShan-G2',
+  },
+  {
+    id: 'newapi_nanobanana2',
+    providerId: 'newapi',
+    apiModel: 'newapi_nanobanana2',
+    label: 'LingShan-NB-2',
+  },
   {
     id: 'huimeng/gpt-image-2',
     providerId: 'huimeng',
@@ -113,7 +124,8 @@ export const SHARED_MODELS: ModelOption[] = [
   },
 ];
 
-export const DEFAULT_SHARED_MODEL_ID = 'huimeng/gpt-image-2';
+export const DEFAULT_SHARED_MODEL_ID = 'newapi_gpt_image2';
+export const DEFAULT_UPSCALE_MODEL_ID = 'newapi_gpt_image2';
 
 // Video generation models. `id` is the raw backend model id sent to
 // /freezone/video/gen so we don't need a separate apiModel mapping.

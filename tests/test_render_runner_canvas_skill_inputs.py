@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -440,6 +441,71 @@ async def test_regenerate_selected_beats_preserves_standalone_zero_beat_number(
     assert results[0].beat_count == 1
     assert captured["location_beat_numbers"] == [0]
     assert captured["beat_sketch_paths"] == {0: str(sketch_path)}
+
+
+@pytest.mark.asyncio
+async def test_regenerate_selected_beats_runs_images_sequentially(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novelvideo.generators import nanobanana_grid
+
+    active = 0
+    max_active = 0
+    completed_batches: list[tuple[int, int]] = []
+
+    class FakeGridGenerator:
+        async def generate_grid(self, **kwargs):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            try:
+                await asyncio.sleep(0.01)
+                output_path = Path(kwargs["output_path"])
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                Image.new("RGB", (16, 24), "blue").save(output_path)
+                return nanobanana_grid.GridGenerationResult(
+                    success=True,
+                    grid_image_path=str(output_path),
+                    generation_time=0.01,
+                )
+            finally:
+                active -= 1
+
+    monkeypatch.setattr(
+        nanobanana_grid,
+        "create_grid_generator",
+        lambda *_args, **_kwargs: FakeGridGenerator(),
+    )
+
+    results = await nanobanana_grid.regenerate_selected_beats(
+        selected_beats=[
+            {"beat_number": index, "visual_description": f"Beat {index}"}
+            for index in range(1, 8)
+        ],
+        mode_key="1x1_2-3",
+        character_map={},
+        style="realistic",
+        output_dir=str(tmp_path / "render"),
+        progress_callback=lambda completed, total: completed_batches.append(
+            (completed, total)
+        ),
+    )
+
+    assert max_active == 1
+    assert len(results) == 7
+    assert [Path(result.grid_image_path or "").name for result in results] == [
+        f"regen_1x1_2-3_g{index:02d}.png" for index in range(1, 8)
+    ]
+    assert completed_batches == [
+        (1, 7),
+        (2, 7),
+        (3, 7),
+        (4, 7),
+        (5, 7),
+        (6, 7),
+        (7, 7),
+    ]
 
 
 @pytest.mark.asyncio

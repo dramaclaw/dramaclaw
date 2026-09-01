@@ -26,11 +26,17 @@ describe("runtime-config", () => {
       ),
     );
 
-    const { authRequired, isCeRuntime, loadRuntimeConfig } = await import("@/lib/runtime-config");
+    const {
+      authRequired,
+      isCeRuntime,
+      loadRuntimeConfig,
+      mcpDirectCanvasApplyEnabled,
+    } = await import("@/lib/runtime-config");
     await loadRuntimeConfig();
 
     expect(isCeRuntime()).toBe(true);
     expect(authRequired()).toBe(false);
+    expect(mcpDirectCanvasApplyEnabled()).toBe(false);
   });
 
   it("falls back to auth-required when the fetch fails without VITE_EDITION", async () => {

@@ -41,6 +41,7 @@ import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { stashExternalFile } from '@/features/canvas/application/pendingExternalFiles';
 import { useExternalFileHandoff } from '@/features/canvas/hooks/useExternalFileHandoff';
 import { isVideoFile, VIDEO_FILE_ACCEPT } from '@/features/canvas/application/videoFileTypes';
+import { AddNodeToChatButton } from '@/features/canvas/ui/AddNodeToChatButton';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import {
@@ -91,6 +92,11 @@ import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '@/stores/settingsStore';
+import {
+  publishNodeActionAccepted,
+  publishNodeActionSuccess,
+  subscribeNodeAction,
+} from '@/features/canvas/application/nodeActionResult';
 
 type UploadNodeProps = NodeProps & {
   id: string;
@@ -632,6 +638,15 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
     inputRef.current?.click();
   }, []);
 
+  useEffect(() => {
+    return subscribeNodeAction(({ nodeId, action, requestId }) => {
+      if (nodeId !== id || action !== 'open_upload_picker') return;
+      publishNodeActionAccepted(requestId, id, action);
+      handlePickFile();
+      publishNodeActionSuccess(requestId, id, action, { openedUiAction: true });
+    });
+  }, [handlePickFile, id]);
+
   const handleOpenDirectorStage = useCallback(async () => {
     if (!canOpenDirectorStage) return;
     const projectId = readUrl().project;
@@ -907,6 +922,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
         editable
         onTitleChange={(nextTitle) => updateNodeData(id, { displayName: nextTitle })}
       />
+      <AddNodeToChatButton nodeId={id} />
       <CandidateBindingBadges roles={candidateBindingRoles} />
 
       {!data.imageUrl && !transientPreviewUrl && (

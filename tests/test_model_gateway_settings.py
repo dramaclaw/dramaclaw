@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from novelvideo import config
+from novelvideo import model_gateway_settings as gateway_settings
+from novelvideo.shared import runtime_env
 from novelvideo import model_gateway_settings
 from novelvideo import official_media_catalog_remote
 from novelvideo.api.routes import freezone as freezone_routes
@@ -158,6 +161,7 @@ def test_list_channel_types_normalizes_newapi_metadata():
 
 def _isolate_settings_db(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setattr(config, "STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(runtime_env, "load_project_dotenv", lambda override=False: None)
     monkeypatch.setenv("ST_EDITION", "ce")
     for key in (
         "ST_CONTROL_PLANE_DSN",
@@ -167,6 +171,40 @@ def _isolate_settings_db(monkeypatch: pytest.MonkeyPatch, tmp_path):
         "NEWAPI_BASE_URL",
     ):
         monkeypatch.delenv(key, raising=False)
+
+
+def test_settings_db_retries_transient_sqlite_io_error(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    real_connect = gateway_settings.sqlite3.connect
+    real_configure = gateway_settings.configure_sqlite_connection
+    connections = []
+    configure_calls = 0
+
+    def tracking_connect(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    def flaky_configure(connection):
+        nonlocal configure_calls
+        configure_calls += 1
+        if configure_calls == 1:
+            raise sqlite3.OperationalError("disk I/O error")
+        real_configure(connection)
+
+    monkeypatch.setattr(gateway_settings.sqlite3, "connect", tracking_connect)
+    monkeypatch.setattr(
+        gateway_settings, "configure_sqlite_connection", flaky_configure
+    )
+    monkeypatch.setattr(gateway_settings.time, "sleep", lambda _seconds: None)
+
+    assert (
+        gateway_settings.get_model_gateway_settings()["model_gateway_mode"]
+        == MODE_OFFICIAL
+    )
+    assert configure_calls == 2
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connections[0].execute("SELECT 1")
 
 
 def test_effective_newapi_config_uses_request_scoped_explicit_config_without_writes(
@@ -366,10 +404,16 @@ def test_hybrid_mode_uses_official_gateway_by_default(monkeypatch, tmp_path):
     set_model_gateway_mode(MODE_HYBRID)
 
     effective = get_effective_newapi_config()
+    effective_llm = gateway_settings.get_effective_llm_config()
 
     assert effective.mode == MODE_HYBRID
     assert effective.source == "hybrid"
     assert effective.api_key == "sk-official-secret"
+    assert effective_llm.mode == MODE_HYBRID
+    assert effective_llm.source == "hybrid"
+    assert effective_llm.api_key == "sk-official-secret"
+    assert effective_llm.model == "brainclaw"
+    assert effective_llm.is_brainclaw is True
 
 
 def test_hybrid_video_routes_only_comfyui_models_to_local_gateway(

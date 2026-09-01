@@ -303,6 +303,8 @@ class BeatsRegenerateRequest(BaseModel):
     mode_key: str = "1x1_2-3"
     image_generation_selection: Optional[str] = None
     sketch_aspect_padding: Optional[bool] = None
+    batch_id: Optional[str] = Field(default=None, max_length=100)
+    batch_size: Optional[int] = Field(default=None, ge=1, le=9)
 
 
 class SketchRegenerateRequest(BaseModel):
@@ -361,6 +363,8 @@ class SingleVideoRequest(BaseModel):
     audio_setting: Optional[str] = None
     prompt_guidance: Optional[str] = None
     text_overlay: Optional[dict[str, Any]] = None
+    batch_id: Optional[str] = Field(default=None, max_length=100)
+    batch_size: Optional[int] = Field(default=None, ge=1, le=9)
 
 
 # ── 风格 ──────────────────────────────────────────────────────────────────────
@@ -762,13 +766,14 @@ class FreezoneTemplateEditRequest(BaseModel):
         "storyboard_25_grid",
         "cinematic_light_correction",
         "character_three_view_generation",
+        "scene_setting_sheet",
         "image_projection_after_3s",
         "image_projection_before_5s",
     ] = Field(
         description=(
             "模板模式。分别对应：多机位九宫格 / 剧情推演四宫格 / 角色脸部三视图 / "
             "产品三视图 / 25宫格连贯分镜 / 电影级光影校正 / 角色三视图生成 / "
-            "画面推演-3秒后 / 画面推演-5秒前"
+            "场景设定图 / 画面推演-3秒后 / 画面推演-5秒前"
         )
     )
     prompt: str = Field(default="", description="用户补充提示词，可为空")
@@ -1553,6 +1558,21 @@ class FreezoneAudioVoiceRef(BaseModel):
 class FreezoneAudioSpeechRequest(BaseModel):
     """Freezone 音频节点：文本生成语音请求。"""
 
+    speech_mode: Literal["preset", "clone"] = Field(
+        default="clone",
+        description=(
+            "语音生成模式。preset 使用系统预设音色且不需要参考音频；"
+            "clone 使用项目、角色或账号级参考声线。"
+        ),
+    )
+    preset_model: str = Field(
+        default="edge-tts",
+        description="speech_mode=preset 时使用的预设语音模型。",
+    )
+    preset_voice: str = Field(
+        default="Serena",
+        description="speech_mode=preset 时使用的系统音色。",
+    )
     text: str = Field(
         description=("要合成的台词/旁白文本。"),
         examples=["她低声说：终于等到这一天了。"],
@@ -1624,6 +1644,7 @@ class FreezoneVideoComposeItem(BaseModel):
     source_end: float = Field(gt=0.0, description="源媒体裁剪结束秒，必须大于 source_start")
     volume: float = Field(default=1.0, ge=0.0, le=2.0, description="音量倍率")
     muted: bool = Field(default=False, description="是否静音")
+    speed: float = Field(default=1.0, gt=0.0, le=4.0, description="播放倍速")
 
 
 class FreezoneVideoComposeTrack(BaseModel):
@@ -1635,10 +1656,16 @@ class FreezoneVideoComposeTrack(BaseModel):
 class FreezoneVideoComposeRequest(BaseModel):
     title: str = Field(default="", description="合成任务标题，可为空")
     canvas_id: str = Field(default="", description="来源画布 id，可为空")
+    node_id: str = Field(default="", description="来源合成节点 id，用于生成历史")
     resolution: Literal["720p", "1080p"] = Field(default="1080p", description="目标输出分辨率")
     fps: int = Field(default=30, ge=1, le=60, description="输出帧率")
     background_color: str = Field(default="#000000", description="补边或空隙使用的背景色")
     keep_original_audio: bool = Field(default=True, description="是否保留视频片段自带音频")
+    cover_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("cover_url", "coverUrl"),
+        description="合成封面图 URL，可为空。仅作为成片封面元信息返回，不改变视频内容。",
+    )
     tracks: list[FreezoneVideoComposeTrack] = Field(
         default_factory=list, description="时间线轨道列表"
     )
@@ -1661,6 +1688,93 @@ class FreezoneTextTranslateRequest(BaseModel):
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
 
+
+class FreezoneRecipeCompileReference(BaseModel):
+    """Recipe 编译时可用的媒体引用摘要，不包含内部文件路径。"""
+
+    kind: Literal["image", "video", "audio"]
+    label: str = Field(default="", max_length=200)
+
+
+class FreezoneRecipePipelineEntry(BaseModel):
+    id: str = Field(min_length=1, max_length=128)
+    version: str = Field(default="", max_length=64)
+
+
+class FreezoneRecipeCompileRequest(BaseModel):
+    """将节点意图与可信 Recipe 编译为最终执行提示词。"""
+
+    recipe_id: str = Field(min_length=1, max_length=128)
+    recipe_version: str = Field(default="", max_length=64)
+    recipe_pipeline: list[FreezoneRecipePipelineEntry] = Field(
+        default_factory=list,
+        max_length=6,
+    )
+    skill_id: str = Field(default="", max_length=128)
+    skill_version: str = Field(default="", max_length=64)
+    confirmed_inputs: dict[str, Any] = Field(default_factory=dict)
+    node_kind: Literal["image", "video", "audio", "text"]
+    prompt_strategy: Literal["template", "user_message", "previous_output", "llm_refine"] = (
+        "llm_refine"
+    )
+    node_prompt: str = Field(default="", max_length=20000)
+    user_goal: str = Field(default="", max_length=20000)
+    upstream_text: str = Field(default="", max_length=40000)
+    reference_media: list[FreezoneRecipeCompileReference] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+
+
+class FreezoneRecipeCompileData(BaseModel):
+    prompt: str
+    compile_mode: Literal[
+        "deterministic",
+        "memory_cache",
+        "persistent_cache",
+        "model",
+        "timeout_fallback",
+    ]
+    recipe_ids: list[str] = Field(default_factory=list)
+
+
+class FreezoneRecipeCompileResponse(BaseModel):
+    ok: Literal[True] = True
+    data: FreezoneRecipeCompileData
+
+
+class FreezoneRecipeCompileBatchItem(FreezoneRecipeCompileRequest):
+    request_id: str = Field(min_length=1, max_length=128)
+
+
+class FreezoneRecipeCompileBatchRequest(BaseModel):
+    items: list[FreezoneRecipeCompileBatchItem] = Field(min_length=1, max_length=12)
+
+
+class FreezoneRecipeCompileBatchResult(BaseModel):
+    request_id: str
+    ok: bool
+    data: FreezoneRecipeCompileData | None = None
+    error: str = ""
+    retryable: bool = False
+
+
+class FreezoneRecipeCompileBatchData(BaseModel):
+    items: list[FreezoneRecipeCompileBatchResult]
+
+
+class FreezoneRecipeCompileBatchResponse(BaseModel):
+    ok: Literal[True] = True
+    data: FreezoneRecipeCompileBatchData
+
+
+class FreezoneRecipeTextGenerateData(BaseModel):
+    content: str
+
+
+class FreezoneRecipeTextGenerateResponse(BaseModel):
+    ok: Literal[True] = True
+    data: FreezoneRecipeTextGenerateData
 
 class FreezoneTextGenerateRequest(BaseModel):
     """Freezone 文本节点：根据创作要求生成自由文本。"""
@@ -2057,6 +2171,10 @@ class AssetImageSourceSelectionRequest(BaseModel):
 
 class CharacterVoiceRecordRequest(BaseModel):
     data_url: str
+
+
+class SystemVoicePrepareRequest(BaseModel):
+    confirmed: bool = False
 
 
 class NarratorVoiceCopyRequest(BaseModel):

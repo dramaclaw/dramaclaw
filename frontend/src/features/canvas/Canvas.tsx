@@ -46,6 +46,10 @@ import { translateSkillName } from '@/features/freezone/context/skillI18n';
 import { canvasAiGateway, canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { stashExternalFile } from '@/features/canvas/application/pendingExternalFiles';
 import {
+  WORKFLOW_RUN_UPDATED_EVENT,
+  type WorkflowRunUpdatedDetail,
+} from '@/features/canvas/application/workflowExecutionActivity';
+import {
   CANVAS_NODE_TYPES,
   type BeatContextNodeData,
   type CanvasEdge,
@@ -117,6 +121,7 @@ import { nodeTypes as canvasNodeTypes } from './nodes';
 import { edgeTypes as canvasEdgeTypes } from './edges';
 import { NodeSelectionMenu } from './NodeSelectionMenu';
 import { SelectedNodeOverlay } from './ui/SelectedNodeOverlay';
+import { LightEditorCanvasOverlay } from './ui/LightEditorCanvasOverlay';
 import { MultiSelectionToolbar } from './ui/MultiSelectionToolbar';
 import {
   MultiSelectionConnectButton,
@@ -719,13 +724,27 @@ interface PendingNodePlacement {
 }
 
 interface CanvasProps {
+  projectId?: string;
+  canvasId?: string;
   onBlankPaneClick?: () => void;
   controlsPlacement?: 'bottom-right' | 'top-right';
+  /**
+   * 故事板 overlay（AssetBoardView）等全屏视图盖在保活画布上时置 true：
+   * 屏蔽画布注册的所有 window/document 级键盘与粘贴监听，并隐藏会压在
+   * overlay 之上的悬浮控件（CanvasQuickActionBar）。否则 Delete/Tab/⌘Z/
+   * 粘贴等会穿透到隐藏画布（删节点、弹 NodeSelectionMenu、建上传节点并
+   * 持久化）。不能复用 useViewerImmersiveBody 的 body class 方案——那会把
+   * 故事板自己隐藏掉（见 src/index.css 的 viewer-immersive 规则）。
+   */
+  suspended?: boolean;
 }
 
 export function Canvas({
+  projectId,
+  canvasId,
   onBlankPaneClick,
   controlsPlacement = 'bottom-right',
+  suspended = false,
 }: CanvasProps = {}) {
   const { t } = useTranslation();
   const reactFlowInstance = useReactFlow();
@@ -733,6 +752,10 @@ export function Canvas({
   const nodeTypes = useMemo(() => canvasNodeTypes, []);
   const edgeTypes = useMemo(() => canvasEdgeTypes, []);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  // 用 ref 镜像 suspended：各全局键盘/粘贴监听读 ref 而非闭包值，
+  // prop 变化不触发监听器重绑，切换视图零成本即时生效。
+  const suspendedRef = useRef(suspended);
+  suspendedRef.current = suspended;
   const suppressNextPaneClickRef = useRef(false);
   // After a marquee box-select we must swallow the trailing pane `click` at the capture
   // phase: React Flow's Pane onClick calls resetSelectedElements() unconditionally (right
@@ -756,12 +779,10 @@ export function Canvas({
 
   const [minimapPinned, setMinimapPinned] = useState(false);
   const [minimapHovered, setMinimapHovered] = useState(false);
-  // 小地图拖动期间必须钉住不卸载：非固定模式下指针一拖出小地图就会触发
-  // onMouseLeave → 180ms 后 minimapVisible 变 false → MiniMap 卸载 →
-  // useSmoothMinimapPan 的清理函数摘掉 window 监听，拖动直接断在半路。
+  const [workflowExecutionActive, setWorkflowExecutionActive] = useState(false);
+  // 拖动小地图期间保持其挂载，否则移出区域时会中断平移。
   const [minimapPanning, setMinimapPanning] = useState(false);
   const minimapVisible = minimapPinned || minimapHovered || minimapPanning;
-
   const openStoryVariablesGroupId = useCanvasStore((s) => s.openStoryVariablesGroupId);
   const closeStoryVariables = useCanvasStore((s) => s.closeStoryVariables);
   const openStoryLintGroupId = useCanvasStore((s) => s.openStoryLintGroupId);
@@ -770,6 +791,24 @@ export function Canvas({
   const closeStoryGen = useCanvasStore((s) => s.closeStoryGen);
   const openStoryTreeGroupId = useCanvasStore((s) => s.openStoryTreeGroupId);
   const closeStoryTree = useCanvasStore((s) => s.closeStoryTree);
+  useEffect(() => {
+    const handleWorkflowRunUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<WorkflowRunUpdatedDetail>).detail;
+      const status = detail?.status ?? detail?.run?.status;
+      if (status === 'running') {
+        setWorkflowExecutionActive(true);
+      } else if (
+        status === 'completed'
+        || status === 'failed'
+        || status === 'cancelled'
+        || status === 'interrupted'
+      ) {
+        setWorkflowExecutionActive(false);
+      }
+    };
+    window.addEventListener(WORKFLOW_RUN_UPDATED_EVENT, handleWorkflowRunUpdated);
+    return () => window.removeEventListener(WORKFLOW_RUN_UPDATED_EVENT, handleWorkflowRunUpdated);
+  }, []);
   // 小地图弹层（含上方的书签数字行）靠 hover 显示。数字行是小地图上方、隔着间隙的
   // 独立 DOM 子树:鼠标从小地图移到数字按钮的途中会先离开小地图,若立即把
   // minimapHovered 置 false,整个 overlay 会在点到按钮前卸载,导致「点不了」。
@@ -1162,6 +1201,9 @@ export function Canvas({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (suspendedRef.current) {
+        return;
+      }
       if (!isSpacePanKey(event) || isTypingTarget(event.target) || isImmersiveViewerActive()) {
         return;
       }
@@ -1169,6 +1211,8 @@ export function Canvas({
       clearMarqueeSelection();
     };
 
+    // keyup 不加 suspendedRef 守卫：它只把 spacePanActiveRef 复位为
+    // false（惰性状态）。若守卫,「按住空格→切故事板→松开」会让 ref 卡在 true。
     const handleKeyUp = (event: KeyboardEvent) => {
       if (!isSpacePanKey(event)) {
         return;
@@ -2262,6 +2306,9 @@ export function Canvas({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (suspendedRef.current) {
+        return;
+      }
       if (
         event.defaultPrevented ||
         event.isComposing ||
@@ -2304,6 +2351,9 @@ export function Canvas({
   // a bare digit jumps to it, and ⌘/Ctrl+Shift+E clears them all.
   useEffect(() => {
     const handleBookmarkKeys = (event: KeyboardEvent) => {
+      if (suspendedRef.current) {
+        return;
+      }
       if (isTypingTarget(event.target) || isImmersiveViewerActive()) {
         return;
       }
@@ -2346,6 +2396,9 @@ export function Canvas({
   // collides with ⌘M (minimize) or text input.
   useEffect(() => {
     const handleMinimapKey = (event: KeyboardEvent) => {
+      if (suspendedRef.current) {
+        return;
+      }
       if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
         return;
       }
@@ -2368,11 +2421,15 @@ export function Canvas({
   // keyup that fires off-window (e.g. after an alt-tab) can't leave it stuck on.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (suspendedRef.current) {
+        return;
+      }
       if (event.code !== 'Space' || isTypingTarget(event.target)) {
         return;
       }
       spacePanActiveRef.current = true;
     };
+    // keyup 不守卫,理由同上面 space-pan capture 监听:只复位为惰性状态。
     const handleKeyUp = (event: KeyboardEvent) => {
       if (event.code !== 'Space') {
         return;
@@ -2689,6 +2746,9 @@ export function Canvas({
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
+      if (suspendedRef.current) {
+        return;
+      }
       pasteImageHandledRef.current = false;
       if (isTypingTarget(event.target) || isImmersiveViewerActive()) {
         return;
@@ -2795,6 +2855,9 @@ export function Canvas({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (suspendedRef.current) {
+        return;
+      }
       if (isTypingTarget(event.target)) {
         return;
       }
@@ -4934,7 +4997,8 @@ export function Canvas({
         // 低缩放档关掉视口裁剪：此档所有节点都是轻量 shell（见 withLodShell），
         // 全量挂载的渲染树很小；而裁剪在快速平移时每帧挂/卸边界节点，实测 4 秒
         // 拖拽 800+ 次翻腾、p99 帧时 470ms——收益早已倒挂。高缩放档维持裁剪。
-        onlyRenderVisibleElements={!lowDetailActive}
+        // 工作流执行期也要保持节点挂载，避免后台节点因裁剪中断。
+        onlyRenderVisibleElements={!workflowExecutionActive && !lowDetailActive}
         zoomOnDoubleClick={false}
         proOptions={REACT_FLOW_PRO_OPTIONS}
         className="bg-background"
@@ -4975,7 +5039,8 @@ export function Canvas({
 
         <StoryPlayerOverlay />
         <SelectedNodeOverlay />
-        <MultiSelectionToolbar />
+        <LightEditorCanvasOverlay />
+        <MultiSelectionToolbar projectId={projectId} canvasId={canvasId} />
         <MultiSelectionConnectButton
           onBatchOpenMenu={handleBatchConnectOpenMenu}
           onBatchDragStart={handleBatchConnectDragStart}
@@ -5129,14 +5194,17 @@ export function Canvas({
 
       <CanvasFpsMeter />
 
-      <BackToNodesHint />
+      {/* z-[130] 的「回到节点」提示会浮到故事板(z-30)之上，挂起时一并隐藏。 */}
+      {!suspended && <BackToNodesHint />}
 
       <CanvasZoomControl
         onOrganize={handleOrganizeCanvas}
         placement={controlsPlacement}
       />
 
-      {!taskPanelOpen && (
+      {/* 快捷操作条 z-[41] 高于故事板 overlay(z-30)，挂起时必须隐藏；
+          右侧 z-30 的缩放/小地图/FPS 控件与故事板同级、按 DOM 顺序被盖住，无需处理。 */}
+      {!taskPanelOpen && !suspended && (
         <CanvasQuickActionBar
           placement={controlsPlacement}
           skillItems={skillRegistry}
