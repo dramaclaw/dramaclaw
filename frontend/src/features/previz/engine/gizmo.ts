@@ -90,6 +90,11 @@ export class PrevizGizmo {
     this.deps.controls.setMode(mode);
   }
 
+  /** 截图前把手柄藏掉——箭头进了截图就毁了整张参考图。 */
+  setHelperVisible(visible: boolean): void {
+    this.deps.controls.getHelper().visible = visible;
+  }
+
   dispose(): void {
     this.deps.controls.detach();
     this.deps.root.remove(this.deps.controls.getHelper());

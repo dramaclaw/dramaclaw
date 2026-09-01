@@ -8,6 +8,7 @@ import { createDefaultScene } from "@/features/previz/domain/scene";
 import { PrevizRenderer } from "@/features/previz/engine/PrevizRenderer";
 import { PrevizEditor } from "@/features/previz/PrevizEditor";
 import { usePrevizStore } from "@/features/previz/store";
+import { readUrl } from "@/lib/url-params";
 
 const dispose = vi.fn();
 const resize = vi.fn();
@@ -19,6 +20,7 @@ const applyViewDirection = vi.fn();
 const focusObject = vi.fn();
 const resetView = vi.fn();
 const pickAt = vi.fn(() => null as string | null);
+const capture = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
 
 /** 每条用例一份全新的假渲染器，免得 onTransformCommit 在用例之间串。 */
 function fakeRenderer() {
@@ -33,6 +35,7 @@ function fakeRenderer() {
     focusObject,
     resetView,
     pickAt,
+    capture,
     onTransformCommit: null as
       | ((objectId: string, transform: unknown) => void)
       | null,
@@ -45,6 +48,26 @@ vi.mock("@/features/previz/engine/PrevizRenderer", () => ({
     create: vi.fn(async () => fakeRenderer()),
   },
 }));
+
+const addDerivedUploadNode = vi.fn(() => "upload-1");
+const addEdge = vi.fn(() => "edge-1");
+
+vi.mock("@/lib/url-params", () => ({
+  readUrl: vi.fn(() => ({ project: "demo" })),
+}));
+
+vi.mock("@/api/ops", () => ({
+  uploadFreezoneImage: vi.fn(async () => ({ url: "/static/shot.png" })),
+}));
+
+vi.mock("@/stores/canvasStore", () => ({
+  useCanvasStore: Object.assign(
+    (selector: (state: unknown) => unknown) => selector({ addDerivedUploadNode, addEdge }),
+    { getState: () => ({ addDerivedUploadNode, addEdge }) },
+  ),
+}));
+
+vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 // dispose / resize 是模块级共享的，而 testing-library 每个用例结束都会自动
 // unmount、从而触发一次 dispose。不清的话第三条用例的 toHaveBeenCalledTimes(1)
@@ -80,7 +103,13 @@ describe("PrevizEditor", () => {
     scene.settings.durationFrames = 240;
 
     render(
-      <PrevizEditor open initialScene={scene} onOpenChange={vi.fn()} onFlush={vi.fn()} />,
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
     );
 
     expect(screen.getByTestId("previz-canvas")).toBeInTheDocument();
@@ -95,6 +124,7 @@ describe("PrevizEditor", () => {
     render(
       <PrevizEditor
         open
+        nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={onOpenChange}
         onFlush={onFlush}
@@ -125,6 +155,7 @@ describe("PrevizEditor", () => {
     const { unmount } = render(
       <PrevizEditor
         open
+        nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
         onFlush={vi.fn()}
@@ -143,6 +174,7 @@ describe("PrevizEditor", () => {
     render(
       <PrevizEditor
         open
+        nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
         onFlush={vi.fn()}
@@ -157,6 +189,7 @@ describe("PrevizEditor", () => {
     render(
       <PrevizEditor
         open
+        nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
         onFlush={vi.fn()}
@@ -176,6 +209,7 @@ describe("PrevizEditor", () => {
     render(
       <PrevizEditor
         open
+        nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
         onFlush={vi.fn()}
@@ -186,5 +220,43 @@ describe("PrevizEditor", () => {
     await user.click(screen.getByRole("button", { name: "previz.hud.view.top" }));
 
     expect(applyViewDirection).toHaveBeenCalledWith("top");
+  });
+  it("captures and publishes into the canvas", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "previz.editor.capture" }));
+
+    await vi.waitFor(() => expect(capture).toHaveBeenCalled());
+    await vi.waitFor(() => expect(addDerivedUploadNode).toHaveBeenCalled());
+  });
+
+  it("does not capture without a project in the url", async () => {
+    const user = userEvent.setup();
+    vi.mocked(readUrl).mockReturnValueOnce({ project: "" } as ReturnType<typeof readUrl>);
+
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "previz.editor.capture" }));
+
+    expect(capture).not.toHaveBeenCalled();
   });
 });

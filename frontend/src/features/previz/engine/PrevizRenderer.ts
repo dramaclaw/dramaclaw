@@ -3,6 +3,8 @@
 import type * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
+import { createDomCaptureCanvas, renderCapture } from '../capture/renderCapture';
+import { aspectRatio } from '../domain/camera';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
 import type { PrevizScene, PrevizTransform, Vec3 } from '../domain/scene';
 import {
@@ -217,6 +219,61 @@ export class PrevizRenderer {
 
   nodeFor(objectId: string): THREE.Object3D | undefined {
     return this.graph.nodeFor(objectId);
+  }
+
+  /**
+   * 按场景画幅出一张 PNG。有活动机位就从机位出片，否则出当前编辑视角。
+   * 场景还没灌进来时返回 null。
+   */
+  async capture(): Promise<Blob | null> {
+    if (this.disposed) return null;
+    const scene = this.currentScene;
+    if (!scene) return null;
+    const aspect = scene.settings.outputAspect;
+
+    const active = this.activeCameraId
+      ? scene.objects.find((entry) => entry.id === this.activeCameraId)
+      : undefined;
+    const activeNode = this.activeCameraId ? this.graph.nodeFor(this.activeCameraId) : undefined;
+    const useMonitor = Boolean(
+      active && active.kind === 'camera' && activeNode && this.monitorCamera,
+    );
+
+    // 手柄、以及出片机位自己的锥体，都不该进画面。
+    this.gizmo?.setHelperVisible(false);
+    if (useMonitor && activeNode) activeNode.visible = false;
+
+    // 编辑相机的 aspect 跟着视口走，和出片画幅无关；借用它出片前要先改，出完再还。
+    const editorAspect = this.camera.aspect;
+
+    try {
+      let camera: THREE.Camera;
+      if (useMonitor && active?.kind === 'camera' && activeNode && this.monitorCamera) {
+        syncMonitorCamera(this.monitorCamera, activeNode, active, aspect);
+        camera = this.monitorCamera;
+      } else {
+        this.camera.aspect = aspectRatio(aspect);
+        this.camera.updateProjectionMatrix();
+        camera = this.camera;
+      }
+
+      return await renderCapture(
+        {
+          three: this.three,
+          renderer: this.renderer,
+          scene: this.scene,
+          camera,
+          createCanvas: createDomCaptureCanvas,
+        },
+        aspect,
+      );
+    } finally {
+      this.camera.aspect = editorAspect;
+      this.camera.updateProjectionMatrix();
+      if (useMonitor && activeNode) activeNode.visible = true;
+      this.gizmo?.setHelperVisible(true);
+      this.requestRender();
+    }
   }
 
   /**
