@@ -4,7 +4,7 @@ import type * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
-import type { PrevizScene, Vec3 } from '../domain/scene';
+import type { PrevizScene, PrevizTransform, Vec3 } from '../domain/scene';
 import {
   PREVIZ_DEFAULT_VIEW,
   boundsCenter,
@@ -16,6 +16,7 @@ import {
   type PrevizViewDirection,
 } from '../domain/view';
 import { CharacterRigFactory } from './characterRig';
+import { PrevizGizmo, type GizmoMode, type TransformControlsLike } from './gizmo';
 import { PropLoader } from './propLoader';
 import { PREVIZ_PLACEHOLDER_RADIUS, PrevizSceneGraph, type ThreeModule } from './sceneGraph';
 
@@ -48,6 +49,9 @@ export class PrevizRenderer {
   private raycaster: THREE.Raycaster | null = null;
   private currentScene: PrevizScene | null = null;
   private selectionId: string | null = null;
+  private gizmo: PrevizGizmo | null = null;
+  /** 手柄拖完把变换交回上层（编辑器接到 store 的 updateObject）。 */
+  onTransformCommit: ((objectId: string, transform: PrevizTransform) => void) | null = null;
 
   private constructor(
     private readonly renderer: THREE.WebGLRenderer,
@@ -60,13 +64,15 @@ export class PrevizRenderer {
   ) {}
 
   static async create(canvas: HTMLCanvasElement): Promise<PrevizRenderer> {
-    const [three, controlsModule, gltfModule, objModule, skeletonUtils] = await Promise.all([
-      import('three'),
-      import('three/examples/jsm/controls/OrbitControls.js'),
-      import('three/examples/jsm/loaders/GLTFLoader.js'),
-      import('three/examples/jsm/loaders/OBJLoader.js'),
-      import('three/examples/jsm/utils/SkeletonUtils.js'),
-    ]);
+    const [three, controlsModule, transformModule, gltfModule, objModule, skeletonUtils] =
+      await Promise.all([
+        import('three'),
+        import('three/examples/jsm/controls/OrbitControls.js'),
+        import('three/examples/jsm/controls/TransformControls.js'),
+        import('three/examples/jsm/loaders/GLTFLoader.js'),
+        import('three/examples/jsm/loaders/OBJLoader.js'),
+        import('three/examples/jsm/utils/SkeletonUtils.js'),
+      ]);
 
     const renderer = new three.WebGLRenderer({ canvas, antialias: true });
 
@@ -129,6 +135,17 @@ export class PrevizRenderer {
         loadObj: (url) => objLoader.loadAsync(url),
       }),
     );
+
+    const transformControls = new transformModule.TransformControls(camera, canvas);
+    instance.gizmo = new PrevizGizmo({
+      controls: transformControls as unknown as TransformControlsLike,
+      orbit: controls,
+      // helper 挂在 scene 而不是 objectRoot 下：objectRoot 是拾取与聚焦的取值范围，
+      // 手柄挂进去会被射线命中，也会被算进「框全场景」的包围盒里。
+      root: scene,
+      onCommit: (objectId, transform) => instance.onTransformCommit?.(objectId, transform),
+      onChange: () => instance.requestRender(),
+    });
     instance.resize();
     instance.start();
     return instance;
@@ -175,6 +192,13 @@ export class PrevizRenderer {
    */
   setSelection(objectId: string | null): void {
     this.selectionId = objectId;
+    this.gizmo?.attach(objectId ? (this.graph.nodeFor(objectId) ?? null) : null);
+    this.requestRender();
+  }
+
+  setGizmoMode(mode: GizmoMode): void {
+    this.gizmo?.setMode(mode);
+    this.requestRender();
   }
 
   nodeFor(objectId: string): THREE.Object3D | undefined {
@@ -347,6 +371,7 @@ export class PrevizRenderer {
     this.controls.dispose();
     // 必须排在下面那次 traverse 之前：场景图会把自己的节点从对象根上摘掉再还资源，
     // 顺序反过来的话同一批几何体与材质会被 dispose 两遍。
+    this.gizmo?.dispose();
     this.graph.dispose();
     this.scene.traverse((object) => {
       const mesh = object as THREE.Mesh;
