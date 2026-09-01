@@ -172,10 +172,119 @@ function isOutputAspect(value: unknown): value is OutputAspect {
   return typeof value === 'string' && (OUTPUT_ASPECTS as readonly string[]).includes(value);
 }
 
+const BODY_TYPES: readonly BodyType[] = ['slim', 'average', 'heavy'];
+const LIGHT_TYPES: readonly PrevizLight['lightType'][] = ['key', 'point', 'spot'];
+const SENSORS: readonly PrevizCamera['sensor'][] = ['ff', 's35'];
+const ASSET_FORMATS: readonly PrevizProp['assetFormat'][] = ['glb', 'gltf', 'obj'];
+
+function isMember<T extends string>(list: readonly T[], value: unknown): value is T {
+  return typeof value === 'string' && (list as readonly string[]).includes(value);
+}
+
+function num(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function vec3(value: unknown, fallback: Vec3): Vec3 {
+  if (!Array.isArray(value) || value.length !== 3) return [...fallback];
+  return [num(value[0], fallback[0]), num(value[1], fallback[1]), num(value[2], fallback[2])];
+}
+
+function parseTransform(value: unknown): PrevizTransform {
+  const source = (value ?? {}) as Partial<PrevizTransform>;
+  return {
+    position: vec3(source.position, [0, 0, 0]),
+    rotation: vec3(source.rotation, [0, 0, 0]),
+    scale: vec3(source.scale, [1, 1, 1]),
+  };
+}
+
+/**
+ * 把一条不可信的对象记录读成 `PrevizObject`。**只有两种情况返回 null**：没有可用的
+ * id，或者 kind 不认识——这两样都没法修，留着只会在场景图同步时变成幽灵条目。
+ * 其余字段一律就地修复回默认值：用户手改坏一个数字，不该让整个人物凭空消失。
+ */
+function parseObject(raw: unknown): PrevizObject | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const source = raw as Record<string, unknown>;
+
+  const id = typeof source.id === 'string' && source.id.length > 0 ? source.id : null;
+  if (!id) return null;
+
+  const base = {
+    id,
+    name: typeof source.name === 'string' ? source.name : id,
+    transform: parseTransform(source.transform),
+    // 缺字段时按「可见、未锁定」兜底：反过来兜会让读进来的场景整个是空的，
+    // 用户看到的是「我的东西全没了」而不是「有一项属性没读出来」。
+    visible: source.visible === false ? false : true,
+    locked: source.locked === true,
+  };
+
+  switch (source.kind) {
+    case 'character':
+      return {
+        ...base,
+        kind: 'character',
+        bodyType: isMember(BODY_TYPES, source.bodyType) ? source.bodyType : 'average',
+        heightCm: num(source.heightCm, 175),
+        basePoseId: typeof source.basePoseId === 'string' ? source.basePoseId : 'standing',
+        poseAdjust: {
+          pitch: num((source.poseAdjust as { pitch?: unknown } | undefined)?.pitch, 0),
+          turn: num((source.poseAdjust as { turn?: unknown } | undefined)?.turn, 0),
+          lean: num((source.poseAdjust as { lean?: unknown } | undefined)?.lean, 0),
+        },
+      };
+    case 'camera':
+      return {
+        ...base,
+        kind: 'camera',
+        focalMm: num(source.focalMm, 50),
+        aperture: num(source.aperture, 2.8),
+        sensor: isMember(SENSORS, source.sensor) ? source.sensor : 'ff',
+      };
+    case 'light':
+      return {
+        ...base,
+        kind: 'light',
+        lightType: isMember(LIGHT_TYPES, source.lightType) ? source.lightType : 'key',
+        color: typeof source.color === 'string' ? source.color : '#ffffff',
+        intensity: num(source.intensity, 1),
+      };
+    case 'prop':
+      return {
+        ...base,
+        kind: 'prop',
+        assetUrl: typeof source.assetUrl === 'string' ? source.assetUrl : '',
+        assetFormat: isMember(ASSET_FORMATS, source.assetFormat) ? source.assetFormat : 'glb',
+      };
+    default:
+      return null;
+  }
+}
+
+function parseTracks(raw: unknown, objectIds: ReadonlySet<string>): PrevizTrack[] {
+  if (!Array.isArray(raw)) return [];
+  const tracks: PrevizTrack[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const source = entry as Partial<PrevizTrack>;
+    if (typeof source.id !== 'string' || typeof source.objectId !== 'string') continue;
+    // 悬空轨道直接丢：求值器（P3）拿到指向已删对象的轨道只会报错或静默出错。
+    if (!objectIds.has(source.objectId)) continue;
+    tracks.push({
+      id: source.id,
+      objectId: source.objectId,
+      clips: Array.isArray(source.clips) ? [...source.clips] : [],
+    });
+  }
+  return tracks;
+}
+
 /**
  * 把 node.data.scene 这类不可信 JSON 读成 PrevizScene：缺字段或非法枚举回落默认值，
- * 版本过新抛 PrevizSceneVersionError。objects / tracks 只校验是不是数组（并做浅拷贝以
- * 免和调用方共享可变引用）——逐对象校验留到 P1 真正有对象编辑时再补，现在做只会是空转。
+ * 版本过新抛 PrevizSceneVersionError。对象逐条校验（见 parseObject），认不出 kind 或
+ * 没有 id 的丢弃，其余字段就地修复；轨道指向已不存在的对象时一并丢弃。
  */
 export function parseScene(raw: unknown): PrevizScene {
   if (raw === null || typeof raw !== 'object') return createDefaultScene();
@@ -187,6 +296,11 @@ export function parseScene(raw: unknown): PrevizScene {
 
   const fallback = createDefaultScene();
   const settings = (source.settings ?? {}) as Partial<PrevizSceneSettings>;
+
+  const objects = Array.isArray(source.objects)
+    ? source.objects.map(parseObject).filter((object): object is PrevizObject => object !== null)
+    : [];
+  const objectIds = new Set(objects.map((object) => object.id));
 
   return {
     schemaVersion: PREVIZ_SCHEMA_VERSION,
@@ -200,9 +314,7 @@ export function parseScene(raw: unknown): PrevizScene {
         ? settings.outputAspect
         : fallback.settings.outputAspect,
     },
-    objects: Array.isArray(source.objects) ? [...source.objects] : [],
-    timeline: {
-      tracks: Array.isArray(source.timeline?.tracks) ? [...source.timeline.tracks] : [],
-    },
+    objects,
+    timeline: { tracks: parseTracks(source.timeline?.tracks, objectIds) },
   };
 }
