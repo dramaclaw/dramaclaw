@@ -1725,6 +1725,23 @@
       "middle": "中年",
       "elder": "老年"
     },
+    "identityPeriods": {
+      "earlyChildhood": "幼年时期",
+      "childhoodKid": "孩童时期",
+      "childhoodChild": "儿童时期",
+      "childhoodYears": "童年时期",
+      "adolescence": "少年时期",
+      "schoolYears": "学生时期",
+      "youngAdult": "青年时期",
+      "adulthood": "成年时期",
+      "middleAge": "中年时期",
+      "laterYears": "老年时期",
+      "workAttire": "职场装束",
+      "homeAttire": "居家装束",
+      "casualWear": "便装",
+      "formalWear": "正装",
+      "courtDress": "宫装"
+    },
     "genders": {
       "male": "男",
       "female": "女"

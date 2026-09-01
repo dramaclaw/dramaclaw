@@ -1725,6 +1725,23 @@
       "middle": "Middle-aged",
       "elder": "Elder"
     },
+    "identityPeriods": {
+      "earlyChildhood": "Early childhood",
+      "childhoodKid": "Childhood",
+      "childhoodChild": "Childhood",
+      "childhoodYears": "Childhood",
+      "adolescence": "Adolescence",
+      "schoolYears": "School years",
+      "youngAdult": "Young adult",
+      "adulthood": "Adulthood",
+      "middleAge": "Middle age",
+      "laterYears": "Later years",
+      "workAttire": "Work attire",
+      "homeAttire": "Home attire",
+      "casualWear": "Casual wear",
+      "formalWear": "Formal wear",
+      "courtDress": "Court dress"
+    },
     "genders": {
       "male": "Male",
       "female": "Female"

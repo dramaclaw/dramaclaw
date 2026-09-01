@@ -834,7 +834,7 @@ function InputModeToggle({
   return (
     <div
       className={cn(
-        "inline-flex h-8 items-center rounded-[8px] border border-white/10 bg-transparent p-1 text-xs",
+        "inline-flex h-8 shrink-0 items-center rounded-[8px] border border-white/10 bg-transparent p-1 text-xs",
         className,
       )}
     >
@@ -1728,7 +1728,10 @@ export function IngestPageContent({ project }: { project: string }) {
                   )}
                 </div>
               )}
-              <div className="mt-2.5 grid grid-cols-2 gap-2.5 px-1 md:flex md:items-center md:gap-3">
+              {/* 这排控件除本段切换外全是 shrink-0 / min-w-max，行放不下时只有它会被压缩，
+                  英文标签下「Paste Text」就被压出圆角边框外（按钮自己是 md:flex-none 不跟着缩）。
+                  给它 shrink-0，并让整行在 md+ 允许换行，多出来的控件掉到第二行而不是溢出裁切。 */}
+              <div className="mt-2.5 grid grid-cols-2 gap-2.5 px-1 md:flex md:flex-wrap md:items-center md:gap-3">
                 <InputModeToggle
                   value={inputMode}
                   onChange={setInputMode}
