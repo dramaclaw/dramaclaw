@@ -11,6 +11,13 @@ import {
   createDefaultScene,
   parseScene,
 } from "@/features/previz/domain/scene";
+import { PREVIZ_APERTURE, PREVIZ_FOCAL_MM } from "@/features/previz/domain/camera";
+import {
+  PREVIZ_DEFAULT_HEIGHT_CM,
+  PREVIZ_MAX_HEIGHT_CM,
+  PREVIZ_MIN_HEIGHT_CM,
+  PREVIZ_OBJECT_BASE_NAME,
+} from "@/features/previz/domain/objects";
 
 describe("previz scene schema", () => {
   it("creates an empty scene at the current schema version", () => {
@@ -166,5 +173,120 @@ describe("parseScene object validation", () => {
     });
 
     expect(parsed.timeline.tracks).toEqual([]);
+  });
+});
+
+describe("parseScene field hygiene", () => {
+  it("clamps a character's height and falls back to the default for non-numbers", () => {
+    const heightOf = (heightCm: unknown) => {
+      const parsed = parseScene({ objects: [{ id: "a", kind: "character", heightCm }] });
+      const character = parsed.objects[0];
+      if (character?.kind !== "character") throw new Error("expected a character");
+      return character.heightCm;
+    };
+
+    expect(heightOf(5)).toBe(PREVIZ_MIN_HEIGHT_CM);
+    expect(heightOf(-5)).toBe(PREVIZ_MIN_HEIGHT_CM);
+    expect(heightOf(900)).toBe(PREVIZ_MAX_HEIGHT_CM);
+    expect(heightOf(NaN)).toBe(PREVIZ_DEFAULT_HEIGHT_CM);
+    expect(heightOf("tall")).toBe(PREVIZ_DEFAULT_HEIGHT_CM);
+  });
+
+  // focalMm 为 0 会让水平视场角变成 180°，three 的投影矩阵直接算出 NaN，整个画面消失。
+  it("clamps a camera's focal length and aperture", () => {
+    const cameraFrom = (focalMm: unknown, aperture: unknown) => {
+      const parsed = parseScene({ objects: [{ id: "a", kind: "camera", focalMm, aperture }] });
+      const camera = parsed.objects[0];
+      if (camera?.kind !== "camera") throw new Error("expected a camera");
+      return camera;
+    };
+
+    expect(cameraFrom(0, 0)).toMatchObject({
+      focalMm: PREVIZ_FOCAL_MM.min,
+      aperture: PREVIZ_APERTURE.min,
+    });
+    expect(cameraFrom(-50, 999)).toMatchObject({
+      focalMm: PREVIZ_FOCAL_MM.min,
+      aperture: PREVIZ_APERTURE.max,
+    });
+    expect(cameraFrom(500, NaN)).toMatchObject({
+      focalMm: PREVIZ_FOCAL_MM.max,
+      aperture: PREVIZ_APERTURE.default,
+    });
+    expect(cameraFrom(NaN, "f/2")).toMatchObject({
+      focalMm: PREVIZ_FOCAL_MM.default,
+      aperture: PREVIZ_APERTURE.default,
+    });
+  });
+
+  it("clamps a light's intensity to a non-negative value", () => {
+    const intensityOf = (intensity: unknown) => {
+      const parsed = parseScene({ objects: [{ id: "a", kind: "light", intensity }] });
+      const light = parsed.objects[0];
+      if (light?.kind !== "light") throw new Error("expected a light");
+      return light.intensity;
+    };
+
+    expect(intensityOf(-3)).toBe(0);
+    expect(intensityOf(1000)).toBe(20);
+    expect(intensityOf(NaN)).toBe(1);
+    expect(intensityOf(2.5)).toBe(2.5);
+  });
+
+  // 缩放分量为 0 会压出退化几何，手柄也就此抓不住，只能重开场景才能救回来。
+  it("keeps every scale component out of the degenerate range", () => {
+    const scaleOf = (scale: unknown) => {
+      const parsed = parseScene({
+        objects: [{ id: "a", kind: "prop", transform: { scale } }],
+      });
+      return parsed.objects[0]?.transform.scale;
+    };
+
+    expect(scaleOf([0, 0, 0])).toEqual([0.01, 0.01, 0.01]);
+    expect(scaleOf([-2, 500, NaN])).toEqual([0.01, 100, 1]);
+    expect(scaleOf([2, 3, 4])).toEqual([2, 3, 4]);
+  });
+
+  it("keeps only the first object of a duplicated id", () => {
+    const parsed = parseScene({
+      objects: [
+        { id: "dup", kind: "camera", name: "先来的" },
+        { id: "dup", kind: "light", name: "后来的" },
+        { id: "other", kind: "prop", name: "另一个" },
+      ],
+    });
+
+    expect(parsed.objects.map((object) => object.id)).toEqual(["dup", "other"]);
+    expect(parsed.objects[0]?.kind).toBe("camera");
+    expect(parsed.objects[0]?.name).toBe("先来的");
+  });
+
+  it("round-trips explicit visible and locked flags", () => {
+    const parsed = parseScene({
+      objects: [
+        { id: "a", kind: "prop", visible: false, locked: true },
+        { id: "b", kind: "prop" },
+        { id: "c", kind: "prop", visible: "yes", locked: "yes" },
+      ],
+    });
+
+    expect(parsed.objects.map((object) => object.visible)).toEqual([false, true, true]);
+    expect(parsed.objects.map((object) => object.locked)).toEqual([true, false, false]);
+  });
+
+  it("names an object after its kind when the stored name is blank or missing", () => {
+    const parsed = parseScene({
+      objects: [
+        { id: "a", kind: "camera" },
+        { id: "b", kind: "light", name: "   " },
+        { id: "c", kind: "prop", name: 42 },
+      ],
+    });
+
+    expect(parsed.objects.map((object) => object.name)).toEqual([
+      PREVIZ_OBJECT_BASE_NAME.camera,
+      PREVIZ_OBJECT_BASE_NAME.light,
+      PREVIZ_OBJECT_BASE_NAME.prop,
+    ]);
   });
 });

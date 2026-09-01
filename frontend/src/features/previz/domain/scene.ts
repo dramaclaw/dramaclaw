@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { PREVIZ_APERTURE, PREVIZ_FOCAL_MM } from './camera';
+import {
+  PREVIZ_DEFAULT_HEIGHT_CM,
+  PREVIZ_MAX_HEIGHT_CM,
+  PREVIZ_MIN_HEIGHT_CM,
+  PREVIZ_OBJECT_BASE_NAME,
+} from './objects';
+import { PREVIZ_DEFAULT_POSE_ID } from './poses';
 
 /** 预演台里所有三元组的统一形状，顺序恒为 [x, y, z]，单位米 / 度。 */
 export type Vec3 = [number, number, number];
@@ -33,6 +41,10 @@ export interface PrevizCharacter extends PrevizObjectBase {
   kind: 'character';
   bodyType: BodyType;
   heightCm: number;
+  /**
+   * 刻意留成 string 而不是 PrevizPoseId：新版客户端存进来的姿势要原样活过一次
+   * 读写，静默改写成默认姿势是无声的数据损坏。认不出的 id 由引擎侧回落。
+   */
   basePoseId: string;
   poseAdjust: { pitch: number; turn: number; lean: number };
 }
@@ -162,32 +174,66 @@ function clampDuration(value: unknown): number {
   return Math.min(PREVIZ_MAX_DURATION_FRAMES, Math.max(PREVIZ_MIN_DURATION_FRAMES, frames));
 }
 
-const DISPLAY_MODES: readonly DisplayMode[] = ['solid', 'translucent', 'clay'];
-function isDisplayMode(value: unknown): value is DisplayMode {
-  return typeof value === 'string' && (DISPLAY_MODES as readonly string[]).includes(value);
-}
+/**
+ * 枚举白名单一律写成 Record 而不是数组：Record 的键必须覆盖联合类型的全部成员，
+ * 往 `assetFormat` 加了 'fbx' 却忘了改这里，编译期就红；数组只查得出「多写」，
+ * 查不出「漏写」，而漏写的后果是 parseObject 把已经落盘的新值静默改回默认值。
+ */
+const DISPLAY_MODES: Record<DisplayMode, true> = { solid: true, translucent: true, clay: true };
+const OUTPUT_ASPECTS: Record<OutputAspect, true> = {
+  '16:9': true,
+  '9:16': true,
+  '1:1': true,
+  '4:3': true,
+};
+const OBJECT_KINDS: Record<PrevizObjectKind, true> = {
+  character: true,
+  camera: true,
+  light: true,
+  prop: true,
+};
+const BODY_TYPES: Record<BodyType, true> = { slim: true, average: true, heavy: true };
+const LIGHT_TYPES: Record<PrevizLight['lightType'], true> = { key: true, point: true, spot: true };
+const SENSORS: Record<PrevizCamera['sensor'], true> = { ff: true, s35: true };
+const ASSET_FORMATS: Record<PrevizProp['assetFormat'], true> = { glb: true, gltf: true, obj: true };
 
-const OUTPUT_ASPECTS: readonly OutputAspect[] = ['16:9', '9:16', '1:1', '4:3'];
-function isOutputAspect(value: unknown): value is OutputAspect {
-  return typeof value === 'string' && (OUTPUT_ASPECTS as readonly string[]).includes(value);
-}
-
-const BODY_TYPES: readonly BodyType[] = ['slim', 'average', 'heavy'];
-const LIGHT_TYPES: readonly PrevizLight['lightType'][] = ['key', 'point', 'spot'];
-const SENSORS: readonly PrevizCamera['sensor'][] = ['ff', 's35'];
-const ASSET_FORMATS: readonly PrevizProp['assetFormat'][] = ['glb', 'gltf', 'obj'];
-
-function isMember<T extends string>(list: readonly T[], value: unknown): value is T {
-  return typeof value === 'string' && (list as readonly string[]).includes(value);
+function isMember<T extends string>(table: Record<T, true>, value: unknown): value is T {
+  // hasOwnProperty 而不是 `in`：`in` 会把 'constructor' 这类原型链上的键也认成合法值。
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(table, value);
 }
 
 function num(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+/**
+ * 非有限输入回落到默认值而不是边界值，与 camera.ts 的 `clampFocalMm` 保持同一约定：
+ * NaN 更可能是上游算错了，把它夹成 min 等于替用户做了个他没提过的选择。
+ */
+function clamp(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+/** 强度必须非负：负值在 three 里等于从场景里反向减光，画面会出现无解的黑块。上限
+ *  只是挡住手改坏的天文数字，再亮也只是过曝，取一个够用的软顶。 */
+const INTENSITY_RANGE = { min: 0, max: 20, default: 1 } as const;
+/** 缩放分量为 0 会压出退化几何（法线全零、包围盒没厚度），手柄跟着抓不住；负值翻转
+ *  面朝向、打乱光照，而 P1 没有镜像需求。两头都挡在正区间内。 */
+const SCALE_RANGE = { min: 0.01, max: 100, default: 1 } as const;
+
 function vec3(value: unknown, fallback: Vec3): Vec3 {
   if (!Array.isArray(value) || value.length !== 3) return [...fallback];
   return [num(value[0], fallback[0]), num(value[1], fallback[1]), num(value[2], fallback[2])];
+}
+
+function scaleVec3(value: unknown): Vec3 {
+  const raw = vec3(value, [SCALE_RANGE.default, SCALE_RANGE.default, SCALE_RANGE.default]);
+  return [
+    clamp(raw[0], SCALE_RANGE.min, SCALE_RANGE.max, SCALE_RANGE.default),
+    clamp(raw[1], SCALE_RANGE.min, SCALE_RANGE.max, SCALE_RANGE.default),
+    clamp(raw[2], SCALE_RANGE.min, SCALE_RANGE.max, SCALE_RANGE.default),
+  ];
 }
 
 function parseTransform(value: unknown): PrevizTransform {
@@ -195,14 +241,15 @@ function parseTransform(value: unknown): PrevizTransform {
   return {
     position: vec3(source.position, [0, 0, 0]),
     rotation: vec3(source.rotation, [0, 0, 0]),
-    scale: vec3(source.scale, [1, 1, 1]),
+    scale: scaleVec3(source.scale),
   };
 }
 
 /**
  * 把一条不可信的对象记录读成 `PrevizObject`。**只有两种情况返回 null**：没有可用的
  * id，或者 kind 不认识——这两样都没法修，留着只会在场景图同步时变成幽灵条目。
- * 其余字段一律就地修复回默认值：用户手改坏一个数字，不该让整个人物凭空消失。
+ * 其余字段一律就地修复回默认值或夹回合法区间：用户手改坏一个数字，不该让整个人物
+ * 凭空消失，但也不能让 `focalMm: 0` 这种值把 three 的投影矩阵算成 NaN。
  */
 function parseObject(raw: unknown): PrevizObject | null {
   if (raw === null || typeof raw !== 'object') return null;
@@ -210,25 +257,38 @@ function parseObject(raw: unknown): PrevizObject | null {
 
   const id = typeof source.id === 'string' && source.id.length > 0 ? source.id : null;
   if (!id) return null;
+  if (!isMember(OBJECT_KINDS, source.kind)) return null;
+  const kind = source.kind;
 
   const base = {
     id,
-    name: typeof source.name === 'string' ? source.name : id,
+    // 名字空着或缺失都回落到类型基名：图层面板要按名字列条目，空串是一行看不见的
+    // 东西，uuid 则是一串对用户没有意义的字符。
+    name:
+      typeof source.name === 'string' && source.name.trim().length > 0
+        ? source.name
+        : PREVIZ_OBJECT_BASE_NAME[kind],
     transform: parseTransform(source.transform),
     // 缺字段时按「可见、未锁定」兜底：反过来兜会让读进来的场景整个是空的，
     // 用户看到的是「我的东西全没了」而不是「有一项属性没读出来」。
-    visible: source.visible === false ? false : true,
+    visible: source.visible !== false,
     locked: source.locked === true,
   };
 
-  switch (source.kind) {
+  switch (kind) {
     case 'character':
       return {
         ...base,
         kind: 'character',
         bodyType: isMember(BODY_TYPES, source.bodyType) ? source.bodyType : 'average',
-        heightCm: num(source.heightCm, 175),
-        basePoseId: typeof source.basePoseId === 'string' ? source.basePoseId : 'standing',
+        heightCm: clamp(
+          source.heightCm,
+          PREVIZ_MIN_HEIGHT_CM,
+          PREVIZ_MAX_HEIGHT_CM,
+          PREVIZ_DEFAULT_HEIGHT_CM,
+        ),
+        basePoseId:
+          typeof source.basePoseId === 'string' ? source.basePoseId : PREVIZ_DEFAULT_POSE_ID,
         poseAdjust: {
           pitch: num((source.poseAdjust as { pitch?: unknown } | undefined)?.pitch, 0),
           turn: num((source.poseAdjust as { turn?: unknown } | undefined)?.turn, 0),
@@ -239,8 +299,18 @@ function parseObject(raw: unknown): PrevizObject | null {
       return {
         ...base,
         kind: 'camera',
-        focalMm: num(source.focalMm, 50),
-        aperture: num(source.aperture, 2.8),
+        focalMm: clamp(
+          source.focalMm,
+          PREVIZ_FOCAL_MM.min,
+          PREVIZ_FOCAL_MM.max,
+          PREVIZ_FOCAL_MM.default,
+        ),
+        aperture: clamp(
+          source.aperture,
+          PREVIZ_APERTURE.min,
+          PREVIZ_APERTURE.max,
+          PREVIZ_APERTURE.default,
+        ),
         sensor: isMember(SENSORS, source.sensor) ? source.sensor : 'ff',
       };
     case 'light':
@@ -249,7 +319,12 @@ function parseObject(raw: unknown): PrevizObject | null {
         kind: 'light',
         lightType: isMember(LIGHT_TYPES, source.lightType) ? source.lightType : 'key',
         color: typeof source.color === 'string' ? source.color : '#ffffff',
-        intensity: num(source.intensity, 1),
+        intensity: clamp(
+          source.intensity,
+          INTENSITY_RANGE.min,
+          INTENSITY_RANGE.max,
+          INTENSITY_RANGE.default,
+        ),
       };
     case 'prop':
       return {
@@ -258,8 +333,6 @@ function parseObject(raw: unknown): PrevizObject | null {
         assetUrl: typeof source.assetUrl === 'string' ? source.assetUrl : '',
         assetFormat: isMember(ASSET_FORMATS, source.assetFormat) ? source.assetFormat : 'glb',
       };
-    default:
-      return null;
   }
 }
 
@@ -275,6 +348,8 @@ function parseTracks(raw: unknown, objectIds: ReadonlySet<string>): PrevizTrack[
     tracks.push({
       id: source.id,
       objectId: source.objectId,
+      // clips 只做浅拷贝，片段内部原样透传：片段校验是 P3 求值器落地时的事，
+      // 现在没有任何代码读它，提前写一遍只会和那时的真实需求对不上。
       clips: Array.isArray(source.clips) ? [...source.clips] : [],
     });
   }
@@ -297,20 +372,26 @@ export function parseScene(raw: unknown): PrevizScene {
   const fallback = createDefaultScene();
   const settings = (source.settings ?? {}) as Partial<PrevizSceneSettings>;
 
-  const objects = Array.isArray(source.objects)
-    ? source.objects.map(parseObject).filter((object): object is PrevizObject => object !== null)
-    : [];
-  const objectIds = new Set(objects.map((object) => object.id));
+  const objects: PrevizObject[] = [];
+  const objectIds = new Set<string>();
+  for (const entry of Array.isArray(source.objects) ? source.objects : []) {
+    const object = parseObject(entry);
+    // 同 id 的第二条直接丢（先到者留下）：场景图与 store 都按 id 取对象，留着等于让
+    // 两条记录互相覆盖，表现是「图层面板里有它，选中却改到了另一个」。
+    if (!object || objectIds.has(object.id)) continue;
+    objectIds.add(object.id);
+    objects.push(object);
+  }
 
   return {
     schemaVersion: PREVIZ_SCHEMA_VERSION,
     settings: {
       fps: PREVIZ_FPS,
       durationFrames: clampDuration(settings.durationFrames),
-      displayMode: isDisplayMode(settings.displayMode)
+      displayMode: isMember(DISPLAY_MODES, settings.displayMode)
         ? settings.displayMode
         : fallback.settings.displayMode,
-      outputAspect: isOutputAspect(settings.outputAspect)
+      outputAspect: isMember(OUTPUT_ASPECTS, settings.outputAspect)
         ? settings.outputAspect
         : fallback.settings.outputAspect,
     },
