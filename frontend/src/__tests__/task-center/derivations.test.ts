@@ -78,6 +78,34 @@ describe("displayLabel", () => {
       ),
     ).toBe("雨夜巷口 · 第二版");
   });
+  // review #447: 后端 freezone/scripts 传的 display_name 是写死中文（"生成草图 · EP1 / Beat 3"），
+  // 一度被当成业务内容标了 localizable=false，英文界面照样漏中文。这两条钉住重拼路径。
+  it("rebuilds freezone display names that are hardcoded Chinese on the backend", () => {
+    expect(
+      displayLabel(
+        sampleTask({
+          task_type: "sketch_regen",
+          episode: 1,
+          beat_num: 3,
+          display_name: "生成草图 · EP1 / Beat 3",
+        }),
+        t,
+      ),
+    ).toBe("草图重生成 · ep1 · beat 3");
+  });
+  it("keeps scene_name when rebuilding a scene-scoped label", () => {
+    expect(
+      displayLabel(
+        sampleTask({
+          task_type: "scene_360",
+          episode: 0,
+          display_name: "生成 360 全景 · 皇宫大殿",
+          metadata: { scene_name: "皇宫大殿" },
+        }),
+        t,
+      ),
+    ).toContain("皇宫大殿");
+  });
   it("composes stage asset labels from metadata", () => {
     expect(
       displayLabel(

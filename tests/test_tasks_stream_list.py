@@ -79,6 +79,57 @@ def test_stage_asset_task_display_name_includes_scene_and_step():
     assert payload["display_name"] == "场景资产 · 咖啡馆 · Master 生成全景"
 
 
+def test_backend_authored_display_name_stays_localizable():
+    """freezone / scripts 传的 display_name 是系统写死的中文，不是业务内容。
+
+    review #447：这里一度写成「metadata 里有 display_name 就 localizable=False」，
+    于是 "生成草图 · EP1 / Beat 3" 被当成用户自定义名，前端 displayLabel 原样透出，
+    英文界面的任务中心、完成通知和伙伴气泡继续显示中文。
+    """
+    from novelvideo.api.routes.tasks import _serialize_task
+    from novelvideo.task_state import TaskState
+
+    task = TaskState(
+        task_id="task-1",
+        task_type="sketch_regen",
+        project_id="proj_123",
+        episode=1,
+        beat_num=3,
+        status="queued",
+        # freezone.py:2053 的真实形状
+        metadata={
+            "task_family": "mainline_skill",
+            "task_label": "生成草图",
+            "display_name": "生成草图 · EP1 / Beat 3",
+        },
+    )
+
+    payload = _serialize_task(task)
+
+    assert payload["display_name"] == "生成草图 · EP1 / Beat 3"
+    assert payload["display_name_localizable"] is True
+
+
+def test_user_authored_display_name_opts_out_of_localization():
+    """真正的用户自定义名称由生产者显式标记退出本地化，翻译它反而是错的。"""
+    from novelvideo.api.routes.tasks import _serialize_task
+    from novelvideo.task_state import TaskState
+
+    task = TaskState(
+        task_id="task-2",
+        task_type="freezone_gen",
+        project_id="proj_123",
+        episode=0,
+        status="queued",
+        metadata={"display_name": "雨夜巷口 · 第二版", "display_name_user_content": True},
+    )
+
+    payload = _serialize_task(task)
+
+    assert payload["display_name"] == "雨夜巷口 · 第二版"
+    assert payload["display_name_localizable"] is False
+
+
 def test_serialize_task_rewrites_internal_result_paths_to_project_static_urls(tmp_path):
     from novelvideo.api.routes.tasks import _serialize_task
     from novelvideo.task_state import TaskState

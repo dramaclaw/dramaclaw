@@ -265,9 +265,15 @@ def _serialize_task(t: TaskState, *, ctx: ProjectContext | None = None) -> dict:
         "task_key": key,
         "task_type_label": task_type_label,
         "display_name": display_name,
-        # display_name 是我们按 task_type 拼出来的中文，前端在英文界面下要自己按
-        # task_type / metadata 重拼；调用方自带的 display_name 属于业务内容，原样透传。
-        "display_name_localizable": not metadata_display_name,
+        # display_name 一律是中文：要么这里按 task_type 拼，要么调用方
+        # (freezone / scripts 的 task_display) 传的写死中文，两者英文界面下都不能直接用，
+        # 所以默认可本地化，前端按 task_type / metadata 重拼。
+        #
+        # 只有真正的用户自定义名称（画布名、素材名之类）不能翻译，那种由生产者在
+        # metadata 里显式标 `display_name_user_content: True` 退出本地化。注意
+        # task_display 全部由服务端构造、请求体注入不进来，所以这个标记必须是后端
+        # 自己打的，不能改成读客户端字段。
+        "display_name_localizable": not bool(metadata.get("display_name_user_content")),
     }
 
 

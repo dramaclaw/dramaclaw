@@ -47,8 +47,14 @@ DEFAULT_VALUE = re.compile(r"defaultValue:\s*([\"'])(?:(?!\1).)*\1")
 
 
 
-def scan() -> dict[str, list[tuple[int, str]]]:
+def scan() -> tuple[dict[str, list[tuple[int, str]]], list[str]]:
+    """返回 (命中, 豁免标记错误)。
+
+    标记错误单独返回而不是并入命中：区间标记写错会让扫描器**少报**，
+    是关卡静默失效而不是文案回潮，必须无条件失败，不能被 allowlist 抵掉。
+    """
     hits: dict[str, list[tuple[int, str]]] = {}
+    marker_errors: list[str] = []
     for root, dirs, files in os.walk(FRONTEND_SRC):
         dirs[:] = [d for d in dirs if d != "node_modules"]
         if "__tests__" in root.split(os.sep):
@@ -65,15 +71,27 @@ def scan() -> dict[str, list[tuple[int, str]]]:
             source = BLOCK_COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), raw)
             found: list[tuple[int, str]] = []
             in_exempt_block = False
+            exempt_start_line = 0
             # 标记在原文里找、命中在剥注释后的文本里找：两边行号一一对应。
             for lineno, (raw_line, line) in enumerate(
                 zip(raw.split("\n"), source.split("\n")), 1
             ):
                 if EXEMPT_START.search(raw_line):
+                    if in_exempt_block:
+                        marker_errors.append(
+                            f"{path}:{lineno}: i18n-exempt-start 嵌套在第 "
+                            f"{exempt_start_line} 行开启的豁免块里（区间不支持嵌套）"
+                        )
                     in_exempt_block = True
+                    exempt_start_line = lineno
                     continue
                 if EXEMPT_END.search(raw_line):
+                    if not in_exempt_block:
+                        marker_errors.append(
+                            f"{path}:{lineno}: i18n-exempt-end 没有对应的 i18n-exempt-start"
+                        )
                     in_exempt_block = False
+                    exempt_start_line = 0
                     continue
                 if in_exempt_block:
                     continue
@@ -85,9 +103,16 @@ def scan() -> dict[str, list[tuple[int, str]]]:
                 stripped = DEFAULT_VALUE.sub("", stripped)
                 if CJK.search(stripped):
                     found.append((lineno, line.strip()[:120]))
+            if in_exempt_block:
+                # 漏写结束标记时，该行之后整个文件的中文都被跳过，扫描依然 0 命中通过——
+                # 这是棘轮静默失效，比漏一处文案严重得多，直接报错。
+                marker_errors.append(
+                    f"{path}:{exempt_start_line}: i18n-exempt-start 到文件结束都没有 "
+                    "i18n-exempt-end，其后所有中文都被静默跳过了"
+                )
             if found:
                 hits[path] = found
-    return hits
+    return hits, marker_errors
 
 
 def load_allowlist() -> dict[str, int]:
@@ -103,8 +128,20 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args(argv)
 
-    hits = scan()
+    hits, marker_errors = scan()
     counts = {path: len(v) for path, v in sorted(hits.items())}
+
+    # 标记写错会让扫描器少报，所以在任何模式下都先失败：`--write` 尤其不能在
+    # 区间破损的情况下把「少报后的计数」固化进 allowlist。
+    if marker_errors:
+        print("✖ i18n 豁免区间标记有误（会让检查静默跳过中文）:", file=sys.stderr)
+        for line in marker_errors:
+            print(f"  {line}", file=sys.stderr)
+        print(
+            "\n`// i18n-exempt-start` 必须有配对的 `// i18n-exempt-end`，且不支持嵌套。",
+            file=sys.stderr,
+        )
+        return 1
 
     if args.list:
         for path, entries in sorted(hits.items()):

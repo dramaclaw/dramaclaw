@@ -35,20 +35,25 @@ export const taskTypeLabel = (t: TaskState, tFn: TFn): string =>
   tFn(`tasks.types.${t.task_type}`, { defaultValue: t.task_type_label || t.task_type });
 
 export const displayLabel = (t: TaskState, tFn: TFn): string => {
-  // 调用方自带的 display_name 是业务内容（画布名、素材名之类），原样显示；
-  // display_name_localizable 说明那串只是后端按 task_type 拼的中文，这里重拼。
+  // display_name_localizable === false 表示这串是用户自定义名称（画布名、素材名之类），
+  // 翻译反而是错的，原样显示。后端默认给 true：它自己拼的和 freezone/scripts 的
+  // task_display 传的都是写死中文，英文界面下必须在这里按 task_type / metadata 重拼。
   if (t.display_name && t.display_name_localizable === false) return t.display_name;
 
   const typeLabel = taskTypeLabel(t, tFn);
+  const sceneName = metaString(t, "scene_name");
 
   if (t.task_type === "stage_asset") {
     const step = metaString(t, "step");
-    const parts = [typeLabel, metaString(t, "scene_name")];
+    const parts = [typeLabel, sceneName];
     if (step) parts.push(tFn(`tasks.stageAssetSteps.${step}`, { defaultValue: step }));
     return parts.filter(Boolean).join(" · ");
   }
 
   const parts = [typeLabel];
+  // 场景任务（360 全景等）的 display_name 原本是「生成 360 全景 · 场景名」，重拼时
+  // 不带上 scene_name 就把场景名弄丢了。scene_name 是场景标识，不翻译。
+  if (sceneName) parts.push(sceneName);
   if (t.episode > 0) parts.push(`ep${t.episode}`);
   if (t.beat_num != null) parts.push(`beat ${t.beat_num}`);
   if (t.scope && !isInternalRunScope(t.scope)) parts.push(t.scope);
