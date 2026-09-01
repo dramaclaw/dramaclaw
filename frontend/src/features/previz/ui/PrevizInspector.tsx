@@ -13,8 +13,6 @@ import {
 } from "@/features/previz/domain/camera";
 import {
   PREVIZ_HEIGHT_CM_RANGE,
-  PREVIZ_MAX_HEIGHT_CM,
-  PREVIZ_MIN_HEIGHT_CM,
   type PrevizObjectPatch,
 } from "@/features/previz/domain/objects";
 import { PREVIZ_POSES, PREVIZ_POSE_LABEL } from "@/features/previz/domain/poses";
@@ -37,18 +35,47 @@ const FIELD =
   "h-8 w-full rounded-md border border-white/10 bg-white/[0.04] px-2 text-[12px] text-white/90 outline-none focus:border-white/25";
 const LABEL = "mb-1 block text-[11px] text-white/45";
 
-const AXES = ["x", "y", "z"] as const;
-const CHANNELS = ["position", "rotation", "scale"] as const;
-const BODY_TYPES: readonly BodyType[] = ["slim", "average", "heavy"];
-const POSE_ADJUST_AXES = ["pitch", "turn", "lean"] as const;
-
 type PoseAdjustAxis = keyof PrevizCharacter["poseAdjust"];
 
 /**
- * 空串是「正在编辑」而不是「设成 0」：`Number("")` 是 0，逐键放行会在用户删完第一个
- * 数字的瞬间就把字段改掉（位置跳回原点、身高压到下界），第二个数字根本没机会敲。
- * 非有限值同理——喂给 three 的 fov / 矩阵一旦沾上 NaN，画面全黑，而病因离故障点隔着
+ * 三张列表都从 `Record<T, true>` 取键，而不是写成裸数组字面量：`BodyType` 多一个体型、
+ * `PrevizTransform` 多一个通道、`poseAdjust` 多一根轴时，这里编译期就红，不会静默少一个
+ * 下拉项 / 少一组输入框——少掉的那个字段在界面上根本不存在，用户改不到，落盘的值也就
+ * 永远停在默认值上，没有任何报错。（`PrevizViewportHud` 的 `inOrder`、工具栏与图层面板的
+ * `Record<Kind, Icon>` 是同一套写法；非整数字符串键的 `Object.keys` 保持书写顺序，
+ * 所以左边的顺序就是屏幕上的顺序。）
+ */
+const CHANNELS = Object.keys({
+  position: true,
+  rotation: true,
+  scale: true,
+} satisfies Record<keyof PrevizTransform, true>) as readonly (keyof PrevizTransform)[];
+const BODY_TYPES = Object.keys({
+  slim: true,
+  average: true,
+  heavy: true,
+} satisfies Record<BodyType, true>) as readonly BodyType[];
+const POSE_ADJUST_AXES = Object.keys({
+  pitch: true,
+  turn: true,
+  lean: true,
+} satisfies Record<PoseAdjustAxis, true>) as readonly PoseAdjustAxis[];
+
+/** 三根轴的书写顺序就是 `Vec3` 的下标顺序，`patchTransform` 靠这个把 index 当轴用。 */
+const AXES = ["x", "y", "z"] as const;
+
+/**
+ * 空串是「正在编辑」而不是「设成 0」：`Number("")` 是 0，逐键放行会在用户删完最后一个
+ * 数字的瞬间就把字段改掉——位置跳回原点、身高压到下界 120、焦距跳回默认 50。
+ * 非有限值同理，喂给 three 的 fov / 矩阵一旦沾上 NaN，画面全黑，而病因离故障点隔着
  * 好几个文件。
+ *
+ * 这道守卫只保证「删空的那一瞬间不改数据」，**不**等于「清空再重输就能输对」。这些框
+ * 全是受控的，本组件也不留编辑中的字符串，于是被守卫拦下的那次 change 之后 React 会把
+ * DOM 值还原成 prop，接着敲的字符是**追加**在旧值后面的。实测（身高默认 175）：清空再
+ * 敲 `130` 得到的是 220。全选覆盖输入正常，逐位退格也正常，只有「先删空再重输」会走偏。
+ * 要修得让面板自己存一份编辑中的原始字符串（聚焦期间不从 prop 回灌），那是另一件事，
+ * 不是这道守卫能顺手办掉的。
  */
 function readNumber(raw: string): number | null {
   if (raw.trim() === "") return null;
@@ -83,6 +110,13 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
   const light = selected.kind === "light" ? selected : null;
   const prop = selected.kind === "prop" ? selected : null;
 
+  /**
+   * 三个通道共用一份：只把改动的那一轴换掉，另外两轴与另外两个通道原样带回去。
+   * 这里**不**夹取——`scale` 在 domain 里是有区间的（`PREVIZ_SCALE_RANGE`，1e-4..100），
+   * 但夹取由 store 的 `normalizeObject`（走 `parseObject`）统一做，面板不重复一份：
+   * 两份夹取迟早会对边界值给出不同答案，而 store 那份是所有写入路径（手柄拖拽、
+   * 撤销重做、读盘）都必经的，面板这份只覆盖键盘输入这一条。
+   */
   const patchTransform = (channel: keyof PrevizTransform, axis: 0 | 1 | 2, raw: string) => {
     const value = readNumber(raw);
     if (value === null) return;
@@ -143,8 +177,8 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
               id={`${prefix}-height`}
               className={FIELD}
               type="number"
-              min={PREVIZ_MIN_HEIGHT_CM}
-              max={PREVIZ_MAX_HEIGHT_CM}
+              min={PREVIZ_HEIGHT_CM_RANGE.min}
+              max={PREVIZ_HEIGHT_CM_RANGE.max}
               value={character.heightCm}
               onChange={(event) => {
                 const value = readNumber(event.target.value);
@@ -180,6 +214,10 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
               value={character.basePoseId}
               onChange={(event) => onChange({ basePoseId: event.target.value })}
             >
+              {/* 标签是硬编码中文，不走 i18n：`PREVIZ_POSE_LABEL` 与 viewer-kit 的
+                  `POSE_LABELS` 有棘轮对齐（`poses.test.ts` 盯着），两边必须逐字一致。
+                  代价是英文界面下这个下拉框里也是中文——这是已知取舍，不是 i18n 漏了，
+                  别顺手改成 `t()`。 */}
               {PREVIZ_POSES.map((pose) => (
                 <option key={pose} value={pose}>
                   {PREVIZ_POSE_LABEL[pose]}
