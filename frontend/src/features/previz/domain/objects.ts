@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { v4 as uuidv4 } from 'uuid';
 
+import type { PrevizRange } from './camera';
 import { PREVIZ_DEFAULT_POSE_ID } from './poses';
 import type {
   PrevizCamera,
@@ -16,6 +17,18 @@ import type {
 export const PREVIZ_DEFAULT_HEIGHT_CM = 175;
 export const PREVIZ_MIN_HEIGHT_CM = 120;
 export const PREVIZ_MAX_HEIGHT_CM = 220;
+
+/**
+ * 身高区间，即 `clampToRange` 要的那个形状。三个边界各自还有直接的调用方，所以边界
+ * 常量继续单独导出；但「区间」这个组合形状有两处要用（`domain/scene.ts` 的 parseScene
+ * 夹 heightCm、`engine/sceneGraph.ts` 按身高定占位胶囊），拼在这里才不会出现两份逐字
+ * 相同的对象字面量——数字没抄第二遍，形状抄了也一样是重复。
+ */
+export const PREVIZ_HEIGHT_CM_RANGE: PrevizRange = {
+  min: PREVIZ_MIN_HEIGHT_CM,
+  max: PREVIZ_MAX_HEIGHT_CM,
+  default: PREVIZ_DEFAULT_HEIGHT_CM,
+};
 
 /**
  * 硬编码中文，与 `nodeDisplay.ts` 的 `DEFAULT_NODE_DISPLAY_NAME` 同一个取舍：
