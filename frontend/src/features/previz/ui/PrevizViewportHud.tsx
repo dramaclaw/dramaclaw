@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 import { Crosshair, RotateCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -10,11 +10,17 @@ import { PREVIZ_VIEW_DIRECTIONS, type PrevizViewDirection } from "@/features/pre
 import { cn } from "@/lib/utils";
 
 /**
- * 计划书把这个类型放在 `engine/gizmo.ts`（TransformControls 接线），但那个模块还没落地，
- * 而 HUD 只是把用户选的模式原样交出去，不需要 three。先在这里定义，等 `engine/gizmo.ts`
- * 建起来后由它 re-export 或反过来 import 这里——总之只保留一份定义。
+ * **临时定义，`GizmoMode` 落进 `domain/scene.ts` 时必须整块删掉**，把下面四个使用点
+ * （`GIZMO_MODES` 的类型参数、props 里的 `gizmoMode` 与 `onGizmoMode`）改成 import。
+ *
+ * 计划书让这个类型从 `engine/gizmo.ts` 来，但那个模块还没落地，而 HUD 只是把用户选的
+ * 模式原样交出去、不需要 three。这里刻意**不导出**：结构相同的两个联合类型互相可赋值，
+ * 真身建起来之后这份副本继续留着也**一个编译错误都不会有**，而 `Record<PrevizGizmoMode, true>`
+ * 的穷尽性守卫会安安静静地守着这份过时的定义——给手柄加第四种模式时真身那边全绿、
+ * HUD 这边静默少一个按钮。不导出至少保证它长不出第二个消费者，删除永远是单文件改动。
+ * 外部要引用这几个 prop 的类型，走 `PrevizViewportHudProps["gizmoMode"]`。
  */
-export type PrevizGizmoMode = "translate" | "rotate" | "scale";
+type PrevizGizmoMode = "translate" | "rotate" | "scale";
 
 /**
  * Record 而不是数组字面量：漏写或写错一个成员在这里编译期就报错，不会静默少一个 chip。
@@ -53,6 +59,23 @@ const CHIP_ON = "bg-white/15 text-white hover:bg-white/20";
 const GROUP = "pointer-events-auto flex items-center gap-1 rounded-lg bg-black/50 p-1 backdrop-blur-sm";
 
 /**
+ * 每一组都要有名字：HUD 是浮在画布上的一条散装控件，读屏顺着读下来是「实体 半透 粘土
+ * 前 后 左 右 上 下 聚焦 重置 移动 旋转 缩放」——十四个按钮连成一串，"缩放" 到底是手柄
+ * 模式还是画幅缩放全靠猜。`role="group"` + 名字把这四段分开，与 `PrevizLayerPanel` 里
+ * 按对象类型分组的做法同源。
+ *
+ * 写成组件而不是在四个 `<div>` 上各挂一遍 `role` / `aria-label`：漏挂一处没有任何编译期
+ * 或运行期信号，只有读屏用户会撞上，而这正是最不可能有人手测的那条路径。
+ */
+function HudGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div role="group" aria-label={label} className={GROUP}>
+      {children}
+    </div>
+  );
+}
+
+/**
  * `disabled:pointer-events-auto` 是故意覆盖 buttonVariants 的 `disabled:pointer-events-none`：
  * 禁用的原因只写在 `title` 里，而 pointer-events: none 的元素不参与命中测试，浏览器不会
  * 派 hover，原生 tooltip 永远弹不出来，用户就只剩一个没有解释的灰按钮。原生 `disabled`
@@ -84,7 +107,7 @@ export function PrevizViewportHud({
       按下拖拽会绕不动视角。
     */
     <div className="pointer-events-none absolute inset-x-0 top-3 flex flex-wrap items-center justify-center gap-2 px-4">
-      <div className={GROUP}>
+      <HudGroup label={t("previz.hud.group.display")}>
         {DISPLAY_MODES.map((mode) => (
           <Button
             key={mode}
@@ -98,9 +121,9 @@ export function PrevizViewportHud({
             {t(`previz.hud.display.${mode}`)}
           </Button>
         ))}
-      </div>
+      </HudGroup>
 
-      <div className={GROUP}>
+      <HudGroup label={t("previz.hud.group.view")}>
         {PREVIZ_VIEW_DIRECTIONS.map((direction) => (
           <Button
             key={direction}
@@ -139,9 +162,9 @@ export function PrevizViewportHud({
         >
           <RotateCcw className="h-3.5 w-3.5" />
         </Button>
-      </div>
+      </HudGroup>
 
-      <div className={GROUP}>
+      <HudGroup label={t("previz.hud.group.gizmo")}>
         {GIZMO_MODES.map((mode) => (
           <Button
             key={mode}
@@ -155,9 +178,9 @@ export function PrevizViewportHud({
             {t(`previz.hud.gizmo.${mode}`)}
           </Button>
         ))}
-      </div>
+      </HudGroup>
 
-      <div className={GROUP}>
+      <HudGroup label={t("previz.hud.group.aspect")}>
         {/*
           无障碍名字只由这个 sr-only <label> 提供，不再额外挂一份 aria-label——两处真相
           改坏其中一处，另一处会把问题遮住。
@@ -178,7 +201,7 @@ export function PrevizViewportHud({
             </option>
           ))}
         </select>
-      </div>
+      </HudGroup>
     </div>
   );
 }
