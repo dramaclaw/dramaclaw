@@ -29,8 +29,34 @@ export const PREVIZ_INTENSITY_RANGE = { min: 0, max: 10, default: 1 } as const;
 /**
  * 缩放分量区间。为 0 会压出退化几何（法线全零、包围盒没厚度），手柄跟着抓不住；
  * 负值翻转面朝向、打乱光照，而 P1 没有镜像需求。两头都挡在正区间内。
+ *
+ * 下界取 1e-4 而不是「刚好不退化」：`assetFormat` 收了 'obj'，而 OBJ 不带单位元数据，
+ * 一个按毫米建模的道具进到米制场景就得靠 0.001 才对得上——夹在 0.01 的后果不是报错，
+ * 是每次重新读场景都把它悄悄放大十倍。1e-4 离退化仍然很远：1 单位的网格缩到 0.1 mm，
+ * float32 还剩六七位有效数字，法线与包围盒都照常算得出来。
+ * 上界 100 挡的是另一回事——不是单位换算，是拖坏的手柄：包围盒是取景距离
+ * （`view.ts` 的 `boundsRadius` / `framingDistance`）的输入，一个失控的大值会把镜头推到
+ * 看不见场景的地方。220 cm 的人物放大 100 倍已是 220 m，超过任何预演场景的尺度，
+ * 再大只可能是错值。两头不对称是故意的：下界服务导入时的单位换算，上界服务交互里的
+ * 失控值，本来就是两件事，没有理由取成对称区间。
  */
-export const PREVIZ_SCALE_RANGE = { min: 0.01, max: 100, default: 1 } as const;
+export const PREVIZ_SCALE_RANGE = { min: 1e-4, max: 100, default: 1 } as const;
+
+/**
+ * 姿势微调三轴的区间，单位度，零点是基础姿势本身。取值不是拍的：照抄参照实现那三条
+ * 滑杆（见 `output/previz-research/REPORT.md`「创建人物对话框」一节的属性表：
+ * 前倾 -30..45 / 转身 -60..60 / 侧倾 -35..35）。这三个角分别是髋部弯曲、躯干扭转、
+ * 侧向倾斜，超出区间的值木偶做不出来，只会把关节拧穿——`lean: 1e9` 不产生 NaN，
+ * 但它渲染出来是个绕着自己转了两百万圈的人。三条区间各不对称也是照抄的：
+ * 人向前屈得比向后仰得多。
+ */
+export const PREVIZ_POSE_ADJUST_RANGE: Readonly<
+  Record<keyof PrevizCharacter['poseAdjust'], PrevizRange>
+> = {
+  pitch: { min: -30, max: 45, default: 0 },
+  turn: { min: -60, max: 60, default: 0 },
+  lean: { min: -35, max: 35, default: 0 },
+};
 
 export type BodyType = 'slim' | 'average' | 'heavy';
 export type DisplayMode = 'solid' | 'translucent' | 'clay';
@@ -253,6 +279,16 @@ function scaleVec3(value: unknown): Vec3 {
   ];
 }
 
+/** 三轴各自夹回 `PREVIZ_POSE_ADJUST_RANGE`：越界的角度不会算出 NaN，只会拧穿关节。 */
+function parsePoseAdjust(value: unknown): PrevizCharacter['poseAdjust'] {
+  const source = (value ?? {}) as Record<string, unknown>;
+  return {
+    pitch: clampRange(source.pitch, PREVIZ_POSE_ADJUST_RANGE.pitch),
+    turn: clampRange(source.turn, PREVIZ_POSE_ADJUST_RANGE.turn),
+    lean: clampRange(source.lean, PREVIZ_POSE_ADJUST_RANGE.lean),
+  };
+}
+
 function parseTransform(value: unknown): PrevizTransform {
   const source = (value ?? {}) as Partial<PrevizTransform>;
   return {
@@ -301,11 +337,7 @@ function parseObject(raw: unknown): PrevizObject | null {
         heightCm: clampRange(source.heightCm, HEIGHT_CM_RANGE),
         basePoseId:
           typeof source.basePoseId === 'string' ? source.basePoseId : PREVIZ_DEFAULT_POSE_ID,
-        poseAdjust: {
-          pitch: num((source.poseAdjust as { pitch?: unknown } | undefined)?.pitch, 0),
-          turn: num((source.poseAdjust as { turn?: unknown } | undefined)?.turn, 0),
-          lean: num((source.poseAdjust as { lean?: unknown } | undefined)?.lean, 0),
-        },
+        poseAdjust: parsePoseAdjust(source.poseAdjust),
       };
     case 'camera':
       return {

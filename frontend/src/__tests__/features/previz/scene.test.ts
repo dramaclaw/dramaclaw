@@ -7,6 +7,7 @@ import {
   PREVIZ_FPS,
   PREVIZ_INTENSITY_RANGE,
   PREVIZ_MAX_DURATION_FRAMES,
+  PREVIZ_POSE_ADJUST_RANGE,
   PREVIZ_SCALE_RANGE,
   PREVIZ_SCHEMA_VERSION,
   PrevizSceneVersionError,
@@ -235,19 +236,70 @@ describe("parseScene field hygiene", () => {
     expect(intensityOf(2.5)).toBe(2.5);
   });
 
+  const scaleOf = (scale: unknown) => {
+    const parsed = parseScene({
+      objects: [{ id: "a", kind: "prop", transform: { scale } }],
+    });
+    return parsed.objects[0]?.transform.scale;
+  };
+
   // 缩放分量为 0 会压出退化几何，手柄也就此抓不住，只能重开场景才能救回来。
   it("keeps every scale component out of the degenerate range", () => {
-    const scaleOf = (scale: unknown) => {
-      const parsed = parseScene({
-        objects: [{ id: "a", kind: "prop", transform: { scale } }],
-      });
-      return parsed.objects[0]?.transform.scale;
-    };
-
     const { min, max, default: fallback } = PREVIZ_SCALE_RANGE;
     expect(scaleOf([0, 0, 0])).toEqual([min, min, min]);
     expect(scaleOf([-2, 500, NaN])).toEqual([min, max, fallback]);
     expect(scaleOf([2, 3, 4])).toEqual([2, 3, 4]);
+  });
+
+  // 下界必须容得下单位换算，不只是「不退化」：assetFormat 收 'obj'，而 OBJ 不带单位
+  // 元数据，一个按毫米建模的道具靠 0.001 才对得上米制场景。夹在 0.01 不会报错，只会
+  // 在每次重新读场景时把它悄悄放大十倍——这条断言就是钉住那个十倍。
+  it("keeps a millimetre-authored prop's scale instead of inflating it", () => {
+    expect(scaleOf([0.001, 0.001, 0.001])).toEqual([0.001, 0.001, 0.001]);
+  });
+
+  // 三轴各有各的区间（见 PREVIZ_POSE_ADJUST_RANGE 的注释：抄自参照实现的三条滑杆）。
+  // 越界的角度不产生 NaN，所以不夹也不崩；夹是因为 lean: 1e9 渲染出来是个把关节拧穿、
+  // 绕自己转了两百万圈的人，而这是三轴里唯一还没做数值卫生的一处。
+  it("clamps each poseAdjust axis into its own range", () => {
+    const adjustOf = (poseAdjust: unknown) => {
+      const parsed = parseScene({ objects: [{ id: "a", kind: "character", poseAdjust }] });
+      const character = parsed.objects[0];
+      if (character?.kind !== "character") throw new Error("expected a character");
+      return character.poseAdjust;
+    };
+
+    const { pitch, turn, lean } = PREVIZ_POSE_ADJUST_RANGE;
+
+    expect(adjustOf({ pitch: 1e9, turn: 1e9, lean: 1e9 })).toEqual({
+      pitch: pitch.max,
+      turn: turn.max,
+      lean: lean.max,
+    });
+    expect(adjustOf({ pitch: -1e9, turn: -1e9, lean: -1e9 })).toEqual({
+      pitch: pitch.min,
+      turn: turn.min,
+      lean: lean.min,
+    });
+    // 50° 刚好落在 turn 的区间里、落在 pitch 与 lean 的区间外——三轴共用同一段区间的话
+    // 这一条就红了。
+    expect(adjustOf({ pitch: 50, turn: 50, lean: 50 })).toEqual({
+      pitch: pitch.max,
+      turn: 50,
+      lean: lean.max,
+    });
+    // 非有限值与非数字回落到 0（区间的 default），与本文件其余字段同一约定。
+    expect(adjustOf({ pitch: NaN, turn: "10", lean: undefined })).toEqual({
+      pitch: 0,
+      turn: 0,
+      lean: 0,
+    });
+    expect(adjustOf(undefined)).toEqual({ pitch: 0, turn: 0, lean: 0 });
+    expect(adjustOf({ pitch: 12.5, turn: -20, lean: 3 })).toEqual({
+      pitch: 12.5,
+      turn: -20,
+      lean: 3,
+    });
   });
 
   it("keeps only the first object of a duplicated id", () => {
