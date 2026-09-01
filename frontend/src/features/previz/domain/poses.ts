@@ -35,17 +35,27 @@ export function isPrevizPoseId(value: unknown): value is PrevizPoseId {
   return typeof value === 'string' && (PREVIZ_POSES as readonly string[]).includes(value);
 }
 
+/** 一个姿势要用哪条 clip、定格在哪一秒。抽成具名类型是为了让引擎侧 hover
+ *  `PREVIZ_POSE_CLIPS[pose]` 时能看见下面这两行语义，而不是一个裸结构。 */
+export interface PrevizPoseClipConfig {
+  /** 候选 clip 名，按优先级排列——取第一个在模型里存在的。 */
+  readonly names: readonly string[];
+  /** 定格在动画的第几秒。 */
+  readonly sampleTime: number;
+}
+
 /**
- * 每个姿势在 Quaternius UAL 模型里的 clip 名候选，按优先级排列；`sampleTime` 是把
- * 该 clip 定格在第几秒当静态姿势用。整张表原样取自 viewer-kit 的
- * `QUATERNIUS_POSE_CLIPS`（viewerApp.ts:1090），那是对着同一份 GLB 调出来的。
- * **别自己重挑 clip 名**——UAL2 里有几百条 clip，名字相近的定格效果差很多。
+ * 每个姿势在 Quaternius UAL 模型里的 clip 名候选与采样时刻。整张表和 viewer-kit 的
+ * `QUATERNIUS_POSE_CLIPS`（`features/viewer-kit/three-d/engine/poses.ts`）是同一份——
+ * 那边是对着同一批 GLB 挑出来的，逐条的来历与两处取值特例（`lying` 的首帧、`pointing`
+ * 超出 clip 时长）都写在那个常量的注释里。**别自己重挑 clip 名。**
  *
- * 那个常量是 PlayCanvas 模块里的局部 const，import 不到（连测试都不行，一 import
- * 就把 playcanvas 拉起来），只能抄。`poses.test.ts` 有一条棘轮直接读 viewerApp.ts
- * 的源码文本比对，改这里就必须同步改那边。
+ * 这里保一份副本而不是 re-export：预演台的**运行时**代码不许引用 `features/viewer-kit/**`，
+ * 那边是 PlayCanvas 栈，一旦被引到就会把整个引擎拖进预演台的 chunk。测试没有这个顾虑——
+ * `engine/poses.ts` 是零 import 的纯数据模块，`poses.test.ts` 直接 import 它那份常量做
+ * `toEqual`。改这里就必须同步改那边，反之亦然。
  */
-export const PREVIZ_POSE_CLIPS: Record<PrevizPoseId, { names: string[]; sampleTime: number }> = {
+export const PREVIZ_POSE_CLIPS: Readonly<Record<PrevizPoseId, PrevizPoseClipConfig>> = {
   standing: { names: ['Idle_Loop', 'Idle_No_Loop', 'Idle_FoldArms_Loop', 'A_TPose'], sampleTime: 0.25 },
   talking: { names: ['Idle_Talking_Loop', 'Idle_Rail_Call', 'Yes'], sampleTime: 0.3 },
   arms_crossed: { names: ['Idle_FoldArms_Loop', 'Idle_No_Loop'], sampleTime: 0.25 },
@@ -65,7 +75,7 @@ export const PREVIZ_POSE_CLIPS: Record<PrevizPoseId, { names: string[]; sampleTi
 
 /** 硬编码中文，理由同 `PREVIZ_OBJECT_BASE_NAME`：姿势 id 会随场景落盘，标签只是展示。
  *  同样是 viewer-kit `POSE_LABELS` 的副本，同样由 `poses.test.ts` 的棘轮盯着。 */
-export const PREVIZ_POSE_LABEL: Record<PrevizPoseId, string> = {
+export const PREVIZ_POSE_LABEL: Readonly<Record<PrevizPoseId, string>> = {
   standing: '站立',
   talking: '交谈',
   arms_crossed: '抱臂',
@@ -86,11 +96,14 @@ export const PREVIZ_POSE_LABEL: Record<PrevizPoseId, string> = {
 /**
  * 在模型实际带的 clip 名集合里挑第一个命中的候选。全都没有时返回 null——
  * 调用方据此回落到占位几何体，而不是抛异常把整个场景搭建流程炸掉。
- * 姿势 id 本身不认识（场景是落盘数据，旧文件可能带着已删掉的 id）时同样返回 null，
- * 而不是在缺表项上抛 TypeError。
+ *
+ * `pose` 收 `string` 而不是 `PrevizPoseId`：真正的入参来自落盘的场景
+ * （`PrevizCharacter.basePoseId` 就是 `string`，旧文件可能带着已删掉的 id），
+ * 收窄成联合类型只会逼调用点写 cast，把守卫的作用又还回去。认不出的 id 走同一条
+ * null 回落，而不是在缺失的表项上抛 TypeError。
  */
 export function resolvePoseClipName(
-  pose: PrevizPoseId,
+  pose: string,
   available: ReadonlySet<string>,
 ): string | null {
   const config = isPrevizPoseId(pose) ? PREVIZ_POSE_CLIPS[pose] : undefined;
