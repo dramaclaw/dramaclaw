@@ -43,6 +43,17 @@ const webglRenderers: FakeWebGLRenderer[] = [];
 /** 打开后所有 `setFromObject()` 都交出空盒，模拟「节点下面还没有任何几何体」。 */
 let boxIsEmpty = false;
 
+/**
+ * 地面取点时射线打在 y=0 平面上的位置。null 表示射线与地面平行（相机平视时的真实
+ * 情况），`Ray.intersectPlane` 这时返回 null——被测代码必须扛得住。
+ */
+let groundHit: Vec3 | null = [0, 0, 0];
+function rayPlaneHit(target: { set: (x: number, y: number, z: number) => unknown }) {
+  if (!groundHit) return null;
+  target.set(groundHit[0], groundHit[1], groundHit[2]);
+  return target;
+}
+
 vi.mock('three', () => {
   class Vector2 {
     constructor(
@@ -163,6 +174,25 @@ vi.mock('three', () => {
     CapsuleGeometry: FakeGeometry,
     ConeGeometry: FakeGeometry,
     SphereGeometry: FakeGeometry,
+    BufferGeometry: class extends FakeGeometry {
+      setFromPoints = vi.fn(() => this);
+    },
+    LineBasicMaterial: FakeMaterialImpl,
+    MeshBasicMaterial: FakeMaterialImpl,
+    Line: class extends Object3D {
+      constructor(
+        public geometry: FakeGeometry,
+        public material: FakeMaterialImpl,
+      ) {
+        super();
+      }
+    },
+    Plane: class {
+      constructor(
+        public normal: unknown = null,
+        public constant = 0,
+      ) {}
+    },
     BoxGeometry: FakeGeometry,
     MeshStandardMaterial: FakeMaterialImpl,
     PerspectiveCamera: class extends Object3D {
@@ -177,6 +207,7 @@ vi.mock('three', () => {
     Raycaster: class {
       setFromCamera = setFromCamera;
       intersectObjects = intersectObjects;
+      ray = { intersectPlane: (_plane: unknown, target: Vector3) => rayPlaneHit(target) };
     },
     WebGLRenderer: class {
       domElement = document.createElement('canvas');
@@ -305,6 +336,7 @@ beforeEach(() => {
   materials.length = 0;
   webglRenderers.length = 0;
   boxIsEmpty = false;
+  groundHit = [0, 0, 0];
   render.mockClear();
   setFromCamera.mockClear();
   intersectObjects.mockClear();
@@ -765,5 +797,114 @@ describe('PrevizRenderer 接场景图', () => {
     expect(gl.autoClear).toBe(true);
 
     instance.dispose();
+  });
+});
+
+describe('PrevizRenderer timeline', () => {
+  function sceneWithWalk(): PrevizScene {
+    const scene = createDefaultScene();
+    const object = createPrevizObject('character', scene.objects);
+    return {
+      ...scene,
+      objects: [object],
+      timeline: {
+        tracks: [
+          {
+            id: 'track',
+            objectId: object.id,
+            clips: [
+              {
+                id: 'clip',
+                kind: 'path' as const,
+                startFrame: 0,
+                endFrame: 120,
+                points: [
+                  { id: 'p0', u: 0, position: [0, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+                  { id: 'p1', u: 1, position: [10, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  it('moves the object to where the playhead says it is', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWithWalk();
+    instance.setScene(scene);
+
+    instance.setFrame(60);
+
+    const node = instance.nodeFor(scene.objects[0].id);
+    // 半程：两点之间的中点。
+    expect(node?.position.x).toBeCloseTo(5, 5);
+  });
+
+  it('re-applies the evaluated frame after a scene sync', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWithWalk();
+    instance.setScene(scene);
+    instance.setFrame(120);
+
+    // 一次无关的编辑（比如改了名字）会走 setScene → graph.sync，而 sync 每次都把
+    // 静态 transform 写回节点。求值结果不在 sync 之后重放一遍，播放中随便改点什么
+    // 人就瞬移回起点了。
+    instance.setScene({ ...scene, objects: [{ ...scene.objects[0], name: 'B' }] });
+
+    const node = instance.nodeFor(scene.objects[0].id);
+    expect(node?.position.x).toBeCloseTo(10, 5);
+  });
+
+  it('leaves objects without a track on their static transform', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const object = createPrevizObject('prop', scene.objects, {
+      transform: { position: [3, 0, 4], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    });
+    instance.setScene({ ...scene, objects: [object] });
+
+    instance.setFrame(60);
+
+    const node = instance.nodeFor(object.id);
+    expect([node?.position.x, node?.position.z]).toEqual([3, 4]);
+  });
+
+  it('asks for a repaint when the playhead moves', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(sceneWithWalk());
+    step();
+    render.mockClear();
+
+    instance.setFrame(30);
+    step();
+
+    // 按需重绘的循环这时是静止的；不主动请求一帧，播放头动了画面不动。
+    expect(render).toHaveBeenCalled();
+  });
+
+  it('projects a pointer onto the ground plane', async () => {
+    const { instance } = await createRenderer();
+    groundHit = [2, 0, -3];
+
+    expect(instance.groundPointAt(100, 100)).toEqual([2, 0, -3]);
+  });
+
+  it('returns null when the ray never meets the ground', async () => {
+    const { instance } = await createRenderer();
+    groundHit = null;
+
+    // 相机平视时射线与地面平行。返回一个瞎编的点，笔画上会多出一个乱跳的顶点。
+    expect(instance.groundPointAt(100, 100)).toBeNull();
+  });
+
+  it('refuses to evaluate or pick after dispose', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(sceneWithWalk());
+    instance.dispose();
+
+    expect(() => instance.setFrame(60)).not.toThrow();
+    expect(instance.groundPointAt(100, 100)).toBeNull();
   });
 });

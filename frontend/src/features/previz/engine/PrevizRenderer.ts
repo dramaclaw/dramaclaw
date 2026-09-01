@@ -4,7 +4,8 @@ import type * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import { createDomCaptureCanvas, renderCapture } from '../capture/renderCapture';
-import { aspectRatio } from '../domain/camera';
+import { aspectRatio, DEG_TO_RAD } from '../domain/camera';
+import { evaluateSceneAt } from '../domain/evaluate';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
 import type { PrevizScene, PrevizTransform, Vec3 } from '../domain/scene';
 import {
@@ -19,6 +20,7 @@ import {
 } from '../domain/view';
 import { monitorViewportRect, syncMonitorCamera } from './cameraRig';
 import { CharacterRigFactory } from './characterRig';
+import { PrevizPathPreview } from './pathPreview';
 import { PrevizGizmo, type GizmoMode, type TransformControlsLike } from './gizmo';
 import { PropLoader } from './propLoader';
 import { PREVIZ_PLACEHOLDER_RADIUS, PrevizSceneGraph, type ThreeModule } from './sceneGraph';
@@ -56,6 +58,10 @@ export class PrevizRenderer {
   private monitorCamera: THREE.PerspectiveCamera | null = null;
   /** 右下角监看当前看的是哪个机位。null 就是不画监看。 */
   private activeCameraId: string | null = null;
+  /** 播放头当前帧。场景灌进来时按它解算一次，之后每次移动播放头再解算。 */
+  private currentFrame = 0;
+  private pathPreview: PrevizPathPreview | null = null;
+  private selectedClipId: string | null = null;
   /** 手柄拖完把变换交回上层（编辑器接到 store 的 updateObject）。 */
   onTransformCommit: ((objectId: string, transform: PrevizTransform) => void) | null = null;
 
@@ -156,6 +162,11 @@ export class PrevizRenderer {
       onCommit: (objectId, transform) => instance.onTransformCommit?.(objectId, transform),
       onChange: () => instance.requestRender(),
     });
+    // 轨迹预览挂在 scene 而不是 objectRoot 下：objectRoot 是拾取与「框全场景」的取值
+    // 范围，曲线挂进去会被射线命中（点轨迹选中人物），也会把包围盒撑到整条路径那么大。
+    const previewRoot = new three.Group();
+    scene.add(previewRoot);
+    instance.pathPreview = new PrevizPathPreview(three, previewRoot);
     instance.resize();
     instance.start();
     return instance;
@@ -193,6 +204,10 @@ export class PrevizRenderer {
     if (this.disposed) return;
     this.currentScene = scene;
     this.graph.sync(scene);
+    // 必须排在 sync 之后：sync 每次都把静态 transform 写回节点，先解算就会被它盖掉，
+    // 表现是播放中随便改点什么（改个名字都算）人就瞬移回起点。
+    this.applyEvaluatedFrame();
+    this.pathPreview?.sync(scene, this.selectedClipId);
     this.requestRender();
   }
 
@@ -210,6 +225,67 @@ export class PrevizRenderer {
   setActiveCamera(objectId: string | null): void {
     this.activeCameraId = objectId;
     this.requestRender();
+  }
+
+  /** 把播放头挪到某一帧，并把这一帧的解算结果写进场景。 */
+  setFrame(frame: number): void {
+    if (this.disposed) return;
+    this.currentFrame = frame;
+    this.applyEvaluatedFrame();
+    this.requestRender();
+  }
+
+  /** 高亮某条轨迹。传 null 取消高亮。 */
+  setSelectedClip(clipId: string | null): void {
+    if (this.disposed) return;
+    this.selectedClipId = clipId;
+    if (this.currentScene) this.pathPreview?.sync(this.currentScene, clipId);
+    this.requestRender();
+  }
+
+  /**
+   * 把画布上的一个点投到 y=0 的地面上，交出世界坐标。绘制轨迹靠它把二维笔画变成
+   * 三维路径。
+   *
+   * 射线与地面平行时（相机平视）返回 null：编个落点出来，笔画上会多一个乱跳的顶点。
+   */
+  groundPointAt(clientX: number, clientY: number): Vec3 | null {
+    if (this.disposed) return null;
+    if (!this.raycaster) this.raycaster = new this.three.Raycaster();
+    const rect = this.canvas.getBoundingClientRect();
+    const width = rect.width || 1;
+    const height = rect.height || 1;
+    const pointer = new this.three.Vector2(
+      ((clientX - rect.left) / width) * 2 - 1,
+      -((clientY - rect.top) / height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(pointer, this.camera);
+
+    const plane = new this.three.Plane(new this.three.Vector3(0, 1, 0), 0);
+    const hit = this.raycaster.ray.intersectPlane(plane, new this.three.Vector3());
+    return hit ? [hit.x, hit.y, hit.z] : null;
+  }
+
+  /**
+   * 把当前帧的解算结果写进各个节点。
+   *
+   * 只写位置与旋转：姿势（`poseId`）在 P3 里恒等于人物的 `basePoseId`，场景图每次 sync
+   * 已经刷过了，这里再刷一遍是重复的一份真相；P4 的动作片段会让它随帧变化，那时再接。
+   */
+  private applyEvaluatedFrame(): void {
+    const scene = this.currentScene;
+    if (!scene) return;
+    const evaluated = evaluateSceneAt(scene, this.currentFrame);
+    for (const [objectId, state] of evaluated) {
+      const node = this.graph.nodeFor(objectId);
+      if (!node) continue;
+      node.position.set(state.position[0], state.position[1], state.position[2]);
+      node.rotation.set(
+        state.rotation[0] * DEG_TO_RAD,
+        state.rotation[1] * DEG_TO_RAD,
+        state.rotation[2] * DEG_TO_RAD,
+      );
+    }
   }
 
   setGizmoMode(mode: GizmoMode): void {
@@ -478,6 +554,7 @@ export class PrevizRenderer {
     // 顺序反过来的话同一批几何体与材质会被 dispose 两遍。
     this.gizmo?.dispose();
     this.graph.dispose();
+    this.pathPreview?.dispose();
     this.scene.traverse((object) => {
       const mesh = object as THREE.Mesh;
       mesh.geometry?.dispose();
