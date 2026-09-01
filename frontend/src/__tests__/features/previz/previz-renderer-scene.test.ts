@@ -179,6 +179,8 @@ vi.mock('three', () => {
  * 那条用例自己把 `pendingGltf` 填上。
  */
 let pendingGltf: unknown = null;
+/** 同上，OBJ 那一路。物件默认也停在占位方块上。 */
+let pendingObj: unknown = null;
 const loadedUrls: string[] = [];
 
 vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
@@ -186,6 +188,15 @@ vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
     loadAsync = vi.fn((url: string) => {
       loadedUrls.push(url);
       return pendingGltf ? Promise.resolve(pendingGltf) : new Promise(() => {});
+    });
+  },
+}));
+
+vi.mock('three/examples/jsm/loaders/OBJLoader.js', () => ({
+  OBJLoader: class {
+    loadAsync = vi.fn((url: string) => {
+      loadedUrls.push(url);
+      return pendingObj ? Promise.resolve(pendingObj) : new Promise(() => {});
     });
   },
 }));
