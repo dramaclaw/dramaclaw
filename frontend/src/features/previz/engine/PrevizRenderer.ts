@@ -54,6 +54,11 @@ export class PrevizRenderer {
     controls.update();
 
     const instance = new PrevizRenderer(renderer, scene, camera, controls, canvas);
+    // 滚轮缩放走的是 OrbitControls 的 wheel 处理器：它自己就把 update() 调了、
+    // 把 _scale 消化干净，只留下这个 change 事件。tick 里那次 update() 只会拿到
+    // false，不订阅 change 的话相机确实动了、屏幕上却一帧都不重绘——缩放看起来
+    // 就是彻底失灵，直到下一次拖拽（阻尼余速能让 update() 连着返回 true）才补上。
+    controls.addEventListener('change', () => instance.requestRender());
     instance.resize();
     instance.start();
     return instance;
