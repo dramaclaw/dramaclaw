@@ -3,18 +3,22 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  clearPathPoints,
   clipById,
   frameToU,
+  insertPathPointAt,
   isPathClip,
   moveClip,
   pathClipAt,
   removeClip,
+  removePathPoint,
   removeTrack,
   splitClip,
   timelineSeconds,
   trackFor,
   trimClip,
   uToFrame,
+  updatePathPoint,
   upsertPathClip,
 } from '@/features/previz/domain/timeline';
 import {
@@ -253,5 +257,76 @@ describe('removeClip / removeTrack', () => {
 describe('default duration', () => {
   it('matches the schema default so a fresh clip fills the timeline', () => {
     expect(PREVIZ_DEFAULT_DURATION_FRAMES).toBe(120);
+  });
+});
+function pathClipOf(scene: PrevizScene, clipId: string): PrevizPathClip {
+  const found = scene.timeline.tracks[0].clips.find((clip) => clip.id === clipId);
+  return found as PrevizPathClip;
+}
+
+describe('insertPathPointAt', () => {
+  it('adds a keyframe on the curve at the playhead', () => {
+    const next = insertPathPointAt(sceneWithClip(), 'c', 30);
+    const points = pathClipOf(next, 'c').points;
+    expect(points).toHaveLength(4);
+    // u = 0.25 处曲线上的位置，不是相邻两点的中点凑数。
+    const inserted = points.find((point) => Math.abs(point.u - 0.25) < 1e-9);
+    expect(inserted).toBeDefined();
+    expect(inserted!.position[0]).toBeGreaterThan(0);
+    expect(inserted!.position[0]).toBeLessThan(5);
+  });
+
+  it('keeps the points sorted by u', () => {
+    const points = pathClipOf(insertPathPointAt(sceneWithClip(), 'c', 30), 'c').points;
+    expect(points.map((point) => point.u)).toEqual([...points.map((point) => point.u)].sort((a, b) => a - b));
+  });
+
+  it('replaces the point already sitting on that frame', () => {
+    // 同一帧上两个关键帧是无解的：谁生效取决于数组顺序。
+    const points = pathClipOf(insertPathPointAt(sceneWithClip(), 'c', 60), 'c').points;
+    expect(points).toHaveLength(3);
+  });
+
+  it('does nothing on a clip with no points', () => {
+    const empty = { ...drawnClip(), points: [] };
+    expect(pathClipOf(insertPathPointAt(sceneWithClip(empty), 'c', 30), 'c').points).toHaveLength(0);
+  });
+});
+
+describe('updatePathPoint', () => {
+  it('writes a new position', () => {
+    const next = updatePathPoint(sceneWithClip(), 'c', 'p1', { position: [1, 2, 3] });
+    expect(pathClipOf(next, 'c').points[1].position).toEqual([1, 2, 3]);
+  });
+
+  it('marks the point as edited when the rotation changes', () => {
+    const next = updatePathPoint(sceneWithClip(), 'c', 'p1', { rotation: [0, 90, 0] });
+    // 这个标记就是「朝向沿用至下一个手动调整过的点」的开关。
+    expect(pathClipOf(next, 'c').points[1].rotationEdited).toBe(true);
+  });
+
+  it('does not mark the point as edited for a position-only change', () => {
+    const next = updatePathPoint(sceneWithClip(), 'c', 'p1', { position: [1, 2, 3] });
+    expect(pathClipOf(next, 'c').points[1].rotationEdited).toBeUndefined();
+  });
+
+  it('hands the point back to the automatic rotation', () => {
+    const edited = updatePathPoint(sceneWithClip(), 'c', 'p1', { rotation: [0, 90, 0] });
+    const next = updatePathPoint(edited, 'c', 'p1', { rotation: null });
+    // 少了这条反向操作，手滑改过一次角度的点就永远脱离轨迹，只能删掉重插。
+    expect(pathClipOf(next, 'c').points[1].rotationEdited).toBe(false);
+  });
+});
+
+describe('removePathPoint / clearPathPoints', () => {
+  it('drops one point', () => {
+    expect(pathClipOf(removePathPoint(sceneWithClip(), 'c', 'p1'), 'c').points).toHaveLength(2);
+  });
+
+  it('empties the clip without deleting it', () => {
+    const next = clearPathPoints(sceneWithClip(), 'c');
+    expect(pathClipOf(next, 'c').points).toHaveLength(0);
+    // 「清空轨迹」清的是点，片段还在——参照实现也是这样，重画不用先建片段。
+    expect(next.timeline.tracks[0].clips).toHaveLength(1);
   });
 });

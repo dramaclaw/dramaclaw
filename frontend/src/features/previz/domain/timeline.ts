@@ -10,6 +10,7 @@ import {
   type PrevizPathPoint,
   type PrevizScene,
   type PrevizTrack,
+  type Vec3,
 } from './scene';
 
 /**
@@ -213,4 +214,93 @@ export function removeTrack(scene: PrevizScene, objectId: string): PrevizScene {
     ...scene,
     timeline: { tracks: scene.timeline.tracks.filter((track) => track.objectId !== objectId) },
   };
+}
+
+/** 两个 u 差在这以内就算同一个关键帧。120 帧的片段上 1e-6 远小于半帧。 */
+const U_EPSILON = 1e-6;
+
+/** 只改路径片段的点列，其余原样。四个点操作共用。 */
+function withPathPoints(
+  scene: PrevizScene,
+  clipId: string,
+  update: (points: PrevizPathPoint[]) => PrevizPathPoint[],
+): PrevizScene {
+  const found = clipById(scene, clipId);
+  if (!found || !isPathClip(found.clip)) return scene;
+  return withClips(scene, clipId, [{ ...found.clip, points: update(found.clip.points) }]);
+}
+
+/**
+ * 在播放头处插一个关键帧，值取**曲线上**的当前位置与朝向。取曲线而不是取相邻两点的
+ * 中点：插一个点不该改变轨迹的形状，只该把这一处钉住。
+ */
+export function insertPathPointAt(
+  scene: PrevizScene,
+  clipId: string,
+  frame: number,
+): PrevizScene {
+  const found = clipById(scene, clipId);
+  if (!found || !isPathClip(found.clip)) return scene;
+  const clip = found.clip;
+  // 空片段上没有曲线可采，插出来的点只能是原点——那是把对象拽走，不是插关键帧。
+  if (clip.points.length === 0) return scene;
+
+  const u = frameToU(clip, frame);
+  const inserted: PrevizPathPoint = {
+    id: uuidv4(),
+    u,
+    position: samplePathPosition(clip.points, u),
+    rotation: samplePathRotation(clip.points, u),
+  };
+
+  return withPathPoints(scene, clipId, (points) =>
+    sortedPathPoints([
+      // 同一帧上留两个关键帧是无解的：谁生效取决于数组顺序。
+      ...points.filter((point) => Math.abs(point.u - u) > U_EPSILON),
+      inserted,
+    ]),
+  );
+}
+
+/**
+ * 改一个轨迹点。带 `rotation` 的补丁会顺带把 `rotationEdited` 置上——这个标记就是
+ * 「该朝向沿用至下一个手动调整过朝向的点」的开关，由改朝向这个动作本身触发，而不是
+ * 让每个调用方自己记得传。
+ *
+ * `rotation: null` 是反向操作：把这个点交还给自动朝向。没有它，手滑改过一次角度的点
+ * 就永远脱离了轨迹，只能删掉重插。
+ */
+export function updatePathPoint(
+  scene: PrevizScene,
+  clipId: string,
+  pointId: string,
+  patch: { position?: Vec3; rotation?: Vec3 | null },
+): PrevizScene {
+  return withPathPoints(scene, clipId, (points) =>
+    points.map((point) =>
+      point.id === pointId
+        ? {
+            ...point,
+            ...(patch.position ? { position: patch.position } : {}),
+            ...(patch.rotation ? { rotation: patch.rotation, rotationEdited: true } : {}),
+            ...(patch.rotation === null ? { rotationEdited: false } : {}),
+          }
+        : point,
+    ),
+  );
+}
+
+export function removePathPoint(
+  scene: PrevizScene,
+  clipId: string,
+  pointId: string,
+): PrevizScene {
+  return withPathPoints(scene, clipId, (points) =>
+    points.filter((point) => point.id !== pointId),
+  );
+}
+
+/** 清空轨迹但保留片段：重画一条不需要先把片段删了再建。 */
+export function clearPathPoints(scene: PrevizScene, clipId: string): PrevizScene {
+  return withPathPoints(scene, clipId, () => []);
 }
