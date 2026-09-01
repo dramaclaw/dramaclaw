@@ -192,7 +192,9 @@ export class PrevizRenderer {
     // maxDistance 默认 Infinity 在 `:133`），但缩放是**乘性**的：`:776` 的
     // `radius = _clampDistance(radius * _scale)`，`_clampDistance` 在 `:1074` 只是
     // `Math.max(min, Math.min(max, dist))`，正半径乘任意有限倍率都不会精确变成 0；
-    // 平移则把 `_panOffset` 同时加到 position 与 target 上，两者的差不变。
+    // 平移则只动 target：`_panOffset` 只加在 `this.target` 上（`:753` / `:757`），
+    // position 随后由 `:786` 的 `position.copy(this.target).add(_v)` 按**未变的**球半径
+    // 重建，所以相机与注视点之差同样不会缩到 0。
     //
     // 所以留着它是为了将来：Task 10 的手柄拖拽会直接写相机机位，谁给这里配上
     // `minDistance = 0` 之外的推拉逻辑、或改成加性缩放，0 长度就会真的出现。
@@ -230,7 +232,7 @@ export class PrevizRenderer {
     );
     this.raycaster.setFromCamera(pointer, this.camera);
 
-    const hits = this.raycaster.intersectObjects(this.pickableNodes(), true);
+    const hits = this.raycaster.intersectObjects(this.visibleNodes(), true);
     for (const hit of hits) {
       let node: THREE.Object3D | null = hit.object;
       while (node) {
@@ -243,13 +245,13 @@ export class PrevizRenderer {
   }
 
   /**
-   * 参与拾取与「框全场景」的节点：场景里可见的那些对象。
+   * 场景里可见对象的节点。拾取与「框全场景」共用它——两处都只该看得见的东西。
    *
    * 必须自己剔掉隐藏的对象。three 0.185 的 `Raycaster.intersect()` 只测 `layers`，
    * `Mesh.raycast()` 里也没有 visible 检查——隐藏的对象在屏幕上看不见，射线却照样
    * 打得中，表现是点空白处选中了一个「不存在」的东西。
    */
-  private pickableNodes(): THREE.Object3D[] {
+  private visibleNodes(): THREE.Object3D[] {
     const nodes: THREE.Object3D[] = [];
     for (const object of this.currentScene?.objects ?? []) {
       if (!object.visible) continue;
@@ -285,7 +287,7 @@ export class PrevizRenderer {
     const selected = this.selectionId ? this.graph.nodeFor(this.selectionId) : undefined;
     if (selected) return this.boundsOf(selected);
 
-    const all = this.pickableNodes().map((node) => this.boundsOf(node));
+    const all = this.visibleNodes().map((node) => this.boundsOf(node));
     return unionBounds(all) ?? placeholderBounds(0, 0, 0);
   }
 

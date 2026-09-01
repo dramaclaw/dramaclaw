@@ -24,9 +24,8 @@ const setFromCamera = vi.fn();
 let intersections: Array<{ object: unknown }> = [];
 const intersectObjects = vi.fn((_objects: unknown[], _recursive?: boolean) => intersections);
 
+/** 建出来的材质只在「dispose 了几次」这一件事上被断言，所以只记这一个方法。 */
 interface FakeMaterial {
-  transparent: boolean;
-  opacity: number;
   dispose: ReturnType<typeof vi.fn>;
 }
 const materials: FakeMaterial[] = [];
@@ -245,10 +244,8 @@ async function createRenderer(size?: { width: number; height: number }) {
   // 尺寸要赶在 create() 之前盖上：这里测的正是 create() 自己那次 resize()。
   if (size) setClientSize(canvas, size.width, size.height);
   const instance = await PrevizRenderer.create(canvas);
-  // create() 写完 position/target 之后必须自己 update() 一次。真 OrbitControls 的
-  // 构造函数末尾也有一次 update()，但它跑在我们写 target 之前——不补这一次的话
-  // 内部球坐标记的还是 target=(0,0,0)，用户第一次拖拽相机会跳一下。
-  expect(controls.update).toHaveBeenCalledTimes(1);
+  // 这里只做搭台，不放断言：helper 里的断言一红，15 条用例会一起红，
+  // 谁都看不出坏的是哪一处。create() 自己的行为归下面「重置回共享的默认机位」那条管。
   // create() 里的 resize() 置了 needsRender，先把首帧跑掉再计数。
   step();
   render.mockClear();
@@ -434,7 +431,13 @@ describe('PrevizRenderer 接场景图', () => {
   });
 
   it('重置回共享的默认机位', async () => {
-    const { instance } = await createRenderer();
+    // 这条不走 createRenderer()：它要数的正是 create() 自己留下的那次 update()，
+    // 而 helper 会先跑掉一帧，tick 里那次 update() 会把计数顶到 2。
+    const instance = await PrevizRenderer.create(document.createElement('canvas'));
+    // create() 写完 position/target 之后必须自己 update() 一次。真 OrbitControls 的
+    // 构造函数末尾也有一次 update()，但它跑在我们写 target 之前——不补这一次的话
+    // 内部球坐标记的还是 target=(0,0,0)，用户第一次拖拽相机会跳一下。
+    expect(controls.update).toHaveBeenCalledTimes(1);
     expect(instance.cameraPositionForTest()).toEqual([...PREVIZ_DEFAULT_VIEW.position]);
     // create() 里的初始轨道中心也走同一份真相，不是另抄一遍的 (0, 0, 0)——
     // 抄错的话用户第一次点「重置」之前轨道中心就是错的，聚焦的首次观察方向也跟着歪。
@@ -571,14 +574,16 @@ describe('PrevizRenderer 接场景图', () => {
     instance.setScene(scene);
     const id = scene.objects[0].id;
     expect(instance.nodeFor(id)).toBeDefined();
-    expect(materials).toHaveLength(1);
+    // 只要求「确实建了材质」，不钉数量：一个节点建几份材质是场景图的事，
+    // 由 scene-graph 的用例管；钉在这里的话那边多加一份材质就会把这条无关的用例带红。
+    expect(materials.length).toBeGreaterThan(0);
 
     instance.dispose();
 
     expect(instance.nodeFor(id)).toBeUndefined();
     // 场景图先把节点从对象根上摘掉再还资源，之后 dispose() 里的 scene.traverse
     // 就遍历不到它们了；两步顺序反过来的话每份材质会被 dispose 两次。
-    expect(materials[0].dispose).toHaveBeenCalledTimes(1);
+    for (const material of materials) expect(material.dispose).toHaveBeenCalledTimes(1);
 
     // 已经 dispose 的渲染器不该再被灌活，也不该再打射线。
     instance.setScene(scene);
