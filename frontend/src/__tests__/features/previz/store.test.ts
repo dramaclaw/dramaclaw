@@ -8,7 +8,11 @@ import {
   PREVIZ_MAX_HEIGHT_CM,
   createPrevizObject,
 } from "@/features/previz/domain/objects";
-import { createDefaultScene, type PrevizScene } from "@/features/previz/domain/scene";
+import {
+  createDefaultScene,
+  type PrevizPathClip,
+  type PrevizScene,
+} from "@/features/previz/domain/scene";
 import {
   PREVIZ_HISTORY_LIMIT,
   PREVIZ_PLAYBACK_RATES,
@@ -621,5 +625,160 @@ describe("previz store object editing", () => {
     expect(usePrevizStore.getState().pathSpacingM).toBe(0.05);
     usePrevizStore.getState().setPathSpacing(99);
     expect(usePrevizStore.getState().pathSpacingM).toBe(5);
+  });
+
+  function addCharacter(): string {
+    const id = usePrevizStore.getState().addObject("character");
+    if (!id) throw new Error("expected the character to be created");
+    return id;
+  }
+
+  it("creates a track and a full-length clip on the first stroke", () => {
+    const id = addCharacter();
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+
+    const track = usePrevizStore.getState().scene.timeline.tracks[0];
+    expect(track.objectId).toBe(id);
+    const clip = track.clips[0] as PrevizPathClip;
+    expect(clip.kind).toBe("path");
+    // 实测参照实现：人物原本不在时间轴上，画完直接生成轨道 + 铺满时间轴的路径片段。
+    expect([clip.startFrame, clip.endFrame]).toEqual([0, 120]);
+    expect(clip.points.length).toBeGreaterThan(1);
+  });
+
+  it("redraws into the clip under the playhead instead of stacking a new one", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+    const first = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [0, 0, 6],
+    ]);
+
+    const clips = usePrevizStore.getState().scene.timeline.tracks[0].clips;
+    // 重画是改这条轨迹，不是叠一条新的——叠起来两条同时覆盖同一帧，谁生效全靠运气。
+    expect(clips).toHaveLength(1);
+    expect(clips[0].id).toBe(first);
+    expect((clips[0] as PrevizPathClip).points[0].position).toEqual([0, 0, 0]);
+  });
+
+  it("selects the clip it just drew", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+    expect(usePrevizStore.getState().selectedClipId).toBe(
+      usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id,
+    );
+  });
+
+  it("ignores a stroke with nothing in it", () => {
+    const id = addCharacter();
+    const before = usePrevizStore.getState().past.length;
+
+    usePrevizStore.getState().drawPath(id, []);
+
+    // 空笔画建了片段就是往 undo 栈里塞一步什么都没干的操作。
+    expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(0);
+    expect(usePrevizStore.getState().past).toHaveLength(before);
+  });
+
+  it("puts every timeline edit on the undo stack", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+
+    usePrevizStore.getState().undo();
+
+    // 画一条轨迹是一次场景改动，撤销该把它整条撤掉。
+    expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(0);
+  });
+
+  it("adds an empty clip for an object that has no track yet", () => {
+    const id = addCharacter();
+
+    usePrevizStore.getState().addObjectToTimeline(id);
+
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
+    expect(clip.points).toHaveLength(0);
+    expect([clip.startFrame, clip.endFrame]).toEqual([0, 120]);
+  });
+
+  it("splits the selected clip at the playhead", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+    const clipId = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
+    usePrevizStore.getState().setTimelineFrame(60);
+
+    usePrevizStore.getState().splitClipAtPlayhead(clipId);
+
+    const clips = usePrevizStore.getState().scene.timeline.tracks[0].clips;
+    expect(clips.map((clip) => [clip.startFrame, clip.endFrame])).toEqual([
+      [0, 60],
+      [60, 120],
+    ]);
+    // 被切的那条已经不存在了，选中态得跟着放开。
+    expect(usePrevizStore.getState().selectedClipId).toBeNull();
+  });
+
+  it("inserts a keyframe at the playhead", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+    const clipId = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
+    const before = (usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip)
+      .points.length;
+    usePrevizStore.getState().setTimelineFrame(37);
+
+    usePrevizStore.getState().insertKeyframe(clipId);
+
+    const points = (usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip)
+      .points;
+    expect(points.length).toBe(before + 1);
+  });
+
+  it("marks a rotated keyframe as edited", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
+
+    usePrevizStore.getState().updateKeyframe(clip.id, clip.points[0].id, { rotation: [0, 45, 0] });
+
+    const points = (usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip)
+      .points;
+    expect(points[0].rotationEdited).toBe(true);
+  });
+
+  it("drops the track when the object is removed from the timeline", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+
+    usePrevizStore.getState().removeTrackFor(id);
+
+    expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(0);
+    // 对象本身还在——删轨道不是删人。
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(1);
   });
 });
