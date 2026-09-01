@@ -7,13 +7,19 @@ import re
 from typing import Literal
 
 from novelvideo.utils.screenplay_scene_parser import (
+    BARE_ENGLISH_SENSE_SCENE_RE,
     BRACKETED_LABELED_SCENE_RE,
     CHINESE_FOUNTAIN_SCENE_RE,
+    ENGLISH_LABELED_TIME_RE,
+    ENGLISH_SCENE_MARKER_RE,
+    ENGLISH_SENSE_MARKER_RE,
     INTERIOR_EXTERIOR,
     INTERNATIONAL_SCENE_RE,
     INLINE_LABELED_SCENE_RE,
     INSERT_SCENE_RE,
+    LABELED_CHARACTER_RE,
     LABELED_LOCATION_RE,
+    NUMBERED_ENGLISH_SCENE_RE,
     NUMBERED_SCENE_RE,
     TIME_TOKEN_RE,
     is_scene_start_line,
@@ -158,6 +164,14 @@ def _has_source_scene_header_evidence(header_line: str) -> bool:
         return True
     if INTERNATIONAL_SCENE_RE.fullmatch(header):
         return True
+    if ENGLISH_SCENE_MARKER_RE.fullmatch(header):
+        return True
+    if BARE_ENGLISH_SENSE_SCENE_RE.fullmatch(header):
+        return True
+    if ENGLISH_SENSE_MARKER_RE.fullmatch(header):
+        return True
+    if NUMBERED_ENGLISH_SCENE_RE.fullmatch(header):
+        return True
     if INSERT_SCENE_RE.fullmatch(header):
         return True
     if INLINE_LABELED_SCENE_RE.fullmatch(header):
@@ -208,9 +222,11 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
     for line in non_empty_lines:
         if is_scene_start_line(line):
             continue
-        if line.startswith(("地点：", "地点:", "环境：", "环境:", "场景：", "场景:")):
+        if LABELED_LOCATION_RE.match(line):
             continue
-        if line.startswith(("人物：", "人物:", "出场人物：", "出场人物:", "角色：", "角色:")):
+        if LABELED_CHARACTER_RE.match(line):
+            continue
+        if ENGLISH_LABELED_TIME_RE.match(line):
             continue
         if SCENE_HEADER_WITHOUT_TIME_RE.match(line) or SCENE_BLOCK_HEADER_WITHOUT_TIME_RE.match(line):
             scene_headers_missing_time_count += 1
