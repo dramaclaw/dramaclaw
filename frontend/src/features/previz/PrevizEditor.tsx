@@ -93,7 +93,15 @@ export function PrevizEditor({ open, initialScene, onOpenChange, onFlush }: Prev
           <DialogDescription>{t("previz.editor.description")}</DialogDescription>
         </DialogHeader>
 
-        <div className="relative h-full w-full bg-[#101216]">
+        {/*
+          absolute inset-0 而不是 h-full w-full：DialogContent 的基础类是 `grid gap-4`，
+          行高是 auto。`h-full` 在 auto 行里是循环百分比，浏览器改用内容高度回落，而
+          canvas 的内容高度就是它 width/height 属性给的固有尺寸——ResizeObserver 把
+          量到的高写回属性，属性又撑高行，行再撑高 canvas，每次窗口缩放都把画布越滚
+          越大（实测 960 → 1785），相机 aspect 也跟着偏离可见区域。绝对定位让它彻底
+          退出网格流，尺寸只认 DialogContent 的 h-dvh。
+        */}
+        <div className="absolute inset-0 bg-[#101216]">
           <canvas ref={setCanvas} data-testid="previz-canvas" className="block h-full w-full" />
 
           <div className="pointer-events-none absolute left-4 top-4 rounded-lg bg-black/45 px-3 py-1.5 text-xs text-white/80">
