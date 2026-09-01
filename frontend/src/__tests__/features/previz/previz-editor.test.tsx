@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createDefaultScene } from "@/features/previz/domain/scene";
+import { createDefaultScene, type Vec3 } from "@/features/previz/domain/scene";
 import { PrevizRenderer } from "@/features/previz/engine/PrevizRenderer";
 import { PrevizEditor } from "@/features/previz/PrevizEditor";
 import { usePrevizStore } from "@/features/previz/store";
@@ -21,6 +22,9 @@ const focusObject = vi.fn();
 const resetView = vi.fn();
 const pickAt = vi.fn(() => null as string | null);
 const capture = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
+const setFrame = vi.fn();
+const setSelectedClip = vi.fn();
+const groundPointAt = vi.fn((): Vec3 | null => [0, 0, 0]);
 
 /** 每条用例一份全新的假渲染器，免得 onTransformCommit 在用例之间串。 */
 function fakeRenderer() {
@@ -36,6 +40,9 @@ function fakeRenderer() {
     resetView,
     pickAt,
     capture,
+    setFrame,
+    setSelectedClip,
+    groundPointAt,
     onTransformCommit: null as
       | ((objectId: string, transform: unknown) => void)
       | null,
@@ -258,5 +265,175 @@ describe("PrevizEditor", () => {
     await user.click(screen.getByRole("button", { name: "previz.editor.capture" }));
 
     expect(capture).not.toHaveBeenCalled();
+  });
+});
+
+/** 上面每条用例都手抄一遍的那五个 prop。新加的用例只改 `open`，其余给默认。 */
+function editorProps(overrides: Partial<ComponentProps<typeof PrevizEditor>> = {}) {
+  return {
+    open: true,
+    nodeId: "previz-1",
+    initialScene: createDefaultScene(),
+    onOpenChange: vi.fn(),
+    onFlush: vi.fn(),
+    ...overrides,
+  } satisfies ComponentProps<typeof PrevizEditor>;
+}
+
+/**
+ * 渲染编辑器并等到渲染器建好为止。时间轴那组用例几乎每条都要碰渲染器，
+ * 而 `create()` 是异步的——不等这一下，`setFrame` 之类的断言会跑在实例存在之前。
+ */
+async function renderEditor(overrides: Partial<ComponentProps<typeof PrevizEditor>> = {}) {
+  const result = render(<PrevizEditor {...editorProps(overrides)} />);
+  await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+  return { ...result, renderer: { setFrame, setSelectedClip, groundPointAt, pickAt } };
+}
+
+describe("PrevizEditor timeline", () => {
+  it("shows the timeline under the viewport", async () => {
+    await renderEditor();
+
+    expect(screen.getByRole("slider", { name: "previz.timeline.playhead" })).toBeInTheDocument();
+  });
+
+  it("tells the renderer which frame to show", async () => {
+    const { renderer } = await renderEditor();
+
+    act(() => usePrevizStore.getState().setTimelineFrame(42));
+
+    expect(renderer.setFrame).toHaveBeenLastCalledWith(42);
+  });
+
+  it("tells the renderer which clip is selected", async () => {
+    const { renderer } = await renderEditor();
+
+    act(() => usePrevizStore.getState().selectClip("clip-1"));
+
+    expect(renderer.setSelectedClip).toHaveBeenLastCalledWith("clip-1");
+  });
+
+  it("advances the playhead while playing", async () => {
+    await renderEditor();
+    // 假时钟只罩住播放这一段：`renderEditor` 里的 `create()` 是真异步的，
+    // 提前换掉时钟会让那次等待永远等不到。
+    // vitest 默认不假造 rAF 与 performance，这两样正是播放循环的心跳，得点名。
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance", "Date"],
+    });
+    try {
+      act(() => {
+        usePrevizStore.getState().setTimelinePlaying(true);
+      });
+
+      // 推进一秒的 rAF。tickPlayback 收的是真实耗时，所以这里推的是时钟，不是帧数。
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      expect(usePrevizStore.getState().timelineFrame).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops the playback loop when the editor closes", async () => {
+    const { rerender } = await renderEditor();
+    act(() => usePrevizStore.getState().setTimelinePlaying(true));
+
+    rerender(<PrevizEditor {...editorProps({ open: false })} />);
+
+    // 循环留在后台跑着，关掉编辑器之后播放头还在动，下次打开是从半路开始的。
+    expect(usePrevizStore.getState().timelinePlaying).toBe(false);
+  });
+
+  it("draws a path with the pen tool", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("character");
+    act(() => usePrevizStore.getState().selectObject(objectId!));
+    await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
+
+    const canvas = screen.getByTestId("previz-canvas");
+    let x = 0;
+    renderer.groundPointAt.mockImplementation(() => [(x += 1), 0, 0]);
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(canvas, { clientX: 40, clientY: 10 });
+    fireEvent.pointerMove(canvas, { clientX: 70, clientY: 10 });
+    fireEvent.pointerUp(canvas, { clientX: 70, clientY: 10 });
+
+    expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(1);
+  });
+
+  it("returns to the select tool after a stroke", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("character");
+    act(() => usePrevizStore.getState().selectObject(objectId!));
+    await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
+
+    const canvas = screen.getByTestId("previz-canvas");
+    renderer.groundPointAt.mockReturnValue([1, 0, 0]);
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(canvas, { clientX: 40, clientY: 10 });
+    fireEvent.pointerUp(canvas, { clientX: 40, clientY: 10 });
+
+    // 实测参照实现：画完一笔自动切回选择，否则下一次想选个对象反而又画了一条。
+    expect(screen.getByRole("button", { name: "previz.hud.tool.select" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("does not select an object with the pen down", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("character");
+    act(() => usePrevizStore.getState().selectObject(objectId!));
+    await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
+    renderer.pickAt.mockClear();
+
+    const canvas = screen.getByTestId("previz-canvas");
+    renderer.groundPointAt.mockReturnValue([1, 0, 0]);
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(canvas, { clientX: 10, clientY: 10 });
+
+    // 画笔按下的那一下不能同时走拾取，否则一笔画完选中的对象已经换人了。
+    expect(renderer.pickAt).not.toHaveBeenCalled();
+  });
+
+  it("ignores the pen with nothing selected", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    act(() => usePrevizStore.getState().selectObject(null));
+    await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
+
+    const canvas = screen.getByTestId("previz-canvas");
+    renderer.groundPointAt.mockReturnValue([1, 0, 0]);
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(canvas, { clientX: 40, clientY: 10 });
+    fireEvent.pointerUp(canvas, { clientX: 40, clientY: 10 });
+
+    // 没选对象时这一笔没有归属；建一条无主轨迹只会在时间轴上多一行删不掉的东西。
+    expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(0);
+  });
+
+  it("toggles playback with the space bar", async () => {
+    await renderEditor();
+
+    fireEvent.keyDown(window, { key: " " });
+
+    expect(usePrevizStore.getState().timelinePlaying).toBe(true);
+  });
+
+  it("steps frames with the arrow keys", async () => {
+    await renderEditor();
+    act(() => usePrevizStore.getState().setTimelineFrame(10));
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(usePrevizStore.getState().timelineFrame).toBe(11);
+
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    expect(usePrevizStore.getState().timelineFrame).toBe(10);
   });
 });
