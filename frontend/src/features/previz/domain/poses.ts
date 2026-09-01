@@ -4,8 +4,8 @@
 /**
  * 姿势 id 与 viewer-kit 的 `PoseName` 取同一套字面量，但**不 import 它**：
  * 那边整个目录是 PlayCanvas 栈，运行时引用会把引擎拖进预演台的 chunk。
- * 两套表不许漂移，Task 3 会补一条对着 viewer-kit 姿势表的棘轮测试盯住这件事；
- * 在那之前，顺序也不要动——棘轮是按顺序比的。
+ * 两套表不许漂移，`poses.test.ts` 有一条棘轮对着 viewer-kit 的 `POSES` 盯着这件事——
+ * 比的是集合而不是顺序。顺序本身也别乱动：它就是属性面板里姿势下拉框的排列顺序。
  */
 export const PREVIZ_POSES = [
   'standing',
