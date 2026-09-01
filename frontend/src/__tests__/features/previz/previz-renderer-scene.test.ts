@@ -183,6 +183,20 @@ let pendingGltf: unknown = null;
 let pendingObj: unknown = null;
 const loadedUrls: string[] = [];
 
+vi.mock('three/examples/jsm/controls/TransformControls.js', () => ({
+  TransformControls: class {
+    enabled = true;
+    object = null;
+    attach = vi.fn();
+    detach = vi.fn();
+    setMode = vi.fn();
+    setSpace = vi.fn();
+    dispose = vi.fn();
+    getHelper = vi.fn(() => ({ traverse() {} }));
+    addEventListener = vi.fn();
+  },
+}));
+
 vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
   GLTFLoader: class {
     loadAsync = vi.fn((url: string) => {
