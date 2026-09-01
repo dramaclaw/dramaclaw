@@ -77,6 +77,14 @@ describe("framingDistance", () => {
     expect(framingDistance(1, 90, 1)).toBeLessThan(framingDistance(1, 50, 1));
   });
 
+  // 180° 以上半角的正弦掉头变小，不钳上界的话 359°（半角 179.5°，正弦只剩 0.0087）
+  // 会算出 143 这种「越广角退得越远」的距离。钳到 179° 之后它就是个贴脸的广角。
+  it("clamps an absurdly wide field of view instead of backing away", () => {
+    expect(framingDistance(1, 359, 1)).toBe(framingDistance(1, 179, 1));
+    expect(framingDistance(1, 359, 1)).toBeCloseTo(1.25, 3);
+    expect(framingDistance(1, 359, 1)).toBeLessThan(framingDistance(1, 50, 1));
+  });
+
   it("never returns a degenerate distance for a zero-size target", () => {
     // 一盏灯的包围盒是个点。距离算成 0 会把相机塞进对象里，近裁面直接吃掉画面。
     expect(framingDistance(0, 50, 16 / 9)).toBeGreaterThanOrEqual(1);
@@ -153,6 +161,19 @@ describe("viewPlacement", () => {
 
     const bottom = viewPlacement("bottom", bounds, 50, 16 / 9);
     expect(bottom.position[1]).toBeLessThan(1);
+  });
+
+  // 底视图的极角是 π，`makeSafe()` 在 π−EPS 那一端钳得一样狠，所以它同样不能正落在
+  // −Y 极点上。两个极点共用同一个微倾，差别只在 Y 的符号。
+  it("tilts the bottom view off the pole exactly like the top view", () => {
+    const distance = framingDistance(boundsRadius(bounds), 50, 16 / 9);
+    const top = viewPlacement("top", bounds, 50, 16 / 9);
+    const bottom = viewPlacement("bottom", bounds, 50, 16 / 9);
+
+    expect(Math.abs(bottom.position[2] - bottom.target[2])).toBeGreaterThan(0);
+    expect(bottom.position[2]).toBeCloseTo(top.position[2], 12);
+    expect(bottom.position[1] - bottom.target[1]).toBeCloseTo(-distance, 6);
+    expect(top.position[1] - top.target[1]).toBeCloseTo(distance, 6);
   });
 
   // 微倾按距离成比例给，才能在大小场景里都是同一个「几乎看不出来」的角度：
