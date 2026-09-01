@@ -2,10 +2,45 @@
 // Copyright (c) 2026 ClaymoreLab
 import { create } from 'zustand';
 
-import { createDefaultScene, type PrevizScene } from './domain/scene';
+import { canAddObject } from './domain/limits';
+import { createPrevizObject, type PrevizObjectPatch } from './domain/objects';
+import {
+  createDefaultScene,
+  parseScene,
+  type DisplayMode,
+  type OutputAspect,
+  type PrevizObject,
+  type PrevizObjectKind,
+  type PrevizScene,
+} from './domain/scene';
 
 /** 场景是纯数值 JSON，整份快照很便宜；50 步够覆盖一次连续编辑。 */
 export const PREVIZ_HISTORY_LIMIT = 50;
+
+/**
+ * 新建对象时按 kind 收窄的 overrides。直接从 `createPrevizObject` 的第三个参数取型，
+ * 而不是把 `Partial<Omit<…, 'id' | 'kind'>>` 再抄一遍：抄一遍就等于埋一个日后会和工厂
+ * 各走各的第二份定义。
+ */
+type PrevizObjectOverrides<K extends PrevizObjectKind> = NonNullable<
+  Parameters<typeof createPrevizObject<K>>[2]
+>;
+
+/**
+ * 把一条刚编辑过的记录重新过一遍 `parseScene` 的逐字段校验：越界值夹回区间，
+ * 非有限值回落默认值，不属于这个 kind 的字段丢掉。
+ *
+ * 借一份只装它一个的临时场景送进 `parseScene`，是因为逐对象校验在 domain 层只有这
+ * 一个出口（`parseObject` 没有导出）。在 store 里另抄一份字段表与区间常量，两份实现
+ * 迟早会对同一个越界值给出不同答案。只送单个对象而不是整份场景，是为了让没被改到的
+ * 对象保持引用不变——场景图同步（Task 6）据此跳过未改动的条目。
+ *
+ * 结果必然有第 0 项：`parseObject` 只在缺 id 或 kind 不认识时丢对象，而这两个字段
+ * 都不在 `PrevizObjectPatch` / overrides 里，改不到。
+ */
+function normalizeObject(object: PrevizObject): PrevizObject {
+  return parseScene({ objects: [object] }).objects[0];
+}
 
 interface PrevizStoreState {
   scene: PrevizScene;
@@ -13,6 +48,12 @@ interface PrevizStoreState {
   dirty: boolean;
   past: PrevizScene[];
   future: PrevizScene[];
+  /**
+   * 选中对象与监看机位是**会话态**，刻意不进 PrevizScene、也不进 undo 栈：
+   * 撤销一次删除该把对象撤回来，而不是顺带把用户当前选的东西也换掉。
+   */
+  selectedObjectId: string | null;
+  activeCameraId: string | null;
   /** 打开编辑器时灌入初始场景，同时清空历史——上一次会话的 undo 不该跨节点串。 */
   loadScene: (scene: PrevizScene) => void;
   /** 场景改动的唯一入口：压历史、清 redo、置脏。 */
@@ -20,6 +61,17 @@ interface PrevizStoreState {
   undo: () => void;
   redo: () => void;
   markSaved: () => void;
+  selectObject: (id: string | null) => void;
+  setActiveCamera: (id: string | null) => void;
+  /** 建对象并选中它；超出该类型数量上限时返回 null 且不动场景。 */
+  addObject: <K extends PrevizObjectKind>(
+    kind: K,
+    overrides?: PrevizObjectOverrides<K>,
+  ) => string | null;
+  updateObject: (id: string, patch: PrevizObjectPatch) => void;
+  removeObject: (id: string) => void;
+  setDisplayMode: (mode: DisplayMode) => void;
+  setOutputAspect: (aspect: OutputAspect) => void;
 }
 
 export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
@@ -27,8 +79,18 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   dirty: false,
   past: [],
   future: [],
+  selectedObjectId: null,
+  activeCameraId: null,
 
-  loadScene: (scene) => set({ scene, dirty: false, past: [], future: [] }),
+  loadScene: (scene) =>
+    set({
+      scene,
+      dirty: false,
+      past: [],
+      future: [],
+      selectedObjectId: null,
+      activeCameraId: null,
+    }),
 
   applyScene: (next) => {
     const { scene, past } = get();
@@ -60,4 +122,62 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   },
 
   markSaved: () => set({ dirty: false }),
+
+  selectObject: (id) => set({ selectedObjectId: id }),
+
+  setActiveCamera: (id) => set({ activeCameraId: id }),
+
+  addObject: (kind, overrides) => {
+    const { scene, applyScene } = get();
+    // 越界时连新场景都不建：建了就等于往 undo 栈里塞一步什么都没干的操作。
+    if (!canAddObject(scene, kind)) return null;
+
+    // overrides 会从导入路径带进脏数值，所以新建这一步也收敛一次；
+    // 不带 overrides 时 `createPrevizObject` 的默认值本就合法，这一步是幂等的。
+    const created = normalizeObject(createPrevizObject(kind, scene.objects, overrides));
+    applyScene({ ...scene, objects: [...scene.objects, created] });
+    set({ selectedObjectId: created.id });
+    return created.id;
+  },
+
+  updateObject: (id, patch) => {
+    const { scene, applyScene } = get();
+    if (!scene.objects.some((object) => object.id === id)) return;
+
+    applyScene({
+      ...scene,
+      objects: scene.objects.map((object) =>
+        // patch 是四种对象 Partial 的交集，往人物身上写 focalMm 编译期拦不住；
+        // `normalizeObject` 会把不属于这个 kind 的字段丢掉。`kind` 自身不在 patch
+        // 里，合并时永远由被改对象保留。
+        object.id === id ? normalizeObject({ ...object, ...patch }) : object,
+      ),
+    });
+  },
+
+  removeObject: (id) => {
+    const { scene, applyScene, selectedObjectId, activeCameraId } = get();
+    if (!scene.objects.some((object) => object.id === id)) return;
+
+    applyScene({
+      ...scene,
+      objects: scene.objects.filter((object) => object.id !== id),
+      // 轨道跟着走：留下来就是一个悬空引用，P3 的求值器会撞上它。
+      timeline: { tracks: scene.timeline.tracks.filter((track) => track.objectId !== id) },
+    });
+    set({
+      selectedObjectId: selectedObjectId === id ? null : selectedObjectId,
+      activeCameraId: activeCameraId === id ? null : activeCameraId,
+    });
+  },
+
+  setDisplayMode: (mode) => {
+    const { scene, applyScene } = get();
+    applyScene({ ...scene, settings: { ...scene.settings, displayMode: mode } });
+  },
+
+  setOutputAspect: (aspect) => {
+    const { scene, applyScene } = get();
+    applyScene({ ...scene, settings: { ...scene.settings, outputAspect: aspect } });
+  },
 }));
