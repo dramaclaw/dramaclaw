@@ -82,6 +82,10 @@ export class CharacterRigFactory {
     this.applyPoseAdjust(model, character);
     // 场景图靠这个标记在节点的子节点里认出「已经换过模型了」。
     model.userData.previzRig = true;
+    // `SkeletonUtils.clone` 是浅克隆几何体与材质：克隆体和缓存里那份源模型共用同一批
+    // GPU 资源。这个标记让 `disposeSubtree` 整棵跳过——照占位体那样 dispose 一个克隆，
+    // 会把源模型一起还掉，之后新建的每一个人物都拿到已经 dispose 的几何体。
+    model.userData.previzSharedModel = true;
     return model;
   }
 

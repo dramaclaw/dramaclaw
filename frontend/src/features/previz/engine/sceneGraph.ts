@@ -9,10 +9,12 @@ import {
   type DisplayMode,
   type PrevizCharacter,
   type PrevizObject,
+  type PrevizProp,
   type PrevizScene,
   type Vec3,
 } from '../domain/scene';
 import type { CharacterRigFactory } from './characterRig';
+import type { PropLoader } from './propLoader';
 
 /** three 命名空间本体。以构造参数传入，绝不在本文件里 import —— 见类注释。 */
 export type ThreeModule = typeof THREE;
@@ -76,6 +78,8 @@ export class PrevizSceneGraph {
   /** 由 `PrevizRenderer.create()` 注入；没注入时人物一直用占位胶囊。 */
   private characterRig: CharacterRigFactory | null = null;
   private onModelReady: (() => void) | null = null;
+  /** 由 `PrevizRenderer.create()` 注入；没注入时物件一直用占位方块。 */
+  private propLoader: PropLoader | null = null;
 
   constructor(
     private readonly three: ThreeModule,
@@ -89,6 +93,11 @@ export class PrevizSceneGraph {
   attachCharacterRig(factory: CharacterRigFactory, onReady: () => void): void {
     this.characterRig = factory;
     this.onModelReady = onReady;
+  }
+
+  /** 接上物件模型加载器。重绘回调与人物共用 `attachCharacterRig` 传进来的那个。 */
+  attachPropLoader(loader: PropLoader): void {
+    this.propLoader = loader;
   }
 
   nodeFor(objectId: string): THREE.Object3D | undefined {
@@ -145,6 +154,8 @@ export class PrevizSceneGraph {
 
       const rig = this.characterRig;
       if (object.kind === 'character' && rig) this.syncCharacterRig(rig, node, object);
+      const loader = this.propLoader;
+      if (object.kind === 'prop' && loader) this.syncPropModel(loader, node, object);
     }
 
     // 遍历 Map 的过程中删掉当前项在 JS 里是有定义的行为，不需要先复制一份。
@@ -226,6 +237,50 @@ export class PrevizSceneGraph {
     }
     node.add(model);
     // 模型是在任何一次 sync 之外落进树里的，显示模式得单独补一次。
+    this.refreshDisplayMode();
+    this.onModelReady?.();
+  }
+
+  /**
+   * 物件的模型跟着 `assetUrl` 走：换一个 URL 就换一份模型。所以这里记的是「当前挂着
+   * 哪份资产」而不是人物那种「请求过没有」的布尔。
+   *
+   * 标记同样记在**节点**上而不是一张按对象 id 的表里，理由与 `syncCharacterRig` 一样：
+   * 撤销一次删除会让同一个 id 带着全新的节点回来，按 id 记的话那个物件永远停在占位方块上。
+   */
+  private syncPropModel(loader: PropLoader, node: THREE.Object3D, prop: PrevizProp): void {
+    if (!prop.assetUrl) return;
+    const assetKey = `${prop.assetFormat}:${prop.assetUrl}`;
+    if (node.userData.previzPropAsset === assetKey) return;
+    node.userData.previzPropAsset = assetKey;
+    void this.swapInPropModel(loader, node, prop, assetKey);
+  }
+
+  private async swapInPropModel(
+    loader: PropLoader,
+    node: THREE.Object3D,
+    prop: PrevizProp,
+    assetKey: string,
+  ): Promise<void> {
+    const model = await loader.load(prop);
+    if (!model) {
+      // 加载失败：占位方块留着，标记清掉——下一次 sync 就是一次重试。清的时候先确认
+      // 标记还是自己那一份：用户在加载途中又换了一个 URL 的话，覆盖它会把新那次请求
+      // 的记账抹掉，于是同一份模型被重复加载。
+      if (node.userData.previzPropAsset === assetKey) node.userData.previzPropAsset = undefined;
+      return;
+    }
+    // 加载期间对象可能已经被删了，或者渲染器整个 dispose 了。理由同 `swapInCharacterModel`。
+    if (node.parent !== this.root) return;
+    // 中途又换了一次 URL：那一次的模型才是用户要的，这一份直接丢掉，别倒着覆盖回去。
+    if (node.userData.previzPropAsset !== assetKey) return;
+
+    // 换模型时旧的也要清掉，不只是占位方块——`disposeSubtree` 会跳过共享模型的子树。
+    for (const child of [...node.children]) {
+      node.remove(child);
+      disposeSubtree(child);
+    }
+    node.add(model);
     this.refreshDisplayMode();
     this.onModelReady?.();
   }
@@ -349,12 +404,31 @@ function finiteVec3(value: Vec3): Vec3 {
 }
 
 /** three 的 remove() 只解父子关系，几何体与材质要自己还。 */
+/**
+ * 挂在共享模型根上的标记：`disposeSubtree` 见到它就整棵跳过。
+ *
+ * 承重的原因：人物的 `SkeletonUtils.clone` 与物件的 `Object3D.clone()` 都是**浅**克隆
+ * 几何体与材质——克隆体和缓存里那份源模型指向同一批 `BufferGeometry` / `Material`。
+ * 照着占位体的路子 dispose 一个克隆，等于把源模型的 GPU 资源一起还了：删掉第一个人物
+ * 之后，之后每一个新建的人物拿到的都是已经 dispose 的几何体，模型不显示且控制台刷
+ * `GL_INVALID_OPERATION`，而症状离「删除」这个动作隔了好几步。
+ *
+ * 反过来占位体（胶囊 / 锥体 / 灯球 / 方块）是一节点一份、谁都不共享的，必须照旧 dispose，
+ * 否则拖一次身高滑杆就按帧泄漏几何体。所以是「按标记跳过」而不是「一律不 dispose」。
+ */
+const SHARED_MODEL_KEY = 'previzSharedModel';
+
+/**
+ * 还掉一棵子树的 GPU 资源，共享模型的子树整棵跳过（见 `SHARED_MODEL_KEY`）。
+ *
+ * 手写递归而不是 `traverse`：`traverse` 无条件往下走，没法在某个节点上剪枝。
+ */
 function disposeSubtree(root: THREE.Object3D): void {
-  root.traverse((object) => {
-    const mesh = object as THREE.Mesh;
-    mesh.geometry?.dispose();
-    const material = mesh.material;
-    if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
-    else material?.dispose();
-  });
+  if (root.userData[SHARED_MODEL_KEY]) return;
+  const mesh = root as THREE.Mesh;
+  mesh.geometry?.dispose();
+  const material = mesh.material;
+  if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+  else material?.dispose();
+  for (const child of [...root.children]) disposeSubtree(child);
 }

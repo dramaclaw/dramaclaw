@@ -16,6 +16,7 @@ import {
   type PrevizViewDirection,
 } from '../domain/view';
 import { CharacterRigFactory } from './characterRig';
+import { PropLoader } from './propLoader';
 import { PREVIZ_PLACEHOLDER_RADIUS, PrevizSceneGraph, type ThreeModule } from './sceneGraph';
 
 const GROUND_SIZE_METERS = 20;
@@ -59,10 +60,11 @@ export class PrevizRenderer {
   ) {}
 
   static async create(canvas: HTMLCanvasElement): Promise<PrevizRenderer> {
-    const [three, controlsModule, gltfModule, skeletonUtils] = await Promise.all([
+    const [three, controlsModule, gltfModule, objModule, skeletonUtils] = await Promise.all([
       import('three'),
       import('three/examples/jsm/controls/OrbitControls.js'),
       import('three/examples/jsm/loaders/GLTFLoader.js'),
+      import('three/examples/jsm/loaders/OBJLoader.js'),
       import('three/examples/jsm/utils/SkeletonUtils.js'),
     ]);
 
@@ -118,6 +120,14 @@ export class PrevizRenderer {
       }),
       // 模型是异步到的，到了之后必须主动请求一帧：按需重绘的循环这时早就静下来了。
       () => instance.requestRender(),
+    );
+
+    const objLoader = new objModule.OBJLoader();
+    instance.graph.attachPropLoader(
+      new PropLoader({
+        loadGltf: (url) => gltfLoader.loadAsync(url),
+        loadObj: (url) => objLoader.loadAsync(url),
+      }),
     );
     instance.resize();
     instance.start();
