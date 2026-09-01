@@ -33,8 +33,13 @@ const KIND_ICON: Record<PrevizObjectKind, LucideIcon> = {
   prop: Box,
 };
 
-/** 分组顺序与工具栏的创建按钮顺序一致，用户在两处看到的是同一个次序。 */
-const KIND_ORDER: readonly PrevizObjectKind[] = ["character", "camera", "light", "prop"];
+/**
+ * 从图标表派生，而不是再手写一份字面量：手写数组没有穷尽性检查，新增一种对象时上面的
+ * Record 会报错、数组却静默少一项，那一类的对象就整个不出现在图层面板里——选不中、
+ * 删不掉，只能回场景 JSON 里找。`Object.keys` 对非整数字符串键保持书写顺序，所以上面
+ * 的键序就是分组在屏幕上的顺序，与工具栏（同样从它的图标表派生）保持一致。
+ */
+const KIND_ORDER = Object.keys(KIND_ICON) as PrevizObjectKind[];
 
 export interface PrevizLayerPanelProps {
   objects: readonly PrevizObject[];
@@ -48,7 +53,43 @@ export interface PrevizLayerPanelProps {
   onSetActiveCamera: (id: string | null) => void;
 }
 
-const ROW_BUTTON = "text-white/55 hover:bg-white/10 hover:text-white";
+/**
+ * 行内按钮统一走这里，`stopPropagation` 因此只写一遍：它挡的是「点按钮顺手把整行也选
+ * 中了」——行本身有 onClick，按钮的 click 会冒泡上去。四个按钮各写一份的话，第五个按钮
+ * 漏掉它就是一次没有编译期信号的静默回归。（键盘那条路另有守卫，见行的 onKeyDown：
+ * 按钮上的空格先发一个冒泡的 keydown，click 要到 keyup 才来，stopPropagation 够不着。）
+ */
+function LayerRowButton({
+  icon: Icon,
+  label,
+  pressed,
+  className,
+  onActivate,
+}: {
+  icon: LucideIcon;
+  label: string;
+  /** 省略即不是开关按钮（如「删除」），不渲染 aria-pressed。 */
+  pressed?: boolean;
+  className?: string;
+  onActivate: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      className={cn("text-white/55 hover:bg-white/10 hover:text-white", className)}
+      aria-label={label}
+      aria-pressed={pressed}
+      onClick={(event) => {
+        event.stopPropagation();
+        onActivate();
+      }}
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </Button>
+  );
+}
 
 export function PrevizLayerPanel({
   objects,
@@ -112,9 +153,10 @@ export function PrevizLayerPanel({
                     tabIndex={0}
                     onClick={() => onSelect(object.id)}
                     onKeyDown={(event) => {
-                      // 只认落在行本身的按键。行里还有四个按钮，用空格激活「隐藏」时
-                      // keydown 会一路冒泡上来，不挡的话一次按键既切了可见性又选了行——
-                      // 鼠标那条路径靠按钮的 stopPropagation 挡住了，键盘这条没有。
+                      // 只认落在行本身的按键。行里还有三四个按钮，用空格激活「隐藏」时
+                      // keydown 会一路冒泡上来，不挡的话一次按键既切了可见性又选了行。
+                      // 按钮的 stopPropagation 补不上这一枪：它挡的是 click，而按钮上的
+                      // 空格要到 keyup 才合成 click，这个 keydown 早就冒泡完了。
                       if (event.target !== event.currentTarget) return;
                       if (event.key === "Enter" || event.key === " ") {
                         // 空格默认会滚动页面，而这一行本身就在一个可滚动的列表里。
@@ -136,73 +178,35 @@ export function PrevizLayerPanel({
                     </span>
 
                     {object.kind === "camera" && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        className={cn(ROW_BUTTON, monitoring && "text-sky-300 hover:text-sky-200")}
-                        aria-label={t("previz.layers.setActiveCamera")}
-                        aria-pressed={monitoring}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onSetActiveCamera(monitoring ? null : object.id);
-                        }}
-                      >
-                        <Monitor className="h-3.5 w-3.5" />
-                      </Button>
+                      <LayerRowButton
+                        icon={Monitor}
+                        label={t("previz.layers.setActiveCamera")}
+                        pressed={monitoring}
+                        className={monitoring ? "text-sky-300 hover:text-sky-200" : undefined}
+                        onActivate={() => onSetActiveCamera(monitoring ? null : object.id)}
+                      />
                     )}
 
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      className={ROW_BUTTON}
-                      aria-label={t("previz.layers.toggleVisible")}
-                      aria-pressed={object.visible}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onToggleVisible(object.id);
-                      }}
-                    >
-                      {object.visible ? (
-                        <Eye className="h-3.5 w-3.5" />
-                      ) : (
-                        <EyeOff className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
+                    <LayerRowButton
+                      icon={object.visible ? Eye : EyeOff}
+                      label={t("previz.layers.toggleVisible")}
+                      pressed={object.visible}
+                      onActivate={() => onToggleVisible(object.id)}
+                    />
 
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      className={ROW_BUTTON}
-                      aria-label={t("previz.layers.toggleLocked")}
-                      aria-pressed={object.locked}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onToggleLocked(object.id);
-                      }}
-                    >
-                      {object.locked ? (
-                        <Lock className="h-3.5 w-3.5" />
-                      ) : (
-                        <LockOpen className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
+                    <LayerRowButton
+                      icon={object.locked ? Lock : LockOpen}
+                      label={t("previz.layers.toggleLocked")}
+                      pressed={object.locked}
+                      onActivate={() => onToggleLocked(object.id)}
+                    />
 
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      className={cn(ROW_BUTTON, "hover:text-red-300")}
-                      aria-label={t("previz.layers.remove")}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onRemove(object.id);
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    <LayerRowButton
+                      icon={Trash2}
+                      label={t("previz.layers.remove")}
+                      className="hover:text-red-300"
+                      onActivate={() => onRemove(object.id)}
+                    />
                   </div>
                 );
               })}
