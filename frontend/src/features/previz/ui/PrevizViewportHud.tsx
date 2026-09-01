@@ -31,6 +31,10 @@ function inOrder<T extends string>(members: Record<T, true>): readonly T[] {
   return Object.keys(members) as T[];
 }
 
+/** 视口里的鼠标工具。选择是默认；绘制是按住左键在地面上拖出一条轨迹。 */
+export const PREVIZ_TOOLS = ["select", "draw"] as const;
+export type PrevizTool = (typeof PREVIZ_TOOLS)[number];
+
 const DISPLAY_MODES = inOrder<DisplayMode>({ solid: true, translucent: true, clay: true });
 const GIZMO_MODES = inOrder<PrevizGizmoMode>({ translate: true, rotate: true, scale: true });
 const OUTPUT_ASPECTS = inOrder<OutputAspect>({
@@ -46,12 +50,16 @@ export interface PrevizViewportHudProps {
   gizmoMode: PrevizGizmoMode;
   /** 没有选中对象时「聚焦」无从聚起，禁用而不是点了没反应。 */
   hasSelection: boolean;
+  tool: PrevizTool;
+  pathSpacingM: number;
   onDisplayMode: (mode: DisplayMode) => void;
   onOutputAspect: (aspect: OutputAspect) => void;
   onGizmoMode: (mode: PrevizGizmoMode) => void;
   onViewDirection: (direction: PrevizViewDirection) => void;
   onFocus: () => void;
   onResetView: () => void;
+  onTool: (tool: PrevizTool) => void;
+  onPathSpacing: (metres: number) => void;
 }
 
 const CHIP = "text-white/70 hover:bg-white/10 hover:text-white";
@@ -88,12 +96,16 @@ export function PrevizViewportHud({
   outputAspect,
   gizmoMode,
   hasSelection,
+  tool,
+  pathSpacingM,
   onDisplayMode,
   onOutputAspect,
   onGizmoMode,
   onViewDirection,
   onFocus,
   onResetView,
+  onTool,
+  onPathSpacing,
 }: PrevizViewportHudProps) {
   const { t } = useTranslation();
   const aspectId = useId();
@@ -178,6 +190,44 @@ export function PrevizViewportHud({
             {t(`previz.hud.gizmo.${mode}`)}
           </Button>
         ))}
+      </HudGroup>
+
+      <HudGroup label={t("previz.hud.group.tool")}>
+        {PREVIZ_TOOLS.map((option) => (
+          <Button
+            key={option}
+            type="button"
+            variant="ghost"
+            size="xs"
+            className={cn(CHIP, option === tool && CHIP_ON)}
+            aria-pressed={option === tool}
+            onClick={() => onTool(option)}
+          >
+            {t(`previz.hud.tool.${option}`)}
+          </Button>
+        ))}
+
+        <div className="mx-0.5 h-4 w-px bg-white/15" />
+
+        {/*
+          间距决定一笔画出来落几个轨迹点。参照实现把它摆在画笔旁边而不是藏进设置里，
+          因为它得跟着场景尺度改：室内走位 0.3 米一个点，外景赶路 2 米一个点。
+        */}
+        <label className="flex items-center gap-1 text-xs text-white/70">
+          <span className="sr-only">{t("previz.hud.pathSpacing")}</span>
+          <input
+            type="number"
+            aria-label={t("previz.hud.pathSpacing")}
+            className="h-6 w-14 rounded-[6px] bg-white/10 px-1 text-right text-xs text-white/85 outline-none"
+            min={0.05}
+            max={5}
+            step={0.05}
+            key={pathSpacingM}
+            defaultValue={pathSpacingM}
+            onBlur={(event) => onPathSpacing(Number(event.target.value))}
+          />
+          m
+        </label>
       </HudGroup>
 
       <HudGroup label={t("previz.hud.group.aspect")}>
