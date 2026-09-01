@@ -72,6 +72,11 @@ export type PrevizObjectOverrides<K extends PrevizObjectKind> = Partial<
  * 直接展开合并会把目标上已有的值盖成 `undefined`，再被规范化「修」成字段默认值——
  * 一次可选补丁就能把用户改过的名字抹回基名、把隐藏的对象重新显示出来。
  * 工厂与 store 的补丁路径共用这一份，免得两条路各防各的、日后只补上其中一条。
+ *
+ * **只滤顶层键。** `{ transform: { position: undefined, … } }` 这种嵌套的 undefined 滤不掉，
+ * 会被 `parseTransform` 兜成 `[0, 0, 0]`——位置悄悄清回原点。属性面板拼 transform 与
+ * poseAdjust 时是把已有值整份展开再改一个分量（见 `PrevizInspector` 的 `patchTransform`），
+ * 所以现在走不到；换成「有就带上」的写法就会踩上，那时要滤的是子对象而不是这一层。
  */
 export function withoutUndefined<T extends object>(source: T): Partial<T> {
   return Object.fromEntries(
