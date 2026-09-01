@@ -83,7 +83,10 @@ export interface PrevizCharacter extends PrevizObjectBase {
   heightCm: number;
   /**
    * 刻意留成 string 而不是 PrevizPoseId：新版客户端存进来的姿势要原样活过一次
-   * 读写，静默改写成默认姿势是无声的数据损坏。认不出的 id 由引擎侧回落。
+   * 读写，静默改写成默认姿势是无声的数据损坏。认不出的 id 现在没有任何消费者——
+   * `basePoseId` 出了这份 schema 还没人读——所以「读不出来怎么办」是 Task 3 接引擎
+   * 时才需要回答的问题（viewer-kit 的 `requirePoseName` 给的答案是抛异常，不是回落）。
+   * 那是渲染层的决定，读取层不该提前替它把数据改掉。
    */
   basePoseId: string;
   poseAdjust: { pitch: number; turn: number; lean: number };
@@ -316,7 +319,10 @@ function parseObject(raw: unknown): PrevizObject | null {
   const base = {
     id,
     // 名字空着或缺失都回落到类型基名：图层面板要按名字列条目，空串是一行看不见的
-    // 东西，uuid 则是一串对用户没有意义的字符。
+    // 东西，uuid 则是一串对用户没有意义的字符。代价是这个回落值不唯一——四个都没名字
+    // 的机位会一起解析成「机位」，图层面板上就是四行同名条目。选中与改属性都按 id 走，
+    // 重名只影响可读性，不会让操作落到另一个对象上；真要唯一就得在读取时按顺序补编号，
+    // 那等于读一遍改一次数据，比重名更难交代。
     name:
       typeof source.name === 'string' && source.name.trim().length > 0
         ? source.name
