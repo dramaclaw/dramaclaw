@@ -2,12 +2,8 @@
 // Copyright (c) 2026 ClaymoreLab
 import type * as THREE from 'three';
 
-import { clampToRange, DEG_TO_RAD, type PrevizRange } from '../domain/camera';
-import {
-  PREVIZ_DEFAULT_HEIGHT_CM,
-  PREVIZ_MAX_HEIGHT_CM,
-  PREVIZ_MIN_HEIGHT_CM,
-} from '../domain/objects';
+import { clampToRange, DEG_TO_RAD } from '../domain/camera';
+import { PREVIZ_HEIGHT_CM_RANGE } from '../domain/objects';
 import {
   PREVIZ_SCALE_RANGE,
   type DisplayMode,
@@ -19,7 +15,13 @@ import {
 /** three 命名空间本体。以构造参数传入，绝不在本文件里 import —— 见类注释。 */
 export type ThreeModule = typeof THREE;
 
-/** 半透明模式的不透明度。设计文档「显示模式」一节定的 0.35。 */
+/**
+ * 半透明模式的不透明度。设计文档「显示模式」一节定的 0.35。
+ *
+ * 导出是给 Task 8 / Task 9 那些自己往节点上挂材质的模块用的，让它们不必再猜一个数。
+ * 单元测试**刻意不 import 它**而是写字面量 0.35：期望值从被测模块读回来，改一处两边
+ * 一起变，等于什么都没锁住。
+ */
 export const PREVIZ_TRANSLUCENT_OPACITY = 0.35;
 
 /**
@@ -27,7 +29,7 @@ export const PREVIZ_TRANSLUCENT_OPACITY = 0.35;
  * 细到不至于把相邻的两个人物粘在一起。
  *
  * 它同时是一条尺寸约束：胶囊中段长度是「身高 − 2 × 半径」，必须为正。身高先夹进
- * `HEIGHT_CM_RANGE`，下界 `PREVIZ_MIN_HEIGHT_CM` = 120 cm，减掉 0.44 m 还剩 0.76 m，
+ * `PREVIZ_HEIGHT_CM_RANGE`，其下界是 120 cm，减掉 0.44 m 还剩 0.76 m，
  * 离退化很远。改大这个半径前先算一遍这笔账。
  */
 export const PREVIZ_PLACEHOLDER_RADIUS = 0.22;
@@ -40,17 +42,6 @@ const KIND_COLOR: Record<PrevizObject['kind'], number> = {
   camera: 0xffd166,
   light: 0xfff3b0,
   prop: 0x9ad0a0,
-};
-
-/**
- * 身高区间。三个边界各自在 `domain/objects.ts` 有自己的调用方，这里只是拼成
- * `clampToRange` 要的形状——和 `domain/scene.ts` 里那份私有的 `HEIGHT_CM_RANGE`
- * 同源同值，共享的是常量而不是又抄了一遍数字。
- */
-const HEIGHT_CM_RANGE: PrevizRange = {
-  min: PREVIZ_MIN_HEIGHT_CM,
-  max: PREVIZ_MAX_HEIGHT_CM,
-  default: PREVIZ_DEFAULT_HEIGHT_CM,
 };
 
 /**
@@ -122,7 +113,8 @@ export class PrevizSceneGraph {
       const [rx, ry, rz] = finiteVec3(rotation);
       node.rotation.set(rx * DEG_TO_RAD, ry * DEG_TO_RAD, rz * DEG_TO_RAD);
       // 零与负的缩放压出退化几何（法线全零、包围盒没厚度），手柄抓不住，
-      // `view.ts` 的取景距离也跟着算不出来。夹取语义全仓只有 `clampToRange` 一份。
+      // `view.ts` 的取景距离也跟着算不出来。凡是有现成区间常量的字段，预演台一律走
+      // `domain/camera.ts` 的 `clampToRange`，不在这里另写一份 Math.min/Math.max。
       node.scale.set(
         clampToRange(scale[0], PREVIZ_SCALE_RANGE),
         clampToRange(scale[1], PREVIZ_SCALE_RANGE),
@@ -171,7 +163,7 @@ export class PrevizSceneGraph {
 
     switch (object.kind) {
       case 'character': {
-        const height = clampToRange(object.heightCm, HEIGHT_CM_RANGE) / 100;
+        const height = clampToRange(object.heightCm, PREVIZ_HEIGHT_CM_RANGE) / 100;
         // CapsuleGeometry(radius, height, …)：第二参数是两个半球之间那段柱体的高度
         // （three 0.185 的形参名就叫 height），胶囊总高是它加上两个半径，所以先减掉。
         const radius = PREVIZ_PLACEHOLDER_RADIUS;
