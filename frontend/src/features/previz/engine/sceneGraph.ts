@@ -203,7 +203,9 @@ export class PrevizSceneGraph {
   ): void {
     const model = node.children.find((child) => child.userData.previzRig);
     if (model) {
-      rig.applyBodyScale(model, character);
+      // 姿势、身高体型、姿态微调一起刷。只刷缩放的话，属性面板的「基础姿势」下拉框与
+      // 「姿态微调」三根滑杆对已加载的人物完全失效。
+      rig.applyCharacter(model, character);
       return;
     }
     if (node.userData.previzRigRequested) return;
