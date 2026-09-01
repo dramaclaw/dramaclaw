@@ -370,6 +370,125 @@ describe('PrevizSceneGraph', () => {
     expect(tinyMesh.geometry.args[1]).toBeGreaterThan(0);
   });
 
+  it('rebuilds the capsule when heightCm changes, and returns the old resources', () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+
+    const scene = sceneWith('character');
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync({ ...scene, objects: [{ ...character, heightCm: 150 }] });
+    const node = graph.nodeFor(character.id);
+    const before = placeholderOf(graph, character.id);
+    expect(capsuleHeight(before)).toBeCloseTo(1.5, 6);
+
+    graph.sync({ ...scene, objects: [{ ...character, heightCm: 200 }] });
+
+    // 身高是唯一一个能改变占位几何的用户输入，而属性面板的滑杆直接接在它上面。
+    // 几何体建好就不会自己跟着变：少了重建，拖完滑杆得到的是一个还停在旧身高的胶囊，
+    // 而且它不会在下一次 sync 时自愈——只有整个节点被拆掉才会。
+    const after = placeholderOf(graph, character.id);
+    expect(capsuleHeight(after)).toBeCloseTo(2, 6);
+    // 站位跟着一起改，否则那个尺寸错的胶囊还悬空或者陷进地里。
+    expect(after.position.y).toBeCloseTo(1, 6);
+    // 换的是占位体不是整个节点：节点上挂着 Task 8 加载好的 GLB，重建等于白下一次。
+    expect(root.children).toHaveLength(1);
+    expect(graph.nodeFor(character.id)).toBe(node);
+    expect(node?.children).toHaveLength(1);
+    // 换下来的那一对必须还掉，不然拖一次滑杆就按帧泄漏一个几何体加一份材质。
+    expect(before.geometry.dispose).toHaveBeenCalled();
+    expect(before.material.dispose).toHaveBeenCalled();
+    // 而新建的这一对当然不能跟着一起还。
+    expect(after.geometry.dispose).not.toHaveBeenCalled();
+    expect(after.material.dispose).not.toHaveBeenCalled();
+  });
+
+  it('leaves the capsule alone when heightCm did not change', () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+
+    const scene = sceneWith('character');
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    const posed = { ...character, heightCm: 180 };
+    graph.sync({ ...scene, objects: [posed] });
+    const mesh = placeholderOf(graph, character.id);
+
+    graph.sync({
+      ...scene,
+      objects: [
+        { ...posed, transform: { position: [1, 0, 2], rotation: [0, 45, 0], scale: [1, 1, 1] } },
+      ],
+    });
+
+    // 无条件重建就是每帧扔掉一对 geometry / material 再建一对——身高之外胶囊的输入
+    // （半径、分段数）全是常量，拆了也建回同一个东西。
+    expect(placeholderOf(graph, character.id)).toBe(mesh);
+    expect(mesh.geometry.dispose).not.toHaveBeenCalled();
+
+    // 比的是夹取之后的身高：两个都超上界的值算出来是同一个胶囊，不该拆了重建。
+    graph.sync({ ...scene, objects: [{ ...posed, heightCm: 1e9 }] });
+    const clamped = placeholderOf(graph, character.id);
+    expect(capsuleHeight(clamped)).toBeCloseTo(PREVIZ_MAX_HEIGHT_CM / 100, 6);
+    graph.sync({ ...scene, objects: [{ ...posed, heightCm: 1e10 }] });
+    expect(placeholderOf(graph, character.id)).toBe(clamped);
+  });
+
+  it('gives the rebuilt capsule the display mode that is already in force', () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+
+    const scene = sceneWith('character');
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    const translucent = { ...scene.settings, displayMode: 'translucent' as const };
+    graph.sync({ ...scene, settings: translucent, objects: [{ ...character, heightCm: 150 }] });
+    graph.sync({ ...scene, settings: translucent, objects: [{ ...character, heightCm: 200 }] });
+
+    // 新材质是按「实心」建出来的，而显示模式这一帧没变——不给它补一次，拖一次身高
+    // 滑杆就能在半透明场景里留下一个实心的人。
+    const rebuilt = placeholderOf(graph, character.id);
+    expect(rebuilt.material.transparent).toBe(true);
+    expect(rebuilt.material.opacity).toBeCloseTo(0.35, 6);
+  });
+
+  it('invalidates the shader program only when transparency actually flips', () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+
+    const scene = sceneWith('prop');
+    const solid = scene.settings;
+    graph.sync(scene);
+    const mesh = placeholderOf(graph, scene.objects[0]!.id);
+    // 刚建出来的材质本来就是实心的，实心模式下不该白让它的着色程序失效一次。
+    expect(mesh.material.needsUpdate).toBe(false);
+
+    graph.sync({ ...scene, settings: { ...solid, displayMode: 'translucent' } });
+    expect(mesh.material.needsUpdate).toBe(true);
+
+    // Task 8 / Task 9 的每个模型一到位就调一次 `refreshDisplayMode()`，而它遍历整个 root。
+    // 无条件置 needsUpdate 的话，N 个模型就是 N 次全场景着色器重编译——three 里最典型的
+    // 掉帧来源，而画面上什么都没变。
+    mesh.material.needsUpdate = false;
+    graph.refreshDisplayMode();
+    expect(mesh.material.transparent).toBe(true);
+    expect(mesh.material.needsUpdate).toBe(false);
+
+    // 回到实心是一次真翻转，这一次必须失效。
+    graph.sync({ ...scene, settings: { ...solid, displayMode: 'solid' } });
+    expect(mesh.material.needsUpdate).toBe(true);
+
+    // 全灰只改颜色。`color` 与 `opacity` 都是 uniform，改了直接生效，不必重编译。
+    mesh.material.needsUpdate = false;
+    graph.sync({ ...scene, settings: { ...solid, displayMode: 'clay' } });
+    expect(mesh.material.color.set).toHaveBeenCalled();
+    expect(mesh.material.needsUpdate).toBe(false);
+  });
+
   it('removes nodes for objects that are gone and disposes their resources', () => {
     const three = fakeThree();
     const root = new three.Group();
