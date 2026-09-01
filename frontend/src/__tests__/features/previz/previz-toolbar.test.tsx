@@ -38,19 +38,29 @@ function canAddExcept(atLimit: string): ToolbarProps["canAdd"] {
   };
 }
 
-function setup(overrides: Partial<ToolbarProps> = {}) {
-  const props = {
-    canAdd: { character: true, camera: true, light: true, prop: true },
-    canUndo: true,
-    canRedo: false,
+/**
+ * 回调不进 overrides：`...Partial<ToolbarProps>` 展开会把每个 handler 的类型拓宽成
+ * `Mock | ((kind: PrevizObjectKind) => void)`，之后取 `.mock` / `.mockClear()` 就过不了
+ * 类型检查。只让状态类 prop 可覆盖，mock 原样返回，类型就保得住。
+ */
+type ToolbarOverrides = Partial<Pick<ToolbarProps, "canAdd" | "canUndo" | "canRedo">>;
+
+function setup(overrides: ToolbarOverrides = {}) {
+  const handlers = {
     onAdd: vi.fn(),
     onImportProp: vi.fn(),
     onUndo: vi.fn(),
     onRedo: vi.fn(),
+  };
+  const props: ToolbarProps = {
+    canAdd: { character: true, camera: true, light: true, prop: true },
+    canUndo: true,
+    canRedo: false,
     ...overrides,
-  } satisfies ToolbarProps;
+    ...handlers,
+  };
   render(<PrevizToolbar {...props} />);
-  return props;
+  return handlers;
 }
 
 describe("PrevizToolbar", () => {
@@ -65,12 +75,12 @@ describe("PrevizToolbar", () => {
 
   it.each(KINDS)("calls onAdd with $kind when that button is clicked", async ({ kind }) => {
     const user = userEvent.setup();
-    const props = setup();
+    const { onAdd } = setup();
 
     await user.click(screen.getByRole("button", { name: `previz.toolbar.add.${kind}` }));
 
-    expect(props.onAdd).toHaveBeenCalledTimes(1);
-    expect(props.onAdd).toHaveBeenCalledWith(kind);
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    expect(onAdd).toHaveBeenCalledWith(kind);
   });
 
   // 到上限时静默失败最气人：按钮看着能点，点了什么都不发生。禁用之外还得说清
@@ -91,37 +101,55 @@ describe("PrevizToolbar", () => {
 
   it("mirrors undo availability", async () => {
     const user = userEvent.setup();
-    const props = setup({ canUndo: true, canRedo: false });
+    const { onUndo, onRedo } = setup({ canUndo: true, canRedo: false });
 
     expect(screen.getByRole("button", { name: "previz.toolbar.redo" })).toBeDisabled();
     const undo = screen.getByRole("button", { name: "previz.toolbar.undo" });
     expect(undo).toBeEnabled();
     await user.click(undo);
 
-    expect(props.onUndo).toHaveBeenCalledTimes(1);
-    expect(props.onRedo).not.toHaveBeenCalled();
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    expect(onRedo).not.toHaveBeenCalled();
   });
 
   it("mirrors redo availability", async () => {
     const user = userEvent.setup();
-    const props = setup({ canUndo: false, canRedo: true });
+    const { onUndo, onRedo } = setup({ canUndo: false, canRedo: true });
 
     expect(screen.getByRole("button", { name: "previz.toolbar.undo" })).toBeDisabled();
     const redo = screen.getByRole("button", { name: "previz.toolbar.redo" });
     expect(redo).toBeEnabled();
     await user.click(redo);
 
-    expect(props.onRedo).toHaveBeenCalledTimes(1);
-    expect(props.onUndo).not.toHaveBeenCalled();
+    expect(onRedo).toHaveBeenCalledTimes(1);
+    expect(onUndo).not.toHaveBeenCalled();
+  });
+
+  // 同 KINDS 那条的理由：这三个控件也只有图标，没有可见文字。图标画错、tooltip 丢了，
+  // 鼠标用户就再也读不出这个按钮是干什么的，而 aria-label 只服务读屏。
+  it.each([
+    ["previz.toolbar.undo", "lucide-undo-2"],
+    ["previz.toolbar.redo", "lucide-redo-2"],
+  ])("labels the %s button with its own icon and tooltip", (name, icon) => {
+    setup({ canUndo: true, canRedo: true });
+
+    const button = screen.getByRole("button", { name });
+    expect(button).toHaveAttribute("title", name);
+    expect(button.querySelector("svg")).toHaveClass(icon);
+  });
+
+  it("labels the import control with its own icon and tooltip", () => {
+    setup();
+
+    // getByTitle 落在视觉控件（<label>）上，input 本身是 sr-only 的。
+    const importControl = screen.getByTitle("previz.toolbar.importProp");
+    expect(importControl).toHaveAttribute("for", screen.getByLabelText("previz.toolbar.importProp").id);
+    expect(importControl.querySelector("svg")).toHaveClass("lucide-upload");
   });
 
   it("hands the picked file to onImportProp", async () => {
     const user = userEvent.setup();
-    // 单独持一个 mock 引用，而不是从 setup() 的返回值上取：那个返回值被 `...overrides`
-    // 铺开过，每个 handler 的类型都拓宽成了 `Mock | ((file: File) => void)`，取 `.mock`
-    // 过不了类型检查。
-    const onImportProp = vi.fn();
-    setup({ onImportProp });
+    const { onImportProp } = setup();
     const file = new File([new Uint8Array(1)], "chair.glb");
 
     const input = screen.getByLabelText("previz.toolbar.importProp");
