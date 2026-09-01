@@ -127,3 +127,136 @@ describe('PrevizTimeline transport', () => {
     expect(usePrevizStore.getState().timelineFrame).toBe(60);
   });
 });
+describe('PrevizTimeline tracks', () => {
+  beforeEach(() => {
+    // 每条用例自己决定时间轴上有什么。少了这一步，「空时间轴」那条会读到上一条
+    // 留下的轨道。
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  function seedWalk(): { objectId: string; clipId: string } {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+    const objectId = usePrevizStore.getState().addObject('character');
+    if (!objectId) throw new Error('expected the character to be created');
+    usePrevizStore.getState().drawPath(objectId, [
+      [0, 0, 0],
+      [6, 0, 0],
+    ]);
+    return { objectId, clipId: usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id };
+  }
+
+  it('lists one row per track, named after the object', () => {
+    const { objectId } = seedWalk();
+    usePrevizStore.getState().updateObject(objectId, { name: '女主' });
+    render(<PrevizTimeline />);
+
+    expect(screen.getByRole('listitem', { name: '女主' })).toBeInTheDocument();
+  });
+
+  it('says so when nothing is on the timeline yet', () => {
+    render(<PrevizTimeline />);
+    expect(screen.getByText('previz.timeline.empty')).toBeInTheDocument();
+  });
+
+  it('places the clip bar by frame', () => {
+    const { objectId } = seedWalk();
+    const clipId = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
+    usePrevizStore.getState().trimClipToPlayhead(clipId, 'start');
+    usePrevizStore.getState().setTimelineFrame(30);
+    usePrevizStore.getState().trimClipToPlayhead(clipId, 'start');
+    render(<PrevizTimeline />);
+
+    const bar = screen.getByTestId(`previz-clip-${clipId}`);
+    // 0~120 的时间轴上，30~120 的片段从 25% 开始、占 75%。
+    expect(bar).toHaveStyle({ left: '25%', width: '75%' });
+    expect(objectId).toBeTruthy();
+  });
+
+  it('selects a clip by clicking its bar', async () => {
+    const user = userEvent.setup();
+    const { clipId } = seedWalk();
+    usePrevizStore.getState().selectClip(null);
+    render(<PrevizTimeline />);
+
+    await user.click(screen.getByTestId(`previz-clip-${clipId}`));
+
+    expect(usePrevizStore.getState().selectedClipId).toBe(clipId);
+  });
+
+  it('draws one diamond per keyframe', () => {
+    const { clipId } = seedWalk();
+    const points = usePrevizStore.getState().scene.timeline.tracks[0].clips[0];
+    render(<PrevizTimeline />);
+
+    expect(screen.getAllByTestId(/^previz-keyframe-/)).toHaveLength(
+      (points as { points: unknown[] }).points.length,
+    );
+    expect(clipId).toBeTruthy();
+  });
+
+  it('moves the playhead to the keyframe it is told to', async () => {
+    const user = userEvent.setup();
+    seedWalk();
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as {
+      id: string;
+      points: { id: string; u: number }[];
+    };
+    render(<PrevizTimeline />);
+
+    await user.click(screen.getByTestId(`previz-keyframe-${clip.points[1].id}`));
+
+    // 点关键帧既选中它、也把播放头挪过去——否则属性面板改的那个点在视口里看不见。
+    expect(usePrevizStore.getState().selectedPointId).toBe(clip.points[1].id);
+    expect(usePrevizStore.getState().timelineFrame).toBe(Math.round(clip.points[1].u * 120));
+  });
+
+  it('cuts the selected clip at the playhead', async () => {
+    const user = userEvent.setup();
+    const { clipId } = seedWalk();
+    usePrevizStore.getState().selectClip(clipId);
+    usePrevizStore.getState().setTimelineFrame(48);
+    render(<PrevizTimeline />);
+
+    await user.click(screen.getByRole('button', { name: 'previz.timeline.razor' }));
+
+    expect(usePrevizStore.getState().scene.timeline.tracks[0].clips).toHaveLength(2);
+  });
+
+  it('disables the razor with no clip selected', () => {
+    seedWalk();
+    usePrevizStore.getState().selectClip(null);
+    render(<PrevizTimeline />);
+
+    expect(screen.getByRole('button', { name: 'previz.timeline.razor' })).toBeDisabled();
+  });
+
+  it('removes a track from its row', async () => {
+    const user = userEvent.setup();
+    seedWalk();
+    render(<PrevizTimeline />);
+
+    await user.click(screen.getByRole('button', { name: 'previz.timeline.removeTrack' }));
+
+    expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(0);
+  });
+
+  it('adds an object to the timeline', async () => {
+    const user = userEvent.setup();
+    usePrevizStore.getState().loadScene(createDefaultScene());
+    const objectId = usePrevizStore.getState().addObject('character');
+    render(<PrevizTimeline />);
+
+    await user.selectOptions(screen.getByLabelText('previz.timeline.addObject'), objectId!);
+
+    expect(usePrevizStore.getState().scene.timeline.tracks[0].objectId).toBe(objectId);
+  });
+
+  it('offers only objects that have no track yet', () => {
+    const { objectId } = seedWalk();
+    render(<PrevizTimeline />);
+
+    // 已经在时间轴上的对象再加一次会撞上「一个对象一条轨道」，下拉框里就不该出现。
+    const picker = screen.getByLabelText('previz.timeline.addObject') as HTMLSelectElement;
+    expect([...picker.options].map((option) => option.value)).not.toContain(objectId);
+  });
+});
