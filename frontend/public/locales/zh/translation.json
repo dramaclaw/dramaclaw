@@ -432,9 +432,26 @@
     "account": {
       "open": "打开个人信息",
       "changeAvatar": "更换头像",
+      "changePassword": "修改密码",
       "selectLanguage": "选择语言",
       "languageChinese": "中文",
       "languageEnglish": "English",
+      "passwordDialog": {
+        "title": "修改密码",
+        "description": "修改成功后会退出所有设备，需要使用新密码重新登录。",
+        "current": "当前密码",
+        "new": "新密码",
+        "confirm": "确认新密码",
+        "requirement": "新密码至少 8 位，且不能与当前密码相同。",
+        "mismatch": "两次输入的新密码不一致。",
+        "unchanged": "新密码不能与当前密码相同。",
+        "currentIncorrect": "当前密码不正确。",
+        "submit": "修改密码",
+        "saving": "修改中…",
+        "success": "密码已修改，请使用新密码重新登录。",
+        "partialSuccess": "密码已修改，请重新登录；部分会话正在同步退出。",
+        "error": "密码修改失败，请重试。"
+      },
       "avatarDialog": {
         "title": "更换头像",
         "description": "选择一张图片作为你的头像，建议使用清晰的正方形图片。",

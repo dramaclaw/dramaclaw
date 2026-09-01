@@ -62,6 +62,7 @@ vi.mock("react-i18next", () => ({
         "header.account.open": "Open account",
         "header.notifications": "Announcement Center",
         "header.account.changeAvatar": "Change avatar",
+        "header.account.changePassword": "Change password",
         "header.account.selectLanguage": "Select language",
         "header.account.languageChinese": "Chinese",
         "header.account.languageEnglish": "English",
@@ -176,6 +177,7 @@ describe("Header runtime gating", () => {
     fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
 
     expect(await screen.findByText("Log out")).toBeInTheDocument();
+    expect(screen.getByText("Change password")).toBeInTheDocument();
   });
 
   it("moves the announcement entry from the header actions into the account panel", async () => {
@@ -281,6 +283,7 @@ describe("Header runtime gating", () => {
       expect(screen.getByText("local")).toBeInTheDocument();
     });
     expect(screen.queryByText("Log out")).not.toBeInTheDocument();
+    expect(screen.queryByText("Change password")).not.toBeInTheDocument();
   });
 
   it("purges user-scoped caches after logout so the next account can't see stale data", async () => {
