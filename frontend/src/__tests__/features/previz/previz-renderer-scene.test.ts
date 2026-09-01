@@ -30,6 +30,16 @@ interface FakeMaterial {
 }
 const materials: FakeMaterial[] = [];
 
+/** 建出来的假 WebGLRenderer。监看 pass 借了视口 / 剪刀 / autoClear，断言它有没有还回去。 */
+interface FakeWebGLRenderer {
+  autoClear: boolean;
+  setViewport: ReturnType<typeof vi.fn>;
+  setScissor: ReturnType<typeof vi.fn>;
+  setScissorTest: ReturnType<typeof vi.fn>;
+  clearDepth: ReturnType<typeof vi.fn>;
+}
+const webglRenderers: FakeWebGLRenderer[] = [];
+
 /** 打开后所有 `setFromObject()` 都交出空盒，模拟「节点下面还没有任何几何体」。 */
 let boxIsEmpty = false;
 
@@ -52,6 +62,10 @@ vi.mock('three', () => {
       this.z = z;
       return this;
     }
+    /** 监看相机从节点的世界矩阵取位置；本假实现不模拟矩阵，取到什么不影响断言。 */
+    setFromMatrixPosition(_matrix: unknown) {
+      return this;
+    }
   }
   class Object3D {
     name = '';
@@ -62,6 +76,9 @@ vi.mock('three', () => {
     position = new Vector3();
     rotation = new Vector3();
     scale = new Vector3(1, 1, 1);
+    quaternion = { setFromRotationMatrix: vi.fn() };
+    matrixWorld = {};
+    updateWorldMatrix(_updateParents?: boolean, _updateChildren?: boolean) {}
     add(child: Object3D) {
       child.parent = this;
       this.children.push(child);
@@ -168,6 +185,19 @@ vi.mock('three', () => {
       setSize = vi.fn();
       dispose = vi.fn();
       forceContextLoss = vi.fn();
+      autoClear = true;
+      getSize = vi.fn((target: { x: number; y: number }) => {
+        target.x = 800;
+        target.y = 450;
+        return target;
+      });
+      setViewport = vi.fn();
+      setScissor = vi.fn();
+      setScissorTest = vi.fn();
+      clearDepth = vi.fn();
+      constructor() {
+        webglRenderers.push(this as unknown as FakeWebGLRenderer);
+      }
     },
   };
 });
@@ -270,8 +300,10 @@ beforeEach(() => {
   frames = [];
   intersections = [];
   pendingGltf = null;
+  pendingObj = null;
   loadedUrls.length = 0;
   materials.length = 0;
+  webglRenderers.length = 0;
   boxIsEmpty = false;
   render.mockClear();
   setFromCamera.mockClear();
@@ -668,6 +700,69 @@ describe('PrevizRenderer 接场景图', () => {
     // 用户下一次动鼠标才出现在画面上。
     step();
     expect(render).toHaveBeenCalledTimes(1);
+
+    instance.dispose();
+  });
+  // 监看是同一个 WebGLRenderer 的第二次 pass。另开一个 renderer 才是真正的坑：
+  // 浏览器并发 WebGL 上下文上限约 16 个，而预演台反复开关，迟早静默黑屏。
+  it('renders a second monitor pass only when a camera is active', async () => {
+    const instance = await PrevizRenderer.create(document.createElement('canvas'));
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject('camera', scene.objects));
+    instance.setScene(scene);
+    step();
+
+    render.mockClear();
+    instance.requestRender();
+    step();
+    expect(render).toHaveBeenCalledTimes(1);
+
+    instance.setActiveCamera(scene.objects[0]!.id);
+    render.mockClear();
+    step();
+
+    // 主视图一次 + 监看一次，共享同一个 WebGLRenderer。
+    expect(render).toHaveBeenCalledTimes(2);
+
+    instance.dispose();
+  });
+
+  it('does not render a monitor pass for a non-camera object', async () => {
+    const instance = await PrevizRenderer.create(document.createElement('canvas'));
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject('light', scene.objects));
+    instance.setScene(scene);
+    step();
+
+    // 灯不是机位：从它「看出去」没有意义，而 syncMonitorCamera 会照着一个没有
+    // focalMm / sensor 的对象读出 NaN 视场角，监看框直接全黑。
+    instance.setActiveCamera(scene.objects[0]!.id);
+    render.mockClear();
+    step();
+
+    expect(render).toHaveBeenCalledTimes(1);
+
+    instance.dispose();
+  });
+
+  it('restores the viewport and hides the camera cone during the monitor pass', async () => {
+    const instance = await PrevizRenderer.create(document.createElement('canvas'));
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject('camera', scene.objects));
+    instance.setScene(scene);
+    instance.setActiveCamera(scene.objects[0]!.id);
+    step();
+
+    const node = instance.nodeFor(scene.objects[0]!.id);
+    // 机位锥体就长在相机原点上，不藏起来会糊满整个监看画面；但 pass 结束必须还回去，
+    // 否则主视图里那个机位从此消失。
+    expect(node?.visible).toBe(true);
+    // 剪刀测试留在打开状态的话，之后每一帧主视图都只画得出右下角那一小块。
+    const gl = webglRenderers[webglRenderers.length - 1]!;
+    expect(gl.setScissorTest).toHaveBeenLastCalledWith(false);
+    expect(gl.setViewport).toHaveBeenLastCalledWith(0, 0, 800, 450);
+    // autoClear 借出去必须还：留在 false 之后主视图不再清屏，画面会一层层糊上去。
+    expect(gl.autoClear).toBe(true);
 
     instance.dispose();
   });
