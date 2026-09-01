@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { Suspense, lazy, memo, useCallback, useMemo, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Clapperboard } from "lucide-react";
+import { Camera } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -89,7 +89,7 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
 
       <NodeHeader
         className={NODE_HEADER_FLOATING_POSITION_CLASS}
-        icon={<Clapperboard className="h-4 w-4" />}
+        icon={<Camera className="h-4 w-4" />}
         titleText={resolvedTitle}
         editable
         onTitleChange={(next) => updateNodeData(id, { displayName: next })}
