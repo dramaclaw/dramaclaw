@@ -70,29 +70,29 @@ function aspectSelect(): HTMLSelectElement {
   return screen.getByLabelText<HTMLSelectElement>("previz.hud.outputAspect");
 }
 
-/**
- * HUD 的每一组都是一个没有可查询锚点的 <div>，所以从组里任取一个已知按钮反查父节点——
- * 实现里每个按钮都是那个 <div> 的直接子节点。拿整组而不是按名字前缀过滤，是为了让
- * 「多长出一个 chip」也能被抓住：前缀过滤会把陌生的多余按钮直接滤掉。
- */
-function groupAround(anchor: string): HTMLElement {
-  const group = button(anchor).parentElement;
-  if (!group) throw new Error(`no group container around ${anchor}`);
-  return group;
+/** 四组控件各有 `role="group"` 与一个名字，组内查询一律从这里出发。 */
+function groupNamed(label: string): ReturnType<typeof within> {
+  return within(screen.getByRole("group", { name: label }));
 }
 
-/**
- * 拿「按名字取到的元素序列」跟「组里实际的按钮序列」逐位比，而不是自己从 aria-label
- * 或文本里拼名字：可访问名怎么算交给 getByRole，测试就不会被「名字改从 title 来」这类
- * 对用户无感的改动误伤，而少一个、多一个、换个先后顺序照样红。
- */
-function expectButtonsInOrder(group: HTMLElement, names: readonly string[]): void {
-  const actual = within(group).getAllByRole("button");
-  const expected = names.map((name) => within(group).getByRole("button", { name }));
+/** `screen` 与 `within(...)` 的公共子集，让下面那条断言既能查全屏也能查一组之内。 */
+type RoleScope = Pick<typeof screen, "queryAllByRole" | "getByRole">;
 
-  expect(actual.length, `group should hold exactly: ${names.join(", ")}`).toBe(expected.length);
+/**
+ * 拿「按名字取到的元素序列」跟「实际的元素序列」逐位比，而不是自己从 aria-label 或文本
+ * 里拼名字：可访问名怎么算交给 getByRole，测试就不会被「名字改从 title 来」这类对用户
+ * 无感的改动误伤，而少一个、多一个、换个先后顺序照样红。
+ *
+ * `queryAllByRole` 而不是 `getAllByRole`：`names` 传空数组时要能表达「这里一个都不该有」，
+ * 而 getAllBy 在零命中时是抛异常。
+ */
+function expectInOrder(scope: RoleScope, role: "button" | "group", names: readonly string[]): void {
+  const actual = scope.queryAllByRole(role);
+  const expected = names.map((name) => scope.getByRole(role, { name }));
+
+  expect(actual.length, `should hold exactly: ${names.join(", ") || "(nothing)"}`).toBe(names.length);
   actual.forEach((element, index) => {
-    expect(element, `button #${index} should be ${names[index]}`).toBe(expected[index]);
+    expect(element, `${role} #${index} should be ${names[index]}`).toBe(expected[index]);
   });
 }
 
@@ -111,6 +111,19 @@ describe("PrevizViewportHud", () => {
     for (const mock of Object.values(handlers)) {
       expect(mock).not.toHaveBeenCalled();
     }
+  });
+
+  // 四个组的左右次序是用户一眼看到的布局，而组与组之间没有任何按钮名字能表达它：
+  // 把手柄那组整个挪到显示模式前面，上面每一条「组内顺序」用例都照样全绿。
+  it("lays the four control groups out in order", () => {
+    setup();
+
+    expectInOrder(screen, "group", [
+      "previz.hud.group.display",
+      "previz.hud.group.view",
+      "previz.hud.group.gizmo",
+      "previz.hud.group.aspect",
+    ]);
   });
 
   it.each(DISPLAY_MODES)("asks for the %s display mode when that chip is clicked", async (mode) => {
@@ -140,7 +153,7 @@ describe("PrevizViewportHud", () => {
   it("lists exactly the three display modes in order", () => {
     setup();
 
-    expectButtonsInOrder(groupAround("previz.hud.display.solid"), [
+    expectInOrder(groupNamed("previz.hud.group.display"), "button", [
       "previz.hud.display.solid",
       "previz.hud.display.translucent",
       "previz.hud.display.clay",
@@ -172,7 +185,7 @@ describe("PrevizViewportHud", () => {
   it("lists exactly the three gizmo modes in order", () => {
     setup();
 
-    expectButtonsInOrder(groupAround("previz.hud.gizmo.translate"), [
+    expectInOrder(groupNamed("previz.hud.group.gizmo"), "button", [
       "previz.hud.gizmo.translate",
       "previz.hud.gizmo.rotate",
       "previz.hud.gizmo.scale",
@@ -206,7 +219,7 @@ describe("PrevizViewportHud", () => {
   it("lists exactly the six view directions in order, then focus and reset", () => {
     setup();
 
-    expectButtonsInOrder(groupAround("previz.hud.view.front"), [
+    expectInOrder(groupNamed("previz.hud.group.view"), "button", [
       "previz.hud.view.front",
       "previz.hud.view.back",
       "previz.hud.view.left",
@@ -296,6 +309,9 @@ describe("PrevizViewportHud", () => {
       "1:1",
       "4:3",
     ]);
+    // 这一组只有下拉，没有按钮——跑错组的 chip 在这里现形。上面三组靠整组比对挡住
+    // 「多长一个」，画幅这组没有按钮可比，所以得单说一句。
+    expectInOrder(groupNamed("previz.hud.group.aspect"), "button", []);
   });
 
   /**
