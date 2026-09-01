@@ -33,7 +33,6 @@ export class PrevizRenderer {
     ]);
 
     const renderer = new three.WebGLRenderer({ canvas, antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
 
     const scene = new three.Scene();
     scene.background = new three.Color(0x101216);
@@ -50,7 +49,7 @@ export class PrevizRenderer {
     const controls = new controlsModule.OrbitControls(camera, canvas);
     controls.enableDamping = true;
     // 轨道中心抬到地面之上 1 米，给后续落在网格上的主体留出视觉空间；
-    // 代价是网格整体下移约 1/5 屏高。
+    // 代价是网格中心从画面正中下移到约 60% 高度处。
     controls.target.set(0, 1, 0);
     controls.update();
 
@@ -67,8 +66,10 @@ export class PrevizRenderer {
     // 进而毒掉整个投影矩阵。别顺手精简掉。
     const width = this.canvas.clientWidth || 1;
     const height = this.canvas.clientHeight || 1;
-    // devicePixelRatio 会变（拖到外接 1x 屏、浏览器缩放），这两种情况都会触发
-    // ResizeObserver，所以每次 resize 都要重设，不能只在 create() 设一次。
+    // 每次 resize 都重设，而不是只在 create() 设一次：浏览器缩放会同时改变
+    // devicePixelRatio 和视口 CSS 尺寸，全屏画布因此会走到这里。
+    // 注意：拖到不同 DPR 的显示器只改 DPR、不改 CSS 尺寸，ResizeObserver 不会触发，
+    // 这条路径当前覆盖不到。
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
     // updateStyle=false：尺寸由 CSS 决定，渲染器只跟随，别反过来写死 style。
     this.renderer.setSize(width, height, false);
@@ -112,5 +113,11 @@ export class PrevizRenderer {
       else material?.dispose();
     });
     this.renderer.dispose();
+    // dispose() 只摘监听、清 three 自己的 cache，不还底层 WebGL context（three 0.185
+    // 实测）。浏览器并发 context 上限约 16 个，而预演台是反复开关的，不显式归还的话
+    // 开到后面会静默黑屏。必须在 dispose() 之后调：dispose() 已经摘掉了
+    // 'webglcontextlost' 监听，此时 loseContext() 不会再触发 three 的 onContextLost
+    // （那个 handler 会打一行 "WebGLRenderer: Context Lost." 噪音日志）。
+    this.renderer.forceContextLoss();
   }
 }
