@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -118,8 +118,12 @@ describe("PrevizLayerPanel", () => {
     expect(row(objects[0]!.id)).toHaveAttribute("aria-selected", "false");
     expect(row(objects[2]!.id)).toHaveAttribute("aria-selected", "false");
 
+    // 两行都点：只断言第 0 行的话，「永远传第一行的 id」这种写法一条都红不了。
+    await user.click(screen.getByText(objects[2]!.name));
+    expect(onSelect).toHaveBeenCalledWith(objects[2]!.id);
+
     await user.click(screen.getByText(objects[0]!.name));
-    expect(onSelect).toHaveBeenCalledWith(objects[0]!.id);
+    expect(onSelect).toHaveBeenLastCalledWith(objects[0]!.id);
   });
 
   it("toggles visibility and lock per row without touching each other", async () => {
@@ -227,5 +231,21 @@ describe("PrevizLayerPanel", () => {
     await user.keyboard(" ");
     expect(onToggleVisible).toHaveBeenCalledWith(objects[0]!.id);
     expect(onSelect).not.toHaveBeenCalled();
+
+    // 行本身收到空格时要吃掉默认行为，否则列表会跟着滚一屏。jsdom 观察不到滚动，
+    // 只能看事件有没有被 preventDefault——dispatchEvent 对被取消的事件返回 false。
+    target.focus();
+    expect(fireEvent.keyDown(target, { key: " " })).toBe(false);
+    expect(onSelect).toHaveBeenCalledWith(objects[0]!.id);
+  });
+
+  it("leaves out the heading for a kind that has nothing in it", () => {
+    const objects = build().filter((object) => object.kind === "character");
+    setup({ objects });
+
+    expect(screen.getByRole("group", { name: "previz.layers.kind.character" })).toBeInTheDocument();
+    for (const kind of ["camera", "light", "prop"]) {
+      expect(screen.queryByRole("group", { name: `previz.layers.kind.${kind}` })).toBeNull();
+    }
   });
 });
