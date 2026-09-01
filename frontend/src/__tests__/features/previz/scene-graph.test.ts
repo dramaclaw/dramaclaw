@@ -490,6 +490,11 @@ describe('PrevizSceneGraph', () => {
     graph.sync({ ...scene, settings: { ...scene.settings, displayMode: 'solid' } });
     expect(lastColour(character)).toBe(createdColour);
     expect(lastColour(prop)).toBe(createdPropColour);
+    // 回程要连半透明一起还掉，不只是颜色。把 transparent 恒设成 true、opacity 恒设成
+    // 0.35，上面那几条颜色断言一条都不会红——而后果是 solid 模式下整个场景发虚，
+    // 且所有占位体都进 three 的透明渲染队列、按距离排序、丢掉深度写入。
+    expect(character.material.transparent).toBe(false);
+    expect(character.material.opacity).toBeCloseTo(1, 6);
   });
 
   it('clears everything on dispose', () => {
