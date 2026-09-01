@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { create } from 'zustand';
+import { v4 as uuidv4 } from 'uuid';
 
 import { clampToRange } from './domain/camera';
 import { canAddObject } from './domain/limits';
@@ -10,7 +11,12 @@ import {
   type PrevizObjectOverrides,
   type PrevizObjectPatch,
 } from './domain/objects';
-import { PREVIZ_PATH_SPACING_M } from './domain/pathDraw';
+import {
+  pathPointSeeds,
+  PREVIZ_PATH_SPACING_M,
+  resampleByDistance,
+  smoothStroke,
+} from './domain/pathDraw';
 import {
   createDefaultScene,
   PREVIZ_FPS,
@@ -19,8 +25,24 @@ import {
   type OutputAspect,
   type PrevizObject,
   type PrevizObjectKind,
+  type PrevizPathClip,
   type PrevizScene,
+  type Vec3,
 } from './domain/scene';
+import {
+  clearPathPoints,
+  insertPathPointAt,
+  moveClip,
+  pathClipAt,
+  removeClip,
+  removePathPoint,
+  removeTrack,
+  splitClip,
+  trackFor,
+  trimClip,
+  updatePathPoint,
+  upsertPathClip,
+} from './domain/timeline';
 
 /** 场景是纯数值 JSON，整份快照很便宜；50 步够覆盖一次连续编辑。 */
 export const PREVIZ_HISTORY_LIMIT = 50;
@@ -82,6 +104,24 @@ interface PrevizStoreState {
   selectClip: (id: string | null) => void;
   selectPathPoint: (id: string | null) => void;
   setPathSpacing: (metres: number) => void;
+  /** 把一笔世界坐标笔画变成选中对象的轨迹。对象还没有轨道时顺手建一条。 */
+  drawPath: (objectId: string, stroke: Vec3[]) => void;
+  /** 给对象建一条空轨道与一个铺满时间轴的空片段（时间轴上的「+ 添加对象」）。 */
+  addObjectToTimeline: (objectId: string) => void;
+  insertKeyframe: (clipId: string) => void;
+  updateKeyframe: (
+    clipId: string,
+    pointId: string,
+    /** `rotation: null` 表示把这个点交还给自动朝向。 */
+    patch: { position?: Vec3; rotation?: Vec3 | null },
+  ) => void;
+  removeKeyframe: (clipId: string, pointId: string) => void;
+  clearPath: (clipId: string) => void;
+  moveClipBy: (clipId: string, deltaFrames: number) => void;
+  trimClipToPlayhead: (clipId: string, edge: 'start' | 'end') => void;
+  splitClipAtPlayhead: (clipId: string) => void;
+  removeClipById: (clipId: string) => void;
+  removeTrackFor: (objectId: string) => void;
   /** 打开编辑器时灌入初始场景，同时清空历史——上一次会话的 undo 不该跨节点串。 */
   loadScene: (scene: PrevizScene) => void;
   /** 场景改动的唯一入口：压历史、清 redo、置脏。 */
@@ -261,4 +301,99 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   selectPathPoint: (id) => set({ selectedPointId: id }),
 
   setPathSpacing: (metres) => set({ pathSpacingM: clampToRange(metres, PREVIZ_PATH_SPACING_M) }),
+
+  drawPath: (objectId, stroke) => {
+    const { scene, applyScene, pathSpacingM, timelineFrame } = get();
+    if (!scene.objects.some((object) => object.id === objectId)) return;
+    // 空笔画（点一下没拖）不建片段：建了就是往 undo 栈里塞一步什么都没干的操作。
+    if (stroke.length < 2) return;
+
+    const points = pathPointSeeds(resampleByDistance(smoothStroke(stroke), pathSpacingM));
+    if (points.length < 2) return;
+
+    const track = trackFor(scene, objectId);
+    // 重画是改播放头下的那条轨迹，不是叠一条新的——叠起来两条同时覆盖同一帧，
+    // 谁生效全靠 `pathClipAt` 的取舍，用户看到的是随机结果。
+    const existing = track ? pathClipAt(track, timelineFrame) : undefined;
+    const clip: PrevizPathClip = existing
+      ? { ...existing, points }
+      : {
+          id: uuidv4(),
+          kind: 'path',
+          startFrame: 0,
+          // 铺满时间轴：实测参照实现画完直接给一条 0~120 的路径片段。
+          endFrame: scene.settings.durationFrames,
+          points,
+        };
+
+    applyScene(upsertPathClip(scene, objectId, clip));
+    set({ selectedClipId: clip.id, selectedPointId: null });
+  },
+
+  addObjectToTimeline: (objectId) => {
+    const { scene, applyScene } = get();
+    if (!scene.objects.some((object) => object.id === objectId)) return;
+    const clip: PrevizPathClip = {
+      id: uuidv4(),
+      kind: 'path',
+      startFrame: 0,
+      endFrame: scene.settings.durationFrames,
+      points: [],
+    };
+    applyScene(upsertPathClip(scene, objectId, clip));
+    set({ selectedClipId: clip.id, selectedPointId: null });
+  },
+
+  insertKeyframe: (clipId) => {
+    const { scene, applyScene, timelineFrame } = get();
+    applyScene(insertPathPointAt(scene, clipId, timelineFrame));
+  },
+
+  updateKeyframe: (clipId, pointId, patch) => {
+    const { scene, applyScene } = get();
+    applyScene(updatePathPoint(scene, clipId, pointId, patch));
+  },
+
+  removeKeyframe: (clipId, pointId) => {
+    const { scene, applyScene, selectedPointId } = get();
+    applyScene(removePathPoint(scene, clipId, pointId));
+    if (selectedPointId === pointId) set({ selectedPointId: null });
+  },
+
+  clearPath: (clipId) => {
+    const { scene, applyScene } = get();
+    applyScene(clearPathPoints(scene, clipId));
+    set({ selectedPointId: null });
+  },
+
+  moveClipBy: (clipId, deltaFrames) => {
+    const { scene, applyScene } = get();
+    applyScene(moveClip(scene, clipId, deltaFrames, scene.settings.durationFrames));
+  },
+
+  trimClipToPlayhead: (clipId, edge) => {
+    const { scene, applyScene, timelineFrame } = get();
+    applyScene(trimClip(scene, clipId, edge, timelineFrame));
+  },
+
+  splitClipAtPlayhead: (clipId) => {
+    const { scene, applyScene, timelineFrame, selectedClipId } = get();
+    const next = splitClip(scene, clipId, timelineFrame);
+    if (next === scene) return;
+    applyScene(next);
+    // 被切的那条已经不存在了（剃刀交出的是两条新片段），选中态得跟着放开。
+    if (selectedClipId === clipId) set({ selectedClipId: null, selectedPointId: null });
+  },
+
+  removeClipById: (clipId) => {
+    const { scene, applyScene, selectedClipId } = get();
+    applyScene(removeClip(scene, clipId));
+    if (selectedClipId === clipId) set({ selectedClipId: null, selectedPointId: null });
+  },
+
+  removeTrackFor: (objectId) => {
+    const { scene, applyScene } = get();
+    applyScene(removeTrack(scene, objectId));
+    set({ selectedClipId: null, selectedPointId: null });
+  },
 }));
