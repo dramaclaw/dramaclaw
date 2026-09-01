@@ -12,9 +12,11 @@ import {
   createDefaultScene,
   PREVIZ_SCALE_RANGE,
   type PrevizCharacter,
+  type PrevizProp,
   type PrevizScene,
 } from '@/features/previz/domain/scene';
 import { CharacterRigFactory } from '@/features/previz/engine/characterRig';
+import { PropLoader } from '@/features/previz/engine/propLoader';
 import { PrevizSceneGraph } from '@/features/previz/engine/sceneGraph';
 
 /**
@@ -60,14 +62,40 @@ function fakeThree() {
       callback(this);
       for (const child of [...this.children]) child.traverse(callback);
     }
+    /**
+     * 照着真 three 的语义来：结构深拷贝，**几何体与材质按引用共享**。共享正是
+     * `previzSharedModel` 那道 dispose 护栏要挡的东西——假实现里改成深拷贝几何体的话，
+     * 「删一个物件把缓存里的源模型一起 dispose 掉」这个 bug 在测试里根本复现不出来。
+     */
+    clone(): Object3D {
+      const copy = this.newInstance();
+      copy.name = this.name;
+      copy.visible = this.visible;
+      copy.userData = { ...this.userData };
+      copy.position.set(this.position.x, this.position.y, this.position.z);
+      copy.rotation.set(this.rotation.x, this.rotation.y, this.rotation.z);
+      copy.scale.set(this.scale.x, this.scale.y, this.scale.z);
+      for (const child of this.children) copy.add(child.clone());
+      return copy;
+    }
+    protected newInstance(): Object3D {
+      return new Object3D();
+    }
   }
-  class Group extends Object3D {}
+  class Group extends Object3D {
+    protected override newInstance(): Object3D {
+      return new Group();
+    }
+  }
   class Mesh extends Object3D {
     constructor(
       public geometry: FakeGeometry,
       public material: FakeMaterial,
     ) {
       super();
+    }
+    protected override newInstance(): Object3D {
+      return new Mesh(this.geometry, this.material);
     }
   }
   /**
@@ -208,6 +236,42 @@ function flush(): Promise<void> {
 /** 节点下面那个模型根（`build()` 在它身上留了 `previzRig`）。 */
 function rigOf(graph: PrevizSceneGraph, objectId: string): THREE.Object3D | undefined {
   return graph.nodeFor(objectId)?.children.find((child) => child.userData.previzRig);
+}
+
+/**
+ * 一个真的 `PropLoader`，喂同一份假 three 建出来的源模型。同 `rigFactory`：接线是本组
+ * 用例的被测对象，桩替掉之后加载器改了语义这边一条都不会红。
+ *
+ * 源模型下面挂一个带几何体与材质的 Mesh——`clone()` 是浅克隆这两样，共享正是那道
+ * dispose 护栏要挡的东西。
+ */
+function propLoaderWith(three: typeof import('three')) {
+  const source = new three.Object3D();
+  const sourceMesh = new three.Mesh(
+    new three.BoxGeometry(1, 1, 1),
+    new three.MeshStandardMaterial(),
+  );
+  source.add(sourceMesh);
+  const loadGltf = vi.fn(async () => ({ scene: source }));
+  const loadObj = vi.fn(async () => source);
+  return {
+    loader: new PropLoader({ loadGltf, loadObj }),
+    loadGltf,
+    loadObj,
+    sourceMesh: sourceMesh as unknown as FakeMeshView,
+  };
+}
+
+/** 节点下面那个共享模型根（两条加载路径都在它身上留了 `previzSharedModel`）。 */
+function sharedModelOf(graph: PrevizSceneGraph, objectId: string): THREE.Object3D | undefined {
+  return graph.nodeFor(objectId)?.children.find((child) => child.userData.previzSharedModel);
+}
+
+function propScene(overrides: Partial<PrevizProp> = {}): PrevizScene {
+  const scene = createDefaultScene();
+  const prop = createPrevizObject('prop', scene.objects);
+  scene.objects.push({ ...prop, assetUrl: '/uploads/chair.glb', assetFormat: 'glb', ...overrides });
+  return scene;
 }
 
 function characterScene(overrides: Partial<PrevizCharacter> = {}): PrevizScene {
@@ -869,5 +933,130 @@ describe('PrevizSceneGraph', () => {
 
     expect(rigOf(graph, id)).toBeDefined();
     expect(clone).toHaveBeenCalledTimes(2);
+  });
+  it('swaps the placeholder box for the loaded prop model', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const onReady = vi.fn();
+    const { loader, loadGltf } = propLoaderWith(three);
+    graph.attachCharacterRig(rigFactory(three).factory, onReady);
+    graph.attachPropLoader(loader);
+
+    const scene = propScene();
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+    // 先抓住占位方块：换模型是异步的，flush 之后它已经从树上摘走，取不回来了。
+    const placeholder = placeholderOf(graph, id);
+    await flush();
+
+    expect(loadGltf).toHaveBeenCalledWith('/uploads/chair.glb');
+    expect(sharedModelOf(graph, id)).toBeDefined();
+    // 占位方块是一节点一份、谁都不共享的，必须真的还掉，否则每换一次模型泄漏一对资源。
+    expect(graph.nodeFor(id)?.children).toHaveLength(1);
+    expect(placeholder.geometry.dispose).toHaveBeenCalledTimes(1);
+    // 模型是在任何一次 sync 之外落进树里的：不主动请求一帧，按需重绘的循环这时已经静了，
+    // 物件要等到用户下一次动鼠标才出现。
+    expect(onReady).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a prop without an asset url on its placeholder', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { loader, loadGltf, loadObj } = propLoaderWith(three);
+    graph.attachPropLoader(loader);
+
+    const scene = propScene({ assetUrl: '' });
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+    await flush();
+
+    expect(loadGltf).not.toHaveBeenCalled();
+    expect(loadObj).not.toHaveBeenCalled();
+    expect(placeholderOf(graph, id).geometry.shape).toBe('box');
+  });
+
+  it('routes obj assets to the obj loader', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { loader, loadGltf, loadObj } = propLoaderWith(three);
+    graph.attachPropLoader(loader);
+
+    graph.sync(propScene({ assetUrl: '/uploads/chair.obj', assetFormat: 'obj' }));
+    await flush();
+
+    expect(loadObj).toHaveBeenCalledWith('/uploads/chair.obj');
+    expect(loadGltf).not.toHaveBeenCalled();
+  });
+
+  it('reloads the model when the asset url changes and not when it does not', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { loader, loadGltf } = propLoaderWith(three);
+    graph.attachPropLoader(loader);
+
+    const scene = propScene();
+    const prop = scene.objects[0] as PrevizProp;
+    graph.sync(scene);
+    await flush();
+    // 每帧都 sync，但资产没变：重复加载会把同一个模型每帧换一次，画面闪、显存涨。
+    graph.sync(scene);
+    graph.sync(scene);
+    await flush();
+    expect(loadGltf).toHaveBeenCalledTimes(1);
+
+    const swapped = { ...scene, objects: [{ ...prop, assetUrl: '/uploads/desk.glb' }] };
+    graph.sync(swapped);
+    await flush();
+
+    expect(loadGltf).toHaveBeenCalledTimes(2);
+    expect(loadGltf).toHaveBeenLastCalledWith('/uploads/desk.glb');
+    // 换模型时旧模型也要从树上摘掉，不然新旧两份叠在同一个位置。
+    expect(graph.nodeFor(prop.id)?.children).toHaveLength(1);
+  });
+
+  // 这条是承重的：`clone()` 与 `SkeletonUtils.clone` 都是浅克隆几何体与材质，克隆体和
+  // 缓存里那份源模型指向同一批 GPU 资源。照占位体的路子 dispose 一个克隆，等于把源模型
+  // 一起还了——删掉第一把椅子之后，同一个 URL 克隆出来的每一把都是空的，而症状离
+  // 「删除」这个动作隔了好几步。
+  it('does not dispose the shared source when a prop is removed', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { loader, sourceMesh } = propLoaderWith(three);
+    graph.attachPropLoader(loader);
+
+    const scene = propScene();
+    graph.sync(scene);
+    await flush();
+
+    graph.sync({ ...scene, objects: [] });
+    expect(sourceMesh.geometry.dispose).not.toHaveBeenCalled();
+    expect(sourceMesh.material.dispose).not.toHaveBeenCalled();
+  });
+
+  it('does not dispose the shared actor model when a character is removed', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+    await flush();
+    const rigMesh = rigOf(graph, id)?.children[0] as unknown as FakeMeshView;
+    expect(rigMesh).toBeDefined();
+
+    // 删除走的是 sync 的清理分支，dispose() 走的是另一条——两条都得跳过共享模型。
+    graph.sync({ ...scene, objects: [] });
+    expect(rigMesh.geometry.dispose).not.toHaveBeenCalled();
+    expect(rigMesh.material.dispose).not.toHaveBeenCalled();
+
+    graph.sync(scene);
+    await flush();
+    const second = rigOf(graph, id)?.children[0] as unknown as FakeMeshView;
+    graph.dispose();
+    expect(second.geometry.dispose).not.toHaveBeenCalled();
+    expect(second.material.dispose).not.toHaveBeenCalled();
   });
 });

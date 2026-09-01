@@ -74,6 +74,13 @@ vi.mock("three/examples/jsm/loaders/GLTFLoader.js", () => ({
   },
 }));
 
+vi.mock("three/examples/jsm/loaders/OBJLoader.js", () => ({
+  OBJLoader: class {
+    // 同上：本文件没有物件，加载器不该被调到。
+    loadAsync = vi.fn(() => new Promise(() => {}));
+  },
+}));
+
 vi.mock("three/examples/jsm/utils/SkeletonUtils.js", () => ({
   clone: (object: unknown) => object,
 }));
