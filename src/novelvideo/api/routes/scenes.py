@@ -667,7 +667,9 @@ def _scene_payload(
         "time_of_day": time_of_day,
         "environment_prompt": scene.environment_prompt,
         "variant_prompt": getattr(scene, "variant_prompt", ""),
-        "effective_environment_prompt": build_scene_effective_prompt(scene, base_scene),
+        "effective_environment_prompt": build_scene_effective_prompt(
+            scene, base_scene
+        ),
         "description": scene.description,
         "derived_from_scene": derived_from_scene,
         "spatial_layout_image": scene.spatial_layout_image,
@@ -736,9 +738,7 @@ def _scene_summary_payload(
         "time_of_day": str(getattr(scene, "time_of_day", "") or "").strip(),
         "environment_prompt": scene.environment_prompt,
         "variant_prompt": getattr(scene, "variant_prompt", ""),
-        "effective_environment_prompt": build_scene_effective_prompt(
-            scene, base_scene
-        ),
+        "effective_environment_prompt": build_scene_effective_prompt(scene, base_scene),
         "description": scene.description,
         "derived_from_scene": base_scene_id,
         "spatial_layout_image": scene.spatial_layout_image,
@@ -1369,12 +1369,15 @@ async def upload_scene_master(
         return await _require_scene(store, scene.name) or scene
 
     try:
-        scene = await run_asset_upload_operation(
-            _persist_scene_master_upload,
-            file,
-            master_path,
-            finalize=touch_master,
-        )
+        async with scene_upload_lock(
+            _scene_upload_lock_key(project_dir, scene.name)
+        ):
+            scene = await run_asset_upload_operation(
+                _persist_scene_master_upload,
+                file,
+                master_path,
+                finalize=touch_master,
+            )
     except _InvalidSceneImageError as exc:
         return {"ok": False, "error": f"Invalid image file: {exc}"}
 
@@ -1400,12 +1403,13 @@ async def delete_scene_master(
     scene = await _require_scene(store, name)
     if scene is None:
         return {"ok": False, "error": f"Scene '{name}' not found"}
-    master_path = compute_scene_master_path(project_dir, scene.name)
-    deleted = False
-    if master_path:
-        Path(master_path).unlink(missing_ok=True)
-        deleted = True
-        await store.touch_scene_asset(scene.name)
+    async with scene_upload_lock(_scene_upload_lock_key(project_dir, scene.name)):
+        master_path = compute_scene_master_path(project_dir, scene.name)
+        deleted = False
+        if master_path:
+            Path(master_path).unlink(missing_ok=True)
+            deleted = True
+            await store.touch_scene_asset(scene.name)
     return {"ok": True, "data": {"deleted": deleted}}
 
 
@@ -1580,9 +1584,7 @@ async def upload_scene_custom_package(
         }
 
     try:
-        async with scene_upload_lock(
-            _scene_upload_lock_key(project_dir, scene.name)
-        ):
+        async with scene_upload_lock(_scene_upload_lock_key(project_dir, scene.name)):
             await run_asset_upload_operation(
                 _persist_custom_scene_upload,
                 file,

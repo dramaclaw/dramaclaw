@@ -21,7 +21,7 @@ _scene_ply_upload_limiter_var: RunVar[anyio.CapacityLimiter] = RunVar(
     "scene_ply_upload_limiter"
 )
 _scene_upload_locks_var: RunVar[
-    weakref.WeakValueDictionary[tuple[str, str], asyncio.Lock]
+    weakref.WeakValueDictionary[tuple[str, ...], asyncio.Lock]
 ] = RunVar("scene_upload_locks")
 
 
@@ -45,8 +45,8 @@ def scene_ply_upload_limiter() -> anyio.CapacityLimiter:
     return limiter
 
 
-def scene_upload_lock(key: tuple[str, str]) -> asyncio.Lock:
-    """Return a per-run lock serializing manifest writes for one scene."""
+def asset_resource_lock(key: tuple[str, ...]) -> asyncio.Lock:
+    """Return a per-run lock serializing one asset's publish transaction."""
 
     locks = _scene_upload_locks_var.get(None)
     if locks is None:
@@ -57,6 +57,12 @@ def scene_upload_lock(key: tuple[str, str]) -> asyncio.Lock:
         lock = asyncio.Lock()
         locks[key] = lock
     return lock
+
+
+def scene_upload_lock(key: tuple[str, str]) -> asyncio.Lock:
+    """Return the asset lock used by one scene's staged files and manifest."""
+
+    return asset_resource_lock(key)
 
 
 async def run_asset_upload_operation(
@@ -77,5 +83,6 @@ async def run_asset_upload_operation(
         *args,
         finalize=finalize,
         limiter=limiter,
+        shield=False,
         **kwargs,
     )

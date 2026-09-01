@@ -17,7 +17,10 @@ logger = logging.getLogger("novelvideo.api.characters")
 
 from novelvideo.api.asset_metadata import newest_updated_at, tree_updated_at
 from novelvideo.api.auth import get_api_user
-from novelvideo.api.upload_workers import run_asset_upload_operation
+from novelvideo.api.upload_workers import (
+    asset_resource_lock,
+    run_asset_upload_operation,
+)
 from novelvideo.api.deps import (
     may_run_asset_repair,
     make_sqlite_store,
@@ -767,6 +770,7 @@ async def list_characters(
         characters = [c for c in characters if c.name in requested_names]
 
     asset_project = getattr(ctx, "project_id", "") or project
+
     def build_item(c) -> dict:
         canonical_portrait = canonical_portrait_path(project_dir, c.name)
         abs_portrait = str(canonical_portrait) if summary else compute_portrait_path(
@@ -1843,28 +1847,35 @@ async def upload_identity_costume(
     ctx, username, project_name, project_dir, _output_dir, store = (
         await _resolve_character_project(project, user)
     )
-    character = store.get_character(name)
-    if character is None:
-        return {"ok": False, "error": f"Character '{name}' not found"}
-    identity = _identity_by_id(character, identity_id)
-    if identity is None:
-        return {"ok": False, "error": f"Identity '{identity_id}' not found"}
-
-    safe_name = _safe_asset_name(identity.identity_name)
-    identities_dir = project_dir / "assets" / "characters" / name / "identities"
-    target = identities_dir / f"{safe_name}_costume.png"
-
-    async def update_costume_path(_result):
-        await store.update_character_identity(
-            name, identity_id, costume_image=str(target)
-        )
-
-    await run_asset_upload_operation(
-        _persist_uploaded_character_image,
-        file,
-        target,
-        finalize=update_costume_path,
+    lock_key = (
+        "character-costume",
+        str(project_dir.resolve()),
+        name,
+        identity_id,
     )
+    async with asset_resource_lock(lock_key):
+        character = store.get_character(name)
+        if character is None:
+            return {"ok": False, "error": f"Character '{name}' not found"}
+        identity = _identity_by_id(character, identity_id)
+        if identity is None:
+            return {"ok": False, "error": f"Identity '{identity_id}' not found"}
+
+        safe_name = _safe_asset_name(identity.identity_name)
+        identities_dir = project_dir / "assets" / "characters" / name / "identities"
+        target = identities_dir / f"{safe_name}_costume.png"
+
+        async def update_costume_path(_result):
+            await store.update_character_identity(
+                name, identity_id, costume_image=str(target)
+            )
+
+        await run_asset_upload_operation(
+            _persist_uploaded_character_image,
+            file,
+            target,
+            finalize=update_costume_path,
+        )
     return {
         "ok": True,
         "data": {"costume_image_url": _asset_url(ctx, project_dir, target)},
@@ -1883,34 +1894,43 @@ async def delete_identity_costume(
     ctx, _username, _project_name, project_dir, _output_dir, store = (
         await _resolve_character_project(project, user)
     )
-    character = store.get_character(name)
-    if character is None:
-        return {"ok": False, "error": f"Character '{name}' not found"}
-    identity = _identity_by_id(character, identity_id)
-    if identity is None:
-        return {"ok": False, "error": f"Identity '{identity_id}' not found"}
+    lock_key = (
+        "character-costume",
+        str(project_dir.resolve()),
+        name,
+        identity_id,
+    )
+    async with asset_resource_lock(lock_key):
+        character = store.get_character(name)
+        if character is None:
+            return {"ok": False, "error": f"Character '{name}' not found"}
+        identity = _identity_by_id(character, identity_id)
+        if identity is None:
+            return {"ok": False, "error": f"Identity '{identity_id}' not found"}
 
-    candidate_paths: list[Path] = []
-    computed = compute_identity_costume_path(project_dir, name, identity.identity_name)
-    if computed:
-        candidate_paths.append(Path(computed))
-    saved = str(getattr(identity, "costume_image", "") or "").strip()
-    if saved:
-        candidate_paths.append(Path(saved))
+        candidate_paths: list[Path] = []
+        computed = compute_identity_costume_path(
+            project_dir, name, identity.identity_name
+        )
+        if computed:
+            candidate_paths.append(Path(computed))
+        saved = str(getattr(identity, "costume_image", "") or "").strip()
+        if saved:
+            candidate_paths.append(Path(saved))
 
-    deleted = False
-    seen: set[Path] = set()
-    for path in candidate_paths:
-        if path in seen:
-            continue
-        seen.add(path)
-        if path.exists():
-            path.unlink()
-            deleted = True
+        deleted = False
+        seen: set[Path] = set()
+        for path in candidate_paths:
+            if path in seen:
+                continue
+            seen.add(path)
+            if path.exists():
+                path.unlink()
+                deleted = True
 
-    await store.update_character_identity(name, identity_id, costume_image="")
-    if hasattr(identity, "costume_image"):
-        setattr(identity, "costume_image", "")
+        await store.update_character_identity(name, identity_id, costume_image="")
+        if hasattr(identity, "costume_image"):
+            setattr(identity, "costume_image", "")
     return {"ok": True, "data": {"deleted": deleted}}
 
 

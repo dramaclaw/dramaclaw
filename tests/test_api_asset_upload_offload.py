@@ -285,6 +285,68 @@ async def test_cancelled_character_image_upload_finishes_required_metadata(
 
 
 @pytest.mark.asyncio
+async def test_identity_costume_delete_waits_for_upload_transaction(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import characters
+
+    store = _CharacterStore()
+    ctx = SimpleNamespace(project_id="proj_demo")
+
+    async def resolve_project(*_args, **_kwargs):
+        return ctx, "admin", "demo", tmp_path, str(tmp_path), store
+
+    monkeypatch.setattr(characters, "_resolve_character_project", resolve_project)
+    monkeypatch.setattr(
+        characters,
+        "make_static_url_for_context",
+        lambda _ctx, rel, local_path=None: f"/static/{rel}",
+    )
+    loop = asyncio.get_running_loop()
+    published = asyncio.Event()
+    release_upload = threading.Event()
+    published_path: list[Path] = []
+
+    def held_publish(_file: UploadFile, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"new costume")
+        published_path.append(target)
+        loop.call_soon_threadsafe(published.set)
+        assert release_upload.wait(timeout=5)
+
+    monkeypatch.setattr(characters, "_persist_uploaded_character_image", held_publish)
+    upload_task = asyncio.create_task(
+        characters.upload_identity_costume(
+            project="demo",
+            name="秦",
+            identity_id="秦_少年",
+            file=_png_upload(),
+            user={"username": "admin"},
+        )
+    )
+    await asyncio.wait_for(published.wait(), timeout=1)
+    delete_task = asyncio.create_task(
+        characters.delete_identity_costume(
+            project="demo",
+            name="秦",
+            identity_id="秦_少年",
+            user={"username": "admin"},
+        )
+    )
+    try:
+        done, _pending = await asyncio.wait({delete_task}, timeout=0.1)
+        assert delete_task not in done
+    finally:
+        release_upload.set()
+
+    upload_response, delete_response = await asyncio.gather(upload_task, delete_task)
+    assert upload_response["ok"] is True
+    assert delete_response == {"ok": True, "data": {"deleted": True}}
+    assert not published_path[0].exists()
+    assert store.identity_updates[-1][2] == {"costume_image": ""}
+
+
+@pytest.mark.asyncio
 async def test_scene_image_upload_encodes_off_event_loop(tmp_path, monkeypatch):
     from PIL import Image
 
@@ -369,6 +431,54 @@ async def test_cancelled_scene_master_finishes_asset_version_metadata(
 
     assert raised.value.args == ("cancel-scene-master",)
     assert store.touched == ["Hall"]
+
+
+@pytest.mark.asyncio
+async def test_scene_master_delete_waits_for_upload_transaction(tmp_path, monkeypatch):
+    from novelvideo.api.routes import scenes
+
+    store = _SceneStore()
+    ctx = SimpleNamespace(project_id="proj_demo")
+
+    async def resolve_project(*_args, **_kwargs):
+        return ctx, "admin", "demo", tmp_path, str(tmp_path), store
+
+    monkeypatch.setattr(scenes, "_resolve_scene_project", resolve_project)
+    loop = asyncio.get_running_loop()
+    published = asyncio.Event()
+    release_upload = threading.Event()
+
+    def held_publish(_file: UploadFile, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"new master")
+        loop.call_soon_threadsafe(published.set)
+        assert release_upload.wait(timeout=5)
+
+    monkeypatch.setattr(scenes, "_persist_scene_master_upload", held_publish)
+    upload_task = asyncio.create_task(
+        scenes.upload_scene_master(
+            project="demo",
+            name="Hall",
+            file=_png_upload(),
+            user={"username": "admin"},
+        )
+    )
+    await asyncio.wait_for(published.wait(), timeout=1)
+    delete_task = asyncio.create_task(
+        scenes.delete_scene_master(
+            project="demo", name="Hall", user={"username": "admin"}
+        )
+    )
+    try:
+        done, _pending = await asyncio.wait({delete_task}, timeout=0.1)
+        assert delete_task not in done
+    finally:
+        release_upload.set()
+
+    upload_response, delete_response = await asyncio.gather(upload_task, delete_task)
+    assert upload_response["ok"] is True
+    assert delete_response == {"ok": True, "data": {"deleted": True}}
+    assert not (tmp_path / "assets" / "scenes" / "Hall" / "master.png").exists()
 
 
 @pytest.mark.asyncio
@@ -1375,6 +1485,47 @@ async def test_unshielded_bounded_worker_cancels_while_waiting_for_capacity():
         with pytest.raises(asyncio.CancelledError) as raised:
             await queued
         assert raised.value.args == ("drop-queued-work",)
+        assert not queued_started.is_set()
+        assert limiter.statistics().tasks_waiting == 0
+    finally:
+        release_holder.set()
+        await asyncio.gather(holder, return_exceptions=True)
+        if queued is not None and not queued.done():
+            await asyncio.gather(queued, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_asset_upload_cancels_while_waiting_for_capacity():
+    from novelvideo.api.upload_workers import run_asset_upload_operation
+
+    limiter = anyio.CapacityLimiter(1)
+    holder_started = threading.Event()
+    release_holder = threading.Event()
+    queued_started = threading.Event()
+
+    def hold_capacity() -> None:
+        holder_started.set()
+        assert release_holder.wait(timeout=5)
+
+    holder = asyncio.create_task(
+        run_asset_upload_operation(hold_capacity, worker_limiter=limiter)
+    )
+    queued = None
+    try:
+        assert await asyncio.to_thread(holder_started.wait, 1)
+        queued = asyncio.create_task(
+            run_asset_upload_operation(queued_started.set, worker_limiter=limiter)
+        )
+        while limiter.statistics().tasks_waiting != 1:
+            await asyncio.sleep(0)
+
+        queued.cancel("drop-queued-upload")
+        done, _pending = await asyncio.wait({queued}, timeout=1)
+
+        assert queued in done
+        with pytest.raises(asyncio.CancelledError) as raised:
+            await queued
+        assert raised.value.args == ("drop-queued-upload",)
         assert not queued_started.is_set()
         assert limiter.statistics().tasks_waiting == 0
     finally:
