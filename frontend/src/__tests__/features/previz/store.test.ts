@@ -246,6 +246,37 @@ describe("previz store object editing", () => {
     expect(usePrevizStore.getState().scene.objects[0].name).toBe(PREVIZ_OBJECT_BASE_NAME.light);
   });
 
+  // 属性面板的 patch 是「有就带上」拼出来的，`{ name: maybeName }`（string | undefined）
+  // 在 exactOptionalPropertyTypes 关着时照样过类型检查。原样合并的话 undefined 会盖掉
+  // 已有的值，接着被 normalizeObject 「修」成字段默认值——一次这样的补丁就能把用户改过的
+  // 名字抹回基名、把隐藏的对象重新显示出来、把锁定的解锁、把身高和变换清回默认。
+  it("treats undefined patch fields as absent instead of resetting them", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+    usePrevizStore.getState().updateObject(id, {
+      name: "阿离",
+      visible: false,
+      locked: true,
+      heightCm: 200,
+      transform: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    });
+
+    const maybeName: string | undefined = undefined;
+    usePrevizStore.getState().updateObject(id, {
+      name: maybeName,
+      visible: undefined,
+      locked: undefined,
+      heightCm: undefined,
+      transform: undefined,
+    });
+
+    const patched = usePrevizStore.getState().scene.objects[0];
+    expect(patched.name).toBe("阿离");
+    expect(patched.visible).toBe(false);
+    expect(patched.locked).toBe(true);
+    expect(patched.kind === "character" && patched.heightCm).toBe(200);
+    expect(patched.transform.position).toEqual([1, 2, 3]);
+  });
+
   it("ignores a patch for an unknown id", () => {
     const before = usePrevizStore.getState().scene;
     usePrevizStore.getState().updateObject("nope", { name: "x" });
