@@ -89,8 +89,16 @@ describe("previz pose catalogue", () => {
 
   // 姿势 id 来自落盘的场景，旧文件可能带着已经删掉的 id，类型拦不住它走到这里。
   // 这种情况要走同一条 null 回落，而不是在缺失的表项上抛 TypeError。
+  //
+  // 原型键是同一条路上更凶的一种：普通未知 id 查表得 undefined、`?.` 短路成 null 就完事了，
+  // 但 `PREVIZ_POSE_CLIPS["constructor"]` 会命中 Object.prototype 上的同名成员，是个 truthy
+  // 函数，`?.` 不短路，接着读 `.names` 得 undefined、`.find` 当场抛 TypeError。挡住它的只有
+  // resolvePoseClipName 里那个 isPrevizPoseId 白名单守卫——这两条断言就是钉住那个守卫的，
+  // 删掉守卫后它们会红，而上面那条 "moonwalk" 照样绿。
   it("returns null for a pose id that is not in the catalogue", () => {
     expect(resolvePoseClipName("moonwalk", new Set(["Idle_Loop"]))).toBeNull();
+    expect(resolvePoseClipName("constructor", new Set(["Idle_Loop"]))).toBeNull();
+    expect(resolvePoseClipName("__proto__", new Set(["Idle_Loop"]))).toBeNull();
   });
 
   it("recognises only known pose ids", () => {
