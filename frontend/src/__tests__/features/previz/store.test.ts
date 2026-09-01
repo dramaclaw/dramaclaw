@@ -193,8 +193,9 @@ describe("previz store object editing", () => {
     expect(untouched?.kind === "camera" && untouched.focalMm).toBe(50);
   });
 
-  // 未改动的对象要保持引用不变：场景图同步（Task 6）按引用跳过没动过的条目，
-  // 每次编辑都把整份 objects 重建一遍等于让那条快路径永远不生效。
+  // 未改动的对象要保持引用不变：一次属性编辑只重建被改的那一条，不把整份 objects
+  // 翻新。（这不是给哪个消费者的前置条件——`PrevizSceneGraph.sync()` 是可以每帧调的
+  // 全量重写，不做引用比较——而是「谁被改了」在 store 之外仍然看得出来。）
   it("keeps untouched objects referentially stable across a patch", () => {
     const first = usePrevizStore.getState().addObject("camera")!;
     const second = usePrevizStore.getState().addObject("camera")!;
@@ -249,6 +250,23 @@ describe("previz store object editing", () => {
     const before = usePrevizStore.getState().scene;
     usePrevizStore.getState().updateObject("nope", { name: "x" });
     expect(usePrevizStore.getState().scene).toBe(before);
+  });
+
+  // `loadScene` / `applyScene` 的入参是调用方自建的 PrevizScene，不经 parseScene，
+  // 所以空 id 这类脏值进得来：`.some()` 守卫放行、`parseObject` 却因空 id 返回 null。
+  // 少了归一化那一步的兜底，`scene.objects` 就会变成 `[undefined]`，接着被
+  // JSON.stringify 原样写进 node.data。宁可留一个没规范化的对象。
+  it("never lets a patch put undefined into the objects array", () => {
+    const scene = createDefaultScene();
+    scene.objects = [{ ...createPrevizObject("prop", []), id: "" }];
+    usePrevizStore.getState().loadScene(scene);
+
+    usePrevizStore.getState().updateObject("", { name: "x" });
+
+    const objects = usePrevizStore.getState().scene.objects;
+    expect(objects).toHaveLength(1);
+    expect(objects[0]).toBeDefined();
+    expect(objects[0]?.id).toBe("");
   });
 
   it("removes an object together with its timeline track and selection", () => {
@@ -321,7 +339,10 @@ describe("previz store object editing", () => {
     const before = usePrevizStore.getState();
     usePrevizStore.getState().markSaved();
 
+    // 先断言取消选中真的生效：`addObject` 已经把 id 选上了，直接选回来的话这条用例
+    // 连「selectObject 是个空实现」都区分不出来。
     usePrevizStore.getState().selectObject(null);
+    expect(usePrevizStore.getState().selectedObjectId).toBeNull();
     usePrevizStore.getState().selectObject(id);
 
     // 选中态是会话态：既不进历史，也不算一次未落盘的场景改动。
@@ -364,7 +385,9 @@ describe("previz store object editing", () => {
 
   it("drops the selection when a fresh scene is loaded", () => {
     usePrevizStore.getState().addObject("character");
-    usePrevizStore.getState().setActiveCamera("whatever");
+    // 用真的机位 id，不用一个场景里不存在的字符串：后者等于把「setActiveCamera 接受
+    // 任何 id」写成测试契约，将来真要加 kind 守卫就得回头改这条用例。
+    usePrevizStore.getState().setActiveCamera(usePrevizStore.getState().addObject("camera")!);
     usePrevizStore.getState().loadScene(createDefaultScene());
 
     expect(usePrevizStore.getState().selectedObjectId).toBeNull();
@@ -378,8 +401,16 @@ describe("previz store object editing", () => {
 
     const created = usePrevizStore.getState().scene.objects.find((object) => object.id === id);
     expect(created?.kind === "prop" && created.assetUrl).toBe("/static/x.glb");
-    // 工厂本身仍要被用到：名字编号不该因为带了 overrides 就丢。
-    expect(created?.name).toBe(createPrevizObject("prop", []).name);
+    // 工厂本身仍要被用到，而且要拿到**当前场景的对象列表**：编号是照着已有同类对象算
+    // 出来的，实现里把 `scene.objects` 换成 `[]` 的话第二个物件也会叫「物件 1」。
+    // 拿 `createPrevizObject("prop", [])` 的名字来比就抓不到这条——两边同源，恒等成立。
+    expect(created?.name).toBe(`${PREVIZ_OBJECT_BASE_NAME.prop} 1`);
+
+    const second = usePrevizStore
+      .getState()
+      .addObject("prop", { assetUrl: "/static/y.glb", assetFormat: "glb" })!;
+    const next = usePrevizStore.getState().scene.objects.find((object) => object.id === second);
+    expect(next?.name).toBe(`${PREVIZ_OBJECT_BASE_NAME.prop} 2`);
   });
 
   // overrides 按 kind 收窄，写错 kind 的字段要在编译期就红——store 的 addObject 是
