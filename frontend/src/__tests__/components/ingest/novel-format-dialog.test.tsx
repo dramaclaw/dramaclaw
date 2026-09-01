@@ -44,20 +44,32 @@ describe("NovelFormatDialog", () => {
   it("shows the Fountain sample and English-only rules in the English UI", async () => {
     const { baseElement } = await renderIn("en");
     const shown = baseElement.textContent ?? "";
+    // 三个 <pre> 依次是：完整场景头 / 可修复格式 / 示例片段。分开断言，
+    // 因为「某一行出现在哪一块」正是这个弹窗要传达的信息。
+    const [spec, repairable, example] = Array.from(
+      baseElement.querySelectorAll("pre"),
+    ).map((el) => el.textContent ?? "");
+
+    expect(spec).toContain("INT. SEOUL SUBWAY STATION - NIGHT");
+    expect(spec).toContain("EXT. SEOUL STREET - DAWN");
+    // 精确钟点走独立的 Time: 行，不能写进地点名。
+    expect(spec).toContain("Time: 11:47 PM");
+    // 时间词只有 7 个，写别的会整行识别不出来。
+    expect(spec).toContain("DAY / NIGHT / MORNING / AFTERNOON / EVENING / DAWN / DUSK");
+
+    // INT./EXT. 落不到单一的内/外景取值上，一个这样的场景就会把整本剧本从
+    // standard 拉到 repairable，所以它属于「可修复」而不是「完整」。对应后端
+    // tests/test_screenplay_scene_parser.py::test_int_ext_heading_is_repairable_not_complete。
+    expect(spec).not.toContain("INT./EXT.");
+    expect(repairable).toContain("SCENE 1 - SEOUL SUBWAY STATION");
+    expect(repairable).toContain("INT./EXT. MOVING TAXI - DAY");
 
     // 完整示例逐字对齐 tests/test_screenplay_scene_parser.py 里那份，
     // 那边钉住了它解析出来是 standard、零警告。
-    expect(shown).toContain("INT. SEOUL SUBWAY STATION - NIGHT");
-    expect(shown).toContain("EXT. SEOUL STREET - DAWN");
-    expect(shown).toContain("JI-WON: I made it back.");
-    // 可修复格式：SCENE 1 - TITLE，能定边界但缺时间。
-    expect(shown).toContain("SCENE 1 - SEOUL SUBWAY STATION");
-    // 精确钟点走独立的 Time: 行，不能写进地点名。
-    expect(shown).toContain("Time: 11:47 PM");
-    // 时间词只有 7 个，写别的会整行识别不出来。
-    expect(shown).toContain("DAY / NIGHT / MORNING / AFTERNOON / EVENING / DAWN / DUSK");
-    expect(shown).toContain("MIDNIGHT");
+    expect(example).toContain("EXT. SEOUL STREET - DAWN");
+    expect(example).toContain("JI-WON: I made it back.");
 
+    expect(shown).toContain("MIDNIGHT");
     // 英文界面不该再漏中文样例。
     expect(shown).not.toContain("苏鸾寝殿");
   });

@@ -690,3 +690,70 @@ def test_clock_time_inside_the_location_name_pollutes_the_location():
 
     assert block.location == "SEOUL SUBWAY STATION 11:47 PM"
     assert assess_screenplay_scene_headers(text).status == "standard"
+
+
+# 弹窗 “Supported complete scene headings” 里列的英文场景头。列在那儿就是在说
+# 「照抄这行不会掉警告」，所以每一行都必须真的评成 standard。
+DOCUMENTED_COMPLETE_ENGLISH_HEADINGS = [
+    "INT. SEOUL SUBWAY STATION - NIGHT",
+    "EXT. SEOUL STREET - DAWN",
+]
+
+
+@pytest.mark.parametrize("heading", DOCUMENTED_COMPLETE_ENGLISH_HEADINGS)
+def test_documented_complete_english_headings_assess_as_standard(heading):
+    text = (
+        "EPISODE 1\n"
+        f"{heading}\n"
+        "Characters: Ji-won\n"
+        "△ Rainwater drips from the ceiling.\n"
+        "JI-WON: Is anyone here?\n"
+    )
+
+    assert assess_screenplay_scene_headers(text).status == "standard"
+
+
+def test_int_ext_heading_is_repairable_not_complete():
+    """`INT./EXT.` 不能列进「完整格式」：它落不到单一的内/外景取值上。
+
+    `interior_exterior` 只有「内」「外」两个取值，表示不了内外景，于是留空，
+    质量检查据此判 repairable。真正支持了这个取值之后，这条会转红——那时才可以
+    把 `INT./EXT.` 从弹窗的「可修复格式」挪回「完整格式」。
+    """
+    text = (
+        "EPISODE 1\n"
+        "INT./EXT. MOVING TAXI - DAY\n"
+        "Characters: Ji-won\n"
+        "△ The taxi weaves through traffic.\n"
+        "JI-WON: Faster, please.\n"
+    )
+
+    (block,) = parse_scene_blocks(text)
+    assert block.location == "MOVING TAXI"
+    assert block.time_of_day == "日"
+    assert block.interior_exterior == ""
+
+    assert assess_screenplay_scene_headers(text).status == "repairable"
+
+
+def test_one_int_ext_scene_downgrades_the_whole_script():
+    """一个 INT./EXT. 场景会把整本剧本从 standard 拉到 repairable，不是只影响它自己。"""
+    complete = (
+        "EPISODE 1\n"
+        "INT. SEOUL SUBWAY STATION - NIGHT\n"
+        "Characters: Ji-won\n"
+        "△ Rainwater drips from the ceiling.\n"
+        "JI-WON: Is anyone here?\n"
+        "\n"
+        "EXT. MOVING TAXI - DAY\n"
+        "Characters: Ji-won\n"
+        "△ The taxi weaves through traffic.\n"
+        "JI-WON: Faster, please.\n"
+    )
+    assert assess_screenplay_scene_headers(complete).status == "standard"
+
+    with_int_ext = complete.replace("EXT. MOVING TAXI", "INT./EXT. MOVING TAXI")
+    assessment = assess_screenplay_scene_headers(with_int_ext)
+    assert assessment.status == "repairable"
+    assert assessment.detected_headers == 2
+    assert assessment.standard_headers == 1

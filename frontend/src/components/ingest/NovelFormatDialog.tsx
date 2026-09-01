@@ -73,7 +73,6 @@ const DRAMA_FORMAT_SPEC_EN = [
   "Fountain / Final Draft (recommended)",
   "INT. SEOUL SUBWAY STATION - NIGHT",
   "EXT. SEOUL STREET - DAWN",
-  "INT./EXT. MOVING TAXI - DAY",
   "",
   "Time values",
   "DAY / NIGHT / MORNING / AFTERNOON / EVENING / DAWN / DUSK",
@@ -90,6 +89,11 @@ const DRAMA_REPAIRABLE_FORMAT_EN = [
   "Characters: Ji-won, Old Woman",
   "△ Rainwater drips from the ceiling.",
   "JI-WON: Is anyone here?",
+  "",
+  "INT./EXT. MOVING TAXI - DAY",
+  "Characters: Ji-won",
+  "△ The taxi weaves through traffic.",
+  "JI-WON: Faster, please.",
 ].join("\n");
 
 const DRAMA_FORMAT_EXAMPLE_EN = [
