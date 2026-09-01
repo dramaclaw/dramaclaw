@@ -162,7 +162,12 @@ export function normalizeCanvasCommandNodeData(
           next.text = text;
         }
       }
-      deleteFields(next, ["prompt", "content", "body", "description", "script", "narration"]);
+      // Audio generation resolves its provider from audioKind and the
+      // frontend audio pipeline.  `model` belongs to image/video nodes and
+      // is not editable on an audio node; discard it during normalization so
+      // a workflow-wide model hint cannot make the whole command fail before
+      // the approval card is shown.
+      deleteFields(next, ["prompt", "content", "body", "description", "script", "narration", "model"]);
       break;
     case CANVAS_NODE_TYPES.beatContext:
       if (!hasNonEmptyStringField(next, "content")) {

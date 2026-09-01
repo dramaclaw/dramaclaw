@@ -606,7 +606,7 @@ describe("canvas chat commands", () => {
           {
             type: "update_node_data",
             node_id: audioId,
-            data: { prompt: "new audio" },
+            data: { prompt: "new audio", model: "suno_music" },
           },
           {
             type: "update_node_data",

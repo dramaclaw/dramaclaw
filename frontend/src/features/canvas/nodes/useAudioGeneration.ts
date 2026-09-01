@@ -190,10 +190,18 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
               workflowRecipeIds: recipeIds,
             }),
           })
-        : extractSpeakableAudioText(
-            runtimeOwnText.trim()
-            || selectWorkflowUpstreamText(runtimeData, upstreamContents, upstreamTextJoined),
-          );
+        : (() => {
+            // A workflow may leave a label such as “这是短剧的第一段旁白”
+            // in the audio node while the real narration is provided by an
+            // upstream script/text node.  Strip the label first, then fall
+            // back to the upstream narration instead of sending the label to
+            // TTS verbatim.
+            const ownNarration = extractSpeakableAudioText(runtimeOwnText.trim());
+            const upstreamNarration = extractSpeakableAudioText(
+              selectWorkflowUpstreamText(runtimeData, upstreamContents, upstreamTextJoined),
+            );
+            return ownNarration || upstreamNarration;
+          })();
       if (!trimmed) {
         throw new Error('没有可朗读的旁白或对白');
       }
