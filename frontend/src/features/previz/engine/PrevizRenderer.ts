@@ -183,6 +183,19 @@ export class PrevizRenderer {
     ];
     // `|| 1`：相机正好停在注视点上时长度是 0，除下去是 NaN。方向随便取一个都行，
     // 这里让它退化成沿 +X 退开，至少画面还在。
+    //
+    // 当前这条分支到不了，两条写机位的路都够不着 0：
+    // 一是渲染器自己写机位只经 moveCamera，而它拿到的距离都出自 view.ts 的
+    // `framingDistance()`，那里有 MIN_FRAMING_DISTANCE = 1 的下界；
+    // 二是 OrbitControls 会绕过渲染器直接改 camera.position——滚轮与拖拽——而这里
+    // 没有设 minDistance。它默认是 0（three 0.185 `OrbitControls.js:125`，
+    // maxDistance 默认 Infinity 在 `:133`），但缩放是**乘性**的：`:776` 的
+    // `radius = _clampDistance(radius * _scale)`，`_clampDistance` 在 `:1074` 只是
+    // `Math.max(min, Math.min(max, dist))`，正半径乘任意有限倍率都不会精确变成 0；
+    // 平移则把 `_panOffset` 同时加到 position 与 target 上，两者的差不变。
+    //
+    // 所以留着它是为了将来：Task 10 的手柄拖拽会直接写相机机位，谁给这里配上
+    // `minDistance = 0` 之外的推拉逻辑、或改成加性缩放，0 长度就会真的出现。
     const length = Math.hypot(offset[0], offset[1], offset[2]) || 1;
     const distance = framingDistance(boundsRadius(bounds), EDITOR_FOV_DEG, this.camera.aspect);
     this.moveCamera(
