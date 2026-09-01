@@ -7417,7 +7417,123 @@
       "description": "在 3D 空间中搭建场景、布置机位并进行多视角截图",
       "close": "关闭预演台",
       "duration": "时长 {{frames}} 帧",
-      "sceneTooLarge": "场景数据过大，本次未保存；请减少对象后重试"
+      "sceneTooLarge": "场景数据过大，本次未保存；请减少对象后重试",
+      "limitReached": "该类型对象已达数量上限",
+      "noProject": "当前页面没有项目上下文，无法上传模型",
+      "propUpload": {
+        "format": "只支持 GLB / GLTF / OBJ 模型",
+        "tooLarge": "模型超过 50 MB，请先减面或压缩贴图",
+        "failed": "模型上传失败，请重试"
+      }
+    },
+    "toolbar": {
+      "add": {
+        "character": "添加人物",
+        "camera": "添加机位",
+        "light": "添加灯光",
+        "prop": "添加物件"
+      },
+      "importProp": "导入模型",
+      "limitReached": "已达上限 {{count}} 个",
+      "undo": "撤销",
+      "redo": "重做"
+    },
+    "layers": {
+      "title": "对象",
+      "empty": "还没有对象，用左侧工具栏添加",
+      "kind": {
+        "character": "人物",
+        "camera": "机位",
+        "light": "灯光",
+        "prop": "物件"
+      },
+      "toggleVisible": "显示 / 隐藏",
+      "toggleLocked": "锁定 / 解锁",
+      "remove": "删除",
+      "setActiveCamera": "设为监看机位"
+    },
+    "inspector": {
+      "empty": "选中一个对象后在这里编辑",
+      "name": "名称",
+      "position": {
+        "label": "位置（米）",
+        "x": "位置 X",
+        "y": "位置 Y",
+        "z": "位置 Z"
+      },
+      "rotation": {
+        "label": "旋转（度）",
+        "x": "旋转 X",
+        "y": "旋转 Y",
+        "z": "旋转 Z"
+      },
+      "scale": {
+        "label": "缩放",
+        "x": "缩放 X",
+        "y": "缩放 Y",
+        "z": "缩放 Z"
+      },
+      "heightCm": "身高（厘米）",
+      "bodyType": "体型",
+      "bodyTypes": {
+        "slim": "偏瘦",
+        "average": "标准",
+        "heavy": "偏壮"
+      },
+      "basePose": "基础姿势",
+      "poseAdjust": {
+        "label": "姿态微调（度）",
+        "pitch": "俯仰",
+        "turn": "转身",
+        "lean": "倾斜"
+      },
+      "focalMm": "焦距（毫米）",
+      "aperture": "光圈",
+      "sensor": "画幅",
+      "sensors": {
+        "ff": "全画幅",
+        "s35": "Super 35"
+      },
+      "angleOfView": "水平视场角 {{degrees}}°",
+      "lightType": "灯光类型",
+      "lightTypes": {
+        "key": "主光",
+        "point": "点光",
+        "spot": "聚光"
+      },
+      "color": "颜色",
+      "intensity": "强度",
+      "assetUrl": "模型地址"
+    },
+    "hud": {
+      "group": {
+        "display": "显示",
+        "view": "视角",
+        "gizmo": "手柄",
+        "aspect": "画幅"
+      },
+      "display": {
+        "solid": "实体",
+        "translucent": "半透",
+        "clay": "全灰"
+      },
+      "view": {
+        "front": "前",
+        "back": "后",
+        "left": "左",
+        "right": "右",
+        "top": "顶",
+        "bottom": "底"
+      },
+      "focus": "聚焦 (F)",
+      "focusHint": "先选中一个对象再聚焦",
+      "resetView": "重置视角 (H)",
+      "gizmo": {
+        "translate": "移动",
+        "rotate": "旋转",
+        "scale": "缩放"
+      },
+      "outputAspect": "出片画幅"
     }
   }
 }

@@ -7417,7 +7417,123 @@
       "description": "Block out a scene in 3D, place cameras, and capture multiple angles",
       "close": "Close Previz Stage",
       "duration": "Duration {{frames}} frames",
-      "sceneTooLarge": "The scene is too large to save. Remove some objects and try again."
+      "sceneTooLarge": "The scene is too large to save. Remove some objects and try again.",
+      "limitReached": "This object type has reached its limit",
+      "noProject": "No project in the current URL — cannot upload a model",
+      "propUpload": {
+        "format": "Only GLB / GLTF / OBJ models are supported",
+        "tooLarge": "The model is over 50 MB. Reduce its polygons or textures first.",
+        "failed": "Model upload failed. Please try again."
+      }
+    },
+    "toolbar": {
+      "add": {
+        "character": "Add character",
+        "camera": "Add camera",
+        "light": "Add light",
+        "prop": "Add prop"
+      },
+      "importProp": "Import model",
+      "limitReached": "Limit reached ({{count}})",
+      "undo": "Undo",
+      "redo": "Redo"
+    },
+    "layers": {
+      "title": "Objects",
+      "empty": "No objects yet — add one from the toolbar",
+      "kind": {
+        "character": "Character",
+        "camera": "Camera",
+        "light": "Light",
+        "prop": "Prop"
+      },
+      "toggleVisible": "Show / hide",
+      "toggleLocked": "Lock / unlock",
+      "remove": "Delete",
+      "setActiveCamera": "Use as monitor camera"
+    },
+    "inspector": {
+      "empty": "Select an object to edit it here",
+      "name": "Name",
+      "position": {
+        "label": "Position (m)",
+        "x": "Position X",
+        "y": "Position Y",
+        "z": "Position Z"
+      },
+      "rotation": {
+        "label": "Rotation (deg)",
+        "x": "Rotation X",
+        "y": "Rotation Y",
+        "z": "Rotation Z"
+      },
+      "scale": {
+        "label": "Scale",
+        "x": "Scale X",
+        "y": "Scale Y",
+        "z": "Scale Z"
+      },
+      "heightCm": "Height (cm)",
+      "bodyType": "Build",
+      "bodyTypes": {
+        "slim": "Slim",
+        "average": "Average",
+        "heavy": "Heavy"
+      },
+      "basePose": "Base pose",
+      "poseAdjust": {
+        "label": "Pose adjust (deg)",
+        "pitch": "Pitch",
+        "turn": "Turn",
+        "lean": "Lean"
+      },
+      "focalMm": "Focal length (mm)",
+      "aperture": "Aperture",
+      "sensor": "Sensor",
+      "sensors": {
+        "ff": "Full frame",
+        "s35": "Super 35"
+      },
+      "angleOfView": "Horizontal angle of view {{degrees}}°",
+      "lightType": "Light type",
+      "lightTypes": {
+        "key": "Key",
+        "point": "Point",
+        "spot": "Spot"
+      },
+      "color": "Color",
+      "intensity": "Intensity",
+      "assetUrl": "Model URL"
+    },
+    "hud": {
+      "group": {
+        "display": "Display",
+        "view": "View",
+        "gizmo": "Gizmo",
+        "aspect": "Aspect"
+      },
+      "display": {
+        "solid": "Solid",
+        "translucent": "Translucent",
+        "clay": "Clay"
+      },
+      "view": {
+        "front": "Front",
+        "back": "Back",
+        "left": "Left",
+        "right": "Right",
+        "top": "Top",
+        "bottom": "Bottom"
+      },
+      "focus": "Focus (F)",
+      "focusHint": "Select an object first",
+      "resetView": "Reset view (H)",
+      "gizmo": {
+        "translate": "Move",
+        "rotate": "Rotate",
+        "scale": "Scale"
+      },
+      "outputAspect": "Output aspect"
     }
   }
 }
