@@ -12,6 +12,7 @@ import {
   type PrevizScene,
   type Vec3,
 } from '../domain/scene';
+import type { CharacterRigFactory } from './characterRig';
 
 /** three 命名空间本体。以构造参数传入，绝不在本文件里 import —— 见类注释。 */
 export type ThreeModule = typeof THREE;
@@ -72,11 +73,23 @@ function finiteOr(value: number, fallback: number): number {
 export class PrevizSceneGraph {
   private readonly nodes = new Map<string, THREE.Object3D>();
   private displayMode: DisplayMode | null = null;
+  /** 由 `PrevizRenderer.create()` 注入；没注入时人物一直用占位胶囊。 */
+  private characterRig: CharacterRigFactory | null = null;
+  private onModelReady: (() => void) | null = null;
 
   constructor(
     private readonly three: ThreeModule,
     private readonly root: THREE.Object3D,
   ) {}
+
+  /**
+   * 接上人物模型工厂。`onReady` 在每个模型换入之后调一次：模型是异步到的，
+   * 按需重绘的循环这时早就静下来了，不主动请求一帧的话人物要等到用户下一次动鼠标才出现。
+   */
+  attachCharacterRig(factory: CharacterRigFactory, onReady: () => void): void {
+    this.characterRig = factory;
+    this.onModelReady = onReady;
+  }
 
   nodeFor(objectId: string): THREE.Object3D | undefined {
     return this.nodes.get(objectId);
@@ -129,6 +142,9 @@ export class PrevizSceneGraph {
         clampToRange(scale[1], PREVIZ_SCALE_RANGE),
         clampToRange(scale[2], PREVIZ_SCALE_RANGE),
       );
+
+      const rig = this.characterRig;
+      if (object.kind === 'character' && rig) this.syncCharacterRig(rig, node, object);
     }
 
     // 遍历 Map 的过程中删掉当前项在 JS 里是有定义的行为，不需要先复制一份。
@@ -157,6 +173,61 @@ export class PrevizSceneGraph {
     }
     this.nodes.clear();
     this.displayMode = null;
+  }
+
+  /**
+   * 人物的真模型是异步来的：第一次见到这个节点时发一次请求，回来再把占位胶囊换掉。
+   *
+   * 「已经请求过了」这个标记记在**节点**上，而不是记在一张按对象 id 的表里：撤销一次
+   * 删除会让同一个 id 带着一个全新的节点回来，按 id 记的话那个人物就永远停在占位胶囊上。
+   * 请求失败时标记会被清掉（见 `swapInCharacterModel`），下一次 sync 就是一次重试。
+   *
+   * 模型到位之后 `resizePlaceholder` 就再也帮不上忙了——占位体已经被删掉，它直接早退——
+   * 身高与体型改由 rig 的缩放接手；少了这一条，属性面板的身高滑杆对已加载的人物完全失效。
+   */
+  private syncCharacterRig(
+    rig: CharacterRigFactory,
+    node: THREE.Object3D,
+    character: PrevizCharacter,
+  ): void {
+    const model = node.children.find((child) => child.userData.previzRig);
+    if (model) {
+      rig.applyBodyScale(model, character);
+      return;
+    }
+    if (node.userData.previzRigRequested) return;
+    node.userData.previzRigRequested = true;
+    void this.swapInCharacterModel(rig, node, character);
+  }
+
+  private async swapInCharacterModel(
+    rig: CharacterRigFactory,
+    node: THREE.Object3D,
+    character: PrevizCharacter,
+  ): Promise<void> {
+    const model = await rig.build(character);
+    if (!model) {
+      // 加载失败：占位胶囊留着，并且把标记清掉——用户改一次属性触发的下一次 sync
+      // 就等于一次重试，否则一次网络抖动能把这个人物永久钉死在胶囊上。
+      node.userData.previzRigRequested = false;
+      return;
+    }
+    // 加载期间对象可能已经被删了，或者渲染器整个 dispose 了：那时节点已经从对象根上
+    // 摘掉、资源也还过了，往它身上挂一个 GLB 就是一份谁都够不着、也不会再被 dispose 的副本。
+    if (node.parent !== this.root) return;
+
+    // 只扫直接子节点，与 `resizePlaceholder` 一致。要把占位体或模型嵌进一层中间 Group，
+    // 两处得一起改，否则换模型时占位体删不掉，会和 GLB 叠在一起。
+    for (const child of [...node.children]) {
+      if (child.userData.previzPlaceholder) {
+        node.remove(child);
+        disposeSubtree(child);
+      }
+    }
+    node.add(model);
+    // 模型是在任何一次 sync 之外落进树里的，显示模式得单独补一次。
+    this.refreshDisplayMode();
+    this.onModelReady?.();
   }
 
   private createNode(object: PrevizObject): THREE.Object3D {

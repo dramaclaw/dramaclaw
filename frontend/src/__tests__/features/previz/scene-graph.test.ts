@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -10,8 +11,10 @@ import {
 import {
   createDefaultScene,
   PREVIZ_SCALE_RANGE,
+  type PrevizCharacter,
   type PrevizScene,
 } from '@/features/previz/domain/scene';
+import { CharacterRigFactory } from '@/features/previz/engine/characterRig';
 import { PrevizSceneGraph } from '@/features/previz/engine/sceneGraph';
 
 /**
@@ -103,6 +106,31 @@ function fakeThree() {
     dispose = vi.fn();
     constructor(public params: Record<string, unknown> = {}) {}
   }
+  /**
+   * 净高 2 m 的模型。真 `setFromObject()` 量的是**世界**包围盒，根对象自己的 scale
+   * 就在它的 matrixWorld 里，所以这份假实现也把 scale 乘进去——恒定尺寸的假盒会让
+   * 「重量一次已经缩放过的 rig」这个错误完全测不出来。
+   */
+  class FakeBox3 {
+    min = new Vector3(Infinity, Infinity, Infinity);
+    max = new Vector3(-Infinity, -Infinity, -Infinity);
+    setFromObject(object: Object3D) {
+      this.min.set(-0.3 * object.scale.x, 0, -0.3 * object.scale.z);
+      this.max.set(0.3 * object.scale.x, 2 * object.scale.y, 0.3 * object.scale.z);
+      return this;
+    }
+    isEmpty() {
+      return this.max.x < this.min.x || this.max.y < this.min.y || this.max.z < this.min.z;
+    }
+  }
+  /** 姿势采样只要求「能建、能 play、能 setTime」，本文件不断言它，行为归 character-rig 那边。 */
+  class FakeAnimationMixer {
+    constructor(_root: unknown) {}
+    clipAction(_clip: unknown) {
+      return { play: () => {} };
+    }
+    setTime(_time: number) {}
+  }
 
   return {
     Object3D,
@@ -110,6 +138,8 @@ function fakeThree() {
     Mesh,
     Vector3,
     Euler,
+    Box3: FakeBox3,
+    AnimationMixer: FakeAnimationMixer,
     CapsuleGeometry: FakeCapsuleGeometry,
     ConeGeometry: FakeConeGeometry,
     SphereGeometry: FakeSphereGeometry,
@@ -148,6 +178,43 @@ function lastColour(mesh: FakeMeshView): number | undefined {
 function capsuleHeight(mesh: FakeMeshView): number {
   const [radius, middle] = mesh.geometry.args;
   return middle! + radius! * 2;
+}
+
+/**
+ * 一个真的 `CharacterRigFactory`，喂同一份假 three。这里刻意不用手搓的桩：本组用例测的
+ * 就是场景图与工厂之间的接线，桩替掉之后工厂改了签名或者语义，这边一条都不会红。
+ *
+ * `clone` 每次交出一个新的模型根，下面再挂一个带材质的 Mesh——显示模式要刷到模型的
+ * 每份材质上，模型根自己是没有材质的。
+ */
+function rigFactory(three: typeof import('three'), clipNames: string[] = ['Idle_Loop']) {
+  const loadGltf = vi.fn(async () => ({
+    scene: new three.Object3D(),
+    animations: clipNames.map((name) => ({ name })) as unknown as THREE.AnimationClip[],
+  }));
+  const clone = vi.fn(() => {
+    const model = new three.Object3D();
+    model.add(new three.Mesh(new three.BoxGeometry(1, 1, 1), new three.MeshStandardMaterial()));
+    return model;
+  });
+  return { factory: new CharacterRigFactory({ three, loadGltf, clone }), loadGltf, clone };
+}
+
+/** 排空微任务队列：模型换入走的是一条纯 Promise 链，没有定时器。 */
+function flush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** 节点下面那个模型根（`build()` 在它身上留了 `previzRig`）。 */
+function rigOf(graph: PrevizSceneGraph, objectId: string): THREE.Object3D | undefined {
+  return graph.nodeFor(objectId)?.children.find((child) => child.userData.previzRig);
+}
+
+function characterScene(overrides: Partial<PrevizCharacter> = {}): PrevizScene {
+  const scene = createDefaultScene();
+  const character = createPrevizObject('character', scene.objects);
+  scene.objects.push({ ...character, ...overrides });
+  return scene;
 }
 
 function sceneWith(...kinds: Array<'character' | 'camera' | 'light' | 'prop'>): PrevizScene {
@@ -644,5 +711,163 @@ describe('PrevizSceneGraph', () => {
     expect(graph.nodeFor(scene.objects[0]!.id)).toBeUndefined();
     expect(mesh.geometry.dispose).toHaveBeenCalled();
     expect(mesh.material.dispose).toHaveBeenCalled();
+  });
+  it('swaps the placeholder capsule for the loaded model, and only loads it once', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const onReady = vi.fn();
+    const { factory, loadGltf } = rigFactory(three);
+    graph.attachCharacterRig(factory, onReady);
+
+    const scene = characterScene();
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+    const node = graph.nodeFor(id);
+    const placeholder = placeholderOf(graph, id);
+    // 模型是异步来的：这一刻画面上还只有占位胶囊。
+    expect(node?.children).toHaveLength(1);
+
+    await flush();
+
+    expect(node?.children).toHaveLength(1);
+    expect(rigOf(graph, id)).toBeDefined();
+    // 占位胶囊必须摘掉并还资源：留着就是一个人和一个胶囊叠在一起，还按帧漏几何体。
+    expect(placeholder.geometry.dispose).toHaveBeenCalled();
+    expect(placeholder.material.dispose).toHaveBeenCalled();
+    // 按需重绘的循环这时早就静下来了。不主动请求一帧，人物要等到用户下一次动鼠标才出现。
+    expect(onReady).toHaveBeenCalled();
+
+    // sync 是可以每帧调的。少了「只发一次」的守卫，每一帧都往同一个节点上再叠一个 GLB。
+    graph.sync(scene);
+    graph.sync(scene);
+    await flush();
+    expect(loadGltf).toHaveBeenCalledTimes(1);
+    expect(node?.children).toHaveLength(1);
+  });
+
+  it('rescales the loaded rig when heightCm changes, without loading a second model', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const { factory, loadGltf } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene({ heightCm: 150 });
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+    await flush();
+    const rig = rigOf(graph, character.id);
+    // 假模型净高 2 m，1.5 m 的人就是缩到 0.75。
+    expect(rig?.scale.y).toBeCloseTo(0.75, 6);
+
+    graph.sync({ ...scene, objects: [{ ...character, heightCm: 200, bodyType: 'heavy' }] });
+
+    // 模型到位之后占位胶囊已经没了，`resizePlaceholder` 从此直接早退——身高体型
+    // 只能由 rig 的缩放接手。少了这条，属性面板的身高滑杆对已加载的人物完全失效。
+    expect(rig?.scale.y).toBeCloseTo(1, 6);
+    expect(rig?.scale.x).toBeCloseTo(1.15, 6);
+    // 而且是重新缩放，不是重新下一个模型。
+    expect(loadGltf).toHaveBeenCalledTimes(1);
+    expect(graph.nodeFor(character.id)?.children).toHaveLength(1);
+    expect(rigOf(graph, character.id)).toBe(rig);
+  });
+
+  it('gives the model that just arrived the display mode already in force', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    graph.sync({ ...scene, settings: { ...scene.settings, displayMode: 'translucent' } });
+    await flush();
+
+    // 模型是在任何一次 sync 之外落进树里的：不补一次显示模式，半透明场景里每个
+    // 人物都会是实心的，而占位体又都是半透明的。
+    const mesh = rigOf(graph, scene.objects[0]!.id)?.children[0] as unknown as FakeMeshView;
+    expect(mesh.material.transparent).toBe(true);
+    expect(mesh.material.opacity).toBeCloseTo(0.35, 6);
+  });
+
+  it('keeps the placeholder capsule when the model cannot be loaded, and retries later', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const onReady = vi.fn();
+    const loadGltf = vi.fn(async () => {
+      throw new Error('404');
+    });
+    graph.attachCharacterRig(
+      new CharacterRigFactory({ three, loadGltf, clone: (object) => object }),
+      onReady,
+    );
+
+    const scene = characterScene();
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+    await flush();
+
+    // 模型 404 不该把人物从场景里抹掉，也不该白请求一帧。
+    const placeholder = placeholderOf(graph, id);
+    expect(placeholder.geometry.shape).toBe('capsule');
+    expect(placeholder.geometry.dispose).not.toHaveBeenCalled();
+    expect(onReady).not.toHaveBeenCalled();
+
+    // 失败之后要能重试：用户改一次属性触发的下一次 sync 就是一次重试，
+    // 否则一次网络抖动就把这个人物永久钉死在占位胶囊上。
+    graph.sync(scene);
+    await flush();
+    expect(loadGltf).toHaveBeenCalledTimes(2);
+
+    error.mockRestore();
+  });
+
+  it('drops the model when its node is gone by the time it arrives', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const onReady = vi.fn();
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, onReady);
+
+    const scene = characterScene();
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+    const node = graph.nodeFor(id);
+    graph.dispose();
+    await flush();
+
+    // 节点已经从树上摘掉、资源也还过了。往它身上挂一个 GLB 就是一份谁都够不着、
+    // 也永远不会再被 dispose 的副本。
+    expect(node?.children).toHaveLength(1);
+    expect(node?.children[0]?.userData.previzPlaceholder).toBe(true);
+    expect(onReady).not.toHaveBeenCalled();
+  });
+
+  it('requests the model again for an object that came back after being removed', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const { factory, clone } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+    await flush();
+    expect(rigOf(graph, id)).toBeDefined();
+
+    // 删掉再撤销：对象带着同一个 id 回来，但节点是全新的。「已经建过 rig 的 id」
+    // 这种记法会让撤销回来的人物永远停在占位胶囊上。
+    graph.sync({ ...scene, objects: [] });
+    graph.sync(scene);
+    await flush();
+
+    expect(rigOf(graph, id)).toBeDefined();
+    expect(clone).toHaveBeenCalledTimes(2);
   });
 });
