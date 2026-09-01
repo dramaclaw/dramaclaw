@@ -30,6 +30,12 @@ const PREVIZ_POSE_SAMPLE_TIME: Record<PrevizPoseId, number> = Object.fromEntries
 /** 模型自身净高（米）量出来之后记在 rig 上的键。缩放为 1 时量一次，之后只读缓存。 */
 const NATIVE_HEIGHT_KEY = 'previzRigNativeHeightM';
 
+/**
+ * 当前摆着哪个姿势，记在 rig 上。`sync` 每次编辑都跑，没有这个标记就得每次重建一个
+ * AnimationMixer 把整副骨架重推一遍——那是拖身高滑杆时每一帧都要付的钱。
+ */
+const APPLIED_POSE_KEY = 'previzPoseId';
+
 /** GLTFLoader 结果里本模块真正用到的那两块。 */
 export interface PrevizGltf {
   scene: THREE.Object3D;
@@ -56,6 +62,12 @@ export interface CharacterRigDeps {
 export class CharacterRigFactory {
   /** 共享的加载 Promise：50 个人物各下一次 8 MB 就是 400 MB 流量。 */
   private loading: Promise<PrevizGltf> | null = null;
+  /**
+   * 已经解出来的源模型。姿势要在 rig 建好之后还能改（属性面板的「基础姿势」下拉框），
+   * 而重新摆姿势要的是那份 clip 列表——只留 Promise 的话，改姿势这条同步路径就得
+   * 再 await 一次，把一次纯属性编辑变成异步的。
+   */
+  private source: PrevizGltf | null = null;
 
   constructor(private readonly deps: CharacterRigDeps) {}
 
@@ -76,10 +88,9 @@ export class CharacterRigFactory {
       return null;
     }
 
+    this.source = source;
     const model = this.deps.clone(source.scene);
-    this.applyPose(model, source.animations, character.basePoseId as PrevizPoseId);
-    this.applyBodyScale(model, character);
-    this.applyPoseAdjust(model, character);
+    this.applyCharacter(model, character);
     // 场景图靠这个标记在节点的子节点里认出「已经换过模型了」。
     model.userData.previzRig = true;
     // `SkeletonUtils.clone` 是浅克隆几何体与材质：克隆体和缓存里那份源模型共用同一批
@@ -108,20 +119,39 @@ export class CharacterRigFactory {
   }
 
   /**
+   * 把一个人物的全部外观属性刷到一个已经建好的 rig 上：姿势、身高体型、姿态微调。
+   *
+   * 场景图每次 sync 都调它。少了姿势与姿态微调这两步（早先只刷了缩放），属性面板的
+   * 「基础姿势」下拉框和「姿态微调」三根滑杆对**已加载的人物**完全失效——改成抱臂、
+   * 拖满俯仰，视口里人还站得笔直，而新建的人物又是对的，看起来像随机失灵。
+   */
+  applyCharacter(model: THREE.Object3D, character: PrevizCharacter): void {
+    this.applyPose(model, character.basePoseId as PrevizPoseId);
+    this.applyBodyScale(model, character);
+    this.applyPoseAdjust(model, character);
+  }
+
+  /**
    * 用 AnimationMixer 把某条 clip 定格在某一时刻当静态姿势。定格在 0 常常是
    * 绑定姿势或者动作的起手，看起来像没摆；姿势表里的 sampleTime 是挑过的。
+   *
+   * 姿势没变就直接早退：这条路径每次 sync 都会走到，而重摆一次姿势要建一个 mixer
+   * 并把整副骨架重推一遍。
    */
-  private applyPose(
-    model: THREE.Object3D,
-    animations: THREE.AnimationClip[],
-    poseId: PrevizPoseId,
-  ): void {
+  private applyPose(model: THREE.Object3D, poseId: PrevizPoseId): void {
+    if (model.userData[APPLIED_POSE_KEY] === poseId) return;
+    // 模型还没解出来时无事可做。走不到这里——`build()` 里先缓存 source 再摆姿势，
+    // 而外部调用方手里的 rig 本来就是 `build()` 交出来的。
+    const animations = this.source?.animations;
+    if (!animations) return;
+
     const available = new Set(animations.map((clip) => clip.name));
     const clipName = resolvePoseClipName(poseId, available);
-    // 对不上就用模型自带的绑定姿势站着，比整个人物消失强；也绝不拿别的 clip 顶上，
-    // 那会摆出一个跟属性面板完全对不上的姿势。
-    if (!clipName) return;
-    const clip = animations.find((entry) => entry.name === clipName);
+    // 对不上就保持现有姿势（新建的人物就是模型自带的绑定姿势），比整个人物消失强；
+    // 也绝不拿别的 clip 顶上，那会摆出一个跟属性面板完全对不上的姿势。
+    // 标记照样落下：clip 列表不会再变，下一次 sync 重查一遍也是同一个结果。
+    const clip = clipName ? animations.find((entry) => entry.name === clipName) : undefined;
+    model.userData[APPLIED_POSE_KEY] = poseId;
     if (!clip) return;
 
     // mixer 挂在这个人物自己的克隆体上。挂在共享的源场景上，一个人物摆姿势会把

@@ -838,6 +838,56 @@ describe('PrevizSceneGraph', () => {
     expect(rigOf(graph, character.id)).toBe(rig);
   });
 
+  it('re-poses the loaded rig when basePoseId changes', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const { factory, loadGltf } = rigFactory(three, ['Idle_Loop', 'Walk_Loop']);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene({ basePoseId: 'standing' });
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+    await flush();
+    const rig = rigOf(graph, character.id);
+
+    graph.sync({ ...scene, objects: [{ ...character, basePoseId: 'walking' }] });
+
+    // 模型是第一次 sync 时按当时的姿势定格的。之后只重新缩放的话，属性面板的
+    // 「基础姿势」下拉框对已加载的人物完全失效——改成行走，人还站着。
+    expect(rig?.userData.previzPoseId).toBe('walking');
+    // 而且是重新摆姿势，不是重新下一个模型。
+    expect(loadGltf).toHaveBeenCalledTimes(1);
+    expect(rigOf(graph, character.id)).toBe(rig);
+  });
+
+  it('re-applies pose adjust to the loaded rig', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+    await flush();
+    const rig = rigOf(graph, character.id);
+
+    graph.sync({
+      ...scene,
+      objects: [{ ...character, poseAdjust: { pitch: 30, turn: -45, lean: 10 } }],
+    });
+
+    // 姿态微调那三根滑杆转的是 rig 根节点，不是对象节点——对象节点的 rotation 是
+    // 「旋转（度）」那三个输入框的地盘，两者不能互相覆盖。
+    expect(rig?.rotation.x).toBeCloseTo(Math.PI / 6, 6);
+    expect(rig?.rotation.y).toBeCloseTo(-Math.PI / 4, 6);
+    expect(rig?.rotation.z).toBeCloseTo(Math.PI / 18, 6);
+  });
+
   it('gives the model that just arrived the display mode already in force', async () => {
     const three = fakeThree();
     const root = new three.Group();
