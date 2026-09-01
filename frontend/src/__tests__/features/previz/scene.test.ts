@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 import {
   PREVIZ_DEFAULT_DURATION_FRAMES,
   PREVIZ_FPS,
+  PREVIZ_INTENSITY_RANGE,
   PREVIZ_MAX_DURATION_FRAMES,
+  PREVIZ_SCALE_RANGE,
   PREVIZ_SCHEMA_VERSION,
   PrevizSceneVersionError,
   createDefaultScene,
@@ -227,9 +229,9 @@ describe("parseScene field hygiene", () => {
       return light.intensity;
     };
 
-    expect(intensityOf(-3)).toBe(0);
-    expect(intensityOf(1000)).toBe(20);
-    expect(intensityOf(NaN)).toBe(1);
+    expect(intensityOf(-3)).toBe(PREVIZ_INTENSITY_RANGE.min);
+    expect(intensityOf(1000)).toBe(PREVIZ_INTENSITY_RANGE.max);
+    expect(intensityOf(NaN)).toBe(PREVIZ_INTENSITY_RANGE.default);
     expect(intensityOf(2.5)).toBe(2.5);
   });
 
@@ -242,8 +244,9 @@ describe("parseScene field hygiene", () => {
       return parsed.objects[0]?.transform.scale;
     };
 
-    expect(scaleOf([0, 0, 0])).toEqual([0.01, 0.01, 0.01]);
-    expect(scaleOf([-2, 500, NaN])).toEqual([0.01, 100, 1]);
+    const { min, max, default: fallback } = PREVIZ_SCALE_RANGE;
+    expect(scaleOf([0, 0, 0])).toEqual([min, min, min]);
+    expect(scaleOf([-2, 500, NaN])).toEqual([min, max, fallback]);
     expect(scaleOf([2, 3, 4])).toEqual([2, 3, 4]);
   });
 
