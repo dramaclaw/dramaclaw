@@ -894,6 +894,11 @@ export const UPSTREAM_SPAWN_WHITELIST: Partial<
     CANVAS_NODE_TYPES.imageGen,
     CANVAS_NODE_TYPES.audio,
   ],
+  // 预演台：P0 不读任何上游，场景全部在编辑器里手工搭建。缺条目会回落到 connectMenu
+  // 默认列表（skill / threeDWorld / 以及预演台自己），全是「骗人的线」。空数组让
+  // Canvas.tsx 的 `allowedTypes.length === 0` 分支直接不弹菜单——左侧「+」用的是
+  // NodeSpawnPlusOverlay 自己那份视频专用列表，不会因此出现空面板。
+  [CANVAS_NODE_TYPES.previz]: [],
 };
 
 // 给定目标节点类型，返回「从左侧 target handle 出发能创建的上游节点类型集」。
