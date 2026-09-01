@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { clampToRange } from './camera';
+import type { PrevizRange } from './camera';
 import type { Vec3 } from './scene';
 
 /**
@@ -60,7 +62,7 @@ const MIN_FRAMING_DISTANCE = 1;
  * 180° 后半角的正弦反而开始变小，距离会算成一个「越广角退得越远」的荒谬值。
  * 非有限值回落到 50°，与预演台视口相机的视场角一致。
  */
-const FRAMING_FOV_DEG = { min: 1, max: 179, default: 50 } as const;
+const FRAMING_FOV_DEG: PrevizRange = { min: 1, max: 179, default: 50 };
 /**
  * 顶/底视图偏离极轴的微倾比例（相对距离）。正上方站位会让 OrbitControls 的极角
  * 落到 0，它的 `makeSafe()` 夹到 EPS 的同时会把方位角一并归零，用户下一次拖拽
@@ -123,11 +125,6 @@ export function unionBounds(list: readonly PrevizBounds[]): PrevizBounds | null 
   return used === 0 ? null : { min, max };
 }
 
-function clampFramingFovDeg(value: number): number {
-  if (!Number.isFinite(value)) return FRAMING_FOV_DEG.default;
-  return Math.min(FRAMING_FOV_DEG.max, Math.max(FRAMING_FOV_DEG.min, value));
-}
-
 /**
  * 让半径 `radius` 的包围球在两个方向上都进画的相机距离。垂直方向由 `verticalFovDeg`
  * 定，水平方向由它和 `aspect` 推出来，取两者中更远的那个——只按垂直算的话，竖幅
@@ -138,7 +135,7 @@ export function framingDistance(radius: number, verticalFovDeg: number, aspect: 
   const safeRadius = Number.isFinite(radius) && radius > 0 ? radius : 0;
   // 非有限或非正的画幅比按方形处理：这时水平与垂直一样紧，退化不成 0 距离。
   const safeAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
-  const halfVertical = (clampFramingFovDeg(verticalFovDeg) * Math.PI) / 360;
+  const halfVertical = (clampToRange(verticalFovDeg, FRAMING_FOV_DEG) * Math.PI) / 360;
   const halfHorizontal = Math.atan(Math.tan(halfVertical) * safeAspect);
   const distance = Math.max(
     safeRadius / Math.sin(halfVertical),
