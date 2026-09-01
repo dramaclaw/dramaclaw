@@ -130,6 +130,63 @@ def test_user_authored_display_name_opts_out_of_localization():
     assert payload["display_name_localizable"] is False
 
 
+def test_user_content_flag_survives_the_real_enqueue_projection():
+    """走真实链路：display_metadata_for_task → TaskState → _serialize_task。
+
+    review #447 复审：opt-out 标记只在 _serialize_task 里读是不够的，入队时
+    display_metadata_for_task 的投影白名单会把它丢掉，标记等于形同虚设。
+    """
+    from novelvideo.api.routes.tasks import _serialize_task
+    from novelvideo.ports.tasks import display_metadata_for_task
+    from novelvideo.task_state import TaskState
+
+    payload = {
+        "display_name": "雨夜巷口 · 第二版",
+        "display_name_user_content": True,
+        "task_label": "自由生成图片",
+    }
+    metadata = display_metadata_for_task("freezone_gen", payload)
+
+    assert metadata["display_name_user_content"] is True
+
+    payload_out = _serialize_task(
+        TaskState(
+            task_id="task-3",
+            task_type="freezone_gen",
+            project_id="proj_123",
+            episode=0,
+            status="queued",
+            metadata=metadata,
+        )
+    )
+    assert payload_out["display_name_localizable"] is False
+
+
+def test_user_content_flag_is_not_coerced_through_the_string_loop():
+    """标记必须是布尔投影：str(False) == "False" 是真值，会把判断整个反过来。"""
+    from novelvideo.api.routes.tasks import _serialize_task
+    from novelvideo.ports.tasks import display_metadata_for_task
+    from novelvideo.task_state import TaskState
+
+    for falsy in (False, None, "", 0):
+        metadata = display_metadata_for_task(
+            "freezone_gen",
+            {"display_name": "生成草图 · EP1 / Beat 3", "display_name_user_content": falsy},
+        )
+        assert "display_name_user_content" not in metadata, falsy
+        payload = _serialize_task(
+            TaskState(
+                task_id="task-4",
+                task_type="freezone_gen",
+                project_id="proj_123",
+                episode=1,
+                status="queued",
+                metadata=metadata,
+            )
+        )
+        assert payload["display_name_localizable"] is True, falsy
+
+
 def test_serialize_task_rewrites_internal_result_paths_to_project_static_urls(tmp_path):
     from novelvideo.api.routes.tasks import _serialize_task
     from novelvideo.task_state import TaskState

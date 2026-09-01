@@ -2727,38 +2727,14 @@
     }
   },
   "taskCenter": {
-    "title": "Task Center",
-    "panel": {
-      "open": "Open Task Center",
-      "close": "Close",
-      "filters": {
-        "all": "All",
-        "running": "Running",
-        "failed": "Failed",
-        "done": "Done"
-      },
-      "empty": "No tasks",
-      "emptyFiltered": "No tasks",
-      "selectPrompt": "Select a task to see details."
-    },
-    "statusBar": {
-      "idle": "Idle",
-      "connecting": "Connecting…",
-      "connected": "Connected",
-      "reconnecting": "Reconnecting…",
-      "polling": "Polling…",
-      "failed": "Connection failed",
-      "offline": "Offline",
-      "running": "{{count}} running",
-      "lastDone": "Last: {{label}} {{relative}}",
-      "generationRunning": "Generating",
-      "generationComplete": "Complete",
-      "progress": "Progress {{percent}}%",
-      "openHint": "Click to open",
-      "closeHint": "Click to collapse"
-    },
-    "relative": {
-      "justNow": "just now"
+    "actions": {
+      "cancel": "Cancel",
+      "cancelConfirm": "Cancel this task?",
+      "clearCompleted": "Clear completed",
+      "openOrigin": "Open origin page",
+      "copyId": "Copy task ID",
+      "downloadLogs": "Download logs",
+      "retryHint": "Retry from origin page"
     },
     "detail": {
       "currentStatus": "Current status",
@@ -2791,6 +2767,39 @@
         "placeholder": "No log output yet."
       }
     },
+    "io": {
+      "background": "Background",
+      "backgroundCandidate": "Background candidate",
+      "beatContext": "Beat context",
+      "currentBackground": "Current background",
+      "currentSketch": "Current sketch",
+      "currentSketchCandidate": "Current sketch candidate",
+      "currentStoryboard": "Current storyboard",
+      "directorComposite": "Director composite",
+      "inputReference": "Input reference",
+      "masterReverse": "Master + reverse",
+      "pano360": "360° panorama",
+      "sceneMasterReverse": "Scene master + reverse",
+      "sketchBackgroundIdentityProps": "Sketch + background + identities/props",
+      "sketchCandidate": "Sketch candidate",
+      "storyboardCandidate": "Storyboard candidate"
+    },
+    "panel": {
+      "open": "Open Task Center",
+      "close": "Close",
+      "filters": {
+        "all": "All",
+        "running": "Running",
+        "failed": "Failed",
+        "done": "Done"
+      },
+      "empty": "No tasks",
+      "emptyFiltered": "No tasks",
+      "selectPrompt": "Select a task to see details."
+    },
+    "relative": {
+      "justNow": "just now"
+    },
     "status": {
       "submitting": "Submitting",
       "queued": "Queued",
@@ -2801,15 +2810,23 @@
       "failed": "Failed",
       "cancelled": "Cancelled"
     },
-    "actions": {
-      "cancel": "Cancel",
-      "cancelConfirm": "Cancel this task?",
-      "clearCompleted": "Clear completed",
-      "openOrigin": "Open origin page",
-      "copyId": "Copy task ID",
-      "downloadLogs": "Download logs",
-      "retryHint": "Retry from origin page"
+    "statusBar": {
+      "idle": "Idle",
+      "connecting": "Connecting…",
+      "connected": "Connected",
+      "reconnecting": "Reconnecting…",
+      "polling": "Polling…",
+      "failed": "Connection failed",
+      "offline": "Offline",
+      "running": "{{count}} running",
+      "lastDone": "Last: {{label}} {{relative}}",
+      "generationRunning": "Generating",
+      "generationComplete": "Complete",
+      "progress": "Progress {{percent}}%",
+      "openHint": "Click to open",
+      "closeHint": "Click to collapse"
     },
+    "title": "Task Center",
     "toast": {
       "completed": "{{label}} completed",
       "failed": "{{label}} failed: {{error}}",

@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { currentTaskText, displayLabel } from "@/task-center/derivations";
 import { taskErrorMessage } from "@/task-center/task-errors";
+import { taskIoLabel } from "@/lib/task-io-label";
 import type { TaskState } from "@/task-center/types";
 
 export function formatLocalTaskTime(value?: string | null): string {
@@ -151,8 +152,9 @@ export function TaskDetail() {
   }
   const providerId = providerTaskId(task);
   const displayResult = task.result ? sanitizeResultForDisplay(task.result) : null;
-  const sourceLabel = metadataField(task, "source_label");
-  const targetLabel = metadataField(task, "target_label");
+  // 后端这两个标签是 freezone 写死的中文，英文界面下要按词条渲染（见 lib/task-io-label.ts）。
+  const sourceLabel = taskIoLabel(metadataField(task, "source_label"), t);
+  const targetLabel = taskIoLabel(metadataField(task, "target_label"), t);
   const jobId = metadataField(task, "job_id") || metadataField(task, "scope") || task.scope || "";
   const celeryId = metadataField(task, "celery_task_id");
   const skillId = metadataField(task, "skill_id");

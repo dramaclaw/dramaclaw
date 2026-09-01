@@ -2727,38 +2727,14 @@
     }
   },
   "taskCenter": {
-    "title": "任务中心",
-    "panel": {
-      "open": "打开任务中心",
-      "close": "关闭",
-      "filters": {
-        "all": "全部",
-        "running": "运行中",
-        "failed": "失败",
-        "done": "已完成"
-      },
-      "empty": "暂无任务",
-      "emptyFiltered": "暂无任务",
-      "selectPrompt": "选择一个任务查看详情。"
-    },
-    "statusBar": {
-      "idle": "空闲",
-      "connecting": "连接中…",
-      "connected": "已连接",
-      "reconnecting": "重新连接中…",
-      "polling": "轮询中…",
-      "failed": "连接失败",
-      "offline": "离线",
-      "running": "{{count}} 个运行中",
-      "lastDone": "最近：{{label}} {{relative}}",
-      "generationRunning": "生成中",
-      "generationComplete": "生成完成",
-      "progress": "进度 {{percent}}%",
-      "openHint": "点击查看",
-      "closeHint": "点击收起"
-    },
-    "relative": {
-      "justNow": "刚刚"
+    "actions": {
+      "cancel": "终止任务",
+      "cancelConfirm": "确认终止该任务？",
+      "clearCompleted": "清除已完成",
+      "openOrigin": "打开来源页",
+      "copyId": "复制任务 ID",
+      "downloadLogs": "下载日志",
+      "retryHint": "前往来源页重试"
     },
     "detail": {
       "currentStatus": "当前状态",
@@ -2791,6 +2767,39 @@
         "placeholder": "暂无日志输出。"
       }
     },
+    "io": {
+      "background": "背景",
+      "backgroundCandidate": "背景候选",
+      "beatContext": "Beat 上下文",
+      "currentBackground": "当前背景",
+      "currentSketch": "当前草图",
+      "currentSketchCandidate": "当前草图候选",
+      "currentStoryboard": "当前分镜",
+      "directorComposite": "导演合成图",
+      "inputReference": "输入参考",
+      "masterReverse": "Master + Reverse",
+      "pano360": "360 全景",
+      "sceneMasterReverse": "场景 Master + Reverse",
+      "sketchBackgroundIdentityProps": "草图 + 背景 + 身份/道具",
+      "sketchCandidate": "草图候选",
+      "storyboardCandidate": "分镜候选"
+    },
+    "panel": {
+      "open": "打开任务中心",
+      "close": "关闭",
+      "filters": {
+        "all": "全部",
+        "running": "运行中",
+        "failed": "失败",
+        "done": "已完成"
+      },
+      "empty": "暂无任务",
+      "emptyFiltered": "暂无任务",
+      "selectPrompt": "选择一个任务查看详情。"
+    },
+    "relative": {
+      "justNow": "刚刚"
+    },
     "status": {
       "submitting": "投递中",
       "queued": "队列中",
@@ -2801,15 +2810,23 @@
       "failed": "失败",
       "cancelled": "已取消"
     },
-    "actions": {
-      "cancel": "终止任务",
-      "cancelConfirm": "确认终止该任务？",
-      "clearCompleted": "清除已完成",
-      "openOrigin": "打开来源页",
-      "copyId": "复制任务 ID",
-      "downloadLogs": "下载日志",
-      "retryHint": "前往来源页重试"
+    "statusBar": {
+      "idle": "空闲",
+      "connecting": "连接中…",
+      "connected": "已连接",
+      "reconnecting": "重新连接中…",
+      "polling": "轮询中…",
+      "failed": "连接失败",
+      "offline": "离线",
+      "running": "{{count}} 个运行中",
+      "lastDone": "最近：{{label}} {{relative}}",
+      "generationRunning": "生成中",
+      "generationComplete": "生成完成",
+      "progress": "进度 {{percent}}%",
+      "openHint": "点击查看",
+      "closeHint": "点击收起"
     },
+    "title": "任务中心",
     "toast": {
       "completed": "{{label}} 已完成",
       "failed": "{{label}} 失败：{{error}}",
