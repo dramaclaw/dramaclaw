@@ -14,8 +14,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 /**
  * 精品剧（drama）的导入标准格式与示例。逐行写死而不是塞进 i18n 的长字符串：
  * 这是要按原样展示的样例，任何换行/空格都有意义，不该被译者改动。
+ *
+ * 中英各一套：解析器两种格式都认（utils/screenplay_scene_parser.py），但样例是
+ * 「照着抄」的模板，中文界面给中文制片格式、英文界面给 Fountain 格式，混着给等于没给。
  */
-// i18n-exempt-start —— 样例本身就是解析器认的中文制片格式，翻译过去就不是那个格式了
+// i18n-exempt-start —— 样例本身就是解析器认的制片格式，翻译过去就不是那个格式了
 const DRAMA_FORMAT_SPEC = [
   "中文制片格式（任选一种）",
   "1-1 苏鸾寝殿 深夜 内",
@@ -65,7 +68,79 @@ const DRAMA_FORMAT_EXAMPLE = [
   "锦绣（头埋得极低，声音恭顺）：回公主，三更。公主噩梦惊醒，奴婢炖了安神汤。",
   "△苏糖的眼神骤然锐利，随即立刻垂下眼帘，露出一副困倦不堪的模样。",
 ].join("\n");
+
+const DRAMA_FORMAT_SPEC_EN = [
+  "Fountain / Final Draft (recommended)",
+  "INT. SEOUL SUBWAY STATION - NIGHT",
+  "EXT. SEOUL STREET - DAWN",
+  "",
+  "Time values",
+  "DAY / NIGHT / MORNING / AFTERNOON / EVENING / DAWN / DUSK",
+  "",
+  "Exact clock time (its own line, under the heading)",
+  "INT. SEOUL SUBWAY STATION - NIGHT",
+  "Time: 11:47 PM",
+].join("\n");
+
+const DRAMA_REPAIRABLE_FORMAT_EN = [
+  "EPISODE 1",
+  "",
+  "SCENE 1 - SEOUL SUBWAY STATION",
+  "Characters: Ji-won, Old Woman",
+  "△ Rainwater drips from the ceiling.",
+  "JI-WON: Is anyone here?",
+  "",
+  "INT./EXT. MOVING TAXI - DAY",
+  "Characters: Ji-won",
+  "△ The taxi weaves through traffic.",
+  "JI-WON: Faster, please.",
+].join("\n");
+
+const DRAMA_FORMAT_EXAMPLE_EN = [
+  "EPISODE 1",
+  "",
+  "INT. SEOUL SUBWAY STATION - NIGHT",
+  "Characters: Ji-won, Old Woman",
+  "",
+  "△ Rainwater drips from the ceiling. The platform is completely empty.",
+  "",
+  "JI-WON: Is anyone here?",
+  "",
+  "OLD WOMAN: You should not have come this late.",
+  "",
+  "",
+  "INT. SUBWAY CAR - NIGHT",
+  "Characters: Ji-won, Old Woman, Boy",
+  "",
+  "△ The train doors close. The lights flicker above the empty seats.",
+  "",
+  "JI-WON: Where is this train going?",
+  "",
+  "OLD WOMAN: To the last station.",
+  "",
+  "",
+  "EXT. SEOUL STREET - DAWN",
+  "Characters: Ji-won",
+  "",
+  "△ Ji-won steps onto the deserted street as the first morning light appears.",
+  "",
+  "JI-WON: I made it back.",
+].join("\n");
 // i18n-exempt-end
+
+/** 样例按界面语言取，不按剧本语言：这是「照着抄」的模板，跟着读的人走。 */
+const FORMAT_SAMPLES = {
+  zh: {
+    spec: DRAMA_FORMAT_SPEC,
+    repairable: DRAMA_REPAIRABLE_FORMAT,
+    example: DRAMA_FORMAT_EXAMPLE,
+  },
+  en: {
+    spec: DRAMA_FORMAT_SPEC_EN,
+    repairable: DRAMA_REPAIRABLE_FORMAT_EN,
+    example: DRAMA_FORMAT_EXAMPLE_EN,
+  },
+} as const;
 
 export function NovelFormatDialog({
   open,
@@ -74,7 +149,10 @@ export function NovelFormatDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const samples = (i18n.resolvedLanguage ?? i18n.language ?? "").startsWith("zh")
+    ? FORMAT_SAMPLES.zh
+    : FORMAT_SAMPLES.en;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -125,7 +203,7 @@ export function NovelFormatDialog({
                 {t("ingest.novelFormat.specLabel")}
               </h3>
               <pre className="whitespace-pre-wrap rounded-md border border-white/10 bg-white/[0.03] px-3.5 py-3 text-[13px] leading-7 text-foreground/90">
-                {DRAMA_FORMAT_SPEC}
+                {samples.spec}
               </pre>
             </section>
 
@@ -137,7 +215,7 @@ export function NovelFormatDialog({
                 {t("ingest.novelFormat.repairableHint")}
               </p>
               <pre className="whitespace-pre-wrap rounded-md border border-amber-500/15 bg-amber-500/[0.04] px-3.5 py-3 text-[13px] leading-7 text-foreground/80">
-                {DRAMA_REPAIRABLE_FORMAT}
+                {samples.repairable}
               </pre>
             </section>
 
@@ -152,6 +230,8 @@ export function NovelFormatDialog({
                 <li>{t("ingest.novelFormat.ruleBody")}</li>
                 <li>{t("ingest.novelFormat.ruleDialogue")}</li>
                 <li>{t("ingest.novelFormat.ruleLocationChange")}</li>
+                <li>{t("ingest.novelFormat.ruleTimeTokens")}</li>
+                <li>{t("ingest.novelFormat.ruleClockTime")}</li>
               </ul>
             </section>
 
@@ -160,7 +240,7 @@ export function NovelFormatDialog({
                 {t("ingest.novelFormat.exampleLabel")}
               </h3>
               <pre className="whitespace-pre-wrap rounded-md border border-white/10 bg-white/[0.03] px-3.5 py-3 text-[13px] leading-7 text-foreground/70">
-                {DRAMA_FORMAT_EXAMPLE}
+                {samples.example}
               </pre>
             </section>
           </div>

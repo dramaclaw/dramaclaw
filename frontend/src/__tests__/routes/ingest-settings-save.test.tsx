@@ -447,21 +447,24 @@ describe("IngestPage settings save", () => {
     );
 
     expect(screen.getByText("Premium drama format")).toBeInTheDocument();
+    // 这个 Wrapper 跑在 lng: "en"：样例要给英文用户能照着抄的 Fountain 格式，
+    // 给中文制片格式等于没给。逐字对齐的解析断言在
+    // tests/test_screenplay_scene_parser.py::test_documented_english_format_example_parses_as_standard。
     expect(
       screen.getAllByText(
         (_content, element) =>
           element?.tagName === "PRE" &&
-          element.textContent?.includes("1-1 苏鸾寝殿 深夜 内") === true,
+          element.textContent?.includes("INT. SEOUL SUBWAY STATION - NIGHT") === true,
       ).length,
     ).toBeGreaterThan(0);
     expect(
       screen.getByText(
         (_content, element) =>
           element?.tagName === "PRE" &&
-          element.textContent?.includes("场次：1") === true,
+          element.textContent?.includes("SCENE 1 - SEOUL SUBWAY STATION") === true,
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/1-1 场景：苏鸾寝殿深夜内/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/苏鸾寝殿/)).not.toBeInTheDocument();
   });
 
   it("saves project settings without uploading or starting ingest", async () => {

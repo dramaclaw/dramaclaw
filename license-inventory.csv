@@ -339,6 +339,7 @@ frontend/src/__tests__/components/episode/script-beat-preview.test.tsx,Elastic-2
 frontend/src/__tests__/components/episode/task-controller-provider.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/identity-picker-dialog.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/ingest-elapsed-time.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/components/ingest/novel-format-dialog.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/layout/brand-lockup.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/layout/credit-balance-badge.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/layout/header.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
