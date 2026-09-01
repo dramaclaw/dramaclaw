@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createPrevizObject } from '@/features/previz/domain/objects';
@@ -233,9 +234,21 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function createRenderer() {
+/** jsdom 的 clientWidth/clientHeight 恒为 0，resize() 要拿到真尺寸只能自己盖上去。 */
+function setClientSize(canvas: HTMLCanvasElement, width: number, height: number) {
+  Object.defineProperty(canvas, 'clientWidth', { value: width, configurable: true });
+  Object.defineProperty(canvas, 'clientHeight', { value: height, configurable: true });
+}
+
+async function createRenderer(size?: { width: number; height: number }) {
   const canvas = document.createElement('canvas');
+  // 尺寸要赶在 create() 之前盖上：这里测的正是 create() 自己那次 resize()。
+  if (size) setClientSize(canvas, size.width, size.height);
   const instance = await PrevizRenderer.create(canvas);
+  // create() 写完 position/target 之后必须自己 update() 一次。真 OrbitControls 的
+  // 构造函数末尾也有一次 update()，但它跑在我们写 target 之前——不补这一次的话
+  // 内部球坐标记的还是 target=(0,0,0)，用户第一次拖拽相机会跳一下。
+  expect(controls.update).toHaveBeenCalledTimes(1);
   // create() 里的 resize() 置了 needsRender，先把首帧跑掉再计数。
   step();
   render.mockClear();
@@ -253,12 +266,6 @@ function sceneWith(...positions: Vec3[]): PrevizScene {
     );
   }
   return scene;
-}
-
-/** jsdom 的 clientWidth/clientHeight 恒为 0，resize() 要拿到真尺寸只能自己盖上去。 */
-function setClientSize(canvas: HTMLCanvasElement, width: number, height: number) {
-  Object.defineProperty(canvas, 'clientWidth', { value: width, configurable: true });
-  Object.defineProperty(canvas, 'clientHeight', { value: height, configurable: true });
 }
 
 function targetOf(): Vec3 {
@@ -287,9 +294,17 @@ describe('PrevizRenderer 接场景图', () => {
     step();
 
     expect(render).toHaveBeenCalledTimes(1);
-    expect(instance.nodeFor(scene.objects[0].id)?.userData.previzObjectId).toBe(
-      scene.objects[0].id,
-    );
+    const node = instance.nodeFor(scene.objects[0].id);
+    expect(node?.userData.previzObjectId).toBe(scene.objects[0].id);
+
+    // 对象挂在一个独立的对象根上，对象根再挂进场景。两头都要锁：
+    // 把 scene 本身交给场景图的话，显示模式会连地面网格与常驻灯光一起改材质，
+    // dispose 也会顺手把它们清掉；而对象根忘了 add 进场景的话，nodeFor / 拾取 /
+    // 取景全都照常工作，只有画面上一个对象都看不见——最难查的那种症状。
+    const objectRoot = node?.parent;
+    expect(objectRoot).toBeInstanceOf(THREE.Group);
+    expect(objectRoot).not.toBeInstanceOf(THREE.Scene);
+    expect(objectRoot?.parent).toBeInstanceOf(THREE.Scene);
 
     instance.dispose();
   });
@@ -356,9 +371,21 @@ describe('PrevizRenderer 接场景图', () => {
 
     const position = instance.cameraPositionForTest();
     expect(position.every((value) => Number.isFinite(value))).toBe(true);
-    // 占位盒是 1.75 m 高、脚底贴地的一个人，中心在 y=0.875。
+    // 占位盒是 1.75 m 高、0.44 m 宽、脚底贴地的一个人，中心在 y=0.875。
     expect(targetOf()).toEqual([0, 0.875, 0]);
-    expect(position[2]).toBeGreaterThan(1);
+    // 正视图的注视点在 z=0，所以 position[2] 就是取景距离。这一个数把整条取景链路
+    // 都钉住了：包围球半径 √(0.22² + 0.875² + 0.22²) ≈ 0.92867，除以 sin(50°/2)
+    // 再乘 1.25 的留白 ≈ 2.7468。占位盒半宽归零会退化成一条竖线，这个数掉到 2.588。
+    // 期望值刻意写字面量：从被测模块 import 常量来算期望，改一处两边一起变。
+    expect(position[2]).toBeCloseTo(2.7468, 3);
+    // 上面那个 2.7468 里已经含着「取景用 50°」，这里再把**相机自己**的视场角钉在同一
+    // 个数上，两条合起来锁的是二者的耦合：分岔之后「切到正视图」框出来的画面就不是
+    // 相机真正看到的画面（一边裁掉、一边留白），而取景数学和相机各自看起来都「对」，
+    // 没有任何东西会报错。这两行合在一起也顺带把 50 这个取值本身变成了棘轮——改它
+    // 要同时改这两个字面量，是有意的。
+    // （下面「出片画幅不改编辑视角的视场角」那条用的是区间断言，测的是另一件事：
+    //   同一个渲染器实例内，切画幅前后 fov 不变。）
+    expect(instance.editorFovForTest()).toBe(50);
 
     instance.dispose();
   });
@@ -409,10 +436,16 @@ describe('PrevizRenderer 接场景图', () => {
   it('重置回共享的默认机位', async () => {
     const { instance } = await createRenderer();
     expect(instance.cameraPositionForTest()).toEqual([...PREVIZ_DEFAULT_VIEW.position]);
+    // create() 里的初始轨道中心也走同一份真相，不是另抄一遍的 (0, 0, 0)——
+    // 抄错的话用户第一次点「重置」之前轨道中心就是错的，聚焦的首次观察方向也跟着歪。
+    expect(targetOf()).toEqual([...PREVIZ_DEFAULT_VIEW.target]);
 
     instance.applyViewDirection('top');
     expect(instance.cameraPositionForTest()).not.toEqual([...PREVIZ_DEFAULT_VIEW.position]);
 
+    // 先把上一次的重绘请求消化掉，下面那次计数才是在测 resetView 自己。
+    step();
+    render.mockClear();
     controls.update.mockClear();
     instance.resetView();
 
@@ -420,17 +453,24 @@ describe('PrevizRenderer 接场景图', () => {
     expect(targetOf()).toEqual([...PREVIZ_DEFAULT_VIEW.target]);
     // 直接写 position/target 之后必须让 OrbitControls 重算一次：真 three 里这一步
     // 才会 lookAt(target) 把姿态摆正，少了它相机位置变了、朝向还停在原处。
+    // 计数要赶在 step() 之前：tick 每帧自己也会调一次 update()。
     expect(controls.update).toHaveBeenCalledTimes(1);
+
+    // 假 controls 的 update() 恒为 false，所以这一帧要重绘只可能是 moveCamera
+    // 自己请求的。生产里还有 controls 的 'change' 事件兜底，但那是第二层。
+    step();
+    expect(render).toHaveBeenCalledTimes(1);
 
     instance.dispose();
   });
 
   it('取景用的是画布当前的宽高比', async () => {
-    const { canvas, instance } = await createRenderer();
+    const { canvas, instance } = await createRenderer({ width: 400, height: 1600 });
     instance.setScene(sceneWith([0, 0, 0]));
 
-    setClientSize(canvas, 400, 1600);
-    instance.resize();
+    // 刻意不先调 resize()：create() 自己就该把画布尺寸接上。少了那一步，aspect 会
+    // 停在 PerspectiveCamera 构造时的 1，竖幅容器里第一帧的取景就是错的（左右被裁），
+    // 一直错到容器第一次改尺寸、ResizeObserver 补上为止。
     instance.applyViewDirection('front');
     const tall = instance.cameraPositionForTest()[2];
 
@@ -457,6 +497,10 @@ describe('PrevizRenderer 接场景图', () => {
     // 命中的永远是子网格，previzObjectId 挂在它上面那个组上。
     intersections = [{ object: node?.children[0] }];
     expect(instance.pickAt(300, 100)).toBe(scene.objects[0].id);
+
+    // 递归必须开着：交给射线的是 createNode() 建出来的 Group，几何体挂在它的子
+    // Mesh 上，而 Object3D.raycast() 是空实现——关掉递归就永远命中不了任何东西。
+    expect(intersectObjects.mock.calls[0][1]).toBe(true);
 
     const pointer = setFromCamera.mock.calls[0][0] as { x: number; y: number };
     expect(pointer.x).toBeCloseTo(0, 6);
