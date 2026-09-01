@@ -54,6 +54,16 @@ vi.mock("three", () => {
       setSize = vi.fn();
       dispose = vi.fn();
       forceContextLoss = vi.fn();
+      autoClear = true;
+      getSize = vi.fn((target: { x: number; y: number }) => {
+        target.x = 800;
+        target.y = 450;
+        return target;
+      });
+      setViewport = vi.fn();
+      setScissor = vi.fn();
+      setScissorTest = vi.fn();
+      clearDepth = vi.fn();
     },
   };
 });

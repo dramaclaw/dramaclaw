@@ -15,6 +15,7 @@ import {
   type PrevizBounds,
   type PrevizViewDirection,
 } from '../domain/view';
+import { monitorViewportRect, syncMonitorCamera } from './cameraRig';
 import { CharacterRigFactory } from './characterRig';
 import { PrevizGizmo, type GizmoMode, type TransformControlsLike } from './gizmo';
 import { PropLoader } from './propLoader';
@@ -50,6 +51,9 @@ export class PrevizRenderer {
   private currentScene: PrevizScene | null = null;
   private selectionId: string | null = null;
   private gizmo: PrevizGizmo | null = null;
+  private monitorCamera: THREE.PerspectiveCamera | null = null;
+  /** 右下角监看当前看的是哪个机位。null 就是不画监看。 */
+  private activeCameraId: string | null = null;
   /** 手柄拖完把变换交回上层（编辑器接到 store 的 updateObject）。 */
   onTransformCommit: ((objectId: string, transform: PrevizTransform) => void) | null = null;
 
@@ -136,6 +140,10 @@ export class PrevizRenderer {
       }),
     );
 
+    // 监看用的是同一个 WebGLRenderer 的第二次 pass。浏览器并发 WebGL 上下文上限
+    // 约 16 个，而预演台是反复开关的——再开一个 renderer 迟早静默黑屏。
+    instance.monitorCamera = new three.PerspectiveCamera(40, 16 / 9, 0.1, 500);
+
     const transformControls = new transformModule.TransformControls(camera, canvas);
     instance.gizmo = new PrevizGizmo({
       controls: transformControls as unknown as TransformControlsLike,
@@ -193,6 +201,12 @@ export class PrevizRenderer {
   setSelection(objectId: string | null): void {
     this.selectionId = objectId;
     this.gizmo?.attach(objectId ? (this.graph.nodeFor(objectId) ?? null) : null);
+    this.requestRender();
+  }
+
+  /** 指定右下角监看看哪个机位。传 null 关掉监看。 */
+  setActiveCamera(objectId: string | null): void {
+    this.activeCameraId = objectId;
     this.requestRender();
   }
 
@@ -350,6 +364,39 @@ export class PrevizRenderer {
     this.requestRender();
   }
 
+  /** 右下角的机位监看。没有活动机位时什么都不做。 */
+  private renderMonitor(): void {
+    const scene = this.currentScene;
+    const monitor = this.monitorCamera;
+    if (!scene || !monitor || !this.activeCameraId) return;
+
+    const object = scene.objects.find((entry) => entry.id === this.activeCameraId);
+    const node = this.graph.nodeFor(this.activeCameraId);
+    if (!object || object.kind !== 'camera' || !node) return;
+
+    syncMonitorCamera(monitor, node, object, scene.settings.outputAspect);
+
+    const size = this.renderer.getSize(new this.three.Vector2());
+    const rect = monitorViewportRect(size.x, size.y, scene.settings.outputAspect);
+
+    // 机位自己的锥体就长在相机原点上，不藏起来会糊满整个监看画面。
+    const wasVisible = node.visible;
+    node.visible = false;
+
+    this.renderer.setScissorTest(true);
+    this.renderer.setViewport(rect.x, rect.y, rect.width, rect.height);
+    this.renderer.setScissor(rect.x, rect.y, rect.width, rect.height);
+    // autoClear 默认为真，会连主画面一起清掉；这里只清深度，留住已经画好的主视图。
+    this.renderer.autoClear = false;
+    this.renderer.clearDepth();
+    this.renderer.render(this.scene, monitor);
+    this.renderer.autoClear = true;
+    this.renderer.setScissorTest(false);
+    this.renderer.setViewport(0, 0, size.x, size.y);
+
+    node.visible = wasVisible;
+  }
+
   private start(): void {
     const tick = () => {
       if (this.disposed) return;
@@ -358,6 +405,7 @@ export class PrevizRenderer {
       if (this.controls.update() || this.needsRender) {
         this.needsRender = false;
         this.renderer.render(this.scene, this.camera);
+        this.renderMonitor();
       }
       this.rafHandle = window.requestAnimationFrame(tick);
     };
