@@ -34,9 +34,14 @@ vi.mock("three", () => {
   }
   return {
     Scene,
-    // create() 现在会建一个对象根挂进场景（场景图的父节点）。本用例不碰场景图，
-    // 一个空壳就够——但少了它 create() 直接抛，整条按需重绘的断言都跑不到。
-    Group: class {},
+    // create() 现在会建两个 Group 挂进场景：场景图的对象根，与轨迹预览的根。
+    // 本用例不碰这两样，但 dispose() 会走进轨迹预览的清理，所以 children / remove
+    // 得是真的——少了它 dispose() 直接抛，按需重绘那条断言就跑不完。
+    Group: class {
+      children: unknown[] = [];
+      add() {}
+      remove() {}
+    },
     Color: class {},
     GridHelper: class {},
     AmbientLight: class {},
