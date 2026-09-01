@@ -59,8 +59,8 @@ export interface PrevizViewPlacement {
  * `viewPlacement()` 返回同形状的可变对象、它自己末尾就在就地改 `position[2]`，
  * 「顺手就地调一下机位」是很容易写出来的代码，改到这个常量上会污染所有后续调用。
  *
- * `PrevizRenderer.create()` 目前另有一份硬编码的相同数值，没有任何东西能发现两边漂移；
- * 要等 Task 7 让渲染器反过来 import 这个常量，才谈得上「一份真相」。
+ * `PrevizRenderer.create()` 的初始机位与初始轨道中心都从这里读，`resetView()` 也是，
+ * 不再另抄一份数值；渲染器用例里「重置回共享的默认机位」那条把这三处一起锁在本常量上。
  */
 export const PREVIZ_DEFAULT_VIEW = {
   position: [6, 4, 8],
