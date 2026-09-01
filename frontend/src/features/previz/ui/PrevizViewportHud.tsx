@@ -16,9 +16,23 @@ import { cn } from "@/lib/utils";
  */
 export type PrevizGizmoMode = "translate" | "rotate" | "scale";
 
-const DISPLAY_MODES: readonly DisplayMode[] = ["solid", "translucent", "clay"];
-const GIZMO_MODES: readonly PrevizGizmoMode[] = ["translate", "rotate", "scale"];
-const OUTPUT_ASPECTS: readonly OutputAspect[] = ["16:9", "9:16", "1:1", "4:3"];
+/**
+ * Record 而不是数组字面量：漏写或写错一个成员在这里编译期就报错，不会静默少一个 chip。
+ * `Object.keys` 对非整数字符串键保持字面量的书写顺序，所以左边的顺序就是屏幕上的顺序。
+ * （`domain/scene.ts` 的校验表用的是同一套 `Record<T, true>` 写法。）
+ */
+function inOrder<T extends string>(members: Record<T, true>): readonly T[] {
+  return Object.keys(members) as T[];
+}
+
+const DISPLAY_MODES = inOrder<DisplayMode>({ solid: true, translucent: true, clay: true });
+const GIZMO_MODES = inOrder<PrevizGizmoMode>({ translate: true, rotate: true, scale: true });
+const OUTPUT_ASPECTS = inOrder<OutputAspect>({
+  "16:9": true,
+  "9:16": true,
+  "1:1": true,
+  "4:3": true,
+});
 
 export interface PrevizViewportHudProps {
   displayMode: DisplayMode;
