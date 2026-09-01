@@ -268,6 +268,49 @@ describe("PrevizInspector", () => {
     expect(onChange).toHaveBeenLastCalledWith({ basePoseId: "sitting" });
   });
 
+  // 下拉框是这 15 个姿势在界面上唯一的入口：`PREVIZ_POSES` 被切一刀（`.slice(0, 5)`
+  // 之类）或者被过滤掉几个，选中的对象照样能存、能渲染，只是用户再也选不到那几个姿势，
+  // 一条断言都碰不到。选项值逐个写死在这里，不从 `PREVIZ_POSES` 取——跟着实现一起变的
+  // 列表等于没有列表。
+  it("offers every pose in the dropdown", () => {
+    renderInspector(createPrevizObject("character", []));
+
+    const options = Array.from(
+      screen.getByLabelText("previz.inspector.basePose").querySelectorAll("option"),
+    );
+    expect(options.map((option) => option.value)).toEqual([
+      "standing",
+      "talking",
+      "arms_crossed",
+      "sitting",
+      "eating",
+      "crouching",
+      "kneeling",
+      "lying",
+      "walking",
+      "running",
+      "pointing",
+      "holding",
+      "interacting",
+      "fighting",
+      "sword",
+    ]);
+  });
+
+  // 姿势标签刻意不走 i18n：它是 viewer-kit `POSE_LABELS` 的逐字副本，两边由 poses.test.ts
+  // 的棘轮盯着，代价是英文界面下这里也显示中文。钉住显示文本，免得下一个人把它当成
+  // 「i18n 漏了」顺手改成 `t()`——那样棘轮会在另一个文件里红，症状离改动很远。
+  it("labels the poses with the hardcoded Chinese names", () => {
+    renderInspector(createPrevizObject("character", []));
+
+    const options = Array.from(
+      screen.getByLabelText("previz.inspector.basePose").querySelectorAll("option"),
+    );
+    expect(options[0]?.textContent).toBe("站立");
+    expect(options[3]?.textContent).toBe("坐下");
+    expect(options[14]?.textContent).toBe("持械");
+  });
+
   it("edits the body type", async () => {
     const user = userEvent.setup();
     const onChange = renderInspector(createPrevizObject("character", []));
@@ -386,6 +429,8 @@ describe("PrevizInspector", () => {
       expect(slider).toHaveAttribute("type", "range");
       expect(slider).toHaveAttribute("min", min);
       expect(slider).toHaveAttribute("max", max);
+      // 步长也一起钉：三轴都是整度，粗一格的滑杆就调不出 -12° 这种值了。
+      expect(slider).toHaveAttribute("step", "1");
     }
   });
 
@@ -400,6 +445,20 @@ describe("PrevizInspector", () => {
     expect(onChange).toHaveBeenLastCalledWith({ sensor: "s35" });
     // 换机身要真的换掉换算里的传感器宽度：Super 35 的 50 mm 是 28.0°，不是 39.6°。
     expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^28\.0°$/);
+  });
+
+  // 两个 `<option>` 的 value 就是 store 里存的机身 id。把 "ff" 打错（或两个 option 写成
+  // 同一个 value）之后，默认的全画幅机位在下拉框里选不中、也换不回来，而 `sensor: "s35"`
+  // 的机位照样一切正常——上面那条用例只走 s35，看不出来。
+  it("offers both sensor options", () => {
+    renderInspector(createPrevizObject("camera", []));
+
+    const select = screen.getByLabelText("previz.inspector.sensor");
+    expect(
+      Array.from(select.querySelectorAll("option")).map((option) => option.value),
+    ).toEqual(["ff", "s35"]);
+    // 默认机位是全画幅：选不中 "ff" 时受控 select 的值会掉成空串。
+    expect(select).toHaveValue("ff");
   });
 
   it("recomputes the angle of view when the focal length changes", () => {
@@ -497,6 +556,8 @@ describe("PrevizInspector", () => {
     expect(slider).toHaveAttribute("type", "range");
     expect(slider).toHaveAttribute("min", "0");
     expect(slider).toHaveAttribute("max", "10");
+    // 步长和变换框一样是拖拽手感的一部分：整数步的强度滑杆调不出 3.5。
+    expect(slider).toHaveAttribute("step", "0.1");
 
     setValue(slider, "7.5");
 
