@@ -91,6 +91,12 @@ interface PrevizStoreState {
    */
   timelineFrame: number;
   timelinePlaying: boolean;
+  /**
+   * 播放时被取整丢掉的那小半帧。rAF 大约每 16ms 醒一次，而时间轴是 30fps——
+   * 一次心跳只推进 0.48 帧，每次都取整就永远是 0，播放头卡在原地不动。
+   * 把余数留到下一次心跳，攒够一帧才走一格。
+   */
+  playbackCarry: number;
   timelineRate: number;
   selectedClipId: string | null;
   selectedPointId: string | null;
@@ -156,6 +162,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   activeCameraId: null,
   timelineFrame: 0,
   timelinePlaying: false,
+  playbackCarry: 0,
   timelineRate: 1,
   selectedClipId: null,
   selectedPointId: null,
@@ -171,6 +178,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       activeCameraId: null,
       timelineFrame: 0,
       timelinePlaying: false,
+      playbackCarry: 0,
       selectedClipId: null,
       selectedPointId: null,
     }),
@@ -284,24 +292,29 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     const { scene } = get();
     // 四舍五入到整帧：小数帧在刻度尺上落在两格之间，读数也会抖。
     const clamped = Math.min(scene.settings.durationFrames, Math.max(0, Math.round(frame)));
-    set({ timelineFrame: Number.isFinite(clamped) ? clamped : 0 });
+    // 手动定位播放头会把攒着的半帧作废：那半帧是上一段连续播放的余数，
+    // 留着会让下一次播放的第一格提前跳。
+    set({ timelineFrame: Number.isFinite(clamped) ? clamped : 0, playbackCarry: 0 });
   },
 
   setTimelinePlaying: (playing) => set({ timelinePlaying: playing }),
 
-  stopPlayback: () => set({ timelinePlaying: false, timelineFrame: 0 }),
+  stopPlayback: () => set({ timelinePlaying: false, timelineFrame: 0, playbackCarry: 0 }),
 
   tickPlayback: (deltaSeconds) => {
-    const { timelinePlaying, timelineFrame, timelineRate, scene } = get();
+    const { timelinePlaying, timelineFrame, timelineRate, scene, playbackCarry } = get();
     if (!timelinePlaying) return;
     const last = scene.settings.durationFrames;
-    const next = timelineFrame + deltaSeconds * PREVIZ_FPS * timelineRate;
+    const next = timelineFrame + playbackCarry + deltaSeconds * PREVIZ_FPS * timelineRate;
     // 停在最后一帧，不回零、不循环——实测参照实现就是这样（循环默认关）。
     if (next >= last) {
-      set({ timelineFrame: last, timelinePlaying: false });
+      set({ timelineFrame: last, timelinePlaying: false, playbackCarry: 0 });
       return;
     }
-    set({ timelineFrame: Math.round(next) });
+    // 向下取整而不是四舍五入，余数攒进 playbackCarry：见那个字段的注释，
+    // 每次心跳都取整会把 0.48 帧全丢掉，播放头一格都不走。
+    const frame = Math.floor(next);
+    set({ timelineFrame: frame, playbackCarry: next - frame });
   },
 
   setTimelineRate: (rate) => {

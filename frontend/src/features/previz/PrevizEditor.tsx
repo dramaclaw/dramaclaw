@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import { toast } from "sonner";
@@ -24,12 +24,14 @@ import type { GizmoMode } from "./engine/gizmo";
 import { canAddObject } from "./domain/limits";
 import { uploadPrevizProp } from "./propAsset";
 import { usePrevizStore } from "./store";
+import { PrevizClipInspector } from "./ui/PrevizClipInspector";
 import { PrevizInspector } from "./ui/PrevizInspector";
 import { PrevizLayerPanel } from "./ui/PrevizLayerPanel";
+import { PrevizTimeline } from "./ui/PrevizTimeline";
 import { PrevizToolbar } from "./ui/PrevizToolbar";
 import { PrevizViewportHud } from "./ui/PrevizViewportHud";
 import type { PrevizTool } from "./ui/PrevizViewportHud";
-import type { PrevizObjectKind, PrevizScene } from "./domain/scene";
+import type { PrevizObjectKind, PrevizScene, Vec3 } from "./domain/scene";
 
 interface PrevizEditorProps {
   open: boolean;
@@ -43,6 +45,21 @@ interface PrevizEditorProps {
 
 /** 按下与抬起之间超过这个像素就算在转视角，不是在点选。 */
 const CLICK_SLOP_PX = 4;
+
+/**
+ * 把后续的指针事件锁在画布上，这样一笔画到视口外面也不会中途断掉。
+ *
+ * 包一层 try：`setPointerCapture` 对一个已经不活跃的 pointerId 会抛 NotFoundError
+ * （鼠标在别处松开、笔离开数位板都能造出这种时序），而捕获失败只是「画出视口那段丢了」，
+ * 不该把整笔轨迹连同后面的 pointerup 一起吞掉。
+ */
+function capturePointer(event: PointerEvent<HTMLCanvasElement>): void {
+  try {
+    event.currentTarget.setPointerCapture(event.pointerId);
+  } catch {
+    // 见上：捕获不上就退化成不捕获。
+  }
+}
 
 export function PrevizEditor({
   open,
@@ -62,6 +79,8 @@ export function PrevizEditor({
   const [renderer, setRenderer] = useState<PrevizRenderer | null>(null);
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
   const [tool, setTool] = useState<PrevizTool>("select");
+  /** 正在画的那一笔，世界坐标。null 表示画笔没按下。 */
+  const stroke = useRef<Vec3[] | null>(null);
   const [capturing, setCapturing] = useState(false);
   const pointerDownAt = useRef<{ x: number; y: number } | null>(null);
 
@@ -82,6 +101,9 @@ export function PrevizEditor({
   const redo = usePrevizStore((state) => state.redo);
   const pathSpacingM = usePrevizStore((state) => state.pathSpacingM);
   const setPathSpacing = usePrevizStore((state) => state.setPathSpacing);
+  const timelineFrame = usePrevizStore((state) => state.timelineFrame);
+  const timelinePlaying = usePrevizStore((state) => state.timelinePlaying);
+  const selectedClipId = usePrevizStore((state) => state.selectedClipId);
   const addDerivedUploadNode = useCanvasStore((state) => state.addDerivedUploadNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
 
@@ -166,6 +188,39 @@ export function PrevizEditor({
       renderer.onTransformCommit = null;
     };
   }, [renderer]);
+
+  useEffect(() => {
+    renderer?.setFrame(timelineFrame);
+  }, [renderer, timelineFrame]);
+
+  useEffect(() => {
+    renderer?.setSelectedClip(selectedClipId);
+  }, [renderer, selectedClipId]);
+
+  /**
+   * 播放循环。跑在编辑器里而不是 store 里：store 是纯状态，不该握着 rAF 句柄，
+   * 那样一个没卸载干净的循环会跨编辑器实例继续推播放头。
+   */
+  useEffect(() => {
+    if (!open || !timelinePlaying) return undefined;
+    let handle = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      // 用真实耗时而不是「每帧推一帧」：显示器是 120Hz 时后者会双倍速播放。
+      const delta = (now - last) / 1000;
+      last = now;
+      usePrevizStore.getState().tickPlayback(delta);
+      handle = window.requestAnimationFrame(tick);
+    };
+    handle = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(handle);
+  }, [open, timelinePlaying]);
+
+  // 关掉编辑器时把播放停下来：循环虽然随 effect 一起卸了，但 `timelinePlaying`
+  // 还留在 true 上，下次打开会从半路自动播起来。
+  useEffect(() => {
+    if (!open) usePrevizStore.getState().setTimelinePlaying(false);
+  }, [open]);
 
   const handleAdd = useCallback(
     (kind: PrevizObjectKind) => {
@@ -283,6 +338,17 @@ export function PrevizEditor({
         case "r":
           setGizmoMode("scale");
           break;
+        case " ":
+          // 空格是播放/暂停。上面已经挡掉了输入框里的按键，这里不会抢走打字的空格。
+          event.preventDefault();
+          store.setTimelinePlaying(!store.timelinePlaying);
+          break;
+        case "arrowright":
+          store.setTimelineFrame(store.timelineFrame + 1);
+          break;
+        case "arrowleft":
+          store.setTimelineFrame(store.timelineFrame - 1);
+          break;
         case "delete":
         case "backspace":
           if (store.selectedObjectId) store.removeObject(store.selectedObjectId);
@@ -316,7 +382,8 @@ export function PrevizEditor({
           越大（实测 960 → 1785），相机 aspect 也跟着偏离可见区域。绝对定位让它彻底
           退出网格流，尺寸只认 DialogContent 的 h-dvh。
         */}
-        <div className="absolute inset-0 flex bg-[#101216]">
+        <div className="absolute inset-0 flex flex-col bg-[#101216]">
+          <div className="flex min-h-0 flex-1">
           <PrevizToolbar
             canAdd={canAdd}
             canUndo={canUndo}
@@ -334,8 +401,34 @@ export function PrevizEditor({
               className="block h-full w-full"
               onPointerDown={(event) => {
                 pointerDownAt.current = { x: event.clientX, y: event.clientY };
+                if (tool !== "draw" || !renderer) return;
+                // 画笔按下这一下不能同时走拾取，否则一笔画完选中的对象已经换人了。
+                pointerDownAt.current = null;
+                capturePointer(event);
+                const point = renderer.groundPointAt(event.clientX, event.clientY);
+                stroke.current = point ? [point] : [];
+              }}
+              onPointerMove={(event) => {
+                if (!stroke.current || !renderer) return;
+                const point = renderer.groundPointAt(event.clientX, event.clientY);
+                // 射线与地面平行时 groundPointAt 交出 null，这一段笔画直接丢掉：
+                // 补一个瞎编的点会在轨迹上留下一个乱跳的顶点。
+                if (point) stroke.current.push(point);
               }}
               onPointerUp={(event) => {
+                if (stroke.current) {
+                  const points = stroke.current;
+                  stroke.current = null;
+                  const targetId = usePrevizStore.getState().selectedObjectId;
+                  // 没选对象时这一笔没有归属，直接丢——建一条无主轨迹只会在时间轴上
+                  // 多一行删不掉的东西。
+                  if (targetId) usePrevizStore.getState().drawPath(targetId, points);
+                  // 画完自动切回选择：实测参照实现就是这样，否则下一次想选个对象
+                  // 反而又画了一条。
+                  setTool("select");
+                  return;
+                }
+
                 const down = pointerDownAt.current;
                 pointerDownAt.current = null;
                 if (!renderer || !down) return;
@@ -408,12 +501,18 @@ export function PrevizEditor({
             onSetActiveCamera={setActiveCamera}
           />
 
-          <PrevizInspector
-            object={selectedObject}
-            onChange={(patch) => {
-              if (selectedObjectId) updateObject(selectedObjectId, patch);
-            }}
-          />
+          <div className="flex shrink-0 flex-col overflow-y-auto">
+            <PrevizInspector
+              object={selectedObject}
+              onChange={(patch) => {
+                if (selectedObjectId) updateObject(selectedObjectId, patch);
+              }}
+            />
+            <PrevizClipInspector />
+          </div>
+          </div>
+
+          <PrevizTimeline />
         </div>
       </DialogContent>
     </Dialog>
