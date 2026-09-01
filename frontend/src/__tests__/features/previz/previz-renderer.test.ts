@@ -32,6 +32,9 @@ vi.mock("three", () => {
   }
   return {
     Scene,
+    // create() 现在会建一个对象根挂进场景（场景图的父节点）。本用例不碰场景图，
+    // 一个空壳就够——但少了它 create() 直接抛，整条按需重绘的断言都跑不到。
+    Group: class {},
     Color: class {},
     GridHelper: class {},
     AmbientLight: class {},
