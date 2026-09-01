@@ -72,7 +72,8 @@ export const SHELL_FALLBACK_SIZES: Partial<Record<string, { width: number; heigh
   videoComposeNode: { width: 240, height: 136 },
   pano360ViewerNode: { width: 900, height: 540 },
   threeDWorldNode: { width: 340, height: 210 },
-  // 暂借 3D 世界的默认尺寸；Task 9 写 PrevizNode.tsx 时须回来核对这两个数。
+  // 与 PrevizNode.tsx 的 NODE_WIDTH / NODE_HEIGHT 一致；改那两个数必须同步改这里，
+  // 对不上只会在低缩放档看到盒子尺寸跳变，没有任何测试会因此变红。
   previzNode: { width: 340, height: 210 },
   storyboardNode: { width: 800, height: 600 },
   storyboardGenNode: { width: 800, height: 600 },
