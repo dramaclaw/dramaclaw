@@ -7424,7 +7424,12 @@
         "format": "只支持 GLB / GLTF / OBJ 模型",
         "tooLarge": "模型超过 50 MB，请先减面或压缩贴图",
         "failed": "模型上传失败，请重试"
-      }
+      },
+      "capture": "截图出片",
+      "capturing": "正在出片…",
+      "captureDone": "已生成截图节点",
+      "captureFailed": "截图上传失败，请重试",
+      "captureNoNode": "画布上找不到本节点，无法接出截图"
     },
     "toolbar": {
       "add": {

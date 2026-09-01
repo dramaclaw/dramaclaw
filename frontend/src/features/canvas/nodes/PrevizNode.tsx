@@ -130,6 +130,7 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
         <Suspense fallback={null}>
           <PrevizEditor
             open={isEditorOpen}
+            nodeId={id}
             initialScene={initialScene}
             onOpenChange={setEditorOpen}
             onFlush={handleFlush}

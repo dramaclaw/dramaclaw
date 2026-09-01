@@ -7424,7 +7424,12 @@
         "format": "Only GLB / GLTF / OBJ models are supported",
         "tooLarge": "The model is over 50 MB. Reduce its polygons or textures first.",
         "failed": "Model upload failed. Please try again."
-      }
+      },
+      "capture": "Capture",
+      "capturing": "Capturing…",
+      "captureDone": "Capture added to the canvas",
+      "captureFailed": "Capture upload failed. Please try again.",
+      "captureNoNode": "This node is no longer on the canvas — cannot attach the capture"
     },
     "toolbar": {
       "add": {
