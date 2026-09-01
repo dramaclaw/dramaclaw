@@ -11,19 +11,48 @@ import { usePrevizStore } from "@/features/previz/store";
 
 const dispose = vi.fn();
 const resize = vi.fn();
+const setScene = vi.fn();
+const setSelection = vi.fn();
+const setActiveCamera = vi.fn();
+const setGizmoMode = vi.fn();
+const applyViewDirection = vi.fn();
+const focusObject = vi.fn();
+const resetView = vi.fn();
+const pickAt = vi.fn(() => null as string | null);
+
+/** 每条用例一份全新的假渲染器，免得 onTransformCommit 在用例之间串。 */
+function fakeRenderer() {
+  return {
+    dispose,
+    resize,
+    setScene,
+    setSelection,
+    setActiveCamera,
+    setGizmoMode,
+    applyViewDirection,
+    focusObject,
+    resetView,
+    pickAt,
+    onTransformCommit: null as
+      | ((objectId: string, transform: unknown) => void)
+      | null,
+  };
+}
 
 // WebGL 在 jsdom 里不存在；编辑器只需要知道自己正确地建了、也正确地拆了渲染器。
 vi.mock("@/features/previz/engine/PrevizRenderer", () => ({
   PrevizRenderer: {
-    create: vi.fn(async () => ({ dispose, resize })),
+    create: vi.fn(async () => fakeRenderer()),
   },
 }));
 
 // dispose / resize 是模块级共享的，而 testing-library 每个用例结束都会自动
 // unmount、从而触发一次 dispose。不清的话第三条用例的 toHaveBeenCalledTimes(1)
 // 会数到前两条留下的调用。
+// store 也是模块级单例：新加的用例读它的真实状态，不重置就会串。
 beforeEach(() => {
   vi.clearAllMocks();
+  usePrevizStore.getState().loadScene(createDefaultScene());
 });
 
 vi.mock("react-i18next", () => ({
@@ -106,7 +135,56 @@ describe("PrevizEditor", () => {
     unmount();
     expect(dispose).not.toHaveBeenCalled();
 
-    settle({ dispose, resize } as unknown as PrevizRenderer);
+    settle(fakeRenderer() as unknown as PrevizRenderer);
     await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
+  });
+
+  it("pushes the store scene into the renderer", async () => {
+    render(
+      <PrevizEditor
+        open
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+  });
+
+  it("adds an object from the toolbar and selects it", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.camera" }));
+
+    const state = usePrevizStore.getState();
+    expect(state.scene.objects).toHaveLength(1);
+    // 新建即选中：否则用户建完还得自己去右边点一下才能改属性。
+    expect(state.selectedObjectId).toBe(state.scene.objects[0]!.id);
+  });
+
+  it("routes a view button to the renderer", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "previz.hud.view.top" }));
+
+    expect(applyViewDirection).toHaveBeenCalledWith("top");
   });
 });
