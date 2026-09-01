@@ -9,7 +9,11 @@ import {
   createPrevizObject,
 } from "@/features/previz/domain/objects";
 import { createDefaultScene, type PrevizScene } from "@/features/previz/domain/scene";
-import { PREVIZ_HISTORY_LIMIT, usePrevizStore } from "@/features/previz/store";
+import {
+  PREVIZ_HISTORY_LIMIT,
+  PREVIZ_PLAYBACK_RATES,
+  usePrevizStore,
+} from "@/features/previz/store";
 
 function sceneWithDuration(frames: number): PrevizScene {
   const scene = createDefaultScene();
@@ -519,5 +523,103 @@ describe("previz store object editing", () => {
 
     const created = usePrevizStore.getState().scene.objects.find((object) => object.id === id);
     expect(created?.kind === "character" && created.heightCm).toBe(PREVIZ_MAX_HEIGHT_CM);
+  });
+
+  it("clamps the playhead into the scene duration", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(200));
+
+    usePrevizStore.getState().setTimelineFrame(500);
+    expect(usePrevizStore.getState().timelineFrame).toBe(200);
+
+    usePrevizStore.getState().setTimelineFrame(-10);
+    expect(usePrevizStore.getState().timelineFrame).toBe(0);
+
+    // 帧号是整数：小数帧在刻度尺上落在两格之间，读数也会抖。
+    usePrevizStore.getState().setTimelineFrame(12.6);
+    expect(usePrevizStore.getState().timelineFrame).toBe(13);
+  });
+
+  it("keeps the playhead out of the undo stack", () => {
+    usePrevizStore.getState().setTimelineFrame(30);
+    // 播放头是会话态，和选中对象同一类：撤销一次删除该把对象撤回来，
+    // 而不是顺带把播放头也拽走。
+    expect(usePrevizStore.getState().past).toHaveLength(0);
+    expect(usePrevizStore.getState().dirty).toBe(false);
+  });
+
+  it("pulls the playhead back when a shorter scene is loaded", () => {
+    usePrevizStore.getState().setTimelineFrame(120);
+    usePrevizStore.getState().loadScene(sceneWithDuration(60));
+    // 换节点时留在旧位置的话，播放头会停在时间轴之外，拖回来才动得了。
+    expect(usePrevizStore.getState().timelineFrame).toBe(0);
+    expect(usePrevizStore.getState().timelinePlaying).toBe(false);
+  });
+
+  it("advances the playhead at the playback rate", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(120));
+    usePrevizStore.getState().setTimelineRate(2);
+    usePrevizStore.getState().setTimelinePlaying(true);
+
+    usePrevizStore.getState().tickPlayback(1);
+
+    // 30 fps × 1 秒 × 2 倍速 = 60 帧。
+    expect(usePrevizStore.getState().timelineFrame).toBe(60);
+  });
+
+  it("stops at the last frame instead of looping", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(120));
+    usePrevizStore.getState().setTimelinePlaying(true);
+
+    usePrevizStore.getState().tickPlayback(10);
+
+    // 实测参照实现：播放到末尾停住，不回零、不循环（循环默认关）。
+    expect(usePrevizStore.getState().timelineFrame).toBe(120);
+    expect(usePrevizStore.getState().timelinePlaying).toBe(false);
+  });
+
+  it("ignores playback ticks while stopped", () => {
+    usePrevizStore.getState().tickPlayback(1);
+    expect(usePrevizStore.getState().timelineFrame).toBe(0);
+  });
+
+  it("rewinds to zero on stop", () => {
+    usePrevizStore.getState().setTimelineFrame(60);
+    usePrevizStore.getState().stopPlayback();
+    expect(usePrevizStore.getState().timelineFrame).toBe(0);
+    expect(usePrevizStore.getState().timelinePlaying).toBe(false);
+  });
+
+  it("clamps the playback rate to the offered ones", () => {
+    usePrevizStore.getState().setTimelineRate(99);
+    // 下拉框只给这五档；99 倍速一帧就跑完整条时间轴。
+    expect(PREVIZ_PLAYBACK_RATES).toEqual([0.25, 0.5, 1, 1.5, 2]);
+    expect(usePrevizStore.getState().timelineRate).toBe(2);
+  });
+
+  it("clears the clip and point selection when the object selection changes", () => {
+    usePrevizStore.getState().selectClip("clip-1");
+    usePrevizStore.getState().selectPathPoint("point-1");
+
+    usePrevizStore.getState().selectObject("other");
+
+    // 选中的片段属于上一个对象；留着它，属性面板会显示一个跟当前选中对象无关的片段。
+    expect(usePrevizStore.getState().selectedClipId).toBeNull();
+    expect(usePrevizStore.getState().selectedPointId).toBeNull();
+  });
+
+  it("clears the point selection when another clip is selected", () => {
+    usePrevizStore.getState().selectClip("clip-1");
+    usePrevizStore.getState().selectPathPoint("point-1");
+
+    usePrevizStore.getState().selectClip("clip-2");
+
+    expect(usePrevizStore.getState().selectedPointId).toBeNull();
+  });
+
+  it("clamps the drawing spacing into its range", () => {
+    usePrevizStore.getState().setPathSpacing(0);
+    expect(usePrevizStore.getState().pathSpacingM).toBe(0.05);
+    usePrevizStore.getState().setPathSpacing(99);
+    expect(usePrevizStore.getState().pathSpacingM).toBe(5);
   });
 });
