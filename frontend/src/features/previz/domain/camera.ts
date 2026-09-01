@@ -39,7 +39,8 @@ export function aspectRatio(aspect: OutputAspect): number {
 }
 
 const RAD_TO_DEG = 180 / Math.PI;
-const DEG_TO_RAD = Math.PI / 180;
+/** 导出给 `domain/view.ts`：取景那边也要度转弧度，没必要各写一份。 */
+export const DEG_TO_RAD = Math.PI / 180;
 
 /** 水平视场角只由传感器宽度与焦距决定，与出片画幅无关。 */
 export function horizontalFovDeg(focalMm: number, sensor: PrevizCamera['sensor']): number {

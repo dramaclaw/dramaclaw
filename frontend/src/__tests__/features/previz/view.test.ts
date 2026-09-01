@@ -19,6 +19,9 @@ const EMPTY_BOX = {
   max: [-Infinity, -Infinity, -Infinity],
 } as const;
 
+/** 与 `view.ts` 的 `POLE_TILT_RATIO` 对齐。全仓只有下面那条循环用例钉着这个值。 */
+const POLE_TILT_RATIO = 0.005;
+
 describe("bounds helpers", () => {
   it("takes the centre and the half-diagonal of a box", () => {
     const bounds = { min: [-1, 0, -1] as const, max: [1, 2, 1] as const };
@@ -85,51 +88,48 @@ describe("framingDistance", () => {
     expect(framingDistance(1, 359, 1)).toBeLessThan(framingDistance(1, 50, 1));
   });
 
+  // 竖幅方向没有对称的自限：aspect 越小水平越紧，距离几乎线性发散。不钳下界的话
+  // aspect=0.001 要退到半径的 2680 倍，早越过渲染器 500 的远平面，画面全黑。
+  it("clamps an absurdly tall aspect instead of retreating past the far plane", () => {
+    expect(framingDistance(1, 50, 0.001)).toBe(framingDistance(1, 50, 0.25));
+    expect(framingDistance(1, 50, 0.001)).toBeCloseTo(10.795, 3);
+    // 最竖的出片画幅比下界宽，不该被这条护栏碰到。
+    expect(framingDistance(1, 50, 9 / 16)).toBeLessThan(framingDistance(1, 50, 0.25));
+  });
+
   it("never returns a degenerate distance for a zero-size target", () => {
     // 一盏灯的包围盒是个点。距离算成 0 会把相机塞进对象里，近裁面直接吃掉画面。
     expect(framingDistance(0, 50, 16 / 9)).toBeGreaterThanOrEqual(1);
   });
 
-  // 视场角与画幅比都可能是上游算出来的：画布高度为 0 时 aspect 就是 Infinity。
-  it("stays finite for non-finite inputs", () => {
-    for (const distance of [
-      framingDistance(NaN, 50, 16 / 9),
-      framingDistance(1, NaN, 16 / 9),
-      framingDistance(1, 0, 16 / 9),
-      framingDistance(1, 180, 16 / 9),
-      framingDistance(1, -50, 16 / 9),
-      framingDistance(1, 50, NaN),
-      framingDistance(1, 50, Infinity),
-      framingDistance(1, 50, 0),
-      framingDistance(-3, 50, 16 / 9),
-    ]) {
-      expect(Number.isFinite(distance)).toBe(true);
-      expect(distance).toBeGreaterThanOrEqual(1);
-    }
+  // 非有限的和有限但越界的混在一起：两类都得收敛成一个能用的距离。
+  const unusableInputs: Array<[string, number, number, number]> = [
+    ["radius is NaN", NaN, 50, 16 / 9],
+    ["radius is negative", -3, 50, 16 / 9],
+    ["fov is NaN", 1, NaN, 16 / 9],
+    ["fov is zero", 1, 0, 16 / 9],
+    ["fov is negative", 1, -50, 16 / 9],
+    ["fov is 180", 1, 180, 16 / 9],
+    ["aspect is NaN", 1, 50, NaN],
+    ["aspect is Infinity", 1, 50, Infinity],
+    ["aspect is zero", 1, 50, 0],
+    ["aspect is negative", 1, 50, -1.5],
+  ];
+
+  it.each(unusableInputs)("stays usable when %s", (_label, radius, fov, aspect) => {
+    const distance = framingDistance(radius, fov, aspect);
+
+    expect(Number.isFinite(distance)).toBe(true);
+    expect(distance).toBeGreaterThanOrEqual(1);
   });
 });
 
 describe("viewPlacement", () => {
   const bounds = { min: [-1, 0, -1] as const, max: [1, 2, 1] as const };
 
-  it("puts the camera on the requested axis, looking at the centre", () => {
-    const front = viewPlacement("front", bounds, 50, 16 / 9);
-
-    expect(front.target).toEqual([0, 1, 0]);
-    expect(front.position[0]).toBeCloseTo(0, 6);
-    expect(front.position[1]).toBeCloseTo(1, 6);
-    // 正视图站在 +Z 一侧：three 的相机默认朝 -Z，从 +Z 看回原点才是「正面」。
-    expect(front.position[2]).toBeCloseTo(framingDistance(Math.sqrt(3), 50, 16 / 9), 6);
-
-    const left = viewPlacement("left", bounds, 50, 16 / 9);
-    expect(left.position[0]).toBeLessThan(0);
-    expect(left.position[1]).toBeCloseTo(1, 6);
-    expect(left.position[2]).toBeCloseTo(0, 6);
-  });
-
-  // 六个方向各自站在自己的轴上，且都退到同一个取景距离——只对了正视图那一个方向的
-  // 实现（比如把 back 也放到 +Z）在这里会红。
-  it("places every direction on its own axis at the framing distance", () => {
+  // 六个方向各自站在自己的轴上、退到同一个取景距离，且两个离轴分量都贴着中心。
+  // 正视图在 +Z 是因为 three 的相机默认朝 -Z，从 +Z 看回原点才是「正面」。
+  it("places every direction on its own axis, looking at the centre", () => {
     const distance = framingDistance(boundsRadius(bounds), 50, 16 / 9);
     const axes: Record<PrevizViewDirection, { index: 0 | 1 | 2; sign: 1 | -1 }> = {
       front: { index: 2, sign: 1 },
@@ -143,15 +143,22 @@ describe("viewPlacement", () => {
     for (const direction of PREVIZ_VIEW_DIRECTIONS) {
       const { index, sign } = axes[direction];
       const placement = viewPlacement(direction, bounds, 50, 16 / 9);
+      const polar = direction === "top" || direction === "bottom";
 
       expect(placement.target).toEqual([0, 1, 0]);
       expect(placement.position[index] - placement.target[index]).toBeCloseTo(sign * distance, 6);
+
+      for (const offAxis of [0, 1, 2] as const) {
+        if (offAxis === index) continue;
+        // 离轴分量必须贴着中心，否则相机就不是正对着轴的了。顶/底的 Z 是那条有意的
+        // 微倾（见 view.ts 的 POLE_TILT_RATIO），这里顺带把比例本身钉住。
+        const offset = polar && offAxis === 2 ? distance * POLE_TILT_RATIO : 0;
+        expect(placement.position[offAxis]).toBeCloseTo(placement.target[offAxis] + offset, 6);
+      }
     }
   });
 
-  // 顶视图正上方站位会让 OrbitControls 的极角变成 0，它内部 makeSafe() 会夹到
-  // 一个极小值并顺手把方位角归零 —— 表现是「点顶视图之后第一次拖拽画面猛地一跳」。
-  // 给个可忽略的微倾就绕开了。
+  // 微倾的来龙去脉写在 view.ts 的 POLE_TILT_RATIO 上，别在这里抄第二份。
   it("tilts the top and bottom views off the pole", () => {
     const top = viewPlacement("top", bounds, 50, 16 / 9);
 
@@ -163,15 +170,15 @@ describe("viewPlacement", () => {
     expect(bottom.position[1]).toBeLessThan(1);
   });
 
-  // 底视图的极角是 π，`makeSafe()` 在 π−EPS 那一端钳得一样狠，所以它同样不能正落在
-  // −Y 极点上。两个极点共用同一个微倾，差别只在 Y 的符号。
+  // phi = π 那一端钳得一样狠，所以底视图同样不能正落在 −Y 极点上。
   it("tilts the bottom view off the pole exactly like the top view", () => {
     const distance = framingDistance(boundsRadius(bounds), 50, 16 / 9);
     const top = viewPlacement("top", bounds, 50, 16 / 9);
     const bottom = viewPlacement("bottom", bounds, 50, 16 / 9);
 
     expect(Math.abs(bottom.position[2] - bottom.target[2])).toBeGreaterThan(0);
-    expect(bottom.position[2]).toBeCloseTo(top.position[2], 12);
+    // 两个极点共用同一个微倾，差别只在 Y 的符号；同一表达式算出来，差值就是 0。
+    expect(bottom.position[2]).toBe(top.position[2]);
     expect(bottom.position[1] - bottom.target[1]).toBeCloseTo(-distance, 6);
     expect(top.position[1] - top.target[1]).toBeCloseTo(distance, 6);
   });
@@ -184,7 +191,7 @@ describe("viewPlacement", () => {
 
     const bigRatio = (big.position[2] - 0) / (big.position[1] - 0);
     const smallRatio = (small.position[2] - 0) / (small.position[1] - 0);
-    expect(bigRatio).toBeCloseTo(smallRatio, 9);
+    expect(bigRatio).toBe(smallRatio);
     expect(bigRatio).toBeGreaterThan(0);
   });
 
