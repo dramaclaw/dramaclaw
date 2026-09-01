@@ -38,7 +38,8 @@ export function aspectRatio(aspect: OutputAspect): number {
   return size.width / size.height;
 }
 
-const RAD_TO_DEG = 180 / Math.PI;
+/** 导出给 `engine/gizmo.ts`：手柄读回的 Euler 是弧度，场景里存的是度。 */
+export const RAD_TO_DEG = 180 / Math.PI;
 /** 导出给 `domain/view.ts`：取景那边也要度转弧度，没必要各写一份。 */
 export const DEG_TO_RAD = Math.PI / 180;
 
