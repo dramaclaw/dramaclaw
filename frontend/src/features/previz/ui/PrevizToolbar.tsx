@@ -9,7 +9,10 @@ import { PREVIZ_OBJECT_LIMITS } from "@/features/previz/domain/limits";
 import type { PrevizObjectKind } from "@/features/previz/domain/scene";
 import { cn } from "@/lib/utils";
 
-/** Record 而不是 Partial：新增对象类型时这里编译期报错，不会静默少一个按钮。 */
+/**
+ * Record 而不是 Partial：新增对象类型时这里编译期报错，不会静默塌成一个通用图标。
+ * 键序即按钮的渲染顺序。
+ */
 const KIND_ICON: Record<PrevizObjectKind, LucideIcon> = {
   character: User,
   camera: Camera,
@@ -17,7 +20,13 @@ const KIND_ICON: Record<PrevizObjectKind, LucideIcon> = {
   prop: Box,
 };
 
-const KINDS: readonly PrevizObjectKind[] = ["character", "camera", "light", "prop"];
+/**
+ * 从图标表派生，而不是再手写一份 `readonly PrevizObjectKind[]` 字面量：手写数组
+ * 没有穷尽性检查，新增一种对象时上面的 Record 会报错、数组却会静默少一项，
+ * 结果是加完图标仍然少一个按钮——恰恰是 Record 想拦住的那种失败。
+ * `Object.keys` 对非整数字符串键保持书写顺序，所以上面的键序就是按钮在屏幕上的顺序。
+ */
+const KINDS = Object.keys(KIND_ICON) as PrevizObjectKind[];
 
 export interface PrevizToolbarProps {
   /** 每种对象是否还能再加（数量上限）。false 时按钮禁用而不是点了没反应。 */
@@ -82,6 +91,8 @@ export function PrevizToolbar({
         再也够不着导入入口了。视觉上的按钮是它的 <label>，焦点环靠 peer-* 从 input 转过来。
         无障碍名字只由 <label> 里的 sr-only 文本提供——再挂一份 aria-label 是两处真相，
         改坏其中一处另一处会把问题遮住。
+        下面 label 上那三个 peer-focus-visible:* 是 buttonVariants 基类里 focus-visible:*
+        的同值翻版（Tailwind 无法给现成的变体换前缀）；设计系统改焦点环时这里要跟着改。
       */}
       <input
         id={fileInputId}
