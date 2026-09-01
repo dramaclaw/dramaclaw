@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { PREVIZ_APERTURE, PREVIZ_FOCAL_MM } from './camera';
+import { PREVIZ_APERTURE, PREVIZ_FOCAL_MM, clampToRange, type PrevizRange } from './camera';
 import {
   PREVIZ_DEFAULT_HEIGHT_CM,
   PREVIZ_MAX_HEIGHT_CM,
@@ -221,13 +221,22 @@ function num(value: unknown, fallback: number): number {
 }
 
 /**
- * 非有限输入回落到默认值而不是边界值，与 camera.ts 的 `clampFocalMm` 保持同一约定：
- * NaN 更可能是上游算错了，把它夹成 min 等于替用户做了个他没提过的选择。
+ * 夹取本身不在这里实现，一律走 camera.ts 的 `clampToRange`：domain 层只留一份夹取
+ * 语义，两处各写一遍迟早会对非有限输入给出不同答案。这个包装只补上 `clampToRange`
+ * 没有的那一层——它收 number，而 parseScene 拿到的是 unknown。非数字与非有限值一样
+ * 落到 `range.default`（不是落到边界值）：NaN 更可能是上游算错了或输入框空着，
+ * 把它夹成 min 等于替用户做了个他没提过的选择。
  */
-function clamp(value: unknown, min: number, max: number, fallback: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-  return Math.min(max, Math.max(min, value));
+function clampRange(value: unknown, range: PrevizRange): number {
+  return typeof value === 'number' ? clampToRange(value, range) : range.default;
 }
+
+/** 身高的三个常量在 objects.ts 各有各的调用方，这里只是拼成 `clampRange` 要的形状。 */
+const HEIGHT_CM_RANGE: PrevizRange = {
+  min: PREVIZ_MIN_HEIGHT_CM,
+  max: PREVIZ_MAX_HEIGHT_CM,
+  default: PREVIZ_DEFAULT_HEIGHT_CM,
+};
 
 function vec3(value: unknown, fallback: Vec3): Vec3 {
   if (!Array.isArray(value) || value.length !== 3) return [...fallback];
@@ -235,12 +244,12 @@ function vec3(value: unknown, fallback: Vec3): Vec3 {
 }
 
 function scaleVec3(value: unknown): Vec3 {
-  const { min, max, default: fallback } = PREVIZ_SCALE_RANGE;
+  const fallback = PREVIZ_SCALE_RANGE.default;
   const raw = vec3(value, [fallback, fallback, fallback]);
   return [
-    clamp(raw[0], min, max, fallback),
-    clamp(raw[1], min, max, fallback),
-    clamp(raw[2], min, max, fallback),
+    clampRange(raw[0], PREVIZ_SCALE_RANGE),
+    clampRange(raw[1], PREVIZ_SCALE_RANGE),
+    clampRange(raw[2], PREVIZ_SCALE_RANGE),
   ];
 }
 
@@ -289,12 +298,7 @@ function parseObject(raw: unknown): PrevizObject | null {
         ...base,
         kind: 'character',
         bodyType: isMember(BODY_TYPES, source.bodyType) ? source.bodyType : 'average',
-        heightCm: clamp(
-          source.heightCm,
-          PREVIZ_MIN_HEIGHT_CM,
-          PREVIZ_MAX_HEIGHT_CM,
-          PREVIZ_DEFAULT_HEIGHT_CM,
-        ),
+        heightCm: clampRange(source.heightCm, HEIGHT_CM_RANGE),
         basePoseId:
           typeof source.basePoseId === 'string' ? source.basePoseId : PREVIZ_DEFAULT_POSE_ID,
         poseAdjust: {
@@ -307,18 +311,8 @@ function parseObject(raw: unknown): PrevizObject | null {
       return {
         ...base,
         kind: 'camera',
-        focalMm: clamp(
-          source.focalMm,
-          PREVIZ_FOCAL_MM.min,
-          PREVIZ_FOCAL_MM.max,
-          PREVIZ_FOCAL_MM.default,
-        ),
-        aperture: clamp(
-          source.aperture,
-          PREVIZ_APERTURE.min,
-          PREVIZ_APERTURE.max,
-          PREVIZ_APERTURE.default,
-        ),
+        focalMm: clampRange(source.focalMm, PREVIZ_FOCAL_MM),
+        aperture: clampRange(source.aperture, PREVIZ_APERTURE),
         sensor: isMember(SENSORS, source.sensor) ? source.sensor : 'ff',
       };
     case 'light':
@@ -327,12 +321,7 @@ function parseObject(raw: unknown): PrevizObject | null {
         kind: 'light',
         lightType: isMember(LIGHT_TYPES, source.lightType) ? source.lightType : 'key',
         color: typeof source.color === 'string' ? source.color : '#ffffff',
-        intensity: clamp(
-          source.intensity,
-          PREVIZ_INTENSITY_RANGE.min,
-          PREVIZ_INTENSITY_RANGE.max,
-          PREVIZ_INTENSITY_RANGE.default,
-        ),
+        intensity: clampRange(source.intensity, PREVIZ_INTENSITY_RANGE),
       };
     case 'prop':
       return {
