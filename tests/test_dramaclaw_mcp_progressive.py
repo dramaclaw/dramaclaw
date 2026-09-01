@@ -31,6 +31,28 @@ def test_external_mcp_ready_draft_honors_explicit_create_without_changing_plugin
     assert "without asking for another confirmation" in adapted["agent_instruction"]
 
 
+def test_external_mcp_ready_draft_preserves_nested_billing_instruction():
+    original = {
+        "ok": True,
+        "status": "workflow_draft_ready",
+        "draft_id": "draft-b",
+        "revision": 2,
+        "agent_instruction": "展示规划费用，并说明媒体节点另行计费。",
+        "billing": {"agent_credit_estimate": {"display": "约 12 积分"}},
+    }
+
+    adapted = json.loads(
+        dramaclaw_mcp._adapt_external_agent_tool_result(
+            "freezone_prepare_workflow_draft",
+            json.dumps(original, ensure_ascii=False),
+        )
+    )
+
+    assert "展示规划费用" in adapted["agent_instruction"]
+    assert "Preserve and clearly display" in adapted["agent_instruction"]
+    assert "Do not invent or mention credits" not in adapted["agent_instruction"]
+
+
 def test_plugin_reads_turn_token_file_lazily(monkeypatch, tmp_path):
     token_file = tmp_path / "turn.token"
     token_file.write_text("first-token", encoding="utf-8")

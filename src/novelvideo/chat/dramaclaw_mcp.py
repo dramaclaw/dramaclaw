@@ -110,16 +110,48 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         and str(payload.get("status") or "") == "workflow_draft_ready"
     ):
         return raw
-    payload["agent_instruction"] = (
+    # Billing metadata is intentionally kept in the tool payload.  Do not
+    # replace an instruction produced by the workflow plugin: EE uses that
+    # instruction to describe the planning estimate and the separate media
+    # charges.  Metadata can be nested in ``billing`` or ``data`` depending
+    # on the plugin version, so inspect the whole JSON object.
+    billing_keys = {
+        "agent_planning_charge",
+        "agent_credit_estimate",
+        "planning_charge",
+        "credit_estimate",
+        "feature_credit_estimate",
+    }
+
+    def has_billing_metadata(item: Any) -> bool:
+        if isinstance(item, dict):
+            if any(key in item for key in billing_keys):
+                return True
+            return any(has_billing_metadata(child) for child in item.values())
+        if isinstance(item, list):
+            return any(has_billing_metadata(child) for child in item)
+        return False
+
+    instruction = str(payload.get("agent_instruction") or "").strip()
+    if instruction:
+        instruction += " "
+    instruction += (
         "Present the exact preview in product language, including each node's "
-        "preview.recipe_pipelines order as 主 Recipe → 补充 Recipe. Do not mention credits, "
-        "billing, pricing, or editions. If the current user message explicitly asks to create "
+        "preview.recipe_pipelines order as 主 Recipe → 补充 Recipe. If the current user message explicitly asks to create "
         "or run the workflow and all required clarification answers are available, that "
         "imperative is authorization: call freezone_confirm_workflow_draft exactly once now "
         "with this draft_id and revision, without asking for another confirmation. Otherwise "
         "wait for explicit user confirmation. For adjustments, patch this draft instead of "
         "rebuilding the intent."
     )
+    if has_billing_metadata(payload):
+        instruction += (
+            " Preserve and clearly display the provided planning charge, Agent credit estimate, "
+            "and separate media-generation costs."
+        )
+    else:
+        instruction += " Do not invent or mention credits, billing, pricing, or editions."
+    payload["agent_instruction"] = instruction
     return json.dumps(payload, ensure_ascii=False)
 
 TOOL_SEARCH_NAME = "dramaclaw_tool_search"

@@ -2310,6 +2310,11 @@ tests/test_chat_ws_project_egress.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_cli_cognee_commands.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cli_store_lifecycle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_codex_app_server.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_codex_app_server_filesystem_security.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/虾画token优化.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/freezone/canvas-command-user-messages.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/nodes/audioVoicePolicy.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_freezone_recipe_timeout_message.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cognee_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cognee_episode_update_merge.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cognee_ingest_failure_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

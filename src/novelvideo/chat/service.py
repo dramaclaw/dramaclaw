@@ -499,6 +499,10 @@ _FREEZONE_CANVAS_NO_WRITE_FAILURE_RE = re.compile(
     r"(?:未能|无法|失败|找不到|不可用|未创建|没有创建|未执行|没有执行|不能)",
     re.IGNORECASE,
 )
+_FREEZONE_TEXT_ARTIFACT_RE = re.compile(
+    r"(?:剧本|脚本|文案|提示词|解说词|描述|script|screenplay|prompt|copy|copywriting|description)",
+    re.IGNORECASE,
+)
 _FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
     {
         "freezone_create_node",
@@ -536,6 +540,14 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     has_node_reference = "[SUPERTALE_CANVAS_NODE_REFERENCES]" in raw_prompt
     standalone_clear = bool(re.search(r"(?:清空|clear)", user_text, re.IGNORECASE))
     if _FREEZONE_CANVAS_KNOWLEDGE_QUESTION_RE.search(user_text):
+        return False
+    # A text artifact request such as “生成一个视频脚本” or “create an image
+    # prompt” must remain a chat response unless the user explicitly names a
+    # canvas/node mutation. Otherwise the post-turn adapter may replace the
+    # generated text with a misleading canvas-write failure.
+    if _FREEZONE_TEXT_ARTIFACT_RE.search(user_text) and not re.search(
+        r"(?:节点|画布|连线|node|canvas|edge)", user_text, re.IGNORECASE
+    ):
         return False
     return has_action and (
         has_canvas_object

@@ -1247,6 +1247,10 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
     assert chat_service._freezone_canvas_write_requested("生成一张赛博朋克风格的图片") is True
     assert chat_service._freezone_canvas_write_requested("生成一段视频") is True
     assert chat_service._freezone_canvas_write_requested("做一个女总裁复仇短视频") is True
+    assert chat_service._freezone_canvas_write_requested("生成一个视频脚本") is False
+    assert chat_service._freezone_canvas_write_requested("generate a video script") is False
+    assert chat_service._freezone_canvas_write_requested("create an image prompt") is False
+    assert chat_service._freezone_canvas_write_requested("生成这个工作流的文案") is False
     assert (
         chat_service._freezone_canvas_write_requested(
             "请生成本集完整剧本。输出 20—25 个视觉 Beat，并描述旧图片与视频质感。"
