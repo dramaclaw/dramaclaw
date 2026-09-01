@@ -166,6 +166,46 @@ describe("parseScene object validation", () => {
     expect(parsed.objects).toEqual([]);
   });
 
+  // isMember 用的是 `Object.prototype.hasOwnProperty.call(table, value)` 而不是
+  // `value in table`：白名单都是对象字面量，`in` 会连着 Object.prototype 一起查，于是
+  // 'constructor' / 'toString' / 'valueOf' / '__proto__' 统统算「合法枚举值」被原样存进
+  // 场景，而后面每一处按枚举查表的地方（材质、灯型、加载器）拿到的都是 undefined。
+  it("rejects Object.prototype keys as string enum values", () => {
+    const parsed = parseScene({
+      settings: { displayMode: "constructor", outputAspect: "toString" },
+      objects: [
+        { id: "a", kind: "character", bodyType: "constructor" },
+        { id: "b", kind: "prop", assetFormat: "constructor" },
+        { id: "c", kind: "light", lightType: "valueOf" },
+        { id: "d", kind: "camera", sensor: "__proto__" },
+      ],
+    });
+
+    expect(parsed.settings.displayMode).toBe("solid");
+    expect(parsed.settings.outputAspect).toBe("16:9");
+    expect(parsed.objects[0]).toMatchObject({ kind: "character", bodyType: "average" });
+    expect(parsed.objects[1]).toMatchObject({ kind: "prop", assetFormat: "glb" });
+    expect(parsed.objects[2]).toMatchObject({ kind: "light", lightType: "key" });
+    expect(parsed.objects[3]).toMatchObject({ kind: "camera", sensor: "ff" });
+  });
+
+  // kind 走的是同一个 isMember，但这一条从 parseScene 的输出上看不出 hasOwnProperty 与
+  // `in` 的差别：就算 `in` 放行了 'constructor'，parseObject 的 switch 也一个分支都命不
+  // 中，对象照样被丢掉。留着是为了钉住「原型链上的名字不是合法 kind」这个契约本身——
+  // switch 将来万一补上 default 分支，它就成了唯一一道防线。
+  it("drops objects whose kind is an Object.prototype key", () => {
+    const parsed = parseScene({
+      objects: [
+        { id: "a", kind: "constructor" },
+        { id: "b", kind: "toString" },
+        { id: "c", kind: "__proto__" },
+        { id: "d", kind: "camera" },
+      ],
+    });
+
+    expect(parsed.objects.map((object) => object.id)).toEqual(["d"]);
+  });
+
   // 轨道指向已经不存在的对象时，求值器（P3）会拿到一个悬空引用。P1 还没有求值器，
   // 但让脏数据在这里就地消失比留到那时候再排查便宜得多。
   it("drops tracks whose object is gone", () => {

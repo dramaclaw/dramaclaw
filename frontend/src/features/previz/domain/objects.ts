@@ -30,7 +30,9 @@ export const PREVIZ_OBJECT_BASE_NAME: Record<PrevizObjectKind, string> = {
 };
 
 /**
- * 对象的可编辑字段补丁，属性面板用它描述「改哪些字段」。四个 kind 的 `Partial` 求交：
+ * 对象的可编辑字段补丁：一次编辑要动哪些字段。属性面板（Task 14）落地时会拿它当入参
+ * 类型；在那之前 `src` 下还没有消费者，先定在这里是因为它整个是从四个 kind 的字段推出
+ * 来的，跟 schema 放在一起才不会随着字段增删各走各的。四个 kind 的 `Partial` 求交：
  * 公共字段（name / transform / visible / locked）类型一致，各自的专有字段互不冲突，
  * 于是交出来是「全部可选」。`id` 与 `kind` 刻意排除——换 kind 等于换对象，走删除加新建。
  */
@@ -117,6 +119,20 @@ function withDefaults(kind: PrevizObjectKind, base: ReturnType<typeof baseFields
  * 建一个新对象。`objects` 只用来算名字编号，不会被改动。
  * `overrides` 用于「导入物件时顺带带上 assetUrl」这类场景，按 kind 收窄，
  * 往人物身上写机位字段这种事在编译期就被挡掉。
+ *
+ * 残留的两条收窄边界，都不在「按 kind 分派」这一侧：
+ * 1. kind 传的是 `PrevizObjectKind` 类型的**变量**而非字面量时，K 推成整个联合。
+ *    `Extract` 在 `PrevizObject` 上分发出四个成员，但随后的 `Omit<A | B | C | D, …>`
+ *    只留得下四者的**公共**键——于是动态 kind 的 overrides 反而比字面量调用点更严：
+ *    `{ name }` 收，`{ assetUrl }` 连 kind 运行时确实是 'prop' 都不收。方向是安全的
+ *    （不会漏），但很意外，动态 kind 的调用点只能先建后改。
+ * 2. 超额属性检查是**新鲜对象字面量**才有的规则。overrides 先落进变量再传进来，且它与
+ *    目标至少有一个同名属性时，多出来的字段就查不出来了：
+ *    `const patch = { name: 'a', assetUrl: 'x' }; createPrevizObject('character', [], patch)`
+ *    编译得过。一个属性都不重叠时还有弱类型检测兜底（单传 `{ assetUrl }` 会红）。
+ *    这是 TS 的语言规则，不是这个签名的疏漏。
+ * 两条都仍严格好过重构前——那时 `overrides` 是一个 `PrevizObjectPatch`，四个 kind 的
+ * 字段在**所有**调用点、连新鲜字面量都一律放行。
  */
 export function createPrevizObject<K extends PrevizObjectKind>(
   kind: K,
