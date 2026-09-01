@@ -4,10 +4,12 @@ import type { OutputAspect, PrevizCamera } from './scene';
 
 /**
  * 镜头换算全仓只此一份：属性面板、监看取景框、截图尺寸都从这里取值。
- * 本模块的换算函数都是**全函数**——焦距先过 `clampFocalMm`，视场角先验区间，
+ * 本模块的换算函数对**数值**参数是全函数——焦距先过 `clampFocalMm`，视场角先验区间，
  * 越界与非有限输入在内部收敛掉，调用方不需要也不应该自己先夹一遍。之所以要这样，
  * 是因为 three 的 `PerspectiveCamera` 拿到 0 / 180 / 负数 / NaN 的 fov 不会报错，
  * 只会给出零宽或 NaN 的视锥、甚至悄悄翻转手性，症状离病因隔着好几层。
+ * `sensor` / `aspect` 这两个字符串参数不在此列：查表查空了会直接 TypeError。它们由
+ * `parseScene` 在入口收敛到联合类型来保证，这里不再重复校验。
  */
 
 /** 两种机身的成像面物理尺寸，单位毫米。s35 取 Super 35 的常见值 24.89 × 18.66。 */
@@ -69,7 +71,8 @@ export function verticalFovDeg(
   return 2 * Math.atan(sensorWidth / (2 * clampFocalMm(focalMm) * aspectRatio(aspect))) * RAD_TO_DEG;
 }
 
-interface PrevizRange {
+/** 一段带默认值的闭区间。预演台 domain 层的可夹字段都按这个形状声明。 */
+export interface PrevizRange {
   readonly min: number;
   readonly max: number;
   readonly default: number;
@@ -80,16 +83,20 @@ interface PrevizRange {
  * 不是用户想要长焦。
  * 属性面板（Task 14）注意：这条约定只适合在 blur 时调用。逐键调用的话，清空输入框会
  * 立刻跳回 50，想输 120 时先敲的那个 1 会被夹成 12，用户根本没法把数字打完。
+ * 导出是为了让 domain 层只有这一套夹取语义——`scene.ts` 的逐字段夹取也走这里，
+ * 免得两份实现日后对非有限输入给出不同答案。
  */
-function clampToRange(value: number, range: PrevizRange): number {
+export function clampToRange(value: number, range: PrevizRange): number {
   if (!Number.isFinite(value)) return range.default;
   return Math.min(range.max, Math.max(range.min, value));
 }
 
+/** 见 `clampToRange`：非有限输入回落到默认焦距，所以只该在 blur 时调用。 */
 export function clampFocalMm(value: number): number {
   return clampToRange(value, PREVIZ_FOCAL_MM);
 }
 
+/** 见 `clampToRange`：非有限输入回落到默认光圈，所以只该在 blur 时调用。 */
 export function clampAperture(value: number): number {
   return clampToRange(value, PREVIZ_APERTURE);
 }
