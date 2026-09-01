@@ -20,6 +20,8 @@ import {
 import {
   createDefaultScene,
   PREVIZ_FPS,
+  PREVIZ_MAX_DURATION_FRAMES,
+  PREVIZ_MIN_DURATION_FRAMES,
   parseObject,
   type DisplayMode,
   type OutputAspect,
@@ -140,6 +142,7 @@ interface PrevizStoreState {
   removeObject: (id: string) => void;
   setDisplayMode: (mode: DisplayMode) => void;
   setOutputAspect: (aspect: OutputAspect) => void;
+  setDurationFrames: (frames: number) => void;
 }
 
 export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
@@ -262,6 +265,17 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   setOutputAspect: (aspect) => {
     const { scene, applyScene } = get();
     applyScene({ ...scene, settings: { ...scene.settings, outputAspect: aspect } });
+  },
+
+  setDurationFrames: (frames) => {
+    const { scene, applyScene, timelineFrame } = get();
+    const clamped = Math.min(
+      PREVIZ_MAX_DURATION_FRAMES,
+      Math.max(PREVIZ_MIN_DURATION_FRAMES, Math.round(frames) || PREVIZ_MIN_DURATION_FRAMES),
+    );
+    applyScene({ ...scene, settings: { ...scene.settings, durationFrames: clamped } });
+    // 时间轴缩短到播放头以内时把播放头拽回来，否则它停在时间轴外面，拖都拖不动。
+    if (timelineFrame > clamped) set({ timelineFrame: clamped });
   },
 
   setTimelineFrame: (frame) => {
