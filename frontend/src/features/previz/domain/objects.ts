@@ -56,6 +56,29 @@ export type PrevizObjectPatch = Partial<Omit<PrevizCharacter, 'id' | 'kind'>> &
 
 type PrevizObjectOfKind<K extends PrevizObjectKind> = Extract<PrevizObject, { kind: K }>;
 
+/**
+ * 新建一个对象时可以带上的初始字段，按 kind 收窄：往人物身上写机位字段编译期就红。
+ * `id` 与 `kind` 排除的理由同 `PrevizObjectPatch`——换 kind 等于换对象。
+ * 定在这里而不是在调用方从 `createPrevizObject` 的参数反推：反推读不动，而且没法被
+ * UI 代码拿去声明一个 overrides 变量。
+ */
+export type PrevizObjectOverrides<K extends PrevizObjectKind> = Partial<
+  Omit<PrevizObjectOfKind<K>, 'id' | 'kind'>
+>;
+
+/**
+ * 滤掉值为 `undefined` 的键。`exactOptionalPropertyTypes` 关着，所以调用方常见的
+ * 「有就带上」写法 `{ name: maybeName }`（`string | undefined`）照样通过类型检查；
+ * 直接展开合并会把目标上已有的值盖成 `undefined`，再被规范化「修」成字段默认值——
+ * 一次可选补丁就能把用户改过的名字抹回基名、把隐藏的对象重新显示出来。
+ * 工厂与 store 的补丁路径共用这一份，免得两条路各防各的、日后只补上其中一条。
+ */
+export function withoutUndefined<T extends object>(source: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(source).filter(([, value]) => value !== undefined),
+  ) as Partial<T>;
+}
+
 function identityTransform(): PrevizTransform {
   return { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
 }
@@ -150,16 +173,11 @@ function withDefaults(kind: PrevizObjectKind, base: ReturnType<typeof baseFields
 export function createPrevizObject<K extends PrevizObjectKind>(
   kind: K,
   objects: readonly PrevizObject[],
-  overrides: Partial<Omit<PrevizObjectOfKind<K>, 'id' | 'kind'>> = {},
+  overrides: PrevizObjectOverrides<K> = {},
 ): PrevizObjectOfKind<K> {
-  // 显式的 undefined 先滤掉再合并：exactOptionalPropertyTypes 关着，`{ name: maybe }`
-  // 照样通过类型检查，直接合并会得到一个 name 是 undefined 的对象，一路存到画布里。
-  const defined = Object.fromEntries(
-    Object.entries(overrides).filter(([, value]) => value !== undefined),
-  );
   const created = withDefaults(kind, baseFields(objects, kind));
 
   // 唯一一处断言：`withDefaults` 按运行时的 kind 分支返回联合类型，TS 没法把这个
   // 分支结果绑回类型参数 K；每个 case 的字面量 kind 已经保证了两者一致。
-  return Object.assign(created, defined) as PrevizObjectOfKind<K>;
+  return Object.assign(created, withoutUndefined(overrides)) as PrevizObjectOfKind<K>;
 }

@@ -3,10 +3,15 @@
 import { create } from 'zustand';
 
 import { canAddObject } from './domain/limits';
-import { createPrevizObject, type PrevizObjectPatch } from './domain/objects';
+import {
+  createPrevizObject,
+  withoutUndefined,
+  type PrevizObjectOverrides,
+  type PrevizObjectPatch,
+} from './domain/objects';
 import {
   createDefaultScene,
-  parseScene,
+  parseObject,
   type DisplayMode,
   type OutputAspect,
   type PrevizObject,
@@ -18,35 +23,23 @@ import {
 export const PREVIZ_HISTORY_LIMIT = 50;
 
 /**
- * 新建对象时按 kind 收窄的 overrides。直接从 `createPrevizObject` 的第三个参数取型，
- * 而不是把 `Partial<Omit<…, 'id' | 'kind'>>` 再抄一遍：抄一遍就等于埋一个日后会和工厂
- * 各走各的第二份定义。
- */
-type PrevizObjectOverrides<K extends PrevizObjectKind> = NonNullable<
-  Parameters<typeof createPrevizObject<K>>[2]
->;
-
-/**
- * 把一条刚编辑过的记录重新过一遍 `parseScene` 的逐字段校验：越界值夹回区间，
- * 非有限值回落默认值，不属于这个 kind 的字段丢掉。
+ * 把一条刚编辑过的记录重新过一遍读盘时的逐字段校验：越界值夹回区间，非有限值回落
+ * 默认值，不属于这个 kind 的字段丢掉。直接复用 `parseObject` 而不在 store 里另抄一份
+ * 字段表与区间常量——两份实现迟早会对同一个越界值给出不同答案。
  *
- * 借一份只装它一个的临时场景送进 `parseScene`，是因为逐对象校验在 domain 层只有这
- * 一个出口（`parseObject` 没有导出）。在 store 里另抄一份字段表与区间常量，两份实现
- * 迟早会对同一个越界值给出不同答案。只送单个对象而不是整份场景，是为了让没被改到的
- * 对象保持引用不变：只重建被改的那一条，避免一次属性编辑把整份 objects 翻新。
- *
- * `?? object` 不是形式主义：`parseObject` 有三种丢弃条件——缺 id、id 是空串、kind
- * 不认识。光看类型这三样都到不了（patch 与 overrides 都改不到 id / kind），但
- * `loadScene` / `applyScene` 的入参是调用方自建的 `PrevizScene`，**不经 `parseScene`**，
+ * `?? object` 不是形式主义：`parseObject` 的三种丢弃条件里，「记录不是对象」在这个
+ * 调用点到不了（入参已经是对象），另外两种到得了——id 不可用（缺失、非字符串或空串）
+ * 与 kind 不认识。光看类型这两样也该到不了（patch 与 overrides 都改不到 id / kind），
+ * 但 `loadScene` / `applyScene` 的入参是调用方自建的 `PrevizScene`，**不经 `parseScene`**，
  * 空 id 这类脏值本来就能从那里进场景；JS 调用方也不受 patch 类型约束。而
  * `normalizeObject` 存在的全部理由就是拦运行时脏值，拿类型论证它够不着自相矛盾。
  * 丢弃时兜回原对象：宁可在场景里留一个没规范化的对象，也不能让 `undefined` 流进
  * `scene.objects`，再被 `JSON.stringify` 原样写进 `node.data`。
- * 编译期指望不上——`tsconfig.app.json` 没开 `noUncheckedIndexedAccess`，
- * `.objects[0]` 被静态推成 `PrevizObject`，少了这个兜底也不会报错。
+ * 编译期指望不上——`tsconfig.app.json` 没开 `noUncheckedIndexedAccess`，`?? object`
+ * 少了也不会报错。
  */
 function normalizeObject(object: PrevizObject): PrevizObject {
-  return parseScene({ objects: [object] }).objects[0] ?? object;
+  return parseObject(object) ?? object;
 }
 
 interface PrevizStoreState {
@@ -155,9 +148,14 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       ...scene,
       objects: scene.objects.map((object) =>
         // patch 是四种对象 Partial 的交集，往人物身上写 focalMm 编译期拦不住；
-        // `normalizeObject` 会把不属于这个 kind 的字段丢掉。`kind` 自身不在 patch
-        // 里，合并时永远由被改对象保留。
-        object.id === id ? normalizeObject({ ...object, ...patch }) : object,
+        // `normalizeObject` 会把不属于这个 kind 的字段丢掉。类型上 patch 不含 `kind`，
+        // 所以正常路径下 kind 由被改对象保留；JS 调用方硬塞一个 `kind` 则会让这条记录
+        // 按新 kind 重新解析、却留着旧 id。结构性拦下来（合并后再钉回 `object.kind`）
+        // 会把 kind 拓宽成整个联合而报 TS2345，等于要把 `as PrevizObject` 断言请回来，
+        // 不划算。
+        // `withoutUndefined`：exactOptionalPropertyTypes 关着，`{ name: maybeName }` 能
+        // 过类型检查，原样合并会把已有值盖成 undefined，再被规范化「修」成默认值。
+        object.id === id ? normalizeObject({ ...object, ...withoutUndefined(patch) }) : object,
       ),
     });
   },

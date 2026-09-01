@@ -297,7 +297,7 @@ function parseTransform(value: unknown): PrevizTransform {
  * 区间：用户手改坏一个数字，不该让整个人物凭空消失，但也不能让 `focalMm: 0` 这种值把
  * three 的投影矩阵算成 NaN。
  */
-function parseObject(raw: unknown): PrevizObject | null {
+export function parseObject(raw: unknown): PrevizObject | null {
   if (raw === null || typeof raw !== 'object') return null;
   const source = raw as Record<string, unknown>;
 
