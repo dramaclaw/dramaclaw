@@ -33,6 +33,20 @@ from novelvideo.freezone.workflow_schema import (
 
 SERVER = Server("dramaclaw-workflows", version="1.0.0")
 
+_WORKFLOW_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": "Structured result returned by every DramaClaw workflow tool.",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "status": {"type": "string"},
+        "code": {"type": ["string", "null"]},
+        "error": {"type": ["string", "null"]},
+        "next_action": {"type": ["string", "null"]},
+    },
+    "required": ["ok", "status"],
+    "additionalProperties": True,
+}
+
 
 def _username() -> str:
     return str(os.environ.get("DRAMACLAW_USERNAME") or "local").strip() or "local"
@@ -45,6 +59,29 @@ def _text(payload: dict[str, Any]) -> list[types.TextContent]:
             text=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         )
     ]
+
+
+def _result(payload: Any) -> types.CallToolResult | list[types.TextContent]:
+    """Return JSON text plus structured content for MCP clients that support it."""
+    if not isinstance(payload, dict):
+        return _text({"ok": False, "status": "invalid_tool_result", "error": str(payload)})
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=encoded)],
+        structuredContent=payload,
+    )
+
+
+def _normalize_graph_arguments(args: dict[str, Any]) -> dict[str, Any]:
+    """Unwrap the one accidental double-plan envelope seen from some hosts."""
+    if not isinstance(args, dict):
+        return {}
+    plan = args.get("plan")
+    if isinstance(plan, dict) and isinstance(plan.get("plan"), dict):
+        normalized = dict(args)
+        normalized["plan"] = plan["plan"]
+        return normalized
+    return args
 
 
 def _object_schema(
@@ -127,6 +164,7 @@ async def list_tools() -> list[types.Tool]:
                 },
                 ["kind"],
             ),
+            outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
         ),
         types.Tool(
             name="workflow_skill_get",
@@ -149,6 +187,7 @@ async def list_tools() -> list[types.Tool]:
                 },
                 ["skill_id"],
             ),
+            outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
         ),
         types.Tool(
             name="workflow_recipe_get",
@@ -160,6 +199,7 @@ async def list_tools() -> list[types.Tool]:
                 {"recipe_id": {"type": "string", "minLength": 1}},
                 ["recipe_id"],
             ),
+            outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
         ),
         types.Tool(
             name="workflow_intent_compile",
@@ -172,6 +212,7 @@ async def list_tools() -> list[types.Tool]:
                 {"intent": workflow_intent_json_schema()},
                 ["intent"],
             ),
+            outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
         ),
         types.Tool(
             name="workflow_graph_compile",
@@ -189,46 +230,54 @@ async def list_tools() -> list[types.Tool]:
                 },
                 ["plan"],
             ),
+            outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
         ),
     ]
 
 
 @SERVER.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
+async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     args = dict(arguments or {})
     if name == "workflow_catalog_search":
         kind = str(args.get("kind") or "")
         if kind not in {"skills", "recipes"}:
-            return _text({"ok": False, "status": "invalid_catalog_kind"})
+            return _result({"ok": False, "status": "invalid_catalog_kind"})
         items = search_catalog(
             username=_username(),
             kind=kind,  # type: ignore[arg-type]
             query=str(args.get("query") or ""),
             limit=int(args.get("limit") or 12),
         )
-        return _text({"ok": True, "kind": kind, "items": items})
+        return _result({"ok": True, "status": "catalog_ready", "kind": kind, "items": items})
     if name == "workflow_skill_get":
         result = get_workflow_skill({**args, "compact": True})
-        return _text(result)
+        return _result(result)
     if name == "workflow_recipe_get":
         item = get_catalog_item(
             username=_username(),
             kind="recipes",
             item_id=str(args.get("recipe_id") or ""),
         )
-        return _text(
+        return _result(
             {"ok": True, "recipe": item}
             if item is not None
             else {"ok": False, "status": "recipe_not_found"}
         )
     if name == "workflow_intent_compile":
-        return _text(compile_workflow_intent(args.get("intent")))
+        return _result(compile_workflow_intent(args.get("intent")))
     if name == "workflow_graph_compile":
+        args = _normalize_graph_arguments(args)
         validation = validate_agent_workflow_plan(args.get("plan"))
         if not validation.get("ok"):
-            return _text(validation)
-        return _text(build_workflow_graph_commands(args))
-    return _text({"ok": False, "status": "unknown_tool", "tool": name})
+            validation.setdefault(
+                "agent_instruction",
+                "保留同一份完整 WorkflowPlan；不要提交单节点探测、空 edges 或 compact Intent。"
+                "每个可执行节点必须在 data.workflowCatalog.recipeId 中指定 Recipe，"
+                "且所有边的 source/target 必须对应 nodes[].id。",
+            )
+            return _result(validation)
+        return _result(build_workflow_graph_commands(args))
+    return _result({"ok": False, "status": "unknown_tool", "tool": name})
 
 
 async def _main() -> None:

@@ -1263,6 +1263,30 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
     )
 
 
+def test_codex_freezone_write_receipt_accepts_structured_mcp_result_without_legacy_status():
+    event = SimpleNamespace(
+        name="freezone_create_workflow_graph",
+        status="completed",
+        error=None,
+        structured={"ok": True, "applied": True, "status": "completed"},
+        output=None,
+    )
+
+    assert chat_service._codex_freezone_write_result_succeeded(event) is True
+
+
+def test_codex_freezone_write_receipt_accepts_created_node_count():
+    event = SimpleNamespace(
+        name="freezone_create_workflow_graph",
+        status="completed",
+        error=None,
+        structured={"ok": True, "created_node_count": 3, "status": "completed"},
+        output=None,
+    )
+
+    assert chat_service._codex_freezone_write_result_succeeded(event) is True
+
+
 def test_codex_freezone_instructions_forbid_invented_resource_uris():
     instructions = chat_service._CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS
 

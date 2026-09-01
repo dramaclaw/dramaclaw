@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import inspect
 import json
 import logging
 import os
@@ -179,6 +180,20 @@ _WORKFLOW_DRAFT_OUTPUT_SCHEMA: dict[str, Any] = {
     "additionalProperties": True,
 }
 
+_MCP_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": "Structured DramaClaw tool result; tool-specific fields may be present.",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "status": {"type": "string"},
+        "code": {"type": ["string", "null"]},
+        "error": {"type": ["string", "null"]},
+        "next_action": {"type": ["string", "null"]},
+    },
+    "required": ["ok"],
+    "additionalProperties": True,
+}
+
 # Home turns have no bound project and should only manage the project
 # collection. Project-scoped tokens remain the authority for every underlying
 # API call, but this allow-list also keeps irrelevant production schemas out of
@@ -332,6 +347,17 @@ def _json_text(payload: Any) -> list[types.TextContent]:
     ]
 
 
+def _workflow_schema_recovery_instruction(tool_name: str) -> str | None:
+    if tool_name not in {"freezone_create_workflow_graph", "workflow_graph_compile"}:
+        return None
+    return (
+        "WorkflowPlan 校验失败。不要提交单节点探测、空 edges 或 compact Intent。"
+        "请保留同一份完整节点清单和所有边；每个可执行节点必须把"
+        "workflowCatalog.recipeId 放在节点 data 内。确认所有 edge 的 source/target"
+        "都对应 nodes[].id 后，只重新提交一次完整 WorkflowPlan。"
+    )
+
+
 @SERVER.list_tools()
 async def list_tools() -> list[types.Tool]:
     # In Freezone, expose the same concrete Hermes tool names. The previous
@@ -350,7 +376,7 @@ async def list_tools() -> list[types.Tool]:
                     outputSchema=(
                         _WORKFLOW_DRAFT_OUTPUT_SCHEMA
                         if name == "freezone_prepare_workflow_draft"
-                        else None
+                        else _MCP_OUTPUT_SCHEMA
                     ),
                 )
             )
@@ -502,24 +528,63 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             Draft202012Validator.check_schema(input_schema)
             Draft202012Validator(input_schema).validate(arguments)
         except (SchemaError, ValidationError) as exc:
+            recovery = _workflow_schema_recovery_instruction(name)
+            # Some model adapters accidentally wrap a complete graph one level
+            # too deep as {"plan": {"plan": {...}}}. Unwrap only this exact
+            # shape; all other schema errors remain fail-closed.
+            nested = arguments.get("plan") if isinstance(arguments, dict) else None
+            if (
+                name == "freezone_create_workflow_graph"
+                and isinstance(nested, dict)
+                and isinstance(nested.get("plan"), dict)
+            ):
+                unwrapped = dict(arguments)
+                unwrapped["plan"] = nested["plan"]
+                try:
+                    Draft202012Validator(input_schema).validate(unwrapped)
+                except ValidationError:
+                    pass
+                else:
+                    arguments = unwrapped
+                    # Continue through the normal handler below.
+                    result = await asyncio.to_thread(handler, arguments)
+                    if inspect.isawaitable(result):
+                        result = await result
+                    adapted = _adapt_external_agent_tool_result(name, result)
+                    try:
+                        structured = json.loads(adapted)
+                    except (TypeError, json.JSONDecodeError):
+                        structured = None
+                    if isinstance(structured, dict):
+                        return types.CallToolResult(
+                            content=[types.TextContent(type="text", text=adapted)],
+                            structuredContent=structured,
+                        )
+                    return [types.TextContent(type="text", text=adapted)]
             return _json_text({
                 "ok": False,
                 "error": "tool_arguments_invalid",
                 "tool_name": name,
                 "message": getattr(exc, "message", str(exc)),
+                **({"agent_instruction": recovery} if recovery else {}),
             })
-        result = handler(arguments)
+        result = await asyncio.to_thread(handler, arguments)
+        if inspect.isawaitable(result):
+            result = await result
         adapted = _adapt_external_agent_tool_result(name, result)
-        if name == "freezone_prepare_workflow_draft":
-            try:
-                structured = json.loads(adapted)
-            except (TypeError, json.JSONDecodeError):
-                structured = {"ok": False, "status": "invalid_tool_result", "next_action": None}
-            if isinstance(structured, dict):
-                return types.CallToolResult(
-                    content=[types.TextContent(type="text", text=adapted)],
-                    structuredContent=structured,
-                )
+        try:
+            structured = json.loads(adapted)
+        except (TypeError, json.JSONDecodeError):
+            structured = None
+        if isinstance(structured, dict):
+            if not isinstance(structured.get("ok"), bool):
+                structured["ok"] = not bool(structured.get("error"))
+            if not isinstance(structured.get("status"), str):
+                structured["status"] = "completed" if structured["ok"] else "failed"
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=adapted)],
+                structuredContent=structured,
+            )
         return [
             types.TextContent(
                 type="text",

@@ -607,7 +607,25 @@ def _codex_freezone_write_result_succeeded(event: Any) -> bool:
             if payload.get("ok") is not True:
                 continue
             apply_status = str(payload.get("canvas_apply_status") or "").strip().lower()
-            if apply_status in {"applied", "accepted", "direct_applied"}:
+            tool_status = str(
+                payload.get("tool_call_status") or payload.get("status") or ""
+            ).strip().lower()
+            applied_count = payload.get("applied_count")
+            created_node_count = payload.get("created_node_count")
+            has_applied_count = isinstance(applied_count, (int, float)) and applied_count > 0
+            has_created_nodes = isinstance(created_node_count, (int, float)) and created_node_count > 0
+            # Codex 0.149 may surface the MCP CallToolResult through
+            # structuredContent without preserving the legacy
+            # canvas_apply_status field.  `applied=true` (or an accepted
+            # tool-call status) is still a durable write receipt and must
+            # prevent the post-turn adapter from reporting a false failure.
+            if (
+                apply_status in {"applied", "accepted", "direct_applied"}
+                or payload.get("applied") is True
+                or tool_status in {"accepted", "completed", "succeeded"}
+                or has_applied_count
+                or has_created_nodes
+            ):
                 return True
     return False
 
@@ -5254,8 +5272,7 @@ def _codex_gateway_provider_overrides(
 
 def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
     """Node-safe Codex config containing no usable Gateway credential."""
-
-    return (
+    overrides = [
         *_codex_gateway_provider_overrides(
             base_url,
         ),
@@ -5273,7 +5290,27 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
         "features.view_image=false",
         "memories.generate_memories=false",
         "memories.use_memories=false",
-    )
+    ]
+    # Codex only enables native deferred tool search for models present in its
+    # catalog.  Do not fabricate metadata for the custom Gateway slug; allow a
+    # deployment to provide a verified catalog file and fail closed otherwise.
+    catalog_file = str(
+        os.environ.get("DRAMACLAW_CODEX_MODEL_CATALOG_FILE") or ""
+    ).strip()
+    if catalog_file:
+        path = Path(catalog_file).expanduser()
+        if not path.is_file() or not path.is_absolute():
+            raise RuntimeError(
+                "DRAMACLAW_CODEX_MODEL_CATALOG_FILE must be an existing absolute file"
+            )
+        try:
+            catalog = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Codex model catalog file is not valid JSON") from exc
+        if not isinstance(catalog, (dict, list)):
+            raise RuntimeError("Codex model catalog must be a JSON object or array")
+        overrides.append(f"model_catalog_json={json.dumps(str(path))}")
+    return tuple(overrides)
 
 
 def _build_codex_thread(

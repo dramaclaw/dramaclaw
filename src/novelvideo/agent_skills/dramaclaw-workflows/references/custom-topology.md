@@ -16,6 +16,24 @@ production Skill does not turn an exact topology request into the normal draft f
 3. Every executable node must contain an explicit `data.workflowCatalog.recipeId`. Input/resource
    text nodes may omit a Recipe when they only carry user-provided material, but they must set
    `stage` to `input`, `resource`, or `asset`. A terminal `videoComposeNode` has no Recipe.
+   Put executable options inside `data` as well; do not place them beside `id`/`node_type`.
+   For example, a background-music node must use this shape (with the actual Recipe returned by
+   the selected Skill):
+
+   ```json
+   {
+     "id": "bgm",
+     "node_type": "audioNode",
+     "data": {
+       "workflowCatalog": {"recipeId": "general-audio"},
+       "audioKind": "music",
+       "text": "无歌词、纯音乐的背景氛围配乐"
+     }
+   }
+   ```
+
+   Do not use ad-hoc top-level fields such as `audioKind`, `musicLengthMs`, `forceInstrumental`,
+   or `respectSectionsDurations`; if supported by the live node schema, put them under `data`.
 4. Put all nodes and semantic edges in the same plan. Use logical plan IDs only; the compiler turns
    them into same-batch `client_id` values.
 5. When the user states exact totals, copy them into `expected_node_count` and
@@ -24,6 +42,9 @@ production Skill does not turn an exact topology request into the normal draft f
 6. Requests that explicitly enumerate Beats, shots, nodes, or dependency order always stay on this
    full Plan path, including requests above the compact Intent planner's item limit. Do not switch to
    `workflow_intent_compile`, a smaller sample plan, or standalone node tools after a validation error.
+   Every edge endpoint must match an `id` in the same `nodes` array. Never invent a source such as
+   `source` or `input` unless that exact node is present; remove an optional edge rather than
+   leaving a dangling reference.
 7. Call `freezone_create_workflow_graph` once. It deterministically adds grouping, layout, selection,
    and one canvas batch.
 
