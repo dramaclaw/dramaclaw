@@ -183,6 +183,10 @@ describe('PrevizSceneGraph', () => {
     expect(graph.nodeFor(scene.objects[0]!.id)?.name).toBe('主角');
     expect(graph.nodeFor(scene.objects[0]!.id)?.userData.previzLocked).toBe(true);
     expect(graph.nodeFor(scene.objects[1]!.id)?.userData.previzLocked).toBe(false);
+    // 锁定只挡手柄，不挡渲染。两个标志在这里必须分开断言：把 `visible` 写成
+    // `visible && !locked`，锁住的灯就从画面上消失了，而只测 `visible` 的那条用例
+    // 里对象从来没被锁过，一条都不会红。
+    expect(graph.nodeFor(scene.objects[0]!.id)?.visible).toBe(true);
   });
 
   it('reuses the existing node when only the transform changed', () => {
@@ -291,6 +295,7 @@ describe('PrevizSceneGraph', () => {
 
     // 胶囊的分段数：radialSegments 太少就不是个圆柱而是根三棱柱，一眼穿帮。
     // CapsuleGeometry(radius, height, capSegments, radialSegments)。
+    expect(character!.geometry.args[2]).toBeGreaterThanOrEqual(4);
     expect(character!.geometry.args[3]).toBeGreaterThanOrEqual(8);
 
     // 机位是个小四棱锥（radialSegments = 4），比人物矮一大截才不喧宾夺主：
@@ -303,9 +308,18 @@ describe('PrevizSceneGraph', () => {
     expect(cone[2]).toBe(4);
 
     // 灯是个更小的球，物件是个 0.6 m 见方的盒子——都在「人一眼扫过去认得出」的量级。
+    // 球同样要够圆：SphereGeometry(radius, widthSegments, heightSegments)，段数掉到个位数
+    // 就成了个多面体疙瘩，而上面那两条尺寸断言照样绿。
     expect(light!.geometry.args[0]).toBeGreaterThan(0);
     expect(light!.geometry.args[0]).toBeLessThan(0.3);
+    expect(light!.geometry.args[1]).toBeGreaterThanOrEqual(8);
+    expect(light!.geometry.args[2]).toBeGreaterThanOrEqual(6);
     expect(prop!.geometry.args.slice(0, 3)).toEqual([0.6, 0.6, 0.6]);
+
+    // 四类的分类色必须两两不同。形状之外这是第二条辨认线索，也正是 clay 模式回程
+    // 要还原的那份映射；把机位改成和灯一个色，上面所有形状与尺寸断言一条都不会红。
+    const colours = [character!, camera!, light!, prop!].map((mesh) => mesh.material.params.color);
+    expect(new Set(colours).size).toBe(4);
   });
 
   it('sizes the character capsule from heightCm and stands it on the ground', () => {
