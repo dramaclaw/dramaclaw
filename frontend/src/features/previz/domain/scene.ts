@@ -296,6 +296,12 @@ function parseTransform(value: unknown): PrevizTransform {
  * 让所有空 id 的对象互相覆盖成同一个节点）。其余字段一律就地修复回默认值或夹回合法
  * 区间：用户手改坏一个数字，不该让整个人物凭空消失，但也不能让 `focalMm: 0` 这种值把
  * three 的投影矩阵算成 NaN。
+ *
+ * 导出是给 store 的 `normalizeObject` 用的：改完一条记录就地复校一次，不必为此拼一份
+ * 只装它一个的临时场景。**它保证的只到「这一条记录自身合法」为止**——id 去重、悬空轨道
+ * 清理这些跨对象的一致性都在 `parseScene` 里，不在这里。所以读一整份不可信场景仍然一律
+ * 走 `parseScene`：拿 `raw.objects.map(parseObject)` 代替它会把重复 id 原样放行，而 store
+ * 与场景图都按 id 索引对象，表现是「图层面板里有它，选中却改到了另一个」。
  */
 export function parseObject(raw: unknown): PrevizObject | null {
   if (raw === null || typeof raw !== 'object') return null;
