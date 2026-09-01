@@ -24,7 +24,10 @@ const VIEW_DIRECTIONS = ["front", "back", "left", "right", "top", "bottom"] as c
  * 展开之后每个回调都会被推成 `Mock | ((...) => void)`，`mockClear()` 之类就调不动了。
  */
 type HudOverrides = Partial<
-  Pick<PrevizViewportHudProps, "displayMode" | "outputAspect" | "gizmoMode" | "hasSelection">
+  Pick<
+    PrevizViewportHudProps,
+    "displayMode" | "outputAspect" | "gizmoMode" | "hasSelection" | "tool" | "pathSpacingM"
+  >
 >;
 
 function makeHandlers() {
@@ -35,6 +38,8 @@ function makeHandlers() {
     onViewDirection: vi.fn<PrevizViewportHudProps["onViewDirection"]>(),
     onFocus: vi.fn<PrevizViewportHudProps["onFocus"]>(),
     onResetView: vi.fn<PrevizViewportHudProps["onResetView"]>(),
+    onTool: vi.fn<PrevizViewportHudProps["onTool"]>(),
+    onPathSpacing: vi.fn<PrevizViewportHudProps["onPathSpacing"]>(),
   };
 }
 
@@ -51,6 +56,8 @@ function makeProps(overrides: HudOverrides, handlers: Handlers): PrevizViewportH
     outputAspect: "4:3",
     gizmoMode: "scale",
     hasSelection: true,
+    tool: "draw",
+    pathSpacingM: 0.5,
     ...overrides,
     ...handlers,
   };
@@ -70,7 +77,7 @@ function aspectSelect(): HTMLSelectElement {
   return screen.getByLabelText<HTMLSelectElement>("previz.hud.outputAspect");
 }
 
-/** 四组控件各有 `role="group"` 与一个名字，组内查询一律从这里出发。 */
+/** 五组控件各有 `role="group"` 与一个名字，组内查询一律从这里出发。 */
 function groupNamed(label: string): ReturnType<typeof within> {
   return within(screen.getByRole("group", { name: label }));
 }
@@ -113,17 +120,58 @@ describe("PrevizViewportHud", () => {
     }
   });
 
-  // 四个组的左右次序是用户一眼看到的布局，而组与组之间没有任何按钮名字能表达它：
+  // 五个组的左右次序是用户一眼看到的布局，而组与组之间没有任何按钮名字能表达它：
   // 把手柄那组整个挪到显示模式前面，上面每一条「组内顺序」用例都照样全绿。
-  it("lays the four control groups out in order", () => {
+  it("lays the five control groups out in order", () => {
     setup();
 
     expectInOrder(screen, "group", [
       "previz.hud.group.display",
       "previz.hud.group.view",
       "previz.hud.group.gizmo",
+      "previz.hud.group.tool",
       "previz.hud.group.aspect",
     ]);
+  });
+
+  it("lays the tool group out in order", () => {
+    setup();
+
+    expectInOrder(groupNamed("previz.hud.group.tool"), "button", [
+      "previz.hud.tool.select",
+      "previz.hud.tool.draw",
+    ]);
+  });
+
+  it("reads the tool group's pressed state off its own prop", () => {
+    setup({ tool: "select" });
+
+    expect(button("previz.hud.tool.select")).toHaveAttribute("aria-pressed", "true");
+    expect(button("previz.hud.tool.draw")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("switches tools", async () => {
+    const user = userEvent.setup();
+    const handlers = setup({ tool: "select" });
+
+    await user.click(button("previz.hud.tool.draw"));
+
+    expect(handlers.onTool).toHaveBeenCalledWith("draw");
+    expectOnly(handlers, "onTool");
+  });
+
+  it("reports the drawing spacing", async () => {
+    const user = userEvent.setup();
+    const handlers = setup();
+    const field = screen.getByLabelText<HTMLInputElement>("previz.hud.pathSpacing");
+
+    expect(field).toHaveValue(0.5);
+    await user.clear(field);
+    await user.type(field, "2");
+    await user.tab();
+
+    expect(handlers.onPathSpacing).toHaveBeenLastCalledWith(2);
+    expectOnly(handlers, "onPathSpacing");
   });
 
   it.each(DISPLAY_MODES)("asks for the %s display mode when that chip is clicked", async (mode) => {

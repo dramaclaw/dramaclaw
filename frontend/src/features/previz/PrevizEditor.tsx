@@ -28,6 +28,7 @@ import { PrevizInspector } from "./ui/PrevizInspector";
 import { PrevizLayerPanel } from "./ui/PrevizLayerPanel";
 import { PrevizToolbar } from "./ui/PrevizToolbar";
 import { PrevizViewportHud } from "./ui/PrevizViewportHud";
+import type { PrevizTool } from "./ui/PrevizViewportHud";
 import type { PrevizObjectKind, PrevizScene } from "./domain/scene";
 
 interface PrevizEditorProps {
@@ -60,6 +61,7 @@ export function PrevizEditor({
   // 渲染器也进 state 而不是 ref：面板的回调要在它就绪后重新绑定，ref 变化不会触发重渲染。
   const [renderer, setRenderer] = useState<PrevizRenderer | null>(null);
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
+  const [tool, setTool] = useState<PrevizTool>("select");
   const [capturing, setCapturing] = useState(false);
   const pointerDownAt = useRef<{ x: number; y: number } | null>(null);
 
@@ -78,6 +80,8 @@ export function PrevizEditor({
   const setOutputAspect = usePrevizStore((state) => state.setOutputAspect);
   const undo = usePrevizStore((state) => state.undo);
   const redo = usePrevizStore((state) => state.redo);
+  const pathSpacingM = usePrevizStore((state) => state.pathSpacingM);
+  const setPathSpacing = usePrevizStore((state) => state.setPathSpacing);
   const addDerivedUploadNode = useCanvasStore((state) => state.addDerivedUploadNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
 
@@ -356,6 +360,10 @@ export function PrevizEditor({
                 if (selectedObjectId) renderer?.focusObject(selectedObjectId);
               }}
               onResetView={() => renderer?.resetView()}
+              tool={tool}
+              pathSpacingM={pathSpacingM}
+              onTool={setTool}
+              onPathSpacing={setPathSpacing}
             />
 
             <div className="pointer-events-none absolute bottom-4 left-4 rounded-lg bg-black/45 px-3 py-1.5 text-xs text-white/80">
