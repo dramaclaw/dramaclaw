@@ -33,13 +33,20 @@ type PrevizObjectOverrides<K extends PrevizObjectKind> = NonNullable<
  * 借一份只装它一个的临时场景送进 `parseScene`，是因为逐对象校验在 domain 层只有这
  * 一个出口（`parseObject` 没有导出）。在 store 里另抄一份字段表与区间常量，两份实现
  * 迟早会对同一个越界值给出不同答案。只送单个对象而不是整份场景，是为了让没被改到的
- * 对象保持引用不变——场景图同步（Task 6）据此跳过未改动的条目。
+ * 对象保持引用不变：只重建被改的那一条，避免一次属性编辑把整份 objects 翻新。
  *
- * 结果必然有第 0 项：`parseObject` 只在缺 id 或 kind 不认识时丢对象，而这两个字段
- * 都不在 `PrevizObjectPatch` / overrides 里，改不到。
+ * `?? object` 不是形式主义：`parseObject` 有三种丢弃条件——缺 id、id 是空串、kind
+ * 不认识。光看类型这三样都到不了（patch 与 overrides 都改不到 id / kind），但
+ * `loadScene` / `applyScene` 的入参是调用方自建的 `PrevizScene`，**不经 `parseScene`**，
+ * 空 id 这类脏值本来就能从那里进场景；JS 调用方也不受 patch 类型约束。而
+ * `normalizeObject` 存在的全部理由就是拦运行时脏值，拿类型论证它够不着自相矛盾。
+ * 丢弃时兜回原对象：宁可在场景里留一个没规范化的对象，也不能让 `undefined` 流进
+ * `scene.objects`，再被 `JSON.stringify` 原样写进 `node.data`。
+ * 编译期指望不上——`tsconfig.app.json` 没开 `noUncheckedIndexedAccess`，
+ * `.objects[0]` 被静态推成 `PrevizObject`，少了这个兜底也不会报错。
  */
 function normalizeObject(object: PrevizObject): PrevizObject {
-  return parseScene({ objects: [object] }).objects[0];
+  return parseScene({ objects: [object] }).objects[0] ?? object;
 }
 
 interface PrevizStoreState {
