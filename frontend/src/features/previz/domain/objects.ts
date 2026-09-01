@@ -30,14 +30,16 @@ export const PREVIZ_OBJECT_BASE_NAME: Record<PrevizObjectKind, string> = {
 };
 
 /**
- * 对象的可编辑字段补丁。四个 kind 的 `Partial` 求交：公共字段（name / transform /
- * visible / locked）类型一致，各自的专有字段互不冲突，于是交出来是「全部可选」。
- * `id` 与 `kind` 刻意排除——换 kind 等于换对象，走删除加新建。
+ * 对象的可编辑字段补丁，属性面板用它描述「改哪些字段」。四个 kind 的 `Partial` 求交：
+ * 公共字段（name / transform / visible / locked）类型一致，各自的专有字段互不冲突，
+ * 于是交出来是「全部可选」。`id` 与 `kind` 刻意排除——换 kind 等于换对象，走删除加新建。
  */
 export type PrevizObjectPatch = Partial<Omit<PrevizCharacter, 'id' | 'kind'>> &
   Partial<Omit<PrevizCamera, 'id' | 'kind'>> &
   Partial<Omit<PrevizLight, 'id' | 'kind'>> &
   Partial<Omit<PrevizProp, 'id' | 'kind'>>;
+
+type PrevizObjectOfKind<K extends PrevizObjectKind> = Extract<PrevizObject, { kind: K }>;
 
 function identityTransform(): PrevizTransform {
   return { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
@@ -70,21 +72,10 @@ function baseFields(objects: readonly PrevizObject[], kind: PrevizObjectKind) {
   };
 }
 
-/**
- * 建一个新对象。`objects` 只用来算名字编号，不会被改动。
- * `overrides` 走 `Object.assign` 合并，用于「导入物件时顺带带上 assetUrl」这类场景。
- */
-export function createPrevizObject(
-  kind: PrevizObjectKind,
-  objects: readonly PrevizObject[],
-  overrides: PrevizObjectPatch = {},
-): PrevizObject {
-  const base = baseFields(objects, kind);
-  let created: PrevizObject;
-
+function withDefaults(kind: PrevizObjectKind, base: ReturnType<typeof baseFields>): PrevizObject {
   switch (kind) {
     case 'character':
-      created = {
+      return {
         ...base,
         kind: 'character',
         bodyType: 'average',
@@ -92,9 +83,8 @@ export function createPrevizObject(
         basePoseId: PREVIZ_DEFAULT_POSE_ID,
         poseAdjust: { pitch: 0, turn: 0, lean: 0 },
       };
-      break;
     case 'camera':
-      created = {
+      return {
         ...base,
         kind: 'camera',
         // 眼高 1.6 m、退后 4 m，正对 -Z：three 的相机默认朝 -Z，rotation 全零即
@@ -104,9 +94,8 @@ export function createPrevizObject(
         aperture: 2.8,
         sensor: 'ff',
       };
-      break;
     case 'light':
-      created = {
+      return {
         ...base,
         kind: 'light',
         transform: { ...identityTransform(), position: [3, 4, 3] },
@@ -114,16 +103,34 @@ export function createPrevizObject(
         color: '#ffffff',
         intensity: 1,
       };
-      break;
     case 'prop':
-      created = {
+      return {
         ...base,
         kind: 'prop',
         assetUrl: '',
         assetFormat: 'glb',
       };
-      break;
   }
+}
 
-  return Object.assign(created, overrides) as PrevizObject;
+/**
+ * 建一个新对象。`objects` 只用来算名字编号，不会被改动。
+ * `overrides` 用于「导入物件时顺带带上 assetUrl」这类场景，按 kind 收窄，
+ * 往人物身上写机位字段这种事在编译期就被挡掉。
+ */
+export function createPrevizObject<K extends PrevizObjectKind>(
+  kind: K,
+  objects: readonly PrevizObject[],
+  overrides: Partial<Omit<PrevizObjectOfKind<K>, 'id' | 'kind'>> = {},
+): PrevizObjectOfKind<K> {
+  // 显式的 undefined 先滤掉再合并：exactOptionalPropertyTypes 关着，`{ name: maybe }`
+  // 照样通过类型检查，直接合并会得到一个 name 是 undefined 的对象，一路存到画布里。
+  const defined = Object.fromEntries(
+    Object.entries(overrides).filter(([, value]) => value !== undefined),
+  );
+  const created = withDefaults(kind, baseFields(objects, kind));
+
+  // 唯一一处断言：`withDefaults` 按运行时的 kind 分支返回联合类型，TS 没法把这个
+  // 分支结果绑回类型参数 K；每个 case 的字面量 kind 已经保证了两者一致。
+  return Object.assign(created, defined) as PrevizObjectOfKind<K>;
 }
