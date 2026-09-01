@@ -581,6 +581,35 @@ describe("previz store object editing", () => {
     expect(usePrevizStore.getState().timelinePlaying).toBe(false);
   });
 
+  it("carries the sub-frame remainder between ticks", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(120));
+    // 倍速是模块级单例上的会话态，上一条用例调过 setTimelineRate；这里点名 1×。
+    usePrevizStore.getState().setTimelineRate(1);
+    usePrevizStore.getState().setTimelinePlaying(true);
+
+    // rAF 的一次心跳大约 16ms，在 30fps 的时间轴上是 0.48 帧。每次都取整就永远是 0，
+    // 播放头卡在第 0 帧一格都不走——三次心跳该攒够一帧。
+    usePrevizStore.getState().tickPlayback(0.016);
+    expect(usePrevizStore.getState().timelineFrame).toBe(0);
+    usePrevizStore.getState().tickPlayback(0.016);
+    usePrevizStore.getState().tickPlayback(0.016);
+
+    expect(usePrevizStore.getState().timelineFrame).toBe(1);
+  });
+
+  it("drops the carried remainder when the playhead is moved by hand", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(120));
+    usePrevizStore.getState().setTimelineRate(1);
+    usePrevizStore.getState().setTimelinePlaying(true);
+    usePrevizStore.getState().tickPlayback(0.03);
+
+    usePrevizStore.getState().setTimelineFrame(10);
+    usePrevizStore.getState().tickPlayback(0.001);
+
+    // 攒着的那 0.9 帧是上一段播放的余数；留着会让手动定位之后第一格就提前跳。
+    expect(usePrevizStore.getState().timelineFrame).toBe(10);
+  });
+
   it("ignores playback ticks while stopped", () => {
     usePrevizStore.getState().tickPlayback(1);
     expect(usePrevizStore.getState().timelineFrame).toBe(0);
