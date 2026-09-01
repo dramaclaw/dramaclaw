@@ -172,6 +172,28 @@ vi.mock('three', () => {
   };
 });
 
+/**
+ * 人物模型的加载：本文件测的是渲染器与场景图 / 取景数学的接线，模型自身的行为归
+ * `character-rig.test.ts` 与 `scene-graph.test.ts`。默认让加载永不落地——别的用例里的
+ * 人物就一直停在占位胶囊上，不会有一次异步换模型插进它们的断言中间。要测这条接线的
+ * 那条用例自己把 `pendingGltf` 填上。
+ */
+let pendingGltf: unknown = null;
+const loadedUrls: string[] = [];
+
+vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
+  GLTFLoader: class {
+    loadAsync = vi.fn((url: string) => {
+      loadedUrls.push(url);
+      return pendingGltf ? Promise.resolve(pendingGltf) : new Promise(() => {});
+    });
+  },
+}));
+
+vi.mock('three/examples/jsm/utils/SkeletonUtils.js', () => ({
+  clone: (object: unknown) => object,
+}));
+
 class FakeTarget {
   x = 0;
   y = 0;
@@ -214,9 +236,16 @@ function step() {
   for (const frame of pending) frame(0);
 }
 
+/** 排空微任务队列：模型换入走的是一条纯 Promise 链，没有定时器。 */
+function flush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 beforeEach(() => {
   frames = [];
   intersections = [];
+  pendingGltf = null;
+  loadedUrls.length = 0;
   materials.length = 0;
   boxIsEmpty = false;
   render.mockClear();
@@ -590,5 +619,31 @@ describe('PrevizRenderer 接场景图', () => {
     expect(instance.nodeFor(id)).toBeUndefined();
     expect(instance.pickAt(1, 1)).toBeNull();
     expect(setFromCamera).not.toHaveBeenCalled();
+  });
+  it('把角色 rig 工厂接给场景图，模型到位后主动请求一帧', async () => {
+    const { instance } = await createRenderer();
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    const scene = sceneWith([0, 0, 0]);
+    instance.setScene(scene);
+    // 先把 setScene 自己那次重绘消化掉，下面数的才是模型到位换来的那一帧。
+    step();
+    render.mockClear();
+
+    await flush();
+
+    const node = instance.nodeFor(scene.objects[0].id);
+    // 占位胶囊换成了真模型：工厂没接上的话这里还是那个胶囊。
+    expect(node?.children).toHaveLength(1);
+    expect(node?.children[0]?.userData.previzRig).toBe(true);
+    // 加载的是仓库里那份共享角色模型。路径写字面量：从被测模块 import 回来的常量
+    // 改一处两边一起变。
+    expect(loadedUrls).toEqual(['/viewer-kit/quaternius/ual2/UAL2_Standard.glb']);
+
+    // 模型到位时按需重绘的循环早就静下来了。不把 requestRender 接上，人物要等到
+    // 用户下一次动鼠标才出现在画面上。
+    step();
+    expect(render).toHaveBeenCalledTimes(1);
+
+    instance.dispose();
   });
 });

@@ -15,6 +15,7 @@ import {
   type PrevizBounds,
   type PrevizViewDirection,
 } from '../domain/view';
+import { CharacterRigFactory } from './characterRig';
 import { PREVIZ_PLACEHOLDER_RADIUS, PrevizSceneGraph, type ThreeModule } from './sceneGraph';
 
 const GROUND_SIZE_METERS = 20;
@@ -58,9 +59,11 @@ export class PrevizRenderer {
   ) {}
 
   static async create(canvas: HTMLCanvasElement): Promise<PrevizRenderer> {
-    const [three, controlsModule] = await Promise.all([
+    const [three, controlsModule, gltfModule, skeletonUtils] = await Promise.all([
       import('three'),
       import('three/examples/jsm/controls/OrbitControls.js'),
+      import('three/examples/jsm/loaders/GLTFLoader.js'),
+      import('three/examples/jsm/utils/SkeletonUtils.js'),
     ]);
 
     const renderer = new three.WebGLRenderer({ canvas, antialias: true });
@@ -103,6 +106,19 @@ export class PrevizRenderer {
     // false，不订阅 change 的话相机确实动了、屏幕上却一帧都不重绘——缩放看起来
     // 就是彻底失灵，直到下一次拖拽（阻尼余速能让 update() 连着返回 true）才补上。
     controls.addEventListener('change', () => instance.requestRender());
+
+    const gltfLoader = new gltfModule.GLTFLoader();
+    instance.graph.attachCharacterRig(
+      new CharacterRigFactory({
+        three,
+        loadGltf: (url) => gltfLoader.loadAsync(url),
+        // 必须是 SkeletonUtils 的 clone，不是 Object3D.clone()：后者复制 SkinnedMesh 时
+        // 仍指向原骨架，第二个人物一摆姿势第一个也跟着动。
+        clone: skeletonUtils.clone,
+      }),
+      // 模型是异步到的，到了之后必须主动请求一帧：按需重绘的循环这时早就静下来了。
+      () => instance.requestRender(),
+    );
     instance.resize();
     instance.start();
     return instance;
