@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -45,9 +45,8 @@ type Handlers = ReturnType<typeof makeHandlers>;
  * outputAspect 取第 4 个。若某一组的选中态读串了另一组的 prop，取值相同的夹具会让这类
  * 交叉读取全程隐形。
  */
-function setup(overrides: HudOverrides = {}): Handlers {
-  const handlers = makeHandlers();
-  const props: PrevizViewportHudProps = {
+function makeProps(overrides: HudOverrides, handlers: Handlers): PrevizViewportHudProps {
+  return {
     displayMode: "translucent",
     outputAspect: "4:3",
     gizmoMode: "scale",
@@ -55,7 +54,11 @@ function setup(overrides: HudOverrides = {}): Handlers {
     ...overrides,
     ...handlers,
   };
-  render(<PrevizViewportHud {...props} />);
+}
+
+function setup(overrides: HudOverrides = {}): Handlers {
+  const handlers = makeHandlers();
+  render(<PrevizViewportHud {...makeProps(overrides, handlers)} />);
   return handlers;
 }
 
@@ -65,6 +68,32 @@ function button(name: string): HTMLElement {
 
 function aspectSelect(): HTMLSelectElement {
   return screen.getByLabelText<HTMLSelectElement>("previz.hud.outputAspect");
+}
+
+/**
+ * HUD 的每一组都是一个没有可查询锚点的 <div>，所以从组里任取一个已知按钮反查父节点——
+ * 实现里每个按钮都是那个 <div> 的直接子节点。拿整组而不是按名字前缀过滤，是为了让
+ * 「多长出一个 chip」也能被抓住：前缀过滤会把陌生的多余按钮直接滤掉。
+ */
+function groupAround(anchor: string): HTMLElement {
+  const group = button(anchor).parentElement;
+  if (!group) throw new Error(`no group container around ${anchor}`);
+  return group;
+}
+
+/**
+ * 拿「按名字取到的元素序列」跟「组里实际的按钮序列」逐位比，而不是自己从 aria-label
+ * 或文本里拼名字：可访问名怎么算交给 getByRole，测试就不会被「名字改从 title 来」这类
+ * 对用户无感的改动误伤，而少一个、多一个、换个先后顺序照样红。
+ */
+function expectButtonsInOrder(group: HTMLElement, names: readonly string[]): void {
+  const actual = within(group).getAllByRole("button");
+  const expected = names.map((name) => within(group).getByRole("button", { name }));
+
+  expect(actual.length, `group should hold exactly: ${names.join(", ")}`).toBe(expected.length);
+  actual.forEach((element, index) => {
+    expect(element, `button #${index} should be ${names[index]}`).toBe(expected[index]);
+  });
 }
 
 /** 一次交互只该惊动一个回调；缺了这条，把两个 handler 接反了照样全绿。 */
@@ -106,6 +135,18 @@ describe("PrevizViewportHud", () => {
     }
   });
 
+  // 组里「有哪几个、按什么顺序」是用户直接看到的东西，跟画幅下拉一样得整组钉死：
+  // 只逐个断言「每个都在」的话，多长一个 chip 或换个先后顺序都是全绿。
+  it("lists exactly the three display modes in order", () => {
+    setup();
+
+    expectButtonsInOrder(groupAround("previz.hud.display.solid"), [
+      "previz.hud.display.solid",
+      "previz.hud.display.translucent",
+      "previz.hud.display.clay",
+    ]);
+  });
+
   it.each(GIZMO_MODES)("asks for the %s gizmo when that chip is clicked", async (mode) => {
     const user = userEvent.setup();
     const handlers = setup();
@@ -126,6 +167,16 @@ describe("PrevizViewportHud", () => {
         candidate === mode ? "true" : "false",
       );
     }
+  });
+
+  it("lists exactly the three gizmo modes in order", () => {
+    setup();
+
+    expectButtonsInOrder(groupAround("previz.hud.gizmo.translate"), [
+      "previz.hud.gizmo.translate",
+      "previz.hud.gizmo.rotate",
+      "previz.hud.gizmo.scale",
+    ]);
   });
 
   // 两组 chip 的选中态各读各的 prop：显示模式取第 1 个、手柄模式取第 3 个，
@@ -150,13 +201,40 @@ describe("PrevizViewportHud", () => {
     expectOnly(handlers, "onViewDirection");
   });
 
-  // 正交视图不依赖选中态，跟着「聚焦」一起被禁掉就没法看空场景的布局了。
-  it("keeps all six view directions available with nothing selected", () => {
+  // 相机那一组还捎带着聚焦和重置两个图标按钮，一起钉：六个方向的先后顺序是罗盘式的
+  // 对位关系（前后、左右、上下），插一个进去或换个次序都要看得见。
+  it("lists exactly the six view directions in order, then focus and reset", () => {
+    setup();
+
+    expectButtonsInOrder(groupAround("previz.hud.view.front"), [
+      "previz.hud.view.front",
+      "previz.hud.view.back",
+      "previz.hud.view.left",
+      "previz.hud.view.right",
+      "previz.hud.view.top",
+      "previz.hud.view.bottom",
+      "previz.hud.focus",
+      "previz.hud.resetView",
+    ]);
+  });
+
+  // 空场景时只有「聚焦」无从聚起。其余控件——正交视图、重置、显示模式、手柄模式、
+  // 画幅——都跟选中态无关，整条 HUD 一起变灰是个真实的回归，这里逐组挡住。
+  it("keeps every control except focus available with nothing selected", () => {
     setup({ hasSelection: false });
 
     for (const direction of VIEW_DIRECTIONS) {
       expect(button(`previz.hud.view.${direction}`)).toBeEnabled();
     }
+    expect(button("previz.hud.resetView")).toBeEnabled();
+
+    for (const mode of DISPLAY_MODES) {
+      expect(button(`previz.hud.display.${mode}`)).toBeEnabled();
+    }
+    for (const mode of GIZMO_MODES) {
+      expect(button(`previz.hud.gizmo.${mode}`)).toBeEnabled();
+    }
+    expect(aspectSelect()).toBeEnabled();
   });
 
   it("focuses the selection without disturbing the rest of the hud", async () => {
@@ -246,5 +324,26 @@ describe("PrevizViewportHud", () => {
     expect(handlers.onOutputAspect).toHaveBeenCalledTimes(1);
     expect(handlers.onOutputAspect).toHaveBeenCalledWith(to);
     expectOnly(handlers, "onOutputAspect");
+  });
+
+  /**
+   * 画幅下拉必须是受控的：真值只在 prop 里，用户点了什么由上层决定认不认。若写成
+   * 非受控（defaultValue），store 归一化或拒掉某个画幅时，下拉会自己停在用户点的那一格，
+   * 跟 store 悄悄对不上——而首渲的 value 依然对，selectOptions 依然派 change，
+   * 上面那些用例一条都不会红。所以这里必须重渲一次，看 DOM 会不会退回 prop。
+   */
+  it("snaps the aspect select back to its prop when the change is not accepted", async () => {
+    const user = userEvent.setup();
+    const handlers = makeHandlers();
+    const props = makeProps({ outputAspect: "4:3" }, handlers);
+    const { rerender } = render(<PrevizViewportHud {...props} />);
+
+    await user.selectOptions(aspectSelect(), "16:9");
+    expect(handlers.onOutputAspect).toHaveBeenCalledWith("16:9");
+
+    // 上层没有接受这次改动，原样再渲一遍：受控的下拉必须回到 "4:3"。
+    rerender(<PrevizViewportHud {...props} />);
+
+    expect(aspectSelect()).toHaveValue("4:3");
   });
 });
