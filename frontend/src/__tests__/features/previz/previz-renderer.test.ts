@@ -65,6 +65,19 @@ vi.mock("three/examples/jsm/controls/OrbitControls.js", () => ({
   },
 }));
 
+// create() 现在还会动态 import 这两个 three 扩展来建人物模型工厂。本文件不碰场景内容，
+// 桩到能被 new 出来就够；不桩的话跑的是真模块，而真模块 import 的是上面那份残缺的假 three。
+vi.mock("three/examples/jsm/loaders/GLTFLoader.js", () => ({
+  GLTFLoader: class {
+    // 永不落地：本文件一个人物都没有，加载器本来就不该被调到。
+    loadAsync = vi.fn(() => new Promise(() => {}));
+  },
+}));
+
+vi.mock("three/examples/jsm/utils/SkeletonUtils.js", () => ({
+  clone: (object: unknown) => object,
+}));
+
 let frames: FrameRequestCallback[] = [];
 
 /** 跑一帧：rAF 回调里会重新排下一帧，所以先取走再执行。 */
