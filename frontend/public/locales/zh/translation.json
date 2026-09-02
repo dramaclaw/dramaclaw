@@ -7457,6 +7457,63 @@
       "remove": "删除",
       "setActiveCamera": "设为监看机位"
     },
+    "cameraCreate": {
+      "title": "摄影机创建",
+      "close": "关闭机位创建",
+      "previewLabel": "机位取景预览",
+      "dragHint": "拖拽调整视角",
+      "previewCaption": "预览按当前焦距与画幅取景；拖拽画面调整朝向，创建的机位方向与此一致",
+      "properties": "机位属性",
+      "body": "摄影机",
+      "bodies": {
+        "cine": "数字电影机",
+        "virtual": "虚拟制片机",
+        "handheld": "轻量手持机"
+      },
+      "bodyPrev": "上一个机型",
+      "bodyNext": "下一个机型",
+      "lens": "镜头系列",
+      "lenses": {
+        "prime": "定焦镜头",
+        "zoom": "变焦镜头",
+        "anamorphic": "变形宽银幕"
+      },
+      "lensPrev": "上一个镜头系列",
+      "lensNext": "下一个镜头系列",
+      "focal": "焦距",
+      "focalDown": "焦距减",
+      "focalUp": "焦距加",
+      "focalClasses": {
+        "ultrawide": "超广角",
+        "wide": "广角",
+        "standard": "标准",
+        "teleShort": "中长焦",
+        "tele": "长焦"
+      },
+      "aperture": "光圈",
+      "apertureDown": "光圈减",
+      "apertureUp": "光圈加",
+      "depthOfField": {
+        "shallow": "浅景深",
+        "standard": "标准景深",
+        "deep": "深景深"
+      },
+      "sensor": "画幅设置",
+      "position": "位置信息",
+      "viewReadout": "当前导演视角",
+      "viewReadoutLabel": "视角位置读数",
+      "yaw": "水平",
+      "yawSlider": "水平角滑杆",
+      "yawInput": "水平角",
+      "pitch": "俯仰",
+      "pitchSlider": "俯仰角滑杆",
+      "pitchInput": "俯仰角",
+      "roll": "横滚",
+      "rollSlider": "横滚角滑杆",
+      "rollInput": "横滚角",
+      "footerHint": "位置与旋转取自当前导演视角；焦距和画幅共同决定视场角",
+      "submit": "从当前视角创建机位"
+    },
     "inspector": {
       "empty": "选中一个对象后在这里编辑",
       "name": "名称",

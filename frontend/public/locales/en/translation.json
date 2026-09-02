@@ -7457,6 +7457,63 @@
       "remove": "Delete",
       "setActiveCamera": "Use as monitor camera"
     },
+    "cameraCreate": {
+      "title": "Create camera",
+      "close": "Close camera creation",
+      "previewLabel": "Camera framing preview",
+      "dragHint": "Drag to aim",
+      "previewCaption": "The preview frames with the current focal length and aspect; drag it to aim, and the new camera keeps that direction",
+      "properties": "Camera settings",
+      "body": "Camera body",
+      "bodies": {
+        "cine": "Digital cinema",
+        "virtual": "Virtual production",
+        "handheld": "Lightweight handheld"
+      },
+      "bodyPrev": "Previous body",
+      "bodyNext": "Next body",
+      "lens": "Lens series",
+      "lenses": {
+        "prime": "Prime lens",
+        "zoom": "Zoom lens",
+        "anamorphic": "Anamorphic"
+      },
+      "lensPrev": "Previous lens series",
+      "lensNext": "Next lens series",
+      "focal": "Focal length",
+      "focalDown": "Shorter focal length",
+      "focalUp": "Longer focal length",
+      "focalClasses": {
+        "ultrawide": "Ultra wide",
+        "wide": "Wide",
+        "standard": "Standard",
+        "teleShort": "Short tele",
+        "tele": "Telephoto"
+      },
+      "aperture": "Aperture",
+      "apertureDown": "Stop down",
+      "apertureUp": "Open up",
+      "depthOfField": {
+        "shallow": "Shallow depth of field",
+        "standard": "Standard depth of field",
+        "deep": "Deep depth of field"
+      },
+      "sensor": "Sensor format",
+      "position": "Placement",
+      "viewReadout": "Current director view",
+      "viewReadoutLabel": "View position readout",
+      "yaw": "Yaw",
+      "yawSlider": "Yaw slider",
+      "yawInput": "Yaw angle",
+      "pitch": "Pitch",
+      "pitchSlider": "Pitch slider",
+      "pitchInput": "Pitch angle",
+      "roll": "Roll",
+      "rollSlider": "Roll slider",
+      "rollInput": "Roll angle",
+      "footerHint": "Position and rotation come from the current director view; focal length and sensor format together set the angle of view",
+      "submit": "Create camera from this view"
+    },
     "inspector": {
       "empty": "Select an object to edit it here",
       "name": "Name",
