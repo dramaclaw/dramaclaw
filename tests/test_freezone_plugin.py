@@ -441,6 +441,42 @@ def test_validate_canvas_commands_rejects_empty_required_data():
     assert "data" in result["error"]
 
 
+def test_workflow_compiler_output_satisfies_plugin_write_shape_contract():
+    plugin = _load_plugin_module()
+    built = plugin.build_workflow_graph_commands(
+        {
+            "plan": {
+                "schema_version": "freezone_workflow_plan.v1",
+                "nodes": [
+                    {
+                        "id": "input-root",
+                        "node_type": "textAnnotationNode",
+                        "stage": "input",
+                        "data": {"displayName": "公共输入"},
+                    },
+                    {
+                        "id": "beat-image",
+                        "node_type": "imageGenNode",
+                        "data": {"prompt": "生成首帧"},
+                    },
+                ],
+                "edges": [
+                    {
+                        "source": "input-root",
+                        "target": "beat-image",
+                        "link_type": "prompt_for",
+                    }
+                ],
+            }
+        }
+    )
+
+    assert built["ok"] is True
+    assert plugin._validate_write_commands_shape(
+        "project-a", "canvas-a", built["commands"]
+    ) is None
+
+
 def test_freezone_run_workflow_emits_one_deterministic_runner_command(monkeypatch):
     plugin = _load_plugin_module()
     captured = {}

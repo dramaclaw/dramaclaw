@@ -2292,6 +2292,7 @@ tests/test_brainclaw_outcome_runtime.py,Elastic-2.0,2026 SuperTale contributors,
 tests/test_build_style_gallery.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_command_bridge.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_scene_refs_override.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_canvas_write_receipt_compatibility.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ce_allowlist.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ce_imports_lint.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ce_migrated_test_ratchet.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

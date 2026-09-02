@@ -9,6 +9,8 @@ production Skill does not turn an exact topology request into the normal draft f
    use `freezone_get_workflow_skill(skill_id=..., compact=true)`.
 2. Author one complete `freezone_workflow_plan.v1` using only that Skill's allowed node capabilities
    and Recipe IDs returned in `available_recipes`.
+   Author semantic Plan fields only. Do not construct `canvas_chat_commands.v1` yourself: the graph
+   compiler owns command defaults, stable IDs, layout, grouping, and final static command validation.
    Use `node_type` for each node's portable kind. The public MCP contract also accepts the canvas
    compatibility alias `type`; if both are present they must contain the same stable enum value.
    Keep input/resource `stage` at node level when possible; `data.stage` is accepted for canvas
@@ -56,7 +58,8 @@ production Skill does not turn an exact topology request into the normal draft f
    `source` or `input` unless that exact node is present; remove an optional edge rather than
    leaving a dangling reference.
 7. Call `freezone_create_workflow_graph` once. It already performs strict validation and
-   deterministically adds grouping, layout, selection, and one canvas batch. Do not call
+   deterministically normalizes derivable node fields, adds grouping, layout, selection, validates
+   the generated command batch, and submits it as one canvas write. Do not call
    `workflow_graph_compile` as a routine preflight before this first write. Use the read-only compiler
    only to diagnose and correct a validation failure. After a recovery compile succeeds, immediately
    submit that exact corrected Plan with `freezone_create_workflow_graph`; do not stop after reporting

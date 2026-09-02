@@ -9,6 +9,8 @@ production Skill does not turn an exact topology request into the normal draft f
    use `freezone_get_workflow_skill(skill_id=..., compact=true)`.
 2. Author one complete `freezone_workflow_plan.v1` using only that Skill's allowed node capabilities
    and Recipe IDs returned in `available_recipes`.
+   Author semantic Plan fields only. Do not construct `canvas_chat_commands.v1` yourself: the graph
+   compiler owns command defaults, stable IDs, layout, grouping, and final static command validation.
    Use `node_type` for each node's portable kind. The public MCP contract also accepts the canvas
    compatibility alias `type`; if both are present they must contain the same stable enum value.
    Keep input/resource `stage` at node level when possible; `data.stage` is accepted for canvas
@@ -16,6 +18,24 @@ production Skill does not turn an exact topology request into the normal draft f
 3. Every executable node must contain an explicit `data.workflowCatalog.recipeId`. Input/resource
    text nodes may omit a Recipe when they only carry user-provided material, but they must set
    `stage` to `input`, `resource`, or `asset`. A terminal `videoComposeNode` has no Recipe.
+   Put executable options inside `data` as well; do not place them beside `id`/`node_type`.
+   For example, a background-music node must use this shape (with the actual Recipe returned by
+   the selected Skill):
+
+   ```json
+   {
+     "id": "bgm",
+     "node_type": "audioNode",
+     "data": {
+       "workflowCatalog": {"recipeId": "general-audio"},
+       "audioKind": "music",
+       "text": "无歌词、纯音乐的背景氛围配乐"
+     }
+   }
+   ```
+
+   Do not use ad-hoc top-level fields such as `audioKind`, `musicLengthMs`, `forceInstrumental`,
+   or `respectSectionsDurations`; if supported by the live node schema, put them under `data`.
 4. Put all nodes and semantic edges in the same plan. Use logical plan IDs only; the compiler turns
    them into same-batch `client_id` values.
    Before choosing an edge `link_type`, use the injected compatibility information or call
@@ -34,8 +54,12 @@ production Skill does not turn an exact topology request into the normal draft f
 6. Requests that explicitly enumerate Beats, shots, nodes, or dependency order always stay on this
    full Plan path, including requests above the compact Intent planner's item limit. Do not switch to
    `workflow_intent_compile`, a smaller sample plan, or standalone node tools after a validation error.
+   Every edge endpoint must match an `id` in the same `nodes` array. Never invent a source such as
+   `source` or `input` unless that exact node is present; remove an optional edge rather than
+   leaving a dangling reference.
 7. Call `freezone_create_workflow_graph` once. It already performs strict validation and
-   deterministically adds grouping, layout, selection, and one canvas batch. Do not call
+   deterministically normalizes derivable node fields, adds grouping, layout, selection, validates
+   the generated command batch, and submits it as one canvas write. Do not call
    `workflow_graph_compile` as a routine preflight before this first write. Use the read-only compiler
    only to diagnose and correct a validation failure. After a recovery compile succeeds, immediately
    submit that exact corrected Plan with `freezone_create_workflow_graph`; do not stop after reporting

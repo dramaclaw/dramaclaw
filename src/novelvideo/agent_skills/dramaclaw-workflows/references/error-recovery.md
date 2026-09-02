@@ -20,7 +20,9 @@
   `voiceRef`; if none is selected, skip the audio node without submitting TTS and continue the
   remaining workflow. Never choose a catalog voice or open the picker automatically.
 - Batch/schema failure: do not degrade to single-node tools. Return the blocking validation detail if
-  one corrected retry cannot satisfy the schema.
+  one corrected retry cannot satisfy the schema. For `invalid_compiled_command_schema`, correct only
+  a semantic Plan field explicitly named by `errors[].path`; never hand-author canvas commands. If
+  the named field is compiler-owned, stop retrying and report an adapter/compiler defect.
 - Historical failures do not satisfy that retry requirement. On a later user retry, attempt the same
   complete write once in that turn; only a same-turn result can establish that the current adapter
   remains blocked.

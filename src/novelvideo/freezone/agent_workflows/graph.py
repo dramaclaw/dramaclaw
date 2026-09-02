@@ -22,6 +22,15 @@ TEXTUAL_NODE_TYPES = {"textAnnotationNode", "scriptNode", "beatContextNode"}
 
 LINK_TYPE_VALUES = set(PORTABLE_LINK_TYPE_VALUES)
 
+WORKFLOW_GRAPH_COMMAND_TYPES = {
+    "create_node",
+    "create_edge",
+    "group_nodes",
+    "layout_nodes",
+    "select_nodes",
+    "run_workflow",
+}
+
 LINK_OBJECT_TYPE_BY_NODE_TYPE = {
     "textAnnotationNode": "TextNode",
     "scriptNode": "ScriptNode",
@@ -348,6 +357,25 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
+    command_errors = validate_workflow_graph_commands(commands)
+    if command_errors:
+        return {
+            "ok": False,
+            "status": "invalid_compiled_command_schema",
+            "code": "invalid_compiled_command_schema",
+            "error": command_errors[0]["message"],
+            "errors": command_errors,
+            "commands": [],
+            "skipped_edges": skipped_edges,
+            "warnings": warnings,
+            "agent_instruction": (
+                "The deterministic workflow compiler produced commands that do not satisfy the "
+                "canvas write contract. Do not hand-author canvas commands or reduce the plan. "
+                "Correct only a semantic WorkflowPlan field explicitly named by errors[].path; "
+                "otherwise report this as an adapter/compiler defect without retrying."
+            ),
+        }
+
     return {
         "ok": True,
         "status": "workflow_graph_commands_created",
@@ -511,8 +539,13 @@ def _node_data(
         if not isinstance(content, str) or not content.strip():
             for candidate in (
                 result.get("text"),
+                result.get("prompt"),
+                result.get("description"),
                 node.get("content"),
                 node.get("text"),
+                result.get("title"),
+                result.get("displayName"),
+                node.get("id"),
             ):
                 if isinstance(candidate, str) and candidate.strip():
                     result["content"] = candidate.strip()
@@ -539,6 +572,122 @@ def _node_data(
         result.setdefault("isGenerating", False)
         result.setdefault("generationStartedAt", None)
     return result
+
+
+def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
+    """Validate the static canvas contract emitted by the workflow compiler.
+
+    The frontend still performs authoritative stateful validation (live model
+    catalogs, current node ids, revision checks). This check covers the stable
+    command shape before ``workflow_graph_compile`` is allowed to report
+    success, so compilation and creation cannot disagree on fields that the
+    deterministic builder owns.
+    """
+    if not isinstance(commands, list) or not commands:
+        return [{"path": "commands", "message": "compiled commands must be a non-empty array"}]
+
+    errors: list[dict[str, str]] = []
+    created_ids: set[str] = set()
+    for index, command in enumerate(commands):
+        path = f"commands[{index}]"
+        if not isinstance(command, dict):
+            errors.append({"path": path, "message": f"{path} must be an object"})
+            continue
+        command_type = command.get("type")
+        if command_type not in WORKFLOW_GRAPH_COMMAND_TYPES:
+            errors.append(
+                {
+                    "path": f"{path}.type",
+                    "message": f"{path}.type is not a workflow graph command: {command_type!r}",
+                }
+            )
+            continue
+        if command_type != "create_node":
+            continue
+        client_id = command.get("client_id")
+        if not isinstance(client_id, str) or not client_id.strip():
+            errors.append(
+                {"path": f"{path}.client_id", "message": f"{path} requires client_id"}
+            )
+        elif client_id in created_ids:
+            errors.append(
+                {
+                    "path": f"{path}.client_id",
+                    "message": f"{path}.client_id duplicates {client_id!r}",
+                }
+            )
+        else:
+            created_ids.add(client_id)
+        node_type = command.get("node_type")
+        if node_type not in ALLOWED_NODE_TYPES:
+            errors.append(
+                {
+                    "path": f"{path}.node_type",
+                    "message": f"{path}.node_type is not directly creatable: {node_type!r}",
+                }
+            )
+        position = command.get("position")
+        if not isinstance(position, dict) or any(
+            _number(position.get(axis)) is None for axis in ("x", "y")
+        ):
+            errors.append(
+                {
+                    "path": f"{path}.position",
+                    "message": f"{path}.position requires numeric x and y",
+                }
+            )
+        data = command.get("data")
+        if not isinstance(data, dict):
+            errors.append({"path": f"{path}.data", "message": f"{path}.data must be an object"})
+        elif node_type == "textAnnotationNode":
+            for field in ("title", "content"):
+                if not isinstance(data.get(field), str) or not data[field].strip():
+                    errors.append(
+                        {
+                            "path": f"{path}.data.{field}",
+                            "message": f"{path} requires textAnnotationNode {field} in data",
+                        }
+                    )
+
+    for index, command in enumerate(commands):
+        if not isinstance(command, dict):
+            continue
+        path = f"commands[{index}]"
+        command_type = command.get("type")
+        if command_type == "create_edge":
+            for field in ("source", "target"):
+                value = command.get(field)
+                if not isinstance(value, str) or value not in created_ids:
+                    errors.append(
+                        {
+                            "path": f"{path}.{field}",
+                            "message": f"{path}.{field} must reference a created client_id",
+                        }
+                    )
+            if command.get("link_type") not in LINK_TYPE_VALUES:
+                errors.append(
+                    {
+                        "path": f"{path}.link_type",
+                        "message": f"{path}.link_type is not supported",
+                    }
+                )
+        elif command_type in {"group_nodes", "layout_nodes", "select_nodes", "run_workflow"}:
+            node_ids = command.get("node_ids")
+            if not isinstance(node_ids, list) or not node_ids:
+                errors.append(
+                    {"path": f"{path}.node_ids", "message": f"{path}.node_ids must be non-empty"}
+                )
+            elif any(not isinstance(node_id, str) or node_id not in created_ids for node_id in node_ids):
+                errors.append(
+                    {
+                        "path": f"{path}.node_ids",
+                        "message": f"{path}.node_ids must reference created client_ids",
+                    }
+                )
+            if command_type == "layout_nodes" and not str(command.get("mode") or "").strip():
+                errors.append({"path": f"{path}.mode", "message": f"{path} requires mode"})
+
+    return errors
 
 
 def _normalize_model_alias(data: dict[str, Any], node_type: str) -> None:
