@@ -54,6 +54,28 @@ describe("auth-store", () => {
     expect(init.credentials).toBe("include");
   });
 
+  it("OTP login stores the masked phone instead of the internal generated username", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        data: {
+          phone_masked: "138****8000",
+          role: "worker",
+          created_user: true,
+          password_configured: false,
+        },
+      }),
+    });
+
+    await useAuthStore
+      .getState()
+      .loginWithOtp("13800138000", "A".repeat(26), "123456", "web:verify-key-0001");
+
+    expect(useAuthStore.getState().username).toBe("138****8000");
+    expect(useAuthStore.getState().role).toBe("worker");
+  });
+
   it("login throws on invalid credentials", async () => {
     global.fetch = vi.fn().mockResolvedValueOnce({
       ok: false,

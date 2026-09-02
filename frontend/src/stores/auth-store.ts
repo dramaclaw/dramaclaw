@@ -5,6 +5,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { quotaSafeStateStorage } from "@/lib/localStorageQuota";
 import { regionAbortController } from "@/lib/region-abort";
 import type { OkResponse } from "@/types/api";
+import { verifyOtp, type OtpLoginResult } from "@/lib/auth-api";
 
 export interface CurrentUser {
   username: string;
@@ -29,6 +30,12 @@ export interface AuthState {
   role: string | null;
   avatarUrl: string | null;
   login: (username: string, password: string) => Promise<void>;
+  loginWithOtp: (
+    phone: string,
+    verificationId: string,
+    code: string,
+    idempotencyKey: string,
+  ) => Promise<OtpLoginResult>;
   logout: () => Promise<void>;
   validateSession: () => Promise<boolean>;
   getCurrentUser: (options?: GetCurrentUserOptions) => Promise<CurrentUser | null>;
@@ -100,6 +107,27 @@ export const useAuthStore = create<AuthState>()(
         });
         // Avatar is an EE-only feature served by its own endpoint, not /auth/me.
         void useAuthStore.getState().refreshAvatar();
+      },
+      loginWithOtp: async (
+        phone: string,
+        verificationId: string,
+        code: string,
+        idempotencyKey: string,
+      ) => {
+        const result = await verifyOtp(
+          { phone, verificationId, code },
+          idempotencyKey,
+        );
+        cachedCurrentUser = {
+          username: result.phone_masked,
+          role: result.role,
+          credit_balance: 0,
+          credential_kind: "browser_session",
+        };
+        lastSuccessfulValidationAt = Date.now();
+        set({ username: result.phone_masked, role: result.role });
+        void useAuthStore.getState().refreshAvatar();
+        return result;
       },
       logout: async () => {
         // Ask the BE to clear the HttpOnly cookie. If the network call fails
