@@ -1,38 +1,56 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChevronFirst,
   ChevronLast,
   ChevronLeft,
   ChevronRight,
+  Maximize,
   Pause,
   Play,
-  Scissors,
+  Plus,
   Square,
-  Trash2,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import type { PrevizClip } from '../domain/scene';
+import type { PrevizObjectKind } from '../domain/scene';
 import { PREVIZ_FPS } from '../domain/scene';
-import { isPathClip, uToFrame } from '../domain/timeline';
 import { PREVIZ_PLAYBACK_RATES, usePrevizStore } from '../store';
+import { PrevizTimeRuler } from './PrevizTimeRuler';
+import { PREVIZ_TRACK_HEADER_PX, PrevizTimelineTrack } from './PrevizTimelineTrack';
 
 /** 传输条上每个图标按钮的样式。 */
 const BUTTON_CLASS =
-  'flex h-7 w-7 items-center justify-center rounded text-[#c7cedb] hover:bg-[#2a2f3a] disabled:opacity-40';
+  'flex h-7 w-7 shrink-0 items-center justify-center rounded text-[#c7cedb] hover:bg-[#2a2f3a] disabled:opacity-40';
 
-export function PrevizTimeline() {
+/** 缩放按钮一次走多少倍。1.5 大约是「按三下翻一番」，手感不至于太跳。 */
+const ZOOM_STEP = 1.5;
+
+export function PrevizTimeline({
+  onCreateObject,
+}: {
+  /**
+   * 空态里的「创建人物 / 创建机位」走这里。不直接调 store 的 addObject：
+   * 机位在编辑器里要先过创建对话框，绕过去就少了取景那一步。没传时退回直接建。
+   */
+  onCreateObject?: (kind: PrevizObjectKind) => void;
+} = {}) {
   const { t } = useTranslation();
   const durationFrames = usePrevizStore((state) => state.scene.settings.durationFrames);
   const frame = usePrevizStore((state) => state.timelineFrame);
   const playing = usePrevizStore((state) => state.timelinePlaying);
   const rate = usePrevizStore((state) => state.timelineRate);
+  const zoom = usePrevizStore((state) => state.timelineZoom);
   const setTimelineFrame = usePrevizStore((state) => state.setTimelineFrame);
   const setTimelinePlaying = usePrevizStore((state) => state.setTimelinePlaying);
   const stopPlayback = usePrevizStore((state) => state.stopPlayback);
   const setTimelineRate = usePrevizStore((state) => state.setTimelineRate);
   const setDurationFrames = usePrevizStore((state) => state.setDurationFrames);
+  const zoomTimelineBy = usePrevizStore((state) => state.zoomTimelineBy);
+  const fitTimelineZoom = usePrevizStore((state) => state.fitTimelineZoom);
   const objects = usePrevizStore((state) => state.scene.objects);
   const tracks = usePrevizStore((state) => state.scene.timeline.tracks);
   const selectedClipId = usePrevizStore((state) => state.selectedClipId);
@@ -41,33 +59,68 @@ export function PrevizTimeline() {
   const selectPathPoint = usePrevizStore((state) => state.selectPathPoint);
   const splitClipAtPlayhead = usePrevizStore((state) => state.splitClipAtPlayhead);
   const removeTrackFor = usePrevizStore((state) => state.removeTrackFor);
+  const pinTrackToTop = usePrevizStore((state) => state.pinTrackToTop);
   const addObjectToTimeline = usePrevizStore((state) => state.addObjectToTimeline);
+  const appendClip = usePrevizStore((state) => state.appendClip);
+  const setClipEdge = usePrevizStore((state) => state.setClipEdge);
+  const insertKeyframe = usePrevizStore((state) => state.insertKeyframe);
+  const clearPath = usePrevizStore((state) => state.clearPath);
+  const addObject = usePrevizStore((state) => state.addObject);
 
+  /** 折叠过的轨道。没记过的默认展开——建完轨迹马上要看关键帧。 */
+  const [collapsed, setCollapsed] = useState<Record<string, true>>({});
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [viewportPx, setViewportPx] = useState(0);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    // jsdom 没有 ResizeObserver，也没有布局——量不出来就按 0 走，轨槽退回内容宽度。
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => setViewportPx(entry.contentRect.width));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const pxPerFrame = zoom / PREVIZ_FPS;
+  const lanePx = Math.max(viewportPx - PREVIZ_TRACK_HEADER_PX, 0);
+  // 尺子铺满面板，哪怕内容只有 4 秒——参照实现里 0s~10s 的刻度是一直在的。
+  const laneWidthPx = Math.max(durationFrames * pxPerFrame, lanePx, 1);
+
+  const seekFromPointer = useCallback(
+    (clientX: number, element: HTMLElement) => {
+      const rect = element.getBoundingClientRect();
+      setTimelineFrame(Math.round((clientX - rect.left) / (pxPerFrame || 1)));
+    },
+    [pxPerFrame, setTimelineFrame],
+  );
+
+  const scrubFrom = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const element = event.currentTarget;
+      seekFromPointer(event.clientX, element);
+      const move = (moved: PointerEvent) => seekFromPointer(moved.clientX, element);
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    },
+    [seekFromPointer],
+  );
+
+  const create = (kind: PrevizObjectKind) => (onCreateObject ? onCreateObject(kind) : addObject(kind));
   const nameOf = (objectId: string) =>
     objects.find((object) => object.id === objectId)?.name ?? objectId;
+  const kindOf = (objectId: string): PrevizObjectKind =>
+    objects.find((object) => object.id === objectId)?.kind ?? 'prop';
   const untracked = objects.filter(
     (object) => !tracks.some((track) => track.objectId === object.id),
   );
 
   return (
-    <div className="flex flex-col gap-2 border-t border-[#232833] bg-[#15181f] px-3 py-2">
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          className={BUTTON_CLASS}
-          aria-label={t('previz.timeline.goToStart')}
-          onClick={() => setTimelineFrame(0)}
-        >
-          <ChevronFirst className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          className={BUTTON_CLASS}
-          aria-label={t('previz.timeline.prevFrame')}
-          onClick={() => setTimelineFrame(frame - 1)}
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
+    <div className="flex flex-col border-t border-[#232833] bg-[#15181f]">
+      <div className="flex items-center gap-1 px-3 py-1.5">
         <button
           type="button"
           className={BUTTON_CLASS}
@@ -87,6 +140,22 @@ export function PrevizTimeline() {
         <button
           type="button"
           className={BUTTON_CLASS}
+          aria-label={t('previz.timeline.goToStart')}
+          onClick={() => setTimelineFrame(0)}
+        >
+          <ChevronFirst className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          className={BUTTON_CLASS}
+          aria-label={t('previz.timeline.prevFrame')}
+          onClick={() => setTimelineFrame(frame - 1)}
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          className={BUTTON_CLASS}
           aria-label={t('previz.timeline.nextFrame')}
           onClick={() => setTimelineFrame(frame + 1)}
         >
@@ -101,26 +170,16 @@ export function PrevizTimeline() {
           <ChevronLast className="h-4 w-4" />
         </button>
 
-        <button
-          type="button"
-          className={BUTTON_CLASS}
-          aria-label={t('previz.timeline.razor')}
-          title={t('previz.timeline.razor')}
-          disabled={!selectedClipId}
-          onClick={() => selectedClipId && splitClipAtPlayhead(selectedClipId)}
-        >
-          <Scissors className="h-4 w-4" />
-        </button>
-
         <span
           data-testid="previz-timecode"
           className="ml-2 font-mono text-xs tabular-nums text-[#c7cedb]"
         >
-          {/* 秒与帧一起报：只报帧号的话，「这个镜头几秒」每次都得心算。 */}
-          {(frame / PREVIZ_FPS).toFixed(2)}s · {frame}/{durationFrames}
+          {/* 帧号、已走的秒数、总长一起报：只报帧号的话「这个镜头几秒」每次都得心算。 */}
+          F{frame} · {(frame / PREVIZ_FPS).toFixed(2)}s /{' '}
+          {(durationFrames / PREVIZ_FPS).toFixed(2)}s
         </span>
 
-        <label className="ml-auto flex items-center gap-1 text-xs text-[#8b93a3]">
+        <label className="ml-3 flex items-center gap-1 text-xs text-[#8b93a3]">
           {t('previz.timeline.rate')}
           <select
             aria-label={t('previz.timeline.rate')}
@@ -147,17 +206,63 @@ export function PrevizTimeline() {
             onBlur={(event) => setDurationFrames(Number(event.target.value))}
           />
         </label>
+
+        <label className="flex items-center gap-1 text-xs text-[#8b93a3]">
+          <Plus className="h-3.5 w-3.5" />
+          <span className="sr-only">{t('previz.timeline.addObject')}</span>
+          <select
+            aria-label={t('previz.timeline.addObject')}
+            className="rounded bg-[#1d222b] px-1 py-0.5 text-[#c7cedb]"
+            value=""
+            onChange={(event) => event.target.value && addObjectToTimeline(event.target.value)}
+          >
+            <option value="">{t('previz.timeline.addObject')}</option>
+            {/* 已经有轨道的对象不列：一个对象一条轨道，再加一次只会加到原来那条上。 */}
+            {untracked.map((object) => (
+              <option key={object.id} value={object.id}>
+                {object.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            className={BUTTON_CLASS}
+            aria-label={t('previz.timeline.zoomOut')}
+            onClick={() => zoomTimelineBy(1 / ZOOM_STEP)}
+          >
+            <ZoomOut className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className={BUTTON_CLASS}
+            aria-label={t('previz.timeline.zoomIn')}
+            onClick={() => zoomTimelineBy(ZOOM_STEP)}
+          >
+            <ZoomIn className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className={BUTTON_CLASS}
+            aria-label={t('previz.timeline.zoomFit')}
+            onClick={() => fitTimelineZoom(lanePx)}
+          >
+            <Maximize className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {/*
-        播放头用 range input 而不是「在时间轴条上按下拖动」：jsdom 没有布局，
-        条上的命中测试只能对着 mock 出来的 getBoundingClientRect 断言，等于没测；
-        range 顺带白拿键盘可达性。条上拖拽是 P4 的事。
+        播放头另外挂一个 range：jsdom 没有布局，在轨槽上按下拖动的命中测试只能对着
+        mock 出来的 getBoundingClientRect 断言，等于没测。range 顺带白拿键盘可达性，
+        视觉上藏起来——参照实现的时间轴上并没有这么一根滑块。
       */}
       <input
         type="range"
         aria-label={t('previz.timeline.playhead')}
-        className="w-full accent-[#5b8cff]"
+        className="sr-only"
         min={0}
         max={durationFrames}
         step={1}
@@ -165,127 +270,111 @@ export function PrevizTimeline() {
         onChange={(event) => setTimelineFrame(Number(event.target.value))}
       />
 
-      <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
-        {tracks.length === 0 && (
-          <li className="px-1 py-2 text-xs text-[#6d7585]">{t('previz.timeline.empty')}</li>
-        )}
-        {tracks.map((track) => (
-          <li
-            key={track.id}
-            aria-label={nameOf(track.objectId)}
-            className="flex items-center gap-2"
-          >
-            <span className="w-24 shrink-0 truncate text-xs text-[#c7cedb]">
-              {nameOf(track.objectId)}
-            </span>
-
-            {/* 片段条按帧号定位在这条 relative 轨槽里，和上面的 range 共用同一套 0~时长坐标。 */}
-            <div className="relative h-6 min-w-0 flex-1 rounded bg-[#1d222b]">
-              {track.clips.map((clip) => (
-                <ClipBar
-                  key={clip.id}
-                  clip={clip}
-                  durationFrames={durationFrames}
-                  selected={clip.id === selectedClipId}
-                  selectedPointId={selectedPointId}
-                  onSelect={() => selectClip(clip.id)}
-                  onSelectPoint={(pointId, u) => {
-                    selectClip(clip.id);
-                    selectPathPoint(pointId);
-                    // 播放头跟着跳过去：不跳的话属性面板改的那个点在视口里根本看不见。
-                    setTimelineFrame(uToFrame(clip, u));
-                  }}
-                />
-              ))}
-            </div>
-
-            <button
-              type="button"
-              className={BUTTON_CLASS}
-              aria-label={t('previz.timeline.removeTrack')}
-              title={t('previz.timeline.removeTrack')}
-              onClick={() => removeTrackFor(track.objectId)}
+      <div ref={scrollRef} className="relative max-h-56 overflow-auto">
+        <div className="relative min-w-max">
+          <div className="sticky top-0 z-30 flex items-stretch bg-[#15181f]">
+            <div
+              className="sticky left-0 z-30 shrink-0 border-b border-[#232833] bg-[#15181f]"
+              style={{ width: PREVIZ_TRACK_HEADER_PX }}
+            />
+            <div
+              className="shrink-0 cursor-ew-resize"
+              style={{ width: laneWidthPx }}
+              onPointerDown={scrubFrom}
             >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </li>
-        ))}
-      </ul>
+              <PrevizTimeRuler seconds={laneWidthPx / zoom} pxPerSecond={zoom} />
+            </div>
+          </div>
 
-      <label className="flex items-center gap-1 text-xs text-[#8b93a3]">
-        {t('previz.timeline.addObject')}
-        <select
-          aria-label={t('previz.timeline.addObject')}
-          className="rounded bg-[#1d222b] px-1 py-0.5 text-[#c7cedb]"
-          value=""
-          onChange={(event) => event.target.value && addObjectToTimeline(event.target.value)}
-        >
-          <option value="" />
-          {/* 已经有轨道的对象不列：一个对象一条轨道，再加一次只会加到原来那条上。 */}
-          {untracked.map((object) => (
-            <option key={object.id} value={object.id}>
-              {object.name}
-            </option>
-          ))}
-        </select>
-      </label>
-    </div>
-  );
-}
+          <ul>
+            {tracks.map((track) => (
+              <PrevizTimelineTrack
+                key={track.id}
+                track={track}
+                name={nameOf(track.objectId)}
+                kind={kindOf(track.objectId)}
+                pxPerFrame={pxPerFrame}
+                laneWidthPx={laneWidthPx}
+                frame={frame}
+                expanded={!collapsed[track.id]}
+                selectedClipId={selectedClipId}
+                selectedPointId={selectedPointId}
+                onToggleExpand={() =>
+                  setCollapsed((current) => {
+                    const next = { ...current };
+                    if (next[track.id]) delete next[track.id];
+                    else next[track.id] = true;
+                    return next;
+                  })
+                }
+                onSelectClip={selectClip}
+                onSelectPoint={(clipId, pointId, at) => {
+                  selectClip(clipId);
+                  selectPathPoint(pointId);
+                  // 播放头跟着跳过去：不跳的话属性面板改的那个点在视口里根本看不见。
+                  setTimelineFrame(at);
+                }}
+                onTrimClip={setClipEdge}
+                onSplit={splitClipAtPlayhead}
+                onAppend={() => appendClip(track.objectId)}
+                onPin={() => pinTrackToTop(track.objectId)}
+                onRemove={() => removeTrackFor(track.objectId)}
+                onInsertKeyframe={insertKeyframe}
+                onClearPath={clearPath}
+                onSeek={setTimelineFrame}
+              />
+            ))}
+          </ul>
 
-function ClipBar({
-  clip,
-  durationFrames,
-  selected,
-  selectedPointId,
-  onSelect,
-  onSelectPoint,
-}: {
-  clip: PrevizClip;
-  durationFrames: number;
-  selected: boolean;
-  selectedPointId: string | null;
-  onSelect: () => void;
-  onSelectPoint: (pointId: string, u: number) => void;
-}) {
-  // 除零守卫：时长最小是 1 帧（schema 保证），但这里不依赖那个保证——真除出 NaN 的话
-  // 整条轨道会从布局里消失，而不是显示得难看一点。
-  const span = durationFrames || 1;
-  const left = (clip.startFrame / span) * 100;
-  const width = ((clip.endFrame - clip.startFrame) / span) * 100;
+          {tracks.length === 0 && (
+            <div className="sticky left-0 flex flex-col items-center gap-2 px-4 py-8 text-center">
+              {objects.length === 0 ? (
+                <>
+                  <p className="text-xs text-[#c7cedb]">{t('previz.timeline.emptyNoObjects')}</p>
+                  <p className="text-[11px] text-[#6d7585]">
+                    {t('previz.timeline.emptyNoObjectsHint')}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded-full border border-[#2f3542] px-3 py-1 text-xs text-[#c7cedb] hover:border-[#5b8cff]"
+                      onClick={() => create('character')}
+                    >
+                      {t('previz.timeline.createCharacter')}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-[#2f3542] px-3 py-1 text-xs text-[#c7cedb] hover:border-[#5b8cff]"
+                      onClick={() => create('camera')}
+                    >
+                      {t('previz.timeline.createCamera')}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-[#8b93a3]">{t('previz.timeline.empty')}</p>
+                  <p className="text-[11px] text-[#6d7585]">{t('previz.timeline.emptyHint')}</p>
+                </>
+              )}
+            </div>
+          )}
 
-  return (
-    <div
-      data-testid={`previz-clip-${clip.id}`}
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') onSelect();
-      }}
-      className={`absolute top-0 h-6 rounded ${
-        selected ? 'bg-[#5b8cff]/45 ring-1 ring-[#8fb0ff]' : 'bg-[#39415a]'
-      }`}
-      style={{ left: `${left}%`, width: `${width}%` }}
-    >
-      {isPathClip(clip) &&
-        clip.points.map((point) => (
-          <button
-            key={point.id}
-            type="button"
-            data-testid={`previz-keyframe-${point.id}`}
-            aria-label={`${point.id}`}
-            className={`absolute top-1.5 h-3 w-3 -translate-x-1/2 rotate-45 rounded-[2px] ${
-              point.id === selectedPointId ? 'bg-[#ffd166]' : 'bg-[#dfe6f5]'
-            }`}
-            style={{ left: `${point.u * 100}%` }}
-            onClick={(event) => {
-              // 不冒泡到片段条：那一层会把刚选中的轨迹点清掉（选片段等于换上下文）。
-              event.stopPropagation();
-              onSelectPoint(point.id, point.u);
-            }}
-          />
-        ))}
+          {/* 播放头：一条贯穿所有轨道的竖线，压在头列下面（头列 z 更高）。 */}
+          <div
+            className="pointer-events-none absolute inset-y-0 z-10"
+            style={{ left: PREVIZ_TRACK_HEADER_PX, width: laneWidthPx }}
+          >
+            <div
+              data-testid="previz-playhead"
+              className="absolute inset-y-0 w-px bg-[#e8ecf5]"
+              style={{ left: frame * pxPerFrame }}
+            >
+              <span className="absolute -left-[5px] top-0 h-2.5 w-2.5 rounded-b-sm bg-[#e8ecf5]" />
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
