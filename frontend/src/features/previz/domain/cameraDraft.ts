@@ -117,6 +117,24 @@ export function createCameraDraft(placement: {
 }
 
 /**
+ * 把草稿的每个数值字段收进各自的区间。
+ *
+ * 对话框上的数字输入框存的是**用户敲进去的原样**——逐键夹取会让「先删空再重输」
+ * 变得没法用（见 `clampToRange` 的说明），所以收敛推迟到提交与落盘这两个出口。
+ * 水平角走的是循环而不是夹取：滑杆推过 360 或敲进 -30，得到的应该是绕回来的那个角。
+ */
+export function clampCameraDraft(draft: PrevizCameraDraft): PrevizCameraDraft {
+  return {
+    ...draft,
+    focalMm: clampFocalMm(draft.focalMm),
+    aperture: clampAperture(draft.aperture),
+    yawDeg: normalizeYawDeg(draft.yawDeg),
+    pitchDeg: clampToRange(draft.pitchDeg, PREVIZ_PITCH_RANGE),
+    rollDeg: clampToRange(draft.rollDeg, PREVIZ_ROLL_RANGE),
+  };
+}
+
+/**
  * 草稿 → `createPrevizObject('camera', …)` 的初始字段。
  *
  * 这里是「三根有名字的滑杆」变回「`[x, y, z]` 三元组」的唯一一处，换序就发生在这一行：
@@ -124,20 +142,17 @@ export function createCameraDraft(placement: {
  * 会做的那次夹取一致——UI 上滑杆到不了界外，但数字输入框能敲进去。
  */
 export function cameraDraftOverrides(draft: PrevizCameraDraft): PrevizObjectOverrides<'camera'> {
+  const safe = clampCameraDraft(draft);
   return {
     transform: {
-      position: [...draft.position],
-      rotation: [
-        clampToRange(draft.pitchDeg, PREVIZ_PITCH_RANGE),
-        normalizeYawDeg(draft.yawDeg),
-        clampToRange(draft.rollDeg, PREVIZ_ROLL_RANGE),
-      ],
+      position: [...safe.position],
+      rotation: [safe.pitchDeg, safe.yawDeg, safe.rollDeg],
       scale: [1, 1, 1],
     },
-    focalMm: clampFocalMm(draft.focalMm),
-    aperture: clampAperture(draft.aperture),
-    sensor: draft.sensor,
-    cameraBody: draft.cameraBody,
-    lensSeries: draft.lensSeries,
+    focalMm: safe.focalMm,
+    aperture: safe.aperture,
+    sensor: safe.sensor,
+    cameraBody: safe.cameraBody,
+    lensSeries: safe.lensSeries,
   };
 }
