@@ -854,3 +854,73 @@ describe("previz store timeline zoom", () => {
     expect(usePrevizStore.getState().past).toHaveLength(0);
   });
 });
+
+describe("previz store clip editing", () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  function seedClip(): { objectId: string; clipId: string } {
+    const objectId = usePrevizStore.getState().addObject("character");
+    if (!objectId) throw new Error("expected the character to be created");
+    usePrevizStore.getState().drawPath(objectId, [
+      [0, 0, 0],
+      [6, 0, 0],
+    ]);
+    return { objectId, clipId: usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id };
+  }
+
+  it("trims either edge to an absolute frame", () => {
+    const { clipId } = seedClip();
+
+    usePrevizStore.getState().setClipEdge(clipId, "start", 30);
+    usePrevizStore.getState().setClipEdge(clipId, "end", 90);
+
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0];
+    expect(clip.startFrame).toBe(30);
+    expect(clip.endFrame).toBe(90);
+  });
+
+  it("keeps a trimmed clip at least one frame long", () => {
+    const { clipId } = seedClip();
+
+    usePrevizStore.getState().setClipEdge(clipId, "start", 999);
+
+    // 拖过头把片段拖成 0 长，`frameToU` 就无解了，时间轴上也再点不中它。
+    expect(usePrevizStore.getState().scene.timeline.tracks[0].clips[0].startFrame).toBe(119);
+  });
+
+  it("appends a clip into the gap after the last one", () => {
+    const { objectId, clipId } = seedClip();
+    usePrevizStore.getState().setClipEdge(clipId, "end", 60);
+
+    usePrevizStore.getState().appendClip(objectId);
+
+    const clips = usePrevizStore.getState().scene.timeline.tracks[0].clips;
+    expect(clips).toHaveLength(2);
+    expect(clips[1].startFrame).toBe(60);
+    expect(clips[1].endFrame).toBe(120);
+    // 新片段接着被选中：紧接着就要给它画轨迹，不选中还得再点一下。
+    expect(usePrevizStore.getState().selectedClipId).toBe(clips[1].id);
+  });
+
+  it("refuses to append when the last clip already reaches the end", () => {
+    const { objectId } = seedClip();
+
+    usePrevizStore.getState().appendClip(objectId);
+
+    // 时间轴已经铺满，再追加只能得到一个 0 长片段。
+    expect(usePrevizStore.getState().scene.timeline.tracks[0].clips).toHaveLength(1);
+  });
+
+  it("pins a track to the top", () => {
+    const first = usePrevizStore.getState().addObject("character");
+    const second = usePrevizStore.getState().addObject("character");
+    usePrevizStore.getState().addObjectToTimeline(first!);
+    usePrevizStore.getState().addObjectToTimeline(second!);
+
+    usePrevizStore.getState().pinTrackToTop(second!);
+
+    expect(usePrevizStore.getState().scene.timeline.tracks[0].objectId).toBe(second);
+  });
+});
