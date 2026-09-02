@@ -29,8 +29,8 @@ export function PanoCaptureDialog({
   open,
   onOpenChange,
   manifest,
-  title = "360 取景",
-  description = "选择比例和视角，截图后写入目标位置。",
+  title,
+  description,
   captureLabel,
   viewerPurpose,
   onCapture,
@@ -46,8 +46,8 @@ export function PanoCaptureDialog({
         showCloseButton={false}
       >
         <DialogHeader className="sr-only">
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
+          <DialogTitle>{title ?? t("viewer.pano.dialogTitle")}</DialogTitle>
+          <DialogDescription>{description ?? t("viewer.pano.dialogDescription")}</DialogDescription>
         </DialogHeader>
         {manifest ? (
           <PanoCaptureSurface

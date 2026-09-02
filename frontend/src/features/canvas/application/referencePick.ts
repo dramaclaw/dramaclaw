@@ -13,12 +13,14 @@
  * 收窄（图片节点只收图片 / 文本），与 UPSTREAM_SPAWN_WHITELIST 收窄上游菜单是同一
  * 个道理——建边规则允许的边不一定是用户在这个入口里想要的边。
  */
+import type { TFunction } from 'i18next';
+
 import {
   CANVAS_NODE_TYPES,
   type CanvasNode,
   type CanvasNodeType,
 } from '../domain/canvasNodes';
-import { resolveNodeDisplayName } from '../domain/nodeDisplay';
+import { localizeNodeDisplayName } from '../domain/nodeDisplay';
 import {
   isManualConnectionAllowed,
   nodeHasSourceHandle,
@@ -58,11 +60,11 @@ const DEFAULT_REFERENCE_KIND: Partial<Record<CanvasNodeType, ReferenceKind>> = {
 };
 
 /** 「视频暂不支持作为参考」这类提示里的种类名。 */
-const REFERENCE_KIND_LABEL: Record<ReferenceKind, string> = {
-  text: '文本',
-  image: '图片',
-  video: '视频',
-  audio: '音频',
+const REFERENCE_KIND_LABEL_KEY: Record<ReferenceKind, string> = {
+  text: 'canvas.referencePick.kind.text',
+  image: 'canvas.referencePick.kind.image',
+  video: 'canvas.referencePick.kind.video',
+  audio: 'canvas.referencePick.kind.audio',
 };
 
 export interface ReferencePickCandidate {
@@ -118,6 +120,7 @@ export function collectReferencePickTargets(
   nodes: readonly CanvasNode[],
   targetNodeId: string,
   targetNodeType: CanvasNodeType,
+  t: TFunction,
 ): ReferencePickTargets {
   const candidates = new Map<string, ReferencePickCandidate>();
   const rejections = new Map<string, string>();
@@ -139,7 +142,7 @@ export function collectReferencePickTargets(
       && isManualConnectionAllowed(type, targetNodeType)
     ) {
       candidates.set(node.id, {
-        label: resolveNodeDisplayName(type, node.data ?? {}),
+        label: localizeNodeDisplayName(type, node.data ?? {}, t),
         kind,
       });
       continue;
@@ -148,7 +151,9 @@ export function collectReferencePickTargets(
     // 这类根本不承载素材的节点，给一句通用的就够了。
     rejections.set(
       node.id,
-      kind ? `${REFERENCE_KIND_LABEL[kind]}暂不支持作为参考` : '这个节点不能作为参考',
+      kind
+        ? t('canvas.referencePick.rejectKind', { kind: t(REFERENCE_KIND_LABEL_KEY[kind]) })
+        : t('canvas.referencePick.rejectGeneric'),
     );
   }
   return { candidates, rejections };
@@ -189,8 +194,9 @@ export function collectReferenceMaterials(
   targetNodeId: string,
   targetNodeType: CanvasNodeType,
   excludedNodeIds: ReadonlySet<string>,
+  t: TFunction,
 ): ReferenceMaterialOption[] {
-  const { candidates } = collectReferencePickTargets(nodes, targetNodeId, targetNodeType);
+  const { candidates } = collectReferencePickTargets(nodes, targetNodeId, targetNodeType, t);
   const options: ReferenceMaterialOption[] = [];
   for (const node of nodes) {
     const candidate = candidates.get(node.id);
@@ -214,6 +220,7 @@ export function collectReferenceCandidates(
   nodes: readonly CanvasNode[],
   targetNodeId: string,
   targetNodeType: CanvasNodeType,
+  t: TFunction,
 ): Map<string, ReferencePickCandidate> {
-  return collectReferencePickTargets(nodes, targetNodeId, targetNodeType).candidates;
+  return collectReferencePickTargets(nodes, targetNodeId, targetNodeType, t).candidates;
 }

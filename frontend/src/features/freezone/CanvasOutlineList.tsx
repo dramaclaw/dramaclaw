@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { TFunction } from "i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -43,7 +44,8 @@ import {
 } from "@/features/canvas/domain/canvasNodes";
 import { resolveNodePrimaryAsset } from "@/features/canvas/domain/canvasAssets";
 import {
-  getDefaultNodeDisplayName,
+  localizeDefaultNodeDisplayName,
+  localizeNodeDisplayName,
   resolveNodeDisplayName,
 } from "@/features/canvas/domain/nodeDisplay";
 import {
@@ -136,9 +138,14 @@ function outlineMediaUrl(node: CanvasNode): string | null {
  * 用绝对时刻而不是「3 分钟前」：相对时间要么算 Date.now() 污染纯函数，要么显示的是
  * 上次渲染那一刻的旧值。加字段之前存的老画布没有 createdAt，那些行退回只显示类型。
  */
-function outlineMeta(node: CanvasNode, type: CanvasNodeType, name: string): string | null {
+function outlineMeta(
+  node: CanvasNode,
+  type: CanvasNodeType,
+  name: string,
+  t: TFunction,
+): string | null {
   const parts: string[] = [];
-  const typeLabel = getDefaultNodeDisplayName(type, node.data);
+  const typeLabel = localizeDefaultNodeDisplayName(type, node.data, t);
   if (typeLabel && typeLabel !== name) {
     parts.push(typeLabel);
   }
@@ -156,10 +163,10 @@ function formatOutlineStamp(epochMs: number): string {
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function toOutlineItem(node: CanvasNode): CanvasOutlineItem {
+function toOutlineItem(node: CanvasNode, t: TFunction): CanvasOutlineItem {
   const type = node.type as CanvasNodeType;
   const group = isGroupNode(node);
-  const name = resolveNodeDisplayName(type, node.data);
+  const name = localizeNodeDisplayName(type, node.data, t);
   return {
     id: node.id,
     kind: group ? "group" : "node",
@@ -167,7 +174,7 @@ function toOutlineItem(node: CanvasNode): CanvasOutlineItem {
     type,
     thumbUrl: group ? null : outlineThumbUrl(node),
     mediaUrl: group ? null : outlineMediaUrl(node),
-    meta: group ? null : outlineMeta(node, type, name),
+    meta: group ? null : outlineMeta(node, type, name, t),
     children: [],
   };
 }
@@ -176,10 +183,10 @@ function toOutlineItem(node: CanvasNode): CanvasOutlineItem {
  * 把画布节点压成一棵大纲树：组变成文件夹（名字就是组名），组内成员挂在它下面，
  * 其余节点平铺在顶层。父节点找不到（或父节点不是组）的一律回到顶层，不丢节点。
  */
-export function buildCanvasOutline(nodes: CanvasNode[]): CanvasOutlineItem[] {
+export function buildCanvasOutline(nodes: CanvasNode[], t: TFunction): CanvasOutlineItem[] {
   const items = new Map<string, CanvasOutlineItem>();
   for (const node of nodes) {
-    items.set(node.id, toOutlineItem(node));
+    items.set(node.id, toOutlineItem(node, t));
   }
 
   const roots: CanvasOutlineItem[] = [];
@@ -382,9 +389,9 @@ export function canvasOutlineSignature(nodes: CanvasNode[]): string {
         resolveNodeDisplayName(type, node.data),
         (isGroupNode(node) ? null : outlineThumbUrl(node)) ?? "",
         (isGroupNode(node) ? null : outlineMediaUrl(node)) ?? "",
-        (isGroupNode(node)
-          ? null
-          : outlineMeta(node, type, resolveNodeDisplayName(type, node.data))) ?? "",
+        // 签名只用来判「画布变了没」，不进界面，所以取语言无关的原始值 ——
+        // 换语言不该让签名变，那是 useMemo 的 t 依赖去管的事。
+        String((node.data as { createdAt?: unknown }).createdAt ?? ""),
       ].join("\u0001");
     })
     .join("\u0002");
@@ -429,8 +436,8 @@ export function CanvasOutlineList({
   const outline = useMemo(
     // signature 变了才重建；节点从 store 现取，免得把 nodes 也订阅进来。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    () => buildCanvasOutline(useCanvasStore.getState().nodes),
-    [signature],
+    () => buildCanvasOutline(useCanvasStore.getState().nodes, t),
+    [signature, t],
   );
 
   const filtering = filterKey !== "all" || query.trim() !== "";

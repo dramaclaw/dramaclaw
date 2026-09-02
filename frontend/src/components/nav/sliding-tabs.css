@@ -88,10 +88,14 @@
 }
 
 .sliding-tabs--project-modes .sliding-tabs__trigger {
-  width: 4.625rem;
-  min-width: 0;
+  /* 原来写死 width: 4.625rem + padding: 0，是照「虾花 / 虾集」两个汉字量的。
+     英文标签（Freezone 约 55px + 图标 14px + gap 6px）直接撑破这个盒子，文字会
+     贴到胶囊边缘、和相邻项挤在一起。改成内边距撑开、min-width 兜底：中文仍是
+     74px 不变，英文按内容自己长。滑块是按 activeTrigger 的 rect 量的，宽度可变
+     不影响动画。 */
+  min-width: 4.625rem;
   min-height: 30px;
-  padding: 0;
+  padding: 0 0.875rem;
   font-weight: 600;
 }
 

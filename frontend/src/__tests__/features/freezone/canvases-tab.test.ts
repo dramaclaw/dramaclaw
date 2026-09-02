@@ -34,6 +34,7 @@ import {
   shouldFlushBeforePresetRefresh,
 } from "@/features/freezone/useCanvasSync";
 import { BackendStatusError } from "@/lib/api-errors";
+import { zhT } from "../../helpers/i18n-fixtures";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -546,6 +547,7 @@ describe("freezone preset auto refresh guard", () => {
         backup: null,
       },
       "proj",
+      zhT,
     );
 
     expect(patch).toMatchObject({
@@ -582,6 +584,7 @@ describe("freezone preset auto refresh guard", () => {
         backup: null,
       },
       "proj",
+      zhT,
     )).toBeNull();
   });
 
@@ -599,6 +602,7 @@ describe("freezone preset auto refresh guard", () => {
         backup: null,
       },
       "proj",
+      zhT,
     );
 
     expect(patch).toMatchObject({
@@ -619,6 +623,7 @@ describe("freezone preset auto refresh guard", () => {
       { kind: "video", episode: 2, beat: 4 },
       { target_path: "videos/ep002/beat_04.mp4", target_url: "/static/video.mp4", backup: null },
       "proj",
+      zhT,
     )).toMatchObject({
       videoUrl: "/static/video.mp4",
       previewImageUrl: "/static/video.mp4",
@@ -631,6 +636,7 @@ describe("freezone preset auto refresh guard", () => {
       { kind: "beat_audio", episode: 2, beat: 4 },
       { target_path: "audio/ep002/beat_04.wav", target_url: "/static/audio.wav", backup: null },
       "proj",
+      zhT,
     )).toMatchObject({
       audioUrl: "/static/audio.wav",
       url: "/static/audio.wav",
@@ -643,6 +649,7 @@ describe("freezone preset auto refresh guard", () => {
       { kind: "identity", character: "杜晨", identity_id: "default" },
       { target_path: "characters/duchen/default.png", target_url: "/static/identity.png", backup: null },
       "proj",
+      zhT,
     )).toMatchObject({
       imageUrl: "/static/identity.png",
       displayName: "杜晨 / default / 身份",
@@ -657,6 +664,7 @@ describe("freezone preset auto refresh guard", () => {
       { kind: "prop_ref", prop_id: "纸箱" },
       { target_path: "props/box.png", target_url: "/static/prop.png", backup: null },
       "proj",
+      zhT,
     )).toMatchObject({
       imageUrl: "/static/prop.png",
       displayName: "纸箱 / 道具",

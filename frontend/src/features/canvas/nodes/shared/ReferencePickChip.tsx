@@ -14,6 +14,8 @@
  * 没有传 onPickExternal 的节点（如图片生成节点，它本来就没有外部素材入口）保持
  * 单击直接进拾取态，不平白多一层菜单。
  */
+import type { TFunction } from 'i18next';
+import { useTranslation } from 'react-i18next';
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { MousePointerClick, Plus, Upload } from 'lucide-react';
@@ -39,14 +41,14 @@ const MENU_HEIGHT = 108;
  * 进入画布拾取态。可选目标为空时不进入——拾取态下整张画布都会变样，
  * 进去了却一个能点的都没有，只会让用户以为功能坏了。
  */
-function startCanvasPick(nodeId: string, nodeType: CanvasNodeType): void {
+function startCanvasPick(nodeId: string, nodeType: CanvasNodeType, t: TFunction): void {
   // 视口从 store 读而不是 useReactFlow()：这个 chip 活在节点组件里，节点组件的
   // 单测普遍只 mock 了 @xyflow/react 的一小撮导出，多要一个 hook 就会把它们全部
   // 拖下水；currentViewport 本来就是 store 维护的（见 BackToNodesHint）。
   const { nodes, currentViewport } = useCanvasStore.getState();
-  const { candidates, rejections } = collectReferencePickTargets(nodes, nodeId, nodeType);
+  const { candidates, rejections } = collectReferencePickTargets(nodes, nodeId, nodeType, t);
   if (candidates.size === 0) {
-    toast.info('画布上还没有可以作为参考的节点');
+    toast.info(t('canvas.referencePick.noTargets'));
     return;
   }
   useReferencePickStore.getState().start({
@@ -96,6 +98,7 @@ export function ReferencePickChip({
   /** 选择「外部参考」时的回调；不传则本 chip 单击直接进画布拾取态。 */
   onPickExternal?: () => void;
 }) {
+  const { t } = useTranslation();
   const active = useReferencePickStore((state) => state.request?.targetNodeId === nodeId);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -145,7 +148,7 @@ export function ReferencePickChip({
       return;
     }
     if (!onPickExternal) {
-      startCanvasPick(nodeId, nodeType);
+      startCanvasPick(nodeId, nodeType, t);
       return;
     }
     if (anchor) setAnchor(null);
@@ -165,8 +168,8 @@ export function ReferencePickChip({
         }`}
         title={
           onPickExternal
-            ? '添加参考：画布上的节点，或本地文件'
-            : '在画布上选择一个节点作为参考'
+            ? t('canvas.referencePick.chipTitleWithExternal')
+            : t('canvas.referencePick.chipTitleCanvasOnly')
         }
       >
         <Plus
@@ -176,7 +179,7 @@ export function ReferencePickChip({
               : 'group-hover/refpick:text-text-dark'
           }`}
         />
-        <span>参考</span>
+        <span>{t('canvas.referencePick.chip')}</span>
       </button>
       {anchor &&
         onPickExternal &&
@@ -196,17 +199,17 @@ export function ReferencePickChip({
           >
             <ReferenceSourceMenuItem
               icon={<MousePointerClick className="h-3.5 w-3.5" />}
-              label="画布参考"
-              hint="在画布上点选一个节点"
+              label={t('canvas.referencePick.sourceCanvas')}
+              hint={t('canvas.referencePick.sourceCanvasHint')}
               onSelect={() => {
                 setAnchor(null);
-                startCanvasPick(nodeId, nodeType);
+                startCanvasPick(nodeId, nodeType, t);
               }}
             />
             <ReferenceSourceMenuItem
               icon={<Upload className="h-3.5 w-3.5" />}
-              label="外部参考"
-              hint="从本地上传素材文件"
+              label={t('canvas.referencePick.sourceExternal')}
+              hint={t('canvas.referencePick.sourceExternalHint')}
               onSelect={() => {
                 setAnchor(null);
                 onPickExternal();

@@ -77,7 +77,8 @@ const PRESET_CONFIGS: Record<Exclude<MultiAnglePresetKey, 'custom'>, MultiAngleP
     horizontalDeg: 0,
     verticalDeg: 30,
     zoom: 'extreme_close_up',
-    defaultOverride: '极度特写镜头，广角镜头，边缘带有鱼眼畸变效果。',
+    // 直接拼进提示词发给模型，跟着界面语言走会让出图不稳。
+    defaultOverride: '极度特写镜头，广角镜头，边缘带有鱼眼畸变效果。', // i18n-exempt —— 提示词
   },
   tilted: {
     horizontalDeg: 45,

@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import { useTranslation } from "react-i18next";
 import { Header } from "@/components/layout/header";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { useAppStore } from "@/stores/app-store";
@@ -43,6 +44,7 @@ export function shouldRedirectMissingUsernameToLogin(): boolean {
 }
 
 function AppLayout() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   // `username` stands in for the old `apiKey` gate — the SPA is cookie-backed,
   // JS can no longer read the credential, so the login marker is username.
@@ -249,11 +251,11 @@ function AppLayout() {
                 >
                   {requiredSurfaceCode && productSurfaces.error ? (
                     <ProductSurfaceUnavailable
-                      message="暂时无法确认功能开放状态，请稍后重试。"
+                      message={t("productSurface.statusUnknown")}
                       retry={() => void productSurfaces.refetch()}
                     />
                   ) : requiredSurfaceCode && !requiredSurface ? (
-                    <ProductSurfaceUnavailable message="功能开放配置不完整，请联系管理员。" />
+                    <ProductSurfaceUnavailable message={t("productSurface.misconfigured")} />
                   ) : requiredSurface && !requiredSurface.available ? (
                     <ProductSurfaceUnavailable message={requiredSurface.unavailable_message} />
                   ) : (

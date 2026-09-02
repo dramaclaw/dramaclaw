@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from 'i18next';
 import {
   NODE_TOOL_TYPES,
   type NodeToolType,
@@ -59,7 +63,7 @@ export class CanvasToolProcessor implements ToolProcessor {
           ),
         };
       default:
-        throw new Error('不支持的工具类型');
+        throw new Error(i18n.t('canvas.toolProcessor.unsupportedTool'));
     }
   }
 
@@ -127,7 +131,7 @@ export class CanvasToolProcessor implements ToolProcessor {
 
     const context = canvas.getContext('2d');
     if (!context) {
-      throw new Error('无法初始化画布');
+      throw new Error(i18n.t('canvas.toolProcessor.canvasInitFailed'));
     }
 
     context.drawImage(
@@ -156,7 +160,7 @@ export class CanvasToolProcessor implements ToolProcessor {
 
     const context = canvas.getContext('2d');
     if (!context) {
-      throw new Error('无法初始化画布');
+      throw new Error(i18n.t('canvas.toolProcessor.canvasInitFailed'));
     }
 
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
@@ -236,7 +240,7 @@ export class CanvasToolProcessor implements ToolProcessor {
     );
 
     if (safeRows <= 0 || safeCols <= 0) {
-      throw new Error('宫格行列必须大于 0');
+      throw new Error(i18n.t('canvas.toolProcessor.gridSizeInvalid'));
     }
 
     let outputs: string[];
@@ -369,7 +373,7 @@ export class CanvasToolProcessor implements ToolProcessor {
     const usableHeight = image.naturalHeight - (rows - 1) * resolvedLineThickness;
 
     if (usableWidth < cols || usableHeight < rows) {
-      throw new Error('分隔线过粗，无法完成分格抽取');
+      throw new Error(i18n.t('canvas.toolProcessor.lineTooThick'));
     }
 
     const columnWidths = this.splitIntoSegments(usableWidth, cols);
@@ -408,7 +412,7 @@ export class CanvasToolProcessor implements ToolProcessor {
 
         const context = canvas.getContext('2d');
         if (!context) {
-          throw new Error('无法初始化画布');
+          throw new Error(i18n.t('canvas.toolProcessor.canvasInitFailed'));
         }
 
         context.drawImage(

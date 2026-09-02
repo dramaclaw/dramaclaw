@@ -4975,7 +4975,7 @@ export function Canvas({
             [
               {
                 key: 'upload',
-                label: '上传',
+                label: t('canvas.contextMenu.upload'),
                 onSelect: () => {
                   const flowPos = reactFlowInstance.screenToFlowPosition({
                     x: contextMenu.clientX,
@@ -4987,7 +4987,7 @@ export function Canvas({
               },
               {
                 key: 'add-node',
-                label: '添加节点',
+                label: t('canvas.contextMenu.addNode'),
                 onSelect: () =>
                   openNodeMenuAtClientPosition({
                     x: contextMenu.clientX,
@@ -4998,7 +4998,7 @@ export function Canvas({
             [
               {
                 key: 'undo',
-                label: '撤销',
+                label: t('canvas.contextMenu.undo'),
                 shortcut: '⌘Z',
                 disabled: !contextMenu.canUndo,
                 onSelect: () => {
@@ -5009,7 +5009,7 @@ export function Canvas({
               },
               {
                 key: 'redo',
-                label: '重做',
+                label: t('canvas.contextMenu.redo'),
                 shortcut: '⇧⌘Z',
                 disabled: !contextMenu.canRedo,
                 onSelect: () => {
@@ -5022,7 +5022,7 @@ export function Canvas({
             [
               {
                 key: 'paste',
-                label: '粘贴',
+                label: t('canvas.contextMenu.paste'),
                 shortcut: '⌘V',
                 disabled: !contextMenu.canPaste,
                 onSelect: () => {

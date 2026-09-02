@@ -19,6 +19,7 @@ const regenerateSketchMock = vi.fn();
 const poolSelectMock = vi.fn();
 const creditCostMock = vi.fn();
 const taskControllerKeyMock = vi.fn();
+const trackRegenScopeMock = vi.fn();
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -113,6 +114,10 @@ vi.mock("@/hooks/use-task-controller", () => ({
     taskControllerKeyMock(options.key);
     return { start: taskStartMock };
   },
+}));
+
+vi.mock("@/hooks/use-scoped-task-batch-invalidation", () => ({
+  useScopedTaskBatchInvalidation: () => ({ track: trackRegenScopeMock }),
 }));
 
 vi.mock("@/hooks/use-now", () => ({
@@ -239,6 +244,7 @@ describe("SketchSection", () => {
       data: { ok: true, data: { cost: 1, display: "1 credit" } },
     });
     taskControllerKeyMock.mockReset();
+    trackRegenScopeMock.mockReset();
   });
 
   it("keeps sketch identity, detected props, and local marked props in the right-side info row", () => {
@@ -542,6 +548,51 @@ describe("SketchSection", () => {
       modeKey: "1x1_16-9_sketch",
       imageGenerationSelection: "doubao_seedream-3.0-t2i",
     });
+  });
+
+  // beat 4 在跑草图时切到 beat 5,「立即生成」不该是灰的:sketch_regen 的 registry
+  // entry 必须按 beat 分开(coversBeat),而不是整集共用一个。
+  it("scopes the sketch_regen controller to this beat's coverage", () => {
+    render(
+      <SketchSection
+        beat={makeBeat()}
+        project="demo"
+        episode={1}
+        images={[]}
+        assignments={{}}
+      />,
+    );
+
+    expect(taskControllerKeyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskType: "sketch_regen",
+        coversBeat: 4,
+      }),
+    );
+    // 按 beat 分 entry 之后,切走的那一格没人 own 了,得靠全局任务总线兜底刷新。
+    const regenKey = taskControllerKeyMock.mock.calls
+      .map(([key]) => key as { taskType: string; beatNum?: number })
+      .find((key) => key.taskType === "sketch_regen");
+    expect(regenKey?.beatNum).toBeUndefined();
+  });
+
+  it("tracks the dispatched regen scope so a backgrounded beat still refreshes", async () => {
+    render(
+      <SketchSection
+        beat={makeBeat()}
+        project="demo"
+        episode={1}
+        images={[]}
+        assignments={{}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /重新生成/ }));
+    fireEvent.click(screen.getByRole("button", { name: "common.confirm" }));
+
+    await waitFor(() =>
+      expect(trackRegenScopeMock).toHaveBeenCalledWith("1x1_16-9_sketch__beat_04"),
+    );
   });
 
   it("shows generate new for the current beat when the beat has no sketch", async () => {

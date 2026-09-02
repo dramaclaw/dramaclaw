@@ -12,6 +12,7 @@
  * 条，一次全铺开会把选单拉成一根长条，而用户心里通常已经知道自己要找的是哪一类。
  * 一旦开始搜索就拉平成一个列表——搜的时候按种类翻反而碍事。
  */
+import { useTranslation } from 'react-i18next';
 import {
   useEffect,
   useMemo,
@@ -39,10 +40,11 @@ const ANCHOR_GAP = 4;
 const SEARCH_ROW_HEIGHT = 46;
 
 const KIND_ORDER: readonly ReferenceMediaKind[] = ['image', 'video', 'audio'];
-const KIND_LABEL: Record<ReferenceMediaKind, string> = {
-  image: '图片',
-  video: '视频',
-  audio: '音频',
+/** 三类素材的展示名跟资产库共用一套词条，源码里只留 key。 */
+const KIND_LABEL_KEYS: Record<ReferenceMediaKind, string> = {
+  image: 'canvas.assetLibrary.media.image',
+  video: 'canvas.assetLibrary.media.video',
+  audio: 'canvas.assetLibrary.media.audio',
 };
 
 export interface MentionReplacePopoverProps {
@@ -125,6 +127,7 @@ export function MentionReplacePopover({
   onPickMaterial,
   onClose,
 }: MentionReplacePopoverProps) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState('');
   // 展开中的种类分组 + 它那一行的位置（右侧列表用 fixed 定位，避开选单自身的滚动裁切）。
   const [openGroup, setOpenGroup] = useState<{
@@ -211,7 +214,7 @@ export function MentionReplacePopover({
             // 编辑器把方向键 / Enter 用于候选导航，别让这里的输入冒泡上去。
             // Escape 例外：焦点在这颗输入框上，不在这儿处理就没人处理了。
             onKeyDown={handleKeyDown}
-            placeholder="搜索"
+            placeholder={t('common.search')}
             className="min-w-0 flex-1 bg-transparent text-xs text-text-dark outline-none placeholder:text-text-muted/60"
           />
         </div>
@@ -223,7 +226,7 @@ export function MentionReplacePopover({
         >
           {matchedReferenced.length > 0 && (
             <>
-              <SectionLabel>已引用</SectionLabel>
+              <SectionLabel>{t('canvas.mentionReplace.referenced')}</SectionLabel>
               {matchedReferenced.map((candidate) => (
                 <button
                   key={candidate.key}
@@ -249,7 +252,7 @@ export function MentionReplacePopover({
 
           {groups.length > 0 && (
             <>
-              <SectionLabel>素材引用</SectionLabel>
+              <SectionLabel>{t('canvas.mentionReplace.materials')}</SectionLabel>
               {flattenMaterials
                 ? matchedMaterials.map((material) => (
                     <button
@@ -276,7 +279,9 @@ export function MentionReplacePopover({
                       type="button"
                       // 行内文字只有「图片」，和已引用段里同名的引用标签分不开；
                       // 给个明确的可读名，读屏和测试都能指到这一行。
-                      aria-label={`${KIND_LABEL[group.kind]}素材`}
+                      aria-label={t('canvas.mentionReplace.kindMaterialsAria', {
+                        kind: t(KIND_LABEL_KEYS[group.kind]),
+                      })}
                       onMouseEnter={(event) => {
                         const rect = event.currentTarget.getBoundingClientRect();
                         setOpenGroup({
@@ -297,7 +302,7 @@ export function MentionReplacePopover({
                         videoUrl={group.items[0]?.videoUrl}
                         kind={group.kind}
                       />
-                      <span className="flex-1 truncate">{KIND_LABEL[group.kind]}</span>
+                      <span className="flex-1 truncate">{t(KIND_LABEL_KEYS[group.kind])}</span>
                       <span className="text-[10px] text-text-muted/70">
                         {group.items.length}
                       </span>
@@ -309,7 +314,7 @@ export function MentionReplacePopover({
 
           {matchedReferenced.length === 0 && groups.length === 0 && (
             <div className="px-2 py-3 text-center text-[11px] text-text-muted/70">
-              没有可替换的素材
+              {t('canvas.mentionReplace.empty')}
             </div>
           )}
         </div>

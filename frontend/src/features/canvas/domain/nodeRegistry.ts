@@ -213,7 +213,8 @@ const beatContextNodeDefinition: CanvasNodeDefinition<BeatContextNodeData> = {
     beat_context: {
       schema: 'beat_context.v1',
       source: 'standalone',
-      title: '自定义镜头上下文',
+      // 写进节点 data 的规范标题，界面上显示的那一份由 standaloneTitle 词条给。
+      title: '自定义镜头上下文', // i18n-exempt —— 规范值
       visual_description: '',
       narration_segment: '',
       scene_id: '',
@@ -256,7 +257,8 @@ const groupNodeDefinition: CanvasNodeDefinition<GroupNodeData> = {
   },
   createDefaultData: () => ({
     displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.group],
-    label: '组',
+    // 与 displayName 同为写进画布 JSON 的规范默认值，标题显示走 headerTitle
+    label: '组', // i18n-exempt
   }),
 };
 

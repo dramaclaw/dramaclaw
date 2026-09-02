@@ -1,34 +1,15 @@
 import type { CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
 import DarkVeil from "@/components/react-bits/dark-veil";
 import styles from "./ninth-workflow-screen.module.css";
 import { cinematicVideos } from "./media";
 import { COMMUNITY_WATCH_WORK } from "./watch-link";
 
 const workflow = [
-  {
-    id: "01",
-    label: "INPUT",
-    title: "一句设定",
-    body: "失联城市重新发光，幸存者同时听见同一个倒计时。",
-  },
-  {
-    id: "02",
-    label: "STRUCTURE",
-    title: "拆成结构",
-    body: "角色、冲突、场景和叙事限制被拆开，进入可继续推进的节点。",
-  },
-  {
-    id: "03",
-    label: "CAMERA",
-    title: "形成镜头",
-    body: "镜头顺序、场景气质和节奏被锁定，片段开始具备观看方向。",
-  },
-  {
-    id: "04",
-    label: "OUTPUT",
-    title: "片段生成",
-    body: "一段可以继续扩写、重剪或进入作品墙的故事片段完成。",
-  },
+  { id: "01", label: "INPUT" },
+  { id: "02", label: "STRUCTURE" },
+  { id: "03", label: "CAMERA" },
+  { id: "04", label: "OUTPUT" },
 ];
 
 const clamp = (value: number, min = 0, max = 1) =>
@@ -43,6 +24,8 @@ export function NinthWorkflowScreen({
   sequenceProgress: number;
   exitProgress?: number;
 }) {
+  const { t } = useTranslation();
+
   if (exitProgress >= 0.99) return null;
 
   if (progress <= 0.01) return null;
@@ -71,13 +54,11 @@ export function NinthWorkflowScreen({
       <div className={styles.header}>
         <p>WORKFLOW 09</p>
         <h2>
-          一句设定，直接进入
+          {t("loginCinematic.ninth.headingTop")}
           <br />
-          镜头
+          {t("loginCinematic.ninth.headingAccent")}
         </h2>
-        <span>
-          不必先写完整剧本。给出一个方向，DramaClaw 会把它拆成角色、冲突、场景和可推进的镜头链路。
-        </span>
+        <span>{t("loginCinematic.ninth.lead")}</span>
       </div>
 
       <div className={styles.path} aria-hidden="true">
@@ -104,16 +85,16 @@ export function NinthWorkflowScreen({
                     <video src={cinematicVideos.pk} muted loop playsInline autoPlay preload="metadata" />
                     <div className={styles.previewScrim} />
                     <div className={styles.previewTitle}>
-                      <strong>鲁班秘术</strong>
+                      <strong>{t("loginCinematic.ninth.featuredWork")}</strong>
                     </div>
                     <a
                       className={styles.watchButton}
                       href={`/watch/${COMMUNITY_WATCH_WORK}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      aria-label="立即观看社区作品"
+                      aria-label={t("loginCinematic.watchCommunity")}
                     >
-                      <span>立即观看</span>
+                      <span>{t("loginCinematic.watchNow")}</span>
                     </a>
                   </div>
                 </div>
@@ -121,8 +102,8 @@ export function NinthWorkflowScreen({
               <div className={styles.node}>
                 <span>{item.id}</span>
               </div>
-              <h3>{item.title}</h3>
-              <p>{item.body}</p>
+              <h3>{t(`loginCinematic.ninth.steps.${item.id}.title`)}</h3>
+              <p>{t(`loginCinematic.ninth.steps.${item.id}.body`)}</p>
             </article>
           );
         })}

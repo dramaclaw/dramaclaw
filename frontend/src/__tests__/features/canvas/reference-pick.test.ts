@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from 'vitest';
 
+import { zhT } from "../../helpers/i18n-fixtures";
 import {
   collectReferenceCandidates,
   collectReferenceMaterials,
@@ -47,6 +48,7 @@ describe('reference pick candidates', () => {
       nodes,
       TARGET_IMAGE.id,
       CANVAS_NODE_TYPES.imageGen,
+      zhT,
     );
 
     expect([...candidates.keys()].sort()).toEqual(['image', 'text']);
@@ -65,6 +67,7 @@ describe('reference pick candidates', () => {
       nodes,
       TARGET_VIDEO.id,
       CANVAS_NODE_TYPES.video,
+      zhT,
     );
 
     expect([...candidates.keys()].sort()).toEqual(['audio', 'image', 'text', 'video']);
@@ -75,6 +78,7 @@ describe('reference pick candidates', () => {
       [TARGET_IMAGE],
       TARGET_IMAGE.id,
       CANVAS_NODE_TYPES.imageGen,
+      zhT,
     );
 
     expect(candidates.size).toBe(0);
@@ -91,6 +95,7 @@ describe('reference pick candidates', () => {
       nodes,
       TARGET_IMAGE.id,
       CANVAS_NODE_TYPES.imageGen,
+      zhT,
     );
 
     expect([...candidates.keys()].sort()).toEqual(['empty-image', 'empty-text']);
@@ -110,6 +115,7 @@ describe('reference pick candidates', () => {
           [TARGET_IMAGE, uploadVideo, uploadImage],
           TARGET_IMAGE.id,
           CANVAS_NODE_TYPES.imageGen,
+          zhT,
         ).keys(),
       ].sort(),
     ).toEqual(['upload-image']);
@@ -121,6 +127,7 @@ describe('reference pick candidates', () => {
           [TARGET_VIDEO, uploadVideo, uploadImage],
           TARGET_VIDEO.id,
           CANVAS_NODE_TYPES.video,
+          zhT,
         ).keys(),
       ].sort(),
     ).toEqual(['upload-image', 'upload-video']);
@@ -131,6 +138,7 @@ describe('reference pick candidates', () => {
       [TARGET_IMAGE, node('style', CANVAS_NODE_TYPES.style, {})],
       TARGET_IMAGE.id,
       CANVAS_NODE_TYPES.imageGen,
+      zhT,
     );
 
     expect(candidates.has('style')).toBe(false);
@@ -148,6 +156,7 @@ describe('reference pick candidates', () => {
       ],
       TARGET_IMAGE.id,
       CANVAS_NODE_TYPES.imageGen,
+      zhT,
     );
 
     expect(candidates.get('named')?.label).toBe('S09｜近景·正面');
@@ -166,6 +175,7 @@ describe('reference pick rejections', () => {
       ],
       TARGET_IMAGE.id,
       CANVAS_NODE_TYPES.imageGen,
+      zhT,
     );
 
     expect([...candidates.keys()]).toEqual(['image']);
@@ -183,6 +193,7 @@ describe('reference pick rejections', () => {
       ],
       TARGET_VIDEO.id,
       CANVAS_NODE_TYPES.video,
+      zhT,
     );
 
     expect(rejections.size).toBe(0);
@@ -197,6 +208,7 @@ describe('reference pick rejections', () => {
       ],
       TARGET_IMAGE.id,
       CANVAS_NODE_TYPES.imageGen,
+      zhT,
     );
 
     expect(candidates.size).toBe(0);
@@ -217,6 +229,7 @@ describe('reference pick rejections', () => {
       TARGET_VIDEO.id,
       CANVAS_NODE_TYPES.video,
       new Set<string>(),
+      zhT,
     );
 
     expect(materials).toHaveLength(1);
@@ -233,6 +246,7 @@ describe('reference pick rejections', () => {
       [node('target-video', CANVAS_NODE_TYPES.video, { videoUrl: 'https://x/a.mp4' })],
       'target-video',
       CANVAS_NODE_TYPES.imageGen,
+      zhT,
     );
 
     expect(rejections.size).toBe(0);

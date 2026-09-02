@@ -15,6 +15,7 @@
  * 的按钮，也不该把节点拖走。
  */
 import { memo, type MouseEvent, type SyntheticEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { useCanvasStore } from '@/stores/canvasStore';
 import { attachReferenceEdge } from '@/features/canvas/application/attachReference';
@@ -46,6 +47,7 @@ function ActiveReferencePickOverlay({
   targetNodeId: string;
   label: string;
 }) {
+  const { t } = useTranslation();
   const connected = useCanvasStore((state) =>
     state.edges.some((edge) => edge.source === nodeId && edge.target === targetNodeId)
   );
@@ -63,11 +65,15 @@ function ActiveReferencePickOverlay({
     attachReferenceEdge(nodeId, targetNodeId);
   };
 
+  const hint = connected
+    ? t('canvas.referencePick.deselect')
+    : t('canvas.referencePick.select', { label });
+
   return (
     <div
       role="button"
       tabIndex={-1}
-      title={connected ? '取消选择' : `选择 ${label}`}
+      title={hint}
       className={`nodrag nopan group/refpick absolute inset-0 z-[45] cursor-pointer rounded-[var(--node-radius)] ring-2 transition-[box-shadow] ${
         connected
           ? 'ring-[rgb(var(--accent-rgb))] bg-[rgb(var(--accent-rgb)/0.08)]'
@@ -79,7 +85,7 @@ function ActiveReferencePickOverlay({
       onDoubleClick={stopEvent}
       onContextMenu={stopEvent}
     >
-      <OverlayHint text={connected ? '取消选择' : `选择 ${label}`} always={connected} />
+      <OverlayHint text={hint} always={connected} />
     </div>
   );
 }

@@ -646,6 +646,45 @@ async def test_compile_episode_scenes_persists_base_and_derived_as_normal_scenes
 
 
 @pytest.mark.asyncio
+async def test_base_scene_reconcile_strips_english_time_before_persisting(monkeypatch):
+    import novelvideo.agents.asset_compiler as asset_compiler
+
+    async def fake_enrich(**kwargs):
+        return NovelScene(
+            name=kwargs["scene_name"],
+            scene_type=kwargs["scene_type"],
+            environment_prompt=ENRICHED_ENVIRONMENT_PROMPT,
+        )
+
+    monkeypatch.setattr(
+        asset_compiler,
+        "enrich_scene_environment_from_context",
+        fake_enrich,
+    )
+    store = _FakeCogneeStore()
+    compiler = asset_compiler.AssetCompiler(store)
+
+    created = await compiler._apply_base_scene_reconcile_output(
+        asset_compiler.EpisodeBaseSceneReconcileOutput(
+            scenes=[
+                asset_compiler.BaseSceneReconcileDecision(
+                    action="create",
+                    scene_name="Seoul Subway Station 11:47 PM",
+                    scene_type="interior",
+                    evidence_lines=["Location: Seoul Subway Station"],
+                )
+            ]
+        ),
+        "Location: Seoul Subway Station\nTime: 11:47 PM",
+        SimpleNamespace(number=1),
+        lambda _message: None,
+    )
+
+    assert created == ["Seoul Subway Station"]
+    assert sorted(store.sqlite_store.scenes) == ["Seoul Subway Station"]
+
+
+@pytest.mark.asyncio
 async def test_base_scene_reconcile_does_not_create_existing_alias():
     import novelvideo.agents.asset_compiler as asset_compiler
 

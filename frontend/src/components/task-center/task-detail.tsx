@@ -7,8 +7,9 @@ import { TaskLogs } from "./task-logs";
 import { TaskActions } from "./task-actions";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { displayLabel } from "@/task-center/derivations";
+import { currentTaskText, displayLabel } from "@/task-center/derivations";
 import { taskErrorMessage } from "@/task-center/task-errors";
+import { taskIoLabel } from "@/lib/task-io-label";
 import type { TaskState } from "@/task-center/types";
 
 export function formatLocalTaskTime(value?: string | null): string {
@@ -151,8 +152,9 @@ export function TaskDetail() {
   }
   const providerId = providerTaskId(task);
   const displayResult = task.result ? sanitizeResultForDisplay(task.result) : null;
-  const sourceLabel = metadataField(task, "source_label");
-  const targetLabel = metadataField(task, "target_label");
+  // 后端这两个标签是 freezone 写死的中文，英文界面下要按词条渲染（见 lib/task-io-label.ts）。
+  const sourceLabel = taskIoLabel(metadataField(task, "source_label"), t);
+  const targetLabel = taskIoLabel(metadataField(task, "target_label"), t);
   const jobId = metadataField(task, "job_id") || metadataField(task, "scope") || task.scope || "";
   const celeryId = metadataField(task, "celery_task_id");
   const skillId = metadataField(task, "skill_id");
@@ -213,7 +215,7 @@ export function TaskDetail() {
               <div className="text-muted-foreground">
                 {t("taskCenter.detail.currentStatus")}
               </div>
-              <div className="mt-1">{task.current_task || t(`taskCenter.status.${task.status}`)}</div>
+              <div className="mt-1">{currentTaskText(task, t) || t(`taskCenter.status.${task.status}`)}</div>
               <div className="mt-1 font-mono text-[11px] text-muted-foreground">
                 {Math.round(task.progress * 100)}%
               </div>

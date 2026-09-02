@@ -147,7 +147,7 @@ export function ImageViewerModal({
           type="button"
           onClick={onClose}
           className={`absolute right-6 top-6 z-20 ${MEDIA_VIEWER_CLOSE_BUTTON_CLASS}`}
-          title={t('common.close', '关闭')}
+          title={t('common.close')}
         >
           <X className={MEDIA_VIEWER_CLOSE_ICON_CLASS} />
         </button>
@@ -156,7 +156,7 @@ export function ImageViewerModal({
           <img
             ref={imageRef}
             src={displayImageUrl}
-            alt={t('viewer.imageAlt', '图片')}
+            alt={t('viewer.imageAlt')}
             className="select-none transition-opacity duration-300"
             style={{
               opacity: viewerOpacity * overlayOpacity,
@@ -186,7 +186,7 @@ export function ImageViewerModal({
                 onClick={() => onNavigate('prev')}
                 disabled={currentIndex <= 0}
                 className="rounded-full bg-zinc-800/80 p-2 text-white backdrop-blur-sm transition-all duration-200 hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
-                title={t('viewer.prev', '上一张')}
+                title={t('viewer.prev')}
               >
                 <ChevronLeft className="h-5 w-5" />
               </button>
@@ -194,7 +194,7 @@ export function ImageViewerModal({
                 onClick={() => onNavigate('next')}
                 disabled={currentIndex >= imageList.length - 1}
                 className="rounded-full bg-zinc-800/80 p-2 text-white backdrop-blur-sm transition-all duration-200 hover:bg-zinc-700/80 disabled:cursor-not-allowed disabled:opacity-50"
-                title={t('viewer.next', '下一张')}
+                title={t('viewer.next')}
               >
                 <ChevronRight className="h-5 w-5" />
               </button>
@@ -216,7 +216,7 @@ export function ImageViewerModal({
             <button
               onClick={resetView}
               className={`${viewerControlClass} transition-colors hover:bg-white/10`}
-              title={t('viewer.reset', '重置视图')}
+              title={t('viewer.reset')}
             >
               <RotateCcw className="h-4 w-4" />
             </button>

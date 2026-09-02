@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import type { CSSProperties } from "react";
 import styles from "./scroll-video-scene.module.css";
 import { COMMUNITY_WATCH_WORK } from "./watch-link";
@@ -28,6 +29,7 @@ export function ScrollVideoScene({
   videoOpacity: number;
   videoUrl: string;
 }) {
+  const { t } = useTranslation();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const wasActiveRef = useRef(false);
 
@@ -85,9 +87,9 @@ export function ScrollVideoScene({
         href={`/watch/${COMMUNITY_WATCH_WORK}`}
         target="_blank"
         rel="noopener noreferrer"
-        aria-label="立即观看社区作品"
+        aria-label={t("loginCinematic.watchCommunity")}
       >
-        <span>立即观看</span>
+        <span>{t("loginCinematic.watchNow")}</span>
       </a>
       <div className={`${styles.copy} ${align === "right" ? styles.copyRight : ""}`}>
         <p className={styles.kicker}>{kicker}</p>

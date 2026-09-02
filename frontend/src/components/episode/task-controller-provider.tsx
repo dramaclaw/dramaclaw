@@ -80,6 +80,21 @@ export interface TaskKey {
   episode: number;
   beatNum?: number;
   scope?: string;
+  /**
+   * "Only follow runs that cover this beat."
+   *
+   * Different from `beatNum`, which matches the task row's `beat_num` column.
+   * Selection-scoped runs (`sketch_regen`, `selected_regen`) write
+   * `beat_num = null` and carry their beat list in `metadata.beat_numbers`, so
+   * `beatNum` can never match them — passing it just makes reconcile miss the
+   * row entirely (see the comment above `regenTask` in sketch-section.tsx).
+   *
+   * Setting this gives each beat its own registry entry and filters reconcile
+   * by coverage, so one beat's in-flight run no longer freezes every other
+   * beat's panel. A row with no beat list is "unknown coverage" and still
+   * matches — same rule as `covers()`.
+   */
+  coversBeat?: number;
 }
 
 export interface TaskStreamState {
@@ -166,7 +181,7 @@ const ACTIVE_STATUSES: readonly TaskStatus[] = [
  * iff they identify the same scoped task. Exported for tests.
  */
 export function serializeKey(k: TaskKey): string {
-  return `${k.taskType}|${k.project}|${k.episode}|${k.beatNum ?? ""}|${k.scope ?? ""}`;
+  return `${k.taskType}|${k.project}|${k.episode}|${k.beatNum ?? ""}|${k.scope ?? ""}|${k.coversBeat ?? ""}`;
 }
 
 export function isActiveStatus(status: TaskStatus): boolean {

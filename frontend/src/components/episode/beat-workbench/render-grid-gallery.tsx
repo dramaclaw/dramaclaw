@@ -582,12 +582,15 @@ function findBestPlannedGridIndex(
   return best?.gridIndex ?? null;
 }
 
+/** 分组用的兜底桶名。只当 Map 的 key，不上界面，所以用哨兵而不是文案。 */
+const UNKNOWN_SCENE_BUCKET = "__unknown_scene__";
+
 function getBeatSceneId(beat: Beat): string {
   return (
     beat.scene_ref?.scene_id?.trim() ||
     beat.location?.trim() ||
     beat.location_description?.trim() ||
-    "未知场景"
+    UNKNOWN_SCENE_BUCKET
   );
 }
 

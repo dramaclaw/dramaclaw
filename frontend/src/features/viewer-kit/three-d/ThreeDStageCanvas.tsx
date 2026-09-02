@@ -57,6 +57,8 @@ export function ThreeDStageCanvas({
   const onPlaceRequestRef = useRef<(() => void) | undefined>(onPlaceRequest);
   const sourceTransformRef = useRef<typeof sourceTransform>(sourceTransform);
   const interactionActiveRef = useRef(interactionActive);
+  // viewer 只在挂载时建一次，t 却会随语言切换换实例；用 ref 保证引擎拿到的永远是最新那个。
+  const tRef = useRef(t);
   onReadyRef.current = onReady;
   onErrorRef.current = onError;
   onStatusRef.current = onStatus;
@@ -65,6 +67,7 @@ export function ThreeDStageCanvas({
   onPlaceRequestRef.current = onPlaceRequest;
   sourceTransformRef.current = sourceTransform;
   interactionActiveRef.current = interactionActive;
+  tRef.current = t;
 
   useEffect(() => {
     let disposed = false;
@@ -116,7 +119,10 @@ export function ThreeDStageCanvas({
     const initFrame = window.requestAnimationFrame(() => {
       void (async () => {
         try {
-          const viewer = await createViewerApp({ canvas });
+          const viewer = await createViewerApp({
+            canvas,
+            translate: (key, params) => tRef.current(key, params),
+          });
           if (disposed) {
             viewer.destroy();
             return;

@@ -9,6 +9,7 @@ import Lenis from "lenis";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { ChevronUp } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { LoginModal } from "@/components/login/login-modal";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { LoginCinematicHero } from "./LoginCinematicHero";
@@ -36,6 +37,7 @@ const segment = (position: number, start: number, duration: number) =>
   clamp((position - start) / duration);
 
 export function LoginCinematicPage() {
+  const { t } = useTranslation();
   const mainRef = useRef<HTMLElement | null>(null);
   const introRef = useRef<HTMLElement | null>(null);
   const lenisRef = useRef<Lenis | null>(null);
@@ -355,8 +357,8 @@ export function LoginCinematicPage() {
       <button
         type="button"
         className={`${layout.backToTop} ${pageScrolled ? layout.backToTopVisible : ""}`}
-        aria-label="回到顶部"
-        title="回到顶部"
+        aria-label={t("loginCinematic.backToTop")}
+        title={t("loginCinematic.backToTop")}
         onClick={scrollToTop}
       >
         <ChevronUp aria-hidden="true" />

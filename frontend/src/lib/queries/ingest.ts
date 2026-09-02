@@ -12,13 +12,20 @@ import type { SpineTemplate } from "@/types/project";
 export interface FormatCheckIssue {
   code: string;
   line: number | null;
+  /** 后端产的中文原文，仅作 i18n 的 defaultValue，不要直接渲染。 */
   message: string;
+  /** 同上。 */
   fix: string;
+  /** 结构化插值参数，交给 localizeFormatCheck 拼本地化文案。 */
+  params?: Record<string, unknown>;
 }
 
 export interface FormatCheck {
   level: "ok" | "warning" | "blocking";
+  /** 后端产的中文原文，仅作 i18n 的 defaultValue，不要直接渲染。 */
   summary: string;
+  summary_code?: string;
+  summary_params?: Record<string, unknown>;
   issues?: FormatCheckIssue[];
   metrics?: Record<string, number>;
   scene_header_status?: "standard" | "repairable" | "missing";

@@ -64,7 +64,7 @@ const AnnouncementSchema = z.object({
   id: z.string().trim().min(1),
   publishedAt: z
     .string()
-    .refine((value) => Number.isFinite(Date.parse(value)), "publishedAt 必须是可解析的 ISO 8601"),
+    .refine((value) => Number.isFinite(Date.parse(value)), "publishedAt 必须是可解析的 ISO 8601"), // i18n-exempt —— zod 校验的开发期报错
   pinned: z.boolean().optional(),
   // 至少得有一种语言，否则这条公告渲染出来是张空卡。
   i18n: z.record(z.string(), AnnouncementTextSchema).refine((map) => Object.keys(map).length > 0),

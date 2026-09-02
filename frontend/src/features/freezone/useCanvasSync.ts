@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, useState } from "react";
 import { useReactFlow, type Viewport } from "@xyflow/react";
+import { useTranslation } from "react-i18next";
 import {
   useCanvasStore,
   type CanvasEdge,
@@ -20,6 +21,7 @@ import {
   type FreezonePresetCanvasRequest,
 } from "@/api/canvas";
 import { ApiError } from "@/api/client";
+import type { TFn } from "@/lib/i18n-types";
 import {
   buildSavePayload,
   checkPayloadLimits,
@@ -399,6 +401,7 @@ function decideHydrateDraft(
   remoteNodes: CanvasNode[],
   remoteEdges: CanvasEdge[],
   remoteMetadata: Record<string, unknown> | null,
+  t: TFn,
 ): HydrateDraftDecision {
   if (!draft) return { kind: "remote" };
   if (draft.signature === remoteSignature) {
@@ -421,8 +424,7 @@ function decideHydrateDraft(
   return {
     kind: "conflict",
     draft,
-    message:
-      "本地有未同步的画布草稿，但服务器版本已经变化。请保存副本或丢弃本地草稿后继续。",
+    message: t("freezone.canvasSync.localDraftStale"),
   };
 }
 
@@ -711,6 +713,7 @@ export function useCanvasSync(
   project: string,
   canvasId: string,
 ): CanvasSyncResult {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<CanvasSyncStatus>("loading");
   const [error, setError] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<Record<string, unknown> | null>(null);
@@ -877,6 +880,7 @@ export function useCanvasSync(
     );
     return {
       project,
+      t,
       canvasId,
       nodes: canvasState.nodes,
       edges: canvasState.edges,
@@ -1148,6 +1152,7 @@ export function useCanvasSync(
           nodes,
           edges,
           meta,
+          t,
         );
         lastRemoteNodeCountRef.current = nodes.length;
         if (draftDecision.kind === "draft") {
@@ -1633,7 +1638,7 @@ export function useCanvasSync(
     const preset = metadata?.preset as Record<string, unknown> | undefined;
     const request = presetRequestFromMetadata(preset);
     if (!request) {
-      throw new Error("当前画布不是可恢复的主线 preset");
+      throw new Error(t("freezone.canvasSync.notRestorablePreset"));
     }
     if (
       shouldDeferPresetRefreshUntilReady(
@@ -1657,7 +1662,7 @@ export function useCanvasSync(
             setSyncStatus("ready");
             return canvasId;
           }
-          throw new Error("当前画布还有未保存冲突，处理后再同步主线视图");
+          throw new Error(t("freezone.canvasSync.unsavedConflictBeforeSync"));
         }
       }
       await createCanvasFromPreset(project, {
@@ -1677,7 +1682,7 @@ export function useCanvasSync(
       }
       const message =
         status === 409
-          ? "主线视图已被其他窗口更新,请刷新后重试"
+          ? t("freezone.canvasSync.mainlineUpdatedElsewhere")
           : err instanceof Error
             ? err.message
             : String(err);
@@ -1706,6 +1711,8 @@ export function useCanvasSync(
 
 interface SaveArgs {
   project: string;
+  /** 保存链路上的所有文案都要跟着界面语言走，由 hook 从 useTranslation 传下来。 */
+  t: TFn;
   canvasId: string;
   nodes: unknown[];
   edges: unknown[];
@@ -1794,9 +1801,7 @@ async function scheduleSave(args: SaveArgs): Promise<boolean> {
   if (decision.kind === "block") {
     args.pendingClientSaveIdRef.current = null;
     args.pendingClientSaveIdSignatureRef.current = null;
-    args.setError(
-      "本地画布为空但服务器还有节点，已暂停自动保存以避免覆盖。请刷新后再编辑。",
-    );
+    args.setError(args.t("freezone.canvasSync.dangerousEmptyBlocked"));
     args.setStatus("conflict");
     return false;
   }
@@ -1878,7 +1883,7 @@ async function performSave(
   if (countViolation) {
     args.pendingClientSaveIdRef.current = null;
     args.pendingClientSaveIdSignatureRef.current = null;
-    args.setError(describePayloadViolation(countViolation));
+    args.setError(describePayloadViolation(countViolation, args.t));
     args.setStatus("error");
     return false;
   }
@@ -1973,7 +1978,7 @@ function consumeSaveResponse(
     // warning without flipping into the hard error path — the user's edits
     // are durable on the server, just not yet replicated. The dedicated
     // backupStatus channel above also picks this up for the UI indicator.
-    args.setError("云端备份失败，请稍后再试");
+    args.setError(args.t("freezone.canvasSync.backupFailed"));
   }
 }
 
@@ -1987,7 +1992,12 @@ async function handleSaveError(
 ): Promise<boolean> {
   const { status, body } = saveErrorStatusAndBody(err);
   const fallback = err instanceof Error ? err.message : String(err);
-  const outcome: SaveResponseOutcome = classifySaveError(status, body, fallback);
+  const outcome: SaveResponseOutcome = classifySaveError(
+    status,
+    body,
+    fallback,
+    args.t,
+  );
 
   // Local helpers — every "terminal" branch drops the pending idempotency
   // token so the next fresh content change mints a new one. Retry branches
@@ -2038,7 +2048,7 @@ async function handleSaveError(
       // Retry budget exhausted — surface as a generic error so the user
       // knows the save did not stick.
       dropPendingId();
-      args.setError("画布写入被锁占用，请稍后重试");
+      args.setError(args.t("freezone.canvasSync.lockBusy"));
       args.setStatus("error");
       return false;
     }

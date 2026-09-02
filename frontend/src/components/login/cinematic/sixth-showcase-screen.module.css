@@ -234,3 +234,18 @@
     width: calc(100vw - 48px);
   }
 }
+
+/* 同字号下英文的行宽差不多是中文的两倍：「按剧集推进到成片」占 1 行，对应的英文标题
+   要 3 行，文案块底边从 330 掉到 594，直接压进 `.filmStage`（实测重叠 222px）。
+   影片轨道是写死的 43vh 硬偏移、没法为文案块让位，所以按语言收窄展示字号，把英文
+   标题压回 2 行以内——`<html lang>` 由 src/i18n/index.ts 与 i18next 保持同步。 */
+:global(html[lang="en"]) .header h2 {
+  font-size: clamp(38px, 3.4vw, 66px);
+  line-height: 1.06;
+}
+
+:global(html[lang="en"]) .header span {
+  max-width: 780px;
+  font-size: clamp(15px, 1.05vw, 21px);
+  line-height: 1.5;
+}

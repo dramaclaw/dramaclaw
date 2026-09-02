@@ -23,7 +23,7 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { useExternalFileHandoff } from '@/features/canvas/hooks/useExternalFileHandoff';
-import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import {
   NodeHeader,
   NODE_HEADER_FLOATING_POSITION_CLASS,
@@ -108,8 +108,8 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
     !isGenerating && !data.audioUrl && generationError.length > 0;
 
   const resolvedTitle = useMemo(
-    () => resolveNodeDisplayName(CANVAS_NODE_TYPES.audio, data),
-    [data],
+    () => localizeNodeDisplayName(CANVAS_NODE_TYPES.audio, data, t),
+    [data, t],
   );
   const resolvedWidth = Math.max(MIN_WIDTH, Math.round(width ?? DEFAULT_WIDTH));
   const resolvedHeight = Math.max(MIN_HEIGHT, Math.round(height ?? DEFAULT_HEIGHT));
@@ -204,7 +204,7 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
         if (!first) {
           updateNodeData(id, {
             voiceAvailable: false,
-            voiceLabel: '未配置可用声线',
+            voiceLabel: t('node.audioNode.noVoiceConfigured'),
           });
           return;
         }
@@ -329,7 +329,7 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
           <div className="nodrag flex flex-col items-center px-5 text-center">
             <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-red-200">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-300/90" />
-              <span>生成失败</span>
+              <span>{t('node.audioNode.generateFailed')}</span>
             </div>
             <div
               className="mt-1 max-h-12 max-w-full overflow-y-auto break-words text-[11px] leading-4 text-red-100/76 [overflow-wrap:anywhere]"
@@ -341,14 +341,14 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
               <RegenerateButton
                 onClick={() => void generate()}
                 busy={isGenerating}
-                label="重试"
+                label={t('common.retry')}
               />
             </div>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2 text-text-muted/70">
             <Music2 className="h-7 w-7 opacity-60" />
-            <span className="text-[12px]">暂无音频</span>
+            <span className="text-[12px]">{t('node.audioNode.empty')}</span>
           </div>
         )}
       </div>

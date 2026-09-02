@@ -203,8 +203,8 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
       baseCanvas.getContext('2d')?.drawImage(img, 0, 0);
       setImageReady(true);
     };
-    img.onerror = () => setError('无法加载源图');
-  }, [imageSource]);
+    img.onerror = () => setError(t('canvas.paintTools.loadSourceFailed'));
+  }, [imageSource, t]);
 
   const recomputeHasMask = useCallback(() => {
     const canvas = maskCanvasRef.current;
@@ -425,7 +425,9 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
   const createRedrawNode = useCallback(
     (sourceAspectRatio: string, masked: boolean, position: { x: number; y: number }) => {
       const generationStartedAt = Date.now();
-      const displayName = masked ? '局部重绘' : '重绘';
+      const displayName = masked
+        ? t('canvas.redrawOverlay.maskedDisplayName')
+        : t('canvas.redrawOverlay.displayName');
       // 1→1 redraw / mask-redraw: inherit source's mainline fields so the
       // child still targets the same canonical slot at Push. user_spawned is
       // stamped by inheritMainlineFields; preset_managed never set.
@@ -515,11 +517,11 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
     }
     const project = readUrl().project;
     if (!project) {
-      setError('当前 URL 没有 project，无法提交');
+      setError(t('canvas.paintTools.noProject'));
       return;
     }
     if (!hasMask && !prompt.trim()) {
-      setError('请输入提示词，或在图上画出局部重绘区域');
+      setError(t('canvas.redrawOverlay.needPromptOrMask'));
       return;
     }
     setError(null);
@@ -603,7 +605,9 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
     return 'crosshair';
   }, [imageReady, tool]);
 
-  const submitLabel = hasMask ? '局部重绘' : '整体重绘';
+  const submitLabel = hasMask
+    ? t('canvas.redrawOverlay.submitMasked')
+    : t('canvas.redrawOverlay.submitWhole');
   const brushPercent = ((brushSize - BRUSH_MIN) / (BRUSH_MAX - BRUSH_MIN)) * 100;
   const brushSliderStyle = {
     background: `linear-gradient(to right, #5b8cff 0%, #5b8cff ${brushPercent}%, rgba(255,255,255,0.28) ${brushPercent}%, rgba(255,255,255,0.28) 100%)`,
@@ -625,19 +629,19 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
         <div className="pointer-events-none absolute left-4 right-4 top-3 z-10 flex h-9 items-center justify-between gap-3">
           <div className="pointer-events-auto flex items-center gap-5">
             <div className="flex items-center gap-2">
-              <ToolBtn active={tool === 'brush'} onClick={() => setTool('brush')} title="画笔">
+              <ToolBtn active={tool === 'brush'} onClick={() => setTool('brush')} title={t('canvas.paintTools.brush')}>
                 <Brush className="h-4 w-4" />
               </ToolBtn>
-              <ToolBtn active={tool === 'rect'} onClick={() => setTool('rect')} title="矩形">
+              <ToolBtn active={tool === 'rect'} onClick={() => setTool('rect')} title={t('canvas.paintTools.rect')}>
                 <Square className="h-4 w-4" />
               </ToolBtn>
-              <ToolBtn active={tool === 'eraser'} onClick={() => setTool('eraser')} title="橡皮擦">
+              <ToolBtn active={tool === 'eraser'} onClick={() => setTool('eraser')} title={t('canvas.paintTools.eraser')}>
                 <Eraser className="h-4 w-4" />
               </ToolBtn>
             </div>
 
             <div className="flex items-center gap-2 text-xs text-text-dark/68">
-              <span className="whitespace-nowrap">粗细</span>
+              <span className="whitespace-nowrap">{t('canvas.paintTools.thickness')}</span>
               <input
                 type="range"
                 min={BRUSH_MIN}
@@ -658,20 +662,20 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
               onClick={handleUndo}
               disabled={submitting || undoStackRef.current.length === 0}
               className={REDRAW_TEXT_BUTTON_CLASS}
-              title="撤销上一步"
+              title={t('canvas.paintTools.undo')}
             >
               <Undo2 className="h-3.5 w-3.5" />
-              撤销
+              {t('canvas.paintTools.undoShort')}
             </button>
             <button
               type="button"
               onClick={handleReset}
               disabled={submitting}
               className={REDRAW_TEXT_BUTTON_CLASS}
-              title="清空蒙版"
+              title={t('canvas.redrawOverlay.clearMask')}
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              重置
+              {t('canvas.paintTools.reset')}
             </button>
             <button
               type="button"
@@ -680,13 +684,15 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
               className={REDRAW_TEXT_BUTTON_CLASS}
             >
               <X className="h-3.5 w-3.5" />
-              退出重绘
+              {t('canvas.redrawOverlay.exit')}
             </button>
           </div>
         </div>
 
         <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#111214]/80 p-4 pt-14">
-          {!imageReady && <div className="text-sm text-text-muted">加载源图...</div>}
+          {!imageReady && (
+            <div className="text-sm text-text-muted">{t('canvas.paintTools.loadingSource')}</div>
+          )}
           <div
             className={`relative max-h-full max-w-full ${imageReady ? '' : 'hidden'}`}
             style={{ cursor }}
@@ -718,14 +724,14 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
             disabled={submitting}
             placeholder={
               hasMask
-                ? '描述蒙版区域要变成什么，例：把这块背景改成黄昏天空'
-                : '描述要如何重新设计这张图，例：保留构图，把背景改成黄昏沙漠'
+                ? t('canvas.redrawOverlay.promptPlaceholderMasked')
+                : t('canvas.redrawOverlay.promptPlaceholderWhole')
             }
             className={`${REDRAW_PROMPT_CLASS} ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
           />
 
           <div className="flex flex-wrap items-center gap-5 text-xs text-text-dark/58">
-            <Field label="模型">
+            <Field label={t('modelPicker.model')}>
               <ProviderModelPicker
                 selectedModelId={modelId}
                 onChange={setModelId}
@@ -745,7 +751,7 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
                 ))}
               </RedrawSelect>
             </Field>
-            <Field label="数量">
+            <Field label={t('canvas.paintTools.count')}>
               <RedrawSelect
                 value={numImages}
                 onChange={(event) => setNumImages(Number(event.target.value))}
@@ -758,7 +764,7 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
                 ))}
               </RedrawSelect>
             </Field>
-            <Field label="目标比例">
+            <Field label={t('canvas.redrawOverlay.targetAspect')}>
               <RedrawSelect
                 value={effectiveAspectRatio}
                 onChange={(event) =>

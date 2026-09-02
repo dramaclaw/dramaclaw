@@ -39,6 +39,7 @@ import {
   usePlanIdentities,
 } from "@/lib/queries/episodes";
 import { deriveEpisodeStats, type EpisodeStats } from "@/lib/episode-stats";
+import { episodeDisplayTitle } from "@/lib/episode-title";
 import { useStageTask } from "@/hooks/use-stage-task";
 import { useTaskController } from "@/hooks/use-task-controller";
 import { useTaskActivity } from "@/task-center/use-task-activity";
@@ -143,10 +144,6 @@ function EpisodeHeaderLayout({
 
 // ─── Top bar ────────────────────────────────────────────────────────────────
 
-function episodeDisplayTitle(episode: Episode, episodeNumberLabel: string) {
-  return episode.title?.trim() || episodeNumberLabel;
-}
-
 function EpisodeTitleSwitcher({
   selectedEpisode,
   episodes,
@@ -158,8 +155,9 @@ function EpisodeTitleSwitcher({
 }) {
   const { t } = useTranslation();
   const currentTitle = episodeDisplayTitle(
-    selectedEpisode,
-    t("episode.list.episodeNumber", { n: selectedEpisode.number }),
+    selectedEpisode.number,
+    selectedEpisode.title,
+    t,
   );
 
   if (episodes.length <= 1) {
@@ -198,10 +196,7 @@ function EpisodeTitleSwitcher({
           <div className="max-h-[min(62vh,26rem)] overflow-y-auto overscroll-contain pr-1">
             {episodes.map((episode) => {
               const isCurrent = episode.number === selectedEpisode.number;
-              const title = episodeDisplayTitle(
-                episode,
-                t("episode.list.episodeNumber", { n: episode.number }),
-              );
+              const title = episodeDisplayTitle(episode.number, episode.title, t);
               const lines = countContentLines(
                 episode.beat_source_text || episode.raw_content,
               );
@@ -648,8 +643,7 @@ function EpisodeListItem({
       );
     },
   });
-  const title =
-    episode.title?.trim() || t("episode.list.episodeNumber", { n: episode.number });
+  const title = episodeDisplayTitle(episode.number, episode.title, t);
   const snippet = (episode.summary || "")
     .replace(/\s+/g, " ")
     .trim()

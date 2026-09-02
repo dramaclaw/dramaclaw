@@ -45,6 +45,7 @@ import { cn } from "@/lib/utils";
 import { useNow } from "@/hooks/use-now";
 import { useNavigateToAsset } from "@/hooks/use-assets-deep-link";
 import { useTaskController } from "@/hooks/use-task-controller";
+import { useScopedTaskBatchInvalidation } from "@/hooks/use-scoped-task-batch-invalidation";
 import { queryKeys } from "@/lib/query-keys";
 import { TASK_TYPES } from "@/lib/task-types";
 import { useSeenPoolStore } from "@/stores/seen-pool-store";
@@ -153,12 +154,31 @@ export function SketchSection({
   // missed the row and the stream fell into a "Task not found" reconnect
   // loop. Scope now flows through `start({ scope })` from the mutation
   // response.
+  //
+  // `coversBeat` 而不是 `beatNum`:任务行的 beat_num 恒为 None,但 beat 名单在
+  // metadata.beat_numbers 里。它让每个 beat 拿到自己的 registry entry —— 之前
+  // 全集共用一个 entry,beat 4 在跑的时候 beat 5 的「生成草图」也是 disabled,
+  // 而且 beat 5 因为 covers() 不命中连进度条都没有,按钮就成了没有任何解释的死键。
+  // 后端本来就支持并发(每个 selection_scope 是独立的 scope/任务行)。
   const regenTask = useTaskController({
     key: {
       taskType: "sketch_regen",
       project,
       episode,
+      coversBeat: beat.beat_number,
     },
+    invalidateKeys: [
+      queryKeys.grids(project, episode),
+      queryKeys.beats(project, episode),
+    ],
+  });
+  // 每个 beat 一个 entry 之后,切到别的 beat 时这一格的 entry 就没有 owner 了
+  // (SketchSection 不换实例但 key 变了),SSE 断开 → 那次 run 完成时没人去
+  // invalidate grids/beats。用全局任务总线按 scope 兜底:组件实例跨 beat 切换
+  // 存活,所以后台跑完的那个 beat 一样会刷新。
+  const { track: trackRegenScope } = useScopedTaskBatchInvalidation({
+    project,
+    taskType: TASK_TYPES.SKETCH_REGEN,
     invalidateKeys: [
       queryKeys.grids(project, episode),
       queryKeys.beats(project, episode),
@@ -199,9 +219,8 @@ export function SketchSection({
   // (0–1) is surfaced as a percentage; it survives refresh because both
   // controllers reconcile against the persisted task row.
   //
-  // `regenTask` is keyed episode-wide (the BE's `sketch_regen` row has
-  // beat_num=None and a hashed scope), so every beat's panel shares one entry.
-  // Gate on `covers` or beat 11 shows beat 9's progress bar.
+  // `regenTask` 现在按 `coversBeat` 分 entry,`covers` 只是再兜一道:覆盖范围
+  // 未知的旧任务行(没写 metadata.beat_numbers)两边都按「命中」处理。
   const regenActive = regenTask.started && regenTask.covers(beat.beat_number);
   const sketchActive = directorTask.started || regenActive;
   const sketchStream = directorTask.started ? directorTask.stream : regenTask.stream;
@@ -347,6 +366,7 @@ export function SketchSection({
         toast.error(res.error || t("episode.workbench.sketch.regenFailed"));
         return;
       }
+      trackRegenScope(res.scope);
       regenTask.start({
         scope: res.scope,
         taskId: res.task_id,
@@ -722,10 +742,8 @@ export function SketchSection({
               size="xs"
               variant="outline"
               onClick={() => setRegenConfirm(true)}
-              // Also blocked while a regen this beat is NOT part of is running:
-              // all beats share one `sketch_regen` registry entry, so starting a
-              // second run would repoint its scope/task id/beat coverage and the
-              // in-flight beat would lose its progress bar and Stop button.
+              // 只在「这一格自己」有 run 在跑时禁用:entry 按 coversBeat 分开后,
+              // 别的 beat 在跑不再连累这里(那时上面已经渲染的是 Stop 按钮)。
               disabled={regenerate.isPending || regenTask.started}
               className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
             >

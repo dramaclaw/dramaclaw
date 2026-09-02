@@ -61,6 +61,11 @@ export function buildContextPromptPaletteForNode(
   return buildContextPromptPalette(canvasBeatContexts.length === 1 ? canvasBeatContexts : []);
 }
 
+/**
+ * 点一下就插进提示词输入框的那句话。它跟着上游镜头上下文一起发给模型，
+ * 模型认的是这套中文表述，跟界面语言无关。
+ */
+// i18n-exempt-start
 export function contextPromptPaletteInsertionText(entry: ContextPromptPaletteEntry): string {
   if (entry.kind === "actor") {
     if (!entry.named) return `${entry.color} 标记的人物`;
@@ -69,6 +74,7 @@ export function contextPromptPaletteInsertionText(entry: ContextPromptPaletteEnt
   if (!entry.named) return `${entry.color} 标记的道具`;
   return `${entry.color} 标记的道具「${entry.label}」`;
 }
+// i18n-exempt-end
 
 // Keep these in sync with the backend director-world anonymous palettes:
 // BRIDGMAN_CHARACTER_PALETTE and PROP_MARKER_PALETTE.

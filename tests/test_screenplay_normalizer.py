@@ -121,6 +121,24 @@ def test_clean_scene_name_and_time_preserves_specific_location_anchor():
     assert tod == ""
 
 
+@pytest.mark.parametrize(
+    ("raw_name", "expected_name", "expected_time"),
+    [
+        ("Seoul Subway Station 11:47 PM", "Seoul Subway Station", "夜晚"),
+        ("Living Room - NIGHT", "Living Room", "夜晚"),
+        ("Park, daytime", "Park", "白天"),
+        ("Studio 54", "Studio 54", ""),
+    ],
+)
+def test_clean_scene_name_and_time_removes_english_time_suffixes(
+    raw_name, expected_name, expected_time
+):
+    name, tod = clean_scene_name_and_time(raw_name, "")
+
+    assert name == expected_name
+    assert tod == expected_time
+
+
 def test_normalized_scene_block_validator_cleans_location_time():
     block = NormalizedSceneBlock(
         episode_number=3,

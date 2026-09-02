@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface ReferenceDetachButtonProps {
   /** 上游节点 id（连线的 source） */
@@ -21,11 +22,12 @@ interface ReferenceDetachButtonProps {
  * 通过 `group-hover:flex` 显示。
  */
 export function ReferenceDetachButton({ nodeId, onDetach, className }: ReferenceDetachButtonProps) {
+  const { t } = useTranslation();
   return (
     <span
       role="button"
       tabIndex={-1}
-      title="取消引用此素材"
+      title={t('canvas.reference.detach')}
       className={
         className ??
         'nodrag absolute right-1 top-1 z-10 hidden h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white shadow-sm ring-1 ring-white/15 transition-colors hover:bg-red-500 group-hover:flex'

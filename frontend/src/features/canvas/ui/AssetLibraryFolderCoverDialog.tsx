@@ -8,6 +8,7 @@
 // 不涉及上传，素材被删掉后封面自然回落到默认图标。
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { Loader2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -28,6 +29,7 @@ export function AssetLibraryFolderCoverDialog({
   onClose,
   onSubmit,
 }: AssetLibraryFolderCoverDialogProps) {
+  const { t } = useTranslation();
   const [picked, setPicked] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -63,18 +65,18 @@ export function AssetLibraryFolderCoverDialog({
     <div
       className="fixed inset-0 z-[320] flex items-center justify-center"
       role="dialog"
-      aria-label="修改封面"
+      aria-label={t('canvas.assetLibrary.cover.title')}
     >
       <div className="absolute inset-0 bg-black/55" onClick={onClose} />
       <div className="relative flex max-h-[80vh] w-[min(720px,92vw)] flex-col overflow-hidden rounded-[10px] border border-white/[0.12] bg-[#1b1c22] shadow-[0_18px_48px_rgba(0,0,0,0.5)]">
         <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-3.5">
           <h3 className="text-sm font-semibold text-text-dark">
-            修改封面 · {folder.label}
+            {t('canvas.assetLibrary.cover.titleWithFolder', { name: folder.label })}
           </h3>
           <button
             type="button"
             onClick={onClose}
-            title="关闭"
+            title={t('common.close')}
             className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted/90 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
           >
             <X className="h-4 w-4" />
@@ -84,7 +86,7 @@ export function AssetLibraryFolderCoverDialog({
         <div className="ui-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {images.length === 0 ? (
             <div className="py-10 text-center text-xs text-text-muted/70">
-              这个文件夹里还没有图片素材，先上传一张再来设封面。
+              {t('canvas.assetLibrary.cover.empty')}
             </div>
           ) : (
             <div
@@ -98,7 +100,7 @@ export function AssetLibraryFolderCoverDialog({
                   key={entry.id ?? `img-${idx}`}
                   type="button"
                   onClick={() => setPicked(entry.url)}
-                  aria-label={`选择封面 ${entry.name}`}
+                  aria-label={t('canvas.assetLibrary.cover.pickAria', { name: entry.name })}
                   className={`relative aspect-square overflow-hidden rounded-[8px] border transition-colors ${
                     picked === entry.url
                       ? 'border-accent/70 ring-1 ring-accent/45'
@@ -125,7 +127,7 @@ export function AssetLibraryFolderCoverDialog({
             className="px-4 text-text-muted hover:text-text-dark"
             onClick={onClose}
           >
-            取消
+            {t('common.cancel')}
           </Button>
           <Button
             size="sm"
@@ -134,7 +136,7 @@ export function AssetLibraryFolderCoverDialog({
             onClick={() => void handleSubmit()}
           >
             {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-            保存
+            {t('common.save')}
           </Button>
         </div>
       </div>

@@ -5,6 +5,10 @@ import { useTranslation } from "react-i18next";
 
 import { useProject } from "@/lib/queries/projects";
 import { useStyles } from "@/lib/queries/styles";
+import {
+  BUILTIN_STYLE_LABEL_KEYS,
+  DEFAULT_VISUAL_STYLE,
+} from "@/lib/visual-styles";
 import { cn } from "@/lib/utils";
 import type { Style } from "@/types/style";
 
@@ -13,16 +17,6 @@ export type ProjectStyleChipProps = {
   className?: string;
 };
 
-const DEFAULT_VISUAL_STYLE = "chinese_period_drama";
-
-export const BUILTIN_STYLE_LABEL_KEYS: Record<string, string> = {
-  chinese_period_drama: "ingest.visualStyles.chinesePeriodDrama",
-  anime: "ingest.visualStyles.anime",
-  guoman_fantasy: "ingest.visualStyles.guomanFantasy",
-  post_apocalyptic: "ingest.visualStyles.postApocalyptic",
-  realistic: "ingest.visualStyles.realistic",
-  republican_era_drama: "ingest.visualStyles.republicanEraDrama",
-};
 
 function resolveStyleLabel(
   styleId: string,

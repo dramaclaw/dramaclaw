@@ -187,6 +187,50 @@ describe("useTaskController beat coverage", () => {
     expect(result.current.covers(11)).toBe(true);
   });
 
+  // 用户报的 bug：beat 4 在跑草图，切到 beat 5 「立即生成」是灰的，而且 beat 5
+  // 因为 covers() 不命中连进度条都没有——按钮成了没有任何解释的死键。后端本来就
+  // 支持并发（每个 selection_scope 是独立的 scope/任务行），所以 key 加 coversBeat
+  // 让每个 beat 拿自己的注册表条目，reconcile 也按覆盖范围过滤。
+  it("coversBeat 让别的 beat 在跑时本 beat 不被点亮", async () => {
+    state.tasks = [runningRegen({ task_id: "t4", metadata: { beat_numbers: [4] } })];
+
+    // 两个面板挂在同一个 provider 下：等 beat 4 那格认领成功，再断言 beat 5 没被带亮。
+    // 只断言「一直是 false」会因为初始就是 false 而形同虚设。
+    const { result } = renderHook(
+      () => ({
+        four: useTaskController({ key: { ...KEY, coversBeat: 4 } }),
+        five: useTaskController({ key: { ...KEY, coversBeat: 5 } }),
+      }),
+      { wrapper: ({ children }) => wrap(children) },
+    );
+
+    await waitFor(() => expect(result.current.four.started).toBe(true));
+    expect(result.current.five.started).toBe(false);
+  });
+
+  it("coversBeat 命中的任务行照常认领", async () => {
+    state.tasks = [runningRegen({ task_id: "t4", metadata: { beat_numbers: [4] } })];
+
+    const { result } = renderHook(
+      () => useTaskController({ key: { ...KEY, coversBeat: 4 } }),
+      { wrapper: ({ children }) => wrap(children) },
+    );
+
+    await waitFor(() => expect(result.current.started).toBe(true));
+    expect(result.current.covers(4)).toBe(true);
+  });
+
+  it("覆盖范围未知的任务行仍按命中处理，不把真在跑的 beat 藏掉", async () => {
+    state.tasks = [runningRegen({ task_id: "t4" })];
+
+    const { result } = renderHook(
+      () => useTaskController({ key: { ...KEY, coversBeat: 5 } }),
+      { wrapper: ({ children }) => wrap(children) },
+    );
+
+    await waitFor(() => expect(result.current.started).toBe(true));
+  });
+
   it("任务行只带 beat_num 时按单 beat 归属", async () => {
     state.tasks = [
       runningRegen({ task_type: "director_control_to_sketch", beat_num: 9, scope: undefined }),

@@ -9,6 +9,8 @@ import {
   type ChangeEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
+import type { TFunction } from 'i18next';
+import { useTranslation } from 'react-i18next';
 import { Loader2, Plus, Search, X, AudioWaveform } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -92,6 +94,7 @@ export function VoiceSelectionModal({
   currentRef,
   onPick,
 }: VoiceSelectionModalProps) {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<TabId>('library');
   const [items, setItems] = useState<FreezoneAudioReferenceItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -100,7 +103,7 @@ export function VoiceSelectionModal({
   const reload = useCallback(async () => {
     const project = readUrl().project;
     if (!project) {
-      setError('当前 URL 缺少 project 参数');
+      setError(t('node.voiceModal.missingProject'));
       return;
     }
     setLoading(true);
@@ -109,11 +112,11 @@ export function VoiceSelectionModal({
       const res = await fetchFreezoneAudioReferences(project);
       setItems(res.available ?? []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载声线失败');
+      setError(err instanceof Error ? err.message : t('node.voiceModal.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   // ESC 关闭
   useEffect(() => {
@@ -150,12 +153,14 @@ export function VoiceSelectionModal({
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between px-5 pb-3 pt-4">
-          <h2 className="text-[15px] font-semibold text-text-dark">音色选择</h2>
+          <h2 className="text-[15px] font-semibold text-text-dark">
+            {t('node.voiceModal.title')}
+          </h2>
           <button
             type="button"
             onClick={onClose}
             className="flex h-7 w-7 items-center justify-center rounded-md text-text-dark/70 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
-            title="关闭"
+            title={t('node.voiceModal.close')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -198,9 +203,10 @@ interface TabsRowProps {
 }
 
 function TabsRow({ tab, onChange }: TabsRowProps) {
+  const { t } = useTranslation();
   const tabs: Array<{ id: TabId; label: string }> = [
-    { id: 'library', label: '音色库' },
-    { id: 'mine', label: '我的音色' },
+    { id: 'library', label: t('node.voiceModal.tab.library') },
+    { id: 'mine', label: t('node.voiceModal.tab.mine') },
   ];
   return (
     <div className="flex items-center gap-2 px-5">
@@ -238,6 +244,7 @@ interface LibraryTabProps {
 }
 
 function LibraryTab({ currentRef, onPick, items, loading, error }: LibraryTabProps) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
 
@@ -276,21 +283,21 @@ function LibraryTab({ currentRef, onPick, items, loading, error }: LibraryTabPro
         <SearchBox
           value={query}
           onChange={setQuery}
-          placeholder="搜索音色库"
+          placeholder={t('node.voiceModal.searchLibrary')}
         />
       </ToolbarRow>
 
       <ListBody>
         {loading && (
           <CenteredHint>
-            <Loader2 className="h-4 w-4 animate-spin" /> 加载中…
+            <Loader2 className="h-4 w-4 animate-spin" /> {t('node.voiceModal.loading')}
           </CenteredHint>
         )}
         {!loading && error && (
           <CenteredHint className="text-rose-400">{error}</CenteredHint>
         )}
         {!loading && !error && total === 0 && (
-          <CenteredHint>暂无可用音色</CenteredHint>
+          <CenteredHint>{t('node.voiceModal.empty')}</CenteredHint>
         )}
         {!loading &&
           !error &&
@@ -310,14 +317,14 @@ function LibraryTab({ currentRef, onPick, items, loading, error }: LibraryTabPro
             return (
               <VoiceRow
                 key={`${key}-${idx}`}
-                title={item.label ?? describeVoiceRef(ref)}
+                title={item.label ?? describeVoiceRef(ref, t)}
                 language={item.language ?? null}
                 gender={readGender(item)}
                 isActive={isActive}
                 onSelect={() =>
                   onPick({
                     ref,
-                    label: item.label ?? describeVoiceRef(ref),
+                    label: item.label ?? describeVoiceRef(ref, t),
                     language: item.language ?? undefined,
                   })
                 }
@@ -357,6 +364,7 @@ function MyVoicesTab({
   error,
   onReload,
 }: MyVoicesTabProps) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [uploading, setUploading] = useState(false);
@@ -373,19 +381,19 @@ function MyVoicesTab({
       e.target.value = '';
       if (!file) return;
       if (!isAllowedAudioFile(file)) {
-        toast.error('请选择音频文件（mp3 / wav / m4a / aac / ogg / webm）');
+        toast.error(t('node.voiceModal.pickAudioFile'));
         return;
       }
       if (file.size > MAX_VOICE_FILE_BYTES) {
         const gotMb = (file.size / 1024 / 1024).toFixed(1);
         toast.error(
-          `参考音频不能超过 ${MAX_VOICE_FILE_MB}MB（当前 ${gotMb}MB），请压缩或裁剪后重试`,
+          t('node.voiceModal.fileTooLarge', { limit: MAX_VOICE_FILE_MB, size: gotMb }),
         );
         return;
       }
       const project = readUrl().project;
       if (!project) {
-        toast.error('当前 URL 缺少 project 参数');
+        toast.error(t('node.voiceModal.missingProject'));
         return;
       }
       setUploading(true);
@@ -399,14 +407,14 @@ function MyVoicesTab({
         // ky 的 NetworkError 文案是英文原文（"Request failed due to a network
         // error: ..."）。多数情况是文件偏大导致连接被提前关闭,给一句可读提示。
         const friendly = /network error/i.test(raw)
-          ? `上传失败：网络中断（音频过大可能被中途断开，请确认不超过 ${MAX_VOICE_FILE_MB}MB 后重试）`
-          : raw || '上传失败';
+          ? t('node.voiceModal.uploadNetworkError', { limit: MAX_VOICE_FILE_MB })
+          : raw || t('node.voiceModal.uploadFailed');
         toast.error(friendly);
       } finally {
         setUploading(false);
       }
     },
-    [onReload],
+    [onReload, t],
   );
 
   const filtered = useMemo(() => {
@@ -450,7 +458,7 @@ function MyVoicesTab({
           ) : (
             <Plus className="h-3.5 w-3.5" />
           )}
-          {uploading ? '上传中…' : '克隆新音色'}
+          {uploading ? t('node.voiceModal.uploading') : t('node.voiceModal.clone')}
         </button>
         <input
           ref={fileInputRef}
@@ -462,14 +470,14 @@ function MyVoicesTab({
         <SearchBox
           value={query}
           onChange={setQuery}
-          placeholder="搜索我的音色"
+          placeholder={t('node.voiceModal.searchMine')}
         />
       </ToolbarRow>
 
       <ListBody>
         {loading && (
           <CenteredHint>
-            <Loader2 className="h-4 w-4 animate-spin" /> 加载中…
+            <Loader2 className="h-4 w-4 animate-spin" /> {t('node.voiceModal.loading')}
           </CenteredHint>
         )}
         {!loading && error && (
@@ -488,7 +496,7 @@ function MyVoicesTab({
             };
             const key = voiceRefKey(ref);
             const isActive = key === currentKey;
-            const label = item.label ?? voiceId ?? '自定义音色';
+            const label = item.label ?? voiceId ?? t('node.voiceRef.userCustom');
             return (
               <VoiceRow
                 key={voiceId ? `${voiceId}` : `mine-${idx}`}
@@ -586,6 +594,7 @@ interface VoiceRowProps {
 }
 
 function VoiceRow({ title, language, gender, isActive, onSelect }: VoiceRowProps) {
+  const { t } = useTranslation();
   return (
     <div className="flex h-[52px] items-center gap-3 rounded-[10px] border border-white/[0.06] bg-white/[0.035] px-3 transition-colors hover:border-white/[0.1] hover:bg-white/[0.055]">
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-white/[0.06]">
@@ -612,13 +621,14 @@ function VoiceRow({ title, language, gender, isActive, onSelect }: VoiceRowProps
             : 'bg-[rgb(var(--accent-rgb))] text-bg-dark hover:bg-[rgb(var(--accent-rgb))]/90'
         }`}
       >
-        {isActive ? '已选' : '选择'}
+        {isActive ? t('node.voiceModal.selected') : t('node.voiceModal.select')}
       </button>
     </div>
   );
 }
 
 function EmptyState({ onClone }: { onClone: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-16 text-[13px] text-text-muted">
       <div className="flex h-16 w-20 items-center justify-center rounded-md bg-white/[0.04]">
@@ -635,14 +645,14 @@ function EmptyState({ onClone }: { onClone: () => void }) {
           />
         </svg>
       </div>
-      <span>暂无可用音色，快去克隆你的新音色吧～</span>
+      <span>{t('node.voiceModal.emptyMine')}</span>
       <button
         type="button"
         onClick={onClone}
         className="inline-flex h-8 items-center gap-1 rounded-full border border-[rgb(var(--accent-rgb))]/35 bg-[rgb(var(--accent-rgb))]/12 px-3 text-[12px] font-medium text-[rgb(var(--accent-rgb))] transition-colors hover:bg-[rgb(var(--accent-rgb))]/20"
       >
         <Plus className="h-3 w-3" />
-        克隆新音色
+        {t('node.voiceModal.clone')}
       </button>
     </div>
   );
@@ -661,6 +671,7 @@ function FooterPagination({
   total,
   onChange,
 }: FooterPaginationProps) {
+  const { t } = useTranslation();
   if (total === 0) return null;
   const pages = paginationWindow(page, totalPages);
   return (
@@ -694,14 +705,14 @@ function FooterPagination({
           {'>'}
         </PaginationButton>
         <span className="ml-3 inline-flex h-7 items-center rounded-full border border-white/[0.1] bg-transparent px-2.5 text-[12px] text-text-dark">
-          {PAGE_SIZE} 条/页
+          {t('node.voiceModal.perPage', { count: PAGE_SIZE })}
         </span>
       </div>
       <div className="flex items-center gap-2">
-        <span>跳至</span>
+        <span>{t('node.voiceModal.jumpTo')}</span>
         <PaginationJump page={page} totalPages={totalPages} onChange={onChange} />
-        <span>页</span>
-        <span className="ml-3">共 {total} 条</span>
+        <span>{t('node.voiceModal.pageSuffix')}</span>
+        <span className="ml-3">{t('node.voiceModal.totalCount', { count: total })}</span>
       </div>
     </footer>
   );
@@ -798,20 +809,29 @@ function voiceRefKey(ref: AudioVoiceRef): string {
   ].join('|');
 }
 
-function describeVoiceRef(ref: AudioVoiceRef): string {
+function describeVoiceRef(ref: AudioVoiceRef, t: TFunction): string {
   switch (ref.scope) {
     case 'project_narrator':
-      return '项目解说人';
+      return t('node.voiceRef.projectNarrator');
     case 'user_custom':
-      return ref.voiceId ?? '自定义音色';
+      return ref.voiceId ?? t('node.voiceRef.userCustom');
     case 'character_default':
-      return `${ref.characterName ?? '角色'}（默认声线）`;
+      return t('node.voiceRef.characterDefault', {
+        name: ref.characterName ?? t('node.voiceRef.character'),
+      });
     case 'character_age_group':
-      return `${ref.characterName ?? '角色'}（${ref.slot ?? '年龄段'}）`;
+      return t('node.voiceRef.characterAgeGroup', {
+        name: ref.characterName ?? t('node.voiceRef.character'),
+        slot: ref.slot ?? t('node.voiceRef.ageGroup'),
+      });
     case 'identity':
-      return `${ref.identityId ?? '身份'}（自有声线）`;
+      return t('node.voiceRef.identity', {
+        id: ref.identityId ?? t('node.voiceRef.identityFallback'),
+      });
     case 'identity_resolved':
-      return `${ref.identityId ?? '身份'}（解析后）`;
+      return t('node.voiceRef.identityResolved', {
+        id: ref.identityId ?? t('node.voiceRef.identityFallback'),
+      });
     default:
       return ref.scope;
   }

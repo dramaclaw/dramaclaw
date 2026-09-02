@@ -61,7 +61,7 @@ import {
   resolveMinEdgeFittedSize,
   shouldForceNaturalImageSize,
 } from '@/features/canvas/application/imageNodeSizing';
-import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import {
   isSystemManagedNodeData,
   mainlineNodeVisualState,
@@ -250,8 +250,10 @@ const OPERATIONS_PANEL_EXPANDED_HEIGHT = 560;
 const OPERATIONS_PANEL_EXPANDED_MIN_WIDTH = 960;
 const IMAGE_GENERATE_FEATURE_KEY = 'freezone.image_generate';
 
+// 只有 auto 需要翻译，其余标签就是比例本身。模块级常量取不到 t，所以存 key。
+const ASPECT_LABEL_KEYS: Record<string, string> = { auto: 'node.imageGen.aspect.auto' };
 const ASPECT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'auto', label: '自适应' },
+  { value: 'auto', label: 'auto' },
   { value: '1:1', label: '1:1' },
   { value: '9:16', label: '9:16' },
   { value: '16:9', label: '16:9' },
@@ -268,10 +270,10 @@ const SIZE_OPTIONS: ReadonlyArray<ImageSize> = ['1K', '2K', '4K'];
 const COUNT_OPTIONS: ReadonlyArray<ImageGenCount> = [1, 2, 4];
 const SELECTED_BACKGROUND_CROP_ASPECT_OPTIONS = ['2:3', '16:9'] as const;
 
-const QUALITY_OPTIONS: ReadonlyArray<{ value: ImageQuality; label: string }> = [
-  { value: 'low', label: '低画质' },
-  { value: 'medium', label: '标准画质' },
-  { value: 'high', label: '高画质' },
+const QUALITY_OPTIONS: ReadonlyArray<{ value: ImageQuality; labelKey: string }> = [
+  { value: 'low', labelKey: 'node.imageGen.quality.low' },
+  { value: 'medium', labelKey: 'node.imageGen.quality.medium' },
+  { value: 'high', labelKey: 'node.imageGen.quality.high' },
 ];
 const DEFAULT_IMAGE_QUALITY: ImageQuality = 'medium';
 const IMAGE_PARAM_POPOVER_CLASS =
@@ -466,9 +468,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         ASPECT_OPTIONS.map((item) => item.value),
       ).map((value) => ({
         value,
-        label: ASPECT_OPTIONS.find((item) => item.value === value)?.label ?? value,
+        label: ASPECT_LABEL_KEYS[value] ? t(ASPECT_LABEL_KEYS[value]) : value,
       })),
-    [selectedModel],
+    [selectedModel, t],
   );
   const effectiveImageSize =
     modelSizeOptions.find((option) => option.toLowerCase() === size.toLowerCase())
@@ -708,7 +710,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         key:
           upstreamImageContents.find((content) => content.imageUrl === url)
             ?.nodeId ?? `self:${url}`,
-        name: `图片${index + 1}`,
+        // `@图片N` 是提示词里的引用记号，随 prompt 原样发给后端，不是界面文案。
+        name: `图片${index + 1}`, // i18n-exempt
         imageUrl: resolveImageDisplayUrl(url),
         index: index + 1,
       })),
@@ -749,8 +752,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       id,
       CANVAS_NODE_TYPES.imageGen,
       attached,
+      t,
     );
-  }, [id]);
+  }, [id, t]);
   // 选中一条画布素材：连成上游即可，参考图行与 @ 编号都由上游推导链路跟上。
   // 被拒（素材上限等）时 attachReferenceEdge 已经把原因弹出来了，这里只回结果。
   const handleAttachMaterial = useCallback(
@@ -772,7 +776,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   );
   useReferenceMentionSync(
     prompt,
-    [{ prefix: "图片", ids: orderedReferenceUrls }],
+    [{ prefix: "图片", ids: orderedReferenceUrls }], // i18n-exempt —— 同 mentionCandidates，属提示词协议
     applyPromptRemap,
   );
 
@@ -837,7 +841,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         addEdgeAction(newId, id);
         newIds.push(newId);
       });
-      state.autoGroupSpawn(id, newIds, { label: '资产参考组' });
+      state.autoGroupSpawn(id, newIds, { label: t('node.imageGen.assetReferenceGroup') });
     },
     [addEdgeAction, addNodeAction, id],
   );
@@ -858,8 +862,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   }, [refHover]);
 
   const resolvedTitle = useMemo(
-    () => resolveNodeDisplayName(CANVAS_NODE_TYPES.imageGen, data),
-    [data],
+    () => localizeNodeDisplayName(CANVAS_NODE_TYPES.imageGen, data, t),
+    [data, t],
   );
   const resolvedWidth = Math.max(MIN_WIDTH, Math.round(width ?? DEFAULT_WIDTH));
   const resolvedHeight = Math.max(MIN_HEIGHT, Math.round(height ?? DEFAULT_HEIGHT));
@@ -1143,7 +1147,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const selectedModelReferenceError =
     selectedModel?.referenceImageMax != null &&
     orderedReferenceUrls.length > selectedModel.referenceImageMax
-      ? `该模型最多支持 ${selectedModel.referenceImageMax} 张图片素材`
+      ? t('node.videoModel.reason.maxImages', { count: selectedModel.referenceImageMax })
       : null;
   const modelTaskAccess = useModelTaskAccess();
   const submitDisabled =
@@ -1449,7 +1453,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     async (blob: Blob, meta: ThreeDDirectorCaptureMeta) => {
       const projectId = readUrl().project;
       if (!projectId || effectiveEpisode === null || effectiveBeat === null) {
-        throw new Error('缺少项目或镜头上下文');
+        throw new Error(t('node.imageGen.missingContext'));
       }
 
       let imageUrl = meta.controlFrameUrl
@@ -1533,7 +1537,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                 key={`album-deck-${index}`}
                 role="button"
                 tabIndex={-1}
-                title="展开画册"
+                title={t('node.imageGen.album.expand')}
                 onClick={(event) => {
                   event.stopPropagation();
                   handleToggleAlbumExpanded();
@@ -1610,7 +1614,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               handlePickFile();
             }}
             onPointerDown={(event) => event.stopPropagation()}
-            title="上传图片"
+            title={t('node.imageGen.upload')}
             className={NODE_SIDE_ACTION_BUTTON_CLASS}
           >
             {isUploading ? (
@@ -1618,7 +1622,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             ) : (
               <Upload className={NODE_SIDE_ACTION_ICON_CLASS} />
             )}
-            <span>{isUploading ? '上传中' : '上传图片'}</span>
+            <span>{t(isUploading ? 'node.imageGen.uploading' : 'node.imageGen.upload')}</span>
           </button>
         </NodeSideActionRail>
       )}
@@ -1731,7 +1735,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                   event.stopPropagation();
                   handleClearReference();
                 }}
-                title="移除参考图"
+                title={t('node.imageGen.removeReference')}
                 className="nodrag absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white transition-colors hover:bg-black/75"
               >
                 <X className="h-3.5 w-3.5" />
@@ -1746,7 +1750,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                   handleToggleAlbumExpanded();
                 }}
                 onPointerDown={(event) => event.stopPropagation()}
-                title={`展开 ${albumTotalSlots} 张生成结果`}
+                title={t('node.imageGen.album.expandCount', { count: albumTotalSlots })}
                 className="nodrag group/albumpill absolute right-2 top-2 z-10 hidden items-center gap-1 rounded-full bg-black/65 px-2.5 py-1 text-[12px] font-medium tabular-nums text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black/85 group-hover:inline-flex"
               >
                 {albumPendingCount > 0
@@ -1777,7 +1781,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-2 p-2">
               <span className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[11px] text-white/90 backdrop-blur">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                新图片生成中…
+                {t('node.imageGen.history.generatingNew')}
               </span>
               <button
                 type="button"
@@ -1788,7 +1792,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                 }}
               >
                 <X className="h-3 w-3" />
-                返回
+                {t('node.imageGen.history.back')}
               </button>
             </div>
           </div>
@@ -1803,7 +1807,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             {isUploading ? (
               <div className="flex w-full flex-col items-center justify-center gap-2">
                 <Loader2 className="h-7 w-7 animate-spin opacity-70" />
-                <span className="text-[12px] leading-6">上传中…</span>
+                <span className="text-[12px] leading-6">{t('node.imageGen.uploadingEllipsis')}</span>
               </div>
             ) : isConnected ? (
               // 已连线：不再显示文字 CTA，只在节点中间放一个图标（对齐 libtv）。
@@ -1813,7 +1817,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             ) : (
               <>
                 <div className="flex min-h-0 flex-col justify-center gap-2 py-4">
-                  <div className="text-xs text-[var(--canvas-node-input-helper)]">试试：</div>
+                  <div className="text-xs text-[var(--canvas-node-input-helper)]">
+                    {t('node.imageGen.emptyState.tryLabel')}
+                  </div>
                   <div className="flex flex-col gap-0.5">
                   <button
                     type="button"
@@ -1822,11 +1828,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                       handleSpawnUpstreamImage();
                     }}
                     onPointerDown={(event) => event.stopPropagation()}
-                    title="新建一个上游图片节点用作参考"
+                    title={t('node.imageGen.emptyState.imageToImageTitle')}
                     className="nodrag -mx-2 inline-flex items-center gap-3 rounded-lg px-2 py-2 text-sm text-text-dark transition-colors hover:bg-white/[0.08]"
                   >
                     <Upload className="h-4 w-4 text-text-muted/90" />
-                    <span>图生图</span>
+                    <span>{t('node.imageGen.emptyState.imageToImage')}</span>
                   </button>
                   </div>
                 </div>
@@ -1916,7 +1922,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         >
           <div className="mb-2 flex items-center gap-1.5 px-1 text-[12px] font-medium text-white/60">
             <ImageIcon className="h-3.5 w-3.5 text-white/45" />
-            画册 · {albumTotalSlots} 张
+            {t('node.imageGen.album.heading', { count: albumTotalSlots })}
           </div>
           <div className="grid grid-cols-2 gap-3">
           {albumUrls.map((url, index) => {
@@ -1927,7 +1933,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                 key={`album-cell-${index}`}
                 role="button"
                 tabIndex={-1}
-                title="点击设为主图"
+                title={t('node.imageGen.album.setAsMain')}
                 onClick={(event) => {
                   event.stopPropagation();
                   // 拖动画册（移动节点）后松手补发的 click 不算选主图。
@@ -1959,11 +1965,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                     event.stopPropagation();
                     handleApplyAlbumImageToCanvas(url);
                   }}
-                  title="把这张图作为独立图片节点放到画布上"
+                  title={t('node.imageGen.album.applyToCanvas')}
                   className="nodrag absolute left-2 top-2 z-10 hidden h-7 items-center gap-1 rounded-md bg-black/70 px-2.5 text-[12px] font-medium text-white backdrop-blur-sm transition-colors hover:bg-black/90 group-hover/albumcell:inline-flex"
                 >
                   <Upload className="h-3.5 w-3.5" />
-                  应用到画布
+                  {t('node.imageGen.album.applyToCanvasLabel')}
                 </button>
                 <button
                   type="button"
@@ -1971,14 +1977,14 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                     event.stopPropagation();
                     void handleDownloadAlbumImage(url, index);
                   }}
-                  title="下载这张图片"
+                  title={t('node.imageGen.album.download')}
                   className="nodrag absolute right-2 top-2 z-10 hidden h-7 w-7 items-center justify-center rounded-full bg-black/70 text-white backdrop-blur-sm transition-colors hover:bg-black/90 group-hover/albumcell:inline-flex"
                 >
                   <Download className="h-3.5 w-3.5" />
                 </button>
                 {isMain && (
                   <span className="absolute bottom-2 left-2 z-10 rounded-md bg-black/65 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">
-                    主图
+                    {t('node.imageGen.album.mainImage')}
                   </span>
                 )}
               </div>
@@ -1993,7 +1999,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             >
               <div className="flex flex-col items-center gap-2 text-text-muted/70">
                 <Loader2 className="h-6 w-6 animate-spin" />
-                <span className="text-[12px]">生成中…</span>
+                <span className="text-[12px]">{t('node.imageGen.album.generating')}</span>
               </div>
             </div>
           ))}
@@ -2019,9 +2025,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                 setBgCropperOpen(true);
               }}
               className="inline-flex h-6 items-center gap-1 rounded-md border border-amber-300/55 bg-[rgba(120,77,19,0.78)] px-2 text-[10px] font-medium text-amber-100 shadow-[0_0_0_1px_rgba(0,0,0,0.45)] hover:bg-[rgba(140,90,22,0.88)] disabled:cursor-not-allowed disabled:opacity-50"
-              title={`从 ${sourceRole === 'scene_master' ? 'scene_master' : 'scene_reverse_master'} 选一个 16:9 区域写入本 beat 的 selected_background.png — beat 工作台后续 sketch/render 会用这张做背景锚点`}
+              title={t('node.imageGen.cropBackgroundTitle', {
+                source: sourceRole === 'scene_master' ? 'scene_master' : 'scene_reverse_master',
+              })}
             >
-              📐 截取背景
+              {t('node.imageGen.cropBackground')}
             </button>
           )}
           {canOpenDirectorStage && (
@@ -2095,10 +2103,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                 setIsAssetLibraryOpen(true);
               }}
               className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} group/asset px-1.5`}
-              title="从资产库选择参考图（人物 / 场景 / 道具）"
+              title={t('node.imageGen.assetLibraryTitle')}
             >
               <Library className={`${NODE_TEXT_CONTROL_ICON_CLASS} group-hover/asset:text-text-dark`} />
-              <span>资产库</span>
+              <span>{t('node.imageGen.assetLibrary')}</span>
             </button>
           </div>
 
@@ -2128,7 +2136,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                       <div
                         key={`upstream-image-${content.nodeId}`}
                         className={NODE_REFERENCE_MEDIA_CHIP_CLASS}
-                        title={`来自上游 · ${content.displayName ?? content.nodeType}`}
+                        title={t('node.imageGen.fromUpstream', {
+                          name: content.displayName ?? content.nodeType,
+                        })}
                         onMouseEnter={(event) => {
                           setRefHover({
                             imageUrl: url,
@@ -2161,7 +2171,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                         ) : null}
                         <button
                           type="button"
-                          title="取消引用此素材"
+                          title={t('node.imageGen.dropReference')}
                           className={NODE_REFERENCE_MEDIA_DETACH_CLASS}
                           onMouseDown={(event) => event.stopPropagation()}
                           onClick={(event) => {
@@ -2230,9 +2240,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             }}
             candidates={mentionCandidates}
             placeholder={
-              upstreamTextJoined.length > 0
-                ? '上游内容已自动接入，可继续补充提示词…'
-                : '描述你想要生成的画面内容，@引用素材'
+              t(
+                upstreamTextJoined.length > 0
+                  ? 'node.imageGen.promptPlaceholderUpstream'
+                  : 'node.imageGen.promptPlaceholder',
+              )
             }
             className={`nodrag nowheel min-h-0 w-full flex-1 overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent px-3 py-2 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
           />
@@ -2246,7 +2258,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                 getOptionDisabledReason={(model) =>
                   model.referenceImageMax != null &&
                   orderedReferenceUrls.length > model.referenceImageMax
-                    ? `该模型最多支持 ${model.referenceImageMax} 张图片素材`
+                    ? t('node.videoModel.reason.maxImages', {
+                        count: model.referenceImageMax,
+                      })
                     : null
                 }
               />
@@ -2279,7 +2293,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               )}
               <button
                 type="button"
-                title="翻译提示词（中英文互译）"
+                title={t('node.imageGen.translatePrompt')}
                 disabled={isTranslatingPrompt || isGenerating || prompt.trim().length === 0}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -2308,7 +2322,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               <button
                 type="button"
                 disabled={submitDisabled}
-                title={selectedModelReferenceError ?? modelTaskAccess.message ?? "生成"}
+                title={selectedModelReferenceError ?? modelTaskAccess.message ?? t('node.imageGen.generate')}
                 onClick={(event) => {
                   event.stopPropagation();
                   void handleSubmit();
@@ -2459,6 +2473,7 @@ interface AspectSizeChipProps {
 }
 
 function AspectSizeChip({ aspectRatio, size, sizeOptions, aspectOptions, quality, qualityOptions, showQuality, onChange }: AspectSizeChipProps) {
+  const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -2480,8 +2495,8 @@ function AspectSizeChip({ aspectRatio, size, sizeOptions, aspectOptions, quality
 
   const nearestAspect = resolveNearestAspectOption(aspectRatio, aspectOptions);
   const aspectLabel = nearestAspect.label;
-  const qualityLabel = QUALITY_OPTIONS.find((option) => option.value === quality)?.label
-    ?? quality;
+  const qualityLabelKey = QUALITY_OPTIONS.find((option) => option.value === quality)?.labelKey;
+  const qualityLabel = qualityLabelKey ? t(qualityLabelKey) : quality;
 
   return (
     <div className="relative">
@@ -2514,10 +2529,11 @@ function AspectSizeChip({ aspectRatio, size, sizeOptions, aspectOptions, quality
         >
           {showQuality && (
             <>
-              <div className={IMAGE_PARAM_LABEL_CLASS}>画质</div>
+              <div className={IMAGE_PARAM_LABEL_CLASS}>{t('node.imageGen.param.quality')}</div>
               <div className={IMAGE_PARAM_ROW_CLASS}>
                 {qualityOptions.map((value) => {
-                  const label = QUALITY_OPTIONS.find((option) => option.value === value)?.label ?? value;
+                  const optionKey = QUALITY_OPTIONS.find((option) => option.value === value)?.labelKey;
+                  const label = optionKey ? t(optionKey) : value;
                   const isActive = quality === value;
                   return (
                     <button
@@ -2537,7 +2553,7 @@ function AspectSizeChip({ aspectRatio, size, sizeOptions, aspectOptions, quality
               </div>
             </>
           )}
-          <div className={IMAGE_PARAM_LABEL_CLASS}>分辨率</div>
+          <div className={IMAGE_PARAM_LABEL_CLASS}>{t('node.imageGen.param.resolution')}</div>
           <div className={IMAGE_PARAM_ROW_CLASS}>
             {sizeOptions.map((option) => {
               const isActive = size === option;
@@ -2558,7 +2574,7 @@ function AspectSizeChip({ aspectRatio, size, sizeOptions, aspectOptions, quality
             })}
           </div>
 
-          <div className={IMAGE_PARAM_LABEL_CLASS}>比例</div>
+          <div className={IMAGE_PARAM_LABEL_CLASS}>{t('node.imageGen.param.aspect')}</div>
           <div className="grid grid-cols-4 gap-2">
             {aspectOptions.map((option) => {
               const isActive = nearestAspect.value === option.value;
@@ -2591,6 +2607,7 @@ interface CameraChipProps {
 }
 
 function CameraChip({ selection, summary, onChange }: CameraChipProps) {
+  const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -2637,7 +2654,7 @@ function CameraChip({ selection, summary, onChange }: CameraChipProps) {
   }, [isOpen, syncPopoverPosition]);
 
   const isActive = Boolean(selection) && summary != null;
-  const label = isActive && summary ? summary : '摄像机';
+  const label = isActive && summary ? summary : t('node.imageGen.camera');
 
   return (
     <div className="relative">
@@ -2648,7 +2665,7 @@ function CameraChip({ selection, summary, onChange }: CameraChipProps) {
           event.stopPropagation();
           setIsOpen((prev) => !prev);
         }}
-        title={isActive ? summary ?? undefined : '摄像机'}
+        title={isActive ? summary ?? undefined : t('node.imageGen.camera')}
         className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} max-w-[220px]`}
       >
         <Camera className={`${NODE_TEXT_CONTROL_ICON_CLASS} shrink-0`} />
@@ -2686,6 +2703,7 @@ interface CountSelectProps {
 }
 
 function CountSelect({ value, onChange }: CountSelectProps) {
+  const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -2716,7 +2734,7 @@ function CountSelect({ value, onChange }: CountSelectProps) {
         }}
         className={NODE_TEXT_CONTROL_TRIGGER_CLASS}
       >
-        <span>{value}张</span>
+        <span>{t('node.imageGen.countValue', { count: value })}</span>
         <ChevronDown className="h-3 w-3 text-text-muted/90" />
       </button>
       {isOpen && (
@@ -2740,7 +2758,7 @@ function CountSelect({ value, onChange }: CountSelectProps) {
                     : 'text-text-muted/95 hover:bg-white/[0.11] hover:text-text-dark'
                 }`}
               >
-                {option}张
+                {t('node.imageGen.countValue', { count: option })}
               </button>
             );
           })}

@@ -176,11 +176,14 @@ export async function resolveDesktopRelease(
 }
 
 function warnUnresolved(platform: DesktopPlatform, cause: unknown): void {
+  // 开发日志，不是界面文案。
+  // i18n-exempt-start
   console.warn(
     `[desktop-download] ${platform} 版本指针解析失败,退到 GitHub Releases 兜底。` +
       ` 若为网络错误,先查 CSP connect-src 是否放行 ${DOWNLOAD_BASE}`,
     cause,
   );
+  // i18n-exempt-end
 }
 
 /**

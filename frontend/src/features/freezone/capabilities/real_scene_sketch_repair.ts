@@ -1,30 +1,35 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import type { GenerationCapability } from "./capabilityRegistry";
+import type { CapabilityParamOption, GenerationCapability } from "./capabilityRegistry";
 import { stringifyParamValue } from "./capabilityRegistry";
 
-const PRESERVE_OPTIONS = [
-  { value: "camera", label: "原始机位 / 构图" },
-  { value: "layout", label: "桌椅 / 墙面 / 门窗位置" },
-  { value: "identity", label: "人物身份颜色" },
-  { value: "props", label: "道具颜色和位置" },
-  { value: "street_mood", label: "市井氛围" },
+const K = "canvas.capabilities.real_scene_sketch_repair";
+
+// promptLabel 会被 valuesToLabels 拼进提示词，是模型输入不是界面文案，所以留中文。
+// i18n-exempt-start
+const PRESERVE_OPTIONS: CapabilityParamOption[] = [
+  { value: "camera", labelKey: `${K}.preserve.camera`, promptLabel: "原始机位 / 构图" },
+  { value: "layout", labelKey: `${K}.preserve.layout`, promptLabel: "桌椅 / 墙面 / 门窗位置" },
+  { value: "identity", labelKey: `${K}.preserve.identity`, promptLabel: "人物身份颜色" },
+  { value: "props", labelKey: `${K}.preserve.props`, promptLabel: "道具颜色和位置" },
+  { value: "street_mood", labelKey: `${K}.preserve.street_mood`, promptLabel: "市井氛围" },
 ];
 
-const MODIFY_OPTIONS = [
-  { value: "deblur", label: "修复模糊 / 糊成一片的背景" },
-  { value: "distortion", label: "修复 3GS 畸变 / 拉伸" },
-  { value: "furniture_detail", label: "补清桌椅结构" },
-  { value: "actor_blocks", label: "方块人转干净角色线稿" },
-  { value: "staging_blocks", label: "占位块转真实物体" },
+const MODIFY_OPTIONS: CapabilityParamOption[] = [
+  { value: "deblur", labelKey: `${K}.modify.deblur`, promptLabel: "修复模糊 / 糊成一片的背景" },
+  { value: "distortion", labelKey: `${K}.modify.distortion`, promptLabel: "修复 3GS 畸变 / 拉伸" },
+  { value: "furniture_detail", labelKey: `${K}.modify.furniture_detail`, promptLabel: "补清桌椅结构" },
+  { value: "actor_blocks", labelKey: `${K}.modify.actor_blocks`, promptLabel: "方块人转干净角色线稿" },
+  { value: "staging_blocks", labelKey: `${K}.modify.staging_blocks`, promptLabel: "占位块转真实物体" },
 ];
+// i18n-exempt-end
 
-function valuesToLabels(values: unknown, options: { value: string; label: string }[]): string {
+function valuesToLabels(values: unknown, options: CapabilityParamOption[]): string {
   const raw = Array.isArray(values) ? values : typeof values === "string" ? [values] : [];
   const labels = raw
-    .map((value) => options.find((option) => option.value === value)?.label ?? String(value))
+    .map((value) => options.find((option) => option.value === value)?.promptLabel ?? String(value))
     .filter(Boolean);
-  return labels.length > 0 ? labels.join("；") : "保持当前画面核心结构";
+  return labels.length > 0 ? labels.join("；") : "保持当前画面核心结构"; // i18n-exempt —— 拼进提示词
 }
 
 function readBeatText(metadata: Record<string, unknown> | null | undefined): string {
@@ -40,10 +45,10 @@ function readBeatText(metadata: Record<string, unknown> | null | undefined): str
 
 export const realSceneSketchRepairCapability: GenerationCapability = {
   id: "real_scene_sketch_repair",
-  name: "实景草图修复",
-  shortName: "实景草图",
+  nameKey: `${K}.name`,
+  shortNameKey: `${K}.shortName`,
   category: "beat",
-  description: "用导演世界 control frame 和场景/身份参考修复当前 beat 的实景草图。",
+  descriptionKey: `${K}.description`,
   outputKind: "sketch",
   model: "openai/gpt-image-2",
   aspectRatio: "16:9",
@@ -51,89 +56,96 @@ export const realSceneSketchRepairCapability: GenerationCapability = {
   inputs: [
     {
       key: "3gs_combined",
-      label: "3GS 导演合成图",
+      labelKey: `${K}.inputs.3gs_combined.label`,
       required: true,
       acceptKinds: ["director", "sketch", "frame", "generic"],
-      description: "第一张连入图会作为 base，控制机位、空间和构图。",
+      descriptionKey: `${K}.inputs.3gs_combined.description`,
     },
     {
       key: "scene_refs",
-      label: "场景/身份/道具参考",
+      labelKey: `${K}.inputs.scene_refs.label`,
       required: false,
       acceptKinds: ["scene", "identity", "portrait", "prop", "director", "generic"],
-      description: "后续连入图作为修复和语义参考。",
+      descriptionKey: `${K}.inputs.scene_refs.description`,
     },
   ],
   params: [
     {
       key: "shot_type",
-      label: "景别",
+      labelKey: `${K}.params.shot_type.label`,
       type: "enum",
+      // defaultValue / value 是拼进提示词的协议值，不跟界面语言走。
+      // i18n-exempt-start
       defaultValue: "中景",
       options: [
-        { value: "特写", label: "特写" },
-        { value: "近景", label: "近景" },
-        { value: "中景", label: "中景" },
-        { value: "全景", label: "全景" },
+        { value: "特写", labelKey: `${K}.params.shot_type.options.closeup` },
+        { value: "近景", labelKey: `${K}.params.shot_type.options.medium_closeup` },
+        { value: "中景", labelKey: `${K}.params.shot_type.options.medium` },
+        { value: "全景", labelKey: `${K}.params.shot_type.options.wide` },
       ],
+      // i18n-exempt-end
     },
     {
       key: "angle",
-      label: "角度",
+      labelKey: `${K}.params.angle.label`,
       type: "enum",
+      // i18n-exempt-start
       defaultValue: "平视",
       options: [
-        { value: "平视", label: "平视" },
-        { value: "俯拍", label: "俯拍" },
-        { value: "仰拍", label: "仰拍" },
-        { value: "过肩", label: "过肩" },
-        { value: "反打", label: "反打" },
+        { value: "平视", labelKey: `${K}.params.angle.options.eye_level` },
+        { value: "俯拍", labelKey: `${K}.params.angle.options.high` },
+        { value: "仰拍", labelKey: `${K}.params.angle.options.low` },
+        { value: "过肩", labelKey: `${K}.params.angle.options.over_shoulder` },
+        { value: "反打", labelKey: `${K}.params.angle.options.reverse` },
       ],
+      // i18n-exempt-end
     },
     {
       key: "lens",
-      label: "镜头",
+      labelKey: `${K}.params.lens.label`,
       type: "enum",
       defaultValue: "35mm",
       options: [
-        { value: "24mm", label: "24mm 广角" },
-        { value: "35mm", label: "35mm 自然" },
-        { value: "50mm", label: "50mm 标准" },
-        { value: "85mm", label: "85mm 压缩" },
+        { value: "24mm", labelKey: `${K}.params.lens.options.24mm` },
+        { value: "35mm", labelKey: `${K}.params.lens.options.35mm` },
+        { value: "50mm", labelKey: `${K}.params.lens.options.50mm` },
+        { value: "85mm", labelKey: `${K}.params.lens.options.85mm` },
       ],
     },
     {
       key: "lighting",
-      label: "光线",
+      labelKey: `${K}.params.lighting.label`,
       type: "enum",
+      // i18n-exempt-start
       defaultValue: "昏暗市井暖光",
       options: [
-        { value: "昏暗市井暖光", label: "昏暗市井暖光" },
-        { value: "冷暖混合霓虹", label: "冷暖混合霓虹" },
-        { value: "自然窗光", label: "自然窗光" },
-        { value: "顶灯硬光", label: "顶灯硬光" },
+        { value: "昏暗市井暖光", labelKey: `${K}.params.lighting.options.dim_street_warm` },
+        { value: "冷暖混合霓虹", labelKey: `${K}.params.lighting.options.mixed_neon` },
+        { value: "自然窗光", labelKey: `${K}.params.lighting.options.window_daylight` },
+        { value: "顶灯硬光", labelKey: `${K}.params.lighting.options.hard_toplight` },
       ],
+      // i18n-exempt-end
     },
     {
       key: "preserve",
-      label: "必须保持",
+      labelKey: `${K}.params.preserve.label`,
       type: "multiselect",
       defaultValue: ["camera", "layout", "identity", "props"],
       options: PRESERVE_OPTIONS,
     },
     {
       key: "modify",
-      label: "重点修复",
+      labelKey: `${K}.params.modify.label`,
       type: "multiselect",
       defaultValue: ["deblur", "distortion", "furniture_detail", "actor_blocks"],
       options: MODIFY_OPTIONS,
     },
     {
       key: "notes",
-      label: "补充要求",
+      labelKey: `${K}.params.notes.label`,
       type: "text",
       defaultValue: "",
-      description: "例如：后排灰色人物也要上色，桌子必须保持木质结构。",
+      descriptionKey: `${K}.params.notes.description`,
     },
   ],
   compose: ({ inputUrls, params, metadata, nodePrompt }) => {
@@ -141,10 +153,12 @@ export const realSceneSketchRepairCapability: GenerationCapability = {
     const preserve = valuesToLabels(params.preserve, PRESERVE_OPTIONS);
     const modify = valuesToLabels(params.modify, MODIFY_OPTIONS);
     const notes = stringifyParamValue(params.notes);
+    // i18n-exempt-start —— 与 options 对齐的协议默认值，会拼进提示词
     const shotType = stringifyParamValue(params.shot_type) || "中景";
     const angle = stringifyParamValue(params.angle) || "平视";
     const lens = stringifyParamValue(params.lens) || "35mm";
     const lighting = stringifyParamValue(params.lighting) || "昏暗市井暖光";
+    // i18n-exempt-end
 
     const prompt = `Create a repaired real-scene storyboard sketch for the current SuperTale beat.
 

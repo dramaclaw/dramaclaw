@@ -4282,15 +4282,16 @@ function LocalMediaModelEditor({
                   {t("settings.modelConfig.mediaModels.supportedModes")}
                 </p>
                 <div className="grid grid-cols-3 gap-2">
+                  {/* 左边是后端目录里的模式值，右边只是展示名，和视频节点的页签共用词条。 */}
                   {[
-                    ["text_to_video", "文生视频"],
-                    ["first_frame", "首帧"],
-                    ["first_last_frame", "首尾帧"],
-                    ["image_to_video", "图生视频"],
-                    ["image_reference", "图片参考"],
-                    ["all_reference", "全能参考"],
-                    ["video_edit", "视频编辑"],
-                  ].map(([value, label]) => {
+                    ["text_to_video", "node.videoNode.tabs.textToVideo"],
+                    ["first_frame", "node.videoNode.tabs.firstFrame"],
+                    ["first_last_frame", "node.videoNode.tabs.firstLastFrame"],
+                    ["image_to_video", "node.videoNode.tabs.imageToVideo"],
+                    ["image_reference", "node.videoNode.tabs.imageReference"],
+                    ["all_reference", "node.videoNode.tabs.allReference"],
+                    ["video_edit", "node.videoNode.tabs.videoEdit"],
+                  ].map(([value, labelKey]) => {
                     const selected = stringOptions("supportedModes");
                     return (
                       <label
@@ -4309,7 +4310,7 @@ function LocalMediaModelEditor({
                             )
                           }
                         />
-                        {label}
+                        {t(labelKey)}
                       </label>
                     );
                   })}

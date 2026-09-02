@@ -109,32 +109,6 @@ async def get_audio_durations_async(paths: "Sequence[str]") -> "list[float | Non
     return list(await asyncio.gather(*(probe(path) for path in paths)))
 
 
-def crop_image_to_path_sync(
-    image_path: str | Path,
-    *,
-    x: int,
-    y: int,
-    width: int,
-    height: int,
-    output_path: str | Path | None = None,
-) -> tuple[int, int]:
-    """Synchronously crop an image with bounds clamping and save it to disk."""
-
-    from PIL import Image
-
-    source = Path(image_path)
-    target = Path(output_path) if output_path is not None else source
-    with Image.open(source) as img:
-        crop_x = max(0, min(int(x), img.width - 1))
-        crop_y = max(0, min(int(y), img.height - 1))
-        right = min(crop_x + max(1, int(width)), img.width)
-        bottom = min(crop_y + max(1, int(height)), img.height)
-        cropped = img.crop((crop_x, crop_y, right, bottom))
-        target.parent.mkdir(parents=True, exist_ok=True)
-        cropped.save(target)
-        return cropped.width, cropped.height
-
-
 async def crop_image_to_path(
     image_path: str | Path,
     *,
@@ -144,22 +118,24 @@ async def crop_image_to_path(
     height: int,
     output_path: str | Path | None = None,
 ) -> tuple[int, int]:
-    """Crop an image off the event loop."""
+    """Crop an image with bounds clamping and save it to disk."""
 
-    return await call_blocking(
-        crop_image_to_path_sync,
-        image_path,
-        x=x,
-        y=y,
-        width=width,
-        height=height,
-        output_path=output_path,
-    )
+    def _crop() -> tuple[int, int]:
+        from PIL import Image
+
+        source = Path(image_path)
+        target = Path(output_path) if output_path is not None else source
+        with Image.open(source) as img:
+            crop_x = max(0, min(int(x), img.width - 1))
+            crop_y = max(0, min(int(y), img.height - 1))
+            right = min(crop_x + max(1, int(width)), img.width)
+            bottom = min(crop_y + max(1, int(height)), img.height)
+            cropped = img.crop((crop_x, crop_y, right, bottom))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            cropped.save(target)
+            return cropped.width, cropped.height
+
+    return await call_blocking(_crop)
 
 
-__all__ = [
-    "crop_image_to_path",
-    "crop_image_to_path_sync",
-    "get_audio_duration",
-    "get_audio_duration_async",
-]
+__all__ = ["crop_image_to_path", "get_audio_duration", "get_audio_duration_async"]

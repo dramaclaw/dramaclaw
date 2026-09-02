@@ -9,6 +9,7 @@
 // 时间」，和视频卡的播放角标视觉对齐，两种非图片素材看起来才像一套东西。
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { Play, Pause } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import type { LibraryItem } from './assetLibraryItems';
@@ -127,6 +128,7 @@ function VideoThumb({ src }: { src: string }) {
 }
 
 function AudioThumb({ src }: { src: string }) {
+  const { t } = useTranslation();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
@@ -206,7 +208,11 @@ function AudioThumb({ src }: { src: string }) {
       <button
         type="button"
         onClick={toggle}
-        aria-label={playing ? '暂停' : '播放'}
+        aria-label={
+          playing
+            ? t('canvas.assetLibrary.audioPause')
+            : t('canvas.assetLibrary.audioPlay')
+        }
         className="flex h-10 w-10 items-center justify-center rounded-full bg-white/92 text-[#15161b] shadow-[0_2px_10px_rgba(0,0,0,0.35)] transition hover:scale-105 hover:bg-white"
       >
         {playing ? (
@@ -219,7 +225,7 @@ function AudioThumb({ src }: { src: string }) {
       {/* 波形即进度条：播过的柱子亮起来，点哪跳哪。 */}
       <div
         role="slider"
-        aria-label="播放进度"
+        aria-label={t('canvas.assetLibrary.audioProgress')}
         aria-valuemin={0}
         aria-valuemax={Math.round(duration)}
         aria-valuenow={Math.round(time)}

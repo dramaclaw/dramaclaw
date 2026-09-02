@@ -9,6 +9,10 @@
 // node (so the 生成中 overlay re-appears from `generationStartedAt`) and re-attaching
 // to the task API on reload via {@link resumeNodeGeneration}.
 
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from 'i18next';
 import type { CanvasNode, CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import {
@@ -139,7 +143,7 @@ export function staleGenerationJobPatch(node: CanvasNode): Record<string, unknow
   if (taskKey.length > 0) {
     return DETACHED_GENERATION_PATCH;
   }
-  return buildErrorPatch('image', new Error('生成任务已结束或不存在'));
+  return buildErrorPatch('image', new Error(i18n.t('canvas.resumeGeneration.taskGone')));
 }
 
 /** 判定「任务不存在」需要连续 miss 的次数,以及每次之间的间隔。 */
@@ -269,7 +273,7 @@ async function buildSuccessPatch(
         url = await fetchFreezoneJobResult(projectId, taskType, jobId).then((r) => r.url).catch(() => null);
       }
       if (!url) {
-        return { ...CLEARED_TASK_FIELDS, generationError: '生成未返回结果' };
+        return { ...CLEARED_TASK_FIELDS, generationError: i18n.t('canvas.resumeGeneration.noImageResult') };
       }
       return { ...CLEARED_TASK_FIELDS, imageUrl: url, previewImageUrl: url, generationError: null };
     }
@@ -279,7 +283,7 @@ async function buildSuccessPatch(
         url = await fetchFreezoneJobResult(projectId, taskType, jobId).then((r) => r.url).catch(() => null);
       }
       if (!url) {
-        return { ...CLEARED_TASK_FIELDS, generationError: '视频生成未返回结果' };
+        return { ...CLEARED_TASK_FIELDS, generationError: i18n.t('canvas.resumeGeneration.noVideoResult') };
       }
       return {
         ...CLEARED_TASK_FIELDS,
@@ -303,7 +307,7 @@ async function buildSuccessPatch(
     case 'ply': {
       const plyUrl = pickPlyUrlFromResult(completed.result);
       if (!plyUrl) {
-        return { ...CLEARED_TASK_FIELDS, taskKey: null, errorMessage: '生成失败: 未能在 task.result 中找到 3D 世界地址' };
+        return { ...CLEARED_TASK_FIELDS, taskKey: null, errorMessage: i18n.t('canvas.resumeGeneration.noWorldUrl') };
       }
       return { ...CLEARED_TASK_FIELDS, plyUrl, taskKey: null, errorMessage: null };
     }
@@ -341,10 +345,12 @@ function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unkno
   }
   if (kind === 'ply') {
     const message = error instanceof Error ? error.message : String(error);
-    return { ...CLEARED_TASK_FIELDS, taskKey: null, errorMessage: `生成失败: ${message}` };
+    return { ...CLEARED_TASK_FIELDS, taskKey: null, errorMessage: i18n.t('canvas.resumeGeneration.failedWithMessage', { message }) };
   }
   if (kind === 'image' || kind === 'video') {
-    const resolved = resolveErrorContent(error, kind === 'video' ? '视频生成失败' : '图像生成失败');
+    const resolved = resolveErrorContent(error, kind === 'video'
+      ? i18n.t('canvas.resumeGeneration.videoFailed')
+      : i18n.t('canvas.resumeGeneration.imageFailed'));
     const rawMessage = resolved.message;
     return {
       ...CLEARED_TASK_FIELDS,
@@ -406,7 +412,7 @@ export async function resumeNodeGeneration(params: {
       return;
     }
 
-    updateNodeData(node.id, buildErrorPatch(kind, new Error('生成任务已结束或不存在')));
+    updateNodeData(node.id, buildErrorPatch(kind, new Error(i18n.t('canvas.resumeGeneration.taskGone'))));
     return;
   }
 

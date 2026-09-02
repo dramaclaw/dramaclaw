@@ -38,7 +38,8 @@ export function findReferenceTokens(text: string, maxImageCount?: number): Refer
   const maxReferenceNumber = resolveMaxReferenceNumber(maxImageCount);
 
   for (let index = 0; index < text.length; index += 1) {
-    if (text[index] !== '@' || text[index + 1] !== '图') {
+    // `@图N` 是写进提示词、模型认的引用 token，跟界面语言无关。
+    if (text[index] !== '@' || text[index + 1] !== '图') { // i18n-exempt —— 提示词 token
       continue;
     }
 

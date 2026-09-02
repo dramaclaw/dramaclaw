@@ -30,6 +30,7 @@ import {
   sceneRefToName,
   type SceneRefRecordLike,
 } from "@/lib/scene-ref";
+import { identityRefLabel } from "@/lib/identity-period";
 import { timeOfDayLabel, timeOfDayOptions } from "@/lib/time-of-day";
 import { cn } from "@/lib/utils";
 import type { Beat } from "@/types/episode";
@@ -425,6 +426,18 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
     () => [...episodeIdentityIds, ...episodePropIds],
     [episodeIdentityIds, episodePropIds],
   );
+  // 徽章上显示的是 `角色名_时期`，时期名跟界面语言走（见 lib/identity-period）；
+  // 落库的 detected_identities、@提及 token 用的都还是原 id，只有这层显示本地化。
+  const identityBadgeLabels = useMemo(() => {
+    const map: Record<string, string> = {
+      [NO_CHARACTER_MARKER]: t("episode.workbench.text.noCharacter"),
+    };
+    for (const id of [...identityOptions, ...identities]) {
+      if (id === NO_CHARACTER_MARKER) continue;
+      map[id] = identityRefLabel(id, t);
+    }
+    return map;
+  }, [identityOptions, identities, t]);
   const audioTypeOptions = useMemo(
     () =>
       spineTemplate === "narrated"
@@ -621,7 +634,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
                 <SelectValue
                   placeholder={t("episode.workbench.text.timeOfDayPlaceholder")}
                 >
-                  {timeOfDayLabel(timeOfDay)}
+                  {timeOfDayLabel(timeOfDay, t)}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent
@@ -633,11 +646,11 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
                   value={NO_TIME_OF_DAY_MARKER}
                   className={SELECT_ITEM_CLASS}
                 >
-                  {timeOfDayLabel("")}
+                  {timeOfDayLabel("", t)}
                 </SelectItem>
                 {timeOfDayChoices.map((value) => (
                   <SelectItem key={value} value={value} className={SELECT_ITEM_CLASS}>
-                    {timeOfDayLabel(value)}
+                    {timeOfDayLabel(value, t)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -677,9 +690,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
               onToggle={toggleIdentity}
               onJump={(id) => navigateToAsset("identity", id)}
               noJumpIds={[NO_CHARACTER_MARKER]}
-              labels={{
-                [NO_CHARACTER_MARKER]: t("episode.workbench.text.noCharacter"),
-              }}
+              labels={identityBadgeLabels}
               jumpLabel={t("assets.common.jumpToAsset", { name: "" }).trim()}
               emptyMessage={t("episode.workbench.text.identitiesNotPlanned")}
               ariaLabel={t("episode.workbench.text.identities")}
@@ -757,7 +768,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
                 ) : null}
                 {episodeIdentityIds.map((id) => (
                   <SelectItem key={id} value={id} className={SELECT_ITEM_CLASS}>
-                    {id}
+                    {identityRefLabel(id, t)}
                   </SelectItem>
                 ))}
               </SelectContent>

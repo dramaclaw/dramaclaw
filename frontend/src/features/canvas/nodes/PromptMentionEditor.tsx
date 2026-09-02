@@ -14,6 +14,10 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。chip 是脱离 React 的
+// 裸 DOM，拿不到 useTranslation 的 t，只能在模块级取。
+import i18n from 'i18next';
+
 
 import type { ReferenceMaterialOption } from '@/features/canvas/application/referencePick';
 
@@ -126,14 +130,14 @@ function buildChipElement(candidate: MentionCandidate): HTMLElement {
   span.className = 'mention-chip';
   const label = mentionChipLabel(candidate);
   if (candidate.imageUrl) {
-    span.title = '双击替换引用';
+    span.title = i18n.t('canvas.mentionChip.doubleClickReplace');
     const img = document.createElement('img');
     img.src = candidate.imageUrl;
     img.alt = '';
     img.draggable = false;
     span.appendChild(img);
   } else if (candidate.videoUrl) {
-    span.title = '双击替换引用';
+    span.title = i18n.t('canvas.mentionChip.doubleClickReplace');
     // 没有静态首帧图时，用 muted 静止 <video> 显示首帧——与候选行 / 引用行一致。
     const video = document.createElement('video');
     video.src = candidate.videoUrl;
@@ -146,14 +150,14 @@ function buildChipElement(candidate: MentionCandidate): HTMLElement {
     // 音频没有缩略图：放一个可点击的 ▶/⏸ 播放按钮（::before 画图标，播放态由
     // chip 上的 data-audio-playing 切换）。hover 时 title 给出完整文件名。
     span.classList.add('mention-chip-audio');
-    span.title = `${label} · 点击播放`;
+    span.title = i18n.t('canvas.mentionChip.clickToPlay', { label });
     const play = document.createElement('span');
     play.className = 'mention-chip-audio-play';
     play.dataset.audioPlay = '';
     play.setAttribute('aria-hidden', 'true');
     span.appendChild(play);
   } else {
-    span.title = '双击替换引用';
+    span.title = i18n.t('canvas.mentionChip.doubleClickReplace');
   }
   const labelEl = document.createElement('span');
   labelEl.className = 'mention-chip-label';
@@ -165,7 +169,7 @@ function buildChipElement(candidate: MentionCandidate): HTMLElement {
   const swap = document.createElement('span');
   swap.className = 'mention-chip-swap';
   swap.dataset.mentionSwap = '';
-  swap.title = '替换引用';
+  swap.title = i18n.t('canvas.mentionChip.replace');
   swap.setAttribute('aria-hidden', 'true');
   if (candidate.imageUrl || candidate.videoUrl) {
     span.insertBefore(swap, span.firstChild);

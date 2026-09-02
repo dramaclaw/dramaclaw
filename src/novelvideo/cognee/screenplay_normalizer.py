@@ -18,6 +18,16 @@ InteriorExterior = Literal["内", "外", "无"]
 # Scene headings are ~14 characters each, so many fit comfortably in one call.
 _NORMALIZER_BATCH_SIZE = 20
 
+ENGLISH_TIME_SUFFIX_RE = re.compile(
+    r"^(?P<location>.+?)(?:\s*[-–—,，]\s*|\s+)"
+    r"(?P<time>"
+    r"\d{1,2}(?::\d{2})?\s*(?:AM|PM)|\d{1,2}:\d{2}|"
+    r"daytime|nighttime|day|night|morning|afternoon|evening|"
+    r"dawn|dusk|midnight|noon"
+    r")$",
+    re.IGNORECASE,
+)
+
 ATTACHED_SINGLE_CHAR_TIME_TOKENS = {"日", "夜", "晨", "午", "晚"}
 LOCATION_SUFFIXES_FOR_ATTACHED_TIME = {
     "仓",
@@ -77,12 +87,19 @@ def clean_scene_name_and_time(location: str, time_of_day: str = "") -> tuple[str
     name = re.sub(r"^(?:地点|场景)\s*[:：]\s*", "", name).strip()
     name = re.sub(r"\s+(?:内|外|室内|室外)$", "", name).strip()
 
-    time_match = re.search(rf"\s+(?P<time>{TIME_TOKEN_RE})$", name)
-    if time_match:
+    english_time_match = ENGLISH_TIME_SUFFIX_RE.fullmatch(name)
+    time_match = None
+    if english_time_match:
+        if not tod:
+            tod = normalize_time_of_day(english_time_match.group("time"))
+        name = english_time_match.group("location").strip()
+    else:
+        time_match = re.search(rf"\s+(?P<time>{TIME_TOKEN_RE})$", name)
+    if not english_time_match and time_match:
         if not tod:
             tod = normalize_time_of_day(time_match.group("time"))
         name = name[: time_match.start()].strip()
-    else:
+    elif not english_time_match:
         separated_time_match = re.search(
             rf"[·・,，、]\s*(?P<time>{TIME_TOKEN_RE})$", name
         )
@@ -274,6 +291,7 @@ SCREENPLAY_NORMALIZER_SYSTEM_PROMPT = """你是剧本场景头标准化分析师
 - location 是稳定物理地点，只保留地点本身，不包含时间、内/外、镜头词、闪回、特写、情绪或事件。
 - episode_number 必须从原始场次号回填，例如“3-1”对应 3；没有场次号时才填 0。
 - time_of_day 只能输出：无、清晨、上午、正午、午后、白天、黄昏、夜晚。遇到“日/昼”输出“白天”；“夜/深夜/三更/亥时”输出“夜晚”；无明确时间时输出“无”；不要输出原始时辰词或空字符串。
+- 英文时间也映射到同一组选项：day/daytime 输出“白天”，night/nighttime 或 PM 深夜钟点输出“夜晚”，morning 输出“上午”，afternoon 输出“午后”，dawn 输出“清晨”，dusk/evening 输出“黄昏”。
 - interior_exterior 只能是 内、外 或无。
 - scene_type 只能是 interior、exterior、nature。
 - aliases 只能放场景头中明确出现的地点别名；没有就输出空列表。

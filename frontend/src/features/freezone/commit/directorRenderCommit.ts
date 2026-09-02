@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from "i18next";
 import { saveBeatDirectorControlFrame } from "@/api/viewerManifests";
 import type { PushResult, PushTarget } from "@/api/push";
 
@@ -26,12 +30,12 @@ function stringValue(value: unknown): string {
 async function fetchJsonRecord(url: string): Promise<Record<string, unknown>> {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
-    throw new Error(`读取导演元数据失败：${response.status}`);
+    throw new Error(i18n.t("freezone.directorCommit.metaFetchFailed", { status: response.status }));
   }
   const json = await response.json();
   const record = recordValue(json);
   if (!record) {
-    throw new Error("导演元数据格式无效");
+    throw new Error(i18n.t("freezone.directorCommit.metaInvalid"));
   }
   return record;
 }
@@ -39,7 +43,7 @@ async function fetchJsonRecord(url: string): Promise<Record<string, unknown>> {
 async function urlToPngDataUrl(url: string): Promise<string> {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
-    throw new Error(`读取导演图层失败：${response.status}`);
+    throw new Error(i18n.t("freezone.directorCommit.layerFetchFailed", { status: response.status }));
   }
   const blob = await response.blob();
   return await new Promise<string>((resolve, reject) => {
@@ -54,10 +58,11 @@ async function urlToPngDataUrl(url: string): Promise<string> {
           ? `data:image/png;base64,${result.slice(commaIndex + 1)}`
           : result);
       } else {
-        reject(new Error("导演图层不是图片 data URL"));
+        reject(new Error(i18n.t("freezone.directorCommit.layerNotImage")));
       }
     };
-    reader.onerror = () => reject(reader.error ?? new Error("读取导演图层失败"));
+    reader.onerror = () =>
+      reject(reader.error ?? new Error(i18n.t("freezone.directorCommit.layerReadFailed")));
     reader.readAsDataURL(blob);
   });
 }
@@ -89,7 +94,8 @@ function manualFrameMeta(source: DirectorRenderCanvasCommitSource): Record<strin
       source_id: sourceId,
       source_type: "sog",
       source_kind: "custom",
-      label: source.label || "画布手动提交",
+      // 写进 frame_meta 的规范来源名，跨语言要保持一致，所以不跟界面语言走。
+      label: source.label || "画布手动提交", // i18n-exempt
       url: source.sourceUrl,
     },
     camera: {
@@ -139,7 +145,7 @@ export async function commitDirectorRenderFromCanvasSource(
   const targetPath = stringValue(result.rel_paths.combined) || parts?.combinedRelPath || "";
   const targetUrl = stringValue(result.urls?.combined);
   if (!targetPath || !targetUrl) {
-    throw new Error("导演合成图写入后缺少目标路径");
+    throw new Error(i18n.t("freezone.directorCommit.missingTargetPath"));
   }
   return {
     target_path: targetPath,

@@ -7,6 +7,7 @@
  * 的退路，长得一样用户不用重新认。两条同时出现时由 BackToNodesHint 让位上移。
  */
 import { useCallback, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useReactFlow } from '@xyflow/react';
 import { X } from 'lucide-react';
 
@@ -15,6 +16,7 @@ import { selectNodeExclusively } from '@/features/canvas/application/nodeSelecti
 import { useViewportReturnStore } from '@/features/canvas/application/viewportReturnStore';
 
 export function ViewportReturnHint() {
+  const { t } = useTranslation();
   const request = useViewportReturnStore((state) => state.request);
   const stop = useViewportReturnStore((state) => state.stop);
   const reactFlow = useReactFlow();
@@ -42,18 +44,18 @@ export function ViewportReturnHint() {
   return (
     <div className="pointer-events-none absolute bottom-6 left-1/2 z-[132] -translate-x-1/2">
       <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-white/10 bg-[#1f1f1f]/95 py-1.5 pl-4 pr-1.5 text-xs text-white/85 shadow-lg shadow-black/40 backdrop-blur">
-        <span className="whitespace-nowrap">已聚焦到所选节点</span>
+        <span className="whitespace-nowrap">{t("canvas.viewportHint.focused")}</span>
         <button
           type="button"
           className="whitespace-nowrap rounded-full bg-white/[0.14] px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/25"
           onClick={handleReturn}
         >
-          返回节点
+          {t("canvas.viewportHint.returnToNode")}
         </button>
         <button
           type="button"
-          title="关闭"
-          aria-label="关闭"
+          title={t("common.close")}
+          aria-label={t("common.close")}
           className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/[0.14] hover:text-white"
           onClick={stop}
         >

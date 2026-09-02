@@ -2,6 +2,11 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { Spec as SpecRenderSpec } from "dramaclaw-spec-render";
 import type { ChatMessage } from "@/features/superchat/types";
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from "i18next";
+
 
 function uiSpecTagRegex(): RegExp {
   return /<ui-spec\b[^>]*>([\s\S]*?)<\/ui-spec>/gi;
@@ -307,7 +312,8 @@ function coerceLooseCharacterShowcase(value: unknown): UiSpec | null {
     if (!isRecord(child)) return;
     const childProps = isRecord(child.props) ? child.props : {};
     const image = isRecord(childProps.image) ? childProps.image : {};
-    const name = stringValue(childProps.name) || `角色 ${index + 1}`;
+    const name =
+      stringValue(childProps.name) || i18n.t("superchat.spec.characterFallback", { index: index + 1 });
     const role = stringValue(childProps.role);
     const description = stringValue(childProps.description);
     const src = stringValue(image.src);
@@ -329,8 +335,10 @@ function coerceLooseCharacterShowcase(value: unknown): UiSpec | null {
         overlayPosition: "bottom",
         overlayVariant: "gradient-dark",
         detailSections: [
-          ...(role ? [{ label: "角色", value: role }] : []),
-          ...(description ? [{ label: "描述", value: description }] : []),
+          ...(role ? [{ label: i18n.t("superchat.spec.roleLabel"), value: role }] : []),
+          ...(description
+            ? [{ label: i18n.t("superchat.spec.descriptionLabel"), value: description }]
+            : []),
         ],
       },
       children: [],
@@ -599,6 +607,8 @@ function looksLikeVideoUrl(value: string): boolean {
 
 function statusBadgeVariant(status: string): string {
   const normalized = status.toLowerCase();
+  // 下面比对的是后端 / 模型给的状态原文，不是界面文案，跟着界面语言走就认不出来了。
+  // i18n-exempt-start
   if (["failed", "error", "失败"].some((item) => normalized.includes(item))) {
     return "danger";
   }
@@ -608,6 +618,7 @@ function statusBadgeVariant(status: string): string {
   if (["running", "pending", "生成中", "处理中"].some((item) => normalized.includes(item))) {
     return "info";
   }
+  // i18n-exempt-end
   return "default";
 }
 
