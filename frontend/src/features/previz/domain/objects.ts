@@ -136,6 +136,8 @@ function withDefaults(kind: PrevizObjectKind, base: ReturnType<typeof baseFields
         focalMm: 50,
         aperture: 2.8,
         sensor: 'ff',
+        cameraBody: 'cine',
+        lensSeries: 'prime',
       };
     case 'light':
       return {

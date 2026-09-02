@@ -92,6 +92,13 @@ export interface PrevizCamera extends PrevizObjectBase {
   focalMm: number;
   aperture: number;
   sensor: 'ff' | 's35';
+  /**
+   * 机身与镜头系列只是标签：视场角由焦距与 `sensor` 算出来，这两个字段一个像素都不改。
+   * 存下来是因为用户在创建对话框里挑过它们——不存的话重开面板看到的是默认值而不是
+   * 自己的选择，那两个 stepper 就成了摆设。
+   */
+  cameraBody: 'cine' | 'virtual' | 'handheld';
+  lensSeries: 'prime' | 'zoom' | 'anamorphic';
 }
 
 export interface PrevizLight extends PrevizObjectBase {
@@ -233,6 +240,16 @@ const OBJECT_KINDS: Record<PrevizObjectKind, true> = {
 const BODY_TYPES: Record<BodyType, true> = { slim: true, average: true, heavy: true };
 const LIGHT_TYPES: Record<PrevizLight['lightType'], true> = { key: true, point: true, spot: true };
 const SENSORS: Record<PrevizCamera['sensor'], true> = { ff: true, s35: true };
+const CAMERA_BODIES: Record<PrevizCamera['cameraBody'], true> = {
+  cine: true,
+  virtual: true,
+  handheld: true,
+};
+const LENS_SERIES: Record<PrevizCamera['lensSeries'], true> = {
+  prime: true,
+  zoom: true,
+  anamorphic: true,
+};
 const ASSET_FORMATS: Record<PrevizProp['assetFormat'], true> = { glb: true, gltf: true, obj: true };
 
 function isMember<T extends string>(table: Record<T, true>, value: unknown): value is T {
@@ -348,6 +365,8 @@ export function parseObject(raw: unknown): PrevizObject | null {
         focalMm: clampRange(source.focalMm, PREVIZ_FOCAL_MM),
         aperture: clampRange(source.aperture, PREVIZ_APERTURE),
         sensor: isMember(SENSORS, source.sensor) ? source.sensor : 'ff',
+        cameraBody: isMember(CAMERA_BODIES, source.cameraBody) ? source.cameraBody : 'cine',
+        lensSeries: isMember(LENS_SERIES, source.lensSeries) ? source.lensSeries : 'prime',
       };
     case 'light':
       return {
