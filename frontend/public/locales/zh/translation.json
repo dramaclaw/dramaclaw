@@ -432,9 +432,26 @@
     "account": {
       "open": "打开个人信息",
       "changeAvatar": "更换头像",
+      "changePassword": "修改密码",
       "selectLanguage": "选择语言",
       "languageChinese": "中文",
       "languageEnglish": "English",
+      "passwordDialog": {
+        "title": "修改密码",
+        "description": "修改成功后会退出所有设备，需要使用新密码重新登录。",
+        "current": "当前密码",
+        "new": "新密码",
+        "confirm": "确认新密码",
+        "requirement": "新密码至少 8 位，且不能与当前密码相同。",
+        "mismatch": "两次输入的新密码不一致。",
+        "unchanged": "新密码不能与当前密码相同。",
+        "currentIncorrect": "当前密码不正确。",
+        "submit": "修改密码",
+        "saving": "修改中…",
+        "success": "密码已修改，请使用新密码重新登录。",
+        "partialSuccess": "密码已修改，请重新登录；部分会话正在同步退出。",
+        "error": "密码修改失败，请重试。"
+      },
       "avatarDialog": {
         "title": "更换头像",
         "description": "选择一张图片作为你的头像，建议使用清晰的正方形图片。",
@@ -2443,7 +2460,9 @@
       "ruleBody": "动作和画面描述建议一行一个画面，“△”和“▲”都可以；不要把多个镜头和多段对白挤在同一行。",
       "ruleDialogue": "对白使用“角色：台词”；必要时可写“角色（简短表演提示）：台词”，不要每句堆叠括号说明；内心独白可写“角色 OS：内容”。",
       "ruleLocationChange": "物理地点发生变化时应新建场景头；“地点 时间 内/外”和“地点 内/外 时间”两种顺序都支持。",
-      "exampleLabel": "示例片段"
+      "exampleLabel": "示例片段",
+      "ruleTimeTokens": "时间锚点写在场景头里：中文用“日/夜/清晨/上午/正午/午后/下午/傍晚/夜晚/深夜/凌晨/黄昏”或时辰词；英文格式只认 DAY / NIGHT / MORNING / AFTERNOON / EVENING / DAWN / DUSK，写别的（MIDNIGHT、裸钟点）会导致整行场景头识别不出来，连分场边界一起丢。",
+      "ruleClockTime": "不要把具体钟点写进地点名。英文格式需要精确钟点时，在场景头下另起一行“Time: 11:47 PM”，地点仍解析为 Seoul Subway Station，时间归一化为“夜晚”。"
     },
     "sceneHeaders": {
       "missing": "没有识别到场景头，系统无法判断每个场景从哪里开始。",

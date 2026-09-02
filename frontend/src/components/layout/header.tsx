@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { createPortal } from "react-dom";
-import { Link, useParams } from "@tanstack/react-router";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
@@ -14,10 +14,12 @@ import {
   ChevronRight,
   Languages,
   LogOut,
+  KeyRound,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AvatarUploadDialog } from "@/components/account/avatar-upload-dialog";
+import { PasswordChangeDialog } from "@/components/account/password-change-dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -57,12 +59,14 @@ const ACCOUNT_PANEL_TRANSITION_MS = 350;
 
 export function Header({ ambientBackground = false }: { ambientBackground?: boolean }) {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const params = useParams({ strict: false }) as { project?: string };
   const [companionOpen, setCompanionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [releaseNotificationStateVersion, setReleaseNotificationStateVersion] = useState(0);
   const [avatarDialogOpen, setAvatarDialogOpen] = useState(false);
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   const [accountPanelVisible, setAccountPanelVisible] = useState(false);
   const [settingsWarningBubbleDismissed, setSettingsWarningBubbleDismissed] = useState(false);
@@ -297,6 +301,16 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
     setAvatarDialogOpen(true);
   };
 
+  const openPasswordDialog = () => {
+    closeAccountPanelNow();
+    setPasswordDialogOpen(true);
+  };
+
+  const handlePasswordChanged = () => {
+    resetUserSessionState({ queryClient });
+    void navigate({ to: "/login", replace: true });
+  };
+
   return (
     <div
       className={`relative z-20 shrink-0 text-sidebar-foreground ${
@@ -429,6 +443,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               displayName={displayName}
               hasUnreadNotification={hasUnreadNotification}
               onChangeAvatar={openAvatarDialog}
+              onChangePassword={showLogout ? openPasswordDialog : undefined}
               onLanguageChange={switchLanguage}
               onNotifications={openNotifications}
               onClose={scheduleCloseAccountPanel}
@@ -461,6 +476,11 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         displayName={displayName}
         open={avatarDialogOpen}
         onOpenChange={setAvatarDialogOpen}
+      />
+      <PasswordChangeDialog
+        open={passwordDialogOpen}
+        onOpenChange={setPasswordDialogOpen}
+        onPasswordChanged={handlePasswordChanged}
       />
       {ceRuntime ? <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} /> : null}
       {settingsWarningBubble
@@ -545,6 +565,7 @@ function AccountPanel({
   displayName,
   hasUnreadNotification,
   onChangeAvatar,
+  onChangePassword,
   onLanguageChange,
   onNotifications,
   onClose,
@@ -561,6 +582,7 @@ function AccountPanel({
   displayName: string;
   hasUnreadNotification: boolean;
   onChangeAvatar: () => void;
+  onChangePassword?: () => void;
   onLanguageChange: (lang: "zh" | "en") => void;
   onNotifications: () => void;
   onClose: () => void;
@@ -613,6 +635,13 @@ function AccountPanel({
             label={t("header.account.changeAvatar")}
             onClick={onChangeAvatar}
           />
+          {onChangePassword ? (
+            <AccountMenuRow
+              icon={<KeyRound className="size-3.5" />}
+              label={t("header.account.changePassword")}
+              onClick={onChangePassword}
+            />
+          ) : null}
           <AccountMenuRow
             active={languageOpen}
             icon={<Languages className="size-3.5" />}
