@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  PREVIZ_TIMELINE_ZOOM,
   clearPathPoints,
   clipById,
   frameToU,
@@ -13,6 +14,7 @@ import {
   removeClip,
   removePathPoint,
   removeTrack,
+  rulerTicks,
   splitClip,
   timelineSeconds,
   trackFor,
@@ -20,6 +22,7 @@ import {
   uToFrame,
   updatePathPoint,
   upsertPathClip,
+  zoomToFit,
 } from '@/features/previz/domain/timeline';
 import {
   createDefaultScene,
@@ -328,5 +331,59 @@ describe('removePathPoint / clearPathPoints', () => {
     expect(pathClipOf(next, 'c').points).toHaveLength(0);
     // 「清空轨迹」清的是点，片段还在——参照实现也是这样，重画不用先建片段。
     expect(next.timeline.tracks[0].clips).toHaveLength(1);
+  });
+});
+
+describe('rulerTicks', () => {
+  it('labels every major tick and leaves the minors bare', () => {
+    const ticks = rulerTicks(10, PREVIZ_TIMELINE_ZOOM.default);
+
+    const majors = ticks.filter((tick) => tick.major);
+    expect(majors.map((tick) => tick.seconds)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(majors.map((tick) => tick.label)).toEqual([
+      '0s', '1s', '2s', '3s', '4s', '5s', '6s', '7s', '8s', '9s', '10s',
+    ]);
+    // 次刻度只有位置没有文字：标满了尺子上全是字，读不出主刻度在哪。
+    expect(ticks.filter((tick) => !tick.major).every((tick) => tick.label === null)).toBe(true);
+  });
+
+  it('coarsens the step as the scale shrinks instead of crowding the labels', () => {
+    // 缩到很小时每秒一格会挤成一团，主刻度得自己退到 2s、5s……
+    const zoomedOut = rulerTicks(10, PREVIZ_TIMELINE_ZOOM.min);
+    const majors = zoomedOut.filter((tick) => tick.major).map((tick) => tick.seconds);
+
+    expect(majors[1] - majors[0]).toBeGreaterThan(1);
+    expect(majors[majors.length - 1]).toBe(10);
+  });
+
+  it('refines the step as the scale grows', () => {
+    const zoomedIn = rulerTicks(2, PREVIZ_TIMELINE_ZOOM.max);
+    const majors = zoomedIn.filter((tick) => tick.major).map((tick) => tick.seconds);
+
+    expect(majors[1] - majors[0]).toBeLessThan(1);
+    expect(majors[0]).toBe(0);
+  });
+
+  it('still yields the zero tick for an empty span', () => {
+    // 时长为 0 的场景（还没建任何东西）不该让尺子渲染成空，起码留一根 0s。
+    expect(rulerTicks(0, PREVIZ_TIMELINE_ZOOM.default)).toEqual([
+      { seconds: 0, major: true, label: '0s' },
+    ]);
+  });
+});
+
+describe('zoomToFit', () => {
+  it('spreads the whole timeline across the lane', () => {
+    expect(zoomToFit(4, 600)).toBe(150);
+  });
+
+  it('clamps into the zoom range instead of collapsing', () => {
+    // 极长的时间轴挤进窄面板时，比例会算到小于下限——夹住，别让片段缩成一根线。
+    expect(zoomToFit(1000, 300)).toBe(PREVIZ_TIMELINE_ZOOM.min);
+    expect(zoomToFit(0.1, 1200)).toBe(PREVIZ_TIMELINE_ZOOM.max);
+  });
+
+  it('falls back to the default before the lane has been measured', () => {
+    expect(zoomToFit(4, 0)).toBe(PREVIZ_TIMELINE_ZOOM.default);
   });
 });
