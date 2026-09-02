@@ -52,6 +52,8 @@ describe("previz scene schema", () => {
       focalMm: 35,
       aperture: 2.8,
       sensor: "ff",
+      cameraBody: "virtual",
+      lensSeries: "anamorphic",
     });
     scene.timeline.tracks.push({ id: "track-1", objectId: "cam-1", clips: [] });
 
@@ -178,6 +180,7 @@ describe("parseScene object validation", () => {
         { id: "b", kind: "prop", assetFormat: "constructor" },
         { id: "c", kind: "light", lightType: "valueOf" },
         { id: "d", kind: "camera", sensor: "__proto__" },
+        { id: "e", kind: "camera", cameraBody: "toString", lensSeries: "__proto__" },
       ],
     });
 
@@ -187,6 +190,22 @@ describe("parseScene object validation", () => {
     expect(parsed.objects[1]).toMatchObject({ kind: "prop", assetFormat: "glb" });
     expect(parsed.objects[2]).toMatchObject({ kind: "light", lightType: "key" });
     expect(parsed.objects[3]).toMatchObject({ kind: "camera", sensor: "ff" });
+    expect(parsed.objects[4]).toMatchObject({
+      kind: "camera",
+      cameraBody: "cine",
+      lensSeries: "prime",
+    });
+  });
+
+  // 机身与镜头系列在渲染上不起作用（视场角只由焦距与画幅决定），但它们是用户在创建
+  // 对话框里挑过的东西。不存的话，重开面板看到的会是别人的选择，而不是自己的。
+  it("keeps the camera body and lens series across a round trip", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [{ id: "a", kind: "camera", cameraBody: "handheld", lensSeries: "anamorphic" }],
+    });
+
+    expect(parsed.objects[0]).toMatchObject({ cameraBody: "handheld", lensSeries: "anamorphic" });
   });
 
   // kind 走的是同一个 isMember，但这一条从 parseScene 的输出上看不出 hasOwnProperty 与
