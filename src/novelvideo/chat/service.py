@@ -93,10 +93,9 @@ _ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str]] = {}
 _ACTIVE_CODEX_TURNS_LOCK = threading.Lock()
 _CODEX_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant. Use the required dramaclaw MCP "
-    "server for all DramaClaw data reads and writes. Its business tools use progressive "
-    "disclosure: search with dramaclaw_tool_search, inspect an unfamiliar tool with "
-    "dramaclaw_tool_describe, then execute it with dramaclaw_tool_call. Never guess a "
-    "tool name or argument schema. Do not use shell commands, "
+    "server for all DramaClaw data reads and writes. Use the concrete business tools "
+    "listed by the server and their native input schemas. Do not guess a tool name or "
+    "argument schema. Do not use shell commands, "
     "local file editing, web search, or other external tools."
 )
 _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
@@ -106,8 +105,7 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "search Workflow Skills and do not call a canvas write tool merely because the requested "
     "content mentions images, audio, or video. "
     "Use the concrete tools currently listed by the required dramaclaw MCP server. "
-    "Freezone tools are exposed directly with names such as freezone_emit_canvas_command; "
-    "do not look for the progressive dramaclaw_tool_search/describe/call bridge in this mode. "
+    "Freezone tools are exposed directly with names such as freezone_emit_canvas_command. "
     "For any workflow, several connected nodes, grouped stages, storyboard, or media pipeline, "
     "load and follow the project Agent Skill named dramaclaw-workflows. Read that Skill only from "
     "the exact file URI advertised in the available Skills or dramaclaw resources; never invent a "

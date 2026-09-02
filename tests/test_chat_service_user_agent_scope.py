@@ -34,7 +34,7 @@ async def test_human_billing_confirmation_phrase_issues_trusted_context(
             "expires_at": 9999999999,
         }
 
-    monkeypatch.setattr(chat_routes, "confirm_latest_billing_quote", fake_confirm)
+    monkeypatch.setattr(chat_routes, "confirm_billing_quote", fake_confirm)
     result = await chat_routes._trusted_billing_confirmation_for_message(
         project_ctx=SimpleNamespace(
             state_dir=tmp_path,
@@ -48,7 +48,7 @@ async def test_human_billing_confirmation_phrase_issues_trusted_context(
             surface="freezone",
             canvas_id="canvas-a",
         ),
-        display_text="确认规划费用",
+        display_text="确认规划费用 billing_quote_a",
         surface_context=None,
     )
 
@@ -61,6 +61,8 @@ async def test_human_billing_confirmation_phrase_issues_trusted_context(
     assert seen["user_id"] == "user-a"
     assert seen["project_id"] == "project-a"
     assert seen["canvas_id"] == "canvas-a"
+    assert seen["quote_id"] == "billing_quote_a"
+    assert seen["expected_operation_kind"] == "workflow_planning_create"
 
 
 @pytest.mark.anyio
@@ -77,7 +79,7 @@ async def test_untrusted_or_inexact_billing_confirmation_does_not_issue_receipt(
 ):
     monkeypatch.setattr(
         chat_routes,
-        "confirm_latest_billing_quote",
+        "confirm_billing_quote",
         lambda **_kwargs: pytest.fail("must not confirm a quote"),
     )
 
@@ -1239,8 +1241,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         )
         developer_instructions = chat_service._codex_developer_instructions(tool_mode)
         assert "concrete tools currently listed" in developer_instructions
-        assert "dramaclaw_tool_search/describe/call" in developer_instructions
-        assert "do not look for" in developer_instructions
+        assert "dramaclaw_tool_search/describe/call" not in developer_instructions
         assert "custom-topology reference" in developer_instructions
         assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
         assert "expected_node_count" in developer_instructions
@@ -1256,9 +1257,8 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "run_after_create=true" in developer_instructions
     else:
         assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
-        assert (
-            "search with dramaclaw_tool_search"
-            in chat_service._codex_developer_instructions(tool_mode)
+        assert "concrete business tools" in chat_service._codex_developer_instructions(
+            tool_mode
         )
     assert [event["type"] for event in events] == [
         "thread_started",

@@ -59,7 +59,7 @@ from novelvideo.freezone.agent_capability_billing import (
     settle_agent_capability_charge,
     workflow_design_charge,
 )
-from novelvideo.freezone.agent_billing_state import confirm_latest_billing_quote
+from novelvideo.freezone.agent_billing_state import confirm_billing_quote
 from novelvideo.ports import get_product_surface_access, get_usage_meter
 from novelvideo.ports.local.usage import NoOpUsageMeter
 from novelvideo.project_context import (
@@ -97,6 +97,32 @@ _BILLING_CONFIRMATION_PHRASES = {
 }
 
 
+def _explicit_billing_confirmation(
+    display_text: str, surface_context: dict[str, Any] | None
+) -> tuple[str, str] | None:
+    parts = display_text.split()
+    phrase = parts[0] if parts else ""
+    operation_kind = _BILLING_CONFIRMATION_PHRASES.get(phrase)
+    if not operation_kind:
+        return None
+    context_quote_id = str(
+        (surface_context or {}).get("billing_quote_id") or ""
+    ).strip()
+    message_quote_id = parts[1] if len(parts) == 2 else ""
+    quote_id = context_quote_id or message_quote_id
+    if (
+        not quote_id.startswith("billing_quote_")
+        or (len(parts) != 1 and len(parts) != 2)
+        or (
+            context_quote_id
+            and message_quote_id
+            and context_quote_id != message_quote_id
+        )
+    ):
+        return None
+    return operation_kind, quote_id
+
+
 async def _trusted_billing_confirmation_for_message(
     *,
     project_ctx: ProjectContext,
@@ -105,13 +131,14 @@ async def _trusted_billing_confirmation_for_message(
     display_text: str,
     surface_context: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    operation_kind = _BILLING_CONFIRMATION_PHRASES.get(display_text)
+    confirmation = _explicit_billing_confirmation(display_text, surface_context)
     if (
-        not operation_kind
+        confirmation is None
         or not _is_freezone_scope(scope)
         or user.get("credential_kind") in {"agent_session", "local_trusted_agent"}
     ):
         return None
+    operation_kind, quote_id = confirmation
     canvas_id = str(
         scope.canvas_id
         or (surface_context or {}).get("freezone_canvas_id")
@@ -121,8 +148,9 @@ async def _trusted_billing_confirmation_for_message(
     if not canvas_id:
         return None
     confirmed_quote = await asyncio.to_thread(
-        confirm_latest_billing_quote,
+        confirm_billing_quote,
         project_dir=project_ctx.state_dir,
+        quote_id=quote_id,
         user_id=str(
             project_ctx.requester_user_id
             or user.get("id")
@@ -131,10 +159,8 @@ async def _trusted_billing_confirmation_for_message(
         ),
         project_id=str(project_ctx.project_id or scope.id),
         canvas_id=canvas_id,
-        operation_kind=operation_kind,
+        expected_operation_kind=operation_kind,
     )
-    if confirmed_quote is None:
-        return None
     return {
         "quote_id": confirmed_quote["quote_id"],
         "confirmation_receipt": confirmed_quote["receipt"],

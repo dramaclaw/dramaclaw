@@ -7,12 +7,12 @@ import pytest
 
 from novelvideo.freezone.agent_billing_state import (
     confirm_billing_quote,
-    confirm_latest_billing_quote,
     consume_billing_confirmation,
     create_billing_quote,
     due_billing_settlements,
     enqueue_billing_settlement,
     mark_billing_settlement_failed,
+    mark_billing_settlement_projected,
     mark_billing_settlement_succeeded,
 )
 
@@ -103,6 +103,20 @@ def test_confirmation_rejects_cross_user_scope(tmp_path) -> None:
         )
 
 
+def test_confirmation_rejects_mismatched_explicit_action(tmp_path) -> None:
+    quote = _quote(tmp_path)
+
+    with pytest.raises(ValueError, match="does not match this confirmation action"):
+        confirm_billing_quote(
+            project_dir=tmp_path,
+            quote_id=quote["quote_id"],
+            user_id="user-a",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            expected_operation_kind="workflow_create",
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -143,7 +157,7 @@ def test_consumption_rejects_every_scope_or_operation_mismatch(
         consume_billing_confirmation(**arguments)
 
 
-def test_confirmation_receipt_expiry_and_rotation(tmp_path) -> None:
+def test_confirmation_receipt_is_idempotent_and_expires(tmp_path) -> None:
     operation = {"intent": {"user_goal": "广告"}}
     quote = _quote(tmp_path, operation)
     first = confirm_billing_quote(
@@ -153,28 +167,14 @@ def test_confirmation_receipt_expiry_and_rotation(tmp_path) -> None:
         project_id="project-a",
         canvas_id="canvas-a",
     )
-    rotated = confirm_latest_billing_quote(
+    repeated = confirm_billing_quote(
         project_dir=tmp_path,
+        quote_id=quote["quote_id"],
         user_id="user-a",
         project_id="project-a",
         canvas_id="canvas-a",
-        operation_kind="workflow_planning_create",
     )
-    assert rotated is not None
-    assert rotated["receipt"] != first["receipt"]
-
-    with pytest.raises(ValueError, match="does not match this operation"):
-        consume_billing_confirmation(
-            project_dir=tmp_path,
-            quote_id=quote["quote_id"],
-            receipt=first["receipt"],
-            user_id="user-a",
-            project_id="project-a",
-            canvas_id="canvas-a",
-            feature_key="freezone.agent.creative_planning",
-            operation_kind="workflow_planning_create",
-            operation=operation,
-        )
+    assert repeated["receipt"] == first["receipt"]
 
     with sqlite3.connect(tmp_path / "data.db") as conn:
         conn.execute(
@@ -185,7 +185,7 @@ def test_confirmation_receipt_expiry_and_rotation(tmp_path) -> None:
         consume_billing_confirmation(
             project_dir=tmp_path,
             quote_id=quote["quote_id"],
-            receipt=rotated["receipt"],
+            receipt=repeated["receipt"],
             user_id="user-a",
             project_id="project-a",
             canvas_id="canvas-a",
@@ -251,6 +251,13 @@ def test_settlement_outbox_retries_with_backoff_and_reaches_terminal_state(
         project_dir=tmp_path,
         reservation_id="reservation-a",
     )
+    pending_projection = due_billing_settlements(project_dir=tmp_path)
+    assert pending_projection[0]["status"] == "settled_projection_pending"
+
+    mark_billing_settlement_projected(
+        project_dir=tmp_path,
+        reservation_id="reservation-a",
+    )
     assert due_billing_settlements(project_dir=tmp_path) == []
 
 
@@ -310,6 +317,71 @@ def test_reconciler_settles_outbox_and_updates_draft(tmp_path, monkeypatch) -> N
     assert stored is not None
     assert stored["billing"]["planning"]["status"] == "confirmed"
     assert settled == [("reservation-retry", True, {"outcome": "planning_delivered"})]
+
+
+def test_reconciler_recovers_projection_without_repeating_external_settlement(
+    tmp_path, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.workflow_drafts import (
+        create_workflow_draft,
+        read_workflow_draft,
+        set_workflow_draft_billing,
+    )
+
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="canvas-a",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled={
+            "ok": True,
+            "skill_id": "video-ad",
+            "plan": {"nodes": [], "edges": [], "phases": []},
+        },
+    )
+    set_workflow_draft_billing(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        billing={
+            "planning": {
+                "reservation_id": "reservation-projection",
+                "status": "settlement_pending",
+            }
+        },
+    )
+    enqueue_billing_settlement(
+        project_dir=tmp_path,
+        reservation_id="reservation-projection",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        action="confirm",
+        metadata={"outcome": "planning_delivered"},
+    )
+    mark_billing_settlement_succeeded(
+        project_dir=tmp_path,
+        reservation_id="reservation-projection",
+    )
+
+    async def fail_if_settled_again(*_args, **_kwargs):
+        pytest.fail("external settlement must not repeat after it already succeeded")
+
+    monkeypatch.setattr(
+        freezone, "settle_agent_capability_charge", fail_if_settled_again
+    )
+    asyncio.run(freezone._reconcile_agent_billing_settlements(tmp_path))
+
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+    )
+    assert error is None
+    assert stored is not None
+    assert stored["billing"]["planning"]["status"] == "confirmed"
+    assert due_billing_settlements(project_dir=tmp_path) == []
 
 
 def test_reconciler_refunds_cancelled_workflow_reservation(

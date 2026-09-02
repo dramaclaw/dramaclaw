@@ -4404,6 +4404,22 @@ def _agent_billing_confirmation_gate(
                 "a plan, and do not invent a confirmation receipt."
             ),
         }
+    if quote_payload.get("allowed") is False:
+        return {
+            "ok": False,
+            "status": "agent_credit_insufficient",
+            "code": "agent_credit_insufficient",
+            "quote": quote_payload,
+            "confirmation_required": False,
+            "next_action": "add_credits",
+            "error": f"{capability_name}所需积分超过当前可用余额。",
+            "message": f"当前 Agent 积分不足，暂时无法执行{capability_name}。",
+            "agent_instruction": (
+                "Tell the user that the current Agent credit balance is insufficient. "
+                "Show quote.display as the required charge, do not ask for confirmation, "
+                "and do not retry or continue planning until credits are added."
+            ),
+        }
     return {
         "ok": True,
         "status": "agent_planning_confirmation_required",
@@ -4415,7 +4431,8 @@ def _agent_billing_confirmation_gate(
         "agent_instruction": (
             "Show quote.display as the exact Agent charge and ask the user to confirm. "
             "Stop this turn without compiling, preparing, patching, or creating a workflow. "
-            f"Ask the user to reply with the exact phrase {confirmation_phrase}. Only the "
+            f"Ask the user to reply with the exact phrase {confirmation_phrase} "
+            f"{quote_payload.get('quote_id')}. Only the "
             "server can then issue a confirmation receipt. Retry the same requested workflow "
             "tool with the trusted quote_id and confirmation_receipt; never invent them."
         ),

@@ -1367,6 +1367,40 @@ def test_workflow_planning_quote_skips_billing_in_ce(monkeypatch):
     assert result is None
 
 
+def test_workflow_planning_quote_stops_when_agent_credits_are_insufficient(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "data": {
+                "billing_required": True,
+                "configured": True,
+                "exact": True,
+                "allowed": False,
+                "quote_id": "billing_quote_insufficient",
+                "display": "12 积分",
+            },
+        },
+    )
+
+    result = plugin._agent_billing_confirmation_gate(
+        "project-a",
+        "canvas-a",
+        args={},
+        operation_kind="workflow_planning_create",
+        operation={"intent": {}, "run_after_create": False},
+    )
+
+    assert result["status"] == "agent_credit_insufficient"
+    assert result["confirmation_required"] is False
+    assert result["next_action"] == "add_credits"
+    assert "ask for confirmation" in result["agent_instruction"]
+
+
 def test_workflow_prepare_requires_server_receipt_and_retries_exact_operation(
     monkeypatch,
 ):
@@ -1425,6 +1459,7 @@ def test_workflow_prepare_requires_server_receipt_and_retries_exact_operation(
 
     quoted = plugin._handle_prepare_workflow_draft({"intent": intent})
     assert quoted["status"] == "agent_planning_confirmation_required"
+    assert "确认规划费用 billing_quote_a" in quoted["agent_instruction"]
     assert len(calls) == 1
     assert calls[0][2]["operation"]["compiled"] == compiled
 

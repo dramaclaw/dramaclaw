@@ -129,13 +129,24 @@ def test_freezone_handler_reads_rotating_turn_token_file(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_list_tools_exposes_only_progressive_bridge(monkeypatch):
+async def test_project_scope_lists_concrete_tools(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
 
     tools = await dramaclaw_mcp.list_tools()
 
-    assert {tool.name for tool in tools} == dramaclaw_mcp.BRIDGE_TOOL_NAMES
-    assert len(tools) == 3
+    names = {tool.name for tool in tools}
+    assert names == set(dramaclaw_mcp.TOOLS)
+    assert names.isdisjoint(dramaclaw_mcp.BRIDGE_TOOL_NAMES)
+
+
+@pytest.mark.asyncio
+async def test_home_scope_lists_only_concrete_project_collection_tools(monkeypatch):
+    monkeypatch.delenv("DRAMACLAW_PROJECT_ID", raising=False)
+
+    tools = await dramaclaw_mcp.list_tools()
+
+    assert {tool.name for tool in tools} == dramaclaw_mcp.HOME_TOOL_NAMES
+    assert {tool.name for tool in tools}.isdisjoint(dramaclaw_mcp.BRIDGE_TOOL_NAMES)
 
 
 @pytest.mark.asyncio
@@ -286,50 +297,20 @@ async def test_freezone_scope_rejects_direct_mainline_write_call(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
 
-    result = await dramaclaw_mcp.call_tool(
-        dramaclaw_mcp.TOOL_CALL_NAME,
-        {
-            "tool_name": "dramaclaw_render_first_frames",
-            "arguments": {"episode": 1},
-        },
-    )
-    payload = json.loads(result[0].text)
-
-    assert payload["ok"] is False
-    assert payload["error"] == "tool_not_available_in_scope"
+    with pytest.raises(ValueError, match="unknown DramaClaw tool"):
+        await dramaclaw_mcp.call_tool(
+            "dramaclaw_render_first_frames",
+            {"episode": 1},
+        )
 
 
 @pytest.mark.asyncio
-async def test_describe_rejects_project_tool_from_home(monkeypatch):
-    monkeypatch.delenv("DRAMACLAW_PROJECT_ID", raising=False)
-
-    result = await dramaclaw_mcp.call_tool(
-        dramaclaw_mcp.TOOL_DESCRIBE_NAME,
-        {"tool_name": "dramaclaw_render_first_frames"},
-    )
-    payload = json.loads(result[0].text)
-
-    assert payload == {
-        "ok": False,
-        "error": "tool_not_available_in_scope",
-        "scope": "home",
-        "tool_name": "dramaclaw_render_first_frames",
-    }
-
-
-@pytest.mark.asyncio
-async def test_describe_returns_one_exact_underlying_schema(monkeypatch):
+@pytest.mark.parametrize("wrapper_name", sorted(dramaclaw_mcp.BRIDGE_TOOL_NAMES))
+async def test_legacy_bridge_wrappers_are_unavailable(monkeypatch, wrapper_name):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
 
-    result = await dramaclaw_mcp.call_tool(
-        dramaclaw_mcp.TOOL_DESCRIBE_NAME,
-        {"tool_name": "dramaclaw_render_first_frames"},
-    )
-    payload = json.loads(result[0].text)
-
-    assert payload["ok"] is True
-    assert payload["tool"]["name"] == "dramaclaw_render_first_frames"
-    assert payload["tool"]["input_schema"]["type"] == "object"
+    with pytest.raises(ValueError, match="unknown DramaClaw tool"):
+        await dramaclaw_mcp.call_tool(wrapper_name, {})
 
 
 @pytest.mark.asyncio
@@ -343,31 +324,21 @@ async def test_tool_call_validates_and_dispatches_existing_handler(monkeypatch):
         (schema, lambda arguments: calls.append(arguments) or '{"ok":true}'),
     )
 
-    invalid = await dramaclaw_mcp.call_tool(
-        dramaclaw_mcp.TOOL_CALL_NAME,
-        {
-            "tool_name": "dramaclaw_render_first_frames",
-            "arguments": {},
-        },
-    )
-    invalid_payload = json.loads(invalid[0].text)
+    invalid = await dramaclaw_mcp.call_tool("dramaclaw_render_first_frames", {})
+    invalid_payload = json.loads(invalid.content[0].text)
     assert invalid_payload["ok"] is False
     assert invalid_payload["error"] == "tool_arguments_invalid"
     assert calls == []
 
     valid = await dramaclaw_mcp.call_tool(
-        dramaclaw_mcp.TOOL_CALL_NAME,
-        {
-            "tool_name": "dramaclaw_render_first_frames",
-            "arguments": {"episode": 1},
-        },
+        "dramaclaw_render_first_frames", {"episode": 1}
     )
-    assert json.loads(valid[0].text) == {"ok": True}
+    assert json.loads(valid.content[0].text) == {"ok": True}
     assert calls == [{"episode": 1}]
 
 
 @pytest.mark.asyncio
-async def test_fallback_tool_call_does_not_block_mcp_event_loop(monkeypatch):
+async def test_native_tool_call_does_not_block_mcp_event_loop(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     schema, _handler = dramaclaw_mcp.TOOLS["dramaclaw_render_first_frames"]
 
@@ -382,15 +353,12 @@ async def test_fallback_tool_call_does_not_block_mcp_event_loop(monkeypatch):
     )
     call = asyncio.create_task(
         dramaclaw_mcp.call_tool(
-            dramaclaw_mcp.TOOL_CALL_NAME,
-            {
-                "tool_name": "dramaclaw_render_first_frames",
-                "arguments": {"episode": 1},
-            },
+            "dramaclaw_render_first_frames",
+            {"episode": 1},
         )
     )
 
     await asyncio.sleep(0.05)
     assert call.done() is False
     result = await call
-    assert json.loads(result[0].text) == {"ok": True}
+    assert json.loads(result.content[0].text) == {"ok": True}

@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS agent_billing_quotes (
     display             TEXT NOT NULL,
     status              TEXT NOT NULL,
     receipt_hash        TEXT,
+    receipt_token       TEXT,
     created_at          REAL NOT NULL,
     expires_at          REAL NOT NULL,
     confirmed_at        REAL,
@@ -66,6 +67,12 @@ def _connect(project_dir: Path):
     conn.row_factory = sqlite3.Row
     configure_sqlite_connection(conn)
     conn.executescript(_SCHEMA_SQL)
+    quote_columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(agent_billing_quotes)").fetchall()
+    }
+    if "receipt_token" not in quote_columns:
+        conn.execute("ALTER TABLE agent_billing_quotes ADD COLUMN receipt_token TEXT")
     try:
         yield conn
         conn.commit()
@@ -178,40 +185,6 @@ def create_billing_quote(
         return _quote_payload(row)
 
 
-def confirm_latest_billing_quote(
-    *,
-    project_dir: Path,
-    user_id: str,
-    project_id: str,
-    canvas_id: str,
-    operation_kind: str,
-) -> dict[str, Any] | None:
-    now = time.time()
-    receipt = f"billing_receipt_{secrets.token_urlsafe(32)}"
-    with _connect(project_dir) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute(
-            """
-            SELECT * FROM agent_billing_quotes
-            WHERE user_id = ? AND project_id = ? AND canvas_id = ?
-              AND operation_kind = ? AND status IN ('quoted', 'confirmed') AND expires_at >= ?
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            (user_id, project_id, canvas_id, operation_kind, now),
-        ).fetchone()
-        if row is None:
-            return None
-        conn.execute(
-            """
-            UPDATE agent_billing_quotes
-            SET status = 'confirmed', receipt_hash = ?, confirmed_at = ?
-            WHERE quote_id = ? AND status IN ('quoted', 'confirmed')
-            """,
-            (_receipt_hash(receipt), now, row["quote_id"]),
-        )
-        return {**_quote_payload(row), "status": "confirmed", "receipt": receipt}
-
-
 def confirm_billing_quote(
     *,
     project_dir: Path,
@@ -219,9 +192,9 @@ def confirm_billing_quote(
     user_id: str,
     project_id: str,
     canvas_id: str,
+    expected_operation_kind: str | None = None,
 ) -> dict[str, Any]:
     now = time.time()
-    receipt = f"billing_receipt_{secrets.token_urlsafe(32)}"
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
@@ -235,17 +208,26 @@ def confirm_billing_quote(
             or row["canvas_id"] != canvas_id
         ):
             raise ValueError("billing quote does not belong to this scope")
+        if expected_operation_kind and row["operation_kind"] != expected_operation_kind:
+            raise ValueError("billing quote does not match this confirmation action")
         if float(row["expires_at"]) < now:
             raise ValueError("billing quote expired")
         if row["status"] not in {"quoted", "confirmed"}:
             raise ValueError("billing quote is no longer awaiting confirmation")
+        if row["status"] == "confirmed" and row["receipt_token"]:
+            return {
+                **_quote_payload(row),
+                "status": "confirmed",
+                "receipt": row["receipt_token"],
+            }
+        receipt = f"billing_receipt_{secrets.token_urlsafe(32)}"
         conn.execute(
             """
             UPDATE agent_billing_quotes
-            SET status = 'confirmed', receipt_hash = ?, confirmed_at = ?
+            SET status = 'confirmed', receipt_hash = ?, receipt_token = ?, confirmed_at = ?
             WHERE quote_id = ? AND status IN ('quoted', 'confirmed')
             """,
-            (_receipt_hash(receipt), now, quote_id),
+            (_receipt_hash(receipt), receipt, now, quote_id),
         )
         return {**_quote_payload(row), "status": "confirmed", "receipt": receipt}
 
@@ -326,7 +308,8 @@ def enqueue_billing_settlement(
                 action = excluded.action,
                 metadata_json = excluded.metadata_json,
                 status = CASE
-                    WHEN agent_billing_settlements.status = 'settled' THEN 'settled'
+                    WHEN agent_billing_settlements.status IN ('settled', 'settled_projection_pending')
+                        THEN agent_billing_settlements.status
                     ELSE 'pending'
                 END,
                 next_attempt_at = excluded.next_attempt_at,
@@ -353,7 +336,8 @@ def due_billing_settlements(
         rows = conn.execute(
             """
             SELECT * FROM agent_billing_settlements
-            WHERE status = 'pending' AND next_attempt_at <= ?
+            WHERE status IN ('pending', 'settled_projection_pending')
+              AND next_attempt_at <= ?
             ORDER BY next_attempt_at ASC LIMIT ?
             """,
             (time.time(), max(1, min(int(limit), 200))),
@@ -375,10 +359,26 @@ def mark_billing_settlement_succeeded(
         conn.execute(
             """
             UPDATE agent_billing_settlements
-            SET status = 'settled', settled_at = ?, updated_at = ?, last_error = NULL
+            SET status = 'settled_projection_pending', settled_at = ?, updated_at = ?, last_error = NULL
             WHERE reservation_id = ?
             """,
             (now, now, reservation_id),
+        )
+
+
+def mark_billing_settlement_projected(
+    *, project_dir: Path, reservation_id: str
+) -> None:
+    """Finish an outbox item only after its local draft projection is durable."""
+    now = time.time()
+    with _connect(project_dir) as conn:
+        conn.execute(
+            """
+            UPDATE agent_billing_settlements
+            SET status = 'settled', updated_at = ?, last_error = NULL
+            WHERE reservation_id = ? AND status = 'settled_projection_pending'
+            """,
+            (now, reservation_id),
         )
 
 

@@ -142,6 +142,7 @@ from novelvideo.freezone.agent_billing_state import (
     due_billing_settlements,
     enqueue_billing_settlement,
     mark_billing_settlement_failed,
+    mark_billing_settlement_projected,
     mark_billing_settlement_succeeded,
 )
 from novelvideo.media_model_request_schema import (
@@ -4842,72 +4843,78 @@ async def _reconcile_agent_billing_settlements(project_dir: Path) -> None:
         due_billing_settlements, project_dir=project_dir
     ):
         reservation_id = str(pending.get("reservation_id") or "")
-        try:
-            await settle_agent_capability_charge(
-                reservation_id,
-                confirmed=pending.get("action") == "confirm",
-                metadata=(
-                    pending.get("metadata")
-                    if isinstance(pending.get("metadata"), dict)
-                    else {}
-                ),
-            )
-        except Exception as exc:
-            await asyncio.to_thread(
-                mark_billing_settlement_failed,
-                project_dir=project_dir,
-                reservation_id=reservation_id,
-                error=str(exc),
-            )
-            logger.warning(
-                "Agent billing settlement retry remains pending reservation_id=%s",
-                reservation_id,
-            )
-        else:
+        if pending.get("status") == "pending":
+            try:
+                await settle_agent_capability_charge(
+                    reservation_id,
+                    confirmed=pending.get("action") == "confirm",
+                    metadata=(
+                        pending.get("metadata")
+                        if isinstance(pending.get("metadata"), dict)
+                        else {}
+                    ),
+                )
+            except Exception as exc:
+                await asyncio.to_thread(
+                    mark_billing_settlement_failed,
+                    project_dir=project_dir,
+                    reservation_id=reservation_id,
+                    error=str(exc),
+                )
+                logger.warning(
+                    "Agent billing settlement retry remains pending reservation_id=%s",
+                    reservation_id,
+                )
+                continue
             await asyncio.to_thread(
                 mark_billing_settlement_succeeded,
                 project_dir=project_dir,
                 reservation_id=reservation_id,
             )
-            draft, _error = await asyncio.to_thread(
-                read_workflow_draft,
+        draft_id = str(pending.get("draft_id") or "")
+        if not draft_id:
+            await asyncio.to_thread(
+                mark_billing_settlement_projected,
                 project_dir=project_dir,
-                canvas_id=str(pending.get("canvas_id") or ""),
-                draft_id=str(pending.get("draft_id") or ""),
+                reservation_id=reservation_id,
             )
-            if draft is not None:
-                billing = (
-                    draft.get("billing")
-                    if isinstance(draft.get("billing"), dict)
-                    else {}
-                )
-                planning = (
-                    billing.get("planning")
-                    if isinstance(billing.get("planning"), dict)
-                    else {}
-                )
-                if str(planning.get("reservation_id") or "") == reservation_id:
-                    planning["status"] = (
-                        "confirmed"
-                        if pending.get("action") == "confirm"
-                        else "refunded"
-                    )
-                    billing["planning"] = planning
-                elif str(billing.get("reservation_id") or "") == reservation_id:
-                    billing["status"] = (
-                        "confirmed"
-                        if pending.get("action") == "confirm"
-                        else "refunded"
-                    )
-                else:
-                    continue
-                await asyncio.to_thread(
-                    set_workflow_draft_billing,
-                    project_dir=project_dir,
-                    canvas_id=str(pending.get("canvas_id") or ""),
-                    draft_id=str(pending.get("draft_id") or ""),
-                    billing=billing,
-                )
+            continue
+        draft, _error = await asyncio.to_thread(
+            read_workflow_draft,
+            project_dir=project_dir,
+            canvas_id=str(pending.get("canvas_id") or ""),
+            draft_id=draft_id,
+        )
+        if draft is None:
+            continue
+        billing = draft.get("billing") if isinstance(draft.get("billing"), dict) else {}
+        planning = (
+            billing.get("planning") if isinstance(billing.get("planning"), dict) else {}
+        )
+        if str(planning.get("reservation_id") or "") == reservation_id:
+            planning["status"] = (
+                "confirmed" if pending.get("action") == "confirm" else "refunded"
+            )
+            billing["planning"] = planning
+        elif str(billing.get("reservation_id") or "") == reservation_id:
+            billing["status"] = (
+                "confirmed" if pending.get("action") == "confirm" else "refunded"
+            )
+        else:
+            continue
+        projected = await asyncio.to_thread(
+            set_workflow_draft_billing,
+            project_dir=project_dir,
+            canvas_id=str(pending.get("canvas_id") or ""),
+            draft_id=draft_id,
+            billing=billing,
+        )
+        if projected is not None:
+            await asyncio.to_thread(
+                mark_billing_settlement_projected,
+                project_dir=project_dir,
+                reservation_id=reservation_id,
+            )
 
 
 def _billing_confirmation_fields(body: dict[str, Any]) -> tuple[str, str]:
@@ -4942,7 +4949,7 @@ async def _settle_agent_reservation_with_outbox(
         reservation_id=reservation_id,
         project_id=project_id,
         canvas_id=canvas_id,
-        draft_id=draft_id,
+        draft_id="",
         action="confirm" if confirmed else "refund",
         metadata=metadata,
     )
@@ -4966,6 +4973,11 @@ async def _settle_agent_reservation_with_outbox(
         return False
     await asyncio.to_thread(
         mark_billing_settlement_succeeded,
+        project_dir=state_dir,
+        reservation_id=reservation_id,
+    )
+    await asyncio.to_thread(
+        mark_billing_settlement_projected,
         project_dir=state_dir,
         reservation_id=reservation_id,
     )
@@ -5116,6 +5128,12 @@ async def _charge_workflow_draft_planning(
         draft_id=str(draft.get("draft_id") or ""),
         billing=pending_billing,
     )
+    if settled is not None:
+        await asyncio.to_thread(
+            mark_billing_settlement_projected,
+            project_dir=state_dir,
+            reservation_id=reservation_id,
+        )
     return settled or draft
 
 
@@ -13939,6 +13957,11 @@ async def finish_canvas_workflow_draft(
             )
             if persisted is not None:
                 draft = persisted
+                await asyncio.to_thread(
+                    mark_billing_settlement_projected,
+                    project_dir=state_dir,
+                    reservation_id=reservation_id,
+                )
     return {"ok": True, "data": _workflow_draft_api_data(draft)}
 
 

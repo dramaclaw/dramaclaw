@@ -452,36 +452,32 @@ def _workflow_plan_log_summary(arguments: Any) -> dict[str, Any]:
 
 @SERVER.list_tools()
 async def list_tools() -> list[types.Tool]:
-    # In Freezone, expose the same concrete Hermes tool names. The previous
-    # search/describe/call indirection made Codex spend an extra turn choosing
-    # a tool and could cause it to retry after the browser had already applied
-    # the command. All handlers still execute through the same Freezone bridge.
-    if _scope_kind() == "project" and _freezone_canvas_mode():
-        result: list[types.Tool] = []
-        for name, (schema, _handler) in sorted(_available_tools().items()):
-            parameters = schema.get("parameters") if isinstance(schema, dict) else None
-            result.append(
-                types.Tool(
-                    name=name,
-                    description=str(schema.get("description") or ""),
-                    inputSchema=(
-                        parameters
-                        if isinstance(parameters, dict)
-                        else {"type": "object"}
-                    ),
-                    outputSchema=(
-                        _WORKFLOW_DRAFT_OUTPUT_SCHEMA
-                        if name
-                        in {
-                            "freezone_prepare_workflow_draft",
-                            "freezone_prepare_workflow_plan_draft",
-                        }
-                        else _MCP_OUTPUT_SCHEMA
-                    ),
-                )
+    # Expose concrete, scope-filtered business tools everywhere. Native MCP
+    # clients can defer loading schemas themselves, while the old
+    # search/describe/call wrapper hid capabilities from that mechanism and
+    # added an avoidable model round trip.
+    result: list[types.Tool] = []
+    for name, (schema, _handler) in sorted(_available_tools().items()):
+        parameters = schema.get("parameters") if isinstance(schema, dict) else None
+        result.append(
+            types.Tool(
+                name=name,
+                description=str(schema.get("description") or ""),
+                inputSchema=(
+                    parameters if isinstance(parameters, dict) else {"type": "object"}
+                ),
+                outputSchema=(
+                    _WORKFLOW_DRAFT_OUTPUT_SCHEMA
+                    if name
+                    in {
+                        "freezone_prepare_workflow_draft",
+                        "freezone_prepare_workflow_plan_draft",
+                    }
+                    else _MCP_OUTPUT_SCHEMA
+                ),
             )
-        return result
-    return _bridge_tools()
+        )
+    return result
 
 
 def _skill_resource_path(uri: str) -> Path:
@@ -622,12 +618,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         arguments.get("tool_name"),
         sorted(str(key) for key in arguments),
     )
-    if name in _available_tools() and name not in BRIDGE_TOOL_NAMES:
+    if name in _available_tools():
         schema, handler = _available_tools()[name]
         workflow_started = (
-            time.monotonic()
-            if name == "freezone_prepare_workflow_plan_draft"
-            else None
+            time.monotonic() if name == "freezone_prepare_workflow_plan_draft" else None
         )
         if workflow_started is not None:
             logger.info(
@@ -704,13 +698,19 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 "status": (
                     "workflow_validation_failed"
                     if name
-                    in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"}
+                    in {
+                        "freezone_prepare_workflow_plan_draft",
+                        "workflow_graph_compile",
+                    }
                     else "tool_arguments_invalid"
                 ),
                 "phase": (
                     "graph_compile"
                     if name
-                    in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"}
+                    in {
+                        "freezone_prepare_workflow_plan_draft",
+                        "workflow_graph_compile",
+                    }
                     else "tool_validation"
                 ),
                 "retryable": name
@@ -778,139 +778,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             )
         ]
 
-    if name == TOOL_SEARCH_NAME:
-        try:
-            limit = max(1, min(12, int(arguments.get("limit", 6))))
-        except (TypeError, ValueError):
-            limit = 6
-        matches = _search_tools(str(arguments.get("query") or ""), limit)
-        payload = {
-            "ok": True,
-            "scope": _scope_kind(),
-            "available_count": len(_available_tools()),
-            "matches": matches,
-        }
-        _log_mcp_call_end(
-            scope=_scope_kind(), tool=name, started=call_started, payload=payload
-        )
-        return _json_text(payload)
-
-    tool_name = str(arguments.get("tool_name") or "").strip()
-    item = _available_tools().get(tool_name)
-    if item is None:
-        payload = {
-            "ok": False,
-            "error": "tool_not_available_in_scope",
-            "scope": _scope_kind(),
-            "tool_name": tool_name,
-        }
-        _log_mcp_call_end(
-            scope=_scope_kind(), tool=name, started=call_started, payload=payload
-        )
-        return _json_text(payload)
-    schema, handler = item
-    parameters = schema.get("parameters") if isinstance(schema, dict) else None
-    input_schema = parameters if isinstance(parameters, dict) else {"type": "object"}
-
-    if name == TOOL_DESCRIBE_NAME:
-        payload = {
-            "ok": True,
-            "scope": _scope_kind(),
-            "tool": {
-                **_tool_summary(tool_name, schema),
-                "input_schema": input_schema,
-            },
-        }
-        _log_mcp_call_end(
-            scope=_scope_kind(), tool=name, started=call_started, payload=payload
-        )
-        return _json_text(payload)
-    if name != TOOL_CALL_NAME:
-        raise ValueError(f"unknown DramaClaw bridge tool: {name}")
-
-    underlying_arguments = arguments.get("arguments") or {}
-    if not isinstance(underlying_arguments, dict):
-        payload = {"ok": False, "error": "arguments_must_be_an_object"}
-        _log_mcp_call_end(
-            scope=_scope_kind(), tool=name, started=call_started, payload=payload
-        )
-        return _json_text(payload)
-    try:
-        Draft202012Validator.check_schema(input_schema)
-        Draft202012Validator(input_schema).validate(underlying_arguments)
-    except SchemaError:
-        payload = {
-            "ok": False,
-            "error": "invalid_registered_tool_schema",
-            "tool_name": tool_name,
-        }
-        _log_mcp_call_end(
-            scope=_scope_kind(), tool=name, started=call_started, payload=payload
-        )
-        return _json_text(payload)
-    except ValidationError as exc:
-        payload = {
-            "ok": False,
-            "error": "tool_arguments_invalid",
-            "tool_name": tool_name,
-            "message": exc.message,
-            "path": list(exc.absolute_path),
-        }
-        _log_mcp_call_end(
-            scope=_scope_kind(), tool=name, started=call_started, payload=payload
-        )
-        return _json_text(payload)
-
-    try:
-        text = await asyncio.to_thread(handler, underlying_arguments)
-    except Exception as exc:
-        logger.exception(
-            "mcp.call.exception scope=%s tool=%s underlying_tool=%s elapsed_ms=%d error_type=%s error=%s",
-            _scope_kind(),
-            name,
-            tool_name,
-            int((time.monotonic() - call_started) * 1000),
-            type(exc).__name__,
-            str(exc)[:240],
-        )
-        raise
-    if inspect.isawaitable(text):
-        text = await text
-    if tool_name in {
-        "freezone_prepare_workflow_draft",
-        "freezone_prepare_workflow_plan_draft",
-    }:
-        adapted = _adapt_external_agent_tool_result(tool_name, text)
-        try:
-            structured = json.loads(adapted)
-        except (TypeError, json.JSONDecodeError):
-            structured = None
-        if isinstance(structured, dict):
-            _log_mcp_call_end(
-                scope=_scope_kind(),
-                tool=f"{name}:{tool_name}",
-                started=call_started,
-                payload=structured,
-            )
-            return types.CallToolResult(
-                content=[types.TextContent(type="text", text=adapted)],
-                structuredContent=structured,
-            )
-        _log_mcp_call_end(
-            scope=_scope_kind(),
-            tool=f"{name}:{tool_name}",
-            started=call_started,
-            payload=adapted,
-        )
-        return [types.TextContent(type="text", text=adapted)]
-    text_result = str(text or "")
-    _log_mcp_call_end(
-        scope=_scope_kind(),
-        tool=f"{name}:{tool_name}",
-        started=call_started,
-        payload=text_result,
-    )
-    return [types.TextContent(type="text", text=text_result)]
+    raise ValueError(f"unknown DramaClaw tool: {name}")
 
 
 async def _main() -> None:
