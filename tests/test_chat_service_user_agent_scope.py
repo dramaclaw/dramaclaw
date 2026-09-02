@@ -19,6 +19,88 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.mark.anyio
+async def test_human_billing_confirmation_phrase_issues_trusted_context(
+    monkeypatch, tmp_path
+):
+    seen = {}
+
+    def fake_confirm(**kwargs):
+        seen.update(kwargs)
+        return {
+            "quote_id": "billing_quote_a",
+            "receipt": "billing_receipt_a",
+            "operation_kind": "workflow_planning_create",
+            "expires_at": 9999999999,
+        }
+
+    monkeypatch.setattr(chat_routes, "confirm_latest_billing_quote", fake_confirm)
+    result = await chat_routes._trusted_billing_confirmation_for_message(
+        project_ctx=SimpleNamespace(
+            state_dir=tmp_path,
+            requester_user_id="user-a",
+            project_id="project-a",
+        ),
+        user={"id": "user-a", "credential_kind": "browser_session"},
+        scope=ChatScope(
+            kind="project",
+            id="project-a",
+            surface="freezone",
+            canvas_id="canvas-a",
+        ),
+        display_text="确认规划费用",
+        surface_context=None,
+    )
+
+    assert result == {
+        "quote_id": "billing_quote_a",
+        "confirmation_receipt": "billing_receipt_a",
+        "operation_kind": "workflow_planning_create",
+        "expires_at": 9999999999,
+    }
+    assert seen["user_id"] == "user-a"
+    assert seen["project_id"] == "project-a"
+    assert seen["canvas_id"] == "canvas-a"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("message", "credential_kind"),
+    [
+        ("确认规划费用。", "browser_session"),
+        ("确认规划费用", "agent_session"),
+        ("确认规划费用", "local_trusted_agent"),
+    ],
+)
+async def test_untrusted_or_inexact_billing_confirmation_does_not_issue_receipt(
+    monkeypatch, tmp_path, message, credential_kind
+):
+    monkeypatch.setattr(
+        chat_routes,
+        "confirm_latest_billing_quote",
+        lambda **_kwargs: pytest.fail("must not confirm a quote"),
+    )
+
+    result = await chat_routes._trusted_billing_confirmation_for_message(
+        project_ctx=SimpleNamespace(
+            state_dir=tmp_path,
+            requester_user_id="user-a",
+            project_id="project-a",
+        ),
+        user={"id": "user-a", "credential_kind": credential_kind},
+        scope=ChatScope(
+            kind="project",
+            id="project-a",
+            surface="freezone",
+            canvas_id="canvas-a",
+        ),
+        display_text=message,
+        surface_context=None,
+    )
+
+    assert result is None
+
+
 def test_chat_visible_text_redacts_local_filesystem_paths():
     content = (
         "前端目录 ~/Works/supertale-fe，"
@@ -1244,16 +1326,47 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
         is False
     )
     assert chat_service._freezone_canvas_write_requested("生成一张图片") is True
-    assert chat_service._freezone_canvas_write_requested("生成一张赛博朋克风格的图片") is True
+    assert (
+        chat_service._freezone_canvas_write_requested("生成一张赛博朋克风格的图片")
+        is True
+    )
     assert chat_service._freezone_canvas_write_requested("生成一段视频") is True
-    assert chat_service._freezone_canvas_write_requested("做一个女总裁复仇短视频") is True
+    assert (
+        chat_service._freezone_canvas_write_requested("做一个女总裁复仇短视频") is True
+    )
     assert chat_service._freezone_canvas_write_requested("生成一个视频脚本") is False
-    assert chat_service._freezone_canvas_write_requested("generate a video script") is False
-    assert chat_service._freezone_canvas_write_requested("create an image prompt") is False
-    assert chat_service._freezone_canvas_write_requested("生成这个工作流的文案") is False
+    assert (
+        chat_service._freezone_canvas_write_requested("generate a video script")
+        is False
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested("create an image prompt") is False
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested("生成这个工作流的文案") is False
+    )
     assert chat_service._freezone_canvas_write_requested("生成一张带文案的图片") is True
-    assert chat_service._freezone_canvas_write_requested("create an image from this prompt") is True
-    assert chat_service._freezone_canvas_write_requested("根据这个提示词生成视频") is True
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "create an image from this prompt"
+        )
+        is True
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "Create an image showing a sunset"
+        )
+        is True
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "Generate a video showing our product"
+        )
+        is True
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested("根据这个提示词生成视频") is True
+    )
     assert chat_service._freezone_canvas_write_requested("用这段描述生成一张图") is True
     assert (
         chat_service._freezone_canvas_write_requested(
@@ -1263,19 +1376,26 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
     )
 
 
-def test_codex_freezone_write_receipt_accepts_structured_mcp_result_without_legacy_status():
+def test_codex_freezone_write_receipt_accepts_durable_browser_result():
     event = SimpleNamespace(
         name="freezone_create_workflow_graph",
         status="completed",
         error=None,
-        structured={"ok": True, "applied": True, "status": "completed"},
+        structured={
+            "ok": True,
+            "applied": True,
+            "canvas_apply_status": "applied",
+            "bridge_key": "bridge-a",
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+        },
         output=None,
     )
 
     assert chat_service._codex_freezone_write_result_succeeded(event) is True
 
 
-def test_codex_freezone_write_receipt_accepts_created_node_count():
+def test_codex_freezone_write_receipt_rejects_counts_without_durable_identity():
     event = SimpleNamespace(
         name="freezone_create_workflow_graph",
         status="completed",
@@ -1284,7 +1404,7 @@ def test_codex_freezone_write_receipt_accepts_created_node_count():
         output=None,
     )
 
-    assert chat_service._codex_freezone_write_result_succeeded(event) is True
+    assert chat_service._codex_freezone_write_result_succeeded(event) is False
 
 
 def test_codex_freezone_instructions_forbid_invented_resource_uris():
@@ -1370,7 +1490,10 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     name="dramaclaw.freezone_prepare_workflow_draft",
                     call_id="call-draft",
                     status="completed",
-                    input={"planning_confirmed": True},
+                    input={
+                        "quote_id": "billing_quote_a",
+                        "confirmation_receipt": "billing_receipt_a",
+                    },
                     output={
                         "content": [
                             {
@@ -1391,7 +1514,14 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 )
             elif tool_outcome not in {"missing", "blocked"}:
                 result_payload = (
-                    {"ok": True, "canvas_apply_status": "applied"}
+                    {
+                        "ok": True,
+                        "canvas_apply_status": "applied",
+                        "applied": True,
+                        "bridge_key": "bridge-call-1",
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                    }
                     if tool_outcome == "success"
                     else {
                         "ok": False,
@@ -2025,7 +2155,56 @@ def test_codex_gateway_overrides_use_responses_without_embedding_secret():
     assert "memories.use_memories=false" in overrides
     assert 'model_reasoning_effort="medium"' in overrides
     assert 'web_search="disabled"' in overrides
+    catalog_override = next(
+        item for item in overrides if item.startswith("model_catalog_json=")
+    )
+    catalog_path = Path(json.loads(catalog_override.split("=", 1)[1]))
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    model = next(
+        item for item in catalog["models"] if item["slug"] == "DC-codex-agent-LLM"
+    )
+    assert model["supports_search_tool"] is True
+    assert model["base_instructions"]
+    assert model["truncation_policy"] == {"mode": "tokens", "limit": 10000}
     assert "secret-value" not in rendered
+
+
+def test_codex_gateway_fails_closed_for_incomplete_model_catalog(monkeypatch, tmp_path):
+    catalog_path = tmp_path / "models.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "slug": "DC-codex-agent-LLM",
+                        "supports_search_tool": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(catalog_path))
+
+    with pytest.raises(RuntimeError, match="no complete entry"):
+        chat_service._codex_gateway_config_overrides("https://gateway.example/v1")
+
+
+def test_codex_gateway_fails_closed_when_tool_search_is_disabled(monkeypatch, tmp_path):
+    bundled = (
+        Path(chat_service.__file__).resolve().parents[3]
+        / "deploy"
+        / "codex"
+        / "dramaclaw-model-catalog.json"
+    )
+    catalog = json.loads(bundled.read_text(encoding="utf-8"))
+    catalog["models"][0]["supports_search_tool"] = False
+    catalog_path = tmp_path / "models.json"
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(catalog_path))
+
+    with pytest.raises(RuntimeError, match="must enable supports_search_tool"):
+        chat_service._codex_gateway_config_overrides("https://gateway.example/v1")
 
 
 def test_codex_gateway_reasoning_effort_is_configurable(monkeypatch):

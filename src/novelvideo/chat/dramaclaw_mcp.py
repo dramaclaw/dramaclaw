@@ -152,16 +152,17 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
             "and separate media-generation costs."
         )
     else:
-        instruction += " Do not invent or mention credits, billing, pricing, or editions."
+        instruction += (
+            " Do not invent or mention credits, billing, pricing, or editions."
+        )
     payload["agent_instruction"] = instruction
     return json.dumps(payload, ensure_ascii=False)
+
 
 TOOL_SEARCH_NAME = "dramaclaw_tool_search"
 TOOL_DESCRIBE_NAME = "dramaclaw_tool_describe"
 TOOL_CALL_NAME = "dramaclaw_tool_call"
-BRIDGE_TOOL_NAMES = frozenset(
-    {TOOL_SEARCH_NAME, TOOL_DESCRIBE_NAME, TOOL_CALL_NAME}
-)
+BRIDGE_TOOL_NAMES = frozenset({TOOL_SEARCH_NAME, TOOL_DESCRIBE_NAME, TOOL_CALL_NAME})
 _WORKFLOW_DRAFT_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -174,10 +175,12 @@ _WORKFLOW_DRAFT_OUTPUT_SCHEMA: dict[str, Any] = {
         "agent_planning_charge": {"type": ["object", "number", "string", "null"]},
         "agent_credit_estimate": {"type": ["object", "number", "string", "null"]},
         "confirmation_required": {"type": "boolean"},
+        "quote_id": {"type": ["string", "null"]},
+        "quote": {"type": ["object", "null"]},
         "next_action": {"type": ["string", "null"]},
         "agent_instruction": {"type": ["string", "null"]},
     },
-    "required": ["ok", "status", "confirmation_required", "next_action"],
+    "required": ["ok", "status"],
     "additionalProperties": True,
 }
 
@@ -226,10 +229,15 @@ def _freezone_canvas_mode() -> bool:
     """Detect Freezone even when a shared App Server drops one env flag."""
     if os.environ.get("DRAMACLAW_TOOL_MODE", "").strip() == "freezone_canvas":
         return True
-    return bool(
-        os.environ.get("DRAMACLAW_CANVAS_ID", "").strip()
-        and os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip().startswith("freezone")
-    ) or os.environ.get("DRAMACLAW_CHAT_SURFACE", "").strip() == "freezone"
+    return (
+        bool(
+            os.environ.get("DRAMACLAW_CANVAS_ID", "").strip()
+            and os.environ.get("DRAMACLAW_AGENT_PROFILE", "")
+            .strip()
+            .startswith("freezone")
+        )
+        or os.environ.get("DRAMACLAW_CHAT_SURFACE", "").strip() == "freezone"
+    )
 
 
 def _available_tools() -> dict[str, tuple[dict[str, Any], Any]]:
@@ -237,7 +245,10 @@ def _available_tools() -> dict[str, tuple[dict[str, Any], Any]]:
         return {name: TOOLS[name] for name in sorted(HOME_TOOL_NAMES) if name in TOOLS}
     if _freezone_canvas_mode():
         denied = frozenset().union(
-            *(getattr(plugin, "FREEZONE_DENIED_MAINLINE_WRITE_TOOLS", ()) for plugin in PLUGINS)
+            *(
+                getattr(plugin, "FREEZONE_DENIED_MAINLINE_WRITE_TOOLS", ())
+                for plugin in PLUGINS
+            )
         )
         return {name: item for name, item in TOOLS.items() if name not in denied}
     return dict(TOOLS)
@@ -265,7 +276,9 @@ def _search_tools(query: str, limit: int) -> list[dict[str, str]]:
         if not terms:
             score = 1
         else:
-            score = sum(4 if term in name.lower() else 1 for term in terms if term in haystack)
+            score = sum(
+                4 if term in name.lower() else 1 for term in terms if term in haystack
+            )
         if score:
             ranked.append((score, name, schema))
 
@@ -441,7 +454,11 @@ async def list_tools() -> list[types.Tool]:
                 types.Tool(
                     name=name,
                     description=str(schema.get("description") or ""),
-                    inputSchema=parameters if isinstance(parameters, dict) else {"type": "object"},
+                    inputSchema=(
+                        parameters
+                        if isinstance(parameters, dict)
+                        else {"type": "object"}
+                    ),
                     outputSchema=(
                         _WORKFLOW_DRAFT_OUTPUT_SCHEMA
                         if name == "freezone_prepare_workflow_draft"
@@ -493,10 +510,7 @@ def _skill_resource_path(uri: str) -> Path:
     roots = _skill_resource_roots()
     if raw_target.is_absolute() and raw_target.exists():
         existing_target = raw_target.resolve()
-        if not any(
-            _path_is_within(existing_target, root)
-            for root in roots
-        ):
+        if not any(_path_is_within(existing_target, root) for root in roots):
             raise ValueError("resource belongs to a different agent workspace")
     # Persisted Codex threads can retain a file URI from an older workspace.
     # Resolve the same skill-relative path against the current thread's
@@ -596,7 +610,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     )
     if name in _available_tools() and name not in BRIDGE_TOOL_NAMES:
         schema, handler = _available_tools()[name]
-        workflow_started = time.monotonic() if name == "freezone_create_workflow_graph" else None
+        workflow_started = (
+            time.monotonic() if name == "freezone_create_workflow_graph" else None
+        )
         if workflow_started is not None:
             logger.info(
                 "freezone_create_workflow_graph.start scope=%s summary=%s",
@@ -604,7 +620,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 _workflow_plan_log_summary(arguments),
             )
         parameters = schema.get("parameters") if isinstance(schema, dict) else None
-        input_schema = parameters if isinstance(parameters, dict) else {"type": "object"}
+        input_schema = (
+            parameters if isinstance(parameters, dict) else {"type": "object"}
+        )
         try:
             Draft202012Validator.check_schema(input_schema)
             Draft202012Validator(input_schema).validate(arguments)
@@ -669,15 +687,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 "message": getattr(exc, "message", str(exc)),
                 "status": (
                     "workflow_validation_failed"
-                    if name in {"freezone_create_workflow_graph", "workflow_graph_compile"}
+                    if name
+                    in {"freezone_create_workflow_graph", "workflow_graph_compile"}
                     else "tool_arguments_invalid"
                 ),
-                "phase": "graph_compile" if name in {
-                    "freezone_create_workflow_graph", "workflow_graph_compile"
-                } else "tool_validation",
-                "retryable": name in {
-                    "freezone_create_workflow_graph", "workflow_graph_compile"
-                },
+                "phase": (
+                    "graph_compile"
+                    if name
+                    in {"freezone_create_workflow_graph", "workflow_graph_compile"}
+                    else "tool_validation"
+                ),
+                "retryable": name
+                in {"freezone_create_workflow_graph", "workflow_graph_compile"},
                 **({"agent_instruction": recovery} if recovery else {}),
             }
             _log_mcp_call_end(
@@ -748,24 +769,28 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             limit = 6
         matches = _search_tools(str(arguments.get("query") or ""), limit)
         payload = {
-                "ok": True,
-                "scope": _scope_kind(),
-                "available_count": len(_available_tools()),
-                "matches": matches,
-            }
-        _log_mcp_call_end(scope=_scope_kind(), tool=name, started=call_started, payload=payload)
+            "ok": True,
+            "scope": _scope_kind(),
+            "available_count": len(_available_tools()),
+            "matches": matches,
+        }
+        _log_mcp_call_end(
+            scope=_scope_kind(), tool=name, started=call_started, payload=payload
+        )
         return _json_text(payload)
 
     tool_name = str(arguments.get("tool_name") or "").strip()
     item = _available_tools().get(tool_name)
     if item is None:
         payload = {
-                "ok": False,
-                "error": "tool_not_available_in_scope",
-                "scope": _scope_kind(),
-                "tool_name": tool_name,
-            }
-        _log_mcp_call_end(scope=_scope_kind(), tool=name, started=call_started, payload=payload)
+            "ok": False,
+            "error": "tool_not_available_in_scope",
+            "scope": _scope_kind(),
+            "tool_name": tool_name,
+        }
+        _log_mcp_call_end(
+            scope=_scope_kind(), tool=name, started=call_started, payload=payload
+        )
         return _json_text(payload)
     schema, handler = item
     parameters = schema.get("parameters") if isinstance(schema, dict) else None
@@ -773,14 +798,16 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
 
     if name == TOOL_DESCRIBE_NAME:
         payload = {
-                "ok": True,
-                "scope": _scope_kind(),
-                "tool": {
-                    **_tool_summary(tool_name, schema),
-                    "input_schema": input_schema,
-                },
-            }
-        _log_mcp_call_end(scope=_scope_kind(), tool=name, started=call_started, payload=payload)
+            "ok": True,
+            "scope": _scope_kind(),
+            "tool": {
+                **_tool_summary(tool_name, schema),
+                "input_schema": input_schema,
+            },
+        }
+        _log_mcp_call_end(
+            scope=_scope_kind(), tool=name, started=call_started, payload=payload
+        )
         return _json_text(payload)
     if name != TOOL_CALL_NAME:
         raise ValueError(f"unknown DramaClaw bridge tool: {name}")
@@ -788,28 +815,38 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     underlying_arguments = arguments.get("arguments") or {}
     if not isinstance(underlying_arguments, dict):
         payload = {"ok": False, "error": "arguments_must_be_an_object"}
-        _log_mcp_call_end(scope=_scope_kind(), tool=name, started=call_started, payload=payload)
+        _log_mcp_call_end(
+            scope=_scope_kind(), tool=name, started=call_started, payload=payload
+        )
         return _json_text(payload)
     try:
         Draft202012Validator.check_schema(input_schema)
         Draft202012Validator(input_schema).validate(underlying_arguments)
     except SchemaError:
-        payload = {"ok": False, "error": "invalid_registered_tool_schema", "tool_name": tool_name}
-        _log_mcp_call_end(scope=_scope_kind(), tool=name, started=call_started, payload=payload)
+        payload = {
+            "ok": False,
+            "error": "invalid_registered_tool_schema",
+            "tool_name": tool_name,
+        }
+        _log_mcp_call_end(
+            scope=_scope_kind(), tool=name, started=call_started, payload=payload
+        )
         return _json_text(payload)
     except ValidationError as exc:
         payload = {
-                "ok": False,
-                "error": "tool_arguments_invalid",
-                "tool_name": tool_name,
-                "message": exc.message,
-                "path": list(exc.absolute_path),
-            }
-        _log_mcp_call_end(scope=_scope_kind(), tool=name, started=call_started, payload=payload)
+            "ok": False,
+            "error": "tool_arguments_invalid",
+            "tool_name": tool_name,
+            "message": exc.message,
+            "path": list(exc.absolute_path),
+        }
+        _log_mcp_call_end(
+            scope=_scope_kind(), tool=name, started=call_started, payload=payload
+        )
         return _json_text(payload)
 
     try:
-        text = handler(underlying_arguments)
+        text = await asyncio.to_thread(handler, underlying_arguments)
     except Exception as exc:
         logger.exception(
             "mcp.call.exception scope=%s tool=%s underlying_tool=%s elapsed_ms=%d error_type=%s error=%s",
@@ -821,6 +858,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             str(exc)[:240],
         )
         raise
+    if inspect.isawaitable(text):
+        text = await text
     if tool_name == "freezone_prepare_workflow_draft":
         adapted = _adapt_external_agent_tool_result(tool_name, text)
         try:

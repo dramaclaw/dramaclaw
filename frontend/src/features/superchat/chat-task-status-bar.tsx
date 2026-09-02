@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   listFreezoneWorkflowRuns,
+  updateFreezoneWorkflowRun,
   type FreezoneWorkflowRun,
   type FreezoneWorkflowRunAction,
 } from "@/api/canvas";

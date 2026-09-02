@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from io import BytesIO
 import json
+import time
 
 import pytest
 
@@ -331,3 +333,33 @@ async def test_tool_call_validates_and_dispatches_existing_handler(monkeypatch):
     )
     assert json.loads(valid[0].text) == {"ok": True}
     assert calls == [{"episode": 1}]
+
+
+@pytest.mark.asyncio
+async def test_fallback_tool_call_does_not_block_mcp_event_loop(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    schema, _handler = dramaclaw_mcp.TOOLS["dramaclaw_render_first_frames"]
+
+    def blocking_handler(_arguments):
+        time.sleep(0.2)
+        return '{"ok":true}'
+
+    monkeypatch.setitem(
+        dramaclaw_mcp.TOOLS,
+        "dramaclaw_render_first_frames",
+        (schema, blocking_handler),
+    )
+    call = asyncio.create_task(
+        dramaclaw_mcp.call_tool(
+            dramaclaw_mcp.TOOL_CALL_NAME,
+            {
+                "tool_name": "dramaclaw_render_first_frames",
+                "arguments": {"episode": 1},
+            },
+        )
+    )
+
+    await asyncio.sleep(0.05)
+    assert call.done() is False
+    result = await call
+    assert json.loads(result[0].text) == {"ok": True}

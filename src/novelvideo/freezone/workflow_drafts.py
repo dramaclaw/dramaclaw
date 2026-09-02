@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS workflow_drafts (
     preview_json             TEXT NOT NULL,
     last_changes_json        TEXT NOT NULL DEFAULT '{}',
     billing_json             TEXT NOT NULL DEFAULT '{}',
+    billing_quote_id         TEXT NOT NULL DEFAULT '',
     plan_digest              TEXT NOT NULL,
     created_at               REAL NOT NULL,
     updated_at               REAL NOT NULL,
@@ -77,12 +78,22 @@ def _connect(project_dir: Path):
                 configure_sqlite_connection(conn)
                 conn.executescript(WORKFLOW_DRAFT_SCHEMA_SQL)
                 columns = {
-                    str(row[1]) for row in conn.execute("PRAGMA table_info(workflow_drafts)")
+                    str(row[1])
+                    for row in conn.execute("PRAGMA table_info(workflow_drafts)")
                 }
                 if "billing_json" not in columns:
                     conn.execute(
                         "ALTER TABLE workflow_drafts ADD COLUMN billing_json TEXT NOT NULL DEFAULT '{}'"
                     )
+                if "billing_quote_id" not in columns:
+                    conn.execute(
+                        "ALTER TABLE workflow_drafts ADD COLUMN billing_quote_id TEXT NOT NULL DEFAULT ''"
+                    )
+                conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_drafts_billing_quote "
+                    "ON workflow_drafts(project_id, canvas_id, billing_quote_id) "
+                    "WHERE billing_quote_id <> ''"
+                )
                 conn.commit()
                 _SCHEMA_READY_PATHS.add(db_path)
             else:
@@ -184,7 +195,11 @@ def _plan_preview(compiled: dict[str, Any]) -> dict[str, Any]:
                 "name": node_name,
                 "stage": str(node.get("stage") or "").strip(),
                 "node_type": str(node.get("node_type") or "").strip(),
-                **({"recipe_pipeline": deepcopy(pipeline_steps)} if pipeline_steps else {}),
+                **(
+                    {"recipe_pipeline": deepcopy(pipeline_steps)}
+                    if pipeline_steps
+                    else {}
+                ),
             }
         )
         if pipeline_steps:
@@ -225,6 +240,7 @@ def _payload_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "plan_digest": row["plan_digest"],
         "last_changes": _json_object(row["last_changes_json"]),
         "billing": _json_object(row["billing_json"]),
+        "billing_quote_id": row["billing_quote_id"],
         "created_at": float(row["created_at"]),
         "updated_at": float(row["updated_at"]),
         "expires_at": float(row["expires_at"]),
@@ -252,9 +268,9 @@ def _write_draft(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
         INSERT INTO workflow_drafts (
             draft_id, schema_version, project_id, canvas_id, revision, status,
             skill_id, run_after_create, intent_json, compiled_json, preview_json,
-            last_changes_json, billing_json, plan_digest, created_at, updated_at, expires_at,
+            last_changes_json, billing_json, billing_quote_id, plan_digest, created_at, updated_at, expires_at,
             confirmation_started_at, confirmed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(draft_id) DO UPDATE SET
             revision = excluded.revision,
             status = excluded.status,
@@ -265,6 +281,7 @@ def _write_draft(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
             preview_json = excluded.preview_json,
             last_changes_json = excluded.last_changes_json,
             billing_json = excluded.billing_json,
+            billing_quote_id = excluded.billing_quote_id,
             plan_digest = excluded.plan_digest,
             updated_at = excluded.updated_at,
             expires_at = excluded.expires_at,
@@ -280,15 +297,24 @@ def _write_draft(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
             payload["status"],
             payload.get("skill_id") or "",
             int(bool(payload.get("run_after_create"))),
-            json.dumps(payload.get("intent") or {}, ensure_ascii=False, separators=(",", ":")),
-            json.dumps(payload.get("compiled") or {}, ensure_ascii=False, separators=(",", ":")),
-            json.dumps(payload.get("preview") or {}, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(
+                payload.get("intent") or {}, ensure_ascii=False, separators=(",", ":")
+            ),
+            json.dumps(
+                payload.get("compiled") or {}, ensure_ascii=False, separators=(",", ":")
+            ),
+            json.dumps(
+                payload.get("preview") or {}, ensure_ascii=False, separators=(",", ":")
+            ),
             json.dumps(
                 payload.get("last_changes") or {},
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),
-            json.dumps(payload.get("billing") or {}, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(
+                payload.get("billing") or {}, ensure_ascii=False, separators=(",", ":")
+            ),
+            payload.get("billing_quote_id") or "",
             payload["plan_digest"],
             payload["created_at"],
             payload["updated_at"],
@@ -311,6 +337,7 @@ def create_workflow_draft(
     intent: dict[str, Any],
     compiled: dict[str, Any],
     run_after_create: bool = False,
+    billing_quote_id: str = "",
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
 ) -> dict[str, Any]:
     _validate_scope(canvas_id)
@@ -334,6 +361,7 @@ def create_workflow_draft(
         "plan_digest": _digest(compiled.get("plan")),
         "last_changes": {},
         "billing": {},
+        "billing_quote_id": str(billing_quote_id or "").strip(),
         "created_at": now,
         "updated_at": now,
         "expires_at": now + max(int(ttl_seconds), 300),
@@ -342,6 +370,14 @@ def create_workflow_draft(
     }
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if payload["billing_quote_id"]:
+            existing = conn.execute(
+                "SELECT * FROM workflow_drafts "
+                "WHERE project_id = ? AND canvas_id = ? AND billing_quote_id = ?",
+                (project_id, canvas_id, payload["billing_quote_id"]),
+            ).fetchone()
+            if existing is not None:
+                return _payload_from_row(existing)
         _write_draft(conn, payload)
     return deepcopy(payload)
 

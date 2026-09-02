@@ -74,7 +74,7 @@ _USER_INPUT_STEP_IDS = {"workflow_input", "user_input", "user_requirement"}
 
 
 def _node_type_value(node: dict[str, Any]) -> str:
-    return str(node.get("node_type") or node.get("type") or "").strip()
+    return str(node.get("node_type") or "").strip()
 
 
 def _node_stage_value(node: dict[str, Any]) -> str:
@@ -83,7 +83,7 @@ def _node_stage_value(node: dict[str, Any]) -> str:
 
 
 def _edge_link_type_value(edge: dict[str, Any]) -> str:
-    return str(edge.get("link_type") or edge.get("type") or "").strip()
+    return str(edge.get("link_type") or "").strip()
 
 
 def validate_workflow_plan(
@@ -103,14 +103,13 @@ def validate_workflow_plan(
                 f"must equal {WORKFLOW_PLAN_SCHEMA_VERSION}",
             )
         )
-    for execution_key in ("run_after_create", "runAfterCreate"):
-        if execution_key in payload:
-            errors.append(
-                _issue(
-                    execution_key,
-                    "execution policy must be passed beside plan in the tool arguments",
-                )
+    if "run_after_create" in payload:
+        errors.append(
+            _issue(
+                "run_after_create",
+                "execution policy must be passed beside plan in the tool arguments",
             )
+        )
 
     nodes = payload.get("nodes")
     if not isinstance(nodes, list) or not nodes:
@@ -121,9 +120,7 @@ def validate_workflow_plan(
             _issue("nodes", f"must contain at most {MAX_WORKFLOW_NODES} nodes")
         )
 
-    expected_node_count = payload.get(
-        "expected_node_count", payload.get("expectedNodeCount")
-    )
+    expected_node_count = payload.get("expected_node_count")
     if expected_node_count is not None:
         if isinstance(expected_node_count, bool) or not isinstance(
             expected_node_count, int
@@ -137,9 +134,7 @@ def validate_workflow_plan(
                 )
             )
 
-    expected_node_counts = payload.get(
-        "expected_node_counts", payload.get("expectedNodeCounts")
-    )
+    expected_node_counts = payload.get("expected_node_counts")
     if expected_node_counts is not None:
         if not isinstance(expected_node_counts, dict):
             errors.append(_issue("expected_node_counts", "must be an object"))
@@ -187,16 +182,7 @@ def validate_workflow_plan(
         if node_id in node_types:
             errors.append(_issue(f"{path}.id", f"duplicate node id: {node_id}"))
             continue
-        canonical_node_type = str(node.get("node_type") or "").strip()
-        alias_node_type = str(node.get("type") or "").strip()
-        if canonical_node_type and alias_node_type and canonical_node_type != alias_node_type:
-            errors.append(
-                _issue(
-                    f"{path}.type",
-                    f"conflicts with node_type: {canonical_node_type}",
-                )
-            )
-        node_type = canonical_node_type or alias_node_type
+        node_type = str(node.get("node_type") or "").strip()
         if node_type not in ALLOWED_NODE_TYPES:
             errors.append(
                 _issue(f"{path}.node_type", f"unsupported node type: {node_type}")
@@ -273,16 +259,7 @@ def validate_workflow_plan(
             continue
         source = edge.get("source")
         target = edge.get("target")
-        canonical_link_type = str(edge.get("link_type") or "").strip()
-        alias_link_type = str(edge.get("type") or "").strip()
-        if canonical_link_type and alias_link_type and canonical_link_type != alias_link_type:
-            errors.append(
-                _issue(
-                    f"{path}.type",
-                    f"conflicts with link_type: {canonical_link_type}",
-                )
-            )
-        link_type = canonical_link_type or alias_link_type
+        link_type = str(edge.get("link_type") or "").strip()
         if source not in node_types:
             errors.append(_issue(f"{path}.source", f"unknown node: {source}"))
         if target not in node_types:
@@ -788,7 +765,7 @@ def _validate_group_refs(
         if not isinstance(group, dict):
             errors.append(_issue(f"{groups_path}[{group_index}]", "must be an object"))
             continue
-        refs = group.get("node_ids") or group.get("nodeIds") or group.get("nodes") or []
+        refs = group.get("node_ids") or []
         if not isinstance(refs, list):
             errors.append(
                 _issue(f"{groups_path}[{group_index}].node_ids", "must be an array")

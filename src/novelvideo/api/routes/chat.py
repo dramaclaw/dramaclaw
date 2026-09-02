@@ -59,6 +59,7 @@ from novelvideo.freezone.agent_capability_billing import (
     settle_agent_capability_charge,
     workflow_design_charge,
 )
+from novelvideo.freezone.agent_billing_state import confirm_latest_billing_quote
 from novelvideo.ports import get_product_surface_access, get_usage_meter
 from novelvideo.ports.local.usage import NoOpUsageMeter
 from novelvideo.project_context import (
@@ -88,6 +89,59 @@ EMPTY_AGENT_REPLY_MESSAGE = "这轮操作没有收到虾导的有效回复，请
 # `chat/hermes_egress.py:131` 的 `capability="agent.hermes.text"`，与 EG-07 对齐；
 # 绑定侧与账本侧必须是同一个字符串，不另取。
 HERMES_TEXT_EGRESS_TASK_TYPE = "agent.hermes.text"
+
+_BILLING_CONFIRMATION_PHRASES = {
+    "确认规划费用": "workflow_planning_create",
+    "确认修改费用": "workflow_planning_patch",
+    "确认创建费用": "workflow_create",
+}
+
+
+async def _trusted_billing_confirmation_for_message(
+    *,
+    project_ctx: ProjectContext,
+    user: dict[str, Any],
+    scope: ChatScope,
+    display_text: str,
+    surface_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    operation_kind = _BILLING_CONFIRMATION_PHRASES.get(display_text)
+    if (
+        not operation_kind
+        or not _is_freezone_scope(scope)
+        or user.get("credential_kind") in {"agent_session", "local_trusted_agent"}
+    ):
+        return None
+    canvas_id = str(
+        scope.canvas_id
+        or (surface_context or {}).get("freezone_canvas_id")
+        or (surface_context or {}).get("canvas_id")
+        or ""
+    ).strip()
+    if not canvas_id:
+        return None
+    confirmed_quote = await asyncio.to_thread(
+        confirm_latest_billing_quote,
+        project_dir=project_ctx.state_dir,
+        user_id=str(
+            project_ctx.requester_user_id
+            or user.get("id")
+            or user.get("username")
+            or ""
+        ),
+        project_id=str(project_ctx.project_id or scope.id),
+        canvas_id=canvas_id,
+        operation_kind=operation_kind,
+    )
+    if confirmed_quote is None:
+        return None
+    return {
+        "quote_id": confirmed_quote["quote_id"],
+        "confirmation_receipt": confirmed_quote["receipt"],
+        "operation_kind": confirmed_quote["operation_kind"],
+        "expires_at": confirmed_quote["expires_at"],
+    }
+
 
 _REASONING_REQUIRED_ERROR_MESSAGE = (
     "模型请求失败：当前上游模型要求启用推理，但模型网关仍将本次请求识别为关闭推理。"
@@ -603,7 +657,9 @@ async def _persist_chat_turn_error(
                 state_dir=str(project_ctx.state_dir),
             )
 
-        existing_messages = await chat_store.list_messages_async(username, storage_scope)
+        existing_messages = await chat_store.list_messages_async(
+            username, storage_scope
+        )
         for existing in reversed(existing_messages):
             if (
                 str(existing.get("turn_id") or "") == turn_id
@@ -2779,6 +2835,24 @@ async def _stream_project_turn(
     )
     agent_text = _text_with_attachment_context(text, attachments)
     display_text = str(user_text or text).strip()
+    trusted_confirmation = await _trusted_billing_confirmation_for_message(
+        project_ctx=project_ctx,
+        user=user,
+        scope=scope,
+        display_text=display_text,
+        surface_context=surface_context,
+    )
+    if trusted_confirmation is not None:
+        agent_text += (
+            "\n\n[Trusted server billing confirmation]\n"
+            + json.dumps(
+                trusted_confirmation,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            + "\nPass quote_id and confirmation_receipt only to the matching "
+            "workflow tool call. Do not alter either value."
+        )
     if storage_scope is not None:
         await chat_store.append_message_async(
             username,

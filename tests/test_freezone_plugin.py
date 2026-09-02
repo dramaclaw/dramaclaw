@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import copy
 import importlib.util
 import json
@@ -11,6 +10,23 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _restore_tools_registry_modules():
+    """Keep dynamic Hermes plugin imports from leaking across test modules/workers."""
+
+    sentinel = object()
+    previous = {
+        name: sys.modules.get(name, sentinel) for name in ("tools", "tools.registry")
+    }
+    yield
+    for name, value in previous.items():
+        if value is sentinel:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = value
+
 
 _MINIMAL_ECOMMERCE_SKILL = {
     "id": "ecommerce-product",
@@ -141,6 +157,7 @@ def _install_workflow_draft_api(monkeypatch, plugin, project_dir: Path) -> None:
                 "ok": True,
                 "data": {
                     "feature_key": "freezone.agent.creative_planning",
+                    "billing_required": False,
                     "metering_enabled": True,
                     "configured": True,
                     "exact": True,
@@ -248,6 +265,15 @@ def test_freezone_plugin_registers_canvas_command_tools():
     assert "freezone_put_agent_catalog_draft_outline" in names
     assert "freezone_begin_agent_catalog_draft" in names
     assert "freezone_put_agent_catalog_skill" in names
+    for tool_name in (
+        "freezone_prepare_workflow_draft",
+        "freezone_patch_workflow_draft",
+        "freezone_confirm_workflow_draft",
+    ):
+        properties = schemas[tool_name]["parameters"]["properties"]
+        assert "quote_id" in properties
+        assert "confirmation_receipt" in properties
+        assert "planning_confirmed" not in properties
     assert "freezone_put_agent_catalog_recipe" in names
     assert "freezone_patch_agent_catalog_draft" in names
     assert "freezone_finish_agent_catalog_draft" in names
@@ -266,20 +292,20 @@ def test_freezone_plugin_registers_canvas_command_tools():
     ]
     assert plan_schema["properties"]["nodes"]["maxItems"] == MAX_WORKFLOW_NODES
     node_variants = plan_schema["properties"]["nodes"]["items"]["anyOf"]
-    assert set(
-        node_type
-        for variant in node_variants
-        for node_type in variant["properties"]["node_type"]["enum"]
-    ) == ALLOWED_NODE_TYPES
+    assert (
+        set(
+            node_type
+            for variant in node_variants
+            for node_type in variant["properties"]["node_type"]["enum"]
+        )
+        == ALLOWED_NODE_TYPES
+    )
     recipe_variant = node_variants[0]
     workflow_catalog = recipe_variant["properties"]["data"]["properties"][
         "workflowCatalog"
     ]
-    assert recipe_variant["required"] == ["id", "data"]
-    assert {tuple(option["required"]) for option in recipe_variant["anyOf"]} == {
-        ("node_type",),
-        ("type",),
-    }
+    assert recipe_variant["required"] == ["id", "node_type", "data"]
+    assert recipe_variant["additionalProperties"] is False
     assert workflow_catalog["required"] == ["recipeId"]
     assert set(workflow_catalog["properties"]) >= {
         "skillId",
@@ -290,17 +316,17 @@ def test_freezone_plugin_registers_canvas_command_tools():
     }
     assert recipe_variant["properties"]["prompt"] == {"type": "string"}
     edge_schema = plan_schema["properties"]["edges"]["items"]
-    assert edge_schema["required"] == ["source", "target"]
-    assert {tuple(option["required"]) for option in edge_schema["anyOf"]} == {
-        ("link_type",),
-        ("type",),
-    }
+    assert edge_schema["required"] == ["source", "target", "link_type"]
+    assert edge_schema["additionalProperties"] is False
     assert plan_schema["properties"]["edges"]["maxItems"] == MAX_WORKFLOW_EDGES
-    assert set(
-        plan_schema["properties"]["edges"]["items"]["properties"]["link_type"][
-            "enum"
-        ]
-    ) == ALLOWED_LINK_TYPES
+    assert (
+        set(
+            plan_schema["properties"]["edges"]["items"]["properties"]["link_type"][
+                "enum"
+            ]
+        )
+        == ALLOWED_LINK_TYPES
+    )
     assert plan_schema["properties"] != {}
     intent_schema = schemas["freezone_create_workflow_from_intent"]["parameters"]
     assert intent_schema["required"] == ["intent"]
@@ -347,9 +373,7 @@ def test_workflow_graph_schema_rejects_missing_skill_and_executable_recipe():
                         "skillVersion": "1",
                         "recipeId": "ecommerce-ad-image",
                         "recipeVersion": "1",
-                        "recipePipeline": [
-                            {"id": "image-review", "version": "1"}
-                        ],
+                        "recipePipeline": [{"id": "image-review", "version": "1"}],
                     }
                 },
             }
@@ -472,9 +496,12 @@ def test_workflow_compiler_output_satisfies_plugin_write_shape_contract():
     )
 
     assert built["ok"] is True
-    assert plugin._validate_write_commands_shape(
-        "project-a", "canvas-a", built["commands"]
-    ) is None
+    assert (
+        plugin._validate_write_commands_shape(
+            "project-a", "canvas-a", built["commands"]
+        )
+        is None
+    )
 
 
 def test_freezone_run_workflow_emits_one_deterministic_runner_command(monkeypatch):
@@ -1040,15 +1067,6 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
         }
 
     monkeypatch.setattr(plugin, "_emit_canvas_commands", fake_emit)
-    planning_quote = plugin._handle_prepare_workflow_draft(
-        {
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
-        }
-    )
-    assert planning_quote["status"] == "agent_planning_confirmation_required"
-    assert planning_quote["quote"]["display"] == "12 积分"
-
     prepared = plugin._handle_prepare_workflow_draft(
         {
             "project_id": "project-a",
@@ -1059,7 +1077,6 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
                 "items": ["开场", "卖点"],
             },
             "run_after_create": True,
-            "planning_confirmed": True,
         }
     )
 
@@ -1074,7 +1091,6 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
             "draft_id": prepared["draft_id"],
             "expected_revision": 1,
             "changes": {"items": ["开场", "卖点", "收尾"]},
-            "planning_confirmed": True,
         }
     )
 
@@ -1087,7 +1103,6 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
             "draft_id": prepared["draft_id"],
             "expected_revision": 1,
             "changes": {"include_audio": False},
-            "planning_confirmed": True,
         }
     )
     confirmed = plugin._handle_confirm_workflow_draft(
@@ -1144,7 +1159,6 @@ def test_workflow_draft_prepare_stops_when_live_model_catalog_is_unavailable(
                 "skill_id": "ecommerce-product",
                 "user_goal": "生成商品图",
             },
-            "planning_confirmed": True,
         }
     )
 
@@ -1211,7 +1225,6 @@ def test_workflow_draft_confirm_stops_when_live_model_catalog_becomes_unavailabl
                 "skill_id": "ecommerce-product",
                 "user_goal": "生成商品图",
             },
-            "planning_confirmed": True,
         }
     )
     assert prepared["ok"] is True
@@ -1225,7 +1238,7 @@ def test_workflow_draft_confirm_stops_when_live_model_catalog_becomes_unavailabl
     assert result["preflight"]["blockers"][0]["code"] == "model_catalog_unavailable"
 
 
-def test_workflow_draft_normalizes_json_intent_string(monkeypatch, tmp_path):
+def test_workflow_draft_rejects_json_intent_string(monkeypatch, tmp_path):
     plugin = _load_plugin_module()
     _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
     compiled = {
@@ -1250,12 +1263,10 @@ def test_workflow_draft_normalizes_json_intent_string(monkeypatch, tmp_path):
         ensure_ascii=False,
     )
 
-    result = plugin._handle_prepare_workflow_draft(
-        {"intent": serialized, "planning_confirmed": True}
-    )
+    result = plugin._handle_prepare_workflow_draft({"intent": serialized})
 
-    assert result["ok"] is True
-    assert result["status"] == "workflow_draft_ready"
+    assert result["ok"] is False
+    assert result["status"] == "workflow_intent_object_required"
 
 
 def test_workflow_draft_returns_actionable_errors_for_wrong_phase_arguments():
@@ -1271,10 +1282,9 @@ def test_workflow_draft_returns_actionable_errors_for_wrong_phase_arguments():
         {
             "project_id": "project-a",
             "canvas_id": "canvas-a",
-            "planning_confirmed": True,
         }
     )
-    assert missing_intent["status"] == "workflow_intent_required_after_confirmation"
+    assert missing_intent["status"] == "workflow_intent_required_for_quote"
 
     invalid_intent = plugin._handle_prepare_workflow_draft(
         {
@@ -1287,7 +1297,7 @@ def test_workflow_draft_returns_actionable_errors_for_wrong_phase_arguments():
     assert "execute_code" in invalid_intent["agent_instruction"]
 
 
-def test_workflow_draft_tolerates_common_model_argument_shapes(monkeypatch, tmp_path):
+def test_workflow_draft_requires_canonical_argument_shapes(monkeypatch, tmp_path):
     plugin = _load_plugin_module()
     _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
     compiled = {
@@ -1308,38 +1318,47 @@ def test_workflow_draft_tolerates_common_model_argument_shapes(monkeypatch, tmp_
         lambda intent: {**compiled, "skill_id": intent.get("skill_id") or "video-ad"},
     )
 
-    # 确认后允许 intent 字段平铺在 arguments 顶层(模型常忘记包 intent 壳)。
-    prepared = plugin._handle_prepare_workflow_draft(
+    flattened = plugin._handle_prepare_workflow_draft(
         {
             "project_id": "project-a",
             "canvas_id": "canvas-a",
-            "planning_confirmed": True,
             "skill_id": "video-ad",
             "user_goal": "制作广告",
             "planner": {"deliverable": "video", "units": []},
         }
     )
-    assert prepared["ok"] is True
-    assert prepared["status"] == "workflow_draft_ready"
+    assert flattened["ok"] is False
+    assert flattened["status"] == "workflow_intent_required_for_quote"
 
-    # changes 支持 patch 别名;等值回显的 skill_id 被忽略而不是打回。
-    patched = plugin._handle_patch_workflow_draft(
+    prepared = plugin._handle_prepare_workflow_draft(
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "intent": {
+                "schema_version": "freezone_workflow_intent.v1",
+                "skill_id": "video-ad",
+                "user_goal": "制作广告",
+                "planner": {"mode": "standard", "deliverable": "video", "units": []},
+            },
+        }
+    )
+    assert prepared["ok"] is True
+
+    alias_patch = plugin._handle_patch_workflow_draft(
         {
             "draft_id": prepared["draft_id"],
             "expected_revision": 1,
-            "planning_confirmed": True,
             "patch": {"skill_id": "video-ad", "user_goal": "改成 30 秒"},
         }
     )
-    assert patched["ok"] is True
-    assert patched["revision"] == 2
+    assert alias_patch["ok"] is False
+    assert alias_patch["status"] == "workflow_draft_patch_args_invalid"
 
     # 真正不可修改的字段仍然打回,并附可修改字段清单与纠正指令。
     rejected = plugin._handle_patch_workflow_draft(
         {
             "draft_id": prepared["draft_id"],
-            "expected_revision": 2,
-            "planning_confirmed": True,
+            "expected_revision": 1,
             "changes": {"skill_id": "other-skill"},
         }
     )
@@ -1367,11 +1386,97 @@ def test_workflow_planning_quote_skips_billing_in_ce(monkeypatch):
         },
     )
 
-    result = plugin._handle_prepare_workflow_draft({})
+    result = plugin._agent_billing_confirmation_gate(
+        "project-a",
+        "canvas-a",
+        args={},
+        operation_kind="workflow_planning_create",
+        operation={"intent": {}, "run_after_create": False},
+    )
 
-    assert result["ok"] is True
-    assert result["status"] == "agent_planning_billing_not_required"
-    assert "Do not mention credits" in result["agent_instruction"]
+    assert result is None
+
+
+def test_workflow_prepare_requires_server_receipt_and_retries_exact_operation(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    intent = {"skill_id": "video-ad", "user_goal": "制作广告"}
+    compiled = {
+        "ok": True,
+        "skill_id": "video-ad",
+        "edge_count": 0,
+        "plan": {"summary": "广告", "nodes": [], "edges": [], "phases": []},
+    }
+    calls = []
+
+    def fake_request(method, path, *, body=None, **_kwargs):
+        calls.append((method, path, body))
+        if path.endswith("/freezone/agent-capability-quote"):
+            return {
+                "ok": True,
+                "data": {
+                    "billing_required": True,
+                    "configured": True,
+                    "exact": True,
+                    "quote_id": "billing_quote_a",
+                    "display": "12 积分",
+                },
+            }
+        if path.endswith("/workflow-drafts"):
+            return {
+                "ok": True,
+                "data": {
+                    "schema_version": "freezone_workflow_draft.v1",
+                    "draft_id": "workflow_draft_a",
+                    "revision": 1,
+                    "status": "ready",
+                    "skill_id": "video-ad",
+                    "intent": intent,
+                    "compiled": compiled,
+                    "preview": {"node_count": 0},
+                    "plan_digest": "digest-a",
+                    "run_after_create": False,
+                    "last_changes": {},
+                    "expires_at": 9999999999,
+                },
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(plugin, "_request", fake_request)
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda _intent: compiled)
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_runtime_preflight",
+        lambda *_args, **_kwargs: {"status": "ready", "blockers": [], "warnings": []},
+    )
+
+    quoted = plugin._handle_prepare_workflow_draft({"intent": intent})
+    assert quoted["status"] == "agent_planning_confirmation_required"
+    assert len(calls) == 1
+    assert calls[0][2]["operation"]["compiled"] == compiled
+
+    prepared = plugin._handle_prepare_workflow_draft(
+        {
+            "intent": intent,
+            "quote_id": "billing_quote_a",
+            "confirmation_receipt": "billing_receipt_a",
+        }
+    )
+    assert prepared["draft_id"] == "workflow_draft_a"
+    assert calls[-1][2]["quote_id"] == "billing_quote_a"
+    assert calls[-1][2]["confirmation_receipt"] == "billing_receipt_a"
+
+    incomplete = plugin._agent_billing_confirmation_gate(
+        "project-a",
+        "canvas-a",
+        args={"quote_id": "billing_quote_a"},
+        operation_kind="workflow_planning_create",
+        operation={"intent": intent, "compiled": compiled},
+    )
+    assert incomplete["status"] == "billing_confirmation_incomplete"
 
 
 def test_workflow_draft_concurrent_confirmation_emits_once(monkeypatch, tmp_path):
@@ -1420,7 +1525,6 @@ def test_workflow_draft_concurrent_confirmation_emits_once(monkeypatch, tmp_path
     prepared = plugin._handle_prepare_workflow_draft(
         {
             "intent": {"skill_id": "video-ad", "user_goal": "广告"},
-            "planning_confirmed": True,
         }
     )
     confirm_args = {"draft_id": prepared["draft_id"], "revision": 1}
@@ -1483,7 +1587,6 @@ def test_workflow_draft_timeout_is_persisted_without_duplicate_submission(
     prepared = plugin._handle_prepare_workflow_draft(
         {
             "intent": {"skill_id": "video-ad", "user_goal": "广告"},
-            "planning_confirmed": True,
         }
     )
     confirm_args = {"draft_id": prepared["draft_id"], "revision": 1}
@@ -1523,7 +1626,6 @@ def test_workflow_draft_patch_rejects_skill_replacement(monkeypatch, tmp_path):
     prepared = plugin._handle_prepare_workflow_draft(
         {
             "intent": {"skill_id": "video-ad", "user_goal": "广告"},
-            "planning_confirmed": True,
         }
     )
 
@@ -1532,7 +1634,6 @@ def test_workflow_draft_patch_rejects_skill_replacement(monkeypatch, tmp_path):
             "draft_id": prepared["draft_id"],
             "expected_revision": 1,
             "changes": {"skill_id": "short-drama"},
-            "planning_confirmed": True,
         }
     )
 
@@ -1789,10 +1890,7 @@ def test_workflow_runtime_preflight_rejects_values_outside_selected_model_schema
     )
 
     assert result["status"] == "blocked"
-    assert {
-        (blocker["path"], blocker["code"])
-        for blocker in result["blockers"]
-    } == {
+    assert {(blocker["path"], blocker["code"]) for blocker in result["blockers"]} == {
         ("runtime.models.image.aspectRatio", "model_capability_unsupported"),
         ("runtime.models.image.size", "model_capability_unsupported"),
         ("runtime.models.image.quality", "model_capability_unsupported"),
@@ -4601,35 +4699,6 @@ def test_canvas_command_schema_accepts_minimal_variants_and_rejects_union_shell(
     }
     with pytest.raises(ValidationError):
         validator.validate({"commands": [union_shell]})
-
-
-def test_agent_mcp_exposes_the_reviewed_canvas_command_schema(monkeypatch):
-    plugin = _load_plugin_module()
-    expected = {
-        name: schema["parameters"]
-        for name, schema, _handler in plugin.TOOLS
-        if name in {"freezone_validate_canvas_commands", "freezone_emit_canvas_command"}
-    }
-
-    # agent_mcp establishes local CLI defaults at import time. Pin every
-    # affected variable through monkeypatch so this contract test cannot leak
-    # those defaults into unrelated environment-sensitive tests.
-    monkeypatch.setenv("DRAMACLAW_API_URL", "http://127.0.0.1:8780")
-    monkeypatch.setenv("DRAMACLAW_LOCAL_AGENT_TRUST", "1")
-    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
-    monkeypatch.setenv("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", "0")
-    monkeypatch.setenv("DRAMACLAW_USER", "test-user")
-    monkeypatch.setenv("SUPERTALE_USER", "test-user")
-    monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "/tmp/test-bridge")
-
-    from novelvideo.chat import agent_mcp
-
-    exposed = {
-        tool.name: tool.inputSchema
-        for tool in asyncio.run(agent_mcp.list_tools())
-        if tool.name in expected
-    }
-    assert exposed == expected
 
 
 def test_freezone_mcp_default_create_node_uses_frontend_bridge(monkeypatch):

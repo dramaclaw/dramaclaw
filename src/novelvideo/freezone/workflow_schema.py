@@ -48,7 +48,10 @@ def _catalog_schema(*, recipe_required: bool = False) -> dict[str, Any]:
         "properties": {
             "skillId": {"type": "string", "minLength": 1},
             "skillVersion": _version_schema(),
+            "stepId": {"type": "string", "minLength": 1},
+            "operationType": {"type": "string", "minLength": 1},
             "recipeId": {"type": "string", "minLength": 1},
+            "recipeName": {"type": "string"},
             "recipeVersion": _version_schema(),
             "recipePipeline": {
                 "type": "array",
@@ -62,7 +65,7 @@ def _catalog_schema(*, recipe_required: bool = False) -> dict[str, Any]:
                                 "version": _version_schema(),
                             },
                             "required": ["id"],
-                            "additionalProperties": True,
+                            "additionalProperties": False,
                         },
                     ]
                 },
@@ -73,7 +76,7 @@ def _catalog_schema(*, recipe_required: bool = False) -> dict[str, Any]:
                     "Confirmed Skill input values keyed by input id. Workflow node "
                     "dependencies belong in plan edges, never in this object."
                 ),
-                "additionalProperties": True,
+                "additionalProperties": {},
             },
             "promptStrategy": {
                 "type": "string",
@@ -81,21 +84,53 @@ def _catalog_schema(*, recipe_required: bool = False) -> dict[str, Any]:
             },
             "inputStrategy": {
                 "type": "object",
-                "additionalProperties": True,
+                "additionalProperties": {},
             },
             "promptBuilder": {
                 "type": "object",
                 "properties": {
                     "userGoal": {"type": "string"},
+                    "goalTemplate": {"type": "string"},
+                    "recipeId": {"type": "string", "minLength": 1},
+                    "planItem": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "minLength": 1},
+                            "title": {"type": "string"},
+                            "prompt": {"type": "string"},
+                            "narration": {"type": "string"},
+                            "audio_kind": {"type": "string", "enum": ["speech", "music"]},
+                            "music_length_ms": {
+                                "type": "integer",
+                                "minimum": 3000,
+                                "maximum": 600000,
+                            },
+                            "duration_seconds": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 600,
+                            },
+                            "recipe_id": {"type": "string", "minLength": 1},
+                            "depends_on": {"type": "array", "items": {"type": "string"}},
+                            "reference_inputs": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "stage": {"type": "string"},
+                            "timeline_role": {"type": "string"},
+                        },
+                        "required": ["id", "title", "recipe_id"],
+                        "additionalProperties": False,
+                    },
                     "inputStrategy": {
                         "type": "object",
-                        "additionalProperties": True,
+                        "additionalProperties": {},
                     },
                 },
-                "additionalProperties": True,
+                "additionalProperties": False,
             },
         },
-        "additionalProperties": True,
+        "additionalProperties": False,
     }
     if recipe_required:
         schema["required"] = ["recipeId"]
@@ -147,14 +182,6 @@ def _node_common_properties() -> dict[str, Any]:
         "text": {"type": "string"},
         "prompt": {"type": "string"},
         "description": {"type": "string"},
-        "type": {
-            "type": "string",
-            "enum": NODE_TYPE_VALUES,
-            "description": (
-                "Compatibility alias for node_type used by canvas-oriented agents. "
-                "Prefer node_type in portable plans."
-            ),
-        },
         "position": {
             "type": "object",
             "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
@@ -173,19 +200,14 @@ def _recipe_node_schema() -> dict[str, Any]:
                 "type": "string",
                 "enum": NODE_TYPE_VALUES[:-1],
             },
-            "type": {
-                "type": "string",
-                "enum": NODE_TYPE_VALUES[:-1],
-            },
             "data": _node_data_schema(recipe_required=True),
         }
     )
     return {
         "type": "object",
         "properties": properties,
-        "required": ["id", "data"],
-        "anyOf": [{"required": ["node_type"]}, {"required": ["type"]}],
-        "additionalProperties": True,
+        "required": ["id", "node_type", "data"],
+        "additionalProperties": False,
     }
 
 
@@ -194,16 +216,14 @@ def _resource_text_node_schema() -> dict[str, Any]:
     properties.update(
         {
             "node_type": {"type": "string", "enum": ["textAnnotationNode"]},
-            "type": {"type": "string", "enum": ["textAnnotationNode"]},
             "stage": {"type": "string", "enum": ["input", "resource", "asset"]},
         }
     )
     return {
         "type": "object",
         "properties": properties,
-        "required": ["id"],
+        "required": ["id", "node_type"],
         "allOf": [
-            {"anyOf": [{"required": ["node_type"]}, {"required": ["type"]}]},
             {
                 "anyOf": [
                     {"required": ["stage"]},
@@ -219,20 +239,18 @@ def _resource_text_node_schema() -> dict[str, Any]:
                 ]
             },
         ],
-        "additionalProperties": True,
+        "additionalProperties": False,
     }
 
 
 def _compose_node_schema() -> dict[str, Any]:
     properties = _node_common_properties()
     properties["node_type"] = {"type": "string", "enum": ["videoComposeNode"]}
-    properties["type"] = {"type": "string", "enum": ["videoComposeNode"]}
     return {
         "type": "object",
         "properties": properties,
-        "required": ["id"],
-        "anyOf": [{"required": ["node_type"]}, {"required": ["type"]}],
-        "additionalProperties": True,
+        "required": ["id", "node_type"],
+        "additionalProperties": False,
     }
 
 
@@ -241,29 +259,13 @@ def _group_schema() -> dict[str, Any]:
         "type": "object",
         "properties": {
             "label": {"type": "string"},
-            "title": {"type": "string"},
-            "name": {"type": "string"},
             "node_ids": {
                 "type": "array",
                 "minItems": 2,
                 "items": {"type": "string", "minLength": 1},
             },
-            "nodeIds": {
-                "type": "array",
-                "minItems": 2,
-                "items": {"type": "string", "minLength": 1},
-            },
-            "nodes": {
-                "type": "array",
-                "minItems": 2,
-                "items": {"type": "string", "minLength": 1},
-            },
         },
-        "anyOf": [
-            {"required": ["node_ids"]},
-            {"required": ["nodeIds"]},
-            {"required": ["nodes"]},
-        ],
+        "required": ["node_ids"],
         "additionalProperties": False,
     }
 
@@ -319,7 +321,7 @@ def workflow_plan_json_schema() -> dict[str, Any]:
                     "version": _version_schema(),
                 },
                 "required": ["id"],
-                "additionalProperties": True,
+                "additionalProperties": False,
             },
             "nodes": {
                 "type": "array",
@@ -348,21 +350,9 @@ def workflow_plan_json_schema() -> dict[str, Any]:
                         "source": {"type": "string", "minLength": 1},
                         "target": {"type": "string", "minLength": 1},
                         "link_type": {"type": "string", "enum": LINK_TYPE_VALUES},
-                        "type": {
-                            "type": "string",
-                            "enum": LINK_TYPE_VALUES,
-                            "description": (
-                                "Compatibility alias for link_type used by canvas-oriented "
-                                "agents. Prefer link_type in portable plans."
-                            ),
-                        },
                     },
-                    "required": ["source", "target"],
-                    "anyOf": [
-                        {"required": ["link_type"]},
-                        {"required": ["type"]},
-                    ],
-                    "additionalProperties": True,
+                    "required": ["source", "target", "link_type"],
+                    "additionalProperties": False,
                 },
             },
             "groups": {"type": "array", "items": deepcopy(group)},
@@ -382,7 +372,7 @@ def workflow_plan_json_schema() -> dict[str, Any]:
                     },
                     "groups": {"type": "array", "items": deepcopy(group)},
                 },
-                "additionalProperties": True,
+                "additionalProperties": False,
             },
         },
         "required": ["schema_version", "skill", "nodes", "edges"],
@@ -395,7 +385,7 @@ def workflow_plan_json_schema() -> dict[str, Any]:
                 }
             },
         ],
-        "additionalProperties": True,
+        "additionalProperties": False,
     }
     return schema
 
@@ -411,7 +401,7 @@ def workflow_intent_json_schema() -> dict[str, Any]:
             "duration_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
         },
         "required": ["title"],
-        "additionalProperties": True,
+        "additionalProperties": False,
     }
     item = {
         "type": "object",
@@ -430,7 +420,7 @@ def workflow_intent_json_schema() -> dict[str, Any]:
             "timeline_role": {"type": "string"},
         },
         "required": ["id", "title", "recipe_id"],
-        "additionalProperties": True,
+        "additionalProperties": False,
     }
     return {
         "type": "object",
@@ -463,7 +453,7 @@ def workflow_intent_json_schema() -> dict[str, Any]:
                     "units": {"type": "array", "maxItems": 12, "items": unit},
                 },
                 "required": ["mode"],
-                "additionalProperties": True,
+                "additionalProperties": False,
             },
             "items": {"type": "array", "maxItems": 24, "items": item},
             "include_audio": {"type": "boolean"},
@@ -471,5 +461,5 @@ def workflow_intent_json_schema() -> dict[str, Any]:
             "assumptions": {"type": "array", "items": {"type": "string"}},
         },
         "required": ["skill_id", "user_goal"],
-        "additionalProperties": True,
+        "additionalProperties": False,
     }

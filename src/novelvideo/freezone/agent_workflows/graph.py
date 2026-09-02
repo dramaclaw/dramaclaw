@@ -342,11 +342,7 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             "focus": True,
         }
     )
-    raw_run_after_create = (
-        args.get("run_after_create")
-        if "run_after_create" in args
-        else args.get("runAfterCreate")
-    )
+    raw_run_after_create = args.get("run_after_create")
     run_after_create = _bool_value(raw_run_after_create, False)
     if run_after_create:
         commands.append(
@@ -389,13 +385,7 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _workflow_instance_id(args: dict[str, Any], payload: dict[str, Any]) -> str:
-    explicit = str(
-        args.get("workflow_instance_id")
-        or args.get("workflowInstanceId")
-        or payload.get("workflow_instance_id")
-        or payload.get("workflowInstanceId")
-        or ""
-    ).strip()
+    explicit = str(args.get("workflow_instance_id") or "").strip()
     if explicit:
         return explicit[:160]
     encoded = json.dumps(
@@ -423,19 +413,17 @@ def _bool_value(value: Any, default: bool = False) -> bool:
 
 
 def _node_plan_id(node: dict[str, Any], index: int) -> str:
-    for key in ("id", "client_id", "clientId", "node_id", "nodeId"):
-        value = node.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+    value = node.get("id")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
     label = node.get("label") or node.get("title") or node.get("name") or f"node_{index + 1}"
     return str(label)
 
 
 def _node_type(node: dict[str, Any]) -> str:
-    for key in ("node_type", "nodeType", "type"):
-        value = node.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+    value = node.get("node_type")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
     return DEFAULT_NODE_TYPE
 
 
@@ -710,25 +698,11 @@ def _edge_pairs(raw_edges: Any) -> list[tuple[str, str, str | None]]:
         target: Any = None
         requested_link_type: str | None = None
         if isinstance(raw, dict):
-            source = (
-                raw.get("source") or raw.get("from") or raw.get("source_id") or raw.get("sourceId")
-            )
-            target = (
-                raw.get("target") or raw.get("to") or raw.get("target_id") or raw.get("targetId")
-            )
-            link_type_value = (
-                raw.get("link_type") or raw.get("linkType") or raw.get("type")
-            )
+            source = raw.get("source")
+            target = raw.get("target")
+            link_type_value = raw.get("link_type")
             if isinstance(link_type_value, str) and link_type_value.strip():
                 requested_link_type = link_type_value.strip()
-            else:
-                legacy_role = raw.get("role")
-                if isinstance(legacy_role, str) and legacy_role.strip():
-                    requested_link_type = legacy_role.strip()
-        elif isinstance(raw, (list, tuple)) and len(raw) >= 2:
-            source, target = raw[0], raw[1]
-            if len(raw) >= 3 and isinstance(raw[2], str) and raw[2].strip():
-                requested_link_type = raw[2].strip()
         if (
             isinstance(source, str)
             and source.strip()
@@ -742,8 +716,6 @@ def _edge_pairs(raw_edges: Any) -> list[tuple[str, str, str | None]]:
 def _infer_link_type(
     source_type: str, target_type: str, requested: str | None = None
 ) -> str | None:
-    if requested in {"visual_reference_for", "source_media_for"}:
-        requested = "media_input_for"
     if requested in LINK_TYPE_VALUES and _link_type_allowed(requested, source_type, target_type):
         return requested
     if target_type == "videoComposeNode" and _link_type_allowed(
@@ -796,13 +768,13 @@ def _groups(raw_groups: Any, layout: Any) -> list[dict[str, Any]]:
     for raw in groups:
         if not isinstance(raw, dict):
             continue
-        node_ids = raw.get("node_ids") or raw.get("nodeIds") or raw.get("nodes")
+        node_ids = raw.get("node_ids")
         if not isinstance(node_ids, list):
             continue
         refs = [item.strip() for item in node_ids if isinstance(item, str) and item.strip()]
         if len(refs) < 2:
             continue
-        label = raw.get("label") or raw.get("title") or raw.get("name")
+        label = raw.get("label")
         result.append({"label": str(label).strip() if label else "工作流", "node_ids": refs})
     return result
 

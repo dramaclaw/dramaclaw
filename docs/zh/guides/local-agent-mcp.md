@@ -36,18 +36,19 @@ DRAMACLAW_LOCAL_AGENT_TRUST=1 novelvideo api --host 127.0.0.1 --port 8780
 
 ## MCP Server
 
-合并版 MCP 入口：
+业务工具与只读 Workflow 目录使用两个明确边界：
 
 ```bash
-python -m novelvideo.chat.agent_mcp
+python agent-kit/scripts/launch_mcp.py tools
+python agent-kit/scripts/launch_mcp.py workflows
 ```
 
-它会同时暴露两类工具：
+两个入口分别暴露：
 
-- `dramaclaw_*`：虾导项目、任务、剧集、媒体、生成流程。
-- `freezone_*`：虾画画布、节点、连线、工作流、节点动作。
+- `tools`：经过授权的 `dramaclaw_*` 业务操作和 `freezone_*` 画布写入。
+- `workflows`：Workflow Skill/Recipe 查询、验证与只读编译。
 
-底层复用 `.hermes/plugins/dramaclaw` 和 `.hermes/plugins/freezone` 的现有工具实现。
+`tools` 底层复用 `.hermes/plugins/dramaclaw` 和 `.hermes/plugins/freezone` 的现有工具实现。
 
 默认环境会自动补齐：
 
@@ -69,7 +70,7 @@ python -m novelvideo.chat.agent_mcp
   "mcpServers": {
     "dramaclaw": {
       "command": "/path/to/dramaclaw-ce/.venv/bin/python",
-      "args": ["-m", "novelvideo.chat.agent_mcp"],
+      "args": ["/path/to/dramaclaw-ce/agent-kit/scripts/launch_mcp.py", "tools"],
       "cwd": "/path/to/dramaclaw-ce",
       "env": {
         "DRAMACLAW_API_URL": "http://127.0.0.1:8780",
@@ -77,6 +78,14 @@ python -m novelvideo.chat.agent_mcp
         "DRAMACLAW_EXTERNAL_MCP": "1",
         "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY": "0",
         "DRAMACLAW_USER": "local"
+      }
+    },
+    "dramaclaw-workflows": {
+      "command": "/path/to/dramaclaw-ce/.venv/bin/python",
+      "args": ["/path/to/dramaclaw-ce/agent-kit/scripts/launch_mcp.py", "workflows"],
+      "cwd": "/path/to/dramaclaw-ce",
+      "env": {
+        "DRAMACLAW_USERNAME": "local"
       }
     }
   }

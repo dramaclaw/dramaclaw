@@ -25,17 +25,29 @@ def _event(payload, *, name="freezone_create_workflow_graph", status="completed"
 @pytest.mark.parametrize(
     "payload",
     [
-        {"ok": True, "canvas_apply_status": "accepted"},
-        {"ok": True, "canvas_apply_status": "applied"},
-        {"ok": True, "canvas_apply_status": "direct_applied"},
-        {"ok": True, "applied": True},
-        {"ok": True, "applied_count": 1},
-        {"ok": True, "created_node_count": 3},
-        {"ok": True, "tool_call_status": "succeeded"},
-        {"result": {"ok": True, "applied": True}},
         {
-            "type": "text",
-            "text": '{"ok":true,"created_node_count":2,"status":"completed"}',
+            "ok": True,
+            "canvas_apply_status": "accepted",
+            "applied": True,
+            "bridge_key": "bridge-a",
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+        },
+        {
+            "ok": True,
+            "canvas_apply_status": "applied",
+            "applied": True,
+            "bridge_key": "bridge-b",
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+        },
+        {
+            "ok": True,
+            "canvas_apply_status": "direct_applied",
+            "applied": True,
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "revision": 7,
         },
     ],
 )
@@ -50,6 +62,18 @@ def test_accepts_supported_success_receipts(payload):
         {"ok": False, "error": "validation failed"},
         {"ok": True, "canvas_apply_status": "timeout"},
         {"ok": True, "applied": False, "applied_count": 0},
+        {"ok": True, "applied": True, "status": "completed"},
+        {"ok": True, "applied_count": 1},
+        {"ok": True, "created_node_count": 3},
+        {"ok": True, "tool_call_status": "succeeded"},
+        {"ok": True, "canvas_apply_status": "applied", "applied": True},
+        {
+            "ok": True,
+            "canvas_apply_status": "direct_applied",
+            "applied": True,
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+        },
     ],
 )
 def test_rejects_failure_or_empty_receipts(payload):

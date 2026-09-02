@@ -162,8 +162,12 @@ def test_workflow_draft_confirmation_is_atomic(tmp_path: Path) -> None:
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: claim(), range(2)))
 
-    claimed = [payload for payload, error in results if payload is not None and error is None]
-    rejected = [error for payload, error in results if payload is None and error is not None]
+    claimed = [
+        payload for payload, error in results if payload is not None and error is None
+    ]
+    rejected = [
+        error for payload, error in results if payload is None and error is not None
+    ]
     assert len(claimed) == 1
     assert rejected[0]["status"] == "workflow_draft_confirmation_in_progress"
 
@@ -234,3 +238,24 @@ def test_confirmed_workflow_draft_is_not_claimed_twice(tmp_path: Path) -> None:
     assert read_error is None
     assert stored is not None
     assert stored["status"] == "confirmed"
+
+
+def test_create_workflow_draft_is_idempotent_for_billing_quote(tmp_path: Path) -> None:
+    first = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+        billing_quote_id="billing_quote_a",
+    )
+    repeated = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+        billing_quote_id="billing_quote_a",
+    )
+
+    assert repeated["draft_id"] == first["draft_id"]

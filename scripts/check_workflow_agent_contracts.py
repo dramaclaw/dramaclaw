@@ -33,12 +33,14 @@ EXPECTED_TOOLS = {
     "workflow_catalog_search",
     "workflow_skill_get",
     "workflow_recipe_get",
+    "workflow_skill_reference_get",
     "workflow_intent_compile",
     "workflow_graph_compile",
 }
 EXPECTED_RESOURCE_TEMPLATES = {
     "dramaclaw-workflow://skills/{skill_id}",
     "dramaclaw-workflow://recipes/{recipe_id}",
+    "dramaclaw-workflow://skills/{skill_id}/references/{reference}",
 }
 MEDIA_OUTPUT_KINDS = {"image", "video", "audio"}
 
@@ -73,11 +75,16 @@ class DiagnosticReport:
 
 
 def _json_payload_from_tool(result: Any) -> dict[str, Any]:
+    structured = getattr(result, "structuredContent", None)
     for content in result.content:
         text = getattr(content, "text", None)
         if isinstance(text, str):
             payload = json.loads(text)
             if isinstance(payload, dict):
+                if structured != payload:
+                    raise ValueError(
+                        "MCP tool structuredContent differs from its JSON text content"
+                    )
                 return payload
     raise ValueError("MCP tool result has no JSON object text content")
 
@@ -381,6 +388,13 @@ async def _exercise_mcp(
                     Draft202012Validator.check_schema(tool.inputSchema)
                 except Exception as exc:
                     report.check(False, f"MCP tool {tool.name} has invalid JSON Schema: {exc}")
+                try:
+                    Draft202012Validator.check_schema(tool.outputSchema)
+                except Exception as exc:
+                    report.check(
+                        False,
+                        f"MCP tool {tool.name} has invalid output JSON Schema: {exc}",
+                    )
             report.check(
                 tool_by_name["workflow_graph_compile"].inputSchema["properties"]["plan"]
                 == workflow_plan_json_schema(),

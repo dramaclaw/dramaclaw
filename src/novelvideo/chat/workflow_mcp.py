@@ -73,40 +73,19 @@ def _text(payload: dict[str, Any]) -> list[types.TextContent]:
 def _result(payload: Any) -> types.CallToolResult | list[types.TextContent]:
     """Return JSON text plus structured content for MCP clients that support it."""
     if not isinstance(payload, dict):
-        return _text({"ok": False, "status": "invalid_tool_result", "error": str(payload)})
+        payload = {"ok": False, "status": "invalid_tool_result", "error": str(payload)}
+    else:
+        payload = dict(payload)
+        if not isinstance(payload.get("ok"), bool):
+            payload["ok"] = not bool(payload.get("error"))
+        if not isinstance(payload.get("status"), str) or not payload["status"].strip():
+            payload["status"] = "completed" if payload["ok"] else "failed"
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=encoded)],
         structuredContent=payload,
         isError=payload.get("ok") is False,
     )
-
-
-def _normalize_graph_arguments(args: dict[str, Any]) -> dict[str, Any]:
-    """Normalize harmless host envelope mistakes before strict plan validation."""
-    if not isinstance(args, dict):
-        return {}
-    plan = args.get("plan")
-    if isinstance(plan, dict) and isinstance(plan.get("plan"), dict):
-        normalized = dict(args)
-        normalized["plan"] = plan["plan"]
-        plan = normalized["plan"]
-    else:
-        normalized = dict(args)
-
-    # Some hosts serialize the execution choice inside the plan even though it
-    # is an invocation policy.  Hoist only this known policy field; leave all
-    # node/edge data untouched so schema validation remains fail-closed.
-    if isinstance(plan, dict):
-        for key in ("run_after_create", "runAfterCreate"):
-            if key in plan and key not in normalized:
-                normalized[key] = plan[key]
-            if key in plan:
-                cleaned_plan = dict(plan)
-                cleaned_plan.pop(key, None)
-                normalized["plan"] = cleaned_plan
-                plan = cleaned_plan
-    return normalized
 
 
 def _plan_log_summary(plan: Any) -> dict[str, Any]:
@@ -118,7 +97,7 @@ def _plan_log_summary(plan: Any) -> dict[str, Any]:
     if isinstance(nodes, list):
         for node in nodes:
             if isinstance(node, dict):
-                node_type = str(node.get("node_type") or node.get("type") or "unknown")
+                node_type = str(node.get("node_type") or "unknown")
                 node_types[node_type] = node_types.get(node_type, 0) + 1
     return {
         "schema_version": plan.get("schema_version"),
@@ -376,7 +355,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     if name == "workflow_intent_compile":
         return _result(compile_workflow_intent(args.get("intent")))
     if name == "workflow_graph_compile":
-        args = _normalize_graph_arguments(args)
         started = time.monotonic()
         logger.info("workflow_graph_compile.start summary=%s", _plan_log_summary(args.get("plan")))
         validation = validate_agent_workflow_plan(args.get("plan"))

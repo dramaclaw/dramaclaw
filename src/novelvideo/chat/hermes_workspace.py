@@ -768,11 +768,11 @@ def _render_workflow_skill(item: dict) -> tuple[str, dict[str, object]]:
 
 ## 执行规则
 
-1. 本 Skill 已由用户明确选择。开始规划前只调用一次 `freezone_prepare_workflow_draft` 获取报价，不传 `intent` 或 `planning_confirmed=true`。如果工具返回需要计费确认，则向用户展示确切报价并停止本轮；如果返回无需计费，则不要向用户提及积分、版本或确认，继续本轮规划。
-2. 报价确认完成（或返回无需计费）后，只调用一次 `freezone_get_workflow_skill`，固定传入 `skill_id=\"{skill_id}\"` 和 `compact=true`；不要再次选择或替换 Skill。只补充 `input_contract.missing_required`，不要重复询问已经推断或有默认值的参数。
-3. 生成精简 `freezone_workflow_intent.v1`，以结构化 JSON 对象（不是字符串）和 `planning_confirmed=true` 调用 `freezone_prepare_workflow_draft` 一次并生成草稿。不要传 `draft_id`，不要调用 `execute_code`。严格按返回的预览向用户确认，同时展示创建工作流所需的 `agent_credit_estimate.display`，并说明图片、音频、视频等节点生成积分另计。
-4. 用户调整方案时调用 `freezone_patch_workflow_draft`，只提交发生变化的字段；修改规划也必须先按工具返回的报价征得确认，再以 `planning_confirmed=true` 提交，不能把用户的修改请求本身视为扣费确认。
-5. 用户确认后调用 `freezone_confirm_workflow_draft`，使用已确认的 draft_id 和 revision。
+1. 本 Skill 已由用户明确选择。只调用一次 `freezone_get_workflow_skill`，固定传入 `skill_id=\"{skill_id}\"` 和 `compact=true`；不要再次选择或替换 Skill。只补充 `input_contract.missing_required`，不要重复询问已经推断或有默认值的参数。
+2. 生成精简 `freezone_workflow_intent.v1`，以结构化 JSON 对象（不是字符串）调用 `freezone_prepare_workflow_draft`。工具会为这份确切 intent 返回报价；若需计费，展示确切报价并停止本轮，只有服务端在用户回复“确认规划费用”后签发可信 `quote_id` 与 `confirmation_receipt`，才能用完全相同的参数重试。不要伪造凭证、传 `draft_id` 或调用 `execute_code`。
+3. 返回草稿后，严格按预览向用户确认，同时展示创建工作流所需的 `agent_credit_estimate.display`，并说明图片、音频、视频等节点生成积分另计。
+4. 用户调整方案时调用 `freezone_patch_workflow_draft`，只提交发生变化的字段；修改规划也必须按工具返回的报价等待用户回复“确认修改费用”，再携带服务端凭证重试，不能把修改请求本身视为扣费确认。
+5. 用户确认方案后调用 `freezone_confirm_workflow_draft`；若需创建费用确认，等待用户回复“确认创建费用”并携带服务端凭证重试，始终使用已确认的 draft_id 和 revision。
 6. Recipe 选择、节点展开、稳定 ID、连线、布局和合成全部交给工具；不要手写 WorkflowPlan 或逐节点创建。
 
 ## 业务说明

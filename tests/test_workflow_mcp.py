@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, ValidationError
 
 from novelvideo.chat import workflow_mcp
 from novelvideo.freezone.agent_workflows import registry
@@ -47,7 +47,7 @@ async def test_standalone_workflow_mcp_exposes_portable_tools_and_resources():
     ]
     assert plan_schema["properties"]["nodes"]["items"]["anyOf"]
     recipe_node_schema = plan_schema["properties"]["nodes"]["items"]["anyOf"][0]
-    assert recipe_node_schema["properties"]["type"]["enum"] == [
+    assert recipe_node_schema["properties"]["node_type"]["enum"] == [
         "textAnnotationNode",
         "scriptNode",
         "beatContextNode",
@@ -55,10 +55,14 @@ async def test_standalone_workflow_mcp_exposes_portable_tools_and_resources():
         "videoNode",
         "audioNode",
     ]
-    assert {tuple(option["required"]) for option in recipe_node_schema["anyOf"]} == {
-        ("node_type",),
-        ("type",),
-    }
+    assert recipe_node_schema["required"] == ["id", "node_type", "data"]
+    assert recipe_node_schema["additionalProperties"] is False
+    assert plan_schema["properties"]["edges"]["items"]["required"] == [
+        "source",
+        "target",
+        "link_type",
+    ]
+    assert plan_schema["additionalProperties"] is False
     assert "groups" in plan_schema["properties"]
     assert plan_schema["properties"]["expected_node_count"]["maximum"] == 200
     assert (
@@ -82,7 +86,7 @@ async def test_standalone_workflow_mcp_exposes_portable_tools_and_resources():
 
 
 @pytest.mark.asyncio
-async def test_graph_compile_accepts_canvas_type_alias():
+async def test_graph_compile_accepts_canonical_plan_fields():
     arguments = {
         "plan": {
             "schema_version": "freezone_workflow_plan.v1",
@@ -90,7 +94,7 @@ async def test_graph_compile_accepts_canvas_type_alias():
             "nodes": [
                 {
                     "id": "input",
-                    "type": "textAnnotationNode",
+                    "node_type": "textAnnotationNode",
                     "data": {
                         "stage": "input",
                         "text": "用户提供的固定文案",
@@ -98,7 +102,7 @@ async def test_graph_compile_accepts_canvas_type_alias():
                 },
                 {
                     "id": "image",
-                    "type": "imageGenNode",
+                    "node_type": "imageGenNode",
                     "data": {
                         "prompt": "未来城市雨夜",
                         "workflowCatalog": {"recipeId": "general-image"},
@@ -106,7 +110,7 @@ async def test_graph_compile_accepts_canvas_type_alias():
                 }
             ],
             "edges": [
-                {"source": "input", "target": "image", "type": "prompt_for"}
+                {"source": "input", "target": "image", "link_type": "prompt_for"}
             ],
         }
     }
@@ -127,24 +131,26 @@ async def test_graph_compile_accepts_canvas_type_alias():
 
 
 @pytest.mark.asyncio
-async def test_graph_compile_hoists_nested_execution_policy():
+async def test_graph_compile_rejects_nested_execution_policy():
     arguments = {
         "plan": {
             "schema_version": "freezone_workflow_plan.v1",
             "skill": {"id": "video-tutorial", "version": 1},
             "run_after_create": True,
             "nodes": [
-                {"id": "input", "type": "textAnnotationNode", "data": {"stage": "input", "text": "文案"}},
-                {"id": "image", "type": "imageGenNode", "data": {"prompt": "雨夜城市", "workflowCatalog": {"recipeId": "general-image"}}},
+                {"id": "input", "node_type": "textAnnotationNode", "data": {"stage": "input", "text": "文案"}},
+                {"id": "image", "node_type": "imageGenNode", "data": {"prompt": "雨夜城市", "workflowCatalog": {"recipeId": "general-image"}}},
             ],
-            "edges": [{"source": "input", "target": "image", "type": "prompt_for"}],
+            "edges": [{"source": "input", "target": "image", "link_type": "prompt_for"}],
         }
     }
-    result = await workflow_mcp.call_tool("workflow_graph_compile", arguments)
-    payload = _result_payload(result)
-    assert payload["ok"] is True, payload
-    assert payload["run_after_create"] is True
-    assert any(command["type"] == "run_workflow" for command in payload["commands"])
+    graph_tool = next(
+        tool
+        for tool in await workflow_mcp.list_tools()
+        if tool.name == "workflow_graph_compile"
+    )
+    with pytest.raises(ValidationError):
+        Draft202012Validator(graph_tool.inputSchema).validate(arguments)
 
 
 @pytest.mark.asyncio
@@ -156,24 +162,24 @@ async def test_graph_compile_explains_how_to_connect_independent_branches():
             "nodes": [
                 {
                     "id": "beat-01-input",
-                    "type": "textAnnotationNode",
+                    "node_type": "textAnnotationNode",
                     "stage": "input",
                     "data": {"text": "第一段"},
                 },
                 {
                     "id": "beat-01-image",
-                    "type": "imageGenNode",
+                    "node_type": "imageGenNode",
                     "data": {"workflowCatalog": {"recipeId": "general-image"}},
                 },
                 {
                     "id": "beat-02-input",
-                    "type": "textAnnotationNode",
+                    "node_type": "textAnnotationNode",
                     "stage": "input",
                     "data": {"text": "第二段"},
                 },
                 {
                     "id": "beat-02-image",
-                    "type": "imageGenNode",
+                    "node_type": "imageGenNode",
                     "data": {"workflowCatalog": {"recipeId": "general-image"}},
                 },
             ],
@@ -181,12 +187,12 @@ async def test_graph_compile_explains_how_to_connect_independent_branches():
                 {
                     "source": "beat-01-input",
                     "target": "beat-01-image",
-                    "type": "prompt_for",
+                    "link_type": "prompt_for",
                 },
                 {
                     "source": "beat-02-input",
                     "target": "beat-02-image",
-                    "type": "prompt_for",
+                    "link_type": "prompt_for",
                 },
             ],
         }
@@ -210,13 +216,13 @@ async def test_graph_compile_rejects_edge_guessing_and_directs_catalog_lookup():
             "nodes": [
                 {
                     "id": "input-root",
-                    "type": "textAnnotationNode",
+                    "node_type": "textAnnotationNode",
                     "stage": "input",
                     "data": {"text": "公共输入"},
                 },
                 {
                     "id": "beat-image",
-                    "type": "imageGenNode",
+                    "node_type": "imageGenNode",
                     "data": {"workflowCatalog": {"recipeId": "general-image"}},
                 },
             ],
@@ -224,7 +230,7 @@ async def test_graph_compile_rejects_edge_guessing_and_directs_catalog_lookup():
                 {
                     "source": "input-root",
                     "target": "beat-image",
-                    "type": "context_for",
+                    "link_type": "context_for",
                 }
             ],
         }
@@ -464,7 +470,7 @@ def test_compiled_command_validator_reports_canvas_contract_paths():
     }
 
 
-def test_graph_compiler_prefers_canonical_run_after_create_flag():
+def test_graph_compiler_ignores_removed_run_after_create_alias():
     result = build_workflow_graph_commands(
         {
             "plan": {

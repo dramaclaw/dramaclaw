@@ -5,9 +5,11 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator, ValidationError
 
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
 from novelvideo.freezone.workflow_plan import validate_workflow_plan
+from novelvideo.freezone.workflow_schema import workflow_plan_json_schema
 
 _MINIMAL_ECOMMERCE_SKILL = {
     "id": "ecommerce-product",
@@ -1216,30 +1218,23 @@ def test_compiler_propagates_portable_video_generation_inputs(monkeypatch):
     }
 
 
-def test_validator_checks_singular_group_alias_references():
-    result = validate_workflow_plan(
-        {
-            "schema_version": "freezone_workflow_plan.v1",
-            "skill": {"id": "ecommerce-product"},
-            "nodes": [
-                {
-                    "id": "prompt",
-                    "node_type": "textAnnotationNode",
-                    "stage": "input",
-                }
-            ],
-            "edges": [],
-            "group": {"label": "测试工作流", "nodes": ["prompt", "missing"]},
-        },
-        skills_by_id={"ecommerce-product": _MINIMAL_ECOMMERCE_SKILL},
-        recipes_by_id={recipe["id"]: recipe for recipe in _MINIMAL_ECOMMERCE_RECIPES},
-    )
+def test_schema_rejects_singular_group_alias():
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "skill": {"id": "ecommerce-product"},
+        "nodes": [
+            {
+                "id": "prompt",
+                "node_type": "textAnnotationNode",
+                "stage": "input",
+            }
+        ],
+        "edges": [],
+        "group": {"label": "测试工作流", "nodes": ["prompt", "missing"]},
+    }
 
-    assert result["ok"] is False
-    assert any(
-        issue["path"] == "group[0].node_ids[1]" and "missing" in issue["message"]
-        for issue in result["errors"]
-    )
+    with pytest.raises(ValidationError):
+        Draft202012Validator(workflow_plan_json_schema()).validate(plan)
 
 
 def test_validator_rejects_execution_policy_inside_plan():
@@ -1519,59 +1514,40 @@ def test_dynamic_workflow_plan_accepts_different_node_counts(monkeypatch):
     assert six["node_count"] == 7
 
 
-def test_workflow_plan_accepts_canvas_type_alias_and_counts_it():
+def test_workflow_plan_schema_rejects_canvas_type_alias():
     plan = _dynamic_plan(image_count=1)
     for node in plan["nodes"]:
         node["type"] = node.pop("node_type")
 
-    result = validate_workflow_plan(plan)
-
-    assert result["ok"] is True, result
-    assert result["preflight"]["counts"] == {
-        "text": 1,
-        "image": 1,
-        "video": 0,
-        "audio": 0,
-        "compose": 0,
-    }
+    with pytest.raises(ValidationError):
+        Draft202012Validator(workflow_plan_json_schema()).validate(plan)
 
 
-def test_workflow_plan_rejects_conflicting_node_type_alias():
+def test_workflow_plan_schema_rejects_extra_node_type_alias():
     plan = _dynamic_plan(image_count=1)
     plan["nodes"][1]["type"] = "audioNode"
 
-    result = validate_workflow_plan(plan)
-
-    assert result["ok"] is False
-    assert {
-        "path": "nodes[1].type",
-        "message": "conflicts with node_type: imageGenNode",
-    } in result["errors"]
+    with pytest.raises(ValidationError):
+        Draft202012Validator(workflow_plan_json_schema()).validate(plan)
 
 
-def test_workflow_plan_accepts_data_stage_and_edge_type_aliases():
+def test_workflow_plan_schema_allows_data_stage_but_rejects_edge_type_alias():
     plan = _dynamic_plan(image_count=1)
     input_node = plan["nodes"][0]
     input_node["data"]["stage"] = input_node.pop("stage")
     for edge in plan["edges"]:
         edge["type"] = edge.pop("link_type")
 
-    result = validate_workflow_plan(plan)
+    with pytest.raises(ValidationError):
+        Draft202012Validator(workflow_plan_json_schema()).validate(plan)
 
-    assert result["ok"] is True, result
 
-
-def test_workflow_plan_rejects_conflicting_edge_type_alias():
+def test_workflow_plan_schema_rejects_extra_edge_type_alias():
     plan = _dynamic_plan(image_count=1)
     plan["edges"][0]["type"] = "dependency_for"
 
-    result = validate_workflow_plan(plan)
-
-    assert result["ok"] is False
-    assert {
-        "path": "edges[0].type",
-        "message": "conflicts with link_type: prompt_for",
-    } in result["errors"]
+    with pytest.raises(ValidationError):
+        Draft202012Validator(workflow_plan_json_schema()).validate(plan)
 
 
 def test_workflow_plan_rejects_invalid_runtime_catalog_shapes_before_canvas_apply():

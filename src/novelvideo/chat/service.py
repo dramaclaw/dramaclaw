@@ -515,7 +515,7 @@ _FREEZONE_DIRECT_MEDIA_WRITE_RE = re.compile(
 )
 _FREEZONE_CANVAS_KNOWLEDGE_QUESTION_RE = re.compile(
     r"(?:如何|怎么|为什么|为何|是什么|教程|方法|步骤|是否支持|支不支持|"
-    r"what|why|how|can\s+i)",
+    r"\bwhat\b|\bwhy\b|\bhow\b|\bcan\s+i\b)",
     re.IGNORECASE,
 )
 _FREEZONE_CANVAS_NO_WRITE_FAILURE_RE = re.compile(
@@ -630,25 +630,26 @@ def _codex_freezone_write_result_succeeded(event: Any) -> bool:
             if payload.get("ok") is not True:
                 continue
             apply_status = str(payload.get("canvas_apply_status") or "").strip().lower()
-            tool_status = str(
-                payload.get("tool_call_status") or payload.get("status") or ""
-            ).strip().lower()
-            applied_count = payload.get("applied_count")
-            created_node_count = payload.get("created_node_count")
-            has_applied_count = isinstance(applied_count, (int, float)) and applied_count > 0
-            has_created_nodes = isinstance(created_node_count, (int, float)) and created_node_count > 0
-            # Codex 0.149 may surface the MCP CallToolResult through
-            # structuredContent without preserving the legacy
-            # canvas_apply_status field.  `applied=true` (or an accepted
-            # tool-call status) is still a durable write receipt and must
-            # prevent the post-turn adapter from reporting a false failure.
-            if (
-                apply_status in {"applied", "accepted", "direct_applied"}
-                or payload.get("applied") is True
-                or tool_status in {"accepted", "completed", "succeeded"}
-                or has_applied_count
-                or has_created_nodes
-            ):
+            project_id = str(payload.get("project_id") or "").strip()
+            canvas_id = str(payload.get("canvas_id") or "").strip()
+            bridge_key = str(payload.get("bridge_key") or "").strip()
+            revision = payload.get("revision")
+            # A transport/tool status is not proof that the canvas mutation
+            # was persisted. Browser-applied results are durable only when
+            # they carry the bridge receipt identity; direct applies must
+            # carry the saved canvas revision returned by the persistence API.
+            browser_receipt = (
+                apply_status in {"applied", "accepted"}
+                and payload.get("applied") is True
+                and bool(bridge_key and project_id and canvas_id)
+            )
+            direct_receipt = (
+                apply_status == "direct_applied"
+                and payload.get("applied") is True
+                and bool(project_id and canvas_id)
+                and isinstance(revision, int)
+            )
+            if browser_receipt or direct_receipt:
                 return True
     return False
 
@@ -5315,24 +5316,63 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
         "memories.use_memories=false",
     ]
     # Codex only enables native deferred tool search for models present in its
-    # catalog.  Do not fabricate metadata for the custom Gateway slug; allow a
-    # deployment to provide a verified catalog file and fail closed otherwise.
+    # catalog. The repository ships complete metadata for the default Gateway
+    # slug; deployments may replace it with another verified catalog.
+    bundled_catalog = (
+        Path(__file__).resolve().parents[3]
+        / "deploy"
+        / "codex"
+        / "dramaclaw-model-catalog.json"
+    )
     catalog_file = str(
-        os.environ.get("DRAMACLAW_CODEX_MODEL_CATALOG_FILE") or ""
+        os.environ.get("DRAMACLAW_CODEX_MODEL_CATALOG_FILE") or bundled_catalog
     ).strip()
-    if catalog_file:
-        path = Path(catalog_file).expanduser()
-        if not path.is_file() or not path.is_absolute():
-            raise RuntimeError(
-                "DRAMACLAW_CODEX_MODEL_CATALOG_FILE must be an existing absolute file"
-            )
-        try:
-            catalog = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError("Codex model catalog file is not valid JSON") from exc
-        if not isinstance(catalog, (dict, list)):
-            raise RuntimeError("Codex model catalog must be a JSON object or array")
-        overrides.append(f"model_catalog_json={json.dumps(str(path))}")
+    path = Path(catalog_file).expanduser()
+    if not path.is_file() or not path.is_absolute():
+        raise RuntimeError(
+            "DRAMACLAW_CODEX_MODEL_CATALOG_FILE must be an existing absolute file"
+        )
+    try:
+        catalog = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Codex model catalog file is not valid JSON") from exc
+    models = catalog.get("models") if isinstance(catalog, dict) else None
+    if not isinstance(models, list):
+        raise RuntimeError("Codex model catalog must contain a models array")
+    configured_model = _codex_model()
+    entry = next(
+        (
+            item
+            for item in models
+            if isinstance(item, dict) and item.get("slug") == configured_model
+        ),
+        None,
+    )
+    required_fields = {
+        "base_instructions",
+        "display_name",
+        "supported_reasoning_levels",
+        "shell_type",
+        "visibility",
+        "supported_in_api",
+        "priority",
+        "truncation_policy",
+        "experimental_supported_tools",
+        "supports_search_tool",
+    }
+    if entry is None or not required_fields.issubset(entry):
+        raise RuntimeError(
+            f"Codex model catalog has no complete entry for {configured_model}"
+        )
+    if entry.get("supports_search_tool") is not True:
+        raise RuntimeError(
+            f"Codex model catalog must enable supports_search_tool for {configured_model}"
+        )
+    if not str(entry.get("base_instructions") or "").strip():
+        raise RuntimeError(
+            f"Codex model catalog must provide base_instructions for {configured_model}"
+        )
+    overrides.append(f"model_catalog_json={json.dumps(str(path))}")
     return tuple(overrides)
 
 
