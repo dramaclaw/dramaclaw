@@ -72,6 +72,69 @@ export function timelineSeconds(scene: PrevizScene): number {
   return scene.settings.durationFrames / PREVIZ_FPS;
 }
 
+/**
+ * 时间轴的横向比例：每秒占多少像素。存像素而不是「缩放倍率」，是因为刻度疏密、
+ * 片段宽度、播放头落点全都要拿它换算，多一层倍率只会让每处都乘一遍同样的常数。
+ */
+export const PREVIZ_TIMELINE_ZOOM = { min: 20, max: 480, default: 120 } as const;
+
+/** 主刻度之间至少留这么宽，否则标签会挨在一起糊成一片。 */
+const RULER_MIN_MAJOR_PX = 80;
+
+/** 主刻度可以取的整齐间隔（秒）。不整齐的间隔（比如 0.37s）读不出来。 */
+const RULER_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60] as const;
+
+/** 每个主刻度切成几段次刻度。 */
+const RULER_MINORS_PER_MAJOR = 5;
+
+/** 尺子渲染多少根就到头：缩放算错时不至于铺出十万个 DOM 节点把页面卡死。 */
+const RULER_MAX_TICKS = 2000;
+
+export interface PrevizRulerTick {
+  /** 落点，单位秒。 */
+  seconds: number;
+  major: boolean;
+  /** 只有主刻度带文字。 */
+  label: string | null;
+}
+
+/** 秒数写成刻度上的标签。整秒不带小数点，细分刻度才带。 */
+function rulerLabel(seconds: number): string {
+  return `${Number(seconds.toFixed(2))}s`;
+}
+
+/**
+ * 一把覆盖 `totalSeconds` 的刻度尺。间隔随比例自动粗细：比例小了退到 2s/5s，
+ * 放大了细到 0.2s——固定间隔要么缩放后挤成一团，要么放大后整屏只有两根线。
+ */
+export function rulerTicks(totalSeconds: number, pxPerSecond: number): PrevizRulerTick[] {
+  const span = Math.max(0, totalSeconds);
+  if (span <= 0) return [{ seconds: 0, major: true, label: rulerLabel(0) }];
+
+  const major =
+    RULER_STEPS.find((step) => step * pxPerSecond >= RULER_MIN_MAJOR_PX) ??
+    RULER_STEPS[RULER_STEPS.length - 1];
+  const minor = major / RULER_MINORS_PER_MAJOR;
+  const count = Math.min(Math.floor(span / minor), RULER_MAX_TICKS);
+
+  const ticks: PrevizRulerTick[] = [];
+  for (let index = 0; index <= count; index += 1) {
+    // 累加会把浮点误差滚成 0.30000000000000004，乘完再圆一次才对得上标签。
+    const seconds = Math.round(index * minor * 1000) / 1000;
+    const isMajor = index % RULER_MINORS_PER_MAJOR === 0;
+    ticks.push({ seconds, major: isMajor, label: isMajor ? rulerLabel(seconds) : null });
+  }
+  return ticks;
+}
+
+/** 「适配」按钮要的比例：整条时间轴正好铺满轨槽，再夹回缩放范围内。 */
+export function zoomToFit(totalSeconds: number, laneWidthPx: number): number {
+  // 面板还没量出宽度（首帧、或者被折叠着）时别算出 0——退回默认比例。
+  if (laneWidthPx <= 0 || totalSeconds <= 0) return PREVIZ_TIMELINE_ZOOM.default;
+  const raw = laneWidthPx / totalSeconds;
+  return Math.min(PREVIZ_TIMELINE_ZOOM.max, Math.max(PREVIZ_TIMELINE_ZOOM.min, raw));
+}
+
 /** 片段最短长度（帧）。0 长片段的 `frameToU` 无解，时间轴上也点不中。 */
 export const PREVIZ_MIN_CLIP_FRAMES = 1;
 
