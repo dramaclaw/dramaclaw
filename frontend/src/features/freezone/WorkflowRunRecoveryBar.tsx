@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LoaderCircle, RotateCcw, X } from "lucide-react";
+import { AlertTriangle, LoaderCircle, Pencil, RotateCcw, SkipForward, X } from "lucide-react";
 
 import {
   listFreezoneWorkflowRuns,
@@ -19,6 +19,16 @@ import { useCanvasStore } from "@/stores/canvasStore";
 import { useTaskCenterStore } from "@/task-center/store";
 
 const RESUMABLE_ACTION_STATUSES = new Set(["pending", "running", "failed", "blocked"]);
+
+function isSafetyReviewError(error: string | null | undefined): boolean {
+  const normalized = String(error || "").toLowerCase();
+  return normalized.includes("safety review")
+    || normalized.includes("内容未通过安全审核")
+    || normalized.includes("内容安全审核")
+    || normalized.includes("sensitivecontent")
+    || normalized.includes("privacyinformation")
+    || normalized.includes("moderation_blocked");
+}
 
 export function resumableWorkflowNodeIds(run: FreezoneWorkflowRun): string[] {
   return [...new Set(
@@ -200,7 +210,25 @@ export function WorkflowRunRecoveryBar({
     () => run
       ? [...new Set(
         recoverableWorkflowActions(run, existingNodeIds)
-          .filter((action) => action.status === "failed" && existingNodeIds.has(action.node_id))
+          .filter((action) =>
+            action.status === "failed" &&
+            existingNodeIds.has(action.node_id) &&
+            !isSafetyReviewError(action.error)
+          )
+          .map((action) => action.node_id),
+      )]
+      : [],
+    [canvasNodes, existingNodeIds, run],
+  );
+  const safetyNodeIds = useMemo(
+    () => run
+      ? [...new Set(
+        recoverableWorkflowActions(run, existingNodeIds)
+          .filter((action) =>
+            action.status === "failed" &&
+            existingNodeIds.has(action.node_id) &&
+            isSafetyReviewError(action.error)
+          )
           .map((action) => action.node_id),
       )]
       : [],
@@ -268,6 +296,38 @@ export function WorkflowRunRecoveryBar({
     }
   };
 
+  const handleEditSafetyPrompt = () => {
+    const nodeId = safetyNodeIds[0];
+    if (!nodeId) return;
+    useCanvasStore.getState().setSelectedNode(nodeId);
+    useCanvasStore.getState().requestFocusNode(nodeId);
+    setDismissedRunId(run?.run_id ?? null);
+  };
+
+  const handleSkipSafetyNodes = async () => {
+    if (busy || !run || safetyNodeIds.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const updates = run.actions
+        .filter((action) => safetyNodeIds.includes(action.node_id) && action.status === "failed")
+        .map((action) => ({
+          node_id: action.node_id,
+          action: action.action,
+          status: "skipped" as const,
+          error: "用户选择跳过安全审核失败节点",
+        }));
+      const updated = await updateFreezoneWorkflowRun(projectId, canvasId, run.run_id, {
+        action_updates: updates,
+      });
+      setRuns((current) => current.map((item) => item.run_id === run.run_id ? updated : item));
+    } catch (skipError) {
+      setError(skipError instanceof Error ? skipError.message : String(skipError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const completedCount = Math.max(0, run.actions.length - nodeIds.length);
   return (
     <div className="pointer-events-auto absolute left-1/2 top-4 z-30 flex max-w-[calc(100%-32px)] -translate-x-1/2 items-center gap-3 rounded-md border border-border/70 bg-background/95 px-3 py-2 shadow-lg backdrop-blur">
@@ -278,6 +338,22 @@ export function WorkflowRunRecoveryBar({
         </div>
         {error && <div className="mt-1 max-w-[420px] truncate text-xs text-destructive">{error}</div>}
       </div>
+      {safetyNodeIds.length > 0 && (
+        <>
+          <div className="inline-flex items-center gap-1 text-xs text-amber-200">
+            <AlertTriangle className="size-3.5" />
+            有节点未通过安全审核
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={handleEditSafetyPrompt} disabled={busy}>
+            <Pencil className="size-4" />
+            修改提示词
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => void handleSkipSafetyNodes()} disabled={busy}>
+            <SkipForward className="size-4" />
+            跳过节点
+          </Button>
+        </>
+      )}
       {failedNodeIds.length > 0 && (
         <Button
           type="button"

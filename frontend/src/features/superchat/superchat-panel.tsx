@@ -3779,7 +3779,9 @@ function CanvasCommandFeedbackCard({
   feedback: CanvasCommandFeedback;
   onRetry?: (feedback: CanvasCommandFeedback) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  // Expired approvals contain the actionable recovery button. Keep them open
+  // so the user can see and retry the operation without an extra click.
+  const [expanded, setExpanded] = useState(() => canvasCommandFeedbackIsTimeoutCancelled(feedback));
   const steps = feedback.commandResults ?? [];
   const successfulCount = feedback.applied + feedback.openedUiActions;
   if (steps.length === 0 && successfulCount === 0 && feedback.errors.length === 0) return null;
@@ -3792,8 +3794,13 @@ function CanvasCommandFeedbackCard({
   const collapseSuccessfulDetails = !failed && steps.length > 2;
   const compactTitle = canvasCommandFeedbackCompactTitle(feedback);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
+  const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
+    ? "画布操作因等待超时已取消，没有应用到画布。"
+    : canvasCommandFeedbackIsUserCancelled(feedback)
+      ? "画布操作已手动取消，没有应用到画布。"
+      : null;
   const userFailureMessage = failed
-    ? canvasCommandUserMessageFromResult(
+    ? cancellationMessage ?? canvasCommandUserMessageFromResult(
         feedback.errors,
         feedback.commandResults.map((step) => ({ error: step.error })),
       )
@@ -3891,8 +3898,13 @@ function CanvasCommandFeedbackCard({
       </div>
       {canRetry && onRetry ? (
         <div className="flex items-center justify-end border-t border-white/[0.06] px-3 py-2.5">
-          <Button size="xs" variant="outline" onClick={() => onRetry(feedback)}>
-            <RefreshCw className="mr-1.5 size-3.5" />
+          <Button
+            size="xs"
+            variant="outline"
+            className="border-amber-400/50 text-amber-200 hover:bg-amber-400/10 hover:text-amber-100"
+            onClick={() => onRetry(feedback)}
+          >
+            <RefreshCw className="mr-1.5 size-3.5 text-amber-300" />
             重新执行
           </Button>
         </div>
