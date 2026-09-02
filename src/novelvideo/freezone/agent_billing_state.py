@@ -212,14 +212,14 @@ def confirm_billing_quote(
             raise ValueError("billing quote does not match this confirmation action")
         if float(row["expires_at"]) < now:
             raise ValueError("billing quote expired")
-        if row["status"] not in {"quoted", "confirmed"}:
-            raise ValueError("billing quote is no longer awaiting confirmation")
-        if row["status"] == "confirmed" and row["receipt_token"]:
+        if row["status"] in {"confirmed", "consumed"} and row["receipt_token"]:
             return {
                 **_quote_payload(row),
                 "status": "confirmed",
                 "receipt": row["receipt_token"],
             }
+        if row["status"] != "quoted":
+            raise ValueError("billing quote is no longer awaiting confirmation")
         receipt = f"billing_receipt_{secrets.token_urlsafe(32)}"
         conn.execute(
             """

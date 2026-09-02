@@ -125,6 +125,35 @@ def test_agent_planning_quote_is_non_reserving_and_exact(
     assert seen["feature_key"] == "freezone.agent.creative_planning"
 
 
+def test_agent_planning_quote_does_not_create_confirmable_quote_when_insufficient(
+    workflow_run_client: TestClient,
+    monkeypatch,
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    class Meter:
+        async def require_feature_credit_balance(self, **_kwargs):
+            return {"required_balance": 15, "balance": 4, "allowed": False}
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: Meter())
+    response = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-capability-quote",
+        json={
+            "feature_key": "freezone.agent.creative_planning",
+            "canvas_id": "default",
+            "operation_kind": "workflow_planning_create",
+            "operation": {"intent": {"user_goal": "广告"}, "run_after_create": False},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["status"] == "agent_credit_insufficient"
+    assert payload["allowed"] is False
+    assert payload["required_credits"] == 15
+    assert "quote_id" not in payload
+
+
 def test_agent_planning_quote_falls_back_when_price_rule_is_missing(
     workflow_run_client: TestClient,
     monkeypatch,

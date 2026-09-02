@@ -63,6 +63,16 @@ def test_confirmation_receipt_is_hashed_scoped_and_operation_bound(tmp_path) -> 
     )
     assert consumed["status"] == "consumed"
 
+    repeated_confirmation = confirm_billing_quote(
+        project_dir=tmp_path,
+        quote_id=quote["quote_id"],
+        user_id="user-a",
+        project_id="project-a",
+        canvas_id="canvas-a",
+    )
+    assert repeated_confirmation["status"] == "confirmed"
+    assert repeated_confirmation["receipt"] == confirmed["receipt"]
+
     # Exact retries are allowed; downstream writes and reservations use quote_id for idempotency.
     consume_billing_confirmation(
         project_dir=tmp_path,

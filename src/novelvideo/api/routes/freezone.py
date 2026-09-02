@@ -13442,6 +13442,7 @@ async def quote_freezone_agent_capability(
             raise
         access = {"required_balance": None, "allowed": True}
     required = access.get("required_balance")
+    allowed = bool(access.get("allowed", True))
     explicitly_configured = access.get("price_rule_configured") is True
     exact = isinstance(required, (int, float)) and (
         explicitly_configured or float(required) > 0
@@ -13477,7 +13478,7 @@ async def quote_freezone_agent_capability(
             "canvas_id, operation_kind, and structured operation are required",
         )
     stored_quote = None
-    if exact:
+    if exact and allowed:
         stored_quote = await asyncio.to_thread(
             create_billing_quote,
             project_dir=state_dir,
@@ -13495,6 +13496,15 @@ async def quote_freezone_agent_capability(
             ),
             display=f"{required:g} 积分",
         )
+    quote_status = (
+        "agent_capability_quote_ready" if allowed else "agent_credit_insufficient"
+    )
+    if not allowed:
+        quote_message = "当前 Agent 积分不足，无法确认或执行本次操作。"
+    elif exact:
+        quote_message = "已读取本次规划的确切积分价格。"
+    else:
+        quote_message = f"{capability_name}价格尚未配置，当前仅能显示参考区间。"
     return {
         "ok": True,
         "data": {
@@ -13503,16 +13513,13 @@ async def quote_freezone_agent_capability(
             "metering_enabled": metering_enabled,
             "configured": exact,
             "exact": exact,
+            "status": quote_status,
             "required_credits": required if exact else None,
             "display": (f"{required:g} 积分" if exact else estimate["display"]),
             "reference_display": estimate["display"],
-            "allowed": bool(access.get("allowed", True)),
+            "allowed": allowed,
             **(stored_quote or {}),
-            "message": (
-                "已读取本次规划的确切积分价格。"
-                if exact
-                else (f"{capability_name}价格尚未配置，当前仅能显示参考区间。")
-            ),
+            "message": quote_message,
         },
     }
 
