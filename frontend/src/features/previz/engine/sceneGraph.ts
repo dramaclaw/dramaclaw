@@ -142,8 +142,12 @@ export class PrevizSceneGraph {
       const [px, py, pz] = finiteVec3(position);
       node.position.set(px, py, pz);
       // 场景里的角度是度（属性面板直接展示的就是它），three 的 Euler 收弧度。
+      // 次序钉死 YXZ——不是 three 的默认 XYZ。预演台把这三个分量当作
+      // 偏航 / 俯仰 / 横滚：先绕 Y 转朝向，再绕转过之后的 X 抬头，最后沿视线翻滚。
+      // 用 XYZ 的话俯仰绕的是世界 X 轴，偏航 90° 之后它抬的是镜头侧向而不是朝向，
+      // 而且横滚固定为 0 时表达不出任意朝向——摄影机创建对话框那三根滑杆就是这么用的。
       const [rx, ry, rz] = finiteVec3(rotation);
-      node.rotation.set(rx * DEG_TO_RAD, ry * DEG_TO_RAD, rz * DEG_TO_RAD);
+      node.rotation.set(rx * DEG_TO_RAD, ry * DEG_TO_RAD, rz * DEG_TO_RAD, 'YXZ');
       // 零与负的缩放压出退化几何（法线全零、包围盒没厚度），手柄抓不住，
       // `view.ts` 的取景距离也跟着算不出来。
       node.scale.set(
