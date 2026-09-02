@@ -383,6 +383,33 @@ def test_graph_compiler_emits_one_grouped_canvas_batch():
     assert result["commands"][5]["label"] == "文生视频测试工作流"
 
 
+def test_graph_compiler_derives_text_title_from_nested_display_name():
+    result = build_workflow_graph_commands(
+        {
+            "plan": {
+                "schema_version": "freezone_workflow_plan.v1",
+                "nodes": [
+                    {
+                        "id": "input-root",
+                        "node_type": "textAnnotationNode",
+                        "stage": "input",
+                        "data": {
+                            "displayName": "公共输入",
+                            "text": "九个 Beat 的共享创作要求",
+                        },
+                    }
+                ],
+                "edges": [],
+            }
+        }
+    )
+
+    assert result["ok"] is True
+    command = result["commands"][0]
+    assert command["data"]["title"] == "公共输入"
+    assert command["data"]["content"] == "九个 Beat 的共享创作要求"
+
+
 def test_graph_compiler_prefers_canonical_run_after_create_flag():
     result = build_workflow_graph_commands(
         {

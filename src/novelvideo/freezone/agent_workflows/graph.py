@@ -492,9 +492,21 @@ def _node_data(
     if node_type == "textAnnotationNode":
         # Workflow plans authored by different agent hosts commonly use either
         # ``text`` or ``content`` for a plain text node. The canvas command
-        # contract is intentionally narrower and requires ``data.content``.
+        # contract is intentionally narrower and requires ``data.title`` plus
+        # ``data.content``.
         # Normalize at the portable workflow boundary so every host emits the
         # same valid canvas command without loosening the canvas schema.
+        title = result.get("title")
+        if not isinstance(title, str) or not title.strip():
+            for candidate in (
+                result.get("displayName"),
+                node.get("label"),
+                node.get("name"),
+                node.get("id"),
+            ):
+                if isinstance(candidate, str) and candidate.strip():
+                    result["title"] = candidate.strip()
+                    break
         content = result.get("content")
         if not isinstance(content, str) or not content.strip():
             for candidate in (
