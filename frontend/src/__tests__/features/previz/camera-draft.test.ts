@@ -8,6 +8,7 @@ import {
   PREVIZ_ROLL_RANGE,
   cameraDraftForward,
   cameraDraftOverrides,
+  clampCameraDraft,
   createCameraDraft,
   normalizeYawDeg,
 } from "@/features/previz/domain/cameraDraft";
@@ -154,5 +155,27 @@ describe("cameraDraftOverrides", () => {
     expect(overrides.focalMm).toBe(200);
     expect(overrides.aperture).toBe(1.2);
     expect(overrides.transform?.rotation).toEqual([90, 330, -180]);
+  });
+});
+
+describe("clampCameraDraft", () => {
+  // 对话框上的数字输入框存的是用户敲的原样，收敛推迟到这里；水平角循环、其余夹取。
+  it("wraps yaw and clamps the rest", () => {
+    const clamped = clampCameraDraft({
+      ...createCameraDraft(PREVIZ_DEFAULT_VIEW),
+      focalMm: 0,
+      aperture: 99,
+      yawDeg: 400,
+      pitchDeg: -200,
+      rollDeg: 500,
+    });
+
+    expect(clamped).toMatchObject({
+      focalMm: 12,
+      aperture: 22,
+      yawDeg: 40,
+      pitchDeg: -90,
+      rollDeg: 180,
+    });
   });
 });

@@ -22,7 +22,9 @@ export interface CameraPreviewImageData {
  * jsdom 里 `getContext('2d')` 返回 null，测试塞个假的进来就行。
  */
 export interface CameraPreviewContext2D {
-  fillStyle: string;
+  // 与真 `CanvasRenderingContext2D` 对齐的宽类型：写成 `string` 的话真画布赋不进来，
+  // 属性的可赋值性是协变的，窄一格就整个不兼容。本模块只往里写颜色字符串。
+  fillStyle: string | CanvasGradient | CanvasPattern;
   fillRect(x: number, y: number, width: number, height: number): void;
   createImageData(width: number, height: number): CameraPreviewImageData;
   putImageData(image: CameraPreviewImageData, dx: number, dy: number): void;
