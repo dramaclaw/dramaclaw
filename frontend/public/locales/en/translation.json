@@ -7499,7 +7499,7 @@
         "ff": "Full frame",
         "s35": "Super 35"
       },
-      "angleOfView": "Horizontal angle of view {{degrees}}°",
+      "angleOfView": "Angle of view",
       "lightType": "Light type",
       "lightTypes": {
         "key": "Key",

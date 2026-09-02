@@ -438,13 +438,13 @@ describe("PrevizInspector", () => {
     const user = userEvent.setup();
     const onChange = renderInspector(createPrevizObject("camera", []));
 
-    // 全画幅 50 mm 的水平视场角是 39.6°，直接显示出来省得用户自己心算。
-    expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^39\.6°$/);
+    // 全画幅 50 mm 的镜头视角是 27.0°，直接显示出来省得用户自己心算。
+    expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^27\.0°$/);
 
     await user.selectOptions(screen.getByLabelText("previz.inspector.sensor"), "s35");
     expect(onChange).toHaveBeenLastCalledWith({ sensor: "s35" });
-    // 换机身要真的换掉换算里的传感器宽度：Super 35 的 50 mm 是 28.0°，不是 39.6°。
-    expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^28\.0°$/);
+    // 换机身要真的换掉换算里的成像面尺寸：Super 35 的 50 mm 是 21.1°，不是 27.0°。
+    expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^21\.1°$/);
   });
 
   // 两个 `<option>` 的 value 就是 store 里存的机身 id。把 "ff" 打错（或两个 option 写成
@@ -464,9 +464,9 @@ describe("PrevizInspector", () => {
   it("recomputes the angle of view when the focal length changes", () => {
     renderInspector(createPrevizObject("camera", []));
 
-    // 全画幅 24 mm 是 73.7°。
+    // 全画幅 24 mm 是 53.1°。
     setValue(screen.getByLabelText("previz.inspector.focalMm"), "24");
-    expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^73\.7°$/);
+    expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^53\.1°$/);
   });
 
   it("clamps focal length into the supported range", () => {
@@ -496,9 +496,9 @@ describe("PrevizInspector", () => {
     expect(screen.getByLabelText("previz.inspector.focalMm")).toHaveValue(85);
     expect(screen.getByLabelText("previz.inspector.aperture")).toHaveValue(5.6);
     expect(screen.getByLabelText("previz.inspector.sensor")).toHaveValue("s35");
-    // Super 35 的 85 mm 是 16.7°：读数要同时跟着焦距与机身走，把 aperture 当焦距喂进
-    // 换算（5.6 mm 在 s35 上是 132.6°）也会在这里现形。
-    expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^16\.7°$/);
+    // Super 35 的 85 mm 是 12.5°：读数要同时跟着焦距与机身走，把 aperture 当焦距喂进
+    // 换算（5.6 mm 在 s35 上是 118.6°）也会在这里现形。
+    expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^12\.5°$/);
   });
 
   it("clamps the aperture into the supported range", () => {

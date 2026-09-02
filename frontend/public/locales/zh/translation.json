@@ -7499,7 +7499,7 @@
         "ff": "全画幅",
         "s35": "Super 35"
       },
-      "angleOfView": "水平视场角 {{degrees}}°",
+      "angleOfView": "视场角",
       "lightType": "灯光类型",
       "lightTypes": {
         "key": "主光",
