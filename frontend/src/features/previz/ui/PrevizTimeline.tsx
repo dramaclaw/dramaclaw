@@ -272,7 +272,12 @@ export function PrevizTimeline({
 
       <div ref={scrollRef} className="relative max-h-56 overflow-auto">
         <div className="relative min-w-max">
-          <div className="sticky top-0 z-30 flex items-stretch bg-[#15181f]">
+          {/*
+            三层压着的顺序是有讲究的：头列（30）> 播放头（20）> 标尺与轨槽（10）。
+            头列要在最上面，横向滚动时片段得从它底下穿过去；播放头要压过标尺，
+            不然顶上那个把手看不见——而参照实现里正是抓着那个把手拖的。
+          */}
+          <div className="sticky top-0 z-10 flex items-stretch bg-[#15181f]">
             <div
               className="sticky left-0 z-30 shrink-0 border-b border-[#232833] bg-[#15181f]"
               style={{ width: PREVIZ_TRACK_HEADER_PX }}
@@ -362,7 +367,7 @@ export function PrevizTimeline({
 
           {/* 播放头：一条贯穿所有轨道的竖线，压在头列下面（头列 z 更高）。 */}
           <div
-            className="pointer-events-none absolute inset-y-0 z-10"
+            className="pointer-events-none absolute inset-y-0 z-20"
             style={{ left: PREVIZ_TRACK_HEADER_PX, width: laneWidthPx }}
           >
             <div

@@ -20,7 +20,7 @@ import type { PrevizClip, PrevizObjectKind, PrevizTrack } from '../domain/scene'
 import { isPathClip, uToFrame } from '../domain/timeline';
 
 /** 头列宽度。轨道行、子轨道行、标尺占位共用同一个数，三者才对得齐。 */
-export const PREVIZ_TRACK_HEADER_PX = 200;
+export const PREVIZ_TRACK_HEADER_PX = 240;
 
 const ICON_BUTTON =
   'flex h-6 w-6 shrink-0 items-center justify-center rounded text-[#8b93a3] hover:bg-[#2a2f3a] hover:text-[#c7cedb] disabled:opacity-30 disabled:hover:bg-transparent';
@@ -103,7 +103,7 @@ export function PrevizTimelineTrack({
     <li aria-label={name} className="border-b border-[#1c202a]">
       <div className="flex h-8 items-stretch">
         <div
-          className="sticky left-0 z-20 flex shrink-0 items-center gap-1 bg-[#15181f] pl-1 pr-2"
+          className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-[#15181f] pl-1 pr-2"
           style={{ width: PREVIZ_TRACK_HEADER_PX }}
         >
           <button
@@ -177,7 +177,7 @@ export function PrevizTimelineTrack({
       {expanded && (
         <div className="flex h-7 items-stretch bg-[#12151b]">
           <div
-            className="sticky left-0 z-20 flex shrink-0 items-center gap-1 bg-[#12151b] pl-6 pr-2"
+            className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-[#12151b] pl-6 pr-2"
             style={{ width: PREVIZ_TRACK_HEADER_PX }}
           >
             <span className="min-w-0 flex-1 truncate text-[11px] text-[#8b93a3]">
@@ -314,7 +314,7 @@ function ClipBar({
         if (event.key === 'Enter' || event.key === ' ') onSelect();
       }}
       className={`absolute top-1 flex h-6 items-center overflow-hidden rounded ${
-        selected ? 'bg-[#3f6bd8] ring-1 ring-[#8fb0ff]' : 'bg-[#2f4a86]'
+        selected ? 'bg-[#4a7de0] ring-1 ring-[#a8c4ff]' : 'bg-[#3560ba]'
       }`}
       style={{
         left: clip.startFrame * pxPerFrame,
