@@ -43,11 +43,28 @@ export interface PrevizCameraCreateDialogProps {
 /** 在预览上拖一像素转多少度。320 px 拖满一屏是 80°，与视口的手感接近。 */
 export const PREVIZ_PREVIEW_DRAG_DEG_PER_PX = 0.25;
 
-const FIELD =
-  "h-8 w-full rounded-md border border-white/10 bg-white/[0.04] px-2 text-[12px] text-white/90 outline-none focus:border-white/25";
-const LABEL = "mb-1 block text-[11px] text-white/45";
+/**
+ * 输入框与下拉的外观，**不含宽度**：宽度一律由调用处单独给。写在一起被咬过——类名
+ * 字符串里的先后不决定胜负，Tailwind 生成的样式表里 `w-full` 排在 `w-16` 之后，
+ * 于是 `${FIELD} w-16` 实际生效的是 `w-full`；数字框吃满整行又 `shrink-0`，会把整列
+ * 撑得比弹窗还宽，控件溢出到面板外面。
+ */
+const FIELD_BASE =
+  "h-8 rounded-md border border-white/10 bg-white/[0.04] px-2 text-[12px] text-white/90 outline-none focus:border-white/25";
+const LABEL = "text-[11px] text-white/45";
+/** 分档器与读数的外框：极淡的描边 + 一层比面板亮一点的底，圆角比输入框大一档。 */
+const CARD = "rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1.5";
+/** 箭头按钮不描边，只在悬停时浮起来一层底色，免得四个分档器变成一片框中框。 */
 const STEP_BUTTON =
-  "flex h-6 w-6 shrink-0 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-white/60 transition-colors hover:border-white/25 hover:text-white/90";
+  "flex h-6 w-6 shrink-0 items-center justify-center rounded text-white/45 transition-colors hover:bg-white/10 hover:text-white/90";
+/** 时间轴的播放头用的也是这个蓝，滑杆跟着它走，整个预演台只有一种强调色。 */
+const SLIDER = "h-1 min-w-0 flex-1 accent-[#5b8cff]";
+/**
+ * 角度数字框。原生的上下微调箭头要去掉：框只有 64 px 宽，箭头一占就把「-10.4」挤成
+ * 「-10.」，而这一位小数正是拖预览转出来的角度。
+ */
+const NUMBER_FIELD =
+  "w-16 shrink-0 px-1 text-center tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
 
 /**
  * 两张「只是标签」的列表。写成 `Record<T, true>` 取键而不是裸数组：机身或镜头系列
@@ -107,15 +124,15 @@ function Stepper({
   onNext,
 }: StepperProps) {
   return (
-    <div className="rounded-md border border-white/10 bg-white/[0.02] p-2">
-      <span className={LABEL}>{label}</span>
+    <div className={CARD}>
+      <span className={`block text-center ${LABEL}`}>{label}</span>
       <div className="flex items-center gap-1">
         <button type="button" className={STEP_BUTTON} aria-label={prevLabel} onClick={onPrev}>
           <ChevronLeft className="h-3.5 w-3.5" />
         </button>
         <span
           data-testid={testId}
-          className="flex-1 truncate text-center text-[12px] text-white/90 tabular-nums"
+          className="min-w-0 flex-1 truncate text-center text-[13px] font-medium text-white/90 tabular-nums"
         >
           {value}
         </span>
@@ -126,7 +143,7 @@ function Stepper({
       {note ? (
         <div
           data-testid={`${testId}-note`}
-          className="mt-1 text-center text-[11px] text-white/40 tabular-nums"
+          className="text-center text-[11px] text-white/40 tabular-nums"
         >
           {note}
         </div>
@@ -153,30 +170,28 @@ function AngleRow({ label, sliderLabel, inputLabel, value, min, max, onChange }:
     onChange(next);
   };
   return (
-    <div>
-      <span className={LABEL}>{label}</span>
-      <div className="flex items-center gap-2">
-        <input
-          type="range"
-          aria-label={sliderLabel}
-          className="h-1 flex-1 accent-white/70"
-          min={min}
-          max={max}
-          step={1}
-          value={value}
-          onChange={(event) => handle(event.target.value)}
-        />
-        <input
-          type="number"
-          aria-label={inputLabel}
-          className={`${FIELD} w-16 shrink-0 text-right tabular-nums`}
-          min={min}
-          max={max}
-          step={1}
-          value={value}
-          onChange={(event) => handle(event.target.value)}
-        />
-      </div>
+    <div className="flex items-center gap-2">
+      <span className={`w-8 shrink-0 ${LABEL}`}>{label}</span>
+      <input
+        type="range"
+        aria-label={sliderLabel}
+        className={SLIDER}
+        min={min}
+        max={max}
+        step={1}
+        value={value}
+        onChange={(event) => handle(event.target.value)}
+      />
+      <input
+        type="number"
+        aria-label={inputLabel}
+        className={`${FIELD_BASE} ${NUMBER_FIELD}`}
+        min={min}
+        max={max}
+        step={1}
+        value={value}
+        onChange={(event) => handle(event.target.value)}
+      />
     </div>
   );
 }
@@ -264,7 +279,7 @@ function CameraCreatePanel({
       aria-label={t("previz.cameraCreate.title")}
       className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 p-6"
     >
-      <div className="flex w-full max-w-3xl flex-col gap-4 rounded-lg border border-white/10 bg-[#14161b] p-4 shadow-2xl">
+      <div className="flex w-full max-w-[960px] flex-col gap-4 rounded-xl border border-white/10 bg-[#14161b] p-4 shadow-2xl">
         <header className="flex items-center justify-between">
           <h4 className="text-[13px] font-medium text-white/90">
             {t("previz.cameraCreate.title")}
@@ -306,9 +321,13 @@ function CameraCreatePanel({
             </p>
           </div>
 
-          <div className="grid flex-1 grid-cols-2 gap-4">
-            <section aria-label={t("previz.cameraCreate.properties")} className="flex flex-col gap-2">
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-4">
+            <section
+              aria-label={t("previz.cameraCreate.properties")}
+              className="flex min-w-0 flex-col gap-2"
+            >
               <h5 className="text-[12px] text-white/70">{t("previz.cameraCreate.properties")}</h5>
+              <div className="grid grid-cols-2 gap-2">
               <Stepper
                 label={t("previz.cameraCreate.body")}
                 value={t(`previz.cameraCreate.bodies.${draft.cameraBody}`)}
@@ -351,13 +370,14 @@ function CameraCreatePanel({
                   patch({ aperture: stepStop(PREVIZ_APERTURE_STOPS, draft.aperture, 1) })
                 }
               />
-              <div>
-                <label className={LABEL} htmlFor={`${prefix}-sensor`}>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className={`shrink-0 ${LABEL}`} htmlFor={`${prefix}-sensor`}>
                   {t("previz.cameraCreate.sensor")}
                 </label>
                 <select
                   id={`${prefix}-sensor`}
-                  className={FIELD}
+                  className={`${FIELD_BASE} min-w-0 flex-1`}
                   value={draft.sensor}
                   onChange={(event) =>
                     patch({ sensor: event.target.value as PrevizCamera["sensor"] })
@@ -369,13 +389,16 @@ function CameraCreatePanel({
               </div>
             </section>
 
-            <section aria-label={t("previz.cameraCreate.position")} className="flex flex-col gap-3">
+            <section
+              aria-label={t("previz.cameraCreate.position")}
+              className="flex min-w-0 flex-col gap-2"
+            >
               <h5 className="text-[12px] text-white/70">{t("previz.cameraCreate.position")}</h5>
-              <div className="rounded-md border border-white/10 bg-white/[0.02] p-2">
-                <span className={LABEL}>{t("previz.cameraCreate.viewReadout")}</span>
+              <div className="flex items-center gap-2">
+                <span className={`shrink-0 ${LABEL}`}>{t("previz.cameraCreate.viewReadout")}</span>
                 <div
                   aria-label={t("previz.cameraCreate.viewReadoutLabel")}
-                  className="text-[12px] tabular-nums text-white/80"
+                  className={`${CARD} min-w-0 flex-1 text-center text-[12px] tabular-nums text-white/85`}
                 >
                   {viewPose.position.map((value) => value.toFixed(1)).join(" / ")}
                 </div>
