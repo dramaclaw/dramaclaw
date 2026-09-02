@@ -148,6 +148,30 @@ def test_export_bundle_api_returns_skill_with_recipes(bundle_client: TestClient)
     assert [recipe["id"] for recipe in bundle["recipes"]] == ["community-brief"]
 
 
+def test_bundle_api_round_trips_structured_legal_metadata(bundle_client: TestClient) -> None:
+    legal = {
+        "copyright": "2026 SuperTale contributors",
+        "license": {
+            "id": "Elastic-2.0",
+            "text": "Elastic License 2.0 terms.",
+        },
+        "notice": "DramaClaw trademark rights are reserved.",
+    }
+    install = bundle_client.post(
+        "/api/v1/freezone/agent-config/bundles:install",
+        json={"bundle": {**_bundle_payload(), "legal": legal}},
+    )
+    assert install.status_code == 200, install.text
+
+    response = bundle_client.post(
+        "/api/v1/freezone/agent-config/bundles:export",
+        json={"skill_id": "community-video", "bundle": {}},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["legal"] == legal
+
+
 def test_community_catalog_endpoints_are_not_exposed(bundle_client: TestClient) -> None:
     catalog = bundle_client.get("/api/v1/freezone/agent-config/community/catalog")
     install = bundle_client.post(

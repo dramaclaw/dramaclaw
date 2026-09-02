@@ -79,6 +79,17 @@ def _bundle_payload(**overrides) -> dict:
     return payload
 
 
+def _legal_payload() -> dict:
+    return {
+        "copyright": "2026 SuperTale contributors",
+        "license": {
+            "id": "Elastic-2.0",
+            "text": "Elastic License 2.0 terms.",
+        },
+        "notice": "DramaClaw trademark rights are reserved.",
+    }
+
+
 @pytest.fixture
 def isolated_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(agent_config_store, "OUTPUT_DIR", str(tmp_path))
@@ -94,6 +105,14 @@ def test_validate_agent_bundle_accepts_skill_and_recipes(isolated_catalog: Path)
     assert result["skill_count"] == 1
     assert result["recipe_count"] == 1
     assert result["warnings"] == []
+
+
+def test_validate_agent_bundle_preserves_structured_legal_metadata(isolated_catalog: Path) -> None:
+    legal = _legal_payload()
+
+    result = agent_bundle_store.validate_agent_bundle(_bundle_payload(legal=legal))
+
+    assert result["bundle"]["legal"] == legal
 
 
 def test_validate_agent_bundle_rejects_missing_recipe_reference(isolated_catalog: Path) -> None:
@@ -160,6 +179,33 @@ def test_install_agent_bundle_saves_user_skill_and_recipes(isolated_catalog: Pat
     )
     assert json.loads(skill_path.read_text(encoding="utf-8"))["id"] == "community-video"
     assert json.loads(recipe_path.read_text(encoding="utf-8"))["id"] == "community-brief"
+
+
+def test_install_and_export_preserve_structured_legal_metadata(isolated_catalog: Path) -> None:
+    legal = _legal_payload()
+    agent_bundle_store.install_agent_bundle(
+        username="alice",
+        payload=_bundle_payload(legal=legal),
+    )
+
+    stored_skill_path = (
+        isolated_catalog
+        / "alice"
+        / "_account"
+        / "freezone"
+        / "agent_config"
+        / "skills"
+        / "community-video.json"
+    )
+    stored_skill = json.loads(stored_skill_path.read_text(encoding="utf-8"))
+    assert stored_skill["_catalog_bundle_legal"] == legal
+
+    exported = agent_bundle_store.export_agent_bundle(
+        username="alice",
+        skill_id="community-video",
+        bundle_meta={},
+    )
+    assert exported["legal"] == legal
 
 
 def test_export_agent_bundle_preserves_imported_bundle_metadata(isolated_catalog: Path) -> None:
