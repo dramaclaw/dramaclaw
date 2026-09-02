@@ -32,6 +32,7 @@ import {
   type Vec3,
 } from './domain/scene';
 import {
+  PREVIZ_TIMELINE_ZOOM,
   clearPathPoints,
   insertPathPointAt,
   moveClip,
@@ -41,9 +42,11 @@ import {
   removeTrack,
   splitClip,
   trackFor,
+  timelineSeconds,
   trimClip,
   updatePathPoint,
   upsertPathClip,
+  zoomToFit,
 } from './domain/timeline';
 
 /** 场景是纯数值 JSON，整份快照很便宜；50 步够覆盖一次连续编辑。 */
@@ -98,6 +101,8 @@ interface PrevizStoreState {
    */
   playbackCarry: number;
   timelineRate: number;
+  /** 时间轴的横向比例，每秒多少像素。是「怎么看」，不进场景也不进 undo 栈。 */
+  timelineZoom: number;
   selectedClipId: string | null;
   selectedPointId: string | null;
   /** 绘制轨迹时的轨迹点间距，单位米。 */
@@ -109,6 +114,10 @@ interface PrevizStoreState {
   /** 推进播放头；走到末尾就停住，不循环。入参是这一帧的真实耗时，单位秒。 */
   tickPlayback: (deltaSeconds: number) => void;
   setTimelineRate: (rate: number) => void;
+  /** 按倍数缩放时间轴（放大传 >1，缩小传 <1），夹在缩放范围内。 */
+  zoomTimelineBy: (factor: number) => void;
+  /** 「适配」：把整条时间轴铺进这么宽的轨槽。宽度由 UI 量出来传进来。 */
+  fitTimelineZoom: (laneWidthPx: number) => void;
   selectClip: (id: string | null) => void;
   selectPathPoint: (id: string | null) => void;
   setPathSpacing: (metres: number) => void;
@@ -164,6 +173,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   timelinePlaying: false,
   playbackCarry: 0,
   timelineRate: 1,
+  timelineZoom: PREVIZ_TIMELINE_ZOOM.default,
   selectedClipId: null,
   selectedPointId: null,
   pathSpacingM: PREVIZ_PATH_SPACING_M.default,
@@ -179,6 +189,8 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       timelineFrame: 0,
       timelinePlaying: false,
       playbackCarry: 0,
+      // 换节点等于换一条时间轴，上一条缩到多大跟这条的时长没关系。
+      timelineZoom: PREVIZ_TIMELINE_ZOOM.default,
       selectedClipId: null,
       selectedPointId: null,
     }),
@@ -315,6 +327,20 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     // 每次心跳都取整会把 0.48 帧全丢掉，播放头一格都不走。
     const frame = Math.floor(next);
     set({ timelineFrame: frame, playbackCarry: next - frame });
+  },
+
+  zoomTimelineBy: (factor) => {
+    const next = get().timelineZoom * factor;
+    set({
+      timelineZoom: Math.min(
+        PREVIZ_TIMELINE_ZOOM.max,
+        Math.max(PREVIZ_TIMELINE_ZOOM.min, next),
+      ),
+    });
+  },
+
+  fitTimelineZoom: (laneWidthPx) => {
+    set({ timelineZoom: zoomToFit(timelineSeconds(get().scene), laneWidthPx) });
   },
 
   setTimelineRate: (rate) => {
