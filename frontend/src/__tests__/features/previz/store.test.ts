@@ -13,6 +13,7 @@ import {
   type PrevizPathClip,
   type PrevizScene,
 } from "@/features/previz/domain/scene";
+import { PREVIZ_TIMELINE_ZOOM } from "@/features/previz/domain/timeline";
 import {
   PREVIZ_HISTORY_LIMIT,
   PREVIZ_PLAYBACK_RATES,
@@ -809,5 +810,47 @@ describe("previz store object editing", () => {
     expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(0);
     // 对象本身还在——删轨道不是删人。
     expect(usePrevizStore.getState().scene.objects).toHaveLength(1);
+  });
+});
+
+describe("previz store timeline zoom", () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  it("starts at the default scale and reloads back to it", () => {
+    expect(usePrevizStore.getState().timelineZoom).toBe(PREVIZ_TIMELINE_ZOOM.default);
+
+    usePrevizStore.getState().zoomTimelineBy(2);
+    usePrevizStore.getState().loadScene(sceneWithDuration(300));
+    // 换一个节点等于换一条时间轴，上一条缩到多大跟这条没关系。
+    expect(usePrevizStore.getState().timelineZoom).toBe(PREVIZ_TIMELINE_ZOOM.default);
+  });
+
+  it("scales by a factor and clamps at both ends", () => {
+    usePrevizStore.getState().zoomTimelineBy(2);
+    expect(usePrevizStore.getState().timelineZoom).toBe(PREVIZ_TIMELINE_ZOOM.default * 2);
+
+    for (let index = 0; index < 20; index += 1) usePrevizStore.getState().zoomTimelineBy(2);
+    expect(usePrevizStore.getState().timelineZoom).toBe(PREVIZ_TIMELINE_ZOOM.max);
+
+    for (let index = 0; index < 40; index += 1) usePrevizStore.getState().zoomTimelineBy(0.5);
+    expect(usePrevizStore.getState().timelineZoom).toBe(PREVIZ_TIMELINE_ZOOM.min);
+  });
+
+  it("fits the whole duration into the measured lane", () => {
+    usePrevizStore.getState().loadScene(sceneWithDuration(120));
+
+    usePrevizStore.getState().fitTimelineZoom(600);
+    // 120 帧 / 30fps = 4s，铺满 600px 就是 150px 每秒。
+    expect(usePrevizStore.getState().timelineZoom).toBe(150);
+  });
+
+  it("keeps zoom out of the undo stack", () => {
+    usePrevizStore.getState().zoomTimelineBy(2);
+
+    // 缩放是看的方式，不是场景内容：进了 undo 栈，撤销就得先撤销几十次缩放。
+    expect(usePrevizStore.getState().dirty).toBe(false);
+    expect(usePrevizStore.getState().past).toHaveLength(0);
   });
 });
