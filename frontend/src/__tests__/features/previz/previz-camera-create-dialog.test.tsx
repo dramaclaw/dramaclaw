@@ -266,4 +266,16 @@ describe("PrevizCameraCreateDialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onCreate).not.toHaveBeenCalled();
   });
+
+  it("keeps the angle number field off the full row width", () => {
+    // 这不是在测审美，是在测一条踩过的坑：类名字符串的先后不决定胜负，Tailwind
+    // 的样式表里 w-full 排在 w-16 之后，`${FIELD} w-16` 实际生效的是 w-full。
+    // 数字框吃满整行又 shrink-0，会把整列撑得比弹窗还宽，控件溢出到面板外面。
+    setup();
+
+    const field = screen.getByLabelText("previz.cameraCreate.yawInput");
+    expect(field.className).toMatch(/\bw-\d+\b/);
+    expect(field.className).not.toContain("w-full");
+  });
+
 });
