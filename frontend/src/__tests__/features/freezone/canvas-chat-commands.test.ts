@@ -28,6 +28,7 @@ import {
   buildCanvasContextRequestResponse,
   buildCanvasNodeReferenceAttachment,
   buildCanvasNodeReferenceContext,
+  canvasSelectionAttachmentDeliveryKey,
   canvasNodeReferenceAttachmentNodes,
   extractCanvasContextRequestEnvelopes,
   mergeCanvasNodeReferenceAttachments,
@@ -143,6 +144,32 @@ describe("canvas chat commands", () => {
         user_remaining: 1,
       },
     });
+  });
+
+  it("keeps selection attachment delivery stable across geometry updates", () => {
+    const initialDisplayNodes = [
+      { id: "beat-01", position: { x: 0, y: 0 } },
+      { id: "beat-02", position: { x: 100, y: 0 } },
+    ];
+    const measuredDisplayNodes = [
+      { id: "beat-01", position: { x: 24, y: 48 } },
+      { id: "beat-02", position: { x: 212, y: 48 } },
+    ];
+    const referencedNodes = [{ id: "workflow-group", position: { x: 0, y: 0 } }];
+
+    expect(
+      canvasSelectionAttachmentDeliveryKey(initialDisplayNodes, referencedNodes),
+    ).toBe(
+      canvasSelectionAttachmentDeliveryKey(measuredDisplayNodes, referencedNodes),
+    );
+    expect(
+      canvasSelectionAttachmentDeliveryKey(measuredDisplayNodes, [
+        ...referencedNodes,
+        { id: "beat-03", position: { x: 420, y: 48 } },
+      ]),
+    ).not.toBe(
+      canvasSelectionAttachmentDeliveryKey(measuredDisplayNodes, referencedNodes),
+    );
   });
 
   it("dispatches approval events even when an in-memory subscriber handles them", () => {

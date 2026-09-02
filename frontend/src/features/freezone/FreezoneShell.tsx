@@ -152,6 +152,7 @@ import {
 import {
   buildCanvasNodeReferenceAttachment,
   buildCanvasContextRequestResponses,
+  canvasSelectionAttachmentDeliveryKey,
   extractCanvasContextRequestEnvelopes,
 } from "@/features/freezone/chatNodeReferences";
 import {
@@ -872,6 +873,7 @@ export function FreezoneShell({
   const [chatOpen, setChatOpen] = useState(loadChatOpen);
   const [pendingChatAttachments, setPendingChatAttachments] = useState<ChatAttachment[]>([]);
   const [pendingChatNodeMentions, setPendingChatNodeMentions] = useState<string[]>([]);
+  const deliveredSelectionAttachmentKeyRef = useRef<string | null>(null);
   const handlePendingChatAttachmentsConsumed = useCallback(() => {
     setPendingChatAttachments([]);
   }, []);
@@ -970,6 +972,14 @@ export function FreezoneShell({
     }
     return canvasNodes.filter((node) => expandedIds.has(node.id));
   }, [canvasNodes, visibleSelectedCanvasNodes]);
+  const currentCanvasSelectionAttachmentKey = useMemo(
+    () =>
+      canvasSelectionAttachmentDeliveryKey(
+        visibleSelectedCanvasNodes,
+        chatReferenceCanvasNodes,
+      ),
+    [chatReferenceCanvasNodes, visibleSelectedCanvasNodes],
+  );
   const currentCanvasSelection = useMemo<CurrentCanvasSelectionItem[]>(
     () =>
       visibleSelectedCanvasNodes.map((node) => ({
@@ -992,10 +1002,13 @@ export function FreezoneShell({
     [canvasEdges, canvasId, canvasNodes, chatReferenceCanvasNodes, projectId, visibleSelectedCanvasNodes],
   );
   const attachCurrentSelectionToChat = useCallback(() => {
-    if (!currentCanvasSelectionAttachment) return false;
+    if (!currentCanvasSelectionAttachment || !currentCanvasSelectionAttachmentKey) {
+      return false;
+    }
+    deliveredSelectionAttachmentKeyRef.current = currentCanvasSelectionAttachmentKey;
     setPendingChatAttachments([currentCanvasSelectionAttachment]);
     return true;
-  }, [currentCanvasSelectionAttachment]);
+  }, [currentCanvasSelectionAttachment, currentCanvasSelectionAttachmentKey]);
   const handleChatOpenChange = useCallback(
     (nextOpen: boolean) => {
       if (nextOpen) {
@@ -1014,9 +1027,29 @@ export function FreezoneShell({
     [canvasEdges, canvasId, canvasNodes, chatReferenceCanvasNodes],
   );
   useEffect(() => {
-    if (!chatOpen || !currentCanvasSelectionAttachment) return;
+    if (
+      !chatOpen ||
+      !currentCanvasSelectionAttachment ||
+      !currentCanvasSelectionAttachmentKey
+    ) {
+      deliveredSelectionAttachmentKeyRef.current = null;
+      return;
+    }
+    // React Flow updates node geometry repeatedly while a large approved graph
+    // mounts. The attachment payload includes positions, so rebuilding it on
+    // every measurement used to make this effect publish again while
+    // SuperChatPanel consumed the previous value. Parent and child then kept
+    // setting state until React raised "Maximum update depth exceeded".
+    // Delivery identity follows the semantic selection/topology instead of
+    // transient node geometry.
+    if (
+      deliveredSelectionAttachmentKeyRef.current === currentCanvasSelectionAttachmentKey
+    ) {
+      return;
+    }
+    deliveredSelectionAttachmentKeyRef.current = currentCanvasSelectionAttachmentKey;
     setPendingChatAttachments([currentCanvasSelectionAttachment]);
-  }, [chatOpen, currentCanvasSelectionAttachment]);
+  }, [chatOpen, currentCanvasSelectionAttachment, currentCanvasSelectionAttachmentKey]);
   // 开合状态落盘：刷新/重进画布后由 useState(loadChatOpen) 恢复。所有开关路径
   // （手动按钮、命令自动展开、空白点击）都经由 chatOpen，故一个 effect 全覆盖。
   useEffect(() => {
