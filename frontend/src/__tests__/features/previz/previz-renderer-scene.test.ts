@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createCameraDraft } from '@/features/previz/domain/cameraDraft';
 import { createPrevizObject } from '@/features/previz/domain/objects';
 import { createDefaultScene, type PrevizScene, type Vec3 } from '@/features/previz/domain/scene';
 import { PREVIZ_DEFAULT_VIEW } from '@/features/previz/domain/view';
@@ -395,6 +396,45 @@ function orbitOffset(instance: PrevizRenderer): { unit: Vec3; distance: number }
   const distance = Math.hypot(raw[0], raw[1], raw[2]);
   return { unit: [raw[0] / distance, raw[1] / distance, raw[2] / distance], distance };
 }
+
+describe('PrevizRenderer 的当前导演视角', () => {
+  it('把眼位与轨道中心一起交出来', async () => {
+    const { instance } = await createRenderer();
+    instance.applyViewDirection('front');
+
+    const pose = instance.viewPose();
+
+    // 摄影机创建对话框要的就是这两样：站位从眼位来，朝向从眼位指向轨道中心。
+    expect(pose.position).toEqual(instance.cameraPositionForTest());
+    expect(pose.target).toEqual(targetOf());
+  });
+
+  it('交出的是快照而不是 three 内部对象的引用', async () => {
+    const { instance } = await createRenderer();
+
+    const pose = instance.viewPose();
+    pose.position[0] = 999;
+    pose.target[0] = 999;
+
+    // 对话框会把这两个数组存进 React state 再逐分量改；漏出引用的话用户拖一下滑杆
+    // 就把视口相机搬走了。
+    expect(instance.cameraPositionForTest()[0]).not.toBe(999);
+    expect(targetOf()[0]).not.toBe(999);
+  });
+
+  it('销毁之后画预览不炸', async () => {
+    const { instance } = await createRenderer();
+    instance.dispose();
+
+    // 对话框关闭与编辑器卸载谁先谁后不好保证，画到一台已销毁的渲染器上是会发生的。
+    expect(() =>
+      instance.renderCameraPreview(
+        { width: 320, height: 180, getContext: () => null },
+        createCameraDraft(instance.viewPose()),
+      ),
+    ).not.toThrow();
+  });
+});
 
 describe('PrevizRenderer 接场景图', () => {
   it('把场景灌进对象树并请求一次重绘', async () => {

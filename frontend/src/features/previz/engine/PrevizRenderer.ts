@@ -5,6 +5,7 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 
 import { createDomCaptureCanvas, renderCapture } from '../capture/renderCapture';
 import { aspectRatio, DEG_TO_RAD } from '../domain/camera';
+import type { PrevizCameraDraft } from '../domain/cameraDraft';
 import { evaluateSceneAt } from '../domain/evaluate';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
 import type { PrevizScene, PrevizTransform, Vec3 } from '../domain/scene';
@@ -17,8 +18,10 @@ import {
   viewPlacement,
   type PrevizBounds,
   type PrevizViewDirection,
+  type PrevizViewPlacement,
 } from '../domain/view';
 import { monitorViewportRect, syncMonitorCamera } from './cameraRig';
+import { renderCameraPreview, type CameraPreviewCanvas } from './cameraPreview';
 import { CharacterRigFactory } from './characterRig';
 import { PrevizPathPreview } from './pathPreview';
 import { PrevizGizmo, type GizmoMode, type TransformControlsLike } from './gizmo';
@@ -56,6 +59,8 @@ export class PrevizRenderer {
   private selectionId: string | null = null;
   private gizmo: PrevizGizmo | null = null;
   private monitorCamera: THREE.PerspectiveCamera | null = null;
+  /** 摄影机创建对话框的取景预览相机，第一次画预览时建，之后一直留着。 */
+  private previewCamera: THREE.PerspectiveCamera | null = null;
   /** 右下角监看当前看的是哪个机位。null 就是不画监看。 */
   private activeCameraId: string | null = null;
   /** 播放头当前帧。场景灌进来时按它解算一次，之后每次移动播放头再解算。 */
@@ -409,6 +414,55 @@ export class PrevizRenderer {
 
   resetView(): void {
     this.moveCamera([...PREVIZ_DEFAULT_VIEW.position], [...PREVIZ_DEFAULT_VIEW.target]);
+  }
+
+  /**
+   * 当前导演视角：眼位与轨道中心。摄影机创建对话框拿它推新机位的站位与朝向。
+   *
+   * 返回的是快照而不是 three 内部对象的引用——对话框会把它存进 React state 再逐分量
+   * 改，漏出引用的话用户拖一下滑杆就把视口相机一起搬走了。
+   */
+  viewPose(): PrevizViewPlacement {
+    return {
+      position: [this.camera.position.x, this.camera.position.y, this.camera.position.z],
+      target: [this.controls.target.x, this.controls.target.y, this.controls.target.z],
+    };
+  }
+
+  /**
+   * 把一份机位草稿的取景画到对话框那块预览画布上。
+   *
+   * 借视口这套渲染器与场景，所以预览里所见与视口所见严格一致，也不必再开一个 WebGL
+   * 上下文（浏览器对同时存活的上下文有个位数的上限）。场景还没灌进来时不画：画幅要从
+   * 场景设置里读，没有场景就没有画幅。
+   */
+  renderCameraPreview(canvas: CameraPreviewCanvas, draft: PrevizCameraDraft): void {
+    if (this.disposed) return;
+    const scene = this.currentScene;
+    if (!scene) return;
+
+    // 临时相机只在这里用，建一次留着：每帧新建一台会在拖拽预览时一秒钟丢几十个对象。
+    if (!this.previewCamera) this.previewCamera = new this.three.PerspectiveCamera();
+
+    // 手柄的 helper 与轨迹预览属于编辑期的辅助显示，出片与取景预览里都不该出现。
+    this.gizmo?.setHelperVisible(false);
+    try {
+      renderCameraPreview(
+        {
+          three: this.three,
+          renderer: this.renderer,
+          scene: this.scene,
+          camera: this.previewCamera,
+          canvas,
+        },
+        draft,
+        scene.settings.outputAspect,
+      );
+    } finally {
+      this.gizmo?.setHelperVisible(true);
+      // 离屏 pass 把 render target 换过一轮，屏幕上那一帧要重画。
+      this.requestRender();
+    }
   }
 
   /**
