@@ -7515,8 +7515,14 @@
         "display": "显示",
         "view": "视角",
         "gizmo": "手柄",
+        "tool": "工具",
         "aspect": "画幅"
       },
+      "tool": {
+        "select": "选择",
+        "draw": "绘制轨迹"
+      },
+      "pathSpacing": "轨迹点间距（米）",
       "display": {
         "solid": "实体",
         "translucent": "半透",
@@ -7539,6 +7545,43 @@
         "scale": "缩放"
       },
       "outputAspect": "出片画幅"
+    },
+    "timeline": {
+      "play": "播放",
+      "pause": "暂停",
+      "stop": "停止",
+      "prevFrame": "上一帧",
+      "nextFrame": "下一帧",
+      "goToStart": "回到开头",
+      "goToEnd": "跳到结尾",
+      "playhead": "播放头",
+      "rate": "倍速",
+      "duration": "总帧数",
+      "razor": "在播放头处剪开",
+      "removeTrack": "删除轨道",
+      "addObject": "添加对象到时间轴",
+      "empty": "时间轴上还没有对象"
+    },
+    "clip": {
+      "empty": "选中一个片段后在这里编辑",
+      "startFrame": "起始帧",
+      "endFrame": "结束帧",
+      "trimStart": "裁前到播放头",
+      "trimEnd": "裁后到播放头",
+      "insertPoint": "在播放头插点",
+      "clearPoints": "清空轨迹",
+      "remove": "删除片段",
+      "point": {
+        "empty": "点一个轨迹点后在这里编辑",
+        "x": "位置 X",
+        "y": "位置 Y",
+        "z": "位置 Z",
+        "pitch": "俯仰角",
+        "yaw": "水平角",
+        "roll": "横滚角",
+        "reface": "取消手动朝向",
+        "remove": "删除该点"
+      }
     }
   }
 }

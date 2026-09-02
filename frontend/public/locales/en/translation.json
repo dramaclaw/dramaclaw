@@ -7515,8 +7515,14 @@
         "display": "Display",
         "view": "View",
         "gizmo": "Gizmo",
+        "tool": "Tool",
         "aspect": "Aspect"
       },
+      "tool": {
+        "select": "Select",
+        "draw": "Draw path"
+      },
+      "pathSpacing": "Point spacing (m)",
       "display": {
         "solid": "Solid",
         "translucent": "Translucent",
@@ -7539,6 +7545,43 @@
         "scale": "Scale"
       },
       "outputAspect": "Output aspect"
+    },
+    "timeline": {
+      "play": "Play",
+      "pause": "Pause",
+      "stop": "Stop",
+      "prevFrame": "Previous frame",
+      "nextFrame": "Next frame",
+      "goToStart": "Go to start",
+      "goToEnd": "Go to end",
+      "playhead": "Playhead",
+      "rate": "Speed",
+      "duration": "Frames",
+      "razor": "Cut at playhead",
+      "removeTrack": "Remove track",
+      "addObject": "Add object to timeline",
+      "empty": "Nothing on the timeline yet"
+    },
+    "clip": {
+      "empty": "Select a clip to edit it here",
+      "startFrame": "Start frame",
+      "endFrame": "End frame",
+      "trimStart": "Trim head to playhead",
+      "trimEnd": "Trim tail to playhead",
+      "insertPoint": "Insert point at playhead",
+      "clearPoints": "Clear path",
+      "remove": "Delete clip",
+      "point": {
+        "empty": "Pick a keyframe to edit it here",
+        "x": "Position X",
+        "y": "Position Y",
+        "z": "Position Z",
+        "pitch": "Pitch",
+        "yaw": "Yaw",
+        "roll": "Roll",
+        "reface": "Clear manual rotation",
+        "remove": "Delete point"
+      }
     }
   }
 }
