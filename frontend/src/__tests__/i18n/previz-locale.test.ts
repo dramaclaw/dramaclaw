@@ -36,6 +36,51 @@ const CLIP_KEYS = [
 
 const POINT_KEYS = ['empty', 'x', 'y', 'z', 'pitch', 'yaw', 'roll', 'reface', 'remove'] as const;
 
+/** 摄影机创建对话框。嵌套的四张小表单列，与顶层平铺的键分开比。 */
+const CAMERA_CREATE_KEYS = [
+  'title',
+  'close',
+  'previewLabel',
+  'dragHint',
+  'previewCaption',
+  'properties',
+  'body',
+  'bodyPrev',
+  'bodyNext',
+  'lens',
+  'lensPrev',
+  'lensNext',
+  'focal',
+  'focalDown',
+  'focalUp',
+  'aperture',
+  'apertureDown',
+  'apertureUp',
+  'sensor',
+  'position',
+  'viewReadout',
+  'viewReadoutLabel',
+  'yaw',
+  'yawSlider',
+  'yawInput',
+  'pitch',
+  'pitchSlider',
+  'pitchInput',
+  'roll',
+  'rollSlider',
+  'rollInput',
+  'footerHint',
+  'submit',
+] as const;
+
+/** 这四张表的键各自等于一个联合类型：少一个的表现是界面上直接蹦出原始 key。 */
+const CAMERA_CREATE_TABLES = {
+  bodies: ['cine', 'virtual', 'handheld'],
+  lenses: ['prime', 'zoom', 'anamorphic'],
+  focalClasses: ['ultrawide', 'wide', 'standard', 'teleShort', 'tele'],
+  depthOfField: ['shallow', 'standard', 'deep'],
+} as const;
+
 describe('previz P3 locale keys', () => {
   for (const [name, bundle] of [
     ['zh', zh],
@@ -49,6 +94,15 @@ describe('previz P3 locale keys', () => {
       const { point, ...rest } = bundle.previz.clip;
       expect(Object.keys(rest).sort()).toEqual([...CLIP_KEYS].sort());
       expect(Object.keys(point).sort()).toEqual([...POINT_KEYS].sort());
+    });
+
+    it(`${name} carries every camera create key`, () => {
+      const { bodies, lenses, focalClasses, depthOfField, ...rest } = bundle.previz.cameraCreate;
+      expect(Object.keys(rest).sort()).toEqual([...CAMERA_CREATE_KEYS].sort());
+      expect(Object.keys(bodies).sort()).toEqual([...CAMERA_CREATE_TABLES.bodies].sort());
+      expect(Object.keys(lenses).sort()).toEqual([...CAMERA_CREATE_TABLES.lenses].sort());
+      expect(Object.keys(focalClasses).sort()).toEqual([...CAMERA_CREATE_TABLES.focalClasses].sort());
+      expect(Object.keys(depthOfField).sort()).toEqual([...CAMERA_CREATE_TABLES.depthOfField].sort());
     });
 
     it(`${name} carries the new hud keys`, () => {
