@@ -38,7 +38,16 @@ function fakeThree() {
       return this;
     }
   }
-  class Euler extends Vector3 {}
+  class Euler extends Vector3 {
+    // 真 three 的 Euler 带旋转次序，`set` 的第四个参数不传就沿用当前次序。
+    // 假的也得留着：预演台把对象旋转钉在 YXZ 上，那是个会被静默改掉的约定。
+    order = 'XYZ';
+    set(x: number, y: number, z: number, order?: string) {
+      super.set(x, y, z);
+      if (order) this.order = order;
+      return this;
+    }
+  }
   class Object3D {
     name = '';
     visible = true;
@@ -347,6 +356,30 @@ describe('PrevizSceneGraph', () => {
     // 场景里存的是度，three 的 Euler 收弧度。
     expect(node?.rotation.y).toBeCloseTo(Math.PI / 2, 6);
     expect(node?.scale).toMatchObject({ x: 2, y: 2, z: 2 });
+  });
+
+  it('rotates objects in yaw-pitch-roll order', () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+
+    const scene = sceneWith('prop');
+    graph.sync({
+      ...scene,
+      objects: [
+        {
+          ...scene.objects[0]!,
+          transform: { position: [0, 0, 0], rotation: [30, 90, 0], scale: [1, 1, 1] },
+        },
+      ],
+    });
+
+    // three 默认的 XYZ 次序意思是 R = Rx·Ry·Rz，绕的是**固有**轴：先绕自身 Z 翻滚、
+    // 再绕自身 Y 偏航、最后绕世界 X 俯仰。于是偏航 90° 之后，俯仰那一下抬的是镜头的
+    // 侧向而不是朝向——摄影机创建对话框那三根滑杆（水平 0–360 / 俯仰 ±90 / 横滚）
+    // 在这个次序下互相串味，而且横滚为 0 时表达不出任意朝向。
+    // YXZ 才是这三根滑杆的定义：先偏航、再俯仰、最后沿视线翻滚。
+    expect(graph.nodeFor(scene.objects[0]!.id)?.rotation.order).toBe('YXZ');
   });
 
   it('falls back to zero for non-finite position and rotation components', () => {
