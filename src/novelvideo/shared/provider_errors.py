@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from typing import Any
+
+from novelvideo.utils.error_redaction import redact_secrets
 
 CONTENT_MODERATION_FAILED_CODE = "CONTENT_MODERATION_FAILED"
 CONTENT_MODERATION_FAILED_MESSAGE = "图片生成结果未通过内容审核，请调整提示词后重试"
@@ -37,6 +40,12 @@ _PROVIDER_VIDEO_ERROR_CODE_RE = re.compile(r"VIDEO_[A-Z0-9]+(?:_[A-Z0-9]+)*")
 _PROVIDER_VIDEO_ERROR_BODY_CODE_RE = re.compile(
     r"[\"']code[\"']\s*:\s*[\"'](VIDEO_[A-Z0-9_]+)[\"']"
 )
+_PROVIDER_URL_RE = re.compile(r"https?://[^\s<>{}\[\]\"']+", re.IGNORECASE)
+_PROVIDER_SENSITIVE_FRAGMENT_RE = re.compile(
+    r"(?i)\b(?:ossaccesskeyid|x-amz-(?:credential|signature)|api[_-]?key|"
+    r"access[_-]?key|token|secret)(?:\s*[:=]\s*|[-_/])[^\s,;]+"
+)
+_PROVIDER_ERROR_MESSAGE_MAX_LENGTH = 1000
 # 网关只给自由文本（`error_message`）时，按厂商原话里的关键字归类。
 _PROVIDER_VIDEO_ERROR_TEXT_MARKERS: tuple[tuple[str, str], ...] = (
     ("heighttoosmall", VIDEO_MEDIA_DIMENSIONS_INVALID_CODE),
@@ -128,6 +137,86 @@ def provider_video_error_code_from_text(text: str) -> str:
     return ""
 
 
+def _provider_video_message_from_value(value: object) -> str:
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ""
+        if text[:1] in {"{", "["}:
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                pass
+            else:
+                nested = _provider_video_message_from_value(parsed)
+                if nested:
+                    return nested
+        return text
+    if isinstance(value, Mapping):
+        for key in (
+            "content",
+            "error",
+            "message",
+            "error_message",
+            "fail_reason",
+            "detail",
+        ):
+            nested = _provider_video_message_from_value(value.get(key))
+            if nested:
+                return nested
+        return ""
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            nested = _provider_video_message_from_value(item)
+            if nested:
+                return nested
+    return ""
+
+
+def _sanitize_provider_video_error_message(value: object) -> str:
+    message = _provider_video_message_from_value(value)
+    if not message:
+        return ""
+    message = _PROVIDER_URL_RE.sub("[redacted-url]", message)
+    message = redact_secrets(message)
+    message = _PROVIDER_SENSITIVE_FRAGMENT_RE.sub("[redacted]", message)
+    message = re.sub(r"\s+", " ", message).strip()
+    visible = message.replace("[redacted-url]", "").replace("[redacted]", "")
+    if not visible.strip(" -:：,，.;；"):
+        return ""
+    return message[:_PROVIDER_ERROR_MESSAGE_MAX_LENGTH]
+
+
+def provider_video_task_error_message(task: Mapping[str, Any]) -> str:
+    """Return a redacted provider message from a definitive failed-task response."""
+    for value in (
+        task.get("content"),
+        task.get("error"),
+        task.get("fail_reason"),
+        task.get("error_message"),
+    ):
+        message = _sanitize_provider_video_error_message(value)
+        if message:
+            return message
+    return ""
+
+
+def provider_video_error_message_from_text(text: str) -> str:
+    """Extract a redacted message from an embedded JSON provider error body."""
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "{[":
+            continue
+        try:
+            payload, _end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        message = _sanitize_provider_video_error_message(payload)
+        if message:
+            return message
+    return ""
+
+
 def classify_provider_video_task_error(task: Mapping[str, Any]) -> str:
     """把网关「任务失败」报文归成安全的 VIDEO_* 码，认不出返回空串。
 
@@ -179,6 +268,8 @@ __all__ = [
     "content_moderation_payload",
     "is_content_moderation_error",
     "provider_video_error_code_from_text",
+    "provider_video_error_message_from_text",
     "provider_video_error_payload",
+    "provider_video_task_error_message",
     "safe_provider_video_error_code",
 ]
