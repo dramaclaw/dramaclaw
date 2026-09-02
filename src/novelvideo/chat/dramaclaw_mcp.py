@@ -399,7 +399,10 @@ def _workflow_schema_recovery_instruction(tool_name: str) -> str | None:
         "WorkflowPlan 校验失败。不要提交单节点探测、空 edges 或 compact Intent。"
         "请保留同一份完整节点清单和所有边；每个可执行节点必须把"
         "workflowCatalog.recipeId 放在节点 data 内。确认所有 edge 的 source/target"
-        "都对应 nodes[].id 后，只重新提交一次完整 WorkflowPlan。"
+        "都对应 nodes[].id。提交前由 Agent 检查整图连通性；独立 Beat/镜头分支应通过"
+        "非执行型公共输入根节点扇出连接，不能要求用户说明内部连线，也不能把需要故障"
+        "隔离的兄弟分支串行连接。连线兼容性不明确时先读取 link type catalog，禁止猜测"
+        "类型或反复试编译。恢复编译成功后立即用同一计划提交创建。"
     )
 
 

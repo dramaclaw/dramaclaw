@@ -18,14 +18,28 @@ production Skill does not turn an exact topology request into the normal draft f
    `stage` to `input`, `resource`, or `asset`. A terminal `videoComposeNode` has no Recipe.
 4. Put all nodes and semantic edges in the same plan. Use logical plan IDs only; the compiler turns
    them into same-batch `client_id` values.
+   Before choosing an edge `link_type`, use the injected compatibility information or call
+   `freezone_get_link_type_catalog` once when compatibility is not already explicit. Never guess a
+   link type and never trial several link types through repeated compiler calls.
+   Before submission, treat graph connectivity as an Agent-owned planning invariant rather than a
+   detail the user must specify. Traverse the proposed graph as undirected and make sure every node
+   belongs to one connected component. When the user's requested units are intentionally independent
+   (for example Beats or shots that must fail, skip, and retry without affecting siblings), do not
+   chain those units together. Add one non-executable input/root node and fan it out to each unit's
+   input node instead. This satisfies whole-plan connectivity while preserving independent execution
+   branches. A user does not need to ask for this structural root or name any `link_type`.
 5. When the user states exact totals, copy them into `expected_node_count` and
    `expected_node_counts`. Counts refer to Plan/business nodes; the generated group node is not
    included. Never lower these expectations to make a partial plan validate.
 6. Requests that explicitly enumerate Beats, shots, nodes, or dependency order always stay on this
    full Plan path, including requests above the compact Intent planner's item limit. Do not switch to
    `workflow_intent_compile`, a smaller sample plan, or standalone node tools after a validation error.
-7. Call `freezone_create_workflow_graph` once. It deterministically adds grouping, layout, selection,
-   and one canvas batch.
+7. Call `freezone_create_workflow_graph` once. It already performs strict validation and
+   deterministically adds grouping, layout, selection, and one canvas batch. Do not call
+   `workflow_graph_compile` as a routine preflight before this first write. Use the read-only compiler
+   only to diagnose and correct a validation failure. After a recovery compile succeeds, immediately
+   submit that exact corrected Plan with `freezone_create_workflow_graph`; do not stop after reporting
+   that compilation passed.
 
 The user's imperative to create or run authorizes this protected write submission. Do not ask for a
 second create/run confirmation. The graph call emits the approval surface; in `auto_execute`, the

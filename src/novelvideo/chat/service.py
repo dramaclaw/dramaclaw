@@ -138,6 +138,14 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "smoke test, or placeholder graph such as A/B or T1/T2 to the real canvas; diagnose with the "
     "read-only compiler only by compiling that same complete graph, preserving all nodes and "
     "dependency edges. Never compile reduced probe nodes or use edges=[] for a multi-node plan. "
+    "The Agent owns graph completeness: before submission, verify that every plan node belongs to "
+    "one undirected connected component. For independent Beat/shot branches that must preserve "
+    "failure isolation, add a non-executable common input root and fan it out to each branch input; "
+    "do not ask the user to specify this internal topology and do not serialize sibling branches. "
+    "Resolve unknown edge compatibility from freezone_get_link_type_catalog once; never guess link "
+    "types through repeated compiler calls. Do not use workflow_graph_compile as routine preflight "
+    "before the first graph write. After a recovery compile succeeds, immediately submit that exact "
+    "corrected Plan with freezone_create_workflow_graph instead of stopping at compile success. "
     "Correct the same complete plan once, then report the blocking error. The "
     "failure result must come from the current turn: historical failures are diagnostic context, "
     "not proof that the current adapter remains blocked. When the user repeats the create/run "
@@ -437,6 +445,15 @@ Canvas write contract:
   expected_node_counts and must remain unchanged during recovery. Episodic short-drama, Beat,
   voice-over, or background-music workflows should use the short-drama production Skill rather than
   the generic text-to-image-video Skill.
+  Graph completeness is the Agent's responsibility. Before submission, verify that all Plan nodes
+  form one connected component when edges are viewed as undirected. For independent Beat/shot
+  branches that need failure isolation, add one non-executable common input root and fan it out to
+  every branch input; do not ask the user for internal nodes or link types, and do not serialize
+  sibling branches merely to satisfy connectivity validation.
+  Resolve unknown edge compatibility by reading freezone_get_link_type_catalog once. Never guess
+  link types through repeated compiler calls. The graph write already validates, so do not use
+  workflow_graph_compile as a routine preflight before the first write. After a recovery compile
+  succeeds, immediately submit the exact same Plan with freezone_create_workflow_graph.
   Never call dramaclaw_get with guessed Skill or workflow HTTP paths. Use the workflow MCP catalog
   and its returned resource URI, or the documented freezone_get_workflow_skill fallback, exactly once.
   Do not use freezone_emit_canvas_command for a workflow.

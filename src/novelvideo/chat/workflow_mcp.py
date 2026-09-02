@@ -387,12 +387,35 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
                 validation.get("status"),
                 validation.get("errors") or validation.get("error"),
             )
-            validation.setdefault(
-                "agent_instruction",
+            errors = validation.get("errors") or []
+            disconnected = any(
+                isinstance(issue, dict)
+                and "disconnected nodes" in str(issue.get("message") or "")
+                for issue in errors
+            )
+            incompatible_edge = any(
+                isinstance(issue, dict)
+                and "is incompatible with" in str(issue.get("message") or "")
+                for issue in errors
+            )
+            instruction = (
                 "保留同一份完整 WorkflowPlan；不要提交单节点探测、空 edges 或 compact Intent。"
                 "每个可执行节点必须在 data.workflowCatalog.recipeId 中指定 Recipe，"
-                "且所有边的 source/target 必须对应 nodes[].id。",
+                "且所有边的 source/target 必须对应 nodes[].id。"
             )
+            if disconnected:
+                instruction += (
+                    "当前计划包含多个互不连通的分支。不要要求用户补充内部连线，也不要为了"
+                    "通过校验而把需要独立失败隔离的 Beat/镜头串行连接；请加入一个非执行型公共"
+                    "输入根节点，将它分别连接到每个独立分支的输入节点，再仅重新编译一次完整计划。"
+                )
+            if incompatible_edge:
+                instruction += (
+                    "当前存在不兼容的连线类型。调用 freezone_get_link_type_catalog 一次，按实际"
+                    "source/target 节点类型选择目录中列出的 link_type；禁止继续猜测其它类型或"
+                    "反复试编译。恢复编译成功后，必须立即用同一份计划提交工作流创建。"
+                )
+            validation.setdefault("agent_instruction", instruction)
             return _result(validation)
         result = build_workflow_graph_commands(args)
         logger.info(

@@ -5,6 +5,14 @@
 - Invalid intent: correct the reported intent path and retry the same draft preparation once.
 - Invalid plan or Recipe: correct the same complete Plan with only the selected Skill package's node
   capabilities and Recipe IDs. Do not switch an exact topology to compact Intent compilation.
+- Disconnected nodes: inspect connected components in the same complete Plan. Preserve independent
+  Beat/shot failure isolation; do not serialize sibling branches merely to satisfy validation. Add or
+  restore one non-executable common input/root and connect it to every independent branch input, then
+  compile the corrected complete Plan once. Do not ask the user to describe this internal topology.
+- Incompatible edge type: read `freezone_get_link_type_catalog` once and select a listed type for the
+  exact source/target node kinds. Do not guess alternatives through repeated compiler calls. A
+  successful recovery compile is not completion: immediately submit the exact same corrected Plan to
+  `freezone_create_workflow_graph`.
 - Revision conflict: read the existing draft and use its current revision; do not create a new draft.
 - Awaiting approval or timeout: keep the same operation/draft identity and wait for or report the
   existing approval state. Never replay the write as standalone commands.

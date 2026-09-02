@@ -145,6 +145,98 @@ async def test_graph_compile_hoists_nested_execution_policy():
 
 
 @pytest.mark.asyncio
+async def test_graph_compile_explains_how_to_connect_independent_branches():
+    arguments = {
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "skill": {"id": "short-drama-quick", "version": 1},
+            "nodes": [
+                {
+                    "id": "beat-01-input",
+                    "type": "textAnnotationNode",
+                    "stage": "input",
+                    "data": {"text": "第一段"},
+                },
+                {
+                    "id": "beat-01-image",
+                    "type": "imageGenNode",
+                    "data": {"workflowCatalog": {"recipeId": "general-image"}},
+                },
+                {
+                    "id": "beat-02-input",
+                    "type": "textAnnotationNode",
+                    "stage": "input",
+                    "data": {"text": "第二段"},
+                },
+                {
+                    "id": "beat-02-image",
+                    "type": "imageGenNode",
+                    "data": {"workflowCatalog": {"recipeId": "general-image"}},
+                },
+            ],
+            "edges": [
+                {
+                    "source": "beat-01-input",
+                    "target": "beat-01-image",
+                    "type": "prompt_for",
+                },
+                {
+                    "source": "beat-02-input",
+                    "target": "beat-02-image",
+                    "type": "prompt_for",
+                },
+            ],
+        }
+    }
+
+    result = await workflow_mcp.call_tool("workflow_graph_compile", arguments)
+
+    payload = _result_payload(result)
+    assert payload["ok"] is False
+    assert "公共输入根节点" in payload["agent_instruction"]
+    assert "不要要求用户补充内部连线" in payload["agent_instruction"]
+    assert "不要为了" in payload["agent_instruction"]
+
+
+@pytest.mark.asyncio
+async def test_graph_compile_rejects_edge_guessing_and_directs_catalog_lookup():
+    arguments = {
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "skill": {"id": "short-drama-quick", "version": 1},
+            "nodes": [
+                {
+                    "id": "input-root",
+                    "type": "textAnnotationNode",
+                    "stage": "input",
+                    "data": {"text": "公共输入"},
+                },
+                {
+                    "id": "beat-image",
+                    "type": "imageGenNode",
+                    "data": {"workflowCatalog": {"recipeId": "general-image"}},
+                },
+            ],
+            "edges": [
+                {
+                    "source": "input-root",
+                    "target": "beat-image",
+                    "type": "context_for",
+                }
+            ],
+        }
+    }
+
+    result = await workflow_mcp.call_tool("workflow_graph_compile", arguments)
+
+    payload = _result_payload(result)
+    assert payload["ok"] is False
+    assert "freezone_get_link_type_catalog" in payload["agent_instruction"]
+    assert "禁止继续猜测" in payload["agent_instruction"]
+    assert "立即用同一份计划提交工作流创建" in payload["agent_instruction"]
+
+
+@pytest.mark.asyncio
 async def test_recipe_resource_reads_one_exact_definition(monkeypatch):
     monkeypatch.setattr(
         workflow_mcp,
