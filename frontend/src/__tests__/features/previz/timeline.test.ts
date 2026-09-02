@@ -11,6 +11,7 @@ import {
   isPathClip,
   moveClip,
   pathClipAt,
+  pinTrack,
   removeClip,
   removePathPoint,
   removeTrack,
@@ -385,5 +386,26 @@ describe('zoomToFit', () => {
 
   it('falls back to the default before the lane has been measured', () => {
     expect(zoomToFit(4, 0)).toBe(PREVIZ_TIMELINE_ZOOM.default);
+  });
+});
+
+describe('pinTrack', () => {
+  function threeTracks(): PrevizScene {
+    return sceneWith([
+      { id: 't1', objectId: 'a', clips: [] },
+      { id: 't2', objectId: 'b', clips: [] },
+      { id: 't3', objectId: 'c', clips: [] },
+    ]);
+  }
+
+  it('moves the track to the front', () => {
+    const next = pinTrack(threeTracks(), 'c');
+    expect(next.timeline.tracks.map((track) => track.objectId)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('leaves an unknown object alone', () => {
+    const scene = threeTracks();
+    // 对象没有轨道时不该重排出一个空洞，也不该新建一条轨道。
+    expect(pinTrack(scene, 'zz').timeline.tracks).toEqual(scene.timeline.tracks);
   });
 });
