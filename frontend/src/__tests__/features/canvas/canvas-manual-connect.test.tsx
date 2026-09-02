@@ -29,6 +29,9 @@ let capturedOnConnectEnd:
   | ((event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => void)
   | null = null;
 let capturedReactFlowProps: Record<string, unknown> | null = null;
+let capturedNodeSelect:
+  | ((type: string, clientPosition?: { x: number; y: number }) => void)
+  | null = null;
 
 class ResizeObserverMock {
   observe() {}
@@ -62,6 +65,7 @@ vi.mock("@xyflow/react", async () => {
       fitView: vi.fn(),
       getViewport: () => ({ x: 0, y: 0, zoom: 1 }),
       getZoom: () => 1,
+      getInternalNode: () => null,
       screenToFlowPosition: ({ x, y }: { x: number; y: number }) => ({ x, y }),
       setCenter: vi.fn(),
       setViewport: vi.fn(),
@@ -160,7 +164,14 @@ vi.mock("@/features/canvas/edges", () => ({
 }));
 
 vi.mock("@/features/canvas/NodeSelectionMenu", () => ({
-  NodeSelectionMenu: () => null,
+  NodeSelectionMenu: ({
+    onSelect,
+  }: {
+    onSelect: (type: string, clientPosition?: { x: number; y: number }) => void;
+  }) => {
+    capturedNodeSelect = onSelect;
+    return null;
+  },
 }));
 
 vi.mock("@/features/canvas/ui/SelectedNodeOverlay", () => ({
@@ -225,6 +236,7 @@ describe("Canvas manual skill connections", () => {
     capturedOnConnectStart = null;
     capturedOnConnectEnd = null;
     capturedReactFlowProps = null;
+    capturedNodeSelect = null;
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     useCanvasStore.getState().setCanvasData(
       [
@@ -397,6 +409,89 @@ describe("Canvas manual skill connections", () => {
         reference_target: { kind: "identity", identity_id: "GREEN" },
       },
     });
+  });
+});
+
+describe("Canvas 剧情片段拖线新建", () => {
+  beforeEach(() => {
+    capturedOnConnect = null;
+    capturedOnConnectStart = null;
+    capturedOnConnectEnd = null;
+    capturedReactFlowProps = null;
+    capturedNodeSelect = null;
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    useCanvasStore.getState().setCanvasData(
+      [
+        {
+          id: "story",
+          type: CANVAS_NODE_TYPES.group,
+          position: { x: 100, y: 80 },
+          width: 1800,
+          height: 900,
+          data: { storyGroup: true },
+        },
+        {
+          id: "start",
+          type: CANVAS_NODE_TYPES.video,
+          parentId: "story",
+          position: { x: 40, y: 60 },
+          data: { videoUrl: "/start.mp4", storySegmentId: "segment-start" },
+        },
+      ],
+      [],
+    );
+  });
+
+  it("从剧情片段拖到空白新建视频时保留松手位置", async () => {
+    renderCanvas();
+    await waitFor(() => expect(capturedOnConnectStart).toBeTruthy());
+    await waitFor(() => expect(capturedOnConnectEnd).toBeTruthy());
+
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(document.body),
+    });
+
+    try {
+      act(() => {
+        capturedOnConnectStart?.(
+          { clientX: 140, clientY: 140, target: null } as unknown as MouseEvent,
+          { nodeId: "start", handleId: "source", handleType: "source" },
+        );
+      });
+      act(() => {
+        capturedOnConnectEnd?.(
+          { clientX: 900, clientY: 500, target: document.body } as unknown as MouseEvent,
+          { isValid: false, from: { x: 140, y: 140 } } as FinalConnectionState,
+        );
+      });
+      await waitFor(() => expect(capturedNodeSelect).toBeTruthy());
+
+      act(() => {
+        capturedNodeSelect?.(CANVAS_NODE_TYPES.video);
+      });
+    } finally {
+      Object.defineProperty(document, "elementFromPoint", {
+        configurable: true,
+        value: originalElementFromPoint,
+      });
+    }
+
+    const created = useCanvasStore
+      .getState()
+      .nodes.find((node) => node.id !== "start" && node.type === CANVAS_NODE_TYPES.video);
+    expect(created).toMatchObject({
+      parentId: "story",
+      position: { x: 460, y: 230 },
+    });
+    expect(useCanvasStore.getState().edges).toContainEqual(
+      expect.objectContaining({
+        source: "start",
+        target: created?.id,
+        type: "storyChoiceEdge",
+      }),
+    );
   });
 });
 

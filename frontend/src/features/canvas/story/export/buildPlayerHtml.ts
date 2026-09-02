@@ -9,6 +9,8 @@ export interface PlayerLabels {
   endingFallback: string;
   restart: string;
   loadError: string;
+  placeholderBadge: string;
+  placeholderHint: string;
 }
 
 export interface BuildPlayerHtmlOptions {
@@ -24,6 +26,8 @@ const DEFAULT_LABELS: PlayerLabels = {
   endingFallback: '全剧终',
   restart: '重新开始',
   loadError: '故事加载失败',
+  placeholderBadge: '占位片段',
+  placeholderHint: '此片段尚未生成视频,点选下方选项继续试玩',
 };
 
 /** HTML 文本转义（用于 <title>）。 */
@@ -74,6 +78,7 @@ export function buildPlayerHtml(
     choiceTime: compiled.choiceTimeByNodeId,
     defaultChoice: compiled.defaultChoiceIndexByNodeId,
     endings: compiled.endingByNodeId,
+    placeholders: compiled.placeholderByNodeId,
     variables: compiled.variables,
     labels: opts.labels ?? DEFAULT_LABELS,
     title,

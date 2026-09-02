@@ -6,8 +6,9 @@ function seed() {
   const store = useCanvasStore.getState();
   store.setCanvasData(
     [
-      { id: 'v1', type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 }, data: { videoUrl: 'a.mp4', aspectRatio: '16:9' } },
-      { id: 'v2', type: CANVAS_NODE_TYPES.video, position: { x: 400, y: 0 }, data: { videoUrl: 'b.mp4', aspectRatio: '16:9' } },
+      { id: 'story', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { storyGroup: true } },
+      { id: 'v1', type: CANVAS_NODE_TYPES.video, parentId: 'story', position: { x: 0, y: 0 }, data: { videoUrl: 'a.mp4', aspectRatio: '16:9' } },
+      { id: 'v2', type: CANVAS_NODE_TYPES.video, parentId: 'story', position: { x: 400, y: 0 }, data: { videoUrl: 'b.mp4', aspectRatio: '16:9' } },
     ] as never,
     [],
   );

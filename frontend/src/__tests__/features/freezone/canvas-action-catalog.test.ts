@@ -279,6 +279,47 @@ describe("canvas action catalog", () => {
     });
   });
 
+  it("exposes story content and production notes for interactive-story video clips", () => {
+    const storyClip = node({
+      id: "story-video-a",
+      type: CANVAS_NODE_TYPES.video,
+      data: {
+        storySegmentId: "segment-story-video-a",
+        narration: "林晚锁上便利店的门。",
+        storyProductionNotes: "雪夜，监控屏闪过人脸。",
+        prompt: "便利店雪夜收尾镜头",
+      },
+    });
+    const regularVideo = node({
+      id: "regular-video-a",
+      type: CANVAS_NODE_TYPES.video,
+      data: { prompt: "普通视频提示词" },
+    });
+
+    const storyCatalog = buildCanvasNodeActionCatalog(storyClip);
+    const regularCatalog = buildCanvasNodeActionCatalog(regularVideo);
+
+    expect(storyCatalog.editable_fields).toEqual(
+      expect.arrayContaining(["narration", "storyProductionNotes", "prompt"]),
+    );
+    expect(storyCatalog.editable_schema.narration).toMatchObject({
+      type: "string",
+      label: "剧情内容",
+      current_value: "林晚锁上便利店的门。",
+      description: expect.stringContaining("prompt"),
+    });
+    expect(storyCatalog.editable_schema.storyProductionNotes).toMatchObject({
+      type: "string",
+      label: "制作备注",
+      current_value: "雪夜，监控屏闪过人脸。",
+    });
+    expect(
+      storyCatalog.actions.find((action) => action.action === "update_node_data")?.description,
+    ).toContain("narration");
+    expect(regularCatalog.editable_fields).not.toContain("narration");
+    expect(regularCatalog.editable_fields).not.toContain("storyProductionNotes");
+  });
+
   it("explains generator prompt fields are combined with upstream prompt text and reference mentions", () => {
     const image = node({
       id: "image-prompt-a",

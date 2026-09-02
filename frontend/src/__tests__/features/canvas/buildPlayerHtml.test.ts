@@ -45,9 +45,17 @@ describe('buildPlayerHtml', () => {
   });
 
   it('空 clip 保持空串(占位片段)', () => {
-    const html = buildPlayerHtml(baseCompiled({ clipByNodeId: { a: '' } }), '{}', { origin: 'https://x' });
-    const data = extractData(html) as { clips: Record<string, string> };
+    const html = buildPlayerHtml(baseCompiled({
+      clipByNodeId: { a: '' },
+      placeholderByNodeId: { a: { label: '雨夜', text: '主角推开便利店的门。' } },
+    }), '{}', { origin: 'https://x' });
+    const data = extractData(html) as {
+      clips: Record<string, string>;
+      placeholders: Record<string, { label: string; text: string }>;
+    };
     expect(data.clips.a).toBe('');
+    expect(data.placeholders.a).toEqual({ label: '雨夜', text: '主角推开便利店的门。' });
+    expect(html).toContain("el('p', 'placeholder-text'");
   });
 
   it('转义结局标题中的 </script>,且可被还原', () => {
@@ -62,9 +70,28 @@ describe('buildPlayerHtml', () => {
   it('注入本地化 labels(传入则用传入)', () => {
     const html = buildPlayerHtml(baseCompiled(), '{}', {
       origin: 'https://x',
-      labels: { defaultChoice: 'DEF', endingBadge: 'END', endingFallback: 'FIN', restart: 'AGAIN', loadError: 'ERR' },
+      labels: {
+        defaultChoice: 'DEF',
+        endingBadge: 'END',
+        endingFallback: 'FIN',
+        restart: 'AGAIN',
+        loadError: 'ERR',
+        placeholderBadge: 'PLACEHOLDER',
+        placeholderHint: 'NO VIDEO',
+      },
     });
     const data = extractData(html) as { labels: Record<string, string> };
     expect(data.labels.restart).toBe('AGAIN');
+    expect(data.labels.placeholderHint).toBe('NO VIDEO');
+  });
+
+  it('安全转义占位剧情中的 script 结束标签', () => {
+    const html = buildPlayerHtml(baseCompiled({
+      placeholderByNodeId: { a: { label: '占位', text: '前半段</script><b>后半段</b>' } },
+    }), '{}', { origin: 'https://x' });
+    const payload = html.match(/window\.__STORY__=(\{[\s\S]*?\});<\/script>/)![1];
+    expect(payload).not.toContain('</script>');
+    const data = extractData(html) as { placeholders: Record<string, { text: string }> };
+    expect(data.placeholders.a.text).toBe('前半段</script><b>后半段</b>');
   });
 });

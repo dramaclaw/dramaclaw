@@ -11,6 +11,10 @@ html, body { height: 100%; background: #000; color: #fff; font-family: system-ui
 .stage { display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .fallback { padding: 24px; text-align: center; color: rgba(255,255,255,.8); }
 .video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+.placeholder { position: absolute; inset: 0 24px 11rem; z-index: 8; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 32px 24px; text-align: center; pointer-events: none; }
+.placeholder-badge { padding: 4px 10px; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; color: rgba(255,255,255,.65); background: rgba(255,255,255,.06); font-size: 12px; letter-spacing: .08em; }
+.placeholder-label { color: rgba(255,255,255,.62); font-size: 14px; }
+.placeholder-text { max-width: 46rem; color: rgba(255,255,255,.92); font-size: clamp(18px, 2.4vw, 28px); font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; text-shadow: 0 2px 18px rgba(0,0,0,.9); }
 .hud { position: absolute; left: 16px; top: 16px; z-index: 10; display: flex; flex-direction: column; gap: 4px; background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.15); border-radius: 10px; padding: 8px 12px; font-size: 14px; }
 .hud-row { display: flex; justify-content: space-between; gap: 12px; }
 .hud-label { color: rgba(255,255,255,.7); }
@@ -38,7 +42,7 @@ export const PLAYER_SCRIPT = `
     return;
   }
   var story = new inkjs.Story(D.storyJson);
-  var st = { clipUrl: null, choices: [], ending: null, phase: 'playing', timeSec: null, defaultIdx: null };
+  var st = { clipUrl: null, choices: [], ending: null, placeholder: null, phase: 'playing', timeSec: null, defaultIdx: null };
   var videoEnded = false;
   var timer = null;
 
@@ -64,6 +68,8 @@ export const PLAYER_SCRIPT = `
     st.clipUrl = (nodeId && D.clips[nodeId]) ? D.clips[nodeId] : null;
     st.choices = story.currentChoices.map(function (c) { return { index: c.index, text: c.text }; });
     st.phase = st.choices.length > 0 ? 'playing' : 'ended';
+    var placeholder = (nodeId && D.placeholders) ? D.placeholders[nodeId] : null;
+    st.placeholder = (!st.clipUrl && st.choices.length > 0) ? (placeholder || { label: '', text: '' }) : null;
     var lim = nodeId ? D.choiceTime[nodeId] : undefined;
     st.timeSec = (st.choices.length > 0 && typeof lim === 'number' && lim > 0) ? lim : null;
     var di = nodeId ? D.defaultChoice[nodeId] : undefined;
@@ -100,6 +106,15 @@ export const PLAYER_SCRIPT = `
       v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', '');
       v.addEventListener('ended', function () { videoEnded = true; render(); });
       stage.appendChild(v);
+    }
+
+    if (!st.clipUrl && st.choices.length > 0 && st.placeholder) {
+      var placeholderBox = el('div', 'placeholder');
+      placeholderBox.appendChild(el('span', 'placeholder-badge', L.placeholderBadge || '占位片段'));
+      if (st.placeholder.label) placeholderBox.appendChild(el('span', 'placeholder-label', st.placeholder.label));
+      var placeholderText = String(st.placeholder.text || '').trim() || L.placeholderHint || '此片段尚未生成视频,点选下方选项继续试玩';
+      placeholderBox.appendChild(el('p', 'placeholder-text', placeholderText));
+      stage.appendChild(placeholderBox);
     }
 
     if (showChoices() && st.choices.length > 0) {

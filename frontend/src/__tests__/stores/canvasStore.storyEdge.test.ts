@@ -67,4 +67,44 @@ describe("canvasStore — storyChoiceEdge survives normalizeEdgesWithNodes", () 
     const { edges } = useCanvasStore.getState();
     expect(edges.some((e) => e.id === "dangling")).toBe(false);
   });
+
+  it("upgrades a legacy regular edge between clips in one story group", () => {
+    const group = {
+      id: "story-group",
+      type: CANVAS_NODE_TYPES.group,
+      position: { x: 0, y: 0 },
+      data: { storyGroup: true },
+    };
+    const nodeA = {
+      id: "vid-a",
+      type: CANVAS_NODE_TYPES.video,
+      parentId: "story-group",
+      position: { x: 20, y: 40 },
+      data: { videoUrl: "/static/a.mp4", storySegmentId: "segment-a" },
+    };
+    const nodeB = {
+      id: "vid-b",
+      type: CANVAS_NODE_TYPES.video,
+      parentId: "story-group",
+      position: { x: 720, y: 40 },
+      data: { videoUrl: "/static/b.mp4", storySegmentId: "segment-b" },
+    };
+    const legacyEdge = {
+      id: "legacy-edge",
+      type: "disconnectableEdge",
+      source: "vid-a",
+      target: "vid-b",
+      data: {},
+    };
+
+    useCanvasStore.getState().setCanvasData([group, nodeA, nodeB], [legacyEdge]);
+
+    expect(useCanvasStore.getState().edges).toContainEqual(
+      expect.objectContaining({
+        id: "legacy-edge",
+        type: STORY_CHOICE_EDGE_TYPE,
+        data: expect.objectContaining({ choiceText: "", order: 0 }),
+      }),
+    );
+  });
 });

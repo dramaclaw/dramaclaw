@@ -136,6 +136,12 @@ function nodeHasImageSource(node: CanvasNode): boolean {
   return Boolean(resolveNodeSourceImageUrl(node) || hasString((node.data as { previewImageUrl?: unknown }).previewImageUrl));
 }
 
+function isInteractiveStoryClipNode(node: CanvasNode): boolean {
+  if (node.type !== CANVAS_NODE_TYPES.video) return false;
+  const data = node.data as { storySegmentId?: unknown; storyRole?: unknown };
+  return hasString(data.storySegmentId) || data.storyRole === "start";
+}
+
 function imageModelParameterSchema(): CanvasEditableFieldSchema {
   const snapshot = getFreezoneImageModelsSnapshot();
   return {
@@ -782,9 +788,44 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
       if ((node.data as { isUpscaleNode?: unknown }).isUpscaleNode === true) {
         return videoUpscaleEditableSchema(node);
       }
+      const storyClip = isInteractiveStoryClipNode(node);
       return {
         displayName: { type: "string", label: "显示名称" },
-        prompt: { type: "string", label: "提示词", description: GENERATOR_PROMPT_DESCRIPTION },
+        ...(storyClip
+          ? {
+              narration: {
+                type: "string" as const,
+                label: "剧情内容",
+                current_value:
+                  typeof (node.data as { narration?: unknown }).narration === "string"
+                    ? (node.data as { narration: string }).narration
+                    : "",
+                description:
+                  "互动剧情片段中展示给创作者的剧情正文。用户要求补充、完善或续写该剧情节点时必须更新 narration；它与用于生成视频的 prompt 是两个独立字段，不能只更新 prompt。",
+              },
+              storyProductionNotes: {
+                type: "string" as const,
+                label: "制作备注",
+                current_value:
+                  typeof (node.data as { storyProductionNotes?: unknown }).storyProductionNotes === "string"
+                    ? (node.data as { storyProductionNotes: string }).storyProductionNotes
+                    : "",
+                description:
+                  "供拍摄和视频生产使用的镜头、表演、声音与连续性备注；不要把剧情正文写入此字段。",
+              },
+            }
+          : {}),
+        prompt: {
+          type: "string",
+          label: "提示词",
+          current_value:
+            typeof (node.data as { prompt?: unknown }).prompt === "string"
+              ? (node.data as { prompt: string }).prompt
+              : "",
+          description: storyClip
+            ? `${GENERATOR_PROMPT_DESCRIPTION} This is only the video-generation prompt and does not replace narration. When completing a story clip, update narration separately.`
+            : GENERATOR_PROMPT_DESCRIPTION,
+        },
         genMode: videoGenModeSchema(node),
         model: videoModelSchema(node),
         aspectRatio: videoAspectRatioSchema(node),
@@ -934,6 +975,7 @@ function addChatCommandActions(node: CanvasNode, actions: CanvasNodeActionCatalo
   }
 
   if (canUpdateNodeDataViaChat(node)) {
+    const storyClip = isInteractiveStoryClipNode(node);
     actions.push({
       action: "update_node_data",
       execution: "chat_command",
@@ -941,7 +983,9 @@ function addChatCommandActions(node: CanvasNode, actions: CanvasNodeActionCatalo
       description:
         node.type === CANVAS_NODE_TYPES.beatContext
           ? `更新镜头上下文节点草稿字段。只允许 data 包含 ${BEAT_CONTEXT_AGENT_EDITABLE_FIELDS.join(", ")}；出场身份和出场道具不开放给 agent 编辑。`
-          : "Update editable data fields on this node. Reserved mainline/projection fields are ignored.",
+          : storyClip
+            ? "更新互动剧情片段。补充或完善剧情时必须写 narration（剧情内容）；prompt 只用于视频生成，不能代替 narration。拍摄、表演、声音与连续性说明写入 storyProductionNotes。"
+            : "Update editable data fields on this node. Reserved mainline/projection fields are ignored.",
       parameters: {
         node_id: node.id,
         data: "object",

@@ -1784,6 +1784,48 @@ describe("canvas chat commands", () => {
     expect(textNode?.data).not.toHaveProperty("prompt");
   });
 
+  it("updates story content separately from the video prompt on a story clip", () => {
+    const storyId = useCanvasStore
+      .getState()
+      .addNode(
+        CANVAS_NODE_TYPES.video,
+        { x: 0, y: 0 },
+        {
+          storySegmentId: "segment-story-a",
+          narration: "新增",
+          storyProductionNotes: "",
+          prompt: "旧提示词",
+        },
+      );
+    const envelopes = extractCanvasChatCommandEnvelopes([
+      {
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [
+          {
+            type: "update_node_data",
+            node_id: storyId,
+            data: {
+              narration: "林晚反锁店门，监控屏上的雪花中闪过一张陌生人脸。",
+              storyProductionNotes: "结尾短暂停留在监控画面，制造悬念。",
+              prompt: "林晚反锁便利店门，收拾收银台，监控屏雪花中闪过人脸。",
+            },
+          },
+        ],
+      },
+    ]);
+
+    const result = applyCanvasChatCommands(envelopes);
+    const storyNode = useCanvasStore.getState().nodes.find((node) => node.id === storyId);
+
+    expect(result.errors).toEqual([]);
+    expect(result.applied).toBe(1);
+    expect(storyNode?.data).toMatchObject({
+      narration: "林晚反锁店门，监控屏上的雪花中闪过一张陌生人脸。",
+      storyProductionNotes: "结尾短暂停留在监控画面，制造悬念。",
+      prompt: "林晚反锁便利店门，收拾收银台，监控屏雪花中闪过人脸。",
+    });
+  });
+
   it("rejects incompatible direct downstream node types", () => {
     const imageId = useCanvasStore
       .getState()

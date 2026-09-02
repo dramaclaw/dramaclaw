@@ -18,6 +18,7 @@ import {
   ChevronDown,
   Group,
   Clapperboard,
+  Play,
   Trash2,
 } from 'lucide-react';
 
@@ -96,6 +97,7 @@ export const MultiSelectionToolbar = memo(({
   );
   const deleteNodes = useCanvasStore((state) => state.deleteNodes);
   const groupNodes = useCanvasStore((state) => state.groupNodes);
+  const createStoryGroup = useCanvasStore((state) => state.createStoryGroup);
   const mergeStoryboardGroup = useCanvasStore((state) => state.mergeStoryboardGroup);
 
   const [arrangeMenuOpen, setArrangeMenuOpen] = useState(false);
@@ -132,6 +134,15 @@ export const MultiSelectionToolbar = memo(({
     () =>
       selectedNodes.length <= STORYBOARD_MAX_NODES &&
       selectedNodes.every((node) => STORYBOARD_IMAGE_NODE_TYPES.has(node.type ?? '')),
+    [selectedNodes]
+  );
+
+  // 互动短剧的运行时只编译组内视频节点；在入口处收紧选择条件，避免用户先
+  // 创建一个必然无法试玩的混合组，再从编译错误里猜原因。
+  const canCreateStoryGroup = useMemo(
+    () =>
+      selectedNodes.length >= 2 &&
+      selectedNodes.every((node) => node.type === CANVAS_NODE_TYPES.video),
     [selectedNodes]
   );
 
@@ -396,6 +407,15 @@ export const MultiSelectionToolbar = memo(({
     mergeStoryboardGroup(selectedIds);
   }, [mergeStoryboardGroup, selectedIds]);
 
+  const handleCreateStoryGroup = useCallback(() => {
+    setGroupMenuOpen(false);
+    if (!canCreateStoryGroup) {
+      return;
+    }
+    createStoryGroup(selectedIds);
+    toast.success('已创建互动短剧组：设置起点和选项后即可试玩');
+  }, [canCreateStoryGroup, createStoryGroup, selectedIds]);
+
   useEffect(() => {
     if (!arrangeMenuOpen) {
       return;
@@ -562,7 +582,7 @@ export const MultiSelectionToolbar = memo(({
             </button>
 
             {groupMenuOpen && (
-              <div className="absolute right-0 top-full mt-2 min-w-[160px] overflow-hidden rounded-xl border border-white/10 bg-[#242426]/95 p-1.5 text-text-dark shadow-none backdrop-blur-3xl">
+              <div className="absolute right-0 top-full mt-2 min-w-[200px] overflow-hidden rounded-xl border border-white/10 bg-[#242426]/95 p-1.5 text-text-dark shadow-none backdrop-blur-3xl">
                 <button
                   type="button"
                   className={MULTI_TOOLBAR_MENU_ITEM_CLASS}
@@ -592,6 +612,29 @@ export const MultiSelectionToolbar = memo(({
                   {!canMergeStoryboard ? (
                     <div className="pointer-events-none absolute right-0 top-full z-10 mt-1.5 hidden w-max max-w-[240px] rounded-lg border border-white/10 bg-[#1c1c1e]/95 px-3 py-1.5 text-xs leading-relaxed text-white/80 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl group-hover/sb:block">
                       分镜组仅支持图片节点，且组内节点数量不可超过25个
+                    </div>
+                  ) : null}
+                </div>
+                <div className="group/story relative">
+                  <button
+                    type="button"
+                    // 与分镜组相同，保留 hover 以解释为什么当前选区不能创建。
+                    aria-disabled={!canCreateStoryGroup}
+                    className={`${MULTI_TOOLBAR_MENU_ITEM_CLASS} ${
+                      canCreateStoryGroup ? '' : 'cursor-not-allowed opacity-40'
+                    }`}
+                    onClick={() => {
+                      if (canCreateStoryGroup) {
+                        handleCreateStoryGroup();
+                      }
+                    }}
+                  >
+                    <Play className="h-4 w-4 text-text-muted" />
+                    <span className="whitespace-nowrap">创建互动短剧组</span>
+                  </button>
+                  {!canCreateStoryGroup ? (
+                    <div className="pointer-events-none absolute right-0 top-full z-10 mt-1.5 hidden w-max max-w-[240px] rounded-lg border border-white/10 bg-[#1c1c1e]/95 px-3 py-1.5 text-xs leading-relaxed text-white/80 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl group-hover/story:block">
+                      互动短剧组需要至少两个视频节点
                     </div>
                   ) : null}
                 </div>

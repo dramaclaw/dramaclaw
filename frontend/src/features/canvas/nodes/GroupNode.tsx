@@ -123,6 +123,8 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
           endingFallback: t('canvas.story.endingFallback'),
           restart: t('canvas.story.restart'),
           loadError: t('canvas.story.error'),
+          placeholderBadge: t('canvas.story.placeholderBadge'),
+          placeholderHint: t('canvas.story.placeholderHint'),
         },
       });
       downloadStoryHtml(html, title);
@@ -146,6 +148,7 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
   const fitGroupToChildren = useCanvasStore((state) => state.fitGroupToChildren);
   const reorderStoryboardMember = useCanvasStore((state) => state.reorderStoryboardMember);
   const addStoryboardMembers = useCanvasStore((state) => state.addStoryboardMembers);
+  const addStorySegment = useCanvasStore((state) => state.addStorySegment);
   const deleteNode = useCanvasStore((state) => state.deleteNode);
   const isInteracting = useCanvasStore((state) => state.dragHistorySnapshot !== null);
 
@@ -473,6 +476,17 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
         })}
         rightSlot={isStory ? (
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              className="nodrag flex items-center gap-1.5 rounded px-2.5 py-1 text-base text-white/85 hover:bg-white/10"
+              title={t('canvas.story.addSegment')}
+              onClick={(e) => {
+                e.stopPropagation();
+                addStorySegment(id);
+              }}
+            >
+              <Plus className="h-4 w-4" /> {t('canvas.story.addSegment')}
+            </button>
             <button
               type="button"
               className="nodrag flex items-center gap-1.5 rounded px-2.5 py-1 text-base text-white/85 hover:bg-white/10"

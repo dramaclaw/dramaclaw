@@ -117,6 +117,11 @@ import { applySkillRoleBindingConnection } from '@/features/canvas/domain/skillC
 import { videoReferenceConnectionRejection } from '@/features/canvas/domain/videoReferenceLimits';
 import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
 import { embedStoryboardImageMetadata } from '@/commands/image';
+import {
+  resolveStoryGroupAtCanvasPoint,
+  resolveStoryGroupForNewVideo,
+  storySegmentPositionInGroup,
+} from '@/features/canvas/story/storyClipLayout';
 import { nodeTypes as canvasNodeTypes } from './nodes';
 import { edgeTypes as canvasEdgeTypes } from './edges';
 import { NodeSelectionMenu } from './NodeSelectionMenu';
@@ -1112,10 +1117,10 @@ export function Canvas({
   const applyNodesChange = useCanvasStore((state) => state.onNodesChange);
   const applyEdgesChange = useCanvasStore((state) => state.onEdgesChange);
   const connectNodes = useCanvasStore((state) => state.onConnect);
-  const addStoryChoiceEdge = useCanvasStore((state) => state.addStoryChoiceEdge);
   const replaceEdges = useCanvasStore((state) => state.replaceEdges);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const addNode = useCanvasStore((state) => state.addNode);
+  const addStorySegment = useCanvasStore((state) => state.addStorySegment);
   const addStoryImport = useCanvasStore((state) => state.addStoryImport);
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
@@ -1879,45 +1884,16 @@ export function Canvas({
     [connectSkillRoleBinding],
   );
 
-  /**
-   * 若连线两端均为 videoNode，弹 prompt 建故事选项边并返回 true（调用方应 return）。
-   * 用于统一所有手动连线路径，避免走自定义落点时绕过 handleConnect。
-   */
-  const maybeCreateStoryChoiceEdge = useCallback(
-    (connection: { source: string | null; target: string | null }): boolean => {
-      if (!connection.source || !connection.target) return false;
-      const sourceNode = nodes.find((n) => n.id === connection.source);
-      const targetNode = nodes.find((n) => n.id === connection.target);
-      if (
-        sourceNode?.type === CANVAS_NODE_TYPES.video &&
-        targetNode?.type === CANVAS_NODE_TYPES.video
-      ) {
-        const newId = addStoryChoiceEdge(connection.source, connection.target, '');
-        if (newId) {
-          // 选中新边 → StoryChoiceEdge 在 selected 时打开编辑器,用户直接填文案/条件/效果。
-          useCanvasStore.setState((s) => ({
-            edges: s.edges.map((e) => ({ ...e, selected: e.id === newId })),
-          }));
-          scheduleCanvasPersist(0);
-        }
-        return true;
-      }
-      return false;
-    },
-    [nodes, addStoryChoiceEdge, scheduleCanvasPersist],
-  );
-
   const handleConnect = useCallback(
     (connection: Connection) => {
       if (!canNodeBeManualConnectionSource(connection.source, nodes, connection.target)) {
         return;
       }
-      // videoNode → videoNode 连线：弹 prompt 建故事选项边
-      if (maybeCreateStoryChoiceEdge(connection)) return;
+      // 同一故事组的视频连线由 store 统一转换成剧情选项边；其它节点仍走常规边。
       connectGraphNodes(connection);
       scheduleCanvasPersist(0);
     },
-    [connectGraphNodes, nodes, scheduleCanvasPersist, maybeCreateStoryChoiceEdge]
+    [connectGraphNodes, nodes, scheduleCanvasPersist]
   );
 
   // 3D 世界节点只用一张上游图生成 —— 入边唯一。已有上游时实时拒绝再连入(连线
@@ -2244,14 +2220,29 @@ export function Canvas({
         return false;
       }
 
-      const newNodeId = addNode(
-        pendingNodePlacement.type,
-        reactFlowInstance.screenToFlowPosition({
+      const placementCenter = reactFlowInstance.screenToFlowPosition(clientPosition);
+      const storyGroupId = pendingNodePlacement.type === CANVAS_NODE_TYPES.video
+        ? (
+            resolveStoryGroupAtCanvasPoint(nodes, placementCenter)
+            ?? resolveStoryGroupForNewVideo(nodes, selectedNodeId)
+          )
+        : null;
+      const storyPosition = storyGroupId
+        ? storySegmentPositionInGroup(nodes, storyGroupId, placementCenter)
+        : null;
+      const newNodeId = storyGroupId && storyPosition
+        ? addStorySegment(storyGroupId, {
+            position: storyPosition,
+            data: pendingNodePlacement.initialData as Partial<CanvasNodeData> | undefined,
+          })!
+        : addNode(
+            pendingNodePlacement.type,
+            reactFlowInstance.screenToFlowPosition({
           x: clientPosition.x - NODE_PLACEMENT_PREVIEW_WIDTH / 2,
           y: clientPosition.y - NODE_PLACEMENT_PREVIEW_HEIGHT / 2,
-        }),
-        pendingNodePlacement.initialData,
-      );
+            }),
+            pendingNodePlacement.initialData,
+          );
       setSelectedNode(newNodeId);
       focusNewNodeIfLowZoom(newNodeId);
       if (pendingNodePlacement.skill) {
@@ -2266,11 +2257,14 @@ export function Canvas({
     },
     [
       addNode,
+      addStorySegment,
       bindSingleBeatContextInput,
       focusNewNodeIfLowZoom,
+      nodes,
       pendingNodePlacement,
       reactFlowInstance,
       scheduleCanvasPersist,
+      selectedNodeId,
       setSelectedNode,
       triggerPlacementConfirm,
     ],
@@ -3344,11 +3338,23 @@ export function Canvas({
         return;
       }
 
-      const newNodeId = addNode(type, flowPosition, initialData);
+      const connectedStoryGroupId = type === CANVAS_NODE_TYPES.video && pendingConnectStart
+        ? resolveStoryGroupForNewVideo(nodes, pendingConnectStart.nodeId)
+        : null;
+      const storySegmentId = connectedStoryGroupId
+        ? addStorySegment(connectedStoryGroupId, {
+            position: storySegmentPositionInGroup(nodes, connectedStoryGroupId, flowPosition)
+              ?? undefined,
+            data: initialData as Partial<CanvasNodeData> | undefined,
+          })
+        : null;
+      // 组若在菜单打开期间被移除，退化为普通节点，避免把 null 传入后续连线流程。
+      const newNodeId = storySegmentId ?? addNode(type, flowPosition, initialData);
       finalizeNodeSpawn(newNodeId);
     },
     [
       addNode,
+      addStorySegment,
       finalizeNodeSpawn,
       flowPosition,
       menuAllowedTypes,
@@ -3409,12 +3415,32 @@ export function Canvas({
 
   const handleQuickAddNode = useCallback(
     (type: CanvasNodeType) => {
+      if (type === CANVAS_NODE_TYPES.video) {
+        const storyGroupId = resolveStoryGroupForNewVideo(nodes, selectedNodeId);
+        if (storyGroupId) {
+          const storySegmentId = addStorySegment(storyGroupId);
+          if (storySegmentId) {
+            focusNewNodeIfLowZoom(storySegmentId);
+            scheduleCanvasPersist(0);
+            return;
+          }
+        }
+      }
       const newNodeId = addNode(type, spawnAtViewportCenter());
       setSelectedNode(newNodeId);
       focusNewNodeIfLowZoom(newNodeId);
       scheduleCanvasPersist(0);
     },
-    [addNode, focusNewNodeIfLowZoom, scheduleCanvasPersist, setSelectedNode, spawnAtViewportCenter],
+    [
+      addNode,
+      addStorySegment,
+      focusNewNodeIfLowZoom,
+      nodes,
+      scheduleCanvasPersist,
+      selectedNodeId,
+      setSelectedNode,
+      spawnAtViewportCenter,
+    ],
   );
 
   const importStoryFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -4256,10 +4282,8 @@ export function Canvas({
                 }) ?? 'target'
               : pendingConnectStart.handleId ?? 'target';
           const conn = { source: sourceNode.id, target: targetNode.id, sourceHandle, targetHandle };
-          if (!maybeCreateStoryChoiceEdge(conn)) {
-            connectGraphNodes(conn);
-            scheduleCanvasPersist(0);
-          }
+          connectGraphNodes(conn);
+          scheduleCanvasPersist(0);
           setPendingConnectStart(null);
           setPreviewConnectionVisual(null);
           return;
@@ -4338,7 +4362,6 @@ export function Canvas({
     [
       connectGraphNodes,
       manualDropReferenceRejection,
-      maybeCreateStoryChoiceEdge,
       nodes,
       pendingConnectStart,
       reactFlowInstance,
@@ -4628,10 +4651,8 @@ export function Canvas({
                 }) ?? 'target'
               : pending.handleId ?? 'target';
           const conn = { source: sourceNode.id, target: targetNode.id, sourceHandle, targetHandle };
-          if (!maybeCreateStoryChoiceEdge(conn)) {
-            connectGraphNodes(conn);
-            scheduleCanvasPersist(0);
-          }
+          connectGraphNodes(conn);
+          scheduleCanvasPersist(0);
           setPendingConnectStart(null);
           setPreviewConnectionVisual(null);
           return;
@@ -4677,7 +4698,6 @@ export function Canvas({
     [
       connectGraphNodes,
       manualDropReferenceRejection,
-      maybeCreateStoryChoiceEdge,
       nodes,
       reactFlowInstance,
       scheduleCanvasPersist,

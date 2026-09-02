@@ -7,6 +7,8 @@ import pytest
 
 from novelvideo.freezone import canvas_store
 from novelvideo.interactive_story.canvas_mapper import (
+    CLIP_HEIGHT,
+    CLIP_WIDTH,
     project_story_to_canvas,
     story_from_canvas,
 )
@@ -77,6 +79,37 @@ def test_mapper_round_trip_preserves_domain_ids_conditions_and_effects(
     ]
     assert restored.choices[0].effects[0].variable == "courage"
     assert restored.choices[2].condition == story.choices[2].condition
+
+
+def test_mapper_projects_composite_story_clips_without_overlap(
+    story: StoryDraftV1,
+) -> None:
+    projection = project_story_to_canvas(story)
+    clips = [node for node in projection.nodes if node["type"] == "videoNode"]
+    group = next(node for node in projection.nodes if node["id"] == projection.group_id)
+
+    assert clips
+    assert all(
+        node["width"] == CLIP_WIDTH and node["height"] == CLIP_HEIGHT for node in clips
+    )
+    for index, left in enumerate(clips):
+        for right in clips[index + 1 :]:
+            left_x, left_y = left["position"]["x"], left["position"]["y"]
+            right_x, right_y = right["position"]["x"], right["position"]["y"]
+            overlaps = (
+                left_x < right_x + CLIP_WIDTH
+                and left_x + CLIP_WIDTH > right_x
+                and left_y < right_y + CLIP_HEIGHT
+                and left_y + CLIP_HEIGHT > right_y
+            )
+            assert not overlaps
+
+    assert group["width"] >= max(
+        node["position"]["x"] + CLIP_WIDTH + 60 for node in clips
+    )
+    assert group["height"] >= max(
+        node["position"]["y"] + CLIP_HEIGHT + 60 for node in clips
+    )
 
 
 def test_create_appends_story_atomically_and_get_reads_canvas_revision(

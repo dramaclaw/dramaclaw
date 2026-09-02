@@ -24,8 +24,12 @@ GROUP_NODE_TYPE = "groupNode"
 VIDEO_NODE_TYPE = "videoNode"
 STORY_CHOICE_EDGE_TYPE = "storyChoiceEdge"
 GROUP_PADDING = 60
-CLIP_WIDTH = 460
-CLIP_HEIGHT = 300
+# Story clips render as a media player plus a persistent narrative side panel in
+# the canvas.  These dimensions must stay aligned with the frontend's
+# STORY_CLIP_NODE_WIDTH/HEIGHT: the old 460x300 projection made the frontend
+# expand every clip after placement, so adjacent generated clips overlapped.
+CLIP_WIDTH = 680
+CLIP_HEIGHT = 380
 COLUMN_GAP = 160
 ROW_GAP = 120
 GROUP_COLOR = "#3b82f6"

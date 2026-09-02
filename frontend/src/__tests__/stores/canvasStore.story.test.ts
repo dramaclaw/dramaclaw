@@ -7,8 +7,9 @@ function seedTwoVideos() {
   const store = useCanvasStore.getState();
   store.setCanvasData(
     [
-      { id: 'v1', type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 }, data: { videoUrl: 'a.mp4', aspectRatio: '16:9' } },
-      { id: 'v2', type: CANVAS_NODE_TYPES.video, position: { x: 400, y: 0 }, data: { videoUrl: 'b.mp4', aspectRatio: '16:9' } },
+      { id: 'story', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { storyGroup: true } },
+      { id: 'v1', type: CANVAS_NODE_TYPES.video, parentId: 'story', position: { x: 0, y: 0 }, data: { videoUrl: 'a.mp4', aspectRatio: '16:9' } },
+      { id: 'v2', type: CANVAS_NODE_TYPES.video, parentId: 'story', position: { x: 400, y: 0 }, data: { videoUrl: 'b.mp4', aspectRatio: '16:9' } },
     ] as never,
     [],
   );
@@ -28,9 +29,10 @@ describe('canvasStore story actions', () => {
   it('同一源的多条选项边 order 递增', () => {
     useCanvasStore.getState().setCanvasData(
       [
-        { id: 'v1', type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 }, data: { videoUrl: 'a.mp4', aspectRatio: '16:9' } },
-        { id: 'v2', type: CANVAS_NODE_TYPES.video, position: { x: 400, y: 0 }, data: { videoUrl: 'b.mp4', aspectRatio: '16:9' } },
-        { id: 'v3', type: CANVAS_NODE_TYPES.video, position: { x: 400, y: 300 }, data: { videoUrl: 'c.mp4', aspectRatio: '16:9' } },
+        { id: 'story', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { storyGroup: true } },
+        { id: 'v1', type: CANVAS_NODE_TYPES.video, parentId: 'story', position: { x: 0, y: 0 }, data: { videoUrl: 'a.mp4', aspectRatio: '16:9' } },
+        { id: 'v2', type: CANVAS_NODE_TYPES.video, parentId: 'story', position: { x: 400, y: 0 }, data: { videoUrl: 'b.mp4', aspectRatio: '16:9' } },
+        { id: 'v3', type: CANVAS_NODE_TYPES.video, parentId: 'story', position: { x: 400, y: 300 }, data: { videoUrl: 'c.mp4', aspectRatio: '16:9' } },
       ] as never,
       [],
     );
@@ -50,6 +52,19 @@ describe('canvasStore story actions', () => {
   it('addStoryChoiceEdge target 不存在时返回 null', () => {
     const id = useCanvasStore.getState().addStoryChoiceEdge('v1', 'no-such-node', '幽灵边');
     expect(id).toBeNull();
+    expect(useCanvasStore.getState().edges).toHaveLength(0);
+  });
+
+  it('addStoryChoiceEdge 拒绝不在同一故事组里的普通视频', () => {
+    useCanvasStore.getState().setCanvasData(
+      [
+        { id: 'v1', type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 }, data: { videoUrl: 'a.mp4' } },
+        { id: 'v2', type: CANVAS_NODE_TYPES.video, position: { x: 400, y: 0 }, data: { videoUrl: 'b.mp4' } },
+      ] as never,
+      [],
+    );
+
+    expect(useCanvasStore.getState().addStoryChoiceEdge('v1', 'v2', '不应创建')).toBeNull();
     expect(useCanvasStore.getState().edges).toHaveLength(0);
   });
 

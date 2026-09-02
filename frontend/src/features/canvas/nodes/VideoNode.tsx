@@ -229,6 +229,12 @@ import { readUrl } from "@/lib/url-params";
 import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
 import { CreditCostPill } from "@/components/credits/credit-visual";
 import { VideoOperationsPanel } from "@/features/canvas/nodes/VideoOperationsPanel";
+import { StoryClipNarrativePanel } from "@/features/canvas/nodes/StoryClipNarrativePanel";
+import {
+  STORY_CLIP_DETAILS_WIDTH_PERCENT,
+  STORY_CLIP_MIN_HEIGHT,
+  STORY_CLIP_MIN_WIDTH,
+} from "@/features/canvas/story/storyClipLayout";
 
 type VideoNodeProps = NodeProps & {
   id: string;
@@ -2774,6 +2780,15 @@ export const VideoNode = memo(
         ? CANVAS_NODE_INPUT_BODY_SELECTED_FRAME_CLASS
         : CANVAS_NODE_INPUT_BODY_FRAME_CLASS
       : cardToneClass;
+    const storyMediaState = isUploading
+      ? "uploading"
+      : isGenerating
+        ? "generating"
+        : hasGenerationError
+          ? "failed"
+          : videoSource
+            ? "ready"
+            : "missing";
     const showVideoOpsPanel =
       selected &&
       !isBoxSelecting &&
@@ -2964,8 +2979,8 @@ export const VideoNode = memo(
         />
 
         <NodeResizeHandle
-          minWidth={MIN_WIDTH}
-          minHeight={MIN_HEIGHT}
+          minWidth={storyPlayerMode ? STORY_CLIP_MIN_WIDTH : MIN_WIDTH}
+          minHeight={storyPlayerMode ? STORY_CLIP_MIN_HEIGHT : MIN_HEIGHT}
           maxWidth={MAX_WIDTH}
           maxHeight={MAX_HEIGHT}
           keepAspectRatio
@@ -2989,10 +3004,11 @@ export const VideoNode = memo(
         )}
 
         <div
-          className={`relative flex h-full w-full items-center justify-center ${videoSource ? "overflow-hidden" : "overflow-visible"} rounded-[var(--node-radius)] border ${bodySurfaceClass} transition-colors ${bodyFrameClass} ${
+          className={`relative flex h-full w-full items-center justify-center ${videoSource || storyPlayerMode ? "overflow-hidden" : "overflow-visible"} rounded-[var(--node-radius)] border ${bodySurfaceClass} transition-colors ${bodyFrameClass} ${
             // 画册展开时藏起节点本体——半透明的画册容器盖不严，底下的视频会透出来。
             albumExpanded && hasAlbum ? "invisible" : ""
           }`}
+          style={storyPlayerMode ? { paddingRight: `${STORY_CLIP_DETAILS_WIDTH_PERCENT}%` } : undefined}
         >
           {/* 生成/上传中优先显示 loading：原地重新生成时 videoUrl 仍是上一条结果，
               若不加这层 guard，旧视频会一直占位、isGenerating 分支永远到不了。
@@ -3156,6 +3172,13 @@ export const VideoNode = memo(
                 {t("node.videoUpscale.placeholder")}
               </span>
             </div>
+          ) : storyPlayerMode ? (
+            <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-6 text-text-muted/75">
+              <Film className="h-8 w-8 opacity-60" />
+              <span className="text-center text-[12px] font-medium leading-5">
+                {t("canvas.story.mediaState.missing")}
+              </span>
+            </div>
           ) : data.narration || data.videoHint ? (
             // 导入互动影游的占位片段：无视频时展示旁白 + 期望文件名 + 待补提示。
             // 旁白双击就地编辑（与节点标题一致），写回 narration。
@@ -3270,6 +3293,7 @@ export const VideoNode = memo(
                 videoEl={videoEl}
                 isCapturingFrame={isCapturingFrame}
                 onCapture={handleCaptureFrame}
+                rightInsetPercent={storyPlayerMode ? STORY_CLIP_DETAILS_WIDTH_PERCENT : 0}
               />
             )}
 
@@ -3328,9 +3352,16 @@ export const VideoNode = memo(
               }}
               onPointerDown={(event) => event.stopPropagation()}
               title={t("node.videoNode.replace")}
-              className={`nodrag absolute top-2 z-10 hidden h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-black/55 text-white/90 shadow-lg backdrop-blur-sm transition-colors hover:bg-black/80 hover:text-white group-hover:inline-flex ${
-                hasAlbum ? "right-12" : "right-2"
-              }`}
+              className="nodrag absolute top-2 z-10 hidden h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-black/55 text-white/90 shadow-lg backdrop-blur-sm transition-colors hover:bg-black/80 hover:text-white group-hover:inline-flex"
+              style={{
+                right: storyPlayerMode
+                  ? hasAlbum
+                    ? `calc(${STORY_CLIP_DETAILS_WIDTH_PERCENT}% + 48px)`
+                    : `calc(${STORY_CLIP_DETAILS_WIDTH_PERCENT}% + 8px)`
+                  : hasAlbum
+                    ? 48
+                    : 8,
+              }}
             >
               <ShareIcon className="h-3.5 w-3.5" />
             </button>
@@ -3346,7 +3377,12 @@ export const VideoNode = memo(
               }}
               onPointerDown={(event) => event.stopPropagation()}
               title={`展开 ${albumTotalSlots} 条生成结果`}
-              className="nodrag group/albumpill absolute right-2 top-2 z-10 hidden items-center gap-1 rounded-full bg-black/65 px-2.5 py-1 text-[12px] font-medium tabular-nums text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black/85 group-hover:inline-flex"
+              className="nodrag group/albumpill absolute top-2 z-10 hidden items-center gap-1 rounded-full bg-black/65 px-2.5 py-1 text-[12px] font-medium tabular-nums text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black/85 group-hover:inline-flex"
+              style={{
+                right: storyPlayerMode
+                  ? `calc(${STORY_CLIP_DETAILS_WIDTH_PERCENT}% + 8px)`
+                  : 8,
+              }}
             >
               {albumPendingCount > 0
                 ? `${albumUrls.length}/${albumPendingTotal}`
@@ -3380,6 +3416,20 @@ export const VideoNode = memo(
               }}
             />
           )}
+
+          {storyPlayerMode ? (
+            <StoryClipNarrativePanel
+              narration={typeof data.narration === 'string' ? data.narration : ''}
+              productionNotes={
+                typeof data.storyProductionNotes === 'string' ? data.storyProductionNotes : ''
+              }
+              videoHint={typeof data.videoHint === 'string' ? data.videoHint : undefined}
+              importNeedsReview={data.importNeedsReview}
+              importReviewNote={data.importReviewNote}
+              mediaState={storyMediaState}
+              onChange={(patch) => updateNodeData(id, patch)}
+            />
+          ) : null}
         </div>
 
         {/* 展开的画册宫格：与图片节点同构——「组」式轮廓 + 2 列宫格；点视频设为
@@ -3659,6 +3709,8 @@ interface VideoPlayerControlsProps {
   videoEl: HTMLVideoElement | null;
   isCapturingFrame: boolean;
   onCapture: (mode: "first" | "last" | "current") => void;
+  /** 故事片段右侧的剧情栏宽度；控制条只覆盖左侧媒体栏。 */
+  rightInsetPercent?: number;
 }
 
 function formatTime(seconds: number): string {
@@ -3673,6 +3725,7 @@ function VideoPlayerControls({
   videoEl,
   isCapturingFrame,
   onCapture,
+  rightInsetPercent = 0,
 }: VideoPlayerControlsProps) {
   const { t } = useTranslation();
   const [isPlaying, setIsPlaying] = useState(false);
@@ -3744,7 +3797,10 @@ function VideoPlayerControls({
   const sliderBg = `linear-gradient(to right, rgb(var(--accent-rgb)) 0%, rgb(var(--accent-rgb)) ${progressPct}%, rgba(255,255,255,0.18) ${progressPct}%, rgba(255,255,255,0.18) 100%)`;
 
   return (
-    <div className="nodrag absolute inset-x-0 bottom-0 z-20 flex items-center gap-2.5 bg-gradient-to-t from-black/75 via-black/45 to-transparent px-3 pb-2 pt-6 text-text-dark">
+    <div
+      className="nodrag absolute bottom-0 left-0 z-20 flex items-center gap-2.5 bg-gradient-to-t from-black/75 via-black/45 to-transparent px-3 pb-2 pt-6 text-text-dark"
+      style={{ right: `${rightInsetPercent}%` }}
+    >
       <button
         type="button"
         onClick={(event) => {
