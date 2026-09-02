@@ -11,6 +11,7 @@ import { ArrowRight, Eye, EyeOff } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
 import { RegionSelector } from "@/components/login/region-selector";
 import { clusterConfig } from "@/lib/cluster-config";
+import { phoneOtpEntryVisible } from "@/lib/runtime-config";
 import { useRegionStore } from "@/stores/region-store";
 import {
   AuthApiError,
@@ -32,7 +33,19 @@ export function LoginCard() {
   const { t } = useTranslation();
   const regionId = useRegionStore((s) => s.selectedRegionId);
   const needsRegion = clusterConfig.mode === "multi-region" && !regionId;
-  const [mode, setMode] = useState<LoginMode>("otp");
+  const otpEntryVisible = phoneOtpEntryVisible();
+  const [mode, setMode] = useState<LoginMode>(() =>
+    otpEntryVisible ? "otp" : "password",
+  );
+
+  if (!otpEntryVisible) {
+    return (
+      <div className={styles.card}>
+        <RegionSelector />
+        <PasswordLoginForm needsRegion={needsRegion} />
+      </div>
+    );
+  }
 
   return (
     <div className={styles.card}>

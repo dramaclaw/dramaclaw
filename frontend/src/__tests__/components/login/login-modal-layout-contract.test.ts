@@ -54,6 +54,8 @@ describe("login modal layout contract", () => {
 
   it("explains that OTP login creates an account without a separate application", () => {
     expect(modal).toContain('t("auth.modal.otpRegistration")');
+    expect(modal).toContain("phoneOtpEntryVisible()");
+    expect(modal).toMatch(/otpEntryVisible\s*\?\s*\([\s\S]*?loginApplyRow/);
     expect(modal).not.toContain("businessWechatQrUrl");
     expect(modal).not.toContain('role="tooltip"');
   });

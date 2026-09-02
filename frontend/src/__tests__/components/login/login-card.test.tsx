@@ -10,6 +10,7 @@ const login = vi.hoisted(() => vi.fn());
 const loginWithOtp = vi.hoisted(() => vi.fn());
 const requestOtp = vi.hoisted(() => vi.fn());
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+const otpEntryVisible = vi.hoisted(() => vi.fn(() => true));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
 vi.mock("sonner", () => ({ toast }));
@@ -17,6 +18,7 @@ vi.mock("@/components/login/region-selector", () => ({ RegionSelector: () => nul
 vi.mock("@/lib/cluster-config", () => ({
   clusterConfig: { mode: "none", regions: [] },
 }));
+vi.mock("@/lib/runtime-config", () => ({ phoneOtpEntryVisible: otpEntryVisible }));
 vi.mock("@/stores/region-store", () => ({
   useRegionStore: (selector: (state: { selectedRegionId: null }) => unknown) =>
     selector({ selectedRegionId: null }),
@@ -48,6 +50,7 @@ describe("LoginCard", () => {
     requestOtp.mockReset();
     toast.success.mockReset();
     toast.error.mockReset();
+    otpEntryVisible.mockReturnValue(true);
   });
 
   it("uses OTP as the default sign-in path and completes auto-registration", async () => {
@@ -102,5 +105,26 @@ describe("LoginCard", () => {
 
     await waitFor(() => expect(login).toHaveBeenCalledWith("13800138000", "password123"));
     expect(navigate).toHaveBeenCalledWith({ to: "/", replace: true });
+  });
+
+  it("shows only account/password login while the OTP entry is hidden", async () => {
+    otpEntryVisible.mockReturnValue(false);
+    login.mockResolvedValue(undefined);
+    render(<LoginCard />);
+
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByLabelText("auth.otp.phone")).toBeNull();
+    expect(screen.getByLabelText("auth.accountOrPhone")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("auth.accountOrPhone"), {
+      target: { value: "legacy-account" },
+    });
+    fireEvent.change(screen.getByLabelText("auth.password"), {
+      target: { value: "password123" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "auth.loginButton" }));
+
+    await waitFor(() => expect(login).toHaveBeenCalledWith("legacy-account", "password123"));
+    expect(requestOtp).not.toHaveBeenCalled();
   });
 });

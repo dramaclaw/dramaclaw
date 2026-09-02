@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
+import { phoneOtpEntryVisible } from "@/lib/runtime-config";
 import { loginModalShowcaseVideo } from "./cinematic/media";
 import { LoginCard } from "./login-card";
 import styles from "./login.module.css";
@@ -17,6 +18,7 @@ type LoginModalProps = {
 export function LoginModal({ open, onClose }: LoginModalProps) {
   const { t } = useTranslation();
   const reducedMotion = useReducedMotion();
+  const otpEntryVisible = phoneOtpEntryVisible();
 
   useEffect(() => {
     if (!open) return;
@@ -92,9 +94,11 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
 
                 <LoginCard />
 
-                <div className={styles.loginApplyRow}>
-                  <span>{t("auth.modal.otpRegistration")}</span>
-                </div>
+                {otpEntryVisible ? (
+                  <div className={styles.loginApplyRow}>
+                    <span>{t("auth.modal.otpRegistration")}</span>
+                  </div>
+                ) : null}
               </div>
             </section>
           </motion.div>
