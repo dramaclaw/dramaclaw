@@ -8,8 +8,14 @@ import {
   aspectRatio,
   clampAperture,
   clampFocalMm,
+  PREVIZ_APERTURE_STOPS,
+  PREVIZ_FOCAL_STOPS,
+  depthOfFieldClass,
+  focalClass,
   focalFromHorizontalFovDeg,
   horizontalFovDeg,
+  sensorVerticalFovDeg,
+  stepStop,
   verticalFovDeg,
 } from "@/features/previz/domain/camera";
 import type { OutputAspect } from "@/features/previz/domain/scene";
@@ -113,5 +119,86 @@ describe("output sizes", () => {
   it("keeps both sensors' physical dimensions", () => {
     expect(PREVIZ_SENSOR_MM.ff).toEqual({ width: 36, height: 24 });
     expect(PREVIZ_SENSOR_MM.s35).toEqual({ width: 24.89, height: 18.66 });
+  });
+});
+
+describe("lens stops and readouts", () => {
+  it("reports the angle of view printed on a lens", () => {
+    // 全画幅成像面高 24 mm：2·atan(12/50) ≈ 26.99°，四舍五入就是镜头表上的 27.0°。
+    expect(sensorVerticalFovDeg(50, "ff")).toBeCloseTo(26.991, 3);
+    // Super 35 更小，同一支 50 mm 只有 21.1°。
+    expect(sensorVerticalFovDeg(50, "s35")).toBeCloseTo(21.1397, 3);
+  });
+
+  it("keeps every focal stop's readout on the documented value", () => {
+    // 这张表就是创建对话框里「上一档 / 下一档」走过的全部读数，逐档钉死。
+    const expected: Record<number, string> = {
+      14: "81.2",
+      18: "67.4",
+      24: "53.1",
+      35: "37.8",
+      50: "27.0",
+      85: "16.1",
+      135: "10.2",
+      200: "6.9",
+    };
+    for (const focal of PREVIZ_FOCAL_STOPS) {
+      expect(sensorVerticalFovDeg(focal, "ff").toFixed(1)).toBe(expected[focal]);
+    }
+  });
+
+  it("does not follow the output aspect the way the render fov does", () => {
+    // 两者只在 3:2 附近相等。混用的后果是界面读数与实际取景对不上，所以这里钉一条
+    // 反向断言：16:9 出片时 three 拿到的垂直角比镜头自身的纵向角小得多。
+    expect(verticalFovDeg(50, "ff", "16:9")).toBeLessThan(sensorVerticalFovDeg(50, "ff"));
+    expect(verticalFovDeg(50, "ff", "9:16")).toBeGreaterThan(sensorVerticalFovDeg(50, "ff"));
+  });
+
+  it("classifies focal lengths and apertures for the readout labels", () => {
+    expect(PREVIZ_FOCAL_STOPS.map(focalClass)).toEqual([
+      "ultrawide",
+      "ultrawide",
+      "wide",
+      "standard",
+      "standard",
+      "teleShort",
+      "tele",
+      "tele",
+    ]);
+    expect(PREVIZ_APERTURE_STOPS.map(depthOfFieldClass)).toEqual([
+      "shallow",
+      "shallow",
+      "standard",
+      "standard",
+      "standard",
+      "deep",
+      "deep",
+      "deep",
+      "deep",
+    ]);
+  });
+
+  it("classifies hand-typed values between two stops", () => {
+    // 属性面板允许敲任意值，分类不能只认档位表上的那几个数。
+    expect(focalClass(63)).toBe("standard");
+    expect(focalClass(19.9)).toBe("ultrawide");
+    expect(depthOfFieldClass(3.5)).toBe("standard");
+    expect(depthOfFieldClass(6)).toBe("deep");
+  });
+
+  it("walks the stop table one step at a time and stops at both ends", () => {
+    expect(stepStop(PREVIZ_FOCAL_STOPS, 50, 1)).toBe(85);
+    expect(stepStop(PREVIZ_FOCAL_STOPS, 50, -1)).toBe(35);
+    expect(stepStop(PREVIZ_FOCAL_STOPS, 14, -1)).toBe(14);
+    expect(stepStop(PREVIZ_FOCAL_STOPS, 200, 1)).toBe(200);
+    expect(stepStop(PREVIZ_APERTURE_STOPS, 2.8, 1)).toBe(4);
+  });
+
+  it("snaps a value that is not on the table to the nearest stop first", () => {
+    // 63 mm 离 50 更近（13）than 85（22），所以「上一档」是 35 而不是 50。
+    expect(stepStop(PREVIZ_FOCAL_STOPS, 63, -1)).toBe(35);
+    expect(stepStop(PREVIZ_FOCAL_STOPS, 63, 1)).toBe(85);
+    // 非有限值没有「最近的一档」，落到首档再挪。
+    expect(stepStop(PREVIZ_FOCAL_STOPS, Number.NaN, 1)).toBe(18);
   });
 });
