@@ -21,9 +21,15 @@ import { uploadFreezoneImage } from "@/api/ops";
 import { publishCapture } from "./capture/publishCapture";
 import { PrevizRenderer } from "./engine/PrevizRenderer";
 import type { GizmoMode } from "./engine/gizmo";
+import {
+  cameraDraftOverrides,
+  type PrevizCameraDraft,
+  type PrevizCameraPlacement,
+} from "./domain/cameraDraft";
 import { canAddObject } from "./domain/limits";
 import { uploadPrevizProp } from "./propAsset";
 import { usePrevizStore } from "./store";
+import { PrevizCameraCreateDialog } from "./ui/PrevizCameraCreateDialog";
 import { PrevizClipInspector } from "./ui/PrevizClipInspector";
 import { PrevizInspector } from "./ui/PrevizInspector";
 import { PrevizLayerPanel } from "./ui/PrevizLayerPanel";
@@ -32,6 +38,7 @@ import { PrevizToolbar } from "./ui/PrevizToolbar";
 import { PrevizViewportHud } from "./ui/PrevizViewportHud";
 import type { PrevizTool } from "./ui/PrevizViewportHud";
 import type { PrevizObjectKind, PrevizScene, Vec3 } from "./domain/scene";
+import { PREVIZ_DEFAULT_VIEW } from "./domain/view";
 
 interface PrevizEditorProps {
   open: boolean;
@@ -82,6 +89,11 @@ export function PrevizEditor({
   /** 正在画的那一笔，世界坐标。null 表示画笔没按下。 */
   const stroke = useRef<Vec3[] | null>(null);
   const [capturing, setCapturing] = useState(false);
+  /**
+   * 机位创建对话框打开时，锁着的那一份导演视角。存下来而不是每帧现取：对话框开着时
+   * 视口仍能被轨道拖动（预览渲染本身就会重画视口），现取的话用户拖一下取景就飘了。
+   */
+  const [cameraPose, setCameraPose] = useState<PrevizCameraPlacement | null>(null);
   const pointerDownAt = useRef<{ x: number; y: number } | null>(null);
 
   const scene = usePrevizStore((state) => state.scene);
@@ -224,10 +236,34 @@ export function PrevizEditor({
 
   const handleAdd = useCallback(
     (kind: PrevizObjectKind) => {
+      // 机位不直接建：先开创建对话框，让用户定焦距、画幅与朝向。上限在开框前就查，
+      // 不然填完一屏参数再告诉人家建不了。
+      if (kind === "camera") {
+        if (!canAddObject(usePrevizStore.getState().scene, "camera")) {
+          toast.error(t("previz.editor.limitReached"));
+          return;
+        }
+        setCameraPose(renderer?.viewPose() ?? PREVIZ_DEFAULT_VIEW);
+        return;
+      }
       const id = addObject(kind);
       if (!id) toast.error(t("previz.editor.limitReached"));
     },
-    [addObject, t],
+    [addObject, renderer, t],
+  );
+
+  const handleCreateCamera = useCallback(
+    (draft: PrevizCameraDraft) => {
+      setCameraPose(null);
+      const id = addObject("camera", cameraDraftOverrides(draft));
+      if (!id) {
+        toast.error(t("previz.editor.limitReached"));
+        return;
+      }
+      // 建完把监看切过去：用户刚定完这台的取景，右下角还盯着上一台没有道理。
+      setActiveCamera(id);
+    },
+    [addObject, setActiveCamera, t],
   );
 
   const handleImportProp = useCallback(
@@ -482,6 +518,21 @@ export function PrevizEditor({
             >
               <X className="h-5 w-5" />
             </Button>
+
+            {/*
+              铺在视口上而不是再套一层 base-ui Dialog：编辑器本身已经是个全屏 Dialog，
+              嵌套 Dialog 会把焦点陷阱和 Esc 各自劫持一遍，Esc 一按连编辑器一起关掉。
+            */}
+            <PrevizCameraCreateDialog
+              open={Boolean(cameraPose)}
+              viewPose={cameraPose ?? PREVIZ_DEFAULT_VIEW}
+              outputAspect={scene.settings.outputAspect}
+              onRenderPreview={(previewCanvas, draft) => {
+                renderer?.renderCameraPreview(previewCanvas, draft);
+              }}
+              onCreate={handleCreateCamera}
+              onClose={() => setCameraPose(null)}
+            />
           </div>
 
           <PrevizLayerPanel

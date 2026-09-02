@@ -25,6 +25,8 @@ const capture = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
 const setFrame = vi.fn();
 const setSelectedClip = vi.fn();
 const groundPointAt = vi.fn((): Vec3 | null => [0, 0, 0]);
+const viewPose = vi.fn(() => ({ position: [6, 4, 8] as Vec3, target: [0, 1, 0] as Vec3 }));
+const renderCameraPreview = vi.fn();
 
 /** 每条用例一份全新的假渲染器，免得 onTransformCommit 在用例之间串。 */
 function fakeRenderer() {
@@ -43,6 +45,8 @@ function fakeRenderer() {
     setFrame,
     setSelectedClip,
     groundPointAt,
+    viewPose,
+    renderCameraPreview,
     onTransformCommit: null as
       | ((objectId: string, transform: unknown) => void)
       | null,
@@ -205,10 +209,62 @@ describe("PrevizEditor", () => {
 
     await user.click(screen.getByRole("button", { name: "previz.toolbar.add.camera" }));
 
+    // 机位不是点一下就建：先开创建对话框，让用户定焦距、画幅与朝向。
+    expect(screen.getByRole("dialog", { name: "previz.cameraCreate.title" })).toBeInTheDocument();
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "previz.cameraCreate.submit" }));
+
     const state = usePrevizStore.getState();
     expect(state.scene.objects).toHaveLength(1);
+    const created = state.scene.objects[0]!;
     // 新建即选中：否则用户建完还得自己去右边点一下才能改属性。
-    expect(state.selectedObjectId).toBe(state.scene.objects[0]!.id);
+    expect(state.selectedObjectId).toBe(created.id);
+    // 监看也切过去，不然建完机位右下角还盯着上一台。
+    expect(state.activeCameraId).toBe(created.id);
+    // 站位与朝向从导演视角来：视角 [6,4,8] 看向 [0,1,0]，往前挪 20% 落在 [4.8, 3.4, 6.4]。
+    expect(created.transform.position[0]).toBeCloseTo(4.8, 6);
+    expect(created.transform.rotation[1]).toBeCloseTo(36.9, 6);
+    // 对话框关掉了，不会挡着刚建好的机位。
+    expect(screen.queryByRole("dialog", { name: "previz.cameraCreate.title" })).toBeNull();
+  });
+
+  it("closes the camera dialog without creating anything", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.camera" }));
+    await user.click(screen.getByRole("button", { name: "previz.cameraCreate.close" }));
+
+    expect(screen.queryByRole("dialog", { name: "previz.cameraCreate.title" })).toBeNull();
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+  });
+
+  it("draws the create dialog preview through the renderer", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.camera" }));
+
+    expect(renderCameraPreview).toHaveBeenCalled();
+    const call = renderCameraPreview.mock.calls[renderCameraPreview.mock.calls.length - 1];
+    expect(call?.[0]).toBe(screen.getByTestId("camera-create-preview"));
   });
 
   it("routes a view button to the renderer", async () => {
