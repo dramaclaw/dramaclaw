@@ -77,6 +77,31 @@ def _newer_bundled_catalog_version(offset: int = 1) -> str:
     return ".".join(parts)
 
 
+def test_bundled_catalog_includes_seedance_25_capabilities():
+    bundled = json.loads(
+        Path(model_gateway_settings.__file__)
+        .with_name("official_media_models.json")
+        .read_text(encoding="utf-8")
+    )
+
+    model = bundled["mediaModels"]["seedance-2.5"]
+    assert model["upstreamModel"] == "seedance-2.5"
+    assert model["mediaType"] == "video"
+    assert model["config"]["supportedModes"] == [
+        "text_to_video",
+        "image_reference",
+        "all_reference",
+        "video_edit",
+        "first_last_frame",
+    ]
+    assert model["config"]["referenceImageMax"] == 30
+    assert model["config"]["referenceVideoMax"] == 10
+    assert model["config"]["referenceAudioMax"] == 10
+    assert model["config"]["maxDuration"] == 30
+    assert model["config"]["referenceVideoTotalMaxSeconds"] == 30
+    assert model["config"]["referenceAudioTotalMaxSeconds"] == 30
+
+
 def test_generic_comfyui_i2v_defaults_to_widescreen():
     config = model_gateway._default_comfyui_media_model_config("wan-i2v")
 
@@ -3324,7 +3349,7 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     videos = get_official_media_model_catalog("video")
 
     assert len(images) == 6
-    assert len(videos) == 10
+    assert len(videos) == 11
     assert [entry["id"] for entry in videos[:2]] == [
         "wan3.0-video-prime",
         "wan3.0-video",
@@ -3333,6 +3358,10 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     assert wan["referenceFileMax"] == 1
     assert wan["referenceLinkMax"] == 1
     assert "pdf" in wan["referenceFileTypes"]
+    seedance_25 = next(entry for entry in videos if entry["id"] == "seedance-2.5")
+    assert seedance_25["apiModel"] == "newapi_seedance-2.5"
+    assert seedance_25["resolutionOptions"] == ["480p", "720p", "1080p"]
+    assert seedance_25["ratioOptions"][-1] == "auto"
     seedream = next(entry for entry in images if entry["id"] == "seedream-5.0-pro")
     assert seedream["gatewayModel"] == "seedream-5.0-pro"
     assert seedream["resolutionOptions"] == ["1k", "2k"]
