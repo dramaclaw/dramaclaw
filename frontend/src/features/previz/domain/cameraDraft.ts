@@ -84,12 +84,17 @@ export function cameraDraftForward(draft: { yawDeg: number; pitchDeg: number }):
  * 横滚固定 0 而不是从视口读：OrbitControls 全程保持 up 朝天，视口相机的滚转恒为 0，
  * 读回来也只会是 0——但那是「读不到」而不是「就是 0」，写死更诚实。
  */
-export function createCameraDraft(placement: {
-  // 收 readonly 而不是直接收 `PrevizViewPlacement`：本函数只读两个坐标，而
-  // `PREVIZ_DEFAULT_VIEW` 是 `as const` 的只读常量，用可变形状会把它挡在门外。
+/**
+ * 起草一台机位要的那点视角信息。收 readonly 而不是直接用 `PrevizViewPlacement`：
+ * 这里只读两个坐标，而 `PREVIZ_DEFAULT_VIEW` 是 `as const` 的只读常量，用可变形状
+ * 会把它挡在门外。有名字是因为创建对话框的 props 也要声明同一个形状。
+ */
+export interface PrevizCameraPlacement {
   readonly position: readonly [number, number, number];
   readonly target: readonly [number, number, number];
-}): PrevizCameraDraft {
+}
+
+export function createCameraDraft(placement: PrevizCameraPlacement): PrevizCameraDraft {
   const { position: eye, target } = placement;
   const dx = target[0] - eye[0];
   const dy = target[1] - eye[1];
