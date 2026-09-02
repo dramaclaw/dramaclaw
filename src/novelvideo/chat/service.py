@@ -1192,7 +1192,7 @@ def _sync_project_skills(skills_dir: Path, *, agent_profile: str = "main") -> No
     skills_dir.mkdir(parents=True, exist_ok=True)
     profile = str(agent_profile or "main").strip() or "main"
     allowed = (
-        {"freezone", "workflows", "dramaclaw-workflows"}
+        {"freezone", "workflows", "dramaclaw-workflows", "interactive-story"}
         if profile.startswith("freezone")
         else None
     )

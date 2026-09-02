@@ -116,6 +116,15 @@ def repo_skills(isolated_workspace):
     ):
         (skills / name).mkdir()
         (skills / name / "SKILL.md").write_text(f"# {name}\n")
+    shared_story = (
+        isolated_workspace
+        / "src"
+        / "novelvideo"
+        / "agent_skills"
+        / "interactive-story"
+    )
+    shared_story.mkdir(parents=True)
+    (shared_story / "SKILL.md").write_text("# shared interactive story\n")
     return skills
 
 
@@ -186,6 +195,13 @@ def test_freezone_profile_uses_isolated_workspace(
 
     assert home == isolated_workspace / "state" / "admin" / ".hermes-freezone"
     assert (home / "skills" / "freezone").is_symlink()
+    assert (home / "skills" / "interactive-story").resolve() == (
+        isolated_workspace
+        / "src"
+        / "novelvideo"
+        / "agent_skills"
+        / "interactive-story"
+    )
     assert (home / "skills" / "workflows").is_symlink()
     assert not (home / "skills" / "dramaclaw").exists()
     assert (home / "plugins" / "freezone").is_symlink()

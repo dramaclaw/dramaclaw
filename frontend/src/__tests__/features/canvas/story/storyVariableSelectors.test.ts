@@ -1,17 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
+import {
+  CANVAS_NODE_TYPES,
+  type CanvasNode,
+  type StoryVariableDefinition,
+} from '@/features/canvas/domain/canvasNodes';
 import type { StoryVariable } from '@/features/canvas/story/storyTypes';
 import {
   selectGroupStoryVariables,
   selectStoryVariablesForEdgeSource,
 } from '@/features/canvas/story/storyVariableSelectors';
 
-function group(id: string, storyVariables?: StoryVariable[]): CanvasNode {
+function group(
+  id: string,
+  storyVariables?: StoryVariable[],
+  storyVariableDefinitions?: StoryVariableDefinition[],
+): CanvasNode {
   return {
     id,
     type: CANVAS_NODE_TYPES.group,
     position: { x: 0, y: 0 },
-    data: storyVariables === undefined ? { label: 'g' } : { label: 'g', storyVariables },
+    data: {
+      label: 'g',
+      ...(storyVariables === undefined ? {} : { storyVariables }),
+      ...(storyVariableDefinitions === undefined ? {} : { storyVariableDefinitions }),
+    },
   } as CanvasNode;
 }
 function clip(id: string, parentId: string): CanvasNode {
@@ -46,5 +58,16 @@ describe('story variable selectors', () => {
     const nodes = [group('g1', vars), clip('a', 'g1')];
     expect(selectGroupStoryVariables(nodes, 'g1')).toBe(vars);
     expect(selectStoryVariablesForEdgeSource(nodes, 'a')).toBe(vars);
+  });
+
+  it('完整变量定义存在时优先于兼容字段', () => {
+    const legacy: StoryVariable[] = [{ name: 'fav', label: '旧好感', initial: 0 }];
+    const definitions: StoryVariableDefinition[] = [
+      { name: 'fav', label: '新好感', initial: 5, minimum: 0, maximum: 10 },
+    ];
+    const nodes = [group('g1', legacy, definitions), clip('a', 'g1')];
+
+    expect(selectGroupStoryVariables(nodes, 'g1')).toBe(definitions);
+    expect(selectStoryVariablesForEdgeSource(nodes, 'a')).toBe(definitions);
   });
 });

@@ -1060,6 +1060,140 @@ describe("useCanvasSync hydrate lifecycle", () => {
     hook.unmount();
   });
 
+  it("adopts consecutive Agent remote refreshes when normalized local state is fully saved", async () => {
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 7,
+      metadata: null,
+    });
+
+    const hook = renderHook(() =>
+      useCanvasSync("project-a", "agent_refresh_clean_user_eric"),
+    );
+    await waitFor(() => expect(hook.result.current.status).toBe("ready"));
+
+    let applied = false;
+    act(() => {
+      applied = applyRemoteFreezoneCanvas(
+        "project-a",
+        "agent_refresh_clean_user_eric",
+        {
+          nodes: [
+            {
+              id: "agent-story-node",
+              type: CANVAS_NODE_TYPES.upload,
+              position: { x: 0, y: 0 },
+              data: { imageUrl: "/static/agent.png" },
+            },
+          ],
+          edges: [],
+          revision: 8,
+          metadata: null,
+        },
+        undefined,
+        { protectUnsavedLocalEdits: true },
+      );
+    });
+
+    expect(applied).toBe(true);
+    expect(hook.result.current.status).toBe("ready");
+    expect(hook.result.current.revision).toBe(8);
+    expect(useCanvasStore.getState().nodes.map((node) => node.id)).toEqual([
+      "agent-story-node",
+    ]);
+
+    act(() => {
+      applied = applyRemoteFreezoneCanvas(
+        "project-a",
+        "agent_refresh_clean_user_eric",
+        {
+          nodes: [
+            {
+              id: "agent-story-node-v2",
+              type: CANVAS_NODE_TYPES.upload,
+              position: { x: 20, y: 20 },
+              data: { imageUrl: "/static/agent-v2.png" },
+            },
+          ],
+          edges: [],
+          revision: 9,
+          metadata: null,
+        },
+        undefined,
+        { protectUnsavedLocalEdits: true },
+      );
+    });
+
+    expect(applied).toBe(true);
+    expect(hook.result.current.status).toBe("ready");
+    expect(hook.result.current.revision).toBe(9);
+    expect(useCanvasStore.getState().nodes.map((node) => node.id)).toEqual([
+      "agent-story-node-v2",
+    ]);
+
+    hook.unmount();
+  });
+
+  it("preserves genuinely unsaved local edits when an Agent remote refresh arrives", async () => {
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 7,
+      metadata: null,
+    });
+
+    const canvasId = "agent_refresh_dirty_user_eric";
+    const hook = renderHook(() => useCanvasSync("project-a", canvasId));
+    await waitFor(() => expect(hook.result.current.status).toBe("ready"));
+
+    act(() => {
+      useCanvasStore
+        .getState()
+        .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    });
+
+    let applied = true;
+    act(() => {
+      applied = applyRemoteFreezoneCanvas(
+        "project-a",
+        canvasId,
+        {
+          nodes: [
+            {
+              id: "agent-story-node",
+              type: CANVAS_NODE_TYPES.upload,
+              position: { x: 0, y: 0 },
+              data: { imageUrl: "/static/agent.png" },
+            },
+          ],
+          edges: [],
+          revision: 8,
+          metadata: null,
+        },
+        undefined,
+        {
+          protectUnsavedLocalEdits: true,
+          conflictMessage: "Agent update overlaps unsaved local edits",
+        },
+      );
+    });
+
+    expect(applied).toBe(false);
+    expect(hook.result.current.status).toBe("conflict");
+    expect(hook.result.current.error).toBe(
+      "Agent update overlaps unsaved local edits",
+    );
+    expect(hook.result.current.revision).toBe(7);
+    expect(useCanvasStore.getState().nodes).toHaveLength(1);
+    expect(useCanvasStore.getState().nodes[0]?.id).not.toBe("agent-story-node");
+    expect(hook.result.current.readConflictSnapshot()).toMatchObject({
+      canvas_id: canvasId,
+    });
+
+    hook.unmount();
+  });
+
   // The draft is the only copy of edits that have not reached the server. A
   // save landing clears it — but only if nothing newer is still queued behind
   // that save, otherwise the newest edit exists nowhere at all.

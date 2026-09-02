@@ -149,6 +149,8 @@ _DRAMACLAW_WRITE_TOOLS = {
     "dramaclaw_save_freezone_canvas",
     "dramaclaw_delete_freezone_canvas",
     "dramaclaw_create_freezone_canvas_from_preset",
+    "dramaclaw_create_interactive_story",
+    "dramaclaw_patch_interactive_story",
 }
 
 _FREEZONE_CANVAS_WRITE_TOOLS = {

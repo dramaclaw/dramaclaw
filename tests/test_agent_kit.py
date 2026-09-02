@@ -67,7 +67,12 @@ def test_manifest_and_skill_are_publishable() -> None:
     assert contract["contract_version"] >= ce_requirement["minimum_contract_version"]
     assert set(ce_requirement["required_capabilities"]) <= set(contract["capabilities"])
     assert set(manifest["mcp_servers"]) == {"dramaclaw", "dramaclaw-workflows"}
-    assert (KIT_ROOT / manifest["skills"][0] / "SKILL.md").is_file()
+    assert {Path(path).name for path in manifest["skills"]} == {
+        "dramaclaw-workflows",
+        "interactive-story",
+    }
+    for skill_path in manifest["skills"]:
+        assert (KIT_ROOT / skill_path / "SKILL.md").is_file()
     assert (KIT_ROOT / "LICENSES" / "Elastic-2.0.txt").is_file()
 
 

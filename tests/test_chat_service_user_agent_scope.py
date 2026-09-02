@@ -1632,6 +1632,9 @@ def test_user_agent_workspace_is_not_project_workspace(monkeypatch, tmp_path):
     assert (
         freezone_workspace / ".agents" / "skills" / "dramaclaw-workflows" / "SKILL.md"
     ).is_file()
+    assert (
+        freezone_workspace / ".agents" / "skills" / "interactive-story" / "SKILL.md"
+    ).is_file()
     assert codex_home.is_dir()
 
     project_workspace = Path(tmp_path / "output" / "admin" / "project-a")

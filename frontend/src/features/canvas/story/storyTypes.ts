@@ -35,6 +35,8 @@ export interface StoryChoiceEffect {
 
 /** 选项边携带的数据。 */
 export interface StoryChoiceEdgeData {
+  /** Agent 领域协议中的稳定选择 ID，不随边重连或显示顺序变化。 */
+  storyChoiceId?: string;
   /** 玩家看到的选项文案,如「先自我介绍」。空串视为无文字纯跳转。 */
   choiceText: string;
   /** 同一源节点多个选项的显示顺序,升序。 */

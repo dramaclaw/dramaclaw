@@ -21,6 +21,7 @@
         "src/novelvideo/chat/dramaclaw_mcp.py",
         "src/novelvideo/chat/workflow_mcp.py",
         ".hermes/plugins/dramaclaw/__init__.py",
+        ".hermes/plugins/dramaclaw/interactive_story.py",
         ".hermes/plugins/freezone/__init__.py"
       ]
     },
@@ -28,7 +29,8 @@
     "mcp_transport": "stdio"
   },
   "skills": [
-    "skills/dramaclaw-workflows"
+    "skills/dramaclaw-workflows",
+    "skills/interactive-story"
   ],
   "mcp_servers": {
     "dramaclaw-workflows": {

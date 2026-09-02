@@ -7,6 +7,7 @@ Python's stdlib HTTP client and the DramaClaw agent environment injected by
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -2577,6 +2578,28 @@ _PRESET_CANVAS_SCHEMA = {
 }
 
 
+def _load_interactive_story_tools():
+    module_path = Path(__file__).with_name("interactive_story.py")
+    spec = importlib.util.spec_from_file_location(
+        "_dramaclaw_interactive_story_tools",
+        module_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load interactive-story tools from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.build_tools(
+        schema=_schema,
+        request=lambda *args, **kwargs: _request(*args, **kwargs),
+        project_from_args=lambda args: _project_from_args(args),
+        tool_result=tool_result,
+        tool_error=tool_error,
+    )
+
+
+INTERACTIVE_STORY_TOOLS = _load_interactive_story_tools()
+
+
 TOOLS = (
     (
         "dramaclaw_control_episode_auto",
@@ -2702,6 +2725,7 @@ TOOLS = (
         ),
         _handle_get_freezone_canvas,
     ),
+    *INTERACTIVE_STORY_TOOLS,
     (
         "dramaclaw_save_freezone_canvas",
         _schema(

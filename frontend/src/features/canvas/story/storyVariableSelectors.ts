@@ -1,4 +1,7 @@
-import type { CanvasNode } from '@/features/canvas/domain/canvasNodes';
+import type {
+  CanvasNode,
+  StoryVariableDefinition,
+} from '@/features/canvas/domain/canvasNodes';
 import type { StoryVariable } from './storyTypes';
 
 /**
@@ -8,14 +11,19 @@ import type { StoryVariable } from './storyTypes';
  */
 export const EMPTY_STORY_VARIABLES: StoryVariable[] = [];
 
-function groupVariablesOf(node: CanvasNode | undefined): StoryVariable[] {
-  const vars = (node?.data as { storyVariables?: StoryVariable[] } | undefined)?.storyVariables;
-  return vars ?? EMPTY_STORY_VARIABLES;
+export function storyVariablesOfNode(node: CanvasNode | undefined): StoryVariableDefinition[] {
+  const data = node?.data as
+    | {
+        storyVariableDefinitions?: StoryVariableDefinition[];
+        storyVariables?: StoryVariable[];
+      }
+    | undefined;
+  return data?.storyVariableDefinitions ?? data?.storyVariables ?? EMPTY_STORY_VARIABLES;
 }
 
 /** 取某故事组的变量(引用稳定:有变量时为该组实际数组,无变量时为共享空数组)。 */
 export function selectGroupStoryVariables(nodes: CanvasNode[], groupId: string): StoryVariable[] {
-  return groupVariablesOf(nodes.find((n) => n.id === groupId));
+  return storyVariablesOfNode(nodes.find((n) => n.id === groupId));
 }
 
 /** 取某选项边 source 节点所属故事组的变量(引用稳定)。 */
@@ -25,5 +33,5 @@ export function selectStoryVariablesForEdgeSource(
 ): StoryVariable[] {
   const src = nodes.find((n) => n.id === sourceId);
   const group = src?.parentId ? nodes.find((n) => n.id === src.parentId) : undefined;
-  return groupVariablesOf(group);
+  return storyVariablesOfNode(group);
 }

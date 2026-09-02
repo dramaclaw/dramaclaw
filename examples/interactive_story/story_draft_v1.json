@@ -1,0 +1,138 @@
+{
+  "schema_version": "story_draft.v1",
+  "story_id": "midnight_station",
+  "revision": 0,
+  "title": "午夜站台",
+  "synopsis": "末班车停在一座不存在的车站，玩家必须判断陌生女孩是否值得信任。",
+  "start_segment_id": "arrival",
+  "characters": [
+    {
+      "id": "traveler",
+      "name": "旅人",
+      "description": "错过末班车的普通上班族",
+      "visual_description": "深色风衣，手持旧皮箱"
+    },
+    {
+      "id": "girl",
+      "name": "陌生女孩",
+      "description": "似乎知道车站秘密的少女",
+      "visual_description": "白色雨衣，神情紧张"
+    }
+  ],
+  "variables": [
+    {
+      "name": "courage",
+      "label": "勇气",
+      "initial": 0,
+      "minimum": 0,
+      "maximum": 5
+    }
+  ],
+  "segments": [
+    {
+      "id": "arrival",
+      "title": "不存在的站台",
+      "script": "列车突然停下。窗外站牌没有名字，一个穿白色雨衣的女孩敲响车窗。",
+      "kind": "scene",
+      "character_ids": ["traveler", "girl"],
+      "choice_time_limit_sec": 8,
+      "production_notes": "冷色调，车厢灯光间歇闪烁",
+      "media": {
+        "source": "placeholder",
+        "status": "missing",
+        "version": 1
+      }
+    },
+    {
+      "id": "follow_girl",
+      "title": "跟随女孩",
+      "script": "旅人走下列车。女孩说，只有在钟声结束前找到值班室，两人才能离开。",
+      "kind": "scene",
+      "character_ids": ["traveler", "girl"],
+      "production_notes": "长镜头跟随，远处传来钟声",
+      "media": {
+        "source": "placeholder",
+        "status": "missing",
+        "version": 1
+      }
+    },
+    {
+      "id": "truth_ending",
+      "title": "真相结局",
+      "script": "旅人推开值班室，发现女孩是多年前事故中唯一留下的守护者。黎明到来，两人一起离开车站。",
+      "kind": "ending",
+      "ending_label": "GE",
+      "character_ids": ["traveler", "girl"],
+      "production_notes": "暖色晨光逐渐覆盖站台",
+      "media": {
+        "source": "placeholder",
+        "status": "missing",
+        "version": 1
+      }
+    },
+    {
+      "id": "loop_ending",
+      "title": "循环结局",
+      "script": "旅人回到车厢闭上眼睛。列车再次启动，而广播又一次响起同样的报站声。",
+      "kind": "ending",
+      "ending_label": "BE",
+      "character_ids": ["traveler"],
+      "production_notes": "镜头构图回到开场，形成循环",
+      "media": {
+        "source": "placeholder",
+        "status": "missing",
+        "version": 1
+      }
+    }
+  ],
+  "choices": [
+    {
+      "id": "arrival_follow",
+      "source_segment_id": "arrival",
+      "target_segment_id": "follow_girl",
+      "text": "相信女孩，下车看看",
+      "order": 0,
+      "effects": [
+        {
+          "kind": "increment",
+          "variable": "courage",
+          "delta": 1
+        }
+      ],
+      "is_default": false
+    },
+    {
+      "id": "arrival_stay",
+      "source_segment_id": "arrival",
+      "target_segment_id": "loop_ending",
+      "text": "留在车厢，不理会她",
+      "order": 1,
+      "effects": [],
+      "is_default": true
+    },
+    {
+      "id": "follow_open_door",
+      "source_segment_id": "follow_girl",
+      "target_segment_id": "truth_ending",
+      "text": "推开值班室的门",
+      "order": 0,
+      "condition": {
+        "kind": "variable",
+        "variable": "courage",
+        "operator": ">=",
+        "value": 1
+      },
+      "effects": [],
+      "is_default": false
+    },
+    {
+      "id": "follow_retreat",
+      "source_segment_id": "follow_girl",
+      "target_segment_id": "loop_ending",
+      "text": "转身逃回列车",
+      "order": 1,
+      "effects": [],
+      "is_default": false
+    }
+  ]
+}

@@ -29,6 +29,7 @@ import {
   type StoryboardExportOptions,
   type StoryboardFrameItem,
   type GroupNodeData,
+  type StoryVariableDefinition,
   isGroupNode,
   isProtectedProjectionGroupNode,
   isStoryboardGroupNode,
@@ -98,7 +99,7 @@ import {
 } from '@/features/canvas/domain/mainlineNodeFlags';
 import { scopeProjectionGraphIds } from '@/features/freezone/projectionGraphIds';
 import { slugifyName } from '@/features/canvas/story/variableName';
-import type { StoryVariable } from '@/features/canvas/story/storyTypes';
+import { storyVariablesOfNode } from '@/features/canvas/story/storyVariableSelectors';
 
 export type {
   ActiveToolDialog,
@@ -371,7 +372,7 @@ interface CanvasState {
       padding?: { side: number; top: number; bottom: number };
     }
   ) => string | null;
-  /** 把选中节点打成「故事组」(互动影游),标记 storyGroup + 初始化空 storyVariables。返回组 id。 */
+  /** 把选中节点打成「故事组」并初始化权威变量定义及兼容镜像。返回组 id。 */
   createStoryGroup: (nodeIds: string[]) => string | null;
   /** 把一份导入的故事(节点+边)整体追加进画布,作为一个 undo 步。 */
   addStoryImport: (nodes: CanvasNode[], edges: CanvasEdge[]) => void;
@@ -1364,6 +1365,13 @@ function createDefaultStoryboardExportOptions(): StoryboardExportOptions {
     fontSize: 4,
     backgroundColor: '#0f1115',
     textColor: '#f8fafc',
+  };
+}
+
+function synchronizedStoryVariableData(variables: StoryVariableDefinition[]) {
+  return {
+    storyVariableDefinitions: variables,
+    storyVariables: variables.map(({ name, label, initial }) => ({ name, label, initial })),
   };
 }
 
@@ -3152,7 +3160,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => ({
       nodes: state.nodes.map((node) =>
         node.id === groupId
-          ? { ...node, data: { ...node.data, storyGroup: true, storyVariables: [] } }
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                storyGroup: true,
+                ...synchronizedStoryVariableData([]),
+              },
+            }
           : node,
       ),
       ...trackEdit(state),
@@ -3178,15 +3193,21 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => {
       const nodes = state.nodes.map((node) => {
         if (node.id !== groupId) return node;
-        const existing = ((node.data as { storyVariables?: StoryVariable[] }).storyVariables ?? []);
+        const existing = storyVariablesOfNode(node);
         const taken = new Set(existing.map((v) => v.name));
         const base = slugifyName(label || 'var');
         let name = base;
         let i = 1;
         while (taken.has(name)) name = `${base}_${i++}`;
         createdName = name;
-        const variable: StoryVariable = { name, label: label || name, initial: 0 };
-        return { ...node, data: { ...node.data, storyVariables: [...existing, variable] } };
+        const variable: StoryVariableDefinition = { name, label: label || name, initial: 0 };
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            ...synchronizedStoryVariableData([...existing, variable]),
+          },
+        };
       });
       return { nodes, ...trackEdit(state) };
     });
@@ -3197,20 +3218,21 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => ({
       nodes: state.nodes.map((node) => {
         if (node.id !== groupId) return node;
-        const existing = ((node.data as { storyVariables?: StoryVariable[] }).storyVariables ?? []);
+        const existing = storyVariablesOfNode(node);
+        const updated = existing.map((v) =>
+          v.name === name
+            ? {
+                ...v,
+                ...(patch.label !== undefined ? { label: patch.label } : {}),
+                ...(patch.initial !== undefined ? { initial: Math.trunc(patch.initial) } : {}),
+              }
+            : v,
+        );
         return {
           ...node,
           data: {
             ...node.data,
-            storyVariables: existing.map((v) =>
-              v.name === name
-                ? {
-                    ...v,
-                    ...(patch.label !== undefined ? { label: patch.label } : {}),
-                    ...(patch.initial !== undefined ? { initial: Math.trunc(patch.initial) } : {}),
-                  }
-                : v,
-            ),
+            ...synchronizedStoryVariableData(updated),
           },
         };
       }),
@@ -3222,8 +3244,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => ({
       nodes: state.nodes.map((node) => {
         if (node.id !== groupId) return node;
-        const existing = ((node.data as { storyVariables?: StoryVariable[] }).storyVariables ?? []);
-        return { ...node, data: { ...node.data, storyVariables: existing.filter((v) => v.name !== name) } };
+        const existing = storyVariablesOfNode(node);
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            ...synchronizedStoryVariableData(existing.filter((v) => v.name !== name)),
+          },
+        };
       }),
       ...trackEdit(state),
     }));

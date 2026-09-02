@@ -45,6 +45,7 @@ python -m novelvideo.chat.agent_mcp
 它会同时暴露两类工具：
 
 - `dramaclaw_*`：虾导项目、任务、剧集、媒体、生成流程。
+- `dramaclaw_{create,get,patch,validate}_interactive_story`：互动故事结构化创建、读取、增量修改与校验。
 - `freezone_*`：虾画画布、节点、连线、工作流、节点动作。
 
 底层复用 `.hermes/plugins/dramaclaw` 和 `.hermes/plugins/freezone` 的现有工具实现。
@@ -130,6 +131,8 @@ MCP freezone 工具
 ```
 
 因此，使用 Codex/Claude 操作虾画时，需要浏览器中打开对应 Freezone 页面。这样可以让 React Flow 状态、选中状态、节点尺寸、autosave 和进度显示保持即时同步。
+
+互动故事四个工具是例外：Create/Patch 调用 CE API，由 `InteractiveStoryService` 在后端写入完整故事投影，不写 pending canvas command，也不受 `DRAMACLAW_MCP_DIRECT_CANVAS_APPLY` 控制。产品内 Agent 会根据成功工具帧自动刷新当前画布并保护未保存本地编辑；外部 MCP 客户端当前没有通用的浏览器刷新广播，写入后需要宿主适配刷新或手动刷新/重新打开画布。
 
 `DRAMACLAW_EXTERNAL_MCP=1` 只用于外部 Agent 入口。内置 Hermes 不设置该变量，因此仍使用虾画聊天内的审批卡；外部 Agent 则在 Codex / Claude / OpenClaw 自己的聊天中确认，确认后前端自动执行命令，不弹出虾画聊天审批。
 

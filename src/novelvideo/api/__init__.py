@@ -53,6 +53,7 @@ from novelvideo.api.routes import (  # noqa: E402
     freezone,
     generation,
     ingest,
+    interactive_stories,
     model_gateway,
     model_credits,
     pipeline,
@@ -85,6 +86,10 @@ OPENAPI_TAGS = [
     },
     {"name": "freezone-text", "description": "Freezone 文本节点接口，包括翻译与故事脚本生成。"},
     {"name": "freezone-canvas", "description": "Freezone 画布文档接口。"},
+    {
+        "name": "interactive-story",
+        "description": "Agent 互动故事的创建、读取、增量修改与校验接口。",
+    },
     {"name": "freezone-assets", "description": "Freezone canonical 资产与上下文接口。"},
     {
         "name": "freezone-commit",
@@ -103,6 +108,7 @@ api_router.include_router(product_surfaces.router, tags=["product-surfaces"])
 api_router.include_router(chat.router, tags=["chat"])
 api_router.include_router(projects.router, tags=["projects"])
 api_router.include_router(ingest.router, tags=["ingest"])
+api_router.include_router(interactive_stories.router)
 api_router.include_router(characters.router, tags=["characters"])
 api_router.include_router(assets.router, tags=["assets"])
 api_router.include_router(scenes.router, tags=["scenes"])

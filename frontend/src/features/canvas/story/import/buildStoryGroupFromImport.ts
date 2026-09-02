@@ -146,6 +146,7 @@ export function buildStoryGroupFromImport(
       data: {
         label: '互动影游(导入)',
         storyGroup: true,
+        storyVariableDefinitions: variables,
         storyVariables: variables,
         backgroundColor: IMPORT_GROUP_COLOR,
       },

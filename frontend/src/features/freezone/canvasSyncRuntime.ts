@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import type { FreezoneCanvasPayload } from "@/api/canvas";
+import { getFreezoneCanvas, type FreezoneCanvasPayload } from "@/api/canvas";
 import type { CanvasEdge, CanvasNode } from "@/stores/canvasStore";
 
 export type RemoteCanvasMerge = (
@@ -10,10 +10,22 @@ export type RemoteCanvasMerge = (
   localEdges: CanvasEdge[],
 ) => { nodes: CanvasNode[]; edges: CanvasEdge[] };
 
+export interface RemoteCanvasApplyOptions {
+  /**
+   * Refuse to replace the open canvas when it contains edits that have not
+   * reached the server yet. Remote writes initiated by the current Agent use
+   * this guard: a clean canvas can adopt the Agent's new revision silently,
+   * while genuine concurrent local work still gets the recovery overlay.
+   */
+  protectUnsavedLocalEdits?: boolean;
+  conflictMessage?: string;
+}
+
 type RemoteCanvasApplier = (
   remote: FreezoneCanvasPayload,
   merge?: RemoteCanvasMerge,
-) => void;
+  options?: RemoteCanvasApplyOptions,
+) => boolean;
 
 type CanvasFlush = () => Promise<boolean>;
 
@@ -67,12 +79,21 @@ export function applyRemoteFreezoneCanvas(
   canvasId: string,
   remote: FreezoneCanvasPayload,
   merge?: RemoteCanvasMerge,
+  options?: RemoteCanvasApplyOptions,
 ): boolean {
   if (!currentRuntime || currentRuntime.project !== project || currentRuntime.canvasId !== canvasId) {
     return false;
   }
-  currentRuntime.apply(remote, merge);
-  return true;
+  return currentRuntime.apply(remote, merge, options);
+}
+
+export async function refreshRemoteFreezoneCanvas(
+  project: string,
+  canvasId: string,
+  options?: RemoteCanvasApplyOptions,
+): Promise<boolean> {
+  const remote = await getFreezoneCanvas(project, canvasId);
+  return applyRemoteFreezoneCanvas(project, canvasId, remote, undefined, options);
 }
 
 export async function flushFreezoneCanvasRuntime(

@@ -31,7 +31,7 @@ DEFAULT_HERMES_SKILLS = {
 }
 DEFAULT_HERMES_PLUGINS = {"dramaclaw"}
 DEFAULT_HERMES_TOOLSETS = {"hermes-acp"}
-FREEZONE_HERMES_SKILLS = {"freezone", "workflows"}
+FREEZONE_HERMES_SKILLS = {"freezone", "interactive-story", "workflows"}
 FREEZONE_HERMES_PLUGINS = {"freezone"}
 _GENERATED_WORKFLOW_SKILL_MARKER = ".dramaclaw-workflow-skill.json"
 FREEZONE_HERMES_PYTHON_HOOK_DIR = ".dramaclaw-python"
@@ -837,17 +837,19 @@ def _sync_freezone_workflow_skills(skills_dir: Path, username: str) -> None:
 def _materialize_skill_links(skills_dir: Path, *, profile: str = "director") -> None:
     """Create / refresh symlinks from skills_dir/<name> → repo-pinned skills.
 
-    The source of truth is ``DramaClaw/.hermes/skills/`` so a fresh checkout
-    has the same Hermes skills on every machine.
+    Hermes-native skills come from ``DramaClaw/.hermes/skills/``. Runtime-
+    neutral skills come from ``src/novelvideo/agent_skills/``; ``agent-kit``
+    contains synchronized publication copies, not runtime dependencies.
 
     Idempotent: stale links to dirs that no longer exist in the source are
     removed; new skills are added; existing real directories are left alone.
     """
-    src_skills = DRAMACLAW_ROOT / ".hermes" / "skills"
-    if not src_skills.is_dir():
+    hermes_skills = DRAMACLAW_ROOT / ".hermes" / "skills"
+    shared_skills = DRAMACLAW_ROOT / "src" / "novelvideo" / "agent_skills"
+    if not hermes_skills.is_dir() and not shared_skills.is_dir():
         _log.info(
-            "hermes skills source not found at %s — skipping skill links",
-            src_skills,
+            "hermes skill sources not found under %s — skipping skill links",
+            DRAMACLAW_ROOT,
         )
         return
 
@@ -862,10 +864,20 @@ def _materialize_skill_links(skills_dir: Path, *, profile: str = "director") -> 
         for name in os.environ.get(env_name, ",".join(sorted(defaults))).split(",")
         if name.strip()
     }
+    available: dict[str, Path] = {}
+    if hermes_skills.is_dir():
+        available.update(
+            (path.name, path.resolve())
+            for path in hermes_skills.iterdir()
+            if path.is_dir()
+        )
+    shared_interactive_story = shared_skills / "interactive-story"
+    if (shared_interactive_story / "SKILL.md").is_file():
+        available["interactive-story"] = shared_interactive_story.resolve()
     want = {
-        p.name: p.resolve()
-        for p in src_skills.iterdir()
-        if p.is_dir() and (not allowed or p.name in allowed)
+        name: target
+        for name, target in available.items()
+        if not allowed or name in allowed
     }
 
     # Add / refresh links

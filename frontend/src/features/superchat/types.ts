@@ -234,6 +234,7 @@ export type ServerFrame =
       input?: unknown;
       output?: unknown;
       error?: unknown;
+      result_json?: unknown;
       raw?: unknown;
     }
   | {

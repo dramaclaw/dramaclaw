@@ -82,6 +82,41 @@ assert not any(name == 'novelvideo' or name.startswith('novelvideo.') for name i
     assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
+def test_interactive_story_tools_use_typed_api_routes(monkeypatch):
+    plugin = _load_plugin_module()
+    calls = []
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda method, path, query=None, body=None: calls.append(
+            (method, path, query, body)
+        ) or {"ok": True},
+    )
+
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    handlers["dramaclaw_patch_interactive_story"]({
+        "story_id": "story-a",
+        "base_revision": 2,
+        "idempotency_key": "patch-story-a-2",
+        "operations": [{"op": "update_story_metadata", "changes": {"title": "新版"}}],
+    })
+
+    assert calls == [(
+        "PATCH",
+        "/api/v1/projects/project-a/interactive-stories/story-a",
+        None,
+        {
+            "canvas_id": "canvas-a",
+            "story_id": "story-a",
+            "base_revision": 2,
+            "idempotency_key": "patch-story-a-2",
+            "operations": [{"op": "update_story_metadata", "changes": {"title": "新版"}}],
+        },
+    )]
+
+
 def test_dramaclaw_plugin_adds_chat_error_without_replacing_task_error():
     plugin = _load_plugin_module()
     raw_error = "Content filter triggered. Finish reason: 'content_filter'"

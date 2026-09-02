@@ -123,6 +123,29 @@ export type VideoGenQuality = string;
 export type VideoGenCount = 1 | 2 | 4;
 export type Seedance2SceneOptimize = 'anime' | 'realistic';
 
+/** Agent 互动故事节点的素材来源元数据；videoUrl 仍是播放器读取的实际地址。 */
+export interface StoryMediaMetadata {
+  source: 'placeholder' | 'imported' | 'generated';
+  status: 'missing' | 'pending' | 'ready' | 'failed';
+  asset_id?: string | null;
+  url?: string | null;
+  version: number;
+}
+
+/** Agent 互动故事的角色摘要，保存在故事组供后续制作规格复用。 */
+export interface StoryCharacterMetadata {
+  id: string;
+  name: string;
+  description?: string;
+  visual_description?: string;
+}
+
+/** StoryDraftV1 的完整变量定义；storyVariables 保持现有 Ink 编译兼容格式。 */
+export interface StoryVariableDefinition extends StoryVariable {
+  minimum?: number | null;
+  maximum?: number | null;
+}
+
 export interface VideoNodeData extends NodeDisplayData {
   videoUrl: string | null;
   previewImageUrl?: string | null;
@@ -201,6 +224,14 @@ export interface VideoNodeData extends NodeDisplayData {
   upscaleDenoise?: 'none' | '1x' | '2x';
   /** 故事模式:被设为分支叙事起点的视频节点。仅 'start',未设则 undefined。 */
   storyRole?: 'start';
+  /** Agent 领域协议中的稳定片段 ID，不随画布布局或节点标题变化。 */
+  storySegmentId?: string;
+  /** 当前片段出现的 StoryDraftV1 角色 ID。 */
+  storyCharacterIds?: string[];
+  /** 供视频生产阶段使用的镜头、连续性等备注。 */
+  storyProductionNotes?: string;
+  /** 素材来源、任务状态和版本；播放器仍读取 videoUrl。 */
+  storyMedia?: StoryMediaMetadata;
   /** 互动影游:选项窗口秒数(每源片段一个)。空/0 = 不限时(无限等待)。 */
   choiceTimeLimitSec?: number;
   /** 互动影游:结局标(如 GE/NE/BE),仅叶子结局片段。结局页作 badge 显示。 */
@@ -279,7 +310,15 @@ export interface GroupNodeData extends NodeDisplayData {
   storyboardBaseHeight?: number;
   /** 标记此组为「故事组」(互动影游)。 */
   storyGroup?: boolean;
-  /** 该故事的数值变量(好感度等),按组独立。 */
+  /** Agent 领域协议中的稳定故事 ID。 */
+  interactiveStoryId?: string;
+  /** 当前故事领域协议版本，如 story_draft.v1。 */
+  interactiveStorySchemaVersion?: string;
+  storySynopsis?: string;
+  storyCharacters?: StoryCharacterMetadata[];
+  /** 变量定义的权威来源；旧画布缺失时才回退 storyVariables。 */
+  storyVariableDefinitions?: StoryVariableDefinition[];
+  /** Ink/旧前端兼容镜像，不应由写入方单独维护。 */
   storyVariables?: StoryVariable[];
   [key: string]: unknown;
 }
