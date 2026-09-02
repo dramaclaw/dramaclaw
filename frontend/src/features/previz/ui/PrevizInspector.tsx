@@ -9,7 +9,7 @@ import {
   clampAperture,
   clampFocalMm,
   clampToRange,
-  horizontalFovDeg,
+  sensorVerticalFovDeg,
 } from "@/features/previz/domain/camera";
 import {
   PREVIZ_HEIGHT_CM_RANGE,
@@ -307,11 +307,14 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
             </select>
           </div>
           {/* 视场角是算出来的读数，不是可编辑字段：数字单独占一个节点，好让它跟着
-              焦距与机身走，而不是跟着文案模板走。 */}
+              焦距与机身走，而不是跟着文案模板走。
+              读的是镜头自身的纵向角（见 `sensorVerticalFovDeg` 的注释），与摄影机创建
+              对话框那条「标准 · 27.0°」是同一个数——同一台机位在两处显示不同的视场角，
+              用户只会当成 bug。 */}
           <div className="text-[11px] text-white/45">
             {t("previz.inspector.angleOfView")}
             <span data-testid="previz-inspector-fov" className="ml-1 tabular-nums text-white/70">
-              {horizontalFovDeg(camera.focalMm, camera.sensor).toFixed(1)}°
+              {sensorVerticalFovDeg(camera.focalMm, camera.sensor).toFixed(1)}°
             </span>
           </div>
         </>

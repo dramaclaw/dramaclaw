@@ -102,3 +102,76 @@ export function clampFocalMm(value: number): number {
 export function clampAperture(value: number): number {
   return clampToRange(value, PREVIZ_APERTURE);
 }
+
+/**
+ * 镜头**自身**的视角，即成像面高度方向张开的角度。
+ *
+ * 这是印在镜头参数表上的那个数（全画幅 50 mm → 27.0°、Super 35 50 mm → 21.1°），
+ * 属性面板与摄影机创建对话框的读数都用它，因为用户挑的是「一支多少度的镜头」。
+ *
+ * 与上面两个函数的分工要分清，三个都是「视场角」但答的不是同一个问题：
+ * - `horizontalFovDeg` —— 画面**横向**张多少，由传感器宽度定，与出片画幅无关；
+ * - `verticalFovDeg` —— 喂给 three 的 `PerspectiveCamera.fov`，由出片画幅回推，
+ *   出片越竖它越大；
+ * - 本函数 —— 机身原生的纵向角，既不随出片画幅变，也不是渲染用的值。
+ * 出片画幅恰好是 3:2（全画幅的原生比例）时本函数与 `verticalFovDeg` 才相等，
+ * 其余画幅下两者不同**是对的**，不要为了「统一」把其中一个改成另一个。
+ */
+export function sensorVerticalFovDeg(focalMm: number, sensor: PrevizCamera['sensor']): number {
+  return 2 * Math.atan(PREVIZ_SENSOR_MM[sensor].height / (2 * clampFocalMm(focalMm))) * RAD_TO_DEG;
+}
+
+/**
+ * 焦距档位，单位毫米。整段区间是连续的（`PREVIZ_FOCAL_MM` 12–200，属性面板可以随手
+ * 敲 63），档位只服务「上一档 / 下一档」这种按钮式选择——照抄常见定焦镜头的那一套。
+ * 首档 14 高于 `PREVIZ_FOCAL_MM.min` 是有意的：12 mm 留给手输与导入的场景，档位表
+ * 只列真实镜头库里有的那几支。
+ */
+export const PREVIZ_FOCAL_STOPS: readonly number[] = [14, 18, 24, 35, 50, 85, 135, 200];
+
+/** 光圈档位，标准整档序列。同样只服务按钮式选择，手输仍走 `PREVIZ_APERTURE` 整段区间。 */
+export const PREVIZ_APERTURE_STOPS: readonly number[] = [1.4, 2, 2.8, 4, 5.6, 8, 11, 16, 22];
+
+/**
+ * 在档位表里挪一档。当前值不在表上（手输过、或是从别处导入的）时先落到**最近**的一档
+ * 再挪：否则「下一档」得先猜用户想从哪儿开始，而落到最近档是唯一不会让人意外的答案。
+ * 已经在两端时原地不动——返回值恒等于某一档，调用方不必再夹一次。
+ */
+export function stepStop(stops: readonly number[], value: number, direction: -1 | 1): number {
+  // 空表在类型上进得来，返回入参比抛异常温和：调用方拿到的仍是一个可用的数。
+  if (stops.length === 0) return value;
+  let nearest = 0;
+  for (let index = 1; index < stops.length; index += 1) {
+    // 非有限的 value 让每次比较都是 false，nearest 停在 0——首档，等同于「没有当前值」。
+    if (Math.abs(stops[index] - value) < Math.abs(stops[nearest] - value)) nearest = index;
+  }
+  return stops[Math.min(stops.length - 1, Math.max(0, nearest + direction))];
+}
+
+/** 焦距的口语分类，只用于读数文案（「标准 · 27.0°」里的前半截）。 */
+export type PrevizFocalClass = 'ultrawide' | 'wide' | 'standard' | 'teleShort' | 'tele';
+
+/**
+ * 分界取在档位之间而不是等于某一档，这样手输的 63 mm 也分得出类。
+ * 边界值本身归上一类（`< 20` 而不是 `<= 20`），与档位表对齐：14/18 超广角、24 广角、
+ * 35/50 标准、85 中长焦、135/200 长焦。
+ */
+export function focalClass(focalMm: number): PrevizFocalClass {
+  const focal = clampFocalMm(focalMm);
+  if (focal < 20) return 'ultrawide';
+  if (focal < 30) return 'wide';
+  if (focal < 70) return 'standard';
+  if (focal < 100) return 'teleShort';
+  return 'tele';
+}
+
+/** 光圈的口语分类，只用于读数文案（「标准景深」）。 */
+export type PrevizDepthOfField = 'shallow' | 'standard' | 'deep';
+
+/** 分界同样取在档位上：f/2 及更大光圈算浅景深，f/5.6 及以内算标准，再收就是深景深。 */
+export function depthOfFieldClass(aperture: number): PrevizDepthOfField {
+  const value = clampAperture(aperture);
+  if (value <= 2) return 'shallow';
+  if (value <= 5.6) return 'standard';
+  return 'deep';
+}
