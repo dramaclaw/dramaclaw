@@ -37,6 +37,7 @@ import {
   insertPathPointAt,
   moveClip,
   pathClipAt,
+  pinTrack,
   removeClip,
   removePathPoint,
   removeTrack,
@@ -138,6 +139,12 @@ interface PrevizStoreState {
   trimClipToPlayhead: (clipId: string, edge: 'start' | 'end') => void;
   /** 直接改片段终点（改长度，不是平移）。 */
   setClipEnd: (clipId: string, endFrame: number) => void;
+  /** 把片段的某一端拖到某一帧（时间轴上的修剪把手）。 */
+  setClipEdge: (clipId: string, edge: 'start' | 'end', frame: number) => void;
+  /** 在最后一个片段之后、时间轴末尾之前追加一个空片段；没有空档时什么都不做。 */
+  appendClip: (objectId: string) => void;
+  /** 把一条轨道挪到最上面。 */
+  pinTrackToTop: (objectId: string) => void;
   splitClipAtPlayhead: (clipId: string) => void;
   removeClipById: (clipId: string) => void;
   removeTrackFor: (objectId: string) => void;
@@ -435,6 +442,36 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     const { scene, applyScene } = get();
     // 复用 trimClip 的夹取：最小长度与时间轴上下界只有一处真相。
     applyScene(trimClip(scene, clipId, 'end', Math.round(endFrame)));
+  },
+
+  setClipEdge: (clipId, edge, frame) => {
+    const { scene, applyScene } = get();
+    applyScene(trimClip(scene, clipId, edge, frame));
+  },
+
+  appendClip: (objectId) => {
+    const { scene, applyScene } = get();
+    const track = trackFor(scene, objectId);
+    const end = track
+      ? track.clips.reduce((last, clip) => Math.max(last, clip.endFrame), 0)
+      : 0;
+    // 已经铺到末尾就不追加：追出来的是个 0 长片段，点不中也画不了。
+    if (end >= scene.settings.durationFrames) return;
+
+    const clip: PrevizPathClip = {
+      id: uuidv4(),
+      kind: 'path',
+      startFrame: end,
+      endFrame: scene.settings.durationFrames,
+      points: [],
+    };
+    applyScene(upsertPathClip(scene, objectId, clip));
+    set({ selectedClipId: clip.id, selectedPointId: null });
+  },
+
+  pinTrackToTop: (objectId) => {
+    const { scene, applyScene } = get();
+    applyScene(pinTrack(scene, objectId));
   },
 
   splitClipAtPlayhead: (clipId) => {

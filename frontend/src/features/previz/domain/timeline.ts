@@ -272,6 +272,21 @@ export function removeClip(scene: PrevizScene, clipId: string): PrevizScene {
   return withClips(scene, clipId, []);
 }
 
+/**
+ * 把一条轨道挪到最前面（时间轴上的「置顶」）。轨道没有单独的排序字段，数组顺序
+ * 就是渲染顺序——盯着某个对象排戏时把它提到眼前，比一直往下滚要省事。
+ */
+export function pinTrack(scene: PrevizScene, objectId: string): PrevizScene {
+  const target = trackFor(scene, objectId);
+  if (!target) return scene;
+  return {
+    ...scene,
+    timeline: {
+      tracks: [target, ...scene.timeline.tracks.filter((track) => track.id !== target.id)],
+    },
+  };
+}
+
 export function removeTrack(scene: PrevizScene, objectId: string): PrevizScene {
   return {
     ...scene,
