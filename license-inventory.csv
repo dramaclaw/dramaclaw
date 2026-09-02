@@ -475,6 +475,7 @@ frontend/src/__tests__/features/canvas/editor-content-split.test.tsx,Elastic-2.0
 frontend/src/__tests__/features/canvas/external-file-handoff-low-zoom.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/fixed-feature-model-request.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/fixed-feature-overlay-submit.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/group-node-fit-scheduling.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/generation-error-report.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/generation-resume-race.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/generation-task-arbitration.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
