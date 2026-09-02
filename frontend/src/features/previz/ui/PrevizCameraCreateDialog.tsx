@@ -20,9 +20,9 @@ import {
   createCameraDraft,
   normalizeYawDeg,
   type PrevizCameraDraft,
+  type PrevizCameraPlacement,
 } from "@/features/previz/domain/cameraDraft";
 import type { OutputAspect, PrevizCamera } from "@/features/previz/domain/scene";
-import type { PrevizViewPlacement } from "@/features/previz/domain/view";
 import {
   PREVIZ_PREVIEW_SIZE,
   type CameraPreviewCanvas,
@@ -31,7 +31,7 @@ import {
 export interface PrevizCameraCreateDialogProps {
   open: boolean;
   /** 打开那一刻的导演视角。关掉再打开就是重新取一次，不接着上次的编辑。 */
-  viewPose: PrevizViewPlacement;
+  viewPose: PrevizCameraPlacement;
   /** 场景当前的出片画幅：预览要按它留黑边，视场角也要按它算。 */
   outputAspect: OutputAspect;
   /** 把草稿画到预览画布上。接线交给编辑器，本组件只吃 props，好用纯 props 测。 */
