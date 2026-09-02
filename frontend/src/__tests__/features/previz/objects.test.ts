@@ -36,6 +36,9 @@ describe("createPrevizObject", () => {
 
     expect(camera.focalMm).toBe(50);
     expect(camera.sensor).toBe("ff");
+    // 与 upstream 的创建对话框同默认：数字电影机 + 定焦镜头。
+    expect(camera.cameraBody).toBe("cine");
+    expect(camera.lensSeries).toBe("prime");
     expect(camera.transform.position).toEqual([0, 1.6, 4]);
     expect(camera.transform.rotation).toEqual([0, 0, 0]);
   });
