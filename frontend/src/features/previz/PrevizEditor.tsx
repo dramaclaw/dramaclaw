@@ -563,7 +563,7 @@ export function PrevizEditor({
           </div>
           </div>
 
-          <PrevizTimeline />
+          <PrevizTimeline onCreateObject={handleAdd} />
         </div>
       </DialogContent>
     </Dialog>

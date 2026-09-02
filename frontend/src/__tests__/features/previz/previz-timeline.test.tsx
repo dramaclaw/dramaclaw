@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -153,9 +153,34 @@ describe('PrevizTimeline tracks', () => {
     expect(screen.getByRole('listitem', { name: '女主' })).toBeInTheDocument();
   });
 
-  it('says so when nothing is on the timeline yet', () => {
+  it('offers to create something when the scene is still empty', () => {
     render(<PrevizTimeline />);
+
+    // 场景里一个对象都没有时，「暂无轨道」是废话——没东西可编排，得先建对象。
+    expect(screen.getByText('previz.timeline.emptyNoObjects')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'previz.timeline.createCharacter' }),
+    ).toBeInTheDocument();
+  });
+
+  it('says the timeline is empty once objects exist', () => {
+    usePrevizStore.getState().addObject('character');
+    render(<PrevizTimeline />);
+
     expect(screen.getByText('previz.timeline.empty')).toBeInTheDocument();
+    expect(screen.queryByText('previz.timeline.emptyNoObjects')).toBeNull();
+  });
+
+  it('hands object creation to the editor so cameras still get their dialog', async () => {
+    const user = userEvent.setup();
+    const onCreateObject = vi.fn();
+    render(<PrevizTimeline onCreateObject={onCreateObject} />);
+
+    await user.click(screen.getByRole('button', { name: 'previz.timeline.createCamera' }));
+
+    // 机位在编辑器里要先过创建对话框，直接调 addObject 就少了取景那一步。
+    expect(onCreateObject).toHaveBeenCalledWith('camera');
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
   });
 
   it('places the clip bar by frame', () => {
@@ -167,8 +192,8 @@ describe('PrevizTimeline tracks', () => {
     render(<PrevizTimeline />);
 
     const bar = screen.getByTestId(`previz-clip-${clipId}`);
-    // 0~120 的时间轴上，30~120 的片段从 25% 开始、占 75%。
-    expect(bar).toHaveStyle({ left: '25%', width: '75%' });
+    // 默认比例 120px 每秒、30fps，一帧 4px：30~120 的片段从 120px 开始、占 360px。
+    expect(bar).toHaveStyle({ left: '120px', width: '360px' });
     expect(objectId).toBeTruthy();
   });
 
@@ -212,8 +237,7 @@ describe('PrevizTimeline tracks', () => {
 
   it('cuts the selected clip at the playhead', async () => {
     const user = userEvent.setup();
-    const { clipId } = seedWalk();
-    usePrevizStore.getState().selectClip(clipId);
+    seedWalk();
     usePrevizStore.getState().setTimelineFrame(48);
     render(<PrevizTimeline />);
 
@@ -222,11 +246,13 @@ describe('PrevizTimeline tracks', () => {
     expect(usePrevizStore.getState().scene.timeline.tracks[0].clips).toHaveLength(2);
   });
 
-  it('disables the razor with no clip selected', () => {
-    seedWalk();
-    usePrevizStore.getState().selectClip(null);
+  it('disables the razor when the playhead is off the clip', () => {
+    const { clipId } = seedWalk();
+    usePrevizStore.getState().setClipEdge(clipId, 'end', 60);
+    usePrevizStore.getState().setTimelineFrame(90);
     render(<PrevizTimeline />);
 
+    // 剃刀按轨道走，不按选中走：播放头压不到片段时切在哪儿都没有答案。
     expect(screen.getByRole('button', { name: 'previz.timeline.razor' })).toBeDisabled();
   });
 
@@ -258,5 +284,118 @@ describe('PrevizTimeline tracks', () => {
     // 已经在时间轴上的对象再加一次会撞上「一个对象一条轨道」，下拉框里就不该出现。
     const picker = screen.getByLabelText('previz.timeline.addObject') as HTMLSelectElement;
     expect([...picker.options].map((option) => option.value)).not.toContain(objectId);
+  });
+});
+
+describe('PrevizTimeline scale', () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  function seedWalk(): string {
+    const objectId = usePrevizStore.getState().addObject('character');
+    if (!objectId) throw new Error('expected the character to be created');
+    usePrevizStore.getState().drawPath(objectId, [
+      [0, 0, 0],
+      [6, 0, 0],
+    ]);
+    return objectId;
+  }
+
+  it('rules the lane in seconds', () => {
+    render(<PrevizTimeline />);
+
+    // 尺子是这次改造的起点：以前整条时间轴只有一根滑块，读不出任何时间位置。
+    const ruler = screen.getByTestId('previz-ruler');
+    expect(ruler).toHaveTextContent('0s');
+    expect(ruler).toHaveTextContent('4s');
+  });
+
+  it('puts the playhead where the frame is', () => {
+    usePrevizStore.getState().setTimelineFrame(60);
+    render(<PrevizTimeline />);
+
+    // 默认 120px 每秒、30fps：第 60 帧是第 2 秒，落在 240px。
+    expect(screen.getByTestId('previz-playhead')).toHaveStyle({ left: '240px' });
+  });
+
+  it('zooms the scale in and out', async () => {
+    const user = userEvent.setup();
+    render(<PrevizTimeline />);
+
+    await user.click(screen.getByRole('button', { name: 'previz.timeline.zoomIn' }));
+    const zoomedIn = usePrevizStore.getState().timelineZoom;
+    expect(zoomedIn).toBeGreaterThan(120);
+
+    await user.click(screen.getByRole('button', { name: 'previz.timeline.zoomOut' }));
+    expect(usePrevizStore.getState().timelineZoom).toBeLessThan(zoomedIn);
+  });
+
+  it('keeps the keyframes on their own sub-track', async () => {
+    const user = userEvent.setup();
+    seedWalk();
+    render(<PrevizTimeline />);
+
+    expect(screen.getByText('previz.timeline.motionPath')).toBeInTheDocument();
+    expect(screen.getAllByTestId(/^previz-keyframe-/).length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole('button', { name: 'previz.timeline.collapseTrack' }));
+
+    // 折叠起来是为了同时看很多条轨道的片段排布，子轨道跟着收走。
+    expect(screen.queryAllByTestId(/^previz-keyframe-/)).toHaveLength(0);
+  });
+
+  it('walks the playhead between keyframes', async () => {
+    const user = userEvent.setup();
+    seedWalk();
+    usePrevizStore.getState().setTimelineFrame(0);
+    render(<PrevizTimeline />);
+
+    await user.click(screen.getByRole('button', { name: 'previz.timeline.nextKeyframe' }));
+    const forward = usePrevizStore.getState().timelineFrame;
+    expect(forward).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole('button', { name: 'previz.timeline.prevKeyframe' }));
+    expect(usePrevizStore.getState().timelineFrame).toBeLessThan(forward);
+  });
+
+  it('trims a clip by dragging its end handle', () => {
+    seedWalk();
+    render(<PrevizTimeline />);
+
+    const handle = screen.getByRole('slider', { name: 'previz.timeline.trimEnd' });
+    fireEvent.pointerDown(handle, { clientX: 480, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 360, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 360, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 0, pointerId: 1 });
+
+    // 一帧 4px：往回拖 120px 就是砍掉 30 帧，120 变 90。松手之后再动不该继续跟。
+    expect(usePrevizStore.getState().scene.timeline.tracks[0].clips[0].endFrame).toBe(90);
+  });
+
+  it('appends a clip into the gap after the last one', async () => {
+    const user = userEvent.setup();
+    const objectId = seedWalk();
+    const clipId = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
+    usePrevizStore.getState().setClipEdge(clipId, 'end', 60);
+    render(<PrevizTimeline />);
+
+    await user.click(screen.getByRole('button', { name: 'previz.timeline.appendClip' }));
+
+    expect(usePrevizStore.getState().scene.timeline.tracks[0].clips).toHaveLength(2);
+    expect(objectId).toBeTruthy();
+  });
+
+  it('pins a track to the top', async () => {
+    const user = userEvent.setup();
+    const first = seedWalk();
+    const second = usePrevizStore.getState().addObject('character');
+    usePrevizStore.getState().addObjectToTimeline(second!);
+    render(<PrevizTimeline />);
+
+    await user.click(screen.getAllByRole('button', { name: 'previz.timeline.pinTrack' })[1]);
+
+    expect(usePrevizStore.getState().scene.timeline.tracks[0].objectId).toBe(second);
+    expect(first).toBeTruthy();
   });
 });
