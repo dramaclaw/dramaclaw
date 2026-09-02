@@ -106,6 +106,8 @@ class AgentSkillBundle(_BundleBaseModel):
         skill_id = str(self.skill.get("id") or "").strip()
         if skill_id and skill_id != self.id:
             raise ValueError("Bundle skill.id must match bundle id")
+        if self.legal is not None and self.license != self.legal.license.id:
+            raise ValueError("Bundle license must match legal.license.id")
         return self
 
 
@@ -114,7 +116,7 @@ def normalize_agent_bundle(payload: dict[str, Any]) -> dict[str, Any]:
 
     scan_agent_catalog_payload_for_unsafe_content(payload, label="Bundle")
     try:
-        bundle = AgentSkillBundle.model_validate(payload).model_dump(mode="json")
+        bundle = AgentSkillBundle.model_validate(payload).model_dump(mode="json", exclude_none=True)
     except ValidationError as exc:
         raise ValueError(f"invalid agent Bundle: {exc}") from exc
 

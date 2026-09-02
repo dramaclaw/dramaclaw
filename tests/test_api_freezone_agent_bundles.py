@@ -159,7 +159,13 @@ def test_bundle_api_round_trips_structured_legal_metadata(bundle_client: TestCli
     }
     install = bundle_client.post(
         "/api/v1/freezone/agent-config/bundles:install",
-        json={"bundle": {**_bundle_payload(), "legal": legal}},
+        json={
+            "bundle": {
+                **_bundle_payload(),
+                "license": legal["license"]["id"],
+                "legal": legal,
+            }
+        },
     )
     assert install.status_code == 200, install.text
 

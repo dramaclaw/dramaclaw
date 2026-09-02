@@ -110,9 +110,20 @@ def test_validate_agent_bundle_accepts_skill_and_recipes(isolated_catalog: Path)
 def test_validate_agent_bundle_preserves_structured_legal_metadata(isolated_catalog: Path) -> None:
     legal = _legal_payload()
 
-    result = agent_bundle_store.validate_agent_bundle(_bundle_payload(legal=legal))
+    result = agent_bundle_store.validate_agent_bundle(
+        _bundle_payload(license=legal["license"]["id"], legal=legal)
+    )
 
     assert result["bundle"]["legal"] == legal
+
+
+def test_validate_agent_bundle_rejects_mismatched_legal_license_id(
+    isolated_catalog: Path,
+) -> None:
+    with pytest.raises(ValueError, match="license must match legal.license.id"):
+        agent_bundle_store.validate_agent_bundle(
+            _bundle_payload(license="MIT", legal=_legal_payload())
+        )
 
 
 def test_validate_agent_bundle_rejects_missing_recipe_reference(isolated_catalog: Path) -> None:
@@ -185,7 +196,7 @@ def test_install_and_export_preserve_structured_legal_metadata(isolated_catalog:
     legal = _legal_payload()
     agent_bundle_store.install_agent_bundle(
         username="alice",
-        payload=_bundle_payload(legal=legal),
+        payload=_bundle_payload(license=legal["license"]["id"], legal=legal),
     )
 
     stored_skill_path = (
@@ -206,6 +217,18 @@ def test_install_and_export_preserve_structured_legal_metadata(isolated_catalog:
         bundle_meta={},
     )
     assert exported["legal"] == legal
+
+
+def test_install_and_export_legacy_bundle_omits_legal_field(isolated_catalog: Path) -> None:
+    agent_bundle_store.install_agent_bundle(username="alice", payload=_bundle_payload())
+
+    exported = agent_bundle_store.export_agent_bundle(
+        username="alice",
+        skill_id="community-video",
+        bundle_meta={},
+    )
+
+    assert "legal" not in exported
 
 
 def test_export_agent_bundle_preserves_imported_bundle_metadata(isolated_catalog: Path) -> None:
