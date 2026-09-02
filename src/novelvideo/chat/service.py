@@ -128,8 +128,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "fall back to repeated single-node or single-edge tools after an error. "
     "For a normal workflow request, follow that Skill's discovery, draft, preview, and confirmation "
     "sequence. When the user explicitly specifies exact nodes and dependencies, follow the Skill's "
-    "custom-topology reference and call freezone_create_workflow_graph once instead; do not route "
-    "that request through the normal draft flow or compact Intent compiler merely because a "
+    "custom-topology reference and call freezone_prepare_workflow_plan_draft once instead; do not "
+    "route that request through the compact Intent compiler merely because a "
     "production Skill matches. Explicit Beat, shot, node-count, or dependency requirements must "
     "remain one complete WorkflowPlan even when they exceed the compact planner limit. Copy exact "
     "user totals into expected_node_count and expected_node_counts. For episodic short-drama, Beat, "
@@ -145,7 +145,7 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "Resolve unknown edge compatibility from freezone_get_link_type_catalog once; never guess link "
     "types through repeated compiler calls. Do not use workflow_graph_compile as routine preflight "
     "before the first graph write. After a recovery compile succeeds, immediately submit that exact "
-    "corrected Plan with freezone_create_workflow_graph instead of stopping at compile success. "
+    "corrected Plan with freezone_prepare_workflow_plan_draft instead of stopping at compile success. "
     "Correct the same complete plan once, then report the blocking error. The "
     "failure result must come from the current turn: historical failures are diagnostic context, "
     "not proof that the current adapter remains blocked. When the user repeats the create/run "
@@ -438,7 +438,7 @@ Canvas write contract:
   only the Skill/catalog reads required by the next rule before their single workflow write call.
 - For any workflow, several connected nodes, grouped stages, storyboard, or media pipeline, load
   and follow the dramaclaw-workflows Agent Skill. For an exact user-specified topology, read its
-  references/custom-topology.md and call freezone_create_workflow_graph once with one complete
+  references/custom-topology.md and call freezone_prepare_workflow_plan_draft once with one complete
   freezone_workflow_plan.v1. Exact means the user names the nodes and their dependency order; do not
   route it through the normal draft flow or compact Intent compiler merely because a production
   Skill matches. Explicit Beat, shot, or node totals must be copied into expected_node_count and
@@ -453,7 +453,7 @@ Canvas write contract:
   Resolve unknown edge compatibility by reading freezone_get_link_type_catalog once. Never guess
   link types through repeated compiler calls. The graph write already validates, so do not use
   workflow_graph_compile as a routine preflight before the first write. After a recovery compile
-  succeeds, immediately submit the exact same Plan with freezone_create_workflow_graph.
+  succeeds, immediately prepare the exact same Plan with freezone_prepare_workflow_plan_draft.
   Never call dramaclaw_get with guessed Skill or workflow HTTP paths. Use the workflow MCP catalog
   and its returned resource URI, or the documented freezone_get_workflow_skill fallback, exactly once.
   Do not use freezone_emit_canvas_command for a workflow.
@@ -545,8 +545,6 @@ _FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
         "freezone_open_mainline_projection",
         "freezone_run_node_action",
         "freezone_run_workflow",
-        "freezone_create_workflow_graph",
-        "freezone_create_workflow_from_intent",
         "freezone_confirm_workflow_draft",
         "freezone_confirm_canvas_action",
     }
@@ -5945,9 +5943,9 @@ async def _stream_assistant_reply_hermes(
                         and guard_details.get("tool_name")
                         not in {
                             "freezone_prepare_workflow_draft",
+                            "freezone_prepare_workflow_plan_draft",
                             "freezone_patch_workflow_draft",
                             "freezone_confirm_workflow_draft",
-                            "freezone_create_workflow_from_intent",
                         }
                         and not guard_details.get("had_write")
                     ):

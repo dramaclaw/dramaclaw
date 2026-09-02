@@ -135,7 +135,8 @@ including `480P` whenever the schema lists it.
    `draft_id` and `revision`.
 
 When the user explicitly names the required nodes and their dependency order, use the exact topology
-path in [references/custom-topology.md](references/custom-topology.md), even when a production Skill
+path in [references/custom-topology.md](references/custom-topology.md), preparing the complete Plan
+as a persisted draft even when a production Skill
 also matches. For error recovery, read
 [references/error-recovery.md](references/error-recovery.md).
 

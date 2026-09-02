@@ -12,9 +12,9 @@ const EMPTY_AGENT_REPLY_PLACEHOLDERS = new Set([
 ]);
 const HIDDEN_TOOL_STATUS_NAMES = new Set<string>([
   "freezone_add_next_node",
+  "freezone_confirm_workflow_draft",
   "freezone_create_edge",
   "freezone_create_node",
-  "freezone_create_workflow_graph",
   "freezone_delete_edges",
   "freezone_delete_nodes",
   "freezone_emit_canvas_command",

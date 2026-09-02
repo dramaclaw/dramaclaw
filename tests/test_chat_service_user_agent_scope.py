@@ -1242,7 +1242,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "dramaclaw_tool_search/describe/call" in developer_instructions
         assert "do not look for" in developer_instructions
         assert "custom-topology reference" in developer_instructions
-        assert "freezone_create_workflow_graph once" in developer_instructions
+        assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
         assert "expected_node_count" in developer_instructions
         assert "placeholder graph such as A/B" in developer_instructions
         assert "short-drama production Skill" in developer_instructions
@@ -1378,7 +1378,7 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
 
 def test_codex_freezone_write_receipt_accepts_durable_browser_result():
     event = SimpleNamespace(
-        name="freezone_create_workflow_graph",
+        name="freezone_confirm_workflow_draft",
         status="completed",
         error=None,
         structured={
@@ -1397,7 +1397,7 @@ def test_codex_freezone_write_receipt_accepts_durable_browser_result():
 
 def test_codex_freezone_write_receipt_rejects_counts_without_durable_identity():
     event = SimpleNamespace(
-        name="freezone_create_workflow_graph",
+        name="freezone_confirm_workflow_draft",
         status="completed",
         error=None,
         structured={"ok": True, "created_node_count": 3, "status": "completed"},
@@ -1425,7 +1425,7 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
 
 def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
     event = SimpleNamespace(
-        name="dramaclaw.freezone_create_workflow_graph",
+        name="dramaclaw.freezone_confirm_workflow_draft",
         output={
             "content": [
                 {
@@ -3033,7 +3033,7 @@ def test_freezone_prompt_allows_creative_ideation_canvas_framework_without_mainl
     assert "successful same-turn frontend write result" in prompt
     assert "Validate" in prompt
     assert "batch only for several ordinary non-workflow" in prompt
-    assert "freezone_create_workflow_graph once" in prompt
+    assert "freezone_prepare_workflow_plan_draft once" in prompt
     assert "not a Workflow catalog `skill_id`" in prompt
     assert "Do not ask for a second “创建并运行” confirmation" in prompt
     assert "the write tool creates it" in prompt

@@ -12,7 +12,7 @@
 - Incompatible edge type: read `freezone_get_link_type_catalog` once and select a listed type for the
   exact source/target node kinds. Do not guess alternatives through repeated compiler calls. A
   successful recovery compile is not completion: immediately submit the exact same corrected Plan to
-  `freezone_create_workflow_graph`.
+  `freezone_prepare_workflow_plan_draft`.
 - Revision conflict: read the existing draft and use its current revision; do not create a new draft.
 - Awaiting approval or timeout: keep the same operation/draft identity and wait for or report the
   existing approval state. Never replay the write as standalone commands.

@@ -57,17 +57,17 @@ production Skill does not turn an exact topology request into the normal draft f
    Every edge endpoint must match an `id` in the same `nodes` array. Never invent a source such as
    `source` or `input` unless that exact node is present; remove an optional edge rather than
    leaving a dangling reference.
-7. Call `freezone_create_workflow_graph` once. It already performs strict validation and
-   deterministically normalizes derivable node fields, adds grouping, layout, selection, validates
-   the generated command batch, and submits it as one canvas write. Do not call
-   `workflow_graph_compile` as a routine preflight before this first write. Use the read-only compiler
+7. Call `freezone_prepare_workflow_plan_draft` once. It strictly validates the complete Plan,
+   obtains an operation-bound planning quote and server receipt, then persists an exact preview
+   without writing canvas nodes. After the user reviews that preview, call
+   `freezone_confirm_workflow_draft` with its exact `draft_id` and `revision`. Do not call
+   `workflow_graph_compile` as a routine preflight before preparing the first draft. Use the read-only compiler
    only to diagnose and correct a validation failure. After a recovery compile succeeds, immediately
-   submit that exact corrected Plan with `freezone_create_workflow_graph`; do not stop after reporting
-   that compilation passed.
+   prepare that exact corrected Plan with `freezone_prepare_workflow_plan_draft`; do not stop after
+   reporting that compilation passed.
 
-The user's imperative to create or run authorizes this protected write submission. Do not ask for a
-second create/run confirmation. The graph call emits the approval surface; in `auto_execute`, the
-host applies the ordinary approval event automatically after required media parameters are known.
+The user's imperative does not replace an exact billing confirmation receipt. Follow the quote
+response, present the persisted preview, and confirm only the returned draft revision.
 
 Do not call `freezone_emit_canvas_command` for this path. Do not separately create nodes, edges,
 groups, or layout after the graph call. Never write placeholder or diagnostic nodes such as `A/B`,

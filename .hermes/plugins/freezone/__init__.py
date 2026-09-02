@@ -3992,7 +3992,7 @@ def _emit_canvas_commands(
                 "Do not use canvas commands to bypass dynamic WorkflowPlan validation. Select "
                 "one native Hermes Skill, load it with freezone_get_workflow_skill(compact=true), "
                 "author a complete freezone_workflow_plan.v1 with explicit Recipe ids, then call "
-                "freezone_create_workflow_graph(plan=...)."
+                "freezone_prepare_workflow_plan_draft(plan=...)."
             ),
         )
     project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
@@ -4147,7 +4147,7 @@ def _handle_get_workflow_skill(args: dict[str, Any], **_: Any) -> str:
     )
 
 
-def _handle_create_workflow_graph(args: dict[str, Any], **_: Any) -> str:
+def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     if build_workflow_graph_commands is None:
         return tool_error(
             "Freezone workflow graph builder is unavailable. "
@@ -4164,7 +4164,7 @@ def _handle_create_workflow_graph(args: dict[str, Any], **_: Any) -> str:
                 "agent_instruction": (
                     "Load the selected Skill with freezone_get_workflow_skill(compact=true), "
                     "author one complete freezone_workflow_plan.v1 with explicit Recipe ids, "
-                    "then call freezone_create_workflow_graph(plan=...). Do not retry with "
+                    "then call freezone_prepare_workflow_plan_draft(plan=...). Do not retry with "
                     "workflow_type, count, items, or handwritten canvas commands."
                 ),
             }
@@ -4177,25 +4177,15 @@ def _handle_create_workflow_graph(args: dict[str, Any], **_: Any) -> str:
     validated = validate_agent_workflow_plan(args["plan"])
     if not validated.get("ok"):
         return tool_result(validated)
-    project = (
-        str(
-            args.get("project_id") or args.get("project") or _default_project_id()
-        ).strip()
-        or None
-    )
-    canvas = (
-        str(
-            args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()
-        ).strip()
-        or None
-    )
+    project, canvas, scope_error = _workflow_draft_scope(args)
+    if scope_error:
+        return tool_result(scope_error)
+    assert project is not None and canvas is not None
     preflight = _workflow_runtime_preflight(
-        {
-            "plan": args["plan"],
-            "preflight": {"status": "ready", "blockers": [], "warnings": []},
-        },
-        project_id=project or "",
+        validated,
+        project_id=project,
     )
+    validated["preflight"] = preflight
     if preflight["blockers"]:
         return tool_result(
             {
@@ -4205,36 +4195,56 @@ def _handle_create_workflow_graph(args: dict[str, Any], **_: Any) -> str:
                 "preflight": preflight,
             }
         )
-    built = build_workflow_graph_commands(args)
-    if not built.get("ok"):
-        return tool_result(built)
-    skipped_edges = built.get("skipped_edges")
-    if isinstance(skipped_edges, list) and skipped_edges:
-        # A graph with silently omitted edges is a partial workflow. Refuse it
-        # before the protected canvas bridge so no incomplete graph can land.
-        return tool_result(
-            {
-                "ok": False,
-                "status": "workflow_graph_incomplete",
-                "code": "workflow_edges_skipped",
-                "error": "workflow graph contains invalid or unresolved edge endpoints",
-                "skipped_edges": skipped_edges[:12],
-                "warnings": built.get("warnings") or [],
-                "agent_instruction": (
-                    "Do not submit a reduced graph or retry with empty edges. Correct the same "
-                    "complete WorkflowPlan so every edge source and target matches a node id, "
-                    "then submit it once."
-                ),
-            }
-        )
-    commands = built.get("commands")
-    return _emit_canvas_commands(
+    run_after_create = _run_after_create_arg(args)
+    source = {
+        "schema_version": "freezone_workflow_plan_draft.v1",
+        "plan": validated["plan"],
+    }
+    confirmation_gate = _agent_billing_confirmation_gate(
         project,
         canvas,
-        commands,
-        allow_dynamic_workflow_batch=True,
-        slim_result=True,
+        args=args,
+        operation_kind="workflow_planning_create",
+        operation={
+            "intent": source,
+            "compiled": validated,
+            "run_after_create": bool(run_after_create),
+        },
     )
+    if confirmation_gate is not None:
+        return tool_result(confirmation_gate)
+    payload, error = _workflow_draft_response(
+        _request(
+            "POST",
+            _workflow_draft_api_path(project, canvas),
+            body={
+                "intent": source,
+                "compiled": validated,
+                "run_after_create": bool(run_after_create),
+                "quote_id": args.get("quote_id"),
+                "confirmation_receipt": args.get("confirmation_receipt"),
+            },
+        )
+    )
+    if payload is None:
+        return tool_result(error)
+    result = public_workflow_draft(payload)
+    billing_instruction = (
+        "Before asking for confirmation, state that this delivered planning turn is billed under "
+        "agent_planning_charge.display, then present agent_credit_estimate.display as the "
+        "additional estimated Agent credits charged only after workflow creation is confirmed. "
+        "State that image, audio, and video generation credits are charged separately. "
+        if result.get("agent_planning_charge") and result.get("agent_credit_estimate")
+        else "Do not mention credits, billing, pricing, or editions. "
+    )
+    result["agent_instruction"] = (
+        "Present the exact custom topology preview and its node/edge counts. "
+        f"{billing_instruction}"
+        "Wait for user confirmation, then call freezone_confirm_workflow_draft with the exact "
+        "draft_id and revision. To change the topology, prepare a new complete Plan draft; never "
+        "fall back to direct canvas commands."
+    )
+    return tool_result(result)
 
 
 def _workflow_draft_dependencies_available() -> bool:
@@ -5150,46 +5160,6 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     else:
         _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
     return result
-
-
-def _handle_create_workflow_from_intent(args: dict[str, Any], **_: Any) -> str:
-    if compile_workflow_intent is None:
-        return tool_error(
-            "Freezone workflow intent compiler is unavailable. "
-            f"Import error: {_JSON_WORKFLOW_CATALOG_IMPORT_ERROR}"
-        )
-    if build_workflow_graph_commands is None:
-        return tool_error(
-            "Freezone workflow graph builder is unavailable. "
-            f"Import error: {_WORKFLOW_GRAPH_IMPORT_ERROR}"
-        )
-    compiled = compile_workflow_intent(args.get("intent"))
-    if not compiled.get("ok"):
-        return tool_result(compiled)
-    project = str(args.get("project_id") or _default_project_id()).strip() or None
-    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
-    preflight = _workflow_runtime_preflight(compiled, project_id=project or "")
-    compiled["preflight"] = preflight
-    if preflight["blockers"]:
-        return tool_result(
-            {
-                "ok": False,
-                "status": "workflow_preflight_failed",
-                "error": preflight["blockers"][0]["message"],
-                "preflight": preflight,
-            }
-        )
-    plan = compiled.get("plan")
-    built = build_workflow_graph_commands({**args, "plan": plan})
-    if not built.get("ok"):
-        return tool_result(built)
-    return _emit_canvas_commands(
-        project,
-        canvas,
-        built.get("commands"),
-        allow_dynamic_workflow_batch=True,
-        slim_result=True,
-    )
 
 
 def _position_from_args(args: dict[str, Any]) -> dict[str, Any] | None:
@@ -7500,37 +7470,25 @@ TOOLS = (
         _handle_confirm_workflow_draft,
     ),
     (
-        "freezone_create_workflow_from_intent",
+        "freezone_prepare_workflow_plan_draft",
         _schema(
-            "freezone_create_workflow_from_intent",
-            (
-                "Compatibility path for direct creation from a compact workflow intent. New "
-                "interactive flows should prepare, patch, and confirm a persisted workflow draft "
-                "so the reviewed preview cannot drift before creation."
-            ),
-            {
-                **_SCOPE_PROPS,
-                "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
-                **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
-            },
-            ["intent"],
-            reject_unknown=True,
-        ),
-        _handle_create_workflow_from_intent,
-    ),
-    (
-        "freezone_create_workflow_graph",
-        _schema(
-            "freezone_create_workflow_graph",
-            "Create one agent-authored dynamic Freezone WorkflowPlan in one frontend approval. "
-            "A complete plan is required and strictly validated; fixed workflow_type/count/items "
-            "template creation is disabled. The tool arguments have exactly one workflow payload: "
-            "plan={schema_version,skill,nodes,edges,...}. Put every node identifier only in "
-            "plan.nodes[].id; never add a top-level id, node_id, commands, or canvas command "
-            "objects. Use workflow_graph_compile first when constructing a new plan.",
+            "freezone_prepare_workflow_plan_draft",
+            "Validate and prepare one complete agent-authored freezone_workflow_plan.v1 as a "
+            "persisted draft. This is the only custom-topology entry point: it first obtains an "
+            "operation-bound planning quote, requires a trusted server receipt, then returns an "
+            "exact preview. It never writes canvas nodes directly. After the user reviews the "
+            "preview, use freezone_confirm_workflow_draft with its draft_id and revision.",
             {
                 **_SCOPE_PROPS,
                 "plan": _WORKFLOW_PLAN_OBJECT_SCHEMA,
+                "quote_id": {
+                    "type": "string",
+                    "description": "Server-issued billing quote id.",
+                },
+                "confirmation_receipt": {
+                    "type": "string",
+                    "description": "Trusted server-issued receipt bound to this exact Plan.",
+                },
                 "run_after_create": {
                     "type": "boolean",
                     "description": (
@@ -7538,19 +7496,11 @@ TOOLS = (
                         "frontend batch after the user has approved the WorkflowPlan."
                     ),
                 },
-                "workflow_instance_id": {
-                    "type": "string",
-                    "description": (
-                        "Optional stable idempotency key for an advanced direct Plan submission. "
-                        "Reuse it when retrying the same submission. Omit it for normal draft "
-                        "confirmation, which supplies the draft id automatically."
-                    ),
-                },
             },
             ["plan"],
             reject_unknown=True,
         ),
-        _handle_create_workflow_graph,
+        _handle_prepare_workflow_plan_draft,
     ),
     # 写入前预校验。
     (
@@ -7576,12 +7526,12 @@ TOOLS = (
         "freezone_emit_canvas_command",
         _schema(
             "freezone_emit_canvas_command",
-            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. Do not use this tool for registered or dynamic WorkflowPlans; use freezone_create_workflow_graph instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first.",
+            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first.",
             {
                 **_CANVAS_COMMAND_TOOL_SCOPE_PROPS,
                 "commands": {
                     "type": "array",
-                    "description": "Complete canvas_chat_commands.v1 commands array for ordinary non-workflow edits. For workflows, do not build this array manually; call freezone_create_workflow_graph with a complete dynamic plan. Batch command objects require snake_case fields from freezone_get_canvas_command_catalog: type, node_type, source_node_id, node_id, node_ids, source, target, link_type, etc.",
+                    "description": "Complete canvas_chat_commands.v1 commands array for ordinary non-workflow edits. For workflows, do not build this array manually; use a persisted workflow draft. Batch command objects require snake_case fields from freezone_get_canvas_command_catalog: type, node_type, source_node_id, node_id, node_ids, source, target, link_type, etc.",
                     "items": _CANVAS_COMMAND_ITEM_SCHEMA,
                 },
             },

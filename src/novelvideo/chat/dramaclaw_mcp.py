@@ -101,7 +101,10 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
     """
 
     raw = str(value or "")
-    if name != "freezone_prepare_workflow_draft":
+    if name not in {
+        "freezone_prepare_workflow_draft",
+        "freezone_prepare_workflow_plan_draft",
+    }:
         return raw
     try:
         payload = json.loads(raw)
@@ -143,8 +146,12 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         "or run the workflow and all required clarification answers are available, that "
         "imperative is authorization: call freezone_confirm_workflow_draft exactly once now "
         "with this draft_id and revision, without asking for another confirmation. Otherwise "
-        "wait for explicit user confirmation. For adjustments, patch this draft instead of "
-        "rebuilding the intent."
+        "wait for explicit user confirmation. "
+    )
+    instruction += (
+        "For adjustments, prepare a new complete Plan draft."
+        if name == "freezone_prepare_workflow_plan_draft"
+        else "For adjustments, patch this draft instead of rebuilding the intent."
     )
     if has_billing_metadata(payload):
         instruction += (
@@ -406,7 +413,10 @@ def _log_mcp_call_end(
 
 
 def _workflow_schema_recovery_instruction(tool_name: str) -> str | None:
-    if tool_name not in {"freezone_create_workflow_graph", "workflow_graph_compile"}:
+    if tool_name not in {
+        "freezone_prepare_workflow_plan_draft",
+        "workflow_graph_compile",
+    }:
         return None
     return (
         "WorkflowPlan 校验失败。不要提交单节点探测、空 edges 或 compact Intent。"
@@ -461,7 +471,11 @@ async def list_tools() -> list[types.Tool]:
                     ),
                     outputSchema=(
                         _WORKFLOW_DRAFT_OUTPUT_SCHEMA
-                        if name == "freezone_prepare_workflow_draft"
+                        if name
+                        in {
+                            "freezone_prepare_workflow_draft",
+                            "freezone_prepare_workflow_plan_draft",
+                        }
                         else _MCP_OUTPUT_SCHEMA
                     ),
                 )
@@ -611,11 +625,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     if name in _available_tools() and name not in BRIDGE_TOOL_NAMES:
         schema, handler = _available_tools()[name]
         workflow_started = (
-            time.monotonic() if name == "freezone_create_workflow_graph" else None
+            time.monotonic()
+            if name == "freezone_prepare_workflow_plan_draft"
+            else None
         )
         if workflow_started is not None:
             logger.info(
-                "freezone_create_workflow_graph.start scope=%s summary=%s",
+                "freezone_prepare_workflow_plan_draft.start scope=%s summary=%s",
                 _scope_kind(),
                 _workflow_plan_log_summary(arguments),
             )
@@ -630,7 +646,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             recovery = _workflow_schema_recovery_instruction(name)
             if workflow_started is not None:
                 logger.warning(
-                    "freezone_create_workflow_graph.validation_failed elapsed_ms=%d message=%s path=%s summary=%s",
+                    "freezone_prepare_workflow_plan_draft.validation_failed elapsed_ms=%d message=%s path=%s summary=%s",
                     int((time.monotonic() - workflow_started) * 1000),
                     getattr(exc, "message", str(exc)),
                     ".".join(str(part) for part in getattr(exc, "absolute_path", ())),
@@ -641,7 +657,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             # shape; all other schema errors remain fail-closed.
             nested = arguments.get("plan") if isinstance(arguments, dict) else None
             if (
-                name == "freezone_create_workflow_graph"
+                name == "freezone_prepare_workflow_plan_draft"
                 and isinstance(nested, dict)
                 and isinstance(nested.get("plan"), dict)
             ):
@@ -688,17 +704,17 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 "status": (
                     "workflow_validation_failed"
                     if name
-                    in {"freezone_create_workflow_graph", "workflow_graph_compile"}
+                    in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"}
                     else "tool_arguments_invalid"
                 ),
                 "phase": (
                     "graph_compile"
                     if name
-                    in {"freezone_create_workflow_graph", "workflow_graph_compile"}
+                    in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"}
                     else "tool_validation"
                 ),
                 "retryable": name
-                in {"freezone_create_workflow_graph", "workflow_graph_compile"},
+                in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"},
                 **({"agent_instruction": recovery} if recovery else {}),
             }
             _log_mcp_call_end(
@@ -725,7 +741,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         adapted = _adapt_external_agent_tool_result(name, result)
         if workflow_started is not None:
             logger.info(
-                "freezone_create_workflow_graph.end elapsed_ms=%d result_bytes=%d",
+                "freezone_prepare_workflow_plan_draft.end elapsed_ms=%d result_bytes=%d",
                 int((time.monotonic() - workflow_started) * 1000),
                 len(adapted),
             )
@@ -860,7 +876,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         raise
     if inspect.isawaitable(text):
         text = await text
-    if tool_name == "freezone_prepare_workflow_draft":
+    if tool_name in {
+        "freezone_prepare_workflow_draft",
+        "freezone_prepare_workflow_plan_draft",
+    }:
         adapted = _adapt_external_agent_tool_result(tool_name, text)
         try:
             structured = json.loads(adapted)

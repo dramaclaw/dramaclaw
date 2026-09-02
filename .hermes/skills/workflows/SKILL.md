@@ -20,10 +20,11 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 
 - 读规划包：`tool_call(name="freezone_get_workflow_skill", arguments={"skill_id": ..., "inputs": {...}, "compact": true})`
 - 规划并报价：`tool_call(name="freezone_prepare_workflow_draft", arguments={"canvas_id": ..., "intent": {...}})`；需要计费时先展示报价并等待用户回复“确认规划费用”，服务端随后提供 `quote_id` 和 `confirmation_receipt`，再用完全相同的 intent 携带二者重试
+- 自定义拓扑规划并报价：`tool_call(name="freezone_prepare_workflow_plan_draft", arguments={"canvas_id": ..., "plan": {...}})`；使用与普通草稿相同的服务端报价和 receipt 流程，返回精确预览而不直接写画布
 - 修改草稿：`freezone_patch_workflow_draft`，arguments `{"draft_id": ..., "expected_revision": ..., "changes": {...}}`；需要计费时等待用户回复“确认修改费用”，仅使用服务端签发的 `quote_id` 和 `confirmation_receipt` 重试同一修改
 - 确认落图：`freezone_confirm_workflow_draft`，arguments `{"draft_id": ..., "revision": ...}`；需要创建费用时等待用户回复“确认创建费用”，再携带服务端凭证重试
 
-如果用户只是咨询或分析，只展示一般性说明，不创建草稿或写画布。用户提出具体创建需求后，先读取当前已选的唯一 Skill 紧凑规划包并生成结构化 `intent`，再调用 `freezone_prepare_workflow_draft`，让服务端把报价绑定到该 intent 和编译结果。如果工具要求确认，展示确切报价并立即停止本轮；只有用户使用指定确认短语后，才能使用服务端签发的凭证重试。不得伪造、复用到其它操作或部分复制凭证。只有用户明确要求 Skill 蓝图无法表达的自定义拓扑时，才使用完整 `freezone_create_workflow_graph(plan=...)` 兼容入口。
+如果用户只是咨询或分析，只展示一般性说明，不创建草稿或写画布。用户提出具体创建需求后，先读取当前已选的唯一 Skill 紧凑规划包并生成结构化 `intent`，再调用 `freezone_prepare_workflow_draft`，让服务端把报价绑定到该 intent 和编译结果。如果工具要求确认，展示确切报价并立即停止本轮；只有用户使用指定确认短语后，才能使用服务端签发的凭证重试。不得伪造、复用到其它操作或部分复制凭证。只有用户明确要求 Skill 蓝图无法表达的自定义拓扑时，才使用 `freezone_prepare_workflow_plan_draft(plan=...)`，并继续走同一草稿确认入口。
 
 “再创建一个 / 再来一个 / 再添加一个 / 重新建一个 / 复制一个同类型工作流”都属于创建请求。当前画布已经存在相同工作流时，不要改为查询列表、解释已有工作流、复用旧节点或等待用户重新选择，仍然创建一个新的工作流实例并走确认流程；不要复用旧 `draft_id`，也不要调用 `freezone_emit_canvas_command`。
 
@@ -90,11 +91,11 @@ Plan 中的边只表示真实输入依赖，不表示时间顺序。节点 ID �
 - 准备或修改草稿不会写画布；只有用户确认后才调用草稿确认工具创建节点。
 - 普通节点删除、移动、连接或属性修改交给 Freezone 节点操作工具，不混入工作流规划。
 - 用户未要求自动执行时，不自动运行图片、视频、音频生成。
-- Skill 蓝图无法表达的高级自定义拓扑，才允许在用户确认后调用完整 Plan 兼容入口。
+- Skill 蓝图无法表达的高级自定义拓扑，才允许准备完整 Plan 草稿；不得直接写画布。
 
 ## 落画布交接
 
-用户确认动态方案后，默认只调用 `freezone_confirm_workflow_draft(draft_id=..., revision=...)`，一次性创建草稿中已经预览过的节点、连线、布局和分组。`freezone_create_workflow_from_intent` 只保留给无需多轮确认的兼容调用；完整 Plan 工具只用于 Skill 蓝图无法表达的高级自定义拓扑。
+用户确认动态方案后，只调用 `freezone_confirm_workflow_draft(draft_id=..., revision=...)`，一次性创建草稿中已经预览过的节点、连线、布局和分组。普通 Intent 与高级完整 Plan 都必须先生成持久化草稿；不再保留任何直接创建兼容入口。
 - 用户要求“继续/完成工作流”时直接调用 `freezone_run_workflow(regenerate=false)`，让 Runner 自动发现可执行节点并跳过已有结果；调用前不要读取画布摘要、节点详情、邻接图或逐节点动作目录，也不要逐节点执行。
 - 用户修改某个节点后要求“从这里重跑/重做后续”时，调用 `freezone_run_workflow(node_ids=[...], direction="downstream", regenerate=true)`；Agent 不遍历或枚举下游节点。
 - 仅重试一个失败节点时使用 `direction="node"`；没有明确要求覆盖已有结果时不得设置 `regenerate=true`。

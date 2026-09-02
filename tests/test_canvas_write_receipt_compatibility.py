@@ -12,7 +12,7 @@ import pytest
 from novelvideo.chat.service import _codex_freezone_write_result_succeeded
 
 
-def _event(payload, *, name="freezone_create_workflow_graph", status="completed", error=None):
+def _event(payload, *, name="freezone_confirm_workflow_draft", status="completed", error=None):
     return SimpleNamespace(
         name=name,
         status=status,

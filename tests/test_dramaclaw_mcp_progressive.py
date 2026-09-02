@@ -55,6 +55,29 @@ def test_external_mcp_ready_draft_preserves_nested_billing_instruction():
     assert "Do not invent or mention credits" not in adapted["agent_instruction"]
 
 
+def test_external_mcp_plan_draft_keeps_custom_topology_in_the_draft_flow():
+    original = {
+        "ok": True,
+        "status": "workflow_draft_ready",
+        "draft_id": "draft-plan",
+        "revision": 1,
+        "agent_instruction": "Present the exact custom topology preview.",
+    }
+
+    adapted = json.loads(
+        dramaclaw_mcp._adapt_external_agent_tool_result(
+            "freezone_prepare_workflow_plan_draft",
+            json.dumps(original),
+        )
+    )
+
+    assert "call freezone_confirm_workflow_draft exactly once" in adapted[
+        "agent_instruction"
+    ]
+    assert "prepare a new complete Plan draft" in adapted["agent_instruction"]
+    assert "patch this draft" not in adapted["agent_instruction"]
+
+
 def test_plugin_reads_turn_token_file_lazily(monkeypatch, tmp_path):
     token_file = tmp_path / "turn.token"
     token_file.write_text("first-token", encoding="utf-8")
@@ -125,7 +148,15 @@ async def test_freezone_lists_concrete_hermes_tools(monkeypatch):
 
     assert "freezone_create_node" in names
     assert "freezone_emit_canvas_command" in names
+    assert "freezone_prepare_workflow_plan_draft" in names
+    assert "freezone_create_workflow_graph" not in names
+    assert "freezone_create_workflow_from_intent" not in names
     assert "dramaclaw_tool_call" not in names
+    tools_by_name = {tool.name: tool for tool in tools}
+    assert (
+        tools_by_name["freezone_prepare_workflow_plan_draft"].outputSchema
+        == dramaclaw_mcp._WORKFLOW_DRAFT_OUTPUT_SCHEMA
+    )
 
 
 def test_freezone_profile_defaults_tool_mode(monkeypatch):

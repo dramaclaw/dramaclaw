@@ -257,16 +257,18 @@ def test_freezone_plugin_registers_canvas_command_tools():
     assert "freezone_get_workflow_skill" in names
     assert not any(name.startswith("freezone_skill_") for name in names)
     assert "freezone_prepare_workflow_draft" in names
+    assert "freezone_prepare_workflow_plan_draft" in names
     assert "freezone_patch_workflow_draft" in names
     assert "freezone_confirm_workflow_draft" in names
-    assert "freezone_create_workflow_from_intent" in names
-    assert "freezone_create_workflow_graph" in names
+    assert "freezone_create_workflow_from_intent" not in names
+    assert "freezone_create_workflow_graph" not in names
     assert "freezone_present_agent_catalog_draft" in names
     assert "freezone_put_agent_catalog_draft_outline" in names
     assert "freezone_begin_agent_catalog_draft" in names
     assert "freezone_put_agent_catalog_skill" in names
     for tool_name in (
         "freezone_prepare_workflow_draft",
+        "freezone_prepare_workflow_plan_draft",
         "freezone_patch_workflow_draft",
         "freezone_confirm_workflow_draft",
     ):
@@ -280,7 +282,7 @@ def test_freezone_plugin_registers_canvas_command_tools():
     assert "freezone_list_agent_catalog" in names
     assert "freezone_get_saved_skill" in names
     assert "freezone_get_saved_recipe" in names
-    create_schema = schemas["freezone_create_workflow_graph"]["parameters"]
+    create_schema = schemas["freezone_prepare_workflow_plan_draft"]["parameters"]
     assert create_schema["required"] == ["plan"]
     assert "workflow_type" not in create_schema["properties"]
     assert "items" not in create_schema["properties"]
@@ -328,15 +330,6 @@ def test_freezone_plugin_registers_canvas_command_tools():
         == ALLOWED_LINK_TYPES
     )
     assert plan_schema["properties"] != {}
-    intent_schema = schemas["freezone_create_workflow_from_intent"]["parameters"]
-    assert intent_schema["required"] == ["intent"]
-    assert intent_schema["properties"]["intent"]["required"] == [
-        "skill_id",
-        "user_goal",
-    ]
-    planner_schema = intent_schema["properties"]["intent"]["properties"]["planner"]
-    assert planner_schema["properties"]["mode"]["enum"] == ["standard"]
-    assert planner_schema["properties"]["item_count"]["maximum"] == 12
     draft_schema = schemas["freezone_confirm_workflow_draft"]["parameters"]
     assert draft_schema["required"] == ["draft_id", "revision"]
     prepare_draft_schema = schemas["freezone_prepare_workflow_draft"]["parameters"]
@@ -356,7 +349,7 @@ def test_workflow_graph_schema_rejects_missing_skill_and_executable_recipe():
     schema = next(
         schema
         for name, schema, _handler in plugin.TOOLS
-        if name == "freezone_create_workflow_graph"
+        if name == "freezone_prepare_workflow_plan_draft"
     )["parameters"]["properties"]["plan"]
     Draft202012Validator.check_schema(schema)
     validator = Draft202012Validator(schema)
@@ -707,7 +700,7 @@ def test_hermes_generation_path_does_not_enable_external_parameter_preflight(
 def test_dynamic_workflow_plan_is_rejected_before_canvas_bridge():
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
-    result = handlers["freezone_create_workflow_graph"](
+    result = handlers["freezone_prepare_workflow_plan_draft"](
         {
             "plan": {
                 "schema_version": "freezone_workflow_plan.v1",
@@ -728,7 +721,7 @@ def test_fixed_workflow_creation_is_rejected_before_canvas_bridge():
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
 
-    result = handlers["freezone_create_workflow_graph"](
+    result = handlers["freezone_prepare_workflow_plan_draft"](
         {
             "workflow_type": "catalog.ecommerce_product.ecommerce_scene_images",
             "count": 3,
@@ -856,8 +849,9 @@ def test_hermes_canvas_write_preserves_recommended_model(monkeypatch):
     assert captured["commands"][0]["data"]["model"] == "recommended"
 
 
-def test_dynamic_workflow_creation_reaches_canvas_bridge(monkeypatch):
+def test_dynamic_workflow_plan_uses_draft_before_canvas_bridge(monkeypatch, tmp_path):
     plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
     plan = {
         "schema_version": "freezone_workflow_plan.v1",
         "workflow_type": "dynamic.ecommerce-product",
@@ -869,7 +863,17 @@ def test_dynamic_workflow_creation_reaches_canvas_bridge(monkeypatch):
     captured = {}
 
     monkeypatch.setattr(
-        plugin, "validate_agent_workflow_plan", lambda value: {"ok": value is plan}
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda value: {
+            "ok": value is plan,
+            "status": "workflow_plan_valid",
+            "schema_version": "freezone_workflow_plan.v1",
+            "skill_id": "ecommerce-product",
+            "node_count": 0,
+            "edge_count": 0,
+            "plan": value,
+        },
     )
     monkeypatch.setattr(
         plugin,
@@ -893,18 +897,31 @@ def test_dynamic_workflow_creation_reaches_canvas_bridge(monkeypatch):
                 "kwargs": kwargs,
             }
         )
-        return "created"
+        return {
+            "ok": True,
+            "canvas_apply_status": "applied",
+            "applied": True,
+        }
 
     monkeypatch.setattr(plugin, "_emit_canvas_commands", fake_emit)
 
-    result = plugin._handle_create_workflow_graph(
+    prepared = plugin._handle_prepare_workflow_plan_draft(
         {"project_id": "project-a", "canvas_id": "canvas-a", "plan": plan}
     )
 
-    assert result == "created"
-    assert captured["commands"] == commands
+    assert prepared["ok"] is True
+    assert prepared["status"] == "workflow_draft_ready"
+    assert prepared["preview"]["node_count"] == 0
+    assert captured.get("commands") is None
     assert captured["preflight_plan"] is plan
     assert captured["preflight_project"] == "project-a"
+
+    confirmed = plugin._handle_confirm_workflow_draft(
+        {"draft_id": prepared["draft_id"], "revision": prepared["revision"]}
+    )
+
+    assert confirmed["ok"] is True
+    assert captured["commands"] == commands
     assert captured["kwargs"]["allow_dynamic_workflow_batch"] is True
 
 
@@ -926,7 +943,9 @@ def test_dynamic_workflow_creation_stops_when_live_model_catalog_is_unavailable(
         "edges": [],
     }
     monkeypatch.setattr(
-        plugin, "validate_agent_workflow_plan", lambda value: {"ok": value is plan}
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda value: {"ok": value is plan, "plan": value},
     )
     monkeypatch.setattr(plugin, "_available", lambda: True)
 
@@ -945,61 +964,12 @@ def test_dynamic_workflow_creation_stops_when_live_model_catalog_is_unavailable(
         lambda _args: pytest.fail("must stop before building canvas commands"),
     )
 
-    result = plugin._handle_create_workflow_graph(
+    result = plugin._handle_prepare_workflow_plan_draft(
         {"project_id": "project-a", "canvas_id": "canvas-a", "plan": plan}
     )
 
     assert result["status"] == "workflow_preflight_failed"
     assert result["preflight"]["blockers"][0]["code"] == "model_catalog_unavailable"
-
-
-def test_compact_workflow_intent_compiles_before_canvas_bridge(monkeypatch):
-    plugin = _load_plugin_module()
-    intent = {"skill_id": "video-ad", "user_goal": "制作五镜广告"}
-    plan = {"schema_version": "freezone_workflow_plan.v1", "nodes": []}
-    commands = [{"type": "create_node", "node_type": "textAnnotationNode"}]
-    captured = {}
-
-    monkeypatch.setattr(
-        plugin,
-        "compile_workflow_intent",
-        lambda value: {"ok": value is intent, "plan": plan},
-    )
-    monkeypatch.setattr(
-        plugin,
-        "build_workflow_graph_commands",
-        lambda args: {"ok": args["plan"] is plan, "commands": commands},
-    )
-
-    def fake_preflight(compiled, *, project_id):
-        captured["preflight_compiled"] = compiled
-        captured["preflight_project"] = project_id
-        return {"status": "ready", "blockers": [], "warnings": []}
-
-    monkeypatch.setattr(plugin, "_workflow_runtime_preflight", fake_preflight)
-
-    def fake_emit(project, canvas, emitted, **kwargs):
-        captured.update(
-            {
-                "project": project,
-                "canvas": canvas,
-                "commands": emitted,
-                "kwargs": kwargs,
-            }
-        )
-        return "created-from-intent"
-
-    monkeypatch.setattr(plugin, "_emit_canvas_commands", fake_emit)
-
-    result = plugin._handle_create_workflow_from_intent(
-        {"project_id": "project-a", "canvas_id": "canvas-a", "intent": intent}
-    )
-
-    assert result == "created-from-intent"
-    assert captured["commands"] == commands
-    assert captured["preflight_compiled"]["plan"] is plan
-    assert captured["preflight_project"] == "project-a"
-    assert captured["kwargs"]["allow_dynamic_workflow_batch"] is True
 
 
 def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
@@ -1477,6 +1447,100 @@ def test_workflow_prepare_requires_server_receipt_and_retries_exact_operation(
         operation={"intent": intent, "compiled": compiled},
     )
     assert incomplete["status"] == "billing_confirmation_incomplete"
+
+
+def test_workflow_plan_prepare_uses_the_same_receipt_bound_draft_flow(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "skill": {"id": "video-ad"},
+        "nodes": [],
+        "edges": [],
+    }
+    compiled = {
+        "ok": True,
+        "status": "workflow_plan_valid",
+        "schema_version": "freezone_workflow_plan.v1",
+        "skill_id": "video-ad",
+        "node_count": 0,
+        "edge_count": 0,
+        "plan": plan,
+        "preflight": {"status": "ready", "blockers": [], "warnings": []},
+    }
+    calls = []
+
+    def fake_request(method, path, *, body=None, **_kwargs):
+        calls.append((method, path, body))
+        if path.endswith("/freezone/agent-capability-quote"):
+            return {
+                "ok": True,
+                "data": {
+                    "billing_required": True,
+                    "configured": True,
+                    "exact": True,
+                    "quote_id": "billing_quote_plan",
+                    "display": "12 积分",
+                },
+            }
+        if path.endswith("/workflow-drafts"):
+            return {
+                "ok": True,
+                "data": {
+                    "schema_version": "freezone_workflow_draft.v1",
+                    "draft_id": "workflow_draft_plan",
+                    "revision": 1,
+                    "status": "ready",
+                    "skill_id": "video-ad",
+                    "compiled": compiled,
+                    "preview": {"node_count": 0, "edge_count": 0},
+                    "plan_digest": "digest-plan",
+                    "run_after_create": False,
+                    "last_changes": {},
+                    "expires_at": 9999999999,
+                },
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(plugin, "_request", fake_request)
+    monkeypatch.setattr(
+        plugin, "validate_agent_workflow_plan", lambda value: dict(compiled)
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_runtime_preflight",
+        lambda *_args, **_kwargs: compiled["preflight"],
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_emit_canvas_commands",
+        lambda *_args, **_kwargs: pytest.fail("prepare must never write the canvas"),
+    )
+
+    quoted = plugin._handle_prepare_workflow_plan_draft({"plan": plan})
+    assert quoted["status"] == "agent_planning_confirmation_required"
+    assert len(calls) == 1
+    operation = calls[0][2]["operation"]
+    assert operation["intent"] == {
+        "schema_version": "freezone_workflow_plan_draft.v1",
+        "plan": plan,
+    }
+    assert operation["compiled"] == compiled
+
+    prepared = plugin._handle_prepare_workflow_plan_draft(
+        {
+            "plan": plan,
+            "quote_id": "billing_quote_plan",
+            "confirmation_receipt": "billing_receipt_plan",
+        }
+    )
+    assert prepared["status"] == "workflow_draft_ready"
+    assert prepared["draft_id"] == "workflow_draft_plan"
+    assert calls[-1][2]["quote_id"] == "billing_quote_plan"
+    assert calls[-1][2]["confirmation_receipt"] == "billing_receipt_plan"
+    assert calls[-1][2]["intent"] == operation["intent"]
+    assert calls[-1][2]["compiled"] == operation["compiled"]
 
 
 def test_workflow_draft_concurrent_confirmation_emits_once(monkeypatch, tmp_path):

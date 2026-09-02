@@ -1432,7 +1432,7 @@ def _compile_dynamic_recipe_items_intent(
             "requires_user_confirmation": True,
             "auto_create_nodes": False,
             "auto_generate_content": False,
-            "handoff_tool": "freezone_create_workflow_from_intent",
+            "handoff_tool": "freezone_prepare_workflow_draft",
         },
     }
     validated = validate_agent_workflow_plan(plan)

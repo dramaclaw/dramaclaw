@@ -22,7 +22,7 @@ The host's authorized adapter must expose the high-level write contract used by 
 - `freezone_prepare_workflow_draft`
 - `freezone_patch_workflow_draft`
 - `freezone_confirm_workflow_draft`
-- `freezone_create_workflow_graph`
+- `freezone_prepare_workflow_plan_draft`
 - `freezone_run_workflow`
 
 Keep the portable MCP read/compile-only. This ensures every host can reuse the same Skill and Recipe
