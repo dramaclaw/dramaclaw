@@ -11,6 +11,11 @@ from novelvideo.freezone.agent_workflows import catalog
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
 
 
+def _result_payload(result):
+    content = result.content if hasattr(result, "content") else result
+    return json.loads(content[0].text)
+
+
 @pytest.mark.asyncio
 async def test_standalone_workflow_mcp_exposes_portable_tools_and_resources():
     tools = await workflow_mcp.list_tools()
@@ -20,12 +25,14 @@ async def test_standalone_workflow_mcp_exposes_portable_tools_and_resources():
         "workflow_catalog_search",
         "workflow_skill_get",
         "workflow_recipe_get",
+        "workflow_skill_reference_get",
         "workflow_intent_compile",
         "workflow_graph_compile",
     }
     assert {template.uriTemplate for template in templates} == {
         "dramaclaw-workflow://skills/{skill_id}",
         "dramaclaw-workflow://recipes/{recipe_id}",
+        "dramaclaw-workflow://skills/{skill_id}/references/{reference}",
     }
 
     schemas = {tool.name: tool.inputSchema for tool in tools}
@@ -109,11 +116,32 @@ async def test_graph_compile_accepts_canvas_type_alias():
 
     result = await workflow_mcp.call_tool("workflow_graph_compile", arguments)
 
-    payload = json.loads(result[0].text)
+    payload = _result_payload(result)
     assert payload["ok"] is True, payload
     assert payload["commands"][0]["node_type"] == "textAnnotationNode"
     assert payload["commands"][1]["node_type"] == "imageGenNode"
     assert payload["commands"][2]["link_type"] == "prompt_for"
+
+
+@pytest.mark.asyncio
+async def test_graph_compile_hoists_nested_execution_policy():
+    arguments = {
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "skill": {"id": "video-tutorial", "version": 1},
+            "run_after_create": True,
+            "nodes": [
+                {"id": "input", "type": "textAnnotationNode", "data": {"stage": "input", "text": "文案"}},
+                {"id": "image", "type": "imageGenNode", "data": {"prompt": "雨夜城市", "workflowCatalog": {"recipeId": "general-image"}}},
+            ],
+            "edges": [{"source": "input", "target": "image", "type": "prompt_for"}],
+        }
+    }
+    result = await workflow_mcp.call_tool("workflow_graph_compile", arguments)
+    payload = _result_payload(result)
+    assert payload["ok"] is True, payload
+    assert payload["run_after_create"] is True
+    assert any(command["type"] == "run_workflow" for command in payload["commands"])
 
 
 @pytest.mark.asyncio
@@ -132,6 +160,34 @@ async def test_recipe_resource_reads_one_exact_definition(monkeypatch):
         "ok": True,
         "recipe": {"id": "recipe-a", "name": "Recipe A"},
     }
+
+
+@pytest.mark.asyncio
+async def test_skill_reference_is_resolved_without_exposing_a_filesystem_path():
+    result = await workflow_mcp.call_tool(
+        "workflow_skill_reference_get",
+        {"skill_id": "short-drama-quick", "reference": "custom-topology.md"},
+    )
+    payload = _result_payload(result)
+    assert payload["ok"] is True
+    assert "filesystem" not in payload["content"]
+    assert payload["reference"] == "custom-topology.md"
+
+    resource = await workflow_mcp.read_resource(
+        "dramaclaw-workflow://skills/short-drama-quick/references/custom-topology.md"
+    )
+    assert json.loads(resource)["status"] == "workflow_reference_ready"
+
+
+@pytest.mark.asyncio
+async def test_skill_reference_rejects_path_traversal():
+    result = await workflow_mcp.call_tool(
+        "workflow_skill_reference_get",
+        {"skill_id": "short-drama-quick", "reference": "../../secret"},
+    )
+    payload = _result_payload(result)
+    assert payload["ok"] is False
+    assert payload["status"] == "workflow_reference_not_found"
 
 
 def test_catalog_search_is_compact_and_progressive(monkeypatch):

@@ -45,6 +45,28 @@ def canvas_command_bridge_key(
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()[:32]
 
 
+def canvas_command_idempotency_key(
+    *,
+    project_id: str | None,
+    canvas_id: str | None,
+    commands: list[Any],
+) -> str:
+    """Return a stable key for replaying the same workflow write.
+
+    Ordinary canvas commands keep the nonce-bearing bridge key above so each
+    user action remains independent. Workflow submissions pass an explicit
+    ``workflowInstanceId`` in every create-node command and use this stable
+    variant to make transport retries idempotent.
+    """
+    payload = {
+        "kind": "canvas_command_idempotency",
+        "project_id": project_id or "",
+        "canvas_id": canvas_id or "",
+        "commands": commands,
+    }
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()[:32]
+
+
 def canvas_context_bridge_key(
     *,
     project_id: str | None,

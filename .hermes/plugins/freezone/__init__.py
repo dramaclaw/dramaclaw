@@ -109,6 +109,7 @@ _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR: Exception | None = None
 try:
     from novelvideo.freezone.canvas_command_bridge import (
         canvas_command_bridge_key,
+        canvas_command_idempotency_key,
         canvas_context_bridge_key,
         clarification_bridge_key,
         put_pending_clarification_event,
@@ -124,6 +125,7 @@ try:
 except Exception as exc:
     _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR = exc
     canvas_command_bridge_key = None
+    canvas_command_idempotency_key = None
     canvas_context_bridge_key = None
     clarification_bridge_key = None
     put_pending_clarification_event = None
@@ -2752,6 +2754,13 @@ def _external_generation_parameter_preflight(
             if required_fields is None:
                 continue
             data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            # Workflow graph approval is the single image/video parameter
+            # confirmation point. Re-running the workflow must reuse the
+            # persisted node configuration instead of opening another
+            # clarification card. Runtime capability preflight still runs
+            # below the write boundary and can reject unsupported values.
+            if data.get("workflowConfigConfirmed") is True:
+                continue
             if command_type == "run_workflow" and not raw_command.get("regenerate"):
                 output_key = "imageUrl" if node_type == "imageGenNode" else "videoUrl"
                 if isinstance(data.get(output_key), str) and data[output_key].strip():
@@ -2962,7 +2971,24 @@ def _dispatch_mcp_approved_frontend_commands(
     if external_mcp:
         envelope["agent_id"] = agent_id or "main"
         envelope["external_mcp_command"] = True
-    key = canvas_command_bridge_key(project_id=project, canvas_id=canvas, commands=commands)
+    # Dynamic workflow commands carry a stable workflowInstanceId on every
+    # create_node. Reuse one bridge key for identical retries so a lost MCP
+    # response cannot create a second approval or duplicate the graph.
+    is_workflow_batch = any(
+        isinstance(command, dict)
+        and command.get("type") == "create_node"
+        and isinstance(command.get("data"), dict)
+        and str(command["data"].get("workflowInstanceId") or "").strip()
+        for command in commands
+    )
+    if is_workflow_batch and canvas_command_idempotency_key is not None:
+        key = canvas_command_idempotency_key(
+            project_id=project,
+            canvas_id=canvas,
+            commands=commands,
+        )
+    else:
+        key = canvas_command_bridge_key(project_id=project, canvas_id=canvas, commands=commands)
     bridge_root = os.environ.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "").strip()
     # The worker launcher already gives each Hermes/Codex profile its
     # profile-scoped bridge directory (``.../freezone_freezone_main``). Do not
@@ -3813,6 +3839,25 @@ def _handle_create_workflow_graph(args: dict[str, Any], **_: Any) -> str:
     built = build_workflow_graph_commands(args)
     if not built.get("ok"):
         return tool_result(built)
+    skipped_edges = built.get("skipped_edges")
+    if isinstance(skipped_edges, list) and skipped_edges:
+        # A graph with silently omitted edges is a partial workflow. Refuse it
+        # before the protected canvas bridge so no incomplete graph can land.
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_graph_incomplete",
+                "code": "workflow_edges_skipped",
+                "error": "workflow graph contains invalid or unresolved edge endpoints",
+                "skipped_edges": skipped_edges[:12],
+                "warnings": built.get("warnings") or [],
+                "agent_instruction": (
+                    "Do not submit a reduced graph or retry with empty edges. Correct the same "
+                    "complete WorkflowPlan so every edge source and target matches a node id, "
+                    "then submit it once."
+                ),
+            }
+        )
     commands = built.get("commands")
     return _emit_canvas_commands(
         project,
@@ -4656,6 +4701,22 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     if not built.get("ok"):
         _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
         return tool_result(built)
+    if isinstance(built.get("skipped_edges"), list) and built["skipped_edges"]:
+        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_graph_incomplete",
+                "code": "workflow_edges_skipped",
+                "error": "workflow graph contains invalid or unresolved edge endpoints",
+                "skipped_edges": built["skipped_edges"][:12],
+                "agent_instruction": (
+                    "Do not submit a reduced graph or retry with empty edges. Correct the same "
+                    "complete WorkflowPlan so every edge source and target matches a node id, "
+                    "then submit it once."
+                ),
+            }
+        )
     try:
         result = _emit_canvas_commands(
             explicit_project or stored_project or _default_project_id() or None,
@@ -6887,7 +6948,12 @@ TOOLS = (
         "freezone_create_workflow_graph",
         _schema(
             "freezone_create_workflow_graph",
-            "Create one agent-authored dynamic Freezone WorkflowPlan in one frontend approval. A complete plan is required and strictly validated; fixed workflow_type/count/items template creation is disabled.",
+            "Create one agent-authored dynamic Freezone WorkflowPlan in one frontend approval. "
+            "A complete plan is required and strictly validated; fixed workflow_type/count/items "
+            "template creation is disabled. The tool arguments have exactly one workflow payload: "
+            "plan={schema_version,skill,nodes,edges,...}. Put every node identifier only in "
+            "plan.nodes[].id; never add a top-level id, node_id, commands, or canvas command "
+            "objects. Use workflow_graph_compile first when constructing a new plan.",
             {
                 **_SCOPE_PROPS,
                 "plan": _WORKFLOW_PLAN_OBJECT_SCHEMA,
@@ -7279,7 +7345,7 @@ TOOLS = (
         "freezone_run_workflow",
         _schema(
             "freezone_run_workflow",
-            "Run, continue, retry, or locally regenerate a canvas workflow through the deterministic DAG runner. The runner expands dependencies, skips completed outputs by default, executes independent nodes in parallel, persists status, and blocks failed descendants without Agent polling. Use this directly for continue/resume requests instead of reading and running nodes one by one. If it reports content_policy, stop: do not infer sensitive words, rewrite prompts, or retry unless the user explicitly requests one specific prompt edit.",
+            "Run, continue, retry, or locally regenerate a canvas workflow through the deterministic DAG runner. The runner expands dependencies, skips completed outputs by default, executes independent nodes in parallel, persists status, and blocks failed descendants without Agent polling. For nodes marked workflowConfigConfirmed=true, reuse the already approved model, size, duration, quality, voice, and composition fields; do not ask the user to choose them again. Ask again only when a required field is missing, the user changed it, or the provider rejects it. Use this directly for continue/resume requests instead of reading and running nodes one by one. If it reports content_policy, stop: do not infer sensitive words, rewrite prompts, or retry unless the user explicitly requests one specific prompt edit.",
             {
                 **_SCOPE_PROPS,
                 "node_ids": {
@@ -7308,8 +7374,8 @@ TOOLS = (
     (
         "freezone_run_node_action",
         _schema(
-            "freezone_run_node_action",
-            "Single-operation tool only: run or open exactly one frontend node action listed by node_detail action_summary. For non-default action parameters, inspect freezone_get_node_action_catalog with the specific action first. For multiple actions or mixed workflows, use one freezone_emit_canvas_command batch.",
+        "freezone_run_node_action",
+            "Single-operation tool only: run or open exactly one frontend node action listed by node_detail action_summary. If the node has workflowConfigConfirmed=true, reuse its persisted generation parameters and do not ask the user to choose them again unless a required field is missing or the user changed it. For non-default action parameters, inspect freezone_get_node_action_catalog with the specific action first. For multiple actions or mixed workflows, use one freezone_emit_canvas_command batch.",
             {
                 **_SCOPE_PROPS,
                 "node_id": {"type": "string", "description": "Existing canvas node id."},

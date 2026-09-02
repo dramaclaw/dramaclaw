@@ -1517,11 +1517,24 @@ export function FreezoneShell({
       const envelopes = extractCanvasChatCommandEnvelopes(candidates)
         .filter((envelope) => canvasCommandEnvelopeMatchesCanvas(envelope, canvasId));
 
+      console.info("[freezone-canvas-command] frame received", {
+        bridgeKey,
+        turnId,
+        externalMcpCommand: isExternalMcpCommand,
+        candidateCount: candidates.length,
+        envelopeCount: envelopes.length,
+      });
+
       if (envelopes.length === 0) {
         const errors = [
           "画布命令格式无效或不属于当前画布，前端未执行。",
           "无法解析 canvas_chat_commands.v1 命令；请检查 command 字段是否在正确层级。",
         ];
+        console.warn("[freezone-canvas-command] frame rejected: no valid envelope", {
+          bridgeKey,
+          turnId,
+          candidateCount: candidates.length,
+        });
         emitCanvasContextActivity({
           turnId,
           anchorTextPrefix: detail?.anchorTextPrefix ?? null,
@@ -1612,6 +1625,13 @@ export function FreezoneShell({
           "画布命令预校验失败，前端未展示确认卡，也未执行。",
           ...validation.issues.map((issue) => `${issue.path}: ${issue.message}`),
         ];
+        console.warn("[freezone-canvas-command] validation failed", {
+          bridgeKey,
+          turnId,
+          envelopeCount: normalizedEnvelopes.length,
+          issueCount: validation.issues.length,
+          issues: validation.issues.slice(0, 12).map((issue) => `${issue.path}: ${issue.message}`),
+        });
         emitCanvasContextActivity({
           turnId,
           anchorTextPrefix: detail?.anchorTextPrefix ?? null,
@@ -1706,6 +1726,13 @@ export function FreezoneShell({
         bridgeKey,
         externalMcpCommand: isExternalMcpCommand,
       });
+      console.info("[freezone-canvas-command] approval emitted", {
+        bridgeKey,
+        turnId,
+        envelopeCount: normalizedEnvelopes.length,
+        commandCount: normalizedEnvelopes.reduce((sum, envelope) => sum + envelope.commands.length, 0),
+        externalMcpCommand: isExternalMcpCommand,
+      });
       setChatOpen(true);
       window.setTimeout(() => emitCanvasCommandApproval({
         canvasId,
@@ -1746,6 +1773,17 @@ export function FreezoneShell({
           agentIds,
           seenKeys,
         });
+        if (frames.length > 0) {
+          console.info("[freezone-canvas-command] pending frames polled", {
+            count: frames.length,
+            bridgeKeys: frames
+              .map((frame) => {
+                const record = frame as Record<string, unknown>;
+                return typeof record.bridge_key === "string" ? record.bridge_key : null;
+              })
+              .filter((key): key is string => Boolean(key)),
+          });
+        }
         const now = Date.now();
         frames.forEach((frame, index) => {
           const frameRecord = frame as Record<string, unknown>;

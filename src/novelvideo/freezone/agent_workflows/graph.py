@@ -262,6 +262,13 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             data.setdefault("semanticOutputRole", "input_text")
         data.setdefault("workflowInstanceId", workflow_instance_id)
         data.setdefault("workflowPlanNodeId", node["plan_id"])
+        # The graph approval is the single parameter confirmation point for a
+        # workflow. Persist this marker on executable nodes so the later DAG
+        # runner and Agent action catalog can reuse the approved model/size/
+        # duration/voice fields instead of asking for them again.
+        if node["node_type"] in {"imageGenNode", "videoNode", "audioNode", "videoComposeNode"}:
+            data["workflowConfigConfirmed"] = True
+            data["workflowConfigSource"] = "workflow_graph_approval"
         command = {
             "type": "create_node",
             "client_id": node["client_id"],

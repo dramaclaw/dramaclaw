@@ -10,6 +10,7 @@ import {
   LoaderCircle,
   LocateFixed,
   Play,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -36,6 +37,8 @@ import {
 } from "@/features/superchat/task-notification-batch";
 import { recoverableWorkflowNodeIds } from "@/features/freezone/WorkflowRunRecoveryBar";
 import { cn } from "@/lib/utils";
+import { confirmDialog } from "@/components/confirm-dialog-host";
+import { useCancelTask } from "@/lib/queries/tasks";
 import { useAppStore } from "@/stores/app-store";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { displayLabel, isActive, isTerminal } from "@/task-center/derivations";
@@ -497,6 +500,8 @@ export function ChatTaskStatusBar({
   const [now, setNow] = useState(() => Date.now());
   const [workflowRuns, setWorkflowRuns] = useState<FreezoneWorkflowRun[]>([]);
   const [resuming, setResuming] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const cancelTask = useCancelTask();
 
   const taskItems = useMemo(
     () => {
@@ -744,6 +749,77 @@ export function ChatTaskStatusBar({
     if (leading) setSelectedTask(leading.task.task_key);
     setTaskPanelOpen(true);
   };
+  const activeStandaloneTasks = taskItems
+    .map(({ task }) => task)
+    .filter((task) =>
+      isActive(task) &&
+      !workflowRun?.actions.some((action) => action.task_key === task.task_key),
+    );
+  const cancelOneTask = async (task: TaskState) => {
+    const confirmed = await confirmDialog({
+      title: "取消生成任务",
+      description: `确定取消“${displayLabel(task, t)}”吗？运行中的任务取消后通常不退款。`,
+      confirmText: "确认取消",
+      cancelText: "继续生成",
+      confirmVariant: "destructive",
+    });
+    if (!confirmed) return;
+    setCancelling(true);
+    try {
+      await cancelTask.mutateAsync({
+        type: task.task_type,
+        project: projectId ?? task.project_id ?? task.project,
+        episode: task.episode,
+        beatNum: task.beat_num ?? undefined,
+        scope: task.scope ?? undefined,
+        confirmed: true,
+      });
+      toast.success("任务已提交取消");
+    } catch (error) {
+      toast.error(`取消任务失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setCancelling(false);
+    }
+  };
+  const cancelAll = async () => {
+    const workflowActive = workflowRun?.status === "running";
+    const count = activeStandaloneTasks.length + (workflowActive ? 1 : 0);
+    if (count === 0 || cancelling) return;
+    const confirmed = await confirmDialog({
+      title: "全部取消生成任务",
+      description: `确定取消当前列表中的 ${count} 项任务吗？运行中的任务取消后通常不退款，已完成的任务不会回滚。`,
+      confirmText: "确认全部取消",
+      cancelText: "继续生成",
+      confirmVariant: "destructive",
+    });
+    if (!confirmed) return;
+    setCancelling(true);
+    try {
+      if (workflowActive && projectId && canvasId && workflowRun) {
+        await updateFreezoneWorkflowRun(projectId, canvasId, workflowRun.run_id, {
+          status: "cancelled",
+        });
+      }
+      const results = await Promise.allSettled(
+        activeStandaloneTasks.map((task) => cancelTask.mutateAsync({
+          type: task.task_type,
+          project: projectId ?? task.project_id ?? task.project,
+          episode: task.episode,
+          beatNum: task.beat_num ?? undefined,
+          scope: task.scope ?? undefined,
+          confirmed: true,
+        })),
+      );
+      const failed = results.filter((result) => result.status === "rejected").length;
+      if (failed > 0) toast.error(`${failed} 项任务取消失败，请到任务中心查看`);
+      else toast.success("已提交全部取消");
+      await refreshWorkflowRuns();
+    } catch (error) {
+      toast.error(`取消任务失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setCancelling(false);
+    }
+  };
   const resumeWorkflow = async () => {
     if (
       resuming ||
@@ -871,6 +947,20 @@ export function ChatTaskStatusBar({
                 : t("taskCenter.chatStatus.resume")}
           </Button>
         ) : null}
+        {hasActiveStatus ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 shrink-0 gap-1 px-2 text-xs text-destructive hover:text-destructive"
+            disabled={cancelling}
+            title="全部取消"
+            onClick={() => void cancelAll()}
+          >
+            {cancelling ? <LoaderCircle className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
+            全部取消
+          </Button>
+        ) : null}
         <Button
           type="button"
           size="icon"
@@ -941,6 +1031,20 @@ export function ChatTaskStatusBar({
                 >
                   <LocateFixed className="size-3.5" />
                 </Button>
+                {task && isActive(task) ? (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="size-7 shrink-0 text-destructive hover:text-destructive"
+                    title="取消任务"
+                    aria-label="取消任务"
+                    disabled={cancelling}
+                    onClick={() => void cancelOneTask(task)}
+                  >
+                    <X className="size-3.5" />
+                  </Button>
+                ) : null}
               </div>
             );
           }) : null}
@@ -990,6 +1094,20 @@ export function ChatTaskStatusBar({
                     onClick={() => locateNode(nodeId)}
                   >
                     <LocateFixed className="size-3.5" />
+                  </Button>
+                ) : null}
+                {isActive(task) ? (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="size-7 shrink-0 text-destructive hover:text-destructive"
+                    title="取消任务"
+                    aria-label="取消任务"
+                    disabled={cancelling}
+                    onClick={() => void cancelOneTask(task)}
+                  >
+                    <X className="size-3.5" />
                   </Button>
                 ) : null}
               </div>

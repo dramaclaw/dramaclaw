@@ -112,6 +112,10 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "load and follow the project Agent Skill named dramaclaw-workflows. Read that Skill only from "
     "the exact file URI advertised in the available Skills or dramaclaw resources; never invent a "
     "project:// Skill URI. "
+    "Never probe guessed HTTP API paths such as /agent-skills, /skills, or /workflows/skills with "
+    "dramaclaw_get. For workflow discovery use workflow_catalog_search on dramaclaw_workflows; "
+    "read only the returned workflow resource URI or call freezone_get_workflow_skill as its "
+    "documented fallback, then stop reading and author the plan. "
     "The Agent Skill package name dramaclaw-workflows is not a Workflow catalog skill_id: never "
     "pass dramaclaw-workflows to workflow_skill_get, freezone_get_workflow_skill, or an intent's "
     "skill_id. Select the matching production Workflow Skill returned by the catalog instead "
@@ -433,6 +437,8 @@ Canvas write contract:
   expected_node_counts and must remain unchanged during recovery. Episodic short-drama, Beat,
   voice-over, or background-music workflows should use the short-drama production Skill rather than
   the generic text-to-image-video Skill.
+  Never call dramaclaw_get with guessed Skill or workflow HTTP paths. Use the workflow MCP catalog
+  and its returned resource URI, or the documented freezone_get_workflow_skill fallback, exactly once.
   Do not use freezone_emit_canvas_command for a workflow.
 - `dramaclaw-workflows` is the Agent Skill package name, not a Workflow catalog `skill_id`. Never
   pass it to workflow_skill_get/freezone_get_workflow_skill or use it as intent.skill_id. Select the

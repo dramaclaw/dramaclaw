@@ -8,7 +8,10 @@ the same deterministic plans without duplicating the protected write boundary.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -32,6 +35,12 @@ from novelvideo.freezone.workflow_schema import (
 )
 
 SERVER = Server("dramaclaw-workflows", version="1.0.0")
+logger = logging.getLogger("novelvideo.chat.workflow_mcp")
+
+# References are shared host guidance, not catalog IDs.  Keep the resolver
+# inside the repository and never expose/accept arbitrary filesystem paths.
+_REFERENCE_ROOT = Path(__file__).resolve().parents[1] / "agent_skills" / "dramaclaw-workflows" / "references"
+_REFERENCE_NAMES = frozenset({"custom-topology.md", "error-recovery.md", "integration.md"})
 
 _WORKFLOW_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -69,19 +78,55 @@ def _result(payload: Any) -> types.CallToolResult | list[types.TextContent]:
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=encoded)],
         structuredContent=payload,
+        isError=payload.get("ok") is False,
     )
 
 
 def _normalize_graph_arguments(args: dict[str, Any]) -> dict[str, Any]:
-    """Unwrap the one accidental double-plan envelope seen from some hosts."""
+    """Normalize harmless host envelope mistakes before strict plan validation."""
     if not isinstance(args, dict):
         return {}
     plan = args.get("plan")
     if isinstance(plan, dict) and isinstance(plan.get("plan"), dict):
         normalized = dict(args)
         normalized["plan"] = plan["plan"]
-        return normalized
-    return args
+        plan = normalized["plan"]
+    else:
+        normalized = dict(args)
+
+    # Some hosts serialize the execution choice inside the plan even though it
+    # is an invocation policy.  Hoist only this known policy field; leave all
+    # node/edge data untouched so schema validation remains fail-closed.
+    if isinstance(plan, dict):
+        for key in ("run_after_create", "runAfterCreate"):
+            if key in plan and key not in normalized:
+                normalized[key] = plan[key]
+            if key in plan:
+                cleaned_plan = dict(plan)
+                cleaned_plan.pop(key, None)
+                normalized["plan"] = cleaned_plan
+                plan = cleaned_plan
+    return normalized
+
+
+def _plan_log_summary(plan: Any) -> dict[str, Any]:
+    if not isinstance(plan, dict):
+        return {"plan_type": type(plan).__name__}
+    nodes = plan.get("nodes")
+    edges = plan.get("edges")
+    node_types: dict[str, int] = {}
+    if isinstance(nodes, list):
+        for node in nodes:
+            if isinstance(node, dict):
+                node_type = str(node.get("node_type") or node.get("type") or "unknown")
+                node_types[node_type] = node_types.get(node_type, 0) + 1
+    return {
+        "schema_version": plan.get("schema_version"),
+        "node_count": len(nodes) if isinstance(nodes, list) else None,
+        "edge_count": len(edges) if isinstance(edges, list) else None,
+        "node_types": node_types,
+        "has_skill": isinstance(plan.get("skill"), dict),
+    }
 
 
 def _object_schema(
@@ -92,6 +137,37 @@ def _object_schema(
         "properties": properties,
         "required": required or [],
         "additionalProperties": False,
+    }
+
+
+def _read_skill_reference(skill_id: Any, reference: Any) -> dict[str, Any]:
+    """Read an allow-listed Workflow Skill reference by logical name."""
+    normalized_skill = str(skill_id or "").strip()
+    normalized_reference = str(reference or "").strip().replace("\\", "/")
+    # References currently describe the portable workflow contract and are
+    # shared by all catalog Skills.  Require a real Skill ID so hosts cannot
+    # use this endpoint as a generic file reader.
+    skill = get_workflow_skill({"skill_id": normalized_skill, "compact": True})
+    if not skill.get("ok"):
+        return {"ok": False, "status": "workflow_skill_not_found", "skill_id": normalized_skill}
+    if normalized_reference.startswith("references/"):
+        normalized_reference = normalized_reference[len("references/") :]
+    if (
+        not normalized_reference
+        or normalized_reference not in _REFERENCE_NAMES
+        or "/" in normalized_reference
+        or normalized_reference in {".", ".."}
+    ):
+        return {"ok": False, "status": "workflow_reference_not_found", "reference": normalized_reference}
+    path = (_REFERENCE_ROOT / normalized_reference).resolve()
+    if path.parent != _REFERENCE_ROOT or not path.is_file():
+        return {"ok": False, "status": "workflow_reference_not_found", "reference": normalized_reference}
+    return {
+        "ok": True,
+        "status": "workflow_reference_ready",
+        "skill_id": normalized_skill,
+        "reference": normalized_reference,
+        "content": path.read_text(encoding="utf-8"),
     }
 
 
@@ -112,6 +188,12 @@ async def list_resource_templates() -> list[types.ResourceTemplate]:
             description="One portable Workflow Recipe definition",
             mimeType="application/json",
         ),
+        types.ResourceTemplate(
+            name="DramaClaw Workflow Skill Reference",
+            uriTemplate="dramaclaw-workflow://skills/{skill_id}/references/{reference}",
+            description="One allow-listed reference document for a Workflow Skill",
+            mimeType="text/markdown",
+        ),
     ]
 
 
@@ -125,9 +207,15 @@ async def read_resource(uri: Any) -> str:
     kind = parsed.netloc
     item_id = unquote(parsed.path.lstrip("/"))
     if kind == "skills":
-        payload = get_workflow_skill({"skill_id": item_id, "compact": True})
-        if not payload.get("ok"):
-            raise ValueError("workflow skill resource not found")
+        parts = item_id.split("/references/", 1)
+        if len(parts) == 2:
+            payload = _read_skill_reference(parts[0], parts[1])
+            if not payload.get("ok"):
+                raise ValueError("workflow skill reference not found")
+        else:
+            payload = get_workflow_skill({"skill_id": item_id, "compact": True})
+            if not payload.get("ok"):
+                raise ValueError("workflow skill resource not found")
     elif kind == "recipes":
         item = get_catalog_item(
             username=_username(),
@@ -202,6 +290,24 @@ async def list_tools() -> list[types.Tool]:
             outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
         ),
         types.Tool(
+            name="workflow_skill_reference_get",
+            description=(
+                "Read one allow-listed reference document for a selected Workflow Skill. "
+                "Pass only a logical filename such as custom-topology.md; never pass a filesystem path."
+            ),
+            inputSchema=_object_schema(
+                {
+                    "skill_id": {"type": "string", "minLength": 1},
+                    "reference": {
+                        "type": "string",
+                        "enum": ["custom-topology.md", "error-recovery.md", "integration.md"],
+                    },
+                },
+                ["skill_id", "reference"],
+            ),
+            outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
+        ),
+        types.Tool(
             name="workflow_intent_compile",
             description=(
                 "Deterministically compile one freezone_workflow_intent.v1 into a validated "
@@ -220,7 +326,9 @@ async def list_tools() -> list[types.Tool]:
                 "Validate one freezone_workflow_plan.v1 and deterministically compile a single "
                 "canvas batch containing nodes, edges, grouping, layout, and selection. Read-only. "
                 "For recovery, compile the same complete user workflow; never construct reduced "
-                "probe nodes or pass an empty edges array for a multi-node plan."
+                "probe nodes or pass an empty edges array for a multi-node plan. Node ids belong "
+                "only in plan.nodes[].id and edge source/target values; do not add a top-level "
+                "id, node_id, commands, or canvas command objects."
             ),
             inputSchema=_object_schema(
                 {
@@ -263,12 +371,22 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             if item is not None
             else {"ok": False, "status": "recipe_not_found"}
         )
+    if name == "workflow_skill_reference_get":
+        return _result(_read_skill_reference(args.get("skill_id"), args.get("reference")))
     if name == "workflow_intent_compile":
         return _result(compile_workflow_intent(args.get("intent")))
     if name == "workflow_graph_compile":
         args = _normalize_graph_arguments(args)
+        started = time.monotonic()
+        logger.info("workflow_graph_compile.start summary=%s", _plan_log_summary(args.get("plan")))
         validation = validate_agent_workflow_plan(args.get("plan"))
         if not validation.get("ok"):
+            logger.warning(
+                "workflow_graph_compile.validation_failed elapsed_ms=%d status=%s errors=%s",
+                int((time.monotonic() - started) * 1000),
+                validation.get("status"),
+                validation.get("errors") or validation.get("error"),
+            )
             validation.setdefault(
                 "agent_instruction",
                 "保留同一份完整 WorkflowPlan；不要提交单节点探测、空 edges 或 compact Intent。"
@@ -276,7 +394,15 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
                 "且所有边的 source/target 必须对应 nodes[].id。",
             )
             return _result(validation)
-        return _result(build_workflow_graph_commands(args))
+        result = build_workflow_graph_commands(args)
+        logger.info(
+            "workflow_graph_compile.end elapsed_ms=%d ok=%s status=%s command_count=%s",
+            int((time.monotonic() - started) * 1000),
+            result.get("ok"),
+            result.get("status"),
+            len(result.get("commands") or []) if isinstance(result, dict) else None,
+        )
+        return _result(result)
     return _result({"ok": False, "status": "unknown_tool", "tool": name})
 
 

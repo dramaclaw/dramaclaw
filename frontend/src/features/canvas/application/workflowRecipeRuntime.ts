@@ -128,11 +128,14 @@ export async function compileWorkflowNodePrompt(
   const catalog = readCatalog(input.nodeData);
   const recipeId = text(catalog?.recipeId);
   if (!recipeId) return input.fallbackPrompt;
-  const upstreamText = selectWorkflowUpstreamText(
-    input.nodeData,
-    input.upstreamContents,
-    input.upstreamText ?? '',
-  );
+  const isMusicRecipe = input.nodeKind === 'audio' && recipeId === 'drama-background-music';
+  const upstreamText = isMusicRecipe
+    ? ''
+    : selectWorkflowUpstreamText(
+      input.nodeData,
+      input.upstreamContents,
+      input.upstreamText ?? '',
+    );
   const pipeline = recipePipeline(catalog?.recipePipeline);
 
   reportWorkflowExecutionActivity(input.nodeId, 'compiling_recipe');

@@ -1166,6 +1166,50 @@ function nodeById(id: string): CanvasNode | null {
   return useCanvasStore.getState().nodes.find((node) => node.id === id) ?? null;
 }
 
+/**
+ * Resolve narration text only after an upstream text/script node has produced it.
+ * Workflow plans may create the audio node before the script is materialized;
+ * dispatching TTS with an empty `text` causes the backend to stop before NewAPI.
+ */
+function workflowNarrationTextFromNode(node: CanvasNode): string {
+  const data = node.data as JsonRecord;
+  const direct = nonEmptyString(data.content) ?? nonEmptyString(data.text);
+  if (direct) return direct;
+  const scriptResult = data.scriptResult;
+  if (!isRecord(scriptResult) || !Array.isArray(scriptResult.rows)) return "";
+  return scriptResult.rows
+    .map((row) => {
+      if (!isRecord(row)) return "";
+      return (
+        nonEmptyString(row.narration) ??
+        nonEmptyString(row.voiceover) ??
+        nonEmptyString(row.dialogue) ??
+        ""
+      );
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function hydrateWorkflowAudioInput(nodeId: string): boolean {
+  const target = nodeById(nodeId);
+  if (!target) return false;
+  const targetData = target.data as JsonRecord;
+  if (nonEmptyString(targetData.text)) return true;
+  const state = useCanvasStore.getState();
+  const incoming = state.edges
+    .filter((edge) => edge.target === nodeId)
+    .map((edge) => nodeById(edge.source))
+    .filter((node): node is CanvasNode => node !== null);
+  for (const source of incoming) {
+    const text = workflowNarrationTextFromNode(source);
+    if (!text) continue;
+    state.updateNodeData(nodeId, { text });
+    return true;
+  }
+  return false;
+}
+
 const VIDEO_CONTINUITY_PROMPT_NOTE =
   "上一镜尾帧已作为图片参考接入，请以它作为本镜头开场的动作、构图和角色状态连续依据。";
 
@@ -3119,6 +3163,14 @@ async function executeQueuedNodeActions(
             }]);
 
             await ensureVideoContinuityTailFrames(action, projectId);
+
+            if (action.action === "generate_audio" && !hydrateWorkflowAudioInput(action.nodeId)) {
+              return {
+                action,
+                failed: "旁白节点缺少上游生成的文本，已停止提交 TTS 请求；请先完成剧本/Beat 文本生成后重试。",
+                retryCount,
+              };
+            }
 
             const requestId = `node-action:${Date.now()}:${Math.random().toString(36).slice(2)}`;
             const uiOpenAction = UI_OPEN_NODE_ACTIONS.has(action.action);

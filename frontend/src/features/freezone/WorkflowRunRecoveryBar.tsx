@@ -59,7 +59,15 @@ function recoverableWorkflowActions(
   existingNodeIds: ReadonlySet<string>,
 ) {
   return unresolvedWorkflowActions(run, existingNodeIds).filter(
-    (action) => !isNodeActionGenerationPending(action.node_id, action.action),
+    (action) => {
+      // A downstream action blocked by a failed dependency was recorded for
+      // visibility, but has never been submitted. Do not surface it as an
+      // independent retry target or create another waiting progress item.
+      if (action.status === "blocked" && String(action.error || "").startsWith("跳过 ")) {
+        return false;
+      }
+      return !isNodeActionGenerationPending(action.node_id, action.action);
+    },
   );
 }
 

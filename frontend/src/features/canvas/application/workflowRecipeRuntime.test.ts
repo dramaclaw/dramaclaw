@@ -94,7 +94,7 @@ describe('workflowRecipeRuntime', () => {
       },
       nodeKind: 'audio',
       nodePrompt: '冷灰海浪氛围配乐',
-      upstreamText: '第1集剧本',
+      upstreamText: '',
       fallbackPrompt: '第1集剧本\n\n冷灰海浪氛围配乐',
     });
 
@@ -107,7 +107,7 @@ describe('workflowRecipeRuntime', () => {
       nodeKind: 'audio',
       promptStrategy: 'llm_refine',
       nodePrompt: '冷灰海浪氛围配乐',
-      upstreamText: '第1集剧本',
+      upstreamText: '',
       userGoal: '',
       referenceMedia: undefined,
     });

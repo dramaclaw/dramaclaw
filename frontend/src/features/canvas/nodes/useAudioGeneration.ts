@@ -34,6 +34,15 @@ import { useModelTaskAccess } from '@/lib/model-task-access';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 
+const MAX_MUSIC_PROMPT_CHARS = 4_100;
+
+function normalizeMusicPrompt(prompt: string): string {
+  const trimmed = prompt.trim();
+  if (trimmed.length <= MAX_MUSIC_PROMPT_CHARS) return trimmed;
+  const tailLength = 200;
+  return `${trimmed.slice(0, MAX_MUSIC_PROMPT_CHARS - tailLength)}\n${trimmed.slice(-tailLength)}`;
+}
+
 /**
  * 老节点数据可能还带着 segments（旧版分段编辑器留下的）。新版直接读 `text`，
  * 没的话回退去拼 segments — 这样老节点打开后用户就能继续编辑。
@@ -173,14 +182,18 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
       generationError: null,
     });
     try {
-      const trimmed = runtimeIsMusic
+      let trimmed = runtimeIsMusic
         ? await compileWorkflowNodePrompt({
             nodeId,
             nodeData: runtimeData,
             nodeKind: 'audio',
             nodePrompt: runtimeOwnText,
-            upstreamText: upstreamTextJoined,
-            upstreamContents,
+            // Music prompts describe the soundtrack itself.  Do not feed the
+            // full upstream script/beat text into the music compiler: the
+            // Eleven music endpoint caps input at 4100 characters and the
+            // node prompt already contains the intended musical direction.
+            upstreamText: '',
+            upstreamContents: [],
             fallbackPrompt,
             onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => updateNodeData(nodeId, {
               workflowRecipeCompileMode: mode,
@@ -202,6 +215,7 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
             );
             return ownNarration || upstreamNarration;
           })();
+      if (runtimeIsMusic) trimmed = normalizeMusicPrompt(trimmed);
       if (!trimmed) {
         throw new Error('没有可朗读的旁白或对白');
       }
