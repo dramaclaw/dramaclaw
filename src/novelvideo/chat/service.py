@@ -210,7 +210,7 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # browser-bridge contract changes so canvas turns cannot silently resume a
 # thread that predates the required concrete write tools. Mainline thread keys
 # intentionally remain unchanged.
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v15"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v16"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -5311,9 +5311,10 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
         "memories.generate_memories=false",
         "memories.use_memories=false",
     ]
-    # Codex only enables native deferred tool search for models present in its
-    # catalog. The repository ships complete metadata for the default Gateway
-    # slug; deployments may replace it with another verified catalog.
+    # The repository ships complete metadata for the default Gateway slug;
+    # deployments may replace it with another verified catalog. Keep
+    # supports_search_tool explicit in the catalog: compatibility gateways may
+    # accept Responses requests while rejecting the hosted tool_search type.
     bundled_catalog = (
         Path(__file__).resolve().parents[3]
         / "deploy"
@@ -5360,9 +5361,9 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
         raise RuntimeError(
             f"Codex model catalog has no complete entry for {configured_model}"
         )
-    if entry.get("supports_search_tool") is not True:
+    if not isinstance(entry.get("supports_search_tool"), bool):
         raise RuntimeError(
-            f"Codex model catalog must enable supports_search_tool for {configured_model}"
+            f"Codex model catalog must declare supports_search_tool for {configured_model}"
         )
     if not str(entry.get("base_instructions") or "").strip():
         raise RuntimeError(

@@ -2163,7 +2163,7 @@ def test_codex_gateway_overrides_use_responses_without_embedding_secret():
     model = next(
         item for item in catalog["models"] if item["slug"] == "DC-codex-agent-LLM"
     )
-    assert model["supports_search_tool"] is True
+    assert model["supports_search_tool"] is False
     assert model["base_instructions"]
     assert model["truncation_policy"] == {"mode": "tokens", "limit": 10000}
     assert "secret-value" not in rendered
@@ -2190,7 +2190,7 @@ def test_codex_gateway_fails_closed_for_incomplete_model_catalog(monkeypatch, tm
         chat_service._codex_gateway_config_overrides("https://gateway.example/v1")
 
 
-def test_codex_gateway_fails_closed_when_tool_search_is_disabled(monkeypatch, tmp_path):
+def test_codex_gateway_accepts_explicitly_disabled_tool_search(monkeypatch, tmp_path):
     bundled = (
         Path(chat_service.__file__).resolve().parents[3]
         / "deploy"
@@ -2203,8 +2203,11 @@ def test_codex_gateway_fails_closed_when_tool_search_is_disabled(monkeypatch, tm
     catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
     monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(catalog_path))
 
-    with pytest.raises(RuntimeError, match="must enable supports_search_tool"):
-        chat_service._codex_gateway_config_overrides("https://gateway.example/v1")
+    overrides = chat_service._codex_gateway_config_overrides(
+        "https://gateway.example/v1"
+    )
+
+    assert any(value.startswith("model_catalog_json=") for value in overrides)
 
 
 def test_codex_gateway_reasoning_effort_is_configurable(monkeypatch):
