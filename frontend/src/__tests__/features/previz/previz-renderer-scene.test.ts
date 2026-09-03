@@ -915,6 +915,55 @@ describe('PrevizRenderer timeline', () => {
     expect(node?.position.x).toBeCloseTo(10, 5);
   });
 
+  it('lets a hand-placed object stay put until the playhead moves', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWithWalk();
+    instance.setScene(scene);
+    const objectId = scene.objects[0]!.id;
+
+    // 拖动手柄提交的是静态 transform。求值器每次 setScene 都无条件重放的话，
+    // 提交的那一瞬间人又被路径拽回去了——画面上就是「有轨迹的对象拖不动」。
+    instance.setScene({
+      ...scene,
+      objects: [
+        {
+          ...scene.objects[0]!,
+          transform: { ...scene.objects[0]!.transform, position: [7, 0, 3] as Vec3 },
+        },
+      ],
+    });
+
+    const node = instance.nodeFor(objectId);
+    expect([node?.position.x, node?.position.z]).toEqual([7, 3]);
+    // 轨迹本身一动不动：手动摆的是这一刻的位置，不是把整条路径搬走。
+    expect(scene.timeline.tracks[0]!.clips[0]).toMatchObject({ id: 'clip' });
+
+    // 播放头一动，时间轴收回控制权，人自动回到轨迹上。
+    instance.setFrame(60);
+    expect(instance.nodeFor(objectId)?.position.x).toBeCloseTo(5, 5);
+  });
+
+  it('keeps a hand-placed object put across unrelated edits', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWithWalk();
+    instance.setScene(scene);
+
+    const moved = {
+      ...scene,
+      objects: [
+        {
+          ...scene.objects[0]!,
+          transform: { ...scene.objects[0]!.transform, position: [7, 0, 3] as Vec3 },
+        },
+      ],
+    };
+    instance.setScene(moved);
+    // 摆好之后随便改点别的（这里是改名）。这一下不该把人弹回轨迹：中间没人碰过播放头。
+    instance.setScene({ ...moved, objects: [{ ...moved.objects[0]!, name: 'B' }] });
+
+    expect(instance.nodeFor(scene.objects[0]!.id)?.position.x).toBe(7);
+  });
+
   it('leaves objects without a track on their static transform', async () => {
     const { instance } = await createRenderer();
     const scene = createDefaultScene();
