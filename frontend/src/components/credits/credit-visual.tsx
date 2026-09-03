@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { createContext, useContext, useId } from "react";
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from "i18next";
 
 import { cn } from "@/lib/utils";
 
@@ -34,10 +38,16 @@ export function formatCreditPromotionLabel(
   if (!Number.isFinite(basisPoints) || basisPoints <= 0 || basisPoints >= 10_000) {
     return null;
   }
-  const discount = (basisPoints / 1_000)
-    .toFixed(2)
-    .replace(/\.?0+$/, "");
-  return promotion?.ends_at ? `限时 ${discount} 折` : `${discount} 折优惠`;
+  // 中文按「几折」说，英文按「off 多少」说，两种说法的数字不一样：7000bp 是
+  // 「7 折」也是「30% off」。两个数都算好丢给词条，让语言自己挑要哪个。
+  const discount = (basisPoints / 1_000).toFixed(2).replace(/\.?0+$/, "");
+  const percentOff = (100 - basisPoints / 100).toFixed(2).replace(/\.?0+$/, "");
+  return i18n.t(
+    promotion?.ends_at
+      ? "credits.promotion.limitedDiscount"
+      : "credits.promotion.discount",
+    { discount, percentOff },
+  );
 }
 
 type CreditSparkIconProps = {
@@ -118,7 +128,7 @@ export function CreditCostPill({
     ? display.split("→", 2)
     : [null, display];
   const promotionLabel = originalDisplay
-    ? (formatCreditPromotionLabel(promotion) ?? "促销中")
+    ? (formatCreditPromotionLabel(promotion) ?? i18n.t("credits.promotion.active"))
     : null;
 
   return (

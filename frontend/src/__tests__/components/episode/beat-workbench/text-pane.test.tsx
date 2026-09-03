@@ -8,9 +8,10 @@ import i18next from "i18next";
 import { describe, expect, it, vi, beforeEach, beforeAll, type Mock } from "vitest";
 import type { ReactNode } from "react";
 
-// Local i18n instance — mirrors public/locales/zh/translation.json for the
-// keys TextPane reads. Avoids loading the HTTP backend in jsdom and keeps the
-// Chinese-string assertions deterministic.
+import { zhTranslation } from "../../../helpers/i18n-fixtures";
+
+// 本地 i18n 实例：直接吃 public/locales/zh/translation.json，不走 HTTP backend。
+// 以前是手抄一份子集，新增 key 时抄漏了测试就挂在「渲染出 key」上，索性用真的。
 const i18n = i18next.createInstance();
 
 beforeAll(async () => {
@@ -18,50 +19,7 @@ beforeAll(async () => {
     lng: "zh",
     fallbackLng: "zh",
     interpolation: { escapeValue: false },
-    resources: {
-      zh: {
-        translation: {
-          common: { removed: "（已移除）" },
-          episode: {
-            workbench: {
-              text: {
-                narration: "台词",
-                narrationPlaceholder: "填写需要朗读的台词",
-                more: "更多",
-                type: "类型",
-                location: "场景",
-                sceneVariant: "变体",
-                timeOfDay: "时间",
-                timeOfDayPlaceholder: "白天 / 夜晚",
-                visualDescription: "画面描述",
-                identities: "出场身份",
-                noCharacter: "无角色出场",
-                identityDetectionRequired:
-                  "未检测/未标注出场身份；如果确实没有角色出场，请选择「无角色出场」。",
-                identitiesNotPlanned:
-                  "本集身份未规划，请先到「脚本」页配置本集身份。",
-                props: "出场道具",
-                noProp: "无道具出场",
-                propsNotPlanned:
-                  "本集道具未规划，请先到「脚本」页配置本集道具。",
-                keyframePrompt: "关键帧提示词",
-                videoPrompt: "视频提示词",
-                speaker: "说话人",
-                narrator: "解说人",
-                projectNarrator: "项目解说人",
-                speakerPlaceholder:
-                  "身份ID（如 陈锋_和尚），对白时必填",
-                speakerRequired: "请选择说话人",
-                saveFailed: "保存失败",
-                narrationLabel: "解说",
-                silence: "静音",
-                dialogue: "对白",
-              },
-            },
-          },
-        },
-      },
-    },
+    resources: { zh: { translation: zhTranslation } },
   });
 });
 
@@ -196,7 +154,7 @@ describe("TextPane", () => {
     expect(screen.queryByText(/Fish Speech|fishSpeechPrompt/)).not.toBeInTheDocument();
     expect(screen.getByText("类型")).toBeInTheDocument();
     expect(screen.getByText("场景")).toBeInTheDocument();
-    expect(screen.getByText("变体")).toBeInTheDocument();
+    expect(screen.getByText("场景变体")).toBeInTheDocument();
     expect(screen.getByText("时间")).toBeInTheDocument();
     expect(screen.getByText("出场身份")).toBeInTheDocument();
     expect(screen.getByText("出场道具")).toBeInTheDocument();
@@ -620,8 +578,10 @@ describe("TextPane", () => {
       </Wrapper>,
     );
 
-    expect(screen.queryByText("场景变体")).not.toBeInTheDocument();
-
+    // 这里原本还断言「场景变体」不出现。那条断言从标签改名起就一直是空跑的：本地
+    // i18n 抄的是旧值「变体」，查「场景变体」自然查不到。换成真词条后才露出来 ——
+    // beat 上带着 variant_id: "雨夜"，变体选择器本来就该在。真正要验的是换场景后
+    // variant_id 被清掉，下面那条断言已经盯着了。
     // Scene is now a base-scene dropdown sourced from the episode scene menu.
     await user.click(screen.getByRole("combobox", { name: "场景" }));
     await user.click(await screen.findByRole("option", { name: "森林" }));
@@ -645,7 +605,7 @@ describe("TextPane", () => {
       </Wrapper>,
     );
 
-    await user.click(screen.getByRole("combobox", { name: "变体" }));
+    await user.click(screen.getByRole("combobox", { name: "场景变体" }));
     await user.click(await screen.findByRole("option", { name: "漏水" }));
 
     expect(mutateAsync).toHaveBeenCalledTimes(1);
@@ -676,7 +636,7 @@ describe("TextPane", () => {
       </Wrapper>,
     );
 
-    await user.click(screen.getByRole("combobox", { name: "变体" }));
+    await user.click(screen.getByRole("combobox", { name: "场景变体" }));
     expect(
       screen.queryByRole("option", { name: "漏水_夜晚" }),
     ).not.toBeInTheDocument();
@@ -701,7 +661,7 @@ describe("TextPane", () => {
     );
 
     expect(screen.getByRole("combobox", { name: "场景" })).toHaveTextContent("卫生间");
-    expect(screen.getByRole("combobox", { name: "变体" })).toHaveTextContent("漏水");
+    expect(screen.getByRole("combobox", { name: "场景变体" })).toHaveTextContent("漏水");
     expect(screen.getByText("Render：将使用 卫生间_漏水_夜晚，锁图光")).toBeInTheDocument();
   });
 
@@ -753,7 +713,7 @@ describe("TextPane", () => {
       </Wrapper>,
     );
 
-    await user.click(screen.getByRole("combobox", { name: "变体" }));
+    await user.click(screen.getByRole("combobox", { name: "场景变体" }));
     await user.click(await screen.findByRole("option", { name: "漏水_严重" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync.mock.calls[0][0].data).toEqual({

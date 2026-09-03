@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { TFunction } from "i18next";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -35,9 +36,12 @@ describe("time-of-day helpers", () => {
   });
 
   it("labels empty and legacy values explicitly", () => {
-    expect(timeOfDayLabel("")).toBe("无（保持场景图光线，不重打光）");
-    expect(timeOfDayLabel("白天")).toBe("白天");
-    expect(timeOfDayLabel("夜晚")).toBe("夜晚");
-    expect(timeOfDayLabel("亥时")).toBe("亥时（剧本原值）");
+    // 回显 key + 插值，断言映射到哪条文案，不依赖具体译文。
+    const echoKey = ((key: string, opts?: Record<string, unknown>) =>
+      opts?.value ? `${key}:${String(opts.value)}` : key) as unknown as TFunction;
+    expect(timeOfDayLabel("", echoKey)).toBe("timeOfDay.none");
+    expect(timeOfDayLabel("白天", echoKey)).toBe("timeOfDay.day");
+    expect(timeOfDayLabel("夜晚", echoKey)).toBe("timeOfDay.night");
+    expect(timeOfDayLabel("亥时", echoKey)).toBe("timeOfDay.scriptOriginal:亥时");
   });
 });

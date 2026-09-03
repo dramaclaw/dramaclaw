@@ -464,12 +464,14 @@ def test_chat_run_lock_uses_named_agent_locks_dir(monkeypatch, tmp_path):
     assert lock_path.name.endswith(".lock")
 
 
-def test_chat_run_lock_file_expires_after_ten_minutes(monkeypatch, tmp_path):
+def test_chat_run_lock_file_expires_after_two_minutes(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    assert chat_service._CHAT_RUN_LOCK_TTL_SECONDS == 10 * 60
+    assert chat_service._CHAT_RUN_LOCK_TTL_SECONDS == 2 * 60
 
     lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    stale_started_at = datetime.now(timezone.utc) - timedelta(seconds=10 * 60 + 1)
+    stale_started_at = datetime.now(timezone.utc) - timedelta(
+        seconds=chat_service._CHAT_RUN_LOCK_TTL_SECONDS + 1
+    )
     lock_path.write_text(
         json.dumps(
             {
@@ -512,6 +514,32 @@ def test_chat_run_lock_uses_updated_at_for_idle_timeout(monkeypatch, tmp_path):
         chat_service._acquire_chat_run_lock("admin", "project-a")
 
 
+def test_chat_run_lock_trusts_fresh_heartbeat_from_another_pod(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(chat_service.socket, "gethostname", lambda: "new-pod")
+    monkeypatch.setattr(chat_service, "_pid_is_alive", lambda pid: False)
+
+    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
+    now = datetime.now(timezone.utc).isoformat()
+    lock_path.write_text(
+        json.dumps(
+            {
+                "lock_id": "old-pod-lock",
+                "owner_id": "old-pod:3912",
+                "owner_pid": 3912,
+                "started_at": now,
+                "updated_at": now,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert chat_service.chat_run_lock_is_active("admin", "project-a") is True
+    with pytest.raises(RuntimeError, match="当前用户已有 AI 对话"):
+        chat_service._acquire_chat_run_lock("admin", "project-a")
+    assert json.loads(lock_path.read_text(encoding="utf-8"))["lock_id"] == "old-pod-lock"
+
+
 def test_chat_run_lock_still_has_max_runtime(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
 
@@ -552,8 +580,8 @@ def test_chat_run_lock_heartbeat_refreshes_updated_at(monkeypatch, tmp_path):
     lock_id = chat_service._acquire_chat_run_lock("admin", "project-a")
     lock_path = chat_service._chat_run_lock_path("admin", "project-a")
     try:
-        _current_lock_id, _owner_pid, started_at, updated_at = chat_service._read_chat_run_lock_file(
-            lock_path
+        _current_lock_id, _owner_id, _owner_pid, started_at, updated_at = (
+            chat_service._read_chat_run_lock_file(lock_path)
         )
         assert started_at is not None
         assert updated_at is not None
@@ -574,9 +602,13 @@ def test_chat_run_lock_heartbeat_refreshes_updated_at(monkeypatch, tmp_path):
         assert len(atomic_writes) == 1
         assert atomic_writes[0][0] == lock_path
         assert json.loads(atomic_writes[0][1])["lock_id"] == lock_id
-        refreshed_lock_id, _owner_pid, refreshed_started_at, refreshed_updated_at = (
-            chat_service._read_chat_run_lock_file(lock_path)
-        )
+        (
+            refreshed_lock_id,
+            _owner_id,
+            _owner_pid,
+            refreshed_started_at,
+            refreshed_updated_at,
+        ) = chat_service._read_chat_run_lock_file(lock_path)
         assert refreshed_lock_id == lock_id
         assert refreshed_started_at == started_at
         assert refreshed_updated_at is not None

@@ -17,6 +17,9 @@ import type { VideoStoryRow } from '@/features/canvas/domain/canvasNodes';
 // motion_prompt / keyframes (array of 1-based indices into the chronologically
 // sorted frame_urls).
 
+// 下面两张别名表里的中文不是界面文案，是模型/后端返回的列名字面量，
+// 用来把返回字段对上前端字段，翻译过去就对不上了。
+// i18n-exempt-start
 const FIELD_ALIASES: Record<Exclude<keyof VideoStoryRow, 'raw' | 'keyframeUrl'>, string[]> = {
   shotNumber: ['shot', 'shotNumber', 'shot_number', 'shot_no', 'shot_index', 'index', 'number', '镜号', '序号'],
   startTime: ['startTime', 'start_time', 'start', '开始时间'],
@@ -45,6 +48,8 @@ const KEYFRAME_URL_ALIASES = [
   '关键帧URL',
   '关键帧地址',
 ];
+
+// i18n-exempt-end
 
 const KEYFRAME_INDEX_ALIASES = ['keyframes', 'keyframe_indices', 'keyframeIndices'];
 

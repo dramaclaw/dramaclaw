@@ -97,6 +97,7 @@ from novelvideo.config import (
 from novelvideo.director_world import DirectorWorldService
 from novelvideo.director_world.staging_prop_ai import generate_ai_staging_prop
 from novelvideo.freezone import canvas_store
+from novelvideo.i18n_message import log_lines_text
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
     media_request_schema_for_mode,
@@ -9878,7 +9879,7 @@ async def freezone_job_result(
                     "ok": False,
                     "error": task.error or "job failed",
                     "status": task.status,
-                    "logs": task.logs[-10:],
+                    "logs": log_lines_text(task.logs[-10:]),
                 }
             if task.status in {"pending", "starting", "running"}:
                 return {
@@ -9960,7 +9961,7 @@ async def freezone_job_result(
                         "ok": False,
                         "error": task.error or "job failed",
                         "status": task.status,
-                        "logs": task.logs[-10:],
+                        "logs": log_lines_text(task.logs[-10:]),
                     }
                 if task.status in {"pending", "starting", "running"}:
                     return {
@@ -10008,7 +10009,7 @@ async def freezone_job_result(
                     "ok": False,
                     "error": task.error or "job failed",
                     "status": task.status,
-                    "logs": task.logs[-10:],
+                    "logs": log_lines_text(task.logs[-10:]),
                 }
             if task.status != "completed":
                 return {
@@ -10041,7 +10042,7 @@ async def freezone_job_result(
                     "ok": False,
                     "error": task.error or "job failed",
                     "status": task.status,
-                    "logs": task.logs[-10:],
+                    "logs": log_lines_text(task.logs[-10:]),
                 }
             if task.status in {"pending", "starting", "running"}:
                 return {

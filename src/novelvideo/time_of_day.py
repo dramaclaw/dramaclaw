@@ -64,6 +64,39 @@ _CLASSICAL_HOUR_TO_TIME_OF_DAY: dict[str, str] = {
     "亥": "夜晚",
 }
 _CLASSICAL_TIME_RE = re.compile(r"^(?P<hour>[子丑寅卯辰巳午未申酉戌亥])时(?:[一二三四]刻|半)?$")
+_ENGLISH_TIME_OF_DAY: dict[str, str] = {
+    "dawn": "清晨",
+    "morning": "上午",
+    "noon": "正午",
+    "afternoon": "午后",
+    "day": "白天",
+    "daytime": "白天",
+    "dusk": "黄昏",
+    "evening": "黄昏",
+    "night": "夜晚",
+    "nighttime": "夜晚",
+    "midnight": "夜晚",
+}
+_CLOCK_TIME_RE = re.compile(
+    r"^(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>AM|PM)?$",
+    re.IGNORECASE,
+)
+
+
+def _clock_hour_to_time_of_day(hour: int) -> str:
+    if hour < 5:
+        return "夜晚"
+    if hour < 8:
+        return "清晨"
+    if hour < 12:
+        return "上午"
+    if hour == 12:
+        return "正午"
+    if hour < 17:
+        return "午后"
+    if hour < 20:
+        return "黄昏"
+    return "夜晚"
 
 
 def normalize_time_of_day(value: str | None) -> str:
@@ -75,9 +108,23 @@ def normalize_time_of_day(value: str | None) -> str:
     direct = _NORMALIZED_TIME_OF_DAY.get(text)
     if direct:
         return direct
+    english_direct = _ENGLISH_TIME_OF_DAY.get(text.lower())
+    if english_direct:
+        return english_direct
     classical_match = _CLASSICAL_TIME_RE.match(text)
     if classical_match:
         return _CLASSICAL_HOUR_TO_TIME_OF_DAY[classical_match.group("hour")]
+    clock_match = _CLOCK_TIME_RE.match(text)
+    if clock_match and (clock_match.group("minute") or clock_match.group("meridiem")):
+        hour = int(clock_match.group("hour"))
+        minute = int(clock_match.group("minute") or 0)
+        meridiem = str(clock_match.group("meridiem") or "").upper()
+        if minute < 60 and (
+            (meridiem and 1 <= hour <= 12) or (not meridiem and 0 <= hour <= 23)
+        ):
+            if meridiem:
+                hour = hour % 12 + (12 if meridiem == "PM" else 0)
+            return _clock_hour_to_time_of_day(hour)
     return text
 
 

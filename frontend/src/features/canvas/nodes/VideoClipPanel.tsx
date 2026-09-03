@@ -10,6 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { Check, Loader2, Repeat, Type as TypeIcon, VolumeX, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import {
   mediaNeedsCrossOrigin,
@@ -144,6 +145,7 @@ export const VideoClipPanel = memo(function VideoClipPanel({
   onExit,
   onSubmit,
 }: VideoClipPanelProps) {
+  const { t } = useTranslation();
   const totalMs = useMemo(() => {
     if (typeof durationMs === 'number' && durationMs > 0) return durationMs;
     return null;
@@ -261,14 +263,14 @@ export const VideoClipPanel = memo(function VideoClipPanel({
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-dark/80 transition-colors hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-55"
         onClick={onExit}
         disabled={isSubmitting}
-        title="退出剪辑"
+        title={t('canvas.videoClip.exit')}
       >
         <X className="h-4 w-4" />
       </button>
       <button
         type="button"
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-dark/72"
-        title="字幕（待实现）"
+        title={t('canvas.videoClip.subtitleTodo')}
         disabled
       >
         <TypeIcon className="h-4 w-4" />
@@ -295,12 +297,12 @@ export const VideoClipPanel = memo(function VideoClipPanel({
 
         {thumbsState === 'loading' && thumbs.length === 0 && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[11px] text-text-muted/70">
-            提取画面帧中…
+            {t('canvas.videoClip.extractingFrames')}
           </div>
         )}
         {thumbsState === 'error' && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[11px] text-text-muted/70">
-            画面帧加载失败
+            {t('canvas.videoClip.framesFailed')}
           </div>
         )}
 
@@ -322,14 +324,14 @@ export const VideoClipPanel = memo(function VideoClipPanel({
           <div
             className="absolute inset-y-0 left-0 flex w-3 cursor-ew-resize items-center justify-center rounded-l-md bg-white"
             onPointerDown={startDrag('start')}
-            title="拖动以调整起点"
+            title={t('canvas.videoClip.dragStart')}
           >
             <div className="h-4 w-[2px] rounded-full bg-black/40" />
           </div>
           <div
             className="absolute inset-y-0 right-0 flex w-3 cursor-ew-resize items-center justify-center rounded-r-md bg-white"
             onPointerDown={startDrag('end')}
-            title="拖动以调整终点"
+            title={t('canvas.videoClip.dragEnd')}
           >
             <div className="h-4 w-[2px] rounded-full bg-black/40" />
           </div>
@@ -347,7 +349,7 @@ export const VideoClipPanel = memo(function VideoClipPanel({
       <button
         type="button"
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-dark/72"
-        title="静音（待实现）"
+        title={t('canvas.videoClip.muteTodo')}
         disabled
       >
         <VolumeX className="h-4 w-4" />
@@ -355,7 +357,7 @@ export const VideoClipPanel = memo(function VideoClipPanel({
       <button
         type="button"
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-dark/72"
-        title="循环（待实现）"
+        title={t('canvas.videoClip.loopTodo')}
         disabled
       >
         <Repeat className="h-4 w-4" />
@@ -365,7 +367,11 @@ export const VideoClipPanel = memo(function VideoClipPanel({
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-black transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:bg-white/30 disabled:text-text-muted"
         onClick={handleSubmit}
         disabled={!totalMs || selectionMs < MIN_CLIP_MS || isSubmitting}
-        title={isSubmitting ? '剪辑中…' : '提交剪辑'}
+        title={
+          isSubmitting
+            ? t('canvas.videoClip.submitting')
+            : t('canvas.videoClip.submit')
+        }
       >
         {isSubmitting ? (
           <Loader2 className="h-4 w-4 animate-spin" />

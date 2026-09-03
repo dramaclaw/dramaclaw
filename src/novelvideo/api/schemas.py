@@ -40,7 +40,7 @@ class ErrorResponse(BaseModel):
 
 
 class ProjectCreate(BaseModel):
-    name: str
+    name: str = Field(max_length=64)
 
 
 class ProjectSummary(BaseModel):
@@ -179,6 +179,7 @@ class BeatUpdate(BaseModel):
 class Seedance2PromptGenerateRequest(BaseModel):
     manual_prompt_reference: Optional[str] = None
     prompt_guidance: Optional[str] = None
+    prompt_guidance_template_keys: Optional[list[str]] = None
 
 
 class BeatVideoPromptGenerateRequest(BaseModel):

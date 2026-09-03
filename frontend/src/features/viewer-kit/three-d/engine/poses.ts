@@ -35,24 +35,24 @@ export const POSES: PoseName[] = [
   'sword',
 ];
 
-export const POSE_LABELS: Record<PoseName, string> = {
-  standing: '站立',
-  talking: '交谈',
-  arms_crossed: '抱臂',
-  sitting: '坐下',
-  eating: '进食',
-  crouching: '蹲伏',
-  kneeling: '下跪',
-  lying: '躺 / 倒地',
-  walking: '行走',
-  running: '奔跑',
-  pointing: '指向',
-  holding: '持物',
-  interacting: '操作 / 互动',
-  fighting: '格斗',
-  sword: '持械',
+/** 姿势名的界面文案：只存 key，渲染时由调用方带着 t 解析（POSES 才是协议值）。 */
+export const POSE_LABEL_KEYS: Record<PoseName, string> = {
+  standing: 'viewer.threeD.poses.standing',
+  talking: 'viewer.threeD.poses.talking',
+  arms_crossed: 'viewer.threeD.poses.arms_crossed',
+  sitting: 'viewer.threeD.poses.sitting',
+  eating: 'viewer.threeD.poses.eating',
+  crouching: 'viewer.threeD.poses.crouching',
+  kneeling: 'viewer.threeD.poses.kneeling',
+  lying: 'viewer.threeD.poses.lying',
+  walking: 'viewer.threeD.poses.walking',
+  running: 'viewer.threeD.poses.running',
+  pointing: 'viewer.threeD.poses.pointing',
+  holding: 'viewer.threeD.poses.holding',
+  interacting: 'viewer.threeD.poses.interacting',
+  fighting: 'viewer.threeD.poses.fighting',
+  sword: 'viewer.threeD.poses.sword',
 };
-
 export function isPoseName(value: unknown): value is PoseName {
   return typeof value === 'string' && (POSES as string[]).includes(value);
 }

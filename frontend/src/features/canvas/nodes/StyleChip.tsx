@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { Palette, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import type { FreezoneStyleTemplate } from '@/api/ops';
 import { StyleAssetImage } from '@/features/canvas/ui/StyleAssetImage';
@@ -15,19 +16,22 @@ import {
 /** 缩略图接管的是 ready 态,所以这颗 chip 只需要覆盖其余四种。 */
 export type StyleTriggerChipState = Exclude<StyleSelectionState, 'ready'>;
 
-const STYLE_TRIGGER_CHIP_TEXT: Record<
+const STYLE_TRIGGER_CHIP_KEYS: Record<
   StyleTriggerChipState,
   { label: string; title: string }
 > = {
-  none: { label: '风格', title: '风格' },
-  loading: { label: '风格 · 加载中', title: '风格清单加载中' },
+  none: { label: 'canvas.style.chip', title: 'canvas.style.chip' },
+  loading: {
+    label: 'canvas.style.chipLoading',
+    title: 'canvas.style.chipLoadingTitle',
+  },
   failed: {
-    label: '风格 · 加载失败',
-    title: '风格清单没拉到,点一下重试;已选的风格仍会随生成提交',
+    label: 'canvas.style.chipFailed',
+    title: 'canvas.style.chipFailedTitle',
   },
   missing: {
-    label: '风格 · 已失效',
-    title: '这个风格已经下线了,点一下重新选一个',
+    label: 'canvas.style.chipMissing',
+    title: 'canvas.style.chipMissingTitle',
   },
 };
 
@@ -46,7 +50,10 @@ export function StyleTriggerChip({
   state = 'none',
   onOpen,
 }: StyleTriggerChipProps) {
-  const { label, title } = STYLE_TRIGGER_CHIP_TEXT[state];
+  const { t } = useTranslation();
+  const keys = STYLE_TRIGGER_CHIP_KEYS[state];
+  const label = t(keys.label);
+  const title = t(keys.title);
   const degraded = state === 'failed' || state === 'missing';
   return (
     <button
@@ -80,12 +87,13 @@ export function StyleThumbnail({
   onOpen,
   onClear,
 }: StyleThumbnailProps) {
+  const { t } = useTranslation();
   return (
     <div className="group/stylethumb relative">
       <div
         role="button"
         tabIndex={0}
-        aria-label={`风格 ${template.label}`}
+        aria-label={t('canvas.style.thumbAria', { label: template.label })}
         className={`${NODE_REFERENCE_MEDIA_CHIP_CLASS} cursor-pointer`}
         onClick={(event) => {
           event.stopPropagation();
@@ -106,8 +114,8 @@ export function StyleThumbnail({
         />
         <button
           type="button"
-          aria-label="清除风格"
-          title="清除风格"
+          aria-label={t('canvas.style.clear')}
+          title={t('canvas.style.clear')}
           className={NODE_REFERENCE_MEDIA_DETACH_CLASS}
           onMouseDown={(event) => event.stopPropagation()}
           onClick={(event) => {

@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from 'i18next';
+
 import {
   isAudioNode,
   isExportImageNode,
@@ -127,10 +132,11 @@ export function classifyVideoReferenceMedia(
   return null;
 }
 
-const KIND_LABEL: Record<VideoReferenceMediaKind, string> = {
-  image: '张图片',
-  video: '个视频',
-  audio: '个音频',
+/** 每类素材超额时那句提示的词条 key——整句都在词条里，别在源码里拼半句。 */
+const KIND_LIMIT_KEYS: Record<VideoReferenceMediaKind, string> = {
+  image: 'canvas.videoReference.limitImage',
+  video: 'canvas.videoReference.limitVideo',
+  audio: 'canvas.videoReference.limitAudio',
 };
 
 /**
@@ -173,11 +179,11 @@ export function videoReferenceConnectionRejection(
   }
 
   if (counts[incoming] + 1 > envelope[incoming]) {
-    return `视频节点最多引用 ${envelope[incoming]} ${KIND_LABEL[incoming]}`;
+    return i18n.t(KIND_LIMIT_KEYS[incoming], { limit: envelope[incoming] });
   }
   const total = counts.image + counts.video + counts.audio;
   if (total + 1 > envelope.total) {
-    return `视频节点最多引用 ${envelope.total} 个素材`;
+    return i18n.t('canvas.videoReference.limitTotal', { limit: envelope.total });
   }
   return null;
 }

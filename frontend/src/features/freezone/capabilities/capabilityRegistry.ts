@@ -18,27 +18,33 @@ export type CapabilityParamType = "enum" | "multiselect" | "slider" | "text" | "
 
 export interface CapabilityInputDefinition {
   key: string;
-  label: string;
+  labelKey: string;
   required: boolean;
   acceptKinds: string[];
-  description?: string;
+  descriptionKey?: string;
 }
 
 export interface CapabilityParamOption {
+  /** 协议值：会原样拼进提示词或写进节点参数，不跟界面语言走。 */
   value: string;
-  label: string;
+  labelKey: string;
+  /**
+   * 少数能力（实景草图修复）把选项文案本身拼进提示词。那串是模型输入不是界面文案，
+   * 改动会直接改变生成结果，所以单独放一份，不跟界面语言走。
+   */
+  promptLabel?: string;
 }
 
 export interface CapabilityParamDefinition {
   key: string;
-  label: string;
+  labelKey: string;
   type: CapabilityParamType;
   defaultValue?: unknown;
   options?: CapabilityParamOption[];
   min?: number;
   max?: number;
   step?: number;
-  description?: string;
+  descriptionKey?: string;
 }
 
 export interface CapabilityComposeContext {
@@ -60,10 +66,11 @@ export interface ComposedCapabilityJob {
 
 export interface GenerationCapability {
   id: string;
-  name: string;
-  shortName: string;
+  /** 能力的展示文案全部落成词条 key（`canvas.capabilities.<id>.*`），渲染时才解析。 */
+  nameKey: string;
+  shortNameKey: string;
   category: CapabilityCategory;
-  description: string;
+  descriptionKey: string;
   outputKind: string;
   model: string;
   aspectRatio: string;

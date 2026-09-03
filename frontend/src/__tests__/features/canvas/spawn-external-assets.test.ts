@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  EXTERNAL_ASSET_GROUP_LABEL,
+  externalAssetGroupLabel,
   spawnExternalAssetNodes,
   type SpawnExternalAssetsDeps,
 } from '@/features/canvas/application/spawnExternalAssets';
@@ -254,7 +254,7 @@ describe('spawnExternalAssetNodes', () => {
     expect(autoGroupSpawn).toHaveBeenCalledExactlyOnceWith(
       'video-1',
       ['up-0', 'up-1'],
-      { label: EXTERNAL_ASSET_GROUP_LABEL },
+      { label: externalAssetGroupLabel() },
     );
   });
 
@@ -284,8 +284,8 @@ describe('spawnExternalAssetNodes', () => {
   });
 });
 
-describe('EXTERNAL_ASSET_GROUP_LABEL', () => {
+describe('externalAssetGroupLabel', () => {
   it('与资产库的编组标签区分开', () => {
-    expect(EXTERNAL_ASSET_GROUP_LABEL).not.toBe('资产参考组');
+    expect(externalAssetGroupLabel()).not.toBe('资产参考组');
   });
 });

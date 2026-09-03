@@ -1149,7 +1149,7 @@ function RenderBackgroundReferencePanel({
               className={CROP_DIALOG_SAVE_BUTTON_CLASS}
             >
               {cropPending ? <Loader2 className="size-3 animate-spin" /> : <Crop className="size-3" />}
-              {t("episode.workbench.render.backgroundCropSave", "保存截图")}
+              {t("episode.workbench.render.backgroundCropSave")}
             </Button>
           </div>
         </DialogContent>

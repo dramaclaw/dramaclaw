@@ -37,6 +37,8 @@ interface SceneEnvironmentSection {
   i18nKey: string;
 }
 
+// label 是写进序列化提示词的契约文字，跟界面语言无关；界面上显示的是 i18nKey。
+// i18n-exempt-start
 export const SCENE_ENVIRONMENT_SECTIONS: readonly SceneEnvironmentSection[] = [
   { key: "front", label: "正面", i18nKey: "assets.scenes.environment.front" },
   { key: "left", label: "左侧", i18nKey: "assets.scenes.environment.left" },
@@ -54,6 +56,7 @@ export const SCENE_ENVIRONMENT_SECTIONS: readonly SceneEnvironmentSection[] = [
     i18nKey: "assets.scenes.environment.forbidden",
   },
 ] as const;
+// i18n-exempt-end
 
 export type SceneEnvironmentSections = Record<SceneEnvironmentSectionKey, string>;
 

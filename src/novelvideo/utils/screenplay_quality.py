@@ -7,13 +7,19 @@ import re
 from typing import Literal
 
 from novelvideo.utils.screenplay_scene_parser import (
+    BARE_ENGLISH_SENSE_SCENE_RE,
     BRACKETED_LABELED_SCENE_RE,
     CHINESE_FOUNTAIN_SCENE_RE,
+    ENGLISH_LABELED_TIME_RE,
+    ENGLISH_SCENE_MARKER_RE,
+    ENGLISH_SENSE_MARKER_RE,
     INTERIOR_EXTERIOR,
     INTERNATIONAL_SCENE_RE,
     INLINE_LABELED_SCENE_RE,
     INSERT_SCENE_RE,
+    LABELED_CHARACTER_RE,
     LABELED_LOCATION_RE,
+    NUMBERED_ENGLISH_SCENE_RE,
     NUMBERED_SCENE_RE,
     TIME_TOKEN_RE,
     is_scene_start_line,
@@ -158,6 +164,14 @@ def _has_source_scene_header_evidence(header_line: str) -> bool:
         return True
     if INTERNATIONAL_SCENE_RE.fullmatch(header):
         return True
+    if ENGLISH_SCENE_MARKER_RE.fullmatch(header):
+        return True
+    if BARE_ENGLISH_SENSE_SCENE_RE.fullmatch(header):
+        return True
+    if ENGLISH_SENSE_MARKER_RE.fullmatch(header):
+        return True
+    if NUMBERED_ENGLISH_SCENE_RE.fullmatch(header):
+        return True
     if INSERT_SCENE_RE.fullmatch(header):
         return True
     if INLINE_LABELED_SCENE_RE.fullmatch(header):
@@ -208,9 +222,11 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
     for line in non_empty_lines:
         if is_scene_start_line(line):
             continue
-        if line.startswith(("地点：", "地点:", "环境：", "环境:", "场景：", "场景:")):
+        if LABELED_LOCATION_RE.match(line):
             continue
-        if line.startswith(("人物：", "人物:", "出场人物：", "出场人物:", "角色：", "角色:")):
+        if LABELED_CHARACTER_RE.match(line):
+            continue
+        if ENGLISH_LABELED_TIME_RE.match(line):
             continue
         if SCENE_HEADER_WITHOUT_TIME_RE.match(line) or SCENE_BLOCK_HEADER_WITHOUT_TIME_RE.match(line):
             scene_headers_missing_time_count += 1
@@ -339,6 +355,7 @@ def build_import_format_check(
     report = check_screenplay_import_quality(text)
     scene_header_assessment = assess_screenplay_scene_headers(text)
     metrics = dict(report.metrics)
+    summary_params: dict = {}
     issues = _build_line_aware_format_issues(text or "")
     if chapters:
         issues.extend(_build_chapter_structure_issues(chapters))
@@ -368,6 +385,7 @@ def build_import_format_check(
                 "line": None,
                 "message": issue.message,
                 "fix": fix,
+                "params": {},
             }
         )
 
@@ -380,12 +398,15 @@ def build_import_format_check(
                     "line": None,
                     "message": "没有识别到场景头，系统无法判断每个场景从哪里开始。",
                     "fix": FIX_HINTS["missing_scene_headers"],
+                    "params": {},
                 },
             )
         level = "blocking"
+        summary_code = "missing_scene_headers"
         summary = "精品剧必须包含场景头：系统没有识别到每个场景从哪里开始，请补充后重新导入。"
     elif not has_chapters:
         level = "blocking"
+        summary_code = "no_chapters"
         summary = "未检测到有效章节或可识别正文，无法用于剧本结构化。"
     elif scene_header_assessment.status == "repairable":
         if not any(issue["code"] == "nonstandard_scene_headers" for issue in issues):
@@ -396,20 +417,29 @@ def build_import_format_check(
                     "line": None,
                     "message": "已识别场景边界，但部分场景元数据不完整。",
                     "fix": FIX_HINTS["nonstandard_scene_headers"],
+                    "params": {},
                 },
             )
         level = "warning"
+        summary_code = "repairable_scene_headers"
         summary = "已识别场景边界；缺失的场景元数据将在场景规划时补齐。"
     elif issues:
         level = "warning"
+        summary_code = "format_risks"
+        summary_params = {"count": len(issues)}
         summary = f"上传成功，但检测到 {len(issues)} 个格式风险，可能影响场景识别。"
     else:
         level = "ok"
+        summary_code = "passed"
         summary = "上传成功，剧本格式校验通过。"
 
     return {
         "level": level,
+        # summary/message/fix 是中文单语，只作为旧客户端和日志的兜底；
+        # 前端按 summary_code / issue.code 走 i18n，见 frontend 的 formatCheckCopy.ts。
         "summary": summary,
+        "summary_code": summary_code,
+        "summary_params": summary_params,
         "issues": issues,
         "metrics": metrics,
         "scene_header_status": scene_header_assessment.status,
@@ -436,15 +466,19 @@ def _build_line_aware_format_issues(text: str) -> list[dict]:
                 break
 
         missing: list[str] = []
+        missing_slots: list[str] = []
         placeholders: list[str] = []
         if not block.location:
             missing.append("地点")
+            missing_slots.append("location")
             placeholders.append("[地点]")
         if not block.time_of_day or block.time_inferred:
             missing.append("时间")
+            missing_slots.append("time")
             placeholders.append("[日/夜]")
         if block.interior_exterior not in INTERIOR_EXTERIOR:
             missing.append("内/外")
+            missing_slots.append("interior_exterior")
             placeholders.append("[内/外]")
         if not missing:
             continue
@@ -473,6 +507,22 @@ def _build_line_aware_format_issues(text: str) -> list[dict]:
                 "line": line_number,
                 "message": f"场景头“{header}”缺少{'、'.join(missing)}。",
                 "fix": f"请按实际场景补充，可参考“{suggestion}”。",
+                # 槽位名而不是中文词：英文界面要按 missing_slots 自己拼句子，
+                # 建议头也要用本地化占位符重拼，所以把原始字段一并带出去。
+                "params": {
+                    "header": header,
+                    "missing_slots": missing_slots,
+                    "location": block.location or "",
+                    "time_of_day": (
+                        block.time_of_day
+                        if block.time_of_day and not block.time_inferred
+                        else ""
+                    ),
+                    "interior_exterior": block.interior_exterior or "",
+                    "labeled_form": bool(
+                        header.startswith(("场次", "第")) and block.location
+                    ),
+                },
             }
         )
 
@@ -493,6 +543,7 @@ def _build_line_aware_format_issues(text: str) -> list[dict]:
                     "line": idx,
                     "message": "场景头缺少“内/外”。",
                     "fix": "建议补上“内/外”，如“地点 时间 内/外”。",
+                    "params": {},
                 }
             )
 
@@ -519,6 +570,7 @@ def _build_chapter_structure_issues(chapters: list[dict]) -> list[dict]:
                     "line": line_number,
                     "message": f"检测到重复章节序号 {number}：{title or '未命名章节'}。",
                     "fix": FIX_HINTS["duplicate_chapter_number"],
+                    "params": {"number": number, "title": title},
                 }
             )
         seen_numbers.add(number)
@@ -530,6 +582,7 @@ def _build_chapter_structure_issues(chapters: list[dict]) -> list[dict]:
                     "line": line_number,
                     "message": f"章节序号从 {previous_number} 跳回或重复为 {number}。",
                     "fix": FIX_HINTS["non_increasing_chapter_number"],
+                    "params": {"previous_number": previous_number, "number": number},
                 }
             )
         previous_number = number

@@ -1343,6 +1343,7 @@ async def build_scenes(project: str, user: dict = Depends(get_api_user)):
             "backend": queued.backend,
             "queue": queued.queue,
             "message": "场景补充任务已进入队列",
+            "message_code": "tasks.toast.scenesBuildQueued",
         }
 
     return {"ok": False, "error": "场景补充需要 project context"}

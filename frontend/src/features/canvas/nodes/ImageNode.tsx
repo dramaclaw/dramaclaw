@@ -37,7 +37,7 @@ import {
   shouldUseOriginalImageByZoom,
   withImageCacheBust,
 } from '@/features/canvas/application/imageData';
-import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
@@ -123,8 +123,8 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
     height: resolvedHeight,
   });
   const resolvedTitle = useMemo(
-    () => resolveNodeDisplayName(type as CanvasNodeType, data),
-    [data, type]
+    () => localizeNodeDisplayName(type as CanvasNodeType, data, t),
+    [data, t, type]
   );
   const hasMainlineContext = hasMainlineContexts(
     (data as { mainline_context?: unknown }).mainline_context,
@@ -376,7 +376,7 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
             </span>
             {generationErrorRequestId && (
               <div className="flex w-full max-w-[240px] items-center gap-1 rounded bg-red-500/10 px-2 py-1">
-                <span className="shrink-0 text-[10px] text-red-300/70">请求ID</span>
+                <span className="shrink-0 text-[10px] text-red-300/70">{t('common.requestId')}</span>
                 <code
                   className="min-w-0 flex-1 truncate font-mono text-[10px] text-red-200"
                   title={generationErrorRequestId}

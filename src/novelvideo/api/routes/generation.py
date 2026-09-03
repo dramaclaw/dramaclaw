@@ -51,6 +51,7 @@ from novelvideo.api.schemas import (
     Seedance2AssetCropRequest,
     Seedance2AssetDeleteRequest,
 )
+from novelvideo.utils.source_language import detect_episode_asset_language
 from novelvideo.api.viewer_manifests import (
     build_director_stage_manifest,
     build_pano_viewer_manifest,
@@ -1359,6 +1360,15 @@ async def _seedance2_panel_context(
     characters = store.get_all_characters()
     episode_obj = _episode_from_store_or_none(store, episode_num)
     prop_menu = await _runtime_prop_menu_with_global_props(store, episode_obj, beats)
+    language = await detect_episode_asset_language(
+        store,
+        episode_num,
+        fallback_text="\n".join(
+            str(item.get(field) or "")
+            for item in beats
+            for field in ("narration_segment", "dialogue", "visual_description")
+        ),
+    )
     return {
         "project_ctx": resolved.ctx,
         "username": username,
@@ -1370,6 +1380,7 @@ async def _seedance2_panel_context(
         "next_beat": next_beat,
         "characters": characters,
         "prop_menu": prop_menu,
+        "language": language,
     }
 
 
@@ -1395,6 +1406,7 @@ def _seedance2_status_response(
         characters=ctx["characters"],
         prop_menu=ctx["prop_menu"],
         state_dir=Path(ctx["store"].state_dir),
+        language=ctx.get("language"),
     )
     assets = state.assets
     selected_assets = [asset for asset in assets if asset.selected]
@@ -2660,8 +2672,7 @@ async def global_optimize_video(
 ):
     """全局视频提示词优化（草图 → AI 自由决策每个 beat 的 i2v/k2v 模式）。
 
-    language="en" (默认) 使用 SuperPower 模式（Gemini 英文提示词，含 camera/action/audio）。
-    language="zh" 使用中文简短提示词。
+    输出语言由作者保存的当前剧本文本决定，不受界面语言影响。
     """
     resolved = await _resolve_generation_project(project, user, required_role="editor")
     ctx = resolved.ctx
@@ -2678,6 +2689,16 @@ async def global_optimize_video(
 
     if not beats:
         return {"ok": False, "error": f"No beats found for episode {episode_num}"}
+
+    language = await detect_episode_asset_language(
+        store,
+        episode_num,
+        fallback_text="\n".join(
+            str(beat.get(field) or "")
+            for beat in beats
+            for field in ("narration_segment", "dialogue", "visual_description")
+        ),
+    )
 
     # 预检和报价必须使用同一统计口径。
     billable_beat_numbers = _global_optimize_billable_beat_numbers(
@@ -2714,7 +2735,7 @@ async def global_optimize_video(
                 "beats": beats,
                 "characters": char_list,
                 "output_dir": output_dir,
-                "language": body.language,
+                "language": language,
                 "billing": {
                     "items": billable_beat_count,
                     "beat_numbers": billable_beat_numbers,
