@@ -11,10 +11,10 @@ production Skill does not turn an exact topology request into the normal draft f
    and Recipe IDs returned in `available_recipes`.
    Author semantic Plan fields only. Do not construct `canvas_chat_commands.v1` yourself: the graph
    compiler owns command defaults, stable IDs, layout, grouping, and final static command validation.
-   Use `node_type` for each node's portable kind. The public MCP contract also accepts the canvas
-   compatibility alias `type`; if both are present they must contain the same stable enum value.
+   Use only canonical `node_type` for each node's portable kind. The public MCP contract rejects
+   the legacy canvas-command alias `type` and all unknown top-level fields.
    Keep input/resource `stage` at node level when possible; `data.stage` is accepted for canvas
-   compatibility. Use `link_type` on edges; the same stable `type` alias is also accepted.
+   compatibility. Use only canonical `link_type` on edges.
 3. Every executable node must contain an explicit `data.workflowCatalog.recipeId`. Input/resource
    text nodes may omit a Recipe when they only carry user-provided material, but they must set
    `stage` to `input`, `resource`, or `asset`. A terminal `videoComposeNode` has no Recipe.

@@ -1281,7 +1281,7 @@ def _require_episode(args: dict[str, Any]) -> int:
 
 
 def _require_name(args: dict[str, Any]) -> str:
-    name = str(args.get("name") or args.get("character") or "").strip()
+    name = str(args.get("name") or "").strip()
     if not name:
         raise ValueError("name (character name) is required")
     return name
@@ -1344,7 +1344,7 @@ def _handle_generate_scene_master(args: dict[str, Any], **_: Any) -> str:
     """Generate one scene's canonical master reference image."""
     try:
         project = _project_from_args(args)
-        name = str(args.get("name") or args.get("scene_name") or "").strip()
+        name = str(args.get("name") or "").strip()
         if not name:
             raise ValueError("name (scene name) is required")
         return tool_result(
@@ -1361,7 +1361,7 @@ def _handle_generate_scene_reverse(args: dict[str, Any], **_: Any) -> str:
     """Generate one scene's reverse master reference image."""
     try:
         project = _project_from_args(args)
-        name = str(args.get("name") or args.get("scene_name") or "").strip()
+        name = str(args.get("name") or "").strip()
         if not name:
             raise ValueError("name (scene name) is required")
         return tool_result(
@@ -2839,15 +2839,14 @@ def _schema(
     properties: dict[str, Any],
     required: list[str] | None = None,
     *,
-    additional_properties: bool = True,
+    additional_properties: bool = False,
 ) -> dict[str, Any]:
     parameters = {
         "type": "object",
         "properties": properties,
         "required": required or [],
     }
-    if not additional_properties:
-        parameters["additionalProperties"] = False
+    parameters["additionalProperties"] = additional_properties
     return {
         "name": name,
         "description": description,
@@ -3278,7 +3277,6 @@ TOOLS = (
             {
                 "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
                 "name": {"type": "string", "description": "Character name (required)."},
-                "character": {"type": "string", "description": "Alias of name."},
                 "face_prompt": {
                     "type": "string",
                     "description": "Concrete facial features: hairstyle, face shape, eyes, skin tone, age cues; no clothing.",
@@ -3348,7 +3346,6 @@ TOOLS = (
             {
                 "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
                 "name": {"type": "string", "description": "Scene name (required)."},
-                "scene_name": {"type": "string", "description": "Alias of name."},
             },
             ["name"],
         ),
@@ -3365,7 +3362,6 @@ TOOLS = (
             {
                 "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
                 "name": {"type": "string", "description": "Scene name (required)."},
-                "scene_name": {"type": "string", "description": "Alias of name."},
             },
             ["name"],
         ),
@@ -3571,7 +3567,6 @@ TOOLS = (
                     "items": {"type": "string"},
                     "description": "Show scenes whose name contains any of these texts.",
                 },
-                "scene_name": {"type": "string", "description": "Alias of name; fuzzy contains match."},
                 "scene_type": {"type": "string", "description": "Show only scenes with this scene_type."},
                 "index": {
                     "type": "integer",
@@ -3655,10 +3650,6 @@ TOOLS = (
                 "query": {
                     "type": "string",
                     "description": "Fuzzy text query over beat title, description, narration/dialogue, speaker, characters, and scene.",
-                },
-                "search": {
-                    "type": "string",
-                    "description": "Alias of query.",
                 },
                 "offset": {
                     "type": "integer",

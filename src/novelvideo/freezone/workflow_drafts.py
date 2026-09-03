@@ -19,6 +19,7 @@ from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 SCHEMA_VERSION = "freezone_workflow_draft.v1"
 DEFAULT_TTL_SECONDS = 24 * 60 * 60
+DEFAULT_CONFIRMATION_LEASE_SECONDS = 5 * 60
 DRAFT_ID_RE = re.compile(r"^workflow_draft_[a-zA-Z0-9_-]{1,80}$")
 DRAFT_STATUSES = {"ready", "confirming", "submitted", "confirmed"}
 CONFIRMATION_OUTCOMES = {"ready", "submitted", "confirmed"}
@@ -474,6 +475,8 @@ def claim_workflow_draft_confirmation(
     canvas_id: str,
     draft_id: str,
     revision: int,
+    now: float | None = None,
+    lease_seconds: int = DEFAULT_CONFIRMATION_LEASE_SECONDS,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     _validate_scope(canvas_id, draft_id)
     with _connect(project_dir) as conn:
@@ -481,7 +484,30 @@ def claim_workflow_draft_confirmation(
         payload = _read_draft(conn, canvas_id=canvas_id, draft_id=draft_id)
         if payload is None:
             return None, _unavailable("workflow draft not found")
-        if float(payload.get("expires_at") or 0) < time.time():
+        claim_time = time.time() if now is None else float(now)
+        billing = (
+            payload.get("billing") if isinstance(payload.get("billing"), dict) else {}
+        )
+        reservation_id = str(billing.get("reservation_id") or "")
+        billing_status = str(billing.get("status") or "")
+        active_reservation = bool(reservation_id) and billing_status in {
+            "reserved",
+            "settlement_pending",
+        }
+        expired = float(payload.get("expires_at") or 0) < claim_time
+        started_at = float(payload.get("confirmation_started_at") or 0)
+        stale_confirmation = (
+            payload["status"] == "confirming"
+            and started_at > 0
+            and started_at <= claim_time - max(int(lease_seconds), 1)
+        )
+        if (expired or stale_confirmation) and active_reservation:
+            return None, {
+                "ok": False,
+                "status": "workflow_draft_confirmation_reconciliation_required",
+                "error": "workflow draft reservation must be reconciled before retry",
+            }
+        if expired:
             return None, _unavailable("workflow draft expired")
         current_revision = int(payload["revision"])
         if revision != current_revision:
@@ -501,14 +527,14 @@ def claim_workflow_draft_confirmation(
                 "status": "workflow_draft_already_confirmed",
                 "message": "该工作流方案已经创建，不会重复创建节点。",
             }
-        if payload["status"] in {"confirming", "submitted"}:
+        if payload["status"] in {"confirming", "submitted"} and not stale_confirmation:
             return None, {
                 **public_workflow_draft(payload),
                 "ok": False,
                 "status": "workflow_draft_confirmation_in_progress",
                 "message": "该工作流方案正在创建或已经提交，不会重复创建节点。",
             }
-        now = time.time()
+        now = claim_time
         payload.update(
             {
                 "status": "confirming",
@@ -576,17 +602,29 @@ def prune_expired_workflow_drafts(
         _validate_scope(canvas_id)
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        if canvas_id is None:
-            cursor = conn.execute(
-                "DELETE FROM workflow_drafts WHERE expires_at < ?",
-                (now or time.time(),),
+        cutoff = time.time() if now is None else float(now)
+        query = "SELECT * FROM workflow_drafts WHERE expires_at < ?"
+        params: tuple[Any, ...] = (cutoff,)
+        if canvas_id is not None:
+            query += " AND canvas_id = ?"
+            params = (cutoff, canvas_id)
+        deleted = 0
+        for row in conn.execute(query, params).fetchall():
+            payload = _payload_from_row(row)
+            billing = (
+                payload.get("billing")
+                if isinstance(payload.get("billing"), dict)
+                else {}
             )
-        else:
+            if str(billing.get("reservation_id") or "") and str(
+                billing.get("status") or ""
+            ) in {"reserved", "settlement_pending"}:
+                continue
             cursor = conn.execute(
-                "DELETE FROM workflow_drafts WHERE canvas_id = ? AND expires_at < ?",
-                (canvas_id, now or time.time()),
+                "DELETE FROM workflow_drafts WHERE draft_id = ?", (payload["draft_id"],)
             )
-        return max(int(cursor.rowcount), 0)
+            deleted += max(int(cursor.rowcount), 0)
+        return deleted
 
 
 def public_workflow_draft(payload: dict[str, Any]) -> dict[str, Any]:

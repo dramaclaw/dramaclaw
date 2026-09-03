@@ -10,6 +10,7 @@ from novelvideo.freezone.workflow_drafts import (
     patch_workflow_draft,
     read_workflow_draft,
     set_workflow_draft_billing,
+    prune_expired_workflow_drafts,
     workflow_drafts_db_path,
 )
 
@@ -259,3 +260,108 @@ def test_create_workflow_draft_is_idempotent_for_billing_quote(tmp_path: Path) -
     )
 
     assert repeated["draft_id"] == first["draft_id"]
+
+
+def test_stale_confirmation_lease_can_be_reclaimed_without_a_reservation(
+    tmp_path: Path,
+) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+    claimed, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1000,
+    )
+    assert error is None
+    assert claimed is not None
+
+    reclaimed, reclaim_error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1301,
+        lease_seconds=300,
+    )
+
+    assert reclaim_error is None
+    assert reclaimed is not None
+    assert reclaimed["confirmation_started_at"] == 1301
+
+
+def test_expiry_prune_preserves_draft_with_unsettled_reservation(
+    tmp_path: Path,
+) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+    set_workflow_draft_billing(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        billing={"reservation_id": "reservation-1", "status": "reserved"},
+    )
+
+    deleted = prune_expired_workflow_drafts(
+        project_dir=tmp_path,
+        canvas_id="default",
+        now=float(draft["expires_at"]) + 1,
+    )
+
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+    )
+    assert deleted == 0
+    assert error is None
+    assert stored is not None
+
+
+def test_stale_confirmation_with_reservation_requires_reconciliation(
+    tmp_path: Path,
+) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1000,
+    )
+    set_workflow_draft_billing(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        billing={"reservation_id": "reservation-1", "status": "reserved"},
+    )
+
+    claimed, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1301,
+        lease_seconds=300,
+    )
+
+    assert claimed is None
+    assert error is not None
+    assert error["status"] == "workflow_draft_confirmation_reconciliation_required"

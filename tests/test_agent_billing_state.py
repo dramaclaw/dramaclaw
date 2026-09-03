@@ -450,3 +450,38 @@ def test_reconciler_refunds_cancelled_workflow_reservation(
     assert stored is not None
     assert stored["billing"]["status"] == "refunded"
     assert settled == [("workflow-reservation-refund", False, {"outcome": "ready"})]
+
+
+def test_settlement_helper_keeps_failed_refund_in_durable_outbox(
+    tmp_path, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    async def fail_settlement(*_args, **_kwargs):
+        raise RuntimeError("usage meter unavailable")
+
+    monkeypatch.setattr(freezone, "settle_agent_capability_charge", fail_settlement)
+
+    settled = asyncio.run(
+        freezone._settle_agent_reservation_with_outbox(
+            state_dir=tmp_path,
+            reservation_id="reservation-refund-failure",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            draft_id="workflow_draft_missing",
+            confirmed=False,
+            metadata={"reason": "draft_billing_persist_failed"},
+        )
+    )
+    with sqlite3.connect(tmp_path / "data.db") as conn:
+        conn.execute(
+            "UPDATE agent_billing_settlements SET next_attempt_at = 0 "
+            "WHERE reservation_id = 'reservation-refund-failure'"
+        )
+    pending = due_billing_settlements(project_dir=tmp_path)
+
+    assert settled is False
+    assert len(pending) == 1
+    assert pending[0]["reservation_id"] == "reservation-refund-failure"
+    assert pending[0]["action"] == "refund"
+    assert pending[0]["metadata"] == {"reason": "draft_billing_persist_failed"}

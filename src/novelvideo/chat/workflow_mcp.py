@@ -18,6 +18,7 @@ from urllib.parse import unquote, urlsplit
 from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+from jsonschema import Draft202012Validator
 
 from novelvideo.freezone.agent_workflows.catalog import (
     compile_workflow_intent,
@@ -39,21 +40,118 @@ logger = logging.getLogger("novelvideo.chat.workflow_mcp")
 
 # References are shared host guidance, not catalog IDs.  Keep the resolver
 # inside the repository and never expose/accept arbitrary filesystem paths.
-_REFERENCE_ROOT = Path(__file__).resolve().parents[1] / "agent_skills" / "dramaclaw-workflows" / "references"
-_REFERENCE_NAMES = frozenset({"custom-topology.md", "error-recovery.md", "integration.md"})
+_REFERENCE_ROOT = (
+    Path(__file__).resolve().parents[1]
+    / "agent_skills"
+    / "dramaclaw-workflows"
+    / "references"
+)
+_REFERENCE_NAMES = frozenset(
+    {"custom-topology.md", "error-recovery.md", "integration.md"}
+)
 
-_WORKFLOW_OUTPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "description": "Structured result returned by every DramaClaw workflow tool.",
-    "properties": {
+
+def _output_schema(
+    success_properties: dict[str, Any], required: list[str]
+) -> dict[str, Any]:
+    """Describe the observable success payload while retaining rich typed failures."""
+
+    common = {
         "ok": {"type": "boolean"},
-        "status": {"type": "string"},
+        "status": {"type": "string", "minLength": 1},
+    }
+    failure_properties = {
+        **common,
         "code": {"type": ["string", "null"]},
         "error": {"type": ["string", "null"]},
+        "message": {"type": ["string", "null"]},
         "next_action": {"type": ["string", "null"]},
-    },
-    "required": ["ok", "status"],
-    "additionalProperties": True,
+        "agent_instruction": {"type": ["string", "null"]},
+        "errors": {"type": "array"},
+        "available_skill_ids": {"type": "array", "items": {"type": "string"}},
+        "skill_id": {"type": "string"},
+        "reference": {"type": "string"},
+        "tool": {"type": "string"},
+        "commands": {"type": "array"},
+        "skipped_edges": {"type": "array"},
+        "warnings": {"type": "array"},
+    }
+    return {
+        "type": "object",
+        "oneOf": [
+            {
+                "properties": {**common, "ok": {"const": True}, **success_properties},
+                "required": ["ok", "status", *required],
+                "additionalProperties": False,
+            },
+            {
+                "properties": {**failure_properties, "ok": {"const": False}},
+                "required": ["ok", "status"],
+                "additionalProperties": False,
+            },
+        ],
+    }
+
+
+_WORKFLOW_OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
+    "workflow_catalog_search": _output_schema(
+        {
+            "kind": {"type": "string", "enum": ["skills", "recipes"]},
+            "items": {"type": "array", "items": {"type": "object"}},
+        },
+        ["kind", "items"],
+    ),
+    "workflow_skill_get": _output_schema(
+        {
+            "schema_version": {"const": "freezone_workflow_skill_package.v1"},
+            "skill_id": {"type": "string", "minLength": 1},
+            "skill": {"type": "object"},
+            "user_goal": {"type": "string"},
+            "source": {"type": "string"},
+            "recipes": {"type": "array"},
+            "recipe_definitions_omitted": {"type": "boolean"},
+            "available_recipes": {"type": "array"},
+            "capabilities": {"type": "array"},
+            "allowed_node_types": {"type": "array"},
+            "allowed_link_types": {"type": "array"},
+            "input_contract": {"type": "object"},
+            "planning_contract": {"type": "object"},
+            "message": {"type": "string"},
+        },
+        ["schema_version", "skill_id", "skill", "available_recipes"],
+    ),
+    "workflow_recipe_get": _output_schema({"recipe": {"type": "object"}}, ["recipe"]),
+    "workflow_skill_reference_get": _output_schema(
+        {
+            "skill_id": {"type": "string", "minLength": 1},
+            "reference": {"type": "string", "minLength": 1},
+            "content": {"type": "string"},
+        },
+        ["skill_id", "reference", "content"],
+    ),
+    "workflow_intent_compile": _output_schema(
+        {
+            "skill_id": {"type": "string", "minLength": 1},
+            "plan": {"type": "object"},
+            "schema_version": {"type": "string"},
+            "node_count": {"type": "integer"},
+            "edge_count": {"type": "integer"},
+            "preflight": {"type": "object"},
+            "planner": {"type": "object"},
+        },
+        ["skill_id", "plan"],
+    ),
+    "workflow_graph_compile": _output_schema(
+        {
+            "schema_version": {"type": "string", "minLength": 1},
+            "workflow_instance_id": {"type": "string", "minLength": 1},
+            "commands": {"type": "array"},
+            "run_after_create": {"type": "boolean"},
+            "skipped_edges": {"type": "array"},
+            "warnings": {"type": "array"},
+        },
+        ["schema_version", "workflow_instance_id", "commands"],
+    ),
 }
 
 
@@ -70,7 +168,7 @@ def _text(payload: dict[str, Any]) -> list[types.TextContent]:
     ]
 
 
-def _result(payload: Any) -> types.CallToolResult | list[types.TextContent]:
+def _result(tool_name: str, payload: Any) -> types.CallToolResult:
     """Return JSON text plus structured content for MCP clients that support it."""
     if not isinstance(payload, dict):
         payload = {"ok": False, "status": "invalid_tool_result", "error": str(payload)}
@@ -80,6 +178,9 @@ def _result(payload: Any) -> types.CallToolResult | list[types.TextContent]:
             payload["ok"] = not bool(payload.get("error"))
         if not isinstance(payload.get("status"), str) or not payload["status"].strip():
             payload["status"] = "completed" if payload["ok"] else "failed"
+    schema = _WORKFLOW_OUTPUT_SCHEMAS.get(tool_name)
+    if schema is not None:
+        Draft202012Validator(schema).validate(payload)
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=encoded)],
@@ -128,7 +229,11 @@ def _read_skill_reference(skill_id: Any, reference: Any) -> dict[str, Any]:
     # use this endpoint as a generic file reader.
     skill = get_workflow_skill({"skill_id": normalized_skill, "compact": True})
     if not skill.get("ok"):
-        return {"ok": False, "status": "workflow_skill_not_found", "skill_id": normalized_skill}
+        return {
+            "ok": False,
+            "status": "workflow_skill_not_found",
+            "skill_id": normalized_skill,
+        }
     if normalized_reference.startswith("references/"):
         normalized_reference = normalized_reference[len("references/") :]
     if (
@@ -137,10 +242,18 @@ def _read_skill_reference(skill_id: Any, reference: Any) -> dict[str, Any]:
         or "/" in normalized_reference
         or normalized_reference in {".", ".."}
     ):
-        return {"ok": False, "status": "workflow_reference_not_found", "reference": normalized_reference}
+        return {
+            "ok": False,
+            "status": "workflow_reference_not_found",
+            "reference": normalized_reference,
+        }
     path = (_REFERENCE_ROOT / normalized_reference).resolve()
     if path.parent != _REFERENCE_ROOT or not path.is_file():
-        return {"ok": False, "status": "workflow_reference_not_found", "reference": normalized_reference}
+        return {
+            "ok": False,
+            "status": "workflow_reference_not_found",
+            "reference": normalized_reference,
+        }
     return {
         "ok": True,
         "status": "workflow_reference_ready",
@@ -231,7 +344,7 @@ async def list_tools() -> list[types.Tool]:
                 },
                 ["kind"],
             ),
-            outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
+            outputSchema=_WORKFLOW_OUTPUT_SCHEMAS["workflow_catalog_search"],
         ),
         types.Tool(
             name="workflow_skill_get",
@@ -254,7 +367,7 @@ async def list_tools() -> list[types.Tool]:
                 },
                 ["skill_id"],
             ),
-            outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
+            outputSchema=_WORKFLOW_OUTPUT_SCHEMAS["workflow_skill_get"],
         ),
         types.Tool(
             name="workflow_recipe_get",
@@ -266,7 +379,7 @@ async def list_tools() -> list[types.Tool]:
                 {"recipe_id": {"type": "string", "minLength": 1}},
                 ["recipe_id"],
             ),
-            outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
+            outputSchema=_WORKFLOW_OUTPUT_SCHEMAS["workflow_recipe_get"],
         ),
         types.Tool(
             name="workflow_skill_reference_get",
@@ -279,12 +392,16 @@ async def list_tools() -> list[types.Tool]:
                     "skill_id": {"type": "string", "minLength": 1},
                     "reference": {
                         "type": "string",
-                        "enum": ["custom-topology.md", "error-recovery.md", "integration.md"],
+                        "enum": [
+                            "custom-topology.md",
+                            "error-recovery.md",
+                            "integration.md",
+                        ],
                     },
                 },
                 ["skill_id", "reference"],
             ),
-            outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
+            outputSchema=_WORKFLOW_OUTPUT_SCHEMAS["workflow_skill_reference_get"],
         ),
         types.Tool(
             name="workflow_intent_compile",
@@ -297,7 +414,7 @@ async def list_tools() -> list[types.Tool]:
                 {"intent": workflow_intent_json_schema()},
                 ["intent"],
             ),
-            outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
+            outputSchema=_WORKFLOW_OUTPUT_SCHEMAS["workflow_intent_compile"],
         ),
         types.Tool(
             name="workflow_graph_compile",
@@ -317,7 +434,7 @@ async def list_tools() -> list[types.Tool]:
                 },
                 ["plan"],
             ),
-            outputSchema=_WORKFLOW_OUTPUT_SCHEMA,
+            outputSchema=_WORKFLOW_OUTPUT_SCHEMAS["workflow_graph_compile"],
         ),
     ]
 
@@ -328,17 +445,19 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     if name == "workflow_catalog_search":
         kind = str(args.get("kind") or "")
         if kind not in {"skills", "recipes"}:
-            return _result({"ok": False, "status": "invalid_catalog_kind"})
+            return _result(name, {"ok": False, "status": "invalid_catalog_kind"})
         items = search_catalog(
             username=_username(),
             kind=kind,  # type: ignore[arg-type]
             query=str(args.get("query") or ""),
             limit=int(args.get("limit") or 12),
         )
-        return _result({"ok": True, "status": "catalog_ready", "kind": kind, "items": items})
+        return _result(
+            name, {"ok": True, "status": "catalog_ready", "kind": kind, "items": items}
+        )
     if name == "workflow_skill_get":
         result = get_workflow_skill({**args, "compact": True})
-        return _result(result)
+        return _result(name, result)
     if name == "workflow_recipe_get":
         item = get_catalog_item(
             username=_username(),
@@ -346,17 +465,25 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             item_id=str(args.get("recipe_id") or ""),
         )
         return _result(
-            {"ok": True, "recipe": item}
-            if item is not None
-            else {"ok": False, "status": "recipe_not_found"}
+            name,
+            (
+                {"ok": True, "recipe": item}
+                if item is not None
+                else {"ok": False, "status": "recipe_not_found"}
+            ),
         )
     if name == "workflow_skill_reference_get":
-        return _result(_read_skill_reference(args.get("skill_id"), args.get("reference")))
+        return _result(
+            name, _read_skill_reference(args.get("skill_id"), args.get("reference"))
+        )
     if name == "workflow_intent_compile":
-        return _result(compile_workflow_intent(args.get("intent")))
+        return _result(name, compile_workflow_intent(args.get("intent")))
     if name == "workflow_graph_compile":
         started = time.monotonic()
-        logger.info("workflow_graph_compile.start summary=%s", _plan_log_summary(args.get("plan")))
+        logger.info(
+            "workflow_graph_compile.start summary=%s",
+            _plan_log_summary(args.get("plan")),
+        )
         validation = validate_agent_workflow_plan(args.get("plan"))
         if not validation.get("ok"):
             logger.warning(
@@ -394,7 +521,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
                     "反复试编译。恢复编译成功后，必须立即用同一份计划提交工作流创建。"
                 )
             validation.setdefault("agent_instruction", instruction)
-            return _result(validation)
+            return _result(name, validation)
         result = build_workflow_graph_commands(args)
         logger.info(
             "workflow_graph_compile.end elapsed_ms=%d ok=%s status=%s command_count=%s",
@@ -403,8 +530,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             result.get("status"),
             len(result.get("commands") or []) if isinstance(result, dict) else None,
         )
-        return _result(result)
-    return _result({"ok": False, "status": "unknown_tool", "tool": name})
+        return _result(name, result)
+    return _result(name, {"ok": False, "status": "unknown_tool", "tool": name})
 
 
 async def _main() -> None:

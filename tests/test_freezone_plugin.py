@@ -4635,9 +4635,7 @@ def test_freezone_plugin_create_node_schema_hides_internal_node_types():
     assert "exportImageNode" not in enum_values
     assert "videoStoryNode" not in enum_values
     assert "skillNode" in enum_values
-    assert (
-        enum_values == create_node_tool["parameters"]["properties"]["nodeType"]["enum"]
-    )
+    assert "nodeType" not in create_node_tool["parameters"]["properties"]
     assert add_next_enum_values == enum_values
     assert set(emit_enum_values) == set(enum_values)
 

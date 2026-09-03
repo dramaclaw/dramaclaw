@@ -35,9 +35,10 @@ def test_external_mcp_ready_draft_honors_explicit_create_without_changing_plugin
     )
 
     assert original["agent_instruction"] == "Wait for user confirmation."
-    assert "call freezone_confirm_workflow_draft exactly once now" in adapted[
-        "agent_instruction"
-    ]
+    assert (
+        "call freezone_confirm_workflow_draft exactly once now"
+        in adapted["agent_instruction"]
+    )
     assert "without asking for another confirmation" in adapted["agent_instruction"]
 
 
@@ -79,9 +80,10 @@ def test_external_mcp_plan_draft_keeps_custom_topology_in_the_draft_flow():
         )
     )
 
-    assert "call freezone_confirm_workflow_draft exactly once" in adapted[
-        "agent_instruction"
-    ]
+    assert (
+        "call freezone_confirm_workflow_draft exactly once"
+        in adapted["agent_instruction"]
+    )
     assert "prepare a new complete Plan draft" in adapted["agent_instruction"]
     assert "patch this draft" not in adapted["agent_instruction"]
 
@@ -156,6 +158,18 @@ async def test_project_scope_lists_concrete_tools(monkeypatch):
         assert "data" not in schema["properties"]
         assert schema["additionalProperties"] is False
         assert all(property_schema for property_schema in schema["properties"].values())
+
+    for name, (tool, _handler) in dramaclaw_mcp.TOOLS.items():
+        input_schema = tool["parameters"]
+        assert input_schema["additionalProperties"] is False, name
+        assert all(
+            key.replace("_", "").islower() for key in input_schema["properties"]
+        ), name
+        assert list(
+            Draft202012Validator(input_schema).iter_errors(
+                {"__unexpected_contract_field__": True}
+            )
+        ), name
 
     for plugin in dramaclaw_mcp.PLUGINS:
         plugin_tool_names = {name for name, _schema, _handler in plugin.TOOLS}
@@ -243,7 +257,11 @@ async def test_real_core_handlers_match_their_endpoint_output_contracts(monkeypa
         if path.endswith("/tasks/script_writer/1"):
             return {
                 "ok": True,
-                "data": {"task_id": "task-1", "task_type": "script_writer", "episode": 1},
+                "data": {
+                    "task_id": "task-1",
+                    "task_type": "script_writer",
+                    "episode": 1,
+                },
             }
         if path.endswith("/episodes/1/script"):
             return {"ok": True, "data": {"episode": 1, "beats": []}}
@@ -355,7 +373,9 @@ async def test_real_scene_images_handler_matches_its_mcp_output_contract(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_real_episode_image_handlers_preserve_project_scope_in_mcp_contract(monkeypatch):
+async def test_real_episode_image_handlers_preserve_project_scope_in_mcp_contract(
+    monkeypatch,
+):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
 
     def fake_request(_method, path, **_kwargs):
@@ -369,11 +389,13 @@ async def test_real_episode_image_handlers_preserve_project_scope_in_mcp_contrac
             }
         return {
             "ok": True,
-            "data": [{
-                "beat_number": 1,
-                "sketch_url": "/static/sketch.png",
-                "frame_url": "/static/frame.png",
-            }],
+            "data": [
+                {
+                    "beat_number": 1,
+                    "sketch_url": "/static/sketch.png",
+                    "frame_url": "/static/frame.png",
+                }
+            ],
         }
 
     monkeypatch.setattr(dramaclaw_mcp.PLUGIN, "_request", fake_request)
@@ -392,7 +414,9 @@ async def test_real_episode_image_handlers_preserve_project_scope_in_mcp_contrac
 
 
 @pytest.mark.asyncio
-async def test_real_final_video_handler_models_single_and_collection_results(monkeypatch):
+async def test_real_final_video_handler_models_single_and_collection_results(
+    monkeypatch,
+):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
 
     def fake_request(_method, path, **_kwargs):
@@ -436,7 +460,9 @@ async def test_real_final_video_handler_models_single_and_collection_results(mon
 
 
 @pytest.mark.asyncio
-async def test_real_clarification_results_preserve_frontend_answers_and_retry_fields(monkeypatch):
+async def test_real_clarification_results_preserve_frontend_answers_and_retry_fields(
+    monkeypatch,
+):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
@@ -461,11 +487,13 @@ async def test_real_clarification_results_preserve_frontend_answers_and_retry_fi
     )
     question = {
         "clarification_id": "clarify-1",
-        "questions": [{
-            "id": "scope",
-            "title": "主要做什么？",
-            "options": [{"id": "workflow", "label": "工作流"}],
-        }],
+        "questions": [
+            {
+                "id": "scope",
+                "title": "主要做什么？",
+                "options": [{"id": "workflow", "label": "工作流"}],
+            }
+        ],
     }
     answered = await dramaclaw_mcp.call_tool(
         "freezone_request_user_clarification", question
@@ -486,11 +514,15 @@ async def test_real_clarification_results_preserve_frontend_answers_and_retry_fi
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
     rejected = await dramaclaw_mcp.call_tool(
         "freezone_request_user_clarification",
-        {"questions": [{
-            "id": "generation_settings",
-            "title": "生成设置",
-            "options": [{"id": "default", "label": "默认"}],
-        }]},
+        {
+            "questions": [
+                {
+                    "id": "generation_settings",
+                    "title": "生成设置",
+                    "options": [{"id": "default", "label": "默认"}],
+                }
+            ]
+        },
     )
     assert rejected.isError is True
     assert rejected.structuredContent["required_question_ids"]["image"]
@@ -513,6 +545,7 @@ async def test_real_skill_studio_results_match_mcp_contract(monkeypatch):
     monkeypatch.setattr(
         freezone_plugin, "put_pending_skill_studio_event", lambda **_kwargs: None
     )
+
     def frontend_result(key, **_kwargs):
         return {
             "ok": True,
@@ -523,6 +556,7 @@ async def test_real_skill_studio_results_match_mcp_contract(monkeypatch):
             "action": "submit",
             "selections": {"scope": "planning"},
         }
+
     monkeypatch.setattr(freezone_plugin, "wait_skill_studio_result", frontend_result)
     base = {"skill_studio_session_id": "studio-1"}
     progress_calls = [
@@ -548,7 +582,9 @@ async def test_real_skill_studio_results_match_mcp_contract(monkeypatch):
     for tool_name, arguments in progress_calls:
         _schema, handler = dramaclaw_mcp.TOOLS[tool_name]
         result = dramaclaw_mcp._structured_tool_result(tool_name, handler(arguments))
-        assert result.structuredContent["status"] == "skill_studio_progress_event_emitted", (
+        assert (
+            result.structuredContent["status"] == "skill_studio_progress_event_emitted"
+        ), (
             tool_name,
             result.structuredContent,
         )
@@ -595,9 +631,7 @@ async def test_real_delete_nodes_empty_canvas_noop_matches_mcp_contract(monkeypa
         lambda *_args, **_kwargs: {"ok": True, "data": {"nodes": [], "edges": []}},
     )
 
-    result = await dramaclaw_mcp.call_tool(
-        "freezone_delete_nodes", {"scope": "canvas"}
-    )
+    result = await dramaclaw_mcp.call_tool("freezone_delete_nodes", {"scope": "canvas"})
 
     assert result.isError is False
     assert result.structuredContent["canvas_apply_status"] == "already_empty"
@@ -704,12 +738,7 @@ async def test_read_resource_remaps_stale_workspace_uri_to_current_skills_root(
     current_skill.parent.mkdir(parents=True)
     current_skill.write_text("# Current workflow skill\n", encoding="utf-8")
     stale_skill = (
-        tmp_path
-        / "retired"
-        / ".agents"
-        / "skills"
-        / "dramaclaw-workflows"
-        / "SKILL.md"
+        tmp_path / "retired" / ".agents" / "skills" / "dramaclaw-workflows" / "SKILL.md"
     )
     monkeypatch.setenv("DRAMACLAW_SKILLS_DIR", str(current_root))
 

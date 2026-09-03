@@ -16,6 +16,7 @@ import math
 import os
 import re
 import shutil
+import time
 import uuid
 from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
@@ -4901,6 +4902,11 @@ async def _reconcile_agent_billing_settlements(project_dir: Path) -> None:
                 "confirmed" if pending.get("action") == "confirm" else "refunded"
             )
         else:
+            await asyncio.to_thread(
+                mark_billing_settlement_projected,
+                project_dir=project_dir,
+                reservation_id=reservation_id,
+            )
             continue
         projected = await asyncio.to_thread(
             set_workflow_draft_billing,
@@ -4949,7 +4955,7 @@ async def _settle_agent_reservation_with_outbox(
         reservation_id=reservation_id,
         project_id=project_id,
         canvas_id=canvas_id,
-        draft_id="",
+        draft_id=draft_id,
         action="confirm" if confirmed else "refund",
         metadata=metadata,
     )
@@ -4976,12 +4982,102 @@ async def _settle_agent_reservation_with_outbox(
         project_dir=state_dir,
         reservation_id=reservation_id,
     )
-    await asyncio.to_thread(
-        mark_billing_settlement_projected,
+    draft, _error = await asyncio.to_thread(
+        read_workflow_draft,
         project_dir=state_dir,
-        reservation_id=reservation_id,
+        canvas_id=canvas_id,
+        draft_id=draft_id,
     )
+    projected = draft is None
+    if draft is not None:
+        billing = draft.get("billing") if isinstance(draft.get("billing"), dict) else {}
+        planning = (
+            billing.get("planning") if isinstance(billing.get("planning"), dict) else {}
+        )
+        if str(planning.get("reservation_id") or "") == reservation_id:
+            planning["status"] = "confirmed" if confirmed else "refunded"
+            billing["planning"] = planning
+        elif str(billing.get("reservation_id") or "") == reservation_id:
+            billing["status"] = "confirmed" if confirmed else "refunded"
+        else:
+            projected = True
+        if not projected:
+            projected = (
+                await asyncio.to_thread(
+                    set_workflow_draft_billing,
+                    project_dir=state_dir,
+                    canvas_id=canvas_id,
+                    draft_id=draft_id,
+                    billing=billing,
+                )
+                is not None
+            )
+    if projected:
+        await asyncio.to_thread(
+            mark_billing_settlement_projected,
+            project_dir=state_dir,
+            reservation_id=reservation_id,
+        )
     return True
+
+
+async def _recover_stale_workflow_draft_confirmation(
+    *,
+    draft: dict[str, Any],
+    state_dir: Path,
+    project_id: str,
+    canvas_id: str,
+) -> dict[str, Any] | None:
+    """Release an abandoned confirmation lease before a retry or expiry prune."""
+
+    now = time.time()
+    started_at = float(draft.get("confirmation_started_at") or 0)
+    stale = (
+        draft.get("status") == "confirming"
+        and started_at > 0
+        and started_at <= now - 300
+    )
+    expired = float(draft.get("expires_at") or 0) < now
+    if not stale and not expired:
+        return draft
+    billing = draft.get("billing") if isinstance(draft.get("billing"), dict) else {}
+    reservation_id = str(billing.get("reservation_id") or "")
+    billing_status = str(billing.get("status") or "")
+    if reservation_id and billing_status in {"reserved", "settlement_pending"}:
+        settled = await _settle_agent_reservation_with_outbox(
+            state_dir=state_dir,
+            reservation_id=reservation_id,
+            project_id=project_id,
+            canvas_id=canvas_id,
+            draft_id=str(draft.get("draft_id") or ""),
+            confirmed=False,
+            metadata={
+                **(
+                    billing.get("metadata")
+                    if isinstance(billing.get("metadata"), dict)
+                    else {}
+                ),
+                "reason": "stale_workflow_draft_confirmation",
+            },
+        )
+        if not settled:
+            return draft
+    recovered = await asyncio.to_thread(
+        finish_workflow_draft_confirmation,
+        project_dir=state_dir,
+        canvas_id=canvas_id,
+        draft_id=str(draft.get("draft_id") or ""),
+        outcome="ready",
+    )
+    if expired:
+        await asyncio.to_thread(
+            prune_expired_workflow_drafts,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            now=now,
+        )
+        return None
+    return recovered
 
 
 def _require_billing_confirmation(
@@ -13713,6 +13809,7 @@ async def claim_canvas_workflow_draft(
         await _resolve_freezone_project(project, user)
     )
     state_dir = _canvas_state_project_dir(ctx, project_dir)
+    await _reconcile_agent_billing_settlements(state_dir)
     try:
         revision = int(body.get("revision"))
     except (TypeError, ValueError) as exc:
@@ -13728,6 +13825,18 @@ async def claim_canvas_workflow_draft(
             "ok": False,
             "status": "workflow_draft_unavailable",
             "error": current_error or "workflow draft not found",
+        }
+    current_draft = await _recover_stale_workflow_draft_confirmation(
+        draft=current_draft,
+        state_dir=state_dir,
+        project_id=str(ctx.project_id or project),
+        canvas_id=canvas_id,
+    )
+    if current_draft is None:
+        return {
+            "ok": False,
+            "status": "workflow_draft_unavailable",
+            "error": "workflow draft expired after reservation reconciliation",
         }
     charge = workflow_design_charge(current_draft.get("preview"))
     confirmed_quote: dict[str, Any] = {}
@@ -13774,7 +13883,7 @@ async def claim_canvas_workflow_draft(
             charge=charge,
             idempotency_key=(
                 f"freezone-agent-workflow:{ctx.project_id}:{canvas_id}:"
-                f"{draft_id}:{revision}:{confirmed_quote.get('quote_id')}"
+                f"{draft_id}:{revision}"
             ),
             metadata={**billing_metadata, "quote_id": confirmed_quote.get("quote_id")},
         )
@@ -13836,8 +13945,12 @@ async def claim_canvas_workflow_draft(
             },
         )
     except Exception:
-        await settle_agent_capability_charge(
-            reservation_id,
+        await _settle_agent_reservation_with_outbox(
+            state_dir=state_dir,
+            reservation_id=reservation_id,
+            project_id=str(ctx.project_id or project),
+            canvas_id=canvas_id,
+            draft_id=draft_id,
             confirmed=False,
             metadata={**billing_metadata, "reason": "draft_billing_persist_failed"},
         )
@@ -13850,8 +13963,12 @@ async def claim_canvas_workflow_draft(
         )
         raise
     if persisted is None:
-        await settle_agent_capability_charge(
-            reservation_id,
+        await _settle_agent_reservation_with_outbox(
+            state_dir=state_dir,
+            reservation_id=reservation_id,
+            project_id=str(ctx.project_id or project),
+            canvas_id=canvas_id,
+            draft_id=draft_id,
             confirmed=False,
             metadata={**billing_metadata, "reason": "workflow_draft_missing"},
         )

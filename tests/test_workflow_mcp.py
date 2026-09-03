@@ -39,6 +39,13 @@ async def test_standalone_workflow_mcp_exposes_portable_tools_and_resources():
     }
 
     schemas = {tool.name: tool.inputSchema for tool in tools}
+    output_schemas = {tool.name: tool.outputSchema for tool in tools}
+    assert len({json.dumps(schema, sort_keys=True) for schema in output_schemas.values()}) == 6
+    assert all(
+        branch["additionalProperties"] is False
+        for schema in output_schemas.values()
+        for branch in schema["oneOf"]
+    )
     assert schemas["workflow_skill_get"]["properties"]["compact"]["type"] == "boolean"
     plan_schema = schemas["workflow_graph_compile"]["properties"]["plan"]
     intent_schema = schemas["workflow_intent_compile"]["properties"]["intent"]
@@ -107,7 +114,7 @@ async def test_graph_compile_accepts_canonical_plan_fields():
                         "prompt": "未来城市雨夜",
                         "workflowCatalog": {"recipeId": "general-image"},
                     },
-                }
+                },
             ],
             "edges": [
                 {"source": "input", "target": "image", "link_type": "prompt_for"}
@@ -131,6 +138,81 @@ async def test_graph_compile_accepts_canonical_plan_fields():
 
 
 @pytest.mark.asyncio
+async def test_every_workflow_tool_validates_its_real_call_result(monkeypatch):
+    monkeypatch.setattr(workflow_mcp, "search_catalog", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        workflow_mcp,
+        "get_workflow_skill",
+        lambda _args: {
+            "ok": True,
+            "status": "workflow_skill_ready",
+            "schema_version": "freezone_workflow_skill_package.v1",
+            "skill_id": "skill-a",
+            "skill": {},
+            "available_recipes": [],
+        },
+    )
+    monkeypatch.setattr(
+        workflow_mcp, "get_catalog_item", lambda **_kwargs: {"id": "recipe-a"}
+    )
+    monkeypatch.setattr(
+        workflow_mcp,
+        "_read_skill_reference",
+        lambda *_args: {
+            "ok": True,
+            "status": "workflow_reference_ready",
+            "skill_id": "skill-a",
+            "reference": "integration.md",
+            "content": "contract",
+        },
+    )
+    monkeypatch.setattr(
+        workflow_mcp,
+        "compile_workflow_intent",
+        lambda _intent: {
+            "ok": True,
+            "status": "workflow_plan_ready",
+            "skill_id": "skill-a",
+            "plan": {},
+        },
+    )
+    monkeypatch.setattr(
+        workflow_mcp,
+        "validate_agent_workflow_plan",
+        lambda _plan: {"ok": True, "status": "workflow_plan_valid"},
+    )
+    monkeypatch.setattr(
+        workflow_mcp,
+        "build_workflow_graph_commands",
+        lambda _args: {
+            "ok": True,
+            "status": "workflow_graph_commands_created",
+            "schema_version": "canvas_chat_commands.v1",
+            "workflow_instance_id": "workflow-a",
+            "commands": [],
+        },
+    )
+    calls = {
+        "workflow_catalog_search": {"kind": "skills"},
+        "workflow_skill_get": {"skill_id": "skill-a"},
+        "workflow_recipe_get": {"recipe_id": "recipe-a"},
+        "workflow_skill_reference_get": {
+            "skill_id": "skill-a",
+            "reference": "integration.md",
+        },
+        "workflow_intent_compile": {"intent": {}},
+        "workflow_graph_compile": {"plan": {}},
+    }
+    tools = {tool.name: tool for tool in await workflow_mcp.list_tools()}
+
+    for name, arguments in calls.items():
+        result = await workflow_mcp.call_tool(name, arguments)
+        Draft202012Validator(tools[name].outputSchema).validate(
+            result.structuredContent
+        )
+
+
+@pytest.mark.asyncio
 async def test_graph_compile_rejects_nested_execution_policy():
     arguments = {
         "plan": {
@@ -138,10 +220,23 @@ async def test_graph_compile_rejects_nested_execution_policy():
             "skill": {"id": "video-tutorial", "version": 1},
             "run_after_create": True,
             "nodes": [
-                {"id": "input", "node_type": "textAnnotationNode", "data": {"stage": "input", "text": "文案"}},
-                {"id": "image", "node_type": "imageGenNode", "data": {"prompt": "雨夜城市", "workflowCatalog": {"recipeId": "general-image"}}},
+                {
+                    "id": "input",
+                    "node_type": "textAnnotationNode",
+                    "data": {"stage": "input", "text": "文案"},
+                },
+                {
+                    "id": "image",
+                    "node_type": "imageGenNode",
+                    "data": {
+                        "prompt": "雨夜城市",
+                        "workflowCatalog": {"recipeId": "general-image"},
+                    },
+                },
             ],
-            "edges": [{"source": "input", "target": "image", "link_type": "prompt_for"}],
+            "edges": [
+                {"source": "input", "target": "image", "link_type": "prompt_for"}
+            ],
         }
     }
     graph_tool = next(

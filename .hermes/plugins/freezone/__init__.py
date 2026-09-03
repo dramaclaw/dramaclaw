@@ -1972,7 +1972,7 @@ def _handle_list_agent_catalog(args: dict[str, Any], **_: Any) -> str:
             },
             tool_name="freezone_list_agent_catalog",
         )
-    query = str(args.get("query") or args.get("q") or "").strip().lower()
+    query = str(args.get("query") or "").strip().lower()
     try:
         limit = int(args.get("limit") or 12)
     except (TypeError, ValueError):
@@ -2106,7 +2106,7 @@ def _handle_node_detail(args: dict[str, Any], **_: Any) -> str:
         ).strip()
         or None
     )
-    node_id = str(args.get("node_id") or args.get("nodeId") or "").strip()
+    node_id = str(args.get("node_id") or "").strip()
     if not node_id:
         return tool_result(
             {"ok": False, "status": "node_id_required", "error": "node_id is required"}
@@ -2131,7 +2131,7 @@ def _handle_neighbor_graph(args: dict[str, Any], **_: Any) -> str:
         ).strip()
         or None
     )
-    node_id = str(args.get("node_id") or args.get("nodeId") or "").strip()
+    node_id = str(args.get("node_id") or "").strip()
     if not node_id:
         return tool_result(
             {"ok": False, "status": "node_id_required", "error": "node_id is required"}
@@ -2159,7 +2159,7 @@ def _handle_node_action_catalog(args: dict[str, Any], **_: Any) -> str:
         ).strip()
         or None
     )
-    node_id = str(args.get("node_id") or args.get("nodeId") or "").strip()
+    node_id = str(args.get("node_id") or "").strip()
     if not node_id:
         return tool_result(
             {"ok": False, "status": "node_id_required", "error": "node_id is required"}
@@ -6328,15 +6328,14 @@ def _schema(
     properties: dict[str, Any],
     required: list[str] | None = None,
     *,
-    reject_unknown: bool = False,
+    reject_unknown: bool = True,
 ) -> dict[str, Any]:
     parameters: dict[str, Any] = {
         "type": "object",
         "properties": properties,
         "required": required or [],
     }
-    if reject_unknown:
-        parameters["additionalProperties"] = False
+    parameters["additionalProperties"] = not reject_unknown
     return {
         "name": name,
         "description": description,
@@ -7140,12 +7139,6 @@ _NODE_TYPE_SCHEMA = {
     "description": _NODE_TYPE_DESCRIPTION,
 }
 
-_NODE_TYPE_ALIAS_SCHEMA = {
-    "type": "string",
-    "enum": _AGENT_CREATABLE_NODE_TYPE_VALUES,
-    "description": "Alias of node_type. Prefer snake_case node_type.",
-}
-
 _MAINLINE_PROJECTION_SCOPE_VALUES = ["episode", "beat", "asset"]
 _MAINLINE_PRIMARY_SLOT_VALUES = ["sketch", "frame", "render"]
 _MAINLINE_ASSET_KIND_VALUES = [
@@ -7737,10 +7730,6 @@ TOOLS = (
                         "and result summary. Use a few craft keywords rather than a full sentence."
                     ),
                 },
-                "q": {
-                    "type": "string",
-                    "description": "Alias of query.",
-                },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum summaries to return. Default 12, maximum 30.",
@@ -7807,7 +7796,6 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_id": {"type": "string", "description": "Canvas node id."},
-                "nodeId": {"type": "string", "description": "Alias of node_id."},
             },
             ["node_id"],
         ),
@@ -7821,7 +7809,6 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_id": {"type": "string", "description": "Canvas node id."},
-                "nodeId": {"type": "string", "description": "Alias of node_id."},
                 "depth": {
                     "type": "number",
                     "description": "Neighbor traversal depth. Defaults to 1.",
@@ -7839,13 +7826,10 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_id": {"type": "string", "description": "Canvas node id."},
-                "nodeId": {"type": "string", "description": "Alias of node_id."},
                 "action": {
                     "type": "string",
                     "description": "Optional action id to return one action's exact parameters and behavior. Omit only when comparing all node actions.",
                 },
-                "action_name": {"type": "string", "description": "Alias of action."},
-                "actionName": {"type": "string", "description": "Alias of action."},
             },
             ["node_id"],
         ),
@@ -7862,7 +7846,6 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_type": _NODE_TYPE_SCHEMA,
-                "nodeType": _NODE_TYPE_ALIAS_SCHEMA,
             },
             ["node_type"],
         ),
@@ -7876,7 +7859,6 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_id": {"type": "string", "description": "Audio canvas node id."},
-                "nodeId": {"type": "string", "description": "Alias of node_id."},
             },
             ["node_id"],
         ),
@@ -7893,7 +7875,6 @@ TOOLS = (
                     "type": "string",
                     "description": "Optional mainline slot kind filter for canvas-to-mainline submission, e.g. image, video, audio, or text.",
                 },
-                "slotKind": {"type": "string", "description": "Alias of slot_kind."},
             },
         ),
         _handle_slot_candidates,
@@ -7913,22 +7894,10 @@ TOOLS = (
                     },
                     "description": "Optional filters for mainline asset kinds to map into Freezone. Use character for all people/identity/portrait requests. Other narrow categories include prop, scene_master, scene_reverse_master, scene_360, or prop_ref.",
                 },
-                "assetKinds": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Alias of asset_kinds.",
-                },
-                "asset_kind": {
-                    "type": "string",
-                    "enum": _MAINLINE_PROJECTION_ASSET_KIND_VALUES,
-                    "description": "Single asset kind filter alias. Prefer asset_kinds for multiple values.",
-                },
-                "assetKind": {"type": "string", "description": "Alias of asset_kind."},
                 "query": {
                     "type": "string",
                     "description": "Optional user-facing keyword to match asset label/name.",
                 },
-                "q": {"type": "string", "description": "Alias of query."},
                 "limit": {
                     "type": "integer",
                     "description": "Maximum candidates to return. Default 20, maximum 50.",
@@ -8153,10 +8122,6 @@ TOOLS = (
                     "type": "string",
                     "description": "approval_id returned by a previous approval_required MCP canvas write.",
                 },
-                "approvalId": {
-                    "type": "string",
-                    "description": "Alias of approval_id.",
-                },
             },
             ["approval_id"],
         ),
@@ -8172,10 +8137,6 @@ TOOLS = (
                     "type": "string",
                     "description": "approval_id returned by a previous approval_required MCP canvas write.",
                 },
-                "approvalId": {
-                    "type": "string",
-                    "description": "Alias of approval_id.",
-                },
             },
             ["approval_id"],
         ),
@@ -8190,7 +8151,6 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_type": _NODE_TYPE_SCHEMA,
-                "nodeType": _NODE_TYPE_ALIAS_SCHEMA,
                 "data": {
                     "type": "object",
                     "description": "Node data. Prefer stable fields such as prompt, title, content, text, displayName.",
@@ -8217,12 +8177,7 @@ TOOLS = (
                     "type": "string",
                     "description": "Existing source canvas node id.",
                 },
-                "sourceNodeId": {
-                    "type": "string",
-                    "description": "Alias of source_node_id.",
-                },
                 "node_type": _NODE_TYPE_SCHEMA,
-                "nodeType": _NODE_TYPE_ALIAS_SCHEMA,
                 "data": {"type": "object", "description": "New node data."},
                 "connect": {
                     "type": "boolean",
@@ -8269,7 +8224,6 @@ TOOLS = (
                     "enum": _LINK_TYPE_VALUES,
                     "description": "Semantic relation. Required; do not use role, link_kind, semantic_kind, semantic_reason, or semantic_description.",
                 },
-                "linkType": {"type": "string", "description": "Alias of link_type."},
             },
             ["source", "target", "link_type"],
         ),
@@ -8292,11 +8246,6 @@ TOOLS = (
                     "description": "Existing node ids to delete.",
                     "items": {"type": "string"},
                 },
-                "nodeIds": {
-                    "type": "array",
-                    "description": "Alias of node_ids.",
-                    "items": {"type": "string"},
-                },
             },
             [],
         ),
@@ -8312,11 +8261,6 @@ TOOLS = (
                 "edge_ids": {
                     "type": "array",
                     "description": "Existing edge ids to delete.",
-                    "items": {"type": "string"},
-                },
-                "edgeIds": {
-                    "type": "array",
-                    "description": "Alias of edge_ids.",
                     "items": {"type": "string"},
                 },
                 "pairs": {
@@ -8344,11 +8288,6 @@ TOOLS = (
                     "description": "Node ids for relative movement.",
                     "items": {"type": "string"},
                 },
-                "nodeIds": {
-                    "type": "array",
-                    "description": "Alias of node_ids.",
-                    "items": {"type": "string"},
-                },
                 "dx": {"type": "number", "description": "Relative x delta."},
                 "dy": {"type": "number", "description": "Relative y delta."},
             },
@@ -8372,11 +8311,6 @@ TOOLS = (
                     "description": "Optional node ids to layout.",
                     "items": {"type": "string"},
                 },
-                "nodeIds": {
-                    "type": "array",
-                    "description": "Alias of node_ids.",
-                    "items": {"type": "string"},
-                },
             },
             ["mode"],
         ),
@@ -8392,11 +8326,6 @@ TOOLS = (
                 "node_ids": {
                     "type": "array",
                     "description": "At least two node ids/client_ids to group.",
-                    "items": {"type": "string"},
-                },
-                "nodeIds": {
-                    "type": "array",
-                    "description": "Alias of node_ids.",
                     "items": {"type": "string"},
                 },
                 "label": {"type": "string", "description": "Optional group label."},
@@ -8415,11 +8344,6 @@ TOOLS = (
                 "node_ids": {
                     "type": "array",
                     "description": "Node ids/client_ids to select.",
-                    "items": {"type": "string"},
-                },
-                "nodeIds": {
-                    "type": "array",
-                    "description": "Alias of node_ids.",
                     "items": {"type": "string"},
                 },
                 "focus": {
@@ -8456,33 +8380,19 @@ TOOLS = (
                     "enum": _MAINLINE_PRIMARY_SLOT_VALUES,
                     "description": "For beat scope: sketch for 草图, frame for 分镜, render for default/render.",
                 },
-                "primarySlot": {
-                    "type": "string",
-                    "description": "Alias of primary_slot.",
-                },
                 "asset_kind": {
                     "type": "string",
                     "enum": _MAINLINE_ASSET_KIND_VALUES,
                     "description": "Asset kind for asset scope.",
                 },
-                "assetKind": {"type": "string", "description": "Alias of asset_kind."},
                 "character": {
                     "type": "string",
                     "description": "Character name for character assets.",
-                },
-                "identity_id": {
-                    "type": "string",
-                    "description": "Legacy alias accepted by older character projection requests; prefer character-only asset projections.",
-                },
-                "identityId": {
-                    "type": "string",
-                    "description": "Alias of identity_id.",
                 },
                 "asset_id": {
                     "type": "string",
                     "description": "Scene or prop id for scene/prop assets.",
                 },
-                "assetId": {"type": "string", "description": "Alias of asset_id."},
                 "request": {
                     "type": "object",
                     "description": "Optional raw projection request object. Top-level fields are preferred.",
@@ -8533,7 +8443,6 @@ TOOLS = (
                     "type": "string",
                     "description": "Existing canvas node id.",
                 },
-                "nodeId": {"type": "string", "description": "Alias of node_id."},
                 "action": {
                     "type": "string",
                     "description": "Exact action id from the node action catalog.",
@@ -8542,14 +8451,9 @@ TOOLS = (
                     "type": "object",
                     "description": "Optional parameters for actions whose action_catalog exposes parameter_schema. For generation actions, omit regenerate unless the user explicitly asks to regenerate/overwrite existing output.",
                 },
-                "params": {"type": "object", "description": "Alias of parameters."},
                 "regenerate": {
                     "type": "boolean",
                     "description": "Set true only when the user explicitly asks to regenerate/overwrite this node. Normal continue/complete requests skip nodes that already have output.",
-                },
-                "force_regenerate": {
-                    "type": "boolean",
-                    "description": "Alias of regenerate.",
                 },
             },
             ["node_id", "action"],
