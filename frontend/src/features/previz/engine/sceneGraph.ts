@@ -7,12 +7,15 @@ import { PREVIZ_HEIGHT_CM_RANGE } from '../domain/objects';
 import {
   PREVIZ_SCALE_RANGE,
   type DisplayMode,
+  type OutputAspect,
+  type PrevizCamera,
   type PrevizCharacter,
   type PrevizObject,
   type PrevizProp,
   type PrevizScene,
   type Vec3,
 } from '../domain/scene';
+import { buildCameraModel, syncCameraFrustum } from './cameraModel';
 import type { CharacterRigFactory } from './characterRig';
 import type { PropLoader } from './propLoader';
 
@@ -42,9 +45,12 @@ export const PREVIZ_PLACEHOLDER_RADIUS = 0.22;
 /** 全灰模式的统一颜色。 */
 const CLAY_COLOR = 0xb9bec8;
 
-const KIND_COLOR: Record<PrevizObject['kind'], number> = {
+/**
+ * 单件占位体的分类色。机位不在表里——它是 `cameraModel.ts` 建的一台多色摄影机，
+ * 颜色由那边管；在这里留一个用不到的 `camera` 项只会让人以为改它能改出效果。
+ */
+const KIND_COLOR: Record<Exclude<PrevizObject['kind'], 'camera'>, number> = {
   character: 0x6ea8fe,
-  camera: 0xffd166,
   light: 0xfff3b0,
   prop: 0x9ad0a0,
 };
@@ -75,6 +81,9 @@ function finiteOr(value: number, fallback: number): number {
 export class PrevizSceneGraph {
   private readonly nodes = new Map<string, THREE.Object3D>();
   private displayMode: DisplayMode | null = null;
+
+  /** 上一次 `sync` 见到的出片画幅。机位视锥的宽高比取自它。 */
+  private outputAspect: OutputAspect = '16:9';
   /** 由 `PrevizRenderer.create()` 注入；没注入时人物一直用占位胶囊。 */
   private characterRig: CharacterRigFactory | null = null;
   private onModelReady: (() => void) | null = null;
@@ -107,6 +116,8 @@ export class PrevizSceneGraph {
   /** 把当前场景同步进对象树。可以每帧调，代价是一次 Map 查表加几次赋值。 */
   sync(scene: PrevizScene): void {
     const mode = scene.settings.displayMode;
+    // 出片画幅决定机位视锥张多宽，而 `createNode` 拿不到 scene——先记下来。
+    this.outputAspect = scene.settings.outputAspect;
     // 显示模式只在变化时整树重刷：它要遍历整棵树改材质并让着色程序失效，每帧跑纯属浪费。
     const modeChanged = this.displayMode !== mode;
     this.displayMode = mode;
@@ -131,6 +142,9 @@ export class PrevizSceneGraph {
       if (object.kind === 'character' && this.resizePlaceholder(node, object)) {
         pending.push(node);
       }
+      // 机位的视锥同理：焦距、传感器、出片画幅都是能在属性面板上改的，几何体建好
+      // 不会自己跟着变。这里不进 `pending`——重画只换几何体，材质原封不动。
+      if (object.kind === 'camera') this.syncCameraModel(node, object);
 
       node.name = object.name;
       node.visible = object.visible;
@@ -318,9 +332,25 @@ export class PrevizSceneGraph {
     return true;
   }
 
-  /** 占位几何体。人物胶囊、机位锥体、灯球、物件方块——形状不同是为了一眼分得清。 */
-  private createPlaceholder(object: PrevizObject): THREE.Mesh {
+  /**
+   * 机位的视锥跟着焦距 / 传感器 / 出片画幅重画。找不到模型时什么都不做——那说明
+   * 这个节点还停在别的形态上。
+   */
+  private syncCameraModel(node: THREE.Object3D, object: PrevizCamera): boolean {
+    const model = node.children.find((child) => child.userData.previzCameraModel);
+    if (!model) return false;
+    return syncCameraFrustum(this.three, model, object, this.outputAspect);
+  }
+
+  /**
+   * 占位几何体。人物胶囊、灯球、物件方块——形状不同是为了一眼分得清。
+   *
+   * 机位是唯一一个不止一件几何体的：它是一台摄影机加一具取景视锥，整组由
+   * `cameraModel.ts` 建，所以这里的返回类型是 `Object3D` 而不是 `Mesh`。
+   */
+  private createPlaceholder(object: PrevizObject): THREE.Object3D {
     const three = this.three;
+    if (object.kind === 'camera') return buildCameraModel(three, object, this.outputAspect);
     let geometry: THREE.BufferGeometry;
     let yOffset = 0;
     let heightCm: number | undefined;
@@ -337,9 +367,6 @@ export class PrevizSceneGraph {
         yOffset = height / 2;
         break;
       }
-      case 'camera':
-        geometry = new three.ConeGeometry(0.16, 0.42, 4);
-        break;
       case 'light':
         geometry = new three.SphereGeometry(0.14, 16, 12);
         break;
@@ -419,7 +446,7 @@ function finiteVec3(value: Vec3): Vec3 {
  * 之后，之后每一个新建的人物拿到的都是已经 dispose 的几何体，模型不显示且控制台刷
  * `GL_INVALID_OPERATION`，而症状离「删除」这个动作隔了好几步。
  *
- * 反过来占位体（胶囊 / 锥体 / 灯球 / 方块）是一节点一份、谁都不共享的，必须照旧 dispose，
+ * 反过来占位体（胶囊 / 摄影机 / 灯球 / 方块）是一节点一份、谁都不共享的，必须照旧 dispose，
  * 否则拖一次身高滑杆就按帧泄漏几何体。所以是「按标记跳过」而不是「一律不 dispose」。
  */
 const SHARED_MODEL_KEY = 'previzSharedModel';
