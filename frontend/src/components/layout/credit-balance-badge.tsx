@@ -12,6 +12,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useCurrentUser } from "@/lib/queries/auth";
 import { useCreditSummary } from "@/lib/queries/credits";
+import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
 import { isCeRuntime } from "@/lib/runtime-config";
 import { CREDIT_CENTER_TAB_KEY, OPEN_CREDIT_CENTER_KEY } from "@/lib/payment-navigation";
 import { cn } from "@/lib/utils";
@@ -33,6 +34,8 @@ export function CreditBalanceBadge() {
   const username = useAuthStore((s) => s.username);
   const { data, isLoading, isError } = useCurrentUser(Boolean(username) && !ce);
   const summaryQuery = useCreditSummary(Boolean(username) && !ce);
+  const productSurfaces = useProductSurfaces(Boolean(username) && !ce);
+  const paymentAvailable = surfaceAccess(productSurfaces.data, "payment")?.available ?? false;
   const summary = summaryQuery.data?.data;
   const balance = summary?.balance ?? data?.data.credit_balance;
   const language = i18n?.resolvedLanguage ?? i18n?.language ?? "en";
@@ -128,13 +131,15 @@ export function CreditBalanceBadge() {
             <div className="flex items-center justify-between">
               <div className="text-xs font-semibold">{t("credits.availableBalance")}</div>
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => openCredits("custom")}
-                  className="text-xs font-medium text-primary outline-none transition-colors hover:text-primary/80 focus:outline-none focus:shadow-none focus:ring-0 focus-visible:outline-none focus-visible:shadow-none focus-visible:ring-0"
-                >
-                  {t("credits.centerModal.tabs.custom")}
-                </button>
+                {paymentAvailable ? (
+                  <button
+                    type="button"
+                    onClick={() => openCredits("custom")}
+                    className="text-xs font-medium text-primary outline-none transition-colors hover:text-primary/80 focus:outline-none focus:shadow-none focus:ring-0 focus-visible:outline-none focus-visible:shadow-none focus-visible:ring-0"
+                  >
+                    {t("credits.centerModal.tabs.custom")}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => openCredits("usage")}
@@ -193,6 +198,7 @@ export function CreditBalanceBadge() {
           open={centerOpen}
           onOpenChange={setCenterOpen}
           initialTab={centerTab}
+          paymentAvailable={paymentAvailable}
         />
       ) : null}
     </>

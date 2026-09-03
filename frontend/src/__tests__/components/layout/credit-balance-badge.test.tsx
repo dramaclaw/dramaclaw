@@ -13,6 +13,7 @@ const currentUserState = vi.hoisted(() => ({
   balance: 1234 as number | undefined,
 }));
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: false }));
+const productSurfaceState = vi.hoisted(() => ({ paymentAvailable: false }));
 const summaryState = vi.hoisted(() => ({
   balance: 1234,
   earned: 2000,
@@ -29,6 +30,27 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@/lib/runtime-config", () => ({
   isCeRuntime: () => runtimeState.isCeRuntime,
+}));
+
+vi.mock("@/lib/queries/product-surfaces", () => ({
+  useProductSurfaces: () => ({
+    data: {
+      data: {
+        items: [
+          {
+            surface_code: "payment",
+            label: "积分充值",
+            available: productSurfaceState.paymentAvailable,
+            unavailable_message: "积分充值暂未开放",
+          },
+        ],
+      },
+    },
+  }),
+  surfaceAccess: (
+    data: { data: { items: Array<{ surface_code: string }> } } | undefined,
+    surfaceCode: string,
+  ) => data?.data.items.find((item) => item.surface_code === surfaceCode),
 }));
 
 vi.mock("@/stores/auth-store", () => ({
@@ -78,8 +100,14 @@ vi.mock("@/components/ui/popover", () => ({
 }));
 
 vi.mock("@/components/credits/CreditCenterDialog", () => ({
-  CreditCenterDialog: ({ open, initialTab }: { open: boolean; initialTab?: string }) =>
-    open ? <div role="dialog">积分中心弹窗:{initialTab}</div> : null,
+  CreditCenterDialog: ({
+    open,
+    initialTab,
+  }: {
+    open: boolean;
+    initialTab?: string;
+    paymentAvailable: boolean;
+  }) => (open ? <div role="dialog">积分中心弹窗:{initialTab}</div> : null),
 }));
 
 // The real dictionary, not a hand-copied one: which wallet this popover claims
@@ -132,6 +160,7 @@ describe("CreditBalanceBadge", () => {
     currentUserState.isLoading = false;
     currentUserState.balance = 1234;
     runtimeState.isCeRuntime = false;
+    productSurfaceState.paymentAvailable = false;
     summaryState.scope = undefined;
   });
 
@@ -143,12 +172,10 @@ describe("CreditBalanceBadge", () => {
     expect(screen.getByText("当前有 2 项可能适用的优惠")).toBeInTheDocument();
   });
 
-  it("presents recharge and details entries with the lightweight summary cards", () => {
+  it("hides recharge while keeping details and the lightweight summary cards", () => {
     renderBadge();
 
-    expect(screen.getByRole("button", { name: "充值积分" })).toHaveClass(
-      "focus-visible:ring-0",
-    );
+    expect(screen.queryByRole("button", { name: "充值积分" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "查看明细" })).toHaveClass(
       "focus-visible:ring-0",
     );
@@ -169,6 +196,7 @@ describe("CreditBalanceBadge", () => {
   });
 
   it("opens custom recharge from the recharge entry", () => {
+    productSurfaceState.paymentAvailable = true;
     renderBadge();
 
     fireEvent.click(screen.getByRole("button", { name: "充值积分" }));
@@ -177,6 +205,7 @@ describe("CreditBalanceBadge", () => {
   });
 
   it("opens billing history after returning from payment", () => {
+    productSurfaceState.paymentAvailable = true;
     sessionStorage.setItem("dramaclaw-open-credit-center", "1");
     sessionStorage.setItem("dramaclaw-credit-center-tab", "orders");
 

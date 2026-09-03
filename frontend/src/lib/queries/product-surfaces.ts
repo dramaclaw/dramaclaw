@@ -10,7 +10,8 @@ export type ProductSurfaceCode =
   | "mainline"
   | "freezone"
   | "assistant"
-  | "freezone_assistant";
+  | "freezone_assistant"
+  | "payment";
 
 export interface ProductSurfaceAccess {
   surface_code: ProductSurfaceCode;
