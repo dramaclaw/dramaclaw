@@ -8,6 +8,7 @@ import type { OkResponse } from "@/types/api";
 
 export interface AccountSecurity {
   password_configured: boolean;
+  phone: string | null;
   phone_masked: string | null;
 }
 

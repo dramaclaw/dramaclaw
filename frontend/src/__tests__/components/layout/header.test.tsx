@@ -12,7 +12,9 @@ const runtimeState = vi.hoisted(() => ({ authRequired: true, isCe: false }));
 const authState = vi.hoisted(() => ({ username: "local", logout: vi.fn() }));
 const resetUserSessionStateMock = vi.hoisted(() => vi.fn());
 const securityState = vi.hoisted(() => ({
-  data: undefined as undefined | { password_configured: boolean; phone_masked: string | null },
+  data: undefined as
+    | undefined
+    | { password_configured: boolean; phone: string | null; phone_masked: string | null },
 }));
 const brandingState = vi.hoisted(() => ({
   enabled: null as boolean | null,
@@ -190,7 +192,11 @@ describe("Header runtime gating", () => {
   });
 
   it("shows a masked phone and first-password action for a passwordless account", async () => {
-    securityState.data = { password_configured: false, phone_masked: "138****8000" };
+    securityState.data = {
+      password_configured: false,
+      phone: "+8613800138000",
+      phone_masked: "138****8000",
+    };
     renderHeader();
 
     fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
