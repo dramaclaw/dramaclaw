@@ -444,7 +444,7 @@ export type VideoInputCropTarget =
 const seedance2BeatStatusProjectKey = (project: string) =>
   ["seedance2-beat-status", project] as const;
 
-const seedance2BeatStatusKey = (
+export const seedance2BeatStatusKey = (
   project: string,
   episode: number,
   beatNum: number,

@@ -24,6 +24,8 @@ from typing import Any, Callable, Optional
 from novelvideo.shared.provider_errors import (
     classify_provider_video_task_error,
     provider_video_error_code_from_text,
+    provider_video_error_message_from_text,
+    provider_video_task_error_message,
 )
 
 import aiohttp
@@ -3647,6 +3649,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     safe_task_error = (
                         (
                             classify_provider_video_task_error(task)
+                            or provider_video_task_error_message(task)
                             or "EGRESS_OPERATION_UNKNOWN"
                         )
                         if organization_request
@@ -3741,7 +3744,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 error_message=type(exc).__name__,
             )
             safe_exception_error = (
-                _safe_video_error_code(exc, "EGRESS_OPERATION_UNKNOWN")
+                (
+                    _safe_video_error_code(exc, "")
+                    or provider_video_error_message_from_text(str(exc))
+                    or "EGRESS_OPERATION_UNKNOWN"
+                )
                 if organization_request
                 else str(exc)
             )

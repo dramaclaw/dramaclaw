@@ -34,6 +34,7 @@ import {
   useUploadBeatImage,
 } from "@/lib/queries/sketches";
 import { queryKeys } from "@/lib/query-keys";
+import { seedance2BeatStatusKey } from "@/lib/queries/video";
 import { api } from "@/lib/api";
 import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 
@@ -716,6 +717,101 @@ describe("pool selection query", () => {
       queryKeys.grids("demo", 1),
     );
     expect(grids?.data.beat_assignments["5"]).toBe("render_pool");
+  });
+
+  // Reference details renders `assets.items` from the seedance2 beat status
+  // query, and pool-select rewrites the canonical frame file that backs the
+  // "current render" asset. Patching grids/beats alone leaves that panel on
+  // the pre-switch thumbnail until the 30s staleTime lapses.
+  it("invalidates only the switched beat's seedance2 status for render selection", async () => {
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/projects/demo/episodes/1/beats/5/pool-select",
+        () =>
+          HttpResponse.json({
+            ok: true,
+            data: {
+              beat_num: 5,
+              pool_id: "render_pool_b",
+              image_type: "render",
+              frame_url: "/static/projects/demo/frames/ep001/beat_05.png?v=222",
+            },
+          }),
+      ),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    queryClient.setQueryData(queryKeys.beats("demo", 1), {
+      ok: true,
+      data: [
+        {
+          beat_number: 5,
+          narration_segment: "n",
+          visual_description: "v",
+          frame_url: "/static/projects/demo/frames/ep001/beat_05.png?v=111",
+          sketch_url: null,
+        },
+      ],
+    });
+    queryClient.setQueryData(queryKeys.grids("demo", 1), {
+      ok: true,
+      data: {
+        episode: 1,
+        modes: {},
+        images: [],
+        beat_assignments: { "5": "render_pool_a" },
+      },
+    });
+
+    const { result } = renderHook(() => usePoolSelect("demo", 1), {
+      wrapper: wrapperWithClient(queryClient),
+    });
+
+    await result.current.mutateAsync({ beatNum: 5, poolId: "render_pool_b" });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: seedance2BeatStatusKey("demo", 1, 5),
+    });
+    // Scoped to the switched beat: no episode-wide status refetch.
+    const statusInvalidations = invalidateSpy.mock.calls.filter(([arg]) =>
+      Array.isArray(arg?.queryKey) && arg.queryKey[0] === "seedance2-beat-status",
+    );
+    expect(statusInvalidations).toHaveLength(1);
+  });
+
+  it("leaves seedance2 status untouched for sketch selection", async () => {
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/projects/demo/episodes/1/beats/5/pool-select",
+        () =>
+          HttpResponse.json({
+            ok: true,
+            data: {
+              beat_num: 5,
+              pool_id: "sketch_pool",
+              image_type: "sketch",
+              sketch_url: "/static/projects/demo/sketches/ep001/beat_05.png?v=1",
+            },
+          }),
+      ),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { result } = renderHook(() => usePoolSelect("demo", 1), {
+      wrapper: wrapperWithClient(queryClient),
+    });
+
+    await result.current.mutateAsync({ beatNum: 5, poolId: "sketch_pool" });
+
+    const statusInvalidations = invalidateSpy.mock.calls.filter(([arg]) =>
+      Array.isArray(arg?.queryKey) && arg.queryKey[0] === "seedance2-beat-status",
+    );
+    expect(statusInvalidations).toHaveLength(0);
   });
 });
 

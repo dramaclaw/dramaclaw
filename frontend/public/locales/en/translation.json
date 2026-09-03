@@ -432,9 +432,26 @@
     "account": {
       "open": "Open account menu",
       "changeAvatar": "Change avatar",
+      "changePassword": "Change password",
       "selectLanguage": "Select language",
       "languageChinese": "中文",
       "languageEnglish": "English",
+      "passwordDialog": {
+        "title": "Change password",
+        "description": "Changing your password signs you out on every device. Sign in again with the new password.",
+        "current": "Current password",
+        "new": "New password",
+        "confirm": "Confirm new password",
+        "requirement": "Use at least 8 characters and choose a password different from the current one.",
+        "mismatch": "The new passwords do not match.",
+        "unchanged": "The new password must differ from the current password.",
+        "currentIncorrect": "The current password is incorrect.",
+        "submit": "Change password",
+        "saving": "Changing…",
+        "success": "Password changed. Sign in again with your new password.",
+        "partialSuccess": "Password changed. Sign in again; some sessions are still being signed out.",
+        "error": "Could not change the password. Try again."
+      },
       "avatarDialog": {
         "title": "Change avatar",
         "description": "Choose an image for your avatar. A clear square image works best.",

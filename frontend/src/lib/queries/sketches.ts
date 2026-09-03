@@ -14,6 +14,7 @@ import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
 import { invalidateAssetReferences } from "@/lib/queries/asset-references";
+import { seedance2BeatStatusKey } from "@/lib/queries/video";
 import type { ApiResponse, ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { Beat } from "@/types/episode";
 import type { RejectedDispatch } from "@/types/render-plan";
@@ -450,6 +451,14 @@ export function usePoolSelect(project: string, episode: number) {
             };
           },
         );
+        // The canonical frame file this rewrites also backs the "current
+        // render" asset in the video pane's Reference details, which reads
+        // seedance2 beat status. Without this the panel keeps the pre-switch
+        // thumbnail (staleTime is 30s and window-focus refetch is off).
+        // Scoped to this beat so we don't refetch status for the whole episode.
+        qc.invalidateQueries({
+          queryKey: seedance2BeatStatusKey(project, episode, beatNum),
+        });
       }
       if (patched?.sketch_url) {
         qc.invalidateQueries({
