@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { closeupTargets } from '../domain/closeupClip';
 import type { PrevizObjectKind } from '../domain/scene';
 import { PREVIZ_FPS } from '../domain/scene';
 import { PREVIZ_PLAYBACK_RATES, usePrevizStore } from '../store';
@@ -51,6 +52,7 @@ export function PrevizTimeline({
   const setDurationFrames = usePrevizStore((state) => state.setDurationFrames);
   const zoomTimelineBy = usePrevizStore((state) => state.zoomTimelineBy);
   const fitTimelineZoom = usePrevizStore((state) => state.fitTimelineZoom);
+  const scene = usePrevizStore((state) => state.scene);
   const objects = usePrevizStore((state) => state.scene.objects);
   const tracks = usePrevizStore((state) => state.scene.timeline.tracks);
   const selectedClipId = usePrevizStore((state) => state.selectedClipId);
@@ -66,6 +68,7 @@ export function PrevizTimeline({
   const insertKeyframe = usePrevizStore((state) => state.insertKeyframe);
   const clearPath = usePrevizStore((state) => state.clearPath);
   const addObject = usePrevizStore((state) => state.addObject);
+  const addCloseup = usePrevizStore((state) => state.addCloseup);
 
   /** 折叠过的轨道。没记过的默认展开——建完轨迹马上要看关键帧。 */
   const [collapsed, setCollapsed] = useState<Record<string, true>>({});
@@ -327,6 +330,11 @@ export function PrevizTimeline({
                 onInsertKeyframe={insertKeyframe}
                 onClearPath={clearPath}
                 onSeek={setTimelineFrame}
+                // 只有机位跟得了别人。其余轨道拿到空列表，那颗按钮根本不出现。
+                closeupTargets={
+                  kindOf(track.objectId) === 'camera' ? closeupTargets(scene, track.objectId) : []
+                }
+                onAddCloseup={(target) => addCloseup(track.objectId, target)}
               />
             ))}
           </ul>

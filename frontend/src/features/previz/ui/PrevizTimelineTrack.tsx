@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   Box,
   ChevronDown,
@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Diamond,
   Lightbulb,
+  Link2,
   Pin,
   Scissors,
   Trash2,
@@ -16,8 +17,9 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import type { CloseupTarget } from '../domain/closeupClip';
 import type { PrevizClip, PrevizObjectKind, PrevizTrack } from '../domain/scene';
-import { isPathClip, uToFrame } from '../domain/timeline';
+import { isPathClip, isRigClip, uToFrame } from '../domain/timeline';
 
 /** 头列宽度。轨道行、子轨道行、标尺占位共用同一个数，三者才对得齐。 */
 export const PREVIZ_TRACK_HEADER_PX = 240;
@@ -54,6 +56,9 @@ export interface PrevizTimelineTrackProps {
   onInsertKeyframe: (clipId: string) => void;
   onClearPath: (clipId: string) => void;
   onSeek: (frame: number) => void;
+  /** 这台机位可以跟谁。非机位轨道传空数组——特写是机位的属性。 */
+  closeupTargets: CloseupTarget[];
+  onAddCloseup: (target: CloseupTarget) => void;
 }
 
 /** 播放头压着的那个片段。剃刀、插入关键帧、清空轨迹都作用在它身上。 */
@@ -90,8 +95,12 @@ export function PrevizTimelineTrack({
   onInsertKeyframe,
   onClearPath,
   onSeek,
+  closeupTargets,
+  onAddCloseup,
 }: PrevizTimelineTrackProps) {
   const { t } = useTranslation();
+  /** 「跟谁」的选单开着没有。开在行内而不是弹一个对话框：挑的只是一个名字。 */
+  const [picking, setPicking] = useState(false);
   const KindIcon = KIND_ICON[kind];
   const current = clipUnder(track, frame);
   const keyframes = keyframeFrames(track);
@@ -106,6 +115,33 @@ export function PrevizTimelineTrack({
           className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-[#15181f] pl-1 pr-2"
           style={{ width: PREVIZ_TRACK_HEADER_PX }}
         >
+          {picking && closeupTargets.length > 0 && (
+            <div
+              data-testid="previz-closeup-menu"
+              className="absolute left-6 top-7 z-40 flex min-w-40 flex-col rounded border border-[#2f3542] bg-[#1d222b] py-1 shadow-lg"
+            >
+              <span className="px-2 py-0.5 text-[10px] text-[#6d7585]">
+                {t('previz.timeline.closeupTarget')}
+              </span>
+              {closeupTargets.map((target) => (
+                <button
+                  key={target.objectId}
+                  type="button"
+                  className="px-2 py-1 text-left text-xs text-[#c7cedb] hover:bg-[#2a2f3a]"
+                  onClick={() => {
+                    setPicking(false);
+                    onAddCloseup(target);
+                  }}
+                >
+                  {/*
+                    名字加它在时间轴上占到的那一段——同一个人物身上可能有好几段戏，
+                    只报名字的话选完才知道特写覆盖到哪儿。这里没有可翻译的词。
+                  */}
+                  {target.name} · {target.startFrame}~{target.endFrame}
+                </button>
+              ))}
+            </div>
+          )}
           <button
             type="button"
             className={ICON_BUTTON}
@@ -117,6 +153,19 @@ export function PrevizTimelineTrack({
           <KindIcon className="h-3.5 w-3.5 shrink-0 text-[#6d7585]" />
           <span className="min-w-0 flex-1 truncate text-xs text-[#c7cedb]">{name}</span>
 
+          {kind === 'camera' && (
+            <button
+              type="button"
+              className={ICON_BUTTON}
+              aria-label={t('previz.timeline.addCloseup')}
+              title={t('previz.timeline.addCloseup')}
+              // 场景里只有这台机位时没得跟。摆一个按下去没反应的按钮比没有更糟。
+              disabled={closeupTargets.length === 0}
+              onClick={() => setPicking((open) => !open)}
+            >
+              <Link2 className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button
             type="button"
             className={ICON_BUTTON}
@@ -272,6 +321,7 @@ function ClipBar({
   onTrim: (edge: 'start' | 'end', frame: number) => void;
 }) {
   const { t } = useTranslation();
+  const closeup = isRigClip(clip);
   const drag = useRef<{ x: number; frame: number; edge: 'start' | 'end' } | null>(null);
 
   const startTrim = useCallback(
@@ -313,8 +363,18 @@ function ClipBar({
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') onSelect();
       }}
+      /*
+        两种片段两种颜色：路径是蓝的，特写是紫的。同色的话，一条机位轨道上「自己走位」
+        与「跟着人走」两段看起来一模一样，而它们的改法完全不同。
+      */
       className={`absolute top-1 flex h-6 items-center overflow-hidden rounded ${
-        selected ? 'bg-[#4a7de0] ring-1 ring-[#a8c4ff]' : 'bg-[#3560ba]'
+        closeup
+          ? selected
+            ? 'bg-[#8a5cd6] ring-1 ring-[#d5bcff]'
+            : 'bg-[#6c43ae]'
+          : selected
+            ? 'bg-[#4a7de0] ring-1 ring-[#a8c4ff]'
+            : 'bg-[#3560ba]'
       }`}
       style={{
         left: clip.startFrame * pxPerFrame,
@@ -334,7 +394,10 @@ function ClipBar({
         }}
       />
       <span className="pointer-events-none truncate px-3 text-[11px] text-white/90">
-        {t('previz.timeline.clipLabel', { start: clip.startFrame, end: clip.endFrame })}
+        {t(closeup ? 'previz.timeline.closeupLabel' : 'previz.timeline.clipLabel', {
+          start: clip.startFrame,
+          end: clip.endFrame,
+        })}
       </span>
       <span
         role="slider"

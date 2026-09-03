@@ -386,6 +386,48 @@ describe('PrevizTimeline scale', () => {
     expect(objectId).toBeTruthy();
   });
 
+  it('opens a closeup on a camera track and names what it can track', async () => {
+    const user = userEvent.setup();
+    const objectId = seedWalk();
+    usePrevizStore.getState().updateObject(objectId, { name: '女主' });
+    const cameraId = usePrevizStore.getState().addObject('camera');
+    usePrevizStore.getState().addObjectToTimeline(cameraId!);
+    render(<PrevizTimeline />);
+
+    await user.click(screen.getAllByRole('button', { name: 'previz.timeline.addCloseup' })[0]!);
+    // 挑的是「跟谁」，所以列的是对象的名字与它在时间轴上占到的那一段。
+    await user.click(screen.getByRole('button', { name: /女主/ }));
+
+    const cameraTrack = usePrevizStore
+      .getState()
+      .scene.timeline.tracks.find((track) => track.objectId === cameraId);
+    const closeup = cameraTrack?.clips.find((clip) => clip.kind === 'rig');
+    expect(closeup).toMatchObject({ anchorObjectId: objectId, startFrame: 0, endFrame: 120 });
+    // 新建完直接选中：接下来要调的就是取景那几个数。
+    expect(usePrevizStore.getState().selectedClipId).toBe(closeup?.id);
+  });
+
+  it('keeps the closeup button off tracks that are not cameras', () => {
+    seedWalk();
+    render(<PrevizTimeline />);
+
+    // 特写是机位的属性。人物轨道上摆一个按下去没反应的按钮，比没有更糟。
+    expect(screen.queryByRole('button', { name: 'previz.timeline.addCloseup' })).toBeNull();
+  });
+
+  it('has nothing to track when the camera is alone in the scene', async () => {
+    const user = userEvent.setup();
+    const cameraId = usePrevizStore.getState().addObject('camera');
+    usePrevizStore.getState().addObjectToTimeline(cameraId!);
+    render(<PrevizTimeline />);
+
+    const button = screen.getByRole('button', { name: 'previz.timeline.addCloseup' });
+    expect(button).toBeDisabled();
+    await user.click(button);
+    // 没得跟的时候不该弹出一个空菜单。
+    expect(screen.queryByTestId('previz-closeup-menu')).toBeNull();
+  });
+
   it('pins a track to the top', async () => {
     const user = userEvent.setup();
     const first = seedWalk();
