@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { PREVIZ_APERTURE, PREVIZ_FOCAL_MM, clampToRange, type PrevizRange } from './camera';
-import { PREVIZ_HEIGHT_CM_RANGE, PREVIZ_OBJECT_BASE_NAME } from './objects';
+import {
+  PREVIZ_CHARACTER_COLORS,
+  PREVIZ_HEIGHT_CM_RANGE,
+  PREVIZ_OBJECT_BASE_NAME,
+} from './objects';
 import { PREVIZ_DEFAULT_POSE_ID } from './poses';
 
 /** 预演台里所有三元组的统一形状，顺序恒为 [x, y, z]，单位米 / 度。 */
@@ -86,6 +90,12 @@ export interface PrevizObjectBase {
 
 export interface PrevizCharacter extends PrevizObjectBase {
   kind: 'character';
+  /**
+   * 辨识色 `#rrggbb`。所有人物共用同一份角色模型，不给个颜色就只能靠名字认人。
+   * 备选色见 `domain/objects.ts` 的 `PREVIZ_CHARACTER_COLORS`，但这里不收敛到那八个：
+   * 用户在属性面板上调出来的任何一个颜色都该原样活过一次读写。
+   */
+  color: string;
   bodyType: BodyType;
   heightCm: number;
   /**
@@ -306,6 +316,15 @@ function clampRange(value: unknown, range: PrevizRange): number {
   return typeof value === 'number' ? clampToRange(value, range) : range.default;
 }
 
+/**
+ * 只认 `#rrggbb`。三位简写与 `red` 这类颜色名一并挡在外面：three 收得下，属性面板的
+ * `<input type="color">` 收不下——它遇到读不懂的值会静默显示成黑色，用户再一提交，
+ * 一个本来好好的颜色就真变成黑的了。
+ */
+function hexColor(value: unknown, fallback: string): string {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+}
+
 function vec3(value: unknown, fallback: Vec3): Vec3 {
   if (!Array.isArray(value) || value.length !== 3) return [...fallback];
   return [num(value[0], fallback[0]), num(value[1], fallback[1]), num(value[2], fallback[2])];
@@ -386,6 +405,7 @@ export function parseObject(raw: unknown): PrevizObject | null {
       return {
         ...base,
         kind: 'character',
+        color: hexColor(source.color, PREVIZ_CHARACTER_COLORS[0]),
         bodyType: isMember(BODY_TYPES, source.bodyType) ? source.bodyType : 'average',
         heightCm: clampRange(source.heightCm, PREVIZ_HEIGHT_CM_RANGE),
         basePoseId:
@@ -407,7 +427,7 @@ export function parseObject(raw: unknown): PrevizObject | null {
         ...base,
         kind: 'light',
         lightType: isMember(LIGHT_TYPES, source.lightType) ? source.lightType : 'key',
-        color: typeof source.color === 'string' ? source.color : '#ffffff',
+        color: hexColor(source.color, '#ffffff'),
         intensity: clampRange(source.intensity, PREVIZ_INTENSITY_RANGE),
       };
     case 'prop':

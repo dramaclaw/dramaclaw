@@ -7948,6 +7948,7 @@
         "spot": "Spot"
       },
       "color": "Color",
+      "markerColor": "Marker colour",
       "intensity": "Intensity",
       "assetUrl": "Model URL"
     },
