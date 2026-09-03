@@ -7651,6 +7651,8 @@
       "endFrame": "End frame",
       "aim": "Look at",
       "aimNone": "Nothing",
+      "aimHintFree": "The camera keeps the angle it had when you drew the path. Pick an object to keep it aimed there instead.",
+      "aimHintLocked": "The camera stays aimed at this object; the rotation on each path point no longer applies.",
       "trimStart": "Trim head to playhead",
       "trimEnd": "Trim tail to playhead",
       "insertPoint": "Insert point at playhead",

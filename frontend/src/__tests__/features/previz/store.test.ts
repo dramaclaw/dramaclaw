@@ -700,6 +700,38 @@ describe("previz store object editing", () => {
     expect((clips[0] as PrevizPathClip).points[0].position).toEqual([0, 0, 0]);
   });
 
+  it("keeps a camera pointed where it was pointed before the stroke", () => {
+    const id = usePrevizStore.getState().addObject("camera")!;
+    usePrevizStore.getState().updateObject(id, {
+      transform: { position: [0, 3, 8], rotation: [-16.7, 200, 0], scale: [1, 1, 1] },
+    });
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 3, 0],
+      [3, 3, 0],
+      [6, 3, 3],
+    ]);
+
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
+    // 切线朝向等于把摄影机焊在轨道车头上：一画完，原本对着人物的机位就转过去看轨道
+    // 前方了，连俯角也被抹平成 0。
+    expect(clip.points.map((point) => point.rotation)).toEqual(
+      clip.points.map(() => [-16.7, 200, 0]),
+    );
+  });
+
+  it("still turns a character along its own stroke", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
+    // 人走路就是朝行进方向走：+X 方向对应 yaw -90。
+    expect(clip.points[0].rotation[1]).toBeCloseTo(-90, 6);
+  });
+
   it("selects the clip it just drew", () => {
     const id = addCharacter();
     usePrevizStore.getState().drawPath(id, [

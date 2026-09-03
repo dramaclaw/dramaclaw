@@ -232,6 +232,15 @@ export function PrevizClipInspector() {
     if (point) updateKeyframe(clip.id, point.id, patch);
   };
 
+  // 提示只对机位说：人物走位本来就是朝行进方向走，「保持画轨迹那一刻的朝向」对它是假的。
+  const mover = scene.objects.find((object) => object.id === found.track.objectId);
+  const aimHint =
+    isPathClip(clip) && mover?.kind === 'camera'
+      ? clip.aimObjectId
+        ? 'previz.clip.aimHintLocked'
+        : 'previz.clip.aimHintFree'
+      : null;
+
   return (
     <div className="flex flex-col gap-2 border-t border-[#232833] px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -266,6 +275,8 @@ export function PrevizClipInspector() {
           onCommit={(next) => setClipAim(clip.id, next === '' ? null : next)}
         />
       )}
+
+      {aimHint && <div className="text-[11px] leading-relaxed text-[#6d7585]">{t(aimHint)}</div>}
 
       <div className="flex flex-wrap gap-1">
         <button

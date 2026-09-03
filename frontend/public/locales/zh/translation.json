@@ -7651,6 +7651,8 @@
       "endFrame": "结束帧",
       "aim": "看向",
       "aimNone": "不指定",
+      "aimHintFree": "机位沿轨迹移动时保持画轨迹那一刻的朝向。选一个对象，全程自动对准它。",
+      "aimHintLocked": "机位全程对准该对象；轨迹点上的朝向不再生效。",
       "trimStart": "裁前到播放头",
       "trimEnd": "裁后到播放头",
       "insertPoint": "在播放头插点",
