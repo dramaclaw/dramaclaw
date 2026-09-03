@@ -177,11 +177,11 @@ function withClips(scene: PrevizScene, clipId: string, next: PrevizClip[]): Prev
   });
 }
 
-/** 新建或替换一个路径片段；对象还没有轨道时顺手建一条。 */
-export function upsertPathClip(
+/** 新建或替换一个片段；对象还没有轨道时顺手建一条。 */
+export function upsertClip(
   scene: PrevizScene,
   objectId: string,
-  clip: PrevizPathClip,
+  clip: PrevizClip,
 ): PrevizScene {
   const track = trackFor(scene, objectId);
   if (!track) {

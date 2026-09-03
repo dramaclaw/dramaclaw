@@ -46,7 +46,7 @@ import {
   timelineSeconds,
   trimClip,
   updatePathPoint,
-  upsertPathClip,
+  upsertClip,
   zoomToFit,
 } from './domain/timeline';
 
@@ -388,7 +388,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
           points,
         };
 
-    applyScene(upsertPathClip(scene, objectId, clip));
+    applyScene(upsertClip(scene, objectId, clip));
     set({ selectedClipId: clip.id, selectedPointId: null });
   },
 
@@ -402,7 +402,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       endFrame: scene.settings.durationFrames,
       points: [],
     };
-    applyScene(upsertPathClip(scene, objectId, clip));
+    applyScene(upsertClip(scene, objectId, clip));
     set({ selectedClipId: clip.id, selectedPointId: null });
   },
 
@@ -465,7 +465,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       endFrame: scene.settings.durationFrames,
       points: [],
     };
-    applyScene(upsertPathClip(scene, objectId, clip));
+    applyScene(upsertClip(scene, objectId, clip));
     set({ selectedClipId: clip.id, selectedPointId: null });
   },
 
