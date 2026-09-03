@@ -7417,6 +7417,7 @@
       "description": "在 3D 空间中搭建场景、布置机位并进行多视角截图",
       "close": "关闭预演台",
       "duration": "时长 {{frames}} 帧",
+      "hideMonitor": "隐藏监看",
       "sceneTooLarge": "场景数据过大，本次未保存；请减少对象后重试",
       "limitReached": "该类型对象已达数量上限",
       "noProject": "当前页面没有项目上下文，无法上传模型",

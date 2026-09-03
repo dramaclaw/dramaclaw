@@ -20,6 +20,7 @@ import { uploadFreezoneImage } from "@/api/ops";
 
 import { publishCapture } from "./capture/publishCapture";
 import { PrevizRenderer } from "./engine/PrevizRenderer";
+import { monitorViewportRect } from "./engine/cameraRig";
 import type { GizmoMode } from "./engine/gizmo";
 import {
   cameraDraftOverrides,
@@ -53,6 +54,10 @@ interface PrevizEditorProps {
 /** 按下与抬起之间超过这个像素就算在转视角，不是在点选。 */
 const CLICK_SLOP_PX = 4;
 
+/** 监看画中画右上角那个「隐藏」按钮的边长与内缩，单位 CSS 像素。 */
+const MONITOR_HIDE_SIZE = 20;
+const MONITOR_HIDE_INSET = 6;
+
 /**
  * 把后续的指针事件锁在画布上，这样一笔画到视口外面也不会中途断掉。
  *
@@ -82,6 +87,10 @@ export function PrevizEditor({
   // 渲染器就永远建不起来。改成把 canvas 存进 state：元素真正挂上时触发一次重渲染，
   // effect 这才拿得到它。
   const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null);
+  // 监看画中画是画在 WebGL 里的，右下角那个「隐藏」按钮却是普通 DOM。要让按钮
+  // 正好压在画中画的角上，React 这边得跟着量一份画布尺寸——两边都走
+  // `monitorViewportRect`，位置才不会各算各的。
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   // 渲染器也进 state 而不是 ref：面板的回调要在它就绪后重新绑定，ref 变化不会触发重渲染。
   const [renderer, setRenderer] = useState<PrevizRenderer | null>(null);
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
@@ -124,6 +133,11 @@ export function PrevizEditor({
     [scene.objects, selectedObjectId],
   );
 
+  const monitorRect = useMemo(
+    () => monitorViewportRect(canvasSize.width, canvasSize.height, scene.settings.outputAspect),
+    [canvasSize.width, canvasSize.height, scene.settings.outputAspect],
+  );
+
   const canAdd = useMemo(
     () => ({
       character: canAddObject(scene, "character"),
@@ -161,7 +175,14 @@ export function PrevizEditor({
       setRenderer(created);
     });
 
-    const observer = new ResizeObserver(() => instance?.resize());
+    const measure = () => {
+      setCanvasSize({ width: canvas.clientWidth, height: canvas.clientHeight });
+    };
+    measure();
+    const observer = new ResizeObserver(() => {
+      instance?.resize();
+      measure();
+    });
     observer.observe(canvas);
 
     return () => {
@@ -494,6 +515,31 @@ export function PrevizEditor({
               onTool={setTool}
               onPathSpacing={setPathSpacing}
             />
+
+            {activeCameraId && (
+              /*
+                贴在监看画中画的右上角内侧。位置用的是渲染器同一个 `monitorViewportRect`：
+                自己按 26% 加 padding 拼一遍 CSS 也能对上大多数情况，但竖幅画幅在矮画布上
+                会走那条「改按高度回推宽度」的分支，两套算法立刻错开，按钮飘到画面外。
+                `bottom` 而不是 `top`：那个 rect 是 WebGL 视口坐标，y 从底边量起。
+              */
+              <button
+                type="button"
+                data-testid="previz-monitor-hide"
+                aria-label={t("previz.editor.hideMonitor")}
+                title={t("previz.editor.hideMonitor")}
+                onClick={() => setActiveCamera(null)}
+                style={{
+                  left: monitorRect.x + monitorRect.width - MONITOR_HIDE_SIZE - MONITOR_HIDE_INSET,
+                  bottom: monitorRect.y + monitorRect.height - MONITOR_HIDE_SIZE - MONITOR_HIDE_INSET,
+                  width: MONITOR_HIDE_SIZE,
+                  height: MONITOR_HIDE_SIZE,
+                }}
+                className="absolute grid place-items-center rounded bg-black/55 text-white/70 transition hover:bg-black/80 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:outline-none"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
 
             <div className="pointer-events-none absolute bottom-4 left-4 rounded-lg bg-black/45 px-3 py-1.5 text-xs text-white/80">
               {t("previz.editor.duration", { frames: scene.settings.durationFrames })}
