@@ -25,11 +25,10 @@ import { renderCameraPreview, type CameraPreviewCanvas } from './cameraPreview';
 import { CharacterRigFactory } from './characterRig';
 import { PrevizPathPreview } from './pathPreview';
 import { PrevizGizmo, type GizmoMode, type TransformControlsLike } from './gizmo';
+import { createInfiniteGrid } from './grid';
 import { PropLoader } from './propLoader';
 import { PREVIZ_PLACEHOLDER_RADIUS, PrevizSceneGraph, type ThreeModule } from './sceneGraph';
 
-const GROUND_SIZE_METERS = 20;
-const GROUND_DIVISIONS = 20;
 // 上限 2：3x DPR 设备按原生比例渲染是 9 倍像素，收益远小于开销。
 const MAX_PIXEL_RATIO = 2;
 
@@ -95,7 +94,8 @@ export class PrevizRenderer {
 
     const scene = new three.Scene();
     scene.background = new three.Color(0x101216);
-    scene.add(new three.GridHelper(GROUND_SIZE_METERS, GROUND_DIVISIONS, 0x3a4150, 0x232833));
+    // 地面自己跟着当前那台相机走（见 grid.ts），所以这里只管加进场景，不必接线。
+    scene.add(createInfiniteGrid(three));
     scene.add(new three.AmbientLight(0xffffff, 1.2));
 
     const keyLight = new three.DirectionalLight(0xffffff, 1.8);
