@@ -12,6 +12,7 @@ import {
   type PrevizObjectPatch,
 } from './domain/objects';
 import {
+  drawSeedRotation,
   pathPointSeeds,
   PREVIZ_PATH_SPACING_M,
   resampleByDistance,
@@ -386,7 +387,10 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     // 空笔画（点一下没拖）不建片段：建了就是往 undo 栈里塞一步什么都没干的操作。
     if (stroke.length < 2) return;
 
-    const points = pathPointSeeds(resampleByDistance(smoothStroke(stroke), pathSpacingM));
+    const points = pathPointSeeds(
+      resampleByDistance(smoothStroke(stroke), pathSpacingM),
+      drawSeedRotation(scene, objectId, timelineFrame),
+    );
     if (points.length < 2) return;
 
     const track = trackFor(scene, objectId);

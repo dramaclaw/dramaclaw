@@ -6,6 +6,7 @@ import { createPrevizObject } from '@/features/previz/domain/objects';
 import {
   PREVIZ_PATH_SPACING_M,
   drawPlaneHeight,
+  drawSeedRotation,
   pathPointSeeds,
   resampleByDistance,
   smoothStroke,
@@ -180,6 +181,39 @@ describe('pathPointSeeds', () => {
     expect(seeds[1].rotation[1]).toBeCloseTo(-90, 10);
   });
 
+  it('holds one rotation on every seed when the caller hands one in', () => {
+    const seeds = pathPointSeeds(
+      [
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 0, 1],
+      ],
+      [-16.7, 200, 0],
+    );
+
+    // 推轨镜头是车走、镜头照旧盯着被摄体；把机位焊在轨道车头上（切线朝向）等于
+    // 画完一笔它就不再看着人物了。俯仰也得留住，切线只给得出 yaw。
+    expect(seeds.map((seed) => seed.rotation)).toEqual([
+      [-16.7, 200, 0],
+      [-16.7, 200, 0],
+      [-16.7, 200, 0],
+    ]);
+  });
+
+  it('gives each held seed its own array', () => {
+    const seeds = pathPointSeeds(
+      [
+        [0, 0, 0],
+        [1, 0, 0],
+      ],
+      [0, 90, 0],
+    );
+    seeds[0].rotation[1] = 0;
+
+    // 共享同一个数组的话，在检查器里调一个轨迹点的朝向，整条轨迹会一起转。
+    expect(seeds[1].rotation[1]).toBe(90);
+  });
+
   it('marks no seed as manually edited', () => {
     const seeds = pathPointSeeds([
       [0, 0, 0],
@@ -193,6 +227,30 @@ describe('pathPointSeeds', () => {
 describe('PREVIZ_PATH_SPACING_M', () => {
   it('defaults to one metre inside a 0.05..5 range', () => {
     expect(PREVIZ_PATH_SPACING_M).toEqual({ min: 0.05, max: 5, default: 1 });
+  });
+});
+
+describe('drawSeedRotation', () => {
+  function sceneWith(kind: 'camera' | 'character', rotation: Vec3) {
+    const object = createPrevizObject(kind, []);
+    object.transform.rotation = rotation;
+    return { scene: { ...createDefaultScene(), objects: [object] }, objectId: object.id };
+  }
+
+  it('lets a character face along its own stroke', () => {
+    const { scene, objectId } = sceneWith('character', [0, 30, 0]);
+    // 人走路就是朝行进方向走。null 表示「别管我，用切线」。
+    expect(drawSeedRotation(scene, objectId, 0)).toBeNull();
+  });
+
+  it('holds the camera aim it had before the stroke', () => {
+    const { scene, objectId } = sceneWith('camera', [-16.7, 200, 0]);
+    expect(drawSeedRotation(scene, objectId, 0)).toEqual([-16.7, 200, 0]);
+  });
+
+  it('has no opinion about an object that is not there', () => {
+    const { scene } = sceneWith('camera', [-16.7, 200, 0]);
+    expect(drawSeedRotation(scene, 'gone', 0)).toBeNull();
   });
 });
 

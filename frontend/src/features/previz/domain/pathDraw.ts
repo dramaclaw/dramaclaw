@@ -44,6 +44,28 @@ export function drawPlaneHeight(
   return evaluateSceneAt(scene, frame).get(objectId)?.position[1] ?? 0;
 }
 
+/**
+ * 机位画轨迹时，每个轨迹点该 seed 成什么朝向；人物返回 null，表示照旧用笔画切线。
+ *
+ * 切线朝向对人物是对的——人走路就是朝行进方向走。对机位是错的：推轨镜头是车走、镜头
+ * 照旧盯着被摄体，按切线等于把摄影机焊在轨道车头上，一画完机位就不再看着人物了。
+ * 切线还只给得出 yaw，机位原来的俯角会一起被抹平。
+ *
+ * 和 [drawPlaneHeight] 一样取解算后的值：重画已有轨迹时机位正按旧轨迹转着，静态
+ * transform 停在它出生时的朝向。
+ */
+export function drawSeedRotation(
+  scene: PrevizScene,
+  objectId: string | null,
+  frame: number,
+): Vec3 | null {
+  if (!objectId) return null;
+  const object = scene.objects.find((entry) => entry.id === objectId);
+  if (object?.kind !== 'camera') return null;
+  const evaluated = evaluateSceneAt(scene, frame).get(objectId);
+  return [...(evaluated?.rotation ?? object.transform.rotation)];
+}
+
 function distance(a: Vec3, b: Vec3): number {
   return Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
 }
@@ -127,11 +149,24 @@ export function tangentYawDeg(from: Vec3, to: Vec3): number {
  * 点列 → 轨迹点。u 按**累计弧长**分配而不是按序号等分：实测参照实现一笔得到的关键帧是
  * 0/40/45/56/67/78/89/101/111/120，等分给不出这种分布。等分的实际后果是匀速笔画在
  * 长段上突然加速——重采样后段长大体相等，但笔画首尾那两段总是不齐的。
+ *
+ * `heldRotation` 非空时所有点共用它，不推切线：见 [drawSeedRotation]。每个点各拿一份
+ * 拷贝，共享同一个数组的话，在检查器里调一个轨迹点的朝向会让整条轨迹一起转。
  */
-export function pathPointSeeds(positions: readonly Vec3[]): PrevizPathPoint[] {
+export function pathPointSeeds(
+  positions: readonly Vec3[],
+  heldRotation?: Vec3 | null,
+): PrevizPathPoint[] {
   if (positions.length === 0) return [];
   if (positions.length === 1) {
-    return [{ id: uuidv4(), u: 0, position: [...positions[0]], rotation: [0, 0, 0] }];
+    return [
+      {
+        id: uuidv4(),
+        u: 0,
+        position: [...positions[0]],
+        rotation: heldRotation ? [...heldRotation] : [0, 0, 0],
+      },
+    ];
   }
 
   const cumulative: number[] = [0];
@@ -151,7 +186,7 @@ export function pathPointSeeds(positions: readonly Vec3[]): PrevizPathPoint[] {
       // 整笔长度为 0（点一下没拖）时全部落在 0，而不是 0/0 = NaN。
       u: total > 0 ? cumulative[index] / total : 0,
       position: [...position] as Vec3,
-      rotation: [0, yaw, 0] as Vec3,
+      rotation: (heldRotation ? [...heldRotation] : [0, yaw, 0]) as Vec3,
     };
   });
 }
