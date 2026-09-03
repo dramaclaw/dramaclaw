@@ -124,12 +124,10 @@ including `480P` whenever the schema lists it.
    `workflow_catalog_search(kind="skills")` when discovery is needed. If several materially
    different Skills match, ask the user to choose; do not guess.
 2. Read the selected package with `workflow_skill_get`, or with
-   `freezone_get_workflow_skill(compact=true)` when the standalone server is unavailable. Use only
+   `freezone_get_workflow_skill` when the standalone server is unavailable. Use only
    the returned Recipe summaries and input contract.
 3. For a normal workflow, submit one compact `freezone_workflow_intent.v1` to
-   `freezone_prepare_workflow_draft` and follow its quote/confirmation response. When billing is
-   required, stop until the server supplies the operation-bound `quote_id` and
-   `confirmation_receipt`, then retry the exact same operation with those trusted values.
+   `freezone_prepare_workflow_draft`.
 4. Present the returned preview. Adjust it only with `freezone_patch_workflow_draft`.
 5. After explicit user confirmation, call `freezone_confirm_workflow_draft` once with the exact
    `draft_id` and `revision`.

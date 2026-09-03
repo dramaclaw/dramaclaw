@@ -112,6 +112,7 @@ STAGE_ORDER = {
 
 USER_INPUT_STAGES = {"input", "resource", "asset"}
 
+
 def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
     """Convert a workflow plan/graph payload into canvas_chat_commands.v1 commands.
 
@@ -211,7 +212,9 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
                 }
             )
             continue
-        link_type = _infer_link_type(source["node_type"], target["node_type"], requested_link_type)
+        link_type = _infer_link_type(
+            source["node_type"], target["node_type"], requested_link_type
+        )
         if link_type is None:
             skipped_edges.append(
                 {
@@ -259,8 +262,7 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             node["node_type"],
             audio_uses_upstream_text=node["plan_id"] in audio_prompt_target_plan_ids,
         )
-        raw_data = raw_node.get("data") if isinstance(raw_node.get("data"), dict) else {}
-        raw_stage = str(raw_node.get("stage") or raw_data.get("stage") or "").strip().lower()
+        raw_stage = str(raw_node.get("stage") or "").strip().lower()
         if node["node_type"] in TEXTUAL_NODE_TYPES and raw_stage in USER_INPUT_STAGES:
             data.setdefault("workflowCatalogRole", "user_input")
         if (
@@ -275,7 +277,12 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
         # workflow. Persist this marker on executable nodes so the later DAG
         # runner and Agent action catalog can reuse the approved model/size/
         # duration/voice fields instead of asking for them again.
-        if node["node_type"] in {"imageGenNode", "videoNode", "audioNode", "videoComposeNode"}:
+        if node["node_type"] in {
+            "imageGenNode",
+            "videoNode",
+            "audioNode",
+            "videoComposeNode",
+        }:
             data["workflowConfigConfirmed"] = True
             data["workflowConfigSource"] = "workflow_graph_approval"
         command = {
@@ -299,7 +306,9 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
         }
         commands.append(command)
 
-    groups = _groups(payload.get("groups") or payload.get("group"), payload.get("layout"))
+    groups = _groups(
+        payload.get("groups") or payload.get("group"), payload.get("layout")
+    )
     group_client_node_ids: list[list[str]] = []
     if groups:
         for group in groups:
@@ -322,11 +331,15 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             {
                 "type": "group_nodes",
                 "node_ids": [node["client_id"] for node in normalized_nodes],
-                "label": str(payload.get("workflow_type") or payload.get("title") or "工作流"),
+                "label": str(
+                    payload.get("workflow_type") or payload.get("title") or "工作流"
+                ),
             }
         )
 
-    layout_targets = group_client_node_ids or [[node["client_id"] for node in normalized_nodes]]
+    layout_targets = group_client_node_ids or [
+        [node["client_id"] for node in normalized_nodes]
+    ]
     for node_ids in layout_targets:
         commands.append(
             {
@@ -416,7 +429,12 @@ def _node_plan_id(node: dict[str, Any], index: int) -> str:
     value = node.get("id")
     if isinstance(value, str) and value.strip():
         return value.strip()
-    label = node.get("label") or node.get("title") or node.get("name") or f"node_{index + 1}"
+    label = (
+        node.get("label")
+        or node.get("title")
+        or node.get("name")
+        or f"node_{index + 1}"
+    )
     return str(label)
 
 
@@ -448,7 +466,16 @@ def _safe_client_id(value: str) -> str:
 def _stage_index(node: dict[str, Any], node_type: str) -> int:
     text = " ".join(
         str(node.get(key) or "")
-        for key in ("stage", "phase", "group", "role", "id", "label", "title", "description")
+        for key in (
+            "stage",
+            "phase",
+            "group",
+            "role",
+            "id",
+            "label",
+            "title",
+            "description",
+        )
     ).lower()
     for key, order in STAGE_ORDER.items():
         if key in text:
@@ -464,7 +491,9 @@ def _stage_index(node: dict[str, Any], node_type: str) -> int:
     }.get(node_type, 0)
 
 
-def _node_position(node: dict[str, Any], stage_index: int, order: int) -> dict[str, int]:
+def _node_position(
+    node: dict[str, Any], stage_index: int, order: int
+) -> dict[str, int]:
     position = node.get("position")
     if isinstance(position, dict):
         x = _number(position.get("x"))
@@ -492,7 +521,9 @@ def _node_data(
     data = node.get("data")
     result = dict(data) if isinstance(data, dict) else {}
     label = node.get("label") or node.get("title") or node.get("name")
-    description = node.get("description") or node.get("responsibility") or node.get("purpose")
+    description = (
+        node.get("description") or node.get("responsibility") or node.get("purpose")
+    )
     if isinstance(label, str) and label.strip():
         result.setdefault("displayName", label.strip())
         result.setdefault("title", label.strip())
@@ -549,7 +580,9 @@ def _node_data(
         result.setdefault("durationMs", None)
         result.setdefault("isUploading", False)
         text = result.get("text")
-        if not audio_uses_upstream_text and (not isinstance(text, str) or not text.strip()):
+        if not audio_uses_upstream_text and (
+            not isinstance(text, str) or not text.strip()
+        ):
             for key in ("content", "prompt", "description"):
                 value = result.get(key)
                 if isinstance(value, str) and value.strip():
@@ -572,7 +605,12 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
     deterministic builder owns.
     """
     if not isinstance(commands, list) or not commands:
-        return [{"path": "commands", "message": "compiled commands must be a non-empty array"}]
+        return [
+            {
+                "path": "commands",
+                "message": "compiled commands must be a non-empty array",
+            }
+        ]
 
     errors: list[dict[str, str]] = []
     created_ids: set[str] = set()
@@ -626,7 +664,9 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
             )
         data = command.get("data")
         if not isinstance(data, dict):
-            errors.append({"path": f"{path}.data", "message": f"{path}.data must be an object"})
+            errors.append(
+                {"path": f"{path}.data", "message": f"{path}.data must be an object"}
+            )
         elif node_type == "textAnnotationNode":
             for field in ("title", "content"):
                 if not isinstance(data.get(field), str) or not data[field].strip():
@@ -659,21 +699,37 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
                         "message": f"{path}.link_type is not supported",
                     }
                 )
-        elif command_type in {"group_nodes", "layout_nodes", "select_nodes", "run_workflow"}:
+        elif command_type in {
+            "group_nodes",
+            "layout_nodes",
+            "select_nodes",
+            "run_workflow",
+        }:
             node_ids = command.get("node_ids")
             if not isinstance(node_ids, list) or not node_ids:
                 errors.append(
-                    {"path": f"{path}.node_ids", "message": f"{path}.node_ids must be non-empty"}
+                    {
+                        "path": f"{path}.node_ids",
+                        "message": f"{path}.node_ids must be non-empty",
+                    }
                 )
-            elif any(not isinstance(node_id, str) or node_id not in created_ids for node_id in node_ids):
+            elif any(
+                not isinstance(node_id, str) or node_id not in created_ids
+                for node_id in node_ids
+            ):
                 errors.append(
                     {
                         "path": f"{path}.node_ids",
                         "message": f"{path}.node_ids must reference created client_ids",
                     }
                 )
-            if command_type == "layout_nodes" and not str(command.get("mode") or "").strip():
-                errors.append({"path": f"{path}.mode", "message": f"{path} requires mode"})
+            if (
+                command_type == "layout_nodes"
+                and not str(command.get("mode") or "").strip()
+            ):
+                errors.append(
+                    {"path": f"{path}.mode", "message": f"{path} requires mode"}
+                )
 
     return errors
 
@@ -716,7 +772,9 @@ def _edge_pairs(raw_edges: Any) -> list[tuple[str, str, str | None]]:
 def _infer_link_type(
     source_type: str, target_type: str, requested: str | None = None
 ) -> str | None:
-    if requested in LINK_TYPE_VALUES and _link_type_allowed(requested, source_type, target_type):
+    if requested in LINK_TYPE_VALUES and _link_type_allowed(
+        requested, source_type, target_type
+    ):
         return requested
     if target_type == "videoComposeNode" and _link_type_allowed(
         "composition_input_for",
@@ -771,11 +829,15 @@ def _groups(raw_groups: Any, layout: Any) -> list[dict[str, Any]]:
         node_ids = raw.get("node_ids")
         if not isinstance(node_ids, list):
             continue
-        refs = [item.strip() for item in node_ids if isinstance(item, str) and item.strip()]
+        refs = [
+            item.strip() for item in node_ids if isinstance(item, str) and item.strip()
+        ]
         if len(refs) < 2:
             continue
         label = raw.get("label")
-        result.append({"label": str(label).strip() if label else "工作流", "node_ids": refs})
+        result.append(
+            {"label": str(label).strip() if label else "工作流", "node_ids": refs}
+        )
     return result
 
 

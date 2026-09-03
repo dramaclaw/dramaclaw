@@ -19,90 +19,6 @@ def anyio_backend():
     return "asyncio"
 
 
-@pytest.mark.anyio
-async def test_human_billing_confirmation_phrase_issues_trusted_context(
-    monkeypatch, tmp_path
-):
-    seen = {}
-
-    def fake_confirm(**kwargs):
-        seen.update(kwargs)
-        return {
-            "quote_id": "billing_quote_a",
-            "receipt": "billing_receipt_a",
-            "operation_kind": "workflow_planning_create",
-            "expires_at": 9999999999,
-        }
-
-    monkeypatch.setattr(chat_routes, "confirm_billing_quote", fake_confirm)
-    result = await chat_routes._trusted_billing_confirmation_for_message(
-        project_ctx=SimpleNamespace(
-            state_dir=tmp_path,
-            requester_user_id="user-a",
-            project_id="project-a",
-        ),
-        user={"id": "user-a", "credential_kind": "browser_session"},
-        scope=ChatScope(
-            kind="project",
-            id="project-a",
-            surface="freezone",
-            canvas_id="canvas-a",
-        ),
-        display_text="确认规划费用 billing_quote_a",
-        surface_context=None,
-    )
-
-    assert result == {
-        "quote_id": "billing_quote_a",
-        "confirmation_receipt": "billing_receipt_a",
-        "operation_kind": "workflow_planning_create",
-        "expires_at": 9999999999,
-    }
-    assert seen["user_id"] == "user-a"
-    assert seen["project_id"] == "project-a"
-    assert seen["canvas_id"] == "canvas-a"
-    assert seen["quote_id"] == "billing_quote_a"
-    assert seen["expected_operation_kind"] == "workflow_planning_create"
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    ("message", "credential_kind"),
-    [
-        ("确认规划费用。", "browser_session"),
-        ("确认规划费用", "agent_session"),
-        ("确认规划费用", "local_trusted_agent"),
-    ],
-)
-async def test_untrusted_or_inexact_billing_confirmation_does_not_issue_receipt(
-    monkeypatch, tmp_path, message, credential_kind
-):
-    monkeypatch.setattr(
-        chat_routes,
-        "confirm_billing_quote",
-        lambda **_kwargs: pytest.fail("must not confirm a quote"),
-    )
-
-    result = await chat_routes._trusted_billing_confirmation_for_message(
-        project_ctx=SimpleNamespace(
-            state_dir=tmp_path,
-            requester_user_id="user-a",
-            project_id="project-a",
-        ),
-        user={"id": "user-a", "credential_kind": credential_kind},
-        scope=ChatScope(
-            kind="project",
-            id="project-a",
-            surface="freezone",
-            canvas_id="canvas-a",
-        ),
-        display_text=message,
-        surface_context=None,
-    )
-
-    assert result is None
-
-
 def test_chat_visible_text_redacts_local_filesystem_paths():
     content = (
         "前端目录 ~/Works/supertale-fe，"
@@ -1517,10 +1433,7 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     name="dramaclaw.freezone_prepare_workflow_draft",
                     call_id="call-draft",
                     status="completed",
-                    input={
-                        "quote_id": "billing_quote_a",
-                        "confirmation_receipt": "billing_receipt_a",
-                    },
+                    input={"intent": {"skill_id": "video-ad"}},
                     output={
                         "content": [
                             {

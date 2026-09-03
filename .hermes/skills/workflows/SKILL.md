@@ -10,21 +10,21 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 
 工作流 skill 不依赖外部项目主线。它只基于用户输入、前端注入的当前项目/画布资源上下文，以及虾画节点能力来规划生产流程。
 
-用户从输入框选择 `/skill-id` 后，Hermes 会原生加载对应 Workflow Skill。必须使用该 Skill 固定的 `skill_id` 直接调用 `freezone_get_workflow_skill(skill_id=..., inputs=..., compact=true)`，不得再次语义路由。`inputs` 只填写用户已经明确提供的结构化参数。正常规划只使用 `available_recipes` 摘要，不读取完整 Recipe `system_prompt`。
+用户从输入框选择 `/skill-id` 后，Hermes 会原生加载对应 Workflow Skill。必须使用该 Skill 固定的 `skill_id` 直接调用 `freezone_get_workflow_skill(skill_id=..., inputs=...)`，不得再次语义路由。`inputs` 只填写用户已经明确提供的结构化参数。正常规划只使用 `available_recipes` 摘要，不读取完整 Recipe `system_prompt`。
 
 读取 Skill 规划包后，Agent 只决定用户目标、结构化输入、作品/镜头 PlanItems、每项使用的允许 Recipe、真实输入依赖、是否生成素材锚点和是否自动执行。调用 `freezone_prepare_workflow_draft` 后，节点数据、稳定 ID、连线类型、分组、布局和成片合成由工具确定性完成。用户调整方案时调用 `freezone_patch_workflow_draft`，确认后调用 `freezone_confirm_workflow_draft`。不得调用 `freezone_build_workflow_plan`，也不得用通用画布命令手写工作流。
 
 ## 工具调用方式
 
-`freezone_*` 工具不在工具列表里，统一用 `tool_call(name="<工具名>", arguments={...})` 调用；JSON 里先写 `name` 再写 `arguments`（arguments 很大时后写的 `name` 容易被漏掉，缺 `name` 会直接报错）；`arguments` 必须传 JSON 对象——不要传转义后的 JSON 字符串，大型嵌套 intent 会因转义损坏而反复失败。**不要先跑 `tool_search` 或 `tool_describe`**——`tool_call` 不依赖它们。**顺序固定：读规划包 → 生成结构化 intent → 获取绑定该操作的报价 → 服务端确认凭证 → 编译**。`deliverable`、Recipe、字段枚举都来自规划包，跳过它自造字段会被校验反复打回。所需参数如下：
+`freezone_*` 工具不在工具列表里，统一用 `tool_call(name="<工具名>", arguments={...})` 调用；JSON 里先写 `name` 再写 `arguments`（arguments 很大时后写的 `name` 容易被漏掉，缺 `name` 会直接报错）；`arguments` 必须传 JSON 对象——不要传转义后的 JSON 字符串，大型嵌套 intent 会因转义损坏而反复失败。**不要先跑 `tool_search` 或 `tool_describe`**——`tool_call` 不依赖它们。**顺序固定：读规划包 → 生成结构化 intent → 编译草稿 → 用户确认 → 创建**。`deliverable`、Recipe、字段枚举都来自规划包，跳过它自造字段会被校验反复打回。所需参数如下：
 
-- 读规划包：`tool_call(name="freezone_get_workflow_skill", arguments={"skill_id": ..., "inputs": {...}, "compact": true})`
-- 规划并报价：`tool_call(name="freezone_prepare_workflow_draft", arguments={"canvas_id": ..., "intent": {...}})`；需要计费时先展示报价并等待用户回复“确认规划费用”，服务端随后提供 `quote_id` 和 `confirmation_receipt`，再用完全相同的 intent 携带二者重试
-- 自定义拓扑规划并报价：`tool_call(name="freezone_prepare_workflow_plan_draft", arguments={"canvas_id": ..., "plan": {...}})`；使用与普通草稿相同的服务端报价和 receipt 流程，返回精确预览而不直接写画布
-- 修改草稿：`freezone_patch_workflow_draft`，arguments `{"draft_id": ..., "expected_revision": ..., "changes": {...}}`；需要计费时等待用户回复“确认修改费用”，仅使用服务端签发的 `quote_id` 和 `confirmation_receipt` 重试同一修改
-- 确认落图：`freezone_confirm_workflow_draft`，arguments `{"draft_id": ..., "revision": ...}`；需要创建费用时等待用户回复“确认创建费用”，再携带服务端凭证重试
+- 读规划包：`tool_call(name="freezone_get_workflow_skill", arguments={"skill_id": ..., "inputs": {...}})`
+- 规划草稿：`tool_call(name="freezone_prepare_workflow_draft", arguments={"canvas_id": ..., "intent": {...}})`
+- 自定义拓扑草稿：`tool_call(name="freezone_prepare_workflow_plan_draft", arguments={"canvas_id": ..., "plan": {...}})`；返回精确预览而不直接写画布
+- 修改草稿：`freezone_patch_workflow_draft`，arguments `{"draft_id": ..., "expected_revision": ..., "changes": {...}}`
+- 确认落图：`freezone_confirm_workflow_draft`，arguments `{"draft_id": ..., "revision": ...}`
 
-如果用户只是咨询或分析，只展示一般性说明，不创建草稿或写画布。用户提出具体创建需求后，先读取当前已选的唯一 Skill 紧凑规划包并生成结构化 `intent`，再调用 `freezone_prepare_workflow_draft`，让服务端把报价绑定到该 intent 和编译结果。如果工具要求确认，展示确切报价并立即停止本轮；只有用户使用指定确认短语后，才能使用服务端签发的凭证重试。不得伪造、复用到其它操作或部分复制凭证。只有用户明确要求 Skill 蓝图无法表达的自定义拓扑时，才使用 `freezone_prepare_workflow_plan_draft(plan=...)`，并继续走同一草稿确认入口。
+如果用户只是咨询或分析，只展示一般性说明，不创建草稿或写画布。用户提出具体创建需求后，先读取当前已选的唯一 Skill 紧凑规划包并生成结构化 `intent`，再调用 `freezone_prepare_workflow_draft`。只有用户明确要求 Skill 蓝图无法表达的自定义拓扑时，才使用 `freezone_prepare_workflow_plan_draft(plan=...)`，并继续走同一草稿确认入口。
 
 “再创建一个 / 再来一个 / 再添加一个 / 重新建一个 / 复制一个同类型工作流”都属于创建请求。当前画布已经存在相同工作流时，不要改为查询列表、解释已有工作流、复用旧节点或等待用户重新选择，仍然创建一个新的工作流实例并走确认流程；不要复用旧 `draft_id`，也不要调用 `freezone_emit_canvas_command`。
 
@@ -37,13 +37,13 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 动态工作流必须按以下顺序执行：
 
 1. 使用 Hermes 本轮已经加载的原生 Workflow Skill；没有唯一 Skill 时先用 `skills_list` 展示候选，让用户通过输入框 `/` 选择。已选 Skill 不得再做语义路由或加载其它候选。
-2. 调用一次 `freezone_get_workflow_skill(compact=true)` 读取该 Skill 的 Recipe 规划摘要、能力约束和 `input_contract`。
+2. 调用一次 `freezone_get_workflow_skill` 读取该 Skill 的 Recipe 规划摘要、能力约束和 `input_contract`。
 3. 使用 `input_contract.resolved` 展示用户值、工具从原话确定性提取的值和默认值；`fields[].source=inferred` 表示工具已从时长、画幅、执行模式等明确措辞中提取，不要再次分析或追问。只追问 `missing_required` 或修正 `errors`，已有素材和明确参数不要重复询问。`requires_confirmation=true` 时，在方案确认中一并确认这些值，不创建 Skill Session。
 4. 生成精简 `freezone_workflow_intent.v1`：只写 `skill_id`、`user_goal`、当前 `inputs`、PlanItems 和必要选项。每个 item 使用语义化 `id`、`title`、`prompt`、一个来自 `available_recipes` 的 `recipe_id`，并用 `depends_on` 声明真实输入依赖；需要配音时再提供只含实际朗读正文的 `narration`。当图片或视频节点需要根据上游剧本、分镜或 Shot List 生成时，必须把对应文本 PlanItem 写入 `depends_on`；当它还需要角色、场景、道具等生成素材作为实际参考时，再把这些素材写入 `reference_inputs`。每个视频 item 的 `prompt` 必须说明所对应 Shot 或 Shot Group 的具体叙事、动作和目标，不能只写“开场日常”“镜头一”等泛化标题。不要把时间码、时长、语气、环境音、音效或配乐说明写入 `narration`。调用 `freezone_prepare_workflow_draft` 编译并保存，记录返回的 `draft_id` 和 `revision`。不要生成画布 nodes/edges、UUID、连线类型、布局或分组。
 5. 缺少素材但允许从文字创建时，把素材锚点作为第一个 PlanItem，选择同一 Skill 允许的、`requires_source_media=false` 且输出类型匹配的 Recipe；后续依赖项通过 `depends_on` 引用该语义 item id。
 6. 严格按草稿工具返回的 `preview` 展示节点数量、作品清单、阶段和执行方式，不展示内部 JSON、`draft_id` 或 `revision`。
-7. 用户调整方案时，只把发生变化的字段传给 `freezone_patch_workflow_draft(draft_id=..., expected_revision=..., changes=...)`；不要重建 Intent 或创建新草稿。如需计费确认，等待服务端凭证后重试完全相同的修改。按新预览展示结果并记录新 revision。
-8. 用户确认后调用一次 `freezone_confirm_workflow_draft(draft_id=..., revision=...)`。如需创建费用确认，等待服务端凭证后重试完全相同的确认操作。执行方式默认使用草稿中已经确认的 `run_after_create`。
+7. 用户调整方案时，只把发生变化的字段传给 `freezone_patch_workflow_draft(draft_id=..., expected_revision=..., changes=...)`；不要重建 Intent 或创建新草稿。按新预览展示结果并记录新 revision。
+8. 用户确认后调用一次 `freezone_confirm_workflow_draft(draft_id=..., revision=...)`。执行方式默认使用草稿中已经确认的 `run_after_create`。
 9. 草稿校验失败时只修正返回的输入、item 或选项字段后重试；禁止改用单节点工具绕过校验，也不要退回生成整份 Plan。
 
 Plan 中的边只表示真实输入依赖，不表示时间顺序。节点 ID 必须稳定且唯一；禁止环、坏边、未知节点类型、未知 Recipe 和不兼容 Recipe。用户要求自动执行时才设置 `run_after_create=true`，否则只创建画布。

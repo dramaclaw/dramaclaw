@@ -114,32 +114,9 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         and str(payload.get("status") or "") == "workflow_draft_ready"
     ):
         return raw
-    # Billing metadata is intentionally kept in the tool payload.  Do not
-    # replace an instruction produced by the workflow plugin: EE uses that
-    # instruction to describe the planning estimate and the separate media
-    # charges.  Metadata can be nested in ``billing`` or ``data`` depending
-    # on the plugin version, so inspect the whole JSON object.
-    billing_keys = {
-        "agent_planning_charge",
-        "agent_credit_estimate",
-        "planning_charge",
-        "credit_estimate",
-        "feature_credit_estimate",
-    }
-
-    def has_billing_metadata(item: Any) -> bool:
-        if isinstance(item, dict):
-            if any(key in item for key in billing_keys):
-                return True
-            return any(has_billing_metadata(child) for child in item.values())
-        if isinstance(item, list):
-            return any(has_billing_metadata(child) for child in item)
-        return False
-
-    instruction = str(payload.get("agent_instruction") or "").strip()
-    if instruction:
-        instruction += " "
-    instruction += (
+    for field in ("billing", "agent_planning_charge", "agent_credit_estimate"):
+        payload.pop(field, None)
+    instruction = (
         "Present the exact preview in product language, including each node's "
         "preview.recipe_pipelines order as 主 Recipe → 补充 Recipe. If the current user message explicitly asks to create "
         "or run the workflow and all required clarification answers are available, that "
@@ -152,15 +129,7 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         if name == "freezone_prepare_workflow_plan_draft"
         else "For adjustments, patch this draft instead of rebuilding the intent."
     )
-    if has_billing_metadata(payload):
-        instruction += (
-            " Preserve and clearly display the provided planning charge, Agent credit estimate, "
-            "and separate media-generation costs."
-        )
-    else:
-        instruction += (
-            " Do not invent or mention credits, billing, pricing, or editions."
-        )
+    instruction += " Do not invent or mention credits, billing, pricing, or editions."
     payload["agent_instruction"] = instruction
     return json.dumps(payload, ensure_ascii=False)
 
@@ -177,7 +146,9 @@ def _output_schema_for_tool(name: str) -> dict[str, Any]:
     return output_schema
 
 
-_WORKFLOW_DRAFT_OUTPUT_SCHEMA = _output_schema_for_tool("freezone_prepare_workflow_plan_draft")
+_WORKFLOW_DRAFT_OUTPUT_SCHEMA = _output_schema_for_tool(
+    "freezone_prepare_workflow_plan_draft"
+)
 
 # Home turns have no bound project and should only manage the project
 # collection. Project-scoped tokens remain the authority for every underlying
@@ -191,6 +162,7 @@ HOME_TOOL_NAMES = frozenset(
         "dramaclaw_delete",
     }
 )
+
 
 def _scope_kind() -> str:
     return "project" if os.environ.get("DRAMACLAW_PROJECT_ID", "").strip() else "home"
@@ -230,7 +202,9 @@ def _normalize_structured_result(
 ) -> dict[str, Any]:
     raw = decoded if isinstance(decoded, dict) else {}
     nested = raw.get("data") if isinstance(raw.get("data"), dict) else {}
-    ok = raw.get("ok") if isinstance(raw.get("ok"), bool) else not bool(raw.get("error"))
+    ok = (
+        raw.get("ok") if isinstance(raw.get("ok"), bool) else not bool(raw.get("error"))
+    )
     status = raw.get("status") or nested.get("status")
     if not isinstance(status, str) or not status:
         status = "completed" if ok else "failed"
@@ -245,7 +219,12 @@ def _normalize_structured_result(
             structured[key] = nested[key]
 
     tool_name = str(schema.get("x-dramaclaw-tool") or "")
-    if tool_name in {"dramaclaw_get", "dramaclaw_post", "dramaclaw_patch", "dramaclaw_delete"}:
+    if tool_name in {
+        "dramaclaw_get",
+        "dramaclaw_post",
+        "dramaclaw_patch",
+        "dramaclaw_delete",
+    }:
         structured["response"] = raw.get("data", decoded)
     elif tool_name == "dramaclaw_get_task":
         structured["task"] = raw.get("data")

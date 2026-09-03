@@ -127,7 +127,6 @@ def test_social_content_campaign_builtin_skill_is_loadable(monkeypatch):
         {
             "skill_id": "social-content-campaign",
             "user_goal": "制作小红书配图",
-            "compact": True,
         }
     )
 
@@ -1531,12 +1530,10 @@ def test_workflow_plan_schema_rejects_extra_node_type_alias():
         Draft202012Validator(workflow_plan_json_schema()).validate(plan)
 
 
-def test_workflow_plan_schema_allows_data_stage_but_rejects_edge_type_alias():
+def test_workflow_plan_schema_rejects_data_stage_compatibility_path():
     plan = _dynamic_plan(image_count=1)
     input_node = plan["nodes"][0]
     input_node["data"]["stage"] = input_node.pop("stage")
-    for edge in plan["edges"]:
-        edge["type"] = edge.pop("link_type")
 
     with pytest.raises(ValidationError):
         Draft202012Validator(workflow_plan_json_schema()).validate(plan)

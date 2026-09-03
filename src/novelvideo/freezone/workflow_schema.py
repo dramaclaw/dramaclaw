@@ -99,7 +99,10 @@ def _catalog_schema(*, recipe_required: bool = False) -> dict[str, Any]:
                             "title": {"type": "string"},
                             "prompt": {"type": "string"},
                             "narration": {"type": "string"},
-                            "audio_kind": {"type": "string", "enum": ["speech", "music"]},
+                            "audio_kind": {
+                                "type": "string",
+                                "enum": ["speech", "music"],
+                            },
                             "music_length_ms": {
                                 "type": "integer",
                                 "minimum": 3000,
@@ -111,7 +114,10 @@ def _catalog_schema(*, recipe_required: bool = False) -> dict[str, Any]:
                                 "maximum": 600,
                             },
                             "recipe_id": {"type": "string", "minLength": 1},
-                            "depends_on": {"type": "array", "items": {"type": "string"}},
+                            "depends_on": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
                             "reference_inputs": {
                                 "type": "array",
                                 "items": {"type": "string"},
@@ -152,7 +158,7 @@ def _node_data_schema(*, recipe_required: bool = False) -> dict[str, Any]:
             "text": {"type": "string"},
             "prompt": {"type": "string"},
             "description": {"type": "string"},
-            "stage": {"type": "string"},
+            "stage": False,
             "model": {"type": "string"},
             "aspectRatio": {"type": "string"},
             "size": {"type": "string"},
@@ -222,23 +228,7 @@ def _resource_text_node_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": properties,
-        "required": ["id", "node_type"],
-        "allOf": [
-            {
-                "anyOf": [
-                    {"required": ["stage"]},
-                    {
-                        "properties": {
-                            "data": {
-                                "type": "object",
-                                "required": ["stage"],
-                            }
-                        },
-                        "required": ["data"],
-                    },
-                ]
-            },
-        ],
+        "required": ["id", "node_type", "stage"],
         "additionalProperties": False,
     }
 

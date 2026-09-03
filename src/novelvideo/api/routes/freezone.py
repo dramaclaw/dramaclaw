@@ -19,7 +19,6 @@ import shutil
 import time
 import uuid
 from collections.abc import Mapping
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Annotated, Any, Awaitable, Callable, Literal, Optional
 from urllib.parse import quote, unquote, urlencode, urlsplit
@@ -125,27 +124,6 @@ from novelvideo.freezone.agent_config_store import (
     list_user_agent_config_items,
     save_user_agent_config_item,
 )
-from novelvideo.freezone.agent_capability_billing import (
-    CREATIVE_PLANNING_FEATURE_KEY,
-    WORKFLOW_COMPLEX_FEATURE_KEY,
-    WORKFLOW_SIMPLE_FEATURE_KEY,
-    creative_planning_charge,
-    creative_planning_credit_estimate,
-    reserve_agent_capability_charge,
-    settle_agent_capability_charge,
-    workflow_design_charge,
-    workflow_design_credit_estimate,
-)
-from novelvideo.freezone.agent_billing_state import (
-    confirm_billing_quote,
-    consume_billing_confirmation,
-    create_billing_quote,
-    due_billing_settlements,
-    enqueue_billing_settlement,
-    mark_billing_settlement_failed,
-    mark_billing_settlement_projected,
-    mark_billing_settlement_succeeded,
-)
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
     media_request_schema_for_mode,
@@ -185,7 +163,6 @@ from novelvideo.freezone.workflow_drafts import (
     patch_workflow_draft,
     prune_expired_workflow_drafts,
     read_workflow_draft,
-    set_workflow_draft_billing,
 )
 from novelvideo.freezone.workflow_runs import (
     WorkflowRunLeaseConflict,
@@ -232,7 +209,6 @@ from novelvideo.freezone.recipe_runtime import (
 )
 from novelvideo.ports import get_usage_meter
 from novelvideo.ports.local.usage import NoOpUsageMeter
-from novelvideo.shared.billing_errors import find_billing_rule_not_configured_error
 from novelvideo.freezone.route_helpers import (
     accepted_job_response as _accepted_job_response,
 )
@@ -3333,39 +3309,6 @@ def _synced_reference_edge(
     }
 
 
-@router.post(
-    "/projects/{project}/freezone/agent-capability-quotes/{quote_id}/confirm",
-    tags=[TAG_FREEZONE_CANVAS],
-)
-async def confirm_freezone_agent_capability_quote(
-    project: str,
-    quote_id: str,
-    body: dict = Body(...),
-    user: dict = Depends(get_api_user),
-):
-    """Confirm a quote from a human browser session; Agent credentials are forbidden."""
-    if user.get("credential_kind") in {"agent_session", "local_trusted_agent"}:
-        raise HTTPException(403, "agent credentials cannot confirm billing quotes")
-    canvas_id = str(body.get("canvas_id") or "").strip()
-    if not CANVAS_ID_RE.match(canvas_id):
-        raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = (
-        await _resolve_freezone_project(project, user)
-    )
-    try:
-        confirmed = await asyncio.to_thread(
-            confirm_billing_quote,
-            project_dir=_canvas_state_project_dir(ctx, project_dir),
-            quote_id=quote_id,
-            user_id=_agent_billing_user_id(ctx, user),
-            project_id=str(ctx.project_id or project),
-            canvas_id=canvas_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    return {"ok": True, "data": confirmed}
-
-
 def _filter_canvas_references_by_beat_context(
     items: list[dict],
     beat_input: ResolvedSkillInput | None,
@@ -4794,379 +4737,8 @@ async def delete_freezone_agent_config_item(
 
 
 def _workflow_draft_api_data(draft: dict[str, Any]) -> dict[str, Any]:
-    """Hide reservations while exposing a safe estimate for confirmation copy."""
-    public = {
-        key: value
-        for key, value in draft.items()
-        if key not in {"billing", "billing_quote_id"}
-    }
-    if isinstance(get_usage_meter(), NoOpUsageMeter):
-        return public
-    public["agent_credit_estimate"] = workflow_design_credit_estimate(
-        draft.get("preview") if isinstance(draft.get("preview"), dict) else None
-    )
-    planning_billing = (
-        draft.get("billing", {}).get("planning")
-        if isinstance(draft.get("billing"), dict)
-        else None
-    )
-    charged_credits = (
-        planning_billing.get("cost") if isinstance(planning_billing, dict) else None
-    )
-    public["agent_planning_charge"] = {
-        **creative_planning_credit_estimate(),
-        "status": (
-            str(planning_billing.get("status") or "unpriced")
-            if isinstance(planning_billing, dict)
-            else "unpriced"
-        ),
-        "display": (
-            f"{charged_credits:g} 积分"
-            if isinstance(charged_credits, (int, float))
-            else creative_planning_credit_estimate()["display"]
-        ),
-        "charged_credits": charged_credits,
-    }
-    return public
-
-
-def _agent_billing_user_id(ctx: Any, user: dict[str, Any]) -> str:
-    return str(
-        getattr(ctx, "requester_user_id", "")
-        or user.get("id")
-        or user.get("username")
-        or ""
-    )
-
-
-async def _reconcile_agent_billing_settlements(project_dir: Path) -> None:
-    """Retry durable settlement intents; the usage meter is idempotent by reservation id."""
-    for pending in await asyncio.to_thread(
-        due_billing_settlements, project_dir=project_dir
-    ):
-        reservation_id = str(pending.get("reservation_id") or "")
-        if pending.get("status") == "pending":
-            try:
-                await settle_agent_capability_charge(
-                    reservation_id,
-                    confirmed=pending.get("action") == "confirm",
-                    metadata=(
-                        pending.get("metadata")
-                        if isinstance(pending.get("metadata"), dict)
-                        else {}
-                    ),
-                )
-            except Exception as exc:
-                await asyncio.to_thread(
-                    mark_billing_settlement_failed,
-                    project_dir=project_dir,
-                    reservation_id=reservation_id,
-                    error=str(exc),
-                )
-                logger.warning(
-                    "Agent billing settlement retry remains pending reservation_id=%s",
-                    reservation_id,
-                )
-                continue
-            await asyncio.to_thread(
-                mark_billing_settlement_succeeded,
-                project_dir=project_dir,
-                reservation_id=reservation_id,
-            )
-        draft_id = str(pending.get("draft_id") or "")
-        if not draft_id:
-            await asyncio.to_thread(
-                mark_billing_settlement_projected,
-                project_dir=project_dir,
-                reservation_id=reservation_id,
-            )
-            continue
-        draft, _error = await asyncio.to_thread(
-            read_workflow_draft,
-            project_dir=project_dir,
-            canvas_id=str(pending.get("canvas_id") or ""),
-            draft_id=draft_id,
-        )
-        if draft is None:
-            continue
-        billing = draft.get("billing") if isinstance(draft.get("billing"), dict) else {}
-        planning = (
-            billing.get("planning") if isinstance(billing.get("planning"), dict) else {}
-        )
-        if str(planning.get("reservation_id") or "") == reservation_id:
-            planning["status"] = (
-                "confirmed" if pending.get("action") == "confirm" else "refunded"
-            )
-            billing["planning"] = planning
-        else:
-            await asyncio.to_thread(
-                mark_billing_settlement_projected,
-                project_dir=project_dir,
-                reservation_id=reservation_id,
-            )
-            continue
-        projected = await asyncio.to_thread(
-            set_workflow_draft_billing,
-            project_dir=project_dir,
-            canvas_id=str(pending.get("canvas_id") or ""),
-            draft_id=draft_id,
-            billing=billing,
-        )
-        if projected is not None:
-            await asyncio.to_thread(
-                mark_billing_settlement_projected,
-                project_dir=project_dir,
-                reservation_id=reservation_id,
-            )
-
-
-def _billing_confirmation_fields(body: dict[str, Any]) -> tuple[str, str]:
-    return (
-        str(body.get("quote_id") or "").strip(),
-        str(body.get("confirmation_receipt") or "").strip(),
-    )
-
-
-def _billing_amount_matches(quoted: Any, reserved: Any) -> bool:
-    try:
-        return Decimal(str(quoted)) == Decimal(str(reserved))
-    except (InvalidOperation, TypeError, ValueError):
-        return False
-
-
-async def _settle_agent_reservation_with_outbox(
-    *,
-    state_dir: Path,
-    reservation_id: str,
-    project_id: str,
-    canvas_id: str,
-    draft_id: str,
-    confirmed: bool,
-    metadata: dict[str, Any],
-) -> bool:
-    """Persist a settlement intent before contacting the external usage meter."""
-
-    await asyncio.to_thread(
-        enqueue_billing_settlement,
-        project_dir=state_dir,
-        reservation_id=reservation_id,
-        project_id=project_id,
-        canvas_id=canvas_id,
-        draft_id=draft_id,
-        action="confirm" if confirmed else "refund",
-        metadata=metadata,
-    )
-    try:
-        await settle_agent_capability_charge(
-            reservation_id,
-            confirmed=confirmed,
-            metadata=metadata,
-        )
-    except Exception as exc:
-        await asyncio.to_thread(
-            mark_billing_settlement_failed,
-            project_dir=state_dir,
-            reservation_id=reservation_id,
-            error=str(exc),
-        )
-        logger.exception(
-            "Agent capability settlement remains pending reservation_id=%s",
-            reservation_id,
-        )
-        return False
-    await asyncio.to_thread(
-        mark_billing_settlement_succeeded,
-        project_dir=state_dir,
-        reservation_id=reservation_id,
-    )
-    draft, _error = await asyncio.to_thread(
-        read_workflow_draft,
-        project_dir=state_dir,
-        canvas_id=canvas_id,
-        draft_id=draft_id,
-    )
-    projected = draft is None
-    if draft is not None:
-        billing = draft.get("billing") if isinstance(draft.get("billing"), dict) else {}
-        planning = (
-            billing.get("planning") if isinstance(billing.get("planning"), dict) else {}
-        )
-        if str(planning.get("reservation_id") or "") == reservation_id:
-            planning["status"] = "confirmed" if confirmed else "refunded"
-            billing["planning"] = planning
-        else:
-            projected = True
-        if not projected:
-            projected = (
-                await asyncio.to_thread(
-                    set_workflow_draft_billing,
-                    project_dir=state_dir,
-                    canvas_id=canvas_id,
-                    draft_id=draft_id,
-                    billing=billing,
-                )
-                is not None
-            )
-    if projected:
-        await asyncio.to_thread(
-            mark_billing_settlement_projected,
-            project_dir=state_dir,
-            reservation_id=reservation_id,
-        )
-    return True
-
-
-def _require_billing_confirmation(
-    *,
-    state_dir: Path,
-    body: dict[str, Any],
-    user_id: str,
-    project_id: str,
-    canvas_id: str,
-    feature_key: str,
-    operation_kind: str,
-    operation: Any,
-) -> dict[str, Any]:
-    quote_id, receipt = _billing_confirmation_fields(body)
-    if not quote_id or not receipt:
-        raise HTTPException(
-            409, "server-issued billing confirmation receipt is required"
-        )
-    try:
-        return consume_billing_confirmation(
-            project_dir=state_dir,
-            quote_id=quote_id,
-            receipt=receipt,
-            user_id=user_id,
-            project_id=project_id,
-            canvas_id=canvas_id,
-            feature_key=feature_key,
-            operation_kind=operation_kind,
-            operation=operation,
-        )
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-
-
-async def _charge_workflow_draft_planning(
-    *,
-    draft: dict[str, Any],
-    ctx: Any,
-    user: dict[str, Any],
-    project: str,
-    canvas_id: str,
-    state_dir: Path,
-    confirmed_quote: dict[str, Any],
-) -> dict[str, Any]:
-    """Charge only after a substantive planning draft has been produced."""
-    if isinstance(get_usage_meter(), NoOpUsageMeter):
-        return draft
-    preview = draft.get("preview") if isinstance(draft.get("preview"), dict) else {}
-    charge = creative_planning_charge(preview)
-    metadata = {
-        "deliverable": "workflow_planning",
-        "draft_id": str(draft.get("draft_id") or ""),
-        "canvas_id": canvas_id,
-        "revision": int(draft.get("revision") or 1),
-        **(charge.params or {}),
-    }
-    reservation = await reserve_agent_capability_charge(
-        user_id=_agent_billing_user_id(ctx, user),
-        project_id=str(getattr(ctx, "project_id", "") or project),
-        charge=charge,
-        idempotency_key=(
-            f"freezone-agent-planning:{getattr(ctx, 'project_id', '') or project}:"
-            f"{canvas_id}:{confirmed_quote.get('quote_id')}"
-        ),
-        metadata={**metadata, "quote_id": confirmed_quote.get("quote_id")},
-    )
-    reservation_id = str(reservation.get("id") or "")
-    if not reservation_id:
-        raise RuntimeError("Agent planning reservation did not return an id")
-    quoted_amount = confirmed_quote.get("amount")
-    reserved_amount = reservation.get("cost")
-    if not _billing_amount_matches(quoted_amount, reserved_amount):
-        await _settle_agent_reservation_with_outbox(
-            state_dir=state_dir,
-            reservation_id=reservation_id,
-            project_id=str(getattr(ctx, "project_id", "") or project),
-            canvas_id=canvas_id,
-            draft_id=str(draft.get("draft_id") or ""),
-            confirmed=False,
-            metadata={**metadata, "reason": "quoted_price_changed"},
-        )
-        raise HTTPException(409, "agent planning price changed; request a new quote")
-    settlement_metadata = {
-        **metadata,
-        "quote_id": confirmed_quote.get("quote_id"),
-        "outcome": "planning_delivered",
-    }
-    await asyncio.to_thread(
-        enqueue_billing_settlement,
-        project_dir=state_dir,
-        reservation_id=reservation_id,
-        project_id=str(getattr(ctx, "project_id", "") or project),
-        canvas_id=canvas_id,
-        draft_id=str(draft.get("draft_id") or ""),
-        action="confirm",
-        metadata=settlement_metadata,
-    )
-    billing = draft.get("billing") if isinstance(draft.get("billing"), dict) else {}
-    pending_billing = {
-        **billing,
-        "planning": {
-            "feature_key": charge.feature_key,
-            "reservation_id": reservation_id,
-            "quote_id": confirmed_quote.get("quote_id"),
-            "status": "settlement_pending" if reservation_id else "unpriced",
-            "cost": reservation.get("cost"),
-            "metadata": metadata,
-        },
-    }
-    persisted = await asyncio.to_thread(
-        set_workflow_draft_billing,
-        project_dir=state_dir,
-        canvas_id=canvas_id,
-        draft_id=str(draft.get("draft_id") or ""),
-        billing=pending_billing,
-    )
-    if persisted is not None:
-        draft = persisted
-    try:
-        await settle_agent_capability_charge(
-            reservation_id,
-            confirmed=True,
-            metadata=settlement_metadata,
-        )
-    except Exception as exc:
-        await asyncio.to_thread(
-            mark_billing_settlement_failed,
-            project_dir=state_dir,
-            reservation_id=reservation_id,
-            error=str(exc),
-        )
-        return draft
-    else:
-        await asyncio.to_thread(
-            mark_billing_settlement_succeeded,
-            project_dir=state_dir,
-            reservation_id=reservation_id,
-        )
-    pending_billing["planning"]["status"] = "confirmed"
-    settled = await asyncio.to_thread(
-        set_workflow_draft_billing,
-        project_dir=state_dir,
-        canvas_id=canvas_id,
-        draft_id=str(draft.get("draft_id") or ""),
-        billing=pending_billing,
-    )
-    if settled is not None:
-        await asyncio.to_thread(
-            mark_billing_settlement_projected,
-            project_dir=state_dir,
-            reservation_id=reservation_id,
-        )
-    return settled or draft
+    """Expose the non-monetary draft state owned by CE."""
+    return dict(draft)
 
 
 @router.post(
@@ -13436,127 +13008,6 @@ async def list_canvas_history(
 
 
 @router.post(
-    "/projects/{project}/freezone/agent-capability-quote",
-    tags=[TAG_FREEZONE_CANVAS],
-)
-async def quote_freezone_agent_capability(
-    project: str,
-    body: dict = Body(...),
-    user: dict = Depends(get_api_user),
-):
-    """Return a non-reserving quote before a billable Agent planning turn."""
-    feature_key = str(body.get("feature_key") or "").strip()
-    if feature_key not in {
-        CREATIVE_PLANNING_FEATURE_KEY,
-        WORKFLOW_SIMPLE_FEATURE_KEY,
-        WORKFLOW_COMPLEX_FEATURE_KEY,
-    }:
-        raise HTTPException(400, "unsupported agent capability quote")
-    ctx, _username, _project_name, project_dir, _output_dir = (
-        await _resolve_freezone_project(project, user)
-    )
-    user_id = _agent_billing_user_id(ctx, user)
-    project_id = str(getattr(ctx, "project_id", "") or project)
-    state_dir = _canvas_state_project_dir(ctx, project_dir)
-    await _reconcile_agent_billing_settlements(state_dir)
-    usage_meter = get_usage_meter()
-    metering_enabled = not isinstance(usage_meter, NoOpUsageMeter)
-    try:
-        access = await usage_meter.require_feature_credit_balance(
-            user_id=user_id,
-            feature_key=feature_key,
-            project_id=str(getattr(ctx, "project_id", "") or project),
-            resource_kind="agent_capability",
-            metadata={"billing_scope": "agent_planning_quote"},
-        )
-    except Exception as exc:
-        if find_billing_rule_not_configured_error(exc) is None:
-            raise
-        access = {"required_balance": None, "allowed": True}
-    required = access.get("required_balance")
-    allowed = bool(access.get("allowed", True))
-    explicitly_configured = access.get("price_rule_configured") is True
-    exact = isinstance(required, (int, float)) and (
-        explicitly_configured or float(required) > 0
-    )
-    if feature_key == CREATIVE_PLANNING_FEATURE_KEY:
-        estimate = creative_planning_credit_estimate()
-        capability_name = "Agent 创意规划"
-    else:
-        estimate = workflow_design_credit_estimate(
-            {"node_count": 6 if feature_key == WORKFLOW_COMPLEX_FEATURE_KEY else 0}
-        )
-        capability_name = "Agent 工作流创建"
-    if not metering_enabled:
-        return {
-            "ok": True,
-            "data": {
-                "feature_key": feature_key,
-                "billing_required": False,
-                "metering_enabled": False,
-                "allowed": True,
-            },
-        }
-    canvas_id = str(body.get("canvas_id") or "").strip()
-    operation_kind = str(body.get("operation_kind") or "").strip()
-    operation = body.get("operation")
-    if (
-        not CANVAS_ID_RE.match(canvas_id)
-        or not operation_kind
-        or not isinstance(operation, dict)
-    ):
-        raise HTTPException(
-            400,
-            "canvas_id, operation_kind, and structured operation are required",
-        )
-    stored_quote = None
-    if exact and allowed:
-        stored_quote = await asyncio.to_thread(
-            create_billing_quote,
-            project_dir=state_dir,
-            user_id=user_id,
-            project_id=project_id,
-            canvas_id=canvas_id,
-            feature_key=feature_key,
-            operation_kind=operation_kind,
-            operation=operation,
-            amount=float(required),
-            price_version=str(
-                access.get("price_rule_version")
-                or access.get("price_rule_id")
-                or f"{feature_key}:{required:g}"
-            ),
-            display=f"{required:g} 积分",
-        )
-    quote_status = (
-        "agent_capability_quote_ready" if allowed else "agent_credit_insufficient"
-    )
-    if not allowed:
-        quote_message = "当前 Agent 积分不足，无法确认或执行本次操作。"
-    elif exact:
-        quote_message = "已读取本次规划的确切积分价格。"
-    else:
-        quote_message = f"{capability_name}价格尚未配置，当前仅能显示参考区间。"
-    return {
-        "ok": True,
-        "data": {
-            "feature_key": feature_key,
-            "billing_required": True,
-            "metering_enabled": metering_enabled,
-            "configured": exact,
-            "exact": exact,
-            "status": quote_status,
-            "required_credits": required if exact else None,
-            "display": (f"{required:g} 积分" if exact else estimate["display"]),
-            "reference_display": estimate["display"],
-            "allowed": allowed,
-            **(stored_quote or {}),
-            "message": quote_message,
-        },
-    }
-
-
-@router.post(
     "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts",
     tags=[TAG_FREEZONE_CANVAS],
 )
@@ -13572,22 +13023,6 @@ async def create_canvas_workflow_draft(
         await _resolve_freezone_project(project, user)
     )
     state_dir = _canvas_state_project_dir(ctx, project_dir)
-    confirmed_quote: dict[str, Any] = {}
-    if not isinstance(get_usage_meter(), NoOpUsageMeter):
-        confirmed_quote = _require_billing_confirmation(
-            state_dir=state_dir,
-            body=body,
-            user_id=_agent_billing_user_id(ctx, user),
-            project_id=str(ctx.project_id or project),
-            canvas_id=canvas_id,
-            feature_key=CREATIVE_PLANNING_FEATURE_KEY,
-            operation_kind="workflow_planning_create",
-            operation={
-                "intent": body.get("intent"),
-                "compiled": body.get("compiled"),
-                "run_after_create": bool(body.get("run_after_create")),
-            },
-        )
     try:
         await asyncio.to_thread(
             prune_expired_workflow_drafts,
@@ -13602,16 +13037,6 @@ async def create_canvas_workflow_draft(
             intent=body.get("intent"),
             compiled=body.get("compiled"),
             run_after_create=bool(body.get("run_after_create")),
-            billing_quote_id=str(confirmed_quote.get("quote_id") or ""),
-        )
-        draft = await _charge_workflow_draft_planning(
-            draft=draft,
-            ctx=ctx,
-            user=user,
-            project=project,
-            canvas_id=canvas_id,
-            state_dir=state_dir,
-            confirmed_quote=confirmed_quote,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -13634,7 +13059,6 @@ async def get_canvas_workflow_draft(
         await _resolve_freezone_project(project, user, required_role="viewer")
     )
     state_dir = _canvas_state_project_dir(ctx, project_dir)
-    await _reconcile_agent_billing_settlements(state_dir)
     try:
         draft, error = await asyncio.to_thread(
             read_workflow_draft,
@@ -13674,24 +13098,6 @@ async def patch_canvas_workflow_draft(
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, "expected_revision must be an integer") from exc
     state_dir = _canvas_state_project_dir(ctx, project_dir)
-    confirmed_quote: dict[str, Any] = {}
-    if not isinstance(get_usage_meter(), NoOpUsageMeter):
-        confirmed_quote = _require_billing_confirmation(
-            state_dir=state_dir,
-            body=body,
-            user_id=_agent_billing_user_id(ctx, user),
-            project_id=str(ctx.project_id or project),
-            canvas_id=canvas_id,
-            feature_key=CREATIVE_PLANNING_FEATURE_KEY,
-            operation_kind="workflow_planning_patch",
-            operation={
-                "draft_id": draft_id,
-                "expected_revision": expected_revision,
-                "intent": body.get("intent"),
-                "compiled": body.get("compiled"),
-                "run_after_create": body.get("run_after_create"),
-            },
-        )
     try:
         draft, error = await asyncio.to_thread(
             patch_workflow_draft,
@@ -13716,15 +13122,6 @@ async def patch_canvas_workflow_draft(
         raise HTTPException(400, str(exc)) from exc
     if draft is None:
         return error
-    draft = await _charge_workflow_draft_planning(
-        draft=draft,
-        ctx=ctx,
-        user=user,
-        project=project,
-        canvas_id=canvas_id,
-        state_dir=state_dir,
-        confirmed_quote=confirmed_quote,
-    )
     return {"ok": True, "data": _workflow_draft_api_data(draft)}
 
 
@@ -13745,7 +13142,6 @@ async def claim_canvas_workflow_draft(
         await _resolve_freezone_project(project, user)
     )
     state_dir = _canvas_state_project_dir(ctx, project_dir)
-    await _reconcile_agent_billing_settlements(state_dir)
     try:
         revision = int(body.get("revision"))
     except (TypeError, ValueError) as exc:
@@ -13762,23 +13158,6 @@ async def claim_canvas_workflow_draft(
             "status": "workflow_draft_unavailable",
             "error": current_error or "workflow draft not found",
         }
-    charge = workflow_design_charge(current_draft.get("preview"))
-    confirmed_quote: dict[str, Any] = {}
-    if not isinstance(get_usage_meter(), NoOpUsageMeter):
-        confirmed_quote = _require_billing_confirmation(
-            state_dir=state_dir,
-            body=body,
-            user_id=_agent_billing_user_id(ctx, user),
-            project_id=str(ctx.project_id or project),
-            canvas_id=canvas_id,
-            feature_key=charge.feature_key,
-            operation_kind="workflow_create",
-            operation={
-                "draft_id": draft_id,
-                "revision": revision,
-                "plan_digest": current_draft.get("plan_digest"),
-            },
-        )
     try:
         draft, error = await asyncio.to_thread(
             claim_workflow_draft_confirmation,
@@ -13804,12 +13183,6 @@ async def claim_canvas_workflow_draft(
                 "canvas_id": canvas_id,
                 "revision": revision,
                 "plan_digest": current_draft.get("plan_digest"),
-                "quote_id": confirmed_quote.get("quote_id"),
-                "quoted_credits": confirmed_quote.get("amount"),
-                "billing": {
-                    "feature_key": charge.feature_key,
-                    **(charge.params or {}),
-                },
             },
         )
     except Exception:

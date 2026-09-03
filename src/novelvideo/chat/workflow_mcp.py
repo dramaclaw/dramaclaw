@@ -357,13 +357,6 @@ async def list_tools() -> list[types.Tool]:
                     "skill_id": {"type": "string", "minLength": 1},
                     "user_goal": {"type": "string"},
                     "inputs": {"type": "object"},
-                    "compact": {
-                        "type": "boolean",
-                        "description": (
-                            "Compatibility flag accepted by every host. This standalone "
-                            "reader always returns the compact planning package."
-                        ),
-                    },
                 },
                 ["skill_id"],
             ),

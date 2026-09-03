@@ -40,13 +40,16 @@ async def test_standalone_workflow_mcp_exposes_portable_tools_and_resources():
 
     schemas = {tool.name: tool.inputSchema for tool in tools}
     output_schemas = {tool.name: tool.outputSchema for tool in tools}
-    assert len({json.dumps(schema, sort_keys=True) for schema in output_schemas.values()}) == 6
+    assert (
+        len({json.dumps(schema, sort_keys=True) for schema in output_schemas.values()})
+        == 6
+    )
     assert all(
         branch["additionalProperties"] is False
         for schema in output_schemas.values()
         for branch in schema["oneOf"]
     )
-    assert schemas["workflow_skill_get"]["properties"]["compact"]["type"] == "boolean"
+    assert "compact" not in schemas["workflow_skill_get"]["properties"]
     plan_schema = schemas["workflow_graph_compile"]["properties"]["plan"]
     intent_schema = schemas["workflow_intent_compile"]["properties"]["intent"]
     assert plan_schema["properties"]["schema_version"]["enum"] == [
@@ -99,13 +102,13 @@ async def test_graph_compile_accepts_canonical_plan_fields():
             "schema_version": "freezone_workflow_plan.v1",
             "skill": {"id": "video-tutorial", "version": 1},
             "nodes": [
-                {
-                    "id": "input",
-                    "node_type": "textAnnotationNode",
-                    "data": {
+                    {
+                        "id": "input",
+                        "node_type": "textAnnotationNode",
                         "stage": "input",
-                        "text": "用户提供的固定文案",
-                    },
+                        "data": {
+                            "text": "用户提供的固定文案",
+                        },
                 },
                 {
                     "id": "image",

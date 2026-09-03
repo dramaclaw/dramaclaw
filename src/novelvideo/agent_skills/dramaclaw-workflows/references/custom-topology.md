@@ -5,16 +5,15 @@ production Skill does not turn an exact topology request into the normal draft f
 
 1. Load exactly one matching production Workflow Skill. Prefer
    `workflow_skill_get(skill_id=...)` on the standalone workflow MCP server; that reader is always
-   compact, so `compact` is optional compatibility input. When the standalone server is unavailable,
-   use `freezone_get_workflow_skill(skill_id=..., compact=true)`.
+   compact. When the standalone server is unavailable, use
+   `freezone_get_workflow_skill(skill_id=...)`.
 2. Author one complete `freezone_workflow_plan.v1` using only that Skill's allowed node capabilities
    and Recipe IDs returned in `available_recipes`.
    Author semantic Plan fields only. Do not construct `canvas_chat_commands.v1` yourself: the graph
    compiler owns command defaults, stable IDs, layout, grouping, and final static command validation.
    Use only canonical `node_type` for each node's portable kind. The public MCP contract rejects
    the legacy canvas-command alias `type` and all unknown top-level fields.
-   Keep input/resource `stage` at node level when possible; `data.stage` is accepted for canvas
-   compatibility. Use only canonical `link_type` on edges.
+   Keep input/resource `stage` at node level. Use only canonical `link_type` on edges.
 3. Every executable node must contain an explicit `data.workflowCatalog.recipeId`. Input/resource
    text nodes may omit a Recipe when they only carry user-provided material, but they must set
    `stage` to `input`, `resource`, or `asset`. A terminal `videoComposeNode` has no Recipe.

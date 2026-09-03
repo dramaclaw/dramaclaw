@@ -286,9 +286,13 @@ def test_freezone_plugin_registers_canvas_command_tools():
         "freezone_confirm_workflow_draft",
     ):
         properties = schemas[tool_name]["parameters"]["properties"]
-        assert "quote_id" in properties
-        assert "confirmation_receipt" in properties
+        assert "quote_id" not in properties
+        assert "confirmation_receipt" not in properties
         assert "planning_confirmed" not in properties
+    assert (
+        "compact"
+        not in schemas["freezone_get_workflow_skill"]["parameters"]["properties"]
+    )
     assert "freezone_put_agent_catalog_recipe" in names
     assert "freezone_patch_agent_catalog_draft" in names
     assert "freezone_finish_agent_catalog_draft" in names
@@ -1069,7 +1073,7 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
     assert prepared["revision"] == 1
     assert prepared["preview"]["node_count"] == 3
     assert prepared["run_after_create"] is True
-    assert "Do not mention credits" in prepared["agent_instruction"]
+    assert "do not mention credits" in prepared["agent_instruction"].lower()
     _assert_real_mcp_output(plugin, "freezone_prepare_workflow_draft", prepared)
 
     patched = plugin._handle_patch_workflow_draft(
@@ -1281,7 +1285,7 @@ def test_workflow_draft_returns_actionable_errors_for_wrong_phase_arguments():
             "canvas_id": "canvas-a",
         }
     )
-    assert missing_intent["status"] == "workflow_intent_required_for_quote"
+    assert missing_intent["status"] == "workflow_intent_required"
 
     invalid_intent = plugin._handle_prepare_workflow_draft(
         {
@@ -1325,7 +1329,7 @@ def test_workflow_draft_requires_canonical_argument_shapes(monkeypatch, tmp_path
         }
     )
     assert flattened["ok"] is False
-    assert flattened["status"] == "workflow_intent_required_for_quote"
+    assert flattened["status"] == "workflow_intent_required"
 
     prepared = plugin._handle_prepare_workflow_draft(
         {
@@ -1363,261 +1367,6 @@ def test_workflow_draft_requires_canonical_argument_shapes(monkeypatch, tmp_path
     assert rejected["status"] == "invalid_workflow_draft_patch"
     assert "planner" in rejected["patchable_fields"]
     assert "freezone_patch_workflow_draft" in rejected["agent_instruction"]
-
-
-def test_workflow_planning_quote_skips_billing_in_ce(monkeypatch):
-    plugin = _load_plugin_module()
-    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
-    monkeypatch.setattr(
-        plugin,
-        "_request",
-        lambda *_args, **_kwargs: {
-            "ok": True,
-            "data": {
-                "feature_key": "freezone.agent.creative_planning",
-                "metering_enabled": False,
-                "billing_required": False,
-                "allowed": True,
-            },
-        },
-    )
-
-    result = plugin._agent_billing_confirmation_gate(
-        "project-a",
-        "canvas-a",
-        args={},
-        operation_kind="workflow_planning_create",
-        operation={"intent": {}, "run_after_create": False},
-    )
-
-    assert result is None
-
-
-def test_workflow_planning_quote_stops_when_agent_credits_are_insufficient(
-    monkeypatch,
-):
-    plugin = _load_plugin_module()
-    monkeypatch.setattr(
-        plugin,
-        "_request",
-        lambda *_args, **_kwargs: {
-            "ok": True,
-            "data": {
-                "billing_required": True,
-                "configured": True,
-                "exact": True,
-                "allowed": False,
-                "quote_id": "billing_quote_insufficient",
-                "display": "12 积分",
-            },
-        },
-    )
-
-    result = plugin._agent_billing_confirmation_gate(
-        "project-a",
-        "canvas-a",
-        args={},
-        operation_kind="workflow_planning_create",
-        operation={"intent": {}, "run_after_create": False},
-    )
-
-    assert result["status"] == "agent_credit_insufficient"
-    assert result["confirmation_required"] is False
-    assert result["next_action"] == "add_credits"
-    assert "ask for confirmation" in result["agent_instruction"]
-    structured = _assert_real_mcp_output(
-        plugin, "freezone_prepare_workflow_draft", result
-    )
-    assert structured["quote"]["quote_id"] == "billing_quote_insufficient"
-
-
-def test_workflow_prepare_requires_server_receipt_and_retries_exact_operation(
-    monkeypatch,
-):
-    plugin = _load_plugin_module()
-    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
-    intent = {"skill_id": "video-ad", "user_goal": "制作广告"}
-    compiled = {
-        "ok": True,
-        "skill_id": "video-ad",
-        "edge_count": 0,
-        "plan": {"summary": "广告", "nodes": [], "edges": [], "phases": []},
-    }
-    calls = []
-
-    def fake_request(method, path, *, body=None, **_kwargs):
-        calls.append((method, path, body))
-        if path.endswith("/freezone/agent-capability-quote"):
-            return {
-                "ok": True,
-                "data": {
-                    "billing_required": True,
-                    "configured": True,
-                    "exact": True,
-                    "quote_id": "billing_quote_a",
-                    "display": "12 积分",
-                },
-            }
-        if path.endswith("/workflow-drafts"):
-            return {
-                "ok": True,
-                "data": {
-                    "schema_version": "freezone_workflow_draft.v1",
-                    "draft_id": "workflow_draft_a",
-                    "revision": 1,
-                    "status": "ready",
-                    "skill_id": "video-ad",
-                    "intent": intent,
-                    "compiled": compiled,
-                    "preview": {"node_count": 0},
-                    "plan_digest": "digest-a",
-                    "run_after_create": False,
-                    "last_changes": {},
-                    "expires_at": 9999999999,
-                },
-            }
-        raise AssertionError(path)
-
-    monkeypatch.setattr(plugin, "_request", fake_request)
-    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda _intent: compiled)
-    monkeypatch.setattr(
-        plugin,
-        "_workflow_runtime_preflight",
-        lambda *_args, **_kwargs: {"status": "ready", "blockers": [], "warnings": []},
-    )
-
-    quoted = plugin._handle_prepare_workflow_draft({"intent": intent})
-    assert quoted["status"] == "agent_planning_confirmation_required"
-    assert "确认规划费用 billing_quote_a" in quoted["agent_instruction"]
-    assert len(calls) == 1
-    assert calls[0][2]["operation"]["compiled"] == compiled
-    quoted_output = _assert_real_mcp_output(
-        plugin, "freezone_prepare_workflow_draft", quoted
-    )
-    assert quoted_output["confirmation_required"] is True
-
-    prepared = plugin._handle_prepare_workflow_draft(
-        {
-            "intent": intent,
-            "quote_id": "billing_quote_a",
-            "confirmation_receipt": "billing_receipt_a",
-        }
-    )
-    assert prepared["draft_id"] == "workflow_draft_a"
-    assert calls[-1][2]["quote_id"] == "billing_quote_a"
-    assert calls[-1][2]["confirmation_receipt"] == "billing_receipt_a"
-    prepared_output = _assert_real_mcp_output(
-        plugin, "freezone_prepare_workflow_draft", prepared
-    )
-    assert prepared_output["revision"] == 1
-
-    incomplete = plugin._agent_billing_confirmation_gate(
-        "project-a",
-        "canvas-a",
-        args={"quote_id": "billing_quote_a"},
-        operation_kind="workflow_planning_create",
-        operation={"intent": intent, "compiled": compiled},
-    )
-    assert incomplete["status"] == "billing_confirmation_incomplete"
-    _assert_real_mcp_output(plugin, "freezone_prepare_workflow_draft", incomplete)
-
-
-def test_workflow_plan_prepare_uses_the_same_receipt_bound_draft_flow(monkeypatch):
-    plugin = _load_plugin_module()
-    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
-    plan = {
-        "schema_version": "freezone_workflow_plan.v1",
-        "skill": {"id": "video-ad"},
-        "nodes": [],
-        "edges": [],
-    }
-    compiled = {
-        "ok": True,
-        "status": "workflow_plan_valid",
-        "schema_version": "freezone_workflow_plan.v1",
-        "skill_id": "video-ad",
-        "node_count": 0,
-        "edge_count": 0,
-        "plan": plan,
-        "preflight": {"status": "ready", "blockers": [], "warnings": []},
-    }
-    calls = []
-
-    def fake_request(method, path, *, body=None, **_kwargs):
-        calls.append((method, path, body))
-        if path.endswith("/freezone/agent-capability-quote"):
-            return {
-                "ok": True,
-                "data": {
-                    "billing_required": True,
-                    "configured": True,
-                    "exact": True,
-                    "quote_id": "billing_quote_plan",
-                    "display": "12 积分",
-                },
-            }
-        if path.endswith("/workflow-drafts"):
-            return {
-                "ok": True,
-                "data": {
-                    "schema_version": "freezone_workflow_draft.v1",
-                    "draft_id": "workflow_draft_plan",
-                    "revision": 1,
-                    "status": "ready",
-                    "skill_id": "video-ad",
-                    "compiled": compiled,
-                    "preview": {"node_count": 0, "edge_count": 0},
-                    "plan_digest": "digest-plan",
-                    "run_after_create": False,
-                    "last_changes": {},
-                    "expires_at": 9999999999,
-                },
-            }
-        raise AssertionError(path)
-
-    monkeypatch.setattr(plugin, "_request", fake_request)
-    monkeypatch.setattr(
-        plugin, "validate_agent_workflow_plan", lambda value: dict(compiled)
-    )
-    monkeypatch.setattr(
-        plugin,
-        "_workflow_runtime_preflight",
-        lambda *_args, **_kwargs: compiled["preflight"],
-    )
-    monkeypatch.setattr(
-        plugin,
-        "_emit_canvas_commands",
-        lambda *_args, **_kwargs: pytest.fail("prepare must never write the canvas"),
-    )
-
-    quoted = plugin._handle_prepare_workflow_plan_draft({"plan": plan})
-    assert quoted["status"] == "agent_planning_confirmation_required"
-    assert len(calls) == 1
-    operation = calls[0][2]["operation"]
-    assert operation["intent"] == {
-        "schema_version": "freezone_workflow_plan_draft.v1",
-        "plan": plan,
-    }
-    assert operation["compiled"] == compiled
-    _assert_real_mcp_output(plugin, "freezone_prepare_workflow_plan_draft", quoted)
-
-    prepared = plugin._handle_prepare_workflow_plan_draft(
-        {
-            "plan": plan,
-            "quote_id": "billing_quote_plan",
-            "confirmation_receipt": "billing_receipt_plan",
-        }
-    )
-    assert prepared["status"] == "workflow_draft_ready"
-    assert prepared["draft_id"] == "workflow_draft_plan"
-    assert calls[-1][2]["quote_id"] == "billing_quote_plan"
-    assert calls[-1][2]["confirmation_receipt"] == "billing_receipt_plan"
-    assert calls[-1][2]["intent"] == operation["intent"]
-    assert calls[-1][2]["compiled"] == operation["compiled"]
-    _assert_real_mcp_output(plugin, "freezone_prepare_workflow_plan_draft", prepared)
 
 
 def test_workflow_draft_concurrent_confirmation_emits_once(monkeypatch, tmp_path):
@@ -2211,13 +1960,11 @@ def test_freezone_get_workflow_skill_accepts_native_skill_id(monkeypatch):
     assert decoded["skill_id"] == "ecommerce-ad"
 
 
-def test_freezone_get_workflow_skill_compact_omits_recipe_definitions(monkeypatch):
+def test_freezone_get_workflow_skill_always_omits_recipe_definitions(monkeypatch):
     plugin = _load_plugin_module_with_registry_result(lambda value: "summarized")
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
 
-    loaded = handlers["freezone_get_workflow_skill"](
-        {"skill_id": "ecommerce-ad", "compact": True}
-    )
+    loaded = handlers["freezone_get_workflow_skill"]({"skill_id": "ecommerce-ad"})
 
     decoded = json.loads(loaded)
     assert decoded["ok"] is True

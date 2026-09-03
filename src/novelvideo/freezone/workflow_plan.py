@@ -78,8 +78,7 @@ def _node_type_value(node: dict[str, Any]) -> str:
 
 
 def _node_stage_value(node: dict[str, Any]) -> str:
-    data = node.get("data") if isinstance(node.get("data"), dict) else {}
-    return str(node.get("stage") or data.get("stage") or "").strip()
+    return str(node.get("stage") or "").strip()
 
 
 def _edge_link_type_value(edge: dict[str, Any]) -> str:
@@ -568,10 +567,14 @@ def _validate_node_catalog_refs(
     stage = _node_stage_value(node).lower()
     role = str(data.get("workflowCatalogRole") or "").strip().lower()
     step_id = str(catalog.get("stepId") or "").strip().lower().replace("-", "_")
-    if recipe_id and node_type in {"textAnnotationNode", "scriptNode", "beatContextNode"} and (
-        stage in _USER_INPUT_STAGES
-        or role == "user_input"
-        or step_id in _USER_INPUT_STEP_IDS
+    if (
+        recipe_id
+        and node_type in {"textAnnotationNode", "scriptNode", "beatContextNode"}
+        and (
+            stage in _USER_INPUT_STAGES
+            or role == "user_input"
+            or step_id in _USER_INPUT_STEP_IDS
+        )
     ):
         errors.append(
             _issue(

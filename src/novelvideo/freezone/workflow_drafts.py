@@ -37,8 +37,6 @@ CREATE TABLE IF NOT EXISTS workflow_drafts (
     compiled_json            TEXT NOT NULL,
     preview_json             TEXT NOT NULL,
     last_changes_json        TEXT NOT NULL DEFAULT '{}',
-    billing_json             TEXT NOT NULL DEFAULT '{}',
-    billing_quote_id         TEXT NOT NULL DEFAULT '',
     task_id                  TEXT NOT NULL DEFAULT '',
     root_task_id             TEXT NOT NULL DEFAULT '',
     plan_digest              TEXT NOT NULL,
@@ -83,14 +81,6 @@ def _connect(project_dir: Path):
                     str(row[1])
                     for row in conn.execute("PRAGMA table_info(workflow_drafts)")
                 }
-                if "billing_json" not in columns:
-                    conn.execute(
-                        "ALTER TABLE workflow_drafts ADD COLUMN billing_json TEXT NOT NULL DEFAULT '{}'"
-                    )
-                if "billing_quote_id" not in columns:
-                    conn.execute(
-                        "ALTER TABLE workflow_drafts ADD COLUMN billing_quote_id TEXT NOT NULL DEFAULT ''"
-                    )
                 if "task_id" not in columns:
                     conn.execute(
                         "ALTER TABLE workflow_drafts ADD COLUMN task_id TEXT NOT NULL DEFAULT ''"
@@ -99,11 +89,6 @@ def _connect(project_dir: Path):
                     conn.execute(
                         "ALTER TABLE workflow_drafts ADD COLUMN root_task_id TEXT NOT NULL DEFAULT ''"
                     )
-                conn.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_drafts_billing_quote "
-                    "ON workflow_drafts(project_id, canvas_id, billing_quote_id) "
-                    "WHERE billing_quote_id <> ''"
-                )
                 conn.commit()
                 _SCHEMA_READY_PATHS.add(db_path)
             else:
@@ -249,8 +234,6 @@ def _payload_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "preview": _json_object(row["preview_json"]),
         "plan_digest": row["plan_digest"],
         "last_changes": _json_object(row["last_changes_json"]),
-        "billing": _json_object(row["billing_json"]),
-        "billing_quote_id": row["billing_quote_id"],
         "task_id": row["task_id"],
         "root_task_id": row["root_task_id"],
         "created_at": float(row["created_at"]),
@@ -280,10 +263,10 @@ def _write_draft(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
         INSERT INTO workflow_drafts (
             draft_id, schema_version, project_id, canvas_id, revision, status,
             skill_id, run_after_create, intent_json, compiled_json, preview_json,
-            last_changes_json, billing_json, billing_quote_id, task_id, root_task_id,
+            last_changes_json, task_id, root_task_id,
             plan_digest, created_at, updated_at, expires_at,
             confirmation_started_at, confirmed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(draft_id) DO UPDATE SET
             revision = excluded.revision,
             status = excluded.status,
@@ -293,8 +276,6 @@ def _write_draft(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
             compiled_json = excluded.compiled_json,
             preview_json = excluded.preview_json,
             last_changes_json = excluded.last_changes_json,
-            billing_json = excluded.billing_json,
-            billing_quote_id = excluded.billing_quote_id,
             task_id = excluded.task_id,
             root_task_id = excluded.root_task_id,
             plan_digest = excluded.plan_digest,
@@ -326,10 +307,6 @@ def _write_draft(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),
-            json.dumps(
-                payload.get("billing") or {}, ensure_ascii=False, separators=(",", ":")
-            ),
-            payload.get("billing_quote_id") or "",
             payload.get("task_id") or "",
             payload.get("root_task_id") or "",
             payload["plan_digest"],
@@ -354,7 +331,6 @@ def create_workflow_draft(
     intent: dict[str, Any],
     compiled: dict[str, Any],
     run_after_create: bool = False,
-    billing_quote_id: str = "",
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
 ) -> dict[str, Any]:
     _validate_scope(canvas_id)
@@ -377,8 +353,6 @@ def create_workflow_draft(
         "preview": _plan_preview(compiled),
         "plan_digest": _digest(compiled.get("plan")),
         "last_changes": {},
-        "billing": {},
-        "billing_quote_id": str(billing_quote_id or "").strip(),
         "task_id": "",
         "root_task_id": "",
         "created_at": now,
@@ -389,14 +363,6 @@ def create_workflow_draft(
     }
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        if payload["billing_quote_id"]:
-            existing = conn.execute(
-                "SELECT * FROM workflow_drafts "
-                "WHERE project_id = ? AND canvas_id = ? AND billing_quote_id = ?",
-                (project_id, canvas_id, payload["billing_quote_id"]),
-            ).fetchone()
-            if existing is not None:
-                return _payload_from_row(existing)
         _write_draft(conn, payload)
     return deepcopy(payload)
 
@@ -602,26 +568,6 @@ def finish_workflow_draft_confirmation(
             payload["confirmed_at"] = now
         elif outcome == "ready":
             payload["confirmation_started_at"] = None
-        _write_draft(conn, payload)
-        return deepcopy(payload)
-
-
-def set_workflow_draft_billing(
-    *,
-    project_dir: Path,
-    canvas_id: str,
-    draft_id: str,
-    billing: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Persist planning-delivery billing projection; confirmation billing is task-owned."""
-    _validate_scope(canvas_id, draft_id)
-    with _connect(project_dir) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        payload = _read_draft(conn, canvas_id=canvas_id, draft_id=draft_id)
-        if payload is None:
-            return None
-        payload["billing"] = deepcopy(billing)
-        payload["updated_at"] = time.time()
         _write_draft(conn, payload)
         return deepcopy(payload)
 

@@ -42,7 +42,7 @@ def test_external_mcp_ready_draft_honors_explicit_create_without_changing_plugin
     assert "without asking for another confirmation" in adapted["agent_instruction"]
 
 
-def test_external_mcp_ready_draft_preserves_nested_billing_instruction():
+def test_external_mcp_ready_draft_removes_legacy_ce_billing_metadata():
     original = {
         "ok": True,
         "status": "workflow_draft_ready",
@@ -59,9 +59,8 @@ def test_external_mcp_ready_draft_preserves_nested_billing_instruction():
         )
     )
 
-    assert "展示规划费用" in adapted["agent_instruction"]
-    assert "Preserve and clearly display" in adapted["agent_instruction"]
-    assert "Do not invent or mention credits" not in adapted["agent_instruction"]
+    assert "billing" not in adapted
+    assert "Do not invent or mention credits" in adapted["agent_instruction"]
 
 
 def test_external_mcp_plan_draft_keeps_custom_topology_in_the_draft_flow():
