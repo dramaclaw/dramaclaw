@@ -109,6 +109,31 @@ describe("PrevizLayerPanel", () => {
     }
   });
 
+  it("tints a character's icon with its own colour, and leaves the other kinds alone", () => {
+    const objects = build();
+    // 两个人物才看得出「颜色是各人自己的」，一个人物看不出。
+    objects.push(createPrevizObject("character", objects));
+    setup({ objects });
+
+    const first = objects[0]!;
+    const second = objects[4]!;
+    expect(first.kind).toBe("character");
+    expect(second.kind).toBe("character");
+    expect(first.kind === "character" && second.kind === "character" && first.color).not.toBe(
+      second.kind === "character" ? second.color : "",
+    );
+
+    for (const character of [first, second]) {
+      if (character.kind !== "character") throw new Error("unreachable");
+      expect(screen.getByTestId(`previz-layer-icon-${character.id}`)).toHaveStyle({
+        color: character.color,
+      });
+    }
+
+    // 机位那三类没有辨识色，图标该留在原来那层灰上，不该被顺手涂掉。
+    expect(screen.getByTestId(`previz-layer-icon-${objects[1]!.id}`)).toHaveClass("text-white/45");
+  });
+
   it("selects on click and marks only the selected row", async () => {
     const user = userEvent.setup();
     const objects = build();
