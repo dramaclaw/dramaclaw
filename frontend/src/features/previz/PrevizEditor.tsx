@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { X } from "lucide-react";
+import { Monitor, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -132,6 +132,22 @@ export function PrevizEditor({
     () => scene.objects.find((object) => object.id === selectedObjectId) ?? null,
     [scene.objects, selectedObjectId],
   );
+
+  // 关掉监看时记住关的是哪一台：右下角那个开关重新打开的必须是同一台机位，
+  // 否则机位不止一台的场景里「关掉再打开」会顺手换成第一台。
+  const lastMonitoredCameraId = useRef<string | null>(null);
+  if (activeCameraId) lastMonitoredCameraId.current = activeCameraId;
+  // 这里不套 useMemo：它读的是一个 ref，而 ref 变了不会让 memo 失效，缓存下来的
+  // 会一直是首帧那台（那时还没人监看过，也就是第一台）。逐帧过一遍几个对象而已。
+  const restorableCameraId = (() => {
+    const cameras = scene.objects.filter((object) => object.kind === "camera");
+    // 记下的那台可能已经被删了，这时退回第一台；一台都没有就没什么可开的。
+    return (
+      cameras.find((camera) => camera.id === lastMonitoredCameraId.current)?.id ??
+      cameras[0]?.id ??
+      null
+    );
+  })();
 
   const monitorRect = useMemo(
     () => monitorViewportRect(canvasSize.width, canvasSize.height, scene.settings.outputAspect),
@@ -538,6 +554,23 @@ export function PrevizEditor({
                 className="absolute grid place-items-center rounded bg-black/55 text-white/70 transition hover:bg-black/80 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:outline-none"
               >
                 <X className="h-3 w-3" />
+              </button>
+            )}
+
+            {!activeCameraId && restorableCameraId && (
+              /*
+                监看关掉之后留在原地的开关。没有画中画可以贴，就贴画布自己的右下角。
+                和上面那个叉是同一个位置量级，于是「关」和「开」在视觉上是同一颗按钮。
+              */
+              <button
+                type="button"
+                data-testid="previz-monitor-show"
+                aria-label={t("previz.editor.showMonitor")}
+                title={t("previz.editor.showMonitor")}
+                onClick={() => setActiveCamera(restorableCameraId)}
+                className="absolute right-4 bottom-4 grid h-7 w-7 place-items-center rounded bg-black/55 text-white/70 transition hover:bg-black/80 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:outline-none"
+              >
+                <Monitor className="h-3.5 w-3.5" />
               </button>
             )}
 
