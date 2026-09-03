@@ -16,6 +16,7 @@ import {
   removePathPoint,
   removeTrack,
   rulerTicks,
+  setPathAim,
   splitClip,
   timelineSeconds,
   trackFor,
@@ -407,5 +408,41 @@ describe('pinTrack', () => {
     const scene = threeTracks();
     // 对象没有轨道时不该重排出一个空洞，也不该新建一条轨道。
     expect(pinTrack(scene, 'zz').timeline.tracks).toEqual(scene.timeline.tracks);
+  });
+});
+
+describe('setPathAim', () => {
+  function scene(): PrevizScene {
+    return sceneWith([{ id: 't1', objectId: 'mover', clips: [pathClip('c1', 0, 120)] }]);
+  }
+
+  it('points the clip at another object', () => {
+    const next = setPathAim(scene(), 'c1', 'hero');
+    expect((next.timeline.tracks[0].clips[0] as PrevizPathClip).aimObjectId).toBe('hero');
+  });
+
+  it('clears the aim back to the path tangent', () => {
+    const aimed = setPathAim(scene(), 'c1', 'hero');
+    expect((setPathAim(aimed, 'c1', null).timeline.tracks[0].clips[0] as PrevizPathClip).aimObjectId)
+      .toBeNull();
+  });
+
+  it('refuses to aim an object at itself', () => {
+    const before = scene();
+    // 自己看自己解不出方向。求值器也会跳过，但让它进不了场景更省事。
+    expect(setPathAim(before, 'c1', 'mover')).toBe(before);
+  });
+
+  it('leaves clips that are not paths alone', () => {
+    const before = sceneWith([
+      {
+        id: 't1',
+        objectId: 'cam',
+        clips: [{ id: 'c1', kind: 'action', startFrame: 0, endFrame: 60, poseId: 'p' }],
+      },
+    ]);
+    // 特写片段有自己那套「看向」，动作片段根本没有朝向可言。
+    expect(setPathAim(before, 'c1', 'hero')).toBe(before);
+    expect(setPathAim(before, 'missing', 'hero')).toBe(before);
   });
 });
