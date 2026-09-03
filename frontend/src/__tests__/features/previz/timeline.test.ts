@@ -22,7 +22,7 @@ import {
   trimClip,
   uToFrame,
   updatePathPoint,
-  upsertPathClip,
+  upsertClip,
   zoomToFit,
 } from '@/features/previz/domain/timeline';
 import {
@@ -138,23 +138,23 @@ function sceneWithClip(clip: PrevizPathClip = drawnClip()): PrevizScene {
   return sceneWith([{ id: 't1', objectId: 'obj', clips: [clip] }]);
 }
 
-describe('upsertPathClip', () => {
+describe('upsertClip', () => {
   it('creates the track when the object has none', () => {
-    const next = upsertPathClip(sceneWith([]), 'obj', drawnClip());
+    const next = upsertClip(sceneWith([]), 'obj', drawnClip());
     expect(next.timeline.tracks).toHaveLength(1);
     expect(next.timeline.tracks[0].objectId).toBe('obj');
     expect(next.timeline.tracks[0].clips[0].id).toBe('c');
   });
 
   it('replaces a clip that already has that id', () => {
-    const next = upsertPathClip(sceneWithClip(), 'obj', { ...drawnClip(), endFrame: 90 });
+    const next = upsertClip(sceneWithClip(), 'obj', { ...drawnClip(), endFrame: 90 });
     expect(next.timeline.tracks[0].clips).toHaveLength(1);
     expect(next.timeline.tracks[0].clips[0].endFrame).toBe(90);
   });
 
   it('leaves the input scene untouched', () => {
     const scene = sceneWithClip();
-    upsertPathClip(scene, 'obj', { ...drawnClip(), endFrame: 90 });
+    upsertClip(scene, 'obj', { ...drawnClip(), endFrame: 90 });
     // undo 栈存的是整份场景快照，就地改会把历史里的旧快照一起改掉。
     expect(scene.timeline.tracks[0].clips[0].endFrame).toBe(120);
   });
