@@ -194,9 +194,20 @@ describe("PrevizInspector", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it("recolours a character's marker", () => {
+    const onChange = renderInspector(createPrevizObject("character", []));
+
+    fireEvent.change(screen.getByLabelText("previz.inspector.markerColor"), {
+      target: { value: "#ff00aa" },
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith({ color: "#ff00aa" });
+  });
+
   it("shows only the character fields for a character", () => {
     renderInspector(createPrevizObject("character", []));
 
+    expect(screen.getByLabelText("previz.inspector.markerColor")).toBeInTheDocument();
     expect(screen.getByLabelText("previz.inspector.heightCm")).toBeInTheDocument();
     expect(screen.getByLabelText("previz.inspector.bodyType")).toBeInTheDocument();
     expect(screen.getByLabelText("previz.inspector.basePose")).toBeInTheDocument();

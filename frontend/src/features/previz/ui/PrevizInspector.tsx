@@ -170,6 +170,22 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
       {character && (
         <>
           <div>
+            <label className={LABEL} htmlFor={`${prefix}-marker-color`}>
+              {t("previz.inspector.markerColor")}
+            </label>
+            {/*
+              辨识色排在身高体型之前：这一栏回答的是「这是谁」，而不是「他长什么样」。
+              场上所有人共用同一份角色模型，这个颜色是唯一分得清谁是谁的东西。
+            */}
+            <input
+              id={`${prefix}-marker-color`}
+              className={`${FIELD} p-1`}
+              type="color"
+              value={character.color}
+              onChange={(event) => onChange({ color: event.target.value })}
+            />
+          </div>
+          <div>
             <label className={LABEL} htmlFor={`${prefix}-height`}>
               {t("previz.inspector.heightCm")}
             </label>

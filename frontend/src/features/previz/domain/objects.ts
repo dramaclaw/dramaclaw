@@ -31,6 +31,38 @@ export const PREVIZ_HEIGHT_CM_RANGE: PrevizRange = {
 };
 
 /**
+ * 人物辨识色。所有人物共用同一份角色模型，站在场里长得一模一样——颜色是分清谁是谁
+ * 最便宜的一刀：图层面板的图标、脚下的辨识环读的都是它。
+ *
+ * 八个色相在深色底上都认得出，也刻意避开机位那套青白，免得一眼扫过去把人当成机位。
+ */
+export const PREVIZ_CHARACTER_COLORS = [
+  '#6ea8fe',
+  '#f78da7',
+  '#ffd166',
+  '#06d6a0',
+  '#c77dff',
+  '#ff9f68',
+  '#8ce99a',
+  '#ffa8a8',
+] as const;
+
+/**
+ * 下一个人物用哪个颜色：先挑没人用的，用满一轮之后按人数循环。
+ *
+ * 「先挑没人用的」而不是直接按人数取模，是为了让删掉的人把颜色还回来——否则场上
+ * 只剩两个人，颜色却已经排到了第五个。
+ */
+export function nextCharacterColor(objects: readonly PrevizObject[]): string {
+  const characters = objects.filter((object) => object.kind === 'character');
+  const taken = new Set(characters.map((character) => character.color.toLowerCase()));
+  return (
+    PREVIZ_CHARACTER_COLORS.find((color) => !taken.has(color)) ??
+    PREVIZ_CHARACTER_COLORS[characters.length % PREVIZ_CHARACTER_COLORS.length]
+  );
+}
+
+/**
  * 硬编码中文，与 `nodeDisplay.ts` 的 `DEFAULT_NODE_DISPLAY_NAME` 同一个取舍：
  * 名字是要随场景落盘的数据，跟着 i18n 走会让同一份 JSON 在两种语言下自相矛盾
  * （中文建的场景切到英文再存一次，一半对象叫 Camera 一半叫机位）。
@@ -115,12 +147,17 @@ function baseFields(objects: readonly PrevizObject[], kind: PrevizObjectKind) {
   };
 }
 
-function withDefaults(kind: PrevizObjectKind, base: ReturnType<typeof baseFields>): PrevizObject {
+function withDefaults(
+  kind: PrevizObjectKind,
+  base: ReturnType<typeof baseFields>,
+  objects: readonly PrevizObject[],
+): PrevizObject {
   switch (kind) {
     case 'character':
       return {
         ...base,
         kind: 'character',
+        color: nextCharacterColor(objects),
         bodyType: 'average',
         heightCm: PREVIZ_DEFAULT_HEIGHT_CM,
         basePoseId: PREVIZ_DEFAULT_POSE_ID,
@@ -182,7 +219,7 @@ export function createPrevizObject<K extends PrevizObjectKind>(
   objects: readonly PrevizObject[],
   overrides: PrevizObjectOverrides<K> = {},
 ): PrevizObjectOfKind<K> {
-  const created = withDefaults(kind, baseFields(objects, kind));
+  const created = withDefaults(kind, baseFields(objects, kind), objects);
 
   // 唯一一处断言：`withDefaults` 按运行时的 kind 分支返回联合类型，TS 没法把这个
   // 分支结果绑回类型参数 K；每个 case 的字面量 kind 已经保证了两者一致。
