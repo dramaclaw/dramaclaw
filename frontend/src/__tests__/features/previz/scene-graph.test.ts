@@ -146,13 +146,29 @@ function fakeThree() {
   class FakeConeGeometry extends FakeGeometry {
     readonly shape = 'cone';
   }
+  /**
+   * 颜色不能只是一个 `set` 桩：全灰模式的回程要先把材质**当前**的颜色读出来记账，
+   * 读不到就等于「原色是 undefined」，还原那一步会把模型涂成黑的——而这正是这份
+   * 假实现要能测出来的东西。
+   */
+  class FakeColor {
+    constructor(private hex: number) {}
+    set = vi.fn((value: number | string) => {
+      this.hex = typeof value === 'number' ? value : Number.parseInt(value.slice(1), 16);
+      return this;
+    });
+    getHex = () => this.hex;
+  }
   class FakeMaterial {
     opacity = 1;
     transparent = false;
     needsUpdate = false;
-    color = { set: vi.fn() };
+    color: FakeColor;
+    userData: Record<string, unknown> = {};
     dispose = vi.fn();
-    constructor(public params: Record<string, unknown> = {}) {}
+    constructor(public params: Record<string, unknown> = {}) {
+      this.color = new FakeColor(typeof params.color === 'number' ? params.color : 0xffffff);
+    }
   }
   /**
    * 净高 2 m 的模型。真 `setFromObject()` 量的是**世界**包围盒，根对象自己的 scale
@@ -216,7 +232,8 @@ interface FakeMeshView {
     opacity: number;
     transparent: boolean;
     needsUpdate: boolean;
-    color: { set: ReturnType<typeof vi.fn> };
+    color: { set: ReturnType<typeof vi.fn>; getHex: () => number };
+    userData: Record<string, unknown>;
     dispose: ReturnType<typeof vi.fn>;
     // 辨识标记的颜色是 `#rrggbb` 字符串（人物自己那一份），占位体的是数字常量。
     params: { color?: number | string; side?: number };
@@ -261,7 +278,14 @@ function rigFactory(three: typeof import('three'), clipNames: string[] = ['Idle_
   }));
   const clone = vi.fn(() => {
     const model = new three.Object3D();
-    model.add(new three.Mesh(new three.BoxGeometry(1, 1, 1), new three.MeshStandardMaterial()));
+    // 给模型材质一个明确的本色：默认白跟「原色没记住、还原成了 undefined」在断言里
+    // 分不开，全灰的回程正是要区分这两者。
+    model.add(
+      new three.Mesh(
+        new three.BoxGeometry(1, 1, 1),
+        new three.MeshStandardMaterial({ color: 0x8844ff }),
+      ),
+    );
     return model;
   });
   return { factory: new CharacterRigFactory({ three, loadGltf, clone }), loadGltf, clone };
@@ -972,6 +996,29 @@ describe('PrevizSceneGraph', () => {
     const mesh = rigOf(graph, scene.objects[0]!.id)?.children[0] as unknown as FakeMeshView;
     expect(mesh.material.transparent).toBe(true);
     expect(mesh.material.opacity).toBeCloseTo(0.35, 6);
+  });
+
+  it('gives the loaded model its own colour back on the way out of clay mode', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    graph.sync(scene);
+    await flush();
+    const mesh = rigOf(graph, scene.objects[0]!.id)?.children[0] as unknown as FakeMeshView;
+    const ownColour = mesh.material.color.getHex();
+
+    graph.sync({ ...scene, settings: { ...scene.settings, displayMode: 'clay' } });
+    expect(mesh.material.color.getHex()).not.toBe(ownColour);
+
+    // 模型的材质各有各的贴图与颜色，占位体那套「本色记在网格上」的账在它身上不成立。
+    // 少了这一步，全灰切回实体之后每个人物都永久停在水泥灰上——而用户唯一的补救办法
+    // 是删掉重建。
+    graph.sync({ ...scene, settings: { ...scene.settings, displayMode: 'solid' } });
+    expect(mesh.material.color.getHex()).toBe(ownColour);
   });
 
   it('keeps the placeholder capsule when the model cannot be loaded, and retries later', async () => {
