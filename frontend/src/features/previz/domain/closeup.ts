@@ -32,6 +32,12 @@ export const PREVIZ_RIG_ANCHOR_FRACTION: Readonly<Record<RigAnchorPart, number>>
 };
 
 /** 机位到锚点的距离区间，单位米。下界不取 0：机位穿进人物身体里只会拍到模型内壁。 */
+/**
+ * 路径片段「看向」目标时瞄的是哪一处。特写片段那边可以挑，路径片段只有一个开关，
+ * 就钉在胸口：瞄脚底会得到一个一路低头的画面，瞄头顶则在人走近时抬得太夸张。
+ */
+export const PREVIZ_PATH_AIM_PART: RigAnchorPart = 'chest';
+
 export const PREVIZ_RIG_DISTANCE_RANGE = { min: 0.2, max: 50, default: 2.75 } as const;
 
 /**

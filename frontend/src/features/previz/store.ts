@@ -49,6 +49,7 @@ import {
   removeClip,
   removePathPoint,
   removeTrack,
+  setPathAim,
   splitClip,
   trackFor,
   timelineSeconds,
@@ -156,6 +157,8 @@ interface PrevizStoreState {
   splitClipAtPlayhead: (clipId: string) => void;
   removeClipById: (clipId: string) => void;
   removeTrackFor: (objectId: string) => void;
+  /** 路径片段的「看向」：走的是自己那条路，眼睛一路盯着谁。null 回到沿切线朝向。 */
+  setClipAim: (clipId: string, aimObjectId: string | null) => void;
   /** 给机位新建一段特写，覆盖被跟对象在时间轴上已经占到的那一段。 */
   addCloseup: (cameraObjectId: string, target: CloseupTarget) => void;
   updateCloseup: (clipId: string, patch: RigClipPatch) => void;
@@ -526,6 +529,14 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   updateCloseup: (clipId, patch) => {
     const { scene, applyScene } = get();
     applyScene(updateRigClip(scene, clipId, patch));
+  },
+
+  setClipAim: (clipId, aimObjectId) => {
+    const { scene, applyScene } = get();
+    if (aimObjectId !== null && !scene.objects.some((object) => object.id === aimObjectId)) return;
+    const next = setPathAim(scene, clipId, aimObjectId);
+    if (next === scene) return;
+    applyScene(next);
   },
 
   bakeCloseup: (clipId) => {

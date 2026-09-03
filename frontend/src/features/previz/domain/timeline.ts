@@ -397,6 +397,23 @@ export function removePathPoint(
   );
 }
 
+/**
+ * 给路径片段指一个「看向」目标；null 表示回到沿切线自动朝向。
+ *
+ * 目标存不存在这里不查：删对象不该顺手改别人的片段，求值器碰到悬空的目标会退回
+ * 切线朝向。这里只挡「自己看自己」——那个解不出方向，会交出一个假的正前方。
+ */
+export function setPathAim(
+  scene: PrevizScene,
+  clipId: string,
+  aimObjectId: string | null,
+): PrevizScene {
+  const found = clipById(scene, clipId);
+  if (!found || !isPathClip(found.clip)) return scene;
+  if (aimObjectId === found.track.objectId) return scene;
+  return withClips(scene, clipId, [{ ...found.clip, aimObjectId }]);
+}
+
 /** 清空轨迹但保留片段：重画一条不需要先把片段删了再建。 */
 export function clearPathPoints(scene: PrevizScene, clipId: string): PrevizScene {
   return withPathPoints(scene, clipId, () => []);
