@@ -176,6 +176,7 @@ vi.mock('three', () => {
     DirectionalLight: class extends Object3D {},
     CapsuleGeometry: FakeGeometry,
     ConeGeometry: FakeGeometry,
+    RingGeometry: FakeGeometry,
     SphereGeometry: FakeGeometry,
     CylinderGeometry: FakeGeometry,
     BufferGeometry: class extends FakeGeometry {
@@ -779,9 +780,10 @@ describe('PrevizRenderer 接场景图', () => {
     await flush();
 
     const node = instance.nodeFor(scene.objects[0].id);
-    // 占位胶囊换成了真模型：工厂没接上的话这里还是那个胶囊。
-    expect(node?.children).toHaveLength(1);
-    expect(node?.children[0]?.userData.previzRig).toBe(true);
+    // 占位胶囊换成了真模型：工厂没接上的话这里还是那个胶囊。脚下那组辨识标记
+    // 不带 `previzPlaceholder`，换模型时清不到它头上，所以是两个子节点。
+    expect(node?.children).toHaveLength(2);
+    expect(node?.children.some((child) => child.userData.previzRig)).toBe(true);
     // 加载的是仓库里那份共享角色模型。路径写字面量：从被测模块 import 回来的常量
     // 改一处两边一起变。
     expect(loadedUrls).toEqual(['/viewer-kit/quaternius/ual2/UAL2_Standard.glb']);
