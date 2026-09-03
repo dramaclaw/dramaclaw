@@ -44,6 +44,22 @@ const PLACEHOLDER_HEIGHT_M = PREVIZ_DEFAULT_HEIGHT_CM / 100;
 const PLACEHOLDER_HALF_WIDTH_M = PREVIZ_PLACEHOLDER_RADIUS;
 
 /**
+ * 求值器会写回的那两项变了没有。
+ *
+ * 缩放不算：它不参与求值，跟着算的话缩放一个带轨迹的对象会把它按在原地不动。
+ */
+function samePlacement(a: PrevizTransform, b: PrevizTransform): boolean {
+  return (
+    a.position[0] === b.position[0] &&
+    a.position[1] === b.position[1] &&
+    a.position[2] === b.position[2] &&
+    a.rotation[0] === b.rotation[0] &&
+    a.rotation[1] === b.rotation[1] &&
+    a.rotation[2] === b.rotation[2]
+  );
+}
+
+/**
  * three.js 渲染层。构造走静态 create() 而不是 new：three 与 OrbitControls 都在
  * 里面动态 import，只有真正打开预演台才下载那个 chunk。顶层只有 type import，
  * 编译后会被完全擦除，不会把 three 拉进首屏。
@@ -64,6 +80,14 @@ export class PrevizRenderer {
   private activeCameraId: string | null = null;
   /** 播放头当前帧。场景灌进来时按它解算一次，之后每次移动播放头再解算。 */
   private currentFrame = 0;
+  /**
+   * 这些对象的位置是人手摆出来的，当前这一帧不许求值器盖回去。
+   *
+   * 拖手柄改的是静态 transform，而带轨迹的对象每次 setScene 都会被路径覆盖掉——包括
+   * 拖动自己提交的那一次，于是画面上「有轨迹的相机拖不动」。upstream 的做法是让手摆
+   * 的位置先赢：轨迹一点不改，人停在放下的地方，直到播放头再动才回到轨迹上。
+   */
+  private readonly handPlaced = new Set<string>();
   private pathPreview: PrevizPathPreview | null = null;
   private selectedClipId: string | null = null;
   /** 手柄拖完把变换交回上层（编辑器接到 store 的 updateObject）。 */
@@ -207,7 +231,9 @@ export class PrevizRenderer {
   /** 灌入当前场景。编辑器每次 store 变化都调它，代价是一次 Map 查表加几次赋值。 */
   setScene(scene: PrevizScene): void {
     if (this.disposed) return;
+    const previous = this.currentScene;
     this.currentScene = scene;
+    this.trackHandPlacements(previous, scene);
     this.graph.sync(scene);
     // 必须排在 sync 之后：sync 每次都把静态 transform 写回节点，先解算就会被它盖掉，
     // 表现是播放中随便改点什么（改个名字都算）人就瞬移回起点。
@@ -236,6 +262,8 @@ export class PrevizRenderer {
   setFrame(frame: number): void {
     if (this.disposed) return;
     this.currentFrame = frame;
+    // 播放头一动，时间轴就把控制权收回去：手摆的那些位置到此为止，对象回到轨迹上。
+    this.handPlaced.clear();
     this.applyEvaluatedFrame();
     this.requestRender();
   }
@@ -272,6 +300,30 @@ export class PrevizRenderer {
   }
 
   /**
+   * 挑出这一次 setScene 里被人改过静态 transform 的对象。
+   *
+   * 按「变了没有」认，而不是让拖动手柄那条路径单独通知一声：检查器里改坐标、撤销一次
+   * 拖动，走的都是同一个 store 动作，认提交点会漏掉后两种，表现依旧是改了没反应。
+   */
+  private trackHandPlacements(previous: PrevizScene | null, next: PrevizScene): void {
+    // 头一次灌场景（或换了个场景）没有「上一份」可比，此时一切都算时间轴说了算。
+    if (!previous) return;
+    const before = new Map(previous.objects.map((object) => [object.id, object.transform]));
+    const alive = new Set(next.objects.map((object) => object.id));
+    // 删掉的对象顺手清掉：这个集合活到播放头下次移动，中间删了再撤销回来的对象
+    // 不该带着上一世的「手摆过」标记复活。
+    for (const objectId of this.handPlaced) {
+      if (!alive.has(objectId)) this.handPlaced.delete(objectId);
+    }
+    for (const object of next.objects) {
+      const placement = before.get(object.id);
+      if (!placement) continue;
+      if (samePlacement(placement, object.transform)) continue;
+      this.handPlaced.add(object.id);
+    }
+  }
+
+  /**
    * 把当前帧的解算结果写进各个节点。
    *
    * 只写位置与旋转：姿势（`poseId`）在 P3 里恒等于人物的 `basePoseId`，场景图每次 sync
@@ -282,6 +334,8 @@ export class PrevizRenderer {
     if (!scene) return;
     const evaluated = evaluateSceneAt(scene, this.currentFrame);
     for (const [objectId, state] of evaluated) {
+      // 刚被手摆过的对象让位给那一次摆放，等播放头再动时才交还给时间轴。
+      if (this.handPlaced.has(objectId)) continue;
       const node = this.graph.nodeFor(objectId);
       if (!node) continue;
       node.position.set(state.position[0], state.position[1], state.position[2]);

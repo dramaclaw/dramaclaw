@@ -7418,6 +7418,7 @@
       "close": "Close Previz Stage",
       "duration": "Duration {{frames}} frames",
       "hideMonitor": "Hide monitor",
+      "showMonitor": "Show monitor",
       "sceneTooLarge": "The scene is too large to save. Remove some objects and try again.",
       "limitReached": "This object type has reached its limit",
       "noProject": "No project in the current URL — cannot upload a model",

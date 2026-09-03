@@ -144,6 +144,55 @@ describe("PrevizEditor", () => {
     expect(screen.queryByTestId("previz-monitor-hide")).toBeNull();
   });
 
+  it("brings the monitor back from the same corner", async () => {
+    const user = userEvent.setup();
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject("camera", scene.objects));
+    scene.objects.push(createPrevizObject("camera", scene.objects));
+    const second = scene.objects[1]!.id;
+
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    act(() => {
+      usePrevizStore.getState().setActiveCamera(second);
+    });
+    await user.click(screen.getByTestId("previz-monitor-hide"));
+
+    // 关掉之后视口里得留一个开回来的入口。唯一的入口是右侧图层面板那个显示器图标的话，
+    // 从画面上按叉关掉的人根本找不回来——那个叉就成了单向门。
+    const show = screen.getByTestId("previz-monitor-show");
+    expect(show).toHaveAccessibleName("previz.editor.showMonitor");
+
+    await user.click(show);
+
+    // 回到刚才那台，而不是场景里的第一台：机位不止一个时，「关掉再打开」不该顺手换一台。
+    expect(usePrevizStore.getState().activeCameraId).toBe(second);
+    expect(screen.queryByTestId("previz-monitor-show")).toBeNull();
+  });
+
+  it("offers no monitor switch until the scene has a camera", () => {
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    // 没有机位可监看时那个按钮点了也没有东西可开，挂着只是画布右下角一块空占位。
+    expect(screen.queryByTestId("previz-monitor-show")).toBeNull();
+  });
+
   it("mounts a canvas and shows the timeline duration", () => {
     const scene = createDefaultScene();
     scene.settings.durationFrames = 240;
