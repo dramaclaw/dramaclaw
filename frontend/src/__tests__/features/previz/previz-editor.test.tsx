@@ -28,6 +28,7 @@ const setSelectedClip = vi.fn();
 const planePointAt = vi.fn(
   (_clientX: number, _clientY: number, _height: number): Vec3 | null => [0, 0, 0],
 );
+const setStroke = vi.fn((_points: readonly Vec3[] | null) => {});
 const viewPose = vi.fn(() => ({ position: [6, 4, 8] as Vec3, target: [0, 1, 0] as Vec3 }));
 const renderCameraPreview = vi.fn();
 
@@ -48,6 +49,7 @@ function fakeRenderer() {
     setFrame,
     setSelectedClip,
     planePointAt,
+    setStroke,
     viewPose,
     renderCameraPreview,
     onTransformCommit: null as
@@ -429,7 +431,7 @@ function editorProps(overrides: Partial<ComponentProps<typeof PrevizEditor>> = {
 async function renderEditor(overrides: Partial<ComponentProps<typeof PrevizEditor>> = {}) {
   const result = render(<PrevizEditor {...editorProps(overrides)} />);
   await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
-  return { ...result, renderer: { setFrame, setSelectedClip, planePointAt, pickAt } };
+  return { ...result, renderer: { setFrame, setSelectedClip, planePointAt, setStroke, pickAt } };
 }
 
 describe("PrevizEditor timeline", () => {
@@ -533,6 +535,33 @@ describe("PrevizEditor timeline", () => {
     // 打到地面上的话，给 4 米高的机位画完一笔机位就掉到地上了。整笔共用按下那一刻的
     // 高度：中途重算的话，笔画会在自己造成的移动上滑坡。
     expect(renderer.planePointAt.mock.calls.map((call) => call[2])).toEqual([4, 4]);
+  });
+
+  it("shows the stroke while it is being drawn, and drops it on release", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("character");
+    act(() => usePrevizStore.getState().selectObject(objectId!));
+    await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
+
+    const canvas = screen.getByTestId("previz-canvas");
+    let x = 0;
+    renderer.planePointAt.mockImplementation(() => [(x += 1), 0, 0]);
+    // 交出去的是那支笔画数组本体（渲染器当场就把坐标抄进缓冲），事后翻 mock.calls
+    // 读到的三次都是同一个已经长满的数组——长度必须在调用的那一刻记下来。
+    const lengths: (number | null)[] = [];
+    renderer.setStroke.mockImplementation((points) => void lengths.push(points?.length ?? null));
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(canvas, { clientX: 40, clientY: 10 });
+    fireEvent.pointerMove(canvas, { clientX: 70, clientY: 10 });
+
+    // 每一下都要交出去：只在松手时给一次的话，画的过程仍然是盲的。
+    expect(lengths).toEqual([1, 2, 3]);
+
+    fireEvent.pointerUp(canvas, { clientX: 70, clientY: 10 });
+
+    // 松手后由轨迹曲线接管；不收笔的话两条线重叠着留在画面上。
+    expect(lengths[lengths.length - 1]).toBeNull();
   });
 
   it("returns to the select tool after a stroke", async () => {

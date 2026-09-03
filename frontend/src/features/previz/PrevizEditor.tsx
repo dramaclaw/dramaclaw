@@ -498,6 +498,7 @@ export function PrevizEditor({
                   strokeHeight.current,
                 );
                 stroke.current = point ? [point] : [];
+                renderer.setStroke(stroke.current);
               }}
               onPointerMove={(event) => {
                 if (!stroke.current || !renderer) return;
@@ -509,11 +510,16 @@ export function PrevizEditor({
                 // 射线与该平面平行时 planePointAt 交出 null，这一段笔画直接丢掉：
                 // 补一个瞎编的点会在轨迹上留下一个乱跳的顶点。
                 if (point) stroke.current.push(point);
+                // 每一下都推给渲染器：这条线就是绘制过程中唯一的反馈，攒到松手才画
+                // 等于让用户盲画一整笔。
+                renderer.setStroke(stroke.current);
               }}
               onPointerUp={(event) => {
                 if (stroke.current) {
                   const points = stroke.current;
                   stroke.current = null;
+                  // 收笔交给轨迹曲线接管：不收的话这条线会和刚生成的轨迹重叠着留在画面上。
+                  renderer?.setStroke(null);
                   const targetId = usePrevizStore.getState().selectedObjectId;
                   // 没选对象时这一笔没有归属，直接丢——建一条无主轨迹只会在时间轴上
                   // 多一行删不掉的东西。
