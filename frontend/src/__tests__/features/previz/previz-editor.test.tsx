@@ -5,6 +5,7 @@ import type { ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createPrevizObject } from "@/features/previz/domain/objects";
 import { createDefaultScene, type Vec3 } from "@/features/previz/domain/scene";
 import { PrevizRenderer } from "@/features/previz/engine/PrevizRenderer";
 import { PrevizEditor } from "@/features/previz/PrevizEditor";
@@ -109,6 +110,40 @@ beforeAll(() => {
 });
 
 describe("PrevizEditor", () => {
+  it("lets the viewport hide the monitor picture-in-picture", async () => {
+    const user = userEvent.setup();
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject("camera", scene.objects));
+
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    // 没在监看时不该挂这个按钮：画布右下角空着，多一个关不掉的叉只会碍事。
+    expect(screen.queryByTestId("previz-monitor-hide")).toBeNull();
+
+    act(() => {
+      usePrevizStore.getState().setActiveCamera(scene.objects[0]!.id);
+    });
+
+    const hide = screen.getByTestId("previz-monitor-hide");
+    // 无障碍名写字面量：从被测组件读回 key 等于什么都没锁。
+    expect(hide).toHaveAccessibleName("previz.editor.hideMonitor");
+
+    await user.click(hide);
+
+    // 关掉的是「谁在监看」这个状态本身，不是单藏一块画面——图层面板上那个
+    // 监看图标要跟着灭掉，否则界面上会同时显示「正在监看」和一个空的右下角。
+    expect(usePrevizStore.getState().activeCameraId).toBeNull();
+    expect(screen.queryByTestId("previz-monitor-hide")).toBeNull();
+  });
+
   it("mounts a canvas and shows the timeline duration", () => {
     const scene = createDefaultScene();
     scene.settings.durationFrames = 240;
