@@ -1925,6 +1925,7 @@
     "namePlaceholder": "Enter your project name",
     "clearName": "Clear project name",
     "nameNoChinese": "Project name cannot contain Chinese characters.",
+    "nameTooLong": "Project name must be at most 64 characters long.",
     "nameInvalid": "Project name can only contain letters, numbers, and underscores.",
     "nameExistsActive": "A project with this name already exists. Choose another name.",
     "nameExistsArchived": "An archived project already uses this name. Unarchive it or choose another name.",

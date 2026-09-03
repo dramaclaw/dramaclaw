@@ -40,7 +40,7 @@ class ErrorResponse(BaseModel):
 
 
 class ProjectCreate(BaseModel):
-    name: str
+    name: str = Field(max_length=64)
 
 
 class ProjectSummary(BaseModel):

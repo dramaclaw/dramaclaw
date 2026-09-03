@@ -140,6 +140,11 @@ def may_run_asset_repair(ctx: ProjectContext | None) -> bool:
 
 def validate_project_name(name: str):
     """验证项目名称格式。"""
+    if len(name) > 64:
+        raise HTTPException(
+            status_code=400,
+            detail="Project name must be at most 64 characters long",
+        )
     if not name or not re.match(r"^[a-zA-Z0-9_]+$", name):
         raise HTTPException(
             status_code=400,
