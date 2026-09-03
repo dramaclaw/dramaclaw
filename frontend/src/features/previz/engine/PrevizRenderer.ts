@@ -194,6 +194,8 @@ export class PrevizRenderer {
     // 轨迹预览挂在 scene 而不是 objectRoot 下：objectRoot 是拾取与「框全场景」的取值
     // 范围，曲线挂进去会被射线命中（点轨迹选中人物），也会把包围盒撑到整条路径那么大。
     const previewRoot = new three.Group();
+    // 编辑器自己的东西，不是镜头里的东西：见 `setEditorHelpersVisible`。
+    previewRoot.userData.previzEditorOnly = true;
     scene.add(previewRoot);
     instance.pathPreview = new PrevizPathPreview(three, previewRoot);
     instance.resize();
@@ -374,8 +376,9 @@ export class PrevizRenderer {
       active && active.kind === 'camera' && activeNode && this.monitorCamera,
     );
 
-    // 手柄、以及出片机位自己的锥体，都不该进画面。
+    // 手柄、轨迹辅助物、以及出片机位自己的锥体，都不该进画面。
     this.gizmo?.setHelperVisible(false);
+    this.setEditorHelpersVisible(false);
     if (useMonitor && activeNode) activeNode.visible = false;
 
     // 编辑相机的 aspect 跟着视口走，和出片画幅无关；借用它出片前要先改，出完再还。
@@ -406,6 +409,7 @@ export class PrevizRenderer {
       this.camera.aspect = editorAspect;
       this.camera.updateProjectionMatrix();
       if (useMonitor && activeNode) activeNode.visible = true;
+      this.setEditorHelpersVisible(true);
       this.gizmo?.setHelperVisible(true);
       this.requestRender();
     }
@@ -623,6 +627,7 @@ export class PrevizRenderer {
     // 机位自己的锥体就长在相机原点上，不藏起来会糊满整个监看画面。
     const wasVisible = node.visible;
     node.visible = false;
+    this.setEditorHelpersVisible(false);
 
     this.renderer.setScissorTest(true);
     this.renderer.setViewport(rect.x, rect.y, rect.width, rect.height);
@@ -635,7 +640,23 @@ export class PrevizRenderer {
     this.renderer.setScissorTest(false);
     this.renderer.setViewport(0, 0, size.x, size.y);
 
+    this.setEditorHelpersVisible(true);
     node.visible = wasVisible;
+  }
+
+  /**
+   * 编辑器自己的辅助物（当下是轨迹曲线与轨迹点）在镜头里的开关。
+   *
+   * 它们属于编辑视图，不属于镜头：机位停在自己的轨迹上是「机位走位」的常规用法，
+   * 而那时轨迹点小球就贴在镜头原点上，监看框与成片都会被一团白糊满。
+   *
+   * 按 `previzEditorOnly` 标记扫 scene 的直接子节点，而不是记一份句柄：之后再往
+   * scene 上挂别的辅助物（标尺、安全框），打上标记就自动跟着一起藏。
+   */
+  private setEditorHelpersVisible(visible: boolean): void {
+    for (const child of this.scene.children) {
+      if (child.userData.previzEditorOnly) child.visible = visible;
+    }
   }
 
   private start(): void {

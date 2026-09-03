@@ -249,10 +249,24 @@ vi.mock('three', () => {
       setScissor = vi.fn();
       setScissorTest = vi.fn();
       clearDepth = vi.fn();
+      // 出片走的是离屏 render target。读回来的像素全是 0，出片本身在
+      // `render-capture.test.ts` 那边测；这里只要这条路能走通，好让出片那一次
+      // `render()` 真的发生——藏没藏住辅助物就是在那一刻断言的。
+      getRenderTarget = vi.fn(() => null);
+      setRenderTarget = vi.fn();
+      readRenderTargetPixels = vi.fn();
       constructor() {
         webglRenderers.push(this as unknown as FakeWebGLRenderer);
       }
     },
+    WebGLRenderTarget: class {
+      constructor(
+        public width: number,
+        public height: number,
+      ) {}
+      dispose = vi.fn();
+    },
+    SRGBColorSpace: 'srgb',
   };
 });
 
@@ -276,7 +290,9 @@ vi.mock('three/examples/jsm/controls/TransformControls.js', () => ({
     setMode = vi.fn();
     setSpace = vi.fn();
     dispose = vi.fn();
-    getHelper = vi.fn(() => ({ traverse() {} }));
+    // 真手柄是个 Object3D，挂在 scene 下面。谁扫一遍 scene 的子节点都会碰到它，
+    // 少了 userData 就是一句和被测行为毫无关系的 TypeError。
+    getHelper = vi.fn(() => ({ traverse() {}, visible: true, userData: {} }));
     addEventListener = vi.fn();
   },
 }));
@@ -859,6 +875,51 @@ describe('PrevizRenderer 接场景图', () => {
     // autoClear 借出去必须还：留在 false 之后主视图不再清屏，画面会一层层糊上去。
     expect(gl.autoClear).toBe(true);
 
+    instance.dispose();
+  });
+
+  it('keeps the editor-only helpers out of the monitor pass and out of the capture', async () => {
+    const instance = await PrevizRenderer.create(document.createElement('canvas'));
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject('camera', scene.objects));
+    instance.setScene(scene);
+    instance.setActiveCamera(scene.objects[0]!.id);
+    step();
+
+    // 机位停在自己的轨迹上时，那颗轨迹点小球就贴在镜头前——不藏起来，监看框和出片
+    // 的成片都会被一团糊满整幅画面的白挡住，而这恰恰是「机位走位」的常规用法。
+    //
+    // 必须在 `render()` 被调用的**那一刻**取样：藏起来是借的，pass 结束就还回去了，
+    // 事后翻 mock.calls 里那个场景对象，读到的永远是还完之后的状态。
+    type Traversable = {
+      traverse(callback: (object: { userData: Record<string, unknown>; visible: boolean }) => void): void;
+    };
+    let seen: boolean[] = [];
+    render.mockImplementation((target: unknown) => {
+      (target as Traversable).traverse((object) => {
+        if (object.userData.previzEditorOnly) seen.push(object.visible);
+      });
+    });
+    const helperVisibility = () => seen;
+
+    seen = [];
+    instance.requestRender();
+    step();
+    // 主视图一次 + 监看一次。主视图要看得见轨迹，监看不能。
+    expect(helperVisibility()).toEqual([true, false]);
+
+    // 出片同理，而且更要紧：监看糊了还能重摆机位，成片糊了是直接送进后面流程的。
+    seen = [];
+    await instance.capture().catch(() => null);
+    expect(helperVisibility()).toEqual([false]);
+
+    // 借出去要还：留在隐藏状态，主视图里整条轨迹从此消失。
+    seen = [];
+    instance.requestRender();
+    step();
+    expect(helperVisibility()[0]).toBe(true);
+
+    render.mockReset();
     instance.dispose();
   });
 });
