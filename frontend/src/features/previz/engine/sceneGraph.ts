@@ -475,10 +475,9 @@ export class PrevizSceneGraph {
   /**
    * 把当前显示模式刷到 `target` 子树的每份材质上。
    *
-   * 从全灰切回来时只有占位体能恢复本色——它建出来时就把本色记在了自己的 userData 上。
-   * Task 8 / Task 9 挂进来的 GLB 材质各有各的贴图与颜色，被染灰之后无从还原，那时要么
-   * 照这里的办法逐份材质记一份原色，要么换成整体覆盖材质（`Scene.overrideMaterial`）；
-   * 在只有占位体的当下，这个分支覆盖了全部情况。
+   * 回程有两条还原线：占位体建出来时就把分类色记在了自己的 userData 上；GLB 的材质
+   * 各有各的贴图与颜色，没人替它们记，所以染灰之前当场记一份在材质上。少了后面这条，
+   * 全灰切回实体之后每个模型都永久停在水泥灰上，用户唯一的补救办法是删掉重建。
    */
   private applyDisplayMode(target: THREE.Object3D): void {
     const mode = this.displayMode;
@@ -505,9 +504,17 @@ export class PrevizSceneGraph {
           standard.needsUpdate = true;
         }
         standard.opacity = transparent ? PREVIZ_TRANSLUCENT_OPACITY : 1;
-        if (mode === 'clay') standard.color?.set(CLAY_COLOR);
-        else if (mesh.userData.previzPlaceholder) {
+        if (mode === 'clay') {
+          // 只在第一次染灰时记账。这里读到的一定是本色：颜色只有这个函数会改，而这份
+          // 材质还没被它碰过。重复记账会把水泥灰当成本色记下来，那时回程就是个空操作。
+          if (standard.userData.previzOriginalColor === undefined) {
+            standard.userData.previzOriginalColor = standard.color?.getHex();
+          }
+          standard.color?.set(CLAY_COLOR);
+        } else if (mesh.userData.previzPlaceholder) {
           standard.color?.set(mesh.userData.previzPlaceholderColor);
+        } else if (typeof standard.userData.previzOriginalColor === 'number') {
+          standard.color?.set(standard.userData.previzOriginalColor);
         }
       }
     });
