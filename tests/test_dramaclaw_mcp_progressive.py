@@ -139,13 +139,11 @@ def test_freezone_handler_reads_rotating_turn_token_file(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_project_scope_lists_concrete_tools(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.delenv("DRAMACLAW_MCP_TOOL_DISCOVERY", raising=False)
 
     tools = await dramaclaw_mcp.list_tools()
 
     names = {tool.name for tool in tools}
     assert names == set(dramaclaw_mcp.TOOLS)
-    assert names.isdisjoint(dramaclaw_mcp.BRIDGE_TOOL_NAMES)
 
     schemas = {tool.name: tool.outputSchema for tool in tools}
     assert all(schema is not None for schema in schemas.values())
@@ -612,19 +610,16 @@ async def test_real_delete_nodes_empty_canvas_noop_matches_mcp_contract(monkeypa
 @pytest.mark.asyncio
 async def test_home_scope_lists_only_concrete_project_collection_tools(monkeypatch):
     monkeypatch.delenv("DRAMACLAW_PROJECT_ID", raising=False)
-    monkeypatch.delenv("DRAMACLAW_MCP_TOOL_DISCOVERY", raising=False)
 
     tools = await dramaclaw_mcp.list_tools()
 
     assert {tool.name for tool in tools} == dramaclaw_mcp.HOME_TOOL_NAMES
-    assert {tool.name for tool in tools}.isdisjoint(dramaclaw_mcp.BRIDGE_TOOL_NAMES)
 
 
 @pytest.mark.asyncio
 async def test_freezone_lists_concrete_hermes_tools(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
-    monkeypatch.delenv("DRAMACLAW_MCP_TOOL_DISCOVERY", raising=False)
 
     tools = await dramaclaw_mcp.list_tools()
     names = {tool.name for tool in tools}
@@ -643,189 +638,6 @@ async def test_freezone_lists_concrete_hermes_tools(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_codex_bridge_lists_only_function_compatible_discovery_tools(monkeypatch):
-    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.setenv("DRAMACLAW_MCP_TOOL_DISCOVERY", "bridge")
-
-    tools = await dramaclaw_mcp.list_tools()
-
-    assert {tool.name for tool in tools} == dramaclaw_mcp.BRIDGE_TOOL_NAMES
-
-
-@pytest.mark.asyncio
-async def test_codex_bridge_search_describe_and_call(monkeypatch):
-    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.setenv("DRAMACLAW_MCP_TOOL_DISCOVERY", "bridge")
-    schema, _handler = dramaclaw_mcp.TOOLS["dramaclaw_render_first_frames"]
-    calls = []
-    monkeypatch.setitem(
-        dramaclaw_mcp.TOOLS,
-        "dramaclaw_render_first_frames",
-        (
-            schema,
-            lambda arguments: calls.append(arguments)
-            or json.dumps(
-                {
-                    "ok": True,
-                    "episode": 1,
-                    "batch_id": "batch-1",
-                    "requested": [1],
-                    "started": [1],
-                }
-            ),
-        ),
-    )
-
-    search = await dramaclaw_mcp.call_tool(
-        dramaclaw_mcp.TOOL_SEARCH_NAME, {"query": "首帧生成"}
-    )
-    search_payload = json.loads(search.content[0].text)
-    assert "dramaclaw_render_first_frames" in {
-        item["name"] for item in search_payload["tools"]
-    }
-
-    describe = await dramaclaw_mcp.call_tool(
-        dramaclaw_mcp.TOOL_DESCRIBE_NAME,
-        {"tool_name": "dramaclaw_render_first_frames"},
-    )
-    describe_payload = json.loads(describe.content[0].text)
-    assert describe_payload["tool"]["input_schema"] == schema["parameters"]
-    assert describe_payload["tool"]["output_schema"]["x-dramaclaw-tool"] == (
-        "dramaclaw_render_first_frames"
-    )
-
-    result = await dramaclaw_mcp.call_tool(
-        dramaclaw_mcp.TOOL_CALL_NAME,
-        {
-            "tool_name": "dramaclaw_render_first_frames",
-            "arguments": {"episode": 1},
-        },
-    )
-    bridge_payload = json.loads(result.content[0].text)
-    assert bridge_payload["ok"] is True
-    assert bridge_payload["tool_name"] == "dramaclaw_render_first_frames"
-    assert bridge_payload["result"]["batch_id"] == "batch-1"
-    assert calls == [{"episode": 1}]
-
-
-@pytest.mark.asyncio
-async def test_codex_bridge_discovers_and_describes_every_project_tool(monkeypatch):
-    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.setenv("DRAMACLAW_MCP_TOOL_DISCOVERY", "bridge")
-
-    for tool_name, (schema, _handler) in dramaclaw_mcp.TOOLS.items():
-        search = await dramaclaw_mcp.call_tool(
-            dramaclaw_mcp.TOOL_SEARCH_NAME,
-            {"query": tool_name, "limit": 1},
-        )
-        search_payload = json.loads(search.content[0].text)
-        assert search_payload["tools"][0]["name"] == tool_name
-
-        describe = await dramaclaw_mcp.call_tool(
-            dramaclaw_mcp.TOOL_DESCRIBE_NAME,
-            {"tool_name": tool_name},
-        )
-        describe_payload = json.loads(describe.content[0].text)
-        assert describe_payload["tool"]["name"] == tool_name
-        assert describe_payload["tool"]["input_schema"] == schema["parameters"]
-
-
-@pytest.mark.asyncio
-async def test_codex_bridge_handles_concurrent_searches(monkeypatch):
-    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.setenv("DRAMACLAW_MCP_TOOL_DISCOVERY", "bridge")
-    queries = ["项目", "状态", "首帧", "视频", "音频", "角色", "画布", "工作流"] * 10
-
-    results = await asyncio.gather(
-        *(
-            dramaclaw_mcp.call_tool(
-                dramaclaw_mcp.TOOL_SEARCH_NAME,
-                {"query": query, "limit": 6},
-            )
-            for query in queries
-        )
-    )
-
-    assert len(results) == 80
-    assert all(json.loads(result.content[0].text)["tools"] for result in results)
-
-
-@pytest.mark.asyncio
-async def test_codex_bridge_rejects_unknown_and_nested_calls(monkeypatch):
-    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.setenv("DRAMACLAW_MCP_TOOL_DISCOVERY", "bridge")
-
-    unknown = await dramaclaw_mcp.call_tool(
-        dramaclaw_mcp.TOOL_DESCRIBE_NAME,
-        {"tool_name": "dramaclaw_not_real"},
-    )
-    nested = await dramaclaw_mcp.call_tool(
-        dramaclaw_mcp.TOOL_CALL_NAME,
-        {"tool_name": dramaclaw_mcp.TOOL_SEARCH_NAME, "arguments": {}},
-    )
-
-    assert unknown.isError is True
-    assert nested.isError is True
-    assert json.loads(unknown.content[0].text)["error"] == "unknown_dramaclaw_tool"
-    assert json.loads(nested.content[0].text)["error"] == "unknown_dramaclaw_tool"
-
-
-@pytest.mark.asyncio
-async def test_codex_bridge_keeps_home_and_freezone_scope_filters(monkeypatch):
-    monkeypatch.setenv("DRAMACLAW_MCP_TOOL_DISCOVERY", "bridge")
-    monkeypatch.delenv("DRAMACLAW_PROJECT_ID", raising=False)
-
-    home_search = await dramaclaw_mcp.call_tool(
-        dramaclaw_mcp.TOOL_SEARCH_NAME, {"query": ""}
-    )
-    home_payload = json.loads(home_search.content[0].text)
-    assert {item["name"] for item in home_payload["tools"]} == (
-        dramaclaw_mcp.HOME_TOOL_NAMES
-    )
-
-    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
-    denied = await dramaclaw_mcp.call_tool(
-        dramaclaw_mcp.TOOL_CALL_NAME,
-        {
-            "tool_name": "dramaclaw_render_first_frames",
-            "arguments": {"episode": 1},
-        },
-    )
-    assert denied.isError is True
-    assert json.loads(denied.content[0].text)["error"] == "unknown_dramaclaw_tool"
-
-
-async def test_codex_bridge_completes_real_mcp_handshake():
-    env = {
-        **os.environ,
-        "DRAMACLAW_MCP_TOOL_DISCOVERY": "bridge",
-        "DRAMACLAW_PROJECT_ID": "project-a",
-        "DRAMACLAW_USERNAME": "local",
-        "PYTHONDONTWRITEBYTECODE": "1",
-    }
-    parameters = StdioServerParameters(
-        command=sys.executable,
-        args=["-m", "novelvideo.chat.dramaclaw_mcp"],
-        env=env,
-        cwd=str(CE_ROOT),
-    )
-
-    async with stdio_client(parameters) as (reader, writer):
-        async with ClientSession(reader, writer) as session:
-            await session.initialize()
-            tools = await session.list_tools()
-            search = await session.call_tool(
-                dramaclaw_mcp.TOOL_SEARCH_NAME, {"query": "首帧生成"}
-            )
-
-    assert {tool.name for tool in tools.tools} == dramaclaw_mcp.BRIDGE_TOOL_NAMES
-    payload = json.loads(search.content[0].text)
-    assert "dramaclaw_render_first_frames" in {
-        item["name"] for item in payload["tools"]
-    }
-
-
 async def test_concrete_tool_completes_real_mcp_output_contract_round_trip():
     env = {
         **os.environ,
@@ -833,7 +645,6 @@ async def test_concrete_tool_completes_real_mcp_output_contract_round_trip():
         "DRAMACLAW_USERNAME": "local",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
-    env.pop("DRAMACLAW_MCP_TOOL_DISCOVERY", None)
     parameters = StdioServerParameters(
         command=sys.executable,
         args=["-m", "novelvideo.chat.dramaclaw_mcp"],
@@ -948,24 +759,19 @@ async def test_read_resource_rejects_existing_file_from_another_workspace(
         await dramaclaw_mcp.read_resource(foreign_skill.as_uri())
 
 
-def test_home_scope_only_discovers_project_collection_tools(monkeypatch):
+def test_home_scope_only_exposes_project_collection_tools(monkeypatch):
     monkeypatch.delenv("DRAMACLAW_PROJECT_ID", raising=False)
 
     assert set(dramaclaw_mcp._available_tools()) == dramaclaw_mcp.HOME_TOOL_NAMES
-    matches = dramaclaw_mcp._search_tools("项目列表", 12)
-    assert {match["name"] for match in matches} <= dramaclaw_mcp.HOME_TOOL_NAMES
-    assert matches[0]["name"] == "dramaclaw_get"
 
 
-def test_project_scope_can_discover_production_tools(monkeypatch):
+def test_project_scope_exposes_production_tools(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.delenv("DRAMACLAW_TOOL_MODE", raising=False)
 
     available = dramaclaw_mcp._available_tools()
-    matches = dramaclaw_mcp._search_tools("首帧生成", 6)
 
     assert set(available) == set(dramaclaw_mcp.TOOLS)
-    assert "dramaclaw_render_first_frames" in {match["name"] for match in matches}
 
 
 def test_freezone_scope_hides_mainline_write_tools(monkeypatch):
@@ -993,7 +799,10 @@ async def test_freezone_scope_rejects_direct_mainline_write_call(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("wrapper_name", sorted(dramaclaw_mcp.BRIDGE_TOOL_NAMES))
+@pytest.mark.parametrize(
+    "wrapper_name",
+    ["dramaclaw_tool_search", "dramaclaw_tool_describe", "dramaclaw_tool_call"],
+)
 async def test_legacy_bridge_wrappers_are_unavailable(monkeypatch, wrapper_name):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
 

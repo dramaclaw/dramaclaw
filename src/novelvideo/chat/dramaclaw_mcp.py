@@ -13,7 +13,6 @@ import inspect
 import json
 import logging
 import os
-import re
 import sys
 import time
 import types as py_types
@@ -166,22 +165,6 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-TOOL_SEARCH_NAME = "dramaclaw_tool_search"
-TOOL_DESCRIBE_NAME = "dramaclaw_tool_describe"
-TOOL_CALL_NAME = "dramaclaw_tool_call"
-BRIDGE_TOOL_NAMES = frozenset({TOOL_SEARCH_NAME, TOOL_DESCRIBE_NAME, TOOL_CALL_NAME})
-_BRIDGE_COMMON_OUTPUT_PROPERTIES: dict[str, Any] = {
-    "ok": {"type": "boolean"},
-    "status": {"type": "string", "minLength": 1},
-    "code": {"type": ["string", "null"]},
-    "error": {"type": ["string", "object", "array", "null"]},
-    "message": {"type": ["string", "null"]},
-    "retryable": {"type": "boolean"},
-    "next_action": {"type": ["string", "null"]},
-    "agent_instruction": {"type": ["string", "null"]},
-    "data": {},
-}
-
 def _output_schema_for_tool(name: str) -> dict[str, Any]:
     """Read the explicit contract declared next to the plugin tool definition."""
     schema_entry = TOOLS.get(name)
@@ -209,16 +192,6 @@ HOME_TOOL_NAMES = frozenset(
     }
 )
 
-_SEARCH_ALIASES = {
-    "dramaclaw_get": "get read list inspect project projects 项目 查询 读取 列表 状态 settings config",
-    "dramaclaw_post": "post create start project projects 项目 创建 新建 启动 upload ingest",
-    "dramaclaw_patch": "patch update edit project projects settings 项目 修改 更新 设置",
-    "dramaclaw_delete": "delete remove project projects canvas 项目 删除 移除",
-}
-_SEARCH_TERM_RE = re.compile(r"[\w\u4e00-\u9fff-]+", re.UNICODE)
-_CJK_TERM_RE = re.compile(r"^[\u4e00-\u9fff]+$")
-
-
 def _scope_kind() -> str:
     return "project" if os.environ.get("DRAMACLAW_PROJECT_ID", "").strip() else "home"
 
@@ -238,13 +211,6 @@ def _freezone_canvas_mode() -> bool:
     )
 
 
-def _bridge_discovery_mode() -> bool:
-    """Use function-only progressive discovery for compatibility gateways."""
-    return (
-        os.environ.get("DRAMACLAW_MCP_TOOL_DISCOVERY", "").strip().lower() == "bridge"
-    )
-
-
 def _available_tools() -> dict[str, tuple[dict[str, Any], Any]]:
     if _scope_kind() == "home":
         return {name: TOOLS[name] for name in sorted(HOME_TOOL_NAMES) if name in TOOLS}
@@ -257,178 +223,6 @@ def _available_tools() -> dict[str, tuple[dict[str, Any], Any]]:
         )
         return {name: item for name, item in TOOLS.items() if name not in denied}
     return dict(TOOLS)
-
-
-def _tool_summary(name: str, schema: dict[str, Any]) -> dict[str, str]:
-    return {
-        "name": name,
-        "description": str(schema.get("description") or "").strip(),
-    }
-
-
-def _search_tools(query: str, limit: int) -> list[dict[str, str]]:
-    available = _available_tools()
-    normalized = str(query or "").strip().lower()
-    terms: list[str] = []
-    for term in _SEARCH_TERM_RE.findall(normalized):
-        terms.append(term)
-        if len(term) > 2 and _CJK_TERM_RE.fullmatch(term):
-            terms.extend(term[index : index + 2] for index in range(len(term) - 1))
-    ranked: list[tuple[int, str, dict[str, Any]]] = []
-    for name, (schema, _handler) in available.items():
-        description = str(schema.get("description") or "")
-        haystack = f"{name} {description} {_SEARCH_ALIASES.get(name, '')}".lower()
-        if not terms:
-            score = 1
-        else:
-            score = sum(
-                4 if term in name.lower() else 1 for term in terms if term in haystack
-            )
-        if score:
-            ranked.append((score, name, schema))
-
-    # A zero-result search is rarely useful to an agent. Home has only four
-    # tools, while project fallback returns a small alphabetical sample that
-    # lets the model refine its next query without receiving every schema.
-    if not ranked:
-        ranked = [(0, name, schema) for name, (schema, _handler) in available.items()]
-    ranked.sort(key=lambda item: (-item[0], item[1]))
-    return [_tool_summary(name, schema) for _score, name, schema in ranked[:limit]]
-
-
-def _bridge_output_schema(
-    name: str,
-    properties: dict[str, Any],
-    required: list[str],
-) -> dict[str, Any]:
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": f"{name}.result",
-        "type": "object",
-        "properties": {**_BRIDGE_COMMON_OUTPUT_PROPERTIES, **properties},
-        "required": ["ok", "status", *required],
-        "additionalProperties": False,
-        "x-dramaclaw-tool": name,
-    }
-
-
-def _bridge_tools() -> list[types.Tool]:
-    scope = _scope_kind()
-    return [
-        types.Tool(
-            name=TOOL_SEARCH_NAME,
-            description=(
-                "Search the project-scoped DramaClaw tool catalog before choosing a business "
-                "operation. Search by user intent, production phase, asset, task, or Chinese/English "
-                f"keyword. Current scope: {scope}. Returns names and short descriptions only."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Intent or capability keywords, for example 项目列表, 分集规划, 首帧, or compose video.",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 12,
-                        "default": 6,
-                    },
-                },
-                "additionalProperties": False,
-            },
-            outputSchema=_bridge_output_schema(
-                TOOL_SEARCH_NAME,
-                {
-                    "tools": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string", "minLength": 1},
-                                "description": {"type": "string"},
-                            },
-                            "required": ["name", "description"],
-                            "additionalProperties": False,
-                        },
-                    }
-                },
-                ["tools"],
-            ),
-        ),
-        types.Tool(
-            name=TOOL_DESCRIBE_NAME,
-            description=(
-                "Return the exact input schema for one tool found with dramaclaw_tool_search. "
-                "Use this before dramaclaw_tool_call when its arguments are not already known."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "tool_name": {"type": "string", "minLength": 1},
-                },
-                "required": ["tool_name"],
-                "additionalProperties": False,
-            },
-            outputSchema=_bridge_output_schema(
-                TOOL_DESCRIBE_NAME,
-                {
-                    "tool_name": {"type": ["string", "null"]},
-                    "tool": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "minLength": 1},
-                            "description": {"type": "string"},
-                            "input_schema": {"type": "object"},
-                            "output_schema": {"type": "object"},
-                        },
-                        "required": [
-                            "name",
-                            "description",
-                            "input_schema",
-                            "output_schema",
-                        ],
-                        "additionalProperties": False,
-                    },
-                },
-                [],
-            ),
-        ),
-        types.Tool(
-            name=TOOL_CALL_NAME,
-            description=(
-                "Call one project-scoped DramaClaw tool after discovering it. The underlying "
-                "schema is validated and the existing short-lived agent token remains authoritative."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "tool_name": {"type": "string", "minLength": 1},
-                    "arguments": {"type": "object", "default": {}},
-                },
-                "required": ["tool_name"],
-                "additionalProperties": False,
-            },
-            outputSchema=_bridge_output_schema(
-                TOOL_CALL_NAME,
-                {
-                    "tool_name": {"type": "string", "minLength": 1},
-                    "result": {"type": "object"},
-                },
-                [],
-            ),
-        ),
-    ]
-
-
-def _json_text(payload: Any) -> list[types.TextContent]:
-    return [
-        types.TextContent(
-            type="text",
-            text=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-        )
-    ]
 
 
 def _normalize_structured_result(
@@ -490,10 +284,7 @@ def _mcp_error_result(name: str, payload: dict[str, Any]) -> types.CallToolResul
     body.setdefault("retryable", False)
     body.setdefault("next_action", "检查错误字段后再重试")
     encoded = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
-    if name in BRIDGE_TOOL_NAMES:
-        schema = next(tool.outputSchema for tool in _bridge_tools() if tool.name == name)
-    else:
-        schema = _output_schema_for_tool(name)
+    schema = _output_schema_for_tool(name)
     structured = _normalize_structured_result(schema, body)
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=encoded)],
@@ -585,18 +376,8 @@ def _workflow_plan_log_summary(arguments: Any) -> dict[str, Any]:
 
 @SERVER.list_tools()
 async def list_tools() -> list[types.Tool]:
-    # Codex compatibility gateways that translate Responses requests to Chat
-    # Completions cannot carry the hosted ``type=tool_search`` wire item. In
-    # that environment expose the existing search/describe/call operations as
-    # ordinary MCP functions, retaining progressive discovery without sending
-    # an unsupported tool type. Other MCP clients keep native concrete tools.
-    if _bridge_discovery_mode():
-        return _bridge_tools()
-
-    # Expose concrete, scope-filtered business tools everywhere. Native MCP
-    # clients can defer loading schemas themselves, while the old
-    # search/describe/call wrapper hid capabilities from that mechanism and
-    # added an avoidable model round trip.
+    # Native Responses Tool Search progressively loads these scope-filtered
+    # concrete tools and preserves their input/output schemas end to end.
     result: list[types.Tool] = []
     for name, (schema, _handler) in sorted(_available_tools().items()):
         parameters = schema.get("parameters") if isinstance(schema, dict) else None
@@ -745,110 +526,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     arguments = arguments or {}
     call_started = time.monotonic()
     logger.info(
-        "mcp.call.start scope=%s tool=%s bridge_tool=%s arg_keys=%s",
+        "mcp.call.start scope=%s tool=%s arg_keys=%s",
         _scope_kind(),
         name,
-        arguments.get("tool_name"),
         sorted(str(key) for key in arguments),
     )
-    if _bridge_discovery_mode() and name == TOOL_SEARCH_NAME:
-        try:
-            limit = max(1, min(12, int(arguments.get("limit") or 6)))
-        except (TypeError, ValueError):
-            limit = 6
-        payload = {
-            "ok": True,
-            "status": "completed",
-            "tools": _search_tools(str(arguments.get("query") or ""), limit),
-        }
-        _log_mcp_call_end(
-            scope=_scope_kind(), tool=name, started=call_started, payload=payload
-        )
-        return types.CallToolResult(
-            content=_json_text(payload),
-            structuredContent=payload,
-            isError=False,
-        )
-
-    if _bridge_discovery_mode() and name == TOOL_DESCRIBE_NAME:
-        tool_name = str(arguments.get("tool_name") or "").strip()
-        available = _available_tools()
-        if tool_name not in available:
-            return _mcp_error_result(
-                TOOL_DESCRIBE_NAME,
-                {
-                    "ok": False,
-                    "error": "unknown_dramaclaw_tool",
-                    "tool_name": tool_name,
-                }
-            )
-        schema, _handler = available[tool_name]
-        payload = {
-            "ok": True,
-            "status": "completed",
-            "tool": {
-                "name": tool_name,
-                "description": str(schema.get("description") or ""),
-                "input_schema": schema.get("parameters") or {"type": "object"},
-                "output_schema": _output_schema_for_tool(tool_name),
-            },
-        }
-        _log_mcp_call_end(
-            scope=_scope_kind(), tool=name, started=call_started, payload=payload
-        )
-        return types.CallToolResult(
-            content=_json_text(payload),
-            structuredContent=payload,
-            isError=False,
-        )
-
-    if _bridge_discovery_mode() and name == TOOL_CALL_NAME:
-        tool_name = str(arguments.get("tool_name") or "").strip()
-        tool_arguments = arguments.get("arguments") or {}
-        if tool_name not in _available_tools() or tool_name in BRIDGE_TOOL_NAMES:
-            return _mcp_error_result(
-                TOOL_CALL_NAME,
-                {
-                    "ok": False,
-                    "error": "unknown_dramaclaw_tool",
-                    "tool_name": tool_name,
-                }
-            )
-        if not isinstance(tool_arguments, dict):
-            return _mcp_error_result(
-                TOOL_CALL_NAME,
-                {
-                    "ok": False,
-                    "error": "tool_arguments_invalid",
-                    "tool_name": tool_name,
-                    "message": "arguments must be an object",
-                }
-            )
-        underlying = await call_tool(tool_name, tool_arguments)
-        underlying_structured = (
-            underlying.structuredContent
-            if isinstance(underlying, types.CallToolResult)
-            else None
-        )
-        payload = {
-            "ok": bool(
-                isinstance(underlying_structured, dict)
-                and underlying_structured.get("ok") is True
-            ),
-            "status": (
-                str(underlying_structured.get("status") or "completed")
-                if isinstance(underlying_structured, dict)
-                else "failed"
-            ),
-            "tool_name": tool_name,
-            "result": underlying_structured or {},
-        }
-        return types.CallToolResult(
-            content=_json_text(payload),
-            structuredContent=payload,
-            isError=payload["ok"] is False,
-        )
-
     if name in _available_tools():
         schema, handler = _available_tools()[name]
         workflow_started = (

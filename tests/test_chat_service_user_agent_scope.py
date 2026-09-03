@@ -1267,9 +1267,8 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
             in captured["prompt"]
         )
         developer_instructions = chat_service._codex_developer_instructions(tool_mode)
-        assert "dramaclaw_tool_search" in developer_instructions
-        assert "dramaclaw_tool_describe" in developer_instructions
-        assert "dramaclaw_tool_call" in developer_instructions
+        assert "native Responses Tool Search" in developer_instructions
+        assert "call the selected tool directly" in developer_instructions
         assert "custom-topology reference" in developer_instructions
         assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
         assert "expected_node_count" in developer_instructions
@@ -1285,8 +1284,8 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "run_after_create=true" in developer_instructions
     else:
         assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
-        assert "dramaclaw_tool_search" in chat_service._codex_developer_instructions(
-            tool_mode
+        assert "native Responses Tool Search" in (
+            chat_service._codex_developer_instructions(tool_mode)
         )
     assert [event["type"] for event in events] == [
         "thread_started",
@@ -1986,7 +1985,6 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_CHAT_SURFACE",
         "DRAMACLAW_EXTERNAL_MCP",
         "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
-        "DRAMACLAW_MCP_TOOL_DISCOVERY",
         "DRAMACLAW_AGENT_PROFILE",
         "DRAMACLAW_PROJECT_ID",
         "DRAMACLAW_SKILLS_DIR",
@@ -2038,7 +2036,6 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         '"DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR","DRAMACLAW_CHAT_SURFACE",'
         '"DRAMACLAW_EXTERNAL_MCP",'
         '"DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",'
-        '"DRAMACLAW_MCP_TOOL_DISCOVERY",'
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
         '"DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
         '"DRAMACLAW_USERNAME"]' in overrides
@@ -2193,7 +2190,7 @@ def test_codex_gateway_overrides_use_responses_without_embedding_secret():
     model = next(
         item for item in catalog["models"] if item["slug"] == "DC-codex-agent-LLM"
     )
-    assert model["supports_search_tool"] is False
+    assert model["supports_search_tool"] is True
     assert model["base_instructions"]
     assert model["truncation_policy"] == {"mode": "tokens", "limit": 10000}
     assert "secret-value" not in rendered
@@ -2220,7 +2217,7 @@ def test_codex_gateway_fails_closed_for_incomplete_model_catalog(monkeypatch, tm
         chat_service._codex_gateway_config_overrides("https://gateway.example/v1")
 
 
-def test_codex_gateway_accepts_explicitly_disabled_tool_search(monkeypatch, tmp_path):
+def test_codex_gateway_rejects_disabled_tool_search(monkeypatch, tmp_path):
     bundled = (
         Path(chat_service.__file__).resolve().parents[3]
         / "deploy"
@@ -2233,11 +2230,8 @@ def test_codex_gateway_accepts_explicitly_disabled_tool_search(monkeypatch, tmp_
     catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
     monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(catalog_path))
 
-    overrides = chat_service._codex_gateway_config_overrides(
-        "https://gateway.example/v1"
-    )
-
-    assert any(value.startswith("model_catalog_json=") for value in overrides)
+    with pytest.raises(RuntimeError, match="must enable supports_search_tool"):
+        chat_service._codex_gateway_config_overrides("https://gateway.example/v1")
 
 
 def test_codex_gateway_reasoning_effort_is_configurable(monkeypatch):
@@ -2283,7 +2277,6 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     assert env["SUPERTALE_AGENT_SCOPE"] == "project"
     assert env["DRAMACLAW_AGENT_PROFILE"] == "main"
     assert env["DRAMACLAW_TOOL_MODE"] == "default"
-    assert env["DRAMACLAW_MCP_TOOL_DISCOVERY"] == "bridge"
     assert env["DRAMACLAW_SKILLS_DIR"].endswith(
         "/agents/codex/workspaces/main-0d6e4079e367/.agents/skills"
     )

@@ -93,9 +93,9 @@ _ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str]] = {}
 _ACTIVE_CODEX_TURNS_LOCK = threading.Lock()
 _CODEX_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant. Use the required dramaclaw MCP "
-    "server for all DramaClaw data reads and writes. Discover business operations with "
-    "dramaclaw_tool_search, inspect unknown schemas with dramaclaw_tool_describe, and "
-    "execute them with dramaclaw_tool_call. Do not guess a tool name or argument schema. "
+    "server for all DramaClaw data reads and writes. Use native Responses Tool Search to "
+    "discover the scope-filtered concrete MCP tools, inspect their schemas, and call the "
+    "selected concrete tool directly. Do not guess a tool name or argument schema. "
     "Do not use shell commands, "
     "local file editing, web search, or other external tools."
 )
@@ -105,8 +105,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "explicitly ask to create/add/land nodes or a workflow on the canvas, answer in chat. Do not "
     "search Workflow Skills and do not call a canvas write tool merely because the requested "
     "content mentions images, audio, or video. "
-    "Use dramaclaw_tool_search, dramaclaw_tool_describe, and dramaclaw_tool_call on the "
-    "required dramaclaw MCP server to discover and execute Freezone operations. "
+    "Use native Responses Tool Search on the required dramaclaw MCP server to discover the "
+    "scope-filtered concrete Freezone operations, then call the selected tool directly. "
     "For any workflow, several connected nodes, grouped stages, storyboard, or media pipeline, "
     "load and follow the project Agent Skill named dramaclaw-workflows. Read that Skill only from "
     "the exact file URI advertised in the available Skills or dramaclaw resources; never invent a "
@@ -587,12 +587,7 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
 
 
 def _codex_freezone_tool_name(event: Any) -> str:
-    name = str(getattr(event, "name", "") or "").rsplit(".", 1)[-1].strip()
-    if name == "dramaclaw_tool_call":
-        tool_input = getattr(event, "input", None)
-        if isinstance(tool_input, dict):
-            name = str(tool_input.get("tool_name") or "").strip()
-    return name
+    return str(getattr(event, "name", "") or "").rsplit(".", 1)[-1].strip()
 
 
 def _json_objects_from_codex_tool_value(value: Any) -> list[dict[str, Any]]:
@@ -4919,10 +4914,6 @@ def _build_codex_env(
     if agent_token_file is not None:
         env["DRAMACLAW_AGENT_TOKEN_FILE"] = str(agent_token_file)
     env["DRAMACLAW_TOOL_MODE"] = str(tool_mode or "default").strip() or "default"
-    # Preserve progressive tool discovery without emitting Responses' hosted
-    # ``tool_search`` type through gateways that convert requests to Chat.
-    # This variable is set only for Codex; Hermes keeps its native registry.
-    env["DRAMACLAW_MCP_TOOL_DISCOVERY"] = "bridge"
     if str(tool_mode or "").strip() == "freezone_canvas":
         # Keep Codex MCP on the same per-user/per-profile bridge directory as
         # Hermes. Without this, the MCP process writes pending commands into a
@@ -5229,7 +5220,6 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_CHAT_SURFACE",
                 "DRAMACLAW_EXTERNAL_MCP",
                 "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
-                "DRAMACLAW_MCP_TOOL_DISCOVERY",
                 "DRAMACLAW_AGENT_PROFILE",
                 "DRAMACLAW_PROJECT_ID",
                 "DRAMACLAW_SKILLS_DIR",
@@ -5327,8 +5317,8 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
     ]
     # The repository ships complete metadata for the default Gateway slug;
     # deployments may replace it with another verified catalog. Keep
-    # supports_search_tool explicit in the catalog: compatibility gateways may
-    # accept Responses requests while rejecting the hosted tool_search type.
+    # The Gateway and App Server preserve native Responses Tool Search, so the
+    # model catalog must keep it enabled for progressive concrete MCP loading.
     bundled_catalog = (
         Path(__file__).resolve().parents[3]
         / "deploy"
@@ -5375,9 +5365,9 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
         raise RuntimeError(
             f"Codex model catalog has no complete entry for {configured_model}"
         )
-    if not isinstance(entry.get("supports_search_tool"), bool):
+    if entry.get("supports_search_tool") is not True:
         raise RuntimeError(
-            f"Codex model catalog must declare supports_search_tool for {configured_model}"
+            f"Codex model catalog must enable supports_search_tool for {configured_model}"
         )
     if not str(entry.get("base_instructions") or "").strip():
         raise RuntimeError(

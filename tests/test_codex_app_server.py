@@ -1,5 +1,6 @@
 from pathlib import Path
 from contextlib import contextmanager
+from importlib.metadata import distribution
 import os
 import sqlite3
 import threading
@@ -7,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from novelvideo.chat import backend_sdk, codex_app_server
+from novelvideo.chat import backend_sdk, codex_app_server, service
 from novelvideo.chat.backend_sdk import (
     CodexThread,
     _start_codex_turn,
@@ -256,6 +257,100 @@ def test_codex_149_sdk_exposes_required_runtime_notifications():
         "turn/plan/updated",
         "turn/started",
     } <= NOTIFICATION_MODELS.keys()
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_real_gateway_app_server_native_tool_search_calls_concrete_mcp(
+    monkeypatch, tmp_path
+):
+    """Exercise the deployed Gateway, real App Server, and stdio MCP together.
+
+    This is intentionally opt-in because it spends a real model request and
+    requires a Gateway with Responses Tool Search enabled. It verifies the
+    externally observable contract: the model reaches a scope-filtered
+    concrete MCP tool, not the removed search/describe/call wrappers.
+    """
+
+    if os.environ.get("DRAMACLAW_NATIVE_TOOL_SEARCH_E2E", "").strip() != "1":
+        pytest.skip("set DRAMACLAW_NATIVE_TOOL_SEARCH_E2E=1 for the live Gateway test")
+    gateway_base_url = os.environ.get(
+        "DRAMACLAW_NATIVE_TOOL_SEARCH_E2E_GATEWAY_URL", ""
+    ).strip()
+    gateway_api_key = os.environ.get(
+        "DRAMACLAW_NATIVE_TOOL_SEARCH_E2E_GATEWAY_KEY", ""
+    ).strip()
+    if not gateway_base_url or not gateway_api_key:
+        pytest.skip("a Tool Search-capable DramaClaw Gateway URL and key are required")
+
+    bundled_codex = Path(
+        distribution("openai-codex-cli-bin").locate_file(
+            "codex_cli_bin/bin/codex"
+        )
+    )
+    codex_bin = Path(os.environ.get("CODEX_BIN", "") or bundled_codex)
+    if not codex_bin.is_file():
+        pytest.skip("DramaClaw-patched Codex binary is unavailable")
+
+    codex_home = tmp_path / "codex-home"
+    token_file = tmp_path / "turn.token"
+    token_file.write_text("e2e-agent-token", encoding="utf-8")
+    token_file.chmod(0o600)
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    env = {
+        **os.environ,
+        "CODEX_HOME": str(codex_home),
+        "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_base_url,
+        "DRAMACLAW_PROJECT_ID": "native-tool-search-e2e",
+        "DRAMACLAW_USERNAME": "local",
+        "DRAMACLAW_AGENT_TOKEN_FILE": str(token_file),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    client = backend_sdk.CodexClient(
+        codex_bin=codex_bin,
+        cwd=tmp_path,
+        env=env,
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions=service._codex_developer_instructions("default"),
+        config_overrides=service._codex_gateway_config_overrides(gateway_base_url),
+        thread_config_overrides=service._codex_mcp_config_overrides(
+            service._dramaclaw_mcp_servers()
+        ),
+        turn_metadata={"dramaclaw_gateway_api_key": gateway_api_key},
+    )
+
+    try:
+        events = [
+            event
+            async for event in client.thread_start().stream(
+                "为第 1 集准备系统音色，但不要确认执行。使用原生 Tool Search 找到并调用"
+                "唯一合适的 DramaClaw MCP 业务工具，然后简短报告确认要求。"
+            )
+        ]
+    finally:
+        codex_app_server.stop_shared_codex_runtime()
+
+    completed_tools = [
+        event
+        for event in events
+        if event.type == "tool_updated" and event.status == "completed"
+    ]
+    assert [event.name for event in completed_tools] == [
+        "dramaclaw.dramaclaw_prepare_system_voices"
+    ]
+    assert completed_tools[0].call_id
+    assert completed_tools[0].structured["confirmation_required"] is True
+    assert completed_tools[0].structured["operation"] == "prepare_system_voices"
+    assert all(
+        name not in str(event.name or "")
+        for event in events
+        for name in (
+            "dramaclaw_tool_search",
+            "dramaclaw_tool_describe",
+            "dramaclaw_tool_call",
+        )
+    )
 
 
 def test_codex_native_approval_handler_fails_closed():
