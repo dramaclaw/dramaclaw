@@ -2,13 +2,59 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useTranslation } from 'react-i18next';
 
-import type { PrevizPathPoint, Vec3 } from '../domain/scene';
-import { clipById, isPathClip } from '../domain/timeline';
+import { PREVIZ_RIG_ANCHOR_FRACTION } from '../domain/closeup';
+import type {
+  PrevizPathPoint,
+  PrevizRigClip,
+  RigAnchorPart,
+  RigBearing,
+  RigMotion,
+  Vec3,
+} from '../domain/scene';
+import { clipById, isPathClip, isRigClip } from '../domain/timeline';
 import { usePrevizStore } from '../store';
 
 const FIELD =
   'w-16 rounded bg-[#1d222b] px-1 py-0.5 text-right text-xs text-[#c7cedb] outline-none';
 const ACTION = 'rounded bg-[#242a35] px-2 py-1 text-xs text-[#c7cedb] hover:bg-[#2f3644]';
+const SELECT = 'rounded bg-[#1d222b] px-1 py-0.5 text-xs text-[#c7cedb] outline-none';
+const SECTION = 'text-[10px] uppercase tracking-wide text-[#6d7585]';
+
+/** 锚点从低到高。顺序照身体来，下拉里才好按「往上挪一格」读。 */
+const ANCHOR_PARTS = Object.keys(PREVIZ_RIG_ANCHOR_FRACTION) as RigAnchorPart[];
+const MOTIONS: RigMotion[] = ['static', 'orbit', 'push', 'pull'];
+const BEARINGS: RigBearing[] = ['front', 'custom'];
+
+/** 下拉框。选项的字全部走 i18n，值才是存进片段里的东西。 */
+function SelectField<T extends string>({
+  label,
+  value,
+  options,
+  onCommit,
+}: {
+  label: string;
+  value: T;
+  options: readonly { value: T; label: string }[];
+  onCommit: (next: T) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1 text-[11px] text-[#8b93a3]">
+      {label}
+      <select
+        aria-label={label}
+        className={SELECT}
+        value={value}
+        onChange={(event) => onCommit(event.target.value as T)}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 /** 数字输入框。`key` 挂当前值：外部改动（撤销、拖手柄）要能把框里的字刷新掉。 */
 function NumberField({
@@ -41,6 +87,117 @@ function NumberField({
 }
 
 /**
+ * 特写片段的取景面板。机位不自己走位，调的是「跟着谁、离多远、从哪个方位看」，
+ * 所以这里一个关键帧都没有。
+ */
+function CloseupPanel({ clip, cameraObjectId }: { clip: PrevizRigClip; cameraObjectId: string }) {
+  const { t } = useTranslation();
+  const objects = usePrevizStore((state) => state.scene.objects);
+  const updateCloseup = usePrevizStore((state) => state.updateCloseup);
+  const bakeCloseup = usePrevizStore((state) => state.bakeCloseup);
+
+  // 机位自己不在候选里：自己跟自己没有不动点，求值器也只会原地跳过。
+  const targets = objects.filter((object) => object.id !== cameraObjectId);
+  const aiming = clip.aimObjectId !== null;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className={SECTION}>{t('previz.clip.closeup.sectionTracking')}</div>
+      <div className="flex flex-wrap items-center gap-2">
+        <SelectField
+          label={t('previz.clip.closeup.target')}
+          value={clip.anchorObjectId}
+          options={targets.map((object) => ({ value: object.id, label: object.name }))}
+          // 「看向」跟着目标走：换了人还盯着上一个，画面里就只剩一个后脑勺。
+          onCommit={(next) =>
+            updateCloseup(clip.id, {
+              anchorObjectId: next,
+              ...(aiming ? { aimObjectId: next } : {}),
+            })
+          }
+        />
+        <SelectField
+          label={t('previz.clip.closeup.anchor')}
+          value={clip.anchorPart}
+          options={ANCHOR_PARTS.map((part) => ({
+            value: part,
+            label: t(`previz.clip.closeup.part.${part}`),
+          }))}
+          onCommit={(next) => updateCloseup(clip.id, { anchorPart: next })}
+        />
+      </div>
+
+      <div className={SECTION}>{t('previz.clip.closeup.sectionFraming')}</div>
+      <div className="flex flex-wrap items-center gap-2">
+        <SelectField
+          label={t('previz.clip.closeup.aim')}
+          value={aiming ? 'track' : 'free'}
+          options={[
+            { value: 'track', label: t('previz.clip.closeup.aimTrack') },
+            { value: 'free', label: t('previz.clip.closeup.aimFree') },
+          ]}
+          onCommit={(next) =>
+            updateCloseup(clip.id, { aimObjectId: next === 'track' ? clip.anchorObjectId : null })
+          }
+        />
+        <SelectField
+          label={t('previz.clip.closeup.bearing')}
+          value={clip.bearing}
+          options={BEARINGS.map((bearing) => ({
+            value: bearing,
+            label: t(`previz.clip.closeup.bearing_${bearing}`),
+          }))}
+          onCommit={(next) => updateCloseup(clip.id, { bearing: next })}
+        />
+        <NumberField
+          label={t('previz.clip.closeup.azimuth')}
+          value={clip.azimuth}
+          step={1}
+          onCommit={(next) => updateCloseup(clip.id, { azimuth: next })}
+        />
+        <NumberField
+          label={t('previz.clip.closeup.elevation')}
+          value={clip.elevation}
+          step={1}
+          onCommit={(next) => updateCloseup(clip.id, { elevation: next })}
+        />
+      </div>
+
+      <div className={SECTION}>{t('previz.clip.closeup.sectionMotion')}</div>
+      <div className="flex flex-wrap items-center gap-2">
+        <NumberField
+          label={t('previz.clip.closeup.distance')}
+          value={clip.distance}
+          step={0.05}
+          onCommit={(next) => updateCloseup(clip.id, { distance: next })}
+        />
+        <NumberField
+          label={t('previz.clip.closeup.height')}
+          value={clip.height}
+          step={0.05}
+          onCommit={(next) => updateCloseup(clip.id, { height: next })}
+        />
+        <SelectField
+          label={t('previz.clip.closeup.motion')}
+          value={clip.motion}
+          options={MOTIONS.map((motion) => ({
+            value: motion,
+            label: t(`previz.clip.closeup.motion_${motion}`),
+          }))}
+          onCommit={(next) => updateCloseup(clip.id, { motion: next })}
+        />
+      </div>
+
+      <div className="flex flex-wrap gap-1">
+        <button type="button" className={ACTION} onClick={() => bakeCloseup(clip.id)}>
+          {t('previz.clip.closeup.bake')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * 片段与轨迹点属性面板。挂在右侧属性面板下方，只在选中片段时出现。
  *
  * 所有编辑都走数值输入框与按钮，而不是在时间轴条上拖：jsdom 没有布局，拖拽的命中
@@ -60,9 +217,9 @@ export function PrevizClipInspector() {
   const clearPath = usePrevizStore((state) => state.clearPath);
   const setClipEnd = usePrevizStore((state) => state.setClipEnd);
 
-  // clipById 交出的是 { track, clip }，这里只要片段本身。
-  const clip = selectedClipId ? clipById(scene, selectedClipId)?.clip : undefined;
-  if (!clip) {
+  const found = selectedClipId ? clipById(scene, selectedClipId) : undefined;
+  const clip = found?.clip;
+  if (!clip || !found) {
     return <div className="px-3 py-2 text-xs text-[#6d7585]">{t('previz.clip.empty')}</div>;
   }
 
@@ -105,22 +262,29 @@ export function PrevizClipInspector() {
         <button type="button" className={ACTION} onClick={() => trimClipToPlayhead(clip.id, 'end')}>
           {t('previz.clip.trimEnd')}
         </button>
-        <button type="button" className={ACTION} onClick={() => insertKeyframe(clip.id)}>
-          {t('previz.clip.insertPoint')}
-        </button>
-        <button type="button" className={ACTION} onClick={() => clearPath(clip.id)}>
-          {t('previz.clip.clearPoints')}
-        </button>
+        {/* 特写片段身上没有关键帧，这两个按钮按下去只是空转。 */}
+        {isPathClip(clip) && (
+          <>
+            <button type="button" className={ACTION} onClick={() => insertKeyframe(clip.id)}>
+              {t('previz.clip.insertPoint')}
+            </button>
+            <button type="button" className={ACTION} onClick={() => clearPath(clip.id)}>
+              {t('previz.clip.clearPoints')}
+            </button>
+          </>
+        )}
         <button type="button" className={ACTION} onClick={() => removeClipById(clip.id)}>
           {t('previz.clip.remove')}
         </button>
       </div>
 
-      {!point && (
+      {isRigClip(clip) && <CloseupPanel clip={clip} cameraObjectId={found.track.objectId} />}
+
+      {isPathClip(clip) && !point && (
         <div className="text-[11px] text-[#6d7585]">{t('previz.clip.point.empty')}</div>
       )}
 
-      {point && (
+      {isPathClip(clip) && point && (
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap gap-2">
             {(['x', 'y', 'z'] as const).map((axis, index) => (

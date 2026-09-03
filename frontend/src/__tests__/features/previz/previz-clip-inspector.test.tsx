@@ -4,7 +4,12 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createDefaultScene, type PrevizPathClip } from '@/features/previz/domain/scene';
+import { PREVIZ_RIG_DISTANCE_RANGE } from '@/features/previz/domain/closeup';
+import {
+  createDefaultScene,
+  type PrevizPathClip,
+  type PrevizRigClip,
+} from '@/features/previz/domain/scene';
 import { usePrevizStore } from '@/features/previz/store';
 import { PrevizClipInspector } from '@/features/previz/ui/PrevizClipInspector';
 
@@ -178,5 +183,134 @@ describe('PrevizClipInspector', () => {
 
     expect(screen.getByText('previz.clip.point.empty')).toBeInTheDocument();
     expect(screen.queryByLabelText('previz.clip.point.y')).not.toBeInTheDocument();
+  });
+});
+
+/** 一个人物、一个配角、一台跟着人物的机位。返回的是机位那条特写片段。 */
+function seedCloseup(): { clipId: string; leadId: string; sideId: string; cameraId: string } {
+  usePrevizStore.getState().loadScene(createDefaultScene());
+  const store = () => usePrevizStore.getState();
+  const leadId = store().addObject('character');
+  const sideId = store().addObject('character');
+  const cameraId = store().addObject('camera');
+  if (!leadId || !sideId || !cameraId) throw new Error('expected three objects');
+  store().updateObject(leadId, { name: '女主' });
+  store().updateObject(sideId, { name: '配角' });
+  store().addObjectToTimeline(cameraId);
+  store().addCloseup(cameraId, { objectId: leadId, name: '女主', startFrame: 0, endFrame: 120 });
+  const clipId = store().selectedClipId;
+  if (!clipId) throw new Error('expected the new closeup to be selected');
+  return { clipId, leadId, sideId, cameraId };
+}
+
+function currentRig(): PrevizRigClip {
+  const clip = usePrevizStore
+    .getState()
+    .scene.timeline.tracks.flatMap((track) => track.clips)
+    .find((entry) => entry.kind === 'rig');
+  if (!clip) throw new Error('expected a rig clip');
+  return clip as PrevizRigClip;
+}
+
+describe('PrevizClipInspector closeup clips', () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  it('shows framing controls instead of keyframe ones', () => {
+    seedCloseup();
+    render(<PrevizClipInspector />);
+
+    expect(screen.getByLabelText('previz.clip.closeup.distance')).toHaveValue(2.75);
+    // 特写片段身上没有关键帧。这两个按钮按下去本来就是空转，摆着只会让人以为坏了。
+    expect(screen.queryByRole('button', { name: 'previz.clip.insertPoint' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'previz.clip.clearPoints' })).toBeNull();
+  });
+
+  it('retargets the closeup at another character', async () => {
+    const user = userEvent.setup();
+    const { sideId } = seedCloseup();
+    render(<PrevizClipInspector />);
+
+    await user.selectOptions(screen.getByLabelText('previz.clip.closeup.target'), sideId);
+
+    expect(currentRig().anchorObjectId).toBe(sideId);
+    // 「看向」原本跟着目标走，换人之后不该还盯着上一个人。
+    expect(currentRig().aimObjectId).toBe(sideId);
+  });
+
+  it('moves the anchor up to the head', async () => {
+    const user = userEvent.setup();
+    seedCloseup();
+    render(<PrevizClipInspector />);
+
+    await user.selectOptions(screen.getByLabelText('previz.clip.closeup.anchor'), 'chest');
+
+    expect(currentRig().anchorPart).toBe('chest');
+  });
+
+  it('lets the camera keep its own aim', async () => {
+    const user = userEvent.setup();
+    seedCloseup();
+    render(<PrevizClipInspector />);
+
+    await user.selectOptions(screen.getByLabelText('previz.clip.closeup.aim'), 'free');
+
+    // 只定机位不定朝向：位置照样跟着人走，构图留给自己转。
+    expect(currentRig().aimObjectId).toBeNull();
+  });
+
+  it('wraps a horizontal angle typed past a full turn', async () => {
+    const user = userEvent.setup();
+    seedCloseup();
+    render(<PrevizClipInspector />);
+
+    const field = screen.getByLabelText('previz.clip.closeup.azimuth');
+    await user.clear(field);
+    await user.type(field, '390');
+    await user.tab();
+
+    // 方位是角度不是距离：370° 就是 10°，夹在上限上会让机位停在一个错的方位。
+    expect(currentRig().azimuth).toBeCloseTo(30, 6);
+  });
+
+  it('clamps a distance typed past the limit', async () => {
+    const user = userEvent.setup();
+    seedCloseup();
+    render(<PrevizClipInspector />);
+
+    const field = screen.getByLabelText('previz.clip.closeup.distance');
+    await user.clear(field);
+    await user.type(field, '999');
+    await user.tab();
+
+    expect(currentRig().distance).toBe(PREVIZ_RIG_DISTANCE_RANGE.max);
+  });
+
+  it('switches the camera move to an orbit', async () => {
+    const user = userEvent.setup();
+    seedCloseup();
+    render(<PrevizClipInspector />);
+
+    await user.selectOptions(screen.getByLabelText('previz.clip.closeup.motion'), 'orbit');
+
+    expect(currentRig().motion).toBe('orbit');
+  });
+
+  it('bakes the closeup into a path clip', async () => {
+    const user = userEvent.setup();
+    const { clipId } = seedCloseup();
+    render(<PrevizClipInspector />);
+
+    await user.click(screen.getByRole('button', { name: 'previz.clip.closeup.bake' }));
+
+    const clip = usePrevizStore
+      .getState()
+      .scene.timeline.tracks.flatMap((track) => track.clips)
+      .find((entry) => entry.id === clipId);
+    // 烤完还是同一条片段，只是从此不再跟着人走——选中不断，属性面板原地换一副面孔。
+    expect(clip?.kind).toBe('path');
+    expect(usePrevizStore.getState().selectedClipId).toBe(clipId);
+    expect(screen.getByText('previz.clip.point.empty')).toBeInTheDocument();
   });
 });
