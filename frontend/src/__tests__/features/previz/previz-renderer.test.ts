@@ -43,7 +43,44 @@ vi.mock("three", () => {
       remove() {}
     },
     Color: class {},
-    GridHelper: class {},
+    // 地面网格：一块平面几何体 + 一份着色器材质，挂在一个 Mesh 上。
+    Vector3: class {
+      constructor(
+        public x = 0,
+        public y = 0,
+        public z = 0,
+      ) {}
+      set(x: number, y: number, z: number) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        return this;
+      }
+    },
+    PlaneGeometry: class {
+      dispose = vi.fn();
+      constructor(..._args: number[]) {}
+    },
+    ShaderMaterial: class {
+      uniforms: Record<string, { value: unknown }> = {};
+      dispose = vi.fn();
+      constructor(params: Record<string, unknown> = {}) {
+        Object.assign(this, params);
+      }
+    },
+    DoubleSide: 2,
+    Mesh: class {
+      renderOrder = 0;
+      userData: Record<string, unknown> = {};
+      position = { set: vi.fn() };
+      rotation = { x: 0, y: 0, z: 0 };
+      scale = { set: vi.fn() };
+      updateMatrixWorld = vi.fn();
+      constructor(
+        public geometry: unknown,
+        public material: unknown,
+      ) {}
+    },
     AmbientLight: class {},
     DirectionalLight: class {
       position = { set: vi.fn() };
