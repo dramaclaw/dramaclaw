@@ -32,6 +32,14 @@ import {
   type Vec3,
 } from './domain/scene';
 import {
+  addRigClip,
+  createRigClip,
+  rigClipToPath,
+  updateRigClip,
+  type CloseupTarget,
+  type RigClipPatch,
+} from './domain/closeupClip';
+import {
   PREVIZ_TIMELINE_ZOOM,
   clearPathPoints,
   insertPathPointAt,
@@ -148,6 +156,11 @@ interface PrevizStoreState {
   splitClipAtPlayhead: (clipId: string) => void;
   removeClipById: (clipId: string) => void;
   removeTrackFor: (objectId: string) => void;
+  /** 给机位新建一段特写，覆盖被跟对象在时间轴上已经占到的那一段。 */
+  addCloseup: (cameraObjectId: string, target: CloseupTarget) => void;
+  updateCloseup: (clipId: string, patch: RigClipPatch) => void;
+  /** 「转为路径片段」：把跟踪结果烤成关键帧，从此不再跟着人物走。 */
+  bakeCloseup: (clipId: string) => void;
   /** 打开编辑器时灌入初始场景，同时清空历史——上一次会话的 undo 不该跨节点串。 */
   loadScene: (scene: PrevizScene) => void;
   /** 场景改动的唯一入口：压历史、清 redo、置脏。 */
@@ -493,5 +506,32 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     const { scene, applyScene } = get();
     applyScene(removeTrack(scene, objectId));
     set({ selectedClipId: null, selectedPointId: null });
+  },
+
+  addCloseup: (cameraObjectId, target) => {
+    const { scene, applyScene } = get();
+    if (!scene.objects.some((object) => object.id === cameraObjectId)) return;
+    if (!scene.objects.some((object) => object.id === target.objectId)) return;
+
+    const clip = createRigClip({
+      anchorObjectId: target.objectId,
+      startFrame: target.startFrame,
+      endFrame: target.endFrame,
+    });
+    applyScene(addRigClip(scene, cameraObjectId, clip));
+    // 选中它：新建之后要调的就是取景那几个数，不选中的话属性面板还停在上一条片段上。
+    set({ selectedClipId: clip.id, selectedPointId: null });
+  },
+
+  updateCloseup: (clipId, patch) => {
+    const { scene, applyScene } = get();
+    applyScene(updateRigClip(scene, clipId, patch));
+  },
+
+  bakeCloseup: (clipId) => {
+    const { scene, applyScene } = get();
+    const next = rigClipToPath(scene, clipId);
+    if (next === scene) return;
+    applyScene(next);
   },
 }));
