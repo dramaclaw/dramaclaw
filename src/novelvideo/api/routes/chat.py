@@ -1149,6 +1149,7 @@ def _resolve_skill_studio_tool_result_payload(
     )
     result = {
         "ok": ok,
+        "status": "skill_studio_frontend_result",
         "turn_id": payload.turn_id,
         "tool_call_status": payload.tool_call_status,
         "skill_studio_status": payload.skill_studio_status,
@@ -1228,6 +1229,7 @@ def _resolve_clarification_tool_result_payload(
         )
     result = {
         "ok": ok,
+        "status": "clarification_frontend_result",
         "turn_id": payload.turn_id,
         "tool_call_status": payload.tool_call_status,
         "clarification_status": payload.clarification_status,

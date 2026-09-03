@@ -1607,6 +1607,7 @@ def _handle_get_sketches(args: dict[str, Any], **_: Any) -> str:
         return tool_result(
             {
                 "ok": True,
+                "project_id": project,
                 "episode": episode,
                 "media_kind": media_kind,
                 "count": len(sketches),
@@ -1672,6 +1673,7 @@ def _handle_get_first_frames(args: dict[str, Any], **_: Any) -> str:
         return tool_result(
             {
                 "ok": True,
+                "project_id": project,
                 "episode": episode,
                 "media_kind": "frame",
                 "count": len(frames),
@@ -1719,6 +1721,7 @@ def _handle_get_sketch_candidates(args: dict[str, Any], **_: Any) -> str:
         return tool_result(
             {
                 "ok": bool(resp.get("ok", True)) if isinstance(resp, dict) else True,
+                "project_id": project,
                 "episode": episode,
                 "beat": beat,
                 "media_kind": "sketch_candidate",
@@ -2191,12 +2194,15 @@ def _handle_get_final_video(args: dict[str, Any], **_: Any) -> str:
         if args.get("episode") is not None and not raw_episode_indices:
             episode = _require_episode(args)
             result = _request("GET", f"/api/v1/projects/{project}/episodes/{episode}/final")
+            if isinstance(result, dict) and result.get("ok") is False:
+                return tool_result(result)
             data = result.get("data") if isinstance(result, dict) else None
             video_url = ""
             if isinstance(data, dict) and data.get("exists"):
                 video_url = str(data.get("video_url") or "").strip()
-            if video_url and isinstance(result, dict):
-                result["ui_spec"] = _video_ui_spec(
+            ui_spec = None
+            if video_url:
+                ui_spec = _video_ui_spec(
                     [
                         {
                             "src": video_url,
@@ -2205,7 +2211,17 @@ def _handle_get_final_video(args: dict[str, Any], **_: Any) -> str:
                         }
                     ]
                 )
-            return tool_result(result)
+            return tool_result(
+                {
+                    "ok": True,
+                    "status": "final_video_result",
+                    "project_id": project,
+                    "episode": episode,
+                    "exists": bool(isinstance(data, dict) and data.get("exists")),
+                    "video_url": video_url or None,
+                    "ui_spec": ui_spec,
+                }
+            )
 
         episode_indices: list[int] = []
         if isinstance(raw_episode_indices, list):
@@ -2263,13 +2279,14 @@ def _handle_get_final_video(args: dict[str, Any], **_: Any) -> str:
         return tool_result(
             {
                 "ok": True,
+                "status": "final_video_collection",
                 "project_id": project,
                 "count": len(found_episodes),
                 "episodes": page_episodes,
                 "offset": offset,
                 "limit": limit,
                 "has_more": offset + limit < len(found_episodes),
-                **({"ui_spec": _video_ui_spec(page_items)} if page_items else {}),
+                "ui_spec": _video_ui_spec(page_items) if page_items else None,
             }
         )
     except Exception as exc:
@@ -2477,6 +2494,7 @@ _RESULT_BOOLEAN_FIELDS = frozenset(
         "confirmed",
         "deleted",
         "has_more",
+        "exists",
         "saved",
         "upload_dir_available",
     }
@@ -2491,6 +2509,8 @@ _RESULT_INTEGER_FIELDS = frozenset(
         "episode",
         "grid_index",
         "image_count",
+        "limit",
+        "offset",
         "progress",
         "revision",
     }
@@ -2631,7 +2651,18 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "items",
     ),
     "dramaclaw_compose_episode": ("task", "task_id", "episode", "add_bgm", "add_subtitles"),
-    "dramaclaw_get_final_video": ("project_id", "episodes", "count", "has_more", "ui_spec"),
+    "dramaclaw_get_final_video": (
+        "project_id",
+        "episode",
+        "exists",
+        "video_url",
+        "episodes",
+        "count",
+        "offset",
+        "limit",
+        "has_more",
+        "ui_spec",
+    ),
     "dramaclaw_generate_portrait": ("task", "task_id", "character_id"),
     "dramaclaw_generate_identity_image": ("task", "task_id", "identity_id"),
     "dramaclaw_start_single_video": ("task", "task_id", "episode", "beat"),
@@ -2694,7 +2725,6 @@ _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
     ),
     "dramaclaw_get_character_media": ("project_id", "count", "ui_spec"),
     "dramaclaw_get_episode_media": ("project_id", "episode", "beats", "media_type", "ui_spec"),
-    "dramaclaw_get_final_video": ("project_id", "episodes", "count", "has_more", "ui_spec"),
 }
 
 _TASK_RESULT_TOOLS = {
@@ -2724,6 +2754,33 @@ _BATCH_RESULT_TOOLS = {
 
 
 def _success_contract(name: str) -> dict[str, Any]:
+    if name == "dramaclaw_get_final_video":
+        return {
+            "oneOf": [
+                {
+                    "properties": {"status": {"const": "final_video_result"}},
+                    "required": [
+                        "project_id",
+                        "episode",
+                        "exists",
+                        "video_url",
+                        "ui_spec",
+                    ],
+                },
+                {
+                    "properties": {"status": {"const": "final_video_collection"}},
+                    "required": [
+                        "project_id",
+                        "episodes",
+                        "count",
+                        "offset",
+                        "limit",
+                        "has_more",
+                        "ui_spec",
+                    ],
+                },
+            ]
+        }
     if name in _TASK_RESULT_TOOLS:
         return {
             "anyOf": [

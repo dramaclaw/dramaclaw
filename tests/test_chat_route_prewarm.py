@@ -633,6 +633,7 @@ def test_resolve_skill_studio_tool_result_writes_bridge_result(
     )
 
     assert resolved["ok"] is True
+    assert resolved["status"] == "skill_studio_frontend_result"
     assert resolved["skill_studio_status"] == "answered"
     assert resolved["selections"] == {"scope": "planning"}
     assert (
@@ -1227,6 +1228,7 @@ def test_resolve_clarification_tool_result_writes_bridge_result(
     )
 
     assert resolved["ok"] is True
+    assert resolved["status"] == "clarification_frontend_result"
     assert resolved["clarification_status"] == "answered"
     assert resolved["answers"]["scope"]["option_ids"] == ["workflow"]
     assert (

@@ -357,6 +357,235 @@ async def test_real_scene_images_handler_matches_its_mcp_output_contract(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_real_episode_image_handlers_preserve_project_scope_in_mcp_contract(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+
+    def fake_request(_method, path, **_kwargs):
+        if path.endswith("/sketch-candidates"):
+            return {
+                "ok": True,
+                "data": {
+                    "candidate_count": 1,
+                    "candidates": [{"url": "/static/candidate.png", "stale": False}],
+                },
+            }
+        return {
+            "ok": True,
+            "data": [{
+                "beat_number": 1,
+                "sketch_url": "/static/sketch.png",
+                "frame_url": "/static/frame.png",
+            }],
+        }
+
+    monkeypatch.setattr(dramaclaw_mcp.PLUGIN, "_request", fake_request)
+    cases = [
+        ("dramaclaw_get_sketches", {"episode": 1}, "sketches"),
+        ("dramaclaw_get_first_frames", {"episode": 1}, "frames"),
+        ("dramaclaw_get_sketch_candidates", {"episode": 1, "beat": 1}, "candidates"),
+    ]
+    for tool_name, arguments, collection_field in cases:
+        result = await dramaclaw_mcp.call_tool(tool_name, arguments)
+        assert result.isError is False
+        assert result.structuredContent["project_id"] == "project-a"
+        assert result.structuredContent[collection_field]
+        schema = dramaclaw_mcp.TOOLS[tool_name][0]["output_schema"]
+        Draft202012Validator(schema).validate(result.structuredContent)
+
+
+@pytest.mark.asyncio
+async def test_real_final_video_handler_models_single_and_collection_results(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+
+    def fake_request(_method, path, **_kwargs):
+        if path.endswith("/episodes/1/final"):
+            return {
+                "ok": True,
+                "data": {"exists": True, "video_url": "/static/episode-1.mp4"},
+            }
+        if path.endswith("/episodes/2/final"):
+            return {"ok": True, "data": {"exists": False, "video_url": None}}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(dramaclaw_mcp.PLUGIN, "_request", fake_request)
+    found = await dramaclaw_mcp.call_tool("dramaclaw_get_final_video", {"episode": 1})
+    assert found.structuredContent["status"] == "final_video_result"
+    assert found.structuredContent["project_id"] == "project-a"
+    assert found.structuredContent["exists"] is True
+    assert found.structuredContent["video_url"] == "/static/episode-1.mp4"
+    assert found.structuredContent["ui_spec"] is not None
+
+    missing = await dramaclaw_mcp.call_tool("dramaclaw_get_final_video", {"episode": 2})
+    assert missing.structuredContent["status"] == "final_video_result"
+    assert missing.structuredContent["exists"] is False
+    assert missing.structuredContent["video_url"] is None
+    assert missing.structuredContent["ui_spec"] is None
+
+    collection = await dramaclaw_mcp.call_tool(
+        "dramaclaw_get_final_video", {"episode_indices": [1, 2]}
+    )
+    assert collection.structuredContent["status"] == "final_video_collection"
+    assert collection.structuredContent["episodes"] == [1]
+    assert collection.structuredContent["count"] == 1
+    assert collection.structuredContent["ui_spec"] is not None
+
+    empty = await dramaclaw_mcp.call_tool(
+        "dramaclaw_get_final_video", {"episode_indices": [2]}
+    )
+    assert empty.structuredContent["status"] == "final_video_collection"
+    assert empty.structuredContent["episodes"] == []
+    assert empty.structuredContent["ui_spec"] is None
+
+
+@pytest.mark.asyncio
+async def test_real_clarification_results_preserve_frontend_answers_and_retry_fields(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    freezone_plugin = dramaclaw_mcp.PLUGINS[1]
+    monkeypatch.setattr(
+        freezone_plugin, "clarification_bridge_key", lambda **_kwargs: "clarify-1"
+    )
+    monkeypatch.setattr(
+        freezone_plugin, "put_pending_clarification_event", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        freezone_plugin,
+        "wait_clarification_result",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "status": "clarification_frontend_result",
+            "tool_call_status": "completed",
+            "clarification_status": "answered",
+            "bridge_key": "clarify-1",
+            "answers": {"scope": {"option_ids": ["workflow"]}},
+        },
+    )
+    question = {
+        "clarification_id": "clarify-1",
+        "questions": [{
+            "id": "scope",
+            "title": "主要做什么？",
+            "options": [{"id": "workflow", "label": "工作流"}],
+        }],
+    }
+    answered = await dramaclaw_mcp.call_tool(
+        "freezone_request_user_clarification", question
+    )
+    assert answered.structuredContent["answers"]["scope"]["option_ids"] == ["workflow"]
+
+    monkeypatch.setattr(
+        freezone_plugin, "wait_clarification_result", lambda *_args, **_kwargs: None
+    )
+    timed_out = await dramaclaw_mcp.call_tool(
+        "freezone_request_user_clarification", question
+    )
+    assert timed_out.isError is True
+    assert timed_out.structuredContent["status"] == "clarification_frontend_timeout"
+    assert timed_out.structuredContent["clarification_status"] == "pending_user_input"
+    assert timed_out.structuredContent["bridge_key"] == "clarify-1"
+
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    rejected = await dramaclaw_mcp.call_tool(
+        "freezone_request_user_clarification",
+        {"questions": [{
+            "id": "generation_settings",
+            "title": "生成设置",
+            "options": [{"id": "default", "label": "默认"}],
+        }]},
+    )
+    assert rejected.isError is True
+    assert rejected.structuredContent["required_question_ids"]["image"]
+    assert rejected.structuredContent["required_question_ids"]["video"]
+
+
+@pytest.mark.asyncio
+async def test_real_skill_studio_results_match_mcp_contract(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    freezone_plugin = dramaclaw_mcp.PLUGINS[1]
+    freezone_plugin._PENDING_SKILL_STUDIO_DRAFTS.clear()
+    bridge_counter = iter(range(20))
+    monkeypatch.setattr(
+        freezone_plugin,
+        "skill_studio_bridge_key",
+        lambda **_kwargs: f"skill-studio-{next(bridge_counter)}",
+    )
+    monkeypatch.setattr(
+        freezone_plugin, "put_pending_skill_studio_event", lambda **_kwargs: None
+    )
+    def frontend_result(key, **_kwargs):
+        return {
+            "ok": True,
+            "status": "skill_studio_frontend_result",
+            "tool_call_status": "completed",
+            "skill_studio_status": "answered",
+            "bridge_key": key,
+            "action": "submit",
+            "selections": {"scope": "planning"},
+        }
+    monkeypatch.setattr(freezone_plugin, "wait_skill_studio_result", frontend_result)
+    base = {"skill_studio_session_id": "studio-1"}
+    progress_calls = [
+        (
+            "freezone_put_agent_catalog_draft_outline",
+            {**base, "reuse_goal": "视频工作流", "catalog_checked": True},
+        ),
+        ("freezone_begin_agent_catalog_draft", {**base, "mode": "create"}),
+        ("freezone_put_agent_catalog_skill", {**base, "skill": {"id": "video-skill"}}),
+        (
+            "freezone_put_agent_catalog_recipe",
+            {**base, "index": 0, "recipe": {"id": "video-recipe"}},
+        ),
+        (
+            "freezone_patch_agent_catalog_draft",
+            {
+                **base,
+                "target": "skill",
+                "patch": [{"op": "add", "path": "/description", "value": "更新"}],
+            },
+        ),
+    ]
+    for tool_name, arguments in progress_calls:
+        _schema, handler = dramaclaw_mcp.TOOLS[tool_name]
+        result = dramaclaw_mcp._structured_tool_result(tool_name, handler(arguments))
+        assert result.structuredContent["status"] == "skill_studio_progress_event_emitted", (
+            tool_name,
+            result.structuredContent,
+        )
+        assert result.structuredContent["skill_studio_status"] == "draft_progress"
+        assert result.structuredContent["bridge_key"]
+
+    presented_handler = dramaclaw_mcp.TOOLS["freezone_present_agent_catalog_draft"][1]
+    presented = dramaclaw_mcp._structured_tool_result(
+        "freezone_present_agent_catalog_draft",
+        presented_handler({**base, "skill": {"id": "video-skill"}, "recipes": []}),
+    )
+    assert presented.structuredContent["status"] == "skill_studio_frontend_result"
+    assert presented.structuredContent["selections"] == {"scope": "planning"}
+
+    monkeypatch.setattr(
+        freezone_plugin, "wait_skill_studio_result", lambda *_args, **_kwargs: None
+    )
+    timed_out = dramaclaw_mcp._structured_tool_result(
+        "freezone_present_agent_catalog_draft",
+        presented_handler({**base, "skill": {"id": "video-skill"}, "recipes": []}),
+    )
+    assert timed_out.isError is True
+    assert timed_out.structuredContent["status"] == "skill_studio_frontend_timeout"
+    assert timed_out.structuredContent["skill_studio_status"] == "pending_user_input"
+
+    monkeypatch.setattr(freezone_plugin, "wait_skill_studio_result", frontend_result)
+    finished_handler = dramaclaw_mcp.TOOLS["freezone_finish_agent_catalog_draft"][1]
+    finished = dramaclaw_mcp._structured_tool_result(
+        "freezone_finish_agent_catalog_draft", finished_handler(base)
+    )
+    assert finished.structuredContent["status"] == "skill_studio_frontend_result"
+    assert finished.structuredContent["action"] == "submit"
+
+
+@pytest.mark.asyncio
 async def test_real_delete_nodes_empty_canvas_noop_matches_mcp_contract(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")

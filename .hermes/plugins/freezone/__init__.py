@@ -5804,7 +5804,8 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "nodes",
         "questions",
         "recipes",
-        "required_question_ids",
+        "saved_recipe_ids",
+        "saved_skill_ids",
         "skipped_edges",
         "voices",
         "warnings",
@@ -5820,6 +5821,9 @@ _RESULT_BOOLEAN_FIELDS = frozenset(
         "connect",
         "removed",
         "run_after_create",
+        "saved_to_catalog",
+        "skipped",
+        "used_recommended",
     }
 )
 _RESULT_INTEGER_FIELDS = frozenset(
@@ -5838,6 +5842,13 @@ _RESULT_INTEGER_FIELDS = frozenset(
         "total_count",
     }
 )
+_RESULT_OBJECT_FIELDS = frozenset(
+    {
+        "answers",
+        "client_debug",
+        "selections",
+    }
+)
 _RESULT_STRING_FIELDS = frozenset(
     {
         "action",
@@ -5846,6 +5857,7 @@ _RESULT_STRING_FIELDS = frozenset(
         "canvas_apply_status",
         "canvas_id",
         "clarification_id",
+        "clarification_status",
         "command_id",
         "confirmation_receipt",
         "direction",
@@ -5867,23 +5879,40 @@ _RESULT_STRING_FIELDS = frozenset(
         "schema_version",
         "scope",
         "skill_studio_session_id",
+        "skill_studio_status",
         "slot",
         "source",
         "source_node_id",
         "target",
         "tool_call_status",
+        "turn_id",
+        "type",
         "workflow_instance_id",
     }
 )
 
 
 def _result_field_schema(field: str) -> dict[str, Any]:
+    if field == "required_question_ids":
+        return {
+            "type": "object",
+            "properties": {
+                "image": {"type": "array", "items": {"type": "string"}},
+                "video": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["image", "video"],
+            "additionalProperties": False,
+        }
     if field in _RESULT_ARRAY_FIELDS:
         return {"type": "array"}
     if field in _RESULT_BOOLEAN_FIELDS:
         return {"type": "boolean"}
     if field in _RESULT_INTEGER_FIELDS:
         return {"type": ["integer", "null"]}
+    if field in _RESULT_OBJECT_FIELDS:
+        return {"type": "object"}
+    if field in {"draft", "draft_ref"}:
+        return {"type": ["object", "null"]}
     if field in _RESULT_STRING_FIELDS:
         return {"type": ["string", "null"]}
     if field in {"agent_credit_estimate", "agent_planning_charge"}:
@@ -5908,10 +5937,22 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "freezone_summarize_canvas": ("summary", "nodes", "edges", "counts"),
     "freezone_request_user_clarification": (
         "clarification_id",
+        "clarification_status",
         "questions",
         "required_question_ids",
         "allow_recommended",
         "allow_skip",
+        "tool_call_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
+        "turn_id",
+        "action",
+        "answers",
+        "skipped",
+        "used_recommended",
+        "errors",
     ),
     "freezone_begin_agent_catalog_draft": (
         "skill_studio_session_id",
@@ -5920,6 +5961,12 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "outline",
         "expected_recipe_count",
         "warnings",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
     ),
     "freezone_put_agent_catalog_draft_outline": (
         "skill_studio_session_id",
@@ -5928,12 +5975,24 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "planned_stage_count",
         "recipe_chunk_count",
         "warnings",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
     ),
     "freezone_put_agent_catalog_skill": (
         "skill_studio_session_id",
         "skill",
         "expected_recipe_count",
         "warnings",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
     ),
     "freezone_put_agent_catalog_recipe": (
         "skill_studio_session_id",
@@ -5941,6 +6000,12 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "recipe_count",
         "recipes",
         "warnings",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
     ),
     "freezone_patch_agent_catalog_draft": (
         "skill_studio_session_id",
@@ -5948,6 +6013,12 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "recipe_id",
         "recipe_index",
         "removed",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
     ),
     "freezone_finish_agent_catalog_draft": (
         "skill_studio_session_id",
@@ -5955,6 +6026,22 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "recipes",
         "outline",
         "warnings",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
+        "turn_id",
+        "action",
+        "selections",
+        "draft",
+        "draft_ref",
+        "saved_to_catalog",
+        "saved_skill_ids",
+        "saved_recipe_ids",
+        "errors",
+        "client_debug",
     ),
     "freezone_present_agent_catalog_draft": (
         "skill_studio_session_id",
@@ -5962,6 +6049,22 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "recipes",
         "summary",
         "warnings",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
+        "turn_id",
+        "action",
+        "selections",
+        "draft",
+        "draft_ref",
+        "saved_to_catalog",
+        "saved_skill_ids",
+        "saved_recipe_ids",
+        "errors",
+        "client_debug",
     ),
     "freezone_list_agent_catalog": (
         "kind",
@@ -6007,19 +6110,38 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+_SKILL_STUDIO_PROGRESS_REQUIRED = (
+    "skill_studio_session_id",
+    "tool_call_status",
+    "skill_studio_status",
+    "bridge_key",
+)
+
+_SKILL_STUDIO_FRONTEND_REQUIRED = (
+    "tool_call_status",
+    "skill_studio_status",
+    "bridge_key",
+    "action",
+)
+
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
     "freezone_get_canvas_ontology": ("ontology", "node_types", "link_types"),
     "freezone_summarize_canvas": ("summary", "nodes", "edges", "counts"),
     "freezone_get_canvas_action_catalog": ("actions", "count"),
     "freezone_get_canvas_command_catalog": ("commands", "count"),
-    "freezone_request_user_clarification": ("clarification_id", "questions"),
-    "freezone_present_agent_catalog_draft": ("skill_studio_session_id", "skill", "recipes"),
-    "freezone_put_agent_catalog_draft_outline": ("skill_studio_session_id", "outline"),
-    "freezone_begin_agent_catalog_draft": ("skill_studio_session_id",),
-    "freezone_put_agent_catalog_skill": ("skill_studio_session_id", "skill"),
-    "freezone_put_agent_catalog_recipe": ("skill_studio_session_id", "recipes"),
-    "freezone_patch_agent_catalog_draft": ("skill_studio_session_id", "target"),
-    "freezone_finish_agent_catalog_draft": ("skill_studio_session_id", "skill", "recipes"),
+    "freezone_request_user_clarification": (
+        "tool_call_status",
+        "clarification_status",
+        "bridge_key",
+        "answers",
+    ),
+    "freezone_present_agent_catalog_draft": _SKILL_STUDIO_FRONTEND_REQUIRED,
+    "freezone_put_agent_catalog_draft_outline": _SKILL_STUDIO_PROGRESS_REQUIRED,
+    "freezone_begin_agent_catalog_draft": _SKILL_STUDIO_PROGRESS_REQUIRED,
+    "freezone_put_agent_catalog_skill": _SKILL_STUDIO_PROGRESS_REQUIRED,
+    "freezone_put_agent_catalog_recipe": _SKILL_STUDIO_PROGRESS_REQUIRED,
+    "freezone_patch_agent_catalog_draft": _SKILL_STUDIO_PROGRESS_REQUIRED,
+    "freezone_finish_agent_catalog_draft": _SKILL_STUDIO_FRONTEND_REQUIRED,
     "freezone_list_agent_catalog": ("kind", "items", "count"),
     "freezone_get_saved_skill": ("id", "kind", "item"),
     "freezone_get_saved_recipe": ("id", "kind", "item"),
@@ -6062,8 +6184,36 @@ _CANVAS_RESULT_TOOLS = {
     "freezone_run_node_action",
 }
 
+_SKILL_STUDIO_PROGRESS_TOOLS = {
+    "freezone_put_agent_catalog_draft_outline",
+    "freezone_begin_agent_catalog_draft",
+    "freezone_put_agent_catalog_skill",
+    "freezone_put_agent_catalog_recipe",
+    "freezone_patch_agent_catalog_draft",
+}
+
+_SKILL_STUDIO_FRONTEND_TOOLS = {
+    "freezone_present_agent_catalog_draft",
+    "freezone_finish_agent_catalog_draft",
+}
+
 
 def _success_contract(name: str) -> dict[str, Any]:
+    if name == "freezone_request_user_clarification":
+        return {
+            "properties": {"status": {"const": "clarification_frontend_result"}},
+            "required": list(_RESULT_SUCCESS_REQUIRED[name]),
+        }
+    if name in _SKILL_STUDIO_PROGRESS_TOOLS:
+        return {
+            "properties": {"status": {"const": "skill_studio_progress_event_emitted"}},
+            "required": list(_SKILL_STUDIO_PROGRESS_REQUIRED),
+        }
+    if name in _SKILL_STUDIO_FRONTEND_TOOLS:
+        return {
+            "properties": {"status": {"const": "skill_studio_frontend_result"}},
+            "required": list(_SKILL_STUDIO_FRONTEND_REQUIRED),
+        }
     if name in _WORKFLOW_RESULT_TOOLS:
         return {
             "anyOf": [
