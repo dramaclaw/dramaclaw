@@ -8,6 +8,7 @@ import {
   type PrevizClip,
   type PrevizPathClip,
   type PrevizPathPoint,
+  type PrevizRigClip,
   type PrevizScene,
   type PrevizTrack,
   type Vec3,
@@ -20,6 +21,10 @@ import {
 
 export function isPathClip(clip: PrevizClip): clip is PrevizPathClip {
   return clip.kind === 'path';
+}
+
+export function isRigClip(clip: PrevizClip): clip is PrevizRigClip {
+  return clip.kind === 'rig';
 }
 
 export function trackFor(scene: PrevizScene, objectId: string): PrevizTrack | undefined {
@@ -43,9 +48,23 @@ export function clipById(
  * 因为新建的片段总是 push 在后面，「后建的盖住先建的」是用户能预期的方向。
  */
 export function pathClipAt(track: PrevizTrack, frame: number): PrevizPathClip | undefined {
-  let best: PrevizPathClip | undefined;
+  return clipAt(track, frame, isPathClip);
+}
+
+/** 这一帧生效的特写片段。取舍与 `pathClipAt` 同一套，见那里的说明。 */
+export function rigClipAt(track: PrevizTrack, frame: number): PrevizRigClip | undefined {
+  return clipAt(track, frame, isRigClip);
+}
+
+/** 上面两个查询共用的选取规则。分开写两遍迟早会让两种片段的覆盖顺序对不上。 */
+function clipAt<T extends PrevizClip>(
+  track: PrevizTrack,
+  frame: number,
+  is: (clip: PrevizClip) => clip is T,
+): T | undefined {
+  let best: T | undefined;
   for (const clip of track.clips) {
-    if (!isPathClip(clip)) continue;
+    if (!is(clip)) continue;
     if (frame < clip.startFrame || frame > clip.endFrame) continue;
     if (!best || clip.startFrame >= best.startFrame) best = clip;
   }
