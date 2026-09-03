@@ -52,6 +52,8 @@ const CLIP_KEYS = [
   'endFrame',
   'aim',
   'aimNone',
+  'aimHintFree',
+  'aimHintLocked',
   'trimStart',
   'trimEnd',
   'insertPoint',

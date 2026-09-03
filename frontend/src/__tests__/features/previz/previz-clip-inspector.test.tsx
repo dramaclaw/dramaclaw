@@ -37,6 +37,20 @@ function seedNamed(): { objectId: string; clipId: string } {
   return { objectId, clipId };
 }
 
+/** 同 `seed`，但画轨迹的是机位——「看向」的提示只对机位说得通。 */
+function seedCamera(): { objectId: string; clipId: string } {
+  usePrevizStore.getState().loadScene(createDefaultScene());
+  const objectId = usePrevizStore.getState().addObject('camera');
+  if (!objectId) throw new Error('expected the camera to be created');
+  usePrevizStore.getState().drawPath(objectId, [
+    [0, 3, 0],
+    [6, 3, 0],
+  ]);
+  const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
+  usePrevizStore.getState().selectClip(clip.id);
+  return { objectId, clipId: clip.id };
+}
+
 function currentClip(): PrevizPathClip {
   return usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
 }
@@ -344,5 +358,44 @@ describe('PrevizClipInspector closeup clips', () => {
     expect(clip?.kind).toBe('path');
     expect(usePrevizStore.getState().selectedClipId).toBe(clipId);
     expect(screen.getByText('previz.clip.point.empty')).toBeInTheDocument();
+  });
+});
+
+describe('PrevizClipInspector 的「看向」提示', () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  it('tells the reader what a camera does with no aim set', () => {
+    seedCamera();
+    render(<PrevizClipInspector />);
+
+    // 机位画完轨迹保持原朝向，这是一条谁都猜不到的规则；「看向」这个下拉本身也长得
+    // 像个可选项，不说清楚就没人会去点它。
+    expect(screen.getByText('previz.clip.aimHintFree')).toBeInTheDocument();
+    expect(screen.queryByText('previz.clip.aimHintLocked')).not.toBeInTheDocument();
+  });
+
+  it('tells the reader the path rotations stop mattering once an aim is set', () => {
+    const { clipId } = seedCamera();
+    usePrevizStore.getState().addObject('character');
+    const targetId = usePrevizStore
+      .getState()
+      .scene.objects.find((object) => object.kind === 'character')!.id;
+    usePrevizStore.getState().setClipAim(clipId, targetId);
+    render(<PrevizClipInspector />);
+
+    // 设了「看向」之后逐点调朝向是白调的——不说的话用户会一直调，一直没反应。
+    expect(screen.getByText('previz.clip.aimHintLocked')).toBeInTheDocument();
+    expect(screen.queryByText('previz.clip.aimHintFree')).not.toBeInTheDocument();
+  });
+
+  it('says nothing about aim on a character path', () => {
+    seed();
+    render(<PrevizClipInspector />);
+
+    // 人物走位本来就是朝行进方向走，「保持画轨迹那一刻的朝向」这句话对它是假的。
+    expect(screen.queryByText('previz.clip.aimHintFree')).not.toBeInTheDocument();
+    expect(screen.queryByText('previz.clip.aimHintLocked')).not.toBeInTheDocument();
   });
 });
