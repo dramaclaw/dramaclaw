@@ -90,7 +90,7 @@ def _assert_real_mcp_output(plugin, tool_name, result):
     output_schema = schemas[tool_name]["output_schema"]
     structured = dramaclaw_mcp._normalize_structured_result(output_schema, result)
     Draft202012Validator(output_schema).validate(structured)
-    assert structured["data"] == result
+    assert "data" not in structured
     return structured
 
 

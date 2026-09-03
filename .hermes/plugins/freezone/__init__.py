@@ -5746,7 +5746,6 @@ _RESULT_COMMON_PROPERTIES: dict[str, Any] = {
     "retryable": {"type": "boolean"},
     "next_action": {"type": ["string", "null"]},
     "agent_instruction": {"type": ["string", "null"]},
-    "data": {"type": ["object", "array", "string", "number", "boolean", "null"]},
 }
 
 _CANVAS_RESULT_FIELDS = (
@@ -6008,6 +6007,90 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+_RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
+    "freezone_get_canvas_ontology": ("ontology", "node_types", "link_types"),
+    "freezone_summarize_canvas": ("summary", "nodes", "edges", "counts"),
+    "freezone_get_canvas_action_catalog": ("actions", "count"),
+    "freezone_get_canvas_command_catalog": ("commands", "count"),
+    "freezone_request_user_clarification": ("clarification_id", "questions"),
+    "freezone_present_agent_catalog_draft": ("skill_studio_session_id", "skill", "recipes"),
+    "freezone_put_agent_catalog_draft_outline": ("skill_studio_session_id", "outline"),
+    "freezone_begin_agent_catalog_draft": ("skill_studio_session_id",),
+    "freezone_put_agent_catalog_skill": ("skill_studio_session_id", "skill"),
+    "freezone_put_agent_catalog_recipe": ("skill_studio_session_id", "recipes"),
+    "freezone_patch_agent_catalog_draft": ("skill_studio_session_id", "target"),
+    "freezone_finish_agent_catalog_draft": ("skill_studio_session_id", "skill", "recipes"),
+    "freezone_list_agent_catalog": ("kind", "items", "count"),
+    "freezone_get_saved_skill": ("id", "kind", "item"),
+    "freezone_get_saved_recipe": ("id", "kind", "item"),
+    "freezone_get_link_type_catalog": ("link_types", "count"),
+    "freezone_get_selection": ("node_ids", "edge_ids", "selection"),
+    "freezone_get_node_detail": ("node_id", "node"),
+    "freezone_get_neighbor_graph": ("node_id", "nodes", "edges"),
+    "freezone_get_node_action_catalog": ("node_id", "actions", "count"),
+    "freezone_get_node_create_schema": ("node_type", "schema"),
+    "freezone_get_audio_voice_options": ("node_id", "voices", "count"),
+    "freezone_get_slot_candidates": ("slot", "candidates", "count"),
+    "freezone_get_mainline_projection_assets": ("assets", "count"),
+    "freezone_get_workflow_skill": ("schema_version", "skill", "recipes", "inputs"),
+    "freezone_validate_canvas_commands": ("commands", "errors", "warnings"),
+}
+
+_WORKFLOW_RESULT_TOOLS = {
+    "freezone_prepare_workflow_draft",
+    "freezone_patch_workflow_draft",
+    "freezone_confirm_workflow_draft",
+    "freezone_prepare_workflow_plan_draft",
+    "freezone_run_workflow",
+}
+
+_CANVAS_RESULT_TOOLS = {
+    "freezone_emit_canvas_command",
+    "freezone_confirm_canvas_action",
+    "freezone_cancel_canvas_action",
+    "freezone_create_node",
+    "freezone_add_next_node",
+    "freezone_update_node_data",
+    "freezone_create_edge",
+    "freezone_delete_nodes",
+    "freezone_delete_edges",
+    "freezone_move_nodes",
+    "freezone_layout_nodes",
+    "freezone_group_nodes",
+    "freezone_select_nodes",
+    "freezone_open_mainline_projection",
+    "freezone_run_node_action",
+}
+
+
+def _success_contract(name: str) -> dict[str, Any]:
+    if name in _WORKFLOW_RESULT_TOOLS:
+        return {
+            "anyOf": [
+                {"required": ["draft_id"]},
+                {"required": ["quote_id"]},
+                {"required": ["operation_id"]},
+                {"required": ["workflow_instance_id"]},
+                {"required": ["run_id"]},
+            ]
+        }
+    if name in _CANVAS_RESULT_TOOLS:
+        return {
+            "anyOf": [
+                {"required": ["approval_id"]},
+                {"required": ["operation_id"]},
+                {"required": ["command_id"]},
+                {"required": ["bridge_key"]},
+                {"required": ["receipt"]},
+                {"required": ["durable_receipt"]},
+            ]
+        }
+    required = _RESULT_SUCCESS_REQUIRED.get(name)
+    if required is None:
+        raise RuntimeError(f"missing successful output contract for {name}")
+    return {"required": list(required)}
+
+
 def _output_schema(name: str) -> dict[str, Any]:
     fields = _RESULT_FIELDS.get(name)
     if fields is None:
@@ -6019,9 +6102,26 @@ def _output_schema(name: str) -> dict[str, Any]:
         "title": f"{name}.result",
         "type": "object",
         "properties": properties,
-        "required": ["ok", "status", "data"],
+        "required": ["ok", "status"],
         "additionalProperties": False,
         "x-dramaclaw-tool": name,
+        "allOf": [
+            {
+                "if": {"properties": {"ok": {"const": True}}, "required": ["ok"]},
+                "then": _success_contract(name),
+            },
+            {
+                "if": {"properties": {"ok": {"const": False}}, "required": ["ok"]},
+                "then": {
+                    "anyOf": [
+                        {"required": ["code"]},
+                        {"required": ["error"]},
+                        {"required": ["message"]},
+                        {"required": ["errors"]},
+                    ]
+                },
+            },
+        ],
     }
     if name in {
         "freezone_prepare_workflow_draft",
@@ -6030,7 +6130,7 @@ def _output_schema(name: str) -> dict[str, Any]:
         "freezone_confirm_workflow_draft",
         "freezone_run_workflow",
     }:
-        schema["allOf"] = [
+        schema["allOf"].extend([
             {
                 "if": {"properties": {"status": {"const": "agent_planning_confirmation_required"}}},
                 "then": {
@@ -6052,7 +6152,7 @@ def _output_schema(name: str) -> dict[str, Any]:
                 "if": {"properties": {"status": {"const": "workflow_draft_ready"}}},
                 "then": {"required": ["draft_id", "revision", "preview"]},
             },
-        ]
+        ])
     return schema
 
 

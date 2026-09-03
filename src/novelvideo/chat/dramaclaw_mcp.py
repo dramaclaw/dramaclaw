@@ -435,17 +435,49 @@ def _normalize_structured_result(
     schema: dict[str, Any], decoded: Any
 ) -> dict[str, Any]:
     raw = decoded if isinstance(decoded, dict) else {}
+    nested = raw.get("data") if isinstance(raw.get("data"), dict) else {}
     ok = raw.get("ok") if isinstance(raw.get("ok"), bool) else not bool(raw.get("error"))
-    status = raw.get("status")
+    status = raw.get("status") or nested.get("status")
     if not isinstance(status, str) or not status:
         status = "completed" if ok else "failed"
     properties = schema.get("properties") or {}
     structured = {"ok": ok, "status": status}
     for key in properties:
-        if key not in {"ok", "status", "data"} and key in raw:
+        if key in {"ok", "status"}:
+            continue
+        if key in raw:
             structured[key] = raw[key]
-    if "data" in properties:
-        structured["data"] = decoded
+        elif key in nested:
+            structured[key] = nested[key]
+
+    tool_name = str(schema.get("x-dramaclaw-tool") or "")
+    if tool_name in {"dramaclaw_get", "dramaclaw_post", "dramaclaw_patch", "dramaclaw_delete"}:
+        structured["response"] = raw.get("data", decoded)
+    elif tool_name == "dramaclaw_get_task":
+        structured["task"] = raw.get("data")
+    elif tool_name == "dramaclaw_get_episode_script":
+        structured["script"] = raw.get("data")
+    elif tool_name == "dramaclaw_update_character_face_prompt":
+        structured["character"] = raw.get("data")
+
+    if isinstance(raw.get("data"), list):
+        array_fields = [
+            key
+            for key, property_schema in properties.items()
+            if key not in structured and property_schema.get("type") == "array"
+        ]
+        if len(array_fields) == 1:
+            structured[array_fields[0]] = raw["data"]
+    for collection_field, count_field in (
+        ("skills", "count"),
+        ("canvases", "count"),
+        ("tasks", "count"),
+        ("files", "count"),
+        ("candidates", "candidate_count"),
+    ):
+        collection = structured.get(collection_field)
+        if isinstance(collection, list) and count_field in properties:
+            structured.setdefault(count_field, len(collection))
     Draft202012Validator(schema).validate(structured)
     return structured
 

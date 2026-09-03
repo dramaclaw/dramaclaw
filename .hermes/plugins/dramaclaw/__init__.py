@@ -929,12 +929,13 @@ def _handle_get_freezone_canvas(args: dict[str, Any], **_: Any) -> str:
     try:
         project = _project_from_args(args)
         canvas_id = _require_text_arg(args, "canvas_id")
-        return tool_result(
-            _request(
-                "GET",
-                f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
-            )
+        result = _request(
+            "GET",
+            f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
         )
+        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+            result["data"].setdefault("canvas_id", canvas_id)
+        return tool_result(result)
     except Exception as exc:
         return tool_error(str(exc))
 
@@ -981,13 +982,14 @@ def _handle_save_freezone_canvas(args: dict[str, Any], **_: Any) -> str:
         payload.setdefault("canvas_id", canvas_id)
         payload.setdefault("project_id", project)
         payload.setdefault("save_source", "manual_save")
-        return tool_result(
-            _request(
-                "PUT",
-                f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
-                body=payload,
-            )
+        result = _request(
+            "PUT",
+            f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
+            body=payload,
         )
+        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+            result["data"].setdefault("canvas_id", canvas_id)
+        return tool_result(result)
     except Exception as exc:
         return tool_error(str(exc))
 
@@ -997,12 +999,13 @@ def _handle_delete_freezone_canvas(args: dict[str, Any], **_: Any) -> str:
     try:
         project = _project_from_args(args)
         canvas_id = _require_text_arg(args, "canvas_id")
-        return tool_result(
-            _request(
-                "DELETE",
-                f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
-            )
+        result = _request(
+            "DELETE",
+            f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
         )
+        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+            result["data"].setdefault("canvas_id", canvas_id)
+        return tool_result(result)
     except Exception as exc:
         return tool_error(str(exc))
 
@@ -2441,7 +2444,6 @@ _RESULT_COMMON_PROPERTIES: dict[str, Any] = {
     "retryable": {"type": "boolean"},
     "next_action": {"type": ["string", "null"]},
     "agent_instruction": {"type": ["string", "null"]},
-    "data": {"type": ["object", "array", "string", "number", "boolean", "null"]},
 }
 
 _RESULT_ARRAY_FIELDS = frozenset(
@@ -2458,14 +2460,26 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "images",
         "items",
         "nodes",
+        "requested",
         "scenes",
         "sketches",
         "skills",
+        "started",
         "tasks",
+        "waiting",
+        "failed",
     }
 )
 _RESULT_BOOLEAN_FIELDS = frozenset(
-    {"add_bgm", "add_subtitles", "confirmed", "deleted", "has_more", "upload_dir_available"}
+    {
+        "add_bgm",
+        "add_subtitles",
+        "confirmed",
+        "deleted",
+        "has_more",
+        "saved",
+        "upload_dir_available",
+    }
 )
 _RESULT_INTEGER_FIELDS = frozenset(
     {
@@ -2473,18 +2487,25 @@ _RESULT_INTEGER_FIELDS = frozenset(
         "beat_num",
         "candidate_count",
         "count",
+        "current_episode",
         "episode",
-        "failed",
         "grid_index",
         "progress",
-        "requested",
         "revision",
-        "started",
-        "waiting",
     }
 )
 _RESULT_OBJECT_FIELDS = frozenset(
-    {"character", "pipeline", "script", "session", "task", "ui_spec"}
+    {
+        "audio_prerequisites",
+        "character",
+        "episode_status",
+        "global",
+        "pipeline",
+        "script",
+        "session",
+        "task",
+        "ui_spec",
+    }
 )
 
 
@@ -2502,7 +2523,14 @@ def _result_field_schema(field: str) -> dict[str, Any]:
     return {"type": ["string", "null"]}
 
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
-    "dramaclaw_control_episode_auto": ("action", "reason", "session"),
+    "dramaclaw_control_episode_auto": (
+        "episode",
+        "run_id",
+        "activated_at",
+        "updated_at",
+        "last_error",
+        "voice_policy",
+    ),
     "dramaclaw_get": ("response",),
     "dramaclaw_post": ("response",),
     "dramaclaw_patch": ("response",),
@@ -2512,14 +2540,27 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "dramaclaw_get_freezone_skill_result": ("run_id", "outputs", "progress"),
     "dramaclaw_list_freezone_canvases": ("canvases", "count"),
     "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges", "revision"),
-    "dramaclaw_save_freezone_canvas": ("canvas_id", "revision", "client_save_id"),
+    "dramaclaw_save_freezone_canvas": (
+        "canvas_id",
+        "saved",
+        "revision",
+        "client_save_id",
+    ),
     "dramaclaw_delete_freezone_canvas": ("canvas_id", "deleted"),
     "dramaclaw_create_freezone_canvas_from_preset": (
         "canvas_id",
         "revision",
         "preset",
     ),
-    "dramaclaw_pipeline_status": ("project_id", "episode", "next_step", "pipeline"),
+    "dramaclaw_pipeline_status": (
+        "project",
+        "global",
+        "current_episode",
+        "episode_status",
+        "audio_prerequisites",
+        "next_step",
+        "next_step_name",
+    ),
     "dramaclaw_list_tasks": ("tasks", "count", "episode", "task_type"),
     "dramaclaw_get_task": ("task", "task_id", "task_type", "episode", "beat_num"),
     "dramaclaw_get_episode_script": ("project_id", "episode", "script", "beats"),
@@ -2548,7 +2589,13 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "dramaclaw_detect_sketch_identities": ("task", "task_id", "episode"),
     "dramaclaw_optimize_video_global": ("task", "task_id", "episode"),
     "dramaclaw_generate_audio": ("task", "task_id", "episode"),
-    "dramaclaw_prepare_system_voices": ("task", "task_id", "episode", "confirmed"),
+    "dramaclaw_prepare_system_voices": (
+        "task",
+        "task_id",
+        "task_type",
+        "episode",
+        "confirmed",
+    ),
     "dramaclaw_get_sketches": ("project_id", "episode", "sketches", "count", "ui_spec"),
     "dramaclaw_get_first_frames": ("project_id", "episode", "frames", "count", "ui_spec"),
     "dramaclaw_get_sketch_candidates": (
@@ -2593,6 +2640,96 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Fields that identify a real successful result for every public tool.  The larger
+# _RESULT_FIELDS table above lists optional fields for all supported states; this
+# table is deliberately separate so dropping a tool's business payload cannot be
+# hidden by a generic MCP envelope.
+_RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
+    "dramaclaw_control_episode_auto": ("run_id", "episode"),
+    "dramaclaw_get": ("response",),
+    "dramaclaw_post": ("response",),
+    "dramaclaw_patch": ("response",),
+    "dramaclaw_delete": ("response",),
+    "dramaclaw_list_freezone_skills": ("skills", "count"),
+    "dramaclaw_run_freezone_skill": ("run_id",),
+    "dramaclaw_get_freezone_skill_result": ("run_id",),
+    "dramaclaw_list_freezone_canvases": ("canvases", "count"),
+    "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges"),
+    "dramaclaw_save_freezone_canvas": ("canvas_id", "saved", "revision"),
+    "dramaclaw_delete_freezone_canvas": ("canvas_id", "deleted"),
+    "dramaclaw_create_freezone_canvas_from_preset": ("canvas_id",),
+    "dramaclaw_pipeline_status": ("project", "global", "next_step"),
+    "dramaclaw_list_tasks": ("tasks", "count"),
+    "dramaclaw_get_task": ("task",),
+    "dramaclaw_get_episode_script": ("script",),
+    "dramaclaw_list_ingest_uploads": (
+        "project_id",
+        "files",
+        "count",
+        "upload_dir_available",
+    ),
+    "dramaclaw_update_character_face_prompt": ("character",),
+    "dramaclaw_get_sketches": ("project_id", "episode", "sketches", "count", "ui_spec"),
+    "dramaclaw_get_first_frames": ("project_id", "episode", "frames", "count", "ui_spec"),
+    "dramaclaw_get_sketch_candidates": (
+        "project_id",
+        "episode",
+        "candidates",
+        "candidate_count",
+        "ui_spec",
+    ),
+    "dramaclaw_get_scene_images": ("project_id", "images", "count", "ui_spec"),
+    "dramaclaw_get_character_media": ("project_id", "count", "ui_spec"),
+    "dramaclaw_get_episode_media": ("project_id", "episode", "beats", "media_type", "ui_spec"),
+    "dramaclaw_get_final_video": ("project_id", "episodes", "count", "has_more", "ui_spec"),
+}
+
+_TASK_RESULT_TOOLS = {
+    "dramaclaw_build_characters",
+    "dramaclaw_plan_episodes",
+    "dramaclaw_generate_script",
+    "dramaclaw_plan_identities",
+    "dramaclaw_plan_scenes",
+    "dramaclaw_plan_props",
+    "dramaclaw_generate_scene_master",
+    "dramaclaw_generate_scene_reverse",
+    "dramaclaw_generate_portrait",
+    "dramaclaw_generate_identity_image",
+    "dramaclaw_generate_sketches",
+    "dramaclaw_detect_sketch_identities",
+    "dramaclaw_generate_audio",
+    "dramaclaw_prepare_system_voices",
+    "dramaclaw_optimize_video_global",
+    "dramaclaw_compose_episode",
+    "dramaclaw_start_single_video",
+}
+
+_BATCH_RESULT_TOOLS = {
+    "dramaclaw_render_first_frames",
+    "dramaclaw_start_video_batch",
+}
+
+
+def _success_contract(name: str) -> dict[str, Any]:
+    if name in _TASK_RESULT_TOOLS:
+        return {
+            "anyOf": [
+                {"required": ["task"]},
+                {"required": ["task_id"]},
+                {"required": ["task_type"]},
+            ]
+        }
+    if name in _BATCH_RESULT_TOOLS:
+        return {
+            "required": ["episode", "requested", "started"],
+            "anyOf": [{"required": ["batch_id"]}, {"required": ["code"]}],
+        }
+    required = _RESULT_SUCCESS_REQUIRED.get(name)
+    if required is None:
+        raise RuntimeError(f"missing successful output contract for {name}")
+    return {"required": list(required)}
+
+
 def _output_schema(name: str) -> dict[str, Any]:
     fields = _RESULT_FIELDS.get(name)
     if fields is None:
@@ -2604,9 +2741,25 @@ def _output_schema(name: str) -> dict[str, Any]:
         "title": f"{name}.result",
         "type": "object",
         "properties": properties,
-        "required": ["ok", "status", "data"],
+        "required": ["ok", "status"],
         "additionalProperties": False,
         "x-dramaclaw-tool": name,
+        "allOf": [
+            {
+                "if": {"properties": {"ok": {"const": True}}, "required": ["ok"]},
+                "then": _success_contract(name),
+            },
+            {
+                "if": {"properties": {"ok": {"const": False}}, "required": ["ok"]},
+                "then": {
+                    "anyOf": [
+                        {"required": ["code"]},
+                        {"required": ["error"]},
+                        {"required": ["message"]},
+                    ]
+                },
+            },
+        ],
     }
 
 

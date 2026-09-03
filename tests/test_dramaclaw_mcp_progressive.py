@@ -154,13 +154,175 @@ async def test_project_scope_lists_concrete_tools(monkeypatch):
     for name, schema in schemas.items():
         Draft202012Validator.check_schema(schema)
         assert schema["x-dramaclaw-tool"] == name
-        assert schema["required"] == ["ok", "status", "data"]
+        assert schema["required"] == ["ok", "status"]
+        assert "data" not in schema["properties"]
         assert schema["additionalProperties"] is False
         assert all(property_schema for property_schema in schema["properties"].values())
 
     for plugin in dramaclaw_mcp.PLUGINS:
         plugin_tool_names = {name for name, _schema, _handler in plugin.TOOLS}
         assert set(plugin._RESULT_FIELDS) == plugin_tool_names
+
+
+def test_every_public_tool_rejects_an_arbitrary_success_envelope():
+    for name, (tool, _handler) in dramaclaw_mcp.TOOLS.items():
+        output_schema = tool["output_schema"]
+        errors = list(
+            Draft202012Validator(output_schema).iter_errors(
+                {"ok": True, "status": "completed", "data": {"anything": "goes"}}
+            )
+        )
+        assert errors, f"{name} accepted a success result without its business fields"
+
+
+@pytest.mark.asyncio
+async def test_real_list_tasks_handler_exposes_and_requires_task_fields(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setattr(
+        dramaclaw_mcp.PLUGIN,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "data": [{"id": "task-1"}],
+        },
+    )
+
+    result = await dramaclaw_mcp.call_tool("dramaclaw_list_tasks", {})
+
+    assert result.structuredContent == {
+        "ok": True,
+        "status": "completed",
+        "tasks": [{"id": "task-1"}],
+        "count": 1,
+    }
+    schema = dramaclaw_mcp.TOOLS["dramaclaw_list_tasks"][0]["output_schema"]
+    missing_count = dict(result.structuredContent)
+    missing_count.pop("count")
+    assert list(Draft202012Validator(schema).iter_errors(missing_count))
+
+
+@pytest.mark.asyncio
+async def test_real_core_handlers_match_their_endpoint_output_contracts(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.delenv("DRAMACLAW_TOOL_MODE", raising=False)
+
+    def fake_request(method, path, *, query=None, body=None):
+        del query, body
+        if path == "/api/v1/freezone/skills":
+            return {"ok": True, "data": [{"id": "skill-1"}]}
+        if path.endswith("/freezone/skills/skill-1/run"):
+            return {"run_id": "run-1", "status": "queued"}
+        if path.endswith("/freezone/skills/runs/run-1/result"):
+            return {"run_id": "run-1", "status": "done", "outputs": []}
+        if path.endswith("/freezone/canvases:from-preset"):
+            return {"ok": True, "data": {"canvas_id": "canvas-a", "reused": True}}
+        if path.endswith("/freezone/canvases"):
+            return {"ok": True, "data": [{"canvas_id": "canvas-a"}]}
+        if path.endswith("/freezone/canvases/canvas-a"):
+            if method == "GET":
+                return {
+                    "ok": True,
+                    "data": {"nodes": [], "edges": [], "revision": 2},
+                }
+            if method == "PUT":
+                return {
+                    "ok": True,
+                    "data": {"saved": True, "revision": 3, "client_save_id": "save-1"},
+                }
+            return {"ok": True, "data": {"deleted": True}}
+        if path.endswith("/pipeline/status"):
+            return {
+                "ok": True,
+                "data": {
+                    "project": "project-a",
+                    "global": {"ingested": True},
+                    "current_episode": 1,
+                    "episode_status": {},
+                    "next_step": "script_writer",
+                    "next_step_name": "生成脚本",
+                },
+            }
+        if path.endswith("/tasks/script_writer/1"):
+            return {
+                "ok": True,
+                "data": {"task_id": "task-1", "task_type": "script_writer", "episode": 1},
+            }
+        if path.endswith("/episodes/1/script"):
+            return {"ok": True, "data": {"episode": 1, "beats": []}}
+        raise AssertionError(f"unexpected request: {method} {path}")
+
+    monkeypatch.setattr(dramaclaw_mcp.PLUGIN, "_request", fake_request)
+    cases = [
+        ("dramaclaw_list_freezone_skills", {}, {"skills", "count"}),
+        (
+            "dramaclaw_run_freezone_skill",
+            {"skill_id": "skill-1"},
+            {"run_id", "status"},
+        ),
+        (
+            "dramaclaw_get_freezone_skill_result",
+            {"run_id": "run-1"},
+            {"run_id", "status", "outputs"},
+        ),
+        ("dramaclaw_list_freezone_canvases", {}, {"canvases", "count"}),
+        (
+            "dramaclaw_get_freezone_canvas",
+            {"canvas_id": "canvas-a"},
+            {"canvas_id", "nodes", "edges", "revision"},
+        ),
+        (
+            "dramaclaw_save_freezone_canvas",
+            {
+                "canvas_id": "canvas-a",
+                "payload": {
+                    "nodes": [],
+                    "edges": [],
+                    "viewport": None,
+                    "metadata": {},
+                    "base_revision": 2,
+                    "client_save_id": "save-1",
+                },
+            },
+            {"canvas_id", "saved", "revision", "client_save_id"},
+        ),
+        (
+            "dramaclaw_delete_freezone_canvas",
+            {"canvas_id": "canvas-a"},
+            {"canvas_id", "deleted"},
+        ),
+        (
+            "dramaclaw_create_freezone_canvas_from_preset",
+            {"preset": {"scope": "blank"}},
+            {"canvas_id"},
+        ),
+        ("dramaclaw_pipeline_status", {}, {"project", "global", "next_step"}),
+        (
+            "dramaclaw_get_task",
+            {"task_type": "script_writer", "episode": 1},
+            {"task", "task_id", "task_type", "episode", "status"},
+        ),
+        ("dramaclaw_get_episode_script", {"episode": 1}, {"script"}),
+    ]
+
+    for tool_name, arguments, required_fields in cases:
+        result = await dramaclaw_mcp.call_tool(tool_name, arguments)
+        assert result.isError is False, tool_name
+        assert required_fields <= set(result.structuredContent), tool_name
+
+
+@pytest.mark.asyncio
+async def test_real_handler_failure_uses_the_shared_error_contract(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+
+    result = await dramaclaw_mcp.call_tool(
+        "dramaclaw_get_task", {"episode": 1, "task_type": ""}
+    )
+
+    assert result.isError is True
+    assert result.structuredContent["ok"] is False
+    assert result.structuredContent["error"]
+    schema = dramaclaw_mcp.TOOLS["dramaclaw_get_task"][0]["output_schema"]
+    Draft202012Validator(schema).validate(result.structuredContent)
 
 
 @pytest.mark.asyncio
@@ -215,7 +377,19 @@ async def test_codex_bridge_search_describe_and_call(monkeypatch):
     monkeypatch.setitem(
         dramaclaw_mcp.TOOLS,
         "dramaclaw_render_first_frames",
-        (schema, lambda arguments: calls.append(arguments) or '{"ok":true}'),
+        (
+            schema,
+            lambda arguments: calls.append(arguments)
+            or json.dumps(
+                {
+                    "ok": True,
+                    "episode": 1,
+                    "batch_id": "batch-1",
+                    "requested": [1],
+                    "started": [1],
+                }
+            ),
+        ),
     )
 
     search = await dramaclaw_mcp.call_tool(
@@ -246,7 +420,7 @@ async def test_codex_bridge_search_describe_and_call(monkeypatch):
     bridge_payload = json.loads(result.content[0].text)
     assert bridge_payload["ok"] is True
     assert bridge_payload["tool_name"] == "dramaclaw_render_first_frames"
-    assert bridge_payload["result"]["data"] == {"ok": True}
+    assert bridge_payload["result"]["batch_id"] == "batch-1"
     assert calls == [{"episode": 1}]
 
 
@@ -551,7 +725,19 @@ async def test_tool_call_validates_and_dispatches_existing_handler(monkeypatch):
     monkeypatch.setitem(
         dramaclaw_mcp.TOOLS,
         "dramaclaw_render_first_frames",
-        (schema, lambda arguments: calls.append(arguments) or '{"ok":true}'),
+        (
+            schema,
+            lambda arguments: calls.append(arguments)
+            or json.dumps(
+                {
+                    "ok": True,
+                    "episode": 1,
+                    "batch_id": "batch-1",
+                    "requested": [1],
+                    "started": [1],
+                }
+            ),
+        ),
     )
 
     invalid = await dramaclaw_mcp.call_tool("dramaclaw_render_first_frames", {})
@@ -563,7 +749,7 @@ async def test_tool_call_validates_and_dispatches_existing_handler(monkeypatch):
     valid = await dramaclaw_mcp.call_tool(
         "dramaclaw_render_first_frames", {"episode": 1}
     )
-    assert json.loads(valid.content[0].text) == {"ok": True}
+    assert json.loads(valid.content[0].text)["ok"] is True
     assert calls == [{"episode": 1}]
 
 
@@ -574,7 +760,15 @@ async def test_native_tool_call_does_not_block_mcp_event_loop(monkeypatch):
 
     def blocking_handler(_arguments):
         time.sleep(0.2)
-        return '{"ok":true}'
+        return json.dumps(
+            {
+                "ok": True,
+                "episode": 1,
+                "batch_id": "batch-1",
+                "requested": [1],
+                "started": [1],
+            }
+        )
 
     monkeypatch.setitem(
         dramaclaw_mcp.TOOLS,
@@ -591,4 +785,4 @@ async def test_native_tool_call_does_not_block_mcp_event_loop(monkeypatch):
     await asyncio.sleep(0.05)
     assert call.done() is False
     result = await call
-    assert json.loads(result.content[0].text) == {"ok": True}
+    assert json.loads(result.content[0].text)["ok"] is True
