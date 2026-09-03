@@ -27,7 +27,7 @@ import { Progress } from "@/components/ui/progress";
 import { TaskListSkeleton } from "@/components/skeletons";
 import { cn } from "@/lib/utils";
 import { stageForTaskType } from "@/lib/episode-stage-registry";
-import { currentTaskText } from "@/task-center/derivations";
+import { currentTaskText, taskLogLinesOf } from "@/task-center/derivations";
 import { TASK_TYPES } from "@/lib/task-types";
 import type { Task, TaskStatus } from "@/types/task";
 
@@ -253,7 +253,7 @@ function TaskRow({
                     {t("tasks.logs")}
                   </p>
                   <div className="max-h-48 overflow-auto rounded-[8px] border border-white/[0.06] bg-white/[0.04] p-2.5">
-                    {task.logs.map((line, i) => (
+                    {taskLogLinesOf(task, t).map((line, i) => (
                       <p key={i} className="whitespace-pre-wrap font-mono text-xs text-muted-foreground">
                         {line}
                       </p>

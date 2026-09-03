@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 
 import {
   claimOwnership,
@@ -17,6 +18,7 @@ import {
 import { useTaskStream } from "@/hooks/use-task-stream";
 import { useCancelTask, useTasks } from "@/lib/queries/tasks";
 import { mergeTaskLogs } from "@/lib/script-feedback";
+import { currentTaskText, taskLogLinesOf } from "@/task-center/derivations";
 import { taskBeatNumbers } from "@/lib/task-types";
 
 /**
@@ -92,6 +94,7 @@ export function useTaskController(
   // below and also as a runtime guard against stray uses.
   const registry = useTaskRegistry();
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const instanceId = useInstanceId();
 
   // Serialize the key so dependency arrays are stable strings rather than
@@ -298,10 +301,14 @@ export function useTaskController(
       streamState: {
         status: match.status,
         progress: match.progress ?? current.streamState.progress,
-        currentTask: match.current_task ?? current.streamState.currentTask,
+        currentTask: match.current_task
+          ? currentTaskText(match, t)
+          : current.streamState.currentTask,
         result: match.result ?? null,
         error: match.error ?? null,
-        logs: Array.isArray(match.logs) ? match.logs : current.streamState.logs,
+        logs: Array.isArray(match.logs)
+          ? taskLogLinesOf(match, t)
+          : current.streamState.logs,
       },
     });
 
@@ -418,8 +425,9 @@ export function useTaskController(
         matchesCoverage(t) &&
         isActiveStatus(t.status),
     );
-    appendLogs(match?.logs);
+    appendLogs(match ? taskLogLinesOf(match, t) : undefined);
   }, [
+    t,
     isOwner,
     tasksRes,
     key.taskType,
@@ -462,10 +470,10 @@ export function useTaskController(
       streamState: {
         status: match.status,
         progress: match.progress ?? 1,
-        currentTask: match.current_task ?? "",
+        currentTask: currentTaskText(match, t),
         result: match.result ?? null,
         error: match.error ?? null,
-        logs: Array.isArray(match.logs) ? match.logs.filter((x) => typeof x === "string") : [],
+        logs: taskLogLinesOf(match, t),
       },
     });
     if (invalidateKeys) {

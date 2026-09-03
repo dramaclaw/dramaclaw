@@ -53,6 +53,9 @@ dependencies = [
     "asyncpg>=0.30.0",
     "packaging>=24.0",
     "portalocker>=3.2.0",
+    "langdetect>=1.0.9,<2.0.0",
+    "langid>=1.1.6,<2.0.0",
+    "wordninja>=2.0.0,<3.0.0",
 ]
 
 [project.scripts]

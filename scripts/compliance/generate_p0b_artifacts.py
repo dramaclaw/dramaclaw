@@ -73,6 +73,10 @@ MANUAL_LICENSES = {
         "LicenseRef-Apple-Sample-Code AND LicenseRef-Apple-ML-Research-Model",
         "package license files: sharp-0.1.dist-info/licenses/LICENSE and LICENSE_MODEL",
     ),
+    "wordninja": (
+        "MIT",
+        "manual review: https://github.com/keredson/wordninja/blob/master/LICENSE",
+    ),
 }
 
 

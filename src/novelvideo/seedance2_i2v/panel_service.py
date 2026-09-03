@@ -24,6 +24,7 @@ from novelvideo.seedance2_i2v.character_voice_storage import (
     voice_content_sha256,
 )
 from novelvideo.seedance2_i2v.models import (
+    SEEDANCE2_PROMPT_GUIDANCE_TEMPLATE_KEYS,
     Seedance2I2VMode,
     dump_seedance2_config,
     parse_seedance2_config,
@@ -31,11 +32,13 @@ from novelvideo.seedance2_i2v.models import (
 from novelvideo.seedance2_i2v.prompt import (
     build_seedance2_prompt_draft,
     compute_seedance2_prompt_inputs_hash,
+    detect_seedance2_prompt_language,
     generate_seedance2_prompt,
 )
 from novelvideo.seedance2_i2v.voice_clone import normalize_seedance2_audio_type
 from novelvideo.utils.media_io import crop_image_to_path, get_audio_duration
 from novelvideo.utils.path_resolver import PathResolver
+from novelvideo.utils.source_language import AssetLanguage
 
 
 SEEDANCE2_PROMPT_GUIDANCE_TEMPLATES: dict[str, str] = {
@@ -174,11 +177,22 @@ async def generate_seedance2_prompt_for_panel(
     composer=None,
     manual_prompt_reference: str | None = None,
     prompt_guidance: str | None = None,
+    prompt_guidance_template_keys: list[str] | None = None,
+    language: AssetLanguage | None = None,
     prop_menu: list[Any] | None = None,
 ) -> str:
     config = parse_seedance2_config(beat.get("seedance2_config_json"))
     if prompt_guidance is not None:
         config.prompt_guidance = str(prompt_guidance or "").strip()
+    if prompt_guidance_template_keys is not None:
+        config.prompt_guidance_template_keys = list(
+            dict.fromkeys(
+                key
+                for value in prompt_guidance_template_keys
+                if (key := str(value or "").strip())
+                in SEEDANCE2_PROMPT_GUIDANCE_TEMPLATE_KEYS
+            )
+        )
     assets = build_seedance2_project_assets(
         project_output=Path(project_dir),
         episode=episode,
@@ -196,10 +210,12 @@ async def generate_seedance2_prompt_for_panel(
         else (config.final_prompt or initial_prompt or "")
     ).strip()
     prompt_beat = _beat_with_seedance2_initial_prompt(beat, initial_prompt)
+    output_language = language or detect_seedance2_prompt_language(prompt_beat)
     inputs_hash = _seedance2_prompt_inputs_hash(
         config=config,
         beat=prompt_beat,
         assets=assets,
+        language=output_language,
     )
     result = await generate_seedance2_prompt(
         mode=config.mode,
@@ -207,6 +223,7 @@ async def generate_seedance2_prompt_for_panel(
         assets=assets,
         text_overlay=config.text_overlay,
         prompt_guidance=config.prompt_guidance,
+        prompt_guidance_template_keys=config.prompt_guidance_template_keys,
         request_params={
             "duration": int(config.duration),
             "resolution": config.resolution,
@@ -214,6 +231,7 @@ async def generate_seedance2_prompt_for_panel(
         },
         manual_prompt_reference=reference_prompt,
         composer=composer,
+        language=output_language,
     )
     config.final_prompt = mark_seedance2_prompt_references_for_editor(result.prompt)
     config.prompt_source = "generated" if result.used_ai else "fallback"
@@ -459,6 +477,7 @@ def build_seedance2_video_panel_state(
     next_beat: dict[str, Any] | None = None,
     characters: list[Any] | None = None,
     prop_menu: list[Any] | None = None,
+    language: AssetLanguage | None = None,
 ) -> Seedance2VideoPanelState:
     config = parse_seedance2_config(beat.get("seedance2_config_json"))
     duration_floor = _seedance2_duration_floor(
@@ -481,12 +500,14 @@ def build_seedance2_video_panel_state(
     prompt_source = config.prompt_source or "saved"
     final_prompt = config.final_prompt
     initial_prompt = _seedance2_initial_prompt(beat)
+    output_language = language or detect_seedance2_prompt_language(beat)
     if not final_prompt and initial_prompt:
         final_prompt = _seedance2_default_prompt(
             beat=_beat_with_seedance2_initial_prompt(beat, initial_prompt),
             config=config,
             assets=assets,
             text_overlay=config.text_overlay,
+            language=output_language,
         )
         prompt_source = "fallback"
     assets = apply_prompt_audio_selection(assets, final_prompt)
@@ -494,6 +515,7 @@ def build_seedance2_video_panel_state(
         config=config,
         beat=beat,
         assets=assets,
+        language=output_language,
     )
     return Seedance2VideoPanelState(
         mode=config.mode.value,
@@ -643,6 +665,7 @@ def _seedance2_default_prompt(
     config: Any,
     assets: list[Seedance2ResolvedAsset],
     text_overlay: dict[str, Any],
+    language: str = "zh",
 ) -> str:
     return build_seedance2_prompt_draft(
         mode=config.mode,
@@ -650,6 +673,8 @@ def _seedance2_default_prompt(
         assets=assets,
         text_overlay=text_overlay,
         prompt_guidance=config.prompt_guidance,
+        prompt_guidance_template_keys=config.prompt_guidance_template_keys,
+        language=language,
     )
 
 
@@ -729,6 +754,7 @@ def _seedance2_prompt_inputs_hash(
     config: Any,
     beat: dict[str, Any],
     assets: list[Seedance2ResolvedAsset],
+    language: str = "zh",
 ) -> str:
     return compute_seedance2_prompt_inputs_hash(
         mode=config.mode,
@@ -736,6 +762,8 @@ def _seedance2_prompt_inputs_hash(
         assets=assets,
         text_overlay=config.text_overlay,
         prompt_guidance=config.prompt_guidance,
+        prompt_guidance_template_keys=config.prompt_guidance_template_keys,
+        language=language,
     )
 
 

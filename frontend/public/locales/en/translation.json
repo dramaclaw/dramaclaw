@@ -1925,6 +1925,7 @@
     "namePlaceholder": "Enter your project name",
     "clearName": "Clear project name",
     "nameNoChinese": "Project name cannot contain Chinese characters.",
+    "nameTooLong": "Project name must be at most 64 characters long.",
     "nameInvalid": "Project name can only contain letters, numbers, and underscores.",
     "nameExistsActive": "A project with this name already exists. Choose another name.",
     "nameExistsArchived": "An archived project already uses this name. Unarchive it or choose another name.",
@@ -2743,6 +2744,86 @@
       "unknownCharacter": "Character",
       "withEpisodeBeat": "{{label}} (Ep {{episode}}, Beat {{beat}})",
       "withEpisode": "{{label}} (Ep {{episode}})"
+    },
+    "progress": {
+      "ingest": {
+        "reading": "Reading and validating source text...",
+        "validated": "Source text validated",
+        "chunking": "Splitting source text...",
+        "planning": "Recording analysis plan...",
+        "saving": "Saving import result...",
+        "complete": "Import complete"
+      },
+      "pipeline": {
+        "normalizingScenes": "Normalizing screenplay scene blocks with AI..."
+      },
+      "script": {
+        "start": "Generating script...",
+        "beatVideoPromptStart": "Generating video prompt for beat {{beatNum}}",
+        "beatVideoPromptSaved": "Saved video prompt for beat {{beatNum}}"
+      },
+      "submitting": "Submitting task…",
+      "queued": "Task queued",
+      "characters": {
+        "chunking": "Splitting the source text…",
+        "nothingToAnalyze": "Nothing to analyze",
+        "extracting": "Extracting characters chunk by chunk…",
+        "noResults": "No results extracted",
+        "enrichingAppearance": "Filling in character appearances…",
+        "publishing": "Publishing characters…",
+        "repairingAppearance": "Filling gaps in existing character appearances…",
+        "recordingEvidence": "Recording character evidence…",
+        "complete": "Character extraction complete"
+      },
+      "scenes": {
+        "notNeeded": "No scenes need building up front",
+        "extractingFromHeadings": "Extracting base scenes from scene headings…",
+        "noResults": "No results extracted",
+        "normalizing": "Normalizing variant spellings of the same location…",
+        "saving": "Saving new scenes…",
+        "complete": "Scene extraction complete"
+      },
+      "props": {
+        "perEpisode": "Props are generated per episode"
+      }
+    },
+    "log": {
+      "ingest": {
+        "readingFile": "Reading file: {{path}}",
+        "readComplete": "File read: {{charCount}} characters",
+        "chunked": "Deterministic split complete: {{chunkCount}} segments ({{sectionType}})",
+        "planReused": "Reusing existing analysis plan: {{runId}}",
+        "planRecorded": "Analysis plan recorded: {{runId}}",
+        "sourceSaved": "Source text saved"
+      },
+      "source": {
+        "loading": "Loading source text from file...",
+        "loaded": "Source text loaded: {{charCount}} characters"
+      },
+      "pipeline": {
+        "legacyRecall": "Rule-based recall sanity check found {{sceneCount}} scene blocks: {{sceneNames}}"
+      },
+      "characters": {
+        "emptyChunks": "⚠️ The source text produced no chunks",
+        "chunked": "Deterministic split: {{chunkCount}} chunks ({{sectionType}})",
+        "reusingChunks": "Reusing {{cachedCount}} finished chunks, recomputing only {{pendingCount}}",
+        "reusingAdjudication": "Reusing the previous adjudication: {{characterCount}} characters, no model call",
+        "noEvidence": "⚠️ No characters with source evidence were extracted; existing character data kept",
+        "merged": "Merged into {{candidateCount}} character candidates",
+        "published": "Added {{addedCount}} characters, skipped {{skippedCount}} existing",
+        "repaired": "Filled in face prompts for {{repairedCount}} existing characters"
+      },
+      "scenes": {
+        "deferred": "Narrated-project scenes are generated on demand during episode planning",
+        "noHeadings": "⚠️ No scenes were extracted from scene headings; existing scene data kept",
+        "published": "Added {{addedCount}} scenes, repaired {{repairedCount}} placeholder descriptions, skipped {{skippedCount}} existing"
+      },
+      "props": {
+        "deferred": "Props are generated on demand during episode planning"
+      }
+    },
+    "toast": {
+      "scenesBuildQueued": "Scene build task queued"
     }
   },
   "taskCenter": {
@@ -3403,6 +3484,12 @@
         "seedance2GuidanceCamera": "Camera",
         "seedance2GuidanceStyle": "Style",
         "seedance2GuidanceNoSubtitle": "No subtitle",
+        "seedance2GuidanceSubjectTemplate": "Subject: Define the primary character or object, its current action and state, and avoid competing focal subjects.",
+        "seedance2GuidanceSceneTemplate": "Scene: Describe the spatial background, location relationships, key props, and environmental materials while staying consistent with the references.",
+        "seedance2GuidanceLightingTemplate": "Lighting: Describe the key light, tonal layers, color temperature, and atmosphere while avoiding unintended flicker.",
+        "seedance2GuidanceCameraTemplate": "Camera: Specify shot size, viewpoint, movement speed, and direction so the camera move is clear and executable.",
+        "seedance2GuidanceStyleTemplate": "Style: Define visual texture, period, color direction, and realism to prevent style drift.",
+        "seedance2GuidanceNoSubtitleTemplate": "No subtitles: Do not generate any text or subtitles; keep the frame visually clean.",
         "seedance2SceneOptimizeLabels": {
           "anime": "Anime",
           "realistic": "Realistic"
