@@ -19,7 +19,6 @@ from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 SCHEMA_VERSION = "freezone_workflow_draft.v1"
 DEFAULT_TTL_SECONDS = 24 * 60 * 60
-DEFAULT_CONFIRMATION_LEASE_SECONDS = 5 * 60
 DRAFT_ID_RE = re.compile(r"^workflow_draft_[a-zA-Z0-9_-]{1,80}$")
 DRAFT_STATUSES = {"ready", "confirming", "submitted", "confirmed"}
 CONFIRMATION_OUTCOMES = {"ready", "submitted", "confirmed"}
@@ -40,6 +39,8 @@ CREATE TABLE IF NOT EXISTS workflow_drafts (
     last_changes_json        TEXT NOT NULL DEFAULT '{}',
     billing_json             TEXT NOT NULL DEFAULT '{}',
     billing_quote_id         TEXT NOT NULL DEFAULT '',
+    task_id                  TEXT NOT NULL DEFAULT '',
+    root_task_id             TEXT NOT NULL DEFAULT '',
     plan_digest              TEXT NOT NULL,
     created_at               REAL NOT NULL,
     updated_at               REAL NOT NULL,
@@ -89,6 +90,14 @@ def _connect(project_dir: Path):
                 if "billing_quote_id" not in columns:
                     conn.execute(
                         "ALTER TABLE workflow_drafts ADD COLUMN billing_quote_id TEXT NOT NULL DEFAULT ''"
+                    )
+                if "task_id" not in columns:
+                    conn.execute(
+                        "ALTER TABLE workflow_drafts ADD COLUMN task_id TEXT NOT NULL DEFAULT ''"
+                    )
+                if "root_task_id" not in columns:
+                    conn.execute(
+                        "ALTER TABLE workflow_drafts ADD COLUMN root_task_id TEXT NOT NULL DEFAULT ''"
                     )
                 conn.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_drafts_billing_quote "
@@ -242,6 +251,8 @@ def _payload_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "last_changes": _json_object(row["last_changes_json"]),
         "billing": _json_object(row["billing_json"]),
         "billing_quote_id": row["billing_quote_id"],
+        "task_id": row["task_id"],
+        "root_task_id": row["root_task_id"],
         "created_at": float(row["created_at"]),
         "updated_at": float(row["updated_at"]),
         "expires_at": float(row["expires_at"]),
@@ -269,9 +280,10 @@ def _write_draft(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
         INSERT INTO workflow_drafts (
             draft_id, schema_version, project_id, canvas_id, revision, status,
             skill_id, run_after_create, intent_json, compiled_json, preview_json,
-            last_changes_json, billing_json, billing_quote_id, plan_digest, created_at, updated_at, expires_at,
+            last_changes_json, billing_json, billing_quote_id, task_id, root_task_id,
+            plan_digest, created_at, updated_at, expires_at,
             confirmation_started_at, confirmed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(draft_id) DO UPDATE SET
             revision = excluded.revision,
             status = excluded.status,
@@ -283,6 +295,8 @@ def _write_draft(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
             last_changes_json = excluded.last_changes_json,
             billing_json = excluded.billing_json,
             billing_quote_id = excluded.billing_quote_id,
+            task_id = excluded.task_id,
+            root_task_id = excluded.root_task_id,
             plan_digest = excluded.plan_digest,
             updated_at = excluded.updated_at,
             expires_at = excluded.expires_at,
@@ -316,6 +330,8 @@ def _write_draft(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 payload.get("billing") or {}, ensure_ascii=False, separators=(",", ":")
             ),
             payload.get("billing_quote_id") or "",
+            payload.get("task_id") or "",
+            payload.get("root_task_id") or "",
             payload["plan_digest"],
             payload["created_at"],
             payload["updated_at"],
@@ -363,6 +379,8 @@ def create_workflow_draft(
         "last_changes": {},
         "billing": {},
         "billing_quote_id": str(billing_quote_id or "").strip(),
+        "task_id": "",
+        "root_task_id": "",
         "created_at": now,
         "updated_at": now,
         "expires_at": now + max(int(ttl_seconds), 300),
@@ -394,7 +412,10 @@ def read_workflow_draft(
         payload = _read_draft(conn, canvas_id=canvas_id, draft_id=draft_id)
     if payload is None:
         return None, "workflow draft not found"
-    if float(payload.get("expires_at") or 0) < time.time():
+    if (
+        float(payload.get("expires_at") or 0) < time.time()
+        and payload.get("status") == "ready"
+    ):
         return None, "workflow draft expired"
     return payload, None
 
@@ -461,6 +482,8 @@ def patch_workflow_draft(
                 "expires_at": now + max(int(ttl_seconds), 300),
                 "confirmation_started_at": None,
                 "confirmed_at": None,
+                "task_id": "",
+                "root_task_id": "",
             }
         )
         if run_after_create is not None:
@@ -476,7 +499,6 @@ def claim_workflow_draft_confirmation(
     draft_id: str,
     revision: int,
     now: float | None = None,
-    lease_seconds: int = DEFAULT_CONFIRMATION_LEASE_SECONDS,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     _validate_scope(canvas_id, draft_id)
     with _connect(project_dir) as conn:
@@ -485,29 +507,8 @@ def claim_workflow_draft_confirmation(
         if payload is None:
             return None, _unavailable("workflow draft not found")
         claim_time = time.time() if now is None else float(now)
-        billing = (
-            payload.get("billing") if isinstance(payload.get("billing"), dict) else {}
-        )
-        reservation_id = str(billing.get("reservation_id") or "")
-        billing_status = str(billing.get("status") or "")
-        active_reservation = bool(reservation_id) and billing_status in {
-            "reserved",
-            "settlement_pending",
-        }
         expired = float(payload.get("expires_at") or 0) < claim_time
-        started_at = float(payload.get("confirmation_started_at") or 0)
-        stale_confirmation = (
-            payload["status"] == "confirming"
-            and started_at > 0
-            and started_at <= claim_time - max(int(lease_seconds), 1)
-        )
-        if (expired or stale_confirmation) and active_reservation:
-            return None, {
-                "ok": False,
-                "status": "workflow_draft_confirmation_reconciliation_required",
-                "error": "workflow draft reservation must be reconciled before retry",
-            }
-        if expired:
+        if expired and payload["status"] == "ready":
             return None, _unavailable("workflow draft expired")
         current_revision = int(payload["revision"])
         if revision != current_revision:
@@ -527,7 +528,7 @@ def claim_workflow_draft_confirmation(
                 "status": "workflow_draft_already_confirmed",
                 "message": "该工作流方案已经创建，不会重复创建节点。",
             }
-        if payload["status"] in {"confirming", "submitted"} and not stale_confirmation:
+        if payload["status"] in {"confirming", "submitted"}:
             return None, {
                 **public_workflow_draft(payload),
                 "ok": False,
@@ -546,12 +547,42 @@ def claim_workflow_draft_confirmation(
         return deepcopy(payload), None
 
 
+def bind_workflow_draft_task(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    draft_id: str,
+    task_id: str,
+    root_task_id: str,
+) -> dict[str, Any] | None:
+    """Project the durable task identity onto its presentation draft."""
+    _validate_scope(canvas_id, draft_id)
+    clean_task_id = str(task_id or "").strip()
+    clean_root_task_id = str(root_task_id or "").strip()
+    if not clean_task_id or not clean_root_task_id:
+        raise ValueError("workflow confirmation task identity is required")
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        payload = _read_draft(conn, canvas_id=canvas_id, draft_id=draft_id)
+        if payload is None:
+            return None
+        existing = str(payload.get("task_id") or "")
+        if existing and existing != clean_task_id:
+            raise ValueError("workflow draft is bound to a different task")
+        payload["task_id"] = clean_task_id
+        payload["root_task_id"] = clean_root_task_id
+        payload["updated_at"] = time.time()
+        _write_draft(conn, payload)
+        return deepcopy(payload)
+
+
 def finish_workflow_draft_confirmation(
     *,
     project_dir: Path,
     canvas_id: str,
     draft_id: str,
     outcome: str,
+    expected_task_id: str = "",
 ) -> dict[str, Any] | None:
     _validate_scope(canvas_id, draft_id)
     if outcome not in CONFIRMATION_OUTCOMES:
@@ -561,6 +592,9 @@ def finish_workflow_draft_confirmation(
         payload = _read_draft(conn, canvas_id=canvas_id, draft_id=draft_id)
         if payload is None:
             return None
+        bound_task_id = str(payload.get("task_id") or "")
+        if expected_task_id and expected_task_id != bound_task_id:
+            raise ValueError("workflow draft confirmation task changed")
         now = time.time()
         payload["status"] = outcome
         payload["updated_at"] = now
@@ -579,7 +613,7 @@ def set_workflow_draft_billing(
     draft_id: str,
     billing: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Persist the reservation shared by claim and finish calls."""
+    """Persist planning-delivery billing projection; confirmation billing is task-owned."""
     _validate_scope(canvas_id, draft_id)
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -611,14 +645,7 @@ def prune_expired_workflow_drafts(
         deleted = 0
         for row in conn.execute(query, params).fetchall():
             payload = _payload_from_row(row)
-            billing = (
-                payload.get("billing")
-                if isinstance(payload.get("billing"), dict)
-                else {}
-            )
-            if str(billing.get("reservation_id") or "") and str(
-                billing.get("status") or ""
-            ) in {"reserved", "settlement_pending"}:
+            if payload.get("status") in {"confirming", "submitted"}:
                 continue
             cursor = conn.execute(
                 "DELETE FROM workflow_drafts WHERE draft_id = ?", (payload["draft_id"],)
@@ -641,5 +668,7 @@ def public_workflow_draft(payload: dict[str, Any]) -> dict[str, Any]:
         "preview": deepcopy(payload.get("preview") or {}),
         "last_changes": deepcopy(payload.get("last_changes") or {}),
         "expires_at": payload.get("expires_at"),
+        "task_id": payload.get("task_id") or None,
+        "root_task_id": payload.get("root_task_id") or None,
         "message": "工作流方案草稿已准备完成，可继续调整或确认创建。",
     }

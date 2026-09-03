@@ -3310,7 +3310,10 @@ def _dispatch_mcp_approved_frontend_commands(
     resolved = wait_canvas_command_result(
         key,
         timeout_seconds=timeout_seconds,
-        timeout_result=timeout_result,
+        # A workflow confirmation is a durable project task. A tool-level wait
+        # timeout is not its business outcome; keep the bridge pending so a late
+        # browser result can still complete that task safely.
+        timeout_result=None if is_workflow_batch else timeout_result,
         bridge_dir=bridge_dir,
     )
     if resolved is not None:
@@ -3351,6 +3354,13 @@ def _dispatch_frontend_canvas_commands(
     key = canvas_command_bridge_key(
         project_id=project, canvas_id=canvas, commands=commands
     )
+    is_workflow_batch = any(
+        isinstance(command, dict)
+        and command.get("type") == "create_node"
+        and isinstance(command.get("data"), dict)
+        and str(command["data"].get("workflowInstanceId") or "").strip()
+        for command in commands
+    )
     put_pending_canvas_command(
         key=key,
         project_id=project,
@@ -3387,7 +3397,7 @@ def _dispatch_frontend_canvas_commands(
     resolved = wait_canvas_command_result(
         key,
         timeout_seconds=timeout_seconds,
-        timeout_result=timeout_result,
+        timeout_result=None if is_workflow_batch else timeout_result,
     )
     if resolved is not None:
         return tool_result(
@@ -4460,6 +4470,7 @@ def _finish_workflow_draft(
     draft_id: str,
     *,
     outcome: str,
+    task_id: str = "",
 ) -> None:
     _request(
         "POST",
@@ -4469,7 +4480,7 @@ def _finish_workflow_draft(
             draft_id,
             "finish",
         ),
-        body={"outcome": outcome},
+        body={"outcome": outcome, **({"task_id": task_id} if task_id else {})},
     )
 
 
@@ -5086,12 +5097,19 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     )
     if payload is None:
         return tool_result(claim_result)
+    confirmation_task_id = str(payload.get("task_id") or "").strip()
     explicit_project = str(args.get("project_id") or "").strip()
     explicit_canvas = str(args.get("canvas_id") or "").strip()
     stored_project = str(payload.get("project_id") or "").strip()
     stored_canvas = str(payload.get("canvas_id") or "").strip()
     if explicit_project and stored_project and explicit_project != stored_project:
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
         return tool_result(
             {
                 "ok": False,
@@ -5100,7 +5118,13 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             }
         )
     if explicit_canvas and stored_canvas and explicit_canvas != stored_canvas:
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
         return tool_result(
             {
                 "ok": False,
@@ -5119,7 +5143,13 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
         project_id=explicit_project or stored_project,
     )
     if preflight["blockers"]:
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
         return tool_result(
             {
                 "ok": False,
@@ -5137,10 +5167,22 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
         }
     )
     if not built.get("ok"):
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
         return tool_result(built)
     if isinstance(built.get("skipped_edges"), list) and built["skipped_edges"]:
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
         return tool_result(
             {
                 "ok": False,
@@ -5164,18 +5206,42 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             slim_result=True,
         )
     except Exception:
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
         raise
     result_payload = _tool_result_payload(result)
-    if result_payload and result_payload.get("ok"):
-        outcome = (
-            "submitted"
-            if result_payload.get("canvas_apply_status") == "timeout"
-            else "confirmed"
+    if result_payload and result_payload.get("canvas_apply_status") == "timeout":
+        # The durable task remains active. The browser may reconnect and report
+        # the authoritative canvas result after this tool call has returned.
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="submitted",
+            task_id=confirmation_task_id,
         )
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome=outcome)
+    elif result_payload and result_payload.get("ok"):
+        outcome = "confirmed"
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome=outcome,
+            task_id=confirmation_task_id,
+        )
     else:
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
     return result
 
 
@@ -5921,6 +5987,7 @@ def _result_field_schema(field: str) -> dict[str, Any]:
         return {"type": ["object", "string", "null"]}
     return {"type": ["object", "array", "string", "number", "boolean", "null"]}
 
+
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "freezone_get_canvas_ontology": ("ontology", "node_types", "link_types"),
     "freezone_get_canvas_action_catalog": ("actions", "count"),
@@ -6077,9 +6144,16 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "freezone_get_saved_recipe": ("id", "kind", "item", "available_ids"),
     "freezone_get_workflow_skill": ("schema_version", "skill", "recipes", "inputs"),
     "freezone_prepare_workflow_draft": _WORKFLOW_RESULT_FIELDS,
-    "freezone_patch_workflow_draft": (*_WORKFLOW_RESULT_FIELDS, "changes", "expected_revision"),
+    "freezone_patch_workflow_draft": (
+        *_WORKFLOW_RESULT_FIELDS,
+        "changes",
+        "expected_revision",
+    ),
     "freezone_confirm_workflow_draft": _WORKFLOW_RESULT_FIELDS,
-    "freezone_prepare_workflow_plan_draft": (*_WORKFLOW_RESULT_FIELDS, "schema_version"),
+    "freezone_prepare_workflow_plan_draft": (
+        *_WORKFLOW_RESULT_FIELDS,
+        "schema_version",
+    ),
     "freezone_emit_canvas_command": (*_CANVAS_RESULT_FIELDS, "commands"),
     "freezone_confirm_canvas_action": _CANVAS_RESULT_FIELDS,
     "freezone_cancel_canvas_action": _CANVAS_RESULT_FIELDS,
@@ -6092,7 +6166,13 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "connect",
     ),
     "freezone_update_node_data": (*_CANVAS_RESULT_FIELDS, "node_id", "updated_fields"),
-    "freezone_create_edge": (*_CANVAS_RESULT_FIELDS, "edge_id", "source", "target", "link_type"),
+    "freezone_create_edge": (
+        *_CANVAS_RESULT_FIELDS,
+        "edge_id",
+        "source",
+        "target",
+        "link_type",
+    ),
     "freezone_delete_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids", "deleted_node_count"),
     "freezone_delete_edges": (*_CANVAS_RESULT_FIELDS, "edge_ids", "deleted_edge_count"),
     "freezone_move_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids", "positions"),
@@ -6296,29 +6376,37 @@ def _output_schema(name: str) -> dict[str, Any]:
         "freezone_confirm_workflow_draft",
         "freezone_run_workflow",
     }:
-        schema["allOf"].extend([
-            {
-                "if": {"properties": {"status": {"const": "agent_planning_confirmation_required"}}},
-                "then": {
-                    "required": ["quote_id", "confirmation_required", "next_action"]
+        schema["allOf"].extend(
+            [
+                {
+                    "if": {
+                        "properties": {
+                            "status": {"const": "agent_planning_confirmation_required"}
+                        }
+                    },
+                    "then": {
+                        "required": ["quote_id", "confirmation_required", "next_action"]
+                    },
                 },
-            },
-            {
-                "if": {"properties": {"status": {"const": "agent_credit_insufficient"}}},
-                "then": {
-                    "required": [
-                        "code",
-                        "quote",
-                        "confirmation_required",
-                        "next_action",
-                    ]
+                {
+                    "if": {
+                        "properties": {"status": {"const": "agent_credit_insufficient"}}
+                    },
+                    "then": {
+                        "required": [
+                            "code",
+                            "quote",
+                            "confirmation_required",
+                            "next_action",
+                        ]
+                    },
                 },
-            },
-            {
-                "if": {"properties": {"status": {"const": "workflow_draft_ready"}}},
-                "then": {"required": ["draft_id", "revision", "preview"]},
-            },
-        ])
+                {
+                    "if": {"properties": {"status": {"const": "workflow_draft_ready"}}},
+                    "then": {"required": ["draft_id", "revision", "preview"]},
+                },
+            ]
+        )
     return schema
 
 

@@ -394,64 +394,6 @@ def test_reconciler_recovers_projection_without_repeating_external_settlement(
     assert due_billing_settlements(project_dir=tmp_path) == []
 
 
-def test_reconciler_refunds_cancelled_workflow_reservation(
-    tmp_path, monkeypatch
-) -> None:
-    from novelvideo.api.routes import freezone
-    from novelvideo.freezone.workflow_drafts import (
-        create_workflow_draft,
-        read_workflow_draft,
-        set_workflow_draft_billing,
-    )
-
-    draft = create_workflow_draft(
-        project_dir=tmp_path,
-        project_id="project-a",
-        canvas_id="canvas-a",
-        intent={"skill_id": "video-ad", "user_goal": "广告"},
-        compiled={
-            "ok": True,
-            "skill_id": "video-ad",
-            "plan": {"nodes": [], "edges": [], "phases": []},
-        },
-    )
-    set_workflow_draft_billing(
-        project_dir=tmp_path,
-        canvas_id="canvas-a",
-        draft_id=draft["draft_id"],
-        billing={
-            "reservation_id": "workflow-reservation-refund",
-            "status": "settlement_pending",
-        },
-    )
-    enqueue_billing_settlement(
-        project_dir=tmp_path,
-        reservation_id="workflow-reservation-refund",
-        project_id="project-a",
-        canvas_id="canvas-a",
-        draft_id=draft["draft_id"],
-        action="refund",
-        metadata={"outcome": "ready"},
-    )
-    settled = []
-
-    async def fake_settle(reservation_id, *, confirmed, metadata=None):
-        settled.append((reservation_id, confirmed, metadata))
-
-    monkeypatch.setattr(freezone, "settle_agent_capability_charge", fake_settle)
-    asyncio.run(freezone._reconcile_agent_billing_settlements(tmp_path))
-
-    stored, error = read_workflow_draft(
-        project_dir=tmp_path,
-        canvas_id="canvas-a",
-        draft_id=draft["draft_id"],
-    )
-    assert error is None
-    assert stored is not None
-    assert stored["billing"]["status"] == "refunded"
-    assert settled == [("workflow-reservation-refund", False, {"outcome": "ready"})]
-
-
 def test_settlement_helper_keeps_failed_refund_in_durable_outbox(
     tmp_path, monkeypatch
 ) -> None:

@@ -3,7 +3,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import pytest
+
 from novelvideo.freezone.workflow_drafts import (
+    bind_workflow_draft_task,
     claim_workflow_draft_confirmation,
     create_workflow_draft,
     finish_workflow_draft_confirmation,
@@ -262,7 +265,7 @@ def test_create_workflow_draft_is_idempotent_for_billing_quote(tmp_path: Path) -
     assert repeated["draft_id"] == first["draft_id"]
 
 
-def test_stale_confirmation_lease_can_be_reclaimed_without_a_reservation(
+def test_confirmation_is_not_reclaimed_by_elapsed_time(
     tmp_path: Path,
 ) -> None:
     draft = create_workflow_draft(
@@ -288,15 +291,14 @@ def test_stale_confirmation_lease_can_be_reclaimed_without_a_reservation(
         draft_id=draft["draft_id"],
         revision=1,
         now=1301,
-        lease_seconds=300,
     )
 
-    assert reclaim_error is None
-    assert reclaimed is not None
-    assert reclaimed["confirmation_started_at"] == 1301
+    assert reclaimed is None
+    assert reclaim_error is not None
+    assert reclaim_error["status"] == "workflow_draft_confirmation_in_progress"
 
 
-def test_expiry_prune_preserves_draft_with_unsettled_reservation(
+def test_expiry_prune_preserves_draft_with_active_durable_task(
     tmp_path: Path,
 ) -> None:
     draft = create_workflow_draft(
@@ -306,11 +308,18 @@ def test_expiry_prune_preserves_draft_with_unsettled_reservation(
         intent={"skill_id": "video-ad", "user_goal": "广告"},
         compiled=_compiled(),
     )
-    set_workflow_draft_billing(
+    claim_workflow_draft_confirmation(
         project_dir=tmp_path,
         canvas_id="default",
         draft_id=draft["draft_id"],
-        billing={"reservation_id": "reservation-1", "status": "reserved"},
+        revision=1,
+    )
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
     )
 
     deleted = prune_expired_workflow_drafts(
@@ -327,9 +336,10 @@ def test_expiry_prune_preserves_draft_with_unsettled_reservation(
     assert deleted == 0
     assert error is None
     assert stored is not None
+    assert stored["task_id"] == "task-1"
 
 
-def test_stale_confirmation_with_reservation_requires_reconciliation(
+def test_stale_confirmation_with_task_stays_in_progress(
     tmp_path: Path,
 ) -> None:
     draft = create_workflow_draft(
@@ -346,11 +356,12 @@ def test_stale_confirmation_with_reservation_requires_reconciliation(
         revision=1,
         now=1000,
     )
-    set_workflow_draft_billing(
+    bind_workflow_draft_task(
         project_dir=tmp_path,
         canvas_id="default",
         draft_id=draft["draft_id"],
-        billing={"reservation_id": "reservation-1", "status": "reserved"},
+        task_id="task-1",
+        root_task_id="task-1",
     )
 
     claimed, error = claim_workflow_draft_confirmation(
@@ -359,9 +370,40 @@ def test_stale_confirmation_with_reservation_requires_reconciliation(
         draft_id=draft["draft_id"],
         revision=1,
         now=1301,
-        lease_seconds=300,
     )
 
     assert claimed is None
     assert error is not None
-    assert error["status"] == "workflow_draft_confirmation_reconciliation_required"
+    assert error["status"] == "workflow_draft_confirmation_in_progress"
+
+
+def test_workflow_draft_rejects_task_identity_rebinding(tmp_path: Path) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+
+    with pytest.raises(ValueError, match="different task"):
+        bind_workflow_draft_task(
+            project_dir=tmp_path,
+            canvas_id="default",
+            draft_id=draft["draft_id"],
+            task_id="task-2",
+            root_task_id="task-2",
+        )

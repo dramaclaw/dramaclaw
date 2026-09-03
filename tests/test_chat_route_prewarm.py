@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
@@ -114,13 +116,17 @@ async def test_hermes_cancel_error_recovers_stranded_home_lock(
 
 
 @pytest.mark.anyio
-async def test_cancel_does_not_force_release_while_interrupt_is_settling(monkeypatch) -> None:
+async def test_cancel_does_not_force_release_while_interrupt_is_settling(
+    monkeypatch,
+) -> None:
     releases = []
 
     async def active_turn_cancelled(_username):
         return True
 
-    monkeypatch.setattr(chat_route.chat_service, "get_chat_backend_name", lambda: "codex")
+    monkeypatch.setattr(
+        chat_route.chat_service, "get_chat_backend_name", lambda: "codex"
+    )
     monkeypatch.setattr(
         chat_route.chat_service,
         "interrupt_active_codex_turns",
@@ -139,7 +145,9 @@ async def test_cancel_does_not_force_release_while_interrupt_is_settling(monkeyp
 
 
 @pytest.mark.anyio
-async def test_cancel_stays_best_effort_when_backend_resolution_fails(monkeypatch) -> None:
+async def test_cancel_stays_best_effort_when_backend_resolution_fails(
+    monkeypatch,
+) -> None:
     releases = []
 
     def fail_backend_resolution():
@@ -312,6 +320,135 @@ def test_canvas_command_tool_result_accepts_background_workflow(
     assert "tool was opened" in result["agent_instruction"]
     assert "operate it manually" in result["agent_instruction"]
     assert "Do not claim" in result["agent_instruction"]
+
+
+@pytest.mark.anyio
+async def test_late_canvas_result_completes_durable_workflow_draft(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from novelvideo.freezone.workflow_drafts import (
+        bind_workflow_draft_task,
+        claim_workflow_draft_confirmation,
+        create_workflow_draft,
+        finish_workflow_draft_confirmation,
+        read_workflow_draft,
+    )
+
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="canvas-a",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled={
+            "ok": True,
+            "skill_id": "video-ad",
+            "plan": {"nodes": [], "edges": [], "phases": []},
+        },
+    )
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+    finish_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        outcome="submitted",
+    )
+
+    async def project_context(_user, _scope):
+        return SimpleNamespace(state_dir=tmp_path)
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", project_context)
+    from novelvideo import task_state
+
+    monkeypatch.setattr(
+        task_state,
+        "get_task_manager",
+        lambda: SimpleNamespace(
+            get_task_for_project=lambda *_args, **_kwargs: SimpleNamespace(
+                task_id="task-1", status="running"
+            )
+        ),
+    )
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-workflow",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        tool_call_status="completed",
+        canvas_apply_status="applied",
+        applied=True,
+    )
+
+    await chat_route._record_workflow_draft_canvas_result(
+        user={"id": "u-admin", "username": "admin"},
+        payload=payload,
+        draft_id=draft["draft_id"],
+        resolved={"ok": True},
+    )
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+    )
+
+    assert error is None
+    assert stored is not None
+    assert stored["status"] == "confirmed"
+
+
+def test_pending_canvas_result_recovers_workflow_draft_identity(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    draft_id = "workflow_draft_late_result"
+    put_pending_canvas_command(
+        key="bridge-workflow",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=[
+            {
+                "type": "create_node",
+                "node_type": "textAnnotationNode",
+                "data": {"workflowInstanceId": draft_id},
+            }
+        ],
+        envelope={
+            "commands": [
+                {
+                    "type": "create_node",
+                    "node_type": "textAnnotationNode",
+                    "data": {"workflowInstanceId": draft_id},
+                }
+            ]
+        },
+        bridge_dir=bridge_dir,
+    )
+    monkeypatch.setattr(
+        chat_route,
+        "_bridge_dir_for_pending_key",
+        lambda *_args, **_kwargs: bridge_dir,
+    )
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-workflow",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        canvas_apply_status="applied",
+        applied=True,
+    )
+
+    assert chat_route._pending_workflow_draft_id("admin", payload) == draft_id
 
 
 def test_canvas_command_tool_result_reports_open_node_action_as_opened_panel(
@@ -1375,6 +1512,7 @@ async def test_freezone_assistant_rejects_hidden_surface_before_credit_check(
         lambda: FakeProductSurfaceAccess(),
     )
     monkeypatch.setattr(chat_route, "get_usage_meter", lambda: FakeUsageMeter())
+
     async def fake_requester_user_id(_user, _scope):
         return "usr_1"
 
@@ -1455,7 +1593,9 @@ async def test_project_prewarm_ignores_unavailable_assistant_surface(
     )
 
     assert warmed is True
-    assert calls == [(("alice",), {"project": "project-a", "surface": None, "agent_id": None})]
+    assert calls == [
+        (("alice",), {"project": "project-a", "surface": None, "agent_id": None})
+    ]
 
 
 @pytest.mark.anyio

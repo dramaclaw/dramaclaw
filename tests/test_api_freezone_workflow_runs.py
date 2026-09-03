@@ -21,7 +21,17 @@ def workflow_run_client(monkeypatch, tmp_path):
         state_dir=str(tmp_path),
         runtime_dir=str(tmp_path / "_runtime"),
         is_home_node=True,
+        requester_user_id="u-alice",
+        enqueued_tasks=[],
     )
+
+    class FakeTaskBackend:
+        async def enqueue_project_task(self, _ctx, **kwargs):
+            ctx.enqueued_tasks.append(kwargs)
+            task_id = f"workflow-task-{len(ctx.enqueued_tasks)}"
+            return SimpleNamespace(task_state=SimpleNamespace(task_id=task_id))
+
+    task_backend = FakeTaskBackend()
 
     async def fake_resolve(
         project: str,
@@ -34,6 +44,7 @@ def workflow_run_client(monkeypatch, tmp_path):
         return ctx, "alice", "demo", tmp_path, str(tmp_path)
 
     monkeypatch.setattr(freezone, "_resolve_freezone_project", fake_resolve)
+    monkeypatch.setattr(freezone, "get_task_backend", lambda: task_backend)
     app = FastAPI()
     app.include_router(freezone.router, prefix="/api/v1")
     app.dependency_overrides[get_api_user] = lambda: {
@@ -499,6 +510,8 @@ def test_workflow_draft_api_lifecycle(workflow_run_client: TestClient) -> None:
         json={"revision": 2},
     )
     assert claimed_response.json()["data"]["status"] == "confirming"
+    assert claimed_response.json()["data"]["task_id"] == "workflow-task-1"
+    assert claimed_response.json()["data"]["root_task_id"] == "workflow-task-1"
 
     finished_response = workflow_run_client.post(
         f"{base}/{created['draft_id']}/finish",
@@ -513,7 +526,7 @@ def test_workflow_draft_api_lifecycle(workflow_run_client: TestClient) -> None:
     )
 
 
-def test_workflow_draft_api_reserves_and_confirms_agent_charge(
+def test_workflow_draft_confirmation_uses_durable_task_billing_contract(
     workflow_run_client: TestClient,
     monkeypatch,
 ) -> None:
@@ -659,11 +672,10 @@ def test_workflow_draft_api_reserves_and_confirms_agent_charge(
     assert claimed.status_code == 200
     assert finished.status_code == 200
     assert reserved[0]["charge"].feature_key.endswith("creative_planning")
-    assert reserved[2]["charge"].feature_key.endswith("workflow_design.complex")
+    assert claimed.json()["data"]["task_id"] == "workflow-task-1"
     assert settled == [
         ("planning-reservation-1", True),
         ("planning-reservation-1", True),
-        ("workflow-reservation-1", True),
     ]
 
 

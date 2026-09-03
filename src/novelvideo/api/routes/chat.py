@@ -841,6 +841,110 @@ def _pending_direct_workflow_preview(
     }
 
 
+def _pending_workflow_draft_id(
+    username: str,
+    payload: CanvasCommandToolResultIn,
+) -> str:
+    """Read the draft identity before resolving (and removing) its pending bridge file."""
+    key = payload.bridge_key.strip()
+    if not key:
+        return ""
+    directory = _bridge_dir_for_pending_key(username, payload)
+    pending = _load_pending_canvas_command(directory / f"{key}.pending.json")
+    commands = (
+        pending.get("envelope", {}).get("commands")
+        if isinstance(pending, dict)
+        else None
+    )
+    if not isinstance(commands, list):
+        return ""
+    identities = {
+        str(command.get("data", {}).get("workflowInstanceId") or "").strip()
+        for command in commands
+        if isinstance(command, dict)
+        and command.get("type") == "create_node"
+        and isinstance(command.get("data"), dict)
+    }
+    identities.discard("")
+    if len(identities) != 1:
+        return ""
+    identity = next(iter(identities))
+    return identity if identity.startswith("workflow_draft_") else ""
+
+
+async def _record_workflow_draft_canvas_result(
+    *,
+    user: dict[str, Any],
+    payload: CanvasCommandToolResultIn,
+    draft_id: str,
+    resolved: dict[str, Any],
+) -> None:
+    if not draft_id:
+        return
+    project_id = str(payload.project_id or "").strip()
+    canvas_id = str(payload.canvas_id or "").strip()
+    if not project_id or not canvas_id:
+        return
+    try:
+        from novelvideo.freezone.workflow_drafts import (
+            finish_workflow_draft_confirmation,
+            read_workflow_draft,
+        )
+        from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
+
+        scope = ChatScope(
+            kind="project",
+            id=project_id,
+            surface="freezone",
+            canvas_id=canvas_id,
+            agent_id=_freezone_agent_id_from_payload(payload),
+        )
+        project_ctx = await _project_context_for_scope(user, scope)
+        if project_ctx is None:
+            raise RuntimeError("workflow draft project context is unavailable")
+        draft, _error = await asyncio.to_thread(
+            read_workflow_draft,
+            project_dir=project_ctx.state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+        )
+        if draft is None:
+            return
+        task_id = str(draft.get("task_id") or "")
+        revision = int(draft.get("revision") or 0)
+        task_state = await asyncio.to_thread(
+            get_task_manager().get_task_for_project,
+            project_ctx,
+            "freezone_workflow_confirm",
+            0,
+            beat_num=None,
+            scope=f"{canvas_id}:{draft_id}:{revision}",
+        )
+        if (
+            task_state is None
+            or str(task_state.task_id) != task_id
+            or task_state.status not in ACTIVE_PROJECT_TASK_STATUSES
+        ):
+            logger.info(
+                "ignored late workflow canvas result without active task draft_id=%s",
+                draft_id,
+            )
+            return
+        await asyncio.to_thread(
+            finish_workflow_draft_confirmation,
+            project_dir=project_ctx.state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+            outcome="confirmed" if resolved.get("ok") else "ready",
+            expected_task_id=task_id,
+        )
+    except Exception:
+        logger.exception(
+            "failed to record durable workflow canvas outcome draft_id=%s",
+            draft_id,
+        )
+
+
 async def _close_freezone_agent_worker(username: str, agent_id: str | None) -> bool:
     try:
         from novelvideo.chat.hermes_pool import pool as hermes_pool
@@ -1414,7 +1518,14 @@ async def resolve_canvas_command_tool_result(
 ) -> dict[str, Any]:
     username = str(user["username"])
     direct_workflow_preview = _pending_direct_workflow_preview(username, payload)
+    workflow_draft_id = _pending_workflow_draft_id(username, payload)
     resolved = _resolve_canvas_command_tool_result_payload(payload, username=username)
+    await _record_workflow_draft_canvas_result(
+        user=user,
+        payload=payload,
+        draft_id=workflow_draft_id,
+        resolved=resolved,
+    )
     if direct_workflow_preview is not None and resolved.get("ok"):
         charge = workflow_design_charge(direct_workflow_preview)
         metadata = {
@@ -1681,7 +1792,16 @@ async def _receive_bridge_results_during_turn(
         event_type = str(raw.get("type") or "")
         if event_type == "canvas.command.result":
             payload = CanvasCommandToolResultIn.model_validate(raw)
-            _resolve_canvas_command_tool_result_payload(payload, username=username)
+            workflow_draft_id = _pending_workflow_draft_id(username, payload)
+            resolved = _resolve_canvas_command_tool_result_payload(
+                payload, username=username
+            )
+            await _record_workflow_draft_canvas_result(
+                user=user,
+                payload=payload,
+                draft_id=workflow_draft_id,
+                resolved=resolved,
+            )
             if payload.cancelled or payload.canvas_apply_status == "cancelled_by_user":
                 await _close_canvas_command_worker(username, payload)
             continue
