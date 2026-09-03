@@ -13,7 +13,7 @@ import {
 } from "@/lib/api-errors";
 import { SESSION_EXPIRED_EVENT } from "@/lib/session-expiry";
 import { p } from "@/lib/api-path";
-import { currentTaskText, taskLogLines } from "@/task-center/derivations";
+import { currentTaskText, taskLogLinesOf } from "@/task-center/derivations";
 import type { TaskStatus, TaskStreamEvent } from "@/types/task";
 
 interface UseTaskStreamOptions {
@@ -127,13 +127,14 @@ export function useTaskStream(options: UseTaskStreamOptions): TaskStreamState {
     const handleEvent = (e: MessageEvent) => {
       try {
         const data: TaskStreamEvent = JSON.parse(e.data);
+        const currentTask = currentTaskText({ ...data, status: data.status }, t);
         setState({
           status: data.status,
           progress: data.progress ?? 0,
-          currentTask: currentTaskText({ ...data, status: data.status }, t),
+          currentTask,
           result: data.result ?? null,
           error: data.error ?? null,
-          logs: taskLogLines(data.logs, t),
+          logs: taskLogLinesOf(data, t),
         });
 
         if (data.status === "completed") {
@@ -144,7 +145,11 @@ export function useTaskStream(options: UseTaskStreamOptions): TaskStreamState {
             );
           }
           if (showCompleteToast) {
-            toast.success(data.current_task || "Task completed");
+            // 用本地化后的那份，不是 data.current_task —— run_core 收尾时固定写
+            // current_task="完成"，直接回显就是英文界面里的一处中文。currentTaskText
+            // 已经把这个终态哨兵换成了状态词条；它为空（后端没给文案）时也要走词条，
+            // 硬编码的 "Task completed" 在中文界面同样是错的。
+            toast.success(currentTask || t("taskCenter.status.completed"));
           }
           onCompleteRef.current?.(data.result);
         } else if (data.status === "failed") {

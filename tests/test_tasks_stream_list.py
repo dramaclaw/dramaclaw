@@ -331,3 +331,62 @@ async def test_project_task_stream_includes_logs(tmp_path, monkeypatch):
 
     payload = json.loads(first["data"])
     assert payload["logs"] == ["start", "step"]
+
+
+@pytest.mark.asyncio
+async def test_project_task_stream_keeps_logs_as_strings(tmp_path, monkeypatch):
+    """SSE 的 `logs` 也必须守住 `string[]` 契约。
+
+    结构化条目从存储层出来时是 `{text, code, params}`，原样推给还没升级的前端
+    （滚动发布期间、或用户手上那张缓存的旧页面），日志面板就变成一串
+    `[object Object]`。带 code 的那份走 `logs_i18n`。
+    """
+    from novelvideo.task_state import TaskState
+
+    ctx = _ctx(tmp_path)
+    _install_fake_project_context(monkeypatch, ctx)
+    _install_fake_task_manager(
+        monkeypatch,
+        task=TaskState(
+            task_id="t1",
+            task_type="ingest_fast",
+            username="admin",
+            project="demo",
+            project_id=ctx.project_id,
+            episode=0,
+            status="running",
+            progress=0.5,
+            current_task="正在切分章节...",
+            logs=[
+                "任务已开始",
+                {
+                    "text": "已切分 3 段",
+                    "code": "tasks.log.ingest.chunked",
+                    "params": {"chunkCount": 3},
+                },
+            ],
+        ),
+    )
+
+    from novelvideo.api.routes.tasks import stream_project_task
+
+    resp = await stream_project_task(
+        project=ctx.project_id,
+        task_type="ingest_fast",
+        episode=0,
+        request=None,  # type: ignore[arg-type]
+        interval=0.5,
+        user={"username": "admin", "role": "admin"},
+    )
+
+    gen = resp.body_iterator
+    try:
+        first = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
+    finally:
+        aclose = getattr(gen, "aclose", None)
+        if aclose is not None:
+            await aclose()
+
+    payload = json.loads(first["data"])
+    assert payload["logs"] == ["任务已开始", "已切分 3 段"]
+    assert payload["logs_i18n"][1]["code"] == "tasks.log.ingest.chunked"

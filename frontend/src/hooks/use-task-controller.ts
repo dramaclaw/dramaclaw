@@ -18,7 +18,7 @@ import {
 import { useTaskStream } from "@/hooks/use-task-stream";
 import { useCancelTask, useTasks } from "@/lib/queries/tasks";
 import { mergeTaskLogs } from "@/lib/script-feedback";
-import { currentTaskText, taskLogLines } from "@/task-center/derivations";
+import { currentTaskText, taskLogLinesOf } from "@/task-center/derivations";
 import { taskBeatNumbers } from "@/lib/task-types";
 
 /**
@@ -307,7 +307,7 @@ export function useTaskController(
         result: match.result ?? null,
         error: match.error ?? null,
         logs: Array.isArray(match.logs)
-          ? taskLogLines(match.logs, t)
+          ? taskLogLinesOf(match, t)
           : current.streamState.logs,
       },
     });
@@ -425,7 +425,7 @@ export function useTaskController(
         matchesCoverage(t) &&
         isActiveStatus(t.status),
     );
-    appendLogs(match ? taskLogLines(match.logs, t) : undefined);
+    appendLogs(match ? taskLogLinesOf(match, t) : undefined);
   }, [
     t,
     isOwner,
@@ -473,7 +473,7 @@ export function useTaskController(
         currentTask: currentTaskText(match, t),
         result: match.result ?? null,
         error: match.error ?? null,
-        logs: taskLogLines(match.logs, t),
+        logs: taskLogLinesOf(match, t),
       },
     });
     if (invalidateKeys) {

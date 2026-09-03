@@ -109,6 +109,23 @@ export const taskLogLines = (logs: unknown, tFn: TFn): string[] =>
         .map((entry) => taskLogText(entry, tFn))
     : [];
 
+/**
+ * 任务日志的读取入口：优先结构化的 `logs_i18n`，没有再回落到 `logs`。
+ *
+ * `logs` 的公开契约一直是 `string[]`（老前端直接 `logs.join("\n")`），所以后端
+ * 不能把 `{text, code, params}` 塞回那个字段——滚动发布期间新后端配老前端就会
+ * 显示成 `[object Object]`。带 code 的那份走 `logs_i18n`，只有认识它的前端才读。
+ * 反过来，老后端不发 `logs_i18n`，这里就直接用 `logs` 里的中文，同样不用原子部署。
+ */
+export const taskLogLinesOf = (
+  source: { logs?: unknown; logs_i18n?: unknown } | null | undefined,
+  tFn: TFn,
+): string[] =>
+  taskLogLines(
+    Array.isArray(source?.logs_i18n) ? source.logs_i18n : source?.logs,
+    tFn,
+  );
+
 export const taskLogText = (entry: TaskLogEntry, tFn: TFn): string => {
   if (typeof entry === "string") return entry;
   const text = String(entry?.text ?? "");

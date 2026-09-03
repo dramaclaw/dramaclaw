@@ -541,6 +541,7 @@ frontend/src/__tests__/hooks/use-scoped-task-batch-invalidation.test.tsx,Elastic
 frontend/src/__tests__/hooks/use-selection.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/hooks/use-task-controller-beat-coverage.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/hooks/use-task-controller-logs.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/hooks/use-task-stream-i18n.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/i18n/locales-json.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/lib/api-abort.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/lib/api-no-region.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

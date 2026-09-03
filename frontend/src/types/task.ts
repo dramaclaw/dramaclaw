@@ -29,7 +29,9 @@ export interface Task {
   result?: unknown;
   metadata?: Record<string, unknown>;
   error?: string;
-  logs?: TaskLogEntry[];
+  logs?: string[];
+  /** 带 i18n code 的日志；老后端不发这个字段，读的时候回落到 `logs`。 */
+  logs_i18n?: TaskLogEntry[];
   created_at?: string;
   task_type_label?: string;
   display_name?: string;
@@ -45,7 +47,9 @@ export interface TaskStreamEvent {
   result?: unknown;
   error?: string;
   error_code?: string | null;
-  logs?: TaskLogEntry[];
+  logs?: string[];
+  /** 带 i18n code 的日志；老后端不发这个字段，读的时候回落到 `logs`。 */
+  logs_i18n?: TaskLogEntry[];
 }
 
 // Re-export the task-center canonical types so new code can import from either

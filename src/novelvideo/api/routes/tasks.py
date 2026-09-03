@@ -17,6 +17,7 @@ from novelvideo.api.auth import (
     get_api_user_or_query,
     verify_credential_for_request,
 )
+from novelvideo.i18n_message import has_localizable_log, log_lines_text
 from novelvideo.ports import get_project_access, get_task_backend
 from novelvideo.project_context import ProjectContext, resolve_project_context
 from novelvideo.task_backend.limits import (
@@ -239,6 +240,22 @@ def _current_task_message_fields(metadata: dict | None) -> dict:
     }
 
 
+def _task_log_fields(entries: list | None) -> dict:
+    """`logs` 的对外形状。
+
+    `logs` 从一开始就是 `string[]`，老前端拿到就 `logs.join("\\n")`，所以存储层的
+    `{text, code, params}` 条目**不能**从这个字段出去——滚动发布期间新后端配老前端、
+    或者用户手上还开着缓存的旧页面，日志就会显示/下载成一串 `[object Object]`。
+    这里把它压回中文字符串，结构化条目另走 `logs_i18n`，新前端优先读它，没有再回落
+    到 `logs`。这样前后端不需要原子部署，外部调用方也不会被打断。
+    """
+    fields: dict = {"logs": log_lines_text(entries)}
+    # 没有任何一条带 code 时不下发这个字段，省得给每个任务白挂一份重复日志。
+    if has_localizable_log(entries):
+        fields["logs_i18n"] = list(entries or [])
+    return fields
+
+
 def _serialize_task(t: TaskState, *, ctx: ProjectContext | None = None) -> dict:
     metadata = t.metadata if isinstance(t.metadata, dict) else {}
     if t.project_id:
@@ -275,6 +292,7 @@ def _serialize_task(t: TaskState, *, ctx: ProjectContext | None = None) -> dict:
     payload = asdict(t)
     for field in ("created_at", "updated_at", "completed_at", "expires_at"):
         payload[field] = _serialize_task_timestamp(payload.get(field, ""))
+    payload.update(_task_log_fields(payload.get("logs")))
     payload["result"] = _sanitize_task_result_for_client(payload.get("result"), ctx=ctx)
     payload["status"] = _effective_task_status(t)
     return {
@@ -575,7 +593,7 @@ async def stream_project_task(
                     "status": effective_status,
                     "progress": round(task.progress, 3),
                     "current_task": task.current_task,
-                    "logs": task.logs[-100:],
+                    **_task_log_fields(task.logs[-100:]),
                     **_current_task_message_fields(task.metadata),
                 }
                 if is_terminal:

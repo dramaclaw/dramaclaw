@@ -10,8 +10,11 @@
 import json
 
 from novelvideo.i18n_message import (
+    has_localizable_log,
     lmsg,
     log_entry_payload,
+    log_entry_text,
+    log_lines_text,
     message_payload,
     message_text,
 )
@@ -104,3 +107,65 @@ def test_state_stays_json_serializable_after_a_localizable_update():
     json.dumps(state.logs)
     json.dumps(state.metadata)
     assert isinstance(state.current_task, str)
+
+
+def test_stored_logs_flatten_back_to_plain_strings():
+    """`logs` 的公开契约是 `string[]`，结构化条目不能从这个字段出去。"""
+    entries = [
+        "任务已开始",
+        {"text": "已切分 3 段", "code": "tasks.log.ingest.chunked", "params": {"chunkCount": 3}},
+    ]
+
+    assert log_lines_text(entries) == ["任务已开始", "已切分 3 段"]
+    assert log_entry_text("任务已开始") == "任务已开始"
+    assert has_localizable_log(entries) is True
+    assert has_localizable_log(["任务已开始"]) is False
+    # 没有 logs（老行、刚建的任务）时不能炸。
+    assert log_lines_text(None) == []
+    assert has_localizable_log(None) is False
+
+
+def test_serialized_task_keeps_logs_as_strings_and_adds_the_i18n_field():
+    """滚动发布：新后端 + 老前端不能把日志渲染成 `[object Object]`。
+
+    老前端对 `logs` 只会 `join("\\n")` / 下载成 .log，拿到对象就直接退化。
+    结构化那份另走 `logs_i18n`，只有认识它的前端才读。
+    """
+    from novelvideo.api.routes.tasks import _serialize_task
+
+    task = TaskState(
+        task_id="t1",
+        task_type="ingest_fast",
+        project_id="proj_123",
+        episode=0,
+        status="running",
+        logs=[
+            "任务已开始",
+            {"text": "已切分 3 段", "code": "tasks.log.ingest.chunked", "params": {"chunkCount": 3}},
+        ],
+    )
+
+    payload = _serialize_task(task)
+
+    assert payload["logs"] == ["任务已开始", "已切分 3 段"]
+    assert all(isinstance(line, str) for line in payload["logs"])
+    assert payload["logs_i18n"][1]["code"] == "tasks.log.ingest.chunked"
+
+
+def test_serialized_task_omits_the_i18n_field_when_nothing_is_localizable():
+    """一条 code 都没有时不下发，省得每个任务白挂一份重复日志。"""
+    from novelvideo.api.routes.tasks import _serialize_task
+
+    payload = _serialize_task(
+        TaskState(
+            task_id="t2",
+            task_type="ingest_fast",
+            project_id="proj_123",
+            episode=0,
+            status="running",
+            logs=["任务已开始"],
+        )
+    )
+
+    assert payload["logs"] == ["任务已开始"]
+    assert "logs_i18n" not in payload

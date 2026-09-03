@@ -29,6 +29,9 @@ __all__ = [
     "message_text",
     "message_payload",
     "log_entry_payload",
+    "log_entry_text",
+    "log_lines_text",
+    "has_localizable_log",
 ]
 
 
@@ -95,3 +98,37 @@ def log_entry_payload(value: MessageLike) -> Union[str, dict[str, Any]]:
     if value.params:
         entry["params"] = dict(value.params)
     return entry
+
+
+def log_entry_text(entry: Any) -> str:
+    """Chinese fallback for one *stored* log entry.
+
+    Stored entries come back from ``logs_json`` as either a plain string
+    (historic rows, call sites not migrated yet) or ``{text, code, params}``.
+    """
+    if isinstance(entry, LocalizableMessage):
+        return entry.text
+    if isinstance(entry, dict):
+        return str(entry.get("text") or "")
+    return "" if entry is None else str(entry)
+
+
+def log_lines_text(entries: Any) -> list[str]:
+    """Flatten stored log entries back to the public ``logs: string[]`` shape.
+
+    The storage layer keeps structured entries so the code/params survive, but
+    ``logs`` has always been a list of strings over the wire. Old frontends do
+    ``logs.join("\n")``, so handing them objects would render
+    ``[object Object]`` during a rolling deploy. Structured entries go out in a
+    separate field instead (see ``logs_i18n`` in the tasks API).
+    """
+    if not isinstance(entries, (list, tuple)):
+        return []
+    return [log_entry_text(entry) for entry in entries]
+
+
+def has_localizable_log(entries: Any) -> bool:
+    """True when at least one stored entry carries an i18n code."""
+    if not isinstance(entries, (list, tuple)):
+        return False
+    return any(isinstance(entry, dict) and entry.get("code") for entry in entries)

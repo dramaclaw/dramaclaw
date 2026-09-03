@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { taskLogLines } from "@/task-center/derivations";
+import { taskLogLinesOf } from "@/task-center/derivations";
 import type { TaskState } from "@/task-center/types";
 
 export function TaskLogs({ task }: { task: TaskState }) {
@@ -35,7 +35,7 @@ export function TaskLogs({ task }: { task: TaskState }) {
     <div ref={scrollRef} className="h-full">
       <ScrollArea className="h-full">
         <pre className="whitespace-pre-wrap break-words p-3 font-mono text-[11px] leading-snug">
-          {taskLogLines(task.logs, t).join("\n")}
+          {taskLogLinesOf(task, t).join("\n")}
         </pre>
       </ScrollArea>
     </div>

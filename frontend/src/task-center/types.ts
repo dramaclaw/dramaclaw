@@ -38,7 +38,13 @@ export interface TaskState {
   metadata?: Record<string, unknown> | null;
   error: string | null;
   error_code?: string | null;
-  logs: TaskLogEntry[];
+  /**
+   * 公开契约一直是 `string[]`。带 i18n code 的结构化版本另走 `logs_i18n`，
+   * 这样新后端配老前端不会把日志渲染成 `[object Object]`。读的时候用
+   * `taskLogLinesOf(task, t)`，别直接挑字段。
+   */
+  logs: string[];
+  logs_i18n?: TaskLogEntry[];
   task_type_label?: string;
   display_name?: string;
   /** false = display_name 是调用方自带的业务名；true/缺省 = 后端按 task_type 拼的中文，前端重拼。 */

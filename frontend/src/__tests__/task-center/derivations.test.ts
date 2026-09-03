@@ -10,6 +10,7 @@ import {
   displayLabel,
   originDeepLink,
   taskLogLines,
+  taskLogLinesOf,
 } from "@/task-center/derivations";
 
 import { enT, zhT } from "../helpers/i18n-fixtures";
@@ -241,6 +242,33 @@ describe("taskLogLines", () => {
   });
   it("returns an empty array for a missing logs field", () => {
     expect(taskLogLines(undefined, t)).toEqual([]);
+  });
+});
+
+describe("taskLogLinesOf", () => {
+  const t = zhT as unknown as (k: string, opts?: Record<string, unknown>) => string;
+
+  it("prefers the structured logs_i18n field", () => {
+    expect(
+      taskLogLinesOf(
+        {
+          logs: ["原文已保存"],
+          logs_i18n: [{ text: "原文已保存", code: "tasks.log.ingest.sourceSaved" }],
+        },
+        enT as unknown as typeof t,
+      ),
+    ).toEqual(["Source text saved"]);
+  });
+  it("falls back to logs when the backend predates logs_i18n", () => {
+    // 滚动发布的另一半：老后端只发 `logs`，新前端照样得显示出来。
+    expect(taskLogLinesOf({ logs: ["原文已保存", "任务已开始"] }, t)).toEqual([
+      "原文已保存",
+      "任务已开始",
+    ]);
+  });
+  it("returns an empty array when neither field is present", () => {
+    expect(taskLogLinesOf({}, t)).toEqual([]);
+    expect(taskLogLinesOf(undefined, t)).toEqual([]);
   });
 });
 
