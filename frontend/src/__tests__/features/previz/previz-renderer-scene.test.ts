@@ -193,12 +193,23 @@ vi.mock('three', () => {
     SphereGeometry: FakeGeometry,
     CylinderGeometry: FakeGeometry,
     BufferGeometry: class extends FakeGeometry {
+      drawRange = { start: 0, count: Infinity };
       setFromPoints = vi.fn(() => this);
       setAttribute = vi.fn(() => this);
+      setDrawRange(start: number, count: number) {
+        this.drawRange = { start, count };
+      }
     },
     Float32BufferAttribute: class {
       constructor(
         public array: number[],
+        public itemSize: number,
+      ) {}
+    },
+    BufferAttribute: class {
+      needsUpdate = false;
+      constructor(
+        public array: Float32Array,
         public itemSize: number,
       ) {}
     },
@@ -931,6 +942,53 @@ describe('PrevizRenderer 接场景图', () => {
     expect(helperVisibility()[0]).toBe(true);
 
     render.mockReset();
+    instance.dispose();
+  });
+
+  it('draws the stroke being dragged, and drops it on release', async () => {
+    const { instance } = await createRenderer();
+
+    instance.setStroke([
+      [0, 0, 0],
+      [1, 0, -1],
+      [2, 0, -2],
+    ]);
+
+    // 这条线属于编辑视图，和轨迹曲线挂在同一个 previzEditorOnly 组下面——监看框和
+    // 出片里不该出现一条正在画的笔画。
+    const lines: { visible: boolean; geometry: { drawRange: { count: number } } }[] = [];
+    (instance as unknown as { scene: { traverse(cb: (o: unknown) => void): void } }).scene.traverse(
+      (object) => {
+        const candidate = object as { geometry?: { drawRange?: { count: number } } };
+        if (candidate.geometry?.drawRange) {
+          lines.push(object as (typeof lines)[number]);
+        }
+      },
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0].visible).toBe(true);
+    expect(lines[0].geometry.drawRange.count).toBe(3);
+
+    instance.setStroke(null);
+
+    // 松手后轨迹曲线接管；两条重叠着画会看成一条粗细不匀的线。
+    expect(lines[0].visible).toBe(false);
+    instance.dispose();
+  });
+
+  it('repaints while the stroke grows', async () => {
+    const { instance } = await createRenderer();
+    step();
+    render.mockClear();
+
+    instance.setStroke([
+      [0, 0, 0],
+      [1, 0, 0],
+    ]);
+    step();
+
+    // 不请求重绘的话，按需重绘的循环早就静下来了——线改了屏幕上一帧都不动。
+    expect(render).toHaveBeenCalled();
     instance.dispose();
   });
 });
