@@ -58,6 +58,18 @@ export type DisplayMode = 'solid' | 'translucent' | 'clay';
 export type OutputAspect = '16:9' | '9:16' | '1:1' | '4:3';
 export type RigMotion = 'static' | 'orbit' | 'push' | 'pull';
 
+/**
+ * 特写片段挂在被跟踪对象身上的哪一处。比例见 `domain/closeup.ts`——那里是几何，
+ * 这里只声明有哪几处。
+ */
+export type RigAnchorPart = 'pelvis' | 'body' | 'chest' | 'face' | 'head';
+
+/**
+ * 水平角是从哪儿量起的。`front` 从被跟踪对象的正面量（人一转身机位跟着转到他脸前），
+ * `custom` 从世界坐标量（人怎么转机位都停在同一个方位）。
+ */
+export type RigBearing = 'front' | 'custom';
+
 export interface PrevizTransform {
   position: Vec3;
   rotation: Vec3;
@@ -144,16 +156,31 @@ export interface PrevizActionClip {
   poseId: string;
 }
 
+/**
+ * 特写片段：机位不自己走位，而是由「跟着谁、离多远、从哪个方位看」反推出来。
+ *
+ * 跟踪目标存的是**对象** id 而不是对方那条路径片段的 id：片段会被剃刀切成两半、
+ * 会被删掉重画，而「这台机位在拍谁」不该跟着断。新建时从目标片段抄一份起止帧，
+ * 之后两者各走各的。
+ */
 export interface PrevizRigClip {
   id: string;
   kind: 'rig';
   startFrame: number;
   endFrame: number;
   anchorObjectId: string;
+  anchorPart: RigAnchorPart;
+  /** 看向谁。null 表示不接管朝向，机位保持自己的角度。 */
   aimObjectId: string | null;
+  /** 水平角，单位度，起量处由 `bearing` 决定。 */
   azimuth: number;
+  /** 俯仰，单位度，正值表示机位在锚点之上俯拍。 */
   elevation: number;
+  /** 机位到锚点的球面距离，单位米。 */
   distance: number;
+  /** 在锚点之上再抬多少，单位米。抬的是机位，不是视线落点。 */
+  height: number;
+  bearing: RigBearing;
   motion: RigMotion;
 }
 
