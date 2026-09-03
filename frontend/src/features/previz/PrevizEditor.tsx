@@ -28,6 +28,7 @@ import {
   type PrevizCameraPlacement,
 } from "./domain/cameraDraft";
 import { canAddObject } from "./domain/limits";
+import { drawPlaneHeight } from "./domain/pathDraw";
 import { uploadPrevizProp } from "./propAsset";
 import { usePrevizStore } from "./store";
 import { PrevizCameraCreateDialog } from "./ui/PrevizCameraCreateDialog";
@@ -97,6 +98,13 @@ export function PrevizEditor({
   const [tool, setTool] = useState<PrevizTool>("select");
   /** 正在画的那一笔，世界坐标。null 表示画笔没按下。 */
   const stroke = useRef<Vec3[] | null>(null);
+  /**
+   * 这一笔投在多高的水平面上，按下的那一刻定死。
+   *
+   * 每次 move 现算的话，笔画会在自己造成的移动上滑坡：画到一半 store 里的轨迹还没更新
+   * 倒是不会，但重画已有轨迹时播放头一动高度就变，同一笔的前后段落在两个平面上。
+   */
+  const strokeHeight = useRef(0);
   const [capturing, setCapturing] = useState(false);
   /**
    * 机位创建对话框打开时，锁着的那一份导演视角。存下来而不是每帧现取：对话框开着时
@@ -478,13 +486,27 @@ export function PrevizEditor({
                 // 画笔按下这一下不能同时走拾取，否则一笔画完选中的对象已经换人了。
                 pointerDownAt.current = null;
                 capturePointer(event);
-                const point = renderer.groundPointAt(event.clientX, event.clientY);
+                const store = usePrevizStore.getState();
+                strokeHeight.current = drawPlaneHeight(
+                  store.scene,
+                  store.selectedObjectId,
+                  store.timelineFrame,
+                );
+                const point = renderer.planePointAt(
+                  event.clientX,
+                  event.clientY,
+                  strokeHeight.current,
+                );
                 stroke.current = point ? [point] : [];
               }}
               onPointerMove={(event) => {
                 if (!stroke.current || !renderer) return;
-                const point = renderer.groundPointAt(event.clientX, event.clientY);
-                // 射线与地面平行时 groundPointAt 交出 null，这一段笔画直接丢掉：
+                const point = renderer.planePointAt(
+                  event.clientX,
+                  event.clientY,
+                  strokeHeight.current,
+                );
+                // 射线与该平面平行时 planePointAt 交出 null，这一段笔画直接丢掉：
                 // 补一个瞎编的点会在轨迹上留下一个乱跳的顶点。
                 if (point) stroke.current.push(point);
               }}

@@ -279,24 +279,29 @@ export class PrevizRenderer {
   }
 
   /**
-   * 把画布上的一个点投到 y=0 的地面上，交出世界坐标。绘制轨迹靠它把二维笔画变成
-   * 三维路径。
+   * 把画布上的一个点投到 `height` 米高的水平面上，交出世界坐标。绘制轨迹靠它把二维
+   * 笔画变成三维路径。
    *
-   * 射线与地面平行时（相机平视）返回 null：编个落点出来，笔画上会多一个乱跳的顶点。
+   * 高度是参数而不是写死的 0：一笔画下去所有点都落在同一个水平面上，那这个平面就该是
+   * 被画的对象**当下所在**的那个高度。钉死在地面上的话，给 4 米高的机位画一条走位，
+   * 画完机位就掉到地上了，用户得逐个轨迹点把它抬回去。
+   *
+   * 射线与该平面平行时（相机视线水平）返回 null：编个落点出来，笔画上会多一个乱跳的顶点。
    */
-  groundPointAt(clientX: number, clientY: number): Vec3 | null {
+  planePointAt(clientX: number, clientY: number, height: number): Vec3 | null {
     if (this.disposed) return null;
     if (!this.raycaster) this.raycaster = new this.three.Raycaster();
     const rect = this.canvas.getBoundingClientRect();
-    const width = rect.width || 1;
-    const height = rect.height || 1;
+    const canvasWidth = rect.width || 1;
+    const canvasHeight = rect.height || 1;
     const pointer = new this.three.Vector2(
-      ((clientX - rect.left) / width) * 2 - 1,
-      -((clientY - rect.top) / height) * 2 + 1,
+      ((clientX - rect.left) / canvasWidth) * 2 - 1,
+      -((clientY - rect.top) / canvasHeight) * 2 + 1,
     );
     this.raycaster.setFromCamera(pointer, this.camera);
 
-    const plane = new this.three.Plane(new this.three.Vector3(0, 1, 0), 0);
+    // three 的平面方程是 n·p + d = 0：法线朝 +Y 时 y = -d，所以常量取高度的相反数。
+    const plane = new this.three.Plane(new this.three.Vector3(0, 1, 0), -height);
     const hit = this.raycaster.ray.intersectPlane(plane, new this.three.Vector3());
     return hit ? [hit.x, hit.y, hit.z] : null;
   }
