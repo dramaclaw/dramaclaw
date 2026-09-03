@@ -2785,7 +2785,9 @@
       },
       "props": {
         "perEpisode": "Props are generated per episode"
-      }
+      },
+      "started": "Task started",
+      "cancelled": "Task cancelled"
     },
     "log": {
       "ingest": {

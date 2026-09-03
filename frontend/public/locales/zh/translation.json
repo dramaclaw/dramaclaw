@@ -2785,7 +2785,9 @@
       },
       "props": {
         "perEpisode": "道具按分集生成"
-      }
+      },
+      "started": "任务已开始",
+      "cancelled": "任务已取消"
     },
     "log": {
       "ingest": {
