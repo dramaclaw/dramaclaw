@@ -49,7 +49,17 @@ let boxIsEmpty = false;
  * 情况），`Ray.intersectPlane` 这时返回 null——被测代码必须扛得住。
  */
 let groundHit: Vec3 | null = [0, 0, 0];
-function rayPlaneHit(target: { set: (x: number, y: number, z: number) => unknown }) {
+
+/**
+ * 上一次射线求交拿到的那个平面。绘制平面的高度只体现在平面本身上——假实现无论平面在
+ * 哪都交出同一个落点，不把平面记下来的话「按对象高度取平面」这件事在这里测不出来。
+ */
+let lastPlane: { normal: { x: number; y: number; z: number }; constant: number } | null = null;
+function rayPlaneHit(
+  plane: unknown,
+  target: { set: (x: number, y: number, z: number) => unknown },
+) {
+  lastPlane = plane as typeof lastPlane;
   if (!groundHit) return null;
   target.set(groundHit[0], groundHit[1], groundHit[2]);
   return target;
@@ -212,7 +222,7 @@ vi.mock('three', () => {
     },
     Plane: class {
       constructor(
-        public normal: unknown = null,
+        public normal: Vector3 = new Vector3(),
         public constant = 0,
       ) {}
     },
@@ -230,7 +240,7 @@ vi.mock('three', () => {
     Raycaster: class {
       setFromCamera = setFromCamera;
       intersectObjects = intersectObjects;
-      ray = { intersectPlane: (_plane: unknown, target: Vector3) => rayPlaneHit(target) };
+      ray = { intersectPlane: (plane: unknown, target: Vector3) => rayPlaneHit(plane, target) };
     },
     WebGLRenderer: class {
       domElement = document.createElement('canvas');
@@ -376,6 +386,7 @@ beforeEach(() => {
   webglRenderers.length = 0;
   boxIsEmpty = false;
   groundHit = [0, 0, 0];
+  lastPlane = null;
   render.mockClear();
   setFromCamera.mockClear();
   intersectObjects.mockClear();
@@ -1061,7 +1072,18 @@ describe('PrevizRenderer timeline', () => {
     const { instance } = await createRenderer();
     groundHit = [2, 0, -3];
 
-    expect(instance.groundPointAt(100, 100)).toEqual([2, 0, -3]);
+    expect(instance.planePointAt(100, 100, 0)).toEqual([2, 0, -3]);
+  });
+
+  it('puts the drawing plane at the requested height', async () => {
+    const { instance } = await createRenderer();
+    groundHit = [2, 4, -3];
+
+    expect(instance.planePointAt(100, 100, 4)).toEqual([2, 4, -3]);
+    // three 的平面方程是 n·p + d = 0，法线朝 +Y 时 y = -d，所以 4 米高的平面常量是 -4。
+    // 写成 +4 一样能画出轨迹，只是整条镜像到地面下方去了——而俯视角下这两种看着一模一样。
+    expect(lastPlane?.constant).toBe(-4);
+    expect([lastPlane?.normal.x, lastPlane?.normal.y, lastPlane?.normal.z]).toEqual([0, 1, 0]);
   });
 
   it('returns null when the ray never meets the ground', async () => {
@@ -1069,7 +1091,7 @@ describe('PrevizRenderer timeline', () => {
     groundHit = null;
 
     // 相机平视时射线与地面平行。返回一个瞎编的点，笔画上会多出一个乱跳的顶点。
-    expect(instance.groundPointAt(100, 100)).toBeNull();
+    expect(instance.planePointAt(100, 100, 0)).toBeNull();
   });
 
   it('refuses to evaluate or pick after dispose', async () => {
@@ -1078,6 +1100,6 @@ describe('PrevizRenderer timeline', () => {
     instance.dispose();
 
     expect(() => instance.setFrame(60)).not.toThrow();
-    expect(instance.groundPointAt(100, 100)).toBeNull();
+    expect(instance.planePointAt(100, 100, 0)).toBeNull();
   });
 });

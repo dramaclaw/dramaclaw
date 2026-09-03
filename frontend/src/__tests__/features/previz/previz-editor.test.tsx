@@ -25,7 +25,9 @@ const pickAt = vi.fn(() => null as string | null);
 const capture = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
 const setFrame = vi.fn();
 const setSelectedClip = vi.fn();
-const groundPointAt = vi.fn((): Vec3 | null => [0, 0, 0]);
+const planePointAt = vi.fn(
+  (_clientX: number, _clientY: number, _height: number): Vec3 | null => [0, 0, 0],
+);
 const viewPose = vi.fn(() => ({ position: [6, 4, 8] as Vec3, target: [0, 1, 0] as Vec3 }));
 const renderCameraPreview = vi.fn();
 
@@ -45,7 +47,7 @@ function fakeRenderer() {
     capture,
     setFrame,
     setSelectedClip,
-    groundPointAt,
+    planePointAt,
     viewPose,
     renderCameraPreview,
     onTransformCommit: null as
@@ -427,7 +429,7 @@ function editorProps(overrides: Partial<ComponentProps<typeof PrevizEditor>> = {
 async function renderEditor(overrides: Partial<ComponentProps<typeof PrevizEditor>> = {}) {
   const result = render(<PrevizEditor {...editorProps(overrides)} />);
   await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
-  return { ...result, renderer: { setFrame, setSelectedClip, groundPointAt, pickAt } };
+  return { ...result, renderer: { setFrame, setSelectedClip, planePointAt, pickAt } };
 }
 
 describe("PrevizEditor timeline", () => {
@@ -496,13 +498,41 @@ describe("PrevizEditor timeline", () => {
 
     const canvas = screen.getByTestId("previz-canvas");
     let x = 0;
-    renderer.groundPointAt.mockImplementation(() => [(x += 1), 0, 0]);
+    renderer.planePointAt.mockImplementation(() => [(x += 1), 0, 0]);
     fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
     fireEvent.pointerMove(canvas, { clientX: 40, clientY: 10 });
     fireEvent.pointerMove(canvas, { clientX: 70, clientY: 10 });
     fireEvent.pointerUp(canvas, { clientX: 70, clientY: 10 });
 
     expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(1);
+  });
+
+  it("draws on the plane the selected object sits on", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("camera")!;
+    act(() => {
+      usePrevizStore.getState().selectObject(objectId);
+      usePrevizStore.getState().updateObject(objectId, {
+        transform: {
+          position: [0, 4, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
+
+    const canvas = screen.getByTestId("previz-canvas");
+    renderer.planePointAt.mockClear();
+    renderer.planePointAt.mockReturnValue([1, 4, 0]);
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(canvas, { clientX: 40, clientY: 10 });
+    fireEvent.pointerUp(canvas, { clientX: 40, clientY: 10 });
+
+    // 打到地面上的话，给 4 米高的机位画完一笔机位就掉到地上了。整笔共用按下那一刻的
+    // 高度：中途重算的话，笔画会在自己造成的移动上滑坡。
+    expect(renderer.planePointAt.mock.calls.map((call) => call[2])).toEqual([4, 4]);
   });
 
   it("returns to the select tool after a stroke", async () => {
@@ -513,7 +543,7 @@ describe("PrevizEditor timeline", () => {
     await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
 
     const canvas = screen.getByTestId("previz-canvas");
-    renderer.groundPointAt.mockReturnValue([1, 0, 0]);
+    renderer.planePointAt.mockReturnValue([1, 0, 0]);
     fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
     fireEvent.pointerMove(canvas, { clientX: 40, clientY: 10 });
     fireEvent.pointerUp(canvas, { clientX: 40, clientY: 10 });
@@ -534,7 +564,7 @@ describe("PrevizEditor timeline", () => {
     renderer.pickAt.mockClear();
 
     const canvas = screen.getByTestId("previz-canvas");
-    renderer.groundPointAt.mockReturnValue([1, 0, 0]);
+    renderer.planePointAt.mockReturnValue([1, 0, 0]);
     fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
     fireEvent.pointerUp(canvas, { clientX: 10, clientY: 10 });
 
@@ -549,7 +579,7 @@ describe("PrevizEditor timeline", () => {
     await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
 
     const canvas = screen.getByTestId("previz-canvas");
-    renderer.groundPointAt.mockReturnValue([1, 0, 0]);
+    renderer.planePointAt.mockReturnValue([1, 0, 0]);
     fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
     fireEvent.pointerMove(canvas, { clientX: 40, clientY: 10 });
     fireEvent.pointerUp(canvas, { clientX: 40, clientY: 10 });
