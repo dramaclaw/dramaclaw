@@ -36,6 +36,12 @@ const MAX_PIXEL_RATIO = 2;
 /** 编辑视角的视场角。刻意与机位的 focalMm 无关：这是自由飞行相机，不是取景器。 */
 const EDITOR_FOV_DEG = 50;
 
+/** 视口里点中的那个轨迹点。带上 clipId 是因为点 id 只在自己那条轨迹里唯一。 */
+export interface PrevizPathPointPick {
+  clipId: string;
+  pointId: string;
+}
+
 /**
  * 节点交不出包围盒时的占位尺寸，单位米。尺寸不是新编的，直接沿用场景图那两个常量：
  * 默认身高与占位胶囊半径。这样「没有几何体的对象在取景里占多大」和「占位体画多大」
@@ -90,8 +96,11 @@ export class PrevizRenderer {
    */
   private readonly handPlaced = new Set<string>();
   private pathPreview: PrevizPathPreview | null = null;
+  /** 轨迹预览挂的那一组。拾取轨迹点要单独朝它打射线，见 [pickPathPointAt]。 */
+  private pathRoot: THREE.Object3D | null = null;
   private strokePreview: PrevizStrokePreview | null = null;
   private selectedClipId: string | null = null;
+  private selectedPointId: string | null = null;
   /** 手柄拖完把变换交回上层（编辑器接到 store 的 updateObject）。 */
   onTransformCommit: ((objectId: string, transform: PrevizTransform) => void) | null = null;
 
@@ -205,6 +214,7 @@ export class PrevizRenderer {
     previewRoot.add(pathRoot);
     const strokeRoot = new three.Group();
     previewRoot.add(strokeRoot);
+    instance.pathRoot = pathRoot;
     instance.pathPreview = new PrevizPathPreview(three, pathRoot);
     instance.strokePreview = new PrevizStrokePreview(three, strokeRoot);
     instance.resize();
@@ -249,7 +259,7 @@ export class PrevizRenderer {
     // 必须排在 sync 之后：sync 每次都把静态 transform 写回节点，先解算就会被它盖掉，
     // 表现是播放中随便改点什么（改个名字都算）人就瞬移回起点。
     this.applyEvaluatedFrame();
-    this.pathPreview?.sync(scene, this.selectedClipId);
+    this.pathPreview?.sync(scene, this.selectedClipId, this.selectedPointId);
     this.requestRender();
   }
 
@@ -279,11 +289,17 @@ export class PrevizRenderer {
     this.requestRender();
   }
 
-  /** 高亮某条轨迹。传 null 取消高亮。 */
-  setSelectedClip(clipId: string | null): void {
+  /**
+   * 高亮某条轨迹，以及其中某一个轨迹点。传 null 取消高亮。
+   *
+   * 两者一起进来而不是各给一个方法：轨迹预览是整组重建的，分两次调用就意味着点一下
+   * 轨迹点要重建两遍预览，中间那一遍还画的是「换了轨迹但点还是旧的」这种不存在的状态。
+   */
+  setSelectedClip(clipId: string | null, pointId: string | null = null): void {
     if (this.disposed) return;
     this.selectedClipId = clipId;
-    if (this.currentScene) this.pathPreview?.sync(this.currentScene, clipId);
+    this.selectedPointId = pointId;
+    if (this.currentScene) this.pathPreview?.sync(this.currentScene, clipId, pointId);
     this.requestRender();
   }
 
@@ -555,6 +571,42 @@ export class PrevizRenderer {
    */
   pickAt(clientX: number, clientY: number): string | null {
     if (this.disposed) return null;
+    const hits = this.rayFrom(clientX, clientY).intersectObjects(this.visibleNodes(), true);
+    for (const hit of hits) {
+      let node: THREE.Object3D | null = hit.object;
+      while (node) {
+        const id: unknown = node.userData.previzObjectId;
+        if (typeof id === 'string') return id;
+        node = node.parent;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 画布坐标下的轨迹点拾取，点空处返回 null。
+   *
+   * 和 [pickAt] 分开而不是合成一次射线取最近命中：轨迹点球是画在被它牵着走的那个对象
+   * 身上的（轨迹从对象当前位置开始画），最近的那个命中永远是对象本身，合起来算的话
+   * 轨迹点恰恰在最该点它的地方点不中。调用方拿到点就别再问对象了。
+   */
+  pickPathPointAt(clientX: number, clientY: number): PrevizPathPointPick | null {
+    if (this.disposed || !this.pathRoot) return null;
+    // 不递归：球和曲线都是预览根的直接子节点，而递归会顺带把将来挂进来的任何装饰
+    // 也算成命中。
+    const hits = this.rayFrom(clientX, clientY).intersectObjects(this.pathRoot.children, false);
+    for (const hit of hits) {
+      const { previzClipId, previzPointId } = hit.object.userData;
+      // 曲线身上也有 previzClipId，但它不是某一个点：点在两点之间的线上什么都不该选中。
+      if (typeof previzClipId === 'string' && typeof previzPointId === 'string') {
+        return { clipId: previzClipId, pointId: previzPointId };
+      }
+    }
+    return null;
+  }
+
+  /** 从画布坐标打出一条射线。两处拾取共用，省得 NDC 那几步各写一遍还写岔。 */
+  private rayFrom(clientX: number, clientY: number): THREE.Raycaster {
     if (!this.raycaster) this.raycaster = new this.three.Raycaster();
     const rect = this.canvas.getBoundingClientRect();
     // `|| 1`：容器尚未布局时宽高为 0，除下去是 NaN，射线方向整个是 NaN。
@@ -566,17 +618,7 @@ export class PrevizRenderer {
       -((clientY - rect.top) / height) * 2 + 1,
     );
     this.raycaster.setFromCamera(pointer, this.camera);
-
-    const hits = this.raycaster.intersectObjects(this.visibleNodes(), true);
-    for (const hit of hits) {
-      let node: THREE.Object3D | null = hit.object;
-      while (node) {
-        const id: unknown = node.userData.previzObjectId;
-        if (typeof id === 'string') return id;
-        node = node.parent;
-      }
-    }
-    return null;
+    return this.raycaster;
   }
 
   /**
