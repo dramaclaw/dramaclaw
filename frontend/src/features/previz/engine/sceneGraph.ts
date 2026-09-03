@@ -56,6 +56,23 @@ const KIND_COLOR: Record<Exclude<PrevizObject['kind'], 'camera'>, number> = {
 };
 
 /**
+ * 人物脚下那圈辨识环的内外半径，单位米。外径比占位胶囊的半径（0.22）大一圈，
+ * 站位重叠时两个人的环仍然分得开；内径留空是为了别把脚整个盖住。
+ */
+const MARKER_INNER_RADIUS = 0.3;
+const MARKER_OUTER_RADIUS = 0.36;
+
+/**
+ * 辨识环离地的高度，单位米。地面网格就画在 y=0 上，两个共面的东西在透视投影下会
+ * 逐像素争谁在前（z-fighting），环会闪成一圈虚线。抬一毫米就够，抬多了在低机位下
+ * 看得出它浮着。
+ */
+const MARKER_LIFT = 0.001;
+
+/** 朝向箭头的落点：环外一点点的 -Z。对象在零旋转时脸朝 -Z，箭头指的就是这个方向。 */
+const MARKER_ARROW_Z = -(MARKER_OUTER_RADIUS + 0.1);
+
+/**
  * 位置与旋转没有值域，只有「必须有限」这一条。非有限分量落到 0：
  * NaN 会顺着 `updateMatrixWorld` 污染整棵子树的世界矩阵，物体从画面上凭空消失，
  * 而 three 一声不吭——症状离病因隔着整个引擎层。
@@ -142,6 +159,7 @@ export class PrevizSceneGraph {
       if (object.kind === 'character' && this.resizePlaceholder(node, object)) {
         pending.push(node);
       }
+      if (object.kind === 'character') this.syncMarker(node, object);
       // 机位的视锥同理：焦距、传感器、出片画幅都是能在属性面板上改的，几何体建好
       // 不会自己跟着变。这里不进 `pending`——重画只换几何体，材质原封不动。
       if (object.kind === 'camera') this.syncCameraModel(node, object);
@@ -308,7 +326,67 @@ export class PrevizSceneGraph {
   private createNode(object: PrevizObject): THREE.Object3D {
     const group = new this.three.Group();
     group.add(this.createPlaceholder(object));
+    if (object.kind === 'character') group.add(this.createMarker(object));
     return group;
+  }
+
+  /**
+   * 人物脚下的辨识标记：一圈本人颜色的环，加一个指着 -Z 的箭头。
+   *
+   * 它是**占位体的兄弟节点**，而不是挂在占位体或模型下面：真模型到位时
+   * `swapInCharacterModel` 会把带 `previzPlaceholder` 的子节点整棵删掉，挂在里面的话
+   * 人物一加载完标记就没了——而那正是最需要它的时候（所有人共用同一份角色模型，
+   * 加载完之后大家长得一模一样）。
+   *
+   * 材质用 `MeshBasicMaterial` 而不是 standard：这组东西是画在场景里的界面，不该被
+   * 布光影响——顶光偏暗的场景里，一圈受光的环会跟着变色，辨识色就不成其为辨识色了。
+   */
+  private createMarker(character: PrevizCharacter): THREE.Object3D {
+    const three = this.three;
+    const group = new three.Group();
+    group.userData.previzMarker = true;
+    group.userData.previzMarkerColor = character.color;
+
+    const ring = new three.Mesh(
+      new three.RingGeometry(MARKER_INNER_RADIUS, MARKER_OUTER_RADIUS, 32),
+      this.markerMaterial(character.color),
+    );
+    // RingGeometry 默认立在 XY 面上，绕 X 转 -90° 把它放倒贴地。
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(0, MARKER_LIFT, 0);
+    ring.userData.previzMarker = true;
+
+    const arrow = new three.Mesh(
+      new three.ConeGeometry(0.075, 0.16, 3),
+      this.markerMaterial(character.color),
+    );
+    // 锥体默认尖朝 +Y，同一转法把尖指到 -Z——也就是对象的正面。
+    arrow.rotation.x = -Math.PI / 2;
+    arrow.position.set(0, MARKER_LIFT, MARKER_ARROW_Z);
+    arrow.userData.previzMarker = true;
+
+    group.add(ring);
+    group.add(arrow);
+    return group;
+  }
+
+  private markerMaterial(color: string): THREE.Material {
+    return new this.three.MeshBasicMaterial({ color, side: this.three.DoubleSide });
+  }
+
+  /**
+   * 辨识色改了就把标记重新染一遍。颜色没变时直接早退：`sync` 每帧都会走到这里，
+   * 而 `color.set` 每次都会把材质标脏。
+   */
+  private syncMarker(node: THREE.Object3D, character: PrevizCharacter): void {
+    const marker = node.children.find((child) => child.userData.previzMarker);
+    if (!marker) return;
+    if (marker.userData.previzMarkerColor === character.color) return;
+    marker.userData.previzMarkerColor = character.color;
+    marker.traverse((child) => {
+      const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
+      material?.color?.set(character.color);
+    });
   }
 
   /**
@@ -408,6 +486,10 @@ export class PrevizSceneGraph {
     const transparent = mode === 'translucent';
     target.traverse((object) => {
       const mesh = object as THREE.Mesh;
+      // 辨识标记不吃显示模式：它不是场景里的东西，是画在场景里的界面。全灰会把它涂成
+      // 和别人一样的灰（辨识色就白给了），半透明会把它化掉——而这两个模式恰恰是最难
+      // 认人的时候。
+      if (mesh.userData.previzMarker) return;
       const material = mesh.material;
       if (!material) return;
       const list = Array.isArray(material) ? material : [material];

@@ -140,6 +140,12 @@ function fakeThree() {
   class FakeBoxGeometry extends FakeGeometry {
     readonly shape = 'box';
   }
+  class FakeRingGeometry extends FakeGeometry {
+    readonly shape = 'ring';
+  }
+  class FakeConeGeometry extends FakeGeometry {
+    readonly shape = 'cone';
+  }
   class FakeMaterial {
     opacity = 1;
     transparent = false;
@@ -186,7 +192,10 @@ function fakeThree() {
     CylinderGeometry: FakeCylinderGeometry,
     SphereGeometry: FakeSphereGeometry,
     BoxGeometry: FakeBoxGeometry,
+    RingGeometry: FakeRingGeometry,
+    ConeGeometry: FakeConeGeometry,
     BufferGeometry: FakeBufferGeometry,
+    DoubleSide: 2,
     Float32BufferAttribute: class {
       constructor(
         public array: number[],
@@ -195,6 +204,7 @@ function fakeThree() {
     },
     LineSegments: Mesh,
     MeshStandardMaterial: FakeMaterial,
+    MeshBasicMaterial: FakeMaterial,
     LineBasicMaterial: FakeMaterial,
   } as unknown as typeof import('three');
 }
@@ -208,15 +218,21 @@ interface FakeMeshView {
     needsUpdate: boolean;
     color: { set: ReturnType<typeof vi.fn> };
     dispose: ReturnType<typeof vi.fn>;
-    params: { color?: number };
+    // 辨识标记的颜色是 `#rrggbb` 字符串（人物自己那一份），占位体的是数字常量。
+    params: { color?: number | string; side?: number };
   };
   position: { x: number; y: number; z: number };
+  rotation: { x: number; y: number; z: number };
 }
 
 function placeholderOf(graph: PrevizSceneGraph, objectId: string): FakeMeshView {
   const node = graph.nodeFor(objectId);
   if (!node) throw new Error(`no node for ${objectId}`);
-  return node.children[0] as unknown as FakeMeshView;
+  // 按标记找而不是按下标：人物节点下面还挂着一组辨识标记，而占位体被重建之后
+  // 会排到它后面去。
+  const placeholder = node.children.find((child) => child.userData.previzPlaceholder);
+  if (!placeholder) throw new Error(`no placeholder for ${objectId}`);
+  return placeholder as unknown as FakeMeshView;
 }
 
 /** 材质最后一次被染上的颜色。`Array.prototype.at` 不在本仓的 lib 里，只能按下标取。 */
@@ -254,6 +270,11 @@ function rigFactory(three: typeof import('three'), clipNames: string[] = ['Idle_
 /** 排空微任务队列：模型换入走的是一条纯 Promise 链，没有定时器。 */
 function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** 人物脚下那组辨识标记（辨识环 + 朝向箭头）。 */
+function markerOf(graph: PrevizSceneGraph, objectId: string): THREE.Object3D | undefined {
+  return graph.nodeFor(objectId)?.children.find((child) => child.userData.previzMarker);
 }
 
 /** 节点下面那个模型根（`build()` 在它身上留了 `previzRig`）。 */
@@ -568,7 +589,8 @@ describe('PrevizSceneGraph', () => {
     // 换的是占位体不是整个节点：节点上挂着 Task 8 加载好的 GLB，重建等于白下一次。
     expect(root.children).toHaveLength(1);
     expect(graph.nodeFor(character.id)).toBe(node);
-    expect(node?.children).toHaveLength(1);
+    // 占位胶囊加脚下那组辨识标记，就这两件。
+    expect(node?.children).toHaveLength(2);
     // 换下来的那一对必须还掉，不然拖一次滑杆就按帧泄漏一个几何体加一份材质。
     expect(before.geometry.dispose).toHaveBeenCalled();
     expect(before.material.dispose).toHaveBeenCalled();
@@ -711,7 +733,10 @@ describe('PrevizSceneGraph', () => {
       const mesh = object as unknown as {
         material?: { opacity: number; transparent: boolean; needsUpdate: boolean };
       };
-      if (mesh.material) materials.push(mesh.material);
+      // 辨识标记刻意不吃显示模式（见它自己那条用例），这里把它排除在外。
+      if (mesh.material && !(object.userData as { previzMarker?: boolean }).previzMarker) {
+        materials.push(mesh.material);
+      }
     });
 
     expect(materials).toHaveLength(2);
@@ -831,12 +856,13 @@ describe('PrevizSceneGraph', () => {
     graph.sync(scene);
     const node = graph.nodeFor(id);
     const placeholder = placeholderOf(graph, id);
-    // 模型是异步来的：这一刻画面上还只有占位胶囊。
-    expect(node?.children).toHaveLength(1);
+    // 模型是异步来的：这一刻画面上还是占位胶囊（外加脚下那组辨识标记）。
+    expect(node?.children).toHaveLength(2);
 
     await flush();
 
-    expect(node?.children).toHaveLength(1);
+    // 换进来的是模型，标记原样留着——它不带 `previzPlaceholder`，清不到它头上。
+    expect(node?.children).toHaveLength(2);
     expect(rigOf(graph, id)).toBeDefined();
     // 占位胶囊必须摘掉并还资源：留着就是一个人和一个胶囊叠在一起，还按帧漏几何体。
     expect(placeholder.geometry.dispose).toHaveBeenCalled();
@@ -849,7 +875,7 @@ describe('PrevizSceneGraph', () => {
     graph.sync(scene);
     await flush();
     expect(loadGltf).toHaveBeenCalledTimes(1);
-    expect(node?.children).toHaveLength(1);
+    expect(node?.children).toHaveLength(2);
   });
 
   it('rescales the loaded rig when heightCm changes, without loading a second model', async () => {
@@ -876,7 +902,7 @@ describe('PrevizSceneGraph', () => {
     expect(rig?.scale.x).toBeCloseTo(1.15, 6);
     // 而且是重新缩放，不是重新下一个模型。
     expect(loadGltf).toHaveBeenCalledTimes(1);
-    expect(graph.nodeFor(character.id)?.children).toHaveLength(1);
+    expect(graph.nodeFor(character.id)?.children).toHaveLength(2);
     expect(rigOf(graph, character.id)).toBe(rig);
   });
 
@@ -999,7 +1025,7 @@ describe('PrevizSceneGraph', () => {
 
     // 节点已经从树上摘掉、资源也还过了。往它身上挂一个 GLB 就是一份谁都够不着、
     // 也永远不会再被 dispose 的副本。
-    expect(node?.children).toHaveLength(1);
+    expect(node?.children).toHaveLength(2);
     expect(node?.children[0]?.userData.previzPlaceholder).toBe(true);
     expect(onReady).not.toHaveBeenCalled();
   });
@@ -1150,5 +1176,91 @@ describe('PrevizSceneGraph', () => {
     graph.dispose();
     expect(second.geometry.dispose).not.toHaveBeenCalled();
     expect(second.material.dispose).not.toHaveBeenCalled();
+  });
+  it("marks each character's feet with a ring in that character's own colour", () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const scene = sceneWith('character', 'camera', 'light', 'prop');
+    graph.sync(scene);
+
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('unreachable');
+    const marker = markerOf(graph, character.id);
+    expect(marker).toBeDefined();
+
+    const [ring, arrow] = marker!.children as unknown as FakeMeshView[];
+    expect(ring!.geometry.shape).toBe('ring');
+    expect(arrow!.geometry.shape).toBe('cone');
+    // 两件都吃人物自己的辨识色，不是分类色——这组标记存在的全部意义就是分清谁是谁。
+    expect(ring!.material.params.color).toBe(character.color);
+    expect(arrow!.material.params.color).toBe(character.color);
+
+    // 环躺平贴地：绕 X 转 -90° 把默认立在 XY 面上的环放倒，再抬一丁点躲开地面网格的 z-fighting。
+    expect(ring!.rotation.x).toBeCloseTo(-Math.PI / 2, 6);
+    expect(ring!.position.y).toBeGreaterThan(0);
+    expect(ring!.position.y).toBeLessThan(0.05);
+    // 箭头落在环外的 -Z 上：对象的正面就是 -Z，箭头指哪边人就朝哪边。
+    expect(arrow!.position.z).toBeLessThan(0);
+    expect(arrow!.rotation.x).toBeCloseTo(-Math.PI / 2, 6);
+
+    // 只有人物有辨识色，另外三类不该凭空长出一圈来。
+    for (const other of scene.objects.slice(1)) {
+      expect(markerOf(graph, other.id)).toBeUndefined();
+    }
+  });
+
+  it('recolours the marker when the character changes colour', () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const scene = characterScene();
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+
+    const ring = markerOf(graph, id)!.children[0] as unknown as FakeMeshView;
+    ring.material.color.set.mockClear();
+
+    graph.sync({ ...scene, objects: [{ ...scene.objects[0]!, color: '#ff00aa' } as PrevizCharacter] });
+    expect(lastColour(ring)).toBe('#ff00aa');
+
+    // 颜色没变就别每帧往材质上写：这一条防的是「每次 sync 都刷一遍」那种写法。
+    ring.material.color.set.mockClear();
+    graph.sync({ ...scene, objects: [{ ...scene.objects[0]!, color: '#ff00aa' } as PrevizCharacter] });
+    expect(ring.material.color.set).not.toHaveBeenCalled();
+  });
+
+  it('keeps the marker when the actor model swaps in', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+    await flush();
+
+    // 换模型那一步只清占位体。标记要是被顺手带走，人物一加载完就再也认不出谁是谁了。
+    expect(rigOf(graph, id)).toBeDefined();
+    expect(markerOf(graph, id)).toBeDefined();
+  });
+
+  it('keeps the marker out of the display modes', () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const scene = characterScene();
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+
+    const ring = markerOf(graph, id)!.children[0] as unknown as FakeMeshView;
+    ring.material.color.set.mockClear();
+
+    // 全灰模式把场景涂成一色，正是最需要认人的时候——标记不能跟着被涂掉。
+    graph.sync({ ...scene, settings: { ...scene.settings, displayMode: 'clay' } });
+    expect(ring.material.color.set).not.toHaveBeenCalled();
+
+    // 半透明同理：标记化掉就等于没有。
+    graph.sync({ ...scene, settings: { ...scene.settings, displayMode: 'translucent' } });
+    expect(ring.material.transparent).toBe(false);
+    expect(ring.material.opacity).toBe(1);
   });
 });
