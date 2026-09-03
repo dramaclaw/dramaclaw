@@ -9,6 +9,7 @@ import sys
 import time
 
 import pytest
+from jsonschema import Draft202012Validator
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -146,6 +147,58 @@ async def test_project_scope_lists_concrete_tools(monkeypatch):
     assert names == set(dramaclaw_mcp.TOOLS)
     assert names.isdisjoint(dramaclaw_mcp.BRIDGE_TOOL_NAMES)
 
+    schemas = {tool.name: tool.outputSchema for tool in tools}
+    assert all(schema is not None for schema in schemas.values())
+    assert len({schema["title"] for schema in schemas.values()}) == len(schemas)
+    for name, schema in schemas.items():
+        Draft202012Validator.check_schema(schema)
+        assert schema["x-dramaclaw-tool"] == name
+        assert schema["required"] == ["ok", "status"]
+
+
+async def test_every_concrete_tool_round_trips_schema_valid_structured_content_over_stdio():
+    env = {
+        **os.environ,
+        "DRAMACLAW_PROJECT_ID": "project-a",
+        "DRAMACLAW_USERNAME": "local",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    env.pop("DRAMACLAW_MCP_TOOL_DISCOVERY", None)
+    server_script = """
+import json
+from novelvideo.chat import dramaclaw_mcp as m
+sample = json.dumps({
+    "ok": True,
+    "status": "completed",
+    "operation_id": "operation-a",
+    "confirmation_required": False,
+    "next_action": None,
+})
+for name, (schema, _handler) in list(m.TOOLS.items()):
+    permissive = {**schema, "parameters": {"type": "object"}}
+    m.TOOLS[name] = (permissive, lambda _arguments, value=sample: value)
+m.main()
+"""
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", server_script],
+        env=env,
+        cwd=str(CE_ROOT),
+    )
+
+    async with stdio_client(parameters) as (reader, writer):
+        async with ClientSession(reader, writer) as session:
+            await session.initialize()
+            tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+            assert set(tools) == set(dramaclaw_mcp.TOOLS)
+            for name, tool in tools.items():
+                result = await session.call_tool(name, {})
+                assert result.structuredContent is not None
+                Draft202012Validator(tool.outputSchema).validate(
+                    result.structuredContent
+                )
+                assert result.structuredContent["operation_id"] == "operation-a"
+
 
 @pytest.mark.asyncio
 async def test_home_scope_lists_only_concrete_project_collection_tools(monkeypatch):
@@ -216,6 +269,9 @@ async def test_codex_bridge_search_describe_and_call(monkeypatch):
     )
     describe_payload = json.loads(describe.content[0].text)
     assert describe_payload["tool"]["input_schema"] == schema["parameters"]
+    assert describe_payload["tool"]["output_schema"]["x-dramaclaw-tool"] == (
+        "dramaclaw_render_first_frames"
+    )
 
     result = await dramaclaw_mcp.call_tool(
         dramaclaw_mcp.TOOL_CALL_NAME,
@@ -344,6 +400,38 @@ async def test_codex_bridge_completes_real_mcp_handshake():
     assert "dramaclaw_render_first_frames" in {
         item["name"] for item in payload["tools"]
     }
+
+
+async def test_concrete_tool_completes_real_mcp_output_contract_round_trip():
+    env = {
+        **os.environ,
+        "DRAMACLAW_PROJECT_ID": "project-a",
+        "DRAMACLAW_USERNAME": "local",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    env.pop("DRAMACLAW_MCP_TOOL_DISCOVERY", None)
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "novelvideo.chat.dramaclaw_mcp"],
+        env=env,
+        cwd=str(CE_ROOT),
+    )
+
+    async with stdio_client(parameters) as (reader, writer):
+        async with ClientSession(reader, writer) as session:
+            await session.initialize()
+            tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+            result = await session.call_tool(
+                "dramaclaw_prepare_system_voices",
+                {"episode": 1, "confirmed": False},
+            )
+
+    tool = tools["dramaclaw_prepare_system_voices"]
+    assert tool.outputSchema["x-dramaclaw-tool"] == tool.name
+    assert result.structuredContent is not None
+    Draft202012Validator(tool.outputSchema).validate(result.structuredContent)
+    assert result.structuredContent["ok"] is False
+    assert result.isError is True
 
 
 def test_freezone_profile_defaults_tool_mode(monkeypatch):
