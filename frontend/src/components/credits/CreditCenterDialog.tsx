@@ -135,14 +135,18 @@ const NAV_GROUPS: Array<{
   },
 ];
 
+const PAYMENT_TABS = new Set<CreditCenterTab>(["packages", "custom", "orders"]);
+
 export function CreditCenterDialog({
   open,
   onOpenChange,
   initialTab = "packages",
+  paymentAvailable,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialTab?: CreditCenterTab;
+  paymentAvailable: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const [activeTab, setActiveTab] = useState<CreditCenterTab>(initialTab);
@@ -150,9 +154,9 @@ export function CreditCenterDialog({
   const username = useAuthStore((state) => state.username) ?? t("credits.centerModal.account");
   const language = i18n.resolvedLanguage ?? i18n.language ?? "zh";
   const summaryQuery = useCreditSummary(open);
-  const packagesQuery = useRechargePackages();
-  const customRechargeQuery = useCustomRechargeConfig(open);
-  const ordersQuery = useRechargeOrders();
+  const packagesQuery = useRechargePackages(open && paymentAvailable);
+  const customRechargeQuery = useCustomRechargeConfig(open && paymentAvailable);
+  const ordersQuery = useRechargeOrders({ enabled: open && paymentAvailable });
   const promotionsQuery = useCreditPromotions(open && activeTab === "benefits");
   const summary = summaryQuery.data?.data;
   const packages = useMemo(
@@ -169,6 +173,14 @@ export function CreditCenterDialog({
   const customAmountCents = customRecharge
     ? (customCredits * 100) / customRecharge.credits_per_cny
     : 0;
+  const visibleActiveTab =
+    !paymentAvailable && PAYMENT_TABS.has(activeTab) ? "usage" : activeTab;
+  const visibleNavGroups = paymentAvailable
+    ? NAV_GROUPS
+    : NAV_GROUPS.map((group) => ({
+        ...group,
+        items: group.items.filter(({ tab }) => !PAYMENT_TABS.has(tab)),
+      })).filter((group) => group.items.length > 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -198,7 +210,7 @@ export function CreditCenterDialog({
           </div>
 
           <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto">
-            {NAV_GROUPS.map((group) => (
+            {visibleNavGroups.map((group) => (
               <div key={group.label}>
                 <div className="px-3 text-[11px] font-medium text-white/35">
                   {t(group.label)}
@@ -211,7 +223,7 @@ export function CreditCenterDialog({
                       onClick={() => setActiveTab(tab)}
                       className={cn(
                         "flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-left text-sm transition-colors",
-                        activeTab === tab
+                        visibleActiveTab === tab
                           ? "bg-white/[0.08] text-white"
                           : "text-white/58 hover:bg-white/[0.05] hover:text-white",
                       )}
@@ -230,10 +242,10 @@ export function CreditCenterDialog({
           <header className="flex shrink-0 items-center justify-between border-b border-white/8 px-5 py-4 pr-14 md:px-7">
             <div>
               <h2 className="text-lg font-semibold">
-                {t(`credits.centerModal.tabs.${activeTab}`)}
+                {t(`credits.centerModal.tabs.${visibleActiveTab}`)}
               </h2>
               <p className="mt-1 text-xs text-white/45">
-                {t(`credits.centerModal.descriptions.${activeTab}`)}
+                {t(`credits.centerModal.descriptions.${visibleActiveTab}`)}
               </p>
             </div>
             <div className="flex items-center gap-2 text-sm text-white/45 md:hidden">
@@ -245,14 +257,14 @@ export function CreditCenterDialog({
           </header>
 
           <div className="flex gap-1 overflow-x-auto border-b border-white/8 px-4 py-2 md:hidden">
-            {NAV_GROUPS.flatMap((group) => group.items).map(({ tab }) => (
+            {visibleNavGroups.flatMap((group) => group.items).map(({ tab }) => (
               <button
                 key={tab}
                 type="button"
                 onClick={() => setActiveTab(tab)}
                 className={cn(
                   "shrink-0 rounded-full px-3 py-1.5 text-xs",
-                  activeTab === tab ? "bg-white text-black" : "bg-white/6 text-white/55",
+                  visibleActiveTab === tab ? "bg-white text-black" : "bg-white/6 text-white/55",
                 )}
               >
                 {t(`credits.centerModal.tabs.${tab}`)}
@@ -261,7 +273,7 @@ export function CreditCenterDialog({
           </div>
 
           <div className="ui-scrollbar min-h-0 flex-1 overflow-y-auto p-5 md:p-7">
-            {activeTab === "packages" ? (
+            {visibleActiveTab === "packages" ? (
               <PackageTab
                 packages={packages}
                 loading={packagesQuery.isPending}
@@ -269,7 +281,7 @@ export function CreditCenterDialog({
                 onCheckout={(packageId) => beginCheckout({ kind: "package", packageId })}
               />
             ) : null}
-            {activeTab === "custom" ? (
+            {visibleActiveTab === "custom" ? (
               <CustomRechargeTab
                 config={customRecharge}
                 loading={customRechargeQuery.isPending}
@@ -285,16 +297,16 @@ export function CreditCenterDialog({
                 }
               />
             ) : null}
-            {activeTab === "benefits" ? (
+            {visibleActiveTab === "benefits" ? (
               <BenefitsTab promotions={promotions} loading={promotionsQuery.isPending} />
             ) : null}
-            {activeTab === "orders" ? (
+            {visibleActiveTab === "orders" ? (
               <OrdersTab orders={orders} loading={ordersQuery.isPending} language={language} />
             ) : null}
-            {activeTab === "usage" ? (
+            {visibleActiveTab === "usage" ? (
               <UsageTab summary={summary} language={language} />
             ) : null}
-            {activeTab === "help" ? <HelpTab /> : null}
+            {visibleActiveTab === "help" ? <HelpTab /> : null}
           </div>
         </section>
       </DialogContent>

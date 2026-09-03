@@ -82,13 +82,14 @@ type RechargeLinkPackagesResponse = {
   items: RechargePackage[];
 };
 
-export function useRechargePackages() {
+export function useRechargePackages(enabled = true) {
   return useQuery({
     queryKey: queryKeys.rechargePackages(),
     queryFn: ({ signal }) =>
       api
         .get("api/v1/payments/packages", { signal })
         .json<OkResponse<{ items: RechargePackage[] }>>(),
+    enabled,
     staleTime: 30_000,
     refetchOnWindowFocus: true,
     retry: false,
