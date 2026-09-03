@@ -39,6 +39,8 @@ vi.mock("three", () => {
     // 得是真的——少了它 dispose() 直接抛，按需重绘那条断言就跑不完。
     Group: class {
       children: unknown[] = [];
+      visible = true;
+      userData: Record<string, unknown> = {};
       add() {}
       remove() {}
     },
@@ -130,7 +132,9 @@ vi.mock("three/examples/jsm/controls/TransformControls.js", () => ({
     setMode = vi.fn();
     setSpace = vi.fn();
     dispose = vi.fn();
-    getHelper = vi.fn(() => ({ traverse() {} }));
+    // 真手柄是个 Object3D，挂在 scene 下面。谁扫一遍 scene 的子节点都会碰到它，
+    // 少了 userData 就是一句和被测行为毫无关系的 TypeError。
+    getHelper = vi.fn(() => ({ traverse() {}, visible: true, userData: {} }));
     addEventListener = vi.fn();
   },
 }));
