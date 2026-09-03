@@ -1,14 +1,18 @@
 from pathlib import Path
 from contextlib import contextmanager
 from importlib.metadata import distribution
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import gzip
+import json
 import os
 import sqlite3
 import threading
 from types import SimpleNamespace
 
 import pytest
+from jsonschema import Draft202012Validator
 
-from novelvideo.chat import backend_sdk, codex_app_server, service
+from novelvideo.chat import backend_sdk, codex_app_server, dramaclaw_mcp, service
 from novelvideo.chat.backend_sdk import (
     CodexThread,
     _start_codex_turn,
@@ -115,9 +119,7 @@ def test_control_files_use_system_tmp_while_logs_use_runtime(monkeypatch, tmp_pa
     codex_home = tmp_path / "state" / ".codex-app-server"
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(runtime_root))
 
-    socket_path, lock_path, signature_path = codex_app_server._control_paths(
-        codex_home
-    )
+    socket_path, lock_path, signature_path = codex_app_server._control_paths(codex_home)
     log_path = codex_app_server._app_server_log_path(codex_home)
 
     expected_control_root = Path("/tmp") / f"claymore-{os.getuid()}"
@@ -259,6 +261,262 @@ def test_codex_149_sdk_exposes_required_runtime_notifications():
     } <= NOTIFICATION_MODELS.keys()
 
 
+def _responses_sse(*events: dict) -> bytes:
+    chunks = []
+    for event in events:
+        event_type = event["type"]
+        chunks.append(f"event: {event_type}\ndata: {json.dumps(event)}\n\n")
+    return "".join(chunks).encode()
+
+
+def _response_created(response_id: str) -> dict:
+    return {"type": "response.created", "response": {"id": response_id}}
+
+
+def _response_completed(response_id: str) -> dict:
+    return {
+        "type": "response.completed",
+        "response": {
+            "id": response_id,
+            "usage": {
+                "input_tokens": 0,
+                "input_tokens_details": None,
+                "output_tokens": 0,
+                "output_tokens_details": None,
+                "total_tokens": 0,
+            },
+        },
+    }
+
+
+@contextmanager
+def _recording_responses_gateway(responses: list[bytes]):
+    requests: list[dict] = []
+    response_queue = iter(responses)
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 - stdlib handler callback
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length)
+            if self.headers.get("Content-Encoding", "").lower() == "gzip":
+                raw = gzip.decompress(raw)
+            requests.append(
+                {
+                    "path": self.path,
+                    "headers": dict(self.headers),
+                    "body": json.loads(raw),
+                }
+            )
+            try:
+                response = next(response_queue)
+            except StopIteration:
+                self.send_error(500, "unexpected extra Responses request")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, _format, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        host, port = server.server_address
+        yield f"http://{host}:{port}/v1", requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_app_server_native_tool_search_preserves_gateway_event_chain(
+    monkeypatch, tmp_path
+):
+    """Record the complete Responses Tool Search chain across App Server + MCP."""
+    search_call_id = "search-call-1"
+    tool_call_id = "mcp-call-1"
+    tool_name = "dramaclaw_prepare_system_voices"
+    namespace = "mcp__dramaclaw"
+    scripted_responses = [
+        _responses_sse(
+            _response_created("response-1"),
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "tool_search_call",
+                    "call_id": search_call_id,
+                    "execution": "client",
+                    "arguments": {
+                        "query": (
+                            "Prepare missing narrator and character reference voices from system "
+                            "presets. This starts the agent-only system_voice_setup background "
+                            "task and does not start episode TTS."
+                        ),
+                        "limit": 8,
+                    },
+                },
+            },
+            _response_completed("response-1"),
+        ),
+        _responses_sse(
+            _response_created("response-2"),
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "function_call",
+                    "call_id": tool_call_id,
+                    "namespace": namespace,
+                    "name": tool_name,
+                    "arguments": json.dumps({"episode": 1, "confirmed": False}),
+                },
+            },
+            _response_completed("response-2"),
+        ),
+        _responses_sse(
+            _response_created("response-3"),
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "id": "message-1",
+                    "content": [{"type": "output_text", "text": "需要用户确认。"}],
+                },
+            },
+            _response_completed("response-3"),
+        ),
+    ]
+
+    with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
+        bundled_codex = Path(
+            distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
+        )
+        assert bundled_codex.is_file(), "the pinned App Server binary is required"
+        token_file = tmp_path / "turn.token"
+        token_file.write_text("contract-test-token", encoding="utf-8")
+        token_file.chmod(0o600)
+        monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+        monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "native-tool-search-contract")
+        env = {
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+            "DRAMACLAW_PROJECT_ID": "native-tool-search-contract",
+            "DRAMACLAW_USERNAME": "local",
+            "DRAMACLAW_AGENT_TOKEN_FILE": str(token_file),
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        mcp_servers = service._dramaclaw_mcp_servers()
+        mcp_servers["dramaclaw"]["env_vars"].append("PYTHONPATH")
+        client = backend_sdk.CodexClient(
+            codex_bin=bundled_codex,
+            cwd=tmp_path,
+            env=env,
+            model="DC-codex-agent-LLM",
+            model_provider="dramaclaw_gateway",
+            developer_instructions=service._codex_developer_instructions("default"),
+            config_overrides=service._codex_gateway_config_overrides(gateway_url),
+            thread_config_overrides=service._codex_mcp_config_overrides(mcp_servers),
+            turn_metadata={"dramaclaw_gateway_api_key": "per-turn-contract-key"},
+        )
+
+        try:
+            events = [
+                event
+                async for event in client.thread_start().stream(
+                    "为第 1 集准备系统音色，但不要确认执行。"
+                )
+            ]
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
+
+    assert len(requests) == 3
+    assert [request["path"] for request in requests] == ["/v1/responses"] * 3
+    first, second, third = [request["body"] for request in requests]
+
+    first_tool_names = [tool.get("name") for tool in first["tools"]]
+    assert any(tool.get("type") == "tool_search" for tool in first["tools"])
+    assert tool_name not in first_tool_names
+    assert namespace not in first_tool_names
+
+    second_history = second["input"]
+    search_call = next(
+        item for item in second_history if item.get("type") == "tool_search_call"
+    )
+    search_output = next(
+        item for item in second_history if item.get("type") == "tool_search_output"
+    )
+    assert search_call["call_id"] == search_output["call_id"] == search_call_id
+    assert second_history.index(search_call) < second_history.index(search_output)
+    assert search_output["execution"] == "client"
+    assert search_output["status"] == "completed"
+
+    discovered_namespace = search_output["tools"][0]
+    assert discovered_namespace["type"] == "namespace"
+    assert discovered_namespace["name"] == namespace
+    discovered_tool = next(
+        tool for tool in discovered_namespace["tools"] if tool.get("name") == tool_name
+    )
+    expected_schema = dramaclaw_mcp.TOOLS[tool_name][0]
+    assert discovered_tool["name"] == tool_name
+    assert discovered_tool["parameters"] == expected_schema["parameters"]
+    assert discovered_tool["defer_loading"] is True
+    # Native Responses serializes the searched function's input contract in
+    # tool_search_output. The output contract remains on MCP tools/list and
+    # governs the structuredContent that App Server returns to the model.
+    advertised_tool = next(
+        tool for tool in await dramaclaw_mcp.list_tools() if tool.name == tool_name
+    )
+    assert advertised_tool.inputSchema == expected_schema["parameters"]
+    assert advertised_tool.outputSchema == expected_schema["output_schema"]
+    assert not {
+        "dramaclaw_tool_search",
+        "dramaclaw_tool_describe",
+        "dramaclaw_tool_call",
+    } & {tool["name"] for tool in discovered_namespace["tools"]}
+    for request in (second, third):
+        advertised_names = [tool.get("name") for tool in request["tools"]]
+        assert tool_name not in advertised_names
+        assert namespace not in advertised_names
+
+    third_history = third["input"]
+    concrete_call = next(
+        item
+        for item in third_history
+        if item.get("type") == "function_call" and item.get("name") == tool_name
+    )
+    concrete_output = next(
+        item for item in third_history if item.get("type") == "function_call_output"
+    )
+    assert concrete_call["call_id"] == concrete_output["call_id"] == tool_call_id
+    assert third_history.index(concrete_call) < third_history.index(concrete_output)
+    assert (
+        third_history.index(search_call)
+        < third_history.index(search_output)
+        < third_history.index(concrete_call)
+        < third_history.index(concrete_output)
+    )
+    tool_result = json.loads(concrete_output["output"].split("Output:\n", 1)[1])
+    assert tool_result["ok"] is False
+    assert tool_result["status"] == "failed"
+    assert "system_voice_confirmation_required" in tool_result["error"]
+    Draft202012Validator(advertised_tool.outputSchema).validate(tool_result)
+
+    tool_events = [event for event in events if event.type == "tool_updated"]
+    assert [event.name for event in tool_events] == [f"dramaclaw.{tool_name}"]
+    assert tool_events[0].call_id == tool_call_id
+    assert tool_events[0].structured == tool_result
+    assert any(
+        event.type == "complete" and event.text == "需要用户确认。" for event in events
+    )
+
+
 @pytest.mark.e2e
 @pytest.mark.asyncio
 async def test_real_gateway_app_server_native_tool_search_calls_concrete_mcp(
@@ -284,9 +542,7 @@ async def test_real_gateway_app_server_native_tool_search_calls_concrete_mcp(
         pytest.skip("a Tool Search-capable DramaClaw Gateway URL and key are required")
 
     bundled_codex = Path(
-        distribution("openai-codex-cli-bin").locate_file(
-            "codex_cli_bin/bin/codex"
-        )
+        distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
     )
     codex_bin = Path(os.environ.get("CODEX_BIN", "") or bundled_codex)
     if not codex_bin.is_file():
@@ -340,8 +596,10 @@ async def test_real_gateway_app_server_native_tool_search_calls_concrete_mcp(
         "dramaclaw.dramaclaw_prepare_system_voices"
     ]
     assert completed_tools[0].call_id
-    assert completed_tools[0].structured["confirmation_required"] is True
-    assert completed_tools[0].structured["operation"] == "prepare_system_voices"
+    assert completed_tools[0].structured["ok"] is False
+    assert (
+        "system_voice_confirmation_required" in completed_tools[0].structured["error"]
+    )
     assert all(
         name not in str(event.name or "")
         for event in events
