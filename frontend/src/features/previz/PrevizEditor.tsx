@@ -133,6 +133,7 @@ export function PrevizEditor({
   const timelineFrame = usePrevizStore((state) => state.timelineFrame);
   const timelinePlaying = usePrevizStore((state) => state.timelinePlaying);
   const selectedClipId = usePrevizStore((state) => state.selectedClipId);
+  const selectedPointId = usePrevizStore((state) => state.selectedPointId);
   const addDerivedUploadNode = useCanvasStore((state) => state.addDerivedUploadNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
 
@@ -251,8 +252,8 @@ export function PrevizEditor({
   }, [renderer, timelineFrame]);
 
   useEffect(() => {
-    renderer?.setSelectedClip(selectedClipId);
-  }, [renderer, selectedClipId]);
+    renderer?.setSelectedClip(selectedClipId, selectedPointId);
+  }, [renderer, selectedClipId, selectedPointId]);
 
   /**
    * 播放循环。跑在编辑器里而不是 store 里：store 是纯状态，不该握着 rAF 句柄，
@@ -535,6 +536,17 @@ export function PrevizEditor({
                 if (!renderer || !down) return;
                 // 轨道拖拽也会经过 pointerdown/up；位移超过阈值就是在转视角。
                 if (Math.hypot(event.clientX - down.x, event.clientY - down.y) > CLICK_SLOP_PX) {
+                  return;
+                }
+                // 轨迹点优先于对象：球是画在被它牵着走的那个对象身上的，让对象先接
+                // 这一下，轨迹点就永远点不中。点中之后对象的选中状态原样留着——
+                // 右侧面板上下两半正好是「谁在动」和「动到哪」。
+                const point = renderer.pickPathPointAt(event.clientX, event.clientY);
+                if (point) {
+                  // 先选片段：selectClip 会顺手清掉旧的轨迹点，两句写反的话刚选的点
+                  // 当场就被清了。
+                  usePrevizStore.getState().selectClip(point.clipId);
+                  usePrevizStore.getState().selectPathPoint(point.pointId);
                   return;
                 }
                 selectObject(renderer.pickAt(event.clientX, event.clientY));

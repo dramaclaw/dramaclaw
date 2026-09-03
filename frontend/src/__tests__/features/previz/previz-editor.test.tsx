@@ -22,6 +22,7 @@ const applyViewDirection = vi.fn();
 const focusObject = vi.fn();
 const resetView = vi.fn();
 const pickAt = vi.fn(() => null as string | null);
+const pickPathPointAt = vi.fn(() => null as { clipId: string; pointId: string } | null);
 const capture = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
 const setFrame = vi.fn();
 const setSelectedClip = vi.fn();
@@ -45,6 +46,7 @@ function fakeRenderer() {
     focusObject,
     resetView,
     pickAt,
+    pickPathPointAt,
     capture,
     setFrame,
     setSelectedClip,
@@ -431,7 +433,10 @@ function editorProps(overrides: Partial<ComponentProps<typeof PrevizEditor>> = {
 async function renderEditor(overrides: Partial<ComponentProps<typeof PrevizEditor>> = {}) {
   const result = render(<PrevizEditor {...editorProps(overrides)} />);
   await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
-  return { ...result, renderer: { setFrame, setSelectedClip, planePointAt, setStroke, pickAt } };
+  return {
+    ...result,
+    renderer: { setFrame, setSelectedClip, planePointAt, setStroke, pickAt, pickPathPointAt },
+  };
 }
 
 describe("PrevizEditor timeline", () => {
@@ -454,7 +459,7 @@ describe("PrevizEditor timeline", () => {
 
     act(() => usePrevizStore.getState().selectClip("clip-1"));
 
-    expect(renderer.setSelectedClip).toHaveBeenLastCalledWith("clip-1");
+    expect(renderer.setSelectedClip).toHaveBeenLastCalledWith("clip-1", null);
   });
 
   it("advances the playhead while playing", async () => {
@@ -582,6 +587,39 @@ describe("PrevizEditor timeline", () => {
       "aria-pressed",
       "true",
     );
+  });
+
+  it("selects the path point under the pointer", async () => {
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("character");
+    act(() => usePrevizStore.getState().selectObject(objectId!));
+    renderer.pickAt.mockClear();
+    renderer.pickPathPointAt.mockReturnValueOnce({ clipId: "clip-9", pointId: "point-3" });
+
+    const canvas = screen.getByTestId("previz-canvas");
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(canvas, { clientX: 10, clientY: 10 });
+
+    const state = usePrevizStore.getState();
+    expect(state.selectedClipId).toBe("clip-9");
+    expect(state.selectedPointId).toBe("point-3");
+    // 轨迹点球是画在被它牵着走的那个对象身上的，按「最近的命中」算的话它永远输给对象，
+    // 也就永远点不中；点球时干脆不问对象拾取。
+    expect(renderer.pickAt).not.toHaveBeenCalled();
+    // 选点不该把对象的选中状态挪走：右侧面板上下两半正好是「谁在动」和「动到哪」。
+    expect(state.selectedObjectId).toBe(objectId);
+  });
+
+  it("falls back to picking an object when no path point is under the pointer", async () => {
+    const { renderer } = await renderEditor();
+    renderer.pickAt.mockClear();
+
+    const canvas = screen.getByTestId("previz-canvas");
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(canvas, { clientX: 10, clientY: 10 });
+
+    expect(renderer.pickAt).toHaveBeenCalledTimes(1);
+    expect(usePrevizStore.getState().selectedObjectId).toBeNull();
   });
 
   it("does not select an object with the pen down", async () => {

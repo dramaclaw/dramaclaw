@@ -62,7 +62,11 @@ function fakeThree() {
       ) {}
     },
     BufferGeometry: FakeGeometry,
-    SphereGeometry: class extends FakeGeometry {},
+    SphereGeometry: class extends FakeGeometry {
+      constructor(public radius = 0) {
+        super();
+      }
+    },
     LineBasicMaterial: FakeMaterial,
     MeshBasicMaterial: FakeMaterial,
     Line: class extends FakeObject3D {
@@ -191,6 +195,23 @@ describe('PrevizPathPreview', () => {
     const marker = root.children[1];
     expect(marker.userData.previzClipId).toBe('clip');
     expect(marker.userData.previzPointId).toBe('p0');
+  });
+
+  it('marks the selected path point out from the rest', () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const preview = new PrevizPathPreview(three, root);
+
+    preview.sync(sceneWithPath(3), 'clip', 'p1');
+
+    type Marker = { geometry: { radius: number }; material: { params: { color: number } } };
+    const markers = root.children.slice(1) as unknown as Marker[];
+    // 点中一个球之后画面上必须看得出点中的是哪个：只有右侧面板换了内容的话，
+    // 用户没法确认自己点到的是不是想改的那个点。
+    expect(markers[1].material.params.color).not.toBe(markers[0].material.params.color);
+    expect(markers[2].material.params.color).toBe(markers[0].material.params.color);
+    // 顺带长大一圈：改完位置之后还要再点它一次，太小了会点不回来。
+    expect(markers[1].geometry.radius).toBeGreaterThan(markers[0].geometry.radius);
   });
 
   it('empties the group on dispose', () => {
