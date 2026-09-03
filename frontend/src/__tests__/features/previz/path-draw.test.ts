@@ -2,14 +2,21 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from 'vitest';
 
+import { createPrevizObject } from '@/features/previz/domain/objects';
 import {
   PREVIZ_PATH_SPACING_M,
+  drawPlaneHeight,
   pathPointSeeds,
   resampleByDistance,
   smoothStroke,
   tangentYawDeg,
 } from '@/features/previz/domain/pathDraw';
-import type { Vec3 } from '@/features/previz/domain/scene';
+import {
+  createDefaultScene,
+  type PrevizPathClip,
+  type PrevizScene,
+  type Vec3,
+} from '@/features/previz/domain/scene';
 
 describe('smoothStroke', () => {
   it('keeps the two endpoints exactly where the user put them', () => {
@@ -186,5 +193,51 @@ describe('pathPointSeeds', () => {
 describe('PREVIZ_PATH_SPACING_M', () => {
   it('defaults to one metre inside a 0.05..5 range', () => {
     expect(PREVIZ_PATH_SPACING_M).toEqual({ min: 0.05, max: 5, default: 1 });
+  });
+});
+
+describe('drawPlaneHeight', () => {
+  function sceneWith(position: Vec3): { scene: PrevizScene; objectId: string } {
+    const object = createPrevizObject('camera', []);
+    object.transform.position = position;
+    return { scene: { ...createDefaultScene(), objects: [object] }, objectId: object.id };
+  }
+
+  it('draws on the ground when nothing is selected', () => {
+    expect(drawPlaneHeight(createDefaultScene(), null, 0)).toBe(0);
+  });
+
+  it('draws on the ground for an object that is no longer there', () => {
+    const { scene } = sceneWith([0, 4, 0]);
+    // 选中的对象刚被删掉、笔画又已经按下去了。掉回地面至少还能画，抛异常是整个画布罢工。
+    expect(drawPlaneHeight(scene, 'gone', 0)).toBe(0);
+  });
+
+  it('draws at the height the selected object sits at', () => {
+    const { scene, objectId } = sceneWith([2, 4, 8]);
+    // 给 4 米高的机位画走位，画完机位不该掉到地上：这一笔就该整条落在 4 米的水平面上。
+    expect(drawPlaneHeight(scene, objectId, 0)).toBe(4);
+  });
+
+  it('takes the height the object has on the current frame, not its static one', () => {
+    const { scene, objectId } = sceneWith([0, 4, 0]);
+    const clip: PrevizPathClip = {
+      id: 'clip',
+      kind: 'path',
+      startFrame: 0,
+      endFrame: 100,
+      points: [
+        { id: 'a', u: 0, position: [0, 10, 0], rotation: [0, 0, 0] },
+        { id: 'b', u: 1, position: [10, 10, 0], rotation: [0, 0, 0] },
+      ],
+    };
+    const withTrack: PrevizScene = {
+      ...scene,
+      timeline: { ...scene.timeline, tracks: [{ id: 'track', objectId, clips: [clip] }] },
+    };
+
+    // 重画一条已有的轨迹是常事。读静态 transform 的话，机位明明在 10 米高飞着，
+    // 重画一笔就掉回它出生时的 4 米——而那个高度用户早就不记得了。
+    expect(drawPlaneHeight(withTrack, objectId, 50)).toBe(10);
   });
 });

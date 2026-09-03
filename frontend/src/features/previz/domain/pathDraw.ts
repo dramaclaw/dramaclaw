@@ -3,11 +3,12 @@
 import { v4 as uuidv4 } from 'uuid';
 
 import { RAD_TO_DEG, type PrevizRange } from './camera';
-import type { PrevizPathPoint, Vec3 } from './scene';
+import { evaluateSceneAt } from './evaluate';
+import type { PrevizPathPoint, PrevizScene, Vec3 } from './scene';
 
 /**
  * 「在视口按住左键连续画一条轨迹」的纯数学部分：平滑 → 等距重采样 → 按弧长分配时间。
- * 引擎层只负责把屏幕坐标打到地面上，拿到一串世界坐标点之后就全交给这里，所以整条
+ * 引擎层只负责把屏幕坐标打到一个水平面上，拿到一串世界坐标点之后就全交给这里，所以整条
  * 管线在 jsdom 里测得动。
  */
 
@@ -20,6 +21,28 @@ export const PREVIZ_PATH_SPACING_M: PrevizRange = { min: 0.05, max: 5, default: 
 
 /** 默认平滑轮数。三轮之后手抖基本没了，再多就开始削掉用户真的画出来的转角。 */
 export const PREVIZ_SMOOTH_PASSES = 3;
+
+/**
+ * 一笔轨迹该画在多高的水平面上：被画的那个对象在当前帧**看得见的**高度。
+ *
+ * 绘制是把二维笔画打到一个水平面上，整笔共用一个高度。钉死在地面上的话，给 4 米高的
+ * 机位画一条走位，画完机位就掉到地上了——用户得回头逐个轨迹点把它抬回去，而轨迹点
+ * 可能有几十个。
+ *
+ * 取解算后的高度而不是静态 transform：重画一条已有的轨迹是常事，那时对象正沿着旧轨迹
+ * 飞在半空，静态 transform 停留在它出生的位置，而那个高度用户早就不记得了。
+ *
+ * 没选中对象、或选中的对象刚被删掉，都退回地面：这一笔本来也无处可去，但抛异常会让
+ * 整个画布罢工。
+ */
+export function drawPlaneHeight(
+  scene: PrevizScene,
+  objectId: string | null,
+  frame: number,
+): number {
+  if (!objectId) return 0;
+  return evaluateSceneAt(scene, frame).get(objectId)?.position[1] ?? 0;
+}
 
 function distance(a: Vec3, b: Vec3): number {
   return Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
