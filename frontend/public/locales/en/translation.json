@@ -7663,6 +7663,36 @@
         "roll": "Roll",
         "reface": "Clear manual rotation",
         "remove": "Delete point"
+      },
+      "closeup": {
+        "sectionTracking": "Tracking",
+        "sectionFraming": "Framing",
+        "sectionMotion": "Camera move",
+        "target": "Target",
+        "anchor": "Anchor",
+        "part": {
+          "pelvis": "Pelvis",
+          "body": "Body",
+          "chest": "Chest",
+          "face": "Face",
+          "head": "Head"
+        },
+        "aim": "Aim",
+        "aimTrack": "Always at the target",
+        "aimFree": "Keep its own aim",
+        "bearing": "Bearing",
+        "bearing_front": "Front",
+        "bearing_custom": "Custom",
+        "azimuth": "Azimuth°",
+        "elevation": "Elevation°",
+        "distance": "Distance",
+        "height": "Height",
+        "motion": "Move",
+        "motion_static": "Static",
+        "motion_orbit": "Orbit",
+        "motion_push": "Push in",
+        "motion_pull": "Pull out",
+        "bake": "Convert to path clip"
       }
     }
   }

@@ -30,6 +30,9 @@ const TIMELINE_KEYS = [
   'trimStart',
   'trimEnd',
   'clipLabel',
+  'closeupLabel',
+  'addCloseup',
+  'closeupTarget',
   'appendClip',
   'zoomIn',
   'zoomOut',
@@ -55,6 +58,33 @@ const CLIP_KEYS = [
 ] as const;
 
 const POINT_KEYS = ['empty', 'x', 'y', 'z', 'pitch', 'yaw', 'roll', 'reface', 'remove'] as const;
+
+/** 特写片段的取景面板。`part` 是嵌套的一张小表，与平铺的键分开比。 */
+const CLOSEUP_KEYS = [
+  'sectionTracking',
+  'sectionFraming',
+  'sectionMotion',
+  'target',
+  'anchor',
+  'aim',
+  'aimTrack',
+  'aimFree',
+  'bearing',
+  'bearing_front',
+  'bearing_custom',
+  'azimuth',
+  'elevation',
+  'distance',
+  'height',
+  'motion',
+  'motion_static',
+  'motion_orbit',
+  'motion_push',
+  'motion_pull',
+  'bake',
+] as const;
+
+const CLOSEUP_PART_KEYS = ['pelvis', 'body', 'chest', 'face', 'head'] as const;
 
 /** 摄影机创建对话框。嵌套的四张小表单列，与顶层平铺的键分开比。 */
 const CAMERA_CREATE_KEYS = [
@@ -111,9 +141,12 @@ describe('previz P3 locale keys', () => {
     });
 
     it(`${name} carries every clip key`, () => {
-      const { point, ...rest } = bundle.previz.clip;
+      const { point, closeup, ...rest } = bundle.previz.clip;
       expect(Object.keys(rest).sort()).toEqual([...CLIP_KEYS].sort());
       expect(Object.keys(point).sort()).toEqual([...POINT_KEYS].sort());
+      const { part, ...closeupRest } = closeup;
+      expect(Object.keys(closeupRest).sort()).toEqual([...CLOSEUP_KEYS].sort());
+      expect(Object.keys(part).sort()).toEqual([...CLOSEUP_PART_KEYS].sort());
     });
 
     it(`${name} carries every camera create key`, () => {

@@ -7663,6 +7663,36 @@
         "roll": "横滚角",
         "reface": "取消手动朝向",
         "remove": "删除该点"
+      },
+      "closeup": {
+        "sectionTracking": "跟踪目标",
+        "sectionFraming": "取景",
+        "sectionMotion": "机位运动",
+        "target": "目标",
+        "anchor": "锚点",
+        "part": {
+          "pelvis": "胯部",
+          "body": "身体",
+          "chest": "胸部",
+          "face": "面部",
+          "head": "头顶"
+        },
+        "aim": "朝向",
+        "aimTrack": "始终看向目标",
+        "aimFree": "保持自身朝向",
+        "bearing": "方位",
+        "bearing_front": "正面",
+        "bearing_custom": "自定义",
+        "azimuth": "水平角°",
+        "elevation": "俯仰°",
+        "distance": "距离",
+        "height": "高度",
+        "motion": "运镜",
+        "motion_static": "固定",
+        "motion_orbit": "环绕",
+        "motion_push": "推近",
+        "motion_pull": "拉远",
+        "bake": "转为路径片段"
       }
     }
   }
