@@ -143,7 +143,10 @@ vi.mock('three', () => {
     transparent = false;
     opacity = 1;
     needsUpdate = false;
-    color = { set: vi.fn() };
+    // 真材质身上一定有这两样，全灰模式的记账就走它们。缺一个，这边任何一条走到全灰的
+    // 用例都会炸在一句和显示模式毫无关系的 TypeError 上。
+    color = { set: vi.fn(), getHex: vi.fn(() => 0xffffff) };
+    userData: Record<string, unknown> = {};
     dispose = vi.fn();
     constructor(public params: Record<string, unknown> = {}) {
       materials.push(this as unknown as FakeMaterial);
