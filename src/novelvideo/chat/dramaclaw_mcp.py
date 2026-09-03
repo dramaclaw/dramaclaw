@@ -247,6 +247,13 @@ def _freezone_canvas_mode() -> bool:
     )
 
 
+def _bridge_discovery_mode() -> bool:
+    """Use function-only progressive discovery for compatibility gateways."""
+    return (
+        os.environ.get("DRAMACLAW_MCP_TOOL_DISCOVERY", "").strip().lower() == "bridge"
+    )
+
+
 def _available_tools() -> dict[str, tuple[dict[str, Any], Any]]:
     if _scope_kind() == "home":
         return {name: TOOLS[name] for name in sorted(HOME_TOOL_NAMES) if name in TOOLS}
@@ -452,6 +459,14 @@ def _workflow_plan_log_summary(arguments: Any) -> dict[str, Any]:
 
 @SERVER.list_tools()
 async def list_tools() -> list[types.Tool]:
+    # Codex compatibility gateways that translate Responses requests to Chat
+    # Completions cannot carry the hosted ``type=tool_search`` wire item. In
+    # that environment expose the existing search/describe/call operations as
+    # ordinary MCP functions, retaining progressive discovery without sending
+    # an unsupported tool type. Other MCP clients keep native concrete tools.
+    if _bridge_discovery_mode():
+        return _bridge_tools()
+
     # Expose concrete, scope-filtered business tools everywhere. Native MCP
     # clients can defer loading schemas themselves, while the old
     # search/describe/call wrapper hid capabilities from that mechanism and
@@ -618,6 +633,77 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         arguments.get("tool_name"),
         sorted(str(key) for key in arguments),
     )
+    if _bridge_discovery_mode() and name == TOOL_SEARCH_NAME:
+        try:
+            limit = max(1, min(12, int(arguments.get("limit") or 6)))
+        except (TypeError, ValueError):
+            limit = 6
+        payload = {
+            "ok": True,
+            "status": "completed",
+            "tools": _search_tools(str(arguments.get("query") or ""), limit),
+        }
+        _log_mcp_call_end(
+            scope=_scope_kind(), tool=name, started=call_started, payload=payload
+        )
+        return types.CallToolResult(
+            content=_json_text(payload),
+            structuredContent=payload,
+            isError=False,
+        )
+
+    if _bridge_discovery_mode() and name == TOOL_DESCRIBE_NAME:
+        tool_name = str(arguments.get("tool_name") or "").strip()
+        available = _available_tools()
+        if tool_name not in available:
+            return _mcp_error_result(
+                {
+                    "ok": False,
+                    "error": "unknown_dramaclaw_tool",
+                    "tool_name": tool_name,
+                }
+            )
+        schema, _handler = available[tool_name]
+        payload = {
+            "ok": True,
+            "status": "completed",
+            "tool": {
+                "name": tool_name,
+                "description": str(schema.get("description") or ""),
+                "input_schema": schema.get("parameters") or {"type": "object"},
+            },
+        }
+        _log_mcp_call_end(
+            scope=_scope_kind(), tool=name, started=call_started, payload=payload
+        )
+        return types.CallToolResult(
+            content=_json_text(payload),
+            structuredContent=payload,
+            isError=False,
+        )
+
+    if _bridge_discovery_mode() and name == TOOL_CALL_NAME:
+        tool_name = str(arguments.get("tool_name") or "").strip()
+        tool_arguments = arguments.get("arguments") or {}
+        if tool_name not in _available_tools() or tool_name in BRIDGE_TOOL_NAMES:
+            return _mcp_error_result(
+                {
+                    "ok": False,
+                    "error": "unknown_dramaclaw_tool",
+                    "tool_name": tool_name,
+                }
+            )
+        if not isinstance(tool_arguments, dict):
+            return _mcp_error_result(
+                {
+                    "ok": False,
+                    "error": "tool_arguments_invalid",
+                    "tool_name": tool_name,
+                    "message": "arguments must be an object",
+                }
+            )
+        return await call_tool(tool_name, tool_arguments)
+
     if name in _available_tools():
         schema, handler = _available_tools()[name]
         workflow_started = (

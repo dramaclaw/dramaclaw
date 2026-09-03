@@ -857,7 +857,9 @@ def test_codex_sessions_are_project_scoped_and_backend_independent(
     assert state_file.exists()
     home_state_file = tmp_path / "state" / "admin" / "codex_sessions.json"
     assert json.loads(home_state_file.read_text(encoding="utf-8")) == {
-        "home": "codex-home-thread",
+        f'["main","home",null,"{chat_service._CODEX_THREAD_PROTOCOL_VERSION}"]': (
+            "codex-home-thread"
+        ),
     }
     for project, thread_id in (
         ("project-a", "codex-thread-1"),
@@ -873,7 +875,8 @@ def test_codex_sessions_are_project_scoped_and_backend_independent(
             / "sessions.json"
         )
         assert json.loads(project_state_file.read_text(encoding="utf-8")) == {
-            f"project:{project}": thread_id,
+            f'["main","project","{project}",'
+            f'"{chat_service._CODEX_THREAD_PROTOCOL_VERSION}"]': thread_id,
         }
 
 
@@ -979,13 +982,37 @@ def test_codex_freezone_protocol_upgrade_does_not_resume_legacy_thread(
     )
 
 
-def test_codex_main_thread_key_stays_backward_compatible():
-    assert chat_service._codex_scope_key("project-a") == "project:project-a"
+def test_codex_main_thread_key_is_discovery_protocol_scoped():
+    protocol = chat_service._CODEX_THREAD_PROTOCOL_VERSION
+    assert chat_service._codex_scope_key("project-a") == (
+        f'["main","project","project-a","{protocol}"]'
+    )
     assert (
         chat_service._codex_scope_key("project-a", canvas_id="ignored-canvas")
-        == "project:project-a"
+        == f'["main","project","project-a","{protocol}"]'
     )
-    assert chat_service._codex_scope_key("") == "home"
+    assert chat_service._codex_scope_key("") == f'["main","home",null,"{protocol}"]'
+
+
+def test_codex_discovery_upgrade_does_not_resume_legacy_main_thread(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    state_file = (
+        tmp_path
+        / "state"
+        / "admin"
+        / "project-a"
+        / "agents"
+        / "codex"
+        / "sessions.json"
+    )
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text(
+        json.dumps({"project:project-a": "legacy-thread"}), encoding="utf-8"
+    )
+
+    assert chat_service._get_codex_thread_id("admin", "project-a") is None
 
 
 @pytest.mark.anyio
@@ -1240,8 +1267,9 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
             in captured["prompt"]
         )
         developer_instructions = chat_service._codex_developer_instructions(tool_mode)
-        assert "concrete tools currently listed" in developer_instructions
-        assert "dramaclaw_tool_search/describe/call" not in developer_instructions
+        assert "dramaclaw_tool_search" in developer_instructions
+        assert "dramaclaw_tool_describe" in developer_instructions
+        assert "dramaclaw_tool_call" in developer_instructions
         assert "custom-topology reference" in developer_instructions
         assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
         assert "expected_node_count" in developer_instructions
@@ -1257,7 +1285,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "run_after_create=true" in developer_instructions
     else:
         assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
-        assert "concrete business tools" in chat_service._codex_developer_instructions(
+        assert "dramaclaw_tool_search" in chat_service._codex_developer_instructions(
             tool_mode
         )
     assert [event["type"] for event in events] == [
@@ -1958,6 +1986,7 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_CHAT_SURFACE",
         "DRAMACLAW_EXTERNAL_MCP",
         "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
+        "DRAMACLAW_MCP_TOOL_DISCOVERY",
         "DRAMACLAW_AGENT_PROFILE",
         "DRAMACLAW_PROJECT_ID",
         "DRAMACLAW_SKILLS_DIR",
@@ -2009,6 +2038,7 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         '"DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR","DRAMACLAW_CHAT_SURFACE",'
         '"DRAMACLAW_EXTERNAL_MCP",'
         '"DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",'
+        '"DRAMACLAW_MCP_TOOL_DISCOVERY",'
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
         '"DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
         '"DRAMACLAW_USERNAME"]' in overrides
@@ -2253,6 +2283,7 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     assert env["SUPERTALE_AGENT_SCOPE"] == "project"
     assert env["DRAMACLAW_AGENT_PROFILE"] == "main"
     assert env["DRAMACLAW_TOOL_MODE"] == "default"
+    assert env["DRAMACLAW_MCP_TOOL_DISCOVERY"] == "bridge"
     assert env["DRAMACLAW_SKILLS_DIR"].endswith(
         "/agents/codex/workspaces/main-0d6e4079e367/.agents/skills"
     )

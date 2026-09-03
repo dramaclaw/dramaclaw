@@ -93,9 +93,10 @@ _ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str]] = {}
 _ACTIVE_CODEX_TURNS_LOCK = threading.Lock()
 _CODEX_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant. Use the required dramaclaw MCP "
-    "server for all DramaClaw data reads and writes. Use the concrete business tools "
-    "listed by the server and their native input schemas. Do not guess a tool name or "
-    "argument schema. Do not use shell commands, "
+    "server for all DramaClaw data reads and writes. Discover business operations with "
+    "dramaclaw_tool_search, inspect unknown schemas with dramaclaw_tool_describe, and "
+    "execute them with dramaclaw_tool_call. Do not guess a tool name or argument schema. "
+    "Do not use shell commands, "
     "local file editing, web search, or other external tools."
 )
 _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
@@ -104,8 +105,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "explicitly ask to create/add/land nodes or a workflow on the canvas, answer in chat. Do not "
     "search Workflow Skills and do not call a canvas write tool merely because the requested "
     "content mentions images, audio, or video. "
-    "Use the concrete tools currently listed by the required dramaclaw MCP server. "
-    "Freezone tools are exposed directly with names such as freezone_emit_canvas_command. "
+    "Use dramaclaw_tool_search, dramaclaw_tool_describe, and dramaclaw_tool_call on the "
+    "required dramaclaw MCP server to discover and execute Freezone operations. "
     "For any workflow, several connected nodes, grouped stages, storyboard, or media pipeline, "
     "load and follow the project Agent Skill named dramaclaw-workflows. Read that Skill only from "
     "the exact file URI advertised in the available Skills or dramaclaw resources; never invent a "
@@ -206,11 +207,11 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 )
 
 # A resumed App Server thread retains the MCP tool catalog and environment from
-# when it was created. Bump this value whenever the Freezone MCP exposure or
-# browser-bridge contract changes so canvas turns cannot silently resume a
-# thread that predates the required concrete write tools. Mainline thread keys
-# intentionally remain unchanged.
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v16"
+# when it was created. Bump the relevant value whenever MCP discovery or the
+# Freezone browser-bridge contract changes so a turn cannot silently resume a
+# thread with incompatible tool definitions.
+_CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v1"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v17"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -4401,8 +4402,16 @@ def _codex_scope_key(
     normalized_project = str(project or "").strip()
     profile = str(agent_profile or "main").strip() or "main"
     if profile == "main":
-        # Preserve the original key so existing Director threads keep resuming.
-        return f"project:{normalized_project}" if normalized_project else "home"
+        # Tool definitions are retained by a resumed App Server thread. Include
+        # the discovery protocol so a deployment cannot resume a thread whose
+        # catalog still contains the incompatible concrete/special tools.
+        scope = (
+            profile,
+            "project" if normalized_project else "home",
+            normalized_project or None,
+            _CODEX_THREAD_PROTOCOL_VERSION,
+        )
+        return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
     scoped_canvas = str(canvas_id or "").strip() or None
     if not profile.startswith("freezone"):
         scoped_canvas = None
@@ -4910,6 +4919,10 @@ def _build_codex_env(
     if agent_token_file is not None:
         env["DRAMACLAW_AGENT_TOKEN_FILE"] = str(agent_token_file)
     env["DRAMACLAW_TOOL_MODE"] = str(tool_mode or "default").strip() or "default"
+    # Preserve progressive tool discovery without emitting Responses' hosted
+    # ``tool_search`` type through gateways that convert requests to Chat.
+    # This variable is set only for Codex; Hermes keeps its native registry.
+    env["DRAMACLAW_MCP_TOOL_DISCOVERY"] = "bridge"
     if str(tool_mode or "").strip() == "freezone_canvas":
         # Keep Codex MCP on the same per-user/per-profile bridge directory as
         # Hermes. Without this, the MCP process writes pending commands into a
@@ -5216,6 +5229,7 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_CHAT_SURFACE",
                 "DRAMACLAW_EXTERNAL_MCP",
                 "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
+                "DRAMACLAW_MCP_TOOL_DISCOVERY",
                 "DRAMACLAW_AGENT_PROFILE",
                 "DRAMACLAW_PROJECT_ID",
                 "DRAMACLAW_SKILLS_DIR",
