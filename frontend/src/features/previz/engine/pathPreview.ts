@@ -23,10 +23,13 @@ export const PREVIZ_PATH_CURVE_SAMPLES = 64;
 
 /** 轨迹点球半径，单位米。小到不挡住人物，大到在整场景视角下点得中。 */
 const MARKER_RADIUS = 0.07;
+/** 选中的那个点长大一圈：改完位置之后还得再点它一次，原尺寸下容易点丢。 */
+const MARKER_RADIUS_SELECTED = MARKER_RADIUS * 1.6;
 
 const CURVE_COLOR = 0x5b8cff;
 const CURVE_COLOR_SELECTED = 0xffd166;
 const MARKER_COLOR = 0xdfe6f5;
+const MARKER_COLOR_SELECTED = 0xff8a4c;
 
 export class PrevizPathPreview {
   constructor(
@@ -38,13 +41,17 @@ export class PrevizPathPreview {
    * 整组重建，不做增量。一条轨迹撑死几百个顶点，而增量要按 clip id 对账点的增删改——
    * 那份账本的复杂度远超它省下的那点重建成本。
    */
-  sync(scene: PrevizScene, selectedClipId: string | null): void {
+  sync(
+    scene: PrevizScene,
+    selectedClipId: string | null,
+    selectedPointId: string | null = null,
+  ): void {
     this.clear();
 
     for (const track of scene.timeline.tracks) {
       for (const clip of track.clips) {
         if (!isPathClip(clip)) continue;
-        this.addClip(clip, clip.id === selectedClipId);
+        this.addClip(clip, clip.id === selectedClipId, selectedPointId);
       }
     }
   }
@@ -53,7 +60,7 @@ export class PrevizPathPreview {
     this.clear();
   }
 
-  private addClip(clip: PrevizPathClip, selected: boolean): void {
+  private addClip(clip: PrevizPathClip, selected: boolean, selectedPointId: string | null): void {
     // 一个点连不成线，但那个点自己要看得见——否则刚插的第一个关键帧是隐形的。
     if (clip.points.length >= 2) {
       const samples = Array.from({ length: PREVIZ_PATH_CURVE_SAMPLES + 1 }, (_, index) => {
@@ -70,9 +77,14 @@ export class PrevizPathPreview {
     }
 
     for (const point of clip.points) {
+      // 选中的点要一眼认得出来：点它的唯一反馈要是只有右侧面板换了内容，用户没法
+      // 确认自己点到的是不是想改的那个。
+      const pointSelected = point.id === selectedPointId;
       const marker = new this.three.Mesh(
-        new this.three.SphereGeometry(MARKER_RADIUS, 8, 8),
-        new this.three.MeshBasicMaterial({ color: MARKER_COLOR }),
+        new this.three.SphereGeometry(pointSelected ? MARKER_RADIUS_SELECTED : MARKER_RADIUS, 8, 8),
+        new this.three.MeshBasicMaterial({
+          color: pointSelected ? MARKER_COLOR_SELECTED : MARKER_COLOR,
+        }),
       );
       marker.position.set(point.position[0], point.position[1], point.position[2]);
       // 视口里点中一个球要能选中对应的轨迹点，靠的就是这两个标记。

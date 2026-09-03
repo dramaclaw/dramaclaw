@@ -764,6 +764,46 @@ describe('PrevizRenderer 接场景图', () => {
     instance.dispose();
   });
 
+  it('从轨迹点球上拾取轨迹点，点在曲线上不算', async () => {
+    const { canvas, instance } = await createRenderer();
+    canvas.getBoundingClientRect = () => new DOMRect(0, 0, 400, 200);
+    const scene = sceneWith([0, 0, 0]);
+    scene.timeline.tracks.push({
+      id: 'track',
+      objectId: scene.objects[0].id,
+      clips: [
+        {
+          id: 'clip',
+          kind: 'path' as const,
+          startFrame: 0,
+          endFrame: 120,
+          points: [
+            { id: 'p0', u: 0, position: [0, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+            { id: 'p1', u: 1, position: [4, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+          ],
+        },
+      ],
+    });
+    instance.setScene(scene);
+
+    intersections = [{ object: { userData: { previzClipId: 'clip', previzPointId: 'p1' } } }];
+    expect(instance.pickPathPointAt(10, 10)).toEqual({ clipId: 'clip', pointId: 'p1' });
+
+    // 递给射线的必须是轨迹预览这一组：轨迹点球挂在预览根下，不在任何对象节点里，
+    // 跟着 pickAt 那份候选走的话永远打不中。
+    const candidates = intersectObjects.mock.calls[0][0] as Array<{
+      userData: Record<string, unknown>;
+    }>;
+    const markers = candidates.filter((entry) => typeof entry.userData.previzPointId === 'string');
+    expect(markers).toHaveLength(2);
+
+    // 曲线身上也有 clipId，但它不是某一个点：点在两点之间的线上不该选中任何轨迹点。
+    intersections = [{ object: { userData: { previzClipId: 'clip' } } }];
+    expect(instance.pickPathPointAt(10, 10)).toBeNull();
+
+    instance.dispose();
+  });
+
   it('出片画幅不改编辑视角的视场角', async () => {
     const { instance } = await createRenderer();
     const scene = createDefaultScene();
