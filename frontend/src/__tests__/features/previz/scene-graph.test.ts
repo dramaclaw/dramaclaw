@@ -110,9 +110,9 @@ function fakeThree() {
   /**
    * 几何体记下构造实参：占位体的尺寸是本模块的输出之一，不记就断言不到。
    *
-   * 四种形状各是一个独立子类，而不是四个名字指向同一个类：形状本身就是本模块的
-   * 一句话职责（人物胶囊、机位锥体、灯球、物件方块），共用一个类之后「把 ConeGeometry
-   * 写成 BoxGeometry」这类改动在测试里完全看不出来——连 instanceof 都分不开。
+   * 每种形状各是一个独立子类，而不是几个名字指向同一个类：形状本身就是本模块的
+   * 一句话职责（人物胶囊、灯球、物件方块，机位是整台摄影机模型），共用一个类之后
+   * 「把 SphereGeometry 写成 BoxGeometry」这类改动在测试里完全看不出来——连 instanceof 都分不开。
    * `shape` 是给断言用的标签，比 instanceof 在这份 `as unknown as` 出来的假模块上好读。
    */
   class FakeGeometry {
@@ -126,8 +126,13 @@ function fakeThree() {
   class FakeCapsuleGeometry extends FakeGeometry {
     readonly shape = 'capsule';
   }
-  class FakeConeGeometry extends FakeGeometry {
-    readonly shape = 'cone';
+  class FakeCylinderGeometry extends FakeGeometry {
+    readonly shape = 'cylinder';
+  }
+  /** 机位视锥是逐点喂进来的，构造实参为空，点落在 `setAttribute` 上。 */
+  class FakeBufferGeometry extends FakeGeometry {
+    readonly shape = 'buffer';
+    setAttribute = vi.fn(() => this);
   }
   class FakeSphereGeometry extends FakeGeometry {
     readonly shape = 'sphere';
@@ -178,10 +183,19 @@ function fakeThree() {
     Box3: FakeBox3,
     AnimationMixer: FakeAnimationMixer,
     CapsuleGeometry: FakeCapsuleGeometry,
-    ConeGeometry: FakeConeGeometry,
+    CylinderGeometry: FakeCylinderGeometry,
     SphereGeometry: FakeSphereGeometry,
     BoxGeometry: FakeBoxGeometry,
+    BufferGeometry: FakeBufferGeometry,
+    Float32BufferAttribute: class {
+      constructor(
+        public array: number[],
+        public itemSize: number,
+      ) {}
+    },
+    LineSegments: Mesh,
     MeshStandardMaterial: FakeMaterial,
+    LineBasicMaterial: FakeMaterial,
   } as unknown as typeof import('three');
 }
 
@@ -450,26 +464,21 @@ describe('PrevizSceneGraph', () => {
       placeholderOf(graph, object.id),
     );
 
-    // 「人物是胶囊、机位是锥体、灯是小球、物件是方块」是本模块的一句话职责。
-    // 形状互换任意两个，画面上就分不出谁是谁了，而所有尺寸断言一条都不会红。
+    // 「人物是胶囊、灯是小球、物件是方块」是本模块的一句话职责。形状互换任意两个，
+    // 画面上就分不出谁是谁了，而所有尺寸断言一条都不会红。
     expect(character!.geometry.shape).toBe('capsule');
-    expect(camera!.geometry.shape).toBe('cone');
     expect(light!.geometry.shape).toBe('sphere');
     expect(prop!.geometry.shape).toBe('box');
+    // 机位不是单件几何体，是 `cameraModel.ts` 建的整台摄影机加取景视锥；本文件只认
+    // 「挂上去的确实是那一组」，机身的形状与尺寸归 camera-model 那边断言。
+    expect(camera!.geometry).toBeUndefined();
+    expect((camera as unknown as { userData: Record<string, unknown> }).userData.previzCameraModel)
+      .toBe(true);
 
     // 胶囊的分段数：radialSegments 太少就不是个圆柱而是根三棱柱，一眼穿帮。
     // CapsuleGeometry(radius, height, capSegments, radialSegments)。
     expect(character!.geometry.args[2]).toBeGreaterThanOrEqual(4);
     expect(character!.geometry.args[3]).toBeGreaterThanOrEqual(8);
-
-    // 机位是个小四棱锥（radialSegments = 4），比人物矮一大截才不喧宾夺主：
-    // 半径 0.16 m、高 0.42 m 的量级。ConeGeometry(radius, height, radialSegments)。
-    const cone = camera!.geometry.args;
-    expect(cone[0]).toBeGreaterThan(0);
-    expect(cone[0]).toBeLessThan(0.3);
-    expect(cone[1]).toBeGreaterThan(cone[0]!);
-    expect(cone[1]).toBeLessThan(1);
-    expect(cone[2]).toBe(4);
 
     // 灯是个更小的球，物件是个 0.6 m 见方的盒子——都在「人一眼扫过去认得出」的量级。
     // 球同样要够圆：SphereGeometry(radius, widthSegments, heightSegments)，段数掉到个位数
@@ -480,10 +489,10 @@ describe('PrevizSceneGraph', () => {
     expect(light!.geometry.args[2]).toBeGreaterThanOrEqual(6);
     expect(prop!.geometry.args.slice(0, 3)).toEqual([0.6, 0.6, 0.6]);
 
-    // 四类的分类色必须两两不同。形状之外这是第二条辨认线索，也正是 clay 模式回程
-    // 要还原的那份映射；把机位改成和灯一个色，上面所有形状与尺寸断言一条都不会红。
-    const colours = [character!, camera!, light!, prop!].map((mesh) => mesh.material.params.color);
-    expect(new Set(colours).size).toBe(4);
+    // 分类色必须两两不同。形状之外这是第二条辨认线索，也正是 clay 模式回程要还原的
+    // 那份映射；把物件改成和灯一个色，上面所有形状与尺寸断言一条都不会红。
+    const colours = [character!, light!, prop!].map((mesh) => mesh.material.params.color);
+    expect(new Set(colours).size).toBe(3);
   });
 
   it('sizes the character capsule from heightCm and stands it on the ground', () => {

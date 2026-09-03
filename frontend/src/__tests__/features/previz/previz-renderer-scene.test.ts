@@ -175,12 +175,28 @@ vi.mock('three', () => {
     CapsuleGeometry: FakeGeometry,
     ConeGeometry: FakeGeometry,
     SphereGeometry: FakeGeometry,
+    CylinderGeometry: FakeGeometry,
     BufferGeometry: class extends FakeGeometry {
       setFromPoints = vi.fn(() => this);
+      setAttribute = vi.fn(() => this);
+    },
+    Float32BufferAttribute: class {
+      constructor(
+        public array: number[],
+        public itemSize: number,
+      ) {}
     },
     LineBasicMaterial: FakeMaterialImpl,
     MeshBasicMaterial: FakeMaterialImpl,
     Line: class extends Object3D {
+      constructor(
+        public geometry: FakeGeometry,
+        public material: FakeMaterialImpl,
+      ) {
+        super();
+      }
+    },
+    LineSegments: class extends Object3D {
       constructor(
         public geometry: FakeGeometry,
         public material: FakeMaterialImpl,
@@ -817,7 +833,7 @@ describe('PrevizRenderer 接场景图', () => {
     instance.dispose();
   });
 
-  it('restores the viewport and hides the camera cone during the monitor pass', async () => {
+  it('restores the viewport and hides the camera model during the monitor pass', async () => {
     const instance = await PrevizRenderer.create(document.createElement('canvas'));
     const scene = createDefaultScene();
     scene.objects.push(createPrevizObject('camera', scene.objects));
@@ -826,7 +842,7 @@ describe('PrevizRenderer 接场景图', () => {
     step();
 
     const node = instance.nodeFor(scene.objects[0]!.id);
-    // 机位锥体就长在相机原点上，不藏起来会糊满整个监看画面；但 pass 结束必须还回去，
+    // 机位模型就长在相机原点上，不藏起来会糊满整个监看画面；但 pass 结束必须还回去，
     // 否则主视图里那个机位从此消失。
     expect(node?.visible).toBe(true);
     // 剪刀测试留在打开状态的话，之后每一帧主视图都只画得出右下角那一小块。
