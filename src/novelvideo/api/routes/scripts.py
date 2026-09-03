@@ -664,6 +664,7 @@ async def generate_seedance2_prompt(
             next_beat=next_beat,
             manual_prompt_reference=body.manual_prompt_reference,
             prompt_guidance=body.prompt_guidance,
+            prompt_guidance_template_keys=body.prompt_guidance_template_keys,
             language=language,
             prop_menu=list(script_data.get("prop_menu") or []),
         )

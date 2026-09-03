@@ -638,10 +638,12 @@ export function useGenerateSeedance2Prompt(project: string, episode: number) {
       beatNum,
       manualPromptReference,
       promptGuidance,
+      promptGuidanceTemplateKeys,
     }: {
       beatNum: number;
       manualPromptReference?: string;
       promptGuidance?: string;
+      promptGuidanceTemplateKeys?: string[];
     }) =>
       jsonWithBackendError<OkResponse<Seedance2PromptResult> | ErrorResponse>(
         api.post(
@@ -650,6 +652,7 @@ export function useGenerateSeedance2Prompt(project: string, episode: number) {
             json: {
               manual_prompt_reference: manualPromptReference ?? "",
               prompt_guidance: promptGuidance ?? "",
+              prompt_guidance_template_keys: promptGuidanceTemplateKeys ?? [],
             },
             throwHttpErrors: false,
           },

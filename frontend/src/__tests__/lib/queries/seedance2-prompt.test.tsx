@@ -71,6 +71,7 @@ describe("Seedance2 prompt generation query", () => {
       beatNum: 2,
       manualPromptReference: "current prompt",
       promptGuidance: "more camera motion",
+      promptGuidanceTemplateKeys: ["camera"],
     });
 
     await waitFor(() => expect(result.current.data).toBeDefined());
@@ -80,6 +81,7 @@ describe("Seedance2 prompt generation query", () => {
     expect(body).toEqual({
       manual_prompt_reference: "current prompt",
       prompt_guidance: "more camera motion",
+      prompt_guidance_template_keys: ["camera"],
     });
     expect(result.current.data?.ok).toBe(true);
   });
@@ -118,6 +120,7 @@ describe("Seedance2 prompt generation query", () => {
     expect(body).toEqual({
       manual_prompt_reference: "",
       prompt_guidance: "",
+      prompt_guidance_template_keys: [],
     });
   });
 

@@ -31,6 +31,34 @@ class Seedance2PromptGeneration:
 Seedance2PromptComposer = Callable[..., Awaitable[str]]
 
 
+SEEDANCE2_PROMPT_GUIDANCE_TEMPLATES: dict[str, dict[AssetLanguage, str]] = {
+    "subject": {
+        "zh": "主体：明确画面核心人物或物体、当前动作和状态，避免多个主体争抢焦点。",
+        "en": "Subject: Define the primary character or object, its current action and state, and avoid competing focal subjects.",
+    },
+    "scene": {
+        "zh": "场景：补充空间背景、地点关系、关键道具和环境材质，保持与参考图一致。",
+        "en": "Scene: Describe the spatial background, location relationships, key props, and environmental materials while staying consistent with the references.",
+    },
+    "lighting": {
+        "zh": "光影：描述主光源、明暗层次、色温和氛围，避免忽明忽暗。",
+        "en": "Lighting: Describe the key light, tonal layers, color temperature, and atmosphere while avoiding unintended flicker.",
+    },
+    "camera": {
+        "zh": "镜头：说明景别、视角、运镜速度和运动方向，保持镜头运动清晰可执行。",
+        "en": "Camera: Specify shot size, viewpoint, movement speed, and direction so the camera move is clear and executable.",
+    },
+    "style": {
+        "zh": "风格：限定画面质感、时代感、色彩倾向和真实度，避免风格漂移。",
+        "en": "Style: Define visual texture, period, color direction, and realism to prevent style drift.",
+    },
+    "no_subtitle": {
+        "zh": "无字幕：避免生成任何文字或字幕，保持画面纯净。",
+        "en": "No subtitles: Do not generate any text or subtitles; keep the frame visually clean.",
+    },
+}
+
+
 SEEDANCE2_COMPOSER_SYSTEM_PROMPT = """You write image-to-video prompts for Seedance 2.0.
 Use the fixed asset manifest, storyboard context, user guidance, and rule-based draft to write the final Seedance 2.0 prompt.
 Asset order is fixed. Only use existing reference tokens such as 图片1 and 音频1 from the asset manifest.
@@ -165,6 +193,36 @@ def normalize_seedance2_editor_prompt(prompt: str) -> str:
         .replace("@音频", "音频")
         .replace("@视频", "视频")
     )
+
+
+def _guidance_matches_language(guidance: str, language: AssetLanguage) -> bool:
+    """Keep rule-based fallbacks inside the supported output-language contract."""
+
+    if language == "en":
+        return detect_asset_language(guidance) == "en"
+    if re.search(r"[\u3040-\u30ff\uac00-\ud7af]", guidance):
+        return False
+    return bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", guidance))
+
+
+def _localized_prompt_guidance(
+    guidance: str,
+    template_keys: list[str] | tuple[str, ...] | None,
+    language: AssetLanguage,
+) -> str:
+    normalized = normalize_seedance2_editor_prompt(guidance)
+    keys = [key for key in template_keys or [] if key in SEEDANCE2_PROMPT_GUIDANCE_TEMPLATES]
+    template_texts = {
+        text
+        for key in keys
+        for text in SEEDANCE2_PROMPT_GUIDANCE_TEMPLATES[key].values()
+    }
+    freeform = "\n".join(
+        line for line in normalized.splitlines() if line.strip() not in template_texts
+    ).strip()
+    parts = [freeform] if freeform and _guidance_matches_language(freeform, language) else []
+    parts.extend(SEEDANCE2_PROMPT_GUIDANCE_TEMPLATES[key][language] for key in keys)
+    return "\n".join(dict.fromkeys(parts))
 
 
 def _selected_assets(assets: list[Any] | None) -> list[Any]:
@@ -580,6 +638,7 @@ def build_seedance2_prompt_draft(
     assets: list[Any] | None,
     text_overlay: dict[str, Any] | None,
     prompt_guidance: str = "",
+    prompt_guidance_template_keys: list[str] | tuple[str, ...] | None = None,
     manual_prompt_reference: str = "",
     language: AssetLanguage = "zh",
 ) -> str:
@@ -607,7 +666,9 @@ def build_seedance2_prompt_draft(
     spoken = _beat_spoken_prompt_fragment(beat, assets, language)
     spoken_label = _beat_spoken_label(beat, language)
     overlay = build_text_overlay_prompt_fragment(text_overlay, language)
-    guidance = normalize_seedance2_editor_prompt(prompt_guidance)
+    guidance = _localized_prompt_guidance(
+        prompt_guidance, prompt_guidance_template_keys, language
+    )
     manual = normalize_seedance2_editor_prompt(manual_prompt_reference)
 
     lines = [_clean_sentence(reference, language)]
@@ -666,6 +727,7 @@ def compute_seedance2_prompt_inputs_hash(
     assets: list[Any] | None,
     text_overlay: dict[str, Any] | None,
     prompt_guidance: str = "",
+    prompt_guidance_template_keys: list[str] | tuple[str, ...] | None = None,
     language: AssetLanguage = "zh",
 ) -> str:
     """Hash only prompt-relevant inputs, excluding request-only video controls."""
@@ -690,7 +752,9 @@ def compute_seedance2_prompt_inputs_hash(
         "assets": build_seedance2_asset_manifest(assets),
         "asset_fallbacks": build_seedance2_asset_fallback_manifest(assets),
         "text_overlay": text_overlay or {},
-        "prompt_guidance": _text(prompt_guidance),
+        "prompt_guidance": _localized_prompt_guidance(
+            prompt_guidance, prompt_guidance_template_keys, language
+        ),
         "language": language,
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
@@ -830,6 +894,7 @@ async def generate_seedance2_prompt(
     assets: list[Any] | None,
     text_overlay: dict[str, Any] | None,
     prompt_guidance: str,
+    prompt_guidance_template_keys: list[str] | tuple[str, ...] | None = None,
     request_params: dict[str, Any] | None = None,
     manual_prompt_reference: str = "",
     composer: Seedance2PromptComposer | None = None,
@@ -837,12 +902,15 @@ async def generate_seedance2_prompt(
 ) -> Seedance2PromptGeneration:
     """Generate a Seedance 2.0 prompt, preferring AI and falling back to rules."""
 
+    localized_guidance = _localized_prompt_guidance(
+        prompt_guidance, prompt_guidance_template_keys, language
+    )
     draft_prompt = build_seedance2_prompt_draft(
         mode=mode,
         beat=beat,
         assets=assets,
         text_overlay=text_overlay,
-        prompt_guidance=prompt_guidance,
+        prompt_guidance=localized_guidance,
         manual_prompt_reference=manual_prompt_reference,
         language=language,
     )
@@ -853,7 +921,7 @@ async def generate_seedance2_prompt(
             beat=beat,
             assets=assets,
             text_overlay=text_overlay,
-            prompt_guidance=prompt_guidance,
+            prompt_guidance=localized_guidance,
             draft_prompt=draft_prompt,
             request_params=request_params or {},
             manual_prompt_reference=manual_prompt_reference,

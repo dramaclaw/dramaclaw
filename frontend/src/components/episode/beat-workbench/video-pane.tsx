@@ -224,6 +224,7 @@ interface Seedance2ConfigDraft {
   human_review_user_set: boolean;
   prompt_source: string;
   prompt_guidance: string;
+  prompt_guidance_template_keys: string[];
   final_prompt: string;
   text_overlay: {
     enabled: boolean;
@@ -932,6 +933,7 @@ export function VideoPane({
         beatNum: triggeredBeatNumber,
         manualPromptReference: seedance2Draft.final_prompt,
         promptGuidance: seedance2Draft.prompt_guidance,
+        promptGuidanceTemplateKeys: seedance2Draft.prompt_guidance_template_keys,
       });
       if (!res.ok) {
         toast.error(
@@ -1188,13 +1190,19 @@ export function VideoPane({
         break;
     }
   };
-  const appendSeedance2PromptGuidanceTemplate = (template: string) => {
+  const appendSeedance2PromptGuidanceTemplate = (key: string, template: string) => {
     const current = seedance2DraftRef.current;
     if (current.prompt_guidance.includes(template)) return;
     const guidance = [current.prompt_guidance.trim(), template]
       .filter(Boolean)
       .join("\n");
-    const next = { ...current, prompt_guidance: guidance };
+    const next = {
+      ...current,
+      prompt_guidance: guidance,
+      prompt_guidance_template_keys: Array.from(
+        new Set([...current.prompt_guidance_template_keys, key]),
+      ),
+    };
     seedance2DraftRef.current = next;
     setSeedance2Draft(next);
   };
@@ -2405,7 +2413,13 @@ export function VideoPane({
                   aria-label={t("episode.workbench.video.seedance2PromptGuidance")}
                   value={seedance2Draft.prompt_guidance}
                   onChange={(e) => {
-                    updateSeedance2Draft("prompt_guidance", e.target.value);
+                    const next = {
+                      ...seedance2DraftRef.current,
+                      prompt_guidance: e.target.value,
+                      prompt_guidance_template_keys: [],
+                    };
+                    seedance2DraftRef.current = next;
+                    setSeedance2Draft(next);
                     rememberSeedance2PromptSelection(
                       "prompt_guidance",
                       e.currentTarget,
@@ -2456,6 +2470,7 @@ export function VideoPane({
                     className={SEEDANCE2_PILL_ACTION_CLASS}
                     onClick={() =>
                       appendSeedance2PromptGuidanceTemplate(
+                        template.key,
                         t(`episode.workbench.video.${template.textKey}`),
                       )
                     }
@@ -3193,6 +3208,9 @@ function defaultSeedance2Config(
         : true,
     prompt_source: String(raw.prompt_source ?? ""),
     prompt_guidance: String(raw.prompt_guidance ?? ""),
+    prompt_guidance_template_keys: Array.isArray(raw.prompt_guidance_template_keys)
+      ? raw.prompt_guidance_template_keys.map(String)
+      : [],
     final_prompt: String(raw.final_prompt ?? ""),
     text_overlay: {
       enabled: textOverlay.enabled === true,
@@ -3552,6 +3570,8 @@ function sameSeedance2Config(
     left.human_review === right.human_review &&
     left.human_review_user_set === right.human_review_user_set &&
     left.prompt_guidance === right.prompt_guidance &&
+    JSON.stringify(left.prompt_guidance_template_keys) ===
+      JSON.stringify(right.prompt_guidance_template_keys) &&
     left.final_prompt === right.final_prompt &&
     JSON.stringify(left.text_overlay) === JSON.stringify(right.text_overlay)
   );
@@ -3583,6 +3603,7 @@ function serializeSeedance2Config(
     human_review: draft.human_review,
     human_review_user_set: draft.human_review_user_set,
     prompt_guidance: draft.prompt_guidance.trim(),
+    prompt_guidance_template_keys: draft.prompt_guidance_template_keys,
     final_prompt: finalPrompt,
     text_overlay: {
       ...draft.text_overlay,

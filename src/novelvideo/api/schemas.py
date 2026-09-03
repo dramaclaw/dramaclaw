@@ -179,6 +179,7 @@ class BeatUpdate(BaseModel):
 class Seedance2PromptGenerateRequest(BaseModel):
     manual_prompt_reference: Optional[str] = None
     prompt_guidance: Optional[str] = None
+    prompt_guidance_template_keys: Optional[list[str]] = None
 
 
 class BeatVideoPromptGenerateRequest(BaseModel):

@@ -1941,6 +1941,7 @@ describe("VideoPane Seedance2 inspector", () => {
       beatNum: 1,
       manualPromptReference: "manual reference prompt",
       promptGuidance: "more camera motion",
+      promptGuidanceTemplateKeys: [],
     });
     expect(screen.getByLabelText("Seedance2.0主体提示词")).toHaveValue(
       "optimized seedance2 prompt",
@@ -2088,6 +2089,12 @@ describe("VideoPane Seedance2 inspector", () => {
     const payload = updateBeatMock.mock.calls[0][0];
     const config = JSON.parse(payload.data.seedance2_config_json);
     expect(config.prompt_guidance).toBe(template);
+    expect(config.prompt_guidance_template_keys).toEqual(["camera"]);
+
+    await user.click(screen.getByRole("button", { name: "AI 优化" }));
+    expect(generateSeedance2PromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({ promptGuidanceTemplateKeys: ["camera"] }),
+    );
   });
 
   it("uses the current UI language for Seedance2 guidance after switching", async () => {

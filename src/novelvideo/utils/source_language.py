@@ -20,6 +20,7 @@ _SCREENPLAY_HEADING_RE = re.compile(
     re.IGNORECASE,
 )
 _LATIN_SPEAKER_CUE_RE = re.compile(r"^[A-Za-z][A-Za-z .'-]{0,80}[:：]\s*")
+_BARE_LATIN_SPEAKER_CUE_RE = re.compile(r"^[A-Z][A-Z .'-]{0,80}$")
 _SHORT_ENGLISH_ACTION_RE = re.compile(
     r"^\s*\S+\s+(?P<verb>[A-Za-z]{2,}(?:s|ed|ing))\b",
     re.IGNORECASE | re.MULTILINE,
@@ -33,10 +34,16 @@ def detect_asset_language(text: str) -> AssetLanguage:
     script, a tie, or empty input retains the historical Chinese default.
     """
     raw_text = str(text or "")
+    raw_lines = [line.strip() for line in raw_text.splitlines()]
+    has_latin_speaker_cue = any(
+        _LATIN_SPEAKER_CUE_RE.match(line) or _BARE_LATIN_SPEAKER_CUE_RE.fullmatch(line)
+        for line in raw_lines
+    )
     prose_lines = [
         _LATIN_SPEAKER_CUE_RE.sub("", line.strip())
-        for line in raw_text.splitlines()
-        if not _SCREENPLAY_HEADING_RE.match(line.strip())
+        for line in raw_lines
+        if not _SCREENPLAY_HEADING_RE.match(line)
+        and not _BARE_LATIN_SPEAKER_CUE_RE.fullmatch(line)
     ]
     prose = "\n".join(prose_lines).strip() or raw_text
 
@@ -73,6 +80,14 @@ def detect_asset_language(text: str) -> AssetLanguage:
         return "en"
     if langid_detected == "en" and looks_like_short_english_action:
         return "en"
+    if has_latin_speaker_cue and langid_detected == "en":
+        english_words = re.findall(r"[A-Za-z]+", ascii_prose.lower())
+        word_costs = [
+            wordninja.DEFAULT_LANGUAGE_MODEL._wordcost.get(word, float("inf"))
+            for word in english_words
+        ]
+        if english_words and max(word_costs) <= 11:
+            return "en"
 
     # Unsupported natural languages — including kana/Hangul prose and Latin
     # languages that happen to be ASCII-only — retain the Chinese fallback.

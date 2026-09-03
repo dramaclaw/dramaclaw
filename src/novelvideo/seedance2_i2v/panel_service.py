@@ -24,6 +24,7 @@ from novelvideo.seedance2_i2v.character_voice_storage import (
     voice_content_sha256,
 )
 from novelvideo.seedance2_i2v.models import (
+    SEEDANCE2_PROMPT_GUIDANCE_TEMPLATE_KEYS,
     Seedance2I2VMode,
     dump_seedance2_config,
     parse_seedance2_config,
@@ -176,12 +177,22 @@ async def generate_seedance2_prompt_for_panel(
     composer=None,
     manual_prompt_reference: str | None = None,
     prompt_guidance: str | None = None,
+    prompt_guidance_template_keys: list[str] | None = None,
     language: AssetLanguage | None = None,
     prop_menu: list[Any] | None = None,
 ) -> str:
     config = parse_seedance2_config(beat.get("seedance2_config_json"))
     if prompt_guidance is not None:
         config.prompt_guidance = str(prompt_guidance or "").strip()
+    if prompt_guidance_template_keys is not None:
+        config.prompt_guidance_template_keys = list(
+            dict.fromkeys(
+                key
+                for value in prompt_guidance_template_keys
+                if (key := str(value or "").strip())
+                in SEEDANCE2_PROMPT_GUIDANCE_TEMPLATE_KEYS
+            )
+        )
     assets = build_seedance2_project_assets(
         project_output=Path(project_dir),
         episode=episode,
@@ -212,6 +223,7 @@ async def generate_seedance2_prompt_for_panel(
         assets=assets,
         text_overlay=config.text_overlay,
         prompt_guidance=config.prompt_guidance,
+        prompt_guidance_template_keys=config.prompt_guidance_template_keys,
         request_params={
             "duration": int(config.duration),
             "resolution": config.resolution,
@@ -661,6 +673,7 @@ def _seedance2_default_prompt(
         assets=assets,
         text_overlay=text_overlay,
         prompt_guidance=config.prompt_guidance,
+        prompt_guidance_template_keys=config.prompt_guidance_template_keys,
         language=language,
     )
 
@@ -749,6 +762,7 @@ def _seedance2_prompt_inputs_hash(
         assets=assets,
         text_overlay=config.text_overlay,
         prompt_guidance=config.prompt_guidance,
+        prompt_guidance_template_keys=config.prompt_guidance_template_keys,
         language=language,
     )
 

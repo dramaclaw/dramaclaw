@@ -228,6 +228,7 @@ def test_generate_seedance2_prompt_updates_config_json(monkeypatch, tmp_path):
         json={
             "manual_prompt_reference": "current seedance2 prompt",
             "prompt_guidance": "more camera motion",
+            "prompt_guidance_template_keys": ["camera"],
         },
     )
 
@@ -239,6 +240,7 @@ def test_generate_seedance2_prompt_updates_config_json(monkeypatch, tmp_path):
     assert payload["data"]["beat"]["seedance2_config_json"] == saved_json
     assert seen["manual_prompt_reference"] == "current seedance2 prompt"
     assert seen["prompt_guidance"] == "more camera motion"
+    assert seen.get("prompt_guidance_template_keys") == ["camera"]
     assert seen["language"] == "en"
     assert seen["next_beat"]["beat_number"] == 2
     assert store.updates == [
