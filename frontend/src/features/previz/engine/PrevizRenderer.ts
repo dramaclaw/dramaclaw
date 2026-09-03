@@ -24,6 +24,7 @@ import { monitorViewportRect, syncMonitorCamera } from './cameraRig';
 import { renderCameraPreview, type CameraPreviewCanvas } from './cameraPreview';
 import { CharacterRigFactory } from './characterRig';
 import { PrevizPathPreview } from './pathPreview';
+import { PrevizStrokePreview } from './strokePreview';
 import { PrevizGizmo, type GizmoMode, type TransformControlsLike } from './gizmo';
 import { createInfiniteGrid } from './grid';
 import { PropLoader } from './propLoader';
@@ -89,6 +90,7 @@ export class PrevizRenderer {
    */
   private readonly handPlaced = new Set<string>();
   private pathPreview: PrevizPathPreview | null = null;
+  private strokePreview: PrevizStrokePreview | null = null;
   private selectedClipId: string | null = null;
   /** 手柄拖完把变换交回上层（编辑器接到 store 的 updateObject）。 */
   onTransformCommit: ((objectId: string, transform: PrevizTransform) => void) | null = null;
@@ -197,7 +199,14 @@ export class PrevizRenderer {
     // 编辑器自己的东西，不是镜头里的东西：见 `setEditorHelpersVisible`。
     previewRoot.userData.previzEditorOnly = true;
     scene.add(previewRoot);
-    instance.pathPreview = new PrevizPathPreview(three, previewRoot);
+    // 成型轨迹与正在画的那一笔各占一个子组：轨迹预览是整组重建的，两者混在一起的话
+    // 每次 store 变化都会把用户手上这一笔连同缓冲一起清掉。
+    const pathRoot = new three.Group();
+    previewRoot.add(pathRoot);
+    const strokeRoot = new three.Group();
+    previewRoot.add(strokeRoot);
+    instance.pathPreview = new PrevizPathPreview(three, pathRoot);
+    instance.strokePreview = new PrevizStrokePreview(three, strokeRoot);
     instance.resize();
     instance.start();
     return instance;
@@ -275,6 +284,18 @@ export class PrevizRenderer {
     if (this.disposed) return;
     this.selectedClipId = clipId;
     if (this.currentScene) this.pathPreview?.sync(this.currentScene, clipId);
+    this.requestRender();
+  }
+
+  /**
+   * 画出正在拖的这一笔；传 null 收笔。
+   *
+   * 绘制途中没有这条线的话，按下到松手之间画面上什么都不发生——用户是在盲画，
+   * 松手才第一次看见自己划过哪里。
+   */
+  setStroke(points: readonly Vec3[] | null): void {
+    if (this.disposed) return;
+    this.strokePreview?.set(points);
     this.requestRender();
   }
 
@@ -689,6 +710,7 @@ export class PrevizRenderer {
     this.gizmo?.dispose();
     this.graph.dispose();
     this.pathPreview?.dispose();
+    this.strokePreview?.dispose();
     this.scene.traverse((object) => {
       const mesh = object as THREE.Mesh;
       mesh.geometry?.dispose();
