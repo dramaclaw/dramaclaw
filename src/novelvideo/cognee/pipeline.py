@@ -14,6 +14,7 @@ import re
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Protocol, TypeVar
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from novelvideo.i18n_message import MessageLike, lmsg
 from novelvideo.shared.env_guard import preserve_st_env
 from novelvideo.config import get_newapi_structured_output_litellm_kwargs
 from novelvideo.utils.bounded_concurrency import (
@@ -329,11 +330,11 @@ async def extract_characters_from_graph(
         from cognee.api.v1.search import SearchType
         from cognee.infrastructure.llm.LLMGateway import LLMGateway
 
-    def report(progress: float, task: str):
+    def report(progress: float, task: MessageLike):
         if on_progress:
             on_progress(progress, task)
 
-    def log(message: str):
+    def log(message: MessageLike):
         print(f"[extract_characters] {message}")
 
     # Step 1: 通过 cognee.search 获取图谱上下文
@@ -509,7 +510,7 @@ async def extract_episodes_with_characters(
         from cognee.infrastructure.llm.LLMGateway import LLMGateway
         from cognee.modules.engine.operations.setup import setup
 
-    def log(message: str):
+    def log(message: MessageLike):
         # 只打印到控制台，不调用 on_log（由 store.py 统一管理日志回调）
         print(f"[extract_episodes] {message}")
 
@@ -1374,11 +1375,11 @@ async def extract_scenes_from_graph(
         from cognee.api.v1.search import SearchType
         from cognee.infrastructure.llm.LLMGateway import LLMGateway
 
-    def report(progress: float, task: str) -> None:
+    def report(progress: float, task: MessageLike) -> None:
         if on_progress:
             on_progress(progress, task)
 
-    def log(message: str) -> None:
+    def log(message: MessageLike) -> None:
         print(f"[extract_scenes] {message}")
         if on_log:
             on_log(message)
@@ -1651,11 +1652,11 @@ async def extract_scenes_from_script(
     """
     from .script_parser import parse_scenes, extract_synopsis
 
-    def report(progress: float, task: str):
+    def report(progress: float, task: MessageLike):
         if on_progress:
             on_progress(progress, task)
 
-    def log(message: str):
+    def log(message: MessageLike):
         print(f"[extract_scenes] {message}")
 
     synopsis = extract_synopsis(novel_text)
@@ -1665,14 +1666,22 @@ async def extract_scenes_from_script(
 
     legacy_candidates = parse_scenes(novel_text)
     log(
-        "程序召回 sanity check 得到 "
-        f"{len(legacy_candidates)} 个场景块: {[c.name for c in legacy_candidates]}"
+        lmsg(
+            "tasks.log.pipeline.legacyRecall",
+            "程序召回 sanity check 得到 "
+            f"{len(legacy_candidates)} 个场景块: {[c.name for c in legacy_candidates]}",
+            sceneCount=len(legacy_candidates),
+            sceneNames=str([c.name for c in legacy_candidates]),
+        )
     )
 
     normalized_scene_candidates: list[dict[str, Any]] = []
     fallback_reason = ""
 
-    report(0.1, "AI 规范化剧本场景块...")
+    report(
+        0.1,
+        lmsg("tasks.progress.pipeline.normalizingScenes", "AI 规范化剧本场景块..."),
+    )
     try:
         normalized_scene_candidates = await _normalized_scene_blocks_cached(
             novel_text, cache
@@ -1862,11 +1871,11 @@ async def extract_props_from_graph(
         from cognee.api.v1.search import SearchType
         from cognee.infrastructure.llm.LLMGateway import LLMGateway
 
-    def report(progress: float, task: str):
+    def report(progress: float, task: MessageLike):
         if on_progress:
             on_progress(progress, task)
 
-    def log(message: str):
+    def log(message: MessageLike):
         print(f"[extract_props] {message}")
 
     report(0.1, "通过图谱检索道具信息...")

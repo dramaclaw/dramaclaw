@@ -1925,6 +1925,7 @@
     "namePlaceholder": "请输入你的项目名称",
     "clearName": "清空项目名称",
     "nameNoChinese": "项目名称不能包含中文字符",
+    "nameTooLong": "项目名称最多 64 个字符",
     "nameInvalid": "项目名称只能包含英文字母、数字和下划线",
     "nameExistsActive": "已存在同名项目，请更换名称",
     "nameExistsArchived": "归档中已有同名项目，请先取消归档或更换名称",
@@ -2743,6 +2744,86 @@
       "unknownCharacter": "角色",
       "withEpisodeBeat": "{{label}}（第 {{episode}} 集 Beat {{beat}}）",
       "withEpisode": "{{label}}（第 {{episode}} 集）"
+    },
+    "progress": {
+      "ingest": {
+        "reading": "读取并校验原文...",
+        "validated": "原文校验完成",
+        "chunking": "切分原文...",
+        "planning": "记录分析计划...",
+        "saving": "保存导入结果...",
+        "complete": "导入完成"
+      },
+      "pipeline": {
+        "normalizingScenes": "AI 规范化剧本场景块..."
+      },
+      "script": {
+        "start": "开始生成脚本...",
+        "beatVideoPromptStart": "开始生成 Beat {{beatNum}} 视频提示词",
+        "beatVideoPromptSaved": "已保存 Beat {{beatNum}} 视频提示词"
+      },
+      "submitting": "任务正在投递",
+      "queued": "任务已进入队列",
+      "characters": {
+        "chunking": "切分原文...",
+        "nothingToAnalyze": "无可分析内容",
+        "extracting": "逐片段抽取角色...",
+        "noResults": "提取无结果",
+        "enrichingAppearance": "补全角色形象...",
+        "publishing": "发布角色...",
+        "repairingAppearance": "补齐已有角色的空缺形象...",
+        "recordingEvidence": "记录角色证据...",
+        "complete": "角色提取完成"
+      },
+      "scenes": {
+        "notNeeded": "无需提前构建场景",
+        "extractingFromHeadings": "从场次头提取基础场景...",
+        "noResults": "提取无结果",
+        "normalizing": "归一同一地点的不同写法...",
+        "saving": "保存新增场景...",
+        "complete": "场景提取完成"
+      },
+      "props": {
+        "perEpisode": "道具按分集生成"
+      }
+    },
+    "log": {
+      "ingest": {
+        "readingFile": "读取文件: {{path}}",
+        "readComplete": "文件读取完成: {{charCount}} 字符",
+        "chunked": "确定性切分完成: {{chunkCount}} 个片段（{{sectionType}}）",
+        "planReused": "复用已有分析计划: {{runId}}",
+        "planRecorded": "分析计划已记录: {{runId}}",
+        "sourceSaved": "原文已保存"
+      },
+      "source": {
+        "loading": "从文件加载原文...",
+        "loaded": "原文加载完成: {{charCount}} 字符"
+      },
+      "pipeline": {
+        "legacyRecall": "程序召回 sanity check 得到 {{sceneCount}} 个场景块: {{sceneNames}}"
+      },
+      "characters": {
+        "emptyChunks": "⚠️ 原文切分结果为空",
+        "chunked": "确定性切分: {{chunkCount}} 个片段（{{sectionType}}）",
+        "reusingChunks": "复用 {{cachedCount}} 个已完成片段，仅重算 {{pendingCount}} 个",
+        "reusingAdjudication": "复用上次裁决结果：{{characterCount}} 个角色，未调用模型",
+        "noEvidence": "⚠️ 未抽取到有原文证据的角色，保留现有角色数据",
+        "merged": "归一后得到 {{candidateCount}} 个角色候选",
+        "published": "已新增 {{addedCount}} 个角色，跳过已有 {{skippedCount}} 个",
+        "repaired": "已为 {{repairedCount}} 个已有角色补齐面部提示词"
+      },
+      "scenes": {
+        "deferred": "解说剧场景将在分集规划时按需生成",
+        "noHeadings": "⚠️ 未从场次头提取到场景，保留现有场景数据",
+        "published": "已新增 {{addedCount}} 个场景，修复占位描述 {{repairedCount}} 个，跳过已有 {{skippedCount}} 个"
+      },
+      "props": {
+        "deferred": "道具将在分集规划时按需生成"
+      }
+    },
+    "toast": {
+      "scenesBuildQueued": "场景补充任务已进入队列"
     }
   },
   "taskCenter": {
