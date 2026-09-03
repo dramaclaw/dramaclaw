@@ -326,6 +326,61 @@ async def test_real_handler_failure_uses_the_shared_error_contract(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_real_scene_images_handler_matches_its_mcp_output_contract(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setattr(
+        dramaclaw_mcp.PLUGIN,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "data": [
+                {
+                    "name": "天台",
+                    "scene_type": "exterior",
+                    "master_url": "/static/scenes/roof.png",
+                }
+            ],
+        },
+    )
+
+    result = await dramaclaw_mcp.call_tool("dramaclaw_get_scene_images", {})
+
+    assert result.isError is False
+    assert result.structuredContent["count"] == 1
+    assert result.structuredContent["image_count"] == 1
+    assert result.structuredContent["scenes"][0]["images"] == [
+        {"kind": "master", "url": "/static/scenes/roof.png"}
+    ]
+    assert "images" not in result.structuredContent
+    schema = dramaclaw_mcp.TOOLS["dramaclaw_get_scene_images"][0]["output_schema"]
+    Draft202012Validator(schema).validate(result.structuredContent)
+
+
+@pytest.mark.asyncio
+async def test_real_delete_nodes_empty_canvas_noop_matches_mcp_contract(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    freezone_plugin = dramaclaw_mcp.PLUGINS[1]
+    monkeypatch.setattr(
+        freezone_plugin,
+        "_request",
+        lambda *_args, **_kwargs: {"ok": True, "data": {"nodes": [], "edges": []}},
+    )
+
+    result = await dramaclaw_mcp.call_tool(
+        "freezone_delete_nodes", {"scope": "canvas"}
+    )
+
+    assert result.isError is False
+    assert result.structuredContent["canvas_apply_status"] == "already_empty"
+    assert result.structuredContent["deleted_node_count"] == 0
+    assert result.structuredContent["applied"] is True
+    schema = dramaclaw_mcp.TOOLS["freezone_delete_nodes"][0]["output_schema"]
+    Draft202012Validator(schema).validate(result.structuredContent)
+
+
+@pytest.mark.asyncio
 async def test_home_scope_lists_only_concrete_project_collection_tools(monkeypatch):
     monkeypatch.delenv("DRAMACLAW_PROJECT_ID", raising=False)
     monkeypatch.delenv("DRAMACLAW_MCP_TOOL_DISCOVERY", raising=False)

@@ -6075,16 +6075,32 @@ def _success_contract(name: str) -> dict[str, Any]:
             ]
         }
     if name in _CANVAS_RESULT_TOOLS:
-        return {
-            "anyOf": [
-                {"required": ["approval_id"]},
-                {"required": ["operation_id"]},
-                {"required": ["command_id"]},
-                {"required": ["bridge_key"]},
-                {"required": ["receipt"]},
-                {"required": ["durable_receipt"]},
-            ]
-        }
+        successful_states = [
+            {"required": ["approval_id"]},
+            {"required": ["operation_id"]},
+            {"required": ["command_id"]},
+            {"required": ["bridge_key"]},
+            {"required": ["receipt"]},
+            {"required": ["durable_receipt"]},
+        ]
+        if name == "freezone_delete_nodes":
+            successful_states.append(
+                {
+                    "properties": {
+                        "canvas_apply_status": {"const": "already_empty"},
+                        "applied": {"const": True},
+                        "deleted_node_count": {"const": 0},
+                    },
+                    "required": [
+                        "project_id",
+                        "canvas_id",
+                        "canvas_apply_status",
+                        "applied",
+                        "deleted_node_count",
+                    ],
+                }
+            )
+        return {"anyOf": successful_states}
     required = _RESULT_SUCCESS_REQUIRED.get(name)
     if required is None:
         raise RuntimeError(f"missing successful output contract for {name}")

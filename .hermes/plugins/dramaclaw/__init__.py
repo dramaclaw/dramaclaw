@@ -2490,6 +2490,7 @@ _RESULT_INTEGER_FIELDS = frozenset(
         "current_episode",
         "episode",
         "grid_index",
+        "image_count",
         "progress",
         "revision",
     }
@@ -2605,7 +2606,13 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "candidate_count",
         "ui_spec",
     ),
-    "dramaclaw_get_scene_images": ("project_id", "scenes", "images", "count", "ui_spec"),
+    "dramaclaw_get_scene_images": (
+        "project_id",
+        "scenes",
+        "count",
+        "image_count",
+        "ui_spec",
+    ),
     "dramaclaw_get_character_media": (
         "project_id",
         "characters",
@@ -2678,7 +2685,13 @@ _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
         "candidate_count",
         "ui_spec",
     ),
-    "dramaclaw_get_scene_images": ("project_id", "images", "count", "ui_spec"),
+    "dramaclaw_get_scene_images": (
+        "project_id",
+        "scenes",
+        "count",
+        "image_count",
+        "ui_spec",
+    ),
     "dramaclaw_get_character_media": ("project_id", "count", "ui_spec"),
     "dramaclaw_get_episode_media": ("project_id", "episode", "beats", "media_type", "ui_spec"),
     "dramaclaw_get_final_video": ("project_id", "episodes", "count", "has_more", "ui_spec"),
