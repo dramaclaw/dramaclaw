@@ -5737,6 +5737,325 @@ def _handle_link_type_catalog(args: dict[str, Any], **_: Any) -> str:
     )
 
 
+_RESULT_COMMON_PROPERTIES: dict[str, Any] = {
+    "ok": {"type": "boolean"},
+    "status": {"type": "string", "minLength": 1},
+    "code": {"type": ["string", "null"]},
+    "error": {"type": ["string", "object", "array", "null"]},
+    "message": {"type": ["string", "null"]},
+    "retryable": {"type": "boolean"},
+    "next_action": {"type": ["string", "null"]},
+    "agent_instruction": {"type": ["string", "null"]},
+    "data": {"type": ["object", "array", "string", "number", "boolean", "null"]},
+}
+
+_CANVAS_RESULT_FIELDS = (
+    "approval_id",
+    "project_id",
+    "canvas_id",
+    "operation_id",
+    "command_id",
+    "bridge_key",
+    "tool_call_status",
+    "canvas_apply_status",
+    "applied",
+    "cancelled",
+    "revision",
+    "receipt",
+    "durable_receipt",
+    "errors",
+    "summary",
+)
+
+_WORKFLOW_RESULT_FIELDS = (
+    *_CANVAS_RESULT_FIELDS,
+    "draft_id",
+    "current_revision",
+    "preview",
+    "intent",
+    "plan",
+    "compiled",
+    "preflight",
+    "confirmation_required",
+    "confirmation_receipt",
+    "quote_id",
+    "quote",
+    "billing",
+    "agent_planning_charge",
+    "agent_credit_estimate",
+    "workflow_instance_id",
+    "plan_digest",
+    "run_after_create",
+    "skipped_edges",
+)
+
+_RESULT_ARRAY_FIELDS = frozenset(
+    {
+        "actions",
+        "assets",
+        "available_ids",
+        "candidates",
+        "commands",
+        "edge_ids",
+        "edges",
+        "errors",
+        "items",
+        "link_types",
+        "node_ids",
+        "nodes",
+        "questions",
+        "recipes",
+        "required_question_ids",
+        "skipped_edges",
+        "voices",
+        "warnings",
+    }
+)
+_RESULT_BOOLEAN_FIELDS = frozenset(
+    {
+        "allow_recommended",
+        "allow_skip",
+        "applied",
+        "cancelled",
+        "confirmation_required",
+        "connect",
+        "removed",
+        "run_after_create",
+    }
+)
+_RESULT_INTEGER_FIELDS = frozenset(
+    {
+        "count",
+        "current_revision",
+        "deleted_edge_count",
+        "deleted_node_count",
+        "expected_recipe_count",
+        "expected_revision",
+        "planned_stage_count",
+        "recipe_chunk_count",
+        "recipe_count",
+        "recipe_index",
+        "revision",
+        "total_count",
+    }
+)
+_RESULT_STRING_FIELDS = frozenset(
+    {
+        "action",
+        "approval_id",
+        "bridge_key",
+        "canvas_apply_status",
+        "canvas_id",
+        "clarification_id",
+        "command_id",
+        "confirmation_receipt",
+        "direction",
+        "draft_id",
+        "edge_id",
+        "group_id",
+        "id",
+        "kind",
+        "link_type",
+        "mode",
+        "node_id",
+        "node_type",
+        "operation_id",
+        "plan_digest",
+        "project_id",
+        "quote_id",
+        "recipe_id",
+        "run_id",
+        "schema_version",
+        "scope",
+        "skill_studio_session_id",
+        "slot",
+        "source",
+        "source_node_id",
+        "target",
+        "tool_call_status",
+        "workflow_instance_id",
+    }
+)
+
+
+def _result_field_schema(field: str) -> dict[str, Any]:
+    if field in _RESULT_ARRAY_FIELDS:
+        return {"type": "array"}
+    if field in _RESULT_BOOLEAN_FIELDS:
+        return {"type": "boolean"}
+    if field in _RESULT_INTEGER_FIELDS:
+        return {"type": ["integer", "null"]}
+    if field in _RESULT_STRING_FIELDS:
+        return {"type": ["string", "null"]}
+    if field in {"agent_credit_estimate", "agent_planning_charge"}:
+        return {"type": ["object", "number", "string", "null"]}
+    if field in {"durable_receipt", "receipt"}:
+        return {"type": ["object", "string", "null"]}
+    return {"type": ["object", "array", "string", "number", "boolean", "null"]}
+
+_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    "freezone_get_canvas_ontology": ("ontology", "node_types", "link_types"),
+    "freezone_get_canvas_action_catalog": ("actions", "count"),
+    "freezone_get_canvas_command_catalog": ("commands", "count"),
+    "freezone_get_selection": ("node_ids", "edge_ids", "selection"),
+    "freezone_get_node_detail": ("node_id", "node"),
+    "freezone_get_neighbor_graph": ("node_id", "nodes", "edges"),
+    "freezone_get_node_action_catalog": ("node_id", "actions", "count"),
+    "freezone_get_node_create_schema": ("node_type", "schema"),
+    "freezone_get_audio_voice_options": ("node_id", "voices", "count"),
+    "freezone_get_slot_candidates": ("slot", "candidates", "count"),
+    "freezone_get_mainline_projection_assets": ("assets", "count"),
+    "freezone_validate_canvas_commands": ("payload", "commands", "errors", "warnings"),
+    "freezone_summarize_canvas": ("summary", "nodes", "edges", "counts"),
+    "freezone_request_user_clarification": (
+        "clarification_id",
+        "questions",
+        "required_question_ids",
+        "allow_recommended",
+        "allow_skip",
+    ),
+    "freezone_begin_agent_catalog_draft": (
+        "skill_studio_session_id",
+        "skill",
+        "recipes",
+        "outline",
+        "expected_recipe_count",
+        "warnings",
+    ),
+    "freezone_put_agent_catalog_draft_outline": (
+        "skill_studio_session_id",
+        "outline",
+        "expected_recipe_count",
+        "planned_stage_count",
+        "recipe_chunk_count",
+        "warnings",
+    ),
+    "freezone_put_agent_catalog_skill": (
+        "skill_studio_session_id",
+        "skill",
+        "expected_recipe_count",
+        "warnings",
+    ),
+    "freezone_put_agent_catalog_recipe": (
+        "skill_studio_session_id",
+        "recipe_index",
+        "recipe_count",
+        "recipes",
+        "warnings",
+    ),
+    "freezone_patch_agent_catalog_draft": (
+        "skill_studio_session_id",
+        "target",
+        "recipe_id",
+        "recipe_index",
+        "removed",
+    ),
+    "freezone_finish_agent_catalog_draft": (
+        "skill_studio_session_id",
+        "skill",
+        "recipes",
+        "outline",
+        "warnings",
+    ),
+    "freezone_present_agent_catalog_draft": (
+        "skill_studio_session_id",
+        "skill",
+        "recipes",
+        "summary",
+        "warnings",
+    ),
+    "freezone_list_agent_catalog": (
+        "kind",
+        "items",
+        "count",
+        "total_count",
+        "available_ids",
+    ),
+    "freezone_get_saved_skill": ("id", "kind", "item", "available_ids"),
+    "freezone_get_saved_recipe": ("id", "kind", "item", "available_ids"),
+    "freezone_get_workflow_skill": ("schema_version", "skill", "recipes", "inputs"),
+    "freezone_prepare_workflow_draft": _WORKFLOW_RESULT_FIELDS,
+    "freezone_patch_workflow_draft": (*_WORKFLOW_RESULT_FIELDS, "changes", "expected_revision"),
+    "freezone_confirm_workflow_draft": _WORKFLOW_RESULT_FIELDS,
+    "freezone_prepare_workflow_plan_draft": (*_WORKFLOW_RESULT_FIELDS, "schema_version"),
+    "freezone_emit_canvas_command": (*_CANVAS_RESULT_FIELDS, "commands"),
+    "freezone_confirm_canvas_action": _CANVAS_RESULT_FIELDS,
+    "freezone_cancel_canvas_action": _CANVAS_RESULT_FIELDS,
+    "freezone_create_node": (*_CANVAS_RESULT_FIELDS, "node_id", "node_type"),
+    "freezone_add_next_node": (
+        *_CANVAS_RESULT_FIELDS,
+        "node_id",
+        "node_type",
+        "source_node_id",
+        "connect",
+    ),
+    "freezone_update_node_data": (*_CANVAS_RESULT_FIELDS, "node_id", "updated_fields"),
+    "freezone_create_edge": (*_CANVAS_RESULT_FIELDS, "edge_id", "source", "target", "link_type"),
+    "freezone_delete_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids", "deleted_node_count"),
+    "freezone_delete_edges": (*_CANVAS_RESULT_FIELDS, "edge_ids", "deleted_edge_count"),
+    "freezone_move_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids", "positions"),
+    "freezone_layout_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids", "mode"),
+    "freezone_group_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids", "group_id"),
+    "freezone_select_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids"),
+    "freezone_run_node_action": (*_CANVAS_RESULT_FIELDS, "node_id", "action", "run_id"),
+    "freezone_run_workflow": (*_WORKFLOW_RESULT_FIELDS, "direction", "run_id"),
+    "freezone_open_mainline_projection": (
+        *_CANVAS_RESULT_FIELDS,
+        "scope",
+        "request",
+    ),
+    "freezone_get_link_type_catalog": ("link_types", "count"),
+}
+
+
+def _output_schema(name: str) -> dict[str, Any]:
+    fields = _RESULT_FIELDS.get(name)
+    if fields is None:
+        raise RuntimeError(f"missing output contract for {name}")
+    properties = dict(_RESULT_COMMON_PROPERTIES)
+    properties.update({field: _result_field_schema(field) for field in fields})
+    schema: dict[str, Any] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": f"{name}.result",
+        "type": "object",
+        "properties": properties,
+        "required": ["ok", "status", "data"],
+        "additionalProperties": False,
+        "x-dramaclaw-tool": name,
+    }
+    if name in {
+        "freezone_prepare_workflow_draft",
+        "freezone_patch_workflow_draft",
+        "freezone_prepare_workflow_plan_draft",
+        "freezone_confirm_workflow_draft",
+        "freezone_run_workflow",
+    }:
+        schema["allOf"] = [
+            {
+                "if": {"properties": {"status": {"const": "agent_planning_confirmation_required"}}},
+                "then": {
+                    "required": ["quote_id", "confirmation_required", "next_action"]
+                },
+            },
+            {
+                "if": {"properties": {"status": {"const": "agent_credit_insufficient"}}},
+                "then": {
+                    "required": [
+                        "code",
+                        "quote",
+                        "confirmation_required",
+                        "next_action",
+                    ]
+                },
+            },
+            {
+                "if": {"properties": {"status": {"const": "workflow_draft_ready"}}},
+                "then": {"required": ["draft_id", "revision", "preview"]},
+            },
+        ]
+    return schema
+
+
 def _schema(
     name: str,
     description: str,
@@ -5756,6 +6075,7 @@ def _schema(
         "name": name,
         "description": description,
         "parameters": parameters,
+        "output_schema": _output_schema(name),
     }
 
 

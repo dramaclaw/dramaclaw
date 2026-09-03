@@ -2432,6 +2432,184 @@ _PATH_PROPS = {
 }
 
 
+_RESULT_COMMON_PROPERTIES: dict[str, Any] = {
+    "ok": {"type": "boolean"},
+    "status": {"type": "string", "minLength": 1},
+    "code": {"type": ["string", "null"]},
+    "error": {"type": ["string", "object", "array", "null"]},
+    "message": {"type": ["string", "null"]},
+    "retryable": {"type": "boolean"},
+    "next_action": {"type": ["string", "null"]},
+    "agent_instruction": {"type": ["string", "null"]},
+    "data": {"type": ["object", "array", "string", "number", "boolean", "null"]},
+}
+
+_RESULT_ARRAY_FIELDS = frozenset(
+    {
+        "beats",
+        "candidates",
+        "canvases",
+        "characters",
+        "edges",
+        "episodes",
+        "files",
+        "frames",
+        "identities",
+        "images",
+        "items",
+        "nodes",
+        "scenes",
+        "sketches",
+        "skills",
+        "tasks",
+    }
+)
+_RESULT_BOOLEAN_FIELDS = frozenset(
+    {"add_bgm", "add_subtitles", "confirmed", "deleted", "has_more", "upload_dir_available"}
+)
+_RESULT_INTEGER_FIELDS = frozenset(
+    {
+        "beat",
+        "beat_num",
+        "candidate_count",
+        "count",
+        "episode",
+        "failed",
+        "grid_index",
+        "progress",
+        "requested",
+        "revision",
+        "started",
+        "waiting",
+    }
+)
+_RESULT_OBJECT_FIELDS = frozenset(
+    {"character", "pipeline", "script", "session", "task", "ui_spec"}
+)
+
+
+def _result_field_schema(field: str) -> dict[str, Any]:
+    if field in _RESULT_ARRAY_FIELDS:
+        return {"type": "array"}
+    if field in _RESULT_BOOLEAN_FIELDS:
+        return {"type": "boolean"}
+    if field in _RESULT_INTEGER_FIELDS:
+        return {"type": ["integer", "null"]}
+    if field in _RESULT_OBJECT_FIELDS:
+        return {"type": ["object", "null"]}
+    if field in {"outputs", "response"}:
+        return {"type": ["object", "array", "string", "number", "boolean", "null"]}
+    return {"type": ["string", "null"]}
+
+_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    "dramaclaw_control_episode_auto": ("action", "reason", "session"),
+    "dramaclaw_get": ("response",),
+    "dramaclaw_post": ("response",),
+    "dramaclaw_patch": ("response",),
+    "dramaclaw_delete": ("response",),
+    "dramaclaw_list_freezone_skills": ("skills", "count"),
+    "dramaclaw_run_freezone_skill": ("run_id", "skill_id", "canvas_id"),
+    "dramaclaw_get_freezone_skill_result": ("run_id", "outputs", "progress"),
+    "dramaclaw_list_freezone_canvases": ("canvases", "count"),
+    "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges", "revision"),
+    "dramaclaw_save_freezone_canvas": ("canvas_id", "revision", "client_save_id"),
+    "dramaclaw_delete_freezone_canvas": ("canvas_id", "deleted"),
+    "dramaclaw_create_freezone_canvas_from_preset": (
+        "canvas_id",
+        "revision",
+        "preset",
+    ),
+    "dramaclaw_pipeline_status": ("project_id", "episode", "next_step", "pipeline"),
+    "dramaclaw_list_tasks": ("tasks", "count", "episode", "task_type"),
+    "dramaclaw_get_task": ("task", "task_id", "task_type", "episode", "beat_num"),
+    "dramaclaw_get_episode_script": ("project_id", "episode", "script", "beats"),
+    "dramaclaw_list_ingest_uploads": (
+        "project_id",
+        "files",
+        "count",
+        "upload_dir_available",
+    ),
+    "dramaclaw_build_characters": ("task", "task_id", "task_type"),
+    "dramaclaw_plan_episodes": ("task", "task_id", "task_type"),
+    "dramaclaw_generate_script": ("task", "task_id", "task_type", "episode"),
+    "dramaclaw_update_character_face_prompt": ("character", "face_prompt"),
+    "dramaclaw_plan_identities": ("task", "task_id", "task_type", "episode"),
+    "dramaclaw_plan_scenes": ("task", "task_id", "task_type", "episode"),
+    "dramaclaw_plan_props": ("task", "task_id", "task_type", "episode"),
+    "dramaclaw_generate_scene_master": ("task", "task_id", "scene_id"),
+    "dramaclaw_generate_scene_reverse": ("task", "task_id", "scene_id"),
+    "dramaclaw_generate_sketches": (
+        "task",
+        "task_id",
+        "episode",
+        "stage",
+        "grid_index",
+    ),
+    "dramaclaw_detect_sketch_identities": ("task", "task_id", "episode"),
+    "dramaclaw_optimize_video_global": ("task", "task_id", "episode"),
+    "dramaclaw_generate_audio": ("task", "task_id", "episode"),
+    "dramaclaw_prepare_system_voices": ("task", "task_id", "episode", "confirmed"),
+    "dramaclaw_get_sketches": ("project_id", "episode", "sketches", "count", "ui_spec"),
+    "dramaclaw_get_first_frames": ("project_id", "episode", "frames", "count", "ui_spec"),
+    "dramaclaw_get_sketch_candidates": (
+        "project_id",
+        "episode",
+        "candidates",
+        "candidate_count",
+        "ui_spec",
+    ),
+    "dramaclaw_get_scene_images": ("project_id", "scenes", "images", "count", "ui_spec"),
+    "dramaclaw_get_character_media": (
+        "project_id",
+        "characters",
+        "identities",
+        "count",
+        "ui_spec",
+    ),
+    "dramaclaw_get_episode_media": ("project_id", "episode", "beats", "media_type", "ui_spec"),
+    "dramaclaw_render_first_frames": (
+        "batch_id",
+        "episode",
+        "requested",
+        "started",
+        "waiting",
+        "failed",
+        "items",
+    ),
+    "dramaclaw_compose_episode": ("task", "task_id", "episode", "add_bgm", "add_subtitles"),
+    "dramaclaw_get_final_video": ("project_id", "episodes", "count", "has_more", "ui_spec"),
+    "dramaclaw_generate_portrait": ("task", "task_id", "character_id"),
+    "dramaclaw_generate_identity_image": ("task", "task_id", "identity_id"),
+    "dramaclaw_start_single_video": ("task", "task_id", "episode", "beat"),
+    "dramaclaw_start_video_batch": (
+        "batch_id",
+        "episode",
+        "requested",
+        "started",
+        "waiting",
+        "failed",
+        "items",
+    ),
+}
+
+
+def _output_schema(name: str) -> dict[str, Any]:
+    fields = _RESULT_FIELDS.get(name)
+    if fields is None:
+        raise RuntimeError(f"missing output contract for {name}")
+    properties = dict(_RESULT_COMMON_PROPERTIES)
+    properties.update({field: _result_field_schema(field) for field in fields})
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": f"{name}.result",
+        "type": "object",
+        "properties": properties,
+        "required": ["ok", "status", "data"],
+        "additionalProperties": False,
+        "x-dramaclaw-tool": name,
+    }
+
+
 def _schema(
     name: str,
     description: str,
@@ -2451,6 +2629,7 @@ def _schema(
         "name": name,
         "description": description,
         "parameters": parameters,
+        "output_schema": _output_schema(name),
     }
 
 

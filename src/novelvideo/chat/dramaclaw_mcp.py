@@ -170,7 +170,7 @@ TOOL_SEARCH_NAME = "dramaclaw_tool_search"
 TOOL_DESCRIBE_NAME = "dramaclaw_tool_describe"
 TOOL_CALL_NAME = "dramaclaw_tool_call"
 BRIDGE_TOOL_NAMES = frozenset({TOOL_SEARCH_NAME, TOOL_DESCRIBE_NAME, TOOL_CALL_NAME})
-_COMMON_OUTPUT_PROPERTIES: dict[str, Any] = {
+_BRIDGE_COMMON_OUTPUT_PROPERTIES: dict[str, Any] = {
     "ok": {"type": "boolean"},
     "status": {"type": "string", "minLength": 1},
     "code": {"type": ["string", "null"]},
@@ -179,145 +179,22 @@ _COMMON_OUTPUT_PROPERTIES: dict[str, Any] = {
     "retryable": {"type": "boolean"},
     "next_action": {"type": ["string", "null"]},
     "agent_instruction": {"type": ["string", "null"]},
-    "result": {},
+    "data": {},
 }
-
-_TASK_OUTPUT_PROPERTIES: dict[str, Any] = {
-    "task": {"type": ["object", "null"]},
-    "task_id": {"type": ["string", "integer", "null"]},
-    "task_type": {"type": ["string", "null"]},
-    "tasks": {"type": "array"},
-    "batch_id": {"type": ["string", "null"]},
-    "run_id": {"type": ["string", "null"]},
-    "episode": {"type": ["integer", "null"]},
-    "beat": {"type": ["integer", "null"]},
-    "queued": {"type": ["boolean", "integer"]},
-}
-
-_MEDIA_OUTPUT_PROPERTIES: dict[str, Any] = {
-    "media": {"type": ["array", "object", "null"]},
-    "items": {"type": "array"},
-    "count": {"type": "integer", "minimum": 0},
-    "images": {"type": "array"},
-    "frames": {"type": "array"},
-    "sketches": {"type": "array"},
-    "candidates": {"type": "array"},
-    "beats": {"type": "array"},
-    "episodes": {"type": "array"},
-    "ui_spec": {"type": ["object", "null"]},
-}
-
-_CATALOG_OUTPUT_PROPERTIES: dict[str, Any] = {
-    "item": {"type": ["object", "null"]},
-    "items": {"type": "array"},
-    "count": {"type": "integer", "minimum": 0},
-    "catalog": {"type": ["array", "object", "null"]},
-    "schema": {"type": ["object", "null"]},
-    "skill": {"type": ["object", "null"]},
-    "recipe": {"type": ["object", "null"]},
-    "warnings": {"type": "array"},
-}
-
-_CANVAS_OUTPUT_PROPERTIES: dict[str, Any] = {
-    "canvas_id": {"type": ["string", "null"]},
-    "command_id": {"type": ["string", "null"]},
-    "operation_id": {"type": ["string", "null"]},
-    "idempotency_key": {"type": ["string", "null"]},
-    "revision": {"type": ["integer", "null"]},
-    "applied": {"type": "boolean"},
-    "canvas_apply_status": {"type": ["string", "null"]},
-    "tool_call_status": {"type": ["string", "null"]},
-    "receipt": {"type": ["object", "string", "null"]},
-    "durable_receipt": {"type": ["object", "string", "null"]},
-}
-
-_WORKFLOW_OUTPUT_PROPERTIES: dict[str, Any] = {
-    **_CANVAS_OUTPUT_PROPERTIES,
-    "draft_id": {"type": ["string", "null"]},
-    "current_revision": {"type": ["integer", "null"]},
-    "preview": {"type": ["object", "array", "null"]},
-    "plan": {"type": ["object", "null"]},
-    "compiled": {"type": ["object", "null"]},
-    "preflight": {"type": ["object", "null"]},
-    "confirmation_required": {"type": "boolean"},
-    "confirmation_receipt": {"type": ["object", "string", "null"]},
-    "quote_id": {"type": ["string", "null"]},
-    "quote": {"type": ["object", "null"]},
-    "billing": {"type": ["object", "null"]},
-    "agent_planning_charge": {"type": ["object", "number", "string", "null"]},
-    "agent_credit_estimate": {"type": ["object", "number", "string", "null"]},
-    "workflow_instance_id": {"type": ["string", "null"]},
-    "plan_digest": {"type": ["string", "null"]},
-}
-
-_WORKFLOW_TOOL_NAMES = frozenset(
-    {
-        "freezone_prepare_workflow_draft",
-        "freezone_prepare_workflow_plan_draft",
-        "freezone_patch_workflow_draft",
-        "freezone_confirm_workflow_draft",
-        "freezone_run_workflow",
-    }
-)
-
-
-def _tool_output_properties(name: str) -> dict[str, Any]:
-    """Return the small result vocabulary for one concrete tool family."""
-    properties = dict(_COMMON_OUTPUT_PROPERTIES)
-    lowered = name.lower()
-    if name in _WORKFLOW_TOOL_NAMES:
-        properties.update(_WORKFLOW_OUTPUT_PROPERTIES)
-    elif name.startswith("freezone_"):
-        properties.update(_CANVAS_OUTPUT_PROPERTIES)
-        if any(
-            marker in lowered
-            for marker in ("catalog", "ontology", "schema", "skill", "recipe", "options")
-        ):
-            properties.update(_CATALOG_OUTPUT_PROPERTIES)
-    elif any(
-        marker in lowered
-        for marker in (
-            "generate",
-            "render",
-            "compose",
-            "plan_",
-            "build_",
-            "start_",
-            "optimize",
-            "control_episode_auto",
-        )
-    ):
-        properties.update(_TASK_OUTPUT_PROPERTIES)
-    elif any(
-        marker in lowered
-        for marker in ("media", "frames", "sketch", "scene_images", "final_video")
-    ):
-        properties.update(_MEDIA_OUTPUT_PROPERTIES)
-    elif any(marker in lowered for marker in ("skill", "canvas", "uploads")):
-        properties.update(_CATALOG_OUTPUT_PROPERTIES)
-    return properties
-
 
 def _output_schema_for_tool(name: str) -> dict[str, Any]:
-    """Build a distinct, validation-ready output contract for one public tool."""
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": f"{name}.result",
-        "type": "object",
-        "description": f"Structured result returned by {name}.",
-        "properties": _tool_output_properties(name),
-        "required": ["ok", "status"],
-        "additionalProperties": True,
-        "x-dramaclaw-tool": name,
-    }
+    """Read the explicit contract declared next to the plugin tool definition."""
+    schema_entry = TOOLS.get(name)
+    if schema_entry is None:
+        raise ValueError(f"unknown DramaClaw tool: {name}")
+    schema, _handler = schema_entry
+    output_schema = schema.get("output_schema")
+    if not isinstance(output_schema, dict):
+        raise RuntimeError(f"missing output schema for {name}")
+    return output_schema
 
 
-# Kept as a compatibility alias for callers that previously inspected the
-# workflow draft schema directly. Public tool declarations use a fresh,
-# tool-named schema from ``_output_schema_for_tool``.
-_WORKFLOW_DRAFT_OUTPUT_SCHEMA = _output_schema_for_tool(
-    "freezone_prepare_workflow_plan_draft"
-)
+_WORKFLOW_DRAFT_OUTPUT_SCHEMA = _output_schema_for_tool("freezone_prepare_workflow_plan_draft")
 
 # Home turns have no bound project and should only manage the project
 # collection. Project-scoped tokens remain the authority for every underlying
@@ -419,6 +296,22 @@ def _search_tools(query: str, limit: int) -> list[dict[str, str]]:
     return [_tool_summary(name, schema) for _score, name, schema in ranked[:limit]]
 
 
+def _bridge_output_schema(
+    name: str,
+    properties: dict[str, Any],
+    required: list[str],
+) -> dict[str, Any]:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": f"{name}.result",
+        "type": "object",
+        "properties": {**_BRIDGE_COMMON_OUTPUT_PROPERTIES, **properties},
+        "required": ["ok", "status", *required],
+        "additionalProperties": False,
+        "x-dramaclaw-tool": name,
+    }
+
+
 def _bridge_tools() -> list[types.Tool]:
     scope = _scope_kind()
     return [
@@ -445,10 +338,9 @@ def _bridge_tools() -> list[types.Tool]:
                 },
                 "additionalProperties": False,
             },
-            outputSchema={
-                **_output_schema_for_tool(TOOL_SEARCH_NAME),
-                "properties": {
-                    **_COMMON_OUTPUT_PROPERTIES,
+            outputSchema=_bridge_output_schema(
+                TOOL_SEARCH_NAME,
+                {
                     "tools": {
                         "type": "array",
                         "items": {
@@ -460,10 +352,10 @@ def _bridge_tools() -> list[types.Tool]:
                             "required": ["name", "description"],
                             "additionalProperties": False,
                         },
-                    },
+                    }
                 },
-                "required": ["ok", "status", "tools"],
-            },
+                ["tools"],
+            ),
         ),
         types.Tool(
             name=TOOL_DESCRIBE_NAME,
@@ -479,10 +371,9 @@ def _bridge_tools() -> list[types.Tool]:
                 "required": ["tool_name"],
                 "additionalProperties": False,
             },
-            outputSchema={
-                **_output_schema_for_tool(TOOL_DESCRIBE_NAME),
-                "properties": {
-                    **_COMMON_OUTPUT_PROPERTIES,
+            outputSchema=_bridge_output_schema(
+                TOOL_DESCRIBE_NAME,
+                {
                     "tool_name": {"type": ["string", "null"]},
                     "tool": {
                         "type": "object",
@@ -501,7 +392,8 @@ def _bridge_tools() -> list[types.Tool]:
                         "additionalProperties": False,
                     },
                 },
-            },
+                [],
+            ),
         ),
         types.Tool(
             name=TOOL_CALL_NAME,
@@ -518,13 +410,14 @@ def _bridge_tools() -> list[types.Tool]:
                 "required": ["tool_name"],
                 "additionalProperties": False,
             },
-            outputSchema={
-                **_output_schema_for_tool(TOOL_CALL_NAME),
-                "description": (
-                    "Temporary compatibility result. On success the structured fields follow "
-                    "the exact output schema returned by dramaclaw_tool_describe."
-                ),
-            },
+            outputSchema=_bridge_output_schema(
+                TOOL_CALL_NAME,
+                {
+                    "tool_name": {"type": "string", "minLength": 1},
+                    "result": {"type": "object"},
+                },
+                [],
+            ),
         ),
     ]
 
@@ -538,7 +431,26 @@ def _json_text(payload: Any) -> list[types.TextContent]:
     ]
 
 
-def _mcp_error_result(payload: dict[str, Any]) -> types.CallToolResult:
+def _normalize_structured_result(
+    schema: dict[str, Any], decoded: Any
+) -> dict[str, Any]:
+    raw = decoded if isinstance(decoded, dict) else {}
+    ok = raw.get("ok") if isinstance(raw.get("ok"), bool) else not bool(raw.get("error"))
+    status = raw.get("status")
+    if not isinstance(status, str) or not status:
+        status = "completed" if ok else "failed"
+    properties = schema.get("properties") or {}
+    structured = {"ok": ok, "status": status}
+    for key in properties:
+        if key not in {"ok", "status", "data"} and key in raw:
+            structured[key] = raw[key]
+    if "data" in properties:
+        structured["data"] = decoded
+    Draft202012Validator(schema).validate(structured)
+    return structured
+
+
+def _mcp_error_result(name: str, payload: dict[str, Any]) -> types.CallToolResult:
     """Expose validation failures as MCP errors rather than plain text."""
     body = dict(payload)
     body.setdefault("ok", False)
@@ -546,9 +458,14 @@ def _mcp_error_result(payload: dict[str, Any]) -> types.CallToolResult:
     body.setdefault("retryable", False)
     body.setdefault("next_action", "检查错误字段后再重试")
     encoded = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    if name in BRIDGE_TOOL_NAMES:
+        schema = next(tool.outputSchema for tool in _bridge_tools() if tool.name == name)
+    else:
+        schema = _output_schema_for_tool(name)
+    structured = _normalize_structured_result(schema, body)
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=encoded)],
-        structuredContent=body,
+        structuredContent=structured,
         isError=True,
     )
 
@@ -559,15 +476,7 @@ def _structured_tool_result(name: str, adapted: str) -> types.CallToolResult:
         decoded = json.loads(adapted)
     except (TypeError, json.JSONDecodeError):
         decoded = adapted
-    if isinstance(decoded, dict):
-        structured = dict(decoded)
-        if not isinstance(structured.get("ok"), bool):
-            structured["ok"] = not bool(structured.get("error"))
-        if not isinstance(structured.get("status"), str) or not structured["status"]:
-            structured["status"] = "completed" if structured["ok"] else "failed"
-    else:
-        structured = {"ok": True, "status": "completed", "result": decoded}
-    Draft202012Validator(_output_schema_for_tool(name)).validate(structured)
+    structured = _normalize_structured_result(_output_schema_for_tool(name), decoded)
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=adapted)],
         structuredContent=structured,
@@ -834,6 +743,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         available = _available_tools()
         if tool_name not in available:
             return _mcp_error_result(
+                TOOL_DESCRIBE_NAME,
                 {
                     "ok": False,
                     "error": "unknown_dramaclaw_tool",
@@ -865,6 +775,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         tool_arguments = arguments.get("arguments") or {}
         if tool_name not in _available_tools() or tool_name in BRIDGE_TOOL_NAMES:
             return _mcp_error_result(
+                TOOL_CALL_NAME,
                 {
                     "ok": False,
                     "error": "unknown_dramaclaw_tool",
@@ -873,6 +784,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             )
         if not isinstance(tool_arguments, dict):
             return _mcp_error_result(
+                TOOL_CALL_NAME,
                 {
                     "ok": False,
                     "error": "tool_arguments_invalid",
@@ -880,7 +792,30 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                     "message": "arguments must be an object",
                 }
             )
-        return await call_tool(tool_name, tool_arguments)
+        underlying = await call_tool(tool_name, tool_arguments)
+        underlying_structured = (
+            underlying.structuredContent
+            if isinstance(underlying, types.CallToolResult)
+            else None
+        )
+        payload = {
+            "ok": bool(
+                isinstance(underlying_structured, dict)
+                and underlying_structured.get("ok") is True
+            ),
+            "status": (
+                str(underlying_structured.get("status") or "completed")
+                if isinstance(underlying_structured, dict)
+                else "failed"
+            ),
+            "tool_name": tool_name,
+            "result": underlying_structured or {},
+        }
+        return types.CallToolResult(
+            content=_json_text(payload),
+            structuredContent=payload,
+            isError=payload["ok"] is False,
+        )
 
     if name in _available_tools():
         schema, handler = _available_tools()[name]
@@ -977,7 +912,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 started=call_started,
                 payload=error_payload,
             )
-            return _mcp_error_result(error_payload)
+            return _mcp_error_result(name, error_payload)
         try:
             result = await asyncio.to_thread(handler, arguments)
         except Exception as exc:

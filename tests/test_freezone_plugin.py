@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 
 @pytest.fixture(autouse=True)
@@ -79,6 +80,18 @@ def _load_plugin_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def _assert_real_mcp_output(plugin, tool_name, result):
+    """Validate one real handler result through the production MCP envelope."""
+    from novelvideo.chat import dramaclaw_mcp
+
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+    output_schema = schemas[tool_name]["output_schema"]
+    structured = dramaclaw_mcp._normalize_structured_result(output_schema, result)
+    Draft202012Validator(output_schema).validate(structured)
+    assert structured["data"] == result
+    return structured
 
 
 def _load_plugin_module_with_registry_result(registry_result):
@@ -1034,6 +1047,8 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
             "ok": True,
             "canvas_apply_status": "applied",
             "applied": True,
+            "operation_id": "operation-workflow-a",
+            "durable_receipt": {"receipt_id": "receipt-workflow-a"},
         }
 
     monkeypatch.setattr(plugin, "_emit_canvas_commands", fake_emit)
@@ -1055,6 +1070,7 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
     assert prepared["preview"]["node_count"] == 3
     assert prepared["run_after_create"] is True
     assert "Do not mention credits" in prepared["agent_instruction"]
+    _assert_real_mcp_output(plugin, "freezone_prepare_workflow_draft", prepared)
 
     patched = plugin._handle_patch_workflow_draft(
         {
@@ -1067,6 +1083,7 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
     assert patched["ok"] is True
     assert patched["revision"] == 2
     assert patched["preview"]["node_count"] == 4
+    _assert_real_mcp_output(plugin, "freezone_patch_workflow_draft", patched)
 
     stale_patch = plugin._handle_patch_workflow_draft(
         {
@@ -1087,6 +1104,16 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
     assert len(emitted) == 1
     assert emitted[0][0:2] == ("project-a", "canvas-a")
     assert repeated["status"] == "workflow_draft_already_confirmed"
+    stale_output = _assert_real_mcp_output(
+        plugin, "freezone_patch_workflow_draft", stale_patch
+    )
+    assert stale_output["current_revision"] == 2
+    confirmed_output = _assert_real_mcp_output(
+        plugin, "freezone_confirm_workflow_draft", confirmed
+    )
+    assert confirmed_output["operation_id"]
+    assert confirmed_output["durable_receipt"]
+    _assert_real_mcp_output(plugin, "freezone_confirm_workflow_draft", repeated)
 
 
 def test_workflow_draft_prepare_stops_when_live_model_catalog_is_unavailable(
@@ -1399,6 +1426,10 @@ def test_workflow_planning_quote_stops_when_agent_credits_are_insufficient(
     assert result["confirmation_required"] is False
     assert result["next_action"] == "add_credits"
     assert "ask for confirmation" in result["agent_instruction"]
+    structured = _assert_real_mcp_output(
+        plugin, "freezone_prepare_workflow_draft", result
+    )
+    assert structured["quote"]["quote_id"] == "billing_quote_insufficient"
 
 
 def test_workflow_prepare_requires_server_receipt_and_retries_exact_operation(
@@ -1462,6 +1493,10 @@ def test_workflow_prepare_requires_server_receipt_and_retries_exact_operation(
     assert "确认规划费用 billing_quote_a" in quoted["agent_instruction"]
     assert len(calls) == 1
     assert calls[0][2]["operation"]["compiled"] == compiled
+    quoted_output = _assert_real_mcp_output(
+        plugin, "freezone_prepare_workflow_draft", quoted
+    )
+    assert quoted_output["confirmation_required"] is True
 
     prepared = plugin._handle_prepare_workflow_draft(
         {
@@ -1473,6 +1508,10 @@ def test_workflow_prepare_requires_server_receipt_and_retries_exact_operation(
     assert prepared["draft_id"] == "workflow_draft_a"
     assert calls[-1][2]["quote_id"] == "billing_quote_a"
     assert calls[-1][2]["confirmation_receipt"] == "billing_receipt_a"
+    prepared_output = _assert_real_mcp_output(
+        plugin, "freezone_prepare_workflow_draft", prepared
+    )
+    assert prepared_output["revision"] == 1
 
     incomplete = plugin._agent_billing_confirmation_gate(
         "project-a",
@@ -1482,6 +1521,7 @@ def test_workflow_prepare_requires_server_receipt_and_retries_exact_operation(
         operation={"intent": intent, "compiled": compiled},
     )
     assert incomplete["status"] == "billing_confirmation_incomplete"
+    _assert_real_mcp_output(plugin, "freezone_prepare_workflow_draft", incomplete)
 
 
 def test_workflow_plan_prepare_uses_the_same_receipt_bound_draft_flow(monkeypatch):
@@ -1562,6 +1602,7 @@ def test_workflow_plan_prepare_uses_the_same_receipt_bound_draft_flow(monkeypatc
         "plan": plan,
     }
     assert operation["compiled"] == compiled
+    _assert_real_mcp_output(plugin, "freezone_prepare_workflow_plan_draft", quoted)
 
     prepared = plugin._handle_prepare_workflow_plan_draft(
         {
@@ -1576,6 +1617,7 @@ def test_workflow_plan_prepare_uses_the_same_receipt_bound_draft_flow(monkeypatc
     assert calls[-1][2]["confirmation_receipt"] == "billing_receipt_plan"
     assert calls[-1][2]["intent"] == operation["intent"]
     assert calls[-1][2]["compiled"] == operation["compiled"]
+    _assert_real_mcp_output(plugin, "freezone_prepare_workflow_plan_draft", prepared)
 
 
 def test_workflow_draft_concurrent_confirmation_emits_once(monkeypatch, tmp_path):
