@@ -1738,21 +1738,41 @@ async def test_freezone_platform_context_preserves_legacy_leaf(
                 "status": "failed",
                 "error": {"code": "weird secret-canary", "message": "x"},
             },
-            "EGRESS_OPERATION_UNKNOWN",
+            "x",
+        ),
+        (
+            {
+                "status": "failed",
+                "error": "video generation failed",
+                "content": "提示词长度超过模型限制，请缩短后重试",
+            },
+            "提示词长度超过模型限制，请缩短后重试",
+        ),
+        (
+            {
+                "status": "failed",
+                "content": {
+                    "message": (
+                        "参考素材读取失败：https://relay.example/a.jpg?"
+                        "OSSAccessKeyId=secret-canary 请更换素材后重试"
+                    )
+                },
+            },
+            "参考素材读取失败：[redacted-url] 请更换素材后重试",
         ),
     ],
 )
-async def test_newapi_organization_failures_keep_safe_provider_error_codes(
+async def test_newapi_organization_failures_keep_safe_provider_error_details(
     monkeypatch,
     tmp_path: Path,
     poll_response: dict,
     expected_error: str,
 ) -> None:
-    """厂商明确打回（尺寸/审核）时，组织账号要拿到可读的错误码而不是一律 UNKNOWN。
+    """厂商明确打回时，组织账号拿到安全错误码或脱敏后的具体消息。
 
     2026-08-26 3060 上 creator02-zhu 的参考图 338x191 被火山 HeightTooSmall 拒了 8 次，
-    用户只看到 `EGRESS_OPERATION_UNKNOWN`。放行的只能是 `VIDEO_*` 这种枚举码，
-    厂商原文（含带签名的 relay URL）依旧不能进 result。
+    用户只看到 `EGRESS_OPERATION_UNKNOWN`。已知 `VIDEO_*` 枚举码继续优先放行；其他明确
+    失败恢复安全消息，但带签名的 relay URL 依旧不能进 result。
     """
     from novelvideo.generators.video_generator import (
         NewApiVideoGenerator,
@@ -1810,10 +1830,28 @@ async def test_newapi_organization_failures_keep_safe_provider_error_codes(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response_body", "expected_error"),
+    [
+        (
+            '{"error": {"code": "VIDEO_MEDIA_DIMENSIONS_INVALID", '
+            '"message": "secret-canary"}}',
+            "VIDEO_MEDIA_DIMENSIONS_INVALID",
+        ),
+        (
+            '{"error": {"content": "请求参数不受当前模型支持：'
+            'https://relay.example/a.png?token=secret-canary 请调整后重试"}}',
+            "请求参数不受当前模型支持：[redacted-url] 请调整后重试",
+        ),
+    ],
+)
 async def test_newapi_organization_submit_rejection_keeps_safe_provider_error_code(
-    monkeypatch, tmp_path: Path
+    monkeypatch,
+    tmp_path: Path,
+    response_body: str,
+    expected_error: str,
 ) -> None:
-    """网关在提交阶段就用 `VIDEO_*` 码打回时，组织账号同样拿到该码，不泄漏响应原文。"""
+    """提交阶段明确拒绝时恢复安全详情，同时不泄漏响应中的签名 URL。"""
     from novelvideo.generators.video_generator import (
         NewApiVideoError,
         NewApiVideoGenerator,
@@ -1828,8 +1866,7 @@ async def test_newapi_organization_submit_rejection_keeps_safe_provider_error_co
 
     async def rejected(*_args, **_kwargs):
         raise NewApiVideoError(
-            'DramaClawAPI submit failed: HTTP 400 - {"error": {"code": '
-            '"VIDEO_MEDIA_DIMENSIONS_INVALID", "message": "secret-canary"}}',
+            f"DramaClawAPI submit failed: HTTP 400 - {response_body}",
             request_id="req-1",
             status_code=400,
         )
@@ -1850,6 +1887,6 @@ async def test_newapi_organization_submit_rejection_keeps_safe_provider_error_co
     )
 
     assert result.status is VideoGenStatus.FAILED
-    assert result.error == "VIDEO_MEDIA_DIMENSIONS_INVALID"
+    assert result.error == expected_error
     assert "secret-canary" not in repr(result)
     assert [name for name, _ in operation_port.events] == ["claim", "unknown"]
