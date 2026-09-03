@@ -779,7 +779,12 @@ class TaskStateManager:
                 return False
             state.status = "running"
             state.progress = max(float(state.progress or 0.0), 0.01)
-            state.current_task = "任务已开始"
+            # 走 helper 而不是直接赋值：直接赋值只换掉中文兜底，上一条
+            # tasks.progress.queued 的 code 会留在 metadata 里，英文界面就把一个
+            # running 的任务显示成 "Task queued"。
+            self._apply_progress_message(
+                state, lmsg("tasks.progress.started", "任务已开始"), None
+            )
             if metadata is not None:
                 state.metadata = self._merge_task_metadata(state.metadata, metadata)
                 state.result = self._merge_metadata_into_result(state.result, state.metadata)
@@ -819,7 +824,9 @@ class TaskStateManager:
             if state.status not in {"submitting", "queued"}:
                 return False, state
             state.status = "cancelled"
-            state.current_task = "任务已取消"
+            self._apply_progress_message(
+                state, lmsg("tasks.progress.cancelled", "任务已取消"), None
+            )
             state.completed_at = state.completed_at or utc_now_iso()
             state.updated_at = utc_now_iso()
             state.metadata = self._merge_task_metadata(
@@ -1657,6 +1664,13 @@ class TaskStateManager:
 
     @staticmethod
     def _save_on_connection(conn, task_key: str, state: TaskState, expires_at: str | None) -> None:
+        # metadata 没有自己的列，靠 result_json.task_metadata 落库（见 _row_to_state）。
+        # 合并必须发生在写库边界，不能指望每个调用点自己同步：_apply_progress_message
+        # 改的是 state.metadata，而各调用点的手工合并大多挂在 `if metadata is not None`
+        # 下面，调用方没顺手传 metadata 时，进度文案的 i18n code 就在这一跳丢了——
+        # reserve 写的 tasks.progress.submitting、update_progress 传进来的
+        # LocalizableMessage 都是这么没的，英文界面因此还是渲染中文兜底。
+        result = TaskStateManager._merge_metadata_into_result(state.result, state.metadata)
         conn.execute(
             """
             INSERT INTO task_states (
@@ -1704,11 +1718,7 @@ class TaskStateManager:
                 state.status,
                 state.progress,
                 state.current_task,
-                (
-                    json.dumps(state.result, ensure_ascii=False)
-                    if state.result is not None
-                    else None
-                ),
+                (json.dumps(result, ensure_ascii=False) if result is not None else None),
                 state.error,
                 json.dumps(state.logs, ensure_ascii=False),
                 state.created_at,
