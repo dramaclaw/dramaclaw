@@ -12,6 +12,7 @@ import {
   createDefaultScene,
   type PrevizCamera,
   type PrevizCharacter,
+  type PrevizObject,
   type PrevizPathClip,
   type PrevizRigClip,
   type PrevizScene,
@@ -199,5 +200,76 @@ describe('evaluateSceneAt closeup clips', () => {
     ];
     // 自己跟自己没有不动点：解出来的位置又成了下一帧的锚点。原地不动才是老实的。
     expect(evaluateSceneAt(scene, 0).get(camera.id)?.position).toEqual([99, 99, 99]);
+  });
+});
+
+/** 一台沿直线走的机位 + 一个站着不动的人物。机位这一段可以「看向」他。 */
+function sceneWithAim(
+  aimObjectId: string | null,
+  moverKind: 'camera' | 'character' = 'camera',
+): { scene: PrevizScene; mover: PrevizObject; character: PrevizCharacter } {
+  const character = createPrevizObject('character', [], { heightCm: 180 });
+  character.transform.position = [0, 0, -5];
+  const mover = createPrevizObject(moverKind, [character]);
+
+  const clip: PrevizPathClip = {
+    ...clipFor(0, 120),
+    aimObjectId: aimObjectId === 'self' ? character.id : aimObjectId,
+  };
+
+  return {
+    scene: {
+      ...createDefaultScene(),
+      objects: [character, mover],
+      timeline: { tracks: [{ id: 'at', objectId: mover.id, clips: [clip] }] },
+    },
+    mover,
+    character,
+  };
+}
+
+describe('evaluateSceneAt path aims', () => {
+  it('turns the mover toward what the clip aims at', () => {
+    const { scene, mover } = sceneWithAim('self');
+
+    // 起点在原点，目标在正 -Z：正好是零朝向。
+    const start = evaluateSceneAt(scene, 0).get(mover.id);
+    expect(start?.rotation[1]).toBeCloseTo(0, 6);
+    // 瞄的是胸口而不是脚底，所以从地面高度看过去是抬着头的。
+    expect(start?.rotation[0]).toBeGreaterThan(0);
+
+    // 走到 x=10 之后目标落在左后方，朝向必须跟着转，而不是停在切线上。
+    const end = evaluateSceneAt(scene, 120).get(mover.id);
+    expect(end?.rotation[1]).toBeCloseTo((Math.atan2(10, 5) * 180) / Math.PI, 6);
+  });
+
+  it('keeps a walking character upright', () => {
+    const { scene, mover } = sceneWithAim('self', 'character');
+    const state = evaluateSceneAt(scene, 0).get(mover.id);
+
+    // 人看人是转身，不是整个人前倾。俯仰留给机位。
+    expect(state?.rotation[1]).toBeCloseTo(0, 6);
+    expect(state?.rotation[0]).toBe(0);
+  });
+
+  it('falls back to the path tangent without an aim', () => {
+    const { scene, mover } = sceneWithAim(null);
+    // 没有「看向」时照旧沿切线：这条片段的两个点自己带了 0° 与 90°。
+    expect(evaluateSceneAt(scene, 120).get(mover.id)?.rotation[1]).toBeCloseTo(90, 6);
+  });
+
+  it('ignores an aim at an object that is gone', () => {
+    const { scene, mover } = sceneWithAim('ghost');
+    // 删对象不该顺手改别人的片段，所以悬空的「看向」会留在场上；此时退回切线朝向。
+    expect(evaluateSceneAt(scene, 120).get(mover.id)?.rotation[1]).toBeCloseTo(90, 6);
+  });
+
+  it('refuses to have an object aim at itself', () => {
+    const { scene, mover } = sceneWithAim(null);
+    scene.timeline.tracks[0]!.clips = [
+      { ...(scene.timeline.tracks[0]!.clips[0] as PrevizPathClip), aimObjectId: mover.id },
+    ];
+    // 自己看自己解不出方向，lookAtEulerDeg 会交出零朝向——那是个假的正前方。
+    expect(evaluateSceneAt(scene, 120).get(mover.id)?.rotation[1]).toBeCloseTo(90, 6);
   });
 });

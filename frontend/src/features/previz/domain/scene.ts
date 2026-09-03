@@ -146,6 +146,13 @@ export interface PrevizPathClip {
   startFrame: number;
   endFrame: number;
   points: PrevizPathPoint[];
+  /**
+   * 沿路走的时候始终看向谁。null / 缺省表示照常沿切线自动朝向。
+   *
+   * 可选而不是必填：`parseScene` 把片段原样透传，老场景里根本没有这个字段，
+   * 写成必填就是在类型上撒谎。
+   */
+  aimObjectId?: string | null;
 }
 
 export interface PrevizActionClip {

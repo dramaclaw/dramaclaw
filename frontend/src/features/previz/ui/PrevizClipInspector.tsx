@@ -216,6 +216,7 @@ export function PrevizClipInspector() {
   const removeKeyframe = usePrevizStore((state) => state.removeKeyframe);
   const clearPath = usePrevizStore((state) => state.clearPath);
   const setClipEnd = usePrevizStore((state) => state.setClipEnd);
+  const setClipAim = usePrevizStore((state) => state.setClipAim);
 
   const found = selectedClipId ? clipById(scene, selectedClipId) : undefined;
   const clip = found?.clip;
@@ -250,6 +251,21 @@ export function PrevizClipInspector() {
           onCommit={(next) => setClipEnd(clip.id, next)}
         />
       </div>
+
+      {isPathClip(clip) && (
+        <SelectField
+          label={t('previz.clip.aim')}
+          value={clip.aimObjectId ?? ''}
+          // 空串代表「不指定」：`null` 进不了 option 的 value，DOM 会把它变成字符串 "null"。
+          options={[
+            { value: '', label: t('previz.clip.aimNone') },
+            ...scene.objects
+              .filter((object) => object.id !== found.track.objectId)
+              .map((object) => ({ value: object.id, label: object.name })),
+          ]}
+          onCommit={(next) => setClipAim(clip.id, next === '' ? null : next)}
+        />
+      )}
 
       <div className="flex flex-wrap gap-1">
         <button

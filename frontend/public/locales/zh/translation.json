@@ -7648,6 +7648,8 @@
       "empty": "选中一个片段后在这里编辑",
       "startFrame": "起始帧",
       "endFrame": "结束帧",
+      "aim": "看向",
+      "aimNone": "不指定",
       "trimStart": "裁前到播放头",
       "trimEnd": "裁后到播放头",
       "insertPoint": "在播放头插点",

@@ -7648,6 +7648,8 @@
       "empty": "Select a clip to edit it here",
       "startFrame": "Start frame",
       "endFrame": "End frame",
+      "aim": "Look at",
+      "aimNone": "Nothing",
       "trimStart": "Trim head to playhead",
       "trimEnd": "Trim tail to playhead",
       "insertPoint": "Insert point at playhead",

@@ -30,6 +30,13 @@ function seed(): { clipId: string; pointId: string } {
   return { clipId: clip.id, pointId: clip.points[0].id };
 }
 
+/** 同 `seed`，但把对象的名字也交出来——「看向」下拉列的是名字。 */
+function seedNamed(): { objectId: string; clipId: string } {
+  const { clipId } = seed();
+  const objectId = usePrevizStore.getState().scene.timeline.tracks[0].objectId;
+  return { objectId, clipId };
+}
+
 function currentClip(): PrevizPathClip {
   return usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
 }
@@ -175,6 +182,31 @@ describe('PrevizClipInspector', () => {
     await user.click(screen.getByRole('button', { name: 'previz.clip.clearPoints' }));
 
     expect(currentClip().points).toHaveLength(0);
+  });
+
+  it('aims the path at another object', async () => {
+    const user = userEvent.setup();
+    seed();
+    const cameraId = usePrevizStore.getState().addObject('camera');
+    render(<PrevizClipInspector />);
+
+    await user.selectOptions(screen.getByLabelText('previz.clip.aim'), cameraId!);
+    expect(currentClip().aimObjectId).toBe(cameraId);
+
+    // 「不指定」是回到沿切线自动朝向，不是把朝向冻在最后看的那个方向上。
+    await user.selectOptions(screen.getByLabelText('previz.clip.aim'), '');
+    expect(currentClip().aimObjectId).toBeNull();
+  });
+
+  it('keeps the object itself out of its own aim list', () => {
+    const { objectId } = seedNamed();
+    render(<PrevizClipInspector />);
+
+    // 自己看自己解不出方向。列在下拉里等于摆一个选了没用的选项。
+    const options = Array.from(
+      screen.getByLabelText('previz.clip.aim').querySelectorAll('option'),
+    ).map((option) => option.value);
+    expect(options).not.toContain(objectId);
   });
 
   it('prompts to pick a keyframe when none is selected', () => {
