@@ -7,8 +7,51 @@ import {
   PREVIZ_OBJECT_BASE_NAME,
   createPrevizObject,
   nextObjectName,
+  PREVIZ_CHARACTER_COLORS,
 } from "@/features/previz/domain/objects";
-import type { PrevizObject, PrevizObjectKind } from "@/features/previz/domain/scene";
+import type {
+  PrevizCharacter,
+  PrevizObject,
+  PrevizObjectKind,
+} from "@/features/previz/domain/scene";
+
+describe("人物辨识色", () => {
+  it("hands each new character a colour nobody is using", () => {
+    const first = createPrevizObject("character", []);
+    const second = createPrevizObject("character", [first]);
+    const third = createPrevizObject("character", [first, second]);
+
+    // 所有人物共用同一份角色模型，站在场里长得一模一样。颜色是分清谁是谁最便宜的一刀。
+    expect(new Set([first.color, second.color, third.color]).size).toBe(3);
+    expect(PREVIZ_CHARACTER_COLORS).toContain(first.color);
+  });
+
+  it("takes back a colour its owner freed", () => {
+    const first = createPrevizObject("character", []);
+    const second = createPrevizObject("character", [first]);
+    // 删掉第一个人之后他那个颜色就空出来了，新人接着用——不然场上只有两个人，
+    // 颜色却已经排到第三个。
+    expect(createPrevizObject("character", [second]).color).toBe(first.color);
+  });
+
+  it("cycles the palette once every colour is taken", () => {
+    const crowd: PrevizObject[] = [];
+    for (let index = 0; index < PREVIZ_CHARACTER_COLORS.length; index += 1) {
+      crowd.push(createPrevizObject("character", crowd));
+    }
+    expect(new Set(crowd.map((character) => (character as PrevizCharacter).color)).size).toBe(
+      PREVIZ_CHARACTER_COLORS.length,
+    );
+    // 用满一轮之后从头再来一遍，而不是塌成同一个颜色或者交出 undefined。
+    expect(createPrevizObject("character", crowd).color).toBe(PREVIZ_CHARACTER_COLORS[0]);
+  });
+
+  it("leaves the other kinds without one", () => {
+    // 辨识色是人物的属性。灯光自己有发光色，机位与物件在场里本来就分得清。
+    expect(createPrevizObject("camera", [])).not.toHaveProperty("color");
+    expect(createPrevizObject("prop", [])).not.toHaveProperty("color");
+  });
+});
 
 describe("createPrevizObject", () => {
   it("gives every kind a unique id and the kind's default name", () => {

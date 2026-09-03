@@ -7566,6 +7566,7 @@
         "spot": "聚光"
       },
       "color": "颜色",
+      "markerColor": "辨识色",
       "intensity": "强度",
       "assetUrl": "模型地址"
     },
