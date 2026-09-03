@@ -169,9 +169,19 @@ export function PrevizLayerPanel({
                       selected ? "bg-white/[0.10] text-white" : "text-white/75 hover:bg-white/[0.05]",
                     )}
                   >
+                    {/*
+                      人物图标涂成自己的辨识色：全场人物共用同一份角色模型，这一列图标
+                      是名字之外唯一能一眼分清谁是谁的东西。另外三类没有辨识色，留在
+                      原来那层灰上——`text-white/45` 只在没有内联色时才写，两者同时给会
+                      让「灰」和「彩」谁赢取决于 Tailwind 的产出顺序。
+                    */}
                     <Icon
                       data-testid={`previz-layer-icon-${object.id}`}
-                      className="h-3.5 w-3.5 shrink-0 text-white/45"
+                      className={cn(
+                        "h-3.5 w-3.5 shrink-0",
+                        object.kind !== "character" && "text-white/45",
+                      )}
+                      style={object.kind === "character" ? { color: object.color } : undefined}
                     />
                     <span className="flex-1 truncate" title={object.name}>
                       {object.name}
