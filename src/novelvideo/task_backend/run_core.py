@@ -983,6 +983,20 @@ def run_project_task_core_sync(
                 # 5 个 runner 在自己函数体内另有绑定，嵌套安全（set/reset 成对）。
                 with model_gateway_scope_for_runner(envelope):
                     result = runner(envelope, ctx)
+                if task_type == "freezone_text_generate" and isinstance(result, dict):
+                    result = dict(result)
+                    result_reservation_id = str(
+                        result.pop("__feature_credit_reservation_id", "") or ""
+                    ).strip()
+                    if result_reservation_id:
+                        if (
+                            feature_reservation_id
+                            and feature_reservation_id != result_reservation_id
+                        ):
+                            raise RuntimeError(
+                                "text result produced a conflicting credit reservation"
+                            )
+                        feature_reservation_id = result_reservation_id
             except BaseException as exc:
                 from novelvideo.freezone.agent_product_operations import (
                     AgentProductSettlementPending,

@@ -428,28 +428,30 @@ def test_text_generation_settlement_uses_actual_delivered_output_chars(monkeypat
     from novelvideo.task_backend import run_core
     from novelvideo.task_backend.registry import register_project_task_runner
 
-    settlements: list[dict] = []
+    settlements: list[tuple[str, dict]] = []
 
     class UsageMeter:
         async def resolve_feature_credit_reservation(self, _identity):
             from novelvideo.ports.usage import FeatureSettlementResolution
 
             return FeatureSettlementResolution(
-                outcome="resolved",
-                reservation_id="reservation_text",
+                outcome="not_applicable",
                 feature_key="freezone.text_generate",
                 model_call_credit_policy="separate",
             )
 
         async def settle_feature_credit_reservation(
-            self, _reservation_id, *, action, metadata=None
+            self, reservation_id, *, action, metadata=None
         ):
             assert action == "confirm"
-            settlements.append(metadata or {})
+            settlements.append((reservation_id, metadata or {}))
             return {"decision": action}
 
     def fake_runner(_envelope, _ctx):
-        return {"generated_text": " 雨 夜\n重逢 "}
+        return {
+            "generated_text": " 雨 夜\n重逢 ",
+            "__feature_credit_reservation_id": "reservation_actual_text",
+        }
 
     async def fake_is_cancel_requested(**_kwargs):
         return False
@@ -473,7 +475,7 @@ def test_text_generation_settlement_uses_actual_delivered_output_chars(monkeypat
         _verified_delivery(
             task_type="freezone_text_generate",
             project_id="proj_text",
-            billing_metadata={"feature_credit_reservation_id": "reservation_text"},
+            billing_metadata=None,
         ),
         SimpleNamespace(
             project_id="proj_text", requester_user_id="usr_1", is_home_node=True
@@ -484,7 +486,9 @@ def test_text_generation_settlement_uses_actual_delivered_output_chars(monkeypat
 
     assert result == {"generated_text": " 雨 夜\n重逢 "}
     assert settlements == [
-        {
+        (
+            "reservation_actual_text",
+            {
             "source": "task_completed",
             "business_outcome": "delivered",
             "actual_billing": {
@@ -498,7 +502,8 @@ def test_text_generation_settlement_uses_actual_delivered_output_chars(monkeypat
                 },
                 "quantity_source": "trusted_runner_result",
             },
-        }
+            },
+        )
     ]
 
 

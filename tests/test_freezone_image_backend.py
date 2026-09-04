@@ -3919,11 +3919,19 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
         def update_progress_for_project(self, *_args, **_kwargs):
             return None
 
+    reservations: list[dict] = []
+
+    class FakeUsageMeter:
+        async def reserve_feature_start_credits(self, **kwargs):
+            reservations.append(kwargs)
+            return {"id": "reservation_actual_text"}
+
     monkeypatch.setattr(
         "novelvideo.freezone.text_node.generate_freezone_text",
         fake_generate_freezone_text,
     )
     monkeypatch.setattr(freezone_runner, "get_task_manager", lambda: FakeTaskManager())
+    monkeypatch.setattr(freezone_runner, "get_usage_meter", lambda: FakeUsageMeter())
 
     result = await freezone_runner._run_freezone_text_generate_async(
         {
@@ -3933,7 +3941,9 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
                 "prompt": "写一段雨夜重逢",
                 "canvas_id": "canvas_a",
                 "node_id": "node_text",
-            }
+            },
+            "billing_metadata": {"feature_key": "freezone.text_generate"},
+            "__run_task_id": "task_text_generate",
         },
         ctx,
     )
@@ -3950,6 +3960,9 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
         "pricing_quantity": 13,
         "quantity_source": "generated_text",
     }
+    assert result["__feature_credit_reservation_id"] == "reservation_actual_text"
+    assert reservations[0]["quantity"] == 13
+    assert reservations[0]["params"]["pricing_metrics"]["billable_chars"] == 13
     assert history[-1]["task_type"] == "freezone_text_generate"
     assert history[-1]["model"] == "DC-freezone-text-writer-LLM"
 
@@ -4184,7 +4197,7 @@ async def test_freezone_text_job_preserves_canvas_node_context_in_celery_payload
 
 
 @pytest.mark.asyncio
-async def test_freezone_text_generate_job_uses_visible_chars_for_billing(
+async def test_freezone_text_generate_job_defers_quantity_to_trusted_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4220,8 +4233,8 @@ async def test_freezone_text_generate_job_uses_visible_chars_for_billing(
     assert captured["payload"]["canvas_id"] == "canvas_a"
     assert captured["payload"]["node_id"] == "node_text"
     assert captured["payload"]["billing"] == {
-        "billable_chars": 7,
         "operation": "text_generate",
+        "quantity_source": "trusted_runner_result",
     }
 
 

@@ -7121,8 +7121,8 @@ async def freezone_text_generate(
                     "canvas_id": body.canvas_id or "",
                     "node_id": body.node_id or "",
                     "billing": {
-                        "billable_chars": count_billable_text_chars(prompt),
                         "operation": "text_generate",
+                        "quantity_source": "trusted_runner_result",
                     },
                 },
             )
