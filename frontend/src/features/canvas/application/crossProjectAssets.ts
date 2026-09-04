@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { uploadFreezoneImage } from '@/api/ops';
+import { copyFreezoneAssets } from '@/api/ops';
 import type { CanvasNodeData } from '@/features/canvas/domain/canvasNodes';
 
 /**
@@ -8,26 +8,38 @@ import type { CanvasNodeData } from '@/features/canvas/domain/canvasNodes';
  *
  * 画布的复制/粘贴只是深拷贝节点数据，媒体 URL（videoUrl / imageUrl / audioUrl …）
  * 原样保留，仍指向「源项目」的静态路径。粘贴到另一个项目后，这些资产并不属于
- * 目标项目（不进素材库、源项目一删即失效，视频尤其直接加载不出）。
+ * 目标项目（不进素材库、源项目一删即失效、非源项目成员打开直接 403）。
  *
- * 这里把粘贴进来的节点里的媒体资产 fetch 下来、重新上传到目标项目，再把节点数据里
- * 的 URL 静默改写成目标项目的新地址。后台执行、不阻塞粘贴；单条失败则保留原 URL。
+ * 这里把粘贴进来的节点里的媒体 URL 交给后端 `freezone/assets/copy`，由后端在服务端
+ * 把文件拷进目标项目（OSS 部署下是 CopyObject，字节不经过浏览器），再把节点数据里
+ * 的 URL 静默改写成目标项目的新地址。单条失败则保留原 URL。
  *
- * 识别策略：递归遍历节点数据，凡是 key 以 `Url` 结尾、值是「同源 /static 或 /api 媒体
- * 路径」的字符串就迁移。这样无需维护字段白名单，叠卡画册 / 分镜帧等嵌套结构也自动覆盖。
+ * 识别策略：递归遍历节点数据，凡是 key 以 `Url` 结尾、值是「同源 /static/projects/<pid>/…
+ * 或 /api/v1/projects/<pid>/media/… 路径」的字符串就迁移。这样无需维护字段白名单，
+ * 叠卡画册 / 分镜帧等嵌套结构也自动覆盖。
  */
 
-// 同时进行的上传数上限——视频可能几十 MB，无限并发会撑爆内存 / 触发后端限流。
-const MAX_CONCURRENT_UPLOADS = 4;
+// 单次请求最多带多少个 URL：后端一次请求上限 200，留余量，也让大批粘贴分批出结果。
+const COPY_BATCH_SIZE = 64;
+
+const STATIC_PROJECT_PREFIX = '/static/projects/';
+const MEDIA_PROJECT_RE = /^\/api\/v1\/projects\/([^/]+)\/media\/.+/;
+
+interface CopyableAsset {
+  /** 发给后端的同源路径（含查询串，后端按原字符串回映射）。 */
+  source: string;
+  /** URL 指向的项目 id（已解码）。 */
+  project: string;
+}
 
 /**
- * 把存储的原始 URL 归一化成「可直接 fetch 的同源地址」。
+ * 把存储的原始 URL 归一化成「后端能拷的同源项目路径」。
  *
  * 关键：**不**走 `resolveMediaUrl`——它会把 legacy `/static/<user>/<project>/…`
- * 按当前路由项目重锚定，从而读到目标项目里并不存在的文件。迁移要拿的是源项目的字节，
- * 因此直接用存储路径打到 `/static`（代理按路径直供，与「当前项目」无关）。
+ * 按当前路由项目重锚定。这里只认带项目 id 的 canonical 形式；legacy 形式后端已经
+ * 410，也没法按项目授权，直接不收。
  */
-function toFetchableAssetUrl(raw: string): string | null {
+function toCopyableAsset(raw: string): CopyableAsset | null {
   const trimmed = raw.trim();
   if (!trimmed) {
     return null;
@@ -50,38 +62,35 @@ function toFetchableAssetUrl(raw: string): string | null {
   if (typeof window !== 'undefined' && parsed.origin !== window.location.origin) {
     return null;
   }
-  if (!parsed.pathname.startsWith('/static/') && !parsed.pathname.startsWith('/api/')) {
+  const project = projectIdFromPath(parsed.pathname);
+  if (!project) {
     return null;
   }
-  return parsed.origin + parsed.pathname + parsed.search;
+  return { source: parsed.pathname + parsed.search, project };
 }
 
-function filenameFromUrl(fetchUrl: string): string {
+function projectIdFromPath(pathname: string): string | null {
+  let encoded: string | null = null;
+  if (pathname.startsWith(STATIC_PROJECT_PREFIX)) {
+    const rest = pathname.slice(STATIC_PROJECT_PREFIX.length);
+    const slash = rest.indexOf('/');
+    if (slash > 0 && slash < rest.length - 1) {
+      encoded = rest.slice(0, slash);
+    }
+  } else {
+    const match = MEDIA_PROJECT_RE.exec(pathname);
+    if (match) {
+      encoded = match[1];
+    }
+  }
+  if (!encoded) {
+    return null;
+  }
   try {
-    const parsed = new URL(fetchUrl);
-    const base = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() ?? '');
-    return base || 'pasted-asset';
+    return decodeURIComponent(encoded) || null;
   } catch {
-    return 'pasted-asset';
+    return null;
   }
-}
-
-async function uploadAssetToProject(rawUrl: string, targetProject: string): Promise<string> {
-  const fetchUrl = toFetchableAssetUrl(rawUrl);
-  if (!fetchUrl) {
-    return rawUrl;
-  }
-  const response = await fetch(fetchUrl, { credentials: 'include' });
-  if (!response.ok) {
-    throw new Error(`fetch source asset failed: ${response.status}`);
-  }
-  const blob = await response.blob();
-  // 与图片同一个 /freezone/upload 接口，后端按通用 blob 处理；timeoutMs:false 关掉
-  // ky 默认 30s 超时，避免大视频上传被中断。
-  const uploaded = await uploadFreezoneImage(targetProject, blob, filenameFromUrl(fetchUrl), {
-    timeoutMs: false,
-  });
-  return uploaded.url;
 }
 
 interface RemapResult {
@@ -89,23 +98,31 @@ interface RemapResult {
   changed: boolean;
 }
 
-/** 收集一份节点数据里所有「可迁移」的媒体资产 URL（key 以 Url 结尾、值是同源静态资产）。 */
-function collectAssetUrls(value: unknown, out: Set<string>): void {
+/**
+ * 收集一份节点数据里所有「可迁移」的媒体资产（key 以 Url 结尾、值是别的项目的同源
+ * 静态资产）。返回 原始字符串 → 归一化后的同源路径。
+ */
+function collectAssetUrls(value: unknown, targetProject: string, out: Map<string, string>): void {
   if (Array.isArray(value)) {
     for (const item of value) {
-      collectAssetUrls(item, out);
+      collectAssetUrls(item, targetProject, out);
     }
     return;
   }
   if (value && typeof value === 'object') {
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
       if (typeof child === 'string' && /url$/i.test(key)) {
-        if (toFetchableAssetUrl(child)) {
-          out.add(child);
+        if (out.has(child)) {
+          continue;
+        }
+        const asset = toCopyableAsset(child);
+        // 本来就属于目标项目的 URL 不用动。
+        if (asset && asset.project !== targetProject) {
+          out.set(child, asset.source);
         }
         continue;
       }
-      collectAssetUrls(child, out);
+      collectAssetUrls(child, targetProject, out);
     }
   }
 }
@@ -149,32 +166,47 @@ function remapAssetUrls(value: unknown, urlMap: Map<string, string>): RemapResul
   return { value, changed: false };
 }
 
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    out.push(items.slice(index, index + size));
+  }
+  return out;
+}
+
 /**
- * 并发上限调度器：最多 `max` 个上传同时进行，其余排队。避免一次粘贴大量媒体节点时
- * 瞬间发起几十上百个 fetch+上传请求，撑爆内存 / 触发后端限流。
+ * 分批让后端拷贝，返回 归一化路径 → 新 URL 的映射，以及失败的归一化路径集合。
+ * 一批整体失败（网络 / 5xx）时，这一批的所有路径都算失败，其它批不受影响。
  */
-function createUploadLimiter(max: number): <T>(task: () => Promise<T>) => Promise<T> {
-  let active = 0;
-  const queue: Array<() => void> = [];
-  const release = () => {
-    active -= 1;
-    const run = queue.shift();
-    if (run) {
-      run();
-    }
-  };
-  return <T>(task: () => Promise<T>): Promise<T> =>
-    new Promise<T>((resolve, reject) => {
-      const start = () => {
-        active += 1;
-        task().then(resolve, reject).finally(release);
-      };
-      if (active < max) {
-        start();
-      } else {
-        queue.push(start);
+async function copyAssetsInBatches(
+  targetProject: string,
+  sources: string[],
+): Promise<{ mapping: Map<string, string>; failed: Set<string> }> {
+  const mapping = new Map<string, string>();
+  const failed = new Set<string>();
+  for (const batch of chunk(sources, COPY_BATCH_SIZE)) {
+    try {
+      const result = await copyFreezoneAssets(targetProject, batch);
+      for (const [source, newUrl] of Object.entries(result.mapping ?? {})) {
+        if (typeof newUrl === 'string' && newUrl && newUrl !== source) {
+          mapping.set(source, newUrl);
+        }
       }
-    });
+      for (const item of result.failed ?? []) {
+        failed.add(item.source);
+        console.warn('[cross-project-assets] copy failed, keeping original', item);
+      }
+    } catch (error) {
+      for (const source of batch) {
+        failed.add(source);
+      }
+      console.warn('[cross-project-assets] copy request failed, keeping originals', {
+        count: batch.length,
+        error,
+      });
+    }
+  }
+  return { mapping, failed };
 }
 
 export interface PastedNodeForMigration {
@@ -192,10 +224,10 @@ export interface AssetMigrationSummary {
 /**
  * 把一组刚粘贴进来的节点里的媒体资产迁移到 `targetProject`。
  *
- * 分三步：(1) 从粘贴快照里收集去重的资产 URL；(2) 限并发地 fetch+重新上传，得到
- * 旧→新 URL 映射；(3) 用 `getLiveNodeData` 读取**当前**节点数据（而非粘贴时的快照）做
- * 纯改写——这样上传期间用户对节点的编辑（改 URL、往画册加卡片等）不会被旧快照覆盖；
- * 节点若已被删除 / 切走项目则跳过。相同 URL 只上传一次。
+ * 分三步：(1) 从粘贴快照里收集去重的资产 URL；(2) 分批交给后端拷贝，得到旧→新 URL
+ * 映射；(3) 用 `getLiveNodeData` 读取**当前**节点数据（而非粘贴时的快照）做纯改写——
+ * 这样拷贝期间用户对节点的编辑（改 URL、往画册加卡片等）不会被旧快照覆盖；节点若已
+ * 被删除 / 切走项目则跳过。相同 URL 只拷一次。
  */
 export async function migratePastedNodeAssets(params: {
   nodes: PastedNodeForMigration[];
@@ -205,40 +237,32 @@ export async function migratePastedNodeAssets(params: {
 }): Promise<AssetMigrationSummary> {
   const { nodes, targetProject, getLiveNodeData, updateNodeData } = params;
 
-  // 1. 从快照收集去重的可迁移资产 URL。
-  const urls = new Set<string>();
+  // 1. 从快照收集去重的可迁移资产 URL（原始字符串 → 归一化路径）。
+  const rawToSource = new Map<string, string>();
   for (const { data } of nodes) {
-    collectAssetUrls(data, urls);
+    collectAssetUrls(data, targetProject, rawToSource);
   }
-  if (urls.size === 0) {
+  if (rawToSource.size === 0) {
     return { migrated: 0, failed: 0 };
   }
 
-  // 2. 限并发 fetch + 重新上传到目标项目，构建旧→新 URL 映射。
-  const limit = createUploadLimiter(MAX_CONCURRENT_UPLOADS);
+  // 2. 分批让后端拷贝，构建 原始字符串 → 新 URL 的映射。
+  const sources = [...new Set(rawToSource.values())];
+  const { mapping, failed: failedSources } = await copyAssetsInBatches(targetProject, sources);
   const urlMap = new Map<string, string>();
-  let migrated = 0;
-  let failed = 0;
-  await Promise.all(
-    [...urls].map((url) =>
-      limit(() => uploadAssetToProject(url, targetProject))
-        .then((newUrl) => {
-          if (newUrl !== url) {
-            urlMap.set(url, newUrl);
-            migrated += 1;
-          }
-        })
-        .catch((error) => {
-          failed += 1;
-          console.warn('[cross-project-assets] migrate failed, keeping original', { url, error });
-        }),
-    ),
-  );
+  for (const [raw, source] of rawToSource) {
+    const newUrl = mapping.get(source);
+    if (newUrl) {
+      urlMap.set(raw, newUrl);
+    }
+  }
+  const migrated = mapping.size;
+  const failed = failedSources.size;
   if (urlMap.size === 0) {
     return { migrated, failed };
   }
 
-  // 3. 用「当前」节点数据做纯改写，避免覆盖上传期间用户的并发编辑；节点已不在则跳过。
+  // 3. 用「当前」节点数据做纯改写，避免覆盖拷贝期间用户的并发编辑；节点已不在则跳过。
   for (const { id } of nodes) {
     const liveData = getLiveNodeData(id);
     if (!liveData) {

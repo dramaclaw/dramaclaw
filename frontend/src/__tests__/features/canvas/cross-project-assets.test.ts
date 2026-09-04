@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { migratePastedNodeAssets } from '@/features/canvas/application/crossProjectAssets';
 import type { CanvasNodeData } from '@/features/canvas/domain/canvasNodes';
 
-const uploadFreezoneImage = vi.hoisted(() => vi.fn());
+const copyFreezoneAssets = vi.hoisted(() => vi.fn());
 
 vi.mock('@/api/ops', () => ({
-  uploadFreezoneImage,
+  copyFreezoneAssets,
 }));
 
 function asData(value: Record<string, unknown>): CanvasNodeData {
@@ -20,24 +20,23 @@ function liveFrom(nodes: Array<{ id: string; data: CanvasNodeData }>) {
   return (id: string) => nodes.find((node) => node.id === id)?.data ?? null;
 }
 
+function basename(url: string): string {
+  return url.split('?')[0].split('/').pop() ?? url;
+}
+
 describe('migratePastedNodeAssets', () => {
   beforeEach(() => {
-    uploadFreezoneImage.mockReset();
-    // Each upload returns a new-project URL derived from the source filename.
-    uploadFreezoneImage.mockImplementation(async (project: string, _blob: Blob, filename: string) => ({
-      url: `/static/projects/${project}/videos/${filename}`,
+    copyFreezoneAssets.mockReset();
+    // The backend copies every source it can and answers with old → new URL pairs.
+    copyFreezoneAssets.mockImplementation(async (project: string, sources: string[]) => ({
+      mapping: Object.fromEntries(
+        sources.map((source) => [source, `/static/projects/${project}/freezone/_uploads/${basename(source)}`]),
+      ),
+      failed: [],
     }));
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({ ok: true, blob: async () => new Blob(['x']) })),
-    );
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('re-uploads source-project media and rewrites URLs, incl. nested arrays', async () => {
+  it('asks the backend to copy source-project media and rewrites URLs, incl. nested arrays', async () => {
     const updates: Array<{ id: string; patch: Partial<CanvasNodeData> }> = [];
     const nodes = [
       {
@@ -66,20 +65,27 @@ describe('migratePastedNodeAssets', () => {
 
     expect(summary.failed).toBe(0);
     expect(summary.migrated).toBe(3); // clip.mp4 + a.png + b.png (deduped per URL)
+    // One round trip, no fetch/upload of the bytes through the browser.
+    expect(copyFreezoneAssets).toHaveBeenCalledTimes(1);
+    expect(copyFreezoneAssets).toHaveBeenCalledWith('projB', [
+      '/static/projects/projA/videos/clip.mp4',
+      '/static/projects/projA/images/a.png',
+      '/static/projects/projA/images/b.png',
+    ]);
     expect(updates).toHaveLength(1);
 
     const patch = updates[0].patch as Record<string, unknown>;
-    expect(patch.videoUrl).toBe('/static/projects/projB/videos/clip.mp4');
+    expect(patch.videoUrl).toBe('/static/projects/projB/freezone/_uploads/clip.mp4');
     expect(patch.album).toEqual([
-      { imageUrl: '/static/projects/projB/videos/a.png' },
-      { imageUrl: '/static/projects/projB/videos/b.png' },
+      { imageUrl: '/static/projects/projB/freezone/_uploads/a.png' },
+      { imageUrl: '/static/projects/projB/freezone/_uploads/b.png' },
     ]);
     // Untouched fields are not part of the patch.
     expect('externalUrl' in patch).toBe(false);
     expect('label' in patch).toBe(false);
   });
 
-  it('uploads each unique asset only once', async () => {
+  it('sends each unique asset URL only once', async () => {
     const reused = '/static/projects/projA/images/shared.png';
     const nodes = [
       { id: 'n1', data: asData({ imageUrl: reused, previewImageUrl: reused }) },
@@ -91,11 +97,33 @@ describe('migratePastedNodeAssets', () => {
       getLiveNodeData: liveFrom(nodes),
       updateNodeData: () => undefined,
     });
-    expect(uploadFreezoneImage).toHaveBeenCalledTimes(1);
+    expect(copyFreezoneAssets).toHaveBeenCalledTimes(1);
+    expect(copyFreezoneAssets).toHaveBeenCalledWith('projB', [reused]);
   });
 
-  it('keeps the original URL and counts failures when upload fails', async () => {
-    uploadFreezoneImage.mockRejectedValue(new Error('boom'));
+  it('splits large batches into several requests', async () => {
+    const nodes = Array.from({ length: 150 }, (_, index) => ({
+      id: `n${index}`,
+      data: asData({ imageUrl: `/static/projects/projA/images/${index}.png` }),
+    }));
+    const summary = await migratePastedNodeAssets({
+      nodes,
+      targetProject: 'projB',
+      getLiveNodeData: liveFrom(nodes),
+      updateNodeData: () => undefined,
+    });
+    expect(summary.migrated).toBe(150);
+    expect(copyFreezoneAssets.mock.calls.length).toBeGreaterThan(1);
+    for (const [, sources] of copyFreezoneAssets.mock.calls) {
+      expect((sources as string[]).length).toBeLessThanOrEqual(64);
+    }
+  });
+
+  it('keeps the original URL and counts failures the backend reports', async () => {
+    copyFreezoneAssets.mockResolvedValue({
+      mapping: {},
+      failed: [{ source: '/static/projects/projA/videos/clip.mp4', reason: 'forbidden' }],
+    });
     const updates: Array<{ id: string; patch: Partial<CanvasNodeData> }> = [];
 
     const nodes = [
@@ -112,6 +140,25 @@ describe('migratePastedNodeAssets', () => {
     expect(summary.migrated).toBe(0);
     // No rewrite => no updateNodeData call (URL stays pointing at the source).
     expect(updates).toHaveLength(0);
+  });
+
+  it('counts every URL of a failed request and still applies the requests that succeeded', async () => {
+    copyFreezoneAssets
+      .mockImplementationOnce(async () => {
+        throw new Error('boom');
+      });
+    const nodes = [
+      { id: 'n1', data: asData({ imageUrl: '/static/projects/projA/images/a.png' }) },
+      { id: 'n2', data: asData({ imageUrl: '/static/projects/projA/images/b.png' }) },
+    ];
+    const summary = await migratePastedNodeAssets({
+      nodes,
+      targetProject: 'projB',
+      getLiveNodeData: liveFrom(nodes),
+      updateNodeData: () => undefined,
+    });
+    expect(summary.failed).toBe(2);
+    expect(summary.migrated).toBe(0);
   });
 
   it('rewrites the LIVE node data, preserving concurrent user edits and skipping vanished nodes', async () => {
@@ -136,14 +183,14 @@ describe('migratePastedNodeAssets', () => {
       updateNodeData: (id, patch) => updates.push({ id, patch }),
     });
 
-    // Both snapshot assets were uploaded...
+    // Both snapshot assets were copied...
     expect(summary.migrated).toBe(2);
     expect(summary.failed).toBe(0);
     // ...but only the still-present node n1 is patched (n2 is gone -> skipped).
     expect(updates).toHaveLength(1);
     expect(updates[0].id).toBe('n1');
     const patch = updates[0].patch as Record<string, unknown>;
-    expect(patch.videoUrl).toBe('/static/projects/projB/videos/clip.mp4');
+    expect(patch.videoUrl).toBe('/static/projects/projB/freezone/_uploads/clip.mp4');
     // The user's later album edit is untouched (not in the migration map, not clobbered).
     expect('album' in patch).toBe(false);
   });

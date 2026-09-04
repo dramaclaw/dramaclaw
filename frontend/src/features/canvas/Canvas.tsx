@@ -149,6 +149,7 @@ import {
   type SnapAlignDragSession,
 } from './snap-align/resolveSnapAlignDrag';
 import { computeAutoLayout } from './application/autoLayout';
+import { holdCanvasAutosave } from '@/features/freezone/canvasAutosaveHold';
 import { migratePastedNodeAssets } from './application/crossProjectAssets';
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
@@ -3483,6 +3484,16 @@ export function Canvas({
       const idMap = new Map<string, string>();
       const sizeMap = new Map<string, { width: number; height: number }>();
       const pastedForMigration: Array<{ id: string; data: CanvasNodeData }> = [];
+      // 跨项目粘贴（来自序列化剪贴板且源项目 ≠ 当前项目）：在往 store 里加节点**之前**
+      // 先 hold 住当前项目的自动保存，否则 800ms 后那次 PUT 会把源项目的媒体 URL 先
+      // 落库一次；素材拷完、URL 改写后（或迁移失败）再 release，由 useCanvasSync 补存。
+      const sourceProject = snapshot?.sourceProject ?? null;
+      const currentProject = readUrl().project ?? null;
+      const migrationTarget =
+        sourceProject && currentProject && sourceProject !== currentProject
+          ? currentProject
+          : null;
+      const releaseAutosaveHold = migrationTarget ? holdCanvasAutosave(migrationTarget) : null;
       for (const sourceNode of sourceNodes) {
         const data = cloneNodeData(sourceNode.data);
         if ('isGenerating' in (data as Record<string, unknown>)) {
@@ -3587,20 +3598,13 @@ export function Canvas({
         scheduleCanvasPersist(0);
       }
 
-      // 跨项目粘贴：把节点里指向「源项目」的媒体资产重新上传到当前项目，完成后静默
-      // 改写 URL。后台执行、不阻塞粘贴；单条失败保留原 URL 并提示。仅当来自序列化
-      // 剪贴板（paste）且源项目与当前项目不同才触发——同项目复制/副本无需迁移。
-      const sourceProject = snapshot?.sourceProject ?? null;
-      const currentProject = readUrl().project ?? null;
-      if (
-        sourceProject
-        && currentProject
-        && sourceProject !== currentProject
-        && pastedForMigration.length > 0
-      ) {
+      // 跨项目粘贴：让后端把节点里指向「源项目」的媒体资产拷进当前项目，完成后静默
+      // 改写 URL。后台执行、不阻塞粘贴；单条失败保留原 URL 并提示。无论成败都要
+      // release 上面的自动保存 hold。
+      if (migrationTarget && pastedForMigration.length > 0) {
         void migratePastedNodeAssets({
           nodes: pastedForMigration,
-          targetProject: currentProject,
+          targetProject: migrationTarget,
           getLiveNodeData: (nodeId) =>
             useCanvasStore.getState().nodes.find((node) => node.id === nodeId)?.data ?? null,
           updateNodeData,
@@ -3617,7 +3621,12 @@ export function Canvas({
           })
           .catch((error) => {
             console.warn('[canvas] cross-project asset migration failed', error);
+          })
+          .finally(() => {
+            releaseAutosaveHold?.();
           });
+      } else {
+        releaseAutosaveHold?.();
       }
 
       return { firstNodeId, idMap };
