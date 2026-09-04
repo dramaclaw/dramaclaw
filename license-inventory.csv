@@ -1957,6 +1957,7 @@ src/novelvideo/generators/wan2-2-I2V-LightX2V.json,Elastic-2.0,2026 SuperTale co
 src/novelvideo/graph_preview.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/identity_prerequisites.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/image_request_usage.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/i18n_message.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/knowledge_pipeline.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/llm_instrumentation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/manual_shots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
