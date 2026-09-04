@@ -1405,7 +1405,8 @@
       "all": "All",
       "earned": "Earned",
       "spent": "Spent",
-      "refunded": "Refunded"
+      "refunded": "Refunded",
+      "pending": "Pending"
     },
     "status": {
       "pending": "Pending",
@@ -1430,7 +1431,261 @@
       "active": "Promotion",
       "discount": "{{percentOff}}% off",
       "limitedDiscount": "{{percentOff}}% off, limited time"
+    },
+    "recharge": {
+      "title": "Add credits",
+      "subtitle": "Choose a package and payment method. The order status is the source of truth.",
+      "loading": "Loading recharge packages…",
+      "unavailable": "Recharge is temporarily unavailable",
+      "empty": "No recharge packages are currently available",
+      "credits": "{{count}} credits",
+      "gift": "includes {{count}} bonus",
+      "paymentMethod": "Payment method",
+      "methods": {
+        "alipay": "Alipay",
+        "wxpay": "WeChat Pay"
+      },
+      "pay": "Pay now",
+      "creating": "Creating order…",
+      "createFailed": "Could not create the payment order. Try again later.",
+      "errors": {
+        "tooManyPending": "You already have several unpaid orders. Complete or wait for them to close before trying again.",
+        "packageUnavailable": "This recharge package is no longer available. Refresh and choose another package.",
+        "purchaseLimit": "This recharge package has already reached its purchase limit.",
+        "methodUnavailable": "The selected payment method is currently unavailable.",
+        "orgCreditsInsufficient": "The organization does not have enough credits for this purchase.",
+        "accountUnavailable": "This account is not eligible for the selected recharge.",
+        "linkUnavailable": "This recharge link is expired, disabled, or does not belong to this account.",
+        "requestChanged": "The recharge configuration changed. Refresh and submit the order again.",
+        "serviceUnavailable": "The payment service is temporarily unavailable. Try again later."
+      },
+      "orderAlreadyCreated": "This order already exists. Check its status in recharge history.",
+      "history": "Recharge history",
+      "loadingOrders": "Loading recharge history…",
+      "noOrders": "No recharge orders yet",
+      "columns": {
+        "billId": "Bill number",
+        "transactionTime": "Transaction time",
+        "content": "Description",
+        "time": "Created",
+        "package": "Package",
+        "amount": "Amount",
+        "credits": "Credits",
+        "status": "Status"
+      },
+      "status": {
+        "pending": "Pending payment",
+        "paid": "Paid, crediting",
+        "credited": "Credited",
+        "failed": "Payment failed",
+        "expired": "Expired",
+        "closed": "Closed",
+        "refunded": "Refunded",
+        "manualReview": "Manual review required",
+        "creditFailed": "Crediting exception"
+      }
+    },
+    "centerModal": {
+      "account": "Credit account",
+      "groups": {
+        "recharge": "Credits",
+        "account": "Benefits and billing",
+        "support": "Help and support"
+      },
+      "tabs": {
+        "packages": "Credit packages",
+        "custom": "Custom recharge",
+        "benefits": "My benefits",
+        "orders": "Billing history",
+        "usage": "Usage dashboard",
+        "help": "Recharge help"
+      },
+      "descriptions": {
+        "packages": "Purchase credit packages with no expiration date.",
+        "custom": "Choose the number of credits you need.",
+        "benefits": "Review promotions and benefits available to this account.",
+        "orders": "Review recharge, fulfillment, refund, and exception records.",
+        "usage": "Review earned credits, spending, and recent usage.",
+        "help": "Learn about fulfillment, validity, and refund rules."
+      },
+      "firstPurchase": "New customer",
+      "mostPopular": "Most popular",
+      "oneTimePurchase": "One-time purchase · Credits never expire",
+      "baseCredits": "Base credits",
+      "giftCredits": "Bonus credits",
+      "totalCredits": "Credits received",
+      "buyNow": "Buy now",
+      "packagesUnavailable": "No recharge packages are currently available",
+      "pendingConfiguration": "Pending setup",
+      "packageViews": {
+        "packages": "Credit packages",
+        "enterprise": "Enterprise"
+      },
+      "packageTiers": {
+        "choose": "Choose a {{tier}} purchase option",
+        "starter": {
+          "description": "For your first AI creation projects",
+          "note": "Limited to one purchase per account"
+        },
+        "pro": {
+          "description": "For ongoing creation and short-form projects",
+          "note": "From experiments to consistent production"
+        },
+        "plus": {
+          "description": "For teams and collaborative workflows",
+          "note": "Built for team-based project production"
+        },
+        "max": {
+          "description": "For high-volume production and delivery",
+          "note": "Built for serialized production at scale"
+        }
+      },
+      "enterprise": {
+        "headline": "Give ambitious creative visions the power to grow and reach the screen with confidence.",
+        "subtitle": "Enterprise collaboration and tailored solutions",
+        "benefitsTitle": "Custom solution",
+        "contact": "Contact sales",
+        "benefits": {
+          "quota": "Custom image, video, and character quotas",
+          "priority": "Dedicated highest-priority queue",
+          "templates": "Enterprise template customization",
+          "security": "Layered data security safeguards",
+          "support": "Dedicated service and rapid response"
+        }
+      },
+      "chooseCredits": "Choose credit amount",
+      "customCredits": "Credit amount",
+      "orderSummary": "Recharge summary",
+      "exchangeRate": "Current exchange rate",
+      "amountDue": "Amount due",
+      "rechargeNow": "Recharge now",
+      "noBenefits": "No benefits are currently available",
+      "usage": {
+        "totalSpent": "Total credits spent",
+        "dailyPeak": "Daily peak",
+        "weeklyAverage": "Average per sampled week",
+        "activeDays": "Active days",
+        "longestStreak": "Longest active streak",
+        "activity": "Credit activity",
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "cumulative": "Cumulative",
+        "sampled": "Most recent {{count}} records",
+        "noRecords": "No credit records match these filters",
+        "recordCount": "{{count}} records",
+        "page": "Page {{page}} of {{total}}",
+        "previousPage": "Previous page",
+        "nextPage": "Next page"
+      },
+      "help": {
+        "arrival": {
+          "question": "When will my credits arrive?",
+          "answer": "Credits are fulfilled automatically after the payment provider confirms success. Track progress in billing history."
+        },
+        "validity": {
+          "question": "Do purchased credits expire?",
+          "answer": "Purchased credits currently do not expire. Promotional bonus credits follow the applicable campaign terms."
+        },
+        "refund": {
+          "question": "Can a recharge order be refunded?",
+          "answer": "Refunds are reviewed against usage and platform rules. Credits that have already been consumed cannot be refunded twice."
+        }
+      },
+      "customUnavailable": "Custom credit recharge is not available for this account"
     }
+  },
+  "checkout": {
+    "account": "Current account",
+    "loading": "Preparing secure checkout…",
+    "invalidTitle": "Checkout session expired",
+    "invalidDescription": "Return to the credit center and choose your recharge again.",
+    "subjectMismatch": "The selected package does not match the account that will receive the credits. Return and refresh the available packages.",
+    "back": "Back",
+    "amountDue": "Total due",
+    "orderSummary": "Order summary",
+    "customRecharge": "Custom credit recharge",
+    "quantity": "Quantity {{count}}",
+    "rechargeSubject": "Recharge account",
+    "personalCredits": "Recharge personal credits",
+    "orgCredits": "Recharge organization credits",
+    "paymentMethod": "Payment method",
+    "securePayment": "Transaction details are submitted over a secure connection",
+    "continue": "Continue to payment",
+    "paymentPending": "Awaiting payment · {{time}} remaining",
+    "paymentClosing": "Payment time ended. Confirming the final order status",
+    "paymentClosed": "Order closed",
+    "paymentFailed": "Payment failed. Return and start a new recharge",
+    "viewResult": "View payment result",
+    "restart": "Choose another recharge",
+    "creating": "Creating payment session…",
+    "footerSecurity": "Server notifications are the source of truth for payment status",
+    "customPending": "Custom recharge is waiting for backend support",
+    "leaveTitle": "Leave checkout or continue?",
+    "leaveDescription": "You will return to the credit center and your current selection will be preserved.",
+    "leave": "Leave",
+    "stay": "Continue"
+  },
+  "paymentReturn": {
+    "back": "Back to DramaClaw",
+    "returnButton": "Back to DramaClaw",
+    "orderNumber": "Merchant order number",
+    "retry": "Check again",
+    "states": {
+      "confirming": {
+        "title": "Confirming payment",
+        "description": "The provider notification may take a moment. Do not pay again. This page will show the final fulfillment status once confirmed."
+      },
+      "credited": {
+        "title": "Credits added",
+        "description": "Both payment and credit fulfillment have been confirmed by the server. You can return to DramaClaw."
+      },
+      "closed": {
+        "title": "Order closed",
+        "description": "The payment window expired or the provider closed this order. No credits will be added. You can return and start a new recharge."
+      },
+      "failed": {
+        "title": "Payment not completed",
+        "description": "The payment provider reported a definitive failure. No credits will be added. You can return and start a new recharge."
+      },
+      "fulfillment_failed": {
+        "title": "Payment received, fulfillment pending",
+        "description": "Payment was received but credit fulfillment needs attention. Do not pay again. Track progress in billing history."
+      },
+      "manual_review": {
+        "title": "Order requires review",
+        "description": "The provider refund and credit reversal are not both confirmed. Do not pay again; the billing record will show the reviewed outcome."
+      },
+      "refunded": {
+        "title": "Order refunded",
+        "description": "This order is being refunded or reversed. Billing history remains the source of truth."
+      },
+      "unavailable": {
+        "title": "Payment result unavailable",
+        "description": "This will not cause a duplicate charge. Try again later or check billing history."
+      }
+    }
+  },
+  "rechargeLink": {
+    "title": "Recharge credits",
+    "subtitle": "Choose a recharge package and payment method.",
+    "checking": "Checking your account…",
+    "loading": "Loading recharge packages…",
+    "loginTitle": "Sign in to continue",
+    "loginRequired": "This recharge link is bound to an account or organization. Sign in with the intended account before paying.",
+    "login": "Sign in",
+    "invalidTitle": "Invalid recharge link",
+    "invalid": "The recharge token is missing or malformed. Ask the issuer for a new link.",
+    "unavailableTitle": "Recharge link unavailable",
+    "unavailable": "This link has expired, was disabled, does not belong to this account, or has no active package.",
+    "credits": "{{count}} credits",
+    "methods": {
+      "alipay": "Alipay",
+      "wxpay": "WeChat Pay"
+    },
+    "pay": "Pay now",
+    "creating": "Creating order…",
+    "createFailed": "Could not create the payment order. Try again later.",
+    "orderAlreadyCreated": "This order already exists. Check your recharge history."
   },
   "nav": {
     "home": "Home",

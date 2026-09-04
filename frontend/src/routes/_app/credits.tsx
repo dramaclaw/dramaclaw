@@ -9,6 +9,7 @@ import {
   formatCreditPromotionLabel,
   CreditSparkIcon,
 } from "@/components/credits/credit-visual";
+import { RechargePanel } from "@/components/credits/RechargePanel";
 import {
   Select,
   SelectContent,
@@ -369,6 +370,8 @@ export function CreditsPage() {
           </p>
         ) : null}
       </section>
+
+      <RechargePanel />
 
       {promotions.length > 0 ? (
         <section className={cn(PANEL, "mx-auto w-full max-w-6xl")}>

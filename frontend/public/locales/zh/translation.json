@@ -1405,7 +1405,8 @@
       "all": "全部",
       "earned": "已获得",
       "spent": "已消费",
-      "refunded": "已退款"
+      "refunded": "已退款",
+      "pending": "预扣中"
     },
     "status": {
       "pending": "预扣中",
@@ -1430,7 +1431,261 @@
       "active": "促销中",
       "discount": "{{discount}} 折优惠",
       "limitedDiscount": "限时 {{discount}} 折"
+    },
+    "recharge": {
+      "title": "在线充值",
+      "subtitle": "选择充值档位和支付方式，支付结果以订单到账状态为准。",
+      "loading": "正在加载充值档位…",
+      "unavailable": "充值服务暂时无法使用",
+      "empty": "当前没有可用的充值档位",
+      "credits": "到账 {{count}} 积分",
+      "gift": "含赠送 {{count}}",
+      "paymentMethod": "支付方式",
+      "methods": {
+        "alipay": "支付宝",
+        "wxpay": "微信支付"
+      },
+      "pay": "立即支付",
+      "creating": "正在创建订单…",
+      "createFailed": "支付订单创建失败，请稍后重试",
+      "errors": {
+        "tooManyPending": "当前已有多笔待支付订单，请先完成支付或等待订单关闭后再试",
+        "packageUnavailable": "该充值套餐已不可用，请刷新后选择其他套餐",
+        "purchaseLimit": "该充值套餐已达到购买次数限制",
+        "methodUnavailable": "当前无法使用所选支付方式",
+        "orgCreditsInsufficient": "组织积分不足，无法完成本次购买",
+        "accountUnavailable": "当前账号不符合该充值方式的使用条件",
+        "linkUnavailable": "充值链接已过期、被停用或不属于当前账号",
+        "requestChanged": "充值配置已更新，请刷新后重新提交订单",
+        "serviceUnavailable": "支付服务暂时不可用，请稍后重试"
+      },
+      "orderAlreadyCreated": "该订单已经创建，请在充值记录中查看状态",
+      "history": "充值记录",
+      "loadingOrders": "正在加载充值记录…",
+      "noOrders": "暂无充值记录",
+      "columns": {
+        "billId": "账单号",
+        "transactionTime": "交易时间",
+        "content": "消费内容",
+        "time": "创建时间",
+        "package": "充值档位",
+        "amount": "支付金额",
+        "credits": "到账积分",
+        "status": "状态"
+      },
+      "status": {
+        "pending": "待支付",
+        "paid": "已支付，到账处理中",
+        "credited": "已到账",
+        "failed": "支付失败",
+        "expired": "已过期",
+        "closed": "已关闭",
+        "refunded": "已退款",
+        "manualReview": "需要人工复核",
+        "creditFailed": "到账异常"
+      }
+    },
+    "centerModal": {
+      "account": "积分账户",
+      "groups": {
+        "recharge": "积分充值",
+        "account": "权益与账单",
+        "support": "帮助与支持"
+      },
+      "tabs": {
+        "packages": "充值套餐",
+        "custom": "充值积分",
+        "benefits": "我的权益",
+        "orders": "账单记录",
+        "usage": "用量看板",
+        "help": "充值问题"
+      },
+      "descriptions": {
+        "packages": "购买固定积分套餐，积分永久有效。",
+        "custom": "按需要选择积分数量并完成充值。",
+        "benefits": "查看当前账户可享受的促销和专属权益。",
+        "orders": "查看充值、到账、退款和异常订单。",
+        "usage": "查看积分获得、消费和最近使用明细。",
+        "help": "了解充值到账、有效期和退款规则。"
+      },
+      "firstPurchase": "新客专享",
+      "mostPopular": "最受欢迎",
+      "oneTimePurchase": "单次购买 · 积分永久有效",
+      "baseCredits": "基础积分",
+      "giftCredits": "赠送积分",
+      "totalCredits": "到账积分",
+      "buyNow": "立即购买",
+      "packagesUnavailable": "当前暂无可购买的充值套餐",
+      "pendingConfiguration": "待配置",
+      "packageViews": {
+        "packages": "积分套餐",
+        "enterprise": "企业版"
+      },
+      "packageTiers": {
+        "choose": "选择 {{tier}} 购买档位",
+        "starter": {
+          "description": "适合首次探索 AI 创作",
+          "note": "每个账号限购一次"
+        },
+        "pro": {
+          "description": "适合持续创作与短剧尝试",
+          "note": "从试验创作到稳定产出"
+        },
+        "plus": {
+          "description": "适合团队与工作流协作",
+          "note": "适合多人协作与项目生产"
+        },
+        "max": {
+          "description": "适合批量项目生产交付",
+          "note": "适合批量短剧与漫剧项目"
+        }
+      },
+      "enterprise": {
+        "headline": "让宏大的创作蓝图，拥有持续生长并稳定抵达银幕的力量。",
+        "subtitle": "企业级协作与专属方案",
+        "benefitsTitle": "定制方案",
+        "contact": "联系商务",
+        "benefits": {
+          "quota": "按需要定制图像、视频和角色额度",
+          "priority": "专属最高优先级队列",
+          "templates": "支持企业级模板定制",
+          "security": "多重数据安全保障",
+          "support": "专属服务与快速响应"
+        }
+      },
+      "chooseCredits": "选择充值积分数量",
+      "customCredits": "充值积分数量",
+      "orderSummary": "充值汇总",
+      "exchangeRate": "当前兑换比例",
+      "amountDue": "需要支付金额",
+      "rechargeNow": "立即充值",
+      "noBenefits": "当前暂无可用权益",
+      "usage": {
+        "totalSpent": "总消耗积分",
+        "dailyPeak": "单日峰值",
+        "weeklyAverage": "最近记录周均消耗",
+        "activeDays": "活跃天数",
+        "longestStreak": "最长连续活跃天数",
+        "activity": "积分活动",
+        "daily": "每日",
+        "weekly": "每周",
+        "cumulative": "累计",
+        "sampled": "最近 {{count}} 条记录",
+        "noRecords": "没有符合筛选条件的积分记录",
+        "recordCount": "共 {{count}} 条记录",
+        "page": "第 {{page}} / {{total}} 页",
+        "previousPage": "上一页",
+        "nextPage": "下一页"
+      },
+      "help": {
+        "arrival": {
+          "question": "支付后积分多久可以到账？",
+          "answer": "支付机构确认成功后，系统会自动完成入账。可以在账单记录中查看处理状态。"
+        },
+        "validity": {
+          "question": "购买的积分是否会过期？",
+          "answer": "当前购买的积分永久有效，促销赠送积分以对应活动规则为准。"
+        },
+        "refund": {
+          "question": "充值订单可以退款吗？",
+          "answer": "退款需要根据积分使用情况和平台规则审核，已消费的积分不能重复退款。"
+        }
+      },
+      "customUnavailable": "当前账户暂不支持自定义积分充值"
     }
+  },
+  "checkout": {
+    "account": "当前账户",
+    "loading": "正在准备支付页面…",
+    "invalidTitle": "支付会话已失效",
+    "invalidDescription": "请返回积分中心重新选择充值内容。",
+    "subjectMismatch": "所选套餐与积分到账账号不一致，请返回并刷新可用套餐后重试。",
+    "back": "返回",
+    "amountDue": "待支付总额",
+    "orderSummary": "订单汇总",
+    "customRecharge": "自定义积分充值",
+    "quantity": "数量 {{count}}",
+    "rechargeSubject": "充值主体",
+    "personalCredits": "充值到个人积分账户",
+    "orgCredits": "充值到组织积分账户",
+    "paymentMethod": "支付方式",
+    "securePayment": "交易信息将通过安全连接提交",
+    "continue": "继续支付",
+    "paymentPending": "订单待支付，剩余 {{time}}",
+    "paymentClosing": "支付时间已结束，正在确认订单状态",
+    "paymentClosed": "订单已关闭",
+    "paymentFailed": "支付失败，请返回后重新发起充值",
+    "viewResult": "查看支付结果",
+    "restart": "重新选择充值",
+    "creating": "正在创建支付会话…",
+    "footerSecurity": "支付结果以服务端异步通知为准",
+    "customPending": "自定义积分充值等待后端接口接入",
+    "leaveTitle": "你要离开吗，还是继续流程？",
+    "leaveDescription": "离开后会返回积分中心，当前选择将为你保留。",
+    "leave": "离开",
+    "stay": "继续"
+  },
+  "paymentReturn": {
+    "back": "返回 DramaClaw",
+    "returnButton": "返回 DramaClaw",
+    "orderNumber": "商户订单号",
+    "retry": "重新查询",
+    "states": {
+      "confirming": {
+        "title": "正在确认支付结果",
+        "description": "支付机构的通知可能稍有延迟，请不要重复支付。确认完成后，本页会显示最终到账状态。"
+      },
+      "credited": {
+        "title": "充值已到账",
+        "description": "支付和积分入账均已由服务端确认，你可以返回 DramaClaw 继续创作。"
+      },
+      "closed": {
+        "title": "订单已关闭",
+        "description": "该订单已超过支付有效期或由支付平台关闭，系统不会增加积分。你可以返回后重新发起充值。"
+      },
+      "failed": {
+        "title": "支付未完成",
+        "description": "支付渠道已明确返回失败，系统不会增加积分。你可以返回后重新发起充值。"
+      },
+      "fulfillment_failed": {
+        "title": "支付成功，到账处理中",
+        "description": "系统已收到付款，但积分入账出现异常。请勿重复支付，可在账单记录中查看处理进度。"
+      },
+      "manual_review": {
+        "title": "订单需要人工复核",
+        "description": "支付渠道退款与积分冲正尚未同时确认。请勿重复支付，最终处理结果以账单记录为准。"
+      },
+      "refunded": {
+        "title": "订单已退款",
+        "description": "该订单已经进入退款或冲正状态，最终结果以账单记录为准。"
+      },
+      "unavailable": {
+        "title": "暂时无法查询支付结果",
+        "description": "订单不会因此重复扣款。请稍后重新查询，或返回账单记录查看状态。"
+      }
+    }
+  },
+  "rechargeLink": {
+    "title": "积分充值",
+    "subtitle": "请选择充值档位和支付方式。",
+    "checking": "正在核验账号…",
+    "loading": "正在加载充值档位…",
+    "loginTitle": "登录后继续",
+    "loginRequired": "该充值链接已绑定账号或组织，请使用对应账号登录后再支付。",
+    "login": "登录",
+    "invalidTitle": "充值链接无效",
+    "invalid": "充值令牌缺失或格式错误，请联系链接创建者重新生成。",
+    "unavailableTitle": "充值链接不可用",
+    "unavailable": "链接可能已过期、被停用、不属于当前账号，或当前没有可用充值档位。",
+    "credits": "到账 {{count}} 积分",
+    "methods": {
+      "alipay": "支付宝",
+      "wxpay": "微信支付"
+    },
+    "pay": "立即支付",
+    "creating": "正在创建订单…",
+    "createFailed": "支付订单创建失败，请稍后重试",
+    "orderAlreadyCreated": "该订单已经创建，请在充值记录中查看状态"
   },
   "nav": {
     "home": "首页",

@@ -23,6 +23,10 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => vi.fn(),
 }));
 
+vi.mock("@/components/credits/RechargePanel", () => ({
+  RechargePanel: () => null,
+}));
+
 // base-ui's Select portals a popup and needs layout APIs jsdom doesn't give;
 // the filter controls are not what this test is about.
 vi.mock("@/components/ui/select", () => {
