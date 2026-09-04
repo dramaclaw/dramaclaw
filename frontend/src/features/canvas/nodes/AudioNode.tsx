@@ -85,7 +85,7 @@ function isAudioFile(file: File): boolean {
 
 function isVoicePrerequisiteError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /(?:声线未配置|缺少.*声线|请先配置或选择声线|上传或录制.*音频)/u.test(message);
+  return /(?:声线未配置|缺少.*声线|请先配置或选择声线|上传或录制.*音频)/u.test(message); // i18n-exempt -- backend errors
 }
 
 // 只合并同时发生的请求；settled 后立即失效，避免空结果在上传声线后仍被复用。
@@ -131,12 +131,12 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
                 isGenerating: false,
                 generationStartedAt: null,
                 voiceAvailable: false,
-                generationError: '未选择可用自定义声线，已跳过生成',
+                generationError: '未选择可用自定义声线，已跳过生成', // i18n-exempt -- workflow payload
               });
               publishNodeActionSuccess(requestId, id, action, {
                 skipped: true,
                 reason: 'missing_custom_voice',
-                agent_instruction: '未选择自定义声线，本音频节点已跳过，继续其它工作流节点。',
+                agent_instruction: '未选择自定义声线，本音频节点已跳过，继续其它工作流节点。', // i18n-exempt -- agent protocol
               });
               return;
             }

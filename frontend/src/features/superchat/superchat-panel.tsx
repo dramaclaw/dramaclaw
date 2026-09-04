@@ -2982,7 +2982,7 @@ function amendCanvasApprovalWithAudioParams(
         : {
           voiceRef: null,
           voiceAvailable: false,
-          voiceLabel: "未选择自定义声线",
+          voiceLabel: "未选择自定义声线", // i18n-exempt -- node data payload
           voiceLanguage: "",
         }),
     };
@@ -3299,6 +3299,7 @@ function CanvasCommandApprovalCard({
     reason?: CanvasCommandApprovalCancelReason,
   ) => void;
 }) {
+  const { t } = useTranslation();
   const [now, setNow] = useState(() => Date.now());
   const params = useParams({ strict: false }) as { project?: string };
   const imageModels = useFreezoneImageModels(params.project);
@@ -3460,11 +3461,15 @@ function CanvasCommandApprovalCard({
         <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium text-foreground">
-            {approval.requiresUserChoice ? "请选择旁白声线" : "待确认的画布操作"}
+            {approval.requiresUserChoice
+              ? t("freezone.chat.audioApproval.chooseVoiceTitle", { defaultValue: "请选择旁白声线" })
+              : "待确认的画布操作"}
           </div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {approval.requiresUserChoice
-              ? "请选择自定义声线；如果暂不选择，本次将跳过旁白生成。"
+              ? t("freezone.chat.audioApproval.chooseVoiceDescription", {
+                  defaultValue: "请选择自定义声线；如果暂不选择，本次将跳过旁白生成。",
+                })
               : `Agent 计划执行 ${approval.commandCount} 个操作，确认后才会应用到画布。`}
           </p>
         </div>
@@ -3637,7 +3642,9 @@ function CanvasCommandApprovalCard({
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground">
               <Volume2 className="size-3" />
-              {audioParam.audioKind === "music" ? "音乐" : "旁白"}
+              {audioParam.audioKind === "music"
+                ? t("freezone.chat.audioApproval.music", { defaultValue: "音乐" })
+                : t("freezone.chat.audioApproval.narration", { defaultValue: "旁白" })}
               {(audioParam.nodeIds?.length ?? 1) > 1 ? ` ×${audioParam.nodeIds?.length}` : ""}
             </span>
             <span className="h-4 w-px bg-white/[0.12]" />
@@ -3649,17 +3656,33 @@ function CanvasCommandApprovalCard({
                   onClick={() => setVoicePickerAudioIndex(audioParamIndex)}
                   className="inline-flex h-7 items-center rounded-full border border-white/[0.16] bg-white/[0.065] px-2.5 text-[11px] font-medium text-foreground hover:border-white/30 hover:bg-white/[0.1] disabled:opacity-60"
                 >
-                  {audioParam.voiceAvailable === true ? "更换自定义声线" : "选择自定义声线"}
+                  {audioParam.voiceAvailable === true
+                    ? t("freezone.chat.audioApproval.changeVoice", { defaultValue: "更换自定义声线" })
+                    : t("freezone.chat.audioApproval.chooseVoice", { defaultValue: "选择自定义声线" })}
                 </button>
                 <span className="text-[10px] text-muted-foreground">
                   {audioParam.voiceAvailable === true
-                    ? `已选择：${audioParam.voiceLabel.trim() || "自定义声线"}`
-                    : "未选择，本次将跳过旁白生成"}
+                    ? t("freezone.chat.audioApproval.selectedVoice", {
+                        defaultValue: "已选择：{{voice}}",
+                        voice: audioParam.voiceLabel.trim() || t(
+                          "freezone.chat.audioApproval.customVoice",
+                          { defaultValue: "自定义声线" },
+                        ),
+                      })
+                    : t("freezone.chat.audioApproval.noVoiceSkip", {
+                        defaultValue: "未选择，本次将跳过旁白生成",
+                      })}
                 </span>
               </>
             ) : (
               <span className="text-[10px] text-muted-foreground">
-                {audioParam.musicLengthSec} 秒 · {audioParam.forceInstrumental ? "纯音乐" : "允许人声"}
+                {t("freezone.chat.audioApproval.musicSummary", {
+                  defaultValue: "{{seconds}} 秒 · {{mode}}",
+                  seconds: audioParam.musicLengthSec,
+                  mode: audioParam.forceInstrumental
+                    ? t("freezone.chat.audioApproval.instrumental", { defaultValue: "纯音乐" })
+                    : t("freezone.chat.audioApproval.vocalsAllowed", { defaultValue: "允许人声" }),
+                })}
               </span>
             )}
           </div>
@@ -3677,7 +3700,11 @@ function CanvasCommandApprovalCard({
           disabled={isExecuting}
           onClick={() => onApply(amendedApproval)}
         >
-          {isExecuting ? "执行中..." : approval.requiresUserChoice ? "使用所选声线继续" : "确认执行"}
+          {isExecuting
+            ? t("freezone.chat.canvasExecuting", { defaultValue: "执行中..." })
+            : approval.requiresUserChoice
+              ? t("freezone.chat.audioApproval.continue", { defaultValue: "使用所选声线继续" })
+              : t("freezone.chat.canvasConfirmExecution", { defaultValue: "确认执行" })}
         </Button>
       </div>
       {voicePickerAudioParams && (
@@ -3786,6 +3813,7 @@ function CanvasCommandFeedbackCard({
   feedback: CanvasCommandFeedback;
   onRetry?: (feedback: CanvasCommandFeedback) => void;
 }) {
+  const { t } = useTranslation();
   // Expired approvals contain the actionable recovery button. Keep them open
   // so the user can see and retry the operation without an extra click.
   const [expanded, setExpanded] = useState(() => canvasCommandFeedbackIsTimeoutCancelled(feedback));
@@ -3802,9 +3830,13 @@ function CanvasCommandFeedbackCard({
   const compactTitle = canvasCommandFeedbackCompactTitle(feedback);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
   const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
-    ? "画布操作因等待超时已取消，没有应用到画布。"
+    ? t("freezone.chat.canvasTimeoutCancelled", {
+        defaultValue: "画布操作因等待超时已取消，没有应用到画布。",
+      })
     : canvasCommandFeedbackIsUserCancelled(feedback)
-      ? "画布操作已手动取消，没有应用到画布。"
+      ? t("freezone.chat.canvasManuallyCancelled", {
+          defaultValue: "画布操作已手动取消，没有应用到画布。",
+        })
       : null;
   const userFailureMessage = failed
     ? cancellationMessage ?? canvasCommandUserMessageFromResult(

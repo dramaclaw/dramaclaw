@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, LoaderCircle, Pencil, RotateCcw, SkipForward, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import {
   listFreezoneWorkflowRuns,
@@ -23,8 +24,8 @@ const RESUMABLE_ACTION_STATUSES = new Set(["pending", "running", "failed", "bloc
 function isSafetyReviewError(error: string | null | undefined): boolean {
   const normalized = String(error || "").toLowerCase();
   return normalized.includes("safety review")
-    || normalized.includes("内容未通过安全审核")
-    || normalized.includes("内容安全审核")
+    || normalized.includes("内容未通过安全审核") // i18n-exempt -- backend error matching
+    || normalized.includes("内容安全审核") // i18n-exempt -- backend error matching
     || normalized.includes("sensitivecontent")
     || normalized.includes("privacyinformation")
     || normalized.includes("moderation_blocked");
@@ -73,7 +74,7 @@ function recoverableWorkflowActions(
       // A downstream action blocked by a failed dependency was recorded for
       // visibility, but has never been submitted. Do not surface it as an
       // independent retry target or create another waiting progress item.
-      if (action.status === "blocked" && String(action.error || "").startsWith("跳过 ")) {
+      if (action.status === "blocked" && String(action.error || "").startsWith("跳过 ")) { // i18n-exempt -- workflow payload
         return false;
       }
       return !isNodeActionGenerationPending(action.node_id, action.action);
@@ -108,6 +109,7 @@ export function WorkflowRunRecoveryBar({
   projectId: string;
   canvasId: string;
 }) {
+  const { t } = useTranslation();
   const canvasNodes = useCanvasStore((state) => state.nodes);
   const existingNodeIds = useMemo(
     () => new Set(canvasNodes.map((node) => node.id)),
@@ -315,7 +317,7 @@ export function WorkflowRunRecoveryBar({
           node_id: action.node_id,
           action: action.action,
           status: "skipped" as const,
-          error: "用户选择跳过安全审核失败节点",
+          error: "用户选择跳过安全审核失败节点", // i18n-exempt -- workflow payload
         }));
       const updated = await updateFreezoneWorkflowRun(projectId, canvasId, run.run_id, {
         action_updates: updates,
@@ -342,15 +344,15 @@ export function WorkflowRunRecoveryBar({
         <>
           <div className="inline-flex items-center gap-1 text-xs text-amber-200">
             <AlertTriangle className="size-3.5" />
-            有节点未通过安全审核
+            {t("freezone.workflowRecovery.safetyReviewFailed", { defaultValue: "有节点未通过安全审核" })}
           </div>
           <Button type="button" variant="outline" size="sm" onClick={handleEditSafetyPrompt} disabled={busy}>
             <Pencil className="size-4" />
-            修改提示词
+            {t("freezone.workflowRecovery.editPrompt", { defaultValue: "修改提示词" })}
           </Button>
           <Button type="button" variant="ghost" size="sm" onClick={() => void handleSkipSafetyNodes()} disabled={busy}>
             <SkipForward className="size-4" />
-            跳过节点
+            {t("freezone.workflowRecovery.skipNode", { defaultValue: "跳过节点" })}
           </Button>
         </>
       )}

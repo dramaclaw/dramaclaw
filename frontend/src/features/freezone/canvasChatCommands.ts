@@ -3188,7 +3188,7 @@ async function executeQueuedNodeActions(
             if (action.action === "generate_audio" && !hydrateWorkflowAudioInput(action.nodeId)) {
               return {
                 action,
-                failed: "旁白节点缺少上游生成的文本，已停止提交 TTS 请求；请先完成剧本/Beat 文本生成后重试。",
+          failed: "旁白节点缺少上游生成的文本，已停止提交 TTS 请求；请先完成剧本/Beat 文本生成后重试。", // i18n-exempt -- workflow error payload
                 retryCount,
               };
             }
