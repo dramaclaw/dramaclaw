@@ -218,6 +218,16 @@ interface CanvasState {
     aspectRatio: string,
     previewImageUrl?: string
   ) => string | null;
+  /**
+   * 在源节点右边接一个视频节点。与 `addDerivedUploadNode` 同构，只是承载的是
+   * videoUrl —— 预演台录制、以及后续任何「产出一段视频」的节点内动作都走这里。
+   */
+  addDerivedVideoNode: (
+    sourceNodeId: string,
+    videoUrl: string,
+    aspectRatio: string,
+    displayName?: string | null
+  ) => string | null;
   addDerivedExportNode: (
     sourceNodeId: string,
     imageUrl: string,
@@ -2281,6 +2291,44 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       aspectRatio: resolvedAspectRatio,
     });
     const derivedSize = resolveGeneratedImageNodeDimensions(resolvedAspectRatio);
+    node.width = derivedSize.width;
+    node.height = derivedSize.height;
+    node.style = {
+      ...(node.style ?? {}),
+      width: derivedSize.width,
+      height: derivedSize.height,
+    };
+
+    set({
+      nodes: [...state.nodes, node],
+      selectedNodeId: node.id,
+      activeToolDialog: null,
+      history: {
+        past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
+        future: [],
+      },
+      dragHistorySnapshot: null,
+      ...trackEdit(state),
+    });
+
+    return node.id;
+  },
+
+  addDerivedVideoNode: (sourceNodeId, videoUrl, aspectRatio, displayName) => {
+    const state = get();
+    // 源节点已经被删掉时不建节点：连线会指向一个不存在的目标，画布 store 会悄悄丢掉
+    // 那条边，留下一个孤儿节点。
+    if (!state.nodes.some((node) => node.id === sourceNodeId)) return null;
+    // 画幅按调用方给的算，不走 resolveDerivedAspectRatio：录制出来的比例是预演台
+    // 自己的出片画幅，源节点上那个 aspectRatio 说的是别的事。
+    const derivedSize = resolveGeneratedImageNodeDimensions(aspectRatio);
+    const position = state.findNodePosition(sourceNodeId, derivedSize.width, derivedSize.height);
+    const node = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.video, position, {
+      videoUrl,
+      aspectRatio,
+      displayName: displayName ?? null,
+      sourceFileName: null,
+    } as Partial<CanvasNodeData>);
     node.width = derivedSize.width;
     node.height = derivedSize.height;
     node.style = {

@@ -7494,7 +7494,25 @@
       "capturing": "Capturing…",
       "captureDone": "Capture added to the canvas",
       "captureFailed": "Capture upload failed. Please try again.",
-      "captureNoNode": "This node is no longer on the canvas — cannot attach the capture"
+      "captureNoNode": "This node is no longer on the canvas — cannot attach the capture",
+      "record": {
+        "open": "Record",
+        "stop": "Stop recording",
+        "stopWithProgress": "Stop {{percent}}%",
+        "publishing": "Uploading…",
+        "mode": {
+          "global": "Record viewport",
+          "track": "Record current track"
+        },
+        "noCamera": "No camera on the current track — select a camera first",
+        "unsupported": "This browser cannot record the viewport; use Chrome",
+        "failed": "Recording failed, please try again",
+        "uploadFailed": "Recording upload failed, please try again",
+        "noNode": "This node is no longer on the canvas, nothing to attach the recording to",
+        "done": "Recording node created",
+        "globalNodeName": "Previz viewport recording ({{quality}})",
+        "trackNodeName": "Previz track recording {{index}} ({{quality}})"
+      }
     },
     "toolbar": {
       "add": {

@@ -7494,7 +7494,25 @@
       "capturing": "正在出片…",
       "captureDone": "已生成截图节点",
       "captureFailed": "截图上传失败，请重试",
-      "captureNoNode": "画布上找不到本节点，无法接出截图"
+      "captureNoNode": "画布上找不到本节点，无法接出截图",
+      "record": {
+        "open": "录制",
+        "stop": "停止录制",
+        "stopWithProgress": "停止 {{percent}}%",
+        "publishing": "正在上传…",
+        "mode": {
+          "global": "全局录制",
+          "track": "当前轨道录制"
+        },
+        "noCamera": "当前轨道上没有机位，请先选中一台机位再录",
+        "unsupported": "当前浏览器不支持画面录制，请改用 Chrome",
+        "failed": "录制失败，请重试",
+        "uploadFailed": "录制上传失败，请重试",
+        "noNode": "画布上找不到本节点，无法接出录制",
+        "done": "已生成录制节点",
+        "globalNodeName": "预演台全局录制({{quality}})",
+        "trackNodeName": "预演台轨道录制 {{index}}({{quality}})"
+      }
     },
     "toolbar": {
       "add": {

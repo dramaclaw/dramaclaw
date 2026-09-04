@@ -3,8 +3,9 @@
 import type * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-import { createDomCaptureCanvas, renderCapture } from '../capture/renderCapture';
-import { aspectRatio, DEG_TO_RAD } from '../domain/camera';
+import type { PrevizRecordMode } from '../capture/recordTarget';
+import { createDomCaptureCanvas, createFramePainter, renderCapture } from '../capture/renderCapture';
+import { OUTPUT_PIXEL_SIZE, aspectRatio, DEG_TO_RAD } from '../domain/camera';
 import type { PrevizCameraDraft } from '../domain/cameraDraft';
 import { evaluateSceneAt } from '../domain/evaluate';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
@@ -35,6 +36,18 @@ const MAX_PIXEL_RATIO = 2;
 
 /** 编辑视角的视场角。刻意与机位的 focalMm 无关：这是自由飞行相机，不是取景器。 */
 const EDITOR_FOV_DEG = 50;
+
+/**
+ * 一次录制的句柄。`canvas` 是接给编码器的那块离屏画布，尺寸恒等于出片分辨率。
+ * 用完必须 `end()`：辅助物的可见性与渲染目标都攥在它手里。
+ */
+export interface PrevizRecordingPass {
+  readonly canvas: HTMLCanvasElement;
+  readonly width: number;
+  readonly height: number;
+  drawFrame(frame: number): void;
+  end(): void;
+}
 
 /** 视口里点中的那个轨迹点。带上 clipId 是因为点 id 只在自己那条轨迹里唯一。 */
 export interface PrevizPathPointPick {
@@ -455,6 +468,89 @@ export class PrevizRenderer {
       this.gizmo?.setHelperVisible(true);
       this.requestRender();
     }
+  }
+
+  /**
+   * 开一次录制：交出一块与出片同分辨率的画布，以及「把第 N 帧画上去」的手柄。
+   *
+   * 和 `capture()` 走同一套离屏渲染，区别只在渲染目标与读回缓冲留着不还——录制要按
+   * 30fps 反复画，每帧新建一个 8 MB 缓冲会把 GC 压成卡顿。
+   *
+   * `mode` 为 `track` 时必须给出机位；机位不在（被删了、或压根没选）时返回 null，
+   * 由调用方提示，而不是在这里悄悄退回导演视角录出一段用户没要的画面。
+   */
+  startRecording(mode: PrevizRecordMode, cameraId: string | null): PrevizRecordingPass | null {
+    if (this.disposed) return null;
+    const scene = this.currentScene;
+    if (!scene) return null;
+    const aspect = scene.settings.outputAspect;
+
+    const camera =
+      mode === 'track' && cameraId
+        ? scene.objects.find((entry) => entry.id === cameraId)
+        : undefined;
+    const cameraNode = mode === 'track' && cameraId ? this.graph.nodeFor(cameraId) : undefined;
+    if (mode === 'track' && !(camera?.kind === 'camera' && cameraNode && this.monitorCamera)) {
+      return null;
+    }
+    const monitor = this.monitorCamera;
+
+    // 手柄、轨迹辅助物、以及出片机位自己的锥体，都不该进画面。录制期间一直藏着：
+    // 逐帧开关的话，屏幕上那条 rAF 渲染循环会随机撞在「开」的那一半上。
+    this.gizmo?.setHelperVisible(false);
+    this.setEditorHelpersVisible(false);
+    if (cameraNode) cameraNode.visible = false;
+    this.requestRender();
+
+    const { width, height } = OUTPUT_PIXEL_SIZE[aspect];
+    const painter = createFramePainter(
+      {
+        three: this.three,
+        renderer: this.renderer,
+        scene: this.scene,
+        createCanvas: createDomCaptureCanvas,
+      },
+      width,
+      height,
+    );
+
+    let ended = false;
+    return {
+      canvas: painter.canvas as unknown as HTMLCanvasElement,
+      width,
+      height,
+      drawFrame: (frame) => {
+        if (ended || this.disposed) return;
+        // 先解算再渲染：setFrame 把这一帧的走位写进节点，顺手也把屏幕上那份刷新了，
+        // 于是录制期间视口就是进度条。
+        this.setFrame(frame);
+        if (camera?.kind === 'camera' && cameraNode && monitor) {
+          syncMonitorCamera(monitor, cameraNode, camera, aspect);
+          painter.paint(monitor);
+          return;
+        }
+        // 导演视角的 aspect 跟着视口走，和出片画幅无关。借用它出片得先改，画完立刻
+        // 还回去——留着不还的话，接下来一整段录制里屏幕上的画面都是拉伸的。
+        const editorAspect = this.camera.aspect;
+        this.camera.aspect = aspectRatio(aspect);
+        this.camera.updateProjectionMatrix();
+        try {
+          painter.paint(this.camera);
+        } finally {
+          this.camera.aspect = editorAspect;
+          this.camera.updateProjectionMatrix();
+        }
+      },
+      end: () => {
+        if (ended) return;
+        ended = true;
+        painter.dispose();
+        if (cameraNode) cameraNode.visible = true;
+        this.setEditorHelpersVisible(true);
+        this.gizmo?.setHelperVisible(true);
+        this.requestRender();
+      },
+    };
   }
 
   /**
