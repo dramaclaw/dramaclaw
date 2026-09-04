@@ -15,7 +15,7 @@ import {
   PREVIZ_HEIGHT_CM_RANGE,
   type PrevizObjectPatch,
 } from "@/features/previz/domain/objects";
-import { PREVIZ_POSES, PREVIZ_POSE_LABEL } from "@/features/previz/domain/poses";
+import { PREVIZ_POSES, PREVIZ_POSE_LABEL_KEYS } from "@/features/previz/domain/poses";
 import {
   PREVIZ_INTENSITY_RANGE,
   PREVIZ_POSE_ADJUST_RANGE,
@@ -97,7 +97,7 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
 
   if (!object) {
     return (
-      <div className="flex w-72 shrink-0 items-center justify-center border-l border-white/10 bg-black/30 px-4 text-center text-[12px] text-white/45">
+      <div className="flex items-center justify-center px-4 py-6 text-center text-[12px] text-white/45">
         {t("previz.inspector.empty")}
       </div>
     );
@@ -135,7 +135,7 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
   };
 
   return (
-    <div className="flex w-72 shrink-0 flex-col gap-3 overflow-y-auto border-l border-white/10 bg-black/30 p-3">
+    <div className="flex flex-col gap-3 p-3">
       <div>
         <label className={LABEL} htmlFor={`${prefix}-name`}>
           {t("previz.inspector.name")}
@@ -230,13 +230,12 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
               value={character.basePoseId}
               onChange={(event) => onChange({ basePoseId: event.target.value })}
             >
-              {/* 标签是硬编码中文，不走 i18n：`PREVIZ_POSE_LABEL` 与 viewer-kit 的
-                  `POSE_LABELS` 有棘轮对齐（`poses.test.ts` 盯着），两边必须逐字一致。
-                  代价是英文界面下这个下拉框里也是中文——这是已知取舍，不是 i18n 漏了，
-                  别顺手改成 `t()`。 */}
+              {/* 标签走 i18n，但 key 表不许自己另起一套：`PREVIZ_POSE_LABEL_KEYS` 与
+                  viewer-kit 的 `POSE_LABEL_KEYS` 有棘轮对齐（`poses.test.ts` 盯着），
+                  两边必须逐字一致，同一个姿势才会在预演台和 3D 导演里同名。 */}
               {PREVIZ_POSES.map((pose) => (
                 <option key={pose} value={pose}>
-                  {PREVIZ_POSE_LABEL[pose]}
+                  {t(PREVIZ_POSE_LABEL_KEYS[pose])}
                 </option>
               ))}
             </select>

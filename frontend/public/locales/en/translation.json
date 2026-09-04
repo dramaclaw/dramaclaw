@@ -7658,7 +7658,12 @@
       "insertPoint": "Insert point at playhead",
       "clearPoints": "Clear path",
       "remove": "Delete clip",
+      "slider": "{{name}} slider",
       "point": {
+        "section": "Path point",
+        "frame": "Frame {{frame}}",
+        "position": "Position",
+        "deselect": "Deselect this point",
         "empty": "Pick a keyframe to edit it here",
         "x": "Position X",
         "y": "Position Y",

@@ -7658,7 +7658,12 @@
       "insertPoint": "在播放头插点",
       "clearPoints": "清空轨迹",
       "remove": "删除片段",
+      "slider": "{{name}} 滑杆",
       "point": {
+        "section": "轨迹点",
+        "frame": "帧 {{frame}}",
+        "position": "位置",
+        "deselect": "取消选中该点",
         "empty": "点一个轨迹点后在这里编辑",
         "x": "位置 X",
         "y": "位置 Y",

@@ -59,9 +59,24 @@ const CLIP_KEYS = [
   'insertPoint',
   'clearPoints',
   'remove',
+  'slider',
 ] as const;
 
-const POINT_KEYS = ['empty', 'x', 'y', 'z', 'pitch', 'yaw', 'roll', 'reface', 'remove'] as const;
+const POINT_KEYS = [
+  'section',
+  'frame',
+  'position',
+  'deselect',
+  'empty',
+  'x',
+  'y',
+  'z',
+  'pitch',
+  'yaw',
+  'roll',
+  'reface',
+  'remove',
+] as const;
 
 /** 特写片段的取景面板。`part` 是嵌套的一张小表，与平铺的键分开比。 */
 const CLOSEUP_KEYS = [
