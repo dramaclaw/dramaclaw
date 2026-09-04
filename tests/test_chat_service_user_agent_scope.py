@@ -1183,7 +1183,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
             in captured["prompt"]
         )
         developer_instructions = chat_service._codex_developer_instructions(tool_mode)
-        assert "native Responses Tool Search" in developer_instructions
+        assert "scope-filtered concrete operations" in developer_instructions
         assert "call the selected tool directly" in developer_instructions
         assert "custom-topology reference" in developer_instructions
         assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
@@ -1200,7 +1200,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "run_after_create=true" in developer_instructions
     else:
         assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
-        assert "native Responses Tool Search" in (
+        assert "scope-filtered concrete MCP tools" in (
             chat_service._codex_developer_instructions(tool_mode)
         )
     assert [event["type"] for event in events] == [
@@ -5544,7 +5544,7 @@ def test_append_tool_ui_specs_does_not_duplicate_existing_ui_spec():
 def test_dramaclaw_get_sketch_candidates_displays_pool_candidates(monkeypatch):
     from novelvideo.chat import dramaclaw_mcp
 
-    plugin = dramaclaw_mcp.PLUGIN
+    plugin = dramaclaw_mcp._plugin("dramaclaw")
 
     def fake_request(method, path, **kwargs):
         assert method == "GET"
@@ -5589,7 +5589,7 @@ def test_dramaclaw_get_sketch_candidates_displays_pool_candidates(monkeypatch):
 def test_dramaclaw_get_sketches_does_not_use_pool_candidates(monkeypatch, tmp_path):
     from novelvideo.chat import dramaclaw_mcp
 
-    plugin = dramaclaw_mcp.PLUGIN
+    plugin = dramaclaw_mcp._plugin("dramaclaw")
     project_dir = tmp_path / "project"
     sketch_dir = project_dir / "grids" / "ep001" / "sketch"
     sketch_dir.mkdir(parents=True)

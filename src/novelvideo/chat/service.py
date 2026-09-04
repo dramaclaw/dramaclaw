@@ -211,8 +211,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # when it was created. Bump the relevant value whenever MCP discovery or the
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
-_CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v1"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v17"
+_CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v18"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
