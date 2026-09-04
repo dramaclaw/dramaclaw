@@ -196,9 +196,9 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 
 以下功能公开开发中，还没进正式版。可以盯着分支看，更欢迎来一起做。
 
-- **虾导直接上画布干活** &mdash; 智能体创建并连接节点、更新节点数据、排版与分组、运行节点动作、一次搭出整张工作流图，每条画布指令都先在打开的浏览器里确认再执行。在 `staging` 分支
-- **工作流目录与社区技能** &mdash; 一套 11 个工作流技能 + 60 个配方（快速漫剧、电商广告、IP 角色广告、社媒内容、日漫 / 皮克斯 / 乐高 / 功夫喜剧等风格），自动铺好整张生成图；技能与配方做成可安装、可导出、可分享的 bundle。在 `staging` 分支；设计文档：[社区技能 / 配方生态](https://github.com/dramaclaw/dramaclaw/blob/staging/docs/zh/guides/community-skill-recipe-ecosystem-design.md)
-- **agent-kit** &mdash; 便携包，把同一套 DramaClaw 工作流带给 Hermes、OpenClaw、WorkBuddy、Claude Code、Codex。在 `staging` 分支
+- **虾导直接上画布干活** &mdash; 智能体创建并连接节点、更新节点数据、排版与分组、运行节点动作、一次搭出整张工作流图，每条画布指令都先在打开的浏览器里确认再执行
+- **工作流目录与社区技能** &mdash; 一套 11 个工作流技能 + 60 个配方（快速漫剧、电商广告、IP 角色广告、社媒内容、日漫 / 皮克斯 / 乐高 / 功夫喜剧等风格），自动铺好整张生成图；技能与配方做成可安装、可导出、可分享的 bundle
+- **agent-kit** &mdash; 便携包，把同一套 DramaClaw 工作流带给 Hermes、OpenClaw、WorkBuddy、Claude Code、Codex
 - **预演台** &mdash; 浏览器内的 3D 走位预演台，以画布节点的形式存在：多轨时间线、角色绑定与路径、真实镜头 / 传感器参数的相机模型、特写跟踪，取好的镜头直接送进下一个节点。分支：`feat/previz-canvas-node`
 - **互动剧** &mdash; 在画布上设置分支选择点，编译成 ink 故事并导出为独立 HTML 播放器，带试玩统计与路径覆盖。分支：`feat/canvas-fmv`
 - **互动广告** &mdash; 把上面的广告技能与配方和分支播放结合，做观众能自己选的产品视频

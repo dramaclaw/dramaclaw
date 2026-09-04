@@ -197,9 +197,9 @@ It's built for creators, indie studios and creative engineers — run the whole 
 
 These are being built in the open and are not in a release yet. Watch the branches, or come help.
 
-- **Xia Director on the canvas** &mdash; the agent creates and connects nodes, updates node data, lays out and groups nodes, runs node actions and builds whole workflow graphs, with every canvas command approved in the open browser first. On `staging`.
-- **Workflow catalog and community skills** &mdash; a catalog of 11 workflow skills and 60 recipes (short drama, e-commerce ads, IP character ads, social campaigns, anime / Pixar / LEGO / kung-fu styles…) that lay out whole generation graphs; skills and recipes as installable, exportable, shareable bundles. On `staging`; design: [community skill / recipe ecosystem](https://github.com/dramaclaw/dramaclaw/blob/staging/docs/zh/guides/community-skill-recipe-ecosystem-design.md)
-- **agent-kit** &mdash; a portable package that brings the same DramaClaw workflows to Hermes, OpenClaw, WorkBuddy, Claude Code and Codex. On `staging`
+- **Xia Director on the canvas** &mdash; the agent creates and connects nodes, updates node data, lays out and groups nodes, runs node actions and builds whole workflow graphs, with every canvas command approved in the open browser first.
+- **Workflow catalog and community skills** &mdash; a catalog of 11 workflow skills and 60 recipes (short drama, e-commerce ads, IP character ads, social campaigns, anime / Pixar / LEGO / kung-fu styles…) that lay out whole generation graphs; skills and recipes as installable, exportable, shareable bundles
+- **agent-kit** &mdash; a portable package that brings the same DramaClaw workflows to Hermes, OpenClaw, WorkBuddy, Claude Code and Codex
 - **Previz stage** &mdash; an in-browser 3D blocking stage as a canvas node: multi-track timeline, character rigs and paths, real lens / sensor camera model, close-up tracking, then capture the framed shot straight into the next node. Branch: `feat/previz-canvas-node`
 - **Interactive stories** &mdash; branching choice points on the canvas, compiled to an ink story and exported as a self-contained HTML player, with playtest stats and path coverage. Branch: `feat/canvas-fmv`
 - **Interactive ads** &mdash; the ad skills and recipes above, combined with branching playback, for product videos viewers can steer
