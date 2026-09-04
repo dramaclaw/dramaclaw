@@ -45,6 +45,17 @@ We'll keep tearing down walls.
 
 </p>
 
+<p align="left">
+
+<strong>And yes, you can make money with it.</strong><br/>
+DramaClaw is <a href="./LICENSES/Elastic-2.0.txt">Elastic License 2.0</a>. Run it, modify it, sell what you build with it —<br/>
+the standalone version is free for commercial use, no permission needed.<br/>
+We ask for one thing: a small "Powered by DramaClaw" in the corner of your UI.<br/>
+The only door still closed is wrapping it up as a hosted SaaS for other people; that license isn't open yet.<br/>
+Why, and the FAQ: <a href="https://github.com/dramaclaw/dramaclaw/issues/475">#475</a>.
+
+</p>
+
 <br/>
 
 [![License](https://img.shields.io/badge/License-Elastic_2.0-blue.svg)](./LICENSES/Elastic-2.0.txt)
@@ -428,7 +439,7 @@ The people building DramaClaw — thank you. 💜
 
 ## License
 
-[Elastic License 2.0](./LICENSES/Elastic-2.0.txt). Free to use, modify, and redistribute — the only restriction is that you may not resell the software as a hosted service. See the [license explainer](./docs/en/license.md).
+[Elastic License 2.0](./LICENSES/Elastic-2.0.txt). Free to use, modify, redistribute and sell what you build with it; keep a small "Powered by DramaClaw" in your UI. The only restriction is that you may not offer the software itself as a hosted service to others. See the [license explainer](./docs/en/license.md) and the [licensing statement](https://github.com/dramaclaw/dramaclaw/issues/475).
 
 <br/>
 

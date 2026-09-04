@@ -45,6 +45,17 @@ DramaClaw 要做的事很简单：<br/>
 
 </p>
 
+<p align="left">
+
+<strong>对，你可以拿它赚钱。</strong><br/>
+DramaClaw 采用 <a href="../LICENSE">Elastic License 2.0</a>。自己跑、自己改、自己卖，随便 ——<br/>
+单机版本可以自由商用，不用申请，不用付费。<br/>
+我们只有一个请求：在界面角落留一行小字「基于 DramaClaw」。<br/>
+唯一还没开的门，是把它包成 SaaS 卖给别人；这条授权暂不开放。<br/>
+原因和常见问题：<a href="https://github.com/dramaclaw/dramaclaw/issues/475">#475</a>。
+
+</p>
+
 <br/>
 
 [![License](https://img.shields.io/badge/License-Elastic_2.0-blue.svg)](../LICENSE)
@@ -427,7 +438,7 @@ DramaClaw 对模型侧保持中立 —— 所有文本 / 图片 / 视频 / 音�
 
 ## 许可证
 
-[Elastic License 2.0](../LICENSE)。源码可得（source available），允许自用、修改、再分发；唯一限制是不得将本软件作为托管服务转售。详见 [许可证说明](../docs/zh/license.md)。
+[Elastic License 2.0](../LICENSE)。源码可得（source available），允许自用、修改、再分发、拿它做的东西拿去卖；请在界面里保留一行小字「基于 DramaClaw」。唯一限制是不得把本软件本身作为托管服务提供给他人。详见 [许可证说明](../docs/zh/license.md) 和 [授权说明](https://github.com/dramaclaw/dramaclaw/issues/475)。
 
 <br/>
 
