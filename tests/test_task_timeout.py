@@ -180,6 +180,7 @@ def test_run_project_task_core_injects_deadline_for_runner(monkeypatch):
 
 
 def test_agent_product_pending_timeout_is_reviewed_without_refund(monkeypatch):
+    from novelvideo.chat import evidence_metrics
     from novelvideo.freezone.agent_product_operations import (
         AgentProductSettlementPending,
     )
@@ -187,6 +188,8 @@ def test_agent_product_pending_timeout_is_reviewed_without_refund(monkeypatch):
     from novelvideo.task_backend.registry import register_project_task_runner
 
     events: list[tuple[str, str]] = []
+    observed_metrics: list[str] = []
+    monkeypatch.setattr(evidence_metrics, "observe", observed_metrics.append)
 
     class UsageMeter:
         async def resolve_feature_credit_reservation(self, _identity):
@@ -254,6 +257,7 @@ def test_agent_product_pending_timeout_is_reviewed_without_refund(monkeypatch):
     assert manager.failed[0]["metadata"]["error_code"] == (
         "AGENT_PRODUCT_SETTLEMENT_PENDING"
     )
+    assert observed_metrics == ["agent_product_awaiting_reconciliation"]
 
 
 def test_run_project_task_core_rejects_raw_dict_before_side_effects():

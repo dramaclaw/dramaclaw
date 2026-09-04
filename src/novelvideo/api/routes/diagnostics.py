@@ -26,6 +26,7 @@ async def get_evidence_counters():
     """Return the in-process evidence-plane counters and any halting outcomes."""
     counters = evidence_metrics.counters()
     halting = evidence_metrics.halting_counts()
+    agent_products = evidence_metrics.agent_product_counts()
     return JSONResponse(
         {
             "ok": True,
@@ -38,6 +39,7 @@ async def get_evidence_counters():
                 # had no business reaching.
                 "halting": halting,
                 "capability_issued": counters.get("capability_issued", 0),
+                "agent_products": agent_products,
             },
         }
     )

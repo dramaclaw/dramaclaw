@@ -37,6 +37,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from novelvideo.api.auth import get_api_user
+from novelvideo.chat import evidence_metrics
 from novelvideo.chat import service as chat_service
 from novelvideo.api.deps import (
     make_cognee_store_for_context,
@@ -13606,6 +13607,7 @@ async def create_canvas_workflow_draft(
     }:
         raise HTTPException(409, "workflow result operation is not admitted")
     if operation and not (operation.get("model_evidence") or {}).get("model_call_id"):
+        evidence_metrics.observe("agent_product_evidence_rejected")
         raise HTTPException(
             409,
             "workflow result has no server-observed model execution evidence",
@@ -13887,6 +13889,7 @@ async def _settle_delivered_agent_product_task(
             metadata={"settlement_status": "reconciled"},
             expected_task_id=expected_task_id,
         )
+        evidence_metrics.observe("agent_product_reconciled")
 
 
 @router.get(

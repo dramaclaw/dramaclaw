@@ -202,6 +202,8 @@ def test_metered_workflow_result_is_delivered_once_before_canvas_confirmation(
 ) -> None:
     from novelvideo.api.routes import freezone
 
+    observed_metrics: list[str] = []
+    monkeypatch.setattr(freezone.evidence_metrics, "observe", observed_metrics.append)
     monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
     operation_response = workflow_run_client.post(
         "/api/v1/projects/proj_demo/freezone/agent-product-operations",
@@ -229,6 +231,7 @@ def test_metered_workflow_result_is_delivered_once_before_canvas_confirmation(
 
     rejected = workflow_run_client.post(base, json=draft_request)
     assert rejected.status_code == 409
+    assert observed_metrics == ["agent_product_evidence_rejected"]
 
     from novelvideo.freezone.agent_product_operations import (
         bind_agent_product_model_execution,
@@ -421,6 +424,7 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
 
     settlements: list[tuple[str, str]] = []
     completions: list[dict] = []
+    observed_metrics: list[str] = []
     task = SimpleNamespace(
         task_id="product-task-a",
         status="failed",
@@ -448,6 +452,7 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
 
     monkeypatch.setattr(freezone, "get_usage_meter", lambda: UsageMeter())
     monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+    monkeypatch.setattr(freezone.evidence_metrics, "observe", observed_metrics.append)
 
     await freezone._settle_delivered_agent_product_task(
         ctx=SimpleNamespace(project_id="proj_demo"),
@@ -464,6 +469,7 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
 
     assert settlements == [("reservation-a", "confirm")]
     assert completions[0]["metadata"]["settlement_status"] == "reconciled"
+    assert observed_metrics == ["agent_product_reconciled"]
 
 
 @pytest.mark.asyncio

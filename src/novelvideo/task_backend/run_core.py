@@ -955,6 +955,9 @@ def run_project_task_core_sync(
                 )
 
                 if isinstance(exc, AgentProductSettlementPending):
+                    from novelvideo.chat import evidence_metrics
+
+                    evidence_metrics.observe("agent_product_awaiting_reconciliation")
                     if feature_reservation_id:
                         try:
                             asyncio.run(

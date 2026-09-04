@@ -815,6 +815,9 @@ async def _bind_server_observed_agent_product_execution(
                 tool_call_id=tool_call_id,
             )
         except ValueError:
+            from novelvideo.chat import evidence_metrics
+
+            evidence_metrics.observe("agent_product_binding_failed")
             logger.warning(
                 "could not bind observed Agent product execution operation=%s",
                 operation_id,
