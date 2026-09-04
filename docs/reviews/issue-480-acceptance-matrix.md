@@ -39,6 +39,8 @@
 - 当前 A1 变更：文本任务以实际交付内容创建可信 `billable_chars` 幂等预留并确认；
   EE 入队只做价格/余额预检；Workflow Plan/MCP 与规划回复均拒绝超过 4000 个
   可计费字符的正文旁路。
+- 2026-09-05 paired gate：CE `2b368b2d` + PR #186 head 后续提交 `8188a7d`；
+  产品证据套件 150 passed，EE 合约套件 127 passed。
 - 全量 CE 回归：5183 passed、16 skipped、3 deselected；其中 3 项因受限沙箱的端口/联网限制
   首次失败，在允许对应能力后单独重跑通过。
 
