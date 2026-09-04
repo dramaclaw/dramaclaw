@@ -7,14 +7,14 @@ import { describe, expect, it } from "vitest";
 // `engine/poses.ts` 本身是零 import 的纯数据模块，引它不会把 playcanvas 求值起来。
 import {
   POSES,
-  POSE_LABELS,
+  POSE_LABEL_KEYS,
   QUATERNIUS_POSE_CLIPS,
 } from "@/features/viewer-kit/three-d/engine/poses";
 
 import {
   PREVIZ_POSES,
   PREVIZ_POSE_CLIPS,
-  PREVIZ_POSE_LABEL,
+  PREVIZ_POSE_LABEL_KEYS,
   isPrevizPoseId,
   resolvePoseClipName,
 } from "@/features/previz/domain/poses";
@@ -26,10 +26,10 @@ describe("previz pose catalogue", () => {
     expect([...PREVIZ_POSES].sort()).toEqual([...POSES].sort());
   });
 
-  it("gives every pose a clip candidate list and a label", () => {
+  it("gives every pose a clip candidate list and a label key", () => {
     for (const pose of PREVIZ_POSES) {
       expect(PREVIZ_POSE_CLIPS[pose].names.length).toBeGreaterThan(0);
-      expect(PREVIZ_POSE_LABEL[pose]).toBeTruthy();
+      expect(PREVIZ_POSE_LABEL_KEYS[pose]).toBeTruthy();
     }
   });
 
@@ -67,8 +67,8 @@ describe("previz pose catalogue", () => {
     expect(PREVIZ_POSE_CLIPS).toEqual(QUATERNIUS_POSE_CLIPS);
   });
 
-  it("matches the viewer-kit pose labels verbatim", () => {
-    expect(PREVIZ_POSE_LABEL).toEqual(POSE_LABELS);
+  it("matches the viewer-kit pose label keys verbatim", () => {
+    expect(PREVIZ_POSE_LABEL_KEYS).toEqual(POSE_LABEL_KEYS);
   });
 
   it("picks the first candidate the model actually carries", () => {

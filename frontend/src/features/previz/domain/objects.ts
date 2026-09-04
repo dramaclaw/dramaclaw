@@ -67,12 +67,14 @@ export function nextCharacterColor(objects: readonly PrevizObject[]): string {
  * 名字是要随场景落盘的数据，跟着 i18n 走会让同一份 JSON 在两种语言下自相矛盾
  * （中文建的场景切到英文再存一次，一半对象叫 Camera 一半叫机位）。
  */
+// i18n-exempt-start: 规范默认值，会写进场景 JSON；理由见上面的注释
 export const PREVIZ_OBJECT_BASE_NAME: Record<PrevizObjectKind, string> = {
   character: '人物',
   camera: '机位',
   light: '灯光',
   prop: '物件',
 };
+// i18n-exempt-end
 
 /**
  * 对象的可编辑字段补丁：一次编辑要动哪些字段。属性面板（Task 14）落地时会拿它当入参
