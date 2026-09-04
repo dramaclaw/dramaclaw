@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.COMPOSE_BUMP_TOKEN || github.token }}
+          token: ${{ secrets.DRAMACLAW_RELEASE_TOKEN || github.token }}
       - name: Resolve latest gateway release
         id: gw
         env:
@@ -51,13 +51,13 @@ jobs:
             [ "$rc" = 3 ] && { echo "changed=false" >>"$GITHUB_OUTPUT"; exit 0; }
             exit "$rc"
           fi
-      # 用内置 github.token 开的 PR 不会触发 pull_request CI，卡在必检项上无法合并；配了 COMPOSE_BUMP_TOKEN
-      # （fine-grained PAT，本仓 contents + pull-requests write）就用它 push 和开 PR，CI 正常跑；没配则回退到 github.token，
+      # 用内置 github.token 开的 PR 不会触发 pull_request CI，卡在必检项上无法合并；配了 DRAMACLAW_RELEASE_TOKEN
+      # （与 claymorelab/SuperTale 发版上传用的同一把 fine-grained PAT，本仓 contents + pull-requests write）就用它 push 和开 PR，CI 正常跑；没配则回退到 github.token，
       # 此时还需要仓库设置里的 "Allow GitHub Actions to create and approve pull requests" 打开，否则 gh pr create 会被拒绝。
       - name: Open PR
         if: steps.bump.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.COMPOSE_BUMP_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.DRAMACLAW_RELEASE_TOKEN || github.token }}
           TAG: ${{ steps.gw.outputs.tag }}
         run: |
           set -euo pipefail
