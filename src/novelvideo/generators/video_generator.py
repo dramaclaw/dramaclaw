@@ -3757,7 +3757,15 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 and operation_claim is not None
                 and not operation_terminal
             ):
-                if submit_attempted:
+                if task_id is None and is_definite_no_cost_http_rejection(
+                    exc.status_code
+                ):
+                    # A concrete HTTP rejection without a provider task id proves
+                    # that the submit was not accepted.  ``submit_attempted`` only
+                    # says that the request crossed our client boundary; it does
+                    # not make an explicit 4xx response indeterminate.
+                    await self._mark_operation_rejected(operation_port, operation_claim)
+                elif submit_attempted:
                     await self._mark_operation_unknown(
                         operation_port,
                         operation_claim,

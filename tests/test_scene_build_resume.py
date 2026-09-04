@@ -15,6 +15,7 @@ from novelvideo.cognee.pipeline import (
     SCENE_FALLBACK_FINGERPRINT,
     StoreSceneBuildCache,
     _ensure_directional_environment_prompt,
+    enrich_scene_environment_from_context,
     enrich_scene_environments_batched,
     is_cacheable_scene_prompt,
     normalize_scene_environment_prompt,
@@ -198,6 +199,16 @@ def test_the_contract_version_is_part_of_the_key(monkeypatch):
     assert scene_enrichment_cache_key(_candidate("办公室")) != before
 
 
+def test_pre_language_contract_cache_keys_are_retired(monkeypatch):
+    from novelvideo.cognee import pipeline
+
+    current = scene_enrichment_cache_key(_candidate("Central Library"))
+    monkeypatch.setattr(pipeline, "SCENE_ENRICHMENT_CACHE_VERSION", 1)
+    old = scene_enrichment_cache_key(_candidate("Central Library"))
+
+    assert current != old
+
+
 # ── the payload ─────────────────────────────────────────────────────────────
 
 
@@ -245,6 +256,37 @@ async def test_a_cold_cache_calls_the_model_for_every_scene():
     assert [scene.name for scene in scenes] == [c["name"] for c in candidates]
     assert _scenes_named(agent.prompts) == {c["name"] for c in candidates}
     assert len(cache.bucket(SCENE_ENRICHMENT_CACHE_TYPE)) == 7
+
+
+async def test_english_scene_batches_request_english_user_visible_prose():
+    candidate = _candidate(
+        "Central Library",
+        characters=["Maya"],
+        context_lines=["Maya walks between the shelves."],
+    )
+    agent = FakeAgent()
+
+    scenes = await enrich_scene_environments_batched(
+        [candidate], enrichment_agent=agent
+    )
+
+    assert [scene.name for scene in scenes] == ["Central Library"]
+    assert "Write every user-visible prose field in English" in agent.prompts[0]
+
+
+async def test_english_per_scene_retry_receives_the_same_language_contract():
+    agent = FakeAgent()
+
+    scene = await enrich_scene_environment_from_context(
+        scene_name="Central Library",
+        characters=["Maya"],
+        context_lines=["Maya walks between the shelves."],
+        enrichment_agent=agent,
+        output_language="en",
+    )
+
+    assert scene.name == "Central Library"
+    assert "Write every user-visible prose field in English" in agent.prompts[0]
 
 
 async def test_a_second_run_over_unchanged_input_calls_no_model_at_all():

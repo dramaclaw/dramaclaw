@@ -71,6 +71,7 @@ describe("Seedance2 prompt generation query", () => {
       beatNum: 2,
       manualPromptReference: "current prompt",
       promptGuidance: "more camera motion",
+      promptGuidanceTemplateKeys: ["camera"],
     });
 
     await waitFor(() => expect(result.current.data).toBeDefined());
@@ -80,8 +81,47 @@ describe("Seedance2 prompt generation query", () => {
     expect(body).toEqual({
       manual_prompt_reference: "current prompt",
       prompt_guidance: "more camera motion",
+      prompt_guidance_template_keys: ["camera"],
     });
     expect(result.current.data?.ok).toBe(true);
+  });
+
+  it("does not use the current app language to choose the Seedance2 output language", async () => {
+    useAppStore.setState({ language: "en" });
+    let body: unknown = null;
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/projects/demo/episodes/1/beats/2/seedance2-prompt/generate",
+        async ({ request }) => {
+          body = await request.json();
+          return HttpResponse.json({
+            ok: true,
+            data: {
+              final_prompt: "optimized seedance2 prompt",
+              seedance2_config_json:
+                '{"final_prompt":"optimized seedance2 prompt"}',
+              beat: {
+                beat_number: 2,
+                seedance2_config_json:
+                  '{"final_prompt":"optimized seedance2 prompt"}',
+              },
+            },
+          });
+        },
+      ),
+    );
+
+    const { result } = renderHook(() => useGenerateSeedance2Prompt("demo", 1), {
+      wrapper,
+    });
+    result.current.mutate({ beatNum: 2 });
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(body).toEqual({
+      manual_prompt_reference: "",
+      prompt_guidance: "",
+      prompt_guidance_template_keys: [],
+    });
   });
 
   it("parses feature billing errors from the Seedance2 prompt endpoint", async () => {
@@ -152,11 +192,11 @@ describe("1.x beat video prompt generation query", () => {
     expect(requestedPath).toBe(
       "/api/v1/projects/demo/episodes/1/beats/2/video-prompt/generate",
     );
-    expect(body).toEqual({ language: "zh" });
+    expect(body).toEqual({});
     expect(result.current.data?.ok).toBe(true);
   });
 
-  it("follows the current app language when generating 1.x video prompts", async () => {
+  it("does not use the current app language when generating 1.x video prompts", async () => {
     useAppStore.setState({ language: "en" });
     let body: unknown = null;
     server.use(
@@ -185,7 +225,7 @@ describe("1.x beat video prompt generation query", () => {
     result.current.mutate({ beatNum: 2 });
 
     await waitFor(() => expect(result.current.data).toBeDefined());
-    expect(body).toEqual({ language: "en" });
+    expect(body).toEqual({});
   });
 
   it("parses feature billing errors from the 1.x video prompt endpoint", async () => {

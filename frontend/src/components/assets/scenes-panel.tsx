@@ -37,6 +37,7 @@ import { useNavigateToAsset } from "@/hooks/use-assets-deep-link";
 import {
   backendErrorResponseToastMessage,
   backendErrorToastMessage,
+  taskResponseToastMessage,
   BillingRuleNotConfiguredError,
   humanizeTaskError,
 } from "@/lib/api-errors";
@@ -1354,7 +1355,7 @@ export function ScenesPanel({
       return;
     }
     buildActivity.markStarted({ taskId: res.task_id });
-    toast.success(res.message);
+    toast.success(taskResponseToastMessage(res, t));
   }
 
   async function handleDelete(scene: SceneAsset) {

@@ -2,16 +2,53 @@
 
 from __future__ import annotations
 
+import os
 import re
+import secrets
+import stat
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
 MAX_NOVEL_UPLOAD_BYTES = 512 * 1024
 MAX_NOVEL_IMPORT_BYTES = 1 * 1024 * 1024
+MAX_PROJECT_UPLOAD_BYTES = 200 * 1024 * 1024
 
 
 class UploadTooLargeError(ValueError):
-    """Raised when a novel upload exceeds its raw file-size limit."""
+    """Raised when an upload exceeds its raw file-size limit."""
+
+
+def create_staged_upload_file(
+    staging_dir: Path,
+    *,
+    suffix: str,
+    prefix: str = "upload-",
+    destination: Path | None = None,
+) -> Path:
+    """Create a unique staging file with publish-compatible permissions."""
+
+    for _ in range(10):
+        staged_path = staging_dir / f"{prefix}{secrets.token_hex(16)}{suffix}"
+        try:
+            fd = os.open(
+                staged_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o666,
+            )
+        except FileExistsError:
+            continue
+        os.close(fd)
+        try:
+            if destination is not None:
+                destination_mode = stat.S_IMODE(destination.stat().st_mode)
+                staged_path.chmod(destination_mode)
+        except FileNotFoundError:
+            pass
+        except BaseException:
+            staged_path.unlink(missing_ok=True)
+            raise
+        return staged_path
+    raise OSError("failed to allocate upload staging file")
 
 
 def sanitize_upload_filename(raw_name: str | None, *, fallback: str = "upload.txt") -> str:

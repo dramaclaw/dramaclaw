@@ -52,6 +52,24 @@ def test_parse_seedance2_config_preserves_scene_optimize():
     assert config.scene_optimize == "anime"
 
 
+def test_parse_seedance2_config_preserves_known_guidance_template_keys():
+    config = parse_seedance2_config(
+        {
+            "prompt_guidance_template_keys": [
+                " camera ",
+                "camera",
+                "unknown",
+                "scene",
+            ]
+        }
+    )
+
+    assert config.model_dump().get("prompt_guidance_template_keys") == [
+        "camera",
+        "scene",
+    ]
+
+
 def test_dump_seedance2_config_round_trips_normalized_config():
     dumped = dump_seedance2_config(
         {

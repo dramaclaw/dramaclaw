@@ -1,23 +1,15 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
-// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
-// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
 import i18n from "i18next";
 import { api, uploadApi } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
-import { useAppStore } from "@/stores/app-store";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { Beat } from "@/types/episode";
 
 export const DEFAULT_VIDEO_BACKEND = "huimeng_seedance-1.0-pro-fast";
-
-function currentPromptLanguage(): "zh" | "en" {
-  return useAppStore.getState().language?.startsWith("zh") ? "zh" : "en";
-}
 
 export interface VideoBackendOption {
   value: string;
@@ -225,7 +217,7 @@ export function useGlobalOptimize(project: string, episode: number) {
         api.post(
           p`api/v1/projects/${project}/episodes/${episode}/optimize/video-global`,
           {
-            json: { language: currentPromptLanguage() },
+            json: {},
             throwHttpErrors: false,
           },
         ),
@@ -646,10 +638,12 @@ export function useGenerateSeedance2Prompt(project: string, episode: number) {
       beatNum,
       manualPromptReference,
       promptGuidance,
+      promptGuidanceTemplateKeys,
     }: {
       beatNum: number;
       manualPromptReference?: string;
       promptGuidance?: string;
+      promptGuidanceTemplateKeys?: string[];
     }) =>
       jsonWithBackendError<OkResponse<Seedance2PromptResult> | ErrorResponse>(
         api.post(
@@ -658,6 +652,7 @@ export function useGenerateSeedance2Prompt(project: string, episode: number) {
             json: {
               manual_prompt_reference: manualPromptReference ?? "",
               prompt_guidance: promptGuidance ?? "",
+              prompt_guidance_template_keys: promptGuidanceTemplateKeys ?? [],
             },
             throwHttpErrors: false,
           },
@@ -690,7 +685,7 @@ export function useGenerateBeatVideoPrompt(project: string, episode: number) {
         api.post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/video-prompt/generate`,
           {
-            json: { language: currentPromptLanguage() },
+            json: {},
             throwHttpErrors: false,
           },
         ),

@@ -1831,27 +1831,45 @@ async def test_newapi_organization_failures_keep_safe_provider_error_details(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("response_body", "expected_error"),
+    ("status_code", "response_body", "expected_error", "expected_transition"),
     [
         (
+            400,
             '{"error": {"code": "VIDEO_MEDIA_DIMENSIONS_INVALID", '
             '"message": "secret-canary"}}',
             "VIDEO_MEDIA_DIMENSIONS_INVALID",
+            "rejected_before_submit",
         ),
         (
+            400,
             '{"error": {"content": "请求参数不受当前模型支持：'
             'https://relay.example/a.png?token=secret-canary 请调整后重试"}}',
             "请求参数不受当前模型支持：[redacted-url] 请调整后重试",
+            "rejected_before_submit",
+        ),
+        (
+            403,
+            '{"error": {"content": "token quota is not enough"}}',
+            "token quota is not enough",
+            "rejected_before_submit",
+        ),
+        (
+            500,
+            '{"error": {"content": "upstream result is uncertain"}}',
+            "upstream result is uncertain",
+            "unknown",
         ),
     ],
 )
-async def test_newapi_organization_submit_rejection_keeps_safe_provider_error_code(
+async def test_newapi_organization_submit_response_keeps_safe_error_and_terminal_state(
     monkeypatch,
     tmp_path: Path,
+    status_code: int,
     response_body: str,
     expected_error: str,
+    expected_transition: str,
 ) -> None:
-    """提交阶段明确拒绝时恢复安全详情，同时不泄漏响应中的签名 URL。"""
+    """提交响应恢复安全详情，并按是否明确拒绝收敛出口状态。"""
     from novelvideo.generators.video_generator import (
         NewApiVideoError,
         NewApiVideoGenerator,
@@ -1866,9 +1884,9 @@ async def test_newapi_organization_submit_rejection_keeps_safe_provider_error_co
 
     async def rejected(*_args, **_kwargs):
         raise NewApiVideoError(
-            f"DramaClawAPI submit failed: HTTP 400 - {response_body}",
+            f"DramaClawAPI submit failed: HTTP {status_code} - {response_body}",
             request_id="req-1",
-            status_code=400,
+            status_code=status_code,
         )
 
     monkeypatch.setattr(generator, "_post_json", rejected)
@@ -1889,4 +1907,4 @@ async def test_newapi_organization_submit_rejection_keeps_safe_provider_error_co
     assert result.status is VideoGenStatus.FAILED
     assert result.error == expected_error
     assert "secret-canary" not in repr(result)
-    assert [name for name, _ in operation_port.events] == ["claim", "unknown"]
+    assert [name for name, _ in operation_port.events] == ["claim", expected_transition]

@@ -24,6 +24,11 @@ from novelvideo.shared.env_guard import preserve_st_env
 from novelvideo.cognee.ladybug_access import ladybug_graph_access
 from novelvideo.knowledge_pipeline import is_structured_pipeline
 from novelvideo.sqlite_store import load_episode_planning_content
+from novelvideo.utils.source_language import (
+    AssetLanguage,
+    asset_language_instruction,
+    detect_asset_language,
+)
 
 if TYPE_CHECKING:
     from novelvideo.cognee import CogneeStore
@@ -251,7 +256,6 @@ APPEARANCE_GENERATION_PROMPT = """# 你是专业的影视服装造型师
 - body_type: **仅当身份涉及年龄变化**时填写体型描述
   - 包括：身高、体型、体态特征
   - 普通换装身份（同年龄段）不填此项
-- 使用中文
 - 具体、可视化，适合影视美术部门制作参考
 
 ## 示例
@@ -428,6 +432,7 @@ class IdentityPlanner:
         content_text = await load_episode_planning_content(self.cognee_store, episode)
         if not content_text or not content_text.strip():
             return 0, 0
+        output_language = detect_asset_language(content_text)
 
         # 预筛出场角色（只调一次，后续复用）
         all_chars = self.cognee_store.get_all_characters()
@@ -466,7 +471,10 @@ class IdentityPlanner:
             )
             default_new, resolved_ids, resolved_identity_map = (
                 await self._resolve_requirements(
-                    episode.number, default_as_requirements, on_log
+                    episode.number,
+                    default_as_requirements,
+                    on_log,
+                    output_language=output_language,
                 )
             )
             new_count += default_new
@@ -519,7 +527,10 @@ class IdentityPlanner:
         )
         if special_requirements.requirements:
             special_new, special_ids, _ = await self._resolve_requirements(
-                episode.number, special_requirements, on_log
+                episode.number,
+                special_requirements,
+                on_log,
+                output_language=output_language,
             )
             new_count += special_new
             resolved_seen = set(resolved_ids)
@@ -929,9 +940,12 @@ class IdentityPlanner:
   - 如果只是同龄造型分支，可留空
 """
         try:
+            language_instruction = asset_language_instruction(
+                detect_asset_language(content_text)
+            )
             agent = Agent(
                 self._identity_model("IDENTITY_PLANNER_ANALYSIS_MODEL"),
-                system_prompt=DEFAULT_IDENTITY_PROMPT,
+                system_prompt=f"{DEFAULT_IDENTITY_PROMPT}\n{language_instruction}",
                 model_settings=self._identity_model_settings(),
                 output_type=EpisodeDefaultIdentities,
             )
@@ -1009,9 +1023,12 @@ class IdentityPlanner:
 - 如果没有其他身份需求，返回空列表
 """
         try:
+            language_instruction = asset_language_instruction(
+                detect_asset_language(content_text)
+            )
             agent = Agent(
                 self._identity_model("IDENTITY_PLANNER_ANALYSIS_MODEL"),
-                system_prompt=OTHER_IDENTITY_PROMPT,
+                system_prompt=f"{OTHER_IDENTITY_PROMPT}\n{language_instruction}",
                 model_settings=self._identity_model_settings(),
                 output_type=EpisodeIdentityRequirements,
             )
@@ -1067,6 +1084,7 @@ class IdentityPlanner:
         inferred_fish_voice: str,
         reason: str,
         on_log: Optional[Callable] = None,
+        output_language: AssetLanguage | None = None,
     ) -> dict[str, str]:
         appearance_result = await self._generate_appearance(
             char.name,
@@ -1074,6 +1092,7 @@ class IdentityPlanner:
             resolved_age_group,
             reason,
             on_log,
+            output_language=output_language,
         )
 
         if isinstance(appearance_result, str):
@@ -1151,6 +1170,7 @@ class IdentityPlanner:
         pending: bool,
         corrupted_fields: dict[str, str],
         on_log: Optional[Callable] = None,
+        output_language: AssetLanguage | None = None,
     ) -> bool:
         try:
             generated = await self._generate_identity_appearance_updates(
@@ -1161,6 +1181,7 @@ class IdentityPlanner:
                 inferred_fish_voice,
                 reason,
                 on_log,
+                output_language=output_language,
             )
         except Exception:
             if corrupted_fields:
@@ -1229,6 +1250,7 @@ class IdentityPlanner:
         episode_number: int,
         requirements: EpisodeIdentityRequirements,
         on_log: Optional[Callable] = None,
+        output_language: AssetLanguage | None = None,
     ) -> tuple[int, list[str], dict[tuple[str, str], str]]:
         """Phase 2: 匹配已有身份 → 创建缺失身份。
 
@@ -1285,6 +1307,7 @@ class IdentityPlanner:
                         pending=pending,
                         corrupted_fields=corrupted_fields,
                         on_log=on_log,
+                        output_language=output_language,
                     )
                 else:
                     updates = {}
@@ -1358,6 +1381,7 @@ class IdentityPlanner:
                         pending=True,
                         corrupted_fields={},
                         on_log=on_log,
+                        output_language=output_language,
                     )
                 except Exception as e:
                     if on_log:
@@ -1398,6 +1422,7 @@ class IdentityPlanner:
         planned_age_group: str,
         reason: str,
         on_log: Optional[Callable] = None,
+        output_language: AssetLanguage | None = None,
     ) -> AppearanceDescription:
         """用 AI 生成身份的服装造型描述（含可选面部描述）。"""
         # 获取角色已有造型作为参考（不发送 face_prompt 避免触发安全过滤）
@@ -1448,9 +1473,15 @@ class IdentityPlanner:
 """
 
         try:
+            language = output_language or detect_asset_language(
+                "\n".join((character_name, visual_state, reason))
+            )
+            language_instruction = asset_language_instruction(language)
             appearance_agent = Agent(
                 self._identity_model("IDENTITY_PLANNER_APPEARANCE_MODEL"),
-                system_prompt=APPEARANCE_GENERATION_PROMPT,
+                system_prompt=(
+                    f"{APPEARANCE_GENERATION_PROMPT}\n{language_instruction}"
+                ),
                 model_settings=self._identity_model_settings(),
                 output_type=AppearanceDescription,
                 retries={"output": 2},

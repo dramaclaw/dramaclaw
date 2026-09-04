@@ -138,6 +138,10 @@ class _M09Store:
         assert episode == 1
         return [dict(beat) for beat in self.beats]
 
+    async def load_working_content(self, episode: int):
+        assert episode == 1
+        return "INT. ALLEY - NIGHT\nHero walks through the alley."
+
     async def list_beat_asset_refs(self):
         return [
             SimpleNamespace(
@@ -508,7 +512,10 @@ def test_m09_l2_exercises_all_23_endpoint_contracts(m09_client_factory):
         )
     )
     _assert_ok(
-        client.post(f"/api/v1/projects/{_PROJECT}/episodes/1/optimize/video-global", json={})
+        client.post(
+            f"/api/v1/projects/{_PROJECT}/episodes/1/optimize/video-global",
+            json={"language": "zh"},
+        )
     )
     _assert_ok(client.get(f"/api/v1/projects/{_PROJECT}/assets/identity/{_IDENTITY}/references"))
     _assert_ok(client.get(f"/api/v1/projects/{_PROJECT}/media/media/existing.mp4"))
@@ -576,7 +583,10 @@ def test_global_video_prompt_batch_bills_existing_sketches(
     assert quote["data"]["display"] == "12"
 
     response = _assert_ok(
-        client.post(f"/api/v1/projects/{_PROJECT}/episodes/1/optimize/video-global", json={})
+        client.post(
+            f"/api/v1/projects/{_PROJECT}/episodes/1/optimize/video-global",
+            json={"language": "zh"},
+        )
     )
 
     _assert_task_payload(response, backend=backend, task_type="global_optimize_video")
@@ -590,6 +600,7 @@ def test_global_video_prompt_batch_bills_existing_sketches(
         "item_count": 2,
     }
     assert call["payload"]["beat_numbers"] == [1, 2]
+    assert call["payload"]["language"] == "en"
 
 
 def test_m09_render_execute_rejects_stale_fingerprint_and_plan_hash(m09_client_factory):

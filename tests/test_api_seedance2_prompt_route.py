@@ -21,9 +21,13 @@ class DummySqliteStore:
     updates: list[dict] = field(default_factory=list)
     characters: list[dict] = field(default_factory=list)
     sketch_colors: dict[str, str] = field(default_factory=dict)
+    source_text: str = ""
 
     async def get_script_as_dict(self, episode: int):
         return {"episode": episode, "beats": [dict(beat) for beat in self.beats]}
+
+    async def load_working_content(self, episode: int):
+        return self.source_text
 
     def get_all_characters(self):
         return list(self.characters)
@@ -101,11 +105,12 @@ def _client(
     *,
     ctx=None,
     usage_meter=None,
+    source_text="",
 ):
     from novelvideo.api.routes import scripts
     from novelvideo.api.deps import ProjectResolution
 
-    sqlite_store = DummySqliteStore(beats)
+    sqlite_store = DummySqliteStore(beats, source_text=source_text)
 
     async def _make_sqlite_store(username: str, project: str):
         return sqlite_store
@@ -215,6 +220,7 @@ def test_generate_seedance2_prompt_updates_config_json(monkeypatch, tmp_path):
             },
             {"beat_number": 2},
         ],
+        source_text="INT. SUBWAY STATION - NIGHT\nJi-won raises her phone.",
     )
 
     response = client.post(
@@ -222,6 +228,7 @@ def test_generate_seedance2_prompt_updates_config_json(monkeypatch, tmp_path):
         json={
             "manual_prompt_reference": "current seedance2 prompt",
             "prompt_guidance": "more camera motion",
+            "prompt_guidance_template_keys": ["camera"],
         },
     )
 
@@ -233,6 +240,8 @@ def test_generate_seedance2_prompt_updates_config_json(monkeypatch, tmp_path):
     assert payload["data"]["beat"]["seedance2_config_json"] == saved_json
     assert seen["manual_prompt_reference"] == "current seedance2 prompt"
     assert seen["prompt_guidance"] == "more camera motion"
+    assert seen.get("prompt_guidance_template_keys") == ["camera"]
+    assert seen["language"] == "en"
     assert seen["next_beat"]["beat_number"] == 2
     assert store.updates == [
         {
@@ -385,6 +394,7 @@ def test_generate_seedance2_prompt_requires_next_beat_for_first_last_mode(
                 ),
             }
         ],
+        source_text="INT. SUBWAY STATION - NIGHT\nJi-won raises her phone.",
     )
 
     response = client.post(
@@ -427,6 +437,7 @@ def test_generate_beat_video_prompt_updates_first_frame_video_prompt(
             },
             {"beat_number": 2},
         ],
+        source_text="INT. SUBWAY STATION - NIGHT\nJi-won raises her phone.",
     )
 
     from novelvideo.utils.path_resolver import PathResolver
@@ -435,7 +446,7 @@ def test_generate_beat_video_prompt_updates_first_frame_video_prompt(
 
     response = client.post(
         "/projects/demo/episodes/1/beats/1/video-prompt/generate",
-        json={"language": "en"},
+        json={"language": "zh"},
     )
 
     assert response.status_code == 200
@@ -472,7 +483,8 @@ def test_generate_beat_video_prompt_enqueues_project_task_in_celery_mode(
                 "video_prompt": "old prompt",
             },
             {"beat_number": 2},
-        ]
+        ],
+        source_text="INT. SUBWAY STATION - NIGHT\nJi-won raises her phone.",
     )
     enqueued = {}
 
@@ -518,7 +530,7 @@ def test_generate_beat_video_prompt_enqueues_project_task_in_celery_mode(
 
     response = client.post(
         "/projects/demo/episodes/1/beats/1/video-prompt/generate",
-        json={"language": "en"},
+        json={"language": "zh"},
     )
 
     assert response.status_code == 200
