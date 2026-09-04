@@ -15,10 +15,16 @@ export interface StoryVisitCondition {
   value: number;
 }
 
-/** 条件叶子:变量比较 或 访问计数。判别:'visitedNodeId' in c。 */
-export type StoryConditionLeaf = StoryChoiceCondition | StoryVisitCondition;
+/** 布尔状态条件:某个剧情开关当前是否开启。 */
+export interface StoryFlagCondition {
+  flag: string;
+  value: boolean;
+}
 
-/** 复合条件组:扁平的多个叶子 + 单一连接词(v1 不嵌套,items 至少 1)。 */
+/** 条件叶子:变量比较 或 访问计数。判别:'visitedNodeId' in c。 */
+export type StoryConditionLeaf = StoryChoiceCondition | StoryVisitCondition | StoryFlagCondition;
+
+/** 复合条件组:扁平的多个叶子 + 单一连接词，不嵌套，items 至少 1。 */
 export interface StoryConditionGroup {
   join: 'and' | 'or';
   items: StoryConditionLeaf[];
@@ -28,10 +34,19 @@ export interface StoryConditionGroup {
 export type StoryConditionExpr = StoryConditionLeaf | StoryConditionGroup;
 
 /** 选项效果:选了此选项后,某变量 += delta(delta 可正可负)。 */
-export interface StoryChoiceEffect {
+export interface StoryVariableEffect {
   var: string; // 引用 StoryVariable.name
   delta: number;
 }
+
+/** 把剧情开关明确设为开或关。 */
+export interface StoryFlagEffect {
+  flag: string;
+  value: boolean;
+}
+
+export type StoryChoiceEffect = StoryVariableEffect | StoryFlagEffect;
+export type StoryTransitionMode = 'visible' | 'automatic';
 
 /** 选项在播放器中的呈现方式。默认 overlay 沿用底部选项；其它两种都需要锚点热区。 */
 export type StoryChoicePresentation = 'overlay' | 'object-anchor' | 'baked-video';
@@ -131,7 +146,7 @@ export function normalizeStoryChoiceInteraction(
 /** 玩家可见的语义状态变化；只显示变量标签与方向，不暴露内部数值。 */
 export interface StoryStateChange {
   label: string;
-  direction: 'up' | 'down';
+  direction: 'up' | 'down' | 'on' | 'off';
 }
 
 /** 选项边携带的数据。 */
@@ -140,9 +155,11 @@ export interface StoryChoiceEdgeData {
   storyChoiceId?: string;
   /** 玩家看到的选项文案,如「先自我介绍」。空串视为无文字纯跳转。 */
   choiceText: string;
+  /** visible 由玩家点击；automatic 在条件满足时由系统直接跳转。 */
+  transitionMode?: StoryTransitionMode;
   /** 同一源节点多个选项的显示顺序,升序。 */
   order: number;
-  /** 满足条件才出现此选项(可选)。单叶子或复合 AND/OR 组(向后兼容:旧数据是叶子)。 */
+  /** 满足条件才出现此选项(可选)。可使用单叶子或复合 AND/OR 组。 */
   condition?: StoryConditionExpr;
   /** 选了此选项触发的变量变更(可选,可多条)。 */
   effects?: StoryChoiceEffect[];
@@ -166,6 +183,13 @@ export interface StoryVariable {
   label: string;
   /** 初始值(整数)。 */
   initial: number;
+}
+
+/** 真/假剧情状态，如“已拿到钥匙”。 */
+export interface StoryFlag {
+  name: string;
+  label: string;
+  initial: boolean;
 }
 
 /** 编译产物:knot 名 ↔ 节点 id 互查 + 节点 id → 视频 URL。 */

@@ -4,7 +4,7 @@ The four business tools have the same names and semantics in the Codex MCP and H
 
 Create and Patch write the canvas atomically through `InteractiveStoryService`; they do not use the browser bridge for ordinary Freezone node commands. The in-product Agent refreshes the matching canvas from a successful `agent.tool.updated` frame. If unsaved local edits exist, the frontend preserves a local copy and enters conflict state. An external stdio MCP client receives only the write receipt; unless its host implements a refresh adapter, the user must refresh or reopen the canvas.
 
-The Agent produces `StoryDraftV1` and Patch data objects, not Ink source. The frontend deterministically compiles the canvas story group to Ink when previewing or exporting. Validate does not currently compile Ink.
+The Agent produces `StoryDraftV2` and Patch data objects, not Ink source. The frontend deterministically compiles the canvas story group to Ink when previewing or exporting. Validate does not currently compile Ink.
 
 ## Tools
 
@@ -15,11 +15,11 @@ The Agent produces `StoryDraftV1` and Patch data objects, not Ink source. The fr
 
 Do not call Create and Patch in the same user turn, and do not call Patch twice in one user turn.
 
-## StoryDraftV1
+## StoryDraftV2
 
 ```json
 {
-  "schema_version": "story_draft.v1",
+  "schema_version": "story_draft.v2",
   "story_id": "midnight_station",
   "revision": 0,
   "title": "午夜站台",
@@ -27,6 +27,7 @@ Do not call Create and Patch in the same user turn, and do not call Patch twice 
   "start_segment_id": "arrival",
   "characters": [],
   "variables": [],
+  "flags": [],
   "segments": [],
   "choices": []
 }
@@ -49,7 +50,15 @@ Do not call Create and Patch in the same user turn, and do not call Patch twice 
 {"name":"courage","label":"勇气","initial":0,"minimum":0,"maximum":5}
 ```
 
-V1 supports integer variables only. The initial value must be within the optional bounds.
+Numeric variables use integer values. The initial value must be within the optional bounds.
+
+### Flag
+
+```json
+{"name":"has_key","label":"已拿到钥匙","initial":false}
+```
+
+Flags represent simple yes/no story facts. Variable and flag names share one namespace and must be unique.
 
 ### Segment
 
@@ -83,21 +92,23 @@ V1 supports integer variables only. The initial value must be within the optiona
   "id":"arrival_follow",
   "source_segment_id":"arrival",
   "target_segment_id":"follow_signal",
+  "mode":"visible",
   "text":"跟随灯光",
   "order":0,
   "condition":null,
   "effects":[],
   "feedback_text":"她没有立刻回答，却把手电筒递给了你。",
-  "interaction":{"presentation":"object_anchor","anchor":{"x":0.68,"y":0.64,"object_label":"手电筒"},"ui_style":"glass","motion":"pop","transition":"fade"},
   "is_default":false
 }
 ```
 
 Choices from the same source must have unique `order` values. An ending segment must not be a Choice source.
 
+Set `mode` to `automatic` and use an empty `text` when the system should choose the path after the source clip finishes. Automatic transitions are checked by ascending `order`. Use one final automatic transition without a condition as the fallback. A source with only conditional automatic transitions and no fallback can stop when no rule matches. Do not mix an unconditional automatic fallback with visible Choices.
+
 `feedback_text` is an optional, short line shown immediately after a player confirms a Choice. Keep it sparse: omit it for routine Choices, and use it only for a relationship turn, information reveal, or another clearly felt state change (for example, “她的戒备似乎少了一些。”). When that Choice also has variable effects, the player sees each variable's semantic label with an ↑/↓ direction (for example, `信任 ↑`), never the numeric value. It does not generate, replace, or alter a video asset.
 
-`interaction` is optional. `overlay` is the default bottom-choice presentation. `object_anchor` renders a real frontend choice at the normalized `anchor` point in the video frame; use `object_label` to name the prop or character it belongs to. `baked_video` expects visible UI to already exist in the video and creates only an accessible transparent rectangular hotspot. Its `anchor.x`/`anchor.y` are the rectangle center and `anchor.width`/`anchor.height` are required normalized dimensions; the full rectangle must stay within the source frame. Anchored interactions can use `glass`, `tag`, or `warning` UI styles, `fade`, `pop`, or `pulse` entrance motion, and `fade`, `flash`, or `cut` branch transition.
+`interaction` is optional. Omit it by default so the player sees an explicit bottom `overlay` decision. Use `object_anchor` or `baked_video` only after the user requests an in-frame interaction and the final media target position is known; do not infer precise coordinates from placeholder media or script text. `object_anchor` renders a real frontend choice at the normalized `anchor` point in the video frame; use `object_label` to name the prop or character it belongs to. `baked_video` expects visible UI to already exist in the video and creates only an accessible transparent rectangular hotspot. Its `anchor.x`/`anchor.y` are the rectangle center and `anchor.width`/`anchor.height` are required normalized dimensions; the full rectangle must stay within the source frame. Anchored interactions can use `glass`, `tag`, or `warning` UI styles, `fade`, `pop`, or `pulse` entrance motion, and `fade`, `flash`, or `cut` branch transition.
 
 Variable condition:
 
@@ -111,22 +122,35 @@ Visited condition:
 {"kind":"visited","segment_id":"arrival","operator":">=","value":1}
 ```
 
+Flag condition:
+
+```json
+{"kind":"flag","flag":"has_key","value":true}
+```
+
 Flat condition group:
 
 ```json
 {"kind":"group","join":"and","items":[{"kind":"variable","variable":"courage","operator":">=","value":2}]}
 ```
 
-V1 supports integer increments as its only effect:
+Numeric increment:
 
 ```json
 {"kind":"increment","variable":"courage","delta":1}
+```
+
+Set a flag:
+
+```json
+{"kind":"set_flag","flag":"has_key","value":true}
 ```
 
 ## Patch Operations
 
 ```json
 {
+  "schema_version":"story_patch.v2",
   "story_id":"midnight_station",
   "base_revision":3,
   "idempotency_key":"patch-midnight-r3-ending",
@@ -141,6 +165,7 @@ Supported operations:
 - `add_segment` / `update_segment` / `remove_segment`
 - `add_choice` / `update_choice` / `remove_choice`
 - `upsert_variable` / `remove_variable`
+- `upsert_flag` / `remove_flag`
 - `upsert_character` / `remove_character`
 
 When adding a branch, add both the target Segment and its Choice in the same Patch. Do not send the complete Story returned by Get as a Patch.

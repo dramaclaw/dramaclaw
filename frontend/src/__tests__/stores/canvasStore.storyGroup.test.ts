@@ -28,8 +28,9 @@ describe('canvasStore story group', () => {
     const group = nodes.find((n) => n.id === gid)!;
     expect((group.data as { storyGroup?: boolean }).storyGroup).toBe(true);
     expect((group.data as { interactiveStoryId?: string }).interactiveStoryId).toBe(`story-${gid}`);
-    expect((group.data as { interactiveStorySchemaVersion?: string }).interactiveStorySchemaVersion).toBe('story_draft.v1');
-    expect((group.data as { storyVariables?: unknown[] }).storyVariables).toEqual([]);
+    expect((group.data as { interactiveStorySchemaVersion?: string }).interactiveStorySchemaVersion).toBe('story_draft.v2');
+    expect((group.data as { storyVariableDefinitions?: unknown[] }).storyVariableDefinitions).toEqual([]);
+    expect((group.data as { storyFlags?: unknown[] }).storyFlags).toEqual([]);
     expect((group.data as { storyVariableDefinitions?: unknown[] }).storyVariableDefinitions).toEqual([]);
     expect(nodes.find((n) => n.id === 'v1')!.parentId).toBe(gid);
     expect((nodes.find((n) => n.id === 'v1')!.data as { storySegmentId?: string }).storySegmentId).toBe('segment-v1');
@@ -342,15 +343,13 @@ describe('canvasStore story group', () => {
     expect(/^[a-zA-Z_]/.test(name)).toBe(true);
     useCanvasStore.getState().updateStoryVariable(gid, name, { initial: 5 });
     let groupData = useCanvasStore.getState().nodes.find((n) => n.id === gid)!.data as {
-      storyVariables: { name: string; initial: number }[];
       storyVariableDefinitions: { name: string; initial: number }[];
     };
-    let vars = groupData.storyVariables;
+    let vars = groupData.storyVariableDefinitions;
     expect(vars[0].initial).toBe(5);
-    expect(groupData.storyVariableDefinitions).toEqual(groupData.storyVariables);
     useCanvasStore.getState().removeStoryVariable(gid, name);
     groupData = useCanvasStore.getState().nodes.find((n) => n.id === gid)!.data as typeof groupData;
-    vars = groupData.storyVariables;
+    vars = groupData.storyVariableDefinitions;
     expect(vars).toHaveLength(0);
     expect(groupData.storyVariableDefinitions).toEqual([]);
   });

@@ -1,4 +1,4 @@
-"""Bidirectional mapping between StoryDraftV1 and the opaque canvas graph."""
+"""Bidirectional mapping between StoryDraftV2 and the opaque canvas graph."""
 
 from __future__ import annotations
 
@@ -13,13 +13,16 @@ from novelvideo.interactive_story.models import (
     StoryChoiceLoop,
     StoryCondition,
     StoryConditionGroup,
-    StoryDraftV1,
+    StoryDraftV2,
     StoryEffect,
+    StoryFlag,
+    StoryFlagCondition,
     StoryMediaRef,
     StorySegment,
     StoryVariable,
     StoryVariableCondition,
     StoryVisitCondition,
+    StorySetFlagEffect,
 )
 
 GROUP_NODE_TYPE = "groupNode"
@@ -38,7 +41,7 @@ GROUP_COLOR = "#3b82f6"
 
 
 class CanvasStoryMappingError(ValueError):
-    """Raised when a canvas story group cannot be represented by StoryDraftV1."""
+    """Raised when a canvas story group cannot be represented by StoryDraftV2."""
 
 
 @dataclass(frozen=True)
@@ -76,7 +79,7 @@ def find_story_group(canvas: dict[str, Any], story_id: str) -> dict[str, Any] | 
 
 
 def project_story_to_canvas(
-    story: StoryDraftV1,
+    story: StoryDraftV2,
     *,
     existing_canvas: dict[str, Any] | None = None,
     group_position: dict[str, float] | None = None,
@@ -172,11 +175,8 @@ def project_story_to_canvas(
             "interactiveStorySchemaVersion": story.schema_version,
             "storySynopsis": story.synopsis,
             "storyCharacters": [item.model_dump() for item in story.characters],
-            "storyVariables": [
-                {"name": item.name, "label": item.label, "initial": item.initial}
-                for item in story.variables
-            ],
             "storyVariableDefinitions": [item.model_dump(exclude_none=True) for item in story.variables],
+            "storyFlags": [item.model_dump() for item in story.flags],
             "backgroundColor": group_data.get("backgroundColor") or GROUP_COLOR,
         }
     )
@@ -202,6 +202,7 @@ def project_story_to_canvas(
                 "order": choice.order,
             }
         )
+        _set_optional(data, "transitionMode", "automatic" if choice.mode == "automatic" else None)
         _set_optional(data, "feedbackText", choice.feedback_text or None)
         _set_optional(
             data,
@@ -216,7 +217,12 @@ def project_story_to_canvas(
         _set_optional(
             data,
             "effects",
-            [{"var": effect.variable, "delta": effect.delta} for effect in choice.effects]
+            [
+                {"var": effect.variable, "delta": effect.delta}
+                if isinstance(effect, StoryEffect)
+                else {"flag": effect.flag, "value": effect.value}
+                for effect in choice.effects
+            ]
             if choice.effects
             else None,
         )
@@ -242,7 +248,7 @@ def project_story_to_canvas(
     )
 
 
-def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV1:
+def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV2:
     group = find_story_group(canvas, story_id)
     if group is None:
         raise CanvasStoryMappingError(f"story {story_id!r} was not found")
@@ -300,19 +306,18 @@ def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV1:
                 f"story choice {edge.get('id')!r} points outside story group"
             )
         data = edge.get("data") if isinstance(edge.get("data"), dict) else {}
+        mode = "automatic" if data.get("transitionMode") == "automatic" else "visible"
         choice_id = _domain_id(data.get("storyChoiceId"), fallback=str(edge.get("id") or ""), prefix="choice")
         choices.append(
             StoryChoice(
                 id=choice_id,
                 source_segment_id=segment_id_by_node_id[source_node_id],
                 target_segment_id=segment_id_by_node_id[target_node_id],
-                text=_required_text(data.get("choiceText"), fallback="继续"),
+                mode=mode,
+                text=(str(data.get("choiceText") or "") if mode == "automatic" else _required_text(data.get("choiceText"), fallback="继续")),
                 order=max(0, int(data.get("order") or 0)),
                 condition=_condition_from_canvas(data.get("condition"), segment_id_by_node_id),
-                effects=[
-                    StoryEffect(variable=str(effect.get("var") or ""), delta=int(effect.get("delta") or 0))
-                    for effect in _dict_list(data.get("effects"))
-                ],
+                effects=[_effect_from_canvas(effect) for effect in _dict_list(data.get("effects"))],
                 feedback_text=str(data.get("feedbackText") or ""),
                 interaction=StoryChoiceInteraction.model_validate(
                     _interaction_from_canvas(data.get("interaction"))
@@ -323,11 +328,10 @@ def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV1:
 
     characters = [StoryCharacter.model_validate(item) for item in _dict_list(group_data.get("storyCharacters"))]
     variable_source = group_data.get("storyVariableDefinitions")
-    if not isinstance(variable_source, list):
-        variable_source = group_data.get("storyVariables")
     variables = [StoryVariable.model_validate(item) for item in _dict_list(variable_source)]
+    flags = [StoryFlag.model_validate(item) for item in _dict_list(group_data.get("storyFlags"))]
     revision = canvas.get("revision") if isinstance(canvas.get("revision"), int) else 0
-    return StoryDraftV1(
+    return StoryDraftV2(
         story_id=story_id,
         revision=revision,
         title=_required_text(group_data.get("label"), fallback=story_id),
@@ -335,6 +339,7 @@ def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV1:
         start_segment_id=starts[0],
         characters=characters,
         variables=variables,
+        flags=flags,
         segments=segments,
         choices=choices,
     )
@@ -361,7 +366,7 @@ def story_graph_ids(canvas: dict[str, Any], story_id: str) -> tuple[set[str], se
     return {group_id, *segment_ids}, edge_ids
 
 
-def _layout_story(story: StoryDraftV1) -> tuple[dict[str, dict[str, float]], float, float]:
+def _layout_story(story: StoryDraftV2) -> tuple[dict[str, dict[str, float]], float, float]:
     outgoing: dict[str, list[str]] = {}
     for choice in sorted(story.choices, key=lambda item: (item.source_segment_id, item.order)):
         outgoing.setdefault(choice.source_segment_id, []).append(choice.target_segment_id)
@@ -404,6 +409,8 @@ def _condition_to_canvas(
             "op": condition.operator,
             "value": condition.value,
         }
+    if isinstance(condition, StoryFlagCondition):
+        return {"flag": condition.flag, "value": condition.value}
     return {
         "join": condition.join,
         "items": [_condition_to_canvas(item, segment_node_by_id) for item in condition.items],
@@ -435,11 +442,19 @@ def _condition_from_canvas(
             operator=raw.get("op"),
             value=raw.get("value"),
         )
+    if "flag" in raw:
+        return StoryFlagCondition(flag=raw.get("flag"), value=raw.get("value"))
     return StoryVariableCondition(
         variable=raw.get("var"),
         operator=raw.get("op"),
         value=raw.get("value"),
     )
+
+
+def _effect_from_canvas(raw: dict[str, Any]) -> StoryEffect | StorySetFlagEffect:
+    if "flag" in raw:
+        return StorySetFlagEffect(flag=raw.get("flag"), value=raw.get("value"))
+    return StoryEffect(variable=str(raw.get("var") or ""), delta=int(raw.get("delta") or 0))
 
 
 def _interaction_from_canvas(raw: Any) -> dict[str, Any]:

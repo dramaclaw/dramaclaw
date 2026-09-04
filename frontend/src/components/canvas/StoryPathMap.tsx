@@ -6,7 +6,7 @@ import { CheckCircle2, Circle, Flag, X } from 'lucide-react';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { isVideoNode } from '@/features/canvas/domain/canvasNodes';
 import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
-import { selectGroupStoryVariables } from '@/features/canvas/story/storyVariableSelectors';
+import { selectGroupStoryFlags, selectGroupStoryVariables } from '@/features/canvas/story/storyVariableSelectors';
 import { buildStoryTree, type StoryTreeRow } from '@/features/canvas/story/buildStoryTree';
 import { emptyStoryStats, readStoryStats } from '@/features/canvas/story/storyStats';
 import { computeStoryPathCoverage } from '@/features/canvas/story/storyPathCoverage';
@@ -34,13 +34,14 @@ export const StoryPathMap = memo(function StoryPathMap({
   const nodes = useCanvasStore((s) => s.nodes);
   const edges = useCanvasStore((s) => s.edges);
   const variables = useCanvasStore(useShallow((s) => selectGroupStoryVariables(s.nodes, groupId)));
+  const flags = useCanvasStore(useShallow((s) => selectGroupStoryFlags(s.nodes, groupId)));
 
   const model = useMemo(() => {
     const members = nodes.filter((n) => n.parentId === groupId && isVideoNode(n));
     const memberIds = new Set(members.map((n) => n.id));
     const storyEdges = edges.filter((e) => e.type === STORY_CHOICE_EDGE_TYPE && memberIds.has(e.source));
-    return buildStoryTree(members, storyEdges, variables);
-  }, [nodes, edges, groupId, variables]);
+    return buildStoryTree(members, storyEdges, variables, flags);
+  }, [nodes, edges, flags, groupId, variables]);
 
   // 开面板时读一次统计快照;statsKey 为空(未持久化)则视为空覆盖,仍展示结构。
   const coverage = useMemo(

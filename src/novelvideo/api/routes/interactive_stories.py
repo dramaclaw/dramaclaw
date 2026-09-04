@@ -10,7 +10,7 @@ from novelvideo.api.deps import resolve_project_scope
 from novelvideo.interactive_story.models import (
     CreateInteractiveStoryRequest,
     GetInteractiveStoryRequest,
-    StoryPatchV1,
+    StoryPatchV2,
     ValidateInteractiveStoryRequest,
 )
 from novelvideo.interactive_story.service import (
@@ -106,7 +106,7 @@ async def get_interactive_story(
 async def patch_interactive_story(
     project: str,
     story_id: str,
-    body: StoryPatchV1,
+    body: StoryPatchV2,
     user: dict = Depends(get_api_user),
 ):
     _require_story_id(story_id, body.story_id)

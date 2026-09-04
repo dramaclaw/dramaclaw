@@ -4,7 +4,7 @@ import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/can
 
 function makeNodes(): CanvasNode[] {
   return [
-    { id: 'sg', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { label: '故事', storyGroup: true, storyVariables: [] } },
+    { id: 'sg', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { label: '故事', storyGroup: true, storyVariableDefinitions: [] } },
     { id: 'pg', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { label: '普通组' } },
     { id: 'clip', type: CANVAS_NODE_TYPES.video, parentId: 'sg', position: { x: 0, y: 0 }, data: { videoUrl: null, aspectRatio: '16:9' } },
     { id: 'plainVideo', type: CANVAS_NODE_TYPES.video, parentId: 'pg', position: { x: 0, y: 0 }, data: { videoUrl: null, aspectRatio: '16:9' } },

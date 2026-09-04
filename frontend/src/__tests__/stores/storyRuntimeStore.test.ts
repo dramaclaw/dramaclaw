@@ -110,6 +110,29 @@ describe('storyRuntimeStore', () => {
     expect(s.currentChoices).toHaveLength(0);
   });
 
+  it('片段结束后按布尔条件执行自动跳转，不生成玩家选项', () => {
+    const automatic = {
+      id: 'intro->open',
+      source: 'intro',
+      target: 'open',
+      type: STORY_CHOICE_EDGE_TYPE,
+      data: { choiceText: '', order: 0, transitionMode: 'automatic', condition: { flag: 'has_key', value: false } },
+    } as CanvasEdge;
+    const compiled = compileGraphToInk(
+      [v('intro', 'intro.mp4', 'start'), v('open', 'open.mp4')],
+      [automatic],
+      [],
+      [{ name: 'has_key', label: '已拿到钥匙', initial: false }],
+    );
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(compiled);
+    expect(useStoryRuntimeStore.getState().currentChoices).toEqual([]);
+    expect(useStoryRuntimeStore.getState().phase).toBe('playing');
+    store.advanceAutomatic();
+    expect(useStoryRuntimeStore.getState().currentClipUrl).toBe('open.mp4');
+    expect(useStoryRuntimeStore.getState().phase).toBe('ended');
+  });
+
   it('叶子结局暴露 currentEnding(title=旁白,label=结局标);非结局为 null', () => {
     const leaf = {
       id: 'meet',

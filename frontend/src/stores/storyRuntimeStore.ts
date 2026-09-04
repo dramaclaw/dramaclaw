@@ -69,6 +69,8 @@ interface StoryRuntimeState {
   /** 忽略存档,从头开始并覆盖存档为新起点。 */
   startFresh: () => void;
   choose: (index: number) => void;
+  /** 当前片段播放结束后执行系统自动跳转；没有待执行内容时无操作。 */
+  advanceAutomatic: () => void;
   restart: () => void;
   exitPlay: () => void;
 }
@@ -172,7 +174,7 @@ function advanceToClip(
     ...outcomeFromChoiceTags(c, choiceFeedbackById, choiceStateChangesById),
     interaction: interactionFromChoiceTags(c, choiceInteractionById),
   }));
-  const phase: StoryPhase = currentChoices.length > 0 ? 'playing' : 'ended';
+  const phase: StoryPhase = currentChoices.length > 0 || story.canContinue ? 'playing' : 'ended';
   // 限时只在「有选项」时有意义;无选项(结局)不计时。
   const limit = nodeId ? choiceTimeByNodeId[nodeId] : undefined;
   const currentChoiceTimeSec =
@@ -394,6 +396,32 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       }
     }
     persist(get().saveKey, story);
+  },
+
+  advanceAutomatic: () => {
+    const state = get();
+    const { story } = state;
+    if (!story || state.currentChoices.length > 0 || !story.canContinue) return;
+    const next = advanceToClip(
+      story,
+      state.clipByNodeId,
+      state.choiceTimeByNodeId,
+      state.defaultChoiceIndexByNodeId,
+      state.endingByNodeId,
+      state.placeholderByNodeId,
+      state.choiceFeedbackById,
+      state.choiceStateChangesById,
+      state.choiceInteractionById,
+    );
+    set(next);
+    if (state.statsKey && next.phase === 'ended') {
+      const endNodeId = nodeIdFromTags(story);
+      if (endNodeId) {
+        const ending = state.endingByNodeId[endNodeId] ?? { title: '' };
+        recordEnding(state.statsKey, { nodeId: endNodeId, title: ending.title, label: ending.label });
+      }
+    }
+    persist(state.saveKey, story);
   },
 
   restart: () => {

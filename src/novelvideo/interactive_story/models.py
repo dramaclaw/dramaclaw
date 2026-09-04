@@ -40,7 +40,7 @@ class StoryCharacter(StoryContractModel):
 
 
 class StoryVariable(StoryContractModel):
-    """Numeric v1 variable; maps directly to the current canvas/Ink runtime."""
+    """Numeric story state."""
 
     name: VariableName
     label: str = Field(min_length=1, max_length=120)
@@ -57,6 +57,14 @@ class StoryVariable(StoryContractModel):
         if self.maximum is not None and self.initial > self.maximum:
             raise ValueError("variable initial must be less than or equal to maximum")
         return self
+
+
+class StoryFlag(StoryContractModel):
+    """Boolean story state for facts such as whether a clue was found."""
+
+    name: VariableName
+    label: str = Field(min_length=1, max_length=120)
+    initial: bool = False
 
 
 class StoryMediaRef(StoryContractModel):
@@ -118,14 +126,20 @@ class StoryVisitCondition(StoryContractModel):
     value: int = Field(ge=0)
 
 
+class StoryFlagCondition(StoryContractModel):
+    kind: Literal["flag"] = "flag"
+    flag: VariableName
+    value: bool
+
+
 StoryConditionLeaf = Annotated[
-    StoryVariableCondition | StoryVisitCondition,
+    StoryVariableCondition | StoryVisitCondition | StoryFlagCondition,
     Field(discriminator="kind"),
 ]
 
 
 class StoryConditionGroup(StoryContractModel):
-    """Flat v1 condition group, matching the current canvas condition model."""
+    """Flat condition group matching the current canvas condition model."""
 
     kind: Literal["group"] = "group"
     join: Literal["and", "or"]
@@ -133,17 +147,29 @@ class StoryConditionGroup(StoryContractModel):
 
 
 StoryCondition = Annotated[
-    StoryVariableCondition | StoryVisitCondition | StoryConditionGroup,
+    StoryVariableCondition | StoryVisitCondition | StoryFlagCondition | StoryConditionGroup,
     Field(discriminator="kind"),
 ]
 
 
 class StoryEffect(StoryContractModel):
-    """Increment is the only v1 effect supported by the current Ink compiler."""
+    """Increment a numeric story variable."""
 
     kind: Literal["increment"] = "increment"
     variable: VariableName
     delta: int
+
+
+class StorySetFlagEffect(StoryContractModel):
+    kind: Literal["set_flag"] = "set_flag"
+    flag: VariableName
+    value: bool
+
+
+StoryEffectValue = Annotated[
+    StoryEffect | StorySetFlagEffect,
+    Field(discriminator="kind"),
+]
 
 
 class StoryChoiceAnchor(StoryContractModel):
@@ -193,14 +219,30 @@ class StoryChoice(StoryContractModel):
     id: EntityId
     source_segment_id: EntityId
     target_segment_id: EntityId
-    text: str = Field(min_length=1, max_length=500)
+    mode: Literal["visible", "automatic"] = "visible"
+    text: str = Field(default="", max_length=500)
     order: int = Field(ge=0)
     condition: StoryCondition | None = None
-    effects: list[StoryEffect] = Field(default_factory=list, max_length=20)
+    effects: list[StoryEffectValue] = Field(default_factory=list, max_length=20)
     # 玩家确认选择后短暂看见的剧情反馈；它不要求制作新的视频片段。
     feedback_text: str = Field(default="", max_length=500)
     interaction: StoryChoiceInteraction = Field(default_factory=StoryChoiceInteraction)
     is_default: bool = False
+
+    @model_validator(mode="after")
+    def validate_mode(self) -> "StoryChoice":
+        if self.mode == "visible" and not self.text:
+            raise ValueError("visible choice requires text")
+        if self.mode == "automatic":
+            if self.text:
+                raise ValueError("automatic transition must not define choice text")
+            if self.feedback_text:
+                raise ValueError("automatic transition must not define player feedback")
+            if self.interaction != StoryChoiceInteraction():
+                raise ValueError("automatic transition must not define player interaction")
+            if self.is_default:
+                raise ValueError("automatic transition cannot be a timed default choice")
+        return self
 
 
 def _condition_leaves(condition: StoryCondition | None) -> list[StoryConditionLeaf]:
@@ -211,10 +253,10 @@ def _condition_leaves(condition: StoryCondition | None) -> list[StoryConditionLe
     return [condition]
 
 
-class StoryDraftV1(StoryContractModel):
+class StoryDraftV2(StoryContractModel):
     """Agent-authored story graph before deterministic projection to canvas."""
 
-    schema_version: Literal["story_draft.v1"] = "story_draft.v1"
+    schema_version: Literal["story_draft.v2"] = "story_draft.v2"
     story_id: EntityId
     revision: int = Field(default=0, ge=0)
     title: str = Field(min_length=1, max_length=200)
@@ -222,13 +264,17 @@ class StoryDraftV1(StoryContractModel):
     start_segment_id: EntityId
     characters: list[StoryCharacter] = Field(default_factory=list, max_length=100)
     variables: list[StoryVariable] = Field(default_factory=list, max_length=100)
+    flags: list[StoryFlag] = Field(default_factory=list, max_length=100)
     segments: list[StorySegment] = Field(min_length=1, max_length=2_000)
     choices: list[StoryChoice] = Field(default_factory=list, max_length=8_000)
 
     @model_validator(mode="after")
-    def validate_references(self) -> "StoryDraftV1":
+    def validate_references(self) -> "StoryDraftV2":
         character_ids = self._unique_values("character", [item.id for item in self.characters])
         variable_names = self._unique_values("variable", [item.name for item in self.variables])
+        flag_names = self._unique_values("flag", [item.name for item in self.flags])
+        if variable_names & flag_names:
+            raise ValueError("variable and flag names must be unique across story state")
         segment_ids = self._unique_values("segment", [item.id for item in self.segments])
         self._unique_values("choice", [item.id for item in self.choices])
 
@@ -280,16 +326,24 @@ class StoryDraftV1(StoryContractModel):
                         f"choice {choice.id!r} condition references unknown variable "
                         f"{leaf.variable!r}"
                     )
+                if isinstance(leaf, StoryFlagCondition) and leaf.flag not in flag_names:
+                    raise ValueError(
+                        f"choice {choice.id!r} condition references unknown flag {leaf.flag!r}"
+                    )
                 if isinstance(leaf, StoryVisitCondition) and leaf.segment_id not in segment_ids:
                     raise ValueError(
                         f"choice {choice.id!r} condition references unknown segment "
                         f"{leaf.segment_id!r}"
                     )
             for effect in choice.effects:
-                if effect.variable not in variable_names:
+                if isinstance(effect, StoryEffect) and effect.variable not in variable_names:
                     raise ValueError(
                         f"choice {choice.id!r} effect references unknown variable "
                         f"{effect.variable!r}"
+                    )
+                if isinstance(effect, StorySetFlagEffect) and effect.flag not in flag_names:
+                    raise ValueError(
+                        f"choice {choice.id!r} effect references unknown flag {effect.flag!r}"
                     )
         return self
 
@@ -333,10 +387,11 @@ class StorySegmentChanges(StoryContractModel):
 class StoryChoiceChanges(StoryContractModel):
     source_segment_id: EntityId | None = None
     target_segment_id: EntityId | None = None
-    text: str | None = Field(default=None, min_length=1, max_length=500)
+    mode: Literal["visible", "automatic"] | None = None
+    text: str | None = Field(default=None, max_length=500)
     order: int | None = Field(default=None, ge=0)
     condition: StoryCondition | None = None
-    effects: list[StoryEffect] | None = Field(default=None, max_length=20)
+    effects: list[StoryEffectValue] | None = Field(default=None, max_length=20)
     feedback_text: str | None = Field(default=None, max_length=500)
     interaction: StoryChoiceInteraction | None = None
     is_default: bool | None = None
@@ -400,6 +455,16 @@ class RemoveStoryVariable(StoryContractModel):
     variable_name: VariableName
 
 
+class UpsertStoryFlag(StoryContractModel):
+    op: Literal["upsert_flag"] = "upsert_flag"
+    flag: StoryFlag
+
+
+class RemoveStoryFlag(StoryContractModel):
+    op: Literal["remove_flag"] = "remove_flag"
+    flag_name: VariableName
+
+
 class UpsertStoryCharacter(StoryContractModel):
     op: Literal["upsert_character"] = "upsert_character"
     character: StoryCharacter
@@ -421,14 +486,16 @@ StoryPatchOperation = Annotated[
     | RemoveStoryChoice
     | UpsertStoryVariable
     | RemoveStoryVariable
+    | UpsertStoryFlag
+    | RemoveStoryFlag
     | UpsertStoryCharacter
     | RemoveStoryCharacter,
     Field(discriminator="op"),
 ]
 
 
-class StoryPatchV1(StoryContractModel):
-    schema_version: Literal["story_patch.v1"] = "story_patch.v1"
+class StoryPatchV2(StoryContractModel):
+    schema_version: Literal["story_patch.v2"] = "story_patch.v2"
     canvas_id: CanvasId
     story_id: EntityId
     base_revision: int = Field(ge=0)
@@ -456,21 +523,21 @@ class InteractiveStoryMutationResult(StoryContractModel):
 
 
 class CreateInteractiveStoryRequest(StoryContractModel):
-    schema_version: Literal["interactive_story_create.v1"] = "interactive_story_create.v1"
+    schema_version: Literal["interactive_story_create.v2"] = "interactive_story_create.v2"
     canvas_id: CanvasId
     base_revision: int = Field(ge=0)
     idempotency_key: str = Field(min_length=8, max_length=200)
-    story: StoryDraftV1
+    story: StoryDraftV2
 
 
 class GetInteractiveStoryRequest(StoryContractModel):
-    schema_version: Literal["interactive_story_get.v1"] = "interactive_story_get.v1"
+    schema_version: Literal["interactive_story_get.v2"] = "interactive_story_get.v2"
     canvas_id: CanvasId
     story_id: EntityId
 
 
 class ValidateInteractiveStoryRequest(StoryContractModel):
-    schema_version: Literal["interactive_story_validate.v1"] = "interactive_story_validate.v1"
+    schema_version: Literal["interactive_story_validate.v2"] = "interactive_story_validate.v2"
     canvas_id: CanvasId
     story_id: EntityId
 
@@ -478,7 +545,7 @@ class ValidateInteractiveStoryRequest(StoryContractModel):
 class InteractiveStoryReadResult(StoryContractModel):
     ok: Literal[True] = True
     canvas_id: CanvasId
-    story: StoryDraftV1
+    story: StoryDraftV2
     issues: list[InteractiveStoryIssue] = Field(default_factory=list)
 
 

@@ -8,7 +8,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { StoryChoiceEditor } from '@/components/canvas/StoryChoiceEditor';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { STORY_CHOICE_EDGE_TYPE, type StoryChoiceEdgeData } from '@/features/canvas/story/storyTypes';
-import { selectStoryVariablesForEdgeSource } from '@/features/canvas/story/storyVariableSelectors';
+import { selectStoryFlagsForEdgeSource, selectStoryVariablesForEdgeSource } from '@/features/canvas/story/storyVariableSelectors';
 
 /** 同一对节点之间多条选项边时,相邻曲线上下错开的步长(px)。 */
 const PARALLEL_OFFSET_STEP = 48;
@@ -22,11 +22,15 @@ export const StoryChoiceEdge = memo(function StoryChoiceEdge(props: EdgeProps) {
   const { t } = useTranslation();
   const edgeData = data as StoryChoiceEdgeData | undefined;
   const choiceText = edgeData?.choiceText ?? '';
+  const isAutomatic = edgeData?.transitionMode === 'automatic';
   const selectEdge = useCanvasStore((s) => s.onEdgesChange);
   const hasAnchoredInteraction = edgeData?.interaction?.presentation === 'object-anchor'
     || edgeData?.interaction?.presentation === 'baked-video';
   const groupVariables = useCanvasStore(
     useShallow((s) => selectStoryVariablesForEdgeSource(s.nodes, source)),
+  );
+  const groupFlags = useCanvasStore(
+    useShallow((s) => selectStoryFlagsForEdgeSource(s.nodes, source)),
   );
   // 本边在「同一对节点的所有选项边」里的序号与总数 —— 返回基本类型(useShallow 比较),
   // 避免每次返回新对象触发无限重渲染。
@@ -61,7 +65,7 @@ export const StoryChoiceEdge = memo(function StoryChoiceEdge(props: EdgeProps) {
         id={id}
         path={edgePath}
         markerEnd={markerEnd}
-        style={{ stroke: 'rgb(var(--accent-rgb) / 0.7)', strokeWidth: 2 }}
+        style={{ stroke: 'rgb(var(--accent-rgb) / 0.7)', strokeWidth: 2, strokeDasharray: isAutomatic ? '7 5' : undefined }}
       />
       <EdgeLabelRenderer>
         {/* 选项文案 chip */}
@@ -78,7 +82,7 @@ export const StoryChoiceEdge = memo(function StoryChoiceEdge(props: EdgeProps) {
           className="nodrag nopan group absolute flex max-w-[180px] items-center gap-1 rounded-full border border-white/15 bg-[#17191d]/95 px-3 py-1 text-left text-xs text-white/90 shadow-lg backdrop-blur transition-colors hover:border-cyan-200/45 hover:bg-[#20242a]"
           style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`, pointerEvents: 'all' }}
         >
-          <span className="min-w-0 truncate">{choiceText || t('canvas.story.choicePlaceholder')}</span>
+          <span className="min-w-0 truncate">{isAutomatic ? t('canvas.story.automaticTransition') : (choiceText || t('canvas.story.choicePlaceholder'))}</span>
           {edgeData?.condition && <span className="ml-1 opacity-70">{'{}'}</span>}
           {edgeData?.effects && edgeData.effects.length > 0 && <span className="ml-1 opacity-70">±</span>}
           {hasAnchoredInteraction && <Crosshair className="h-3 w-3 shrink-0 text-cyan-200" aria-hidden />}
@@ -100,8 +104,10 @@ export const StoryChoiceEdge = memo(function StoryChoiceEdge(props: EdgeProps) {
             interaction={edgeData?.interaction}
             condition={edgeData?.condition}
             effects={edgeData?.effects}
+            transitionMode={edgeData?.transitionMode}
             isDefault={edgeData?.isDefault}
             variables={groupVariables}
+            flags={groupFlags}
             onClose={() => selectEdge([{ type: 'select', id, selected: false }])}
           />
         )}

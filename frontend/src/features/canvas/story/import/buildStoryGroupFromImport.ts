@@ -54,7 +54,7 @@ export function parseSimpleCondition(raw: string): StoryChoiceCondition | null {
 export function parseCompoundCondition(raw: string): StoryConditionExpr | null {
   const hasAnd = raw.includes('&&');
   const hasOr = raw.includes('||');
-  if (hasAnd && hasOr) return null; // v1 不支持混合连接
+  if (hasAnd && hasOr) return null; // 当前单层条件组不支持混合连接
   const join: 'and' | 'or' = hasOr ? 'or' : 'and';
   const sep = hasOr ? '||' : '&&';
   const parts = raw.split(sep);
@@ -146,8 +146,8 @@ export function buildStoryGroupFromImport(
       data: {
         label: '互动影游(导入)',
         storyGroup: true,
+        interactiveStorySchemaVersion: 'story_draft.v2',
         storyVariableDefinitions: variables,
-        storyVariables: variables,
         backgroundColor: IMPORT_GROUP_COLOR,
       },
     } as CanvasNode,

@@ -17,9 +17,9 @@ from novelvideo.interactive_story.models import (
     GetInteractiveStoryRequest,
     StoryChoiceAnchor,
     StoryChoiceInteraction,
-    StoryDraftV1,
+    StoryDraftV2,
     StoryMediaRef,
-    StoryPatchV1,
+    StoryPatchV2,
     ValidateInteractiveStoryRequest,
 )
 from novelvideo.interactive_story.service import (
@@ -32,13 +32,13 @@ EXAMPLE_PATH = (
     Path(__file__).resolve().parents[1]
     / "examples"
     / "interactive_story"
-    / "story_draft_v1.json"
+    / "story_draft_v2.json"
 )
 
 
 @pytest.fixture
-def story() -> StoryDraftV1:
-    return StoryDraftV1.model_validate_json(EXAMPLE_PATH.read_text(encoding="utf-8"))
+def story() -> StoryDraftV2:
+    return StoryDraftV2.model_validate_json(EXAMPLE_PATH.read_text(encoding="utf-8"))
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def service(tmp_path: Path) -> InteractiveStoryService:
 
 
 def create_request(
-    story: StoryDraftV1, *, key: str = "agent-create-0001"
+    story: StoryDraftV2, *, key: str = "agent-create-0001"
 ) -> CreateInteractiveStoryRequest:
     return CreateInteractiveStoryRequest(
         canvas_id="default",
@@ -60,7 +60,7 @@ def create_request(
 
 
 def test_mapper_round_trip_preserves_domain_ids_conditions_and_effects(
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     projection = project_story_to_canvas(story)
     canvas = {
@@ -79,15 +79,44 @@ def test_mapper_round_trip_preserves_domain_ids_conditions_and_effects(
     assert [choice.id for choice in restored.choices] == [
         choice.id for choice in story.choices
     ]
-    assert restored.choices[0].effects[0].variable == "courage"
+    assert restored.choices[0].effects[0].variable == "engagement"
     assert restored.choices[0].feedback_text == story.choices[0].feedback_text
     assert restored.choices[0].interaction == story.choices[0].interaction
     assert restored.segments[0].choice_loop == story.segments[0].choice_loop
     assert restored.choices[2].condition == story.choices[2].condition
 
 
+def test_mapper_round_trip_preserves_flags_and_automatic_transition(
+    story: StoryDraftV2,
+) -> None:
+    payload = story.model_dump(mode="json")
+    payload["flags"].append({"name": "has_key", "label": "已拿到钥匙", "initial": False})
+    payload["choices"][0].update(
+        {
+            "mode": "automatic",
+            "text": "",
+            "condition": {"kind": "flag", "flag": "has_key", "value": False},
+            "effects": [{"kind": "set_flag", "flag": "has_key", "value": True}],
+            "feedback_text": "",
+            "interaction": {},
+            "is_default": False,
+        }
+    )
+    edited = StoryDraftV2.model_validate(payload)
+    projection = project_story_to_canvas(edited)
+    restored = story_from_canvas(
+        {"revision": 3, "nodes": projection.nodes, "edges": projection.edges},
+        edited.story_id,
+    )
+
+    assert restored.flags == edited.flags
+    assert restored.choices[0].mode == "automatic"
+    assert restored.choices[0].condition == edited.choices[0].condition
+    assert restored.choices[0].effects == edited.choices[0].effects
+
+
 def test_mapper_preserves_overlay_interaction_with_authored_anchor(
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     edited = story.model_copy(deep=True)
     edited.choices[0].interaction = StoryChoiceInteraction(
@@ -114,7 +143,7 @@ def test_mapper_preserves_overlay_interaction_with_authored_anchor(
     }
 
 
-def test_mapper_preserves_baked_video_rectangular_hotspot(story: StoryDraftV1) -> None:
+def test_mapper_preserves_baked_video_rectangular_hotspot(story: StoryDraftV2) -> None:
     edited = story.model_copy(deep=True)
     edited.choices[0].interaction = StoryChoiceInteraction(
         presentation="baked_video",
@@ -136,7 +165,7 @@ def test_mapper_preserves_baked_video_rectangular_hotspot(story: StoryDraftV1) -
 
 
 def test_mapper_projects_composite_story_clips_without_overlap(
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     projection = project_story_to_canvas(story)
     clips = [node for node in projection.nodes if node["type"] == "videoNode"]
@@ -168,7 +197,7 @@ def test_mapper_projects_composite_story_clips_without_overlap(
 
 def test_create_appends_story_atomically_and_get_reads_canvas_revision(
     service: InteractiveStoryService,
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     result = service.create(create_request(story))
     canvas = canvas_store.read_canvas(service.project_dir, "default")
@@ -193,7 +222,7 @@ def test_create_appends_story_atomically_and_get_reads_canvas_revision(
 
 def test_get_reports_duplicate_story_groups_as_invalid_story(
     service: InteractiveStoryService,
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     service.create(create_request(story))
     canvas_path = service.project_dir / "freezone" / "canvases" / "default.json"
@@ -220,7 +249,7 @@ def test_get_reports_duplicate_story_groups_as_invalid_story(
 
 def test_create_preserves_unrelated_canvas_nodes(
     service: InteractiveStoryService,
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     unrelated = {
         "schema_version": 2,
@@ -259,7 +288,7 @@ def test_create_preserves_unrelated_canvas_nodes(
 
 def test_create_retry_is_idempotent_and_does_not_duplicate_story(
     service: InteractiveStoryService,
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     request = create_request(story)
     first = service.create(request)
@@ -279,7 +308,7 @@ def test_create_retry_is_idempotent_and_does_not_duplicate_story(
 
 def test_create_rejects_idempotency_key_reuse_for_different_story_payload(
     service: InteractiveStoryService,
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     request = create_request(story)
     service.create(request)
@@ -293,7 +322,7 @@ def test_create_rejects_idempotency_key_reuse_for_different_story_payload(
 
 def test_patch_preserves_manual_layout_media_and_unknown_node_data(
     service: InteractiveStoryService,
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     service.create(create_request(story))
     canvas_path = service.project_dir / "freezone" / "canvases" / "default.json"
@@ -301,7 +330,7 @@ def test_patch_preserves_manual_layout_media_and_unknown_node_data(
     target = next(
         node
         for node in canvas["nodes"]
-        if (node.get("data") or {}).get("storySegmentId") == "truth_ending"
+        if (node.get("data") or {}).get("storySegmentId") == "sample_ending"
     )
     target["position"] = {"x": 999, "y": 321}
     target["data"]["videoUrl"] = "/media/user-cut.mp4"
@@ -309,7 +338,7 @@ def test_patch_preserves_manual_layout_media_and_unknown_node_data(
     canvas_store.atomic_write_json(canvas_path, canvas)
 
     result = service.patch(
-        StoryPatchV1.model_validate(
+        StoryPatchV2.model_validate(
             {
                 "canvas_id": "default",
                 "story_id": story.story_id,
@@ -318,7 +347,7 @@ def test_patch_preserves_manual_layout_media_and_unknown_node_data(
                 "operations": [
                     {
                         "op": "update_segment",
-                        "segment_id": "truth_ending",
+                        "segment_id": "sample_ending",
                         "changes": {"script": "旅人带着真相独自走进晨光。"},
                     }
                 ],
@@ -330,7 +359,7 @@ def test_patch_preserves_manual_layout_media_and_unknown_node_data(
     updated = next(
         node
         for node in saved["nodes"]
-        if (node.get("data") or {}).get("storySegmentId") == "truth_ending"
+        if (node.get("data") or {}).get("storySegmentId") == "sample_ending"
     )
 
     assert result.revision == 2
@@ -343,12 +372,12 @@ def test_patch_preserves_manual_layout_media_and_unknown_node_data(
 
 def test_patch_media_null_clears_segment_to_placeholder(
     service: InteractiveStoryService,
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     service.create(create_request(story))
 
     service.patch(
-        StoryPatchV1.model_validate(
+        StoryPatchV2.model_validate(
             {
                 "canvas_id": "default",
                 "story_id": story.story_id,
@@ -376,10 +405,10 @@ def test_patch_media_null_clears_segment_to_placeholder(
 
 def test_patch_is_atomic_on_invalid_result_and_rejects_stale_revision(
     service: InteractiveStoryService,
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     service.create(create_request(story))
-    invalid_patch = StoryPatchV1.model_validate(
+    invalid_patch = StoryPatchV2.model_validate(
         {
             "canvas_id": "default",
             "story_id": story.story_id,
@@ -395,7 +424,7 @@ def test_patch_is_atomic_on_invalid_result_and_rejects_stale_revision(
     assert invalid.value.code == "invalid_story"
     assert canvas_store.read_canvas(service.project_dir, "default")["revision"] == 1
 
-    valid_patch = StoryPatchV1.model_validate(
+    valid_patch = StoryPatchV2.model_validate(
         {
             "canvas_id": "default",
             "story_id": story.story_id,
@@ -404,7 +433,7 @@ def test_patch_is_atomic_on_invalid_result_and_rejects_stale_revision(
             "operations": [
                 {
                     "op": "update_story_metadata",
-                    "changes": {"title": "午夜站台：重制版"},
+                    "changes": {"title": "这一口，听你的：重制版"},
                 }
             ],
         }
@@ -420,18 +449,18 @@ def test_patch_is_atomic_on_invalid_result_and_rejects_stale_revision(
 
 def test_remove_segment_cascades_directly_connected_choices(
     service: InteractiveStoryService,
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     service.create(create_request(story))
 
     result = service.patch(
-        StoryPatchV1.model_validate(
+        StoryPatchV2.model_validate(
             {
                 "canvas_id": "default",
                 "story_id": story.story_id,
                 "base_revision": 1,
                 "idempotency_key": "agent-patch-remove-ending",
-                "operations": [{"op": "remove_segment", "segment_id": "truth_ending"}],
+                "operations": [{"op": "remove_segment", "segment_id": "sample_ending"}],
             }
         )
     )
@@ -440,17 +469,18 @@ def test_remove_segment_cascades_directly_connected_choices(
     ).story
 
     assert result.revision == 2
-    assert "truth_ending" not in {segment.id for segment in restored.segments}
-    assert "follow_open_door" not in {choice.id for choice in restored.choices}
+    assert "sample_ending" not in {segment.id for segment in restored.segments}
+    assert "citrus_sample" not in {choice.id for choice in restored.choices}
+    assert "berry_sample" not in {choice.id for choice in restored.choices}
     assert all(
-        choice.source_segment_id != "truth_ending"
-        and choice.target_segment_id != "truth_ending"
+        choice.source_segment_id != "sample_ending"
+        and choice.target_segment_id != "sample_ending"
         for choice in restored.choices
     )
 
 
 def test_story_issues_distinguish_bound_asset_and_warn_about_timed_fallback(
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     payload = story.model_dump(mode="json")
     payload["segments"][0]["media"] = {
@@ -462,7 +492,7 @@ def test_story_issues_distinguish_bound_asset_and_warn_about_timed_fallback(
     for choice in payload["choices"]:
         if choice["source_segment_id"] == payload["segments"][0]["id"]:
             choice["is_default"] = False
-    updated = StoryDraftV1.model_validate(payload)
+    updated = StoryDraftV2.model_validate(payload)
 
     issues = issues_for_story(updated)
     start_codes = {
@@ -476,10 +506,10 @@ def test_story_issues_distinguish_bound_asset_and_warn_about_timed_fallback(
 
 def test_patch_retry_is_idempotent_and_does_not_bump_revision_twice(
     service: InteractiveStoryService,
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     service.create(create_request(story))
-    patch = StoryPatchV1.model_validate(
+    patch = StoryPatchV2.model_validate(
         {
             "canvas_id": "default",
             "story_id": story.story_id,
@@ -488,7 +518,7 @@ def test_patch_retry_is_idempotent_and_does_not_bump_revision_twice(
             "operations": [
                 {
                     "op": "update_story_metadata",
-                    "changes": {"title": "午夜站台：导演剪辑版"},
+                    "changes": {"title": "这一口，听你的：导演剪辑版"},
                 }
             ],
         }
@@ -506,7 +536,7 @@ def test_patch_retry_is_idempotent_and_does_not_bump_revision_twice(
 
 def test_validate_reports_malformed_canvas_without_modifying_it(
     service: InteractiveStoryService,
-    story: StoryDraftV1,
+    story: StoryDraftV2,
 ) -> None:
     service.create(create_request(story))
     canvas_path = service.project_dir / "freezone" / "canvases" / "default.json"

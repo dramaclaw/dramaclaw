@@ -41,9 +41,12 @@ import type {
   StoryConditionExpr,
   StoryConditionLeaf,
   StoryVariable,
+  StoryFlag,
+  StoryFlagCondition,
+  StoryTransitionMode,
   StoryVisitCondition,
 } from '@/features/canvas/story/storyTypes';
-import { conditionLeaves, isConditionGroup, isVisitCondition } from '@/features/canvas/story/conditionExpr';
+import { conditionLeaves, isConditionGroup, isFlagCondition, isVisitCondition } from '@/features/canvas/story/conditionExpr';
 
 const OPS: StoryChoiceCondition['op'][] = ['>=', '<=', '==', '>', '<'];
 
@@ -144,8 +147,10 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
   interaction,
   condition,
   effects,
+  transitionMode,
   isDefault,
   variables,
+  flags = [],
   onClose,
 }: {
   edgeId: string;
@@ -155,8 +160,10 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
   interaction?: StoryChoiceInteraction;
   condition?: StoryConditionExpr;
   effects?: StoryChoiceEffect[];
+  transitionMode?: StoryTransitionMode;
   isDefault?: boolean;
   variables: StoryVariable[];
+  flags?: StoryFlag[];
   /** 弹窗关闭时由选项边取消选中；编辑内容均为即时保存。 */
   onClose?: () => void;
 }) {
@@ -179,7 +186,10 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
     return typeof v === 'number' ? v : 0;
   });
   const firstVar = variables[0]?.name ?? '';
+  const firstFlag = flags[0]?.name ?? '';
   const hasVariables = variables.length > 0;
+  const hasFlags = flags.length > 0;
+  const resolvedTransitionMode: StoryTransitionMode = transitionMode === 'automatic' ? 'automatic' : 'visible';
   const resolvedInteraction = normalizeStoryChoiceInteraction(interaction);
   // 呈现方式属于整个选择点；锚点/外观/动画仍是某一选项自己的资料。
   const choicePresentation = useMemo(() => {
@@ -499,12 +509,13 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
   );
   const firstMember = members[0]?.id ?? '';
   const hasMembers = members.length > 0;
-  const canCondition = hasVariables || hasMembers;
+  const canCondition = hasVariables || hasFlags || hasMembers;
   const newVarLeaf = (): StoryChoiceCondition => ({ var: firstVar, op: '>=', value: 0 });
   const newVisitLeaf = (): StoryVisitCondition => ({ visitedNodeId: firstMember, op: '>=', value: 1 });
-  const newLeaf = (): StoryConditionLeaf => (hasVariables ? newVarLeaf() : newVisitLeaf());
+  const newFlagLeaf = (): StoryFlagCondition => ({ flag: firstFlag, value: true });
+  const newLeaf = (): StoryConditionLeaf => hasFlags ? newFlagLeaf() : hasVariables ? newVarLeaf() : newVisitLeaf();
 
-  // 条件存储约定:0 条 → undefined;1 条 → 叶子(保持旧形态);≥2 条 → 复合组。
+  // 条件存储约定:0 条 → undefined;1 条 → 叶子;≥2 条 → 复合组。
   const leaves = conditionLeaves(condition);
   const join: 'and' | 'or' = condition && isConditionGroup(condition) ? condition.join : 'and';
   const writeCondition = (nextLeaves: StoryConditionLeaf[], nextJoin: 'and' | 'or') => {
@@ -581,7 +592,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                       : 'text-white/60 hover:bg-white/[0.07] hover:text-white/90'
                   }`}
                 >
-                  <span className="block truncate">{item?.choiceText || t('canvas.story.choicePlaceholder')}</span>
+                  <span className="block truncate">{item?.transitionMode === 'automatic' ? t('canvas.story.automaticTransition') : (item?.choiceText || t('canvas.story.choicePlaceholder'))}</span>
                 </button>
               );
             })}
@@ -590,12 +601,39 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-4 sm:p-5">
 
-      <input
-        {...choiceTextField}
-        placeholder={t('canvas.story.choicePrompt')}
-        className={`${FIELD_CLASS} w-full px-2.5 py-1.5`}
-      />
+      <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-white/[0.08] bg-black/[0.08] p-1.5" role="group" aria-label={t('canvas.story.transitionType')}>
+        {(['visible', 'automatic'] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            aria-pressed={resolvedTransitionMode === mode}
+            onClick={() => {
+              update(edgeId, {
+                transitionMode: mode,
+                ...(mode === 'automatic' ? { choiceText: '', feedbackText: '', interaction: undefined } : {}),
+              });
+              if (mode === 'automatic' && isDefault) setDefault(edgeId, false);
+            }}
+            className={`min-h-9 rounded-lg px-3 text-xs font-medium transition-colors ${resolvedTransitionMode === mode ? 'bg-accent/20 text-white ring-1 ring-accent/35' : 'text-white/60 hover:bg-white/[0.06] hover:text-white/90'}`}
+          >
+            {t(mode === 'automatic' ? 'canvas.story.transitionAutomatic' : 'canvas.story.transitionVisible')}
+          </button>
+        ))}
+      </div>
 
+      {resolvedTransitionMode === 'visible' ? (
+        <input
+          {...choiceTextField}
+          placeholder={t('canvas.story.choicePrompt')}
+          className={`${FIELD_CLASS} w-full px-2.5 py-1.5`}
+        />
+      ) : (
+        <p className="rounded-xl border border-accent/20 bg-accent/[0.08] px-3 py-2 text-xs leading-5 text-white/75">
+          {t('canvas.story.automaticTransitionHint')}
+        </p>
+      )}
+
+      {resolvedTransitionMode === 'visible' && (
       <div className="flex flex-col gap-2 rounded-xl border border-cyan-200/[0.12] bg-cyan-950/[0.08] p-3">
         <div className="flex items-center justify-between gap-2">
           <span className={SECTION_LABEL_CLASS}>{t('canvas.story.interactionPresentation')}</span>
@@ -757,7 +795,9 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
           </>
         )}
       </div>
+      )}
 
+      {resolvedTransitionMode === 'visible' && (
       <div className="flex flex-col gap-1.5 rounded-xl border border-white/[0.08] bg-black/[0.08] p-3">
         <label className={SECTION_LABEL_CLASS} htmlFor={`${edgeId}-feedback`}>
           {t('canvas.story.choiceFeedbackLabel')}
@@ -774,13 +814,14 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
           {t('canvas.story.choiceFeedbackHint')}
         </span>
       </div>
+      )}
 
       <details className="rounded-xl border border-white/[0.08] bg-black/[0.06]">
         <summary className="cursor-pointer select-none px-3 py-2.5 text-xs font-medium text-white/60 transition-colors hover:text-white/90">
           {t('canvas.story.choiceAdvanced')}
         </summary>
         <div className="flex flex-col gap-3 border-t border-white/[0.08] p-3">
-      {!hasVariables && (
+      {!hasVariables && !hasFlags && (
         <span className="rounded-md border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-xs text-amber-300/90">
           {t('canvas.story.noVariablesHint')}
         </span>
@@ -819,10 +860,11 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
           return (
             <div key={i} className="flex items-center gap-1.5 pl-6">
               <select
-                value={isVisitCondition(leaf) ? 'visit' : 'var'}
-                onChange={(e) => setLeaf(e.target.value === 'visit' ? newVisitLeaf() : newVarLeaf())}
+                value={isVisitCondition(leaf) ? 'visit' : isFlagCondition(leaf) ? 'flag' : 'var'}
+                onChange={(e) => setLeaf(e.target.value === 'visit' ? newVisitLeaf() : e.target.value === 'flag' ? newFlagLeaf() : newVarLeaf())}
                 className={SELECT_CLASS}
               >
+                <option value="flag" disabled={!hasFlags}>{t('canvas.story.condFlag')}</option>
                 <option value="var" disabled={!hasVariables}>{t('canvas.story.condVar')}</option>
                 <option value="visit" disabled={!hasMembers}>{t('canvas.story.condVisit')}</option>
               </select>
@@ -834,6 +876,14 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                 >
                   {members.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
                 </select>
+              ) : isFlagCondition(leaf) ? (
+                <select
+                  value={leaf.flag}
+                  onChange={(e) => setLeaf({ ...leaf, flag: e.target.value })}
+                  className={`${SELECT_CLASS} min-w-0 flex-1`}
+                >
+                  {flags.map((flag) => <option key={flag.name} value={flag.name}>{flag.label}</option>)}
+                </select>
               ) : (
                 <select
                   value={leaf.var}
@@ -843,19 +893,28 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                   {variables.map((v) => <option key={v.name} value={v.name}>{v.label}</option>)}
                 </select>
               )}
-              <select
-                value={leaf.op}
-                onChange={(e) => setLeaf({ ...leaf, op: e.target.value as StoryChoiceCondition['op'] })}
-                className={SELECT_CLASS}
-              >
-                {OPS.map((op) => <option key={op} value={op}>{op}</option>)}
-              </select>
-              <input
-                type="number"
-                value={leaf.value}
-                onChange={(e) => setLeaf({ ...leaf, value: Number(e.target.value) })}
-                className={`${FIELD_CLASS} w-12`}
-              />
+              {isFlagCondition(leaf) ? (
+                <select value={leaf.value ? 'true' : 'false'} onChange={(e) => setLeaf({ ...leaf, value: e.target.value === 'true' })} className={SELECT_CLASS}>
+                  <option value="true">{t('canvas.story.flagOn')}</option>
+                  <option value="false">{t('canvas.story.flagOff')}</option>
+                </select>
+              ) : (
+                <>
+                  <select
+                    value={leaf.op}
+                    onChange={(e) => setLeaf({ ...leaf, op: e.target.value as StoryChoiceCondition['op'] })}
+                    className={SELECT_CLASS}
+                  >
+                    {OPS.map((op) => <option key={op} value={op}>{op}</option>)}
+                  </select>
+                  <input
+                    type="number"
+                    value={leaf.value}
+                    onChange={(e) => setLeaf({ ...leaf, value: Number(e.target.value) })}
+                    className={`${FIELD_CLASS} w-12`}
+                  />
+                </>
+              )}
               <button onClick={() => writeCondition(leaves.filter((_, j) => j !== i), join)} className="rounded p-1 text-white/45 transition-colors hover:bg-white/10 hover:text-red-400" aria-label={t('common.delete')}>✕</button>
             </div>
           );
@@ -878,27 +937,47 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
         <span className={SECTION_LABEL_CLASS}>{t('canvas.story.effects')}</span>
         {(effects ?? []).map((eff, i) => (
           <div key={i} className="flex items-center gap-1.5">
-            <select value={eff.var} onChange={(e) => {
-              const next = [...(effects ?? [])]; next[i] = { ...eff, var: e.target.value }; update(edgeId, { effects: next });
-            }} className={`${SELECT_CLASS} min-w-0 flex-1`}>
-              {variables.map((v) => <option key={v.name} value={v.name}>{v.label}</option>)}
-            </select>
-            <span className="text-white/40">+=</span>
-            <input type="number" value={eff.delta} onChange={(e) => {
-              const next = [...(effects ?? [])]; next[i] = { ...eff, delta: Number(e.target.value) }; update(edgeId, { effects: next });
-            }} className={`${FIELD_CLASS} w-14`} />
+            {'flag' in eff ? (
+              <>
+                <select value={eff.flag} onChange={(e) => {
+                  const next = [...(effects ?? [])]; next[i] = { ...eff, flag: e.target.value }; update(edgeId, { effects: next });
+                }} className={`${SELECT_CLASS} min-w-0 flex-1`}>
+                  {flags.map((flag) => <option key={flag.name} value={flag.name}>{flag.label}</option>)}
+                </select>
+                <select value={eff.value ? 'true' : 'false'} onChange={(e) => {
+                  const next = [...(effects ?? [])]; next[i] = { ...eff, value: e.target.value === 'true' }; update(edgeId, { effects: next });
+                }} className={SELECT_CLASS}>
+                  <option value="true">{t('canvas.story.flagOn')}</option>
+                  <option value="false">{t('canvas.story.flagOff')}</option>
+                </select>
+              </>
+            ) : (
+              <>
+                <select value={eff.var} onChange={(e) => {
+                  const next = [...(effects ?? [])]; next[i] = { ...eff, var: e.target.value }; update(edgeId, { effects: next });
+                }} className={`${SELECT_CLASS} min-w-0 flex-1`}>
+                  {variables.map((v) => <option key={v.name} value={v.name}>{v.label}</option>)}
+                </select>
+                <span className="text-white/40">+=</span>
+                <input type="number" value={eff.delta} onChange={(e) => {
+                  const next = [...(effects ?? [])]; next[i] = { ...eff, delta: Number(e.target.value) }; update(edgeId, { effects: next });
+                }} className={`${FIELD_CLASS} w-14`} />
+              </>
+            )}
             <button onClick={() => update(edgeId, { effects: (effects ?? []).filter((_, j) => j !== i) })} className="rounded p-1 text-white/45 transition-colors hover:bg-white/10 hover:text-red-400" aria-label={t('common.delete')}>✕</button>
           </div>
         ))}
-        <button
-          disabled={variables.length === 0}
-          onClick={() => update(edgeId, { effects: [...(effects ?? []), { var: firstVar, delta: 1 }] })}
-          className="self-start rounded-md border border-white/10 bg-white/[0.06] px-2.5 py-1 text-xs font-medium text-white/80 transition-colors hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          + {t('canvas.story.addEffect')}
-        </button>
+        <div className="flex flex-wrap gap-1.5">
+          <button disabled={!hasVariables} onClick={() => update(edgeId, { effects: [...(effects ?? []), { var: firstVar, delta: 1 }] })} className="rounded-md border border-white/10 bg-white/[0.06] px-2.5 py-1 text-xs font-medium text-white/80 transition-colors hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-40">
+            + {t('canvas.story.addNumberEffect')}
+          </button>
+          <button disabled={!hasFlags} onClick={() => update(edgeId, { effects: [...(effects ?? []), { flag: firstFlag, value: true }] })} className="rounded-md border border-white/10 bg-white/[0.06] px-2.5 py-1 text-xs font-medium text-white/80 transition-colors hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-40">
+            + {t('canvas.story.addFlagEffect')}
+          </button>
+        </div>
       </div>
 
+      {resolvedTransitionMode === 'visible' && (<>
       <div className="h-px bg-white/[0.07]" />
 
       {/* 限时:本片段的选择时限(写源节点,同源所有选项共享)+ 默认选项(超时自动选,同源单选)。 */}
@@ -932,6 +1011,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
           {t('canvas.story.defaultChoiceToggle')}
         </label>
       </div>
+      </>)}
         </div>
       </details>
         </div>

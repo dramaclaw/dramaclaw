@@ -11,7 +11,7 @@ describe('addStoryImport', () => {
       [],
     );
     const newNodes = [
-      { id: 'g', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { label: '导入', storyGroup: true, storyVariables: [] } },
+      { id: 'g', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { label: '导入', storyGroup: true, storyVariableDefinitions: [] } },
       { id: 'c', type: CANVAS_NODE_TYPES.video, parentId: 'g', position: { x: 10, y: 10 }, data: { videoUrl: null, aspectRatio: '16:9' } },
     ] as unknown as CanvasNode[];
     const newEdges: CanvasEdge[] = [];
@@ -28,7 +28,7 @@ describe('addStoryImport', () => {
       [],
     );
     const newNodes = [
-      { id: 'g', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { label: '导入', storyGroup: true, storyVariables: [] } },
+      { id: 'g', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { label: '导入', storyGroup: true, storyVariableDefinitions: [] } },
     ] as unknown as CanvasNode[];
     useCanvasStore.getState().addStoryImport(newNodes, []);
     useCanvasStore.getState().undo();

@@ -14,7 +14,7 @@ EXAMPLE_PATH = (
     Path(__file__).resolve().parents[1]
     / "examples"
     / "interactive_story"
-    / "story_draft_v1.json"
+    / "story_draft_v2.json"
 )
 
 
@@ -71,24 +71,24 @@ def test_interactive_story_api_create_get_patch_validate_round_trip(
     assert create.json()["refresh_canvas"] is True
 
     read = client.get(
-        "/api/v1/projects/proj_demo/interactive-stories/midnight_station",
+        "/api/v1/projects/proj_demo/interactive-stories/fizz_choice_ad",
         params={"canvas_id": "default"},
     )
     assert read.status_code == 200, read.text
-    assert read.json()["story"]["title"] == "午夜站台"
+    assert read.json()["story"]["title"] == "这一口，听你的"
     assert read.json()["story"]["revision"] == 1
 
     patch = client.patch(
-        "/api/v1/projects/proj_demo/interactive-stories/midnight_station",
+        "/api/v1/projects/proj_demo/interactive-stories/fizz_choice_ad",
         json={
             "canvas_id": "default",
-            "story_id": "midnight_station",
+            "story_id": "fizz_choice_ad",
             "base_revision": 1,
             "idempotency_key": "api-patch-0001",
             "operations": [
                 {
                     "op": "update_story_metadata",
-                    "changes": {"title": "午夜站台：互动版"},
+                    "changes": {"title": "这一口，听你的：互动版"},
                 }
             ],
         },
@@ -98,8 +98,8 @@ def test_interactive_story_api_create_get_patch_validate_round_trip(
     assert patch.json()["refresh_canvas"] is True
 
     validate = client.post(
-        "/api/v1/projects/proj_demo/interactive-stories/midnight_station/validate",
-        json={"canvas_id": "default", "story_id": "midnight_station"},
+        "/api/v1/projects/proj_demo/interactive-stories/fizz_choice_ad/validate",
+        json={"canvas_id": "default", "story_id": "fizz_choice_ad"},
     )
     assert validate.status_code == 200, validate.text
     assert validate.json()["valid"] is True
@@ -125,10 +125,10 @@ def test_interactive_story_api_returns_structured_revision_conflict(
     assert response.status_code == 200
 
     stale = client.patch(
-        "/api/v1/projects/proj_demo/interactive-stories/midnight_station",
+        "/api/v1/projects/proj_demo/interactive-stories/fizz_choice_ad",
         json={
             "canvas_id": "default",
-            "story_id": "midnight_station",
+            "story_id": "fizz_choice_ad",
             "base_revision": 0,
             "idempotency_key": "api-patch-stale",
             "operations": [
@@ -142,7 +142,7 @@ def test_interactive_story_api_returns_structured_revision_conflict(
         "ok": False,
         "code": "revision_conflict",
         "message": "canvas revision conflict",
-        "story_id": "midnight_station",
+        "story_id": "fizz_choice_ad",
         "current_revision": 1,
         "issues": [],
     }

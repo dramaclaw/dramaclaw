@@ -46,6 +46,7 @@
 4. Agent 后续修改必须是增量修改，不能覆盖用户已有布局、视频和人工调整。
 5. 故事存在断路、不可达节点、变量错误等严重问题时，不能进入发布。
 6. 视频既支持用户导入，也支持系统生成；两种来源在播放器中没有差别。
+7. 剧情状态同时支持数值变量与布尔开关（Flag）；分支既支持玩家主动选择，也支持按条件自动跳转、无需玩家操作。
 
 ### 1.4 第一版不解决的问题
 
@@ -75,7 +76,7 @@ M0–M4 已在代码层打通这条链路。当前剩余工作是用真实模型
 
 ### 3.1 画布故事模型是创作事实源
 
-Agent 不直接把任意 Ink 文本作为主要输出。Agent 输出版本化的 `StoryDraftV1`，系统将其确定性转换为画布节点和连线，再由现有编译器生成 Ink。
+Agent 不直接把任意 Ink 文本作为主要输出。Agent 输出版本化的 `StoryDraftV2`，系统将其确定性转换为画布节点和连线，再由现有编译器生成 Ink。
 
 这样可以保留稳定节点 ID、媒体绑定、画布布局、校验能力和后续增量修改能力。
 
@@ -88,7 +89,7 @@ Agent 不直接把任意 Ink 文本作为主要输出。Agent 输出版本化的
                                   ↓
                     InteractiveStoryService
                                   ↓
-                       StoryDraftV1 / Patch
+                       StoryDraftV2 / Patch
                                   ↓
                     画布 → Ink → 播放器 → 视频
 ```
@@ -122,7 +123,9 @@ Agent 不直接把任意 Ink 文本作为主要输出。Agent 输出版本化的
 
 第一版先保证三种素材来源能绑定到同一个稳定节点；自动生成质量与成本优化后置。
 
-## 4. `StoryDraftV1` 初步范围
+## 4. `StoryDraftV2` 初步范围
+
+> 范围变更记录（2026-09-04）：在 V1 基础上新增布尔开关（Flag）状态与 Choice 自动跳转模式（`mode: automatic`），协议由 `StoryDraftV1` 升级为 `StoryDraftV2`。V1 从未发布、属全新功能，因此协议直接替换：不留双版本兼容层，旧 `storyVariables` 镜像字段不做读取回退与数据迁移。两项能力已随后端模型/服务、前端画布/编译器/运行时和 Skill 契约同步实现。
 
 M0 阶段需要冻结以下语义，具体字段名以实现时的 Pydantic/TypeScript Schema 为准：
 
@@ -131,10 +134,10 @@ M0 阶段需要冻结以下语义，具体字段名以实现时的 Pydantic/Type
 | Story | `schema_version`、`story_id`、标题、简介、开始节点、修订号 |
 | Character | 稳定 ID、名称、简介、可选视觉描述 |
 | Segment | 稳定 ID、标题、剧情/对白、节点类型、是否结局、素材引用 |
-| Choice | 稳定 ID、来源节点、目标节点、显示文案、排序、可选倒计时与默认项 |
-| Variable | 名称、标签、类型、初始值、可选范围 |
-| Condition | 变量/访问次数条件及 `and`、`or` 组合 |
-| Effect | 选择后对变量执行的赋值或数值变化 |
+| Choice | 稳定 ID、来源节点、目标节点、玩家选择/自动跳转模式、排序、可选倒计时与默认项 |
+| Variable / Flag | 数值变量或布尔开关的名称、标签、初始值与可选范围 |
+| Condition | 数值变量、布尔开关、访问次数条件及 `and`、`or` 组合 |
+| Effect | 跳转后执行数值变化或设置布尔开关 |
 | MediaRef | 来源、资产 ID/URL、生成状态、版本 |
 
 协议必须满足：
@@ -150,17 +153,17 @@ M0 阶段需要冻结以下语义，具体字段名以实现时的 Pydantic/Type
 
 - 故事由 Freezone 画布持久化，不新增平行的故事文件或数据库副本。
 - 画布 JSON 是持久化 owner，现有 `revision`、`base_revision`、`client_save_id`、写锁和历史快照继续作为并发与恢复机制。
-- `StoryDraftV1.revision` 表示该故事快照对应的画布 revision；Patch 使用相同 revision 做乐观并发控制。
-- `StoryDraftV1` 是 Agent 和业务服务之间的领域契约，不直接替代完整画布 JSON。
+- `StoryDraftV2.revision` 表示该故事快照对应的画布 revision；Patch 使用相同 revision 做乐观并发控制。
+- `StoryDraftV2` 是 Agent 和业务服务之间的领域契约，不直接替代完整画布 JSON。
 
 ### 4.2 与现有画布模型的确定性映射
 
-| StoryDraftV1 | 画布表示 |
+| StoryDraftV2 | 画布表示 |
 |---|---|
 | `story_id` | 故事组 `data.interactiveStoryId`；画布节点 ID 使用带 story 命名空间的确定性 ID |
 | `title`、`synopsis` | `groupNode.data.label`、`data.storySynopsis` |
 | `characters` | `groupNode.data.storyCharacters`，供后续视频制作规格复用 |
-| `variables` | 权威值存于 `groupNode.data.storyVariableDefinitions`；`storyVariables` 是 Ink/旧前端兼容镜像，由同一写入路径同步维护 |
+| `variables` / `flags` | 分别存于 `groupNode.data.storyVariableDefinitions` 与 `data.storyFlags` |
 | `start_segment_id` | 对应 `videoNode.data.storyRole = "start"` |
 | `segment.id` | `videoNode.data.storySegmentId`；React Flow ID 使用 story 命名空间 |
 | `segment.title` | `videoNode.data.displayName` |
@@ -169,11 +172,13 @@ M0 阶段需要冻结以下语义，具体字段名以实现时的 Pydantic/Type
 | `segment.ending_label` | `videoNode.data.endingLabel` |
 | `segment.media.url` | `videoNode.data.videoUrl`；完整来源与版本另存 `data.storyMedia` |
 | `choice.id` | `storyChoiceEdge.data.storyChoiceId`；边 ID 使用 story 命名空间 |
-| `choice.text/order/is_default` | `choiceText/order/isDefault` |
+| `choice.mode/text/order/is_default` | `transitionMode/choiceText/order/isDefault`；自动跳转在画布上显示为虚线 |
 | variable condition | `{ var, op, value }` |
 | visited condition | `{ visitedNodeId, op, value }`，其中 ID 转成实际画布节点 ID |
-| condition group | `{ join, items }`，保持 v1 单层组合 |
+| flag condition | `{ flag, value }` |
+| condition group | `{ join, items }`，采用单层组合 |
 | increment effect | `{ var, delta }` |
+| set flag effect | `{ flag, value }` |
 
 确定性 ID 建议格式：
 
@@ -210,15 +215,15 @@ choice edge: story-{story_id}-choice-{choice_id}
 
 工作项：
 
-- [x] 对齐现有画布节点、选择边、变量与 `StoryDraftV1` 的映射。
-- [x] 定义 `StoryDraftV1`、Patch 操作和工具输入输出 Schema。
+- [x] 对齐现有画布节点、选择边、变量与 `StoryDraftV2` 的映射。
+- [x] 定义 `StoryDraftV2`、Patch 操作和工具输入输出 Schema。
 - [x] 确认故事、修订号、幂等键和冲突处理的持久化位置。
 - [x] 为 Hermes、MCP、未来 Codex harness 划定相同的服务边界。
 - [x] 增加双选择点、双结局的标准示例和协议测试。
 
 验收标准：
 
-- 一份固定的 `StoryDraftV1` 示例可表达至少两个选择点和两个结局。
+- 一份固定的 `StoryDraftV2` 示例可表达至少两个选择点和两个结局。
 - 示例能无歧义映射到当前画布模型。
 - Create/Get/Patch/Validate 的成功和失败返回均有明确契约。
 - 设计不引用 Hermes 专属会话字段。
@@ -226,7 +231,7 @@ choice edge: story-{story_id}-choice-{choice_id}
 实现与验证：
 
 - 领域模型：`src/novelvideo/interactive_story/models.py`
-- 标准示例：`examples/interactive_story/story_draft_v1.json`
+- 标准示例：`examples/interactive_story/story_draft_v2.json`
 - 契约测试：`tests/test_interactive_story_models.py`
 - 定向验证：`uv run pytest tests/test_interactive_story_models.py -q`
 
@@ -294,7 +299,7 @@ choice edge: story-{story_id}-choice-{choice_id}
 - API 继续复用项目权限、画布锁和 `InteractiveStoryService` 的原子写入；冲突、校验失败和服务不可用均返回结构化错误。
 - Agent 创建和增量修改分别记录为 `agent_create`、`agent_patch`，与前端自动保存和普通导入区分。
 - `remove_segment` 会级联删除直接以该节点为起点或终点的 Choice；条件中的访问节点引用仍需显式调整，避免静默改变条件语义。
-- `storyVariableDefinitions` 是变量权威来源，前端写入时同步刷新兼容字段 `storyVariables`。
+- `storyVariableDefinitions` 与 `storyFlags` 分别是数值状态和布尔状态的权威来源；新功能不再读写旧的 `storyVariables` 字段（V1 未发布、属全新功能，无需兼容回退或迁移）。
 - 媒体引用同时识别 URL 和 asset ID；只有 asset ID 尚未解析为播放 URL 时返回 `media_url_unresolved`，限时节点没有显式默认项时返回首选项回退 warning。
 
 ### M3：互动故事 Skill 与对话闭环
@@ -403,7 +408,7 @@ choice edge: story-{story_id}-choice-{choice_id}
 
 - 发布版本与创作预览的剧情行为一致。
 - 发布后能记录选择路径与结局数据。
-- 新版本发布不破坏已保存的旧版本。
+- 每次发布保留版本快照，并能够回滚到上一发布版本。
 
 ## 7. 当前优先级
 
@@ -429,8 +434,9 @@ choice edge: story-{story_id}-choice-{choice_id}
 - 5～12 个剧情节点。
 - 每个选择点 2～3 个选项。
 - 2～3 个结局。
-- 0～5 个数值变量。
+- 0～5 个数值变量与 0～3 个布尔开关。
 - 允许分支汇合，避免指数级增长。
+- 允许按条件自动跳转的分支，用于无对白的过场衔接。
 
 ## 9. 风险与控制
 

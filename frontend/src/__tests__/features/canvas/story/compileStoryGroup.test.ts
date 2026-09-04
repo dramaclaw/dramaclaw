@@ -6,7 +6,7 @@ import { compileStoryGroup } from '@/features/canvas/story/compileStoryGroup';
 
 function group(id: string, storyVariables: StoryVariable[] = []): CanvasNode {
   return { id, type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 },
-    data: { label: 'g', storyGroup: true, storyVariables } } as CanvasNode;
+    data: { label: 'g', storyGroup: true, storyVariableDefinitions: storyVariables } } as CanvasNode;
 }
 function clip(id: string, parentId: string, url: string, start?: 'start'): CanvasNode {
   return { id, type: CANVAS_NODE_TYPES.video, parentId, position: { x: 0, y: 0 },

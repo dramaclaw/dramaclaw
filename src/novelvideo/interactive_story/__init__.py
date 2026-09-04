@@ -8,8 +8,8 @@ from novelvideo.interactive_story.models import (
     InteractiveStoryMutationResult,
     InteractiveStoryReadResult,
     InteractiveStoryValidationResult,
-    StoryDraftV1,
-    StoryPatchV1,
+    StoryDraftV2,
+    StoryPatchV2,
     ValidateInteractiveStoryRequest,
 )
 from novelvideo.interactive_story.service import (
@@ -27,7 +27,7 @@ __all__ = [
     "InteractiveStoryService",
     "InteractiveStoryServiceError",
     "InteractiveStoryValidationResult",
-    "StoryDraftV1",
-    "StoryPatchV1",
+    "StoryDraftV2",
+    "StoryPatchV2",
     "ValidateInteractiveStoryRequest",
 ]

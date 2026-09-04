@@ -1,6 +1,6 @@
 import { type CanvasEdge, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
-import { STORY_CHOICE_EDGE_TYPE, type StoryConditionExpr, type StoryVariable } from './storyTypes';
-import { conditionLeaves, isVisitCondition } from './conditionExpr';
+import { STORY_CHOICE_EDGE_TYPE, type StoryConditionExpr, type StoryFlag, type StoryVariable } from './storyTypes';
+import { conditionLeaves, isFlagCondition, isVisitCondition } from './conditionExpr';
 import { resolveStartNodeId } from './resolveStart';
 
 export type StoryIssueSeverity = 'error' | 'warning' | 'info';
@@ -9,10 +9,13 @@ export type StoryIssueCode =
   | 'unreachable'
   | 'missing_video'
   | 'undefined_variable'
+  | 'undefined_flag'
   | 'dangling_edge'
   | 'dangling_visit'
   | 'leaf_no_ending'
-  | 'needs_review';
+  | 'needs_review'
+  | 'automatic_no_fallback'
+  | 'automatic_fallback_order';
 
 export interface StoryIssue {
   severity: StoryIssueSeverity;
@@ -38,10 +41,12 @@ export function lintStory(
   members: CanvasNode[],
   edges: CanvasEdge[],
   variables: StoryVariable[],
+  flags: StoryFlag[] = [],
 ): StoryIssue[] {
   const issues: StoryIssue[] = [];
   const memberIds = new Set(members.map((n) => n.id));
   const varNames = new Set(variables.map((v) => v.name));
+  const flagNames = new Set(flags.map((v) => v.name));
 
   const storyEdges = edges.filter(
     (e) => e.type === STORY_CHOICE_EDGE_TYPE && memberIds.has(e.source),
@@ -96,7 +101,7 @@ export function lintStory(
   // 4/5/needs_review(边):未定义变量、悬空边、导入打标
   for (const e of storyEdges) {
     const data = e.data as
-      | { condition?: StoryConditionExpr; effects?: { var?: string }[]; needsReview?: boolean }
+      | { condition?: StoryConditionExpr; effects?: ({ var?: string } | { flag?: string })[]; needsReview?: boolean }
       | undefined;
     const refVars: string[] = [];
     for (const leaf of conditionLeaves(data?.condition)) {
@@ -104,11 +109,18 @@ export function lintStory(
         if (!memberIds.has(leaf.visitedNodeId)) {
           issues.push({ severity: 'error', code: 'dangling_visit', edgeId: e.id });
         }
+      } else if (isFlagCondition(leaf)) {
+        if (!flagNames.has(leaf.flag)) issues.push({ severity: 'error', code: 'undefined_flag', edgeId: e.id, detail: leaf.flag });
       } else if (leaf.var) {
         refVars.push(leaf.var);
       }
     }
-    for (const eff of data?.effects ?? []) if (eff?.var) refVars.push(eff.var);
+    for (const eff of data?.effects ?? []) {
+      if ('var' in eff && eff.var) refVars.push(eff.var);
+      if ('flag' in eff && eff.flag && !flagNames.has(eff.flag)) {
+        issues.push({ severity: 'error', code: 'undefined_flag', edgeId: e.id, detail: eff.flag });
+      }
+    }
     for (const v of refVars) {
       if (!varNames.has(v)) {
         issues.push({ severity: 'error', code: 'undefined_variable', edgeId: e.id, detail: v });
@@ -119,6 +131,27 @@ export function lintStory(
     }
     if (data?.needsReview) {
       issues.push({ severity: 'info', code: 'needs_review', edgeId: e.id });
+    }
+  }
+
+  // 5) 自动分支必须有可解释的兜底；无条件分支按 order 排在最后，避免遮住后续规则。
+  for (const source of choiceSources) {
+    const sourceEdges = storyEdges
+      .filter((edge) => edge.source === source)
+      .sort((a, b) => Number((a.data as { order?: number } | undefined)?.order ?? 0) - Number((b.data as { order?: number } | undefined)?.order ?? 0));
+    const automatic = sourceEdges.filter((edge) => (edge.data as { transitionMode?: string } | undefined)?.transitionMode === 'automatic');
+    if (automatic.length === 0) continue;
+    const fallbackIndexes = automatic
+      .map((edge, index) => ({ edge, index }))
+      .filter(({ edge }) => !(edge.data as { condition?: unknown } | undefined)?.condition);
+    const visibleCount = sourceEdges.length - automatic.length;
+    if (fallbackIndexes.length === 0 && visibleCount === 0) {
+      issues.push({ severity: 'warning', code: 'automatic_no_fallback', nodeId: source });
+    }
+    for (const { edge, index } of fallbackIndexes) {
+      if (index !== automatic.length - 1 || fallbackIndexes.length > 1 || visibleCount > 0) {
+        issues.push({ severity: 'error', code: 'automatic_fallback_order', edgeId: edge.id });
+      }
     }
   }
 

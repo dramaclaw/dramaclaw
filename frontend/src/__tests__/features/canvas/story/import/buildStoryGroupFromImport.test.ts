@@ -38,7 +38,7 @@ describe('buildStoryGroupFromImport', () => {
     const { nodes } = buildStoryGroupFromImport(STORY, { idGen: counterIdGen() });
     const group = nodes.find((n) => n.type === CANVAS_NODE_TYPES.group)!;
     expect((group.data as { storyGroup?: boolean }).storyGroup).toBe(true);
-    expect((group.data as { storyVariables?: unknown[] }).storyVariables).toEqual([{ name: 'favor', label: 'favor', initial: 0 }]);
+    expect((group.data as { storyVariableDefinitions?: unknown[] }).storyVariableDefinitions).toEqual([{ name: 'favor', label: 'favor', initial: 0 }]);
     const clips = nodes.filter((n) => n.type === CANVAS_NODE_TYPES.video);
     expect(clips).toHaveLength(5);
     clips.forEach((c) => expect(c.parentId).toBe(group.id));

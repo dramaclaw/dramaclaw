@@ -30,7 +30,7 @@ export const CANVAS_NODE_TYPES = {
 } as const;
 
 export { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
-import type { StoryVariable } from '@/features/canvas/story/storyTypes';
+import type { StoryFlag, StoryVariable } from '@/features/canvas/story/storyTypes';
 
 export type CanvasNodeType = (typeof CANVAS_NODE_TYPES)[keyof typeof CANVAS_NODE_TYPES];
 
@@ -140,7 +140,7 @@ export interface StoryCharacterMetadata {
   visual_description?: string;
 }
 
-/** StoryDraftV1 的完整变量定义；storyVariables 保持现有 Ink 编译兼容格式。 */
+/** StoryDraftV2 的完整数值状态定义。 */
 export interface StoryVariableDefinition extends StoryVariable {
   minimum?: number | null;
   maximum?: number | null;
@@ -226,7 +226,7 @@ export interface VideoNodeData extends NodeDisplayData {
   storyRole?: 'start';
   /** Agent 领域协议中的稳定片段 ID，不随画布布局或节点标题变化。 */
   storySegmentId?: string;
-  /** 当前片段出现的 StoryDraftV1 角色 ID。 */
+  /** 当前片段出现的 StoryDraftV2 角色 ID。 */
   storyCharacterIds?: string[];
   /** 供视频生产阶段使用的镜头、连续性等备注。 */
   storyProductionNotes?: string;
@@ -323,14 +323,14 @@ export interface GroupNodeData extends NodeDisplayData {
   storyGroup?: boolean;
   /** Agent 领域协议中的稳定故事 ID。 */
   interactiveStoryId?: string;
-  /** 当前故事领域协议版本，如 story_draft.v1。 */
+  /** 当前故事领域协议版本。 */
   interactiveStorySchemaVersion?: string;
   storySynopsis?: string;
   storyCharacters?: StoryCharacterMetadata[];
-  /** 变量定义的权威来源；旧画布缺失时才回退 storyVariables。 */
+  /** 数值剧情状态。 */
   storyVariableDefinitions?: StoryVariableDefinition[];
-  /** Ink/旧前端兼容镜像，不应由写入方单独维护。 */
-  storyVariables?: StoryVariable[];
+  /** 布尔剧情状态，如“已拿到钥匙”。 */
+  storyFlags?: StoryFlag[];
   [key: string]: unknown;
 }
 

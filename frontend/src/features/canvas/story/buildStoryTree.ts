@@ -1,5 +1,5 @@
 import { type CanvasEdge, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
-import { type StoryConditionExpr, type StoryVariable } from './storyTypes';
+import { type StoryConditionExpr, type StoryFlag, type StoryVariable } from './storyTypes';
 import { resolveStartNodeId } from './resolveStart';
 import { lintStory, type StoryIssueCode } from './lintStory';
 
@@ -49,6 +49,7 @@ export function buildStoryTree(
   members: CanvasNode[],
   storyEdges: CanvasEdge[],
   variables: StoryVariable[],
+  flags: StoryFlag[] = [],
 ): StoryTreeModel {
   const byId = new Map(members.map((n) => [n.id, n] as const));
   const memberIds = new Set(byId.keys());
@@ -82,7 +83,7 @@ export function buildStoryTree(
     arr.push(code);
     issuesByNode.set(id, arr);
   };
-  for (const it of lintStory(members, storyEdges, variables)) {
+  for (const it of lintStory(members, storyEdges, variables, flags)) {
     if (it.severity === 'error') errorCount++;
     else warningCount++;
     if (it.nodeId) pushIssue(it.nodeId, it.code);

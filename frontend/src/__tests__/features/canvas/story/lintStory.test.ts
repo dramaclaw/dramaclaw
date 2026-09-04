@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CANVAS_NODE_TYPES, type CanvasEdge, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
-import { STORY_CHOICE_EDGE_TYPE, type StoryVariable } from '@/features/canvas/story/storyTypes';
+import { STORY_CHOICE_EDGE_TYPE, type StoryFlag, type StoryVariable } from '@/features/canvas/story/storyTypes';
 import { lintStory, type StoryIssue } from '@/features/canvas/story/lintStory';
 
 function vnode(
@@ -143,6 +143,24 @@ describe('lintStory', () => {
     const edges = [cedge('e', 'a', 'b', { needsReview: true })];
     const issues = lintStory(members, edges, []);
     expect(issues.filter((i) => i.code === 'needs_review')).toHaveLength(2);
+  });
+
+  it('自动分支没有兜底时给出可定位警告', () => {
+    const members = [vnode('a', { start: true }), vnode('b', { endingLabel: 'GE' })];
+    const edges = [cedge('e', 'a', 'b', { condition: { flag: 'has_key', value: true } })];
+    (edges[0].data as Record<string, unknown>).transitionMode = 'automatic';
+    const flags: StoryFlag[] = [{ name: 'has_key', label: '已拿到钥匙', initial: false }];
+    const issues = lintStory(members, edges, [], flags);
+    expect(issues.some((issue) => issue.code === 'automatic_no_fallback' && issue.nodeId === 'a')).toBe(true);
+    expect(issues.some((issue) => issue.code === 'undefined_flag')).toBe(false);
+  });
+
+  it('无条件自动分支遮住后续规则时阻止发布', () => {
+    const members = [vnode('a', { start: true }), vnode('b', { endingLabel: 'GE' }), vnode('c', { endingLabel: 'BE' })];
+    const edges = [cedge('fallback', 'a', 'b', { order: 0 }), cedge('later', 'a', 'c', { order: 1 })];
+    for (const edge of edges) (edge.data as Record<string, unknown>).transitionMode = 'automatic';
+    const issues = lintStory(members, edges, []);
+    expect(issues.some((issue) => issue.code === 'automatic_fallback_order' && issue.edgeId === 'fallback')).toBe(true);
   });
 
   it('按 error → warning → info 排序', () => {

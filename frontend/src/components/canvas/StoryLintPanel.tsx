@@ -7,7 +7,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { isVideoNode } from '@/features/canvas/domain/canvasNodes';
 import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
-import { selectGroupStoryVariables } from '@/features/canvas/story/storyVariableSelectors';
+import { selectGroupStoryFlags, selectGroupStoryVariables } from '@/features/canvas/story/storyVariableSelectors';
 import { lintStory, type StoryIssue, type StoryIssueSeverity } from '@/features/canvas/story/lintStory';
 
 const SEVERITY_ICON: Record<StoryIssueSeverity, typeof Info> = {
@@ -33,6 +33,7 @@ export const StoryLintPanel = memo(function StoryLintPanel({
   const nodes = useCanvasStore((s) => s.nodes);
   const edges = useCanvasStore((s) => s.edges);
   const variables = useCanvasStore(useShallow((s) => selectGroupStoryVariables(s.nodes, groupId)));
+  const flags = useCanvasStore(useShallow((s) => selectGroupStoryFlags(s.nodes, groupId)));
   const setSelectedNode = useCanvasStore((s) => s.setSelectedNode);
   const requestFocusNode = useCanvasStore((s) => s.requestFocusNode);
 
@@ -43,11 +44,11 @@ export const StoryLintPanel = memo(function StoryLintPanel({
       (e) => e.type === STORY_CHOICE_EDGE_TYPE && memberIds.has(e.source),
     );
     return {
-      issues: lintStory(memberList, edgeList, variables),
+      issues: lintStory(memberList, edgeList, variables, flags),
       members: memberList,
       storyEdges: edgeList,
     };
-  }, [nodes, edges, groupId, variables]);
+  }, [nodes, edges, flags, groupId, variables]);
 
   const nodeLabel = (id: string) => {
     const n = members.find((m) => m.id === id);

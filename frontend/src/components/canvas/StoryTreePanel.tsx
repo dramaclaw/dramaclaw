@@ -6,7 +6,7 @@ import { AlertCircle, AlertTriangle, ChevronDown, ChevronRight, Flag, RotateCcw,
 import { useCanvasStore } from '@/stores/canvasStore';
 import { isVideoNode } from '@/features/canvas/domain/canvasNodes';
 import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
-import { selectGroupStoryVariables } from '@/features/canvas/story/storyVariableSelectors';
+import { selectGroupStoryFlags, selectGroupStoryVariables } from '@/features/canvas/story/storyVariableSelectors';
 import { buildStoryTree, type StoryTreeRow } from '@/features/canvas/story/buildStoryTree';
 
 /** 剧情树面板:故事组的只读俯瞰大纲 + 校验,点击行聚焦画布节点。 */
@@ -21,6 +21,7 @@ export const StoryTreePanel = memo(function StoryTreePanel({
   const nodes = useCanvasStore((s) => s.nodes);
   const edges = useCanvasStore((s) => s.edges);
   const variables = useCanvasStore(useShallow((s) => selectGroupStoryVariables(s.nodes, groupId)));
+  const flags = useCanvasStore(useShallow((s) => selectGroupStoryFlags(s.nodes, groupId)));
   const setSelectedNode = useCanvasStore((s) => s.setSelectedNode);
   const requestFocusNode = useCanvasStore((s) => s.requestFocusNode);
 
@@ -28,8 +29,8 @@ export const StoryTreePanel = memo(function StoryTreePanel({
     const members = nodes.filter((n) => n.parentId === groupId && isVideoNode(n));
     const memberIds = new Set(members.map((n) => n.id));
     const storyEdges = edges.filter((e) => e.type === STORY_CHOICE_EDGE_TYPE && memberIds.has(e.source));
-    return buildStoryTree(members, storyEdges, variables);
-  }, [nodes, edges, groupId, variables]);
+    return buildStoryTree(members, storyEdges, variables, flags);
+  }, [nodes, edges, flags, groupId, variables]);
 
   // 折叠集:存「已折叠」的 nodeId,默认全展开。
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());

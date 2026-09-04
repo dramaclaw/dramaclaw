@@ -136,7 +136,7 @@ export const PLAYER_SCRIPT = `
       var outcome = outcomeForChoice(c);
       return { index: c.index, text: c.text, feedbackText: outcome.feedbackText, stateChanges: outcome.stateChanges, interaction: interactionForChoice(c) };
     });
-    st.phase = st.choices.length > 0 ? 'playing' : 'ended';
+    st.phase = st.choices.length > 0 || story.canContinue ? 'playing' : 'ended';
     var placeholder = (nodeId && D.placeholders) ? D.placeholders[nodeId] : null;
     st.placeholder = (!st.clipUrl && st.choices.length > 0) ? (placeholder || { label: '', text: '' }) : null;
     var lim = nodeId ? D.choiceTime[nodeId] : undefined;
@@ -145,6 +145,7 @@ export const PLAYER_SCRIPT = `
     st.defaultIdx = (st.choices.length > 0 && typeof di === 'number') ? di : null;
     st.ending = (st.phase === 'ended' && nodeId) ? (D.endings[nodeId] || null) : null;
     videoEnded = false;
+    if (!st.clipUrl && st.choices.length === 0 && story.canContinue) { window.setTimeout(advance, 0); return; }
     render();
   }
   function choose(i) {
@@ -164,10 +165,14 @@ export const PLAYER_SCRIPT = `
       var states = el('div', 'outcome-state-changes');
       stateChanges.forEach(function (change) {
         var isUp = change && change.direction === 'up';
+        var isOn = change && change.direction === 'on';
+        var isOff = change && change.direction === 'off';
         var label = change && String(change.label || '').trim();
         if (!label) return;
-        var state = el('span', 'outcome-state ' + (isUp ? 'up' : 'down'), label + ' ' + (isUp ? '↑' : '↓'));
-        state.setAttribute('aria-label', label + (isUp ? '上升' : '下降'));
+        var positive = isUp || isOn;
+        var suffix = isOn ? '开启' : isOff ? '关闭' : isUp ? '↑' : '↓';
+        var state = el('span', 'outcome-state ' + (positive ? 'up' : 'down'), label + ' ' + suffix);
+        state.setAttribute('aria-label', label + suffix);
         states.appendChild(state);
       });
       if (states.childElementCount > 0) feedbackContent.appendChild(states);
@@ -182,7 +187,9 @@ export const PLAYER_SCRIPT = `
     if (videoEnded) return;
     if (!Number.isFinite(video.duration) || video.duration <= .15) return;
     if (video.currentTime < Math.max(0, video.duration - .15)) return;
-    video.pause(); videoEnded = true; render();
+    video.pause(); videoEnded = true;
+    if (st.choices.length === 0 && story.canContinue) { advance(); return; }
+    render();
   }
 
   function render() {
@@ -214,7 +221,11 @@ export const PLAYER_SCRIPT = `
             v.pause();
           }, { once: true });
         } else if (!choiceLoopUrl) {
-          v.addEventListener('ended', function () { v.pause(); videoEnded = true; render(); });
+          v.addEventListener('ended', function () {
+            v.pause(); videoEnded = true;
+            if (st.choices.length === 0 && story.canContinue) { advance(); return; }
+            render();
+          });
           v.addEventListener('timeupdate', function () { revealChoicesAtTailFrame(v); });
           v.addEventListener('seeked', function () { revealChoicesAtTailFrame(v); });
         }

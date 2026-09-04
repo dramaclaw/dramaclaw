@@ -29,17 +29,19 @@ from novelvideo.interactive_story.models import (
     RemoveStoryCharacter,
     RemoveStoryChoice,
     RemoveStorySegment,
+    RemoveStoryFlag,
     RemoveStoryVariable,
     SetStoryStart,
     StoryChoice,
-    StoryDraftV1,
+    StoryDraftV2,
     StoryMediaRef,
-    StoryPatchV1,
+    StoryPatchV2,
     StorySegment,
     UpdateStoryChoice,
     UpdateStoryMetadata,
     UpdateStorySegment,
     UpsertStoryCharacter,
+    UpsertStoryFlag,
     UpsertStoryVariable,
     ValidateInteractiveStoryRequest,
 )
@@ -147,7 +149,7 @@ class InteractiveStoryService:
             issues=issues_for_story(story),
         )
 
-    def patch(self, patch: StoryPatchV1) -> InteractiveStoryMutationResult:
+    def patch(self, patch: StoryPatchV2) -> InteractiveStoryMutationResult:
         def build_payload(existing: dict | None) -> dict:
             if existing is None:
                 raise InteractiveStoryServiceError(
@@ -299,7 +301,7 @@ class InteractiveStoryService:
             )
         return canvas
 
-    def _map_story(self, canvas: dict[str, Any], story_id: str) -> StoryDraftV1:
+    def _map_story(self, canvas: dict[str, Any], story_id: str) -> StoryDraftV2:
         try:
             story_group = find_story_group(canvas, story_id)
         except CanvasStoryMappingError as exc:
@@ -325,7 +327,7 @@ class InteractiveStoryService:
                 story_id=story_id,
             ) from exc
 
-    def _story_after_save(self, canvas_id: str, story_id: str) -> StoryDraftV1:
+    def _story_after_save(self, canvas_id: str, story_id: str) -> StoryDraftV2:
         return self._map_story(self._read_canvas(canvas_id, story_id), story_id)
 
     def _canvas_payload(
@@ -368,7 +370,7 @@ class InteractiveStoryService:
         return payload
 
 
-def apply_story_patch(story: StoryDraftV1, patch: StoryPatchV1) -> StoryDraftV1:
+def apply_story_patch(story: StoryDraftV2, patch: StoryPatchV2) -> StoryDraftV2:
     """Apply typed operations in order and validate the complete resulting graph."""
 
     if story.story_id != patch.story_id:
@@ -384,6 +386,7 @@ def apply_story_patch(story: StoryDraftV1, patch: StoryPatchV1) -> StoryDraftV1:
     start_segment_id = story.start_segment_id
     characters = list(story.characters)
     variables = list(story.variables)
+    flags = list(story.flags)
     segments = list(story.segments)
     choices = list(story.choices)
 
@@ -438,6 +441,11 @@ def apply_story_patch(story: StoryDraftV1, patch: StoryPatchV1) -> StoryDraftV1:
         elif isinstance(operation, RemoveStoryVariable):
             index = _index_by(variables, "name", operation.variable_name, "variable")
             variables.pop(index)
+        elif isinstance(operation, UpsertStoryFlag):
+            flags = _upsert(flags, "name", operation.flag.name, operation.flag)
+        elif isinstance(operation, RemoveStoryFlag):
+            index = _index_by(flags, "name", operation.flag_name, "flag")
+            flags.pop(index)
         elif isinstance(operation, UpsertStoryCharacter):
             characters = _upsert(
                 characters, "id", operation.character.id, operation.character
@@ -446,7 +454,7 @@ def apply_story_patch(story: StoryDraftV1, patch: StoryPatchV1) -> StoryDraftV1:
             index = _index_by(characters, "id", operation.character_id, "character")
             characters.pop(index)
 
-    return StoryDraftV1(
+    return StoryDraftV2(
         story_id=story.story_id,
         revision=patch.base_revision + 1,
         title=title,
@@ -454,12 +462,13 @@ def apply_story_patch(story: StoryDraftV1, patch: StoryPatchV1) -> StoryDraftV1:
         start_segment_id=start_segment_id,
         characters=characters,
         variables=variables,
+        flags=flags,
         segments=segments,
         choices=choices,
     )
 
 
-def issues_for_story(story: StoryDraftV1) -> list[InteractiveStoryIssue]:
+def issues_for_story(story: StoryDraftV2) -> list[InteractiveStoryIssue]:
     outgoing: dict[str, list[str]] = {}
     choices_by_source: dict[str, list[StoryChoice]] = {}
     for choice in story.choices:
@@ -513,10 +522,39 @@ def issues_for_story(story: StoryDraftV1) -> list[InteractiveStoryIssue]:
                 )
             )
         source_choices = choices_by_source.get(segment.id, [])
+        automatic = sorted(
+            (choice for choice in source_choices if choice.mode == "automatic"),
+            key=lambda choice: choice.order,
+        )
+        visible = [choice for choice in source_choices if choice.mode == "visible"]
+        fallbacks = [choice for choice in automatic if choice.condition is None]
+        if automatic and not fallbacks and not visible:
+            issues.append(
+                InteractiveStoryIssue(
+                    severity="warning",
+                    code="automatic_no_fallback",
+                    message="自动分支没有兜底路径，条件都不满足时剧情会停止。",
+                    entity_type="segment",
+                    entity_id=segment.id,
+                )
+            )
+        for index, choice in enumerate(automatic):
+            if choice.condition is None and (
+                index != len(automatic) - 1 or len(fallbacks) > 1 or visible
+            ):
+                issues.append(
+                    InteractiveStoryIssue(
+                        severity="error",
+                        code="automatic_fallback_order",
+                        message="无条件自动分支必须是该节点最后且唯一的兜底路径。",
+                        entity_type="choice",
+                        entity_id=choice.id,
+                    )
+                )
         if (
             segment.choice_time_limit_sec is not None
-            and source_choices
-            and not any(choice.is_default for choice in source_choices)
+            and visible
+            and not any(choice.is_default for choice in visible)
         ):
             issues.append(
                 InteractiveStoryIssue(

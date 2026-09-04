@@ -67,6 +67,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   const error = useStoryRuntimeStore((s) => s.error);
   const resumeAvailable = useStoryRuntimeStore((s) => s.resumeAvailable);
   const choose = useStoryRuntimeStore((s) => s.choose);
+  const advanceAutomatic = useStoryRuntimeStore((s) => s.advanceAutomatic);
   const restart = useStoryRuntimeStore((s) => s.restart);
   const resumeSaved = useStoryRuntimeStore((s) => s.resumeSaved);
   const startFresh = useStoryRuntimeStore((s) => s.startFresh);
@@ -175,6 +176,11 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   useEffect(() => {
     setVideoEnded(false);
   }, [currentClipUrl, currentNodeId]);
+
+  useEffect(() => {
+    if (resumeAvailable || phase !== 'playing' || currentChoices.length > 0) return;
+    if (videoEnded || !resolvedUrl) advanceAutomatic();
+  }, [advanceAutomatic, currentChoices.length, phase, resolvedUrl, resumeAvailable, videoEnded]);
 
   // 锚点属于原始视频画幅；播放器使用 cover 时必须把裁切偏移计入坐标。
   useEffect(() => {
@@ -399,17 +405,21 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
               <div className="flex max-w-xl flex-wrap justify-center gap-1.5">
                 {outcomeFeedback.stateChanges.map((change) => {
                   const isUp = change.direction === 'up';
+                  const isOn = change.direction === 'on';
+                  const isOff = change.direction === 'off';
+                  const positive = isUp || isOn;
+                  const suffix = isOn ? t('canvas.story.flagOn') : isOff ? t('canvas.story.flagOff') : isUp ? '↑' : '↓';
                   return (
                     <span
                       key={`${change.label}-${change.direction}`}
-                      aria-label={`${change.label}${isUp ? '上升' : '下降'}`}
+                      aria-label={`${change.label}${suffix}`}
                       className={`rounded-full border px-2.5 py-1 text-xs font-semibold tracking-wide backdrop-blur-sm ${
-                        isUp
+                        positive
                           ? 'border-cyan-200/25 bg-cyan-200/10 text-cyan-100'
                           : 'border-amber-200/25 bg-amber-200/10 text-amber-100'
                       }`}
                     >
-                      {change.label} {isUp ? '↑' : '↓'}
+                      {change.label} {suffix}
                     </span>
                   );
                 })}
@@ -573,7 +583,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
       )}
 
       {/* 结局页:叶子结局标题 + 重玩。续玩提示期间(idle)不显示。 */}
-      {phase !== 'error' && !resumeAvailable && showChoices && currentChoices.length === 0 && (
+      {phase === 'ended' && !resumeAvailable && showChoices && currentChoices.length === 0 && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-5 bg-black/55 px-6 text-center backdrop-blur-sm">
           {currentEnding?.label && (
             <span className="rounded-full border border-white/25 px-3 py-1 text-sm font-medium tracking-wide text-white/80">

@@ -101,12 +101,13 @@ import {
 } from '@/features/canvas/domain/mainlineNodeFlags';
 import { scopeProjectionGraphIds } from '@/features/freezone/projectionGraphIds';
 import { slugifyName } from '@/features/canvas/story/variableName';
-import { storyVariablesOfNode } from '@/features/canvas/story/storyVariableSelectors';
+import { storyFlagsOfNode, storyVariablesOfNode } from '@/features/canvas/story/storyVariableSelectors';
 import {
   defaultStoryChoiceAnchor,
   normalizeStoryChoiceInteraction,
   type StoryChoiceInteraction,
   type StoryChoicePresentation,
+  type StoryFlag,
 } from '@/features/canvas/story/storyTypes';
 import {
   STORY_CLIP_NODE_HEIGHT,
@@ -385,7 +386,7 @@ interface CanvasState {
       padding?: { side: number; top: number; bottom: number };
     }
   ) => string | null;
-  /** 把选中节点打成「故事组」并初始化权威变量定义及兼容镜像。返回组 id。 */
+  /** 把选中节点打成「故事组」并初始化剧情状态。返回组 id。 */
   createStoryGroup: (nodeIds: string[]) => string | null;
   /** 向既有故事组追加一个空白剧情片段并聚焦。返回新视频节点 id。 */
   addStorySegment: (
@@ -404,6 +405,9 @@ interface CanvasState {
   updateStoryVariable: (groupId: string, name: string, patch: { label?: string; initial?: number }) => void;
   /** 从故事组删除某变量。 */
   removeStoryVariable: (groupId: string, name: string) => void;
+  addStoryFlag: (groupId: string, label: string) => string;
+  updateStoryFlag: (groupId: string, name: string, patch: { label?: string; initial?: boolean }) => void;
+  removeStoryFlag: (groupId: string, name: string) => void;
   /** 打开某故事组的变量面板。 */
   openStoryVariables: (groupId: string) => void;
   /** 关闭变量面板。 */
@@ -465,7 +469,7 @@ interface CanvasState {
   /** 故事模式:patch 一条选项边的 data(文案/剧情反馈/互动呈现/条件/效果)。 */
   updateStoryChoiceEdgeData: (
     edgeId: string,
-    patch: Partial<{ choiceText: string; feedbackText: string; interaction: unknown; condition: unknown; effects: unknown }>,
+    patch: Partial<{ choiceText: string; feedbackText: string; interaction: unknown; condition: unknown; effects: unknown; transitionMode: 'visible' | 'automatic' }>,
   ) => void;
   /** 选择点级互动呈现:同一源节点的所有选项统一使用底部/锚定/视频热区；锚点位置仍各自保留。 */
   setStoryChoicePresentation: (edgeId: string, presentation: StoryChoicePresentation) => void;
@@ -1745,10 +1749,7 @@ function createDefaultStoryboardExportOptions(): StoryboardExportOptions {
 }
 
 function synchronizedStoryVariableData(variables: StoryVariableDefinition[]) {
-  return {
-    storyVariableDefinitions: variables,
-    storyVariables: variables.map(({ name, label, initial }) => ({ name, label, initial })),
-  };
+  return { storyVariableDefinitions: variables };
 }
 
 export const useCanvasStore = create<CanvasState>((set, get) => ({
@@ -3602,8 +3603,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 interactiveStoryId:
                   (node.data as { interactiveStoryId?: string }).interactiveStoryId
                   ?? `story-${groupId}`,
-                interactiveStorySchemaVersion: 'story_draft.v1',
+                interactiveStorySchemaVersion: 'story_draft.v2',
                 ...synchronizedStoryVariableData([]),
+                storyFlags: [],
               },
             }
           : node.parentId === groupId && node.type === CANVAS_NODE_TYPES.video
@@ -3706,7 +3708,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const nodes = state.nodes.map((node) => {
         if (node.id !== groupId) return node;
         const existing = storyVariablesOfNode(node);
-        const taken = new Set(existing.map((v) => v.name));
+        const taken = new Set([...existing.map((v) => v.name), ...storyFlagsOfNode(node).map((v) => v.name)]);
         const base = slugifyName(label || 'var');
         let name = base;
         let i = 1;
@@ -3765,6 +3767,48 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           },
         };
       }),
+      ...trackEdit(state),
+    }));
+  },
+
+  addStoryFlag: (groupId, label) => {
+    let createdName = '';
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id !== groupId) return node;
+        const existing = storyFlagsOfNode(node);
+        const taken = new Set([...existing.map((v) => v.name), ...storyVariablesOfNode(node).map((v) => v.name)]);
+        const base = slugifyName(label || 'flag');
+        let name = base;
+        let i = 1;
+        while (taken.has(name)) name = `${base}_${i++}`;
+        createdName = name;
+        const flag: StoryFlag = { name, label: label || name, initial: false };
+        return { ...node, data: { ...node.data, storyFlags: [...existing, flag] } };
+      }),
+      ...trackEdit(state),
+    }));
+    return createdName;
+  },
+
+  updateStoryFlag: (groupId, name, patch) => {
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id !== groupId) return node;
+        const flags = storyFlagsOfNode(node).map((flag) => flag.name === name
+          ? { ...flag, ...patch }
+          : flag);
+        return { ...node, data: { ...node.data, storyFlags: flags } };
+      }),
+      ...trackEdit(state),
+    }));
+  },
+
+  removeStoryFlag: (groupId, name) => {
+    set((state) => ({
+      nodes: state.nodes.map((node) => node.id === groupId
+        ? { ...node, data: { ...node.data, storyFlags: storyFlagsOfNode(node).filter((flag) => flag.name !== name) } }
+        : node),
       ...trackEdit(state),
     }));
   },

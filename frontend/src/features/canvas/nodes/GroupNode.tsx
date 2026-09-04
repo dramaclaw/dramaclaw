@@ -498,10 +498,10 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
             <button
               type="button"
               className="nodrag flex items-center gap-1.5 rounded px-2.5 py-1 text-base text-white/85 hover:bg-white/10"
-              title={t('canvas.story.variables')}
+              title={t('canvas.story.states')}
               onClick={(e) => { e.stopPropagation(); useCanvasStore.getState().openStoryVariables(id); }}
             >
-              {t('canvas.story.variables')}
+              {t('canvas.story.states')}
             </button>
             <button
               type="button"

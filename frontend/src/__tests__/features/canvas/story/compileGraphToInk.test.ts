@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CanvasEdge, CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
-import type { StoryVariable } from '@/features/canvas/story/storyTypes';
+import type { StoryFlag, StoryVariable } from '@/features/canvas/story/storyTypes';
 import { compileGraphToInk, StoryCompileError } from '@/features/canvas/story/compileGraphToInk';
 
 function videoNode(id: string, videoUrl: string | null, storyRole?: 'start'): CanvasNode {
@@ -334,7 +334,7 @@ describe('compileGraphToInk variables', () => {
     expect(result.warnings.length).toBeGreaterThan(0);
   });
 
-  it('不传 variables 时与 v1 行为一致(向后兼容)', () => {
+  it('不传剧情状态时仍能编译简单故事', () => {
     const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('b', 'b.mp4')];
     const edges = [richEdge('a', 'b', '去 b', 0, {})];
     const result = compileGraphToInk(nodes, edges);
@@ -450,6 +450,24 @@ describe('compileGraphToInk variables', () => {
     const result = compileGraphToInk(nodes, edges);
     expect(result.choiceTimeByNodeId).toEqual({});
     expect(result.defaultChoiceIndexByNodeId).toEqual({});
+  });
+
+  it('自动分支与布尔开关编译为片段结束后的条件跳转', () => {
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('open', 'open.mp4'), videoNode('closed', 'closed.mp4')];
+    const flags: StoryFlag[] = [{ name: 'has_key', label: '已拿到钥匙', initial: false }];
+    const edges: CanvasEdge[] = [
+      { id: 'with-key', source: 'a', target: 'open', type: STORY_CHOICE_EDGE_TYPE, data: {
+        choiceText: '', order: 0, transitionMode: 'automatic', condition: { flag: 'has_key', value: true },
+      } } as CanvasEdge,
+      { id: 'otherwise', source: 'a', target: 'closed', type: STORY_CHOICE_EDGE_TYPE, data: {
+        choiceText: '', order: 1, transitionMode: 'automatic', effects: [{ flag: 'has_key', value: true }],
+      } } as CanvasEdge,
+    ];
+    const result = compileGraphToInk(nodes, edges, [], flags);
+    expect(result.ink).toContain('VAR has_key = false');
+    expect(result.ink).toContain('{ has_key == true:');
+    expect(result.ink).toContain('~ has_key = true');
+    expect(result.ink).not.toContain('+ [');
   });
 
   it('endingByNodeId 仅含叶子结局:title=旁白,label=endingLabel', () => {

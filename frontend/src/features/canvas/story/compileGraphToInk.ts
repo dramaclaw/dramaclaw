@@ -7,10 +7,11 @@ import {
   type CompiledStory,
   type StoryChoiceEdgeData,
   type StoryConditionExpr,
+  type StoryFlag,
   type StoryStateChange,
   type StoryVariable,
 } from './storyTypes';
-import { conditionLeaves, isConditionGroup, isVisitCondition } from './conditionExpr';
+import { conditionLeaves, isConditionGroup, isFlagCondition, isVisitCondition } from './conditionExpr';
 
 /** 抛给 UI 的结构化编译错误,code 供前端选择文案。 */
 export class StoryCompileError extends Error {
@@ -41,6 +42,8 @@ function guardFor(
         continue;
       }
       parts.push(`${knotNameForNodeId(leaf.visitedNodeId)} ${leaf.op} ${leaf.value}`);
+    } else if (isFlagCondition(leaf)) {
+      parts.push(`${leaf.flag} == ${leaf.value ? 'true' : 'false'}`);
     } else {
       parts.push(`${leaf.var} ${leaf.op} ${leaf.value}`);
     }
@@ -54,6 +57,7 @@ function choiceEdgeData(edge: CanvasEdge): StoryChoiceEdgeData | null {
   const data = edge.data as Partial<StoryChoiceEdgeData> | undefined;
   return {
     choiceText: typeof data?.choiceText === 'string' ? data.choiceText : '',
+    transitionMode: data?.transitionMode === 'automatic' ? 'automatic' : 'visible',
     feedbackText: typeof data?.feedbackText === 'string' ? data.feedbackText.trim() : '',
     interaction: data?.interaction && typeof data.interaction === 'object'
       ? data.interaction as StoryChoiceEdgeData['interaction']
@@ -71,6 +75,7 @@ interface ChoiceEntry {
   interaction?: StoryChoiceEdgeData['interaction'];
   order: number;
   isDefault?: boolean;
+  transitionMode: 'visible' | 'automatic';
   condition?: StoryChoiceEdgeData['condition'];
   effects?: StoryChoiceEdgeData['effects'];
 }
@@ -95,6 +100,7 @@ export function compileGraphToInk(
   nodes: CanvasNode[],
   edges: CanvasEdge[],
   variables: StoryVariable[] = [],
+  flags: StoryFlag[] = [],
 ): CompiledStory {
   const warnings: string[] = [];
 
@@ -106,6 +112,7 @@ export function compileGraphToInk(
   const nodeById = new Map(videoNodes.map((node) => [node.id, node] as const));
 
   const validVarNames = new Set(variables.map((v) => v.name));
+  const validFlagNames = new Set(flags.map((v) => v.name));
 
   function condOf(edge: CanvasEdge): StoryChoiceEdgeData['condition'] {
     const c = (edge.data as Partial<StoryChoiceEdgeData> | undefined)?.condition;
@@ -115,6 +122,13 @@ export function compileGraphToInk(
     // 整组校验:任一叶子引用未注册变量 → 整条条件丢弃(与单条件「忽略无效条件」一致)。
     for (const leaf of leaves) {
       if (isVisitCondition(leaf)) continue; // 访问叶子在 guardFor 发射时按可达集校验
+      if (isFlagCondition(leaf)) {
+        if (!validFlagNames.has(leaf.flag)) {
+          warnings.push(`条件引用了未注册开关「${leaf.flag}」,已忽略`);
+          return undefined;
+        }
+        continue;
+      }
       if (typeof leaf.var !== 'string' || !validVarNames.has(leaf.var)) {
         warnings.push(`条件引用了未注册变量「${leaf.var}」,已忽略`);
         return undefined;
@@ -127,9 +141,16 @@ export function compileGraphToInk(
     const list = (edge.data as Partial<StoryChoiceEdgeData> | undefined)?.effects;
     if (!Array.isArray(list)) return undefined;
     const kept = list.filter((e) => {
-      if (!e || typeof e.var !== 'string' || typeof e.delta !== 'number') return false;
-      if (!validVarNames.has(e.var)) {
-        warnings.push(`效果引用了未注册变量「${e.var}」,已忽略`);
+      if (!e || typeof e !== 'object') return false;
+      if ('flag' in e) {
+        if (typeof e.flag !== 'string' || typeof e.value !== 'boolean' || !validFlagNames.has(e.flag)) {
+          warnings.push(`效果引用了未注册开关「${String(e.flag)}」,已忽略`);
+          return false;
+        }
+        return true;
+      }
+      if (typeof e.var !== 'string' || typeof e.delta !== 'number' || !validVarNames.has(e.var)) {
+        warnings.push(`效果引用了未注册变量「${String(e.var)}」,已忽略`);
         return false;
       }
       return true;
@@ -157,6 +178,7 @@ export function compileGraphToInk(
       interaction: data.interaction,
       order: data.order,
       isDefault: data.isDefault === true,
+      transitionMode: data.transitionMode === 'automatic' ? 'automatic' : 'visible',
       condition: condOf(edge),
       effects: effectsOf(edge),
     });
@@ -198,6 +220,7 @@ export function compileGraphToInk(
   const choiceStateChangesById: Record<string, StoryStateChange[]> = {};
   const choiceInteractionById: CompiledStory['choiceInteractionById'] = {};
   const variableLabelByName = new Map(variables.map((variable) => [variable.name, variable.label] as const));
+  const flagLabelByName = new Map(flags.map((flag) => [flag.name, flag.label] as const));
   let choiceFeedbackSequence = 0;
   let choiceInteractionSequence = 0;
 
@@ -206,7 +229,8 @@ export function compileGraphToInk(
   for (const v of variables) {
     lines.push(`VAR ${v.name} = ${Math.trunc(v.initial)}`);
   }
-  if (variables.length > 0) lines.push('');
+  for (const flag of flags) lines.push(`VAR ${flag.name} = ${flag.initial ? 'true' : 'false'}`);
+  if (variables.length > 0 || flags.length > 0) lines.push('');
   lines.push(`-> ${knotNameForNodeId(startNode.id)}`, '');
 
   for (const id of reachable) {
@@ -228,10 +252,11 @@ export function compileGraphToInk(
       };
     }
 
-    const limitSec = Number((node.data as { choiceTimeLimitSec?: number }).choiceTimeLimitSec);
-    if (Number.isFinite(limitSec) && limitSec > 0) choiceTimeByNodeId[id] = limitSec;
     const sortedChoices = choicesBySource.get(id) ?? [];
-    const defaultPos = sortedChoices.findIndex((c) => c.isDefault);
+    const visibleChoices = sortedChoices.filter((choice) => choice.transitionMode === 'visible');
+    const limitSec = Number((node.data as { choiceTimeLimitSec?: number }).choiceTimeLimitSec);
+    if (visibleChoices.length > 0 && Number.isFinite(limitSec) && limitSec > 0) choiceTimeByNodeId[id] = limitSec;
+    const defaultPos = visibleChoices.findIndex((c) => c.isDefault);
     if (defaultPos >= 0) defaultChoiceIndexByNodeId[id] = defaultPos;
 
     lines.push(`=== ${knot} ===`);
@@ -249,7 +274,22 @@ export function compileGraphToInk(
       };
       lines.push('-> END');
     } else {
-      for (const choice of choices) {
+      const automatic = choices.filter((choice) => choice.transitionMode === 'automatic');
+      const visible = choices.filter((choice) => choice.transitionMode === 'visible');
+      for (const choice of automatic) {
+        const leaves = conditionLeaves(choice.condition);
+        const guard = guardFor(choice.condition, seen, warnings);
+        const guardExpr = guard ? guard.trim().replace(/^\{/, '').replace(/\}$/, '') : '';
+        if (leaves.length > 0 && guardExpr) lines.push(`{ ${guardExpr}:`);
+        for (const eff of choice.effects ?? []) {
+          lines.push('flag' in eff
+            ? `${leaves.length > 0 && guardExpr ? '    ' : ''}~ ${eff.flag} = ${eff.value ? 'true' : 'false'}`
+            : `${leaves.length > 0 && guardExpr ? '    ' : ''}~ ${eff.var} += ${Math.trunc(eff.delta)}`);
+        }
+        lines.push(`${leaves.length > 0 && guardExpr ? '    ' : ''}-> ${knotNameForNodeId(choice.target)}`);
+        if (leaves.length > 0 && guardExpr) lines.push('}');
+      }
+      for (const choice of visible) {
         const guard = guardFor(choice.condition, seen, warnings);
         const feedbackId = choice.feedbackText ? `feedback-${choiceFeedbackSequence++}` : null;
         if (feedbackId && choice.feedbackText) {
@@ -257,14 +297,20 @@ export function compileGraphToInk(
           // 反馈是稀疏的关键时刻：只在已有剧情反馈时，把该选择的变量效果转为不含数值的语义箭头。
           const effectTotals = new Map<string, number>();
           for (const effect of choice.effects ?? []) {
-            effectTotals.set(effect.var, (effectTotals.get(effect.var) ?? 0) + Math.trunc(effect.delta));
+            if ('var' in effect) effectTotals.set(effect.var, (effectTotals.get(effect.var) ?? 0) + Math.trunc(effect.delta));
           }
-          const stateChanges = Array.from(effectTotals.entries())
+          const stateChanges: StoryStateChange[] = Array.from(effectTotals.entries())
             .filter(([, delta]) => delta !== 0)
             .map(([variable, delta]) => ({
               label: variableLabelByName.get(variable) ?? variable,
               direction: delta > 0 ? 'up' : 'down',
             } satisfies StoryStateChange));
+          for (const effect of choice.effects ?? []) {
+            if ('flag' in effect) stateChanges.push({
+              label: flagLabelByName.get(effect.flag) ?? effect.flag,
+              direction: effect.value ? 'on' : 'off',
+            });
+          }
           if (stateChanges.length > 0) choiceStateChangesById[feedbackId] = stateChanges;
         }
         const normalizedInteraction = normalizeStoryChoiceInteraction(choice.interaction);
@@ -278,7 +324,9 @@ export function compileGraphToInk(
         const interactionTag = interactionId ? ` # choice-interaction: ${interactionId}` : '';
         lines.push(`+ ${guard}[${choice.text}${feedbackTag}${interactionTag}]`);
         for (const eff of choice.effects ?? []) {
-          lines.push(`    ~ ${eff.var} += ${Math.trunc(eff.delta)}`);
+          lines.push('flag' in eff
+            ? `    ~ ${eff.flag} = ${eff.value ? 'true' : 'false'}`
+            : `    ~ ${eff.var} += ${Math.trunc(eff.delta)}`);
         }
         lines.push(`    -> ${knotNameForNodeId(choice.target)}`);
       }
