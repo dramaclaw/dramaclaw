@@ -1,30 +1,35 @@
 ---
-version: 2.0.1
+version: 2.0.2
 attention: medium
 ---
-# v2.0.1
+# v2.0.2
 
 ## User-facing Highlights (zh)
 
-- **视频生成失败原因更明确**: 组织账号遇到参考图尺寸不合规、版权或敏感内容审核失败时会显示具体原因；Seedance 参考图会在任务提交前检查尺寸，避免无效排队和积分预扣。
-- **登录页与虾画交互更顺手**: 优化登录弹窗、公告中心、画布列表、资产库上传、风格图墙和搭子画廊，并恢复登录页公告的正常加载。
-- **大型资产库浏览更流畅**: 图片仅在真正进入可见区域后加载，减少大型项目打开画布和滚动资产列表时的图片请求与解码压力。
-- **画布与项目分享增加配额提示**: 单个用户在项目内最多创建 25 张画布，单个项目最多分享给 25 人；达到上限时会直接说明原因。
+- **视频参考能力进一步扩展**: 视频节点新增文件和网页链接参考，并支持从画布选择图片或视频作为参考素材、在提示词中替换引用素材；CE 推荐模型列表新增 Seedance 2.5。
+- **英文创作流程更加完整**: 完善前后端英文文案、英文剧本场景识别和 Fountain 格式指引，并确保英文剧本生成的资产继续使用原始语言。
+- **虾画创作效率提升**: 优化画布切换、节点对齐、历史资产、资产库管理和虾导消息体验，减少切换画布时的整页加载和重复操作。
+- **视频任务更稳定透明**: 在排队前检查缺失的提示词和参考素材，保留安全的上游错误原因，并确保已提交任务在组织 Key 轮换后仍能完成。
+- **账号与项目管理更方便**: 新增用户自助修改密码入口，并将项目名称长度上限统一为 64 个字符。
 
 ## User-facing Highlights (en)
 
-- **Clearer video generation failures**: Organization users now receive specific reasons for invalid reference dimensions, copyright checks, or content moderation failures. Seedance reference dimensions are validated before queueing to avoid unnecessary task submission and credit reservation.
-- **Smoother login and Canvas interactions**: The login dialog, announcement center, canvas list, asset upload flow, style gallery, and companion gallery have been refined, and login-page announcements load correctly again.
-- **Faster browsing in large asset libraries**: Images now load only after they actually enter the visible viewport, reducing unnecessary requests and decoding work in large projects.
-- **Quota guidance for canvases and sharing**: A user can create up to 25 canvases per project, and a project can be shared with up to 25 people. The interface explains the limit when it is reached.
+- **More flexible video references**: Video nodes now accept file and public web-link references, support picking image or video references directly from the canvas, and can replace referenced materials in prompts. Seedance 2.5 is included in the CE recommended model catalog.
+- **A more complete English workflow**: Frontend and backend English coverage, English screenplay scene parsing, and Fountain-format guidance have been improved, while generated assets preserve the screenplay's source language.
+- **Faster Canvas workflows**: Canvas switching, node alignment, generation history, asset management, and Xia Director messages have been refined to reduce full-page loading and repeated actions.
+- **More reliable and transparent video tasks**: Missing prompts and references are checked before queueing, safe upstream rejection details are retained, and accepted jobs can finish after an organization key rotation.
+- **Easier account and project management**: Users can now change their own password, and project names consistently support up to 64 characters.
 
 ## Fixes
 
-- 修复组织账号视频生成失败时只显示通用出口错误的问题，并增加 Seedance 参考图尺寸与宽高比预检 (#406).
-- 修复公告 JSON 域名未被前端 CSP 放行，导致登录页公告静默不显示的问题 (#395).
+- 修复视频任务缺少必要提示词或素材时仍进入队列的问题，并完善上游明确拒绝的错误分类 (#413, #454, #464).
+- 修复组织 Gateway Key 轮换后，已被上游接受的视频任务无法继续查询的问题 (#422).
+- 修复英文剧本场景标记识别、生成资产语言继承和任务进度翻译问题 (#441, #462, #463, #469).
+- 修复部分同步工作阻塞 API 事件循环，以及上传取消和并发锁处理问题 (#444).
 
 ## Improvements
 
-- 优化登录页、公告中心、画布列表、资产库和搭子画廊的视觉与交互体验 (#405).
-- 增加画布与项目分享的前端配额提示，并让画布列表滚动时底部操作保持可见 (#391).
-- 资产图片改为进入真实可见区域后再加载，降低大项目浏览压力 (#396).
+- 增加视频文件/链接参考、画布素材选择和提示词素材替换能力 (#419, #424).
+- 优化画布切换、节点对齐、历史资产、资产库和虾导交互体验 (#409, #412, #417, #435).
+- 完善英文界面覆盖、Fountain 剧本格式说明，并增加中英文硬编码检查 (#447, #448).
+- 新增 Seedance 2.5 推荐配置、自助修改密码和项目名称长度统一限制 (#450, #453, #458).
