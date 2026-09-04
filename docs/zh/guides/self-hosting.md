@@ -123,6 +123,8 @@ docker compose -f docker-compose.release.yml up -d
 
 升级不会碰你的 `.env`；`ce-data` 与 `newapi-data` 卷原样复用。
 
+`docker-compose.release.yml` 里内置的 `DRAMACLAW_VERSION` / `DRAMACLAW_GATEWAY_VERSION` 默认值由 CI 自动更新：每次 CE 发版、以及内置网关 fork 发新版后都会自动开 PR 抬高默认值，即使 `.env` 里什么都没设，`git pull` 到 `main` 也能拿到最新默认值。
+
 如果旧版本曾将媒体写入容器内 `/app/output`，请在启动新版本**之前**运行一次迁移（zip 用户没有 git 仓库，直接从 GitHub 下载 `scripts/migrate_docker_output.py`）：
 
 ```bash

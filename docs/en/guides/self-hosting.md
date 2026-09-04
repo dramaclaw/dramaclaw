@@ -123,6 +123,8 @@ docker compose -f docker-compose.release.yml up -d
 
 Your `.env` is never touched by the upgrade. The `ce-data` and `newapi-data` volumes are reused.
 
+The `DRAMACLAW_VERSION` / `DRAMACLAW_GATEWAY_VERSION` defaults baked into `docker-compose.release.yml` are kept current automatically: CI opens a PR bumping them after every CE release and whenever the bundled gateway fork publishes a new release, so pulling `main` picks up the latest defaults even if your `.env` sets nothing.
+
 If an older release wrote media to `/app/output` inside the container, run the one-time migration **before** starting the new version (zip users: download `scripts/migrate_docker_output.py` from GitHub instead of `git pull`):
 
 ```bash
