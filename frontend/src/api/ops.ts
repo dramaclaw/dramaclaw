@@ -33,6 +33,8 @@ export interface FreezoneRecipeCompileMetadata {
 }
 
 export interface FreezoneRecipeCompilePayload {
+  projectId?: string;
+  productOperationId?: string;
   recipeId: string;
   recipeVersion?: string;
   recipePipeline?: Array<{ id: string; version?: string }>;
@@ -73,6 +75,10 @@ let recipeCompileRequestSequence = 0;
 
 function recipeCompileJson(payload: FreezoneRecipeCompilePayload) {
   return {
+    ...(payload.projectId ? { project_id: payload.projectId } : {}),
+    ...(payload.productOperationId
+      ? { product_operation_id: payload.productOperationId }
+      : {}),
     recipe_id: payload.recipeId,
     recipe_version: payload.recipeVersion ?? "",
     ...(payload.recipePipeline?.length
@@ -212,6 +218,10 @@ export async function generateFreezoneRecipeText(
     // longer than the shared 30s API-client timeout.
     timeout: RECIPE_MODEL_TIMEOUT_MS,
     json: {
+      ...(payload.projectId ? { project_id: payload.projectId } : {}),
+      ...(payload.productOperationId
+        ? { product_operation_id: payload.productOperationId }
+        : {}),
       recipe_id: payload.recipeId,
       recipe_version: payload.recipeVersion ?? "",
       ...(payload.recipePipeline?.length

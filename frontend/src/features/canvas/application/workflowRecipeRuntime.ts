@@ -8,7 +8,10 @@ import {
 } from '@/api/ops';
 import { joinUpstreamText } from './graphContentResolver';
 import type { UpstreamContent } from './ports';
-import { reportWorkflowExecutionActivity } from './workflowExecutionActivity';
+import {
+  reportWorkflowExecutionActivity,
+  workflowProductOperation,
+} from './workflowExecutionActivity';
 
 interface WorkflowCatalogRuntime {
   skillId?: unknown;
@@ -140,7 +143,14 @@ export async function compileWorkflowNodePrompt(
 
   reportWorkflowExecutionActivity(input.nodeId, 'compiling_recipe');
   try {
+    const productOperation = workflowProductOperation(input.nodeId);
     return await compileFreezoneRecipePrompt({
+      ...(productOperation
+        ? {
+            projectId: productOperation.projectId,
+            productOperationId: productOperation.operationId,
+          }
+        : {}),
       recipeId,
       recipeVersion: text(catalog?.recipeVersion),
       ...(pipeline.length > 0 ? { recipePipeline: pipeline } : {}),
@@ -174,8 +184,15 @@ export async function generateWorkflowText(input: {
     input.upstreamText ?? '',
   );
   const pipeline = recipePipeline(catalog?.recipePipeline);
+  const productOperation = workflowProductOperation(input.nodeId);
   reportWorkflowExecutionActivity(input.nodeId, 'generating');
   return await generateFreezoneRecipeText({
+    ...(productOperation
+      ? {
+          projectId: productOperation.projectId,
+          productOperationId: productOperation.operationId,
+        }
+      : {}),
     recipeId,
     recipeVersion: text(catalog?.recipeVersion),
     ...(pipeline.length > 0 ? { recipePipeline: pipeline } : {}),

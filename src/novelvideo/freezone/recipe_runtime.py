@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
+import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
 from hashlib import sha256
@@ -40,7 +42,7 @@ _MAX_UPSTREAM_CHARS = 16_000
 _MAX_CONFIRMED_INPUTS_CHARS = 8_000
 _MAX_SKILL_CONSTRAINTS_CHARS = 12_000
 _prompt_cache: OrderedDict[str, str] = OrderedDict()
-_prompt_inflight: dict[str, asyncio.Task[str]] = {}
+_prompt_inflight: dict[str, asyncio.Task["RecipeModelCompilation"]] = {}
 
 _RECIPE_COMPILER_SYSTEM_PROMPT = """You compile a trusted creative Recipe and runtime context into one executable prompt.
 
@@ -72,6 +74,25 @@ class RecipeCompileResult:
     prompt: str
     mode: RecipeCompileMode
     recipe_ids: tuple[str, ...]
+    model_call_id: str = ""
+    executed_at: float = 0.0
+
+
+@dataclass(frozen=True)
+class RecipeModelCompilation:
+    prompt: str
+    model_call_id: str
+    executed_at: float
+
+
+def _model_compilation(value: RecipeModelCompilation | str) -> RecipeModelCompilation:
+    if isinstance(value, RecipeModelCompilation):
+        return value
+    return RecipeModelCompilation(
+        prompt=str(value),
+        model_call_id=f"recipe-compiler:{uuid.uuid4().hex}",
+        executed_at=time.time(),
+    )
 
 
 def _validate_recipe_kind(recipe: dict[str, Any], node_kind: RecipeNodeKind) -> None:
@@ -248,20 +269,20 @@ def _cache_prompt(key: str, prompt: str, *, username: str) -> None:
 def _finalize_compiler_task(
     key: str,
     username: str,
-    task: asyncio.Task[str],
+    task: asyncio.Task[RecipeModelCompilation],
 ) -> None:
     if _prompt_inflight.get(key) is task:
         _prompt_inflight.pop(key, None)
     if task.cancelled():
         return
     try:
-        compiled = task.result()
+        compiled = _model_compilation(task.result())
     except Exception:
         return
-    _cache_prompt(key, compiled, username=username)
+    _cache_prompt(key, compiled.prompt, username=username)
 
 
-async def _run_recipe_compiler(task: str) -> str:
+async def _run_recipe_compiler(task: str) -> RecipeModelCompilation:
     from novelvideo.config import get_newapi_text_pydantic_model
 
     model = get_newapi_text_pydantic_model(
@@ -283,7 +304,11 @@ async def _run_recipe_compiler(task: str) -> str:
     compiled = str(response.output or "").strip()
     if not compiled:
         raise RuntimeError("recipe compiler returned an empty prompt")
-    return compiled
+    return RecipeModelCompilation(
+        prompt=compiled,
+        model_call_id=f"recipe-compiler:{uuid.uuid4().hex}",
+        executed_at=time.time(),
+    )
 
 
 def get_recipe_for_runtime(
@@ -607,6 +632,7 @@ async def compile_recipe_prompt_result(
         return RecipeCompileResult(persisted, "persistent_cache", recipe_ids)
 
     compiler_task = _prompt_inflight.get(cache_key)
+    owns_model_call = compiler_task is None
     if compiler_task is None:
         compiler_task = asyncio.create_task(_run_recipe_compiler(task))
         _prompt_inflight[cache_key] = compiler_task
@@ -615,9 +641,11 @@ async def compile_recipe_prompt_result(
         )
     try:
         try:
-            compiled = await asyncio.wait_for(
-                asyncio.shield(compiler_task),
-                timeout=_recipe_compiler_timeout_seconds(),
+            compiled = _model_compilation(
+                await asyncio.wait_for(
+                    asyncio.shield(compiler_task),
+                    timeout=_recipe_compiler_timeout_seconds(),
+                )
             )
         except TimeoutError:
             return RecipeCompileResult(
@@ -636,8 +664,16 @@ async def compile_recipe_prompt_result(
     finally:
         if compiler_task.done() and _prompt_inflight.get(cache_key) is compiler_task:
             _prompt_inflight.pop(cache_key, None)
-    _cache_prompt(cache_key, compiled, username=username)
-    return RecipeCompileResult(compiled, "model", recipe_ids)
+    _cache_prompt(cache_key, compiled.prompt, username=username)
+    if not owns_model_call:
+        return RecipeCompileResult(compiled.prompt, "memory_cache", recipe_ids)
+    return RecipeCompileResult(
+        compiled.prompt,
+        "model",
+        recipe_ids,
+        model_call_id=compiled.model_call_id,
+        executed_at=compiled.executed_at,
+    )
 
 
 async def compile_recipe_prompt_batch(

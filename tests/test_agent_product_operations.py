@@ -6,6 +6,7 @@ import pytest
 
 from novelvideo.freezone.agent_product_operations import (
     AgentProductSettlementPending,
+    bind_agent_product_model_execution,
     bind_agent_product_task,
     create_agent_product_operation,
     finish_agent_product_operation,
@@ -75,12 +76,19 @@ def test_delivered_operation_requires_execution_evidence_and_result(tmp_path):
             result_ref={"kind": "workflow_draft", "id": "draft-a"},
         )
 
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="response-a",
+        executed_at=1.0,
+        source="server_observed_agent_turn",
+    )
+
     delivered = finish_agent_product_operation(
         project_dir=tmp_path,
         operation_id=operation["operation_id"],
         outcome="delivered",
         expected_task_id="task-a",
-        model_evidence={"model_call_id": "response-a", "executed_at": 1.0},
         result_ref={"kind": "workflow_draft", "id": "draft-a"},
     )
     repeated = finish_agent_product_operation(
@@ -88,12 +96,38 @@ def test_delivered_operation_requires_execution_evidence_and_result(tmp_path):
         operation_id=operation["operation_id"],
         outcome="delivered",
         expected_task_id="task-a",
-        model_evidence={"model_call_id": "ignored", "executed_at": 2.0},
         result_ref={"kind": "workflow_draft", "id": "ignored"},
     )
 
     assert delivered["status"] == "delivered"
     assert repeated == delivered
+
+
+def test_recipe_delivery_requires_fresh_model_compile_evidence(tmp_path):
+    operation = _create(tmp_path, key="recipe-key", kind="recipe_result")
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-recipe",
+        root_task_id="task-recipe",
+    )
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="cached-result",
+        executed_at=1.0,
+        source="server_recipe_compiler",
+        compile_mode="memory_cache",
+    )
+
+    with pytest.raises(ValueError, match="model Recipe compilation"):
+        finish_agent_product_operation(
+            project_dir=tmp_path,
+            operation_id=operation["operation_id"],
+            outcome="delivered",
+            expected_task_id="task-recipe",
+            result_ref={"kind": "recipe_result", "id": "result-a"},
+        )
 
 
 @pytest.mark.parametrize("pending", ["accepted", "submitted", "running"])
@@ -136,6 +170,38 @@ def test_generation_manifest_and_draft_survive_process_memory_loss(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_chat_runtime_binds_server_observed_turn_to_admitted_product(tmp_path):
+    from novelvideo.chat import service
+
+    operation = _create(tmp_path, key="observed-turn")
+    await service._bind_server_observed_agent_product_execution(
+        SimpleNamespace(
+            name="freezone_begin_agent_product_generation",
+            status="completed",
+            error=None,
+            turn_id="turn-a",
+            call_id="call-a",
+            structured={"ok": True, "operation_id": operation["operation_id"]},
+            output=None,
+        ),
+        project_dir=tmp_path,
+        project_state_dir=tmp_path,
+    )
+
+    stored = read_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+    )
+    assert stored["model_evidence"] == {
+        "model_call_id": "agent-turn:turn-a:tool:call-a",
+        "executed_at": stored["model_evidence"]["executed_at"],
+        "source": "server_observed_agent_turn",
+        "turn_id": "turn-a",
+        "tool_call_id": "call-a",
+    }
+
+
+@pytest.mark.asyncio
 async def test_product_task_waits_for_durable_delivery_before_success(
     tmp_path, monkeypatch
 ):
@@ -153,12 +219,18 @@ async def test_product_task_waits_for_durable_delivery_before_success(
     async def deliver_after_wait(_seconds):
         nonlocal sleep_calls
         sleep_calls += 1
+        bind_agent_product_model_execution(
+            project_dir=tmp_path,
+            operation_id=operation["operation_id"],
+            model_call_id="response-a",
+            executed_at=1.0,
+            source="server_observed_agent_turn",
+        )
         finish_agent_product_operation(
             project_dir=tmp_path,
             operation_id=operation["operation_id"],
             outcome="delivered",
             expected_task_id="task-a",
-            model_evidence={"model_call_id": "response-a", "executed_at": 1.0},
             result_ref={"kind": "workflow_draft", "id": "draft-a"},
         )
 

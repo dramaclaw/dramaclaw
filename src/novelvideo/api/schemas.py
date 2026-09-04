@@ -1711,6 +1711,8 @@ class FreezoneRecipeCompileRequest(BaseModel):
     """将节点意图与可信 Recipe 编译为最终执行提示词。"""
 
     recipe_id: str = Field(min_length=1, max_length=128)
+    project_id: str = Field(default="", max_length=128)
+    product_operation_id: str = Field(default="", max_length=128)
     recipe_version: str = Field(default="", max_length=64)
     recipe_pipeline: list[FreezoneRecipePipelineEntry] = Field(
         default_factory=list,

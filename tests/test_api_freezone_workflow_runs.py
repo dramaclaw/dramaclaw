@@ -50,7 +50,9 @@ def workflow_run_client(monkeypatch, tmp_path):
         "id": "u-alice",
         "username": "alice",
     }
-    return TestClient(app)
+    client = TestClient(app)
+    client.state_dir = tmp_path
+    return client
 
 
 def test_workflow_run_api_lifecycle(workflow_run_client: TestClient) -> None:
@@ -159,6 +161,22 @@ def test_metered_workflow_result_is_delivered_once_before_canvas_confirmation(
         },
     }
 
+    rejected = workflow_run_client.post(base, json=draft_request)
+    assert rejected.status_code == 409
+
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
+    )
+
+    bind_agent_product_model_execution(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation["operation_id"],
+        model_call_id="agent-turn:turn-a:tool:call-a",
+        executed_at=1.0,
+        source="server_observed_agent_turn",
+        turn_id="turn-a",
+        tool_call_id="call-a",
+    )
     first = workflow_run_client.post(base, json=draft_request)
     duplicate = workflow_run_client.post(base, json=draft_request)
 
@@ -235,6 +253,76 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
 
     assert settlements == [("reservation-a", "confirm")]
     assert completions[0]["metadata"]["settlement_status"] == "reconciled"
+
+
+@pytest.mark.asyncio
+async def test_recipe_compile_binds_only_fresh_model_evidence(
+    workflow_run_client: TestClient,
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.api.schemas import FreezoneRecipeCompileRequest
+    from novelvideo.freezone.agent_product_operations import (
+        read_agent_product_operation,
+    )
+    from novelvideo.freezone.recipe_runtime import RecipeCompileResult
+
+    def admit(session_id: str) -> dict:
+        response = workflow_run_client.post(
+            "/api/v1/projects/proj_demo/freezone/agent-product-operations",
+            json={
+                "product_kind": "recipe_result",
+                "generation_session_id": session_id,
+                "canvas_id": "default",
+                "artifact_id": "image-1",
+                "normalized_inputs_hash": session_id,
+                "metadata": {"recipe_id": "product-image"},
+            },
+        )
+        assert response.status_code == 200
+        return response.json()["data"]
+
+    def request(operation_id: str) -> FreezoneRecipeCompileRequest:
+        return FreezoneRecipeCompileRequest(
+            project_id="proj_demo",
+            product_operation_id=operation_id,
+            recipe_id="product-image",
+            node_kind="image",
+        )
+
+    model_operation = admit("model-compile")
+    await freezone._record_recipe_compile_product_evidence(
+        body=request(model_operation["operation_id"]),
+        compiled=RecipeCompileResult(
+            "compiled",
+            "model",
+            ("product-image",),
+            model_call_id="recipe-compiler:call-a",
+            executed_at=1.0,
+        ),
+        user={"id": "u-alice", "username": "alice"},
+    )
+    stored_model = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=model_operation["operation_id"],
+    )
+    assert stored_model["model_evidence"]["compile_mode"] == "model"
+
+    cached_operation = admit("cached-compile")
+    await freezone._record_recipe_compile_product_evidence(
+        body=request(cached_operation["operation_id"]),
+        compiled=RecipeCompileResult(
+            "cached",
+            "memory_cache",
+            ("product-image",),
+        ),
+        user={"id": "u-alice", "username": "alice"},
+    )
+    stored_cached = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=cached_operation["operation_id"],
+    )
+    assert stored_cached["status"] == "failed"
+    assert stored_cached["model_evidence"] == {}
 
 
 def test_canvas_revision_endpoint_returns_only_revision(
@@ -493,6 +581,76 @@ def test_workflow_run_list_reconciles_completed_project_task(
     reconciled = next(item for item in runs if item["run_id"] == created["run_id"])
     assert reconciled["status"] == "completed"
     assert reconciled["actions"][0]["artifact_status"] == "valid"
+
+
+def test_recipe_result_does_not_use_media_task_id_as_model_evidence(
+    workflow_run_client: TestClient,
+    monkeypatch,
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        read_agent_product_operation,
+    )
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base,
+        json={
+            "idempotency_key": "media-proof-is-not-model-proof",
+            "actions": [
+                {
+                    "node_id": "image-1",
+                    "action": "generate_image",
+                    "recipe_id": "product-image",
+                    "recipe_version": "1.0.0",
+                    "generation_attempt_id": "attempt-a",
+                }
+            ],
+        },
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    task_key = "task:freezone_image:project:proj_demo:0:media-provider-job"
+    workflow_run_client.patch(
+        f"{base}/{created['run_id']}",
+        json={
+            "action_updates": [
+                {
+                    "node_id": "image-1",
+                    "action": "generate_image",
+                    "status": "running",
+                    "task_key": task_key,
+                    "job_id": "media-provider-job",
+                }
+            ]
+        },
+    )
+    media_task = SimpleNamespace(
+        task_type="freezone_image",
+        status="completed",
+        progress=1.0,
+        current_task="completed",
+        episode=0,
+        beat_num=None,
+        scope="media-provider-job",
+        result={"image_url": "https://cdn.example.test/image.png"},
+        error=None,
+    )
+    monkeypatch.setattr(
+        freezone,
+        "get_task_manager",
+        lambda: SimpleNamespace(list_tasks_for_project=lambda _ctx: [media_task]),
+    )
+
+    response = workflow_run_client.get(base)
+
+    assert response.status_code == 200
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+    )
+    assert operation["status"] == "failed"
+    assert operation["model_evidence"] == {}
 
 
 def test_workflow_run_cancel_stops_linked_active_project_task(

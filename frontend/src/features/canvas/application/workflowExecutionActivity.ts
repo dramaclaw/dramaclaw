@@ -36,6 +36,31 @@ export interface WorkflowRunUpdatedDetail {
   actionUpdates?: WorkflowRunActionUpdate[];
 }
 
+export interface WorkflowProductOperationContext {
+  projectId: string;
+  operationId: string;
+}
+
+const workflowProductOperations = new Map<string, WorkflowProductOperationContext>();
+
+export function bindWorkflowProductOperation(
+  nodeId: string,
+  context: WorkflowProductOperationContext,
+): void {
+  if (!nodeId.trim() || !context.projectId.trim() || !context.operationId.trim()) return;
+  workflowProductOperations.set(nodeId, context);
+}
+
+export function workflowProductOperation(
+  nodeId: string | null | undefined,
+): WorkflowProductOperationContext | undefined {
+  return nodeId ? workflowProductOperations.get(nodeId) : undefined;
+}
+
+export function clearWorkflowProductOperation(nodeId: string): void {
+  workflowProductOperations.delete(nodeId);
+}
+
 export function reportWorkflowExecutionActivity(
   nodeId: string | null | undefined,
   phase: WorkflowRunActionPhase,

@@ -168,6 +168,7 @@ from novelvideo.freezone.workflow_drafts import (
     read_workflow_draft,
 )
 from novelvideo.freezone.agent_product_operations import (
+    bind_agent_product_model_execution,
     bind_agent_product_task,
     create_agent_product_operation,
     finish_agent_product_operation,
@@ -214,6 +215,7 @@ from novelvideo.freezone.route_helpers import (
     FREEZONE_DEFAULT_IMAGE_MODEL,
 )
 from novelvideo.freezone.recipe_runtime import (
+    RecipeCompileResult,
     RecipeRuntimeError,
     compile_recipe_prompt_batch,
     compile_recipe_prompt_result,
@@ -4779,6 +4781,102 @@ def _workflow_draft_api_data(draft: dict[str, Any]) -> dict[str, Any]:
     return dict(draft)
 
 
+async def _record_recipe_compile_product_evidence(
+    *,
+    body: FreezoneRecipeCompileRequest,
+    compiled: RecipeCompileResult,
+    user: dict,
+) -> None:
+    """Settle Recipe-product evidence from the compiler's trusted return value."""
+    operation_id = str(body.product_operation_id or "").strip()
+    project_id = str(body.project_id or "").strip()
+    if not operation_id and not project_id:
+        return
+    if not operation_id or not project_id:
+        raise HTTPException(
+            400,
+            "project_id and product_operation_id must be supplied together",
+        )
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project_id, user)
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    operation = await asyncio.to_thread(
+        read_agent_product_operation,
+        project_dir=state_dir,
+        operation_id=operation_id,
+    )
+    if operation is None:
+        raise HTTPException(404, "Recipe result operation not found")
+    if operation.get("product_kind") != "recipe_result":
+        raise HTTPException(409, "operation is not a Recipe result")
+    admitted_recipe_id = str((operation.get("metadata") or {}).get("recipe_id") or "")
+    if admitted_recipe_id and admitted_recipe_id not in set(compiled.recipe_ids):
+        raise HTTPException(409, "Recipe compilation does not match admitted operation")
+    if operation.get("status") in {"delivered", "failed", "cancelled"}:
+        return
+    if (
+        compiled.mode == "model"
+        and str(compiled.model_call_id or "").strip()
+        and compiled.executed_at
+    ):
+        await asyncio.to_thread(
+            bind_agent_product_model_execution,
+            project_dir=state_dir,
+            operation_id=operation_id,
+            model_call_id=compiled.model_call_id,
+            executed_at=compiled.executed_at,
+            source="server_recipe_compiler",
+            compile_mode="model",
+        )
+        return
+    await asyncio.to_thread(
+        finish_agent_product_operation,
+        project_dir=state_dir,
+        operation_id=operation_id,
+        outcome="failed",
+        expected_task_id=str(operation.get("task_id") or ""),
+    )
+
+
+async def _fail_recipe_product_operation(
+    *, body: FreezoneRecipeCompileRequest, user: dict
+) -> None:
+    operation_id = str(body.product_operation_id or "").strip()
+    project_id = str(body.project_id or "").strip()
+    if not operation_id or not project_id:
+        return
+    try:
+        ctx, _username, _project_name, project_dir, _output_dir = (
+            await _resolve_freezone_project(project_id, user)
+        )
+        state_dir = _canvas_state_project_dir(ctx, project_dir)
+        operation = await asyncio.to_thread(
+            read_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+        )
+        if operation is None or operation.get("status") in {
+            "delivered",
+            "failed",
+            "cancelled",
+        }:
+            return
+        await asyncio.to_thread(
+            finish_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+            outcome="failed",
+            expected_task_id=str(operation.get("task_id") or ""),
+        )
+    except Exception:
+        logger.warning(
+            "could not fail Recipe product operation %s",
+            operation_id,
+            exc_info=True,
+        )
+
+
 @router.post(
     "/freezone/recipes/compile",
     response_model=FreezoneRecipeCompileResponse,
@@ -4794,9 +4892,18 @@ async def compile_freezone_recipe(
         compiled = await compile_recipe_prompt_result(
             **_recipe_compile_args(body, username)
         )
+        await _record_recipe_compile_product_evidence(
+            body=body,
+            compiled=compiled,
+            user=user,
+        )
     except RecipeRuntimeError as exc:
+        await _fail_recipe_product_operation(body=body, user=user)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
+        await _fail_recipe_product_operation(body=body, user=user)
         logger.exception("freezone Recipe compilation failed")
         raise HTTPException(
             status_code=503, detail="Recipe compilation failed"
@@ -4849,6 +4956,7 @@ async def compile_freezone_recipe_batch(
     items: list[dict[str, Any]] = []
     for request, outcome in zip(body.items, outcomes, strict=True):
         if isinstance(outcome, RecipeRuntimeError):
+            await _fail_recipe_product_operation(body=request, user=user)
             items.append(
                 {
                     "request_id": request.request_id,
@@ -4858,6 +4966,7 @@ async def compile_freezone_recipe_batch(
             )
             continue
         if isinstance(outcome, Exception):
+            await _fail_recipe_product_operation(body=request, user=user)
             logger.error(
                 "freezone Recipe batch item failed request_id=%s",
                 request.request_id,
@@ -4872,6 +4981,11 @@ async def compile_freezone_recipe_batch(
                 }
             )
             continue
+        await _record_recipe_compile_product_evidence(
+            body=request,
+            compiled=outcome,
+            user=user,
+        )
         items.append(
             {
                 "request_id": request.request_id,
@@ -4912,9 +5026,24 @@ async def generate_freezone_recipe_text(
             upstream_text=body.upstream_text,
             reference_media=[item.model_dump() for item in body.reference_media],
         )
+        await _record_recipe_compile_product_evidence(
+            body=body,
+            compiled=RecipeCompileResult(
+                prompt=content,
+                mode="model",
+                recipe_ids=(body.recipe_id,),
+                model_call_id=f"recipe-text-writer:{uuid.uuid4().hex}",
+                executed_at=time.time(),
+            ),
+            user=user,
+        )
     except RecipeRuntimeError as exc:
+        await _fail_recipe_product_operation(body=body, user=user)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
+        await _fail_recipe_product_operation(body=body, user=user)
         if _is_recipe_text_generation_timeout(exc):
             logger.warning("freezone Recipe text generation timed out")
             raise HTTPException(
@@ -13196,6 +13325,11 @@ async def create_canvas_workflow_draft(
         "submitted",
     }:
         raise HTTPException(409, "workflow result operation is not admitted")
+    if operation and not (operation.get("model_evidence") or {}).get("model_call_id"):
+        raise HTTPException(
+            409,
+            "workflow result has no server-observed model execution evidence",
+        )
     try:
         await asyncio.to_thread(
             prune_expired_workflow_drafts,
@@ -13229,11 +13363,6 @@ async def create_canvas_workflow_draft(
             operation_id=operation_id,
             outcome="delivered",
             expected_task_id=str(operation.get("task_id") or ""),
-            model_evidence={
-                "model_call_id": f"mcp-result:{operation_id}:{draft['plan_digest']}",
-                "executed_at": time.time(),
-                "source": "authenticated_agent_workflow_result",
-            },
             result_ref={
                 "kind": "workflow_draft",
                 "id": draft["draft_id"],
@@ -13561,7 +13690,6 @@ async def complete_agent_product_operation(
         raise HTTPException(404, "agent product operation not found")
     if str(current.get("task_id") or "") != str(body.get("task_id") or ""):
         raise HTTPException(400, "agent product operation task identity mismatch")
-    model_evidence: dict[str, Any] = {}
     if outcome == "delivered":
         product_kind = str(current.get("product_kind") or "")
         if product_kind not in {"workflow_generate", "recipe_generate"}:
@@ -13607,16 +13735,6 @@ async def complete_agent_product_operation(
             )
         if not result_matches:
             raise HTTPException(409, "durable generated product result is unavailable")
-        evidence_digest = hashlib.sha256(
-            json.dumps(result_ref, sort_keys=True, separators=(",", ":")).encode(
-                "utf-8"
-            )
-        ).hexdigest()[:24]
-        model_evidence = {
-            "model_call_id": f"authenticated-agent-result:{operation_id}:{evidence_digest}",
-            "executed_at": time.time(),
-            "source": "authenticated_agent_product_result",
-        }
     try:
         operation = await asyncio.to_thread(
             finish_agent_product_operation,
@@ -13624,7 +13742,6 @@ async def complete_agent_product_operation(
             operation_id=operation_id,
             outcome=outcome,
             expected_task_id=str(body.get("task_id") or ""),
-            model_evidence=model_evidence,
             result_ref=result_ref,
         )
     except ValueError as exc:
@@ -14032,26 +14149,6 @@ async def get_canvas_workflow_runs(
                 continue
             task_status = str(task.get("status") or "")
             artifact_status = str(action.get("artifact_status") or "")
-            if task_status == "completed" and artifact_status == "valid":
-                outcome = "delivered"
-                result_ref = {
-                    "kind": "recipe_result",
-                    "id": str(action.get("job_id") or task_key),
-                    "workflow_run_id": run["run_id"],
-                    "node_id": action.get("node_id"),
-                    "recipe_id": action.get("recipe_id"),
-                }
-                model_evidence = {
-                    "model_call_id": str(action.get("job_id") or task_key),
-                    "executed_at": run.get("updated_at"),
-                    "source": "verified_project_task_result",
-                }
-            elif task_status in {"failed", "cancelled"}:
-                outcome = "failed" if task_status == "failed" else "cancelled"
-                result_ref = {}
-                model_evidence = {}
-            else:
-                continue
             operation = await asyncio.to_thread(
                 read_agent_product_operation,
                 project_dir=canvas_project_dir,
@@ -14063,13 +14160,38 @@ async def get_canvas_workflow_runs(
                 "cancelled",
             }:
                 continue
+            evidence = operation.get("model_evidence") or {}
+            if (
+                task_status == "completed"
+                and artifact_status == "valid"
+                and evidence.get("compile_mode") == "model"
+                and evidence.get("model_call_id")
+            ):
+                outcome = "delivered"
+                result_ref = {
+                    "kind": "recipe_result",
+                    "id": str(action.get("job_id") or task_key),
+                    "workflow_run_id": run["run_id"],
+                    "node_id": action.get("node_id"),
+                    "recipe_id": action.get("recipe_id"),
+                }
+            elif task_status in {"failed", "cancelled"}:
+                outcome = "failed" if task_status == "failed" else "cancelled"
+                result_ref = {}
+            elif task_status == "completed" and artifact_status == "valid":
+                # Media delivery proves only the media provider task.  Without
+                # a fresh model Recipe compilation this product operation is
+                # non-billable (cache/deterministic/fallback or missing proof).
+                outcome = "failed"
+                result_ref = {}
+            else:
+                continue
             operation = await asyncio.to_thread(
                 finish_agent_product_operation,
                 project_dir=canvas_project_dir,
                 operation_id=operation_id,
                 outcome=outcome,
                 expected_task_id=str(operation.get("task_id") or ""),
-                model_evidence=model_evidence,
                 result_ref=result_ref,
             )
             await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)

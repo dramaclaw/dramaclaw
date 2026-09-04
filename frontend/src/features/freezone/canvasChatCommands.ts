@@ -54,6 +54,8 @@ import {
 import { useCanvasStore } from "@/stores/canvasStore";
 import { deterministicNodeOutputIssue } from "@/features/freezone/workflowQualityGate";
 import {
+  bindWorkflowProductOperation,
+  clearWorkflowProductOperation,
   WORKFLOW_EXECUTION_ACTIVITY_EVENT,
   WORKFLOW_RUN_UPDATED_EVENT,
   type WorkflowExecutionActivityDetail,
@@ -2816,6 +2818,14 @@ async function executeQueuedNodeActions(
           workflowRunnerId,
         );
         workflowRunId = createdRun.run_id;
+        for (const action of createdRun.actions) {
+          if (action.product_operation_id) {
+            bindWorkflowProductOperation(action.node_id, {
+              projectId,
+              operationId: action.product_operation_id,
+            });
+          }
+        }
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent(FREEZONE_WORKFLOW_RUN_UPDATED_EVENT, {
             detail: {
@@ -3479,6 +3489,7 @@ async function executeQueuedNodeActions(
       if (typeof window !== "undefined") {
         window.removeEventListener(WORKFLOW_EXECUTION_ACTIVITY_EVENT, handleWorkflowActivity);
       }
+      for (const action of pendingActions) clearWorkflowProductOperation(action.nodeId);
       stopWorkflowHeartbeat();
     }
   };

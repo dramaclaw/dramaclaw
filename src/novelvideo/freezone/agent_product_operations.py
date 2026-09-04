@@ -275,13 +275,87 @@ def bind_agent_product_task(
     return _payload(row)
 
 
+def bind_agent_product_model_execution(
+    *,
+    project_dir: Path,
+    operation_id: str,
+    model_call_id: str,
+    executed_at: float,
+    source: str,
+    turn_id: str = "",
+    tool_call_id: str = "",
+    compile_mode: str = "",
+) -> dict[str, Any]:
+    """Persist model execution observed by trusted server-side orchestration.
+
+    Result submission routes deliberately cannot write this record.  They may
+    only consume evidence that the chat runtime or Recipe compiler recorded
+    after observing the actual model/tool call.
+    """
+    clean_model_call_id = str(model_call_id or "").strip()
+    clean_source = str(source or "").strip()
+    if not clean_model_call_id or not clean_source or not executed_at:
+        raise ValueError("trusted model execution identity is required")
+    evidence = {
+        "model_call_id": clean_model_call_id,
+        "executed_at": float(executed_at),
+        "source": clean_source,
+        **({"turn_id": str(turn_id).strip()} if str(turn_id).strip() else {}),
+        **(
+            {"tool_call_id": str(tool_call_id).strip()}
+            if str(tool_call_id).strip()
+            else {}
+        ),
+        **(
+            {"compile_mode": str(compile_mode).strip()}
+            if str(compile_mode).strip()
+            else {}
+        ),
+    }
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute(
+            "SELECT * FROM freezone_agent_product_operations WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        if current is None:
+            raise ValueError("agent product operation not found")
+        payload = _payload(current)
+        if payload["status"] in TERMINAL_STATUSES:
+            raise ValueError("agent product operation is already terminal")
+        existing = payload["model_evidence"]
+        if existing:
+            if existing != evidence:
+                raise ValueError(
+                    "agent product operation is bound to another model execution"
+                )
+            return payload
+        conn.execute(
+            """
+            UPDATE freezone_agent_product_operations
+               SET model_evidence_json = ?, updated_at = ?
+             WHERE operation_id = ?
+            """,
+            (
+                json.dumps(evidence, ensure_ascii=False, separators=(",", ":")),
+                time.time(),
+                operation_id,
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM freezone_agent_product_operations WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+    assert row is not None
+    return _payload(row)
+
+
 def finish_agent_product_operation(
     *,
     project_dir: Path,
     operation_id: str,
     outcome: str,
     expected_task_id: str,
-    model_evidence: dict[str, Any] | None = None,
     result_ref: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     status = str(outcome or "").strip()
@@ -304,12 +378,19 @@ def finish_agent_product_operation(
                     "agent product operation already has another terminal outcome"
                 )
             return payload
-        evidence = model_evidence if isinstance(model_evidence, dict) else {}
+        evidence = payload["model_evidence"]
         result = result_ref if isinstance(result_ref, dict) else {}
         if status == "delivered":
             if not evidence.get("model_call_id") or not evidence.get("executed_at"):
                 raise ValueError(
                     "delivered result requires trusted model execution evidence"
+                )
+            if (
+                payload["product_kind"] == "recipe_result"
+                and evidence.get("compile_mode") != "model"
+            ):
+                raise ValueError(
+                    "delivered Recipe result requires a model Recipe compilation"
                 )
             if not result.get("kind") or not result.get("id"):
                 raise ValueError(

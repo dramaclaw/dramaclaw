@@ -103,7 +103,9 @@ def test_recipe_compiler_uses_the_dedicated_brainclaw_profile(monkeypatch):
 
     result = asyncio.run(recipe_runtime._run_recipe_compiler("compile this"))
 
-    assert result == "compiled prompt"
+    assert result.prompt == "compiled prompt"
+    assert result.model_call_id.startswith("recipe-compiler:")
+    assert result.executed_at > 0
     assert captured["brainclaw_profile"] is BrainClawProfile.FREEZONE_RECIPE_COMPILATION
     assert captured["run_kwargs"] == {
         "model_settings": {"openai_reasoning_effort": "none"}
@@ -188,6 +190,8 @@ def test_get_skill_for_runtime_enforces_version_and_recipe_whitelist(monkeypatch
             skill_id="ecommerce",
             recipe_id="other-image",
         )
+
+
 def test_combined_recipe_preserves_pipeline_order():
     combined = recipe_runtime._combined_recipe(
         [
@@ -553,7 +557,8 @@ async def test_generate_recipe_text_executes_compiled_instruction(monkeypatch):
     monkeypatch.setattr(recipe_runtime, "Agent", FakeAgent)
     monkeypatch.setattr(
         "novelvideo.config.get_newapi_text_pydantic_model",
-        lambda *args, **kwargs: captured.update(model_env=args[0], **kwargs) or object(),
+        lambda *args, **kwargs: captured.update(model_env=args[0], **kwargs)
+        or object(),
     )
 
     result = await recipe_runtime.generate_recipe_text(

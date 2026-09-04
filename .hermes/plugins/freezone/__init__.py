@@ -638,6 +638,7 @@ def _emit_skill_studio_progress_event(
     event: dict[str, Any],
     *,
     agent_instruction: str | None = None,
+    tool_name: str = "",
 ) -> str:
     if skill_studio_bridge_key is None or put_pending_skill_studio_event is None:
         return tool_error(
@@ -659,26 +660,34 @@ def _emit_skill_studio_progress_event(
         canvas_id=canvas,
         event=frontend_event,
     )
-    return tool_result(
-        {
-            "ok": True,
-            "status": "skill_studio_progress_event_emitted",
-            "tool_call_status": "completed",
-            "skill_studio_status": "draft_progress",
-            "bridge_key": key,
-            "project_id": project,
-            "canvas_id": canvas,
-            "type": frontend_event.get("type"),
-            "skill_studio_session_id": frontend_event.get("skill_studio_session_id"),
-            "message": frontend_event.get("message")
-            or "Skill Studio draft progress updated.",
-            "agent_instruction": agent_instruction
-            or (
-                "The Skill Studio progress event was delivered to the frontend. "
-                "Do not repeat tool fields to the user. Continue the draft flow and call "
-                "freezone_finish_agent_catalog_draft when the updated draft is ready."
-            ),
-        }
+    payload = {
+        "ok": True,
+        "status": "skill_studio_progress_event_emitted",
+        "tool_call_status": "completed",
+        "skill_studio_status": "draft_progress",
+        "bridge_key": key,
+        "project_id": project,
+        "canvas_id": canvas,
+        "type": frontend_event.get("type"),
+        "skill_studio_session_id": frontend_event.get("skill_studio_session_id"),
+        **(
+            {"operations": frontend_event["operations"]}
+            if isinstance(frontend_event.get("operations"), dict)
+            else {}
+        ),
+        "message": frontend_event.get("message")
+        or "Skill Studio draft progress updated.",
+        "agent_instruction": agent_instruction
+        or (
+            "The Skill Studio progress event was delivered to the frontend. "
+            "Do not repeat tool fields to the user. Continue the draft flow and call "
+            "freezone_finish_agent_catalog_draft when the updated draft is ready."
+        ),
+    }
+    return (
+        _structured_tool_result(payload, tool_name=tool_name)
+        if tool_name
+        else tool_result(payload)
     )
 
 
@@ -1361,7 +1370,9 @@ def _handle_begin_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
             "skill_studio_session_id": session_id,
             "status": "draft_begin",
             "message": "正在创建草稿结构...",
+            "operations": operations,
         },
+        tool_name="freezone_begin_agent_catalog_draft",
     )
 
 
@@ -4594,7 +4605,7 @@ def _handle_begin_agent_product_generation(args: dict[str, Any], **_: Any) -> st
     payload = response.get("data") if isinstance(response.get("data"), dict) else None
     if not response.get("ok") or payload is None:
         return tool_result(response)
-    return tool_result(
+    return _structured_tool_result(
         {
             "ok": True,
             "status": "agent_product_generation_admitted",
@@ -4606,7 +4617,8 @@ def _handle_begin_agent_product_generation(args: dict[str, Any], **_: Any) -> st
                 "then submit it through the matching persisted result tool with this exact "
                 "operation_id. Do not create another operation for retries in the same session."
             ),
-        }
+        },
+        tool_name="freezone_begin_agent_product_generation",
     )
 
 
@@ -6010,6 +6022,7 @@ _RESULT_OBJECT_FIELDS = frozenset(
     {
         "answers",
         "client_debug",
+        "operations",
         "selections",
     }
 )
@@ -6140,6 +6153,7 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "outline",
         "expected_recipe_count",
         "warnings",
+        "operations",
         "tool_call_status",
         "skill_studio_status",
         "bridge_key",

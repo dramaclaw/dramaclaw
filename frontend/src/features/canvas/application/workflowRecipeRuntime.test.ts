@@ -10,6 +10,8 @@ import {
   selectWorkflowUpstreamText,
 } from './workflowRecipeRuntime';
 import {
+  bindWorkflowProductOperation,
+  clearWorkflowProductOperation,
   WORKFLOW_EXECUTION_ACTIVITY_EVENT,
   type WorkflowExecutionActivityDetail,
 } from './workflowExecutionActivity';
@@ -136,6 +138,31 @@ describe('workflowRecipeRuntime', () => {
     }
 
     expect(phases).toEqual(['compiling_recipe', 'submitting']);
+  });
+
+  it('binds workflow Recipe compilation to its admitted product operation', async () => {
+    compileMock.mockResolvedValue('compiled prompt');
+    bindWorkflowProductOperation('image-billed', {
+      projectId: 'project-a',
+      operationId: 'agent_product_a',
+    });
+
+    try {
+      await compileWorkflowNodePrompt({
+        nodeId: 'image-billed',
+        nodeData: { workflowCatalog: { recipeId: 'product-image' } },
+        nodeKind: 'image',
+        nodePrompt: '商品图',
+        fallbackPrompt: 'fallback',
+      });
+    } finally {
+      clearWorkflowProductOperation('image-billed');
+    }
+
+    expect(compileMock).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'project-a',
+      productOperationId: 'agent_product_a',
+    }));
   });
 
   it('executes a catalog-backed text node', async () => {

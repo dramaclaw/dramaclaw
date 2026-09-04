@@ -698,6 +698,63 @@ def _codex_freezone_ready_workflow_draft(event: Any) -> dict[str, Any] | None:
     return None
 
 
+_AGENT_PRODUCT_ADMISSION_TOOLS = {
+    "freezone_begin_agent_product_generation",
+    "freezone_begin_agent_catalog_draft",
+}
+
+
+async def _bind_server_observed_agent_product_execution(
+    event: Any,
+    *,
+    project_dir: str | Path | None,
+    project_state_dir: str | Path | None,
+) -> None:
+    """Bind product operations to the model/tool call observed by chat runtime."""
+    if _codex_freezone_tool_name(event) not in _AGENT_PRODUCT_ADMISSION_TOOLS:
+        return
+    status = str(getattr(event, "status", "") or "").strip().lower()
+    if status not in {"completed", "success", "succeeded"} or getattr(
+        event, "error", None
+    ):
+        return
+    operation_ids: set[str] = set()
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            operation_id = str(payload.get("operation_id") or "").strip()
+            if operation_id.startswith("agent_product_"):
+                operation_ids.add(operation_id)
+    turn_id = str(getattr(event, "turn_id", "") or "").strip()
+    tool_call_id = str(getattr(event, "call_id", "") or "").strip()
+    state_root = project_state_dir or project_dir
+    if not operation_ids or not turn_id or not tool_call_id or state_root is None:
+        return
+    state_dir = Path(state_root)
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
+    )
+
+    model_call_id = f"agent-turn:{turn_id}:tool:{tool_call_id}"
+    for operation_id in sorted(operation_ids):
+        try:
+            await asyncio.to_thread(
+                bind_agent_product_model_execution,
+                project_dir=state_dir,
+                operation_id=operation_id,
+                model_call_id=model_call_id,
+                executed_at=datetime.now(tz=timezone.utc).timestamp(),
+                source="server_observed_agent_turn",
+                turn_id=turn_id,
+                tool_call_id=tool_call_id,
+            )
+        except ValueError:
+            logger.warning(
+                "could not bind observed Agent product execution operation=%s",
+                operation_id,
+                exc_info=True,
+            )
+
+
 _FREEZONE_SKILL_STUDIO_TRIGGER_RE = re.compile(
     r"(?:"
     r"(?:创建|新建|新增|生成|做|制作|编辑|修改|更新|保存|沉淀|整理|总结|抽成|转成|变成)"
@@ -6266,6 +6323,12 @@ async def _stream_assistant_reply_hermes(
                 )
                 continue
             if event.type in {"tool_started", "tool_updated", "tool_update"}:
+                if event.type == "tool_updated":
+                    await _bind_server_observed_agent_product_execution(
+                        event,
+                        project_dir=project_dir,
+                        project_state_dir=project_state_dir,
+                    )
                 if event.raw is not None:
                     tool_chat_error = None
                     raw = event.raw
@@ -6810,6 +6873,11 @@ async def _stream_assistant_reply_codex(
                 continue
             if event.type in {"tool_started", "tool_updated"}:
                 if event.type == "tool_updated":
+                    await _bind_server_observed_agent_product_execution(
+                        event,
+                        project_dir=project_dir,
+                        project_state_dir=project_state_dir,
+                    )
                     prepared_draft = _codex_freezone_ready_workflow_draft(event)
                     if prepared_draft is not None:
                         ready_workflow_draft = prepared_draft
