@@ -131,11 +131,14 @@ We'll keep tearing down walls.
 
 ## What is DramaClaw?
 
-DramaClaw is an industrialized drama-production line whose **source is available**. Drop in a manuscript and DramaClaw takes over all the heavy lifting: extracting characters, planning episodes, generating scripts, drawing storyboards and first frames, synthesizing voice-over, and cutting the final film.
+DramaClaw is a **source-available production line for AI drama** — and, increasingly, for any visual story you want to tell with generative models. It has two faces that share one asset library and one agent:
 
-It's built for creators, indie studios, and creative engineers — letting you run the whole "drama factory" on your own infrastructure, without stitching together a dozen disconnected tools or handing your material to an opaque black-box cloud service.
+- **XiaHua — the infinite canvas.** A node-based workbench where you generate, edit and connect images, video, audio, 3D sets and scripts freely, then promote what you like back into the series. This is where most of our own creative work happens today, and where DramaClaw is heading.
+- **Series (XiaJi) — the pipeline.** Drop in a manuscript or screenplay and DramaClaw takes over the heavy lifting: structuring the story, planning episodes, writing scripts, drawing storyboards and first frames, synthesizing voice-over, and cutting the final film.
 
-And although it's built around drama production, the same pipeline — characters, assets, scripts, storyboards, voice-over, and compositing — carries just as well to other visual-content formats: short-form ads, e-commerce product videos, and interactive otome (romance) games.
+**Xia Director**, the built-in agent, sits across both: it answers questions about your project, drives pipeline tasks, and can build and run node graphs on the canvas for you.
+
+It's built for creators, indie studios and creative engineers — run the whole "drama factory" on your own machine, without stitching together a dozen disconnected tools or handing your material to an opaque black-box cloud service. Although it's built around drama, the same canvas and pipeline carry to short-form ads, e-commerce product videos and other visual formats.
 
 <br/>
 
@@ -145,22 +148,60 @@ And although it's built around drama production, the same pipeline — character
   <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/oss-launch.jpg?v=2" width="760" alt="DramaClaw 源码发布 · source-available launch"/>
 </p>
 
-- **Novel parsing & story graph** &mdash; parse the manuscript into a queryable graph of characters, relationships, and timeline
-- **Asset Library & identity consistency** &mdash; unified management of characters, scenes, props and voices; keep stable identities across episodes, generate character portraits and per-episode variants
-- **Episode planning & narrative pacing** &mdash; automatic chapter segmentation, beat planning, multi-episode arcs
-- **Script generation** &mdash; multiple modes (adaptive, literal, staged) with review / repair loops
-- **Storyboards & first frames** &mdash; beat-driven stylized image generation, grid splitting, image-pool selection<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/storyboard-sketch.jpg?v=2" width="600" alt="独家线稿草图系统 · Line-art Storyboard System"/>
-- **Voice-over synthesis** &mdash; emotion-aware speech synthesis, switchable across providers
-- **Video composition & export** &mdash; assemble episodes, export video + subtitle files and the full asset pack
-- **Freezone (infinite canvas)** &mdash; node-based visual workbench: drag in project assets to generate images / video / audio, promote satisfying candidates back to the main line; the main pipeline and canvas exploration run as dual tracks<br/>
+### XiaHua — infinite canvas
+
+<p align="center">
   <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/dual-mode-workflow.jpg?v=2" width="600" alt="双模式工作流 · Dual-mode Workflow"/>
-- **Director World / 3GS (scene variants)** &mdash; a framable virtual set that locks spatial structure, character blocking and camera placement to keep the same location consistent across shots<br/>
+</p>
+
+- **18 node types on one canvas** &mdash; upload, image generation / edit, storyboard generation, script, beat context, video, video compose, video story, audio, style, skill, group, text annotation, 360° panorama viewer, 3D world, export and more. Connect them freely; every node keeps its own generation history.
+- **Image tools** &mdash; generate, edit, redraw, outpaint, relight, upscale, multi-view, template edit, reverse-prompt, mark detection; a **style wall of 45 short-drama looks** for image-to-image
+- **Video tools** &mdash; text / image / keyframe to video, omni-reference generation with **file, web-link and on-canvas references**, video edit, erase, upscale, audio separation, camera templates, shot analysis; Seedance 2.5 in the recommended catalog
+- **Audio** &mdash; speech synthesis with a voice library, reference voices, music generation
+- **Canvas skills** &mdash; one-click skills such as sketch-from-context, frame-from-context, set-background, scene-360 and frame review, plus a **workflow catalog of 11 skills and 60 recipes** (short drama, e-commerce ads, IP character ads, social campaigns, anime / Pixar / LEGO / kung-fu styles…) that lay out whole generation graphs for you
+- **Built for big canvases** &mdash; canvas tabs, element outline, minimap and viewport bookmarks, snap-align, level-of-detail rendering, multi-select and group nodes, keyboard shortcuts, revision history with restore, per-canvas locking
+- **Commit to the series** &mdash; preview the impact, then promote a single node or a whole batch into the asset library or an episode; project the series back onto a canvas from presets
+
+### Director World — spatially consistent sets
+
+<p align="center">
   <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/world-model.jpg?v=2" width="600" alt="世界模型 · World Model (3GS)"/>
-- **Xia Director (AI assistant)** &mdash; conversational production assistant that checks project progress, advances script / shot tasks, audits deliverable completeness and suggests next steps<br/>
+</p>
+
+- **Image → 3D Gaussian Splat set** and **scene-360 panoramas** &mdash; a framable virtual set that locks spatial structure, character blocking and camera placement, so the same location stays consistent across shots
+- **Director capture** &mdash; frame the shot in the 3D viewer, capture it, and use it as the background for the next generation
+
+### Series (XiaJi) — the pipeline
+
+- **Structured ingest** &mdash; new projects build episodes, characters and scenes straight from the manuscript or screenplay (Fountain supported), no knowledge graph or embeddings required; the Cognee story-graph path remains for legacy projects
+- **Asset library & identity consistency** &mdash; characters, scenes, props and voices organised by purpose and folder; stable identities across episodes, character portraits and per-episode variants
+- **Episode planning & script generation** &mdash; chapter segmentation, beat planning, multi-episode arcs; adaptive / literal / staged script modes with review-and-repair loops
+- **Storyboards & first frames** &mdash; beat-driven stylized generation, grid splitting, image-pool selection<br/>
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/storyboard-sketch.jpg?v=2" width="600" alt="独家线稿草图系统 · Line-art Storyboard System"/>
+- **Voice-over, video composition & export** &mdash; emotion-aware speech, episode assembly, video + subtitle export and the full asset pack
+- **Visual Style** &mdash; upload a reference image to extract style parameters and apply them across the whole project
+- **Task Center** &mdash; status, progress, logs, cancel / retry, resume-from-checkpoint for long runs; prerequisites are validated before a job is queued
+
+### Xia Director — the agent
+
+<p align="center">
   <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/director-agent.jpg?v=2" width="600" alt="导演智能体 · Director Agent"/>
-- **Visual Style (style templates)** &mdash; upload a reference image to auto-extract style parameters and apply them across the whole project for a consistent look
-- **Task Center** &mdash; status, progress, logs and cancel / retry for background generation tasks, with resume-from-checkpoint for long runs
+</p>
+
+- **Knows your project** &mdash; checks progress, advances script / shot tasks, audits deliverable completeness and suggests next steps
+- **Works on the canvas** &mdash; creates and connects nodes, updates node data, lays out and groups nodes, runs node actions and builds whole workflow graphs; every canvas command is approved in the open browser before it runs
+- **Open to other agents** &mdash; a local MCP server exposes DramaClaw to Claude Code, Codex and any MCP client, and a portable `agent-kit` packages the same workflows for Hermes, OpenClaw and WorkBuddy (loopback-only, explicit trust flag)
+
+<br/>
+
+## In Development
+
+These are being built in the open and are not in a release yet. Watch the branches, or come help.
+
+- **Canvas + agent as one workflow** &mdash; skills and recipes become a community ecosystem: install, export and share bundles; let the agent plan, run and review entire canvas graphs. Design: [`docs/zh/guides/community-skill-recipe-ecosystem-design.md`](./docs/zh/guides/community-skill-recipe-ecosystem-design.md)
+- **Previz stage** &mdash; an in-browser 3D blocking stage as a canvas node: multi-track timeline, character rigs and paths, real lens / sensor camera model, close-up tracking, then capture the framed shot straight into the next node. Branch: `feat/previz-canvas-node`
+- **Interactive stories** &mdash; branching choice points on the canvas, compiled to an ink story and exported as a self-contained HTML player, with playtest stats and path coverage. Branch: `feat/canvas-fmv`
+- **Interactive ads** &mdash; the ad skills and recipes above, combined with branching playback, for product videos viewers can steer
 
 <br/>
 
@@ -274,6 +315,8 @@ Provider adapters shipped in the gateway today (see the [channel support matrix]
 ## Why DramaClaw?
 
 **Built for novel-to-short-drama.** General workflow tools can wire nodes together, but they don't know what an "episode beat" is, don't understand why a character's cross-scene identity consistency matters, and won't guard a chapter's emotional arc across image + voice + editing. DramaClaw builds all that judgment into the tool.
+
+**Canvas and pipeline, not canvas or pipeline.** Most tools give you either a free node canvas or a rigid wizard. DramaClaw runs both as dual tracks over one asset library: explore on the canvas, commit what works to the series, project the series back onto a canvas. The agent works on both.
 
 **Every step is decomposable.** Each stage is an independent async task with its own interface. Run sequentially, skip steps, resume mid-way — the toolchain itself is the product, with no hidden black box.
 
