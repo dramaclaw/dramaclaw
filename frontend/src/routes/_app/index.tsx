@@ -102,6 +102,12 @@ const SORT_OPTIONS: { value: SortKey; labelKey: string }[] = [
 ];
 
 const PROJECT_NAME_PATTERN = /^[a-zA-Z0-9_]+$/;
+export const PROJECT_NAME_MAX_LENGTH = 64;
+
+export function getProjectNameValidationKey(name: string): string | null {
+  if (name.length > PROJECT_NAME_MAX_LENGTH) return "project.nameTooLong";
+  return !PROJECT_NAME_PATTERN.test(name) ? "project.nameInvalid" : null;
+}
 
 const PROJECT_CARD_MIN_HEIGHT_CLASS = "min-h-[12.75rem]";
 const RECENTLY_CREATED_PROJECT_KEY = "supertale-dashboard-recent-created-project";
@@ -1168,9 +1174,11 @@ function ProjectDashboard() {
     () => (trimmedNewName ? all.find((p) => p.name === trimmedNewName) : null),
     [all, trimmedNewName],
   );
-  const hasInvalidProjectName = !!trimmedNewName && !PROJECT_NAME_PATTERN.test(trimmedNewName);
-  const createNameError = hasInvalidProjectName
-    ? t("project.nameInvalid")
+  const projectNameValidationKey = trimmedNewName
+    ? getProjectNameValidationKey(trimmedNewName)
+    : null;
+  const createNameError = projectNameValidationKey
+    ? t(projectNameValidationKey)
     : existingProject?.status === "active"
       ? t("project.nameExistsActive")
       : existingProject?.status === "archived"

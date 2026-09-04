@@ -2744,7 +2744,10 @@ export function useSuperChat({
             ? frame.message.trim()
             : "Unknown chat error";
           setError(errorMessage);
+          // 比对的是后端报错原文，不是界面文案。
+          // i18n-exempt-start
           if (errorMessage.includes("当前用户已有 AI 对话正在处理中")) {
+          // i18n-exempt-end
             setBusy(true);
             break;
           }

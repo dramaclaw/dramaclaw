@@ -2,14 +2,15 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const modal = readFileSync("src/components/login/login-modal.tsx", "utf8");
+const media = readFileSync("src/components/login/cinematic/media.ts", "utf8");
 const stage = readFileSync("src/components/login/login-stage.tsx", "utf8");
 const css = readFileSync("src/components/login/login.module.css", "utf8");
 
 describe("login modal layout contract", () => {
-  it("cycles CDN showcase videos beside the account form", () => {
-    expect(modal).toContain("loginModalShowcaseVideos");
-    expect(modal).toContain("visibleShowcases.map");
-    expect(modal).toContain("onEnded={outgoing ? undefined : showNextShowcase}");
+  it("loops the dedicated CDN showcase video beside the account form", () => {
+    expect(modal).toContain("loginModalShowcaseVideo");
+    expect(modal).toContain("loop");
+    expect(media).toContain('cdn("login/login20260826-174426.mp4")');
     expect(modal).not.toContain("/video/login-community-preview.mp4");
     expect(modal).toContain("<LoginCard />");
     expect(css).toMatch(/\.loginDialog\s*\{[\s\S]*?grid-template-columns:/);
@@ -22,12 +23,11 @@ describe("login modal layout contract", () => {
     expect(css).not.toContain(".loginMediaTopline");
   });
 
-  it("crossfades overlapping videos after an extended clip window", () => {
-    expect(modal).toContain("SHOWCASE_CLIP_DURATION_SECONDS = 18");
-    expect(modal).toContain("SHOWCASE_CROSSFADE_DURATION_MS = 720");
-    expect(modal).toContain('data-showcase-phase={outgoing ? "outgoing" : "incoming"}');
-    expect(css).toContain(".loginMediaVideoIncoming");
-    expect(css).toContain(".loginMediaVideoOutgoing");
+  it("does not retain the obsolete multi-video carousel state machine", () => {
+    expect(modal).not.toContain("visibleShowcases");
+    expect(modal).not.toContain("showNextShowcase");
+    expect(modal).not.toContain("SHOWCASE_CROSSFADE");
+    expect(css).not.toContain("loginMediaCrossfade");
   });
 
   it("keeps the brand above the title with optical left alignment", () => {

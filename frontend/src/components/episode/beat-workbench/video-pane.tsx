@@ -114,36 +114,44 @@ import {
 const SEEDANCE2_REFERENCE_DRAG_TYPE =
   "application/x-supertale-seedance2-reference";
 const BEAT_VIDEO_GENERATION_FEATURE_KEY = "mainline.beat_video_generation";
+/**
+ * 后端在没把某个素材当参考发出去时给的 reference_label 哨兵值。真正发出去的
+ * 素材拿到的是 `图片1` / `音频2` 这种编号——那是提示词里模型认的引用 token，
+ * 跟界面语言无关，所以这里比对的也只能是后端那份原文。
+ */
+const SEEDANCE2_UNSENT_REFERENCE_LABEL = "未发送"; // i18n-exempt —— 后端契约值
+
+/** Prompt guidance inserted by UI controls follows the current UI language. */
 const SEEDANCE2_PROMPT_GUIDANCE_TEMPLATES = [
   {
     key: "subject",
     labelKey: "seedance2GuidanceSubject",
-    text: "主体：明确画面核心人物或物体、当前动作和状态，避免多个主体争抢焦点。",
+    textKey: "seedance2GuidanceSubjectTemplate",
   },
   {
     key: "scene",
     labelKey: "seedance2GuidanceScene",
-    text: "场景：补充空间背景、地点关系、关键道具和环境材质，保持与参考图一致。",
+    textKey: "seedance2GuidanceSceneTemplate",
   },
   {
     key: "lighting",
     labelKey: "seedance2GuidanceLighting",
-    text: "光影：描述主光源、明暗层次、色温和氛围，避免忽明忽暗。",
+    textKey: "seedance2GuidanceLightingTemplate",
   },
   {
     key: "camera",
     labelKey: "seedance2GuidanceCamera",
-    text: "镜头：说明景别、视角、运镜速度和运动方向，保持镜头运动清晰可执行。",
+    textKey: "seedance2GuidanceCameraTemplate",
   },
   {
     key: "style",
     labelKey: "seedance2GuidanceStyle",
-    text: "风格：限定画面质感、时代感、色彩倾向和真实度，避免风格漂移。",
+    textKey: "seedance2GuidanceStyleTemplate",
   },
   {
     key: "no_subtitle",
     labelKey: "seedance2GuidanceNoSubtitle",
-    text: "无字幕：避免生成任何文字或字幕，保持画面纯净。",
+    textKey: "seedance2GuidanceNoSubtitleTemplate",
   },
 ] as const;
 const VIDEO_GRID_CLASS =
@@ -216,6 +224,7 @@ interface Seedance2ConfigDraft {
   human_review_user_set: boolean;
   prompt_source: string;
   prompt_guidance: string;
+  prompt_guidance_template_keys: string[];
   final_prompt: string;
   text_overlay: {
     enabled: boolean;
@@ -507,7 +516,7 @@ export function VideoPane({
       modelReferenceAssetItems.filter(
         (asset) =>
           asset.reference_label &&
-          asset.reference_label !== "未发送" &&
+          asset.reference_label !== SEEDANCE2_UNSENT_REFERENCE_LABEL &&
           asset.exists !== false,
     ),
     [modelReferenceAssetItems],
@@ -924,6 +933,7 @@ export function VideoPane({
         beatNum: triggeredBeatNumber,
         manualPromptReference: seedance2Draft.final_prompt,
         promptGuidance: seedance2Draft.prompt_guidance,
+        promptGuidanceTemplateKeys: seedance2Draft.prompt_guidance_template_keys,
       });
       if (!res.ok) {
         toast.error(
@@ -1180,13 +1190,19 @@ export function VideoPane({
         break;
     }
   };
-  const appendSeedance2PromptGuidanceTemplate = (template: string) => {
+  const appendSeedance2PromptGuidanceTemplate = (key: string, template: string) => {
     const current = seedance2DraftRef.current;
     if (current.prompt_guidance.includes(template)) return;
     const guidance = [current.prompt_guidance.trim(), template]
       .filter(Boolean)
       .join("\n");
-    const next = { ...current, prompt_guidance: guidance };
+    const next = {
+      ...current,
+      prompt_guidance: guidance,
+      prompt_guidance_template_keys: Array.from(
+        new Set([...current.prompt_guidance_template_keys, key]),
+      ),
+    };
     seedance2DraftRef.current = next;
     setSeedance2Draft(next);
   };
@@ -1965,7 +1981,8 @@ export function VideoPane({
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(6.75rem,6.75rem))] gap-2">
                     {modelReferenceAssetItems.map((asset) => {
                       const referenceLabel =
-                        asset.reference_label && asset.reference_label !== "未发送"
+                        asset.reference_label &&
+                        asset.reference_label !== SEEDANCE2_UNSENT_REFERENCE_LABEL
                           ? asset.reference_label
                           : "";
                       const canInsertReference =
@@ -1975,7 +1992,7 @@ export function VideoPane({
                       const displayReferenceLabel = referenceLabel || (
                         isMissingImage
                           ? t("episode.workbench.video.seedance2ReferenceImage")
-                          : asset.reference_label
+                          : t("episode.workbench.video.seedance2ReferenceUnused")
                       );
                       const assetImageSrc =
                         asset.media_type === "image" &&
@@ -2396,7 +2413,13 @@ export function VideoPane({
                   aria-label={t("episode.workbench.video.seedance2PromptGuidance")}
                   value={seedance2Draft.prompt_guidance}
                   onChange={(e) => {
-                    updateSeedance2Draft("prompt_guidance", e.target.value);
+                    const next = {
+                      ...seedance2DraftRef.current,
+                      prompt_guidance: e.target.value,
+                      prompt_guidance_template_keys: [],
+                    };
+                    seedance2DraftRef.current = next;
+                    setSeedance2Draft(next);
                     rememberSeedance2PromptSelection(
                       "prompt_guidance",
                       e.currentTarget,
@@ -2446,7 +2469,10 @@ export function VideoPane({
                     disabled={updateBeat.isPending}
                     className={SEEDANCE2_PILL_ACTION_CLASS}
                     onClick={() =>
-                      appendSeedance2PromptGuidanceTemplate(template.text)
+                      appendSeedance2PromptGuidanceTemplate(
+                        template.key,
+                        t(`episode.workbench.video.${template.textKey}`),
+                      )
                     }
                   >
                     {t(`episode.workbench.video.${template.labelKey}`)}
@@ -3182,14 +3208,20 @@ function defaultSeedance2Config(
         : true,
     prompt_source: String(raw.prompt_source ?? ""),
     prompt_guidance: String(raw.prompt_guidance ?? ""),
+    prompt_guidance_template_keys: Array.isArray(raw.prompt_guidance_template_keys)
+      ? raw.prompt_guidance_template_keys.map(String)
+      : [],
     final_prompt: String(raw.final_prompt ?? ""),
     text_overlay: {
       enabled: textOverlay.enabled === true,
       kind: normalizeSeedance2TextOverlayKind(textOverlay.kind),
       content: String(textOverlay.content ?? ""),
+      // 这三项直接进提示词里的字幕规格，模型按中文描述执行，不跟界面语言走。
+      // i18n-exempt-start
       placement: String(textOverlay.placement ?? "画面下方居中"),
       timing: String(textOverlay.timing ?? "全片持续"),
       style: String(textOverlay.style ?? "干净易读"),
+      // i18n-exempt-end
       speaker: String(textOverlay.speaker ?? ""),
     },
   };
@@ -3538,6 +3570,8 @@ function sameSeedance2Config(
     left.human_review === right.human_review &&
     left.human_review_user_set === right.human_review_user_set &&
     left.prompt_guidance === right.prompt_guidance &&
+    JSON.stringify(left.prompt_guidance_template_keys) ===
+      JSON.stringify(right.prompt_guidance_template_keys) &&
     left.final_prompt === right.final_prompt &&
     JSON.stringify(left.text_overlay) === JSON.stringify(right.text_overlay)
   );
@@ -3569,6 +3603,7 @@ function serializeSeedance2Config(
     human_review: draft.human_review,
     human_review_user_set: draft.human_review_user_set,
     prompt_guidance: draft.prompt_guidance.trim(),
+    prompt_guidance_template_keys: draft.prompt_guidance_template_keys,
     final_prompt: finalPrompt,
     text_overlay: {
       ...draft.text_overlay,

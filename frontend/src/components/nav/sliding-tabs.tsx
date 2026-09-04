@@ -25,6 +25,7 @@ interface SlidingTabsProps<T extends string> {
   value: T;
   onValueChange: (value: T) => void;
   className?: string;
+  animateActiveIcon?: boolean;
   "aria-label"?: string;
 }
 
@@ -33,12 +34,14 @@ export function SlidingTabs<T extends string>({
   value,
   onValueChange,
   className,
+  animateActiveIcon = false,
   "aria-label": ariaLabel,
 }: SlidingTabsProps<T>) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const triggerRefs = useRef(new Map<T, HTMLButtonElement>());
   const initializedRef = useRef(false);
   const [visualValue, setVisualValue] = useState(value);
+  const [animatedIconValue, setAnimatedIconValue] = useState<T | null>(null);
   const [slider, setSlider] = useState({
     left: 0,
     width: 0,
@@ -82,6 +85,7 @@ export function SlidingTabs<T extends string>({
       positionSlider(value, false);
     } else {
       setVisualValue(value);
+      if (animateActiveIcon) setAnimatedIconValue(value);
       positionSlider(value, true);
     }
 
@@ -93,16 +97,17 @@ export function SlidingTabs<T extends string>({
     const activeTrigger = triggerRefs.current.get(value);
     if (activeTrigger) resizeObserver.observe(activeTrigger);
     return () => resizeObserver.disconnect();
-  }, [itemValuesKey, positionSlider, value]);
+  }, [animateActiveIcon, itemValuesKey, positionSlider, value]);
 
   const activate = useCallback(
     (nextValue: T) => {
       if (nextValue === visualValue) return;
       setVisualValue(nextValue);
+      if (animateActiveIcon) setAnimatedIconValue(nextValue);
       positionSlider(nextValue, true);
       onValueChange(nextValue);
     },
-    [onValueChange, positionSlider, visualValue],
+    [animateActiveIcon, onValueChange, positionSlider, visualValue],
   );
 
   return (
@@ -136,12 +141,13 @@ export function SlidingTabs<T extends string>({
             role="tab"
             aria-selected={active}
             data-active={active ? "true" : "false"}
+            data-icon-animate={animatedIconValue === item.value ? "true" : "false"}
             data-testid={item.testId}
             className="sliding-tabs__trigger"
             onClick={() => activate(item.value)}
           >
             <span className="sliding-tabs__content">
-              {Icon ? <Icon className="size-3.5 shrink-0" /> : null}
+              {Icon ? <Icon className="sliding-tabs__icon size-3.5 shrink-0" /> : null}
               <span>{item.label}</span>
             </span>
           </button>

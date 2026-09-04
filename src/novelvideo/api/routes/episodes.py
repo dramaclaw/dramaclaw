@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends
+from starlette.concurrency import run_in_threadpool
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.chapter_preview import build_chapter_preview
@@ -214,8 +215,11 @@ async def _enqueue_episode_asset_planner(
             user=user,
         )
     if asset_kind == "scene":
-        build_task = get_task_manager().get_task_for_project(
-            resolved.ctx, "build_scenes", 0
+        build_task = await run_in_threadpool(
+            get_task_manager().get_task_for_project,
+            resolved.ctx,
+            "build_scenes",
+            0,
         )
         if build_task is not None and build_task.status in ACTIVE_PROJECT_TASK_STATUSES:
             return scene_prerequisite_response(SceneCatalogBuildingError())
@@ -558,8 +562,11 @@ async def plan_episode_identities(
     resolved = await resolve_project_scope(project, user, required_role="editor")
     if resolved.ctx is not None:
         try:
-            build_task = get_task_manager().get_task_for_project(
-                resolved.ctx, "build_characters", 0
+            build_task = await run_in_threadpool(
+                get_task_manager().get_task_for_project,
+                resolved.ctx,
+                "build_characters",
+                0,
             )
             if (
                 build_task is not None

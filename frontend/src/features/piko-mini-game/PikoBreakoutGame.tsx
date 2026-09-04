@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { PikoGameHud, PikoGameOverlay } from "@/features/piko-mini-game/PikoGameChrome";
 import { usePikoGameAudio } from "@/features/piko-mini-game/usePikoGameAudio";
 
 const BOARD_WIDTH = 800;
@@ -18,7 +19,8 @@ const BRICK_TOP = 62;
 const BRICK_SIDE = 32;
 const STARTING_LIVES = 3;
 
-type BreakoutStatus = "ready" | "playing" | "paused" | "won" | "lost";
+type BreakoutStatus = "ready" | "playing" | "paused" | "wave" | "won" | "lost";
+type BrickKind = "normal" | "armored" | "blast";
 
 type Ball = {
   x: number;
@@ -32,14 +34,23 @@ type Brick = {
   row: number;
   column: number;
   alive: boolean;
+  kind: BrickKind;
+  hits: number;
 };
 
-function makeBricks(): Brick[] {
+function makeBricks(wave = 1): Brick[] {
   return Array.from({ length: BRICK_ROWS * BRICK_COLUMNS }, (_, id) => ({
     id,
     row: Math.floor(id / BRICK_COLUMNS),
     column: id % BRICK_COLUMNS,
     alive: true,
+    kind:
+      wave >= 2 && (id + wave) % 7 === 0
+        ? "armored"
+        : (id + wave * 3) % 13 === 0
+          ? "blast"
+          : "normal",
+    hits: wave >= 2 && (id + wave) % 7 === 0 ? 2 : 1,
   }));
 }
 
@@ -58,9 +69,11 @@ export function PikoBreakoutGame({ onClose, muted }: { onClose: () => void; mute
   const bricksRef = useRef<Brick[]>(makeBricks());
   const scoreRef = useRef(0);
   const livesRef = useRef(STARTING_LIVES);
+  const waveRef = useRef(1);
   const [status, setStatus] = useState<BreakoutStatus>("ready");
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(STARTING_LIVES);
+  const [wave, setWave] = useState(1);
   const playTone = usePikoGameAudio(muted);
 
   const playStartSound = useCallback(() => {
@@ -111,11 +124,13 @@ export function PikoBreakoutGame({ onClose, muted }: { onClose: () => void; mute
   }, []);
 
   const resetGame = useCallback(() => {
-    bricksRef.current = makeBricks();
+    bricksRef.current = makeBricks(1);
     scoreRef.current = 0;
     livesRef.current = STARTING_LIVES;
+    waveRef.current = 1;
     setScore(0);
     setLives(STARTING_LIVES);
+    setWave(1);
     resetBall();
     setGameStatus("ready");
   }, [resetBall, setGameStatus]);
@@ -173,12 +188,26 @@ export function PikoBreakoutGame({ onClose, muted }: { onClose: () => void; mute
       if (!brick.alive) continue;
       const x = BRICK_SIDE + brick.column * (brickWidth + BRICK_GAP);
       const y = BRICK_TOP + brick.row * (BRICK_HEIGHT + BRICK_GAP);
-      context.fillStyle = rowColors[brick.row];
+      context.fillStyle = brick.kind === "armored" ? "#94a3b8" : brick.kind === "blast" ? "#fb7185" : rowColors[brick.row];
       context.globalAlpha = 0.82;
       context.beginPath();
       context.roundRect(x, y, brickWidth, BRICK_HEIGHT, 4);
       context.fill();
       context.globalAlpha = 1;
+      if (brick.kind !== "normal") {
+        context.strokeStyle = brick.kind === "blast" ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.46)";
+        context.lineWidth = brick.hits > 1 ? 2 : 1;
+        context.beginPath();
+        if (brick.kind === "blast") {
+          context.moveTo(x + brickWidth / 2, y + 5);
+          context.lineTo(x + brickWidth / 2, y + BRICK_HEIGHT - 5);
+          context.moveTo(x + brickWidth / 2 - 7, y + BRICK_HEIGHT / 2);
+          context.lineTo(x + brickWidth / 2 + 7, y + BRICK_HEIGHT / 2);
+        } else {
+          context.roundRect(x + 5, y + 5, brickWidth - 10, BRICK_HEIGHT - 10, 2);
+        }
+        context.stroke();
+      }
     }
 
     const paddleGradient = context.createLinearGradient(paddleXRef.current, 0, paddleXRef.current + PADDLE_WIDTH, 0);
@@ -191,6 +220,19 @@ export function PikoBreakoutGame({ onClose, muted }: { onClose: () => void; mute
     context.beginPath();
     context.roundRect(paddleXRef.current, PADDLE_Y, PADDLE_WIDTH, PADDLE_HEIGHT, 7);
     context.fill();
+
+    const pikoCenterX = paddleXRef.current + PADDLE_WIDTH / 2;
+    context.shadowBlur = 8;
+    context.fillStyle = "#f8fafc";
+    context.beginPath();
+    context.roundRect(pikoCenterX - 13, PADDLE_Y - 22, 26, 18, 6);
+    context.fill();
+    context.shadowBlur = 0;
+    context.fillStyle = "#0f172a";
+    context.fillRect(pikoCenterX - 7, PADDLE_Y - 16, 3, 6);
+    context.fillRect(pikoCenterX + 4, PADDLE_Y - 16, 3, 6);
+    context.fillStyle = "#84cc16";
+    context.fillRect(pikoCenterX + 2, PADDLE_Y - 28, 8, 5);
 
     const ball = ballRef.current;
     context.fillStyle = "#ffffff";
@@ -254,8 +296,22 @@ export function PikoBreakoutGame({ onClose, muted }: { onClose: () => void; mute
             ball.y - BALL_RADIUS > y + BRICK_HEIGHT
           ) continue;
 
-          brick.alive = false;
-          scoreRef.current += (BRICK_ROWS - brick.row) * 10;
+          brick.hits -= 1;
+          const destroyed = brick.hits <= 0;
+          brick.alive = !destroyed;
+          scoreRef.current += destroyed ? (BRICK_ROWS - brick.row) * 10 : 5;
+          if (destroyed && brick.kind === "blast") {
+            for (const neighbor of bricksRef.current) {
+              if (
+                neighbor.alive &&
+                Math.abs(neighbor.row - brick.row) <= 1 &&
+                Math.abs(neighbor.column - brick.column) <= 1
+              ) {
+                neighbor.alive = false;
+                scoreRef.current += 8;
+              }
+            }
+          }
           setScore(scoreRef.current);
           playBrickSound(brick.row);
           const overlapLeft = ball.x + BALL_RADIUS - x;
@@ -268,8 +324,18 @@ export function PikoBreakoutGame({ onClose, muted }: { onClose: () => void; mute
         }
 
         if (bricksRef.current.every((brick) => !brick.alive)) {
-          setGameStatus("won");
-          playWinSound();
+          if (waveRef.current < 3) {
+            const nextWave = waveRef.current + 1;
+            waveRef.current = nextWave;
+            setWave(nextWave);
+            bricksRef.current = makeBricks(nextWave);
+            resetBall();
+            setGameStatus("wave");
+            playWinSound();
+          } else {
+            setGameStatus("won");
+            playWinSound();
+          }
         } else if (ball.y - BALL_RADIUS > BOARD_HEIGHT) {
           livesRef.current -= 1;
           setLives(livesRef.current);
@@ -327,7 +393,15 @@ export function PikoBreakoutGame({ onClose, muted }: { onClose: () => void; mute
     paddleXRef.current = Math.max(0, Math.min(BOARD_WIDTH - PADDLE_WIDTH, boardX - PADDLE_WIDTH / 2));
   };
 
-  const overlayKey = status === "won" ? "won" : status === "lost" ? "lost" : status === "paused" ? "lifeLost" : "ready";
+  const overlayKey = status === "won"
+    ? "won"
+    : status === "lost"
+      ? "lost"
+      : status === "paused"
+        ? "lifeLost"
+        : status === "wave"
+          ? "waveClear"
+          : "ready";
 
   return (
     <div className="relative h-[520px] overflow-hidden border border-white/[0.08] bg-[#080b10]">
@@ -343,36 +417,21 @@ export function PikoBreakoutGame({ onClose, muted }: { onClose: () => void; mute
         }}
       />
 
-      <div className="pointer-events-none absolute inset-x-4 top-4 flex items-center justify-between text-sm font-medium text-white/78">
-        <span>{t("pikoMiniGame.breakout.score", { score })}</span>
-        <span>{t("pikoMiniGame.breakout.lives", { lives })}</span>
-      </div>
+      <PikoGameHud
+        left={t("pikoMiniGame.breakout.score", { score })}
+        center={t("pikoMiniGame.breakout.wave", { wave, total: 3 })}
+        right={t("pikoMiniGame.breakout.lives", { lives })}
+      />
 
       {status !== "playing" ? (
-        <div className="absolute inset-0 grid place-items-center bg-black/52 px-5 backdrop-blur-[2px]">
-          <div className="max-w-sm rounded-2xl border border-white/[0.14] bg-black/68 px-7 py-6 text-center shadow-[0_24px_72px_rgba(0,0,0,0.48)]">
-            <h3 className="text-2xl font-semibold text-white">{t(`pikoMiniGame.breakout.${overlayKey}`)}</h3>
-            <p className="mt-2 text-sm leading-6 text-white/58">{t("pikoMiniGame.breakout.hint")}</p>
-            <div className="mt-6 flex justify-center gap-3">
-              {(status === "won" || status === "lost") ? (
-                <button
-                  type="button"
-                  className="h-10 rounded-full border border-white/[0.14] px-5 text-sm text-white/78 transition-colors hover:bg-white/[0.08] hover:text-white"
-                  onClick={onClose}
-                >
-                  {t("pikoMiniGame.backToWork")}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="h-10 rounded-full bg-cyan-300 px-5 text-sm font-medium text-slate-950 transition-colors hover:bg-cyan-200"
-                onClick={startGame}
-              >
-                {status === "won" || status === "lost" ? t("pikoMiniGame.playAgain") : t("pikoMiniGame.breakout.start")}
-              </button>
-            </div>
-          </div>
-        </div>
+        <PikoGameOverlay
+          title={t(`pikoMiniGame.breakout.${overlayKey}`)}
+          description={t("pikoMiniGame.breakout.hint")}
+          primaryLabel={status === "won" || status === "lost" ? t("pikoMiniGame.playAgain") : t("pikoMiniGame.breakout.start")}
+          onPrimary={startGame}
+          secondaryLabel={status === "won" || status === "lost" ? t("pikoMiniGame.backToWork") : undefined}
+          onSecondary={status === "won" || status === "lost" ? onClose : undefined}
+        />
       ) : null}
     </div>
   );

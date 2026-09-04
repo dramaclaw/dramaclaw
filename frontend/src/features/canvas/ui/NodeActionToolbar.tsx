@@ -60,6 +60,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import type { TFn } from "@/lib/i18n-types";
 
 import { toast } from "sonner";
 
@@ -354,9 +355,15 @@ function beatContextText(ctx: BeatMainlineContext): string {
   ].filter(Boolean).join("\n");
 }
 
-function beatContextNodeData(ctx: BeatMainlineContext): Record<string, unknown> {
+function beatContextNodeData(
+  ctx: BeatMainlineContext,
+  t: TFn,
+): Record<string, unknown> {
   return {
-    displayName: `镜头上下文 · EP${ctx.episode}/B${ctx.beat}`,
+    displayName: t("canvas.nodeToolbar.beatContextName", {
+      episode: ctx.episode,
+      beat: ctx.beat,
+    }),
     content: beatContextText(ctx),
     projectId: ctx.projectId,
     episode: ctx.episode,
@@ -1382,7 +1389,7 @@ export const NodeActionToolbar = memo(
             x: node.position.x + nodeWidth + 80,
             y: node.position.y,
           },
-          beatContextNodeData(extractableBeatContext),
+          beatContextNodeData(extractableBeatContext, t),
         );
         setSelectedNode(contextNodeId);
         requestFocusNode(contextNodeId);
@@ -1396,6 +1403,7 @@ export const NodeActionToolbar = memo(
         node.width,
         requestFocusNode,
         setSelectedNode,
+        t,
       ],
     );
 
@@ -1448,7 +1456,7 @@ export const NodeActionToolbar = memo(
                 key="mainline-lock-pill"
                 className="rounded-full bg-amber-500/15 px-3 py-1.5 text-sm text-amber-100"
               >
-                主线投影 · 锁定
+                {t("canvas.nodeToolbar.mainlineLocked")}
               </span>
             )}
             {recipeCompileFellBack && (
@@ -1472,18 +1480,20 @@ export const NodeActionToolbar = memo(
                 }}
               >
                 <FolderOpen className="h-3.5 w-3.5" />
-                {openingWorkbench ? "打开中..." : "打开工作台"}
+                {openingWorkbench
+                  ? t("canvas.nodeToolbar.openingWorkbench")
+                  : t("canvas.nodeToolbar.openWorkbench")}
               </UiChipButton>
             )}
             {extractableBeatContext && node.type !== CANVAS_NODE_TYPES.beatContext && (
               <UiChipButton
                 key="extract-beat-context"
                 className={TOOLBAR_TEXT_BUTTON_CLASS}
-                title="创建或定位这个素材对应的镜头上下文节点；不会自动连线"
+                title={t("canvas.nodeToolbar.beatContextHint")}
                 onClick={handleEnsureBeatContextNode}
               >
                 <Link2 className="h-3.5 w-3.5" />
-                镜头上下文
+                {t("canvas.nodeToolbar.beatContext")}
               </UiChipButton>
             )}
             {/* AI 改图按钮暂时隐藏（保留代码，等需求恢复时取消注释）
@@ -2400,7 +2410,7 @@ export const NodeActionToolbar = memo(
                       <UiChipButton
                         key="group-color"
                         className={TOOLBAR_TEXT_BUTTON_CLASS}
-                        title="组背景色"
+                        title={t("canvas.nodeToolbar.groupBackground")}
                         onClick={(event) => event.stopPropagation()}
                       >
                         {groupColor ? (
@@ -2411,7 +2421,7 @@ export const NodeActionToolbar = memo(
                         ) : (
                           <Palette className="h-3.5 w-3.5" />
                         )}
-                        背景色
+                        {t("canvas.nodeToolbar.backgroundColor")}
                         <ChevronDown className="h-3 w-3" />
                       </UiChipButton>
                     </DropdownMenuTrigger>
@@ -2424,7 +2434,7 @@ export const NodeActionToolbar = memo(
                       <div className="grid grid-cols-5 gap-1.5 p-1.5">
                         <button
                           type="button"
-                          title="无"
+                          title={t("canvas.nodeToolbar.noColor")}
                           onClick={() => updateNodeData(nodeId, { backgroundColor: null })}
                           className={`relative flex h-6 w-6 items-center justify-center rounded-full border bg-transparent transition-transform hover:scale-110 ${
                             groupColor ? 'border-white/25' : 'border-white ring-1 ring-white/60'
@@ -2436,7 +2446,7 @@ export const NodeActionToolbar = memo(
                           <button
                             key={preset.key}
                             type="button"
-                            title={preset.label}
+                            title={t(preset.labelKey)}
                             onClick={() =>
                               updateNodeData(nodeId, { backgroundColor: preset.value })
                             }
@@ -2456,11 +2466,11 @@ export const NodeActionToolbar = memo(
                       <UiChipButton
                         key="group-arrange"
                         className={TOOLBAR_TEXT_BUTTON_CLASS}
-                        title="排列方式"
+                        title={t("canvas.nodeToolbar.arrangeMode")}
                         onClick={(event) => event.stopPropagation()}
                       >
                         <LayoutGrid className="h-3.5 w-3.5" />
-                        排列
+                        {t("canvas.multiSelect.arrange")}
                         <ChevronDown className="h-3 w-3" />
                       </UiChipButton>
                     </DropdownMenuTrigger>
@@ -2574,10 +2584,10 @@ export const NodeActionToolbar = memo(
                     nodeId: node.id,
                   });
                 }}
-                title="把当前节点的内容写回主流程资产"
+                title={t("canvas.nodeToolbar.commitHint")}
               >
                 <Send className="h-3.5 w-3.5" />
-                提交
+                {t("freezone.commit.submit")}
               </UiChipButton>
             )}
           </UiPanel>

@@ -23,7 +23,7 @@ import {
   type ImageEditNodeData,
   type ImageSize,
 } from '@/features/canvas/domain/canvasNodes';
-import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { coerceSlotTarget } from '@/features/canvas/domain/mainlineNodeTypes';
 import { AddNodeToChatButton } from '@/features/canvas/ui/AddNodeToChatButton';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
@@ -403,12 +403,13 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
 
   const detachUpstream = useDetachUpstream(id);
 
+  // 「图N」是写进 prompt、由后端解析的引用 token，不是界面文案，不翻译。
   const incomingImageItems = useMemo(
     () =>
       incomingImages.map((imageUrl, index) => ({
         imageUrl,
         displayUrl: resolveImageDisplayUrl(imageUrl),
-        label: `图${index + 1}`,
+        label: `图${index + 1}`, // i18n-exempt
         sourceNodeId: imageUrlToNodeId.get(imageUrl),
       })),
     [incomingImages, imageUrlToNodeId]
@@ -526,8 +527,8 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   );
 
   const resolvedTitle = useMemo(
-    () => resolveNodeDisplayName(CANVAS_NODE_TYPES.imageEdit, data),
-    [data]
+    () => localizeNodeDisplayName(CANVAS_NODE_TYPES.imageEdit, data, t),
+    [data, t]
   );
   const capability = useMemo(() => getCapability(data.capabilityId), [data.capabilityId]);
   const structuredCapabilities = useMemo(() => listCapabilities(), []);
@@ -567,7 +568,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   );
   useReferenceMentionSync(
     promptDraft,
-    [{ prefix: "图", ids: incomingImages }],
+    [{ prefix: "图", ids: incomingImages }], // i18n-exempt —— 后端解析的引用前缀
     applyPromptRemap,
   );
 
@@ -651,7 +652,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       void showErrorDialog(errorMessage, t('common.error'));
       return;
     }
-    const ownPrompt = promptDraft.replace(/@(?=图\d+)/g, '').trim();
+    const ownPrompt = promptDraft.replace(/@(?=图\d+)/g, '').trim(); // i18n-exempt
     // 「实时读取上游」：上游 text 节点（文本/脚本/图生 prompt 等）的内容
     // 在每次 submit 时自动前置到 prompt，用户不必手动复制。
     const fallbackPrompt = [upstreamTextJoined, ownPrompt]
@@ -687,7 +688,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     const generationDurationMs = selectedModel.expectedDurationMs ?? 60000;
     const generationStartedAt = Date.now();
     const resultNodeTitle = capability
-      ? `${capability.shortName} · 候选`
+      ? t('canvas.capabilities.candidateResultTitle', { name: t(capability.shortNameKey) })
       : buildAiResultNodeTitle(prompt, t('node.imageEdit.resultTitle'));
     const runtimeDiagnostics = await getRuntimeDiagnostics();
     const { nodes: currentNodes, edges: currentEdges } = useCanvasStore.getState();
@@ -903,7 +904,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   };
 
   const insertImageReference = useCallback((imageIndex: number) => {
-    const marker = `@图${imageIndex + 1}`;
+    const marker = `@图${imageIndex + 1}`; // i18n-exempt —— 后端解析的引用 token
     const currentPrompt = promptDraftRef.current;
     let nextPrompt: string;
     let nextCursor: number;
@@ -1007,9 +1008,11 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         addEdge(newId, id);
         newIds.push(newId);
       });
-      state.autoGroupSpawn(id, newIds, { label: '资产参考组' });
+      state.autoGroupSpawn(id, newIds, {
+        label: t('node.imageEdit.referenceGroupLabel'),
+      });
     },
-    [addEdge, addNode, id],
+    [addEdge, addNode, id, t],
   );
 
   const handlePromptKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1120,7 +1123,8 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         <div className="relative min-h-[190px] flex-[1.25] border-b border-[rgba(255,255,255,0.08)] bg-black/20">
           <div className="pointer-events-none absolute left-3 top-3 z-10 flex items-center gap-1.5 rounded-full bg-black/40 px-2 py-1 text-[11px] text-text-muted">
             <ImageIcon className="h-3.5 w-3.5" />
-            图片节点 {incomingImageItems.length > 0 ? incomingImageItems.length : ''}
+            {t('node.imageEdit.imageNodeBadge')}{' '}
+            {incomingImageItems.length > 0 ? incomingImageItems.length : ''}
           </div>
           {incomingImageItems.length > 0 ? (
             <div className={`grid h-full gap-2 p-3 ${incomingImageItems.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
@@ -1151,7 +1155,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
               ))}
               {incomingImageItems.length > 4 && (
                 <div className="absolute bottom-3 left-3 rounded-full border border-[rgba(255,255,255,0.12)] bg-black/55 px-2 py-0.5 text-[11px] text-text-dark">
-                  +{incomingImageItems.length - 4} 张引用图
+                  {t('node.imageEdit.moreRefs', { count: incomingImageItems.length - 4 })}
                 </div>
               )}
             </div>
@@ -1166,23 +1170,23 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                   event.stopPropagation();
                   promptRef.current?.focus();
                 }}
-                title="从素材库拖入图片，或从图片节点点击 AI 改图自动连接"
+                title={t('node.imageEdit.connectRefTitle')}
               >
                 <UploadCloud className="h-4 w-4" />
-                连接参考图
+                {t('node.imageEdit.connectRef')}
               </button>
               <div className="flex items-center gap-3 text-xs">
-                <span className="text-[var(--canvas-node-input-helper)]">试试：</span>
+                <span className="text-[var(--canvas-node-input-helper)]">{t('node.imageEdit.tryLabel')}</span>
                 <button
                   type="button"
                   className="nodrag rounded-full bg-white/8 px-2 py-1 text-text-dark transition hover:bg-white/12"
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation();
-                    applyPromptSuggestion('基于参考图生成一个更稳定、更精细的版本，保持主体身份和构图。');
+                    applyPromptSuggestion(t('node.imageEdit.suggest.img2imgPrompt'));
                   }}
                 >
-                  图生图
+                  {t('node.imageEdit.suggest.img2img')}
                 </button>
                 <button
                   type="button"
@@ -1190,10 +1194,10 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation();
-                    applyPromptSuggestion('对参考图做高清修复，提升细节、边缘和质感，保持原图内容不变。');
+                    applyPromptSuggestion(t('node.imageEdit.suggest.upscalePrompt'));
                   }}
                 >
-                  图片高清
+                  {t('node.imageEdit.suggest.upscale')}
                 </button>
               </div>
             </div>
@@ -1207,7 +1211,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
               event.stopPropagation();
               promptRef.current?.focus();
             }}
-            title="聚焦 prompt"
+            title={t('node.imageEdit.focusPrompt')}
           >
             <Maximize2 className="h-4 w-4" />
           </button>
@@ -1216,12 +1220,12 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         <div className="relative flex min-h-[180px] flex-1 flex-col p-3">
           <div className="mb-2 flex flex-wrap gap-2">
             {[
-              { key: 'text_to_image', label: '文生图', disabled: incomingImages.length > 0 },
-              { key: 'all_reference', label: '全能参考', disabled: false },
-              { key: 'image_reference', label: '图片参考', disabled: false },
-              { key: 'image_to_image', label: '图生图', disabled: false },
-              { key: 'image_to_video', label: '图生视频', disabled: true },
-              { key: 'first_last_frame', label: '首尾帧', disabled: true },
+              { key: 'text_to_image', disabled: incomingImages.length > 0 },
+              { key: 'all_reference', disabled: false },
+              { key: 'image_reference', disabled: false },
+              { key: 'image_to_image', disabled: false },
+              { key: 'image_to_video', disabled: true },
+              { key: 'first_last_frame', disabled: true },
             ].map((item) => {
               const active = generationMode === item.key;
               return (
@@ -1249,7 +1253,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                     });
                   }}
                 >
-                  {item.label}
+                  {t(`node.imageEdit.modes.${item.key}`)}
                 </button>
               );
             })}
@@ -1268,7 +1272,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                   onClick={(event) => {
                     event.stopPropagation();
                     updateNodeData(id, {
-                      displayName: capability.name,
+                      displayName: t(capability.nameKey),
                       generationMode: 'image_reference',
                       model: capability.model,
                       size: capability.imageSize as ImageEditNodeData['size'],
@@ -1280,7 +1284,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                     });
                   }}
                 >
-                  {capability.shortName}⚙
+                  {t(capability.shortNameKey)}⚙
                 </button>
               );
             })}
@@ -1291,10 +1295,10 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <div className="truncate text-xs font-medium text-text-dark">
-                    {capability.name}
+                    {t(capability.nameKey)}
                   </div>
                   <div className="truncate text-[10px] text-text-muted">
-                    候选图能力 · Commit 后才成为资产
+                    {t('canvas.capabilities.candidateHint')}
                   </div>
                 </div>
                 <button
@@ -1313,7 +1317,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                     });
                   }}
                 >
-                  自由提示词
+                  {t('canvas.capabilities.freePrompt')}
                 </button>
               </div>
               <div
@@ -1343,7 +1347,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                 promptRef.current?.focus();
               }}
             >
-              标记
+              {t('node.imageEdit.markButton')}
             </button>
             <button
               type="button"
@@ -1351,10 +1355,12 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
               onMouseDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation();
-                applyPromptSuggestion(`${promptDraft}${promptDraft ? '\n' : ''}镜头运动：轻微推进，保持主体稳定，电影级质感。`);
+                applyPromptSuggestion(
+                  `${promptDraft}${promptDraft ? '\n' : ''}${t('node.imageEdit.suggest.cameraPrompt')}`,
+                );
               }}
             >
-              运镜
+              {t('node.imageEdit.cameraButton')}
             </button>
             <button
               type="button"
@@ -1364,9 +1370,9 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                 event.stopPropagation();
                 setIsAssetLibraryOpen(true);
               }}
-              title="从资产库选择参考图（人物 / 场景 / 道具）"
+              title={t('node.imageEdit.assetLibraryTitle')}
             >
-              资产库
+              {t('node.imageEdit.assetLibrary')}
             </button>
             {upstreamTextContents.map((content) => (
               <ReferenceTextChip
@@ -1388,7 +1394,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                   event.stopPropagation();
                   insertImageReference(index);
                 }}
-                title={`插入 ${item.label}`}
+                title={t('node.imageEdit.insertRef', { label: item.label })}
               >
                 <CanvasNodeImage
                   src={item.displayUrl}
@@ -1582,6 +1588,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         keepAspectRatio
       />
       <AssetLibraryModal
+        mode="pick"
         open={isAssetLibraryOpen}
         project={readUrl().project ?? null}
         allowedMedia={['image']}
@@ -1601,10 +1608,12 @@ function InlineCapabilityParamControl({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
+  const { t } = useTranslation();
+
   if (param.type === 'enum') {
     return (
       <label className="nodrag block min-w-0 text-[10px] text-text-muted">
-        <span className="mb-1 block truncate">{param.label}</span>
+        <span className="mb-1 block truncate">{t(param.labelKey)}</span>
         <select
           value={stringifyParamValue(value ?? param.defaultValue)}
           onChange={(event) => onChange(event.target.value)}
@@ -1613,7 +1622,7 @@ function InlineCapabilityParamControl({
         >
           {(param.options ?? []).map((option) => (
             <option key={option.value} value={option.value}>
-              {option.label}
+              {t(option.labelKey)}
             </option>
           ))}
         </select>
@@ -1625,7 +1634,7 @@ function InlineCapabilityParamControl({
     const selected = new Set(Array.isArray(value) ? value.map(String) : []);
     return (
       <div className="nodrag col-span-2 text-[10px] text-text-muted">
-        <div className="mb-1">{param.label}</div>
+        <div className="mb-1">{t(param.labelKey)}</div>
         <div className="flex flex-wrap gap-1">
           {(param.options ?? []).map((option) => {
             const active = selected.has(option.value);
@@ -1646,7 +1655,7 @@ function InlineCapabilityParamControl({
                   onChange([...next]);
                 }}
               >
-                {option.label}
+                {t(option.labelKey)}
               </button>
             );
           })}
@@ -1665,7 +1674,7 @@ function InlineCapabilityParamControl({
           onMouseDown={(event) => event.stopPropagation()}
           className="accent-accent"
         />
-        <span>{param.label}</span>
+        <span>{t(param.labelKey)}</span>
       </label>
     );
   }
@@ -1676,7 +1685,7 @@ function InlineCapabilityParamControl({
     return (
       <label className="nodrag col-span-2 block text-[10px] text-text-muted">
         <span className="mb-1 flex justify-between">
-          <span>{param.label}</span>
+          <span>{t(param.labelKey)}</span>
           <span>{numericValue}</span>
         </span>
         <input
@@ -1695,13 +1704,13 @@ function InlineCapabilityParamControl({
 
   return (
     <label className="nodrag col-span-2 block text-[10px] text-text-muted">
-      <span className="mb-1 block">{param.label}</span>
+      <span className="mb-1 block">{t(param.labelKey)}</span>
       <textarea
         value={stringifyParamValue(value ?? param.defaultValue)}
         onChange={(event) => onChange(event.target.value)}
         onMouseDown={(event) => event.stopPropagation()}
         className="ui-scrollbar min-h-12 w-full resize-y rounded-lg border border-[rgba(255,255,255,0.1)] bg-bg-dark px-2 py-1.5 text-xs text-text-dark outline-none"
-        placeholder={param.description}
+        placeholder={param.descriptionKey ? t(param.descriptionKey) : undefined}
       />
     </label>
   );

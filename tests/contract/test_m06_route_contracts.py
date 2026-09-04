@@ -34,7 +34,9 @@ def _png_bytes() -> bytes:
     from PIL import Image
 
     buf = io.BytesIO()
-    Image.new("RGB", (4, 4), color=(90, 120, 150)).save(buf, format="PNG")
+    # 占位图要满足厂商真实约束（Seedance 参考图边长 >= 300px），否则入队前的
+    # 尺寸校验会先于本测试关心的响应形状把请求 400 掉。
+    Image.new("RGB", (320, 320), color=(90, 120, 150)).save(buf, format="PNG")
     return buf.getvalue()
 
 

@@ -85,6 +85,20 @@
   text-shadow: none;
 }
 
+/* SplitText 跑完后，标题的每个字都在下面那条规则里自带同一套渐变 + background-clip:text，
+   .heroTitle 这层就成了对同一批字形的第二次绘制。此时父元素自己只剩「词与词之间的空格」
+   这几个文本节点，Chrome 仍会为它们算一份文字遮罩，在标题内容框左上角糊出一块笔画碎片
+   （实测 CSS x 262.5~317、y 180，正好贴着 h1 左上角）。中文标题一行、英文标题两行，
+   换行数一变碎片就露出来了，所以只在中文下看不见。
+   拆分完成才有 data-rbsplit="done"（见 components/react-bits/split-text.tsx），
+   拆分没跑成时这条不生效、渐变照旧。 */
+.heroTitle[data-rbsplit="done"] {
+  background: none;
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  -webkit-text-stroke: 0;
+}
+
 .heroTitle :global(.split-char),
 .heroTitle :global(.split-word) {
   color: transparent;

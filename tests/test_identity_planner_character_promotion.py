@@ -68,7 +68,9 @@ class ExistingCharacterIdentityPlanner(IdentityPlanner):
             ]
         )
 
-    async def _resolve_requirements(self, episode_number, requirements, on_log=None):
+    async def _resolve_requirements(
+        self, episode_number, requirements, on_log=None, output_language=None
+    ):
         return 0, ["陆辰_默认"], {("陆辰", "默认"): "陆辰_默认"}
 
     async def _analyze_special_identities(

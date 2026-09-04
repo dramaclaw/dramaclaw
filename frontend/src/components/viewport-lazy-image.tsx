@@ -11,8 +11,10 @@ type ViewportLazyImageProps = Omit<
   rootMargin?: string;
 };
 
+const MIN_VISIBLE_RATIO = 0.01;
+
 /**
- * Keeps `src` off the DOM until the image is near the visible viewport.
+ * Keeps `src` off the DOM until the image is actually visible in the viewport.
  *
  * Native `loading="lazy"` is deliberately heuristic and may eagerly fetch an
  * entire list inside a nested scroll container. Asset paths are conventional,
@@ -22,7 +24,7 @@ type ViewportLazyImageProps = Omit<
  */
 export function ViewportLazyImage({
   src,
-  rootMargin = "160px 0px",
+  rootMargin = "0px",
   ...props
 }: ViewportLazyImageProps) {
   const imageRef = useRef<HTMLImageElement>(null);
@@ -39,11 +41,22 @@ export function ViewportLazyImage({
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
+        const visiblyIntersecting = entries.some(
+          (entry) =>
+            entry.isIntersecting && entry.intersectionRatio >= MIN_VISIBLE_RATIO,
+        );
+        if (!visiblyIntersecting) return;
         setRevealedSrc(src);
         observer.disconnect();
       },
-      { rootMargin },
+      {
+        // `root: null` intersects against the browser viewport while still
+        // respecting every clipping/scrolling ancestor. A zero margin means
+        // the request starts only after the user can actually see the slot.
+        root: null,
+        rootMargin,
+        threshold: MIN_VISIBLE_RATIO,
+      },
     );
     observer.observe(image);
     return () => observer.disconnect();

@@ -37,3 +37,16 @@ jobs:
       # 单元测试：pytest 默认 addopts 已排除 ee/e2e；-n auto 走 xdist 并行。
       - name: Run tests
         run: uv run pytest -n auto
+
+  # i18n 棘轮：后端面向前端的进度/日志/toast 文案不许再新增硬编码中文。
+  # 只认 scripts/backend_i18n_allowlist.json 里的存量预算，且只许降不许升。
+  # 纯 AST 扫描不需要业务依赖，所以独立成 job，不等 deps 装 torch。
+  backend-i18n-ratchet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check for hardcoded Chinese in backend user-facing copy
+        run: python3 scripts/check_backend_i18n.py

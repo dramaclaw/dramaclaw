@@ -2,7 +2,8 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from "vitest";
 
-import { videoModeDisabledReason } from "@/features/canvas/nodes/shared/VideoGenerationForm";
+import { videoModeDisabledReason } from "@/features/canvas/nodes/VideoOperationsPanel";
+import { zhT } from "../../helpers/i18n-fixtures";
 
 const NONE = { videos: 0, images: 0, audios: 0 };
 
@@ -36,6 +37,7 @@ describe("videoModeDisabledReason — 上游接了视频时的模式可用性", 
         "videoEdit",
         "seedance-2.0-mini",
         { ...NONE, videos: 1 },
+        zhT,
         WITH_VIDEO_EDIT,
       ),
     ).toBeNull();
@@ -44,7 +46,7 @@ describe("videoModeDisabledReason — 上游接了视频时的模式可用性", 
   it("接了视频时其余模式仍被拦，且提示里带上「视频编辑」这条出路", () => {
     for (const mode of ["textToVideo", "firstFrame", "firstLastFrame", "imageReference"] as const) {
       expect(
-        videoModeDisabledReason(mode, "seedance-2.0-mini", { ...NONE, videos: 1 }, WITH_VIDEO_EDIT),
+        videoModeDisabledReason(mode, "seedance-2.0-mini", { ...NONE, videos: 1 }, zhT, WITH_VIDEO_EDIT),
       ).toBe("上游含视频素材时只能用「全能参考」或「视频编辑」");
     }
     expect(
@@ -52,6 +54,7 @@ describe("videoModeDisabledReason — 上游接了视频时的模式可用性", 
         "allReference",
         "seedance-2.0-mini",
         { ...NONE, videos: 1 },
+        zhT,
         WITH_VIDEO_EDIT,
       ),
     ).toBeNull();
@@ -63,6 +66,7 @@ describe("videoModeDisabledReason — 上游接了视频时的模式可用性", 
         "textToVideo",
         "seedance-2.0",
         { ...NONE, videos: 1 },
+        zhT,
         WITHOUT_VIDEO_EDIT,
       ),
     ).toBe("上游含视频素材时只能用「全能参考」");
@@ -70,7 +74,7 @@ describe("videoModeDisabledReason — 上游接了视频时的模式可用性", 
 
   it("没接视频时「视频编辑」提示去连一个", () => {
     expect(
-      videoModeDisabledReason("videoEdit", "seedance-2.0-mini", NONE, WITH_VIDEO_EDIT),
+      videoModeDisabledReason("videoEdit", "seedance-2.0-mini", NONE, zhT, WITH_VIDEO_EDIT),
     ).toBe("需要连接视频节点（1个）");
   });
 
@@ -80,6 +84,7 @@ describe("videoModeDisabledReason — 上游接了视频时的模式可用性", 
         "videoEdit",
         "seedance-2.0-mini",
         { ...NONE, videos: 2 },
+        zhT,
         WITH_VIDEO_EDIT,
       ),
     ).toBe("「视频编辑」仅支持连接 1 个视频节点");
@@ -91,6 +96,7 @@ describe("videoModeDisabledReason — 上游接了视频时的模式可用性", 
         "videoEdit",
         "seedance-2.0",
         { ...NONE, videos: 1 },
+        zhT,
         WITHOUT_VIDEO_EDIT,
       ),
     ).toBe("该模型不支持「视频编辑」");
@@ -98,11 +104,11 @@ describe("videoModeDisabledReason — 上游接了视频时的模式可用性", 
 
   /** HappyHorse 走它自己那套分支，这次改动不能动到它。 */
   it("HappyHorse 的既有判定不受影响", () => {
-    expect(videoModeDisabledReason("videoEdit", "happyhorse-1.0", { ...NONE, videos: 1 })).toBeNull();
-    expect(videoModeDisabledReason("videoEdit", "happyhorse-1.0", NONE)).toBe(
+    expect(videoModeDisabledReason("videoEdit", "happyhorse-1.0", { ...NONE, videos: 1 }, zhT)).toBeNull();
+    expect(videoModeDisabledReason("videoEdit", "happyhorse-1.0", NONE, zhT)).toBe(
       "需要连接视频节点（1个）",
     );
-    expect(videoModeDisabledReason("textToVideo", "happyhorse-1.0", { ...NONE, videos: 1 })).toBe(
+    expect(videoModeDisabledReason("textToVideo", "happyhorse-1.0", { ...NONE, videos: 1 }, zhT)).toBe(
       "已连接视频节点，请使用「视频编辑」",
     );
   });

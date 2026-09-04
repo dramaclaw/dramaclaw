@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { Loader2, RotateCcw } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface RegenerateButtonProps {
   onClick: () => void;
@@ -22,16 +23,18 @@ export function RegenerateButton({
   onClick,
   busy = false,
   disabled = false,
-  label = '重新生成',
+  label,
   title,
   className = '',
 }: RegenerateButtonProps) {
+  const { t } = useTranslation();
+  const resolvedLabel = label ?? t('canvas.common.regenerate');
   const isDisabled = busy || disabled;
   return (
     <button
       type="button"
       disabled={isDisabled}
-      title={title ?? label}
+      title={title ?? resolvedLabel}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => {
         event.stopPropagation();

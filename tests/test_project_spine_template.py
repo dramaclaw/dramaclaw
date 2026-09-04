@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -353,14 +354,15 @@ async def test_start_ingest_rejects_spine_template_change_without_rebuild(
 
 @pytest.mark.asyncio
 async def test_start_ingest_rejects_headerless_premium_drama_before_saving(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, caplog
 ):
     from novelvideo.api.routes import ingest
 
     uploads = tmp_path / "uploads"
     uploads.mkdir()
+    source_canary = "PRIVATE-SCREENPLAY-CONTENT-CANARY"
     (uploads / "novel.txt").write_text(
-        "第一集\n孙悟空走进寝房，看见师父正在休息。",
+        f"第一集\n孙悟空走进寝房，看见师父正在休息。{source_canary}",
         encoding="utf-8",
     )
     saved: dict = {}
@@ -371,16 +373,23 @@ async def test_start_ingest_rejects_headerless_premium_drama_before_saving(
         lambda state_dir, config=None, **kwargs: saved.update(config or {}),
     )
 
-    response = await ingest.start_ingest(
-        "demo",
-        IngestStart(filename="novel.txt", rebuild=True, spine_template="drama"),
-        {"username": "alice"},
-    )
+    with caplog.at_level(logging.WARNING, logger="novelvideo.api.ingest"):
+        response = await ingest.start_ingest(
+            "demo",
+            IngestStart(filename="novel.txt", rebuild=True, spine_template="drama"),
+            {"username": "alice"},
+        )
 
     assert response["ok"] is False
     assert response["error_type"] == "screenplay_format"
     assert response["format_check"]["scene_header_status"] == "missing"
     assert saved == {}
+    assert "screenplay_format_blocked" in caplog.text
+    assert "project=demo" in caplog.text
+    assert "filename=novel.txt" in caplog.text
+    assert "missing_scene_headers" in caplog.text
+    assert "scene_header_status=missing" in caplog.text
+    assert source_canary not in caplog.text
 
 
 @pytest.mark.asyncio

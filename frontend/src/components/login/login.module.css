@@ -1288,34 +1288,6 @@
   filter: saturate(0.9) contrast(1.04) brightness(0.82);
 }
 
-.loginMediaVideoIncoming {
-  animation: loginMediaCrossfadeIn 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.loginMediaVideoOutgoing {
-  animation: loginMediaCrossfadeOut 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-@keyframes loginMediaCrossfadeIn {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes loginMediaCrossfadeOut {
-  from {
-    opacity: 1;
-  }
-
-  to {
-    opacity: 0;
-  }
-}
-
 .loginMediaShade {
   pointer-events: none;
   background:

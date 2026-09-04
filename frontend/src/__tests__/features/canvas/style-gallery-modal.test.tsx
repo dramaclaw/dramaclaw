@@ -72,6 +72,24 @@ describe("StyleGalleryModal", () => {
     );
   });
 
+  it("matches the fixed-card poster hover behavior", () => {
+    render(
+      <StyleGalleryModal
+        templates={TEMPLATES}
+        assetBase=""
+        selectedId={null}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const cover = screen.getByAltText("黄金时代");
+    const card = cover.closest("button")?.parentElement;
+    expect(cover).toHaveClass("origin-top", "group-hover:scale-[1.02]");
+    expect(card).toHaveClass("transition-[border-color,box-shadow]");
+    expect(card?.className).not.toContain("translate-y");
+  });
+
   it("card body opens the detail view instead of selecting outright", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
@@ -173,6 +191,28 @@ describe("StyleGalleryModal", () => {
     expect(
       screen.getByText(/黄金时代的提示词第一行/),
     ).toHaveTextContent("黄金时代的提示词第二行");
+  });
+
+  it("fits the detail dialog height to its content", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <StyleGalleryModal
+        templates={TEMPLATES}
+        assetBase=""
+        selectedId={null}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "风格图墙" });
+    expect(dialog).toHaveClass("h-[min(720px,82vh)]");
+
+    await user.click(screen.getByRole("button", { name: "查看黄金时代详情" }));
+
+    expect(dialog).not.toHaveClass("h-[min(720px,82vh)]");
+    expect(dialog).toHaveClass("max-h-[82vh]");
   });
 
   it("uses the style from the detail view", async () => {
