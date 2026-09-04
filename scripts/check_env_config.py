@@ -66,8 +66,8 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^(?:ST_API_COVERAGE_FILE|PYTEST_ADDOPTS|PYTEST_CURRENT_TEST)$"), "Pytest runner env."),
     (re.compile(r"^(?:LANG|LC_ALL)$"), "Process locale env, not app configuration."),
     (
-        re.compile(r"^(?:BASH_SOURCE|ROOT_DIR)$"),
-        "Shell-local variable in startup/dev scripts (start-ce.sh etc.), not external env config.",
+        re.compile(r"^(?:BASH_SOURCE|ROOT_DIR|INSTALL_WORLD)$"),
+        "Shell-local variable in startup/dev scripts (start-ce.sh, build_images.sh etc.), not external env config.",
     ),
     (
         re.compile(r"^(?:MODEL|LLM|EMBEDDING)_(?:PROVIDER|MODEL|NAME|API_KEY|BASE_URL|ENDPOINT|TIMEOUT|THINKING_LEVEL|DIMENSIONS|API_VERSION)$"),
