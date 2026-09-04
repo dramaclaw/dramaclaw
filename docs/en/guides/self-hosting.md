@@ -5,11 +5,12 @@
 
 > Deploy, configure, upgrade, and back up DramaClaw CE with Docker.
 
-CE ships three containers: `api` + `newapi` (the bundled DramaClaw gateway, idle until you switch to Self-hosted or Hybrid mode) + `web`, with **no PostgreSQL / no Redis / no Celery** (`ST_EDITION=ce`; tasks run inline within the process). Models go through the official DramaClaw gateway by default.
+CE ships three containers: `api` + `newapi` (the bundled DramaClaw gateway, idle until you switch to Custom or Local + Official Hybrid mode) + `web`, with **no PostgreSQL / no Redis / no Celery** (`ST_EDITION=ce`; tasks run inline within the process). Models go through the official DramaClaw gateway by default.
 
 ## 1. Prerequisites
 
 - Docker + `docker compose`.
+- Docker Compose ≥ 2.24 (`docker compose version`).
 - Resources: ≥ 2 vCPU / 4GB recommended (excluding model inference, which runs through an external gateway).
 - A DC key (the default official gateway is RelayClaw, see <https://relayclaw.cdnfg.com>), or your own OpenAI-compatible gateway.
 
@@ -43,7 +44,7 @@ Groups (each item is commented inline in `.env.example`): local NewAPI provision
 Recommended and alternative options (see [Configuring Model Providers](../getting-started/configuring-models.md) for details):
 
 - **A. DC official key (recommended)**: the default compose already uses the official gateway. After bringing the stack up, open `http://localhost:8080` → Settings → Model Configuration → Official Channel → paste your DC key and save to start using it, **no model mapping required**. Get a key at <https://relayclaw.cdnfg.com>.
-- **B. Local NewAPI**: the bundled gateway is already running; open Settings → Model Configuration → Self-hosted, click Initialize, then configure upstream channels and model mappings from the Local NewAPI page.
+- **B. Local NewAPI**: the bundled gateway is already running; open Settings → Model Configuration → Custom, click Initialize, then configure upstream channels and model mappings from the Local NewAPI page.
 
 Local NewAPI must map DramaClaw's logical models to real upstream models. The reference-image feature needs `OSS_RELAY_AK/SK` (you can skip it for a text-only workflow).
 
@@ -77,6 +78,20 @@ docker run --rm -v dramaclaw-ce_ce-data:/data -v "$PWD":/backup alpine \
 
 Then bring the stack up as usual (`docker compose up -d`). The volume backup already includes generated media; back up `.env` separately.
 
+- The `newapi-data` volume holds the bundled gateway's SQLite database (upstream channels, keys, tokens) and is not regenerable — back it up the same way:
+
+```bash
+docker run --rm -v dramaclaw-ce_newapi-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/newapi-data.tgz -C /data .
+```
+
+Restore it the same way, into the target volume:
+
+```bash
+docker run --rm -v dramaclaw-ce_newapi-data:/data -v "$PWD":/backup alpine \
+  tar xzf /backup/newapi-data.tgz -C /data
+```
+
 ## 6. Upgrades
 
 The compose file only pulls published images, so upgrading is a version bump:
@@ -87,9 +102,9 @@ docker compose pull
 docker compose up -d
 ```
 
-Your `.env` is never touched by the upgrade. The `ce-data` and `newapi-data` volumes are reused.
+Your `.env` is never touched by the upgrade. The `ce-data` and `newapi-data` volumes are reused. Users of the old `docker-compose.selfhosted*.yml` stacks: back up `newapi-data` first — the gateway image jumps several versions and migrates its SQLite schema on first start.
 
-If an older release wrote media to `/app/output` inside the container, run the one-time migration **before** starting the new version:
+If an older release wrote media to `/app/output` inside the container, run the one-time migration **before** starting the new version (zip users: download `scripts/migrate_docker_output.py` from GitHub instead of `git pull`):
 
 ```bash
 git pull
@@ -115,6 +130,7 @@ Building from source instead? Run `scripts/build_images.sh` and set `DRAMACLAW_V
 |---|---|
 | Container won't start | `docker compose logs api`; usually the `.env` gateway address/key was not changed or is unreachable |
 | Port 8780 already in use | Change the left-hand value of `ports` in compose, e.g. `8888:8780` |
+| Port 3000 already in use (bundled gateway fails, `api` waits on it) | Set `ST_NEWAPI_PORT=<free port>` in `.env` and `docker compose up -d` again |
 | Model call errors | Confirm the gateway is reachable and that the `*_MODEL` names exist in the gateway backend |
 
 ## Related

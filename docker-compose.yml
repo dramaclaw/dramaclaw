@@ -4,7 +4,7 @@
 #       并同时钉 DRAMACLAW_VERSION / DRAMACLAW_GATEWAY_VERSION（ACR 只放钉 tag，没有 latest）。
 # 开发：scripts/build_images.sh 构建 :dev 镜像（INSTALL_WORLD=1 带 3DGS/SHARP），.env 写 DRAMACLAW_VERSION=dev。
 # 三服务：api + 内置 newapi 网关（DramaClaw 维护的 dramaclaw-gateway，:3000）+ web（:8080）。
-# 首启打开 http://localhost:8080 → 设置 → 模型：选「官方」粘贴 DC key、或「自建」一键初始化内置网关、或「混合」。
+# 首启打开 http://localhost:8080 → 设置 → 模型：选「官方」粘贴 DC key、或「自定义」一键初始化内置网关、或「本地 + 官方混合」。
 # 默认模式是官方，此时内置网关只是常驻待命；.env 写 NEWAPI_PROVISIONER_ENABLED=false 可禁用一键初始化。
 services:
   api:
@@ -27,10 +27,10 @@ services:
       NOVELVIDEO_RUNTIME_DIR: /data/runtime
       DRAMACLAW_CHAT_BACKEND: hermes
       HERMES_CLI_PATH: /root/.local/bin/hermes
-      # 运行时用哪个网关由应用设置（settings.db 的 model_gateway_mode）决定，CE 不回退到 env；
+      # 运行时用哪个网关由应用设置（settings.db 的 model_gateway_mode）决定，CE 的网关路由不回退到 env；
       # NEWAPI_BASE_URL 只是兜底，默认官方地址，与桌面版 main.js 一致。
       NEWAPI_BASE_URL: "${NEWAPI_BASE_URL:-https://relayclaw.cdnfg.com/v1}"
-      # 以下四项只给 provisioner 用（用户切到「自建 / 混合」时一键初始化内置网关），
+      # 以下四项只给 provisioner 用（用户切到「自定义 / 本地 + 官方混合」时一键初始化内置网关），
       # 由 compose 强制覆盖 .env 里的 127.0.0.1 地址（进容器是错的）。
       NEWAPI_ADMIN_BASE_URL: http://newapi:3000
       NEWAPI_SQL_DSN: local

@@ -5,7 +5,7 @@
 
 > Run DramaClaw locally and produce your first result.
 
-DramaClaw is the Community Edition (CE): it runs on a single machine with no PostgreSQL / Redis required. By default `docker compose` brings up three services: `api` (the creation backend, :8780), `newapi` (the bundled gateway, idle until you switch to Self-hosted or Hybrid mode), and `web` (the browser UI, :8080). Models are served through the **DramaClaw official gateway (RelayClaw)** by default — paste in a DC key and you're ready to go.
+DramaClaw is the Community Edition (CE): it runs on a single machine with no PostgreSQL / Redis required. By default `docker compose` brings up three services: `api` (the creation backend, :8780), `newapi` (the bundled gateway, idle until you switch to Custom or Local + Official Hybrid mode), and `web` (the browser UI, :8080). Models are served through the **DramaClaw official gateway (RelayClaw)** by default — paste in a DC key and you're ready to go.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ DramaClaw is the Community Edition (CE): it runs on a single machine with no Pos
 ## Steps
 
 ```bash
-# 1. Get the code (or download DramaClaw-compose-<tag>.zip from the Release page)
+# 1. Get the code (or, from the next release on, download DramaClaw-compose-<tag>.zip from the Release page)
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
@@ -41,7 +41,7 @@ docker compose ps   # api, newapi, and web should all be running
 
 ## Want to use your own model channels?
 
-The bundled NewAPI starts together with `docker compose up -d`. Initialize it and configure upstream keys and model mappings under Settings → Model Configuration → Self-hosted. Its address and runtime token are stored in local `settings.db`, not `.env`. See [Configuring Model Providers](configuring-models.md).
+The bundled NewAPI starts together with `docker compose up -d`. Initialize it and configure upstream keys and model mappings under Settings → Model Configuration → Custom. Its address and runtime token are stored in local `settings.db`, not `.env`. See [Configuring Model Providers](configuring-models.md).
 
 ## Next steps
 

@@ -199,7 +199,7 @@ DramaClaw 的所有模型推理都走**远程 OpenAI 兼容网关** —— 本�
 每次 GitHub Release 都会发布 amd64/arm64 多架构镜像到 Docker Hub；compose 文件只拉镜像，不构建。
 
 ```bash
-git clone https://github.com/dramaclaw/dramaclaw.git   # 或到 Release 页下载 DramaClaw-compose-<tag>.zip
+git clone https://github.com/dramaclaw/dramaclaw.git   # 或从下一个 Release 起到 Release 页下载 DramaClaw-compose-<tag>.zip
 cd dramaclaw
 
 cp .env.example .env
@@ -211,14 +211,14 @@ docker compose up -d   # 起三个服务：api / newapi（内置网关）/ web
 浏览器打开 <http://localhost:8080>；REST API 在 <http://localhost:8780>。到**设置 → 模型配置**三选一：
 
 - **官方** —— 粘贴 DC key（到 <https://relayclaw.cdnfg.com> 获取），无需映射模型，内置网关闲置待命。
-- **自建** —— 一键初始化内置 `newapi` 网关，再自行配上游渠道。
-- **混合** —— 主链路走官方，额外渠道走内置网关。
+- **自定义** —— 一键初始化内置 `newapi` 网关，再自行配上游渠道。
+- **本地 + 官方混合** —— 主链路走官方，额外渠道走内置网关。
 
 完整步骤见 [快速开始](../docs/zh/getting-started/quickstart.md)。
 
 版本与镜像源在 `.env` 里钉：`DRAMACLAW_VERSION`、`DRAMACLAW_GATEWAY_VERSION`、`DRAMACLAW_IMAGE_PREFIX`。国内拉取慢：设 `DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw` 并同时钉两个版本（ACR 镜像只有钉 tag，没有 latest）。
 
-> 从旧版本升级？`docker-compose.release.yml`、`docker-compose.selfhosted.yml`、`docker-compose.selfhosted.release.yml` 已合并进这一份 `docker-compose.yml`，`ce-data` / `newapi-data` 数据卷原样复用。
+> 从旧版本升级？`docker-compose.release.yml`、`docker-compose.selfhosted.yml`、`docker-compose.selfhosted.release.yml` 已合并进这一份 `docker-compose.yml`，`ce-data` / `newapi-data` 数据卷原样复用。新栈会额外占用宿主 3000 端口给内置网关，被占用时在 `.env` 改 `ST_NEWAPI_PORT`。
 
 ### 本地开发（uv + Python 3.11+）
 
@@ -249,7 +249,7 @@ DramaClaw 对模型侧保持中立 —— 所有文本/图片/视频/音频模�
 - **DramaClaw 官方 key（推荐）**：`docker compose up`,开 <http://localhost:8080> → 设置 → 模型配置 → 官方渠道,粘贴 DC key 保存即用,**无需映射模型**。到 <https://relayclaw.cdnfg.com> 获取 key。
 - **自带网关（BYO）**：把 `NEWAPI_BASE_URL` 指向你自己的 OpenAI 兼容端点并映射模型名（详见 [配置模型供应商](../docs/zh/getting-started/configuring-models.md)）。
 
-> 内置 `newapi` 网关始终随 compose 启动；只有在「设置 → 模型配置」切到**自建**或**混合**后才会被使用。
+> 内置 `newapi` 网关始终随 compose 启动；只有在「设置 → 模型配置」切到**自定义**或**本地 + 官方混合**后才会被使用。
 
 | 环节              | 经网关接入                                                          |
 |-------------------|---------------------------------------------------------------------|

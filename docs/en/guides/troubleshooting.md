@@ -36,7 +36,7 @@
 | Symptom | Diagnosis |
 |---|---|
 | **Data gone after a rebuild** | Data lives in the named volume `ce-data` (`/data` inside the container). `docker compose down` keeps the volume—**do not add `-v`** (it deletes the volume). For backups see the [self-hosting handbook](self-hosting.md#5-where-the-data-lives--backups). |
-| **Config error after an upgrade** | After `git pull`, run `docker compose up -d` to recreate the containers from the pulled images; compare against the new `.env.example` and add any newly introduced variables. |
+| **Config error after an upgrade** | After `git pull`, run `docker compose pull && docker compose up -d` (the default tag `latest` is not re-pulled by `up` alone) to fetch the new images and recreate the containers; compare against the new `.env.example` and add any newly introduced variables. |
 
 ## world features (3DGS/SHARP)
 

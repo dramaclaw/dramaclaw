@@ -200,7 +200,7 @@ DramaClaw runs all inference through a **remote OpenAI-compatible gateway** — 
 Every GitHub Release publishes multi-arch (amd64/arm64) images to Docker Hub; the compose file only pulls, it never builds.
 
 ```bash
-git clone https://github.com/dramaclaw/dramaclaw.git   # or download DramaClaw-compose-<tag>.zip from the Release page
+git clone https://github.com/dramaclaw/dramaclaw.git   # or, from the next release on, download DramaClaw-compose-<tag>.zip from the Release page
 cd dramaclaw
 
 cp .env.example .env
@@ -212,14 +212,14 @@ docker compose up -d   # starts three services: api / newapi (bundled gateway) /
 Open the app at <http://localhost:8080>; the REST API is at <http://localhost:8780>. In **Settings → Model Config** pick one of:
 
 - **Official** — paste your DC key (get one at <https://relayclaw.cdnfg.com>); no model mapping needed. The bundled gateway stays idle.
-- **Self-hosted** — one click initializes the bundled `newapi` gateway; then add your own upstream channels.
-- **Hybrid** — official for the main pipeline, bundled gateway for extra channels.
+- **Custom** — one click initializes the bundled `newapi` gateway; then add your own upstream channels.
+- **Local + Official Hybrid** — official for the main pipeline, bundled gateway for extra channels.
 
 Full steps in the [Quick Start](docs/en/getting-started/quickstart.md).
 
 Pin versions or switch registry in `.env` (`DRAMACLAW_VERSION`, `DRAMACLAW_GATEWAY_VERSION`, `DRAMACLAW_IMAGE_PREFIX`). Mainland China: set `DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw` and pin both versions (the ACR mirror carries pinned tags only).
 
-> Migrating from an older checkout? `docker-compose.release.yml`, `docker-compose.selfhosted.yml` and `docker-compose.selfhosted.release.yml` were merged into this single `docker-compose.yml`. Your `ce-data` / `newapi-data` volumes are reused as-is.
+> Migrating from an older checkout? `docker-compose.release.yml`, `docker-compose.selfhosted.yml` and `docker-compose.selfhosted.release.yml` were merged into this single `docker-compose.yml`. Your `ce-data` / `newapi-data` volumes are reused as-is. The stack now also binds host port 3000 for the bundled gateway; change `ST_NEWAPI_PORT` in `.env` if that port is taken.
 
 ### Local development (uv + Python 3.11+)
 
@@ -250,7 +250,7 @@ DramaClaw stays model-neutral — all text/image/video/audio models connect thro
 - **DramaClaw official key (recommended)**: `docker compose up`, open <http://localhost:8080> → Settings → Model Config → Official, paste your DC key, save. Works instantly — no model mapping needed. Get a key at <https://relayclaw.cdnfg.com>.
 - **Bring your own gateway (BYO)**: point `NEWAPI_BASE_URL` at your own OpenAI-compatible endpoint and map model names (see [Configuring Models](docs/en/getting-started/configuring-models.md)).
 
-> The bundled `newapi` gateway is always part of the compose stack; it is only used once you switch to **Self-hosted** or **Hybrid** in Settings → Model Config.
+> The bundled `newapi` gateway is always part of the compose stack; it is only used once you switch to **Custom** or **Local + Official Hybrid** in Settings → Model Config.
 
 | Stage                | Connected via gateway                                               |
 |----------------------|---------------------------------------------------------------------|

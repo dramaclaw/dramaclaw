@@ -5,7 +5,7 @@
 
 > 本地跑起 DramaClaw,产出第一个结果。
 
-DramaClaw 是社区版(CE),单机运行、无需 PostgreSQL / Redis。默认 `docker compose` 起三个服务:`api`(创作后端,:8780)、`newapi`(内置网关,切到自建/混合模式前闲置)、`web`(浏览器界面,:8080);模型默认走 **DramaClaw 官方网关(RelayClaw)**,填一个 DC key 即用。
+DramaClaw 是社区版(CE),单机运行、无需 PostgreSQL / Redis。默认 `docker compose` 起三个服务:`api`(创作后端,:8780)、`newapi`(内置网关,切到自定义/本地 + 官方混合模式前闲置)、`web`(浏览器界面,:8080);模型默认走 **DramaClaw 官方网关(RelayClaw)**,填一个 DC key 即用。
 
 ## 前置
 
@@ -15,7 +15,7 @@ DramaClaw 是社区版(CE),单机运行、无需 PostgreSQL / Redis。默认 `do
 ## 步骤
 
 ```bash
-# 1. 取得代码(或到 Release 页下载 DramaClaw-compose-<tag>.zip)
+# 1. 取得代码(或从下一个 Release 起到 Release 页下载 DramaClaw-compose-<tag>.zip)
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
@@ -41,7 +41,7 @@ docker compose ps   # api、newapi、web 均应 running
 
 ## 想使用自己的模型渠道？
 
-内置 NewAPI 随 `docker compose up -d` 一起启动。在「设置 → 模型配置 → 自建」中初始化并填写上游 key、保存模型映射。地址和 runtime token 会写入本机 `settings.db`，不写入 `.env`。详见[配置模型供应商](configuring-models.md)。
+内置 NewAPI 随 `docker compose up -d` 一起启动。在「设置 → 模型配置 → 自定义」中初始化并填写上游 key、保存模型映射。地址和 runtime token 会写入本机 `settings.db`，不写入 `.env`。详见[配置模型供应商](configuring-models.md)。
 
 ## 下一步
 

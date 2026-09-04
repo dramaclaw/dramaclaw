@@ -36,7 +36,7 @@
 | 现象 | 排查 |
 |---|---|
 | **重建后数据没了** | 数据在命名卷 `ce-data`(容器内 `/data`)。`docker compose down` 保留卷,**别加 `-v`**(会删卷)。备份见 [自托管手册](self-hosting.md#5-数据在哪--备份)。 |
-| **升级后报配置错误** | `git pull` 后运行 `docker compose up -d`,从已拉取的镜像重建容器;对照新版 `.env.example` 补齐新增变量。 |
+| **升级后报配置错误** | `git pull` 后运行 `docker compose pull && docker compose up -d`(默认 tag `latest` 不会被单独的 `up` 重新拉取)拉取新镜像并重建容器;对照新版 `.env.example` 补齐新增变量。 |
 
 ## world 特性(3DGS/SHARP)类
 

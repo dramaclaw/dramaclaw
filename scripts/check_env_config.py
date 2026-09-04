@@ -67,7 +67,7 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^(?:LANG|LC_ALL)$"), "Process locale env, not app configuration."),
     (
         re.compile(r"^(?:BASH_SOURCE|ROOT_DIR|INSTALL_WORLD)$"),
-        "Shell-local variable in startup/dev scripts (start-ce.sh, build_images.sh etc.), not external env config.",
+        "Shell-local variable in startup/dev scripts (start-ce.sh, build_images.sh etc.); build-time only, never read by the running stack.",
     ),
     (
         re.compile(r"^(?:MODEL|LLM|EMBEDDING)_(?:PROVIDER|MODEL|NAME|API_KEY|BASE_URL|ENDPOINT|TIMEOUT|THINKING_LEVEL|DIMENSIONS|API_VERSION)$"),

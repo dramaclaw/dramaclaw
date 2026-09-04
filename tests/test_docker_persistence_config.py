@@ -19,7 +19,10 @@ def _compose() -> dict:
 
 
 def test_repository_ships_exactly_one_compose_file() -> None:
-    variants = sorted(p.name for p in REPOSITORY_ROOT.glob("docker-compose*.y*ml"))
+    variants = sorted(
+        {p.name for p in REPOSITORY_ROOT.glob("docker-compose*.y*ml")}
+        | {p.name for p in REPOSITORY_ROOT.glob("compose.y*ml")}
+    )
     assert variants == [COMPOSE_FILE]
 
 
@@ -79,6 +82,17 @@ def test_gateway_shares_sqlite_volume_and_has_healthcheck() -> None:
     assert "newapi-data:/data" in newapi["volumes"]
     assert newapi["environment"]["SQL_DSN"] == ""
     assert "healthcheck" in newapi
+    assert "http://localhost:3000/api/status" in " ".join(newapi["healthcheck"]["test"])
+
+
+def test_compose_pins_env_file_long_syntax_ports_and_volumes() -> None:
+    compose = _compose()
+    api = compose["services"]["api"]
+    assert api["env_file"] == [{"path": ".env", "required": False}]
+    assert api["ports"] == ["${ST_API_PORT:-8780}:8780"]
+    assert compose["services"]["newapi"]["ports"] == ["${ST_NEWAPI_PORT:-3000}:3000"]
+    assert compose["services"]["web"]["ports"] == ["${ST_WEB_PORT:-8080}:80"]
+    assert set(compose["volumes"]) == {"ce-data", "newapi-data"}
 
 
 def test_build_script_exists_and_is_executable() -> None:

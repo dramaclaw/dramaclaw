@@ -5,7 +5,7 @@
 
 > 在 macOS / Windows / Linux 上装好 DramaClaw CE 的运行环境。只想最快跑起来,直接看 [快速开始](quickstart.md);本篇覆盖各平台前置与本地开发两种装法。
 
-DramaClaw CE 是单机服务,**无需 PostgreSQL / Redis**。Docker 起 `api` + 内置 `newapi` 网关 + `web`;模型默认走 DramaClaw 官方网关 RelayClaw,在设置页切到自建模式后走内置网关。本机不跑模型,普通机器即可。
+DramaClaw CE 是单机服务,**无需 PostgreSQL / Redis**。Docker 起 `api` + 内置 `newapi` 网关 + `web`;模型默认走 DramaClaw 官方网关 RelayClaw,在设置页切到自定义模式后走内置网关。本机不跑模型,普通机器即可。
 
 ## 两种装法选一
 
@@ -26,7 +26,7 @@ DramaClaw CE 是单机服务,**无需 PostgreSQL / Redis**。Docker 起 `api` + 
 |---|---|
 | **macOS** | [Docker Desktop](https://www.docker.com/products/docker-desktop/)(Apple Silicon 与 Intel 均可) |
 | **Windows** | Docker Desktop,启用 **WSL2** 后端(Settings → General → Use WSL2) |
-| **Linux** | Docker Engine + `docker-compose-plugin`(各发行版包管理器) |
+| **Linux** | Docker Engine + `docker-compose-plugin`(各发行版包管理器) —— Docker Compose **≥ 2.24**(`docker compose version` 确认;compose 文件用了 `env_file` 长语法) |
 
 装好后:
 
@@ -86,7 +86,7 @@ uv sync --extra world                       # 装 torch / ml-sharp / da2 等
 npm install -g @playcanvas/splat-transform  # PLY→SOG 压缩工具
 ```
 
-Docker 端用 `--build-arg INSTALL_WORLD=1` 构建。slim base 为 CPU;GPU 加速需 CUDA base + nvidia runtime。模型权重运行时自动下载,不烤进镜像。
+Docker:`INSTALL_WORLD=1 scripts/build_images.sh`,再在 `.env` 写 `DRAMACLAW_VERSION=dev`。slim base 为 CPU;GPU 加速需 CUDA base + nvidia runtime。模型权重运行时自动下载,不烤进镜像。
 
 > 不做 3D/体素相关流程可忽略本节,纯文本→成片不需要它。
 

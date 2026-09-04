@@ -28,4 +28,5 @@ Done. To run the stack with these images, put this in ${root_dir}/.env:
   DRAMACLAW_VERSION=${tag}
 
 then: docker compose up -d
+If your .env sets DRAMACLAW_IMAGE_PREFIX, export the same value before running this script so the tags match.
 MSG
