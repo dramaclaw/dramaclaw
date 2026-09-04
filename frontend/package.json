@@ -49,6 +49,7 @@
     "lucide-react": "^1.8.0",
     "mediabunny": "^1.50.0",
     "ogl": "^1.0.11",
+    "pixi.js": "^8.20.1",
     "playcanvas": "^2.18.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

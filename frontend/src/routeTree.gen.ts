@@ -11,6 +11,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as PikoWorldRouteImport } from './routes/piko-world'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
@@ -58,6 +59,11 @@ const DownloadLazyRoute = DownloadLazyRouteImport.update({
   path: '/download',
   getParentRoute: () => rootRouteImport,
 } as any).lazy(() => import('./routes/download.lazy').then((d) => d.Route))
+const PikoWorldRoute = PikoWorldRouteImport.update({
+  id: '/piko-world',
+  path: '/piko-world',
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() => import('./routes/piko-world.lazy').then((d) => d.Route))
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -220,6 +226,7 @@ const AppProjectsProjectEpisodesEpisodeAudioLazyRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
+  '/piko-world': typeof PikoWorldRoute
   '/download': typeof DownloadLazyRoute
   '/access-unavailable': typeof AppAccessUnavailableRoute
   '/credits': typeof AppCreditsRoute
@@ -242,6 +249,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/piko-world': typeof PikoWorldRoute
   '/download': typeof DownloadLazyRoute
   '/access-unavailable': typeof AppAccessUnavailableRoute
   '/credits': typeof AppCreditsRoute
@@ -267,6 +275,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/piko-world': typeof PikoWorldRoute
   '/download': typeof DownloadLazyRoute
   '/_app/access-unavailable': typeof AppAccessUnavailableRoute
   '/_app/credits': typeof AppCreditsRoute
@@ -293,6 +302,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/piko-world'
     | '/download'
     | '/access-unavailable'
     | '/credits'
@@ -315,6 +325,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/piko-world'
     | '/download'
     | '/access-unavailable'
     | '/credits'
@@ -339,6 +350,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_app'
     | '/login'
+    | '/piko-world'
     | '/download'
     | '/_app/access-unavailable'
     | '/_app/credits'
@@ -364,6 +376,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  PikoWorldRoute: typeof PikoWorldRoute
   DownloadLazyRoute: typeof DownloadLazyRoute
   WatchWorkRoute: typeof WatchWorkRoute
 }
@@ -375,6 +388,13 @@ declare module '@tanstack/react-router' {
       path: '/download'
       fullPath: '/download'
       preLoaderRoute: typeof DownloadLazyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/piko-world': {
+      id: '/piko-world'
+      path: '/piko-world'
+      fullPath: '/piko-world'
+      preLoaderRoute: typeof PikoWorldRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -594,6 +614,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  PikoWorldRoute: PikoWorldRoute,
   DownloadLazyRoute: DownloadLazyRoute,
   WatchWorkRoute: WatchWorkRoute,
 }

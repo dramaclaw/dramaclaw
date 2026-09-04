@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "mapId": "welcome-courtyard",
+  "globalLighting": {
+    "preset": "neutral-day",
+    "intensity": 1
+  },
+  "effects": [],
+  "audioZones": []
+}
