@@ -308,7 +308,18 @@ cp .env.example .env && $EDITOR .env
 uv run novelvideo api --port 8780   # 启动 REST API（CE 默认 inline 任务，无需 Ray/Redis）
 ```
 
-前端：`cd frontend && pnpm install && pnpm dev`。网关有自己的开发流程（`make dev-api` / `make dev-web`），见 [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/README.zh_CN.md#开发) 仓库。
+另开一个终端起前端：`cd frontend && pnpm install && pnpm dev`。
+
+**网关。** **官方**模式什么都不用再跑。**自定义**或**本地 + 官方混合**模式下，API 需要一个跑在 `127.0.0.1:3000` 的网关，且它的 SQLite 文件在 `./state/newapi/one-api.db`（设置页的「初始化」写的就是这个文件；`.env` 里的 `NEWAPI_ADMIN_BASE_URL` 默认已指向这个地址）。要么用发布镜像并把这个目录挂进去：
+
+```bash
+mkdir -p state/newapi
+docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
+  -v "$PWD/state/newapi:/data" \
+  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.1
+```
+
+要么在旁边的 checkout 里从源码跑网关（[dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/README.zh_CN.md#开发) 的 `make dev-api` / `make dev-web`，或者 `go build` 后用 `SQLITE_PATH=<路径>/dramaclaw/state/newapi/one-api.db` 启动二进制）。
 
 <br/>
 

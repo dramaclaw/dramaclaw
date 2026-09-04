@@ -77,6 +77,19 @@ CE defaults to `ST_EDITION=ce`, no-login single local user, and in-process inlin
 curl http://localhost:8780/api/v1/config   # a 200 response means it's working
 ```
 
+### 4. Gateway (only for Custom / Local + Official Hybrid mode)
+
+Official mode needs nothing else. For the other two modes the API expects a gateway on `127.0.0.1:3000` (the `NEWAPI_ADMIN_BASE_URL` default in `.env`) whose SQLite file is `./state/newapi/one-api.db`, which is what **Initialize** in Settings writes to. Run the published image with that directory mounted:
+
+```bash
+mkdir -p state/newapi
+docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
+  -v "$PWD/state/newapi:/data" \
+  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.1
+```
+
+or build and run the gateway from the sibling `dramaclaw-gateway` checkout with `SQLITE_PATH` pointing at that file. See [Configuring Models](configuring-models.md) for the mode setup.
+
 ---
 
 ## Optional: world features (3DGS / SHARP depth)

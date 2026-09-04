@@ -309,7 +309,18 @@ cp .env.example .env && $EDITOR .env
 uv run novelvideo api --port 8780   # start the REST API (CE defaults to inline tasks, no Ray/Redis)
 ```
 
-Frontend: `cd frontend && pnpm install && pnpm dev`. The gateway has its own dev loop (`make dev-api` / `make dev-web`) in the [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway#develop) repo.
+Frontend in a second terminal: `cd frontend && pnpm install && pnpm dev`.
+
+**Gateway.** In **Official** mode you need nothing else. For **Custom** or **Local + Official Hybrid** the API expects a gateway on `127.0.0.1:3000` whose SQLite file is `./state/newapi/one-api.db` (that is what "Initialize" in Settings writes to; `NEWAPI_ADMIN_BASE_URL` in `.env` already points there). Either run the published image with that directory mounted:
+
+```bash
+mkdir -p state/newapi
+docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
+  -v "$PWD/state/newapi:/data" \
+  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.1
+```
+
+or run the gateway from source in the sibling checkout (`make dev-api` / `make dev-web` in [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway#develop), or `go build` and start the binary with `SQLITE_PATH=<path to>/dramaclaw/state/newapi/one-api.db`).
 
 <br/>
 

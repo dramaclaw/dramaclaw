@@ -77,6 +77,19 @@ CE 默认 `ST_EDITION=ce`、免登录单本地用户、任务进程内 inline �
 curl http://localhost:8780/api/v1/config   # 返回 200 即正常
 ```
 
+### 4. 网关（仅自定义 / 本地 + 官方混合模式需要）
+
+官方模式什么都不用再跑。另外两种模式下，API 需要一个跑在 `127.0.0.1:3000` 的网关（`.env` 里 `NEWAPI_ADMIN_BASE_URL` 的默认值），且它的 SQLite 文件在 `./state/newapi/one-api.db`，设置页的「初始化」写的就是这个文件。用发布镜像并把这个目录挂进去：
+
+```bash
+mkdir -p state/newapi
+docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
+  -v "$PWD/state/newapi:/data" \
+  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.1
+```
+
+或者在旁边的 `dramaclaw-gateway` checkout 里构建并用 `SQLITE_PATH` 指向该文件来启动。模式配置见[配置模型供应商](configuring-models.md)。
+
 ---
 
 ## 可选:world 特性(3DGS / SHARP 深度)
