@@ -25,6 +25,11 @@ vi.mock("react-i18next", () => ({
     t: (key: string, options?: Record<string, unknown>) =>
       options ? `${key}:${Object.values(options).join(",")}` : key,
   }),
+  // `nodes/index.ts` 把 ThreeDWorldNode 一起拉进来，它链到 `src/i18n/index.ts`，
+  // 而那个模块在模块作用域就 `.use(initReactI18next)`。整份 mock 掉 react-i18next
+  // 就必须连这个导出一起给，否则整个套件在收集阶段就炸（症状是「0 test」，
+  // 跟本文件的断言毫无关系）。这里只要一个不做事的 i18next 插件对象。
+  initReactI18next: { type: "3rdParty", init: () => {} },
 }));
 
 // 编辑器是 lazy 的且会拉 three；节点测试只关心卡片和开关接线。
