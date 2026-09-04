@@ -4972,6 +4972,15 @@ def _build_claude_env(
     if project:
         env["DRAMACLAW_PROJECT_ID"] = project
         env["SUPERTALE_PROJECT_ID"] = project
+    # Never let deprecated name/UUID selectors inherited from the host
+    # override the canonical project-id scope supplied for this turn.
+    for name in (
+        "DRAMACLAW_PROJECT",
+        "DRAMACLAW_PROJECT_UUID",
+        "SUPERTALE_PROJECT",
+        "SUPERTALE_PROJECT_UUID",
+    ):
+        env.pop(name, None)
     env["DRAMACLAW_API_URL"] = _load_api_url()
     env["SUPERTALE_API_URL"] = _load_api_url()
     env["DRAMACLAW_AGENT_TOKEN"] = agent_token
@@ -5053,6 +5062,15 @@ def _build_codex_env(
     if project:
         env["DRAMACLAW_PROJECT_ID"] = project
         env["SUPERTALE_PROJECT_ID"] = project
+    # Never let deprecated name/UUID selectors inherited from the host
+    # override the canonical project-id scope supplied for this turn.
+    for name in (
+        "DRAMACLAW_PROJECT",
+        "DRAMACLAW_PROJECT_UUID",
+        "SUPERTALE_PROJECT",
+        "SUPERTALE_PROJECT_UUID",
+    ):
+        env.pop(name, None)
     env["DRAMACLAW_API_URL"] = _load_api_url()
     env["SUPERTALE_API_URL"] = _load_api_url()
     env.pop("DRAMACLAW_AGENT_TOKEN", None)
@@ -5113,6 +5131,8 @@ def _build_codex_env(
         "OPENAI_API_KEY",
         "OPENROUTER_API_KEY",
         "ST_ORG_GATEWAY_API_KEY",
+        "SUPERTALE_API_KEY",
+        "SUPERTALE_API_TOKEN",
         "VOLCENGINE_API_KEY",
     ):
         child_env.pop(name, None)
