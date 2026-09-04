@@ -172,6 +172,7 @@ from novelvideo.freezone.agent_product_operations import (
     bind_agent_product_task,
     create_agent_product_operation,
     finish_agent_product_operation,
+    list_agent_product_operations_for_session,
     read_agent_generation_session,
     read_agent_product_operation,
     save_agent_generation_session,
@@ -4779,6 +4780,225 @@ async def delete_freezone_agent_config_item(
 def _workflow_draft_api_data(draft: dict[str, Any]) -> dict[str, Any]:
     """Expose the non-monetary draft state owned by CE."""
     return dict(draft)
+
+
+def _validate_agent_generation_session_payload(
+    *,
+    state_dir: Path,
+    generation_session_id: str,
+    project_id: str,
+    canvas_id: str,
+    manifest: dict[str, Any],
+    draft: dict[str, Any],
+    available_recipe_ids: set[str],
+) -> None:
+    """Validate Skill Studio output against durable server-side admission state."""
+
+    def reject(message: str) -> None:
+        raise ValueError(f"invalid generation manifest: {message}")
+
+    if str(manifest.get("generation_session_id") or "").strip() != generation_session_id:
+        reject("generation session identity mismatch")
+    generation_attempt_id = str(manifest.get("generation_attempt_id") or "").strip()
+    if not generation_attempt_id:
+        reject("generation_attempt_id is required")
+
+    artifact_mode = str(manifest.get("artifact_mode") or "").strip()
+    if artifact_mode not in {"skill_only", "recipe_only", "skill_and_recipes"}:
+        reject("artifact_mode is unsupported")
+    skill_manifest = manifest.get("skill")
+    if not isinstance(skill_manifest, dict):
+        reject("skill must be an object")
+    skill_generate = skill_manifest.get("generate") is True
+    skill_id = str(skill_manifest.get("id") or "").strip()
+    if skill_generate and not skill_id:
+        reject("generated Skill id is required")
+    expected_skill_generate = artifact_mode in {"skill_only", "skill_and_recipes"}
+    if skill_generate != expected_skill_generate:
+        reject("artifact_mode does not match Skill generation")
+
+    recipe_entries = manifest.get("recipes")
+    if not isinstance(recipe_entries, list):
+        reject("recipes must be an array")
+    generated_recipes: dict[int, str] = {}
+    reused_recipe_ids: set[str] = set()
+    seen_recipe_ids: set[str] = set()
+    for entry in recipe_entries:
+        if not isinstance(entry, dict):
+            reject("every Recipe entry must be an object")
+        recipe_id = str(entry.get("id") or "").strip()
+        if not recipe_id or recipe_id in seen_recipe_ids:
+            reject("Recipe ids must be non-empty and unique")
+        seen_recipe_ids.add(recipe_id)
+        generates = entry.get("generate") is True
+        reuses = entry.get("reuse") is True
+        if generates == reuses:
+            reject(f"Recipe {recipe_id} must declare exactly one of generate or reuse")
+        if reuses:
+            if recipe_id not in available_recipe_ids:
+                reject(f"reused Recipe is unavailable: {recipe_id}")
+            reused_recipe_ids.add(recipe_id)
+            continue
+        try:
+            output_index = int(entry.get("output_index"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid generation manifest: Recipe {recipe_id} output_index is invalid"
+            ) from exc
+        if output_index < 0 or output_index in generated_recipes:
+            reject("generated Recipe output indexes must be unique non-negative integers")
+        if str(entry.get("generation_attempt_id") or "").strip() != generation_attempt_id:
+            reject(f"generated Recipe {recipe_id} uses another generation attempt")
+        generated_recipes[output_index] = recipe_id
+
+    if set(generated_recipes) != set(range(len(generated_recipes))):
+        reject("generated Recipe output indexes must be contiguous from zero")
+    if artifact_mode == "skill_only" and generated_recipes:
+        reject("skill_only cannot generate Recipes")
+    if artifact_mode == "recipe_only" and not generated_recipes:
+        reject("recipe_only must generate at least one Recipe")
+    if artifact_mode == "skill_and_recipes" and not generated_recipes:
+        reject("skill_and_recipes must generate at least one Recipe")
+
+    if draft.get("manifest") != manifest:
+        reject("draft manifest does not match the submitted manifest")
+    if str(draft.get("project_id") or project_id).strip() != project_id:
+        reject("draft belongs to another project")
+    if str(draft.get("canvas_id") or canvas_id).strip() != canvas_id:
+        reject("draft belongs to another canvas")
+    try:
+        expected_recipe_count = int(draft.get("expected_recipe_count") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "invalid generation manifest: expected_recipe_count is invalid"
+        ) from exc
+    if expected_recipe_count != len(generated_recipes):
+        reject("expected Recipe count does not match generated Recipe manifest")
+
+    outline = draft.get("outline")
+    if generated_recipes or reused_recipe_ids:
+        if not isinstance(outline, dict):
+            reject("Recipe generation and reuse require an outline")
+        stages = outline.get("stages")
+        if not isinstance(stages, list):
+            reject("outline stages must be an array")
+        outline_generated: set[str] = set()
+        outline_reused: set[str] = set()
+        for stage in stages:
+            if not isinstance(stage, dict):
+                reject("every outline stage must be an object")
+            recipe_id = str(stage.get("recipe_id") or stage.get("id") or "").strip()
+            if not recipe_id:
+                reject("every outline stage must identify a Recipe")
+            if str(stage.get("reuse") or "").strip().lower() == "existing":
+                outline_reused.add(recipe_id)
+            else:
+                outline_generated.add(recipe_id)
+        if outline_generated != set(generated_recipes.values()):
+            reject("outline generated Recipes do not match the manifest")
+        if outline_reused != reused_recipe_ids:
+            reject("outline reused Recipes do not match the manifest")
+        try:
+            outline_expected = int(outline.get("expected_recipe_count") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "invalid generation manifest: outline expected_recipe_count is invalid"
+            ) from exc
+        if outline_expected != len(generated_recipes):
+            reject("outline Recipe count does not match the manifest")
+
+    operations = draft.get("operations")
+    if not isinstance(operations, dict):
+        reject("draft operations must be an object")
+    recipe_operations = operations.get("recipes")
+    if not isinstance(recipe_operations, dict):
+        reject("draft Recipe operations must be an object")
+    normalized_recipe_operations: dict[int, dict[str, Any]] = {}
+    for raw_index, snapshot in recipe_operations.items():
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "invalid generation manifest: Recipe operation index is invalid"
+            ) from exc
+        if index in normalized_recipe_operations or not isinstance(snapshot, dict):
+            reject("Recipe operation indexes must be unique objects")
+        normalized_recipe_operations[index] = snapshot
+    if set(normalized_recipe_operations) != set(generated_recipes):
+        reject("Recipe operation count does not match generated Recipe manifest")
+
+    admitted = {
+        operation["operation_id"]: operation
+        for operation in list_agent_product_operations_for_session(
+            project_dir=state_dir,
+            generation_session_id=generation_session_id,
+        )
+    }
+    used_operation_ids: set[str] = set()
+
+    def canonical_operation(
+        snapshot: Any, *, product_kind: str, artifact_id: str, recipe_index: int | None
+    ) -> None:
+        if not isinstance(snapshot, dict):
+            reject(f"{product_kind} operation is required")
+        operation_id = str(snapshot.get("operation_id") or "").strip()
+        operation = admitted.get(operation_id)
+        if operation is None or operation_id in used_operation_ids:
+            reject(f"{product_kind} operation is unavailable or reused")
+        used_operation_ids.add(operation_id)
+        if operation.get("project_id") != project_id:
+            reject(f"{product_kind} operation belongs to another project")
+        if operation.get("canvas_id") != canvas_id:
+            reject(f"{product_kind} operation belongs to another canvas")
+        if operation.get("product_kind") != product_kind:
+            reject(f"operation kind does not match {product_kind}")
+        if str(operation.get("artifact_id") or "").strip() != artifact_id:
+            reject(f"{product_kind} operation artifact does not match the manifest")
+        metadata = operation.get("metadata")
+        if not isinstance(metadata, dict) or metadata.get("manifest") != manifest:
+            reject(f"{product_kind} operation was admitted for another manifest")
+        if recipe_index is not None and metadata.get("recipe_index") != recipe_index:
+            reject("Recipe operation index does not match the manifest")
+
+    skill_operation = operations.get("skill")
+    if skill_generate:
+        canonical_operation(
+            skill_operation,
+            product_kind="workflow_generate",
+            artifact_id=skill_id,
+            recipe_index=None,
+        )
+    elif skill_operation is not None and skill_operation != {}:
+        reject("manifest does not admit a Skill operation")
+    for index, recipe_id in generated_recipes.items():
+        canonical_operation(
+            normalized_recipe_operations[index],
+            product_kind="recipe_generate",
+            artifact_id=recipe_id,
+            recipe_index=index,
+        )
+
+    submitted_skill = draft.get("skill")
+    if isinstance(submitted_skill, dict) and submitted_skill:
+        if not skill_generate or str(submitted_skill.get("id") or "").strip() != skill_id:
+            reject("submitted Skill does not match the generated Skill manifest")
+    submitted_recipes = draft.get("recipes")
+    if not isinstance(submitted_recipes, dict):
+        reject("submitted Recipes must be an object")
+    for raw_index, recipe in submitted_recipes.items():
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "invalid generation manifest: submitted Recipe index is invalid"
+            ) from exc
+        expected_id = generated_recipes.get(index)
+        if (
+            expected_id is None
+            or not isinstance(recipe, dict)
+            or str(recipe.get("id") or "").strip() != expected_id
+        ):
+            reject("submitted Recipe does not match the generated Recipe manifest")
 
 
 async def _record_recipe_compile_product_evidence(
@@ -13345,6 +13565,23 @@ async def create_canvas_workflow_draft(
         operation is None or operation.get("product_kind") != "workflow_result"
     ):
         raise HTTPException(400, "workflow result operation is unavailable")
+    if operation is not None:
+        compiled = body.get("compiled") if isinstance(body.get("compiled"), dict) else {}
+        compiled_skill_id = str(compiled.get("skill_id") or "").strip()
+        operation_skill_id = str(
+            (operation.get("metadata") or {}).get("skill_id") or ""
+        ).strip()
+        artifact_id = str(operation.get("artifact_id") or "").strip()
+        artifact_skill_id = artifact_id.split("@", 1)[0]
+        if (
+            not compiled_skill_id
+            or operation_skill_id != compiled_skill_id
+            or artifact_skill_id != compiled_skill_id
+        ):
+            raise HTTPException(
+                400,
+                "workflow result operation does not match compiled Skill",
+            )
     if (
         operation
         and operation.get("status") == "delivered"
@@ -13684,19 +13921,37 @@ async def put_agent_generation_session(
     body: dict = Body(...),
     user: dict = Depends(get_api_user),
 ):
-    ctx, _username, _project_name, project_dir, _output_dir = (
+    ctx, username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user)
     )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
     manifest = body.get("manifest") if isinstance(body.get("manifest"), dict) else {}
     draft = body.get("draft") if isinstance(body.get("draft"), dict) else {}
-    if str(manifest.get("generation_session_id") or "") != generation_session_id:
-        raise HTTPException(400, "generation manifest identity mismatch")
+    canvas_id = str(body.get("canvas_id") or "").strip()
+    available_recipe_ids = {
+        str(item.get("id") or "").strip()
+        for item in list_user_agent_config_items(username, "recipes")
+        if item.get("enabled") is not False and str(item.get("id") or "").strip()
+    }
+    try:
+        await asyncio.to_thread(
+            _validate_agent_generation_session_payload,
+            state_dir=state_dir,
+            generation_session_id=generation_session_id,
+            project_id=ctx.project_id,
+            canvas_id=canvas_id,
+            manifest=manifest,
+            draft=draft,
+            available_recipe_ids=available_recipe_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     session = await asyncio.to_thread(
         save_agent_generation_session,
-        project_dir=_canvas_state_project_dir(ctx, project_dir),
+        project_dir=state_dir,
         generation_session_id=generation_session_id,
         project_id=ctx.project_id,
-        canvas_id=str(body.get("canvas_id") or ""),
+        canvas_id=canvas_id,
         manifest=manifest,
         draft=draft,
     )

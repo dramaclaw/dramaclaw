@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -53,6 +54,70 @@ def workflow_run_client(monkeypatch, tmp_path):
     client = TestClient(app)
     client.state_dir = tmp_path
     return client
+
+
+def _recipe_generation_session_payload(
+    client: TestClient,
+    *,
+    session_id: str,
+    reused_recipe_id: str = "outdoor-stage-duel-storyboard",
+    operation_session_id: str | None = None,
+    operation_kind: str = "recipe_generate",
+    operation_artifact_id: str | None = None,
+) -> tuple[dict, dict]:
+    generated_recipe_id = f"generated-{session_id}"
+    manifest = {
+        "generation_session_id": session_id,
+        "generation_attempt_id": f"attempt-{session_id}",
+        "artifact_mode": "recipe_only",
+        "skill": {"generate": False, "id": ""},
+        "recipes": [
+            {
+                "generate": True,
+                "id": generated_recipe_id,
+                "generation_attempt_id": f"attempt-{session_id}",
+                "output_index": 0,
+            },
+            {"reuse": True, "id": reused_recipe_id},
+        ],
+    }
+    operation_response = client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations",
+        json={
+            "product_kind": operation_kind,
+            "generation_session_id": operation_session_id or session_id,
+            "canvas_id": "default",
+            "artifact_id": operation_artifact_id or generated_recipe_id,
+            "normalized_inputs_hash": f"inputs-{session_id}",
+            "metadata": {"manifest": manifest, "recipe_index": 0},
+        },
+    )
+    assert operation_response.status_code == 200
+    operation = operation_response.json()["data"]
+    draft = {
+        "project_id": "proj_demo",
+        "canvas_id": "default",
+        "expected_recipe_count": 1,
+        "outline": {
+            "expected_recipe_count": 1,
+            "stages": [
+                {
+                    "id": generated_recipe_id,
+                    "recipe_id": generated_recipe_id,
+                    "reuse": "new",
+                },
+                {
+                    "id": reused_recipe_id,
+                    "recipe_id": reused_recipe_id,
+                    "reuse": "existing",
+                },
+            ],
+        },
+        "manifest": manifest,
+        "operations": {"recipes": {"0": operation}},
+        "recipes": {},
+    }
+    return manifest, draft
 
 
 def test_workflow_run_api_lifecycle(workflow_run_client: TestClient) -> None:
@@ -146,6 +211,7 @@ def test_metered_workflow_result_is_delivered_once_before_canvas_confirmation(
             "canvas_id": "default",
             "artifact_id": "video-ad@1.0.0",
             "normalized_inputs_hash": "inputs-a",
+            "metadata": {"skill_id": "video-ad", "skill_version": "1.0.0"},
         },
     )
     assert operation_response.status_code == 200
@@ -200,6 +266,151 @@ def test_metered_workflow_result_is_delivered_once_before_canvas_confirmation(
         + operation["operation_id"]
     ).json()["data"]
     assert after_confirm["status"] == "delivered"
+
+
+def test_workflow_result_rejects_operation_for_another_compiled_skill(
+    workflow_run_client: TestClient,
+) -> None:
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
+    )
+
+    operation = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations",
+        json={
+            "product_kind": "workflow_result",
+            "generation_session_id": "wrong-skill-session",
+            "canvas_id": "default",
+            "artifact_id": "other-skill@1.0.0",
+            "normalized_inputs_hash": "wrong-skill-inputs",
+            "metadata": {"skill_id": "other-skill", "skill_version": "1.0.0"},
+        },
+    ).json()["data"]
+    bind_agent_product_model_execution(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation["operation_id"],
+        model_call_id="agent-turn:wrong-skill",
+        executed_at=1.0,
+        source="server_observed_agent_turn",
+    )
+
+    response = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-drafts",
+        json={
+            "operation_id": operation["operation_id"],
+            "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+            "compiled": {
+                "ok": True,
+                "skill_id": "video-ad",
+                "plan": {"nodes": [], "edges": [], "phases": []},
+            },
+        },
+    )
+
+    assert response.status_code == 400
+    assert "does not match compiled Skill" in response.json()["detail"]
+
+
+def test_generation_session_validates_manifest_against_durable_operations(
+    workflow_run_client: TestClient,
+) -> None:
+    session_id = "validated-session"
+    manifest, draft = _recipe_generation_session_payload(
+        workflow_run_client,
+        session_id=session_id,
+    )
+
+    response = workflow_run_client.put(
+        f"/api/v1/projects/proj_demo/freezone/agent-generation-sessions/{session_id}",
+        json={"canvas_id": "default", "manifest": manifest, "draft": draft},
+    )
+
+    assert response.status_code == 200
+    saved = response.json()["data"]
+    assert saved["manifest"] == manifest
+    assert saved["draft"]["operations"]["recipes"]["0"]["product_kind"] == (
+        "recipe_generate"
+    )
+
+
+def test_generation_session_rejects_unavailable_reused_recipe(
+    workflow_run_client: TestClient,
+) -> None:
+    session_id = "missing-reuse-session"
+    manifest, draft = _recipe_generation_session_payload(
+        workflow_run_client,
+        session_id=session_id,
+        reused_recipe_id="recipe-that-does-not-exist",
+    )
+
+    response = workflow_run_client.put(
+        f"/api/v1/projects/proj_demo/freezone/agent-generation-sessions/{session_id}",
+        json={"canvas_id": "default", "manifest": manifest, "draft": draft},
+    )
+
+    assert response.status_code == 400
+    assert "reused Recipe is unavailable" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        ("missing_operation", "operation count does not match"),
+        ("wrong_recipe_result", "submitted Recipe does not match"),
+    ],
+)
+def test_generation_session_rejects_manifest_draft_mismatches(
+    workflow_run_client: TestClient,
+    mutation: str,
+    expected_error: str,
+) -> None:
+    session_id = f"mismatch-{mutation}"
+    manifest, draft = _recipe_generation_session_payload(
+        workflow_run_client,
+        session_id=session_id,
+    )
+    draft = deepcopy(draft)
+    if mutation == "missing_operation":
+        draft["operations"]["recipes"] = {}
+    else:
+        draft["recipes"] = {"0": {"id": "another-recipe"}}
+
+    response = workflow_run_client.put(
+        f"/api/v1/projects/proj_demo/freezone/agent-generation-sessions/{session_id}",
+        json={"canvas_id": "default", "manifest": manifest, "draft": draft},
+    )
+
+    assert response.status_code == 400
+    assert expected_error in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("operation_overrides", "expected_error"),
+    [
+        ({"operation_session_id": "another-session"}, "operation is unavailable"),
+        ({"operation_kind": "workflow_generate"}, "operation kind does not match"),
+        ({"operation_artifact_id": "another-artifact"}, "artifact does not match"),
+    ],
+)
+def test_generation_session_rejects_wrong_operation_identity(
+    workflow_run_client: TestClient,
+    operation_overrides: dict,
+    expected_error: str,
+) -> None:
+    session_id = f"operation-identity-{expected_error.split()[0]}"
+    manifest, draft = _recipe_generation_session_payload(
+        workflow_run_client,
+        session_id=session_id,
+        **operation_overrides,
+    )
+
+    response = workflow_run_client.put(
+        f"/api/v1/projects/proj_demo/freezone/agent-generation-sessions/{session_id}",
+        json={"canvas_id": "default", "manifest": manifest, "draft": draft},
+    )
+
+    assert response.status_code == 400
+    assert expected_error in response.json()["detail"]
 
 
 @pytest.mark.asyncio
