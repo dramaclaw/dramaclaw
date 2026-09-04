@@ -1,0 +1,93 @@
+# DramaClaw CE — 镜像模式：三个服务全部拉已发布镜像（不构建）。这是三服务运行定义的唯一来源，
+# docker-compose.yml（源码构建）通过 extends 复用它。
+#   cp .env.example .env && docker compose -f docker-compose.release.yml up -d
+# 版本：DRAMACLAW_VERSION（api/web）与 DRAMACLAW_GATEWAY_VERSION（网关）来自 .env，未设时用下面的默认值；
+#      每次 CE / 网关发版由 CI 开 PR 抬默认值。国内拉取慢：.env 设 DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw（ACR 只放钉 tag）。
+# 三服务：api + 内置 newapi 网关（DramaClaw 维护的 dramaclaw-gateway，:3000）+ web（:8080）。
+# 首启打开 http://localhost:8080 → 设置 → 模型：选「官方」粘贴 DC key、或「自定义」一键初始化内置网关、或「本地 + 官方混合」。
+# 默认模式是官方，此时内置网关只是常驻待命；.env 写 NEWAPI_PROVISIONER_ENABLED=false 可禁用一键初始化。
+services:
+  api:
+    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw:${DRAMACLAW_VERSION:-2.0.2}
+    restart: unless-stopped
+    # 运行时从宿主 .env 注入 model/LLM key；镜像版允许没有 .env（首启后再补也行）。
+    # environment: 块仍覆盖此处同名变量，保持 CE inline 模式强制不变。
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ST_EDITION: ce
+      ST_CONTROL_PLANE_DSN: ""
+      ST_REDIS_URL: ""
+      ST_CELERY_BROKER_URL: ""
+      ST_CELERY_RESULT_BACKEND: ""
+      NOVELVIDEO_DATA_ROOT: /data
+      NOVELVIDEO_OUTPUT_DIR: /data/output
+      NOVELVIDEO_STATE_DIR: /data/state
+      NOVELVIDEO_RUNTIME_DIR: /data/runtime
+      DRAMACLAW_CHAT_BACKEND: hermes
+      HERMES_CLI_PATH: /root/.local/bin/hermes
+      # 运行时用哪个网关由应用设置（settings.db 的 model_gateway_mode）决定，CE 的网关路由不回退到 env；
+      # NEWAPI_BASE_URL 只是兜底，默认官方地址，与桌面版 main.js 一致。
+      NEWAPI_BASE_URL: "${NEWAPI_BASE_URL:-https://relayclaw.cdnfg.com/v1}"
+      # 以下四项只给 provisioner 用（用户切到「自定义 / 本地 + 官方混合」时一键初始化内置网关），
+      # 由 compose 强制覆盖 .env 里的 127.0.0.1 地址（进容器是错的）。
+      NEWAPI_ADMIN_BASE_URL: http://newapi:3000
+      NEWAPI_SQL_DSN: local
+      NEWAPI_SQLITE_PATH: /newapi-data/one-api.db
+      NEWAPI_ADMIN_USERNAME: root
+      # 默认开；用户在同目录 .env 里写 NEWAPI_PROVISIONER_ENABLED=false 即可关（compose 插值读 .env）。
+      NEWAPI_PROVISIONER_ENABLED: "${NEWAPI_PROVISIONER_ENABLED:-true}"
+    # 宿主发布端口可配，便于一机多套（每套换 ST_API_PORT + 换 -p 项目名）。
+    # 冒号右侧 8780 是容器内端口，固定不变（web 经内部网络访问它）。
+    ports:
+      - "${ST_API_PORT:-8780}:8780"
+    volumes:
+      - ce-data:/data
+      - newapi-data:/newapi-data
+    # 只等网关容器启动，不等其健康：官方模式用户不用网关，网关拉不到/端口冲突不能拖垮 api。
+    depends_on:
+      newapi:
+        condition: service_started
+
+  # 内置 newAPI 网关（OpenAI 兼容），DramaClaw 维护的修改版，源码 https://github.com/dramaclaw/dramaclaw-gateway 。
+  # 默认使用 newapi-data 卷里的 SQLite；DramaClaw 通过共享卷自动初始化管理员、运行令牌、渠道与模型映射。
+  newapi:
+    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw-gateway:${DRAMACLAW_GATEWAY_VERSION:-v1.0.0-rc.24-dramaclaw.1}
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      # 留空 = 内置 SQLite（容器内 /data/one-api.db），与 api 侧 /newapi-data/one-api.db 是同一文件。
+      SQL_DSN: ""
+    # 默认只绑本机回环：网关的首启 setup 页在初始化前对任何能访问 3000 的人开放。
+    # 需要从别的机器进网关后台时，.env 设 ST_NEWAPI_BIND=0.0.0.0。
+    ports:
+      - "${ST_NEWAPI_BIND:-127.0.0.1}:${ST_NEWAPI_PORT:-3000}:3000"
+    volumes:
+      - newapi-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/status >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # SPA served by nginx, reverse-proxying /api + /static to the api service.
+  # The image's BACKEND_HOST/PORT defaults target the EE/Helm deploy; here
+  # they are overridden to the compose `api` service (internal port 8780). Open
+  # the app at http://localhost:8080 — the browser only ever talks to web.
+  web:
+    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw-frontend:${DRAMACLAW_VERSION:-2.0.2}
+    restart: unless-stopped
+    environment:
+      BACKEND_HOST: api
+      BACKEND_PORT: "8780"
+    # 浏览器打开的就是这个端口（默认 8080）。一机多套时换 ST_WEB_PORT。
+    ports:
+      - "${ST_WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+
+volumes:
+  ce-data:
+  newapi-data:

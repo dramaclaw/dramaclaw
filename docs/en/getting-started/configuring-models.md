@@ -276,6 +276,6 @@ Enter Cloud name, API Key, API Secret, and an optional folder. Find them under *
 
 - `src/novelvideo/official_media_models.json`: CE official media models and capabilities.
 - `.env.example`: environment variable reference.
-- `docker-compose.yml`: the single deployment file (api + bundled NewAPI + web); the gateway mode is chosen in Settings.
+- `docker-compose.yml` (source build) / `docker-compose.release.yml` (images): the deployment files (api + bundled NewAPI + web); the gateway mode is chosen in Settings.
 - [Self-Hosting Handbook](../guides/self-hosting.md)
 - [Environment Variable Reference](../reference/environment-variables.md)

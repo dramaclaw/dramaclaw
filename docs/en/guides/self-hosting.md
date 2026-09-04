@@ -7,6 +7,8 @@
 
 CE ships three containers: `api` + `newapi` (the bundled DramaClaw gateway, idle until you switch to Custom or Local + Official Hybrid mode) + `web`, with **no PostgreSQL / no Redis / no Celery** (`ST_EDITION=ce`; tasks run inline within the process). Models go through the official DramaClaw gateway by default.
 
+Two compose files ship in the repo: `docker-compose.yml` builds all three services from source (the default entry point — `docker compose up -d --build`), and `docker-compose.release.yml` only pulls published images (`docker compose -f docker-compose.release.yml up -d`). `docker-compose.yml` extends `docker-compose.release.yml` for the shared runtime definition (env / ports / volumes / healthchecks) and only adds `build:` plus local image names.
+
 ## 1. Prerequisites
 
 - Docker + `docker compose`.
@@ -22,14 +24,22 @@ cd dramaclaw
 cp .env.example .env
 ```
 
-Key points in `docker-compose.yml` (already set for you, no changes needed):
+Two files, already set for you, no changes needed:
+
+| File | Mode | Command |
+|---|---|---|
+| `docker-compose.yml` | Source build (default) — builds `api`, `web`, and the bundled gateway from the checkout / git `main` | `docker compose up -d --build` |
+| `docker-compose.release.yml` | Image only — pulls published images, never builds | `docker compose -f docker-compose.release.yml up -d` |
+
+Key points shared by both (defined once in `docker-compose.release.yml`, reused by `docker-compose.yml` via `extends`):
 
 | Item | Value | Notes |
 |---|---|---|
 | Services | `api` + `newapi` + `web` | No PG/Redis; `newapi` is the bundled gateway |
-| Images | `${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/...` | Pulled from Docker Hub; set `DRAMACLAW_IMAGE_PREFIX` in `.env` to use the ACR mirror (pinned tags only) |
-| Versions | `DRAMACLAW_VERSION` (api/web), `DRAMACLAW_GATEWAY_VERSION` | Defaults: `latest` / the gateway tag baked into the file |
+| Images (release) | `${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/...` | Pulled from Docker Hub; set `DRAMACLAW_IMAGE_PREFIX` in `.env` to use the ACR mirror (pinned tags only) |
+| Versions (release) | `DRAMACLAW_VERSION` (api/web), `DRAMACLAW_GATEWAY_VERSION` | Defaults: `2.0.2` / the gateway tag baked into the file |
 | Port | `8780:8780` | REST API |
+| Gateway admin port | `${ST_NEWAPI_BIND:-127.0.0.1}:${ST_NEWAPI_PORT:-3000}:3000` | Bound to `127.0.0.1` by default; set `ST_NEWAPI_BIND=0.0.0.0` in `.env` to widen it |
 | Enforced environment | `ST_EDITION=ce`, control-plane/Redis/Celery cleared | CE mode cannot be downgraded |
 | Data volume | `ce-data:/data` (output at `/data/output`) | Persists project databases, settings, and generated media |
 
@@ -51,10 +61,11 @@ Local NewAPI must map DramaClaw's logical models to real upstream models. The re
 ## 4. Start / Stop
 
 ```bash
-docker compose up -d             # start (pulls images on first run)
-docker compose ps                # status
-docker compose logs -f api       # logs
-docker compose down              # stop (keeps the data volume)
+docker compose up -d --build                              # source build: start (builds on first run)
+docker compose -f docker-compose.release.yml up -d         # image mode: start (pulls images on first run)
+docker compose ps                                          # status
+docker compose logs -f api                                 # logs
+docker compose down                                        # stop (keeps the data volume)
 ```
 
 ## 5. Where the data lives / Backup, restore & migrate
@@ -94,15 +105,23 @@ docker run --rm -v dramaclaw-ce_newapi-data:/data -v "$PWD":/backup alpine \
 
 ## 6. Upgrades
 
-The compose file only pulls published images, so upgrading is a version bump:
+Source build:
+
+```bash
+git pull
+# edit .env: DRAMACLAW_VERSION=2.1.0 (and DRAMACLAW_GATEWAY_VERSION if the release notes say so)
+docker compose up -d --build
+```
+
+Image mode:
 
 ```bash
 # edit .env: DRAMACLAW_VERSION=2.1.0 (and DRAMACLAW_GATEWAY_VERSION if the release notes say so)
-docker compose pull
-docker compose up -d
+docker compose -f docker-compose.release.yml pull
+docker compose -f docker-compose.release.yml up -d
 ```
 
-Your `.env` is never touched by the upgrade. The `ce-data` and `newapi-data` volumes are reused. Users of the old `docker-compose.selfhosted*.yml` stacks: back up `newapi-data` first — the gateway image jumps several versions and migrates its SQLite schema on first start.
+Your `.env` is never touched by the upgrade. The `ce-data` and `newapi-data` volumes are reused.
 
 If an older release wrote media to `/app/output` inside the container, run the one-time migration **before** starting the new version (zip users: download `scripts/migrate_docker_output.py` from GitHub instead of `git pull`):
 
@@ -122,7 +141,17 @@ docker compose up -d
 
 The script copies only missing files, never overwrites or deletes the source, and backs up `projects.db` before updating project paths. Files that existed only in an already-removed container layer cannot be recovered from the data volume.
 
-Building from source instead? Add the build override: `docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build` (set `DRAMACLAW_VERSION=dev` in `.env` first).
+### Upgrading from a previous checkout
+
+`docker-compose.selfhosted.yml` and `docker-compose.selfhosted.release.yml` have been removed. Use the two files above instead — service names and the `ce-data` / `newapi-data` volumes are unchanged, so existing data carries over as-is.
+
+| Before | Now |
+|---|---|
+| `docker compose up -d --build` (official gateway, source build) | Same command; now also builds the bundled gateway (defaults to host-only, idle until used) |
+| `docker compose -f docker-compose.release.yml up -d` | Same command; the gateway image is now `claymorelab/dramaclaw-gateway` |
+| `docker compose -f docker-compose.selfhosted.yml up -d --build` | Use `docker compose up -d --build` instead; the `newapi-data` volume is reused — back it up first (rc.21 → rc.24 only adds tables) |
+| `docker compose -f docker-compose.selfhosted.release.yml up -d` | Use `docker compose -f docker-compose.release.yml up -d` instead; same as above |
+| `.env`'s `NEWAPI_BASE_URL` / `NEWAPI_API_KEY` / `ST_*_PORT` / `INSTALL_WORLD` / `NEWAPI_PROVISIONER_ENABLED` | Unchanged, still effective |
 
 ## 7. Troubleshooting
 
@@ -130,7 +159,7 @@ Building from source instead? Add the build override: `docker compose -f docker-
 |---|---|
 | Container won't start | `docker compose logs api`; usually the `.env` gateway address/key was not changed or is unreachable |
 | Port 8780 already in use | Change the left-hand value of `ports` in compose, e.g. `8888:8780` |
-| Port 3000 already in use (bundled gateway fails, `api` waits on it) | Set `ST_NEWAPI_PORT=<free port>` in `.env` and `docker compose up -d` again |
+| Port 3000 already in use (bundled gateway fails to start) | Set `ST_NEWAPI_PORT=<free port>` in `.env` and start the stack again. Note the gateway port is bound to `127.0.0.1` by default; `api` no longer waits on the gateway's health, so this does not block `api`. |
 | Model call errors | Confirm the gateway is reachable and that the `*_MODEL` names exist in the gateway backend |
 
 ## Related

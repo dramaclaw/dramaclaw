@@ -86,7 +86,7 @@ uv sync --extra world                       # 装 torch / ml-sharp / da2 等
 npm install -g @playcanvas/splat-transform  # PLY→SOG 压缩工具
 ```
 
-Docker:`INSTALL_WORLD=1 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`,再在 `.env` 写 `DRAMACLAW_VERSION=dev`。slim base 为 CPU;GPU 加速需 CUDA base + nvidia runtime。模型权重运行时自动下载,不烤进镜像。
+Docker:`INSTALL_WORLD=1 docker compose up -d --build`。slim base 为 CPU;GPU 加速需 CUDA base + nvidia runtime。模型权重运行时自动下载,不烤进镜像。
 
 > 不做 3D/体素相关流程可忽略本节,纯文本→成片不需要它。
 

@@ -86,7 +86,7 @@ uv sync --extra world                       # installs torch / ml-sharp / da2 an
 npm install -g @playcanvas/splat-transform  # PLY→SOG compression tool
 ```
 
-Docker: `INSTALL_WORLD=1 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build` then set `DRAMACLAW_VERSION=dev` in `.env`. The slim base is CPU-only; GPU acceleration needs a CUDA base + nvidia runtime. Model weights are downloaded automatically at runtime, not baked into the image.
+Docker: `INSTALL_WORLD=1 docker compose up -d --build`. The slim base is CPU-only; GPU acceleration needs a CUDA base + nvidia runtime. Model weights are downloaded automatically at runtime, not baked into the image.
 
 > If you're not doing any 3D/voxel workflows, you can ignore this section; plain text→finished video doesn't need it.
 

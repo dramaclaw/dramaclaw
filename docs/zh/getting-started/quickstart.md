@@ -15,7 +15,7 @@ DramaClaw 是社区版(CE),单机运行、无需 PostgreSQL / Redis。默认 `do
 ## 步骤
 
 ```bash
-# 1. 取得代码(或从下一个 Release 起到 Release 页下载 DramaClaw-compose-<tag>.zip)
+# 1. 取得代码
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 

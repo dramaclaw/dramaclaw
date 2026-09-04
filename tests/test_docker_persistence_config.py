@@ -7,37 +7,22 @@ import yaml
 
 
 REPOSITORY_ROOT = Path(__file__).parents[1]
-COMPOSE_FILE = "docker-compose.yml"
+RELEASE_FILE = "docker-compose.release.yml"
+SOURCE_FILE = "docker-compose.yml"
 IMAGE_PREFIX = "${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/"
-BUILD_OVERRIDE = "docker-compose.build.yml"
 OFFICIAL_GATEWAY_URL = "https://relayclaw.cdnfg.com/v1"
 
 
 def _compose() -> dict:
-    return yaml.safe_load((REPOSITORY_ROOT / COMPOSE_FILE).read_text())
+    return yaml.safe_load((REPOSITORY_ROOT / RELEASE_FILE).read_text())
 
 
-def test_repository_ships_only_base_compose_and_build_override() -> None:
+def test_repository_ships_only_source_and_release_compose_files() -> None:
     variants = sorted(
         {p.name for p in REPOSITORY_ROOT.glob("docker-compose*.y*ml")}
         | {p.name for p in REPOSITORY_ROOT.glob("compose.y*ml")}
     )
-    assert variants == ["docker-compose.build.yml", "docker-compose.yml"]
-
-
-def test_build_override_only_adds_build_blocks() -> None:
-    override = yaml.safe_load((REPOSITORY_ROOT / BUILD_OVERRIDE).read_text())
-    assert set(override) == {"services"}
-    services = override["services"]
-    assert set(services) == {"api", "web"}
-    for name, service in services.items():
-        assert set(service) == {"build"}, f"{name} may only declare build"
-    assert services["api"]["build"] == {
-        "context": ".",
-        "dockerfile": "Dockerfile",
-        "args": {"INSTALL_WORLD": "${INSTALL_WORLD:-0}"},
-    }
-    assert services["web"]["build"] == {"context": "./frontend", "dockerfile": "Dockerfile"}
+    assert variants == ["docker-compose.release.yml", "docker-compose.yml"]
 
 
 def test_compose_is_image_only_and_prefixed() -> None:
@@ -61,10 +46,13 @@ def test_gateway_is_the_dramaclaw_fork_pinned_by_variable() -> None:
 
 def test_ce_images_share_one_version_variable() -> None:
     services = _compose()["services"]
-    assert services["api"]["image"] == IMAGE_PREFIX + "dramaclaw:${DRAMACLAW_VERSION:-latest}"
+    assert services["api"]["image"] == IMAGE_PREFIX + "dramaclaw:${DRAMACLAW_VERSION:-2.0.2}"
     assert services["web"]["image"] == (
-        IMAGE_PREFIX + "dramaclaw-frontend:${DRAMACLAW_VERSION:-latest}"
+        IMAGE_PREFIX + "dramaclaw-frontend:${DRAMACLAW_VERSION:-2.0.2}"
     )
+    for name in ("api", "web"):
+        match = re.search(r"DRAMACLAW_VERSION:-(\d+\.\d+\.\d+)\}$", services[name]["image"])
+        assert match, services[name]["image"]
 
 
 def test_api_persists_generated_media_in_ce_data_volume() -> None:
@@ -88,7 +76,7 @@ def test_api_provisioner_env_matches_desktop_contract() -> None:
     assert env["NEWAPI_ADMIN_USERNAME"] == "root"
     assert env["NEWAPI_PROVISIONER_ENABLED"] == "${NEWAPI_PROVISIONER_ENABLED:-true}"
     assert "newapi-data:/newapi-data" in api["volumes"]
-    assert api["depends_on"] == {"newapi": {"condition": "service_healthy"}}
+    assert api["depends_on"] == {"newapi": {"condition": "service_started"}}
 
 
 def test_gateway_shares_sqlite_volume_and_has_healthcheck() -> None:
@@ -104,9 +92,46 @@ def test_compose_pins_env_file_long_syntax_ports_and_volumes() -> None:
     api = compose["services"]["api"]
     assert api["env_file"] == [{"path": ".env", "required": False}]
     assert api["ports"] == ["${ST_API_PORT:-8780}:8780"]
-    assert compose["services"]["newapi"]["ports"] == ["${ST_NEWAPI_PORT:-3000}:3000"]
+    assert compose["services"]["newapi"]["ports"] == [
+        "${ST_NEWAPI_BIND:-127.0.0.1}:${ST_NEWAPI_PORT:-3000}:3000"
+    ]
     assert compose["services"]["web"]["ports"] == ["${ST_WEB_PORT:-8080}:80"]
     assert set(compose["volumes"]) == {"ce-data", "newapi-data"}
+
+
+def test_source_file_extends_release_and_builds_all_three() -> None:
+    source = yaml.safe_load((REPOSITORY_ROOT / SOURCE_FILE).read_text())
+
+    assert set(source) == {"services", "volumes"}
+    services = source["services"]
+    assert set(services) == {"api", "newapi", "web"}
+    for name, service in services.items():
+        assert set(service) == {"extends", "image", "build"}, f"{name} keys: {set(service)}"
+        assert service["extends"] == {"file": RELEASE_FILE, "service": name}
+
+    assert services["api"]["image"] == "dramaclaw-local/api"
+    assert services["newapi"]["image"] == "dramaclaw-local/gateway"
+    assert services["web"]["image"] == "dramaclaw-local/web"
+
+    assert services["api"]["build"] == {
+        "context": ".",
+        "dockerfile": "Dockerfile",
+        "args": {"INSTALL_WORLD": "${INSTALL_WORLD:-0}"},
+    }
+    assert services["newapi"]["build"] == {
+        "context": "${DRAMACLAW_GATEWAY_SRC:-https://github.com/dramaclaw/dramaclaw-gateway.git#main}",
+        "dockerfile": "Dockerfile",
+    }
+    assert services["web"]["build"] == {"context": "./frontend", "dockerfile": "Dockerfile"}
+
+    assert set(source["volumes"]) == {"ce-data", "newapi-data"}
+
+
+def test_source_file_never_mentions_release_versions() -> None:
+    source_text = (REPOSITORY_ROOT / SOURCE_FILE).read_text()
+
+    assert "DRAMACLAW_VERSION" not in source_text
+    assert "DRAMACLAW_GATEWAY_VERSION" not in source_text
 
 
 def test_env_example_configures_data_root_instead_of_individual_directories() -> None:

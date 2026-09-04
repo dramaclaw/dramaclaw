@@ -15,7 +15,7 @@ DramaClaw is the Community Edition (CE): it runs on a single machine with no Pos
 ## Steps
 
 ```bash
-# 1. Get the code (or, from the next release on, download DramaClaw-compose-<tag>.zip from the Release page)
+# 1. Get the code
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 

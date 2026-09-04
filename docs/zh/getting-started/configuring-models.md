@@ -276,6 +276,6 @@ Bucket 无需公开读；DramaClaw 使用临时签名 URL 授权上游读取。
 
 - `src/novelvideo/official_media_models.json`：CE 官方媒体模型与能力。
 - `.env.example`：环境变量参考。
-- `docker-compose.yml`：唯一的部署文件（api + 内置 NewAPI + web），网关模式在设置页选择。
+- `docker-compose.yml`（源码构建）/ `docker-compose.release.yml`（镜像）：部署文件（api + 内置 NewAPI + web），网关模式在设置页选择。
 - [自托管手册](../guides/self-hosting.md)
 - [环境变量参考](../reference/environment-variables.md)

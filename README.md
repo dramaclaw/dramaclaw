@@ -185,7 +185,7 @@ DramaClaw runs all inference through an **OpenAI-compatible gateway** — either
 | **Disk** | A few GB for images plus generated media/state under the `ce-data` volume (no hard minimum) |
 | **OS** | macOS (Apple Silicon / Intel), Windows (Docker Desktop + WSL2 backend), Linux (Docker Engine + compose plugin) |
 | **Docker** | Docker + `docker compose` |
-| **Ports** | `8080` web UI · `8780` REST API · `3000` bundled gateway admin UI |
+| **Ports** | `8080` web UI · `8780` REST API · `3000` bundled gateway admin UI (host-only by default, can be widened) |
 | **Datastores** | None required — no Postgres, Redis, Celery or Ray. Tasks run in-process; state lives on the local filesystem (SQLite + files) |
 | **Network** | Outbound access to the official gateway `relayclaw.cdnfg.com`, and/or to the model providers you configure in the bundled gateway |
 
@@ -197,16 +197,24 @@ DramaClaw runs all inference through an **OpenAI-compatible gateway** — either
 
 ### Docker (recommended)
 
-Every GitHub Release publishes multi-arch (amd64/arm64) images to Docker Hub; the compose file only pulls, it never builds.
+Every GitHub Release publishes multi-arch (amd64/arm64) images to Docker Hub.
+
+**Source build (default)** — `docker compose up -d --build` builds all three: `api`, `web`, and the bundled gateway.
 
 ```bash
-git clone https://github.com/dramaclaw/dramaclaw.git   # or, from the next release on, download DramaClaw-compose-<tag>.zip from the Release page
+git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
 cp .env.example .env
 # Edit .env — set PROMPT_EXPORT_PASSWORD to a non-default value.
 
-docker compose up -d   # starts three services: api / newapi (bundled gateway) / web
+docker compose up -d --build   # builds and starts three services: api / newapi (bundled gateway) / web
+```
+
+**No build** — pull published images instead:
+
+```bash
+docker compose -f docker-compose.release.yml up -d
 ```
 
 Open the app at <http://localhost:8080>; the REST API is at <http://localhost:8780>. In **Settings → Model Config** pick one of:
@@ -217,9 +225,9 @@ Open the app at <http://localhost:8080>; the REST API is at <http://localhost:87
 
 Full steps in the [Quick Start](docs/en/getting-started/quickstart.md).
 
-Pin versions or switch registry in `.env` (`DRAMACLAW_VERSION`, `DRAMACLAW_GATEWAY_VERSION`, `DRAMACLAW_IMAGE_PREFIX`). Mainland China: set `DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw` and pin both versions (the ACR mirror carries pinned tags only).
+Pin versions or switch registry in `.env` (`DRAMACLAW_VERSION`, `DRAMACLAW_GATEWAY_VERSION`, `DRAMACLAW_IMAGE_PREFIX`) — these apply to the image mode (`docker-compose.release.yml`) only. Mainland China: set `DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw` and pin both versions (the ACR mirror carries pinned tags only).
 
-> Migrating from an older checkout? `docker-compose.release.yml`, `docker-compose.selfhosted.yml` and `docker-compose.selfhosted.release.yml` were merged into this single `docker-compose.yml`. Your `ce-data` / `newapi-data` volumes are reused as-is. The stack now also binds host port 3000 for the bundled gateway; change `ST_NEWAPI_PORT` in `.env` if that port is taken.
+> Migrating from an older checkout? `docker-compose.selfhosted.yml` / `docker-compose.selfhosted.release.yml` have been removed — use `docker-compose.yml` (source build) / `docker-compose.release.yml` (images). Service names and the `ce-data` / `newapi-data` volumes are unchanged; existing data is reused as-is. The bundled gateway's port now binds only to `127.0.0.1` by default; set `ST_NEWAPI_BIND=0.0.0.0` in `.env` if you need remote access to it.
 
 ### Local development (uv + Python 3.11+)
 
@@ -231,15 +239,6 @@ uv sync
 cp .env.example .env && $EDITOR .env
 
 uv run novelvideo api --port 8780   # start the REST API (CE defaults to inline tasks, no Ray/Redis)
-```
-
-Build the Docker images from source (the base compose file only pulls; the build override adds `build:` for api/web):
-
-```bash
-echo 'DRAMACLAW_VERSION=dev' >> .env      # keep local builds off the :latest tag
-docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
-# or once in .env:  COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml   then: docker compose up -d --build
-# 3DGS/SHARP "world" extra: INSTALL_WORLD=1 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 <br/>
