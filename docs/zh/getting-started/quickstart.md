@@ -24,8 +24,9 @@ cp .env.example .env
 #    打开 .env,至少把 PROMPT_EXPORT_PASSWORD 改成非默认值。
 #    模型渠道和 key 在下一步通过网页配置，不写入 .env。
 
-# 3. 启动(只拉已发布镜像,不构建)—— 起 api / newapi / web 三个服务
-docker compose up -d
+# 3. 启动 —— 起 api / newapi / web 三个服务
+docker compose up -d --build   # 从源码构建 api、web 与内置网关
+# 免构建：docker compose -f docker-compose.release.yml up -d   # 拉已发布镜像
 
 # 4. 确认已起
 docker compose ps   # api、newapi、web 均应 running

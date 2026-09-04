@@ -34,7 +34,8 @@ DramaClaw CE 是单机服务,**无需 PostgreSQL / Redis**。Docker 起 `api` + 
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 cp .env.example .env        # 至少把 PROMPT_EXPORT_PASSWORD 改成非默认值
-docker compose up -d           # 只拉已发布镜像;起 api / newapi / web
+docker compose up -d --build    # 从源码构建 api、web 与内置网关
+# 免构建：docker compose -f docker-compose.release.yml up -d   # 拉已发布镜像
 ```
 
 起好后浏览器打开 **`http://localhost:8080`**(应用界面);REST API 在 `http://localhost:8780`。进入设置 → 模型配置 → 官方渠道,粘贴 DC key 保存即用。完整步骤见 [快速开始](quickstart.md),起停/备份见 [自托管手册](../guides/self-hosting.md)。

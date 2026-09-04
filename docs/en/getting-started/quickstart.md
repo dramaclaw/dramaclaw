@@ -24,8 +24,9 @@ cp .env.example .env
 #    Open .env and at minimum change PROMPT_EXPORT_PASSWORD to a non-default value.
 #    Configure the model channel and key in the web UI, not in .env.
 
-# 3. Start (pulls published images, never builds) — brings up api / newapi / web
-docker compose up -d
+# 3. Start — brings up api / newapi / web
+docker compose up -d --build   # builds api, web and the bundled gateway from source
+# no build? docker compose -f docker-compose.release.yml up -d   # pulls published images
 
 # 4. Confirm it's up
 docker compose ps   # api, newapi, and web should all be running

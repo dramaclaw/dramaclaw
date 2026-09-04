@@ -34,7 +34,8 @@ Once installed:
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 cp .env.example .env        # at minimum, change PROMPT_EXPORT_PASSWORD to a non-default value
-docker compose up -d           # pulls published images; brings up api / newapi / web
+docker compose up -d --build    # builds api, web and the bundled gateway from source
+# no build? docker compose -f docker-compose.release.yml up -d   # pulls published images
 ```
 
 After it's up, open **`http://localhost:8080`** in your browser (the app UI); the REST API is at `http://localhost:8780`. Go to Settings → Model Configuration → Official Channel, paste your DC key, save, and you're ready. For the full walkthrough see [Quickstart](quickstart.md); for start/stop/backup see the [Self-Hosting Handbook](../guides/self-hosting.md).
