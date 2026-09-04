@@ -270,6 +270,17 @@ function OtpLoginForm({ needsRegion }: { needsRegion: boolean }) {
       void navigate({ to: "/", replace: true });
     } catch (verifyError) {
       const message = otpErrorMessage(verifyError, "verify", t);
+      if (
+        verifyError instanceof AuthApiError &&
+        (verifyError.code === "OTP_CHALLENGE_EXHAUSTED" ||
+          verifyError.code === "OTP_CHALLENGE_CONSUMED")
+      ) {
+        setChallenge(null);
+        setCode("");
+        setCountdown(0);
+        requestKeyRef.current = null;
+        verifyKeyRef.current = null;
+      }
       setError(message);
       toast.error(message);
     } finally {
@@ -378,6 +389,12 @@ function otpErrorMessage(
   if (error instanceof AuthApiError) {
     if (error.status === 400) return t("auth.otp.invalidPhone");
     if (error.status === 401) return t("auth.otp.invalidCode");
+    if (
+      error.code === "OTP_CHALLENGE_EXHAUSTED" ||
+      error.code === "OTP_CHALLENGE_CONSUMED"
+    ) {
+      return t("auth.otp.invalidCode");
+    }
     if (error.status === 429) return t("auth.otp.rateLimited");
     if (error.status === 503) return t("auth.otp.unavailable");
   }

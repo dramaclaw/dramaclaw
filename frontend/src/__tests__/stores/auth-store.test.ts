@@ -23,6 +23,7 @@ describe("auth-store", () => {
   it("starts with null state", () => {
     const state = useAuthStore.getState();
     expect(state.username).toBeNull();
+    expect(state.displayName).toBeNull();
     expect(state.role).toBeNull();
   });
 
@@ -37,6 +38,7 @@ describe("auth-store", () => {
     await useAuthStore.getState().login("admin", "admin123");
     const state = useAuthStore.getState();
     expect(state.username).toBe("admin");
+    expect(state.displayName).toBe("admin");
     expect(state.role).toBe("admin");
   });
 
@@ -54,12 +56,13 @@ describe("auth-store", () => {
     expect(init.credentials).toBe("include");
   });
 
-  it("OTP login stores the masked phone instead of the internal generated username", async () => {
+  it("OTP login separates the canonical username from the masked display name", async () => {
     global.fetch = vi.fn().mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         ok: true,
         data: {
+          username: `u_${"B".repeat(26)}`,
           phone_masked: "138****8000",
           role: "worker",
           created_user: true,
@@ -72,8 +75,37 @@ describe("auth-store", () => {
       .getState()
       .loginWithOtp("13800138000", "A".repeat(26), "123456", "web:verify-key-0001");
 
-    expect(useAuthStore.getState().username).toBe("138****8000");
+    expect(useAuthStore.getState().username).toBe(`u_${"B".repeat(26)}`);
+    expect(useAuthStore.getState().displayName).toBe("138****8000");
     expect(useAuthStore.getState().role).toBe("worker");
+  });
+
+  it("restores a masked display name without replacing the canonical username", async () => {
+    const internalUsername = `u_${"C".repeat(26)}`;
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/auth/me")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            data: { username: internalUsername, role: "worker", credit_balance: 0 },
+          }),
+        });
+      }
+      if (url.includes("/account/security")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, data: { phone_masked: "138****8000" } }),
+        });
+      }
+      return Promise.resolve(avatarMiss);
+    });
+
+    await expect(useAuthStore.getState().getCurrentUser()).resolves.toMatchObject({
+      username: internalUsername,
+    });
+    expect(useAuthStore.getState().username).toBe(internalUsername);
+    expect(useAuthStore.getState().displayName).toBe("138****8000");
   });
 
   it("login throws on invalid credentials", async () => {

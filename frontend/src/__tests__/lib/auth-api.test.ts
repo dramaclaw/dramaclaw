@@ -49,6 +49,7 @@ describe("phone auth API", () => {
         JSON.stringify({
           ok: true,
           data: {
+            username: `u_${"B".repeat(26)}`,
             phone_masked: "138****8000",
             role: "worker",
             created_user: true,
@@ -79,5 +80,30 @@ describe("phone auth API", () => {
 
   it("generates an allowlisted web idempotency key", () => {
     expect(newAuthIdempotencyKey()).toMatch(/^web:[0-9a-f-]{36}$/);
+  });
+
+  it("preserves a structured OTP terminal error code", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: {
+            code: "OTP_CHALLENGE_EXHAUSTED",
+            message: "request a new code",
+          },
+        }),
+        { status: 410, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await expect(
+      verifyOtp(
+        { phone: "13800138000", verificationId: "A".repeat(26), code: "123456" },
+        "web:verify-key-0001",
+      ),
+    ).rejects.toMatchObject({
+      status: 410,
+      code: "OTP_CHALLENGE_EXHAUSTED",
+      message: "request a new code",
+    });
   });
 });

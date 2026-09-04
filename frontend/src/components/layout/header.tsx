@@ -84,7 +84,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   // 面板由点击/键盘打开时「钉住」：此时鼠标移开不再收走它。悬停打开的面板不钉。
   const accountPanelPinnedRef = useRef(false);
   const settingsAnchorRef = useRef<HTMLDivElement | null>(null);
-  const { username, logout } = useAuthStore();
+  const { username, displayName: storedDisplayName, logout } = useAuthStore();
   const queryClient = useQueryClient();
   // 退出登录是 SPA 内部跳转（不刷新页面），必须一并清掉 React Query 缓存和
   // 用户级 zustand/localStorage 状态，否则换账号登录后 projectSummaries 等
@@ -111,7 +111,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
     : t("app.logoHomeTooltip");
   const accountSecurity = useAccountSecurity(!ceRuntime && showLogout && Boolean(username));
   const passwordConfigured = accountSecurity.data?.password_configured ?? true;
-  const displayName = accountSecurity.data?.phone_masked ?? username ?? "User";
+  const displayName = accountSecurity.data?.phone_masked ?? storedDisplayName ?? username ?? "User";
   const avatarInitial = displayName.slice(0, 1).toUpperCase();
   const activeLanguage = (i18n.resolvedLanguage ?? i18n.language).startsWith("zh")
     ? "zh"

@@ -8,6 +8,7 @@ export class AuthApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly code?: string,
   ) {
     super(message);
     this.name = "AuthApiError";
@@ -21,6 +22,7 @@ export interface OtpChallenge {
 }
 
 export interface OtpLoginResult {
+  username: string;
   phone_masked: string;
   role: string;
   created_user: boolean;
@@ -32,11 +34,16 @@ async function authError(response: Response, fallback: string): Promise<AuthApiE
     | { detail?: unknown; error?: unknown }
     | null;
   const detail = body?.detail;
+  const structuredDetail =
+    detail && typeof detail === "object" ? (detail as Record<string, unknown>) : null;
   const message =
     (typeof detail === "string" && detail) ||
+    (typeof structuredDetail?.message === "string" && structuredDetail.message) ||
     (typeof body?.error === "string" && body.error) ||
     fallback;
-  return new AuthApiError(message, response.status);
+  const code =
+    typeof structuredDetail?.code === "string" ? structuredDetail.code : undefined;
+  return new AuthApiError(message, response.status, code);
 }
 
 export function newAuthIdempotencyKey(): string {

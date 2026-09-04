@@ -60,6 +60,7 @@ describe("LoginCard", () => {
       expires_in_seconds: 300,
     });
     loginWithOtp.mockResolvedValue({
+      username: `u_${"B".repeat(26)}`,
       phone_masked: "138****8000",
       role: "worker",
       created_user: true,
