@@ -9,7 +9,6 @@ path,license_expression,copyright,evidence
 .github/PULL_REQUEST_TEMPLATE.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/labels.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/banned-words.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-.github/workflows/bump-gateway-version.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/ce-import-lint.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/ci.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/dco.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

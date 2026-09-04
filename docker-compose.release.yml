@@ -2,7 +2,7 @@
 # docker-compose.yml（源码构建）通过 extends 复用它。
 #   cp .env.example .env && docker compose -f docker-compose.release.yml up -d
 # 版本：DRAMACLAW_VERSION（api/web）与 DRAMACLAW_GATEWAY_VERSION（网关）来自 .env，未设时用下面的默认值；
-#      每次 CE / 网关发版由 CI 开 PR 抬默认值。国内拉取慢：.env 设 DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw（ACR 只放钉 tag）。
+#      每次发行包打包（SuperTale 的 dramaclaw-release-packages 非 dry_run 跑完）由它向本仓开 PR 抬默认值。国内拉取慢：.env 设 DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw（ACR 只放钉 tag）。
 # 三服务：api + 内置 newapi 网关（DramaClaw 维护的 dramaclaw-gateway，:3000）+ web（:8080）。
 # 首启打开 http://localhost:8080 → 设置 → 模型：选「官方」粘贴 DC key、或「自定义」一键初始化内置网关、或「本地 + 官方混合」。
 # 默认模式是官方，此时内置网关只是常驻待命；.env 写 NEWAPI_PROVISIONER_ENABLED=false 可禁用一键初始化。

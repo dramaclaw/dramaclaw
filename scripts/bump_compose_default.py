@@ -11,11 +11,12 @@ file, including the number of lines, is left byte-for-byte identical (the
 match never crosses a newline, so a plain ``re.sub`` cannot change the line
 count).
 
-This is the shared logic behind two CI workflows: after a CE release,
-``release-images.yml`` bumps ``DRAMACLAW_VERSION`` in
-``docker-compose.release.yml``; on a schedule / dispatch,
-``bump-gateway-version.yml`` bumps ``DRAMACLAW_GATEWAY_VERSION`` there. Both
-open a PR rather than pushing straight to ``main``.
+This repo ships the script but no workflow that calls it: the release
+packaging workflow in the (private) SuperTale repo clones ``main``, bumps
+``DRAMACLAW_VERSION`` and ``DRAMACLAW_GATEWAY_VERSION`` in
+``docker-compose.release.yml`` after each published compose bundle, and opens a
+PR here rather than pushing straight to ``main``. Keeping the caller there keeps
+the CE-writing token out of this public repo.
 
 Exit codes:
     0   a change was made (stdout: "<old> -> <new>"), or the default was
@@ -36,8 +37,9 @@ without writing the file just to find out. When a change *would* be needed
 it still exits 0 (truthy in a shell ``if``), matching the "please act"
 case in the non-check mode.
 
-CI usage (see .github/workflows/release-images.yml and
-.github/workflows/bump-gateway-version.yml)::
+CI usage (called by the release packaging workflow in the SuperTale repo,
+``dramaclaw-release-packages.yml`` -> ``compose-package``, on a clone of ``main``;
+this repo carries no workflow that calls it)::
 
     if python3 scripts/bump_compose_default.py FILE VAR NEW --check-only; then
         # a change is needed -> do it for real, then open a PR
