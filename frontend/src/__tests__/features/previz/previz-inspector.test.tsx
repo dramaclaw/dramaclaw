@@ -308,18 +308,19 @@ describe("PrevizInspector", () => {
     ]);
   });
 
-  // 姿势标签刻意不走 i18n：它是 viewer-kit `POSE_LABELS` 的逐字副本，两边由 poses.test.ts
-  // 的棘轮盯着，代价是英文界面下这里也显示中文。钉住显示文本，免得下一个人把它当成
-  // 「i18n 漏了」顺手改成 `t()`——那样棘轮会在另一个文件里红，症状离改动很远。
-  it("labels the poses with the hardcoded Chinese names", () => {
+  // 姿势标签走 i18n，且刻意复用 viewer-kit 的 `viewer.threeD.poses.*` 而不是另起一套
+  // `previz.*` key——同一个姿势在预演台和 3D 导演里必须叫同一个名字，两张 key 表由
+  // poses.test.ts 的棘轮盯着。这里钉住的是 key，免得有人顺手改成 previz 自己的命名空间：
+  // 那样词条还在、界面也不报错，只有另一个文件里的棘轮会红，症状离改动很远。
+  it("labels the poses with the shared viewer-kit pose keys", () => {
     renderInspector(createPrevizObject("character", []));
 
     const options = Array.from(
       screen.getByLabelText("previz.inspector.basePose").querySelectorAll("option"),
     );
-    expect(options[0]?.textContent).toBe("站立");
-    expect(options[3]?.textContent).toBe("坐下");
-    expect(options[14]?.textContent).toBe("持械");
+    expect(options[0]?.textContent).toBe("viewer.threeD.poses.standing");
+    expect(options[3]?.textContent).toBe("viewer.threeD.poses.sitting");
+    expect(options[14]?.textContent).toBe("viewer.threeD.poses.sword");
   });
 
   it("edits the body type", async () => {

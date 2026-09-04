@@ -73,24 +73,26 @@ export const PREVIZ_POSE_CLIPS: Readonly<Record<PrevizPoseId, PrevizPoseClipConf
   sword: { names: ['Sword_Idle', 'Sword_Block', 'Sword_Regular_A'], sampleTime: 0.25 },
 };
 
-/** 硬编码中文，理由同 `PREVIZ_OBJECT_BASE_NAME`：姿势 id 会随场景落盘，标签只是展示。
- *  同样是 viewer-kit `POSE_LABELS` 的副本，同样由 `poses.test.ts` 的棘轮盯着。 */
-export const PREVIZ_POSE_LABEL: Readonly<Record<PrevizPoseId, string>> = {
-  standing: '站立',
-  talking: '交谈',
-  arms_crossed: '抱臂',
-  sitting: '坐下',
-  eating: '进食',
-  crouching: '蹲伏',
-  kneeling: '下跪',
-  lying: '躺 / 倒地',
-  walking: '行走',
-  running: '奔跑',
-  pointing: '指向',
-  holding: '持物',
-  interacting: '操作 / 互动',
-  fighting: '格斗',
-  sword: '持械',
+/** 姿势名的界面文案：只存 i18n key，渲染时由调用方带着 `t` 解析（`PREVIZ_POSES` 才是
+ *  会随场景落盘的协议值）。key 与词条都跟 viewer-kit 的 `POSE_LABEL_KEYS` 共用同一批
+ *  `viewer.threeD.poses.*`——同一个姿势在预演台和 3D 导演里必须叫同一个名字，
+ *  `poses.test.ts` 有一条棘轮盯着两张表逐字相等。 */
+export const PREVIZ_POSE_LABEL_KEYS: Readonly<Record<PrevizPoseId, string>> = {
+  standing: 'viewer.threeD.poses.standing',
+  talking: 'viewer.threeD.poses.talking',
+  arms_crossed: 'viewer.threeD.poses.arms_crossed',
+  sitting: 'viewer.threeD.poses.sitting',
+  eating: 'viewer.threeD.poses.eating',
+  crouching: 'viewer.threeD.poses.crouching',
+  kneeling: 'viewer.threeD.poses.kneeling',
+  lying: 'viewer.threeD.poses.lying',
+  walking: 'viewer.threeD.poses.walking',
+  running: 'viewer.threeD.poses.running',
+  pointing: 'viewer.threeD.poses.pointing',
+  holding: 'viewer.threeD.poses.holding',
+  interacting: 'viewer.threeD.poses.interacting',
+  fighting: 'viewer.threeD.poses.fighting',
+  sword: 'viewer.threeD.poses.sword',
 };
 
 /**
