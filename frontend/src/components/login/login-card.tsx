@@ -42,7 +42,7 @@ export function LoginCard() {
     return (
       <div className={styles.card}>
         <RegionSelector />
-        <PasswordLoginForm needsRegion={needsRegion} />
+        <PasswordLoginForm needsRegion={needsRegion} phoneIdentityVisible={false} />
       </div>
     );
   }
@@ -83,14 +83,20 @@ export function LoginCard() {
         </div>
       ) : (
         <div id="password-login-panel" role="tabpanel" aria-labelledby="password-login-tab">
-          <PasswordLoginForm needsRegion={needsRegion} />
+          <PasswordLoginForm needsRegion={needsRegion} phoneIdentityVisible />
         </div>
       )}
     </div>
   );
 }
 
-function PasswordLoginForm({ needsRegion }: { needsRegion: boolean }) {
+function PasswordLoginForm({
+  needsRegion,
+  phoneIdentityVisible,
+}: {
+  needsRegion: boolean;
+  phoneIdentityVisible: boolean;
+}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const login = useAuthStore((s) => s.login);
@@ -143,14 +149,18 @@ function PasswordLoginForm({ needsRegion }: { needsRegion: boolean }) {
       <div className={styles.field}>
         <div className={styles.fieldRow}>
           <label htmlFor="username" className={styles.label}>
-            {t("auth.accountOrPhone")}
+            {t(phoneIdentityVisible ? "auth.accountOrPhone" : "auth.account")}
           </label>
         </div>
         <div className={styles.inputWrap}>
           <input
             id="username"
             autoComplete="username"
-            placeholder={t("auth.accountOrPhonePlaceholder")}
+            placeholder={t(
+              phoneIdentityVisible
+                ? "auth.accountOrPhonePlaceholder"
+                : "auth.accountPlaceholder",
+            )}
             className={`${styles.input} ${errors.username ? styles.inputInvalid : ""}`}
             {...usernameRest}
             ref={(element) => {

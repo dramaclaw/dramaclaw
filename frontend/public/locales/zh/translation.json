@@ -1795,6 +1795,8 @@
     "login": "登录",
     "logout": "退出",
     "username": "用户名",
+    "account": "账号",
+    "accountPlaceholder": "输入账号",
     "accountOrPhone": "账号或手机号",
     "accountOrPhonePlaceholder": "输入账号或手机号",
     "password": "密码",

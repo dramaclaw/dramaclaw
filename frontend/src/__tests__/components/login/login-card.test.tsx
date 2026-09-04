@@ -115,9 +115,11 @@ describe("LoginCard", () => {
 
     expect(screen.queryByRole("tablist")).toBeNull();
     expect(screen.queryByLabelText("auth.otp.phone")).toBeNull();
-    expect(screen.getByLabelText("auth.accountOrPhone")).toBeTruthy();
+    expect(screen.queryByLabelText("auth.accountOrPhone")).toBeNull();
+    expect(screen.getByLabelText("auth.account")).toBeTruthy();
+    expect(screen.getByPlaceholderText("auth.accountPlaceholder")).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("auth.accountOrPhone"), {
+    fireEvent.change(screen.getByLabelText("auth.account"), {
       target: { value: "legacy-account" },
     });
     fireEvent.change(screen.getByLabelText("auth.password"), {

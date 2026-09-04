@@ -1795,6 +1795,8 @@
     "login": "Login",
     "logout": "Logout",
     "username": "Username",
+    "account": "Account",
+    "accountPlaceholder": "Enter account",
     "accountOrPhone": "Account or phone",
     "accountOrPhonePlaceholder": "Enter account or phone number",
     "password": "Password",
