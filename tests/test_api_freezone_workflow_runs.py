@@ -184,6 +184,59 @@ def test_metered_workflow_result_is_delivered_once_before_canvas_confirmation(
     assert after_confirm["status"] == "delivered"
 
 
+@pytest.mark.asyncio
+async def test_late_agent_product_delivery_confirms_reserved_credit(
+    monkeypatch,
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    settlements: list[tuple[str, str]] = []
+    completions: list[dict] = []
+    task = SimpleNamespace(
+        task_id="product-task-a",
+        status="failed",
+        metadata={
+            "feature_credit_reservation_id": "reservation-a",
+            "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
+        },
+    )
+
+    class UsageMeter:
+        async def settle_feature_credit_reservation(
+            self, reservation_id, *, action, metadata=None
+        ):
+            settlements.append((reservation_id, action))
+            assert metadata["source"] == "agent_product_late_delivery"
+            return {"status": "completed"}
+
+    class Manager:
+        def get_task_for_project(self, *_args, **_kwargs):
+            return task
+
+        def complete_task_for_project(self, *_args, **kwargs):
+            completions.append(kwargs)
+            return True
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+
+    await freezone._settle_delivered_agent_product_task(
+        ctx=SimpleNamespace(project_id="proj_demo"),
+        operation={
+            "operation_id": "agent_product_a",
+            "task_id": "product-task-a",
+            "task_type": "freezone_agent_recipe_result",
+            "product_kind": "recipe_result",
+            "status": "delivered",
+            "model_evidence": {"model_call_id": "provider-job-a"},
+            "result_ref": {"kind": "recipe_result", "id": "asset-a"},
+        },
+    )
+
+    assert settlements == [("reservation-a", "confirm")]
+    assert completions[0]["metadata"]["settlement_status"] == "reconciled"
+
+
 def test_canvas_revision_endpoint_returns_only_revision(
     workflow_run_client: TestClient,
 ) -> None:

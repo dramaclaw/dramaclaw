@@ -45,6 +45,20 @@ PENDING_STATUSES = {"admitting", "reserved", "running", "accepted", "submitted"}
 TERMINAL_STATUSES = {"delivered", "failed", "cancelled"}
 OPERATION_ID_RE = re.compile(r"^agent_product_[a-zA-Z0-9_-]{1,96}$")
 
+
+class AgentProductSettlementPending(RuntimeError):
+    """The product may still arrive, so its credit reservation must stay open."""
+
+    code = "AGENT_PRODUCT_SETTLEMENT_PENDING"
+
+    def __init__(self, *, operation_id: str, status: str) -> None:
+        self.operation_id = operation_id
+        self.status = status
+        super().__init__(
+            f"agent product operation awaits late reconciliation: {status}"
+        )
+
+
 _SCHEMA_READY_PATHS: set[Path] = set()
 _SCHEMA_READY_LOCK = threading.Lock()
 

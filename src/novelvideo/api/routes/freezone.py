@@ -13063,6 +13063,7 @@ async def create_canvas_workflow_draft(
             draft_id=existing_id,
         )
         if existing is not None:
+            await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
             return {"ok": True, "data": _workflow_draft_api_data(existing)}
         raise HTTPException(409, error or "delivered workflow result is missing")
     if operation and operation.get("status") not in {
@@ -13099,7 +13100,7 @@ async def create_canvas_workflow_draft(
             )
         raise HTTPException(400, str(exc)) from exc
     if operation is not None:
-        await asyncio.to_thread(
+        operation = await asyncio.to_thread(
             finish_agent_product_operation,
             project_dir=state_dir,
             operation_id=operation_id,
@@ -13117,6 +13118,7 @@ async def create_canvas_workflow_draft(
                 "digest": draft["plan_digest"],
             },
         )
+        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
     return {"ok": True, "data": _workflow_draft_api_data(draft)}
 
 
@@ -13303,6 +13305,58 @@ async def get_agent_product_operation(
     return {"ok": True, "data": operation}
 
 
+async def _settle_delivered_agent_product_task(
+    *, ctx: ProjectContext, operation: dict[str, Any]
+) -> None:
+    """Confirm a durable late result from trusted task metadata, idempotently."""
+    if operation.get("status") != "delivered":
+        return
+    task_type = str(operation.get("task_type") or "")
+    operation_id = str(operation.get("operation_id") or "")
+    expected_task_id = str(operation.get("task_id") or "")
+    manager = get_task_manager()
+    task = manager.get_task_for_project(ctx, task_type, 0, scope=operation_id)
+    if task is None or task.task_id != expected_task_id:
+        return
+    metadata = task.metadata if isinstance(task.metadata, dict) else {}
+    reservation_id = str(
+        metadata.get("feature_credit_reservation_id")
+        or metadata.get("feature_credit_charge_id")
+        or ""
+    ).strip()
+    if reservation_id:
+        await get_usage_meter().settle_feature_credit_reservation(
+            reservation_id,
+            action="confirm",
+            metadata={
+                "source": "agent_product_late_delivery",
+                "business_outcome": "delivered",
+                "operation_id": operation_id,
+            },
+        )
+    if (
+        task.status == "failed"
+        and metadata.get("error_code") == "AGENT_PRODUCT_SETTLEMENT_PENDING"
+    ):
+        manager.complete_task_for_project(
+            ctx,
+            task_type,
+            0,
+            scope=operation_id,
+            result={
+                "ok": True,
+                "operation_id": operation_id,
+                "product_kind": operation.get("product_kind"),
+                "delivery_status": "delivered",
+                "model_evidence": operation.get("model_evidence") or {},
+                "result_ref": operation.get("result_ref") or {},
+            },
+            current_task="完成（晚到结果已对账）",
+            metadata={"settlement_status": "reconciled"},
+            expected_task_id=expected_task_id,
+        )
+
+
 @router.get(
     "/projects/{project}/freezone/agent-generation-sessions/{generation_session_id}",
     tags=[TAG_FREEZONE_CANVAS],
@@ -13452,6 +13506,7 @@ async def complete_agent_product_operation(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
     return {"ok": True, "data": operation}
 
 
@@ -13885,7 +13940,7 @@ async def get_canvas_workflow_runs(
                 "cancelled",
             }:
                 continue
-            await asyncio.to_thread(
+            operation = await asyncio.to_thread(
                 finish_agent_product_operation,
                 project_dir=canvas_project_dir,
                 operation_id=operation_id,
@@ -13894,6 +13949,7 @@ async def get_canvas_workflow_runs(
                 model_evidence=model_evidence,
                 result_ref=result_ref,
             )
+            await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
     return {"ok": True, "data": {"runs": runs}}
 
 

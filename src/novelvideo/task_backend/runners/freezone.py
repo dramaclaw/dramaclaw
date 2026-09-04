@@ -15,6 +15,8 @@ from novelvideo.egress_context import (
 )
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import (
+    TaskCancelled,
+    TaskTimedOut,
     await_envelope_with_cancel_watch,
     await_with_cancel_watch as _await_with_cancel_watch,
 )
@@ -93,11 +95,45 @@ def run_freezone_agent_product(
     envelope: dict[str, Any],
     ctx: ProjectContext,
 ) -> dict[str, Any]:
-    return _run_cancellable(
-        envelope,
-        _run_freezone_agent_product_async(envelope, ctx),
-        task_type=str(envelope.get("task_type") or ""),
-    )
+    try:
+        return _run_cancellable(
+            envelope,
+            _run_freezone_agent_product_async(envelope, ctx),
+            task_type=str(envelope.get("task_type") or ""),
+        )
+    except (TaskTimedOut, TaskCancelled) as exc:
+        # A product result can arrive after the local worker deadline. Preserve
+        # the reservation for the authenticated result path to reconcile; an
+        # ordinary timeout must never turn an unknown provider outcome into a
+        # refund.
+        from novelvideo.freezone.agent_product_operations import (
+            AgentProductSettlementPending,
+            PENDING_STATUSES,
+            read_agent_product_operation,
+        )
+
+        payload = (
+            envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+        )
+        operation_id = str(payload.get("operation_id") or "").strip()
+        operation = (
+            read_agent_product_operation(
+                project_dir=Path(ctx.state_dir), operation_id=operation_id
+            )
+            if operation_id
+            else None
+        )
+        status = str((operation or {}).get("status") or "")
+        preserve_statuses = (
+            PENDING_STATUSES
+            if isinstance(exc, TaskTimedOut)
+            else {"running", "accepted", "submitted"}
+        )
+        if status in preserve_statuses:
+            raise AgentProductSettlementPending(
+                operation_id=operation_id, status=status
+            ) from exc
+        raise
 
 
 async def _run_freezone_workflow_confirm_async(

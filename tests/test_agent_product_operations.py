@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from novelvideo.freezone.agent_product_operations import (
+    AgentProductSettlementPending,
     bind_agent_product_task,
     create_agent_product_operation,
     finish_agent_product_operation,
@@ -209,3 +210,44 @@ async def test_product_task_fails_when_operation_has_no_result(tmp_path):
             },
             SimpleNamespace(state_dir=tmp_path),
         )
+
+
+def test_product_task_timeout_preserves_pending_operation(tmp_path, monkeypatch):
+    from novelvideo.task_backend.cancel import TaskTimedOut
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    operation = _create(tmp_path, kind="recipe_result")
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    finish_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        outcome="submitted",
+        expected_task_id="task-a",
+    )
+
+    def time_out(_envelope, coro, **_kwargs):
+        coro.close()
+        raise TaskTimedOut(timeout_seconds=1)
+
+    monkeypatch.setattr(freezone_runner, "_run_cancellable", time_out)
+
+    with pytest.raises(AgentProductSettlementPending) as exc_info:
+        freezone_runner.run_freezone_agent_product(
+            {
+                "task_type": "freezone_agent_recipe_result",
+                "__run_task_id": "task-a",
+                "payload": {
+                    "operation_id": operation["operation_id"],
+                    "product_kind": "recipe_result",
+                },
+            },
+            SimpleNamespace(state_dir=tmp_path),
+        )
+
+    assert exc_info.value.operation_id == operation["operation_id"]
+    assert exc_info.value.status == "submitted"
