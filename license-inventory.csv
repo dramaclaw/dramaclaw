@@ -9,6 +9,7 @@ path,license_expression,copyright,evidence
 .github/PULL_REQUEST_TEMPLATE.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/labels.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/banned-words.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+.github/workflows/bump-gateway-version.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/ce-import-lint.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/ci.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/dco.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1460,6 +1461,7 @@ scripts/acceptance/run.sh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml agg
 scripts/backend_i18n_allowlist.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/backfill_thumbnails.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/build_style_gallery.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/bump_compose_default.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/ce_allowlist.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/check_backend_i18n.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/check_ce_port_closure.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1975,6 +1977,7 @@ tests/test_billing_fatal_predicate_invariant.py,Elastic-2.0,2026 SuperTale contr
 tests/test_billing_identity_error.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_block_world_node_unavailable.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_build_style_gallery.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_bump_compose_default.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_scene_refs_override.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ce_allowlist.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ce_imports_lint.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
