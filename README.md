@@ -176,7 +176,7 @@ Every step has its own interface — run them in order, skip steps, resume from 
 
 ## System Requirements
 
-DramaClaw runs all inference through a **remote OpenAI-compatible gateway** — nothing runs models on your machine — so the local footprint is light. An ordinary laptop or a small VPS is enough.
+DramaClaw runs all inference through an **OpenAI-compatible gateway** — either the official RelayClaw service or the bundled [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) routing to providers you configure. Nothing runs models on your machine, so the local footprint is light. An ordinary laptop or a small VPS is enough.
 
 | Item | Requirement |
 |---|---|
@@ -187,7 +187,7 @@ DramaClaw runs all inference through a **remote OpenAI-compatible gateway** — 
 | **Docker** | Docker + `docker compose` |
 | **Ports** | `8080` web UI · `8780` REST API · `3000` bundled gateway admin UI |
 | **Datastores** | None required — no Postgres, Redis, Celery or Ray. Tasks run in-process; state lives on the local filesystem (SQLite + files) |
-| **Network** | Outbound access to the model gateway (official `relayclaw.cdnfg.com`, or your own BYO endpoint) |
+| **Network** | Outbound access to the official gateway `relayclaw.cdnfg.com`, and/or to the model providers you configure in the bundled gateway |
 
 > Local development (non-Docker) additionally needs Python 3.11–3.12 + [`uv`](https://docs.astral.sh/uv/) + `ffmpeg`. Full prerequisites in the [Self-hosting guide](docs/en/guides/self-hosting.md).
 
@@ -245,22 +245,29 @@ docker compose up -d
 
 ## Supported Models & Providers
 
-DramaClaw stays model-neutral — all text/image/video/audio models connect through a single **OpenAI-compatible gateway**, in two ways:
+DramaClaw stays model-neutral — all text / image / video / audio models connect through an **OpenAI-compatible gateway**. Pick the mode in **Settings → Model Config**:
 
-- **DramaClaw official key (recommended)**: `docker compose up`, open <http://localhost:8080> → Settings → Model Config → Official, paste your DC key, save. Works instantly — no model mapping needed. Get a key at <https://relayclaw.cdnfg.com>.
-- **Bring your own gateway (BYO)**: point `NEWAPI_BASE_URL` at your own OpenAI-compatible endpoint and map model names (see [Configuring Models](docs/en/getting-started/configuring-models.md)).
+- **Official (recommended)** — paste your DC key (get one at <https://relayclaw.cdnfg.com>), save, done. RelayClaw already ships every model mapping DramaClaw needs; nothing to configure.
+- **Custom** — one click initializes the bundled `dramaclaw-gateway`, then add your own provider channels (API keys, model IDs) in its admin UI. Every model DramaClaw calls goes through your channels.
+- **Local + Official Hybrid** — keep the official models for the main pipeline and add extra channels (for example a local ComfyUI video workflow) through the bundled gateway.
 
-> The bundled `newapi` gateway is always part of the compose stack; it is only used once you switch to **Custom** or **Local + Official Hybrid** in Settings → Model Config.
+Full walkthrough in [Configuring Models](docs/en/getting-started/configuring-models.md).
 
-| Stage                | Connected via gateway                                               |
-|----------------------|---------------------------------------------------------------------|
-| **Text / LLM**       | via OpenAI-compatible gateway (DramaClaw official key, or BYO)      |
-| **Image**            | gpt-image · nano-banana                                             |
-| **Video**            | Seedance 1.0 / 1.5 / 2.0 series · happyhorse                        |
-| **Voice-over**       | IndexTTS2                                                           |
-| **Story graph**      | Cognee                                                             |
-| **Task runtime**     | in-process inline (no Ray / Redis / Celery)                        |
-| **Storage**          | local filesystem                                                   |
+### The bundled gateway: dramaclaw-gateway
+
+The `newapi` service in `docker-compose.yml` is [**dramaclaw-gateway**](https://github.com/dramaclaw/dramaclaw-gateway), DramaClaw's own fork of [New API](https://github.com/QuantumNous/new-api). It speaks the **DC-Media** contract DramaClaw uses for image / video / audio (media roles, references, first / last frames) and converts each request into the provider's native API. Image: [`claymorelab/dramaclaw-gateway`](https://hub.docker.com/r/claymorelab/dramaclaw-gateway) on Docker Hub, pinned by `DRAMACLAW_GATEWAY_VERSION` in `.env`. It stays idle in Official mode and is only used once you switch to **Custom** or **Local + Official Hybrid**.
+
+Provider adapters shipped in the gateway today (see the [channel support matrix](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/docs/providers/en/README.md) for verification status): ComfyUI · MiniMax / Hailuo · VolcEngine Doubao / Seedance · fal.ai · Alibaba · Kling · Jimeng · Vertex AI · Gemini · OpenAI / Sora · Suno. Want another provider? The gateway has a [scaffold generator and contribution guide](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/CONTRIBUTING.md).
+
+| Stage                | Official mode (RelayClaw)                          | Custom / Hybrid mode (bundled gateway)                    |
+|----------------------|----------------------------------------------------|-----------------------------------------------------------|
+| **Text / LLM**       | `DC-*-LLM` models, no mapping needed               | any OpenAI-compatible chat channel                        |
+| **Image**            | gpt-image · nano-banana                            | any image channel registered in the gateway              |
+| **Video**            | Seedance 1.0 / 1.5 / 2.0 series · happyhorse       | any DC-Media video adapter (Seedance, Hailuo, Kling, ComfyUI, …) |
+| **Voice-over**       | IndexTTS2                                          | any audio channel registered in the gateway              |
+| **Story graph**      | Cognee (`DC-cognee-embedding`)                     | any embedding channel                                     |
+| **Task runtime**     | in-process inline (no Ray / Redis / Celery)        | same                                                      |
+| **Storage**          | local filesystem                                   | same                                                      |
 
 <br/>
 
