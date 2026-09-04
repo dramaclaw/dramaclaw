@@ -385,6 +385,9 @@ def test_run_project_task_core_confirms_delivered_result_when_task_state_write_f
     async def fake_is_cancel_requested(**_kwargs):
         return False
 
+    async def fake_emit_project_task_metrics(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
     monkeypatch.setattr(run_core, "is_cancel_requested", fake_is_cancel_requested)
     monkeypatch.setattr(run_core, "get_usage_meter", lambda: UsageMeter())
@@ -418,6 +421,84 @@ def test_run_project_task_core_confirms_delivered_result_when_task_state_write_f
                 "business_outcome": "delivered",
             },
         )
+    ]
+
+
+def test_text_generation_settlement_uses_actual_delivered_output_chars(monkeypatch):
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+
+    settlements: list[dict] = []
+
+    class UsageMeter:
+        async def resolve_feature_credit_reservation(self, _identity):
+            from novelvideo.ports.usage import FeatureSettlementResolution
+
+            return FeatureSettlementResolution(
+                outcome="resolved",
+                reservation_id="reservation_text",
+                feature_key="freezone.text_generate",
+                model_call_credit_policy="separate",
+            )
+
+        async def settle_feature_credit_reservation(
+            self, _reservation_id, *, action, metadata=None
+        ):
+            assert action == "confirm"
+            settlements.append(metadata or {})
+            return {"decision": action}
+
+    def fake_runner(_envelope, _ctx):
+        return {"generated_text": " 雨 夜\n重逢 "}
+
+    async def fake_is_cancel_requested(**_kwargs):
+        return False
+
+    async def fake_emit_project_task_metrics(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "is_cancel_requested", fake_is_cancel_requested)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(
+        run_core, "_emit_project_task_metrics", fake_emit_project_task_metrics
+    )
+    monkeypatch.setattr(
+        run_core, "_set_project_task_metrics_context", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
+    register_project_task_runner("freezone_text_generate", fake_runner)
+
+    result = run_core.run_project_task_core_sync(
+        _verified_delivery(
+            task_type="freezone_text_generate",
+            project_id="proj_text",
+            billing_metadata={"feature_credit_reservation_id": "reservation_text"},
+        ),
+        SimpleNamespace(
+            project_id="proj_text", requester_user_id="usr_1", is_home_node=True
+        ),
+        _FakeTaskManager(),
+        run_task_id="task_1",
+    )
+
+    assert result == {"generated_text": " 雨 夜\n重逢 "}
+    assert settlements == [
+        {
+            "source": "task_completed",
+            "business_outcome": "delivered",
+            "actual_billing": {
+                "operation": "text_generate",
+                "billable_chars": 4,
+                "pricing_quantity": 4,
+                "pricing_metrics": {
+                    "call_count": 1,
+                    "item_count": 1,
+                    "billable_chars": 4,
+                },
+                "quantity_source": "trusted_runner_result",
+            },
+        }
     ]
 
 

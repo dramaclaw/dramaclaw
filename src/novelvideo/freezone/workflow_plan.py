@@ -13,6 +13,7 @@ from novelvideo.freezone.workflow_schema import (
 
 MAX_WORKFLOW_NODES = 200
 MAX_WORKFLOW_EDGES = 400
+MAX_WORKFLOW_PLANNING_TEXT_CHARS = 4_000
 
 ALLOWED_NODE_TYPES = set(NODE_TYPE_VALUES)
 ALLOWED_LINK_TYPES = set(LINK_TYPE_VALUES)
@@ -95,6 +96,7 @@ def validate_workflow_plan(
     errors: list[dict[str, str]] = []
     if not isinstance(payload, dict):
         return _invalid([_issue("$", "plan must be an object")])
+    errors.extend(_oversized_planning_text_issues(payload))
     if payload.get("schema_version") != WORKFLOW_PLAN_SCHEMA_VERSION:
         errors.append(
             _issue(
@@ -819,6 +821,37 @@ def _find_cycle(adjacency: dict[str, list[str]]) -> str | None:
 
 def _issue(path: str, message: str) -> dict[str, str]:
     return {"path": path, "message": message}
+
+
+def _oversized_planning_text_issues(value: Any) -> list[dict[str, str]]:
+    """Reject prose payloads that must be delivered by a metered text Recipe."""
+    from novelvideo.utils.document_parsers import count_billable_text_chars
+
+    issues: list[dict[str, str]] = []
+
+    def visit(item: Any, path: str) -> None:
+        if isinstance(item, str):
+            chars = count_billable_text_chars(item)
+            if chars > MAX_WORKFLOW_PLANNING_TEXT_CHARS:
+                issues.append(
+                    _issue(
+                        path,
+                        "workflow planning text exceeds "
+                        f"{MAX_WORKFLOW_PLANNING_TEXT_CHARS} characters; deliver large "
+                        "text through a text Recipe",
+                    )
+                )
+            return
+        if isinstance(item, dict):
+            for key, child in item.items():
+                visit(child, f"{path}.{key}" if path else str(key))
+            return
+        if isinstance(item, list):
+            for index, child in enumerate(item):
+                visit(child, f"{path}[{index}]")
+
+    visit(value, "")
+    return issues
 
 
 def _invalid(errors: list[dict[str, str]]) -> dict[str, Any]:

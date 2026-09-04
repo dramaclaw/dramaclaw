@@ -34,8 +34,10 @@ from novelvideo.chat.backend_sdk import (
     interrupt_live_claude_client,
     interrupt_live_codex_turn,
 )
+from novelvideo.freezone.workflow_plan import MAX_WORKFLOW_PLANNING_TEXT_CHARS
 from novelvideo.ports import get_auth_session_port
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
+from novelvideo.utils.document_parsers import count_billable_text_chars
 from novelvideo.utils.error_redaction import redact_secrets
 from novelvideo.utils.static_urls import project_static_url
 
@@ -2186,6 +2188,16 @@ def _completion_text_or_existing(event_text: object, existing: str) -> str:
             return existing
         return f"{existing.rstrip()}\n\n{final_text}"
     return final_text
+
+
+def _bounded_workflow_planning_reply(text: str, *, draft_ready: bool) -> str:
+    """Do not deliver a large unmetered text artifact as a planning reply."""
+    if not draft_ready or count_billable_text_chars(text) <= MAX_WORKFLOW_PLANNING_TEXT_CHARS:
+        return text
+    return (
+        "工作流草稿已准备完成，但规划回复包含大段正文，已拒绝直接交付。"
+        "请把正文改为 text Recipe 节点生成，以便按实际输出字符计量。"
+    )
 
 
 def _is_completion_notice(text: str) -> bool:
@@ -7076,6 +7088,10 @@ async def _stream_assistant_reply_codex(
             failure_detail = "本轮没有执行画布写入，请重试。"
         assistant_text = "画布操作未完成：" + failure_detail
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
+    assistant_text = _bounded_workflow_planning_reply(
+        assistant_text,
+        draft_ready=ready_workflow_draft is not None,
+    )
     assistant_text = _normalize_json_render_reply(assistant_text)
     if requires_canvas_write_receipt:
         await on_event(

@@ -1267,7 +1267,19 @@ async def _run_freezone_text_generate_async(
         "generate_freezone_text",
         prompt=prompt,
     )
-    data = {"generated_text": generated_text, "model": model}
+    from novelvideo.utils.document_parsers import count_billable_text_chars
+
+    billable_chars = count_billable_text_chars(generated_text)
+    data = {
+        "generated_text": generated_text,
+        "model": model,
+        "billing": {
+            "operation": "text_generate",
+            "billable_chars": billable_chars,
+            "pricing_quantity": billable_chars,
+            "quantity_source": "generated_text",
+        },
+    }
     out = outputs_dir(project_dir, "freezone_text_generate") / f"{job_id}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     import json

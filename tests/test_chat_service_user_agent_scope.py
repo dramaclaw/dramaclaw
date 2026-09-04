@@ -181,6 +181,23 @@ def test_completion_notice_appends_without_replacing_existing_reply():
     assert notice in merged
 
 
+def test_workflow_planning_reply_rejects_large_unmetered_text():
+    oversized = "正文" * 2_001
+
+    rejected = chat_service._bounded_workflow_planning_reply(
+        oversized,
+        draft_ready=True,
+    )
+
+    assert "已拒绝直接交付" in rejected
+    assert "text Recipe" in rejected
+    assert oversized not in rejected
+    assert (
+        chat_service._bounded_workflow_planning_reply(oversized, draft_ready=False)
+        == oversized
+    )
+
+
 def test_canvas_context_tool_result_infers_missing_status():
     payload = chat_routes.CanvasContextToolResultIn.model_validate(
         {

@@ -3944,6 +3944,12 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
         node_id="node_text",
     )
     assert result["generated_text"] == "雨夜里，他们在旧站台重逢。"
+    assert result["billing"] == {
+        "operation": "text_generate",
+        "billable_chars": 13,
+        "pricing_quantity": 13,
+        "quantity_source": "generated_text",
+    }
     assert history[-1]["task_type"] == "freezone_text_generate"
     assert history[-1]["model"] == "DC-freezone-text-writer-LLM"
 

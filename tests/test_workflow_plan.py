@@ -1570,6 +1570,20 @@ def test_workflow_plan_rejects_invalid_runtime_catalog_shapes_before_canvas_appl
     assert errors[f"{catalog_path}.promptStrategy"].startswith("must be one of:")
 
 
+def test_workflow_plan_rejects_large_text_hidden_in_mcp_plan_fields():
+    plan = _dynamic_plan()
+    plan["nodes"][0]["data"]["content"] = "正文" * 2_001
+
+    result = validate_workflow_plan(plan)
+
+    assert result["ok"] is False
+    assert any(
+        error["path"] == "nodes[0].data.content"
+        and "deliver large text through a text Recipe" in error["message"]
+        for error in result["errors"]
+    )
+
+
 def test_workflow_plan_rejects_recipe_backed_user_input_node():
     plan = _dynamic_plan()
     plan["nodes"][0]["data"]["workflowCatalog"] = {

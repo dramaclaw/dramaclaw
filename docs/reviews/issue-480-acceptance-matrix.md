@@ -25,7 +25,7 @@
 | 11 | N 个模型型 Recipe 节点对应 N 个 `recipe_result`，确定性路径免费 | 自动覆盖 | `tests/test_api_freezone_workflow_runs.py` workflow-run admission 和 deterministic compile 测试 | 无 |
 | 12 | Workflow result 收费一次，Canvas confirm/apply 不重复收费 | 自动覆盖 | `test_metered_workflow_result_is_delivered_once_before_canvas_confirmation` | paired ledger 可作为额外发布证据 |
 | 13 | CRUD、导入、复制、保存、schema validation、deterministic compile 不收费 | 部分覆盖 | CE 路由无 product operation；deterministic compile 回归 | 增加跨仓“零 ledger event”汇总测试 |
-| 14 | 大量文字按可信 `billable_chars` 额外计费 | 未覆盖 | 现有文本任务按输入字符计量，尚未证明 Recipe 最终输出字符进入计费 | 实现 A1：可信输出 metrics、正文旁路限制、交付失败不确认 |
+| 14 | 大量文字按可信 `billable_chars` 额外计费 | 部分覆盖 | text runner 持久化实际输出字符；任务核心从可信结果重算 settlement metrics；Workflow MCP/规划回复拒绝超过 4000 字符的正文旁路 | SuperTale 结算端按 actual metrics 对预留金额补差/退差，并跑 paired ledger 测试 |
 | 15 | 图片/音频/视频费用不被父 operation 的 `feature_included` 抑制 | 部分覆盖 | SuperTale `feature_included` 与媒体独立 feature 通用测试 | paired workflow 同时断言父产品和媒体两条账 |
 | 16 | 部分成功按各自产物独立 confirm/refund | 部分覆盖 | 每个 Recipe 独立 operation；失败只终结对应 operation | 补混合成功/失败的 paired ledger 测试 |
 | 17 | 个人、组织、成员额度、组织覆盖价 | 部分覆盖 | SuperTale 组织计费通用测试 | 对四个新 feature 跑组织覆盖价 paired test |
@@ -36,6 +36,8 @@
 - `53e3a30e`：服务端交叉校验 manifest、outline、put 结果、operation session/kind/artifact
   和真实可复用 Recipe；同时校验 Workflow result operation 与 `compiled.skill_id`。
 - `d2e7e3be`：诊断计数覆盖证据绑定失败、缺证据 409、进入 reconciliation、晚到结果完成。
+- 当前 A1 变更：文本任务以实际交付内容生成可信 `billable_chars` settlement metadata；
+  Workflow Plan/MCP 与规划回复均拒绝超过 4000 个可计费字符的正文旁路。
 - 全量 CE 回归：5183 passed、16 skipped、3 deselected；其中 3 项因受限沙箱的端口/联网限制
   首次失败，在允许对应能力后单独重跑通过。
 
