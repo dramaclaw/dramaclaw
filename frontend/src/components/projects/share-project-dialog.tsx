@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Copy, Loader2, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
 import { HTTPError } from "ky";
 import { useTranslation } from "react-i18next";
@@ -75,9 +75,12 @@ async function projectShareFailureMessage(
   t: (key: string) => string,
 ): Promise<string> {
   if (error instanceof HTTPError) {
+    let body: unknown = error.data;
     let code: unknown;
     try {
-      const body: unknown = await error.response.clone().json();
+      if (body === undefined) {
+        body = await error.response.clone().json();
+      }
       code = isRecord(body) && isRecord(body.detail) ? body.detail.code : undefined;
     } catch {
       code = undefined;
@@ -112,6 +115,18 @@ export function ShareProjectDialog({
   const addGrant = useAddProjectGrant(projectId);
   const updateGrant = useUpdateProjectGrant(projectId);
   const deleteGrant = useDeleteProjectGrant(projectId);
+
+  useEffect(() => {
+    setQuery("");
+    setSelectedUser(null);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      setSelectedUser(null);
+    }
+  }, [open]);
 
   const searchResults = users.data?.data ?? [];
   const trimmedQuery = query.trim();

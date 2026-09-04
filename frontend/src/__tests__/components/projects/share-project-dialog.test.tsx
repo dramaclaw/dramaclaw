@@ -153,6 +153,13 @@ function httpError(status: number, body: unknown) {
   return new HTTPError(response, request, options);
 }
 
+async function httpErrorWithConsumedBodyData(status: number, body: unknown) {
+  const error = httpError(status, body);
+  error.data = body;
+  await error.response.text();
+  return error;
+}
+
 function resetShareDialogMocks() {
   runtimeState.isCeRuntime = false;
   queryMocks.grants = [];
@@ -259,9 +266,13 @@ describe("ShareProjectDialog (user selection)", () => {
     expect(addGrantMock).toHaveBeenCalledWith({ principal_username: "huangjiao", role: "editor" });
   });
 
-  it("reports an out-of-scope user from the structured 403 code", async () => {
+  it("reports an out-of-scope user from Ky data when the response body is consumed", async () => {
     queryMocks.searchResults = [{ id: "u2", username: "huangjiao" }];
-    addGrantMock.mockRejectedValue(httpError(403, { detail: { code: "project_share_scope_mismatch" } }));
+    addGrantMock.mockRejectedValue(
+      await httpErrorWithConsumedBodyData(403, {
+        detail: { code: "project_share_scope_mismatch" },
+      }),
+    );
     renderDialog();
 
     await selectSearchResult();
@@ -270,6 +281,29 @@ describe("ShareProjectDialog (user selection)", () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith("该用户不在本项目的可分享范围内");
     });
+    expect(toast.error).not.toHaveBeenCalledWith("共享失败，请确认用户存在且你有权限");
+  });
+
+  it("clears a selected user when switching projects without unmounting", async () => {
+    const projectB = {
+      ...project,
+      id: "p2",
+      name: "Next Demo",
+      ownerUsername: "beatrice",
+    } as ProjectSummary;
+    queryMocks.searchResults = [{ id: "u2", username: "huangjiao" }];
+    const { rerender } = renderDialog();
+
+    await selectSearchResult();
+    expect(screen.getByPlaceholderText("搜索用户名")).toHaveValue("huangjiao");
+    expect(screen.getByRole("button", { name: /添加/ })).toBeEnabled();
+
+    rerender(<ShareProjectDialog project={projectB} open onOpenChange={() => {}} />);
+
+    expect(screen.getByPlaceholderText("搜索用户名")).toHaveValue("");
+    expect(screen.getByRole("button", { name: /添加/ })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: /添加/ }));
+    expect(addGrantMock).not.toHaveBeenCalled();
   });
 
   it("reports a missing user from a 404 response", async () => {
