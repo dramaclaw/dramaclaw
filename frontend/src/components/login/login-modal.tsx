@@ -5,7 +5,8 @@ import { X } from "lucide-react";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
-import { businessWechatQrUrl, loginModalShowcaseVideo } from "./cinematic/media";
+import { phoneOtpEntryVisible } from "@/lib/runtime-config";
+import { loginModalShowcaseVideo } from "./cinematic/media";
 import { LoginCard } from "./login-card";
 import styles from "./login.module.css";
 
@@ -17,6 +18,7 @@ type LoginModalProps = {
 export function LoginModal({ open, onClose }: LoginModalProps) {
   const { t } = useTranslation();
   const reducedMotion = useReducedMotion();
+  const otpEntryVisible = phoneOtpEntryVisible();
 
   useEffect(() => {
     if (!open) return;
@@ -92,39 +94,11 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
 
                 <LoginCard />
 
-                <div className={styles.loginApplyRow}>
-                  <span>{t("auth.modal.noAccount")}</span>
-                  <div className={styles.loginApplyAccount}>
-                    <button
-                      type="button"
-                      className={styles.loginApplyTrigger}
-                      aria-describedby="login-apply-account-popover"
-                    >
-                      {t("auth.modal.applyAccount")}
-                    </button>
-                    <div
-                      id="login-apply-account-popover"
-                      className={styles.loginApplyPopover}
-                      role="tooltip"
-                    >
-                      <div className={styles.businessWechatPanel}>
-                        <img
-                          src={businessWechatQrUrl}
-                          alt={t("auth.businessWechat.qrAlt")}
-                          draggable={false}
-                        />
-                        <div className={styles.businessWechatText}>
-                          <p className={styles.businessWechatTitle}>
-                            {t("auth.businessWechat.title")}
-                          </p>
-                          <p className={styles.businessWechatSubtitle}>
-                            {t("auth.businessWechat.subtitle")}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+                {otpEntryVisible ? (
+                  <div className={styles.loginApplyRow}>
+                    <span>{t("auth.modal.otpRegistration")}</span>
                   </div>
-                </div>
+                ) : null}
               </div>
             </section>
           </motion.div>
