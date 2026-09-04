@@ -18,7 +18,6 @@ import {
   Info,
   Loader2,
   Play,
-  Plus,
   RefreshCw,
   Square,
   X,
@@ -33,6 +32,13 @@ import {
   type FormatCheck,
   type UploadResult,
 } from "@/lib/queries/ingest";
+import type { TFunction } from "i18next";
+
+import { localizeFormatCheck } from "@/lib/format-check-copy";
+import {
+  BUILTIN_STYLE_LABEL_KEYS,
+  BUILTIN_VISUAL_STYLES,
+} from "@/lib/visual-styles";
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import { NovelFormatDialog } from "@/components/ingest/NovelFormatDialog";
 import { KnowledgeGraphVisualization } from "@/components/ingest/KnowledgeGraphVisualization";
@@ -99,26 +105,7 @@ const SPINE_TEMPLATE_OPTIONS: { value: "drama" | "narrated"; labelKey: string }[
   { value: "narrated", labelKey: "ingest.projectTypes.narrated" },
 ];
 
-const VISUAL_STYLE_OPTIONS: { value: string; labelKey: string }[] = [
-  {
-    value: "chinese_period_drama",
-    labelKey: "ingest.visualStyles.chinesePeriodDrama",
-  },
-  { value: "anime", labelKey: "ingest.visualStyles.anime" },
-  {
-    value: "guoman_fantasy",
-    labelKey: "ingest.visualStyles.guomanFantasy",
-  },
-  {
-    value: "post_apocalyptic",
-    labelKey: "ingest.visualStyles.postApocalyptic",
-  },
-  { value: "realistic", labelKey: "ingest.visualStyles.realistic" },
-  {
-    value: "republican_era_drama",
-    labelKey: "ingest.visualStyles.republicanEraDrama",
-  },
-];
+const VISUAL_STYLE_OPTIONS = BUILTIN_VISUAL_STYLES;
 
 function chapterContentSlice(
   chapter: Chapter,
@@ -309,10 +296,13 @@ function countBillableNovelChars(text: string): number {
 }
 
 function resolveFormatCheckForSpineTemplate(
-  formatCheck: FormatCheck | null | undefined,
+  rawFormatCheck: FormatCheck | null | undefined,
   spineTemplate: IngestSettingsValues["spine_template"],
-  t: (key: string) => string,
+  t: TFunction,
 ): FormatCheck | null {
+  // 先把后端的中文 summary/message/fix 换成当前语言，再走 spine_template 的裁剪，
+  // 否则英文界面下这些字段会原样漏出中文。
+  const formatCheck = localizeFormatCheck(rawFormatCheck, t);
   if (!formatCheck) return null;
 
   if (spineTemplate === "narrated") {
@@ -444,8 +434,15 @@ function UploadZone({
         className,
       )}
     >
-      <div className="flex h-[72px] w-14 -rotate-[6deg] items-center justify-center rounded-[10px] bg-white/[0.08] text-muted-foreground transition-all duration-300 ease-out group-hover:rotate-0 group-hover:bg-white/[0.1]">
-        <Plus className="size-7 stroke-[1.25px]" />
+      <div className="relative h-[72px] w-14 -rotate-[6deg] transform-gpu overflow-hidden rounded-[10px] transition-transform duration-[var(--duration-slow)] ease-[var(--ease-out-quint)] will-change-transform group-hover:rotate-0">
+        <img
+          src="/images/ingest-add.png"
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          className="h-full w-full select-none object-cover"
+        />
+        <span className="pointer-events-none absolute inset-0 bg-white/0 transition-colors duration-[var(--duration-slow)] ease-[var(--ease-out-quint)] group-hover:bg-white/[0.04]" />
       </div>
       <div className="space-y-1.5 sm:-mt-1">
         <p className="text-lg font-medium tracking-tight text-foreground">
@@ -837,7 +834,7 @@ function InputModeToggle({
   return (
     <div
       className={cn(
-        "inline-flex h-8 items-center rounded-[8px] border border-white/10 bg-transparent p-1 text-xs",
+        "inline-flex h-8 shrink-0 items-center rounded-[8px] border border-white/10 bg-transparent p-1 text-xs",
         className,
       )}
     >
@@ -1264,9 +1261,18 @@ export function IngestPageContent({ project }: { project: string }) {
   const visualStyleOptions = useMemo(() => {
     const styles = stylesRes?.data ?? [];
     if (styles.length > 0) {
+      // 内置 preset 的 `label` 是中文单语（见 src/novelvideo/styles/presets/*.json），
+      // 直接用会让英文界面出现「写实古装剧」。preset id 与 i18n key 一一对应，先查
+      // i18n；用户自建的风格查不到 key，再退回后端的 name/label。
       return styles.map((style) => ({
         value: style.id,
-        label: style.label || style.name || style.id,
+        label:
+          (BUILTIN_STYLE_LABEL_KEYS[style.id]
+            ? t(BUILTIN_STYLE_LABEL_KEYS[style.id])
+            : "") ||
+          style.label ||
+          style.name ||
+          style.id,
       }));
     }
     return VISUAL_STYLE_OPTIONS.map((option) => ({
@@ -1722,7 +1728,10 @@ export function IngestPageContent({ project }: { project: string }) {
                   )}
                 </div>
               )}
-              <div className="mt-2.5 grid grid-cols-2 gap-2.5 px-1 md:flex md:items-center md:gap-3">
+              {/* 这排控件除本段切换外全是 shrink-0 / min-w-max，行放不下时只有它会被压缩，
+                  英文标签下「Paste Text」就被压出圆角边框外（按钮自己是 md:flex-none 不跟着缩）。
+                  给它 shrink-0，并让整行在 md+ 允许换行，多出来的控件掉到第二行而不是溢出裁切。 */}
+              <div className="mt-2.5 grid grid-cols-2 gap-2.5 px-1 md:flex md:flex-wrap md:items-center md:gap-3">
                 <InputModeToggle
                   value={inputMode}
                   onChange={setInputMode}

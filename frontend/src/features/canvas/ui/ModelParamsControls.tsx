@@ -437,7 +437,7 @@ export const ModelParamsControls = memo(({
     const panel = (
       <div
         ref={panelRef}
-        className={`${panelRenderMode === 'inline' ? inlinePanelClassName : 'fixed z-[80]'} transition-opacity duration-200 ease-out ${isPanelVisible ? 'opacity-100' : 'pointer-events-none opacity-0'
+        className={`canvas-node-transient-ui ${panelRenderMode === 'inline' ? inlinePanelClassName : 'fixed z-[80]'} transition-opacity duration-200 ease-out ${isPanelVisible ? 'opacity-100' : 'pointer-events-none opacity-0'
           }`}
         style={panelRenderMode === 'inline' ? undefined : buildPanelStyle(anchor, align)}
       >

@@ -240,6 +240,7 @@ PLACEMENT_FREE_CANVAS_ROUTES = {
     "list_canvas_history",
     "restore_canvas_history",
     "get_node_generation_history",
+    "delete_node_generation_history_record",
     "get_canvas_generation_history",
     "put_canvas",
     "delete_canvas",
@@ -286,9 +287,9 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
         and _opts_out_of_the_guard(call)
     }
 
-    # 新增四类 Agent 产品 operation/session 端点后，当前 freezone 共 102 条路由。
-    assert router_decorators == 102
-    assert len(canvas_routes) == 28
+    # 同步 staging 并加入 Agent 产品 operation/session 后，共 104 条路由，画布占 29 条。
+    assert router_decorators == 104
+    assert len(canvas_routes) == 29
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES
 

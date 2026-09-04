@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PikoActionFigure } from "@/features/companion/PikoActionFigure";
+import { PikoGameHud, PikoGameOverlay } from "@/features/piko-mini-game/PikoGameChrome";
 import { usePikoGameAudio } from "@/features/piko-mini-game/usePikoGameAudio";
 
 const BOARD_WIDTH = 800;
@@ -15,6 +16,8 @@ const MAX_JUMP_DISTANCE = 335;
 const CAMERA_MOVE_MS = 560;
 
 type LeapStatus = "ready" | "playing" | "charging" | "jumping" | "landed" | "lost";
+type PlatformKind = "normal" | "bonus" | "spring" | "fragile";
+type LandingFeedback = "perfect" | "spring" | "rescue";
 
 type Point = {
   x: number;
@@ -27,6 +30,7 @@ type Platform = Point & {
   depth: number;
   height: number;
   bonus: boolean;
+  kind: PlatformKind;
 };
 
 type JumpState = {
@@ -53,10 +57,11 @@ function initialPlatforms(): Platform[] {
     depth: 74,
     height: 24,
     bonus: false,
+    kind: "normal",
   };
   const second = makeNextPlatform(1, first, 0);
   const third = makeNextPlatform(2, second, 1);
-  return [first, second, { ...third, bonus: true }];
+  return [first, second, { ...third, bonus: true, kind: "bonus" }];
 }
 
 function distanceBetween(first: Point, second: Point) {
@@ -79,14 +84,17 @@ function makeNextPlatform(id: number, previous: Platform, score: number): Platfo
   const verticalShift = nextY - previous.y;
   const horizontalShift = Math.sqrt(Math.max(0, distance ** 2 - verticalShift ** 2));
   const sizeVariance = Math.random() * 34;
+  const kind: PlatformKind = id % 7 === 0 ? "spring" : id % 6 === 0 ? "fragile" : id % 5 === 0 ? "bonus" : "normal";
+  const kindWidthPenalty = kind === "fragile" ? 18 : 0;
   return {
     id,
     x: previous.x + horizontalShift,
     y: nextY,
-    width: Math.max(70, 138 - score * 1.25 - sizeVariance),
-    depth: Math.max(46, 78 - score * 0.6 - sizeVariance * 0.45),
+    width: Math.max(70, 138 - score * 1.25 - sizeVariance - kindWidthPenalty),
+    depth: Math.max(46, 78 - score * 0.6 - sizeVariance * 0.45 - kindWidthPenalty * 0.4),
     height: 12 + Math.random() * 36,
-    bonus: id % 5 === 0,
+    bonus: kind === "bonus",
+    kind,
   };
 }
 
@@ -112,10 +120,15 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
   const comboRef = useRef(0);
   const cameraOffsetRef = useRef<Point>({ x: 0, y: 0 });
   const cameraMoveRef = useRef<CameraMove | null>(null);
+  const jumpBoostRef = useRef(1);
+  const rescueAvailableRef = useRef(true);
+  const feedbackTimerRef = useRef<number | null>(null);
   const [status, setStatus] = useState<LeapStatus>("ready");
   const [pikoPosition, setPikoPosition] = useState<Point>({ x: ANCHOR_X, y: ANCHOR_Y });
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
+  const [rescueAvailable, setRescueAvailable] = useState(true);
+  const [landingFeedback, setLandingFeedback] = useState<LandingFeedback | null>(null);
   const playTone = usePikoGameAudio(muted);
 
   const setGameStatus = useCallback((next: LeapStatus) => {
@@ -146,6 +159,19 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
     playTone(130, 0.3, 0.055, "square", 0.07, 44);
   }, [playTone]);
 
+  const showLandingFeedback = useCallback((feedback: LandingFeedback) => {
+    setLandingFeedback(feedback);
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = window.setTimeout(() => {
+      setLandingFeedback(null);
+      feedbackTimerRef.current = null;
+    }, 900);
+  }, []);
+
+  useEffect(() => () => {
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+  }, []);
+
   const resetGame = useCallback(() => {
     const nextPlatforms = initialPlatforms();
     platformsRef.current = nextPlatforms;
@@ -157,9 +183,13 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
     cameraMoveRef.current = null;
     scoreRef.current = 0;
     comboRef.current = 0;
+    jumpBoostRef.current = 1;
+    rescueAvailableRef.current = true;
     setPikoPosition({ x: ANCHOR_X, y: ANCHOR_Y });
     setScore(0);
     setCombo(0);
+    setRescueAvailable(true);
+    setLandingFeedback(null);
     setGameStatus("ready");
   }, [setGameStatus]);
 
@@ -199,7 +229,8 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
       x: (targetPlatform.x - currentPlatform.x) / targetDistance,
       y: (targetPlatform.y - currentPlatform.y) / targetDistance,
     };
-    const jumpDistance = MIN_JUMP_DISTANCE + power * (MAX_JUMP_DISTANCE - MIN_JUMP_DISTANCE);
+    const jumpDistance = (MIN_JUMP_DISTANCE + power * (MAX_JUMP_DISTANCE - MIN_JUMP_DISTANCE)) * jumpBoostRef.current;
+    jumpBoostRef.current = 1;
     const end = {
       x: currentPlatform.x + direction.x * jumpDistance,
       y: currentPlatform.y + direction.y * jumpDistance,
@@ -215,16 +246,21 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
     playJumpSound(power);
   }, [playJumpSound, setGameStatus]);
 
-  const settleOnPlatform = useCallback((target: Platform, landingPoint: Point) => {
+  const settleOnPlatform = useCallback((target: Platform, landingPoint: Point, rescued = false) => {
     const centerDistance = distanceBetween(landingPoint, target);
-    const centered = centerDistance <= Math.min(target.width, target.depth) * 0.18;
-    const gained = 1 + (centered ? 2 : 0) + (target.bonus ? 2 : 0);
+    const centered = !rescued && centerDistance <= Math.min(target.width, target.depth) * 0.18;
+    const spring = !rescued && target.kind === "spring";
+    const gained = 1 + (centered ? 2 : 0) + (target.bonus ? 2 : 0) + (spring ? 1 : 0);
     comboRef.current = centered ? comboRef.current + 1 : 0;
+    if (spring) jumpBoostRef.current = 1.12;
     scoreRef.current += gained;
     setScore(scoreRef.current);
     setCombo(comboRef.current);
     setGameStatus("landed");
     playLandSound(centered, target.bonus);
+    if (rescued) showLandingFeedback("rescue");
+    else if (centered) showLandingFeedback("perfect");
+    else if (spring) showLandingFeedback("spring");
 
     cameraMoveRef.current = {
       startedAt: performance.now(),
@@ -232,7 +268,7 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
       landingPoint,
       offset: { x: ANCHOR_X - target.x, y: ANCHOR_Y - target.y },
     };
-  }, [playLandSound, setGameStatus]);
+  }, [playLandSound, setGameStatus, showLandingFeedback]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -272,7 +308,15 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
       const halfWidth = platform.width / 2;
       const halfDepth = platform.depth / 2;
       const height = platform.height;
-      context.fillStyle = platform.bonus ? "rgba(101,163,13,0.52)" : "rgba(8,145,178,0.45)";
+      const spring = platform.kind === "spring";
+      const fragile = platform.kind === "fragile";
+      context.fillStyle = platform.bonus
+        ? "rgba(101,163,13,0.52)"
+        : spring
+          ? "rgba(124,58,237,0.5)"
+          : fragile
+            ? "rgba(217,119,6,0.48)"
+            : "rgba(8,145,178,0.45)";
       context.beginPath();
       context.moveTo(platform.x - halfWidth, platform.y);
       context.lineTo(platform.x, platform.y + halfDepth);
@@ -280,7 +324,13 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
       context.lineTo(platform.x - halfWidth, platform.y + height);
       context.closePath();
       context.fill();
-      context.fillStyle = platform.bonus ? "rgba(77,124,15,0.58)" : "rgba(30,64,175,0.42)";
+      context.fillStyle = platform.bonus
+        ? "rgba(77,124,15,0.58)"
+        : spring
+          ? "rgba(76,29,149,0.52)"
+          : fragile
+            ? "rgba(146,64,14,0.5)"
+            : "rgba(30,64,175,0.42)";
       context.beginPath();
       context.moveTo(platform.x + halfWidth, platform.y);
       context.lineTo(platform.x, platform.y + halfDepth);
@@ -295,8 +345,8 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
         platform.x + halfWidth,
         platform.y + halfDepth,
       );
-      gradient.addColorStop(0, platform.bonus ? "#d9f99d" : "#cffafe");
-      gradient.addColorStop(1, platform.bonus ? "#84cc16" : "#22d3ee");
+      gradient.addColorStop(0, platform.bonus ? "#d9f99d" : spring ? "#ddd6fe" : fragile ? "#fde68a" : "#cffafe");
+      gradient.addColorStop(1, platform.bonus ? "#84cc16" : spring ? "#8b5cf6" : fragile ? "#f59e0b" : "#22d3ee");
       context.fillStyle = gradient;
       context.shadowColor = platform.bonus ? "rgba(190,242,100,0.4)" : "rgba(103,232,249,0.34)";
       context.shadowBlur = 16;
@@ -314,6 +364,24 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
       context.beginPath();
       context.ellipse(platform.x, platform.y, 7, 4, 0, 0, Math.PI * 2);
       context.stroke();
+      if (spring) {
+        context.strokeStyle = "rgba(255,255,255,0.76)";
+        context.lineWidth = 3;
+        context.beginPath();
+        context.moveTo(platform.x - 12, platform.y - 3);
+        context.lineTo(platform.x - 5, platform.y + 4);
+        context.lineTo(platform.x + 2, platform.y - 3);
+        context.lineTo(platform.x + 9, platform.y + 4);
+        context.stroke();
+      } else if (fragile) {
+        context.strokeStyle = "rgba(120,53,15,0.7)";
+        context.lineWidth = 2;
+        context.beginPath();
+        context.moveTo(platform.x - 10, platform.y - 5);
+        context.lineTo(platform.x, platform.y + 2);
+        context.lineTo(platform.x + 8, platform.y - 4);
+        context.stroke();
+      }
     }
     context.restore();
   }, []);
@@ -339,6 +407,15 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
             pikoPositionRef.current = jump.end;
             setPikoPosition(jump.end);
             settleOnPlatform(target, jump.end);
+          } else if (target && rescueAvailableRef.current) {
+            rescueAvailableRef.current = false;
+            setRescueAvailable(false);
+            comboRef.current = 0;
+            setCombo(0);
+            const rescuePoint = { x: target.x + target.width * 0.26, y: target.y };
+            pikoPositionRef.current = rescuePoint;
+            setPikoPosition(rescuePoint);
+            settleOnPlatform(target, rescuePoint, true);
           } else {
             setGameStatus("lost");
             comboRef.current = 0;
@@ -510,10 +587,15 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
         </div>
       </div>
 
-      <div className="pointer-events-none absolute inset-x-4 top-4 flex justify-between text-sm font-medium text-white/78">
-        <span>{t("pikoMiniGame.leap.score", { score })}</span>
-        <span>{combo > 0 ? t("pikoMiniGame.leap.combo", { combo }) : t("pikoMiniGame.leap.centerHint")}</span>
-      </div>
+      <PikoGameHud
+        left={t("pikoMiniGame.leap.score", { score })}
+        center={landingFeedback ? t(`pikoMiniGame.leap.feedback.${landingFeedback}`) : undefined}
+        right={combo > 0
+          ? t("pikoMiniGame.leap.combo", { combo })
+          : rescueAvailable
+            ? t("pikoMiniGame.leap.rescueReady")
+            : t("pikoMiniGame.leap.centerHint")}
+      />
 
       {status === "playing" ? (
         <div className="pointer-events-none absolute bottom-5 left-1/2 -translate-x-1/2 text-center text-xs text-white/48">
@@ -522,39 +604,15 @@ export function PikoLeapGame({ onClose, muted }: { onClose: () => void; muted: b
       ) : null}
 
       {status === "ready" || status === "lost" ? (
-        <div className="absolute inset-0 grid place-items-center bg-black/52 px-5 backdrop-blur-[2px]">
-          <div className="max-w-sm rounded-2xl border border-white/[0.14] bg-black/68 px-7 py-6 text-center shadow-[0_24px_72px_rgba(0,0,0,0.48)]">
-            <h3 className="text-2xl font-semibold text-white">
-              {t(status === "lost" ? "pikoMiniGame.leap.lost" : "pikoMiniGame.leap.ready")}
-            </h3>
-            <p className="mt-2 text-sm leading-6 text-white/58">
-              {status === "lost"
-                ? t("pikoMiniGame.leap.result", { score })
-                : t("pikoMiniGame.leap.hint")}
-            </p>
-            <div className="mt-6 flex justify-center gap-3">
-              {status === "lost" ? (
-                <button
-                  type="button"
-                  className="h-10 rounded-full border border-white/[0.14] px-5 text-sm text-white/78 transition-colors hover:bg-white/[0.08] hover:text-white"
-                  onClick={onClose}
-                >
-                  {t("pikoMiniGame.backToWork")}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="h-10 rounded-full bg-cyan-300 px-5 text-sm font-medium text-slate-950 transition-colors hover:bg-cyan-200"
-                onClick={(event) => {
-                  event.currentTarget.blur();
-                  startGame();
-                }}
-              >
-                {status === "lost" ? t("pikoMiniGame.playAgain") : t("pikoMiniGame.leap.start")}
-              </button>
-            </div>
-          </div>
-        </div>
+        <PikoGameOverlay
+          title={t(status === "lost" ? "pikoMiniGame.leap.lost" : "pikoMiniGame.leap.ready")}
+          description={status === "lost" ? t("pikoMiniGame.leap.result", { score }) : t("pikoMiniGame.leap.hint")}
+          primaryLabel={status === "lost" ? t("pikoMiniGame.playAgain") : t("pikoMiniGame.leap.start")}
+          onPrimary={startGame}
+          secondaryLabel={status === "lost" ? t("pikoMiniGame.backToWork") : undefined}
+          onSecondary={status === "lost" ? onClose : undefined}
+          accent="lime"
+        />
       ) : null}
     </div>
   );

@@ -578,3 +578,61 @@ describe("Canvas 素材上限在落点校验与建边判定上对齐", () => {
     });
   });
 });
+
+describe("Canvas node drag focus mode", () => {
+  beforeEach(() => {
+    document.body.classList.remove("canvas-node-drag-focus");
+    capturedReactFlowProps = null;
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    useCanvasStore.getState().setCanvasData(
+      [
+        {
+          id: "drag-a",
+          type: CANVAS_NODE_TYPES.imageGen,
+          position: { x: 0, y: 0 },
+          data: {},
+        },
+        {
+          id: "drag-b",
+          type: CANVAS_NODE_TYPES.imageGen,
+          position: { x: 400, y: 0 },
+          data: {},
+        },
+      ],
+      [],
+    );
+  });
+
+  it("enters and restores focus mode for single-node and selection drags", async () => {
+    const view = renderCanvas();
+    await waitFor(() => expect(capturedReactFlowProps).toBeTruthy());
+    const [first, second] = useCanvasStore.getState().nodes;
+    const onNodeDragStart = capturedReactFlowProps?.onNodeDragStart as
+      | ((event: { altKey: boolean }, node: typeof first, nodes: typeof first[]) => void)
+      | undefined;
+    const onNodeDragStop = capturedReactFlowProps?.onNodeDragStop as
+      | ((event: object, node: typeof first) => void)
+      | undefined;
+    const onSelectionDragStart = capturedReactFlowProps?.onSelectionDragStart as
+      | ((event: object, nodes: typeof first[]) => void)
+      | undefined;
+    const onSelectionDragStop = capturedReactFlowProps?.onSelectionDragStop as
+      | (() => void)
+      | undefined;
+    const canvas = view.container.querySelector<HTMLElement>(".dc-canvas");
+
+    act(() => onNodeDragStart?.({ altKey: false }, first, [first]));
+    expect(document.body).toHaveClass("canvas-node-drag-focus");
+    expect(canvas).toHaveAttribute("data-node-drag-focus", "true");
+
+    act(() => onNodeDragStop?.({}, first));
+    expect(document.body).not.toHaveClass("canvas-node-drag-focus");
+    expect(canvas).not.toHaveAttribute("data-node-drag-focus");
+
+    act(() => onSelectionDragStart?.({}, [first, second]));
+    expect(document.body).toHaveClass("canvas-node-drag-focus");
+
+    act(() => onSelectionDragStop?.());
+    expect(document.body).not.toHaveClass("canvas-node-drag-focus");
+  });
+});

@@ -2,10 +2,10 @@
 // Copyright (c) 2026 ClaymoreLab
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
-import { businessWechatQrUrl, loginModalShowcaseVideos } from "./cinematic/media";
+import { businessWechatQrUrl, loginModalShowcaseVideo } from "./cinematic/media";
 import { LoginCard } from "./login-card";
 import styles from "./login.module.css";
 
@@ -14,112 +14,9 @@ type LoginModalProps = {
   onClose: () => void;
 };
 
-const SHOWCASE_CLIP_DURATION_SECONDS = 18;
-const SHOWCASE_CROSSFADE_DURATION_MS = 720;
-
 export function LoginModal({ open, onClose }: LoginModalProps) {
   const { t } = useTranslation();
   const reducedMotion = useReducedMotion();
-  const [showcaseIndex, setShowcaseIndex] = useState(0);
-  const [outgoingShowcaseIndex, setOutgoingShowcaseIndex] = useState<number | null>(null);
-  const showcaseTransitionTimer = useRef<number | null>(null);
-  const showcaseTransitioning = useRef(false);
-  const failedShowcaseIds = useRef<Set<string>>(new Set());
-  const showcaseIndexRef = useRef(0);
-  const pendingShowcaseAdvance = useRef(false);
-  const [showcaseUnavailable, setShowcaseUnavailable] = useState(false);
-  const activeShowcase = loginModalShowcaseVideos[showcaseIndex] ?? loginModalShowcaseVideos[0];
-  const outgoingShowcase =
-    outgoingShowcaseIndex === null ? null : loginModalShowcaseVideos[outgoingShowcaseIndex];
-  const visibleShowcases = outgoingShowcase
-    ? [
-        { item: outgoingShowcase, outgoing: true },
-        { item: activeShowcase, outgoing: false },
-      ]
-    : [{ item: activeShowcase, outgoing: false }];
-
-  const goToShowcase = (nextIndex: number) => {
-    showcaseIndexRef.current = nextIndex;
-    setShowcaseIndex(nextIndex);
-  };
-
-  const showNextShowcase = () => {
-    if (showcaseTransitioning.current) {
-      // 过渡期内的推进请求不能丢。CDN 整体不可用时，incoming 片源会在锁释放前
-      // 就报错，而 error 对同一个元素只发一次 —— 直接 return 会永久停在这个失败
-      // 片源上，既不继续尝试剩余片源，也走不到静态兜底。记下来，过渡结束后补。
-      pendingShowcaseAdvance.current = true;
-      return;
-    }
-
-    // 读 ref 而非闭包：补偿推进是在过渡计时器回调里发起的，那个闭包捕获的
-    // showcaseIndex 已经过期了。
-    const currentIndex = showcaseIndexRef.current;
-    const nextIndex = (currentIndex + 1) % loginModalShowcaseVideos.length;
-    if (reducedMotion) {
-      goToShowcase(nextIndex);
-      return;
-    }
-
-    showcaseTransitioning.current = true;
-    setOutgoingShowcaseIndex(currentIndex);
-    goToShowcase(nextIndex);
-
-    if (showcaseTransitionTimer.current !== null) {
-      window.clearTimeout(showcaseTransitionTimer.current);
-    }
-    showcaseTransitionTimer.current = window.setTimeout(() => {
-      setOutgoingShowcaseIndex(null);
-      showcaseTransitioning.current = false;
-      showcaseTransitionTimer.current = null;
-      if (pendingShowcaseAdvance.current) {
-        pendingShowcaseAdvance.current = false;
-        showNextShowcase();
-      }
-    }, SHOWCASE_CROSSFADE_DURATION_MS);
-  };
-
-  // 轮换在 reducedMotion 下的唯一驱动就是 onError（此时 autoPlay 关闭，
-  // onEnded/onTimeUpdate 都不触发）。逐个记下失败片源，全部失败就停在
-  // .loginMedia 的静态底色上，不再卸载/重建 <video> 反复发请求。
-  const handleShowcaseError = (id: string) => {
-    failedShowcaseIds.current.add(id);
-    if (failedShowcaseIds.current.size < loginModalShowcaseVideos.length) {
-      showNextShowcase();
-      return;
-    }
-    pendingShowcaseAdvance.current = false;
-    if (showcaseTransitionTimer.current !== null) {
-      window.clearTimeout(showcaseTransitionTimer.current);
-      showcaseTransitionTimer.current = null;
-    }
-    showcaseTransitioning.current = false;
-    setOutgoingShowcaseIndex(null);
-    setShowcaseUnavailable(true);
-  };
-
-  useEffect(() => {
-    if (showcaseTransitionTimer.current !== null) {
-      window.clearTimeout(showcaseTransitionTimer.current);
-      showcaseTransitionTimer.current = null;
-    }
-    showcaseTransitioning.current = false;
-    setOutgoingShowcaseIndex(null);
-    failedShowcaseIds.current.clear();
-    pendingShowcaseAdvance.current = false;
-    setShowcaseUnavailable(false);
-    if (!open) return;
-    goToShowcase(0);
-  }, [open]);
-
-  useEffect(
-    () => () => {
-      if (showcaseTransitionTimer.current !== null) {
-        window.clearTimeout(showcaseTransitionTimer.current);
-      }
-    },
-    [],
-  );
 
   useEffect(() => {
     if (!open) return;
@@ -164,36 +61,16 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
             </button>
 
             <section className={styles.loginMedia} aria-label={t("auth.modal.showcaseLabel")}>
-              {!showcaseUnavailable &&
-                visibleShowcases.map(({ item, outgoing }) => (
-                  <video
-                    key={item.id}
-                    className={`${styles.loginMediaVideo} ${
-                      outgoing
-                        ? styles.loginMediaVideoOutgoing
-                        : styles.loginMediaVideoIncoming
-                    }`}
-                    src={item.video}
-                    muted
-                    playsInline
-                    autoPlay={!reducedMotion}
-                    preload="metadata"
-                    onTimeUpdate={
-                      outgoing
-                        ? undefined
-                        : (event) => {
-                            if (event.currentTarget.currentTime >= SHOWCASE_CLIP_DURATION_SECONDS) {
-                              showNextShowcase();
-                            }
-                          }
-                    }
-                    onEnded={outgoing ? undefined : showNextShowcase}
-                    onError={outgoing ? undefined : () => handleShowcaseError(item.id)}
-                    data-showcase-id={item.id}
-                    data-showcase-phase={outgoing ? "outgoing" : "incoming"}
-                    aria-hidden="true"
-                  />
-                ))}
+              <video
+                className={styles.loginMediaVideo}
+                src={loginModalShowcaseVideo}
+                muted
+                playsInline
+                autoPlay={!reducedMotion}
+                loop
+                preload="metadata"
+                aria-hidden="true"
+              />
               <div className={styles.loginMediaShade} aria-hidden="true" />
               <div className={styles.loginMediaCopy}>
                 <h2>{t("auth.modal.showcaseTitle")}</h2>

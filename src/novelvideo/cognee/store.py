@@ -16,6 +16,7 @@ from uuid import UUID
 
 # 重要：必须先导入 config，在 cognee 被导入之前设置环境变量
 from .config import init_cognee  # noqa: F401
+from novelvideo.i18n_message import MessageLike, lmsg
 from novelvideo.config import get_newapi_structured_output_litellm_kwargs
 from .concurrency import cognee_pipeline_concurrency
 from .ladybug_access import cognee_project_context, ladybug_graph_access
@@ -606,11 +607,11 @@ class CogneeStore:
     ) -> dict:
         """在项目图谱锁内构建 Cognee 图谱，不提取角色/剧集。"""
 
-        def report(progress: float, task: str):
+        def report(progress: float, task: MessageLike):
             if on_progress:
                 on_progress(progress, task)
 
-        def log(message: str):
+        def log(message: MessageLike):
             if on_log:
                 on_log(message)
             console.print(f"[dim]{message}[/dim]")
@@ -620,12 +621,27 @@ class CogneeStore:
 
         from .config import init_cognee
 
-        report(INGEST_PROGRESS_MILESTONES["read"], "读取并校验原文...")
-        log(f"读取文件: {novel_path}")
+        report(
+            INGEST_PROGRESS_MILESTONES["read"],
+            lmsg("tasks.progress.ingest.reading", "读取并校验原文..."),
+        )
+        log(
+            lmsg(
+                "tasks.log.ingest.readingFile",
+                f"读取文件: {novel_path}",
+                path=str(novel_path),
+            )
+        )
         content = load_novel_text(novel_path)
         if not content.strip():
             raise ValueError("小说内容为空，无法导入")
-        log(f"文件读取完成: {len(content)} 字符")
+        log(
+            lmsg(
+                "tasks.log.ingest.readComplete",
+                f"文件读取完成: {len(content)} 字符",
+                charCount=len(content),
+            )
+        )
         self._novel_content = content
 
         if str(spine_template or "").strip() == "drama":
@@ -984,11 +1000,11 @@ class CogneeStore:
         self._require_cognee("graph character build")
         from .pipeline import extract_characters_from_graph
 
-        def report(progress: float, task: str):
+        def report(progress: float, task: MessageLike):
             if on_progress:
                 on_progress(progress, task)
 
-        def log(message: str):
+        def log(message: MessageLike):
             if on_log:
                 on_log(message)
             console.print(f"[dim]{message}[/dim]")
@@ -1035,6 +1051,69 @@ class CogneeStore:
         await self._ensure_db()
         return await self.sqlite_store.delete_all_characters()
 
+    async def build_episodes(
+        self,
+        target_episodes: int = 10,
+        on_progress: Optional[Callable[[float, str], None]] = None,
+        on_log: Optional[Callable[[str], None]] = None,
+    ) -> List[NovelEpisode]:
+        """规划剧集（分阶段架构第三步）。"""
+        from .pipeline import extract_episodes_with_characters
+
+        def report(progress: float, task: MessageLike):
+            if on_progress:
+                on_progress(progress, task)
+
+        def log(message: MessageLike):
+            if on_log:
+                on_log(message)
+            console.print(f"[dim]{message}[/dim]")
+
+        # 获取原文内容
+        log(lmsg("tasks.log.source.loading", "从文件加载原文..."))
+        novel_content = require_imported_novel(self.project_dir)
+        log(
+            lmsg(
+                "tasks.log.source.loaded",
+                f"原文加载完成: {len(novel_content)} 字符",
+                charCount=len(novel_content),
+            )
+        )
+
+        # 获取已确认的角色列表
+        character_names = list(self._characters.keys())
+        log(f"已知角色: {len(character_names)} 个")
+
+        # P1: 规划
+        report(0.1, "规划剧集...")
+        log(f"开始规划 {target_episodes} 集...")
+
+        episodes = await extract_episodes_with_characters(
+            novel_content,
+            target_episodes=target_episodes,
+            known_characters=character_names,
+            dataset_name=self.dataset_name,
+            project_name=self.project_name,
+        )
+
+        log(f"LLM 返回 {len(episodes)} 集")
+
+        # P2: 原子替换旧规划。删除和写入必须在同一事务中完成，避免任务
+        # 取消或 Worker 退出后只剩一张空 episodes 表。
+        old_episode_count = len(self._episodes)
+        report(0.85, "保存新剧集...")
+        log("保存新剧集到数据库...")
+        await self.replace_episodes(episodes)
+        log(f"已原子替换 {old_episode_count} 个旧剧集")
+
+        if len(self._episodes) != len(episodes):
+            log(f"⚠️ 警告：内存缓存 ({len(self._episodes)}) 与返回结果 ({len(episodes)}) 不一致")
+
+        report(1.0, "剧集规划完成")
+        log(f"剧集规划完成: {len(episodes)} 集，编号: {list(self._episodes.keys())}")
+
+        return episodes
+
     async def build_episodes_from_chapters(
         self,
         novel_text: str = None,
@@ -1068,20 +1147,26 @@ class CogneeStore:
         from novelvideo.cognee.chapter_detector import ChapterDetector
         from novelvideo.cognee.event_extractor import EventExtractor
 
-        def report(progress: float, task: str):
+        def report(progress: float, task: MessageLike):
             if on_progress:
                 on_progress(progress, task)
 
-        def log(message: str):
+        def log(message: MessageLike):
             if on_log:
                 on_log(message)
             console.print(f"[dim]{message}[/dim]")
 
         # 1. 加载原文并检测章节
-        log("从文件加载原文...")
+        log(lmsg("tasks.log.source.loading", "从文件加载原文..."))
         novel_text = require_imported_novel(self.project_dir)
 
-        log(f"原文加载完成: {len(novel_text)} 字符")
+        log(
+            lmsg(
+                "tasks.log.source.loaded",
+                f"原文加载完成: {len(novel_text)} 字符",
+                charCount=len(novel_text),
+            )
+        )
 
         # 清理剧集内容
         await self.clear_episode_contents()
@@ -1183,7 +1268,7 @@ class CogneeStore:
         import json
         import litellm
 
-        def log(msg: str):
+        def log(msg: MessageLike):
             if on_log:
                 on_log(msg)
 
@@ -1267,7 +1352,7 @@ class CogneeStore:
     ) -> dict:
         """导入小说文本 + 提取角色 + 规划剧集。"""
 
-        def report(progress: float, task: str):
+        def report(progress: float, task: MessageLike):
             if on_progress:
                 on_progress(progress, task)
 
@@ -1720,11 +1805,11 @@ class CogneeStore:
         self._require_cognee("graph scene build")
         from .pipeline import extract_scenes_from_graph
 
-        def report(progress: float, task: str):
+        def report(progress: float, task: MessageLike):
             if on_progress:
                 on_progress(progress, task)
 
-        def log(message: str):
+        def log(message: MessageLike):
             if on_log:
                 on_log(message)
             console.print(f"[dim]{message}[/dim]")
@@ -1803,11 +1888,11 @@ class CogneeStore:
         self._require_cognee("graph prop build")
         from .pipeline import extract_props_from_graph
 
-        def report(progress: float, task: str):
+        def report(progress: float, task: MessageLike):
             if on_progress:
                 on_progress(progress, task)
 
-        def log(message: str):
+        def log(message: MessageLike):
             if on_log:
                 on_log(message)
             console.print(f"[dim]{message}[/dim]")

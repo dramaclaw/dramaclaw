@@ -10,6 +10,7 @@ import type {
   FreezoneAssetLibraryMedia,
   FreezoneAssetLibrarySource,
 } from '@/api/ops';
+import type { TFn } from '@/lib/i18n-types';
 
 export const ASSET_LIBRARY_CARD_CLASS =
   'overflow-hidden rounded-sm border border-border bg-muted/30 transition-colors';
@@ -69,23 +70,30 @@ export type AssetCategory = FreezoneAssetLibraryCategory;
 
 export interface AssetCategoryDef {
   key: AssetCategory;
-  label: string;
+  /** 展示名的词条 key——这张表跟着界面语言走，源码里只留 key。 */
+  labelKey: string;
   /** 该类目收哪些媒介的文件——决定上传时的 accept 与提示文案。 */
   media: AssetLibraryMedia[];
 }
 
 export const ASSET_CATEGORIES: AssetCategoryDef[] = [
-  { key: 'other', label: '其它', media: ['image', 'video'] },
-  { key: 'character', label: '人物', media: ['image', 'video'] },
-  { key: 'scene', label: '场景', media: ['image', 'video'] },
-  { key: 'prop', label: '物品', media: ['image', 'video'] },
-  { key: 'style', label: '风格', media: ['image', 'video'] },
-  { key: 'audio', label: '音效', media: ['audio'] },
+  { key: 'other', labelKey: 'canvas.assetLibrary.category.other', media: ['image', 'video'] },
+  {
+    key: 'character',
+    labelKey: 'canvas.assetLibrary.category.character',
+    media: ['image', 'video'],
+  },
+  { key: 'scene', labelKey: 'canvas.assetLibrary.category.scene', media: ['image', 'video'] },
+  { key: 'prop', labelKey: 'canvas.assetLibrary.category.prop', media: ['image', 'video'] },
+  { key: 'style', labelKey: 'canvas.assetLibrary.category.style', media: ['image', 'video'] },
+  { key: 'audio', labelKey: 'canvas.assetLibrary.category.audio', media: ['audio'] },
 ];
 
-/** 「全部」页签的 key，和类目 key 同处一个 tab 条上，所以单独留一个字面量。 */
+/** 类目筛选器的「全部类别」key。文件夹范围由独立导航控制，不再混入同一排。 */
 export const ALL_CATEGORY_KEY = 'all';
-export type AssetLibraryTabKey = typeof ALL_CATEGORY_KEY | AssetCategory;
+export type AssetLibraryCategoryFilterKey =
+  | typeof ALL_CATEGORY_KEY
+  | AssetCategory;
 
 /** 从 File 的 MIME 判断它属于哪种媒介；认不出来返回 null（直接丢弃该文件）。 */
 export function mediaOfFile(file: File): AssetLibraryMedia | null {
@@ -115,11 +123,11 @@ export function deriveCategory(
   return media === 'audio' ? 'audio' : 'other';
 }
 
-export const SOURCE_LABEL: Record<FreezoneAssetLibrarySource, string> = {
-  upload: '上传',
-  character: '人物',
-  scene: '场景',
-  prop: '道具',
+export const SOURCE_LABEL_KEYS: Record<FreezoneAssetLibrarySource, string> = {
+  upload: 'canvas.assetLibrary.source.upload',
+  character: 'canvas.assetLibrary.source.character',
+  scene: 'canvas.assetLibrary.source.scene',
+  prop: 'canvas.assetLibrary.source.prop',
 };
 
 /**
@@ -135,29 +143,41 @@ export type AssetFolderKey = string;
 
 export const MAINLINE_FOLDER_KEY = 'mainline';
 /** 没归类的本地上传落在「其它」类目，文件夹上换个更直白的名字。 */
-export const UNSORTED_FOLDER_LABEL = '待分类资产';
+export const UNSORTED_FOLDER_LABEL_KEY = 'canvas.assetLibrary.uncategorized';
 /** 与后端 FOLDER_NAME_MAX_LEN 一致。 */
 export const FOLDER_NAME_MAX_LEN = 20;
 
-const SYSTEM_FOLDER_LABELS: Record<string, string> = {
-  [MAINLINE_FOLDER_KEY]: '主线',
+const SYSTEM_FOLDER_LABEL_KEYS: Record<string, string> = {
+  [MAINLINE_FOLDER_KEY]: 'canvas.assetLibrary.folder.mainline',
   ...Object.fromEntries(
     ASSET_CATEGORIES.map((category) => [
       category.key,
-      category.key === 'other' ? UNSORTED_FOLDER_LABEL : category.label,
+      category.key === 'other' ? UNSORTED_FOLDER_LABEL_KEY : category.labelKey,
     ]),
   ),
 };
 
-/** 系统文件夹的显示名；不是系统 key（自建文件夹的 id）时返回 null。 */
-export function systemFolderLabel(key: AssetFolderKey): string | null {
-  return SYSTEM_FOLDER_LABELS[key] ?? null;
+/** 系统文件夹显示名的词条 key；不是系统 key（自建文件夹的 id）时返回 null。 */
+export function systemFolderLabelKey(key: AssetFolderKey): string | null {
+  return SYSTEM_FOLDER_LABEL_KEYS[key] ?? null;
 }
 
-/** 用户建不出来的名字（会和系统文件夹撞），与后端 RESERVED_FOLDER_NAMES 一致。 */
-export const RESERVED_FOLDER_NAMES = Object.values(SYSTEM_FOLDER_LABELS).concat(
-  ASSET_CATEGORIES.map((category) => category.label),
-);
+/**
+ * 用户建不出来的名字（会和系统文件夹撞），与后端 RESERVED_FOLDER_NAMES 一致。
+ * 这是跟后端对齐的协议值，不是界面文案，所以写死中文、不入词条。
+ */
+// i18n-exempt-start
+export const RESERVED_FOLDER_NAMES = [
+  '主线',
+  '待分类资产',
+  '其它',
+  '人物',
+  '场景',
+  '物品',
+  '风格',
+  '音效',
+];
+// i18n-exempt-end
 
 export interface AssetFolder {
   key: AssetFolderKey;
@@ -207,6 +227,7 @@ export function deriveFolder(
  */
 export function buildAssetFolders(
   items: LibraryItem[],
+  t: TFn,
   customFolders: FreezoneAssetLibraryFolder[] = [],
 ): AssetFolder[] {
   const own = (key: AssetFolderKey) =>
@@ -214,7 +235,7 @@ export function buildAssetFolders(
   const folders: AssetFolder[] = [
     {
       key: MAINLINE_FOLDER_KEY,
-      label: SYSTEM_FOLDER_LABELS[MAINLINE_FOLDER_KEY],
+      label: t(SYSTEM_FOLDER_LABEL_KEYS[MAINLINE_FOLDER_KEY]),
       items: items.filter(
         (entry) =>
           entry.folder === MAINLINE_FOLDER_KEY || entry.source !== 'upload',
@@ -228,7 +249,7 @@ export function buildAssetFolders(
     if (category.key !== 'other' && owned.length === 0) continue;
     folders.push({
       key: category.key,
-      label: SYSTEM_FOLDER_LABELS[category.key],
+      label: t(SYSTEM_FOLDER_LABEL_KEYS[category.key]),
       items: owned,
       system: true,
       uploadable: true,

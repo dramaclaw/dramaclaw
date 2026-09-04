@@ -31,11 +31,13 @@ import { Handle, Position, useStore, type NodeProps } from '@xyflow/react';
 import {
   LOD_SHELL_EXEMPT_TYPES,
   isCanvasGestureActive,
+  isCanvasHydrateBurstActive,
   isLowDetailZoom,
   isNodeMediaActive,
   requestShellUpgrade,
 } from '@/features/canvas/application/canvasLod';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { ReferencePickNodeOverlay } from '@/features/canvas/ui/ReferencePickNodeOverlay';
 import {
   getLodStill,
   requestLodStill,
@@ -222,12 +224,16 @@ export function withLodShell(
     //   - 手势进行中新挂载的节点（视口裁剪把它换进来的）从 shell 起步，避免
     //     快速平移时每秒几十次完整挂载造成的稳态掉帧尖刺；
     //   - 缩放升档时视口内的所有 shell 分批升级，摊平原先单次提交的长帧。
+    //   - 换画布 hydrate 首帧挂载的节点（见 canvasLod 的 hydrate burst）：几百个
+    //     节点同一次提交挂完是切画布卡顿的主要来源，先出 shell 再分批补齐。
     // 反方向（完整 → shell）立即生效：降档必须与裁剪开关同一提交（见 Canvas
     // 的 applyLowDetailClass 注释），且换成 shell 本身就便宜。
     const [heldShell, setHeldShell] = useState(
       () =>
         wantShell ||
-        (!exempt && !isActiveSelection && isCanvasGestureActive())
+        (!exempt &&
+          !isActiveSelection &&
+          (isCanvasGestureActive() || isCanvasHydrateBurstActive()))
     );
     if (wantShell && !heldShell) {
       // render 阶段同组件 setState 是 React 认可的「派生状态」写法，立即重渲染。
@@ -239,19 +245,30 @@ export function withLodShell(
       return requestShellUpgrade(() => setHeldShell(false));
     }, [heldShell, wantShell]);
 
+    // 参考拾取遮罩挂在每个节点上（shell 档也要有，低缩放下照样能选）：
+    // `.react-flow__node` 本身是定位元素，遮罩用 inset-0 就精确贴合这个节点的盒子，
+    // 不必在画布层重算 positionAbsolute × zoom。不在拾取态时它渲染 null。
     if (heldShell) {
       return (
-        <LodShell
-          type={type}
-          id={props.id}
-          data={props.data as ShellData}
-          selected={props.selected}
-          width={props.width}
-          height={props.height}
-        />
+        <>
+          <LodShell
+            type={type}
+            id={props.id}
+            data={props.data as ShellData}
+            selected={props.selected}
+            width={props.width}
+            height={props.height}
+          />
+          <ReferencePickNodeOverlay nodeId={props.id} />
+        </>
       );
     }
-    return <Component {...props} />;
+    return (
+      <>
+        <Component {...props} />
+        <ReferencePickNodeOverlay nodeId={props.id} />
+      </>
+    );
   };
   Wrapped.displayName = `withLodShell(${type})`;
   return memo(Wrapped);

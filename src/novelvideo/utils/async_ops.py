@@ -8,11 +8,14 @@ from anyio.lowlevel import RunVar
 
 
 METADATA_IO_CONCURRENCY = 4
-_metadata_io_limiter_var: RunVar[anyio.CapacityLimiter] = RunVar("metadata_io_limiter")
+_metadata_io_limiter_var: RunVar[anyio.CapacityLimiter] = RunVar(
+    "metadata_io_limiter"
+)
 
 
 def metadata_io_limiter() -> anyio.CapacityLimiter:
     """Return the lightweight metadata/file-operation gate for this async run."""
+
     limiter = _metadata_io_limiter_var.get(None)
     if limiter is None:
         limiter = anyio.CapacityLimiter(METADATA_IO_CONCURRENCY)
@@ -25,6 +28,7 @@ async def wait_for_task_completion(
     cancellation: asyncio.CancelledError | None = None,
 ) -> tuple[Any, asyncio.CancelledError | None]:
     """Wait through repeated cancellation, preserving the first cancellation."""
+
     while not task.done():
         try:
             if cancellation is None:
@@ -56,7 +60,14 @@ async def run_sync_bounded(
     shield: bool = True,
     **kwargs: Any,
 ) -> Any:
-    """Run bounded blocking work with transactional cancellation shielding."""
+    """Run bounded blocking work with optional transactional cancellation shielding.
+
+    When ``shield`` is true, cancellation is delayed while waiting for capacity
+    and until the worker and optional finalizer complete. When false, waiting
+    for capacity is cancellable; once admitted, the operation retains its
+    limiter token until the worker and optional finalizer finish. If a finalizer
+    is supplied, its return value is the operation result.
+    """
     bound = functools.partial(function, *args, **kwargs)
     if shield:
         worker_task = asyncio.create_task(

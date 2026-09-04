@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -15,16 +16,20 @@ import {
   ChevronDown,
   ChevronUp,
   Film,
+  FileText,
   Languages,
   Library,
+  Link as LinkIcon,
   Loader2,
   Music,
   Pause,
-  Plus,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import type { TFn } from "@/lib/i18n-types";
+import { toast } from "sonner";
 
 import {
   CANVAS_NODE_TYPES,
@@ -49,6 +54,11 @@ import { canvasEventBus } from "@/features/canvas/application/canvasServices";
 import type { UpstreamContent } from "@/features/canvas/application/ports";
 import { ReferenceTextChip } from "@/features/canvas/nodes/shared/ReferenceTextChip";
 import { ReferenceDetachButton } from "@/features/canvas/nodes/shared/ReferenceDetachButton";
+import { ReferencePickChip } from "@/features/canvas/nodes/shared/ReferencePickChip";
+import { ReferenceMentionButton } from "@/features/canvas/nodes/shared/ReferenceMentionButton";
+import { focusReferenceNode } from "@/features/canvas/application/viewportReturnStore";
+import { collectReferenceMaterials } from "@/features/canvas/application/referencePick";
+import { attachReferenceEdge } from "@/features/canvas/application/attachReference";
 import {
   PromptMentionEditor,
   type MentionCandidate,
@@ -86,6 +96,7 @@ import {
 } from "@/features/canvas/ui/nodeControlStyles";
 import { CameraMovementPickerPopover } from "@/features/canvas/nodes/CameraMovementPickerPopover";
 import {
+  cameraMovementPresetLabel,
   findCameraMovementPreset,
   type CameraMovementPreset,
 } from "@/features/canvas/domain/cameraMovementPresets";
@@ -97,6 +108,7 @@ import { useCanvasStore } from "@/stores/canvasStore";
 import {
   fetchFreezoneTextTranslateResult,
   submitFreezoneTextTranslate,
+  uploadFreezoneReferenceFile,
   type FreezoneVideoAspectRatio,
 } from "@/api/ops";
 import { awaitTaskCompletion } from "@/api/tasks";
@@ -275,6 +287,8 @@ export function VideoOperationsPanel({
   onSubmit,
 }: VideoOperationsPanelProps) {
     const { t } = useTranslation();
+    // 能力守卫返回的是 i18n key（见 videoModelCapabilities.ts），选择器要的是文案。
+    const translateDisabledReason = (key: string | null) => (key ? t(key) : null);
     // `submitDisabled` already carries the org admission block from VideoNode;
     // this is only for the button's title, so a blocked member is told why.
     const modelTaskAccess = useModelTaskAccess();
@@ -286,6 +300,11 @@ export function VideoOperationsPanel({
     // 与 inputRef 分开:那个是「替换本节点自身的视频」(单选、只收视频),
     // 这个是「添加上游外部素材」(多选、收图片/视频/音频)。
     const externalAssetInputRef = useRef<HTMLInputElement>(null);
+    const referenceFileInputRef = useRef<HTMLInputElement>(null);
+    const toolbarContentRef = useRef<HTMLDivElement>(null);
+    const [isUploadingReferenceFile, setIsUploadingReferenceFile] = useState(false);
+    const [referenceLinkDraft, setReferenceLinkDraft] = useState(data.referenceLink ?? "");
+    const [referencePanelWidth, setReferencePanelWidth] = useState<number | null>(null);
     const [isTranslatingPrompt, setIsTranslatingPrompt] = useState(false);
     const [isCharacterLibraryOpen, setIsCharacterLibraryOpen] = useState(false);
     // Local draft + composition guard so IME (中文输入法) candidates stop being
@@ -298,6 +317,60 @@ export function VideoOperationsPanel({
       if (isComposingRef.current) return;
       setPromptDraft(prompt);
     }, [prompt]);
+    useEffect(() => {
+      setReferenceLinkDraft(data.referenceLink ?? "");
+    }, [data.referenceLink]);
+
+    const supportsReferenceFile = (selectedVideoModel?.referenceFileMax ?? 0) > 0;
+    const supportsReferenceLink = (selectedVideoModel?.referenceLinkMax ?? 0) > 0;
+    const referenceFileTypes = selectedVideoModel?.referenceFileTypes ?? [];
+    const referenceFileAccept = referenceFileTypes.length > 0
+      ? referenceFileTypes.map((extension) => `.${extension.replace(/^\./, "")}`).join(",")
+      : undefined;
+
+    const handleReferenceFile = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file || isUploadingReferenceFile) return;
+      const maxReferenceFileBytes = 100 * 1024 * 1024;
+      if (file.size > maxReferenceFileBytes) {
+        toast.error(t("node.videoNode.referenceDocument.fileTooLarge", {
+          size: (file.size / 1024 / 1024).toFixed(1),
+        }));
+        return;
+      }
+      const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+      if (referenceFileTypes.length > 0 && !referenceFileTypes.includes(extension)) {
+        toast.error(t("node.videoNode.referenceDocument.unsupportedType", {
+          types: referenceFileTypes.join(", "),
+        }));
+        return;
+      }
+      const project = readUrl().project;
+      if (!project) return;
+      setIsUploadingReferenceFile(true);
+      try {
+        const uploaded = await uploadFreezoneReferenceFile(project, file);
+        updateNodeData(id, {
+          referenceFileUrl: uploaded.url,
+          referenceFileName: uploaded.filename || file.name,
+          referenceLink: null,
+        });
+        setReferenceLinkDraft("");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : t("common.error"));
+      } finally {
+        setIsUploadingReferenceFile(false);
+      }
+    }, [id, isUploadingReferenceFile, referenceFileTypes, t, updateNodeData]);
+
+    const commitReferenceLink = useCallback(() => {
+      const value = referenceLinkDraft.trim();
+      updateNodeData(id, {
+        referenceLink: value || null,
+        ...(value ? { referenceFileUrl: null, referenceFileName: null } : {}),
+      });
+    }, [id, referenceLinkDraft, updateNodeData]);
     // 卸载前的 IME 合成兜底：合成进行中取消选中会直接卸载本面板，
     // onCompositionEnd 再也没有机会触发，最新草稿只存在于本地 state。
     // 用 ref 镜像 draft，卸载 cleanup 里发现仍在合成就把它落回 data.prompt。
@@ -403,6 +476,8 @@ export function VideoOperationsPanel({
     //
     // 在 REFERENCE_CAPS_BY_MODE 表里有条目的模式，超过 cap 的条目不能进
     // @ 候选 —— 服务端会直接丢弃，留在候选里只会让用户选了之后被静默忽略。
+    // i18n-exempt-start —— 「图片N / 视频N / 音频N」是写进提示词、由后端解析
+    // 的引用 token，翻译掉后端就对不上了。
     const mentionCandidates = useMemo<MentionCandidate[]>(() => {
       const out: MentionCandidate[] = [];
       let imageIdx = 0;
@@ -445,6 +520,7 @@ export function VideoOperationsPanel({
       }
       return out;
     }, [referenceCaps, referenceMediaCapInfo]);
+    // i18n-exempt-end
 
     // 取消关联某个上游素材：删掉「该上游节点 → 本节点」的连线。collectInputContents
     // 只走一跳，item.nodeId 就是直接相连的上游节点，可精确定位要删的边。
@@ -456,6 +532,50 @@ export function VideoOperationsPanel({
           .forEach((edge) => deleteEdge(edge.id));
       },
       [id, deleteEdge],
+    );
+
+    // 引用缩略图右下角的 @ 按钮：把这条引用按它当前的编号插进提示词。编号是
+    // mentionCandidates 算好的（图片 / 视频 / 音频各自计数），用户不必自己数。
+    const mentionNameByNodeId = useMemo(() => {
+      const map = new Map<string, string>();
+      for (const candidate of mentionCandidates) map.set(candidate.key, candidate.name);
+      return map;
+    }, [mentionCandidates]);
+    const handleMentionReference = useCallback(
+      (nodeId: string) => {
+        const candidate = mentionCandidates.find((item) => item.key === nodeId);
+        if (!candidate) return;
+        promptEditorRef.current?.insertMentionAtCursor(candidate);
+      },
+      [mentionCandidates],
+    );
+    // 双击引用 → 视口跳到那个上游节点，并在底部留下「返回节点」。
+    const handleJumpToReference = useCallback(
+      (nodeId: string) => {
+        focusReferenceNode(nodeId, id);
+      },
+      [id],
+    );
+
+    // 替换选单的「素材引用」段：画布上还没连过来的素材。已引用的排除掉——它们
+    // 已经在上面那段里了，同一条出现两次只会让人以为是两个东西。按**边**排除，
+    // 连着但还没出内容的上游节点也算已引用（否则选中它只是对同一条边再建一次）。
+    //
+    // 打开选单时才算：这份清单要扫全画布，常驻订阅的话画布上拖任何一个节点都会
+    // 让这个面板每帧重算一遍。
+    const getMentionMaterials = useCallback(() => {
+      const store = useCanvasStore.getState();
+      const attached = new Set(
+        store.edges.filter((edge) => edge.target === id).map((edge) => edge.source),
+      );
+      return collectReferenceMaterials(store.nodes, id, CANVAS_NODE_TYPES.video, attached, t);
+    }, [id, t]);
+    // 选中一条画布素材：连成上游即可——引用行、@ 候选编号都由上游推导链路跟上，
+    // 编辑器那边等它出现在候选里再把 @ 换过去。被拒（素材上限）时
+    // attachReferenceEdge 已经弹过原因，这里把结果回给编辑器，让它别空等。
+    const handleAttachMaterial = useCallback(
+      (sourceNodeId: string) => attachReferenceEdge(sourceNodeId, id),
+      [id],
     );
 
     const upstreamTextContents = useMemo(
@@ -525,9 +645,11 @@ export function VideoOperationsPanel({
           addEdge(newId, id);
           newIds.push(newId);
         });
-        state.autoGroupSpawn(id, newIds, { label: '资产参考组' });
+        state.autoGroupSpawn(id, newIds, {
+          label: t("node.videoOps.referenceGroupLabel"),
+        });
       },
-      [addEdge, addNode, data.aspectRatio, id],
+      [addEdge, addNode, data.aspectRatio, id, t],
     );
 
     const handleExternalAssetFiles = useCallback(
@@ -600,6 +722,43 @@ export function VideoOperationsPanel({
     // 收起态浮动面板固定基础尺寸；放大用居中弹窗（见下方 OperationPanelShell）。
     const panelHeight = OPERATIONS_PANEL_HEIGHT;
     const panelOverhang = OPERATIONS_PANEL_OVERHANG;
+    const showReferenceDocumentControls =
+      genMode === "allReference" &&
+      (supportsReferenceFile ||
+        supportsReferenceLink ||
+        Boolean(data.referenceFileUrl) ||
+        Boolean(referenceLinkDraft.trim()));
+    useLayoutEffect(() => {
+      if (!showReferenceDocumentControls) {
+        setReferencePanelWidth(null);
+        return;
+      }
+      // The same toolbar is portalled into a constrained modal while expanded.
+      // Measuring there overwrites the inline panel's natural width with the
+      // modal layout width; on collapse that stale value can shrink the panel
+      // to only a few controls. Re-measure after it is back under the node.
+      if (expanded) return;
+      const content = toolbarContentRef.current;
+      if (!content) return;
+      const updateWidth = () => {
+        const contentWidth = content.scrollWidth;
+        if (contentWidth <= 0) return;
+        // Include toolbar padding plus a small buffer for borders and fractional
+        // canvas scaling, otherwise an exact fit can still show a scrollbar.
+        // scrollWidth is intentional: offsetWidth reports the width imposed by
+        // the current panel and can feed a collapsed width back into itself.
+        const nextWidth = Math.ceil(contentWidth + 76);
+        setReferencePanelWidth((current) => current === nextWidth ? current : nextWidth);
+      };
+      updateWidth();
+      if (typeof ResizeObserver === "undefined") return;
+      const observer = new ResizeObserver(updateWidth);
+      observer.observe(content);
+      return () => observer.disconnect();
+    }, [expanded, showReferenceDocumentControls]);
+    const adaptivePanelWidth = referencePanelWidth == null
+      ? "min(1040px, calc(100vw - 48px))"
+      : `min(${referencePanelWidth}px, calc(100vw - 48px))`;
 
     return (
       <>
@@ -609,8 +768,11 @@ export function VideoOperationsPanel({
               inlineClassName={`nodrag absolute z-30 flex flex-col rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS}`}
               inlineStyle={{
                 top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)`,
-                left: -panelOverhang,
-                right: -panelOverhang,
+                left: showReferenceDocumentControls
+                  ? `calc((100% - ${adaptivePanelWidth}) / 2)`
+                  : -panelOverhang,
+                right: showReferenceDocumentControls ? "auto" : -panelOverhang,
+                width: showReferenceDocumentControls ? adaptivePanelWidth : undefined,
                 height: panelHeight,
               }}
               modalStyle={{
@@ -624,7 +786,13 @@ export function VideoOperationsPanel({
                 className="absolute right-2 top-2 z-20"
               />
               <div className="flex shrink-0 items-center overflow-x-auto px-3 pb-2 pr-10 pt-3">
+                <div ref={toolbarContentRef} className="flex w-max shrink-0 items-center">
                 <div className="flex shrink-0 items-center gap-2">
+                  <ReferencePickChip
+                    nodeId={id}
+                    nodeType={CANVAS_NODE_TYPES.video}
+                    onPickExternal={() => externalAssetInputRef.current?.click()}
+                  />
                   <CameraMovementChip
                     templates={cameraTemplates}
                     isLoading={cameraTemplatesLoading}
@@ -635,9 +803,6 @@ export function VideoOperationsPanel({
                   />
                   <CharacterLibraryChip
                     onOpen={() => setIsCharacterLibraryOpen(true)}
-                  />
-                  <ExternalAssetChip
-                    onOpen={() => externalAssetInputRef.current?.click()}
                   />
                 </div>
                 <div className="ml-3 flex shrink-0 items-center gap-3">
@@ -665,6 +830,84 @@ export function VideoOperationsPanel({
                     nodeId={id}
                     onInsert={insertContextPaletteEntry}
                   />
+                </div>
+                {showReferenceDocumentControls && (
+                  <div className="ml-3 flex shrink-0 items-center gap-1.5">
+                    {(supportsReferenceFile || data.referenceFileUrl) && (
+                      <>
+                        <button
+                          type="button"
+                          title={t("node.videoNode.referenceDocument.file")}
+                          disabled={!supportsReferenceFile || isUploadingReferenceFile}
+                          onClick={() => referenceFileInputRef.current?.click()}
+                          className={NODE_CONTEXT_CONTROL_TRIGGER_CLASS}
+                        >
+                          {isUploadingReferenceFile ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <FileText className="h-3.5 w-3.5" />
+                          )}
+                          <span className="max-w-32 truncate">
+                            {data.referenceFileName || t("node.videoNode.referenceDocument.file")}
+                          </span>
+                        </button>
+                        {data.referenceFileUrl && (
+                          <button
+                            type="button"
+                            title={t("node.videoNode.referenceDocument.removeFile")}
+                            onClick={() => updateNodeData(id, { referenceFileUrl: null, referenceFileName: null })}
+                            className={NODE_INLINE_ICON_BUTTON_CLASS}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {(supportsReferenceLink || referenceLinkDraft.trim()) && (
+                      <label className="flex h-7 w-44 items-center gap-1.5 rounded border border-white/15 bg-black/20 px-2 text-xs text-text-dark">
+                        <LinkIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                        <input
+                          type="url"
+                          value={referenceLinkDraft}
+                          placeholder={t("node.videoNode.referenceDocument.linkPlaceholder")}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setReferenceLinkDraft(value);
+                            updateNodeData(
+                              id,
+                              {
+                                referenceLink: value,
+                                ...(value.trim()
+                                  ? { referenceFileUrl: null, referenceFileName: null }
+                                  : {}),
+                              },
+                              { recordHistory: false },
+                            );
+                          }}
+                          onBlur={commitReferenceLink}
+                          onKeyDown={(event) => {
+                            event.stopPropagation();
+                            if (event.key === "Enter") event.currentTarget.blur();
+                          }}
+                          className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-text-muted/60"
+                        />
+                      </label>
+                    )}
+                    <input
+                      ref={referenceFileInputRef}
+                      type="file"
+                      accept={referenceFileAccept}
+                      className="hidden"
+                      onChange={handleReferenceFile}
+                    />
+                  </div>
+                )}
+                </div>
+              </div>
+
+              {/* 引用素材单独占一行：顶排功能 chip 已经排满，素材再挤进去会顶掉输入区。 */}
+              {(upstreamTextContents.length > 0 || referenceMedia.length > 0) && (
+                <div className="nowheel flex shrink-0 items-center gap-3 overflow-x-auto px-3 pb-2">
                   {upstreamTextContents.map((content) => (
                     <ReferenceTextChip
                       key={`upstream-text-${content.nodeId}`}
@@ -672,22 +915,26 @@ export function VideoOperationsPanel({
                       text={content.text ?? ""}
                       sourceLabel={content.displayName ?? content.nodeType}
                       onDetach={handleDetachUpstream}
+                      onJump={handleJumpToReference}
                     />
                   ))}
+                  {referenceMedia.length > 0 && (
+                    <ReferenceMediaRow
+                      items={referenceMediaCapInfo}
+                      caps={referenceCaps}
+                      genMode={genMode}
+                      mentionNames={mentionNameByNodeId}
+                      onFocus={(nodeId) => setSelectedNode(nodeId)}
+                      onMention={handleMentionReference}
+                      onJump={handleJumpToReference}
+                      onDetach={handleDetachUpstream}
+                      onReorder={(ids) =>
+                        updateNodeData(id, { referenceOrder: ids })
+                      }
+                    />
+                  )}
                 </div>
-                {referenceMedia.length > 0 && (
-                  <ReferenceMediaRow
-                    items={referenceMediaCapInfo}
-                    caps={referenceCaps}
-                    genMode={genMode}
-                    onFocus={(nodeId) => setSelectedNode(nodeId)}
-                    onDetach={handleDetachUpstream}
-                    onReorder={(ids) =>
-                      updateNodeData(id, { referenceOrder: ids })
-                    }
-                  />
-                )}
-              </div>
+              )}
 
               <PromptMentionEditor
                 ref={promptEditorRef}
@@ -708,9 +955,11 @@ export function VideoOperationsPanel({
                 }}
                 onKeyDown={(event) => event.stopPropagation()}
                 candidates={mentionCandidates}
+                getMaterials={getMentionMaterials}
+                onAttachMaterial={handleAttachMaterial}
                 placeholder={
                   upstreamTextJoined.length > 0
-                    ? "上游内容已自动接入，可继续补充提示词…"
+                    ? t("node.videoOps.upstreamPlaceholder")
                     : t("node.videoNode.placeholder")
                 }
                 className={`nodrag nowheel min-h-0 w-full flex-1 overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent px-3 py-2 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
@@ -753,14 +1002,14 @@ export function VideoOperationsPanel({
                       // 改动整个丢掉(例如后台下掉 HappyHorse 的视频编辑后,它在这里
                       // 依然可选,选进去所有模式都是灰的、提交也被拦)。与 VideoNode
                       // 的提交守卫同源。
-                      videoModelReferenceDisabledReason(model, {
+                      translateDisabledReason(videoModelReferenceDisabledReason(model, {
                         images: upstreamCounts.images,
                         // 视频 / 音频必须和自动切模型的 effect 同一口径（按节点类型，
                         // 空节点也算）。若这里用「已解析 URL」口径，连着空视频节点时
                         // 1.x 不置灰、用户能选回去，又被 effect 立刻切走，来回打架。
                         videos: upstreamTypeCounts.videos,
                         audios: upstreamTypeCounts.audios,
-                      })
+                      }))
                     }
                   />
                   <VideoConfigChip
@@ -789,7 +1038,7 @@ export function VideoOperationsPanel({
                       type="button"
                       role="switch"
                       aria-checked={humanReview}
-                      title="素材含真实人脸时开启，可能增加审核时间，不保证通过。"
+                      title={t("node.videoOps.humanReviewTitle")}
                       onClick={(event) => {
                         event.stopPropagation();
                         updateNodeData(id, { humanReview: !humanReview });
@@ -800,7 +1049,7 @@ export function VideoOperationsPanel({
                           : "text-text-dark/72 hover:text-text-dark"
                       }`}
                     >
-                      <span>真人验证</span>
+                      <span>{t("node.videoOps.humanReviewLabel")}</span>
                       <span
                         className={`relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition-colors ${
                           humanReview
@@ -824,7 +1073,7 @@ export function VideoOperationsPanel({
                   />
                   <button
                     type="button"
-                    title="翻译提示词（中英文互译）"
+                    title={t("node.videoOps.translateTitle")}
                     disabled={
                       isTranslatingPrompt ||
                       isGenerating ||
@@ -888,6 +1137,7 @@ export function VideoOperationsPanel({
         />
 
         <AssetLibraryModal
+          mode="pick"
           open={isCharacterLibraryOpen}
           project={readUrl().project ?? null}
           onClose={() => setIsCharacterLibraryOpen(false)}
@@ -911,6 +1161,7 @@ export function videoModeDisabledReason(
   mode: VideoGenMode,
   modelId: string | null | undefined,
   upstreamCounts: { videos: number; images: number; audios: number },
+  t: TFn,
   supportedModes?: string[],
 ): string | null {
   // HappyHorse 的模式可用性完全由上游节点类型决定（文档 4 大功能）：
@@ -923,34 +1174,34 @@ export function videoModeDisabledReason(
     const { images, videos } = upstreamCounts;
     switch (mode) {
       case "textToVideo":
-        if (videos > 0) return "已连接视频节点，请使用「视频编辑」";
-        if (images > 0) return "已连接图片节点，请选择「首帧」「图生视频」或「图片参考」";
+        if (videos > 0) return t("node.videoOps.modeDisabled.hasVideoUseVideoEdit");
+        if (images > 0) return t("node.videoOps.modeDisabled.hasImagePickMode");
         return null;
       case "imageToVideo":
       case "firstFrame":
         if (videos > 0) {
           return mode === "firstFrame"
-            ? "已连接视频节点，「首帧」不可用"
-            : "已连接视频节点，「图生视频」不可用";
+            ? t("node.videoOps.modeDisabled.hasVideoNoFirstFrame")
+            : t("node.videoOps.modeDisabled.hasVideoNoImageToVideo");
         }
-        if (images === 0) return "需要连接图片节点（1个）";
+        if (images === 0) return t("node.videoOps.modeDisabled.needOneImage");
         if (images > 1) {
           return mode === "firstFrame"
-            ? "「首帧」仅支持单张图片"
-            : "「图生视频」仅支持单张图片，请用「图片参考」";
+            ? t("node.videoOps.modeDisabled.firstFrameSingleImage")
+            : t("node.videoOps.modeDisabled.imageToVideoSingleImageUseRef");
         }
         return null;
       case "imageReference": // 图片参考 (r2v)
-        if (videos > 0) return "已连接视频节点，「图片参考」不可用";
-        if (images === 0) return "需要连接图片节点（1~9个）";
-        if (images > 9) return "「图片参考」最多支持 9 张图片";
+        if (videos > 0) return t("node.videoOps.modeDisabled.hasVideoNoImageReference");
+        if (images === 0) return t("node.videoOps.modeDisabled.needImages1to9");
+        if (images > 9) return t("node.videoOps.modeDisabled.imageReferenceMax9");
         return null;
       case "videoEdit":
-        if (videos === 0) return "需要连接视频节点（1个）";
-        if (videos > 1) return "「视频编辑」仅支持连接 1 个视频节点";
+        if (videos === 0) return t("node.videoOps.modeDisabled.needOneVideo");
+        if (videos > 1) return t("node.videoOps.modeDisabled.videoEditSingleVideo");
         return null;
       default:
-        return "HappyHorse 不支持该模式";
+        return t("node.videoOps.modeDisabled.happyHorseUnsupported");
     }
   }
   // 「视频编辑」以上游视频**为输入**，不能被下面那条「有视频就只剩全能参考」连坐。
@@ -965,27 +1216,29 @@ export function videoModeDisabledReason(
     : modelId;
   const supportsVideoEdit = isVideoModeSupportedByModel("videoEdit", model);
   if (mode === "videoEdit") {
-    if (!supportsVideoEdit) return "该模型不支持「视频编辑」";
-    if (upstreamCounts.videos === 0) return "需要连接视频节点（1个）";
-    if (upstreamCounts.videos > 1) return "「视频编辑」仅支持连接 1 个视频节点";
+    if (!supportsVideoEdit) return t("node.videoOps.modeDisabled.modelNoVideoEdit");
+    if (upstreamCounts.videos === 0) return t("node.videoOps.modeDisabled.needOneVideo");
+    if (upstreamCounts.videos > 1) return t("node.videoOps.modeDisabled.videoEditSingleVideo");
     return null;
   }
   if (upstreamCounts.videos > 0 && mode !== "allReference") {
     return supportsVideoEdit
-      ? "上游含视频素材时只能用「全能参考」或「视频编辑」"
-      : "上游含视频素材时只能用「全能参考」";
+      ? t("node.videoOps.modeDisabled.videoUpstreamAllRefOrEdit")
+      : t("node.videoOps.modeDisabled.videoUpstreamAllRefOnly");
   }
   if (
     mode === "textToVideo" &&
     (upstreamCounts.images > 0 || upstreamCounts.audios > 0)
   ) {
-    return "已引用图片/音频素材时不可用";
+    return t("node.videoOps.modeDisabled.hasImageOrAudioRefs");
   }
   if ((mode === "firstFrame" || mode === "imageToVideo") && upstreamCounts.images > 1) {
-    return mode === "firstFrame" ? "「首帧」仅支持单张图片" : "「图生视频」仅支持单张图片";
+    return mode === "firstFrame"
+      ? t("node.videoOps.modeDisabled.firstFrameSingleImage")
+      : t("node.videoOps.modeDisabled.imageToVideoSingleImage");
   }
   if (mode === "firstLastFrame" && upstreamCounts.images > 2) {
-    return "上游图片超过 2 张时不可用";
+    return t("node.videoOps.modeDisabled.moreThanTwoImages");
   }
   return null;
 }
@@ -1093,6 +1346,7 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
               tab.key,
               modelId,
               upstreamCounts,
+              t,
               supportedModes,
             );
             const isDisabled = disabledReason != null && !isActive;
@@ -1460,6 +1714,7 @@ function CameraMovementChip({
 }: CameraMovementChipProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(
     null,
@@ -1518,7 +1773,7 @@ function CameraMovementChip({
   }, [isOpen]);
 
   const selectedPreset = findCameraMovementPreset(templates, selectedId);
-  const label = selectedPreset?.label ?? "运镜";
+  const label = selectedPreset ? cameraMovementPresetLabel(selectedPreset, t) : t("canvas.cameraMovement.title");
   const isActive = Boolean(selectedPreset);
 
   return (
@@ -1567,6 +1822,7 @@ interface CharacterLibraryChipProps {
 }
 
 function CharacterLibraryChip({ onOpen }: CharacterLibraryChipProps) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
@@ -1577,27 +1833,7 @@ function CharacterLibraryChip({ onOpen }: CharacterLibraryChipProps) {
       className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} group/asset px-1.5`}
     >
       <Library className={`${NODE_TEXT_CONTROL_ICON_CLASS} group-hover/asset:text-text-dark`} />
-      <span>资产库</span>
-    </button>
-  );
-}
-
-interface ExternalAssetChipProps {
-  onOpen: () => void;
-}
-
-function ExternalAssetChip({ onOpen }: ExternalAssetChipProps) {
-  return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation();
-        onOpen();
-      }}
-      className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} group/external px-1.5`}
-    >
-      <Plus className={`${NODE_TEXT_CONTROL_ICON_CLASS} group-hover/external:text-text-dark`} />
-      <span>外部素材</span>
+      <span>{t("canvas.assetLibrary.title")}</span>
     </button>
   );
 }
@@ -1688,7 +1924,17 @@ interface ReferenceMediaRowProps {
   caps: { image: number; video: number; audio: number } | null;
   /** 当前 genMode；用来决定 firstLastFrame 模式下给前两张图片打 首帧/尾帧 角标。 */
   genMode: VideoGenMode;
+  /**
+   * nodeId → 这条引用在提示词里的名字（图片1 / 视频2 …）。不在表里的没有 @ 按钮
+   * ——超出当前模式上限的素材本来就进不了 @ 候选，给它一个按钮只会插进一个后端
+   * 会丢掉的编号。
+   */
+  mentionNames: ReadonlyMap<string, string>;
   onFocus: (nodeId: string) => void;
+  /** 点右下角 @：把这条引用插进提示词。 */
+  onMention: (nodeId: string) => void;
+  /** 双击 chip：视口跳到该素材在画布上的位置。 */
+  onJump: (nodeId: string) => void;
   onDetach: (nodeId: string) => void;
   // 拖动 chip 换位后，回传新的「按可视顺序排列的上游节点 id 列表」。
   onReorder: (orderedNodeIds: string[]) => void;
@@ -1698,10 +1944,14 @@ function ReferenceMediaRow({
   items,
   caps,
   genMode,
+  mentionNames,
   onFocus,
+  onMention,
+  onJump,
   onDetach,
   onReorder,
 }: ReferenceMediaRowProps) {
+  const { t } = useTranslation();
   // 同时管理整行音频的「当前播放节点」—— 同一时间只允许一个 audio chip 在
   // 播放。点击另一个会切换；再点同一个会暂停。
   const [playingAudioNodeId, setPlayingAudioNodeId] = useState<string | null>(
@@ -1733,32 +1983,24 @@ function ReferenceMediaRow({
   );
 
   return (
-    <div className="ml-4 flex shrink-0 items-center gap-1.5">
+    <div className="flex shrink-0 items-center gap-1.5">
       {items.map((entry) => {
         const { item, typeIndex, withinCap } = entry;
         // 「超出当前模式上限」只在 REFERENCE_CAPS_BY_MODE 里登记过的模式生效。
         const overCap = caps != null && !withinCap;
         const modeCap = caps?.[item.kind] ?? 0;
-        const modeLabel =
-          {
-            textToVideo: "文生视频",
-            firstFrame: "首帧",
-            imageToVideo: "图生视频",
-            imageReference: "多图参考",
-            firstLastFrame: "首尾帧",
-            videoEdit: "视频编辑",
-            allReference: "全能参考",
-          }[genMode] ?? "当前模式";
+        const modeLabel = t(`node.videoOps.modes.${genMode}`, {
+          defaultValue: t("node.videoOps.modes.current"),
+        });
         const overCapTitle = overCap
-          ? `${
-              item.kind === "image"
-                ? "图片"
-                : item.kind === "video"
-                  ? "视频"
-                  : "音频"
-            }引用超出${modeLabel}上限（${modeCap}${
-              item.kind === "image" ? "张" : "段"
-            }），本次生成不会使用该素材`
+          ? t("node.videoOps.overCap", {
+              kind: t(`node.videoOps.refKind.${item.kind}`),
+              mode: modeLabel,
+              cap: modeCap,
+              unit: t(
+                `node.videoOps.refUnit.${item.kind === "image" ? "image" : "video"}`,
+              ),
+            })
           : undefined;
         // 首尾帧模式下，前两张图片打 首帧/尾帧 角标；超出 cap 的图片就回退到
         // 数字角标，让用户看到「这张图被忽略」的同时仍能在 prompt 里通过原序号
@@ -1768,9 +2010,9 @@ function ReferenceMediaRow({
           item.kind === "image" &&
           withinCap
             ? typeIndex === 1
-              ? "首帧"
+              ? t("node.videoOps.slot.firstFrame")
               : typeIndex === 2
-                ? "尾帧"
+                ? t("node.videoOps.slot.lastFrame")
                 : undefined
             : undefined;
         let chip: ReactNode;
@@ -1780,7 +2022,10 @@ function ReferenceMediaRow({
               item={item}
               index={typeIndex - 1}
               slotLabel={slotLabel}
+              mentionName={mentionNames.get(item.nodeId) ?? null}
               onFocus={onFocus}
+              onMention={onMention}
+              onJump={onJump}
               onDetach={onDetach}
             />
           );
@@ -1789,7 +2034,10 @@ function ReferenceMediaRow({
             <ReferenceVideoChip
               item={item}
               index={typeIndex - 1}
+              mentionName={mentionNames.get(item.nodeId) ?? null}
               onFocus={onFocus}
+              onMention={onMention}
+              onJump={onJump}
               onDetach={onDetach}
             />
           );
@@ -1802,7 +2050,10 @@ function ReferenceMediaRow({
               onToggle={(playing) =>
                 setPlayingAudioNodeId(playing ? item.nodeId : null)
               }
+              mentionName={mentionNames.get(item.nodeId) ?? null}
               onFocus={onFocus}
+              onMention={onMention}
+              onJump={onJump}
               onDetach={onDetach}
             />
           );
@@ -1893,7 +2144,11 @@ interface ReferenceImageChipProps {
   index: number;
   /** 给角标显示自定义文案（如「首帧」「尾帧」）。未设置时使用数字角标。 */
   slotLabel?: string;
+  /** 这条引用在提示词里的名字；null 表示它不在 @ 候选里，不显示 @ 按钮。 */
+  mentionName: string | null;
   onFocus: (nodeId: string) => void;
+  onMention: (nodeId: string) => void;
+  onJump: (nodeId: string) => void;
   onDetach: (nodeId: string) => void;
 }
 
@@ -1901,14 +2156,20 @@ function ReferenceImageChip({
   item,
   index,
   slotLabel,
+  mentionName,
   onFocus,
+  onMention,
+  onJump,
   onDetach,
 }: ReferenceImageChipProps) {
+  const { t } = useTranslation();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const PREVIEW_W = 140;
   const { pos, show, hide } = useHoverPreviewPos(buttonRef, PREVIEW_W);
   const label =
-    item.displayName?.trim() || slotLabel || `引用 ${index + 1}`;
+    item.displayName?.trim()
+    || slotLabel
+    || t("node.videoOps.chip.imageFallback", { index: index + 1 });
 
   return (
     <>
@@ -1918,6 +2179,11 @@ function ReferenceImageChip({
         onClick={(event) => {
           event.stopPropagation();
           onFocus(item.nodeId);
+        }}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          hide();
+          onJump(item.nodeId);
         }}
         onMouseEnter={show}
         onMouseLeave={hide}
@@ -1940,6 +2206,15 @@ function ReferenceImageChip({
           >
             {slotLabel}
           </span>
+        ) : null}
+        {mentionName ? (
+          <ReferenceMentionButton
+            mentionName={mentionName}
+            onInsert={() => {
+              hide();
+              onMention(item.nodeId);
+            }}
+          />
         ) : null}
         <ReferenceDetachButton
           nodeId={item.nodeId}
@@ -1972,15 +2247,30 @@ function ReferenceImageChip({
 interface ReferenceVideoChipProps {
   item: Extract<ReferenceMediaItem, { kind: "video" }>;
   index: number;
+  /** 这条引用在提示词里的名字；null 表示它不在 @ 候选里，不显示 @ 按钮。 */
+  mentionName: string | null;
   onFocus: (nodeId: string) => void;
+  onMention: (nodeId: string) => void;
+  onJump: (nodeId: string) => void;
   onDetach: (nodeId: string) => void;
 }
 
-function ReferenceVideoChip({ item, index, onFocus, onDetach }: ReferenceVideoChipProps) {
+function ReferenceVideoChip({
+  item,
+  index,
+  mentionName,
+  onFocus,
+  onMention,
+  onJump,
+  onDetach,
+}: ReferenceVideoChipProps) {
+  const { t } = useTranslation();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const PREVIEW_W = 140;
   const { pos, show, hide } = useHoverPreviewPos(buttonRef, PREVIEW_W);
-  const label = item.displayName?.trim() || `视频引用 ${index + 1}`;
+  const label =
+    item.displayName?.trim()
+    || t("node.videoOps.chip.videoFallback", { index: index + 1 });
 
   // chip 缩略图：有 previewImageUrl 用静态图；否则用一个 muted 静止 <video>
   // 显示首帧。preload=metadata 让 Safari/Chrome 自动定位到首帧。
@@ -2011,12 +2301,26 @@ function ReferenceVideoChip({ item, index, onFocus, onDetach }: ReferenceVideoCh
           event.stopPropagation();
           onFocus(item.nodeId);
         }}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          hide();
+          onJump(item.nodeId);
+        }}
         onMouseEnter={show}
         onMouseLeave={hide}
         className={`nodrag ${NODE_REFERENCE_MEDIA_CHIP_CLASS}`}
         title={label}
       >
         {thumb}
+        {mentionName ? (
+          <ReferenceMentionButton
+            mentionName={mentionName}
+            onInsert={() => {
+              hide();
+              onMention(item.nodeId);
+            }}
+          />
+        ) : null}
         <ReferenceDetachButton
           nodeId={item.nodeId}
           onDetach={onDetach}
@@ -2054,7 +2358,11 @@ interface ReferenceAudioChipProps {
   index: number;
   isPlaying: boolean;
   onToggle: (playing: boolean) => void;
+  /** 这条引用在提示词里的名字；null 表示它不在 @ 候选里，不显示 @ 按钮。 */
+  mentionName: string | null;
   onFocus: (nodeId: string) => void;
+  onMention: (nodeId: string) => void;
+  onJump: (nodeId: string) => void;
   onDetach: (nodeId: string) => void;
 }
 
@@ -2063,9 +2371,13 @@ function ReferenceAudioChip({
   index,
   isPlaying,
   onToggle,
+  mentionName,
   onFocus,
+  onMention,
+  onJump,
   onDetach,
 }: ReferenceAudioChipProps) {
+  const { t } = useTranslation();
   // 用 ref 持有一个 HTMLAudioElement —— 比挂在 DOM 上的 <audio> 简单：可以
   // 直接 .play()/.pause()，也方便处理同时只放一个的逻辑（父层告诉这个
   // chip 它不再是当前正在播的）。
@@ -2114,7 +2426,9 @@ function ReferenceAudioChip({
     };
   }, []);
 
-  const label = item.displayName?.trim() || `音频引用 ${index + 1}`;
+  const label =
+    item.displayName?.trim()
+    || t("node.videoOps.chip.audioFallback", { index: index + 1 });
 
   return (
     <button
@@ -2124,6 +2438,12 @@ function ReferenceAudioChip({
         // 单击：切换播放；同时把焦点切到上游节点（方便用户跳过去看）。
         onFocus(item.nodeId);
         onToggle(!isPlaying);
+      }}
+      onDoubleClick={(event) => {
+        // 双击跳到画布上那个音频节点。播放开关被这两下点成了「开了又关」，
+        // 正好回到双击前的状态，不用额外去抑制它。
+        event.stopPropagation();
+        onJump(item.nodeId);
       }}
       className={`group/refmedia nodrag relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border transition-colors ${
         isPlaying
@@ -2137,6 +2457,12 @@ function ReferenceAudioChip({
       ) : (
         <Music className="h-4 w-4 text-text-dark/90" />
       )}
+      {mentionName ? (
+        <ReferenceMentionButton
+          mentionName={mentionName}
+          onInsert={() => onMention(item.nodeId)}
+        />
+      ) : null}
       <ReferenceDetachButton
         nodeId={item.nodeId}
         onDetach={onDetach}

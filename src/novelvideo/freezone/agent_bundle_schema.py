@@ -24,6 +24,33 @@ class _BundleBaseModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AgentBundleLicense(_BundleBaseModel):
+    id: str
+    text: str
+
+    @field_validator("id", "text")
+    @classmethod
+    def validate_required_strings(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("legal license fields must be non-empty")
+        return stripped
+
+
+class AgentBundleLegal(_BundleBaseModel):
+    copyright: str
+    license: AgentBundleLicense
+    notice: str
+
+    @field_validator("copyright", "notice")
+    @classmethod
+    def validate_required_strings(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("legal fields must be non-empty")
+        return stripped
+
+
 class AgentSkillBundle(_BundleBaseModel):
     schema_version: str
     id: str
@@ -34,6 +61,7 @@ class AgentSkillBundle(_BundleBaseModel):
     license: str = ""
     min_dramaclaw_version: str
     tags: list[str] = Field(default_factory=list)
+    legal: AgentBundleLegal | None = None
     skill: dict[str, Any]
     recipes: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -78,6 +106,8 @@ class AgentSkillBundle(_BundleBaseModel):
         skill_id = str(self.skill.get("id") or "").strip()
         if skill_id and skill_id != self.id:
             raise ValueError("Bundle skill.id must match bundle id")
+        if self.legal is not None and self.license != self.legal.license.id:
+            raise ValueError("Bundle license must match legal.license.id")
         return self
 
 
@@ -86,7 +116,7 @@ def normalize_agent_bundle(payload: dict[str, Any]) -> dict[str, Any]:
 
     scan_agent_catalog_payload_for_unsafe_content(payload, label="Bundle")
     try:
-        bundle = AgentSkillBundle.model_validate(payload).model_dump(mode="json")
+        bundle = AgentSkillBundle.model_validate(payload).model_dump(mode="json", exclude_none=True)
     except ValidationError as exc:
         raise ValueError(f"invalid agent Bundle: {exc}") from exc
 

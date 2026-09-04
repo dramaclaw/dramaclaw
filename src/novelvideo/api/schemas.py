@@ -40,7 +40,7 @@ class ErrorResponse(BaseModel):
 
 
 class ProjectCreate(BaseModel):
-    name: str
+    name: str = Field(max_length=64)
 
 
 class ProjectSummary(BaseModel):
@@ -179,6 +179,7 @@ class BeatUpdate(BaseModel):
 class Seedance2PromptGenerateRequest(BaseModel):
     manual_prompt_reference: Optional[str] = None
     prompt_guidance: Optional[str] = None
+    prompt_guidance_template_keys: Optional[list[str]] = None
 
 
 class BeatVideoPromptGenerateRequest(BaseModel):
@@ -1268,7 +1269,9 @@ class FreezoneVideoEditRequest(BaseModel):
 class FreezoneVideoReferenceItem(BaseModel):
     """全能参考单条素材。"""
 
-    type: Literal["image", "video", "audio"] = Field(description="素材类型")
+    type: Literal["image", "video", "audio", "file", "link"] = Field(
+        description="素材类型"
+    )
     url: str = Field(description="素材静态地址")
     role: str = Field(default="", description="素材角色，例如 角色参考 / 场景参考 / 配乐参考")
     label: str = Field(default="", description="前端展示标签，可为空")
@@ -1378,7 +1381,7 @@ class FreezoneImageReversePromptResponse(BaseModel):
 class FreezoneVideoOmniGenRequest(BaseModel):
     """全能参考视频请求。
 
-    支持文本、图像、视频、音频混合输入。
+    支持文本、图像、视频、音频、文件和公开网页链接混合输入。
     """
 
     prompt: str = Field(description="用户输入的视频内容描述")
@@ -1389,7 +1392,10 @@ class FreezoneVideoOmniGenRequest(BaseModel):
     )
     references: list[FreezoneVideoReferenceItem] = Field(
         default_factory=list,
-        description="混合参考素材列表。总数最多 12，图像≤9、视频≤3、音频≤3",
+        description=(
+            "混合参考素材列表。图像、视频、音频上限由模型目录控制；"
+            "文件和网页链接各最多 1 个且互斥"
+        ),
     )
     marks: list[FreezoneVideoMark] = Field(
         default_factory=list,

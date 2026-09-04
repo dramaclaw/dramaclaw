@@ -63,6 +63,12 @@ def display_metadata_for_task(task_type: str, payload: dict[str, Any] | None) ->
         if value:
             metadata[key] = value
 
+    # 布尔标记不能进上面那个字符串循环：str(False) == "False" 是真值，
+    # 一路 strip 下来会变成字符串 "False" 存进 metadata，_serialize_task 再
+    # bool() 一下就成了 True——用户自定义名反而被判成可本地化，正好搞反。
+    if payload.get("display_name_user_content") is True:
+        metadata["display_name_user_content"] = True
+
     if task_type == "stage_asset":
         for key in ("scene_name", "step"):
             value = str(payload.get(key) or "").strip()

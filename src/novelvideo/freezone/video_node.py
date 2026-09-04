@@ -349,6 +349,19 @@ def is_freezone_seedance2_backend(backend: str | None) -> bool:
     return bool(model and model.startswith("seedance-2.0"))
 
 
+def is_freezone_seedance_backend(backend: str | None) -> bool:
+    """任何代际的 Seedance（1.0/1.5/2.x）——参考图尺寸规则只对它们成立。"""
+    text = str(backend or "").strip()
+    if text in {"seedance_2", "seedance_fast"}:
+        return True
+
+    from novelvideo.generators.huimengi import parse_huimeng_video_backend
+    from novelvideo.generators.video_generator import parse_newapi_video_backend
+
+    model = parse_newapi_video_backend(text) or parse_huimeng_video_backend(text)
+    return bool(model and model.startswith("seedance"))
+
+
 def is_freezone_happyhorse_backend(backend: str | None) -> bool:
     from novelvideo.generators.video_generator import parse_newapi_video_backend
 
@@ -525,7 +538,8 @@ def build_freezone_omni_video_prompt(
         parts.append(marks_block)
 
     parts.append(
-        "全能参考模式要求：综合文本、图像、视频和音频参考进行统一建模，优先保持主体身份、场景连续性、风格一致性和动作自然性。"
+        "全能参考模式要求：综合文本、图像、视频、音频、文件和网页链接参考进行统一建模，"
+        "优先保持主体身份、场景连续性、风格一致性和动作自然性。"
     )
     counts = summarize_omni_reference_counts(reference_items or [])
     single_video_reference_instruction = "这是视频参考生成新的视频，不是视频编辑。"
@@ -533,6 +547,8 @@ def build_freezone_omni_video_prompt(
         counts["video_count"] == 1
         and counts["image_count"] == 0
         and counts["audio_count"] == 0
+        and counts["file_count"] == 0
+        and counts["link_count"] == 0
         and single_video_reference_instruction not in "\n".join(parts)
     ):
         parts.append(single_video_reference_instruction)
@@ -546,11 +562,15 @@ def summarize_omni_reference_counts(items: list[dict[str, Any]]) -> dict[str, in
     image_count = sum(1 for item in items if str(item.get("type")) == "image")
     video_count = sum(1 for item in items if str(item.get("type")) == "video")
     audio_count = sum(1 for item in items if str(item.get("type")) == "audio")
+    file_count = sum(1 for item in items if str(item.get("type")) == "file")
+    link_count = sum(1 for item in items if str(item.get("type")) == "link")
     return {
         "image_count": image_count,
         "video_count": video_count,
         "audio_count": audio_count,
-        "total_count": image_count + video_count + audio_count,
+        "file_count": file_count,
+        "link_count": link_count,
+        "total_count": image_count + video_count + audio_count + file_count + link_count,
     }
 
 
@@ -560,6 +580,8 @@ def validate_omni_reference_limits(
     image_max: int = 9,
     video_max: int = 3,
     audio_max: int = 3,
+    file_max: int = 0,
+    link_max: int = 0,
     total_max: int = 12,
 ) -> None:
     counts = summarize_omni_reference_counts(items)
@@ -571,6 +593,78 @@ def validate_omni_reference_limits(
         raise ValueError(f"video references count must be <= {video_max}")
     if counts["audio_count"] > audio_max:
         raise ValueError(f"audio references count must be <= {audio_max}")
+    if counts["file_count"] > file_max:
+        raise ValueError(f"file references count must be <= {file_max}")
+    if counts["link_count"] > link_max:
+        raise ValueError(f"link references count must be <= {link_max}")
+    if counts["file_count"] and counts["link_count"]:
+        raise ValueError("reference_file and reference_link are mutually exclusive")
+
+
+# 火山 Seedance 对参考图的硬规则（从 400 报文里实测）：
+#   `[InvalidParameter.HeightTooSmall] Height must be between 300px and 6000px.`
+# 宽高比 0.4~2.5 与 seedance2_i2v/assets.py 里分镜路径用的同一组数字。
+MIN_OMNI_REFERENCE_IMAGE_PX = 300
+MAX_OMNI_REFERENCE_IMAGE_PX = 6000
+MIN_OMNI_REFERENCE_IMAGE_ASPECT = 0.4
+MAX_OMNI_REFERENCE_IMAGE_ASPECT = 2.5
+
+
+def _read_reference_image_size(path: Path) -> tuple[int, int] | None:
+    """只读文件头拿尺寸；读不出（文件不存在 / 不是图片）返回 None 交给厂商判。"""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            width, height = img.size
+    except Exception:  # noqa: BLE001 - 任何读取失败都不该替厂商拦请求
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return int(width), int(height)
+
+
+def validate_omni_reference_image_dimensions(
+    paths: list[str | Path | None],
+    *,
+    min_px: int = MIN_OMNI_REFERENCE_IMAGE_PX,
+    max_px: int = MAX_OMNI_REFERENCE_IMAGE_PX,
+    min_aspect: float = MIN_OMNI_REFERENCE_IMAGE_ASPECT,
+    max_aspect: float = MAX_OMNI_REFERENCE_IMAGE_ASPECT,
+) -> None:
+    """参考图尺寸兜底校验，入队前拦住厂商必拒的图，省掉一次预扣 + 上传 + 退款。
+
+    与 `validate_omni_reference_audio_durations` 同一口径：读不出尺寸的条目**不参与判定**。
+    先报边长越界，再报宽高比，两类同时出现时只报前者。
+    """
+    out_of_range: list[str] = []
+    bad_aspect: list[str] = []
+    for raw in paths:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        path = Path(text)
+        size = _read_reference_image_size(path)
+        if size is None:
+            continue
+        width, height = size
+        label = path.name or text
+        if not (min_px <= width <= max_px and min_px <= height <= max_px):
+            out_of_range.append(f"{label} ({width}x{height})")
+            continue
+        aspect = width / height
+        if not (min_aspect <= aspect <= max_aspect):
+            bad_aspect.append(f"{label} ({width}x{height}, {aspect:.2f})")
+    if out_of_range:
+        raise ValueError(
+            f"参考图尺寸不符合要求，宽度和高度需在 {min_px} 至 {max_px} 像素之间: "
+            + ", ".join(out_of_range)
+        )
+    if bad_aspect:
+        raise ValueError(
+            f"参考图宽高比需在 {min_aspect:g} 至 {max_aspect:g} 之间: "
+            + ", ".join(bad_aspect)
+        )
 
 
 async def run_trusted_freezone_video_gen(

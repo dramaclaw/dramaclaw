@@ -17,6 +17,8 @@ interface ReferenceTextChipProps {
   onDetach: (nodeId: string) => void;
   /** 点击 chip 时聚焦上游节点（可选，仅部分节点需要） */
   onFocus?: (nodeId: string) => void;
+  /** 双击 chip 时把视口跳到上游节点所在位置（可选） */
+  onJump?: (nodeId: string) => void;
   /** 覆盖触发器方块的样式（默认 h-9 w-9 圆角方块） */
   triggerClassName?: string;
 }
@@ -36,6 +38,7 @@ export function ReferenceTextChip({
   sourceLabel,
   onDetach,
   onFocus,
+  onJump,
   triggerClassName,
 }: ReferenceTextChipProps) {
   const trimmed = (text ?? '').trim();
@@ -66,6 +69,12 @@ export function ReferenceTextChip({
           event.stopPropagation();
           onFocus?.(nodeId);
         }}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          // 跳走之后这颗 chip 连同整个面板都不在视口里了，浮层留着会飘在半空。
+          hidePreview();
+          onJump?.(nodeId);
+        }}
         className={
           triggerClassName ??
           'nodrag flex h-9 w-9 items-center justify-center rounded-lg bg-white/12 transition-colors hover:bg-white/20'
@@ -88,7 +97,7 @@ export function ReferenceTextChip({
               left: previewAnchor.left,
               transform: 'translateY(-100%)',
             }}
-            className="pointer-events-none z-[2000] w-max max-w-[280px] rounded-lg bg-black px-3 py-2.5 text-xs leading-relaxed text-white shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
+            className="canvas-node-transient-ui pointer-events-none z-[2000] w-max max-w-[280px] rounded-lg bg-black px-3 py-2.5 text-xs leading-relaxed text-white shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
           >
             <div className="max-h-[220px] overflow-y-auto whitespace-pre-wrap break-words">
               {trimmed}

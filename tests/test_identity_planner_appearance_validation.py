@@ -280,6 +280,7 @@ class ControlledAppearancePlanner(IdentityPlanner):
         planned_age_group,
         reason,
         on_log=None,
+        output_language=None,
     ):
         self.appearance_calls.append(
             (character_name, visual_state, planned_age_group, reason)

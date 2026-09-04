@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, useState } from 'react';
 import { Activity } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import {
   CANVAS_CONTROL_GLASS_CLASS,
@@ -15,6 +16,7 @@ import {
  * 排查画布卡顿。
  */
 export function CanvasFpsMeter() {
+  const { t } = useTranslation();
   const [enabled, setEnabled] = useState(false);
   const [fps, setFps] = useState<number | null>(null);
   const rafRef = useRef(0);
@@ -50,6 +52,8 @@ export function CanvasFpsMeter() {
           ? 'text-amber-400'
           : 'text-red-400';
 
+  const label = enabled ? t('canvas.controls.fpsOff') : t('canvas.controls.fpsOn');
+
   return (
     <div
       className="nopan nowheel pointer-events-auto group absolute right-3 top-3 z-30 flex items-center gap-1.5"
@@ -70,12 +74,12 @@ export function CanvasFpsMeter() {
             : 'text-text-muted hover:bg-white/10 hover:text-text'
         }`}
         aria-pressed={enabled}
-        aria-label={enabled ? '关闭 FPS 显示' : '开启 FPS 显示'}
+        aria-label={label}
       >
         <Activity className="h-3.5 w-3.5" />
       </button>
       <span className="pointer-events-none absolute right-0 top-full mt-1.5 whitespace-nowrap rounded-md border border-[rgba(255,255,255,0.12)] bg-bg-dark/95 px-2 py-1 text-[11px] text-text-dark opacity-0 shadow-lg transition-opacity duration-100 group-hover:opacity-100">
-        {enabled ? '关闭 FPS 显示' : '开启 FPS 显示'}
+        {label}
       </span>
     </div>
   );

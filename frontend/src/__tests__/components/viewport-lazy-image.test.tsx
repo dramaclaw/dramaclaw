@@ -7,6 +7,7 @@ import { ViewportLazyImage } from "@/components/viewport-lazy-image";
 
 describe("ViewportLazyImage", () => {
   let callback!: IntersectionObserverCallback;
+  let options: IntersectionObserverInit | undefined;
   const observe = vi.fn();
   const disconnect = vi.fn();
 
@@ -15,15 +16,19 @@ describe("ViewportLazyImage", () => {
     disconnect.mockClear();
     class MockIntersectionObserver {
       root = null;
-      rootMargin = "160px 0px";
-      thresholds = [0];
+      rootMargin = "0px";
+      thresholds = [0.01];
       observe = observe;
       disconnect = disconnect;
       unobserve = vi.fn();
       takeRecords = vi.fn(() => []);
 
-      constructor(nextCallback: IntersectionObserverCallback) {
+      constructor(
+        nextCallback: IntersectionObserverCallback,
+        nextOptions?: IntersectionObserverInit,
+      ) {
         callback = nextCallback;
+        options = nextOptions;
       }
     }
     vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
@@ -39,10 +44,34 @@ describe("ViewportLazyImage", () => {
     const image = screen.getByRole("img", { name: "郑家悦" });
     expect(image).not.toHaveAttribute("src");
     expect(observe).toHaveBeenCalledWith(image);
+    expect(options).toEqual({
+      root: null,
+      rootMargin: "0px",
+      threshold: 0.01,
+    });
 
     act(() => {
       callback(
-        [{ isIntersecting: true } as IntersectionObserverEntry],
+        [
+          {
+            isIntersecting: true,
+            intersectionRatio: 0,
+          } as IntersectionObserverEntry,
+        ],
+        {} as IntersectionObserver,
+      );
+    });
+
+    expect(image).not.toHaveAttribute("src");
+
+    act(() => {
+      callback(
+        [
+          {
+            isIntersecting: true,
+            intersectionRatio: 0.01,
+          } as IntersectionObserverEntry,
+        ],
         {} as IntersectionObserver,
       );
     });
@@ -57,7 +86,12 @@ describe("ViewportLazyImage", () => {
     );
     act(() => {
       callback(
-        [{ isIntersecting: true } as IntersectionObserverEntry],
+        [
+          {
+            isIntersecting: true,
+            intersectionRatio: 0.01,
+          } as IntersectionObserverEntry,
+        ],
         {} as IntersectionObserver,
       );
     });

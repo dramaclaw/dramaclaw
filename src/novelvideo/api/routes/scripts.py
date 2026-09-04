@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 
 logger = logging.getLogger("novelvideo.api.scripts")
 
@@ -29,6 +30,11 @@ from novelvideo.api.schemas import (
 from novelvideo.models import sync_beat_asset_refs
 from novelvideo.ports import get_task_backend, get_usage_meter
 from novelvideo.task_identity import project_task_state_key
+from novelvideo.utils.source_language import detect_episode_asset_language
+from novelvideo.video_prompt_prerequisite import (
+    VideoPromptPrerequisiteError,
+    video_prompt_prerequisite_response,
+)
 
 router = APIRouter()
 
@@ -75,6 +81,41 @@ def _first_existing_path(*paths: Path) -> str:
     return ""
 
 
+def _require_beat_video_prompt_prerequisites(
+    *,
+    output_dir: str | Path,
+    episode: int,
+    beat: dict[str, Any],
+    next_beat: dict[str, Any] | None,
+    field: str,
+) -> None:
+    from novelvideo.utils.path_resolver import PathResolver
+
+    paths = PathResolver(str(output_dir), episode)
+    beat_num = int(beat.get("beat_number") or 0)
+    if field == "keyframe_prompt":
+        current_path = _first_existing_path(paths.frame(beat_num), paths.sketch(beat_num))
+        if not current_path:
+            raise VideoPromptPrerequisiteError(
+                f"Beat {beat_num} 缺少首帧或草图，请先生成预览或草图"
+            )
+        next_beat_num = int((next_beat or {}).get("beat_number") or beat_num + 1)
+        next_path = _first_existing_path(
+            paths.frame(next_beat_num), paths.sketch(next_beat_num)
+        )
+        if not next_path:
+            raise VideoPromptPrerequisiteError(
+                f"Beat {next_beat_num} 缺少首帧或草图，请先生成预览或草图"
+            )
+        return
+
+    current_path = _first_existing_path(paths.sketch(beat_num), paths.frame(beat_num))
+    if not current_path:
+        raise VideoPromptPrerequisiteError(
+            f"Beat {beat_num} 缺少草图或首帧，请先生成草图或预览"
+        )
+
+
 async def _generate_single_beat_video_prompt(
     *,
     store: Any | None = None,
@@ -98,7 +139,9 @@ async def _generate_single_beat_video_prompt(
     paths = PathResolver(str(output_dir), episode)
     sketch_image_path = _first_existing_path(paths.sketch(beat_num), paths.frame(beat_num))
     if not sketch_image_path:
-        raise ValueError(f"Beat {beat_num} 缺少草图或首帧，请先生成草图或预览")
+        raise VideoPromptPrerequisiteError(
+            f"Beat {beat_num} 缺少草图或首帧，请先生成草图或预览"
+        )
 
     beats = list(all_beats or [beat])
     characters = []
@@ -150,9 +193,13 @@ async def _generate_single_beat_keyframe_prompt(
         paths.frame(next_beat_num), paths.sketch(next_beat_num)
     )
     if not first_frame_path:
-        raise ValueError(f"Beat {beat_num} 缺少首帧或草图，请先生成预览或草图")
+        raise VideoPromptPrerequisiteError(
+            f"Beat {beat_num} 缺少首帧或草图，请先生成预览或草图"
+        )
     if not last_frame_path:
-        raise ValueError(f"Beat {next_beat_num} 缺少首帧或草图，请先生成预览或草图")
+        raise VideoPromptPrerequisiteError(
+            f"Beat {next_beat_num} 缺少首帧或草图，请先生成预览或草图"
+        )
 
     audio_type = str(beat.get("audio_type") or "narration")
     narration = str(beat.get("narration_segment") or "")
@@ -429,15 +476,36 @@ async def generate_beat_video_prompt(
     )
 
     try:
-        _, _, field = await _resolve_beat_video_prompt_target(
+        target, next_beat, field = await _resolve_beat_video_prompt_target(
             store=store,
             episode_num=episode_num,
             beat_num=beat_num,
         )
+        _require_beat_video_prompt_prerequisites(
+            output_dir=resolved.output_dir,
+            episode=episode_num,
+            beat=target,
+            next_beat=next_beat,
+            field=field,
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VideoPromptPrerequisiteError as exc:
+        return JSONResponse(
+            status_code=409,
+            content=video_prompt_prerequisite_response(exc),
+        )
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
+
+    language = await detect_episode_asset_language(
+        store,
+        episode_num,
+        fallback_text="\n".join(
+            str(target.get(field) or "")
+            for field in ("narration_segment", "dialogue", "visual_description")
+        ),
+    )
 
     if resolved.ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
@@ -451,7 +519,7 @@ async def generate_beat_video_prompt(
                 "episode": episode_num,
                 "beat_num": beat_num,
                 "field": field,
-                "language": body.language,
+                "language": language,
                 "output_dir": str(resolved.output_dir),
                 "display_name": f"生成提示词 · EP{episode_num} / Beat {beat_num}",
             },
@@ -478,7 +546,7 @@ async def generate_beat_video_prompt(
             project_name=resolved.project_name,
             episode_num=episode_num,
             beat_num=beat_num,
-            language=body.language,
+            language=language,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -526,6 +594,14 @@ async def generate_seedance2_prompt(
     next_beat = next(
         (beat for beat in beats if int(beat.get("beat_number") or 0) == beat_num + 1),
         None,
+    )
+    language = await detect_episode_asset_language(
+        store,
+        episode_num,
+        fallback_text="\n".join(
+            str(target.get(field) or "")
+            for field in ("narration_segment", "dialogue", "visual_description")
+        ),
     )
 
     from novelvideo.seedance2_i2v.models import parse_seedance2_config
@@ -588,6 +664,8 @@ async def generate_seedance2_prompt(
             next_beat=next_beat,
             manual_prompt_reference=body.manual_prompt_reference,
             prompt_guidance=body.prompt_guidance,
+            prompt_guidance_template_keys=body.prompt_guidance_template_keys,
+            language=language,
             prop_menu=list(script_data.get("prop_menu") or []),
         )
     except ValueError as exc:

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import {
   ArrowUp,
@@ -73,14 +74,14 @@ const MUSIC_LENGTH_SELECT_CLASS =
 const MUSIC_LENGTH_SELECT_MENU_CLASS =
   '!z-[260] !min-w-[140px] !border-white/10 !bg-[#202024] !text-text-dark shadow-[0_14px_34px_rgba(0,0,0,0.5)]';
 // 音乐时长预设（毫秒）。后端范围 3000–600000，这里给常用档位。
-export const MUSIC_LENGTH_PRESETS: ReadonlyArray<{ ms: number; label: string }> = [
-  { ms: 30000, label: '30秒' },
-  { ms: 60000, label: '1分钟' },
-  { ms: 120000, label: '2分钟' },
-  { ms: 180000, label: '3分钟' },
-  { ms: 240000, label: '4分钟' },
-  { ms: 300000, label: '5分钟' },
-  { ms: 600000, label: '10分钟' },
+export const MUSIC_LENGTH_PRESETS: ReadonlyArray<{ ms: number; label: string; labelKey: string }> = [
+  { ms: 30000, label: '30秒', labelKey: 'node.audioPanel.musicLength.30s' },
+  { ms: 60000, label: '1分钟', labelKey: 'node.audioPanel.musicLength.1m' },
+  { ms: 120000, label: '2分钟', labelKey: 'node.audioPanel.musicLength.2m' },
+  { ms: 180000, label: '3分钟', labelKey: 'node.audioPanel.musicLength.3m' },
+  { ms: 240000, label: '4分钟', labelKey: 'node.audioPanel.musicLength.4m' },
+  { ms: 300000, label: '5分钟', labelKey: 'node.audioPanel.musicLength.5m' },
+  { ms: 600000, label: '10分钟', labelKey: 'node.audioPanel.musicLength.10m' },
 ];
 
 export function musicBillingSecondsFromMs(ms: number): number {
@@ -263,7 +264,9 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
       <div className="px-3 pt-3">
         <label className="flex flex-col gap-2">
           <span className={AUDIO_INPUT_LABEL_CLASS}>
-            {isMusic ? '输入音乐描述' : '输入要合成的文本'}
+            {isMusic
+              ? t('node.audioPanel.promptLabel.music')
+              : t('node.audioPanel.promptLabel.speech')}
           </span>
           <textarea
             value={textDraft}
@@ -286,8 +289,8 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
             onKeyDown={(event) => event.stopPropagation()}
             placeholder={
               isMusic
-                ? '描述想要的音乐：风格、乐器、节奏、氛围…'
-                : '输入要合成的文本'
+                ? t('node.audioPanel.promptPlaceholder.music')
+                : t('node.audioPanel.promptPlaceholder.speech')
             }
             disabled={isGenerating}
             className={`${AUDIO_INPUT_FIELD_CLASS} ui-scrollbar resize-none py-2 leading-[1.65] ${
@@ -301,8 +304,10 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
       <div className="px-3 pb-3 pt-4">
         <label className="flex flex-col gap-2">
           <span className={AUDIO_INPUT_LABEL_CLASS}>
-            语气词
-            <span className="ml-1 text-text-muted/60">（可选，自由输入）</span>
+            {t('node.audioPanel.emotionLabel')}
+            <span className="ml-1 text-text-muted/60">
+              {t('node.audioPanel.emotionOptional')}
+            </span>
           </span>
           <input
             type="text"
@@ -324,7 +329,7 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
             onKeyDown={(event) => event.stopPropagation()}
-            placeholder="如：紧张、压低声音、带一点恐惧感"
+            placeholder={t('node.audioPanel.emotionPlaceholder')}
             disabled={isGenerating}
             className={`${AUDIO_INPUT_FIELD_CLASS} h-9`}
           />
@@ -334,20 +339,20 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
 
       {voiceMissing ? (
         <div className="flex items-center justify-between gap-3 px-3 pb-2 text-[12px] text-amber-300">
-          <span>尚未选中可用的自定义声线</span>
+          <span>{t('node.audioPanel.voiceMissing')}</span>
           <button
             type="button"
             onClick={() => setVoicePickerOpen(true)}
             className="rounded-full border border-amber-300/30 px-2.5 py-1 text-[11px] text-amber-200 hover:bg-amber-300/10"
           >
-            选择声线
+            {t('node.audioPanel.switchVoice')}
           </button>
         </div>
       ) : null}
 
       <div className="flex shrink-0 items-center justify-end gap-2 px-3 pb-3 pt-1">
         <IconButton
-          title={modelTaskAccess.message ?? '翻译（中英文互译）'}
+          title={modelTaskAccess.message ?? t('node.audioPanel.translate')}
           onClick={handleTranslate}
           disabled={
             modelTaskAccess.blocked
@@ -365,7 +370,7 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
         </IconButton>
         {!isMusic && (
           <IconButton
-            title="音色设置"
+            title={t('node.audioPanel.voiceSettings')}
             onClick={() => setShowVoiceSettings((v) => !v)}
             active={showVoiceSettings}
           >
@@ -374,7 +379,7 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
         )}
         {isMusic && (
           <IconButton
-            title="高级设置"
+            title={t('node.audioPanel.advancedSettings')}
             onClick={() => setShowMusicSettings((v) => !v)}
             active={showMusicSettings}
           >
@@ -391,7 +396,8 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
           type="button"
           disabled={submitDisabled}
           title={
-            modelTaskAccess.message ?? (voiceMissing ? '生成（未选择自定义声线时跳过）' : '生成')
+            modelTaskAccess.message
+            ?? (voiceMissing ? t('node.audioPanel.voiceMissing') : t('node.audioPanel.generate'))
           }
           onClick={() => void handleSubmit()}
           className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${
@@ -520,6 +526,7 @@ function MusicSettingToggle({
 
 // 设置项标签后的「?」说明（hover 弹 tooltip）。
 function MusicSettingHelp({ text }: { text: string }) {
+  const { t } = useTranslation();
   return (
     <TooltipProvider delay={120}>
       <Tooltip>
@@ -527,7 +534,7 @@ function MusicSettingHelp({ text }: { text: string }) {
           render={
             <button
               type="button"
-              aria-label="说明"
+              aria-label={t('node.audioPanel.help')}
               className="inline-flex cursor-help items-center text-text-muted/70 transition-colors hover:text-text-dark"
               onClick={(event) => event.stopPropagation()}
             />
@@ -550,6 +557,7 @@ function AudioMusicSettingsPanel({
   nodeId: string;
   data: AudioNodeData;
 }) {
+  const { t } = useTranslation();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const musicLengthMs =
     typeof data.musicLengthMs === 'number' ? data.musicLengthMs : DEFAULT_MUSIC_LENGTH_MS;
@@ -558,15 +566,17 @@ function AudioMusicSettingsPanel({
   return (
     <div className="border-t border-white/[0.04] px-4 pb-3 pt-1">
       <div className="flex items-center justify-between py-2">
-        <span className="text-[12px] font-semibold text-text-muted">高级设置</span>
+        <span className="text-[12px] font-semibold text-text-muted">
+          {t('node.audioPanel.advancedSettings')}
+        </span>
       </div>
       <div className="flex items-center justify-between gap-3 py-1">
         <span className="inline-flex items-center gap-1.5 text-[13px] text-text-dark">
-          音乐时长
-          <MusicSettingHelp text="设定歌曲长度。自动模式下优先保证歌词完整；指定时长后则优先匹配时长。" />
+          {t('node.audioPanel.musicDuration')}
+          <MusicSettingHelp text={t('node.audioPanel.musicDurationHelp')} />
         </span>
         <UiSelect
-          aria-label="音乐时长"
+          aria-label={t('node.audioPanel.musicDuration')}
           value={String(musicLengthMs)}
           onChange={(event) =>
             updateNodeData(nodeId, { musicLengthMs: Number(event.target.value) })
@@ -577,29 +587,29 @@ function AudioMusicSettingsPanel({
         >
           {MUSIC_LENGTH_PRESETS.map((preset) => (
             <option key={preset.ms} value={String(preset.ms)}>
-              {preset.label}
+              {t(preset.labelKey)}
             </option>
           ))}
         </UiSelect>
       </div>
       <div className="flex items-center justify-between gap-3 py-1">
         <span className="inline-flex items-center gap-1.5 text-[13px] text-text-dark">
-          强制纯音乐
-          <MusicSettingHelp text="是否强制纯音乐（不含人声）。" />
+          {t('node.audioPanel.forceInstrumental')}
+          <MusicSettingHelp text={t('node.audioPanel.forceInstrumentalHelp')} />
         </span>
         <MusicSettingToggle
-          ariaLabel="强制纯音乐"
+          ariaLabel={t('node.audioPanel.forceInstrumental')}
           checked={forceInstrumental}
           onChange={(next) => updateNodeData(nodeId, { forceInstrumental: next })}
         />
       </div>
       <div className="flex items-center justify-between gap-3 py-1">
         <span className="inline-flex items-center gap-1.5 text-[13px] text-text-dark">
-          遵守段落时长
-          <MusicSettingHelp text="是否严格遵守音乐段落时长策略。" />
+          {t('node.audioPanel.respectSections')}
+          <MusicSettingHelp text={t('node.audioPanel.respectSectionsHelp')} />
         </span>
         <MusicSettingToggle
-          ariaLabel="遵守段落时长"
+          ariaLabel={t('node.audioPanel.respectSections')}
           checked={respectSectionsDurations}
           onChange={(next) =>
             updateNodeData(nodeId, { respectSectionsDurations: next })
@@ -611,10 +621,11 @@ function AudioMusicSettingsPanel({
 }
 
 function AudioVoiceSettingsPanel({ nodeId, data }: AudioVoiceSettingsPanelProps) {
+  const { t } = useTranslation();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   // 默认音色的拉取放在 AudioNode 里完成（音频节点一挂载就会触发）；这里只负责展示。
   // 显示兜底改为「加载中…」而不是「项目解说人」——避免在 references 落地前误导用户。
-  const voiceLabel = data.voiceLabel ?? '加载中…';
+  const voiceLabel = data.voiceLabel ?? t('node.audioPanel.voiceLoading');
   const voiceLanguage = data.voiceLanguage ?? '';
   const currentRef: AudioVoiceRef = data.voiceRef ?? { scope: 'project_narrator' };
   const [modalOpen, setModalOpen] = useState(false);
@@ -641,7 +652,7 @@ function AudioVoiceSettingsPanel({ nodeId, data }: AudioVoiceSettingsPanelProps)
       scheduleCopyStateReset();
       return;
     }
-    const id = describeVoiceRef(currentRef);
+    const id = describeVoiceRef(currentRef, t);
     try {
       await navigator.clipboard.writeText(id);
       setCopyState('success');
@@ -654,7 +665,9 @@ function AudioVoiceSettingsPanel({ nodeId, data }: AudioVoiceSettingsPanelProps)
   return (
     <div className="border-t border-white/[0.04] px-4 pt-1 pb-3">
       <div className="flex items-center justify-between py-2">
-        <span className="text-[12px] font-semibold text-text-muted">音色设置</span>
+        <span className="text-[12px] font-semibold text-text-muted">
+          {t('node.audioPanel.voiceSettings')}
+        </span>
       </div>
       <div className="flex min-h-[55px] w-full items-center gap-3 rounded-[10px] border border-white/[0.08] bg-transparent px-3 py-2">
         <div className="min-w-0 flex-1">
@@ -662,7 +675,13 @@ function AudioVoiceSettingsPanel({ nodeId, data }: AudioVoiceSettingsPanelProps)
             <span className="truncate text-[14px] font-medium text-text-dark">{voiceLabel}</span>
             <button
               type="button"
-              title={copyState === 'success' ? '已复制' : copyState === 'error' ? '复制失败' : '复制声线引用'}
+              title={
+                copyState === 'success'
+                  ? t('node.audioPanel.copied')
+                  : copyState === 'error'
+                    ? t('node.audioPanel.copyFailed')
+                    : t('node.audioPanel.copyVoiceRef')
+              }
               onClick={handleCopyVoiceId}
               className={`flex h-4 w-4 shrink-0 items-center justify-center transition-colors ${
                 copyState === 'success'
@@ -688,7 +707,7 @@ function AudioVoiceSettingsPanel({ nodeId, data }: AudioVoiceSettingsPanelProps)
           )}
           <button
             type="button"
-            title="切换音色"
+            title={t('node.audioPanel.switchVoice')}
             onClick={() => setModalOpen(true)}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-dark transition-colors hover:bg-white/[0.06]"
           >
@@ -716,20 +735,29 @@ function AudioVoiceSettingsPanel({ nodeId, data }: AudioVoiceSettingsPanelProps)
   );
 }
 
-function describeVoiceRef(ref: AudioVoiceRef): string {
+function describeVoiceRef(ref: AudioVoiceRef, t: TFunction): string {
   switch (ref.scope) {
     case 'project_narrator':
-      return '项目解说人';
+      return t('node.voiceRef.projectNarrator');
     case 'user_custom':
-      return ref.voiceId ?? '自定义音色';
+      return ref.voiceId ?? t('node.voiceRef.userCustom');
     case 'character_default':
-      return `${ref.characterName ?? '角色'}（默认声线）`;
+      return t('node.voiceRef.characterDefault', {
+        name: ref.characterName ?? t('node.voiceRef.character'),
+      });
     case 'character_age_group':
-      return `${ref.characterName ?? '角色'}（${ref.slot ?? '年龄段'}）`;
+      return t('node.voiceRef.characterAgeGroup', {
+        name: ref.characterName ?? t('node.voiceRef.character'),
+        slot: ref.slot ?? t('node.voiceRef.ageGroup'),
+      });
     case 'identity':
-      return `${ref.identityId ?? '身份'}（自有声线）`;
+      return t('node.voiceRef.identity', {
+        id: ref.identityId ?? t('node.voiceRef.identityFallback'),
+      });
     case 'identity_resolved':
-      return `${ref.identityId ?? '身份'}（解析后）`;
+      return t('node.voiceRef.identityResolved', {
+        id: ref.identityId ?? t('node.voiceRef.identityFallback'),
+      });
     default:
       return ref.scope;
   }

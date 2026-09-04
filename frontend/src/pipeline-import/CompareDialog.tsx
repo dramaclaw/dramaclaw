@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 interface CompareDialogProps {
   /** Two image URLs (cookie-protected /static/...). */
@@ -22,6 +23,7 @@ interface CompareDialogProps {
  * upstream nodeRegistry — keeps the upstream sync surface clean.
  */
 export function CompareDialog({ left, right, onClose }: CompareDialogProps) {
+  const { t } = useTranslation();
   const [position, setPosition] = useState(0.5); // 0 = all left, 1 = all right
   const wrapperRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -49,16 +51,16 @@ export function CompareDialog({ left, right, onClose }: CompareDialogProps) {
       <div className="bg-surface border border-border-default rounded-2xl w-[80vw] max-w-[1100px] h-[80vh] flex flex-col overflow-hidden">
         <header className="flex items-center justify-between px-5 py-3 border-b border-border-default">
           <div>
-            <div className="text-sm font-semibold text-text">🔄 AB 对比</div>
+            <div className="text-sm font-semibold text-text">{t("pipelineImport.compare.title")}</div>
             <div className="text-xs text-text-muted mt-0.5">
-              拖动中线对比；位置 {Math.round(position * 100)}%
+              {t("pipelineImport.compare.position", { percent: Math.round(position * 100) })}
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="text-text-muted hover:text-text transition text-sm"
-            aria-label="关闭"
+            aria-label={t("common.close")}
           >
             ✕
           </button>
@@ -93,7 +95,7 @@ export function CompareDialog({ left, right, onClose }: CompareDialogProps) {
               }}
               className="absolute top-0 bottom-0 w-px bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.4)] cursor-ew-resize"
               style={{ left: `${position * 100}%`, transform: "translateX(-0.5px)" }}
-              aria-label="拖动对比"
+              aria-label={t("pipelineImport.compare.dragHandle")}
             >
               <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white border-2 border-bg-dark text-bg-dark text-[10px] flex items-center justify-center">
                 ◄►
@@ -110,7 +112,7 @@ export function CompareDialog({ left, right, onClose }: CompareDialogProps) {
         </div>
 
         <footer className="px-5 py-3 border-t border-border-default flex items-center justify-between text-xs text-text-muted">
-          <span>提示：拖动中线，按住 ← / → 微调位置</span>
+          <span>{t("pipelineImport.compare.hint")}</span>
           <input
             type="range"
             min={0}

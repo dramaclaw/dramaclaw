@@ -63,6 +63,7 @@ export function AssetBoardVideoGenForm({ nodeId }: { nodeId: string }): ReactEle
         </div>
       </AssetBoardReferenceDropZone>
       <AssetLibraryModal
+        mode="pick"
         open={isAssetLibraryOpen}
         project={readUrl().project ?? null}
         onClose={() => setIsAssetLibraryOpen(false)}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CreditSummary } from "@/lib/queries/credits";
@@ -199,9 +199,22 @@ describe("credits page — personal account", () => {
     const { container } = render(<CreditsPage />);
     const text = container.textContent ?? "";
 
+    expect(container.firstElementChild).toHaveClass(
+      "fixed",
+      "inset-0",
+      "z-[60]",
+      "w-full",
+      "bg-black/35",
+      "backdrop-blur-md",
+    );
+    expect(container.firstElementChild?.firstElementChild).toHaveClass(
+      "mt-auto",
+      "max-w-6xl",
+    );
     expect(text).toContain("积分中心");
-    expect(text).toContain("查看统一积分余额、消费结算、退款和当前可用促销。");
+    expect(screen.getByRole("button", { name: "关闭" })).toHaveClass("size-7");
     expect(text).toContain("当前积分余额");
+    expect(text).not.toContain("查看统一积分余额、消费结算、退款和当前可用促销。");
     expect(text).not.toContain("组织");
     expect(text).not.toContain("组织额度");
     expect(text).not.toContain("个人积分余额（此处不可用）");
@@ -257,7 +270,7 @@ describe("credits page — personal account", () => {
 });
 
 describe("credits page — organization member", () => {
-  it("labels the figures as the organization's allocation and names the organization", () => {
+  it("labels the figures as the organization's allocation without repeating scope copy", () => {
     queryState.summary = { ...ORG_SUMMARY };
 
     const { container } = render(<CreditsPage />);
@@ -268,9 +281,7 @@ describe("credits page — organization member", () => {
     // admin take his own allocation for the whole organization's balance.
     expect(text).toContain("组织分配额度");
     expect(text).toContain("可用余额");
-    expect(text).toContain(
-      "以下余额与明细来自组织「星辰文化」为你分配的组织额度，你的任务消耗从该额度扣除。",
-    );
+    expect(text).not.toContain("以下余额与明细来自组织");
     // The figure on screen is the org member account's, not a personal wallet.
     expect(text).toContain("5,000");
     expect(text).toContain("1,300");
@@ -363,18 +374,15 @@ describe("credits page — organization member", () => {
     expect(container.textContent ?? "").not.toContain(LOW_BALANCE_ANCHOR);
   });
 
-  it("shows a non-zero dormant personal balance and marks it unusable here", () => {
+  it("keeps a dormant personal balance out of this focused transaction view", () => {
     queryState.summary = { ...ORG_SUMMARY, dormant_personal_balance: 1200 };
 
     const { container } = render(<CreditsPage />);
     const text = container.textContent ?? "";
 
-    expect(text).toContain("个人积分余额（此处不可用）");
-    expect(text).toContain(
-      "这笔积分仍保留在你的个人账户中。当前账号按组织额度结算，不会动用个人积分。",
-    );
-    expect(text).toContain("1,200");
-    // It is reported beside the balance, never folded into it.
+    expect(text).not.toContain("个人积分余额（此处不可用）");
+    expect(text).not.toContain("不会动用个人积分");
+    expect(text).not.toContain("1,200");
     expect(text).toContain("5,000");
   });
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import {
   fetchFreezoneJobResult,
@@ -131,6 +132,7 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
   // 组织成员没有发起模型任务的资格时不放行。面板与节点本体的重试共用这个 hook，
   // 所以门控放在这里，两条入口都盖到。
   const modelTaskAccess = useModelTaskAccess();
+  const { t } = useTranslation();
 
   const generate = useCallback(async (): Promise<{
     audioUrl?: string;
@@ -165,7 +167,7 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
       updateNodeData(nodeId, {
         isGenerating: false,
         generationStartedAt: null,
-        generationError: '未选择自定义声线，已跳过生成',
+        generationError: t('node.audioNode.selectVoiceFirst'),
       });
       return { skipped: true, reason: 'missing_custom_voice' };
     }
@@ -173,7 +175,7 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
     if (fallbackPrompt.length === 0) return {};
     const project = readUrl().project;
     if (!project) {
-      updateNodeData(nodeId, { generationError: '当前 URL 缺少 project 参数' });
+      updateNodeData(nodeId, { generationError: t('canvas.generation.missingProjectParam') });
       return {};
     }
     updateNodeData(nodeId, {
@@ -254,11 +256,12 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
       );
       updateNodeData(nodeId, {
         ...CLEARED_GENERATION_TASK_FIELDS,
-        generationError: error instanceof Error ? error.message : '生成失败',
+        generationError: error instanceof Error ? error.message : t('node.audioNode.generateFailed'),
       });
       throw error;
     }
   }, [
+    t,
     isGenerating,
     modelTaskAccess,
     isMusic,

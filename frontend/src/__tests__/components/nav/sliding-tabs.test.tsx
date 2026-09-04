@@ -87,4 +87,24 @@ describe("SlidingTabs", () => {
       "false",
     );
   });
+
+  it("marks only the newly activated icon for optional micro-motion", () => {
+    render(
+      <SlidingTabs
+        items={items}
+        value="script"
+        onValueChange={vi.fn()}
+        animateActiveIcon
+        aria-label="Episode sections"
+      />,
+    );
+
+    const script = screen.getByRole("tab", { name: "Script" });
+    const shots = screen.getByRole("tab", { name: "Shots" });
+    expect(script).toHaveAttribute("data-icon-animate", "false");
+
+    fireEvent.click(shots);
+    expect(shots).toHaveAttribute("data-icon-animate", "true");
+    expect(script).toHaveAttribute("data-icon-animate", "false");
+  });
 });

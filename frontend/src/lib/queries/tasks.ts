@@ -143,7 +143,7 @@ export function useCancelTask() {
             ...conflict,
             ok: false,
             continued: true,
-            message: "已继续执行任务",
+            message: i18n.t("tasks.cancelRunning.continued"),
           };
         }
         return send(true);

@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import shutil
+import socket
 import sqlite3
 import stat
 import sys
@@ -73,7 +74,7 @@ _LOCAL_FILESYSTEM_PATH_RE = re.compile(
     r"(?<![\w./-])(?:~|/Users/[^\s`'\"<>)]+)(?:/[^\s`'\"<>)]+)+"
 )
 _CHAT_RUN_LOCK_KEY = "active_chat_run"
-_CHAT_RUN_LOCK_TTL_SECONDS = 10 * 60
+_CHAT_RUN_LOCK_TTL_SECONDS = 2 * 60
 _CHAT_RUN_LOCK_MAX_SECONDS = 60 * 60
 _CHAT_RUN_LOCK_HEARTBEAT_SECONDS = 30.0
 _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS = 5.0
@@ -1676,21 +1677,23 @@ def _pid_is_alive(pid: int | None) -> bool:
 
 def _parse_chat_run_lock(
     value: str | None,
-) -> tuple[str | None, int | None, datetime | None, datetime | None]:
+) -> tuple[str | None, str | None, int | None, datetime | None, datetime | None]:
     if not value:
-        return None, None, None, None
+        return None, None, None, None, None
     try:
         payload = json.loads(value)
     except json.JSONDecodeError:
-        return value, None, None, None
+        return value, None, None, None, None
     if not isinstance(payload, dict):
-        return None, None, None, None
+        return None, None, None, None, None
     lock_id = payload.get("lock_id")
+    owner_id = payload.get("owner_id")
     owner_pid = payload.get("owner_pid")
     started_at = payload.get("started_at")
     updated_at = payload.get("updated_at") or started_at
     return (
         str(lock_id).strip() or None if lock_id is not None else None,
+        str(owner_id).strip() or None if owner_id is not None else None,
         int(owner_pid) if isinstance(owner_pid, int) else None,
         _parse_iso_datetime(str(started_at)) if started_at is not None else None,
         _parse_iso_datetime(str(updated_at)) if updated_at is not None else None,
@@ -1744,13 +1747,13 @@ def _chat_run_lock_path(username: str, project: str) -> Path:
 
 def _read_chat_run_lock_file(
     path: Path,
-) -> tuple[str | None, int | None, datetime | None, datetime | None]:
+) -> tuple[str | None, str | None, int | None, datetime | None, datetime | None]:
     try:
         value = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return None, None, None, None
+        return None, None, None, None, None
     except OSError:
-        return None, None, None, None
+        return None, None, None, None, None
     return _parse_chat_run_lock(value)
 
 
@@ -1775,6 +1778,7 @@ def _chat_run_lock_payload(lock_id: str, *, started_at: str | None = None) -> st
     return json.dumps(
         {
             "lock_id": lock_id,
+            "owner_id": f"{socket.gethostname()}:{os.getpid()}",
             "owner_pid": os.getpid(),
             "started_at": started_at or now,
             "updated_at": now,
@@ -1795,6 +1799,22 @@ def _chat_run_lock_file_is_new(path: Path) -> bool:
     ) < _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS
 
 
+def _chat_run_lock_owner_is_active(
+    owner_id: str | None,
+    owner_pid: int | None,
+    started_at: datetime | None,
+    updated_at: datetime | None,
+) -> bool:
+    if started_at is None and updated_at is None:
+        return False
+    if _chat_run_lock_is_stale(started_at, updated_at):
+        return False
+    owner_host, separator, _owner_process = (owner_id or "").rpartition(":")
+    if separator and owner_host == socket.gethostname():
+        return _pid_is_alive(owner_pid)
+    return True
+
+
 def _acquire_chat_run_lock(username: str, project: str) -> str:
     lock_path = _chat_run_lock_path(username, project)
     lock_id = uuid.uuid4().hex
@@ -1804,15 +1824,16 @@ def _acquire_chat_run_lock(username: str, project: str) -> str:
         try:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
-            existing_lock_id, owner_pid, started_at, updated_at = (
+            existing_lock_id, owner_id, owner_pid, started_at, updated_at = (
                 _read_chat_run_lock_file(lock_path)
             )
             if not existing_lock_id and _chat_run_lock_file_is_new(lock_path):
                 raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
             if (
                 existing_lock_id
-                and _pid_is_alive(owner_pid)
-                and not _chat_run_lock_is_stale(started_at, updated_at)
+                and _chat_run_lock_owner_is_active(
+                    owner_id, owner_pid, started_at, updated_at
+                )
             ):
                 raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
             _remove_chat_run_lock_file(lock_path)
@@ -1833,8 +1854,8 @@ def _acquire_chat_run_lock(username: str, project: str) -> str:
 
 def _release_chat_run_lock(username: str, project: str, lock_id: str) -> None:
     lock_path = _chat_run_lock_path(username, project)
-    current_lock_id, _owner_pid, _started_at, _updated_at = _read_chat_run_lock_file(
-        lock_path
+    current_lock_id, _owner_id, _owner_pid, _started_at, _updated_at = (
+        _read_chat_run_lock_file(lock_path)
     )
     if current_lock_id == lock_id:
         _remove_chat_run_lock_file(lock_path)
@@ -1842,8 +1863,8 @@ def _release_chat_run_lock(username: str, project: str, lock_id: str) -> None:
 
 def _heartbeat_chat_run_lock(username: str, project: str, lock_id: str) -> bool:
     lock_path = _chat_run_lock_path(username, project)
-    current_lock_id, _owner_pid, started_at, _updated_at = _read_chat_run_lock_file(
-        lock_path
+    current_lock_id, _owner_id, _owner_pid, started_at, _updated_at = (
+        _read_chat_run_lock_file(lock_path)
     )
     if current_lock_id != lock_id:
         return False
@@ -1860,13 +1881,14 @@ def _heartbeat_chat_run_lock(username: str, project: str, lock_id: str) -> bool:
 
 def chat_run_lock_is_active(username: str, project: str = "") -> bool:
     lock_path = _chat_run_lock_path(username, project)
-    existing_lock_id, owner_pid, started_at, updated_at = _read_chat_run_lock_file(
-        lock_path
+    existing_lock_id, owner_id, owner_pid, started_at, updated_at = (
+        _read_chat_run_lock_file(lock_path)
     )
     if (
         existing_lock_id
-        and _pid_is_alive(owner_pid)
-        and not _chat_run_lock_is_stale(started_at, updated_at)
+        and _chat_run_lock_owner_is_active(
+            owner_id, owner_pid, started_at, updated_at
+        )
     ):
         return True
     _remove_chat_run_lock_file(lock_path)

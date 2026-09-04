@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, useState } from "react";
 import { useReactFlow, type Viewport } from "@xyflow/react";
+import { useTranslation } from "react-i18next";
 import {
   useCanvasStore,
   type CanvasEdge,
@@ -20,6 +21,7 @@ import {
   type FreezonePresetCanvasRequest,
 } from "@/api/canvas";
 import { ApiError } from "@/api/client";
+import type { TFn } from "@/lib/i18n-types";
 import {
   buildSavePayload,
   checkPayloadLimits,
@@ -59,6 +61,10 @@ import {
   type StoredCanvasDraft,
 } from "./canvasDraftStorage";
 import { safeLocalStorageSet } from "@/lib/localStorageQuota";
+import {
+  beginCanvasHydrateBurst,
+  notifyCanvasHydrateViewport,
+} from "@/features/canvas/application/canvasLod";
 
 const DEBOUNCE_MS = 800;
 const DRAFT_DEBOUNCE_MS = 300;
@@ -75,6 +81,55 @@ export const FREEZONE_HYDRATE_RELEASE_GRACE_MS = 50;
  * 覆盖「切过去又立刻切回来」，再长就是拿正确性换手感了。
  */
 export const FREEZONE_HYDRATE_SETTLED_REUSE_MS = 10_000;
+
+/**
+ * store 里当前装着哪张画布的内容。跨组件挂载保留（FreezoneShell 没有 key，切画布
+ * 是同一个实例重跑 effect），用来区分两种情况：
+ *   - 换画布：旧内容必须在发请求之前就卸掉，否则卸载与挂载会并进同一次提交；
+ *   - 同一张画布重进（顶栏虾画/虾集来回切）：store 里就是要的内容，清空只会白闪。
+ */
+let storeCanvasKey: string | null = null;
+
+/**
+ * 谁拥有某张画布的 undo 镜像。读完即弃的清理挪进 scheduleIdle 之后，回调可能在
+ * 切走之后才跑；这期间用户完全可能已经切回来并编辑过，盘上那份镜像属于新的一次
+ * hydrate，旧回调再清就是把人家刚写的 undo 栈删了。
+ */
+/**
+ * 没存过相机时的落点。与 canvasStore 的 currentViewport 初值、ReactFlow 的默认
+ * 视口一致 —— 也就是「重挂一个全新 ReactFlow」原本会给到的位置。
+ */
+const DEFAULT_HYDRATE_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
+
+let hydrateSeq = 0;
+const latestHydrateSeq = new Map<string, number>();
+
+function claimHydrate(key: string): number {
+  const seq = ++hydrateSeq;
+  latestHydrateSeq.set(key, seq);
+  return seq;
+}
+
+function ownsHydrate(key: string, seq: number): boolean {
+  return latestHydrateSeq.get(key) === seq;
+}
+
+function storeKeyOf(project: string, canvasId: string): string {
+  // 分隔符写成转义形式：源码里真放一个 0x00 会让 GitHub 把整个 .ts 认成 binary，
+  // PR diff、代码搜索和一部分扫描工具都会直接跳过这个文件。
+  return `${project}\u0000${canvasId}`;
+}
+
+/**
+ * 把一段与「把画布画出来」无关的工作挪出关键路径。timeout 兜底保证再忙也会跑到。
+ */
+function scheduleIdle(run: () => void, timeout = 2_000): void {
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(run, { timeout });
+    return;
+  }
+  window.setTimeout(run, 200);
+}
 
 let prunePending = false;
 
@@ -346,6 +401,7 @@ function decideHydrateDraft(
   remoteNodes: CanvasNode[],
   remoteEdges: CanvasEdge[],
   remoteMetadata: Record<string, unknown> | null,
+  t: TFn,
 ): HydrateDraftDecision {
   if (!draft) return { kind: "remote" };
   if (draft.signature === remoteSignature) {
@@ -368,8 +424,7 @@ function decideHydrateDraft(
   return {
     kind: "conflict",
     draft,
-    message:
-      "本地有未同步的画布草稿，但服务器版本已经变化。请保存副本或丢弃本地草稿后继续。",
+    message: t("freezone.canvasSync.localDraftStale"),
   };
 }
 
@@ -622,6 +677,8 @@ interface CanvasSyncResult {
   metadata: Record<string, unknown> | null;
   revision: number | null;
   hydratedCanvasId: string | null;
+  /** 与 `hydratedCanvasId` 同时更新的项目 id；跨项目同名画布只能靠它区分。 */
+  hydratedProject: string | null;
   /**
    * Reported by the backend on the last save. `null` means we have not
    * observed any backup info yet (fresh mount). `synced` / `disabled` are
@@ -656,11 +713,16 @@ export function useCanvasSync(
   project: string,
   canvasId: string,
 ): CanvasSyncResult {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<CanvasSyncStatus>("loading");
   const [error, setError] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<Record<string, unknown> | null>(null);
   const [revision, setRevision] = useState<number | null>(null);
   const [hydratedCanvasId, setHydratedCanvasId] = useState<string | null>(null);
+  // 与 hydratedCanvasId 成对更新，永远在同一个事件里 set，所以两者不会撕裂。
+  // 个人画布的 id 由用户名推出（personalCanvasIdForUsername），跨项目是同一个 id，
+  // 光看 canvasId 分不出「换了项目」，必须连项目一起报出去。
+  const [hydratedProject, setHydratedProject] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   // Surfaced backup status from the most recent save. The hook always
   // overwrites this on success; on legacy responses without the field, we
@@ -818,6 +880,7 @@ export function useCanvasSync(
     );
     return {
       project,
+      t,
       canvasId,
       nodes: canvasState.nodes,
       edges: canvasState.edges,
@@ -964,6 +1027,7 @@ export function useCanvasSync(
       hydratedRef.current = true;
       switchingRef.current = false;
       setHydratedCanvasId(canvasId);
+      setHydratedProject(project);
       if (mergedLocalWork) {
         window.setTimeout(() => {
           if (!hydratedRef.current || switchingRef.current) return;
@@ -1030,14 +1094,35 @@ export function useCanvasSync(
     metadataRef.current = null;
     setRevision(null);
     setHydratedCanvasId(null);
+    setHydratedProject(null);
     canvasEnvelopeRef.current = {};
     lastPersistedDraftSignatureRef.current = null;
     hydratedRef.current = false;
     switchingRef.current = true;
+    const hydrateKey = storeKeyOf(project, canvasId);
+    const hydrateToken = claimHydrate(hydrateKey);
     // Everything queued for the previous canvas is dropped here: the new
     // session owns save scheduling from now on, and the old one can no longer
     // write to anything this canvas reads.
     startSaveSession();
+    // 换画布时先把旧内容卸掉，别等 hydrate 回来。
+    //
+    // FreezoneShell 没有 key，切画布走的是「同一个组件重跑 effect」，所以在这里不
+    // 清空的话，旧画布的几百个节点会一直挂着，直到 setCanvasData 把新内容换上去
+    // ——React 会把「卸载 N 个旧的」和「挂载 M 个新的」并进同一次同步提交，实测
+    // 350 节点一次冻 ~1.4s。提前清空把它拆成两次：本次提交只卸载（随后画面是
+    // FreezoneShell 的全屏 loading），等请求回来再单独挂载。
+    //
+    // 只在确实换了画布时清：同一张画布重进（顶栏虾画/虾集来回切）store 里就是要
+    // 的内容，清掉只会白闪一下。写盘与自动保存全部被 switchingRef 挡住（见
+    // decideSaveAction 的 switching 分支），空 store 不会外泄成一次覆盖保存。
+    if (
+      storeCanvasKey !== storeKeyOf(project, canvasId) &&
+      useCanvasStore.getState().nodes.length > 0
+    ) {
+      storeCanvasKey = null;
+      setCanvasData([], []);
+    }
     lastRemoteNodeCountRef.current = 0;
     pendingClientSaveIdRef.current = null;
     pendingClientSaveIdSignatureRef.current = null;
@@ -1067,6 +1152,7 @@ export function useCanvasSync(
           nodes,
           edges,
           meta,
+          t,
         );
         lastRemoteNodeCountRef.current = nodes.length;
         if (draftDecision.kind === "draft") {
@@ -1084,32 +1170,34 @@ export function useCanvasSync(
           lastSignatureRef.current = canvasContentSignature(nodes, edges);
           hydratedRef.current = true;
           switchingRef.current = false;
+          // 与远端分支同理：相机先落位（此刻 store 是空的，代价接近零），节点再
+          // 按最终的缩放档一次挂上，并且先出 shell 分批补齐。
+          const draftViewport = isViewport(draftDecision.draft.viewport)
+            ? draftDecision.draft.viewport
+            : readStoredViewport(project, canvasId) ??
+              (isViewport(remote.viewport) ? remote.viewport : null);
+          const draftHydrateViewport = draftViewport ?? DEFAULT_HYDRATE_VIEWPORT;
+          lastSavedViewportRef.current = draftHydrateViewport;
+          setViewportState(draftHydrateViewport);
+          reactFlow.setViewport(draftHydrateViewport, { duration: 0 });
+          notifyCanvasHydrateViewport(draftHydrateViewport.zoom);
+          beginCanvasHydrateBurst();
           hydrateCanvasDraft({
             nodes: draftDecision.draft.nodes,
             edges: draftDecision.draft.edges,
             history: draftDecision.draft.history,
             mutation: draftDecision.draft.mutation,
           });
+          storeCanvasKey = storeKeyOf(project, canvasId);
           useCanvasStore
             .getState()
             .hydrateViewportBookmarks(draftMeta?.viewportBookmarks);
-          const draftViewport = isViewport(draftDecision.draft.viewport)
-            ? draftDecision.draft.viewport
-            : readStoredViewport(project, canvasId) ??
-              (isViewport(remote.viewport) ? remote.viewport : null);
-          if (draftViewport) {
-            lastSavedViewportRef.current = draftViewport;
-            setViewportState(draftViewport);
-            requestAnimationFrame(() => {
-              if (cancelled) return;
-              reactFlow.setViewport(draftViewport, { duration: 0 });
-            });
-          }
           // The draft carries its own undo history (hydrateCanvasDraft above),
           // so the separate mirror is redundant here — drop it read-once like
           // the remote branch. The edit-gated write effect re-creates it.
           clearStoredHistory(project, canvasId);
           setHydratedCanvasId(canvasId);
+          setHydratedProject(project);
           setSyncStatus("ready");
           return;
         }
@@ -1127,7 +1215,38 @@ export function useCanvasSync(
           clearCanvasDraft(project, canvasId);
         }
 
+        // Restore the saved camera position so a refresh lands where the user
+        // left off. Prefer the client-side localStorage copy: it's updated on
+        // every pan/zoom (debounced + a synchronous beforeunload write), so it
+        // always reflects the *last* position. The backend `viewport` only
+        // rides along with content (nodes/edges) PUTs, so after a pure pan/zoom
+        // it's stale — using it first would yank the camera back to wherever it
+        // was during the last content edit. Fall back to the backend value only
+        // when there's no local copy (fresh browser / cross-device).
+        //
+        // 相机必须先于节点落位。原来这里在 setCanvasData 之后再用一个 rAF 把视口
+        // 推给 ReactFlow，于是新画布的节点是「按上一张画布的相机」挂载的：视口裁剪
+        // 算的是错的一批，一帧后相机跳到正确位置又要重算；缩放跨过
+        // LOW_DETAIL_ZOOM_THRESHOLD 时连 onlyRenderVisibleElements 的开关也跟着翻，
+        // 一次切换要挂两三波。此刻 store 已被上面清空，设视口没有任何节点要重排，
+        // 代价接近零；等下面挂节点时缩放档与裁剪窗口都已是最终值，只挂一次。
+        const savedViewport =
+          readStoredViewport(project, canvasId) ??
+          (isViewport(remote.viewport) ? remote.viewport : null);
+        // 没存过相机也必须显式落位：新建画布明确存的是 viewport: null，老数据也
+        // 可能没有。Canvas 现在跨项目常驻，不再靠重挂拿到一个全新的 ReactFlow
+        // 实例，这里不复位就会继续用上一张画布的坐标和缩放 —— 节点可能整个落在
+        // 屏幕外，lowDetail 档也是上一张画布的。
+        const hydrateViewport = savedViewport ?? DEFAULT_HYDRATE_VIEWPORT;
+        lastSavedViewportRef.current = hydrateViewport;
+        setViewportState(hydrateViewport);
+        reactFlow.setViewport(hydrateViewport, { duration: 0 });
+        // 裁剪开关要跟着相机一起走，否则节点会按上一张画布的缩放档挂一整波。
+        notifyCanvasHydrateViewport(hydrateViewport.zoom);
+        // 这一次挂载的节点先出 shell，再由升级队列每帧 3 个补成完整组件。
+        beginCanvasHydrateBurst();
         setCanvasData(nodes, edges);
+        storeCanvasKey = storeKeyOf(project, canvasId);
         // Seed the fingerprint from the normalized store state so the first
         // post-hydrate emission (measure/select) is recognized as a no-op.
         const hydrated = useCanvasStore.getState();
@@ -1139,35 +1258,42 @@ export function useCanvasSync(
         // canvas still matches the content the history was captured against —
         // otherwise (edited on another device, backend newer) we'd let the user
         // undo into a state that never existed here.
-        const storedHistory = readStoredHistory(project, canvasId);
-        if (storedHistory && storedHistory.signature === lastSignatureRef.current) {
-          restoreHistory({ past: storedHistory.past, future: storedHistory.future });
-        }
-        // Read-once: the mirror only exists to bridge this refresh. Drop it now
-        // that it's been consumed (or is stale) so undo stacks don't accumulate
-        // per canvas. The write effect re-persists it once the user edits again.
-        clearStoredHistory(project, canvasId);
-        // Restore the saved camera position so a refresh lands where the user
-        // left off. Prefer the client-side localStorage copy: it's updated on
-        // every pan/zoom (debounced + a synchronous beforeunload write), so it
-        // always reflects the *last* position. The backend `viewport` only
-        // rides along with content (nodes/edges) PUTs, so after a pure pan/zoom
-        // it's stale — using it first would yank the camera back to wherever it
-        // was during the last content edit. Fall back to the backend value only
-        // when there's no local copy (fresh browser / cross-device). Seed both
-        // the store (drives `currentViewport`) and the live ReactFlow instance;
-        // rAF ensures it applies after nodes first render.
-        const savedViewport =
-          readStoredViewport(project, canvasId) ??
-          (isViewport(remote.viewport) ? remote.viewport : null);
-        if (savedViewport) {
-          lastSavedViewportRef.current = savedViewport;
-          setViewportState(savedViewport);
-          requestAnimationFrame(() => {
-            if (cancelled) return;
-            reactFlow.setViewport(savedViewport, { duration: 0 });
-          });
-        }
+        //
+        // 放到空闲期做：readStoredHistory 是一次同步的 JSON.parse（草稿动辄几 MB），
+        // restoreHistory 还要把最多 100 个快照逐个跑 normalizeCanvasData（每个快照
+        // 几百个节点、每个节点一次 createDefaultData）。这一整块和「把画布画出来」
+        // 没有先后依赖——画布刚出现的那一刻用户不可能已经按下 undo——留在关键路径上
+        // 只是白白拉长切换那一帧。
+        const hydratedSignature = lastSignatureRef.current;
+        scheduleIdle(() => {
+          // Read-once: the mirror only exists to bridge this refresh. Drop it
+          // whether or not it was usable so undo stacks don't accumulate per
+          // canvas. The write effect re-persists it once the user edits again.
+          // 这张画布已经被更晚的一次 hydrate 接管（切走又切回来），盘上的镜像归
+          // 那一次所有，无论本次是否 cancelled 都不该动。
+          if (!ownsHydrate(hydrateKey, hydrateToken)) return;
+          if (cancelled) {
+            clearStoredHistory(project, canvasId);
+            return;
+          }
+          const storedHistory = readStoredHistory(project, canvasId);
+          // 空闲期跑意味着中间可能已经有一次真实编辑；那次编辑的快照已经进了
+          // history，这时再整体替换会把它吞掉，所以只在完全没编辑过时恢复。
+          if (
+            storedHistory &&
+            storedHistory.signature === hydratedSignature &&
+            useCanvasStore.getState().userEditsSinceHydrate === 0
+          ) {
+            restoreHistory({ past: storedHistory.past, future: storedHistory.future });
+          }
+          // 空闲期可能已经晚于 edit-gated 的镜像写入（那个 effect 400ms 防抖，而
+          // hydrate 之后主线程正忙着每帧升级 3 个壳）。这时候盘上那份镜像是用户
+          // 刚才那次编辑写的、不是我们要读完即弃的那份，清掉就等于把他的跨刷新
+          // undo 栈删了。
+          if (useCanvasStore.getState().userEditsSinceHydrate === 0) {
+            clearStoredHistory(project, canvasId);
+          }
+        });
         // Hydrate freezone-specific sidecar metadata.
         metadataRef.current = meta;
         setMetadata(meta);
@@ -1182,6 +1308,7 @@ export function useCanvasSync(
         hydratedRef.current = true;
         switchingRef.current = false;
         setHydratedCanvasId(canvasId);
+        setHydratedProject(project);
         if (draftDecision.kind === "conflict") {
           setError(draftDecision.message);
           setSyncStatus("conflict");
@@ -1197,6 +1324,7 @@ export function useCanvasSync(
         switchingRef.current = false;
         setRevision(null);
         setHydratedCanvasId(null);
+        setHydratedProject(null);
         setError(err instanceof Error ? err.message : String(err));
         setSyncStatus("error");
       }
@@ -1510,7 +1638,7 @@ export function useCanvasSync(
     const preset = metadata?.preset as Record<string, unknown> | undefined;
     const request = presetRequestFromMetadata(preset);
     if (!request) {
-      throw new Error("当前画布不是可恢复的主线 preset");
+      throw new Error(t("freezone.canvasSync.notRestorablePreset"));
     }
     if (
       shouldDeferPresetRefreshUntilReady(
@@ -1534,7 +1662,7 @@ export function useCanvasSync(
             setSyncStatus("ready");
             return canvasId;
           }
-          throw new Error("当前画布还有未保存冲突，处理后再同步主线视图");
+          throw new Error(t("freezone.canvasSync.unsavedConflictBeforeSync"));
         }
       }
       await createCanvasFromPreset(project, {
@@ -1554,7 +1682,7 @@ export function useCanvasSync(
       }
       const message =
         status === 409
-          ? "主线视图已被其他窗口更新,请刷新后重试"
+          ? t("freezone.canvasSync.mainlineUpdatedElsewhere")
           : err instanceof Error
             ? err.message
             : String(err);
@@ -1570,6 +1698,7 @@ export function useCanvasSync(
     metadata,
     revision,
     hydratedCanvasId,
+    hydratedProject,
     backupStatus,
     flush,
     retry,
@@ -1582,6 +1711,8 @@ export function useCanvasSync(
 
 interface SaveArgs {
   project: string;
+  /** 保存链路上的所有文案都要跟着界面语言走，由 hook 从 useTranslation 传下来。 */
+  t: TFn;
   canvasId: string;
   nodes: unknown[];
   edges: unknown[];
@@ -1670,9 +1801,7 @@ async function scheduleSave(args: SaveArgs): Promise<boolean> {
   if (decision.kind === "block") {
     args.pendingClientSaveIdRef.current = null;
     args.pendingClientSaveIdSignatureRef.current = null;
-    args.setError(
-      "本地画布为空但服务器还有节点，已暂停自动保存以避免覆盖。请刷新后再编辑。",
-    );
+    args.setError(args.t("freezone.canvasSync.dangerousEmptyBlocked"));
     args.setStatus("conflict");
     return false;
   }
@@ -1754,7 +1883,7 @@ async function performSave(
   if (countViolation) {
     args.pendingClientSaveIdRef.current = null;
     args.pendingClientSaveIdSignatureRef.current = null;
-    args.setError(describePayloadViolation(countViolation));
+    args.setError(describePayloadViolation(countViolation, args.t));
     args.setStatus("error");
     return false;
   }
@@ -1849,7 +1978,7 @@ function consumeSaveResponse(
     // warning without flipping into the hard error path — the user's edits
     // are durable on the server, just not yet replicated. The dedicated
     // backupStatus channel above also picks this up for the UI indicator.
-    args.setError("云端备份失败，请稍后再试");
+    args.setError(args.t("freezone.canvasSync.backupFailed"));
   }
 }
 
@@ -1863,7 +1992,12 @@ async function handleSaveError(
 ): Promise<boolean> {
   const { status, body } = saveErrorStatusAndBody(err);
   const fallback = err instanceof Error ? err.message : String(err);
-  const outcome: SaveResponseOutcome = classifySaveError(status, body, fallback);
+  const outcome: SaveResponseOutcome = classifySaveError(
+    status,
+    body,
+    fallback,
+    args.t,
+  );
 
   // Local helpers — every "terminal" branch drops the pending idempotency
   // token so the next fresh content change mints a new one. Retry branches
@@ -1914,7 +2048,7 @@ async function handleSaveError(
       // Retry budget exhausted — surface as a generic error so the user
       // knows the save did not stick.
       dropPendingId();
-      args.setError("画布写入被锁占用，请稍后重试");
+      args.setError(args.t("freezone.canvasSync.lockBusy"));
       args.setStatus("error");
       return false;
     }

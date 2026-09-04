@@ -345,6 +345,9 @@ async def test_newapi_submit_poll_fetch_use_exact_credential_and_transitions(
     accepted = operation_port.events[1][1]
     completed = operation_port.events[2][1]
     assert accepted["provider_job_id"] == "provider-job-1"
+    assert accepted["requester_user_id"] == context.requester_user_id
+    assert accepted["membership_id"] == context.membership_id
+    assert accepted["authz_version"] == context.authz_version
     assert completed["result_ref"].startswith("video:sha256:")
     assert "result.example" not in completed["result_ref"]
     assert str(tmp_path) not in completed["result_ref"]
@@ -1000,6 +1003,246 @@ async def test_newapi_post_accept_authz_recovers_without_resubmitting_provider(
 
 
 @pytest.mark.asyncio
+async def test_newapi_post_accept_key_rotation_keeps_frozen_credential(
+    monkeypatch,
+) -> None:
+    import novelvideo.ports as ports
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    context = _context()
+    generator = NewApiVideoGenerator(
+        model="seedance-1.0-pro-fast", egress_context=context
+    )
+    rotated = generator._admission_from_egress_context(context)
+    rotated = replace(
+        rotated,
+        credential=replace(
+            context.credential,
+            credential_id="credential-2",
+            key_version=8,
+        ),
+    )
+
+    class Authz:
+        async def admit_model_task(self, **_kwargs):
+            return rotated
+
+    monkeypatch.setattr(ports, "get_authz_port", lambda: Authz())
+
+    await generator._revalidate_organization(context)
+
+
+@pytest.mark.asyncio
+async def test_newapi_post_accept_unbind_revalidates_authority_without_active_key(
+    monkeypatch,
+) -> None:
+    import novelvideo.ports as ports
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+    from novelvideo.ports.authz import AuthzError, AuthzSnapshot
+
+    context = _context()
+    generator = NewApiVideoGenerator(
+        model="seedance-1.0-pro-fast", egress_context=context
+    )
+    calls = {"admit": 0, "snapshot": 0}
+
+    class Authz:
+        async def admit_model_task(self, **_kwargs):
+            calls["admit"] += 1
+            raise AuthzError("ORG_CREDENTIAL_DISABLED")
+
+        async def snapshot(self, *, user_id):
+            calls["snapshot"] += 1
+            assert user_id == context.requester_user_id
+            return AuthzSnapshot(
+                requester_user_id=context.requester_user_id,
+                org_id=context.billing_principal.id,
+                membership_id=context.membership_id,
+                role="member",
+                membership_status="active",
+                org_status="active",
+                authz_version=context.authz_version,
+            )
+
+    monkeypatch.setattr(ports, "get_authz_port", lambda: Authz())
+
+    await generator._revalidate_organization(context)
+
+    assert calls == {"admit": 1, "snapshot": 1}
+
+
+@pytest.mark.asyncio
+async def test_newapi_post_accept_unbind_still_rejects_inactive_membership(
+    monkeypatch,
+) -> None:
+    import novelvideo.ports as ports
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+    from novelvideo.ports.authz import AuthzError, AuthzSnapshot
+
+    context = _context()
+    generator = NewApiVideoGenerator(
+        model="seedance-1.0-pro-fast", egress_context=context
+    )
+
+    class Authz:
+        async def admit_model_task(self, **_kwargs):
+            raise AuthzError("ORG_CREDENTIAL_DISABLED")
+
+        async def snapshot(self, *, user_id):
+            return AuthzSnapshot(
+                requester_user_id=user_id,
+                org_id=context.billing_principal.id,
+                membership_id=context.membership_id,
+                role="member",
+                membership_status="suspended",
+                org_status="active",
+                authz_version=context.authz_version,
+            )
+
+    monkeypatch.setattr(ports, "get_authz_port", lambda: Authz())
+
+    with pytest.raises(AuthzError) as captured:
+        await generator._revalidate_organization(context)
+
+    assert captured.value.code == "ORG_MEMBERSHIP_INACTIVE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("requester_user_id", "user-2"),
+        ("billing_principal", BillingPrincipal(kind="organization", id="org-2")),
+        ("membership_id", "membership-2"),
+        ("authz_version", 12),
+    ],
+)
+async def test_newapi_post_accept_noncredential_authority_drift_still_fails(
+    monkeypatch,
+    field: str,
+    value: object,
+) -> None:
+    import novelvideo.ports as ports
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+    from novelvideo.ports.authz import AuthzError
+
+    context = _context()
+    generator = NewApiVideoGenerator(
+        model="seedance-1.0-pro-fast", egress_context=context
+    )
+    current = generator._admission_from_egress_context(context)
+    if field == "billing_principal":
+        current = replace(
+            current,
+            billing_principal=value,
+            credential=replace(current.credential, org_id=value.id),
+        )
+    else:
+        current = replace(current, **{field: value})
+
+    class Authz:
+        async def admit_model_task(self, **_kwargs):
+            return current
+
+    monkeypatch.setattr(ports, "get_authz_port", lambda: Authz())
+
+    with pytest.raises(AuthzError) as captured:
+        await generator._revalidate_organization(context)
+    assert captured.value.code == "ORG_AUTHZ_STALE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unbind", [False, True])
+async def test_newapi_key_rotation_after_acceptance_keeps_old_key_for_poll(
+    monkeypatch,
+    tmp_path: Path,
+    unbind: bool,
+) -> None:
+    import novelvideo.ports as ports
+    from novelvideo.generators.video_generator import (
+        NewApiVideoGenerator,
+        VideoGenStatus,
+    )
+    from novelvideo.ports.authz import AuthzError, AuthzSnapshot
+
+    context = _context()
+    operation_port = _OperationPort()
+    events: list[str] = []
+    _install_newapi_ports(monkeypatch, context, operation_port, events)
+    generator = NewApiVideoGenerator(
+        model="seedance-1.0-pro-fast", egress_context=context
+    )
+    rotated = replace(
+        generator._admission_from_egress_context(context),
+        credential=replace(
+            context.credential,
+            credential_id="credential-2",
+            key_version=8,
+        ),
+    )
+    calls = {"submit": 0, "poll": 0, "fetch": 0}
+
+    class Authz:
+        async def admit_model_task(self, **_kwargs):
+            if unbind:
+                raise AuthzError("ORG_CREDENTIAL_DISABLED")
+            return rotated
+
+        async def snapshot(self, *, user_id):
+            assert unbind
+            return AuthzSnapshot(
+                requester_user_id=user_id,
+                org_id=context.billing_principal.id,
+                membership_id=context.membership_id,
+                role="member",
+                membership_status="active",
+                org_status="active",
+                authz_version=context.authz_version,
+            )
+
+    async def submit(_url, _payload, *, headers):
+        calls["submit"] += 1
+        assert headers["Authorization"] == "Bearer organization-secret"
+        return {"id": "provider-job-1"}
+
+    async def poll(_url, *, headers):
+        calls["poll"] += 1
+        assert headers["Authorization"] == "Bearer organization-secret"
+        assert "new-key-canary" not in headers.values()
+        return {"status": "completed", "video_url": "https://result.example/video"}
+
+    async def fetch(_url, output_path):
+        calls["fetch"] += 1
+        Path(output_path).write_bytes(b"video-result")
+        return b"video-result"
+
+    monkeypatch.setattr(ports, "get_authz_port", lambda: Authz())
+    monkeypatch.setattr(generator, "_post_json", submit)
+    monkeypatch.setattr(generator, "_get_json", poll)
+    monkeypatch.setattr(generator, "_download_video", fetch)
+
+    result = await generator.generate(
+        image_path=None,
+        prompt="prompt",
+        output_path=str(tmp_path / "video.mp4"),
+        episode=1,
+        beat_num=2,
+        scope="beat",
+        task_type="single_video",
+        poll_interval=0,
+        max_polls=1,
+    )
+
+    assert result.status is VideoGenStatus.DONE
+    assert calls == {"submit": 1, "poll": 1, "fetch": 1}
+    assert [name for name, _ in operation_port.events] == [
+        "claim",
+        "accepted",
+        "completed",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_newapi_disable_between_poll_and_fetch_stops_fetch(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1463,3 +1706,205 @@ async def test_freezone_platform_context_preserves_legacy_leaf(
 
     assert len(calls) == 1
     assert "egress_context" not in calls[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("poll_response", "expected_error"),
+    [
+        (
+            {
+                "status": "failed",
+                "error": {
+                    "code": "VIDEO_MEDIA_DIMENSIONS_INVALID",
+                    "message": "素材尺寸不符合要求 secret-canary",
+                },
+            },
+            "VIDEO_MEDIA_DIMENSIONS_INVALID",
+        ),
+        (
+            {
+                "status": "failed",
+                "error_message": (
+                    "素材审核失败（共 1 个素材）：\n\n[1] 素材：https://relay.example/"
+                    "a.jpg?OSSAccessKeyId=secret-canary\n    原因：[InvalidParameter."
+                    "HeightTooSmall] Height must be between 300px and 6000px."
+                ),
+            },
+            "VIDEO_MEDIA_DIMENSIONS_INVALID",
+        ),
+        (
+            {
+                "status": "failed",
+                "error": {"code": "weird secret-canary", "message": "x"},
+            },
+            "x",
+        ),
+        (
+            {
+                "status": "failed",
+                "error": "video generation failed",
+                "content": "提示词长度超过模型限制，请缩短后重试",
+            },
+            "提示词长度超过模型限制，请缩短后重试",
+        ),
+        (
+            {
+                "status": "failed",
+                "content": {
+                    "message": (
+                        "参考素材读取失败：https://relay.example/a.jpg?"
+                        "OSSAccessKeyId=secret-canary 请更换素材后重试"
+                    )
+                },
+            },
+            "参考素材读取失败：[redacted-url] 请更换素材后重试",
+        ),
+    ],
+)
+async def test_newapi_organization_failures_keep_safe_provider_error_details(
+    monkeypatch,
+    tmp_path: Path,
+    poll_response: dict,
+    expected_error: str,
+) -> None:
+    """厂商明确打回时，组织账号拿到安全错误码或脱敏后的具体消息。
+
+    2026-08-26 3060 上 creator02-zhu 的参考图 338x191 被火山 HeightTooSmall 拒了 8 次，
+    用户只看到 `EGRESS_OPERATION_UNKNOWN`。已知 `VIDEO_*` 枚举码继续优先放行；其他明确
+    失败恢复安全消息，但带签名的 relay URL 依旧不能进 result。
+    """
+    from novelvideo.generators.video_generator import (
+        NewApiVideoGenerator,
+        VideoGenStatus,
+    )
+
+    context = _context()
+    operation_port = _OperationPort()
+    events: list[str] = []
+    _install_newapi_ports(monkeypatch, context, operation_port, events)
+    generator = NewApiVideoGenerator(
+        model="seedance-2.0", egress_context=context
+    )
+    refund_errors: list[str] = []
+
+    async def post(*_args, **_kwargs):
+        return {"id": "provider-job-1"}
+
+    async def poll(*_args, **_kwargs):
+        return poll_response
+
+    async def capture_refund(*_args, **kwargs):
+        refund_errors.append(str(kwargs.get("error") or ""))
+
+    monkeypatch.setattr(generator, "_post_json", post)
+    monkeypatch.setattr(generator, "_get_json", poll)
+    monkeypatch.setattr(
+        generator, "_revalidate_organization", lambda _context: _async_none()
+    )
+    monkeypatch.setattr(
+        "novelvideo.generators.video_generator._refund_video_model_call",
+        capture_refund,
+    )
+
+    result = await generator.generate(
+        image_path=None,
+        prompt="prompt",
+        output_path=str(tmp_path / "video.mp4"),
+        episode=1,
+        beat_num=2,
+        scope="beat",
+        task_type="single_video",
+        max_polls=1,
+    )
+
+    assert result.status is VideoGenStatus.FAILED
+    assert result.error == expected_error
+    assert "secret-canary" not in repr(result)
+    assert refund_errors == [expected_error]
+    assert [name for name, _ in operation_port.events] == [
+        "claim",
+        "accepted",
+        "unknown",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "response_body", "expected_error", "expected_transition"),
+    [
+        (
+            400,
+            '{"error": {"code": "VIDEO_MEDIA_DIMENSIONS_INVALID", '
+            '"message": "secret-canary"}}',
+            "VIDEO_MEDIA_DIMENSIONS_INVALID",
+            "rejected_before_submit",
+        ),
+        (
+            400,
+            '{"error": {"content": "请求参数不受当前模型支持：'
+            'https://relay.example/a.png?token=secret-canary 请调整后重试"}}',
+            "请求参数不受当前模型支持：[redacted-url] 请调整后重试",
+            "rejected_before_submit",
+        ),
+        (
+            403,
+            '{"error": {"content": "token quota is not enough"}}',
+            "token quota is not enough",
+            "rejected_before_submit",
+        ),
+        (
+            500,
+            '{"error": {"content": "upstream result is uncertain"}}',
+            "upstream result is uncertain",
+            "unknown",
+        ),
+    ],
+)
+async def test_newapi_organization_submit_response_keeps_safe_error_and_terminal_state(
+    monkeypatch,
+    tmp_path: Path,
+    status_code: int,
+    response_body: str,
+    expected_error: str,
+    expected_transition: str,
+) -> None:
+    """提交响应恢复安全详情，并按是否明确拒绝收敛出口状态。"""
+    from novelvideo.generators.video_generator import (
+        NewApiVideoError,
+        NewApiVideoGenerator,
+        VideoGenStatus,
+    )
+
+    context = _context()
+    operation_port = _OperationPort()
+    events: list[str] = []
+    _install_newapi_ports(monkeypatch, context, operation_port, events)
+    generator = NewApiVideoGenerator(model="seedance-2.0", egress_context=context)
+
+    async def rejected(*_args, **_kwargs):
+        raise NewApiVideoError(
+            f"DramaClawAPI submit failed: HTTP {status_code} - {response_body}",
+            request_id="req-1",
+            status_code=status_code,
+        )
+
+    monkeypatch.setattr(generator, "_post_json", rejected)
+    monkeypatch.setattr(
+        generator, "_revalidate_organization", lambda _context: _async_none()
+    )
+
+    result = await generator.generate(
+        image_path=None,
+        prompt="prompt",
+        output_path=str(tmp_path / "video.mp4"),
+        episode=1,
+        beat_num=2,
+        scope="beat",
+        task_type="single_video",
+    )
+
+    assert result.status is VideoGenStatus.FAILED
+    assert result.error == expected_error
+    assert "secret-canary" not in repr(result)
+    assert [name for name, _ in operation_port.events] == ["claim", expected_transition]

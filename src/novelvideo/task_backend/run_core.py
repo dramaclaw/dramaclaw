@@ -560,6 +560,7 @@ def _project_task_failure_for_exception(
     from novelvideo.identity_prerequisites import IdentityPlanningPrerequisiteError
     from novelvideo.novel_source import NovelImportRequiredError
     from novelvideo.scene_prerequisites import ScenePlanningPrerequisiteError
+    from novelvideo.video_prompt_prerequisite import VideoPromptPrerequisiteError
 
     if isinstance(exc, VoicePrerequisiteError):
         return str(exc), {"error_code": exc.error_code}, True
@@ -571,6 +572,9 @@ def _project_task_failure_for_exception(
         return str(exc), {"error_code": exc.error_code}, True
 
     if isinstance(exc, NovelImportRequiredError):
+        return str(exc), {"error_code": exc.error_code}, True
+
+    if isinstance(exc, VideoPromptPrerequisiteError):
         return str(exc), {"error_code": exc.error_code}, True
 
     if isinstance(exc, TaskTimedOut):
@@ -635,6 +639,19 @@ def _project_task_failure_for_exception(
         if is_content_moderation_error(exc):
             payload = content_moderation_payload(exc)
             return str(payload.get("message") or ""), payload, True
+    except Exception:
+        pass
+
+    try:
+        from novelvideo.shared.provider_errors import provider_video_error_payload
+
+        provider_payload = provider_video_error_payload(exc)
+        if provider_payload is not None:
+            return (
+                str(provider_payload.get("message") or ""),
+                provider_payload,
+                True,
+            )
     except Exception:
         pass
 

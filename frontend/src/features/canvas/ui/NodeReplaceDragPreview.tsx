@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { AudioLines, Box, Film, Replace } from 'lucide-react';
 
 import { useAssetDropStore } from '@/stores/assetDropStore';
@@ -16,6 +17,7 @@ import { resolveMediaUrl } from '@/lib/media-url';
  * 哪个节点去替换。命中可替换素材时(hoverAssetId)切换为强调态 + 「松开替换」文案。
  */
 export function NodeReplaceDragPreview() {
+  const { t } = useTranslation();
   const activeDrag = useAssetDropStore((s) => s.activeDrag);
   const hoverAssetId = useAssetDropStore((s) => s.hoverAssetId);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
@@ -75,7 +77,9 @@ export function NodeReplaceDragPreview() {
             }`}
           >
             <Replace className="h-3 w-3 shrink-0" />
-            {overTarget ? '松开替换该素材' : '拖到左侧同类型素材上替换'}
+            {overTarget
+              ? t('canvas.assetReplace.dropToReplace')
+              : t('canvas.assetReplace.dragHint')}
           </div>
         </div>
       </div>

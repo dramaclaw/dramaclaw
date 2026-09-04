@@ -37,6 +37,7 @@ from novelvideo.task_backend.limits import (
     ProjectUserTaskLimitExceeded,
     UserTaskLimitExceeded,
 )
+from novelvideo.utils.upload_safety import MAX_PROJECT_UPLOAD_BYTES
 
 logger = logging.getLogger("novelvideo.api.app")
 
@@ -45,7 +46,7 @@ logger = logging.getLogger("novelvideo.api.app")
 # (50k nodes × ~80 bytes JSON each) with comfortable headroom; anything
 # bigger is almost certainly a runaway client / DoS attempt.
 MAX_REQUEST_BODY_BYTES = 5 * 1024 * 1024
-MAX_UPLOAD_REQUEST_BODY_BYTES = 200 * 1024 * 1024
+MAX_UPLOAD_REQUEST_BODY_BYTES = MAX_PROJECT_UPLOAD_BYTES
 _RESOURCE_REQUEST_COUNTS: Counter[str] = Counter()
 _RESOURCE_REQUEST_TOTAL = 0
 _RESOURCE_REQUEST_LOCK = threading.Lock()
@@ -73,7 +74,10 @@ def _request_body_limit(request: Request) -> int:
     content_type = request.headers.get("content-type", "").lower()
     if (
         request.url.path.startswith("/api/v1/projects/")
-        and request.url.path.endswith("/upload")
+        and (
+            request.url.path.endswith("/upload")
+            or request.url.path.endswith("/reference-file-upload")
+        )
         and "multipart/form-data" in content_type
     ):
         return MAX_UPLOAD_REQUEST_BODY_BYTES

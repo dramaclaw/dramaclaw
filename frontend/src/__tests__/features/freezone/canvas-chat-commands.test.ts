@@ -7626,7 +7626,13 @@ describe("canvas chat commands", () => {
       expect(createFreezoneWorkflowRun).toHaveBeenCalledWith(
         "project-a",
         "canvas-a",
-        [{ node_id: imageNodeId, action: "generate_image" }],
+        [
+          expect.objectContaining({
+            node_id: imageNodeId,
+            action: "generate_image",
+            generation_attempt_id: expect.stringMatching(/^canvas-run:/),
+          }),
+        ],
         expect.stringMatching(/^canvas-run:/),
         expect.stringMatching(/^canvas-runner:/),
       );

@@ -31,6 +31,7 @@ import sys
 # b) 多许可（OR）可选出非传染分支。理由必须写明真实许可与依据。
 EXEMPT: dict[str, str] = {
     "tiktoken": "MIT——wheel 未写 License 元数据；见 github.com/openai/tiktoken 根 LICENSE",
+    "wordninja": "MIT——发行包未写 License 元数据；见 github.com/keredson/wordninja 根 LICENSE",
 }
 
 # 强 copyleft：命中即阻断。注意 LGPL/Lesser/Library 属弱 copyleft，须先排除，

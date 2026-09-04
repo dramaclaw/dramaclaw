@@ -26,8 +26,15 @@ from novelvideo.shared.billing_errors import (
 from novelvideo.shared.provider_errors import (
     CONTENT_MODERATION_FAILED_CODE,
     CONTENT_MODERATION_FAILED_MESSAGE,
+    COPYRIGHT_POLICY_FAILED_MESSAGE,
     INPUT_IMAGE_POLICY_FAILED_MESSAGE,
     OUTPUT_VIDEO_POLICY_FAILED_MESSAGE,
+    VIDEO_MEDIA_DIMENSIONS_INVALID_CODE,
+    VIDEO_MEDIA_DIMENSIONS_INVALID_MESSAGE,
+)
+from novelvideo.video_prompt_prerequisite import (
+    VIDEO_PROMPT_PREREQUISITE_REQUIRED_CODE,
+    VideoPromptPrerequisiteError,
 )
 
 pytestmark = pytest.mark.m07
@@ -80,6 +87,19 @@ def test_task_failure_maps_novel_import_prerequisite(monkeypatch) -> None:
     assert handled is True
     assert error == NOVEL_IMPORT_REQUIRED_MESSAGE
     assert metadata == {"error_code": NOVEL_IMPORT_REQUIRED_CODE}
+
+
+def test_task_failure_maps_video_prompt_prerequisite(monkeypatch) -> None:
+    celery_tasks = _import_celery_tasks(monkeypatch)
+    message = "Beat 1 缺少草图或首帧，请先生成草图或预览"
+
+    error, metadata, handled = celery_tasks._project_task_failure_for_exception(
+        VideoPromptPrerequisiteError(message)
+    )
+
+    assert handled is True
+    assert error == message
+    assert metadata == {"error_code": VIDEO_PROMPT_PREREQUISITE_REQUIRED_CODE}
 
 
 def test_task_failure_maps_identity_character_prerequisite(monkeypatch) -> None:
@@ -198,3 +218,56 @@ def test_celery_task_failure_reraises_non_business_base_exception(monkeypatch) -
 
     with pytest.raises(KeyboardInterrupt):
         celery_tasks._project_task_failure_for_exception(KeyboardInterrupt())
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "freezone video generation failed: VIDEO_MEDIA_DIMENSIONS_INVALID",
+        (
+            "freezone video generation failed: {'code': 'VIDEO_MEDIA_DIMENSIONS_INVALID', "
+            "'message': '素材尺寸不符合要求，宽度和高度需在 300 至 6000 像素之间。'}"
+        ),
+    ],
+)
+def test_celery_task_failure_maps_video_media_dimensions_invalid(
+    monkeypatch, text: str
+) -> None:
+    celery_tasks = _import_celery_tasks(monkeypatch)
+
+    error, metadata, handled = celery_tasks._project_task_failure_for_exception(
+        RuntimeError(text)
+    )
+
+    assert handled is True
+    assert error == VIDEO_MEDIA_DIMENSIONS_INVALID_MESSAGE
+    assert metadata["error_code"] == VIDEO_MEDIA_DIMENSIONS_INVALID_CODE
+    assert metadata["message"] == VIDEO_MEDIA_DIMENSIONS_INVALID_MESSAGE
+    assert "VIDEO_MEDIA_DIMENSIONS_INVALID" in metadata["provider_error"]
+
+
+def test_celery_task_failure_maps_provider_copyright_code_to_moderation(
+    monkeypatch,
+) -> None:
+    celery_tasks = _import_celery_tasks(monkeypatch)
+
+    error, metadata, handled = celery_tasks._project_task_failure_for_exception(
+        RuntimeError("freezone video generation failed: VIDEO_CONTENT_COPYRIGHT_RESTRICTED")
+    )
+
+    assert handled is True
+    assert error == COPYRIGHT_POLICY_FAILED_MESSAGE
+    assert metadata["error_code"] == CONTENT_MODERATION_FAILED_CODE
+    assert metadata["message"] == COPYRIGHT_POLICY_FAILED_MESSAGE
+
+
+def test_celery_task_failure_leaves_unknown_egress_code_unmapped(monkeypatch) -> None:
+    celery_tasks = _import_celery_tasks(monkeypatch)
+
+    error, metadata, handled = celery_tasks._project_task_failure_for_exception(
+        RuntimeError("freezone video generation failed: EGRESS_OPERATION_UNKNOWN")
+    )
+
+    assert handled is False
+    assert metadata == {}
+    assert "EGRESS_OPERATION_UNKNOWN" in error
