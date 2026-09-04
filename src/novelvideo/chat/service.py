@@ -698,9 +698,11 @@ def _codex_freezone_ready_workflow_draft(event: Any) -> dict[str, Any] | None:
     return None
 
 
-_AGENT_PRODUCT_ADMISSION_TOOLS = {
-    "freezone_begin_agent_product_generation",
-    "freezone_begin_agent_catalog_draft",
+_AGENT_PRODUCT_RESULT_TOOLS = {
+    "freezone_prepare_workflow_draft",
+    "freezone_prepare_workflow_plan_draft",
+    "freezone_put_agent_catalog_skill",
+    "freezone_put_agent_catalog_recipe",
 }
 
 
@@ -710,29 +712,94 @@ async def _bind_server_observed_agent_product_execution(
     project_dir: str | Path | None,
     project_state_dir: str | Path | None,
 ) -> None:
-    """Bind product operations to the model/tool call observed by chat runtime."""
-    if _codex_freezone_tool_name(event) not in _AGENT_PRODUCT_ADMISSION_TOOLS:
+    """Bind an admitted product operation to the tool call carrying its result."""
+    tool_name = _codex_freezone_tool_name(event)
+    if tool_name not in _AGENT_PRODUCT_RESULT_TOOLS:
         return
+    event_type = str(getattr(event, "type", "") or "tool_updated")
     status = str(getattr(event, "status", "") or "").strip().lower()
-    if status not in {"completed", "success", "succeeded"} or getattr(
-        event, "error", None
-    ):
+    if getattr(event, "error", None):
         return
-    operation_ids: set[str] = set()
-    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
-        for payload in _json_objects_from_codex_tool_value(value):
-            operation_id = str(payload.get("operation_id") or "").strip()
-            if operation_id.startswith("agent_product_"):
-                operation_ids.add(operation_id)
+    if event_type != "tool_started":
+        if status not in {"completed", "success", "succeeded"}:
+            return
+        succeeded = any(
+            payload.get("ok") is True
+            for value in (
+                getattr(event, "structured", None),
+                getattr(event, "output", None),
+            )
+            for payload in _json_objects_from_codex_tool_value(value)
+        )
+        if not succeeded:
+            return
+
+    tool_args: dict[str, Any] = {}
+    for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        tool_args = payload
+        break
     turn_id = str(getattr(event, "turn_id", "") or "").strip()
     tool_call_id = str(getattr(event, "call_id", "") or "").strip()
     state_root = project_state_dir or project_dir
-    if not operation_ids or not turn_id or not tool_call_id or state_root is None:
+    if not tool_args or not turn_id or not tool_call_id or state_root is None:
         return
     state_dir = Path(state_root)
     from novelvideo.freezone.agent_product_operations import (
         bind_agent_product_model_execution,
+        read_agent_generation_session,
     )
+
+    operation_ids: set[str] = set()
+    if tool_name in {
+        "freezone_prepare_workflow_draft",
+        "freezone_prepare_workflow_plan_draft",
+    }:
+        operation_id = str(tool_args.get("operation_id") or "").strip()
+        if operation_id.startswith("agent_product_"):
+            operation_ids.add(operation_id)
+    else:
+        session_id = str(tool_args.get("skill_studio_session_id") or "").strip()
+        if not session_id:
+            return
+        session = await asyncio.to_thread(
+            read_agent_generation_session,
+            project_dir=state_dir,
+            generation_session_id=session_id,
+        )
+        draft = session.get("draft") if isinstance(session, dict) else None
+        operations = draft.get("operations") if isinstance(draft, dict) else None
+        if not isinstance(operations, dict):
+            return
+        if tool_name == "freezone_put_agent_catalog_skill":
+            operation = operations.get("skill")
+        else:
+            recipe_operations = operations.get("recipes")
+            if not isinstance(recipe_operations, dict):
+                return
+            index = tool_args.get("index")
+            operation = recipe_operations.get(index) or recipe_operations.get(
+                str(index)
+            )
+            if not isinstance(operation, dict):
+                recipe = tool_args.get("recipe")
+                recipe_id = (
+                    str(recipe.get("id") or "").strip()
+                    if isinstance(recipe, dict)
+                    else ""
+                )
+                matches = [
+                    candidate
+                    for candidate in recipe_operations.values()
+                    if isinstance(candidate, dict)
+                    and str(candidate.get("artifact_id") or "").strip() == recipe_id
+                ]
+                operation = matches[0] if len(matches) == 1 else None
+        if isinstance(operation, dict):
+            operation_id = str(operation.get("operation_id") or "").strip()
+            if operation_id.startswith("agent_product_"):
+                operation_ids.add(operation_id)
+    if not operation_ids:
+        return
 
     model_call_id = f"agent-turn:{turn_id}:tool:{tool_call_id}"
     for operation_id in sorted(operation_ids):
@@ -6323,12 +6390,11 @@ async def _stream_assistant_reply_hermes(
                 )
                 continue
             if event.type in {"tool_started", "tool_updated", "tool_update"}:
-                if event.type == "tool_updated":
-                    await _bind_server_observed_agent_product_execution(
-                        event,
-                        project_dir=project_dir,
-                        project_state_dir=project_state_dir,
-                    )
+                await _bind_server_observed_agent_product_execution(
+                    event,
+                    project_dir=project_dir,
+                    project_state_dir=project_state_dir,
+                )
                 if event.raw is not None:
                     tool_chat_error = None
                     raw = event.raw
@@ -6872,12 +6938,12 @@ async def _stream_assistant_reply_codex(
                 await on_event({"type": "usage_update", "usage": event.usage or {}})
                 continue
             if event.type in {"tool_started", "tool_updated"}:
+                await _bind_server_observed_agent_product_execution(
+                    event,
+                    project_dir=project_dir,
+                    project_state_dir=project_state_dir,
+                )
                 if event.type == "tool_updated":
-                    await _bind_server_observed_agent_product_execution(
-                        event,
-                        project_dir=project_dir,
-                        project_state_dir=project_state_dir,
-                    )
                     prepared_draft = _codex_freezone_ready_workflow_draft(event)
                     if prepared_draft is not None:
                         ready_workflow_draft = prepared_draft

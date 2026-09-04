@@ -170,17 +170,19 @@ def test_generation_manifest_and_draft_survive_process_memory_loss(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_chat_runtime_binds_server_observed_turn_to_admitted_product(tmp_path):
+async def test_admission_tool_call_is_not_model_generation_evidence(tmp_path):
     from novelvideo.chat import service
 
     operation = _create(tmp_path, key="observed-turn")
     await service._bind_server_observed_agent_product_execution(
         SimpleNamespace(
+            type="tool_updated",
             name="freezone_begin_agent_product_generation",
             status="completed",
             error=None,
             turn_id="turn-a",
             call_id="call-a",
+            input={"operation_id": operation["operation_id"]},
             structured={"ok": True, "operation_id": operation["operation_id"]},
             output=None,
         ),
@@ -192,13 +194,111 @@ async def test_chat_runtime_binds_server_observed_turn_to_admitted_product(tmp_p
         project_dir=tmp_path,
         operation_id=operation["operation_id"],
     )
+    assert not stored["model_evidence"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_path):
+    from novelvideo.chat import service
+
+    operation = _create(tmp_path, key="observed-workflow-result")
+    await service._bind_server_observed_agent_product_execution(
+        SimpleNamespace(
+            type="tool_started",
+            name="freezone_prepare_workflow_draft",
+            status="pending",
+            error=None,
+            turn_id="turn-a",
+            call_id="call-result",
+            input={"operation_id": operation["operation_id"], "intent": {"title": "A"}},
+            structured=None,
+            output=None,
+        ),
+        project_dir=tmp_path,
+        project_state_dir=tmp_path,
+    )
+
+    stored = read_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+    )
     assert stored["model_evidence"] == {
-        "model_call_id": "agent-turn:turn-a:tool:call-a",
+        "model_call_id": "agent-turn:turn-a:tool:call-result",
         "executed_at": stored["model_evidence"]["executed_at"],
         "source": "server_observed_agent_turn",
         "turn_id": "turn-a",
-        "tool_call_id": "call-a",
+        "tool_call_id": "call-result",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "kind", "operation_key", "tool_input"),
+    [
+        (
+            "freezone_put_agent_catalog_skill",
+            "workflow_generate",
+            "skill",
+            {
+                "skill_studio_session_id": "generation-a",
+                "skill": {"id": "artifact-a"},
+            },
+        ),
+        (
+            "freezone_put_agent_catalog_recipe",
+            "recipe_generate",
+            "recipe",
+            {
+                "skill_studio_session_id": "generation-a",
+                "index": 0,
+                "recipe": {"id": "artifact-a"},
+            },
+        ),
+    ],
+)
+async def test_catalog_result_tool_binds_its_generation_operation(
+    tmp_path, tool_name, kind, operation_key, tool_input
+):
+    from novelvideo.chat import service
+
+    operation = _create(tmp_path, key=f"observed-{kind}", kind=kind)
+    operations = (
+        {"skill": operation, "recipes": {}}
+        if operation_key == "skill"
+        else {"recipes": {0: operation}}
+    )
+    save_agent_generation_session(
+        project_dir=tmp_path,
+        generation_session_id="generation-a",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        manifest={"artifact_mode": "recipe_only"},
+        draft={"operations": operations},
+    )
+
+    await service._bind_server_observed_agent_product_execution(
+        SimpleNamespace(
+            type="tool_started",
+            name=tool_name,
+            status="pending",
+            error=None,
+            turn_id="turn-catalog",
+            call_id=f"call-{operation_key}",
+            input=tool_input,
+            structured=None,
+            output=None,
+        ),
+        project_dir=tmp_path,
+        project_state_dir=tmp_path,
+    )
+
+    stored = read_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+    )
+    assert stored["model_evidence"]["model_call_id"] == (
+        f"agent-turn:turn-catalog:tool:call-{operation_key}"
+    )
 
 
 @pytest.mark.asyncio
