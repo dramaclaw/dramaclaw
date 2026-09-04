@@ -154,6 +154,11 @@ It's built for creators, indie studios and creative engineers — run the whole 
 
 ### XiaHua — infinite canvas
 
+<p align="center">
+  <img src="./assets/xiahua-canvas.jpg" width="900" alt="XiaHua canvas: a 17-node short-film workflow that Xia Director laid out and ran from one prompt"/>
+</p>
+<p align="center"><sub>One prompt to Xia Director (right) became this 17-node, 32-edge workflow on the canvas (left): brief → story direction → character and set references → five shot first frames → five shot videos → voice-over and score → final cut.</sub></p>
+
 - **18 node types on one canvas** &mdash; upload, image generation / edit, storyboard generation, script, beat context, video, video compose, video story, audio, style, skill, group, text annotation, 360° panorama viewer, 3D world, export and more. Connect them freely; every node keeps its own generation history.
 - **Image tools** &mdash; generate, edit, redraw, outpaint, relight, upscale, multi-view, template edit, reverse-prompt, mark detection; a **style wall of 45 short-drama looks** for image-to-image
 - **Video tools** &mdash; text / image / keyframe to video, omni-reference generation with **file, web-link and on-canvas references**, video edit, erase, upscale, audio separation, camera templates, shot analysis; Seedance 2.5 in the recommended catalog
@@ -161,15 +166,8 @@ It's built for creators, indie studios and creative engineers — run the whole 
 - **Canvas skills** &mdash; one-click skills such as sketch-from-context, frame-from-context, set-background, scene-360, frame review and beat-graph planning
 - **Built for big canvases** &mdash; canvas tabs, element outline, minimap and viewport bookmarks, snap-align, level-of-detail rendering, multi-select and group nodes, keyboard shortcuts, revision history with restore, per-canvas locking
 - **Commit to the series** &mdash; preview the impact, then promote a single node or a whole batch into the asset library or an episode; project the series back onto a canvas from presets
-
-### Director World — spatially consistent sets
-
-<p align="center">
+- **Director World — spatially consistent sets** &mdash; image → 3D Gaussian Splat set and scene-360 panoramas as canvas nodes: a framable virtual set that locks spatial structure, character blocking and camera placement, so the same location stays consistent across shots; frame the shot in the 3D viewer, capture it, and use it as the background for the next generation<br/>
   <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/world-model.jpg?v=2" width="600" alt="世界模型 · World Model (3GS)"/>
-</p>
-
-- **Image → 3D Gaussian Splat set** and **scene-360 panoramas** &mdash; a framable virtual set that locks spatial structure, character blocking and camera placement, so the same location stays consistent across shots
-- **Director capture** &mdash; frame the shot in the 3D viewer, capture it, and use it as the background for the next generation
 
 ### Series (XiaJi) — the pipeline
 
@@ -194,12 +192,20 @@ Every step has its own interface — run them in order, skip steps, resume from 
   <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/director-agent.jpg?v=2" width="600" alt="导演智能体 · Director Agent"/>
 </p>
 
+**Today**
+
 - **Knows your project** &mdash; checks progress, advances script / shot tasks, audits deliverable completeness and suggests next steps
 - **Open to other agents** &mdash; a local MCP server exposes DramaClaw to Claude Code, Codex and any MCP client (loopback-only, explicit trust flag); see [MCP for Claude Code](docs/en/guides/mcp-claude-code.md)
+
+**Next**
+
+- **Works on the canvas** &mdash; the screenshot above is where this is going: describe the film, and Xia Director creates and connects the nodes, lays them out, runs them, and reviews the results, with every canvas command approved in your browser first. Canvas + agent is the core of DramaClaw from here on; see [In Development](#in-development).
 
 <br/>
 
 ## Why DramaClaw?
+
+**A canvas that understands drama, and an agent that works on it.** Generic node canvases will wire anything together but know nothing about episodes, characters or shots; series tools know the craft but lock you into a wizard. XiaHua gives you the free canvas with drama-aware nodes and skills, and Xia Director is being built to lay out, run and review those graphs for you. That combination is where DramaClaw is going.
 
 **Built for novel-to-short-drama.** General workflow tools can wire nodes together, but they don't know what an "episode beat" is, don't understand why a character's cross-scene identity consistency matters, and won't guard a chapter's emotional arc across image + voice + editing. DramaClaw builds all that judgment into the tool.
 
@@ -335,7 +341,7 @@ Provider adapters shipped in the gateway today (see the [channel support matrix]
 
 <br/>
 
-## In Development
+## <a name="in-development"></a>In Development
 
 These are being built in the open and are not in a release yet. Watch the branches, or come help.
 
