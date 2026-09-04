@@ -153,7 +153,7 @@ _DRAMACLAW_WRITE_TOOLS = {
 
 _FREEZONE_CANVAS_WRITE_TOOLS = {
     "freezone_emit_canvas_command",
-    "freezone_create_workflow_graph",
+    "freezone_confirm_workflow_draft",
     "freezone_create_node",
     "freezone_add_next_node",
     "freezone_update_node_data",

@@ -859,7 +859,31 @@
       "description": "在虾画画布旁打开虾导。",
       "toggle": "打开虾画虾导",
       "close": "收起虾画虾导",
-      "resize": "拖动调整虾画虾导宽度"
+      "resize": "拖动调整虾画虾导宽度",
+      "audioApproval": {
+        "chooseVoiceTitle": "请选择旁白声线",
+        "chooseVoiceDescription": "请选择自定义声线；如果暂不选择，本次将跳过旁白生成。",
+        "music": "音乐",
+        "narration": "旁白",
+        "changeVoice": "更换自定义声线",
+        "chooseVoice": "选择自定义声线",
+        "selectedVoice": "已选择：{{voice}}",
+        "customVoice": "自定义声线",
+        "noVoiceSkip": "未选择，本次将跳过旁白生成",
+        "musicSummary": "{{seconds}} 秒 · {{mode}}",
+        "instrumental": "纯音乐",
+        "vocalsAllowed": "允许人声",
+        "continue": "使用所选声线继续"
+      },
+      "canvasExecuting": "执行中...",
+      "canvasConfirmExecution": "确认执行",
+      "canvasTimeoutCancelled": "画布操作因等待超时已取消，没有应用到画布。",
+      "canvasManuallyCancelled": "画布操作已手动取消，没有应用到画布。"
+    },
+    "workflowRecovery": {
+      "safetyReviewFailed": "有节点未通过安全审核",
+      "editPrompt": "修改提示词",
+      "skipNode": "跳过节点"
     },
     "canvases": {
       "defaultSection": "默认画布",
@@ -2851,6 +2875,23 @@
   },
   "taskCenter": {
     "title": "任务中心",
+    "cancel": {
+      "title": "取消生成任务",
+      "description": "确定取消“{{name}}”吗？运行中的任务取消后通常不退款。",
+      "confirm": "确认取消",
+      "keep": "继续生成",
+      "submitted": "任务已提交取消",
+      "failed": "取消任务失败：{{error}}",
+      "short": "取消任务"
+    },
+    "cancelAll": {
+      "title": "全部取消生成任务",
+      "description": "确定取消当前列表中的 {{count}} 项任务吗？运行中的任务取消后通常不退款，已完成的任务不会回滚。",
+      "confirm": "确认全部取消",
+      "partialFailure": "{{count}} 项任务取消失败，请到任务中心查看",
+      "submitted": "已提交全部取消",
+      "short": "全部取消"
+    },
     "panel": {
       "open": "打开任务中心",
       "close": "关闭",
@@ -6043,11 +6084,12 @@
       "emotionLabel": "语气词",
       "emotionOptional": "（可选，自由输入）",
       "emotionPlaceholder": "如：紧张、压低声音、带一点恐惧感",
-      "voiceMissing": "请先配置或选择声线",
+      "voiceMissing": "尚未选中可用的自定义声线",
       "translate": "翻译（中英文互译）",
       "voiceSettings": "音色设置",
       "advancedSettings": "高级设置",
       "generate": "生成",
+      "generateWithoutVoice": "生成（未选择自定义声线时跳过）",
       "help": "说明",
       "musicDuration": "音乐时长",
       "musicDurationHelp": "设定歌曲长度。自动模式下优先保证歌词完整；指定时长后则优先匹配时长。",
@@ -6059,7 +6101,7 @@
       "copied": "已复制",
       "copyFailed": "复制失败",
       "copyVoiceRef": "复制声线引用",
-      "switchVoice": "切换音色"
+      "switchVoice": "选择声线"
     },
     "voiceRef": {
       "projectNarrator": "项目解说人",
@@ -6168,7 +6210,7 @@
       "empty": "暂无音频",
       "noVoiceConfigured": "未配置可用声线",
       "generateFailed": "生成失败",
-      "selectVoiceFirst": "请先配置或选择声线"
+      "selectVoiceFirst": "未选择自定义声线，已跳过生成"
     },
     "videoStory": {
       "columns": {

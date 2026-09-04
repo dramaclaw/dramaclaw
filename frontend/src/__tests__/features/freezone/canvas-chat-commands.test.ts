@@ -28,6 +28,7 @@ import {
   buildCanvasContextRequestResponse,
   buildCanvasNodeReferenceAttachment,
   buildCanvasNodeReferenceContext,
+  canvasSelectionAttachmentDeliveryKey,
   canvasNodeReferenceAttachmentNodes,
   extractCanvasContextRequestEnvelopes,
   mergeCanvasNodeReferenceAttachments,
@@ -143,6 +144,32 @@ describe("canvas chat commands", () => {
         user_remaining: 1,
       },
     });
+  });
+
+  it("keeps selection attachment delivery stable across geometry updates", () => {
+    const initialDisplayNodes = [
+      { id: "beat-01", position: { x: 0, y: 0 } },
+      { id: "beat-02", position: { x: 100, y: 0 } },
+    ];
+    const measuredDisplayNodes = [
+      { id: "beat-01", position: { x: 24, y: 48 } },
+      { id: "beat-02", position: { x: 212, y: 48 } },
+    ];
+    const referencedNodes = [{ id: "workflow-group", position: { x: 0, y: 0 } }];
+
+    expect(
+      canvasSelectionAttachmentDeliveryKey(initialDisplayNodes, referencedNodes),
+    ).toBe(
+      canvasSelectionAttachmentDeliveryKey(measuredDisplayNodes, referencedNodes),
+    );
+    expect(
+      canvasSelectionAttachmentDeliveryKey(measuredDisplayNodes, [
+        ...referencedNodes,
+        { id: "beat-03", position: { x: 420, y: 48 } },
+      ]),
+    ).not.toBe(
+      canvasSelectionAttachmentDeliveryKey(measuredDisplayNodes, referencedNodes),
+    );
   });
 
   it("dispatches approval events even when an in-memory subscriber handles them", () => {
@@ -606,7 +633,7 @@ describe("canvas chat commands", () => {
           {
             type: "update_node_data",
             node_id: audioId,
-            data: { prompt: "new audio" },
+            data: { prompt: "new audio", model: "suno_music" },
           },
           {
             type: "update_node_data",
@@ -655,7 +682,7 @@ describe("canvas chat commands", () => {
     expect(compose?.data).not.toHaveProperty("prompt");
   });
 
-  it("defaults only assistant-created speech nodes to the preset system voice", () => {
+  it("defaults assistant-created speech nodes to custom voice mode without auto selection", () => {
     const sourceId = useCanvasStore.getState().addNode(
       CANVAS_NODE_TYPES.textAnnotation,
       { x: 0, y: 0 },
@@ -703,11 +730,8 @@ describe("canvas chat commands", () => {
     const existingAudio = state.nodes.find((node) => node.id === existingAudioId);
 
     expect(result.errors).toEqual([]);
-    expect(presetAudio?.data).toMatchObject({
-      speechMode: "preset",
-      presetModel: "edge-tts",
-      presetVoice: "Serena",
-    });
+    expect(presetAudio?.data).toMatchObject({ speechMode: "clone" });
+    expect(presetAudio?.data).not.toHaveProperty("voiceRef");
     expect(cloneAudio?.data).toMatchObject({
       speechMode: "clone",
       voiceRef: { scope: "project_narrator" },
@@ -721,6 +745,42 @@ describe("canvas chat commands", () => {
     });
     expect(existingAudio?.data).not.toHaveProperty("presetModel");
     expect(existingAudio?.data).not.toHaveProperty("presetVoice");
+  });
+
+  it("accepts frontend-approved speech voice metadata before generation", () => {
+    const audioId = useCanvasStore.getState().addNode(
+      CANVAS_NODE_TYPES.audio,
+      { x: 0, y: 0 },
+      { audioKind: "speech", text: "系统旁白", speechMode: "preset" },
+    );
+
+    const result = applyCanvasChatCommands([
+      {
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [
+          {
+            type: "update_node_data",
+            node_id: audioId,
+            data: {
+              speechMode: "preset",
+              voicePolicyConfirmed: true,
+              presetModel: "edge-tts",
+              presetVoice: "Serena",
+              voiceAvailable: true,
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(result.errors).toEqual([]);
+    expect(useCanvasStore.getState().nodes.find((node) => node.id === audioId)?.data).toMatchObject({
+      speechMode: "preset",
+      voicePolicyConfirmed: true,
+      presetModel: "edge-tts",
+      presetVoice: "Serena",
+      voiceAvailable: true,
+    });
   });
 
   it("ignores legacy role on add_next_node auto connections", () => {
@@ -1340,6 +1400,54 @@ describe("canvas chat commands", () => {
             requires_user_action: true,
             reason: "missing_voice",
           }),
+        }),
+      ]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("treats missing custom voice as an intentional workflow skip", async () => {
+    const audioId = useCanvasStore.getState().addNode(
+      CANVAS_NODE_TYPES.audio,
+      { x: 0, y: 0 },
+      { audioKind: "speech", speechMode: "clone", text: "旁白", audioUrl: null },
+    );
+    const unsubscribe = canvasEventBus.subscribe(
+      "freezone/run-node-action",
+      (payload) => {
+        if (!payload.requestId) return;
+        canvasEventBus.publish("freezone/node-action-accepted", {
+          requestId: payload.requestId,
+          nodeId: payload.nodeId,
+          action: payload.action,
+        });
+        canvasEventBus.publish("freezone/node-action-result", {
+          requestId: payload.requestId,
+          nodeId: payload.nodeId,
+          action: payload.action,
+          status: "success",
+          output: { skipped: true, reason: "missing_custom_voice" },
+        });
+      },
+    );
+
+    try {
+      const result = await applyCanvasChatCommandsAsync([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [{
+          type: "run_node_action",
+          node_id: audioId,
+          action: "generate_audio",
+        }],
+      }]);
+
+      expect(result.errors).toEqual([]);
+      expect(result.commandResults).toEqual([
+        expect.objectContaining({
+          type: "run_node_action",
+          status: "success",
+          output: { skipped: true, reason: "missing_custom_voice" },
         }),
       ]);
     } finally {
@@ -7413,6 +7521,71 @@ describe("canvas chat commands", () => {
     }
   });
 
+  it("skips legacy Recipe-backed user requirement nodes when running a workflow", async () => {
+    const store = useCanvasStore.getState();
+    const inputNodeId = store.addNode(
+      CANVAS_NODE_TYPES.textAnnotation,
+      { x: 0, y: 0 },
+      {
+        content: "用户已经提供的剧本事实",
+        workflowCatalog: {
+          recipeId: "general-text",
+          stepId: "user_requirement",
+        },
+      },
+    );
+    const scriptNodeId = store.addNode(
+      CANVAS_NODE_TYPES.textAnnotation,
+      { x: 360, y: 0 },
+      {
+        content: "生成8 Beat剧本",
+        workflowCatalog: {
+          recipeId: "general-text",
+          stepId: "episode_script",
+        },
+      },
+    );
+    store.addEdge(inputNodeId, scriptNodeId);
+    const groupId = store.groupNodes([inputNodeId, scriptNodeId], {
+      label: "短剧工作流",
+    });
+    if (!groupId) throw new Error("expected workflow group");
+
+    const events: Array<{ nodeId: string; action: string }> = [];
+    const unsubscribe = canvasEventBus.subscribe(
+      "freezone/run-node-action",
+      (payload) => {
+        events.push({ nodeId: payload.nodeId, action: payload.action });
+        if (!payload.requestId) return;
+        store.updateNodeData(payload.nodeId, {
+          content: "已生成的8 Beat剧本",
+        });
+        canvasEventBus.publish("freezone/node-action-result", {
+          requestId: payload.requestId,
+          nodeId: payload.nodeId,
+          action: payload.action,
+          status: "success",
+          output: { content: "已生成的8 Beat剧本" },
+        });
+      },
+    );
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [inputNodeId] }],
+        }]),
+        { canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(result.errors).toEqual([]);
+      expect(events).toEqual([{ nodeId: scriptNodeId, action: "generate_text" }]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("persists workflow run progress without changing node execution", async () => {
     const store = useCanvasStore.getState();
     const imageNodeId = store.addNode(
@@ -7453,7 +7626,13 @@ describe("canvas chat commands", () => {
       expect(createFreezoneWorkflowRun).toHaveBeenCalledWith(
         "project-a",
         "canvas-a",
-        [{ node_id: imageNodeId, action: "generate_image" }],
+        [
+          expect.objectContaining({
+            node_id: imageNodeId,
+            action: "generate_image",
+            generation_attempt_id: expect.stringMatching(/^canvas-run:/),
+          }),
+        ],
         expect.stringMatching(/^canvas-run:/),
         expect.stringMatching(/^canvas-runner:/),
       );

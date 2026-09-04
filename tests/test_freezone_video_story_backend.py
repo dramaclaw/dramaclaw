@@ -170,6 +170,50 @@ async def test_video_story_analysis_uses_shared_freezone_vision_model(
 
 
 @pytest.mark.asyncio
+async def test_analyze_uses_the_model_pinned_by_trusted_egress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novelvideo.freezone import presets
+
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (32, 32), (24, 48, 96)).save(frame)
+    transport_context = object()
+    egress = SimpleNamespace(transport_context=transport_context)
+    captured: dict[str, object] = {}
+
+    async def fake_prepare(**_kwargs):
+        return egress
+
+    async def fake_complete(observed, *, result):
+        assert observed is egress
+        assert result == "[]"
+
+    async def fake_abandon(*_args, **_kwargs):
+        raise AssertionError("successful transport must not be abandoned")
+
+    async def fake_call(**kwargs):
+        captured.update(kwargs)
+        return "resolved-transport-model", "[]"
+
+    monkeypatch.setattr(presets, "prepare_freezone_vision_egress", fake_prepare)
+    monkeypatch.setattr(presets, "complete_freezone_vision_egress", fake_complete)
+    monkeypatch.setattr(presets, "abandon_freezone_vision_egress", fake_abandon)
+    monkeypatch.setattr(vision_gateway, "call_freezone_vision_model", fake_call)
+
+    result = await run_freezone_analyze_shots(
+        project_dir=tmp_path,
+        job_id="vision-pinned-model",
+        frame_paths=[str(frame)],
+        model="catalog-facing-alias",
+    )
+
+    assert result["model"] == "resolved-transport-model"
+    assert captured["transport_context"] is transport_context
+    assert captured["model_override"] is None
+
+
+@pytest.mark.asyncio
 async def test_freezone_analyze_route_passes_video_story_options(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

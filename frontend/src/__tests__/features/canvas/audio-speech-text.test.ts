@@ -62,6 +62,11 @@ describe('extractSpeakableAudioText', () => {
     expect(extractSpeakableAudioText(instruction)).toBe('');
   });
 
+  it('rejects workflow narration placeholders instead of speaking them literally', () => {
+    expect(extractSpeakableAudioText('这是短剧的第一段旁白')).toBe('');
+    expect(extractSpeakableAudioText('This is the second narration')).toBe('');
+  });
+
   it('sets BGM one second longer than the requested video duration', () => {
     expect(resolveMusicLengthMs({
       audioKind: 'music',

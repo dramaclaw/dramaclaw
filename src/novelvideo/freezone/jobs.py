@@ -1682,7 +1682,12 @@ async def run_freezone_analyze_shots(
         vision_model, text = await vision_gateway.call_freezone_vision_model(
             prompt=prompt,
             images=frame_inputs,
-            model_override=model,
+            # ``prepare_freezone_vision_egress`` has already resolved catalog
+            # aliases and pinned the exact transport model.  Passing the
+            # caller-facing alias again makes the gateway compare two
+            # different namespaces and reject an otherwise valid trusted
+            # transport context.
+            model_override=None if vision_egress else model,
             timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
             transport_context=(
                 vision_egress.transport_context if vision_egress else None

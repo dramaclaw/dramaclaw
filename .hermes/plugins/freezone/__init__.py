@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import sys
@@ -29,7 +30,9 @@ def _record_structured_tool_result(tool_name: str, value: Any) -> None:
     try:
         base = Path(result_dir)
         base.mkdir(parents=True, exist_ok=True)
-        safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in tool_name)
+        safe_name = "".join(
+            ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in tool_name
+        )
         payload = {
             "tool_name": tool_name,
             "created_at": time.time(),
@@ -109,6 +112,7 @@ _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR: Exception | None = None
 try:
     from novelvideo.freezone.canvas_command_bridge import (
         canvas_command_bridge_key,
+        canvas_command_idempotency_key,
         canvas_context_bridge_key,
         clarification_bridge_key,
         put_pending_clarification_event,
@@ -124,6 +128,7 @@ try:
 except Exception as exc:
     _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR = exc
     canvas_command_bridge_key = None
+    canvas_command_idempotency_key = None
     canvas_context_bridge_key = None
     clarification_bridge_key = None
     put_pending_clarification_event = None
@@ -145,7 +150,9 @@ FREEZONE_ACP_TOOLSET = "freezone-acp"
 REGISTER_TOOLSETS = ("hermes-acp",)
 API_PREFIX = "/api/v1/"
 try:
-    DEFAULT_TIMEOUT_SECONDS = max(30, int(os.environ.get("DRAMACLAW_API_TIMEOUT_SECONDS", "120")))
+    DEFAULT_TIMEOUT_SECONDS = max(
+        30, int(os.environ.get("DRAMACLAW_API_TIMEOUT_SECONDS", "120"))
+    )
 except ValueError:
     DEFAULT_TIMEOUT_SECONDS = 120
 
@@ -153,9 +160,7 @@ _PENDING_SKILL_STUDIO_DRAFTS: dict[str, dict[str, Any]] = {}
 _SKILL_STUDIO_DEFAULT_SKILL_SCHEMA_VERSION = "dramaclaw.workflow-skill.v1"
 _SKILL_STUDIO_DEFAULT_SKILL_VERSION = "1.0.0"
 
-_SKILL_STUDIO_REAL_TOOL_CALL_INSTRUCTION = (
-    "不要用普通文本回复，不要把工具调用、参数块或代码块写进聊天内容；请直接调用对应工具。"
-)
+_SKILL_STUDIO_REAL_TOOL_CALL_INSTRUCTION = "不要用普通文本回复，不要把工具调用、参数块或代码块写进聊天内容；请直接调用对应工具。"
 
 
 def _agent_token_configured() -> bool:
@@ -177,7 +182,9 @@ def _current_agent_token() -> str:
     return os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
 
 
-def _skill_studio_agent_instruction(next_step: str, progress: str, notes: list[str] | None = None) -> str:
+def _skill_studio_agent_instruction(
+    next_step: str, progress: str, notes: list[str] | None = None
+) -> str:
     parts = [
         f"下一步必须调用 {next_step}",
         f"当前进度：{progress}",
@@ -246,21 +253,29 @@ def _default_canvas_id() -> str:
 
 def _surface() -> str:
     return (
-        os.environ.get("DRAMACLAW_CHAT_SURFACE") or os.environ.get("SUPERTALE_CHAT_SURFACE") or ""
+        os.environ.get("DRAMACLAW_CHAT_SURFACE")
+        or os.environ.get("SUPERTALE_CHAT_SURFACE")
+        or ""
     ).strip()
 
 
 def _project_from_args(args: dict[str, Any]) -> str:
-    project = str(args.get("project_id") or args.get("project") or _default_project_id()).strip()
+    project = str(
+        args.get("project_id") or args.get("project") or _default_project_id()
+    ).strip()
     if not project:
-        raise ValueError("project_id is required and no current project context is configured")
+        raise ValueError(
+            "project_id is required and no current project context is configured"
+        )
     return project
 
 
 def _canvas_from_args(args: dict[str, Any]) -> str:
-    canvas = str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip()
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip()
     if not canvas:
-        raise ValueError("canvas_id is required and no current canvas context is configured")
+        raise ValueError(
+            "canvas_id is required and no current canvas context is configured"
+        )
     return canvas
 
 
@@ -285,12 +300,16 @@ def _query_string(params: Any) -> str:
     if not isinstance(params, dict) or not params:
         return ""
     cleaned = {
-        str(key): value for key, value in params.items() if value is not None and value != ""
+        str(key): value
+        for key, value in params.items()
+        if value is not None and value != ""
     }
     return f"?{urlencode(cleaned, doseq=True)}" if cleaned else ""
 
 
-def _request(method: str, path: str, *, query: Any = None, body: Any = None) -> dict[str, Any]:
+def _request(
+    method: str, path: str, *, query: Any = None, body: Any = None
+) -> dict[str, Any]:
     api_path = _normalize_api_path(path)
     url = f"{_base_url()}{api_path}{_query_string(query)}"
     payload = None
@@ -359,7 +378,11 @@ def _project_candidates() -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
         return [], result
     data = result.get("data")
     return (
-        [item for item in data if isinstance(item, dict)] if isinstance(data, list) else [],
+        (
+            [item for item in data if isinstance(item, dict)]
+            if isinstance(data, list)
+            else []
+        ),
         None,
     )
 
@@ -369,17 +392,25 @@ def _canvas_candidates_for_project(
     *,
     project_name: str = "",
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    result = _request("GET", f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases")
+    result = _request(
+        "GET", f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases"
+    )
     if not result.get("ok", True):
         return [], result
     data = result.get("data")
-    canvases = [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+    canvases = (
+        [item for item in data if isinstance(item, dict)]
+        if isinstance(data, list)
+        else []
+    )
     candidates: list[dict[str, Any]] = []
     for item in canvases:
         canvas_id = str(item.get("id") or "").strip()
         if not canvas_id:
             continue
-        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        metadata = (
+            item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        )
         title = (
             str(metadata.get("title") or metadata.get("name") or "").strip()
             if isinstance(metadata, dict)
@@ -489,22 +520,26 @@ def _resolve_canvas_scope_for_write(
         item = candidates[0]
         return str(item["project_id"]), str(item["canvas_id"]), None
     if not candidates:
-        return project, canvas, _no_canvas_candidate(
-            "no matching canvas found for the provided project/canvas context"
+        return (
+            project,
+            canvas,
+            _no_canvas_candidate(
+                "no matching canvas found for the provided project/canvas context"
+            ),
         )
-    return project, canvas, _canvas_selection_required(
-        candidates,
-        reason="multiple canvases matched and no explicit canvas_id was provided",
+    return (
+        project,
+        canvas,
+        _canvas_selection_required(
+            candidates,
+            reason="multiple canvases matched and no explicit canvas_id was provided",
+        ),
     )
 
 
 def _handle_canvas_ontology(args: dict[str, Any], **_: Any) -> str:
-    project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
-    )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
+    project = str(args.get("project_id") or _default_project_id()).strip() or None
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
     return _request_canvas_context_from_frontend(
         project=project,
         canvas=canvas,
@@ -514,11 +549,12 @@ def _handle_canvas_ontology(args: dict[str, Any], **_: Any) -> str:
 
 def _handle_canvas_action_catalog(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
     return _request_canvas_context_from_frontend(
         project=project,
         canvas=canvas,
@@ -528,11 +564,12 @@ def _handle_canvas_action_catalog(args: dict[str, Any], **_: Any) -> str:
 
 def _handle_canvas_command_catalog(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
     return _request_canvas_context_from_frontend(
         project=project,
         canvas=canvas,
@@ -601,6 +638,7 @@ def _emit_skill_studio_progress_event(
     event: dict[str, Any],
     *,
     agent_instruction: str | None = None,
+    tool_name: str = "",
 ) -> str:
     if skill_studio_bridge_key is None or put_pending_skill_studio_event is None:
         return tool_error(
@@ -613,31 +651,43 @@ def _emit_skill_studio_progress_event(
         debug_event = dict(debug) if isinstance(debug, dict) else {}
         debug_event["agent_instruction"] = agent_instruction
         frontend_event["debug"] = debug_event
-    key = skill_studio_bridge_key(project_id=project, canvas_id=canvas, event=frontend_event)
+    key = skill_studio_bridge_key(
+        project_id=project, canvas_id=canvas, event=frontend_event
+    )
     put_pending_skill_studio_event(
         key=key,
         project_id=project,
         canvas_id=canvas,
         event=frontend_event,
     )
-    return tool_result(
-        {
-            "ok": True,
-            "status": "skill_studio_progress_event_emitted",
-            "tool_call_status": "completed",
-            "skill_studio_status": "draft_progress",
-            "bridge_key": key,
-            "project_id": project,
-            "canvas_id": canvas,
-            "type": frontend_event.get("type"),
-            "skill_studio_session_id": frontend_event.get("skill_studio_session_id"),
-            "message": frontend_event.get("message") or "Skill Studio draft progress updated.",
-            "agent_instruction": agent_instruction or (
-                "The Skill Studio progress event was delivered to the frontend. "
-                "Do not repeat tool fields to the user. Continue the draft flow and call "
-                "freezone_finish_agent_catalog_draft when the updated draft is ready."
-            ),
-        }
+    payload = {
+        "ok": True,
+        "status": "skill_studio_progress_event_emitted",
+        "tool_call_status": "completed",
+        "skill_studio_status": "draft_progress",
+        "bridge_key": key,
+        "project_id": project,
+        "canvas_id": canvas,
+        "type": frontend_event.get("type"),
+        "skill_studio_session_id": frontend_event.get("skill_studio_session_id"),
+        **(
+            {"operations": frontend_event["operations"]}
+            if isinstance(frontend_event.get("operations"), dict)
+            else {}
+        ),
+        "message": frontend_event.get("message")
+        or "Skill Studio draft progress updated.",
+        "agent_instruction": agent_instruction
+        or (
+            "The Skill Studio progress event was delivered to the frontend. "
+            "Do not repeat tool fields to the user. Continue the draft flow and call "
+            "freezone_finish_agent_catalog_draft when the updated draft is ready."
+        ),
+    }
+    return (
+        _structured_tool_result(payload, tool_name=tool_name)
+        if tool_name
+        else tool_result(payload)
     )
 
 
@@ -665,7 +715,9 @@ def _emit_clarification_event(
     try:
         timeout_seconds = max(
             1,
-            int(os.environ.get("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "600")),
+            int(
+                os.environ.get("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "600")
+            ),
         )
     except ValueError:
         timeout_seconds = 600
@@ -694,17 +746,21 @@ def _emit_clarification_event(
 
 def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
-    clarification_id = str(args.get("clarification_id") or args.get("request_id") or "").strip()
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    clarification_id = str(
+        args.get("clarification_id") or args.get("request_id") or ""
+    ).strip()
     if not clarification_id:
-        context_id = str(args.get("skill_studio_session_id") or canvas or "default").strip()
+        context_id = str(
+            args.get("skill_studio_session_id") or canvas or "default"
+        ).strip()
         safe_context = "".join(
-            ch if ch.isalnum() or ch in ("-", "_") else "-"
-            for ch in context_id
+            ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in context_id
         ).strip("-")
         clarification_id = f"clarify_{safe_context or 'default'}_{uuid.uuid4().hex[:8]}"
     questions = _safe_list(args.get("questions"))
@@ -787,54 +843,36 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_present_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
-    project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
-    )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
-    session_id = str(args.get("skill_studio_session_id") or args.get("session_id") or "").strip()
-    if not session_id:
-        return tool_result(
-            {
-                "ok": False,
-                "type": "skill_studio.draft",
-                "status": "skill_studio_session_id_required",
-                "error": "skill_studio_session_id is required",
-            }
-        )
-    mode = str(args.get("mode") or "create").strip() or "create"
-    if mode not in {"create", "edit"}:
-        mode = "create"
-    skill = args.get("skill") if isinstance(args.get("skill"), dict) else {}
-    recipes = _safe_list(args.get("recipes"))
-    return _emit_skill_studio_event(
-        project,
-        canvas,
+    return tool_result(
         {
-            "type": "skill_studio.draft",
-            "skill_studio_session_id": session_id,
-            "mode": mode,
-            "skill": skill,
-            "recipes": recipes,
-            "summary": str(args.get("summary") or "").strip(),
-            "warnings": _safe_list(args.get("warnings")),
-        },
+            "ok": False,
+            "status": "skill_studio_generation_admission_required",
+            "error": (
+                "The legacy one-shot presentation path cannot establish per-artifact durable "
+                "generation operations. Use outline, begin, put, and finish."
+            ),
+            "next_action": "begin_skill_studio_generation",
+        }
     )
 
 
-def _skill_studio_scope_from_args(args: dict[str, Any]) -> tuple[str | None, str | None]:
+def _skill_studio_scope_from_args(
+    args: dict[str, Any],
+) -> tuple[str | None, str | None]:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
     return project, canvas
 
 
 def _skill_studio_session_id_from_args(args: dict[str, Any]) -> str:
-    return str(args.get("skill_studio_session_id") or args.get("session_id") or "").strip()
+    return str(
+        args.get("skill_studio_session_id") or args.get("session_id") or ""
+    ).strip()
 
 
 def _skill_studio_meta_text(value: Any) -> str:
@@ -856,12 +894,15 @@ def _skill_studio_has_input_parameter(skill: dict[str, Any], parameter_id: str) 
     if not isinstance(parameters, list):
         return False
     return any(
-        isinstance(parameter, dict) and str(parameter.get("id") or "").strip() == parameter_id
+        isinstance(parameter, dict)
+        and str(parameter.get("id") or "").strip() == parameter_id
         for parameter in parameters
     )
 
 
-def _skill_studio_lint_draft(skill: dict[str, Any], recipes: list[dict[str, Any]]) -> list[str]:
+def _skill_studio_lint_draft(
+    skill: dict[str, Any], recipes: list[dict[str, Any]]
+) -> list[str]:
     warnings: list[str] = []
     has_shot_count = _skill_studio_has_input_parameter(skill, "shot_count")
     multi_output_markers = (
@@ -878,7 +919,13 @@ def _skill_studio_lint_draft(skill: dict[str, Any], recipes: list[dict[str, Any]
         "两个image",
         "两张图",
     )
-    fixed_grid_markers = ("固定 9 宫格", "固定9宫格", "固定九宫格", "固定 9 个分镜", "固定9个分镜")
+    fixed_grid_markers = (
+        "固定 9 宫格",
+        "固定9宫格",
+        "固定九宫格",
+        "固定 9 个分镜",
+        "固定9个分镜",
+    )
     audio_compose_markers = (
         "最终成片",
         "最终合成",
@@ -894,7 +941,10 @@ def _skill_studio_lint_draft(skill: dict[str, Any], recipes: list[dict[str, Any]
         recipe_id = str(recipe.get("id") or "").strip() or "未命名 Recipe"
         text = _skill_studio_collect_text(recipe)
         compact_text = text.replace(" ", "")
-        if any(marker in text for marker in multi_output_markers) or "分别生成角色" in compact_text:
+        if (
+            any(marker in text for marker in multi_output_markers)
+            or "分别生成角色" in compact_text
+        ):
             warnings.append(
                 f"Recipe「{recipe_id}」可能一次生成多个执行节点。建议拆成单一阶段 Recipe。"
             )
@@ -903,7 +953,9 @@ def _skill_studio_lint_draft(skill: dict[str, Any], recipes: list[dict[str, Any]
                 f"Recipe「{recipe_id}」固定了九宫格，但 Skill 已有分镜数量输入。建议让数量跟随开始前选项。"
             )
         output_kind = str(recipe.get("output_kind") or "").strip().lower()
-        if output_kind == "audio" and any(marker in text for marker in audio_compose_markers):
+        if output_kind == "audio" and any(
+            marker in text for marker in audio_compose_markers
+        ):
             warnings.append(
                 f"Recipe「{recipe_id}」是音频输出，但包含最终合成说明。音频 Recipe 应只负责音频层，合成由动态计划处理。"
             )
@@ -932,7 +984,9 @@ def _skill_studio_outline_new_recipe_gap_errors(stages: list[Any]) -> list[str]:
         if not isinstance(stage, dict):
             errors.append("未命名阶段")
             continue
-        recipe_id = str(stage.get("recipe_id") or stage.get("id") or "未命名阶段").strip()
+        recipe_id = str(
+            stage.get("recipe_id") or stage.get("id") or "未命名阶段"
+        ).strip()
         craft_gap = _skill_studio_new_recipe_craft_gap(stage)
         if not craft_gap:
             errors.append(recipe_id)
@@ -963,7 +1017,9 @@ def _handle_put_agent_catalog_draft_outline(args: dict[str, Any], **_: Any) -> s
     except (TypeError, ValueError):
         expected_recipe_count = 0
     stages = _safe_list(args.get("stages"))
-    recipe_chunk_count = sum(1 for stage in stages if _skill_studio_stage_requires_recipe_chunk(stage))
+    recipe_chunk_count = sum(
+        1 for stage in stages if _skill_studio_stage_requires_recipe_chunk(stage)
+    )
     if stages:
         expected_recipe_count = recipe_chunk_count
     outline = {
@@ -1005,7 +1061,7 @@ def _handle_put_agent_catalog_draft_outline(args: dict[str, Any], **_: Any) -> s
                 "skill_studio_session_id": session_id,
                 "agent_instruction": (
                     "Before drafting Recipes, check existing Recipe summaries. Use the injected catalog summary "
-                    "or call freezone_list_agent_catalog(kind=\"recipes\", query=...). Then call "
+                    'or call freezone_list_agent_catalog(kind="recipes", query=...). Then call '
                     "freezone_put_agent_catalog_draft_outline again with catalog_checked=true."
                 ),
             }
@@ -1033,8 +1089,11 @@ def _handle_put_agent_catalog_draft_outline(args: dict[str, Any], **_: Any) -> s
         "project_id": project or (existing or {}).get("project_id"),
         "canvas_id": canvas or (existing or {}).get("canvas_id"),
         "mode": mode,
-        "summary": str(args.get("summary") or (existing or {}).get("summary") or "").strip(),
-        "warnings": _safe_list(args.get("warnings")) or list(_safe_list((existing or {}).get("warnings"))),
+        "summary": str(
+            args.get("summary") or (existing or {}).get("summary") or ""
+        ).strip(),
+        "warnings": _safe_list(args.get("warnings"))
+        or list(_safe_list((existing or {}).get("warnings"))),
         "expected_recipe_count": outline["expected_recipe_count"]
         or int((existing or {}).get("expected_recipe_count") or 0),
         "outline": outline,
@@ -1068,6 +1127,7 @@ def _handle_begin_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     mode = str(args.get("mode") or "create").strip() or "create"
     if mode not in {"create", "edit"}:
         mode = "create"
+    artifact_mode = str(args.get("artifact_mode") or "").strip()
     try:
         expected_recipe_count = int(args.get("expected_recipe_count") or 0)
     except (TypeError, ValueError):
@@ -1075,7 +1135,11 @@ def _handle_begin_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     existing = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) if mode == "edit" else None
     if mode == "create":
         existing_create = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id)
-        outline = existing_create.get("outline") if isinstance(existing_create, dict) else None
+        outline = (
+            existing_create.get("outline")
+            if isinstance(existing_create, dict)
+            else None
+        )
         if expected_recipe_count > 0 and not isinstance(outline, dict):
             return tool_result(
                 {
@@ -1102,8 +1166,10 @@ def _handle_begin_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
                     ),
                 }
             )
-        if isinstance(outline, dict) and int(outline.get("expected_recipe_count") or 0) > 0 and not _safe_list(
-            outline.get("stages")
+        if (
+            isinstance(outline, dict)
+            and int(outline.get("expected_recipe_count") or 0) > 0
+            and not _safe_list(outline.get("stages"))
         ):
             return tool_result(
                 {
@@ -1116,18 +1182,186 @@ def _handle_begin_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
         if isinstance(outline, dict):
             existing = existing_create
             expected_recipe_count = int(outline.get("expected_recipe_count") or 0)
+    if not artifact_mode:
+        artifact_mode = "skill_and_recipes" if expected_recipe_count else "skill_only"
+    if artifact_mode not in {"skill_only", "recipe_only", "skill_and_recipes"}:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "skill_studio_artifact_mode_invalid",
+                "error": "artifact_mode must be skill_only, recipe_only, or skill_and_recipes",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    recipe_targets = [
+        str(value).strip() for value in _safe_list(args.get("recipe_targets"))
+    ]
+    if artifact_mode in {"recipe_only", "skill_and_recipes"}:
+        if _available() and (
+            len(recipe_targets) != expected_recipe_count or not all(recipe_targets)
+        ):
+            return tool_result(
+                {
+                    "ok": False,
+                    "status": "skill_studio_generation_manifest_invalid",
+                    "error": "recipe_targets must identify every newly generated Recipe",
+                    "skill_studio_session_id": session_id,
+                }
+            )
+        if not recipe_targets:
+            recipe_targets = [""] * expected_recipe_count
+    else:
+        recipe_targets = []
+    if not project and _available():
+        return tool_result(
+            {
+                "ok": False,
+                "status": "skill_studio_project_scope_required",
+                "error": "project_id is required for durable generation admission",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    target_skill_id = str(args.get("target_skill_id") or "").strip()
+    generation_attempt_id = str(args.get("generation_attempt_id") or "").strip()
+    if _available() and not generation_attempt_id:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "skill_studio_generation_manifest_invalid",
+                "error": "generation_attempt_id is required for durable generation identity",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    if not generation_attempt_id:
+        generation_attempt_id = session_id
+    if (
+        _available()
+        and artifact_mode in {"skill_only", "skill_and_recipes"}
+        and not target_skill_id
+    ):
+        return tool_result(
+            {
+                "ok": False,
+                "status": "skill_studio_generation_manifest_invalid",
+                "error": "target_skill_id is required when generating a Workflow Skill",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    base_revision = int(args.get("base_revision") or 0)
+    outline = (existing or {}).get("outline")
+    reused_recipes = [
+        {
+            "reuse": True,
+            "id": str(stage.get("recipe_id") or "").strip(),
+        }
+        for stage in _safe_list(
+            outline.get("stages") if isinstance(outline, dict) else []
+        )
+        if isinstance(stage, dict)
+        and str(stage.get("reuse") or "") == "existing"
+        and str(stage.get("recipe_id") or "").strip()
+    ]
+    manifest = {
+        "generation_session_id": session_id,
+        "generation_attempt_id": generation_attempt_id,
+        "mode": mode,
+        "artifact_mode": artifact_mode,
+        "skill": {
+            "generate": artifact_mode in {"skill_only", "skill_and_recipes"},
+            "id": target_skill_id,
+            "base_revision": base_revision,
+        },
+        "recipes": [
+            {
+                "generate": True,
+                "id": recipe_id,
+                "base_revision": base_revision,
+                "generation_attempt_id": generation_attempt_id,
+                "output_index": index,
+            }
+            for index, recipe_id in enumerate(recipe_targets)
+        ]
+        + reused_recipes,
+    }
+    operations: dict[str, Any] = {"recipes": {}}
+    admission_specs: list[tuple[str, str, int | None]] = []
+    if manifest["skill"]["generate"]:
+        admission_specs.append(("workflow_generate", target_skill_id or "skill", None))
+    admission_specs.extend(
+        ("recipe_generate", recipe_id, index)
+        for index, recipe_id in enumerate(recipe_targets)
+    )
+    for product_kind, artifact_id, recipe_index in admission_specs:
+        normalized_inputs = {
+            "manifest": manifest,
+            "outline": (existing or {}).get("outline"),
+            "artifact_id": artifact_id,
+            "recipe_index": recipe_index,
+        }
+        digest = hashlib.sha256(
+            json.dumps(
+                normalized_inputs,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        if _available():
+            response = _request(
+                "POST",
+                _agent_product_operation_api_path(project),
+                body={
+                    "product_kind": product_kind,
+                    "generation_session_id": session_id,
+                    "canvas_id": canvas or "",
+                    "artifact_id": artifact_id,
+                    "normalized_inputs_hash": digest,
+                    "metadata": {
+                        "manifest": manifest,
+                        "recipe_index": recipe_index,
+                    },
+                },
+            )
+            admitted = (
+                response.get("data") if isinstance(response.get("data"), dict) else None
+            )
+        else:
+            response = {"ok": True}
+            admitted = {
+                "operation_id": (
+                    f"unmetered:{session_id}:{product_kind}:{recipe_index}"
+                ),
+                "task_id": "unmetered",
+                "artifact_id": artifact_id if recipe_targets else "",
+            }
+        if not response.get("ok") or admitted is None:
+            return tool_result(response)
+        if recipe_index is None:
+            operations["skill"] = admitted
+        else:
+            operations["recipes"][recipe_index] = admitted
     _PENDING_SKILL_STUDIO_DRAFTS[session_id] = {
         "project_id": project or (existing or {}).get("project_id"),
         "canvas_id": canvas or (existing or {}).get("canvas_id"),
         "mode": mode,
-        "summary": str(args.get("summary") or (existing or {}).get("summary") or "").strip(),
-        "warnings": _safe_list(args.get("warnings")) or list(_safe_list((existing or {}).get("warnings"))),
+        "summary": str(
+            args.get("summary") or (existing or {}).get("summary") or ""
+        ).strip(),
+        "warnings": _safe_list(args.get("warnings"))
+        or list(_safe_list((existing or {}).get("warnings"))),
         "expected_recipe_count": max(0, expected_recipe_count)
         or int((existing or {}).get("expected_recipe_count") or 0),
         "outline": (existing or {}).get("outline"),
         "skill": (existing or {}).get("skill"),
         "recipes": dict((existing or {}).get("recipes") or {}),
+        "manifest": manifest,
+        "operations": operations,
     }
+    persisted_session = _persist_skill_studio_session(
+        _PENDING_SKILL_STUDIO_DRAFTS[session_id]
+    )
+    if not persisted_session.get("ok"):
+        return tool_result(persisted_session)
     return _emit_skill_studio_progress_event(
         project,
         canvas,
@@ -1136,7 +1370,9 @@ def _handle_begin_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
             "skill_studio_session_id": session_id,
             "status": "draft_begin",
             "message": "正在创建草稿结构...",
+            "operations": operations,
         },
+        tool_name="freezone_begin_agent_catalog_draft",
     )
 
 
@@ -1160,20 +1396,36 @@ def _handle_put_agent_catalog_skill(args: dict[str, Any], **_: Any) -> str:
     session_id = _skill_studio_session_id_from_args(args)
     if not session_id:
         return _skill_studio_missing_session_result()
-    draft = _PENDING_SKILL_STUDIO_DRAFTS.setdefault(
-        session_id,
-        {
-            "project_id": project,
-            "canvas_id": canvas,
-            "mode": str(args.get("mode") or "create").strip() or "create",
-            "summary": "",
-            "warnings": [],
-            "expected_recipe_count": 0,
-            "outline": None,
-            "skill": None,
-            "recipes": {},
-        },
+    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) or _load_skill_studio_session(
+        str(project or ""), session_id
     )
+    if draft is None:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "skill_studio_generation_admission_required",
+                "error": "Call freezone_begin_agent_catalog_draft before generating a Skill.",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    skill_operation = (draft.get("operations") or {}).get("skill")
+    if not isinstance(skill_operation, dict):
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_generate_operation_required",
+                "error": "This generation manifest does not admit a Skill definition.",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    operation_error = _reject_unavailable_product_operation(
+        str(project or draft.get("project_id") or "").strip(),
+        skill_operation,
+        product_kind="workflow_generate",
+        session_id=session_id,
+    )
+    if operation_error is not None:
+        return tool_result(operation_error)
     skill = args.get("skill") if isinstance(args.get("skill"), dict) else {}
     if not skill:
         return tool_result(
@@ -1184,9 +1436,25 @@ def _handle_put_agent_catalog_skill(args: dict[str, Any], **_: Any) -> str:
                 "skill_studio_session_id": session_id,
             }
         )
+    expected_skill_id = str(
+        ((draft.get("manifest") or {}).get("skill") or {}).get("id") or ""
+    ).strip()
+    actual_skill_id = str(skill.get("id") or "").strip()
+    if expected_skill_id and actual_skill_id != expected_skill_id:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_generation_manifest_mismatch",
+                "error": "Skill id does not match the admitted generation manifest.",
+                "skill_studio_session_id": session_id,
+            }
+        )
     draft["project_id"] = project or draft.get("project_id")
     draft["canvas_id"] = canvas or draft.get("canvas_id")
     draft["skill"] = _normalize_skill_studio_skill(skill, existing=draft.get("skill"))
+    persisted_session = _persist_skill_studio_session(draft)
+    if not persisted_session.get("ok"):
+        return tool_result(persisted_session)
     expected = int(draft.get("expected_recipe_count") or 0)
     recipes = draft.setdefault("recipes", {})
     if expected > 0:
@@ -1194,7 +1462,11 @@ def _handle_put_agent_catalog_skill(args: dict[str, Any], **_: Any) -> str:
         remaining = max(0, expected - submitted)
         if remaining > 0:
             next_missing_index = next(
-                (candidate for candidate in range(expected) if candidate not in recipes),
+                (
+                    candidate
+                    for candidate in range(expected)
+                    if candidate not in recipes
+                ),
                 submitted,
             )
             agent_instruction = _skill_studio_agent_instruction(
@@ -1244,20 +1516,18 @@ def _handle_put_agent_catalog_recipe(args: dict[str, Any], **_: Any) -> str:
     session_id = _skill_studio_session_id_from_args(args)
     if not session_id:
         return _skill_studio_missing_session_result()
-    draft = _PENDING_SKILL_STUDIO_DRAFTS.setdefault(
-        session_id,
-        {
-            "project_id": project,
-            "canvas_id": canvas,
-            "mode": str(args.get("mode") or "create").strip() or "create",
-            "summary": "",
-            "warnings": [],
-            "expected_recipe_count": 0,
-            "outline": None,
-            "skill": None,
-            "recipes": {},
-        },
+    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) or _load_skill_studio_session(
+        str(project or ""), session_id
     )
+    if draft is None:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "skill_studio_generation_admission_required",
+                "error": "Call freezone_begin_agent_catalog_draft before generating a Recipe.",
+                "skill_studio_session_id": session_id,
+            }
+        )
     recipe = args.get("recipe") if isinstance(args.get("recipe"), dict) else {}
     if not recipe:
         return tool_result(
@@ -1273,7 +1543,40 @@ def _handle_put_agent_catalog_recipe(args: dict[str, Any], **_: Any) -> str:
         index = int(args.get("index"))
     except (TypeError, ValueError):
         index = len(recipes)
+    recipe_operations = (draft.get("operations") or {}).get("recipes") or {}
+    recipe_operation = recipe_operations.get(index) or recipe_operations.get(str(index))
+    if not isinstance(recipe_operation, dict):
+        return tool_result(
+            {
+                "ok": False,
+                "status": "recipe_generate_operation_required",
+                "error": "No admitted Recipe definition operation exists for this index.",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    operation_error = _reject_unavailable_product_operation(
+        str(project or draft.get("project_id") or "").strip(),
+        recipe_operation,
+        product_kind="recipe_generate",
+        session_id=session_id,
+    )
+    if operation_error is not None:
+        return tool_result(operation_error)
+    expected_recipe_id = str(recipe_operation.get("artifact_id") or "").strip()
+    actual_recipe_id = str(recipe.get("id") or "").strip()
+    if expected_recipe_id and actual_recipe_id != expected_recipe_id:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "recipe_generation_manifest_mismatch",
+                "error": "Recipe id does not match the admitted generation manifest.",
+                "skill_studio_session_id": session_id,
+            }
+        )
     recipes[index] = recipe
+    persisted_session = _persist_skill_studio_session(draft)
+    if not persisted_session.get("ok"):
+        return tool_result(persisted_session)
     expected = int(draft.get("expected_recipe_count") or 0)
     if expected > 0:
         message = f"已生成 Recipe {index + 1} / {expected}"
@@ -1281,7 +1584,11 @@ def _handle_put_agent_catalog_recipe(args: dict[str, Any], **_: Any) -> str:
         remaining = max(0, expected - len(recipes))
         if remaining > 0:
             next_missing_index = next(
-                (candidate for candidate in range(expected) if candidate not in recipes),
+                (
+                    candidate
+                    for candidate in range(expected)
+                    if candidate not in recipes
+                ),
                 len(recipes),
             )
             agent_instruction = _skill_studio_agent_instruction(
@@ -1338,7 +1645,9 @@ def _decode_json_pointer(path: object) -> list[str]:
     path_text = str(path or "")
     if not path_text.startswith("/"):
         raise _DraftPatchError("patch path must start with '/'")
-    return [part.replace("~1", "/").replace("~0", "~") for part in path_text.split("/")[1:]]
+    return [
+        part.replace("~1", "/").replace("~0", "~") for part in path_text.split("/")[1:]
+    ]
 
 
 def _resolve_json_pointer_parent(obj: Any, tokens: list[str]) -> tuple[Any, str]:
@@ -1355,7 +1664,9 @@ def _resolve_json_pointer_parent(obj: Any, tokens: list[str]) -> tuple[Any, str]
             try:
                 index = int(token)
             except ValueError as exc:
-                raise _DraftPatchError(f"list path segment must be a number: {token}") from exc
+                raise _DraftPatchError(
+                    f"list path segment must be a number: {token}"
+                ) from exc
             if index < 0 or index >= len(parent):
                 raise _DraftPatchError(f"list path index out of range: {token}")
             parent = parent[index]
@@ -1364,7 +1675,9 @@ def _resolve_json_pointer_parent(obj: Any, tokens: list[str]) -> tuple[Any, str]
     return parent, tokens[-1]
 
 
-def _list_index_for_patch(parent: list[Any], key: str, *, allow_append: bool, allow_end: bool) -> int:
+def _list_index_for_patch(
+    parent: list[Any], key: str, *, allow_append: bool, allow_end: bool
+) -> int:
     if key == "-":
         if allow_append:
             return len(parent)
@@ -1379,7 +1692,9 @@ def _list_index_for_patch(parent: list[Any], key: str, *, allow_append: bool, al
     return index
 
 
-def _apply_json_pointer_patch(obj: dict[str, Any], patch_ops: list[Any]) -> dict[str, Any]:
+def _apply_json_pointer_patch(
+    obj: dict[str, Any], patch_ops: list[Any]
+) -> dict[str, Any]:
     patched = deepcopy(obj)
     for raw_op in patch_ops:
         if not isinstance(raw_op, dict):
@@ -1403,15 +1718,23 @@ def _apply_json_pointer_patch(obj: dict[str, Any], patch_ops: list[Any]) -> dict
         if isinstance(parent, list):
             if op == "add":
                 parent.insert(
-                    _list_index_for_patch(parent, key, allow_append=True, allow_end=True),
+                    _list_index_for_patch(
+                        parent, key, allow_append=True, allow_end=True
+                    ),
                     deepcopy(raw_op.get("value")),
                 )
             elif op == "replace":
-                parent[_list_index_for_patch(parent, key, allow_append=False, allow_end=False)] = deepcopy(
-                    raw_op.get("value")
-                )
+                parent[
+                    _list_index_for_patch(
+                        parent, key, allow_append=False, allow_end=False
+                    )
+                ] = deepcopy(raw_op.get("value"))
             else:
-                parent.pop(_list_index_for_patch(parent, key, allow_append=False, allow_end=False))
+                parent.pop(
+                    _list_index_for_patch(
+                        parent, key, allow_append=False, allow_end=False
+                    )
+                )
             continue
         raise _DraftPatchError(f"patch target parent is not a dict or list: {path}")
     return patched
@@ -1419,7 +1742,10 @@ def _apply_json_pointer_patch(obj: dict[str, Any], patch_ops: list[Any]) -> dict
 
 def _find_recipe_index_by_id(recipes: dict[Any, Any], recipe_id: str) -> Any | None:
     for index, recipe in recipes.items():
-        if isinstance(recipe, dict) and str(recipe.get("id") or "").strip() == recipe_id:
+        if (
+            isinstance(recipe, dict)
+            and str(recipe.get("id") or "").strip() == recipe_id
+        ):
             return index
     return None
 
@@ -1468,7 +1794,9 @@ def _handle_patch_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     session_id = _skill_studio_session_id_from_args(args)
     if not session_id:
         return _skill_studio_missing_session_result()
-    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id)
+    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) or _load_skill_studio_session(
+        str(project or ""), session_id
+    )
     if draft is None:
         return tool_result(
             {
@@ -1502,7 +1830,9 @@ def _handle_patch_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
         if target == "skill":
             skill = draft.get("skill") if isinstance(draft.get("skill"), dict) else None
             if skill is None:
-                raise _DraftPatchError("Cannot patch Skill before put_agent_catalog_skill")
+                raise _DraftPatchError(
+                    "Cannot patch Skill before put_agent_catalog_skill"
+                )
             patched_skill = _apply_json_pointer_patch(skill, patch_ops)
             draft["skill"] = patched_skill
             message = _skill_patch_message(patch_ops)
@@ -1511,7 +1841,9 @@ def _handle_patch_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
             recipe_id = str(args.get("recipe_id") or "").strip()
             if not recipe_id:
                 raise _DraftPatchError("recipe_id is required when target is recipe")
-            recipes = draft.get("recipes") if isinstance(draft.get("recipes"), dict) else {}
+            recipes = (
+                draft.get("recipes") if isinstance(draft.get("recipes"), dict) else {}
+            )
             recipe_index = _find_recipe_index_by_id(recipes, recipe_id)
             if recipe_index is None:
                 raise _DraftPatchError(f"Recipe not found: {recipe_id}")
@@ -1531,7 +1863,11 @@ def _handle_patch_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
                 _validate_recipe_patch_paths(recipe_id, patch_ops)
                 recipes[recipe_index] = _apply_json_pointer_patch(recipe, patch_ops)
                 message = f"已更新 Recipe：{recipe_id}"
-                patched_payload = {"target": "recipe", "recipe_id": recipe_id, "recipe_index": recipe_index}
+                patched_payload = {
+                    "target": "recipe",
+                    "recipe_id": recipe_id,
+                    "recipe_index": recipe_index,
+                }
     except _DraftPatchError as exc:
         return tool_result(
             {
@@ -1541,6 +1877,9 @@ def _handle_patch_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
                 "skill_studio_session_id": session_id,
             }
         )
+    persisted_session = _persist_skill_studio_session(draft)
+    if not persisted_session.get("ok"):
+        return tool_result(persisted_session)
     progress = _emit_skill_studio_progress_event(
         project or draft.get("project_id"),
         canvas or draft.get("canvas_id"),
@@ -1579,7 +1918,9 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     session_id = _skill_studio_session_id_from_args(args)
     if not session_id:
         return _skill_studio_missing_session_result()
-    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id)
+    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) or _load_skill_studio_session(
+        str(project or ""), session_id
+    )
     if draft is None:
         return tool_result(
             {
@@ -1590,7 +1931,9 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
             }
         )
     skill = draft.get("skill") if isinstance(draft.get("skill"), dict) else {}
-    if not skill:
+    manifest = draft.get("manifest") if isinstance(draft.get("manifest"), dict) else {}
+    artifact_mode = str(manifest.get("artifact_mode") or "skill_only")
+    if not skill and artifact_mode != "recipe_only":
         return tool_result(
             {
                 "ok": False,
@@ -1599,20 +1942,37 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
                 "skill_studio_session_id": session_id,
             }
         )
-    recipes_by_index = draft.get("recipes") if isinstance(draft.get("recipes"), dict) else {}
+    recipes_by_index = (
+        draft.get("recipes") if isinstance(draft.get("recipes"), dict) else {}
+    )
     recipes = [recipes_by_index[index] for index in sorted(recipes_by_index)]
+    if artifact_mode == "recipe_only" and not recipes:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "recipe_required",
+                "error": "Recipe-only generation requires at least one Recipe result",
+                "skill_studio_session_id": session_id,
+            }
+        )
     try:
-        expected_recipe_count = int(args.get("expected_recipe_count") or draft.get("expected_recipe_count") or 0)
+        expected_recipe_count = int(
+            args.get("expected_recipe_count") or draft.get("expected_recipe_count") or 0
+        )
     except (TypeError, ValueError):
         expected_recipe_count = 0
     warnings = list(_safe_list(draft.get("warnings")))
     if expected_recipe_count and len(recipes) != expected_recipe_count:
-        warnings.append(f"Recipe 数量为 {len(recipes)}，与预期 {expected_recipe_count} 不一致。")
+        warnings.append(
+            f"Recipe 数量为 {len(recipes)}，与预期 {expected_recipe_count} 不一致。"
+        )
     seen_recipe_ids: set[str] = set()
     duplicate_recipe_ids: list[str] = []
     deduped_reversed: list[dict[str, Any]] = []
     for recipe in reversed(recipes):
-        recipe_id = str(recipe.get("id") or "").strip() if isinstance(recipe, dict) else ""
+        recipe_id = (
+            str(recipe.get("id") or "").strip() if isinstance(recipe, dict) else ""
+        )
         if recipe_id:
             if recipe_id in seen_recipe_ids:
                 duplicate_recipe_ids.append(recipe_id)
@@ -1621,11 +1981,14 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
         deduped_reversed.append(recipe)
     if duplicate_recipe_ids:
         duplicate_summary = "、".join(sorted(set(duplicate_recipe_ids)))
-        warnings.append(f"检测到重复 Recipe ID，已保留最后一次提交的版本：{duplicate_summary}。")
+        warnings.append(
+            f"检测到重复 Recipe ID，已保留最后一次提交的版本：{duplicate_summary}。"
+        )
         recipes = list(reversed(deduped_reversed))
-    for warning in _skill_studio_lint_draft(skill, recipes):
-        if warning not in warnings:
-            warnings.append(warning)
+    if skill:
+        for warning in _skill_studio_lint_draft(skill, recipes):
+            if warning not in warnings:
+                warnings.append(warning)
     result = _emit_skill_studio_event(
         project or draft.get("project_id"),
         canvas or draft.get("canvas_id"),
@@ -1633,7 +1996,9 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
             "type": "skill_studio.draft",
             "skill_studio_session_id": session_id,
             "mode": str(draft.get("mode") or "create"),
-            "outline": draft.get("outline") if isinstance(draft.get("outline"), dict) else None,
+            "outline": (
+                draft.get("outline") if isinstance(draft.get("outline"), dict) else None
+            ),
             "skill": skill,
             "recipes": recipes,
             "summary": str(draft.get("summary") or args.get("summary") or "").strip(),
@@ -1643,6 +2008,69 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     draft["skill"] = skill
     draft["recipes"] = {index: recipe for index, recipe in enumerate(recipes)}
     draft["warnings"] = warnings
+    persisted_session = _persist_skill_studio_session(draft)
+    if not persisted_session.get("ok"):
+        return tool_result(persisted_session)
+    result_payload = _tool_result_payload(result) or {}
+    operations = (
+        draft.get("operations") if isinstance(draft.get("operations"), dict) else {}
+    )
+    project_id = str(project or draft.get("project_id") or "").strip()
+    delivered = bool(
+        result_payload.get("ok")
+        and str(result_payload.get("status") or "") == "skill_studio_frontend_result"
+        and not result_payload.get("errors")
+    )
+    explicit_failure = bool(
+        result_payload
+        and str(result_payload.get("status") or "") != "skill_studio_frontend_timeout"
+        and not delivered
+    )
+    if project_id and (delivered or explicit_failure):
+        skill_operation = operations.get("skill")
+        if isinstance(skill_operation, dict):
+            _finish_agent_product_generation(
+                project_id,
+                skill_operation,
+                outcome="delivered" if delivered else "failed",
+                result_ref=(
+                    {
+                        "kind": "workflow_skill_definition",
+                        "id": str(
+                            skill.get("id") or skill_operation.get("artifact_id") or ""
+                        ),
+                        "generation_session_id": session_id,
+                    }
+                    if delivered
+                    else None
+                ),
+            )
+        recipe_operations = (
+            operations.get("recipes")
+            if isinstance(operations.get("recipes"), dict)
+            else {}
+        )
+        for index, operation in recipe_operations.items():
+            if not isinstance(operation, dict):
+                continue
+            recipe = recipes_by_index.get(index)
+            recipe_id = str(recipe.get("id") or "") if isinstance(recipe, dict) else ""
+            artifact_delivered = delivered and bool(recipe_id)
+            _finish_agent_product_generation(
+                project_id,
+                operation,
+                outcome="delivered" if artifact_delivered else "failed",
+                result_ref=(
+                    {
+                        "kind": "recipe_definition",
+                        "id": recipe_id,
+                        "generation_session_id": session_id,
+                        "output_index": index,
+                    }
+                    if artifact_delivered
+                    else None
+                ),
+            )
     return result
 
 
@@ -1676,7 +2104,9 @@ def _handle_get_saved_agent_catalog_item(
                 "kind": kind,
                 "id": item_id,
                 "status": "catalog_read_failed",
-                "error": response.get("error") or response.get("message") or "Failed to read saved catalog.",
+                "error": response.get("error")
+                or response.get("message")
+                or "Failed to read saved catalog.",
                 "response": response,
             },
             tool_name=tool_name,
@@ -1740,13 +2170,17 @@ def _catalog_item_text(item: dict[str, Any], keys: tuple[str, ...]) -> str:
 def _catalog_query_tokens(query: str) -> list[str]:
     tokens = [
         token.strip()
-        for token in re.split(r"[\s,，、/|;；:：()（）\[\]{}<>《》\"'`]+", query.lower())
+        for token in re.split(
+            r"[\s,，、/|;；:：()（）\[\]{}<>《》\"'`]+", query.lower()
+        )
         if len(token.strip()) >= 2
     ]
     return list(dict.fromkeys(tokens))
 
 
-def _catalog_item_match_score(item: dict[str, Any], keys: tuple[str, ...], query: str) -> int:
+def _catalog_item_match_score(
+    item: dict[str, Any], keys: tuple[str, ...], query: str
+) -> int:
     if not query:
         return 1
     text = _catalog_item_text(item, keys)
@@ -1771,8 +2205,12 @@ def _summarize_agent_catalog_item(item: dict[str, Any], *, kind: str) -> dict[st
         summary.update(
             {
                 "category": str(item.get("category") or ""),
-                "allowed_recipe_ids": allowed_recipe_ids if isinstance(allowed_recipe_ids, list) else [],
-                "input_parameter_count": len(input_parameters) if isinstance(input_parameters, list) else 0,
+                "allowed_recipe_ids": (
+                    allowed_recipe_ids if isinstance(allowed_recipe_ids, list) else []
+                ),
+                "input_parameter_count": (
+                    len(input_parameters) if isinstance(input_parameters, list) else 0
+                ),
                 "builtin": bool(item.get("builtin", False)),
                 "owned": bool(item.get("owned", False)),
             }
@@ -1804,7 +2242,7 @@ def _handle_list_agent_catalog(args: dict[str, Any], **_: Any) -> str:
             },
             tool_name="freezone_list_agent_catalog",
         )
-    query = str(args.get("query") or args.get("q") or "").strip().lower()
+    query = str(args.get("query") or "").strip().lower()
     try:
         limit = int(args.get("limit") or 12)
     except (TypeError, ValueError):
@@ -1818,7 +2256,9 @@ def _handle_list_agent_catalog(args: dict[str, Any], **_: Any) -> str:
                 "ok": False,
                 "kind": kind,
                 "status": "catalog_read_failed",
-                "error": response.get("error") or response.get("message") or "Failed to read saved catalog.",
+                "error": response.get("error")
+                or response.get("message")
+                or "Failed to read saved catalog.",
                 "response": response,
             },
             tool_name="freezone_list_agent_catalog",
@@ -1853,14 +2293,19 @@ def _handle_list_agent_catalog(args: dict[str, Any], **_: Any) -> str:
     ]
     matched = [
         item
-        for score, _index, item in sorted(scored_items, key=lambda entry: (-entry[0], entry[1]))
+        for score, _index, item in sorted(
+            scored_items, key=lambda entry: (-entry[0], entry[1])
+        )
         if score > 0
     ]
-    summarized = [_summarize_agent_catalog_item(item, kind=kind) for item in matched[:limit]]
-    fallback_items = [
-        _summarize_agent_catalog_item(item, kind=kind)
-        for item in items[:limit]
-    ] if query and not summarized else []
+    summarized = [
+        _summarize_agent_catalog_item(item, kind=kind) for item in matched[:limit]
+    ]
+    fallback_items = (
+        [_summarize_agent_catalog_item(item, kind=kind) for item in items[:limit]]
+        if query and not summarized
+        else []
+    )
     return _structured_tool_result(
         {
             "ok": True,
@@ -1900,11 +2345,12 @@ def _handle_get_saved_recipe(args: dict[str, Any], **_: Any) -> str:
 
 def _handle_selection(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
     return _request_canvas_context_from_frontend(
         project=project,
         canvas=canvas,
@@ -1914,12 +2360,13 @@ def _handle_selection(args: dict[str, Any], **_: Any) -> str:
 
 def _handle_node_detail(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
-    node_id = str(args.get("node_id") or args.get("nodeId") or "").strip()
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    node_id = str(args.get("node_id") or "").strip()
     if not node_id:
         return tool_result(
             {"ok": False, "status": "node_id_required", "error": "node_id is required"}
@@ -1933,12 +2380,13 @@ def _handle_node_detail(args: dict[str, Any], **_: Any) -> str:
 
 def _handle_neighbor_graph(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
-    node_id = str(args.get("node_id") or args.get("nodeId") or "").strip()
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    node_id = str(args.get("node_id") or "").strip()
     if not node_id:
         return tool_result(
             {"ok": False, "status": "node_id_required", "error": "node_id is required"}
@@ -1955,19 +2403,18 @@ def _handle_neighbor_graph(args: dict[str, Any], **_: Any) -> str:
 
 def _handle_node_action_catalog(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
-    node_id = str(args.get("node_id") or args.get("nodeId") or "").strip()
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    node_id = str(args.get("node_id") or "").strip()
     if not node_id:
         return tool_result(
             {"ok": False, "status": "node_id_required", "error": "node_id is required"}
         )
-    action = str(
-        args.get("action") or args.get("action_name") or args.get("actionName") or ""
-    ).strip()
+    action = str(args.get("action") or args.get("action_name") or "").strip()
     request: dict[str, Any] = {"type": "node_action_catalog", "node_id": node_id}
     if action:
         request["action"] = action
@@ -1980,15 +2427,20 @@ def _handle_node_action_catalog(args: dict[str, Any], **_: Any) -> str:
 
 def _handle_node_create_schema(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
-    node_type = str(args.get("node_type") or args.get("nodeType") or "").strip()
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    node_type = str(args.get("node_type") or "").strip()
     if not node_type:
         return tool_result(
-            {"ok": False, "status": "node_type_required", "error": "node_type is required"}
+            {
+                "ok": False,
+                "status": "node_type_required",
+                "error": "node_type is required",
+            }
         )
     if node_type not in _AGENT_CREATABLE_NODE_TYPE_VALUES:
         return tool_result(
@@ -2012,12 +2464,13 @@ def _handle_node_create_schema(args: dict[str, Any], **_: Any) -> str:
 
 def _handle_audio_voice_options(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
-    node_id = str(args.get("node_id") or args.get("nodeId") or "").strip()
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    node_id = str(args.get("node_id") or "").strip()
     if not node_id:
         return tool_result(
             {"ok": False, "status": "node_id_required", "error": "node_id is required"}
@@ -2031,12 +2484,13 @@ def _handle_audio_voice_options(args: dict[str, Any], **_: Any) -> str:
 
 def _handle_slot_candidates(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
-    slot_kind = str(args.get("slot_kind") or args.get("slotKind") or "").strip()
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    slot_kind = str(args.get("slot_kind") or "").strip()
     request: dict[str, Any] = {"type": "slot_candidates"}
     if slot_kind:
         request["slot_kind"] = slot_kind
@@ -2049,11 +2503,12 @@ def _handle_slot_candidates(args: dict[str, Any], **_: Any) -> str:
 
 def _handle_mainline_projection_assets(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
     request: dict[str, Any] = {"type": "mainline_projection_assets"}
 
     def _normalize_projection_asset_kind(value: Any) -> str | None:
@@ -2070,7 +2525,7 @@ def _handle_mainline_projection_assets(args: dict[str, Any], **_: Any) -> str:
             return "character"
         return text
 
-    asset_kinds = args.get("asset_kinds") or args.get("assetKinds")
+    asset_kinds = args.get("asset_kinds")
     if isinstance(asset_kinds, list):
         values = [
             normalized
@@ -2079,7 +2534,7 @@ def _handle_mainline_projection_assets(args: dict[str, Any], **_: Any) -> str:
         ]
         if values:
             request["asset_kinds"] = list(dict.fromkeys(values))
-    asset_kind = str(args.get("asset_kind") or args.get("assetKind") or "").strip()
+    asset_kind = str(args.get("asset_kind") or "").strip()
     if asset_kind and "asset_kinds" not in request:
         normalized = _normalize_projection_asset_kind(asset_kind)
         if normalized:
@@ -2129,14 +2584,8 @@ def _handle_validate_commands(args: dict[str, Any], **_: Any) -> str:
             args, ("project", "canvasId", "body", "envelope")
         ):
             return tool_result(legacy_error)
-        project = (
-            str(args.get("project_id") or _default_project_id()).strip()
-            or None
-        )
-        canvas = (
-            str(args.get("canvas_id") or _default_canvas_id()).strip()
-            or None
-        )
+        project = str(args.get("project_id") or _default_project_id()).strip() or None
+        canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
         payload = _validation_payload(args)
         if not payload:
             return tool_result(
@@ -2163,11 +2612,12 @@ def _handle_validate_commands(args: dict[str, Any], **_: Any) -> str:
 
 def _handle_summarize_canvas(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
     return _request_canvas_context_from_frontend(
         project=project,
         canvas=canvas,
@@ -2241,7 +2691,9 @@ _WORKFLOW_HINTS = (
 )
 
 
-def _emit_command_error(project: str | None, canvas: str | None, status: str, error: str) -> str:
+def _emit_command_error(
+    project: str | None, canvas: str | None, status: str, error: str
+) -> str:
     return tool_result(
         {
             "ok": False,
@@ -2254,13 +2706,28 @@ def _emit_command_error(project: str | None, canvas: str | None, status: str, er
 
 def _command_text(command: dict[str, Any]) -> str:
     values: list[str] = []
-    for key in ("client_id", "node_type", "label", "title", "displayName", "display_name"):
+    for key in (
+        "client_id",
+        "node_type",
+        "label",
+        "title",
+        "displayName",
+        "display_name",
+    ):
         value = command.get(key)
         if value is not None:
             values.append(str(value))
     data = command.get("data")
     if isinstance(data, dict):
-        for key in ("displayName", "display_name", "title", "label", "prompt", "text", "content"):
+        for key in (
+            "displayName",
+            "display_name",
+            "title",
+            "label",
+            "prompt",
+            "text",
+            "content",
+        ):
             value = data.get(key)
             if value is not None:
                 values.append(str(value))
@@ -2277,12 +2744,15 @@ def _looks_like_handwritten_workflow_batch(commands: list[Any]) -> bool:
     if len(create_commands) < 3:
         return False
     workflow_like_count = sum(
-        1 for command in create_commands if command.get("node_type") in _WORKFLOW_LIKE_NODE_TYPES
+        1
+        for command in create_commands
+        if command.get("node_type") in _WORKFLOW_LIKE_NODE_TYPES
     )
     if workflow_like_count < 2:
         return False
     has_dependency_shape = any(
-        command.get("type") in {"create_edge", "group_nodes", "layout_nodes", "select_nodes"}
+        command.get("type")
+        in {"create_edge", "group_nodes", "layout_nodes", "select_nodes"}
         for command in object_commands
     )
     haystack = "\n".join(_command_text(command) for command in object_commands)
@@ -2387,10 +2857,13 @@ def _validate_write_commands_shape(
         if command_type == "run_workflow":
             node_ids = command.get("node_ids")
             scope = str(command.get("scope") or "").strip()
-            if not (
-                isinstance(node_ids, list)
-                and any(str(node_id).strip() for node_id in node_ids)
-            ) and scope != "canvas":
+            if (
+                not (
+                    isinstance(node_ids, list)
+                    and any(str(node_id).strip() for node_id in node_ids)
+                )
+                and scope != "canvas"
+            ):
                 return _emit_command_error(
                     project,
                     canvas,
@@ -2401,7 +2874,8 @@ def _validate_write_commands_shape(
                     ),
                 )
         if command_type == "create_node" or (
-            command_type == "add_next_node" and command.get("node_type") not in (None, "")
+            command_type == "add_next_node"
+            and command.get("node_type") not in (None, "")
         ):
             node_type = str(command.get("node_type") or "").strip()
             if node_type not in _AGENT_CREATABLE_NODE_TYPE_VALUES:
@@ -2420,7 +2894,8 @@ def _validate_write_commands_shape(
                 missing_text_fields = [
                     field
                     for field in ("title", "content")
-                    if not isinstance(node_data, dict) or not str(node_data.get(field) or "").strip()
+                    if not isinstance(node_data, dict)
+                    or not str(node_data.get(field) or "").strip()
                 ]
                 if missing_text_fields:
                     return _emit_command_error(
@@ -2434,7 +2909,9 @@ def _validate_write_commands_shape(
                     )
         if command.get("type") == "create_edge":
             missing = [
-                field for field in ("source", "target", "link_type") if not command.get(field)
+                field
+                for field in ("source", "target", "link_type")
+                if not command.get(field)
             ]
             if missing:
                 return _emit_command_error(
@@ -2547,17 +3024,22 @@ def _canvas_generation_preflight_state(
         f"{quote(canvas, safe='')}",
     )
     if not response.get("ok", True):
-        return {}, [], {
-            "ok": False,
-            "status": "generation_parameter_preflight_unavailable",
-            "code": "generation_parameter_preflight_unavailable",
-            "error": response.get("error") or "failed to read canvas before generation",
-            "agent_instruction": (
-                "Do not write or run the canvas. Report that generation parameter "
-                "preflight could not read the current canvas, then retry only after the "
-                "canvas is available."
-            ),
-        }
+        return (
+            {},
+            [],
+            {
+                "ok": False,
+                "status": "generation_parameter_preflight_unavailable",
+                "code": "generation_parameter_preflight_unavailable",
+                "error": response.get("error")
+                or "failed to read canvas before generation",
+                "agent_instruction": (
+                    "Do not write or run the canvas. Report that generation parameter "
+                    "preflight could not read the current canvas, then retry only after the "
+                    "canvas is available."
+                ),
+            },
+        )
     current = response.get("data") if isinstance(response.get("data"), dict) else {}
     nodes = {
         str(node.get("id")): _clone_json(node)
@@ -2670,8 +3152,7 @@ def _external_generation_parameter_preflight(
             command.get("type") == "run_workflow"
             or (
                 command.get("type") == "run_node_action"
-                and str(command.get("action") or "")
-                in _GENERATION_ACTION_NODE_TYPES
+                and str(command.get("action") or "") in _GENERATION_ACTION_NODE_TYPES
             )
         )
     ]
@@ -2752,6 +3233,13 @@ def _external_generation_parameter_preflight(
             if required_fields is None:
                 continue
             data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            # Workflow graph approval is the single image/video parameter
+            # confirmation point. Re-running the workflow must reuse the
+            # persisted node configuration instead of opening another
+            # clarification card. Runtime capability preflight still runs
+            # below the write boundary and can reject unsupported values.
+            if data.get("workflowConfigConfirmed") is True:
+                continue
             if command_type == "run_workflow" and not raw_command.get("regenerate"):
                 output_key = "imageUrl" if node_type == "imageGenNode" else "videoUrl"
                 if isinstance(data.get(output_key), str) and data[output_key].strip():
@@ -2830,7 +3318,8 @@ def _approval_required_for_commands(commands: list[Any]) -> tuple[bool, list[str
 def _requires_frontend_canvas_executor(commands: list[Any]) -> bool:
     frontend_types = {"run_node_action", "run_workflow", "open_mainline_projection"}
     return any(
-        isinstance(command, dict) and str(command.get("type") or "").strip() in frontend_types
+        isinstance(command, dict)
+        and str(command.get("type") or "").strip() in frontend_types
         for command in commands
     )
 
@@ -2849,9 +3338,11 @@ def _command_summary(commands: list[Any]) -> dict[str, Any]:
                 {
                     "client_id": command.get("client_id"),
                     "node_type": command.get("node_type"),
-                    "displayName": (command.get("data") or {}).get("displayName")
-                    if isinstance(command.get("data"), dict)
-                    else None,
+                    "displayName": (
+                        (command.get("data") or {}).get("displayName")
+                        if isinstance(command.get("data"), dict)
+                        else None
+                    ),
                 }
             )
         if isinstance(command.get("node_ids"), list):
@@ -2910,7 +3401,9 @@ def _create_mcp_canvas_approval(
     }
     directory = _approval_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    _approval_path(approval_id).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    _approval_path(approval_id).write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
     return tool_result(
         {
             "ok": False,
@@ -2950,7 +3443,11 @@ def _dispatch_mcp_approved_frontend_commands(
         )
     external_mcp = os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
     profile = os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip()
-    agent_id = profile.removeprefix("freezone:").strip() if profile.startswith("freezone:") else "main"
+    agent_id = (
+        profile.removeprefix("freezone:").strip()
+        if profile.startswith("freezone:")
+        else "main"
+    )
     envelope = {
         "schema_version": "canvas_chat_commands.v1",
         "project_id": project,
@@ -2962,7 +3459,26 @@ def _dispatch_mcp_approved_frontend_commands(
     if external_mcp:
         envelope["agent_id"] = agent_id or "main"
         envelope["external_mcp_command"] = True
-    key = canvas_command_bridge_key(project_id=project, canvas_id=canvas, commands=commands)
+    # Dynamic workflow commands carry a stable workflowInstanceId on every
+    # create_node. Reuse one bridge key for identical retries so a lost MCP
+    # response cannot create a second approval or duplicate the graph.
+    is_workflow_batch = any(
+        isinstance(command, dict)
+        and command.get("type") == "create_node"
+        and isinstance(command.get("data"), dict)
+        and str(command["data"].get("workflowInstanceId") or "").strip()
+        for command in commands
+    )
+    if is_workflow_batch and canvas_command_idempotency_key is not None:
+        key = canvas_command_idempotency_key(
+            project_id=project,
+            canvas_id=canvas,
+            commands=commands,
+        )
+    else:
+        key = canvas_command_bridge_key(
+            project_id=project, canvas_id=canvas, commands=commands
+        )
     bridge_root = os.environ.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "").strip()
     # The worker launcher already gives each Hermes/Codex profile its
     # profile-scoped bridge directory (``.../freezone_freezone_main``). Do not
@@ -2970,7 +3486,7 @@ def _dispatch_mcp_approved_frontend_commands(
     # which the API's candidate-path resolver never polls, so the approval card
     # and the browser refresh both disappear.
     bridge_dir = Path(bridge_root) if bridge_root else None
-    put_pending_canvas_command(
+    immediate_result = put_pending_canvas_command(
         key=key,
         project_id=project,
         canvas_id=canvas,
@@ -2978,10 +3494,22 @@ def _dispatch_mcp_approved_frontend_commands(
         envelope=envelope,
         bridge_dir=bridge_dir,
     )
+    if immediate_result is not None:
+        return tool_result(
+            _summarize_canvas_command_result(
+                immediate_result,
+                bridge_key=key,
+                commands=commands,
+            )
+            if slim_result
+            else immediate_result
+        )
     try:
         timeout_seconds = max(
             1,
-            int(os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "300")),
+            int(
+                os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "300")
+            ),
         )
     except ValueError:
         timeout_seconds = 300
@@ -3005,7 +3533,10 @@ def _dispatch_mcp_approved_frontend_commands(
     resolved = wait_canvas_command_result(
         key,
         timeout_seconds=timeout_seconds,
-        timeout_result=timeout_result,
+        # A workflow confirmation is a durable project task. A tool-level wait
+        # timeout is not its business outcome; keep the bridge pending so a late
+        # browser result can still complete that task safely.
+        timeout_result=None if is_workflow_batch else timeout_result,
         bridge_dir=bridge_dir,
     )
     if resolved is not None:
@@ -3043,7 +3574,16 @@ def _dispatch_frontend_canvas_commands(
         "canvas_id": canvas,
         "commands": commands,
     }
-    key = canvas_command_bridge_key(project_id=project, canvas_id=canvas, commands=commands)
+    key = canvas_command_bridge_key(
+        project_id=project, canvas_id=canvas, commands=commands
+    )
+    is_workflow_batch = any(
+        isinstance(command, dict)
+        and command.get("type") == "create_node"
+        and isinstance(command.get("data"), dict)
+        and str(command["data"].get("workflowInstanceId") or "").strip()
+        for command in commands
+    )
     put_pending_canvas_command(
         key=key,
         project_id=project,
@@ -3054,7 +3594,9 @@ def _dispatch_frontend_canvas_commands(
     try:
         timeout_seconds = max(
             1,
-            int(os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "75")),
+            int(
+                os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "75")
+            ),
         )
     except ValueError:
         timeout_seconds = 75
@@ -3078,7 +3620,7 @@ def _dispatch_frontend_canvas_commands(
     resolved = wait_canvas_command_result(
         key,
         timeout_seconds=timeout_seconds,
-        timeout_result=timeout_result,
+        timeout_result=None if is_workflow_batch else timeout_result,
     )
     if resolved is not None:
         return tool_result(
@@ -3093,7 +3635,9 @@ def _dispatch_frontend_canvas_commands(
     return tool_result(timeout_result)
 
 
-def _read_mcp_canvas_approval(approval_id: str) -> tuple[dict[str, Any] | None, str | None]:
+def _read_mcp_canvas_approval(
+    approval_id: str,
+) -> tuple[dict[str, Any] | None, str | None]:
     path = _approval_path(approval_id)
     if not path.exists():
         return None, "approval not found or already handled"
@@ -3112,14 +3656,20 @@ def _read_mcp_canvas_approval(approval_id: str) -> tuple[dict[str, Any] | None, 
 
 
 def _handle_confirm_canvas_action(args: dict[str, Any], **_: Any) -> str:
-    approval_id = str(args.get("approval_id") or args.get("approvalId") or "").strip()
+    approval_id = str(args.get("approval_id") or "").strip()
     if not approval_id:
         return tool_result(
-            {"ok": False, "status": "approval_id_required", "error": "approval_id is required"}
+            {
+                "ok": False,
+                "status": "approval_id_required",
+                "error": "approval_id is required",
+            }
         )
     payload, error = _read_mcp_canvas_approval(approval_id)
     if error or payload is None:
-        return tool_result({"ok": False, "status": "approval_unavailable", "error": error})
+        return tool_result(
+            {"ok": False, "status": "approval_unavailable", "error": error}
+        )
     path = _approval_path(approval_id)
     try:
         path.unlink()
@@ -3136,7 +3686,9 @@ def _handle_confirm_canvas_action(args: dict[str, Any], **_: Any) -> str:
                 "error": "approval payload is missing project_id, canvas_id, or commands",
             }
         )
-    if not _mcp_direct_canvas_apply_enabled() or _requires_frontend_canvas_executor(commands):
+    if not _mcp_direct_canvas_apply_enabled() or _requires_frontend_canvas_executor(
+        commands
+    ):
         return _dispatch_mcp_approved_frontend_commands(
             project=project,
             canvas=canvas,
@@ -3152,14 +3704,20 @@ def _handle_confirm_canvas_action(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_cancel_canvas_action(args: dict[str, Any], **_: Any) -> str:
-    approval_id = str(args.get("approval_id") or args.get("approvalId") or "").strip()
+    approval_id = str(args.get("approval_id") or "").strip()
     if not approval_id:
         return tool_result(
-            {"ok": False, "status": "approval_id_required", "error": "approval_id is required"}
+            {
+                "ok": False,
+                "status": "approval_id_required",
+                "error": "approval_id is required",
+            }
         )
     payload, error = _read_mcp_canvas_approval(approval_id)
     if error or payload is None:
-        return tool_result({"ok": False, "status": "approval_unavailable", "error": error})
+        return tool_result(
+            {"ok": False, "status": "approval_unavailable", "error": error}
+        )
     try:
         _approval_path(approval_id).unlink()
     except OSError:
@@ -3201,15 +3759,25 @@ def _edge_id(source: str, target: str, link_type: str) -> str:
 
 def _default_link_type(source_type: str, target_type: str) -> str:
     if target_type in {"imageGenNode", "audioNode"}:
-        return "prompt_for" if source_type in {"textAnnotationNode", "scriptNode"} else "media_input_for"
+        return (
+            "prompt_for"
+            if source_type in {"textAnnotationNode", "scriptNode"}
+            else "media_input_for"
+        )
     if target_type == "videoNode":
-        return "media_input_for" if source_type in {"imageGenNode", "uploadNode"} else "prompt_for"
+        return (
+            "media_input_for"
+            if source_type in {"imageGenNode", "uploadNode"}
+            else "prompt_for"
+        )
     if target_type == "videoComposeNode":
         return "composition_input_for"
     return "context_for"
 
 
-def _apply_layout(nodes_by_id: dict[str, dict[str, Any]], node_ids: list[str], mode: str) -> None:
+def _apply_layout(
+    nodes_by_id: dict[str, dict[str, Any]], node_ids: list[str], mode: str
+) -> None:
     targets = [nodes_by_id[node_id] for node_id in node_ids if node_id in nodes_by_id]
     if len(targets) < 2:
         return
@@ -3258,7 +3826,9 @@ def _create_group_node(
     height = int(max_y - min_y + 160)
     group_id = str(uuid.uuid4())
     for node in members:
-        position = node.get("position") if isinstance(node.get("position"), dict) else {}
+        position = (
+            node.get("position") if isinstance(node.get("position"), dict) else {}
+        )
         node["parentId"] = group_id
         node["position"] = {
             "x": float(position.get("x") or 0) - group_x,
@@ -3303,8 +3873,12 @@ def _direct_apply_canvas_commands(
             }
         )
     current = response.get("data") if isinstance(response.get("data"), dict) else {}
-    nodes = _clone_json(current.get("nodes") if isinstance(current.get("nodes"), list) else [])
-    edges = _clone_json(current.get("edges") if isinstance(current.get("edges"), list) else [])
+    nodes = _clone_json(
+        current.get("nodes") if isinstance(current.get("nodes"), list) else []
+    )
+    edges = _clone_json(
+        current.get("edges") if isinstance(current.get("edges"), list) else []
+    )
     nodes_by_id = {
         str(node.get("id")): node
         for node in nodes
@@ -3326,7 +3900,11 @@ def _direct_apply_canvas_commands(
                 if client_id:
                     id_map[client_id] = node_id
                 width, height = _node_size(node_type)
-                position = command.get("position") if isinstance(command.get("position"), dict) else {}
+                position = (
+                    command.get("position")
+                    if isinstance(command.get("position"), dict)
+                    else {}
+                )
                 node = {
                     "id": node_id,
                     "type": node_type,
@@ -3346,11 +3924,16 @@ def _direct_apply_canvas_commands(
                 nodes_by_id[node_id] = node
                 created_node_ids.append(node_id)
                 command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied", "nodeId": node_id}
+                    {
+                        "commandIndex": index,
+                        "type": command_type,
+                        "status": "applied",
+                        "nodeId": node_id,
+                    }
                 )
             elif command_type == "add_next_node":
                 source = _resolve_command_node_ref(
-                    command.get("source_node_id") or command.get("sourceNodeId"), id_map
+                    command.get("source_node_id"), id_map
                 )
                 source_node = nodes_by_id.get(source)
                 if source_node is None:
@@ -3359,7 +3942,9 @@ def _direct_apply_canvas_commands(
                 node_id = str(uuid.uuid4())
                 width, height = _node_size(node_type)
                 source_position = (
-                    source_node.get("position") if isinstance(source_node.get("position"), dict) else {}
+                    source_node.get("position")
+                    if isinstance(source_node.get("position"), dict)
+                    else {}
                 )
                 node = {
                     "id": node_id,
@@ -3380,7 +3965,9 @@ def _direct_apply_canvas_commands(
                 nodes_by_id[node_id] = node
                 created_node_ids.append(node_id)
                 if command.get("connect", True):
-                    link_type = _default_link_type(str(source_node.get("type") or ""), node_type)
+                    link_type = _default_link_type(
+                        str(source_node.get("type") or ""), node_type
+                    )
                     edges.append(
                         {
                             "id": _edge_id(source, node_id, link_type),
@@ -3393,14 +3980,21 @@ def _direct_apply_canvas_commands(
                         }
                     )
                 command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied", "nodeId": node_id}
+                    {
+                        "commandIndex": index,
+                        "type": command_type,
+                        "status": "applied",
+                        "nodeId": node_id,
+                    }
                 )
             elif command_type == "create_edge":
                 source = _resolve_command_node_ref(command.get("source"), id_map)
                 target = _resolve_command_node_ref(command.get("target"), id_map)
                 link_type = str(command.get("link_type") or "context_for").strip()
                 if source not in nodes_by_id or target not in nodes_by_id:
-                    raise ValueError(f"edge source/target not found: {source} -> {target}")
+                    raise ValueError(
+                        f"edge source/target not found: {source} -> {target}"
+                    )
                 edge = {
                     "id": _edge_id(source, target, link_type),
                     "source": source,
@@ -3412,7 +4006,9 @@ def _direct_apply_canvas_commands(
                 }
                 edges = [item for item in edges if item.get("id") != edge["id"]]
                 edges.append(edge)
-                command_results.append({"commandIndex": index, "type": command_type, "status": "applied"})
+                command_results.append(
+                    {"commandIndex": index, "type": command_type, "status": "applied"}
+                )
             elif command_type == "group_nodes":
                 node_ids = [
                     _resolve_command_node_ref(item, id_map)
@@ -3439,8 +4035,12 @@ def _direct_apply_canvas_commands(
                     for item in command.get("node_ids", [])
                     if str(item or "").strip()
                 ]
-                _apply_layout(nodes_by_id, node_ids, str(command.get("mode") or "horizontal"))
-                command_results.append({"commandIndex": index, "type": command_type, "status": "applied"})
+                _apply_layout(
+                    nodes_by_id, node_ids, str(command.get("mode") or "horizontal")
+                )
+                command_results.append(
+                    {"commandIndex": index, "type": command_type, "status": "applied"}
+                )
             elif command_type == "select_nodes":
                 selected_ids = {
                     _resolve_command_node_ref(item, id_map)
@@ -3450,7 +4050,9 @@ def _direct_apply_canvas_commands(
                 for node in nodes:
                     if isinstance(node, dict):
                         node["selected"] = str(node.get("id") or "") in selected_ids
-                command_results.append({"commandIndex": index, "type": command_type, "status": "applied"})
+                command_results.append(
+                    {"commandIndex": index, "type": command_type, "status": "applied"}
+                )
             elif command_type == "update_node_data":
                 node_id = _resolve_command_node_ref(command.get("node_id"), id_map)
                 node = nodes_by_id.get(node_id)
@@ -3459,7 +4061,9 @@ def _direct_apply_canvas_commands(
                 data = node.get("data") if isinstance(node.get("data"), dict) else {}
                 data.update(_clone_json(command.get("data") or {}))
                 node["data"] = data
-                command_results.append({"commandIndex": index, "type": command_type, "status": "applied"})
+                command_results.append(
+                    {"commandIndex": index, "type": command_type, "status": "applied"}
+                )
             elif command_type == "delete_nodes":
                 delete_ids = {
                     _resolve_command_node_ref(item, id_map)
@@ -3467,18 +4071,25 @@ def _direct_apply_canvas_commands(
                     if str(item or "").strip()
                 }
                 if delete_ids:
-                    nodes = [node for node in nodes if str(node.get("id") or "") not in delete_ids]
+                    nodes = [
+                        node
+                        for node in nodes
+                        if str(node.get("id") or "") not in delete_ids
+                    ]
                     edges = [
                         edge
                         for edge in edges
-                        if edge.get("source") not in delete_ids and edge.get("target") not in delete_ids
+                        if edge.get("source") not in delete_ids
+                        and edge.get("target") not in delete_ids
                     ]
                     nodes_by_id = {
                         str(node.get("id")): node
                         for node in nodes
                         if isinstance(node, dict) and str(node.get("id") or "").strip()
                     }
-                command_results.append({"commandIndex": index, "type": command_type, "status": "applied"})
+                command_results.append(
+                    {"commandIndex": index, "type": command_type, "status": "applied"}
+                )
             elif command_type == "delete_edges":
                 source = _resolve_command_node_ref(command.get("source"), id_map)
                 target = _resolve_command_node_ref(command.get("target"), id_map)
@@ -3486,15 +4097,27 @@ def _direct_apply_canvas_commands(
                     edges = [
                         edge
                         for edge in edges
-                        if not (edge.get("source") == source and edge.get("target") == target)
+                        if not (
+                            edge.get("source") == source
+                            and edge.get("target") == target
+                        )
                     ]
-                command_results.append({"commandIndex": index, "type": command_type, "status": "applied"})
+                command_results.append(
+                    {"commandIndex": index, "type": command_type, "status": "applied"}
+                )
             else:
-                raise ValueError(f"{command_type} is not supported by direct MCP canvas apply")
+                raise ValueError(
+                    f"{command_type} is not supported by direct MCP canvas apply"
+                )
         except Exception as exc:
             errors.append(f"commands[{index}]: {exc}")
             command_results.append(
-                {"commandIndex": index, "type": command_type or "unknown", "status": "error", "error": str(exc)}
+                {
+                    "commandIndex": index,
+                    "type": command_type or "unknown",
+                    "status": "error",
+                    "error": str(exc),
+                }
             )
             break
 
@@ -3558,7 +4181,11 @@ def _direct_apply_canvas_commands(
         "opened_ui_actions": 0,
         "created_node_ids": created_node_ids,
         "command_results": command_results,
-        "revision": (saved.get("data") or {}).get("revision") if isinstance(saved.get("data"), dict) else None,
+        "revision": (
+            (saved.get("data") or {}).get("revision")
+            if isinstance(saved.get("data"), dict)
+            else None
+        ),
         "message": "Canvas commands were applied directly by the local MCP server.",
         "agent_instruction": "The canvas change has already been applied. Report success briefly.",
     }
@@ -3586,9 +4213,8 @@ def _emit_canvas_commands(
         return _emit_command_error(
             project, canvas, "empty_commands", "commands must be a non-empty array"
         )
-    if (
-        not allow_dynamic_workflow_batch
-        and _looks_like_handwritten_workflow_batch(commands)
+    if not allow_dynamic_workflow_batch and _looks_like_handwritten_workflow_batch(
+        commands
     ):
         return _emit_command_error(
             project,
@@ -3597,9 +4223,9 @@ def _emit_canvas_commands(
             (
                 "This looks like a workflow being hand-written as canvas commands. "
                 "Do not use canvas commands to bypass dynamic WorkflowPlan validation. Select "
-                "one native Hermes Skill, load it with freezone_get_workflow_skill(compact=true), "
+                "one native Hermes Skill, load it with freezone_get_workflow_skill, "
                 "author a complete freezone_workflow_plan.v1 with explicit Recipe ids, then call "
-                "freezone_create_workflow_graph(plan=...)."
+                "freezone_prepare_workflow_plan_draft(plan=...)."
             ),
         )
     project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
@@ -3720,12 +4346,8 @@ def _handle_emit_canvas_command(args: dict[str, Any], **_: Any) -> str:
         args, ("project", "canvasId", "body", "envelope")
     ):
         return tool_result(legacy_error)
-    project = (
-        str(args.get("project_id") or _default_project_id()).strip() or None
-    )
-    canvas = (
-        str(args.get("canvas_id") or _default_canvas_id()).strip() or None
-    )
+    project = str(args.get("project_id") or _default_project_id()).strip() or None
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
     commands = args.get("commands")
     return _emit_canvas_commands(project, canvas, commands, slim_result=True)
 
@@ -3747,8 +4369,7 @@ def _handle_get_workflow_skill(args: dict[str, Any], **_: Any) -> str:
             "Next step: compile the intent from this package only (deliverable, "
             "recipes, and field enums come from here) and call "
             "freezone_prepare_workflow_draft through tool_call, writing the "
-            "\"name\" field BEFORE \"arguments\". planning_confirmed=true goes at "
-            "the TOP LEVEL of arguments, not inside intent. If include_audio=true, "
+            '"name" field BEFORE "arguments". If include_audio=true, '
             "EVERY planner unit must carry narration with the literal voice-over "
             "text for that unit.",
         )
@@ -3758,7 +4379,7 @@ def _handle_get_workflow_skill(args: dict[str, Any], **_: Any) -> str:
     )
 
 
-def _handle_create_workflow_graph(args: dict[str, Any], **_: Any) -> str:
+def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     if build_workflow_graph_commands is None:
         return tool_error(
             "Freezone workflow graph builder is unavailable. "
@@ -3773,9 +4394,9 @@ def _handle_create_workflow_graph(args: dict[str, Any], **_: Any) -> str:
                 "error": "plan must be a complete freezone_workflow_plan.v1 object",
                 "message": "当前仅支持动态工作流，请先基于 Skill 和 Recipe 生成完整 WorkflowPlan。",
                 "agent_instruction": (
-                    "Load the selected Skill with freezone_get_workflow_skill(compact=true), "
+                    "Load the selected Skill with freezone_get_workflow_skill, "
                     "author one complete freezone_workflow_plan.v1 with explicit Recipe ids, "
-                    "then call freezone_create_workflow_graph(plan=...). Do not retry with "
+                    "then call freezone_prepare_workflow_plan_draft(plan=...). Do not retry with "
                     "workflow_type, count, items, or handwritten canvas commands."
                 ),
             }
@@ -3788,19 +4409,15 @@ def _handle_create_workflow_graph(args: dict[str, Any], **_: Any) -> str:
     validated = validate_agent_workflow_plan(args["plan"])
     if not validated.get("ok"):
         return tool_result(validated)
-    project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
-    )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
+    project, canvas, scope_error = _workflow_draft_scope(args)
+    if scope_error:
+        return tool_result(scope_error)
+    assert project is not None and canvas is not None
     preflight = _workflow_runtime_preflight(
-        {
-            "plan": args["plan"],
-            "preflight": {"status": "ready", "blockers": [], "warnings": []},
-        },
-        project_id=project or "",
+        validated,
+        project_id=project,
     )
+    validated["preflight"] = preflight
     if preflight["blockers"]:
         return tool_result(
             {
@@ -3810,17 +4427,44 @@ def _handle_create_workflow_graph(args: dict[str, Any], **_: Any) -> str:
                 "preflight": preflight,
             }
         )
-    built = build_workflow_graph_commands(args)
-    if not built.get("ok"):
-        return tool_result(built)
-    commands = built.get("commands")
-    return _emit_canvas_commands(
-        project,
-        canvas,
-        commands,
-        allow_dynamic_workflow_batch=True,
-        slim_result=True,
+    run_after_create = _run_after_create_arg(args)
+    operation_id = str(args.get("operation_id") or "").strip()
+    if not operation_id and _available():
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_result_admission_required",
+                "error": "Call freezone_begin_agent_product_generation before authoring the plan.",
+                "next_action": "begin_workflow_result_generation",
+            }
+        )
+    source = {
+        "schema_version": "freezone_workflow_plan_draft.v1",
+        "plan": validated["plan"],
+    }
+    payload, error = _workflow_draft_response(
+        _request(
+            "POST",
+            _workflow_draft_api_path(project, canvas),
+            body={
+                "intent": source,
+                "compiled": validated,
+                "run_after_create": bool(run_after_create),
+                "operation_id": operation_id,
+            },
+        )
     )
+    if payload is None:
+        return tool_result(error)
+    result = public_workflow_draft(payload)
+    result["agent_instruction"] = (
+        "Present the exact custom topology preview and its node/edge counts. "
+        "Do not mention credits, billing, pricing, or editions. "
+        "Wait for user confirmation, then call freezone_confirm_workflow_draft with the exact "
+        "draft_id and revision. To change the topology, prepare a new complete Plan draft; never "
+        "fall back to direct canvas commands."
+    )
+    return tool_result(result)
 
 
 def _workflow_draft_dependencies_available() -> bool:
@@ -3844,26 +4488,24 @@ def _workflow_draft_unavailable() -> str:
 def _run_after_create_arg(args: dict[str, Any]) -> bool | None:
     if "run_after_create" in args:
         return bool(args.get("run_after_create"))
-    if "runAfterCreate" in args:
-        return bool(args.get("runAfterCreate"))
     return None
 
 
 def _workflow_draft_scope(
     args: dict[str, Any],
 ) -> tuple[str | None, str | None, dict[str, Any] | None]:
-    project_id = str(
-        args.get("project_id") or args.get("project") or _default_project_id()
-    ).strip()
-    canvas_id = str(
-        args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()
-    ).strip()
+    project_id = str(args.get("project_id") or _default_project_id()).strip()
+    canvas_id = str(args.get("canvas_id") or _default_canvas_id()).strip()
     if not project_id or not canvas_id:
-        return None, None, {
-            "ok": False,
-            "status": "workflow_draft_scope_required",
-            "error": "project_id and canvas_id are required for persisted workflow drafts",
-        }
+        return (
+            None,
+            None,
+            {
+                "ok": False,
+                "status": "workflow_draft_scope_required",
+                "error": "project_id and canvas_id are required for persisted workflow drafts",
+            },
+        )
     return project_id, canvas_id, None
 
 
@@ -3884,15 +4526,198 @@ def _workflow_draft_api_path(
     return path
 
 
-def _agent_planning_quote_path(project_id: str) -> str:
-    return f"/projects/{quote(project_id, safe='')}/freezone/agent-capability-quote"
+def _agent_product_operation_api_path(
+    project_id: str, operation_id: str = "", suffix: str = ""
+) -> str:
+    path = f"/projects/{quote(project_id, safe='')}/freezone/agent-product-operations"
+    if operation_id:
+        path += f"/{quote(operation_id, safe='')}"
+    if suffix:
+        path += f"/{suffix}"
+    return path
 
 
-def _planning_confirmed_arg(args: dict[str, Any]) -> bool:
-    return args.get("planning_confirmed") is True or args.get("planningConfirmed") is True
+def _agent_generation_session_api_path(project_id: str, session_id: str) -> str:
+    return (
+        f"/projects/{quote(project_id, safe='')}/freezone/agent-generation-sessions/"
+        f"{quote(session_id, safe='')}"
+    )
 
 
-def _normalize_workflow_intent_arg(args: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+def _persist_skill_studio_session(draft: dict[str, Any]) -> dict[str, Any]:
+    project_id = str(draft.get("project_id") or "").strip()
+    session_id = str(
+        (draft.get("manifest") or {}).get("generation_session_id") or ""
+    ).strip()
+    if not _available():
+        return {"ok": True, "status": "local_unmetered_session"}
+    if not project_id or not session_id:
+        return {"ok": False, "status": "generation_session_scope_required"}
+    return _request(
+        "PUT",
+        _agent_generation_session_api_path(project_id, session_id),
+        body={
+            "canvas_id": str(draft.get("canvas_id") or ""),
+            "manifest": draft.get("manifest") or {},
+            "draft": draft,
+        },
+    )
+
+
+def _load_skill_studio_session(
+    project_id: str, session_id: str
+) -> dict[str, Any] | None:
+    if not project_id or not session_id or not _available():
+        return None
+    response = _request(
+        "GET", _agent_generation_session_api_path(project_id, session_id)
+    )
+    data = response.get("data") if isinstance(response.get("data"), dict) else None
+    draft = (
+        data.get("draft")
+        if isinstance(data, dict) and isinstance(data.get("draft"), dict)
+        else None
+    )
+    if draft is not None:
+        _PENDING_SKILL_STUDIO_DRAFTS[session_id] = draft
+    return draft
+
+
+def _handle_begin_agent_product_generation(args: dict[str, Any], **_: Any) -> str:
+    project_id, canvas_id, scope_error = _workflow_draft_scope(args)
+    if scope_error:
+        return tool_result(scope_error)
+    assert project_id is not None and canvas_id is not None
+    product_kind = str(args.get("product_kind") or "").strip()
+    session_id = str(args.get("generation_session_id") or "").strip()
+    normalized_inputs = (
+        args.get("normalized_inputs")
+        if isinstance(args.get("normalized_inputs"), dict)
+        else {}
+    )
+    digest = hashlib.sha256(
+        json.dumps(
+            normalized_inputs,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    response = _request(
+        "POST",
+        _agent_product_operation_api_path(project_id),
+        body={
+            "product_kind": product_kind,
+            "generation_session_id": session_id,
+            "canvas_id": canvas_id,
+            "artifact_id": str(args.get("artifact_id") or "").strip(),
+            "normalized_inputs_hash": digest,
+            "metadata": {
+                "skill_id": str(args.get("skill_id") or "").strip(),
+                "skill_version": str(args.get("skill_version") or "").strip(),
+            },
+        },
+    )
+    payload = response.get("data") if isinstance(response.get("data"), dict) else None
+    if not response.get("ok") or payload is None:
+        return tool_result(response)
+    return _structured_tool_result(
+        {
+            "ok": True,
+            "status": "agent_product_generation_admitted",
+            **payload,
+            "confirmation_required": False,
+            "next_action": "generate_product_result",
+            "agent_instruction": (
+                "Generation admission succeeded. Produce only the declared product result, "
+                "then submit it through the matching persisted result tool with this exact "
+                "operation_id. Reuse it only for transport retries before the operation becomes "
+                "terminal. A later regeneration requires a new generation attempt and operation."
+            ),
+        },
+        tool_name="freezone_begin_agent_product_generation",
+    )
+
+
+def _finish_agent_product_generation(
+    project_id: str,
+    operation: dict[str, Any],
+    *,
+    outcome: str,
+    result_ref: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not _available():
+        return {"ok": True, "status": outcome}
+    return _request(
+        "POST",
+        _agent_product_operation_api_path(
+            project_id, str(operation.get("operation_id") or ""), "finish"
+        ),
+        body={
+            "outcome": outcome,
+            "task_id": str(operation.get("task_id") or ""),
+            "result_ref": result_ref or {},
+        },
+    )
+
+
+def _reject_unavailable_product_operation(
+    project_id: str,
+    operation: dict[str, Any],
+    *,
+    product_kind: str,
+    session_id: str,
+) -> dict[str, Any] | None:
+    """Reject stale product delivery before mutating a persisted Studio draft."""
+    if not _available():
+        return None
+    operation_id = str(operation.get("operation_id") or "").strip()
+    if not project_id or not operation_id:
+        return {
+            "ok": False,
+            "status": "agent_product_generation_admission_required",
+            "error": "A durable product operation is required before submitting a result.",
+            "skill_studio_session_id": session_id,
+        }
+    response = _request(
+        "GET",
+        _agent_product_operation_api_path(project_id, operation_id),
+    )
+    current = response.get("data") if isinstance(response.get("data"), dict) else None
+    if not response.get("ok") or current is None:
+        return response
+    if current.get("product_kind") != product_kind:
+        return {
+            "ok": False,
+            "status": "agent_product_generation_operation_mismatch",
+            "error": "The admitted operation does not match this generated product.",
+            "skill_studio_session_id": session_id,
+        }
+    if current.get("status") in {"delivered", "failed", "cancelled"}:
+        return {
+            "ok": False,
+            "status": "agent_product_generation_attempt_required",
+            "error": (
+                "This generation attempt is already terminal. Start a new attempt with a new "
+                "generation_attempt_id before submitting another result."
+            ),
+            "skill_studio_session_id": session_id,
+            "operation_id": operation_id,
+        }
+    if current.get("status") not in {"reserved", "running", "accepted", "submitted"}:
+        return {
+            "ok": False,
+            "status": "agent_product_generation_not_admitted",
+            "error": "The product operation is not ready to accept a generated result.",
+            "skill_studio_session_id": session_id,
+            "operation_id": operation_id,
+        }
+    return None
+
+
+def _normalize_workflow_intent_arg(
+    args: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Normalize structured intent input and return an actionable validation error."""
 
     raw_intent = args.get("intent")
@@ -3900,13 +4725,6 @@ def _normalize_workflow_intent_arg(args: dict[str, Any]) -> tuple[dict[str, Any]
         return None, None
     if isinstance(raw_intent, dict):
         return raw_intent, None
-    if isinstance(raw_intent, str):
-        try:
-            decoded = json.loads(raw_intent)
-        except json.JSONDecodeError:
-            decoded = None
-        if isinstance(decoded, dict):
-            return decoded, None
     return None, {
         "ok": False,
         "status": "workflow_intent_object_required",
@@ -3923,88 +4741,6 @@ def _normalize_workflow_intent_arg(args: dict[str, Any]) -> tuple[dict[str, Any]
             "including skill_id and user_goal."
         ),
     }
-
-
-def _agent_planning_confirmation_result(
-    project_id: str,
-    *,
-    requested_tool: str = "freezone_prepare_workflow_draft",
-    has_intent: bool = False,
-) -> str:
-    response = _request(
-        "POST",
-        _agent_planning_quote_path(project_id),
-        body={"feature_key": "freezone.agent.creative_planning"},
-    )
-    if not response.get("ok"):
-        return tool_result(response)
-    quote_payload = response.get("data")
-    if not isinstance(quote_payload, dict):
-        return tool_result(
-            {
-                "ok": False,
-                "status": "agent_planning_quote_unavailable",
-                "error": "Agent planning quote API returned an invalid payload",
-            }
-        )
-    if quote_payload.get("billing_required") is False:
-        return tool_result(
-            {
-                "ok": True,
-                "status": "agent_planning_billing_not_required",
-                "agent_instruction": (
-                    "Agent capability billing is not enabled on this edition. Do not mention "
-                    "credits, billing, pricing, editions, or confirmation to the user. "
-                    + (
-                        "Continue the original workflow request in this same turn: retry the "
-                        f"same {requested_tool} call with the same arguments plus top-level "
-                        "planning_confirmed=true (not inside intent)."
-                        if has_intent or requested_tool != "freezone_prepare_workflow_draft"
-                        else "Continue the original workflow request in this same turn: first "
-                        "call freezone_get_workflow_skill(skill_id=..., compact=true) to read "
-                        "the planning package (do NOT invent intent fields such as deliverable "
-                        "without it), then compile the full intent and call "
-                        "freezone_prepare_workflow_draft with top-level planning_confirmed=true "
-                        "(not inside intent)."
-                    )
-                ),
-            }
-        )
-    if quote_payload.get("configured") is not True or quote_payload.get("exact") is not True:
-        return tool_result(
-            {
-                "ok": False,
-                "status": "agent_planning_price_not_configured",
-                "quote": quote_payload,
-                "error": "Agent 创意规划价格尚未配置。",
-                "message": (
-                    f"Agent 创意规划当前参考价格为 "
-                    f"{quote_payload.get('reference_display') or '5–40 积分'}，"
-                    "但尚未配置可实际扣除的价格。"
-                ),
-                "agent_instruction": (
-                    "Tell the user that Agent creative planning cannot start because its exact "
-                    "credit price is not configured. Show quote.reference_display only as a "
-                    "reference range. Do not describe the charge as zero or free, do not compile "
-                    "a plan, and do not retry with planning_confirmed=true."
-                ),
-            }
-        )
-    return tool_result(
-        {
-            "ok": True,
-            "status": "agent_planning_confirmation_required",
-            "quote": quote_payload,
-            "message": "本次请求将生成一份新的创意规划方案，需要先确认 Agent 积分。",
-            "agent_instruction": (
-                "Show quote.display as the exact planning charge and ask the user to confirm. "
-                "Stop this turn without compiling, preparing, patching, or creating a workflow. "
-                "Only after an explicit user confirmation, call the same requested workflow draft "
-                "tool once with planning_confirmed=true. Do not treat the original request itself "
-                "as billing confirmation."
-            ),
-        }
-    )
 
 
 def _workflow_draft_response(
@@ -4028,6 +4764,7 @@ def _finish_workflow_draft(
     draft_id: str,
     *,
     outcome: str,
+    task_id: str = "",
 ) -> None:
     _request(
         "POST",
@@ -4037,7 +4774,7 @@ def _finish_workflow_draft(
             draft_id,
             "finish",
         ),
-        body={"outcome": outcome},
+        body={"outcome": outcome, **({"task_id": task_id} if task_id else {})},
     )
 
 
@@ -4078,12 +4815,14 @@ def _workflow_node_capability_blockers(
             "quality": ("qualityOptions", True),
         }
         if node_type == "imageGenNode"
-        else {
-            "aspectRatio": ("ratioOptions", False),
-            "quality": ("resolutionOptions", True),
-        }
-        if node_type == "videoNode"
-        else {}
+        else (
+            {
+                "aspectRatio": ("ratioOptions", False),
+                "quality": ("resolutionOptions", True),
+            }
+            if node_type == "videoNode"
+            else {}
+        )
     )
     blockers: list[dict[str, Any]] = []
     for field, (catalog_key, case_insensitive) in field_options.items():
@@ -4201,22 +4940,26 @@ def _workflow_runtime_preflight(
                 )
                 continue
             raw_models = response.get("data")
-            catalog_by_id = {
-                str(
-                    item.get("id")
-                    or item.get("apiModel")
-                    or item.get("api_model")
-                    or ""
-                ).strip(): item
-                for item in raw_models
-                if isinstance(item, dict)
-                and str(
-                    item.get("id")
-                    or item.get("apiModel")
-                    or item.get("api_model")
-                    or ""
-                ).strip()
-            } if isinstance(raw_models, list) else {}
+            catalog_by_id = (
+                {
+                    str(
+                        item.get("id")
+                        or item.get("apiModel")
+                        or item.get("api_model")
+                        or ""
+                    ).strip(): item
+                    for item in raw_models
+                    if isinstance(item, dict)
+                    and str(
+                        item.get("id")
+                        or item.get("apiModel")
+                        or item.get("api_model")
+                        or ""
+                    ).strip()
+                }
+                if isinstance(raw_models, list)
+                else {}
+            )
             missing = sorted(requested - set(catalog_by_id))
             checks[f"{node_type}.models"] = {
                 "requested": sorted(requested),
@@ -4243,14 +4986,17 @@ def _workflow_runtime_preflight(
         )
         lane_demand = {
             "default": sum(
-                1 for node in nodes
+                1
+                for node in nodes
                 if isinstance(node, dict)
                 and (
                     node.get("node_type") in {"imageGenNode", "audioNode"}
                     or (
                         node.get("node_type")
                         in {"textAnnotationNode", "scriptNode", "beatContextNode"}
-                        and isinstance((node.get("data") or {}).get("workflowCatalog"), dict)
+                        and isinstance(
+                            (node.get("data") or {}).get("workflowCatalog"), dict
+                        )
                         and str(
                             ((node.get("data") or {}).get("workflowCatalog") or {}).get(
                                 "recipeId"
@@ -4261,12 +5007,15 @@ def _workflow_runtime_preflight(
                 )
             ),
             "video": sum(
-                1 for node in nodes
+                1
+                for node in nodes
                 if isinstance(node, dict) and node.get("node_type") == "videoNode"
             ),
             "ffmpeg": sum(
-                1 for node in nodes
-                if isinstance(node, dict) and node.get("node_type") == "videoComposeNode"
+                1
+                for node in nodes
+                if isinstance(node, dict)
+                and node.get("node_type") == "videoComposeNode"
             ),
         }
         if limits.get("ok") is False or not isinstance(limits.get("data"), dict):
@@ -4319,7 +5068,7 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     if scope_error:
         return tool_result(scope_error)
     assert project_id is not None and canvas_id is not None
-    if any(str(args.get(key) or "").strip() for key in ("draft_id", "draftId")):
+    if str(args.get("draft_id") or "").strip():
         return tool_result(
             {
                 "ok": False,
@@ -4336,44 +5085,16 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     intent, intent_error = _normalize_workflow_intent_arg(args)
     if intent_error is not None:
         return tool_result(intent_error)
-    if not _planning_confirmed_arg(args):
-        return _agent_planning_confirmation_result(project_id, has_intent=intent is not None)
-    if intent is None:
-        # 模型常把 intent 字段(尤其 planner)平铺在 arguments 顶层而不包进 intent；
-        # 确认之后语义无歧义,直接收拢,省一次报错往返。报价阶段(未确认)不做
-        # 收拢——那时应引导先读规划包,而不是拿自造字段去编译。
-        flattened = {
-            key: args[key]
-            for key in (
-                "schema_version",
-                "skill_id",
-                "user_goal",
-                "planner",
-                "items",
-                "inputs",
-                "assumptions",
-                "include_audio",
-                "include_compose",
-                "summary",
-                "title",
-            )
-            if args.get(key) is not None
-        }
-        if isinstance(flattened.get("planner"), dict) or isinstance(
-            flattened.get("items"), list
-        ):
-            intent = flattened
     if intent is None:
         return tool_result(
             {
                 "ok": False,
-                "status": "workflow_intent_required_after_confirmation",
-                "code": "workflow_intent_required_after_confirmation",
-                "error": "确认规划报价后，必须提供完整的 intent 对象才能生成草稿。",
+                "status": "workflow_intent_required",
+                "code": "workflow_intent_required",
+                "error": "必须提供完整的 intent 对象。",
                 "agent_instruction": (
-                    "Call freezone_prepare_workflow_draft exactly once with "
-                    "planning_confirmed=true and a structured intent object containing "
-                    "skill_id and user_goal."
+                    "Read the selected Workflow Skill, then call this tool with a structured "
+                    "intent object."
                 ),
             }
         )
@@ -4392,6 +5113,16 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             }
         )
     run_after_create = _run_after_create_arg(args)
+    operation_id = str(args.get("operation_id") or "").strip()
+    if not operation_id and _available():
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_result_admission_required",
+                "error": "Call freezone_begin_agent_product_generation before generating intent.",
+                "next_action": "begin_workflow_result_generation",
+            }
+        )
     payload, error = _workflow_draft_response(
         _request(
             "POST",
@@ -4400,25 +5131,17 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 "intent": intent,
                 "compiled": compiled,
                 "run_after_create": bool(run_after_create),
-                "planning_confirmed": True,
+                "operation_id": operation_id,
             },
         )
     )
     if payload is None:
         return tool_result(error)
     result = public_workflow_draft(payload)
-    billing_instruction = (
-        "Before asking for confirmation, state that this delivered planning turn is billed under "
-        "agent_planning_charge.display, then present agent_credit_estimate.display as the "
-        "additional estimated Agent credits charged only after workflow creation is confirmed. "
-        "State that image, audio, and video generation credits are charged separately. "
-        if result.get("agent_planning_charge") and result.get("agent_credit_estimate")
-        else "Do not mention credits, billing, pricing, or editions. "
-    )
     result["agent_instruction"] = (
         "Present the exact preview in product language, including each node's "
         "preview.recipe_pipelines order as 主 Recipe → 补充 Recipe. Before asking for confirmation, "
-        f"{billing_instruction}"
+        "do not mention credits, billing, pricing, or editions. "
         "Wait for user confirmation. "
         "For adjustments, patch this draft instead of rebuilding the intent. "
         "After confirmation, call freezone_confirm_workflow_draft with draft_id and revision."
@@ -4433,7 +5156,7 @@ def _handle_patch_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     if scope_error:
         return tool_result(scope_error)
     assert project_id is not None and canvas_id is not None
-    draft_id = str(args.get("draft_id") or args.get("draftId") or "").strip()
+    draft_id = str(args.get("draft_id") or "").strip()
     if not draft_id:
         return tool_result(
             {
@@ -4442,24 +5165,17 @@ def _handle_patch_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 "error": "draft_id is required",
             }
         )
-    if not _planning_confirmed_arg(args):
-        return _agent_planning_confirmation_result(
-            project_id, requested_tool="freezone_patch_workflow_draft"
-        )
     changes = args.get("changes")
-    if not isinstance(changes, dict):
-        # 模型常把 changes 写成 patch/intent_updates/updates；语义无歧义，直接接受。
-        for alias in ("patch", "intent_updates", "intentUpdates", "updates"):
-            candidate = args.get(alias)
-            if isinstance(candidate, dict):
-                changes = candidate
-                break
-    raw_revision = args.get("expected_revision", args.get("expectedRevision"))
+    raw_revision = args.get("expected_revision")
     problems = []
     if not isinstance(changes, dict):
-        problems.append("changes must be an object holding only the changed intent fields")
+        problems.append(
+            "changes must be an object holding only the changed intent fields"
+        )
     if raw_revision is None:
-        problems.append("expected_revision (the current draft revision integer) is required")
+        problems.append(
+            "expected_revision (the current draft revision integer) is required"
+        )
     expected_revision = None
     if raw_revision is not None:
         try:
@@ -4476,14 +5192,13 @@ def _handle_patch_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 "expected_arguments": {
                     "draft_id": "<current draft_id>",
                     "expected_revision": "<current revision integer>",
-                    "planning_confirmed": True,
                     "changes": {"<changed intent field>": "<new value>"},
                 },
                 "agent_instruction": (
                     "Retry freezone_patch_workflow_draft exactly once with ALL of: "
                     "draft_id, integer expected_revision matching the current draft "
-                    "revision, top-level planning_confirmed=true, and changes as an "
-                    "object holding only the changed intent fields. Apply every "
+                    "revision and changes as an object holding only the changed intent "
+                    "fields. Apply every "
                     "requested change in this single call."
                 ),
             }
@@ -4523,7 +5238,6 @@ def _handle_patch_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             _workflow_draft_api_path(project_id, canvas_id, draft_id),
             body={
                 "expected_revision": expected_revision,
-                "planning_confirmed": True,
                 **patch_body,
             },
         )
@@ -4532,18 +5246,10 @@ def _handle_patch_workflow_draft(args: dict[str, Any], **_: Any) -> str:
         return tool_result(error)
     result = public_workflow_draft(payload)
     result["status"] = "workflow_draft_updated"
-    billing_instruction = (
-        "State that this updated planning turn is billed under agent_planning_charge.display. "
-        "Present agent_credit_estimate.display as the additional workflow creation estimate before "
-        "asking for confirmation, and state that image, audio, and video generation credits are "
-        "charged separately. "
-        if result.get("agent_planning_charge") and result.get("agent_credit_estimate")
-        else "Do not mention credits, billing, pricing, or editions. "
-    )
     result["agent_instruction"] = (
         "Present only the resulting product-level changes and updated preview, including any "
         "changed 主 Recipe → 补充 Recipe order from preview.recipe_pipelines. "
-        f"{billing_instruction}"
+        "Do not mention credits, billing, pricing, or editions. "
         "Keep using this draft_id and revision for further adjustments or confirmation."
     )
     return tool_result(result)
@@ -4568,7 +5274,7 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     if scope_error:
         return tool_result(scope_error)
     assert project_id is not None and canvas_id is not None
-    draft_id = str(args.get("draft_id") or args.get("draftId") or "").strip()
+    draft_id = str(args.get("draft_id") or "").strip()
     if not draft_id:
         return tool_result(
             {
@@ -4596,6 +5302,23 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 "error": "revision must be an integer",
             }
         )
+    current_payload, current_error = _workflow_draft_response(
+        _request(
+            "GET",
+            _workflow_draft_api_path(project_id, canvas_id, draft_id),
+        )
+    )
+    if current_payload is None:
+        return tool_result(current_error)
+    if int(current_payload.get("revision") or 0) != revision:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_draft_revision_conflict",
+                "error": "workflow draft revision changed before confirmation",
+                "current_revision": current_payload.get("revision"),
+            }
+        )
     payload, claim_result = _workflow_draft_response(
         _request(
             "POST",
@@ -4605,12 +5328,19 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     )
     if payload is None:
         return tool_result(claim_result)
-    explicit_project = str(args.get("project_id") or args.get("project") or "").strip()
-    explicit_canvas = str(args.get("canvas_id") or args.get("canvasId") or "").strip()
+    confirmation_task_id = str(payload.get("task_id") or "").strip()
+    explicit_project = str(args.get("project_id") or "").strip()
+    explicit_canvas = str(args.get("canvas_id") or "").strip()
     stored_project = str(payload.get("project_id") or "").strip()
     stored_canvas = str(payload.get("canvas_id") or "").strip()
     if explicit_project and stored_project and explicit_project != stored_project:
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
         return tool_result(
             {
                 "ok": False,
@@ -4619,7 +5349,13 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             }
         )
     if explicit_canvas and stored_canvas and explicit_canvas != stored_canvas:
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
         return tool_result(
             {
                 "ok": False,
@@ -4630,13 +5366,21 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     run_after_create = _run_after_create_arg(args)
     if run_after_create is None:
         run_after_create = bool(payload.get("run_after_create"))
-    compiled = payload.get("compiled") if isinstance(payload.get("compiled"), dict) else {}
+    compiled = (
+        payload.get("compiled") if isinstance(payload.get("compiled"), dict) else {}
+    )
     preflight = _workflow_runtime_preflight(
         compiled,
         project_id=explicit_project or stored_project,
     )
     if preflight["blockers"]:
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
         return tool_result(
             {
                 "ok": False,
@@ -4654,8 +5398,36 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
         }
     )
     if not built.get("ok"):
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
         return tool_result(built)
+    if isinstance(built.get("skipped_edges"), list) and built["skipped_edges"]:
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_graph_incomplete",
+                "code": "workflow_edges_skipped",
+                "error": "workflow graph contains invalid or unresolved edge endpoints",
+                "skipped_edges": built["skipped_edges"][:12],
+                "agent_instruction": (
+                    "Do not submit a reduced graph or retry with empty edges. Correct the same "
+                    "complete WorkflowPlan so every edge source and target matches a node id, "
+                    "then submit it once."
+                ),
+            }
+        )
     try:
         result = _emit_canvas_commands(
             explicit_project or stored_project or _default_project_id() or None,
@@ -4665,65 +5437,43 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             slim_result=True,
         )
     except Exception:
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
         raise
     result_payload = _tool_result_payload(result)
-    if result_payload and result_payload.get("ok"):
-        outcome = (
-            "submitted"
-            if result_payload.get("canvas_apply_status") == "timeout"
-            else "confirmed"
+    if result_payload and result_payload.get("canvas_apply_status") == "timeout":
+        # The durable task remains active. The browser may reconnect and report
+        # the authoritative canvas result after this tool call has returned.
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="submitted",
+            task_id=confirmation_task_id,
         )
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome=outcome)
+    elif result_payload and result_payload.get("ok"):
+        outcome = "confirmed"
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome=outcome,
+            task_id=confirmation_task_id,
+        )
     else:
-        _finish_workflow_draft(project_id, canvas_id, draft_id, outcome="ready")
+        _finish_workflow_draft(
+            project_id,
+            canvas_id,
+            draft_id,
+            outcome="ready",
+            task_id=confirmation_task_id,
+        )
     return result
-
-
-def _handle_create_workflow_from_intent(args: dict[str, Any], **_: Any) -> str:
-    if compile_workflow_intent is None:
-        return tool_error(
-            "Freezone workflow intent compiler is unavailable. "
-            f"Import error: {_JSON_WORKFLOW_CATALOG_IMPORT_ERROR}"
-        )
-    if build_workflow_graph_commands is None:
-        return tool_error(
-            "Freezone workflow graph builder is unavailable. "
-            f"Import error: {_WORKFLOW_GRAPH_IMPORT_ERROR}"
-        )
-    compiled = compile_workflow_intent(args.get("intent"))
-    if not compiled.get("ok"):
-        return tool_result(compiled)
-    project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip()
-        or None
-    )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip()
-        or None
-    )
-    preflight = _workflow_runtime_preflight(compiled, project_id=project or "")
-    compiled["preflight"] = preflight
-    if preflight["blockers"]:
-        return tool_result(
-            {
-                "ok": False,
-                "status": "workflow_preflight_failed",
-                "error": preflight["blockers"][0]["message"],
-                "preflight": preflight,
-            }
-        )
-    plan = compiled.get("plan")
-    built = build_workflow_graph_commands({**args, "plan": plan})
-    if not built.get("ok"):
-        return tool_result(built)
-    return _emit_canvas_commands(
-        project,
-        canvas,
-        built.get("commands"),
-        allow_dynamic_workflow_batch=True,
-        slim_result=True,
-    )
 
 
 def _position_from_args(args: dict[str, Any]) -> dict[str, Any] | None:
@@ -4737,25 +5487,25 @@ def _position_from_args(args: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _single_write_command(args: dict[str, Any], command: dict[str, Any]) -> str:
-    project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
-    )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
+    project = str(args.get("project_id") or _default_project_id()).strip() or None
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
     return _emit_canvas_commands(project, canvas, [command], slim_result=True)
 
 
 def _handle_create_node(args: dict[str, Any], **_: Any) -> str:
-    node_type = str(args.get("node_type") or args.get("nodeType") or "").strip()
+    node_type = str(args.get("node_type") or "").strip()
     if not node_type:
         return tool_result(
-            {"ok": False, "status": "node_type_required", "error": "node_type is required"}
+            {
+                "ok": False,
+                "status": "node_type_required",
+                "error": "node_type is required",
+            }
         )
     command: dict[str, Any] = {"type": "create_node", "node_type": node_type}
     if isinstance(args.get("data"), dict):
         command["data"] = args["data"]
-    client_id = str(args.get("client_id") or args.get("clientId") or "").strip()
+    client_id = str(args.get("client_id") or "").strip()
     if client_id:
         command["client_id"] = client_id
     position = _position_from_args(args)
@@ -4765,8 +5515,8 @@ def _handle_create_node(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_add_next_node(args: dict[str, Any], **_: Any) -> str:
-    source_node_id = str(args.get("source_node_id") or args.get("sourceNodeId") or "").strip()
-    node_type = str(args.get("node_type") or args.get("nodeType") or "").strip()
+    source_node_id = str(args.get("source_node_id") or "").strip()
+    node_type = str(args.get("node_type") or "").strip()
     if not source_node_id:
         return tool_result(
             {
@@ -4777,7 +5527,11 @@ def _handle_add_next_node(args: dict[str, Any], **_: Any) -> str:
         )
     if not node_type:
         return tool_result(
-            {"ok": False, "status": "node_type_required", "error": "node_type is required"}
+            {
+                "ok": False,
+                "status": "node_type_required",
+                "error": "node_type is required",
+            }
         )
     command: dict[str, Any] = {
         "type": "add_next_node",
@@ -4787,7 +5541,7 @@ def _handle_add_next_node(args: dict[str, Any], **_: Any) -> str:
     }
     if isinstance(args.get("data"), dict):
         command["data"] = args["data"]
-    client_id = str(args.get("client_id") or args.get("clientId") or "").strip()
+    client_id = str(args.get("client_id") or "").strip()
     if client_id:
         command["client_id"] = client_id
     return _single_write_command(args, command)
@@ -4818,13 +5572,9 @@ def _handle_update_node_data(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_create_edge(args: dict[str, Any], **_: Any) -> str:
-    source = str(
-        args.get("source") or args.get("source_node_id") or args.get("sourceNodeId") or ""
-    ).strip()
-    target = str(
-        args.get("target") or args.get("target_node_id") or args.get("targetNodeId") or ""
-    ).strip()
-    link_type = str(args.get("link_type") or args.get("linkType") or "").strip()
+    source = str(args.get("source") or args.get("source_node_id") or "").strip()
+    target = str(args.get("target") or args.get("target_node_id") or "").strip()
+    link_type = str(args.get("link_type") or "").strip()
     if not source:
         return tool_result(
             {"ok": False, "status": "source_required", "error": "source is required"}
@@ -4835,7 +5585,11 @@ def _handle_create_edge(args: dict[str, Any], **_: Any) -> str:
         )
     if not link_type:
         return tool_result(
-            {"ok": False, "status": "link_type_required", "error": "link_type is required"}
+            {
+                "ok": False,
+                "status": "link_type_required",
+                "error": "link_type is required",
+            }
         )
     return _single_write_command(
         args,
@@ -4849,17 +5603,16 @@ def _handle_create_edge(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_delete_nodes(args: dict[str, Any], **_: Any) -> str:
-    node_ids = args.get("node_ids") or args.get("nodeIds")
+    node_ids = args.get("node_ids")
     scope = str(args.get("scope") or "").strip().lower()
     if scope == "canvas":
         project = (
-            str(args.get("project_id") or args.get("project") or _default_project_id()).strip()
+            str(
+                args.get("project_id") or args.get("project") or _default_project_id()
+            ).strip()
             or None
         )
-        canvas = (
-            str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip()
-            or None
-        )
+        canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
         project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
         if scope_error:
             return scope_error
@@ -4914,7 +5667,7 @@ def _handle_delete_nodes(args: dict[str, Any], **_: Any) -> str:
 
 def _handle_delete_edges(args: dict[str, Any], **_: Any) -> str:
     command: dict[str, Any] = {"type": "delete_edges"}
-    edge_ids = args.get("edge_ids") or args.get("edgeIds")
+    edge_ids = args.get("edge_ids")
     pairs = args.get("pairs")
     if isinstance(edge_ids, list) and edge_ids:
         command["edge_ids"] = edge_ids
@@ -4922,7 +5675,11 @@ def _handle_delete_edges(args: dict[str, Any], **_: Any) -> str:
         command["pairs"] = pairs
     if "edge_ids" not in command and "pairs" not in command:
         return tool_result(
-            {"ok": False, "status": "edge_refs_required", "error": "edge_ids or pairs is required"}
+            {
+                "ok": False,
+                "status": "edge_refs_required",
+                "error": "edge_ids or pairs is required",
+            }
         )
     return _single_write_command(args, command)
 
@@ -4930,7 +5687,7 @@ def _handle_delete_edges(args: dict[str, Any], **_: Any) -> str:
 def _handle_move_nodes(args: dict[str, Any], **_: Any) -> str:
     command: dict[str, Any] = {"type": "move_nodes"}
     positions = args.get("positions")
-    node_ids = args.get("node_ids") or args.get("nodeIds")
+    node_ids = args.get("node_ids")
     if isinstance(positions, dict) and positions:
         command["positions"] = positions
     else:
@@ -4969,14 +5726,14 @@ def _handle_layout_nodes(args: dict[str, Any], **_: Any) -> str:
             }
         )
     command: dict[str, Any] = {"type": "layout_nodes", "mode": mode}
-    node_ids = args.get("node_ids") or args.get("nodeIds")
+    node_ids = args.get("node_ids")
     if isinstance(node_ids, list):
         command["node_ids"] = node_ids
     return _single_write_command(args, command)
 
 
 def _handle_group_nodes(args: dict[str, Any], **_: Any) -> str:
-    node_ids = args.get("node_ids") or args.get("nodeIds")
+    node_ids = args.get("node_ids")
     if not isinstance(node_ids, list) or len(node_ids) < 2:
         return tool_result(
             {
@@ -4993,7 +5750,7 @@ def _handle_group_nodes(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_select_nodes(args: dict[str, Any], **_: Any) -> str:
-    node_ids = args.get("node_ids") or args.get("nodeIds")
+    node_ids = args.get("node_ids")
     if not isinstance(node_ids, list) or not node_ids:
         return tool_result(
             {
@@ -5009,7 +5766,7 @@ def _handle_select_nodes(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_run_node_action(args: dict[str, Any], **_: Any) -> str:
-    node_id = str(args.get("node_id") or args.get("nodeId") or "").strip()
+    node_id = str(args.get("node_id") or "").strip()
     action = str(args.get("action") or "").strip()
     if not node_id:
         return tool_result(
@@ -5019,18 +5776,24 @@ def _handle_run_node_action(args: dict[str, Any], **_: Any) -> str:
         return tool_result(
             {"ok": False, "status": "action_required", "error": "action is required"}
         )
-    command: dict[str, Any] = {"type": "run_node_action", "node_id": node_id, "action": action}
+    command: dict[str, Any] = {
+        "type": "run_node_action",
+        "node_id": node_id,
+        "action": action,
+    }
     parameters = args.get("parameters") or args.get("params")
     if isinstance(parameters, dict):
         command["parameters"] = dict(parameters)
-    if bool(args.get("regenerate") or args.get("force_regenerate") or args.get("forceRegenerate")):
+    if bool(args.get("regenerate") or args.get("force_regenerate")):
         command.setdefault("parameters", {})["regenerate"] = True
     return _single_write_command(args, command)
 
 
 def _handle_run_workflow(args: dict[str, Any], **_: Any) -> str:
-    raw_node_ids = args.get("node_ids") or args.get("nodeIds") or []
-    node_ids = [str(node_id).strip() for node_id in raw_node_ids if str(node_id).strip()]
+    raw_node_ids = args.get("node_ids") or []
+    node_ids = [
+        str(node_id).strip() for node_id in raw_node_ids if str(node_id).strip()
+    ]
     scope = str(args.get("scope") or "").strip()
     if not node_ids and scope != "canvas":
         return tool_result(
@@ -5057,49 +5820,80 @@ def _handle_run_workflow(args: dict[str, Any], **_: Any) -> str:
         command["node_ids"] = node_ids
     if scope:
         command["scope"] = scope
-    if bool(args.get("regenerate") or args.get("force_regenerate") or args.get("forceRegenerate")):
+    if bool(args.get("regenerate") or args.get("force_regenerate")):
         command["regenerate"] = True
     return _single_write_command(args, command)
 
 
 def _handle_open_mainline_projection(args: dict[str, Any], **_: Any) -> str:
-    project = str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
-    canvas = str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
+    project = (
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
+    )
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
     if not project:
-        return tool_result({"ok": False, "status": "project_id_required", "error": "project_id is required"})
+        return tool_result(
+            {
+                "ok": False,
+                "status": "project_id_required",
+                "error": "project_id is required",
+            }
+        )
 
     raw_request = args.get("request") if isinstance(args.get("request"), dict) else args
     scope = str(raw_request.get("scope") or "").strip()
     if scope not in {"episode", "beat", "asset"}:
-        return tool_result({"ok": False, "status": "scope_required", "error": "scope must be episode, beat, or asset"})
+        return tool_result(
+            {
+                "ok": False,
+                "status": "scope_required",
+                "error": "scope must be episode, beat, or asset",
+            }
+        )
 
     request: dict[str, Any] = {"scope": scope}
     if isinstance(raw_request.get("episode"), int):
         request["episode"] = raw_request["episode"]
     if isinstance(raw_request.get("beat"), int):
         request["beat"] = raw_request["beat"]
-    primary_slot = str(raw_request.get("primary_slot") or raw_request.get("primarySlot") or "").strip()
+    primary_slot = str(raw_request.get("primary_slot") or "").strip()
     if primary_slot:
         request["primary_slot"] = primary_slot
-    asset_kind = str(raw_request.get("asset_kind") or raw_request.get("assetKind") or "").strip()
+    asset_kind = str(raw_request.get("asset_kind") or "").strip()
     if asset_kind:
         request["asset_kind"] = asset_kind
-    for snake, camel in (
-        ("character", "character"),
-        ("identity_id", "identityId"),
-        ("asset_id", "assetId"),
-    ):
-        value = str(raw_request.get(snake) or raw_request.get(camel) or "").strip()
+    for field in ("character", "identity_id", "asset_id"):
+        value = str(raw_request.get(field) or "").strip()
         if value:
-            request[snake] = value
+            request[field] = value
 
     if scope == "episode" and "episode" not in request:
-        return tool_result({"ok": False, "status": "episode_required", "error": "episode is required for episode scope"})
+        return tool_result(
+            {
+                "ok": False,
+                "status": "episode_required",
+                "error": "episode is required for episode scope",
+            }
+        )
     if scope == "beat" and ("episode" not in request or "beat" not in request):
-        return tool_result({"ok": False, "status": "beat_required", "error": "episode and beat are required for beat scope"})
+        return tool_result(
+            {
+                "ok": False,
+                "status": "beat_required",
+                "error": "episode and beat are required for beat scope",
+            }
+        )
     if scope == "asset":
         if "asset_kind" not in request:
-            return tool_result({"ok": False, "status": "asset_kind_required", "error": "asset_kind is required for asset scope"})
+            return tool_result(
+                {
+                    "ok": False,
+                    "status": "asset_kind_required",
+                    "error": "asset_kind is required for asset scope",
+                }
+            )
         if not any(key in request for key in ("character", "identity_id", "asset_id")):
             return tool_result(
                 {
@@ -5112,7 +5906,13 @@ def _handle_open_mainline_projection(args: dict[str, Any], **_: Any) -> str:
     return _emit_canvas_commands(
         project,
         canvas,
-        [{"type": "open_mainline_projection", "project_id": project, "request": request}],
+        [
+            {
+                "type": "open_mainline_projection",
+                "project_id": project,
+                "request": request,
+            }
+        ],
     )
 
 
@@ -5132,7 +5932,9 @@ def _request_canvas_context_from_frontend(
         and put_pending_canvas_context is not None
         and wait_canvas_context_result is not None
     ):
-        key = canvas_context_bridge_key(project_id=project, canvas_id=canvas, requests=requests)
+        key = canvas_context_bridge_key(
+            project_id=project, canvas_id=canvas, requests=requests
+        )
         put_pending_canvas_context(
             key=key,
             project_id=project,
@@ -5143,7 +5945,11 @@ def _request_canvas_context_from_frontend(
         try:
             timeout_seconds = max(
                 1,
-                int(os.environ.get("DRAMACLAW_CANVAS_CONTEXT_RESULT_TIMEOUT_SECONDS", "60")),
+                int(
+                    os.environ.get(
+                        "DRAMACLAW_CANVAS_CONTEXT_RESULT_TIMEOUT_SECONDS", "60"
+                    )
+                ),
             )
         except ValueError:
             timeout_seconds = 60
@@ -5172,16 +5978,613 @@ def _request_canvas_context_from_frontend(
 
 def _handle_link_type_catalog(args: dict[str, Any], **_: Any) -> str:
     project = (
-        str(args.get("project_id") or args.get("project") or _default_project_id()).strip() or None
+        str(
+            args.get("project_id") or args.get("project") or _default_project_id()
+        ).strip()
+        or None
     )
-    canvas = (
-        str(args.get("canvas_id") or args.get("canvasId") or _default_canvas_id()).strip() or None
-    )
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
     return _request_canvas_context_from_frontend(
         project=project,
         canvas=canvas,
         requests=[{"type": "link_type_catalog"}],
     )
+
+
+_RESULT_COMMON_PROPERTIES: dict[str, Any] = {
+    "ok": {"type": "boolean"},
+    "status": {"type": "string", "minLength": 1},
+    "code": {"type": ["string", "null"]},
+    "error": {"type": ["string", "object", "array", "null"]},
+    "message": {"type": ["string", "null"]},
+    "retryable": {"type": "boolean"},
+    "next_action": {"type": ["string", "null"]},
+    "agent_instruction": {"type": ["string", "null"]},
+}
+
+_CANVAS_RESULT_FIELDS = (
+    "approval_id",
+    "project_id",
+    "canvas_id",
+    "operation_id",
+    "command_id",
+    "bridge_key",
+    "tool_call_status",
+    "canvas_apply_status",
+    "applied",
+    "cancelled",
+    "revision",
+    "receipt",
+    "durable_receipt",
+    "errors",
+    "summary",
+)
+
+_WORKFLOW_RESULT_FIELDS = (
+    *_CANVAS_RESULT_FIELDS,
+    "draft_id",
+    "current_revision",
+    "preview",
+    "intent",
+    "plan",
+    "compiled",
+    "preflight",
+    "workflow_instance_id",
+    "plan_digest",
+    "run_after_create",
+    "skipped_edges",
+)
+
+_RESULT_ARRAY_FIELDS = frozenset(
+    {
+        "actions",
+        "assets",
+        "available_ids",
+        "candidates",
+        "commands",
+        "edge_ids",
+        "edges",
+        "errors",
+        "items",
+        "link_types",
+        "node_ids",
+        "nodes",
+        "questions",
+        "recipes",
+        "saved_recipe_ids",
+        "saved_skill_ids",
+        "skipped_edges",
+        "voices",
+        "warnings",
+    }
+)
+_RESULT_BOOLEAN_FIELDS = frozenset(
+    {
+        "allow_recommended",
+        "allow_skip",
+        "applied",
+        "cancelled",
+        "confirmation_required",
+        "connect",
+        "removed",
+        "run_after_create",
+        "saved_to_catalog",
+        "skipped",
+        "used_recommended",
+    }
+)
+_RESULT_INTEGER_FIELDS = frozenset(
+    {
+        "count",
+        "current_revision",
+        "deleted_edge_count",
+        "deleted_node_count",
+        "expected_recipe_count",
+        "expected_revision",
+        "planned_stage_count",
+        "recipe_chunk_count",
+        "recipe_count",
+        "recipe_index",
+        "revision",
+        "total_count",
+    }
+)
+_RESULT_OBJECT_FIELDS = frozenset(
+    {
+        "answers",
+        "client_debug",
+        "operations",
+        "selections",
+    }
+)
+_RESULT_STRING_FIELDS = frozenset(
+    {
+        "action",
+        "approval_id",
+        "bridge_key",
+        "canvas_apply_status",
+        "canvas_id",
+        "clarification_id",
+        "clarification_status",
+        "command_id",
+        "direction",
+        "draft_id",
+        "edge_id",
+        "group_id",
+        "artifact_id",
+        "generation_session_id",
+        "id",
+        "kind",
+        "link_type",
+        "mode",
+        "node_id",
+        "node_type",
+        "operation_id",
+        "plan_digest",
+        "project_id",
+        "product_kind",
+        "recipe_id",
+        "run_id",
+        "schema_version",
+        "scope",
+        "skill_studio_session_id",
+        "skill_studio_status",
+        "slot",
+        "source",
+        "source_node_id",
+        "target",
+        "task_type",
+        "tool_call_status",
+        "task_id",
+        "root_task_id",
+        "turn_id",
+        "type",
+        "workflow_instance_id",
+    }
+)
+
+
+def _result_field_schema(field: str) -> dict[str, Any]:
+    if field == "required_question_ids":
+        return {
+            "type": "object",
+            "properties": {
+                "image": {"type": "array", "items": {"type": "string"}},
+                "video": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["image", "video"],
+            "additionalProperties": False,
+        }
+    if field in _RESULT_ARRAY_FIELDS:
+        return {"type": "array"}
+    if field in _RESULT_BOOLEAN_FIELDS:
+        return {"type": "boolean"}
+    if field in _RESULT_INTEGER_FIELDS:
+        return {"type": ["integer", "null"]}
+    if field in _RESULT_OBJECT_FIELDS:
+        return {"type": "object"}
+    if field in {"draft", "draft_ref"}:
+        return {"type": ["object", "null"]}
+    if field in _RESULT_STRING_FIELDS:
+        return {"type": ["string", "null"]}
+    if field in {"durable_receipt", "receipt"}:
+        return {"type": ["object", "string", "null"]}
+    return {"type": ["object", "array", "string", "number", "boolean", "null"]}
+
+
+_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    "freezone_begin_agent_product_generation": (
+        "operation_id",
+        "product_kind",
+        "task_type",
+        "task_id",
+        "root_task_id",
+        "project_id",
+        "canvas_id",
+        "generation_session_id",
+        "artifact_id",
+        "confirmation_required",
+    ),
+    "freezone_get_canvas_ontology": ("ontology", "node_types", "link_types"),
+    "freezone_get_canvas_action_catalog": ("actions", "count"),
+    "freezone_get_canvas_command_catalog": ("commands", "count"),
+    "freezone_get_selection": ("node_ids", "edge_ids", "selection"),
+    "freezone_get_node_detail": ("node_id", "node"),
+    "freezone_get_neighbor_graph": ("node_id", "nodes", "edges"),
+    "freezone_get_node_action_catalog": ("node_id", "actions", "count"),
+    "freezone_get_node_create_schema": ("node_type", "schema"),
+    "freezone_get_audio_voice_options": ("node_id", "voices", "count"),
+    "freezone_get_slot_candidates": ("slot", "candidates", "count"),
+    "freezone_get_mainline_projection_assets": ("assets", "count"),
+    "freezone_validate_canvas_commands": ("payload", "commands", "errors", "warnings"),
+    "freezone_summarize_canvas": ("summary", "nodes", "edges", "counts"),
+    "freezone_request_user_clarification": (
+        "clarification_id",
+        "clarification_status",
+        "questions",
+        "required_question_ids",
+        "allow_recommended",
+        "allow_skip",
+        "tool_call_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
+        "turn_id",
+        "action",
+        "answers",
+        "skipped",
+        "used_recommended",
+        "errors",
+    ),
+    "freezone_begin_agent_catalog_draft": (
+        "skill_studio_session_id",
+        "skill",
+        "recipes",
+        "outline",
+        "expected_recipe_count",
+        "warnings",
+        "operations",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
+    ),
+    "freezone_put_agent_catalog_draft_outline": (
+        "skill_studio_session_id",
+        "outline",
+        "expected_recipe_count",
+        "planned_stage_count",
+        "recipe_chunk_count",
+        "warnings",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
+    ),
+    "freezone_put_agent_catalog_skill": (
+        "skill_studio_session_id",
+        "skill",
+        "expected_recipe_count",
+        "warnings",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
+    ),
+    "freezone_put_agent_catalog_recipe": (
+        "skill_studio_session_id",
+        "recipe_index",
+        "recipe_count",
+        "recipes",
+        "warnings",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
+    ),
+    "freezone_patch_agent_catalog_draft": (
+        "skill_studio_session_id",
+        "target",
+        "recipe_id",
+        "recipe_index",
+        "removed",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
+    ),
+    "freezone_finish_agent_catalog_draft": (
+        "skill_studio_session_id",
+        "skill",
+        "recipes",
+        "outline",
+        "warnings",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
+        "turn_id",
+        "action",
+        "selections",
+        "draft",
+        "draft_ref",
+        "saved_to_catalog",
+        "saved_skill_ids",
+        "saved_recipe_ids",
+        "errors",
+        "client_debug",
+    ),
+    "freezone_present_agent_catalog_draft": (
+        "skill_studio_session_id",
+        "skill",
+        "recipes",
+        "summary",
+        "warnings",
+        "tool_call_status",
+        "skill_studio_status",
+        "bridge_key",
+        "project_id",
+        "canvas_id",
+        "type",
+        "turn_id",
+        "action",
+        "selections",
+        "draft",
+        "draft_ref",
+        "saved_to_catalog",
+        "saved_skill_ids",
+        "saved_recipe_ids",
+        "errors",
+        "client_debug",
+    ),
+    "freezone_list_agent_catalog": (
+        "kind",
+        "items",
+        "count",
+        "total_count",
+        "available_ids",
+    ),
+    "freezone_get_saved_skill": ("id", "kind", "item", "available_ids"),
+    "freezone_get_saved_recipe": ("id", "kind", "item", "available_ids"),
+    "freezone_get_workflow_skill": ("schema_version", "skill", "recipes", "inputs"),
+    "freezone_prepare_workflow_draft": _WORKFLOW_RESULT_FIELDS,
+    "freezone_patch_workflow_draft": (
+        *_WORKFLOW_RESULT_FIELDS,
+        "changes",
+        "expected_revision",
+    ),
+    "freezone_confirm_workflow_draft": _WORKFLOW_RESULT_FIELDS,
+    "freezone_prepare_workflow_plan_draft": (
+        *_WORKFLOW_RESULT_FIELDS,
+        "schema_version",
+    ),
+    "freezone_emit_canvas_command": (*_CANVAS_RESULT_FIELDS, "commands"),
+    "freezone_confirm_canvas_action": _CANVAS_RESULT_FIELDS,
+    "freezone_cancel_canvas_action": _CANVAS_RESULT_FIELDS,
+    "freezone_create_node": (*_CANVAS_RESULT_FIELDS, "node_id", "node_type"),
+    "freezone_add_next_node": (
+        *_CANVAS_RESULT_FIELDS,
+        "node_id",
+        "node_type",
+        "source_node_id",
+        "connect",
+    ),
+    "freezone_update_node_data": (*_CANVAS_RESULT_FIELDS, "node_id", "updated_fields"),
+    "freezone_create_edge": (
+        *_CANVAS_RESULT_FIELDS,
+        "edge_id",
+        "source",
+        "target",
+        "link_type",
+    ),
+    "freezone_delete_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids", "deleted_node_count"),
+    "freezone_delete_edges": (*_CANVAS_RESULT_FIELDS, "edge_ids", "deleted_edge_count"),
+    "freezone_move_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids", "positions"),
+    "freezone_layout_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids", "mode"),
+    "freezone_group_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids", "group_id"),
+    "freezone_select_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids"),
+    "freezone_run_node_action": (*_CANVAS_RESULT_FIELDS, "node_id", "action", "run_id"),
+    "freezone_run_workflow": (*_WORKFLOW_RESULT_FIELDS, "direction", "run_id"),
+    "freezone_open_mainline_projection": (
+        *_CANVAS_RESULT_FIELDS,
+        "scope",
+        "request",
+    ),
+    "freezone_get_link_type_catalog": ("link_types", "count"),
+}
+
+
+_SKILL_STUDIO_PROGRESS_REQUIRED = (
+    "skill_studio_session_id",
+    "tool_call_status",
+    "skill_studio_status",
+    "bridge_key",
+)
+
+_SKILL_STUDIO_FRONTEND_REQUIRED = (
+    "tool_call_status",
+    "skill_studio_status",
+    "bridge_key",
+    "action",
+)
+
+_RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
+    "freezone_begin_agent_product_generation": (
+        "operation_id",
+        "product_kind",
+        "task_id",
+        "generation_session_id",
+    ),
+    "freezone_get_canvas_ontology": ("ontology", "node_types", "link_types"),
+    "freezone_summarize_canvas": ("summary", "nodes", "edges", "counts"),
+    "freezone_get_canvas_action_catalog": ("actions", "count"),
+    "freezone_get_canvas_command_catalog": ("commands", "count"),
+    "freezone_request_user_clarification": (
+        "tool_call_status",
+        "clarification_status",
+        "bridge_key",
+        "answers",
+    ),
+    "freezone_present_agent_catalog_draft": _SKILL_STUDIO_FRONTEND_REQUIRED,
+    "freezone_put_agent_catalog_draft_outline": _SKILL_STUDIO_PROGRESS_REQUIRED,
+    "freezone_begin_agent_catalog_draft": _SKILL_STUDIO_PROGRESS_REQUIRED,
+    "freezone_put_agent_catalog_skill": _SKILL_STUDIO_PROGRESS_REQUIRED,
+    "freezone_put_agent_catalog_recipe": _SKILL_STUDIO_PROGRESS_REQUIRED,
+    "freezone_patch_agent_catalog_draft": _SKILL_STUDIO_PROGRESS_REQUIRED,
+    "freezone_finish_agent_catalog_draft": _SKILL_STUDIO_FRONTEND_REQUIRED,
+    "freezone_list_agent_catalog": ("kind", "items", "count"),
+    "freezone_get_saved_skill": ("id", "kind", "item"),
+    "freezone_get_saved_recipe": ("id", "kind", "item"),
+    "freezone_get_link_type_catalog": ("link_types", "count"),
+    "freezone_get_selection": ("node_ids", "edge_ids", "selection"),
+    "freezone_get_node_detail": ("node_id", "node"),
+    "freezone_get_neighbor_graph": ("node_id", "nodes", "edges"),
+    "freezone_get_node_action_catalog": ("node_id", "actions", "count"),
+    "freezone_get_node_create_schema": ("node_type", "schema"),
+    "freezone_get_audio_voice_options": ("node_id", "voices", "count"),
+    "freezone_get_slot_candidates": ("slot", "candidates", "count"),
+    "freezone_get_mainline_projection_assets": ("assets", "count"),
+    "freezone_get_workflow_skill": ("schema_version", "skill", "recipes", "inputs"),
+    "freezone_validate_canvas_commands": ("commands", "errors", "warnings"),
+}
+
+_WORKFLOW_RESULT_TOOLS = {
+    "freezone_prepare_workflow_draft",
+    "freezone_patch_workflow_draft",
+    "freezone_confirm_workflow_draft",
+    "freezone_prepare_workflow_plan_draft",
+    "freezone_run_workflow",
+}
+
+_CANVAS_RESULT_TOOLS = {
+    "freezone_emit_canvas_command",
+    "freezone_confirm_canvas_action",
+    "freezone_cancel_canvas_action",
+    "freezone_create_node",
+    "freezone_add_next_node",
+    "freezone_update_node_data",
+    "freezone_create_edge",
+    "freezone_delete_nodes",
+    "freezone_delete_edges",
+    "freezone_move_nodes",
+    "freezone_layout_nodes",
+    "freezone_group_nodes",
+    "freezone_select_nodes",
+    "freezone_open_mainline_projection",
+    "freezone_run_node_action",
+}
+
+_SKILL_STUDIO_PROGRESS_TOOLS = {
+    "freezone_put_agent_catalog_draft_outline",
+    "freezone_begin_agent_catalog_draft",
+    "freezone_put_agent_catalog_skill",
+    "freezone_put_agent_catalog_recipe",
+    "freezone_patch_agent_catalog_draft",
+}
+
+_SKILL_STUDIO_FRONTEND_TOOLS = {
+    "freezone_present_agent_catalog_draft",
+    "freezone_finish_agent_catalog_draft",
+}
+
+
+def _success_contract(name: str) -> dict[str, Any]:
+    if name == "freezone_request_user_clarification":
+        return {
+            "properties": {"status": {"const": "clarification_frontend_result"}},
+            "required": list(_RESULT_SUCCESS_REQUIRED[name]),
+        }
+    if name in _SKILL_STUDIO_PROGRESS_TOOLS:
+        return {
+            "properties": {"status": {"const": "skill_studio_progress_event_emitted"}},
+            "required": list(_SKILL_STUDIO_PROGRESS_REQUIRED),
+        }
+    if name in _SKILL_STUDIO_FRONTEND_TOOLS:
+        return {
+            "properties": {"status": {"const": "skill_studio_frontend_result"}},
+            "required": list(_SKILL_STUDIO_FRONTEND_REQUIRED),
+        }
+    if name in _WORKFLOW_RESULT_TOOLS:
+        return {
+            "anyOf": [
+                {"required": ["draft_id"]},
+                {"required": ["operation_id"]},
+                {"required": ["workflow_instance_id"]},
+                {"required": ["run_id"]},
+            ]
+        }
+    if name in _CANVAS_RESULT_TOOLS:
+        successful_states = [
+            {"required": ["approval_id"]},
+            {"required": ["operation_id"]},
+            {"required": ["command_id"]},
+            {"required": ["bridge_key"]},
+            {"required": ["receipt"]},
+            {"required": ["durable_receipt"]},
+        ]
+        if name == "freezone_delete_nodes":
+            successful_states.append(
+                {
+                    "properties": {
+                        "canvas_apply_status": {"const": "already_empty"},
+                        "applied": {"const": True},
+                        "deleted_node_count": {"const": 0},
+                    },
+                    "required": [
+                        "project_id",
+                        "canvas_id",
+                        "canvas_apply_status",
+                        "applied",
+                        "deleted_node_count",
+                    ],
+                }
+            )
+        return {"anyOf": successful_states}
+    required = _RESULT_SUCCESS_REQUIRED.get(name)
+    if required is None:
+        raise RuntimeError(f"missing successful output contract for {name}")
+    return {"required": list(required)}
+
+
+def _output_schema(name: str) -> dict[str, Any]:
+    fields = _RESULT_FIELDS.get(name)
+    if fields is None:
+        raise RuntimeError(f"missing output contract for {name}")
+    properties = dict(_RESULT_COMMON_PROPERTIES)
+    properties.update({field: _result_field_schema(field) for field in fields})
+    schema: dict[str, Any] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": f"{name}.result",
+        "type": "object",
+        "properties": properties,
+        "required": ["ok", "status"],
+        "additionalProperties": False,
+        "x-dramaclaw-tool": name,
+        "allOf": [
+            {
+                "if": {"properties": {"ok": {"const": True}}, "required": ["ok"]},
+                "then": _success_contract(name),
+            },
+            {
+                "if": {"properties": {"ok": {"const": False}}, "required": ["ok"]},
+                "then": {
+                    "anyOf": [
+                        {"required": ["code"]},
+                        {"required": ["error"]},
+                        {"required": ["message"]},
+                        {"required": ["errors"]},
+                    ]
+                },
+            },
+        ],
+    }
+    if name in {
+        "freezone_prepare_workflow_draft",
+        "freezone_patch_workflow_draft",
+        "freezone_prepare_workflow_plan_draft",
+        "freezone_confirm_workflow_draft",
+        "freezone_run_workflow",
+    }:
+        schema["allOf"].append(
+            {
+                "if": {"properties": {"status": {"const": "workflow_draft_ready"}}},
+                "then": {"required": ["draft_id", "revision", "preview"]},
+            }
+        )
+    return schema
 
 
 def _schema(
@@ -5190,25 +6593,31 @@ def _schema(
     properties: dict[str, Any],
     required: list[str] | None = None,
     *,
-    reject_unknown: bool = False,
+    reject_unknown: bool = True,
 ) -> dict[str, Any]:
     parameters: dict[str, Any] = {
         "type": "object",
         "properties": properties,
         "required": required or [],
     }
-    if reject_unknown:
-        parameters["additionalProperties"] = False
+    parameters["additionalProperties"] = not reject_unknown
     return {
         "name": name,
         "description": description,
         "parameters": parameters,
+        "output_schema": _output_schema(name),
     }
 
 
 _SCOPE_PROPS = {
-    "project_id": {"type": "string", "description": "Defaults to the current project context."},
-    "canvas_id": {"type": "string", "description": "Defaults to the current canvas context."},
+    "project_id": {
+        "type": "string",
+        "description": "Defaults to the current project context.",
+    },
+    "canvas_id": {
+        "type": "string",
+        "description": "Defaults to the current canvas context.",
+    },
 }
 
 _WORKFLOW_CATALOG_SCHEMA = {
@@ -5524,10 +6933,6 @@ _WORKFLOW_RUN_AFTER_CREATE_PROPS = {
         "type": "boolean",
         "description": "Append deterministic workflow execution after graph creation.",
     },
-    "runAfterCreate": {
-        "type": "boolean",
-        "description": "Alias of run_after_create.",
-    },
 }
 
 # Use the same public contract advertised by the standalone MCP server. Keep the
@@ -5664,7 +7069,10 @@ _SKILL_STUDIO_RATING_BAND_SCHEMA = {
     "type": "object",
     "properties": {
         "score": {"type": "number", "description": "Score anchor from 0 to 10."},
-        "description": {"type": "string", "description": "Rubric text for this score anchor."},
+        "description": {
+            "type": "string",
+            "description": "Rubric text for this score anchor.",
+        },
     },
     "required": ["score", "description"],
 }
@@ -5674,7 +7082,10 @@ _SKILL_STUDIO_REVIEW_ITEM_SCHEMA = {
     "properties": {
         "name": {"type": "string", "description": "Review dimension name."},
         "weight": {"type": "number", "description": "Dimension weight from 0 to 1."},
-        "description": {"type": "string", "description": "Review dimension description."},
+        "description": {
+            "type": "string",
+            "description": "Review dimension description.",
+        },
     },
     "required": ["name", "weight", "description"],
 }
@@ -5686,7 +7097,10 @@ _SKILL_STUDIO_INPUT_PARAMETER_SCHEMA = {
         "with defaults, and confirmed before WorkflowPlan creation; no Skill Session is created."
     ),
     "properties": {
-        "id": {"type": "string", "description": "Stable input id written to plan.inputs."},
+        "id": {
+            "type": "string",
+            "description": "Stable input id written to plan.inputs.",
+        },
         "label": {"type": "string", "description": "User-facing input label."},
         "type": {
             "type": "string",
@@ -5990,12 +7404,6 @@ _NODE_TYPE_SCHEMA = {
     "description": _NODE_TYPE_DESCRIPTION,
 }
 
-_NODE_TYPE_ALIAS_SCHEMA = {
-    "type": "string",
-    "enum": _AGENT_CREATABLE_NODE_TYPE_VALUES,
-    "description": "Alias of node_type. Prefer snake_case node_type.",
-}
-
 _MAINLINE_PROJECTION_SCOPE_VALUES = ["episode", "beat", "asset"]
 _MAINLINE_PRIMARY_SLOT_VALUES = ["sketch", "frame", "render"]
 _MAINLINE_ASSET_KIND_VALUES = [
@@ -6020,6 +7428,7 @@ _MAINLINE_PROJECTION_ASSET_KIND_VALUES = [
     "prop",
     "prop_ref",
 ]
+
 
 def _command_variant(
     command_type: str,
@@ -6065,7 +7474,9 @@ _TEXT_ANNOTATION_DATA_SCHEMA = {
     "anyOf": [{"required": ["title"]}, {"required": ["displayName"]}],
 }
 _OTHER_AGENT_CREATABLE_NODE_TYPE_VALUES = [
-    value for value in _AGENT_CREATABLE_NODE_TYPE_VALUES if value != "textAnnotationNode"
+    value
+    for value in _AGENT_CREATABLE_NODE_TYPE_VALUES
+    if value != "textAnnotationNode"
 ]
 
 # Keep this JSON Schema mechanically aligned with the frontend's
@@ -6316,7 +7727,11 @@ TOOLS = (
                     "type": "string",
                     "description": "Stable id shared by questions, draft, and later edits in this Skill Studio flow.",
                 },
-                "mode": {"type": "string", "enum": ["create", "edit"], "description": "Draft mode."},
+                "mode": {
+                    "type": "string",
+                    "enum": ["create", "edit"],
+                    "description": "Draft mode.",
+                },
                 "skill": _SKILL_STUDIO_SKILL_SCHEMA,
                 "recipes": {
                     "type": "array",
@@ -6326,7 +7741,10 @@ TOOLS = (
                     ),
                     "items": _SKILL_STUDIO_RECIPE_SCHEMA,
                 },
-                "summary": {"type": "string", "description": "Short user-facing summary."},
+                "summary": {
+                    "type": "string",
+                    "description": "Short user-facing summary.",
+                },
                 "warnings": {
                     "type": "array",
                     "description": "User-facing draft warnings.",
@@ -6347,7 +7765,11 @@ TOOLS = (
                     "type": "string",
                     "description": "Stable id shared by questions, outline, draft chunks, final draft, and later edits.",
                 },
-                "mode": {"type": "string", "enum": ["create", "edit"], "description": "Draft mode."},
+                "mode": {
+                    "type": "string",
+                    "enum": ["create", "edit"],
+                    "description": "Draft mode.",
+                },
                 "reuse_goal": {
                     "type": "string",
                     "description": "Internal one-sentence reusable capability goal for the Skill.",
@@ -6378,7 +7800,10 @@ TOOLS = (
                     "type": "string",
                     "description": "Short internal note describing reused existing Recipes and new Recipe gaps.",
                 },
-                "summary": {"type": "string", "description": "Short user-facing summary for the final draft."},
+                "summary": {
+                    "type": "string",
+                    "description": "Short user-facing summary for the final draft.",
+                },
                 "warnings": {
                     "type": "array",
                     "description": "User-facing draft warnings collected during outline modeling.",
@@ -6386,7 +7811,14 @@ TOOLS = (
                 },
                 **_SCOPE_PROPS,
             },
-            ["skill_studio_session_id", "mode", "reuse_goal", "stages", "expected_recipe_count", "catalog_checked"],
+            [
+                "skill_studio_session_id",
+                "mode",
+                "reuse_goal",
+                "stages",
+                "expected_recipe_count",
+                "catalog_checked",
+            ],
         ),
         _handle_put_agent_catalog_draft_outline,
     ),
@@ -6400,8 +7832,35 @@ TOOLS = (
                     "type": "string",
                     "description": "Stable id shared by questions, draft chunks, final draft, and later edits.",
                 },
-                "mode": {"type": "string", "enum": ["create", "edit"], "description": "Draft mode."},
-                "summary": {"type": "string", "description": "Short user-facing summary for the final draft."},
+                "mode": {
+                    "type": "string",
+                    "enum": ["create", "edit"],
+                    "description": "Draft mode.",
+                },
+                "artifact_mode": {
+                    "type": "string",
+                    "enum": ["skill_only", "recipe_only", "skill_and_recipes"],
+                    "description": "Canonical generation manifest mode.",
+                },
+                "target_skill_id": {
+                    "type": "string",
+                    "description": "Stable target Skill id when a Skill definition is generated.",
+                },
+                "recipe_targets": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "description": "One stable id per newly generated Recipe; reused Recipes are omitted.",
+                },
+                "base_revision": {"type": "integer", "minimum": 0},
+                "generation_attempt_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Stable id reused for transport retries; regenerate creates a new id.",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Short user-facing summary for the final draft.",
+                },
                 "warnings": {
                     "type": "array",
                     "description": "User-facing draft warnings collected during generation.",
@@ -6413,7 +7872,13 @@ TOOLS = (
                 },
                 **_SCOPE_PROPS,
             },
-            ["skill_studio_session_id", "mode", "expected_recipe_count"],
+            [
+                "skill_studio_session_id",
+                "mode",
+                "artifact_mode",
+                "expected_recipe_count",
+                "generation_attempt_id",
+            ],
         ),
         _handle_begin_agent_catalog_draft,
     ),
@@ -6489,7 +7954,10 @@ TOOLS = (
                     "items": {
                         "type": "object",
                         "properties": {
-                            "op": {"type": "string", "enum": ["replace", "add", "remove"]},
+                            "op": {
+                                "type": "string",
+                                "enum": ["replace", "add", "remove"],
+                            },
                             "path": {
                                 "type": "string",
                                 "description": (
@@ -6552,10 +8020,6 @@ TOOLS = (
                         "matched tokens across id, name, description, action keys, allowed Recipes, output kind, "
                         "and result summary. Use a few craft keywords rather than a full sentence."
                     ),
-                },
-                "q": {
-                    "type": "string",
-                    "description": "Alias of query.",
                 },
                 "limit": {
                     "type": "integer",
@@ -6623,7 +8087,6 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_id": {"type": "string", "description": "Canvas node id."},
-                "nodeId": {"type": "string", "description": "Alias of node_id."},
             },
             ["node_id"],
         ),
@@ -6637,7 +8100,6 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_id": {"type": "string", "description": "Canvas node id."},
-                "nodeId": {"type": "string", "description": "Alias of node_id."},
                 "depth": {
                     "type": "number",
                     "description": "Neighbor traversal depth. Defaults to 1.",
@@ -6655,13 +8117,10 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_id": {"type": "string", "description": "Canvas node id."},
-                "nodeId": {"type": "string", "description": "Alias of node_id."},
                 "action": {
                     "type": "string",
                     "description": "Optional action id to return one action's exact parameters and behavior. Omit only when comparing all node actions.",
                 },
-                "action_name": {"type": "string", "description": "Alias of action."},
-                "actionName": {"type": "string", "description": "Alias of action."},
             },
             ["node_id"],
         ),
@@ -6678,7 +8137,6 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_type": _NODE_TYPE_SCHEMA,
-                "nodeType": _NODE_TYPE_ALIAS_SCHEMA,
             },
             ["node_type"],
         ),
@@ -6692,7 +8150,6 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_id": {"type": "string", "description": "Audio canvas node id."},
-                "nodeId": {"type": "string", "description": "Alias of node_id."},
             },
             ["node_id"],
         ),
@@ -6709,7 +8166,6 @@ TOOLS = (
                     "type": "string",
                     "description": "Optional mainline slot kind filter for canvas-to-mainline submission, e.g. image, video, audio, or text.",
                 },
-                "slotKind": {"type": "string", "description": "Alias of slot_kind."},
             },
         ),
         _handle_slot_candidates,
@@ -6723,22 +8179,52 @@ TOOLS = (
                 **_SCOPE_PROPS,
                 "asset_kinds": {
                     "type": "array",
-                    "items": {"type": "string", "enum": _MAINLINE_PROJECTION_ASSET_KIND_VALUES},
+                    "items": {
+                        "type": "string",
+                        "enum": _MAINLINE_PROJECTION_ASSET_KIND_VALUES,
+                    },
                     "description": "Optional filters for mainline asset kinds to map into Freezone. Use character for all people/identity/portrait requests. Other narrow categories include prop, scene_master, scene_reverse_master, scene_360, or prop_ref.",
                 },
-                "assetKinds": {"type": "array", "items": {"type": "string"}, "description": "Alias of asset_kinds."},
-                "asset_kind": {
+                "query": {
                     "type": "string",
-                    "enum": _MAINLINE_PROJECTION_ASSET_KIND_VALUES,
-                    "description": "Single asset kind filter alias. Prefer asset_kinds for multiple values.",
+                    "description": "Optional user-facing keyword to match asset label/name.",
                 },
-                "assetKind": {"type": "string", "description": "Alias of asset_kind."},
-                "query": {"type": "string", "description": "Optional user-facing keyword to match asset label/name."},
-                "q": {"type": "string", "description": "Alias of query."},
-                "limit": {"type": "integer", "description": "Maximum candidates to return. Default 20, maximum 50."},
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum candidates to return. Default 20, maximum 50.",
+                },
             },
         ),
         _handle_mainline_projection_assets,
+    ),
+    (
+        "freezone_begin_agent_product_generation",
+        _schema(
+            "freezone_begin_agent_product_generation",
+            "Create a durable, credit-admitted product operation before producing a Workflow "
+            "result, Recipe result, Workflow Skill definition, or Recipe definition. The next "
+            "model turn must bind its result to the returned operation_id.",
+            {
+                **_SCOPE_PROPS,
+                "product_kind": {
+                    "type": "string",
+                    "enum": [
+                        "workflow_result",
+                        "recipe_result",
+                        "workflow_generate",
+                        "recipe_generate",
+                    ],
+                },
+                "generation_session_id": {"type": "string", "minLength": 1},
+                "artifact_id": {"type": "string"},
+                "skill_id": {"type": "string"},
+                "skill_version": {"type": "string"},
+                "normalized_inputs": {"type": "object"},
+            },
+            ["product_kind", "generation_session_id", "normalized_inputs"],
+            reject_unknown=True,
+        ),
+        _handle_begin_agent_product_generation,
     ),
     (
         "freezone_get_workflow_skill",
@@ -6746,13 +8232,14 @@ TOOLS = (
             "freezone_get_workflow_skill",
             "Load the complete planning package for one explicitly selected native Hermes Workflow Skill, including its rules, compatible Recipes, capabilities, and strict workflow contract. This is read-only and always requires the selected skill_id.",
             {
-                "skill_id": {"type": "string", "description": "Explicit selected Skill id."},
-                "skillId": {"type": "string", "description": "Alias of skill_id."},
+                "skill_id": {
+                    "type": "string",
+                    "description": "Explicit selected Skill id.",
+                },
                 "user_goal": {
                     "type": "string",
                     "description": "Current user goal used as planning context; it does not route to another Skill.",
                 },
-                "userGoal": {"type": "string", "description": "Alias of user_goal."},
                 "inputs": {
                     "type": "object",
                     "description": (
@@ -6761,15 +8248,9 @@ TOOLS = (
                         "and the recommended run_after_create mode without creating a session."
                     ),
                 },
-                "compact": {
-                    "type": "boolean",
-                    "description": (
-                        "When true, omit full Recipe definitions and return planning summaries only. "
-                        "Use this for normal WorkflowPlan generation to reduce context size."
-                    ),
-                },
             },
             ["skill_id"],
+            reject_unknown=True,
         ),
         _handle_get_workflow_skill,
     ),
@@ -6778,25 +8259,21 @@ TOOLS = (
         _schema(
             "freezone_prepare_workflow_draft",
             (
-                "This tool has two explicit phases. First call without intent exactly once to return "
-                "the Agent planning quote; if billing is not required, continue in the same turn. "
-                "Only after quote confirmation (or a no-billing result), call exactly once with "
-                "intent as a JSON object and planning_confirmed=true to compile and persist the "
-                "deterministic preview. Do not pass draft_id, do not pass intent as a string, and "
+                "Compile a structured intent and persist its deterministic preview. "
+                "Do not pass draft_id, do not pass intent as a string, and "
                 "do not use execute_code. Use freezone_patch_workflow_draft for an existing draft."
             ),
             {
                 **_SCOPE_PROPS,
-                "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
-                "planning_confirmed": {
-                    "type": "boolean",
-                    "description": (
-                        "Set true only after the user explicitly confirms the quoted Agent planning credits."
-                    ),
+                "operation_id": {
+                    "type": "string",
+                    "description": "Admitted workflow_result operation from freezone_begin_agent_product_generation.",
                 },
+                "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
-            [],
+            ["operation_id"],
+            reject_unknown=True,
         ),
         _handle_prepare_workflow_draft,
     ),
@@ -6812,14 +8289,9 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "draft_id": {"type": "string"},
-                "draftId": {"type": "string", "description": "Alias of draft_id."},
                 "expected_revision": {
                     "type": "integer",
                     "description": "Last revision shown to the user; rejects stale updates.",
-                },
-                "expectedRevision": {
-                    "type": "integer",
-                    "description": "Alias of expected_revision.",
                 },
                 "changes": {
                     "type": "object",
@@ -6830,15 +8302,10 @@ TOOLS = (
                         "Null removes an optional field; inputs are merged."
                     ),
                 },
-                "planning_confirmed": {
-                    "type": "boolean",
-                    "description": (
-                        "Set true only after the user explicitly confirms the quoted Agent planning credits."
-                    ),
-                },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
             ["draft_id", "expected_revision", "changes"],
+            reject_unknown=True,
         ),
         _handle_patch_workflow_draft,
     ),
@@ -6854,7 +8321,6 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "draft_id": {"type": "string"},
-                "draftId": {"type": "string", "description": "Alias of draft_id."},
                 "revision": {
                     "type": "integer",
                     "description": "Exact draft revision confirmed by the user.",
@@ -6862,34 +8328,24 @@ TOOLS = (
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
             ["draft_id", "revision"],
+            reject_unknown=True,
         ),
         _handle_confirm_workflow_draft,
     ),
     (
-        "freezone_create_workflow_from_intent",
+        "freezone_prepare_workflow_plan_draft",
         _schema(
-            "freezone_create_workflow_from_intent",
-            (
-                "Compatibility path for direct creation from a compact workflow intent. New "
-                "interactive flows should prepare, patch, and confirm a persisted workflow draft "
-                "so the reviewed preview cannot drift before creation."
-            ),
+            "freezone_prepare_workflow_plan_draft",
+            "Validate and prepare one complete agent-authored freezone_workflow_plan.v1 as a "
+            "persisted draft. This is the only custom-topology entry point and returns an exact "
+            "preview. It never writes canvas nodes directly. After the user reviews the "
+            "preview, use freezone_confirm_workflow_draft with its draft_id and revision.",
             {
                 **_SCOPE_PROPS,
-                "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
-                **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
-            },
-            ["intent"],
-        ),
-        _handle_create_workflow_from_intent,
-    ),
-    (
-        "freezone_create_workflow_graph",
-        _schema(
-            "freezone_create_workflow_graph",
-            "Create one agent-authored dynamic Freezone WorkflowPlan in one frontend approval. A complete plan is required and strictly validated; fixed workflow_type/count/items template creation is disabled.",
-            {
-                **_SCOPE_PROPS,
+                "operation_id": {
+                    "type": "string",
+                    "description": "Admitted workflow_result operation from freezone_begin_agent_product_generation.",
+                },
                 "plan": _WORKFLOW_PLAN_OBJECT_SCHEMA,
                 "run_after_create": {
                     "type": "boolean",
@@ -6898,22 +8354,11 @@ TOOLS = (
                         "frontend batch after the user has approved the WorkflowPlan."
                     ),
                 },
-                "runAfterCreate": {
-                    "type": "boolean",
-                    "description": "Alias of run_after_create.",
-                },
-                "workflow_instance_id": {
-                    "type": "string",
-                    "description": (
-                        "Optional stable idempotency key for an advanced direct Plan submission. "
-                        "Reuse it when retrying the same submission. Omit it for normal draft "
-                        "confirmation, which supplies the draft id automatically."
-                    ),
-                },
             },
-            ["plan"],
+            ["operation_id", "plan"],
+            reject_unknown=True,
         ),
-        _handle_create_workflow_graph,
+        _handle_prepare_workflow_plan_draft,
     ),
     # 写入前预校验。
     (
@@ -6939,12 +8384,12 @@ TOOLS = (
         "freezone_emit_canvas_command",
         _schema(
             "freezone_emit_canvas_command",
-            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. Do not use this tool for registered or dynamic WorkflowPlans; use freezone_create_workflow_graph instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first.",
+            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first.",
             {
                 **_CANVAS_COMMAND_TOOL_SCOPE_PROPS,
                 "commands": {
                     "type": "array",
-                    "description": "Complete canvas_chat_commands.v1 commands array for ordinary non-workflow edits. For workflows, do not build this array manually; call freezone_create_workflow_graph with a complete dynamic plan. Batch command objects require snake_case fields from freezone_get_canvas_command_catalog: type, node_type, source_node_id, node_id, node_ids, source, target, link_type, etc.",
+                    "description": "Complete canvas_chat_commands.v1 commands array for ordinary non-workflow edits. For workflows, do not build this array manually; use a persisted workflow draft. Batch command objects require snake_case fields from freezone_get_canvas_command_catalog: type, node_type, source_node_id, node_id, node_ids, source, target, link_type, etc.",
                     "items": _CANVAS_COMMAND_ITEM_SCHEMA,
                 },
             },
@@ -6963,10 +8408,6 @@ TOOLS = (
                     "type": "string",
                     "description": "approval_id returned by a previous approval_required MCP canvas write.",
                 },
-                "approvalId": {
-                    "type": "string",
-                    "description": "Alias of approval_id.",
-                },
             },
             ["approval_id"],
         ),
@@ -6982,10 +8423,6 @@ TOOLS = (
                     "type": "string",
                     "description": "approval_id returned by a previous approval_required MCP canvas write.",
                 },
-                "approvalId": {
-                    "type": "string",
-                    "description": "Alias of approval_id.",
-                },
             },
             ["approval_id"],
         ),
@@ -7000,7 +8437,6 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_type": _NODE_TYPE_SCHEMA,
-                "nodeType": _NODE_TYPE_ALIAS_SCHEMA,
                 "data": {
                     "type": "object",
                     "description": "Node data. Prefer stable fields such as prompt, title, content, text, displayName.",
@@ -7027,9 +8463,7 @@ TOOLS = (
                     "type": "string",
                     "description": "Existing source canvas node id.",
                 },
-                "sourceNodeId": {"type": "string", "description": "Alias of source_node_id."},
                 "node_type": _NODE_TYPE_SCHEMA,
-                "nodeType": _NODE_TYPE_ALIAS_SCHEMA,
                 "data": {"type": "object", "description": "New node data."},
                 "connect": {
                     "type": "boolean",
@@ -7047,7 +8481,10 @@ TOOLS = (
             "Single-operation tool only: update editable data fields on exactly one existing Freezone node when the user explicitly asks for one node edit. For multi-node edits or mixed edit+layout/link workflows, use one freezone_emit_canvas_command batch. Inspect freezone_get_node_detail first when editable parameters or enum options are unclear.",
             {
                 **_SCOPE_PROPS,
-                "node_id": {"type": "string", "description": "Existing canvas node id."},
+                "node_id": {
+                    "type": "string",
+                    "description": "Existing canvas node id.",
+                },
                 "data": {
                     "type": "object",
                     "minProperties": 1,
@@ -7073,7 +8510,6 @@ TOOLS = (
                     "enum": _LINK_TYPE_VALUES,
                     "description": "Semantic relation. Required; do not use role, link_kind, semantic_kind, semantic_reason, or semantic_description.",
                 },
-                "linkType": {"type": "string", "description": "Alias of link_type."},
             },
             ["source", "target", "link_type"],
         ),
@@ -7096,11 +8532,6 @@ TOOLS = (
                     "description": "Existing node ids to delete.",
                     "items": {"type": "string"},
                 },
-                "nodeIds": {
-                    "type": "array",
-                    "description": "Alias of node_ids.",
-                    "items": {"type": "string"},
-                },
             },
             [],
         ),
@@ -7116,11 +8547,6 @@ TOOLS = (
                 "edge_ids": {
                     "type": "array",
                     "description": "Existing edge ids to delete.",
-                    "items": {"type": "string"},
-                },
-                "edgeIds": {
-                    "type": "array",
-                    "description": "Alias of edge_ids.",
                     "items": {"type": "string"},
                 },
                 "pairs": {
@@ -7148,11 +8574,6 @@ TOOLS = (
                     "description": "Node ids for relative movement.",
                     "items": {"type": "string"},
                 },
-                "nodeIds": {
-                    "type": "array",
-                    "description": "Alias of node_ids.",
-                    "items": {"type": "string"},
-                },
                 "dx": {"type": "number", "description": "Relative x delta."},
                 "dy": {"type": "number", "description": "Relative y delta."},
             },
@@ -7176,11 +8597,6 @@ TOOLS = (
                     "description": "Optional node ids to layout.",
                     "items": {"type": "string"},
                 },
-                "nodeIds": {
-                    "type": "array",
-                    "description": "Alias of node_ids.",
-                    "items": {"type": "string"},
-                },
             },
             ["mode"],
         ),
@@ -7196,11 +8612,6 @@ TOOLS = (
                 "node_ids": {
                     "type": "array",
                     "description": "At least two node ids/client_ids to group.",
-                    "items": {"type": "string"},
-                },
-                "nodeIds": {
-                    "type": "array",
-                    "description": "Alias of node_ids.",
                     "items": {"type": "string"},
                 },
                 "label": {"type": "string", "description": "Optional group label."},
@@ -7219,11 +8630,6 @@ TOOLS = (
                 "node_ids": {
                     "type": "array",
                     "description": "Node ids/client_ids to select.",
-                    "items": {"type": "string"},
-                },
-                "nodeIds": {
-                    "type": "array",
-                    "description": "Alias of node_ids.",
                     "items": {"type": "string"},
                 },
                 "focus": {
@@ -7247,25 +8653,32 @@ TOOLS = (
                     "enum": _MAINLINE_PROJECTION_SCOPE_VALUES,
                     "description": "Mainline projection scope: episode, beat, or asset.",
                 },
-                "episode": {"type": "integer", "description": "Episode number. Required for episode and beat scopes."},
-                "beat": {"type": "integer", "description": "Beat number. Required for beat scope."},
+                "episode": {
+                    "type": "integer",
+                    "description": "Episode number. Required for episode and beat scopes.",
+                },
+                "beat": {
+                    "type": "integer",
+                    "description": "Beat number. Required for beat scope.",
+                },
                 "primary_slot": {
                     "type": "string",
                     "enum": _MAINLINE_PRIMARY_SLOT_VALUES,
                     "description": "For beat scope: sketch for 草图, frame for 分镜, render for default/render.",
                 },
-                "primarySlot": {"type": "string", "description": "Alias of primary_slot."},
                 "asset_kind": {
                     "type": "string",
                     "enum": _MAINLINE_ASSET_KIND_VALUES,
                     "description": "Asset kind for asset scope.",
                 },
-                "assetKind": {"type": "string", "description": "Alias of asset_kind."},
-                "character": {"type": "string", "description": "Character name for character assets."},
-                "identity_id": {"type": "string", "description": "Legacy alias accepted by older character projection requests; prefer character-only asset projections."},
-                "identityId": {"type": "string", "description": "Alias of identity_id."},
-                "asset_id": {"type": "string", "description": "Scene or prop id for scene/prop assets."},
-                "assetId": {"type": "string", "description": "Alias of asset_id."},
+                "character": {
+                    "type": "string",
+                    "description": "Character name for character assets.",
+                },
+                "asset_id": {
+                    "type": "string",
+                    "description": "Scene or prop id for scene/prop assets.",
+                },
                 "request": {
                     "type": "object",
                     "description": "Optional raw projection request object. Top-level fields are preferred.",
@@ -7279,7 +8692,7 @@ TOOLS = (
         "freezone_run_workflow",
         _schema(
             "freezone_run_workflow",
-            "Run, continue, retry, or locally regenerate a canvas workflow through the deterministic DAG runner. The runner expands dependencies, skips completed outputs by default, executes independent nodes in parallel, persists status, and blocks failed descendants without Agent polling. Use this directly for continue/resume requests instead of reading and running nodes one by one. If it reports content_policy, stop: do not infer sensitive words, rewrite prompts, or retry unless the user explicitly requests one specific prompt edit.",
+            "Run, continue, retry, or locally regenerate a canvas workflow through the deterministic DAG runner. The runner expands dependencies, skips completed outputs by default, executes independent nodes in parallel, persists status, and blocks failed descendants without Agent polling. For nodes marked workflowConfigConfirmed=true, reuse the already approved model, size, duration, quality, voice, and composition fields; do not ask the user to choose them again. Ask again only when a required field is missing, the user changed it, or the provider rejects it. Use this directly for continue/resume requests instead of reading and running nodes one by one. If it reports content_policy, stop: do not infer sensitive words, rewrite prompts, or retry unless the user explicitly requests one specific prompt edit.",
             {
                 **_SCOPE_PROPS,
                 "node_ids": {
@@ -7309,11 +8722,13 @@ TOOLS = (
         "freezone_run_node_action",
         _schema(
             "freezone_run_node_action",
-            "Single-operation tool only: run or open exactly one frontend node action listed by node_detail action_summary. For non-default action parameters, inspect freezone_get_node_action_catalog with the specific action first. For multiple actions or mixed workflows, use one freezone_emit_canvas_command batch.",
+            "Single-operation tool only: run or open exactly one frontend node action listed by node_detail action_summary. If the node has workflowConfigConfirmed=true, reuse its persisted generation parameters and do not ask the user to choose them again unless a required field is missing or the user changed it. For non-default action parameters, inspect freezone_get_node_action_catalog with the specific action first. For multiple actions or mixed workflows, use one freezone_emit_canvas_command batch.",
             {
                 **_SCOPE_PROPS,
-                "node_id": {"type": "string", "description": "Existing canvas node id."},
-                "nodeId": {"type": "string", "description": "Alias of node_id."},
+                "node_id": {
+                    "type": "string",
+                    "description": "Existing canvas node id.",
+                },
                 "action": {
                     "type": "string",
                     "description": "Exact action id from the node action catalog.",
@@ -7322,12 +8737,10 @@ TOOLS = (
                     "type": "object",
                     "description": "Optional parameters for actions whose action_catalog exposes parameter_schema. For generation actions, omit regenerate unless the user explicitly asks to regenerate/overwrite existing output.",
                 },
-                "params": {"type": "object", "description": "Alias of parameters."},
                 "regenerate": {
                     "type": "boolean",
                     "description": "Set true only when the user explicitly asks to regenerate/overwrite this node. Normal continue/complete requests skip nodes that already have output.",
                 },
-                "force_regenerate": {"type": "boolean", "description": "Alias of regenerate."},
             },
             ["node_id", "action"],
         ),

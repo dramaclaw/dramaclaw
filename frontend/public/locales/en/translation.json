@@ -859,7 +859,31 @@
       "description": "Open Xia Director beside the Freezone canvas.",
       "toggle": "Open Freezone Xia Director",
       "close": "Collapse Freezone Xia Director",
-      "resize": "Drag to resize Freezone Xia Director"
+      "resize": "Drag to resize Freezone Xia Director",
+      "audioApproval": {
+        "chooseVoiceTitle": "Choose a narration voice",
+        "chooseVoiceDescription": "Choose a custom voice. If you do not choose one now, narration generation will be skipped.",
+        "music": "Music",
+        "narration": "Narration",
+        "changeVoice": "Change custom voice",
+        "chooseVoice": "Choose custom voice",
+        "selectedVoice": "Selected: {{voice}}",
+        "customVoice": "Custom voice",
+        "noVoiceSkip": "Not selected; narration generation will be skipped",
+        "musicSummary": "{{seconds}} sec · {{mode}}",
+        "instrumental": "Instrumental",
+        "vocalsAllowed": "Vocals allowed",
+        "continue": "Continue with selected voice"
+      },
+      "canvasExecuting": "Executing...",
+      "canvasConfirmExecution": "Confirm execution",
+      "canvasTimeoutCancelled": "The canvas operation timed out and was cancelled without being applied.",
+      "canvasManuallyCancelled": "The canvas operation was manually cancelled without being applied."
+    },
+    "workflowRecovery": {
+      "safetyReviewFailed": "Some nodes did not pass safety review",
+      "editPrompt": "Edit prompt",
+      "skipNode": "Skip node"
     },
     "canvases": {
       "defaultSection": "Default canvas",
@@ -2851,6 +2875,23 @@
   },
   "taskCenter": {
     "title": "Task Center",
+    "cancel": {
+      "title": "Cancel generation task",
+      "description": "Cancel “{{name}}”? Running tasks usually are not refunded after cancellation.",
+      "confirm": "Confirm cancellation",
+      "keep": "Keep generating",
+      "submitted": "Cancellation submitted",
+      "failed": "Failed to cancel task: {{error}}",
+      "short": "Cancel task"
+    },
+    "cancelAll": {
+      "title": "Cancel all generation tasks",
+      "description": "Cancel {{count}} tasks in the current list? Running tasks usually are not refunded, and completed tasks will not be rolled back.",
+      "confirm": "Cancel all",
+      "partialFailure": "{{count}} tasks could not be cancelled. Check Task Center for details.",
+      "submitted": "All cancellations submitted",
+      "short": "Cancel all"
+    },
     "panel": {
       "open": "Open Task Center",
       "close": "Close",
@@ -6043,11 +6084,12 @@
       "emotionLabel": "Delivery cues",
       "emotionOptional": "(optional, free text)",
       "emotionPlaceholder": "e.g. tense, hushed, a little fearful",
-      "voiceMissing": "Configure or pick a voice first",
+      "voiceMissing": "No usable custom voice is selected",
       "translate": "Translate (Chinese ⇄ English)",
       "voiceSettings": "Voice settings",
       "advancedSettings": "Advanced settings",
       "generate": "Generate",
+      "generateWithoutVoice": "Generate (skip when no custom voice is selected)",
       "help": "Help",
       "musicDuration": "Music length",
       "musicDurationHelp": "Sets the song length. In auto mode the lyrics are kept intact; once a length is set, matching that length takes priority.",
@@ -6059,7 +6101,7 @@
       "copied": "Copied",
       "copyFailed": "Copy failed",
       "copyVoiceRef": "Copy voice reference",
-      "switchVoice": "Switch voice"
+      "switchVoice": "Choose voice"
     },
     "voiceRef": {
       "projectNarrator": "Project narrator",
@@ -6168,7 +6210,7 @@
       "empty": "No audio yet",
       "noVoiceConfigured": "No voice configured",
       "generateFailed": "Generation failed",
-      "selectVoiceFirst": "Configure or pick a voice first"
+      "selectVoiceFirst": "No custom voice selected; generation was skipped"
     },
     "videoStory": {
       "columns": {

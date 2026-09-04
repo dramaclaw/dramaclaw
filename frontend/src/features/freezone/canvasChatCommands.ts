@@ -54,6 +54,8 @@ import {
 import { useCanvasStore } from "@/stores/canvasStore";
 import { deterministicNodeOutputIssue } from "@/features/freezone/workflowQualityGate";
 import {
+  bindWorkflowProductOperation,
+  clearWorkflowProductOperation,
   WORKFLOW_EXECUTION_ACTIVITY_EVENT,
   WORKFLOW_RUN_UPDATED_EVENT,
   type WorkflowExecutionActivityDetail,
@@ -181,6 +183,8 @@ export type CanvasCommandApprovalEventDetail = {
   receivedAt?: number;
   autoExpires?: boolean;
   externalMcpCommand?: boolean;
+  /** 必须由用户在聊天卡片中明确选择，自动执行模式也不能跳过。 */
+  requiresUserChoice?: boolean;
 };
 
 export type CanvasCommandResultEventDetail = {
@@ -1164,6 +1168,50 @@ function nodeById(id: string): CanvasNode | null {
   return useCanvasStore.getState().nodes.find((node) => node.id === id) ?? null;
 }
 
+/**
+ * Resolve narration text only after an upstream text/script node has produced it.
+ * Workflow plans may create the audio node before the script is materialized;
+ * dispatching TTS with an empty `text` causes the backend to stop before NewAPI.
+ */
+function workflowNarrationTextFromNode(node: CanvasNode): string {
+  const data = node.data as JsonRecord;
+  const direct = nonEmptyString(data.content) ?? nonEmptyString(data.text);
+  if (direct) return direct;
+  const scriptResult = data.scriptResult;
+  if (!isRecord(scriptResult) || !Array.isArray(scriptResult.rows)) return "";
+  return scriptResult.rows
+    .map((row) => {
+      if (!isRecord(row)) return "";
+      return (
+        nonEmptyString(row.narration) ??
+        nonEmptyString(row.voiceover) ??
+        nonEmptyString(row.dialogue) ??
+        ""
+      );
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function hydrateWorkflowAudioInput(nodeId: string): boolean {
+  const target = nodeById(nodeId);
+  if (!target) return false;
+  const targetData = target.data as JsonRecord;
+  if (nonEmptyString(targetData.text)) return true;
+  const state = useCanvasStore.getState();
+  const incoming = state.edges
+    .filter((edge) => edge.target === nodeId)
+    .map((edge) => nodeById(edge.source))
+    .filter((node): node is CanvasNode => node !== null);
+  for (const source of incoming) {
+    const text = workflowNarrationTextFromNode(source);
+    if (!text) continue;
+    state.updateNodeData(nodeId, { text });
+    return true;
+  }
+  return false;
+}
+
 const VIDEO_CONTINUITY_PROMPT_NOTE =
   "上一镜尾帧已作为图片参考接入，请以它作为本镜头开场的动作、构图和角色状态连续依据。";
 
@@ -1703,6 +1751,7 @@ function expandWorkflowNodeIds(
 }
 
 function defaultWorkflowActionForNode(node: CanvasNode): string | null {
+  if (isWorkflowUserInputNode(node)) return null;
   const preferredActions = WORKFLOW_GENERATE_ACTION_BY_NODE_TYPE[node.type] ?? [];
   if (preferredActions.length === 0) return null;
   const state = useCanvasStore.getState();
@@ -1717,6 +1766,21 @@ function defaultWorkflowActionForNode(node: CanvasNode): string | null {
     return action;
   }
   return null;
+}
+
+function isWorkflowUserInputNode(node: CanvasNode | undefined): boolean {
+  if (!node) return false;
+  const data = node.data as Record<string, unknown>;
+  if (data.workflowCatalogRole === "user_input") return true;
+  const catalog = data.workflowCatalog && typeof data.workflowCatalog === "object"
+    && !Array.isArray(data.workflowCatalog)
+    ? data.workflowCatalog as Record<string, unknown>
+    : null;
+  const stepId = String(catalog?.stepId ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, "_");
+  return ["workflow_input", "user_input", "user_requirement"].includes(stepId);
 }
 
 function isRedundantLegacyComposeGenerator(
@@ -1826,9 +1890,7 @@ function normalizeWorkflowStartNodeIds(nodeIds: string[]): string[] {
   const nodeByIdMap = new Map(state.nodes.map((node) => [node.id, node] as const));
   return [...new Set(nodeIds.map((nodeId) => {
     const node = nodeByIdMap.get(nodeId);
-    const workflowRole = (node?.data as { workflowCatalogRole?: unknown } | undefined)
-      ?.workflowCatalogRole;
-    if (workflowRole !== "user_input" || !node?.parentId) return nodeId;
+    if (!isWorkflowUserInputNode(node) || !node?.parentId) return nodeId;
     return nodeByIdMap.get(node.parentId)?.type === CANVAS_NODE_TYPES.group
       ? node.parentId
       : nodeId;
@@ -2730,11 +2792,40 @@ async function executeQueuedNodeActions(
         const createdRun = await createFreezoneWorkflowRun(
           projectId,
           canvasId,
-          pendingActions.map((action) => ({ node_id: action.nodeId, action: action.action })),
+          pendingActions.map((action) => {
+            const node = nodeById(action.nodeId);
+            const catalog = node?.data?.workflowCatalog;
+            const recipeId = catalog && typeof catalog === "object"
+              ? String((catalog as Record<string, unknown>).recipeId ?? "").trim()
+              : "";
+            const recipeVersion = catalog && typeof catalog === "object"
+              ? String((catalog as Record<string, unknown>).recipeVersion ?? "").trim()
+              : "";
+            return {
+              node_id: action.nodeId,
+              action: action.action,
+              ...(recipeId ? { recipe_id: recipeId } : {}),
+              ...(recipeVersion ? { recipe_version: recipeVersion } : {}),
+              ...(GENERATION_NODE_ACTIONS.has(action.action)
+                ? {
+                    generation_attempt_id:
+                      `${workflowRunIdempotencyKey}:${action.nodeId}:${action.action}`,
+                  }
+                : {}),
+            };
+          }),
           workflowRunIdempotencyKey,
           workflowRunnerId,
         );
         workflowRunId = createdRun.run_id;
+        for (const action of createdRun.actions) {
+          if (action.product_operation_id) {
+            bindWorkflowProductOperation(action.node_id, {
+              projectId,
+              operationId: action.product_operation_id,
+            });
+          }
+        }
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent(FREEZONE_WORKFLOW_RUN_UPDATED_EVENT, {
             detail: {
@@ -3104,6 +3195,14 @@ async function executeQueuedNodeActions(
 
             await ensureVideoContinuityTailFrames(action, projectId);
 
+            if (action.action === "generate_audio" && !hydrateWorkflowAudioInput(action.nodeId)) {
+              return {
+                action,
+          failed: "旁白节点缺少上游生成的文本，已停止提交 TTS 请求；请先完成剧本/Beat 文本生成后重试。", // i18n-exempt -- workflow error payload
+                retryCount,
+              };
+            }
+
             const requestId = `node-action:${Date.now()}:${Math.random().toString(36).slice(2)}`;
             const uiOpenAction = UI_OPEN_NODE_ACTIONS.has(action.action);
             const waiting = waitForNodeActionResult(
@@ -3281,11 +3380,13 @@ async function executeQueuedNodeActions(
               isRecord(actionResult.output) &&
               (actionResult.output.openedUiAction === true ||
                 actionResult.output.requires_user_action === true);
+            const actionWasSkipped =
+              isRecord(actionResult.output) && actionResult.output.skipped === true;
             const failed = actionResult.status === "error"
               ? actionResult.error || "节点动作执行失败"
               : outputIssue
                 ? outputIssue
-              : !actionOpenedUserUi && !hasRequiredOutput
+              : !actionOpenedUserUi && !actionWasSkipped && !hasRequiredOutput
                 ? nodeGenerationError(action.nodeId) ??
                   `节点动作完成但未产出 ${mediaRequirementLabel(action.action)}。`
                 : null;
@@ -3328,7 +3429,9 @@ async function executeQueuedNodeActions(
             ? settled.failed === WORKFLOW_STOPPED_MESSAGE
               ? "skipped"
               : settled.failed.startsWith("跳过 ") ? "blocked" : "failed"
-            : "completed",
+            : isRecord(settled.output) && settled.output.skipped === true
+              ? "skipped"
+              : "completed",
           ...(settled.failed ? { error: settled.failed } : {}),
           retry_count: settled.retryCount ?? 0,
           ...workflowTaskReference(settled.output),
@@ -3386,6 +3489,7 @@ async function executeQueuedNodeActions(
       if (typeof window !== "undefined") {
         window.removeEventListener(WORKFLOW_EXECUTION_ACTIVITY_EVENT, handleWorkflowActivity);
       }
+      for (const action of pendingActions) clearWorkflowProductOperation(action.nodeId);
       stopWorkflowHeartbeat();
     }
   };

@@ -810,7 +810,7 @@ def test_hermes_stops_mainline_writes_but_not_freezone_canvas_writes():
         "freezone_emit_canvas_command",
         "freezone_emit_canvas_command",
     )
-    assert hermes_sdk._is_freezone_canvas_write_tool("freezone_create_workflow_graph")
+    assert hermes_sdk._is_freezone_canvas_write_tool("freezone_confirm_workflow_draft")
     assert not hermes_sdk._should_stop_after_write_tool(
         "freezone_emit_canvas_command",
         "dramaclaw_start_single_video",

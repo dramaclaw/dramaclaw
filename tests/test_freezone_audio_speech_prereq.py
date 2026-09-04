@@ -135,6 +135,50 @@ async def test_valid_voice_is_resolved_before_job_allocation_and_enqueue(
 
 
 @pytest.mark.asyncio
+async def test_preset_voice_skips_reference_voice_prerequisite(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.api.schemas import FreezoneAudioSpeechRequest
+
+    ctx = _project_context(tmp_path)
+    store_factory = AsyncMock()
+    resolve_voice = AsyncMock(side_effect=AssertionError("preset must not resolve a reference voice"))
+
+    async def fake_resolve_project(*_args, **_kwargs):
+        return ctx, "owner", "demo", tmp_path, str(tmp_path)
+
+    async def enqueue(**kwargs):
+        return {"ok": True, "payload": kwargs["payload"]}
+
+    monkeypatch.setattr(freezone, "_resolve_freezone_project", fake_resolve_project)
+    monkeypatch.setattr(freezone, "make_sqlite_store_for_context", store_factory)
+    monkeypatch.setattr(freezone, "resolve_speech_voice", resolve_voice, raising=False)
+    monkeypatch.setattr(freezone, "_new_job_id", lambda: "job-preset")
+    monkeypatch.setattr(freezone, "_task_projection_payload", AsyncMock(return_value={}))
+    monkeypatch.setattr(freezone, "_enqueue_freezone_background_job", enqueue)
+
+    result = await freezone.freezone_audio_speech(
+        "proj",
+        FreezoneAudioSpeechRequest(
+            text="系统声音旁白",
+            speech_mode="preset",
+            preset_model="edge-tts",
+            preset_voice="Serena",
+        ),
+        user={"username": "viewer"},
+    )
+
+    assert result["payload"]["speech_mode"] == "preset"
+    assert result["payload"]["preset_model"] == "edge-tts"
+    assert result["payload"]["preset_voice"] == "Serena"
+    assert result["payload"]["voice_ref"] is None
+    store_factory.assert_not_awaited()
+    resolve_voice.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_explicit_voice_directory_is_a_structured_prerequisite_error(
     tmp_path: Path,
 ) -> None:

@@ -499,7 +499,9 @@ def ensure_user_hermes_workspace(
     if project_state_dir is not None:
         home = Path(project_state_dir) / "agents" / "hermes" / normalized_profile
     else:
-        home_name = ".hermes-freezone" if normalized_profile == "freezone" else ".hermes"
+        home_name = (
+            ".hermes-freezone" if normalized_profile == "freezone" else ".hermes"
+        )
         home = _state_root() / username / home_name
     home.mkdir(parents=True, exist_ok=True)
     try:
@@ -532,9 +534,11 @@ def ensure_user_hermes_workspace(
     config_yaml = home / "config.yaml"
     if not config_yaml.exists():
         config_yaml.write_text(
-            _default_freezone_config_yaml()
-            if normalized_profile == "freezone"
-            else _default_config_yaml(),
+            (
+                _default_freezone_config_yaml()
+                if normalized_profile == "freezone"
+                else _default_config_yaml()
+            ),
             encoding="utf-8",
         )
     if normalized_profile == "freezone":
@@ -613,9 +617,6 @@ def _parse_env_assignments(text: str) -> dict[str, str]:
         if key:
             values[key] = value.strip().strip('"').strip("'")
     return values
-
-
-
 
 
 def _ensure_gateway_env_file(env_file: Path) -> None:
@@ -768,11 +769,11 @@ def _render_workflow_skill(item: dict) -> tuple[str, dict[str, object]]:
 
 ## 执行规则
 
-1. 本 Skill 已由用户明确选择。开始规划前只调用一次 `freezone_prepare_workflow_draft` 获取报价，不传 `intent` 或 `planning_confirmed=true`。如果工具返回需要计费确认，则向用户展示确切报价并停止本轮；如果返回无需计费，则不要向用户提及积分、版本或确认，继续本轮规划。
-2. 报价确认完成（或返回无需计费）后，只调用一次 `freezone_get_workflow_skill`，固定传入 `skill_id=\"{skill_id}\"` 和 `compact=true`；不要再次选择或替换 Skill。只补充 `input_contract.missing_required`，不要重复询问已经推断或有默认值的参数。
-3. 生成精简 `freezone_workflow_intent.v1`，以结构化 JSON 对象（不是字符串）和 `planning_confirmed=true` 调用 `freezone_prepare_workflow_draft` 一次并生成草稿。不要传 `draft_id`，不要调用 `execute_code`。严格按返回的预览向用户确认，同时展示创建工作流所需的 `agent_credit_estimate.display`，并说明图片、音频、视频等节点生成积分另计。
-4. 用户调整方案时调用 `freezone_patch_workflow_draft`，只提交发生变化的字段；修改规划也必须先按工具返回的报价征得确认，再以 `planning_confirmed=true` 提交，不能把用户的修改请求本身视为扣费确认。
-5. 用户确认后调用 `freezone_confirm_workflow_draft`，使用已确认的 draft_id 和 revision。
+1. 本 Skill 已由用户明确选择。只调用一次 `freezone_get_workflow_skill`，固定传入 `skill_id=\"{skill_id}\"`；不要再次选择或替换 Skill。只补充 `input_contract.missing_required`，不要重复询问已经推断或有默认值的参数。
+2. 生成精简 `freezone_workflow_intent.v1`，以结构化 JSON 对象（不是字符串）调用 `freezone_prepare_workflow_draft`。不要传 `draft_id` 或调用 `execute_code`。
+3. 返回草稿后，严格按预览向用户确认。
+4. 用户调整方案时调用 `freezone_patch_workflow_draft`，只提交发生变化的字段。
+5. 用户确认方案后调用 `freezone_confirm_workflow_draft`，始终使用已确认的 draft_id 和 revision。
 6. Recipe 选择、节点展开、稳定 ID、连线、布局和合成全部交给工具；不要手写 WorkflowPlan 或逐节点创建。
 
 ## 业务说明
@@ -1005,7 +1006,9 @@ def _ensure_director_config_policy(config_yaml: Path) -> None:
     try:
         config_yaml.write_text(_dump_hermes_config_yaml(config), encoding="utf-8")
     except OSError:
-        _log.warning("failed to enforce director hermes config policy at %s", config_yaml)
+        _log.warning(
+            "failed to enforce director hermes config policy at %s", config_yaml
+        )
 
 
 def _ensure_freezone_config_policy(config_yaml: Path) -> None:

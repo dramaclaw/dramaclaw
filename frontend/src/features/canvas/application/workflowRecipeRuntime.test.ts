@@ -10,6 +10,8 @@ import {
   selectWorkflowUpstreamText,
 } from './workflowRecipeRuntime';
 import {
+  bindWorkflowProductOperation,
+  clearWorkflowProductOperation,
   WORKFLOW_EXECUTION_ACTIVITY_EVENT,
   type WorkflowExecutionActivityDetail,
 } from './workflowExecutionActivity';
@@ -78,6 +80,41 @@ describe('workflowRecipeRuntime', () => {
     });
   });
 
+  it('does not forward legacy dependency arrays as confirmed Skill inputs', async () => {
+    compileMock.mockResolvedValue('compiled background music prompt');
+
+    await compileWorkflowNodePrompt({
+      nodeData: {
+        workflowCatalog: {
+          skillId: 'short-drama-quick',
+          confirmedInputs: ['n_script'],
+          recipeId: 'drama-background-music',
+          promptStrategy: 'ambient_bgm',
+          inputStrategy: 'script_to_bgm',
+          promptBuilder: 'episode_bgm',
+        },
+      },
+      nodeKind: 'audio',
+      nodePrompt: '冷灰海浪氛围配乐',
+      upstreamText: '',
+      fallbackPrompt: '第1集剧本\n\n冷灰海浪氛围配乐',
+    });
+
+    expect(compileMock).toHaveBeenCalledWith({
+      recipeId: 'drama-background-music',
+      recipeVersion: '',
+      skillId: 'short-drama-quick',
+      skillVersion: '',
+      confirmedInputs: {},
+      nodeKind: 'audio',
+      promptStrategy: 'llm_refine',
+      nodePrompt: '冷灰海浪氛围配乐',
+      upstreamText: '',
+      userGoal: '',
+      referenceMedia: undefined,
+    });
+  });
+
   it('reports Recipe compilation and task submission phases', async () => {
     compileMock.mockResolvedValue('compiled prompt');
     const phases: string[] = [];
@@ -101,6 +138,31 @@ describe('workflowRecipeRuntime', () => {
     }
 
     expect(phases).toEqual(['compiling_recipe', 'submitting']);
+  });
+
+  it('binds workflow Recipe compilation to its admitted product operation', async () => {
+    compileMock.mockResolvedValue('compiled prompt');
+    bindWorkflowProductOperation('image-billed', {
+      projectId: 'project-a',
+      operationId: 'agent_product_a',
+    });
+
+    try {
+      await compileWorkflowNodePrompt({
+        nodeId: 'image-billed',
+        nodeData: { workflowCatalog: { recipeId: 'product-image' } },
+        nodeKind: 'image',
+        nodePrompt: '商品图',
+        fallbackPrompt: 'fallback',
+      });
+    } finally {
+      clearWorkflowProductOperation('image-billed');
+    }
+
+    expect(compileMock).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'project-a',
+      productOperationId: 'agent_product_a',
+    }));
   });
 
   it('executes a catalog-backed text node', async () => {

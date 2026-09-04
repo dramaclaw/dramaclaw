@@ -421,9 +421,7 @@ def _skill_input_contract(
             value = provided[parameter_id]
             error = _portable_generation_input_error(parameter_id, value)
             if error is not None:
-                errors.append(
-                    {"path": f"inputs.{parameter_id}", "message": error}
-                )
+                errors.append({"path": f"inputs.{parameter_id}", "message": error})
             else:
                 resolved[parameter_id] = deepcopy(value)
 
@@ -446,7 +444,7 @@ def _skill_input_contract(
 
 def get_workflow_skill(args: dict[str, Any]) -> dict[str, Any]:
     """Return one complete planning package for an explicitly selected Skill."""
-    skill_id = _text(args.get("skill_id") or args.get("skillId") or args.get("id"))
+    skill_id = _text(args.get("skill_id"))
     if not skill_id:
         return {
             "ok": False,
@@ -589,7 +587,7 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
             f"schema_version must equal {WORKFLOW_INTENT_SCHEMA_VERSION}",
             path="schema_version",
         )
-    skill_id = _text(intent.get("skill_id") or intent.get("skillId"))
+    skill_id = _text(intent.get("skill_id"))
     if not skill_id:
         return _intent_error("skill_id is required", path="skill_id")
     skill = _load_skill(skill_id)
@@ -648,6 +646,7 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
         if isinstance(plan, dict):
             plan["planner"] = deepcopy(planner_metadata)
     return compiled
+
 
 def _standard_skill_items(
     *,
@@ -1047,7 +1046,7 @@ def _expand_standard_skill_intent(
                             "Write the exact sentence(s) the voice-over should speak "
                             "aloud for this unit, in the user's language. Placeholders "
                             'like "第一段旁白" / "这是短剧的第二段解说" and unit titles '
-                            "are rejected. Example: \"深夜的便利店，只有他一个人。\" "
+                            'are rejected. Example: "深夜的便利店，只有他一个人。" '
                             "If include_audio was not requested by the user, set "
                             "include_audio=false instead of inventing narration."
                         ),
@@ -1211,7 +1210,7 @@ def _compile_dynamic_recipe_items_intent(
                 "prompt must not be a request to generate narration",
                 path=f"items.{index}.narration",
                 hint=(
-                    'Set items[].narration to the exact spoken sentence(s), e.g. '
+                    "Set items[].narration to the exact spoken sentence(s), e.g. "
                     '"深夜的便利店，只有他一个人。" — an instruction such as '
                     '"为这段视频生成旁白" is not narration and is rejected.'
                 ),
@@ -1236,7 +1235,10 @@ def _compile_dynamic_recipe_items_intent(
         node_types[item_id] = node_type
         node_recipes[item_id] = recipe
         node_requires_source[item_id] = any(
-            bool(candidate.get("requires_source_media") or candidate.get("requiresSourceMedia"))
+            bool(
+                candidate.get("requires_source_media")
+                or candidate.get("requiresSourceMedia")
+            )
             for candidate in [recipe, *recipe_pipeline]
         )
         item_by_id[item_id] = item
@@ -1245,20 +1247,18 @@ def _compile_dynamic_recipe_items_intent(
     item_order = {item_id: index for index, item_id in enumerate(item_by_id)}
     for item_id, item in item_by_id.items():
         raw_dependencies = item.get("depends_on") or item.get("dependsOn") or []
-        raw_references = item.get("reference_inputs") or item.get("referenceInputs") or []
+        raw_references = (
+            item.get("reference_inputs") or item.get("referenceInputs") or []
+        )
         dependencies = (
             [_text(value) for value in raw_dependencies if _text(value)]
             if isinstance(raw_dependencies, list)
-            else [_text(raw_dependencies)]
-            if _text(raw_dependencies)
-            else []
+            else [_text(raw_dependencies)] if _text(raw_dependencies) else []
         )
         references = (
             [_text(value) for value in raw_references if _text(value)]
             if isinstance(raw_references, list)
-            else [_text(raw_references)]
-            if _text(raw_references)
-            else []
+            else [_text(raw_references)] if _text(raw_references) else []
         )
         for reference_id in references:
             if reference_id not in dependencies:
@@ -1292,7 +1292,8 @@ def _compile_dynamic_recipe_items_intent(
                 candidate_id
                 for candidate_id, candidate_order in item_order.items()
                 if candidate_order < current_order
-                and node_types.get(candidate_id) in {"imageGenNode", "videoNode", "audioNode"}
+                and node_types.get(candidate_id)
+                in {"imageGenNode", "videoNode", "audioNode"}
                 and not node_requires_source.get(candidate_id)
             ]
             same_kind_candidates = [
@@ -1303,9 +1304,11 @@ def _compile_dynamic_recipe_items_intent(
             anchor_id = (
                 same_kind_candidates[0]
                 if len(same_kind_candidates) == 1
-                else candidates[0]
-                if not same_kind_candidates and len(candidates) == 1
-                else ""
+                else (
+                    candidates[0]
+                    if not same_kind_candidates and len(candidates) == 1
+                    else ""
+                )
             )
             if anchor_id:
                 normalized_dependencies.append(anchor_id)
@@ -1432,7 +1435,7 @@ def _compile_dynamic_recipe_items_intent(
             "requires_user_confirmation": True,
             "auto_create_nodes": False,
             "auto_generate_content": False,
-            "handoff_tool": "freezone_create_workflow_from_intent",
+            "handoff_tool": "freezone_prepare_workflow_draft",
         },
     }
     validated = validate_agent_workflow_plan(plan)
@@ -1464,7 +1467,11 @@ def _dynamic_default_model(recipe: dict[str, Any]) -> str:
             *[_text(item) for item in recipe.get("action_keys") or []],
         ]
     ).lower()
-    return "suno_music" if any(token in searchable for token in ("music", "bgm", "音乐", "配乐")) else "edge-tts"
+    return (
+        "suno_music"
+        if any(token in searchable for token in ("music", "bgm", "音乐", "配乐"))
+        else "edge-tts"
+    )
 
 
 def _intent_audio_kind(item: dict[str, Any], recipe: dict[str, Any] | None) -> str:
@@ -1490,7 +1497,10 @@ def _intent_audio_kind(item: dict[str, Any], recipe: dict[str, Any] | None) -> s
     ).lower()
     return (
         "music"
-        if any(token in searchable for token in ("background_music", "bgm", "背景音乐", "配乐", "纯音乐"))
+        if any(
+            token in searchable
+            for token in ("background_music", "bgm", "背景音乐", "配乐", "纯音乐")
+        )
         else "speech"
     )
 
@@ -1596,7 +1606,9 @@ _INTENT_FIX_INSTRUCTION = (
 )
 
 
-def _intent_error(message: str, *, path: str, hint: str | None = None) -> dict[str, Any]:
+def _intent_error(
+    message: str, *, path: str, hint: str | None = None
+) -> dict[str, Any]:
     error: dict[str, Any] = {"path": path, "message": message}
     if hint:
         error["hint"] = hint
@@ -1691,8 +1703,15 @@ def _intent_items(intent: dict[str, Any]) -> list[dict[str, Any]]:
                         **({"narration": narration} if narration else {}),
                         **({"step_id": _safe_id(step_id)} if step_id else {}),
                         **(
-                            {"recipe_id": _text(raw_item.get("recipe_id") or raw_item.get("recipeId"))}
-                            if _text(raw_item.get("recipe_id") or raw_item.get("recipeId"))
+                            {
+                                "recipe_id": _text(
+                                    raw_item.get("recipe_id")
+                                    or raw_item.get("recipeId")
+                                )
+                            }
+                            if _text(
+                                raw_item.get("recipe_id") or raw_item.get("recipeId")
+                            )
                             else {}
                         ),
                         **(
@@ -1710,7 +1729,12 @@ def _intent_items(intent: dict[str, Any]) -> list[dict[str, Any]]:
                             else {}
                         ),
                         **(
-                            {"depends_on": list(raw_item.get("depends_on") or raw_item.get("dependsOn"))}
+                            {
+                                "depends_on": list(
+                                    raw_item.get("depends_on")
+                                    or raw_item.get("dependsOn")
+                                )
+                            }
                             if isinstance(
                                 raw_item.get("depends_on") or raw_item.get("dependsOn"),
                                 list,
@@ -1737,8 +1761,16 @@ def _intent_items(intent: dict[str, Any]) -> list[dict[str, Any]]:
                             else {}
                         ),
                         **(
-                            {"timeline_role": _text(raw_item.get("timeline_role") or raw_item.get("timelineRole"))}
-                            if _text(raw_item.get("timeline_role") or raw_item.get("timelineRole"))
+                            {
+                                "timeline_role": _text(
+                                    raw_item.get("timeline_role")
+                                    or raw_item.get("timelineRole")
+                                )
+                            }
+                            if _text(
+                                raw_item.get("timeline_role")
+                                or raw_item.get("timelineRole")
+                            )
                             else {}
                         ),
                         **(
@@ -1749,10 +1781,13 @@ def _intent_items(intent: dict[str, Any]) -> list[dict[str, Any]]:
                         **(
                             {
                                 "audio_kind": _text(
-                                    raw_item.get("audio_kind") or raw_item.get("audioKind")
+                                    raw_item.get("audio_kind")
+                                    or raw_item.get("audioKind")
                                 ).lower()
                             }
-                            if _text(raw_item.get("audio_kind") or raw_item.get("audioKind")).lower()
+                            if _text(
+                                raw_item.get("audio_kind") or raw_item.get("audioKind")
+                            ).lower()
                             in {"music", "speech"}
                             else {}
                         ),
@@ -1794,7 +1829,11 @@ def _intent_dependency_edges(
     pairs = (
         list(zip(source_ids, target_ids, strict=True))
         if len(source_ids) == len(target_ids) and len(source_ids) > 1
-        else [(source_id, target_id) for source_id in source_ids for target_id in target_ids]
+        else [
+            (source_id, target_id)
+            for source_id in source_ids
+            for target_id in target_ids
+        ]
     )
     return [
         {
@@ -1881,7 +1920,11 @@ def _intent_item_node(
     audio_kind = _intent_audio_kind(item, recipe) if node_type == "audioNode" else ""
     model = _text(item.get("model"))
     if not model:
-        model = "suno_music" if audio_kind == "music" else _dynamic_default_model(recipe or {})
+        model = (
+            "suno_music"
+            if audio_kind == "music"
+            else _dynamic_default_model(recipe or {})
+        )
     item_prompt = _text(item.get("prompt"))
     if node_type == "audioNode" and model in {
         "edge-tts",
@@ -1937,9 +1980,7 @@ def _intent_item_node(
     generation_model = _text(
         resolved_inputs.get("image_model")
         if node_type == "imageGenNode"
-        else resolved_inputs.get("video_model")
-        if node_type == "videoNode"
-        else ""
+        else resolved_inputs.get("video_model") if node_type == "videoNode" else ""
     )
     if generation_model:
         data["model"] = generation_model
@@ -1948,9 +1989,11 @@ def _intent_item_node(
     aspect_ratio = _text(
         resolved_inputs.get("image_aspect_ratio")
         if node_type == "imageGenNode"
-        else resolved_inputs.get("video_aspect_ratio")
-        if node_type == "videoNode"
-        else ""
+        else (
+            resolved_inputs.get("video_aspect_ratio")
+            if node_type == "videoNode"
+            else ""
+        )
     ) or _text(resolved_inputs.get("aspect_ratio"))
     if aspect_ratio and node_type in {"imageGenNode", "videoNode"}:
         data["aspectRatio"] = aspect_ratio
@@ -1994,12 +2037,8 @@ def _intent_item_node(
                 data["musicLengthMs"] = music_length_ms
         else:
             data["audioKind"] = "speech"
-            data["speechMode"] = "preset"
-            data["presetModel"] = (
-                "edge-tts" if model in {"LingShan-TTS-2", "qwen3-tts-flash"} else model
-            )
-            data["presetVoice"] = "Serena"
-            data["voice"] = "Serena"
+            data["speechMode"] = "clone"
+            data["voiceAvailable"] = False
             data["languageType"] = "Chinese"
     return {
         "id": item_id,
@@ -2078,7 +2117,11 @@ def validate_agent_workflow_plan(plan: Any) -> dict[str, Any]:
         for parameter_id in input_contract["missing_required"]
     )
     for index, node in enumerate(plan.get("nodes") or []):
-        node_type = _text(node.get("node_type")) if isinstance(node, dict) else ""
+        node_type = (
+            _text(node.get("node_type") or node.get("type"))
+            if isinstance(node, dict)
+            else ""
+        )
         if node_type not in allowed_node_types:
             errors.append(
                 {
@@ -2220,10 +2263,7 @@ def _workflow_skill_recipe_candidates(
         if capability in _OUTPUT_KIND_BY_CAPABILITY
     }
     references = _skill_referenced_recipe_ids(skill)
-    general_recipe_ids = {
-        f"general-{output_kind}"
-        for output_kind in output_kinds
-    }
+    general_recipe_ids = {f"general-{output_kind}" for output_kind in output_kinds}
     candidates: list[dict[str, Any]] = []
     for recipe in recipes:
         recipe_id = _text(recipe.get("id"))
@@ -2342,9 +2382,7 @@ def _load_agent_config_items(
             fallback_items = _merge_agent_config_items(fallback_items, project_items)
     if kind == "skills":
         fallback_items = [
-            item
-            for item in fallback_items
-            if item.get("allowed_recipe_ids")
+            item for item in fallback_items if item.get("allowed_recipe_ids")
         ]
     return _normalize_agent_config_items(kind, fallback_items)
 

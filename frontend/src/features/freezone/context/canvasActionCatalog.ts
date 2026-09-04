@@ -294,7 +294,7 @@ export const BASE_CANVAS_ACTION_CAPABILITIES: CanvasActionCapability[] = [
       modes: ["speech", "music"],
       data_fields: {
         audioKind: "speech | music",
-        speechMode: "preset | clone",
+        speechMode: "clone（仅自定义声线；未选择时跳过）", // i18n-exempt -- agent schema description
         text: "string",
         emotionPrompt: "string",
         musicLengthMs: "number",

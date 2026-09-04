@@ -93,6 +93,8 @@ describe("freezone recipe API", () => {
     const onCompileMetadata = vi.fn();
 
     const prompt = await compileFreezoneRecipePrompt({
+      projectId: "project-a",
+      productOperationId: "agent_product_a",
       recipeId: "video-storyboard-grid",
       recipeVersion: "3.0.0",
       recipePipeline: [{ id: "cinematic-lighting", version: "2.0.0" }],
@@ -112,6 +114,8 @@ describe("freezone recipe API", () => {
         method: "POST",
         timeout: 10 * 60 * 1000,
         json: expect.objectContaining({
+          project_id: "project-a",
+          product_operation_id: "agent_product_a",
           recipe_version: "3.0.0",
           recipe_pipeline: [{ id: "cinematic-lighting", version: "2.0.0" }],
           skill_id: "video-ad",

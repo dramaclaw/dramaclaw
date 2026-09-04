@@ -8,6 +8,7 @@ import {
   submitFreezoneAudioMusic,
   submitFreezoneAudioSpeech,
 } from '@/api/ops';
+import { requiresCustomVoiceSelection } from './audioVoicePolicy';
 import { awaitTaskCompletion } from '@/api/tasks';
 import {
   type AudioNodeData,
@@ -33,6 +34,15 @@ import {
 import { useModelTaskAccess } from '@/lib/model-task-access';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
+
+const MAX_MUSIC_PROMPT_CHARS = 4_100;
+
+function normalizeMusicPrompt(prompt: string): string {
+  const trimmed = prompt.trim();
+  if (trimmed.length <= MAX_MUSIC_PROMPT_CHARS) return trimmed;
+  const tailLength = 200;
+  return `${trimmed.slice(0, MAX_MUSIC_PROMPT_CHARS - tailLength)}\n${trimmed.slice(-tailLength)}`;
+}
 
 /**
  * 老节点数据可能还带着 segments（旧版分段编辑器留下的）。新版直接读 `text`，
@@ -118,25 +128,50 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
     .filter((segment) => segment.length > 0)
     .join('\n\n');
   const emotionPrompt = data.emotionPrompt ?? '';
-  const speechMode = data.speechMode ?? 'clone';
+  const speechMode = 'clone';
   // 组织成员没有发起模型任务的资格时不放行。面板与节点本体的重试共用这个 hook，
   // 所以门控放在这里，两条入口都盖到。
   const modelTaskAccess = useModelTaskAccess();
   const { t } = useTranslation();
 
-  const generate = useCallback(async (): Promise<{ audioUrl?: string }> => {
-    if (isGenerating) return {};
+  const generate = useCallback(async (): Promise<{
+    audioUrl?: string;
+    skipped?: boolean;
+    reason?: string;
+  }> => {
+    // 画布批量命令会在同一轮里先写节点参数、再立即执行动作。React props 可能尚未
+    // 完成下一次渲染，因此这里必须以 store 中的最新节点数据为准，避免漏掉用户刚在
+    // 选择器中确认的自定义声线并把本次生成误判为跳过。
+    const latestNode = useCanvasStore.getState().nodes.find((node) => node.id === nodeId);
+    const runtimeData = (latestNode?.data as AudioNodeData | undefined) ?? data;
+    const runtimeAudioKind = resolveAudioKind(runtimeData);
+    const runtimeIsMusic = runtimeAudioKind === 'music';
+    // Freezone speech is custom-voice only. Keep backend preset support for
+    // historical/Hermes callers, but never submit preset generation here.
+    const runtimeSpeechMode = 'clone';
+    const runtimeOwnText = deriveAudioText(runtimeData);
+    const runtimeEffectivePrompt = [upstreamTextJoined.trim(), runtimeOwnText.trim()]
+      .filter((segment) => segment.length > 0)
+      .join('\n\n');
+    const runtimeMusicLengthMs = runtimeIsMusic
+      ? resolveMusicLengthMs(runtimeData)
+      : undefined;
+    if (isGenerating || runtimeData.isGenerating === true) return {};
     if (modelTaskAccess.blocked) {
       if (modelTaskAccess.message) {
         updateNodeData(nodeId, { generationError: modelTaskAccess.message });
       }
       return {};
     }
-    if (!isMusic && data.voiceAvailable === false) {
-      updateNodeData(nodeId, { generationError: t('node.audioNode.selectVoiceFirst') });
-      return {};
+    if (!runtimeIsMusic && requiresCustomVoiceSelection(runtimeData)) {
+      updateNodeData(nodeId, {
+        isGenerating: false,
+        generationStartedAt: null,
+        generationError: t('node.audioNode.selectVoiceFirst'),
+      });
+      return { skipped: true, reason: 'missing_custom_voice' };
     }
-    const fallbackPrompt = effectivePrompt;
+    const fallbackPrompt = runtimeEffectivePrompt;
     if (fallbackPrompt.length === 0) return {};
     const project = readUrl().project;
     if (!project) {
@@ -149,14 +184,18 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
       generationError: null,
     });
     try {
-      const trimmed = isMusic
+      let trimmed = runtimeIsMusic
         ? await compileWorkflowNodePrompt({
             nodeId,
-            nodeData: data,
+            nodeData: runtimeData,
             nodeKind: 'audio',
-            nodePrompt: ownText,
-            upstreamText: upstreamTextJoined,
-            upstreamContents,
+            nodePrompt: runtimeOwnText,
+            // Music prompts describe the soundtrack itself.  Do not feed the
+            // full upstream script/beat text into the music compiler: the
+            // Eleven music endpoint caps input at 4100 characters and the
+            // node prompt already contains the intended musical direction.
+            upstreamText: '',
+            upstreamContents: [],
             fallbackPrompt,
             onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => updateNodeData(nodeId, {
               workflowRecipeCompileMode: mode,
@@ -166,36 +205,41 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
               workflowRecipeIds: recipeIds,
             }),
           })
-        : extractSpeakableAudioText(
-            ownText.trim()
-            || selectWorkflowUpstreamText(data, upstreamContents, upstreamTextJoined),
-          );
+        : (() => {
+            // A workflow may leave a label such as “这是短剧的第一段旁白”
+            // in the audio node while the real narration is provided by an
+            // upstream script/text node.  Strip the label first, then fall
+            // back to the upstream narration instead of sending the label to
+            // TTS verbatim.
+            const ownNarration = extractSpeakableAudioText(runtimeOwnText.trim());
+            const upstreamNarration = extractSpeakableAudioText(
+              selectWorkflowUpstreamText(runtimeData, upstreamContents, upstreamTextJoined),
+            );
+            return ownNarration || upstreamNarration;
+          })();
+      if (runtimeIsMusic) trimmed = normalizeMusicPrompt(trimmed);
       if (!trimmed) {
         throw new Error('没有可朗读的旁白或对白');
       }
-      const ref = isMusic
+      const ref = runtimeIsMusic
         ? await submitFreezoneAudioMusic(project, {
             prompt: trimmed,
-            musicLengthMs: resolvedMusicLengthMs,
-            forceInstrumental: data.forceInstrumental ?? true,
-            respectSectionsDurations: data.respectSectionsDurations ?? true,
+            musicLengthMs: runtimeMusicLengthMs,
+            forceInstrumental: runtimeData.forceInstrumental ?? true,
+            respectSectionsDurations: runtimeData.respectSectionsDurations ?? true,
           })
         : await submitFreezoneAudioSpeech(project, {
             text: trimmed,
-            speechMode,
-            presetModel: data.presetModel ?? 'edge-tts',
-            presetVoice: data.presetVoice ?? 'Serena',
-            emotionPrompt: emotionPrompt.trim() || undefined,
-            voiceRef: speechMode === 'clone'
-              ? data.voiceRef ?? { scope: 'project_narrator' }
-              : null,
+            speechMode: runtimeSpeechMode,
+            emotionPrompt: (runtimeData.emotionPrompt ?? '').trim() || undefined,
+            voiceRef: runtimeData.voiceRef,
           });
       // Persist the task handle so a page refresh can resume this job.
       updateNodeData(nodeId, generationTaskDescriptor(ref));
       await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
       const result = await fetchFreezoneJobResult(
         project,
-        isMusic ? 'freezone_audio_eleven_music' : 'freezone_audio_speech',
+        runtimeIsMusic ? 'freezone_audio_eleven_music' : 'freezone_audio_speech',
         ref.job_id,
       );
       updateNodeData(nodeId, {
@@ -207,7 +251,7 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
       return result.url ? { audioUrl: result.url } : {};
     } catch (error) {
       console.error(
-        `[audio-node] ${isMusic ? 'music' : 'speech'} generation failed`,
+        `[audio-node] ${runtimeIsMusic ? 'music' : 'speech'} generation failed`,
         error,
       );
       updateNodeData(nodeId, {

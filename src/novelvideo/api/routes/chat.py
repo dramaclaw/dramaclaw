@@ -50,15 +50,7 @@ from novelvideo.freezone.canvas_command_bridge import (
     resolve_skill_studio_result,
 )
 from novelvideo.freezone.agent_config_store import save_user_agent_config_item
-from novelvideo.freezone.agent_capability_billing import (
-    AGENT_CAPABILITY_PRICE_REFERENCE,
-    AgentCapabilityCharge,
-    RECIPE_DESIGN_FEATURE_KEY,
-    SKILL_DESIGN_FEATURE_KEY,
-    reserve_agent_capability_charge,
-    settle_agent_capability_charge,
-    workflow_design_charge,
-)
+from novelvideo.freezone.agent_product_operations import AGENT_PRODUCT_PRICE_REFERENCE
 from novelvideo.ports import get_product_surface_access, get_usage_meter
 from novelvideo.ports.local.usage import NoOpUsageMeter
 from novelvideo.project_context import (
@@ -603,7 +595,9 @@ async def _persist_chat_turn_error(
                 state_dir=str(project_ctx.state_dir),
             )
 
-        existing_messages = await chat_store.list_messages_async(username, storage_scope)
+        existing_messages = await chat_store.list_messages_async(
+            username, storage_scope
+        )
         for existing in reversed(existing_messages):
             if (
                 str(existing.get("turn_id") or "") == turn_id
@@ -715,48 +709,108 @@ def _bridge_dir_for_pending_key(username: str, payload: Any) -> Any:
     return candidates[0]
 
 
-def _pending_direct_workflow_preview(
+def _pending_workflow_draft_id(
     username: str,
     payload: CanvasCommandToolResultIn,
-) -> dict[str, Any] | None:
-    """Recognize the legacy direct WorkflowPlan path before its pending file is removed."""
+) -> str:
+    """Read the draft identity before resolving (and removing) its pending bridge file."""
     key = payload.bridge_key.strip()
     if not key:
-        return None
+        return ""
     directory = _bridge_dir_for_pending_key(username, payload)
     pending = _load_pending_canvas_command(directory / f"{key}.pending.json")
-    if pending is None:
-        return None
-    commands = pending.get("envelope", {}).get("commands")
+    commands = (
+        pending.get("envelope", {}).get("commands")
+        if isinstance(pending, dict)
+        else None
+    )
     if not isinstance(commands, list):
-        return None
-    workflow_instance_ids: set[str] = set()
-    recipe_node_count = 0
-    node_count = 0
-    for command in commands:
-        if not isinstance(command, dict) or command.get("type") != "create_node":
-            continue
-        data = command.get("data") if isinstance(command.get("data"), dict) else {}
-        workflow_instance_id = str(data.get("workflowInstanceId") or "").strip()
-        if not workflow_instance_id:
-            continue
-        workflow_instance_ids.add(workflow_instance_id)
-        node_count += 1
-        catalog = data.get("workflowCatalog")
-        if isinstance(catalog, dict) and (
-            catalog.get("recipeId") or catalog.get("recipePipeline")
-        ):
-            recipe_node_count += 1
-    if len(workflow_instance_ids) != 1:
-        return None
-    workflow_instance_id = next(iter(workflow_instance_ids))
-    if workflow_instance_id.startswith("workflow_draft_"):
-        return None
-    return {
-        "workflow_instance_id": workflow_instance_id,
-        "node_count": node_count,
-        "recipe_pipelines": [{} for _ in range(recipe_node_count)],
+        return ""
+    identities = {
+        str(command.get("data", {}).get("workflowInstanceId") or "").strip()
+        for command in commands
+        if isinstance(command, dict)
+        and command.get("type") == "create_node"
+        and isinstance(command.get("data"), dict)
     }
+    identities.discard("")
+    if len(identities) != 1:
+        return ""
+    identity = next(iter(identities))
+    return identity if identity.startswith("workflow_draft_") else ""
+
+
+async def _record_workflow_draft_canvas_result(
+    *,
+    user: dict[str, Any],
+    payload: CanvasCommandToolResultIn,
+    draft_id: str,
+    resolved: dict[str, Any],
+) -> None:
+    if not draft_id:
+        return
+    project_id = str(payload.project_id or "").strip()
+    canvas_id = str(payload.canvas_id or "").strip()
+    if not project_id or not canvas_id:
+        return
+    try:
+        from novelvideo.freezone.workflow_drafts import (
+            finish_workflow_draft_confirmation,
+            read_workflow_draft,
+        )
+        from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
+
+        scope = ChatScope(
+            kind="project",
+            id=project_id,
+            surface="freezone",
+            canvas_id=canvas_id,
+            agent_id=_freezone_agent_id_from_payload(payload),
+        )
+        project_ctx = await _project_context_for_scope(user, scope)
+        if project_ctx is None:
+            raise RuntimeError("workflow draft project context is unavailable")
+        draft, _error = await asyncio.to_thread(
+            read_workflow_draft,
+            project_dir=project_ctx.state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+        )
+        if draft is None:
+            return
+        task_id = str(draft.get("task_id") or "")
+        revision = int(draft.get("revision") or 0)
+        task_state = await asyncio.to_thread(
+            get_task_manager().get_task_for_project,
+            project_ctx,
+            "freezone_workflow_confirm",
+            0,
+            beat_num=None,
+            scope=f"{canvas_id}:{draft_id}:{revision}",
+        )
+        if (
+            task_state is None
+            or str(task_state.task_id) != task_id
+            or task_state.status not in ACTIVE_PROJECT_TASK_STATUSES
+        ):
+            logger.info(
+                "ignored late workflow canvas result without active task draft_id=%s",
+                draft_id,
+            )
+            return
+        await asyncio.to_thread(
+            finish_workflow_draft_confirmation,
+            project_dir=project_ctx.state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+            outcome="confirmed" if resolved.get("ok") else "ready",
+            expected_task_id=task_id,
+        )
+    except Exception:
+        logger.exception(
+            "failed to record durable workflow canvas outcome draft_id=%s",
+            draft_id,
+        )
 
 
 async def _close_freezone_agent_worker(username: str, agent_id: str | None) -> bool:
@@ -1067,6 +1121,7 @@ def _resolve_skill_studio_tool_result_payload(
     )
     result = {
         "ok": ok,
+        "status": "skill_studio_frontend_result",
         "turn_id": payload.turn_id,
         "tool_call_status": payload.tool_call_status,
         "skill_studio_status": payload.skill_studio_status,
@@ -1146,6 +1201,7 @@ def _resolve_clarification_tool_result_payload(
         )
     result = {
         "ok": ok,
+        "status": "clarification_frontend_result",
         "turn_id": payload.turn_id,
         "tool_call_status": payload.tool_call_status,
         "clarification_status": payload.clarification_status,
@@ -1329,46 +1385,14 @@ async def resolve_canvas_command_tool_result(
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
     username = str(user["username"])
-    direct_workflow_preview = _pending_direct_workflow_preview(username, payload)
+    workflow_draft_id = _pending_workflow_draft_id(username, payload)
     resolved = _resolve_canvas_command_tool_result_payload(payload, username=username)
-    if direct_workflow_preview is not None and resolved.get("ok"):
-        charge = workflow_design_charge(direct_workflow_preview)
-        metadata = {
-            "deliverable": "workflow",
-            "compatibility_path": "direct_workflow_graph",
-            "bridge_key": payload.bridge_key,
-            "canvas_id": payload.canvas_id,
-            **(charge.params or {}),
-        }
-        try:
-            scope = ChatScope(
-                kind="project",
-                id=payload.project_id,
-                surface="freezone",
-                canvas_id=payload.canvas_id,
-                agent_id=_freezone_agent_id_from_payload(payload),
-            )
-            user_id = await _requester_user_id_for_chat(user, scope)
-            reservation = await reserve_agent_capability_charge(
-                user_id=user_id,
-                project_id=str(payload.project_id or ""),
-                charge=charge,
-                idempotency_key=(
-                    f"freezone-agent-direct-workflow:{user_id}:{payload.bridge_key}"
-                ),
-                metadata=metadata,
-            )
-            await settle_agent_capability_charge(
-                str(reservation.get("id") or ""),
-                confirmed=True,
-                metadata={**metadata, "outcome": "applied"},
-            )
-        except Exception:
-            # This is a legacy post-delivery compatibility path. Never turn a
-            # successfully applied canvas operation into a user-visible failure.
-            logger.exception(
-                "Direct Workflow Agent capability applied but credit settlement failed"
-            )
+    await _record_workflow_draft_canvas_result(
+        user=user,
+        payload=payload,
+        draft_id=workflow_draft_id,
+        resolved=resolved,
+    )
     if payload.cancelled or payload.canvas_apply_status == "cancelled_by_user":
         await _close_canvas_command_worker(username, payload)
     return {"ok": True, "data": resolved}
@@ -1415,102 +1439,9 @@ async def resolve_skill_studio_tool_result(
         "received skill_studio.result via http %s",
         _skill_studio_result_log_fields(payload, username=username),
     )
-    should_charge = bool(
-        payload.ok
-        and payload.tool_call_status == "completed"
-        and not payload.errors
-        and (payload.saved_to_catalog or payload.skill_studio_status == "catalog_saved")
-    )
-    reservations: list[tuple[str, dict[str, Any]]] = []
-    if should_charge:
-        draft_skill_ids, draft_recipe_ids = _skill_studio_draft_catalog_ids(
-            payload.draft
-        )
-        skill_ids = list(dict.fromkeys(payload.saved_skill_ids or draft_skill_ids))
-        recipe_ids = list(dict.fromkeys(payload.saved_recipe_ids or draft_recipe_ids))
-        charges = [
-            *[
-                (AgentCapabilityCharge(SKILL_DESIGN_FEATURE_KEY), skill_id)
-                for skill_id in skill_ids
-            ],
-            *[
-                (AgentCapabilityCharge(RECIPE_DESIGN_FEATURE_KEY), recipe_id)
-                for recipe_id in recipe_ids
-            ],
-        ]
-        scope = ChatScope(
-            kind="freezone" if payload.project_id else "home",
-            id=payload.project_id,
-            surface="freezone" if payload.project_id else None,
-            canvas_id=payload.canvas_id,
-            agent_id=payload.agent_id,
-        )
-        user_id = await _requester_user_id_for_chat(user, scope)
-        for charge, artifact_id in charges:
-            metadata = {
-                "deliverable": (
-                    "skill"
-                    if charge.feature_key == SKILL_DESIGN_FEATURE_KEY
-                    else "recipe"
-                ),
-                "artifact_id": artifact_id,
-                "bridge_key": payload.bridge_key,
-                "turn_id": payload.turn_id,
-                "canvas_id": payload.canvas_id,
-                "quantity": 1,
-            }
-            try:
-                reservation = await reserve_agent_capability_charge(
-                    user_id=user_id,
-                    project_id=str(payload.project_id or ""),
-                    charge=charge,
-                    idempotency_key=(
-                        f"freezone-agent-catalog:{user_id}:{payload.bridge_key}:"
-                        f"{charge.feature_key}:{artifact_id}"
-                    ),
-                    metadata=metadata,
-                )
-            except Exception:
-                for reserved_id, reserved_metadata in reservations:
-                    await settle_agent_capability_charge(
-                        reserved_id,
-                        confirmed=False,
-                        metadata={
-                            **reserved_metadata,
-                            "reason": "subsequent_reservation_failed",
-                        },
-                    )
-                raise
-            reservations.append((str(reservation.get("id") or ""), metadata))
-    try:
-        resolved = _resolve_skill_studio_tool_result_payload(payload, username=username)
-    except Exception:
-        for reservation_id, metadata in reservations:
-            await settle_agent_capability_charge(
-                reservation_id,
-                confirmed=False,
-                metadata={**metadata, "reason": "catalog_save_failed"},
-            )
-        raise
-    delivered_skill_ids = set(resolved.get("saved_skill_ids") or [])
-    delivered_recipe_ids = set(resolved.get("saved_recipe_ids") or [])
-    for reservation_id, metadata in reservations:
-        delivered_ids = (
-            delivered_skill_ids
-            if metadata.get("deliverable") == "skill"
-            else delivered_recipe_ids
-        )
-        delivered = str(metadata.get("artifact_id") or "") in delivered_ids
-        try:
-            await settle_agent_capability_charge(
-                reservation_id,
-                confirmed=delivered,
-                metadata={**metadata, "outcome": "saved" if delivered else "failed"},
-            )
-        except Exception:
-            logger.exception(
-                "Skill Studio Agent capability completed but credit settlement remains pending"
-            )
+    # Saving is persistence only. Generation charges are admitted before the
+    # model call and settled by the corresponding durable product operation.
+    resolved = _resolve_skill_studio_tool_result_payload(payload, username=username)
     logger.info(
         "resolved skill_studio.result via http bridge_key=%s action=%s status=%s ok=%s saved=%s",
         payload.bridge_key,
@@ -1542,10 +1473,10 @@ async def agent_capability_price_reference(
         "ok": True,
         "data": {
             "enabled": True,
-            "items": list(AGENT_CAPABILITY_PRICE_REFERENCE),
+            "items": list(AGENT_PRODUCT_PRICE_REFERENCE),
             "note": (
-                "仅计算虾导创建或重构高级 Agent 能力的费用；"
-                "图片、音频和视频仍由 NewAPI 独立计费。"
+                "仅计算成功交付的 Workflow/Recipe 结果或定义；"
+                "文字、图片、音频和视频仍通过各自任务独立计费。"
             ),
         },
     }
@@ -1597,7 +1528,16 @@ async def _receive_bridge_results_during_turn(
         event_type = str(raw.get("type") or "")
         if event_type == "canvas.command.result":
             payload = CanvasCommandToolResultIn.model_validate(raw)
-            _resolve_canvas_command_tool_result_payload(payload, username=username)
+            workflow_draft_id = _pending_workflow_draft_id(username, payload)
+            resolved = _resolve_canvas_command_tool_result_payload(
+                payload, username=username
+            )
+            await _record_workflow_draft_canvas_result(
+                user=user,
+                payload=payload,
+                draft_id=workflow_draft_id,
+                resolved=resolved,
+            )
             if payload.cancelled or payload.canvas_apply_status == "cancelled_by_user":
                 await _close_canvas_command_worker(username, payload)
             continue

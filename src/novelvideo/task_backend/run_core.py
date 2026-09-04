@@ -96,6 +96,10 @@ _PROJECT_TASK_RESOURCE_KINDS = {
     "indextts2_audio_generation": "tts",
     "audio_generation_indextts2": "tts",
     "system_voice_setup": "tts",
+    "freezone_agent_workflow_result": "workflow",
+    "freezone_agent_recipe_result": "recipe",
+    "freezone_agent_workflow_generate": "workflow",
+    "freezone_agent_recipe_generate": "recipe",
     "freezone_video_gen": "video",
     "freezone_analyze": "video",
     "freezone_video_story": "video",
@@ -946,6 +950,56 @@ def run_project_task_core_sync(
                 with model_gateway_scope_for_runner(envelope):
                     result = runner(envelope, ctx)
             except BaseException as exc:
+                from novelvideo.freezone.agent_product_operations import (
+                    AgentProductSettlementPending,
+                )
+
+                if isinstance(exc, AgentProductSettlementPending):
+                    if feature_reservation_id:
+                        try:
+                            asyncio.run(
+                                get_usage_meter().mark_feature_credit_settlement_for_review(
+                                    feature_reservation_id,
+                                    metadata={
+                                        "source": "agent_product_late_reconciliation",
+                                        "error_code": exc.code,
+                                        "operation_id": exc.operation_id,
+                                        "operation_status": exc.status,
+                                    },
+                                )
+                            )
+                        except Exception:  # noqa: BLE001
+                            logger.error(
+                                "failed to preserve agent product settlement",
+                                extra={"operation_id": exc.operation_id},
+                            )
+                    failure_payload = {
+                        "error_code": exc.code,
+                        "operation_id": exc.operation_id,
+                        "operation_status": exc.status,
+                        "settlement_status": "awaiting_reconciliation",
+                    }
+                    manager.fail_task_for_project(
+                        ctx,
+                        task_type,
+                        episode,
+                        beat_num=beat_num,
+                        scope=scope,
+                        error="产品结果仍在等待对账",
+                        metadata={**run_metadata, **failure_payload},
+                        expected_task_id=run_task_id,
+                    )
+                    asyncio.run(
+                        _emit_project_task_metrics(
+                            ctx,
+                            task_type,
+                            episode=episode,
+                            beat_num=beat_num,
+                            scope=scope,
+                            outcome="pending",
+                        )
+                    )
+                    return {"pending": True, **failure_payload}
                 if isinstance(exc, RunningTaskAuthorityIndeterminate):
                     logger.warning(
                         "running_task_authz_outcome_indeterminate",

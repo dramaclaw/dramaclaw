@@ -31,6 +31,8 @@ const MUSIC_INTENT =
   /(?:^|[\s_-])bgm(?:$|[\s_-])|background[_\s-]*music|背景音乐|配乐|纯音乐/i;
 const SPEECH_GENERATION_INSTRUCTION =
   /(?:根据|基于|使用|提取|将).{0,40}(?:旁白|文案|脚本|广告词).{0,40}(?:生成|制作|转换|合成).{0,12}(?:旁白|配音|语音|音频)|(?:生成|制作).{0,20}(?:旁白配音|语音音频)/i;
+const PLACEHOLDER_SPEECH_TEXT =
+  /^(?:这是|本段(?:是|为)?|该段(?:是|为)?|this\s+is\s+)?(?:短剧|视频|广告)?(?:的\s*)?(?:第\s*(?:\d+|[一二三四五六七八九十]+)\s*(?:段|条|句)\s*)?(?:(?:the\s+)?(?:first|second|third)\s+)?(?:旁白|配音|解说|narration|voiceover)(?:内容|文本)?[。.!！]?$/i; // i18n-exempt -- parser vocabulary
 
 type AudioKindSource = {
   audioKind?: 'speech' | 'music';
@@ -110,7 +112,7 @@ function cleanSpeakableLine(value: string): string {
  * must never be spoken.
  */
 export function extractSpeakableAudioText(value: string): string {
-  if (isSpeechGenerationInstruction(value)) return '';
+  if (isSpeechGenerationInstruction(value) || PLACEHOLDER_SPEECH_TEXT.test(String(value || '').trim())) return '';
   const lines = String(value || '').split(/\r?\n/);
   let section: 'speech' | 'skip' | null = null;
   const output: string[] = [];

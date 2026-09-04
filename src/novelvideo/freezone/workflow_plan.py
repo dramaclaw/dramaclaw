@@ -62,6 +62,28 @@ _OUTPUT_KIND_BY_NODE_TYPE = {
 
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 
+_PROMPT_STRATEGY_VALUES = {
+    "template",
+    "user_message",
+    "previous_output",
+    "llm_refine",
+}
+
+_USER_INPUT_STAGES = {"input", "resource", "asset"}
+_USER_INPUT_STEP_IDS = {"workflow_input", "user_input", "user_requirement"}
+
+
+def _node_type_value(node: dict[str, Any]) -> str:
+    return str(node.get("node_type") or "").strip()
+
+
+def _node_stage_value(node: dict[str, Any]) -> str:
+    return str(node.get("stage") or "").strip()
+
+
+def _edge_link_type_value(edge: dict[str, Any]) -> str:
+    return str(edge.get("link_type") or "").strip()
+
 
 def validate_workflow_plan(
     payload: Any,
@@ -80,21 +102,66 @@ def validate_workflow_plan(
                 f"must equal {WORKFLOW_PLAN_SCHEMA_VERSION}",
             )
         )
-    for execution_key in ("run_after_create", "runAfterCreate"):
-        if execution_key in payload:
-            errors.append(
-                _issue(
-                    execution_key,
-                    "execution policy must be passed beside plan in the tool arguments",
-                )
+    if "run_after_create" in payload:
+        errors.append(
+            _issue(
+                "run_after_create",
+                "execution policy must be passed beside plan in the tool arguments",
             )
+        )
 
     nodes = payload.get("nodes")
     if not isinstance(nodes, list) or not nodes:
         errors.append(_issue("nodes", "must be a non-empty array"))
         nodes = []
     elif len(nodes) > MAX_WORKFLOW_NODES:
-        errors.append(_issue("nodes", f"must contain at most {MAX_WORKFLOW_NODES} nodes"))
+        errors.append(
+            _issue("nodes", f"must contain at most {MAX_WORKFLOW_NODES} nodes")
+        )
+
+    expected_node_count = payload.get("expected_node_count")
+    if expected_node_count is not None:
+        if isinstance(expected_node_count, bool) or not isinstance(
+            expected_node_count, int
+        ):
+            errors.append(_issue("expected_node_count", "must be an integer"))
+        elif expected_node_count != len(nodes):
+            errors.append(
+                _issue(
+                    "expected_node_count",
+                    f"expected {expected_node_count} nodes but plan contains {len(nodes)}",
+                )
+            )
+
+    expected_node_counts = payload.get("expected_node_counts")
+    if expected_node_counts is not None:
+        if not isinstance(expected_node_counts, dict):
+            errors.append(_issue("expected_node_counts", "must be an object"))
+        else:
+            actual_node_counts = {
+                node_type: sum(
+                    1
+                    for node in nodes
+                    if isinstance(node, dict) and _node_type_value(node) == node_type
+                )
+                for node_type in ALLOWED_NODE_TYPES
+            }
+            for node_type, expected_count in expected_node_counts.items():
+                path = f"expected_node_counts.{node_type}"
+                if node_type not in ALLOWED_NODE_TYPES:
+                    errors.append(_issue(path, f"unsupported node type: {node_type}"))
+                elif isinstance(expected_count, bool) or not isinstance(
+                    expected_count, int
+                ):
+                    errors.append(_issue(path, "must be an integer"))
+                elif expected_count != actual_node_counts[node_type]:
+                    errors.append(
+                        _issue(
+                            path,
+                            f"expected {expected_count} but plan contains "
+                            f"{actual_node_counts[node_type]}",
+                        )
+                    )
 
     node_types: dict[str, str] = {}
     node_values: dict[str, dict[str, Any]] = {}
@@ -114,9 +181,11 @@ def validate_workflow_plan(
         if node_id in node_types:
             errors.append(_issue(f"{path}.id", f"duplicate node id: {node_id}"))
             continue
-        node_type = node.get("node_type")
+        node_type = str(node.get("node_type") or "").strip()
         if node_type not in ALLOWED_NODE_TYPES:
-            errors.append(_issue(f"{path}.node_type", f"unsupported node type: {node_type}"))
+            errors.append(
+                _issue(f"{path}.node_type", f"unsupported node type: {node_type}")
+            )
             continue
         node_types[node_id] = node_type
         node_values[node_id] = node
@@ -167,9 +236,13 @@ def validate_workflow_plan(
         errors.append(_issue("edges", "must be an array"))
         edges = []
     elif len(edges) > MAX_WORKFLOW_EDGES:
-        errors.append(_issue("edges", f"must contain at most {MAX_WORKFLOW_EDGES} edges"))
+        errors.append(
+            _issue("edges", f"must contain at most {MAX_WORKFLOW_EDGES} edges")
+        )
     elif len(node_types) > 1 and not edges:
-        errors.append(_issue("edges", "multi-node workflow must declare dependency edges"))
+        errors.append(
+            _issue("edges", "multi-node workflow must declare dependency edges")
+        )
     adjacency: dict[str, list[str]] = {node_id: [] for node_id in node_types}
     undirected_adjacency: dict[str, set[str]] = {
         node_id: set() for node_id in node_types
@@ -185,7 +258,7 @@ def validate_workflow_plan(
             continue
         source = edge.get("source")
         target = edge.get("target")
-        link_type = edge.get("link_type")
+        link_type = str(edge.get("link_type") or "").strip()
         if source not in node_types:
             errors.append(_issue(f"{path}.source", f"unknown node: {source}"))
         if target not in node_types:
@@ -193,8 +266,14 @@ def validate_workflow_plan(
         if source == target and source in node_types:
             errors.append(_issue(path, "self edges are not allowed"))
         if link_type not in ALLOWED_LINK_TYPES:
-            errors.append(_issue(f"{path}.link_type", f"unsupported link type: {link_type}"))
-        if source in node_types and target in node_types and link_type in ALLOWED_LINK_TYPES:
+            errors.append(
+                _issue(f"{path}.link_type", f"unsupported link type: {link_type}")
+            )
+        if (
+            source in node_types
+            and target in node_types
+            and link_type in ALLOWED_LINK_TYPES
+        ):
             incoming_edges[target].append(edge)
             edge_key = (source, target, link_type)
             if edge_key in seen_edges:
@@ -211,15 +290,19 @@ def validate_workflow_plan(
                 undirected_adjacency[source].add(target)
                 undirected_adjacency[target].add(source)
             adjacency[source].append(target)
-            if (
-                link_type in {"media_input_for", "derived_from"}
-                and _OBJECT_TYPE_BY_NODE_TYPE.get(node_types[source])
-                in {"ImageNode", "VideoNode", "AudioNode"}
-            ):
+            if link_type in {
+                "media_input_for",
+                "derived_from",
+            } and _OBJECT_TYPE_BY_NODE_TYPE.get(node_types[source]) in {
+                "ImageNode",
+                "VideoNode",
+                "AudioNode",
+            }:
                 source_satisfied_node_ids.add(target)
 
     compose_node_ids = [
-        node_id for node_id, node_type in node_types.items()
+        node_id
+        for node_id, node_type in node_types.items()
         if node_type == "videoComposeNode"
     ]
     if len(compose_node_ids) > 1:
@@ -248,8 +331,9 @@ def validate_workflow_plan(
                 )
             compose_inputs = incoming_edges.get(node_id, [])
             video_inputs = [
-                edge for edge in compose_inputs
-                if edge.get("link_type") == "composition_input_for"
+                edge
+                for edge in compose_inputs
+                if _edge_link_type_value(edge) == "composition_input_for"
                 and node_types.get(str(edge.get("source") or "")) == "videoNode"
             ]
             if not video_inputs:
@@ -269,17 +353,18 @@ def validate_workflow_plan(
             continue
         if node_type != "videoNode":
             continue
-        role = str(
-            catalog.get("role")
-            or data.get("workflowCatalogRole")
-            or ""
-        ).strip().lower()
-        stage = str(node.get("stage") or "").strip().lower()
+        role = (
+            str(catalog.get("role") or data.get("workflowCatalogRole") or "")
+            .strip()
+            .lower()
+        )
+        stage = _node_stage_value(node).lower()
         step_id = str(catalog.get("stepId") or "").strip().lower().replace("-", "_")
         if (
             role in {"composition", "compose", "final_composition"}
             or stage in {"composition", "compose"}
-            or step_id in {"compose", "final_compose", "final_composition", "video_compose"}
+            or step_id
+            in {"compose", "final_compose", "final_composition", "video_compose"}
         ):
             errors.append(
                 _issue(
@@ -293,15 +378,21 @@ def validate_workflow_plan(
             continue
         source = edge.get("source")
         target = edge.get("target")
-        link_type = edge.get("link_type")
-        if link_type == "composition_input_for" and node_types.get(target) != "videoComposeNode":
+        link_type = _edge_link_type_value(edge)
+        if (
+            link_type == "composition_input_for"
+            and node_types.get(target) != "videoComposeNode"
+        ):
             errors.append(
                 _issue(
                     f"edges[{index}]",
                     "composition_input_for must target videoComposeNode",
                 )
             )
-        if node_types.get(target) == "videoComposeNode" and link_type != "composition_input_for":
+        if (
+            node_types.get(target) == "videoComposeNode"
+            and link_type != "composition_input_for"
+        ):
             errors.append(
                 _issue(
                     f"edges[{index}]",
@@ -338,7 +429,9 @@ def validate_workflow_plan(
 
     cycle_node = _find_cycle(adjacency)
     if cycle_node:
-        errors.append(_issue("edges", f"workflow graph contains a cycle at node: {cycle_node}"))
+        errors.append(
+            _issue("edges", f"workflow graph contains a cycle at node: {cycle_node}")
+        )
 
     _validate_group_refs(payload, node_types, errors)
     if errors:
@@ -371,7 +464,7 @@ def _build_plan_preflight(nodes: list[Any]) -> dict[str, Any]:
     for index, raw_node in enumerate(nodes):
         if not isinstance(raw_node, dict):
             continue
-        node_type = str(raw_node.get("node_type") or "")
+        node_type = _node_type_value(raw_node)
         kind = {
             "textAnnotationNode": "text",
             "scriptNode": "text",
@@ -455,17 +548,59 @@ def _validate_node_catalog_refs(
     if not isinstance(catalog, dict):
         errors.append(_issue(f"{path}.data.workflowCatalog", "must be an object"))
         return
+    catalog_path = f"{path}.data.workflowCatalog"
+    for field in ("confirmedInputs", "inputStrategy", "promptBuilder"):
+        if field in catalog and not isinstance(catalog[field], dict):
+            errors.append(_issue(f"{catalog_path}.{field}", "must be an object"))
+    if (
+        "promptStrategy" in catalog
+        and catalog["promptStrategy"] not in _PROMPT_STRATEGY_VALUES
+    ):
+        allowed = ", ".join(sorted(_PROMPT_STRATEGY_VALUES))
+        errors.append(
+            _issue(
+                f"{catalog_path}.promptStrategy",
+                f"must be one of: {allowed}",
+            )
+        )
+    recipe_id = str(catalog.get("recipeId") or "").strip()
+    stage = _node_stage_value(node).lower()
+    role = str(data.get("workflowCatalogRole") or "").strip().lower()
+    step_id = str(catalog.get("stepId") or "").strip().lower().replace("-", "_")
+    if (
+        recipe_id
+        and node_type in {"textAnnotationNode", "scriptNode", "beatContextNode"}
+        and (
+            stage in _USER_INPUT_STAGES
+            or role == "user_input"
+            or step_id in _USER_INPUT_STEP_IDS
+        )
+    ):
+        errors.append(
+            _issue(
+                f"{catalog_path}.recipeId",
+                "user input/resource nodes must not execute a Recipe; express downstream "
+                "dependencies with plan edges",
+            )
+        )
     skill_id = str(catalog.get("skillId") or "").strip()
     skill = None
     if skill_id:
         referenced_skill_ids.add(skill_id)
         skill = skills_by_id.get(skill_id) if skills_by_id is not None else None
         if skills_by_id is not None and skill is None:
-            errors.append(_issue(f"{path}.data.workflowCatalog.skillId", f"unknown skill: {skill_id}"))
+            errors.append(
+                _issue(
+                    f"{path}.data.workflowCatalog.skillId", f"unknown skill: {skill_id}"
+                )
+            )
         elif skill is not None:
             requested_skill_version = str(catalog.get("skillVersion") or "").strip()
             actual_skill_version = str(skill.get("version") or "").strip()
-            if requested_skill_version and requested_skill_version != actual_skill_version:
+            if (
+                requested_skill_version
+                and requested_skill_version != actual_skill_version
+            ):
                 errors.append(
                     _issue(
                         f"{path}.data.workflowCatalog.skillVersion",
@@ -473,14 +608,17 @@ def _validate_node_catalog_refs(
                         f"found {actual_skill_version or 'unversioned'}",
                     )
                 )
-    recipe_id = str(catalog.get("recipeId") or "").strip()
     if not recipe_id:
         return
     if recipes_by_id is None:
         return
     recipe = recipes_by_id.get(recipe_id)
     if recipe is None:
-        errors.append(_issue(f"{path}.data.workflowCatalog.recipeId", f"unknown recipe: {recipe_id}"))
+        errors.append(
+            _issue(
+                f"{path}.data.workflowCatalog.recipeId", f"unknown recipe: {recipe_id}"
+            )
+        )
         return
     if skill is not None:
         allowed_recipe_ids = {
@@ -516,7 +654,10 @@ def _validate_node_catalog_refs(
             )
         )
     output_kind = str(
-        recipe.get("output_kind") or recipe.get("generationType") or recipe.get("generation_type") or ""
+        recipe.get("output_kind")
+        or recipe.get("generationType")
+        or recipe.get("generation_type")
+        or ""
     ).strip()
     expected_kind = _OUTPUT_KIND_BY_NODE_TYPE.get(node_type)
     if output_kind and expected_kind and output_kind != expected_kind:
@@ -528,7 +669,9 @@ def _validate_node_catalog_refs(
         )
     pipeline = catalog.get("recipePipeline") or []
     if not isinstance(pipeline, list):
-        errors.append(_issue(f"{path}.data.workflowCatalog.recipePipeline", "must be an array"))
+        errors.append(
+            _issue(f"{path}.data.workflowCatalog.recipePipeline", "must be an array")
+        )
         return
     seen_pipeline_ids = {recipe_id}
     pipeline_recipe_ids = {recipe_id}
@@ -536,8 +679,7 @@ def _validate_node_catalog_refs(
         pipeline_id = str(
             raw_pipeline_item.get("id")
             if isinstance(raw_pipeline_item, dict)
-            else raw_pipeline_item
-            or ""
+            else raw_pipeline_item or ""
         ).strip()
         pipeline_path = f"{path}.data.workflowCatalog.recipePipeline[{pipeline_index}]"
         if not pipeline_id or pipeline_id in seen_pipeline_ids:
@@ -550,7 +692,10 @@ def _validate_node_catalog_refs(
             continue
         if skill is not None and pipeline_id not in allowed_recipe_ids:
             errors.append(
-                _issue(pipeline_path, f"recipe {pipeline_id} is not allowed by skill {skill_id}")
+                _issue(
+                    pipeline_path,
+                    f"recipe {pipeline_id} is not allowed by skill {skill_id}",
+                )
             )
         pipeline_kind = str(pipeline_recipe.get("output_kind") or "").strip()
         if output_kind and pipeline_kind != output_kind:
@@ -561,7 +706,9 @@ def _validate_node_catalog_refs(
                 )
             )
         if isinstance(raw_pipeline_item, dict):
-            requested_pipeline_version = str(raw_pipeline_item.get("version") or "").strip()
+            requested_pipeline_version = str(
+                raw_pipeline_item.get("version") or ""
+            ).strip()
             actual_pipeline_version = str(pipeline_recipe.get("version") or "").strip()
             if (
                 requested_pipeline_version
@@ -621,7 +768,7 @@ def _validate_group_refs(
         if not isinstance(group, dict):
             errors.append(_issue(f"{groups_path}[{group_index}]", "must be an object"))
             continue
-        refs = group.get("node_ids") or group.get("nodeIds") or group.get("nodes") or []
+        refs = group.get("node_ids") or []
         if not isinstance(refs, list):
             errors.append(
                 _issue(f"{groups_path}[{group_index}].node_ids", "must be an array")

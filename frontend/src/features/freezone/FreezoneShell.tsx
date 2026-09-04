@@ -153,6 +153,7 @@ import {
 import {
   buildCanvasNodeReferenceAttachment,
   buildCanvasContextRequestResponses,
+  canvasSelectionAttachmentDeliveryKey,
   extractCanvasContextRequestEnvelopes,
 } from "@/features/freezone/chatNodeReferences";
 import {
@@ -903,6 +904,13 @@ export function FreezoneShell({
   const [chatOpen, setChatOpen] = useState(loadChatOpen);
   const [pendingChatAttachments, setPendingChatAttachments] = useState<ChatAttachment[]>([]);
   const [pendingChatNodeMentions, setPendingChatNodeMentions] = useState<string[]>([]);
+  const deliveredSelectionAttachmentKeyRef = useRef<string | null>(null);
+  const handlePendingChatAttachmentsConsumed = useCallback(() => {
+    setPendingChatAttachments([]);
+  }, []);
+  const handlePendingChatNodeMentionsConsumed = useCallback(() => {
+    setPendingChatNodeMentions([]);
+  }, []);
   const productSurfaces = useProductSurfaces();
   const showChatDock = Boolean(
     surfaceAccess(productSurfaces.data, "freezone_assistant")?.available,
@@ -1031,6 +1039,14 @@ export function FreezoneShell({
     }
     return canvasNodes.filter((node) => expandedIds.has(node.id));
   }, [canvasNodes, visibleSelectedCanvasNodes]);
+  const currentCanvasSelectionAttachmentKey = useMemo(
+    () =>
+      canvasSelectionAttachmentDeliveryKey(
+        visibleSelectedCanvasNodes,
+        chatReferenceCanvasNodes,
+      ),
+    [chatReferenceCanvasNodes, visibleSelectedCanvasNodes],
+  );
   const currentCanvasSelection = useMemo<CurrentCanvasSelectionItem[]>(
     () =>
       visibleSelectedCanvasNodes.map((node) => ({
@@ -1053,10 +1069,13 @@ export function FreezoneShell({
     [canvasEdges, canvasId, canvasNodes, chatReferenceCanvasNodes, projectId, visibleSelectedCanvasNodes],
   );
   const attachCurrentSelectionToChat = useCallback(() => {
-    if (!currentCanvasSelectionAttachment) return false;
+    if (!currentCanvasSelectionAttachment || !currentCanvasSelectionAttachmentKey) {
+      return false;
+    }
+    deliveredSelectionAttachmentKeyRef.current = currentCanvasSelectionAttachmentKey;
     setPendingChatAttachments([currentCanvasSelectionAttachment]);
     return true;
-  }, [currentCanvasSelectionAttachment]);
+  }, [currentCanvasSelectionAttachment, currentCanvasSelectionAttachmentKey]);
   const handleChatOpenChange = useCallback(
     (nextOpen: boolean) => {
       if (nextOpen) {
@@ -1075,9 +1094,29 @@ export function FreezoneShell({
     [canvasEdges, canvasId, canvasNodes, chatReferenceCanvasNodes],
   );
   useEffect(() => {
-    if (!chatOpen || !currentCanvasSelectionAttachment) return;
+    if (
+      !chatOpen ||
+      !currentCanvasSelectionAttachment ||
+      !currentCanvasSelectionAttachmentKey
+    ) {
+      deliveredSelectionAttachmentKeyRef.current = null;
+      return;
+    }
+    // React Flow updates node geometry repeatedly while a large approved graph
+    // mounts. The attachment payload includes positions, so rebuilding it on
+    // every measurement used to make this effect publish again while
+    // SuperChatPanel consumed the previous value. Parent and child then kept
+    // setting state until React raised "Maximum update depth exceeded".
+    // Delivery identity follows the semantic selection/topology instead of
+    // transient node geometry.
+    if (
+      deliveredSelectionAttachmentKeyRef.current === currentCanvasSelectionAttachmentKey
+    ) {
+      return;
+    }
+    deliveredSelectionAttachmentKeyRef.current = currentCanvasSelectionAttachmentKey;
     setPendingChatAttachments([currentCanvasSelectionAttachment]);
-  }, [chatOpen, currentCanvasSelectionAttachment]);
+  }, [chatOpen, currentCanvasSelectionAttachment, currentCanvasSelectionAttachmentKey]);
   // 开合状态落盘：刷新/重进画布后由 useState(loadChatOpen) 恢复。所有开关路径
   // （手动按钮、命令自动展开、空白点击）都经由 chatOpen，故一个 effect 全覆盖。
   useEffect(() => {
@@ -1598,11 +1637,24 @@ export function FreezoneShell({
       const envelopes = extractCanvasChatCommandEnvelopes(candidates)
         .filter((envelope) => canvasCommandEnvelopeMatchesCanvas(envelope, canvasId));
 
+      console.info("[freezone-canvas-command] frame received", {
+        bridgeKey,
+        turnId,
+        externalMcpCommand: isExternalMcpCommand,
+        candidateCount: candidates.length,
+        envelopeCount: envelopes.length,
+      });
+
       if (envelopes.length === 0) {
         const errors = [
           "画布命令格式无效或不属于当前画布，前端未执行。",
           "无法解析 canvas_chat_commands.v1 命令；请检查 command 字段是否在正确层级。",
         ];
+        console.warn("[freezone-canvas-command] frame rejected: no valid envelope", {
+          bridgeKey,
+          turnId,
+          candidateCount: candidates.length,
+        });
         emitCanvasContextActivity({
           turnId,
           anchorTextPrefix: detail?.anchorTextPrefix ?? null,
@@ -1693,6 +1745,13 @@ export function FreezoneShell({
           "画布命令预校验失败，前端未展示确认卡，也未执行。",
           ...validation.issues.map((issue) => `${issue.path}: ${issue.message}`),
         ];
+        console.warn("[freezone-canvas-command] validation failed", {
+          bridgeKey,
+          turnId,
+          envelopeCount: normalizedEnvelopes.length,
+          issueCount: validation.issues.length,
+          issues: validation.issues.slice(0, 12).map((issue) => `${issue.path}: ${issue.message}`),
+        });
         emitCanvasContextActivity({
           turnId,
           anchorTextPrefix: detail?.anchorTextPrefix ?? null,
@@ -1787,6 +1846,13 @@ export function FreezoneShell({
         bridgeKey,
         externalMcpCommand: isExternalMcpCommand,
       });
+      console.info("[freezone-canvas-command] approval emitted", {
+        bridgeKey,
+        turnId,
+        envelopeCount: normalizedEnvelopes.length,
+        commandCount: normalizedEnvelopes.reduce((sum, envelope) => sum + envelope.commands.length, 0),
+        externalMcpCommand: isExternalMcpCommand,
+      });
       setChatOpen(true);
       window.setTimeout(() => emitCanvasCommandApproval({
         canvasId,
@@ -1827,6 +1893,17 @@ export function FreezoneShell({
           agentIds,
           seenKeys,
         });
+        if (frames.length > 0) {
+          console.info("[freezone-canvas-command] pending frames polled", {
+            count: frames.length,
+            bridgeKeys: frames
+              .map((frame) => {
+                const record = frame as Record<string, unknown>;
+                return typeof record.bridge_key === "string" ? record.bridge_key : null;
+              })
+              .filter((key): key is string => Boolean(key)),
+          });
+        }
         const now = Date.now();
         frames.forEach((frame, index) => {
           const frameRecord = frame as Record<string, unknown>;
@@ -2169,9 +2246,9 @@ export function FreezoneShell({
             currentCanvasSelection={currentCanvasSelection}
             currentCanvasOntologyContext={currentCanvasOntologyContext}
             pendingAttachments={pendingChatAttachments}
-            onPendingAttachmentsConsumed={() => setPendingChatAttachments([])}
+            onPendingAttachmentsConsumed={handlePendingChatAttachmentsConsumed}
             pendingNodeMentions={pendingChatNodeMentions}
-            onPendingNodeMentionsConsumed={() => setPendingChatNodeMentions([])}
+            onPendingNodeMentionsConsumed={handlePendingChatNodeMentionsConsumed}
             open={chatOpen}
             onOpenChange={handleChatOpenChange}
             // 抽屉会往 <html> 上广播 --freezone-dock-width，顶栏 / 任务状态条 / 任务

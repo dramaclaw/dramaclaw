@@ -68,7 +68,6 @@ async def run_sync_bounded(
     limiter token until the worker and optional finalizer finish. If a finalizer
     is supplied, its return value is the operation result.
     """
-
     bound = functools.partial(function, *args, **kwargs)
     if shield:
         worker_task = asyncio.create_task(

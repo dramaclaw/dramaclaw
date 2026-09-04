@@ -375,7 +375,14 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
     if (isStoryboard || isInteracting) {
       return;
     }
-    fitGroupToChildren(id);
+    // A workflow approval can mount dozens of freshly-created children in one
+    // commit. React Flow then reports their measurements in rapid succession.
+    // Writing the whole canvas store synchronously from every effect pass can
+    // nest those measurement commits until React trips its maximum-update-depth
+    // guard. Coalesce geometry reconciliation to the next animation frame; a
+    // newer measurement cancels the stale request through the effect cleanup.
+    const frameId = window.requestAnimationFrame(() => fitGroupToChildren(id));
+    return () => window.cancelAnimationFrame(frameId);
   }, [childGeometrySignature, isStoryboard, isInteracting, fitGroupToChildren, id]);
 
   const resolvedTitle = useMemo(

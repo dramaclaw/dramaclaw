@@ -179,6 +179,83 @@ def test_run_project_task_core_injects_deadline_for_runner(monkeypatch):
     assert isinstance(captured["__deadline_monotonic"], float)
 
 
+def test_agent_product_pending_timeout_is_reviewed_without_refund(monkeypatch):
+    from novelvideo.freezone.agent_product_operations import (
+        AgentProductSettlementPending,
+    )
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+
+    events: list[tuple[str, str]] = []
+
+    class UsageMeter:
+        async def resolve_feature_credit_reservation(self, _identity):
+            from novelvideo.ports.usage import FeatureSettlementResolution
+
+            return FeatureSettlementResolution(
+                outcome="resolved",
+                reservation_id="reservation_1",
+                feature_key="freezone.agent.recipe_result",
+                model_call_credit_policy="feature_included",
+            )
+
+        async def mark_feature_credit_settlement_for_review(
+            self, reservation_id, *, metadata=None
+        ):
+            events.append(("review", reservation_id))
+            assert metadata["operation_status"] == "submitted"
+            return {"status": "awaiting"}
+
+        async def settle_cancelled_feature_credit_reservation(self, *_args, **_kwargs):
+            events.append(("refund", "unexpected"))
+
+        async def settle_feature_credit_reservation(self, *_args, **_kwargs):
+            events.append(("confirm", "unexpected"))
+
+    def pending_runner(_envelope, _ctx):
+        raise AgentProductSettlementPending(
+            operation_id="agent_product_test", status="submitted"
+        )
+
+    async def not_cancelled(**_kwargs):
+        return False
+
+    async def no_metrics(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "is_cancel_requested", not_cancelled)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(run_core, "_emit_project_task_metrics", no_metrics)
+    monkeypatch.setattr(
+        run_core, "_set_project_task_metrics_context", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
+    register_project_task_runner(
+        "freezone_agent_recipe_result", pending_runner, requires_home_node=True
+    )
+
+    manager = _FakeTaskManager()
+    result = run_core.run_project_task_core_sync(
+        _verified_delivery(
+            task_type="freezone_agent_recipe_result",
+            billing_metadata={"feature_credit_reservation_id": "reservation_1"},
+        ),
+        SimpleNamespace(
+            project_id="proj_timeout", requester_user_id="usr_1", is_home_node=True
+        ),
+        manager,
+        run_task_id="task_1",
+    )
+
+    assert result["pending"] is True
+    assert result["settlement_status"] == "awaiting_reconciliation"
+    assert events == [("review", "reservation_1")]
+    assert manager.failed[0]["metadata"]["error_code"] == (
+        "AGENT_PRODUCT_SETTLEMENT_PENDING"
+    )
+
+
 def test_run_project_task_core_rejects_raw_dict_before_side_effects():
     from novelvideo.task_backend import run_core
 

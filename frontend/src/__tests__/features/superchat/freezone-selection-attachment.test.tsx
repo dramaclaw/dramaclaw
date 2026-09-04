@@ -42,8 +42,12 @@ function setFreezoneComposerText(input: HTMLElement, value: string): void {
 }
 
 vi.mock("react-i18next", () => ({
+  initReactI18next: {
+    type: "3rdParty",
+    init: vi.fn(),
+  },
   useTranslation: () => ({
-    t: (key: string, options?: { count?: number }) => {
+    t: (key: string, options?: Record<string, unknown>) => {
       const translations: Record<string, string> = {
         "aiAssistant.placeholder": "写下灵感、剧情或任务，虾导来接住",
         "aiAssistant.freezonePlaceholder": "想画什么、改哪里，直接告诉虾画",
@@ -54,7 +58,9 @@ vi.mock("react-i18next", () => ({
         "freezone.chat.usedThisTurn": "本轮会使用",
         "freezone.chat.canvasCommandsCancelled": "已取消画布操作",
       };
-      return (translations[key] ?? key).replace("{{count}}", String(options?.count ?? ""));
+      const template = translations[key]
+        ?? (typeof options?.defaultValue === "string" ? options.defaultValue : key);
+      return template.replace(/{{(\w+)}}/g, (_match, name: string) => String(options?.[name] ?? ""));
     },
   }),
 }));
@@ -1715,7 +1721,8 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     );
 
     expect(screen.queryByText("这轮操作没有收到虾导的有效回复，请稍后重试。")).not.toBeInTheDocument();
-    fireEvent.click(await screen.findByText("画布操作已过期"));
+    // Expired approvals are expanded by default so recovery is immediately visible.
+    expect(await screen.findByRole("button", { name: "重新执行" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "重新执行" }));
 
     await waitFor(() => {
@@ -1998,7 +2005,9 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
 
     expect(screen.getByText("视频生成请求超时了，前端尚未返回结果。")).toBeInTheDocument();
     expect(screen.queryByText("待确认的画布操作")).not.toBeInTheDocument();
-    expect(screen.getByText("画布操作已过期")).toBeInTheDocument();
+    expect(
+      screen.getByText("画布操作因等待超时已取消，没有应用到画布。"),
+    ).toBeInTheDocument();
   });
 
   it("renders Freezone tool calls as activity cards", async () => {

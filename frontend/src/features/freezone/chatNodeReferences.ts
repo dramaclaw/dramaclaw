@@ -50,6 +50,17 @@ export const CANVAS_NODE_REFERENCE_SCHEMA_VERSION = "canvas_node_reference.v1";
 export const CANVAS_CONTEXT_REQUEST_SCHEMA_VERSION =
   "canvas_context_request.v1";
 
+export function canvasSelectionAttachmentDeliveryKey(
+  displayNodes: readonly Pick<CanvasNode, "id">[],
+  referencedNodes: readonly Pick<CanvasNode, "id">[],
+): string | null {
+  if (displayNodes.length === 0) return null;
+  return JSON.stringify({
+    displayNodeIds: displayNodes.map((node) => node.id),
+    referencedNodeIds: referencedNodes.map((node) => node.id),
+  });
+}
+
 type CanvasNodeReferenceItem = {
   node_id: string;
   node_type: string | null;

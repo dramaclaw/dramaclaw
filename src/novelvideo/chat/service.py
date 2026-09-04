@@ -94,21 +94,28 @@ _ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str]] = {}
 _ACTIVE_CODEX_TURNS_LOCK = threading.Lock()
 _CODEX_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant. Use the required dramaclaw MCP "
-    "server for all DramaClaw data reads and writes. Its business tools use progressive "
-    "disclosure: search with dramaclaw_tool_search, inspect an unfamiliar tool with "
-    "dramaclaw_tool_describe, then execute it with dramaclaw_tool_call. Never guess a "
-    "tool name or argument schema. Do not use shell commands, "
+    "server for all DramaClaw data reads and writes. Inspect the available scope-filtered "
+    "concrete MCP tools and their schemas, then call the selected tool directly. Do not guess "
+    "a tool name or argument schema. "
+    "Do not use shell commands, "
     "local file editing, web search, or other external tools."
 )
 _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant inside the Xi画/Freezone canvas. "
-    "Use the concrete tools currently listed by the required dramaclaw MCP server. "
-    "Freezone tools are exposed directly with names such as freezone_emit_canvas_command; "
-    "do not look for the progressive dramaclaw_tool_search/describe/call bridge in this mode. "
+    "If the user asks you to write or return text, copy, a screenplay, or Beats but does not "
+    "explicitly ask to create/add/land nodes or a workflow on the canvas, answer in chat. Do not "
+    "search Workflow Skills and do not call a canvas write tool merely because the requested "
+    "content mentions images, audio, or video. "
+    "Inspect the available scope-filtered concrete operations on the required dramaclaw MCP "
+    "server, then call the selected tool directly. "
     "For any workflow, several connected nodes, grouped stages, storyboard, or media pipeline, "
     "load and follow the project Agent Skill named dramaclaw-workflows. Read that Skill only from "
     "the exact file URI advertised in the available Skills or dramaclaw resources; never invent a "
     "project:// Skill URI. "
+    "Never probe guessed HTTP API paths such as /agent-skills, /skills, or /workflows/skills with "
+    "dramaclaw_get. For workflow discovery use workflow_catalog_search on dramaclaw_workflows; "
+    "read only the returned workflow resource URI or call freezone_get_workflow_skill as its "
+    "documented fallback, then stop reading and author the plan. "
     "The Agent Skill package name dramaclaw-workflows is not a Workflow catalog skill_id: never "
     "pass dramaclaw-workflows to workflow_skill_get, freezone_get_workflow_skill, or an intent's "
     "skill_id. Select the matching production Workflow Skill returned by the catalog instead "
@@ -121,8 +128,29 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "fall back to repeated single-node or single-edge tools after an error. "
     "For a normal workflow request, follow that Skill's discovery, draft, preview, and confirmation "
     "sequence. When the user explicitly specifies exact nodes and dependencies, follow the Skill's "
-    "custom-topology reference and call freezone_create_workflow_graph once instead; do not route "
-    "that request through the normal draft flow merely because a production Skill matches. The "
+    "custom-topology reference and call freezone_prepare_workflow_plan_draft once instead; do not "
+    "route that request through the compact Intent compiler merely because a "
+    "production Skill matches. Explicit Beat, shot, node-count, or dependency requirements must "
+    "remain one complete WorkflowPlan even when they exceed the compact planner limit. Copy exact "
+    "user totals into expected_node_count and expected_node_counts. For episodic short-drama, Beat, "
+    "voice-over, or background-music workflows, prefer the short-drama production Skill over the "
+    "generic text-to-image-video Skill. After any validation error, never submit a reduced sample, "
+    "smoke test, or placeholder graph such as A/B or T1/T2 to the real canvas; diagnose with the "
+    "read-only compiler only by compiling that same complete graph, preserving all nodes and "
+    "dependency edges. Never compile reduced probe nodes or use edges=[] for a multi-node plan. "
+    "The Agent owns graph completeness: before submission, verify that every plan node belongs to "
+    "one undirected connected component. For independent Beat/shot branches that must preserve "
+    "failure isolation, add a non-executable common input root and fan it out to each branch input; "
+    "do not ask the user to specify this internal topology and do not serialize sibling branches. "
+    "Resolve unknown edge compatibility from freezone_get_link_type_catalog once; never guess link "
+    "types through repeated compiler calls. Do not use workflow_graph_compile as routine preflight "
+    "before the first graph write. After a recovery compile succeeds, immediately submit that exact "
+    "corrected Plan with freezone_prepare_workflow_plan_draft instead of stopping at compile success. "
+    "Correct the same complete plan once, then report the blocking error. The "
+    "failure result must come from the current turn: historical failures are diagnostic context, "
+    "not proof that the current adapter remains blocked. When the user repeats the create/run "
+    "request or asks to retry after a restart, submit the same complete workflow write once in "
+    "that turn instead of repeating an old blocking conclusion. The "
     "user's explicit imperative to create or run is authorization to submit the protected canvas "
     "write and display its approval surface. Never ask for a duplicate 'create and run' confirmation, "
     "and never claim that the environment cannot display an approval card: the Freezone write tool "
@@ -134,17 +162,22 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "the one and only run request. If its result says accepted or reports a run_workflow command, "
     "never call freezone_run_workflow again in the same turn. "
     "Only a later explicit user retry after a terminal failure may start another run. For a "
+    "Freezone speech uses custom/reference voices only and must never use a preset/system voice. "
+    "Preserve a valid voiceRef. If no valid custom voice is selected, skip that audio node without "
+    "submitting TTS and continue the remaining workflow. Never choose the first available voice or "
+    "call open_voice_picker unless the user explicitly requests voice selection. "
     "request whose actual next step will generate image or video media, inspect the user's message, "
     "the selected Recipe, and existing target-node data before any canvas write. Obey the injected "
-    "FREEZONE_CANVAS_EXECUTION_MODE contract. In manual_confirm mode, do not ask a preliminary "
-    "generation-parameter clarification: inspect the live schema and populate missing fields with "
-    "supported defaults or symbolic recommended values so the approval card is the final parameter "
-    "editor. In auto_execute mode, if relevant image or video generation choices are still missing, "
-    "call freezone_request_user_clarification once and ask only for the missing user-facing choices. "
+    "FREEZONE_CANVAS_EXECUTION_MODE contract for whether a fresh preliminary parameter selection is "
+    "required; do not infer that policy from conversation history. When that contract requires a "
+    "selection, call freezone_request_user_clarification once for the current request. "
     "Image choices are model preference, aspect "
     "ratio, resolution/quality, and variants per node. Video choices are model or generation mode, aspect "
     "ratio, resolution, duration, sound generation, and variants per node. Offer a recommended/default "
-    "choice instead of forcing technical knowledge. Never bundle these fields into one preset such "
+    "choice for each relevant field. Never include an audio voice-source question in this preliminary "
+    "clarification: do not ask the user to choose system voice versus custom voice. Freezone speech "
+    "uses an already selected custom voiceRef or skips generation when none is selected. "
+    "Never bundle these fields into one preset such "
     "as 'recommended settings'. Use one clarification question per missing field with the portable "
     "field name as its question id. Before asking, inspect the live node create schema once for each "
     "relevant image/video type and use its exact options; video_resolution must show every supported "
@@ -158,12 +191,11 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "video_aspect_ratio, video_resolution, video_duration_seconds, video_generate_audio, and "
     "video_variants_per_node keys. The Skill-specific image_count/video_count fields describe "
     "workflow deliverable or node counts and must never be copied to a node's data.count. If a "
-    "canvas write returns code=generation_parameters_required, never retry "
-    "unchanged. In manual_confirm mode, fill the returned fields from the live schema/defaults and "
-    "retry the same plan so the approval card can expose them. In auto_execute mode, call the "
-    "clarification tool once for all returned missing choices and retry with the answers. A "
+    "canvas write returns code=generation_parameters_required, never retry unchanged. Follow the "
+    "injected execution-mode contract to collect or populate the returned fields, then retry the "
+    "same plan. A "
     "recommended/default model choice is symbolic: serialize "
-    "it as model=\"recommended\" (or the matching portable intent input), not as an invented model "
+    'it as model="recommended" (or the matching portable intent input), not as an invented model '
     "id. The authorized adapter resolves it through the live frontend default. If a complete graph "
     "write fails, do not regenerate or truncate the whole plan merely to replace that sentinel. "
     "For a "
@@ -176,11 +208,11 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 )
 
 # A resumed App Server thread retains the MCP tool catalog and environment from
-# when it was created. Bump this value whenever the Freezone MCP exposure or
-# browser-bridge contract changes so canvas turns cannot silently resume a
-# thread that predates the required concrete write tools. Mainline thread keys
-# intentionally remain unchanged.
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v13"
+# when it was created. Bump the relevant value whenever MCP discovery or the
+# Freezone browser-bridge contract changes so a turn cannot silently resume a
+# thread with incompatible tool definitions.
+_CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v1"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v17"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -406,9 +438,24 @@ Canvas write contract:
   only the Skill/catalog reads required by the next rule before their single workflow write call.
 - For any workflow, several connected nodes, grouped stages, storyboard, or media pipeline, load
   and follow the dramaclaw-workflows Agent Skill. For an exact user-specified topology, read its
-  references/custom-topology.md and call freezone_create_workflow_graph once with one complete
+  references/custom-topology.md and call freezone_prepare_workflow_plan_draft once with one complete
   freezone_workflow_plan.v1. Exact means the user names the nodes and their dependency order; do not
-  route it through the normal draft flow merely because a production Skill matches.
+  route it through the normal draft flow or compact Intent compiler merely because a production
+  Skill matches. Explicit Beat, shot, or node totals must be copied into expected_node_count and
+  expected_node_counts and must remain unchanged during recovery. Episodic short-drama, Beat,
+  voice-over, or background-music workflows should use the short-drama production Skill rather than
+  the generic text-to-image-video Skill.
+  Graph completeness is the Agent's responsibility. Before submission, verify that all Plan nodes
+  form one connected component when edges are viewed as undirected. For independent Beat/shot
+  branches that need failure isolation, add one non-executable common input root and fan it out to
+  every branch input; do not ask the user for internal nodes or link types, and do not serialize
+  sibling branches merely to satisfy connectivity validation.
+  Resolve unknown edge compatibility by reading freezone_get_link_type_catalog once. Never guess
+  link types through repeated compiler calls. The graph write already validates, so do not use
+  workflow_graph_compile as a routine preflight before the first write. After a recovery compile
+  succeeds, immediately prepare the exact same Plan with freezone_prepare_workflow_plan_draft.
+  Never call dramaclaw_get with guessed Skill or workflow HTTP paths. Use the workflow MCP catalog
+  and its returned resource URI, or the documented freezone_get_workflow_skill fallback, exactly once.
   Do not use freezone_emit_canvas_command for a workflow.
 - `dramaclaw-workflows` is the Agent Skill package name, not a Workflow catalog `skill_id`. Never
   pass it to workflow_skill_get/freezone_get_workflow_skill or use it as intent.skill_id. Select the
@@ -420,6 +467,14 @@ Canvas write contract:
   user asks about status.
 - Never claim any canvas change succeeded without a successful same-turn frontend write result. If
   it fails or is absent, say the change could not be confirmed.
+- Never submit reduced sample, smoke-test, or placeholder nodes such as A/B, T1/T2, or “测试节点” to
+  the user's canvas while recovering from a workflow error. Use the read-only workflow compiler
+  only with that same complete graph, preserving all nodes, edges, groups, and exact counts. Never
+  compile reduced probe nodes or use edges=[] for a multi-node plan. Correct the same complete plan
+  once, and then report the blocking validation detail.
+- Historical failures are diagnostic context only. If the user repeats the create/run request or
+  retries after a restart, perform one same-turn write with the complete plan. Never declare the
+  current adapter blocked unless the same failure is returned by that current-turn write.
 - The user's explicit request to create or run is authorization to submit the protected canvas write
   and show its approval card. Do not ask for a second “创建并运行” confirmation and do not say the
   environment cannot display the card; the write tool creates it. In auto_execute, submit the write
@@ -439,22 +494,39 @@ Skill Studio continuation:
 [/FREEZONE_CANVAS_ASSISTANT]"""
 
 _FREEZONE_CANVAS_WRITE_ACTION_RE = re.compile(
-    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|向[上下左右]移|再移|布局|选择|打开|运行|执行|生成|"
+    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|向[上下左右]移|再移|布局|选择|打开|运行|执行|生成|制作|做|"
     r"create|add|insert|delete|remove|clear|update|connect|move|layout|select|open|run|execute|generate)",
     re.IGNORECASE,
 )
 _FREEZONE_CANVAS_WRITE_OBJECT_RE = re.compile(
-    r"(?:节点|画布|工作流|连线|边|图片|视频|音频|合成|"
-    r"node|canvas|workflow|edge|image|video|audio|compose)",
+    r"(?:节点|画布|工作流|连线|边|合成节点|"
+    r"node|canvas|workflow|edge|compose\s+node)",
+    re.IGNORECASE,
+)
+_FREEZONE_DIRECT_MEDIA_WRITE_RE = re.compile(
+    r"(?:"
+    r"(?:生成|创建|新建|添加|制作|做|运行|执行|用|根据|按照|基于)"
+    r"[^。！？!?\n]{0,32}"
+    r"(?:图片|图像|图|视频|音频|音乐|配音|旁白|成片)"
+    r"|(?:generate|create|add|make|run|execute)\s+(?:an?\s+|some\s+)?"
+    r"(?:image|video|audio|music|voiceover|composition)"
+    r")",
     re.IGNORECASE,
 )
 _FREEZONE_CANVAS_KNOWLEDGE_QUESTION_RE = re.compile(
     r"(?:如何|怎么|为什么|为何|是什么|教程|方法|步骤|是否支持|支不支持|"
-    r"what|why|how|can\s+i)",
+    r"\bwhat\b|\bwhy\b|\bhow\b|\bcan\s+i\b)",
     re.IGNORECASE,
 )
 _FREEZONE_CANVAS_NO_WRITE_FAILURE_RE = re.compile(
     r"(?:未能|无法|失败|找不到|不可用|未创建|没有创建|未执行|没有执行|不能)",
+    re.IGNORECASE,
+)
+_FREEZONE_TEXT_ONLY_REQUEST_RE = re.compile(
+    r"(?:生成|创建|编写|撰写|整理|generate|create|write|draft)"
+    r"(?:(?!\n).){0,40}"
+    r"(?:剧本|脚本|文案|提示词|解说词|screenplay|script|copy|copywriting|prompt)"
+    r"\s*[。！？!?．.]?\s*$",
     re.IGNORECASE,
 )
 _FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
@@ -473,8 +545,6 @@ _FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
         "freezone_open_mainline_projection",
         "freezone_run_node_action",
         "freezone_run_workflow",
-        "freezone_create_workflow_graph",
-        "freezone_create_workflow_from_intent",
         "freezone_confirm_workflow_draft",
         "freezone_confirm_canvas_action",
     }
@@ -490,20 +560,35 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
         return False
     has_action = bool(_FREEZONE_CANVAS_WRITE_ACTION_RE.search(user_text))
     has_canvas_object = bool(_FREEZONE_CANVAS_WRITE_OBJECT_RE.search(user_text))
+    has_direct_media_write = bool(_FREEZONE_DIRECT_MEDIA_WRITE_RE.search(user_text))
     has_node_reference = "[SUPERTALE_CANVAS_NODE_REFERENCES]" in raw_prompt
     standalone_clear = bool(re.search(r"(?:清空|clear)", user_text, re.IGNORECASE))
     if _FREEZONE_CANVAS_KNOWLEDGE_QUESTION_RE.search(user_text):
         return False
-    return has_action and (has_canvas_object or has_node_reference or standalone_clear)
+    # A text artifact request such as “生成一个视频脚本” or “create an image
+    # prompt” must remain a chat response unless the user explicitly names a
+    # canvas/node mutation. Otherwise the post-turn adapter may replace the
+    # generated text with a misleading canvas-write failure.
+    # Only suppress an explicit text-artifact request.  Media requests may
+    # legitimately contain the same words (for example “根据这个提示词生成
+    # 一张图” or “生成一张带文案的图片”), so do not use a broad keyword
+    # exclusion here.
+    if (
+        _FREEZONE_TEXT_ONLY_REQUEST_RE.search(user_text)
+        and not re.search(r"(?:根据|用|按照|基于|带|包含|from|using|based\s+on|with)", user_text, re.IGNORECASE)
+        and not re.search(r"(?:节点|画布|连线|node|canvas|edge)", user_text, re.IGNORECASE)
+    ):
+        return False
+    return has_action and (
+        has_canvas_object
+        or has_direct_media_write
+        or has_node_reference
+        or standalone_clear
+    )
 
 
 def _codex_freezone_tool_name(event: Any) -> str:
-    name = str(getattr(event, "name", "") or "").rsplit(".", 1)[-1].strip()
-    if name == "dramaclaw_tool_call":
-        tool_input = getattr(event, "input", None)
-        if isinstance(tool_input, dict):
-            name = str(tool_input.get("tool_name") or "").strip()
-    return name
+    return str(getattr(event, "name", "") or "").rsplit(".", 1)[-1].strip()
 
 
 def _json_objects_from_codex_tool_value(value: Any) -> list[dict[str, Any]]:
@@ -538,7 +623,26 @@ def _codex_freezone_write_result_succeeded(event: Any) -> bool:
             if payload.get("ok") is not True:
                 continue
             apply_status = str(payload.get("canvas_apply_status") or "").strip().lower()
-            if apply_status in {"applied", "accepted", "direct_applied"}:
+            project_id = str(payload.get("project_id") or "").strip()
+            canvas_id = str(payload.get("canvas_id") or "").strip()
+            bridge_key = str(payload.get("bridge_key") or "").strip()
+            revision = payload.get("revision")
+            # A transport/tool status is not proof that the canvas mutation
+            # was persisted. Browser-applied results are durable only when
+            # they carry the bridge receipt identity; direct applies must
+            # carry the saved canvas revision returned by the persistence API.
+            browser_receipt = (
+                apply_status in {"applied", "accepted"}
+                and payload.get("applied") is True
+                and bool(bridge_key and project_id and canvas_id)
+            )
+            direct_receipt = (
+                apply_status == "direct_applied"
+                and payload.get("applied") is True
+                and bool(project_id and canvas_id)
+                and isinstance(revision, int)
+            )
+            if browser_receipt or direct_receipt:
                 return True
     return False
 
@@ -573,6 +677,149 @@ def _codex_freezone_write_result_error(event: Any) -> str:
     if isinstance(raw_error, str) and raw_error.strip():
         return raw_error.strip()[:1000]
     return ""
+
+
+def _codex_freezone_ready_workflow_draft(event: Any) -> dict[str, Any] | None:
+    """Return a successfully prepared workflow draft carried by a Codex event."""
+
+    if _codex_freezone_tool_name(event) != "freezone_prepare_workflow_draft":
+        return None
+    status = str(getattr(event, "status", "") or "").strip().lower()
+    if status not in {"completed", "success", "succeeded"}:
+        return None
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            if (
+                payload.get("ok") is True
+                and str(payload.get("status") or "") == "workflow_draft_ready"
+                and str(payload.get("draft_id") or "").strip()
+            ):
+                return payload
+    return None
+
+
+_AGENT_PRODUCT_RESULT_TOOLS = {
+    "freezone_prepare_workflow_draft",
+    "freezone_prepare_workflow_plan_draft",
+    "freezone_put_agent_catalog_skill",
+    "freezone_put_agent_catalog_recipe",
+}
+
+
+async def _bind_server_observed_agent_product_execution(
+    event: Any,
+    *,
+    project_dir: str | Path | None,
+    project_state_dir: str | Path | None,
+) -> None:
+    """Bind an admitted product operation to the tool call carrying its result."""
+    tool_name = _codex_freezone_tool_name(event)
+    if tool_name not in _AGENT_PRODUCT_RESULT_TOOLS:
+        return
+    event_type = str(getattr(event, "type", "") or "tool_updated")
+    status = str(getattr(event, "status", "") or "").strip().lower()
+    if getattr(event, "error", None):
+        return
+    if event_type != "tool_started":
+        if status not in {"completed", "success", "succeeded"}:
+            return
+        succeeded = any(
+            payload.get("ok") is True
+            for value in (
+                getattr(event, "structured", None),
+                getattr(event, "output", None),
+            )
+            for payload in _json_objects_from_codex_tool_value(value)
+        )
+        if not succeeded:
+            return
+
+    tool_args: dict[str, Any] = {}
+    for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        tool_args = payload
+        break
+    turn_id = str(getattr(event, "turn_id", "") or "").strip()
+    tool_call_id = str(getattr(event, "call_id", "") or "").strip()
+    state_root = project_state_dir or project_dir
+    if not tool_args or not turn_id or not tool_call_id or state_root is None:
+        return
+    state_dir = Path(state_root)
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
+        read_agent_generation_session,
+    )
+
+    operation_ids: set[str] = set()
+    if tool_name in {
+        "freezone_prepare_workflow_draft",
+        "freezone_prepare_workflow_plan_draft",
+    }:
+        operation_id = str(tool_args.get("operation_id") or "").strip()
+        if operation_id.startswith("agent_product_"):
+            operation_ids.add(operation_id)
+    else:
+        session_id = str(tool_args.get("skill_studio_session_id") or "").strip()
+        if not session_id:
+            return
+        session = await asyncio.to_thread(
+            read_agent_generation_session,
+            project_dir=state_dir,
+            generation_session_id=session_id,
+        )
+        draft = session.get("draft") if isinstance(session, dict) else None
+        operations = draft.get("operations") if isinstance(draft, dict) else None
+        if not isinstance(operations, dict):
+            return
+        if tool_name == "freezone_put_agent_catalog_skill":
+            operation = operations.get("skill")
+        else:
+            recipe_operations = operations.get("recipes")
+            if not isinstance(recipe_operations, dict):
+                return
+            index = tool_args.get("index")
+            operation = recipe_operations.get(index) or recipe_operations.get(
+                str(index)
+            )
+            if not isinstance(operation, dict):
+                recipe = tool_args.get("recipe")
+                recipe_id = (
+                    str(recipe.get("id") or "").strip()
+                    if isinstance(recipe, dict)
+                    else ""
+                )
+                matches = [
+                    candidate
+                    for candidate in recipe_operations.values()
+                    if isinstance(candidate, dict)
+                    and str(candidate.get("artifact_id") or "").strip() == recipe_id
+                ]
+                operation = matches[0] if len(matches) == 1 else None
+        if isinstance(operation, dict):
+            operation_id = str(operation.get("operation_id") or "").strip()
+            if operation_id.startswith("agent_product_"):
+                operation_ids.add(operation_id)
+    if not operation_ids:
+        return
+
+    model_call_id = f"agent-turn:{turn_id}:tool:{tool_call_id}"
+    for operation_id in sorted(operation_ids):
+        try:
+            await asyncio.to_thread(
+                bind_agent_product_model_execution,
+                project_dir=state_dir,
+                operation_id=operation_id,
+                model_call_id=model_call_id,
+                executed_at=datetime.now(tz=timezone.utc).timestamp(),
+                source="server_observed_agent_turn",
+                turn_id=turn_id,
+                tool_call_id=tool_call_id,
+            )
+        except ValueError:
+            logger.warning(
+                "could not bind observed Agent product execution operation=%s",
+                operation_id,
+                exc_info=True,
+            )
 
 
 _FREEZONE_SKILL_STUDIO_TRIGGER_RE = re.compile(
@@ -929,6 +1176,8 @@ def _prompt_with_user_context(
     tool_mode: str = "default",
     surface_context: dict[str, Any] | None = None,
     route_prompt: str | None = None,
+    turn_id: str | None = None,
+    require_generation_parameter_preflight: bool = False,
 ) -> str:
     user_message, execution_context = _route_prompt_with_execution_context(
         prompt,
@@ -939,6 +1188,38 @@ def _prompt_with_user_context(
     canvas_execution_mode = _freezone_canvas_execution_mode_from_context(
         surface_context
     )
+    generation_parameter_round = str(turn_id or "current_request").strip()
+    if require_generation_parameter_preflight:
+        generation_parameter_policy = (
+            f"generation_parameter_round: {generation_parameter_round}\n"
+            "For every new request in this round that will actually generate image or video media, "
+            "show one preliminary structured generation-parameter clarification before any canvas "
+            "write in both manual_confirm and auto_execute. Historical clarification answers, "
+            "existing node data, Recipe defaults, and parameters from an earlier turn may only "
+            "prefill recommended choices; they never count as confirmation for this round. Do not "
+            "ask again after the clarification tool returns answers for this same round. This card "
+            "covers image/video parameters only; never add a system-voice/custom-voice choice and "
+            "do not ask the user to choose system voice versus custom voice.\n"
+            "manual_confirm: After the preliminary parameter answers return, put them into the plan "
+            "and submit the protected write. The normal approval card is still shown and remains the "
+            "final parameter editor before execution.\n"
+            "auto_execute: After the preliminary parameter answers return, submit the protected canvas "
+            "write immediately without asking for another create/run confirmation. A normal approval "
+            "event is still emitted and the frontend auto-applies it; explicit human-review requirements "
+            "may pause. Use the MCP clarification tool, never built-in request_user_input.\n"
+        )
+    else:
+        generation_parameter_policy = (
+            "manual_confirm: Do not ask a preliminary image/video parameter clarification. Read the "
+            "live schema and put supported defaults or symbolic recommended values into the plan; the "
+            "approval card is where the user reviews and adjusts final generation parameters.\n"
+            "auto_execute: If image/video parameters needed for generation are missing, ask once before "
+            "the canvas write, with one structured question per missing field. A normal approval event "
+            "is still emitted and the frontend auto-applies it; explicit human-review requirements may "
+            "pause. After the answers return, submit the protected canvas write immediately without "
+            "asking for another create/run confirmation. Use the MCP clarification tool, never built-in "
+            "request_user_input.\n"
+        )
     canvas_context = (
         "\n\n[FREEZONE_CANVAS_CONTEXT]\n"
         f"canvas_id: {canvas_id}\n"
@@ -946,15 +1227,7 @@ def _prompt_with_user_context(
         "[/FREEZONE_CANVAS_CONTEXT]\n\n"
         "[FREEZONE_CANVAS_EXECUTION_MODE]\n"
         f"mode: {canvas_execution_mode}\n"
-        "manual_confirm: Do not ask a preliminary image/video parameter clarification. Read the live "
-        "schema and put supported defaults or symbolic recommended values into the plan; the approval "
-        "card is where the user reviews and adjusts final generation parameters.\n"
-        "auto_execute: If image/video parameters needed for generation are missing, ask once before "
-        "the canvas write, with one structured question per missing field. A normal approval event is "
-        "still emitted and the frontend auto-applies it; explicit human-review requirements may pause. "
-        "After the answers return, submit the protected canvas write immediately without asking for "
-        "another create/run confirmation. Use the MCP clarification tool, never built-in "
-        "request_user_input.\n"
+        f"{generation_parameter_policy}"
         "If the mode is absent or invalid, use manual_confirm. The mode changes parameter collection "
         "only; it does not bypass validation, approval events, or the authorized canvas write path.\n"
         "[/FREEZONE_CANVAS_EXECUTION_MODE]"
@@ -4270,8 +4543,16 @@ def _codex_scope_key(
     normalized_project = str(project or "").strip()
     profile = str(agent_profile or "main").strip() or "main"
     if profile == "main":
-        # Preserve the original key so existing Director threads keep resuming.
-        return f"project:{normalized_project}" if normalized_project else "home"
+        # Tool definitions are retained by a resumed App Server thread. Include
+        # the discovery protocol so a deployment cannot resume a thread whose
+        # catalog still contains the incompatible concrete/special tools.
+        scope = (
+            profile,
+            "project" if normalized_project else "home",
+            normalized_project or None,
+            _CODEX_THREAD_PROTOCOL_VERSION,
+        )
+        return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
     scoped_canvas = str(canvas_id or "").strip() or None
     if not profile.startswith("freezone"):
         scoped_canvas = None
@@ -4691,6 +4972,15 @@ def _build_claude_env(
     if project:
         env["DRAMACLAW_PROJECT_ID"] = project
         env["SUPERTALE_PROJECT_ID"] = project
+    # Never let deprecated name/UUID selectors inherited from the host
+    # override the canonical project-id scope supplied for this turn.
+    for name in (
+        "DRAMACLAW_PROJECT",
+        "DRAMACLAW_PROJECT_UUID",
+        "SUPERTALE_PROJECT",
+        "SUPERTALE_PROJECT_UUID",
+    ):
+        env.pop(name, None)
     env["DRAMACLAW_API_URL"] = _load_api_url()
     env["SUPERTALE_API_URL"] = _load_api_url()
     env["DRAMACLAW_AGENT_TOKEN"] = agent_token
@@ -4772,6 +5062,15 @@ def _build_codex_env(
     if project:
         env["DRAMACLAW_PROJECT_ID"] = project
         env["SUPERTALE_PROJECT_ID"] = project
+    # Never let deprecated name/UUID selectors inherited from the host
+    # override the canonical project-id scope supplied for this turn.
+    for name in (
+        "DRAMACLAW_PROJECT",
+        "DRAMACLAW_PROJECT_UUID",
+        "SUPERTALE_PROJECT",
+        "SUPERTALE_PROJECT_UUID",
+    ):
+        env.pop(name, None)
     env["DRAMACLAW_API_URL"] = _load_api_url()
     env["SUPERTALE_API_URL"] = _load_api_url()
     env.pop("DRAMACLAW_AGENT_TOKEN", None)
@@ -4832,6 +5131,8 @@ def _build_codex_env(
         "OPENAI_API_KEY",
         "OPENROUTER_API_KEY",
         "ST_ORG_GATEWAY_API_KEY",
+        "SUPERTALE_API_KEY",
+        "SUPERTALE_API_TOKEN",
         "VOLCENGINE_API_KEY",
     ):
         child_env.pop(name, None)
@@ -5161,8 +5462,7 @@ def _codex_gateway_provider_overrides(
 
 def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
     """Node-safe Codex config containing no usable Gateway credential."""
-
-    return (
+    overrides = [
         *_codex_gateway_provider_overrides(
             base_url,
         ),
@@ -5180,7 +5480,63 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
         "features.view_image=false",
         "memories.generate_memories=false",
         "memories.use_memories=false",
+    ]
+    # The repository ships complete metadata for the default Gateway slug;
+    # deployments may replace it with another verified catalog. In particular,
+    # Responses-to-Chat gateways must use a catalog with search disabled so
+    # Codex advertises concrete MCP tools instead of the unsupported tool_search.
+    bundled_catalog = (
+        Path(__file__).resolve().parents[3]
+        / "deploy"
+        / "codex"
+        / "dramaclaw-model-catalog.json"
     )
+    catalog_file = str(
+        os.environ.get("DRAMACLAW_CODEX_MODEL_CATALOG_FILE") or bundled_catalog
+    ).strip()
+    path = Path(catalog_file).expanduser()
+    if not path.is_file() or not path.is_absolute():
+        raise RuntimeError(
+            "DRAMACLAW_CODEX_MODEL_CATALOG_FILE must be an existing absolute file"
+        )
+    try:
+        catalog = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Codex model catalog file is not valid JSON") from exc
+    models = catalog.get("models") if isinstance(catalog, dict) else None
+    if not isinstance(models, list):
+        raise RuntimeError("Codex model catalog must contain a models array")
+    configured_model = _codex_model()
+    entry = next(
+        (
+            item
+            for item in models
+            if isinstance(item, dict) and item.get("slug") == configured_model
+        ),
+        None,
+    )
+    required_fields = {
+        "base_instructions",
+        "display_name",
+        "supported_reasoning_levels",
+        "shell_type",
+        "visibility",
+        "supported_in_api",
+        "priority",
+        "truncation_policy",
+        "experimental_supported_tools",
+        "supports_search_tool",
+    }
+    if entry is None or not required_fields.issubset(entry):
+        raise RuntimeError(
+            f"Codex model catalog has no complete entry for {configured_model}"
+        )
+    if not str(entry.get("base_instructions") or "").strip():
+        raise RuntimeError(
+            f"Codex model catalog must provide base_instructions for {configured_model}"
+        )
+    overrides.append(f"model_catalog_json={json.dumps(str(path))}")
+    return tuple(overrides)
 
 
 def _build_codex_thread(
@@ -5752,9 +6108,9 @@ async def _stream_assistant_reply_hermes(
                         and guard_details.get("tool_name")
                         not in {
                             "freezone_prepare_workflow_draft",
+                            "freezone_prepare_workflow_plan_draft",
                             "freezone_patch_workflow_draft",
                             "freezone_confirm_workflow_draft",
-                            "freezone_create_workflow_from_intent",
                         }
                         and not guard_details.get("had_write")
                     ):
@@ -6050,6 +6406,11 @@ async def _stream_assistant_reply_hermes(
                 )
                 continue
             if event.type in {"tool_started", "tool_updated", "tool_update"}:
+                await _bind_server_observed_agent_product_execution(
+                    event,
+                    project_dir=project_dir,
+                    project_state_dir=project_state_dir,
+                )
                 if event.raw is not None:
                     tool_chat_error = None
                     raw = event.raw
@@ -6412,6 +6773,7 @@ async def _stream_assistant_reply_codex(
     canvas_write_attempted = False
     canvas_write_succeeded = False
     canvas_write_failure = ""
+    ready_workflow_draft: dict[str, Any] | None = None
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
         username=username,
@@ -6489,6 +6851,8 @@ async def _stream_assistant_reply_codex(
             tool_mode=tool_mode,
             surface_context=surface_context,
             route_prompt=route_prompt,
+            turn_id=business_turn_id,
+            require_generation_parameter_preflight=tool_mode == "freezone_canvas",
         )
         async for event in thread.stream(agent_prompt):
             logger.debug(
@@ -6590,6 +6954,15 @@ async def _stream_assistant_reply_codex(
                 await on_event({"type": "usage_update", "usage": event.usage or {}})
                 continue
             if event.type in {"tool_started", "tool_updated"}:
+                await _bind_server_observed_agent_product_execution(
+                    event,
+                    project_dir=project_dir,
+                    project_state_dir=project_state_dir,
+                )
+                if event.type == "tool_updated":
+                    prepared_draft = _codex_freezone_ready_workflow_draft(event)
+                    if prepared_draft is not None:
+                        ready_workflow_draft = prepared_draft
                 if _codex_freezone_tool_name(event) in _FREEZONE_CANVAS_WRITE_TOOLS:
                     canvas_write_attempted = True
                     if (
@@ -6694,6 +7067,8 @@ async def _stream_assistant_reply_codex(
             )
         elif _FREEZONE_CANVAS_NO_WRITE_FAILURE_RE.search(assistant_text):
             failure_detail = assistant_text.strip()
+        elif ready_workflow_draft is not None:
+            failure_detail = "工作流草稿已准备完成，但本轮未提交确认创建，请重试。"
         else:
             failure_detail = "本轮没有执行画布写入，请重试。"
         assistant_text = "画布操作未完成：" + failure_detail
@@ -6710,14 +7085,18 @@ async def _stream_assistant_reply_codex(
         if store_scope is not None:
             from novelvideo.chat.store import chat_store
 
-            for trace_index, trace_content in enumerate(_split_trace_contents(tool_text)):
+            for trace_index, trace_content in enumerate(
+                _split_trace_contents(tool_text)
+            ):
                 await chat_store.append_message_async(
                     username,
                     store_scope,
                     "trace",
                     trace_content,
                     turn_id=turn_id,
-                    idempotency_key=(f"trace:{turn_id}:{trace_index}" if turn_id else None),
+                    idempotency_key=(
+                        f"trace:{turn_id}:{trace_index}" if turn_id else None
+                    ),
                 )
         else:
             await asyncio.to_thread(

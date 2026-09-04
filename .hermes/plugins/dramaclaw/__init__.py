@@ -929,12 +929,13 @@ def _handle_get_freezone_canvas(args: dict[str, Any], **_: Any) -> str:
     try:
         project = _project_from_args(args)
         canvas_id = _require_text_arg(args, "canvas_id")
-        return tool_result(
-            _request(
-                "GET",
-                f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
-            )
+        result = _request(
+            "GET",
+            f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
         )
+        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+            result["data"].setdefault("canvas_id", canvas_id)
+        return tool_result(result)
     except Exception as exc:
         return tool_error(str(exc))
 
@@ -981,13 +982,14 @@ def _handle_save_freezone_canvas(args: dict[str, Any], **_: Any) -> str:
         payload.setdefault("canvas_id", canvas_id)
         payload.setdefault("project_id", project)
         payload.setdefault("save_source", "manual_save")
-        return tool_result(
-            _request(
-                "PUT",
-                f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
-                body=payload,
-            )
+        result = _request(
+            "PUT",
+            f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
+            body=payload,
         )
+        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+            result["data"].setdefault("canvas_id", canvas_id)
+        return tool_result(result)
     except Exception as exc:
         return tool_error(str(exc))
 
@@ -997,12 +999,13 @@ def _handle_delete_freezone_canvas(args: dict[str, Any], **_: Any) -> str:
     try:
         project = _project_from_args(args)
         canvas_id = _require_text_arg(args, "canvas_id")
-        return tool_result(
-            _request(
-                "DELETE",
-                f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
-            )
+        result = _request(
+            "DELETE",
+            f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
         )
+        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+            result["data"].setdefault("canvas_id", canvas_id)
+        return tool_result(result)
     except Exception as exc:
         return tool_error(str(exc))
 
@@ -1278,7 +1281,7 @@ def _require_episode(args: dict[str, Any]) -> int:
 
 
 def _require_name(args: dict[str, Any]) -> str:
-    name = str(args.get("name") or args.get("character") or "").strip()
+    name = str(args.get("name") or "").strip()
     if not name:
         raise ValueError("name (character name) is required")
     return name
@@ -1341,7 +1344,7 @@ def _handle_generate_scene_master(args: dict[str, Any], **_: Any) -> str:
     """Generate one scene's canonical master reference image."""
     try:
         project = _project_from_args(args)
-        name = str(args.get("name") or args.get("scene_name") or "").strip()
+        name = str(args.get("name") or "").strip()
         if not name:
             raise ValueError("name (scene name) is required")
         return tool_result(
@@ -1358,7 +1361,7 @@ def _handle_generate_scene_reverse(args: dict[str, Any], **_: Any) -> str:
     """Generate one scene's reverse master reference image."""
     try:
         project = _project_from_args(args)
-        name = str(args.get("name") or args.get("scene_name") or "").strip()
+        name = str(args.get("name") or "").strip()
         if not name:
             raise ValueError("name (scene name) is required")
         return tool_result(
@@ -1604,6 +1607,7 @@ def _handle_get_sketches(args: dict[str, Any], **_: Any) -> str:
         return tool_result(
             {
                 "ok": True,
+                "project_id": project,
                 "episode": episode,
                 "media_kind": media_kind,
                 "count": len(sketches),
@@ -1669,6 +1673,7 @@ def _handle_get_first_frames(args: dict[str, Any], **_: Any) -> str:
         return tool_result(
             {
                 "ok": True,
+                "project_id": project,
                 "episode": episode,
                 "media_kind": "frame",
                 "count": len(frames),
@@ -1716,6 +1721,7 @@ def _handle_get_sketch_candidates(args: dict[str, Any], **_: Any) -> str:
         return tool_result(
             {
                 "ok": bool(resp.get("ok", True)) if isinstance(resp, dict) else True,
+                "project_id": project,
                 "episode": episode,
                 "beat": beat,
                 "media_kind": "sketch_candidate",
@@ -2188,12 +2194,15 @@ def _handle_get_final_video(args: dict[str, Any], **_: Any) -> str:
         if args.get("episode") is not None and not raw_episode_indices:
             episode = _require_episode(args)
             result = _request("GET", f"/api/v1/projects/{project}/episodes/{episode}/final")
+            if isinstance(result, dict) and result.get("ok") is False:
+                return tool_result(result)
             data = result.get("data") if isinstance(result, dict) else None
             video_url = ""
             if isinstance(data, dict) and data.get("exists"):
                 video_url = str(data.get("video_url") or "").strip()
-            if video_url and isinstance(result, dict):
-                result["ui_spec"] = _video_ui_spec(
+            ui_spec = None
+            if video_url:
+                ui_spec = _video_ui_spec(
                     [
                         {
                             "src": video_url,
@@ -2202,7 +2211,17 @@ def _handle_get_final_video(args: dict[str, Any], **_: Any) -> str:
                         }
                     ]
                 )
-            return tool_result(result)
+            return tool_result(
+                {
+                    "ok": True,
+                    "status": "final_video_result",
+                    "project_id": project,
+                    "episode": episode,
+                    "exists": bool(isinstance(data, dict) and data.get("exists")),
+                    "video_url": video_url or None,
+                    "ui_spec": ui_spec,
+                }
+            )
 
         episode_indices: list[int] = []
         if isinstance(raw_episode_indices, list):
@@ -2260,13 +2279,14 @@ def _handle_get_final_video(args: dict[str, Any], **_: Any) -> str:
         return tool_result(
             {
                 "ok": True,
+                "status": "final_video_collection",
                 "project_id": project,
                 "count": len(found_episodes),
                 "episodes": page_episodes,
                 "offset": offset,
                 "limit": limit,
                 "has_more": offset + limit < len(found_episodes),
-                **({"ui_spec": _video_ui_spec(page_items)} if page_items else {}),
+                "ui_spec": _video_ui_spec(page_items) if page_items else None,
             }
         )
     except Exception as exc:
@@ -2432,25 +2452,406 @@ _PATH_PROPS = {
 }
 
 
+_RESULT_COMMON_PROPERTIES: dict[str, Any] = {
+    "ok": {"type": "boolean"},
+    "status": {"type": "string", "minLength": 1},
+    "code": {"type": ["string", "null"]},
+    "error": {"type": ["string", "object", "array", "null"]},
+    "message": {"type": ["string", "null"]},
+    "retryable": {"type": "boolean"},
+    "next_action": {"type": ["string", "null"]},
+    "agent_instruction": {"type": ["string", "null"]},
+}
+
+_RESULT_ARRAY_FIELDS = frozenset(
+    {
+        "beats",
+        "candidates",
+        "canvases",
+        "characters",
+        "edges",
+        "episodes",
+        "files",
+        "frames",
+        "identities",
+        "images",
+        "items",
+        "nodes",
+        "requested",
+        "scenes",
+        "sketches",
+        "skills",
+        "started",
+        "tasks",
+        "waiting",
+        "failed",
+    }
+)
+_RESULT_BOOLEAN_FIELDS = frozenset(
+    {
+        "add_bgm",
+        "add_subtitles",
+        "confirmed",
+        "deleted",
+        "has_more",
+        "exists",
+        "saved",
+        "upload_dir_available",
+    }
+)
+_RESULT_INTEGER_FIELDS = frozenset(
+    {
+        "beat",
+        "beat_num",
+        "candidate_count",
+        "count",
+        "current_episode",
+        "episode",
+        "grid_index",
+        "image_count",
+        "limit",
+        "offset",
+        "progress",
+        "revision",
+    }
+)
+_RESULT_OBJECT_FIELDS = frozenset(
+    {
+        "audio_prerequisites",
+        "character",
+        "episode_status",
+        "global",
+        "pipeline",
+        "script",
+        "session",
+        "task",
+        "ui_spec",
+    }
+)
+
+
+def _result_field_schema(field: str) -> dict[str, Any]:
+    if field in _RESULT_ARRAY_FIELDS:
+        return {"type": "array"}
+    if field in _RESULT_BOOLEAN_FIELDS:
+        return {"type": "boolean"}
+    if field in _RESULT_INTEGER_FIELDS:
+        return {"type": ["integer", "null"]}
+    if field in _RESULT_OBJECT_FIELDS:
+        return {"type": ["object", "null"]}
+    if field in {"outputs", "response"}:
+        return {"type": ["object", "array", "string", "number", "boolean", "null"]}
+    return {"type": ["string", "null"]}
+
+_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    "dramaclaw_control_episode_auto": (
+        "episode",
+        "run_id",
+        "activated_at",
+        "updated_at",
+        "last_error",
+        "voice_policy",
+    ),
+    "dramaclaw_get": ("response",),
+    "dramaclaw_post": ("response",),
+    "dramaclaw_patch": ("response",),
+    "dramaclaw_delete": ("response",),
+    "dramaclaw_list_freezone_skills": ("skills", "count"),
+    "dramaclaw_run_freezone_skill": ("run_id", "skill_id", "canvas_id"),
+    "dramaclaw_get_freezone_skill_result": ("run_id", "outputs", "progress"),
+    "dramaclaw_list_freezone_canvases": ("canvases", "count"),
+    "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges", "revision"),
+    "dramaclaw_save_freezone_canvas": (
+        "canvas_id",
+        "saved",
+        "revision",
+        "client_save_id",
+    ),
+    "dramaclaw_delete_freezone_canvas": ("canvas_id", "deleted"),
+    "dramaclaw_create_freezone_canvas_from_preset": (
+        "canvas_id",
+        "revision",
+        "preset",
+    ),
+    "dramaclaw_pipeline_status": (
+        "project",
+        "global",
+        "current_episode",
+        "episode_status",
+        "audio_prerequisites",
+        "next_step",
+        "next_step_name",
+    ),
+    "dramaclaw_list_tasks": ("tasks", "count", "episode", "task_type"),
+    "dramaclaw_get_task": ("task", "task_id", "task_type", "episode", "beat_num"),
+    "dramaclaw_get_episode_script": ("project_id", "episode", "script", "beats"),
+    "dramaclaw_list_ingest_uploads": (
+        "project_id",
+        "files",
+        "count",
+        "upload_dir_available",
+    ),
+    "dramaclaw_build_characters": ("task", "task_id", "task_type"),
+    "dramaclaw_plan_episodes": ("task", "task_id", "task_type"),
+    "dramaclaw_generate_script": ("task", "task_id", "task_type", "episode"),
+    "dramaclaw_update_character_face_prompt": ("character", "face_prompt"),
+    "dramaclaw_plan_identities": ("task", "task_id", "task_type", "episode"),
+    "dramaclaw_plan_scenes": ("task", "task_id", "task_type", "episode"),
+    "dramaclaw_plan_props": ("task", "task_id", "task_type", "episode"),
+    "dramaclaw_generate_scene_master": ("task", "task_id", "scene_id"),
+    "dramaclaw_generate_scene_reverse": ("task", "task_id", "scene_id"),
+    "dramaclaw_generate_sketches": (
+        "task",
+        "task_id",
+        "episode",
+        "stage",
+        "grid_index",
+    ),
+    "dramaclaw_detect_sketch_identities": ("task", "task_id", "episode"),
+    "dramaclaw_optimize_video_global": ("task", "task_id", "episode"),
+    "dramaclaw_generate_audio": ("task", "task_id", "episode"),
+    "dramaclaw_prepare_system_voices": (
+        "task",
+        "task_id",
+        "task_type",
+        "episode",
+        "confirmed",
+    ),
+    "dramaclaw_get_sketches": ("project_id", "episode", "sketches", "count", "ui_spec"),
+    "dramaclaw_get_first_frames": ("project_id", "episode", "frames", "count", "ui_spec"),
+    "dramaclaw_get_sketch_candidates": (
+        "project_id",
+        "episode",
+        "candidates",
+        "candidate_count",
+        "ui_spec",
+    ),
+    "dramaclaw_get_scene_images": (
+        "project_id",
+        "scenes",
+        "count",
+        "image_count",
+        "ui_spec",
+    ),
+    "dramaclaw_get_character_media": (
+        "project_id",
+        "characters",
+        "identities",
+        "count",
+        "ui_spec",
+    ),
+    "dramaclaw_get_episode_media": ("project_id", "episode", "beats", "media_type", "ui_spec"),
+    "dramaclaw_render_first_frames": (
+        "batch_id",
+        "episode",
+        "requested",
+        "started",
+        "waiting",
+        "failed",
+        "items",
+    ),
+    "dramaclaw_compose_episode": ("task", "task_id", "episode", "add_bgm", "add_subtitles"),
+    "dramaclaw_get_final_video": (
+        "project_id",
+        "episode",
+        "exists",
+        "video_url",
+        "episodes",
+        "count",
+        "offset",
+        "limit",
+        "has_more",
+        "ui_spec",
+    ),
+    "dramaclaw_generate_portrait": ("task", "task_id", "character_id"),
+    "dramaclaw_generate_identity_image": ("task", "task_id", "identity_id"),
+    "dramaclaw_start_single_video": ("task", "task_id", "episode", "beat"),
+    "dramaclaw_start_video_batch": (
+        "batch_id",
+        "episode",
+        "requested",
+        "started",
+        "waiting",
+        "failed",
+        "items",
+    ),
+}
+
+
+# Fields that identify a real successful result for every public tool.  The larger
+# _RESULT_FIELDS table above lists optional fields for all supported states; this
+# table is deliberately separate so dropping a tool's business payload cannot be
+# hidden by a generic MCP envelope.
+_RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
+    "dramaclaw_control_episode_auto": ("run_id", "episode"),
+    "dramaclaw_get": ("response",),
+    "dramaclaw_post": ("response",),
+    "dramaclaw_patch": ("response",),
+    "dramaclaw_delete": ("response",),
+    "dramaclaw_list_freezone_skills": ("skills", "count"),
+    "dramaclaw_run_freezone_skill": ("run_id",),
+    "dramaclaw_get_freezone_skill_result": ("run_id",),
+    "dramaclaw_list_freezone_canvases": ("canvases", "count"),
+    "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges"),
+    "dramaclaw_save_freezone_canvas": ("canvas_id", "saved", "revision"),
+    "dramaclaw_delete_freezone_canvas": ("canvas_id", "deleted"),
+    "dramaclaw_create_freezone_canvas_from_preset": ("canvas_id",),
+    "dramaclaw_pipeline_status": ("project", "global", "next_step"),
+    "dramaclaw_list_tasks": ("tasks", "count"),
+    "dramaclaw_get_task": ("task",),
+    "dramaclaw_get_episode_script": ("script",),
+    "dramaclaw_list_ingest_uploads": (
+        "project_id",
+        "files",
+        "count",
+        "upload_dir_available",
+    ),
+    "dramaclaw_update_character_face_prompt": ("character",),
+    "dramaclaw_get_sketches": ("project_id", "episode", "sketches", "count", "ui_spec"),
+    "dramaclaw_get_first_frames": ("project_id", "episode", "frames", "count", "ui_spec"),
+    "dramaclaw_get_sketch_candidates": (
+        "project_id",
+        "episode",
+        "candidates",
+        "candidate_count",
+        "ui_spec",
+    ),
+    "dramaclaw_get_scene_images": (
+        "project_id",
+        "scenes",
+        "count",
+        "image_count",
+        "ui_spec",
+    ),
+    "dramaclaw_get_character_media": ("project_id", "count", "ui_spec"),
+    "dramaclaw_get_episode_media": ("project_id", "episode", "beats", "media_type", "ui_spec"),
+}
+
+_TASK_RESULT_TOOLS = {
+    "dramaclaw_build_characters",
+    "dramaclaw_plan_episodes",
+    "dramaclaw_generate_script",
+    "dramaclaw_plan_identities",
+    "dramaclaw_plan_scenes",
+    "dramaclaw_plan_props",
+    "dramaclaw_generate_scene_master",
+    "dramaclaw_generate_scene_reverse",
+    "dramaclaw_generate_portrait",
+    "dramaclaw_generate_identity_image",
+    "dramaclaw_generate_sketches",
+    "dramaclaw_detect_sketch_identities",
+    "dramaclaw_generate_audio",
+    "dramaclaw_prepare_system_voices",
+    "dramaclaw_optimize_video_global",
+    "dramaclaw_compose_episode",
+    "dramaclaw_start_single_video",
+}
+
+_BATCH_RESULT_TOOLS = {
+    "dramaclaw_render_first_frames",
+    "dramaclaw_start_video_batch",
+}
+
+
+def _success_contract(name: str) -> dict[str, Any]:
+    if name == "dramaclaw_get_final_video":
+        return {
+            "oneOf": [
+                {
+                    "properties": {"status": {"const": "final_video_result"}},
+                    "required": [
+                        "project_id",
+                        "episode",
+                        "exists",
+                        "video_url",
+                        "ui_spec",
+                    ],
+                },
+                {
+                    "properties": {"status": {"const": "final_video_collection"}},
+                    "required": [
+                        "project_id",
+                        "episodes",
+                        "count",
+                        "offset",
+                        "limit",
+                        "has_more",
+                        "ui_spec",
+                    ],
+                },
+            ]
+        }
+    if name in _TASK_RESULT_TOOLS:
+        return {
+            "anyOf": [
+                {"required": ["task"]},
+                {"required": ["task_id"]},
+                {"required": ["task_type"]},
+            ]
+        }
+    if name in _BATCH_RESULT_TOOLS:
+        return {
+            "required": ["episode", "requested", "started"],
+            "anyOf": [{"required": ["batch_id"]}, {"required": ["code"]}],
+        }
+    required = _RESULT_SUCCESS_REQUIRED.get(name)
+    if required is None:
+        raise RuntimeError(f"missing successful output contract for {name}")
+    return {"required": list(required)}
+
+
+def _output_schema(name: str) -> dict[str, Any]:
+    fields = _RESULT_FIELDS.get(name)
+    if fields is None:
+        raise RuntimeError(f"missing output contract for {name}")
+    properties = dict(_RESULT_COMMON_PROPERTIES)
+    properties.update({field: _result_field_schema(field) for field in fields})
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": f"{name}.result",
+        "type": "object",
+        "properties": properties,
+        "required": ["ok", "status"],
+        "additionalProperties": False,
+        "x-dramaclaw-tool": name,
+        "allOf": [
+            {
+                "if": {"properties": {"ok": {"const": True}}, "required": ["ok"]},
+                "then": _success_contract(name),
+            },
+            {
+                "if": {"properties": {"ok": {"const": False}}, "required": ["ok"]},
+                "then": {
+                    "anyOf": [
+                        {"required": ["code"]},
+                        {"required": ["error"]},
+                        {"required": ["message"]},
+                    ]
+                },
+            },
+        ],
+    }
+
+
 def _schema(
     name: str,
     description: str,
     properties: dict[str, Any],
     required: list[str] | None = None,
     *,
-    additional_properties: bool = True,
+    additional_properties: bool = False,
 ) -> dict[str, Any]:
     parameters = {
         "type": "object",
         "properties": properties,
         "required": required or [],
     }
-    if not additional_properties:
-        parameters["additionalProperties"] = False
+    parameters["additionalProperties"] = additional_properties
     return {
         "name": name,
         "description": description,
         "parameters": parameters,
+        "output_schema": _output_schema(name),
     }
 
 
@@ -2876,7 +3277,6 @@ TOOLS = (
             {
                 "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
                 "name": {"type": "string", "description": "Character name (required)."},
-                "character": {"type": "string", "description": "Alias of name."},
                 "face_prompt": {
                     "type": "string",
                     "description": "Concrete facial features: hairstyle, face shape, eyes, skin tone, age cues; no clothing.",
@@ -2946,7 +3346,6 @@ TOOLS = (
             {
                 "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
                 "name": {"type": "string", "description": "Scene name (required)."},
-                "scene_name": {"type": "string", "description": "Alias of name."},
             },
             ["name"],
         ),
@@ -2963,7 +3362,6 @@ TOOLS = (
             {
                 "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
                 "name": {"type": "string", "description": "Scene name (required)."},
-                "scene_name": {"type": "string", "description": "Alias of name."},
             },
             ["name"],
         ),
@@ -3169,7 +3567,6 @@ TOOLS = (
                     "items": {"type": "string"},
                     "description": "Show scenes whose name contains any of these texts.",
                 },
-                "scene_name": {"type": "string", "description": "Alias of name; fuzzy contains match."},
                 "scene_type": {"type": "string", "description": "Show only scenes with this scene_type."},
                 "index": {
                     "type": "integer",
@@ -3253,10 +3650,6 @@ TOOLS = (
                 "query": {
                     "type": "string",
                     "description": "Fuzzy text query over beat title, description, narration/dialogue, speaker, characters, and scene.",
-                },
-                "search": {
-                    "type": "string",
-                    "description": "Alias of query.",
                 },
                 "offset": {
                     "type": "integer",

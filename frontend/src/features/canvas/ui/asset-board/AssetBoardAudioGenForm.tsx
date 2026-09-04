@@ -16,6 +16,7 @@ import {
   musicBillingSecondsFromMs,
 } from '@/features/canvas/nodes/AudioOperationsPanel';
 import { deriveAudioText, useAudioGeneration } from '@/features/canvas/nodes/useAudioGeneration';
+import { requiresCustomVoiceSelection } from '@/features/canvas/nodes/audioVoicePolicy';
 import { VoiceSelectionModal } from '@/features/canvas/nodes/VoiceSelectionModal';
 import {
   NODE_CREDIT_PILL_FLAT_CLASS,
@@ -124,7 +125,7 @@ export function AssetBoardAudioGenForm({
   const musicLengthMs =
     typeof data.musicLengthMs === 'number' ? data.musicLengthMs : DEFAULT_MUSIC_LENGTH_MS;
   const currentVoiceRef: AudioVoiceRef = data.voiceRef ?? { scope: 'project_narrator' };
-  const speechMode = data.speechMode ?? 'clone';
+  const voiceMissing = requiresCustomVoiceSelection(data);
   // 已有产物 → 提交键语义是「重新生成」（与图片/视频详情口径一致）。
   const hasAudio = typeof data.audioUrl === 'string' && data.audioUrl.length > 0;
 
@@ -198,38 +199,21 @@ export function AssetBoardAudioGenForm({
 
       {!isMusic && (
         <div className="flex flex-col gap-2">
-          <div className="grid grid-cols-2 rounded-[6px] bg-white/[0.04] p-0.5">
-            <button
-              type="button"
-              onClick={() => patch({ speechMode: 'preset' })}
-              className={`h-7 rounded-[5px] text-[12px] transition-colors ${
-                speechMode === 'preset'
-                  ? 'bg-white/10 text-white/90'
-                  : 'text-white/45 hover:text-white/80'
-              }`}
-            >
-              系统音色
-            </button>
-            <button
-              type="button"
-              onClick={() => setVoiceModalOpen(true)}
-              className={`h-7 rounded-[5px] text-[12px] transition-colors ${
-                speechMode === 'clone'
-                  ? 'bg-white/10 text-white/90'
-                  : 'text-white/45 hover:text-white/80'
-              }`}
-            >
-              克隆音色
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setVoiceModalOpen(true)}
+            className="h-7 rounded-[5px] bg-white/10 text-[12px] text-white/90 transition-colors hover:bg-white/15"
+          >
+            {voiceMissing ? '选择自定义声线' : '更换自定义声线'}
+          </button>
           <div className="flex items-center gap-2 text-[12px] text-white/60">
             <span className={FIELD_LABEL_CLASS}>声线</span>
             <span className="truncate text-white/85">
-              {speechMode === 'preset' ? '系统女声' : data.voiceLabel ?? '选择克隆音色'}
+              {voiceMissing ? '未选择（生成时跳过）' : data.voiceLabel ?? '自定义声线'}
             </span>
-            {(speechMode === 'preset' || data.voiceLanguage) && (
+            {data.voiceLanguage && (
               <span className="rounded bg-white/[0.08] px-1.5 py-0.5 text-[11px] text-white/70">
-                {speechMode === 'preset' ? '普通话' : data.voiceLanguage}
+                {data.voiceLanguage}
               </span>
             )}
           </div>
@@ -274,7 +258,7 @@ export function AssetBoardAudioGenForm({
       )}
 
       {/* 底部控制行（对标 liblib 的紧凑 footer，去掉模型选择——我们不给选模型）：
-          左 = 模式（系统/克隆旁白或文字生成音乐）；
+          左 = 模式（自定义声线旁白或文字生成音乐）；
           右 = 字数 · 音色/高级设置 · 算力 ✦ · 提交箭头。与工作流 AudioOperationsPanel
           的控制行同款组件（IconButton / CreditCostPill / ArrowUp 提交键）。 */}
       <div className="flex items-center gap-2 pt-0.5">
@@ -282,18 +266,14 @@ export function AssetBoardAudioGenForm({
         <span className="min-w-0 truncate text-[12px] text-white/60">
           {isMusic
             ? '文字生成音乐'
-            : speechMode === 'preset'
-              ? '系统音色旁白'
-              : '克隆音色旁白'}
+            : '自定义声线旁白'}
         </span>
         <span className="flex-1" />
         <span className="shrink-0 text-[11px] tabular-nums text-white/35">{text.length}</span>
         {!isMusic && (
           <button
             type="button"
-            title={`音色设置（当前：${
-              speechMode === 'preset' ? '系统女声' : data.voiceLabel ?? '未选择'
-            }）`}
+            title={`音色设置（当前：${voiceMissing ? '未选择' : data.voiceLabel ?? '自定义声线'}）`}
             onClick={() => setVoiceModalOpen(true)}
             className={NODE_INLINE_ICON_BUTTON_CLASS}
           >
