@@ -94,7 +94,11 @@ $ vitest run src/__tests__/lib/queries/projects.test.tsx
 
 ## Commit
 
-Pending at report write time; filled in after commit below.
+- `1d4cdcac` `fix: normalize project share user search`
+
+## Repository Note
+
+- `.superpowers/sdd/task-1-report.md` is ignored by default in this repo, so it was added with `git add -f` to satisfy the task requirement.
 
 ## Concerns
 
