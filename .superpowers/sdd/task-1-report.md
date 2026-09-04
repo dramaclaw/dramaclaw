@@ -103,3 +103,62 @@ $ vitest run src/__tests__/lib/queries/projects.test.tsx
 ## Concerns
 
 - The test run emits an existing Vitest/localstorage warning unrelated to this change.
+
+---
+
+## 2026-09-04 Compatibility Follow-up
+
+### Scope
+
+- Fixed the frontend build compatibility issue in `frontend/src/lib/queries/projects.ts` only.
+- Kept the existing project-share dialog behavior, translations, and test semantics unchanged.
+
+### Root Cause
+
+- `normalizeUserSearchQuery` used `String.prototype.replaceAll("'", "")`.
+- The current frontend TypeScript lib target does not include `replaceAll`, so both `pnpm --dir frontend build` and `pnpm --dir frontend build:ce` failed during `tsc -b`.
+
+### RED
+
+Command:
+
+```bash
+pnpm --dir frontend build
+```
+
+Exit code: `2`
+
+Output excerpt:
+
+```text
+src/lib/queries/projects.ts(209,23): error TS2550: Property 'replaceAll' does not exist on type 'string'. Do you need to change your target library? Try changing the 'lib' compiler option to 'es2021' or later.
+[ELIFECYCLE] Command failed with exit code 2.
+```
+
+### Change
+
+- Replaced `query.trim().replaceAll("'", "")` with the behavior-equivalent, lib-compatible `query.trim().replace(/'/g, "")`.
+
+### GREEN
+
+Commands:
+
+```bash
+pnpm --dir frontend test src/__tests__/lib/queries/projects.test.tsx src/__tests__/components/projects/share-project-dialog.test.tsx
+pnpm --dir frontend build
+pnpm --dir frontend build:ce
+```
+
+Exit codes: all `0`
+
+Results:
+
+- Vitest: `2` files passed, `15` tests passed.
+- `frontend` production build completed successfully.
+- `frontend` CE build completed successfully.
+
+### Self-Review
+
+- The change is minimal and limited to the compatibility fault.
+- Apostrophe stripping behavior is preserved exactly for user search normalization.
+- Remaining build output only contains pre-existing Vite chunk-size / dynamic-import warnings unrelated to this fix.

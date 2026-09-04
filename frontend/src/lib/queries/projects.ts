@@ -206,7 +206,7 @@ export function useProjectGrants(project: string, enabled = true) {
 }
 
 export function normalizeUserSearchQuery(query: string): string {
-  return query.trim().replaceAll("'", "");
+  return query.trim().replace(/'/g, "");
 }
 
 export function useUserSearch(project: string, query: string) {
