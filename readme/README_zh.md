@@ -173,7 +173,7 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 ### 虾集 —— 剧集流水线
 
 <p align="center">
-  <img src="../assets/pipeline.png" alt="DramaClaw 流水线 —— 摄取、规划、生产、交付" width="900"/>
+  <img src="../assets/pipeline.png" alt="DramaClaw 流水线 —— 摄取、规划、生产、交付" width="760"/>
 </p>
 
 每一步都有独立的接口 —— 可以按顺序跑，可以跳过，也可以从任意检查点续跑，甚至接入你自己的编排器。
@@ -411,7 +411,6 @@ DramaClaw 对模型侧保持中立 —— 所有文本 / 图片 / 视频 / 音�
 ## 许可证
 
 [Elastic License 2.0](../LICENSE)。源码可得（source available），允许自用、修改、再分发；唯一限制是不得将本软件作为托管服务转售。详见 [许可证说明](../docs/zh/license.md)。
-
 
 <br/>
 
