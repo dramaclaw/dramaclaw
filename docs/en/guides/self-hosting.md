@@ -113,6 +113,8 @@ git pull
 docker compose up -d --build
 ```
 
+`docker compose up -d --build` also re-fetches and rebuilds the bundled gateway from `dramaclaw-gateway` git (Go + bun, several minutes). When only DramaClaw code changed, rebuild just the two local services: `docker compose up -d --build api web`.
+
 Image mode:
 
 ```bash

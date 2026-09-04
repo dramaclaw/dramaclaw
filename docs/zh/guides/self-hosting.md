@@ -113,6 +113,8 @@ git pull
 docker compose up -d --build
 ```
 
+`docker compose up -d --build` 会连内置网关一起从 `dramaclaw-gateway` 的 git 重新拉取并构建（Go + bun，要几分钟）。只改了 DramaClaw 代码时，只重建两个本地服务即可：`docker compose up -d --build api web`。
+
 镜像模式：
 
 ```bash
