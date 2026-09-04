@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { Monitor, X } from "lucide-react";
+import { Circle, Monitor, Square, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -15,10 +15,21 @@ import {
 } from "@/components/ui/dialog";
 import { useViewerImmersiveBody } from "@/features/viewer-kit/useViewerImmersiveBody";
 import { readUrl } from "@/lib/url-params";
+import { cn } from "@/lib/utils";
 import { useCanvasStore } from "@/stores/canvasStore";
-import { uploadFreezoneImage } from "@/api/ops";
+import { uploadFreezoneImage, uploadFreezoneVideo } from "@/api/ops";
 
 import { publishCapture } from "./capture/publishCapture";
+import { publishRecording } from "./capture/publishRecording";
+import { resolveRecordTarget, type PrevizRecordMode } from "./capture/recordTarget";
+import {
+  PREVIZ_RECORD_FPS,
+  createCanvasRecorder,
+  pickRecordMimeType,
+  recordFilename,
+  recordQualityLabel,
+  recordTimeline,
+} from "./capture/recordTimeline";
 import { PrevizRenderer } from "./engine/PrevizRenderer";
 import { monitorViewportRect } from "./engine/cameraRig";
 import type { GizmoMode } from "./engine/gizmo";
@@ -51,6 +62,9 @@ interface PrevizEditorProps {
   /** 关闭时把当前场景交回节点落盘；编辑期不逐帧写 node.data。 */
   onFlush: (scene: PrevizScene) => void;
 }
+
+/** 录制选单里的两项，顺序就是屏幕上的顺序。 */
+const RECORD_MODES: readonly PrevizRecordMode[] = ["global", "track"];
 
 /** 按下与抬起之间超过这个像素就算在转视角，不是在点选。 */
 const CLICK_SLOP_PX = 4;
@@ -106,6 +120,19 @@ export function PrevizEditor({
    */
   const strokeHeight = useRef(0);
   const [capturing, setCapturing] = useState(false);
+  /** 录制模式选单开着没有。只在没录的时候能开。 */
+  const [recordMenuOpen, setRecordMenuOpen] = useState(false);
+  /** 正在录的那一路；null 就是没在录。 */
+  const [recording, setRecording] = useState<PrevizRecordMode | null>(null);
+  /** 录制进度 0..1，只喂按钮上的读数。 */
+  const [recordProgress, setRecordProgress] = useState(0);
+  /**
+   * 用户点了停止。ref 而不是 state：录制循环是在闭包里跑的，读 state 读到的永远是
+   * 开录那一刻的 false。
+   */
+  const recordStopped = useRef(false);
+  /** 录完之后的上传与建节点阶段。与 `recording` 分开：按钮上写的字不一样。 */
+  const [recordPublishing, setRecordPublishing] = useState(false);
   /**
    * 机位创建对话框打开时，锁着的那一份导演视角。存下来而不是每帧现取：对话框开着时
    * 视口仍能被轨道拖动（预览渲染本身就会重画视口），现取的话用户拖一下取景就飘了。
@@ -135,6 +162,7 @@ export function PrevizEditor({
   const selectedClipId = usePrevizStore((state) => state.selectedClipId);
   const selectedPointId = usePrevizStore((state) => state.selectedPointId);
   const addDerivedUploadNode = useCanvasStore((state) => state.addDerivedUploadNode);
+  const addDerivedVideoNode = useCanvasStore((state) => state.addDerivedVideoNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
 
   const selectedObject = useMemo(
@@ -370,6 +398,114 @@ export function PrevizEditor({
       setCapturing(false);
     }
   }, [addDerivedUploadNode, addEdge, capturing, nodeId, renderer, t]);
+
+  const handleRecord = useCallback(
+    async (mode: PrevizRecordMode) => {
+      if (!renderer || recording || capturing) return;
+      const project = readUrl().project;
+      if (!project) {
+        toast.error(t("previz.editor.noProject"));
+        return;
+      }
+
+      const store = usePrevizStore.getState();
+      const target = resolveRecordTarget(
+        store.scene,
+        mode,
+        store.selectedObjectId,
+        store.activeCameraId,
+      );
+      if (!target) {
+        toast.error(t("previz.editor.record.noCamera"));
+        return;
+      }
+
+      const mimeType = pickRecordMimeType();
+      if (!mimeType) {
+        toast.error(t("previz.editor.record.unsupported"));
+        return;
+      }
+
+      const pass = renderer.startRecording(target.mode, target.cameraId);
+      // 机位在解算与开录之间被删掉了；提示一句，别把导演视角录成「轨道录制」。
+      if (!pass) {
+        toast.error(t("previz.editor.record.noCamera"));
+        return;
+      }
+
+      const aspect = store.scene.settings.outputAspect;
+      const durationFrames = store.scene.settings.durationFrames;
+      // 录制自己驱动播放头，不能让播放循环同时也在推：两边一起推的话帧号会跳着走。
+      store.setTimelinePlaying(false);
+      recordStopped.current = false;
+      setRecordProgress(0);
+      setRecording(mode);
+
+      try {
+        let blob: Blob;
+        try {
+          blob = await recordTimeline({
+            durationFrames,
+            fps: PREVIZ_RECORD_FPS,
+            drawFrame: (frame) => {
+              pass.drawFrame(frame);
+              // 顺手把播放头推到同一帧：时间轴与视口跟着走，录制期间就是预览。
+              usePrevizStore.getState().setTimelineFrame(frame);
+            },
+            recorder: createCanvasRecorder(pass.canvas, { fps: PREVIZ_RECORD_FPS, mimeType }),
+            now: () => performance.now(),
+            schedule: (callback) => {
+              window.requestAnimationFrame(callback);
+            },
+            onProgress: setRecordProgress,
+            shouldStop: () => recordStopped.current,
+          });
+        } finally {
+          // 辅助物的可见性攥在这个句柄里，不还回去的话手柄与轨迹会一直不见。
+          pass.end();
+        }
+
+        if (blob.size === 0) {
+          toast.error(t("previz.editor.record.failed"));
+          return;
+        }
+
+        setRecordPublishing(true);
+        const quality = recordQualityLabel(aspect);
+        const result = await publishRecording({
+          project,
+          sourceNodeId: nodeId,
+          aspect,
+          blob,
+          filename: recordFilename(Date.now(), mimeType),
+          displayName:
+            target.mode === "track"
+              ? t("previz.editor.record.trackNodeName", { index: target.index, quality })
+              : t("previz.editor.record.globalNodeName", { quality }),
+          uploadVideo: (targetProject, file, filename) =>
+            uploadFreezoneVideo(targetProject, file, filename),
+          addDerivedVideoNode,
+          addEdge,
+        });
+        if (result.ok) toast.success(t("previz.editor.record.done"));
+        else if (result.reason === "node") toast.error(t("previz.editor.record.noNode"));
+        else toast.error(t("previz.editor.record.uploadFailed"));
+      } catch (error) {
+        console.error("[previz] record failed", error);
+        toast.error(t("previz.editor.record.failed"));
+      } finally {
+        setRecording(null);
+        setRecordPublishing(false);
+        setRecordProgress(0);
+      }
+    },
+    [addDerivedVideoNode, addEdge, capturing, nodeId, recording, renderer, t],
+  );
+
+  // 编辑器关掉时把录制叫停：循环握着渲染器，弹窗一关渲染器就 dispose 了。
+  useEffect(() => {
+    if (!open) recordStopped.current = true;
+  }, [open]);
 
   const handleOpenChange = useCallback(
     (next: boolean) => {
@@ -618,21 +754,96 @@ export function PrevizEditor({
               {t("previz.editor.duration", { frames: scene.settings.durationFrames })}
             </div>
 
-            <Button
-              variant="ghost"
-              aria-label={t("previz.editor.capture")}
-              disabled={capturing}
-              className="absolute right-16 top-4 z-10 h-8 rounded-lg bg-white/10 px-3 text-[12px] text-white/85 hover:bg-white/20"
-              onClick={() => void handleCapture()}
-            >
-              {capturing ? t("previz.editor.capturing") : t("previz.editor.capture")}
-            </Button>
+            {/*
+              选单开着时铺一层透明背板：点视口任何地方都收起来。靠 onBlur 收的话，
+              点选单里的按钮会先触发 blur、把自己卸掉，那一下就永远点不中。
+            */}
+            {recordMenuOpen && (
+              <div
+                className="absolute inset-0 z-10"
+                onPointerDown={() => setRecordMenuOpen(false)}
+              />
+            )}
+
+            <div className="absolute right-14 top-4 z-20 flex items-center gap-2">
+              <div className="relative">
+                <Button
+                  variant="ghost"
+                  aria-label={
+                    recording ? t("previz.editor.record.stop") : t("previz.editor.record.open")
+                  }
+                  disabled={capturing || recordPublishing}
+                  className="h-8 rounded-lg bg-white/10 px-3 text-[12px] text-white/85 hover:bg-white/20"
+                  onClick={() => {
+                    if (recording) {
+                      recordStopped.current = true;
+                      return;
+                    }
+                    setRecordMenuOpen((next) => !next);
+                  }}
+                >
+                  {recording ? (
+                    <>
+                      <Square className="mr-1 h-3 w-3 fill-current text-red-400" />
+                      {t("previz.editor.record.stopWithProgress", {
+                        percent: Math.round(recordProgress * 100),
+                      })}
+                    </>
+                  ) : (
+                    <>
+                      <Circle
+                        className={cn(
+                          "mr-1 h-3 w-3 fill-current",
+                          recordPublishing ? "text-white/40" : "text-red-400",
+                        )}
+                      />
+                      {recordPublishing
+                        ? t("previz.editor.record.publishing")
+                        : t("previz.editor.record.open")}
+                    </>
+                  )}
+                </Button>
+
+                {recordMenuOpen && !recording && (
+                  <div
+                    role="menu"
+                    aria-label={t("previz.editor.record.open")}
+                    className="absolute right-0 top-9 w-44 overflow-hidden rounded-lg border border-white/10 bg-black/85 p-1 backdrop-blur-sm"
+                  >
+                    {RECORD_MODES.map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        role="menuitem"
+                        className="block w-full rounded-md px-3 py-2 text-left text-[12px] text-white/85 transition hover:bg-white/10 hover:text-white"
+                        onClick={() => {
+                          setRecordMenuOpen(false);
+                          void handleRecord(mode);
+                        }}
+                      >
+                        {t(`previz.editor.record.mode.${mode}`)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <Button
+                variant="ghost"
+                aria-label={t("previz.editor.capture")}
+                disabled={capturing || Boolean(recording) || recordPublishing}
+                className="h-8 rounded-lg bg-white/10 px-3 text-[12px] text-white/85 hover:bg-white/20"
+                onClick={() => void handleCapture()}
+              >
+                {capturing ? t("previz.editor.capturing") : t("previz.editor.capture")}
+              </Button>
+            </div>
 
             <Button
               variant="ghost"
               size="icon"
               aria-label={t("previz.editor.close")}
-              className="absolute right-4 top-4 z-10 text-white/80 hover:text-white"
+              className="absolute right-4 top-4 z-20 text-white/80 hover:text-white"
               onClick={() => handleOpenChange(false)}
             >
               <X className="h-5 w-5" />

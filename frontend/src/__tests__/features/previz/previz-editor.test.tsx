@@ -32,6 +32,15 @@ const planePointAt = vi.fn(
 const setStroke = vi.fn((_points: readonly Vec3[] | null) => {});
 const viewPose = vi.fn(() => ({ position: [6, 4, 8] as Vec3, target: [0, 1, 0] as Vec3 }));
 const renderCameraPreview = vi.fn();
+const recordDrawFrame = vi.fn();
+const recordEnd = vi.fn();
+const startRecording = vi.fn((_mode: string, _cameraId: string | null) => ({
+  canvas: document.createElement("canvas"),
+  width: 1920,
+  height: 1080,
+  drawFrame: recordDrawFrame,
+  end: recordEnd,
+}));
 
 /** 每条用例一份全新的假渲染器，免得 onTransformCommit 在用例之间串。 */
 function fakeRenderer() {
@@ -54,6 +63,7 @@ function fakeRenderer() {
     setStroke,
     viewPose,
     renderCameraPreview,
+    startRecording,
     onTransformCommit: null as
       | ((objectId: string, transform: unknown) => void)
       | null,
@@ -68,20 +78,37 @@ vi.mock("@/features/previz/engine/PrevizRenderer", () => ({
 }));
 
 const addDerivedUploadNode = vi.fn(() => "upload-1");
+const addDerivedVideoNode = vi.fn(() => "video-1");
 const addEdge = vi.fn(() => "edge-1");
+const uploadFreezoneVideo = vi.fn(async () => ({ url: "/static/take.mp4" }));
 
 vi.mock("@/lib/url-params", () => ({
   readUrl: vi.fn(() => ({ project: "demo" })),
 }));
 
+// ESM 的 mock 是整体替换：漏掉一个导出，被测模块 import 到的就是 undefined。
+// 工厂跑在本文件常量求值之前，所以引用得包一层箭头，直接写名字会撞 TDZ。
 vi.mock("@/api/ops", () => ({
   uploadFreezoneImage: vi.fn(async () => ({ url: "/static/shot.png" })),
+  uploadFreezoneVideo: () => uploadFreezoneVideo(),
+}));
+
+// jsdom 里既没有 MediaRecorder 也没有 canvas.captureStream；只换掉碰浏览器 API 的
+// 那两个导出，驱动循环本身走真实实现——这条用例要验的正是它把录制串起来了。
+vi.mock("@/features/previz/capture/recordTimeline", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/previz/capture/recordTimeline")>()),
+  pickRecordMimeType: () => "video/mp4",
+  createCanvasRecorder: () => ({
+    start: () => {},
+    stop: async () => new Blob(["take"], { type: "video/mp4" }),
+  }),
 }));
 
 vi.mock("@/stores/canvasStore", () => ({
   useCanvasStore: Object.assign(
-    (selector: (state: unknown) => unknown) => selector({ addDerivedUploadNode, addEdge }),
-    { getState: () => ({ addDerivedUploadNode, addEdge }) },
+    (selector: (state: unknown) => unknown) =>
+      selector({ addDerivedUploadNode, addDerivedVideoNode, addEdge }),
+    { getState: () => ({ addDerivedUploadNode, addDerivedVideoNode, addEdge }) },
   ),
 }));
 
@@ -391,6 +418,74 @@ describe("PrevizEditor", () => {
 
     await vi.waitFor(() => expect(capture).toHaveBeenCalled());
     await vi.waitFor(() => expect(addDerivedUploadNode).toHaveBeenCalled());
+  });
+
+  it("records the current track and publishes a video node", async () => {
+    const user = userEvent.setup();
+    const scene = createDefaultScene();
+    // 只留一帧：录制按墙上时钟走，默认的 120 帧会让这条用例真等四秒。
+    scene.settings.durationFrames = 1;
+    scene.objects.push(createPrevizObject("camera", scene.objects));
+    const cameraId = scene.objects[0]!.id;
+
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => usePrevizStore.getState().selectObject(cameraId));
+
+    await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "previz.editor.record.mode.track" }),
+    );
+
+    await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 3000 });
+
+    // 录的是那台机位的画面，不是导演视角——这正是「当前轨道录制」与「全局录制」的分别。
+    expect(startRecording).toHaveBeenCalledWith("track", cameraId);
+    expect(recordDrawFrame).toHaveBeenCalled();
+    // 出片阶段结束要把辅助物的可见性还回去，否则手柄与轨迹在编辑器里一直不见。
+    expect(recordEnd).toHaveBeenCalled();
+    expect(uploadFreezoneVideo).toHaveBeenCalled();
+    expect(addDerivedVideoNode).toHaveBeenCalledWith(
+      "previz-1",
+      "/static/take.mp4",
+      "16:9",
+      "previz.editor.record.trackNodeName",
+    );
+    // 光有节点不算接出来：画布上得有一条从预演台连过去的边。
+    expect(addEdge).toHaveBeenCalledWith("previz-1", "video-1");
+  });
+
+  it("refuses a track recording with no camera to follow", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "previz.editor.record.mode.track" }),
+    );
+
+    // 场景里一台机位都没有时宁可什么都不录：默默录成导演视角的话，用户拿到的是
+    // 一段标着「轨道录制」的错画面，比报错难查得多。
+    expect(startRecording).not.toHaveBeenCalled();
+    expect(addDerivedVideoNode).not.toHaveBeenCalled();
   });
 
   it("does not capture without a project in the url", async () => {

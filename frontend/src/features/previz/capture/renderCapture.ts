@@ -48,10 +48,62 @@ export function createDomCaptureCanvas(width: number, height: number): CaptureCa
 }
 
 /**
- * 把当前场景按画幅渲染成一张 PNG。
+ * 一块可反复重画的离屏画面。渲染目标、读回缓冲与 `ImageData` 都只建一次——
+ * 录制要按 30fps 一帧一帧地画，每帧新建一个 8 MB 的缓冲会把 GC 压成卡顿。
  *
  * 走离屏 render target 而不是临时改屏幕画布的尺寸：后者会在屏幕上真的闪一帧
  * 出片分辨率的画面，而且 `toBlob` 是异步的，恢复尺寸怎么排都别扭。
+ */
+export interface FramePainter {
+  /** 画好的那一帧就在这块画布上。 */
+  readonly canvas: CaptureCanvas;
+  /** 用给定相机渲染一帧并写进 `canvas`。相机的 aspect / fov 由调用方负责。 */
+  paint(camera: THREE.Camera): void;
+  dispose(): void;
+}
+
+export function createFramePainter(
+  deps: Omit<RenderCaptureDeps, 'camera'>,
+  width: number,
+  height: number,
+): FramePainter {
+  const target = new deps.three.WebGLRenderTarget(width, height, {
+    colorSpace: deps.three.SRGBColorSpace,
+  });
+  const canvas = deps.createCanvas(width, height);
+  const context = canvas.getContext('2d');
+  if (!context) {
+    target.dispose();
+    throw new Error('previz capture: 2d context unavailable');
+  }
+  const pixels = new Uint8Array(width * height * 4);
+  const image = context.createImageData(width, height);
+  const rowBytes = width * 4;
+
+  return {
+    canvas,
+    paint(camera) {
+      const previous = deps.renderer.getRenderTarget();
+      deps.renderer.setRenderTarget(target);
+      deps.renderer.render(deps.scene, camera);
+      deps.renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels);
+      deps.renderer.setRenderTarget(previous);
+
+      // WebGL 读回来的行序是从下往上，2D canvas 是从上往下。不翻的话整张图上下颠倒。
+      for (let row = 0; row < height; row += 1) {
+        const source = (height - 1 - row) * rowBytes;
+        image.data.set(pixels.subarray(source, source + rowBytes), row * rowBytes);
+      }
+      context.putImageData(image, 0, 0);
+    },
+    dispose() {
+      target.dispose();
+    },
+  };
+}
+
+/**
+ * 把当前场景按画幅渲染成一张 PNG。
  *
  * `aspect` 是字符串联合，查表查不空——与 `domain/camera.ts` 的约定一致，这里不重复校验。
  */
@@ -60,36 +112,16 @@ export async function renderCapture(
   aspect: OutputAspect,
 ): Promise<Blob> {
   const { width, height } = OUTPUT_PIXEL_SIZE[aspect];
-
-  const target = new deps.three.WebGLRenderTarget(width, height, {
-    colorSpace: deps.three.SRGBColorSpace,
-  });
-  const previous = deps.renderer.getRenderTarget();
-  deps.renderer.setRenderTarget(target);
-  deps.renderer.render(deps.scene, deps.camera);
-
-  const pixels = new Uint8Array(width * height * 4);
-  deps.renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels);
-  deps.renderer.setRenderTarget(previous);
-  target.dispose();
-
-  const canvas = deps.createCanvas(width, height);
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('previz capture: 2d context unavailable');
-
-  const image = context.createImageData(width, height);
-  const rowBytes = width * 4;
-  // WebGL 读回来的行序是从下往上，2D canvas 是从上往下。不翻的话整张图上下颠倒。
-  for (let row = 0; row < height; row += 1) {
-    const source = (height - 1 - row) * rowBytes;
-    image.data.set(pixels.subarray(source, source + rowBytes), row * rowBytes);
+  const painter = createFramePainter(deps, width, height);
+  try {
+    painter.paint(deps.camera);
+    return await new Promise<Blob>((resolve, reject) => {
+      painter.canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error('previz capture: toBlob returned null'));
+      }, 'image/png');
+    });
+  } finally {
+    painter.dispose();
   }
-  context.putImageData(image, 0, 0);
-
-  return await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob);
-      else reject(new Error('previz capture: toBlob returned null'));
-    }, 'image/png');
-  });
 }

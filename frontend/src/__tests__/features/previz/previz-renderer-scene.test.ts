@@ -971,8 +971,31 @@ describe('PrevizRenderer 接场景图', () => {
     expect(helperVisibility()).toEqual([true, false]);
 
     // 出片同理，而且更要紧：监看糊了还能重摆机位，成片糊了是直接送进后面流程的。
+    // jsdom 的 canvas 交不出 2D 上下文，而出片在拿不到它时会当场抛错、一帧都不渲染，
+    // 于是这条断言就无从取样了——塞一个够用的假上下文进去，让整条出片路径真的跑完。
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation((contextId: string) =>
+        contextId === '2d'
+          ? ({
+              createImageData: (width: number, height: number) => ({
+                data: new Uint8ClampedArray(width * height * 4),
+                width,
+                height,
+              }),
+              putImageData: () => {},
+            } as unknown as CanvasRenderingContext2D)
+          : null,
+      );
+    // jsdom 的 toBlob 同样没实现：它只打一行 "Not implemented" 就再也不回调，
+    // 出片那个 Promise 会一直挂着，测试直接超时。
+    const toBlob = vi
+      .spyOn(HTMLCanvasElement.prototype, 'toBlob')
+      .mockImplementation((callback: BlobCallback) => callback(new Blob()));
     seen = [];
     await instance.capture().catch(() => null);
+    toBlob.mockRestore();
+    getContext.mockRestore();
     expect(helperVisibility()).toEqual([false]);
 
     // 借出去要还：留在隐藏状态，主视图里整条轨迹从此消失。
