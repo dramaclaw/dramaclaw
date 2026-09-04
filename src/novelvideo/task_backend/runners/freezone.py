@@ -25,6 +25,81 @@ from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_state import get_task_manager
 
 
+AGENT_PRODUCT_TASK_TYPES = (
+    "freezone_agent_workflow_result",
+    "freezone_agent_recipe_result",
+    "freezone_agent_workflow_generate",
+    "freezone_agent_recipe_generate",
+)
+
+
+async def _run_freezone_agent_product_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    """Wait for a trusted, persisted product result before EE settlement."""
+    from novelvideo.freezone.agent_product_operations import (
+        PENDING_STATUSES,
+        read_agent_product_operation,
+    )
+
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
+    operation_id = str(payload.get("operation_id") or "").strip()
+    product_kind = str(payload.get("product_kind") or "").strip()
+    run_task_id = str(envelope.get("__run_task_id") or "").strip()
+    if not operation_id or not product_kind or not run_task_id:
+        raise ValueError("agent product task payload is incomplete")
+    while True:
+        operation = await asyncio.to_thread(
+            read_agent_product_operation,
+            project_dir=Path(ctx.state_dir),
+            operation_id=operation_id,
+        )
+        if operation is None:
+            raise RuntimeError("agent product operation disappeared")
+        if operation["product_kind"] != product_kind:
+            raise RuntimeError("agent product operation kind changed")
+        bound_task_id = str(operation.get("task_id") or "")
+        if bound_task_id and bound_task_id != run_task_id:
+            raise RuntimeError("agent product operation is bound to another task")
+        status = str(operation.get("status") or "")
+        if status == "delivered":
+            evidence = operation.get("model_evidence") or {}
+            result_ref = operation.get("result_ref") or {}
+            if not evidence.get("model_call_id") or not result_ref.get("id"):
+                raise RuntimeError(
+                    "agent product result lacks trusted delivery evidence"
+                )
+            return {
+                "ok": True,
+                "operation_id": operation_id,
+                "product_kind": product_kind,
+                "delivery_status": "delivered",
+                "model_evidence": evidence,
+                "result_ref": result_ref,
+            }
+        if status in {"failed", "cancelled"}:
+            raise RuntimeError(
+                f"agent product generation ended without delivery: {status}"
+            )
+        if status not in PENDING_STATUSES:
+            raise RuntimeError(f"invalid agent product operation status: {status}")
+        await asyncio.sleep(0.2)
+
+
+def run_freezone_agent_product(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    return _run_cancellable(
+        envelope,
+        _run_freezone_agent_product_async(envelope, ctx),
+        task_type=str(envelope.get("task_type") or ""),
+    )
+
+
 async def _run_freezone_workflow_confirm_async(
     envelope: dict[str, Any],
     ctx: ProjectContext,
@@ -1588,3 +1663,9 @@ register_project_task_runner(
     run_freezone_workflow_confirm,
     requires_home_node=True,
 )
+for _agent_product_task_type in AGENT_PRODUCT_TASK_TYPES:
+    register_project_task_runner(
+        _agent_product_task_type,
+        run_freezone_agent_product,
+        requires_home_node=True,
+    )

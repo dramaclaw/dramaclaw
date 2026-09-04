@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS workflow_drafts (
     compiled_json            TEXT NOT NULL,
     preview_json             TEXT NOT NULL,
     last_changes_json        TEXT NOT NULL DEFAULT '{}',
+    operation_id             TEXT NOT NULL DEFAULT '',
     task_id                  TEXT NOT NULL DEFAULT '',
     root_task_id             TEXT NOT NULL DEFAULT '',
     plan_digest              TEXT NOT NULL,
@@ -84,6 +85,10 @@ def _connect(project_dir: Path):
                 if "task_id" not in columns:
                     conn.execute(
                         "ALTER TABLE workflow_drafts ADD COLUMN task_id TEXT NOT NULL DEFAULT ''"
+                    )
+                if "operation_id" not in columns:
+                    conn.execute(
+                        "ALTER TABLE workflow_drafts ADD COLUMN operation_id TEXT NOT NULL DEFAULT ''"
                     )
                 if "root_task_id" not in columns:
                     conn.execute(
@@ -234,6 +239,7 @@ def _payload_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "preview": _json_object(row["preview_json"]),
         "plan_digest": row["plan_digest"],
         "last_changes": _json_object(row["last_changes_json"]),
+        "operation_id": row["operation_id"],
         "task_id": row["task_id"],
         "root_task_id": row["root_task_id"],
         "created_at": float(row["created_at"]),
@@ -263,10 +269,10 @@ def _write_draft(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
         INSERT INTO workflow_drafts (
             draft_id, schema_version, project_id, canvas_id, revision, status,
             skill_id, run_after_create, intent_json, compiled_json, preview_json,
-            last_changes_json, task_id, root_task_id,
+            last_changes_json, operation_id, task_id, root_task_id,
             plan_digest, created_at, updated_at, expires_at,
             confirmation_started_at, confirmed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(draft_id) DO UPDATE SET
             revision = excluded.revision,
             status = excluded.status,
@@ -276,6 +282,7 @@ def _write_draft(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
             compiled_json = excluded.compiled_json,
             preview_json = excluded.preview_json,
             last_changes_json = excluded.last_changes_json,
+            operation_id = excluded.operation_id,
             task_id = excluded.task_id,
             root_task_id = excluded.root_task_id,
             plan_digest = excluded.plan_digest,
@@ -307,6 +314,7 @@ def _write_draft(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),
+            payload.get("operation_id") or "",
             payload.get("task_id") or "",
             payload.get("root_task_id") or "",
             payload["plan_digest"],
@@ -331,6 +339,7 @@ def create_workflow_draft(
     intent: dict[str, Any],
     compiled: dict[str, Any],
     run_after_create: bool = False,
+    operation_id: str = "",
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
 ) -> dict[str, Any]:
     _validate_scope(canvas_id)
@@ -353,6 +362,7 @@ def create_workflow_draft(
         "preview": _plan_preview(compiled),
         "plan_digest": _digest(compiled.get("plan")),
         "last_changes": {},
+        "operation_id": str(operation_id or "").strip(),
         "task_id": "",
         "root_task_id": "",
         "created_at": now,

@@ -110,6 +110,10 @@ export interface FreezoneWorkflowRunAction {
   user_error?: string | null;
   retryable?: boolean | null;
   artifact_status?: "valid" | "missing" | "unverified" | "not_required" | null;
+  recipe_id?: string | null;
+  recipe_version?: string | null;
+  generation_attempt_id?: string | null;
+  product_operation_id?: string | null;
   retry_count?: number;
 }
 
@@ -133,7 +137,13 @@ export interface FreezoneWorkflowRun {
 export async function createFreezoneWorkflowRun(
   projectId: string,
   canvasId: string,
-  actions: Array<{ node_id: string; action: string }>,
+  actions: Array<{
+    node_id: string;
+    action: string;
+    recipe_id?: string;
+    recipe_version?: string;
+    generation_attempt_id?: string;
+  }>,
   idempotencyKey?: string,
   runnerId?: string,
 ): Promise<FreezoneWorkflowRun> {

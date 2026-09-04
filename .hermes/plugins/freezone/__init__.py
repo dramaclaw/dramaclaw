@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import sys
@@ -833,42 +834,16 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_present_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
-    project = (
-        str(
-            args.get("project_id") or args.get("project") or _default_project_id()
-        ).strip()
-        or None
-    )
-    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
-    session_id = str(
-        args.get("skill_studio_session_id") or args.get("session_id") or ""
-    ).strip()
-    if not session_id:
-        return tool_result(
-            {
-                "ok": False,
-                "type": "skill_studio.draft",
-                "status": "skill_studio_session_id_required",
-                "error": "skill_studio_session_id is required",
-            }
-        )
-    mode = str(args.get("mode") or "create").strip() or "create"
-    if mode not in {"create", "edit"}:
-        mode = "create"
-    skill = args.get("skill") if isinstance(args.get("skill"), dict) else {}
-    recipes = _safe_list(args.get("recipes"))
-    return _emit_skill_studio_event(
-        project,
-        canvas,
+    return tool_result(
         {
-            "type": "skill_studio.draft",
-            "skill_studio_session_id": session_id,
-            "mode": mode,
-            "skill": skill,
-            "recipes": recipes,
-            "summary": str(args.get("summary") or "").strip(),
-            "warnings": _safe_list(args.get("warnings")),
-        },
+            "ok": False,
+            "status": "skill_studio_generation_admission_required",
+            "error": (
+                "The legacy one-shot presentation path cannot establish per-artifact durable "
+                "generation operations. Use outline, begin, put, and finish."
+            ),
+            "next_action": "begin_skill_studio_generation",
+        }
     )
 
 
@@ -1143,6 +1118,7 @@ def _handle_begin_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     mode = str(args.get("mode") or "create").strip() or "create"
     if mode not in {"create", "edit"}:
         mode = "create"
+    artifact_mode = str(args.get("artifact_mode") or "").strip()
     try:
         expected_recipe_count = int(args.get("expected_recipe_count") or 0)
     except (TypeError, ValueError):
@@ -1197,6 +1173,164 @@ def _handle_begin_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
         if isinstance(outline, dict):
             existing = existing_create
             expected_recipe_count = int(outline.get("expected_recipe_count") or 0)
+    if not artifact_mode:
+        artifact_mode = "skill_and_recipes" if expected_recipe_count else "skill_only"
+    if artifact_mode not in {"skill_only", "recipe_only", "skill_and_recipes"}:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "skill_studio_artifact_mode_invalid",
+                "error": "artifact_mode must be skill_only, recipe_only, or skill_and_recipes",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    recipe_targets = [
+        str(value).strip() for value in _safe_list(args.get("recipe_targets"))
+    ]
+    if artifact_mode in {"recipe_only", "skill_and_recipes"}:
+        if _available() and (
+            len(recipe_targets) != expected_recipe_count or not all(recipe_targets)
+        ):
+            return tool_result(
+                {
+                    "ok": False,
+                    "status": "skill_studio_generation_manifest_invalid",
+                    "error": "recipe_targets must identify every newly generated Recipe",
+                    "skill_studio_session_id": session_id,
+                }
+            )
+        if not recipe_targets:
+            recipe_targets = [""] * expected_recipe_count
+    else:
+        recipe_targets = []
+    if not project and _available():
+        return tool_result(
+            {
+                "ok": False,
+                "status": "skill_studio_project_scope_required",
+                "error": "project_id is required for durable generation admission",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    target_skill_id = str(args.get("target_skill_id") or "").strip()
+    generation_attempt_id = str(args.get("generation_attempt_id") or "").strip()
+    if _available() and not generation_attempt_id:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "skill_studio_generation_manifest_invalid",
+                "error": "generation_attempt_id is required for durable generation identity",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    if not generation_attempt_id:
+        generation_attempt_id = session_id
+    if (
+        _available()
+        and artifact_mode in {"skill_only", "skill_and_recipes"}
+        and not target_skill_id
+    ):
+        return tool_result(
+            {
+                "ok": False,
+                "status": "skill_studio_generation_manifest_invalid",
+                "error": "target_skill_id is required when generating a Workflow Skill",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    base_revision = int(args.get("base_revision") or 0)
+    outline = (existing or {}).get("outline")
+    reused_recipes = [
+        {
+            "reuse": True,
+            "id": str(stage.get("recipe_id") or "").strip(),
+        }
+        for stage in _safe_list(
+            outline.get("stages") if isinstance(outline, dict) else []
+        )
+        if isinstance(stage, dict)
+        and str(stage.get("reuse") or "") == "existing"
+        and str(stage.get("recipe_id") or "").strip()
+    ]
+    manifest = {
+        "generation_session_id": session_id,
+        "generation_attempt_id": generation_attempt_id,
+        "mode": mode,
+        "artifact_mode": artifact_mode,
+        "skill": {
+            "generate": artifact_mode in {"skill_only", "skill_and_recipes"},
+            "id": target_skill_id,
+            "base_revision": base_revision,
+        },
+        "recipes": [
+            {
+                "generate": True,
+                "id": recipe_id,
+                "base_revision": base_revision,
+                "generation_attempt_id": generation_attempt_id,
+                "output_index": index,
+            }
+            for index, recipe_id in enumerate(recipe_targets)
+        ]
+        + reused_recipes,
+    }
+    operations: dict[str, Any] = {"recipes": {}}
+    admission_specs: list[tuple[str, str, int | None]] = []
+    if manifest["skill"]["generate"]:
+        admission_specs.append(("workflow_generate", target_skill_id or "skill", None))
+    admission_specs.extend(
+        ("recipe_generate", recipe_id, index)
+        for index, recipe_id in enumerate(recipe_targets)
+    )
+    for product_kind, artifact_id, recipe_index in admission_specs:
+        normalized_inputs = {
+            "manifest": manifest,
+            "outline": (existing or {}).get("outline"),
+            "artifact_id": artifact_id,
+            "recipe_index": recipe_index,
+        }
+        digest = hashlib.sha256(
+            json.dumps(
+                normalized_inputs,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        if _available():
+            response = _request(
+                "POST",
+                _agent_product_operation_api_path(project),
+                body={
+                    "product_kind": product_kind,
+                    "generation_session_id": session_id,
+                    "canvas_id": canvas or "",
+                    "artifact_id": artifact_id,
+                    "normalized_inputs_hash": digest,
+                    "metadata": {
+                        "manifest": manifest,
+                        "recipe_index": recipe_index,
+                    },
+                },
+            )
+            admitted = (
+                response.get("data") if isinstance(response.get("data"), dict) else None
+            )
+        else:
+            response = {"ok": True}
+            admitted = {
+                "operation_id": (
+                    f"unmetered:{session_id}:{product_kind}:{recipe_index}"
+                ),
+                "task_id": "unmetered",
+                "artifact_id": artifact_id if recipe_targets else "",
+            }
+        if not response.get("ok") or admitted is None:
+            return tool_result(response)
+        if recipe_index is None:
+            operations["skill"] = admitted
+        else:
+            operations["recipes"][recipe_index] = admitted
     _PENDING_SKILL_STUDIO_DRAFTS[session_id] = {
         "project_id": project or (existing or {}).get("project_id"),
         "canvas_id": canvas or (existing or {}).get("canvas_id"),
@@ -1211,7 +1345,14 @@ def _handle_begin_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
         "outline": (existing or {}).get("outline"),
         "skill": (existing or {}).get("skill"),
         "recipes": dict((existing or {}).get("recipes") or {}),
+        "manifest": manifest,
+        "operations": operations,
     }
+    persisted_session = _persist_skill_studio_session(
+        _PENDING_SKILL_STUDIO_DRAFTS[session_id]
+    )
+    if not persisted_session.get("ok"):
+        return tool_result(persisted_session)
     return _emit_skill_studio_progress_event(
         project,
         canvas,
@@ -1244,20 +1385,28 @@ def _handle_put_agent_catalog_skill(args: dict[str, Any], **_: Any) -> str:
     session_id = _skill_studio_session_id_from_args(args)
     if not session_id:
         return _skill_studio_missing_session_result()
-    draft = _PENDING_SKILL_STUDIO_DRAFTS.setdefault(
-        session_id,
-        {
-            "project_id": project,
-            "canvas_id": canvas,
-            "mode": str(args.get("mode") or "create").strip() or "create",
-            "summary": "",
-            "warnings": [],
-            "expected_recipe_count": 0,
-            "outline": None,
-            "skill": None,
-            "recipes": {},
-        },
+    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) or _load_skill_studio_session(
+        str(project or ""), session_id
     )
+    if draft is None:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "skill_studio_generation_admission_required",
+                "error": "Call freezone_begin_agent_catalog_draft before generating a Skill.",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    skill_operation = (draft.get("operations") or {}).get("skill")
+    if not isinstance(skill_operation, dict):
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_generate_operation_required",
+                "error": "This generation manifest does not admit a Skill definition.",
+                "skill_studio_session_id": session_id,
+            }
+        )
     skill = args.get("skill") if isinstance(args.get("skill"), dict) else {}
     if not skill:
         return tool_result(
@@ -1268,9 +1417,25 @@ def _handle_put_agent_catalog_skill(args: dict[str, Any], **_: Any) -> str:
                 "skill_studio_session_id": session_id,
             }
         )
+    expected_skill_id = str(
+        ((draft.get("manifest") or {}).get("skill") or {}).get("id") or ""
+    ).strip()
+    actual_skill_id = str(skill.get("id") or "").strip()
+    if expected_skill_id and actual_skill_id != expected_skill_id:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_generation_manifest_mismatch",
+                "error": "Skill id does not match the admitted generation manifest.",
+                "skill_studio_session_id": session_id,
+            }
+        )
     draft["project_id"] = project or draft.get("project_id")
     draft["canvas_id"] = canvas or draft.get("canvas_id")
     draft["skill"] = _normalize_skill_studio_skill(skill, existing=draft.get("skill"))
+    persisted_session = _persist_skill_studio_session(draft)
+    if not persisted_session.get("ok"):
+        return tool_result(persisted_session)
     expected = int(draft.get("expected_recipe_count") or 0)
     recipes = draft.setdefault("recipes", {})
     if expected > 0:
@@ -1332,20 +1497,18 @@ def _handle_put_agent_catalog_recipe(args: dict[str, Any], **_: Any) -> str:
     session_id = _skill_studio_session_id_from_args(args)
     if not session_id:
         return _skill_studio_missing_session_result()
-    draft = _PENDING_SKILL_STUDIO_DRAFTS.setdefault(
-        session_id,
-        {
-            "project_id": project,
-            "canvas_id": canvas,
-            "mode": str(args.get("mode") or "create").strip() or "create",
-            "summary": "",
-            "warnings": [],
-            "expected_recipe_count": 0,
-            "outline": None,
-            "skill": None,
-            "recipes": {},
-        },
+    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) or _load_skill_studio_session(
+        str(project or ""), session_id
     )
+    if draft is None:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "skill_studio_generation_admission_required",
+                "error": "Call freezone_begin_agent_catalog_draft before generating a Recipe.",
+                "skill_studio_session_id": session_id,
+            }
+        )
     recipe = args.get("recipe") if isinstance(args.get("recipe"), dict) else {}
     if not recipe:
         return tool_result(
@@ -1361,7 +1524,32 @@ def _handle_put_agent_catalog_recipe(args: dict[str, Any], **_: Any) -> str:
         index = int(args.get("index"))
     except (TypeError, ValueError):
         index = len(recipes)
+    recipe_operations = (draft.get("operations") or {}).get("recipes") or {}
+    recipe_operation = recipe_operations.get(index) or recipe_operations.get(str(index))
+    if not isinstance(recipe_operation, dict):
+        return tool_result(
+            {
+                "ok": False,
+                "status": "recipe_generate_operation_required",
+                "error": "No admitted Recipe definition operation exists for this index.",
+                "skill_studio_session_id": session_id,
+            }
+        )
+    expected_recipe_id = str(recipe_operation.get("artifact_id") or "").strip()
+    actual_recipe_id = str(recipe.get("id") or "").strip()
+    if expected_recipe_id and actual_recipe_id != expected_recipe_id:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "recipe_generation_manifest_mismatch",
+                "error": "Recipe id does not match the admitted generation manifest.",
+                "skill_studio_session_id": session_id,
+            }
+        )
     recipes[index] = recipe
+    persisted_session = _persist_skill_studio_session(draft)
+    if not persisted_session.get("ok"):
+        return tool_result(persisted_session)
     expected = int(draft.get("expected_recipe_count") or 0)
     if expected > 0:
         message = f"已生成 Recipe {index + 1} / {expected}"
@@ -1579,7 +1767,9 @@ def _handle_patch_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     session_id = _skill_studio_session_id_from_args(args)
     if not session_id:
         return _skill_studio_missing_session_result()
-    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id)
+    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) or _load_skill_studio_session(
+        str(project or ""), session_id
+    )
     if draft is None:
         return tool_result(
             {
@@ -1660,6 +1850,9 @@ def _handle_patch_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
                 "skill_studio_session_id": session_id,
             }
         )
+    persisted_session = _persist_skill_studio_session(draft)
+    if not persisted_session.get("ok"):
+        return tool_result(persisted_session)
     progress = _emit_skill_studio_progress_event(
         project or draft.get("project_id"),
         canvas or draft.get("canvas_id"),
@@ -1698,7 +1891,9 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     session_id = _skill_studio_session_id_from_args(args)
     if not session_id:
         return _skill_studio_missing_session_result()
-    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id)
+    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) or _load_skill_studio_session(
+        str(project or ""), session_id
+    )
     if draft is None:
         return tool_result(
             {
@@ -1709,7 +1904,9 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
             }
         )
     skill = draft.get("skill") if isinstance(draft.get("skill"), dict) else {}
-    if not skill:
+    manifest = draft.get("manifest") if isinstance(draft.get("manifest"), dict) else {}
+    artifact_mode = str(manifest.get("artifact_mode") or "skill_only")
+    if not skill and artifact_mode != "recipe_only":
         return tool_result(
             {
                 "ok": False,
@@ -1722,6 +1919,15 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
         draft.get("recipes") if isinstance(draft.get("recipes"), dict) else {}
     )
     recipes = [recipes_by_index[index] for index in sorted(recipes_by_index)]
+    if artifact_mode == "recipe_only" and not recipes:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "recipe_required",
+                "error": "Recipe-only generation requires at least one Recipe result",
+                "skill_studio_session_id": session_id,
+            }
+        )
     try:
         expected_recipe_count = int(
             args.get("expected_recipe_count") or draft.get("expected_recipe_count") or 0
@@ -1752,9 +1958,10 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
             f"检测到重复 Recipe ID，已保留最后一次提交的版本：{duplicate_summary}。"
         )
         recipes = list(reversed(deduped_reversed))
-    for warning in _skill_studio_lint_draft(skill, recipes):
-        if warning not in warnings:
-            warnings.append(warning)
+    if skill:
+        for warning in _skill_studio_lint_draft(skill, recipes):
+            if warning not in warnings:
+                warnings.append(warning)
     result = _emit_skill_studio_event(
         project or draft.get("project_id"),
         canvas or draft.get("canvas_id"),
@@ -1774,6 +1981,69 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     draft["skill"] = skill
     draft["recipes"] = {index: recipe for index, recipe in enumerate(recipes)}
     draft["warnings"] = warnings
+    persisted_session = _persist_skill_studio_session(draft)
+    if not persisted_session.get("ok"):
+        return tool_result(persisted_session)
+    result_payload = _tool_result_payload(result) or {}
+    operations = (
+        draft.get("operations") if isinstance(draft.get("operations"), dict) else {}
+    )
+    project_id = str(project or draft.get("project_id") or "").strip()
+    delivered = bool(
+        result_payload.get("ok")
+        and str(result_payload.get("status") or "") == "skill_studio_frontend_result"
+        and not result_payload.get("errors")
+    )
+    explicit_failure = bool(
+        result_payload
+        and str(result_payload.get("status") or "") != "skill_studio_frontend_timeout"
+        and not delivered
+    )
+    if project_id and (delivered or explicit_failure):
+        skill_operation = operations.get("skill")
+        if isinstance(skill_operation, dict):
+            _finish_agent_product_generation(
+                project_id,
+                skill_operation,
+                outcome="delivered" if delivered else "failed",
+                result_ref=(
+                    {
+                        "kind": "workflow_skill_definition",
+                        "id": str(
+                            skill.get("id") or skill_operation.get("artifact_id") or ""
+                        ),
+                        "generation_session_id": session_id,
+                    }
+                    if delivered
+                    else None
+                ),
+            )
+        recipe_operations = (
+            operations.get("recipes")
+            if isinstance(operations.get("recipes"), dict)
+            else {}
+        )
+        for index, operation in recipe_operations.items():
+            if not isinstance(operation, dict):
+                continue
+            recipe = recipes_by_index.get(index)
+            recipe_id = str(recipe.get("id") or "") if isinstance(recipe, dict) else ""
+            artifact_delivered = delivered and bool(recipe_id)
+            _finish_agent_product_generation(
+                project_id,
+                operation,
+                outcome="delivered" if artifact_delivered else "failed",
+                result_ref=(
+                    {
+                        "kind": "recipe_definition",
+                        "id": recipe_id,
+                        "generation_session_id": session_id,
+                        "output_index": index,
+                    }
+                    if artifact_delivered
+                    else None
+                ),
+            )
     return result
 
 
@@ -4131,6 +4401,16 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             }
         )
     run_after_create = _run_after_create_arg(args)
+    operation_id = str(args.get("operation_id") or "").strip()
+    if not operation_id and _available():
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_result_admission_required",
+                "error": "Call freezone_begin_agent_product_generation before authoring the plan.",
+                "next_action": "begin_workflow_result_generation",
+            }
+        )
     source = {
         "schema_version": "freezone_workflow_plan_draft.v1",
         "plan": validated["plan"],
@@ -4143,6 +4423,7 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
                 "intent": source,
                 "compiled": validated,
                 "run_after_create": bool(run_after_create),
+                "operation_id": operation_id,
             },
         )
     )
@@ -4216,6 +4497,139 @@ def _workflow_draft_api_path(
     if suffix:
         path += f"/{suffix}"
     return path
+
+
+def _agent_product_operation_api_path(
+    project_id: str, operation_id: str = "", suffix: str = ""
+) -> str:
+    path = f"/projects/{quote(project_id, safe='')}/freezone/agent-product-operations"
+    if operation_id:
+        path += f"/{quote(operation_id, safe='')}"
+    if suffix:
+        path += f"/{suffix}"
+    return path
+
+
+def _agent_generation_session_api_path(project_id: str, session_id: str) -> str:
+    return (
+        f"/projects/{quote(project_id, safe='')}/freezone/agent-generation-sessions/"
+        f"{quote(session_id, safe='')}"
+    )
+
+
+def _persist_skill_studio_session(draft: dict[str, Any]) -> dict[str, Any]:
+    project_id = str(draft.get("project_id") or "").strip()
+    session_id = str(
+        (draft.get("manifest") or {}).get("generation_session_id") or ""
+    ).strip()
+    if not _available():
+        return {"ok": True, "status": "local_unmetered_session"}
+    if not project_id or not session_id:
+        return {"ok": False, "status": "generation_session_scope_required"}
+    return _request(
+        "PUT",
+        _agent_generation_session_api_path(project_id, session_id),
+        body={
+            "canvas_id": str(draft.get("canvas_id") or ""),
+            "manifest": draft.get("manifest") or {},
+            "draft": draft,
+        },
+    )
+
+
+def _load_skill_studio_session(
+    project_id: str, session_id: str
+) -> dict[str, Any] | None:
+    if not project_id or not session_id or not _available():
+        return None
+    response = _request(
+        "GET", _agent_generation_session_api_path(project_id, session_id)
+    )
+    data = response.get("data") if isinstance(response.get("data"), dict) else None
+    draft = (
+        data.get("draft")
+        if isinstance(data, dict) and isinstance(data.get("draft"), dict)
+        else None
+    )
+    if draft is not None:
+        _PENDING_SKILL_STUDIO_DRAFTS[session_id] = draft
+    return draft
+
+
+def _handle_begin_agent_product_generation(args: dict[str, Any], **_: Any) -> str:
+    project_id, canvas_id, scope_error = _workflow_draft_scope(args)
+    if scope_error:
+        return tool_result(scope_error)
+    assert project_id is not None and canvas_id is not None
+    product_kind = str(args.get("product_kind") or "").strip()
+    session_id = str(args.get("generation_session_id") or "").strip()
+    normalized_inputs = (
+        args.get("normalized_inputs")
+        if isinstance(args.get("normalized_inputs"), dict)
+        else {}
+    )
+    digest = hashlib.sha256(
+        json.dumps(
+            normalized_inputs,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    response = _request(
+        "POST",
+        _agent_product_operation_api_path(project_id),
+        body={
+            "product_kind": product_kind,
+            "generation_session_id": session_id,
+            "canvas_id": canvas_id,
+            "artifact_id": str(args.get("artifact_id") or "").strip(),
+            "normalized_inputs_hash": digest,
+            "metadata": {
+                "skill_id": str(args.get("skill_id") or "").strip(),
+                "skill_version": str(args.get("skill_version") or "").strip(),
+            },
+        },
+    )
+    payload = response.get("data") if isinstance(response.get("data"), dict) else None
+    if not response.get("ok") or payload is None:
+        return tool_result(response)
+    return tool_result(
+        {
+            "ok": True,
+            "status": "agent_product_generation_admitted",
+            **payload,
+            "confirmation_required": False,
+            "next_action": "generate_product_result",
+            "agent_instruction": (
+                "Generation admission succeeded. Produce only the declared product result, "
+                "then submit it through the matching persisted result tool with this exact "
+                "operation_id. Do not create another operation for retries in the same session."
+            ),
+        }
+    )
+
+
+def _finish_agent_product_generation(
+    project_id: str,
+    operation: dict[str, Any],
+    *,
+    outcome: str,
+    result_ref: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not _available():
+        return {"ok": True, "status": outcome}
+    return _request(
+        "POST",
+        _agent_product_operation_api_path(
+            project_id, str(operation.get("operation_id") or ""), "finish"
+        ),
+        body={
+            "outcome": outcome,
+            "task_id": str(operation.get("task_id") or ""),
+            "result_ref": result_ref or {},
+        },
+    )
 
 
 def _normalize_workflow_intent_arg(
@@ -4616,6 +5030,16 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             }
         )
     run_after_create = _run_after_create_arg(args)
+    operation_id = str(args.get("operation_id") or "").strip()
+    if not operation_id and _available():
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_result_admission_required",
+                "error": "Call freezone_begin_agent_product_generation before generating intent.",
+                "next_action": "begin_workflow_result_generation",
+            }
+        )
     payload, error = _workflow_draft_response(
         _request(
             "POST",
@@ -4624,6 +5048,7 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 "intent": intent,
                 "compiled": compiled,
                 "run_after_create": bool(run_after_create),
+                "operation_id": operation_id,
             },
         )
     )
@@ -5556,6 +5981,7 @@ _RESULT_BOOLEAN_FIELDS = frozenset(
         "allow_skip",
         "applied",
         "cancelled",
+        "confirmation_required",
         "connect",
         "removed",
         "run_after_create",
@@ -5601,6 +6027,8 @@ _RESULT_STRING_FIELDS = frozenset(
         "draft_id",
         "edge_id",
         "group_id",
+        "artifact_id",
+        "generation_session_id",
         "id",
         "kind",
         "link_type",
@@ -5610,6 +6038,7 @@ _RESULT_STRING_FIELDS = frozenset(
         "operation_id",
         "plan_digest",
         "project_id",
+        "product_kind",
         "recipe_id",
         "run_id",
         "schema_version",
@@ -5620,7 +6049,10 @@ _RESULT_STRING_FIELDS = frozenset(
         "source",
         "source_node_id",
         "target",
+        "task_type",
         "tool_call_status",
+        "task_id",
+        "root_task_id",
         "turn_id",
         "type",
         "workflow_instance_id",
@@ -5657,6 +6089,18 @@ def _result_field_schema(field: str) -> dict[str, Any]:
 
 
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    "freezone_begin_agent_product_generation": (
+        "operation_id",
+        "product_kind",
+        "task_type",
+        "task_id",
+        "root_task_id",
+        "project_id",
+        "canvas_id",
+        "generation_session_id",
+        "artifact_id",
+        "confirmation_required",
+    ),
     "freezone_get_canvas_ontology": ("ontology", "node_types", "link_types"),
     "freezone_get_canvas_action_catalog": ("actions", "count"),
     "freezone_get_canvas_command_catalog": ("commands", "count"),
@@ -5873,6 +6317,12 @@ _SKILL_STUDIO_FRONTEND_REQUIRED = (
 )
 
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
+    "freezone_begin_agent_product_generation": (
+        "operation_id",
+        "product_kind",
+        "task_id",
+        "generation_session_id",
+    ),
     "freezone_get_canvas_ontology": ("ontology", "node_types", "link_types"),
     "freezone_summarize_canvas": ("summary", "nodes", "edges", "counts"),
     "freezone_get_canvas_action_catalog": ("actions", "count"),
@@ -7302,6 +7752,26 @@ TOOLS = (
                     "enum": ["create", "edit"],
                     "description": "Draft mode.",
                 },
+                "artifact_mode": {
+                    "type": "string",
+                    "enum": ["skill_only", "recipe_only", "skill_and_recipes"],
+                    "description": "Canonical generation manifest mode.",
+                },
+                "target_skill_id": {
+                    "type": "string",
+                    "description": "Stable target Skill id when a Skill definition is generated.",
+                },
+                "recipe_targets": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "description": "One stable id per newly generated Recipe; reused Recipes are omitted.",
+                },
+                "base_revision": {"type": "integer", "minimum": 0},
+                "generation_attempt_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Stable id reused for transport retries; regenerate creates a new id.",
+                },
                 "summary": {
                     "type": "string",
                     "description": "Short user-facing summary for the final draft.",
@@ -7317,7 +7787,13 @@ TOOLS = (
                 },
                 **_SCOPE_PROPS,
             },
-            ["skill_studio_session_id", "mode", "expected_recipe_count"],
+            [
+                "skill_studio_session_id",
+                "mode",
+                "artifact_mode",
+                "expected_recipe_count",
+                "generation_attempt_id",
+            ],
         ),
         _handle_begin_agent_catalog_draft,
     ),
@@ -7637,6 +8113,35 @@ TOOLS = (
         _handle_mainline_projection_assets,
     ),
     (
+        "freezone_begin_agent_product_generation",
+        _schema(
+            "freezone_begin_agent_product_generation",
+            "Create a durable, credit-admitted product operation before producing a Workflow "
+            "result, Recipe result, Workflow Skill definition, or Recipe definition. The next "
+            "model turn must bind its result to the returned operation_id.",
+            {
+                **_SCOPE_PROPS,
+                "product_kind": {
+                    "type": "string",
+                    "enum": [
+                        "workflow_result",
+                        "recipe_result",
+                        "workflow_generate",
+                        "recipe_generate",
+                    ],
+                },
+                "generation_session_id": {"type": "string", "minLength": 1},
+                "artifact_id": {"type": "string"},
+                "skill_id": {"type": "string"},
+                "skill_version": {"type": "string"},
+                "normalized_inputs": {"type": "object"},
+            },
+            ["product_kind", "generation_session_id", "normalized_inputs"],
+            reject_unknown=True,
+        ),
+        _handle_begin_agent_product_generation,
+    ),
+    (
         "freezone_get_workflow_skill",
         _schema(
             "freezone_get_workflow_skill",
@@ -7675,10 +8180,14 @@ TOOLS = (
             ),
             {
                 **_SCOPE_PROPS,
+                "operation_id": {
+                    "type": "string",
+                    "description": "Admitted workflow_result operation from freezone_begin_agent_product_generation.",
+                },
                 "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
-            [],
+            ["operation_id"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow_draft,
@@ -7748,6 +8257,10 @@ TOOLS = (
             "preview, use freezone_confirm_workflow_draft with its draft_id and revision.",
             {
                 **_SCOPE_PROPS,
+                "operation_id": {
+                    "type": "string",
+                    "description": "Admitted workflow_result operation from freezone_begin_agent_product_generation.",
+                },
                 "plan": _WORKFLOW_PLAN_OBJECT_SCHEMA,
                 "run_after_create": {
                     "type": "boolean",
@@ -7757,7 +8270,7 @@ TOOLS = (
                     ),
                 },
             },
-            ["plan"],
+            ["operation_id", "plan"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow_plan_draft,

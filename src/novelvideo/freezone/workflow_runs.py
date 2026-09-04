@@ -70,8 +70,7 @@ RETRYABLE_ERROR_MARKERS = {
     "bad_response_body",
 }
 REQUEST_ID_RE = re.compile(
-    r"(?:request[_\s-]*id\s*[=:]\s*|request\s+id\s*:\s*)"
-    r"([a-zA-Z0-9._:-]+)",
+    r"(?:request[_\s-]*id\s*[=:]\s*|request\s+id\s*:\s*)" r"([a-zA-Z0-9._:-]+)",
     re.IGNORECASE,
 )
 WORKFLOW_RUN_SCHEMA_SQL = """
@@ -119,6 +118,10 @@ CREATE TABLE IF NOT EXISTS workflow_run_actions (
     job_id               TEXT,
     retry_count          INTEGER NOT NULL DEFAULT 0,
     artifact_status      TEXT,
+    recipe_id            TEXT,
+    recipe_version       TEXT,
+    generation_attempt_id TEXT,
+    product_operation_id TEXT,
     PRIMARY KEY (run_id, node_id, action),
     FOREIGN KEY (run_id) REFERENCES workflow_runs(run_id) ON DELETE CASCADE
 );
@@ -225,7 +228,9 @@ def workflow_error_diagnostics(error: str | None) -> dict[str, Any]:
         if "video total duration" in normalized_message:
             user_message = "输入视频总时长超过当前模型限制，请缩短素材或拆分生成。"
         elif "audio_url is required" in normalized_message:
-            user_message = "当前音频模型需要参考音频，请上传样音或切换为无需样音的模型。"
+            user_message = (
+                "当前音频模型需要参考音频，请上传样音或切换为无需样音的模型。"
+            )
         else:
             user_message = "生成参数不符合当前模型要求，请调整节点参数后重试。"
     elif category == "artifact_missing":
@@ -255,12 +260,13 @@ def _artifact_values(value: Any, *, key: str = "") -> list[tuple[str, str]]:
             values.extend(_artifact_values(child, key=key))
     elif isinstance(value, str):
         lowered = key.lower()
-        if (
-            lowered in {"url", "path", "content", "text"}
-            or lowered.endswith(("_url", "_path"))
+        if lowered in {"url", "path", "content", "text"} or lowered.endswith(
+            ("_url", "_path")
         ):
             values.append((lowered, value.strip()))
-    return [(candidate_key, candidate) for candidate_key, candidate in values if candidate]
+    return [
+        (candidate_key, candidate) for candidate_key, candidate in values if candidate
+    ]
 
 
 def _is_output_artifact_key(key: str) -> bool:
@@ -293,29 +299,23 @@ def _validate_action_artifact(
         ),
     ]
     candidates = [
-        candidate
-        for source in sources
-        for candidate in _artifact_values(source)
+        candidate for source in sources for candidate in _artifact_values(source)
     ]
     if action in {"generate_text", "generate_story_script"}:
-        text_values = [
-            value
-            for key, value in candidates
-            if key in {"content", "text"}
-        ]
+        text_values = [value for key, value in candidates if key in {"content", "text"}]
         if text_values:
             return "valid", None
     media_candidates = [
-        value
-        for key, value in candidates
-        if _is_output_artifact_key(key)
+        value for key, value in candidates if _is_output_artifact_key(key)
     ]
     if not media_candidates:
         return "unverified", None
     missing_local_paths: list[str] = []
     for value in media_candidates:
         lowered = value.lower()
-        if lowered.startswith(("http://", "https://", "blob:", "data:", "/static/", "/api/")):
+        if lowered.startswith(
+            ("http://", "https://", "blob:", "data:", "/static/", "/api/")
+        ):
             return "valid", None
         path = Path(value)
         candidate_path = path if path.is_absolute() else project_dir / path
@@ -348,6 +348,20 @@ def _connect(project_dir: Path):
             if db_path not in _SCHEMA_READY_PATHS:
                 configure_sqlite_connection(conn)
                 conn.executescript(WORKFLOW_RUN_SCHEMA_SQL)
+                columns = {
+                    str(row[1])
+                    for row in conn.execute("PRAGMA table_info(workflow_run_actions)")
+                }
+                for column in (
+                    "recipe_id",
+                    "recipe_version",
+                    "generation_attempt_id",
+                    "product_operation_id",
+                ):
+                    if column not in columns:
+                        conn.execute(
+                            f"ALTER TABLE workflow_run_actions ADD COLUMN {column} TEXT"
+                        )
                 conn.commit()
                 _SCHEMA_READY_PATHS.add(db_path)
             else:
@@ -391,6 +405,10 @@ def _action_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "task_type": row["task_type"],
         "job_id": row["job_id"],
         "retry_count": int(row["retry_count"] or 0),
+        "recipe_id": row["recipe_id"],
+        "recipe_version": row["recipe_version"],
+        "generation_attempt_id": row["generation_attempt_id"],
+        "product_operation_id": row["product_operation_id"],
     }
     for field in (
         "error_category",
@@ -492,8 +510,9 @@ def _write_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 run_id, node_id, action, sequence_no, status, phase, updated_at,
                 error, error_category, retryable, error_request_id,
                 error_fingerprint, user_error, task_key, task_type, job_id,
-                retry_count, artifact_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                retry_count, artifact_status, recipe_id, recipe_version,
+                generation_attempt_id, product_operation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(run_id, node_id, action) DO UPDATE SET
                 sequence_no = excluded.sequence_no,
                 status = excluded.status,
@@ -510,6 +529,10 @@ def _write_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 job_id = excluded.job_id,
                 retry_count = excluded.retry_count,
                 artifact_status = excluded.artifact_status
+                ,recipe_id = excluded.recipe_id
+                ,recipe_version = excluded.recipe_version
+                ,generation_attempt_id = excluded.generation_attempt_id
+                ,product_operation_id = excluded.product_operation_id
             """,
             (
                 payload["run_id"],
@@ -521,7 +544,11 @@ def _write_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 item.get("updated_at"),
                 item.get("error"),
                 item.get("error_category"),
-                (int(bool(item["retryable"])) if item.get("retryable") is not None else None),
+                (
+                    int(bool(item["retryable"]))
+                    if item.get("retryable") is not None
+                    else None
+                ),
                 item.get("error_request_id"),
                 item.get("error_fingerprint"),
                 item.get("user_error"),
@@ -530,6 +557,10 @@ def _write_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 item.get("job_id"),
                 int(item.get("retry_count") or 0),
                 item.get("artifact_status"),
+                item.get("recipe_id"),
+                item.get("recipe_version"),
+                item.get("generation_attempt_id"),
+                item.get("product_operation_id"),
             ),
         )
 
@@ -555,7 +586,8 @@ def _list_runs_in_transaction(
     return [
         run
         for row in rows
-        if (run := _read_run(conn, canvas_id=canvas_id, run_id=row["run_id"])) is not None
+        if (run := _read_run(conn, canvas_id=canvas_id, run_id=row["run_id"]))
+        is not None
     ]
 
 
@@ -569,6 +601,7 @@ def _normalize_actions(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         action = str(item.get("action") or "").strip()
         if not node_id or not action:
             raise ValueError("each workflow action requires node_id and action")
+        recipe_id = str(item.get("recipe_id") or "").strip()
         key = (node_id, action)
         if key in seen:
             continue
@@ -585,11 +618,54 @@ def _normalize_actions(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "task_type": None,
                 "job_id": None,
                 "retry_count": 0,
+                "recipe_id": recipe_id or None,
+                "recipe_version": str(item.get("recipe_version") or "").strip() or None,
+                "generation_attempt_id": (
+                    str(item.get("generation_attempt_id") or "").strip() or None
+                ),
+                "product_operation_id": None,
             }
         )
     if not normalized:
         raise ValueError("workflow run requires at least one action")
     return normalized
+
+
+def bind_workflow_action_product_operation(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    run_id: str,
+    node_id: str,
+    action: str,
+    operation_id: str,
+) -> dict[str, Any]:
+    _validate_scope(canvas_id, run_id)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute(
+            """
+            SELECT product_operation_id FROM workflow_run_actions
+             WHERE run_id = ? AND node_id = ? AND action = ?
+            """,
+            (run_id, node_id, action),
+        ).fetchone()
+        if current is None:
+            raise ValueError("workflow action not found")
+        existing = str(current["product_operation_id"] or "")
+        if existing and existing != operation_id:
+            raise ValueError("workflow action is bound to another product operation")
+        conn.execute(
+            """
+            UPDATE workflow_run_actions SET product_operation_id = ?
+             WHERE run_id = ? AND node_id = ? AND action = ?
+            """,
+            (operation_id, run_id, node_id, action),
+        )
+        payload = _read_run(conn, canvas_id=canvas_id, run_id=run_id)
+    if payload is None:
+        raise ValueError("workflow run not found")
+    return payload
 
 
 def create_workflow_run(
@@ -773,7 +849,9 @@ def interrupt_stale_workflow_runs(
     return interrupted
 
 
-def read_workflow_run(*, project_dir: Path, canvas_id: str, run_id: str) -> dict[str, Any] | None:
+def read_workflow_run(
+    *, project_dir: Path, canvas_id: str, run_id: str
+) -> dict[str, Any] | None:
     _validate_scope(canvas_id, run_id)
     with _connect(project_dir) as conn:
         return _read_run(conn, canvas_id=canvas_id, run_id=run_id)
@@ -1001,7 +1079,9 @@ def reconcile_workflow_runs_with_tasks(
                     artifact_status, artifact_error = _validate_action_artifact(
                         action=str(item.get("action") or ""),
                         task_result=(
-                            task.get("result") if isinstance(task.get("result"), dict) else None
+                            task.get("result")
+                            if isinstance(task.get("result"), dict)
+                            else None
                         ),
                         history_record=history_by_task_node.get(
                             (task_key, str(item.get("node_id") or ""))
@@ -1028,7 +1108,9 @@ def reconcile_workflow_runs_with_tasks(
             if not changed:
                 continue
             action_statuses = {
-                str(item.get("status") or "") for item in actions if isinstance(item, dict)
+                str(item.get("status") or "")
+                for item in actions
+                if isinstance(item, dict)
             }
             if action_statuses and action_statuses <= {"completed", "skipped"}:
                 payload["status"] = "completed"

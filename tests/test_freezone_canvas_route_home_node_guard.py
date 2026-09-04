@@ -286,9 +286,9 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
         and _opts_out_of_the_guard(call)
     }
 
-    # 删除 CE 本地报价与确认端点后，当前 freezone 共 97 条路由。
-    assert router_decorators == 97
-    assert len(canvas_routes) == 23
+    # 新增四类 Agent 产品 operation/session 端点后，当前 freezone 共 102 条路由。
+    assert router_decorators == 102
+    assert len(canvas_routes) == 28
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES
 

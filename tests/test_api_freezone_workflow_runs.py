@@ -90,6 +90,100 @@ def test_workflow_run_api_lifecycle(workflow_run_client: TestClient) -> None:
     )
 
 
+def test_metered_workflow_run_admits_each_model_recipe_before_run_creation(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+
+    rejected = workflow_run_client.post(
+        base,
+        json={"actions": [{"node_id": "image-1", "action": "generate_image"}]},
+    )
+    assert rejected.status_code == 400
+    assert workflow_run_client.get(base).json()["data"]["runs"] == []
+
+    request = {
+        "idempotency_key": "run-attempt-a",
+        "actions": [
+            {
+                "node_id": "image-1",
+                "action": "generate_image",
+                "recipe_id": "product-image",
+                "recipe_version": "1.0.0",
+                "generation_attempt_id": "attempt-a",
+            },
+            {"node_id": "save-1", "action": "save"},
+        ],
+    }
+    first = workflow_run_client.post(base, json=request)
+    duplicate = workflow_run_client.post(base, json=request)
+
+    assert first.status_code == 200
+    assert duplicate.status_code == 200
+    first_data = first.json()["data"]
+    assert duplicate.json()["data"]["run_id"] == first_data["run_id"]
+    model_action, deterministic_action = first_data["actions"]
+    assert model_action["product_operation_id"].startswith("agent_product_")
+    assert not deterministic_action["product_operation_id"]
+
+
+def test_metered_workflow_result_is_delivered_once_before_canvas_confirmation(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    operation_response = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations",
+        json={
+            "product_kind": "workflow_result",
+            "generation_session_id": "generation-a",
+            "canvas_id": "default",
+            "artifact_id": "video-ad@1.0.0",
+            "normalized_inputs_hash": "inputs-a",
+        },
+    )
+    assert operation_response.status_code == 200
+    operation = operation_response.json()["data"]
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-drafts"
+    draft_request = {
+        "operation_id": operation["operation_id"],
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+        "compiled": {
+            "ok": True,
+            "skill_id": "video-ad",
+            "plan": {"nodes": [], "edges": [], "phases": []},
+        },
+    }
+
+    first = workflow_run_client.post(base, json=draft_request)
+    duplicate = workflow_run_client.post(base, json=draft_request)
+
+    assert first.status_code == 200
+    assert duplicate.status_code == 200
+    draft = first.json()["data"]
+    assert duplicate.json()["data"]["draft_id"] == draft["draft_id"]
+    stored_operation = workflow_run_client.get(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations/"
+        + operation["operation_id"]
+    ).json()["data"]
+    assert stored_operation["status"] == "delivered"
+    assert stored_operation["result_ref"]["id"] == draft["draft_id"]
+
+    confirmed = workflow_run_client.post(
+        f"{base}/{draft['draft_id']}/claim", json={"revision": draft["revision"]}
+    )
+    assert confirmed.status_code == 200
+    after_confirm = workflow_run_client.get(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations/"
+        + operation["operation_id"]
+    ).json()["data"]
+    assert after_confirm["status"] == "delivered"
+
+
 def test_canvas_revision_endpoint_returns_only_revision(
     workflow_run_client: TestClient,
 ) -> None:

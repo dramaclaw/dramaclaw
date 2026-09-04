@@ -561,9 +561,33 @@ async def test_real_skill_studio_results_match_mcp_contract(monkeypatch):
     progress_calls = [
         (
             "freezone_put_agent_catalog_draft_outline",
-            {**base, "reuse_goal": "视频工作流", "catalog_checked": True},
+            {
+                **base,
+                "reuse_goal": "视频工作流",
+                "catalog_checked": True,
+                "expected_recipe_count": 1,
+                "stages": [
+                    {
+                        "id": "video-recipe",
+                        "recipe_id": "video-recipe",
+                        "reuse": "new",
+                        "new_recipe_craft_gap": "现有 Recipe 缺少该流程的输入输出契约。",
+                    }
+                ],
+            },
         ),
-        ("freezone_begin_agent_catalog_draft", {**base, "mode": "create"}),
+        (
+            "freezone_begin_agent_catalog_draft",
+            {
+                **base,
+                "mode": "create",
+                "artifact_mode": "skill_and_recipes",
+                "expected_recipe_count": 1,
+                "target_skill_id": "video-skill",
+                "recipe_targets": ["video-recipe"],
+                "generation_attempt_id": "attempt-1",
+            },
+        ),
         ("freezone_put_agent_catalog_skill", {**base, "skill": {"id": "video-skill"}}),
         (
             "freezone_put_agent_catalog_recipe",
@@ -595,22 +619,24 @@ async def test_real_skill_studio_results_match_mcp_contract(monkeypatch):
         "freezone_present_agent_catalog_draft",
         presented_handler({**base, "skill": {"id": "video-skill"}, "recipes": []}),
     )
-    assert presented.structuredContent["status"] == "skill_studio_frontend_result"
-    assert presented.structuredContent["selections"] == {"scope": "planning"}
+    assert presented.isError is True
+    assert (
+        presented.structuredContent["status"]
+        == "skill_studio_generation_admission_required"
+    )
 
+    finished_handler = dramaclaw_mcp.TOOLS["freezone_finish_agent_catalog_draft"][1]
     monkeypatch.setattr(
         freezone_plugin, "wait_skill_studio_result", lambda *_args, **_kwargs: None
     )
     timed_out = dramaclaw_mcp._structured_tool_result(
-        "freezone_present_agent_catalog_draft",
-        presented_handler({**base, "skill": {"id": "video-skill"}, "recipes": []}),
+        "freezone_finish_agent_catalog_draft", finished_handler(base)
     )
     assert timed_out.isError is True
     assert timed_out.structuredContent["status"] == "skill_studio_frontend_timeout"
     assert timed_out.structuredContent["skill_studio_status"] == "pending_user_input"
 
     monkeypatch.setattr(freezone_plugin, "wait_skill_studio_result", frontend_result)
-    finished_handler = dramaclaw_mcp.TOOLS["freezone_finish_agent_catalog_draft"][1]
     finished = dramaclaw_mcp._structured_tool_result(
         "freezone_finish_agent_catalog_draft", finished_handler(base)
     )

@@ -2790,7 +2790,28 @@ async function executeQueuedNodeActions(
         const createdRun = await createFreezoneWorkflowRun(
           projectId,
           canvasId,
-          pendingActions.map((action) => ({ node_id: action.nodeId, action: action.action })),
+          pendingActions.map((action) => {
+            const node = nodeById(action.nodeId);
+            const catalog = node?.data?.workflowCatalog;
+            const recipeId = catalog && typeof catalog === "object"
+              ? String((catalog as Record<string, unknown>).recipeId ?? "").trim()
+              : "";
+            const recipeVersion = catalog && typeof catalog === "object"
+              ? String((catalog as Record<string, unknown>).recipeVersion ?? "").trim()
+              : "";
+            return {
+              node_id: action.nodeId,
+              action: action.action,
+              ...(recipeId ? { recipe_id: recipeId } : {}),
+              ...(recipeVersion ? { recipe_version: recipeVersion } : {}),
+              ...(GENERATION_NODE_ACTIONS.has(action.action)
+                ? {
+                    generation_attempt_id:
+                      `${workflowRunIdempotencyKey}:${action.nodeId}:${action.action}`,
+                  }
+                : {}),
+            };
+          }),
           workflowRunIdempotencyKey,
           workflowRunnerId,
         );

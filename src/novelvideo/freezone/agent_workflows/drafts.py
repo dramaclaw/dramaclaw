@@ -95,6 +95,7 @@ def public_workflow_draft(payload: dict[str, Any]) -> dict[str, Any]:
         "status": "workflow_draft_ready",
         "schema_version": SCHEMA_VERSION,
         "draft_id": payload.get("draft_id"),
+        "operation_id": payload.get("operation_id"),
         "revision": payload.get("revision"),
         "draft_status": payload.get("status"),
         "skill_id": payload.get("skill_id"),

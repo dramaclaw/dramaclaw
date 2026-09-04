@@ -126,10 +126,12 @@ including `480P` whenever the schema lists it.
 2. Read the selected package with `workflow_skill_get`, or with
    `freezone_get_workflow_skill` when the standalone server is unavailable. Use only
    the returned Recipe summaries and input contract.
-3. For a normal workflow, submit one compact `freezone_workflow_intent.v1` to
-   `freezone_prepare_workflow_draft`.
-4. Present the returned preview. Adjust it only with `freezone_patch_workflow_draft`.
-5. After explicit user confirmation, call `freezone_confirm_workflow_draft` once with the exact
+3. Call `freezone_begin_agent_product_generation` with `product_kind="workflow_result"`, a stable
+   generation session, and the normalized inputs before authoring the result.
+4. For a normal workflow, submit one compact `freezone_workflow_intent.v1` and the admitted
+   `operation_id` to `freezone_prepare_workflow_draft`.
+5. Present the returned preview. Adjust it only with `freezone_patch_workflow_draft`.
+6. After explicit user confirmation, call `freezone_confirm_workflow_draft` once with the exact
    `draft_id` and `revision`.
 
 When the user explicitly names the required nodes and their dependency order, use the exact topology

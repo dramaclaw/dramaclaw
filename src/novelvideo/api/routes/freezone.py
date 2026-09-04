@@ -164,8 +164,17 @@ from novelvideo.freezone.workflow_drafts import (
     prune_expired_workflow_drafts,
     read_workflow_draft,
 )
+from novelvideo.freezone.agent_product_operations import (
+    bind_agent_product_task,
+    create_agent_product_operation,
+    finish_agent_product_operation,
+    read_agent_generation_session,
+    read_agent_product_operation,
+    save_agent_generation_session,
+)
 from novelvideo.freezone.workflow_runs import (
     WorkflowRunLeaseConflict,
+    bind_workflow_action_product_operation,
     create_workflow_run,
     interrupt_stale_workflow_runs,
     list_workflow_runs,
@@ -13023,6 +13032,46 @@ async def create_canvas_workflow_draft(
         await _resolve_freezone_project(project, user)
     )
     state_dir = _canvas_state_project_dir(ctx, project_dir)
+    operation_id = str(body.get("operation_id") or "").strip()
+    metered_runtime = not isinstance(get_usage_meter(), NoOpUsageMeter)
+    if not operation_id and metered_runtime:
+        raise HTTPException(400, "workflow result operation_id is required")
+    operation = None
+    if operation_id:
+        try:
+            operation = await asyncio.to_thread(
+                read_agent_product_operation,
+                project_dir=state_dir,
+                operation_id=operation_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    if operation_id and (
+        operation is None or operation.get("product_kind") != "workflow_result"
+    ):
+        raise HTTPException(400, "workflow result operation is unavailable")
+    if (
+        operation
+        and operation.get("status") == "delivered"
+        and operation.get("result_ref")
+    ):
+        existing_id = str(operation["result_ref"].get("id") or "")
+        existing, error = await asyncio.to_thread(
+            read_workflow_draft,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            draft_id=existing_id,
+        )
+        if existing is not None:
+            return {"ok": True, "data": _workflow_draft_api_data(existing)}
+        raise HTTPException(409, error or "delivered workflow result is missing")
+    if operation and operation.get("status") not in {
+        "reserved",
+        "running",
+        "accepted",
+        "submitted",
+    }:
+        raise HTTPException(409, "workflow result operation is not admitted")
     try:
         await asyncio.to_thread(
             prune_expired_workflow_drafts,
@@ -13037,9 +13086,37 @@ async def create_canvas_workflow_draft(
             intent=body.get("intent"),
             compiled=body.get("compiled"),
             run_after_create=bool(body.get("run_after_create")),
+            operation_id=operation_id,
         )
     except ValueError as exc:
+        if operation is not None:
+            await asyncio.to_thread(
+                finish_agent_product_operation,
+                project_dir=state_dir,
+                operation_id=operation_id,
+                outcome="failed",
+                expected_task_id=str(operation.get("task_id") or ""),
+            )
         raise HTTPException(400, str(exc)) from exc
+    if operation is not None:
+        await asyncio.to_thread(
+            finish_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+            outcome="delivered",
+            expected_task_id=str(operation.get("task_id") or ""),
+            model_evidence={
+                "model_call_id": f"mcp-result:{operation_id}:{draft['plan_digest']}",
+                "executed_at": time.time(),
+                "source": "authenticated_agent_workflow_result",
+            },
+            result_ref={
+                "kind": "workflow_draft",
+                "id": draft["draft_id"],
+                "revision": draft["revision"],
+                "digest": draft["plan_digest"],
+            },
+        )
     return {"ok": True, "data": _workflow_draft_api_data(draft)}
 
 
@@ -13123,6 +13200,259 @@ async def patch_canvas_workflow_draft(
     if draft is None:
         return error
     return {"ok": True, "data": _workflow_draft_api_data(draft)}
+
+
+@router.post(
+    "/projects/{project}/freezone/agent-product-operations",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def begin_agent_product_operation(
+    project: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    """Admit and reserve one model-produced product before generation starts."""
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    product_kind = str(body.get("product_kind") or "").strip()
+    generation_session_id = str(body.get("generation_session_id") or "").strip()
+    artifact_id = str(body.get("artifact_id") or "").strip()
+    normalized_inputs_hash = str(body.get("normalized_inputs_hash") or "").strip()
+    if not normalized_inputs_hash:
+        raise HTTPException(400, "normalized_inputs_hash is required")
+    idempotency_key = ":".join(
+        (
+            "freezone-agent-product",
+            str(ctx.requester_user_id),
+            str(ctx.project_id),
+            product_kind,
+            generation_session_id,
+            artifact_id or "result",
+            normalized_inputs_hash,
+        )
+    )
+    try:
+        operation = await asyncio.to_thread(
+            create_agent_product_operation,
+            project_dir=state_dir,
+            project_id=ctx.project_id,
+            product_kind=product_kind,
+            idempotency_key=idempotency_key,
+            generation_session_id=generation_session_id,
+            canvas_id=str(body.get("canvas_id") or ""),
+            artifact_id=artifact_id,
+            metadata={
+                **(
+                    body.get("metadata")
+                    if isinstance(body.get("metadata"), dict)
+                    else {}
+                ),
+                "normalized_inputs_hash": normalized_inputs_hash,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if operation.get("task_id"):
+        return {"ok": True, "data": operation}
+    queued = await get_task_backend().enqueue_project_task(
+        ctx,
+        task_type=str(operation["task_type"]),
+        product_surface="freezone_assistant",
+        queue_kind="default",
+        episode=0,
+        scope=str(operation["operation_id"]),
+        payload={
+            "operation_id": operation["operation_id"],
+            "product_kind": operation["product_kind"],
+            "generation_session_id": operation["generation_session_id"],
+            "artifact_id": operation["artifact_id"],
+        },
+    )
+    task_id = str(queued.task_state.task_id)
+    operation = await asyncio.to_thread(
+        bind_agent_product_task,
+        project_dir=state_dir,
+        operation_id=operation["operation_id"],
+        task_id=task_id,
+        root_task_id=task_id,
+    )
+    return {"ok": True, "data": operation}
+
+
+@router.get(
+    "/projects/{project}/freezone/agent-product-operations/{operation_id}",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def get_agent_product_operation(
+    project: str,
+    operation_id: str,
+    user: dict = Depends(get_api_user),
+):
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    operation = await asyncio.to_thread(
+        read_agent_product_operation,
+        project_dir=_canvas_state_project_dir(ctx, project_dir),
+        operation_id=operation_id,
+    )
+    if operation is None:
+        raise HTTPException(404, "agent product operation not found")
+    return {"ok": True, "data": operation}
+
+
+@router.get(
+    "/projects/{project}/freezone/agent-generation-sessions/{generation_session_id}",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def get_agent_generation_session(
+    project: str,
+    generation_session_id: str,
+    user: dict = Depends(get_api_user),
+):
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    session = await asyncio.to_thread(
+        read_agent_generation_session,
+        project_dir=_canvas_state_project_dir(ctx, project_dir),
+        generation_session_id=generation_session_id,
+    )
+    if session is None:
+        raise HTTPException(404, "agent generation session not found")
+    return {"ok": True, "data": session}
+
+
+@router.put(
+    "/projects/{project}/freezone/agent-generation-sessions/{generation_session_id}",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def put_agent_generation_session(
+    project: str,
+    generation_session_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    manifest = body.get("manifest") if isinstance(body.get("manifest"), dict) else {}
+    draft = body.get("draft") if isinstance(body.get("draft"), dict) else {}
+    if str(manifest.get("generation_session_id") or "") != generation_session_id:
+        raise HTTPException(400, "generation manifest identity mismatch")
+    session = await asyncio.to_thread(
+        save_agent_generation_session,
+        project_dir=_canvas_state_project_dir(ctx, project_dir),
+        generation_session_id=generation_session_id,
+        project_id=ctx.project_id,
+        canvas_id=str(body.get("canvas_id") or ""),
+        manifest=manifest,
+        draft=draft,
+    )
+    return {"ok": True, "data": session}
+
+
+@router.post(
+    "/projects/{project}/freezone/agent-product-operations/{operation_id}/finish",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def complete_agent_product_operation(
+    project: str,
+    operation_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    result_ref = (
+        body.get("result_ref") if isinstance(body.get("result_ref"), dict) else {}
+    )
+    outcome = str(body.get("outcome") or "")
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    try:
+        current = await asyncio.to_thread(
+            read_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if current is None:
+        raise HTTPException(404, "agent product operation not found")
+    if str(current.get("task_id") or "") != str(body.get("task_id") or ""):
+        raise HTTPException(400, "agent product operation task identity mismatch")
+    model_evidence: dict[str, Any] = {}
+    if outcome == "delivered":
+        product_kind = str(current.get("product_kind") or "")
+        if product_kind not in {"workflow_generate", "recipe_generate"}:
+            raise HTTPException(
+                400,
+                "result operations are settled only from their server-observed result path",
+            )
+        session = await asyncio.to_thread(
+            read_agent_generation_session,
+            project_dir=state_dir,
+            generation_session_id=str(current.get("generation_session_id") or ""),
+        )
+        session_draft = session.get("draft") if isinstance(session, dict) else None
+        artifact_id = str(result_ref.get("id") or "")
+        admitted_artifact_id = str(current.get("artifact_id") or "")
+        if product_kind == "workflow_generate":
+            persisted = (
+                session_draft.get("skill")
+                if isinstance(session_draft, dict)
+                and isinstance(session_draft.get("skill"), dict)
+                else {}
+            )
+            result_matches = (
+                result_ref.get("kind") == "workflow_skill_definition"
+                and str(persisted.get("id") or "") == artifact_id
+                and admitted_artifact_id == artifact_id
+            )
+        else:
+            persisted_recipes = (
+                session_draft.get("recipes")
+                if isinstance(session_draft, dict)
+                and isinstance(session_draft.get("recipes"), dict)
+                else {}
+            )
+            result_matches = (
+                result_ref.get("kind") == "recipe_definition"
+                and any(
+                    isinstance(recipe, dict)
+                    and str(recipe.get("id") or "") == artifact_id
+                    for recipe in persisted_recipes.values()
+                )
+                and admitted_artifact_id == artifact_id
+            )
+        if not result_matches:
+            raise HTTPException(409, "durable generated product result is unavailable")
+        evidence_digest = hashlib.sha256(
+            json.dumps(result_ref, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()[:24]
+        model_evidence = {
+            "model_call_id": f"authenticated-agent-result:{operation_id}:{evidence_digest}",
+            "executed_at": time.time(),
+            "source": "authenticated_agent_product_result",
+        }
+    try:
+        operation = await asyncio.to_thread(
+            finish_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+            outcome=outcome,
+            expected_task_id=str(body.get("task_id") or ""),
+            model_evidence=model_evidence,
+            result_ref=result_ref,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "data": operation}
 
 
 @router.post(
@@ -13260,15 +13590,36 @@ async def create_canvas_workflow_run(
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user)
     )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    actions = body.get("actions") if isinstance(body.get("actions"), list) else []
+    metered_runtime = not isinstance(get_usage_meter(), NoOpUsageMeter)
+    if metered_runtime:
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            action_name = str(action.get("action") or "")
+            if action_name in {
+                "generate_text",
+                "generate_story_script",
+                "generate_image",
+                "generate_video",
+                "generate_text_video",
+                "generate_audio",
+                "generate_3gs_world",
+            } and (
+                not action.get("recipe_id") or not action.get("generation_attempt_id")
+            ):
+                raise HTTPException(
+                    400,
+                    "model workflow actions require recipe_id and generation_attempt_id",
+                )
     try:
         run = await asyncio.to_thread(
             create_workflow_run,
-            project_dir=_canvas_state_project_dir(ctx, project_dir),
+            project_dir=state_dir,
             project_id=ctx.project_id,
             canvas_id=canvas_id,
-            actions=(
-                body.get("actions") if isinstance(body.get("actions"), list) else []
-            ),
+            actions=actions,
             actor_id=_canvas_actor_id(user),
             metadata=(
                 body.get("metadata") if isinstance(body.get("metadata"), dict) else None
@@ -13288,6 +13639,99 @@ async def create_canvas_workflow_run(
         raise HTTPException(
             400 if isinstance(exc, ValueError) else 503, str(exc)
         ) from exc
+    if not metered_runtime:
+        return {"ok": True, "data": run}
+    admitted_operations: list[dict[str, Any]] = []
+    try:
+        for action in run.get("actions") or []:
+            action_name = str(action.get("action") or "")
+            if action_name not in {
+                "generate_text",
+                "generate_story_script",
+                "generate_image",
+                "generate_video",
+                "generate_text_video",
+                "generate_audio",
+                "generate_3gs_world",
+            }:
+                continue
+            node_id = str(action.get("node_id") or "")
+            recipe_id = str(action.get("recipe_id") or "")
+            recipe_version = str(action.get("recipe_version") or "")
+            attempt_id = str(action.get("generation_attempt_id") or "")
+            operation = await asyncio.to_thread(
+                create_agent_product_operation,
+                project_dir=state_dir,
+                project_id=ctx.project_id,
+                product_kind="recipe_result",
+                idempotency_key=(
+                    f"freezone-agent-product:{ctx.requester_user_id}:{ctx.project_id}:"
+                    f"{run['run_id']}:{node_id}:{recipe_id}:{recipe_version}:{attempt_id}"
+                ),
+                generation_session_id=str(run["run_id"]),
+                canvas_id=canvas_id,
+                artifact_id=node_id,
+                metadata={
+                    "workflow_run_id": run["run_id"],
+                    "node_id": node_id,
+                    "recipe_id": recipe_id,
+                    "recipe_version": recipe_version,
+                    "generation_attempt_id": attempt_id,
+                },
+            )
+            if not operation.get("task_id"):
+                queued = await get_task_backend().enqueue_project_task(
+                    ctx,
+                    task_type=str(operation["task_type"]),
+                    product_surface="freezone_assistant",
+                    queue_kind="default",
+                    episode=0,
+                    scope=str(operation["operation_id"]),
+                    payload={
+                        "operation_id": operation["operation_id"],
+                        "product_kind": "recipe_result",
+                        "generation_session_id": run["run_id"],
+                        "artifact_id": node_id,
+                    },
+                )
+                task_id = str(queued.task_state.task_id)
+                operation = await asyncio.to_thread(
+                    bind_agent_product_task,
+                    project_dir=state_dir,
+                    operation_id=operation["operation_id"],
+                    task_id=task_id,
+                    root_task_id=task_id,
+                )
+            admitted_operations.append(operation)
+            run = await asyncio.to_thread(
+                bind_workflow_action_product_operation,
+                project_dir=state_dir,
+                canvas_id=canvas_id,
+                run_id=run["run_id"],
+                node_id=node_id,
+                action=action_name,
+                operation_id=operation["operation_id"],
+            )
+    except Exception:
+        for operation in admitted_operations:
+            try:
+                await asyncio.to_thread(
+                    finish_agent_product_operation,
+                    project_dir=state_dir,
+                    operation_id=operation["operation_id"],
+                    outcome="failed",
+                    expected_task_id=operation["task_id"],
+                )
+            except ValueError:
+                pass
+        await asyncio.to_thread(
+            update_workflow_run,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            run_id=run["run_id"],
+            status="failed",
+        )
+        raise
     return {"ok": True, "data": run}
 
 
@@ -13341,8 +13785,8 @@ async def get_canvas_workflow_runs(
         # Recovery records are optional. A transient canvas read/lock failure
         # must not make the canvas itself unavailable.
         pass
+    tasks_by_key: dict[str, dict[str, Any]] = {}
     try:
-        tasks_by_key = {}
         for task in get_task_manager().list_tasks_for_project(ctx):
             task_status = str(task.status or "")
             if (
@@ -13401,6 +13845,55 @@ async def get_canvas_workflow_runs(
         canvas_id=canvas_id,
         limit=limit,
     )
+    for run in runs:
+        for action in run.get("actions") or []:
+            operation_id = str(action.get("product_operation_id") or "")
+            task_key = str(action.get("task_key") or "")
+            task = tasks_by_key.get(task_key)
+            if not operation_id or task is None:
+                continue
+            task_status = str(task.get("status") or "")
+            artifact_status = str(action.get("artifact_status") or "")
+            if task_status == "completed" and artifact_status == "valid":
+                outcome = "delivered"
+                result_ref = {
+                    "kind": "recipe_result",
+                    "id": str(action.get("job_id") or task_key),
+                    "workflow_run_id": run["run_id"],
+                    "node_id": action.get("node_id"),
+                    "recipe_id": action.get("recipe_id"),
+                }
+                model_evidence = {
+                    "model_call_id": str(action.get("job_id") or task_key),
+                    "executed_at": run.get("updated_at"),
+                    "source": "verified_project_task_result",
+                }
+            elif task_status in {"failed", "cancelled"}:
+                outcome = "failed" if task_status == "failed" else "cancelled"
+                result_ref = {}
+                model_evidence = {}
+            else:
+                continue
+            operation = await asyncio.to_thread(
+                read_agent_product_operation,
+                project_dir=canvas_project_dir,
+                operation_id=operation_id,
+            )
+            if operation is None or operation.get("status") in {
+                "delivered",
+                "failed",
+                "cancelled",
+            }:
+                continue
+            await asyncio.to_thread(
+                finish_agent_product_operation,
+                project_dir=canvas_project_dir,
+                operation_id=operation_id,
+                outcome=outcome,
+                expected_task_id=str(operation.get("task_id") or ""),
+                model_evidence=model_evidence,
+                result_ref=result_ref,
+            )
     return {"ok": True, "data": {"runs": runs}}
 
 
