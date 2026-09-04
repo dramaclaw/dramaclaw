@@ -2,7 +2,7 @@
 """DCO check（REPO-19）：PR 范围内每个 commit 都必须带 Signed-off-by trailer。
 
 用法：
-    python scripts/check_dco.py <base>..<head>   # 显式范围（CI 用 PR 的 base..head）
+    python scripts/check_dco.py <base>..<head> [--not <trusted-ref>]
     python scripts/check_dco.py                   # 默认 origin/main..HEAD
 
 合并提交（merge）跳过。任一 commit 缺 `Signed-off-by:` → 退出码 1。
@@ -24,15 +24,15 @@ def _git(*args: str) -> str:
     ).stdout
 
 
-def commit_shas(rev_range: str) -> list[str]:
+def commit_shas(revisions: list[str]) -> list[str]:
     # --no-merges 跳过合并提交（其作者非贡献者本人）
-    return _git("log", "--no-merges", "--format=%H", rev_range).split()
+    return _git("log", "--no-merges", "--format=%H", *revisions).split()
 
 
 def main(argv: list[str]) -> int:
-    rev_range = argv[0] if argv else "origin/main..HEAD"
+    revisions = argv if argv else ["origin/main..HEAD"]
     offenders: list[str] = []
-    for sha in commit_shas(rev_range):
+    for sha in commit_shas(revisions):
         body = _git("log", "-1", "--format=%B", sha)
         if not SIGNOFF.search(body):
             subject = _git("log", "-1", "--format=%s", sha).strip()
