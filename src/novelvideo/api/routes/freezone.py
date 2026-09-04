@@ -4839,6 +4839,46 @@ async def _record_recipe_compile_product_evidence(
     )
 
 
+async def _require_recipe_compile_product_admission(
+    *, body: FreezoneRecipeCompileRequest, user: dict
+) -> None:
+    """Fail closed before a Recipe request can reach the model compiler."""
+    operation_id = str(body.product_operation_id or "").strip()
+    project_id = str(body.project_id or "").strip()
+    if bool(operation_id) != bool(project_id):
+        raise HTTPException(
+            400,
+            "project_id and product_operation_id must be supplied together",
+        )
+    if body.prompt_strategy != "llm_refine" or isinstance(
+        get_usage_meter(), NoOpUsageMeter
+    ):
+        return
+    if not operation_id:
+        raise HTTPException(
+            400,
+            "product_operation_id is required for metered model Recipe compilation",
+        )
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project_id, user)
+    )
+    try:
+        operation = await asyncio.to_thread(
+            read_agent_product_operation,
+            project_dir=_canvas_state_project_dir(ctx, project_dir),
+            operation_id=operation_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if operation is None or operation.get("product_kind") != "recipe_result":
+        raise HTTPException(409, "Recipe result operation is unavailable")
+    if operation.get("status") not in {"reserved", "running", "accepted", "submitted"}:
+        raise HTTPException(409, "Recipe result operation is not admitted")
+    admitted_recipe_id = str((operation.get("metadata") or {}).get("recipe_id") or "")
+    if admitted_recipe_id and admitted_recipe_id != body.recipe_id:
+        raise HTTPException(409, "Recipe compilation does not match admitted operation")
+
+
 async def _fail_recipe_product_operation(
     *, body: FreezoneRecipeCompileRequest, user: dict
 ) -> None:
@@ -4888,6 +4928,7 @@ async def compile_freezone_recipe(
 ):
     """Compile an effective user Recipe without returning its internal definition."""
     username = str(user.get("username") or "")
+    await _require_recipe_compile_product_admission(body=body, user=user)
     try:
         compiled = await compile_recipe_prompt_result(
             **_recipe_compile_args(body, username)
@@ -4950,6 +4991,8 @@ async def compile_freezone_recipe_batch(
 ):
     """Compile several independent node prompts without one failure cancelling the batch."""
     username = str(user.get("username") or "")
+    for item in body.items:
+        await _require_recipe_compile_product_admission(body=item, user=user)
     outcomes = await compile_recipe_prompt_batch(
         [_recipe_compile_args(item, username) for item in body.items]
     )

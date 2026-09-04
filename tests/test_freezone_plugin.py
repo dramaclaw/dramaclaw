@@ -3424,6 +3424,83 @@ def _begin_catalog_create_with_recipes(handlers, base_args, recipe_ids):
     )
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "product_kind", "operation_key", "product_args"),
+    [
+        (
+            "freezone_put_agent_catalog_skill",
+            "workflow_generate",
+            "skill",
+            {"skill": {"id": "skill-a"}},
+        ),
+        (
+            "freezone_put_agent_catalog_recipe",
+            "recipe_generate",
+            "recipe",
+            {"index": 0, "recipe": {"id": "recipe-a"}},
+        ),
+    ],
+)
+def test_freezone_plugin_rejects_put_for_terminal_generation_operation(
+    monkeypatch,
+    tool_name,
+    product_kind,
+    operation_key,
+    product_args,
+):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    operation = {
+        "operation_id": f"operation-{operation_key}",
+        "artifact_id": f"{operation_key}-a",
+        "product_kind": product_kind,
+        "status": "reserved",
+        "task_id": "task-a",
+    }
+    operations = (
+        {"skill": operation, "recipes": {}}
+        if operation_key == "skill"
+        else {"recipes": {0: operation}}
+    )
+    session_id = f"terminal-{operation_key}"
+    draft = {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "manifest": {
+            "generation_session_id": session_id,
+            "artifact_mode": "skill_only" if operation_key == "skill" else "recipe_only",
+            "skill": {"id": "skill-a"},
+        },
+        "operations": operations,
+        "recipes": {},
+    }
+    plugin._PENDING_SKILL_STUDIO_DRAFTS[session_id] = draft
+
+    monkeypatch.setattr(plugin, "_available", lambda: True)
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda method, path, **_kwargs: {
+            "ok": True,
+            "data": {**operation, "status": "delivered"},
+        },
+    )
+
+    result = handlers[tool_name](
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "skill_studio_session_id": session_id,
+            **product_args,
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "agent_product_generation_attempt_required"
+    assert draft.get("skill") is None
+    assert draft["recipes"] == {}
+
+
 def test_freezone_plugin_chunked_draft_revision_preserves_unchanged_recipes(
     monkeypatch,
 ):

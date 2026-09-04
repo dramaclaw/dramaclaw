@@ -325,6 +325,96 @@ async def test_recipe_compile_binds_only_fresh_model_evidence(
     assert stored_cached["model_evidence"] == {}
 
 
+def test_metered_model_recipe_compile_requires_operation_before_compiler(
+    workflow_run_client: TestClient,
+    monkeypatch,
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    compiler_called = False
+
+    async def fake_compile(**_kwargs):
+        nonlocal compiler_called
+        compiler_called = True
+        raise AssertionError("compiler must not run without product admission")
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_result", fake_compile)
+
+    response = workflow_run_client.post(
+        "/api/v1/freezone/recipes/compile",
+        json={"recipe_id": "product-image", "node_kind": "image"},
+    )
+
+    assert response.status_code == 400
+    assert "product_operation_id is required" in response.json()["detail"]
+    assert compiler_called is False
+
+
+def test_metered_model_recipe_compile_batch_fails_before_any_compiler_call(
+    workflow_run_client: TestClient,
+    monkeypatch,
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    compiler_called = False
+
+    async def fake_compile_batch(_items):
+        nonlocal compiler_called
+        compiler_called = True
+        raise AssertionError("batch compiler must not run with an unadmitted item")
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_batch", fake_compile_batch)
+
+    response = workflow_run_client.post(
+        "/api/v1/freezone/recipes/compile-batch",
+        json={
+            "items": [
+                {
+                    "request_id": "request-a",
+                    "recipe_id": "product-image",
+                    "node_kind": "image",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    assert "product_operation_id is required" in response.json()["detail"]
+    assert compiler_called is False
+
+
+def test_metered_deterministic_recipe_compile_does_not_require_product_operation(
+    workflow_run_client: TestClient,
+    monkeypatch,
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.recipe_runtime import RecipeCompileResult
+
+    async def fake_compile(**_kwargs):
+        return RecipeCompileResult(
+            "deterministic prompt",
+            "deterministic",
+            ("product-image",),
+        )
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_result", fake_compile)
+
+    response = workflow_run_client.post(
+        "/api/v1/freezone/recipes/compile",
+        json={
+            "recipe_id": "product-image",
+            "node_kind": "image",
+            "prompt_strategy": "template",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["compile_mode"] == "deterministic"
+
+
 def test_canvas_revision_endpoint_returns_only_revision(
     workflow_run_client: TestClient,
 ) -> None:

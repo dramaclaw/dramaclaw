@@ -1418,6 +1418,14 @@ def _handle_put_agent_catalog_skill(args: dict[str, Any], **_: Any) -> str:
                 "skill_studio_session_id": session_id,
             }
         )
+    operation_error = _reject_unavailable_product_operation(
+        str(project or draft.get("project_id") or "").strip(),
+        skill_operation,
+        product_kind="workflow_generate",
+        session_id=session_id,
+    )
+    if operation_error is not None:
+        return tool_result(operation_error)
     skill = args.get("skill") if isinstance(args.get("skill"), dict) else {}
     if not skill:
         return tool_result(
@@ -1546,6 +1554,14 @@ def _handle_put_agent_catalog_recipe(args: dict[str, Any], **_: Any) -> str:
                 "skill_studio_session_id": session_id,
             }
         )
+    operation_error = _reject_unavailable_product_operation(
+        str(project or draft.get("project_id") or "").strip(),
+        recipe_operation,
+        product_kind="recipe_generate",
+        session_id=session_id,
+    )
+    if operation_error is not None:
+        return tool_result(operation_error)
     expected_recipe_id = str(recipe_operation.get("artifact_id") or "").strip()
     actual_recipe_id = str(recipe.get("id") or "").strip()
     if expected_recipe_id and actual_recipe_id != expected_recipe_id:
@@ -4615,7 +4631,8 @@ def _handle_begin_agent_product_generation(args: dict[str, Any], **_: Any) -> st
             "agent_instruction": (
                 "Generation admission succeeded. Produce only the declared product result, "
                 "then submit it through the matching persisted result tool with this exact "
-                "operation_id. Do not create another operation for retries in the same session."
+                "operation_id. Reuse it only for transport retries before the operation becomes "
+                "terminal. A later regeneration requires a new generation attempt and operation."
             ),
         },
         tool_name="freezone_begin_agent_product_generation",
@@ -4642,6 +4659,60 @@ def _finish_agent_product_generation(
             "result_ref": result_ref or {},
         },
     )
+
+
+def _reject_unavailable_product_operation(
+    project_id: str,
+    operation: dict[str, Any],
+    *,
+    product_kind: str,
+    session_id: str,
+) -> dict[str, Any] | None:
+    """Reject stale product delivery before mutating a persisted Studio draft."""
+    if not _available():
+        return None
+    operation_id = str(operation.get("operation_id") or "").strip()
+    if not project_id or not operation_id:
+        return {
+            "ok": False,
+            "status": "agent_product_generation_admission_required",
+            "error": "A durable product operation is required before submitting a result.",
+            "skill_studio_session_id": session_id,
+        }
+    response = _request(
+        "GET",
+        _agent_product_operation_api_path(project_id, operation_id),
+    )
+    current = response.get("data") if isinstance(response.get("data"), dict) else None
+    if not response.get("ok") or current is None:
+        return response
+    if current.get("product_kind") != product_kind:
+        return {
+            "ok": False,
+            "status": "agent_product_generation_operation_mismatch",
+            "error": "The admitted operation does not match this generated product.",
+            "skill_studio_session_id": session_id,
+        }
+    if current.get("status") in {"delivered", "failed", "cancelled"}:
+        return {
+            "ok": False,
+            "status": "agent_product_generation_attempt_required",
+            "error": (
+                "This generation attempt is already terminal. Start a new attempt with a new "
+                "generation_attempt_id before submitting another result."
+            ),
+            "skill_studio_session_id": session_id,
+            "operation_id": operation_id,
+        }
+    if current.get("status") not in {"reserved", "running", "accepted", "submitted"}:
+        return {
+            "ok": False,
+            "status": "agent_product_generation_not_admitted",
+            "error": "The product operation is not ready to accept a generated result.",
+            "skill_studio_session_id": session_id,
+            "operation_id": operation_id,
+        }
+    return None
 
 
 def _normalize_workflow_intent_arg(

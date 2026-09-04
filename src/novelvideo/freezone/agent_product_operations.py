@@ -195,6 +195,11 @@ def create_agent_product_operation(
                 raise ValueError(
                     "agent product idempotency key is bound to another operation"
                 )
+            if payload["status"] in TERMINAL_STATUSES:
+                raise ValueError(
+                    "agent product operation is already terminal; "
+                    "use a new generation_attempt_id"
+                )
             return payload
         conn.execute(
             """
@@ -372,14 +377,18 @@ def finish_agent_product_operation(
         payload = _payload(current)
         if payload["task_id"] != str(expected_task_id or "").strip():
             raise ValueError("agent product operation task identity mismatch")
+        result = result_ref if isinstance(result_ref, dict) else {}
         if payload["status"] in TERMINAL_STATUSES:
             if payload["status"] != status:
                 raise ValueError(
                     "agent product operation already has another terminal outcome"
                 )
+            if payload["result_ref"] != result:
+                raise ValueError(
+                    "agent product operation terminal result reference mismatch"
+                )
             return payload
         evidence = payload["model_evidence"]
-        result = result_ref if isinstance(result_ref, dict) else {}
         if status == "delivered":
             if not evidence.get("model_call_id") or not evidence.get("executed_at"):
                 raise ValueError(

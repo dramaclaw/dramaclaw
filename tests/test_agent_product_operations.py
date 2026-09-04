@@ -96,11 +96,47 @@ def test_delivered_operation_requires_execution_evidence_and_result(tmp_path):
         operation_id=operation["operation_id"],
         outcome="delivered",
         expected_task_id="task-a",
-        result_ref={"kind": "workflow_draft", "id": "ignored"},
+        result_ref={"kind": "workflow_draft", "id": "draft-a"},
     )
 
     assert delivered["status"] == "delivered"
     assert repeated == delivered
+
+    with pytest.raises(ValueError, match="result reference mismatch"):
+        finish_agent_product_operation(
+            project_dir=tmp_path,
+            operation_id=operation["operation_id"],
+            outcome="delivered",
+            expected_task_id="task-a",
+            result_ref={"kind": "workflow_draft", "id": "different-draft"},
+        )
+
+
+def test_terminal_operation_requires_a_new_generation_attempt(tmp_path):
+    operation = _create(tmp_path, key="completed-attempt", kind="workflow_generate")
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="response-a",
+        executed_at=1.0,
+        source="server_observed_agent_turn",
+    )
+    finish_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        outcome="delivered",
+        expected_task_id="task-a",
+        result_ref={"kind": "workflow_skill_definition", "id": "skill-a"},
+    )
+
+    with pytest.raises(ValueError, match="new generation_attempt_id"):
+        _create(tmp_path, key="completed-attempt", kind="workflow_generate")
 
 
 def test_recipe_delivery_requires_fresh_model_compile_evidence(tmp_path):
@@ -262,7 +298,7 @@ async def test_admission_cannot_deliver_until_result_tool_binds_evidence(tmp_pat
         operation_id=operation["operation_id"],
         outcome="delivered",
         expected_task_id="task-a",
-        result_ref={"kind": "workflow_draft", "id": "ignored"},
+        result_ref={"kind": "workflow_draft", "id": "draft-a"},
     )
 
     assert delivered["model_evidence"]["tool_call_id"] == "call-result"
