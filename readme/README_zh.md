@@ -175,7 +175,7 @@ DramaClaw 是一条**源码可见的漫剧工业化生产线**。丢进一本原
 
 ## 系统要求
 
-DramaClaw 的所有模型推理都走**远程 OpenAI 兼容网关** —— 本机不跑模型 —— 所以本地占用很低。一台普通笔记本或小 VPS 就够用。
+DramaClaw 的所有模型推理都走 **OpenAI 兼容网关** —— 要么是官方 RelayClaw 服务，要么是内置的 [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) 转发到你自己配置的模型供应商。本机不跑模型，所以本地占用很低，一台普通笔记本或小 VPS 就够用。
 
 | 项目 | 要求 |
 |---|---|
@@ -186,7 +186,7 @@ DramaClaw 的所有模型推理都走**远程 OpenAI 兼容网关** —— 本�
 | **Docker** | Docker + `docker compose` |
 | **端口** | `8080` 网页 · `8780` REST API · `3000` 内置网关管理页 |
 | **数据库** | 全部不需要 —— 无 Postgres、Redis、Celery、Ray。任务进程内内联执行，状态存本地文件系统（SQLite + 文件） |
-| **网络** | 需能出网访问模型网关（官方 `relayclaw.cdnfg.com`，或你自己的 BYO 端点） |
+| **网络** | 需能出网访问官方网关 `relayclaw.cdnfg.com`，和/或你在内置网关里配置的模型供应商 |
 
 > 本地开发（非 Docker）还需 Python 3.11–3.12 + [`uv`](https://docs.astral.sh/uv/) + `ffmpeg`。完整前置条件见[自托管指南](../docs/zh/guides/self-hosting.md)。
 
@@ -244,22 +244,29 @@ docker compose up -d
 
 ## 支持的模型与服务商
 
-DramaClaw 对模型侧保持中立 —— 所有文本/图片/视频/音频模型都经一个 **OpenAI 兼容网关**接入，两种方式：
+DramaClaw 对模型侧保持中立 —— 所有文本 / 图片 / 视频 / 音频模型都经一个 **OpenAI 兼容网关**接入。到**设置 → 模型配置**三选一：
 
-- **DramaClaw 官方 key（推荐）**：`docker compose up`,开 <http://localhost:8080> → 设置 → 模型配置 → 官方渠道,粘贴 DC key 保存即用,**无需映射模型**。到 <https://relayclaw.cdnfg.com> 获取 key。
-- **自带网关（BYO）**：把 `NEWAPI_BASE_URL` 指向你自己的 OpenAI 兼容端点并映射模型名（详见 [配置模型供应商](../docs/zh/getting-started/configuring-models.md)）。
+- **官方（推荐）** —— 粘贴 DC key（到 <https://relayclaw.cdnfg.com> 获取）保存即用。RelayClaw 已经配好 DramaClaw 需要的全部模型映射，什么都不用调。
+- **自定义** —— 一键初始化内置的 `dramaclaw-gateway`，然后在它的管理页里添加你自己的供应商渠道（API key、模型 ID）。DramaClaw 调用的每一个模型都走你的渠道。
+- **本地 + 官方混合** —— 主链路继续用官方模型，额外渠道（比如本地 ComfyUI 视频工作流）走内置网关。
 
-> 内置 `newapi` 网关始终随 compose 启动；只有在「设置 → 模型配置」切到**自定义**或**本地 + 官方混合**后才会被使用。
+完整步骤见 [配置模型供应商](../docs/zh/getting-started/configuring-models.md)。
 
-| 环节              | 经网关接入                                                          |
-|-------------------|---------------------------------------------------------------------|
-| **文本 / 大模型** | 经 OpenAI 兼容网关（DramaClaw 官方 key,或 BYO）                     |
-| **图像**          | gpt-image · nano-banana                                             |
-| **视频**          | Seedance 1.0 / 1.5 / 2.0 系列 · happyhorse                          |
-| **配音**          | IndexTTS2                                                           |
-| **故事图谱**      | Cognee                                                              |
-| **任务运行时**    | 进程内 inline（无需 Ray / Redis / Celery）                          |
-| **存储**          | 本地文件系统                                                        |
+### 内置网关：dramaclaw-gateway
+
+`docker-compose.yml` 里的 `newapi` 服务就是 [**dramaclaw-gateway**](https://github.com/dramaclaw/dramaclaw-gateway)，DramaClaw 自己维护的 [New API](https://github.com/QuantumNous/new-api) 分支。它实现了 DramaClaw 图片 / 视频 / 音频所用的 **DC-Media** 协议（媒体角色、参考图、首尾帧），并把每个请求转换成各供应商的原生接口。镜像在 Docker Hub：[`claymorelab/dramaclaw-gateway`](https://hub.docker.com/r/claymorelab/dramaclaw-gateway)，版本由 `.env` 里的 `DRAMACLAW_GATEWAY_VERSION` 钉住。官方模式下它只是常驻待命，切到**自定义**或**本地 + 官方混合**后才会被使用。
+
+网关目前自带的供应商适配器（验证状态见 [渠道支持矩阵](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/docs/providers/README.md)）：ComfyUI · MiniMax / 海螺 · 火山引擎豆包 / Seedance · fal.ai · 阿里 · 可灵 · 即梦 · Vertex AI · Gemini · OpenAI / Sora · Suno。想接别的供应商？网关提供了[适配器脚手架和贡献指南](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/CONTRIBUTING.zh_CN.md)。
+
+| 环节              | 官方模式（RelayClaw）                          | 自定义 / 混合模式（内置网关）                            |
+|-------------------|------------------------------------------------|----------------------------------------------------------|
+| **文本 / 大模型** | `DC-*-LLM` 系列，无需映射                       | 任意 OpenAI 兼容对话渠道                                  |
+| **图像**          | gpt-image · nano-banana                        | 网关里注册的任意图片渠道                                  |
+| **视频**          | Seedance 1.0 / 1.5 / 2.0 系列 · happyhorse     | 任意 DC-Media 视频适配器（Seedance、海螺、可灵、ComfyUI 等） |
+| **配音**          | IndexTTS2                                      | 网关里注册的任意音频渠道                                  |
+| **故事图谱**      | Cognee（`DC-cognee-embedding`）                | 任意 embedding 渠道                                       |
+| **任务运行时**    | 进程内 inline（无需 Ray / Redis / Celery）      | 同左                                                      |
+| **存储**          | 本地文件系统                                   | 同左                                                      |
 
 <br/>
 
