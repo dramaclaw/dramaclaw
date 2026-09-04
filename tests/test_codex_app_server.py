@@ -338,6 +338,13 @@ async def test_app_server_native_tool_search_preserves_gateway_event_chain(
     monkeypatch, tmp_path
 ):
     """Record the complete Responses Tool Search chain across App Server + MCP."""
+    native_catalog = (
+        Path(service.__file__).resolve().parents[3]
+        / "deploy"
+        / "codex"
+        / "dramaclaw-model-catalog.json"
+    )
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(native_catalog))
     search_call_id = "search-call-1"
     tool_call_id = "mcp-call-1"
     tool_name = "dramaclaw_prepare_system_voices"
@@ -514,6 +521,83 @@ async def test_app_server_native_tool_search_preserves_gateway_event_chain(
     assert tool_events[0].structured == tool_result
     assert any(
         event.type == "complete" and event.text == "需要用户确认。" for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_app_server_chat_compat_catalog_omits_native_tool_search(
+    monkeypatch, tmp_path
+):
+    """Responses-to-Chat gateways receive concrete MCP functions only."""
+    compat_catalog = (
+        Path(service.__file__).resolve().parents[3]
+        / "deploy"
+        / "codex"
+        / "dramaclaw-model-catalog-chat-compat.json"
+    )
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(compat_catalog))
+    scripted_responses = [
+        _responses_sse(
+            _response_created("response-compat"),
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "id": "message-compat",
+                    "content": [{"type": "output_text", "text": "兼容模式正常。"}],
+                },
+            },
+            _response_completed("response-compat"),
+        )
+    ]
+
+    with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
+        bundled_codex = Path(
+            distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
+        )
+        token_file = tmp_path / "turn.token"
+        token_file.write_text("contract-test-token", encoding="utf-8")
+        token_file.chmod(0o600)
+        monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+        env = {
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+            "DRAMACLAW_PROJECT_ID": "chat-compat-contract",
+            "DRAMACLAW_USERNAME": "local",
+            "DRAMACLAW_AGENT_TOKEN_FILE": str(token_file),
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        mcp_servers = service._dramaclaw_mcp_servers()
+        mcp_servers["dramaclaw"]["env_vars"].append("PYTHONPATH")
+        client = backend_sdk.CodexClient(
+            codex_bin=bundled_codex,
+            cwd=tmp_path,
+            env=env,
+            model="DC-codex-agent-LLM",
+            model_provider="dramaclaw_gateway",
+            developer_instructions=service._codex_developer_instructions("default"),
+            config_overrides=service._codex_gateway_config_overrides(gateway_url),
+            thread_config_overrides=service._codex_mcp_config_overrides(mcp_servers),
+            turn_metadata={"dramaclaw_gateway_api_key": "per-turn-contract-key"},
+        )
+
+        try:
+            events = [
+                event
+                async for event in client.thread_start().stream("查询当前项目状态。")
+            ]
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
+
+    assert len(requests) == 1
+    tools = requests[0]["body"]["tools"]
+    assert not any(tool.get("type") == "tool_search" for tool in tools)
+    assert any(tool.get("type") == "function" for tool in tools)
+    assert any(
+        event.type == "complete" and event.text == "兼容模式正常。" for event in events
     )
 
 

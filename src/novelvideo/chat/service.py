@@ -94,9 +94,9 @@ _ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str]] = {}
 _ACTIVE_CODEX_TURNS_LOCK = threading.Lock()
 _CODEX_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant. Use the required dramaclaw MCP "
-    "server for all DramaClaw data reads and writes. Use native Responses Tool Search to "
-    "discover the scope-filtered concrete MCP tools, inspect their schemas, and call the "
-    "selected concrete tool directly. Do not guess a tool name or argument schema. "
+    "server for all DramaClaw data reads and writes. Inspect the available scope-filtered "
+    "concrete MCP tools and their schemas, then call the selected tool directly. Do not guess "
+    "a tool name or argument schema. "
     "Do not use shell commands, "
     "local file editing, web search, or other external tools."
 )
@@ -106,8 +106,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "explicitly ask to create/add/land nodes or a workflow on the canvas, answer in chat. Do not "
     "search Workflow Skills and do not call a canvas write tool merely because the requested "
     "content mentions images, audio, or video. "
-    "Use native Responses Tool Search on the required dramaclaw MCP server to discover the "
-    "scope-filtered concrete Freezone operations, then call the selected tool directly. "
+    "Inspect the available scope-filtered concrete operations on the required dramaclaw MCP "
+    "server, then call the selected tool directly. "
     "For any workflow, several connected nodes, grouped stages, storyboard, or media pipeline, "
     "load and follow the project Agent Skill named dramaclaw-workflows. Read that Skill only from "
     "the exact file URI advertised in the available Skills or dramaclaw resources; never invent a "
@@ -5482,9 +5482,9 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
         "memories.use_memories=false",
     ]
     # The repository ships complete metadata for the default Gateway slug;
-    # deployments may replace it with another verified catalog. Keep
-    # The Gateway and App Server preserve native Responses Tool Search, so the
-    # model catalog must keep it enabled for progressive concrete MCP loading.
+    # deployments may replace it with another verified catalog. In particular,
+    # Responses-to-Chat gateways must use a catalog with search disabled so
+    # Codex advertises concrete MCP tools instead of the unsupported tool_search.
     bundled_catalog = (
         Path(__file__).resolve().parents[3]
         / "deploy"
@@ -5530,10 +5530,6 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
     if entry is None or not required_fields.issubset(entry):
         raise RuntimeError(
             f"Codex model catalog has no complete entry for {configured_model}"
-        )
-    if entry.get("supports_search_tool") is not True:
-        raise RuntimeError(
-            f"Codex model catalog must enable supports_search_tool for {configured_model}"
         )
     if not str(entry.get("base_instructions") or "").strip():
         raise RuntimeError(
