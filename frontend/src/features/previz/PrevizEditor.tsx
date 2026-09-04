@@ -671,7 +671,12 @@ export function PrevizEditor({
             onSetActiveCamera={setActiveCamera}
           />
 
-          <div className="flex shrink-0 flex-col overflow-y-auto">
+          {/*
+            列宽定在这一层，不靠子面板各自带宽度：这个 div 没有宽度时取的是子面板的
+            max-content，最宽那一排会把整列撑出可视区，最后一个按钮直接被切在屏幕外。
+            边框和底色也一起收到这里——两个面板上下相接，各画各的边会在接缝处露出来。
+          */}
+          <div className="flex w-80 min-w-0 shrink-0 flex-col overflow-y-auto border-l border-white/10 bg-black/30">
             <PrevizInspector
               object={selectedObject}
               onChange={(patch) => {
