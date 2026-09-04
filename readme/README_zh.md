@@ -157,7 +157,7 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 - **图片工具** &mdash; 生成、编辑、重绘、扩图、重打光、放大、多视角、模板编辑、反推提示词、标记检测；图生图**风格墙内置 45 种漫剧风格**
 - **视频工具** &mdash; 文生 / 图生 / 首尾帧生视频，全能参考生成支持**文件、网页链接和画布内素材做参考**，视频编辑、擦除、放大、人声分离、运镜模板、镜头分析；推荐目录已含 Seedance 2.5
 - **音频** &mdash; 带声线库的语音合成、参考音色、音乐生成
-- **画布技能** &mdash; 一键技能：按上下文出线稿、按上下文出首帧、设置背景、场景 360、画面审校；再加一套 **11 个技能 + 60 个配方的工作流目录**（快速漫剧、电商广告、IP 角色广告、社媒内容、日漫 / 皮克斯 / 乐高 / 功夫喜剧等风格），自动帮你铺好整张生成图
+- **画布技能** &mdash; 一键技能：按上下文出线稿、按上下文出首帧、设置背景、场景 360、画面审校、节拍图规划
 - **为大画布而生** &mdash; 画布分页、元素大纲、小地图与视口书签、吸附对齐、分级渲染、多选与分组、快捷键、历史版本回滚、画布级锁
 - **提交回剧集** &mdash; 先预览影响，再把单个节点或整批结果写入资产库或某一集；也能按预设把剧集投影回画布
 
@@ -188,8 +188,7 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 </p>
 
 - **懂你的项目** &mdash; 查询进度、推进脚本 / 镜头任务、检查交付完整性并给出下一步建议
-- **直接上画布干活** &mdash; 创建并连接节点、更新节点数据、排版与分组、运行节点动作、一次搭出整张工作流图；每条画布指令都先在打开的浏览器里确认再执行
-- **对其它 agent 开放** &mdash; 本地 MCP 服务把 DramaClaw 暴露给 Claude Code、Codex 和任何 MCP 客户端；便携的 `agent-kit` 把同一套工作流打包给 Hermes、OpenClaw、WorkBuddy（仅本机回环，需显式信任开关）
+- **对其它 agent 开放** &mdash; 本地 MCP 服务把 DramaClaw 暴露给 Claude Code、Codex 和任何 MCP 客户端（仅本机回环，需显式信任开关），见 [MCP 接入 Claude Code](../docs/en/guides/mcp-claude-code.md)
 
 <br/>
 
@@ -197,7 +196,9 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 
 以下功能公开开发中，还没进正式版。可以盯着分支看，更欢迎来一起做。
 
-- **画布 + 智能体合成一条工作流** &mdash; 技能与配方走向社区生态：安装、导出、分享 bundle；让智能体规划、运行、审校整张画布图。设计文档：[`docs/zh/guides/community-skill-recipe-ecosystem-design.md`](../docs/zh/guides/community-skill-recipe-ecosystem-design.md)
+- **虾导直接上画布干活** &mdash; 智能体创建并连接节点、更新节点数据、排版与分组、运行节点动作、一次搭出整张工作流图，每条画布指令都先在打开的浏览器里确认再执行。在 `staging` 分支
+- **工作流目录与社区技能** &mdash; 一套 11 个工作流技能 + 60 个配方（快速漫剧、电商广告、IP 角色广告、社媒内容、日漫 / 皮克斯 / 乐高 / 功夫喜剧等风格），自动铺好整张生成图；技能与配方做成可安装、可导出、可分享的 bundle。在 `staging` 分支；设计文档：[社区技能 / 配方生态](https://github.com/dramaclaw/dramaclaw/blob/staging/docs/zh/guides/community-skill-recipe-ecosystem-design.md)
+- **agent-kit** &mdash; 便携包，把同一套 DramaClaw 工作流带给 Hermes、OpenClaw、WorkBuddy、Claude Code、Codex。在 `staging` 分支
 - **预演台** &mdash; 浏览器内的 3D 走位预演台，以画布节点的形式存在：多轨时间线、角色绑定与路径、真实镜头 / 传感器参数的相机模型、特写跟踪，取好的镜头直接送进下一个节点。分支：`feat/previz-canvas-node`
 - **互动剧** &mdash; 在画布上设置分支选择点，编译成 ink 故事并导出为独立 HTML 播放器，带试玩统计与路径覆盖。分支：`feat/canvas-fmv`
 - **互动广告** &mdash; 把上面的广告技能与配方和分支播放结合，做观众能自己选的产品视频
@@ -251,6 +252,16 @@ cp .env.example .env
 docker compose up -d --build   # 构建并起三个服务：api / newapi（内置网关）/ web
 ```
 
+网关是 Docker 在构建时直接从 [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) 的 `main` 分支拉源码构建的，只是跑起来的话不需要再 clone 一份。只改了 DramaClaw 代码？只重建两个本地服务：`docker compose up -d --build api web`。
+
+**连网关代码也要改？** 把它 clone 到 DramaClaw 旁边，让构建指向你的 checkout：
+
+```bash
+git clone https://github.com/dramaclaw/dramaclaw-gateway.git ../dramaclaw-gateway
+echo 'DRAMACLAW_GATEWAY_SRC=../dramaclaw-gateway' >> .env
+docker compose up -d --build newapi
+```
+
 **免构建** —— 改拉已发布镜像：
 
 ```bash
@@ -280,6 +291,8 @@ cp .env.example .env && $EDITOR .env
 
 uv run novelvideo api --port 8780   # 启动 REST API（CE 默认 inline 任务，无需 Ray/Redis）
 ```
+
+前端：`cd frontend && pnpm install && pnpm dev`。网关有自己的开发流程（`make dev-api` / `make dev-web`），见 [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/README.zh_CN.md#开发) 仓库。
 
 <br/>
 

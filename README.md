@@ -158,7 +158,7 @@ It's built for creators, indie studios and creative engineers — run the whole 
 - **Image tools** &mdash; generate, edit, redraw, outpaint, relight, upscale, multi-view, template edit, reverse-prompt, mark detection; a **style wall of 45 short-drama looks** for image-to-image
 - **Video tools** &mdash; text / image / keyframe to video, omni-reference generation with **file, web-link and on-canvas references**, video edit, erase, upscale, audio separation, camera templates, shot analysis; Seedance 2.5 in the recommended catalog
 - **Audio** &mdash; speech synthesis with a voice library, reference voices, music generation
-- **Canvas skills** &mdash; one-click skills such as sketch-from-context, frame-from-context, set-background, scene-360 and frame review, plus a **workflow catalog of 11 skills and 60 recipes** (short drama, e-commerce ads, IP character ads, social campaigns, anime / Pixar / LEGO / kung-fu styles…) that lay out whole generation graphs for you
+- **Canvas skills** &mdash; one-click skills such as sketch-from-context, frame-from-context, set-background, scene-360, frame review and beat-graph planning
 - **Built for big canvases** &mdash; canvas tabs, element outline, minimap and viewport bookmarks, snap-align, level-of-detail rendering, multi-select and group nodes, keyboard shortcuts, revision history with restore, per-canvas locking
 - **Commit to the series** &mdash; preview the impact, then promote a single node or a whole batch into the asset library or an episode; project the series back onto a canvas from presets
 
@@ -189,8 +189,7 @@ It's built for creators, indie studios and creative engineers — run the whole 
 </p>
 
 - **Knows your project** &mdash; checks progress, advances script / shot tasks, audits deliverable completeness and suggests next steps
-- **Works on the canvas** &mdash; creates and connects nodes, updates node data, lays out and groups nodes, runs node actions and builds whole workflow graphs; every canvas command is approved in the open browser before it runs
-- **Open to other agents** &mdash; a local MCP server exposes DramaClaw to Claude Code, Codex and any MCP client, and a portable `agent-kit` packages the same workflows for Hermes, OpenClaw and WorkBuddy (loopback-only, explicit trust flag)
+- **Open to other agents** &mdash; a local MCP server exposes DramaClaw to Claude Code, Codex and any MCP client (loopback-only, explicit trust flag); see [MCP for Claude Code](docs/en/guides/mcp-claude-code.md)
 
 <br/>
 
@@ -198,7 +197,9 @@ It's built for creators, indie studios and creative engineers — run the whole 
 
 These are being built in the open and are not in a release yet. Watch the branches, or come help.
 
-- **Canvas + agent as one workflow** &mdash; skills and recipes become a community ecosystem: install, export and share bundles; let the agent plan, run and review entire canvas graphs. Design: [`docs/zh/guides/community-skill-recipe-ecosystem-design.md`](./docs/zh/guides/community-skill-recipe-ecosystem-design.md)
+- **Xia Director on the canvas** &mdash; the agent creates and connects nodes, updates node data, lays out and groups nodes, runs node actions and builds whole workflow graphs, with every canvas command approved in the open browser first. On `staging`.
+- **Workflow catalog and community skills** &mdash; a catalog of 11 workflow skills and 60 recipes (short drama, e-commerce ads, IP character ads, social campaigns, anime / Pixar / LEGO / kung-fu styles…) that lay out whole generation graphs; skills and recipes as installable, exportable, shareable bundles. On `staging`; design: [community skill / recipe ecosystem](https://github.com/dramaclaw/dramaclaw/blob/staging/docs/zh/guides/community-skill-recipe-ecosystem-design.md)
+- **agent-kit** &mdash; a portable package that brings the same DramaClaw workflows to Hermes, OpenClaw, WorkBuddy, Claude Code and Codex. On `staging`
 - **Previz stage** &mdash; an in-browser 3D blocking stage as a canvas node: multi-track timeline, character rigs and paths, real lens / sensor camera model, close-up tracking, then capture the framed shot straight into the next node. Branch: `feat/previz-canvas-node`
 - **Interactive stories** &mdash; branching choice points on the canvas, compiled to an ink story and exported as a self-contained HTML player, with playtest stats and path coverage. Branch: `feat/canvas-fmv`
 - **Interactive ads** &mdash; the ad skills and recipes above, combined with branching playback, for product videos viewers can steer
@@ -252,6 +253,16 @@ cp .env.example .env
 docker compose up -d --build   # builds and starts three services: api / newapi (bundled gateway) / web
 ```
 
+The gateway is built from the `main` branch of [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway), fetched by Docker at build time — you do not need a second clone just to run. Only DramaClaw code changed? Rebuild the two local services: `docker compose up -d --build api web`.
+
+**Hacking on the gateway too?** Clone it next to DramaClaw and point the build at your checkout:
+
+```bash
+git clone https://github.com/dramaclaw/dramaclaw-gateway.git ../dramaclaw-gateway
+echo 'DRAMACLAW_GATEWAY_SRC=../dramaclaw-gateway' >> .env
+docker compose up -d --build newapi
+```
+
 **No build** — pull published images instead:
 
 ```bash
@@ -281,6 +292,8 @@ cp .env.example .env && $EDITOR .env
 
 uv run novelvideo api --port 8780   # start the REST API (CE defaults to inline tasks, no Ray/Redis)
 ```
+
+Frontend: `cd frontend && pnpm install && pnpm dev`. The gateway has its own dev loop (`make dev-api` / `make dev-web`) in the [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway#develop) repo.
 
 <br/>
 
