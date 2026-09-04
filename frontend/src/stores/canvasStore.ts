@@ -103,6 +103,12 @@ import { scopeProjectionGraphIds } from '@/features/freezone/projectionGraphIds'
 import { slugifyName } from '@/features/canvas/story/variableName';
 import { storyVariablesOfNode } from '@/features/canvas/story/storyVariableSelectors';
 import {
+  defaultStoryChoiceAnchor,
+  normalizeStoryChoiceInteraction,
+  type StoryChoiceInteraction,
+  type StoryChoicePresentation,
+} from '@/features/canvas/story/storyTypes';
+import {
   STORY_CLIP_NODE_HEIGHT,
   STORY_CLIP_NODE_WIDTH,
   resolveStoryGroupForChoiceConnection,
@@ -456,11 +462,13 @@ interface CanvasState {
   deleteEdge: (edgeId: string) => void;
   /** 故事模式:在两个视频节点间建一条选项边,order 自动取该源现有选项边数。返回边 id。 */
   addStoryChoiceEdge: (source: string, target: string, choiceText: string) => string | null;
-  /** 故事模式:patch 一条选项边的 data(文案/条件/效果)。 */
+  /** 故事模式:patch 一条选项边的 data(文案/剧情反馈/互动呈现/条件/效果)。 */
   updateStoryChoiceEdgeData: (
     edgeId: string,
-    patch: Partial<{ choiceText: string; condition: unknown; effects: unknown }>,
+    patch: Partial<{ choiceText: string; feedbackText: string; interaction: unknown; condition: unknown; effects: unknown }>,
   ) => void;
+  /** 选择点级互动呈现:同一源节点的所有选项统一使用底部/锚定/视频热区；锚点位置仍各自保留。 */
+  setStoryChoicePresentation: (edgeId: string, presentation: StoryChoicePresentation) => void;
   /** 限时选项:把某条选项边设为/取消默认(同源至多一条默认,设一个清同源其它)。 */
   setStoryDefaultChoice: (edgeId: string, isDefault: boolean) => void;
   /** 故事模式:把某视频节点设为唯一起点(清掉其它节点的 storyRole)。 */
@@ -1226,6 +1234,25 @@ function normalizeCanvasData(
   return {
     nodes: normalizedNodes,
     edges: normalizeEdgesWithNodes(scoped.edges, normalizedNodes),
+  };
+}
+
+/**
+ * `selected` 是 React Flow 的瞬时交互状态，不是画布内容。新建剧情选项边会先选中
+ * 以打开编辑器；若把这个标记随草稿或远端数据恢复，刷新后会错误重开编辑器。
+ */
+function clearHydratedSelection(canvas: CanvasHistorySnapshot): CanvasHistorySnapshot {
+  return {
+    nodes: canvas.nodes.map((node) => node.selected ? { ...node, selected: false } : node),
+    edges: canvas.edges.map((edge) => edge.selected ? { ...edge, selected: false } : edge),
+  };
+}
+
+/** `setCanvasData` 也供当前会话同步选中节点；仅边选中态会触发剧情编辑器，不能保留。 */
+function clearTransientEdgeSelection(canvas: CanvasHistorySnapshot): CanvasHistorySnapshot {
+  return {
+    nodes: canvas.nodes,
+    edges: canvas.edges.map((edge) => edge.selected ? { ...edge, selected: false } : edge),
   };
 }
 
@@ -2005,7 +2032,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 换画布/清空后，上一份画布留下的风格对账记账必须作废，否则重新 hydrate
     // 出来的图片节点会被当成「同一个节点接着算」，该补建的判成用户删了节点。
     resetStyleNodeSyncStates();
-    const normalizedCanvas = normalizeCanvasData(nodes, edges);
+    const normalizedCanvas = clearTransientEdgeSelection(normalizeCanvasData(nodes, edges));
 
     set({
       nodes: normalizedCanvas.nodes,
@@ -2051,7 +2078,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 换画布/清空后，上一份画布留下的风格对账记账必须作废，否则重新 hydrate
     // 出来的图片节点会被当成「同一个节点接着算」，该补建的判成用户删了节点。
     resetStyleNodeSyncStates();
-    const normalizedCanvas = normalizeCanvasData(draft.nodes, draft.edges);
+    const normalizedCanvas = clearHydratedSelection(normalizeCanvasData(draft.nodes, draft.edges));
 
     set({
       nodes: normalizedCanvas.nodes,
@@ -4630,6 +4657,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const order = nextStoryChoiceOrder(state.edges, source);
       const id = uniqueStoryChoiceEdgeId(state.edges, source, target, order);
       createdId = id;
+      const sourceChoice = state.edges.find(
+        (candidate) => candidate.type === STORY_CHOICE_EDGE_TYPE && candidate.source === source,
+      );
+      const inheritedPresentation = normalizeStoryChoiceInteraction(
+        (sourceChoice?.data as { interaction?: StoryChoiceInteraction } | undefined)?.interaction,
+      ).presentation;
       const edge = {
         id,
         source,
@@ -4637,7 +4670,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         sourceHandle: 'source',
         targetHandle: 'target',
         type: STORY_CHOICE_EDGE_TYPE,
-        data: { choiceText, order },
+        data: {
+          choiceText,
+          order,
+          ...(inheritedPresentation !== 'overlay'
+            ? { interaction: { presentation: inheritedPresentation, anchor: defaultStoryChoiceAnchor(inheritedPresentation) } }
+            : {}),
+        },
       } as CanvasEdge;
       return {
         edges: [...state.edges, edge],
@@ -4656,6 +4695,49 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         if (edge.id !== edgeId) return edge;
         changed = true;
         return { ...edge, data: { ...(edge.data as object), ...patch } } as CanvasEdge;
+      });
+      if (!changed) return {};
+      return {
+        edges,
+        history: { past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)), future: [] },
+        dragHistorySnapshot: null,
+        ...trackEdit(state),
+      };
+    });
+  },
+
+  setStoryChoicePresentation: (edgeId, presentation) => {
+    set((state) => {
+      const selected = state.edges.find((edge) => edge.id === edgeId);
+      if (!selected || selected.type !== STORY_CHOICE_EDGE_TYPE) return {};
+      let changed = false;
+      const edges = state.edges.map((edge) => {
+        if (edge.type !== STORY_CHOICE_EDGE_TYPE || edge.source !== selected.source) return edge;
+        const data = edge.data as { interaction?: StoryChoiceInteraction } | undefined;
+        const current = normalizeStoryChoiceInteraction(data?.interaction);
+        const needsDefaultAnchor = presentation !== 'overlay' && !current.anchor;
+        const needsBakedDimensions = presentation === 'baked-video'
+          && (!current.anchor?.width || !current.anchor?.height);
+        const nextAnchor = needsDefaultAnchor
+          ? defaultStoryChoiceAnchor(presentation)
+          : presentation === 'baked-video' && current.anchor
+            ? {
+                ...current.anchor,
+                width: current.anchor.width ?? defaultStoryChoiceAnchor('baked-video').width,
+                height: current.anchor.height ?? defaultStoryChoiceAnchor('baked-video').height,
+              }
+            : current.anchor;
+        const next = normalizeStoryChoiceInteraction({
+          ...current,
+          presentation,
+          ...(nextAnchor ? { anchor: nextAnchor } : {}),
+        });
+        if (
+          current.presentation === presentation
+          && (data?.interaction ? !needsDefaultAnchor && !needsBakedDimensions : presentation === 'overlay')
+        ) return edge;
+        changed = true;
+        return { ...edge, data: { ...(edge.data as object), interaction: next } } as CanvasEdge;
       });
       if (!changed) return {};
       return {

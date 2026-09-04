@@ -47,6 +47,34 @@ describe("canvasStore — storyChoiceEdge survives normalizeEdgesWithNodes", () 
     );
   });
 
+  it("does not restore a selected storyChoiceEdge when reloading a canvas", () => {
+    const nodeA = {
+      id: "vid-a",
+      type: CANVAS_NODE_TYPES.video,
+      position: { x: 0, y: 0 },
+      data: { videoUrl: "/static/a.mp4" },
+    };
+    const nodeB = {
+      id: "vid-b",
+      type: CANVAS_NODE_TYPES.video,
+      position: { x: 400, y: 0 },
+      data: { videoUrl: "/static/b.mp4" },
+    };
+    const selectedChoice = {
+      id: "choice-1",
+      type: STORY_CHOICE_EDGE_TYPE,
+      source: "vid-a",
+      target: "vid-b",
+      selected: true,
+      data: { choiceText: "走左边", order: 0 },
+    };
+
+    useCanvasStore.getState().setCanvasData([nodeA, nodeB], [selectedChoice]);
+
+    expect(useCanvasStore.getState().edges.find((edge) => edge.id === "choice-1")?.selected)
+      .toBe(false);
+  });
+
   it("drops a storyChoiceEdge whose target node is missing", () => {
     const nodeA = {
       id: "vid-a",

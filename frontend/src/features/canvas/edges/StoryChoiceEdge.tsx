@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from '@xyflow/react';
+import { Pencil, Crosshair } from 'lucide-react';
 
 import { useShallow } from 'zustand/react/shallow';
 
@@ -14,13 +15,16 @@ const PARALLEL_OFFSET_STEP = 48;
 
 /**
  * 故事选项边:贝塞尔曲线 + 中点可读的选项文案 chip。
- * 边被选中时在 chip 上方打开编辑器(文案/条件/效果)。
+ * 点击选择 chip 后打开居中编辑弹窗(文案/互动/条件/效果)。
  */
 export const StoryChoiceEdge = memo(function StoryChoiceEdge(props: EdgeProps) {
   const { id, source, target, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, markerEnd, data, selected } = props;
   const { t } = useTranslation();
   const edgeData = data as StoryChoiceEdgeData | undefined;
   const choiceText = edgeData?.choiceText ?? '';
+  const selectEdge = useCanvasStore((s) => s.onEdgesChange);
+  const hasAnchoredInteraction = edgeData?.interaction?.presentation === 'object-anchor'
+    || edgeData?.interaction?.presentation === 'baked-video';
   const groupVariables = useCanvasStore(
     useShallow((s) => selectStoryVariablesForEdgeSource(s.nodes, source)),
   );
@@ -61,38 +65,45 @@ export const StoryChoiceEdge = memo(function StoryChoiceEdge(props: EdgeProps) {
       />
       <EdgeLabelRenderer>
         {/* 选项文案 chip */}
-        <div
-          className="nodrag nopan absolute max-w-[180px] truncate rounded-full border border-white/15 bg-[#17191d]/95 px-3 py-1 text-xs text-white/90 shadow-lg backdrop-blur"
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            // EdgeLabelRenderer 的标签不在 SVG 边上，点击不会自动触发 React Flow 的边选中。
+            // 显式选中后才显示该选项的剧情、反馈和锚点编辑器。
+            selectEdge([{ type: 'select', id, selected: true }]);
+          }}
+          title={t('canvas.story.choiceEditorTitle')}
+          aria-label={t('canvas.story.choiceEditorTitle')}
+          className="nodrag nopan group absolute flex max-w-[180px] items-center gap-1 rounded-full border border-white/15 bg-[#17191d]/95 px-3 py-1 text-left text-xs text-white/90 shadow-lg backdrop-blur transition-colors hover:border-cyan-200/45 hover:bg-[#20242a]"
           style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`, pointerEvents: 'all' }}
         >
-          {choiceText || t('canvas.story.choicePlaceholder')}
+          <span className="min-w-0 truncate">{choiceText || t('canvas.story.choicePlaceholder')}</span>
           {edgeData?.condition && <span className="ml-1 opacity-70">{'{}'}</span>}
           {edgeData?.effects && edgeData.effects.length > 0 && <span className="ml-1 opacity-70">±</span>}
+          {hasAnchoredInteraction && <Crosshair className="h-3 w-3 shrink-0 text-cyan-200" aria-hidden />}
           {edgeData?.needsReview && (
             <span className="ml-1 text-amber-400" title={edgeData.reviewNote}>
               ⚠
             </span>
           )}
-        </div>
+          <Pencil className="h-3 w-3 shrink-0 text-white/40 transition-colors group-hover:text-cyan-100" aria-hidden />
+        </button>
 
-        {/* 选中时打开编辑器 */}
+        {/* 选中时打开编辑弹窗；不再受边中点和故事组层级的尺寸限制。 */}
         {selected && (
-          <div
-            // nodrag nopan:否则 ReactFlow 把编辑器上的鼠标按下当成画布拖拽(抓手光标、吃掉点击)。
-            // 高 z-index:压过打组后(选中态)抬高 z-index 的故事组盒子,否则编辑器被组盖住点不到。
-            className="nodrag nopan absolute"
-            style={{ transform: `translate(-50%, -120%) translate(${labelX}px, ${labelY}px)`, pointerEvents: 'all', zIndex: 1001 }}
-          >
-            <StoryChoiceEditor
-              edgeId={id}
-              sourceNodeId={source}
-              choiceText={choiceText}
-              condition={edgeData?.condition}
-              effects={edgeData?.effects}
-              isDefault={edgeData?.isDefault}
-              variables={groupVariables}
-            />
-          </div>
+          <StoryChoiceEditor
+            edgeId={id}
+            sourceNodeId={source}
+            choiceText={choiceText}
+            feedbackText={edgeData?.feedbackText}
+            interaction={edgeData?.interaction}
+            condition={edgeData?.condition}
+            effects={edgeData?.effects}
+            isDefault={edgeData?.isDefault}
+            variables={groupVariables}
+            onClose={() => selectEdge([{ type: 'select', id, selected: false }])}
+          />
         )}
       </EdgeLabelRenderer>
     </>

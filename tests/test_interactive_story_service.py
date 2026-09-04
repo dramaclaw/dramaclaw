@@ -15,6 +15,8 @@ from novelvideo.interactive_story.canvas_mapper import (
 from novelvideo.interactive_story.models import (
     CreateInteractiveStoryRequest,
     GetInteractiveStoryRequest,
+    StoryChoiceAnchor,
+    StoryChoiceInteraction,
     StoryDraftV1,
     StoryMediaRef,
     StoryPatchV1,
@@ -78,7 +80,59 @@ def test_mapper_round_trip_preserves_domain_ids_conditions_and_effects(
         choice.id for choice in story.choices
     ]
     assert restored.choices[0].effects[0].variable == "courage"
+    assert restored.choices[0].feedback_text == story.choices[0].feedback_text
+    assert restored.choices[0].interaction == story.choices[0].interaction
+    assert restored.segments[0].choice_loop == story.segments[0].choice_loop
     assert restored.choices[2].condition == story.choices[2].condition
+
+
+def test_mapper_preserves_overlay_interaction_with_authored_anchor(
+    story: StoryDraftV1,
+) -> None:
+    edited = story.model_copy(deep=True)
+    edited.choices[0].interaction = StoryChoiceInteraction(
+        presentation="overlay",
+        anchor=StoryChoiceAnchor(x=0.23, y=0.81, object_label="保留给下次锚定的灯"),
+        ui_style="warning",
+        motion="pulse",
+        transition="flash",
+    )
+
+    projection = project_story_to_canvas(edited)
+    canvas = {"revision": 7, "nodes": projection.nodes, "edges": projection.edges}
+    restored = story_from_canvas(canvas, edited.story_id)
+    projected_again = project_story_to_canvas(restored)
+
+    assert restored.choices[0].interaction == edited.choices[0].interaction
+    edge = next(item for item in projected_again.edges if item["data"]["storyChoiceId"] == edited.choices[0].id)
+    assert edge["data"]["interaction"] == {
+        "presentation": "overlay",
+        "anchor": {"x": 0.23, "y": 0.81, "objectLabel": "保留给下次锚定的灯"},
+        "uiStyle": "warning",
+        "motion": "pulse",
+        "transition": "flash",
+    }
+
+
+def test_mapper_preserves_baked_video_rectangular_hotspot(story: StoryDraftV1) -> None:
+    edited = story.model_copy(deep=True)
+    edited.choices[0].interaction = StoryChoiceInteraction(
+        presentation="baked_video",
+        anchor=StoryChoiceAnchor(x=0.52, y=0.63, width=0.28, height=0.16),
+    )
+
+    projection = project_story_to_canvas(edited)
+    canvas = {"revision": 7, "nodes": projection.nodes, "edges": projection.edges}
+    restored = story_from_canvas(canvas, edited.story_id)
+
+    assert restored.choices[0].interaction == edited.choices[0].interaction
+    edge = next(item for item in projection.edges if item["data"]["storyChoiceId"] == edited.choices[0].id)
+    assert edge["data"]["interaction"]["anchor"] == {
+        "x": 0.52,
+        "y": 0.63,
+        "width": 0.28,
+        "height": 0.16,
+    }
 
 
 def test_mapper_projects_composite_story_clips_without_overlap(

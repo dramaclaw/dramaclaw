@@ -64,6 +64,113 @@ describe('compileGraphToInk', () => {
     expect(result.placeholderByNodeId.intro).toEqual({ text: '雨夜,门铃响起', label: '开场' });
   });
 
+  it('把选择阶段循环片段与主剧情视频分开编译', () => {
+    const intro = videoNode('intro', 'story.mp4', 'start');
+    intro.data = { ...intro.data, choiceLoopVideoUrl: 'choice-loop.mp4' };
+    const result = compileGraphToInk(
+      [intro, videoNode('meet', 'meet.mp4')],
+      [choiceEdge('intro', 'meet', '继续', 0)],
+    );
+
+    expect(result.clipByNodeId.intro).toBe('story.mp4');
+    expect(result.choiceLoopClipByNodeId).toEqual({ intro: 'choice-loop.mp4' });
+  });
+
+  it('关键选择把变量效果编译为不含数值的语义箭头，与剧情反馈一起关联', () => {
+    const edge = choiceEdge('intro', 'meet', '接过手电筒', 0);
+    edge.data = {
+      ...edge.data,
+      feedbackText: '她没有松手，只是点了点头。',
+      effects: [{ var: 'trust', delta: 1 }],
+    };
+    const result = compileGraphToInk(
+      [videoNode('intro', 'intro.mp4', 'start'), videoNode('meet', 'meet.mp4')],
+      [edge],
+      [{ name: 'trust', label: '信任', initial: 0 }],
+    );
+    expect(result.choiceFeedbackById['feedback-0']).toBe('她没有松手，只是点了点头。');
+    expect(result.choiceStateChangesById['feedback-0']).toEqual([{ label: '信任', direction: 'up' }]);
+    expect(result.ink).toContain('[接过手电筒 # choice-feedback: feedback-0]');
+    expect(result.clipByNodeId).toEqual({ intro: 'intro.mp4', meet: 'meet.mp4' });
+  });
+
+  it('没有剧情反馈的常规选择即使改变变量，也不产生状态箭头', () => {
+    const edge = choiceEdge('intro', 'meet', '继续前进', 0);
+    edge.data = { ...edge.data, effects: [{ var: 'trust', delta: 1 }] };
+    const result = compileGraphToInk(
+      [videoNode('intro', 'intro.mp4', 'start'), videoNode('meet', 'meet.mp4')],
+      [edge],
+      [{ name: 'trust', label: '信任', initial: 0 }],
+    );
+    expect(result.choiceFeedbackById).toEqual({});
+    expect(result.choiceStateChangesById).toEqual({});
+  });
+
+  it('物品锚定互动通过 Ink choice tag 与具体选项关联', () => {
+    const edge = choiceEdge('intro', 'meet', '拿起手电筒', 0);
+    edge.data = {
+      ...edge.data,
+      interaction: {
+        presentation: 'object-anchor',
+        anchor: { x: 0.68, y: 0.64, objectLabel: '手电筒' },
+        uiStyle: 'glass',
+        motion: 'pop',
+      },
+    };
+    const result = compileGraphToInk(
+      [videoNode('intro', 'intro.mp4', 'start'), videoNode('meet', 'meet.mp4')],
+      [edge],
+    );
+    expect(result.choiceInteractionById['interaction-0']).toEqual({
+      presentation: 'object-anchor',
+      anchor: { x: 0.68, y: 0.64, objectLabel: '手电筒' },
+      uiStyle: 'glass',
+      motion: 'pop',
+      transition: 'fade',
+    });
+    expect(result.ink).toContain('[拿起手电筒 # choice-interaction: interaction-0]');
+  });
+
+  it('视频内 UI 热区保留中心点与矩形宽高', () => {
+    const edge = choiceEdge('intro', 'meet', '打开舱门', 0);
+    edge.data = {
+      ...edge.data,
+      interaction: {
+        presentation: 'baked-video',
+        anchor: { x: 0.58, y: 0.62, width: 0.3, height: 0.16 },
+      },
+    };
+    const result = compileGraphToInk(
+      [videoNode('intro', 'intro.mp4', 'start'), videoNode('meet', 'meet.mp4')],
+      [edge],
+    );
+
+    expect(result.choiceInteractionById['interaction-0']?.anchor).toEqual({
+      x: 0.58,
+      y: 0.62,
+      width: 0.3,
+      height: 0.16,
+    });
+  });
+
+  it('缺少宽高的 baked-video 不兼容为旧点位，直接回退普通选项', () => {
+    const edge = choiceEdge('intro', 'meet', '打开舱门', 0);
+    edge.data = {
+      ...edge.data,
+      interaction: {
+        presentation: 'baked-video',
+        anchor: { x: 0.58, y: 0.62 },
+      },
+    };
+    const result = compileGraphToInk(
+      [videoNode('intro', 'intro.mp4', 'start'), videoNode('meet', 'meet.mp4')],
+      [edge],
+    );
+
+    expect(result.choiceInteractionById).toEqual({});
+    expect(result.ink).not.toContain('choice-interaction:');
+  });
+
   it('选项按 order 升序排列', () => {
     const nodes = [
       videoNode('a', 'a.mp4', 'start'),

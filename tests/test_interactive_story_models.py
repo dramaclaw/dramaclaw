@@ -39,6 +39,13 @@ def test_example_story_round_trips_and_expresses_two_choice_points_two_endings(
     story = StoryDraftV1.model_validate(example_payload)
 
     assert story.start_segment_id == "arrival"
+    assert story.choices[0].feedback_text
+    assert story.choices[1].feedback_text == ""
+    assert story.choices[0].interaction.presentation == "object_anchor"
+    assert story.choices[0].interaction.anchor is not None
+    assert story.choices[0].interaction.anchor.object_label == "站台边缘的手电筒"
+    assert story.segments[0].choice_loop is not None
+    assert "无缝循环" in story.segments[0].choice_loop.production_notes
     assert len({choice.source_segment_id for choice in story.choices}) == 2
     assert [segment.ending_label for segment in story.segments if segment.kind == "ending"] == [
         "GE",
@@ -88,6 +95,18 @@ def test_story_rejects_outgoing_choice_from_ending(example_payload: dict) -> Non
         StoryDraftV1.model_validate(payload)
 
 
+def test_story_rejects_choice_loop_without_outgoing_choices(example_payload: dict) -> None:
+    payload = copy.deepcopy(example_payload)
+    ending = next(segment for segment in payload["segments"] if segment["kind"] == "ending")
+    ending["choice_loop"] = {
+        "description": "不应存在的选择循环",
+        "media": {"source": "placeholder", "status": "missing", "version": 1},
+    }
+
+    with pytest.raises(ValidationError, match="defines choice_loop but has no outgoing choices"):
+        StoryDraftV1.model_validate(payload)
+
+
 def test_story_rejects_unknown_variable_in_condition_and_effect(example_payload: dict) -> None:
     condition_payload = copy.deepcopy(example_payload)
     condition_payload["choices"][2]["condition"]["variable"] = "unknown"
@@ -117,6 +136,38 @@ def test_story_rejects_ready_external_media_without_reference(example_payload: d
     }
 
     with pytest.raises(ValidationError, match="requires asset_id or url"):
+        StoryDraftV1.model_validate(payload)
+
+
+def test_story_rejects_anchored_interaction_without_a_hotspot(example_payload: dict) -> None:
+    payload = copy.deepcopy(example_payload)
+    payload["choices"][0]["interaction"] = {"presentation": "baked_video"}
+
+    with pytest.raises(ValidationError, match="require an anchor"):
+        StoryDraftV1.model_validate(payload)
+
+
+def test_story_rejects_baked_interaction_without_a_rectangular_hotspot(
+    example_payload: dict,
+) -> None:
+    payload = copy.deepcopy(example_payload)
+    payload["choices"][0]["interaction"] = {
+        "presentation": "baked_video",
+        "anchor": {"x": 0.5, "y": 0.5},
+    }
+
+    with pytest.raises(ValidationError, match="require hotspot width and height"):
+        StoryDraftV1.model_validate(payload)
+
+
+def test_story_rejects_hotspot_extending_outside_video_frame(example_payload: dict) -> None:
+    payload = copy.deepcopy(example_payload)
+    payload["choices"][0]["interaction"] = {
+        "presentation": "baked_video",
+        "anchor": {"x": 0.05, "y": 0.5, "width": 0.2, "height": 0.2},
+    }
+
+    with pytest.raises(ValidationError, match="hotspot width must stay inside"):
         StoryDraftV1.model_validate(payload)
 
 

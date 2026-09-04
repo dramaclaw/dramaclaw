@@ -31,6 +31,70 @@ describe('storyRuntimeStore', () => {
     expect(s.currentChoices.map((c) => c.text)).toEqual(['去见面']);
   });
 
+  it('保存选择阶段独立循环片段表，主视频地址保持不变', () => {
+    const intro = v('intro', 'story.mp4', 'start');
+    intro.data = { ...intro.data, choiceLoopVideoUrl: 'choice-loop.mp4' };
+    const compiled = compileGraphToInk(
+      [intro, v('meet', 'meet.mp4')],
+      [e('intro', 'meet', '继续', 0)],
+    );
+
+    useStoryRuntimeStore.getState().enterPlay(compiled);
+    const state = useStoryRuntimeStore.getState();
+    expect(state.currentClipUrl).toBe('story.mp4');
+    expect(state.choiceLoopClipByNodeId).toEqual({ intro: 'choice-loop.mp4' });
+  });
+
+  it('从编译后的 Ink choice tag 读取剧情反馈和语义状态箭头，不改变当前视频', () => {
+    const edge = e('intro', 'meet', '接过手电筒', 0);
+    edge.data = {
+      ...edge.data,
+      feedbackText: '她把手电筒递给了你。',
+      effects: [{ var: 'trust', delta: 1 }],
+    };
+    const compiled = compileGraphToInk(
+      [v('intro', 'intro.mp4', 'start'), v('meet', 'meet.mp4')],
+      [edge],
+      [{ name: 'trust', label: '信任', initial: 0 }],
+    );
+    useStoryRuntimeStore.getState().enterPlay(compiled);
+
+    const s = useStoryRuntimeStore.getState();
+    expect(s.error).toBeNull();
+    expect(s.currentClipUrl).toBe('intro.mp4');
+    expect(s.currentChoices[0]).toMatchObject({
+      text: '接过手电筒',
+      feedbackText: '她把手电筒递给了你。',
+      stateChanges: [{ label: '信任', direction: 'up' }],
+    });
+  });
+
+  it('从编译后的 Ink choice tag 读取物品锚定互动规格', () => {
+    const edge = e('intro', 'meet', '拿起手电筒', 0);
+    edge.data = {
+      ...edge.data,
+      interaction: {
+        presentation: 'object-anchor',
+        anchor: { x: 0.68, y: 0.64, objectLabel: '手电筒' },
+        uiStyle: 'tag',
+        motion: 'pulse',
+      },
+    };
+    const compiled = compileGraphToInk(
+      [v('intro', 'intro.mp4', 'start'), v('meet', 'meet.mp4')],
+      [edge],
+    );
+    useStoryRuntimeStore.getState().enterPlay(compiled);
+
+    expect(useStoryRuntimeStore.getState().currentChoices[0].interaction).toEqual({
+      presentation: 'object-anchor',
+      anchor: { x: 0.68, y: 0.64, objectLabel: '手电筒' },
+      uiStyle: 'tag',
+      motion: 'pulse',
+      transition: 'fade',
+    });
+  });
+
   it('choose 推进到下一片段,叶子节点进入 ended', () => {
     const compiled = compileGraphToInk(
       [v('intro', 'intro.mp4', 'start'), v('meet', 'meet.mp4')],
@@ -94,7 +158,7 @@ describe('storyRuntimeStore', () => {
     expect(useStoryRuntimeStore.getState().story).not.toBeNull();
 
     // ink 内容含非法语法：函数调用括号不匹配，强制 Compiler 抛错
-    useStoryRuntimeStore.getState().enterPlay({ ink: '~ badFunc(', clipByNodeId: {}, knotByNodeId: {}, choiceTimeByNodeId: {}, defaultChoiceIndexByNodeId: {}, endingByNodeId: {}, placeholderByNodeId: {}, warnings: [], variables: [] });
+    useStoryRuntimeStore.getState().enterPlay({ ink: '~ badFunc(', clipByNodeId: {}, choiceLoopClipByNodeId: {}, knotByNodeId: {}, choiceTimeByNodeId: {}, defaultChoiceIndexByNodeId: {}, endingByNodeId: {}, placeholderByNodeId: {}, choiceFeedbackById: {}, choiceStateChangesById: {}, choiceInteractionById: {}, warnings: [], variables: [] });
     const s = useStoryRuntimeStore.getState();
     expect(s.phase).toBe('error');
     expect(s.error).toBeTruthy();
@@ -209,18 +273,4 @@ describe('storyRuntimeStore', () => {
     expect(keys).toEqual([]);
   });
 
-  it('currentVariables 反映效果累加(供 HUD 显示)', () => {
-    const nodes = [v('intro', 'intro.mp4', 'start'), v('meet', 'meet.mp4')];
-    const edges: CanvasEdge[] = [
-      { id: 'intro->meet', source: 'intro', target: 'meet', type: STORY_CHOICE_EDGE_TYPE,
-        data: { choiceText: '夸她', order: 0, effects: [{ var: 'fav', delta: 3 }] } } as CanvasEdge,
-    ];
-    const compiled = compileGraphToInk(nodes, edges, [{ name: 'fav', label: '好感度', initial: 0 }]);
-    const store = useStoryRuntimeStore.getState();
-    store.enterPlay(compiled);
-    // 起点:好感度初始 0
-    expect(useStoryRuntimeStore.getState().currentVariables).toEqual([{ name: 'fav', label: '好感度', value: 0 }]);
-    store.choose(0); // 夸她 → 好感度 +3
-    expect(useStoryRuntimeStore.getState().currentVariables).toEqual([{ name: 'fav', label: '好感度', value: 3 }]);
-  });
 });

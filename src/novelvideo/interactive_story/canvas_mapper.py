@@ -9,6 +9,8 @@ from typing import Any
 from novelvideo.interactive_story.models import (
     StoryCharacter,
     StoryChoice,
+    StoryChoiceInteraction,
+    StoryChoiceLoop,
     StoryCondition,
     StoryConditionGroup,
     StoryDraftV1,
@@ -130,6 +132,22 @@ def project_story_to_canvas(
                 "storyMedia": segment.media.model_dump(exclude_none=True),
             }
         )
+        _set_optional(
+            data,
+            "storyChoiceLoop",
+            {
+                "description": segment.choice_loop.description,
+                "productionNotes": segment.choice_loop.production_notes,
+                "media": segment.choice_loop.media.model_dump(exclude_none=True),
+            }
+            if segment.choice_loop
+            else None,
+        )
+        _set_optional(
+            data,
+            "choiceLoopVideoUrl",
+            segment.choice_loop.media.url if segment.choice_loop else None,
+        )
         _set_optional(data, "storyRole", "start" if segment.id == story.start_segment_id else None)
         _set_optional(data, "choiceTimeLimitSec", segment.choice_time_limit_sec)
         _set_optional(data, "endingLabel", segment.ending_label)
@@ -183,6 +201,12 @@ def project_story_to_canvas(
                 "choiceText": choice.text,
                 "order": choice.order,
             }
+        )
+        _set_optional(data, "feedbackText", choice.feedback_text or None)
+        _set_optional(
+            data,
+            "interaction",
+            _interaction_to_canvas(choice.interaction),
         )
         _set_optional(
             data,
@@ -257,6 +281,7 @@ def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV1:
                 choice_time_limit_sec=_positive_int(data.get("choiceTimeLimitSec")),
                 production_notes=str(data.get("storyProductionNotes") or ""),
                 media=media,
+                choice_loop=_choice_loop_from_canvas(data),
             )
         )
     if len(starts) != 1:
@@ -288,6 +313,10 @@ def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV1:
                     StoryEffect(variable=str(effect.get("var") or ""), delta=int(effect.get("delta") or 0))
                     for effect in _dict_list(data.get("effects"))
                 ],
+                feedback_text=str(data.get("feedbackText") or ""),
+                interaction=StoryChoiceInteraction.model_validate(
+                    _interaction_from_canvas(data.get("interaction"))
+                ),
                 is_default=data.get("isDefault") is True,
             )
         )
@@ -413,6 +442,69 @@ def _condition_from_canvas(
     )
 
 
+def _interaction_from_canvas(raw: Any) -> dict[str, Any]:
+    """Translate browser-friendly interaction keys into the domain contract."""
+
+    if not isinstance(raw, dict):
+        return {}
+    anchor = raw.get("anchor")
+    return {
+        "presentation": str(raw.get("presentation") or "overlay").replace("-", "_"),
+        **(
+            {
+                "anchor": {
+                    "x": anchor.get("x"),
+                    "y": anchor.get("y"),
+                    **({"width": anchor.get("width")} if anchor.get("width") is not None else {}),
+                    **({"height": anchor.get("height")} if anchor.get("height") is not None else {}),
+                    "object_label": str(anchor.get("objectLabel") or ""),
+                }
+            }
+            if isinstance(anchor, dict)
+            else {}
+        ),
+        "ui_style": raw.get("uiStyle") or "glass",
+        "motion": raw.get("motion") or "fade",
+        "transition": raw.get("transition") or "fade",
+    }
+
+
+def _interaction_to_canvas(interaction: StoryChoiceInteraction) -> dict[str, Any] | None:
+    """Keep authored metadata unless the whole interaction is the protocol default."""
+
+    if (
+        interaction.presentation == "overlay"
+        and interaction.anchor is None
+        and interaction.ui_style == "glass"
+        and interaction.motion == "fade"
+        and interaction.transition == "fade"
+    ):
+        return None
+    return {
+        "presentation": interaction.presentation.replace("_", "-"),
+        **(
+            {
+                "anchor": {
+                    "x": interaction.anchor.x,
+                    "y": interaction.anchor.y,
+                    **({"width": interaction.anchor.width} if interaction.anchor.width is not None else {}),
+                    **({"height": interaction.anchor.height} if interaction.anchor.height is not None else {}),
+                    **(
+                        {"objectLabel": interaction.anchor.object_label}
+                        if interaction.anchor.object_label
+                        else {}
+                    ),
+                }
+            }
+            if interaction.anchor
+            else {}
+        ),
+        "uiStyle": interaction.ui_style,
+        "motion": interaction.motion,
+        "transition": interaction.transition,
+    }
+
+
 def _media_from_canvas(data: dict[str, Any]) -> StoryMediaRef:
     raw = data.get("storyMedia")
     media = StoryMediaRef.model_validate(raw) if isinstance(raw, dict) else StoryMediaRef()
@@ -427,6 +519,28 @@ def _media_from_canvas(data: dict[str, Any]) -> StoryMediaRef:
         asset_id=media.asset_id,
         url=video_url,
         version=media.version,
+    )
+
+
+def _choice_loop_from_canvas(data: dict[str, Any]) -> StoryChoiceLoop | None:
+    raw = data.get("storyChoiceLoop")
+    if not isinstance(raw, dict):
+        return None
+    media_raw = raw.get("media")
+    media = StoryMediaRef.model_validate(media_raw) if isinstance(media_raw, dict) else StoryMediaRef()
+    video_url = _optional_text(data.get("choiceLoopVideoUrl"))
+    if video_url:
+        media = StoryMediaRef(
+            source="imported" if media.source == "placeholder" else media.source,
+            status="ready",
+            asset_id=media.asset_id,
+            url=video_url,
+            version=media.version,
+        )
+    return StoryChoiceLoop(
+        description=_required_text(raw.get("description"), fallback="选择界面循环动画"),
+        production_notes=str(raw.get("productionNotes") or ""),
+        media=media,
     )
 
 

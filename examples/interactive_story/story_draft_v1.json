@@ -41,6 +41,15 @@
         "source": "placeholder",
         "status": "missing",
         "version": 1
+      },
+      "choice_loop": {
+        "description": "列车停稳后，女孩保持敲窗姿势，雨水和车厢灯光轻微流动。",
+        "production_notes": "2–4 秒无缝循环；镜头固定；女孩、车窗和手电筒位置不得漂移；首尾帧连续。",
+        "media": {
+          "source": "placeholder",
+          "status": "missing",
+          "version": 1
+        }
       }
     },
     {
@@ -99,6 +108,18 @@
           "delta": 1
         }
       ],
+      "feedback_text": "女孩没有松开视线，却侧身给你让出了站台的路。",
+      "interaction": {
+        "presentation": "object_anchor",
+        "anchor": {
+          "x": 0.68,
+          "y": 0.64,
+          "object_label": "站台边缘的手电筒"
+        },
+        "ui_style": "glass",
+        "motion": "pop",
+        "transition": "fade"
+      },
       "is_default": false
     },
     {
@@ -123,6 +144,7 @@
         "value": 1
       },
       "effects": [],
+      "feedback_text": "门锁发出一声轻响，钟声忽然停了。",
       "is_default": false
     },
     {

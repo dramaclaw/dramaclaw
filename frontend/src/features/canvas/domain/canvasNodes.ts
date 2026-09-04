@@ -232,6 +232,17 @@ export interface VideoNodeData extends NodeDisplayData {
   storyProductionNotes?: string;
   /** 素材来源、任务状态和版本；播放器仍读取 videoUrl。 */
   storyMedia?: StoryMediaMetadata;
+  /**
+   * 选择阶段专用的短循环片段。主剧情视频只播放一次；进入互动后优先播放此素材，
+   * 素材缺失时播放器停留在主视频尾帧。
+   */
+  storyChoiceLoop?: {
+    description: string;
+    productionNotes?: string;
+    media?: StoryMediaMetadata;
+  };
+  /** 选择阶段循环片段的实际播放地址；与主剧情 videoUrl 分离。 */
+  choiceLoopVideoUrl?: string | null;
   /** 互动影游:选项窗口秒数(每源片段一个)。空/0 = 不限时(无限等待)。 */
   choiceTimeLimitSec?: number;
   /** 互动影游:结局标(如 GE/NE/BE),仅叶子结局片段。结局页作 badge 显示。 */

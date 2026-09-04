@@ -63,11 +63,18 @@ V1 supports integer variables only. The initial value must be within the optiona
   "character_ids": ["traveler"],
   "choice_time_limit_sec": null,
   "production_notes": "镜头与连续性提示",
-  "media": {"source":"placeholder","status":"missing","version":1}
+  "media": {"source":"placeholder","status":"missing","version":1},
+  "choice_loop": {
+    "description": "角色保持等待姿势，雨水和灯光轻微流动。",
+    "production_notes": "2–4 秒无缝循环；固定镜头；互动对象不得漂移；首尾帧连续。",
+    "media": {"source":"placeholder","status":"missing","version":1}
+  }
 }
 ```
 
 `kind=ending` requires an `ending_label` and must have no outgoing Choice. A scene must have a null `ending_label`. A timed choice must use 1–300 seconds and should have exactly one default Choice among Choices with the same source.
+
+`choice_loop` is optional and is valid only on a Segment with outgoing Choices. It is one dedicated short animation shared by the entire choice point, not one clip per Choice. The main Segment `media` always plays once. When choices appear, the player switches to ready `choice_loop.media`; when it is missing, the player freezes the main video's tail frame. Describe a 2–4 second seamless loop with a fixed camera, stable first and last composition, stationary props/characters used by anchors, and only subtle ambient motion. Do not bake branch logic into this clip; Choice `interaction` still owns the UI or hotspot.
 
 ### Choice
 
@@ -80,11 +87,17 @@ V1 supports integer variables only. The initial value must be within the optiona
   "order":0,
   "condition":null,
   "effects":[],
+  "feedback_text":"她没有立刻回答，却把手电筒递给了你。",
+  "interaction":{"presentation":"object_anchor","anchor":{"x":0.68,"y":0.64,"object_label":"手电筒"},"ui_style":"glass","motion":"pop","transition":"fade"},
   "is_default":false
 }
 ```
 
 Choices from the same source must have unique `order` values. An ending segment must not be a Choice source.
+
+`feedback_text` is an optional, short line shown immediately after a player confirms a Choice. Keep it sparse: omit it for routine Choices, and use it only for a relationship turn, information reveal, or another clearly felt state change (for example, “她的戒备似乎少了一些。”). When that Choice also has variable effects, the player sees each variable's semantic label with an ↑/↓ direction (for example, `信任 ↑`), never the numeric value. It does not generate, replace, or alter a video asset.
+
+`interaction` is optional. `overlay` is the default bottom-choice presentation. `object_anchor` renders a real frontend choice at the normalized `anchor` point in the video frame; use `object_label` to name the prop or character it belongs to. `baked_video` expects visible UI to already exist in the video and creates only an accessible transparent rectangular hotspot. Its `anchor.x`/`anchor.y` are the rectangle center and `anchor.width`/`anchor.height` are required normalized dimensions; the full rectangle must stay within the source frame. Anchored interactions can use `glass`, `tag`, or `warning` UI styles, `fade`, `pop`, or `pulse` entrance motion, and `fade`, `flash`, or `cut` branch transition.
 
 Variable condition:
 
@@ -132,7 +145,7 @@ Supported operations:
 
 When adding a branch, add both the target Segment and its Choice in the same Patch. Do not send the complete Story returned by Get as a Patch.
 
-Set `update_segment.changes.media` to `null` to clear existing media and restore a placeholder. Do not construct an empty media object manually.
+Set `update_segment.changes.media` to `null` to clear existing media and restore a placeholder. Set `update_segment.changes.choice_loop` to `null` to remove the dedicated choice animation. Do not construct an empty media object manually.
 
 ## Validation Results
 

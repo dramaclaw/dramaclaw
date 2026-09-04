@@ -3,9 +3,11 @@ import { knotNameForNodeId } from './inkNames';
 import { resolveStartNodeId } from './resolveStart';
 import {
   STORY_CHOICE_EDGE_TYPE,
+  normalizeStoryChoiceInteraction,
   type CompiledStory,
   type StoryChoiceEdgeData,
   type StoryConditionExpr,
+  type StoryStateChange,
   type StoryVariable,
 } from './storyTypes';
 import { conditionLeaves, isConditionGroup, isVisitCondition } from './conditionExpr';
@@ -52,14 +54,21 @@ function choiceEdgeData(edge: CanvasEdge): StoryChoiceEdgeData | null {
   const data = edge.data as Partial<StoryChoiceEdgeData> | undefined;
   return {
     choiceText: typeof data?.choiceText === 'string' ? data.choiceText : '',
+    feedbackText: typeof data?.feedbackText === 'string' ? data.feedbackText.trim() : '',
+    interaction: data?.interaction && typeof data.interaction === 'object'
+      ? data.interaction as StoryChoiceEdgeData['interaction']
+      : undefined,
     order: Number.isFinite(data?.order) ? Number(data?.order) : 0,
     isDefault: data?.isDefault === true,
   };
 }
 
 interface ChoiceEntry {
+  id: string;
   target: string;
   text: string;
+  feedbackText?: string;
+  interaction?: StoryChoiceEdgeData['interaction'];
   order: number;
   isDefault?: boolean;
   condition?: StoryChoiceEdgeData['condition'];
@@ -141,8 +150,11 @@ export function compileGraphToInk(
     choiceTargets.add(edge.target);
     const list = choicesBySource.get(edge.source) ?? [];
     list.push({
+      id: edge.id,
       target: edge.target,
       text: data.choiceText,
+      feedbackText: data.feedbackText,
+      interaction: data.interaction,
       order: data.order,
       isDefault: data.isDefault === true,
       condition: condOf(edge),
@@ -171,6 +183,7 @@ export function compileGraphToInk(
   }
 
   const clipByNodeId: Record<string, string> = {};
+  const choiceLoopClipByNodeId: Record<string, string> = {};
   const knotByNodeId: Record<string, string> = {};
   // 限时选项:源节点 id → 选项窗口秒数(>0)/默认选项在「按 order 排序后」的 0-based 位置
   // (= inkjs choice index)。
@@ -180,6 +193,13 @@ export function compileGraphToInk(
   const endingByNodeId: Record<string, { title: string; label?: string }> = {};
   // 节点 → 占位卡文案(旁白 + 显示名),供无视频时占位试玩。
   const placeholderByNodeId: Record<string, { text: string; label?: string }> = {};
+  // 选项反馈通过 Ink choice tag 与当前可选项稳定关联，不影响视频资源。
+  const choiceFeedbackById: Record<string, string> = {};
+  const choiceStateChangesById: Record<string, StoryStateChange[]> = {};
+  const choiceInteractionById: CompiledStory['choiceInteractionById'] = {};
+  const variableLabelByName = new Map(variables.map((variable) => [variable.name, variable.label] as const));
+  let choiceFeedbackSequence = 0;
+  let choiceInteractionSequence = 0;
 
   // 生成 VAR 声明(放在 divert 之前)
   const lines: string[] = [];
@@ -194,6 +214,8 @@ export function compileGraphToInk(
     const knot = knotNameForNodeId(id);
     knotByNodeId[id] = knot;
     clipByNodeId[id] = (node.data as { videoUrl?: string | null }).videoUrl ?? '';
+    const choiceLoopUrl = (node.data as { choiceLoopVideoUrl?: string | null }).choiceLoopVideoUrl;
+    if (choiceLoopUrl) choiceLoopClipByNodeId[id] = choiceLoopUrl;
 
     // 占位卡:旁白(text)+ 显示名(label),视频未生成时供占位试玩。
     const placeholderData = node.data as { narration?: string; displayName?: string };
@@ -229,7 +251,32 @@ export function compileGraphToInk(
     } else {
       for (const choice of choices) {
         const guard = guardFor(choice.condition, seen, warnings);
-        lines.push(`+ ${guard}[${choice.text}]`);
+        const feedbackId = choice.feedbackText ? `feedback-${choiceFeedbackSequence++}` : null;
+        if (feedbackId && choice.feedbackText) {
+          choiceFeedbackById[feedbackId] = choice.feedbackText;
+          // 反馈是稀疏的关键时刻：只在已有剧情反馈时，把该选择的变量效果转为不含数值的语义箭头。
+          const effectTotals = new Map<string, number>();
+          for (const effect of choice.effects ?? []) {
+            effectTotals.set(effect.var, (effectTotals.get(effect.var) ?? 0) + Math.trunc(effect.delta));
+          }
+          const stateChanges = Array.from(effectTotals.entries())
+            .filter(([, delta]) => delta !== 0)
+            .map(([variable, delta]) => ({
+              label: variableLabelByName.get(variable) ?? variable,
+              direction: delta > 0 ? 'up' : 'down',
+            } satisfies StoryStateChange));
+          if (stateChanges.length > 0) choiceStateChangesById[feedbackId] = stateChanges;
+        }
+        const normalizedInteraction = normalizeStoryChoiceInteraction(choice.interaction);
+        const interactionId = normalizedInteraction.presentation !== 'overlay'
+          ? `interaction-${choiceInteractionSequence++}`
+          : null;
+        if (interactionId) choiceInteractionById[interactionId] = normalizedInteraction;
+        // Ink 只会把方括号内的 tag 附到 Choice.tags；tag 使用编译期序号而非 edge id，
+        // 避免测试/外部导入的边 id 含 `->` 等 Ink 语法字符时导致编译失败。
+        const feedbackTag = feedbackId ? ` # choice-feedback: ${feedbackId}` : '';
+        const interactionTag = interactionId ? ` # choice-interaction: ${interactionId}` : '';
+        lines.push(`+ ${guard}[${choice.text}${feedbackTag}${interactionTag}]`);
         for (const eff of choice.effects ?? []) {
           lines.push(`    ~ ${eff.var} += ${Math.trunc(eff.delta)}`);
         }
@@ -242,11 +289,15 @@ export function compileGraphToInk(
   return {
     ink: lines.join('\n'),
     clipByNodeId,
+    choiceLoopClipByNodeId,
     knotByNodeId,
     choiceTimeByNodeId,
     defaultChoiceIndexByNodeId,
     endingByNodeId,
     placeholderByNodeId,
+    choiceFeedbackById,
+    choiceStateChangesById,
+    choiceInteractionById,
     warnings,
     variables,
   };

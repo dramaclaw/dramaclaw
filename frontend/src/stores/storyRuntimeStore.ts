@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Compiler } from 'inkjs/full';
-import type { CompiledStory, StoryVariable } from '@/features/canvas/story/storyTypes';
+import type { CompiledStory, StoryChoiceInteraction, StoryStateChange } from '@/features/canvas/story/storyTypes';
 import { readStorySave, writeStorySave, clearStorySave } from '@/features/canvas/story/storySave';
 import { recordChoice, recordEnding, statsKeyFromSaveKey } from '@/features/canvas/story/storyStats';
 
@@ -12,19 +12,20 @@ export type StoryPhase = 'idle' | 'loading' | 'playing' | 'ended' | 'error';
 export interface StoryChoiceView {
   index: number;
   text: string;
-}
-
-/** 试玩时显示的变量当前值。 */
-export interface StoryVariableView {
-  name: string;
-  label: string;
-  value: number;
+  /** 该选择确认后短暂展示的剧情反馈；为空时直接推进。 */
+  feedbackText?: string;
+  /** 仅在有剧情反馈的关键选择中展示的语义状态箭头。 */
+  stateChanges?: StoryStateChange[];
+  /** 该选择在视频中的呈现与锚点。 */
+  interaction?: StoryChoiceInteraction;
 }
 
 interface StoryRuntimeState {
   mode: 'edit' | 'play';
   story: InkStory | null;
   clipByNodeId: Record<string, string>;
+  /** 选择源节点 id → 独立互动循环片段 URL。 */
+  choiceLoopClipByNodeId: Record<string, string>;
   /** 源节点 id → 选项窗口秒数 / 默认选项 index(限时选项)。 */
   choiceTimeByNodeId: Record<string, number>;
   defaultChoiceIndexByNodeId: Record<string, number>;
@@ -32,16 +33,18 @@ interface StoryRuntimeState {
   endingByNodeId: Record<string, { title: string; label?: string }>;
   /** 节点 id → 占位卡文案(无视频时占位试玩用)。 */
   placeholderByNodeId: Record<string, { text: string; label?: string }>;
-  /** 本故事声明的变量(用于每步读取当前值)。 */
-  variables: StoryVariable[];
+  /** Ink 选项 tag id → 玩家选择后展示的短暂剧情反馈。 */
+  choiceFeedbackById: Record<string, string>;
+  /** Ink 选项 tag id → 玩家看到的语义状态箭头。 */
+  choiceStateChangesById: Record<string, StoryStateChange[]>;
+  /** Ink 选项 tag id → 互动呈现规格。 */
+  choiceInteractionById: Record<string, StoryChoiceInteraction>;
   /** 当前选择点/片段所属的节点 id(`# clip:` 解析所得);null = 无 tag。播放器据此判定「换了一跳」以重置选择点状态机。 */
   currentNodeId: string | null;
   currentClipUrl: string | null;
   currentChoices: StoryChoiceView[];
   /** 当前各选项的后继片段 URL(前瞻所得),供播放器针对性预取「下一跳」分支。 */
   nextClipUrls: string[];
-  /** 各变量的实时值(供 HUD 显示)。 */
-  currentVariables: StoryVariableView[];
   /** 当前选项窗口秒数(null = 不限时);超时自动选的默认选项 index(null = 无默认)。 */
   currentChoiceTimeSec: number | null;
   currentDefaultChoiceIndex: number | null;
@@ -71,14 +74,8 @@ interface StoryRuntimeState {
 }
 
 const CLIP_TAG_PREFIX = 'clip:';
-
-/** 从 inkjs 读取每个声明变量的当前数值。 */
-function readVariables(story: InkStory, variables: StoryVariable[]): StoryVariableView[] {
-  return variables.map((v) => {
-    const raw = (story.variablesState as unknown as Record<string, unknown>)[v.name];
-    return { name: v.name, label: v.label, value: typeof raw === 'number' ? raw : Number(raw ?? 0) };
-  });
-}
+const CHOICE_FEEDBACK_TAG_PREFIX = 'choice-feedback:';
+const CHOICE_INTERACTION_TAG_PREFIX = 'choice-interaction:';
 
 /** 从当前 currentTags 解析 `# clip:` 携带的节点 id(无则 null)。 */
 function nodeIdFromTags(story: InkStory): string | null {
@@ -90,6 +87,31 @@ function nodeIdFromTags(story: InkStory): string | null {
 function clipUrlFromTags(story: InkStory, clipByNodeId: Record<string, string>): string | null {
   const nodeId = nodeIdFromTags(story);
   return nodeId ? (clipByNodeId[nodeId] ?? null) : null;
+}
+
+/** Ink 选项 tag 使用编译期 id，取回该结果的剧情反馈与语义状态变化。 */
+function outcomeFromChoiceTags(
+  choice: { tags?: string[] | null },
+  choiceFeedbackById: Record<string, string>,
+  choiceStateChangesById: Record<string, StoryStateChange[]>,
+): Pick<StoryChoiceView, 'feedbackText' | 'stateChanges'> {
+  const tag = choice.tags?.find((item) => item.startsWith(CHOICE_FEEDBACK_TAG_PREFIX));
+  const feedbackId = tag?.slice(CHOICE_FEEDBACK_TAG_PREFIX.length).trim();
+  const text = feedbackId ? choiceFeedbackById[feedbackId]?.trim() : '';
+  const stateChanges = feedbackId ? choiceStateChangesById[feedbackId] : undefined;
+  return {
+    ...(text ? { feedbackText: text } : {}),
+    ...(stateChanges?.length ? { stateChanges } : {}),
+  };
+}
+
+function interactionFromChoiceTags(
+  choice: { tags?: string[] | null },
+  choiceInteractionById: Record<string, StoryChoiceInteraction>,
+): StoryChoiceInteraction | undefined {
+  const tag = choice.tags?.find((item) => item.startsWith(CHOICE_INTERACTION_TAG_PREFIX));
+  const interactionId = tag?.slice(CHOICE_INTERACTION_TAG_PREFIX.length).trim();
+  return interactionId ? choiceInteractionById[interactionId] : undefined;
 }
 
 /**
@@ -120,17 +142,18 @@ function peekNextClipUrls(story: InkStory, clipByNodeId: Record<string, string>)
 function advanceToClip(
   story: InkStory,
   clipByNodeId: Record<string, string>,
-  variables: StoryVariable[],
   choiceTimeByNodeId: Record<string, number>,
   defaultChoiceIndexByNodeId: Record<string, number>,
   endingByNodeId: Record<string, { title: string; label?: string }>,
   placeholderByNodeId: Record<string, { text: string; label?: string }>,
+  choiceFeedbackById: Record<string, string>,
+  choiceStateChangesById: Record<string, StoryStateChange[]>,
+  choiceInteractionById: Record<string, StoryChoiceInteraction>,
 ): {
   currentNodeId: string | null;
   currentClipUrl: string | null;
   currentChoices: StoryChoiceView[];
   nextClipUrls: string[];
-  currentVariables: StoryVariableView[];
   currentChoiceTimeSec: number | null;
   currentDefaultChoiceIndex: number | null;
   currentEnding: { title: string; label?: string } | null;
@@ -143,7 +166,12 @@ function advanceToClip(
   const tag = story.currentTags?.find((it) => it.startsWith(CLIP_TAG_PREFIX));
   const nodeId = tag ? tag.slice(CLIP_TAG_PREFIX.length).trim() : null;
   const currentClipUrl = nodeId ? (clipByNodeId[nodeId] ?? null) : null;
-  const currentChoices = story.currentChoices.map((c) => ({ index: c.index, text: c.text }));
+  const currentChoices = story.currentChoices.map((c) => ({
+    index: c.index,
+    text: c.text,
+    ...outcomeFromChoiceTags(c, choiceFeedbackById, choiceStateChangesById),
+    interaction: interactionFromChoiceTags(c, choiceInteractionById),
+  }));
   const phase: StoryPhase = currentChoices.length > 0 ? 'playing' : 'ended';
   // 限时只在「有选项」时有意义;无选项(结局)不计时。
   const limit = nodeId ? choiceTimeByNodeId[nodeId] : undefined;
@@ -164,7 +192,6 @@ function advanceToClip(
     currentClipUrl,
     currentChoices,
     nextClipUrls: peekNextClipUrls(story, clipByNodeId),
-    currentVariables: readVariables(story, variables),
     currentChoiceTimeSec,
     currentDefaultChoiceIndex,
     currentEnding,
@@ -181,16 +208,18 @@ function persist(saveKey: string | null, story: InkStory): void {
 const INITIAL_RUNTIME = {
   story: null as InkStory | null,
   clipByNodeId: {} as Record<string, string>,
+  choiceLoopClipByNodeId: {} as Record<string, string>,
   choiceTimeByNodeId: {} as Record<string, number>,
   defaultChoiceIndexByNodeId: {} as Record<string, number>,
   endingByNodeId: {} as Record<string, { title: string; label?: string }>,
   placeholderByNodeId: {} as Record<string, { text: string; label?: string }>,
-  variables: [] as StoryVariable[],
+  choiceFeedbackById: {} as Record<string, string>,
+  choiceStateChangesById: {} as Record<string, StoryStateChange[]>,
+  choiceInteractionById: {} as Record<string, StoryChoiceInteraction>,
   currentNodeId: null as string | null,
   currentClipUrl: null as string | null,
   currentChoices: [] as StoryChoiceView[],
   nextClipUrls: [] as string[],
-  currentVariables: [] as StoryVariableView[],
   currentChoiceTimeSec: null as number | null,
   currentDefaultChoiceIndex: null as number | null,
   currentEnding: null as { title: string; label?: string } | null,
@@ -215,11 +244,14 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       const groupId = opts?.groupId ?? null;
       const tables = {
         clipByNodeId: compiled.clipByNodeId,
+        choiceLoopClipByNodeId: compiled.choiceLoopClipByNodeId,
         choiceTimeByNodeId: compiled.choiceTimeByNodeId,
         defaultChoiceIndexByNodeId: compiled.defaultChoiceIndexByNodeId,
         endingByNodeId: compiled.endingByNodeId,
         placeholderByNodeId: compiled.placeholderByNodeId,
-        variables: compiled.variables,
+        choiceFeedbackById: compiled.choiceFeedbackById,
+        choiceStateChangesById: compiled.choiceStateChangesById,
+        choiceInteractionById: compiled.choiceInteractionById,
       };
       // 有存档:暂不 advance,挂起等玩家选「继续 / 从头」。
       if (saveKey && readStorySave(saveKey) !== null) {
@@ -232,7 +264,6 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
           currentClipUrl: null,
           currentChoices: [],
           nextClipUrls: [],
-          currentVariables: [],
           currentChoiceTimeSec: null,
           currentDefaultChoiceIndex: null,
           currentEnding: null,
@@ -258,11 +289,13 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
         ...advanceToClip(
           story,
           compiled.clipByNodeId,
-          compiled.variables,
           compiled.choiceTimeByNodeId,
           compiled.defaultChoiceIndexByNodeId,
           compiled.endingByNodeId,
           compiled.placeholderByNodeId,
+          compiled.choiceFeedbackById,
+          compiled.choiceStateChangesById,
+          compiled.choiceInteractionById,
         ),
       });
       persist(saveKey, story);
@@ -273,8 +306,8 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
 
   resumeSaved: () => {
     const {
-      story, saveKey, clipByNodeId, variables,
-      choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId,
+      story, saveKey, clipByNodeId,
+      choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById,
     } = get();
     if (!story || !saveKey) return false;
     const json = readStorySave(saveKey);
@@ -289,7 +322,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
     }
     set({
       resumeAvailable: false,
-      ...advanceToClip(story, clipByNodeId, variables, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId),
+      ...advanceToClip(story, clipByNodeId, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById),
     });
     persist(saveKey, story);
     return true;
@@ -297,14 +330,14 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
 
   startFresh: () => {
     const {
-      story, saveKey, clipByNodeId, variables,
-      choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId,
+      story, saveKey, clipByNodeId,
+      choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById,
     } = get();
     if (!story) return;
     story.ResetState();
     set({
       resumeAvailable: false,
-      ...advanceToClip(story, clipByNodeId, variables, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId),
+      ...advanceToClip(story, clipByNodeId, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById),
     });
     persist(saveKey, story);
   },
@@ -313,11 +346,13 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
     const {
       story,
       clipByNodeId,
-      variables,
       choiceTimeByNodeId,
       defaultChoiceIndexByNodeId,
       endingByNodeId,
       placeholderByNodeId,
+      choiceFeedbackById,
+      choiceStateChangesById,
+      choiceInteractionById,
       currentChoices,
       statsKey,
       phase,
@@ -341,11 +376,13 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
     const next = advanceToClip(
       story,
       clipByNodeId,
-      variables,
       choiceTimeByNodeId,
       defaultChoiceIndexByNodeId,
       endingByNodeId,
       placeholderByNodeId,
+      choiceFeedbackById,
+      choiceStateChangesById,
+      choiceInteractionById,
     );
     set(next);
     // 试玩埋点(结局达成率):推进后若到达结局叶子,记一次通关。
@@ -363,11 +400,13 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
     const {
       story,
       clipByNodeId,
-      variables,
       choiceTimeByNodeId,
       defaultChoiceIndexByNodeId,
       endingByNodeId,
       placeholderByNodeId,
+      choiceFeedbackById,
+      choiceStateChangesById,
+      choiceInteractionById,
     } = get();
     if (!story) return;
     story.ResetState();
@@ -375,11 +414,13 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       advanceToClip(
         story,
         clipByNodeId,
-        variables,
         choiceTimeByNodeId,
         defaultChoiceIndexByNodeId,
         endingByNodeId,
         placeholderByNodeId,
+        choiceFeedbackById,
+        choiceStateChangesById,
+        choiceInteractionById,
       ),
     );
     persist(get().saveKey, story);

@@ -73,6 +73,14 @@ class StoryMediaRef(StoryContractModel):
         return self
 
 
+class StoryChoiceLoop(StoryContractModel):
+    """A short seamless animation shown only while a segment waits for a Choice."""
+
+    description: str = Field(min_length=1, max_length=2_000)
+    production_notes: str = Field(default="", max_length=4_000)
+    media: StoryMediaRef = Field(default_factory=StoryMediaRef)
+
+
 class StorySegment(StoryContractModel):
     id: EntityId
     title: str = Field(min_length=1, max_length=200)
@@ -83,6 +91,7 @@ class StorySegment(StoryContractModel):
     choice_time_limit_sec: int | None = Field(default=None, gt=0, le=300)
     production_notes: str = Field(default="", max_length=8_000)
     media: StoryMediaRef = Field(default_factory=StoryMediaRef)
+    choice_loop: StoryChoiceLoop | None = None
 
     @model_validator(mode="after")
     def validate_ending(self) -> "StorySegment":
@@ -137,6 +146,49 @@ class StoryEffect(StoryContractModel):
     delta: int
 
 
+class StoryChoiceAnchor(StoryContractModel):
+    """A proportional anchor or center-based hotspot in the source video frame."""
+
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float | None = Field(default=None, gt=0, le=1)
+    height: float | None = Field(default=None, gt=0, le=1)
+    object_label: str = Field(default="", max_length=80)
+
+    @model_validator(mode="after")
+    def validate_hotspot_bounds(self) -> "StoryChoiceAnchor":
+        if (self.width is None) != (self.height is None):
+            raise ValueError("hotspot width and height must be provided together")
+        if self.width is not None and self.height is not None:
+            if self.x - self.width / 2 < 0 or self.x + self.width / 2 > 1:
+                raise ValueError("hotspot width must stay inside the source frame")
+            if self.y - self.height / 2 < 0 or self.y + self.height / 2 > 1:
+                raise ValueError("hotspot height must stay inside the source frame")
+        return self
+
+
+class StoryChoiceInteraction(StoryContractModel):
+    """How a Choice is presented without coupling its branch logic to a video asset."""
+
+    presentation: Literal["overlay", "object_anchor", "baked_video"] = "overlay"
+    anchor: StoryChoiceAnchor | None = None
+    ui_style: Literal["glass", "tag", "warning"] = "glass"
+    motion: Literal["fade", "pop", "pulse"] = "fade"
+    transition: Literal["fade", "flash", "cut"] = "fade"
+
+    @model_validator(mode="after")
+    def validate_anchor(self) -> "StoryChoiceInteraction":
+        if self.presentation != "overlay" and self.anchor is None:
+            raise ValueError("object_anchor and baked_video interactions require an anchor")
+        if (
+            self.presentation == "baked_video"
+            and self.anchor is not None
+            and (self.anchor.width is None or self.anchor.height is None)
+        ):
+            raise ValueError("baked_video interactions require hotspot width and height")
+        return self
+
+
 class StoryChoice(StoryContractModel):
     id: EntityId
     source_segment_id: EntityId
@@ -145,6 +197,9 @@ class StoryChoice(StoryContractModel):
     order: int = Field(ge=0)
     condition: StoryCondition | None = None
     effects: list[StoryEffect] = Field(default_factory=list, max_length=20)
+    # 玩家确认选择后短暂看见的剧情反馈；它不要求制作新的视频片段。
+    feedback_text: str = Field(default="", max_length=500)
+    interaction: StoryChoiceInteraction = Field(default_factory=StoryChoiceInteraction)
     is_default: bool = False
 
 
@@ -191,6 +246,12 @@ class StoryDraftV1(StoryContractModel):
 
         seen_orders: set[tuple[str, int]] = set()
         default_sources: set[str] = set()
+        choice_sources = {choice.source_segment_id for choice in self.choices}
+        for segment in self.segments:
+            if segment.choice_loop is not None and segment.id not in choice_sources:
+                raise ValueError(
+                    f"segment {segment.id!r} defines choice_loop but has no outgoing choices"
+                )
         for choice in self.choices:
             if choice.source_segment_id not in segment_ids:
                 raise ValueError(f"choice {choice.id!r} has unknown source_segment_id")
@@ -260,6 +321,7 @@ class StorySegmentChanges(StoryContractModel):
     choice_time_limit_sec: int | None = Field(default=None, gt=0, le=300)
     production_notes: str | None = Field(default=None, max_length=8_000)
     media: StoryMediaRef | None = None
+    choice_loop: StoryChoiceLoop | None = None
 
     @model_validator(mode="after")
     def require_change(self) -> "StorySegmentChanges":
@@ -275,6 +337,8 @@ class StoryChoiceChanges(StoryContractModel):
     order: int | None = Field(default=None, ge=0)
     condition: StoryCondition | None = None
     effects: list[StoryEffect] | None = Field(default=None, max_length=20)
+    feedback_text: str | None = Field(default=None, max_length=500)
+    interaction: StoryChoiceInteraction | None = None
     is_default: bool | None = None
 
     @model_validator(mode="after")

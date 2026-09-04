@@ -75,11 +75,14 @@ export function buildPlayerHtml(
   const data = {
     storyJson,
     clips: bakeClips(compiled.clipByNodeId, origin),
+    choiceLoops: bakeClips(compiled.choiceLoopClipByNodeId, origin),
     choiceTime: compiled.choiceTimeByNodeId,
     defaultChoice: compiled.defaultChoiceIndexByNodeId,
     endings: compiled.endingByNodeId,
     placeholders: compiled.placeholderByNodeId,
-    variables: compiled.variables,
+    choiceFeedback: compiled.choiceFeedbackById,
+    choiceStateChanges: compiled.choiceStateChangesById,
+    choiceInteraction: compiled.choiceInteractionById,
     labels: opts.labels ?? DEFAULT_LABELS,
     title,
   };

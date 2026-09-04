@@ -13,6 +13,7 @@ __pycache__/
 logs/
 jr_error.log
 /launchd/
+.idea
 
 # 测试数据与产物，勿提交
 /data/
