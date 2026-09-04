@@ -185,7 +185,7 @@ DramaClaw runs all inference through a **remote OpenAI-compatible gateway** — 
 | **Disk** | A few GB for images plus generated media/state under the `ce-data` volume (no hard minimum) |
 | **OS** | macOS (Apple Silicon / Intel), Windows (Docker Desktop + WSL2 backend), Linux (Docker Engine + compose plugin) |
 | **Docker** | Docker + `docker compose` |
-| **Ports** | `8080` web UI · `8780` REST API · `3000` bundled gateway (self-hosted variant only) |
+| **Ports** | `8080` web UI · `8780` REST API · `3000` bundled gateway admin UI |
 | **Datastores** | None required — no Postgres, Redis, Celery or Ray. Tasks run in-process; state lives on the local filesystem (SQLite + files) |
 | **Network** | Outbound access to the model gateway (official `relayclaw.cdnfg.com`, or your own BYO endpoint) |
 
@@ -197,26 +197,29 @@ DramaClaw runs all inference through a **remote OpenAI-compatible gateway** — 
 
 ### Docker (recommended)
 
+Every GitHub Release publishes multi-arch (amd64/arm64) images to Docker Hub; the compose file only pulls, it never builds.
+
 ```bash
-git clone https://github.com/dramaclaw/dramaclaw.git
+git clone https://github.com/dramaclaw/dramaclaw.git   # or download DramaClaw-compose-<tag>.zip from the Release page
 cd dramaclaw
 
 cp .env.example .env
 # Edit .env — set PROMPT_EXPORT_PASSWORD to a non-default value.
-# NEWAPI_BASE_URL defaults to the official gateway; add your DC key here or paste it in the UI next.
 
-docker compose up -d --build   # starts two services: api / web
+docker compose up -d   # starts three services: api / newapi (bundled gateway) / web
 ```
 
-Open the app at <http://localhost:8080>; the REST API is at <http://localhost:8780>. In **Settings → Model Config → Official**, paste your DC key (get one at <https://relayclaw.cdnfg.com>) and you're ready — no model mapping needed. Full steps in the [Quick Start](docs/en/getting-started/quickstart.md).
+Open the app at <http://localhost:8080>; the REST API is at <http://localhost:8780>. In **Settings → Model Config** pick one of:
 
-**No build needed** — every GitHub Release publishes multi-arch (amd64/arm64) images to Docker Hub, so a single file is enough to run:
+- **Official** — paste your DC key (get one at <https://relayclaw.cdnfg.com>); no model mapping needed. The bundled gateway stays idle.
+- **Self-hosted** — one click initializes the bundled `newapi` gateway; then add your own upstream channels.
+- **Hybrid** — official for the main pipeline, bundled gateway for extra channels.
 
-```bash
-curl -LO https://raw.githubusercontent.com/dramaclaw/dramaclaw/main/docker-compose.release.yml
-docker compose -f docker-compose.release.yml up -d
-# Pin a version (defaults to latest): DRAMACLAW_VERSION=1.0.1 docker compose -f docker-compose.release.yml up -d
-```
+Full steps in the [Quick Start](docs/en/getting-started/quickstart.md).
+
+Pin versions or switch registry in `.env` (`DRAMACLAW_VERSION`, `DRAMACLAW_GATEWAY_VERSION`, `DRAMACLAW_IMAGE_PREFIX`). Mainland China: set `DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw` and pin both versions (the ACR mirror carries pinned tags only).
+
+> Migrating from an older checkout? `docker-compose.release.yml`, `docker-compose.selfhosted.yml` and `docker-compose.selfhosted.release.yml` were merged into this single `docker-compose.yml`. Your `ce-data` / `newapi-data` volumes are reused as-is.
 
 ### Local development (uv + Python 3.11+)
 
@@ -230,6 +233,14 @@ cp .env.example .env && $EDITOR .env
 uv run novelvideo api --port 8780   # start the REST API (CE defaults to inline tasks, no Ray/Redis)
 ```
 
+Build the Docker images from source (the compose file itself never builds):
+
+```bash
+scripts/build_images.sh            # claymorelab/dramaclaw:dev + claymorelab/dramaclaw-frontend:dev
+echo 'DRAMACLAW_VERSION=dev' >> .env
+docker compose up -d
+```
+
 <br/>
 
 ## Supported Models & Providers
@@ -239,7 +250,7 @@ DramaClaw stays model-neutral — all text/image/video/audio models connect thro
 - **DramaClaw official key (recommended)**: `docker compose up`, open <http://localhost:8080> → Settings → Model Config → Official, paste your DC key, save. Works instantly — no model mapping needed. Get a key at <https://relayclaw.cdnfg.com>.
 - **Bring your own gateway (BYO)**: point `NEWAPI_BASE_URL` at your own OpenAI-compatible endpoint and map model names (see [Configuring Models](docs/en/getting-started/configuring-models.md)).
 
-> Prefer fully local? Run `docker compose -f docker-compose.selfhosted.yml up` for a bundled `newapi` gateway you configure yourself (prebuilt-image variant: `docker-compose.selfhosted.release.yml`).
+> The bundled `newapi` gateway is always part of the compose stack; it is only used once you switch to **Self-hosted** or **Hybrid** in Settings → Model Config.
 
 | Stage                | Connected via gateway                                               |
 |----------------------|---------------------------------------------------------------------|

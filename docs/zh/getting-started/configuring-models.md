@@ -57,10 +57,10 @@ DramaClaw CE 通过 NewAPI 兼容网关调用文本、视觉理解、Embedding�
 
 ### 1. 启动本地服务
 
-推荐使用仓库提供的自托管编排：
+使用仓库的 compose 文件（内置 NewAPI 始终包含在内）：
 
 ```bash
-docker compose -f docker-compose.selfhosted.yml up -d --build
+docker compose up -d
 ```
 
 它会启动 DramaClaw API、Web 和内置 NewAPI。默认情况下 DramaClaw 在容器网络中访问 NewAPI；浏览器访问的宿主机端口可以不同，不需要把内部地址改成浏览器地址。
@@ -276,7 +276,6 @@ Bucket 无需公开读；DramaClaw 使用临时签名 URL 授权上游读取。
 
 - `src/novelvideo/official_media_models.json`：CE 官方媒体模型与能力。
 - `.env.example`：环境变量参考。
-- `docker-compose.yml`：官方模式部署。
-- `docker-compose.selfhosted.yml`：内置 NewAPI 自托管部署。
+- `docker-compose.yml`：唯一的部署文件（api + 内置 NewAPI + web），网关模式在设置页选择。
 - [自托管手册](../guides/self-hosting.md)
 - [环境变量参考](../reference/environment-variables.md)

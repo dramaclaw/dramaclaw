@@ -5,7 +5,7 @@
 
 > Run DramaClaw locally and produce your first result.
 
-DramaClaw is the Community Edition (CE): it runs on a single machine with no PostgreSQL / Redis required. By default `docker compose` brings up two services: `api` (the creation backend, :8780) and `web` (the browser UI, :8080). Models are served through the **DramaClaw official gateway (RelayClaw)** — paste in a DC key and you're ready to go.
+DramaClaw is the Community Edition (CE): it runs on a single machine with no PostgreSQL / Redis required. By default `docker compose` brings up three services: `api` (the creation backend, :8780), `newapi` (the bundled gateway, idle until you switch to Self-hosted or Hybrid mode), and `web` (the browser UI, :8080). Models are served through the **DramaClaw official gateway (RelayClaw)** by default — paste in a DC key and you're ready to go.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ DramaClaw is the Community Edition (CE): it runs on a single machine with no Pos
 ## Steps
 
 ```bash
-# 1. Get the code (the current version builds the image from source; later releases will pull a published image)
+# 1. Get the code (or download DramaClaw-compose-<tag>.zip from the Release page)
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
@@ -24,11 +24,11 @@ cp .env.example .env
 #    Open .env and at minimum change PROMPT_EXPORT_PASSWORD to a non-default value.
 #    Configure the model channel and key in the web UI, not in .env.
 
-# 3. Start (the first run builds the image, so it's a bit slow) — brings up the api / web services
-docker compose up -d --build
+# 3. Start (pulls published images, never builds) — brings up api / newapi / web
+docker compose up -d
 
 # 4. Confirm it's up
-docker compose ps   # both api and web should be running
+docker compose ps   # api, newapi, and web should all be running
 ```
 
 ## Enter your DC key (one-time, required)
@@ -41,7 +41,7 @@ docker compose ps   # both api and web should be running
 
 ## Want to use your own model channels?
 
-Start the local NewAPI bundled with CE via `docker-compose.selfhosted.yml`, then initialize it and configure upstream keys and model mappings under Settings → Model Configuration → Local NewAPI. Its address and runtime token are stored in local `settings.db`, not `.env`. See [Configuring Model Providers](configuring-models.md).
+The bundled NewAPI starts together with `docker compose up -d`. Initialize it and configure upstream keys and model mappings under Settings → Model Configuration → Self-hosted. Its address and runtime token are stored in local `settings.db`, not `.env`. See [Configuring Model Providers](configuring-models.md).
 
 ## Next steps
 

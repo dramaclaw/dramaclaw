@@ -57,10 +57,10 @@ To obtain a DC Key, visit <https://relayclaw.cdnfg.com>.
 
 ### 1. Start the local stack
 
-Use the repository’s self-hosted stack:
+Use the repository compose file (the bundled NewAPI is always part of it):
 
 ```bash
-docker compose -f docker-compose.selfhosted.yml up -d --build
+docker compose up -d
 ```
 
 It starts the DramaClaw API, web frontend, and bundled NewAPI. DramaClaw normally reaches NewAPI through the container network. The browser-facing host port may differ and does not need to replace the internal URL.
@@ -276,7 +276,6 @@ Enter Cloud name, API Key, API Secret, and an optional folder. Find them under *
 
 - `src/novelvideo/official_media_models.json`: CE official media models and capabilities.
 - `.env.example`: environment variable reference.
-- `docker-compose.yml`: official-mode deployment.
-- `docker-compose.selfhosted.yml`: bundled NewAPI deployment.
+- `docker-compose.yml`: the single deployment file (api + bundled NewAPI + web); the gateway mode is chosen in Settings.
 - [Self-Hosting Handbook](../guides/self-hosting.md)
 - [Environment Variable Reference](../reference/environment-variables.md)

@@ -184,7 +184,7 @@ DramaClaw 的所有模型推理都走**远程 OpenAI 兼容网关** —— 本�
 | **磁盘** | 预留几 GB 放镜像及 `ce-data` 卷中的生成媒体/状态（无硬性下限） |
 | **操作系统** | macOS（Apple Silicon / Intel）、Windows（Docker Desktop + WSL2 后端）、Linux（Docker Engine + compose 插件） |
 | **Docker** | Docker + `docker compose` |
-| **端口** | `8080` 网页 · `8780` REST API · `3000` 自带网关（仅 selfhosted 版） |
+| **端口** | `8080` 网页 · `8780` REST API · `3000` 内置网关管理页 |
 | **数据库** | 全部不需要 —— 无 Postgres、Redis、Celery、Ray。任务进程内内联执行，状态存本地文件系统（SQLite + 文件） |
 | **网络** | 需能出网访问模型网关（官方 `relayclaw.cdnfg.com`，或你自己的 BYO 端点） |
 
@@ -196,26 +196,29 @@ DramaClaw 的所有模型推理都走**远程 OpenAI 兼容网关** —— 本�
 
 ### Docker（推荐）
 
+每次 GitHub Release 都会发布 amd64/arm64 多架构镜像到 Docker Hub；compose 文件只拉镜像，不构建。
+
 ```bash
-git clone https://github.com/dramaclaw/dramaclaw.git
+git clone https://github.com/dramaclaw/dramaclaw.git   # 或到 Release 页下载 DramaClaw-compose-<tag>.zip
 cd dramaclaw
 
 cp .env.example .env
 # 编辑 .env —— 把 PROMPT_EXPORT_PASSWORD 改成非默认值。
-# NEWAPI_BASE_URL 已默认指向官方网关；DC key 可在此填,或下一步在网页里粘贴。
 
-docker compose up -d --build   # 起两个服务：api / web
+docker compose up -d   # 起三个服务：api / newapi（内置网关）/ web
 ```
 
-浏览器打开 <http://localhost:8080> 进入应用；REST API 在 <http://localhost:8780>。到**设置 → 模型配置 → 官方渠道**粘贴你的 DC key（到 <https://relayclaw.cdnfg.com> 获取）即可,**无需映射模型**。完整步骤见 [快速开始](../docs/zh/getting-started/quickstart.md)。
+浏览器打开 <http://localhost:8080>；REST API 在 <http://localhost:8780>。到**设置 → 模型配置**三选一：
 
-**免构建跑法** —— 每次 GitHub Release 都会发布 amd64/arm64 多架构镜像到 Docker Hub,一个文件即可运行:
+- **官方** —— 粘贴 DC key（到 <https://relayclaw.cdnfg.com> 获取），无需映射模型，内置网关闲置待命。
+- **自建** —— 一键初始化内置 `newapi` 网关，再自行配上游渠道。
+- **混合** —— 主链路走官方，额外渠道走内置网关。
 
-```bash
-curl -LO https://raw.githubusercontent.com/dramaclaw/dramaclaw/main/docker-compose.release.yml
-docker compose -f docker-compose.release.yml up -d
-# 固定版本(默认 latest):DRAMACLAW_VERSION=1.0.1 docker compose -f docker-compose.release.yml up -d
-```
+完整步骤见 [快速开始](../docs/zh/getting-started/quickstart.md)。
+
+版本与镜像源在 `.env` 里钉：`DRAMACLAW_VERSION`、`DRAMACLAW_GATEWAY_VERSION`、`DRAMACLAW_IMAGE_PREFIX`。国内拉取慢：设 `DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw` 并同时钉两个版本（ACR 镜像只有钉 tag，没有 latest）。
+
+> 从旧版本升级？`docker-compose.release.yml`、`docker-compose.selfhosted.yml`、`docker-compose.selfhosted.release.yml` 已合并进这一份 `docker-compose.yml`，`ce-data` / `newapi-data` 数据卷原样复用。
 
 ### 本地开发（uv + Python 3.11+）
 
@@ -229,6 +232,14 @@ cp .env.example .env && $EDITOR .env
 uv run novelvideo api --port 8780   # 启动 REST API（CE 默认 inline 任务，无需 Ray/Redis）
 ```
 
+从源码构建 Docker 镜像（compose 文件本身不构建）：
+
+```bash
+scripts/build_images.sh            # claymorelab/dramaclaw:dev + claymorelab/dramaclaw-frontend:dev
+echo 'DRAMACLAW_VERSION=dev' >> .env
+docker compose up -d
+```
+
 <br/>
 
 ## 支持的模型与服务商
@@ -238,7 +249,7 @@ DramaClaw 对模型侧保持中立 —— 所有文本/图片/视频/音频模�
 - **DramaClaw 官方 key（推荐）**：`docker compose up`,开 <http://localhost:8080> → 设置 → 模型配置 → 官方渠道,粘贴 DC key 保存即用,**无需映射模型**。到 <https://relayclaw.cdnfg.com> 获取 key。
 - **自带网关（BYO）**：把 `NEWAPI_BASE_URL` 指向你自己的 OpenAI 兼容端点并映射模型名（详见 [配置模型供应商](../docs/zh/getting-started/configuring-models.md)）。
 
-> 想完全本地?用 `docker compose -f docker-compose.selfhosted.yml up` 起 selfhosted 版 `newapi` 网关自行配置（免构建镜像版:`docker-compose.selfhosted.release.yml`）。
+> 内置 `newapi` 网关始终随 compose 启动；只有在「设置 → 模型配置」切到**自建**或**混合**后才会被使用。
 
 | 环节              | 经网关接入                                                          |
 |-------------------|---------------------------------------------------------------------|

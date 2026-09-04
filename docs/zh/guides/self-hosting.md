@@ -5,7 +5,7 @@
 
 > 用 Docker 部署、配置、升级、备份 DramaClaw CE。
 
-CE 默认两个容器：`api` + `web`，**无 PostgreSQL / 无 Redis / 无 Celery**（`ST_EDITION=ce`，任务在进程内 inline 执行）。模型默认走 DramaClaw 官方网关；想纯本地自建网关,用 `docker-compose.selfhosted.yml`(多一个内置 `newapi` 容器)。
+CE 三个容器：`api` + `newapi`（内置 DramaClaw 网关，切到自建/混合模式前闲置）+ `web`，**无 PostgreSQL / 无 Redis / 无 Celery**（`ST_EDITION=ce`，任务在进程内 inline 执行）。模型默认走 DramaClaw 官方网关。
 
 ## 1. 前置
 
@@ -25,7 +25,9 @@ cp .env.example .env
 
 | 项 | 值 | 说明 |
 |---|---|---|
-| 服务 | `api` + `web` | 无 PG/Redis（自建网关版另起 `newapi`） |
+| 服务 | `api` + `newapi` + `web` | 无 PG/Redis；`newapi` 是内置网关 |
+| 镜像 | `${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/...` | 默认拉 Docker Hub；`.env` 设 `DRAMACLAW_IMAGE_PREFIX` 切到 ACR 镜像（只有钉 tag） |
+| 版本 | `DRAMACLAW_VERSION`（api/web）、`DRAMACLAW_GATEWAY_VERSION` | 默认 `latest` / 文件里写死的网关 tag |
 | 端口 | `8780:8780` | REST API |
 | 强制环境 | `ST_EDITION=ce`、清空 control-plane/Redis/Celery | CE 模式不可降级 |
 | 数据卷 | `ce-data:/data`（输出为 `/data/output`） | 持久化项目数据库、设置和生成媒体 |
@@ -41,14 +43,14 @@ cp .env.example .env
 推荐与备选(详见 [配置模型供应商](../getting-started/configuring-models.md)):
 
 - **A. DC 官方 key(推荐)**：默认 compose 已走官方网关。起栈后开 `http://localhost:8080` → 设置 → 模型配置 → 官方渠道 → 粘贴 DC key 保存即用,**无需映射模型**。到 <https://relayclaw.cdnfg.com> 取 key。
-- **B. 本地 NewAPI**：改用 `docker compose -f docker-compose.selfhosted.yml up`，然后在网页「本地 NewAPI」页初始化并配置上游渠道和模型映射。
+- **B. 本地 NewAPI**：内置网关已在运行；到 设置 → 模型配置 → 自建，点初始化，然后在「本地 NewAPI」页配置上游渠道和模型映射。
 
 本地 NewAPI 需把 DramaClaw 逻辑模型映射到真实上游模型。参考图功能需要 `OSS_RELAY_AK/SK`（纯文本流程可暂不配）。
 
 ## 4. 起停
 
 ```bash
-docker compose up -d --build     # 启动（首次构建）
+docker compose up -d             # 启动（首次拉镜像）
 docker compose ps                # 状态
 docker compose logs -f api       # 日志
 docker compose down              # 停止（保留数据卷）
@@ -73,23 +75,26 @@ docker run --rm -v dramaclaw-ce_ce-data:/data -v "$PWD":/backup alpine \
   tar xzf /backup/ce-data-backup.tar.gz -C /data
 ```
 
-然后照常起服务（`docker compose -f docker-compose.selfhosted.yml up -d`）。数据卷备份已包含生成媒体；`.env` 仍需单独备份。
+然后照常起服务（`docker compose up -d`）。数据卷备份已包含生成媒体；`.env` 仍需单独备份。
 
 ## 6. 升级
 
-> 🚧 当前由源码构建，升级 = 拉新代码后重建：
+compose 文件只拉已发布镜像，升级 = 改版本号：
 
 ```bash
-git pull
-docker compose up -d --build
+# 编辑 .env：DRAMACLAW_VERSION=2.1.0（发布说明要求时同时改 DRAMACLAW_GATEWAY_VERSION）
+docker compose pull
+docker compose up -d
 ```
 
-如果旧版本曾将媒体写入容器内 `/app/output`，请在重建旧容器**之前**运行一次迁移：
+升级不会碰你的 `.env`；`ce-data` 与 `newapi-data` 卷原样复用。
+
+如果旧版本曾将媒体写入容器内 `/app/output`，请在启动新版本**之前**运行一次迁移：
 
 ```bash
 git pull
 docker compose exec -T api python - < scripts/migrate_docker_output.py
-docker compose up -d --build
+docker compose up -d
 ```
 
 Windows PowerShell 使用：
@@ -97,12 +102,12 @@ Windows PowerShell 使用：
 ```powershell
 git pull
 Get-Content scripts/migrate_docker_output.py -Raw | docker compose exec -T api python -
-docker compose up -d --build
+docker compose up -d
 ```
 
-脚本只补拷缺失文件，不覆盖或删除源文件；修改项目前会备份 `projects.db`。如果旧容器已经被删除，原本仅存在于该容器层的文件无法由数据卷恢复。
+脚本只复制缺失文件，不覆盖、不删除源文件，并在更新项目路径前备份 `projects.db`。只存在于已删除容器层里的文件无法从数据卷恢复。
 
-正式发布后改为**拉取钉版本的已发布镜像** + env-sync（升级保留你的自定义 `.env` 值）——见发行规格落地后更新本节。
+想从源码构建？运行 `scripts/build_images.sh` 并在 `.env` 写 `DRAMACLAW_VERSION=dev`。
 
 ## 7. 排错
 
