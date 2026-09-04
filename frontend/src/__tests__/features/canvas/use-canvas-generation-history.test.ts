@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/api/client";
 
 const fetchCanvasGenerationHistory = vi.hoisted(() => vi.fn());
 const fetchNodeGenerationHistory = vi.hoisted(() => vi.fn());
+const deleteNodeGenerationHistoryRecord = vi.hoisted(() => vi.fn());
 const readUrl = vi.hoisted(() => vi.fn());
 
 vi.mock("@/api/ops", () => ({
   fetchCanvasGenerationHistory,
   fetchNodeGenerationHistory,
+  deleteNodeGenerationHistoryRecord,
 }));
 vi.mock("@/lib/url-params", () => ({ readUrl }));
 
@@ -21,6 +23,7 @@ describe("useCanvasGenerationHistory", () => {
   beforeEach(() => {
     fetchCanvasGenerationHistory.mockReset();
     fetchNodeGenerationHistory.mockReset();
+    deleteNodeGenerationHistoryRecord.mockReset();
     readUrl.mockReset();
     readUrl.mockReturnValue({ project: "p1", canvas: "c1" });
   });
@@ -100,5 +103,24 @@ describe("useCanvasGenerationHistory", () => {
     expect(fetchNodeGenerationHistory).not.toHaveBeenCalled();
     expect(result.current.error?.message).toBe("boom");
     expect(result.current.records).toEqual([]);
+  });
+
+  it("deletes the history record and removes it from local state immediately", async () => {
+    fetchCanvasGenerationHistory.mockResolvedValue([
+      { id: "r1", node_id: "n1", status: "completed", recorded_at: "2026-06-16T00:00:00Z" },
+      { id: "r2", node_id: "n1", status: "completed", recorded_at: "2026-06-15T00:00:00Z" },
+    ]);
+    deleteNodeGenerationHistoryRecord.mockResolvedValue({ deleted: true });
+    const { result } = renderHook(() =>
+      useCanvasGenerationHistory(["n1"], { enabled: true }),
+    );
+    await waitFor(() => expect(result.current.records).toHaveLength(2));
+
+    await act(async () => {
+      expect(await result.current.removeRecord("n1", "r1")).toBe(true);
+    });
+
+    expect(deleteNodeGenerationHistoryRecord).toHaveBeenCalledWith("p1", "c1", "n1", "r1");
+    expect(result.current.records.map((record) => record.id)).toEqual(["r2"]);
   });
 });

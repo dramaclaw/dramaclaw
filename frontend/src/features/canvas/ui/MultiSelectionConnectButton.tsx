@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { memo, useCallback, useMemo, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { NodeToolbar as ReactFlowNodeToolbar, Position } from '@xyflow/react';
 import { Plus } from 'lucide-react';
 
@@ -43,6 +44,7 @@ export const MultiSelectionConnectButton = memo(
     onBatchDragMove,
     onBatchDragEnd,
   }: MultiSelectionConnectButtonProps) => {
+    const { t } = useTranslation();
     const nodes = useCanvasStore((state) => state.nodes);
 
     // Anchor to the full selection box (all selected nodes) so the "+" sits on
@@ -155,8 +157,8 @@ export const MultiSelectionConnectButton = memo(
       >
         <button
           type="button"
-          aria-label="批量连线"
-          title="批量连线：点击新建下游节点并把选中节点都连进去，或拖动连到已有节点"
+          aria-label={t('canvas.multiConnect.label')}
+          title={t('canvas.multiConnect.hint')}
           className="nodrag flex h-8 w-8 items-center justify-center rounded-full border border-white/40 bg-surface-dark/95 text-white/85 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_6px_18px_rgba(0,0,0,0.32)] transition-[border-color,color,box-shadow] duration-150 hover:border-white/85 hover:text-white hover:shadow-[0_0_0_1px_rgba(255,255,255,0.42),0_0_18px_rgba(255,255,255,0.22)]"
           onPointerDown={handlePointerDown}
           onClick={(event) => {

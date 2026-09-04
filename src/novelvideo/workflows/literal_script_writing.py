@@ -31,6 +31,11 @@ from novelvideo.utils.screenplay_scene_parser import (
     parse_scene_blocks,
     split_screenplay_lines,
 )
+from novelvideo.utils.source_language import (
+    AssetLanguage,
+    asset_language_instruction,
+    detect_asset_language,
+)
 
 DIALOGUE_RE = re.compile(r"^(?P<speaker>[^：:]{1,24})[：:](?P<speech>.+)$")
 
@@ -400,6 +405,7 @@ class LiteralScriptWritingWorkflow:
         self._identity_section = ""
         self._scene_section = ""
         self._prop_section = ""
+        self._output_language: AssetLanguage = "zh"
         self.last_review_passed = True
         self.last_review_summary = "逐行剧本模式"
         self.last_degraded_lines: list[int] = []
@@ -413,7 +419,10 @@ class LiteralScriptWritingWorkflow:
                     brainclaw_profile=BrainClawProfile.LITERAL_BEAT_METADATA,
                     capability="text.generate.workflow",
                 ),
-                system_prompt=LITERAL_SCRIPT_PROMPT,
+                system_prompt=(
+                    f"{LITERAL_SCRIPT_PROMPT}\n"
+                    f"{asset_language_instruction(self._output_language)}"
+                ),
                 model_settings=get_newapi_structured_output_model_settings(),
                 output_type=LiteralBeatMetaOutput,
                 output_retries=model_gateway_output_retries(2),
@@ -470,6 +479,7 @@ class LiteralScriptWritingWorkflow:
             )
         if not source_text.strip():
             raise ValueError("当前集原文为空，无法逐行生成脚本")
+        self._output_language = detect_asset_language(source_text)
 
         quality_report = check_screenplay_import_quality(source_text)
         for issue in quality_report.blocking_issues:
@@ -630,7 +640,9 @@ class LiteralScriptWritingWorkflow:
                     + "\n".join(sticky_lines)
                 )
 
-            prompt = f"""请为第 {episode_num} 集当前这一行剧本补全 beat 元数据。
+            prompt = f"""{asset_language_instruction(self._output_language)}
+
+请为第 {episode_num} 集当前这一行剧本补全 beat 元数据。
 
 ## 本集信息
 - 标题: {episode.title}
@@ -835,15 +847,18 @@ class LiteralScriptWritingWorkflow:
             )
             return self._build_fallback_line_metadata(raw_line), True
 
-    @staticmethod
-    def _build_placeholder_line_metadata() -> LiteralBeatMetaOutput:
+    def _build_placeholder_line_metadata(self) -> LiteralBeatMetaOutput:
         """Build a safe beat without reusing content rejected by the provider."""
 
         return LiteralBeatMetaOutput(
             audio_type="silence",
             speaker="",
             speaker_kind="character",
-            visual_description="该行未能生成，请手动补充。",
+            visual_description=(
+                "This line could not be generated; please complete it manually."
+                if self._output_language == "en"
+                else "该行未能生成，请手动补充。"
+            ),
             scene_id="",
         )
 
@@ -859,7 +874,11 @@ class LiteralScriptWritingWorkflow:
         if speaker and not is_non_character:
             audio_type = "dialogue"
             fallback_speaker = speaker
-            visual_description = f"{speaker}开口说话。"
+            visual_description = (
+                f"{speaker} speaks."
+                if self._output_language == "en"
+                else f"{speaker}开口说话。"
+            )
         elif speaker and is_non_character:
             audio_type = "narration"
             fallback_speaker = ""
@@ -880,7 +899,11 @@ class LiteralScriptWritingWorkflow:
             .strip()
         )
         if len(visual_description) < 5:
-            visual_description = f"画面保留原文：{visual_description or '空白行'}"
+            visual_description = (
+                f"Visual source line: {visual_description or 'blank line'}"
+                if self._output_language == "en"
+                else f"画面保留原文：{visual_description or '空白行'}"
+            )
 
         return LiteralBeatMetaOutput.model_construct(
             audio_type=audio_type,

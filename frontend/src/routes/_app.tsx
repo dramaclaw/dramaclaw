@@ -37,6 +37,7 @@ import { AccessoryUnlockPrompt } from "@/features/rewards/AccessoryUnlockPrompt"
 import { VersionUpdateDialog } from "@/features/version-update/VersionUpdateDialog";
 import { PikoInspirationStation } from "@/features/piko-mini-game/PikoInspirationStation";
 import { ProductSurfaceUnavailable } from "@/components/product-surface-unavailable";
+import { CinematicSideRays } from "@/components/login/cinematic/CinematicSideRays";
 import {
   surfaceAccess,
   useProductSurfaces,
@@ -48,6 +49,7 @@ export function shouldRedirectMissingUsernameToLogin(): boolean {
 }
 
 function AppLayout() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   // `username` stands in for the old `apiKey` gate — the SPA is cookie-backed,
   // JS can no longer read the credential, so the login marker is username.
@@ -60,18 +62,38 @@ function AppLayout() {
   const params = useParams({ strict: false }) as { project?: string };
   const routeProject = params.project ?? null;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isProjectDashboard = pathname === "/";
   const projectSummaries = useAllProjectSummaries();
   const canonicalProject = routeProject
     ? canonicalProjectRouteParam(routeProject, projectSummaries.data)
     : null;
   const reducedMotion = useReducedMotion();
+  // This key is a remount switch for everything under <Outlet/>, so the freezone
+  // canvas deliberately drops the project id from it.
+  //
+  // With the project in the key, "project A canvas -> project B canvas" tears
+  // down and rebuilds the whole freezone subtree (ReactFlowProvider + Canvas +
+  // every node). Measured on two 350-node canvases that remount alone cost a
+  // 1.27s blocking task: the fresh ReactFlow instance re-mounts the *outgoing*
+  // canvas's nodes — the store still holds them, and a brand new instance has no
+  // viewport yet, so nothing is culled — only to throw them away a beat later.
+  // Dropping the id took the switch from 3148ms of total blocking time to
+  // 1547ms; it buys nothing in return, because FreezoneShell already keys its
+  // hydrate on project + canvas and `initial={false}` leaves the motion.div with
+  // no enter animation to replay.
+  //
+  // The other sections keep the id: several of them hold per-project state in
+  // plain useState (ingest's submitted/started flags, for one) and rely on the
+  // remount to reset it. They mount far less DOM, so there is nothing to win.
   const routeTransitionKey = (() => {
     const match = pathname.match(/^\/projects\/([^/]+)(?:\/([^/]+))?/);
     if (!match) return pathname;
-    return `/projects/${match[1]}/${match[2] ?? ""}`;
+    const section = match[2] ?? "";
+    return section === "freezone"
+      ? "/projects/freezone"
+      : `/projects/${match[1]}/${section}`;
   })();
   const isAssistantPage = /^\/projects\/[^/]+\/assistant$/.test(pathname);
-  const { t } = useTranslation();
   const routeSwitchPending = useRouteSwitchPending();
   // 撤遮罩要认 resolvedLocation 而不是 location：后者在 beforeLoad 里就变了，
   // 那时候渲染出来的还是旧页面，照它撤等于遮罩白挂。resolvedLocation 是路由在
@@ -207,8 +229,16 @@ function AppLayout() {
     <TaskCenterProvider projectId={canonicalProject}>
       <div className="flex h-dvh flex-col overflow-hidden">
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-            <Header />
+          <div className="relative isolate flex min-w-0 flex-1 flex-col overflow-hidden">
+            {isProjectDashboard ? (
+              <div
+                className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
+                aria-hidden="true"
+              >
+                <CinematicSideRays className="absolute inset-0 opacity-[0.46]" />
+              </div>
+            ) : null}
+            <Header ambientBackground={isProjectDashboard} />
             <MyBuddyCompanion />
             <AccessoryUnlockPrompt />
             <VersionUpdateDialog />
@@ -238,11 +268,11 @@ function AppLayout() {
                 >
                   {requiredSurfaceCode && productSurfaces.error ? (
                     <ProductSurfaceUnavailable
-                      message="暂时无法确认功能开放状态，请稍后重试。"
+                      message={t("productSurface.statusUnknown")}
                       retry={() => void productSurfaces.refetch()}
                     />
                   ) : requiredSurfaceCode && !requiredSurface ? (
-                    <ProductSurfaceUnavailable message="功能开放配置不完整，请联系管理员。" />
+                    <ProductSurfaceUnavailable message={t("productSurface.misconfigured")} />
                   ) : requiredSurface && !requiredSurface.available ? (
                     <ProductSurfaceUnavailable message={requiredSurface.unavailable_message} />
                   ) : (

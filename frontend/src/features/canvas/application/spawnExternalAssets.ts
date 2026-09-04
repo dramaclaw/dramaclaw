@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from 'i18next';
+
 import {
   CANVAS_NODE_TYPES,
   type CanvasNodeData,
@@ -18,8 +23,10 @@ const GAP_Y = 24;
 /** 对齐 VideoNode.tsx 的 DEFAULT_HEIGHT,target 没给 height 时的兜底值。 */
 const FALLBACK_TARGET_HEIGHT = 380;
 
-/** 与资产库的「资产参考组」区分来源。 */
-export const EXTERNAL_ASSET_GROUP_LABEL = '外部素材组';
+/** 与资产库的「资产参考组」区分来源。组名会显示在画布上，所以是词条不是常量。 */
+export function externalAssetGroupLabel(): string {
+  return i18n.t('canvas.naming.externalAssetGroup');
+}
 
 export interface SpawnExternalAssetsTarget {
   id: string;
@@ -139,7 +146,7 @@ export function spawnExternalAssetNodes(
     newIds.push(nodeId);
   });
 
-  deps.autoGroupSpawn(target.id, newIds, { label: EXTERNAL_ASSET_GROUP_LABEL });
+  deps.autoGroupSpawn(target.id, newIds, { label: externalAssetGroupLabel() });
 
   return newIds;
 }

@@ -25,6 +25,7 @@ async def test_allow_all_project_access_returns_owner_semantics() -> None:
 
     principals = await access.resolve_requester_principals("u1")
     role = await access.effective_project_role(_project(), principals)
+    role_by_id = await access.effective_project_role_by_id("proj-1", principals)
     count = await access.count_project_task_eligible_users(
         project_id="proj-1",
         owner_type="user",
@@ -33,4 +34,5 @@ async def test_allow_all_project_access_returns_owner_semantics() -> None:
 
     assert principals == [Principal("user", "local")]
     assert role == "owner"
+    assert role_by_id == "owner"
     assert count == 1

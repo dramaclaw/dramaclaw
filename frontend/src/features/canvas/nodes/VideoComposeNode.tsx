@@ -18,7 +18,7 @@ import {
   type CanvasNodeData,
   type VideoComposeNodeData,
 } from "@/features/canvas/domain/canvasNodes";
-import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
+import { localizeNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import {
   NodeHeader,
   NODE_HEADER_FLOATING_POSITION_CLASS,
@@ -87,8 +87,8 @@ export const VideoComposeNode = memo(
       videoCount >= MIN_AUTO_COMPOSE_VIDEOS && seedNodeIds.length >= MIN_AUTO_COMPOSE_MEDIA;
 
     const resolvedTitle = useMemo(
-      () => resolveNodeDisplayName(CANVAS_NODE_TYPES.videoCompose, data),
-      [data],
+      () => localizeNodeDisplayName(CANVAS_NODE_TYPES.videoCompose, data, t),
+      [data, t],
     );
     const cardToneClass = canvasNodeFrameClass({ selected });
 

@@ -15,6 +15,14 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。chip 是脱离 React 的
+// 裸 DOM，拿不到 useTranslation 的 t，只能在模块级取。
+import i18n from 'i18next';
+
+
+import type { ReferenceMaterialOption } from '@/features/canvas/application/referencePick';
+
+import { MentionReplacePopover } from './MentionReplacePopover';
 
 export interface MentionCandidate {
   key: string;
@@ -54,10 +62,25 @@ interface PromptMentionEditorProps {
    */
   leadingChip?: ReactNode;
   onLeadingChipDelete?: () => void;
+  /**
+   * 打开替换选单时按需读取当前画布中尚未引用的素材，避免所有宿主节点长期订阅
+   * 整个 nodes 数组。
+   */
+  getMaterials?: () => readonly ReferenceMaterialOption[];
+  /** 把画布素材接成本节点引用；返回 false 表示未建立引用。 */
+  onAttachMaterial?: (nodeId: string) => boolean;
 }
 
 export interface PromptMentionEditorHandle {
   insertTextAtCursor: (text: string) => void;
+  /**
+   * 光标处插入一个 @ 引用 chip（引用行上的 @ 按钮走这条）。
+   *
+   * 不走 insertTextAtCursor('@图片1 ')：那是纯文本，序列化虽然一样，但要等到下一次
+   * 外部 value 变化才会被 rebuildDOM 认成 chip——commitChange 刚把新串写进
+   * lastSerializedRef，回流时 sync 那步会直接 return。用户看到的是一串裸文字。
+   */
+  insertMentionAtCursor: (candidate: MentionCandidate) => void;
   focus: () => void;
 }
 
@@ -113,14 +136,14 @@ function buildChipElement(candidate: MentionCandidate): HTMLElement {
   span.className = 'mention-chip';
   const label = mentionChipLabel(candidate);
   if (candidate.imageUrl) {
-    span.title = '双击替换引用';
+    span.title = i18n.t('canvas.mentionChip.doubleClickReplace');
     const img = document.createElement('img');
     img.src = candidate.imageUrl;
     img.alt = '';
     img.draggable = false;
     span.appendChild(img);
   } else if (candidate.videoUrl) {
-    span.title = '双击替换引用';
+    span.title = i18n.t('canvas.mentionChip.doubleClickReplace');
     // 没有静态首帧图时，用 muted 静止 <video> 显示首帧——与候选行 / 引用行一致。
     const video = document.createElement('video');
     video.src = candidate.videoUrl;
@@ -133,19 +156,32 @@ function buildChipElement(candidate: MentionCandidate): HTMLElement {
     // 音频没有缩略图：放一个可点击的 ▶/⏸ 播放按钮（::before 画图标，播放态由
     // chip 上的 data-audio-playing 切换）。hover 时 title 给出完整文件名。
     span.classList.add('mention-chip-audio');
-    span.title = `${label} · 点击播放`;
+    span.title = i18n.t('canvas.mentionChip.clickToPlay', { label });
     const play = document.createElement('span');
     play.className = 'mention-chip-audio-play';
     play.dataset.audioPlay = '';
     play.setAttribute('aria-hidden', 'true');
     span.appendChild(play);
   } else {
-    span.title = '双击替换引用';
+    span.title = i18n.t('canvas.mentionChip.doubleClickReplace');
   }
   const labelEl = document.createElement('span');
   labelEl.className = 'mention-chip-label';
   labelEl.textContent = truncateChipLabel(label);
   span.appendChild(labelEl);
+  // hover 时顶掉缩略图的替换按钮。「这处 @ 可以换成别的素材」以前只有双击能发现，
+  // 等于没有；图片 / 视频把它放在缩略图的位置（CSS 里 hover 互换），音频那格已经
+  // 被播放键占着，就挂到标签后面。
+  const swap = document.createElement('span');
+  swap.className = 'mention-chip-swap';
+  swap.dataset.mentionSwap = '';
+  swap.title = i18n.t('canvas.mentionChip.replace');
+  swap.setAttribute('aria-hidden', 'true');
+  if (candidate.imageUrl || candidate.videoUrl) {
+    span.insertBefore(swap, span.firstChild);
+  } else {
+    span.appendChild(swap);
+  }
   return span;
 }
 
@@ -358,6 +394,8 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
       onKeyDown,
       leadingChip,
       onLeadingChipDelete,
+      getMaterials,
+      onAttachMaterial,
     },
     ref,
   ) {
@@ -375,7 +413,12 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
     const [replaceTarget, setReplaceTarget] = useState<{
       el: HTMLElement;
       rect: DOMRect;
+      /** 打开那一刻的素材快照，见 getMaterials。 */
+      materials: readonly ReferenceMaterialOption[];
     } | null>(null);
+    // 选了一条还没引用的素材：宿主先建边，等它出现在 candidates 里（有了编号）之后
+    // 才好把 chip 换过去——在那之前我们连该写 @图片几都不知道。
+    const pendingAttachRef = useRef<{ el: HTMLElement; key: string } | null>(null);
     const popoverRef = useRef<HTMLDivElement | null>(null);
 
     // 前置 chip 的宿主节点：DOM 节点自己造、自己保管（React 只往里 portal 内容），
@@ -449,13 +492,44 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
       [commitChange],
     );
 
+    const insertMentionAtCursor = useCallback(
+      (candidate: MentionCandidate) => {
+        const el = editorRef.current;
+        if (!el) return;
+
+        el.focus();
+        const selection = window.getSelection();
+        const range =
+          selection && selection.rangeCount > 0 && selectionBelongsTo(el, selection)
+            ? selection.getRangeAt(0).cloneRange()
+            : rangeAtEndOf(el);
+        range.deleteContents();
+        const chip = buildChipElement(candidate);
+        range.insertNode(chip);
+        // 和从候选列表插入一样补一个尾随空格，光标落在它后面，接着打字不会黏在 chip 上。
+        const space = document.createTextNode(' ');
+        chip.parentNode?.insertBefore(space, chip.nextSibling);
+        if (selection) {
+          const after = document.createRange();
+          after.setStartAfter(space);
+          after.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(after);
+        }
+        setMention(null);
+        commitChange();
+      },
+      [commitChange],
+    );
+
     useImperativeHandle(
       ref,
       () => ({
         insertTextAtCursor,
+        insertMentionAtCursor,
         focus: () => editorRef.current?.focus(),
       }),
-      [insertTextAtCursor],
+      [insertTextAtCursor, insertMentionAtCursor],
     );
 
     const clearPlayingState = useCallback(() => {
@@ -613,19 +687,44 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
       [commitChange],
     );
 
+    // 在某颗 chip 下方打开替换选单。两个入口共用：hover 出来的替换图标，和双击
+    // chip（老习惯，留着）。
+    const openReplaceFor = useCallback(
+      (chip: HTMLElement) => {
+        const materials = getMaterials?.() ?? [];
+        if (candidates.length === 0 && materials.length === 0) return;
+        pendingAttachRef.current = null;
+        setMention(null);
+        setHover(null);
+        setReplaceTarget({ el: chip, rect: chip.getBoundingClientRect(), materials });
+      },
+      [candidates.length, getMaterials],
+    );
+
     // 双击 @ chip → 在它下方打开候选列表，快速替换该引用，省去「删 chip 再 @」。
     const handleDoubleClick = useCallback(
       (event: ReactMouseEvent<HTMLDivElement>) => {
-        if (candidates.length === 0) return;
         const chip = (event.target as HTMLElement | null)?.closest('.mention-chip');
         if (!(chip instanceof HTMLElement) || !chip.dataset.mention) return;
         event.preventDefault();
         event.stopPropagation();
-        setMention(null);
-        setHover(null);
-        setReplaceTarget({ el: chip, rect: chip.getBoundingClientRect() });
+        openReplaceFor(chip);
       },
-      [candidates.length],
+      [openReplaceFor],
+    );
+
+    // 选了一条画布素材：先让宿主建边，再等它带着编号进入 candidates。
+    // 建边期间 prompt 文本没变，rebuildDOM 不会跑，所以这里握着的 chip 元素仍然有效。
+    // 建边被拒（比如超了素材上限，宿主已经弹过 toast）就别留 pending——留下的话，
+    // 用户过一阵子从别的入口把同一个节点连上时，这颗早就失去上下文的 chip 会被悄悄改掉。
+    const attachMaterial = useCallback(
+      (chipEl: HTMLElement, nodeId: string) => {
+        setReplaceTarget(null);
+        if (!onAttachMaterial) return;
+        if (!onAttachMaterial(nodeId)) return;
+        pendingAttachRef.current = { el: chipEl, key: nodeId };
+      },
+      [onAttachMaterial],
     );
 
     // 替换态下，点击 popover 以外的任意地方都关闭它（捕获阶段，先于 React 冒泡）。
@@ -641,6 +740,18 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
       document.addEventListener('mousedown', onDocMouseDown, true);
       return () => document.removeEventListener('mousedown', onDocMouseDown, true);
     }, [replaceTarget]);
+
+    // 新引用连上后 candidates 会多出这一条（带好编号），这时才把 chip 换过去。
+    // 只等这一轮：边已经建成了，candidates 必然在同一次更新里重算，这时还找不到它
+    // 就是宿主根本给不出这个候选（例如两个节点指向同一张图，编号只认第一个），
+    // 那就到此为止——继续挂着只会在很久以后误改一颗无关的 chip。
+    useEffect(() => {
+      const pending = pendingAttachRef.current;
+      if (!pending) return;
+      pendingAttachRef.current = null;
+      const candidate = candidates.find((item) => item.key === pending.key);
+      if (candidate) replaceChip(pending.el, candidate);
+    }, [candidates, replaceChip]);
 
     const handleKeyDown = useCallback(
       (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -670,12 +781,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           }
           if (event.key === 'Enter') {
             event.preventDefault();
-            const candidate = filtered[activeIdx];
-            if (replaceTarget) {
-              replaceChip(replaceTarget.el, candidate);
-            } else {
-              insertChip(candidate);
-            }
+            insertChip(filtered[activeIdx]);
             return;
           }
           if (event.key === 'Escape') {
@@ -706,6 +812,15 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
     const handleClick = useCallback(
       (event: ReactMouseEvent<HTMLDivElement>) => {
         event.stopPropagation();
+        const swapEl = (event.target as HTMLElement | null)?.closest('[data-mention-swap]');
+        if (swapEl) {
+          const chip = swapEl.closest('.mention-chip');
+          if (chip instanceof HTMLElement && chip.dataset.mention) {
+            event.preventDefault();
+            openReplaceFor(chip);
+          }
+          return;
+        }
         const playEl = (event.target as HTMLElement | null)?.closest('[data-audio-play]');
         if (!playEl) return;
         const chip = playEl.closest('.mention-chip');
@@ -714,7 +829,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           toggleAudio(chip);
         }
       },
-      [toggleAudio],
+      [openReplaceFor, toggleAudio],
     );
 
     const handleMouseOver = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
@@ -747,12 +862,12 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
     }, []);
 
     const popoverStyle = useMemo(() => {
-      const rect = mention?.rect ?? replaceTarget?.rect ?? null;
+      const rect = mention?.rect ?? null;
       if (!rect) return null;
       const top = rect.bottom + POPOVER_OFFSET_Y;
       const left = rect.left;
       return { top, left } as { top: number; left: number };
-    }, [mention, replaceTarget]);
+    }, [mention]);
 
     const previewStyle = useMemo(() => {
       if (!hover) return null;
@@ -806,7 +921,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           && createPortal(
             <div
               ref={popoverRef}
-              className="ui-scrollbar fixed z-[10000] flex min-w-[200px] max-w-[280px] flex-col overflow-y-auto rounded-lg border border-white/10 bg-surface-dark/95 shadow-xl backdrop-blur-sm"
+              className="canvas-node-transient-ui ui-scrollbar fixed z-[10000] flex min-w-[200px] max-w-[280px] flex-col overflow-y-auto rounded-lg border border-white/10 bg-surface-dark/95 shadow-xl backdrop-blur-sm"
               style={{
                 ...popoverStyle,
                 maxHeight: POPOVER_MAX_VISIBLE * POPOVER_ROW_PX,
@@ -821,11 +936,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
                   onMouseDown={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    if (replaceTarget) {
-                      replaceChip(replaceTarget.el, candidate);
-                    } else {
-                      insertChip(candidate);
-                    }
+                    insertChip(candidate);
                   }}
                   onMouseEnter={() => setActiveIdx(idx)}
                   className={`flex items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors ${
@@ -862,10 +973,26 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
             </div>,
             document.body,
           )}
+        {replaceTarget
+          && createPortal(
+            <div ref={popoverRef}>
+              <MentionReplacePopover
+                anchorRect={replaceTarget.rect}
+                referenced={candidates}
+                materials={replaceTarget.materials}
+                onPickReferenced={(candidate) => replaceChip(replaceTarget.el, candidate)}
+                onPickMaterial={(material) =>
+                  attachMaterial(replaceTarget.el, material.nodeId)
+                }
+                onClose={() => setReplaceTarget(null)}
+              />
+            </div>,
+            document.body,
+          )}
         {hover && previewStyle
           && createPortal(
             <div
-              className="pointer-events-none fixed z-[10001] -translate-y-full overflow-hidden rounded-lg border border-white/15 bg-surface-dark/95 shadow-xl"
+              className="canvas-node-transient-ui pointer-events-none fixed z-[10001] -translate-y-full overflow-hidden rounded-lg border border-white/15 bg-surface-dark/95 shadow-xl"
               style={{
                 left: previewStyle.left,
                 top: previewStyle.top,

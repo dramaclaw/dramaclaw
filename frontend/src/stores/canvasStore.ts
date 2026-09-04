@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from 'i18next';
 import { create } from 'zustand';
 import {
   type Viewport,
@@ -1790,10 +1794,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const nameOverrides: Record<string, unknown> = {};
       if (!parentIsCloned) {
         if (typeof sourceData.displayName === 'string' && sourceData.displayName) {
-          nameOverrides.displayName = `${sourceData.displayName} - 副本`;
+          nameOverrides.displayName = i18n.t('canvas.naming.copySuffix', { name: sourceData.displayName });
         }
         if (typeof sourceData.label === 'string' && sourceData.label) {
-          nameOverrides.label = `${sourceData.label} - 副本`;
+          nameOverrides.label = i18n.t('canvas.naming.copySuffix', { name: sourceData.label });
         }
       }
 
@@ -1992,7 +1996,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const groupX = Math.round(sourceAbs.x + sourceSize.width + 80);
     const groupY = Math.round(sourceAbs.y);
 
-    const groupDisplayName = options?.groupName ?? `全景截图组 (${captures.length} 张)`;
+    const groupDisplayName =
+      options?.groupName ?? i18n.t('canvas.naming.panoCaptureGroup', { total: captures.length });
     const groupNode = canvasNodeFactory.createNode(
       CANVAS_NODE_TYPES.group,
       { x: groupX, y: groupY },
@@ -3004,7 +3009,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     );
 
     const existingGroupCount = state.nodes.filter((node) => node.type === CANVAS_NODE_TYPES.group).length;
-    const groupDisplayName = opts?.label?.trim() || `组 ${existingGroupCount + 1}`;
+    const groupDisplayName =
+      opts?.label?.trim() || i18n.t('canvas.naming.group', { index: existingGroupCount + 1 });
     const groupNode = canvasNodeFactory.createNode(
       CANVAS_NODE_TYPES.group,
       { x: groupX, y: groupY },
@@ -3271,7 +3277,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const existingStoryboardCount = state.nodes.filter((node) =>
       isStoryboardGroupNode(node)
     ).length;
-    const groupDisplayName = `分镜组 ${existingStoryboardCount + 1}`;
+    const groupDisplayName = i18n.t('canvas.naming.storyboardGroup', {
+      index: existingStoryboardCount + 1,
+    });
     const groupNode = canvasNodeFactory.createNode(
       CANVAS_NODE_TYPES.group,
       { x: groupX, y: groupY },
@@ -3535,7 +3543,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         {
           imageUrl: image.imageUrl,
           previewImageUrl: image.previewImageUrl ?? image.imageUrl,
-          displayName: image.displayName ?? '分镜',
+          displayName: image.displayName ?? i18n.t('canvas.naming.storyboardFrame'),
         }
       );
       node.parentId = groupNodeId;

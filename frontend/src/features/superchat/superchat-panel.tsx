@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Copy,
   Download,
+  Ellipsis,
   File,
   Gauge,
   Image,
@@ -76,8 +77,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { apiCall } from "@/api/client";
@@ -101,6 +104,7 @@ import {
 } from "@/features/superchat/use-superchat";
 import { useAiAvatarUrl } from "@/features/superchat/ai-avatar";
 import { buildChatTaskLabel } from "@/features/superchat/task-notification-label";
+import { resolveMessagePresentation } from "@/features/superchat/message-presentation";
 import {
   buildChatTaskBatchNotification,
   resolveChatTaskBatchSummary,
@@ -764,6 +768,9 @@ const ASSISTANT_ERROR_TEXT_PATTERNS: RegExp[] = [
   /请先根据返回的错误/u,
   /content filter triggered/i,
   /finish reason:\s*['"]?content_filter/i,
+  /returned no content/i,
+  /未返回(?:任何)?内容/u,
+  /failed[:：]/i,
 ];
 
 function isAssistantErrorReply(message: ChatMessage): boolean {
@@ -1245,7 +1252,7 @@ function UnifiedMediaCard({
 
   return (
     <>
-      <div className="st-unified-media-card">
+      <div className="st-ai-media-card st-unified-media-card">
         <div className="relative h-full w-full overflow-hidden rounded-2xl bg-white/5 p-[1.5px]">
           <div className="relative z-10 h-full w-full overflow-hidden rounded-[14px] bg-zinc-950">
             {item.kind === "audio" ? (
@@ -7212,7 +7219,7 @@ function SkillStudioEventCard({
   );
 }
 
-const MessageBubble = memo(function MessageBubble({
+export const MessageBubble = memo(function MessageBubble({
   message,
   variant = "default",
   onOpenDetail,
@@ -7295,6 +7302,12 @@ const MessageBubble = memo(function MessageBubble({
   const freezoneToolActivity = isTool ? freezoneToolDisplay(message) : null;
   const isErrorReply = isAssistantErrorReply(message);
   const isCompletionNotice = isAssistantCompletionNotice(message);
+  const presentation = resolveMessagePresentation({
+    role: message.role,
+    tool: isTool,
+    error: isErrorReply,
+    streaming,
+  });
   const { t } = useTranslation();
   const shouldWaitForStructuredRender =
     deferStructuredRender && !isUser && !isTool && looksLikeStructuredRenderText(message.text);
@@ -7397,7 +7410,7 @@ const MessageBubble = memo(function MessageBubble({
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(message.text));
   };
-  const actions = (
+  const userActions = (
     <div
       className={cn(
         "pointer-events-none absolute top-full z-10 mt-1 flex items-center gap-0.5 whitespace-nowrap rounded-full border border-border/70 bg-background/85 px-1 py-0.5 text-foreground/75 opacity-0 shadow-sm backdrop-blur transition-opacity after:absolute after:-top-2 after:left-0 after:h-2 after:w-full after:content-[''] group-hover/message-actions:pointer-events-auto group-hover/message-actions:opacity-100 group-focus-within/message-actions:pointer-events-auto group-focus-within/message-actions:opacity-100",
@@ -7412,7 +7425,7 @@ const MessageBubble = memo(function MessageBubble({
                 <button
                   type="button"
                   className="flex size-6 items-center justify-center rounded-full text-muted-foreground/80 hover:bg-white/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
-                  aria-label="上下文用量"
+                  aria-label={assistantUsageSummary.label}
                   title={assistantUsageSummary.title}
                 />
               }
@@ -7425,7 +7438,7 @@ const MessageBubble = memo(function MessageBubble({
               showArrow={false}
               className="max-w-[18rem] flex-col items-start gap-1 border border-white/10 bg-background/95 text-foreground shadow-none"
             >
-              <div className="text-xs font-medium">上下文用量</div>
+              <div className="text-xs font-medium">{assistantUsageSummary.label}</div>
               <div className="space-y-0.5 text-[11px] leading-4 text-muted-foreground">
                 {assistantUsageSummary.entries.map(([key, value]) => (
                   <div key={key}>
@@ -7484,6 +7497,91 @@ const MessageBubble = memo(function MessageBubble({
       </Button>
     </div>
   );
+  const assistantActions = presentation.showAssistantActions && (
+    <div
+      className="-ml-1 mt-1.5 flex h-7 items-center gap-0.5 text-muted-foreground"
+      role="group"
+      aria-label={t("aiAssistant.actions.label")}
+    >
+      {assistantUsageSummary && (
+        <TooltipProvider delay={80}>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="flex size-6 items-center justify-center rounded-full text-muted-foreground/80 hover:bg-white/[0.06] hover:text-foreground"
+                  aria-label={assistantUsageSummary.label}
+                  title={assistantUsageSummary.title}
+                />
+              }
+            >
+              <Gauge className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent side="top" align="start" showArrow={false}>
+              <div className="space-y-0.5 text-[11px] leading-4">
+                {assistantUsageSummary.entries.map(([key, value]) => (
+                  <div key={key}>
+                    <span>{key}</span>: <span>{value}</span>
+                  </div>
+                ))}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className="size-7 rounded-md opacity-80 hover:bg-white/[0.06] hover:text-foreground"
+        onClick={copyText}
+        aria-label={t("aiAssistant.actions.copy")}
+        title={t("aiAssistant.actions.copy")}
+      >
+        <Copy className="size-3.5" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className="size-7 rounded-md opacity-80 hover:bg-white/[0.06] hover:text-foreground"
+        onClick={speak}
+        aria-label={t("aiAssistant.actions.readAloud")}
+        title={t("aiAssistant.actions.readAloud")}
+      >
+        <Volume2 className="size-3.5" />
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="size-7 rounded-md opacity-80 hover:bg-white/[0.06] hover:text-foreground"
+              aria-label={t("aiAssistant.actions.more")}
+              title={t("aiAssistant.actions.more")}
+            />
+          }
+        >
+          <Ellipsis className="size-3.5" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" sideOffset={4}>
+          <DropdownMenuItem onSelect={() => onOpenDetail(message)}>
+            <Maximize2 />
+            {t("aiAssistant.actions.details")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onTogglePin(message.id)}>
+            {pinned ? <PinOff /> : <Pin />}
+            {t(pinned ? "aiAssistant.actions.unpin" : "aiAssistant.actions.pin")}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => onDelete(message.id)}>
+            <X />
+            {t("aiAssistant.actions.delete")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
 
   if (freezoneToolActivity && !hasCanvasCommandSurface) {
     return (
@@ -7508,7 +7606,7 @@ const MessageBubble = memo(function MessageBubble({
         <div className="flex justify-end">
           <article className={cn("max-w-[72%]", isFreezoneLayout && "max-w-[82%]")}>
             <div className="group/message-actions relative z-0 hover:z-30 focus-within:z-30">
-              <div className="rounded-[14px] border-0 bg-white/[0.12] px-3 py-2.5 text-sm leading-6 text-foreground shadow-none">
+              <div className="rounded-[14px] border-0 bg-white/[0.07] px-3 py-2.5 text-sm leading-6 text-foreground shadow-none">
                 <AttachmentList attachments={message.attachments} align="start" compact />
                 {displayText && (
                   isFreezoneLayout ? (
@@ -7519,7 +7617,7 @@ const MessageBubble = memo(function MessageBubble({
                 )}
                 <StructuredRenderer blocks={visibleBlocks} />
               </div>
-              {actions}
+              {userActions}
             </div>
           </article>
         </div>
@@ -7530,7 +7628,7 @@ const MessageBubble = memo(function MessageBubble({
       <div className="flex justify-end">
         <article className={cn("max-w-[72%]", isFreezoneLayout && "max-w-[82%]")}>
           <div className="group/message-actions relative z-0 hover:z-30 focus-within:z-30">
-            <div className="rounded-[14px] border-0 bg-white/[0.12] px-4 py-2.5 text-sm leading-6 text-foreground shadow-none">
+            <div className="rounded-[14px] border-0 bg-white/[0.07] px-4 py-2.5 text-sm leading-6 text-foreground shadow-none">
               <AttachmentList attachments={message.attachments} align="end" />
               {displayText && (
                 isFreezoneLayout ? (
@@ -7541,7 +7639,7 @@ const MessageBubble = memo(function MessageBubble({
               )}
               <StructuredRenderer blocks={visibleBlocks} />
             </div>
-            {actions}
+            {userActions}
           </div>
         </article>
       </div>
@@ -7572,9 +7670,13 @@ const MessageBubble = memo(function MessageBubble({
               (visibleBlocks.length > 0 || assistantPrefersWideLayout) && !isTool
                 ? "w-full min-w-0 overflow-visible"
                 : "w-fit overflow-hidden",
-              isTool
+              presentation.surface === "tool"
                 ? "max-w-[86%] rounded-[14px] border border-amber-500/20 bg-amber-500/8 px-4 pb-3 pt-2 text-card-foreground"
-                : "max-w-full rounded-[14px] border border-white/[0.08] bg-transparent px-4 pb-3 pt-2 text-foreground",
+                : presentation.surface === "system"
+                  ? "max-w-[86%] rounded-[12px] border border-border/70 bg-muted/25 px-3 py-2 text-muted-foreground"
+                  : presentation.surface === "error"
+                    ? "max-w-full rounded-[12px] border border-red-400/20 bg-red-400/[0.06] px-3 py-2.5 text-foreground"
+                    : "max-w-full text-foreground",
             )}
           >
           {(isTool || message.displayName) && (
@@ -7783,7 +7885,7 @@ const MessageBubble = memo(function MessageBubble({
           </>
         )}
           </article>
-          {actions}
+          {assistantActions}
         </div>
       </div>
       {isUser && (

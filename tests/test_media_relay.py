@@ -154,6 +154,7 @@ def test_get_media_relay_uses_saved_runtime_cloudinary_config(monkeypatch, tmp_p
         ("PNG", "image", "/image/upload", "image/png"),
         ("mp3", "video", "/video/upload", "audio/mpeg"),
         ("mp4", "video", "/video/upload", "video/mp4"),
+        ("pdf", "raw", "/raw/upload", "application/pdf"),
     ],
 )
 def test_cloudinary_relay_uploads_bytes_with_basic_auth(

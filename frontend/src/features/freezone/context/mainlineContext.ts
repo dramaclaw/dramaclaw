@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from "i18next";
+
 export type MainlineContextKind =
   | "identity"
   | "voice"
@@ -358,7 +363,10 @@ export function validateCandidateBindingRoleCandidate(
     ) {
       return {
         ok: false,
-        reason: `该图片已有主线角色 ${existing.role}，不能再绑定 ${candidate.role}`,
+        reason: i18n.t("canvas.mainline.imageRoleTaken", {
+          existing: existing.role,
+          candidate: candidate.role,
+        }),
       };
     }
     if (
@@ -367,7 +375,7 @@ export function validateCandidateBindingRoleCandidate(
     ) {
       return {
         ok: false,
-        reason: `${candidate.role} 已绑定到另一张图，请先断开原绑定`,
+        reason: i18n.t("canvas.mainline.roleBoundElsewhere", { role: candidate.role }),
       };
     }
   }
@@ -426,7 +434,10 @@ export function validatePropagatingEdgeCandidate(
 
   return {
     ok: false,
-    reason: `该链路已绑定 ${labels[0]}，不能再接入 ${labels.slice(1).join("、")}`,
+    reason: i18n.t("canvas.mainline.chainAlreadyBound", {
+      bound: labels[0],
+      incoming: labels.slice(1).join(i18n.t("common.listSeparator")),
+    }),
     beatContextNodeIds: beatContextNodes.map((node) => String(node.id)),
   };
 }

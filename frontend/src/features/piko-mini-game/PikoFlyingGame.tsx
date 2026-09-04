@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PikoActionFigure } from "@/features/companion/PikoActionFigure";
+import { PikoGameHud, PikoGameOverlay } from "@/features/piko-mini-game/PikoGameChrome";
 import { usePikoGameAudio } from "@/features/piko-mini-game/usePikoGameAudio";
 
 const BOARD_WIDTH = 800;
@@ -12,29 +13,39 @@ const PIKO_RADIUS = 18;
 const GRAVITY = 1_180;
 const FLAP_VELOCITY = -390;
 const GATE_WIDTH = 76;
-const GATE_GAP = 168;
+const GATE_GAP = 172;
 const GATE_SPACING = 285;
 
 type FlyingStatus = "ready" | "playing" | "lost";
+type GateKind = "beam" | "gear" | "pulse";
 
 type Gate = {
   id: number;
   x: number;
   gapY: number;
+  gapSize: number;
+  kind: GateKind;
+  hasShield: boolean;
   scored: boolean;
 };
 
-function randomGapY() {
-  return 135 + Math.random() * 250;
+const GATE_PATTERNS = [185, 330, 245, 365, 155, 285] as const;
+
+function makeGate(id: number, x: number): Gate {
+  const kind: GateKind = id % 3 === 1 ? "gear" : id % 3 === 2 ? "pulse" : "beam";
+  return {
+    id,
+    x,
+    gapY: GATE_PATTERNS[id % GATE_PATTERNS.length],
+    gapSize: Math.max(142, GATE_GAP - Math.floor(id / 6) * 4),
+    kind,
+    hasShield: id > 0 && id % 7 === 0,
+    scored: false,
+  };
 }
 
 function makeGates(): Gate[] {
-  return Array.from({ length: 4 }, (_, index) => ({
-    id: index,
-    x: 650 + index * GATE_SPACING,
-    gapY: randomGapY(),
-    scored: false,
-  }));
+  return Array.from({ length: 4 }, (_, index) => makeGate(index, 650 + index * GATE_SPACING));
 }
 
 export function PikoFlyingGame({ onClose, muted }: { onClose: () => void; muted: boolean }) {
@@ -48,10 +59,15 @@ export function PikoFlyingGame({ onClose, muted }: { onClose: () => void; muted:
   const gatesRef = useRef<Gate[]>(makeGates());
   const nextGateIdRef = useRef(4);
   const scoreRef = useRef(0);
+  const passCountRef = useRef(0);
+  const precisionStreakRef = useRef(0);
+  const shieldAvailableRef = useRef(true);
   const [status, setStatus] = useState<FlyingStatus>("ready");
   const [pikoY, setPikoY] = useState(BOARD_HEIGHT / 2);
   const [velocity, setVelocity] = useState(0);
   const [score, setScore] = useState(0);
+  const [precisionStreak, setPrecisionStreak] = useState(0);
+  const [shieldAvailable, setShieldAvailable] = useState(true);
   const playTone = usePikoGameAudio(muted);
 
   const playFlapSound = useCallback(() => {
@@ -92,9 +108,14 @@ export function PikoFlyingGame({ onClose, muted }: { onClose: () => void; muted:
     gatesRef.current = makeGates();
     nextGateIdRef.current = 4;
     scoreRef.current = 0;
+    passCountRef.current = 0;
+    precisionStreakRef.current = 0;
+    shieldAvailableRef.current = true;
     setPikoY(BOARD_HEIGHT / 2);
     setVelocity(0);
     setScore(0);
+    setPrecisionStreak(0);
+    setShieldAvailable(true);
     setGameStatus("ready");
   }, [setGameStatus]);
 
@@ -144,14 +165,24 @@ export function PikoFlyingGame({ onClose, muted }: { onClose: () => void; muted:
       context.fillStyle = index % 4 === 0 ? "rgba(190,242,100,0.38)" : "rgba(165,243,252,0.28)";
       context.fillRect(x, y, index % 5 === 0 ? 2 : 1, index % 5 === 0 ? 2 : 1);
     }
+    for (let index = 0; index < 12; index += 1) {
+      const y = 34 + index * 41;
+      const length = 24 + (index % 4) * 18;
+      context.strokeStyle = `rgba(103,232,249,${0.035 + (index % 3) * 0.018})`;
+      context.lineWidth = 2;
+      context.beginPath();
+      context.moveTo((index * 93 + scoreRef.current * 9) % BOARD_WIDTH, y);
+      context.lineTo(((index * 93 + scoreRef.current * 9) % BOARD_WIDTH) + length, y);
+      context.stroke();
+    }
 
     for (const gate of gatesRef.current) {
-      const gapTop = gate.gapY - GATE_GAP / 2;
-      const gapBottom = gate.gapY + GATE_GAP / 2;
+      const gapTop = gate.gapY - gate.gapSize / 2;
+      const gapBottom = gate.gapY + gate.gapSize / 2;
       const gradient = context.createLinearGradient(gate.x, 0, gate.x + GATE_WIDTH, 0);
-      gradient.addColorStop(0, "rgba(8,145,178,0.48)");
-      gradient.addColorStop(0.5, "rgba(103,232,249,0.82)");
-      gradient.addColorStop(1, "rgba(30,64,175,0.45)");
+      gradient.addColorStop(0, gate.kind === "gear" ? "rgba(190,24,93,0.52)" : "rgba(8,145,178,0.48)");
+      gradient.addColorStop(0.5, gate.kind === "pulse" ? "rgba(167,139,250,0.86)" : "rgba(103,232,249,0.82)");
+      gradient.addColorStop(1, gate.kind === "gear" ? "rgba(244,63,94,0.5)" : "rgba(30,64,175,0.45)");
       context.fillStyle = gradient;
       context.shadowColor = "rgba(103,232,249,0.32)";
       context.shadowBlur = 18;
@@ -163,6 +194,14 @@ export function PikoFlyingGame({ onClose, muted }: { onClose: () => void; muted:
       context.fillRect(gate.x - 7, gapTop - 8, GATE_WIDTH + 14, 8);
       context.fillRect(gate.x - 7, gapBottom, GATE_WIDTH + 14, 8);
       context.shadowBlur = 0;
+
+      if (gate.kind === "gear") {
+        context.fillStyle = "rgba(251,113,133,0.78)";
+        for (let tooth = 0; tooth < 5; tooth += 1) {
+          context.fillRect(gate.x - 7, tooth * 34 + 8, 9, 14);
+          context.fillRect(gate.x + GATE_WIDTH - 2, BOARD_HEIGHT - tooth * 34 - 24, 9, 14);
+        }
+      }
 
       context.strokeStyle = "rgba(236,254,255,0.18)";
       context.lineWidth = 1;
@@ -178,6 +217,20 @@ export function PikoFlyingGame({ onClose, muted }: { onClose: () => void; muted:
         context.lineTo(gate.x + GATE_WIDTH - 12, y);
         context.stroke();
       }
+
+      if (gate.hasShield) {
+        context.fillStyle = "rgba(190,242,100,0.92)";
+        context.shadowColor = "rgba(190,242,100,0.7)";
+        context.shadowBlur = 16;
+        context.beginPath();
+        context.moveTo(gate.x + GATE_WIDTH / 2, gate.gapY - 12);
+        context.lineTo(gate.x + GATE_WIDTH / 2 + 10, gate.gapY);
+        context.lineTo(gate.x + GATE_WIDTH / 2, gate.gapY + 12);
+        context.lineTo(gate.x + GATE_WIDTH / 2 - 10, gate.gapY);
+        context.closePath();
+        context.fill();
+        context.shadowBlur = 0;
+      }
     }
   }, []);
 
@@ -190,14 +243,26 @@ export function PikoFlyingGame({ onClose, muted }: { onClose: () => void; muted:
       if (statusRef.current === "playing") {
         velocityRef.current += GRAVITY * delta;
         yRef.current += velocityRef.current * delta;
-        const gateSpeed = Math.min(190 + scoreRef.current * 5, 310);
+        const gateSpeed = Math.min(190 + passCountRef.current * 7, 310);
         for (const gate of gatesRef.current) gate.x -= gateSpeed * delta;
 
         for (const gate of gatesRef.current) {
           if (!gate.scored && gate.x + GATE_WIDTH < PIKO_X - PIKO_RADIUS) {
             gate.scored = true;
-            scoreRef.current += 1;
+            passCountRef.current += 1;
+            const centerOffset = Math.abs(yRef.current - gate.gapY);
+            const edgeClearance = gate.gapSize / 2 - centerOffset - PIKO_RADIUS;
+            const centered = centerOffset <= 22;
+            const nearMiss = !centered && edgeClearance <= 14;
+            const gained = centered ? 3 : nearMiss ? 2 : 1;
+            scoreRef.current += gained;
+            precisionStreakRef.current = centered ? precisionStreakRef.current + 1 : 0;
+            if (gate.hasShield && centered) {
+              shieldAvailableRef.current = true;
+              setShieldAvailable(true);
+            }
             setScore(scoreRef.current);
+            setPrecisionStreak(precisionStreakRef.current);
             playScoreSound(scoreRef.current);
           }
         }
@@ -207,30 +272,39 @@ export function PikoFlyingGame({ onClose, muted }: { onClose: () => void; muted:
           gatesRef.current = gatesRef.current.filter((gate) => gate.x + GATE_WIDTH >= -10);
           let nextX = Math.max(...gatesRef.current.map((gate) => gate.x), BOARD_WIDTH) + GATE_SPACING;
           for (let index = 0; index < passedGates.length; index += 1) {
-            gatesRef.current.push({
-              id: nextGateIdRef.current++,
-              x: nextX,
-              gapY: randomGapY(),
-              scored: false,
-            });
+            gatesRef.current.push(makeGate(nextGateIdRef.current++, nextX));
             nextX += GATE_SPACING;
           }
         }
 
-        const hitGate = gatesRef.current.some((gate) => {
+        const hitGate = gatesRef.current.find((gate) => {
           const overlapsX =
             PIKO_X + PIKO_RADIUS > gate.x && PIKO_X - PIKO_RADIUS < gate.x + GATE_WIDTH;
           if (!overlapsX) return false;
           return (
-            yRef.current - PIKO_RADIUS < gate.gapY - GATE_GAP / 2 ||
-            yRef.current + PIKO_RADIUS > gate.gapY + GATE_GAP / 2
+            yRef.current - PIKO_RADIUS < gate.gapY - gate.gapSize / 2 ||
+            yRef.current + PIKO_RADIUS > gate.gapY + gate.gapSize / 2
           );
         });
         const outsideBoard =
           yRef.current - PIKO_RADIUS <= 0 || yRef.current + PIKO_RADIUS >= BOARD_HEIGHT;
         if (hitGate || outsideBoard) {
-          setGameStatus("lost");
-          playCollisionSound();
+          if (shieldAvailableRef.current) {
+            shieldAvailableRef.current = false;
+            setShieldAvailable(false);
+            precisionStreakRef.current = 0;
+            setPrecisionStreak(0);
+            yRef.current = hitGate ? hitGate.gapY : BOARD_HEIGHT / 2;
+            velocityRef.current = -80;
+            if (hitGate) {
+              hitGate.x = PIKO_X - GATE_WIDTH - PIKO_RADIUS - 4;
+              hitGate.scored = true;
+            }
+            playTone(260, 0.18, 0.07, "triangle", 0, 1_120);
+          } else {
+            setGameStatus("lost");
+            playCollisionSound();
+          }
         }
 
         setPikoY(yRef.current);
@@ -244,7 +318,7 @@ export function PikoFlyingGame({ onClose, muted }: { onClose: () => void; muted:
     return () => {
       if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
     };
-  }, [draw, playCollisionSound, playScoreSound, setGameStatus]);
+  }, [draw, playCollisionSound, playScoreSound, playTone, setGameStatus]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -273,51 +347,38 @@ export function PikoFlyingGame({ onClose, muted }: { onClose: () => void; muted:
       />
 
       <div
-        className="pointer-events-none absolute size-[58px]"
+        className="pointer-events-none absolute size-[66px]"
         style={{
           left: `${(PIKO_X / BOARD_WIDTH) * 100}%`,
           top: `${(pikoY / BOARD_HEIGHT) * 100}%`,
           transform: `translate(-50%, -50%) rotate(${pikoRotation}deg)`,
         }}
       >
+        <span className="absolute inset-[8px_2px_7px] rounded-[45%_55%_52%_48%] border border-cyan-100/34 bg-cyan-300/24 shadow-[0_0_20px_rgba(103,232,249,0.26)]" />
+        <span className="absolute -left-4 bottom-[15px] h-3 w-7 rounded-full bg-gradient-to-l from-cyan-200/80 to-transparent blur-[1px]" />
         <PikoActionFigure
           action="idle"
-          className="mybuddy-companion-anchor--preview !h-[58px]"
-          style={{ transform: "scale(0.78)", transformOrigin: "center" }}
+          className="mybuddy-companion-anchor--preview !h-[60px]"
+          style={{ transform: "scale(0.68)", transformOrigin: "center" }}
         />
       </div>
 
-      <div className="pointer-events-none absolute left-4 top-4 text-sm font-medium text-white/78">
-        {t("pikoMiniGame.flying.score", { score })}
-      </div>
+      <PikoGameHud
+        left={t("pikoMiniGame.flying.score", { score })}
+        center={precisionStreak > 1 ? t("pikoMiniGame.flying.precision", { streak: precisionStreak }) : undefined}
+        right={t(shieldAvailable ? "pikoMiniGame.flying.shieldReady" : "pikoMiniGame.flying.shieldUsed")}
+      />
 
       {status !== "playing" ? (
-        <div className="absolute inset-0 grid place-items-center bg-black/52 px-5 backdrop-blur-[2px]">
-          <div className="max-w-sm rounded-2xl border border-white/[0.14] bg-black/68 px-7 py-6 text-center shadow-[0_24px_72px_rgba(0,0,0,0.48)]">
-            <h3 className="text-2xl font-semibold text-white">
-              {t(status === "lost" ? "pikoMiniGame.flying.lost" : "pikoMiniGame.flying.ready")}
-            </h3>
-            <p className="mt-2 text-sm leading-6 text-white/58">{t("pikoMiniGame.flying.hint")}</p>
-            <div className="mt-6 flex justify-center gap-3">
-              {status === "lost" ? (
-                <button
-                  type="button"
-                  className="h-10 rounded-full border border-white/[0.14] px-5 text-sm text-white/78 transition-colors hover:bg-white/[0.08] hover:text-white"
-                  onClick={onClose}
-                >
-                  {t("pikoMiniGame.backToWork")}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="h-10 rounded-full bg-cyan-300 px-5 text-sm font-medium text-slate-950 transition-colors hover:bg-cyan-200"
-                onClick={startGame}
-              >
-                {status === "lost" ? t("pikoMiniGame.playAgain") : t("pikoMiniGame.flying.start")}
-              </button>
-            </div>
-          </div>
-        </div>
+        <PikoGameOverlay
+          title={t(status === "lost" ? "pikoMiniGame.flying.lost" : "pikoMiniGame.flying.ready")}
+          description={t("pikoMiniGame.flying.hint")}
+          primaryLabel={status === "lost" ? t("pikoMiniGame.playAgain") : t("pikoMiniGame.flying.start")}
+          onPrimary={startGame}
+          secondaryLabel={status === "lost" ? t("pikoMiniGame.backToWork") : undefined}
+          onSecondary={status === "lost" ? onClose : undefined}
+          accent="violet"
+        />
       ) : null}
     </div>
   );

@@ -478,11 +478,21 @@ describe("HappyHorse 单图默认模式", () => {
   // 默认值必须真的可用，否则一连图就顶进一个 hover 提示写着「不可用」的 tab。
   it("图片参考在 1~9 张图时都可用", () => {
     const source = readFileSync(
-      "src/features/canvas/nodes/shared/VideoGenerationForm.tsx",
+      "src/features/canvas/nodes/VideoOperationsPanel.tsx",
       "utf8",
     );
-    expect(source).toContain('if (images === 0) return "需要连接图片节点（1~9个）";');
-    expect(source).toContain('if (images > 9) return "「图片参考」最多支持 9 张图片";');
+    // 文案已入词条，所以这里认 key；措辞另从 zh 词条里对，两头都不会悄悄漂。
+    expect(source).toContain(
+      'if (images === 0) return t("node.videoOps.modeDisabled.needImages1to9");',
+    );
+    expect(source).toContain(
+      'if (images > 9) return t("node.videoOps.modeDisabled.imageReferenceMax9");',
+    );
+    const zh = JSON.parse(readFileSync("public/locales/zh/translation.json", "utf8"));
+    expect(zh.node.videoOps.modeDisabled.needImages1to9).toBe("需要连接图片节点（1~9个）");
+    expect(zh.node.videoOps.modeDisabled.imageReferenceMax9).toBe(
+      "「图片参考」最多支持 9 张图片",
+    );
   });
 });
 
@@ -570,7 +580,7 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
     };
     expect(
       videoModelReferenceDisabledReason(withoutVideoEdit, { ...none, videos: 1 }),
-    ).toBe("该模型不支持视频素材");
+    ).toBe("node.videoModel.reason.videoUnsupported");
     // 目录里还留着 video_edit 的话照旧放行，别把整个模型误伤掉。
     expect(
       videoModelReferenceDisabledReason(

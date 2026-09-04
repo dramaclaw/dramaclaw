@@ -2,13 +2,14 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import {
   ArrowDownUp,
   Box as BoxIcon,
   Check,
   Download,
   Loader2,
-  Minus,
+  Maximize2,
   Pause,
   Play,
   Plus,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 
 import { useCanvasStore } from '@/stores/canvasStore';
+import { confirmDialog } from '@/components/confirm-dialog-host';
 import { downloadUrlAsFile } from '@/lib/browserDownload';
 import {
   extractCanvasAssets,
@@ -164,11 +166,6 @@ const TAB_LABEL_KEY: Record<CanvasAssetKind, string> = {
   model: 'canvas.history.tabs.world',
 };
 
-const ZOOM_MIN = 50;
-const ZOOM_MAX = 200;
-const ZOOM_STEP = 25;
-const THUMB_BASE_PX = 256;
-
 interface CanvasHistoryAssetsModalProps {
   onClose: () => void;
   /**
@@ -176,7 +173,7 @@ interface CanvasHistoryAssetsModalProps {
    * 由外层把多个节点在视口中心附近铺成网格。
    */
   onUseAsset: (asset: CanvasAsset, placement?: { index: number; total: number }) => void;
-  /** 「删除」：从画布移除该资产对应的源节点。 */
+  /** live-canvas 来源的「删除」：从画布移除该资产对应的源节点。 */
   onDeleteNode: (nodeId: string) => void;
   /** 仅展示图片 tab（用于分镜组只接受图片的取图场景）。 */
   imageOnly?: boolean;
@@ -211,7 +208,7 @@ export function CanvasHistoryAssetsModal({
         .map((node) => node.id),
     [nodes],
   );
-  const { records, isLoading } = useCanvasGenerationHistory(fallbackNodeIds, {
+  const { records, isLoading, removeRecord } = useCanvasGenerationHistory(fallbackNodeIds, {
     enabled: useHistory,
   });
 
@@ -225,16 +222,16 @@ export function CanvasHistoryAssetsModal({
   const [query, setQuery] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const isComposingRef = useRef(false);
-  const [zoom, setZoom] = useState(100);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   // Image lightbox state (drives the shared ImageViewerModal nav list).
   const [imageViewerIndex, setImageViewerIndex] = useState<number | null>(null);
   const [videoViewerUrl, setVideoViewerUrl] = useState<string | null>(null);
   // 世界模型「查看」：用产物 url 现搭一个最小 manifest，直接开虾境（导演台）。
   const [worldManifest, setWorldManifest] = useState<DirectorStageManifest | null>(null);
-  // Full-prompt dialog (opened by double-clicking a card's prompt caption).
+  // Full-prompt dialog (opened by clicking a card's compact prompt caption).
   const [promptDialogText, setPromptDialogText] = useState<string | null>(null);
 
   // 世界记录兜底封面/名字:用记录的 node_id 回到 live 画布,取该 threeDWorld 节点的
@@ -354,6 +351,32 @@ export function CanvasHistoryAssetsModal({
     onClose();
   };
 
+  const handleDelete = async (asset: CanvasAsset) => {
+    if (!useHistory) {
+      onDeleteNode(asset.nodeId);
+      return;
+    }
+    const confirmed = await confirmDialog({
+      title: t('canvas.history.deleteConfirmTitle'),
+      description: t('canvas.history.deleteConfirmDescription'),
+      confirmText: t('canvas.history.deleteConfirmAction'),
+      cancelText: t('common.cancel'),
+      confirmVariant: 'destructive',
+    });
+    if (!confirmed) return;
+    setDeletingIds((current) => new Set(current).add(asset.id));
+    try {
+      const deleted = await removeRecord(asset.nodeId, asset.id);
+      if (!deleted) toast.error(t('canvas.history.deleteFailed'));
+    } finally {
+      setDeletingIds((current) => {
+        const next = new Set(current);
+        next.delete(asset.id);
+        return next;
+      });
+    }
+  };
+
   // 批量操作：当前 tab 里被选中的资产（保持展示顺序）。切 tab 会清空 selectedIds，
   // 所以只需在 activeAssets 里过滤即可，不会跨类型串味。
   const selectedAssets = useMemo(
@@ -403,258 +426,263 @@ export function CanvasHistoryAssetsModal({
     onClose();
   };
 
-  const thumbPx = Math.round((THUMB_BASE_PX * zoom) / 100);
-
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-4">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/55 backdrop-blur-sm"
         onClick={onClose}
         aria-hidden
       />
-      <div className="relative z-10 flex h-[88vh] w-[92vw] max-w-[1440px] flex-col overflow-hidden rounded-2xl border border-white/[0.1] bg-[#0d0f14] shadow-2xl">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4 px-6 py-4">
-        <h2 className="text-[20px] font-semibold leading-none text-white">
-          {t('canvas.history.title')}
-        </h2>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 rounded-full border border-white/[0.12] bg-white/[0.04] px-1 py-0.5">
-            <button
-              type="button"
-              aria-label={t('canvas.toolbar.zoomOut')}
-              onClick={() => setZoom((value) => Math.max(ZOOM_MIN, value - ZOOM_STEP))}
-              className="flex h-6 w-6 items-center justify-center rounded-full text-white/65 transition-colors hover:bg-white/10 hover:text-white"
-            >
-              <Minus className="h-3.5 w-3.5" />
-            </button>
-            <span className="min-w-[44px] text-center text-[12px] tabular-nums text-white/82">
-              {zoom}%
-            </span>
-            <button
-              type="button"
-              aria-label={t('canvas.toolbar.zoomIn')}
-              onClick={() => setZoom((value) => Math.min(ZOOM_MAX, value + ZOOM_STEP))}
-              className="flex h-6 w-6 items-center justify-center rounded-full text-white/65 transition-colors hover:bg-white/10 hover:text-white"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-          </div>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="canvas-history-assets-title"
+        className="relative z-10 flex h-[min(780px,88vh)] w-[min(1200px,94vw)] flex-col overflow-hidden rounded-xl border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.96)] shadow-[0_18px_48px_rgba(0,0,0,0.45)]"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between gap-4 px-5 pb-3 pt-5">
+          <h2
+            id="canvas-history-assets-title"
+            className="text-lg font-semibold leading-none text-foreground"
+          >
+            {t('canvas.history.title')}
+          </h2>
           <button
             type="button"
             onClick={onClose}
             aria-label={t('common.close')}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-white/65 transition-colors hover:bg-white/10 hover:text-white"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
           >
-            <X className="h-5 w-5" />
+            <X className="h-4 w-4" />
           </button>
         </div>
-      </div>
 
-      {/* Tabs + tools */}
-      <div className="flex items-center justify-between gap-4 px-6 pb-3">
-        <div className="flex items-center gap-5">
-          {tabOrder.map((tab) => {
-            const active = tab === activeTab;
-            return (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveTab(tab)}
-                className={`text-[14px] font-medium leading-none transition-colors ${
-                  active ? 'text-white' : 'text-white/40 hover:text-white/70'
-                }`}
-              >
-                {t(TAB_LABEL_KEY[tab])}({filteredBuckets[tab].length})
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex items-center gap-4">
-          {/* 关键词搜索:过滤当前所有 tab 的历史资产(命中数反映在各 tab 计数)。
-              placeholder 分两套 —— live-canvas 取图那条路径上资产没有 prompt(见
-              CanvasAsset.prompt 注释),只有节点名/文件名可搜,不能承诺「搜提示词」。
-              框里有内容时 Escape 先清空输入,否则才让弹窗接管关闭。 */}
-          <div className="relative shrink-0">
-            <Search
-              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/35"
-              aria-hidden
-            />
-            <input
-              type="search"
-              value={query}
-              aria-label={t(
-                useHistory
-                  ? 'canvas.history.searchPlaceholder'
-                  : 'canvas.history.searchPlaceholderName',
-              )}
-              onChange={(event) => {
-                const next = event.target.value;
-                setQuery(next);
-                if (!isComposingRef.current) setSearchTerm(next);
-              }}
-              onCompositionStart={() => {
-                isComposingRef.current = true;
-              }}
-              onCompositionEnd={(event) => {
-                isComposingRef.current = false;
-                const next = event.currentTarget.value;
-                setQuery(next);
-                setSearchTerm(next);
-              }}
-              onKeyDown={(event) => {
-                // 组字中的 Escape 是「取消候选词」,不是「清空搜索框」—— 不加这个判断,
-                // 用中文输入法按 Esc 关候选窗会把已经敲好的整个查询词抹掉。
-                if (event.key === 'Escape' && query && !event.nativeEvent.isComposing) {
-                  event.stopPropagation();
-                  setQuery('');
-                  setSearchTerm('');
-                }
-              }}
-              placeholder={t(
-                useHistory
-                  ? 'canvas.history.searchPlaceholder'
-                  : 'canvas.history.searchPlaceholderName',
-              )}
-              className="h-8 w-44 rounded-lg border border-white/[0.12] bg-white/[0.04] pl-8 pr-7 text-[13px] text-white/85 outline-none transition-colors placeholder:text-white/35 focus:border-white/30 focus:bg-white/[0.07] [&::-webkit-search-cancel-button]:appearance-none"
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => {
-                  setQuery('');
-                  setSearchTerm('');
+        {/* Tabs + tools */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-3">
+          <div className="flex items-center gap-1" role="tablist" aria-label={t('canvas.history.title')}>
+            {tabOrder.map((tab) => {
+              const active = tab === activeTab;
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  aria-pressed={active}
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                    active
+                      ? 'bg-[rgb(var(--accent-rgb)/0.18)] text-[rgb(var(--accent-rgb))]'
+                      : 'text-muted-foreground hover:bg-white/[0.06] hover:text-foreground'
+                  }`}
+                >
+                  {t(TAB_LABEL_KEY[tab])}
+                  <span className="ml-1 tabular-nums opacity-70">
+                    {filteredBuckets[tab].length}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* 关键词搜索:过滤当前所有 tab 的历史资产(命中数反映在各 tab 计数)。
+                placeholder 分两套 —— live-canvas 取图那条路径上资产没有 prompt(见
+                CanvasAsset.prompt 注释),只有节点名/文件名可搜,不能承诺「搜提示词」。
+                框里有内容时 Escape 先清空输入,否则才让弹窗接管关闭。 */}
+            <div className="relative shrink-0">
+              <Search
+                className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+                aria-hidden
+              />
+              <input
+                type="search"
+                value={query}
+                aria-label={t(
+                  useHistory
+                    ? 'canvas.history.searchPlaceholder'
+                    : 'canvas.history.searchPlaceholderName',
+                )}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setQuery(next);
+                  if (!isComposingRef.current) setSearchTerm(next);
                 }}
-                aria-label={t('canvas.history.clearSearch')}
-                className="absolute right-2 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full text-white/40 transition-colors hover:bg-white/10 hover:text-white"
+                onCompositionStart={() => {
+                  isComposingRef.current = true;
+                }}
+                onCompositionEnd={(event) => {
+                  isComposingRef.current = false;
+                  const next = event.currentTarget.value;
+                  setQuery(next);
+                  setSearchTerm(next);
+                }}
+                onKeyDown={(event) => {
+                  // 组字中的 Escape 是「取消候选词」,不是「清空搜索框」—— 不加这个判断,
+                  // 用中文输入法按 Esc 关候选窗会把已经敲好的整个查询词抹掉。
+                  if (event.key === 'Escape' && query && !event.nativeEvent.isComposing) {
+                    event.stopPropagation();
+                    setQuery('');
+                    setSearchTerm('');
+                  }
+                }}
+                placeholder={t(
+                  useHistory
+                    ? 'canvas.history.searchPlaceholder'
+                    : 'canvas.history.searchPlaceholderName',
+                )}
+                className="h-8 w-52 rounded-sm border border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.34)] pl-8 pr-7 text-xs text-foreground outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus:border-accent focus:shadow-[0_0_0_2px_rgba(var(--accent-rgb),0.12)] [&::-webkit-search-cancel-button]:appearance-none"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery('');
+                    setSearchTerm('');
+                  }}
+                  aria-label={t('canvas.history.clearSearch')}
+                  className="absolute right-2 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setDirection((value) => (value === 'desc' ? 'asc' : 'desc'))}
+              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.34)] px-2.5 text-xs text-muted-foreground transition-colors hover:border-[var(--ui-border-strong)] hover:text-foreground"
+            >
+              <ArrowDownUp className="h-3.5 w-3.5" />
+              {t(direction === 'desc' ? 'canvas.history.sortDesc' : 'canvas.history.sortAsc')}
+            </button>
+            {selectionMode && activeAssets.length > 0 && (
+              <button
+                type="button"
+                onClick={handleToggleSelectAll}
+                className="inline-flex h-8 items-center rounded-full px-2.5 text-xs text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
               >
-                <X className="h-3 w-3" />
+                {t(allSelected ? 'canvas.history.deselectAll' : 'canvas.history.selectAll')}
               </button>
             )}
-          </div>
-          <button
-            type="button"
-            onClick={() => setDirection((value) => (value === 'desc' ? 'asc' : 'desc'))}
-            className="flex items-center gap-1.5 text-[13px] text-white/60 transition-colors hover:text-white"
-          >
-            <ArrowDownUp className="h-3.5 w-3.5" />
-            {t(direction === 'desc' ? 'canvas.history.sortDesc' : 'canvas.history.sortAsc')}
-          </button>
-          {selectionMode && activeAssets.length > 0 && (
             <button
               type="button"
-              onClick={handleToggleSelectAll}
-              className="text-[13px] text-white/60 transition-colors hover:text-white"
+              onClick={() => {
+                setSelectionMode((value) => !value);
+                setSelectedIds(new Set());
+              }}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors ${
+                selectionMode
+                  ? 'border-[rgb(var(--accent-rgb)/0.35)] bg-[rgb(var(--accent-rgb)/0.14)] text-[rgb(var(--accent-rgb))]'
+                  : 'border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.34)] text-muted-foreground hover:border-[var(--ui-border-strong)] hover:text-foreground'
+              }`}
             >
-              {t(allSelected ? 'canvas.history.deselectAll' : 'canvas.history.selectAll')}
+              <Check className="h-3.5 w-3.5" />
+              {selectionMode
+                ? t('canvas.history.selectedCount', { n: selectedAssets.length })
+                : t('canvas.history.batch')}
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              setSelectionMode((value) => !value);
-              setSelectedIds(new Set());
-            }}
-            className={`flex items-center gap-1.5 text-[13px] transition-colors ${
-              selectionMode ? 'text-cyan-300' : 'text-white/60 hover:text-white'
-            }`}
-          >
-            <Check className="h-3.5 w-3.5" />
-            {selectionMode
-              ? t('canvas.history.selectedCount', { n: selectedAssets.length })
-              : t('canvas.history.batch')}
-          </button>
+          </div>
         </div>
-      </div>
 
-      {/* Body */}
-      <div className="ui-scrollbar min-h-0 flex-1 overflow-y-auto px-6 pb-8">
-        {/* 加载态判据用**未过滤**的桶:搜索无命中时后台若刚好在 refetch(如删掉某个节点触发
-            重新拉取),用 activeAssets 会把已经确定的「没有匹配」换成「加载中」,暗示结果
-            还可能出现。 */}
-        {useHistory && isLoading && buckets[activeTab].length === 0 ? (
-          <div className="flex h-full items-center justify-center text-[14px] text-white/40">
-            {t('common.loading')}
-          </div>
-        ) : activeAssets.length === 0 ? (
-          <div
-            aria-live="polite"
-            className="flex h-full items-center justify-center px-6 text-center text-[14px] text-white/40"
-          >
-            {!normalizedQuery
-              ? t('canvas.history.empty')
-              : otherTabsWithMatches.length > 0
-                ? t('canvas.history.noMatchOtherTabs', {
-                    // 连接词跟着界面语言走:硬编码顿号会让英文界面显示成
-                    // 「try Images、Videos」。disjunction 而非 conjunction ——
-                    // 这里是让用户挑一个别的分类去看,不是说两个都要看。
-                    tabs: new Intl.ListFormat(i18n.resolvedLanguage ?? i18n.language, {
-                      type: 'disjunction',
-                    }).format(otherTabsWithMatches.map((tab) => t(TAB_LABEL_KEY[tab]))),
-                  })
-                : t('canvas.history.noMatch')}
-          </div>
-        ) : (
-          groups.map((group) => (
-            <div key={group.date ?? 'undated'} className="mb-7">
-              <div className="mb-3 text-[13px] text-white/45">
-                {group.date ?? t('canvas.history.unknownDate')}
-              </div>
-              <div className="flex flex-wrap items-start gap-3">
-                {group.assets.map((asset) => (
-                  <AssetCard
-                    key={asset.id}
-                    asset={asset}
-                    sizePx={thumbPx}
-                    selectionMode={selectionMode}
-                    selected={selectedIds.has(asset.id)}
-                    onToggleSelect={() => toggleSelect(asset)}
-                    onView={() => handleView(asset)}
-                    onUse={() => handleUse(asset)}
-                    onDelete={() => onDeleteNode(asset.nodeId)}
-                    onOpenPrompt={
-                      asset.label ? () => setPromptDialogText(asset.label!) : undefined
-                    }
-                  />
-                ))}
-              </div>
+        {/* Body */}
+        <div className="ui-scrollbar min-h-0 flex-1 overflow-y-auto px-5 pb-6">
+          {/* 加载态判据用**未过滤**的桶:搜索无命中时后台若刚好在 refetch(如删掉某个节点触发
+              重新拉取),用 activeAssets 会把已经确定的「没有匹配」换成「加载中」,暗示结果
+              还可能出现。 */}
+          {useHistory && isLoading && buckets[activeTab].length === 0 ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              {t('common.loading')}
             </div>
-          ))
-        )}
-      </div>
-
-      {/* 批量操作栏：进入选择模式且至少选中一项时，从底部浮出。下载 / 使用 / 删除。 */}
-      {selectionMode && selectedAssets.length > 0 && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-5">
-          <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/[0.12] bg-[#161922]/95 px-2.5 py-2 shadow-2xl backdrop-blur">
-            <span className="px-2 text-[13px] text-white/70">
-              {t('canvas.history.selectedCount', { n: selectedAssets.length })}
-            </span>
-            <span className="h-4 w-px bg-white/15" aria-hidden />
-            <button
-              type="button"
-              onClick={handleBatchDownload}
-              disabled={isDownloading}
-              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium text-white/85 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+          ) : activeAssets.length === 0 ? (
+            <div
+              aria-live="polite"
+              className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted-foreground"
             >
-              {isDownloading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Download className="h-3.5 w-3.5" />
+              <span>
+                {!normalizedQuery
+                  ? t('canvas.history.empty')
+                  : otherTabsWithMatches.length > 0
+                    ? t('canvas.history.noMatchOtherTabs', {
+                        // 连接词跟着界面语言走:硬编码顿号会让英文界面显示成
+                        // 「try Images、Videos」。disjunction 而非 conjunction ——
+                        // 这里是让用户挑一个别的分类去看,不是说两个都要看。
+                        tabs: new Intl.ListFormat(i18n.resolvedLanguage ?? i18n.language, {
+                          type: 'disjunction',
+                        }).format(otherTabsWithMatches.map((tab) => t(TAB_LABEL_KEY[tab]))),
+                      })
+                    : t('canvas.history.noMatch')}
+              </span>
+              {normalizedQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery('');
+                    setSearchTerm('');
+                  }}
+                  className="inline-flex h-8 items-center rounded-full bg-white/[0.08] px-3 text-xs font-medium text-foreground transition-colors hover:bg-white/[0.12]"
+                >
+                  {t('canvas.history.clearSearch')}
+                </button>
               )}
-              {t(isDownloading ? 'canvas.history.downloading' : 'canvas.history.batchDownload')}
-            </button>
-            <button
-              type="button"
-              onClick={handleBatchUse}
-              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium text-white/85 transition-colors hover:bg-white/10 hover:text-white"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {t('canvas.history.batchUse')}
-            </button>
-          </div>
+            </div>
+          ) : (
+            groups.map((group) => (
+              <div key={group.date ?? 'undated'} className="mb-7">
+                <div className="mb-3 text-xs font-medium text-muted-foreground">
+                  {group.date ?? t('canvas.history.unknownDate')}
+                </div>
+                <div className="grid grid-cols-5 items-start gap-3">
+                  {group.assets.map((asset) => (
+                    <AssetCard
+                      key={asset.id}
+                      asset={asset}
+                      selectionMode={selectionMode}
+                      selected={selectedIds.has(asset.id)}
+                      onToggleSelect={() => toggleSelect(asset)}
+                      onView={() => handleView(asset)}
+                      onUse={() => handleUse(asset)}
+                      onDelete={() => void handleDelete(asset)}
+                      deleting={deletingIds.has(asset.id)}
+                      onOpenPrompt={
+                        asset.prompt ? () => setPromptDialogText(asset.prompt!) : undefined
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
         </div>
-      )}
+
+        {/* 批量操作栏：进入选择模式且至少选中一项时，从底部浮出。 */}
+        {selectionMode && selectedAssets.length > 0 && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-5">
+            <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.96)] px-2.5 py-2 shadow-[var(--ui-shadow-panel)]">
+              <span className="px-2 text-xs text-muted-foreground">
+                {t('canvas.history.selectedCount', { n: selectedAssets.length })}
+              </span>
+              <span className="h-4 w-px bg-white/10" aria-hidden />
+              <button
+                type="button"
+                onClick={handleBatchDownload}
+                disabled={isDownloading}
+                className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-foreground/85 transition-colors hover:bg-white/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isDownloading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                {t(isDownloading ? 'canvas.history.downloading' : 'canvas.history.batchDownload')}
+              </button>
+              <button
+                type="button"
+                onClick={handleBatchUse}
+                className="flex items-center gap-1.5 rounded-full bg-[rgb(var(--accent-rgb)/0.16)] px-3 py-1.5 text-xs font-medium text-[rgb(var(--accent-rgb))] transition-colors hover:bg-[rgb(var(--accent-rgb)/0.22)]"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t('canvas.history.batchUse')}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Viewers */}
@@ -695,7 +723,7 @@ export function CanvasHistoryAssetsModal({
         viewerPurpose="freezone"
       />
 
-      {/* 提示词完整查看：双击卡片提示词打开，完整滚动展示。 */}
+      {/* 提示词完整查看：单击卡片提示词摘要打开，完整滚动展示。 */}
       {promptDialogText !== null && (
         <div className="fixed inset-0 z-[210] flex items-center justify-center p-4">
           <div
@@ -703,21 +731,29 @@ export function CanvasHistoryAssetsModal({
             onClick={() => setPromptDialogText(null)}
             aria-hidden
           />
-          <div className="relative z-10 flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-white/[0.1] bg-[#0d0f14] shadow-2xl">
-            <div className="flex items-center justify-between gap-4 border-b border-white/[0.08] px-5 py-3.5">
-              <h3 className="text-[15px] font-semibold text-white">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="canvas-history-prompt-title"
+            className="relative z-10 flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.98)] shadow-[0_18px_48px_rgba(0,0,0,0.45)]"
+          >
+            <div className="flex items-center justify-between gap-4 px-5 pb-2 pt-4">
+              <h3
+                id="canvas-history-prompt-title"
+                className="text-sm font-semibold text-foreground"
+              >
                 {t('canvas.history.promptTitle')}
               </h3>
               <button
                 type="button"
                 onClick={() => setPromptDialogText(null)}
                 aria-label={t('common.close')}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-white/65 transition-colors hover:bg-white/10 hover:text-white"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="ui-scrollbar overflow-y-auto whitespace-pre-wrap px-5 py-4 text-[13px] leading-relaxed text-white/85">
+            <div className="ui-scrollbar overflow-y-auto whitespace-pre-wrap px-5 pb-4 pt-2 text-xs leading-relaxed text-foreground/85">
               {promptDialogText}
             </div>
           </div>
@@ -729,14 +765,14 @@ export function CanvasHistoryAssetsModal({
 
 interface AssetCardProps {
   asset: CanvasAsset;
-  sizePx: number;
   selectionMode: boolean;
   selected: boolean;
   onToggleSelect: () => void;
   onView: () => void;
   onUse: () => void;
   onDelete: () => void;
-  /** Double-click the prompt caption to open the full-prompt dialog. */
+  deleting?: boolean;
+  /** Click the compact prompt caption to open the full-prompt dialog. */
   onOpenPrompt?: () => void;
 }
 
@@ -750,13 +786,13 @@ function formatClock(seconds: number): string {
 
 function AssetCard({
   asset,
-  sizePx,
   selectionMode,
   selected,
   onToggleSelect,
   onView,
   onUse,
   onDelete,
+  deleting = false,
   onOpenPrompt,
 }: AssetCardProps) {
   const { t } = useTranslation();
@@ -807,17 +843,23 @@ function AssetCard({
 
   return (
     <div
-      style={{ width: sizePx, height: sizePx }}
-      className={`group flex flex-col overflow-hidden rounded-lg border bg-white/[0.03] transition-colors ${
-        selected ? 'border-cyan-400' : 'border-white/[0.08] hover:border-white/[0.2]'
+      className={`group flex aspect-square w-full min-w-0 flex-col overflow-hidden rounded-md border bg-[rgba(var(--bg-rgb)/0.28)] transition-colors ${
+        selected
+          ? 'border-[rgb(var(--accent-rgb)/0.72)] ring-1 ring-[rgb(var(--accent-rgb)/0.35)]'
+          : 'border-[var(--ui-border-soft)] hover:border-[var(--ui-border-strong)]'
       }`}
     >
       {/* Thumbnail fills the space left over by the prompt caption, so all cards
           stay the same total height and short prompts get a bigger video. */}
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div
+        style={{
+          clipPath: 'inset(0 round var(--radius-md) var(--radius-md) 0 0)',
+        }}
+        className="relative isolate min-h-0 flex-1 overflow-hidden rounded-t-md"
+      >
       {isAudio ? (
-        <div className="relative flex h-full w-full items-center justify-center bg-gradient-to-br from-cyan-500/15 to-purple-500/15">
-          <Volume2 className="h-7 w-7 text-cyan-200/35" />
+        <div className="relative flex h-full w-full items-center justify-center bg-[rgb(var(--accent-rgb)/0.1)]">
+          <Volume2 className="h-7 w-7 text-[rgb(var(--accent-rgb)/0.48)]" />
           <audio
             ref={audioRef}
             src={asset.url}
@@ -845,8 +887,8 @@ function AssetCard({
             className="h-full w-full object-cover"
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-cyan-500/15 to-purple-500/15">
-            <BoxIcon className="h-7 w-7 text-cyan-200/35" />
+          <div className="flex h-full w-full items-center justify-center bg-[rgb(var(--accent-rgb)/0.1)]">
+            <BoxIcon className="h-7 w-7 text-[rgb(var(--accent-rgb)/0.48)] transition-opacity duration-[var(--duration-fast)] group-focus-within:opacity-0 group-hover:opacity-0" />
           </div>
         )
       ) : asset.kind === 'video' && !asset.previewUrl ? (
@@ -882,7 +924,7 @@ function AssetCard({
           <span
             className={`absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full border ${
               selected
-                ? 'border-cyan-400 bg-cyan-400 text-[#101217]'
+                ? 'border-[rgb(var(--accent-rgb))] bg-[rgb(var(--accent-rgb))] text-[#101217]'
                 : 'border-white/60 bg-black/40'
             }`}
           >
@@ -896,45 +938,54 @@ function AssetCard({
           <button
             type="button"
             onClick={onDelete}
+            disabled={deleting}
             aria-label={t('canvas.history.delete')}
             title={t('canvas.history.delete')}
-            className="absolute right-2 top-2 z-30 flex h-7 w-7 items-center justify-center rounded-md bg-black/50 text-white/85 opacity-0 transition group-hover:opacity-100 hover:bg-red-500/80 hover:text-white"
+            className="absolute right-2 top-2 z-30 flex h-7 w-7 items-center justify-center rounded-md bg-black/50 text-white/85 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-red-500/80 hover:text-white disabled:cursor-wait disabled:opacity-70"
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            {deleting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
           </button>
           <button
             type="button"
             onClick={onUse}
-            className="absolute left-2 top-2 z-30 rounded-md bg-black/50 px-2 py-1 text-[12px] font-medium text-white/90 opacity-0 transition group-hover:opacity-100 hover:bg-black/70 hover:text-white"
+            className="absolute left-2 top-2 z-30 rounded-md bg-black/50 px-2 py-1 text-xs font-medium text-white/90 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-black/70 hover:text-white"
           >
             {t('canvas.history.use')}
           </button>
         </>
       ) : (
-        // 图片 / 视频 hover 蒙层：右上删除，居中查看 / 使用。
-        <div className="absolute inset-0 flex items-center justify-center bg-black/55 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+        // 图片 / 视频 hover 蒙层：轻度模糊复杂缩略图，让右上删除和居中操作稳定可读。
+        <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 backdrop-blur-[10px] transition-opacity duration-[var(--duration-fast)] group-focus-within:opacity-100 group-hover:opacity-100">
           <button
             type="button"
             onClick={onDelete}
+            disabled={deleting}
             aria-label={t('canvas.history.delete')}
             title={t('canvas.history.delete')}
-            className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md bg-black/45 text-white/85 transition-colors hover:bg-red-500/80 hover:text-white"
+            className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md bg-black/45 text-white/85 transition-colors hover:bg-red-500/80 hover:text-white disabled:cursor-wait disabled:opacity-70"
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            {deleting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
           </button>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onView}
-              className="text-[13px] font-medium text-white/90 transition-colors hover:text-white"
+              className="rounded-full bg-white/[0.1] px-3 py-1.5 text-xs font-medium text-white/90 transition-colors hover:bg-white/[0.16] hover:text-white"
             >
               {t('canvas.history.view')}
             </button>
-            <span className="h-3 w-px bg-white/25" aria-hidden />
             <button
               type="button"
               onClick={onUse}
-              className="text-[13px] font-medium text-white/90 transition-colors hover:text-white"
+              className="rounded-full bg-[rgb(var(--accent-rgb)/0.22)] px-3 py-1.5 text-xs font-medium text-[rgb(var(--accent-rgb))] transition-colors hover:bg-[rgb(var(--accent-rgb)/0.3)]"
             >
               {t('canvas.history.use')}
             </button>
@@ -970,7 +1021,7 @@ function AssetCard({
             className="relative h-1.5 flex-1 cursor-pointer overflow-hidden rounded-full bg-white/25"
           >
             <div
-              className="absolute inset-y-0 left-0 rounded-full bg-cyan-300"
+              className="absolute inset-y-0 left-0 rounded-full bg-[rgb(var(--accent-rgb))]"
               style={{ width: `${progressPct}%` }}
             />
           </div>
@@ -981,20 +1032,28 @@ function AssetCard({
       )}
       </div>
 
-      {/* 提示词：图片 / 视频卡片在缩略图下方以卡片形式常显该版本提示词（多行截断，
-          title 悬停看全文，双击开完整弹窗）。历史资产里即「产物 + 提示词」一张卡片。
+      {/* 提示词：固定两行摘要保证网格节奏一致，单击打开完整弹窗；不在 hover 时展开，
+          避免单张卡片改变尺寸并挤动周围内容。历史资产里仍是「产物 + 提示词」一张卡片。
           用 asset.prompt 作为显示条件（仅生成历史记录才有值）：分镜取图（live-canvas）
           的 label 是文件名而非提示词、prompt 为空，故那里不会误显文件名。 */}
       {(asset.kind === 'image' || asset.kind === 'video') &&
         !selectionMode &&
         asset.prompt && (
-          <div
-            title={asset.prompt}
-            onDoubleClick={onOpenPrompt}
-            className="line-clamp-[6] flex-none cursor-pointer select-none px-2.5 py-2 text-[12px] leading-snug text-white/75 transition-colors hover:text-white/90"
+          <button
+            type="button"
+            onClick={onOpenPrompt}
+            aria-label={t('canvas.history.viewFullPrompt')}
+            title={t('canvas.history.viewFullPrompt')}
+            className="group/prompt relative h-12 w-full flex-none select-none px-2.5 py-2 pr-8 text-left text-[12px] leading-4 text-white/68 transition-[background-color,color] hover:bg-white/[0.025] hover:text-white/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[rgb(var(--accent-rgb)/0.55)]"
           >
-            {asset.prompt}
-          </div>
+            <span className="line-clamp-2">{asset.prompt}</span>
+            <span
+              aria-hidden
+              className="absolute bottom-2 right-2 grid size-5 place-items-center rounded-md bg-white/[0.05] text-white/38 transition-[background-color,color] group-hover/prompt:bg-white/[0.1] group-hover/prompt:text-white/78"
+            >
+              <Maximize2 className="size-3" />
+            </span>
+          </button>
         )}
 
       {/* 世界模型：缩略图下方常显名字（提示词缺失时回退到「导演世界」默认名），

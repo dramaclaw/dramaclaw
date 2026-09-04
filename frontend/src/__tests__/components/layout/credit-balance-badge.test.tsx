@@ -133,37 +133,44 @@ describe("CreditBalanceBadge", () => {
     renderBadge();
 
     expect(screen.getAllByText("1,234")).toHaveLength(2);
-    expect(screen.getByText("个人积分账户")).toBeInTheDocument();
+    expect(screen.getByText("可用积分余额")).toBeInTheDocument();
     expect(screen.getByText("当前有 2 项可能适用的优惠")).toBeInTheDocument();
   });
 
-  // OI-7: the figures always came from whichever account the backend resolved,
-  // but the heading was hardcoded to "个人积分账户" — so an org member read his
-  // organization's balance under the name of his personal wallet.
-  //
-  // The label must also say *allocated*: this figure is the member's own share,
-  // handed to him by the org, not the organization-wide pool. Naming it
-  // "组织额度余额" told an org admin he was looking at the whole org's money.
-  it("names the allocation the organization made to this member", () => {
+  it("keeps one details entry and presents the summary as lightweight cards", () => {
+    renderBadge();
+
+    expect(screen.getByRole("button", { name: "查看明细" })).toHaveClass(
+      "focus-visible:ring-0",
+    );
+    expect(screen.getByText("可用积分余额")).toHaveClass("text-xs");
+    expect(screen.queryByText("查看积分明细")).not.toBeInTheDocument();
+    for (const label of ["已获得", "已消费", "已退款"]) {
+      expect(screen.getByText(label).parentElement).toHaveClass("rounded-sm", "bg-white/[0.075]");
+      expect(screen.getByText(label).parentElement).not.toHaveClass("border");
+    }
+  });
+
+  it("uses the same available-balance title for an organization allocation", () => {
     summaryState.scope = "org_member";
 
     renderBadge();
 
-    expect(screen.getByText("组织分配给你的额度")).toBeInTheDocument();
-    expect(screen.getByText("可用余额")).toBeInTheDocument();
+    expect(screen.getByText("可用积分余额")).toBeInTheDocument();
+    expect(screen.queryByText("组织分配给你的额度")).not.toBeInTheDocument();
+    expect(screen.queryByText("可用余额")).not.toBeInTheDocument();
     expect(screen.queryByText("个人积分账户")).not.toBeInTheDocument();
-    expect(screen.queryByText("当前积分余额")).not.toBeInTheDocument();
   });
 
   // A backend that predates the scope contract omits the key entirely, and an
   // unknown value must not be read as an organization.
-  it("keeps the personal framing for an absent or unrecognised scope", () => {
+  it("keeps the available-balance title for an absent or unrecognised scope", () => {
     for (const scope of [undefined, "personal", "something_new"]) {
       summaryState.scope = scope;
 
       const { unmount } = renderBadge();
 
-      expect(screen.getByText("个人积分账户")).toBeInTheDocument();
+      expect(screen.getByText("可用积分余额")).toBeInTheDocument();
       expect(screen.queryByText("组织分配给你的额度")).not.toBeInTheDocument();
       unmount();
     }

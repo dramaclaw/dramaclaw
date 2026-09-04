@@ -2,200 +2,353 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { CanvasNode } from '@/features/canvas/domain/canvasNodes';
 
-import type { SnapAlignGuides } from './snapAlignStore';
+import type { SnapAlignGuideSegment, SnapAlignGuides } from './snapAlignStore';
 
 interface Bbox {
   left: number;
   right: number;
   top: number;
   bottom: number;
-  cx: number;
-  cy: number;
+  centerX: number;
+  centerY: number;
+}
+
+type XEdge = 'left' | 'centerX' | 'right';
+type YEdge = 'top' | 'centerY' | 'bottom';
+type SnapEdge = XEdge | YEdge;
+type SnapRelation = 'align' | 'adjacent';
+
+interface IndexedAnchor<E extends SnapEdge> {
+  nodeId: string;
+  edge: E;
+  coordinate: number;
+  rangeStart: number;
+  rangeEnd: number;
+}
+
+interface AxisMatch<E extends SnapEdge> {
+  draggedEdge: E;
+  target: IndexedAnchor<E>;
+  relation: SnapRelation;
+  delta: number;
+}
+
+export interface SnapAxisLock<E extends SnapEdge = SnapEdge> {
+  draggedEdge: E;
+  target: IndexedAnchor<E>;
+  relation: SnapRelation;
+}
+
+export interface SnapAlignLocks {
+  x: SnapAxisLock<XEdge> | null;
+  y: SnapAxisLock<YEdge> | null;
+}
+
+export interface SnapAlignIndex {
+  x: Record<XEdge, IndexedAnchor<XEdge>[]>;
+  y: Record<YEdge, IndexedAnchor<YEdge>[]>;
+}
+
+export interface SnapAlignOptions {
+  /** Flow 坐标阈值；画布调用方应使用 screenPx / zoom 换算。 */
+  threshold?: number;
+  /** 已吸附后允许离开得更远一点，避免临界点来回跳动。 */
+  releaseThreshold?: number;
+  locks?: SnapAlignLocks;
+}
+
+export interface SnapAlignResult {
+  position: { x: number; y: number };
+  guides: SnapAlignGuides;
+  locks: SnapAlignLocks;
 }
 
 const DEFAULT_NODE_WIDTH = 200;
 const DEFAULT_NODE_HEIGHT = 100;
-/** 引导线 ↔ 拖动节点边线之间多近才算"对齐"（flow 坐标，未除缩放）。 */
-export const SNAP_ALIGN_FLOW_THRESHOLD = 6;
-/** 收集匹配引导线时的判等容差，用于过滤浮点误差。 */
-const MATCH_EPSILON = 0.5;
+export const SNAP_ALIGN_SCREEN_THRESHOLD = 8;
+export const SNAP_ALIGN_SCREEN_RELEASE_THRESHOLD = 12;
+/** 非画布调用方在 zoom=1 下的默认 Flow 阈值。 */
+export const SNAP_ALIGN_FLOW_THRESHOLD = SNAP_ALIGN_SCREEN_THRESHOLD;
+const EMPTY_GUIDES: SnapAlignGuides = { vertical: [], horizontal: [] };
+const EMPTY_LOCKS: SnapAlignLocks = { x: null, y: null };
 
-function bboxAt(node: CanvasNode, pos: { x: number; y: number }): Bbox {
-  const w =
+const X_RELATIONS: ReadonlyArray<{
+  dragged: XEdge;
+  target: XEdge;
+  relation: SnapRelation;
+  priority: number;
+}> = [
+  { dragged: 'left', target: 'left', relation: 'align', priority: 0 },
+  { dragged: 'right', target: 'right', relation: 'align', priority: 0 },
+  { dragged: 'centerX', target: 'centerX', relation: 'align', priority: 1 },
+  { dragged: 'left', target: 'right', relation: 'adjacent', priority: 2 },
+  { dragged: 'right', target: 'left', relation: 'adjacent', priority: 2 },
+];
+
+const Y_RELATIONS: ReadonlyArray<{
+  dragged: YEdge;
+  target: YEdge;
+  relation: SnapRelation;
+  priority: number;
+}> = [
+  { dragged: 'top', target: 'top', relation: 'align', priority: 0 },
+  { dragged: 'bottom', target: 'bottom', relation: 'align', priority: 0 },
+  { dragged: 'centerY', target: 'centerY', relation: 'align', priority: 1 },
+  { dragged: 'top', target: 'bottom', relation: 'adjacent', priority: 2 },
+  { dragged: 'bottom', target: 'top', relation: 'adjacent', priority: 2 },
+];
+
+function bboxAt(node: CanvasNode, position: { x: number; y: number }): Bbox {
+  const width =
     typeof node.measured?.width === 'number'
       ? node.measured.width
       : typeof node.width === 'number'
-      ? node.width
-      : DEFAULT_NODE_WIDTH;
-  const h =
+        ? node.width
+        : DEFAULT_NODE_WIDTH;
+  const height =
     typeof node.measured?.height === 'number'
       ? node.measured.height
       : typeof node.height === 'number'
-      ? node.height
-      : DEFAULT_NODE_HEIGHT;
+        ? node.height
+        : DEFAULT_NODE_HEIGHT;
   return {
-    left: pos.x,
-    right: pos.x + w,
-    top: pos.y,
-    bottom: pos.y + h,
-    cx: pos.x + w / 2,
-    cy: pos.y + h / 2,
+    left: position.x,
+    right: position.x + width,
+    top: position.y,
+    bottom: position.y + height,
+    centerX: position.x + width / 2,
+    centerY: position.y + height / 2,
   };
 }
 
-function nodeBbox(node: CanvasNode): Bbox {
-  return bboxAt(node, node.position);
+function edgeCoordinate(bounds: Bbox, edge: SnapEdge): number {
+  return bounds[edge];
 }
 
-export interface SnapAlignResult {
-  /** 吸附后的左上角位置（flow 坐标）。等于原始 proposed 加上吸附 delta。 */
-  position: { x: number; y: number };
-  guides: SnapAlignGuides;
+function lowerBound<E extends SnapEdge>(sorted: IndexedAnchor<E>[], target: number): number {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (sorted[middle].coordinate < target) low = middle + 1;
+    else high = middle;
+  }
+  return low;
 }
 
-/**
- * 预计算的对齐候选索引：把所有「其它节点」的 left/cx/right 收进排序的 xs、
- * top/cy/bottom 收进排序的 ys。单节点拖动期间其它节点不动，所以这份索引在
- * 拖动开始时构建一次即可，之后每帧只做二分查找，避免每帧 O(n) 重扫 + 重分配。
- */
-export interface SnapAlignIndex {
-  xs: number[];
-  ys: number[];
+function nearestAnchor<E extends SnapEdge>(
+  sorted: IndexedAnchor<E>[],
+  target: number,
+  threshold: number,
+): IndexedAnchor<E> | null {
+  const index = lowerBound(sorted, target);
+  let best: IndexedAnchor<E> | null = null;
+  for (const candidateIndex of [index - 1, index]) {
+    const candidate = sorted[candidateIndex];
+    if (!candidate) continue;
+    const distance = Math.abs(candidate.coordinate - target);
+    if (distance > threshold) continue;
+    if (!best || distance < Math.abs(best.coordinate - target)) best = candidate;
+  }
+  return best;
 }
 
+function emptyIndex(): SnapAlignIndex {
+  return {
+    x: { left: [], centerX: [], right: [] },
+    y: { top: [], centerY: [], bottom: [] },
+  };
+}
+
+/** 输入节点的位置必须位于同一套绝对 Flow 坐标系。 */
 export function buildSnapAlignIndex(otherNodes: CanvasNode[]): SnapAlignIndex {
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (const node of otherNodes) {
-    const b = nodeBbox(node);
-    xs.push(b.left, b.cx, b.right);
-    ys.push(b.top, b.cy, b.bottom);
+  const index = emptyIndex();
+  otherNodes.forEach((node, nodeIndex) => {
+    const bounds = bboxAt(node, node.position);
+    const nodeId = node.id || `snap-target-${nodeIndex}`;
+    for (const edge of ['left', 'centerX', 'right'] as const) {
+      index.x[edge].push({
+        nodeId,
+        edge,
+        coordinate: bounds[edge],
+        rangeStart: bounds.top,
+        rangeEnd: bounds.bottom,
+      });
+    }
+    for (const edge of ['top', 'centerY', 'bottom'] as const) {
+      index.y[edge].push({
+        nodeId,
+        edge,
+        coordinate: bounds[edge],
+        rangeStart: bounds.left,
+        rangeEnd: bounds.right,
+      });
+    }
+  });
+  for (const anchors of Object.values(index.x)) {
+    anchors.sort((a, b) => a.coordinate - b.coordinate);
   }
-  xs.sort((a, b) => a - b);
-  ys.sort((a, b) => a - b);
-  return { xs, ys };
+  for (const anchors of Object.values(index.y)) {
+    anchors.sort((a, b) => a.coordinate - b.coordinate);
+  }
+  return index;
 }
 
-/** 第一个 >= target 的下标（lower bound）。 */
-function lowerBound(sorted: number[], target: number): number {
-  let lo = 0;
-  let hi = sorted.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (sorted[mid] < target) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  return lo;
+function lockedMatch<E extends SnapEdge>(
+  bounds: Bbox,
+  lock: SnapAxisLock<E> | null | undefined,
+  releaseThreshold: number,
+): AxisMatch<E> | null {
+  if (!lock) return null;
+  const delta = lock.target.coordinate - edgeCoordinate(bounds, lock.draggedEdge);
+  if (Math.abs(delta) > releaseThreshold) return null;
+  return { ...lock, delta };
 }
 
-/** 在排序数组里找与 target 距离最近、且在 threshold 内的 (coord - target)，否则 null。 */
-function nearestDelta(sorted: number[], target: number, threshold: number): number | null {
-  if (sorted.length === 0) {
-    return null;
-  }
-  const idx = lowerBound(sorted, target);
-  let best: number | null = null;
-  for (const candidate of [idx - 1, idx]) {
-    if (candidate < 0 || candidate >= sorted.length) {
-      continue;
-    }
-    const delta = sorted[candidate] - target;
-    if (Math.abs(delta) <= threshold && (best === null || Math.abs(delta) < Math.abs(best))) {
-      best = delta;
+function chooseXMatch(
+  bounds: Bbox,
+  index: SnapAlignIndex,
+  threshold: number,
+  releaseThreshold: number,
+  lock: SnapAxisLock<XEdge> | null | undefined,
+): AxisMatch<XEdge> | null {
+  const retained = lockedMatch(bounds, lock, releaseThreshold);
+  if (retained) return retained;
+  let best: (AxisMatch<XEdge> & { priority: number }) | null = null;
+  for (const relation of X_RELATIONS) {
+    const draggedCoordinate = edgeCoordinate(bounds, relation.dragged);
+    const target = nearestAnchor(index.x[relation.target], draggedCoordinate, threshold);
+    if (!target) continue;
+    const match = {
+      draggedEdge: relation.dragged,
+      target,
+      relation: relation.relation,
+      priority: relation.priority,
+      delta: target.coordinate - draggedCoordinate,
+    };
+    if (
+      !best ||
+      Math.abs(match.delta) < Math.abs(best.delta) ||
+      (Math.abs(match.delta) === Math.abs(best.delta) && match.priority < best.priority)
+    ) {
+      best = match;
     }
   }
   return best;
 }
 
-/** 收集所有与 target 距离 < eps 的候选坐标到 out。 */
-function collectWithin(sorted: number[], target: number, eps: number, out: Set<number>): void {
-  for (let i = lowerBound(sorted, target - eps); i < sorted.length && sorted[i] <= target + eps; i += 1) {
-    if (Math.abs(sorted[i] - target) < eps) {
-      out.add(sorted[i]);
+function chooseYMatch(
+  bounds: Bbox,
+  index: SnapAlignIndex,
+  threshold: number,
+  releaseThreshold: number,
+  lock: SnapAxisLock<YEdge> | null | undefined,
+): AxisMatch<YEdge> | null {
+  const retained = lockedMatch(bounds, lock, releaseThreshold);
+  if (retained) return retained;
+  let best: (AxisMatch<YEdge> & { priority: number }) | null = null;
+  for (const relation of Y_RELATIONS) {
+    const draggedCoordinate = edgeCoordinate(bounds, relation.dragged);
+    const target = nearestAnchor(index.y[relation.target], draggedCoordinate, threshold);
+    if (!target) continue;
+    const match = {
+      draggedEdge: relation.dragged,
+      target,
+      relation: relation.relation,
+      priority: relation.priority,
+      delta: target.coordinate - draggedCoordinate,
+    };
+    if (
+      !best ||
+      Math.abs(match.delta) < Math.abs(best.delta) ||
+      (Math.abs(match.delta) === Math.abs(best.delta) && match.priority < best.priority)
+    ) {
+      best = match;
     }
   }
+  return best;
 }
 
-/**
- * 基于预建索引的吸附计算：与 computeSnapAlign 等价，但每帧只做二分查找而非 O(n) 全扫。
- */
+function verticalGuide(match: AxisMatch<XEdge>, bounds: Bbox): SnapAlignGuideSegment {
+  return {
+    coordinate: match.target.coordinate,
+    start: Math.min(bounds.top, match.target.rangeStart),
+    end: Math.max(bounds.bottom, match.target.rangeEnd),
+    targetNodeId: match.target.nodeId,
+    relation: match.relation,
+  };
+}
+
+function horizontalGuide(match: AxisMatch<YEdge>, bounds: Bbox): SnapAlignGuideSegment {
+  return {
+    coordinate: match.target.coordinate,
+    start: Math.min(bounds.left, match.target.rangeStart),
+    end: Math.max(bounds.right, match.target.rangeEnd),
+    targetNodeId: match.target.nodeId,
+    relation: match.relation,
+  };
+}
+
 export function computeSnapAlignFromIndex(
   draggedNode: CanvasNode,
   proposedPosition: { x: number; y: number },
   index: SnapAlignIndex,
-  threshold: number = SNAP_ALIGN_FLOW_THRESHOLD,
+  options: SnapAlignOptions | number = {},
 ): SnapAlignResult {
-  if (index.xs.length === 0) {
-    return { position: proposedPosition, guides: { vertical: [], horizontal: [] } };
-  }
-  const draggedBbox = bboxAt(draggedNode, proposedPosition);
-  const dragXs = [draggedBbox.left, draggedBbox.cx, draggedBbox.right];
-  const dragYs = [draggedBbox.top, draggedBbox.cy, draggedBbox.bottom];
-
-  let bestDx: number | null = null;
-  let bestDy: number | null = null;
-  for (const dx of dragXs) {
-    const delta = nearestDelta(index.xs, dx, threshold);
-    if (delta !== null && (bestDx === null || Math.abs(delta) < Math.abs(bestDx))) {
-      bestDx = delta;
-    }
-  }
-  for (const dy of dragYs) {
-    const delta = nearestDelta(index.ys, dy, threshold);
-    if (delta !== null && (bestDy === null || Math.abs(delta) < Math.abs(bestDy))) {
-      bestDy = delta;
-    }
-  }
-
-  const snapDx = bestDx ?? 0;
-  const snapDy = bestDy ?? 0;
-  const snappedPosition = { x: proposedPosition.x + snapDx, y: proposedPosition.y + snapDy };
-  if (snapDx === 0 && snapDy === 0) {
-    return { position: snappedPosition, guides: { vertical: [], horizontal: [] } };
-  }
-
-  const snappedBbox = bboxAt(draggedNode, snappedPosition);
-  const verticalSet = new Set<number>();
-  const horizontalSet = new Set<number>();
-  for (const sx of [snappedBbox.left, snappedBbox.cx, snappedBbox.right]) {
-    collectWithin(index.xs, sx, MATCH_EPSILON, verticalSet);
-  }
-  for (const sy of [snappedBbox.top, snappedBbox.cy, snappedBbox.bottom]) {
-    collectWithin(index.ys, sy, MATCH_EPSILON, horizontalSet);
-  }
-
+  const normalizedOptions = typeof options === 'number' ? { threshold: options } : options;
+  const threshold = normalizedOptions.threshold ?? SNAP_ALIGN_FLOW_THRESHOLD;
+  const releaseThreshold = normalizedOptions.releaseThreshold ?? threshold * 1.5;
+  const proposedBounds = bboxAt(draggedNode, proposedPosition);
+  const xMatch = chooseXMatch(
+    proposedBounds,
+    index,
+    threshold,
+    releaseThreshold,
+    normalizedOptions.locks?.x,
+  );
+  const yMatch = chooseYMatch(
+    proposedBounds,
+    index,
+    threshold,
+    releaseThreshold,
+    normalizedOptions.locks?.y,
+  );
+  const position = {
+    x: proposedPosition.x + (xMatch?.delta ?? 0),
+    y: proposedPosition.y + (yMatch?.delta ?? 0),
+  };
+  const snappedBounds = bboxAt(draggedNode, position);
+  const locks: SnapAlignLocks = {
+    x: xMatch
+      ? { draggedEdge: xMatch.draggedEdge, target: xMatch.target, relation: xMatch.relation }
+      : null,
+    y: yMatch
+      ? { draggedEdge: yMatch.draggedEdge, target: yMatch.target, relation: yMatch.relation }
+      : null,
+  };
   return {
-    position: snappedPosition,
+    position,
+    locks,
     guides: {
-      vertical: Array.from(verticalSet),
-      horizontal: Array.from(horizontalSet),
+      vertical: xMatch ? [verticalGuide(xMatch, snappedBounds)] : [],
+      horizontal: yMatch ? [horizontalGuide(yMatch, snappedBounds)] : [],
     },
   };
 }
 
-/**
- * 给定一个候选位置，找到最近的对齐线并返回吸附后的位置 + 命中的引导线。
- *
- * - 比较的"对齐线"是 6 条：节点的 left/cx/right 与 top/cy/bottom。
- * - 在 `threshold` 内才会吸附；否则原样返回。
- * - X / Y 两个轴各自独立挑最近的一条，所以可以同时吸到一条竖线 + 一条横线。
- */
 export function computeSnapAlign(
   draggedNode: CanvasNode,
   proposedPosition: { x: number; y: number },
   otherNodes: CanvasNode[],
-  threshold: number = SNAP_ALIGN_FLOW_THRESHOLD,
+  options: SnapAlignOptions | number = {},
 ): SnapAlignResult {
   if (otherNodes.length === 0) {
-    return { position: proposedPosition, guides: { vertical: [], horizontal: [] } };
+    return { position: proposedPosition, guides: EMPTY_GUIDES, locks: EMPTY_LOCKS };
   }
   return computeSnapAlignFromIndex(
     draggedNode,
     proposedPosition,
     buildSnapAlignIndex(otherNodes),
-    threshold,
+    options,
   );
 }

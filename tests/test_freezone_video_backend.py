@@ -40,6 +40,7 @@ from novelvideo.freezone.video_node import (
     summarize_omni_reference_counts,
     sync_mainline_assets_into_library,
     validate_omni_reference_audio_durations,
+    validate_omni_reference_image_dimensions,
     validate_omni_reference_limits,
 )
 
@@ -680,6 +681,8 @@ def test_validate_omni_reference_limits_and_summary() -> None:
         "image_count": 9,
         "video_count": 3,
         "audio_count": 0,
+        "file_count": 0,
+        "link_count": 0,
         "total_count": 12,
     }
 
@@ -708,6 +711,32 @@ def test_validate_omni_reference_limits_and_summary() -> None:
             image_max=1,
             video_max=0,
             audio_max=0,
+            total_max=2,
+        )
+
+    validate_omni_reference_limits(
+        [
+            {"type": "image", "url": "/static/a.png"},
+            {"type": "file", "url": "/static/brief.pdf"},
+        ],
+        image_max=1,
+        video_max=0,
+        audio_max=0,
+        file_max=1,
+        link_max=1,
+        total_max=2,
+    )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        validate_omni_reference_limits(
+            [
+                {"type": "file", "url": "/static/brief.pdf"},
+                {"type": "link", "url": "https://example.com/brief"},
+            ],
+            image_max=0,
+            video_max=0,
+            audio_max=0,
+            file_max=1,
+            link_max=1,
             total_max=2,
         )
 
@@ -800,3 +829,52 @@ def test_validate_reference_duration_uses_video_label() -> None:
             total_max_seconds=None,
             media_label="video",
         )
+
+
+def _write_png(path: Path, width: int, height: int) -> Path:
+    from PIL import Image
+
+    Image.new("RGB", (width, height), (255, 255, 255)).save(path, format="PNG")
+    return path
+
+
+def test_validate_omni_reference_image_dimensions_rejects_small_image(
+    tmp_path: Path,
+) -> None:
+    """3060 实例：338x191 的参考图被火山 HeightTooSmall 打回，要在入队前拦住。"""
+    small = _write_png(tmp_path / "logo.png", 338, 191)
+    ok = _write_png(tmp_path / "frame.png", 1280, 720)
+
+    with pytest.raises(ValueError) as exc:
+        validate_omni_reference_image_dimensions([str(ok), str(small)])
+
+    message = str(exc.value)
+    assert "logo.png" in message
+    assert "338x191" in message
+    assert "300" in message
+    assert "frame.png" not in message
+
+
+def test_validate_omni_reference_image_dimensions_accepts_valid_and_skips_unreadable(
+    tmp_path: Path,
+) -> None:
+    ok = _write_png(tmp_path / "frame.png", 1280, 720)
+    missing = tmp_path / "missing.png"
+    not_an_image = tmp_path / "notes.txt"
+    not_an_image.write_text("hello", encoding="utf-8")
+
+    validate_omni_reference_image_dimensions(
+        [str(ok), str(missing), str(not_an_image), ""]
+    )
+
+
+def test_validate_omni_reference_image_dimensions_rejects_extreme_aspect_ratio(
+    tmp_path: Path,
+) -> None:
+    banner = _write_png(tmp_path / "banner.png", 3000, 400)
+
+    with pytest.raises(ValueError) as exc:
+        validate_omni_reference_image_dimensions([str(banner)])
+
+    assert "banner.png" in str(exc.value)
+    assert "0.4" in str(exc.value) and "2.5" in str(exc.value)

@@ -16,6 +16,7 @@ from novelvideo.utils.debug_context import (
     create_debug_context,
     validate_episode_consistency,
 )
+from novelvideo.utils.source_language import asset_language_instruction
 
 
 VIDEO_PROMPT_BUILDER_INSTRUCTIONS_EN = """# I2V Motion Director (SuperPower)
@@ -27,14 +28,11 @@ The first frame is video time `t=0`; the model cannot go backward to show action
 ## Field Contract
 - `visual_description` describes the beat painting. Use it as the visual anchor for first frame composition and as a strong hint for the action that should follow.
 
-## Sentence & Character Target
-- 4–6 句（~50–90 字）, scaled by duration:
-  - ≤4s → 50–60字 (tight, punchy)
-  - 5–6s → 60–75字 (full motion chain)
-  - ≥7s → 75–90字 (layered continuous motion)
+## Sentence & Length Target
+- 4–6 sentences, scaled appropriately for the requested output language and duration
 
 ## MUST
-✓ Write in **Chinese (中文) only**, **present tense** throughout
+✓ Write in the requested output language, **present tense** throughout
 ✓ Start motion from the first-frame state and continue forward only
 ✓ Use simple, direct verbs
 ✓ When image is provided: use the image for composition/layout; the sketch's body language may be inaccurate, prefer the `visual_description` text for action direction
@@ -76,7 +74,7 @@ Output the motion prompt directly. No explanation. No markdown.
 """
 
 
-def create_video_prompt_builder_agent(language: str = "en") -> Agent:
+def create_video_prompt_builder_agent(language: str = "zh") -> Agent:
     """创建视频提示词生成 Agent。"""
     from novelvideo.config import get_superpower_pydantic_model
 
@@ -86,7 +84,10 @@ def create_video_prompt_builder_agent(language: str = "en") -> Agent:
     )
     return Agent(
         model,
-        system_prompt=VIDEO_PROMPT_BUILDER_INSTRUCTIONS_EN,
+        system_prompt=(
+            f"{VIDEO_PROMPT_BUILDER_INSTRUCTIONS_EN}\n\n"
+            f"## Output Language\n{asset_language_instruction(language)}"
+        ),
         output_type=str,
         name="Video Prompt Builder",
     )
@@ -114,7 +115,7 @@ class VideoPromptBuilder:
         """返回上一次生成视频提示词时使用的上下文。"""
         return self._last_context
 
-    def _get_agent(self, language: str = "en") -> Agent:
+    def _get_agent(self, language: str = "zh") -> Agent:
         """获取指定语言的 Agent（懒加载）。"""
         if language not in self._agents:
             self._agents[language] = create_video_prompt_builder_agent(language)
@@ -152,7 +153,7 @@ class VideoPromptBuilder:
         self,
         duration: float = 5.0,
         frame_prompt: str = "",
-        language: str = "en",
+        language: str = "zh",
         frame_image_path: Optional[str] = None,
         beat_number: int | None = None,
         episode_number: int | None = None,
@@ -168,7 +169,7 @@ class VideoPromptBuilder:
         Args:
             duration: 视频时长（秒），用于调整动作丰富度
             frame_prompt: 首帧提示词（已包含完整视觉描述：场景、光影、角色外貌等）
-            language: 输出语言（预留参数，当前统一使用中文）
+            language: 输出语言，"en" 英文，其他值按中文处理
             frame_image_path: 首帧图片路径（可选），用于多模态分析实际构图
             beat_number: beat 编号（用于调试验证）
             episode_number: episode 编号（用于调试验证）
@@ -212,9 +213,14 @@ class VideoPromptBuilder:
             narration=narration,
             audio_type=audio_type,
             dialogue_line=dialogue_line,
+            language=language,
         )
 
-        log_agent_start("视频提示词生成师", f"生成运动描述 ({duration:.1f}秒, 中文)")
+        language_label = "English" if language == "en" else "中文"
+        log_agent_start(
+            "视频提示词生成师",
+            f"生成运动描述 ({duration:.1f}秒, {language_label})",
+        )
 
         # 存储上下文供调试和优化
         self._last_context = task
@@ -270,7 +276,10 @@ class VideoPromptBuilder:
             log_agent_end("视频提示词生成师", success=True, result=f"{len(result)}字")
             # dialogue beat：追加台词内容
             if audio_type == "dialogue" and dialogue_line:
-                result = f"{result}，说：{dialogue_line}"
+                if language == "en":
+                    result = f'{result} Says: "{dialogue_line}"'
+                else:
+                    result = f"{result}，说：{dialogue_line}"
             return result
 
         except Exception as e:
@@ -279,22 +288,44 @@ class VideoPromptBuilder:
             return self._fallback_build(duration, language)
 
     def _build_task_en(
-        self, *, duration, frame_prompt, has_image, color_map_text, narration, audio_type, dialogue_line,
+        self,
+        *,
+        duration,
+        frame_prompt,
+        has_image,
+        color_map_text,
+        narration,
+        audio_type,
+        dialogue_line,
+        language="zh",
     ) -> str:
         """构建英文 task 模板 (SuperPower)。"""
-        if duration <= 4:
-            word_target = "50-60字"
-        elif duration <= 6:
-            word_target = "60-75字"
+        if language == "en":
+            output_label = "English"
+            sentence_target = "4-6 sentences"
+            if duration <= 4:
+                word_target = "35-50 words"
+            elif duration <= 6:
+                word_target = "50-75 words"
+            else:
+                word_target = "65-90 words"
         else:
-            word_target = "75-90字"
+            output_label = "Chinese (中文)"
+            sentence_target = "4-6 句"
+            if duration <= 4:
+                word_target = "50-60字"
+            elif duration <= 6:
+                word_target = "60-75字"
+            else:
+                word_target = "75-90字"
+        language_instruction = asset_language_instruction(language)
 
         dialogue_hint = ""
         if audio_type == "dialogue" and dialogue_line:
             dialogue_hint = '\n⚠️ This Beat is DIALOGUE — speaking is the primary motion. Describe lips moving, gestures while talking. Dialogue text is appended by the system; only describe physical action.\n'
 
         if has_image and color_map_text:
-            return f"""Generate I2V motion prompt in Chinese (target: {word_target}, 4-6 句):
+            return f"""Generate I2V motion prompt in {output_label} (target: {word_target}, {sentence_target}):
 
 ## Context
 - Duration: {duration:.1f}s
@@ -314,10 +345,13 @@ class VideoPromptBuilder:
 5. If the textual visual_description implies an action moment the first frame has not yet reached, start from the next compatible action.
 6. NO character names → use appearance descriptions from the color mapping
 
-Output the motion prompt in Chinese (中文) directly.
+## Output Language
+{language_instruction}
+
+Output the motion prompt in {output_label} directly.
 """
         elif has_image:
-            return f"""Generate I2V motion prompt in Chinese (target: {word_target}, 4-6 句):
+            return f"""Generate I2V motion prompt in {output_label} (target: {word_target}, {sentence_target}):
 
 ## Context
 - Duration: {duration:.1f}s
@@ -333,10 +367,13 @@ Output the motion prompt in Chinese (中文) directly.
 5. If the textual visual_description implies an action moment the first frame has not yet reached, start from the next compatible action.
 6. NO character names → use visual descriptions ("the woman in gray"); distinguish multiple characters by visual features
 
-Output the motion prompt in Chinese (中文) directly.
+## Output Language
+{language_instruction}
+
+Output the motion prompt in {output_label} directly.
 """
         else:
-            return f"""Generate I2V motion prompt in Chinese (target: {word_target}, 4-6 句):
+            return f"""Generate I2V motion prompt in {output_label} (target: {word_target}, {sentence_target}):
 
 ## Context
 - Duration: {duration:.1f}s
@@ -352,15 +389,20 @@ Output the motion prompt in Chinese (中文) directly.
 6. If the textual visual_description implies an action moment the first frame has not yet reached, start from the next compatible action.
 7. NO character names → use visual descriptions ("the woman in black"); distinguish multiple characters by visual features
 
-Output the motion prompt in Chinese (中文) directly. No explanation.
+## Output Language
+{language_instruction}
+
+Output the motion prompt in {output_label} directly. No explanation.
 """
 
     def _fallback_build(
         self,
         duration: float,
-        language: str = "en",
+        language: str = "zh",
     ) -> str:
         """回退方案：根据规则生成默认运动提示词。"""
+        if language == "en":
+            return "The character moves naturally as the camera follows the action."
         return "角色自然动作，姿态变化，自然镜头运动"
 
 

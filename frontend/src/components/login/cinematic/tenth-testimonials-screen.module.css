@@ -160,3 +160,13 @@
     transform: translateX(-7%);
   }
 }
+
+/* 同上：英文标题多占一行，居中文案块底边压到证言墙上（实测重叠 48px）。 */
+:global(html[lang="en"]) .header h2 {
+  font-size: clamp(40px, 3.6vw, 72px);
+  line-height: 1.06;
+}
+
+:global(html[lang="en"]) .header span {
+  font-size: clamp(15px, 1.05vw, 20px);
+}

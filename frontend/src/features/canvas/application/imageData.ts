@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from 'i18next';
 import {
   MEDIA_VARIANT_MAX_EDGE,
   pickMediaVariant,
@@ -467,7 +471,7 @@ export async function loadImageElement(source: string): Promise<HTMLImageElement
     image.onload = () => resolve(image);
     image.onerror = () =>
       reject(
-        createImagePipelineError('图片加载失败', `source=${source}\ndisplaySource=${displaySource}`)
+        createImagePipelineError(i18n.t('canvas.imagePipeline.loadFailed'), `source=${source}\ndisplaySource=${displaySource}`)
       );
     image.src = displaySource;
   });
@@ -482,7 +486,7 @@ export async function imageUrlToDataUrl(imageUrl: string): Promise<string> {
     const localResponse = await fetch(resolveImageDisplayUrl(imageUrl));
     if (!localResponse.ok) {
       throw createImagePipelineError(
-        '无法读取本地图片数据',
+        i18n.t('canvas.imagePipeline.localReadFailed'),
         `source=${imageUrl}\nstatus=${localResponse.status}`
       );
     }
@@ -492,7 +496,7 @@ export async function imageUrlToDataUrl(imageUrl: string): Promise<string> {
 
   const response = await fetch(imageUrl);
   if (!response.ok) {
-    throw createImagePipelineError('无法下载图片数据', `url=${imageUrl}\nstatus=${response.status}`);
+    throw createImagePipelineError(i18n.t('canvas.imagePipeline.downloadFailed'), `url=${imageUrl}\nstatus=${response.status}`);
   }
 
   const blob = await response.blob();
@@ -504,7 +508,7 @@ export async function blobToDataUrl(blob: Blob): Promise<string> {
 
   return await new Promise((resolve, reject) => {
     reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error('图片转换失败'));
+    reader.onerror = () => reject(new Error(i18n.t('canvas.imagePipeline.convertFailed')));
     reader.readAsDataURL(blob);
   });
 }
@@ -535,7 +539,7 @@ export async function readFileAsDataUrl(file: File): Promise<string> {
 
   return await new Promise((resolve, reject) => {
     reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error('文件读取失败'));
+    reader.onerror = () => reject(new Error(i18n.t('canvas.imagePipeline.fileReadFailed')));
     reader.readAsDataURL(file);
   });
 }
@@ -623,7 +627,7 @@ export async function prepareNodeImage(
 ): Promise<PreparedNodeImage> {
   const trimmedImageUrl = imageUrl.trim();
   if (!trimmedImageUrl) {
-    throw createImagePipelineError('未获取到可用图片结果', 'imageUrl is empty');
+    throw createImagePipelineError(i18n.t('canvas.imagePipeline.emptyResult'), 'imageUrl is empty');
   }
 
   const started = performance.now();
@@ -649,7 +653,7 @@ export async function prepareNodeImage(
     };
   } catch (error) {
     throw createImagePipelineError(
-      '生成结果无法解析为图片',
+      i18n.t('canvas.imagePipeline.unparsableResult'),
       `source=${trimmedImageUrl}`,
       error
     );

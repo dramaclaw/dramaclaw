@@ -688,15 +688,12 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
       />,
     );
 
-    const copyButton = screen.getByLabelText("Copy");
-    // 同上：气泡下方悬浮 + 容器零高度变化（左侧只是换成 left-0）。
-    expect(copyButton.parentElement).toHaveClass("absolute");
-    expect(copyButton.parentElement).toHaveClass("top-full");
-    expect(copyButton.parentElement).toHaveClass("mt-1");
-    expect(copyButton.parentElement).toHaveClass("left-0");
-    expect(copyButton.parentElement).not.toHaveClass("right-0");
-    expect(copyButton.parentElement).not.toHaveClass("top-1.5");
-    expect(copyButton.parentElement?.parentElement).not.toHaveClass("hover:pb-10");
+    const copyButton = screen.getByLabelText("aiAssistant.actions.copy");
+    const actionBar = copyButton.parentElement;
+    // main 的展示语义将助手操作栏放在正文下方的正常文档流中，避免覆盖后续消息。
+    expect(actionBar).toHaveClass("mt-1.5");
+    expect(actionBar).not.toHaveClass("absolute");
+    expect(actionBar).not.toHaveClass("right-0");
   });
 
   it("shows context usage as an assistant action badge instead of body text", () => {

@@ -7,6 +7,7 @@ import type {
   SkillCardinality,
   SkillInputRole,
   SkillOutputRole,
+  SkillProvider,
 } from "@/features/freezone/context/skillRoles";
 
 function tWithFallback(t: TFunction, key: string, fallback: string): string {
@@ -20,6 +21,11 @@ function skillKey(skillId: string): string {
 
 function optionKey(optionValue: string): string {
   return optionValue.replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+/** 技能来源分组的标题（「主线技能」「Agent 技能」…）。 */
+export function translateSkillProviderLabel(provider: SkillProvider, t: TFunction): string {
+  return t(`viewer.threeD.skillProviderLabels.${provider}`);
 }
 
 export function translateSkillName(skill: SkillDefinition, t: TFunction): string {

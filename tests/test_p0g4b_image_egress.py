@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 
 import pytest
+from PIL import Image
 
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.ports.authz import BillingPrincipal
@@ -707,7 +708,7 @@ async def test_eg18b_freezone_analyze_shots_builds_explicit_transport_from_org_c
     built = _org_vision_ports(monkeypatch, context, operation_port)
 
     frame = tmp_path / "frame_001.png"
-    frame.write_bytes(b"frame")
+    Image.new("RGB", (1920, 1080), (24, 48, 96)).save(frame)
 
     payload = await jobs.run_freezone_analyze_shots(
         project_dir=tmp_path,
@@ -753,7 +754,7 @@ async def test_eg18b_freezone_analyze_shots_failure_leaves_no_dispatching_claim(
         exploding_call,
     )
     frame = tmp_path / "frame_001.png"
-    frame.write_bytes(b"frame")
+    Image.new("RGB", (1920, 1080), (24, 48, 96)).save(frame)
 
     with pytest.raises(RuntimeError, match="gateway exploded"):
         await jobs.run_freezone_analyze_shots(

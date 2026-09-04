@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
 import {
   Check,
@@ -10,15 +11,17 @@ import {
   Folder,
   FolderPlus,
   Loader2,
+  Maximize2,
   MoreHorizontal,
   Music,
   RefreshCw,
+  Search,
   Send,
-  Trash2,
   Upload,
   Video as VideoIcon,
   X,
 } from 'lucide-react';
+import { toast } from 'sonner';
 
 import {
   createFreezoneAssetLibraryFolder,
@@ -34,7 +37,9 @@ import {
   type FreezoneAssetLibraryFolder,
 } from '@/api/ops';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
+import { downloadUrlAsFile } from '@/lib/browserDownload';
 import { AssetLibraryItemMedia } from './AssetLibraryItemMedia';
+import { AssetLibraryPreviewDialog } from './AssetLibraryPreviewDialog';
 import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/confirm-dialog-host';
 import { AssetLibraryFolderCoverDialog } from './AssetLibraryFolderCoverDialog';
@@ -49,17 +54,18 @@ import {
   ASSET_CATEGORIES,
   ASSET_LIBRARY_CARD_CLASS,
   ASSET_LIBRARY_CARD_HOVER_CLASS,
-  SOURCE_LABEL,
+  SOURCE_LABEL_KEYS,
   buildAssetFolders,
   folderCoverUrl,
   formatFolderDate,
+  libraryItemDownloadFilename,
   normalizeLibraryList,
-  systemFolderLabel,
+  systemFolderLabelKey,
   type AssetCategory,
   type AssetFolder,
   type AssetFolderKey,
+  type AssetLibraryCategoryFilterKey,
   type AssetLibraryMedia,
-  type AssetLibraryTabKey,
   type LibraryItem,
 } from './assetLibraryItems';
 
@@ -90,13 +96,17 @@ export interface AssetLibrarySelection {
 }
 
 export interface AssetLibraryModalProps {
+  /** 管理态负责查看/维护资产；选材态只负责把素材交给节点。 */
+  mode: 'manage' | 'pick';
   open: boolean;
   project: string | null;
   onClose: () => void;
   onSuccess?: () => void;
   onConfirm?: (selections: AssetLibrarySelection[]) => void;
+  /** 管理态下把单条素材发送到当前画布。 */
+  onSendItemToCanvas?: (entry: LibraryItem) => void;
   maxSelectable?: number;
-  /** 允许的媒体类型 Tab;缺省三类都开。生图/图片编辑节点只传 ['image']。 */
+  /** 允许的媒介类型；缺省三类都开。生图/图片编辑节点只传 ['image']。 */
   allowedMedia?: AssetLibraryMedia[];
   /**
    * 把整个文件夹的素材发到画布并编成一组（组名 = 文件夹名）。不传时文件夹卡片上
@@ -115,17 +125,20 @@ function stripExtension(name: string): string {
 }
 
 export function AssetLibraryModal({
+  mode,
   open,
   project,
   onClose,
   onSuccess,
   onConfirm,
+  onSendItemToCanvas,
   maxSelectable = 9,
   allowedMedia,
   onSendFolderToCanvas,
 }: AssetLibraryModalProps) {
+  const { t } = useTranslation();
   // 类目（标签）按用途分，不按媒介分；allowedMedia 只在两个地方起作用：整类都装
-  // 不下的类目（如只收音频的「音效」在只要图片的节点里）不出现在 tab 条上，条目
+  // 不下的类目（如只收音频的「音效」在只要图片的节点里）不出现在筛选条上，条目
   // 本身再过滤一遍。
   const categories = useMemo(
     () =>
@@ -144,21 +157,22 @@ export function AssetLibraryModal({
   const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const pendingRef = useRef<PendingUpload[]>([]);
   pendingRef.current = pendingUploads;
   const [isDragging, setIsDragging] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
-  const [activeTabKey, setActiveTabKey] =
-    useState<AssetLibraryTabKey>(ALL_CATEGORY_KEY);
-  // 「全部」下先看文件夹，点进去才看条目；非空即当前打开的文件夹。选中状态跨层级
-  // 保留（selectedKeys 与视图无关），所以进出文件夹不会掉勾。
-  const [openFolderKey, setOpenFolderKey] = useState<AssetFolderKey | null>(null);
+  const [previewEntry, setPreviewEntry] = useState<LibraryItem | null>(null);
+  // 文件夹是资产的存放范围，类目是当前范围内的筛选条件：两个维度分别存状态，
+  // 避免把「全部资产」和「人物 / 场景」伪装成同级 Tab。
+  const [activeCategoryKey, setActiveCategoryKey] =
+    useState<AssetLibraryCategoryFilterKey>(ALL_CATEGORY_KEY);
+  // null 表示真正的全部资产；有值表示只浏览该文件夹。
+  const [activeFolderKey, setActiveFolderKey] =
+    useState<AssetFolderKey | null>(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
-  // 批量操作 = 管理态：卡片上的勾选改为「选中待删除」，底部换成删除条。平时的勾选
-  // 是「挑素材给节点用」，两者各存各的，互不影响。
+  // 批量删除只属于管理态；选材态的选择只服务于节点确认，两种任务不复用状态。
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkIds, setBulkIds] = useState<string[]>([]);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
@@ -171,10 +185,11 @@ export function AssetLibraryModal({
   const [coverFolderKey, setCoverFolderKey] = useState<AssetFolderKey | null>(
     null,
   );
-  // 分页只管当前网格：「全部」顶层分文件夹，其余分条目。切 Tab / 进出文件夹 /
-  // 改每页条数都回到第一页——留在第 3 页看一个只有 2 页的目录没有意义。
+  // 分页只管当前资产网格。切换文件夹 / 类目或改每页条数都回到第一页——留在
+  // 第 3 页看一个只有 2 页的结果集没有意义。
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(ASSET_LIBRARY_PAGE_SIZES[0]);
+  const [assetQuery, setAssetQuery] = useState('');
 
   useEffect(() => {
     if (
@@ -187,7 +202,12 @@ export function AssetLibraryModal({
       return;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Escape') return;
+      if (previewEntry) {
+        setPreviewEntry(null);
+        return;
+      }
+      onClose();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
@@ -196,23 +216,24 @@ export function AssetLibraryModal({
     newFolderOpen,
     onClose,
     open,
+    previewEntry,
     renameFolderKey,
     uploadOpen,
   ]);
 
   useEffect(() => {
     setPage(1);
-  }, [activeTabKey, openFolderKey, pageSize]);
+  }, [activeCategoryKey, activeFolderKey, assetQuery, pageSize]);
 
-  // allowedMedia 变了(不同节点复用同一弹窗)时，把当前 Tab 收敛回允许集合。
+  // allowedMedia 变了(不同节点复用同一弹窗)时，把类目筛选收敛回允许集合。
   useEffect(() => {
     if (
-      activeTabKey !== ALL_CATEGORY_KEY &&
-      !categories.some((category) => category.key === activeTabKey)
+      activeCategoryKey !== ALL_CATEGORY_KEY &&
+      !categories.some((category) => category.key === activeCategoryKey)
     ) {
-      setActiveTabKey(ALL_CATEGORY_KEY);
+      setActiveCategoryKey(ALL_CATEGORY_KEY);
     }
-  }, [categories, activeTabKey]);
+  }, [categories, activeCategoryKey]);
 
   // 纯加载已有库：失败不弹红条(缺库文件/后端未就绪都当空处理)，返回加载到的条目。
   const refreshLibrary = useCallback(async (): Promise<LibraryItem[]> => {
@@ -292,19 +313,29 @@ export function AssetLibraryModal({
       setLibrary([]);
       setCustomFolders([]);
       setLibraryError(null);
-      setDeletingId(null);
       setIsDragging(false);
       setIsSyncing(false);
       setSelectedKeys([]);
-      setActiveTabKey(ALL_CATEGORY_KEY);
-      setOpenFolderKey(null);
+      setPreviewEntry(null);
+      setActiveCategoryKey(ALL_CATEGORY_KEY);
+      setActiveFolderKey(null);
       setNewFolderOpen(false);
       setUploadOpen(false);
       setBulkMode(false);
       setBulkIds([]);
+      setAssetQuery('');
     }, 240);
     return () => window.clearTimeout(timer);
   }, [open]);
+
+  useEffect(() => {
+    if (mode === 'manage') {
+      setSelectedKeys([]);
+      return;
+    }
+    setBulkMode(false);
+    setBulkIds([]);
+  }, [mode]);
 
   useEffect(() => {
     return () => {
@@ -330,7 +361,7 @@ export function AssetLibraryModal({
 
   const handleCreateFolder = useCallback(
     async (name: string): Promise<AssetFolderKey> => {
-      if (!project) throw new Error('项目未就绪');
+      if (!project) throw new Error(t('canvas.assetLibrary.projectNotReady'));
       const folder = await createFreezoneAssetLibraryFolder(project, name);
       await refreshFolders();
       return folder.id;
@@ -401,9 +432,9 @@ export function AssetLibraryModal({
         },
       }));
       setPendingUploads((prev) => [...prev, ...accepted.map((a) => a.entry)]);
-      // 把视图切到目标文件夹，否则上传进度落在用户看不见的地方。
-      setActiveTabKey(ALL_CATEGORY_KEY);
-      setOpenFolderKey(folder);
+      // 把范围切到目标文件夹，并保留本次指定的类目，确保上传进度立刻可见。
+      setActiveCategoryKey(category ?? ALL_CATEGORY_KEY);
+      setActiveFolderKey(folder);
       accepted.forEach(({ entry, file }) => {
         void uploadOne(entry, file);
       });
@@ -415,32 +446,48 @@ export function AssetLibraryModal({
     async (entry: LibraryItem) => {
       if (!project || !entry.id) return;
       const confirmed = await confirmDialog({
-        title: '删除素材',
-        description: `确定要删除「${entry.name || entry.id}」？删了找不回来。`,
-        confirmText: '删除',
+        title: t('canvas.assetLibrary.deleteEntryTitle'),
+        description: t('canvas.assetLibrary.deleteEntryDescription', {
+          name: entry.name || entry.id,
+        }),
+        confirmText: t('canvas.assetLibrary.delete'),
         confirmVariant: 'destructive',
       });
       if (!confirmed) return;
-      setDeletingId(entry.id);
       try {
         await deleteFreezoneVideoCharacterLibraryItem(project, entry.id);
         await refreshLibrary();
       } catch (err) {
         console.error('[asset-library] delete failed', err);
         setLibraryError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setDeletingId(null);
       }
     },
     [project, refreshLibrary],
   );
 
+  const handleDownloadEntry = useCallback(async (entry: LibraryItem) => {
+    try {
+      await downloadUrlAsFile(
+        resolveImageDisplayUrl(entry.url),
+        libraryItemDownloadFilename(entry),
+      );
+    } catch (err) {
+      toast.error(
+        t('canvas.assetLibrary.downloadFailed', {
+          detail: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
+  }, []);
+
   const handleBulkDelete = useCallback(async () => {
     if (!project || bulkIds.length === 0 || isBulkDeleting) return;
     const confirmed = await confirmDialog({
-      title: '批量删除',
-      description: `确定要删除选中的 ${bulkIds.length} 项素材？删了找不回来。`,
-      confirmText: '删除',
+      title: t('canvas.assetLibrary.bulkDeleteTitle'),
+      description: t('canvas.assetLibrary.bulkDeleteDescription', {
+        count: bulkIds.length,
+      }),
+      confirmText: t('canvas.assetLibrary.delete'),
       confirmVariant: 'destructive',
     });
     if (!confirmed) return;
@@ -468,7 +515,12 @@ export function AssetLibraryModal({
       if (lastError) {
         const message =
           lastError instanceof Error ? lastError.message : String(lastError);
-        setLibraryError(`${failed.length} 项删除失败：${message}`);
+        setLibraryError(
+          t('canvas.assetLibrary.bulkDeleteFailed', {
+            count: failed.length,
+            detail: message,
+          }),
+        );
       }
     } finally {
       setIsBulkDeleting(false);
@@ -484,35 +536,37 @@ export function AssetLibraryModal({
     [library, allowedMedia],
   );
 
-  // 「全部」下的文件夹，与左侧面板「资产库」tab 同一套分法（见 buildAssetFolders）。
+  // 左侧文件夹导航与常驻面板「资产库」tab 共用同一套分法（见 buildAssetFolders）。
   const folders = useMemo(
-    () => buildAssetFolders(allowedItems, customFolders),
-    [allowedItems, customFolders],
+    () => buildAssetFolders(allowedItems, t, customFolders),
+    [allowedItems, t, customFolders],
   );
   const uploadableFolders = useMemo(
     () => folders.filter((folder) => folder.uploadable),
     [folders],
   );
 
-  const openFolder = useMemo(() => {
-    if (!openFolderKey) return null;
-    const found = folders.find((folder) => folder.key === openFolderKey);
+  const activeFolder = useMemo(() => {
+    if (!activeFolderKey) return null;
+    const found = folders.find((folder) => folder.key === activeFolderKey);
     if (found) return found;
     // 空的系统类目文件夹是「有内容才出现」的（见 buildAssetFolders），所以往一个
     // 还没有素材的类目里传第一个文件时，它并不在 folders 里。这时若照常回落到
     // 文件夹网格，上传中的卡片就没地方落——进度看不见，失败了连「移除」也点不到。
     // 给个同 key 的空壳兜住。只在确实有上传要落进来时才造，免得把刚删掉的文件夹
     // 又变出来。
-    if (!pendingUploads.some((p) => p.folder === openFolderKey)) return null;
+    if (!pendingUploads.some((p) => p.folder === activeFolderKey)) return null;
     const placeholder: AssetFolder = {
-      key: openFolderKey,
-      label: systemFolderLabel(openFolderKey) ?? openFolderKey,
+      key: activeFolderKey,
+      label: systemFolderLabelKey(activeFolderKey)
+        ? t(systemFolderLabelKey(activeFolderKey) as string)
+        : activeFolderKey,
       items: [],
       system: true,
       uploadable: true,
     };
     return placeholder;
-  }, [folders, openFolderKey, pendingUploads]);
+  }, [folders, activeFolderKey, pendingUploads]);
   const renameFolder = useMemo(
     () => folders.find((folder) => folder.key === renameFolderKey) ?? null,
     [folders, renameFolderKey],
@@ -532,12 +586,15 @@ export function AssetLibraryModal({
         (entry) => entry.folder === folder.key,
       ).length;
       const confirmed = await confirmDialog({
-        title: '删除文件夹',
+        title: t('canvas.assetLibrary.deleteFolderTitle'),
         description:
           doomed > 0
-            ? `确定要删除文件夹「${folder.label}」？里面的 ${doomed} 项素材会一起删掉，删了找不回来。`
-            : `确定要删除文件夹「${folder.label}」？`,
-        confirmText: '删除',
+            ? t('canvas.assetLibrary.deleteFolderDescriptionWithItems', {
+                name: folder.label,
+                count: doomed,
+              })
+            : t('canvas.assetLibrary.deleteFolderDescription', { name: folder.label }),
+        confirmText: t('canvas.assetLibrary.delete'),
         confirmVariant: 'destructive',
       });
       if (!confirmed) return;
@@ -549,38 +606,37 @@ export function AssetLibraryModal({
       }
       // 删的是「文件夹 + 里面的素材」，两份数据都得重拉；失败也刷，避免视图停在
       // 一个可能已经被删掉的文件夹上。
-      if (openFolderKey === folder.key) setOpenFolderKey(null);
+      if (activeFolderKey === folder.key) setActiveFolderKey(null);
       await Promise.all([refreshLibrary(), refreshFolders()]);
     },
-    [project, library, openFolderKey, refreshLibrary, refreshFolders],
+    [project, library, activeFolderKey, refreshLibrary, refreshFolders],
   );
-  // 「全部」且没点进文件夹时是文件夹视图，此时不列条目。
-  const showFolders = activeTabKey === ALL_CATEGORY_KEY && !openFolder;
-
-  // 批量能力处理的是资产，不是文件夹。从资产视图退回文件夹总览时同步退出，避免
-  // 出现按钮已禁用、底部却仍保留批量删除栏的矛盾状态。
-  useEffect(() => {
-    if (!showFolders || !bulkMode) return;
-    setBulkMode(false);
-    setBulkIds([]);
-  }, [bulkMode, showFolders]);
-
-  // 直接往弹窗里拖文件的落点：进了可写文件夹就放那儿(不打标签)，在某个类目 tab 下
-  // 就放进该类目的同名系统文件夹并打上该标签。文件夹视图和主线文件夹不接受拖入。
+  // 直接拖文件时，文件夹决定保存位置，类目筛选决定标签。全部资产 + 全部类别时
+  // 默认落到「待分类资产」，避免一个没有存放位置的上传入口。
   const dropTarget = useMemo<
     { folder: AssetFolderKey; category: AssetCategory | null; label: string } | null
   >(() => {
-    if (activeTabKey !== ALL_CATEGORY_KEY) {
-      const category = categories.find((c) => c.key === activeTabKey);
-      return category
-        ? { folder: category.key, category: category.key, label: category.label }
-        : null;
+    const category =
+      activeCategoryKey === ALL_CATEGORY_KEY
+        ? null
+        : categories.find((entry) => entry.key === activeCategoryKey) ?? null;
+    if (activeFolder?.uploadable) {
+      return {
+        folder: activeFolder.key,
+        category: category?.key ?? null,
+        label: activeFolder.label,
+      };
     }
-    if (openFolder?.uploadable) {
-      return { folder: openFolder.key, category: null, label: openFolder.label };
+    if (activeFolder) return null;
+    if (category) {
+      return { folder: category.key, category: category.key, label: t(category.labelKey) };
     }
-    return null;
-  }, [activeTabKey, categories, openFolder]);
+    return {
+      folder: 'other',
+      category: 'other',
+      label: t('canvas.assetLibrary.uncategorized'),
+    };
+  }, [activeCategoryKey, activeFolder, categories]);
 
   const handleDrop = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
@@ -607,20 +663,32 @@ export function AssetLibraryModal({
   );
 
   const visibleItems = useMemo(() => {
-    if (showFolders) return [];
-    if (activeTabKey === ALL_CATEGORY_KEY) return openFolder?.items ?? [];
-    return allowedItems.filter((entry) => entry.category === activeTabKey);
-  }, [showFolders, activeTabKey, openFolder, allowedItems]);
+    const scopedItems = activeFolder ? activeFolder.items : allowedItems;
+    const categorizedItems =
+      activeCategoryKey === ALL_CATEGORY_KEY
+        ? scopedItems
+        : scopedItems.filter((entry) => entry.category === activeCategoryKey);
+    const normalizedQuery = assetQuery.trim().toLowerCase();
+    if (!normalizedQuery) return categorizedItems;
+    return categorizedItems.filter((entry) =>
+      (entry.name || '').toLowerCase().includes(normalizedQuery),
+    );
+  }, [activeCategoryKey, activeFolder, allowedItems, assetQuery]);
 
   const visiblePending = useMemo(() => {
-    if (showFolders) return [];
-    if (activeTabKey === ALL_CATEGORY_KEY) {
-      return openFolder
-        ? pendingUploads.filter((p) => p.folder === openFolder.key)
-        : [];
-    }
-    return pendingUploads.filter((p) => p.category === activeTabKey);
-  }, [showFolders, activeTabKey, openFolder, pendingUploads]);
+    const scopedPending = activeFolder
+      ? pendingUploads.filter((entry) => entry.folder === activeFolder.key)
+      : pendingUploads;
+    const categorizedPending =
+      activeCategoryKey === ALL_CATEGORY_KEY
+        ? scopedPending
+        : scopedPending.filter((entry) => entry.category === activeCategoryKey);
+    const normalizedQuery = assetQuery.trim().toLowerCase();
+    if (!normalizedQuery) return categorizedPending;
+    return categorizedPending.filter((entry) =>
+      entry.fileName.toLowerCase().includes(normalizedQuery),
+    );
+  }, [activeCategoryKey, activeFolder, assetQuery, pendingUploads]);
 
   const isSelected = useCallback(
     (key: string) => selectedKeys.includes(key),
@@ -637,7 +705,7 @@ export function AssetLibraryModal({
     (key: string) => {
       setSelectedKeys((prev) => {
         if (prev.includes(key)) return prev.filter((k) => k !== key);
-        // 每种媒介各自独立的选择配额：切 Tab 时不会被别的媒介占满 maxSelectable
+        // 每种媒介各自独立的选择配额：切筛选时不会被别的媒介占满 maxSelectable
         // 而卡住当前媒介的勾选（selectionKey 前缀即 media）。
         const media = key.split(':', 1)[0];
         const sameMediaCount = prev.filter((k) =>
@@ -677,32 +745,31 @@ export function AssetLibraryModal({
 
   if (typeof document === 'undefined' || !open) return null;
 
-  // 分页作用在当前网格上。上传中的占位卡不参与分页——它们几秒后就变成正式条目，
-  // 被翻到后面反而看不到进度。
-  const pagedTotal = showFolders ? folders.length : visibleItems.length;
+  // 分页只作用在当前范围和类目过滤后的资产。上传中的占位卡不参与分页——它们
+  // 几秒后就变成正式条目，被翻到后面反而看不到进度。
+  const pagedTotal = visibleItems.length;
   const pageCount = Math.max(1, Math.ceil(pagedTotal / pageSize));
   // 删素材会让总页数缩水，停在已经不存在的页上就成空白了，这里兜一下。
   const safePage = Math.min(page, pageCount);
   const pageStart = (safePage - 1) * pageSize;
-  const pagedFolders = showFolders
-    ? folders.slice(pageStart, pageStart + pageSize)
-    : [];
-  const pagedItems = showFolders
-    ? []
-    : visibleItems.slice(pageStart, pageStart + pageSize);
+  const pagedItems = visibleItems.slice(pageStart, pageStart + pageSize);
   const selectedCount = selectedKeys.length;
   // 配额按媒介算（selectionKey 前缀即 media），所以「选满禁选」也得按条目自己的
   // 媒介判断——文件夹里图片和视频是混着的。
   const selectedCountOf = (media: AssetLibraryMedia) =>
     selectedKeys.filter((k) => k.startsWith(`${media}:`)).length;
   const hasSelection = selectedCount > 0;
-  const tabs: Array<{ key: AssetLibraryTabKey; label: string }> = [
-    { key: ALL_CATEGORY_KEY, label: '全部' },
+  const categoryFilters: Array<{
+    key: AssetLibraryCategoryFilterKey;
+    label: string;
+  }> = [
+    { key: ALL_CATEGORY_KEY, label: t('canvas.assetLibrary.allCategories') },
     ...categories.map((category) => ({
       key: category.key,
-      label: category.label,
+      label: t(category.labelKey),
     })),
   ];
+  const activeScopeLabel = activeFolder?.label ?? t('canvas.assetLibrary.allAssets');
 
   const headerButtonLayout =
     'inline-flex h-7 items-center gap-1.5 rounded-[8px] px-2.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40';
@@ -710,12 +777,12 @@ export function AssetLibraryModal({
 
   return createPortal(
     <div className="fixed inset-0 z-[300] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/55 backdrop-blur-sm" onClick={onClose} />
       <div
         className={ASSET_LIBRARY_MODAL_CLASS}
         role="dialog"
         aria-modal="true"
-        aria-label="资产库"
+        aria-label={t('canvas.assetLibrary.title')}
         onClick={(event) => event.stopPropagation()}
         onDragOver={(event) => {
           event.preventDefault();
@@ -729,9 +796,9 @@ export function AssetLibraryModal({
         {/* 标题与高频操作同层：上传和建夹直接暴露，避免为了两个选项再开一层菜单。 */}
         <div className="flex shrink-0 flex-col items-stretch justify-between gap-3 px-5 pb-3 pt-5 sm:flex-row sm:items-center sm:gap-4">
           <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-foreground">资产库</h2>
+            <h2 className="text-lg font-semibold text-foreground">{t('canvas.assetLibrary.title')}</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              整理、复用并上传项目素材
+              {t('canvas.assetLibrary.subtitle')}
             </p>
           </div>
           <div className="ui-scrollbar-hidden flex shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:pb-0">
@@ -740,33 +807,38 @@ export function AssetLibraryModal({
               onClick={() => void handleSyncFromMainline()}
               disabled={!project || isSyncing}
               className={headerButtonClass}
-              title="打开时已自动同步；如主线新增了人物 / 场景 / 道具，可点此重新同步"
+              title={t('canvas.assetLibrary.resyncTitle')}
             >
               {isSyncing ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <RefreshCw className="h-3.5 w-3.5" />
               )}
-              同步主线
+              {t('canvas.assetLibrary.syncMainline')}
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setBulkMode((prev) => !prev);
-                setBulkIds([]);
-              }}
-              disabled={showFolders}
-              className={`${headerButtonClass} ${
-                bulkMode ? 'bg-white/[0.18] text-text-dark' : ''
-              }`}
-              title={
-                showFolders
-                  ? '进入文件夹或分类资产列表后可使用批量操作'
-                  : '进入批量删除模式'
-              }
-            >
-              {bulkMode ? '退出批量' : '批量操作'}
-            </button>
+            {mode === 'manage' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkMode((prev) => !prev);
+                  setBulkIds([]);
+                }}
+                className={`${headerButtonClass} ${
+                  bulkMode ? 'bg-white/[0.18] text-text-dark' : ''
+                }`}
+                title={t(
+                  bulkMode
+                    ? 'canvas.assetLibrary.exitBulkDelete'
+                    : 'canvas.assetLibrary.bulkDeleteHint',
+                )}
+              >
+                {t(
+                  bulkMode
+                    ? 'canvas.assetLibrary.exitBulkDelete'
+                    : 'canvas.assetLibrary.bulkDeleteTitle',
+                )}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setNewFolderOpen(true)}
@@ -774,7 +846,7 @@ export function AssetLibraryModal({
               className={headerButtonClass}
             >
               <FolderPlus className="h-3.5 w-3.5" />
-              新建文件夹
+              {t('canvas.assetLibrary.newFolder')}
             </button>
             <button
               type="button"
@@ -783,100 +855,64 @@ export function AssetLibraryModal({
               className={`${headerButtonLayout} bg-primary font-semibold text-primary-foreground hover:bg-primary/90`}
             >
               <Upload className="h-3.5 w-3.5" />
-              上传资产
+              {t('canvas.assetLibrary.uploadAssets')}
             </button>
             <button
               type="button"
               onClick={onClose}
-              aria-label="关闭"
+              aria-label={t('canvas.assetLibrary.close')}
               className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-[rgba(var(--surface-rgb)/0.88)] hover:text-foreground"
-              title="关闭"
+              title={t('canvas.assetLibrary.close')}
             >
               <X className="h-4 w-4" />
             </button>
           </div>
         </div>
 
-        {/* 类目是浏览导航，不再套一层分段控件底板。 */}
-        <div className="flex shrink-0 items-center justify-between px-5 pb-4 pt-1">
-          <div className="ui-scrollbar-hidden flex min-w-0 items-center gap-1 overflow-x-auto">
-            {tabs.map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => {
-                  setActiveTabKey(tab.key);
-                  // 换 tab 一律退回文件夹层，免得「全部」里还留着上次点进去的目录。
-                  setOpenFolderKey(null);
-                }}
-                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                  tab.key === activeTabKey
-                    ? 'bg-secondary text-primary'
-                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-          {/* 「已录入 N 个 / 已选 x/y」两个计数去掉了：条数底部分页已经在说，选了
-              几个卡片自己有勾。这里只留个加载指示。 */}
-          {isLoadingLibrary && (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-text-muted" />
-          )}
-        </div>
-
-        {/* 面包屑：只在「全部」点进某个文件夹后出现 */}
-        {activeTabKey === ALL_CATEGORY_KEY && openFolder && (
-          <div className="flex shrink-0 items-center gap-1 px-5 pb-3 text-xs text-text-muted/85">
+        <div className="flex min-h-0 flex-1 bg-[rgba(var(--bg-rgb)/0.16)]">
+          {/* 位置导航：只表达资产存放范围，不再与人物 / 场景等类目混为同级 Tab。 */}
+          <aside className="ui-scrollbar flex w-52 shrink-0 flex-col overflow-y-auto bg-black/10 p-3">
             <button
               type="button"
-              onClick={() => setOpenFolderKey(null)}
-              aria-label="返回全部"
-              className="inline-flex items-center gap-0.5 rounded-md px-1.5 py-1 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
+              onClick={() => {
+                setActiveFolderKey(null);
+                setActiveCategoryKey(ALL_CATEGORY_KEY);
+              }}
+              aria-label={t('canvas.assetLibrary.allAssets')}
+              aria-pressed={!activeFolder}
+              className={`flex h-9 w-full items-center gap-2 rounded-sm px-2.5 text-left text-xs font-medium transition-colors ${
+                !activeFolder
+                  ? 'bg-secondary text-primary'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              }`}
             >
-              <ChevronLeft className="h-3.5 w-3.5" />
-              全部
+              <span className="flex h-5 w-5 items-center justify-center rounded-sm bg-current/10">
+                <Folder className="h-3.5 w-3.5" />
+              </span>
+              <span className="min-w-0 flex-1 truncate">{t('canvas.assetLibrary.allAssets')}</span>
+              <span className="text-xs font-normal opacity-70">
+                {allowedItems.length}
+              </span>
             </button>
-            <span className="text-text-muted/50">/</span>
-            <span className="px-1 text-text-dark">{openFolder.label}</span>
-            <span className="text-text-muted/50">
-              （{openFolder.items.length}）
-            </span>
-          </div>
-        )}
-
-        {/* Grid */}
-        <div className="ui-scrollbar relative flex-1 overflow-y-auto px-5 pb-2 [scrollbar-gutter:stable]">
-          {isDragging && dropTarget && (
-            <div className="pointer-events-none absolute inset-x-5 inset-y-0 z-10 flex items-center justify-center rounded-sm border border-dashed border-primary/60 bg-primary/10 text-sm text-foreground">
-              松开以上传到「{dropTarget.label}」
+            <div className="mb-1 mt-4 px-2.5 text-xs font-medium text-muted-foreground">
+              {t('canvas.assetLibrary.folders')}
             </div>
-          )}
-          {libraryError && (
-            <div className="mb-3 rounded-md bg-red-500/10 px-3 py-2 text-[12px] text-red-400">
-              加载失败：{libraryError}
-            </div>
-          )}
-          <div
-            className="grid gap-3.5"
-            style={{
-              gridTemplateColumns: 'repeat(auto-fill, minmax(176px, 176px))',
-            }}
-          >
-            {/* 文件夹卡片 — 只在「全部」的顶层出现 */}
-            {showFolders &&
-              pagedFolders.map((folder) => (
+            <div className="space-y-1">
+              {folders.map((folder) => (
                 <FolderCard
                   key={folder.key}
                   folder={folder}
+                  active={activeFolder?.key === folder.key}
                   menuOpen={folderMenuKey === folder.key}
                   onToggleMenu={() =>
                     setFolderMenuKey((prev) =>
                       prev === folder.key ? null : folder.key,
                     )
                   }
-                  onOpen={() => setOpenFolderKey(folder.key)}
+                  onOpen={() => {
+                    setActiveFolderKey(folder.key);
+                    setActiveCategoryKey(ALL_CATEGORY_KEY);
+                  }}
                   onSend={
                     onSendFolderToCanvas
                       ? () => {
@@ -899,7 +935,89 @@ export function AssetLibraryModal({
                   }}
                 />
               ))}
+            </div>
+          </aside>
 
+          <section className="flex min-w-0 flex-1 flex-col">
+            <div className="shrink-0 px-5 pb-3 pt-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-semibold text-foreground">
+                    {activeScopeLabel}
+                  </h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {t('canvas.assetLibrary.itemCount', { count: visibleItems.length })}
+                  </p>
+                </div>
+                {isLoadingLibrary && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-text-muted" />
+                )}
+                <div className="relative ml-auto w-48 shrink-0">
+                  <Search
+                    className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden
+                  />
+                  <input
+                    type="search"
+                    value={assetQuery}
+                    onChange={(event) => setAssetQuery(event.target.value)}
+                    aria-label={t('canvas.assetLibrary.searchAssets')}
+                    placeholder={t('canvas.assetLibrary.searchPlaceholder')}
+                    className="h-8 w-full rounded-sm border border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.34)] pl-8 pr-7 text-xs text-foreground outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus:border-accent focus:shadow-[0_0_0_2px_rgba(var(--accent-rgb),0.12)] [&::-webkit-search-cancel-button]:appearance-none"
+                  />
+                  {assetQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setAssetQuery('')}
+                      aria-label={t('canvas.assetLibrary.clearSearch')}
+                      className="absolute right-2 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div
+                className="ui-scrollbar-hidden flex min-w-0 items-center gap-1 overflow-x-auto"
+                aria-label={t('canvas.assetLibrary.categories')}
+              >
+                {categoryFilters.map((filter) => (
+                  <button
+                    key={filter.key}
+                    type="button"
+                    onClick={() => setActiveCategoryKey(filter.key)}
+                    aria-label={t('canvas.assetLibrary.categoryAria', { label: filter.label })}
+                    aria-pressed={filter.key === activeCategoryKey}
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                      filter.key === activeCategoryKey
+                        ? 'bg-secondary text-primary'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                    }`}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 当前范围内的资产网格 */}
+            <div className="ui-scrollbar relative flex-1 overflow-y-auto px-5 pb-2 [scrollbar-gutter:stable]">
+          {isDragging && dropTarget && (
+            <div className="pointer-events-none absolute inset-x-5 inset-y-0 z-10 flex items-center justify-center rounded-sm border border-dashed border-primary/60 bg-primary/10 text-sm text-foreground">
+              {t('canvas.assetLibrary.dropToUpload', { label: dropTarget.label })}
+            </div>
+          )}
+          {libraryError && (
+            <div className="mb-3 rounded-md bg-red-500/10 px-3 py-2 text-[12px] text-red-400">
+              {t('canvas.assetLibrary.loadFailed', { detail: libraryError })}
+            </div>
+          )}
+          <div
+            className="grid gap-3.5"
+            style={{
+              gridTemplateColumns: 'repeat(auto-fill, minmax(176px, 176px))',
+            }}
+          >
             {/* In-flight uploads */}
             {visiblePending.map((p) => (
               <div
@@ -926,11 +1044,11 @@ export function AssetLibraryModal({
                   {p.status === 'uploading' ? (
                     <>
                       <Loader2 className="h-5 w-5 animate-spin text-white" />
-                      <div className="text-[11px] text-white/90">上传中…</div>
+                      <div className="text-[11px] text-white/90">{t('canvas.assetLibrary.uploading')}</div>
                     </>
                   ) : (
                     <>
-                      <div className="text-[11px] text-red-300">上传失败</div>
+                      <div className="text-[11px] text-red-300">{t('canvas.assetLibrary.uploadFailed')}</div>
                       {p.error && (
                         <div className="px-2 text-[10px] text-red-200/80 line-clamp-2 text-center">
                           {p.error}
@@ -944,7 +1062,7 @@ export function AssetLibraryModal({
                     type="button"
                     onClick={() => removePending(p.id)}
                     className="absolute right-2 bottom-2 inline-flex h-7 w-7 items-center justify-center rounded-md bg-black/55 text-white transition-colors hover:bg-black/75"
-                    title="移除"
+                    title={t('canvas.assetLibrary.remove')}
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -954,23 +1072,24 @@ export function AssetLibraryModal({
 
             {/* Existing items */}
             {pagedItems.map((entry, idx) => {
-              const isDeleting = deletingId != null && entry.id === deletingId;
               const key = selectionKey(entry);
-              // 批量态下只有本地上传的条目可选——主线条目删了也会被下次同步拉回来。
-              const bulkEligible = bulkMode && entry.source === 'upload' && !!entry.id;
-              const selected = bulkMode
-                ? Boolean(entry.id && bulkIds.includes(entry.id))
-                : isSelected(key);
-              const disabledSelect = bulkMode
-                ? !bulkEligible
-                : !selected && selectedCountOf(entry.media) >= maxSelectable;
-              const activate = () => {
-                if (disabledSelect) return;
-                if (bulkMode) {
-                  if (entry.id) toggleBulk(entry.id);
-                } else {
-                  toggleSelect(key);
+              const pickMode = mode === 'pick';
+              // 批量删除只给本地上传资产显示复选框；主线资产仍保持可查看，不伪装成
+              // 一张“坏掉、点不了”的卡片。
+              const bulkEligible =
+                mode === 'manage' && bulkMode && entry.source === 'upload' && !!entry.id;
+              const selected = pickMode
+                ? isSelected(key)
+                : Boolean(bulkEligible && entry.id && bulkIds.includes(entry.id));
+              const disabledPick =
+                pickMode && !selected && selectedCountOf(entry.media) >= maxSelectable;
+              const openDetails = () => setPreviewEntry(entry);
+              const activateCard = () => {
+                if (pickMode) {
+                  if (!disabledPick) toggleSelect(key);
+                  return;
                 }
+                openDetails();
               };
               return (
                 <div
@@ -981,81 +1100,90 @@ export function AssetLibraryModal({
                         ? 'border-red-400/70 ring-1 ring-red-400/45'
                         : 'border-primary/70 ring-1 ring-primary/45'
                       : ASSET_LIBRARY_CARD_HOVER_CLASS
-                  } ${disabledSelect ? 'cursor-default' : 'cursor-pointer'}`}
-                  onClick={activate}
+                  } ${disabledPick ? 'cursor-default' : 'cursor-pointer'}`}
+                  onClick={activateCard}
+                  title={pickMode ? undefined : t('canvas.assetLibrary.openDetails')}
                 >
                   <AssetLibraryItemMedia entry={entry} />
 
-                  {/* Checkbox top-left */}
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      activate();
-                    }}
-                    disabled={disabledSelect}
-                    title={
-                      bulkMode
-                        ? bulkEligible
-                          ? selected
-                            ? '取消选择'
-                            : '选中待删除'
-                          : '主线同步来的素材不能删除'
-                        : disabledSelect
-                          ? `最多可选 ${maxSelectable} 个`
-                          : selected
-                            ? '取消选择'
-                            : '选择'
-                    }
-                    className={`absolute left-2 top-2 inline-flex h-5 w-5 items-center justify-center rounded-full border transition-colors ${
-                      selected
-                        ? bulkMode
-                          ? 'border-red-400 bg-red-500 text-white'
-                          : 'border-primary bg-primary text-primary-foreground'
-                        : 'border-white/70 bg-black/35 text-transparent hover:border-white'
-                    } ${disabledSelect ? 'cursor-not-allowed opacity-40' : ''}`}
-                  >
-                    <Check className="h-3 w-3" strokeWidth={3} />
-                  </button>
-
-                  {/* Source badge top-right */}
-                  {entry.source !== 'upload' && (
-                    <span className="pointer-events-none absolute right-2 top-2 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white/90">
-                      {SOURCE_LABEL[entry.source]}
-                    </span>
-                  )}
-
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2 text-xs text-white">
-                    <div className="truncate">{entry.name || '(未命名)'}</div>
-                  </div>
-                  {/* 只有本地上传的条目可删；主线同步来的条目删了也会在下次打开自动同步时
-                      重新出现，所以不提供删除入口，避免「删不掉」的误导。批量态下走
-                      底部的「删除所选」，卡片上不再摆单删按钮。 */}
-                  {!bulkMode && entry.source === 'upload' && (
+                  {(pickMode || bulkEligible) && (
                     <button
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
-                        void handleDeleteEntry(entry);
+                        if (bulkEligible && entry.id) {
+                          toggleBulk(entry.id);
+                        } else if (pickMode && !disabledPick) {
+                          toggleSelect(key);
+                        }
                       }}
-                      disabled={!entry.id || isDeleting}
-                      className="absolute right-2 bottom-2 inline-flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white opacity-0 transition-[opacity,background-color] hover:bg-black/80 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
-                      title={entry.id ? '删除' : '该条目缺少 id，无法删除'}
+                      disabled={disabledPick}
+                      title={
+                        bulkEligible
+                          ? t(
+                              selected
+                                ? 'canvas.assetLibrary.deselect'
+                                : 'canvas.assetLibrary.markForDelete',
+                            )
+                          : disabledPick
+                            ? t('canvas.assetLibrary.maxSelectable', {
+                                count: maxSelectable,
+                              })
+                            : t(
+                                selected
+                                  ? 'canvas.assetLibrary.deselect'
+                                  : 'canvas.assetLibrary.select',
+                              )
+                      }
+                      className={`absolute left-2 top-2 z-10 inline-flex h-5 w-5 items-center justify-center rounded-full border transition-colors ${
+                        selected
+                          ? bulkMode
+                            ? 'border-red-400 bg-red-500 text-white'
+                            : 'border-primary bg-primary text-primary-foreground'
+                          : 'border-white/70 bg-black/35 text-transparent hover:border-white'
+                      } ${disabledPick ? 'cursor-not-allowed opacity-40' : ''}`}
                     >
-                      {isDeleting ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-3.5 w-3.5" />
-                      )}
+                      <Check className="h-3 w-3" strokeWidth={3} />
                     </button>
                   )}
+
+                  {mode === 'manage' && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openDetails();
+                      }}
+                      className={`absolute top-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded-md border border-white/15 bg-black/45 text-white/80 transition-colors hover:bg-black/65 hover:text-white ${
+                        bulkEligible ? 'right-2' : 'left-2'
+                      }`}
+                      title={t('canvas.assetLibrary.viewDetails')}
+                      aria-label={t('canvas.assetLibrary.viewDetailsAria', {
+                        name: entry.name || t('canvas.assetLibrary.assetFallbackName'),
+                      })}
+                    >
+                      <Maximize2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+
+                  {/* Source badge top-right */}
+                  {entry.source !== 'upload' && (
+                    <span className="pointer-events-none absolute right-2 top-2 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white/90">
+                      {t(SOURCE_LABEL_KEYS[entry.source])}
+                    </span>
+                  )}
+
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2 text-xs text-white">
+                    <div className="truncate">
+                      {entry.name || t('canvas.assetLibrary.unnamed')}
+                    </div>
+                  </div>
                 </div>
               );
             })}
           </div>
 
           {!isLoadingLibrary &&
-            !showFolders &&
             visibleItems.length === 0 &&
             visiblePending.length === 0 &&
             !libraryError && (
@@ -1064,28 +1192,53 @@ export function AssetLibraryModal({
                   <Upload className="h-4 w-4" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-foreground">这里还没有素材</p>
-                  <p className="mt-1 text-xs text-muted-foreground">上传文件，或同步主线中的人物、场景和道具</p>
+                  <p className="text-sm font-medium text-foreground">
+                    {t(
+                      assetQuery
+                        ? 'canvas.assetLibrary.emptySearchTitle'
+                        : activeCategoryKey === ALL_CATEGORY_KEY
+                          ? 'canvas.assetLibrary.emptyAllTitle'
+                          : 'canvas.assetLibrary.emptyCategoryTitle',
+                    )}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t(
+                      assetQuery
+                        ? 'canvas.assetLibrary.emptySearchHint'
+                        : activeCategoryKey === ALL_CATEGORY_KEY
+                          ? 'canvas.assetLibrary.emptyAllHint'
+                          : 'canvas.assetLibrary.emptyCategoryHint',
+                    )}
+                  </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setUploadOpen(true)}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
-                >
-                  <Upload className="h-3.5 w-3.5" />
-                  上传第一个资产
-                </button>
+                {assetQuery ? (
+                  <button
+                    type="button"
+                    onClick={() => setAssetQuery('')}
+                    className="inline-flex h-8 items-center rounded-full bg-white/[0.08] px-3 text-xs font-medium text-foreground transition-colors hover:bg-white/[0.12]"
+                  >
+                    {t('canvas.assetLibrary.clearSearch')}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setUploadOpen(true)}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    {t('canvas.assetLibrary.uploadFirst')}
+                  </button>
+                )}
               </div>
             )}
-        </div>
+            </div>
 
-        {/* Footer */}
-        <div className="flex shrink-0 items-center justify-end gap-3 px-5 pb-3 pt-2">
+            {/* Footer */}
+            <div className="flex shrink-0 items-center justify-end gap-3 px-5 pb-3 pt-2">
           {bulkMode ? (
             <>
               <span className="mr-auto text-xs text-text-muted/85">
-                已选 <span className="text-text-dark">{bulkIds.length}</span> 项
-                （只能删除本地上传的素材）
+                {t('canvas.assetLibrary.bulkSelected', { count: bulkIds.length })}
               </span>
               <Button
                 size="sm"
@@ -1096,7 +1249,7 @@ export function AssetLibraryModal({
                   setBulkIds([]);
                 }}
               >
-                退出批量
+                {t('canvas.assetLibrary.exitBulkDelete')}
               </Button>
               <Button
                 size="sm"
@@ -1107,7 +1260,7 @@ export function AssetLibraryModal({
                 {isBulkDeleting && (
                   <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                 )}
-                删除所选
+                {t('canvas.assetLibrary.deleteSelected')}
               </Button>
             </>
           ) : (
@@ -1121,20 +1274,48 @@ export function AssetLibraryModal({
               />
               {/* 「确定」只在挑素材给节点用时才有意义；侧栏点开的资产管理态没有
                   接收方，那儿的底部就只剩分页。 */}
-              {onConfirm && (
+              {mode === 'pick' && onConfirm && (
                 <Button
                   size="sm"
                   className="bg-white px-4 text-[#15161b] hover:bg-white/90"
                   disabled={!hasSelection}
                   onClick={handleConfirm}
                 >
-                  确定
+                  {t('canvas.assetLibrary.confirm')}
                 </Button>
               )}
             </>
           )}
+            </div>
+          </section>
         </div>
       </div>
+
+      {previewEntry && (
+        <AssetLibraryPreviewDialog
+          entry={previewEntry}
+          onClose={() => setPreviewEntry(null)}
+          onDownload={() => void handleDownloadEntry(previewEntry)}
+          onSend={
+            onSendItemToCanvas
+              ? () => {
+                  onSendItemToCanvas(previewEntry);
+                  setPreviewEntry(null);
+                  onClose();
+                }
+              : undefined
+          }
+          onDelete={
+            previewEntry.source === 'upload' && previewEntry.id
+              ? () => {
+                  const entry = previewEntry;
+                  setPreviewEntry(null);
+                  void handleDeleteEntry(entry);
+                }
+              : undefined
+          }
+        />
+      )}
 
       <AssetLibraryNewFolderDialog
         open={newFolderOpen}
@@ -1142,16 +1323,16 @@ export function AssetLibraryModal({
         onSubmit={async (name) => {
           const key = await handleCreateFolder(name);
           setNewFolderOpen(false);
-          // 建完直接进去，省得用户回头在一堆文件夹里找。
-          setActiveTabKey(ALL_CATEGORY_KEY);
-          setOpenFolderKey(key);
+          // 建完直接把左侧范围切到新文件夹，省得用户回头再找。
+          setActiveCategoryKey(ALL_CATEGORY_KEY);
+          setActiveFolderKey(key);
         }}
       />
 
       <AssetLibraryUploadDialog
         open={uploadOpen}
         folders={uploadableFolders}
-        defaultFolderKey={openFolder?.uploadable ? openFolder.key : null}
+        defaultFolderKey={activeFolder?.uploadable ? activeFolder.key : null}
         categories={categories}
         allowedMedia={allowedMedia}
         onCreateFolder={handleCreateFolder}
@@ -1161,7 +1342,8 @@ export function AssetLibraryModal({
 
       <AssetLibraryNewFolderDialog
         open={Boolean(renameFolder)}
-        title="重命名"
+        title={t('canvas.assetLibrary.rename')}
+        mode="rename"
         initialName={renameFolder?.label ?? ''}
         onClose={() => setRenameFolderKey(null)}
         onSubmit={async (name) => {
@@ -1192,14 +1374,10 @@ export function AssetLibraryModal({
   );
 }
 
-/**
- * 文件夹卡片。有封面就铺封面（用户设的优先，否则拿夹内第一张图），没有就画图标。
- *
- * 卡片本体是 div 而非 button —— 里面还要放「发送到画布」和「…」两个按钮，
- * button 套 button 是非法 HTML，浏览器会把内层拆出去。role/tabIndex 补齐可达性。
- */
+/** 左侧文件夹导航项：位置入口、数量与文件夹操作保持在同一行。 */
 function FolderCard({
   folder,
+  active,
   menuOpen,
   onToggleMenu,
   onOpen,
@@ -1209,6 +1387,7 @@ function FolderCard({
   onDelete,
 }: {
   folder: AssetFolder;
+  active: boolean;
   menuOpen: boolean;
   onToggleMenu: () => void;
   onOpen: () => void;
@@ -1218,39 +1397,53 @@ function FolderCard({
   onRename: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   const cover = folderCoverUrl(folder);
   const created = formatFolderDate(folder.createdAt);
   return (
-    // 外壳平时不画边框/底色，hover 才浮出来。border 常在只是透明，免得 hover
-    // 时多出 1px 把卡片顶动。
-    <div className="relative flex flex-col rounded-[12px] border border-transparent p-2 transition-colors hover:border-white/[0.14] hover:bg-white/[0.05]">
-      <div
-        role="button"
-        tabIndex={0}
+    <div className="group relative">
+      <button
+        type="button"
         onClick={onOpen}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            onOpen();
-          }
-        }}
-        // 类目 tab 和文件夹同名（如「风格」），加个前缀让两者可区分。
-        aria-label={`文件夹 ${folder.label}`}
-        className="group relative flex aspect-square cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-[8px] bg-white/[0.05]"
+        aria-label={t('canvas.assetLibrary.folderAria', { label: folder.label })}
+        aria-pressed={active}
+        className={`flex min-h-10 w-full items-center gap-2 rounded-sm px-2 py-1.5 pr-14 text-left transition-colors ${
+          active
+            ? 'bg-secondary text-primary'
+            : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+        }`}
       >
-        {cover ? (
-          <img
-            src={resolveImageDisplayUrl(cover)}
-            alt=""
-            className="absolute inset-0 h-full w-full object-cover"
-            draggable={false}
-          />
-        ) : (
-          <Folder className="h-11 w-11 text-text-muted/55 transition-colors group-hover:text-text-muted/80" />
-        )}
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-black/15">
+          {cover ? (
+            <img
+              src={resolveImageDisplayUrl(cover)}
+              alt=""
+              className="h-full w-full object-cover"
+              draggable={false}
+            />
+          ) : (
+            <Folder className="h-4 w-4" />
+          )}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span
+            className="block truncate text-xs font-medium"
+            title={folder.label}
+          >
+            {folder.label}
+          </span>
+          {created && (
+            <span className="mt-0.5 block text-xs font-normal opacity-60">
+              {created}
+            </span>
+          )}
+        </span>
+        <span className="text-xs font-normal opacity-60">
+          {folder.items.length}
+        </span>
+      </button>
 
-        {/* 悬停才出现：整柜发到画布。缩到右下角一个小图标——原先是横在封面正中
-          的一条文字按钮，鼠标从上往下移到卡片就正好压在上面，很容易误触。 */}
+      <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
         {onSend && folder.items.length > 0 && (
           <button
             type="button"
@@ -1258,74 +1451,56 @@ function FolderCard({
               event.stopPropagation();
               onSend();
             }}
-            aria-label="发送到画布"
-            title="发送到画布"
-            className="absolute bottom-2 right-2 hidden h-7 w-7 items-center justify-center rounded-[6px] bg-black/70 text-white transition-colors hover:bg-black/90 group-hover:inline-flex"
+            aria-label={t('canvas.assetLibrary.sendToCanvas')}
+            title={t('canvas.assetLibrary.sendToCanvas')}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
           >
             <Send className="h-3.5 w-3.5" />
           </button>
         )}
-      </div>
-
-      {/* 文件夹级操作属于封面，不与名称争夺横向空间；固定在封面右上角也更符合
-          图片卡片的操作心智。系统文件夹没有可编辑实体，因此不显示。 */}
-      {!folder.system && (
-        <div className="absolute right-4 top-4 z-[2]">
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggleMenu();
-            }}
-            aria-label={`${folder.label} 更多操作`}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/35 text-white/60 transition-colors hover:bg-black/55 hover:text-white"
-          >
-            <MoreHorizontal className="h-3.5 w-3.5" />
-          </button>
-          {menuOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={onToggleMenu} />
-              <div className="absolute right-0 top-8 z-20 w-[112px] overflow-hidden rounded-sm border border-border bg-popover py-1 text-popover-foreground shadow-[0_12px_28px_rgba(0,0,0,0.45)]">
-                <button
-                  type="button"
-                  onClick={onEditCover}
-                  className="block w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent"
-                >
-                  修改封面
-                </button>
-                <button
-                  type="button"
-                  onClick={onRename}
-                  className="block w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent"
-                >
-                  重命名
-                </button>
-                <button
-                  type="button"
-                  onClick={onDelete}
-                  className="block w-full px-3 py-1.5 text-left text-xs text-destructive transition-colors hover:bg-accent"
-                >
-                  删除
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* 名字挪到方块外面，封面就不用被文字压掉一条；条数不显示，进去就知道 */}
-      <div className="mt-2 px-0.5">
-        <div
-          className="min-w-0 flex-1 truncate text-xs text-text-dark"
-          title={folder.label}
-        >
-          {folder.label}
-        </div>
-      </div>
-
-      {/* 建夹日期。系统文件夹没有这个字段，留一行等高的空位让网格对齐。 */}
-      <div className="mt-1 h-4 px-0.5 text-left text-[11px] text-text-muted/60">
-        {created}
+        {!folder.system && (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleMenu();
+              }}
+              aria-label={t('canvas.assetLibrary.folderMoreAria', { label: folder.label })}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+            {menuOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={onToggleMenu} />
+                <div className="absolute right-0 top-8 z-20 w-28 overflow-hidden rounded-sm border border-border bg-popover py-1 text-popover-foreground shadow-[0_12px_28px_rgba(0,0,0,0.45)]">
+                  <button
+                    type="button"
+                    onClick={onEditCover}
+                    className="block w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+                  >
+                    {t('canvas.assetLibrary.changeCover')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onRename}
+                    className="block w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+                  >
+                    {t('canvas.assetLibrary.rename')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onDelete}
+                    className="block w-full px-3 py-1.5 text-left text-xs text-destructive transition-colors hover:bg-accent"
+                  >
+                    {t('canvas.assetLibrary.delete')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1349,6 +1524,7 @@ function AssetLibraryPagination({
   onPageChange: (page: number) => void;
   onPageSizeChange: (size: number) => void;
 }) {
+  const { t } = useTranslation();
   const [sizeMenuOpen, setSizeMenuOpen] = useState(false);
   const stepClass =
     'inline-flex h-7 w-7 items-center justify-center rounded-[6px] text-text-muted/85 transition-colors hover:bg-white/[0.08] hover:text-text-dark disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent';
@@ -1357,7 +1533,7 @@ function AssetLibraryPagination({
     <div className="mr-auto flex items-center gap-1.5">
       <button
         type="button"
-        aria-label="上一页"
+        aria-label={t('canvas.assetLibrary.prevPage')}
         disabled={page <= 1}
         onClick={() => onPageChange(page - 1)}
         className={stepClass}
@@ -1377,7 +1553,7 @@ function AssetLibraryPagination({
           <button
             key={slot}
             type="button"
-            aria-label={`第 ${slot} 页`}
+            aria-label={t('canvas.assetLibrary.pageAria', { page: slot })}
             aria-current={slot === page ? 'page' : undefined}
             onClick={() => onPageChange(slot)}
             className={`inline-flex h-7 min-w-7 items-center justify-center rounded-[6px] px-1.5 text-xs transition-colors ${
@@ -1392,7 +1568,7 @@ function AssetLibraryPagination({
       )}
       <button
         type="button"
-        aria-label="下一页"
+        aria-label={t('canvas.assetLibrary.nextPage')}
         disabled={page >= pageCount}
         onClick={() => onPageChange(page + 1)}
         className={stepClass}
@@ -1403,11 +1579,11 @@ function AssetLibraryPagination({
       <div className="relative ml-1">
         <button
           type="button"
-          aria-label="每页条数"
+          aria-label={t('canvas.assetLibrary.pageSize')}
           onClick={() => setSizeMenuOpen((prev) => !prev)}
           className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-white/[0.10] bg-white/[0.04] px-2.5 text-xs text-text-muted/85 transition-colors hover:border-white/[0.20] hover:text-text-dark"
         >
-          {pageSize}条/页
+          {t('canvas.assetLibrary.perPage', { size: pageSize })}
           <ChevronsUpDown className="h-3 w-3 opacity-60" />
         </button>
         {sizeMenuOpen && (
@@ -1429,7 +1605,7 @@ function AssetLibraryPagination({
                     size === pageSize ? 'text-text-dark' : 'text-text-muted/85'
                   }`}
                 >
-                  {size}条/页
+                  {t('canvas.assetLibrary.perPage', { size })}
                 </button>
               ))}
             </div>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  deleteNodeGenerationHistoryRecord,
   fetchCanvasGenerationHistory,
   fetchNodeGenerationHistory,
   type FreezoneGenerationHistoryRecord,
@@ -15,6 +16,7 @@ export interface UseCanvasGenerationHistoryResult {
   isLoading: boolean;
   error: Error | null;
   refresh: () => Promise<void>;
+  removeRecord: (nodeId: string, recordId: string) => Promise<boolean>;
 }
 
 /** Fan-out concurrency cap for the per-node fallback. */
@@ -117,10 +119,32 @@ export function useCanvasGenerationHistory(
     }
   }, [nodeIdsKey]);
 
+  const removeRecord = useCallback(async (nodeId: string, recordId: string) => {
+    const project = readUrl().project;
+    if (!project) return false;
+    const canvasId = readUrl().canvas ?? "default";
+    try {
+      const result = await deleteNodeGenerationHistoryRecord(
+        project,
+        canvasId,
+        nodeId,
+        recordId,
+      );
+      if (result.deleted) {
+        setRecords((current) => current.filter((record) => record.id !== recordId));
+      }
+      setError(null);
+      return result.deleted;
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error(String(err)));
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
     if (!enabled) return;
     void refresh();
   }, [enabled, refresh]);
 
-  return { records, isLoading, error, refresh };
+  return { records, isLoading, error, refresh, removeRecord };
 }

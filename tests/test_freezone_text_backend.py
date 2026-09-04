@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
+import io
 import json
+from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.api.schemas import (
@@ -525,7 +527,7 @@ async def test_generate_story_script_with_vision_attaches_frames(
     frames = []
     for index in range(3):
         frame = tmp_path / f"frame_{index}.png"
-        frame.write_bytes(b"png-bytes")
+        Image.new("RGB", (1600, 900), (index * 40, 48, 96)).save(frame)
         frames.append(frame)
     captured: dict[str, object] = {}
 
@@ -553,7 +555,12 @@ async def test_generate_story_script_with_vision_attaches_frames(
     assert isinstance(messages[0], str)
     # 三张关键帧必须真的作为附件送进模型，而不是只在提示词里被提一句。
     assert len(messages) == 1 + len(frames)
-    assert all(getattr(item, "data", None) == b"png-bytes" for item in messages[1:])
+    assert all(
+        getattr(item, "media_type", None) == "image/jpeg" for item in messages[1:]
+    )
+    for item in messages[1:]:
+        with Image.open(io.BytesIO(item.data)) as compacted:
+            assert compacted.size == (1280, 720)
 
 
 def test_build_freezone_character_story_script_task_uses_prompt_as_story() -> None:
@@ -580,7 +587,7 @@ async def test_generate_story_script_with_vision_accepts_character_images_only(
     # 前端一旦挂了素材就只发提示词、把 source_text 留空；
     # 「仅角色图」这一路以前会在这里抛 ValueError，任务必挂。
     portrait = tmp_path / "ningyao.png"
-    portrait.write_bytes(b"png-bytes")
+    Image.new("RGB", (640, 960), (24, 48, 96)).save(portrait)
     captured: dict[str, object] = {}
 
     class FakeAgent:
@@ -610,7 +617,9 @@ async def test_generate_story_script_with_vision_accepts_character_images_only(
     assert "角色参考图" in task
     assert "以这个角色生成一段雪山对决" in task
     assert len(messages) == 2
-    assert getattr(messages[1], "data", None) == b"png-bytes"
+    assert getattr(messages[1], "media_type", None) == "image/jpeg"
+    with Image.open(io.BytesIO(messages[1].data)) as compacted:
+        assert compacted.size == (640, 960)
 
 
 def test_bind_story_script_assets_fills_frames_and_character_images() -> None:

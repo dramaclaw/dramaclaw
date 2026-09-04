@@ -431,6 +431,12 @@ def test_m03_l2_covers_episodes_scripts_and_content_endpoints(m03_client):
     )
     assert missing_beat.status_code == 404
 
+    from novelvideo.utils.path_resolver import PathResolver
+
+    sketch_path = PathResolver(str(store.project_dir), 1).sketch(1)
+    sketch_path.parent.mkdir(parents=True, exist_ok=True)
+    sketch_path.write_bytes(b"sketch")
+
     video_prompt = client.post(
         "/api/v1/projects/demo/episodes/1/beats/1/video-prompt/generate",
         json={"language": "zh"},

@@ -241,6 +241,7 @@ PLACEMENT_FREE_CANVAS_ROUTES = {
     "quote_freezone_agent_capability",
     "restore_canvas_history",
     "get_node_generation_history",
+    "delete_node_generation_history_record",
     "get_canvas_generation_history",
     "put_canvas",
     "delete_canvas",
@@ -287,9 +288,9 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
         and _opts_out_of_the_guard(call)
     }
 
-    # 取证口径（`TCP-P60`）：当前 freezone 98 条路由中，画布只占 24 条。
-    assert router_decorators == 98
-    assert len(canvas_routes) == 24
+    # 取证口径（`TCP-P60`）：同步 main 后 freezone 共 100 条路由，画布占 25 条。
+    assert router_decorators == 100
+    assert len(canvas_routes) == 25
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES
 

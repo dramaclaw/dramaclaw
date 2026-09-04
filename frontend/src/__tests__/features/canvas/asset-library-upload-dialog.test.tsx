@@ -16,7 +16,11 @@ const FOLDERS = [
 ];
 
 const CATEGORIES = [
-  { key: 'other' as const, label: '其它', media: ['image' as const, 'video' as const] },
+  {
+    key: 'other' as const,
+    labelKey: 'canvas.assetLibrary.category.other',
+    media: ['image' as const, 'video' as const],
+  },
 ];
 
 function renderDialog(onSubmit = vi.fn()) {

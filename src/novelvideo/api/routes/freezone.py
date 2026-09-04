@@ -26,6 +26,7 @@ from fastapi import (
     APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile,
 )
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.chat import service as chat_service
@@ -125,6 +126,7 @@ from novelvideo.freezone.agent_capability_billing import (
     workflow_design_charge,
     workflow_design_credit_estimate,
 )
+from novelvideo.i18n_message import log_lines_text
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
     media_request_schema_for_mode,
@@ -153,6 +155,7 @@ from novelvideo.freezone.canvas_static_urls import (
 from novelvideo.freezone.history import (
     append_generation_history,
     build_node_history_record,
+    delete_generation_history_record,
     read_canvas_generation_history,
     read_generation_history,
 )
@@ -332,6 +335,7 @@ from novelvideo.freezone.video_node import (
     get_video_camera_templates,
     is_freezone_happyhorse_backend,
     is_freezone_seedance2_backend,
+    is_freezone_seedance_backend,
     library_folder_keys,
     load_video_character_folders,
     load_video_character_library,
@@ -345,6 +349,7 @@ from novelvideo.freezone.video_node import (
     summarize_omni_reference_counts,
     update_video_character_folder,
     validate_omni_reference_audio_durations,
+    validate_omni_reference_image_dimensions,
     validate_omni_reference_limits,
     MAX_OMNI_REFERENCE_AUDIO_SECONDS,
     MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
@@ -513,6 +518,30 @@ async def _start_or_enqueue_freezone_video_gen(
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+    # 参考图尺寸在入队前就拦：厂商必拒的图没必要先预扣积分、上传 relay 再退款。
+    # 组织账号的出口路径会把厂商原文抹成 EGRESS_OPERATION_UNKNOWN，这里是用户唯一
+    # 能看懂原因的地方（3060 2026-08-26：338x191 被 HeightTooSmall 连拒 8 次）。
+    if is_freezone_seedance_backend(backend):
+        image_input_paths = [
+            str(item.get("path") or "").strip()
+            for item in reference_items
+            if str(item.get("type") or "image").strip().lower() == "image"
+            and str(item.get("path") or "").strip()
+        ]
+        if last_frame_path:
+            image_input_paths.append(str(last_frame_path).strip())
+        # 关键帧路由把尾帧同时放进 reference_items 和 last_frame_path，去重后
+        # 同一文件只读一次头、报错也只列一次。
+        image_input_paths = list(dict.fromkeys(path for path in image_input_paths if path))
+        if image_input_paths:
+            try:
+                # 读文件头走线程：/data/output 在 s3fs 上，同步 IO 会卡住事件循环。
+                await asyncio.to_thread(
+                    validate_omni_reference_image_dimensions, image_input_paths
+                )
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+
     normalized_mode = str(gen_mode or "").strip()
     if normalized_mode == "video_edit":
         if not video_input_paths or input_video_duration_seconds <= 0:
@@ -4847,22 +4876,40 @@ async def generate_freezone_recipe_text(
 # 图片处理：上传
 # ============================================================
 
+REFERENCE_FILE_MAX_BYTES = 100 * 1024 * 1024
+_UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 
-@router.post("/projects/{project}/freezone/upload", tags=[TAG_FREEZONE_MEDIA])
-async def freezone_upload(
+
+async def _read_upload_contents(
+    file: UploadFile,
+    *,
+    max_bytes: int | None = None,
+) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(_UPLOAD_READ_CHUNK_BYTES):
+        total += len(chunk)
+        if max_bytes is not None and total > max_bytes:
+            raise HTTPException(413, "reference file must be 100 MB or smaller")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _save_freezone_upload(
     project: str,
-    file: Annotated[UploadFile, File()],
-    user: dict = Depends(get_api_user),
-):
-    """把外部资源上传保存到 `freezone/_uploads/`。"""
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+    file: UploadFile,
+    user: dict,
+    *,
+    max_bytes: int | None = None,
+) -> dict[str, Any]:
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user
     )
     target_dir = uploads_dir(project_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_upload_filename(file.filename)
     target = target_dir / filename
-    contents = await file.read()
+    contents = await _read_upload_contents(file, max_bytes=max_bytes)
     target.write_bytes(contents)
     rel = target.relative_to(project_dir).as_posix()
     return {
@@ -4873,6 +4920,31 @@ async def freezone_upload(
             "size": len(contents),
         },
     }
+
+
+@router.post("/projects/{project}/freezone/upload", tags=[TAG_FREEZONE_MEDIA])
+async def freezone_upload(
+    project: str,
+    file: Annotated[UploadFile, File()],
+    user: dict = Depends(get_api_user),
+):
+    """把外部资源上传保存到 `freezone/_uploads/`。"""
+    return await _save_freezone_upload(project, file, user)
+
+
+@router.post("/projects/{project}/freezone/reference-file-upload", tags=[TAG_FREEZONE_MEDIA])
+async def freezone_reference_file_upload(
+    project: str,
+    file: Annotated[UploadFile, File()],
+    user: dict = Depends(get_api_user),
+):
+    """保存视频模型参考文件，并限制为不超过 100 MB。"""
+    return await _save_freezone_upload(
+        project,
+        file,
+        user,
+        max_bytes=REFERENCE_FILE_MAX_BYTES,
+    )
 
 
 @router.post("/projects/{project}/freezone/three-d-viewer/screenshot", tags=[TAG_FREEZONE_MEDIA])
@@ -8175,6 +8247,8 @@ def _catalog_reference_limits(
     image_default: int,
     video_default: int,
     audio_default: int,
+    file_default: int = 0,
+    link_default: int = 0,
 ) -> dict[str, int]:
     def _limit(key: str, default: int) -> int:
         value = capabilities.get(key) if capabilities else None
@@ -8184,6 +8258,8 @@ def _catalog_reference_limits(
         "image": _limit("referenceImageMax", image_default),
         "video": _limit("referenceVideoMax", video_default),
         "audio": _limit("referenceAudioMax", audio_default),
+        "file": _limit("referenceFileMax", file_default),
+        "link": _limit("referenceLinkMax", link_default),
     }
 
 
@@ -9272,7 +9348,7 @@ async def freezone_video_omni_gen(
 ):
     """视频处理：全能参考文生视频。
 
-    支持文本、图像、视频、音频混合输入，当前默认走 Seedance 2.0。
+    支持文本、图像、视频、音频、文件和公开网页链接混合输入。
     """
     ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
         project, user
@@ -9314,6 +9390,8 @@ async def freezone_video_omni_gen(
         image_default=9,
         video_default=3,
         audio_default=3,
+        file_default=0,
+        link_default=0,
     )
     try:
         validate_omni_reference_limits(
@@ -9321,6 +9399,8 @@ async def freezone_video_omni_gen(
             image_max=reference_limits["image"],
             video_max=reference_limits["video"],
             audio_max=reference_limits["audio"],
+            file_max=reference_limits["file"],
+            link_max=reference_limits["link"],
             total_max=(
                 sum(reference_limits.values())
                 if capabilities
@@ -9330,6 +9410,8 @@ async def freezone_video_omni_gen(
                         "referenceImageMax",
                         "referenceVideoMax",
                         "referenceAudioMax",
+                        "referenceFileMax",
+                        "referenceLinkMax",
                     )
                 )
                 else 12
@@ -9339,13 +9421,45 @@ async def freezone_video_omni_gen(
         raise HTTPException(400, str(exc)) from exc
     reference_items: list[dict[str, str]] = []
     for item in raw_reference_items:
-        path_list = _resolve_url_list(project_dir, [str(item.get("url") or "")])
-        if not path_list:
+        reference_type = str(item.get("type") or "image")
+        reference_url = str(item.get("url") or "").strip()
+        if not reference_url:
             raise HTTPException(400, "reference url is required")
+        if reference_type == "link":
+            parsed = urlsplit(reference_url)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+            ):
+                raise HTTPException(400, "reference link must be a public HTTP/HTTPS URL")
+            resolved_reference = reference_url
+        elif reference_type == "file" and reference_url.startswith(("http://", "https://")):
+            resolved_reference = reference_url
+        else:
+            path_list = _resolve_url_list(project_dir, [reference_url])
+            if not path_list:
+                raise HTTPException(400, "reference url is required")
+            resolved_reference = path_list[0]
+
+        if reference_type == "file":
+            allowed_types = capabilities.get("referenceFileTypes") if capabilities else None
+            if isinstance(allowed_types, list) and allowed_types:
+                extension = Path(unquote(urlsplit(reference_url).path)).suffix.lower().lstrip(".")
+                normalized_types = {
+                    str(value).strip().lower().lstrip(".") for value in allowed_types
+                }
+                if extension not in normalized_types:
+                    raise HTTPException(
+                        400,
+                        "reference file type is not supported; expected one of: "
+                        + ", ".join(str(value) for value in allowed_types),
+                    )
         reference_items.append(
             {
-                "type": str(item.get("type") or "image"),
-                "path": path_list[0],
+                "type": reference_type,
+                "path": resolved_reference,
                 "role": str(item.get("role") or ""),
             }
         )
@@ -10150,11 +10264,23 @@ async def freezone_job_result(
     ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user, required_role="viewer"
     )
-    task = (
-        get_task_manager().get_task_for_project(ctx, task_type, 0, scope=job_id)
-        if ctx is not None
-        else get_task_manager().get_task(task_type, username, project_name, 0, scope=job_id)
-    )
+    if ctx is not None:
+        task = await run_in_threadpool(
+            get_task_manager().get_task_for_project,
+            ctx,
+            task_type,
+            0,
+            scope=job_id,
+        )
+    else:
+        task = await run_in_threadpool(
+            get_task_manager().get_task,
+            task_type,
+            username,
+            project_name,
+            0,
+            scope=job_id,
+        )
     if task_type == "freezone_image_to_3gs":
         if task is not None:
             if task.status == "failed":
@@ -10162,7 +10288,7 @@ async def freezone_job_result(
                     "ok": False,
                     "error": task.error or "job failed",
                     "status": task.status,
-                    "logs": task.logs[-10:],
+                    "logs": log_lines_text(task.logs[-10:]),
                 }
             if task.status in {"pending", "starting", "running"}:
                 return {
@@ -10244,7 +10370,7 @@ async def freezone_job_result(
                         "ok": False,
                         "error": task.error or "job failed",
                         "status": task.status,
-                        "logs": task.logs[-10:],
+                        "logs": log_lines_text(task.logs[-10:]),
                     }
                 if task.status in {"pending", "starting", "running"}:
                     return {
@@ -10292,7 +10418,7 @@ async def freezone_job_result(
                     "ok": False,
                     "error": task.error or "job failed",
                     "status": task.status,
-                    "logs": task.logs[-10:],
+                    "logs": log_lines_text(task.logs[-10:]),
                 }
             if task.status != "completed":
                 return {
@@ -10325,7 +10451,7 @@ async def freezone_job_result(
                     "ok": False,
                     "error": task.error or "job failed",
                     "status": task.status,
-                    "logs": task.logs[-10:],
+                    "logs": log_lines_text(task.logs[-10:]),
                 }
             if task.status in {"pending", "starting", "running"}:
                 return {
@@ -10409,16 +10535,18 @@ async def freezone_skill_run_result(
         task_beat_num = int(task_beat_num_raw) if task_beat_num_raw is not None else None
     except (TypeError, ValueError):
         task_beat_num = None
-    task = (
-        get_task_manager().get_task_for_project(
+    if ctx is not None:
+        task = await run_in_threadpool(
+            get_task_manager().get_task_for_project,
             ctx,
             task_type,
             task_episode,
             beat_num=task_beat_num,
             scope=task_scope,
         )
-        if ctx is not None
-        else get_task_manager().get_task(
+    else:
+        task = await run_in_threadpool(
+            get_task_manager().get_task,
             task_type,
             username,
             project_name,
@@ -10426,7 +10554,6 @@ async def freezone_skill_run_result(
             beat_num=task_beat_num,
             scope=task_scope,
         )
-    )
     task_status = getattr(task, "status", None)
     if task is not None and task_status == "failed":
         return SkillRunResult(
@@ -13404,6 +13531,40 @@ async def get_node_generation_history(
         for record in records
     ]
     return {"ok": True, "data": {"records": records}}
+
+
+@router.delete(
+    "/projects/{project}/freezone/canvases/{canvas_id}/nodes/{node_id}/generation-history",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def delete_node_generation_history_record(
+    project: str,
+    canvas_id: str,
+    node_id: str,
+    record_id: str = Query(..., min_length=1, max_length=512),
+    user: dict = Depends(get_api_user),
+):
+    """Remove one entry from the history browser without deleting its media."""
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project,
+        user,
+        required_role="editor",
+        require_home_node=False,
+    )
+    try:
+        deleted = delete_generation_history_record(
+            project_dir=project_dir,
+            canvas_id=canvas_id,
+            node_id=node_id,
+            record_id=record_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "generation history record not found")
+    return {"ok": True, "data": {"deleted": True}}
 
 
 @router.get(

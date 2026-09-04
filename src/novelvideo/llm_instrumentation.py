@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextvars
 import logging
 import os
+from dataclasses import fields, is_dataclass
 from typing import Any, Optional
 
 logger = logging.getLogger("novelvideo.llm_instrumentation")
@@ -369,10 +370,23 @@ def _json_log_value(value: object, *, depth: int = 0) -> object:
     """Convert provider inputs/results to JSON-safe diagnostic values."""
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
-    if isinstance(value, bytes):
-        return {"type": "bytes", "length": len(value)}
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        size_bytes = value.nbytes if isinstance(value, memoryview) else len(value)
+        return {"type": "bytes", "size_bytes": size_bytes}
+    binary_data = getattr(value, "data", None)
+    if isinstance(binary_data, (bytes, bytearray, memoryview)):
+        size_bytes = (
+            binary_data.nbytes
+            if isinstance(binary_data, memoryview)
+            else len(binary_data)
+        )
+        return {
+            "type": type(value).__name__,
+            "media_type": str(getattr(value, "media_type", "") or ""),
+            "size_bytes": size_bytes,
+        }
     if depth >= 8:
-        return str(value)
+        return {"type": type(value).__name__, "truncated": True}
     if isinstance(value, dict):
         return {
             str(key): _json_log_value(item, depth=depth + 1)
@@ -380,16 +394,33 @@ def _json_log_value(value: object, *, depth: int = 0) -> object:
         }
     if isinstance(value, (list, tuple, set)):
         return [_json_log_value(item, depth=depth + 1) for item in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            "type": type(value).__name__,
+            "fields": {
+                field.name: _json_log_value(
+                    getattr(value, field.name), depth=depth + 1
+                )
+                for field in fields(value)
+            },
+        }
     model_dump = getattr(value, "model_dump", None)
     if callable(model_dump):
         try:
-            return _json_log_value(model_dump(mode="json"), depth=depth + 1)
+            return _json_log_value(model_dump(mode="python"), depth=depth + 1)
         except Exception:
             pass
     output = getattr(value, "output", None)
     if output is not None:
         return {"output": _json_log_value(output, depth=depth + 1)}
-    return str(value)
+    rendered = str(value)
+    if "BinaryContent(data=b" in rendered or "BinaryImage(data=b" in rendered:
+        return {
+            "type": type(value).__name__,
+            "omitted": True,
+            "reason": "nested_binary_repr",
+        }
+    return rendered
 
 
 def _provider_http_status(exc: BaseException) -> int | None:

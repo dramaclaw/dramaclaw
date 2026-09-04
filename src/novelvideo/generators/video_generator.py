@@ -21,6 +21,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from novelvideo.shared.provider_errors import (
+    classify_provider_video_task_error,
+    provider_video_error_code_from_text,
+    provider_video_error_message_from_text,
+    provider_video_task_error_message,
+)
+
 import aiohttp
 import websockets
 from dotenv import load_dotenv
@@ -115,6 +122,10 @@ def _safe_video_error_code(exc: BaseException, fallback: str) -> str:
         "EGRESS_OPERATION_REPLAYED",
     }:
         return code
+    # 网关用 VIDEO_* 枚举码打回（尺寸/审核）时放行该码；原文本身不回传。
+    provider_code = provider_video_error_code_from_text(str(exc))
+    if provider_code:
+        return provider_code
     return fallback
 
 
@@ -781,8 +792,8 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
 class ShotReference:
     """Seedance 2.0 素材引用。"""
 
-    type: str  # "image" / "video" / "audio"
-    path: str  # 本地文件路径
+    type: str  # "image" / "video" / "audio" / "file" / "link"
+    path: str  # 本地文件路径或公开 URL
     role: str  # "首帧" / "角色参考" / "场景参考" / "配乐" / "音色参考"
 
 
@@ -2244,7 +2255,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             media_type = str(getattr(ref, "type", "") or "image").strip().lower()
             path = str(getattr(ref, "path", "") or "").strip()
             role = str(getattr(ref, "role", "") or "").strip()
-            if path and media_type in {"image", "video", "audio"}:
+            if path and media_type in {"image", "video", "audio", "file", "link"}:
                 raw_items.append((media_type, path, role))
 
         seen: set[tuple[str, str]] = set()
@@ -2252,6 +2263,8 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             "image": [],
             "video": [],
             "audio": [],
+            "file": [],
+            "link": [],
         }
         for media_type, path, role in raw_items:
             identity = (media_type, path)
@@ -2260,11 +2273,18 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             seen.add(identity)
             if media_type == "image":
                 url = await self._relay_frame_input(path)
+            elif media_type == "link":
+                parsed = urllib.parse.urlsplit(path)
+                if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                    raise ValueError("reference link must be an HTTP/HTTPS URL")
+                url = path
             else:
                 url = await self._relay_media_input(
                     path,
-                    default_ext="mp4" if media_type == "video" else "mp3",
-                    resource_type="video",
+                    default_ext=(
+                        "mp4" if media_type == "video" else "mp3" if media_type == "audio" else "bin"
+                    ),
+                    resource_type="raw" if media_type == "file" else "video",
                 )
             if not path.startswith(("http://", "https://")):
                 log(f"{media_type} 参考素材已上传到媒体中转")
@@ -2273,6 +2293,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         image_urls = [url for url, _role in relayed["image"]]
         video_urls = [url for url, _role in relayed["video"]]
         audio_urls = [url for url, _role in relayed["audio"]]
+        file_urls = [url for url, _role in relayed["file"]]
+        link_urls = [url for url, _role in relayed["link"]]
+
+        if file_urls and link_urls:
+            raise ValueError("reference_file and reference_link are mutually exclusive")
 
         if normalized_mode in {"image_reference", "all_reference", "video_edit"}:
             if image_urls:
@@ -2281,6 +2306,10 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 metadata["reference_videos"] = video_urls
             if audio_urls:
                 metadata["reference_audios"] = audio_urls
+            if file_urls:
+                metadata["reference_file"] = file_urls[0]
+            if link_urls:
+                metadata["reference_link"] = link_urls[0]
             return
 
         raise ValueError(f"unsupported video generation mode: {normalized_mode}")
@@ -2773,26 +2802,62 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         if context is None or not context.is_organization:
             return
         from novelvideo.ports import get_authz_port
+        from novelvideo.ports.authz import AuthzError
+
+        authz = get_authz_port()
 
         async def read_current():
-            return await get_authz_port().admit_model_task(
+            return await authz.admit_model_task(
                 user_id=context.requester_user_id,
                 root_task_id=context.root_task_id,
             )
 
-        current = await retry_authz_read(
-            read_current,
-            max_retries=_POST_ACCEPT_AUTHZ_MAX_RETRIES,
-            base_delay=_POST_ACCEPT_AUTHZ_RETRY_BASE_SECONDS,
-            cap_delay=_POST_ACCEPT_AUTHZ_RETRY_CAP_SECONDS,
-            sleep=_POST_ACCEPT_AUTHZ_RETRY_SLEEP,
-            random=_POST_ACCEPT_AUTHZ_RETRY_RANDOM,
-            call_site="video_post_accept_revalidation",
-        )
+        try:
+            current = await retry_authz_read(
+                read_current,
+                max_retries=_POST_ACCEPT_AUTHZ_MAX_RETRIES,
+                base_delay=_POST_ACCEPT_AUTHZ_RETRY_BASE_SECONDS,
+                cap_delay=_POST_ACCEPT_AUTHZ_RETRY_CAP_SECONDS,
+                sleep=_POST_ACCEPT_AUTHZ_RETRY_SLEEP,
+                random=_POST_ACCEPT_AUTHZ_RETRY_RANDOM,
+                call_site="video_post_accept_revalidation",
+            )
+        except AuthzError as exc:
+            if exc.code not in {
+                "ORG_CREDENTIAL_MISSING",
+                "ORG_CREDENTIAL_DISABLED",
+                "ORG_CREDENTIAL_VERSION_MISMATCH",
+            }:
+                raise
+
+            async def read_authority():
+                return await authz.snapshot(user_id=context.requester_user_id)
+
+            snapshot = await retry_authz_read(
+                read_authority,
+                max_retries=_POST_ACCEPT_AUTHZ_MAX_RETRIES,
+                base_delay=_POST_ACCEPT_AUTHZ_RETRY_BASE_SECONDS,
+                cap_delay=_POST_ACCEPT_AUTHZ_RETRY_CAP_SECONDS,
+                sleep=_POST_ACCEPT_AUTHZ_RETRY_SLEEP,
+                random=_POST_ACCEPT_AUTHZ_RETRY_RANDOM,
+                call_site="video_post_accept_revalidation",
+            )
+            snapshot.require_active(expected_authz_version=context.authz_version)
+            if (
+                snapshot.requester_user_id != context.requester_user_id
+                or snapshot.org_id != context.billing_principal.id
+                or snapshot.membership_id != context.membership_id
+                or snapshot.authz_version != context.authz_version
+            ):
+                raise AuthzError("ORG_AUTHZ_STALE") from None
+            return
+        # The provider job is already bound to the exact credential resolved before
+        # submit. A later active-Key rotation is not an authorization change: keep
+        # polling with the frozen request headers while still enforcing every other
+        # organization, membership, and authz-version boundary below.
         if (
             current.requester_user_id != context.requester_user_id
             or current.billing_principal != context.billing_principal
-            or current.credential != context.credential
             or current.membership_id != context.membership_id
             or current.authz_version != context.authz_version
         ):
@@ -3360,6 +3425,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     transition_token=operation_claim.transition_token,
                     expected_version=operation_version,
                     provider_job_id=task_id,
+                    requester_user_id=egress_context.requester_user_id,
+                    membership_id=egress_context.membership_id,
+                    authz_version=egress_context.authz_version,
                 )
                 operation_version = accepted.version
             try:
@@ -3579,7 +3647,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                         or "DramaClawAPI video task failed"
                     )
                     safe_task_error = (
-                        "EGRESS_OPERATION_UNKNOWN"
+                        (
+                            classify_provider_video_task_error(task)
+                            or provider_video_task_error_message(task)
+                            or "EGRESS_OPERATION_UNKNOWN"
+                        )
                         if organization_request
                         else str(error)
                     )
@@ -3672,7 +3744,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 error_message=type(exc).__name__,
             )
             safe_exception_error = (
-                _safe_video_error_code(exc, "EGRESS_OPERATION_UNKNOWN")
+                (
+                    _safe_video_error_code(exc, "")
+                    or provider_video_error_message_from_text(str(exc))
+                    or "EGRESS_OPERATION_UNKNOWN"
+                )
                 if organization_request
                 else str(exc)
             )
@@ -3681,7 +3757,15 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 and operation_claim is not None
                 and not operation_terminal
             ):
-                if submit_attempted:
+                if task_id is None and is_definite_no_cost_http_rejection(
+                    exc.status_code
+                ):
+                    # A concrete HTTP rejection without a provider task id proves
+                    # that the submit was not accepted.  ``submit_attempted`` only
+                    # says that the request crossed our client boundary; it does
+                    # not make an explicit 4xx response indeterminate.
+                    await self._mark_operation_rejected(operation_port, operation_claim)
+                elif submit_attempted:
                     await self._mark_operation_unknown(
                         operation_port,
                         operation_claim,

@@ -1,14 +1,25 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from 'i18next';
+
 import type {
   SkillDefinition,
   SkillParameterSpec,
 } from '@/features/freezone/context/skillRoles';
 
-const PARAMETER_LABELS: Record<string, string> = {
-  aspect_ratio: '比例',
-  quality: '质量',
+/** 后端 skill 定义没给 label 时的兜底显示名。 */
+const PARAMETER_LABEL_KEYS: Record<string, string> = {
+  aspect_ratio: 'canvas.skillParams.aspectRatio',
+  quality: 'canvas.skillParams.quality',
 };
+
+function fallbackParameterLabel(key: string): string {
+  const labelKey = PARAMETER_LABEL_KEYS[key];
+  return labelKey ? i18n.t(labelKey) : key;
+}
 
 export interface SkillParameterEntry {
   key: string;
@@ -76,7 +87,7 @@ export function skillParameterEntries(
         key,
         label: typeof spec.label === 'string' && spec.label.trim()
           ? spec.label.trim()
-          : PARAMETER_LABELS[key] ?? key,
+          : fallbackParameterLabel(key),
         type,
         options,
         value: selectedParameterValue(key, spec, storedParameters),
