@@ -106,11 +106,11 @@ docker run --rm -v dramaclaw-ce_newapi-data:/data -v "$PWD":/backup alpine \
 
 ## 6. Upgrades
 
-Source build:
+Source build (both checkouts):
 
 ```bash
+git -C ../dramaclaw-gateway pull   # first time after upgrading from an older checkout: git clone https://github.com/dramaclaw/dramaclaw-gateway.git ../dramaclaw-gateway
 git pull
-# edit .env: DRAMACLAW_VERSION=2.1.0 (and DRAMACLAW_GATEWAY_VERSION if the release notes say so)
 docker compose up -d --build
 ```
 
@@ -152,9 +152,9 @@ The script copies only missing files, never overwrites or deletes the source, an
 
 | Before | Now |
 |---|---|
-| `docker compose up -d --build` (official gateway, source build) | Same command; now also builds the bundled gateway (defaults to host-only, idle until used) |
+| `docker compose up -d --build` (official gateway, source build) | Same command, **after** `git clone https://github.com/dramaclaw/dramaclaw-gateway.git ../dramaclaw-gateway` (or `DRAMACLAW_GATEWAY_SRC=https://github.com/dramaclaw/dramaclaw-gateway.git#main` in `.env` to skip the clone); it now also builds the bundled gateway (host-only by default, idle until used). Without the clone the build stops with `unable to prepare context: path ".../dramaclaw-gateway" not found` |
 | `docker compose -f docker-compose.release.yml up -d` | Same command; the gateway image is now `claymorelab/dramaclaw-gateway` |
-| `docker compose -f docker-compose.selfhosted.yml up -d --build` | Use `docker compose up -d --build` instead; the `newapi-data` volume is reused — back it up first (rc.21 → rc.24 only adds tables) |
+| `docker compose -f docker-compose.selfhosted.yml up -d --build` | Clone the gateway as above, then `docker compose up -d --build`; the `newapi-data` volume is reused — back it up first (rc.21 → rc.24 only adds tables) |
 | `docker compose -f docker-compose.selfhosted.release.yml up -d` | Use `docker compose -f docker-compose.release.yml up -d` instead; same as above |
 | `.env`'s `NEWAPI_BASE_URL` / `NEWAPI_API_KEY` / `ST_*_PORT` / `INSTALL_WORLD` / `NEWAPI_PROVISIONER_ENABLED` | Unchanged, still effective |
 
