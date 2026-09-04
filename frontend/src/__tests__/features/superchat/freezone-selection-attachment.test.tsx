@@ -47,7 +47,7 @@ vi.mock("react-i18next", () => ({
     init: vi.fn(),
   },
   useTranslation: () => ({
-    t: (key: string, options?: { count?: number }) => {
+    t: (key: string, options?: Record<string, unknown>) => {
       const translations: Record<string, string> = {
         "aiAssistant.placeholder": "写下灵感、剧情或任务，虾导来接住",
         "aiAssistant.freezonePlaceholder": "想画什么、改哪里，直接告诉虾画",
@@ -58,7 +58,9 @@ vi.mock("react-i18next", () => ({
         "freezone.chat.usedThisTurn": "本轮会使用",
         "freezone.chat.canvasCommandsCancelled": "已取消画布操作",
       };
-      return (translations[key] ?? key).replace("{{count}}", String(options?.count ?? ""));
+      const template = translations[key]
+        ?? (typeof options?.defaultValue === "string" ? options.defaultValue : key);
+      return template.replace(/{{(\w+)}}/g, (_match, name: string) => String(options?.[name] ?? ""));
     },
   }),
 }));

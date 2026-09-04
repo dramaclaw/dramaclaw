@@ -6084,11 +6084,12 @@
       "emotionLabel": "Delivery cues",
       "emotionOptional": "(optional, free text)",
       "emotionPlaceholder": "e.g. tense, hushed, a little fearful",
-      "voiceMissing": "Configure or pick a voice first",
+      "voiceMissing": "No usable custom voice is selected",
       "translate": "Translate (Chinese ⇄ English)",
       "voiceSettings": "Voice settings",
       "advancedSettings": "Advanced settings",
       "generate": "Generate",
+      "generateWithoutVoice": "Generate (skip when no custom voice is selected)",
       "help": "Help",
       "musicDuration": "Music length",
       "musicDurationHelp": "Sets the song length. In auto mode the lyrics are kept intact; once a length is set, matching that length takes priority.",
@@ -6100,7 +6101,7 @@
       "copied": "Copied",
       "copyFailed": "Copy failed",
       "copyVoiceRef": "Copy voice reference",
-      "switchVoice": "Switch voice"
+      "switchVoice": "Choose voice"
     },
     "voiceRef": {
       "projectNarrator": "Project narrator",

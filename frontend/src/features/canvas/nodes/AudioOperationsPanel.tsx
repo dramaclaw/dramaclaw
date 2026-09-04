@@ -397,7 +397,9 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
           disabled={submitDisabled}
           title={
             modelTaskAccess.message
-            ?? (voiceMissing ? t('node.audioPanel.voiceMissing') : t('node.audioPanel.generate'))
+            ?? (voiceMissing
+              ? t('node.audioPanel.generateWithoutVoice')
+              : t('node.audioPanel.generate'))
           }
           onClick={() => void handleSubmit()}
           className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${

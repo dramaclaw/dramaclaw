@@ -6084,11 +6084,12 @@
       "emotionLabel": "语气词",
       "emotionOptional": "（可选，自由输入）",
       "emotionPlaceholder": "如：紧张、压低声音、带一点恐惧感",
-      "voiceMissing": "请先配置或选择声线",
+      "voiceMissing": "尚未选中可用的自定义声线",
       "translate": "翻译（中英文互译）",
       "voiceSettings": "音色设置",
       "advancedSettings": "高级设置",
       "generate": "生成",
+      "generateWithoutVoice": "生成（未选择自定义声线时跳过）",
       "help": "说明",
       "musicDuration": "音乐时长",
       "musicDurationHelp": "设定歌曲长度。自动模式下优先保证歌词完整；指定时长后则优先匹配时长。",
@@ -6100,7 +6101,7 @@
       "copied": "已复制",
       "copyFailed": "复制失败",
       "copyVoiceRef": "复制声线引用",
-      "switchVoice": "切换音色"
+      "switchVoice": "选择声线"
     },
     "voiceRef": {
       "projectNarrator": "项目解说人",
