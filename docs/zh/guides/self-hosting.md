@@ -122,7 +122,7 @@ docker compose up -d
 
 脚本只复制缺失文件，不覆盖、不删除源文件，并在更新项目路径前备份 `projects.db`。只存在于已删除容器层里的文件无法从数据卷恢复。
 
-想从源码构建？运行 `scripts/build_images.sh` 并在 `.env` 写 `DRAMACLAW_VERSION=dev`。
+想从源码构建？叠加构建 override：`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`（先在 `.env` 写 `DRAMACLAW_VERSION=dev`）。
 
 ## 7. 排错
 

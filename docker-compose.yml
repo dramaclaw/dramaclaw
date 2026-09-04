@@ -2,7 +2,7 @@
 # 用户：cp .env.example .env && docker compose up -d
 #       国内拉取慢：.env 里设 DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw
 #       并同时钉 DRAMACLAW_VERSION / DRAMACLAW_GATEWAY_VERSION（ACR 只放钉 tag，没有 latest）。
-# 开发：scripts/build_images.sh 构建 :dev 镜像（INSTALL_WORLD=1 带 3DGS/SHARP），.env 写 DRAMACLAW_VERSION=dev。
+# 开发（源码构建）：docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build（.env 建议写 DRAMACLAW_VERSION=dev；INSTALL_WORLD=1 带 3DGS/SHARP）
 # 三服务：api + 内置 newapi 网关（DramaClaw 维护的 dramaclaw-gateway，:3000）+ web（:8080）。
 # 首启打开 http://localhost:8080 → 设置 → 模型：选「官方」粘贴 DC key、或「自定义」一键初始化内置网关、或「本地 + 官方混合」。
 # 默认模式是官方，此时内置网关只是常驻待命；.env 写 NEWAPI_PROVISIONER_ENABLED=false 可禁用一键初始化。

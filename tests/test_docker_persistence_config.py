@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
@@ -10,7 +9,7 @@ import yaml
 REPOSITORY_ROOT = Path(__file__).parents[1]
 COMPOSE_FILE = "docker-compose.yml"
 IMAGE_PREFIX = "${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/"
-BUILD_SCRIPT = "scripts/build_images.sh"
+BUILD_OVERRIDE = "docker-compose.build.yml"
 OFFICIAL_GATEWAY_URL = "https://relayclaw.cdnfg.com/v1"
 
 
@@ -18,12 +17,27 @@ def _compose() -> dict:
     return yaml.safe_load((REPOSITORY_ROOT / COMPOSE_FILE).read_text())
 
 
-def test_repository_ships_exactly_one_compose_file() -> None:
+def test_repository_ships_only_base_compose_and_build_override() -> None:
     variants = sorted(
         {p.name for p in REPOSITORY_ROOT.glob("docker-compose*.y*ml")}
         | {p.name for p in REPOSITORY_ROOT.glob("compose.y*ml")}
     )
-    assert variants == [COMPOSE_FILE]
+    assert variants == ["docker-compose.build.yml", "docker-compose.yml"]
+
+
+def test_build_override_only_adds_build_blocks() -> None:
+    override = yaml.safe_load((REPOSITORY_ROOT / BUILD_OVERRIDE).read_text())
+    assert set(override) == {"services"}
+    services = override["services"]
+    assert set(services) == {"api", "web"}
+    for name, service in services.items():
+        assert set(service) == {"build"}, f"{name} may only declare build"
+    assert services["api"]["build"] == {
+        "context": ".",
+        "dockerfile": "Dockerfile",
+        "args": {"INSTALL_WORLD": "${INSTALL_WORLD:-0}"},
+    }
+    assert services["web"]["build"] == {"context": "./frontend", "dockerfile": "Dockerfile"}
 
 
 def test_compose_is_image_only_and_prefixed() -> None:
@@ -93,13 +107,6 @@ def test_compose_pins_env_file_long_syntax_ports_and_volumes() -> None:
     assert compose["services"]["newapi"]["ports"] == ["${ST_NEWAPI_PORT:-3000}:3000"]
     assert compose["services"]["web"]["ports"] == ["${ST_WEB_PORT:-8080}:80"]
     assert set(compose["volumes"]) == {"ce-data", "newapi-data"}
-
-
-def test_build_script_exists_and_is_executable() -> None:
-    script = REPOSITORY_ROOT / BUILD_SCRIPT
-    assert script.is_file()
-    assert os.access(script, os.X_OK)
-    assert script.read_text().startswith("#!/usr/bin/env bash\n")
 
 
 def test_env_example_configures_data_root_instead_of_individual_directories() -> None:

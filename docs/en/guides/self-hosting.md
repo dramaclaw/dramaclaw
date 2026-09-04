@@ -122,7 +122,7 @@ docker compose up -d
 
 The script copies only missing files, never overwrites or deletes the source, and backs up `projects.db` before updating project paths. Files that existed only in an already-removed container layer cannot be recovered from the data volume.
 
-Building from source instead? Run `scripts/build_images.sh` and set `DRAMACLAW_VERSION=dev` in `.env`.
+Building from source instead? Add the build override: `docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build` (set `DRAMACLAW_VERSION=dev` in `.env` first).
 
 ## 7. Troubleshooting
 

@@ -233,12 +233,13 @@ cp .env.example .env && $EDITOR .env
 uv run novelvideo api --port 8780   # start the REST API (CE defaults to inline tasks, no Ray/Redis)
 ```
 
-Build the Docker images from source (the compose file itself never builds):
+Build the Docker images from source (the base compose file only pulls; the build override adds `build:` for api/web):
 
 ```bash
-scripts/build_images.sh            # claymorelab/dramaclaw:dev + claymorelab/dramaclaw-frontend:dev
-echo 'DRAMACLAW_VERSION=dev' >> .env
-docker compose up -d
+echo 'DRAMACLAW_VERSION=dev' >> .env      # keep local builds off the :latest tag
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# or once in .env:  COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml   then: docker compose up -d --build
+# 3DGS/SHARP "world" extra: INSTALL_WORLD=1 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 <br/>

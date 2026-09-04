@@ -232,12 +232,13 @@ cp .env.example .env && $EDITOR .env
 uv run novelvideo api --port 8780   # 启动 REST API（CE 默认 inline 任务，无需 Ray/Redis）
 ```
 
-从源码构建 Docker 镜像（compose 文件本身不构建）：
+从源码构建 Docker 镜像（基座 compose 只拉镜像，构建 override 给 api/web 加 `build:`）：
 
 ```bash
-scripts/build_images.sh            # claymorelab/dramaclaw:dev + claymorelab/dramaclaw-frontend:dev
-echo 'DRAMACLAW_VERSION=dev' >> .env
-docker compose up -d
+echo 'DRAMACLAW_VERSION=dev' >> .env      # 本地构建别覆盖 :latest
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# 或在 .env 写一次 COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml，之后直接 docker compose up -d --build
+# 3DGS/SHARP「world」特性：INSTALL_WORLD=1 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 <br/>

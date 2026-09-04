@@ -1,0 +1,20 @@
+# DramaClaw CE — 源码构建 override（开发者用），与 docker-compose.yml 叠加：
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# 或在 .env 写 COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml 后照常 docker compose up -d --build。
+# 只声明 api / web 的 build 块；镜像名仍来自基座文件（构建产物会打成
+# ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw:${DRAMACLAW_VERSION:-latest}），
+# 建议 .env 里同时写 DRAMACLAW_VERSION=dev，避免把本地构建覆盖成 latest。网关永远拉 fork 镜像，不本地构建。
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # 默认精简镜像。要 3DGS/SHARP「world」特性（torch/gsplat/sharp/da2 + SOG 工具）：
+      #   INSTALL_WORLD=1 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+      # 注：权重运行时下载不入镜像；slim base 为 CPU，GPU 加速需 CUDA base；Mac Docker 无 GPU。
+      args:
+        INSTALL_WORLD: "${INSTALL_WORLD:-0}"
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
