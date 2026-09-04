@@ -15,8 +15,9 @@ DramaClaw 是社区版(CE),单机运行、无需 PostgreSQL / Redis。默认 `do
 ## 步骤
 
 ```bash
-# 1. 取得代码
+# 1. 取得代码 —— DramaClaw 和内置网关并排放
 git clone https://github.com/dramaclaw/dramaclaw.git
+git clone https://github.com/dramaclaw/dramaclaw-gateway.git
 cd dramaclaw
 
 # 2. 准备配置
@@ -25,8 +26,8 @@ cp .env.example .env
 #    模型渠道和 key 在下一步通过网页配置，不写入 .env。
 
 # 3. 启动 —— 起 api / newapi / web 三个服务
-docker compose up -d --build   # 从源码构建 api、web 与内置网关
-# 免构建：docker compose -f docker-compose.release.yml up -d   # 拉已发布镜像
+docker compose up -d --build   # 从源码构建 api、web（本仓）与网关（../dramaclaw-gateway）
+# 免构建：docker compose -f docker-compose.release.yml up -d   # 拉已发布镜像，不需要 clone 网关
 
 # 4. 确认已起
 docker compose ps   # api、newapi、web 均应 running

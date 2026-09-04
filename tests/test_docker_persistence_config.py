@@ -119,7 +119,7 @@ def test_source_file_extends_release_and_builds_all_three() -> None:
         "args": {"INSTALL_WORLD": "${INSTALL_WORLD:-0}"},
     }
     assert services["newapi"]["build"] == {
-        "context": "${DRAMACLAW_GATEWAY_SRC:-https://github.com/dramaclaw/dramaclaw-gateway.git#main}",
+        "context": "${DRAMACLAW_GATEWAY_SRC:-../dramaclaw-gateway}",
         "dockerfile": "Dockerfile",
     }
     assert services["web"]["build"] == {"context": "./frontend", "dockerfile": "Dockerfile"}

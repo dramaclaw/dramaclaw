@@ -1,8 +1,10 @@
-# DramaClaw CE — 源码构建（默认入口）：api、web 用本地 checkout 构建，网关直接从 dramaclaw-gateway 的 git main 构建，三件全部本地产出。
+# DramaClaw CE — 源码构建（默认入口）：api、web 用本地 checkout 构建，网关用旁边的 dramaclaw-gateway checkout 构建，三件全部本地产出。
+#   git clone https://github.com/dramaclaw/dramaclaw-gateway.git ../dramaclaw-gateway
 #   cp .env.example .env && docker compose up -d --build
 # 运行定义（env / 端口 / 卷 / 健康检查）全部 extends 自 docker-compose.release.yml，这里只加 build 与本地镜像名。
 # 只想拉已发布镜像：docker compose -f docker-compose.release.yml up -d
-# 想改网关代码：把 fork 克隆到旁边，.env 设 DRAMACLAW_GATEWAY_SRC=../dramaclaw-gateway。
+# 网关源码默认取 ../dramaclaw-gateway（与本仓并排的 clone，改代码直接改那里）；放在别处或想让 Docker 直接从 git 拉：
+#   .env 设 DRAMACLAW_GATEWAY_SRC=<路径> 或 DRAMACLAW_GATEWAY_SRC=https://github.com/dramaclaw/dramaclaw-gateway.git#main
 # 本地构建的镜像命名为 dramaclaw-local/*，不会覆盖本机缓存里的 claymorelab/* 发布镜像。
 services:
   api:
@@ -24,7 +26,7 @@ services:
       service: newapi
     image: dramaclaw-local/gateway
     build:
-      context: ${DRAMACLAW_GATEWAY_SRC:-https://github.com/dramaclaw/dramaclaw-gateway.git#main}
+      context: ${DRAMACLAW_GATEWAY_SRC:-../dramaclaw-gateway}
       dockerfile: Dockerfile
   web:
     extends:

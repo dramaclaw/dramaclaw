@@ -20,6 +20,7 @@ CE 三个容器：`api` + `newapi`（内置 DramaClaw 网关，切到自定义/�
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
+git clone https://github.com/dramaclaw/dramaclaw-gateway.git   # 只有源码构建需要；镜像模式不用
 cd dramaclaw
 cp .env.example .env
 ```
@@ -28,7 +29,7 @@ cp .env.example .env
 
 | 文件 | 模式 | 命令 |
 |---|---|---|
-| `docker-compose.yml` | 源码构建（默认）—— 从本地 checkout / git `main` 构建 `api`、`web` 与内置网关 | `docker compose up -d --build` |
+| `docker-compose.yml` | 源码构建（默认）—— `api`、`web` 用本仓 checkout，内置网关用 `../dramaclaw-gateway`（`DRAMACLAW_GATEWAY_SRC` 可改成别的路径或 git 地址） | `docker compose up -d --build` |
 | `docker-compose.release.yml` | 只拉镜像，不构建 | `docker compose -f docker-compose.release.yml up -d` |
 
 两者共享的关键点（定义在 `docker-compose.release.yml` 里，`docker-compose.yml` 通过 `extends` 复用）：
@@ -113,7 +114,7 @@ git pull
 docker compose up -d --build
 ```
 
-`docker compose up -d --build` 会连内置网关一起从 `dramaclaw-gateway` 的 git 重新拉取并构建（Go + bun，要几分钟）。只改了 DramaClaw 代码时，只重建两个本地服务即可：`docker compose up -d --build api web`。
+`docker compose up -d --build` 会连内置网关一起从 `../dramaclaw-gateway` 重新构建（Go + bun，要几分钟）；想要更新的网关就到那个目录 `git pull`。只改了 DramaClaw 代码时，只重建两个本地服务：`docker compose up -d --build api web`；只改了网关时：`docker compose up -d --build newapi`。
 
 镜像模式：
 

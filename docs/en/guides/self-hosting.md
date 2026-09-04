@@ -20,6 +20,7 @@ Two compose files ship in the repo: `docker-compose.yml` builds all three servic
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
+git clone https://github.com/dramaclaw/dramaclaw-gateway.git   # only for the source build; image mode does not need it
 cd dramaclaw
 cp .env.example .env
 ```
@@ -28,7 +29,7 @@ Two files, already set for you, no changes needed:
 
 | File | Mode | Command |
 |---|---|---|
-| `docker-compose.yml` | Source build (default) — builds `api`, `web`, and the bundled gateway from the checkout / git `main` | `docker compose up -d --build` |
+| `docker-compose.yml` | Source build (default) — builds `api` and `web` from this checkout and the bundled gateway from `../dramaclaw-gateway` (override with `DRAMACLAW_GATEWAY_SRC`, a path or a git URL) | `docker compose up -d --build` |
 | `docker-compose.release.yml` | Image only — pulls published images, never builds | `docker compose -f docker-compose.release.yml up -d` |
 
 Key points shared by both (defined once in `docker-compose.release.yml`, reused by `docker-compose.yml` via `extends`):
@@ -113,7 +114,7 @@ git pull
 docker compose up -d --build
 ```
 
-`docker compose up -d --build` also re-fetches and rebuilds the bundled gateway from `dramaclaw-gateway` git (Go + bun, several minutes). When only DramaClaw code changed, rebuild just the two local services: `docker compose up -d --build api web`.
+`docker compose up -d --build` also rebuilds the bundled gateway from `../dramaclaw-gateway` (Go + bun, several minutes); `git pull` there too when you want a newer gateway. When only DramaClaw code changed, rebuild just the two local services: `docker compose up -d --build api web`; when only the gateway changed, `docker compose up -d --build newapi`.
 
 Image mode:
 
