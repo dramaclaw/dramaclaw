@@ -6210,7 +6210,7 @@
       "empty": "暂无音频",
       "noVoiceConfigured": "未配置可用声线",
       "generateFailed": "生成失败",
-      "selectVoiceFirst": "请先配置或选择声线"
+      "selectVoiceFirst": "未选择自定义声线，已跳过生成"
     },
     "videoStory": {
       "columns": {
