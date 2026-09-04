@@ -240,10 +240,11 @@ DramaClaw 的所有模型推理都走 **OpenAI 兼容网关** —— 要么是�
 
 每次 GitHub Release 都会发布 amd64/arm64 多架构镜像到 Docker Hub。
 
-**源码构建（默认）** —— `docker compose up -d --build` 会构建三件：`api`、`web` 与内置网关。
+**源码构建（默认）** —— 把 DramaClaw 和内置的 [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) 并排 clone，`docker compose up -d --build` 用这两个 checkout 构建全部三个服务。
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
+git clone https://github.com/dramaclaw/dramaclaw-gateway.git   # 内置网关，从 ../dramaclaw-gateway 构建
 cd dramaclaw
 
 cp .env.example .env
@@ -252,17 +253,9 @@ cp .env.example .env
 docker compose up -d --build   # 构建并起三个服务：api / newapi（内置网关）/ web
 ```
 
-网关是 Docker 在构建时直接从 [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) 的 `main` 分支拉源码构建的，只是跑起来的话不需要再 clone 一份。只改了 DramaClaw 代码？只重建两个本地服务：`docker compose up -d --build api web`。
+两个 checkout 都是普通 git 仓库：改代码、`git pull`、重建。只改了 DramaClaw 代码：`docker compose up -d --build api web`；只改了网关：`docker compose up -d --build newapi`。网关 clone 放在别处，或者想让 Docker 直接从 git 拉？在 `.env` 里把 `DRAMACLAW_GATEWAY_SRC` 设成那个路径或 `https://github.com/dramaclaw/dramaclaw-gateway.git#main`。
 
-**连网关代码也要改？** 把它 clone 到 DramaClaw 旁边，让构建指向你的 checkout：
-
-```bash
-git clone https://github.com/dramaclaw/dramaclaw-gateway.git ../dramaclaw-gateway
-echo 'DRAMACLAW_GATEWAY_SRC=../dramaclaw-gateway' >> .env
-docker compose up -d --build newapi
-```
-
-**免构建** —— 改拉已发布镜像：
+**免构建** —— 改拉已发布镜像（不需要 clone 网关）：
 
 ```bash
 docker compose -f docker-compose.release.yml up -d

@@ -241,10 +241,11 @@ DramaClaw runs all inference through an **OpenAI-compatible gateway** — either
 
 Every GitHub Release publishes multi-arch (amd64/arm64) images to Docker Hub.
 
-**Source build (default)** — `docker compose up -d --build` builds all three: `api`, `web`, and the bundled gateway.
+**Source build (default)** — clone DramaClaw and the bundled [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) side by side; `docker compose up -d --build` builds all three services from those two checkouts.
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
+git clone https://github.com/dramaclaw/dramaclaw-gateway.git   # bundled gateway, built from ../dramaclaw-gateway
 cd dramaclaw
 
 cp .env.example .env
@@ -253,17 +254,9 @@ cp .env.example .env
 docker compose up -d --build   # builds and starts three services: api / newapi (bundled gateway) / web
 ```
 
-The gateway is built from the `main` branch of [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway), fetched by Docker at build time — you do not need a second clone just to run. Only DramaClaw code changed? Rebuild the two local services: `docker compose up -d --build api web`.
+Both checkouts are plain git repos: edit, `git pull`, rebuild. Only DramaClaw code changed? `docker compose up -d --build api web`. Only the gateway? `docker compose up -d --build newapi`. Gateway clone somewhere else, or prefer Docker to fetch it from git? Set `DRAMACLAW_GATEWAY_SRC` in `.env` to that path or to `https://github.com/dramaclaw/dramaclaw-gateway.git#main`.
 
-**Hacking on the gateway too?** Clone it next to DramaClaw and point the build at your checkout:
-
-```bash
-git clone https://github.com/dramaclaw/dramaclaw-gateway.git ../dramaclaw-gateway
-echo 'DRAMACLAW_GATEWAY_SRC=../dramaclaw-gateway' >> .env
-docker compose up -d --build newapi
-```
-
-**No build** — pull published images instead:
+**No build** — pull published images instead (no gateway clone needed):
 
 ```bash
 docker compose -f docker-compose.release.yml up -d
