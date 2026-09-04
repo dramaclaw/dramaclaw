@@ -198,6 +198,117 @@ async def test_admission_tool_call_is_not_model_generation_evidence(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_admission_cannot_deliver_until_result_tool_binds_evidence(tmp_path):
+    from novelvideo.chat import service
+
+    operation = _create(tmp_path, key="admission-then-result")
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+
+    await service._bind_server_observed_agent_product_execution(
+        SimpleNamespace(
+            type="tool_updated",
+            name="freezone_begin_agent_product_generation",
+            status="completed",
+            error=None,
+            turn_id="turn-admission",
+            call_id="call-admission",
+            input={"operation_id": operation["operation_id"]},
+            structured={"ok": True, "operation_id": operation["operation_id"]},
+            output=None,
+        ),
+        project_dir=tmp_path,
+        project_state_dir=tmp_path,
+    )
+
+    with pytest.raises(ValueError, match="execution evidence"):
+        finish_agent_product_operation(
+            project_dir=tmp_path,
+            operation_id=operation["operation_id"],
+            outcome="delivered",
+            expected_task_id="task-a",
+            result_ref={"kind": "workflow_draft", "id": "draft-a"},
+        )
+
+    await service._bind_server_observed_agent_product_execution(
+        SimpleNamespace(
+            type="tool_started",
+            name="freezone_prepare_workflow_draft",
+            status="pending",
+            error=None,
+            turn_id="turn-result",
+            call_id="call-result",
+            input={"operation_id": operation["operation_id"], "intent": {"title": "A"}},
+            structured=None,
+            output=None,
+        ),
+        project_dir=tmp_path,
+        project_state_dir=tmp_path,
+    )
+
+    delivered = finish_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        outcome="delivered",
+        expected_task_id="task-a",
+        result_ref={"kind": "workflow_draft", "id": "draft-a"},
+    )
+    repeated = finish_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        outcome="delivered",
+        expected_task_id="task-a",
+        result_ref={"kind": "workflow_draft", "id": "ignored"},
+    )
+
+    assert delivered["model_evidence"]["tool_call_id"] == "call-result"
+    assert delivered["model_evidence"]["turn_id"] == "turn-result"
+    assert repeated == delivered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "error", "structured"),
+    [
+        ("running", None, None),
+        ("completed", None, {"ok": False}),
+        ("failed", "provider error", {"ok": False}),
+    ],
+)
+async def test_unsuccessful_result_update_does_not_bind_model_evidence(
+    tmp_path, status, error, structured
+):
+    from novelvideo.chat import service
+
+    operation = _create(tmp_path, key=f"result-{status}-{bool(error)}")
+    await service._bind_server_observed_agent_product_execution(
+        SimpleNamespace(
+            type="tool_updated",
+            name="freezone_prepare_workflow_draft",
+            status=status,
+            error=error,
+            turn_id="turn-result",
+            call_id="call-result",
+            input={"operation_id": operation["operation_id"], "intent": {"title": "A"}},
+            structured=structured,
+            output=None,
+        ),
+        project_dir=tmp_path,
+        project_state_dir=tmp_path,
+    )
+
+    stored = read_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+    )
+    assert not stored["model_evidence"]
+
+
+@pytest.mark.asyncio
 async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_path):
     from novelvideo.chat import service
 
