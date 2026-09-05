@@ -13,6 +13,7 @@ from novelvideo.egress_context import (
     TrustedEgressContext,
     TrustedRunnerEnvelope,
 )
+from novelvideo.ports import get_usage_meter
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import (
     TaskCancelled,
@@ -1267,7 +1268,19 @@ async def _run_freezone_text_generate_async(
         "generate_freezone_text",
         prompt=prompt,
     )
-    data = {"generated_text": generated_text, "model": model}
+    from novelvideo.utils.document_parsers import count_billable_text_chars
+
+    billable_chars = count_billable_text_chars(generated_text)
+    data = {
+        "generated_text": generated_text,
+        "model": model,
+        "billing": {
+            "operation": "text_generate",
+            "billable_chars": billable_chars,
+            "pricing_quantity": billable_chars,
+            "quantity_source": "generated_text",
+        },
+    }
     out = outputs_dir(project_dir, "freezone_text_generate") / f"{job_id}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     import json
@@ -1295,6 +1308,46 @@ async def _run_freezone_text_generate_async(
     )
     if history_record:
         result["generation_history_record"] = history_record
+    billing_metadata = (
+        envelope.get("billing_metadata")
+        if isinstance(envelope.get("billing_metadata"), dict)
+        else {}
+    )
+    feature_key = str(billing_metadata.get("feature_key") or "").strip()
+    run_task_id = str(envelope.get("__run_task_id") or "").strip()
+    if feature_key and run_task_id:
+        reservation = await get_usage_meter().reserve_feature_start_credits(
+            user_id=ctx.requester_user_id,
+            feature_key=feature_key,
+            product_surface="freezone",
+            project_id=ctx.project_id,
+            resource_kind="script",
+            task_id=run_task_id,
+            task_type="freezone_text_generate",
+            quantity=billable_chars,
+            idempotency_key=(
+                f"task_result:{ctx.requester_user_id}:{feature_key}:{run_task_id}"
+            ),
+            require_price_rule=True,
+            require_positive_cost=True,
+            params={
+                "operation": "text_generate",
+                "billable_chars": billable_chars,
+                "pricing_quantity": billable_chars,
+                "pricing_metrics": {
+                    "call_count": 1,
+                    "item_count": 1,
+                    "billable_chars": billable_chars,
+                },
+            },
+            metadata={
+                "source": "trusted_task_result",
+                "quantity_source": "generated_text",
+            },
+        )
+        reservation_id = str(reservation.get("id") or "").strip()
+        if reservation_id:
+            result["__feature_credit_reservation_id"] = reservation_id
     return result
 
 

@@ -29,6 +29,15 @@ HALTING = frozenset({
     "credential_refused",
 })
 
+AGENT_PRODUCT_OUTCOMES = frozenset(
+    {
+        "agent_product_binding_failed",
+        "agent_product_evidence_rejected",
+        "agent_product_awaiting_reconciliation",
+        "agent_product_reconciled",
+    }
+)
+
 
 def observe(outcome: str) -> None:
     """Record one outcome. Unnamed outcomes are named rather than dropped."""
@@ -44,6 +53,12 @@ def counters() -> dict[str, int]:
 def halting_counts() -> dict[str, int]:
     return {name: count for name, count in counters().items()
             if name in HALTING and count > 0}
+
+
+def agent_product_counts() -> dict[str, int]:
+    """Return counters used to monitor Agent product settlement rollout."""
+    current = counters()
+    return {name: current.get(name, 0) for name in sorted(AGENT_PRODUCT_OUTCOMES)}
 
 
 def format_report() -> str:

@@ -379,6 +379,40 @@ async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_conflicting_model_evidence_binding_is_counted(tmp_path, monkeypatch):
+    from novelvideo.chat import evidence_metrics, service
+
+    observed_metrics: list[str] = []
+    monkeypatch.setattr(evidence_metrics, "observe", observed_metrics.append)
+    operation = _create(tmp_path, key="conflicting-evidence")
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="agent-turn:first",
+        executed_at=1.0,
+        source="server_observed_agent_turn",
+    )
+
+    await service._bind_server_observed_agent_product_execution(
+        SimpleNamespace(
+            type="tool_started",
+            name="freezone_prepare_workflow_draft",
+            status="pending",
+            error=None,
+            turn_id="turn-second",
+            call_id="call-second",
+            input={"operation_id": operation["operation_id"]},
+            structured=None,
+            output=None,
+        ),
+        project_dir=tmp_path,
+        project_state_dir=tmp_path,
+    )
+
+    assert observed_metrics == ["agent_product_binding_failed"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("tool_name", "kind", "operation_key", "tool_input"),
     [

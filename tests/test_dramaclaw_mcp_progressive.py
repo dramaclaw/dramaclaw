@@ -93,11 +93,12 @@ def test_plugin_reads_turn_token_file_lazily(monkeypatch, tmp_path):
     monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN_FILE", str(token_file))
     monkeypatch.delenv("DRAMACLAW_AGENT_TOKEN", raising=False)
 
-    assert dramaclaw_mcp.PLUGIN._request_headers("test")["Authorization"] == (
+    core_plugin = dramaclaw_mcp._plugin("dramaclaw")
+    assert core_plugin._request_headers("test")["Authorization"] == (
         "Bearer first-token"
     )
     token_file.write_text("second-token", encoding="utf-8")
-    assert dramaclaw_mcp.PLUGIN._request_headers("test")["Authorization"] == (
+    assert core_plugin._request_headers("test")["Authorization"] == (
         "Bearer second-token"
     )
 
@@ -109,7 +110,7 @@ def test_freezone_handler_reads_rotating_turn_token_file(monkeypatch, tmp_path):
     monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN_FILE", str(token_file))
     monkeypatch.delenv("DRAMACLAW_AGENT_TOKEN", raising=False)
     monkeypatch.delenv("DRAMACLAW_LOCAL_AGENT_TRUST", raising=False)
-    freezone_plugin = dramaclaw_mcp.PLUGINS[1]
+    freezone_plugin = dramaclaw_mcp._plugin("freezone")
     seen_authorization = []
 
     class FakeResponse:
@@ -138,18 +139,29 @@ def test_freezone_handler_reads_rotating_turn_token_file(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_project_scope_lists_concrete_tools(monkeypatch):
+@pytest.mark.parametrize(
+    ("tool_mode", "plugin_name"),
+    (("default", "dramaclaw"), ("freezone_canvas", "freezone")),
+)
+async def test_project_scope_lists_only_profile_concrete_tools(
+    monkeypatch, tool_mode, plugin_name
+):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", tool_mode)
 
     tools = await dramaclaw_mcp.list_tools()
 
     names = {tool.name for tool in tools}
-    assert names == set(dramaclaw_mcp.TOOLS)
+    assert names == set(dramaclaw_mcp._plugin_tools(plugin_name))
+    if plugin_name == "dramaclaw":
+        assert not any(name.startswith("freezone_") for name in names)
+    else:
+        assert not any(name.startswith("dramaclaw_") for name in names)
 
     schemas = {tool.name: tool.outputSchema for tool in tools}
     assert all(schema is not None for schema in schemas.values())
     assert len({schema["title"] for schema in schemas.values()}) == len(schemas)
-    assert len({tuple(schema["properties"]) for schema in schemas.values()}) >= 70
+    assert len({tuple(schema["properties"]) for schema in schemas.values()}) >= 30
     for name, schema in schemas.items():
         Draft202012Validator.check_schema(schema)
         assert schema["x-dramaclaw-tool"] == name
@@ -158,7 +170,7 @@ async def test_project_scope_lists_concrete_tools(monkeypatch):
         assert schema["additionalProperties"] is False
         assert all(property_schema for property_schema in schema["properties"].values())
 
-    for name, (tool, _handler) in dramaclaw_mcp.TOOLS.items():
+    for name, (tool, _handler) in dramaclaw_mcp._plugin_tools(plugin_name).items():
         input_schema = tool["parameters"]
         assert input_schema["additionalProperties"] is False, name
         assert all(
@@ -170,27 +182,28 @@ async def test_project_scope_lists_concrete_tools(monkeypatch):
             )
         ), name
 
-    for plugin in dramaclaw_mcp.PLUGINS:
-        plugin_tool_names = {name for name, _schema, _handler in plugin.TOOLS}
-        assert set(plugin._RESULT_FIELDS) == plugin_tool_names
+    plugin = dramaclaw_mcp._plugin(plugin_name)
+    plugin_tool_names = {name for name, _schema, _handler in plugin.TOOLS}
+    assert set(plugin._RESULT_FIELDS) == plugin_tool_names
 
 
 def test_every_public_tool_rejects_an_arbitrary_success_envelope():
-    for name, (tool, _handler) in dramaclaw_mcp.TOOLS.items():
-        output_schema = tool["output_schema"]
-        errors = list(
-            Draft202012Validator(output_schema).iter_errors(
-                {"ok": True, "status": "completed", "data": {"anything": "goes"}}
+    for plugin_name in ("dramaclaw", "freezone"):
+        for name, (tool, _handler) in dramaclaw_mcp._plugin_tools(plugin_name).items():
+            output_schema = tool["output_schema"]
+            errors = list(
+                Draft202012Validator(output_schema).iter_errors(
+                    {"ok": True, "status": "completed", "data": {"anything": "goes"}}
+                )
             )
-        )
-        assert errors, f"{name} accepted a success result without its business fields"
+            assert errors, f"{name} accepted a success result without its business fields"
 
 
 @pytest.mark.asyncio
 async def test_real_list_tasks_handler_exposes_and_requires_task_fields(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setattr(
-        dramaclaw_mcp.PLUGIN,
+        dramaclaw_mcp._plugin("dramaclaw"),
         "_request",
         lambda *_args, **_kwargs: {
             "ok": True,
@@ -206,7 +219,7 @@ async def test_real_list_tasks_handler_exposes_and_requires_task_fields(monkeypa
         "tasks": [{"id": "task-1"}],
         "count": 1,
     }
-    schema = dramaclaw_mcp.TOOLS["dramaclaw_list_tasks"][0]["output_schema"]
+    schema = dramaclaw_mcp._agent_tools()["dramaclaw_list_tasks"][0]["output_schema"]
     missing_count = dict(result.structuredContent)
     missing_count.pop("count")
     assert list(Draft202012Validator(schema).iter_errors(missing_count))
@@ -266,7 +279,7 @@ async def test_real_core_handlers_match_their_endpoint_output_contracts(monkeypa
             return {"ok": True, "data": {"episode": 1, "beats": []}}
         raise AssertionError(f"unexpected request: {method} {path}")
 
-    monkeypatch.setattr(dramaclaw_mcp.PLUGIN, "_request", fake_request)
+    monkeypatch.setattr(dramaclaw_mcp._plugin("dramaclaw"), "_request", fake_request)
     cases = [
         ("dramaclaw_list_freezone_skills", {}, {"skills", "count"}),
         (
@@ -336,7 +349,7 @@ async def test_real_handler_failure_uses_the_shared_error_contract(monkeypatch):
     assert result.isError is True
     assert result.structuredContent["ok"] is False
     assert result.structuredContent["error"]
-    schema = dramaclaw_mcp.TOOLS["dramaclaw_get_task"][0]["output_schema"]
+    schema = dramaclaw_mcp._agent_tools()["dramaclaw_get_task"][0]["output_schema"]
     Draft202012Validator(schema).validate(result.structuredContent)
 
 
@@ -344,7 +357,7 @@ async def test_real_handler_failure_uses_the_shared_error_contract(monkeypatch):
 async def test_real_scene_images_handler_matches_its_mcp_output_contract(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setattr(
-        dramaclaw_mcp.PLUGIN,
+        dramaclaw_mcp._plugin("dramaclaw"),
         "_request",
         lambda *_args, **_kwargs: {
             "ok": True,
@@ -367,7 +380,7 @@ async def test_real_scene_images_handler_matches_its_mcp_output_contract(monkeyp
         {"kind": "master", "url": "/static/scenes/roof.png"}
     ]
     assert "images" not in result.structuredContent
-    schema = dramaclaw_mcp.TOOLS["dramaclaw_get_scene_images"][0]["output_schema"]
+    schema = dramaclaw_mcp._agent_tools()["dramaclaw_get_scene_images"][0]["output_schema"]
     Draft202012Validator(schema).validate(result.structuredContent)
 
 
@@ -397,7 +410,7 @@ async def test_real_episode_image_handlers_preserve_project_scope_in_mcp_contrac
             ],
         }
 
-    monkeypatch.setattr(dramaclaw_mcp.PLUGIN, "_request", fake_request)
+    monkeypatch.setattr(dramaclaw_mcp._plugin("dramaclaw"), "_request", fake_request)
     cases = [
         ("dramaclaw_get_sketches", {"episode": 1}, "sketches"),
         ("dramaclaw_get_first_frames", {"episode": 1}, "frames"),
@@ -408,7 +421,7 @@ async def test_real_episode_image_handlers_preserve_project_scope_in_mcp_contrac
         assert result.isError is False
         assert result.structuredContent["project_id"] == "project-a"
         assert result.structuredContent[collection_field]
-        schema = dramaclaw_mcp.TOOLS[tool_name][0]["output_schema"]
+        schema = dramaclaw_mcp._agent_tools()[tool_name][0]["output_schema"]
         Draft202012Validator(schema).validate(result.structuredContent)
 
 
@@ -428,7 +441,7 @@ async def test_real_final_video_handler_models_single_and_collection_results(
             return {"ok": True, "data": {"exists": False, "video_url": None}}
         raise AssertionError(path)
 
-    monkeypatch.setattr(dramaclaw_mcp.PLUGIN, "_request", fake_request)
+    monkeypatch.setattr(dramaclaw_mcp._plugin("dramaclaw"), "_request", fake_request)
     found = await dramaclaw_mcp.call_tool("dramaclaw_get_final_video", {"episode": 1})
     assert found.structuredContent["status"] == "final_video_result"
     assert found.structuredContent["project_id"] == "project-a"
@@ -465,7 +478,7 @@ async def test_real_clarification_results_preserve_frontend_answers_and_retry_fi
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
-    freezone_plugin = dramaclaw_mcp.PLUGINS[1]
+    freezone_plugin = dramaclaw_mcp._plugin("freezone")
     monkeypatch.setattr(
         freezone_plugin, "clarification_bridge_key", lambda **_kwargs: "clarify-1"
     )
@@ -533,7 +546,7 @@ async def test_real_skill_studio_results_match_mcp_contract(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
-    freezone_plugin = dramaclaw_mcp.PLUGINS[1]
+    freezone_plugin = dramaclaw_mcp._plugin("freezone")
     freezone_plugin._PENDING_SKILL_STUDIO_DRAFTS.clear()
     bridge_counter = iter(range(20))
     monkeypatch.setattr(
@@ -603,7 +616,7 @@ async def test_real_skill_studio_results_match_mcp_contract(monkeypatch):
         ),
     ]
     for tool_name, arguments in progress_calls:
-        _schema, handler = dramaclaw_mcp.TOOLS[tool_name]
+        _schema, handler = dramaclaw_mcp._agent_tools()[tool_name]
         result = dramaclaw_mcp._structured_tool_result(tool_name, handler(arguments))
         assert (
             result.structuredContent["status"] == "skill_studio_progress_event_emitted"
@@ -614,7 +627,7 @@ async def test_real_skill_studio_results_match_mcp_contract(monkeypatch):
         assert result.structuredContent["skill_studio_status"] == "draft_progress"
         assert result.structuredContent["bridge_key"]
 
-    presented_handler = dramaclaw_mcp.TOOLS["freezone_present_agent_catalog_draft"][1]
+    presented_handler = dramaclaw_mcp._agent_tools()["freezone_present_agent_catalog_draft"][1]
     presented = dramaclaw_mcp._structured_tool_result(
         "freezone_present_agent_catalog_draft",
         presented_handler({**base, "skill": {"id": "video-skill"}, "recipes": []}),
@@ -625,7 +638,7 @@ async def test_real_skill_studio_results_match_mcp_contract(monkeypatch):
         == "skill_studio_generation_admission_required"
     )
 
-    finished_handler = dramaclaw_mcp.TOOLS["freezone_finish_agent_catalog_draft"][1]
+    finished_handler = dramaclaw_mcp._agent_tools()["freezone_finish_agent_catalog_draft"][1]
     monkeypatch.setattr(
         freezone_plugin, "wait_skill_studio_result", lambda *_args, **_kwargs: None
     )
@@ -649,7 +662,7 @@ async def test_real_delete_nodes_empty_canvas_noop_matches_mcp_contract(monkeypa
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
-    freezone_plugin = dramaclaw_mcp.PLUGINS[1]
+    freezone_plugin = dramaclaw_mcp._plugin("freezone")
     monkeypatch.setattr(
         freezone_plugin,
         "_request",
@@ -662,7 +675,7 @@ async def test_real_delete_nodes_empty_canvas_noop_matches_mcp_contract(monkeypa
     assert result.structuredContent["canvas_apply_status"] == "already_empty"
     assert result.structuredContent["deleted_node_count"] == 0
     assert result.structuredContent["applied"] is True
-    schema = dramaclaw_mcp.TOOLS["freezone_delete_nodes"][0]["output_schema"]
+    schema = dramaclaw_mcp._agent_tools()["freezone_delete_nodes"][0]["output_schema"]
     Draft202012Validator(schema).validate(result.structuredContent)
 
 
@@ -692,7 +705,9 @@ async def test_freezone_lists_concrete_hermes_tools(monkeypatch):
     tools_by_name = {tool.name: tool for tool in tools}
     assert (
         tools_by_name["freezone_prepare_workflow_plan_draft"].outputSchema
-        == dramaclaw_mcp._WORKFLOW_DRAFT_OUTPUT_SCHEMA
+        == dramaclaw_mcp._agent_tools()["freezone_prepare_workflow_plan_draft"][0][
+            "output_schema"
+        ]
     )
 
 
@@ -815,28 +830,29 @@ async def test_read_resource_rejects_existing_file_from_another_workspace(
 
 def test_home_scope_only_exposes_project_collection_tools(monkeypatch):
     monkeypatch.delenv("DRAMACLAW_PROJECT_ID", raising=False)
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "default")
 
-    assert set(dramaclaw_mcp._available_tools()) == dramaclaw_mcp.HOME_TOOL_NAMES
+    assert set(dramaclaw_mcp._agent_tools()) == dramaclaw_mcp.HOME_TOOL_NAMES
 
 
-def test_project_scope_exposes_production_tools(monkeypatch):
+def test_mainline_scope_loads_only_core_plugin_tools(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.delenv("DRAMACLAW_TOOL_MODE", raising=False)
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "default")
 
-    available = dramaclaw_mcp._available_tools()
+    available = dramaclaw_mcp._agent_tools()
 
-    assert set(available) == set(dramaclaw_mcp.TOOLS)
+    assert set(available) == set(dramaclaw_mcp._plugin_tools("dramaclaw"))
+    assert not any(name.startswith("freezone_") for name in available)
 
 
-def test_freezone_scope_hides_mainline_write_tools(monkeypatch):
+def test_freezone_scope_loads_only_canvas_plugin_tools(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
 
-    available = dramaclaw_mcp._available_tools()
-    denied = dramaclaw_mcp.PLUGIN.FREEZONE_DENIED_MAINLINE_WRITE_TOOLS
+    available = dramaclaw_mcp._agent_tools()
 
-    assert set(available).isdisjoint(denied)
-    assert "dramaclaw_save_freezone_canvas" not in available
+    assert set(available) == set(dramaclaw_mcp._plugin_tools("freezone"))
+    assert not any(name.startswith("dramaclaw_") for name in available)
     assert "freezone_emit_canvas_command" in available
 
 
@@ -867,10 +883,12 @@ async def test_legacy_bridge_wrappers_are_unavailable(monkeypatch, wrapper_name)
 @pytest.mark.asyncio
 async def test_tool_call_validates_and_dispatches_existing_handler(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    schema, _handler = dramaclaw_mcp.TOOLS["dramaclaw_render_first_frames"]
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "default")
+    tools = dramaclaw_mcp._agent_tools()
+    schema, _handler = tools["dramaclaw_render_first_frames"]
     calls = []
     monkeypatch.setitem(
-        dramaclaw_mcp.TOOLS,
+        tools,
         "dramaclaw_render_first_frames",
         (
             schema,
@@ -903,7 +921,9 @@ async def test_tool_call_validates_and_dispatches_existing_handler(monkeypatch):
 @pytest.mark.asyncio
 async def test_native_tool_call_does_not_block_mcp_event_loop(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    schema, _handler = dramaclaw_mcp.TOOLS["dramaclaw_render_first_frames"]
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "default")
+    tools = dramaclaw_mcp._agent_tools()
+    schema, _handler = tools["dramaclaw_render_first_frames"]
 
     def blocking_handler(_arguments):
         time.sleep(0.2)
@@ -918,7 +938,7 @@ async def test_native_tool_call_does_not_block_mcp_event_loop(monkeypatch):
         )
 
     monkeypatch.setitem(
-        dramaclaw_mcp.TOOLS,
+        tools,
         "dramaclaw_render_first_frames",
         (schema, blocking_handler),
     )

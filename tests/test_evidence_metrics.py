@@ -6,6 +6,8 @@ the same thing: fewer attested captures than expected, with nothing to say why.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from novelvideo.chat import evidence_metrics
@@ -67,3 +69,33 @@ def test_the_report_names_no_secret():
     report = evidence_metrics.format_report()
     assert "sk-" not in report and "Bearer" not in report
     assert "HALT" in report, "a halting outcome must be called out, not merely listed"
+
+
+def test_agent_product_rollout_counters_include_zero_defaults():
+    assert evidence_metrics.agent_product_counts() == {
+        "agent_product_awaiting_reconciliation": 0,
+        "agent_product_binding_failed": 0,
+        "agent_product_evidence_rejected": 0,
+        "agent_product_reconciled": 0,
+    }
+
+    evidence_metrics.observe("agent_product_evidence_rejected")
+    evidence_metrics.observe("agent_product_awaiting_reconciliation")
+
+    assert evidence_metrics.agent_product_counts() == {
+        "agent_product_awaiting_reconciliation": 1,
+        "agent_product_binding_failed": 0,
+        "agent_product_evidence_rejected": 1,
+        "agent_product_reconciled": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_exposes_agent_product_counters():
+    from novelvideo.api.routes.diagnostics import get_evidence_counters
+
+    evidence_metrics.observe("agent_product_binding_failed")
+    response = await get_evidence_counters()
+    payload = json.loads(response.body)
+
+    assert payload["data"]["agent_products"]["agent_product_binding_failed"] == 1

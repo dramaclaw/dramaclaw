@@ -81,14 +81,38 @@ def _tool_index(*plugins: Any) -> dict[str, tuple[dict[str, Any], Any]]:
     return index
 
 
-# Hermes registers both the core DramaClaw tools and the Freezone canvas
-# tools. Loading only the core plugin here bypasses the browser bridge, so
-# Codex can mutate canvas state without producing the Hermes approval card.
-PLUGINS = (_load_plugin("dramaclaw"), _load_plugin("freezone"))
-# Backwards-compatible alias for callers/tests that inspect the core plugin.
-PLUGIN = PLUGINS[0]
-TOOLS = _tool_index(*PLUGINS)
+_PLUGIN_CACHE: dict[str, Any] = {}
+_PLUGIN_TOOL_CACHE: dict[str, dict[str, tuple[dict[str, Any], Any]]] = {}
 SERVER = Server("dramaclaw", version="0.1.0")
+
+
+def _plugin(plugin_name: str) -> Any:
+    plugin = _PLUGIN_CACHE.get(plugin_name)
+    if plugin is None:
+        plugin = _load_plugin(plugin_name)
+        _PLUGIN_CACHE[plugin_name] = plugin
+    return plugin
+
+
+def _agent_plugin_name() -> str:
+    """Choose one capability boundary for this agent process."""
+    return "freezone" if _freezone_canvas_mode() else "dramaclaw"
+
+
+def _plugin_tools(plugin_name: str) -> dict[str, tuple[dict[str, Any], Any]]:
+    tools = _PLUGIN_TOOL_CACHE.get(plugin_name)
+    if tools is None:
+        tools = _tool_index(_plugin(plugin_name))
+        _PLUGIN_TOOL_CACHE[plugin_name] = tools
+    return tools
+
+
+def _agent_tools() -> dict[str, tuple[dict[str, Any], Any]]:
+    """Load only the plugin belonging to the active agent profile."""
+    tools = _plugin_tools(_agent_plugin_name())
+    if _scope_kind() == "home":
+        return {name: tools[name] for name in sorted(HOME_TOOL_NAMES) if name in tools}
+    return tools
 
 
 def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
@@ -136,7 +160,7 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
 
 def _output_schema_for_tool(name: str) -> dict[str, Any]:
     """Read the explicit contract declared next to the plugin tool definition."""
-    schema_entry = TOOLS.get(name)
+    schema_entry = _agent_tools().get(name)
     if schema_entry is None:
         raise ValueError(f"unknown DramaClaw tool: {name}")
     schema, _handler = schema_entry
@@ -145,10 +169,6 @@ def _output_schema_for_tool(name: str) -> dict[str, Any]:
         raise RuntimeError(f"missing output schema for {name}")
     return output_schema
 
-
-_WORKFLOW_DRAFT_OUTPUT_SCHEMA = _output_schema_for_tool(
-    "freezone_prepare_workflow_plan_draft"
-)
 
 # Home turns have no bound project and should only manage the project
 # collection. Project-scoped tokens remain the authority for every underlying
@@ -181,20 +201,6 @@ def _freezone_canvas_mode() -> bool:
         )
         or os.environ.get("DRAMACLAW_CHAT_SURFACE", "").strip() == "freezone"
     )
-
-
-def _available_tools() -> dict[str, tuple[dict[str, Any], Any]]:
-    if _scope_kind() == "home":
-        return {name: TOOLS[name] for name in sorted(HOME_TOOL_NAMES) if name in TOOLS}
-    if _freezone_canvas_mode():
-        denied = frozenset().union(
-            *(
-                getattr(plugin, "FREEZONE_DENIED_MAINLINE_WRITE_TOOLS", ())
-                for plugin in PLUGINS
-            )
-        )
-        return {name: item for name, item in TOOLS.items() if name not in denied}
-    return dict(TOOLS)
 
 
 def _normalize_structured_result(
@@ -358,7 +364,7 @@ async def list_tools() -> list[types.Tool]:
     # Native Responses Tool Search progressively loads these scope-filtered
     # concrete tools and preserves their input/output schemas end to end.
     result: list[types.Tool] = []
-    for name, (schema, _handler) in sorted(_available_tools().items()):
+    for name, (schema, _handler) in sorted(_agent_tools().items()):
         parameters = schema.get("parameters") if isinstance(schema, dict) else None
         result.append(
             types.Tool(
@@ -510,8 +516,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         name,
         sorted(str(key) for key in arguments),
     )
-    if name in _available_tools():
-        schema, handler = _available_tools()[name]
+    agent_tools = _agent_tools()
+    if name in agent_tools:
+        schema, handler = agent_tools[name]
         workflow_started = (
             time.monotonic() if name == "freezone_prepare_workflow_plan_draft" else None
         )

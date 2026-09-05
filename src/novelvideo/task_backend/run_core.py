@@ -49,6 +49,7 @@ from novelvideo.task_backend.registry import (
 from novelvideo.task_backend.projection import PROJECTION_REQUIREMENTS, read_projection
 from novelvideo.task_backend.subprocesses import project_task_subprocess_context
 from novelvideo.task_state import project_task_run_context
+from novelvideo.utils.document_parsers import count_billable_text_chars
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +227,39 @@ def _clean_billing_metadata(value: Any) -> dict[str, Any]:
         else:
             cleaned[clean_key] = item
     return cleaned
+
+
+def _trusted_result_billing_metadata(
+    task_type: str,
+    result: Any,
+) -> dict[str, Any]:
+    """Derive output-priced quantities only from a trusted runner result.
+
+    The signed enqueue payload is intentionally not consulted here: for text
+    generation it contains the user's instruction, while the billable product
+    is the text that was actually delivered by the runner.
+    """
+    if task_type != "freezone_text_generate" or not isinstance(result, dict):
+        return {}
+    generated_text = result.get("generated_text")
+    if not isinstance(generated_text, str):
+        return {}
+    billable_chars = count_billable_text_chars(generated_text)
+    if billable_chars <= 0:
+        return {}
+    return {
+        "actual_billing": {
+            "operation": "text_generate",
+            "billable_chars": billable_chars,
+            "pricing_quantity": billable_chars,
+            "pricing_metrics": {
+                "call_count": 1,
+                "item_count": 1,
+                "billable_chars": billable_chars,
+            },
+            "quantity_source": "trusted_runner_result",
+        }
+    }
 
 
 def _without_settlement_handles(metadata: Mapping[str, Any]) -> dict[str, Any]:
@@ -949,12 +983,29 @@ def run_project_task_core_sync(
                 # 5 个 runner 在自己函数体内另有绑定，嵌套安全（set/reset 成对）。
                 with model_gateway_scope_for_runner(envelope):
                     result = runner(envelope, ctx)
+                if task_type == "freezone_text_generate" and isinstance(result, dict):
+                    result = dict(result)
+                    result_reservation_id = str(
+                        result.pop("__feature_credit_reservation_id", "") or ""
+                    ).strip()
+                    if result_reservation_id:
+                        if (
+                            feature_reservation_id
+                            and feature_reservation_id != result_reservation_id
+                        ):
+                            raise RuntimeError(
+                                "text result produced a conflicting credit reservation"
+                            )
+                        feature_reservation_id = result_reservation_id
             except BaseException as exc:
                 from novelvideo.freezone.agent_product_operations import (
                     AgentProductSettlementPending,
                 )
 
                 if isinstance(exc, AgentProductSettlementPending):
+                    from novelvideo.chat import evidence_metrics
+
+                    evidence_metrics.observe("agent_product_awaiting_reconciliation")
                     if feature_reservation_id:
                         try:
                             asyncio.run(
@@ -1136,6 +1187,7 @@ def run_project_task_core_sync(
                     metadata={
                         "source": "task_completed",
                         "business_outcome": "delivered",
+                        **_trusted_result_billing_metadata(task_type, result),
                     },
                 )
             )

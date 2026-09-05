@@ -10,17 +10,18 @@ const nodeSource = readFileSync(
 const apiSource = readFileSync("src/api/ops.ts", "utf8");
 
 describe("canvas AI text generation contract", () => {
-  it("quotes and submits the same character-priced feature", () => {
+  it("keeps the prompt quote explicitly estimated while submitting text generation", () => {
     expect(nodeSource).toContain(
       "const TEXT_GENERATE_FEATURE_KEY = 'freezone.text_generate'",
     );
     expect(nodeSource).toContain("operation: 'text_generate'");
     expect(nodeSource).toContain(
-      "billable_chars: textGenerateBillableChars",
+      "billable_chars: textGenerateEstimatedChars",
     );
     expect(nodeSource).toContain(
-      "pricing_quantity: textGenerateBillableChars",
+      "pricing_quantity: textGenerateEstimatedChars",
     );
+    expect(nodeSource).toContain("trusted generated_text length");
     expect(nodeSource).toContain("submitFreezoneTextGenerate(projectId");
     expect(nodeSource).toContain("prompt,");
   });

@@ -117,6 +117,7 @@ assets/pipeline.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate
 ce-allowlist.toml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 deploy/codex/0.149.0-redact-turn-metadata.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 deploy/codex/dramaclaw-model-catalog.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+deploy/codex/dramaclaw-model-catalog-chat-compat.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 deploy/patch_hermes_acp_toolsets.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 deploy/sandbox/linux-amd64/codex-linux-sandbox,Apache-2.0,2026 OpenAI,built from openai/codex codex-rs/linux-sandbox commit da4c8ca57d40b074bdc1b5b1218851100150c56b
 deploy/sandbox/linux-arm64/codex-linux-sandbox,Apache-2.0,2026 OpenAI,built from openai/codex codex-rs/linux-sandbox commit da4c8ca57d40b074bdc1b5b1218851100150c56b
@@ -151,6 +152,7 @@ docs/en/guides/troubleshooting.md,Elastic-2.0,2026 SuperTale contributors,REUSE.
 docs/en/license.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/en/reference/environment-variables.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/releasing.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/reviews/issue-480-acceptance-matrix.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/superpowers/plans/2026-08-21-ee-config-ce-provisioner-isolation.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/superpowers/plans/2026-09-02-project-name-length-limit.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/superpowers/specs/2026-08-21-ee-config-ce-provisioner-isolation-design.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
