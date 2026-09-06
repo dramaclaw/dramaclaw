@@ -166,6 +166,7 @@ DramaClaw 使用稳定的内部逻辑模型名，例如 `DC-character-builder-LL
 - 视觉理解功能会发送图片或视频，必须选择支持相应输入的多模态模型。
 - 批量填充只修改页面草稿，仍需点击保存映射。
 - Hermes 可以使用独立模型；其他 `DC-*-LLM` 可以按需要统一映射或单独覆盖。
+- 升级后如果新增了功能行（例如 v2.0.3 新增的 `DC-character-builder-LLM`），新行默认为空，不会写入 NewAPI；需要选好模型后点「保存映射」，或重新应用一次快捷配置。在此之前该功能会报 `No available channel for model DC-...`。
 
 #### Embedding
 
