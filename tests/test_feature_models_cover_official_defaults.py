@@ -28,7 +28,11 @@ def _backend_llm_aliases() -> set[str]:
         value = getattr(official_defaults, name)
         if isinstance(value, dict):
             for key, model in value.items():
-                if str(key).endswith("_MODEL") and str(model).startswith("DC-") and str(model).endswith("-LLM"):
+                if (
+                    str(key).endswith("_MODEL")
+                    and str(model).startswith("DC-")
+                    and str(model).endswith("-LLM")
+                ):
                     aliases.add(str(model))
     return aliases
 

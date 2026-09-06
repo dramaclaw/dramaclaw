@@ -166,6 +166,7 @@ DramaClaw uses stable logical names such as `DC-character-builder-LLM`, `DC-scen
 - Vision features send images or video and require a suitable multimodal model.
 - Bulk fill changes drafts only; click Save Mapping afterward.
 - Hermes may use a separate model. Other `DC-*-LLM` mappings can share one upstream model or be overridden individually.
+- After an upgrade that adds a feature row (for example `DC-character-builder-LLM` in v2.0.3), the new row starts empty and is not written to NewAPI until you pick a model and click Save Mapping, or re-apply a quick profile. Until then that feature fails with `No available channel for model DC-...`.
 
 #### Embedding
 
