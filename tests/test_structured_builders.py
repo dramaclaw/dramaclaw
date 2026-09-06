@@ -2734,3 +2734,120 @@ async def test_a_resumed_build_keeps_the_narrator_the_first_attempt_nominated(
 
     assert set(second) == {"郑家悦", "林某"}
     assert [n for n, a in second.items() if a.is_main] == ["郑家悦"]
+
+
+# ── structured output failures: diagnostics and prompted fallback ──────────
+
+
+class ExplodingAgent:
+    """Raises PydanticAI's output-retry error, optionally with a cause."""
+
+    def __init__(self, cause: BaseException | None = None):
+        self.cause = cause
+        self.calls = 0
+
+    async def run(self, prompt: str):
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        self.calls += 1
+        exc = UnexpectedModelBehavior("Exceeded maximum output retries (2)")
+        if self.cause is not None:
+            raise exc from self.cause
+        raise exc
+
+
+async def test_tool_output_failure_falls_back_to_prompted_agent(monkeypatch):
+    """A relay that mangles tool calls must not cost the chunk; prompted JSON is tried next."""
+    monkeypatch.setenv("STRUCTURED_OUTPUT_MODE", "auto")
+    chunk = _chunk("林默走进屋子。")
+    primary = ExplodingAgent()
+    fallback = FakeAgent(
+        {"第一章": ChunkCharacterOutput(characters=[_candidate("林默", quotes=["林默走进屋子。"])])}
+    )
+    logs: list[str] = []
+
+    merged, failures = await extract_characters_from_chunks(
+        [chunk],
+        agent=primary,
+        fallback_agent=fallback,
+        source_text=chunk.text,
+        on_log=logs.append,
+        adjudicate=False,
+    )
+
+    assert [item.name for item in merged] == ["林默"]
+    assert failures == []
+    assert primary.calls == 1 and fallback.seen == ["第一章"]
+    assert any("prompted" in line for line in logs)
+
+
+async def test_failure_log_names_the_underlying_cause(monkeypatch):
+    """'Exceeded maximum output retries' alone is useless; the cause must be logged."""
+    monkeypatch.setenv("STRUCTURED_OUTPUT_MODE", "tool")
+    chunk = _chunk("林默走进屋子。")
+    primary = ExplodingAgent(cause=ValueError("characters.0.evidence: Field required"))
+    logs: list[str] = []
+
+    merged, failures = await extract_characters_from_chunks(
+        [chunk], agent=primary, source_text=chunk.text, on_log=logs.append, adjudicate=False
+    )
+
+    assert merged == [] and len(failures) == 1
+    assert any("characters.0.evidence: Field required" in line for line in logs)
+    assert any("Exceeded maximum output retries" in line for line in logs)
+
+
+async def test_tool_mode_never_falls_back(monkeypatch):
+    monkeypatch.setenv("STRUCTURED_OUTPUT_MODE", "tool")
+    chunk = _chunk("林默走进屋子。")
+    fallback = FakeAgent({"第一章": ChunkCharacterOutput()})
+
+    _, failures = await extract_characters_from_chunks(
+        [chunk], agent=ExplodingAgent(), fallback_agent=fallback, adjudicate=False
+    )
+
+    assert len(failures) == 1 and fallback.seen == []
+
+
+def test_describe_output_failure_includes_retry_prompts():
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.messages import ModelRequest, RetryPromptPart
+
+    from novelvideo.structured_extraction import describe_output_failure
+
+    messages = [
+        ModelRequest(parts=[RetryPromptPart(content="Please call the final_result tool")]),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    content=[
+                        {
+                            "type": "missing",
+                            "loc": ("characters", 0, "evidence"),
+                            "msg": "Field required",
+                            "input": {},
+                        }
+                    ]
+                )
+            ]
+        ),
+    ]
+    exc = UnexpectedModelBehavior("Exceeded maximum output retries (2)")
+
+    text = describe_output_failure(exc, messages)
+
+    assert "Exceeded maximum output retries (2)" in text
+    assert "final_result" in text
+    assert "Field required" in text
+
+
+def test_structured_output_mode_env(monkeypatch):
+    from novelvideo.structured_extraction import structured_output_mode
+
+    monkeypatch.delenv("STRUCTURED_OUTPUT_MODE", raising=False)
+    assert structured_output_mode() == "auto"
+    monkeypatch.setenv("STRUCTURED_OUTPUT_MODE", "Prompted")
+    assert structured_output_mode() == "prompted"
+    monkeypatch.setenv("STRUCTURED_OUTPUT_MODE", "native")
+    with pytest.raises(ValueError):
+        structured_output_mode()
