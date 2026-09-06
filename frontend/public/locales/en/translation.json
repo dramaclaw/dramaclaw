@@ -6872,6 +6872,7 @@
           "LITERAL_BEAT_META": "Split and annotate shots line by line",
           "EPISODE_SCENE_PLANNER": "Plan episode scenes",
           "EPISODE_PROP_PLANNER": "Plan episode props",
+          "CHARACTER_BUILD": "Extract and adjudicate characters from the source text",
           "SCENE_BUILD": "Analyze and enrich scene descriptions",
           "FREEZONE_TRANSLATION": "Prompt zh/en translation",
           "FREEZONE_TEXT_WRITER": "AI text generation",

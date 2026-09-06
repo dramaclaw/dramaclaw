@@ -6872,6 +6872,7 @@
           "LITERAL_BEAT_META": "逐行拆分镜头与标注",
           "EPISODE_SCENE_PLANNER": "规划本集场景",
           "EPISODE_PROP_PLANNER": "规划本集道具",
+          "CHARACTER_BUILD": "从原文抽取并裁定角色",
           "SCENE_BUILD": "解析并完善场景描述",
           "FREEZONE_TRANSLATION": "文本提示词中英互译",
           "FREEZONE_TEXT_WRITER": "AI 文本生成",
