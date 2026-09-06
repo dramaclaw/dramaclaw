@@ -58,7 +58,10 @@ export const FEATURE_MODEL_GROUPS: readonly FeatureModelGroup[] = [
   },
   {
     key: "sceneLibrary",
-    features: [{ id: "SCENE_BUILD", defaultModel: "DC-scene-builder-LLM" }],
+    features: [
+      { id: "CHARACTER_BUILD", defaultModel: "DC-character-builder-LLM" },
+      { id: "SCENE_BUILD", defaultModel: "DC-scene-builder-LLM" },
+    ],
   },
   {
     key: "freezone",

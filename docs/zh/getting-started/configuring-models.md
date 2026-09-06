@@ -160,7 +160,7 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 
 #### 业务模型
 
-DramaClaw 使用稳定的内部逻辑模型名，例如 `DC-scene-builder-LLM` 和 `DC-freezone-vision-LLM`。自定义模式下，应保留这些内部名称，在 NewAPI 渠道中把它们映射到真实上游模型。
+DramaClaw 使用稳定的内部逻辑模型名，例如 `DC-character-builder-LLM`、`DC-scene-builder-LLM` 和 `DC-freezone-vision-LLM`。自定义模式下，应保留这些内部名称，在 NewAPI 渠道中把它们映射到真实上游模型。
 
 - 文本理解与生成可以选择普通文本模型。
 - 视觉理解功能会发送图片或视频，必须选择支持相应输入的多模态模型。

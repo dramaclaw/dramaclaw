@@ -160,7 +160,7 @@ After a profile is saved, a channel key should show “Saved” and a masked pre
 
 #### Feature models
 
-DramaClaw uses stable logical names such as `DC-scene-builder-LLM` and `DC-freezone-vision-LLM`. In Custom mode, keep those internal names and map them to real upstream models in NewAPI.
+DramaClaw uses stable logical names such as `DC-character-builder-LLM`, `DC-scene-builder-LLM` and `DC-freezone-vision-LLM`. In Custom mode, keep those internal names and map them to real upstream models in NewAPI.
 
 - Text features can use text-only models.
 - Vision features send images or video and require a suitable multimodal model.
