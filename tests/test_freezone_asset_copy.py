@@ -13,9 +13,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from pathlib import Path
 from types import SimpleNamespace
+
+from oss2.utils import Crc64
 
 import pytest
 from fastapi import HTTPException
@@ -55,6 +58,8 @@ def test_parse_project_asset_url_accepts_canonical_same_origin_forms(url, expect
     [
         "https://evil.example/static/projects/proj_a/x.png",
         "//evil.example/static/projects/proj_a/x.png",
+        "http://[",
+        "http://[::1/static/projects/proj_a/x.png",
         "/static/alice/demo/legacy.png",
         "/static/projects/proj_a",
         "/static/projects/proj_a/",
@@ -161,7 +166,8 @@ class _FakeBucket:
     """够用的 oss2.Bucket 替身：CopyObject 后（可选）在挂载点上「显形」目标文件。
 
     `remote` 指定 OSS 上真正存着的字节（默认与挂载点上的源文件一致），`remote_mtime`
-    指定对象的 Last-Modified（默认「现在」，即已写回）。
+    指定对象的 Last-Modified（默认「现在」，即已写回）。`crc` / `etag` 控制 head 里带哪些
+    校验和：默认两者都按远端字节算；`etag="multipart"` 模拟分片上传的 `<md5>-<n>` 形式。
     """
 
     bucket_name = "bkt"
@@ -173,6 +179,8 @@ class _FakeBucket:
         exists: bool = True,
         remote: bytes | None = None,
         remote_mtime: float | None = None,
+        crc: bool = True,
+        etag: bool | str = True,
     ):
         self.copies: list[tuple[str, str, str]] = []
         self.heads: list[str] = []
@@ -180,6 +188,8 @@ class _FakeBucket:
         self.exists = exists
         self.remote = remote
         self.remote_mtime = remote_mtime
+        self.crc = crc
+        self.etag = etag
 
     @staticmethod
     def _local(key: str) -> Path:
@@ -193,9 +203,22 @@ class _FakeBucket:
         self.heads.append(key)
         if not self.exists:
             raise RuntimeError("NoSuchKey")
+        data = self._remote_bytes(key)
+        crc = Crc64()
+        crc.update(data)
+        md5 = hashlib.md5(data, usedforsecurity=False).hexdigest().upper()
+        if self.etag == "multipart":
+            etag = f'"{md5}-3"'
+        elif self.etag:
+            etag = f'"{md5}"'
+        else:
+            etag = None
         return SimpleNamespace(
-            content_length=len(self._remote_bytes(key)),
+            content_length=len(data),
             last_modified=self.remote_mtime if self.remote_mtime is not None else time.time(),
+            etag=etag,
+            _server_crc=int(crc.crc) if self.crc else None,
+            headers={},
         )
 
     def copy_object(self, source_bucket_name, source_key, target_key, headers=None, params=None):
@@ -253,19 +276,54 @@ def test_copy_project_file_falls_back_when_the_source_is_not_in_oss_yet(tmp_path
     assert target.read_bytes() == b"png-bytes"
 
 
+@pytest.mark.parametrize("mtime_offset", [-600, -1, 0, +5])
 def test_copy_project_file_falls_back_when_the_oss_object_is_a_stale_same_size_version(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, mtime_offset
 ):
     """源文件被原地覆盖、ossfs 还没写回：OSS 上是旧版本且大小相同。只看「对象存在 +
-    目标大小对得上」会把旧内容当成功结果永久留在目标项目里，必须回退文件系统拷贝。"""
+    目标大小对得上」会把旧内容当成功结果永久留在目标项目里；Last-Modified 差一两秒
+    甚至比本地更新（时钟偏差）也判不准。判定按内容校验和来，与时间戳无关。"""
     source, target = _two_files(tmp_path, monkeypatch)
     source.write_bytes(b"NEW!")
-    bucket = _FakeBucket(remote=b"OLD!", remote_mtime=source.stat().st_mtime - 600)
+    bucket = _FakeBucket(remote=b"OLD!", remote_mtime=source.stat().st_mtime + mtime_offset)
     monkeypatch.setattr(oss_client, "get_bucket", lambda: bucket)
 
     assert asset_copy.copy_project_file(source, target) == "filesystem"
     assert bucket.copies == []
     assert target.read_bytes() == b"NEW!"
+
+
+def test_copy_project_file_accepts_a_matching_single_part_etag_without_crc(tmp_path, monkeypatch):
+    """没有 CRC 头时退而比 ETag：单次上传的对象 ETag 就是内容 MD5。"""
+    source, target = _two_files(tmp_path, monkeypatch)
+    bucket = _FakeBucket(crc=False)
+    monkeypatch.setattr(oss_client, "get_bucket", lambda: bucket)
+
+    assert asset_copy.copy_project_file(source, target) == "oss"
+    assert len(bucket.copies) == 1
+    assert target.read_bytes() == b"png-bytes"
+
+
+def test_copy_project_file_falls_back_when_only_a_multipart_etag_is_available(
+    tmp_path, monkeypatch
+):
+    """分片上传的 ETag 不是内容 MD5，又没有 CRC → 无法确认版本，回退。"""
+    source, target = _two_files(tmp_path, monkeypatch)
+    bucket = _FakeBucket(crc=False, etag="multipart")
+    monkeypatch.setattr(oss_client, "get_bucket", lambda: bucket)
+
+    assert asset_copy.copy_project_file(source, target) == "filesystem"
+    assert bucket.copies == []
+    assert target.read_bytes() == b"png-bytes"
+
+
+def test_copy_project_file_falls_back_when_the_head_carries_no_checksum(tmp_path, monkeypatch):
+    source, target = _two_files(tmp_path, monkeypatch)
+    bucket = _FakeBucket(crc=False, etag=False)
+    monkeypatch.setattr(oss_client, "get_bucket", lambda: bucket)
+
+    assert asset_copy.copy_project_file(source, target) == "filesystem"
+    assert bucket.copies == []
 
 
 def test_copy_project_file_falls_back_when_the_oss_object_size_differs(tmp_path, monkeypatch):
@@ -458,7 +516,7 @@ async def test_copy_route_isolates_preparation_failures_to_the_single_asset(
 ) -> None:
     """准备阶段（解析 URL、定位源文件、给目标起名）炸了也只算那一条失败。
 
-    之前 `bad%00.png` 在 resolve 时抛 ValueError、234 字节的合法文件名加上时间戳前缀后
+    之前 `http://[` 在 urlsplit 就抛 ValueError、`bad%00.png` 在 resolve 时抛 ValueError、234 字节的合法文件名加上时间戳前缀后
     `exists()` 抛 OSError，都会在任何拷贝开始前终止整批，同批 good.png 也迁不过去。
     """
     monkeypatch.setattr(oss_client, "get_bucket", lambda: None)
@@ -471,16 +529,20 @@ async def test_copy_route_isolates_preparation_failures_to_the_single_asset(
     assert len(long_name) == 234
     long_asset = _source_asset(source_ctx, f"freezone/_uploads/{long_name}", b"long")
     null_byte = f"/static/projects/{source_ctx.project_id}/freezone/_uploads/bad%00.png"
+    malformed = "http://["  # urlsplit 自己会抛 ValueError: Invalid IPv6 URL
 
     result = await freezone_routes.freezone_copy_assets_from_project(
         project="proj_dst",
-        body=FreezoneAssetCopyRequest(sources=[null_byte, long_asset, good]),
+        body=FreezoneAssetCopyRequest(sources=[malformed, null_byte, long_asset, good]),
         user=USER,
     )
 
     data = result["data"]
     assert set(data["mapping"]) == {good, long_asset}
-    assert data["failed"] == [{"source": null_byte, "reason": "invalid_source"}]
+    assert data["failed"] == [
+        {"source": malformed, "reason": "invalid_source"},
+        {"source": null_byte, "reason": "invalid_source"},
+    ]
     uploads = {p.read_bytes(): p.name for p in (target_ctx.output_dir / "freezone" / "_uploads").iterdir()}
     assert set(uploads) == {b"ok", b"long"}
     assert len(uploads[b"long"].encode()) <= 255

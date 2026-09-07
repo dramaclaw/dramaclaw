@@ -58,7 +58,11 @@ def parse_project_asset_url(url: str) -> tuple[str, str] | None:
     raw = (url or "").strip()
     if not raw or "\\" in raw:
         return None
-    parts = urlsplit(raw)
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        # `http://[` 这类畸形 URL：urlsplit 自己就会炸（Invalid IPv6 URL），同样不是本站文件。
+        return None
     # 只接受同源路径：带 scheme/netloc 的（含 data:/blob:/协议相对形式）都不是本站文件。
     if parts.scheme or parts.netloc:
         return None
