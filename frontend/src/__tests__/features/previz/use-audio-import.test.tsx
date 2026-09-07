@@ -260,6 +260,47 @@ describe('useAudioImport local file', () => {
 });
 
 describe('useAudioImport upstream node', () => {
+  /** 让播放头压在一段既有音频里：两条上游路径都该在这儿被挡下来。 */
+  function blockThePlayhead() {
+    usePrevizStore
+      .getState()
+      .addAudioClip(
+        { audioUrl: '/static/x.mp3', sourceName: 'x', durationMs: 4000, sourceNodeId: null },
+        0,
+      );
+  }
+
+  it('toasts instead of silently dropping a clip the store refuses', async () => {
+    blockThePlayhead();
+    const { result } = renderHook(() => useAudioImport('previz-1'));
+    await act(() =>
+      result.current.addUpstream({
+        nodeId: 'audio-1',
+        displayName: '旁白',
+        audioUrl: '/static/vo.mp3',
+        durationMs: 3000,
+      }),
+    );
+    expect(toast.error).toHaveBeenCalledWith('previz.audio.noRoom');
+    expect(usePrevizStore.getState().scene.timeline.audio).toHaveLength(1);
+  });
+
+  it('refuses before probing when there is no room, leaving no placeholder', async () => {
+    blockThePlayhead();
+    const { result } = renderHook(() => useAudioImport('previz-1'));
+    await act(() =>
+      result.current.addUpstream({
+        nodeId: 'audio-1',
+        displayName: '旁白',
+        audioUrl: '/static/vo.mp3',
+        durationMs: null,
+      }),
+    );
+    expect(toast.error).toHaveBeenCalledWith('previz.audio.noRoom');
+    expect(probeAudioDuration).not.toHaveBeenCalled();
+    expect(result.current.pending).toBeNull();
+  });
+
   it('places the clip without probing when the node knows its duration', async () => {
     const { result } = renderHook(() => useAudioImport('previz-1'));
     await act(() =>
