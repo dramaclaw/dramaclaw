@@ -15,7 +15,10 @@ export interface PublishRecordingDeps {
   filename: string;
   /** 视频节点的标题，例如「预演台轨道录制 1(1080p 16:9)」。 */
   displayName: string;
-  /** 成片时长，盖到视频节点上：节点有了这个值就不用再加载一遍元数据去探。 */
+  /**
+   * 成片时长。视频节点加载完元数据会自己再写一遍；这个值是给元数据还没到之前就要读
+   * 节点的地方用的——合成弹窗里兜底的片段长度、参考素材是否就绪的判断。
+   */
   durationMs: number;
   /** 注入而不是直接 import：这样测试不用去 mock 整个 @/api/ops。 */
   uploadVideo: (project: string, file: Blob, filename: string) => Promise<{ url: string }>;

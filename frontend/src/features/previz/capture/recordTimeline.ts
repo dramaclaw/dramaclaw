@@ -159,15 +159,25 @@ export function createCanvasRecorder(
   options: CanvasRecorderOptions,
 ): RecorderLike {
   const stream = canvas.captureStream(options.fps);
-  // 并进来之后这些音轨就归这条流管：stop / error 时 `stream.getTracks()` 会把它们一并
-  // 停掉。这是有意的——调用方的混音流是为这一次录制建的，录完就该收。
+  // 并进来之后这些音轨就归这条流管，下面的 `stopTracks` 会连它们一起停。这是有意的——
+  // 调用方的混音流是为这一次录制建的，录完就该收。
   for (const track of options.audioStream?.getAudioTracks() ?? []) {
     stream.addTrack(track);
   }
-  const recorder = new MediaRecorder(stream, {
-    mimeType: options.mimeType,
-    videoBitsPerSecond: options.videoBitsPerSecond ?? 12_000_000,
-  });
+  const stopTracks = () => {
+    for (const track of stream.getTracks()) track.stop();
+  };
+  let recorder: MediaRecorder;
+  try {
+    recorder = new MediaRecorder(stream, {
+      mimeType: options.mimeType,
+      videoBitsPerSecond: options.videoBitsPerSecond ?? 12_000_000,
+    });
+  } catch (error) {
+    // 音轨已经归这里管了：构造器没起来也得放掉，不然音频采集口会一直开着。
+    stopTracks();
+    throw error;
+  }
   const chunks: Blob[] = [];
   recorder.ondataavailable = (event) => {
     if (event.data.size > 0) chunks.push(event.data);
@@ -183,17 +193,17 @@ export function createCanvasRecorder(
     stop() {
       settled ??= new Promise<Blob>((resolve, reject) => {
         recorder.onstop = () => {
-          for (const track of stream.getTracks()) track.stop();
+          stopTracks();
           resolve(new Blob(chunks, { type: options.mimeType }));
         };
         recorder.onerror = (event) => {
-          for (const track of stream.getTracks()) track.stop();
+          stopTracks();
           reject(event instanceof Error ? event : new Error('previz record: MediaRecorder failed'));
         };
         // 已经停了（编码器自己出错停下的）时再调 stop() 会抛 InvalidStateError，
         // 那时 onstop 也永远不会来，Promise 会挂死——直接按已停处理。
         if (recorder.state === 'inactive') {
-          for (const track of stream.getTracks()) track.stop();
+          stopTracks();
           resolve(new Blob(chunks, { type: options.mimeType }));
           return;
         }

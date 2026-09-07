@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createCanvasRecorder,
@@ -196,26 +196,60 @@ describe("createCanvasRecorder", () => {
     }
   }
 
-  it("adds the audio tracks of the given stream to the canvas stream", async () => {
-    const original = globalThis.MediaRecorder;
-    globalThis.MediaRecorder = FakeMediaRecorder as unknown as typeof MediaRecorder;
-    try {
-      const addTrack = vi.fn();
-      const canvas = {
-        captureStream: () => ({ getTracks: () => [], addTrack }),
-      } as unknown as HTMLCanvasElement;
-      const audioTrack = { kind: "audio", stop: vi.fn() };
-      const audioStream = { getAudioTracks: () => [audioTrack] } as unknown as MediaStream;
-      const recorder = createCanvasRecorder(canvas, {
-        fps: 30,
-        mimeType: "video/webm",
-        audioStream,
-      });
-      expect(addTrack).toHaveBeenCalledWith(audioTrack);
-      recorder.start();
-      await expect(recorder.stop()).resolves.toBeInstanceOf(Blob);
-    } finally {
-      globalThis.MediaRecorder = original;
+  /** 假画布流：记住 addTrack 进来的轨，getTracks 原样吐回去——这样才验得到轨的归属。 */
+  function fakeCanvas() {
+    const tracks: unknown[] = [];
+    const addTrack = vi.fn((track: unknown) => {
+      tracks.push(track);
+    });
+    const canvas = {
+      captureStream: () => ({ getTracks: () => tracks, addTrack }),
+    } as unknown as HTMLCanvasElement;
+    return { canvas, addTrack };
+  }
+
+  function fakeAudio() {
+    const audioTrack = { kind: "audio", stop: vi.fn() };
+    const audioStream = { getAudioTracks: () => [audioTrack] } as unknown as MediaStream;
+    return { audioTrack, audioStream };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("adopts the audio tracks of the given stream and stops them with the recording", async () => {
+    vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
+    const { canvas, addTrack } = fakeCanvas();
+    const { audioTrack, audioStream } = fakeAudio();
+
+    const recorder = createCanvasRecorder(canvas, {
+      fps: 30,
+      mimeType: "video/webm",
+      audioStream,
+    });
+    expect(addTrack).toHaveBeenCalledWith(audioTrack);
+
+    recorder.start();
+    await expect(recorder.stop()).resolves.toBeInstanceOf(Blob);
+    // 混音流是为这一次录制建的：录完连音轨一起停，不然音频采集口一直开着。
+    expect(audioTrack.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the adopted tracks when MediaRecorder cannot be constructed", () => {
+    class ThrowingMediaRecorder {
+      static isTypeSupported = () => true;
+      constructor() {
+        throw new Error("NotSupportedError");
+      }
     }
+    vi.stubGlobal("MediaRecorder", ThrowingMediaRecorder);
+    const { canvas } = fakeCanvas();
+    const { audioTrack, audioStream } = fakeAudio();
+
+    expect(() =>
+      createCanvasRecorder(canvas, { fps: 30, mimeType: "video/webm", audioStream }),
+    ).toThrow();
+    expect(audioTrack.stop).toHaveBeenCalledTimes(1);
   });
 });
