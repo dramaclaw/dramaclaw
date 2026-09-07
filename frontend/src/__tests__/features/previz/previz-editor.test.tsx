@@ -1328,15 +1328,19 @@ describe("PrevizEditor timeline", () => {
   // 每颗按钮角上现在画着一个键帽（PrevizToolbar 里的 shortcut prop）。这条把角标念出
   // 的字母喂回真正的 keydown 处理器，两边才不会静悄悄地对不上——角标改了字母而没人
   // 跟着改这里的键位绑定，或者反过来，都会在这里变红。
+  //
+  // 次序不是随手写的：初始状态就是 select / translate，如果把它们摆在最前面，那一步
+  // 断言在 case "w" / case "g" 被删掉之后依然是「本来就 true」，全程不会变红。每一条
+  // 都得先离开那颗按钮的选中态，再靠对应的键把它按回来，断言才是真的在验证这颗键。
   it("every badged key activates the button it is drawn on", async () => {
     await renderEditor();
 
     const badged = [
+      "previz.toolbar.tool.navigate", // 默认是 select，先按 Q 才看得出 W 有没有生效
       "previz.toolbar.tool.select",
-      "previz.toolbar.tool.navigate",
-      "previz.toolbar.gizmo.translate",
-      "previz.toolbar.gizmo.rotate",
+      "previz.toolbar.gizmo.rotate", // 默认是 translate，同理
       "previz.toolbar.gizmo.scale",
+      "previz.toolbar.gizmo.translate",
     ];
 
     for (const label of badged) {
@@ -1351,5 +1355,38 @@ describe("PrevizEditor timeline", () => {
         "true",
       );
     }
+  });
+
+  // 视口那两颗角标（H、F）不进上面那条循环：它们不是切换态的按钮，「生效」看的是
+  // 对应回调有没有被调用一次，而不是 aria-pressed。键位同样从 aria-keyshortcuts 上
+  // 读出来，不手写字母，理由同上——两边对不上时这里要红。
+  it("badges H and F actually reset the view and focus the selection", async () => {
+    await renderEditor();
+
+    const reset = screen.getByRole("button", { name: "previz.viewport.resetView" });
+    const resetKey = reset.getAttribute("aria-keyshortcuts");
+    expect(resetKey, "reset view should carry a shortcut badge").toBeTruthy();
+    resetView.mockClear();
+
+    fireEvent.keyDown(window, { key: (resetKey as string).toLowerCase() });
+
+    expect(resetView).toHaveBeenCalledTimes(1);
+
+    // 聚焦无从聚起时是禁用的（见前面「focuses the selected object」那条），先选中一个
+    // 对象再按键，跟鼠标点击那条用例走的是同一条路径。
+    act(() => {
+      usePrevizStore.getState().addObject("character");
+    });
+    const selected = usePrevizStore.getState().selectedObjectId;
+    expect(selected).toBeTruthy();
+
+    const focus = screen.getByRole("button", { name: "previz.viewport.focus" });
+    const focusKey = focus.getAttribute("aria-keyshortcuts");
+    expect(focusKey, "focus should carry a shortcut badge").toBeTruthy();
+    focusObject.mockClear();
+
+    fireEvent.keyDown(window, { key: (focusKey as string).toLowerCase() });
+
+    expect(focusObject).toHaveBeenCalledWith(selected);
   });
 });

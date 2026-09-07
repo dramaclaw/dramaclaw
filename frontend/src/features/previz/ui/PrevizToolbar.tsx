@@ -74,8 +74,15 @@ const GIZMO_ICON: Record<PrevizGizmoMode, LucideIcon> = {
 /**
  * 工具与手柄的快捷键，画成按钮角上的小键帽。键位本身在 PrevizEditor 的 keydown 里绑定；
  * 这里只负责把它显示出来——没有角标的话用户根本不知道有快捷键。
+ *
+ * 写成 `Record<PrevizTool, string | undefined>` 而不是 `Partial<...>`：新增第四种工具
+ * 时少写一行会在这里编译期报错，而不是悄悄漏掉一个角标（同 `TOOL_ICON` 那份注释）。
  */
-const TOOL_KEY: Partial<Record<PrevizTool, string>> = { select: "W", navigate: "Q" };
+const TOOL_KEY: Record<PrevizTool, string | undefined> = {
+  select: "W",
+  navigate: "Q",
+  draw: undefined, // 绘制没有键位
+};
 const GIZMO_KEY: Record<PrevizGizmoMode, string> = { translate: "G", rotate: "R", scale: "S" };
 
 function inOrder<T extends string>(icons: Record<T, LucideIcon>): readonly T[] {
@@ -107,8 +114,14 @@ const RAIL_ON = "bg-white/15 text-white hover:bg-white/20";
  * `disabled:pointer-events-auto` 是故意覆盖 buttonVariants 的 `disabled:pointer-events-none`：
  * 禁用的原因只写在提示里，而 pointer-events: none 的元素连 hover 都收不到，用户就只剩
  * 一个没有解释的灰按钮。原生 `disabled` 仍然拦住点击，放开指针事件是安全的。
+ *
+ * `relative` 放进基础类而不是按有没有 `shortcut` 现加：没有绝对定位子元素时它是个空操作，
+ * 加一条条件反而多一处要跟 `shortcut` 保持同步的地方。
  */
-const RAIL_BUTTON = cn(RAIL_ITEM, "disabled:pointer-events-auto disabled:cursor-not-allowed");
+const RAIL_BUTTON = cn(
+  RAIL_ITEM,
+  "relative disabled:pointer-events-auto disabled:cursor-not-allowed",
+);
 
 /** 竖栏上的一颗按钮：图标 + 弹在右侧的悬停提示（见 [PrevizHoverTip]）。 */
 function RailButton({
@@ -136,7 +149,7 @@ function RailButton({
         type="button"
         variant="ghost"
         size="icon"
-        className={cn(RAIL_BUTTON, on && RAIL_ON, shortcut && "relative", className)}
+        className={cn(RAIL_BUTTON, on && RAIL_ON, className)}
         aria-label={label}
         aria-keyshortcuts={shortcut}
         {...props}
@@ -205,7 +218,14 @@ export function PrevizToolbar({
   return (
     <TooltipProvider delay={120}>
       <div className="flex w-14 shrink-0 flex-col items-center border-r border-white/10 bg-black/30 py-3">
-        <div className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto">
+        {/*
+          `self-stretch`：角标探出按钮右上角 4px，而 CSS Overflow 规定 overflow-y 一旦不是
+          visible，overflow-x 会跟着变成 auto——这一层本来靠 `items-center` 收缩到跟按钮一样
+          宽（32px），4px 的探出正好落在这条框的滚动裁切线外面，右边角标被裁掉、整条栏子还
+          多出 4px 的横向可滚动区。撑满父级 56px 宽（`w-14`）之后按钮两侧各留 12px，角标那
+          4px 远远够不到裁切线；子元素照样靠自己的 `items-center` 居中，视觉上不挪位置。
+        */}
+        <div className="flex min-h-0 flex-1 flex-col items-center gap-1 self-stretch overflow-y-auto">
           <RailGroup label={t("previz.toolbar.group.create")}>
             {KINDS.map((kind) => {
               const addLabel = t(`previz.toolbar.add.${kind}`);

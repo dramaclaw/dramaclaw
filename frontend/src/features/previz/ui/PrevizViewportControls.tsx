@@ -66,7 +66,9 @@ const CLUSTER =
   "pointer-events-auto flex items-center gap-0.5 rounded-lg border border-white/10 bg-black/55 p-1 backdrop-blur-sm";
 
 const ITEM = cn(
-  "h-7 w-7 text-white/80 hover:bg-white/10 hover:text-white",
+  // `relative` 放进基础类而不是按有没有 `shortcut` 现加：没有绝对定位子元素时它是个
+  // 空操作，加一条条件反而多一处要跟 `shortcut` 保持同步的地方。
+  "relative h-7 w-7 text-white/80 hover:bg-white/10 hover:text-white",
   // 禁用的原因只写在提示里，而 pointer-events: none 的元素连 hover 都收不到，用户就只
   // 剩一个没有解释的灰按钮。原生 `disabled` 仍然拦住点击，放开指针事件是安全的。
   "disabled:pointer-events-auto disabled:cursor-not-allowed",
@@ -118,7 +120,7 @@ function ControlButton({
         type="button"
         variant="ghost"
         size="icon"
-        className={cn(ITEM, on && ITEM_ON, shortcut && "relative")}
+        className={cn(ITEM, on && ITEM_ON)}
         aria-label={label}
         aria-keyshortcuts={shortcut}
         {...props}
