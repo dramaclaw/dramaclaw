@@ -130,13 +130,19 @@ describe('PrevizProgramTrack', () => {
     const { scene } = sceneWithCameras();
     render(<PrevizProgramTrack {...trackProps(scene)} />);
     const picker = screen.getByRole('combobox', { name: 'previz.program.cutTo' });
-    // 占位项 + 两台机位。场景里那个人物切不了镜，不该出现在这张单子上。
-    const options = within(picker).getAllByRole('option', { hidden: true });
+    /*
+      可选项只有两台机位：人物切不了镜。查询故意不带 hidden——带上的话，把机位也藏起来
+      （一只对真人空空如也的下拉）照样能过。占位项则反过来钉住：它得在，但不可选。
+    */
+    const options = within(picker).queryAllByRole('option');
     expect(options.map((option) => option.textContent)).toEqual([
-      'previz.program.cutTo',
       scene.objects[0]!.name,
       scene.objects[1]!.name,
     ]);
+    // 藏起来的元素算不出可访问名，占位项只能按 DOM 顺序取第一个。
+    const placeholder = within(picker).getAllByRole('option', { hidden: true })[0]!;
+    expect(placeholder).toHaveTextContent('previz.program.cutTo');
+    expect(placeholder).toBeDisabled();
   });
 
   it('ignores a change back to the placeholder', () => {
@@ -147,8 +153,10 @@ describe('PrevizProgramTrack', () => {
       name: 'previz.program.cutTo',
     });
     /*
-      受控的 select 值恒为空，正常操作没法把空值交回 onChange，只能先用 React 改写过的
-      setter 把值顶到机位上（连它的值追踪器一起改），再派发一次回到空值的 change。
+      这条钉的是不变量，不是在复现用户操作：占位项带着 disabled hidden，真人选不回它。
+      守卫防的是将来有人把 disabled hidden 去掉，空值一路走到 onCut('') 上。
+      受控的 select 值恒为空，只能先用 React 改写过的 setter 把值顶到机位上（连它的值
+      追踪器一起改），再派发一次回到空值的 change——改用 userEvent 驱动等于把覆盖删掉。
     */
     picker.value = camB;
     fireEvent.change(picker, { target: { value: '' } });
