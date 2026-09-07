@@ -715,6 +715,13 @@
   cursor: grabbing;
 }
 
+/* 剧情边标签为 1002（高于分组边的 SVG 命中层 1001）。视频操作面板
+   位于节点的 stacking context 内，仅提高面板自身 z-index 无效。
+   只在影游片段的内联操作面板打开时提高节点，普通视频节点保持原有层级。 */
+.react-flow .react-flow__node-videoNode:has([data-story-edit-frame]):has([data-slot='node-operation-panel']) {
+  z-index: 1003 !important;
+}
+
 .react-flow__handle {
   width: 8px;
   height: 8px;

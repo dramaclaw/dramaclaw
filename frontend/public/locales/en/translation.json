@@ -3578,6 +3578,7 @@
         "issuesOnly": "Show scenes with issues only",
         "search": "Search scenes or choices…",
         "referenceVia": "Returns here via: ",
+        "mergeVia": "Merges here via: ",
         "choiceVia": "Choice: ",
         "ending": "Ending",
         "hasIssue": "This scene needs review",

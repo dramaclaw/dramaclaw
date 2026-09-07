@@ -26,7 +26,7 @@ vi.mock('react-i18next', () => ({
 }));
 
 describe('StoryClipNarrativePanel', () => {
-  it('有视频时同时展示剧情、制作备注和视频状态', () => {
+  it('有视频时展示剧情与制作备注，不展示冗余就绪状态', () => {
     render(
       <StoryClipNarrativePanel
         narration="她推开门，看见走廊尽头的灯闪了三次。"
@@ -38,7 +38,7 @@ describe('StoryClipNarrativePanel', () => {
 
     expect(screen.getByDisplayValue('她推开门，看见走廊尽头的灯闪了三次。')).toBeInTheDocument();
     expect(screen.getByDisplayValue('保持雨夜光线连续。')).toBeInTheDocument();
-    expect(screen.getByText('视频已就绪')).toBeInTheDocument();
+    expect(screen.queryByText('视频已就绪')).not.toBeInTheDocument();
   });
 
   it('失焦时分别保存剧情和制作备注，不改动视频字段', () => {
@@ -57,7 +57,7 @@ describe('StoryClipNarrativePanel', () => {
 
     expect(onChange).toHaveBeenNthCalledWith(1, { narration: '新剧情' });
     expect(onChange).toHaveBeenNthCalledWith(2, { storyProductionNotes: '连续性备注' });
-    expect(screen.getByText('待制作视频')).toBeInTheDocument();
+    expect(screen.queryByText('待制作视频')).not.toBeInTheDocument();
   });
 
   it('保留导入故事的期望视频文件名与复核提示', () => {
@@ -71,7 +71,12 @@ describe('StoryClipNarrativePanel', () => {
       />,
     );
 
-    expect(screen.getByText('待填视频:scene-03.mp4')).toBeInTheDocument();
+    expect(screen.getByText('scene-03.mp4')).toBeInTheDocument();
     expect(screen.getByText('需检查')).toHaveAttribute('title', '条件结构需要复核');
+  });
+
+  it.each(['uploading', 'generating', 'failed'] as const)('保留需要关注的 %s 状态', (mediaState) => {
+    render(<StoryClipNarrativePanel mediaState={mediaState} videoHint="clip.mp4" onChange={vi.fn()} />);
+    expect(screen.getByText(`canvas.story.mediaState.${mediaState}`)).toBeInTheDocument();
   });
 });

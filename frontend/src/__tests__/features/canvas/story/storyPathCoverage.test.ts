@@ -6,6 +6,7 @@ import { emptyStoryStats, type StoryStats } from '@/features/canvas/story/storyS
 /** 精简造行工具:只填覆盖度计算用得到的字段。 */
 function row(nodeId: string, over: Partial<StoryTreeRow> = {}): StoryTreeRow {
   return {
+    rowId: `root:${nodeId}`,
     nodeId,
     label: nodeId,
     depth: 0,

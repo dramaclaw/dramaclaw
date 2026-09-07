@@ -68,12 +68,25 @@ describe('canvasStore story actions', () => {
     expect(useCanvasStore.getState().edges).toHaveLength(0);
   });
 
-  it('setStoryStartNode 设起点且全局唯一', () => {
+  it('setStoryStartNode 设起点且同组唯一', () => {
     const store = useCanvasStore.getState();
     store.setStoryStartNode('v1');
     store.setStoryStartNode('v2');
     const nodes = useCanvasStore.getState().nodes;
     expect((nodes.find((n) => n.id === 'v1')?.data as { storyRole?: string }).storyRole).toBeUndefined();
     expect((nodes.find((n) => n.id === 'v2')?.data as { storyRole?: string }).storyRole).toBe('start');
+  });
+
+  it('更改起点不清除其他故事组的起点，无效目标不修改数据', () => {
+    const store = useCanvasStore.getState();
+    useCanvasStore.setState({ nodes: store.nodes.map((node) => ({
+      ...node, parentId: node.id === 'v1' ? 'g1' : 'g2',
+    })) });
+    store.setStoryStartNode('v1');
+    store.setStoryStartNode('v2');
+    expect(useCanvasStore.getState().nodes.filter((node) => node.data.storyRole === 'start')).toHaveLength(2);
+    const previous = useCanvasStore.getState().nodes;
+    store.setStoryStartNode('missing');
+    expect(useCanvasStore.getState().nodes).toBe(previous);
   });
 });

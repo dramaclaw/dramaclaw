@@ -30,12 +30,10 @@ import {
   ChevronDown,
   Download,
   Film,
-  Flag,
   Images,
   Layers,
   Loader2,
   Pause,
-  Pencil,
   Play,
   RotateCcw,
   Share as ShareIcon,
@@ -67,6 +65,7 @@ import {
   type VideoNodeData,
 } from "@/features/canvas/domain/canvasNodes";
 import { isNodeStoryClip } from "@/features/canvas/story/storySelectors";
+import { canOpenStoryFrameEditor } from "@/features/canvas/story/storyFrameInteraction";
 import {
   publishNodeActionAccepted,
   publishNodeActionError,
@@ -588,12 +587,13 @@ export const VideoNode = memo(
     const updateNodeInternals = useUpdateNodeInternals();
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     // 故事片段「播放器形态」:故事组内的视频节点默认收起画布编辑 chrome,
-    // 点「编辑」铅笔进编辑态(storyEditNodeId === id)才恢复成普通画布视频节点。
+    // 点击视频框进入编辑态(storyEditNodeId === id)，恢复普通画布视频节点。
     const isStoryClip = useCanvasStore((state) => isNodeStoryClip(state.nodes, id));
     const storyEditNodeId = useCanvasStore((state) => state.storyEditNodeId);
     const setStoryEditNode = useCanvasStore((state) => state.setStoryEditNode);
     const inStoryEditMode = isStoryClip && storyEditNodeId === id;
     const storyPlayerMode = isStoryClip && !inStoryEditMode;
+    const storyFramePointer = useRef<{ x: number; y: number; dragged: boolean } | null>(null);
     const isBoxSelecting = useIsBoxSelecting();
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const addDerivedUploadNode = useCanvasStore(
@@ -1809,6 +1809,8 @@ export const VideoNode = memo(
      */
     const getDisplayedVideoRect = useCallback(
       (containerW: number, containerH: number) => {
+        // 剧情详情在编辑时仍占据右侧，字幕擦除框按左侧真实视频区换算。
+        if (isStoryClip) containerW *= 1 - STORY_CLIP_DETAILS_WIDTH_PERCENT / 100;
         const vw = data.widthPx ?? 0;
         const vh = data.heightPx ?? 0;
         if (!vw || !vh || containerW <= 0 || containerH <= 0) {
@@ -1825,7 +1827,7 @@ export const VideoNode = memo(
         const w = containerH * videoRatio;
         return { left: (containerW - w) / 2, top: 0, width: w, height: h };
       },
-      [data.heightPx, data.widthPx],
+      [data.heightPx, data.widthPx, isStoryClip],
     );
 
     const handleEraseExit = useCallback(() => {
@@ -2949,14 +2951,6 @@ export const VideoNode = memo(
                 updateNodeData(id, { displayName: nextTitle })
               }
             />
-            {data.storyRole === "start" && (
-              <div
-                className="pointer-events-none absolute -top-7 left-1 z-20 flex items-center gap-1 rounded-md border border-accent/40 bg-accent/20 px-2 py-0.5 text-[11px] font-medium text-accent backdrop-blur-sm"
-                title={t("canvas.story.setStart")}
-              >
-                <Flag className="h-3 w-3" />
-              </div>
-            )}
             {videoSource &&
             hasMetadata &&
             !videoLoadError &&
@@ -2979,8 +2973,8 @@ export const VideoNode = memo(
         />
 
         <NodeResizeHandle
-          minWidth={storyPlayerMode ? STORY_CLIP_MIN_WIDTH : MIN_WIDTH}
-          minHeight={storyPlayerMode ? STORY_CLIP_MIN_HEIGHT : MIN_HEIGHT}
+          minWidth={isStoryClip ? STORY_CLIP_MIN_WIDTH : MIN_WIDTH}
+          minHeight={isStoryClip ? STORY_CLIP_MIN_HEIGHT : MIN_HEIGHT}
           maxWidth={MAX_WIDTH}
           maxHeight={MAX_HEIGHT}
           keepAspectRatio
@@ -3004,11 +2998,39 @@ export const VideoNode = memo(
         )}
 
         <div
-          className={`relative flex h-full w-full items-center justify-center ${videoSource || storyPlayerMode ? "overflow-hidden" : "overflow-visible"} rounded-[var(--node-radius)] border ${bodySurfaceClass} transition-colors ${bodyFrameClass} ${
+          data-story-edit-frame={isStoryClip ? id : undefined}
+          tabIndex={storyPlayerMode ? 0 : undefined}
+          aria-label={storyPlayerMode ? t('canvas.story.editClip') : undefined}
+          onPointerDownCapture={(event) => {
+            storyFramePointer.current = event.button === 0 ? { x: event.clientX, y: event.clientY, dragged: false } : null;
+          }}
+          onPointerMoveCapture={(event) => {
+            const point = storyFramePointer.current;
+            if (point && Math.hypot(event.clientX - point.x, event.clientY - point.y) > 5) point.dragged = true;
+          }}
+          onPointerCancel={() => { storyFramePointer.current = null; }}
+          onClick={(event) => {
+            const point = storyFramePointer.current;
+            storyFramePointer.current = null;
+            if (!storyPlayerMode || isGenerating || isUploading || subtitleEraseMode) return;
+            if (!canOpenStoryFrameEditor(event.target as Element, event.currentTarget, Boolean(point?.dragged))) return;
+            setSelectedNode(id);
+            setStoryEditNode(id);
+          }}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget || !storyPlayerMode || isGenerating || isUploading || subtitleEraseMode) return;
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              event.stopPropagation();
+              setSelectedNode(id);
+              setStoryEditNode(id);
+            }
+          }}
+          className={`relative flex h-full w-full items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${videoSource || storyPlayerMode ? "overflow-hidden" : "overflow-visible"} rounded-[var(--node-radius)] border ${bodySurfaceClass} transition-colors ${bodyFrameClass} ${
             // 画册展开时藏起节点本体——半透明的画册容器盖不严，底下的视频会透出来。
             albumExpanded && hasAlbum ? "invisible" : ""
           }`}
-          style={storyPlayerMode ? { paddingRight: `${STORY_CLIP_DETAILS_WIDTH_PERCENT}%` } : undefined}
+          style={isStoryClip ? { paddingRight: `${STORY_CLIP_DETAILS_WIDTH_PERCENT}%` } : undefined}
         >
           {/* 生成/上传中优先显示 loading：原地重新生成时 videoUrl 仍是上一条结果，
               若不加这层 guard，旧视频会一直占位、isGenerating 分支永远到不了。
@@ -3172,12 +3194,9 @@ export const VideoNode = memo(
                 {t("node.videoUpscale.placeholder")}
               </span>
             </div>
-          ) : storyPlayerMode ? (
+          ) : isStoryClip ? (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-6 text-text-muted/75">
               <Film className="h-8 w-8 opacity-60" />
-              <span className="text-center text-[12px] font-medium leading-5">
-                {t("canvas.story.mediaState.missing")}
-              </span>
             </div>
           ) : data.narration || data.videoHint ? (
             // 导入互动影游的占位片段：无视频时展示旁白 + 期望文件名 + 待补提示。
@@ -3293,53 +3312,9 @@ export const VideoNode = memo(
                 videoEl={videoEl}
                 isCapturingFrame={isCapturingFrame}
                 onCapture={handleCaptureFrame}
-                rightInsetPercent={storyPlayerMode ? STORY_CLIP_DETAILS_WIDTH_PERCENT : 0}
+                rightInsetPercent={isStoryClip ? STORY_CLIP_DETAILS_WIDTH_PERCENT : 0}
               />
             )}
-
-          {/* 故事片段播放器形态：左上角 hover 操作簇 —— 编辑(进/退编辑态) + 设为起点。
-              换视频沿用右上角既有圆钮(videoSource 时显示)；空占位则靠「编辑」进编辑态生成。 */}
-          {isStoryClip && !isGenerating && !isUploading && !subtitleEraseMode && (
-            <div className="absolute left-2 top-2 z-10 hidden items-center gap-1 group-hover:flex">
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (inStoryEditMode) {
-                    setStoryEditNode(null);
-                  } else {
-                    setSelectedNode(id);
-                    setStoryEditNode(id);
-                  }
-                }}
-                onPointerDown={(event) => event.stopPropagation()}
-                title={t(inStoryEditMode ? "canvas.story.editClipDone" : "canvas.story.editClip")}
-                className={`nodrag flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 shadow-lg backdrop-blur-sm transition-colors ${
-                  inStoryEditMode
-                    ? "bg-accent/80 text-white hover:bg-accent"
-                    : "bg-black/55 text-white/90 hover:bg-black/80 hover:text-white"
-                }`}
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </button>
-              {storyPlayerMode && (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    useCanvasStore.getState().setStoryStartNode(id);
-                  }}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  title={t("canvas.story.setStart")}
-                  className={`nodrag flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-black/55 shadow-lg backdrop-blur-sm transition-colors hover:bg-black/80 ${
-                    data.storyRole === "start" ? "text-accent" : "text-white/90 hover:text-white"
-                  }`}
-                >
-                  <Flag className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          )}
 
           {/* 替换视频：hover 节点出现的右上角圆钮，点击走文件选择器替换当前节点视频。
               与画册徽标共处右上角，hasAlbum 时左移让位给数量徽标。 */}
@@ -3354,7 +3329,7 @@ export const VideoNode = memo(
               title={t("node.videoNode.replace")}
               className="nodrag absolute top-2 z-10 hidden h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-black/55 text-white/90 shadow-lg backdrop-blur-sm transition-colors hover:bg-black/80 hover:text-white group-hover:inline-flex"
               style={{
-                right: storyPlayerMode
+                right: isStoryClip
                   ? hasAlbum
                     ? `calc(${STORY_CLIP_DETAILS_WIDTH_PERCENT}% + 48px)`
                     : `calc(${STORY_CLIP_DETAILS_WIDTH_PERCENT}% + 8px)`
@@ -3379,7 +3354,7 @@ export const VideoNode = memo(
               title={`展开 ${albumTotalSlots} 条生成结果`}
               className="nodrag group/albumpill absolute top-2 z-10 hidden items-center gap-1 rounded-full bg-black/65 px-2.5 py-1 text-[12px] font-medium tabular-nums text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black/85 group-hover:inline-flex"
               style={{
-                right: storyPlayerMode
+                right: isStoryClip
                   ? `calc(${STORY_CLIP_DETAILS_WIDTH_PERCENT}% + 8px)`
                   : 8,
               }}
@@ -3417,7 +3392,7 @@ export const VideoNode = memo(
             />
           )}
 
-          {storyPlayerMode ? (
+          {isStoryClip ? (
             <StoryClipNarrativePanel
               narration={typeof data.narration === 'string' ? data.narration : ''}
               productionNotes={

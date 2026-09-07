@@ -125,6 +125,7 @@ import {
 import { nodeTypes as canvasNodeTypes } from './nodes';
 import { edgeTypes as canvasEdgeTypes } from './edges';
 import { NodeSelectionMenu } from './NodeSelectionMenu';
+import { isNodeStoryClip } from './story/storySelectors';
 import { SelectedNodeOverlay } from './ui/SelectedNodeOverlay';
 import { LightEditorCanvasOverlay } from './ui/LightEditorCanvasOverlay';
 import { MultiSelectionToolbar } from './ui/MultiSelectionToolbar';
@@ -896,6 +897,7 @@ export function Canvas({
     canUndo: boolean;
     canRedo: boolean;
     canPaste: boolean;
+    storyNodeId?: string;
   } | null>(null);
   const [previewConnectionVisual, setPreviewConnectionVisual] =
     useState<PreviewConnectionVisual | null>(null);
@@ -4960,10 +4962,12 @@ export function Canvas({
 
   return (
     <CreditDisplayHiddenProvider value={isCeRuntime()}>
+    <div className="flex h-full min-h-0 w-full flex-col">
+      {!taskPanelOpen && !suspended && <StoryGroupToolbar />}
     <div
       ref={wrapperRef}
       data-canvas-tool={handToolActive ? 'hand' : 'move'}
-      className="dc-canvas relative h-full w-full bg-background"
+      className="dc-canvas relative min-h-0 w-full flex-1 bg-background"
       onDragEnter={handleCanvasDragEnter}
       onDragOver={handleCanvasDragOver}
       onDragLeave={handleCanvasDragLeave}
@@ -4984,6 +4988,22 @@ export function Canvas({
         onNodeMouseEnter={handleNodeMouseEnter}
         onNodeMouseLeave={handleNodeMouseLeave}
         onNodeClick={handleNodeClick}
+        onNodeContextMenu={(event, node) => {
+          const state = useCanvasStore.getState();
+          if (!isNodeStoryClip(state.nodes, node.id)) return;
+          if ((event.target as Element).closest('input, textarea, [contenteditable="true"]')) return;
+          event.preventDefault();
+          const rect = wrapperRef.current?.getBoundingClientRect();
+          if (!rect) return;
+          setContextMenu({
+            x: event.clientX - rect.left, y: event.clientY - rect.top,
+            clientX: event.clientX, clientY: event.clientY,
+            canUndo: state.history.past.length > 0,
+            canRedo: state.history.future.length > 0,
+            canPaste: (copiedSnapshotRef.current?.nodes.length ?? 0) > 0,
+            storyNodeId: node.id,
+          });
+        }}
         onNodeDragStart={handleNodeDragStart}
         onNodeDrag={handleNodeDrag}
         onNodeDragStop={handleNodeDragStop}
@@ -5131,6 +5151,17 @@ export function Canvas({
           position={{ x: contextMenu.x, y: contextMenu.y }}
           onClose={() => setContextMenu(null)}
           sections={[
+            ...(contextMenu.storyNodeId ? [[{
+              key: 'story-start',
+              label: t('canvas.story.setStart'),
+              disabled: nodes.find((node) => node.id === contextMenu.storyNodeId)?.data.storyRole === 'start',
+              onSelect: () => {
+                const state = useCanvasStore.getState();
+                if (!contextMenu.storyNodeId || !isNodeStoryClip(state.nodes, contextMenu.storyNodeId)) return;
+                state.setStoryStartNode(contextMenu.storyNodeId);
+                scheduleCanvasPersist(0);
+              },
+            }]] : []),
             [
               {
                 key: 'upload',
@@ -5226,9 +5257,6 @@ export function Canvas({
       {/* 快捷操作条 z-[41] 高于故事板 overlay(z-30)，挂起时必须隐藏；
           右侧 z-30 的缩放/小地图/FPS 控件与故事板同级、按 DOM 顺序被盖住，无需处理。 */}
       {!taskPanelOpen && !suspended && (
-        <StoryGroupToolbar />
-      )}
-      {!taskPanelOpen && !suspended && (
         <CanvasQuickActionBar
           placement={controlsPlacement}
           skillItems={skillRegistry}
@@ -5299,6 +5327,7 @@ export function Canvas({
         title={videoViewer.title}
         onClose={closeVideoViewer}
       />
+    </div>
     </div>
     </CreditDisplayHiddenProvider>
   );

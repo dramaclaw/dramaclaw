@@ -31,6 +31,20 @@ function cedge(
 }
 
 describe('buildStoryTree', () => {
+  it('同目标同文案入口使用独立稳定标识，循环返回区别于汇合', () => {
+    const nodes = [vnode('a', { start: true }), vnode('b')];
+    const edges = [
+      { ...cedge('a', 'b', '相同选择', 0), id: 'first' },
+      { ...cedge('a', 'b', '相同选择', 1), id: 'second' },
+      cedge('b', 'a', '返回', 0),
+    ];
+    const root = buildStoryTree(nodes, edges, []).root!;
+    expect(root.children.map((r) => r.rowId)).toEqual(['edge:first', 'edge:second']);
+    expect(root.children[0].children[0].referenceKind).toBe('return');
+    expect(root.children[1].referenceKind).toBe('merge');
+    edges[0].data = { choiceText: '改名', order: 0 };
+    expect(buildStoryTree(nodes, edges, []).root!.children[0].rowId).toBe('edge:first');
+  });
   it('线性故事 → 逐层嵌套,depth 递增', () => {
     const members = [vnode('a', { start: true }), vnode('b'), vnode('c', { ending: 'GE' })];
     const edges = [cedge('a', 'b', '去b', 0), cedge('b', 'c', '去c', 0)];
@@ -62,6 +76,7 @@ describe('buildStoryTree', () => {
     expect(b.children[0].repeated).toBe(false);
     expect(c.children[0].nodeId).toBe('d');
     expect(c.children[0].repeated).toBe(true);
+    expect(c.children[0].referenceKind).toBe('merge');
     expect(c.children[0].children).toHaveLength(0);
   });
 

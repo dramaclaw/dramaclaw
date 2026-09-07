@@ -667,17 +667,23 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
 
       {/* 占位卡:片段未生成视频时,用旁白/显示名占位,先跑通并读懂故事结构再花钱生成视频。 */}
       {phase !== 'error' && !resumeAvailable && !resolvedUrl && currentChoices.length > 0 && currentPlaceholder && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 bottom-44 z-[8] flex flex-col items-center justify-center gap-4 px-6 text-center">
-          <span className="rounded-full border border-white/25 px-3 py-1 text-xs font-medium tracking-wide text-white/70">
+        <>
+          <span className="pointer-events-none absolute left-6 top-5 z-[8] text-xs font-medium text-white/40">
             {t('canvas.story.placeholderBadge')}
           </span>
-          {currentPlaceholder.label && (
-            <span className="text-sm font-medium tracking-wide text-white/60">{currentPlaceholder.label}</span>
+          {!outcomeFeedback && (
+            <div data-story-placeholder className="absolute inset-x-0 top-[18%] bottom-[32%] z-[8] flex overflow-y-auto overscroll-contain px-6 sm:px-8">
+              <div className="m-auto w-full max-w-xl space-y-3 text-left">
+                {currentPlaceholder.label && (
+                  <p className="text-sm font-medium leading-5 text-white/60">{currentPlaceholder.label}</p>
+                )}
+                <p className="whitespace-pre-wrap break-words text-base font-normal leading-8 text-white/90 sm:text-lg">
+                  {currentPlaceholder.text.trim() || t('canvas.story.placeholderHint')}
+                </p>
+              </div>
+            </div>
           )}
-          <p className="max-w-2xl text-2xl font-medium leading-relaxed text-white/90 [text-shadow:0_2px_16px_rgba(0,0,0,0.8)]">
-            {currentPlaceholder.text.trim() || t('canvas.story.placeholderHint')}
-          </p>
-        </div>
+        </>
       )}
 
       {phase !== 'error' && showChoices && currentChoices.length > 0 && (

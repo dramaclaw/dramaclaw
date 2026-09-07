@@ -5,6 +5,8 @@ import { lintStory, type StoryIssueCode } from './lintStory';
 
 /** 一行剧情树节点(只读派生)。 */
 export interface StoryTreeRow {
+  /** 展示入口标识，与同一片段的其他入口分离，不依赖标题或选项文案。 */
+  rowId: string;
   nodeId: string;
   label: string;
   depth: number;
@@ -20,6 +22,7 @@ export interface StoryTreeRow {
   endingTitle?: string;
   /** DAG 汇合:已在别处展开过,这里是 ↩ 叶子,children 空。 */
   repeated: boolean;
+  referenceKind?: 'return' | 'merge';
   issues: StoryIssueCode[];
   children: StoryTreeRow[];
 }
@@ -54,7 +57,7 @@ export function buildStoryTree(
   const byId = new Map(members.map((n) => [n.id, n] as const));
   const memberIds = new Set(byId.keys());
 
-  interface Choice { target: string; choiceText: string; order: number; hasCondition: boolean; }
+  interface Choice { edgeId: string; target: string; choiceText: string; order: number; hasCondition: boolean; }
   const choicesBySource = new Map<string, Choice[]>();
   const choiceSources = new Set<string>();
   const choiceTargets = new Set<string>();
@@ -65,6 +68,7 @@ export function buildStoryTree(
     if (memberIds.has(e.target)) choiceTargets.add(e.target);
     const list = choicesBySource.get(e.source) ?? [];
     list.push({
+      edgeId: e.id,
       target: e.target,
       choiceText: typeof data?.choiceText === 'string' ? data.choiceText : '',
       order: Number.isFinite(data?.order) ? Number(data?.order) : 0,
@@ -94,7 +98,8 @@ export function buildStoryTree(
   }
 
   const visited = new Set<string>();
-  function build(id: string, depth: number, incomingChoiceText: string | null, hasCondition: boolean): StoryTreeRow {
+  const ancestors = new Set<string>();
+  function build(id: string, rowId: string, depth: number, incomingChoiceText: string | null, hasCondition: boolean): StoryTreeRow {
     const node = byId.get(id)!;
     const data = node.data as { choiceTimeLimitSec?: number; narration?: string; endingLabel?: string };
     const childChoices = choicesBySource.get(id) ?? [];
@@ -103,25 +108,27 @@ export function buildStoryTree(
     const isEnding = childChoices.length === 0;
     const isTimedSource = typeof data.choiceTimeLimitSec === 'number' && data.choiceTimeLimitSec > 0;
     const base: StoryTreeRow = {
-      nodeId: id, label: nodeLabel(node), depth, incomingChoiceText, hasCondition,
+      rowId, nodeId: id, label: nodeLabel(node), depth, incomingChoiceText, hasCondition,
       isTimedSource, isEnding,
       ...(data.endingLabel ? { endingLabel: data.endingLabel } : {}),
       ...(data.narration ? { endingTitle: data.narration } : {}),
       repeated: false, issues: issuesByNode.get(id) ?? [], children: [],
     };
-    if (visited.has(id)) return { ...base, repeated: true };
+    if (visited.has(id)) return { ...base, repeated: true, referenceKind: ancestors.has(id) ? 'return' : 'merge' };
     visited.add(id);
+    ancestors.add(id);
     const children: StoryTreeRow[] = [];
     for (const c of childChoices) {
       if (!memberIds.has(c.target)) continue; // 组外目标(dangling)不产行,问题已由 lint 贴到本节点
-      children.push(build(c.target, depth + 1, c.choiceText, c.hasCondition));
+      children.push(build(c.target, `edge:${c.edgeId}`, depth + 1, c.choiceText, c.hasCondition));
     }
+    ancestors.delete(id);
     return { ...base, children };
   }
 
   const start = resolveStartNodeId(members, choiceSources, choiceTargets);
   const noStart = !start.startId || start.reason === 'multiple_start';
-  const root = !noStart && start.startId && byId.has(start.startId) ? build(start.startId, 0, null, false) : null;
+  const root = !noStart && start.startId && byId.has(start.startId) ? build(start.startId, `root:${start.startId}`, 0, null, false) : null;
 
   const orphans: StoryTreeOrphan[] = members
     .filter((n) => !visited.has(n.id))

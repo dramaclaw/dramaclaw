@@ -151,6 +151,7 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
 
   it('有剧情反馈时先显示一行文字，反馈结束后才推进故事', () => {
     const choose = seedChoicePoint({
+      currentPlaceholder: { label: '旧节点标题', text: '旧节点的剧情正文' },
       currentChoices: [
         {
           index: 0,
@@ -168,9 +169,24 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
 
     expect(getByRole('status')).toHaveTextContent('她没有松手，只是点了点头。');
     expect(getByRole('status')).toHaveTextContent('信任 ↑');
+    expect(document.querySelector('[data-story-placeholder]')).toBeNull();
     expect(choose).not.toHaveBeenCalled();
     act(() => vi.advanceTimersByTime(STORY_OUTCOME_FEEDBACK_MS));
     expect(choose).toHaveBeenCalledWith(0);
+  });
+
+  it('占位标识独立于阅读区，正文限制行宽并保留换行，标题随节点更新', () => {
+    seedChoicePoint({ currentPlaceholder: { label: '片段一', text: '第一行\n第二行' } });
+    const { getByText, queryByText } = render(<StoryPlayerOverlay />);
+    const reading = document.querySelector('[data-story-placeholder]')!;
+    expect(reading).toHaveClass('overflow-y-auto');
+    expect(reading.contains(getByText('canvas.story.placeholderBadge'))).toBe(false);
+    expect(getByText('第一行 第二行')).toHaveClass('whitespace-pre-wrap', 'text-base');
+    act(() => useStoryRuntimeStore.setState({
+      currentNodeId: 'n2', currentPlaceholder: { label: '片段二', text: '新剧情' },
+    }));
+    expect(queryByText('片段一')).toBeNull();
+    expect(getByText('片段二')).toBeInTheDocument();
   });
 
   it('重新开始会清除上一分支的 flash 过渡', () => {

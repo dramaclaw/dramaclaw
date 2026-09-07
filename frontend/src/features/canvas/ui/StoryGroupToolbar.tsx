@@ -13,11 +13,12 @@ import { storySaveKey } from '@/features/canvas/story/storySave';
 import { buildPlayerHtml } from '@/features/canvas/story/export/buildPlayerHtml';
 import { downloadStoryHtml } from '@/features/canvas/story/export/downloadStoryHtml';
 import { readUrl } from '@/lib/url-params';
+import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from '@/features/freezone/dockOffset';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/shadcn/dropdown-menu';
 
 const ACTION_CLASS = 'flex h-9 shrink-0 items-center gap-2 rounded-lg px-3 text-sm text-text-dark transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
 
-/** Mounted outside ReactFlow's transformed viewport so size and position stay stable. */
+/** 独立的顶部文档流区域，预留高度且不参与画布缩放或覆盖节点。 */
 export const StoryGroupToolbar = memo(function StoryGroupToolbar() {
   const group = useCanvasStore((state) => {
     const active = state.nodes.find((node) => node.id === state.selectedNodeId);
@@ -89,16 +90,20 @@ function StoryGroupActions({ id, data }: { id: string; data: GroupNodeData }) {
 
   const title = resolveNodeDisplayName(CANVAS_NODE_TYPES.group, data);
   return (
-    <div className="pointer-events-none absolute inset-x-4 bottom-20 z-40 flex justify-center">
+    <div
+      data-story-toolbar-region
+      className="relative z-40 min-w-0 shrink-0 border-b border-white/10 bg-[var(--ui-surface-panel)] px-4 py-2"
+      style={FREEZONE_DOCK_OFFSET_ANIMATED_STYLE}
+    >
       <div
         role="toolbar"
         aria-label={t('canvas.story.toolbar')}
-        className="nodrag nopan nowheel pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1 rounded-xl border border-white/10 bg-[var(--ui-surface-panel)] p-2 text-text-dark shadow-[0_8px_24px_rgba(0,0,0,0.28)]"
+        className="nodrag nopan nowheel flex w-full flex-wrap items-center gap-1 text-text-dark"
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => event.stopPropagation()}
         onWheel={(event) => event.stopPropagation()}
       >
-        <span className="max-w-40 truncate border-r border-white/10 px-3 text-sm font-medium" title={title}>{title}</span>
+        <span className="mr-auto min-w-0 max-w-40 truncate pr-4 text-sm font-medium" title={title}>{title}</span>
         <button type="button" className={ACTION_CLASS} onClick={() => useCanvasStore.getState().addStorySegment(id)}>
           <Plus className="size-4" />{t('canvas.story.addSegment')}
         </button>
@@ -112,7 +117,7 @@ function StoryGroupActions({ id, data }: { id: string; data: GroupNodeData }) {
           <DropdownMenuTrigger asChild>
             <button type="button" className={ACTION_CLASS}><MoreHorizontal className="size-4" />{t('canvas.story.moreActions')}</button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" align="end" className="min-w-48">
+          <DropdownMenuContent side="bottom" align="end" className="min-w-48">
             <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryVariables(id)}><SlidersHorizontal className="mr-2 size-4" />{t('canvas.story.states')}</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryLint(id)}><ShieldCheck className="mr-2 size-4" />{t('canvas.story.lint.open')}</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryGen(id)}><Wand2 className="mr-2 size-4" />{t('canvas.story.gen.open')}</DropdownMenuItem>

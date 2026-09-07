@@ -4816,8 +4816,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   setStoryStartNode: (nodeId) => {
     set((state) => {
+      const target = state.nodes.find((node) => node.id === nodeId && node.type === CANVAS_NODE_TYPES.video);
+      if (!target) return {};
       const newNodes = state.nodes.map((node) => {
-        if (node.type !== CANVAS_NODE_TYPES.video) return node;
+        if (node.type !== CANVAS_NODE_TYPES.video || node.parentId !== target.parentId) return node;
         const isTarget = node.id === nodeId;
         const currentRole = (node.data as { storyRole?: string }).storyRole;
         if (isTarget && currentRole === 'start') return node;

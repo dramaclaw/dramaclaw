@@ -3578,6 +3578,7 @@
         "issuesOnly": "只看有问题的片段",
         "search": "搜索片段或选项…",
         "referenceVia": "回到此处：",
+        "mergeVia": "汇合到此片段：",
         "choiceVia": "选择：",
         "ending": "结局",
         "hasIssue": "此片段需要检查",

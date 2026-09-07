@@ -51,9 +51,8 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
     if (next !== productionNotes) onChange({ storyProductionNotes: next });
   };
 
-  const mediaLabel = videoHint
-    ? t('canvas.story.importClipHint', { file: videoHint })
-    : t(`canvas.story.mediaState.${mediaState}`);
+  const showMediaState = mediaState === 'uploading' || mediaState === 'generating' || mediaState === 'failed';
+  const mediaLabel = showMediaState ? t(`canvas.story.mediaState.${mediaState}`) : videoHint;
 
   return (
     <aside
@@ -98,15 +97,16 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
         </label>
       </div>
 
+      {(mediaLabel || importNeedsReview) && (
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-t border-white/[0.07] px-3 text-[11px] text-text-muted">
-        <Film className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">{mediaLabel}</span>
+        {mediaLabel && <><Film className="h-3.5 w-3.5 shrink-0" /><span className="truncate" title={videoHint}>{mediaLabel}</span></>}
         {importNeedsReview ? (
           <span className="ml-auto shrink-0 text-amber-400" title={importReviewNote}>
             {t('canvas.story.reviewRequired')}
           </span>
         ) : null}
       </div>
+      )}
     </aside>
   );
 });

@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   CornerUpLeft,
+  GitMerge,
   Filter,
   Flag,
   LayoutTemplate,
@@ -35,7 +36,7 @@ interface StoryPlaytestTreeProps {
 
 function collectExpandable(row: StoryTreeRow | null, target: Set<string>): void {
   if (!row) return;
-  if (row.children.length > 0) target.add(row.nodeId);
+  if (row.children.length > 0) target.add(row.rowId);
   row.children.forEach((child) => collectExpandable(child, target));
 }
 
@@ -74,15 +75,8 @@ export const StoryPlaytestTree = memo(function StoryPlaytestTree({
   const [query, setQuery] = useState('');
   const [issuesOnly, setIssuesOnly] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [selectedEntry, setSelectedEntry] = useState<{ groupId: string; nodeId: string; rowId: string } | null>(null);
   const treeRootRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (!selectedNodeId) return;
-    const active = Array.from(
-      treeRootRef.current?.querySelectorAll<HTMLElement>('[data-story-node-id]') ?? [],
-    ).find((element) => element.dataset.storyNodeId === selectedNodeId);
-    active?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [selectedNodeId]);
 
   useEffect(() => {
     const viewport = treeRootRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
@@ -113,6 +107,40 @@ export const StoryPlaytestTree = memo(function StoryPlaytestTree({
       selectGroupStoryFlags(nodes, groupId),
     );
   }, [edges, groupId, members, nodes]);
+
+  const entries = useMemo(() => {
+    const rows: { rowId: string; nodeId: string }[] = [];
+    const visit = (row: StoryTreeRow) => {
+      rows.push(row);
+      row.children.forEach(visit);
+    };
+    if (model.root) visit(model.root);
+    model.orphans.forEach((row) => rows.push({ ...row, rowId: `orphan:${row.nodeId}` }));
+    return rows;
+  }, [model]);
+  const selectedRowId = (
+    selectedEntry?.groupId === groupId && selectedEntry.nodeId === selectedNodeId
+      ? entries.find((row) => row.rowId === selectedEntry.rowId && row.nodeId === selectedNodeId)
+      : undefined
+  )?.rowId ?? entries.find((row) => row.nodeId === selectedNodeId)?.rowId;
+
+  useEffect(() => {
+    // 播放器跳转后放弃旧入口，避免稍后返回同片段时恢复过期的路径选择。
+    setSelectedEntry((entry) => entry && (entry.groupId !== groupId || entry.nodeId !== selectedNodeId) ? null : entry);
+  }, [groupId, selectedNodeId]);
+
+  useEffect(() => {
+    if (!selectedRowId) return;
+    const active = Array.from(
+      treeRootRef.current?.querySelectorAll<HTMLElement>('[data-story-row-id]') ?? [],
+    ).find((element) => element.dataset.storyRowId === selectedRowId);
+    active?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [selectedRowId]);
+
+  const selectEntry = (nodeId: string, rowId: string) => {
+    setSelectedEntry({ groupId, nodeId, rowId });
+    onSelectNode(nodeId);
+  };
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleRoot = useMemo(
@@ -146,11 +174,11 @@ export const StoryPlaytestTree = memo(function StoryPlaytestTree({
 
   const renderRow = (row: StoryTreeRow): ReactNode => {
     const hasChildren = row.children.length > 0;
-    const isCollapsed = collapsed.has(row.nodeId) && !normalizedQuery && !issuesOnly;
-    const active = selectedNodeId === row.nodeId;
+    const isCollapsed = collapsed.has(row.rowId) && !normalizedQuery && !issuesOnly;
+    const active = selectedRowId === row.rowId;
     const hasError = row.issues.some((issue) => ERROR_ISSUES.has(issue));
     const NodeIcon = row.repeated
-      ? CornerUpLeft
+      ? row.referenceKind === 'return' ? CornerUpLeft : GitMerge
       : row.isEnding
         ? Flag
         : row.depth === 0
@@ -158,8 +186,9 @@ export const StoryPlaytestTree = memo(function StoryPlaytestTree({
           : LayoutTemplate;
     return (
       <div
-        key={`${row.nodeId}-${row.depth}-${row.incomingChoiceText ?? ''}`}
+        key={row.rowId}
         data-story-node-id={row.nodeId}
+        data-story-row-id={row.rowId}
         className={row.depth > 0 ? 'ml-4 border-l border-white/[0.08] pl-1' : undefined}
       >
         <div
@@ -174,7 +203,7 @@ export const StoryPlaytestTree = memo(function StoryPlaytestTree({
           {hasChildren ? (
             <button
               type="button"
-              onClick={() => toggle(row.nodeId)}
+              onClick={() => toggle(row.rowId)}
               className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded text-[#8f9099] hover:bg-white/[0.06] hover:text-[#e2e2e3]"
               aria-label={isCollapsed ? t('canvas.story.tree.expand') : t('canvas.story.tree.collapse')}
             >
@@ -185,7 +214,7 @@ export const StoryPlaytestTree = memo(function StoryPlaytestTree({
           )}
           <button
             type="button"
-            onClick={() => onSelectNode(row.nodeId)}
+            onClick={() => selectEntry(row.nodeId, row.rowId)}
             className="flex min-w-0 flex-1 items-start gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(0.72_0.145_205)]"
             title={row.label}
             aria-current={active ? 'true' : undefined}
@@ -204,7 +233,9 @@ export const StoryPlaytestTree = memo(function StoryPlaytestTree({
               </span>
               {row.incomingChoiceText && (
                 <span className="mt-0.5 block whitespace-nowrap text-xs leading-4 text-[#8f9099]">
-                  {row.repeated ? t('canvas.story.tree.referenceVia') : t('canvas.story.tree.choiceVia')}
+                  {row.repeated
+                    ? t(row.referenceKind === 'return' ? 'canvas.story.tree.referenceVia' : 'canvas.story.tree.mergeVia')
+                    : t('canvas.story.tree.choiceVia')}
                   {row.incomingChoiceText}
                 </span>
               )}
@@ -313,8 +344,10 @@ export const StoryPlaytestTree = memo(function StoryPlaytestTree({
               <button
                 type="button"
                 key={orphan.nodeId}
-                onClick={() => onSelectNode(orphan.nodeId)}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-[#e2e2e3] hover:bg-[#1a1c23]"
+                data-story-row-id={`orphan:${orphan.nodeId}`}
+                aria-current={selectedRowId === `orphan:${orphan.nodeId}` ? 'true' : undefined}
+                onClick={() => selectEntry(orphan.nodeId, `orphan:${orphan.nodeId}`)}
+                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm ${selectedRowId === `orphan:${orphan.nodeId}` ? 'bg-[oklch(0.72_0.145_205/0.1)] text-[oklch(0.72_0.145_205)]' : 'text-[#e2e2e3] hover:bg-[#1a1c23]'}`}
               >
                 <LayoutTemplate className="size-4 shrink-0 text-[#8f9099]" />
                 <span className="min-w-0 flex-1 whitespace-nowrap">{orphan.label}</span>
