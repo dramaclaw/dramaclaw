@@ -35,6 +35,11 @@ import {
   type Vec3,
 } from './domain/scene';
 import {
+  insertAudioClip,
+  type AudioInsertRejection,
+  type PrevizAudioSource,
+} from './domain/audioTrack';
+import {
   addRigClip,
   createRigClip,
   rigClipToPath,
@@ -42,9 +47,11 @@ import {
   type CloseupTarget,
   type RigClipPatch,
 } from './domain/closeupClip';
+import { insertCut, liveCameraAt, type CutRejection } from './domain/program';
 import {
   PREVIZ_TIMELINE_ZOOM,
   clearPathPoints,
+  clipById,
   insertPathPointAt,
   moveClip,
   pathClipAt,
@@ -100,6 +107,13 @@ interface PrevizStoreState {
    */
   selectedObjectId: string | null;
   activeCameraId: string | null;
+  /**
+   * 监看是否跟着镜头轨走。手动点一台机位就退出跟随；这是会话状态，不进 undo，
+   * 也不存进场景——换个人打开同一节点，默认还是跟随。
+   */
+  monitorFollowsProgram: boolean;
+  /** 每次跳转/停止 +1，编辑器靠它知道该重新起播音频。播放 tick 不动它。 */
+  seekSerial: number;
   /**
    * 时间轴会话态。和 `selectedObjectId` 同一类：刻意不进 `PrevizScene`、不进 undo 栈。
    * 播放头进了场景，每拖一格就是一次 `dirty`，关窗时会把一次纯浏览写回 `node.data`；
@@ -179,6 +193,12 @@ interface PrevizStoreState {
   markSaved: () => void;
   selectObject: (id: string | null) => void;
   setActiveCamera: (id: string | null) => void;
+  followProgram: () => void;
+  /** 在播放头处切到某机位；返回拒绝原因，成功为 null。 */
+  cutToCamera: (cameraId: string) => CutRejection | null;
+  setCutCamera: (clipId: string, cameraId: string) => void;
+  addAudioClip: (source: PrevizAudioSource, atFrame: number) => AudioInsertRejection | null;
+  relocateAudioClipToPlayhead: (clipId: string) => void;
   /** 建对象并选中它；超出该类型数量上限时返回 null 且不动场景。 */
   addObject: <K extends PrevizObjectKind>(
     kind: K,
@@ -198,6 +218,8 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   future: [],
   selectedObjectId: null,
   activeCameraId: null,
+  monitorFollowsProgram: true,
+  seekSerial: 0,
   timelineFrame: 0,
   timelinePlaying: false,
   playbackCarry: 0,
@@ -216,6 +238,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       future: [],
       selectedObjectId: null,
       activeCameraId: null,
+      monitorFollowsProgram: true,
       timelineFrame: 0,
       timelinePlaying: false,
       playbackCarry: 0,
@@ -258,7 +281,9 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
 
   selectObject: (id) => set({ selectedObjectId: id, selectedClipId: null, selectedPointId: null }),
 
-  setActiveCamera: (id) => set({ activeCameraId: id }),
+  setActiveCamera: (id) => set({ activeCameraId: id, monitorFollowsProgram: false }),
+
+  followProgram: () => set({ monitorFollowsProgram: true }),
 
   addObject: (kind, overrides) => {
     const { scene, applyScene } = get();
@@ -304,6 +329,8 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
         ...scene.timeline,
         // 轨道跟着走：留下来就是一个悬空引用，P3 的求值器会撞上它。
         tracks: scene.timeline.tracks.filter((track) => track.objectId !== id),
+        // 机位没了，指向它的切片一起走，同一步 undo 能整体回来。
+        program: scene.timeline.program.filter((cut) => cut.cameraId !== id),
       },
     });
     set({
@@ -339,12 +366,23 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     const clamped = Math.min(scene.settings.durationFrames, Math.max(0, Math.round(frame)));
     // 手动定位播放头会把攒着的半帧作废：那半帧是上一段连续播放的余数，
     // 留着会让下一次播放的第一格提前跳。
-    set({ timelineFrame: Number.isFinite(clamped) ? clamped : 0, playbackCarry: 0 });
+    // seekSerial +1：编辑器靠它识别「这是一次跳转」，该重新起播音频而不是接着上次的播放位置。
+    set((state) => ({
+      timelineFrame: Number.isFinite(clamped) ? clamped : 0,
+      playbackCarry: 0,
+      seekSerial: state.seekSerial + 1,
+    }));
   },
 
   setTimelinePlaying: (playing) => set({ timelinePlaying: playing }),
 
-  stopPlayback: () => set({ timelinePlaying: false, timelineFrame: 0, playbackCarry: 0 }),
+  stopPlayback: () =>
+    set((state) => ({
+      timelinePlaying: false,
+      timelineFrame: 0,
+      playbackCarry: 0,
+      seekSerial: state.seekSerial + 1,
+    })),
 
   tickPlayback: (deltaSeconds) => {
     const { timelinePlaying, timelineFrame, timelineRate, scene, playbackCarry } = get();
@@ -543,6 +581,55 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     set({ selectedClipId: null, selectedPointId: null });
   },
 
+  cutToCamera: (cameraId) => {
+    const { scene, timelineFrame, applyScene } = get();
+    const result = insertCut(scene, timelineFrame, cameraId);
+    if (!result.ok) return result.reason;
+    applyScene(result.scene);
+    return null;
+  },
+
+  setCutCamera: (clipId, cameraId) => {
+    const { scene, applyScene } = get();
+    const camera = scene.objects.find((object) => object.id === cameraId);
+    if (camera?.kind !== 'camera') return;
+    const cut = scene.timeline.program.find((entry) => entry.id === clipId);
+    if (!cut) return;
+    // 改成同一台机位是空操作：还是这么写不动 applyScene，免得往 undo 栈塞一步没变化的记录。
+    if (cut.cameraId === cameraId) return;
+    applyScene({
+      ...scene,
+      timeline: {
+        ...scene.timeline,
+        program: scene.timeline.program.map((entry) =>
+          entry.id === clipId ? { ...entry, cameraId } : entry,
+        ),
+      },
+    });
+  },
+
+  addAudioClip: (source, atFrame) => {
+    const { scene, applyScene } = get();
+    const result = insertAudioClip(scene, atFrame, source);
+    if (!result.ok) return result.reason;
+    applyScene(result.scene);
+    set({ selectedClipId: result.clipId, selectedPointId: null });
+    return null;
+  },
+
+  relocateAudioClipToPlayhead: (clipId) => {
+    const { scene, timelineFrame, applyScene } = get();
+    const found = clipById(scene, clipId);
+    if (!found || found.table !== 'audio') return;
+    const next = moveClip(
+      scene,
+      clipId,
+      timelineFrame - found.clip.startFrame,
+      scene.settings.durationFrames,
+    );
+    if (next !== scene) applyScene(next);
+  },
+
   addCloseup: (cameraObjectId, target) => {
     const { scene, applyScene } = get();
     if (!scene.objects.some((object) => object.id === cameraObjectId)) return;
@@ -578,3 +665,17 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     applyScene(next);
   },
 }));
+
+/**
+ * 监看该看哪台机位。跟随时按镜头轨取；空隙或没切片时退回手动选的那台。
+ * 参数写成结构类型，测试可以直接喂 `getState()`，组件用 `usePrevizStore(monitorCameraId)`。
+ */
+export function monitorCameraId(state: {
+  scene: PrevizScene;
+  timelineFrame: number;
+  activeCameraId: string | null;
+  monitorFollowsProgram: boolean;
+}): string | null {
+  if (!state.monitorFollowsProgram) return state.activeCameraId;
+  return liveCameraAt(state.scene, state.timelineFrame) ?? state.activeCameraId;
+}
