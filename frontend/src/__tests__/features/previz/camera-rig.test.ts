@@ -90,6 +90,34 @@ describe("monitorViewportRect", () => {
     expect(rect.width / rect.height).toBeCloseTo(9 / 16, 2);
   });
 
+  it("grows the monitor on the enlarged step", () => {
+    const normal = monitorViewportRect(1600, 900, "16:9");
+    const large = monitorViewportRect(1600, 900, "16:9", "large");
+
+    expect(large.width).toBeGreaterThan(normal.width);
+    // 放大档也贴右下角，两档之间只有大小变了——放大再还原不该让画面换个地方待着。
+    expect(large.x).toBe(1600 - large.width - 16);
+    expect(large.y).toBe(16);
+    expect(large.width / large.height).toBeCloseTo(16 / 9, 2);
+  });
+
+  it("fits the enlarged monitor inside a short canvas", () => {
+    // 又矮又宽：按 55% 宽度算出来的高会顶出画布，得按高度回推宽度。
+    const rect = monitorViewportRect(1600, 260, "16:9", "large");
+
+    expect(rect.height).toBeLessThanOrEqual(260 - 32);
+    expect(rect.width).toBeLessThanOrEqual(1600 - 32);
+    expect(rect.width / rect.height).toBeCloseTo(16 / 9, 2);
+  });
+
+  it("fits the enlarged monitor inside a narrow canvas", () => {
+    // 反过来：画布比放大档还窄时，宽度也得夹住，否则视口整个横着跑到画布外。
+    const rect = monitorViewportRect(200, 1200, "16:9", "large");
+
+    expect(rect.width).toBeLessThanOrEqual(200 - 32);
+    expect(rect.x).toBeGreaterThanOrEqual(0);
+  });
+
   // 画布还没布局完（clientWidth 为 0）或者被拖到极窄时，按比例算出来的宽高会是 0
   // 甚至负数。`setViewport(…, 0, 0)` 在部分驱动上是 GL_INVALID_VALUE，而 three 不报错。
   it("never hands back a degenerate rect on a tiny canvas", () => {

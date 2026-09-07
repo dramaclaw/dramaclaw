@@ -26,6 +26,16 @@ export const PREVIZ_GRID_CELL_SIZE = 1;
 /** 粗线间距。必须是细线的整数倍，否则两层线互相错开，画面上是一片乱纹。 */
 export const PREVIZ_GRID_SECTION_SIZE = 10;
 
+/**
+ * 线条颜色。背景是 #101216，细线还要再乘一道 `uCellOpacity` 才落到画面上，所以这两个
+ * 值要比「看起来该有的灰」亮出不少：细线按 0.7 的不透明度混完约是 #464c58，粗线满
+ * 不透明度约是 #788091——地面读得出来，又不至于抢过场景里的对象。
+ */
+export const PREVIZ_GRID_CELL_COLOR = 0x5d6574;
+export const PREVIZ_GRID_SECTION_COLOR = 0x788091;
+/** 细线相对粗线的不透明度。两层同色时全靠它拉开主次。 */
+export const PREVIZ_GRID_CELL_OPACITY = 0.7;
+
 /** 淡出半径的上下限，单位米。 */
 export const PREVIZ_GRID_FADE_MIN = 40;
 /**
@@ -129,11 +139,11 @@ void main() {
 export function createInfiniteGrid(three: ThreeModule): THREE.Mesh {
   const material = new three.ShaderMaterial({
     uniforms: {
-      uCellColor: { value: new three.Color(0x2b3140) },
-      uSectionColor: { value: new three.Color(0x3f4759) },
+      uCellColor: { value: new three.Color(PREVIZ_GRID_CELL_COLOR) },
+      uSectionColor: { value: new three.Color(PREVIZ_GRID_SECTION_COLOR) },
       uCellSize: { value: PREVIZ_GRID_CELL_SIZE },
       uSectionSize: { value: PREVIZ_GRID_SECTION_SIZE },
-      uCellOpacity: { value: 0.55 },
+      uCellOpacity: { value: PREVIZ_GRID_CELL_OPACITY },
       uFadeNear: { value: PREVIZ_GRID_FADE_MIN * FADE_NEAR_RATIO },
       uFadeFar: { value: PREVIZ_GRID_FADE_MIN },
     },

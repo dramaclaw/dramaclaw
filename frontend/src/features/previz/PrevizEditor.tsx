@@ -2,10 +2,11 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { Circle, Monitor, Square, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Circle, Monitor, Square, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -31,7 +32,8 @@ import {
   recordTimeline,
 } from "./capture/recordTimeline";
 import { PrevizRenderer } from "./engine/PrevizRenderer";
-import { monitorViewportRect } from "./engine/cameraRig";
+import type { CameraPreviewCanvas } from "./engine/cameraPreview";
+import { monitorViewportRect, type MonitorSize } from "./engine/cameraRig";
 import type { GizmoMode } from "./engine/gizmo";
 import {
   cameraDraftOverrides,
@@ -46,12 +48,17 @@ import { PrevizCameraCreateDialog } from "./ui/PrevizCameraCreateDialog";
 import { PrevizClipInspector } from "./ui/PrevizClipInspector";
 import { PrevizInspector } from "./ui/PrevizInspector";
 import { PrevizLayerPanel } from "./ui/PrevizLayerPanel";
+import { PrevizMonitorFrame } from "./ui/PrevizMonitorFrame";
+import { PrevizQuadPreview } from "./ui/PrevizQuadPreview";
 import { PrevizTimeline } from "./ui/PrevizTimeline";
 import { PrevizToolbar } from "./ui/PrevizToolbar";
-import { PrevizViewportHud } from "./ui/PrevizViewportHud";
-import type { PrevizTool } from "./ui/PrevizViewportHud";
+import type { PrevizTool } from "./ui/PrevizToolbar";
+import { PrevizHoverTip } from "./ui/PrevizHoverTip";
+import { PrevizViewportControls } from "./ui/PrevizViewportControls";
+import type { PrevizViewSource } from "./ui/PrevizAxisGizmo";
+import type { PrevizAxisView } from "./domain/axisGizmo";
 import type { PrevizObjectKind, PrevizScene, Vec3 } from "./domain/scene";
-import { PREVIZ_DEFAULT_VIEW } from "./domain/view";
+import { PREVIZ_DEFAULT_VIEW, type PrevizViewDirection } from "./domain/view";
 
 interface PrevizEditorProps {
   open: boolean;
@@ -68,10 +75,6 @@ const RECORD_MODES: readonly PrevizRecordMode[] = ["global", "track"];
 
 /** 按下与抬起之间超过这个像素就算在转视角，不是在点选。 */
 const CLICK_SLOP_PX = 4;
-
-/** 监看画中画右上角那个「隐藏」按钮的边长与内缩，单位 CSS 像素。 */
-const MONITOR_HIDE_SIZE = 20;
-const MONITOR_HIDE_INSET = 6;
 
 /**
  * 把后续的指针事件锁在画布上，这样一笔画到视口外面也不会中途断掉。
@@ -109,6 +112,14 @@ export function PrevizEditor({
   // 渲染器也进 state 而不是 ref：面板的回调要在它就绪后重新绑定，ref 变化不会触发重渲染。
   const [renderer, setRenderer] = useState<PrevizRenderer | null>(null);
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
+  /**
+   * 监看的三个开关。放在编辑器本地而不是场景设置里：它们只改「怎么看」，一个像素都不
+   * 进出片，跟 `gizmoMode` / `tool` 是同一类东西。落进 `settings` 的话，切一次描边会
+   * 进撤销栈、还会把节点数据标脏——用户会莫名其妙地被问「要不要保存」。
+   */
+  const [monitorSize, setMonitorSize] = useState<MonitorSize>("normal");
+  const [showOutline, setShowOutline] = useState(true);
+  const [showNamePlate, setShowNamePlate] = useState(true);
   const [tool, setTool] = useState<PrevizTool>("select");
   /** 正在画的那一笔，世界坐标。null 表示画笔没按下。 */
   const stroke = useRef<Vec3[] | null>(null);
@@ -120,6 +131,22 @@ export function PrevizEditor({
    */
   const strokeHeight = useRef(0);
   const [capturing, setCapturing] = useState(false);
+  /**
+   * 右侧那两块面板（图层 + 属性）是否展开。收起来的是整条侧栏而不是各收各的：
+   * 这两块上下相接、共用一条左边框，单收一块会在接缝处留下半截悬空的边。
+   * 视口是 flex-1，侧栏一收它就自己长满——canvas 的尺寸由 ResizeObserver 跟。
+   */
+  const [panelsOpen, setPanelsOpen] = useState(true);
+  /**
+   * 底下那条轨迹面板是否展开。摆位阶段（搭景、调机位）用不上时间轴，收起来能把视口
+   * 还给画面；开关钉在左栏最下面，紧挨着它收起的那块面板。
+   */
+  const [timelineOpen, setTimelineOpen] = useState(true);
+  /**
+   * 四视图：右侧那两块正交预览开着没有。默认关——它要占掉一列视口宽度，而摆场景的
+   * 大部分时间只看透视那一块。
+   */
+  const [quadView, setQuadView] = useState(false);
   /** 录制模式选单开着没有。只在没录的时候能开。 */
   const [recordMenuOpen, setRecordMenuOpen] = useState(false);
   /** 正在录的那一路；null 就是没在录。 */
@@ -157,6 +184,8 @@ export function PrevizEditor({
   const redo = usePrevizStore((state) => state.redo);
   const pathSpacingM = usePrevizStore((state) => state.pathSpacingM);
   const setPathSpacing = usePrevizStore((state) => state.setPathSpacing);
+  const pathSpeedMps = usePrevizStore((state) => state.pathSpeedMps);
+  const setPathSpeed = usePrevizStore((state) => state.setPathSpeed);
   const timelineFrame = usePrevizStore((state) => state.timelineFrame);
   const timelinePlaying = usePrevizStore((state) => state.timelinePlaying);
   const selectedClipId = usePrevizStore((state) => state.selectedClipId);
@@ -187,9 +216,72 @@ export function PrevizEditor({
   })();
 
   const monitorRect = useMemo(
-    () => monitorViewportRect(canvasSize.width, canvasSize.height, scene.settings.outputAspect),
-    [canvasSize.width, canvasSize.height, scene.settings.outputAspect],
+    () =>
+      monitorViewportRect(
+        canvasSize.width,
+        canvasSize.height,
+        scene.settings.outputAspect,
+        monitorSize,
+      ),
+    [canvasSize.width, canvasSize.height, scene.settings.outputAspect, monitorSize],
   );
+
+  /** 监看字幕要读机位自己的焦距与传感器，所以取的是对象而不只是 id。 */
+  const monitoredCamera = useMemo(() => {
+    const object = scene.objects.find((entry) => entry.id === activeCameraId);
+    return object?.kind === "camera" ? object : null;
+  }, [scene.objects, activeCameraId]);
+
+  /**
+   * 坐标轴小球读的视角。存在 ref 里、由订阅推给那一颗组件，而不是做成 state：轨道
+   * 拖拽期间相机每帧都在变，做成 state 就是每帧把整棵编辑器（时间轴、监看边框、检视
+   * 面板）重渲一遍，为的只是让左上角一颗 72px 的小球跟手。
+   */
+  const viewStore = useRef({
+    pose: PREVIZ_DEFAULT_VIEW as PrevizAxisView,
+    listeners: new Set<() => void>(),
+  });
+  const viewSource = useMemo<PrevizViewSource>(
+    () => ({
+      subscribe: (listener) => {
+        viewStore.current.listeners.add(listener);
+        return () => {
+          viewStore.current.listeners.delete(listener);
+        };
+      },
+      // 必须交回同一个引用：每次新建一个字面量的话 useSyncExternalStore 会认为值一直
+      // 在变，当场无限重渲。
+      snapshot: () => viewStore.current.pose,
+    }),
+    [],
+  );
+
+  /**
+   * 拖手柄期间「东西在动」的订阅者，眼下只有右侧那两块正交预览。
+   *
+   * 和上面的视角小球同一个理由走订阅而不是 state：这条信号跟着鼠标采样率来，做成
+   * state 就是每动一下把整棵编辑器重渲一遍。这里连值都不用带——收到通知的人自己去
+   * 重画，渲染器那边的场景已经是新的了。
+   */
+  const dragListeners = useRef(new Set<() => void>());
+  const subscribeDrag = useCallback((listener: () => void) => {
+    dragListeners.current.add(listener);
+    return () => {
+      dragListeners.current.delete(listener);
+    };
+  }, []);
+
+  /**
+   * 四视图里机位那一格看的是哪台机位：优先右下角监看的那台，没设监看就用场景里的第一台。
+   *
+   * 不跟监看绑死：那一格答的是「镜头里是什么样」，而建完机位的下一件事就是想看它拍到
+   * 什么。要求先去图层面板设一次监看才肯出画，等于让用户对着一格黑画面猜自己漏了哪步。
+   */
+  const quadCamera = useMemo(() => {
+    const cameras = scene.objects.filter((object) => object.kind === "camera");
+    return cameras.find((object) => object.id === activeCameraId) ?? cameras[0];
+  }, [scene.objects, activeCameraId]);
+  const quadCameraId = quadCamera?.id ?? null;
 
   const canAdd = useMemo(
     () => ({
@@ -200,6 +292,9 @@ export function PrevizEditor({
     }),
     [scene],
   );
+
+  // 同一颗把手既收也展，名字跟着当前状态换。
+  const panelsLabel = t(panelsOpen ? "previz.editor.collapsePanels" : "previz.editor.expandPanels");
 
   // 全屏时独占键盘，让画布的 Delete / 复制粘贴快捷键让位。
   useViewerImmersiveBody(open);
@@ -252,6 +347,14 @@ export function PrevizEditor({
   }, [renderer, scene]);
 
   useEffect(() => {
+    renderer?.setViewOverlays({ outline: showOutline, namePlate: showNamePlate });
+  }, [renderer, showOutline, showNamePlate]);
+
+  useEffect(() => {
+    renderer?.setMonitorSize(monitorSize);
+  }, [renderer, monitorSize]);
+
+  useEffect(() => {
     renderer?.setSelection(selectedObjectId);
   }, [renderer, selectedObjectId]);
 
@@ -263,6 +366,12 @@ export function PrevizEditor({
     renderer?.setGizmoMode(gizmoMode);
   }, [renderer, gizmoMode]);
 
+  // 拿工具本身当开关，而不是在 pointerdown/up 里开关一次：中途松手在画布外、或者
+  // 一笔没画完就切走工具，收尾那一下就不一定跑得到，左键会一直卡在摘掉的状态。
+  useEffect(() => {
+    renderer?.setDrawing(tool === "draw");
+  }, [renderer, tool]);
+
   useEffect(() => {
     if (!renderer) return undefined;
     // 走 getState() 而不是闭包里的 updateObject：拖手柄期间 scene 每次提交都在变，
@@ -270,8 +379,27 @@ export function PrevizEditor({
     renderer.onTransformCommit = (objectId, transform) => {
       usePrevizStore.getState().updateObject(objectId, { transform });
     };
+    renderer.onTransformDrag = () => {
+      for (const listener of dragListeners.current) listener();
+    };
     return () => {
       renderer.onTransformCommit = null;
+      renderer.onTransformDrag = null;
+    };
+  }, [renderer]);
+
+  useEffect(() => {
+    if (!renderer) return undefined;
+    const publish = (pose: PrevizAxisView) => {
+      viewStore.current.pose = pose;
+      for (const listener of viewStore.current.listeners) listener();
+    };
+    // 渲染器是异步建起来的，挂上时先对一次：不然小球一直停在默认视角，直到用户第一次
+    // 拖动轨道才跳到实际朝向。
+    publish(renderer.viewPose());
+    renderer.onViewChange = publish;
+    return () => {
+      renderer.onViewChange = null;
     };
   }, [renderer]);
 
@@ -368,6 +496,20 @@ export function PrevizEditor({
       if (!id) toast.error(t("previz.editor.limitReached"));
     },
     [addObject, t],
+  );
+
+  const handleQuadPreview = useCallback(
+    (previewCanvas: CameraPreviewCanvas, direction: PrevizViewDirection) => {
+      renderer?.renderQuadPreview(previewCanvas, direction);
+    },
+    [renderer],
+  );
+
+  const handleQuadCamera = useCallback(
+    (previewCanvas: CameraPreviewCanvas) => {
+      if (quadCameraId) renderer?.renderCameraView(previewCanvas, quadCameraId);
+    },
+    [renderer, quadCameraId],
   );
 
   const handleCapture = useCallback(async () => {
@@ -604,301 +746,363 @@ export function PrevizEditor({
           <div className="flex min-h-0 flex-1">
           <PrevizToolbar
             canAdd={canAdd}
-            canUndo={canUndo}
-            canRedo={canRedo}
+            gizmoMode={gizmoMode}
+            tool={tool}
+            timelineOpen={timelineOpen}
             onAdd={handleAdd}
             onImportProp={(file) => void handleImportProp(file)}
-            onUndo={undo}
-            onRedo={redo}
-          />
-
-          <div className="relative min-w-0 flex-1">
-            <canvas
-              ref={setCanvas}
-              data-testid="previz-canvas"
-              className="block h-full w-full"
-              onPointerDown={(event) => {
-                pointerDownAt.current = { x: event.clientX, y: event.clientY };
-                if (tool !== "draw" || !renderer) return;
-                // 画笔按下这一下不能同时走拾取，否则一笔画完选中的对象已经换人了。
-                pointerDownAt.current = null;
-                capturePointer(event);
-                const store = usePrevizStore.getState();
-                strokeHeight.current = drawPlaneHeight(
-                  store.scene,
-                  store.selectedObjectId,
-                  store.timelineFrame,
-                );
-                const point = renderer.planePointAt(
-                  event.clientX,
-                  event.clientY,
-                  strokeHeight.current,
-                );
-                stroke.current = point ? [point] : [];
-                renderer.setStroke(stroke.current);
-              }}
-              onPointerMove={(event) => {
-                if (!stroke.current || !renderer) return;
-                const point = renderer.planePointAt(
-                  event.clientX,
-                  event.clientY,
-                  strokeHeight.current,
-                );
-                // 射线与该平面平行时 planePointAt 交出 null，这一段笔画直接丢掉：
-                // 补一个瞎编的点会在轨迹上留下一个乱跳的顶点。
-                if (point) stroke.current.push(point);
-                // 每一下都推给渲染器：这条线就是绘制过程中唯一的反馈，攒到松手才画
-                // 等于让用户盲画一整笔。
-                renderer.setStroke(stroke.current);
-              }}
-              onPointerUp={(event) => {
-                if (stroke.current) {
-                  const points = stroke.current;
-                  stroke.current = null;
-                  // 收笔交给轨迹曲线接管：不收的话这条线会和刚生成的轨迹重叠着留在画面上。
-                  renderer?.setStroke(null);
-                  const targetId = usePrevizStore.getState().selectedObjectId;
-                  // 没选对象时这一笔没有归属，直接丢——建一条无主轨迹只会在时间轴上
-                  // 多一行删不掉的东西。
-                  if (targetId) usePrevizStore.getState().drawPath(targetId, points);
-                  // 画完自动切回选择：实测参照实现就是这样，否则下一次想选个对象
-                  // 反而又画了一条。
-                  setTool("select");
-                  return;
-                }
-
-                const down = pointerDownAt.current;
-                pointerDownAt.current = null;
-                if (!renderer || !down) return;
-                // 轨道拖拽也会经过 pointerdown/up；位移超过阈值就是在转视角。
-                if (Math.hypot(event.clientX - down.x, event.clientY - down.y) > CLICK_SLOP_PX) {
-                  return;
-                }
-                // 轨迹点优先于对象：球是画在被它牵着走的那个对象身上的，让对象先接
-                // 这一下，轨迹点就永远点不中。点中之后对象的选中状态原样留着——
-                // 右侧面板上下两半正好是「谁在动」和「动到哪」。
-                const point = renderer.pickPathPointAt(event.clientX, event.clientY);
-                if (point) {
-                  // 先选片段：selectClip 会顺手清掉旧的轨迹点，两句写反的话刚选的点
-                  // 当场就被清了。
-                  usePrevizStore.getState().selectClip(point.clipId);
-                  usePrevizStore.getState().selectPathPoint(point.pointId);
-                  return;
-                }
-                selectObject(renderer.pickAt(event.clientX, event.clientY));
-              }}
-            />
-
-            <PrevizViewportHud
-              displayMode={scene.settings.displayMode}
-              outputAspect={scene.settings.outputAspect}
-              gizmoMode={gizmoMode}
-              hasSelection={Boolean(selectedObjectId)}
-              onDisplayMode={setDisplayMode}
-              onOutputAspect={setOutputAspect}
-              onGizmoMode={setGizmoMode}
-              onViewDirection={(direction) => renderer?.applyViewDirection(direction)}
-              onFocus={() => {
-                if (selectedObjectId) renderer?.focusObject(selectedObjectId);
-              }}
-              onResetView={() => renderer?.resetView()}
-              tool={tool}
-              pathSpacingM={pathSpacingM}
-              onTool={setTool}
-              onPathSpacing={setPathSpacing}
-            />
-
-            {activeCameraId && (
-              /*
-                贴在监看画中画的右上角内侧。位置用的是渲染器同一个 `monitorViewportRect`：
-                自己按 26% 加 padding 拼一遍 CSS 也能对上大多数情况，但竖幅画幅在矮画布上
-                会走那条「改按高度回推宽度」的分支，两套算法立刻错开，按钮飘到画面外。
-                `bottom` 而不是 `top`：那个 rect 是 WebGL 视口坐标，y 从底边量起。
-              */
-              <button
-                type="button"
-                data-testid="previz-monitor-hide"
-                aria-label={t("previz.editor.hideMonitor")}
-                title={t("previz.editor.hideMonitor")}
-                onClick={() => setActiveCamera(null)}
-                style={{
-                  left: monitorRect.x + monitorRect.width - MONITOR_HIDE_SIZE - MONITOR_HIDE_INSET,
-                  bottom: monitorRect.y + monitorRect.height - MONITOR_HIDE_SIZE - MONITOR_HIDE_INSET,
-                  width: MONITOR_HIDE_SIZE,
-                  height: MONITOR_HIDE_SIZE,
-                }}
-                className="absolute grid place-items-center rounded bg-black/55 text-white/70 transition hover:bg-black/80 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:outline-none"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
-
-            {!activeCameraId && restorableCameraId && (
-              /*
-                监看关掉之后留在原地的开关。没有画中画可以贴，就贴画布自己的右下角。
-                和上面那个叉是同一个位置量级，于是「关」和「开」在视觉上是同一颗按钮。
-              */
-              <button
-                type="button"
-                data-testid="previz-monitor-show"
-                aria-label={t("previz.editor.showMonitor")}
-                title={t("previz.editor.showMonitor")}
-                onClick={() => setActiveCamera(restorableCameraId)}
-                className="absolute right-4 bottom-4 grid h-7 w-7 place-items-center rounded bg-black/55 text-white/70 transition hover:bg-black/80 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:outline-none"
-              >
-                <Monitor className="h-3.5 w-3.5" />
-              </button>
-            )}
-
-            <div className="pointer-events-none absolute bottom-4 left-4 rounded-lg bg-black/45 px-3 py-1.5 text-xs text-white/80">
-              {t("previz.editor.duration", { frames: scene.settings.durationFrames })}
-            </div>
-
-            {/*
-              选单开着时铺一层透明背板：点视口任何地方都收起来。靠 onBlur 收的话，
-              点选单里的按钮会先触发 blur、把自己卸掉，那一下就永远点不中。
-            */}
-            {recordMenuOpen && (
-              <div
-                className="absolute inset-0 z-10"
-                onPointerDown={() => setRecordMenuOpen(false)}
-              />
-            )}
-
-            <div className="absolute right-14 top-4 z-20 flex items-center gap-2">
-              <div className="relative">
-                <Button
-                  variant="ghost"
-                  aria-label={
-                    recording ? t("previz.editor.record.stop") : t("previz.editor.record.open")
-                  }
-                  disabled={capturing || recordPublishing}
-                  className="h-8 rounded-lg bg-white/10 px-3 text-[12px] text-white/85 hover:bg-white/20"
-                  onClick={() => {
-                    if (recording) {
-                      recordStopped.current = true;
-                      return;
-                    }
-                    setRecordMenuOpen((next) => !next);
-                  }}
-                >
-                  {recording ? (
-                    <>
-                      <Square className="mr-1 h-3 w-3 fill-current text-red-400" />
-                      {t("previz.editor.record.stopWithProgress", {
-                        percent: Math.round(recordProgress * 100),
-                      })}
-                    </>
-                  ) : (
-                    <>
-                      <Circle
-                        className={cn(
-                          "mr-1 h-3 w-3 fill-current",
-                          recordPublishing ? "text-white/40" : "text-red-400",
-                        )}
-                      />
-                      {recordPublishing
-                        ? t("previz.editor.record.publishing")
-                        : t("previz.editor.record.open")}
-                    </>
-                  )}
-                </Button>
-
-                {recordMenuOpen && !recording && (
-                  <div
-                    role="menu"
-                    aria-label={t("previz.editor.record.open")}
-                    className="absolute right-0 top-9 w-44 overflow-hidden rounded-lg border border-white/10 bg-black/85 p-1 backdrop-blur-sm"
-                  >
-                    {RECORD_MODES.map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        role="menuitem"
-                        className="block w-full rounded-md px-3 py-2 text-left text-[12px] text-white/85 transition hover:bg-white/10 hover:text-white"
-                        onClick={() => {
-                          setRecordMenuOpen(false);
-                          void handleRecord(mode);
-                        }}
-                      >
-                        {t(`previz.editor.record.mode.${mode}`)}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <Button
-                variant="ghost"
-                aria-label={t("previz.editor.capture")}
-                disabled={capturing || Boolean(recording) || recordPublishing}
-                className="h-8 rounded-lg bg-white/10 px-3 text-[12px] text-white/85 hover:bg-white/20"
-                onClick={() => void handleCapture()}
-              >
-                {capturing ? t("previz.editor.capturing") : t("previz.editor.capture")}
-              </Button>
-            </div>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={t("previz.editor.close")}
-              className="absolute right-4 top-4 z-20 text-white/80 hover:text-white"
-              onClick={() => handleOpenChange(false)}
-            >
-              <X className="h-5 w-5" />
-            </Button>
-
-            {/*
-              铺在视口上而不是再套一层 base-ui Dialog：编辑器本身已经是个全屏 Dialog，
-              嵌套 Dialog 会把焦点陷阱和 Esc 各自劫持一遍，Esc 一按连编辑器一起关掉。
-            */}
-            <PrevizCameraCreateDialog
-              open={Boolean(cameraPose)}
-              viewPose={cameraPose ?? PREVIZ_DEFAULT_VIEW}
-              outputAspect={scene.settings.outputAspect}
-              onRenderPreview={(previewCanvas, draft) => {
-                renderer?.renderCameraPreview(previewCanvas, draft);
-              }}
-              onCreate={handleCreateCamera}
-              onClose={() => setCameraPose(null)}
-            />
-          </div>
-
-          <PrevizLayerPanel
-            objects={scene.objects}
-            selectedId={selectedObjectId}
-            activeCameraId={activeCameraId}
-            onSelect={selectObject}
-            onToggleVisible={(id) => {
-              const object = scene.objects.find((entry) => entry.id === id);
-              if (object) updateObject(id, { visible: !object.visible });
-            }}
-            onToggleLocked={(id) => {
-              const object = scene.objects.find((entry) => entry.id === id);
-              if (object) updateObject(id, { locked: !object.locked });
-            }}
-            onRemove={removeObject}
-            onSetActiveCamera={setActiveCamera}
+            onGizmoMode={setGizmoMode}
+            onTool={setTool}
+            onTimelineOpen={setTimelineOpen}
           />
 
           {/*
-            列宽定在这一层，不靠子面板各自带宽度：这个 div 没有宽度时取的是子面板的
-            max-content，最宽那一排会把整列撑出可视区，最后一个按钮直接被切在屏幕外。
-            边框和底色也一起收到这里——两个面板上下相接，各画各的边会在接缝处露出来。
+            视口四周那几颗浮着的图标按钮（关闭、侧栏把手、监看开关，以及浮层控件里的
+            撤销与显示模式）共用一份延迟：少了这个 Provider，鼠标从一颗扫到相邻那颗还要
+            再等一次，一排开关按下来像是每颗都卡一下。
           */}
-          <div className="flex w-80 min-w-0 shrink-0 flex-col overflow-y-auto border-l border-white/10 bg-black/30">
-            <PrevizInspector
-              object={selectedObject}
-              onChange={(patch) => {
-                if (selectedObjectId) updateObject(selectedObjectId, patch);
-              }}
+          <TooltipProvider delay={120}>
+            <div className="relative min-w-0 flex-1">
+              <canvas
+                ref={setCanvas}
+                data-testid="previz-canvas"
+                className="block h-full w-full"
+                onPointerDown={(event) => {
+                  pointerDownAt.current = { x: event.clientX, y: event.clientY };
+                  if (tool !== "draw" || !renderer) return;
+                  // 画笔按下这一下不能同时走拾取，否则一笔画完选中的对象已经换人了。
+                  pointerDownAt.current = null;
+                  capturePointer(event);
+                  const store = usePrevizStore.getState();
+                  strokeHeight.current = drawPlaneHeight(
+                    store.scene,
+                    store.selectedObjectId,
+                    store.timelineFrame,
+                  );
+                  const point = renderer.planePointAt(
+                    event.clientX,
+                    event.clientY,
+                    strokeHeight.current,
+                  );
+                  stroke.current = point ? [point] : [];
+                  renderer.setStroke(stroke.current);
+                }}
+                onPointerMove={(event) => {
+                  if (!stroke.current || !renderer) return;
+                  const point = renderer.planePointAt(
+                    event.clientX,
+                    event.clientY,
+                    strokeHeight.current,
+                  );
+                  // 射线与该平面平行时 planePointAt 交出 null，这一段笔画直接丢掉：
+                  // 补一个瞎编的点会在轨迹上留下一个乱跳的顶点。
+                  if (point) stroke.current.push(point);
+                  // 每一下都推给渲染器：这条线就是绘制过程中唯一的反馈，攒到松手才画
+                  // 等于让用户盲画一整笔。
+                  renderer.setStroke(stroke.current);
+                }}
+                onPointerUp={(event) => {
+                  if (stroke.current) {
+                    const points = stroke.current;
+                    stroke.current = null;
+                    // 收笔交给轨迹曲线接管：不收的话这条线会和刚生成的轨迹重叠着留在画面上。
+                    renderer?.setStroke(null);
+                    const targetId = usePrevizStore.getState().selectedObjectId;
+                    // 没选对象时这一笔没有归属，直接丢——建一条无主轨迹只会在时间轴上
+                    // 多一行删不掉的东西。
+                    if (targetId) usePrevizStore.getState().drawPath(targetId, points);
+                    // 画完自动切回选择：实测参照实现就是这样，否则下一次想选个对象
+                    // 反而又画了一条。
+                    setTool("select");
+                    return;
+                  }
+
+                  const down = pointerDownAt.current;
+                  pointerDownAt.current = null;
+                  if (!renderer || !down) return;
+                  // 轨道拖拽也会经过 pointerdown/up；位移超过阈值就是在转视角。
+                  if (Math.hypot(event.clientX - down.x, event.clientY - down.y) > CLICK_SLOP_PX) {
+                    return;
+                  }
+                  // 轨迹点优先于对象：球是画在被它牵着走的那个对象身上的，让对象先接
+                  // 这一下，轨迹点就永远点不中。点中之后对象的选中状态原样留着——
+                  // 右侧面板上下两半正好是「谁在动」和「动到哪」。
+                  const point = renderer.pickPathPointAt(event.clientX, event.clientY);
+                  if (point) {
+                    // 先选片段：selectClip 会顺手清掉旧的轨迹点，两句写反的话刚选的点
+                    // 当场就被清了。
+                    usePrevizStore.getState().selectClip(point.clipId);
+                    usePrevizStore.getState().selectPathPoint(point.pointId);
+                    return;
+                  }
+                  selectObject(renderer.pickAt(event.clientX, event.clientY));
+                }}
+              />
+
+              {monitoredCamera && (
+                <PrevizMonitorFrame
+                  rect={monitorRect}
+                  camera={monitoredCamera}
+                  outputAspect={scene.settings.outputAspect}
+                  size={monitorSize}
+                  showOutline={showOutline}
+                  showNamePlate={showNamePlate}
+                  onOutputAspect={setOutputAspect}
+                  onSize={setMonitorSize}
+                  onShowOutline={setShowOutline}
+                  onShowNamePlate={setShowNamePlate}
+                  onClose={() => setActiveCamera(null)}
+                />
+              )}
+
+              {!activeCameraId && restorableCameraId && (
+                /*
+                  监看关掉之后留在原地的开关。没有画中画可以贴，就贴画布自己的右下角。
+                  和上面那个叉是同一个位置量级，于是「关」和「开」在视觉上是同一颗按钮。
+                */
+                <span className="absolute right-4 bottom-4">
+                  <PrevizHoverTip label={t("previz.editor.showMonitor")}>
+                    <button
+                      type="button"
+                      data-testid="previz-monitor-show"
+                      aria-label={t("previz.editor.showMonitor")}
+                      onClick={() => setActiveCamera(restorableCameraId)}
+                      className="grid h-7 w-7 place-items-center rounded bg-black/55 text-white/70 transition hover:bg-black/80 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:outline-none"
+                    >
+                      <Monitor className="h-3.5 w-3.5" />
+                    </button>
+                  </PrevizHoverTip>
+                </span>
+              )}
+
+              <div className="pointer-events-none absolute bottom-4 left-4 rounded-lg bg-black/45 px-3 py-1.5 text-xs text-white/80">
+                {t("previz.editor.duration", { frames: scene.settings.durationFrames })}
+              </div>
+
+              {/*
+                收起/展开的把手。贴视口右边缘、垂直居中：展开时它正好落在侧栏那条左边框
+                上，收起后原地不动——于是「收」和「展」在视觉上是同一颗按钮，不会出现
+                「收起来之后找不到怎么开回去」。挂在视口里而不是侧栏里，正是为了让它在
+                侧栏卸掉之后还在。上下两端留给右上角的关闭键与右下角的监看开关。
+              */}
+              <span className="absolute right-0 top-1/2 z-20 -translate-y-1/2">
+                <PrevizHoverTip label={panelsLabel} side="left">
+                  <button
+                    type="button"
+                    data-testid="previz-panels-toggle"
+                    aria-expanded={panelsOpen}
+                    aria-label={panelsLabel}
+                    onClick={() => setPanelsOpen((next) => !next)}
+                    className="grid h-14 w-4 place-items-center rounded-l-md bg-white/10 text-white/60 transition hover:bg-white/20 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:outline-none"
+                  >
+                    {panelsOpen ? (
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </PrevizHoverTip>
+              </span>
+
+              {/*
+                选单开着时铺一层透明背板：点视口任何地方都收起来。靠 onBlur 收的话，
+                点选单里的按钮会先触发 blur、把自己卸掉，那一下就永远点不中。
+              */}
+              {recordMenuOpen && (
+                <div
+                  className="absolute inset-0 z-10"
+                  onPointerDown={() => setRecordMenuOpen(false)}
+                />
+              )}
+
+              <div className="absolute right-14 top-4 z-30 flex items-center gap-2">
+                <div className="relative">
+                  <Button
+                    variant="ghost"
+                    aria-label={
+                      recording ? t("previz.editor.record.stop") : t("previz.editor.record.open")
+                    }
+                    disabled={capturing || recordPublishing}
+                    className="h-8 rounded-lg bg-white/10 px-3 text-[12px] text-white/85 hover:bg-white/20"
+                    onClick={() => {
+                      if (recording) {
+                        recordStopped.current = true;
+                        return;
+                      }
+                      setRecordMenuOpen((next) => !next);
+                    }}
+                  >
+                    {recording ? (
+                      <>
+                        <Square className="mr-1 h-3 w-3 fill-current text-red-400" />
+                        {t("previz.editor.record.stopWithProgress", {
+                          percent: Math.round(recordProgress * 100),
+                        })}
+                      </>
+                    ) : (
+                      <>
+                        <Circle
+                          className={cn(
+                            "mr-1 h-3 w-3 fill-current",
+                            recordPublishing ? "text-white/40" : "text-red-400",
+                          )}
+                        />
+                        {recordPublishing
+                          ? t("previz.editor.record.publishing")
+                          : t("previz.editor.record.open")}
+                      </>
+                    )}
+                  </Button>
+
+                  {recordMenuOpen && !recording && (
+                    <div
+                      role="menu"
+                      aria-label={t("previz.editor.record.open")}
+                      className="absolute right-0 top-9 w-44 overflow-hidden rounded-lg border border-white/10 bg-black/85 p-1 backdrop-blur-sm"
+                    >
+                      {RECORD_MODES.map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          role="menuitem"
+                          className="block w-full rounded-md px-3 py-2 text-left text-[12px] text-white/85 transition hover:bg-white/10 hover:text-white"
+                          onClick={() => {
+                            setRecordMenuOpen(false);
+                            void handleRecord(mode);
+                          }}
+                        >
+                          {t(`previz.editor.record.mode.${mode}`)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <Button
+                  variant="ghost"
+                  aria-label={t("previz.editor.capture")}
+                  disabled={capturing || Boolean(recording) || recordPublishing}
+                  className="h-8 rounded-lg bg-white/10 px-3 text-[12px] text-white/85 hover:bg-white/20"
+                  onClick={() => void handleCapture()}
+                >
+                  {capturing ? t("previz.editor.capturing") : t("previz.editor.capture")}
+                </Button>
+              </div>
+
+              <PrevizViewportControls
+                canUndo={canUndo}
+                canRedo={canRedo}
+                displayMode={scene.settings.displayMode}
+                pathSpacingM={pathSpacingM}
+                pathSpeedMps={pathSpeedMps}
+                view={viewSource}
+                hasSelection={Boolean(selectedObjectId)}
+                quadView={quadView}
+                onUndo={undo}
+                onRedo={redo}
+                onDisplayMode={setDisplayMode}
+                onResetView={() => renderer?.resetView()}
+                onPathSpacing={setPathSpacing}
+                onPathSpeed={setPathSpeed}
+                onViewDirection={(direction) => renderer?.applyViewDirection(direction)}
+                onFocus={() => {
+                  if (selectedObjectId) renderer?.focusObject(selectedObjectId);
+                }}
+                onQuadView={setQuadView}
+              />
+
+              <span className="absolute right-4 top-4 z-20">
+                <PrevizHoverTip label={t("previz.editor.close")} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={t("previz.editor.close")}
+                    className="text-white/80 hover:text-white"
+                    onClick={() => handleOpenChange(false)}
+                  >
+                    <X className="h-5 w-5" />
+                  </Button>
+                </PrevizHoverTip>
+              </span>
+
+              {/*
+                铺在视口上而不是再套一层 base-ui Dialog：编辑器本身已经是个全屏 Dialog，
+                嵌套 Dialog 会把焦点陷阱和 Esc 各自劫持一遍，Esc 一按连编辑器一起关掉。
+              */}
+              <PrevizCameraCreateDialog
+                open={Boolean(cameraPose)}
+                viewPose={cameraPose ?? PREVIZ_DEFAULT_VIEW}
+                outputAspect={scene.settings.outputAspect}
+                onRenderPreview={(previewCanvas, draft) => {
+                  renderer?.renderCameraPreview(previewCanvas, draft);
+                }}
+                onCreate={handleCreateCamera}
+                onClose={() => setCameraPose(null)}
+              />
+            </div>
+          </TooltipProvider>
+
+          {/*
+            两块正交预览自成一列，不跟着图层/属性面板一起收：它们回答的是「这场戏摆成
+            什么样」，跟看不看得见图层树没关系。收起侧栏正是为了把地方让给画面，这时更
+            需要这两张参照图留着。
+          */}
+          {quadView && (
+            <PrevizQuadPreview
+              scene={scene}
+              frame={timelineFrame}
+              cameraId={quadCameraId}
+              cameraName={quadCamera?.name ?? null}
+              subscribeDrag={subscribeDrag}
+              onRenderOrtho={handleQuadPreview}
+              onRenderCamera={handleQuadCamera}
             />
-            <PrevizClipInspector />
-          </div>
+          )}
+
+          {panelsOpen && (
+            <>
+              <PrevizLayerPanel
+                objects={scene.objects}
+                selectedId={selectedObjectId}
+                activeCameraId={activeCameraId}
+                onSelect={selectObject}
+                onToggleVisible={(id) => {
+                  const object = scene.objects.find((entry) => entry.id === id);
+                  if (object) updateObject(id, { visible: !object.visible });
+                }}
+                onToggleLocked={(id) => {
+                  const object = scene.objects.find((entry) => entry.id === id);
+                  if (object) updateObject(id, { locked: !object.locked });
+                }}
+                onRemove={removeObject}
+                onSetActiveCamera={setActiveCamera}
+              />
+
+              {/*
+                没选中对象也没选中片段时整列不出来：两条「选中后在这里编辑」的占位叠在一起
+                白占一列宽，用户想看的只是对象列表。片段单独算一路——时间轴上点片段不会
+                顺带选中对象，这时片段属性照样得能编。
+
+                列宽定在这一层，不靠子面板各自带宽度：这个 div 没有宽度时取的是子面板的
+                max-content，最宽那一排会把整列撑出可视区，最后一个按钮直接被切在屏幕外。
+                边框和底色也一起收到这里——两个面板上下相接，各画各的边会在接缝处露出来。
+              */}
+              {(selectedObject || selectedClipId) && (
+                <div className="flex w-80 min-w-0 shrink-0 flex-col overflow-y-auto border-l border-white/10 bg-black/30">
+                  <PrevizInspector
+                    object={selectedObject}
+                    onChange={(patch) => {
+                      if (selectedObjectId) updateObject(selectedObjectId, patch);
+                    }}
+                  />
+                  <PrevizClipInspector />
+                </div>
+              )}
+            </>
+          )}
           </div>
 
-          <PrevizTimeline onCreateObject={handleAdd} />
+          {timelineOpen && <PrevizTimeline onCreateObject={handleAdd} />}
         </div>
       </DialogContent>
     </Dialog>

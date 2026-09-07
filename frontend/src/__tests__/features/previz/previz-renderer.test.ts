@@ -8,6 +8,10 @@ const render = vi.fn();
 
 class FakeControls {
   enableDamping = false;
+  // 真 OrbitControls 在构造里就填好这两份按键映射（three 0.185
+  // `OrbitControls.js:358`）；进入绘制态摘掉的正是其中的左键与单指。
+  mouseButtons: Record<string, number | null> = { LEFT: 0, MIDDLE: 1, RIGHT: 2 };
+  touches: Record<string, number | null> = { ONE: 0, TWO: 1 };
   target = { set: vi.fn() };
   update = vi.fn(() => false);
   dispose = vi.fn();
@@ -71,6 +75,8 @@ vi.mock("three", () => {
       }
     },
     DoubleSide: 2,
+    MOUSE: { LEFT: 0, MIDDLE: 1, RIGHT: 2, ROTATE: 0, DOLLY: 1, PAN: 2 },
+    TOUCH: { ROTATE: 0, PAN: 1, DOLLY_PAN: 2, DOLLY_ROTATE: 3 },
     Mesh: class {
       renderOrder = 0;
       userData: Record<string, unknown> = {};
@@ -199,6 +205,30 @@ describe("PrevizRenderer 按需重绘", () => {
     controls.emit("change");
     step();
     expect(render).toHaveBeenCalledTimes(1);
+
+    instance.dispose();
+  });
+});
+
+describe("PrevizRenderer 绘制态", () => {
+  it("绘制时摘掉左键与单指的轨道旋转，画完再挂回去", async () => {
+    const canvas = document.createElement("canvas");
+    const instance = await PrevizRenderer.create(canvas);
+
+    // 画笔和 OrbitControls 听的是同一块 canvas 上同一串指针事件，都认「按住左键拖」。
+    // 不摘的话每划一笔整个空间跟着转，而落点是拿当前相机打射线求的——视角边转边画，
+    // 画出来的轨迹和手划过的形状对不上。
+    instance.setDrawing(true);
+    expect(controls.mouseButtons.LEFT).toBeNull();
+    expect(controls.touches.ONE).toBeNull();
+
+    // 缩放、推拉、平移在绘制途中照样要用：画一条长轨迹常常得一路推着看。
+    expect(controls.mouseButtons.MIDDLE).toBe(1);
+    expect(controls.mouseButtons.RIGHT).toBe(2);
+
+    instance.setDrawing(false);
+    expect(controls.mouseButtons.LEFT).toBe(0);
+    expect(controls.touches.ONE).toBe(0);
 
     instance.dispose();
   });

@@ -6,7 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDefaultScene } from '@/features/previz/domain/scene';
 import { usePrevizStore } from '@/features/previz/store';
-import { PrevizTimeline } from '@/features/previz/ui/PrevizTimeline';
+import {
+  PREVIZ_TIMELINE_HEIGHT,
+  PrevizTimeline,
+  clampTimelineHeight,
+} from '@/features/previz/ui/PrevizTimeline';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -138,9 +142,12 @@ describe('PrevizTimeline tracks', () => {
     usePrevizStore.getState().loadScene(createDefaultScene());
     const objectId = usePrevizStore.getState().addObject('character');
     if (!objectId) throw new Error('expected the character to be created');
+    // 4 米、1 m/s = 120 帧，正好铺满默认时间轴：片段长度现在由笔画长度定，
+    // 而速度是 store 上的全局设置，loadScene 不复位，得自己钉一遍。
+    usePrevizStore.getState().setPathSpeed(1);
     usePrevizStore.getState().drawPath(objectId, [
       [0, 0, 0],
-      [6, 0, 0],
+      [4, 0, 0],
     ]);
     return { objectId, clipId: usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id };
   }
@@ -295,9 +302,12 @@ describe('PrevizTimeline scale', () => {
   function seedWalk(): string {
     const objectId = usePrevizStore.getState().addObject('character');
     if (!objectId) throw new Error('expected the character to be created');
+    // 4 米、1 m/s = 120 帧，正好铺满默认时间轴：片段长度现在由笔画长度定，
+    // 而速度是 store 上的全局设置，loadScene 不复位，得自己钉一遍。
+    usePrevizStore.getState().setPathSpeed(1);
     usePrevizStore.getState().drawPath(objectId, [
       [0, 0, 0],
-      [6, 0, 0],
+      [4, 0, 0],
     ]);
     return objectId;
   }
@@ -439,5 +449,86 @@ describe('PrevizTimeline scale', () => {
 
     expect(usePrevizStore.getState().scene.timeline.tracks[0].objectId).toBe(second);
     expect(first).toBeTruthy();
+  });
+});
+
+describe('PrevizTimeline 面板高度', () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  /** 拖把手：监听挂在 window 上，所以 move / up 都得发给 window。 */
+  function dragHandleBy(deltaPx: number) {
+    const handle = screen.getByTestId('previz-timeline-resize');
+    fireEvent.pointerDown(handle, { clientY: 500 });
+    // 往上拖是拉高，所以 clientY 减去 delta。
+    fireEvent.pointerMove(window, { clientY: 500 - deltaPx });
+    fireEvent.pointerUp(window);
+  }
+
+  it('只把默认高度当上限用，不一上来就撑满', () => {
+    render(<PrevizTimeline />);
+
+    // 一条轨道的场景本来就该只占两行；先撑到 224 再说等于白白吃掉视口。
+    expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({
+      maxHeight: `${PREVIZ_TIMELINE_HEIGHT.default}px`,
+    });
+  });
+
+  it('拖过之后按拖出来的高度钉死', () => {
+    render(<PrevizTimeline />);
+
+    dragHandleBy(100);
+
+    const tracks = screen.getByTestId('previz-timeline-tracks');
+    // 用户亲手拖出来的空白是他自己要的（腾地方往里加轨道），不该再被内容高度收回去。
+    expect(tracks).toHaveStyle({ height: '324px' });
+    expect(tracks.style.maxHeight).toBe('');
+  });
+
+  it('拖得再狠也停在上下限上', () => {
+    render(<PrevizTimeline />);
+
+    // jsdom 的窗口高 768，六成是 460.8——上限由窗口这条管着，不是那个 560。
+    dragHandleBy(4000);
+    expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({ height: '461px' });
+
+    dragHandleBy(-4000);
+    expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({
+      height: `${PREVIZ_TIMELINE_HEIGHT.min}px`,
+    });
+  });
+
+  it('松手之后不再跟着指针跑', () => {
+    render(<PrevizTimeline />);
+
+    dragHandleBy(100);
+    fireEvent.pointerMove(window, { clientY: 0 });
+
+    // 监听没摘干净的话，松手后指针每动一下面板还在长——而这时用户以为自己在操作别处。
+    expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({ height: '324px' });
+  });
+
+  it('上下键也能调，触控板上精确到几像素太难受', async () => {
+    const user = userEvent.setup();
+    render(<PrevizTimeline />);
+
+    const handle = screen.getByTestId('previz-timeline-resize');
+    handle.focus();
+    await user.keyboard('{ArrowUp}');
+    expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({ height: '248px' });
+
+    await user.keyboard('{ArrowDown}{ArrowDown}');
+    expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({ height: '200px' });
+  });
+
+  it('上限由窗口高度与绝对值一起管', () => {
+    // 矮屏：只写绝对值 560 的话，面板能把 3D 视口整个挤没——而拉高轨道正是为了对着
+    // 画面看哪根关键帧对应哪一步。
+    expect(clampTimelineHeight(500, 600)).toBe(360);
+    // 超宽屏：只按比例的话六成是七八百像素，轨道再多也用不上，剩下全是空白。
+    expect(clampTimelineHeight(1000, 2000)).toBe(PREVIZ_TIMELINE_HEIGHT.max);
+    // 下界：再矮连一条轨道加它下面那行运动路径都露不全。
+    expect(clampTimelineHeight(0, 900)).toBe(PREVIZ_TIMELINE_HEIGHT.min);
   });
 });

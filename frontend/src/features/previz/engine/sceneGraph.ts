@@ -59,6 +59,13 @@ const KIND_COLOR: Record<Exclude<PrevizObject['kind'], 'camera'>, number> = {
  * 人物脚下那圈辨识环的内外半径，单位米。外径比占位胶囊的半径（0.22）大一圈，
  * 站位重叠时两个人的环仍然分得开；内径留空是为了别把脚整个盖住。
  */
+/**
+ * 视图叠加层（描边、名牌）的标记。它们的资源由 `viewOverlays.ts` 独家持有：染色要跳过
+ * 它们（描边是纯色轮廓，染成水泥灰就没有轮廓可言），回收也要跳过（几何体是跟源网格
+ * 借的，材质是全局共用的）。
+ */
+export const PREVIZ_OVERLAY_KEY = 'previzOverlay';
+
 const MARKER_INNER_RADIUS = 0.3;
 const MARKER_OUTER_RADIUS = 0.36;
 
@@ -489,6 +496,8 @@ export class PrevizSceneGraph {
       // 和别人一样的灰（辨识色就白给了），半透明会把它化掉——而这两个模式恰恰是最难
       // 认人的时候。
       if (mesh.userData.previzMarker) return;
+      // 描边与名牌同理：它们是看的辅助，不是镜头里的材质。
+      if (mesh.userData[PREVIZ_OVERLAY_KEY]) return;
       const material = mesh.material;
       if (!material) return;
       const list = Array.isArray(material) ? material : [material];
@@ -547,6 +556,8 @@ const SHARED_MODEL_KEY = 'previzSharedModel';
  */
 function disposeSubtree(root: THREE.Object3D): void {
   if (root.userData[SHARED_MODEL_KEY]) return;
+  // 叠加层什么都不持有：几何体借自源网格，材质是全局共用的。照着还会把源模型一起还掉。
+  if (root.userData[PREVIZ_OVERLAY_KEY]) return;
   const mesh = root as THREE.Mesh;
   mesh.geometry?.dispose();
   const material = mesh.material;

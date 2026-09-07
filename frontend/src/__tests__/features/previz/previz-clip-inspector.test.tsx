@@ -21,9 +21,12 @@ function seed(): { clipId: string; pointId: string } {
   usePrevizStore.getState().loadScene(createDefaultScene());
   const objectId = usePrevizStore.getState().addObject('character');
   if (!objectId) throw new Error('expected the character to be created');
+  // 4 米、1 m/s = 120 帧，正好铺满默认时间轴：片段长度现在由笔画长度定，
+  // 而速度是 store 上的全局设置，loadScene 不复位，得自己钉一遍。
+  usePrevizStore.getState().setPathSpeed(1);
   usePrevizStore.getState().drawPath(objectId, [
     [0, 0, 0],
-    [6, 0, 0],
+    [4, 0, 0],
   ]);
   const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
   usePrevizStore.getState().selectClip(clip.id);
@@ -42,9 +45,10 @@ function seedCamera(): { objectId: string; clipId: string } {
   usePrevizStore.getState().loadScene(createDefaultScene());
   const objectId = usePrevizStore.getState().addObject('camera');
   if (!objectId) throw new Error('expected the camera to be created');
+  usePrevizStore.getState().setPathSpeed(1);
   usePrevizStore.getState().drawPath(objectId, [
     [0, 3, 0],
-    [6, 3, 0],
+    [4, 3, 0],
   ]);
   const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
   usePrevizStore.getState().selectClip(clip.id);

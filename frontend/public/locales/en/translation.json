@@ -7482,6 +7482,8 @@
       "duration": "Duration {{frames}} frames",
       "hideMonitor": "Hide monitor",
       "showMonitor": "Show monitor",
+      "collapsePanels": "Collapse panels",
+      "expandPanels": "Expand panels",
       "sceneTooLarge": "The scene is too large to save. Remove some objects and try again.",
       "limitReached": "This object type has reached its limit",
       "noProject": "No project in the current URL — cannot upload a model",
@@ -7523,8 +7525,59 @@
       },
       "importProp": "Import model",
       "limitReached": "Limit reached ({{count}})",
+      "tool": {
+        "select": "Select",
+        "draw": "Draw path"
+      },
+      "gizmo": {
+        "translate": "Move",
+        "rotate": "Rotate",
+        "scale": "Scale"
+      },
+      "group": {
+        "create": "Create",
+        "tool": "Tool",
+        "gizmo": "Gizmo"
+      },
+      "collapseTimeline": "Collapse timeline panel",
+      "expandTimeline": "Expand timeline panel"
+    },
+    "viewport": {
       "undo": "Undo",
-      "redo": "Redo"
+      "redo": "Redo",
+      "resetView": "Reset view (H)",
+      "display": {
+        "solid": "Solid",
+        "translucent": "Translucent",
+        "clay": "Clay"
+      },
+      "pathSpacing": "Point spacing (m)",
+      "pathSpeed": "Draw speed (m/s)",
+      "group": {
+        "history": "History",
+        "display": "Display",
+        "draw": "Draw",
+        "view": "View",
+        "axis": "Axes"
+      },
+      "view": {
+        "front": "Front view",
+        "back": "Back view",
+        "left": "Left view",
+        "right": "Right view",
+        "top": "Top view",
+        "bottom": "Bottom view"
+      },
+      "axis": "View cube",
+      "focus": "Focus (F)",
+      "focusHint": "Select an object first",
+      "quadView": "Quad view",
+      "quadNoCamera": "No camera in the scene yet",
+      "quad": {
+        "camera": "Camera",
+        "top": "Top",
+        "side": "Side"
+      }
     },
     "layers": {
       "title": "Objects",
@@ -7651,41 +7704,13 @@
       "intensity": "Intensity",
       "assetUrl": "Model URL"
     },
-    "hud": {
-      "group": {
-        "display": "Display",
-        "view": "View",
-        "gizmo": "Gizmo",
-        "tool": "Tool",
-        "aspect": "Aspect"
-      },
-      "tool": {
-        "select": "Select",
-        "draw": "Draw path"
-      },
-      "pathSpacing": "Point spacing (m)",
-      "display": {
-        "solid": "Solid",
-        "translucent": "Translucent",
-        "clay": "Clay"
-      },
-      "view": {
-        "front": "Front",
-        "back": "Back",
-        "left": "Left",
-        "right": "Right",
-        "top": "Top",
-        "bottom": "Bottom"
-      },
-      "focus": "Focus (F)",
-      "focusHint": "Select an object first",
-      "resetView": "Reset view (H)",
-      "gizmo": {
-        "translate": "Move",
-        "rotate": "Rotate",
-        "scale": "Scale"
-      },
-      "outputAspect": "Output aspect"
+    "monitor": {
+      "aspect": "Aspect ratio",
+      "outline": "Model outline",
+      "namePlate": "Character name plates",
+      "enlarge": "Enlarge monitor",
+      "restore": "Restore size",
+      "caption": "{{name}} · {{focal}}mm · {{sensor}}"
     },
     "timeline": {
       "play": "Play",
@@ -7715,6 +7740,7 @@
       "clipLabel": "Path clip {{start}}-{{end}}",
       "closeupLabel": "Closeup {{start}}-{{end}}",
       "appendClip": "Append a clip after this one",
+      "resize": "Drag to resize the timeline panel",
       "zoomIn": "Zoom in",
       "zoomOut": "Zoom out",
       "zoomFit": "Fit the timeline",
@@ -7732,7 +7758,7 @@
       "endFrame": "End frame",
       "aim": "Look at",
       "aimNone": "Nothing",
-      "aimHintFree": "The camera keeps the angle it had when you drew the path. Pick an object to keep it aimed there instead.",
+      "aimHintFree": "The camera turns with the path, holding the angle to the direction of travel it was drawn with. Pick an object to keep it aimed there instead.",
       "aimHintLocked": "The camera stays aimed at this object; the rotation on each path point no longer applies.",
       "trimStart": "Trim head to playhead",
       "trimEnd": "Trim tail to playhead",

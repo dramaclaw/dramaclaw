@@ -8,6 +8,7 @@ import {
   boundsCenter,
   boundsRadius,
   framingDistance,
+  orthoPlacement,
   unionBounds,
   viewPlacement,
 } from "@/features/previz/domain/view";
@@ -208,5 +209,116 @@ describe("viewPlacement", () => {
     expect(PREVIZ_VIEW_DIRECTIONS).toEqual(["front", "back", "left", "right", "top", "bottom"]);
     // 默认机位与 PrevizRenderer.create() 里建相机时用的一致，别各写一份。
     expect(PREVIZ_DEFAULT_VIEW).toEqual({ position: [6, 4, 8], target: [0, 1, 0] });
+  });
+});
+
+/**
+ * 四视图那两块预览用的正交取景。
+ *
+ * 这里的每一条都对应一种「画面看起来没坏、但判断会出错」的失效：窗口开小了主体被切、
+ * 相机站进包围球里近处的东西被裁掉、顶视图 up 没定死导致画面整个转过去。
+ */
+describe("orthoPlacement", () => {
+  /** 半径 √3 的立方体，居中在原点上方 1 米。 */
+  const BOX = { min: [-1, 0, -1] as const, max: [1, 2, 1] as const };
+  const RADIUS = Math.sqrt(3);
+
+  it("frames the bounding sphere with padding", () => {
+    const placement = orthoPlacement("front", BOX, 16 / 9);
+
+    expect(placement.target).toEqual([0, 1, 0]);
+    // 竖直方向是宽画布上紧的那一边：半高恰好是半径乘留白系数。
+    expect(placement.halfHeight).toBeCloseTo(RADIUS * 1.25, 6);
+    expect(placement.halfWidth / placement.halfHeight).toBeCloseTo(16 / 9, 6);
+    expect(placement.halfWidth).toBeGreaterThan(RADIUS);
+  });
+
+  // 竖幅画布上紧的换成了水平方向。只按高算的话左右会被切掉——预览里最要命的一种切，
+  // 因为俯视图看的就是横向走位。
+  it("grows the window vertically when the canvas is taller than it is wide", () => {
+    const placement = orthoPlacement("top", BOX, 0.5);
+
+    expect(placement.halfWidth).toBeCloseTo(RADIUS * 1.25, 6);
+    expect(placement.halfHeight).toBeCloseTo(RADIUS * 1.25 * 2, 6);
+  });
+
+  it.each([
+    ["front", [0, 0, 1]],
+    ["back", [0, 0, -1]],
+    ["right", [1, 0, 0]],
+    ["left", [-1, 0, 0]],
+    ["top", [0, 1, 0]],
+    ["bottom", [0, -1, 0]],
+  ] as const)("stands the %s camera off along its own axis", (direction, unit) => {
+    const placement = orthoPlacement(direction, BOX, 16 / 9);
+
+    const offset = [
+      placement.position[0] - placement.target[0],
+      placement.position[1] - placement.target[1],
+      placement.position[2] - placement.target[2],
+    ];
+    const distance = Math.hypot(...offset);
+    expect(offset.map((value) => value / distance)).toEqual(unit.map((value) => value));
+    // 站进包围球里的话，靠近相机那半个场景会被近平面切掉。
+    expect(distance).toBeGreaterThan(RADIUS);
+  });
+
+  // 正交投影下站多远不改变画面大小，只改变裁切：整个包围球必须落在近远平面之间。
+  it("brackets the whole bounding sphere between near and far", () => {
+    const placement = orthoPlacement("right", BOX, 16 / 9);
+
+    const distance = Math.hypot(
+      placement.position[0] - placement.target[0],
+      placement.position[1] - placement.target[1],
+      placement.position[2] - placement.target[2],
+    );
+    expect(placement.near).toBeLessThan(distance - RADIUS);
+    expect(placement.far).toBeGreaterThan(distance + RADIUS);
+    expect(placement.near).toBeGreaterThan(0);
+  });
+
+  /*
+    顶/底视图的视线与世界 up 平行，`lookAt` 会走 three 内部那条加 0.0001 扰动的兜底分支，
+    画面的滚转由那个隐藏量决定——换个 three 版本俯视图就可能整个转过去。所以 up 在这里
+    显式定死，顺带定下「俯视图里 +Z 朝下」这个读图习惯。
+  */
+  it.each([
+    ["top", [0, 0, -1]],
+    ["bottom", [0, 0, 1]],
+  ] as const)("pins the %s view's up vector off the pole", (direction, up) => {
+    expect(orthoPlacement(direction, BOX, 16 / 9).up).toEqual([...up]);
+  });
+
+  it("keeps the up vector vertical for the four side views", () => {
+    for (const direction of ["front", "back", "left", "right"] as const) {
+      expect(orthoPlacement(direction, BOX, 16 / 9).up).toEqual([0, 1, 0]);
+    }
+  });
+
+  // 空场景（还没建对象、或者选中的东西没有几何体）不能把 0 尺寸的取景窗交给相机：
+  // left===right 的投影矩阵里全是 Infinity，预览一片黑。
+  it("still opens a usable window for an unusable box", () => {
+    const placement = orthoPlacement("top", EMPTY_BOX, 16 / 9);
+
+    expect(placement.halfHeight).toBeGreaterThanOrEqual(1);
+    expect(placement.halfWidth).toBeGreaterThanOrEqual(1);
+    const numbers = [
+      ...placement.position,
+      ...placement.target,
+      placement.halfWidth,
+      placement.halfHeight,
+      placement.near,
+      placement.far,
+    ];
+    expect(numbers.every((value) => Number.isFinite(value))).toBe(true);
+  });
+
+  // 画幅比是从 DOM 量出来的：侧栏折叠动画中途会量到 0，容器还没布局时会量到 NaN。
+  it.each([0, Number.NaN, Infinity, -3])("survives an aspect of %s", (aspect) => {
+    const placement = orthoPlacement("front", BOX, aspect);
+
+    expect(placement.halfWidth).toBeGreaterThan(0);
+    expect(placement.halfHeight).toBeGreaterThan(0);
+    expect(Number.isFinite(placement.halfWidth * placement.halfHeight)).toBe(true);
   });
 });

@@ -5,7 +5,7 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 
 import type { PrevizRecordMode } from '../capture/recordTarget';
 import { createDomCaptureCanvas, createFramePainter, renderCapture } from '../capture/renderCapture';
-import { OUTPUT_PIXEL_SIZE, aspectRatio, DEG_TO_RAD } from '../domain/camera';
+import { OUTPUT_PIXEL_SIZE, aspectRatio, coverFovDeg, DEG_TO_RAD } from '../domain/camera';
 import type { PrevizCameraDraft } from '../domain/cameraDraft';
 import { evaluateSceneAt } from '../domain/evaluate';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
@@ -15,14 +15,20 @@ import {
   boundsCenter,
   boundsRadius,
   framingDistance,
+  orthoPlacement,
   unionBounds,
   viewPlacement,
   type PrevizBounds,
   type PrevizViewDirection,
   type PrevizViewPlacement,
 } from '../domain/view';
-import { monitorViewportRect, syncMonitorCamera } from './cameraRig';
-import { renderCameraPreview, type CameraPreviewCanvas } from './cameraPreview';
+import { monitorViewportRect, syncMonitorCamera, type MonitorSize } from './cameraRig';
+import {
+  blitCameraToCanvas,
+  renderCameraPreview,
+  type CameraPreviewCanvas,
+} from './cameraPreview';
+import { renderOrthoPreview } from './orthoPreview';
 import { CharacterRigFactory } from './characterRig';
 import { PrevizPathPreview } from './pathPreview';
 import { PrevizStrokePreview } from './strokePreview';
@@ -30,6 +36,7 @@ import { PrevizGizmo, type GizmoMode, type TransformControlsLike } from './gizmo
 import { createInfiniteGrid } from './grid';
 import { PropLoader } from './propLoader';
 import { PREVIZ_PLACEHOLDER_RADIUS, PrevizSceneGraph, type ThreeModule } from './sceneGraph';
+import { PrevizViewOverlays, type PrevizViewOverlayOptions } from './viewOverlays';
 
 // 上限 2：3x DPR 设备按原生比例渲染是 9 倍像素，收益远小于开销。
 const MAX_PIXEL_RATIO = 2;
@@ -94,8 +101,14 @@ export class PrevizRenderer {
   private selectionId: string | null = null;
   private gizmo: PrevizGizmo | null = null;
   private monitorCamera: THREE.PerspectiveCamera | null = null;
+  /** 监看画中画的大小档位。 */
+  private monitorSize: MonitorSize = 'normal';
+  /** 描边与名牌。 */
+  private overlays: PrevizViewOverlays | null = null;
   /** 摄影机创建对话框的取景预览相机，第一次画预览时建，之后一直留着。 */
   private previewCamera: THREE.PerspectiveCamera | null = null;
+  /** 四视图那两块正交预览共用的相机，第一次画时建。 */
+  private orthoCamera: THREE.OrthographicCamera | null = null;
   /** 右下角监看当前看的是哪个机位。null 就是不画监看。 */
   private activeCameraId: string | null = null;
   /** 播放头当前帧。场景灌进来时按它解算一次，之后每次移动播放头再解算。 */
@@ -116,6 +129,22 @@ export class PrevizRenderer {
   private selectedPointId: string | null = null;
   /** 手柄拖完把变换交回上层（编辑器接到 store 的 updateObject）。 */
   onTransformCommit: ((objectId: string, transform: PrevizTransform) => void) | null = null;
+  /**
+   * 手柄拖拽期间对象正在动。四视图那两块正交预览靠它跟手。
+   *
+   * 拖拽中的位置只存在于 three 的节点上——变换要到松手才提交回 store（见 [PrevizGizmo]，
+   * 每帧都提交等于毁掉撤销）。只跟着 store 走的话，俯视与侧视会僵在原地、松手才瞬移
+   * 过去，而拖动过程恰恰是最需要照着俯视图对位置的时候。
+   *
+   * 一次拖拽会来几百次，接的人别顺手把整棵编辑器重渲一遍（同 [onViewChange]）。
+   */
+  onTransformDrag: (() => void) | null = null;
+  /**
+   * 视口相机动了。拖轨道、滚滚轮、切视角、聚焦都会报，左上角那颗坐标轴球靠它跟手。
+   *
+   * 拖拽期间每帧都会来一次（含阻尼余速），所以接的人别顺手把整棵编辑器重渲一遍。
+   */
+  onViewChange: ((view: PrevizViewPlacement) => void) | null = null;
 
   private constructor(
     private readonly renderer: THREE.WebGLRenderer,
@@ -178,7 +207,11 @@ export class PrevizRenderer {
     // 把 _scale 消化干净，只留下这个 change 事件。tick 里那次 update() 只会拿到
     // false，不订阅 change 的话相机确实动了、屏幕上却一帧都不重绘——缩放看起来
     // 就是彻底失灵，直到下一次拖拽（阻尼余速能让 update() 连着返回 true）才补上。
-    controls.addEventListener('change', () => instance.requestRender());
+    controls.addEventListener('change', () => {
+      instance.requestRender();
+      // moveCamera 里那次 controls.update() 也走这里：写机位的路径不必各自再报一遍。
+      instance.onViewChange?.(instance.viewPose());
+    });
 
     const gltfLoader = new gltfModule.GLTFLoader();
     instance.graph.attachCharacterRig(
@@ -190,7 +223,11 @@ export class PrevizRenderer {
         clone: skeletonUtils.clone,
       }),
       // 模型是异步到的，到了之后必须主动请求一帧：按需重绘的循环这时早就静下来了。
-      () => instance.requestRender(),
+      // 顺手补一次描边 / 名牌：这条路径不经过 setScene，少了它后到的 GLB 一直没有描边。
+      () => {
+        instance.syncOverlays();
+        instance.requestRender();
+      },
     );
 
     const objLoader = new objModule.OBJLoader();
@@ -205,6 +242,8 @@ export class PrevizRenderer {
     // 约 16 个，而预演台是反复开关的——再开一个 renderer 迟早静默黑屏。
     instance.monitorCamera = new three.PerspectiveCamera(40, 16 / 9, 0.1, 500);
 
+    instance.overlays = new PrevizViewOverlays(three);
+
     const transformControls = new transformModule.TransformControls(camera, canvas);
     instance.gizmo = new PrevizGizmo({
       controls: transformControls as unknown as TransformControlsLike,
@@ -213,7 +252,10 @@ export class PrevizRenderer {
       // 手柄挂进去会被射线命中，也会被算进「框全场景」的包围盒里。
       root: scene,
       onCommit: (objectId, transform) => instance.onTransformCommit?.(objectId, transform),
-      onChange: () => instance.requestRender(),
+      onChange: () => {
+        instance.requestRender();
+        instance.onTransformDrag?.();
+      },
     });
     // 轨迹预览挂在 scene 而不是 objectRoot 下：objectRoot 是拾取与「框全场景」的取值
     // 范围，曲线挂进去会被射线命中（点轨迹选中人物），也会把包围盒撑到整条路径那么大。
@@ -273,7 +315,27 @@ export class PrevizRenderer {
     // 表现是播放中随便改点什么（改个名字都算）人就瞬移回起点。
     this.applyEvaluatedFrame();
     this.pathPreview?.sync(scene, this.selectedClipId, this.selectedPointId);
+    this.syncOverlays();
     this.requestRender();
+  }
+
+  /** 描边与名牌的开关。 */
+  setViewOverlays(options: PrevizViewOverlayOptions): void {
+    this.overlays?.setOptions(options);
+    this.syncOverlays();
+    this.requestRender();
+  }
+
+  /** 监看画中画的大小档位。 */
+  setMonitorSize(size: MonitorSize): void {
+    this.monitorSize = size;
+    this.requestRender();
+  }
+
+  private syncOverlays(): void {
+    const scene = this.currentScene;
+    if (!scene) return;
+    this.overlays?.sync(scene, (objectId) => this.graph.nodeFor(objectId));
   }
 
   /**
@@ -326,6 +388,23 @@ export class PrevizRenderer {
     if (this.disposed) return;
     this.strokePreview?.set(points);
     this.requestRender();
+  }
+
+  /**
+   * 进入 / 离开绘制态：把左键（与单指）从轨道旋转上摘下来，画完再挂回去。
+   *
+   * 画笔和 OrbitControls 听的是同一块 canvas 上同一串指针事件，都认「按住左键拖」。
+   * 不摘的话用户每划一笔，整个空间跟着一起转；而落点是拿**当前**相机打射线求出来的，
+   * 视角边转边画，画出来的轨迹和手划过的形状根本对不上。
+   *
+   * 只摘左键，不是 `controls.enabled = false`：滚轮缩放、中键推拉、右键平移在绘制途中
+   * 照样要用——画一条长轨迹常常得一路推着看——全关掉等于逼用户在「看」和「画」之间
+   * 反复切工具。
+   */
+  setDrawing(active: boolean): void {
+    if (this.disposed) return;
+    this.controls.mouseButtons.LEFT = active ? null : this.three.MOUSE.ROTATE;
+    this.controls.touches.ONE = active ? null : this.three.TOUCH.ROTATE;
   }
 
   /**
@@ -431,9 +510,10 @@ export class PrevizRenderer {
       active && active.kind === 'camera' && activeNode && this.monitorCamera,
     );
 
-    // 手柄、轨迹辅助物、以及出片机位自己的锥体，都不该进画面。
+    // 手柄、轨迹辅助物、描边名牌、以及出片机位自己的锥体，都不该进画面。
     this.gizmo?.setHelperVisible(false);
     this.setEditorHelpersVisible(false);
+    this.overlays?.setSuppressed(true);
     if (useMonitor && activeNode) activeNode.visible = false;
 
     // 编辑相机的 aspect 跟着视口走，和出片画幅无关；借用它出片前要先改，出完再还。
@@ -464,6 +544,7 @@ export class PrevizRenderer {
       this.camera.aspect = editorAspect;
       this.camera.updateProjectionMatrix();
       if (useMonitor && activeNode) activeNode.visible = true;
+      this.overlays?.setSuppressed(false);
       this.setEditorHelpersVisible(true);
       this.gizmo?.setHelperVisible(true);
       this.requestRender();
@@ -495,10 +576,11 @@ export class PrevizRenderer {
     }
     const monitor = this.monitorCamera;
 
-    // 手柄、轨迹辅助物、以及出片机位自己的锥体，都不该进画面。录制期间一直藏着：
-    // 逐帧开关的话，屏幕上那条 rAF 渲染循环会随机撞在「开」的那一半上。
+    // 手柄、轨迹辅助物、描边名牌、以及出片机位自己的锥体，都不该进画面。录制期间一直
+    // 藏着：逐帧开关的话，屏幕上那条 rAF 渲染循环会随机撞在「开」的那一半上。
     this.gizmo?.setHelperVisible(false);
     this.setEditorHelpersVisible(false);
+    this.overlays?.setSuppressed(true);
     if (cameraNode) cameraNode.visible = false;
     this.requestRender();
 
@@ -546,6 +628,7 @@ export class PrevizRenderer {
         ended = true;
         painter.dispose();
         if (cameraNode) cameraNode.visible = true;
+        this.overlays?.setSuppressed(false);
         this.setEditorHelpersVisible(true);
         this.gizmo?.setHelperVisible(true);
         this.requestRender();
@@ -662,6 +745,102 @@ export class PrevizRenderer {
   }
 
   /**
+   * 把整个场景的某个正交视角画到四视图那块画布上。
+   *
+   * 框的是全场景而不是 [currentBounds]：俯视和侧视是「这场戏摆成什么样」的参照图，
+   * 跟着选中对象一起跳的话，每点一次人物两张图就换一次比例尺，反而读不出走位关系。
+   *
+   * 真正换成正交投影的只有这两块画布，视口相机始终是透视：视口换成正交会改掉
+   * OrbitControls 的推拉手感，检视面板里那些按透视算出来的读数也会一起失真。
+   */
+  renderQuadPreview(canvas: CameraPreviewCanvas, direction: PrevizViewDirection): void {
+    if (this.disposed) return;
+
+    // 临时相机只在这里用，建一次留着：每帧新建一台会在拖拽时一秒钟丢几十个对象。
+    if (!this.orthoCamera) this.orthoCamera = new this.three.OrthographicCamera();
+
+    const width = Math.max(1, Math.floor(canvas.width));
+    const height = Math.max(1, Math.floor(canvas.height));
+    const placement = orthoPlacement(direction, this.sceneBounds(), width / height);
+
+    // 手柄的 helper 是贴着屏幕大小画的，正交小图里会糊满整块画布。轨迹与描边留着：
+    // 俯视图上那几条走位线正是要看的东西。
+    this.gizmo?.setHelperVisible(false);
+    try {
+      renderOrthoPreview(
+        {
+          three: this.three,
+          renderer: this.renderer,
+          scene: this.scene,
+          camera: this.orthoCamera,
+          canvas,
+        },
+        placement,
+      );
+    } finally {
+      this.gizmo?.setHelperVisible(true);
+      this.requestRender();
+    }
+  }
+
+  /**
+   * 把某台机位眼里的一帧画到四视图那块画布上。机位由调用方点名——四视图那一格与右下角
+   * 监看看的不一定是同一台（见 `PrevizEditor` 里的 `quadCamera`），谁也别替谁做主。
+   * 传进来的 id 不是机位、或者场景里没有它时**什么都不画**：由调用方在那块地方摆一句
+   * 提示，比留一块黑画布说得清楚。
+   *
+   * 与右下角监看用的是同一台相机、同一套参数（[syncMonitorCamera]），区别只在落点：
+   * 监看是主画面上的一次 scissor pass，这里是画进一块独立画布。所以两处的取舍也一样——
+   * 机位自己的锥体、手柄、轨迹辅助物都要先藏起来：锥体就长在相机原点上，不藏会糊满
+   * 整块画布，而轨迹小球在机位走位时同样贴在镜头上。这一条是四视图里唯一一块「镜头里
+   * 的画面」，其余三块都是编辑视图，看得见辅助物才好用。
+   *
+   * 画面**铺满**画布，多出来的那一边裁掉（[coverFovDeg]），而不是像取景预览那样留黑边：
+   * 这是四格里最大的一格，画布长宽比又跟着布局走，留边等于把它最大的用处（看清楚镜头里
+   * 是什么）先削掉一半。裁而不是拉伸——拉伸过的画面会让用户照着错误的构图去摆机位。
+   */
+  renderCameraView(canvas: CameraPreviewCanvas, cameraId: string): void {
+    if (this.disposed) return;
+    const scene = this.currentScene;
+    const monitor = this.monitorCamera;
+    if (!scene || !monitor) return;
+
+    const object = scene.objects.find((entry) => entry.id === cameraId);
+    const node = this.graph.nodeFor(cameraId);
+    if (!object || object.kind !== 'camera' || !node) return;
+
+    const aspect = scene.settings.outputAspect;
+    syncMonitorCamera(monitor, node, object, aspect);
+
+    // 至少 1 像素：画布还没进布局时宽高是 0，而 `WebGLRenderTarget(0, 0)` 会抛。
+    const width = Math.max(1, Math.floor(canvas.width));
+    const height = Math.max(1, Math.floor(canvas.height));
+    // 铺满这块画布，而不是按出片画幅留黑边。`syncMonitorCamera` 刚按出片画幅摆好的
+    // 那台相机在这里改一次取景，改的只是取景——机位的位置、朝向、焦距一个都没动。
+    monitor.fov = coverFovDeg(monitor.fov, aspectRatio(aspect), width / height);
+    monitor.aspect = width / height;
+    monitor.updateProjectionMatrix();
+
+    const wasVisible = node.visible;
+    node.visible = false;
+    this.gizmo?.setHelperVisible(false);
+    this.setEditorHelpersVisible(false);
+    try {
+      blitCameraToCanvas(
+        { three: this.three, renderer: this.renderer, scene: this.scene, canvas },
+        monitor,
+        { x: 0, y: 0, width, height },
+      );
+    } finally {
+      this.setEditorHelpersVisible(true);
+      this.gizmo?.setHelperVisible(true);
+      node.visible = wasVisible;
+      // 离屏 pass 把 render target 换过一轮，屏幕上那一帧要重画。
+      this.requestRender();
+    }
+  }
+
+  /**
    * 画布坐标下的拾取，返回对象 id，点空处返回 null。命中的一定是占位体或模型里的
    * 子网格，所以要沿 parent 往上走到挂着 previzObjectId 的那个组。
    */
@@ -755,11 +934,15 @@ export class PrevizRenderer {
     return placeholderBounds(origin.x, origin.y, origin.z);
   }
 
-  /** 这次取景要框的东西：选中的那个，否则全部可见对象，再否则原点上的占位盒。 */
+  /** 这次取景要框的东西：选中的那个，否则全场景。 */
   private currentBounds(): PrevizBounds {
     const selected = this.selectionId ? this.graph.nodeFor(this.selectionId) : undefined;
     if (selected) return this.boundsOf(selected);
+    return this.sceneBounds();
+  }
 
+  /** 全部可见对象，场景空了退回原点上的占位盒——不然四视图会框到一个没有意义的地方。 */
+  private sceneBounds(): PrevizBounds {
     const all = this.visibleNodes().map((node) => this.boundsOf(node));
     return unionBounds(all) ?? placeholderBounds(0, 0, 0);
   }
@@ -786,7 +969,7 @@ export class PrevizRenderer {
     syncMonitorCamera(monitor, node, object, scene.settings.outputAspect);
 
     const size = this.renderer.getSize(new this.three.Vector2());
-    const rect = monitorViewportRect(size.x, size.y, scene.settings.outputAspect);
+    const rect = monitorViewportRect(size.x, size.y, scene.settings.outputAspect, this.monitorSize);
 
     // 机位自己的锥体就长在相机原点上，不藏起来会糊满整个监看画面。
     const wasVisible = node.visible;
@@ -846,6 +1029,9 @@ export class PrevizRenderer {
     // 必须排在下面那次 traverse 之前：场景图会把自己的节点从对象根上摘掉再还资源，
     // 顺序反过来的话同一批几何体与材质会被 dispose 两遍。
     this.gizmo?.dispose();
+    // 必须排在 graph.dispose() 之前：叠加层挂在场景图的节点下面，反过来的话它要摘的
+    // 那些子节点已经跟着节点一起没了，名牌的贴图就还不回去。
+    this.overlays?.dispose();
     this.graph.dispose();
     this.pathPreview?.dispose();
     this.strokePreview?.dispose();

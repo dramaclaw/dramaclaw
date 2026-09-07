@@ -7482,6 +7482,8 @@
       "duration": "时长 {{frames}} 帧",
       "hideMonitor": "隐藏监看",
       "showMonitor": "显示监看",
+      "collapsePanels": "收起面板",
+      "expandPanels": "展开面板",
       "sceneTooLarge": "场景数据过大，本次未保存；请减少对象后重试",
       "limitReached": "该类型对象已达数量上限",
       "noProject": "当前页面没有项目上下文，无法上传模型",
@@ -7523,8 +7525,59 @@
       },
       "importProp": "导入模型",
       "limitReached": "已达上限 {{count}} 个",
+      "tool": {
+        "select": "选择",
+        "draw": "绘制轨迹"
+      },
+      "gizmo": {
+        "translate": "移动",
+        "rotate": "旋转",
+        "scale": "缩放"
+      },
+      "group": {
+        "create": "创建",
+        "tool": "工具",
+        "gizmo": "手柄"
+      },
+      "collapseTimeline": "收起轨迹面板",
+      "expandTimeline": "展开轨迹面板"
+    },
+    "viewport": {
       "undo": "撤销",
-      "redo": "重做"
+      "redo": "重做",
+      "resetView": "重置视角 (H)",
+      "display": {
+        "solid": "实体",
+        "translucent": "半透",
+        "clay": "全灰"
+      },
+      "pathSpacing": "轨迹点间距（米）",
+      "pathSpeed": "画笔速度（米/秒）",
+      "group": {
+        "history": "历史",
+        "display": "显示",
+        "draw": "绘制",
+        "view": "视角",
+        "axis": "坐标轴"
+      },
+      "view": {
+        "front": "前视图",
+        "back": "后视图",
+        "left": "左视图",
+        "right": "右视图",
+        "top": "顶视图",
+        "bottom": "底视图"
+      },
+      "axis": "视角球",
+      "focus": "聚焦 (F)",
+      "focusHint": "先选中一个对象再聚焦",
+      "quadView": "四视图",
+      "quadNoCamera": "场景里还没有机位",
+      "quad": {
+        "camera": "机位",
+        "top": "俯视",
+        "side": "侧视"
+      }
     },
     "layers": {
       "title": "对象",
@@ -7651,41 +7704,13 @@
       "intensity": "强度",
       "assetUrl": "模型地址"
     },
-    "hud": {
-      "group": {
-        "display": "显示",
-        "view": "视角",
-        "gizmo": "手柄",
-        "tool": "工具",
-        "aspect": "画幅"
-      },
-      "tool": {
-        "select": "选择",
-        "draw": "绘制轨迹"
-      },
-      "pathSpacing": "轨迹点间距（米）",
-      "display": {
-        "solid": "实体",
-        "translucent": "半透",
-        "clay": "全灰"
-      },
-      "view": {
-        "front": "前",
-        "back": "后",
-        "left": "左",
-        "right": "右",
-        "top": "顶",
-        "bottom": "底"
-      },
-      "focus": "聚焦 (F)",
-      "focusHint": "先选中一个对象再聚焦",
-      "resetView": "重置视角 (H)",
-      "gizmo": {
-        "translate": "移动",
-        "rotate": "旋转",
-        "scale": "缩放"
-      },
-      "outputAspect": "出片画幅"
+    "monitor": {
+      "aspect": "画幅比",
+      "outline": "模型描边",
+      "namePlate": "人物名牌",
+      "enlarge": "放大监看",
+      "restore": "还原大小",
+      "caption": "{{name}} · {{focal}}mm · {{sensor}}"
     },
     "timeline": {
       "play": "播放",
@@ -7715,6 +7740,7 @@
       "clipLabel": "路径片段 {{start}}-{{end}}",
       "closeupLabel": "特写片段 {{start}}-{{end}}",
       "appendClip": "在后面追加片段",
+      "resize": "拖动调整轨道面板高度",
       "zoomIn": "放大时间轴",
       "zoomOut": "缩小时间轴",
       "zoomFit": "适配时间轴",
@@ -7732,7 +7758,7 @@
       "endFrame": "结束帧",
       "aim": "看向",
       "aimNone": "不指定",
-      "aimHintFree": "机位沿轨迹移动时保持画轨迹那一刻的朝向。选一个对象，全程自动对准它。",
+      "aimHintFree": "机位沿轨迹移动时，画面跟着轨迹转，始终保持画轨迹那一刻相对行进方向的角度。选一个对象，全程自动对准它。",
       "aimHintLocked": "机位全程对准该对象；轨迹点上的朝向不再生效。",
       "trimStart": "裁前到播放头",
       "trimEnd": "裁后到播放头",

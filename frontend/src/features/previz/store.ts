@@ -15,8 +15,10 @@ import {
   drawSeedRotation,
   pathPointSeeds,
   PREVIZ_PATH_SPACING_M,
+  PREVIZ_PATH_SPEED_MPS,
   resampleByDistance,
   smoothStroke,
+  strokeDurationFrames,
 } from './domain/pathDraw';
 import {
   createDefaultScene,
@@ -118,6 +120,8 @@ interface PrevizStoreState {
   selectedPointId: string | null;
   /** 绘制轨迹时的轨迹点间距，单位米。 */
   pathSpacingM: number;
+  /** 绘制轨迹时按多快的速度走，米/秒。决定一笔画出来的片段有多长。 */
+  pathSpeedMps: number;
   setTimelineFrame: (frame: number) => void;
   setTimelinePlaying: (playing: boolean) => void;
   /** 停止：回到第 0 帧。参照实现的「停止」按钮就是这个语义，不是暂停。 */
@@ -132,6 +136,7 @@ interface PrevizStoreState {
   selectClip: (id: string | null) => void;
   selectPathPoint: (id: string | null) => void;
   setPathSpacing: (metres: number) => void;
+  setPathSpeed: (metresPerSecond: number) => void;
   /** 把一笔世界坐标笔画变成选中对象的轨迹。对象还没有轨道时顺手建一条。 */
   drawPath: (objectId: string, stroke: Vec3[]) => void;
   /** 给对象建一条空轨道与一个铺满时间轴的空片段（时间轴上的「+ 添加对象」）。 */
@@ -201,6 +206,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   selectedClipId: null,
   selectedPointId: null,
   pathSpacingM: PREVIZ_PATH_SPACING_M.default,
+  pathSpeedMps: PREVIZ_PATH_SPEED_MPS.default,
 
   loadScene: (scene) =>
     set({
@@ -381,34 +387,51 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
 
   setPathSpacing: (metres) => set({ pathSpacingM: clampToRange(metres, PREVIZ_PATH_SPACING_M) }),
 
+  setPathSpeed: (metresPerSecond) =>
+    set({ pathSpeedMps: clampToRange(metresPerSecond, PREVIZ_PATH_SPEED_MPS) }),
+
   drawPath: (objectId, stroke) => {
-    const { scene, applyScene, pathSpacingM, timelineFrame } = get();
+    const { scene, applyScene, pathSpacingM, pathSpeedMps, timelineFrame } = get();
     if (!scene.objects.some((object) => object.id === objectId)) return;
     // 空笔画（点一下没拖）不建片段：建了就是往 undo 栈里塞一步什么都没干的操作。
     if (stroke.length < 2) return;
 
-    const points = pathPointSeeds(
-      resampleByDistance(smoothStroke(stroke), pathSpacingM),
-      drawSeedRotation(scene, objectId, timelineFrame),
-    );
+    const positions = resampleByDistance(smoothStroke(stroke), pathSpacingM);
+    const points = pathPointSeeds(positions, drawSeedRotation(scene, objectId, timelineFrame));
     if (points.length < 2) return;
 
     const track = trackFor(scene, objectId);
     // 重画是改播放头下的那条轨迹，不是叠一条新的——叠起来两条同时覆盖同一帧，
     // 谁生效全靠 `pathClipAt` 的取舍，用户看到的是随机结果。
     const existing = track ? pathClipAt(track, timelineFrame) : undefined;
-    const clip: PrevizPathClip = existing
-      ? { ...existing, points }
-      : {
-          id: uuidv4(),
-          kind: 'path',
-          startFrame: 0,
-          // 铺满时间轴：实测参照实现画完直接给一条 0~120 的路径片段。
-          endFrame: scene.settings.durationFrames,
-          points,
-        };
+    /*
+      片段有多长由这一笔的长度和画笔速度定（见 [strokeDurationFrames]），不再一律铺满
+      时间轴。铺满的老做法等于「画多长都是 4 秒」，长轨迹只是走得更快，而用户画得更长
+      想要的正是走得更久。
 
-    applyScene(upsertClip(scene, objectId, clip));
+      重画沿用原来的起点、只重新定终点：那条片段可能已经被挪到时间轴中段、跟别的片段
+      排好了先后，把它甩回 0 帧等于把编排推翻重来。
+    */
+    const startFrame = existing?.startFrame ?? 0;
+    const endFrame = Math.min(
+      PREVIZ_MAX_DURATION_FRAMES,
+      startFrame + strokeDurationFrames(positions, pathSpeedMps),
+    );
+    const clip: PrevizPathClip = existing
+      ? { ...existing, endFrame, points }
+      : { id: uuidv4(), kind: 'path', startFrame, endFrame, points };
+
+    /*
+      片段伸到时间轴外面就把时间轴撑长，不然这一笔后半段既播不到也剪不着。只撑不缩：
+      时间轴是整个场景共用的，为了一条短轨迹把它裁短，别的对象的片段就跟着被裁了。
+    */
+    const withClip = upsertClip(scene, objectId, clip);
+    const durationFrames = Math.max(withClip.settings.durationFrames, clip.endFrame);
+    applyScene(
+      durationFrames === withClip.settings.durationFrames
+        ? withClip
+        : { ...withClip, settings: { ...withClip.settings, durationFrames } },
+    );
     set({ selectedClipId: clip.id, selectedPointId: null });
   },
 

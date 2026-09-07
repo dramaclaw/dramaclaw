@@ -2,9 +2,16 @@
 // Copyright (c) 2026 ClaymoreLab
 import { v4 as uuidv4 } from 'uuid';
 
-import { RAD_TO_DEG, type PrevizRange } from './camera';
+import { clampToRange, RAD_TO_DEG, type PrevizRange } from './camera';
 import { evaluateSceneAt } from './evaluate';
-import type { PrevizPathPoint, PrevizScene, Vec3 } from './scene';
+import {
+  PREVIZ_FPS,
+  PREVIZ_MAX_DURATION_FRAMES,
+  PREVIZ_MIN_DURATION_FRAMES,
+  type PrevizPathPoint,
+  type PrevizScene,
+  type Vec3,
+} from './scene';
 
 /**
  * 「在视口按住左键连续画一条轨迹」的纯数学部分：平滑 → 等距重采样 → 按弧长分配时间。
@@ -18,6 +25,19 @@ import type { PrevizPathPoint, PrevizScene, Vec3 } from './scene';
  * 的轨迹能出四十个关键帧，时间轴上挤成一团没法点。
  */
 export const PREVIZ_PATH_SPACING_M: PrevizRange = { min: 0.05, max: 5, default: 1 };
+
+/**
+ * 画笔速度，米/秒：一笔轨迹在时间轴上占多久由它和这一笔的长度一起定出来（见
+ * [strokeDurationFrames]）。
+ *
+ * 必须是可调的，不能写死一个系数。同一条 12 米的轨迹，人物散步走过去是 8 秒多，
+ * 汽车开过去不到 1 秒——写死之后总有一头需要画完再回时间轴上手动改长度，而那正是
+ * 这个功能要省掉的一步。
+ *
+ * 默认 1.4 是成年人正常步行的速度（约 5 km/h）：预演台里画得最多的就是人物走位。
+ * 上界 20 m/s（72 km/h）留给车辆与快速推轨，下界 0.1 m/s 留给慢摇。
+ */
+export const PREVIZ_PATH_SPEED_MPS: PrevizRange = { min: 0.1, max: 20, default: 1.4 };
 
 /** 默认平滑轮数。三轮之后手抖基本没了，再多就开始削掉用户真的画出来的转角。 */
 export const PREVIZ_SMOOTH_PASSES = 3;
@@ -45,11 +65,12 @@ export function drawPlaneHeight(
 }
 
 /**
- * 机位画轨迹时，每个轨迹点该 seed 成什么朝向；人物返回 null，表示照旧用笔画切线。
+ * 机位画轨迹时，这一笔的起手朝向；人物返回 null，表示照旧完全按笔画切线来。
  *
- * 切线朝向对人物是对的——人走路就是朝行进方向走。对机位是错的：推轨镜头是车走、镜头
- * 照旧盯着被摄体，按切线等于把摄影机焊在轨道车头上，一画完机位就不再看着人物了。
- * 切线还只给得出 yaw，机位原来的俯角会一起被抹平。
+ * 人物直接用切线就对了——人走路就是朝行进方向走。机位不行：切线只给得出 yaw，机位
+ * 原来的俯角会被一起抹平，而且推轨镜头多半不是正对着车头，而是偏着一个角度盯住被
+ * 摄体。所以机位交出整份朝向，由 [pathPointSeeds] 把俯仰横滚原样留住，再让 yaw
+ * **跟着切线一起转**（见那里的说明）。
  *
  * 和 [drawPlaneHeight] 一样取解算后的值：重画已有轨迹时机位正按旧轨迹转着，静态
  * transform 停在它出生时的朝向。
@@ -131,6 +152,37 @@ export function resampleByDistance(stroke: readonly Vec3[], spacing: number): Ve
   return out;
 }
 
+/** 折线的总弧长，单位米。少于两个点就是 0。 */
+export function polylineLength(points: readonly Vec3[]): number {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) total += distance(points[i - 1], points[i]);
+  return total;
+}
+
+/**
+ * 这一笔该占多少帧：长度 ÷ 速度，再换算成帧。
+ *
+ * 之前画完一律铺满时间轴，于是画多长都是同样的时长，长的轨迹只是走得更快——一条
+ * 30 米的走位和一条 2 米的走位在时间轴上一样长，而用户想表达的恰恰是「这段路要走
+ * 很久」。按长度定时长之后，画笔本身就是节奏。
+ *
+ * 收进 `[PREVIZ_MIN_DURATION_FRAMES, PREVIZ_MAX_DURATION_FRAMES]`：上界是场景时长
+ * 自己的上界，超出去的片段一部分永远落在时间轴外面，既播不到也剪不着；下界挡住
+ * 0 帧片段，那样的片段 `frameToU` 无解、时间轴上也点不中。
+ *
+ * 传进来的应当是**重采样之后**的点列，也就是真正成为关键帧的那些点：用户手绘的原始
+ * 笔画每帧一个采样点，手抖会把弧长撑长，同一条路画慢一点就会变长。
+ */
+export function strokeDurationFrames(points: readonly Vec3[], speedMps: number): number {
+  const speed = clampToRange(speedMps, PREVIZ_PATH_SPEED_MPS);
+  const frames = Math.round((polylineLength(points) / speed) * PREVIZ_FPS);
+  // 非有限值（上游漏了护栏的 NaN 坐标）走这条分支，别把 NaN 写进场景。
+  if (!Number.isFinite(frames) || frames < PREVIZ_MIN_DURATION_FRAMES) {
+    return PREVIZ_MIN_DURATION_FRAMES;
+  }
+  return Math.min(PREVIZ_MAX_DURATION_FRAMES, frames);
+}
+
 /**
  * 由一段位移推水平朝向，单位度。
  *
@@ -146,16 +198,39 @@ export function tangentYawDeg(from: Vec3, to: Vec3): number {
 }
 
 /**
+ * 把角度收进 `[-180, 180)`。
+ *
+ * 切线朝向出自 `atan2`，本来就落在这个区间；机位的 yaw 却存在 `[0, 360)`
+ * （见 `normalizeYawDeg`）。两者相加会一路越界，而轨迹点检查器上那三根角度滑杆只到
+ * ±180——越界的点在面板上就调不动了。
+ */
+function wrapYawDeg(value: number): number {
+  return ((((value + 180) % 360) + 360) % 360) - 180;
+}
+
+/**
  * 点列 → 轨迹点。u 按**累计弧长**分配而不是按序号等分：实测参照实现一笔得到的关键帧是
  * 0/40/45/56/67/78/89/101/111/120，等分给不出这种分布。等分的实际后果是匀速笔画在
  * 长段上突然加速——重采样后段长大体相等，但笔画首尾那两段总是不齐的。
  *
- * `heldRotation` 非空时所有点共用它，不推切线：见 [drawSeedRotation]。每个点各拿一份
- * 拷贝，共享同一个数组的话，在检查器里调一个轨迹点的朝向会让整条轨迹一起转。
+ * `seedRotation` 非空（机位，见 [drawSeedRotation]）时，朝向按「相对行进方向的夹角」
+ * 铺开：俯仰与横滚原样留住（切线给不出），yaw 取起手那一刻的 yaw 加上这一点的切线相
+ * 对**首段**切线转过的角度。也就是说，画的时候镜头偏着行进方向多少度，全程就偏着多少
+ * 度——轨迹一拐弯，画面跟着摇过去。
+ *
+ * 两个都不选是不行的：整条轨迹共用一个绝对朝向，机位会一路盯死一个方向，轨迹拐了它
+ * 也不摇；纯切线又等于把摄影机焊在轨道车头上，起手的取景角度和俯角当场就没了。
+ *
+ * 要让机位真的盯死一个方向（比如全程对着门口）也还做得到：把首个轨迹点的朝向手调一
+ * 次，`resolvePathRotations` 会把它传播到后面所有点。想全程对准某个对象，则用片段上
+ * 的「看向」。
+ *
+ * 每个点各拿一份朝向拷贝，共享同一个数组的话，在检查器里调一个轨迹点的朝向会让整条
+ * 轨迹一起转。
  */
 export function pathPointSeeds(
   positions: readonly Vec3[],
-  heldRotation?: Vec3 | null,
+  seedRotation?: Vec3 | null,
 ): PrevizPathPoint[] {
   if (positions.length === 0) return [];
   if (positions.length === 1) {
@@ -164,7 +239,7 @@ export function pathPointSeeds(
         id: uuidv4(),
         u: 0,
         position: [...positions[0]],
-        rotation: heldRotation ? [...heldRotation] : [0, 0, 0],
+        rotation: seedRotation ? [...seedRotation] : [0, 0, 0],
       },
     ];
   }
@@ -174,6 +249,8 @@ export function pathPointSeeds(
     cumulative.push(cumulative[i - 1] + distance(positions[i - 1], positions[i]));
   }
   const total = cumulative[cumulative.length - 1];
+  // 首段切线就是「行进方向」的起量处：机位的起手 yaw 相对它偏多少，全程就偏多少。
+  const baseYaw = tangentYawDeg(positions[0], positions[1]);
 
   return positions.map((position, index) => {
     // 末点没有下一个点可求切线，沿用上一段的朝向——掉回 0 的话人物走到终点会突然转向 -Z。
@@ -181,12 +258,15 @@ export function pathPointSeeds(
       index < positions.length - 1
         ? tangentYawDeg(position, positions[index + 1])
         : tangentYawDeg(positions[index - 1], position);
+    const rotation: Vec3 = seedRotation
+      ? [seedRotation[0], wrapYawDeg(seedRotation[1] + yaw - baseYaw), seedRotation[2]]
+      : [0, yaw, 0];
     return {
       id: uuidv4(),
       // 整笔长度为 0（点一下没拖）时全部落在 0，而不是 0/0 = NaN。
       u: total > 0 ? cumulative[index] / total : 0,
       position: [...position] as Vec3,
-      rotation: (heldRotation ? [...heldRotation] : [0, yaw, 0]) as Vec3,
+      rotation,
     };
   });
 }

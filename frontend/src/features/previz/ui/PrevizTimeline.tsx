@@ -17,6 +17,7 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import { closeupTargets } from '../domain/closeupClip';
+import type { PrevizRange } from '../domain/camera';
 import type { PrevizObjectKind } from '../domain/scene';
 import { PREVIZ_FPS } from '../domain/scene';
 import { PREVIZ_PLAYBACK_RATES, usePrevizStore } from '../store';
@@ -29,6 +30,33 @@ const BUTTON_CLASS =
 
 /** 缩放按钮一次走多少倍。1.5 大约是「按三下翻一番」，手感不至于太跳。 */
 const ZOOM_STEP = 1.5;
+
+/**
+ * 轨道区高度的可调范围，单位像素。默认值就是原来那个 `max-h-56`。
+ *
+ * 下界留 96：再矮连一条轨道加它下面那行运动路径都露不全，拖到底等于把面板关掉，而
+ * 关面板另有其人（左栏最下面那颗开关）。
+ */
+export const PREVIZ_TIMELINE_HEIGHT: PrevizRange = { min: 96, max: 560, default: 224 };
+
+/** 键盘每按一下调多少像素。 */
+const RESIZE_STEP_PX = 24;
+
+/**
+ * 把拖出来的高度夹回合法区间。
+ *
+ * 上限是两条一起管的：一条是绝对值 560，另一条是当前窗口的六成。只写绝对值的话，在
+ * 矮屏（笔记本外接竖屏、或者浏览器开了一堆工具栏）上 560 已经能把 3D 视口挤没——而
+ * 用户拉高轨道恰恰是为了对着画面看哪根关键帧对应哪一步，视口没了这事就白做。只按比
+ * 例也不行：超宽屏上六成是七八百像素，轨道再多也用不上那么高，剩下的全是空白。
+ */
+export function clampTimelineHeight(px: number, viewportPx: number): number {
+  const ceiling = Math.max(
+    PREVIZ_TIMELINE_HEIGHT.min,
+    Math.min(PREVIZ_TIMELINE_HEIGHT.max, viewportPx * 0.6),
+  );
+  return Math.round(Math.min(ceiling, Math.max(PREVIZ_TIMELINE_HEIGHT.min, px)));
+}
 
 export function PrevizTimeline({
   onCreateObject,
@@ -112,6 +140,50 @@ export function PrevizTimeline({
     [seekFromPointer],
   );
 
+  /**
+   * 轨道区高度。`resized` 之前只当上限用：一条轨道的场景本来就该只占两行，一上来就
+   * 撑满 224 像素等于白白吃掉视口。用户亲手拖过之后就按拖出来的高度钉死——那时空白
+   * 是他自己要的（腾出地方好往里加轨道）。
+   */
+  const [trackHeightPx, setTrackHeightPx] = useState(PREVIZ_TIMELINE_HEIGHT.default);
+  const [resized, setResized] = useState(false);
+
+  /** 拖的是当下**看得见**的高度，不是 state 里那个上限值，否则第一下会跳一大截。 */
+  const visibleTrackHeight = useCallback(
+    () => scrollRef.current?.getBoundingClientRect().height || trackHeightPx,
+    [trackHeightPx],
+  );
+
+  const resizeFrom = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      // 不 preventDefault 的话，从把手往上拖会把整条传输栏的文字一起选中。
+      event.preventDefault();
+      const startY = event.clientY;
+      const startHeight = visibleTrackHeight();
+      setResized(true);
+      // 监听挂在 window 上而不是把手上：手快的时候指针早就甩出那条 6 像素的把手了，
+      // 挂在元素上等于拖一下就断（和 [scrubFrom] 同一个理由）。
+      const move = (moved: PointerEvent) => {
+        // 往上拖是拉高：clientY 变小，所以差值取反。
+        setTrackHeightPx(
+          clampTimelineHeight(startHeight + (startY - moved.clientY), window.innerHeight),
+        );
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    },
+    [visibleTrackHeight],
+  );
+
+  const resizeBy = (deltaPx: number) => {
+    setResized(true);
+    setTrackHeightPx(clampTimelineHeight(visibleTrackHeight() + deltaPx, window.innerHeight));
+  };
+
   const create = (kind: PrevizObjectKind) => (onCreateObject ? onCreateObject(kind) : addObject(kind));
   const nameOf = (objectId: string) =>
     objects.find((object) => object.id === objectId)?.name ?? objectId;
@@ -123,6 +195,30 @@ export function PrevizTimeline({
 
   return (
     <div className="flex flex-col border-t border-[#232833] bg-[#15181f]">
+      {/*
+        面板顶边就是把手。做成 `role="separator"` 而不是一颗按钮：它分的是视口与轨道
+        两块区域，且可聚焦、能用上下键调——只能拖的话，触控板上精确到几像素很难受。
+      */}
+      <div
+        data-testid="previz-timeline-resize"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label={t('previz.timeline.resize')}
+        aria-valuenow={trackHeightPx}
+        aria-valuemin={PREVIZ_TIMELINE_HEIGHT.min}
+        aria-valuemax={PREVIZ_TIMELINE_HEIGHT.max}
+        tabIndex={0}
+        className="h-1.5 w-full shrink-0 cursor-row-resize hover:bg-[#5b8cff]/50 focus-visible:bg-[#5b8cff]/50 focus-visible:outline-none"
+        onPointerDown={resizeFrom}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowUp') resizeBy(RESIZE_STEP_PX);
+          else if (event.key === 'ArrowDown') resizeBy(-RESIZE_STEP_PX);
+          else return;
+          // 上下键在这条面板里本来会滚动轨道区，按一下既调高度又滚一截很难受。
+          event.preventDefault();
+        }}
+      />
+
       <div className="flex items-center gap-1 px-3 py-1.5">
         <button
           type="button"
@@ -273,7 +369,12 @@ export function PrevizTimeline({
         onChange={(event) => setTimelineFrame(Number(event.target.value))}
       />
 
-      <div ref={scrollRef} className="relative max-h-56 overflow-auto">
+      <div
+        ref={scrollRef}
+        data-testid="previz-timeline-tracks"
+        className="relative overflow-auto"
+        style={resized ? { height: trackHeightPx } : { maxHeight: trackHeightPx }}
+      >
         <div className="relative min-w-max">
           {/*
             三层压着的顺序是有讲究的：头列（30）> 播放头（20）> 标尺与轨槽（10）。
