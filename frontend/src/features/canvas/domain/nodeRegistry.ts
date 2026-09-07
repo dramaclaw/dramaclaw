@@ -644,7 +644,11 @@ const styleNodeDefinition: CanvasNodeDefinition<StyleNodeData> = {
 };
 
 const derivedMediaDefinition = (type: CanvasNodeType): CanvasNodeDefinition => ({
-  ...styleNodeDefinition, type,
+  type,
+  menuLabelKey: type === CANVAS_NODE_TYPES.vectorSvg ? '矢量图' : '动态图',
+  menuIcon: type === CANVAS_NODE_TYPES.vectorSvg ? 'upload' : 'video',
+  visibleInMenu: false,
+  capabilities: { toolbar: true, promptInput: false },
   connectivity: { sourceHandle: true, targetHandle: true, connectMenu: { fromSource: false, fromTarget: false } },
   createDefaultData: () => ({ imageUrl: null, aspectRatio: '16:9' }),
 });
