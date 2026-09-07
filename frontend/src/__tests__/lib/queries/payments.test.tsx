@@ -39,6 +39,40 @@ function wrapper(queryClient: QueryClient) {
 }
 
 describe("recharge checkout", () => {
+  it.each([
+    [409, { detail: "PAYMENT_ORG_CREDITS_INSUFFICIENT" }, "credits.recharge.errors.orgCreditsInsufficient"],
+    [409, { ok: false, error: "PAYMENT_ORG_CREDITS_INSUFFICIENT" }, "credits.recharge.errors.orgCreditsInsufficient"],
+    [503, { detail: "payment service unavailable" }, "credits.recharge.errors.serviceUnavailable"],
+    [409, { detail: "unrecognized internal error" }, "credits.recharge.createFailed"],
+  ])("shows the expected message for an HTTP %s checkout failure", async (status, body, expectedKey) => {
+    server.use(
+      http.post("http://localhost:3000/api/v1/payments/orders", () => {
+        return HttpResponse.json(body, { status });
+      }),
+    );
+    const queryClient = new QueryClient();
+    const { result, unmount } = renderHook(() => useCreateRechargeOrder(), {
+      wrapper: wrapper(queryClient),
+    });
+    let failure: unknown;
+    await act(async () => {
+      try {
+        await result.current.mutateAsync({
+          packageId: "paypkg-org-1",
+          paymentMethod: "alipay",
+          idempotencyKey: "error-request-0001",
+        });
+      } catch (error) {
+        failure = error;
+      }
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(paymentErrorToastMessage(failure, ((key: string) => key) as never,
+      "credits.recharge.createFailed")).toBe(expectedKey);
+    unmount();
+    queryClient.clear();
+  });
+
   it("maps structured payment failures to actionable messages", () => {
     const t = ((key: string) => key) as never;
 

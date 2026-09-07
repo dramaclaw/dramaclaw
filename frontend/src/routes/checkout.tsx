@@ -4,7 +4,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   ArrowLeft,
   CircleAlert,
-  Building2,
   Check,
   CreditCard,
   LockKeyhole,
@@ -338,14 +337,16 @@ export function CheckoutPage() {
               <div className="text-xs text-white/38">{t("checkout.rechargeSubject")}</div>
               <div className="mt-2 flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.035] p-4">
                 <span className="flex size-10 items-center justify-center rounded-md bg-white/[0.06] text-white/70">
-                  {isOrgScope ? <Building2 className="size-5" /> : <UserRound className="size-5" />}
+                  <UserRound className="size-5" />
                 </span>
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">
-                    {isOrgScope ? targetOrganizationName : username}
+                    {username}
                   </div>
                   <div className="mt-1 text-xs text-white/40">
-                    {t(isOrgScope ? "checkout.orgCredits" : "checkout.personalCredits")}
+                    {t(isOrgScope ? "checkout.orgCredits" : "checkout.personalCredits", {
+                      organization: targetOrganizationName,
+                    })}
                   </div>
                 </div>
                 <Check className="ml-auto size-4 text-success" />

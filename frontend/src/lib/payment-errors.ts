@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import type { TFunction } from "i18next";
+import { HTTPError } from "ky";
 
-import { BackendStatusError } from "@/lib/api-errors";
+import { BackendStatusError, errorFromBackendBody } from "@/lib/api-errors";
 
 const PAYMENT_ERROR_KEYS: Record<string, string> = {
   PAYMENT_TOO_MANY_PENDING: "credits.recharge.errors.tooManyPending",
@@ -30,7 +31,12 @@ export function paymentErrorToastMessage(
     error && typeof error === "object" && "cause" in error
       ? (error as { cause?: unknown }).cause
       : undefined;
-  const paymentError = cause instanceof Error ? cause : error;
+  let paymentError = cause instanceof Error ? cause : error;
+  if (paymentError instanceof HTTPError) {
+    paymentError =
+      errorFromBackendBody(paymentError.response.status, paymentError.data, paymentError.message) ??
+      new BackendStatusError(paymentError.message, paymentError.response.status);
+  }
   const code = paymentError instanceof Error ? paymentError.message.trim() : "";
   const translationKey = PAYMENT_ERROR_KEYS[code];
   if (translationKey) return t(translationKey);
