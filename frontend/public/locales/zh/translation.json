@@ -7526,14 +7526,14 @@
       "importProp": "导入模型",
       "limitReached": "已达上限 {{count}} 个",
       "tool": {
-        "select": "选择 (W)",
-        "navigate": "导航 (Q)",
+        "select": "选择",
+        "navigate": "导航",
         "draw": "绘制轨迹"
       },
       "gizmo": {
-        "translate": "移动 (G)",
-        "rotate": "旋转 (R)",
-        "scale": "缩放 (S)"
+        "translate": "移动",
+        "rotate": "旋转",
+        "scale": "缩放"
       },
       "group": {
         "create": "创建",
@@ -7546,7 +7546,7 @@
     "viewport": {
       "undo": "撤销",
       "redo": "重做",
-      "resetView": "重置视角 (H)",
+      "resetView": "重置视角",
       "display": {
         "solid": "实体",
         "translucent": "半透",
@@ -7570,7 +7570,7 @@
         "bottom": "底视图"
       },
       "axis": "视角球",
-      "focus": "聚焦 (F)",
+      "focus": "聚焦",
       "focusHint": "先选中一个对象再聚焦",
       "quadView": "四视图",
       "quadNoCamera": "场景里还没有机位",

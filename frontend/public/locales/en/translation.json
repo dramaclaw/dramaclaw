@@ -7526,14 +7526,14 @@
       "importProp": "Import model",
       "limitReached": "Limit reached ({{count}})",
       "tool": {
-        "select": "Select (W)",
-        "navigate": "Navigate (Q)",
+        "select": "Select",
+        "navigate": "Navigate",
         "draw": "Draw path"
       },
       "gizmo": {
-        "translate": "Move (G)",
-        "rotate": "Rotate (R)",
-        "scale": "Scale (S)"
+        "translate": "Move",
+        "rotate": "Rotate",
+        "scale": "Scale"
       },
       "group": {
         "create": "Create",
@@ -7546,7 +7546,7 @@
     "viewport": {
       "undo": "Undo",
       "redo": "Redo",
-      "resetView": "Reset view (H)",
+      "resetView": "Reset view",
       "display": {
         "solid": "Solid",
         "translucent": "Translucent",
@@ -7570,7 +7570,7 @@
         "bottom": "Bottom view"
       },
       "axis": "View cube",
-      "focus": "Focus (F)",
+      "focus": "Focus",
       "focusHint": "Select an object first",
       "quadView": "Quad view",
       "quadNoCamera": "No camera in the scene yet",

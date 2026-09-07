@@ -24,6 +24,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { PREVIZ_OBJECT_LIMITS } from "@/features/previz/domain/limits";
 import type { PrevizObjectKind } from "@/features/previz/domain/scene";
 import { PrevizHoverTip } from "@/features/previz/ui/PrevizHoverTip";
+import { PrevizKeyCap } from "@/features/previz/ui/PrevizKeyCap";
 import { cn } from "@/lib/utils";
 
 /**
@@ -70,6 +71,13 @@ const GIZMO_ICON: Record<PrevizGizmoMode, LucideIcon> = {
   scale: Scaling,
 };
 
+/**
+ * 工具与手柄的快捷键，画成按钮角上的小键帽。键位本身在 PrevizEditor 的 keydown 里绑定；
+ * 这里只负责把它显示出来——没有角标的话用户根本不知道有快捷键。
+ */
+const TOOL_KEY: Partial<Record<PrevizTool, string>> = { select: "W", navigate: "Q" };
+const GIZMO_KEY: Record<PrevizGizmoMode, string> = { translate: "G", rotate: "R", scale: "S" };
+
 function inOrder<T extends string>(icons: Record<T, LucideIcon>): readonly T[] {
   return Object.keys(icons) as T[];
 }
@@ -108,6 +116,7 @@ function RailButton({
   label,
   tip,
   on,
+  shortcut,
   className,
   ...props
 }: {
@@ -118,6 +127,8 @@ function RailButton({
   tip?: string;
   /** 当前是否是选中态。 */
   on?: boolean;
+  /** 快捷键字母；给了就在右上角画一个小键帽，并写进 aria-keyshortcuts。 */
+  shortcut?: string;
 } & ComponentProps<typeof Button>) {
   return (
     <PrevizHoverTip label={tip ?? label} side="right">
@@ -125,11 +136,13 @@ function RailButton({
         type="button"
         variant="ghost"
         size="icon"
-        className={cn(RAIL_BUTTON, on && RAIL_ON, className)}
+        className={cn(RAIL_BUTTON, on && RAIL_ON, shortcut && "relative", className)}
         aria-label={label}
+        aria-keyshortcuts={shortcut}
         {...props}
       >
         <Icon className="h-4 w-4" />
+        {shortcut && <PrevizKeyCap className="absolute -right-1 -top-1">{shortcut}</PrevizKeyCap>}
       </Button>
     </PrevizHoverTip>
   );
@@ -256,6 +269,7 @@ export function PrevizToolbar({
                 icon={TOOL_ICON[option]}
                 label={t(`previz.toolbar.tool.${option}`)}
                 on={option === tool}
+                shortcut={TOOL_KEY[option]}
                 aria-pressed={option === tool}
                 onClick={() => onTool(option)}
               />
@@ -271,6 +285,7 @@ export function PrevizToolbar({
                 icon={GIZMO_ICON[mode]}
                 label={t(`previz.toolbar.gizmo.${mode}`)}
                 on={mode === gizmoMode}
+                shortcut={GIZMO_KEY[mode]}
                 aria-pressed={mode === gizmoMode}
                 onClick={() => onGizmoMode(mode)}
               />

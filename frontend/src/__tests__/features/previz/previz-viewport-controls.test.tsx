@@ -389,6 +389,15 @@ describe("PrevizViewportControls", () => {
     expectOnly(handlers, "onResetView");
   });
 
+  // 悬停提示曾是唯一念出 H 的地方。角标把它画在按钮角上，并写进 aria-keyshortcuts。
+  it("badges the reset-view shortcut", () => {
+    setup();
+
+    const reset = button("previz.viewport.resetView");
+    expect(reset).toHaveAttribute("aria-keyshortcuts", "H");
+    expect(within(reset).getByText("H").tagName).toBe("KBD");
+  });
+
   // 显示模式与重置视角跟撤销栈无关，不该被顺手一起禁掉。
   it("keeps the display cluster usable with an empty undo stack", () => {
     setup({ canUndo: false, canRedo: false });
@@ -477,6 +486,19 @@ describe("PrevizViewportControls", () => {
 
     expect(handlers.onFocus).toHaveBeenCalledTimes(1);
     expectOnly(handlers, "onFocus");
+  });
+
+  // 悬停提示曾是唯一念出 F 的地方。角标跟在文字后面，写进 aria-keyshortcuts；名字与
+  // 提示都不该被它带偏——`button(...)` 走的就是按可访问名字查询，找得到已经说明名字
+  // 没变，这里再补一遍 tooltip。
+  it("badges the focus shortcut without changing its name or tooltip", async () => {
+    const user = userEvent.setup();
+    setup({ hasSelection: true });
+
+    const focus = button("previz.viewport.focus");
+    expect(focus).toHaveAttribute("aria-keyshortcuts", "F");
+    expect(within(focus).getByText("F").tagName).toBe("KBD");
+    expect(await tooltipOf(user, focus)).toBe("previz.viewport.focus");
   });
 
   // 没选中东西时「聚焦」无从聚起，禁用比点了没反应清楚——但光禁用不说原因就只剩一个
