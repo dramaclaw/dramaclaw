@@ -263,6 +263,7 @@ Bucket 无需公开读；DramaClaw 使用临时签名 URL 授权上游读取。
 | 保存 Key 后高级配置仍没有“已保存”标记 | Key 可能只存在于页面草稿。重新保存对应渠道或重新应用完整配置，并确认使用的是包含最新代码的镜像。 |
 | 添加媒体模型时提示缺少供应商 Key | 对应供应商渠道尚未真正写入 NewAPI；先保存/更新渠道，再保存媒体模型。 |
 | NewAPI 报 `No available channel for model ...` | 检查逻辑模型映射、渠道是否启用、上游模型名及分组。 |
+| 走 Codex 类中转站（Codex2API 等）时结构化环节报 `Exceeded maximum output retries` | 中转站在 `/v1/chat/completions` 上丢掉了 `tool_calls`。到 NewAPI 后台给该渠道开启 **ChatCompletions → Responses Compatibility**，或设 `STRUCTURED_OUTPUT_MODE=prompted`。详见[排错指南](../guides/troubleshooting.md#模型--网关类)。 |
 | 本地 NewAPI 初始化失败 | 检查 NewAPI 服务、SQLite 挂载、目录权限和 `NEWAPI_PROVISIONER_ENABLED`。 |
 | 虾画没有显示新增模型 | 确认模型已启用、媒体类型正确、已保存全部配置并刷新页面。 |
 | 模型控件与实际能力不一致 | 检查媒体模型的 `config`，尤其是分辨率、比例、模式和参考素材上限。 |
