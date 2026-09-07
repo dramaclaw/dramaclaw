@@ -5,10 +5,12 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { uploadFreezoneAudio } from '@/api/ops';
+import { backendErrorToastMessage } from '@/lib/api-errors';
 import { readUrl } from '@/lib/url-params';
 
 import {
   audioFileExtension,
+  audioInsertBlockedAt,
   isAcceptedAudioFile,
   type PrevizAudioSource,
 } from '../domain/audioTrack';
@@ -45,8 +47,11 @@ export interface AudioImport {
 export function useAudioImport(nodeId: string): AudioImport {
   const { t } = useTranslation();
   const [pending, setPending] = useState<PendingAudioClip | null>(null);
-  /** 同一节点连传几个文件时文件名不撞。 */
-  const seq = useRef(0);
+  /**
+   * 每次导入领一个号。两次导入撞在一起时，先落地的那次不能顺手把后一次的占位条
+   * 抹掉——`pending` 是这个 hook 对外唯一的进度信号，抹早了轨道上就没东西了。
+   */
+  const serial = useRef(0);
 
   const place = useCallback(
     (source: PrevizAudioSource, frame: number) => {
@@ -57,20 +62,45 @@ export function useAudioImport(nodeId: string): AudioImport {
     [t],
   );
 
-  const showPending = useCallback((name: string, frame: number) => {
+  /**
+   * 上传/探测之前先问一次不看时长就能定的拒绝理由，顺手提示。返回 true 表示别再往下走。
+   * 放不下是现在就知道的事，别让人等完一个 20 MB 的上传再被拒——那份文件后端已经落盘，
+   * 留下的是一个没人引用的孤儿。剩下的「素材比空隙短」得等时长，仍由 `place` 兜底。
+   */
+  const refuseEarly = useCallback(
+    (frame: number) => {
+      const blocked = audioInsertBlockedAt(usePrevizStore.getState().scene, frame);
+      if (!blocked) return false;
+      toast.error(blocked === 'limit' ? t('previz.audio.limit') : t('previz.audio.noRoom'));
+      return true;
+    },
+    [t],
+  );
+
+  /** 领号、挂占位条，返回一个只在本次导入仍是最新一次时才清空占位的收尾函数。 */
+  const beginPending = useCallback((name: string, frame: number) => {
+    serial.current += 1;
+    const mine = serial.current;
     const { durationFrames } = usePrevizStore.getState().scene.settings;
-    // 时长未知，先占一秒宽，让人看见轨道上有东西在来。
+    // 时长未知，先占一秒宽，让人看见轨道上有东西在来。夹到时间轴末尾，
+    // 免得占位条画到轨道外面去。
     setPending({
       startFrame: frame,
       endFrame: Math.min(frame + PREVIZ_FPS, durationFrames),
       name,
     });
+    return () => {
+      if (serial.current === mine) setPending(null);
+    };
   }, []);
 
   const failed = useCallback(
     (error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      toast.error(t('previz.audio.uploadFailed', { message }));
+      // `uploadFreezoneImage` 走的是原始 apiClient，抛出来的 ky `HTTPError` 的 message 里
+      // 带着内部 API 地址；给人看的那条被挂在 `.cause` 上（见 api/client.ts 的 beforeError）。
+      const cause = (error as { cause?: unknown } | null)?.cause;
+      const shown = cause instanceof Error ? cause : error;
+      toast.error(t('previz.audio.uploadFailed', { message: backendErrorToastMessage(shown, t) }));
     },
     [t],
   );
@@ -88,18 +118,17 @@ export function useAudioImport(nodeId: string): AudioImport {
       }
       const project = readUrl().project;
       if (!project) {
-        toast.error(t('previz.editor.noProject'));
+        toast.error(t('previz.audio.noProject'));
         return;
       }
       const frame = usePrevizStore.getState().timelineFrame;
-      showPending(file.name, frame);
+      if (refuseEarly(frame)) return;
+      const settle = beginPending(file.name, frame);
       try {
-        seq.current += 1;
         const extension = audioFileExtension(file.name);
-        const filename = `previz-audio-${nodeId}-${seq.current}.${extension}`;
         const [durationMs, upload] = await Promise.all([
           probeAudioDuration(file),
-          uploadFreezoneAudio(project, file, filename),
+          uploadFreezoneAudio(project, file, `previz-audio-${nodeId}.${extension}`),
         ]);
         place(
           { audioUrl: upload.url, sourceName: file.name, durationMs, sourceNodeId: null },
@@ -108,10 +137,10 @@ export function useAudioImport(nodeId: string): AudioImport {
       } catch (error) {
         failed(error);
       } finally {
-        setPending(null);
+        settle();
       }
     },
-    [failed, nodeId, place, showPending, t],
+    [beginPending, failed, nodeId, place, refuseEarly, t],
   );
 
   const addUpstream = useCallback(
@@ -126,17 +155,18 @@ export function useAudioImport(nodeId: string): AudioImport {
         place({ ...base, durationMs: source.durationMs }, frame);
         return;
       }
-      showPending(source.displayName, frame);
+      if (refuseEarly(frame)) return;
+      const settle = beginPending(source.displayName, frame);
       try {
         const durationMs = await probeAudioDuration(source.audioUrl);
         place({ ...base, durationMs }, frame);
       } catch (error) {
         failed(error);
       } finally {
-        setPending(null);
+        settle();
       }
     },
-    [failed, place, showPending],
+    [beginPending, failed, place, refuseEarly],
   );
 
   return { pending, addFile, addUpstream };

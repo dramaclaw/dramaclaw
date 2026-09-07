@@ -36,6 +36,31 @@ export function framesToMs(frames: number, fps: number): number {
 
 export type AudioInsertRejection = 'no-room' | 'limit';
 
+/**
+ * 不看素材时长就能定下的拒绝理由。上传一个 20 MB 的 wav 要几十秒，传完才说
+ * 「音频轨最多 20 段」既白费了这段等待，也在后端的 `_uploads/` 里留下一个
+ * 谁都不会引用的孤儿文件——所以「添加」按下的那一刻先问一次这里。
+ * 剩下的「素材比空隙还短」得知道时长，仍由 `insertAudioClip` 兜底。
+ */
+export function audioInsertBlockedAt(
+  scene: PrevizScene,
+  frame: number,
+): AudioInsertRejection | null {
+  const audio = scene.timeline.audio;
+  if (audio.length >= PREVIZ_MAX_AUDIO_CLIPS) return 'limit';
+  // 帧号不是有限数就没有「这一帧」可放，按没空间处理，别让 NaN 混进快照。
+  if (!Number.isFinite(frame)) return 'no-room';
+  const at = Math.max(0, Math.round(frame));
+  if (audio.some((clip) => clip.startFrame <= at && at < clip.endFrame)) return 'no-room';
+  return audioGapAt(scene, at) < PREVIZ_MIN_CLIP_FRAMES ? 'no-room' : null;
+}
+
+/** 从 `at` 到下一段开头（没有下一段就到时间轴末尾）还剩多少帧。 */
+function audioGapAt(scene: PrevizScene, at: number): number {
+  const next = scene.timeline.audio.find((clip) => clip.startFrame > at);
+  return (next ? next.startFrame : scene.settings.durationFrames) - at;
+}
+
 export type InsertAudioClipResult =
   | { ok: true; scene: PrevizScene; clipId: string }
   | { ok: false; reason: AudioInsertRejection };
@@ -51,22 +76,19 @@ export function insertAudioClip(
   source: PrevizAudioSource,
 ): InsertAudioClipResult {
   const audio = scene.timeline.audio;
-  if (audio.length >= PREVIZ_MAX_AUDIO_CLIPS) return { ok: false, reason: 'limit' };
-  // 帧号不是有限数就没有「这一帧」可放，按没空间处理，别让 NaN 混进快照。
-  if (!Number.isFinite(frame)) return { ok: false, reason: 'no-room' };
+  // 上限、越界帧、压在片段上、空隙不足一帧——这四条不看时长就能判，跟上传前的
+  // 预检查共用同一个判断，免得两处的边界各走各的。
+  const blocked = audioInsertBlockedAt(scene, frame);
+  if (blocked) return { ok: false, reason: blocked };
   // 素材时长不是有限正数就没有帧可放——`HTMLMediaElement.duration` 在元数据到位前就是 NaN。
   if (!Number.isFinite(source.durationMs) || source.durationMs <= 0) {
     return { ok: false, reason: 'no-room' };
   }
 
   const at = Math.max(0, Math.round(frame));
-  if (audio.some((clip) => clip.startFrame <= at && at < clip.endFrame)) {
-    return { ok: false, reason: 'no-room' };
-  }
   const nextIndex = audio.findIndex((clip) => clip.startFrame > at);
-  const gapEnd = nextIndex >= 0 ? audio[nextIndex]!.startFrame : scene.settings.durationFrames;
   const length = Math.min(
-    gapEnd - at,
+    audioGapAt(scene, at),
     audioFramesAvailable(source.durationMs, 0, scene.settings.fps),
   );
   if (length < PREVIZ_MIN_CLIP_FRAMES) return { ok: false, reason: 'no-room' };

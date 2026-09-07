@@ -31,7 +31,18 @@ function file(name: string, bytes = 1024): File {
   return new File([new Uint8Array(bytes)], name, { type: 'audio/mpeg' });
 }
 
+/** 把上传或探测按在半途，好观察「还在传」这段时间里 hook 的样子。 */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 beforeEach(() => {
+  // clearAllMocks 只清调用记录，`mockImplementationOnce` 的队列和这里的默认实现都还在；
+  // 换成 mockReset 会把上面两个 vi.fn 的默认实现一起抹掉，别顺手「修正」。
   vi.clearAllMocks();
   usePrevizStore.getState().loadScene(createDefaultScene());
 });
@@ -70,7 +81,7 @@ describe('useAudioImport local file', () => {
     expect(uploadFreezoneAudio).toHaveBeenCalledWith(
       'demo',
       expect.any(File),
-      'previz-audio-previz-1-1.mp3',
+      'previz-audio-previz-1.mp3',
     );
 
     // 上传期间播放头挪走了，片段仍落在点「添加」时的位置。
@@ -93,6 +104,80 @@ describe('useAudioImport local file', () => {
     ]);
   });
 
+  it('starts the upload without waiting for the probe', async () => {
+    // 并行是有意的：探时长和传文件互不依赖，串起来等于让人多等一整个 upload。
+    const probe = deferred<number>();
+    probeAudioDuration.mockReturnValueOnce(probe.promise);
+    const { result } = renderHook(() => useAudioImport('previz-1'));
+    let done: Promise<void> | undefined;
+    act(() => {
+      done = result.current.addFile(file('take.mp3'));
+    });
+    await waitFor(() => expect(uploadFreezoneAudio).toHaveBeenCalledTimes(1));
+    probe.resolve(2000);
+    await act(async () => {
+      await done;
+    });
+    expect(usePrevizStore.getState().scene.timeline.audio).toHaveLength(1);
+  });
+
+  it('clamps the placeholder to the end of the timeline', async () => {
+    usePrevizStore.getState().setTimelineFrame(100);
+    const probe = deferred<number>();
+    probeAudioDuration.mockReturnValueOnce(probe.promise);
+    const { result } = renderHook(() => useAudioImport('previz-1'));
+    let done: Promise<void> | undefined;
+    act(() => {
+      done = result.current.addFile(file('take.mp3'));
+    });
+    await waitFor(() =>
+      expect(result.current.pending).toEqual({
+        startFrame: 100,
+        endFrame: 120,
+        name: 'take.mp3',
+      }),
+    );
+    probe.resolve(2000);
+    await act(async () => {
+      await done;
+    });
+  });
+
+  it('keeps the second placeholder when the first import settles', async () => {
+    const first = deferred<{ url: string }>();
+    const second = deferred<{ url: string }>();
+    uploadFreezoneAudio.mockReturnValueOnce(first.promise);
+    uploadFreezoneAudio.mockReturnValueOnce(second.promise);
+    const { result } = renderHook(() => useAudioImport('previz-1'));
+    let a: Promise<void> | undefined;
+    let b: Promise<void> | undefined;
+    act(() => {
+      a = result.current.addFile(file('a.mp3'));
+    });
+    await waitFor(() => expect(result.current.pending?.name).toBe('a.mp3'));
+    act(() => usePrevizStore.getState().setTimelineFrame(70));
+    act(() => {
+      b = result.current.addFile(file('b.mp3'));
+    });
+    await waitFor(() => expect(result.current.pending?.name).toBe('b.mp3'));
+
+    first.resolve({ url: '/static/a.mp3' });
+    await act(async () => {
+      await a;
+    });
+    expect(result.current.pending?.name).toBe('b.mp3');
+
+    second.resolve({ url: '/static/b.mp3' });
+    await act(async () => {
+      await b;
+    });
+    expect(result.current.pending).toBeNull();
+    expect(usePrevizStore.getState().scene.timeline.audio).toMatchObject([
+      { startFrame: 0, sourceName: 'a.mp3' },
+      { startFrame: 70, sourceName: 'b.mp3' },
+    ]);
+  });
+
   it('drops the placeholder and toasts the backend message when the upload fails', async () => {
     uploadFreezoneAudio.mockRejectedValueOnce(new Error('413 too large'));
     const { result } = renderHook(() => useAudioImport('previz-1'));
@@ -100,6 +185,20 @@ describe('useAudioImport local file', () => {
     expect(result.current.pending).toBeNull();
     expect(usePrevizStore.getState().scene.timeline.audio).toEqual([]);
     expect(toast.error).toHaveBeenCalledWith('previz.audio.uploadFailed:413 too large');
+  });
+
+  it('shows the backend message instead of the ky error carrying the api url', async () => {
+    // uploadFreezoneImage 直接用 apiClient，抛的是 ky 的 HTTPError：message 里是内部
+    // 地址，给人看的那句挂在 .cause 上。非 2xx 走的都是这条路。
+    const httpError = new Error(
+      'Request failed with status code 413 Payload Too Large: ' +
+        'POST http://host/api/v1/projects/demo/freezone/upload',
+    );
+    (httpError as { cause?: unknown }).cause = new Error('音频文件过大');
+    uploadFreezoneAudio.mockRejectedValueOnce(httpError);
+    const { result } = renderHook(() => useAudioImport('previz-1'));
+    await act(() => result.current.addFile(file('take.mp3')));
+    expect(toast.error).toHaveBeenCalledWith('previz.audio.uploadFailed:音频文件过大');
   });
 
   it('treats a probe failure like an upload failure', async () => {
@@ -124,6 +223,17 @@ describe('useAudioImport local file', () => {
     const { result } = renderHook(() => useAudioImport('previz-1'));
     await act(() => result.current.addFile(file('take.mp3')));
     expect(toast.error).toHaveBeenCalledWith('previz.audio.limit');
+    expect(uploadFreezoneAudio).not.toHaveBeenCalled();
+  });
+
+  it('refuses at the very end of the timeline without uploading', async () => {
+    // setTimelineFrame 的上界是闭区间，播放头能停在 durationFrames 上，那里没有一帧可放。
+    usePrevizStore.getState().setTimelineFrame(120);
+    const { result } = renderHook(() => useAudioImport('previz-1'));
+    await act(() => result.current.addFile(file('take.mp3')));
+    expect(toast.error).toHaveBeenCalledWith('previz.audio.noRoom');
+    expect(uploadFreezoneAudio).not.toHaveBeenCalled();
+    expect(result.current.pending).toBeNull();
   });
 
   it('does not upload when the page has no project context', async () => {
@@ -131,7 +241,7 @@ describe('useAudioImport local file', () => {
     const { result } = renderHook(() => useAudioImport('previz-1'));
     await act(() => result.current.addFile(file('take.mp3')));
     expect(uploadFreezoneAudio).not.toHaveBeenCalled();
-    expect(toast.error).toHaveBeenCalledWith('previz.editor.noProject');
+    expect(toast.error).toHaveBeenCalledWith('previz.audio.noProject');
   });
 
   it('toasts when the store has no room', async () => {
@@ -145,6 +255,7 @@ describe('useAudioImport local file', () => {
     const { result } = renderHook(() => useAudioImport('previz-1'));
     await act(() => result.current.addFile(file('take.mp3')));
     expect(toast.error).toHaveBeenCalledWith('previz.audio.noRoom');
+    expect(uploadFreezoneAudio).not.toHaveBeenCalled();
   });
 });
 
@@ -167,6 +278,33 @@ describe('useAudioImport upstream node', () => {
       sourceNodeId: 'audio-1',
       endFrame: 90,
     });
+  });
+
+  it('places the probed clip where the playhead was when it was picked', async () => {
+    usePrevizStore.getState().setTimelineFrame(20);
+    const probe = deferred<number>();
+    probeAudioDuration.mockReturnValueOnce(probe.promise);
+    const { result } = renderHook(() => useAudioImport('previz-1'));
+    let done: Promise<void> | undefined;
+    act(() => {
+      done = result.current.addUpstream({
+        nodeId: 'audio-1',
+        displayName: '旁白',
+        audioUrl: '/static/vo.mp3',
+        durationMs: null,
+      });
+    });
+    await waitFor(() => expect(result.current.pending?.name).toBe('旁白'));
+
+    // 探测期间播放头挪走了，片段仍落在选中上游节点时的位置。
+    act(() => usePrevizStore.getState().setTimelineFrame(90));
+    probe.resolve(2000);
+    await act(async () => {
+      await done;
+    });
+    expect(usePrevizStore.getState().scene.timeline.audio).toMatchObject([
+      { startFrame: 20, endFrame: 80 },
+    ]);
   });
 
   it('probes the url when the node has no duration', async () => {

@@ -7780,7 +7780,8 @@
       "tooLarge": "Audio files must be 20 MB or smaller",
       "noRoom": "No room at the playhead",
       "limit": "The audio track holds at most 20 clips",
-      "uploadFailed": "Audio upload failed: {{message}}"
+      "uploadFailed": "Audio upload failed: {{message}}",
+      "noProject": "This page has no project context, so audio cannot be uploaded"
     },
     "clip": {
       "empty": "Select a clip to edit it here",

@@ -2508,6 +2508,8 @@ export async function uploadFreezoneAudio(
   file: File | Blob,
   filename?: string,
 ): Promise<FreezoneUploadResult> {
+  // 同 uploadFreezoneVideo：上传默认不设超时（见 FreezoneUploadOptions）。一个 20 MB
+  // 的 wav 走的是流式 body，任何计时器都会在服务端读完之前把请求掐掉。
   return await uploadFreezoneImage(project, file, filename);
 }
 

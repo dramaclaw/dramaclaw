@@ -7780,7 +7780,8 @@
       "tooLarge": "音频文件不能超过 20 MB",
       "noRoom": "此处没有空位",
       "limit": "音频轨最多 20 段",
-      "uploadFailed": "音频上传失败：{{message}}"
+      "uploadFailed": "音频上传失败：{{message}}",
+      "noProject": "当前页面没有项目上下文，无法上传音频"
     },
     "clip": {
       "empty": "选中一个片段后在这里编辑",
