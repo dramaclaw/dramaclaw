@@ -12,23 +12,45 @@ export type PaymentReturnState =
   | "refunded"
   | "unavailable";
 
+export type RechargeOrderStatus =
+  | RechargeOrder["payment_status"]
+  | "credited"
+  | "creditFailed"
+  | "manualReview";
+
+export function resolveRechargeOrderStatus(order: RechargeOrder): RechargeOrderStatus {
+  if (order.payment_status === "refunded" && order.fulfillment_status === "reversed") {
+    return "refunded";
+  }
+  if (order.payment_status === "refunded" || order.fulfillment_status === "reversed") {
+    return "manualReview";
+  }
+  if (order.fulfillment_status === "credited") {
+    return order.payment_status === "paid" ? "credited" : "manualReview";
+  }
+  // Closing an unpaid order can also fail fulfillment; it does not imply payment.
+  if (order.payment_status === "paid" && order.fulfillment_status === "failed") {
+    return "creditFailed";
+  }
+  return order.payment_status;
+}
+
 export function resolvePaymentReturnState(
   order: RechargeOrder | undefined,
   queryFailed: boolean,
 ): PaymentReturnState {
   if (queryFailed) return "unavailable";
   if (!order) return "confirming";
-  if (order.payment_status === "refunded" && order.fulfillment_status === "reversed") {
-    return "refunded";
+  switch (resolveRechargeOrderStatus(order)) {
+    case "credited": return "credited";
+    case "creditFailed": return "fulfillment_failed";
+    case "manualReview": return "manual_review";
+    case "refunded": return "refunded";
+    case "expired":
+    case "closed": return "closed";
+    case "failed": return "failed";
+    default: return "confirming";
   }
-  if (order.payment_status === "refunded" || order.fulfillment_status === "reversed") {
-    return "manual_review";
-  }
-  if (order.fulfillment_status === "credited") return "credited";
-  if (order.fulfillment_status === "failed") return "fulfillment_failed";
-  if (["expired", "closed"].includes(order.payment_status)) return "closed";
-  if (order.payment_status === "failed") return "failed";
-  return "confirming";
 }
 
 export function paymentTimeRemaining(expiresAt: string, nowMs: number): string {

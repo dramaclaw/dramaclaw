@@ -40,9 +40,11 @@ import {
 import {
   CHECKOUT_DRAFT_KEY,
   CHECKOUT_RETURN_KEY,
+  clearPaymentAttempt,
   PAYMENT_RETURN_ORDER_ID_KEY,
   PAYMENT_RETURN_ORDER_KEY,
 } from "@/lib/payment-navigation";
+import { resolveRechargeOrderStatus } from "@/lib/payment-return";
 import {
   type CustomRechargeConfig,
   type RechargeOrder,
@@ -100,6 +102,7 @@ function formatDateTime(value: string, language: string): string {
 }
 
 function beginCheckout(draft: CheckoutDraft): void {
+  clearPaymentAttempt();
   sessionStorage.removeItem(PAYMENT_RETURN_ORDER_ID_KEY);
   sessionStorage.removeItem(PAYMENT_RETURN_ORDER_KEY);
   sessionStorage.setItem(CHECKOUT_DRAFT_KEY, JSON.stringify(draft));
@@ -692,17 +695,7 @@ function OrdersTab({ orders, loading, language }: { orders: RechargeOrder[]; loa
         </thead>
         <tbody>
           {orders.map((order) => {
-            const status =
-              (order.payment_status === "refunded") !==
-              (order.fulfillment_status === "reversed")
-                ? "manualReview"
-                : order.payment_status === "refunded"
-                  ? "refunded"
-                  : order.fulfillment_status === "credited"
-                ? "credited"
-                : order.fulfillment_status === "failed"
-                  ? "creditFailed"
-                  : order.payment_status;
+            const status = resolveRechargeOrderStatus(order);
             return (
               <tr key={order.order_id} className="border-t border-white/8">
                 <td className="px-4 py-3 font-mono text-xs font-medium text-white/82">

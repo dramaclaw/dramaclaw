@@ -6,7 +6,6 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import {
-  type RechargeOrder,
   type RechargePaymentMethod,
   submitEpayCheckout,
   useCreateRechargeOrder,
@@ -19,6 +18,7 @@ import {
   rememberPaymentOrder,
 } from "@/lib/payment-navigation";
 import { paymentErrorToastMessage } from "@/lib/payment-errors";
+import { resolveRechargeOrderStatus } from "@/lib/payment-return";
 
 const PANEL = "rounded-lg border border-foreground/12 bg-foreground/8 p-4";
 const ITEM = "rounded-md border border-foreground/12 bg-foreground/10";
@@ -39,20 +39,6 @@ function timestamp(value: string, language: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
-}
-
-function orderStatus(order: RechargeOrder): string {
-  if (
-    (order.payment_status === "refunded") !==
-    (order.fulfillment_status === "reversed")
-  ) {
-    return "manualReview";
-  }
-  if (order.payment_status === "refunded") return "refunded";
-  if (order.fulfillment_status === "credited") return "credited";
-  if (order.fulfillment_status === "failed") return "creditFailed";
-  if (order.payment_status === "paid") return "paid";
-  return order.payment_status;
 }
 
 export function RechargePanel() {
@@ -249,7 +235,7 @@ export function RechargePanel() {
                       {order.base_credits + order.gift_credits}
                     </td>
                     <td className="py-2.5 text-muted-foreground">
-                      {t(`credits.recharge.status.${orderStatus(order)}`)}
+                      {t(`credits.recharge.status.${resolveRechargeOrderStatus(order)}`)}
                     </td>
                   </tr>
                 ))}

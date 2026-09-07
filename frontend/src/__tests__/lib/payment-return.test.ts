@@ -15,6 +15,7 @@ import {
   paymentTimeRemaining,
   paymentWindowExpired,
   resolvePaymentReturnState,
+  resolveRechargeOrderStatus,
 } from "@/lib/payment-return";
 import type { RechargeOrder } from "@/lib/queries/payments";
 
@@ -63,7 +64,7 @@ describe("payment return state", () => {
     expect(resolvePaymentReturnState(order({ payment_status: "expired" }), false)).toBe("closed");
     expect(resolvePaymentReturnState(order({ payment_status: "closed" }), false)).toBe("closed");
     expect(resolvePaymentReturnState(order({ payment_status: "failed" }), false)).toBe("failed");
-    expect(resolvePaymentReturnState(order({ fulfillment_status: "failed" }), false)).toBe(
+    expect(resolvePaymentReturnState(order({ payment_status: "paid", fulfillment_status: "failed" }), false)).toBe(
       "fulfillment_failed",
     );
     expect(resolvePaymentReturnState(order({ payment_status: "refunded" }), false)).toBe(
@@ -78,6 +79,36 @@ describe("payment return state", () => {
         false,
       ),
     ).toBe("refunded");
+  });
+
+  it.each([
+    ["closed", "failed", "closed", "closed"],
+    ["expired", "failed", "expired", "closed"],
+    ["failed", "failed", "failed", "failed"],
+    ["pending", "failed", "pending", "confirming"],
+    ["pending", "reserved", "pending", "confirming"],
+    ["paid", "failed", "creditFailed", "fulfillment_failed"],
+    ["paid", "processing", "paid", "confirming"],
+    ["paid", "credited", "credited", "credited"],
+    ["closed", "credited", "manualReview", "manual_review"],
+    ["pending", "credited", "manualReview", "manual_review"],
+    ["refunded", "reversed", "refunded", "refunded"],
+    ["refunded", "credited", "manualReview", "manual_review"],
+    ["paid", "reversed", "manualReview", "manual_review"],
+  ] as const)("presents %s/%s consistently in bills and payment results", (
+    payment_status, fulfillment_status, billingStatus, returnState,
+  ) => {
+    const current = order({ payment_status, fulfillment_status });
+    expect(resolveRechargeOrderStatus(current)).toBe(billingStatus);
+    expect(resolvePaymentReturnState(current, false)).toBe(returnState);
+  });
+
+  it("does not claim payment success when the order cannot be verified", () => {
+    expect(resolvePaymentReturnState(undefined, false)).toBe("confirming");
+    expect(resolvePaymentReturnState(undefined, true)).toBe("unavailable");
+    expect(resolvePaymentReturnState(
+      order({ payment_status: "paid", fulfillment_status: "credited" }), true,
+    )).toBe("unavailable");
   });
 });
 
