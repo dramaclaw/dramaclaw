@@ -4198,7 +4198,10 @@
     },
     "crossProjectAssets": {
       "success": "已将 {{count}} 个媒体资产复制到当前项目",
-      "partialFailure": "有 {{count}} 个媒体资产复制失败，已保留原链接"
+      "partialFailure": "有 {{count}} 个媒体资产复制失败，相关节点已标记，请删除后重新粘贴",
+      "copying": "素材复制中…",
+      "failedPlaceholder": "素材复制失败，请删除后重新粘贴",
+      "removeNode": "移除节点"
     },
     "emptyHintChips": {
       "textToVideo": "文字生视频",

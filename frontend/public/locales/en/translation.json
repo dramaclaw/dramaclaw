@@ -4198,7 +4198,10 @@
     },
     "crossProjectAssets": {
       "success": "Copied {{count}} media asset(s) into this project",
-      "partialFailure": "{{count}} media asset(s) failed to copy; original links kept"
+      "partialFailure": "{{count}} media asset(s) failed to copy; the affected nodes are marked, delete them and paste again",
+      "copying": "Copying assets…",
+      "failedPlaceholder": "Asset copy failed. Delete this node and paste again.",
+      "removeNode": "Remove node"
     },
     "emptyHintChips": {
       "textToVideo": "Text to Video",

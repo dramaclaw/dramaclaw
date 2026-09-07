@@ -150,7 +150,11 @@ import {
 } from './snap-align/resolveSnapAlignDrag';
 import { computeAutoLayout } from './application/autoLayout';
 import { holdCanvasAutosave } from '@/features/freezone/canvasAutosaveHold';
-import { migratePastedNodeAssets } from './application/crossProjectAssets';
+import {
+  migratePastedNodeAssets,
+  withholdForeignAssetUrls,
+  type PastedNodeForMigration,
+} from './application/crossProjectAssets';
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 const DEFAULT_EDGE_OPTIONS = { type: 'disconnectableEdge' };
@@ -3483,10 +3487,12 @@ export function Canvas({
 
       const idMap = new Map<string, string>();
       const sizeMap = new Map<string, { width: number; height: number }>();
-      const pastedForMigration: Array<{ id: string; data: CanvasNodeData }> = [];
-      // 跨项目粘贴（来自序列化剪贴板且源项目 ≠ 当前项目）：在往 store 里加节点**之前**
-      // 先 hold 住当前项目的自动保存，否则 800ms 后那次 PUT 会把源项目的媒体 URL 先
-      // 落库一次；素材拷完、URL 改写后（或迁移失败）再 release，由 useCanvasSync 补存。
+      const pastedForMigration: PastedNodeForMigration[] = [];
+      // 跨项目粘贴（来自序列化剪贴板且源项目 ≠ 当前项目）：指向源项目的媒体 URL 在入
+      // store **之前**就被扣下（withholdForeignAssetUrls），节点先以「素材复制中」占位入
+      // 画布，后端拷完才填回目标项目地址——store 与落库数据里任何时候都没有源项目 URL。
+      // 同时 hold 住当前项目的自动保存，让占位态别白白落一次库；迁移结束（成功或失败）
+      // 再 release，由 useCanvasSync 补存完整节点。hold 超时恢复保存也只会存到占位节点。
       const sourceProject = snapshot?.sourceProject ?? null;
       const currentProject = readUrl().project ?? null;
       const migrationTarget =
@@ -3533,14 +3539,19 @@ export function Canvas({
               x: sourceNode.position.x + chosenOffset.x + offsetStep * 8,
               y: sourceNode.position.y + chosenOffset.y + offsetStep * 6,
             };
+        const { data: storeData, withheld } = migrationTarget
+          ? withholdForeignAssetUrls(data, migrationTarget)
+          : { data, withheld: [] };
         const nextNodeId = addNode(
           sourceNode.type as CanvasNodeType,
           position,
-          { ...data }
+          { ...storeData }
         );
         idMap.set(sourceNode.id, nextNodeId);
         sizeMap.set(nextNodeId, getNodeSize(sourceNode));
-        pastedForMigration.push({ id: nextNodeId, data });
+        if (withheld.length > 0) {
+          pastedForMigration.push({ id: nextNodeId, withheld });
+        }
       }
 
       const sizeSyncChanges = Array.from(sizeMap.entries()).map(([nodeId, size]) => ({
@@ -3598,9 +3609,9 @@ export function Canvas({
         scheduleCanvasPersist(0);
       }
 
-      // 跨项目粘贴：让后端把节点里指向「源项目」的媒体资产拷进当前项目，完成后静默
-      // 改写 URL。后台执行、不阻塞粘贴；单条失败保留原 URL 并提示。无论成败都要
-      // release 上面的自动保存 hold。
+      // 跨项目粘贴：让后端把扣下的源项目媒体拷进当前项目，完成后填回目标地址、摘掉
+      // 占位标记。后台执行、不阻塞粘贴；失败的节点保持字段为空并标记 failed（占位遮罩
+      // 提示删除重贴）。无论成败都要 release 上面的自动保存 hold。
       if (migrationTarget && pastedForMigration.length > 0) {
         void migratePastedNodeAssets({
           nodes: pastedForMigration,
@@ -3609,13 +3620,15 @@ export function Canvas({
             useCanvasStore.getState().nodes.find((node) => node.id === nodeId)?.data ?? null,
           updateNodeData,
         })
-          .then(({ migrated, failed }) => {
-            if (failed > 0) {
-              toast.error(t('canvas.crossProjectAssets.partialFailure', { count: failed }));
+          .then(({ migrated, failed, failedNodeIds }) => {
+            if (failedNodeIds.length > 0 || failed > 0) {
+              toast.error(
+                t('canvas.crossProjectAssets.partialFailure', { count: Math.max(failed, 1) })
+              );
             } else if (migrated > 0) {
               toast.success(t('canvas.crossProjectAssets.success', { count: migrated }));
             }
-            if (migrated > 0) {
+            if (migrated > 0 || failedNodeIds.length > 0) {
               scheduleCanvasPersist(0);
             }
           })
