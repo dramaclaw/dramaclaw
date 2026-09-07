@@ -7473,7 +7473,8 @@
       "hint": "在 3D 空间中搭建场景并进行多视角截图",
       "empty": "尚未搭建场景",
       "summary": "{{objects}} 个对象 · {{frames}} 帧",
-      "versionTooNew": "场景由更新的版本写入，请升级后再打开"
+      "versionTooNew": "场景由更新的版本写入，请升级后再打开",
+      "audioSummary": "已接入音频 {{count}} 段"
     },
     "editor": {
       "title": "预演台",
@@ -7513,7 +7514,8 @@
         "noNode": "画布上找不到本节点，无法接出录制",
         "done": "已生成录制节点",
         "globalNodeName": "预演台全局录制({{quality}})",
-        "trackNodeName": "预演台轨道录制 {{index}}({{quality}})"
+        "trackNodeName": "预演台轨道录制 {{index}}({{quality}})",
+        "noAudioMix": "本浏览器无法混音，已录制无声视频"
       }
     },
     "toolbar": {
@@ -7713,7 +7715,9 @@
       "namePlate": "人物名牌",
       "enlarge": "放大监看",
       "restore": "还原大小",
-      "caption": "{{name}} · {{focal}}mm · {{sensor}}"
+      "caption": "{{name}} · {{focal}}mm · {{sensor}}",
+      "follow": "跟随镜头轨",
+      "following": "跟随中"
     },
     "timeline": {
       "play": "播放",
@@ -7753,7 +7757,29 @@
       "emptyNoObjects": "当前没有可编排对象",
       "emptyNoObjectsHint": "先创建机位或人物，建好之后会自动出现在这里。",
       "createCharacter": "创建人物",
-      "createCamera": "创建机位"
+      "createCamera": "创建机位",
+      "cutHere": "切到此机位",
+      "live": "直播"
+    },
+    "program": {
+      "title": "镜头轨",
+      "cutTo": "切到…",
+      "empty": "按 1–9 或在机位轨表头点「切到此机位」",
+      "noRoom": "时间轴末尾没有空间",
+      "limit": "镜头轨最多 60 段"
+    },
+    "audio": {
+      "title": "音频轨",
+      "add": "添加音频",
+      "local": "本地文件…",
+      "upstream": "上游音频",
+      "noUpstream": "把音频节点连到预演台即可在此选择",
+      "uploading": "上传中",
+      "badExtension": "只支持 mp3 / wav / m4a / ogg",
+      "tooLarge": "音频文件不能超过 20 MB",
+      "noRoom": "此处没有空位",
+      "limit": "音频轨最多 20 段",
+      "uploadFailed": "音频上传失败：{{message}}"
     },
     "clip": {
       "empty": "选中一个片段后在这里编辑",
@@ -7813,6 +7839,14 @@
         "motion_push": "推近",
         "motion_pull": "拉远",
         "bake": "转为路径片段"
+      },
+      "cut": {
+        "camera": "机位"
+      },
+      "audio": {
+        "source": "素材",
+        "offset": "素材偏移（毫秒）",
+        "relocate": "重新定位到播放头"
       }
     }
   }

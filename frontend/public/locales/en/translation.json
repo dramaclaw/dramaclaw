@@ -7473,7 +7473,8 @@
       "hint": "Block out a scene in 3D and capture it from multiple angles",
       "empty": "No scene yet",
       "summary": "{{objects}} objects · {{frames}} frames",
-      "versionTooNew": "This scene was written by a newer version. Update before opening it."
+      "versionTooNew": "This scene was written by a newer version. Update before opening it.",
+      "audioSummary": "{{count}} audio clips attached"
     },
     "editor": {
       "title": "Previz Stage",
@@ -7513,7 +7514,8 @@
         "noNode": "This node is no longer on the canvas, nothing to attach the recording to",
         "done": "Recording node created",
         "globalNodeName": "Previz viewport recording ({{quality}})",
-        "trackNodeName": "Previz track recording {{index}} ({{quality}})"
+        "trackNodeName": "Previz track recording {{index}} ({{quality}})",
+        "noAudioMix": "This browser cannot mix audio; recorded without sound"
       }
     },
     "toolbar": {
@@ -7713,7 +7715,9 @@
       "namePlate": "Character name plates",
       "enlarge": "Enlarge monitor",
       "restore": "Restore size",
-      "caption": "{{name}} · {{focal}}mm · {{sensor}}"
+      "caption": "{{name}} · {{focal}}mm · {{sensor}}",
+      "follow": "Follow program",
+      "following": "Following"
     },
     "timeline": {
       "play": "Play",
@@ -7753,7 +7757,29 @@
       "emptyNoObjects": "Nothing to sequence yet",
       "emptyNoObjectsHint": "Create a camera or a character first — they show up here automatically.",
       "createCharacter": "Create a character",
-      "createCamera": "Create a camera"
+      "createCamera": "Create a camera",
+      "cutHere": "Cut to this camera",
+      "live": "LIVE"
+    },
+    "program": {
+      "title": "Program",
+      "cutTo": "Cut to…",
+      "empty": "Press 1–9 or use “Cut to this camera” on a camera track",
+      "noRoom": "No room at the end of the timeline",
+      "limit": "The program track holds at most 60 cuts"
+    },
+    "audio": {
+      "title": "Audio",
+      "add": "Add audio",
+      "local": "Local file…",
+      "upstream": "Upstream audio",
+      "noUpstream": "Connect an audio node to the previz node to pick it here",
+      "uploading": "Uploading",
+      "badExtension": "Only mp3 / wav / m4a / ogg files are supported",
+      "tooLarge": "Audio files must be 20 MB or smaller",
+      "noRoom": "No room at the playhead",
+      "limit": "The audio track holds at most 20 clips",
+      "uploadFailed": "Audio upload failed: {{message}}"
     },
     "clip": {
       "empty": "Select a clip to edit it here",
@@ -7813,6 +7839,14 @@
         "motion_push": "Push in",
         "motion_pull": "Pull out",
         "bake": "Convert to path clip"
+      },
+      "cut": {
+        "camera": "Camera"
+      },
+      "audio": {
+        "source": "Source",
+        "offset": "Offset (ms)",
+        "relocate": "Move to playhead"
       }
     }
   }

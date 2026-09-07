@@ -45,6 +45,8 @@ const TIMELINE_KEYS = [
   'emptyNoObjectsHint',
   'createCharacter',
   'createCamera',
+  'cutHere',
+  'live',
 ] as const;
 
 const CLIP_KEYS = [
@@ -61,6 +63,26 @@ const CLIP_KEYS = [
   'clearPoints',
   'remove',
   'slider',
+] as const;
+
+const CUT_KEYS = ['camera'] as const;
+
+const AUDIO_CLIP_KEYS = ['source', 'offset', 'relocate'] as const;
+
+const PROGRAM_KEYS = ['title', 'cutTo', 'empty', 'noRoom', 'limit'] as const;
+
+const AUDIO_KEYS = [
+  'title',
+  'add',
+  'local',
+  'upstream',
+  'noUpstream',
+  'uploading',
+  'badExtension',
+  'tooLarge',
+  'noRoom',
+  'limit',
+  'uploadFailed',
 ] as const;
 
 const POINT_KEYS = [
@@ -161,12 +183,14 @@ describe('previz P3 locale keys', () => {
     });
 
     it(`${name} carries every clip key`, () => {
-      const { point, closeup, ...rest } = bundle.previz.clip;
+      const { point, closeup, cut, audio, ...rest } = bundle.previz.clip;
       expect(Object.keys(rest).sort()).toEqual([...CLIP_KEYS].sort());
       expect(Object.keys(point).sort()).toEqual([...POINT_KEYS].sort());
       const { part, ...closeupRest } = closeup;
       expect(Object.keys(closeupRest).sort()).toEqual([...CLOSEUP_KEYS].sort());
       expect(Object.keys(part).sort()).toEqual([...CLOSEUP_PART_KEYS].sort());
+      expect(Object.keys(cut).sort()).toEqual([...CUT_KEYS].sort());
+      expect(Object.keys(audio).sort()).toEqual([...AUDIO_CLIP_KEYS].sort());
     });
 
     it(`${name} carries every camera create key`, () => {
@@ -223,4 +247,23 @@ describe('previz P3 locale keys', () => {
     // 两边 key 集合一致才算翻完；少一个的表现是英文界面上蹦出一行原始 key。
     expect(Object.keys(en.previz).sort()).toEqual(Object.keys(zh.previz).sort());
   });
+});
+
+describe('previz program and audio locale', () => {
+  for (const [name, bundle] of [
+    ['zh', zh],
+    ['en', en],
+  ] as const) {
+    it(`${name} carries the program and audio keys`, () => {
+      expect(Object.keys(bundle.previz.program).sort()).toEqual([...PROGRAM_KEYS].sort());
+      expect(Object.keys(bundle.previz.audio).sort()).toEqual([...AUDIO_KEYS].sort());
+      expect(bundle.previz.monitor).toHaveProperty('follow');
+      expect(bundle.previz.monitor).toHaveProperty('following');
+      expect(bundle.previz.node).toHaveProperty('audioSummary');
+      expect(bundle.previz.editor.record).toHaveProperty('noAudioMix');
+      // 上传失败要把后端原话带出来，占位符不能丢。
+      expect(bundle.previz.audio.uploadFailed).toContain('{{message}}');
+      expect(bundle.previz.node.audioSummary).toContain('{{count}}');
+    });
+  }
 });
