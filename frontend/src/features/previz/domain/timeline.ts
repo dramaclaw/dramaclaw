@@ -2,11 +2,14 @@
 // Copyright (c) 2026 ClaymoreLab
 import { v4 as uuidv4 } from 'uuid';
 
+import { audioFramesAvailable, framesToMs } from './audioTrack';
 import { samplePathPosition, samplePathRotation, sortedPathPoints } from './pathCurve';
 import {
   PREVIZ_FPS,
   PREVIZ_MIN_CLIP_FRAMES,
+  type PrevizAudioClip,
   type PrevizClip,
+  type PrevizCutClip,
   type PrevizPathClip,
   type PrevizPathPoint,
   type PrevizRigClip,
@@ -28,18 +31,33 @@ export function isRigClip(clip: PrevizClip): clip is PrevizRigClip {
   return clip.kind === 'rig';
 }
 
+export function isCutClip(clip: PrevizClip): clip is PrevizCutClip {
+  return clip.kind === 'cut';
+}
+
+export function isAudioClip(clip: PrevizClip): clip is PrevizAudioClip {
+  return clip.kind === 'audio';
+}
+
 export function trackFor(scene: PrevizScene, objectId: string): PrevizTrack | undefined {
   return scene.timeline.tracks.find((track) => track.objectId === objectId);
 }
 
-export function clipById(
-  scene: PrevizScene,
-  clipId: string,
-): { track: PrevizTrack; clip: PrevizClip } | undefined {
+/** 片段在哪张表里。对象轨道带 `track`，另外两张表没有轨道这一层。 */
+export type PrevizClipLocation =
+  | { table: 'tracks'; track: PrevizTrack; clip: PrevizClip }
+  | { table: 'program'; clip: PrevizCutClip }
+  | { table: 'audio'; clip: PrevizAudioClip };
+
+export function clipById(scene: PrevizScene, clipId: string): PrevizClipLocation | undefined {
   for (const track of scene.timeline.tracks) {
     const clip = track.clips.find((entry) => entry.id === clipId);
-    if (clip) return { track, clip };
+    if (clip) return { table: 'tracks', track, clip };
   }
+  const cut = scene.timeline.program.find((entry) => entry.id === clipId);
+  if (cut) return { table: 'program', clip: cut };
+  const audio = scene.timeline.audio.find((entry) => entry.id === clipId);
+  if (audio) return { table: 'audio', clip: audio };
   return undefined;
 }
 
@@ -168,14 +186,55 @@ function withTrack(scene: PrevizScene, trackId: string, next: PrevizTrack): Prev
   };
 }
 
-/** 换掉某个片段（换成数组是为了让剃刀能用同一条路径把一个片段变成两个）。 */
+function withProgram(scene: PrevizScene, program: PrevizCutClip[]): PrevizScene {
+  return { ...scene, timeline: { ...scene.timeline, program } };
+}
+
+function withAudio(scene: PrevizScene, audio: PrevizAudioClip[]): PrevizScene {
+  return { ...scene, timeline: { ...scene.timeline, audio } };
+}
+
+/** 用 `next` 替换 `clipId` 所在位置（空数组即删除），三张表通用。 */
 function withClips(scene: PrevizScene, clipId: string, next: PrevizClip[]): PrevizScene {
   const found = clipById(scene, clipId);
   if (!found) return scene;
+  if (found.table === 'program') {
+    return withProgram(
+      scene,
+      scene.timeline.program.flatMap((cut) => (cut.id === clipId ? next.filter(isCutClip) : [cut])),
+    );
+  }
+  if (found.table === 'audio') {
+    return withAudio(
+      scene,
+      scene.timeline.audio.flatMap((clip) => (clip.id === clipId ? next.filter(isAudioClip) : [clip])),
+    );
+  }
   return withTrack(scene, found.track.id, {
     ...found.track,
     clips: found.track.clips.flatMap((clip) => (clip.id === clipId ? next : [clip])),
   });
+}
+
+/**
+ * 镜头轨与音频轨里一段的可动范围：前一段的终点到后一段的起点。
+ * 两张表都有序且不重叠，所以按下标取前后即可。
+ */
+function neighbourBounds(
+  siblings: readonly { id: string; startFrame: number; endFrame: number }[],
+  clipId: string,
+): { lower: number; upper: number } {
+  const index = siblings.findIndex((clip) => clip.id === clipId);
+  return {
+    lower: siblings[index - 1]?.endFrame ?? 0,
+    upper: siblings[index + 1]?.startFrame ?? Number.POSITIVE_INFINITY,
+  };
+}
+
+function siblingsOf(scene: PrevizScene, found: PrevizClipLocation): readonly PrevizClip[] | null {
+  if (found.table === 'program') return scene.timeline.program;
+  if (found.table === 'audio') return scene.timeline.audio;
+  return null;
 }
 
 /** 新建或替换一个片段；对象还没有轨道时顺手建一条。 */
@@ -217,10 +276,17 @@ export function moveClip(
   if (!found) return scene;
   const { clip } = found;
   const span = clip.endFrame - clip.startFrame;
-  const start = Math.min(
+  let start = Math.min(
     Math.max(0, maxFrame - span),
     Math.max(0, clip.startFrame + Math.round(deltaFrames)),
   );
+  const siblings = siblingsOf(scene, found);
+  if (siblings) {
+    // 固定行里的段不能压到邻居身上，卡在两边之间。
+    const { lower, upper } = neighbourBounds(siblings, clipId);
+    start = Math.min(Math.max(start, lower), Math.max(lower, upper - span));
+  }
+  if (start === clip.startFrame) return scene;
   return withClips(scene, clipId, [{ ...clip, startFrame: start, endFrame: start + span }]);
 }
 
@@ -234,13 +300,32 @@ export function trimClip(
   const found = clipById(scene, clipId);
   if (!found) return scene;
   const { clip } = found;
+  const fps = scene.settings.fps;
   const target = Math.round(frame);
+  const siblings = siblingsOf(scene, found);
+  const bounds = siblings ? neighbourBounds(siblings, clipId) : null;
 
   if (edge === 'start') {
-    const start = Math.min(Math.max(0, target), clip.endFrame - PREVIZ_MIN_CLIP_FRAMES);
+    let start = Math.min(Math.max(0, target), clip.endFrame - PREVIZ_MIN_CLIP_FRAMES);
+    if (bounds) start = Math.max(start, bounds.lower);
+    if (found.table === 'audio') {
+      // 往左拉等于把素材偏移往回退，退到 0 就到头了。
+      start = Math.max(start, clip.startFrame - Math.floor((found.clip.offsetMs * fps) / 1000));
+      const offsetMs = Math.max(0, found.clip.offsetMs + framesToMs(start - clip.startFrame, fps));
+      return withClips(scene, clipId, [{ ...found.clip, startFrame: start, offsetMs }]);
+    }
     return withClips(scene, clipId, [{ ...clip, startFrame: start }]);
   }
-  const end = Math.max(target, clip.startFrame + PREVIZ_MIN_CLIP_FRAMES);
+
+  let end = Math.max(target, clip.startFrame + PREVIZ_MIN_CLIP_FRAMES);
+  if (bounds) end = Math.min(end, bounds.upper);
+  if (found.table === 'audio') {
+    // 素材放完就没有声音了，片段不能比剩余素材长。
+    end = Math.max(
+      clip.startFrame + PREVIZ_MIN_CLIP_FRAMES,
+      Math.min(end, clip.startFrame + audioFramesAvailable(found.clip.durationMs, found.clip.offsetMs, fps)),
+    );
+  }
   return withClips(scene, clipId, [{ ...clip, endFrame: end }]);
 }
 
@@ -277,11 +362,31 @@ function halfPoints(clip: PrevizPathClip, uCut: number, side: 'left' | 'right'):
  */
 export function splitClip(scene: PrevizScene, clipId: string, frame: number): PrevizScene {
   const found = clipById(scene, clipId);
-  if (!found || !isPathClip(found.clip)) return scene;
-  const clip = found.clip;
+  if (!found) return scene;
+  const { clip } = found;
   const cut = Math.round(frame);
   if (cut <= clip.startFrame || cut >= clip.endFrame) return scene;
 
+  if (found.table === 'program') {
+    return withClips(scene, clipId, [
+      { ...found.clip, id: uuidv4(), endFrame: cut },
+      { ...found.clip, id: uuidv4(), startFrame: cut },
+    ]);
+  }
+  if (found.table === 'audio') {
+    const fps = scene.settings.fps;
+    return withClips(scene, clipId, [
+      { ...found.clip, id: uuidv4(), endFrame: cut },
+      {
+        ...found.clip,
+        id: uuidv4(),
+        startFrame: cut,
+        // 右半段从素材更靠后的位置起播，声音才接得上。
+        offsetMs: found.clip.offsetMs + framesToMs(cut - clip.startFrame, fps),
+      },
+    ]);
+  }
+  if (!isPathClip(clip)) return scene;
   const uCut = frameToU(clip, cut);
   return withClips(scene, clipId, [
     { ...clip, id: uuidv4(), endFrame: cut, points: halfPoints(clip, uCut, 'left') },
@@ -415,7 +520,7 @@ export function setPathAim(
   aimObjectId: string | null,
 ): PrevizScene {
   const found = clipById(scene, clipId);
-  if (!found || !isPathClip(found.clip)) return scene;
+  if (!found || found.table !== 'tracks' || !isPathClip(found.clip)) return scene;
   if (aimObjectId === found.track.objectId) return scene;
   return withClips(scene, clipId, [{ ...found.clip, aimObjectId }]);
 }
