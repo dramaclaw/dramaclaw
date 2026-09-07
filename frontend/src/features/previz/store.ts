@@ -3,6 +3,11 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 
+import {
+  insertAudioClip,
+  type AudioInsertRejection,
+  type PrevizAudioSource,
+} from './domain/audioTrack';
 import { clampToRange } from './domain/camera';
 import { canAddObject } from './domain/limits';
 import {
@@ -35,11 +40,6 @@ import {
   type Vec3,
 } from './domain/scene';
 import {
-  insertAudioClip,
-  type AudioInsertRejection,
-  type PrevizAudioSource,
-} from './domain/audioTrack';
-import {
   addRigClip,
   createRigClip,
   rigClipToPath,
@@ -47,7 +47,7 @@ import {
   type CloseupTarget,
   type RigClipPatch,
 } from './domain/closeupClip';
-import { insertCut, liveCameraAt, type CutRejection } from './domain/program';
+import { insertCut, liveCameraAt, retargetCut, type CutRejection } from './domain/program';
 import {
   PREVIZ_TIMELINE_ZOOM,
   clearPathPoints,
@@ -112,7 +112,10 @@ interface PrevizStoreState {
    * 也不存进场景——换个人打开同一节点，默认还是跟随。
    */
   monitorFollowsProgram: boolean;
-  /** 每次跳转/停止 +1，编辑器靠它知道该重新起播音频。播放 tick 不动它。 */
+  /**
+   * 每次跳转/停止 +1，编辑器靠它知道该重新起播音频。播放 tick 不动它。
+   * 播到头自动停也不动它：那时音频本来就已按片段长度排完，不需要重起。
+   */
   seekSerial: number;
   /**
    * 时间轴会话态。和 `selectedObjectId` 同一类：刻意不进 `PrevizScene`、不进 undo 栈。
@@ -319,7 +322,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   },
 
   removeObject: (id) => {
-    const { scene, applyScene, selectedObjectId, activeCameraId } = get();
+    const { scene, applyScene, selectedObjectId, activeCameraId, monitorFollowsProgram } = get();
     if (!scene.objects.some((object) => object.id === id)) return;
 
     applyScene({
@@ -336,6 +339,8 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     set({
       selectedObjectId: selectedObjectId === id ? null : selectedObjectId,
       activeCameraId: activeCameraId === id ? null : activeCameraId,
+      // 手动挑的那台没了，监看回到跟随，而不是黑着等人再点一次「跟随」。
+      monitorFollowsProgram: activeCameraId === id ? true : monitorFollowsProgram,
     });
   },
 
@@ -357,7 +362,8 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     );
     applyScene({ ...scene, settings: { ...scene.settings, durationFrames: clamped } });
     // 时间轴缩短到播放头以内时把播放头拽回来，否则它停在时间轴外面，拖都拖不动。
-    if (timelineFrame > clamped) set({ timelineFrame: clamped });
+    // 走 setTimelineFrame 而不是直接 set：这也是一次跳转，seekSerial 该跟着走一格。
+    if (timelineFrame > clamped) get().setTimelineFrame(clamped);
   },
 
   setTimelineFrame: (frame) => {
@@ -591,21 +597,11 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
 
   setCutCamera: (clipId, cameraId) => {
     const { scene, applyScene } = get();
-    const camera = scene.objects.find((object) => object.id === cameraId);
-    if (camera?.kind !== 'camera') return;
-    const cut = scene.timeline.program.find((entry) => entry.id === clipId);
-    if (!cut) return;
-    // 改成同一台机位是空操作：还是这么写不动 applyScene，免得往 undo 栈塞一步没变化的记录。
-    if (cut.cameraId === cameraId) return;
-    applyScene({
-      ...scene,
-      timeline: {
-        ...scene.timeline,
-        program: scene.timeline.program.map((entry) =>
-          entry.id === clipId ? { ...entry, cameraId } : entry,
-        ),
-      },
-    });
+    const next = retargetCut(scene, clipId, cameraId);
+    // 引用相等：机位不是 camera、片段不存在、或已是这台，`retargetCut` 都原样交回同一个
+    // 对象，这里不必再重复判一遍就知道是不是空操作。
+    if (next === scene) return;
+    applyScene(next);
   },
 
   addAudioClip: (source, atFrame) => {

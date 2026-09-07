@@ -30,6 +30,11 @@ function withProgram(scene: PrevizScene, program: PrevizCutClip[]): PrevizScene 
   return { ...scene, timeline: { ...scene.timeline, program } };
 }
 
+/** 只换某一下标那段的机位，其它字段不动。`insertCut` 与 `retargetCut` 共用，别各写一份。 */
+function swapCutCamera(program: PrevizCutClip[], index: number, cameraId: string): PrevizCutClip[] {
+  return program.map((cut, i) => (i === index ? { ...cut, cameraId } : cut));
+}
+
 /**
  * 在 `frame` 处切到 `cameraId`。五种情形见设计文档「切镜操作」：
  * 0 覆盖播放头的那段已是该机位则不动；1 起点恰在播放头只换机位；
@@ -51,13 +56,7 @@ export function insertCut(scene: PrevizScene, frame: number, cameraId: string): 
   if (current) {
     if (current.cameraId === cameraId) return { ok: false, reason: 'same-camera' };
     if (current.startFrame === at) {
-      return {
-        ok: true,
-        scene: withProgram(
-          scene,
-          program.map((cut, i) => (i === index ? { ...cut, cameraId } : cut)),
-        ),
-      };
+      return { ok: true, scene: withProgram(scene, swapCutCamera(program, index, cameraId)) };
     }
     if (program.length >= PREVIZ_MAX_CUTS) return { ok: false, reason: 'limit' };
     // at 严格落在 (startFrame, endFrame) 内，两半都至少一帧。
@@ -92,4 +91,22 @@ export function insertCut(scene: PrevizScene, frame: number, cameraId: string): 
       ? [...program.slice(0, nextIndex), cut, ...program.slice(nextIndex)]
       : [...program, cut];
   return { ok: true, scene: withProgram(scene, next) };
+}
+
+/**
+ * 把某段切片改指到另一台机位。机位不是 camera、找不到切片、或已是这台时原样返回同一个对象，
+ * 调用方按引用相等判断是不是空操作，别往 undo 栈塞一步没变化的记录。
+ */
+export function retargetCut(scene: PrevizScene, clipId: string, cameraId: string): PrevizScene {
+  const camera = scene.objects.find((object) => object.id === cameraId);
+  if (camera?.kind !== 'camera') return scene;
+
+  const program = scene.timeline.program;
+  // findIndex 而不是按 id 过滤：clipById 的注释说过，un-deduped 的场景里同 id 可能不止一条，
+  // 按下标定位只改第一条命中的，不会把重复 id 的那几条一起改掉。
+  const index = program.findIndex((cut) => cut.id === clipId);
+  if (index < 0) return scene;
+  if (program[index]!.cameraId === cameraId) return scene;
+
+  return withProgram(scene, swapCutCamera(program, index, cameraId));
 }

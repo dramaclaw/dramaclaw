@@ -76,6 +76,27 @@ describe('cutToCamera', () => {
     expect(usePrevizStore.getState().past.length).toBe(pastBefore);
     expect(usePrevizStore.getState().dirty).toBe(false);
   });
+
+  it('ignores setCutCamera when the target id is unknown', () => {
+    const cam = addCamera();
+    usePrevizStore.getState().cutToCamera(cam);
+    const clipId = usePrevizStore.getState().scene.timeline.program[0]!.id;
+    const pastBefore = usePrevizStore.getState().past.length;
+    usePrevizStore.getState().setCutCamera(clipId, 'nope');
+    expect(usePrevizStore.getState().scene.timeline.program[0]?.cameraId).toBe(cam);
+    expect(usePrevizStore.getState().past.length).toBe(pastBefore);
+  });
+
+  it('ignores setCutCamera when the target id is not a camera', () => {
+    const cam = addCamera();
+    usePrevizStore.getState().cutToCamera(cam);
+    const lightId = usePrevizStore.getState().addObject('light')!;
+    const clipId = usePrevizStore.getState().scene.timeline.program[0]!.id;
+    const pastBefore = usePrevizStore.getState().past.length;
+    usePrevizStore.getState().setCutCamera(clipId, lightId);
+    expect(usePrevizStore.getState().scene.timeline.program[0]?.cameraId).toBe(cam);
+    expect(usePrevizStore.getState().past.length).toBe(pastBefore);
+  });
 });
 
 describe('monitor follow', () => {
@@ -125,6 +146,16 @@ describe('monitor follow', () => {
     usePrevizStore.getState().followProgram();
     expect(usePrevizStore.getState().past.length).toBe(pastBefore);
   });
+
+  it('resumes following when the active camera is removed', () => {
+    const camA = addCamera();
+    const camB = addCamera();
+    usePrevizStore.getState().cutToCamera(camB);
+    usePrevizStore.getState().setActiveCamera(camA);
+    usePrevizStore.getState().removeObject(camA);
+    expect(usePrevizStore.getState().monitorFollowsProgram).toBe(true);
+    expect(monitorCameraId(usePrevizStore.getState())).toBe(camB);
+  });
 });
 
 describe('audio clips', () => {
@@ -141,11 +172,13 @@ describe('audio clips', () => {
 
   it('returns the rejection when there is no room', () => {
     usePrevizStore.getState().addAudioClip(source, 0);
+    const pastBefore = usePrevizStore.getState().past.length;
     expect(usePrevizStore.getState().addAudioClip(source, 30)).toBe('no-room');
+    expect(usePrevizStore.getState().past.length).toBe(pastBefore);
   });
 
   it('relocates a clip to the playhead', () => {
-    usePrevizStore.getState().addAudioClip(source, 0);
+    usePrevizStore.getState().addAudioClip(source, 10);
     const clipId = usePrevizStore.getState().scene.timeline.audio[0]!.id;
     usePrevizStore.getState().setTimelineFrame(40);
     usePrevizStore.getState().relocateAudioClipToPlayhead(clipId);
@@ -155,7 +188,41 @@ describe('audio clips', () => {
     });
   });
 
-  it('keeps audio clips when the duration is shortened below them', () => {
+  it('does not push undo when relocating to the frame the clip is already at', () => {
+    usePrevizStore.getState().addAudioClip(source, 10);
+    const clipId = usePrevizStore.getState().scene.timeline.audio[0]!.id;
+    usePrevizStore.getState().markSaved();
+    usePrevizStore.getState().setTimelineFrame(10);
+    const pastBefore = usePrevizStore.getState().past.length;
+    usePrevizStore.getState().relocateAudioClipToPlayhead(clipId);
+    expect(usePrevizStore.getState().past.length).toBe(pastBefore);
+    expect(usePrevizStore.getState().dirty).toBe(false);
+  });
+
+  it('ignores relocate when the id names a program cut, not an audio clip', () => {
+    const cam = addCamera();
+    usePrevizStore.getState().cutToCamera(cam);
+    const cutId = usePrevizStore.getState().scene.timeline.program[0]!.id;
+    usePrevizStore.getState().setTimelineFrame(30);
+    const pastBefore = usePrevizStore.getState().past.length;
+    const programBefore = usePrevizStore.getState().scene.timeline.program;
+    usePrevizStore.getState().relocateAudioClipToPlayhead(cutId);
+    expect(usePrevizStore.getState().scene.timeline.program).toBe(programBefore);
+    expect(usePrevizStore.getState().past.length).toBe(pastBefore);
+  });
+
+  it('clamps a relocated clip so it keeps its length within the timeline', () => {
+    usePrevizStore.getState().addAudioClip(source, 0);
+    const clipId = usePrevizStore.getState().scene.timeline.audio[0]!.id;
+    usePrevizStore.getState().setTimelineFrame(119);
+    usePrevizStore.getState().relocateAudioClipToPlayhead(clipId);
+    expect(usePrevizStore.getState().scene.timeline.audio[0]).toMatchObject({
+      startFrame: 60,
+      endFrame: 120,
+    });
+  });
+
+  it('leaves an audio clip past the new duration where it is', () => {
     usePrevizStore.getState().addAudioClip(source, 100);
     usePrevizStore.getState().setDurationFrames(60);
     const clip: PrevizAudioClip | undefined = usePrevizStore.getState().scene.timeline.audio[0];
@@ -171,9 +238,25 @@ describe('seekSerial', () => {
     usePrevizStore.getState().setTimelineFrame(3);
     expect(usePrevizStore.getState().seekSerial).toBe(start + 1);
     usePrevizStore.getState().setTimelinePlaying(true);
-    usePrevizStore.getState().tickPlayback(1000 / 30);
+    usePrevizStore.getState().tickPlayback(1 / 30);
+    expect(usePrevizStore.getState().timelineFrame).toBe(4);
     expect(usePrevizStore.getState().seekSerial).toBe(start + 1);
     usePrevizStore.getState().stopPlayback();
     expect(usePrevizStore.getState().seekSerial).toBe(start + 2);
+  });
+
+  it('bumps when shortening the duration pulls the playhead back', () => {
+    usePrevizStore.getState().setTimelineFrame(100);
+    const start = usePrevizStore.getState().seekSerial;
+    usePrevizStore.getState().setDurationFrames(60);
+    expect(usePrevizStore.getState().timelineFrame).toBe(60);
+    expect(usePrevizStore.getState().seekSerial).toBe(start + 1);
+  });
+
+  it('does not bump when the playhead is already inside the shortened duration', () => {
+    usePrevizStore.getState().setTimelineFrame(10);
+    const start = usePrevizStore.getState().seekSerial;
+    usePrevizStore.getState().setDurationFrames(60);
+    expect(usePrevizStore.getState().seekSerial).toBe(start);
   });
 });
