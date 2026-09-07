@@ -268,6 +268,9 @@ function capsuleHeight(mesh: FakeMeshView): number {
   return middle! + radius! * 2;
 }
 
+/** 人物模型自己一份，外加每个动画库一份：rig 工厂首次 build 就该下这么多、之后不再下。 */
+const ACTOR_FILE_COUNT = 1 + PREVIZ_ACTOR_ANIMATION_URLS.length;
+
 /**
  * 一个真的 `CharacterRigFactory`，喂同一份假 three。这里刻意不用手搓的桩：本组用例测的
  * 就是场景图与工厂之间的接线，桩替掉之后工厂改了签名或者语义，这边一条都不会红。
@@ -275,9 +278,6 @@ function capsuleHeight(mesh: FakeMeshView): number {
  * `clone` 每次交出一个新的模型根，下面再挂一个带材质的 Mesh——显示模式要刷到模型的
  * 每份材质上，模型根自己是没有材质的。
  */
-/** 人物模型自己一份，外加每个动画库一份：rig 工厂首次 build 就该下这么多、之后不再下。 */
-const ACTOR_FILE_COUNT = 1 + PREVIZ_ACTOR_ANIMATION_URLS.length;
-
 function rigFactory(three: typeof import('three'), clipNames: string[] = ['Idle_Loop']) {
   const loadGltf = vi.fn(async () => ({
     scene: new three.Object3D(),
