@@ -22,6 +22,7 @@ import {
   type PrevizViewDirection,
   type PrevizViewPlacement,
 } from '../domain/view';
+import { setFrustumLive } from './cameraModel';
 import { monitorViewportRect, syncMonitorCamera, type MonitorSize } from './cameraRig';
 import {
   blitCameraToCanvas,
@@ -52,7 +53,8 @@ export interface PrevizRecordingPass {
   readonly canvas: HTMLCanvasElement;
   readonly width: number;
   readonly height: number;
-  drawFrame(frame: number): void;
+  /** 全局录制每帧传镜头轨当前机位（null 走导演视角）；单轨录制忽略这个参数。 */
+  drawFrame(frame: number, cameraId: string | null): void;
   end(): void;
 }
 
@@ -111,6 +113,8 @@ export class PrevizRenderer {
   private orthoCamera: THREE.OrthographicCamera | null = null;
   /** 右下角监看当前看的是哪个机位。null 就是不画监看。 */
   private activeCameraId: string | null = null;
+  /** 镜头轨当前直播的机位；视锥涂红。与 `activeCameraId`（监看/操作对象）无关。 */
+  private liveCameraId: string | null = null;
   /** 播放头当前帧。场景灌进来时按它解算一次，之后每次移动播放头再解算。 */
   private currentFrame = 0;
   /**
@@ -320,6 +324,11 @@ export class PrevizRenderer {
     this.currentScene = scene;
     this.trackHandPlacements(previous, scene);
     this.graph.sync(scene);
+    // sync 可能重建了机位模型，直播色要重新涂上去。
+    if (this.liveCameraId) {
+      const node = this.graph.nodeFor(this.liveCameraId);
+      if (node) setFrustumLive(node, true);
+    }
     // 必须排在 sync 之后：sync 每次都把静态 transform 写回节点，先解算就会被它盖掉，
     // 表现是播放中随便改点什么（改个名字都算）人就瞬移回起点。
     this.applyEvaluatedFrame();
@@ -360,6 +369,21 @@ export class PrevizRenderer {
   /** 指定右下角监看看哪个机位。传 null 关掉监看。 */
   setActiveCamera(objectId: string | null): void {
     this.activeCameraId = objectId;
+    this.requestRender();
+  }
+
+  /** 镜头轨当前直播的机位，视锥点亮 tally 红。传 null 全部熄灭。 */
+  setLiveCamera(objectId: string | null): void {
+    if (objectId === this.liveCameraId) return;
+    if (this.liveCameraId) {
+      const previous = this.graph.nodeFor(this.liveCameraId);
+      if (previous) setFrustumLive(previous, false);
+    }
+    this.liveCameraId = objectId;
+    if (objectId) {
+      const next = this.graph.nodeFor(objectId);
+      if (next) setFrustumLive(next, true);
+    }
     this.requestRender();
   }
 
@@ -610,14 +634,32 @@ export class PrevizRenderer {
       canvas: painter.canvas as unknown as HTMLCanvasElement,
       width,
       height,
-      drawFrame: (frame) => {
+      drawFrame: (frame, liveId) => {
         if (ended || this.disposed) return;
         // 先解算再渲染：setFrame 把这一帧的走位写进节点，顺手也把屏幕上那份刷新了，
         // 于是录制期间视口就是进度条。
         this.setFrame(frame);
-        if (camera?.kind === 'camera' && cameraNode && monitor) {
-          syncMonitorCamera(monitor, cameraNode, camera, aspect);
-          painter.paint(monitor);
+        // 单轨录制锁死在指定机位；全局录制每帧看镜头轨说该看谁。镜头轨指的机位已被
+        // 删掉、或压根不是机位时，这一帧走导演视角，别让整段录制断在这里。
+        const shot =
+          mode === 'track'
+            ? camera
+            : liveId
+              ? scene.objects.find((object) => object.id === liveId)
+              : undefined;
+        const shotNode =
+          mode === 'track' ? cameraNode : liveId ? this.graph.nodeFor(liveId) : undefined;
+        if (shot?.kind === 'camera' && shotNode && monitor) {
+          // 直播机位自己的模型不能出现在自己拍的画面里。单轨模式开录时已经把它藏起来，
+          // 这个开关是给全局模式的：它每帧换机位，只能画哪台藏哪台。
+          const wasVisible = shotNode.visible;
+          shotNode.visible = false;
+          try {
+            syncMonitorCamera(monitor, shotNode, shot, aspect);
+            painter.paint(monitor);
+          } finally {
+            shotNode.visible = wasVisible;
+          }
           return;
         }
         // 导演视角的 aspect 跟着视口走，和出片画幅无关。借用它出片得先改，画完立刻

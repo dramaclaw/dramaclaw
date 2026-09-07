@@ -7,8 +7,10 @@ import type { OutputAspect, PrevizCamera } from '@/features/previz/domain/scene'
 import {
   PREVIZ_CAMERA_COLOR,
   PREVIZ_CAMERA_FRUSTUM_DISTANCE,
+  PREVIZ_LIVE_FRUSTUM_COLOR,
   buildCameraModel,
   frustumWireframe,
+  setFrustumLive,
   syncCameraFrustum,
 } from '@/features/previz/engine/cameraModel';
 
@@ -143,7 +145,11 @@ interface MeshView {
     dispose: ReturnType<typeof vi.fn>;
     attributes?: Record<string, { array: number[]; itemSize: number }>;
   };
-  material: { params: { color?: number }; dispose: ReturnType<typeof vi.fn> };
+  material: {
+    params: { color?: number };
+    color: { set: ReturnType<typeof vi.fn> };
+    dispose: ReturnType<typeof vi.fn>;
+  };
   position: { x: number; y: number; z: number };
   rotation: { x: number; y: number; z: number };
   userData: Record<string, unknown>;
@@ -330,5 +336,45 @@ describe('syncCameraFrustum', () => {
     const stray = new three.Group();
 
     expect(syncCameraFrustum(three, stray, cameraWith(), '16:9')).toBe(false);
+  });
+});
+
+describe('setFrustumLive', () => {
+  it('recolours the frustum and its placeholder colour when live', () => {
+    const three = fakeThree();
+    const model = buildCameraModel(three, cameraWith(), '16:9');
+    const frustum = frustumOf(model);
+
+    setFrustumLive(model, true);
+
+    // 两处都要改：`applyDisplayMode` 切显示模式时是拿 `previzPlaceholderColor` 把颜色
+    // 写回去的，只改材质的话切一次模式就掉回橙色。
+    expect(frustum.userData.previzPlaceholderColor).toBe(PREVIZ_LIVE_FRUSTUM_COLOR);
+    expect(frustum.material.color.set).toHaveBeenLastCalledWith(PREVIZ_LIVE_FRUSTUM_COLOR);
+  });
+
+  it('restores the default colour when no longer live', () => {
+    const three = fakeThree();
+    const model = buildCameraModel(three, cameraWith(), '16:9');
+    const frustum = frustumOf(model);
+
+    setFrustumLive(model, true);
+    setFrustumLive(model, false);
+
+    expect(frustum.userData.previzPlaceholderColor).toBe(PREVIZ_CAMERA_COLOR.frustum);
+    expect(frustum.material.color.set).toHaveBeenLastCalledWith(PREVIZ_CAMERA_COLOR.frustum);
+  });
+
+  it('leaves the camera body alone', () => {
+    const three = fakeThree();
+    const model = buildCameraModel(three, cameraWith(), '16:9');
+
+    setFrustumLive(model, true);
+
+    // 直播色只是视锥的 tally 灯；机身还是蓝的，否则一堆机位里认不出哪一具在直播。
+    for (const mesh of meshesOf(model).filter((entry) => !entry.userData.previzCameraFrustum)) {
+      expect(mesh.userData.previzPlaceholderColor).toBe(mesh.material.params.color);
+      expect(mesh.material.color.set).not.toHaveBeenCalled();
+    }
   });
 });
