@@ -134,12 +134,17 @@ describe('ClipBar', () => {
   it('renders children under the label', () => {
     render(
       <ClipBar clip={cut} pxPerFrame={2} selected onSelect={vi.fn()} onTrim={vi.fn()} tone="audio">
-        <span data-testid="wave" />
+        <span data-testid="wave" className="absolute inset-0" />
       </ClipBar>,
     );
     const bar = screen.getByTestId('previz-clip-c1');
-    // 波形必须排在标签之前：排到后面就盖在字上，「画在标签底下」就成了空话。
     expect(bar.firstElementChild).toBe(screen.getByTestId('wave'));
+    /*
+      光排在前面盖不住：children 是 absolute，标签只要还是静态行内元素，按 CSS 绘制
+      顺序（行内内容第 6 步、定位元素第 8 步）波形就画在字上面，DOM 顺序完全不管用。
+      标签得自己也定位，同为 auto 层级时才轮到「谁在后面谁在上」这条规则。
+    */
+    expect(screen.getByText('10-40').className).toContain('relative');
     expect(bar.className).toContain('bg-[#37b39c]');
   });
 });

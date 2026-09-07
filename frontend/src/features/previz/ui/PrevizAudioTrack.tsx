@@ -267,12 +267,7 @@ function AudioWave({
   );
 }
 
-/**
- * 峰值里截出这一段画成中线对称的柱子。
- *
- * 颜色压得很淡是有原因的：ClipBar 里的文件名是普通行内元素，绝对定位的 canvas 按 CSS
- * 绘制顺序落在它上面，画重了就把名字糊掉。
- */
+/** 峰值里截出这一段，画成中线对称的柱子。 */
 function drawPeaks(
   canvas: HTMLCanvasElement | null,
   peaks: Float32Array,
@@ -289,7 +284,7 @@ function drawPeaks(
   const first = Math.floor((offsetMs / 1000) * PEAK_BUCKETS_PER_SEC);
   const count = Math.max(1, Math.floor((clipMs / 1000) * PEAK_BUCKETS_PER_SEC));
   context.clearRect(0, 0, width, height);
-  context.fillStyle = 'rgba(255,255,255,0.35)';
+  context.fillStyle = 'rgba(255,255,255,0.55)';
   const middle = height / 2;
   for (let x = 0; x < width; x += 1) {
     const bucket = first + Math.floor((x / width) * count);
