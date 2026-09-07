@@ -626,8 +626,10 @@ export class PrevizRenderer {
     }
     const monitor = this.monitorCamera;
 
-    // 手柄、轨迹辅助物、描边名牌、以及出片机位自己的锥体，都不该进画面。录制期间一直
-    // 藏着而不是逐帧开关：每一帧都只从 drawFrame 出，藏一次、end() 时还一次就够了。
+    // 手柄、轨迹辅助物、描边名牌、以及出片机位自己的锥体，都不该进画面。藏一次、end()
+    // 时还一次就够——前提是录制期间没有别人把它们还回去：四视图那三个离屏预览的 finally
+    // 恰恰会（它们跟着播放头重画，而播放头正是录制在推），所以那三个方法录制期间直接
+    // 不画，见 `renderCameraPreview` / `renderQuadPreview` / `renderCameraView`。
     this.gizmo?.setHelperVisible(false);
     this.setEditorHelpersVisible(false);
     this.overlays?.setSuppressed(true);
@@ -788,7 +790,9 @@ export class PrevizRenderer {
    * 场景设置里读，没有场景就没有画幅。
    */
   renderCameraPreview(canvas: CameraPreviewCanvas, draft: PrevizCameraDraft): void {
-    if (this.disposed) return;
+    // 录制期间不画：这些离屏预览的 finally 会把辅助物的可见性「还」成可见，而录制正
+    // 靠它们一直藏着，见 `startRecording`。
+    if (this.disposed || this.recording) return;
     const scene = this.currentScene;
     if (!scene) return;
 
@@ -826,7 +830,9 @@ export class PrevizRenderer {
    * OrbitControls 的推拉手感，检视面板里那些按透视算出来的读数也会一起失真。
    */
   renderQuadPreview(canvas: CameraPreviewCanvas, direction: PrevizViewDirection): void {
-    if (this.disposed) return;
+    // 同 `renderCameraPreview`：录制期间不画。四视图是跟着播放头重画的，而播放头正是
+    // 录制在推，不挡住的话手柄会被烤进后面每一帧，还要连带四趟离屏读回。
+    if (this.disposed || this.recording) return;
 
     // 临时相机只在这里用，建一次留着：每帧新建一台会在拖拽时一秒钟丢几十个对象。
     if (!this.orthoCamera) this.orthoCamera = new this.three.OrthographicCamera();
@@ -872,7 +878,8 @@ export class PrevizRenderer {
    * 是什么）先削掉一半。裁而不是拉伸——拉伸过的画面会让用户照着错误的构图去摆机位。
    */
   renderCameraView(canvas: CameraPreviewCanvas, cameraId: string): void {
-    if (this.disposed) return;
+    // 同 `renderCameraPreview`：录制期间不画。
+    if (this.disposed || this.recording) return;
     const scene = this.currentScene;
     const monitor = this.monitorCamera;
     if (!scene || !monitor) return;
@@ -1020,6 +1027,10 @@ export class PrevizRenderer {
   }
 
   private moveCamera(position: Vec3, target: Vec3): void {
+    // 录制期间谁都别动导演视角：全局录制没指定机位的那些帧就是从这台相机出的，中途
+    // 跳一下，后面每一帧都换了机位，成片上却看不出发生过什么。停掉 OrbitControls 只
+    // 挡住了鼠标，H / F 与视口控件那几个按钮走的是这条路——三条路都汇到这里。
+    if (this.recording) return;
     this.camera.position.set(position[0], position[1], position[2]);
     this.controls.target.set(target[0], target[1], target[2]);
     // OrbitControls.update() 会按新的 position/target 重算球坐标、夹进各条限制，

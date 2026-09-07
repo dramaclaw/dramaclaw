@@ -148,11 +148,14 @@ export interface CanvasRecorderOptions {
 }
 
 /**
- * 浏览器实现：把一块 2D 画布接到 `MediaRecorder` 上。
+ * 浏览器实现：把画布接到 `MediaRecorder` 上。传进来的是预演台视口那块 WebGL 画布本身
+ * （见 `PrevizRenderer.startRecording`），不是另开的 2D 画布。
  *
  * 用 `captureStream(fps)` 而不是 `captureStream(0)` + `requestFrame()`：后者能精确
  * 控制每一帧，但 `requestFrame` 不是所有浏览器都有，缺了就整条路径静默不出帧。
- * 定速采样在渲染跟不上时只是重复上一帧，退化得体面。
+ * 代价是采样点与我们画完的时刻对不齐：渲染跟不上时，采样撞在两次绘制之间就重复上一帧
+ * ——但撞在绘制中途取到的可能是半新半旧的一帧，WebGL 画布上尤其如此（合成器采的是当下
+ * 的位图，没有「上一帧的副本」这回事）。所以这条退化路径体面，但不像 2D 画布那样干净。
  */
 export function createCanvasRecorder(
   canvas: HTMLCanvasElement,

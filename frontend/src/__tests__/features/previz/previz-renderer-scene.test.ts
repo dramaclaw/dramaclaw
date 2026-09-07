@@ -1535,6 +1535,83 @@ describe('PrevizRenderer recording', () => {
     expect(render).toHaveBeenCalled();
   });
 
+  it('refuses to move the director camera while recording', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene(scene);
+    instance.setSelection(cam.id);
+    step();
+
+    const pass = instance.startRecording('global', null)!;
+    const before = instance.cameraPositionForTest();
+    const targetBefore = targetOf();
+
+    // 停掉 OrbitControls 只挡住了鼠标。H 与 F、以及视口控件上那几个按钮走的是这三个
+    // 方法：录制中跳一下机位，后面每一帧都换了取景，而成片上看不出发生过什么。
+    instance.resetView();
+    instance.applyViewDirection('top');
+    instance.focusObject(cam.id);
+
+    expect(instance.cameraPositionForTest()).toEqual(before);
+    expect(targetOf()).toEqual(targetBefore);
+
+    pass.end();
+    // 录完就该还能用：这是录制期间的临时锁，不是把这几个功能拆了。
+    instance.applyViewDirection('top');
+    expect(instance.cameraPositionForTest()).not.toEqual(before);
+  });
+
+  it('stands the offscreen previews down while recording', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene(scene);
+    step();
+
+    // 四视图那三块预览都要一块画布。录制期间它们一笔都不该画，所以这块空壳够用了；
+    // 真去画的话 jsdom 交不出 2D 上下文，这条用例会当场炸——那也是一种失败。
+    const previewCanvas = {
+      width: 320,
+      height: 180,
+      getContext: () => null,
+    } as unknown as Parameters<typeof instance.renderQuadPreview>[0];
+
+    /** 轨迹与手柄这类编辑期辅助物此刻藏没藏住。 */
+    type HelperChild = { userData: Record<string, unknown>; visible: boolean };
+    const helpersHidden = () =>
+      (instance as unknown as { scene: { children: HelperChild[] } }).scene.children
+        .filter((child) => child.userData.previzEditorOnly)
+        .every((child) => !child.visible);
+
+    const pass = instance.startRecording('track', cam.id)!;
+    pass.drawFrame(0, null);
+    render.mockClear();
+
+    // 录制期间这三条路一步都不该走，所以上面那块画布是空壳、假 three 也不必完整：
+    // 真走进去了，无论是半路抛错还是画出来，下面两条断言都会红。抛错在这里咽掉，是为了
+    // 让失败停在断言上、说清坏了什么，而不是停在一句和录制无关的 mock 报错上。
+    const callPreview = (run: () => void) => {
+      try {
+        run();
+      } catch {
+        // 见上：走到这里本身就说明守卫没拦住，交给下面的断言去报。
+      }
+    };
+    // 四视图是跟着播放头重画的，而播放头正是录制在推——每三帧就来一次。
+    callPreview(() => instance.renderQuadPreview(previewCanvas, 'top'));
+    callPreview(() => instance.renderCameraView(previewCanvas, cam.id));
+    const draft = createCameraDraft(instance.viewPose());
+    callPreview(() => instance.renderCameraPreview(previewCanvas, draft));
+
+    // 一笔都没画：这三条路各自都是几趟离屏 pass 加同步读回，正是这次改动要删掉的开销。
+    expect(render).not.toHaveBeenCalled();
+    // 更要紧的是它们的 finally 会把可见性「还」成可见：还回去之后，手柄与轨迹就被烤进
+    // 后面每一帧成片里。
+    expect(helpersHidden()).toBe(true);
+
+    pass.end();
+    expect(helpersHidden()).toBe(false);
+  });
+
   it('ends once, and hands the helpers and the live camera back', async () => {
     const { instance } = await createRenderer({ width: 800, height: 450 });
     const { scene, cam } = sceneWithCamera();
