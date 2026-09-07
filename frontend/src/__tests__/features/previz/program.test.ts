@@ -2,7 +2,12 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from 'vitest';
 
-import { insertCut, liveCameraAt, PREVIZ_MAX_CUTS } from '@/features/previz/domain/program';
+import {
+  insertCut,
+  liveCameraAt,
+  retargetCut,
+  PREVIZ_MAX_CUTS,
+} from '@/features/previz/domain/program';
 import { createPrevizObject } from '@/features/previz/domain/objects';
 import {
   createDefaultScene,
@@ -198,5 +203,67 @@ describe('insertCut', () => {
   it('rejects a non-finite frame instead of producing a NaN cut', () => {
     const { scene, camA } = seed();
     expect(insertCut(scene, Number.NaN, camA)).toEqual({ ok: false, reason: 'no-room' });
+  });
+});
+
+describe('retargetCut', () => {
+  it('retargets the named cut', () => {
+    const { scene, camA, camB } = seed();
+    const staged = {
+      ...scene,
+      timeline: {
+        ...scene.timeline,
+        program: [cut('c1', 0, 60, camA), cut('c2', 60, 120, camB)],
+      },
+    };
+    const next = retargetCut(staged, 'c1', camB);
+    expect(next.timeline.program).toEqual([cut('c1', 0, 60, camB), cut('c2', 60, 120, camB)]);
+  });
+
+  it('returns the same object when the cut id is unknown', () => {
+    const { scene, camA } = seed();
+    const staged = { ...scene, timeline: { ...scene.timeline, program: [cut('c1', 0, 60, camA)] } };
+    expect(retargetCut(staged, 'nope', camA)).toBe(staged);
+  });
+
+  it('returns the same object when the target id is not a camera', () => {
+    const { scene, camA } = seed();
+    const staged = { ...scene, timeline: { ...scene.timeline, program: [cut('c1', 0, 60, camA)] } };
+    const man = scene.objects.find((object) => object.kind === 'character')!;
+    expect(retargetCut(staged, 'c1', man.id)).toBe(staged);
+  });
+
+  it('returns the same object when the target camera id is unknown', () => {
+    const { scene, camA } = seed();
+    const staged = { ...scene, timeline: { ...scene.timeline, program: [cut('c1', 0, 60, camA)] } };
+    expect(retargetCut(staged, 'c1', 'nope')).toBe(staged);
+  });
+
+  it('returns the same object when the cut already points at that camera', () => {
+    const { scene, camA } = seed();
+    const staged = { ...scene, timeline: { ...scene.timeline, program: [cut('c1', 0, 60, camA)] } };
+    expect(retargetCut(staged, 'c1', camA)).toBe(staged);
+  });
+
+  it('only touches the first cut when two cuts share an id', () => {
+    // parseScene 不去重；同 id 出现两次时，按下标定位应该只改命中的第一条。
+    const { scene, camA, camB } = seed();
+    const staged = {
+      ...scene,
+      timeline: {
+        ...scene.timeline,
+        program: [cut('dup', 0, 30, camA), cut('dup', 30, 60, camA)],
+      },
+    };
+    const next = retargetCut(staged, 'dup', camB);
+    expect(next.timeline.program).toEqual([cut('dup', 0, 30, camB), cut('dup', 30, 60, camA)]);
+  });
+
+  it('never mutates the input scene', () => {
+    const { scene, camA, camB } = seed();
+    const staged = { ...scene, timeline: { ...scene.timeline, program: [cut('c1', 0, 60, camA)] } };
+    const before = structuredClone(staged);
+    retargetCut(staged, 'c1', camB);
+    expect(staged).toEqual(before);
   });
 });
