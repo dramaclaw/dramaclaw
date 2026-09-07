@@ -9,7 +9,7 @@ import { PREVIZ_MIN_CLIP_FRAMES, type PrevizCutClip, type PrevizScene } from './
  * 全是纯函数——store 的 undo 存的是整份场景快照，就地改会把历史一起改掉。
  */
 
-/** 切片上限。60 段对应 360 帧时长下平均 6 帧一切，比任何正常剪辑都密了。 */
+/** 切片上限。60 段对应最长的 360 帧时长下平均 6 帧一切，比任何正常剪辑都密了。 */
 export const PREVIZ_MAX_CUTS = 60;
 
 /** 覆盖这一帧的切片机位；null 是导演视角。起点含、终点不含，与其它片段一致。 */
@@ -32,13 +32,16 @@ function withProgram(scene: PrevizScene, program: PrevizCutClip[]): PrevizScene 
 
 /**
  * 在 `frame` 处切到 `cameraId`。五种情形见设计文档「切镜操作」：
- * 0 同机位不动；1 起点恰在播放头只换机位；2 播放头在段内则截断并新建后半段；
- * 3 空隙里新建到下一段或时间轴末尾；4 末尾没空间；5 达上限。
+ * 0 覆盖播放头的那段已是该机位则不动；1 起点恰在播放头只换机位；
+ * 2 播放头在段内则截断并新建后半段；3 空隙里新建到下一段或时间轴末尾；
+ * 4 末尾没空间；5 达上限。
  * 拒绝时不返回场景：调用方拿到场景就会 applyScene，等于往 undo 栈塞一步空操作。
  */
 export function insertCut(scene: PrevizScene, frame: number, cameraId: string): InsertCutResult {
   const camera = scene.objects.find((object) => object.id === cameraId);
   if (camera?.kind !== 'camera') return { ok: false, reason: 'no-camera' };
+  // 帧号不是有限数就没有「这一帧」可切，按没空间处理，别让 NaN 混进快照。
+  if (!Number.isFinite(frame)) return { ok: false, reason: 'no-room' };
 
   const at = Math.max(0, Math.round(frame));
   const program = scene.timeline.program;
@@ -52,7 +55,7 @@ export function insertCut(scene: PrevizScene, frame: number, cameraId: string): 
         ok: true,
         scene: withProgram(
           scene,
-          program.map((cut) => (cut.id === current.id ? { ...cut, cameraId } : cut)),
+          program.map((cut, i) => (i === index ? { ...cut, cameraId } : cut)),
         ),
       };
     }
