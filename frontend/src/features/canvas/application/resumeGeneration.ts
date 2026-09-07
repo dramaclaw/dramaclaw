@@ -13,6 +13,7 @@
 // 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
 // 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
 import i18n from 'i18next';
+import { completeDerivedMedia } from './derivedMedia';
 import type { CanvasNode, CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import {
@@ -179,6 +180,7 @@ async function confirmTaskMissing(projectId: string, taskKey: string): Promise<b
 }
 
 type ResumeKind =
+  | 'derived-media'
   | 'image'
   | 'video'
   | 'audio'
@@ -189,6 +191,9 @@ type ResumeKind =
 
 function resumeKindForNode(type: CanvasNodeType, taskType: FreezoneTaskType): ResumeKind | null {
   switch (type) {
+    case CANVAS_NODE_TYPES.vectorSvg:
+    case CANVAS_NODE_TYPES.animatedGif:
+      return 'derived-media';
     case CANVAS_NODE_TYPES.imageGen:
     case CANVAS_NODE_TYPES.imageEdit:
     case CANVAS_NODE_TYPES.exportImage:
@@ -267,6 +272,7 @@ async function buildSuccessPatch(
   projectId: string,
 ): Promise<Record<string, unknown>> {
   switch (kind) {
+    case 'derived-media': return {};
     case 'image': {
       let url = resolveUrlFromResult(completed.result, ['output_url', 'image_url', 'url']);
       if (!url && jobId) {
@@ -347,7 +353,7 @@ function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unkno
     const message = error instanceof Error ? error.message : String(error);
     return { ...CLEARED_GENERATION_TASK_FIELDS, taskKey: null, errorMessage: i18n.t('canvas.resumeGeneration.failedWithMessage', { message }) };
   }
-  if (kind === 'image' || kind === 'video') {
+  if (kind === 'image' || kind === 'video' || kind === 'derived-media') {
     const resolved = resolveErrorContent(error, kind === 'video'
       ? i18n.t('canvas.resumeGeneration.videoFailed')
       : i18n.t('canvas.resumeGeneration.imageFailed'));
@@ -418,6 +424,10 @@ export async function resumeNodeGeneration(params: {
 
   try {
     // 按任务类型取预算，跟提交侧同一份口径（见 pollTimeoutForTaskType）。
+    if (kind === 'derived-media') {
+      await completeDerivedMedia(projectId, { task_key: taskKey, task_type: taskType, job_id: jobId }, (patch) => updateNodeData(node.id, patch));
+      return;
+    }
     const completed = await awaitTaskCompletion(taskKey, projectId, { taskType });
     updateNodeData(node.id, await buildSuccessPatch(kind, completed, taskType, jobId, projectId));
   } catch (error) {

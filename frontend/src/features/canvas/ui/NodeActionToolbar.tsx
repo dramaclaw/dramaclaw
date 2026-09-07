@@ -1,3 +1,4 @@
+import { ImageDerivedActions } from './ImageDerivedActions';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import {
@@ -1496,6 +1497,7 @@ export const NodeActionToolbar = memo(
                 {t("canvas.nodeToolbar.beatContext")}
               </UiChipButton>
             )}
+            {canHandleImage && <ImageDerivedActions node={node} />}
             {/* AI 改图按钮暂时隐藏（保留代码，等需求恢复时取消注释）
         {!isImageEdit && canHandleImage && (
           <UiChipButton

@@ -80,6 +80,8 @@ export type CanvasOutlineItem = {
 };
 
 const NODE_TYPE_ICON: Record<CanvasNodeType, LucideIcon> = {
+  vectorSvgNode: ImageIcon,
+  animatedGifNode: Film,
   [CANVAS_NODE_TYPES.upload]: Upload,
   [CANVAS_NODE_TYPES.imageEdit]: ImageIcon,
   [CANVAS_NODE_TYPES.imageGen]: ImageIcon,
