@@ -394,9 +394,10 @@ export function ClipBar({
   /** 不给就按片段种类：特写紫、其它蓝。 */
   tone?: ClipBarTone;
   /**
-   * 画在标签底下的内容（音频波形）。必须自己 absolute inset-0：
+   * 铺满整条片段的背景层（音频波形）。必须自己 absolute inset-0：
    * 片段条是 flex 行，静态子节点会变成挤在标签前面的兄弟项，
    * 把标签推出 overflow-hidden 之外，看到的就是一条没有字的片段。
+   * 标签自带 relative 压在它上面，这里不必为了让字露出来而把内容画淡。
    */
   children?: ReactNode;
 }) {
@@ -469,7 +470,12 @@ export function ClipBar({
           if (event.key === 'ArrowRight') onTrim('start', clip.startFrame + 1);
         }}
       />
-      <span className="pointer-events-none truncate px-3 text-[11px] text-white/90">
+      {/*
+        relative 不是为了挪位置，是为了压住 children：波形是 absolute，标签若是静态
+        行内元素，按 CSS 绘制顺序（行内内容第 6 步、定位元素第 8 步）波形照样画在字上，
+        排在后面也没用。两边都定位、层级同为 auto，才轮到「谁在后面谁在上」。
+      */}
+      <span className="relative pointer-events-none truncate px-3 text-[11px] text-white/90">
         {label ??
           (labelKey
             ? t(labelKey, { start: clip.startFrame, end: clip.endFrame })
