@@ -10,7 +10,7 @@ import {
   type PrevizAudioClip,
   type PrevizScene,
 } from '@/features/previz/domain/scene';
-import { PrevizAudioTrack } from '@/features/previz/ui/PrevizAudioTrack';
+import { peakBarHeights, PrevizAudioTrack } from '@/features/previz/ui/PrevizAudioTrack';
 
 const loadAudioPeaks = vi.fn<(src: string) => Promise<Float32Array>>();
 
@@ -31,7 +31,8 @@ function audio(id: string, startFrame: number, endFrame: number): PrevizAudioCli
     audioUrl: `/static/${id}.mp3`,
     sourceName: `${id}.mp3`,
     durationMs: 4000,
-    offsetMs: 0,
+    // 非零：偏移写死成 0 也能过的话，这个 prop 等于没接。
+    offsetMs: 500,
     sourceNodeId: null,
   };
 }
@@ -60,6 +61,8 @@ function props(
   };
 }
 
+const addButton = () => screen.getByRole('button', { name: 'previz.audio.add' });
+
 beforeEach(() => {
   vi.clearAllMocks();
   loadAudioPeaks.mockImplementation(async () => new Float32Array(240).fill(0.5));
@@ -83,6 +86,36 @@ describe('PrevizAudioTrack', () => {
       expect(wave).toHaveAttribute('data-state', 'ready');
     });
     expect(loadAudioPeaks).toHaveBeenCalledWith('/static/a.mp3');
+  });
+
+  it('loads the peaks once while the clip window stays put', async () => {
+    const clip = audio('a', 0, 60);
+    const { rerender } = render(<PrevizAudioTrack {...props(sceneWith([clip]))} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('previz-audio-wave-a')).toHaveAttribute('data-state', 'ready');
+    });
+    // 同一个窗口重画一次：effect 的依赖数组要是丢了，这里会把整段音频再解一次码。
+    rerender(<PrevizAudioTrack {...props(sceneWith([clip]))} />);
+    expect(loadAudioPeaks).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads the peaks when the clip offset or length moves', async () => {
+    const clip = audio('a', 0, 60);
+    const { rerender } = render(<PrevizAudioTrack {...props(sceneWith([clip]))} />);
+    expect(loadAudioPeaks).toHaveBeenCalledTimes(1);
+    /*
+      波形取的那一窗由片段的偏移与长度定。这两个值得真的从片段接到 AudioWave 上——
+      写死成 0 一样画得出东西，只有在片段挪动时才露馅：窗口没跟着变，重取也不会发生。
+    */
+    rerender(<PrevizAudioTrack {...props(sceneWith([{ ...clip, offsetMs: 1500 }]))} />);
+    expect(loadAudioPeaks).toHaveBeenCalledTimes(2);
+    rerender(
+      <PrevizAudioTrack {...props(sceneWith([{ ...clip, offsetMs: 1500, endFrame: 90 }]))} />,
+    );
+    expect(loadAudioPeaks).toHaveBeenCalledTimes(3);
+    await waitFor(() => {
+      expect(screen.getByTestId('previz-audio-wave-a')).toHaveAttribute('data-state', 'ready');
+    });
   });
 
   it('paints the clips in the audio tone', () => {
@@ -109,18 +142,29 @@ describe('PrevizAudioTrack', () => {
   it('lists upstream nodes and hands the picked one back', async () => {
     const user = userEvent.setup();
     const onAddUpstream = vi.fn();
-    const upstream = {
+    // 两个来源，挑第二个：只放一个的话，「挑中的那个」和「第一个」看起来一模一样。
+    // 第二个的时长为 null——节点没记时长时也得能选，探时长是调用方的事。
+    const first = {
       nodeId: 'audio-1',
       displayName: '旁白',
       audioUrl: '/static/vo.mp3',
       durationMs: 3000,
     };
+    const second = {
+      nodeId: 'audio-2',
+      displayName: '环境声',
+      audioUrl: '/static/amb.mp3',
+      durationMs: null,
+    };
     render(
-      <PrevizAudioTrack {...props(sceneWith([]), { upstreamAudio: [upstream], onAddUpstream })} />,
+      <PrevizAudioTrack
+        {...props(sceneWith([]), { upstreamAudio: [first, second], onAddUpstream })}
+      />,
     );
     await user.click(screen.getByRole('button', { name: 'previz.audio.add' }));
-    await user.click(screen.getByRole('menuitem', { name: '旁白' }));
-    expect(onAddUpstream).toHaveBeenCalledWith(upstream);
+    expect(screen.getByRole('menuitem', { name: '旁白' })).toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: '环境声' }));
+    expect(onAddUpstream).toHaveBeenCalledWith(second);
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
@@ -138,10 +182,12 @@ describe('PrevizAudioTrack', () => {
     expect(input.value).toBe('');
   });
 
-  it('closes the menu on Escape', async () => {
+  it('closes the menu on Escape but not on other keys', async () => {
     const user = userEvent.setup();
     render(<PrevizAudioTrack {...props(sceneWith([]))} />);
     await user.click(screen.getByRole('button', { name: 'previz.audio.add' }));
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menu')).toBeInTheDocument();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('menu')).toBeNull();
   });
@@ -152,6 +198,27 @@ describe('PrevizAudioTrack', () => {
     await user.click(screen.getByRole('button', { name: 'previz.audio.add' }));
     await user.click(document.body);
     expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('says on the wrapper span why the add button is dead', () => {
+    /*
+      三种状态的说明都挂在包着按钮的 span 上：禁用的表单控件不派发鼠标事件，
+      title 写在按钮自己身上，恰恰在需要解释的那两种状态下弹不出来。
+    */
+    const idle = render(<PrevizAudioTrack {...props(sceneWith([]))} />);
+    expect(addButton().parentElement).toHaveAttribute('title', 'previz.audio.add');
+    idle.unmount();
+
+    const clips = Array.from({ length: PREVIZ_MAX_AUDIO_CLIPS }, (_, i) =>
+      audio(`a${i}`, i, i + 1),
+    );
+    const atLimit = render(<PrevizAudioTrack {...props(sceneWith(clips))} />);
+    expect(addButton().parentElement).toHaveAttribute('title', 'previz.audio.limit');
+    atLimit.unmount();
+
+    const pending = { startFrame: 0, endFrame: 10, name: 'take.mp3' };
+    render(<PrevizAudioTrack {...props(sceneWith([]), { pending })} />);
+    expect(addButton().parentElement).toHaveAttribute('title', 'previz.audio.uploading');
   });
 
   it('disables the add button at the clip limit', () => {
@@ -177,5 +244,41 @@ describe('PrevizAudioTrack', () => {
     const placeholder = screen.getByTestId('previz-audio-pending');
     expect(placeholder).toHaveTextContent('previz.audio.uploading');
     expect(placeholder).toHaveStyle({ left: '20px', width: '60px' });
+  });
+});
+
+/** 这一组不碰 DOM：jsdom 没有 2D 上下文，波形的算术只能在纯函数这一层验。 */
+describe('peakBarHeights', () => {
+  it('starts at the bucket the clip offset points into and scales by height', () => {
+    const peaks = new Float32Array(240);
+    peaks[120] = 1; // 素材第 1 秒的头一桶（120 桶/秒）
+    const bars = peakBarHeights(peaks, 1000, 1000, 120, 20);
+    expect(bars).toHaveLength(120);
+    expect(bars[0]).toBe(20);
+    expect(bars[1]).toBe(1);
+  });
+
+  it('spreads one bucket over several columns when the window is narrow', () => {
+    // 20ms ≈ 2 桶，铺到 4 列上，每桶占两列。
+    expect(peakBarHeights(new Float32Array([0.25, 1]), 0, 20, 4, 8)).toEqual([2, 2, 8, 8]);
+  });
+
+  it('drops buckets when the window is wider than the canvas', () => {
+    const peaks = new Float32Array(240).fill(0.5);
+    peaks[0] = 0.25; // 第 0 列的取样点。取二进制里存得下的数，免得 Float32 差在末位
+    peaks[239] = 1; // 落在两列的取样点之间，画不出来
+    expect(peakBarHeights(peaks, 0, 2000, 2, 10)).toEqual([2.5, 5]);
+  });
+
+  it('flattens a clip shorter than one bucket onto that one bucket', () => {
+    const peaks = new Float32Array([1, 0]);
+    // 不足一桶时窗口跨度小于 1，每一列都取 first 那一桶——0 长片段也不该画出 NaN。
+    expect(peakBarHeights(peaks, 0, 0, 3, 10)).toEqual([10, 10, 10]);
+    expect(peakBarHeights(peaks, 0, 4, 3, 10)).toEqual([10, 10, 10]);
+  });
+
+  it('reads past the end of the source as silence, still one pixel tall', () => {
+    // 片段比素材长：越界的桶是 undefined，不能变成 NaN 高的柱子。
+    expect(peakBarHeights(new Float32Array([1]), 0, 4000, 4, 20)).toEqual([20, 1, 1, 1]);
   });
 });
