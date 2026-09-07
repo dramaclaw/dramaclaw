@@ -449,7 +449,8 @@ export function PrevizClipInspector() {
 
   const found = selectedClipId ? clipById(scene, selectedClipId) : undefined;
   const clip = found?.clip;
-  if (!clip || !found) {
+  // 切片、音频片段还没有自己的检查器（Task 15 补），先跟未选中一样显示空状态。
+  if (!clip || !found || found.table !== 'tracks') {
     return (
       <div className="border-t border-white/10 px-3 py-3 text-[12px] text-white/45">
         {t('previz.clip.empty')}

@@ -92,7 +92,7 @@ describe('addRigClip', () => {
     const next = addRigClip(scene, cameraId, clip);
 
     const found = clipById(next, clip.id);
-    expect(found?.track.objectId).toBe(cameraId);
+    expect(found?.table === 'tracks' ? found.track.objectId : undefined).toBe(cameraId);
     // 被跟踪对象的轨道一点没动：特写是机位的属性，不是人物的。
     expect(next.timeline.tracks.find((track) => track.objectId === characterId)?.clips).toEqual(
       scene.timeline.tracks[0]!.clips,

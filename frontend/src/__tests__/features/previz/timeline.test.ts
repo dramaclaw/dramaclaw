@@ -52,7 +52,7 @@ describe('trackFor / clipById', () => {
   it('finds a clip together with the track it lives on', () => {
     const clip = pathClip('c1', 0, 120);
     const scene = sceneWith([{ id: 't1', objectId: 'obj', clips: [clip] }]);
-    expect(clipById(scene, 'c1')).toEqual({ track: scene.timeline.tracks[0], clip });
+    expect(clipById(scene, 'c1')).toEqual({ table: 'tracks', track: scene.timeline.tracks[0], clip });
     expect(clipById(scene, 'nope')).toBeUndefined();
   });
 });

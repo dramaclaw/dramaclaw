@@ -138,7 +138,7 @@ export function updateRigClip(
   patch: RigClipPatch,
 ): PrevizScene {
   const found = clipById(scene, clipId);
-  if (!found || !isRigClip(found.clip)) return scene;
+  if (!found || found.table !== 'tracks' || !isRigClip(found.clip)) return scene;
   const clip = found.clip;
 
   const next: PrevizRigClip = {
@@ -166,7 +166,7 @@ export function updateRigClip(
  */
 export function rigClipToPath(scene: PrevizScene, clipId: string): PrevizScene {
   const found = clipById(scene, clipId);
-  if (!found || !isRigClip(found.clip)) return scene;
+  if (!found || found.table !== 'tracks' || !isRigClip(found.clip)) return scene;
   const clip = found.clip;
   const objectId = found.track.objectId;
 
