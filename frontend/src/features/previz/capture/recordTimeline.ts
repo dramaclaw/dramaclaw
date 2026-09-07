@@ -153,9 +153,9 @@ export interface CanvasRecorderOptions {
  *
  * 用 `captureStream(fps)` 而不是 `captureStream(0)` + `requestFrame()`：后者能精确
  * 控制每一帧，但 `requestFrame` 不是所有浏览器都有，缺了就整条路径静默不出帧。
- * 代价是采样点与我们画完的时刻对不齐：渲染跟不上时，采样撞在两次绘制之间就重复上一帧
- * ——但撞在绘制中途取到的可能是半新半旧的一帧，WebGL 画布上尤其如此（合成器采的是当下
- * 的位图，没有「上一帧的副本」这回事）。所以这条退化路径体面，但不像 2D 画布那样干净。
+ * 代价是采样点与我们画完的时刻对不齐：渲染跟不上时，某一拍没轮到 `drawFrame`，采样只能
+ * 拿画布当下的内容。这里的隐患是 WebGL 特有的——渲染器没开 `preserveDrawingBuffer`，
+ * 绘制缓冲合成完就被清掉，那一拍上并没有一份「上一帧」留在画布里可供重采。
  */
 export function createCanvasRecorder(
   canvas: HTMLCanvasElement,

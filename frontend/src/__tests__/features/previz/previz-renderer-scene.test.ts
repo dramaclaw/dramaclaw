@@ -259,6 +259,17 @@ vi.mock('three', () => {
         this.fov = fov;
       }
     },
+    OrthographicCamera: class extends Object3D {
+      left = -1;
+      right = 1;
+      top = 1;
+      bottom = -1;
+      near = 0.1;
+      far = 100;
+      up = new Vector3(0, 1, 0);
+      lookAt = vi.fn();
+      updateProjectionMatrix = vi.fn();
+    },
     Raycaster: class {
       setFromCamera = setFromCamera;
       intersectObjects = intersectObjects;
@@ -313,6 +324,9 @@ let pendingGltf: unknown = null;
 let pendingObj: unknown = null;
 const loadedUrls: string[] = [];
 
+/** 最近一次建出来的那个手柄 helper，见下面 mock 里的 `getHelper`。 */
+let gizmoHelper: { traverse: () => void; visible: boolean; userData: Record<string, unknown> };
+
 vi.mock('three/examples/jsm/controls/TransformControls.js', () => ({
   TransformControls: class {
     enabled = true;
@@ -324,7 +338,14 @@ vi.mock('three/examples/jsm/controls/TransformControls.js', () => ({
     dispose = vi.fn();
     // 真手柄是个 Object3D，挂在 scene 下面。谁扫一遍 scene 的子节点都会碰到它，
     // 少了 userData 就是一句和被测行为毫无关系的 TypeError。
-    getHelper = vi.fn(() => ({ traverse() {}, visible: true, userData: {} }));
+    //
+    // 每次都返回同一份，而不是新建一个字面量：`setHelperVisible` 改的就是它的 visible，
+    // 每次换一份的话那次赋值写完就丢，「手柄藏没藏住」在这里根本观测不到；
+    // gizmo dispose 里那次 `root.remove(getHelper())` 同理，删的得是当初加进去的那个。
+    getHelper = vi.fn(() => gizmoHelper);
+    constructor() {
+      gizmoHelper = { traverse() {}, visible: true, userData: {} };
+    }
     addEventListener = vi.fn();
   },
 }));
@@ -1566,13 +1587,23 @@ describe('PrevizRenderer recording', () => {
     const { scene, cam } = sceneWithCamera();
     instance.setScene(scene);
     step();
+    const gl = lastGl();
 
-    // 四视图那三块预览都要一块画布。录制期间它们一笔都不该画，所以这块空壳够用了；
-    // 真去画的话 jsdom 交不出 2D 上下文，这条用例会当场炸——那也是一种失败。
+    // 这块画布得能真交出 2D 上下文：`blitCameraToCanvas` 拿不到上下文就直接 return，
+    // 一句 `getContext: () => null` 会让下面那条「一笔都没画」永远绿——守卫删了也绿。
     const previewCanvas = {
       width: 320,
       height: 180,
-      getContext: () => null,
+      getContext: () => ({
+        fillStyle: '',
+        fillRect: () => {},
+        createImageData: (width: number, height: number) => ({
+          data: new Uint8ClampedArray(width * height * 4),
+          width,
+          height,
+        }),
+        putImageData: () => {},
+      }),
     } as unknown as Parameters<typeof instance.renderQuadPreview>[0];
 
     /** 轨迹与手柄这类编辑期辅助物此刻藏没藏住。 */
@@ -1586,26 +1617,50 @@ describe('PrevizRenderer recording', () => {
     pass.drawFrame(0, null);
     render.mockClear();
 
-    // 录制期间这三条路一步都不该走，所以上面那块画布是空壳、假 three 也不必完整：
-    // 真走进去了，无论是半路抛错还是画出来，下面两条断言都会红。抛错在这里咽掉，是为了
-    // 让失败停在断言上、说清坏了什么，而不是停在一句和录制无关的 mock 报错上。
-    const callPreview = (run: () => void) => {
-      try {
-        run();
-      } catch {
-        // 见上：走到这里本身就说明守卫没拦住，交给下面的断言去报。
-      }
-    };
     // 四视图是跟着播放头重画的，而播放头正是录制在推——每三帧就来一次。
-    callPreview(() => instance.renderQuadPreview(previewCanvas, 'top'));
-    callPreview(() => instance.renderCameraView(previewCanvas, cam.id));
+    instance.renderQuadPreview(previewCanvas, 'top');
+    instance.renderCameraView(previewCanvas, cam.id);
     const draft = createCameraDraft(instance.viewPose());
-    callPreview(() => instance.renderCameraPreview(previewCanvas, draft));
+    instance.renderCameraPreview(previewCanvas, draft);
 
     // 一笔都没画：这三条路各自都是几趟离屏 pass 加同步读回，正是这次改动要删掉的开销。
     expect(render).not.toHaveBeenCalled();
+    expect(gl.readRenderTargetPixels).not.toHaveBeenCalled();
     // 更要紧的是它们的 finally 会把可见性「还」成可见：还回去之后，手柄与轨迹就被烤进
-    // 后面每一帧成片里。
+    // 后面每一帧成片里。三块预览都还手柄，只有 `renderCameraView` 连轨迹描边一起还，
+    // 所以两样都要断言，少一样就有两块预览的守卫删掉也没人报。
+    expect(gizmoHelper.visible).toBe(false);
+    expect(helpersHidden()).toBe(true);
+
+    pass.end();
+    expect(helpersHidden()).toBe(false);
+    expect(gizmoHelper.visible).toBe(true);
+  });
+
+  it('refuses to grab a still while recording', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene(scene);
+    instance.setActiveCamera(cam.id);
+    step();
+
+    /** 轨迹与手柄这类编辑期辅助物此刻藏没藏住。 */
+    type HelperChild = { userData: Record<string, unknown>; visible: boolean };
+    const helpersHidden = () =>
+      (instance as unknown as { scene: { children: HelperChild[] } }).scene.children
+        .filter((child) => child.userData.previzEditorOnly)
+        .every((child) => !child.visible);
+
+    const pass = instance.startRecording('global', null)!;
+    pass.drawFrame(0, null);
+    render.mockClear();
+
+    // 出图那条路和三块离屏预览是同一个毛病：它的 finally 把辅助物一律还成可见，还完
+    // 手柄与轨迹就烤进后面每一帧成片里。编辑器那边按钮是禁着的，但守卫得在这一层。
+    const still = await instance.capture().catch(() => 'threw' as const);
+    expect(still).toBeNull();
+    expect(render).not.toHaveBeenCalled();
+    expect(gizmoHelper.visible).toBe(false);
     expect(helpersHidden()).toBe(true);
 
     pass.end();

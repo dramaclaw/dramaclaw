@@ -541,7 +541,9 @@ export class PrevizRenderer {
    * 场景还没灌进来时返回 null。
    */
   async capture(): Promise<Blob | null> {
-    if (this.disposed) return null;
+    // 录制期间不出图：下面那段 finally 做的正是「把辅助物还成可见」，还回去之后手柄、
+    // 轨迹与机位锥体就被烤进后面每一帧成片里，同 `renderCameraPreview`。
+    if (this.disposed || this.recording) return null;
     const scene = this.currentScene;
     if (!scene) return null;
     const aspect = scene.settings.outputAspect;
