@@ -2736,7 +2736,7 @@ async def test_a_resumed_build_keeps_the_narrator_the_first_attempt_nominated(
     assert [n for n, a in second.items() if a.is_main] == ["郑家悦"]
 
 
-# ── structured output failures: diagnostics and prompted fallback ──────────
+# ── structured output failures: diagnostics ────────────────────────────────
 
 
 class ExplodingAgent:
@@ -2756,34 +2756,8 @@ class ExplodingAgent:
         raise exc
 
 
-async def test_tool_output_failure_falls_back_to_prompted_agent(monkeypatch):
-    """A relay that mangles tool calls must not cost the chunk; prompted JSON is tried next."""
-    monkeypatch.setenv("STRUCTURED_OUTPUT_MODE", "auto")
-    chunk = _chunk("林默走进屋子。")
-    primary = ExplodingAgent()
-    fallback = FakeAgent(
-        {"第一章": ChunkCharacterOutput(characters=[_candidate("林默", quotes=["林默走进屋子。"])])}
-    )
-    logs: list[str] = []
-
-    merged, failures = await extract_characters_from_chunks(
-        [chunk],
-        agent=primary,
-        fallback_agent=fallback,
-        source_text=chunk.text,
-        on_log=logs.append,
-        adjudicate=False,
-    )
-
-    assert [item.name for item in merged] == ["林默"]
-    assert failures == []
-    assert primary.calls == 1 and fallback.seen == ["第一章"]
-    assert any("prompted" in line for line in logs)
-
-
-async def test_failure_log_names_the_underlying_cause(monkeypatch):
+async def test_failure_log_names_the_underlying_cause():
     """'Exceeded maximum output retries' alone is useless; the cause must be logged."""
-    monkeypatch.setenv("STRUCTURED_OUTPUT_MODE", "tool")
     chunk = _chunk("林默走进屋子。")
     primary = ExplodingAgent(cause=ValueError("characters.0.evidence: Field required"))
     logs: list[str] = []
@@ -2795,18 +2769,6 @@ async def test_failure_log_names_the_underlying_cause(monkeypatch):
     assert merged == [] and len(failures) == 1
     assert any("characters.0.evidence: Field required" in line for line in logs)
     assert any("Exceeded maximum output retries" in line for line in logs)
-
-
-async def test_tool_mode_never_falls_back(monkeypatch):
-    monkeypatch.setenv("STRUCTURED_OUTPUT_MODE", "tool")
-    chunk = _chunk("林默走进屋子。")
-    fallback = FakeAgent({"第一章": ChunkCharacterOutput()})
-
-    _, failures = await extract_characters_from_chunks(
-        [chunk], agent=ExplodingAgent(), fallback_agent=fallback, adjudicate=False
-    )
-
-    assert len(failures) == 1 and fallback.seen == []
 
 
 def test_describe_output_failure_includes_retry_prompts():
@@ -2840,14 +2802,3 @@ def test_describe_output_failure_includes_retry_prompts():
     assert "final_result" in text
     assert "Field required" in text
 
-
-def test_structured_output_mode_env(monkeypatch):
-    from novelvideo.structured_extraction import structured_output_mode
-
-    monkeypatch.delenv("STRUCTURED_OUTPUT_MODE", raising=False)
-    assert structured_output_mode() == "auto"
-    monkeypatch.setenv("STRUCTURED_OUTPUT_MODE", "Prompted")
-    assert structured_output_mode() == "prompted"
-    monkeypatch.setenv("STRUCTURED_OUTPUT_MODE", "native")
-    with pytest.raises(ValueError):
-        structured_output_mode()

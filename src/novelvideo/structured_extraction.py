@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -142,28 +141,6 @@ class MergedCharacter:
     ambiguous_with: set[str] = field(default_factory=set)
 
 
-STRUCTURED_OUTPUT_MODE_ENV = "STRUCTURED_OUTPUT_MODE"
-STRUCTURED_OUTPUT_MODES = ("auto", "tool", "prompted")
-
-
-def structured_output_mode() -> str:
-    """How structured extraction asks the model for JSON.
-
-    ``tool`` is PydanticAI's default: the schema travels as a function
-    definition and the model must answer with a tool call.  ``prompted`` puts
-    the schema in the prompt and parses JSON out of plain text, which survives
-    relays that rewrite or drop function calls.  ``auto`` tries ``tool`` and
-    falls back to ``prompted`` for the chunk when the model exhausts its output
-    retries (issue #490).
-    """
-    raw = os.getenv(STRUCTURED_OUTPUT_MODE_ENV, "auto").strip().lower() or "auto"
-    if raw not in STRUCTURED_OUTPUT_MODES:
-        raise ValueError(
-            f"{STRUCTURED_OUTPUT_MODE_ENV} must be one of {STRUCTURED_OUTPUT_MODES}, got {raw!r}"
-        )
-    return raw
-
-
 def describe_output_failure(exc: BaseException, messages: list[Any]) -> str:
     """One line a task log can show for a failed structured run.
 
@@ -195,25 +172,17 @@ class StructuredOutputFailure(RuntimeError):
     """A structured run failed; ``str()`` carries the diagnosis."""
 
 
-def _create_character_extraction_agent(agent: Any = None, *, output_mode: str = "tool"):
+def _create_character_extraction_agent(agent: Any = None):
     if agent is not None:
         return agent
 
     from pydantic_ai import Agent
-    from pydantic_ai.output import PromptedOutput
 
     from novelvideo.config import (
         get_newapi_structured_output_model_settings,
         get_newapi_text_pydantic_model,
     )
     from novelvideo.model_gateway_runtime import model_gateway_output_retries
-
-    if output_mode == "prompted":
-        output_type: Any = PromptedOutput(ChunkCharacterOutput)
-        name = "Structured Character Extractor (prompted)"
-    else:
-        output_type = ChunkCharacterOutput
-        name = "Structured Character Extractor"
 
     return Agent(
         get_newapi_text_pydantic_model(
@@ -223,9 +192,9 @@ def _create_character_extraction_agent(agent: Any = None, *, output_mode: str = 
         ),
         system_prompt=CHARACTER_EXTRACTION_SYSTEM_PROMPT,
         model_settings=get_newapi_structured_output_model_settings(),
-        output_type=output_type,
+        output_type=ChunkCharacterOutput,
         retries={"output": model_gateway_output_retries(2)},
-        name=name,
+        name="Structured Character Extractor",
     )
 
 
@@ -393,7 +362,6 @@ async def extract_characters_from_chunks(
     roster: Optional[set] = None,
     adjudicate: bool = True,
     adjudication_agent: Any = None,
-    fallback_agent: Any = None,
     on_log: Optional[Callable[[str], None]] = None,
     on_chunk_done: Optional[Callable[[SourceChunk, ChunkCharacterOutput], Any]] = None,
     on_chunk_failed: Optional[Callable[[SourceChunk, BaseException], Any]] = None,
@@ -404,10 +372,6 @@ async def extract_characters_from_chunks(
     Chunks are independent, so they run in parallel up to ``concurrency``. A
     chunk that fails is reported and skipped rather than failing the build: one
     unparseable scene must not discard every other scene's characters.
-
-    In ``auto`` output mode (see :func:`structured_output_mode`) a chunk whose
-    tool-call run exhausts its output retries is tried once more with
-    ``fallback_agent`` (prompted JSON) before it counts as failed.
     """
 
     def log(message: str) -> None:
@@ -435,34 +399,14 @@ async def extract_characters_from_chunks(
             )
         return merged, []
 
-    mode = structured_output_mode()
-    runner = _create_character_extraction_agent(
-        agent, output_mode="prompted" if mode == "prompted" else "tool"
-    )
-    if mode != "auto":
-        fallback = None
-    elif fallback_agent is not None:
-        fallback = fallback_agent
-    elif agent is None:
-        fallback = _create_character_extraction_agent(output_mode="prompted")
-    else:
-        fallback = None
+    runner = _create_character_extraction_agent(agent)
 
     async def analyse(chunk: SourceChunk) -> tuple[SourceChunk, ChunkCharacterOutput]:
-        prompt = (
+        output = await _run_structured(
+            runner,
             f"{asset_language_instruction(language)}\n\n"
-            f"【片段 {chunk.section_label}】\n{chunk.text}"
+            f"【片段 {chunk.section_label}】\n{chunk.text}",
         )
-        try:
-            output = await _run_structured(runner, prompt)
-        except StructuredOutputFailure as exc:
-            if fallback is None:
-                raise
-            log(
-                f"⚠️ 片段 {chunk.section_label} tool call 结构化输出失败，"
-                f"改用 prompted JSON 重试: {exc}"
-            )
-            output = await _run_structured(fallback, prompt)
         if on_chunk_done:
             await _maybe_await(on_chunk_done(chunk, output))
         return chunk, output
