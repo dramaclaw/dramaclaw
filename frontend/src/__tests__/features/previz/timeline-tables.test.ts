@@ -2,11 +2,13 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from 'vitest';
 
+import { createRigClip } from '@/features/previz/domain/closeupClip';
 import {
   createDefaultScene,
   type PrevizAudioClip,
   type PrevizCutClip,
   type PrevizScene,
+  type PrevizTrack,
 } from '@/features/previz/domain/scene';
 import {
   clipById,
@@ -42,19 +44,28 @@ function audio(
   };
 }
 
-function sceneWith(tables: { program?: PrevizCutClip[]; audio?: PrevizAudioClip[] }): PrevizScene {
+function sceneWith(tables: {
+  tracks?: PrevizTrack[];
+  program?: PrevizCutClip[];
+  audio?: PrevizAudioClip[];
+}): PrevizScene {
   const base = createDefaultScene();
   return {
     ...base,
-    timeline: { ...base.timeline, program: tables.program ?? [], audio: tables.audio ?? [] },
+    timeline: {
+      ...base.timeline,
+      tracks: tables.tracks ?? [],
+      program: tables.program ?? [],
+      audio: tables.audio ?? [],
+    },
   };
 }
 
 describe('clipById across tables', () => {
   it('finds cuts and audio clips and reports which table they live in', () => {
     const scene = sceneWith({ program: [cut('c1', 0, 10)], audio: [audio('a1', 0, 10)] });
-    expect(clipById(scene, 'c1')).toEqual({ table: 'program', clip: cut('c1', 0, 10) });
-    expect(clipById(scene, 'a1')).toEqual({ table: 'audio', clip: audio('a1', 0, 10) });
+    expect(clipById(scene, 'c1')).toEqual({ table: 'program', index: 0, clip: cut('c1', 0, 10) });
+    expect(clipById(scene, 'a1')).toEqual({ table: 'audio', index: 0, clip: audio('a1', 0, 10) });
     expect(clipById(scene, 'nope')).toBeUndefined();
   });
 
@@ -93,6 +104,17 @@ describe('moveClip on program and audio', () => {
       endFrame: 45,
       offsetMs: 500,
     });
+  });
+
+  it('returns the same scene when there is no actual displacement', () => {
+    const scene = sceneWith({ program: [cut('a', 0, 20)] });
+    expect(moveClip(scene, 'a', 0, 120)).toBe(scene);
+  });
+
+  it('ignores non-finite deltas', () => {
+    const scene = sceneWith({ program: [cut('a', 0, 20)] });
+    expect(moveClip(scene, 'a', Number.NaN, 120)).toBe(scene);
+    expect(moveClip(scene, 'a', Number.POSITIVE_INFINITY, 120)).toBe(scene);
   });
 });
 
@@ -156,6 +178,31 @@ describe('trimClip on audio', () => {
     const scene = sceneWith({ audio: [audio('a', 0, 20), audio('b', 30, 50)] });
     expect(trimClip(scene, 'a', 'end', 45).timeline.audio[0]).toMatchObject({ endFrame: 30 });
   });
+
+  it('caps the end at the material floor, never below one frame', () => {
+    // 素材只剩 0 帧（1000 ms 时长，offset 就是 1000 ms），但最小长度守着 1 帧。
+    const scene = sceneWith({ audio: [audio('a', 0, 20, { durationMs: 1000, offsetMs: 1000 })] });
+    expect(trimClip(scene, 'a', 'end', 100).timeline.audio[0]).toMatchObject({ endFrame: 1 });
+  });
+
+  it('does not strand a frame when offsetMs is a repeating decimal (C-1)', () => {
+    // trim 到 31 帧后 offsetMs = 1033.333…ms；再 trim 回 0 应该精确落回 startFrame 0 / offsetMs 0，
+    // 不能因为取整误差卡在 1 帧回不去。
+    const scene = sceneWith({ audio: [audio('a', 0, 200, { offsetMs: 0 })] });
+    const trimmedRight = trimClip(scene, 'a', 'start', 31);
+    const trimmedBack = trimClip(trimmedRight, 'a', 'start', 0);
+    expect(trimmedBack.timeline.audio[0]).toEqual(
+      expect.objectContaining({ startFrame: 0, offsetMs: 0 }),
+    );
+  });
+
+  it('ignores non-finite frames', () => {
+    const scene = sceneWith({ audio: [audio('a', 10, 40, { offsetMs: 500 })] });
+    expect(trimClip(scene, 'a', 'start', Number.NaN)).toBe(scene);
+    expect(trimClip(scene, 'a', 'start', Number.POSITIVE_INFINITY)).toBe(scene);
+    expect(trimClip(scene, 'a', 'end', Number.NaN)).toBe(scene);
+    expect(trimClip(scene, 'a', 'end', Number.POSITIVE_INFINITY)).toBe(scene);
+  });
 });
 
 describe('splitClip on program and audio', () => {
@@ -183,6 +230,55 @@ describe('splitClip on program and audio', () => {
     const scene = sceneWith({ program: [cut('a', 10, 20)] });
     expect(splitClip(scene, 'a', 10)).toBe(scene);
     expect(splitClip(scene, 'a', 20)).toBe(scene);
+  });
+
+  it('is a no-op on a rig clip — closeups have no keyframes to split', () => {
+    const rig = createRigClip({ anchorObjectId: 'target', startFrame: 0, endFrame: 40 });
+    const scene = sceneWith({ tracks: [{ id: 't1', objectId: 'cam', clips: [rig] }] });
+    expect(splitClip(scene, rig.id, 20)).toBe(scene);
+  });
+
+  it('ignores non-finite frames', () => {
+    const scene = sceneWith({ program: [cut('a', 0, 20)] });
+    expect(splitClip(scene, 'a', Number.NaN)).toBe(scene);
+    expect(splitClip(scene, 'a', Number.POSITIVE_INFINITY)).toBe(scene);
+  });
+});
+
+describe('duplicate ids (I-3): withClips must act on the located index, not re-search by id', () => {
+  // parseScene 不做去重，重复 id 在读盘之后仍可能存在——按 id 搜索会把两条一起改掉。
+  it('splits only the clip actually located, leaving the other duplicate alone', () => {
+    const scene = sceneWith({ program: [cut('dup', 0, 10), cut('dup', 20, 30)] });
+    const next = splitClip(scene, 'dup', 5);
+    expect(next.timeline.program.map((c) => [c.startFrame, c.endFrame])).toEqual([
+      [0, 5],
+      [5, 10],
+      [20, 30],
+    ]);
+  });
+
+  it('moves only the clip actually located, leaving the other duplicate alone', () => {
+    const scene = sceneWith({ program: [cut('dup', 0, 10), cut('dup', 20, 30)] });
+    const next = moveClip(scene, 'dup', 3, 120);
+    expect(next.timeline.program.map((c) => [c.startFrame, c.endFrame])).toEqual([
+      [3, 13],
+      [20, 30],
+    ]);
+  });
+});
+
+describe('purity (I-2)', () => {
+  it('never touches the scene it was handed', () => {
+    const scene = sceneWith({
+      program: [cut('a', 0, 20), cut('b', 30, 50)],
+      audio: [audio('x', 0, 20)],
+    });
+    const before = structuredClone(scene);
+    moveClip(scene, 'b', 5, 120);
+    trimClip(scene, 'x', 'start', 10);
+    splitClip(scene, 'a', 10);
+    removeClip(scene, 'a');
+    expect(scene).toEqual(before);
   });
 });
 

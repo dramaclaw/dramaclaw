@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { v4 as uuidv4 } from 'uuid';
 
-import { audioFramesAvailable, framesToMs } from './audioTrack';
+import { audioFramesAvailable, framesToMs, msToFrames } from './audioTrack';
 import { samplePathPosition, samplePathRotation, sortedPathPoints } from './pathCurve';
 import {
   PREVIZ_FPS,
@@ -43,21 +43,29 @@ export function trackFor(scene: PrevizScene, objectId: string): PrevizTrack | un
   return scene.timeline.tracks.find((track) => track.objectId === objectId);
 }
 
-/** 片段在哪张表里。对象轨道带 `track`，另外两张表没有轨道这一层。 */
+/**
+ * 片段在哪张表里、在那张表里排第几。对象轨道带 `track`，另外两张表没有轨道这一层。
+ * `index` 是为了让写操作按下标定位，而不是再按 id 搜一遍——parseScene 不去重，同 id
+ * 出现两次时按 id 搜索会把两条一起改掉。
+ */
 export type PrevizClipLocation =
-  | { table: 'tracks'; track: PrevizTrack; clip: PrevizClip }
-  | { table: 'program'; clip: PrevizCutClip }
-  | { table: 'audio'; clip: PrevizAudioClip };
+  | { table: 'tracks'; track: PrevizTrack; index: number; clip: PrevizClip }
+  | { table: 'program'; index: number; clip: PrevizCutClip }
+  | { table: 'audio'; index: number; clip: PrevizAudioClip };
 
 export function clipById(scene: PrevizScene, clipId: string): PrevizClipLocation | undefined {
   for (const track of scene.timeline.tracks) {
-    const clip = track.clips.find((entry) => entry.id === clipId);
-    if (clip) return { table: 'tracks', track, clip };
+    const index = track.clips.findIndex((entry) => entry.id === clipId);
+    if (index >= 0) return { table: 'tracks', track, index, clip: track.clips[index]! };
   }
-  const cut = scene.timeline.program.find((entry) => entry.id === clipId);
-  if (cut) return { table: 'program', clip: cut };
-  const audio = scene.timeline.audio.find((entry) => entry.id === clipId);
-  if (audio) return { table: 'audio', clip: audio };
+  const programIndex = scene.timeline.program.findIndex((entry) => entry.id === clipId);
+  if (programIndex >= 0) {
+    return { table: 'program', index: programIndex, clip: scene.timeline.program[programIndex]! };
+  }
+  const audioIndex = scene.timeline.audio.findIndex((entry) => entry.id === clipId);
+  if (audioIndex >= 0) {
+    return { table: 'audio', index: audioIndex, clip: scene.timeline.audio[audioIndex]! };
+  }
   return undefined;
 }
 
@@ -194,25 +202,29 @@ function withAudio(scene: PrevizScene, audio: PrevizAudioClip[]): PrevizScene {
   return { ...scene, timeline: { ...scene.timeline, audio } };
 }
 
-/** 用 `next` 替换 `clipId` 所在位置（空数组即删除），三张表通用。 */
-function withClips(scene: PrevizScene, clipId: string, next: PrevizClip[]): PrevizScene {
-  const found = clipById(scene, clipId);
-  if (!found) return scene;
+/** 用 `next`（0~2 项）拼接替换掉数组里下标 `index` 那一项，其余原样保留顺序。 */
+function spliceAt<T>(array: readonly T[], index: number, next: T[]): T[] {
+  return [...array.slice(0, index), ...next, ...array.slice(index + 1)];
+}
+
+/**
+ * 用 `next` 替换 `found` 所在位置（空数组即删除），三张表通用。按 `found.index` 定位，
+ * 不再按 id 重新搜索——见 `PrevizClipLocation` 上的说明。
+ */
+function withClips(scene: PrevizScene, found: PrevizClipLocation, next: PrevizClip[]): PrevizScene {
   if (found.table === 'program') {
-    return withProgram(
-      scene,
-      scene.timeline.program.flatMap((cut) => (cut.id === clipId ? next.filter(isCutClip) : [cut])),
-    );
+    // filter 只是把 PrevizClip 收窄回 PrevizCutClip 好过类型检查，不是校验——
+    // next 里的每一项都是从 found.clip 展开出来的，天然就是同一 kind。
+    const nextCuts = next.filter(isCutClip);
+    return withProgram(scene, spliceAt(scene.timeline.program, found.index, nextCuts));
   }
   if (found.table === 'audio') {
-    return withAudio(
-      scene,
-      scene.timeline.audio.flatMap((clip) => (clip.id === clipId ? next.filter(isAudioClip) : [clip])),
-    );
+    const nextAudio = next.filter(isAudioClip);
+    return withAudio(scene, spliceAt(scene.timeline.audio, found.index, nextAudio));
   }
   return withTrack(scene, found.track.id, {
     ...found.track,
-    clips: found.track.clips.flatMap((clip) => (clip.id === clipId ? next : [clip])),
+    clips: spliceAt(found.track.clips, found.index, next),
   });
 }
 
@@ -221,10 +233,9 @@ function withClips(scene: PrevizScene, clipId: string, next: PrevizClip[]): Prev
  * 两张表都有序且不重叠，所以按下标取前后即可。
  */
 function neighbourBounds(
-  siblings: readonly { id: string; startFrame: number; endFrame: number }[],
-  clipId: string,
+  siblings: readonly { startFrame: number; endFrame: number }[],
+  index: number,
 ): { lower: number; upper: number } {
-  const index = siblings.findIndex((clip) => clip.id === clipId);
   return {
     lower: siblings[index - 1]?.endFrame ?? 0,
     upper: siblings[index + 1]?.startFrame ?? Number.POSITIVE_INFINITY,
@@ -264,7 +275,8 @@ export function upsertClip(
 
 /**
  * 整体平移片段。撞到 0 或时间轴末尾时**保长**——夹的是起点，不是两端各夹各的，
- * 后者会在边界上把片段压扁。
+ * 后者会在边界上把片段压扁。镜头轨、音频轨里的段还会被卡在前后邻居之间（对象轨道的
+ * 片段允许重叠，不受这条限制）。
  */
 export function moveClip(
   scene: PrevizScene,
@@ -274,6 +286,8 @@ export function moveClip(
 ): PrevizScene {
   const found = clipById(scene, clipId);
   if (!found) return scene;
+  // 非有限数没有对应的帧，写进去会被下次 parseScene 整段丢掉。
+  if (!Number.isFinite(deltaFrames)) return scene;
   const { clip } = found;
   const span = clip.endFrame - clip.startFrame;
   let start = Math.min(
@@ -283,11 +297,14 @@ export function moveClip(
   const siblings = siblingsOf(scene, found);
   if (siblings) {
     // 固定行里的段不能压到邻居身上，卡在两边之间。
-    const { lower, upper } = neighbourBounds(siblings, clipId);
+    const { lower, upper } = neighbourBounds(siblings, found.index);
+    // 表合法（有序不重叠）时 upper − span ≥ lower 恒成立；外层 max 只是防坏数据
+    // 把 start 拉到 lower 之前，不代表这种情况真的会发生。
     start = Math.min(Math.max(start, lower), Math.max(lower, upper - span));
   }
+  // 没动就还回原对象，调用方靠引用相等跳过 applyScene，免得一次没位移的拖拽也压一层 undo。
   if (start === clip.startFrame) return scene;
-  return withClips(scene, clipId, [{ ...clip, startFrame: start, endFrame: start + span }]);
+  return withClips(scene, found, [{ ...clip, startFrame: start, endFrame: start + span }]);
 }
 
 /** 把某一边拉到指定帧。两边至少留 `PREVIZ_MIN_CLIP_FRAMES` 帧，不许交叉。 */
@@ -299,34 +316,37 @@ export function trimClip(
 ): PrevizScene {
   const found = clipById(scene, clipId);
   if (!found) return scene;
+  // 非有限数没有对应的帧，写进去会被下次 parseScene 整段丢掉。
+  if (!Number.isFinite(frame)) return scene;
   const { clip } = found;
   const fps = scene.settings.fps;
   const target = Math.round(frame);
   const siblings = siblingsOf(scene, found);
-  const bounds = siblings ? neighbourBounds(siblings, clipId) : null;
+  const bounds = siblings ? neighbourBounds(siblings, found.index) : null;
 
   if (edge === 'start') {
     let start = Math.min(Math.max(0, target), clip.endFrame - PREVIZ_MIN_CLIP_FRAMES);
     if (bounds) start = Math.max(start, bounds.lower);
     if (found.table === 'audio') {
       // 往左拉等于把素材偏移往回退，退到 0 就到头了。
-      start = Math.max(start, clip.startFrame - Math.floor((found.clip.offsetMs * fps) / 1000));
+      start = Math.max(start, clip.startFrame - msToFrames(found.clip.offsetMs, fps));
       const offsetMs = Math.max(0, found.clip.offsetMs + framesToMs(start - clip.startFrame, fps));
-      return withClips(scene, clipId, [{ ...found.clip, startFrame: start, offsetMs }]);
+      return withClips(scene, found, [{ ...found.clip, startFrame: start, offsetMs }]);
     }
-    return withClips(scene, clipId, [{ ...clip, startFrame: start }]);
+    return withClips(scene, found, [{ ...clip, startFrame: start }]);
   }
 
   let end = Math.max(target, clip.startFrame + PREVIZ_MIN_CLIP_FRAMES);
   if (bounds) end = Math.min(end, bounds.upper);
   if (found.table === 'audio') {
     // 素材放完就没有声音了，片段不能比剩余素材长。
+    const available = audioFramesAvailable(found.clip.durationMs, found.clip.offsetMs, fps);
     end = Math.max(
       clip.startFrame + PREVIZ_MIN_CLIP_FRAMES,
-      Math.min(end, clip.startFrame + audioFramesAvailable(found.clip.durationMs, found.clip.offsetMs, fps)),
+      Math.min(end, clip.startFrame + available),
     );
   }
-  return withClips(scene, clipId, [{ ...clip, endFrame: end }]);
+  return withClips(scene, found, [{ ...clip, endFrame: end }]);
 }
 
 /** 把点列按切点重新归一化到 0..1，并保证切点两侧各有一个点。 */
@@ -363,19 +383,21 @@ function halfPoints(clip: PrevizPathClip, uCut: number, side: 'left' | 'right'):
 export function splitClip(scene: PrevizScene, clipId: string, frame: number): PrevizScene {
   const found = clipById(scene, clipId);
   if (!found) return scene;
+  // 非有限数没有对应的帧，写进去会被下次 parseScene 整段丢掉。
+  if (!Number.isFinite(frame)) return scene;
   const { clip } = found;
   const cut = Math.round(frame);
   if (cut <= clip.startFrame || cut >= clip.endFrame) return scene;
 
   if (found.table === 'program') {
-    return withClips(scene, clipId, [
+    return withClips(scene, found, [
       { ...found.clip, id: uuidv4(), endFrame: cut },
       { ...found.clip, id: uuidv4(), startFrame: cut },
     ]);
   }
   if (found.table === 'audio') {
     const fps = scene.settings.fps;
-    return withClips(scene, clipId, [
+    return withClips(scene, found, [
       { ...found.clip, id: uuidv4(), endFrame: cut },
       {
         ...found.clip,
@@ -388,14 +410,16 @@ export function splitClip(scene: PrevizScene, clipId: string, frame: number): Pr
   }
   if (!isPathClip(clip)) return scene;
   const uCut = frameToU(clip, cut);
-  return withClips(scene, clipId, [
+  return withClips(scene, found, [
     { ...clip, id: uuidv4(), endFrame: cut, points: halfPoints(clip, uCut, 'left') },
     { ...clip, id: uuidv4(), startFrame: cut, points: halfPoints(clip, uCut, 'right') },
   ]);
 }
 
 export function removeClip(scene: PrevizScene, clipId: string): PrevizScene {
-  return withClips(scene, clipId, []);
+  const found = clipById(scene, clipId);
+  if (!found) return scene;
+  return withClips(scene, found, []);
 }
 
 /**
@@ -435,7 +459,7 @@ function withPathPoints(
 ): PrevizScene {
   const found = clipById(scene, clipId);
   if (!found || !isPathClip(found.clip)) return scene;
-  return withClips(scene, clipId, [{ ...found.clip, points: update(found.clip.points) }]);
+  return withClips(scene, found, [{ ...found.clip, points: update(found.clip.points) }]);
 }
 
 /**
@@ -522,7 +546,7 @@ export function setPathAim(
   const found = clipById(scene, clipId);
   if (!found || found.table !== 'tracks' || !isPathClip(found.clip)) return scene;
   if (aimObjectId === found.track.objectId) return scene;
-  return withClips(scene, clipId, [{ ...found.clip, aimObjectId }]);
+  return withClips(scene, found, [{ ...found.clip, aimObjectId }]);
 }
 
 /** 清空轨迹但保留片段：重画一条不需要先把片段删了再建。 */

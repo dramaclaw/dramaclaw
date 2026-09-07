@@ -476,7 +476,9 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
 
   moveClipBy: (clipId, deltaFrames) => {
     const { scene, applyScene } = get();
-    applyScene(moveClip(scene, clipId, deltaFrames, scene.settings.durationFrames));
+    const next = moveClip(scene, clipId, deltaFrames, scene.settings.durationFrames);
+    if (next === scene) return;
+    applyScene(next);
   },
 
   trimClipToPlayhead: (clipId, edge) => {
