@@ -88,21 +88,15 @@ export function previewFitRect(
 /**
  * 按草稿的机位参数渲染一帧取景预览。
  *
- * 走离屏 render target 而不是给预览画布单开一个 WebGL 上下文：浏览器对同时存活的
- * WebGL 上下文有个位数的上限，多开一个就要多一套场景、灯光与模型副本。这里借的是
- * 视口那套渲染器与场景，画出来的东西也因此与视口里所见严格一致。
- *
- * 拿不到 2D 上下文时**什么都不做**：jsdom 与个别隐私模式下 `getContext('2d')` 会返回
- * null，抛出去的话对话框一打开就白屏，而预览本来就只是个辅助。
+ * 借的是视口那套渲染器与场景（见 [blitCameraToCanvas]），所以预览里所见与视口里所见
+ * 严格一致。画布是固定的 320×180 而出片画幅可能是 9:16，画面按 [previewFitRect] 等比
+ * 缩进去、四周留黑边——拉伸过的预览会让用户按错误的构图去摆机位。
  */
 export function renderCameraPreview(
   deps: CameraPreviewDeps,
   draft: PrevizCameraDraft,
   aspect: OutputAspect,
 ): void {
-  const context = deps.canvas.getContext('2d');
-  if (!context) return;
-
   const rect = previewFitRect(deps.canvas.width, deps.canvas.height, aspect);
 
   const [px, py, pz] = draft.position;
@@ -118,12 +112,34 @@ export function renderCameraPreview(
   deps.camera.aspect = aspectRatio(aspect);
   deps.camera.updateProjectionMatrix();
 
+  blitCameraToCanvas(deps, deps.camera, rect);
+}
+
+/**
+ * 把 `camera` 眼里的一帧画进 `deps.canvas` 上的 `rect`，画布其余部分刷黑。
+ *
+ * 走离屏 render target 再读回像素，而不是给预览画布单开一个 WebGL 上下文：浏览器对
+ * 同时存活的上下文有个位数的上限，多开一个还要多一套场景、灯光与模型副本。取景预览与
+ * 四视图预览共用这一份，是因为「读回来的行序要翻」「离屏缓冲用完要 dispose」「屏幕上
+ * 原来挂着的 target 要还回去」这三件事漏掉任何一件都只表现为画面不对，很难倒查。
+ *
+ * 拿不到 2D 上下文时**什么都不做**：jsdom 与个别隐私模式下 `getContext('2d')` 会返回
+ * null，抛出去的话对话框一打开就白屏，而预览本来就只是个辅助。
+ */
+export function blitCameraToCanvas(
+  deps: Omit<CameraPreviewDeps, 'camera'>,
+  camera: THREE.Camera,
+  rect: CameraPreviewRect,
+): void {
+  const context = deps.canvas.getContext('2d');
+  if (!context) return;
+
   const target = new deps.three.WebGLRenderTarget(rect.width, rect.height, {
     colorSpace: deps.three.SRGBColorSpace,
   });
   const previous = deps.renderer.getRenderTarget();
   deps.renderer.setRenderTarget(target);
-  deps.renderer.render(deps.scene, deps.camera);
+  deps.renderer.render(deps.scene, camera);
 
   const pixels = new Uint8Array(rect.width * rect.height * 4);
   deps.renderer.readRenderTargetPixels(target, 0, 0, rect.width, rect.height, pixels);

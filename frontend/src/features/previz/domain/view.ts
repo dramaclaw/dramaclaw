@@ -11,9 +11,10 @@ import type { Vec3 } from './scene';
  * `right` 指的是**世界轴**的方向，不是主体的左右：主体朝 +Z 站着时，「右视图」看到的
  * 是它的左半边。
  *
- * 这里的「正交」是**轴对齐方向**的意思——相机沿 ±X / ±Y / ±Z 摆正对准盒子中心——
- * 而不是换成正交投影；换投影会连带影响 OrbitControls 的推拉手感与属性面板上按透视
- * 相机算出的视角读数，真正的正交投影跟 P4 的四视图一起做。
+ * `viewPlacement()` 的「正交」是**轴对齐方向**的意思——相机沿 ±X / ±Y / ±Z 摆正对准
+ * 盒子中心——而不是换成正交投影；换投影会连带影响 OrbitControls 的推拉手感与属性面板
+ * 上按透视相机算出的视角读数。真的换投影的是 `orthoPlacement()`，它只服务四视图那两块
+ * 预览画布，那里既没有轨道控制也没有读数。
  *
  * 本模块的函数都是**全函数**（`domain/` 的横切约定）：包围盒可能是 three 的空 `Box3`
  * （min=+∞ / max=-∞），画幅比可能是上游漏了护栏之后算出来的 0 或 Infinity。这类输入
@@ -54,6 +55,16 @@ export interface PrevizViewPlacement {
   target: Vec3;
 }
 
+export interface PrevizOrthoPlacement extends PrevizViewPlacement {
+  /** 相机的上方向；顶/底视图不能用世界 up（与视线平行）。 */
+  up: Vec3;
+  /** 取景窗的半宽 / 半高，单位是米，直接喂 `OrthographicCamera` 的 left/right/top/bottom。 */
+  halfWidth: number;
+  halfHeight: number;
+  near: number;
+  far: number;
+}
+
 /**
  * 视口相机的初始机位。`as const` 收成只读是有意的：这是全模块共享的单例，而
  * `viewPlacement()` 返回同形状的可变对象、它自己末尾就在就地改 `position[2]`，
@@ -66,6 +77,9 @@ export const PREVIZ_DEFAULT_VIEW = {
   position: [6, 4, 8],
   target: [0, 1, 0],
 } as const;
+
+/** 正交预览的近平面。与视口相机的近平面同值，两处的裁切表现因此一致。 */
+const NEAR_PLANE_M = 0.1;
 
 /** 取景留白系数：包围球贴边填满画面太挤，退 25% 是常见取值。 */
 const FRAMING_PADDING = 1.25;
@@ -197,6 +211,55 @@ export function framingDistance(radius: number, verticalFovDeg: number, aspect: 
     safeRadius / Math.sin(halfHorizontal),
   );
   return Math.max(MIN_FRAMING_DISTANCE, distance * FRAMING_PADDING);
+}
+
+/**
+ * 正交取景：四视图那两块预览用的相机参数。
+ *
+ * 这里才是真正换投影的地方，`viewPlacement()` 不是——那条路要保住 OrbitControls 的推拉
+ * 手感和属性面板按透视相机算出的读数。预览画布上没有这两样顾虑，而俯视/侧视要的正是
+ * 正交：透视下平行的走位轨迹会往灭点收，「这两条路线是不是平行」「人从机位前面过还是
+ * 后面过」这类判断当场就不成立了。
+ *
+ * 取景窗按包围**球**开，所以同一个场景六个方向的窗口一样大，来回切不会忽大忽小。
+ */
+export function orthoPlacement(
+  direction: PrevizViewDirection,
+  bounds: PrevizBounds,
+  aspect: number,
+): PrevizOrthoPlacement {
+  const target = boundsCenter(bounds);
+  const radius = boundsRadius(bounds);
+  const safeAspect = clampToRange(aspect, FRAMING_ASPECT);
+  // 半窗至少 1 米：场景空了（半径 0）也得是一块看得见东西的窗口，而不是一个点。
+  const half = Math.max(MIN_FRAMING_DISTANCE, radius * FRAMING_PADDING);
+  // 竖幅画布上紧的那一边是水平方向，得反过来由它定高，否则左右会切掉。
+  const halfHeight = safeAspect >= 1 ? half : half / safeAspect;
+  const halfWidth = halfHeight * safeAspect;
+
+  // 站得比包围球远一倍再加 1 米。正交投影下站多远不影响画面大小，只影响裁切：
+  // 站进球里会把靠近相机的那半个场景切掉。
+  const distance = radius * 2 + MIN_FRAMING_DISTANCE;
+  const unit = VIEW_DIRECTION_UNIT[direction];
+
+  return {
+    position: [
+      target[0] + unit[0] * distance,
+      target[1] + unit[1] * distance,
+      target[2] + unit[2] * distance,
+    ],
+    target,
+    // 顶/底视图的视线与世界 up 平行，`lookAt` 会退化。这里显式给一个 up，顺带定死
+    // 「俯视图里 +X 朝右、+Z 朝下」——不定的话姿态由 three 内部那个 0.0001 的兜底
+    // 扰动决定，换个 three 版本画面就可能整个转过去。
+    up: direction === 'top' ? [0, 0, -1] : direction === 'bottom' ? [0, 0, 1] : [0, 1, 0],
+    halfWidth,
+    halfHeight,
+    // 近平面贴着相机、远平面兜住整个包围球：正交的深度是线性的，把范围开大不像透视
+    // 那样折损深度精度。
+    near: NEAR_PLANE_M,
+    far: distance + radius * 2 + MIN_FRAMING_DISTANCE,
+  };
 }
 
 export function viewPlacement(

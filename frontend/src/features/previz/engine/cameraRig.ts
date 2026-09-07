@@ -5,8 +5,11 @@ import type * as THREE from 'three';
 import { aspectRatio, verticalFovDeg } from '../domain/camera';
 import type { OutputAspect, PrevizCamera } from '../domain/scene';
 
-/** 监看画中画占画布宽度的比例。 */
-const MONITOR_WIDTH_RATIO = 0.26;
+/** 监看画中画的两档大小。放大档没有铺满画布：主视图里的走位还得看得见。 */
+export type MonitorSize = 'normal' | 'large';
+
+/** 每一档占画布宽度的比例。 */
+const MONITOR_WIDTH_RATIO: Record<MonitorSize, number> = { normal: 0.26, large: 0.55 };
 /** 监看距画布边缘的留白，单位是绘制缓冲像素。 */
 const MONITOR_MARGIN = 16;
 
@@ -45,16 +48,22 @@ export function monitorViewportRect(
   canvasWidth: number,
   canvasHeight: number,
   outputAspect: OutputAspect,
+  size: MonitorSize = 'normal',
 ): MonitorRect {
   const aspect = aspectRatio(outputAspect);
+  // 可用范围是画布减掉四周留白。两个方向都夹一遍，画面才会自己适应容器：
+  // 只夹高度的话，放大档遇到又矮又宽的画布会横着顶出去；只夹宽度的话，竖幅
+  // 画幅在矮画布上会上下顶出去。
+  const maxWidth = Math.max(1, canvasWidth - MONITOR_MARGIN * 2);
+  const maxHeight = Math.max(1, canvasHeight - MONITOR_MARGIN * 2);
+
   // 至少 1 像素：画布还没布局完（clientWidth 为 0）或者被拖到极窄时，
   // 按比例算出来的宽高会是 0，而 `setViewport(…, 0, 0)` 在部分驱动上是
   // GL_INVALID_VALUE——three 不报错，画面上只是监看框莫名其妙没了。
-  let width = Math.max(1, Math.round(canvasWidth * MONITOR_WIDTH_RATIO));
+  let width = Math.max(1, Math.round(Math.min(canvasWidth * MONITOR_WIDTH_RATIO[size], maxWidth)));
   let height = Math.max(1, Math.round(width / aspect));
 
   // 竖幅监看在小画布上按宽度算会比画布还高，那时改按高度回推宽度。
-  const maxHeight = Math.max(1, canvasHeight - MONITOR_MARGIN * 2);
   if (height > maxHeight) {
     height = maxHeight;
     width = Math.max(1, Math.round(height * aspect));

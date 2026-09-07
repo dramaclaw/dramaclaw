@@ -73,6 +73,26 @@ export function verticalFovDeg(
   return 2 * Math.atan(sensorWidth / (2 * clampFocalMm(focalMm) * aspectRatio(aspect))) * RAD_TO_DEG;
 }
 
+/**
+ * 把一帧画面**铺满**一块不同长宽比的画布时，相机该用多大的垂直视场角。
+ *
+ * 铺满意味着裁掉一条边：画布比画幅宽就裁上下（缩小垂直角），比画幅窄就保持垂直角、
+ * 由 `camera.aspect` 去裁两侧。方向不能反——反了就是把视野往外扩，画布上会露出画面
+ * **外**的东西，而这一格恰恰是用来判断「这个人进没进画」的。留黑边同样不行：那是四格
+ * 参照图里最大的一格，两条黑边一占就没剩多少画面了。
+ *
+ * `frameRatio` 是出片画幅的宽高比，`viewRatio` 是画布的。两个比值任一非有限或非正时
+ * 原样交回传进来的角：那是画布还没进布局的一帧过渡态，按它算会解出 NaN 并毒掉投影矩阵。
+ */
+export function coverFovDeg(fovDeg: number, frameRatio: number, viewRatio: number): number {
+  const usable = (ratio: number) => Number.isFinite(ratio) && ratio > 0;
+  if (!usable(frameRatio) || !usable(viewRatio) || !Number.isFinite(fovDeg)) return fovDeg;
+  // 画布比画幅窄（含相等）：垂直方向本来就装得下，垂直角不动。
+  if (viewRatio <= frameRatio) return fovDeg;
+  const half = Math.tan((fovDeg * DEG_TO_RAD) / 2) * (frameRatio / viewRatio);
+  return 2 * Math.atan(half) * RAD_TO_DEG;
+}
+
 /** 一段带默认值的闭区间。预演台 domain 层的可夹字段都按这个形状声明。 */
 export interface PrevizRange {
   readonly min: number;

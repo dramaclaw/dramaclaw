@@ -657,14 +657,24 @@ describe("previz store object editing", () => {
     expect(usePrevizStore.getState().pathSpacingM).toBe(5);
   });
 
+  it("clamps the drawing speed into its range", () => {
+    usePrevizStore.getState().setPathSpeed(0);
+    expect(usePrevizStore.getState().pathSpeedMps).toBe(0.1);
+    usePrevizStore.getState().setPathSpeed(999);
+    expect(usePrevizStore.getState().pathSpeedMps).toBe(20);
+  });
+
   function addCharacter(): string {
     const id = usePrevizStore.getState().addObject("character");
     if (!id) throw new Error("expected the character to be created");
     return id;
   }
 
-  it("creates a track and a full-length clip on the first stroke", () => {
+  it("creates a track and a clip as long as the stroke takes to walk", () => {
     const id = addCharacter();
+    // 速度与间距都是 store 上的全局设置，别的用例调过之后 loadScene 不会复位，
+    // 所以要读出帧数的用例一律自己钉一遍。1 m/s 让长度和秒数一一对应，好对账。
+    usePrevizStore.getState().setPathSpeed(1);
 
     usePrevizStore.getState().drawPath(id, [
       [0, 0, 0],
@@ -675,9 +685,114 @@ describe("previz store object editing", () => {
     expect(track.objectId).toBe(id);
     const clip = track.clips[0] as PrevizPathClip;
     expect(clip.kind).toBe("path");
-    // 实测参照实现：人物原本不在时间轴上，画完直接生成轨道 + 铺满时间轴的路径片段。
-    expect([clip.startFrame, clip.endFrame]).toEqual([0, 120]);
+    // 3 米、1 m/s = 3 秒 = 90 帧。铺满时间轴的老做法等于「画多长都是 4 秒」，
+    // 长轨迹只是走得更快，而画得更长想要的正是走得更久。
+    expect([clip.startFrame, clip.endFrame]).toEqual([0, 90]);
     expect(clip.points.length).toBeGreaterThan(1);
+  });
+
+  it("gives a longer stroke a longer clip", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().setPathSpeed(1);
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [2, 0, 0],
+    ]);
+    const short = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].endFrame;
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [8, 0, 0],
+    ]);
+    const long = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].endFrame;
+
+    expect(short).toBe(60);
+    expect(long).toBe(240);
+  });
+
+  it("walks the same stroke faster when the speed goes up", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().setPathSpeed(1);
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [6, 0, 0],
+    ]);
+    const slow = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].endFrame;
+
+    usePrevizStore.getState().setPathSpeed(3);
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [6, 0, 0],
+    ]);
+    const fast = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].endFrame;
+
+    expect(slow).toBe(180);
+    expect(fast).toBe(60);
+  });
+
+  it("stretches the timeline to fit a stroke that runs past its end", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().setPathSpeed(1);
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [7, 0, 0],
+    ]);
+
+    // 片段伸到时间轴外面的话，这一笔后半段既播不到也剪不着。
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(210);
+  });
+
+  it("leaves the timeline alone for a stroke that fits", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().setPathSpeed(1);
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [2, 0, 0],
+    ]);
+
+    // 只撑不缩：时间轴是整个场景共用的，为了一条短轨迹裁短它，别的对象的片段跟着遭殃。
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
+  });
+
+  it("caps a very long stroke at the longest timeline there is", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().setPathSpeed(0.1);
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [100, 0, 0],
+    ]);
+
+    // 30000 帧的片段绝大部分永远落在时间轴外面：既播不到，也剪不着。
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0];
+    expect(clip.endFrame).toBe(360);
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(360);
+  });
+
+  it("keeps where a redrawn clip starts and only re-times its end", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().setPathSpeed(1);
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+    const clipId = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
+    // 这条片段被挪到了时间轴中段，和别的片段排好了先后。
+    usePrevizStore.getState().moveClipBy(clipId, 30);
+    usePrevizStore.getState().setTimelineFrame(60);
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [1, 0, 0],
+    ]);
+
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0];
+    // 把它甩回 0 帧等于把用户排好的先后推翻重来。
+    expect([clip.startFrame, clip.endFrame]).toEqual([30, 60]);
   });
 
   it("redraws into the clip under the playhead instead of stacking a new one", () => {
@@ -700,24 +815,39 @@ describe("previz store object editing", () => {
     expect((clips[0] as PrevizPathClip).points[0].position).toEqual([0, 0, 0]);
   });
 
-  it("keeps a camera pointed where it was pointed before the stroke", () => {
+  it("starts a camera stroke from the aim it had and swings it with the path", () => {
     const id = usePrevizStore.getState().addObject("camera")!;
     usePrevizStore.getState().updateObject(id, {
       transform: { position: [0, 3, 8], rotation: [-16.7, 200, 0], scale: [1, 1, 1] },
     });
 
+    // 间距显式钉成 1 m：它是 store 上的全局设置，别的用例调过之后不会被 loadScene 复位，
+    // 而重采样出多少个点直接决定这条曲线上量得到多少转角。
+    usePrevizStore.getState().setPathSpacing(1);
+    // 一条向右拐 90° 的笔画。每条边多给几个点，拐角才不会被三轮平滑抹平——两三个点
+    // 的折线平滑完基本是直线，这条用例也就测不到「跟着转」了。
     usePrevizStore.getState().drawPath(id, [
       [0, 3, 0],
-      [3, 3, 0],
-      [6, 3, 3],
+      [2, 3, 0],
+      [4, 3, 0],
+      [6, 3, 0],
+      [6, 3, 2],
+      [6, 3, 4],
+      [6, 3, 6],
     ]);
 
     const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
-    // 切线朝向等于把摄影机焊在轨道车头上：一画完，原本对着人物的机位就转过去看轨道
-    // 前方了，连俯角也被抹平成 0。
-    expect(clip.points.map((point) => point.rotation)).toEqual(
-      clip.points.map(() => [-16.7, 200, 0]),
-    );
+    const yaws = clip.points.map((point) => point.rotation[1]);
+    // 起手的取景不能被切线抹掉：200° 与 -160° 是同一条视线，收进 ±180 是为了让轨迹点
+    // 检查器上的滑杆够得着。
+    expect(yaws[0]).toBeCloseTo(-160, 6);
+    // 走完这个弯，镜头也跟着摇了差不多 90°（平滑削掉了拐角上的几度）。盯死一个方向的
+    // 话这里会是 0。取最短弧：yaw 是循环量，直接相减会得到绕远路的那个 270°。
+    const swing = ((yaws[yaws.length - 1] - yaws[0] + 540) % 360) - 180;
+    expect(swing).toBeLessThan(-70);
+    expect(swing).toBeGreaterThan(-95);
+    // 俯角是切线给不出的，整笔都得原样留住，不然一画完机位就自己抬平了。
+    expect(clip.points.every((point) => point.rotation[0] === -16.7)).toBe(true);
   });
 
   it("still turns a character along its own stroke", () => {
@@ -779,9 +909,11 @@ describe("previz store object editing", () => {
 
   it("splits the selected clip at the playhead", () => {
     const id = addCharacter();
+    // 4 米、1 m/s 正好 120 帧，下面那两段读起来就是「一半一半」。
+    usePrevizStore.getState().setPathSpeed(1);
     usePrevizStore.getState().drawPath(id, [
       [0, 0, 0],
-      [3, 0, 0],
+      [4, 0, 0],
     ]);
     const clipId = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
     usePrevizStore.getState().setTimelineFrame(60);
@@ -895,9 +1027,12 @@ describe("previz store clip editing", () => {
   function seedClip(): { objectId: string; clipId: string } {
     const objectId = usePrevizStore.getState().addObject("character");
     if (!objectId) throw new Error("expected the character to be created");
+    // 4 米、1 m/s = 120 帧，正好铺满默认时间轴：下面那些用例读的是修剪与拼接，
+    // 片段边界写成整数好对账。速度是 store 上的全局设置，得自己钉一遍。
+    usePrevizStore.getState().setPathSpeed(1);
     usePrevizStore.getState().drawPath(objectId, [
       [0, 0, 0],
-      [6, 0, 0],
+      [4, 0, 0],
     ]);
     return { objectId, clipId: usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id };
   }

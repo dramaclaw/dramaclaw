@@ -7,6 +7,7 @@ import {
   PREVIZ_SENSOR_MM,
   aspectRatio,
   clampAperture,
+  coverFovDeg,
   clampFocalMm,
   PREVIZ_APERTURE_STOPS,
   PREVIZ_FOCAL_STOPS,
@@ -37,6 +38,42 @@ describe("focal length and field of view", () => {
     expect(verticalFovDeg(35, "s35", "16:9")).toBeCloseTo(22.6208, 3);
     // 方形出片是这条不对称的支点：只有 1:1 时垂直角才等于水平角。
     expect(verticalFovDeg(50, "ff", "1:1")).toBeCloseTo(horizontalFovDeg(50, "ff"), 6);
+  });
+
+  // 四视图里那格机位画面要铺满格子。留黑边不行——那是几格参照图里最大的一格，
+  // 上下两条黑边一占就没剩多少画面了。
+  it("shrinks the vertical field of view to cover a canvas wider than the frame", () => {
+    const frame = aspectRatio("16:9");
+    // 画布宽了一倍：垂直方向裁掉一半。裁的是 tan（画面上的半高），不是角度本身——
+    // 直接把角折半会裁多，广角下差得尤其离谱。
+    expect(coverFovDeg(60, frame, frame * 2)).toBeCloseTo(
+      2 * Math.atan(Math.tan((60 * Math.PI) / 180 / 2) / 2) * (180 / Math.PI),
+      6,
+    );
+    // 越宽裁得越多。角只能往小走：往大走就是把视野扩到画幅之外，
+    // 这一格恰恰是用来判断「这个人进没进画」的。
+    expect(coverFovDeg(60, frame, frame * 4)).toBeLessThan(coverFovDeg(60, frame, frame * 2));
+    expect(coverFovDeg(60, frame, frame * 2)).toBeLessThan(60);
+  });
+
+  it("leaves the vertical field of view alone when the canvas is not wider than the frame", () => {
+    const frame = aspectRatio("16:9");
+    // 一样宽是恒等：差一点点，机位画面就与出片画面对不上了。
+    expect(coverFovDeg(60, frame, frame)).toBe(60);
+    // 更窄（竖着的格子）时垂直方向本来就装得下，改由 camera.aspect 去裁两侧。
+    expect(coverFovDeg(60, frame, aspectRatio("9:16"))).toBe(60);
+  });
+
+  it("hands the angle back untouched when a ratio is unusable", () => {
+    // 画布还没进布局的那一帧，宽高是 0，比值就是 0 / NaN / Infinity。按它算会解出
+    // 0 或 NaN，而这两个都会顺着投影矩阵一路毒下去，画面直接空白。
+    const frame = aspectRatio("16:9");
+    expect(coverFovDeg(60, frame, 0)).toBe(60);
+    expect(coverFovDeg(60, frame, Number.NaN)).toBe(60);
+    expect(coverFovDeg(60, frame, Number.POSITIVE_INFINITY)).toBe(60);
+    expect(coverFovDeg(60, frame, -2)).toBe(60);
+    expect(coverFovDeg(60, 0, 2)).toBe(60);
+    expect(coverFovDeg(60, Number.NaN, 2)).toBe(60);
   });
 
   it("round-trips focal length through the horizontal field of view", () => {

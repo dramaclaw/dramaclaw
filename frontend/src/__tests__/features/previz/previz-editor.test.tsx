@@ -30,8 +30,13 @@ const planePointAt = vi.fn(
   (_clientX: number, _clientY: number, _height: number): Vec3 | null => [0, 0, 0],
 );
 const setStroke = vi.fn((_points: readonly Vec3[] | null) => {});
+const setDrawing = vi.fn((_active: boolean) => {});
 const viewPose = vi.fn(() => ({ position: [6, 4, 8] as Vec3, target: [0, 1, 0] as Vec3 }));
 const renderCameraPreview = vi.fn();
+const renderQuadPreview = vi.fn();
+const renderCameraView = vi.fn();
+const setViewOverlays = vi.fn();
+const setMonitorSize = vi.fn();
 const recordDrawFrame = vi.fn();
 const recordEnd = vi.fn();
 const startRecording = vi.fn((_mode: string, _cameraId: string | null) => ({
@@ -61,12 +66,19 @@ function fakeRenderer() {
     setSelectedClip,
     planePointAt,
     setStroke,
+    setDrawing,
     viewPose,
     renderCameraPreview,
+    renderQuadPreview,
+    renderCameraView,
+    setViewOverlays,
+    setMonitorSize,
     startRecording,
     onTransformCommit: null as
       | ((objectId: string, transform: unknown) => void)
       | null,
+    onViewChange: null as ((pose: { position: Vec3; target: Vec3 }) => void) | null,
+    onTransformDrag: null as (() => void) | null,
   };
 }
 
@@ -224,6 +236,204 @@ describe("PrevizEditor", () => {
 
     // 没有机位可监看时那个按钮点了也没有东西可开，挂着只是画布右下角一块空占位。
     expect(screen.queryByTestId("previz-monitor-show")).toBeNull();
+  });
+
+  it("hands the monitor's outline and name-plate switches to the renderer", async () => {
+    const user = userEvent.setup();
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject("camera", scene.objects));
+
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+    act(() => {
+      usePrevizStore.getState().setActiveCamera(scene.objects[0]!.id);
+    });
+
+    const outline = screen.getByTestId("previz-monitor-outline");
+    const plate = screen.getByTestId("previz-monitor-plate");
+    // 两样默认都开着：认不出画面里谁是谁的话，监看这块小画面就只是一团灰模型。
+    expect(outline).toHaveAttribute("aria-pressed", "true");
+    expect(plate).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(outline);
+    // 一次只关一样，另一样原样传下去——两个开关合成一个对象发给渲染器，
+    // 漏带没动的那个会把它一起关掉。
+    expect(setViewOverlays).toHaveBeenLastCalledWith({ outline: false, namePlate: true });
+
+    await user.click(plate);
+    expect(setViewOverlays).toHaveBeenLastCalledWith({ outline: false, namePlate: false });
+    expect(outline).toHaveAttribute("aria-pressed", "false");
+    expect(plate).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("enlarges the monitor and offers the way back", async () => {
+    const user = userEvent.setup();
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject("camera", scene.objects));
+
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+    act(() => {
+      usePrevizStore.getState().setActiveCamera(scene.objects[0]!.id);
+    });
+
+    const size = screen.getByTestId("previz-monitor-size");
+    expect(size).toHaveAccessibleName("previz.monitor.enlarge");
+
+    await user.click(size);
+
+    // 尺寸只影响画面在画布上占多大，跟出片无关，所以走渲染器而不是场景设置。
+    expect(setMonitorSize).toHaveBeenLastCalledWith("large");
+    // 同一个按钮换成还原：放大之后没有回头路的话，小画面就再也拿不回来了。
+    expect(size).toHaveAccessibleName("previz.monitor.restore");
+
+    await user.click(size);
+    expect(setMonitorSize).toHaveBeenLastCalledWith("normal");
+  });
+
+  it("switches the output aspect from the monitor frame", async () => {
+    const user = userEvent.setup();
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject("camera", scene.objects));
+
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+    act(() => {
+      usePrevizStore.getState().setActiveCamera(scene.objects[0]!.id);
+    });
+
+    const select = screen.getByLabelText<HTMLSelectElement>("previz.monitor.aspect");
+    // 左栏那份画幅下拉撤掉之后，这里是改出片画幅的唯一入口，四个比例都得在。
+    expect([...select.options].map((option) => option.value)).toEqual([
+      "16:9",
+      "9:16",
+      "1:1",
+      "4:3",
+    ]);
+
+    await user.selectOptions(select, "9:16");
+
+    // 画幅比是真出片参数，落在场景设置里；监看框只是它的入口。
+    expect(usePrevizStore.getState().scene.settings.outputAspect).toBe("9:16");
+    expect(select).toHaveValue("9:16");
+  });
+
+  it("collapses and reopens the timeline panel from the rail", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    // 时间码是轨迹面板独有的读数，拿它当「这块面板在不在」的探针。
+    expect(screen.getByTestId("previz-timecode")).toBeInTheDocument();
+
+    const toggle = screen.getByTestId("previz-timeline-toggle");
+    await user.click(toggle);
+
+    expect(screen.queryByTestId("previz-timecode")).toBeNull();
+    // 开关本身留在原地：卸掉的是面板，不是那颗按钮——否则收起来就再也开不回来。
+    expect(toggle).toHaveAccessibleName("previz.toolbar.expandTimeline");
+
+    await user.click(toggle);
+    expect(screen.getByTestId("previz-timecode")).toBeInTheDocument();
+  });
+
+  it("keeps the property column closed until something is selected", async () => {
+    const scene = createDefaultScene();
+    const camera = createPrevizObject("camera", scene.objects);
+    scene.objects.push(camera);
+
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    // 什么都没选时只有对象列表：两条「选中后在这里编辑」的占位一起藏起来，别占着一整列。
+    expect(screen.getByText("previz.layers.title")).toBeInTheDocument();
+    expect(screen.queryByText("previz.inspector.empty")).toBeNull();
+    expect(screen.queryByText("previz.clip.empty")).toBeNull();
+
+    act(() => usePrevizStore.getState().selectObject(camera.id));
+    expect(screen.getByText("previz.inspector.name")).toBeInTheDocument();
+
+    act(() => usePrevizStore.getState().selectObject(null));
+    expect(screen.queryByText("previz.inspector.name")).toBeNull();
+    expect(screen.queryByText("previz.inspector.empty")).toBeNull();
+
+    // 只在时间轴上点中片段、没点对象，片段属性照样要能编：这一列跟着片段开。
+    act(() => usePrevizStore.getState().addObjectToTimeline(camera.id));
+    expect(screen.queryByText("previz.clip.empty")).toBeNull();
+    expect(screen.getByText("previz.inspector.empty")).toBeInTheDocument();
+  });
+
+  it("collapses and reopens the side panels", async () => {
+    const user = userEvent.setup();
+    const scene = createDefaultScene();
+    const camera = createPrevizObject("camera", scene.objects);
+    scene.objects.push(camera);
+
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    // 先选中一个对象把属性列请出来：没选中时那一列本来就不在，收起来就没得验。
+    act(() => usePrevizStore.getState().selectObject(camera.id));
+    expect(screen.getByText("previz.layers.title")).toBeInTheDocument();
+    expect(screen.getByText("previz.inspector.name")).toBeInTheDocument();
+
+    const toggle = screen.getByTestId("previz-panels-toggle");
+    expect(toggle).toHaveAccessibleName("previz.editor.collapsePanels");
+    await user.click(toggle);
+
+    // 图层与属性一起收：这两块上下相接、共用一条左边框，单收一块会在接缝处留下半截边。
+    expect(screen.queryByText("previz.layers.title")).toBeNull();
+    expect(screen.queryByText("previz.inspector.name")).toBeNull();
+
+    // 把手留在原地，而且换成了「展开」——收起之后没有入口的话这就是一扇单向门。
+    const reopen = screen.getByTestId("previz-panels-toggle");
+    expect(reopen).toHaveAccessibleName("previz.editor.expandPanels");
+    await user.click(reopen);
+
+    expect(screen.getByText("previz.layers.title")).toBeInTheDocument();
   });
 
   it("mounts a canvas and shows the timeline duration", () => {
@@ -397,10 +607,211 @@ describe("PrevizEditor", () => {
     );
 
     await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
-    await user.click(screen.getByRole("button", { name: "previz.hud.view.top" }));
+    // 六个方向现在是视口左上角那颗坐标轴小球上的六颗球。
+    await user.click(screen.getByRole("button", { name: "previz.viewport.view.top" }));
 
     expect(applyViewDirection).toHaveBeenCalledWith("top");
   });
+
+  // 聚焦要拿的是「当前选中的那个对象的 id」，而选中态存在 store 里、按钮在视口浮层上：
+  // 这中间接错一环的表现是「点了聚焦，相机飞去了别的对象」，组件自己的用例看不见。
+  it("focuses the selected object through the renderer", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    // 没选中东西时聚焦无从聚起。
+    expect(screen.getByRole("button", { name: "previz.viewport.focus" })).toBeDisabled();
+
+    act(() => {
+      usePrevizStore.getState().addObject("character");
+    });
+    const selected = usePrevizStore.getState().selectedObjectId;
+    expect(selected).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "previz.viewport.focus" }));
+
+    expect(focusObject).toHaveBeenCalledWith(selected);
+  });
+
+  /*
+    四视图是「开关在视口浮层、画布在右侧那一列、内容要渲染器来画」三处联动。断言画到
+    哪块画布上而不只是「调用过」：两块画布接反了的话，俯视与侧视的标题会各配错一张图，
+    而这正是用来读走位的两张图。
+  */
+  it("renders the two ortho previews once the quad view is on", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    expect(screen.queryByTestId("previz-quad-top")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "previz.viewport.quadView" }));
+
+    await vi.waitFor(() => expect(renderQuadPreview).toHaveBeenCalledTimes(2));
+    expect(renderQuadPreview.mock.calls[0]).toEqual([
+      screen.getByTestId("previz-quad-top"),
+      "top",
+    ]);
+    expect(renderQuadPreview.mock.calls[1]).toEqual([
+      screen.getByTestId("previz-quad-side"),
+      "right",
+    ]);
+
+    // 再点一次收起来：两块画布跟着走，不留在那儿当死图。
+    await user.click(screen.getByRole("button", { name: "previz.viewport.quadView" }));
+    expect(screen.queryByTestId("previz-quad-side")).toBeNull();
+  });
+
+  /*
+    四视图的第四格是机位眼里的画面。建了机位就该看得见，不必先去图层面板设一次监看——
+    要求先设的话，用户对着一格黑画面根本猜不到自己漏了哪步。场景里一台机位都没有时那格
+    摆提示文字：留一块黑画布，用户分不出「没有机位」和「渲染坏了」。
+  */
+  it("renders a camera view in the fourth pane, preferring the monitor camera", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "previz.viewport.quadView" }));
+
+    await vi.waitFor(() => expect(renderQuadPreview).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId("previz-quad-camera")).toBeNull();
+    expect(screen.getByText("previz.viewport.quadNoCamera")).toBeInTheDocument();
+    expect(renderCameraView).not.toHaveBeenCalled();
+
+    // 只建机位、不设监看：那一格照样出画。
+    let first: string | null = null;
+    act(() => {
+      first = usePrevizStore.getState().addObject("camera");
+    });
+
+    await vi.waitFor(() => expect(renderCameraView).toHaveBeenCalled());
+    expect(renderCameraView).toHaveBeenCalledWith(
+      screen.getByTestId("previz-quad-camera"),
+      first,
+    );
+
+    // 设了监看就跟着监看那台走，而不是继续画场景里的第一台。
+    act(() => {
+      const store = usePrevizStore.getState();
+      const second = store.addObject("camera");
+      store.setActiveCamera(second);
+    });
+
+    await vi.waitFor(() =>
+      expect(renderCameraView).toHaveBeenLastCalledWith(
+        screen.getByTestId("previz-quad-camera"),
+        usePrevizStore.getState().activeCameraId,
+      ),
+    );
+  });
+
+  /*
+    拖手柄期间对象只在 three 的场景里动，变换要到松手才写回 store（每帧都提交等于毁掉
+    撤销）。只跟着 store 走的话这两张参照图会僵在原地、松手才瞬移过去——而边拖边看俯视图
+    对位置正是四视图存在的理由。
+  */
+  it("redraws the ortho previews while the gizmo is being dragged", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "previz.viewport.quadView" }));
+    await vi.waitFor(() => expect(renderQuadPreview).toHaveBeenCalledTimes(2));
+
+    const renderer = await vi.mocked(PrevizRenderer.create).mock.results[0]!.value;
+    // 一次拖拽这条信号能来几百次。连报三次只该重画一轮：两张图跟手就够了，跟上鼠标的
+    // 采样率就是白跑几百趟离屏渲染。
+    act(() => {
+      renderer.onTransformDrag?.();
+      renderer.onTransformDrag?.();
+      renderer.onTransformDrag?.();
+    });
+
+    // 合并没生效的话这里会是 8，等不到 4，用例超时。
+    await vi.waitFor(() => expect(renderQuadPreview).toHaveBeenCalledTimes(4));
+  });
+
+  /*
+    撤销重做与显示模式、重置视角从左栏搬到了视口两角（见 `PrevizViewportControls`）。搬家
+    真正会断的是接线：按钮还在、图标还对，回调却接到了隔壁那个 prop 上——组件自己的用例
+    只看得见「点了会调用传进来的函数」，接错了也照样绿。所以这里从编辑器整体验一遍：一头
+    是存储，一头是渲染器。
+  */
+  it("wires the relocated viewport controls to the store and the renderer", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    // 刚打开的场景没有可撤销的步骤。
+    expect(screen.getByRole("button", { name: "previz.viewport.undo" })).toBeDisabled();
+
+    act(() => {
+      usePrevizStore.getState().addObject("character");
+    });
+    const added = usePrevizStore.getState().scene.objects.length;
+    await user.click(screen.getByRole("button", { name: "previz.viewport.undo" }));
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(added - 1);
+
+    await user.click(screen.getByRole("button", { name: "previz.viewport.redo" }));
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(added);
+
+    await user.click(screen.getByRole("button", { name: "previz.viewport.display.clay" }));
+    expect(usePrevizStore.getState().scene.settings.displayMode).toBe("clay");
+
+    resetView.mockClear();
+    await user.click(screen.getByRole("button", { name: "previz.viewport.resetView" }));
+    expect(resetView).toHaveBeenCalledTimes(1);
+
+    // 间距是画笔的参数，落点在 store 上；浮层只是它现在的住处。
+    const spacing = screen.getByLabelText<HTMLInputElement>("previz.viewport.pathSpacing");
+    await user.clear(spacing);
+    await user.type(spacing, "1.5");
+    await user.tab();
+    expect(usePrevizStore.getState().pathSpacingM).toBe(1.5);
+  });
+
   it("captures and publishes into the canvas", async () => {
     const user = userEvent.setup();
     render(
@@ -530,7 +941,15 @@ async function renderEditor(overrides: Partial<ComponentProps<typeof PrevizEdito
   await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
   return {
     ...result,
-    renderer: { setFrame, setSelectedClip, planePointAt, setStroke, pickAt, pickPathPointAt },
+    renderer: {
+      setFrame,
+      setSelectedClip,
+      planePointAt,
+      setStroke,
+      setDrawing,
+      pickAt,
+      pickPathPointAt,
+    },
   };
 }
 
@@ -596,7 +1015,7 @@ describe("PrevizEditor timeline", () => {
     const { renderer } = await renderEditor();
     const objectId = usePrevizStore.getState().addObject("character");
     act(() => usePrevizStore.getState().selectObject(objectId!));
-    await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
 
     const canvas = screen.getByTestId("previz-canvas");
     let x = 0;
@@ -623,7 +1042,7 @@ describe("PrevizEditor timeline", () => {
         },
       });
     });
-    await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
 
     const canvas = screen.getByTestId("previz-canvas");
     renderer.planePointAt.mockClear();
@@ -642,7 +1061,7 @@ describe("PrevizEditor timeline", () => {
     const { renderer } = await renderEditor();
     const objectId = usePrevizStore.getState().addObject("character");
     act(() => usePrevizStore.getState().selectObject(objectId!));
-    await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
 
     const canvas = screen.getByTestId("previz-canvas");
     let x = 0;
@@ -669,7 +1088,7 @@ describe("PrevizEditor timeline", () => {
     const { renderer } = await renderEditor();
     const objectId = usePrevizStore.getState().addObject("character");
     act(() => usePrevizStore.getState().selectObject(objectId!));
-    await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
 
     const canvas = screen.getByTestId("previz-canvas");
     renderer.planePointAt.mockReturnValue([1, 0, 0]);
@@ -678,10 +1097,37 @@ describe("PrevizEditor timeline", () => {
     fireEvent.pointerUp(canvas, { clientX: 40, clientY: 10 });
 
     // 实测参照实现：画完一笔自动切回选择，否则下一次想选个对象反而又画了一条。
-    expect(screen.getByRole("button", { name: "previz.hud.tool.select" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "previz.toolbar.tool.select" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+  });
+
+  /*
+    画笔和轨道操作听的是同一块 canvas 上同一串「按住左键拖」。绘制期间不把左键从轨道
+    旋转上摘下来，用户每划一笔整个空间就跟着转一次——而笔画落点是拿当下的相机打射线
+    求出来的，视角边转边画，出来的轨迹和手划过的形状对不上。
+  */
+  it("takes the left button off the orbit while the draw tool is active", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("character");
+    act(() => usePrevizStore.getState().selectObject(objectId!));
+
+    // 选择工具下左键照常转视角。
+    expect(renderer.setDrawing).toHaveBeenLastCalledWith(false);
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+    expect(renderer.setDrawing).toHaveBeenLastCalledWith(true);
+
+    const canvas = screen.getByTestId("previz-canvas");
+    renderer.planePointAt.mockReturnValue([1, 0, 0]);
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(canvas, { clientX: 40, clientY: 10 });
+    fireEvent.pointerUp(canvas, { clientX: 40, clientY: 10 });
+
+    // 画完自动切回选择，左键也得跟着还回去——还不回去就再也转不动视角了。
+    expect(renderer.setDrawing).toHaveBeenLastCalledWith(false);
   });
 
   it("selects the path point under the pointer", async () => {
@@ -722,7 +1168,7 @@ describe("PrevizEditor timeline", () => {
     const { renderer } = await renderEditor();
     const objectId = usePrevizStore.getState().addObject("character");
     act(() => usePrevizStore.getState().selectObject(objectId!));
-    await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
     renderer.pickAt.mockClear();
 
     const canvas = screen.getByTestId("previz-canvas");
@@ -738,7 +1184,7 @@ describe("PrevizEditor timeline", () => {
     const user = userEvent.setup();
     const { renderer } = await renderEditor();
     act(() => usePrevizStore.getState().selectObject(null));
-    await user.click(screen.getByRole("button", { name: "previz.hud.tool.draw" }));
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
 
     const canvas = screen.getByTestId("previz-canvas");
     renderer.planePointAt.mockReturnValue([1, 0, 0]);

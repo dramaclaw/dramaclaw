@@ -5,11 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { createPrevizObject } from '@/features/previz/domain/objects';
 import {
   PREVIZ_PATH_SPACING_M,
+  PREVIZ_PATH_SPEED_MPS,
   drawPlaneHeight,
   drawSeedRotation,
   pathPointSeeds,
+  polylineLength,
   resampleByDistance,
   smoothStroke,
+  strokeDurationFrames,
   tangentYawDeg,
 } from '@/features/previz/domain/pathDraw';
 import {
@@ -181,7 +184,24 @@ describe('pathPointSeeds', () => {
     expect(seeds[1].rotation[1]).toBeCloseTo(-90, 10);
   });
 
-  it('holds one rotation on every seed when the caller hands one in', () => {
+  it('starts a seeded stroke at the aim it was handed', () => {
+    const seeds = pathPointSeeds(
+      [
+        [0, 0, 0],
+        [1, 0, 0],
+      ],
+      [-16.7, 200, 0],
+    );
+
+    // 起手那一刻的取景不该被切线抹掉：俯仰、横滚原样留住（切线只给得出 yaw），
+    // yaw 也还是同一个方向——200° 与 -160° 是同一条视线，收进 ±180 是为了让轨迹点
+    // 检查器上那三根滑杆够得着。
+    expect(seeds[0].rotation[0]).toBe(-16.7);
+    expect(seeds[0].rotation[1]).toBeCloseTo(-160, 10);
+    expect(seeds[0].rotation[2]).toBe(0);
+  });
+
+  it('swings a seeded aim along with the stroke', () => {
     const seeds = pathPointSeeds(
       [
         [0, 0, 0],
@@ -191,13 +211,27 @@ describe('pathPointSeeds', () => {
       [-16.7, 200, 0],
     );
 
-    // 推轨镜头是车走、镜头照旧盯着被摄体；把机位焊在轨道车头上（切线朝向）等于
-    // 画完一笔它就不再看着人物了。俯仰也得留住，切线只给得出 yaw。
-    expect(seeds.map((seed) => seed.rotation)).toEqual([
-      [-16.7, 200, 0],
-      [-16.7, 200, 0],
-      [-16.7, 200, 0],
-    ]);
+    // 笔画在第二点右转了 90°（切线 -90° → -180°），镜头得跟着摇过去同样的 90°，
+    // 而不是一路盯死起手那个方向。-160 - 90 收回区间就是 110。
+    expect(seeds[1].rotation[1]).toBeCloseTo(110, 10);
+    expect(seeds[2].rotation[1]).toBeCloseTo(110, 10);
+    // 摇的是水平，俯仰不跟着变：推轨拐个弯不该让镜头自己抬头。
+    expect(seeds.map((seed) => seed.rotation[0])).toEqual([-16.7, -16.7, -16.7]);
+  });
+
+  it('keeps a seeded aim square to a straight stroke', () => {
+    const seeds = pathPointSeeds(
+      [
+        [0, 0, 0],
+        [1, 0, 0],
+        [2, 0, 0],
+      ],
+      [0, 0, 0],
+    );
+
+    // 直线上没有相对转角，整笔就该保持同一个朝向——「跟着轨迹转」不等于「每一点都
+    // 抖一下」。
+    expect(seeds.map((seed) => seed.rotation[1])).toEqual([0, 0, 0]);
   });
 
   it('gives each held seed its own array', () => {
@@ -227,6 +261,71 @@ describe('pathPointSeeds', () => {
 describe('PREVIZ_PATH_SPACING_M', () => {
   it('defaults to one metre inside a 0.05..5 range', () => {
     expect(PREVIZ_PATH_SPACING_M).toEqual({ min: 0.05, max: 5, default: 1 });
+  });
+});
+
+describe('PREVIZ_PATH_SPEED_MPS', () => {
+  it('defaults to walking pace inside a 0.1..20 range', () => {
+    // 1.4 m/s 是成年人正常步行（约 5 km/h）：预演台里画得最多的就是人物走位。
+    expect(PREVIZ_PATH_SPEED_MPS).toEqual({ min: 0.1, max: 20, default: 1.4 });
+  });
+});
+
+describe('polylineLength', () => {
+  it('adds the segments up', () => {
+    expect(polylineLength([
+      [0, 0, 0],
+      [3, 0, 0],
+      [3, 0, 4],
+    ])).toBe(7);
+  });
+
+  it('is zero for a stroke that goes nowhere', () => {
+    expect(polylineLength([])).toBe(0);
+    expect(polylineLength([[1, 2, 3]])).toBe(0);
+  });
+});
+
+describe('strokeDurationFrames', () => {
+  const straight = (metres: number): Vec3[] => [
+    [0, 0, 0],
+    [metres, 0, 0],
+  ];
+
+  it('turns length over speed into frames', () => {
+    // 6 米、2 m/s = 3 秒 = 90 帧。
+    expect(strokeDurationFrames(straight(6), 2)).toBe(90);
+  });
+
+  it('gives a longer stroke more frames at the same speed', () => {
+    expect(strokeDurationFrames(straight(2), 1)).toBeLessThan(
+      strokeDurationFrames(straight(8), 1),
+    );
+  });
+
+  it('clamps the speed into its range instead of dividing by it', () => {
+    // 0 会算出 Infinity 帧，负数会算出负帧——两者写进场景都是一条点不中的片段。
+    expect(strokeDurationFrames(straight(6), 0)).toBe(strokeDurationFrames(straight(6), 0.1));
+    expect(strokeDurationFrames(straight(6), -5)).toBe(strokeDurationFrames(straight(6), 0.1));
+  });
+
+  it('never returns less than one frame', () => {
+    // 0 长度的片段 `frameToU` 无解，时间轴上也再点不中它。
+    expect(strokeDurationFrames([], 1)).toBe(1);
+    expect(strokeDurationFrames(straight(0.001), 20)).toBe(1);
+  });
+
+  it('caps at the longest timeline there is', () => {
+    // 超出去的那一段永远落在时间轴外面：既播不到，也剪不着。
+    expect(strokeDurationFrames(straight(1000), 0.1)).toBe(360);
+  });
+
+  it('survives a stroke with NaN in it', () => {
+    // 上游漏了护栏时宁可给一帧，也不能把 NaN 写进场景——那会让整条时间轴算不出来。
+    expect(strokeDurationFrames([
+      [0, 0, 0],
+      [Number.NaN, 0, 0],
+    ], 1)).toBe(1);
   });
 });
 

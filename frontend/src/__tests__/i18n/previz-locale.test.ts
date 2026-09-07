@@ -34,6 +34,7 @@ const TIMELINE_KEYS = [
   'addCloseup',
   'closeupTarget',
   'appendClip',
+  'resize',
   'zoomIn',
   'zoomOut',
   'zoomFit',
@@ -177,10 +178,44 @@ describe('previz P3 locale keys', () => {
       expect(Object.keys(depthOfField).sort()).toEqual([...CAMERA_CREATE_TABLES.depthOfField].sort());
     });
 
-    it(`${name} carries the new hud keys`, () => {
-      expect(bundle.previz.hud.group.tool).toBeTruthy();
-      expect(Object.keys(bundle.previz.hud.tool).sort()).toEqual(['draw', 'select']);
-      expect(bundle.previz.hud.pathSpacing).toBeTruthy();
+    // 视口顶上那条 HUD 已经拆开：摆场景的工具进了左侧菜单列（`previz.toolbar`），
+    // 撤销重做、显示模式、切视角与聚焦浮回视口两角（`previz.viewport`）。这里钉的是
+    // 拆完之后两边都齐全，而不是拆没了。
+    it(`${name} carries every toolbar group and mode key`, () => {
+      const toolbar = bundle.previz.toolbar;
+      expect(Object.keys(toolbar.group).sort()).toEqual(['create', 'tool', 'gizmo'].sort());
+      expect(Object.keys(toolbar.tool).sort()).toEqual(['draw', 'select']);
+      expect(Object.keys(toolbar.gizmo).sort()).toEqual(['rotate', 'scale', 'translate']);
+      for (const key of ['collapseTimeline', 'expandTimeline'] as const) {
+        expect(toolbar[key], key).toBeTruthy();
+      }
+    });
+
+    it(`${name} carries every viewport control key`, () => {
+      const viewport = bundle.previz.viewport;
+      expect(Object.keys(viewport.group).sort()).toEqual(
+        ['axis', 'display', 'draw', 'history', 'view'].sort(),
+      );
+      expect(Object.keys(viewport.display).sort()).toEqual(['clay', 'solid', 'translucent']);
+      // 六个方向是坐标轴小球那六颗球的名字，少一个就是一颗点不出名字的球。
+      expect(Object.keys(viewport.view).sort()).toEqual(
+        ['front', 'back', 'left', 'right', 'top', 'bottom'].sort(),
+      );
+      expect(Object.keys(viewport.quad).sort()).toEqual(['camera', 'side', 'top']);
+      for (const key of [
+        'undo',
+        'redo',
+        'resetView',
+        'pathSpacing',
+        'pathSpeed',
+        'axis',
+        'focus',
+        'focusHint',
+        'quadView',
+        'quadNoCamera',
+      ] as const) {
+        expect(viewport[key], key).toBeTruthy();
+      }
     });
   }
 
