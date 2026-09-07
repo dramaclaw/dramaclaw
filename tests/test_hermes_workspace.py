@@ -86,7 +86,8 @@ def isolated_workspace(tmp_path, monkeypatch):
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("MODEL_GATEWAY_MODE", raising=False)
-    monkeypatch.delenv("HERMES_TOOL_SEARCH_MODE", raising=False)
+    # Isolate the production default from a developer's repository .env.
+    monkeypatch.setenv("HERMES_TOOL_SEARCH_MODE", "auto")
     monkeypatch.delenv("ST_HERMES_SKILLS", raising=False)
     monkeypatch.delenv("HERMES_MODEL", raising=False)
     monkeypatch.delenv("HERMES_MODEL_DEFAULT", raising=False)
@@ -191,7 +192,7 @@ def test_freezone_profile_uses_isolated_workspace(
 
     parsed = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
     assert parsed["enabled_toolsets"] == ["hermes-acp", "freezone-acp", "memory"]
-    assert parsed["tools"]["tool_search"]["enabled"] == "off"
+    assert parsed["tools"]["tool_search"]["enabled"] == "auto"
     assert parsed["plugins"]["enabled"] == ["freezone"]
     assert parsed["tools"]["skill_manage"]["enabled"] == "off"
     assert parsed["agent"]["coding_context"] == "off"

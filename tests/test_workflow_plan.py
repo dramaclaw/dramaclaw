@@ -1584,6 +1584,25 @@ def test_workflow_plan_rejects_large_text_hidden_in_mcp_plan_fields():
     )
 
 
+def test_workflow_plan_rejects_large_text_split_across_small_fields():
+    plan = _dynamic_plan(image_count=3)
+    plan["nodes"][0]["data"].update(
+        {
+            "content": "甲" * 1_500,
+            "text": "乙" * 1_500,
+            "description": "丙" * 1_500,
+        }
+    )
+
+    result = validate_workflow_plan(plan)
+
+    assert result["ok"] is False
+    assert any(
+        issue["path"] == "$" and "aggregate workflow planning text" in issue["message"]
+        for issue in result["errors"]
+    )
+
+
 def test_workflow_plan_rejects_recipe_backed_user_input_node():
     plan = _dynamic_plan()
     plan["nodes"][0]["data"]["workflowCatalog"] = {

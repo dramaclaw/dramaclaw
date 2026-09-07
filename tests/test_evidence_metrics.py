@@ -90,6 +90,16 @@ def test_agent_product_rollout_counters_include_zero_defaults():
     }
 
 
+def test_counters_are_shared_outside_process_memory(monkeypatch, tmp_path):
+    db_path = tmp_path / "shared" / "evidence.sqlite3"
+    monkeypatch.setenv("DRAMACLAW_EVIDENCE_METRICS_DB", str(db_path))
+
+    evidence_metrics.observe("agent_product_reconciled")
+    evidence_metrics._counts.clear()
+
+    assert evidence_metrics.agent_product_counts()["agent_product_reconciled"] == 1
+
+
 @pytest.mark.asyncio
 async def test_diagnostics_exposes_agent_product_counters():
     from novelvideo.api.routes.diagnostics import get_evidence_counters

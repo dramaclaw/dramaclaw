@@ -14,6 +14,17 @@ from novelvideo.freezone.workflow_schema import (
 MAX_WORKFLOW_NODES = 200
 MAX_WORKFLOW_EDGES = 400
 MAX_WORKFLOW_PLANNING_TEXT_CHARS = 4_000
+PLANNING_TEXT_FIELD_NAMES = frozenset(
+    {
+        "brief",
+        "content",
+        "description",
+        "instruction",
+        "prompt",
+        "text",
+        "user_goal",
+    }
+)
 
 ALLOWED_NODE_TYPES = set(NODE_TYPE_VALUES)
 ALLOWED_LINK_TYPES = set(LINK_TYPE_VALUES)
@@ -828,10 +839,14 @@ def _oversized_planning_text_issues(value: Any) -> list[dict[str, str]]:
     from novelvideo.utils.document_parsers import count_billable_text_chars
 
     issues: list[dict[str, str]] = []
+    total_chars = 0
 
-    def visit(item: Any, path: str) -> None:
+    def visit(item: Any, path: str, *, aggregate: bool = False) -> None:
+        nonlocal total_chars
         if isinstance(item, str):
             chars = count_billable_text_chars(item)
+            if aggregate:
+                total_chars += chars
             if chars > MAX_WORKFLOW_PLANNING_TEXT_CHARS:
                 issues.append(
                     _issue(
@@ -844,13 +859,26 @@ def _oversized_planning_text_issues(value: Any) -> list[dict[str, str]]:
             return
         if isinstance(item, dict):
             for key, child in item.items():
-                visit(child, f"{path}.{key}" if path else str(key))
+                visit(
+                    child,
+                    f"{path}.{key}" if path else str(key),
+                    aggregate=str(key).lower() in PLANNING_TEXT_FIELD_NAMES,
+                )
             return
         if isinstance(item, list):
             for index, child in enumerate(item):
-                visit(child, f"{path}[{index}]")
+                visit(child, f"{path}[{index}]", aggregate=aggregate)
 
     visit(value, "")
+    if total_chars > MAX_WORKFLOW_PLANNING_TEXT_CHARS:
+        issues.append(
+            _issue(
+                "$",
+                "aggregate workflow planning text exceeds "
+                f"{MAX_WORKFLOW_PLANNING_TEXT_CHARS} characters; deliver large "
+                "text through a metered text Recipe",
+            )
+        )
     return issues
 
 

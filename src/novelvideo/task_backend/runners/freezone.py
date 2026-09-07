@@ -1315,7 +1315,22 @@ async def _run_freezone_text_generate_async(
     )
     feature_key = str(billing_metadata.get("feature_key") or "").strip()
     run_task_id = str(envelope.get("__run_task_id") or "").strip()
-    if feature_key and run_task_id:
+    result_billing_ack = billing_metadata.get("result_billing_version_ack")
+    existing_reservation_id = str(
+        billing_metadata.get("feature_credit_reservation_id")
+        or billing_metadata.get("feature_credit_charge_id")
+        or ""
+    ).strip()
+    # The runner owns the output-priced reservation only after EE explicitly
+    # acknowledges protocol v2.  With old EE, the legacy estimate was already
+    # reserved at enqueue time; reserving again here would double-charge.
+    if (
+        feature_key
+        and run_task_id
+        and type(result_billing_ack) is int
+        and result_billing_ack == 2
+        and not existing_reservation_id
+    ):
         reservation = await get_usage_meter().reserve_feature_start_credits(
             user_id=ctx.requester_user_id,
             feature_key=feature_key,

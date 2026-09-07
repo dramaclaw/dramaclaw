@@ -7108,6 +7108,12 @@ async def freezone_text_generate(
     if not prompt:
         raise HTTPException(400, "prompt is required")
 
+    # Keep a legacy estimate during rolling upgrades. Old EE reserves it at
+    # enqueue time; new EE acknowledges v2 and defers to the trusted result.
+    from novelvideo.utils.document_parsers import count_billable_text_chars
+
+    legacy_billable_chars = max(1, count_billable_text_chars(prompt))
+
     try:
         job_id = _new_job_id()
         if ctx is not None:
@@ -7123,6 +7129,8 @@ async def freezone_text_generate(
                     "billing": {
                         "operation": "text_generate",
                         "quantity_source": "trusted_runner_result",
+                        "billable_chars": legacy_billable_chars,
+                        "result_billing_version": 2,
                     },
                 },
             )

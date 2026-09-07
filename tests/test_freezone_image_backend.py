@@ -3942,7 +3942,10 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
                 "canvas_id": "canvas_a",
                 "node_id": "node_text",
             },
-            "billing_metadata": {"feature_key": "freezone.text_generate"},
+            "billing_metadata": {
+                "feature_key": "freezone.text_generate",
+                "result_billing_version_ack": 2,
+            },
             "__run_task_id": "task_text_generate",
         },
         ctx,
@@ -3965,6 +3968,25 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
     assert reservations[0]["params"]["pricing_metrics"]["billable_chars"] == 13
     assert history[-1]["task_type"] == "freezone_text_generate"
     assert history[-1]["model"] == "DC-freezone-text-writer-LLM"
+
+    reservations.clear()
+    legacy_result = await freezone_runner._run_freezone_text_generate_async(
+        {
+            "payload": {
+                "job_id": "job_text_generate_legacy",
+                "project_dir": str(project_dir),
+                "prompt": "写一段雨夜重逢",
+            },
+            "billing_metadata": {
+                "feature_key": "freezone.text_generate",
+                "feature_credit_reservation_id": "legacy_reservation",
+            },
+            "__run_task_id": "task_text_generate_legacy",
+        },
+        ctx,
+    )
+    assert reservations == []
+    assert "__feature_credit_reservation_id" not in legacy_result
 
 
 @pytest.mark.asyncio
@@ -4235,6 +4257,8 @@ async def test_freezone_text_generate_job_defers_quantity_to_trusted_result(
     assert captured["payload"]["billing"] == {
         "operation": "text_generate",
         "quantity_source": "trusted_runner_result",
+        "billable_chars": 7,
+        "result_billing_version": 2,
     }
 
 

@@ -1,9 +1,8 @@
 """Read-only diagnostics for the evidence plane.
 
-``evidence_metrics`` counts each per-turn capability outcome in process memory
-only — nothing persists it and nothing emits it, so a running backend cannot be
-asked "did this turn mint a capability?". This endpoint exposes those counters
-so the answer is observable with a single ``curl`` after a message is sent.
+``evidence_metrics`` persists each per-turn capability outcome in a shared
+SQLite store under ``NOVELVIDEO_STATE_DIR``. API and task worker processes read
+the same authoritative counters, including across worker restarts.
 
 Only names and counts are returned. The ``evidence_metrics`` module is designed
 so these carry no key, capability, project, trajectory or prompt — safe to
@@ -23,7 +22,7 @@ router = APIRouter()
 
 @router.get("/diagnostics/evidence")
 async def get_evidence_counters():
-    """Return the in-process evidence-plane counters and any halting outcomes."""
+    """Return shared evidence-plane counters and any halting outcomes."""
     counters = evidence_metrics.counters()
     halting = evidence_metrics.halting_counts()
     agent_products = evidence_metrics.agent_product_counts()
