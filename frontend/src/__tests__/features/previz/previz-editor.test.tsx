@@ -1163,6 +1163,32 @@ describe("PrevizEditor timeline", () => {
     expect(usePrevizStore.getState().selectedObjectId).toBeNull();
   });
 
+  it("skips picking with the navigate tool, but still picks once back on select", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("character");
+    act(() => usePrevizStore.getState().selectObject(objectId!));
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.navigate" }));
+    renderer.pickAt.mockClear();
+    renderer.pickPathPointAt.mockClear();
+
+    const canvas = screen.getByTestId("previz-canvas");
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(canvas, { clientX: 10, clientY: 10 });
+
+    // 导航工具点一下不选也不清选中：转到一半误点不会把面板换掉，给没有中键的触控板用。
+    expect(renderer.pickAt).not.toHaveBeenCalled();
+    expect(renderer.pickPathPointAt).not.toHaveBeenCalled();
+    expect(usePrevizStore.getState().selectedObjectId).toBe(objectId);
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.select" }));
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(canvas, { clientX: 10, clientY: 10 });
+
+    // 切回选择，同一个点还是照常走拾取。
+    expect(renderer.pickAt).toHaveBeenCalledTimes(1);
+  });
+
   it("does not select an object with the pen down", async () => {
     const user = userEvent.setup();
     const { renderer } = await renderEditor();
@@ -1213,5 +1239,89 @@ describe("PrevizEditor timeline", () => {
 
     fireEvent.keyDown(window, { key: "ArrowLeft" });
     expect(usePrevizStore.getState().timelineFrame).toBe(10);
+  });
+
+  it("switches tool with the W and Q keys, matching Blender", async () => {
+    await renderEditor();
+
+    fireEvent.keyDown(window, { key: "q" });
+    expect(screen.getByRole("button", { name: "previz.toolbar.tool.navigate" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.keyDown(window, { key: "w" });
+    expect(screen.getByRole("button", { name: "previz.toolbar.tool.select" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("ignores W and Q mid-stroke, so the camera does not orbit under a live pen", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("character");
+    act(() => usePrevizStore.getState().selectObject(objectId!));
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+
+    const canvas = screen.getByTestId("previz-canvas");
+    renderer.planePointAt.mockReturnValue([1, 0, 0]);
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+
+    fireEvent.keyDown(window, { key: "q" });
+
+    // 笔画还按着：Q 不该把工具切成导航，否则 setDrawing 的效果会重挂左键、
+    // 让视口在笔下转起来。
+    expect(screen.getByRole("button", { name: "previz.toolbar.tool.draw" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "previz.toolbar.tool.navigate" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+
+    fireEvent.pointerUp(canvas, { clientX: 10, clientY: 10 });
+
+    // 松手照常收笔、自动切回选择——快捷键拦截只挡笔画中途，不影响画完的既有行为。
+    expect(screen.getByRole("button", { name: "previz.toolbar.tool.select" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("switches the gizmo mode with the G, R and S keys, matching Blender", async () => {
+    await renderEditor();
+
+    fireEvent.keyDown(window, { key: "r" });
+    expect(screen.getByRole("button", { name: "previz.toolbar.gizmo.rotate" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.keyDown(window, { key: "s" });
+    expect(screen.getByRole("button", { name: "previz.toolbar.gizmo.scale" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.keyDown(window, { key: "g" });
+    expect(screen.getByRole("button", { name: "previz.toolbar.gizmo.translate" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("no longer treats E as a gizmo shortcut", async () => {
+    await renderEditor();
+    // 先切到旋转以外的手柄：E 以前正是旋转的键位，如果它没被摘干净，这里会悄悄切回去。
+    fireEvent.keyDown(window, { key: "s" });
+
+    fireEvent.keyDown(window, { key: "e" });
+
+    expect(screen.getByRole("button", { name: "previz.toolbar.gizmo.scale" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 });

@@ -7526,13 +7526,14 @@
       "importProp": "Import model",
       "limitReached": "Limit reached ({{count}})",
       "tool": {
-        "select": "Select",
+        "select": "Select (W)",
+        "navigate": "Navigate (Q)",
         "draw": "Draw path"
       },
       "gizmo": {
-        "translate": "Move",
-        "rotate": "Rotate",
-        "scale": "Scale"
+        "translate": "Move (G)",
+        "rotate": "Rotate (R)",
+        "scale": "Scale (S)"
       },
       "group": {
         "create": "Create",

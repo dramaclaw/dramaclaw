@@ -210,6 +210,19 @@ describe("PrevizRenderer 按需重绘", () => {
   });
 });
 
+describe("PrevizRenderer 视口手势", () => {
+  it("中键始终环绕视角，不分工具", async () => {
+    const canvas = document.createElement("canvas");
+    const instance = await PrevizRenderer.create(canvas);
+
+    // 滚轮已经负责推拉，中键再推拉是重复的；中键环绕是 Blender 等 DCC 的通用习惯，
+    // 不必先切到某个特定工具。
+    expect(controls.mouseButtons.MIDDLE).toBe(0);
+
+    instance.dispose();
+  });
+});
+
 describe("PrevizRenderer 绘制态", () => {
   it("绘制时摘掉左键与单指的轨道旋转，画完再挂回去", async () => {
     const canvas = document.createElement("canvas");
@@ -222,8 +235,8 @@ describe("PrevizRenderer 绘制态", () => {
     expect(controls.mouseButtons.LEFT).toBeNull();
     expect(controls.touches.ONE).toBeNull();
 
-    // 缩放、推拉、平移在绘制途中照样要用：画一条长轨迹常常得一路推着看。
-    expect(controls.mouseButtons.MIDDLE).toBe(1);
+    // 缩放、环绕、平移在绘制途中照样要用：画一条长轨迹常常得一路转着看。
+    expect(controls.mouseButtons.MIDDLE).toBe(0);
     expect(controls.mouseButtons.RIGHT).toBe(2);
 
     instance.setDrawing(false);

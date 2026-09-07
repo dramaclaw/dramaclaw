@@ -7526,13 +7526,14 @@
       "importProp": "导入模型",
       "limitReached": "已达上限 {{count}} 个",
       "tool": {
-        "select": "选择",
+        "select": "选择 (W)",
+        "navigate": "导航 (Q)",
         "draw": "绘制轨迹"
       },
       "gizmo": {
-        "translate": "移动",
-        "rotate": "旋转",
-        "scale": "缩放"
+        "translate": "移动 (G)",
+        "rotate": "旋转 (R)",
+        "scale": "缩放 (S)"
       },
       "group": {
         "create": "创建",
