@@ -17,8 +17,13 @@ const loadAudioPeaks = vi.fn<(src: string) => Promise<Float32Array>>();
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
-vi.mock('@/features/canvas/compose/audioPeaks', () => ({
-  PEAK_BUCKETS_PER_SEC: 120,
+/*
+  只换掉 loadAudioPeaks（jsdom 没有 AudioContext），其余从真模块透传。
+  之前把 PEAK_BUCKETS_PER_SEC 抄成字面量 120，等于下面那组算术全钉在测试自己编的
+  常量上：把 audioPeaks.ts 里的 120 改成 240，一条都不会红。
+*/
+vi.mock('@/features/canvas/compose/audioPeaks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/canvas/compose/audioPeaks')>()),
   loadAudioPeaks: (src: string) => loadAudioPeaks(src),
 }));
 
