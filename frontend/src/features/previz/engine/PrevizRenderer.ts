@@ -324,7 +324,8 @@ export class PrevizRenderer {
     this.currentScene = scene;
     this.trackHandPlacements(previous, scene);
     this.graph.sync(scene);
-    // sync 可能重建了机位模型，直播色要重新涂上去。
+    // 节点可能是这次 sync 才建出来的（撤销删除、或 setLiveCamera 先于 setScene），也可能
+    // 刚被切显示模式刷掉了颜色，直播色要重新涂上去。
     if (this.liveCameraId) {
       const node = this.graph.nodeFor(this.liveCameraId);
       if (node) setFrustumLive(node, true);
@@ -377,7 +378,11 @@ export class PrevizRenderer {
     if (objectId === this.liveCameraId) return;
     if (this.liveCameraId) {
       const previous = this.graph.nodeFor(this.liveCameraId);
-      if (previous) setFrustumLive(previous, false);
+      if (previous) {
+        setFrustumLive(previous, false);
+        // 熄灯只把本色记回去；此刻该显示什么色由显示模式说了算——全灰里是灰，不是橙。
+        this.graph.refreshDisplayMode(previous);
+      }
     }
     this.liveCameraId = objectId;
     if (objectId) {
