@@ -19,10 +19,15 @@ export interface PrevizAudioSource {
   sourceNodeId: string | null;
 }
 
+/** 毫秒换整帧。加 eps 的原因见 `audioFramesAvailable`：offsetMs 多半是帧换算来的循环小数。 */
+export function msToFrames(ms: number, fps: number): number {
+  return Math.floor((ms * fps) / 1000 + 1e-6);
+}
+
 /** 素材从 `offsetMs` 起还剩多少整帧。向下取整：多出的半帧没有声音可放。 */
 export function audioFramesAvailable(durationMs: number, offsetMs: number, fps: number): number {
   // offsetMs 多半是帧换算来的循环小数，乘回去会差在小数点后十几位，别让它吞掉一帧。
-  return Math.max(0, Math.floor(((durationMs - offsetMs) * fps) / 1000 + 1e-6));
+  return Math.max(0, msToFrames(durationMs - offsetMs, fps));
 }
 
 export function framesToMs(frames: number, fps: number): number {

@@ -8,6 +8,7 @@ import {
   framesToMs,
   insertAudioClip,
   isAcceptedAudioFile,
+  msToFrames,
   PREVIZ_MAX_AUDIO_BYTES,
   PREVIZ_MAX_AUDIO_CLIPS,
   type PrevizAudioSource,
@@ -61,6 +62,16 @@ describe('conversions', () => {
     for (let k = 1; k < 30; k += 1) {
       expect(audioFramesAvailable(2000, framesToMs(k, 30), 30)).toBe(60 - k);
     }
+  });
+
+  it('msToFrames round-trips framesToMs without losing a frame to floating point', () => {
+    // audioFramesAvailable 就是靠 msToFrames 里那个 + 1e-6 兜住这类循环小数的，两处必须
+    // 共用同一个实现，否则一处补了 eps 另一处没补，账还是对不上。
+    for (let k = 1; k < 30; k += 1) {
+      expect(msToFrames(framesToMs(k, 30), 30)).toBe(k);
+    }
+    expect(msToFrames(0, 30)).toBe(0);
+    expect(msToFrames(1000, 30)).toBe(30);
   });
 });
 
