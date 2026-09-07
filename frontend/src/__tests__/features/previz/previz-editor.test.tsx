@@ -1324,4 +1324,32 @@ describe("PrevizEditor timeline", () => {
       "true",
     );
   });
+
+  // 每颗按钮角上现在画着一个键帽（PrevizToolbar 里的 shortcut prop）。这条把角标念出
+  // 的字母喂回真正的 keydown 处理器，两边才不会静悄悄地对不上——角标改了字母而没人
+  // 跟着改这里的键位绑定，或者反过来，都会在这里变红。
+  it("every badged key activates the button it is drawn on", async () => {
+    await renderEditor();
+
+    const badged = [
+      "previz.toolbar.tool.select",
+      "previz.toolbar.tool.navigate",
+      "previz.toolbar.gizmo.translate",
+      "previz.toolbar.gizmo.rotate",
+      "previz.toolbar.gizmo.scale",
+    ];
+
+    for (const label of badged) {
+      const control = screen.getByRole("button", { name: label });
+      const key = control.getAttribute("aria-keyshortcuts");
+      expect(key, `${label} should carry a shortcut badge`).toBeTruthy();
+
+      fireEvent.keyDown(window, { key: (key as string).toLowerCase() });
+
+      expect(screen.getByRole("button", { name: label })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    }
+  });
 });

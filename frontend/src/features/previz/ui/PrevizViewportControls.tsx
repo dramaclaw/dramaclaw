@@ -21,6 +21,7 @@ import type { DisplayMode } from "@/features/previz/domain/scene";
 import type { PrevizViewDirection } from "@/features/previz/domain/view";
 import { PrevizAxisGizmo, type PrevizViewSource } from "@/features/previz/ui/PrevizAxisGizmo";
 import { PrevizHoverTip } from "@/features/previz/ui/PrevizHoverTip";
+import { PrevizKeyCap } from "@/features/previz/ui/PrevizKeyCap";
 import { cn } from "@/lib/utils";
 
 const DISPLAY_ICON: Record<DisplayMode, LucideIcon> = {
@@ -102,11 +103,14 @@ function ControlButton({
   icon: Icon,
   label,
   on,
+  shortcut,
   ...props
 }: {
   icon: LucideIcon;
   label: string;
   on?: boolean;
+  /** 快捷键字母；给了就在右上角画一个小键帽，并写进 aria-keyshortcuts。 */
+  shortcut?: string;
 } & ComponentProps<typeof Button>) {
   return (
     <PrevizHoverTip label={label} side="bottom">
@@ -114,11 +118,13 @@ function ControlButton({
         type="button"
         variant="ghost"
         size="icon"
-        className={cn(ITEM, on && ITEM_ON)}
+        className={cn(ITEM, on && ITEM_ON, shortcut && "relative")}
         aria-label={label}
+        aria-keyshortcuts={shortcut}
         {...props}
       >
         <Icon className="h-4 w-4" />
+        {shortcut && <PrevizKeyCap className="absolute -right-1 -top-1">{shortcut}</PrevizKeyCap>}
       </Button>
     </PrevizHoverTip>
   );
@@ -220,10 +226,12 @@ export function PrevizViewportControls({
               variant="ghost"
               className={TEXT_ITEM}
               disabled={!hasSelection}
+              aria-keyshortcuts="F"
               onClick={onFocus}
             >
               <Crosshair className="h-3.5 w-3.5" />
               {focusLabel}
+              <PrevizKeyCap className="ml-0.5">F</PrevizKeyCap>
             </Button>
           </PrevizHoverTip>
 
@@ -313,6 +321,7 @@ export function PrevizViewportControls({
           <ControlButton
             icon={RotateCcw}
             label={t("previz.viewport.resetView")}
+            shortcut="H"
             onClick={onResetView}
           />
         </div>

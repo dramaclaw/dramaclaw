@@ -380,6 +380,34 @@ describe("PrevizToolbar", () => {
     expect(button("previz.toolbar.tool.select")).toHaveAttribute("aria-pressed", "true");
   });
 
+  // 悬停提示曾是唯一念出 W/Q/G/R/S 的地方，鼠标不划过去就看不见。角标要把这五个键位
+  // 画在按钮角上，并且写进 aria-keyshortcuts 给辅助技术读。`button(label)` 本身就是
+  // 按可访问名字查询的，角标要是把名字带偏了这一步就先找不到按钮，用不着另开一条
+  // 断言证明「名字没变」。
+  it.each([
+    ["previz.toolbar.tool.select", "W"],
+    ["previz.toolbar.tool.navigate", "Q"],
+    ["previz.toolbar.gizmo.translate", "G"],
+    ["previz.toolbar.gizmo.rotate", "R"],
+    ["previz.toolbar.gizmo.scale", "S"],
+  ])("badges each shortcut on its button and exposes it as aria-keyshortcuts", (label, key) => {
+    setup();
+
+    const control = button(label);
+    expect(control).toHaveAttribute("aria-keyshortcuts", key);
+    const badge = within(control).getByText(key);
+    expect(badge.tagName).toBe("KBD");
+  });
+
+  // 绘制没有键位：不该无中生有画一个角标出来。
+  it("draws no shortcut badge on the draw tool button", () => {
+    setup();
+
+    const control = button("previz.toolbar.tool.draw");
+    expect(control).not.toHaveAttribute("aria-keyshortcuts");
+    expect(control.querySelector("kbd")).toBeNull();
+  });
+
   // 同一颗按钮既收也展。两个方向都得测：只测「收」的话，把展开那半接成空函数照样绿，
   // 而那正好是「收起来之后再也开不回来」这个最难受的坏法。
   it.each([
