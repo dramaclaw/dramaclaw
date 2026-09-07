@@ -103,7 +103,7 @@ function sceneWithPath(points = 3): PrevizScene {
   };
   return {
     ...createDefaultScene(),
-    timeline: { tracks: [{ id: 'track', objectId: 'obj', clips: [clip] }] },
+    timeline: { ...createDefaultScene().timeline, tracks: [{ id: 'track', objectId: 'obj', clips: [clip] }] },
   };
 }
 

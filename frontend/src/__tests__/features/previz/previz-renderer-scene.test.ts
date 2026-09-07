@@ -1064,6 +1064,7 @@ describe('PrevizRenderer timeline', () => {
       ...scene,
       objects: [object],
       timeline: {
+        ...scene.timeline,
         tracks: [
           {
             id: 'track',

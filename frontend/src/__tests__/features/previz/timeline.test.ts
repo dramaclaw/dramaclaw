@@ -39,7 +39,7 @@ function pathClip(id: string, startFrame: number, endFrame: number): PrevizPathC
 }
 
 function sceneWith(tracks: PrevizTrack[]): PrevizScene {
-  return { ...createDefaultScene(), timeline: { tracks } };
+  return { ...createDefaultScene(), timeline: { ...createDefaultScene().timeline, tracks } };
 }
 
 describe('trackFor / clipById', () => {

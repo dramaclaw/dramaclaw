@@ -300,8 +300,11 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     applyScene({
       ...scene,
       objects: scene.objects.filter((object) => object.id !== id),
-      // 轨道跟着走：留下来就是一个悬空引用，P3 的求值器会撞上它。
-      timeline: { tracks: scene.timeline.tracks.filter((track) => track.objectId !== id) },
+      timeline: {
+        ...scene.timeline,
+        // 轨道跟着走：留下来就是一个悬空引用，P3 的求值器会撞上它。
+        tracks: scene.timeline.tracks.filter((track) => track.objectId !== id),
+      },
     });
     set({
       selectedObjectId: selectedObjectId === id ? null : selectedObjectId,

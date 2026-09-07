@@ -40,7 +40,7 @@ describe("previz node scene adapter", () => {
 
     expect(result).toEqual({
       ok: true,
-      patch: { scene: expected, summary: { objectCount: 1, durationFrames: 240 } },
+      patch: { scene: expected, summary: { objectCount: 1, durationFrames: 240, audioClipCount: 0 } },
     });
   });
 

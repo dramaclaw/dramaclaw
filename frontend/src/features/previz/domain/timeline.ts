@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { samplePathPosition, samplePathRotation, sortedPathPoints } from './pathCurve';
 import {
   PREVIZ_FPS,
+  PREVIZ_MIN_CLIP_FRAMES,
   type PrevizClip,
   type PrevizPathClip,
   type PrevizPathPoint,
@@ -154,14 +155,14 @@ export function zoomToFit(totalSeconds: number, laneWidthPx: number): number {
   return Math.min(PREVIZ_TIMELINE_ZOOM.max, Math.max(PREVIZ_TIMELINE_ZOOM.min, raw));
 }
 
-/** 片段最短长度（帧）。0 长片段的 `frameToU` 无解，时间轴上也点不中。 */
-export const PREVIZ_MIN_CLIP_FRAMES = 1;
+export { PREVIZ_MIN_CLIP_FRAMES };
 
 /** 换掉某条轨道，其余原样。所有写操作都经过它，免得每个函数各写一遍 map。 */
 function withTrack(scene: PrevizScene, trackId: string, next: PrevizTrack): PrevizScene {
   return {
     ...scene,
     timeline: {
+      ...scene.timeline,
       tracks: scene.timeline.tracks.map((track) => (track.id === trackId ? next : track)),
     },
   };
@@ -188,6 +189,7 @@ export function upsertClip(
     return {
       ...scene,
       timeline: {
+        ...scene.timeline,
         tracks: [...scene.timeline.tracks, { id: uuidv4(), objectId, clips: [clip] }],
       },
     };
@@ -301,6 +303,7 @@ export function pinTrack(scene: PrevizScene, objectId: string): PrevizScene {
   return {
     ...scene,
     timeline: {
+      ...scene.timeline,
       tracks: [target, ...scene.timeline.tracks.filter((track) => track.id !== target.id)],
     },
   };
@@ -309,7 +312,10 @@ export function pinTrack(scene: PrevizScene, objectId: string): PrevizScene {
 export function removeTrack(scene: PrevizScene, objectId: string): PrevizScene {
   return {
     ...scene,
-    timeline: { tracks: scene.timeline.tracks.filter((track) => track.objectId !== objectId) },
+    timeline: {
+      ...scene.timeline,
+      tracks: scene.timeline.tracks.filter((track) => track.objectId !== objectId),
+    },
   };
 }
 
