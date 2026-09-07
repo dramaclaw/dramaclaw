@@ -314,6 +314,27 @@ function rigOf(graph: PrevizSceneGraph, objectId: string): THREE.Object3D | unde
 }
 
 /**
+ * 模型根下面第一个带材质的 Mesh。根到网格之间隔几层不归这组用例管：`build()` 在克隆体
+ * 外面套了一层转半圈的 Group，直接读 `children[0]` 拿到的是那个 Group 而不是网格。
+ */
+function rigMeshOf(graph: PrevizSceneGraph, objectId: string): FakeMeshView {
+  const mesh = findMesh(rigOf(graph, objectId));
+  if (!mesh) throw new Error('expected a mesh under the rig');
+  return mesh;
+}
+
+function findMesh(object: THREE.Object3D | undefined): FakeMeshView | undefined {
+  if (!object) return undefined;
+  const view = object as unknown as FakeMeshView;
+  if (view.material) return view;
+  for (const child of object.children) {
+    const mesh = findMesh(child);
+    if (mesh) return mesh;
+  }
+  return undefined;
+}
+
+/**
  * 一个真的 `PropLoader`，喂同一份假 three 建出来的源模型。同 `rigFactory`：接线是本组
  * 用例的被测对象，桩替掉之后加载器改了语义这边一条都不会红。
  *
@@ -1000,7 +1021,7 @@ describe('PrevizSceneGraph', () => {
 
     // 模型是在任何一次 sync 之外落进树里的：不补一次显示模式，半透明场景里每个
     // 人物都会是实心的，而占位体又都是半透明的。
-    const mesh = rigOf(graph, scene.objects[0]!.id)?.children[0] as unknown as FakeMeshView;
+    const mesh = rigMeshOf(graph, scene.objects[0]!.id);
     expect(mesh.material.transparent).toBe(true);
     expect(mesh.material.opacity).toBeCloseTo(0.35, 6);
   });
@@ -1015,7 +1036,7 @@ describe('PrevizSceneGraph', () => {
     const scene = characterScene();
     graph.sync(scene);
     await flush();
-    const mesh = rigOf(graph, scene.objects[0]!.id)?.children[0] as unknown as FakeMeshView;
+    const mesh = rigMeshOf(graph, scene.objects[0]!.id);
     const ownColour = mesh.material.color.getHex();
 
     graph.sync({ ...scene, settings: { ...scene.settings, displayMode: 'clay' } });
@@ -1220,8 +1241,7 @@ describe('PrevizSceneGraph', () => {
     const id = scene.objects[0]!.id;
     graph.sync(scene);
     await flush();
-    const rigMesh = rigOf(graph, id)?.children[0] as unknown as FakeMeshView;
-    expect(rigMesh).toBeDefined();
+    const rigMesh = rigMeshOf(graph, id);
 
     // 删除走的是 sync 的清理分支，dispose() 走的是另一条——两条都得跳过共享模型。
     graph.sync({ ...scene, objects: [] });
@@ -1230,7 +1250,7 @@ describe('PrevizSceneGraph', () => {
 
     graph.sync(scene);
     await flush();
-    const second = rigOf(graph, id)?.children[0] as unknown as FakeMeshView;
+    const second = rigMeshOf(graph, id);
     graph.dispose();
     expect(second.geometry.dispose).not.toHaveBeenCalled();
     expect(second.material.dispose).not.toHaveBeenCalled();

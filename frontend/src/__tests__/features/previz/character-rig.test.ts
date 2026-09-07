@@ -121,6 +121,7 @@ interface RigView {
   scale: { x: number; y: number; z: number };
   rotation: { x: number; y: number; z: number };
   userData: Record<string, unknown>;
+  children: RigView[];
 }
 
 function viewOf(rig: unknown): RigView {
@@ -452,6 +453,21 @@ describe('CharacterRigFactory', () => {
     // 场景图靠这个标记在节点的子节点里认出「已经换过模型了」，也靠它拿到要重新缩放的
     // 那个根节点。丢了它，每次 sync 都会再下一次模型往同一个节点上叠。
     expect(rig.userData.previzRig).toBe(true);
+  });
+
+  it('turns the model half a turn so its face points where the heading arrow does', async () => {
+    const factory = factoryWith(['Idle_Loop']);
+
+    const adjust = { pitch: 0, turn: 30, lean: 0 };
+    const rig = viewOf(await factory.build(character({ poseAdjust: adjust })));
+
+    // Quaternius 模型的脸朝 +Z（脚尖顶点在 +Z 侧），而预演台的「正前方」是 -Z：机位、
+    // 路径切线、选中环上的箭头都按这条。不转这半圈，人物沿路径倒着走，箭头指着后脑勺。
+    expect(rig.children).toHaveLength(1);
+    expect(rig.children[0].rotation.y).toBeCloseTo(Math.PI, 10);
+    // 半圈转在克隆体上、姿态微调在外层。叠在同一个对象上的话，下一次 sync 重写
+    // rotation 就把半圈抹掉了，人物又转回去。
+    expect(rig.rotation.y).toBeCloseTo(Math.PI / 6, 10);
   });
 });
 

@@ -110,14 +110,21 @@ export class CharacterRigFactory {
     }
 
     const model = this.deps.clone(source.scene);
-    this.applyCharacter(model, character);
+    // Quaternius 模型的脸朝 +Z（脚尖顶点在 +Z 侧），而预演台约定 rotation 全零时朝 -Z：
+    // 机位、路径切线（`tangentYawDeg`）、选中环上的箭头都按这条。不转这半圈，人物沿
+    // 路径倒着走，箭头指着后脑勺。半圈转在克隆体上，姿态微调与身高缩放打在外层的
+    // Group 上：`applyPoseAdjust` 每次 sync 都整体重写 rotation，叠在同一个对象上会被抹掉。
+    model.rotation.y = Math.PI;
+    const rig = new this.deps.three.Group();
+    rig.add(model);
+    this.applyCharacter(rig, character);
     // 场景图靠这个标记在节点的子节点里认出「已经换过模型了」。
-    model.userData.previzRig = true;
+    rig.userData.previzRig = true;
     // `SkeletonUtils.clone` 是浅克隆几何体与材质：克隆体和缓存里那份源模型共用同一批
     // GPU 资源。这个标记让 `disposeSubtree` 整棵跳过——照占位体那样 dispose 一个克隆，
     // 会把源模型一起还掉，之后新建的每一个人物都拿到已经 dispose 的几何体。
-    model.userData.previzSharedModel = true;
-    return model;
+    rig.userData.previzSharedModel = true;
+    return rig;
   }
 
   /**
@@ -246,8 +253,8 @@ export class CharacterRigFactory {
     model.userData[APPLIED_SOURCE_KEY] = this.sourceSerial;
     if (!clip) return;
 
-    // mixer 挂在这个人物自己的克隆体上。挂在共享的源场景上，一个人物摆姿势会把
-    // 所有人物一起摆过去。
+    // mixer 挂在这个人物自己的 rig 上（骨骼按名字往子树里搜，隔一层 Group 照样搜得到）。
+    // 挂在共享的源场景上，一个人物摆姿势会把所有人物一起摆过去。
     const mixer = new this.deps.three.AnimationMixer(model);
     mixer.clipAction(clip).play();
     // setTime 把骨架推进到该时刻并写进变换；之后 mixer 就可以扔了——
