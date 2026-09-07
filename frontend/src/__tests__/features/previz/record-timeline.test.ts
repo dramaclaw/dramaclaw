@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createCanvasRecorder,
   extensionForRecordMime,
   pickRecordMimeType,
   recordFilename,
@@ -131,6 +132,24 @@ describe("pickRecordMimeType", () => {
   it("gives up rather than handing MediaRecorder a type it will reject", () => {
     expect(pickRecordMimeType(() => false)).toBeNull();
   });
+
+  it("prefers a mixed container when audio is wanted", () => {
+    expect(pickRecordMimeType(() => true, true)).toBe("video/mp4;codecs=avc1.42E01E,mp4a.40.2");
+    expect(pickRecordMimeType((type) => type.startsWith("video/webm"), true)).toBe(
+      "video/webm;codecs=vp9,opus",
+    );
+  });
+
+  it("returns null when no mixed container is supported so the caller can fall back", () => {
+    // 模拟一个只认无声显式编码的浏览器：裸的 video/mp4 / video/webm 也在混音候选里
+    // （Safari 只报告裸类型），所以得连它们一起拒掉才算「没有混音容器」。
+    const silentOnly = new Set(["video/mp4;codecs=avc1.42E01E", "video/webm;codecs=vp9"]);
+    expect(pickRecordMimeType((type) => silentOnly.has(type), true)).toBeNull();
+    // 同一个浏览器不带音轨时照常能录：退路是通的。
+    expect(pickRecordMimeType((type) => silentOnly.has(type))).toBe(
+      "video/mp4;codecs=avc1.42E01E",
+    );
+  });
 });
 
 describe("recordFilename", () => {
@@ -154,5 +173,49 @@ describe("recordQualityLabel", () => {
     expect(recordQualityLabel("9:16")).toBe("1080p 9:16");
     expect(recordQualityLabel("1:1")).toBe("1440p 1:1");
     expect(recordQualityLabel("4:3")).toBe("1200p 4:3");
+  });
+});
+
+describe("createCanvasRecorder", () => {
+  class FakeMediaRecorder {
+    static isTypeSupported = () => true;
+    state = "inactive";
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
+    onstop: (() => void) | null = null;
+    onerror: ((event: unknown) => void) | null = null;
+    constructor(
+      public stream: { getTracks: () => unknown[]; addTrack: (track: unknown) => void },
+      public options: { mimeType: string },
+    ) {}
+    start() {
+      this.state = "recording";
+    }
+    stop() {
+      this.state = "inactive";
+      this.onstop?.();
+    }
+  }
+
+  it("adds the audio tracks of the given stream to the canvas stream", async () => {
+    const original = globalThis.MediaRecorder;
+    globalThis.MediaRecorder = FakeMediaRecorder as unknown as typeof MediaRecorder;
+    try {
+      const addTrack = vi.fn();
+      const canvas = {
+        captureStream: () => ({ getTracks: () => [], addTrack }),
+      } as unknown as HTMLCanvasElement;
+      const audioTrack = { kind: "audio", stop: vi.fn() };
+      const audioStream = { getAudioTracks: () => [audioTrack] } as unknown as MediaStream;
+      const recorder = createCanvasRecorder(canvas, {
+        fps: 30,
+        mimeType: "video/webm",
+        audioStream,
+      });
+      expect(addTrack).toHaveBeenCalledWith(audioTrack);
+      recorder.start();
+      await expect(recorder.stop()).resolves.toBeInstanceOf(Blob);
+    } finally {
+      globalThis.MediaRecorder = original;
+    }
   });
 });

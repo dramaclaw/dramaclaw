@@ -15,6 +15,7 @@ function setup(overrides: Partial<PublishRecordingDeps> = {}): PublishRecordingD
     blob: new Blob(["mp4"], { type: "video/mp4" }),
     filename: "previz-record-20260904T101112.mp4",
     displayName: "预演台轨道录制 1(1080p 16:9)",
+    durationMs: 4000,
     uploadVideo: vi.fn(async () => ({ url: "/static/u/demo/freezone/_uploads/take.mp4" })),
     addDerivedVideoNode: vi.fn(() => "video-1"),
     addEdge: vi.fn(() => "edge-1"),
@@ -39,6 +40,7 @@ describe("publishRecording", () => {
       "/static/u/demo/freezone/_uploads/take.mp4",
       "16:9",
       "预演台轨道录制 1(1080p 16:9)",
+      4000,
     );
     expect(deps.addEdge).toHaveBeenCalledWith("previz-1", "video-1");
     expect(result).toEqual({

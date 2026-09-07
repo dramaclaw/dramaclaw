@@ -15,6 +15,8 @@ export interface PublishRecordingDeps {
   filename: string;
   /** 视频节点的标题，例如「预演台轨道录制 1(1080p 16:9)」。 */
   displayName: string;
+  /** 成片时长，盖到视频节点上：节点有了这个值就不用再加载一遍元数据去探。 */
+  durationMs: number;
   /** 注入而不是直接 import：这样测试不用去 mock 整个 @/api/ops。 */
   uploadVideo: (project: string, file: Blob, filename: string) => Promise<{ url: string }>;
   addDerivedVideoNode: (
@@ -22,6 +24,7 @@ export interface PublishRecordingDeps {
     videoUrl: string,
     aspectRatio: string,
     displayName: string,
+    durationMs: number,
   ) => string | null;
   addEdge: (source: string, target: string) => string | null;
 }
@@ -40,7 +43,13 @@ export async function publishRecording(
   } catch {
     return { ok: false, reason: 'upload', blob: deps.blob };
   }
-  const nodeId = deps.addDerivedVideoNode(deps.sourceNodeId, url, deps.aspect, deps.displayName);
+  const nodeId = deps.addDerivedVideoNode(
+    deps.sourceNodeId,
+    url,
+    deps.aspect,
+    deps.displayName,
+    deps.durationMs,
+  );
   // 源节点已经被删掉时返回 null。这时候连线会指向一个不存在的目标，画布 store
   // 会悄悄丢掉这条边，留下一个孤儿节点——不如直接报失败。
   if (!nodeId) return { ok: false, reason: 'node', blob: deps.blob };

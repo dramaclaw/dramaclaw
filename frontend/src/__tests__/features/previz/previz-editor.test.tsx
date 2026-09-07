@@ -876,6 +876,7 @@ describe("PrevizEditor", () => {
       "/static/take.mp4",
       "16:9",
       "previz.editor.record.trackNodeName",
+      expect.any(Number),
     );
     // 光有节点不算接出来：画布上得有一条从预演台连过去的边。
     expect(addEdge).toHaveBeenCalledWith("previz-1", "video-1");

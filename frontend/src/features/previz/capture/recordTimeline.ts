@@ -85,7 +85,7 @@ export async function recordTimeline(deps: RecordTimelineDeps): Promise<Blob> {
  * 挑一个浏览器真的能编的容器。mp4 排在前面：画布上的视频节点、后续的合成与下载
  * 都按 mp4 走得最顺，webm 只是退路。
  */
-const MIME_CANDIDATES = [
+const VIDEO_MIME_CANDIDATES = [
   'video/mp4;codecs=avc1.42E01E',
   'video/mp4',
   'video/webm;codecs=vp9',
@@ -93,11 +93,26 @@ const MIME_CANDIDATES = [
   'video/webm',
 ] as const;
 
+/**
+ * 带音轨的候选。mp4 配 AAC，webm 配 Opus；顺序同无声版，先 mp4 后 webm。
+ * 裸的 'video/mp4' / 'video/webm' 留在这里是为了 Safari：它只报告裸类型支持，但录出来
+ * 确实带 AAC。裸类型最终有没有把声音混进去由浏览器决定。
+ */
+const MIXED_MIME_CANDIDATES = [
+  'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+  'video/mp4',
+  'video/webm;codecs=vp9,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm',
+] as const;
+
 export function pickRecordMimeType(
   isSupported: (type: string) => boolean = (type) =>
     typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type),
+  withAudio = false,
 ): string | null {
-  for (const candidate of MIME_CANDIDATES) {
+  const candidates = withAudio ? MIXED_MIME_CANDIDATES : VIDEO_MIME_CANDIDATES;
+  for (const candidate of candidates) {
     if (isSupported(candidate)) return candidate;
   }
   return null;
@@ -128,6 +143,8 @@ export interface CanvasRecorderOptions {
   mimeType: string;
   /** 码率。1080p30 给 12 Mbps：再低运镜时的网格会糊成一团块。 */
   videoBitsPerSecond?: number;
+  /** 音频轨的混音流；给了就并进画布流，MediaRecorder 会把它编成音轨。 */
+  audioStream?: MediaStream;
 }
 
 /**
@@ -142,6 +159,11 @@ export function createCanvasRecorder(
   options: CanvasRecorderOptions,
 ): RecorderLike {
   const stream = canvas.captureStream(options.fps);
+  // 并进来之后这些音轨就归这条流管：stop / error 时 `stream.getTracks()` 会把它们一并
+  // 停掉。这是有意的——调用方的混音流是为这一次录制建的，录完就该收。
+  for (const track of options.audioStream?.getAudioTracks() ?? []) {
+    stream.addTrack(track);
+  }
   const recorder = new MediaRecorder(stream, {
     mimeType: options.mimeType,
     videoBitsPerSecond: options.videoBitsPerSecond ?? 12_000_000,

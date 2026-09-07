@@ -226,7 +226,8 @@ interface CanvasState {
     sourceNodeId: string,
     videoUrl: string,
     aspectRatio: string,
-    displayName?: string | null
+    displayName?: string | null,
+    durationMs?: number | null
   ) => string | null;
   addDerivedExportNode: (
     sourceNodeId: string,
@@ -2314,7 +2315,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     return node.id;
   },
 
-  addDerivedVideoNode: (sourceNodeId, videoUrl, aspectRatio, displayName) => {
+  addDerivedVideoNode: (sourceNodeId, videoUrl, aspectRatio, displayName, durationMs) => {
     const state = get();
     // 源节点已经被删掉时不建节点：连线会指向一个不存在的目标，画布 store 会悄悄丢掉
     // 那条边，留下一个孤儿节点。
@@ -2327,6 +2328,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       videoUrl,
       aspectRatio,
       displayName: displayName ?? null,
+      durationMs: durationMs ?? null,
       sourceFileName: null,
     } as Partial<CanvasNodeData>);
     node.width = derivedSize.width;
