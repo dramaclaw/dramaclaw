@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   coverPointToMediaAnchor,
   mediaAnchorToCoverPoint,
+  mediaAnchorToContainPoint,
+  objectContainRenderRect,
   objectCoverRenderRect,
 } from '@/features/canvas/story/objectCoverCoordinates';
 
@@ -28,5 +30,20 @@ describe('objectCoverCoordinates', () => {
       y: 0.5,
     });
     expect(coverPointToMediaAnchor({ x: -1000, y: 500 }, container, media)?.x).toBe(0);
+  });
+});
+
+describe('objectContainCoordinates', () => {
+  it('竖屏视频在横屏容器中按完整画面留白并映射锚点', () => {
+    const rendered = objectContainRenderRect(
+      { width: 1600, height: 900 },
+      { width: 900, height: 1600 },
+    )!;
+    expect(rendered).toEqual({ left: 546.875, top: 0, width: 506.25, height: 900 });
+    expect(mediaAnchorToContainPoint(
+      { x: 0.5, y: 0.5 },
+      { width: 1600, height: 900 },
+      { width: 900, height: 1600 },
+    )).toEqual({ x: 800, y: 450 });
   });
 });

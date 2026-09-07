@@ -44,6 +44,19 @@ function cedge(
 const codes = (issues: StoryIssue[]) => issues.map((i) => i.code);
 
 describe('lintStory', () => {
+  it('超过分析深度的有限自动链只提示未完成，不误报死循环或不可达', () => {
+    const members = Array.from({ length: 103 }, (_, i) => vnode(`n${i}`, {
+      start: i === 0, ...(i === 102 ? { endingLabel: 'GE' } : {}),
+    }));
+    const edges = members.slice(0, -1).map((node, i) => ({
+      ...cedge(`e${i}`, node.id, `n${i + 1}`),
+      data: { transitionMode: 'automatic', order: 0 },
+    }));
+    const findings = codes(lintStory(members, edges, []));
+    expect(findings).toContain('path_analysis_incomplete');
+    expect(findings).not.toContain('automatic_cycle');
+    expect(findings).not.toContain('runtime_unreachable');
+  });
   it('合法故事 → 空数组', () => {
     const members = [vnode('a', { start: true }), vnode('b', { endingLabel: 'GE' })];
     const edges = [cedge('e', 'a', 'b')];
@@ -161,6 +174,56 @@ describe('lintStory', () => {
     for (const edge of edges) (edge.data as Record<string, unknown>).transitionMode = 'automatic';
     const issues = lintStory(members, edges, []);
     expect(issues.some((issue) => issue.code === 'automatic_fallback_order' && issue.edgeId === 'fallback')).toBe(true);
+  });
+
+  it('识别连线可达但状态永远无法触发的分支', () => {
+    const members = [
+      vnode('a', { start: true }),
+      vnode('b'),
+      vnode('impossible', { endingLabel: 'X' }),
+      vnode('reachable', { endingLabel: 'GE' }),
+    ];
+    const edges = [
+      cedge('set-key', 'a', 'b', { effects: [{ flag: 'has_key', value: true }] }),
+      cedge('without-key', 'b', 'impossible', { condition: { flag: 'has_key', value: false }, order: 0 }),
+      cedge('with-key', 'b', 'reachable', { condition: { flag: 'has_key', value: true }, order: 1 }),
+    ];
+    const flags: StoryFlag[] = [{ name: 'has_key', label: '已拿到钥匙', initial: false }];
+    const issues = lintStory(members, edges, [], flags);
+    expect(issues.some((issue) => issue.code === 'condition_unreachable' && issue.edgeId === 'without-key')).toBe(true);
+    expect(issues.some((issue) => issue.code === 'runtime_unreachable' && issue.nodeId === 'impossible')).toBe(true);
+  });
+
+  it('变量效果超出声明范围时阻止发布', () => {
+    const members = [vnode('a', { start: true }), vnode('b', { endingLabel: 'GE' })];
+    const edges = [cedge('overflow', 'a', 'b', { effects: [{ var: 'score', delta: 2 }] })];
+    const variables: StoryVariable[] = [{ name: 'score', label: '积分', initial: 0, minimum: 0, maximum: 1 }];
+    const issues = lintStory(members, edges, variables);
+    expect(issues.some((issue) => issue.code === 'variable_out_of_bounds' && issue.edgeId === 'overflow' && issue.severity === 'error')).toBe(true);
+  });
+
+  it('无玩家输入的自动自循环会阻止发布', () => {
+    const members = [vnode('a', { start: true })];
+    const edges = [cedge('auto-loop', 'a', 'a')];
+    (edges[0].data as Record<string, unknown>).transitionMode = 'automatic';
+    const issues = lintStory(members, edges, []);
+    expect(issues.some((issue) => issue.code === 'automatic_cycle' && issue.edgeId === 'auto-loop' && issue.severity === 'error')).toBe(true);
+  });
+
+  it('允许玩家取得钥匙后返回旧节点并解锁新路径', () => {
+    const members = [
+      vnode('door', { start: true }),
+      vnode('key'),
+      vnode('room', { endingLabel: 'GE' }),
+    ];
+    const edges = [
+      cedge('find-key', 'door', 'key', { condition: { flag: 'unlocked', value: false }, order: 0 }),
+      cedge('open-door', 'door', 'room', { condition: { flag: 'unlocked', value: true }, order: 1 }),
+      cedge('return', 'key', 'door', { effects: [{ flag: 'unlocked', value: true }] }),
+    ];
+    const flags: StoryFlag[] = [{ name: 'unlocked', label: '门已解锁', initial: false }];
+    const issues = lintStory(members, edges, [], flags);
+    expect(issues.some((issue) => ['runtime_unreachable', 'condition_unreachable', 'automatic_cycle'].includes(issue.code))).toBe(false);
   });
 
   it('按 error → warning → info 排序', () => {

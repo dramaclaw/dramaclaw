@@ -504,6 +504,129 @@ def test_story_issues_distinguish_bound_asset_and_warn_about_timed_fallback(
     assert "timed_choice_uses_first_default" in start_codes
 
 
+def test_path_analysis_reports_branch_that_conditions_can_never_reach(
+    story: StoryDraftV2,
+) -> None:
+    payload = story.model_dump(mode="json")
+    payload["choices"].append(
+        {
+            "id": "impossible_citrus_branch",
+            "source_segment_id": "citrus_reveal",
+            "target_segment_id": "share_ending",
+            "text": "不存在的莓果状态",
+            "order": 2,
+            "condition": {
+                "kind": "flag",
+                "flag": "prefers_citrus",
+                "value": False,
+            },
+        }
+    )
+
+    issues = issues_for_story(StoryDraftV2.model_validate(payload))
+
+    assert any(
+        issue.code == "condition_unreachable"
+        and issue.entity_id == "impossible_citrus_branch"
+        for issue in issues
+    )
+
+
+def test_path_analysis_blocks_reachable_variable_overflow(story: StoryDraftV2) -> None:
+    payload = story.model_dump(mode="json")
+    payload["choices"][0]["effects"][0]["delta"] = 4
+
+    issues = issues_for_story(StoryDraftV2.model_validate(payload))
+
+    assert any(
+        issue.code == "variable_out_of_bounds" and issue.entity_id == "pick_citrus"
+        for issue in issues
+    )
+
+
+def test_path_analysis_blocks_condition_matched_automatic_cycle(story: StoryDraftV2) -> None:
+    payload = story.model_dump(mode="json")
+    route = next(choice for choice in payload["choices"] if choice["id"] == "route_citrus")
+    route["target_segment_id"] = "flavor_scan"
+
+    issues = issues_for_story(StoryDraftV2.model_validate(payload))
+
+    assert any(
+        issue.code == "automatic_cycle" and issue.entity_id == "route_citrus"
+        for issue in issues
+    )
+
+
+def test_long_finite_automatic_chain_is_incomplete_not_a_cycle() -> None:
+    story = StoryDraftV2.model_validate({
+        "story_id": "long_chain", "title": "长过场", "start_segment_id": "n0",
+        "segments": [
+            {"id": f"n{i}", "title": f"场景{i}", "script": "过场"}
+            for i in range(103)
+        ],
+        "choices": [
+            {"id": f"e{i}", "source_segment_id": f"n{i}",
+             "target_segment_id": f"n{i + 1}", "text": "", "order": 0,
+             "mode": "automatic"}
+            for i in range(102)
+        ],
+    })
+    codes = {issue.code for issue in issues_for_story(story)}
+    assert "path_analysis_incomplete" in codes
+    assert "automatic_cycle" not in codes
+    assert "runtime_unreachable" not in codes
+
+
+def test_path_analysis_allows_player_return_after_unlocking_state() -> None:
+    story = StoryDraftV2.model_validate(
+        {
+            "story_id": "locked_door",
+            "title": "门锁谜题",
+            "start_segment_id": "door",
+            "flags": [{"name": "unlocked", "label": "门已解锁", "initial": False}],
+            "segments": [
+                {"id": "door", "title": "门口", "script": "门锁着。"},
+                {"id": "key", "title": "储物间", "script": "你找到钥匙。"},
+                {"id": "room", "title": "密室", "script": "门开了。", "kind": "ending", "ending_label": "GE"},
+            ],
+            "choices": [
+                {
+                    "id": "find_key",
+                    "source_segment_id": "door",
+                    "target_segment_id": "key",
+                    "text": "寻找钥匙",
+                    "order": 0,
+                    "condition": {"kind": "flag", "flag": "unlocked", "value": False},
+                },
+                {
+                    "id": "open_door",
+                    "source_segment_id": "door",
+                    "target_segment_id": "room",
+                    "text": "打开门",
+                    "order": 1,
+                    "condition": {"kind": "flag", "flag": "unlocked", "value": True},
+                },
+                {
+                    "id": "return_with_key",
+                    "source_segment_id": "key",
+                    "target_segment_id": "door",
+                    "text": "返回门口",
+                    "order": 0,
+                    "effects": [{"kind": "set_flag", "flag": "unlocked", "value": True}],
+                },
+            ],
+        }
+    )
+
+    path_codes = {
+        issue.code
+        for issue in issues_for_story(story)
+        if issue.code in {"runtime_unreachable", "condition_unreachable", "automatic_cycle"}
+    }
+
+    assert path_codes == set()
+
+
 def test_patch_retry_is_idempotent_and_does_not_bump_revision_twice(
     service: InteractiveStoryService,
     story: StoryDraftV2,

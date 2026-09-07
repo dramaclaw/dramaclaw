@@ -56,6 +56,26 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     act(() => useStoryRuntimeStore.getState().exitPlay());
   });
 
+  it('实时生成显示同屏故事树、模式切换和预留生成入口', () => {
+    seedChoicePoint({ playKind: 'live', groupId: 'story-group' });
+    const { getByRole, getByText } = render(<StoryPlayerOverlay />);
+
+    expect(getByText('canvas.story.tree.title')).toBeInTheDocument();
+    expect(getByRole('button', { name: /canvas.story.playMode.backToCanvas/ })).toBeInTheDocument();
+    expect(getByRole('button', { name: 'canvas.story.playMode.live' })).toHaveAttribute('aria-pressed', 'true');
+    expect(getByRole('button', { name: /canvas.story.playMode.generateFromHere/ })).toBeDisabled();
+
+    const autoPlay = getByRole('button', { name: 'canvas.story.playMode.autoPlayShort' });
+    expect(autoPlay).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(autoPlay);
+    expect(autoPlay).toHaveAttribute('aria-pressed', 'false');
+
+    const speed = getByRole('button', { name: 'canvas.story.playMode.playbackRate' });
+    expect(speed).toHaveTextContent('1×');
+    fireEvent.click(speed);
+    expect(speed).toHaveTextContent('1.5×');
+  });
+
   it('init 阶段选项已挂载但未进入,initMs 后转 select 显现', () => {
     seedChoicePoint();
     render(<StoryPlayerOverlay />);
@@ -65,6 +85,32 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     act(() => vi.advanceTimersByTime(initMs));
     expect(panel()?.getAttribute('data-choice-stage')).toBe('select');
     expect(panel()?.className).toContain('opacity-100');
+  });
+
+  it('娱乐模式自动恢复存档，不显示续玩确认', () => {
+    const resumeSaved = vi.fn(() => {
+      useStoryRuntimeStore.setState({ resumeAvailable: false });
+      return true;
+    });
+    seedChoicePoint({ playKind: 'entertainment', resumeAvailable: true, resumeSaved });
+    const { queryByText } = render(<StoryPlayerOverlay />);
+    expect(resumeSaved).toHaveBeenCalledOnce();
+    expect(queryByText('canvas.story.resume.title')).not.toBeInTheDocument();
+    expect(queryByText('canvas.story.resume.continue')).not.toBeInTheDocument();
+  });
+
+  it('实时生成横屏铺满播放器，竖屏保留完整画幅', () => {
+    seedChoicePoint({ playKind: 'live', currentClipUrl: 'portrait.mp4' });
+    render(<StoryPlayerOverlay />);
+    const video = document.body.querySelector('video')!;
+    expect(video).toHaveClass('object-cover');
+    Object.defineProperties(video, {
+      videoWidth: { configurable: true, value: 1080 },
+      videoHeight: { configurable: true, value: 1920 },
+    });
+    act(() => fireEvent.loadedMetadata(video));
+    expect(video).toHaveClass('object-contain');
+    expect(video.parentElement?.style.aspectRatio).toBe('0.5625 / 1');
   });
 
   it('点选后进 hide、高亮所选并淡化其他,confirmMs 后 choose 推进一次', () => {
@@ -204,7 +250,7 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     expect(hotspot).not.toHaveClass('min-w-32');
   });
 
-  it('全屏 cover 裁切时按原视频画幅换算锚点位置', () => {
+  it('完整展示视频时按原视频画幅和留白换算锚点位置', () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
     seedChoicePoint({
       currentClipUrl: 'wide-screen.mp4',
@@ -242,8 +288,8 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     act(() => fireEvent.timeUpdate(video));
     act(() => vi.advanceTimersByTime(initMs));
     const button = getByRole('button', { name: '开始' });
-    expect(button.style.left).toBe('1500px');
-    expect(button.style.top).toBe('742.5px');
+    expect(button.style.left).toBe('1400px');
+    expect(button.style.top).toBe('684px');
     pause.mockRestore();
   });
 
@@ -292,6 +338,43 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     pause.mockRestore();
   });
 
+  it('有视频的结局等待视频播放完成后才展示结局文本', () => {
+    seedChoicePoint({
+      phase: 'ended',
+      currentClipUrl: 'ending.mp4',
+      currentChoices: [],
+      currentEnding: { title: '真正的结局', label: 'True End' },
+    });
+    const { queryByText, getByText } = render(<StoryPlayerOverlay />);
+    const video = document.body.querySelector('video')!;
+
+    expect(queryByText('真正的结局')).not.toBeInTheDocument();
+    act(() => fireEvent.ended(video));
+    expect(getByText('真正的结局')).toBeInTheDocument();
+  });
+
+  it('同一结局重新开始也会重建视频并隐藏旧结局', () => {
+    seedChoicePoint({ playKind: 'entertainment', phase: 'ended', currentClipUrl: 'only.mp4',
+      currentChoices: [], currentEnding: { title: '结局' }, restart: vi.fn() });
+    const { getByText, queryByText } = render(<StoryPlayerOverlay />);
+    const before = document.body.querySelector('video')!;
+    act(() => fireEvent.ended(before));
+    fireEvent.click(getByText('canvas.story.restart'));
+    expect(document.body.querySelector('video')).not.toBe(before);
+    expect(queryByText('结局')).not.toBeInTheDocument();
+  });
+
+  it('娱乐模式不会继承调试模式关闭自动播放的设置', () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    seedChoicePoint({ playKind: 'live', currentClipUrl: 'intro.mp4' });
+    const { getByRole } = render(<StoryPlayerOverlay />);
+    fireEvent.click(getByRole('button', { name: 'canvas.story.playMode.autoPlayShort' }));
+    expect(document.body.querySelector('video')!.autoplay).toBe(false);
+    act(() => useStoryRuntimeStore.setState({ playKind: 'entertainment' }));
+    expect(document.body.querySelector('video')!.autoplay).toBe(true);
+    pause.mockRestore();
+  });
+
   it('主视频播完后切换到独立选择动画，并只循环该动画', () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
     seedChoicePoint({
@@ -306,8 +389,12 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
       currentTime: { configurable: true, value: 4.9 },
     });
 
+    const preloadVideo = Array.from(document.body.querySelectorAll('video'))
+      .find((video) => video.src.includes('choice-loop.mp4'))!;
+    act(() => fireEvent.canPlay(preloadVideo));
     act(() => fireEvent.timeUpdate(mainVideo));
-    const choiceLoopVideo = document.body.querySelector('video')!;
+    const choiceLoopVideo = Array.from(document.body.querySelectorAll('video'))
+      .find((video) => video.src.includes('choice-loop.mp4'))!;
 
     expect(mainVideo.loop).toBe(false);
     expect(choiceLoopVideo).not.toBe(mainVideo);

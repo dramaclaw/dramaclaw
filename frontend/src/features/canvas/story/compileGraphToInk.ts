@@ -16,7 +16,7 @@ import { conditionLeaves, isConditionGroup, isFlagCondition, isVisitCondition } 
 /** 抛给 UI 的结构化编译错误,code 供前端选择文案。 */
 export class StoryCompileError extends Error {
   constructor(
-    public readonly code: 'no_start' | 'empty' | 'start_unreachable',
+    public readonly code: 'no_start' | 'empty' | 'start_unreachable' | 'invalid_story',
     message: string,
   ) {
     super(message);
@@ -101,6 +101,7 @@ export function compileGraphToInk(
   edges: CanvasEdge[],
   variables: StoryVariable[] = [],
   flags: StoryFlag[] = [],
+  options: { entryNodeId?: string } = {},
 ): CompiledStory {
   const warnings: string[] = [];
 
@@ -204,6 +205,25 @@ export function compileGraphToInk(
     }
   }
 
+  const entryNodeId = options.entryNodeId ?? startNode.id;
+  if (!nodeById.has(entryNodeId)) {
+    throw new StoryCompileError('start_unreachable', '所选片段已不存在或不属于当前故事');
+  }
+  // 实时生成允许直接调试孤立片段：保留正式起点的完整故事，同时补编译所选片段的后继子树。
+  // 这不会改变娱乐模式的正式起点，也不会把其他无关孤立节点混入发布产物。
+  if (!seen.has(entryNodeId)) {
+    queue.push(entryNodeId);
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      reachable.push(id);
+      for (const choice of choicesBySource.get(id) ?? []) {
+        if (nodeById.has(choice.target)) queue.push(choice.target);
+      }
+    }
+  }
+
   const clipByNodeId: Record<string, string> = {};
   const choiceLoopClipByNodeId: Record<string, string> = {};
   const knotByNodeId: Record<string, string> = {};
@@ -231,7 +251,7 @@ export function compileGraphToInk(
   }
   for (const flag of flags) lines.push(`VAR ${flag.name} = ${flag.initial ? 'true' : 'false'}`);
   if (variables.length > 0 || flags.length > 0) lines.push('');
-  lines.push(`-> ${knotNameForNodeId(startNode.id)}`, '');
+  lines.push(`-> ${knotNameForNodeId(entryNodeId)}`, '');
 
   for (const id of reachable) {
     const node = nodeById.get(id)!;

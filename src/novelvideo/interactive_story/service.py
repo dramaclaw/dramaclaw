@@ -45,6 +45,7 @@ from novelvideo.interactive_story.models import (
     UpsertStoryVariable,
     ValidateInteractiveStoryRequest,
 )
+from novelvideo.interactive_story.path_analysis import analyze_story_paths
 
 AGENT_CREATE_SAVE_SOURCE = "agent_create"
 AGENT_PATCH_SAVE_SOURCE = "agent_patch"
@@ -575,6 +576,7 @@ def issues_for_story(story: StoryDraftV2) -> list[InteractiveStoryIssue]:
                     entity_id=segment.id,
                 )
             )
+    issues.extend(analyze_story_paths(story))
     severity_order = {"error": 0, "warning": 1, "info": 2}
     return sorted(issues, key=lambda issue: severity_order[issue.severity])
 

@@ -3439,7 +3439,24 @@
       }
     },
     "story": {
+      "disconnect": "Disconnect edge",
+      "toolbar": "Story toolbar",
+      "moreActions": "More",
       "play": "Play",
+      "playMode": {
+        "entertainment": "Play mode",
+        "live": "Live preview",
+        "backToCanvas": "Back to canvas",
+        "liveHint": "Click a story node on the left to switch the player and start from that scene.",
+        "generateFromHere": "Generate from here",
+        "generateFromHereComingSoon": "Regeneration from the current node is coming soon",
+        "autoPlay": "Autoplay toggle",
+        "autoPlayShort": "Autoplay",
+        "playbackRate": "Playback speed {{value}}x",
+        "playCurrent": "Play current scene",
+        "editStructure": "Edit structure",
+        "noSelection": "Select a story scene"
+      },
       "export": "Export",
       "exportDone": "Exported playable HTML",
       "restart": "Restart",
@@ -3551,7 +3568,20 @@
         "orphans": "Unreachable / orphaned",
         "noStart": "No unique start",
         "empty": "Empty story group",
-        "repeated": "seen"
+        "repeated": "seen",
+        "expand": "Expand branch",
+        "collapse": "Collapse branch",
+        "expandAll": "Expand all",
+        "collapseAll": "Collapse all",
+        "addNodeComingSoon": "Add scene (coming soon)",
+        "addNode": "Add new scene",
+        "issuesOnly": "Show scenes with issues only",
+        "search": "Search scenes or choices…",
+        "referenceVia": "Returns here via: ",
+        "choiceVia": "Choice: ",
+        "ending": "Ending",
+        "hasIssue": "This scene needs review",
+        "noResults": "No matching story scenes"
       },
       "lint": {
         "open": "Check",
@@ -3568,7 +3598,12 @@
           "leaf_no_ending": "End clip has no ending label (maybe unfinished)",
           "needs_review": "Imported structure needs review",
           "automatic_no_fallback": "Automatic branches have no fallback; the story can stop when none match",
-          "automatic_fallback_order": "The unconditional automatic branch must be the final and only fallback"
+          "automatic_fallback_order": "The unconditional automatic branch must be the final and only fallback",
+          "runtime_unreachable": "Connected in the graph, but unreachable under every current story state",
+          "condition_unreachable": "This branch can never trigger under the current state changes",
+          "variable_out_of_bounds": "This branch pushes \"{{detail}}\" outside its declared range",
+          "automatic_cycle": "Automatic transitions form a loop that prevents player input",
+          "path_analysis_incomplete": "Too many state combinations to check every story path"
         }
       },
       "variables": "Variables",

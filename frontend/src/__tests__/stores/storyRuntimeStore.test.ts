@@ -15,6 +15,24 @@ function e(s: string, t: string, text: string, order: number): CanvasEdge {
 }
 
 describe('storyRuntimeStore', () => {
+  it('实时生成使用独立的无存档运行态', () => {
+    const compiled = compileGraphToInk(
+      [v('intro', 'intro.mp4', 'start'), v('end', 'end.mp4')],
+      [e('intro', 'end', '继续', 0)],
+    );
+    useStoryRuntimeStore.getState().enterPlay(compiled, {
+      groupId: 'story-group',
+      playKind: 'live',
+    });
+
+    const state = useStoryRuntimeStore.getState();
+    expect(state.playKind).toBe('live');
+    expect(state.groupId).toBe('story-group');
+    expect(state.saveKey).toBeNull();
+    expect(state.statsKey).toBeNull();
+    expect(state.resumeAvailable).toBe(false);
+  });
+
   beforeEach(() => useStoryRuntimeStore.getState().exitPlay());
 
   it('enterPlay 进入起点片段并暴露选项', () => {

@@ -3439,7 +3439,24 @@
       }
     },
     "story": {
+      "disconnect": "断开连线",
+      "toolbar": "剧情工具栏",
+      "moreActions": "更多",
       "play": "试玩",
+      "playMode": {
+        "entertainment": "娱乐模式",
+        "live": "实时生成",
+        "backToCanvas": "返回画布",
+        "liveHint": "点击左侧故事节点，右侧会自动切换并播放该片段。",
+        "generateFromHere": "从此生成",
+        "generateFromHereComingSoon": "即将支持从当前节点重新生成",
+        "autoPlay": "自动播放开关",
+        "autoPlayShort": "自动播放",
+        "playbackRate": "播放速度 {{value}} 倍",
+        "playCurrent": "播放当前片段",
+        "editStructure": "编辑结构",
+        "noSelection": "选择一个故事片段"
+      },
       "export": "导出",
       "exportDone": "已导出 HTML,可下载试玩",
       "restart": "重新开始",
@@ -3551,7 +3568,20 @@
         "orphans": "不可达 / 孤立",
         "noStart": "未设唯一起点",
         "empty": "故事组为空",
-        "repeated": "已出现"
+        "repeated": "已出现",
+        "expand": "展开分支",
+        "collapse": "收起分支",
+        "expandAll": "展开全部",
+        "collapseAll": "收起全部",
+        "addNodeComingSoon": "添加节点（即将支持）",
+        "addNode": "添加新节点",
+        "issuesOnly": "只看有问题的片段",
+        "search": "搜索片段或选项…",
+        "referenceVia": "回到此处：",
+        "choiceVia": "选择：",
+        "ending": "结局",
+        "hasIssue": "此片段需要检查",
+        "noResults": "没有匹配的故事片段"
       },
       "lint": {
         "open": "检查",
@@ -3568,7 +3598,12 @@
           "leaf_no_ending": "末端片段未标结局(可能未完成)",
           "needs_review": "导入的结构待人工确认",
           "automatic_no_fallback": "自动分支没有兜底，条件都不满足时剧情会停止",
-          "automatic_fallback_order": "“否则”自动分支必须是最后且唯一的兜底"
+          "automatic_fallback_order": "“否则”自动分支必须是最后且唯一的兜底",
+          "runtime_unreachable": "连线能到达，但当前剧情状态永远无法进入",
+          "condition_unreachable": "当前状态变化下，这条分支永远不会触发",
+          "variable_out_of_bounds": "这条分支会让「{{detail}}」超出设定范围",
+          "automatic_cycle": "自动跳转形成死循环，玩家将无法继续操作",
+          "path_analysis_incomplete": "状态组合过多，未能完整检查所有剧情路径"
         }
       },
       "variables": "故事变量",

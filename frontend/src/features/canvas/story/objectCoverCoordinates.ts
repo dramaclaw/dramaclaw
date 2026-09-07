@@ -36,6 +36,29 @@ export function objectCoverRenderRect(
   };
 }
 
+/** 计算 `object-fit: contain` 后，原始媒体在容器中的实际尺寸与留白偏移。 */
+export function objectContainRenderRect(
+  container: MediaSize,
+  media: MediaSize,
+): MediaRenderRect | null {
+  if (
+    container.width <= 0
+    || container.height <= 0
+    || media.width <= 0
+    || media.height <= 0
+  ) return null;
+
+  const scale = Math.min(container.width / media.width, container.height / media.height);
+  const width = media.width * scale;
+  const height = media.height * scale;
+  return {
+    left: (container.width - width) / 2,
+    top: (container.height - height) / 2,
+    width,
+    height,
+  };
+}
+
 /** 将相对于原始视频画幅的 0–1 锚点换算到 cover 容器坐标。 */
 export function mediaAnchorToCoverPoint(
   anchor: MediaPoint,
@@ -43,6 +66,20 @@ export function mediaAnchorToCoverPoint(
   media: MediaSize,
 ): MediaPoint | null {
   const rendered = objectCoverRenderRect(container, media);
+  if (!rendered) return null;
+  return {
+    x: rendered.left + Math.min(1, Math.max(0, anchor.x)) * rendered.width,
+    y: rendered.top + Math.min(1, Math.max(0, anchor.y)) * rendered.height,
+  };
+}
+
+/** 将相对于原始视频画幅的 0–1 锚点换算到 contain 容器坐标。 */
+export function mediaAnchorToContainPoint(
+  anchor: MediaPoint,
+  container: MediaSize,
+  media: MediaSize,
+): MediaPoint | null {
+  const rendered = objectContainRenderRect(container, media);
   if (!rendered) return null;
   return {
     x: rendered.left + Math.min(1, Math.max(0, anchor.x)) * rendered.width,

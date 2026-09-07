@@ -1,14 +1,21 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { BarChart3, Map, X } from 'lucide-react';
+import { BarChart3, ChevronLeft, CirclePlay, Gauge, Map, Pause, PencilLine, Play, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import { StoryCompileError } from '@/features/canvas/story/compileGraphToInk';
+import { compileStoryGroup } from '@/features/canvas/story/compileStoryGroup';
+import { storySaveKey } from '@/features/canvas/story/storySave';
+import { readUrl } from '@/lib/url-params';
+import { useCanvasStore } from '@/stores/canvasStore';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
 import { resolveMediaUrl } from '@/lib/media-url';
 import { useChoicePointMachine } from './useChoicePointMachine';
 import { StoryStatsPanel } from './StoryStatsPanel';
 import { StoryPathMap } from './StoryPathMap';
+import { StoryPlaytestTree } from './StoryPlaytestTree';
 import {
   normalizeStoryChoiceInteraction,
   type StoryChoiceInteraction,
@@ -16,6 +23,7 @@ import {
   type StoryStateChange,
 } from '@/features/canvas/story/storyTypes';
 import {
+  mediaAnchorToContainPoint,
   mediaAnchorToCoverPoint,
   type MediaRenderRect,
 } from '@/features/canvas/story/objectCoverCoordinates';
@@ -52,6 +60,7 @@ const ANCHOR_MOTION_CLASS: Record<NonNullable<StoryChoiceInteraction['motion']>,
 export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   const { t } = useTranslation();
   const mode = useStoryRuntimeStore((s) => s.mode);
+  const playKind = useStoryRuntimeStore((s) => s.playKind);
   const phase = useStoryRuntimeStore((s) => s.phase);
   const currentNodeId = useStoryRuntimeStore((s) => s.currentNodeId);
   const currentClipUrl = useStoryRuntimeStore((s) => s.currentClipUrl);
@@ -70,8 +79,12 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   const advanceAutomatic = useStoryRuntimeStore((s) => s.advanceAutomatic);
   const restart = useStoryRuntimeStore((s) => s.restart);
   const resumeSaved = useStoryRuntimeStore((s) => s.resumeSaved);
-  const startFresh = useStoryRuntimeStore((s) => s.startFresh);
   const exitPlay = useStoryRuntimeStore((s) => s.exitPlay);
+  const enterPlay = useStoryRuntimeStore((s) => s.enterPlay);
+  const currentNodeLabel = useCanvasStore((state) => {
+    const node = currentNodeId ? state.nodes.find((candidate) => candidate.id === currentNodeId) : null;
+    return node?.type ? resolveNodeDisplayName(node.type, node.data) : '';
+  });
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [videoEnded, setVideoEnded] = useState(false);
@@ -84,31 +97,47 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   const [coverOpacity, setCoverOpacity] = useState(0);
   const [branchTransition, setBranchTransition] = useState<StoryChoiceTransition>('fade');
   const [mediaRenderRect, setMediaRenderRect] = useState<MediaRenderRect | null>(null);
+  const [mediaAspectRatio, setMediaAspectRatio] = useState(16 / 9);
+  const [autoPlayEnabled, setAutoPlayEnabled] = useState(true);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [videoPaused, setVideoPaused] = useState(false);
+  const [choiceLoopReady, setChoiceLoopReady] = useState(false);
+  const [playbackRevision, setPlaybackRevision] = useState(0);
+  const shouldAutoPlay = playKind === 'entertainment' || autoPlayEnabled;
+  const fillLiveFrame = playKind === 'live' && mediaAspectRatio >= 1;
 
   const resolvedUrl = currentClipUrl ? resolveMediaUrl(currentClipUrl) : null;
-  const showChoices = videoEnded || phase === 'ended' || !resolvedUrl;
+  // 有视频的结局必须等片段真正播完；phase=ended 只表示 Ink 已到叶子，不代表媒体已结束。
+  const showChoices = videoEnded || !resolvedUrl;
   const resolvedChoiceLoopUrl = currentNodeId
     ? resolveMediaUrl(choiceLoopClipByNodeId[currentNodeId] ?? '')
     : null;
-  const choiceLoopActive = showChoices && currentChoices.length > 0 && !!resolvedChoiceLoopUrl;
+  const choiceLoopActive = showChoices
+    && currentChoices.length > 0
+    && !!resolvedChoiceLoopUrl
+    && choiceLoopReady;
   const activeVideoUrl = choiceLoopActive ? resolvedChoiceLoopUrl : resolvedUrl;
   // 不能只依赖 ended：部分浏览器/编码在最后一帧停住却不派发 ended，选择层会永久不出现。
-  // 到尾帧前约 0.15 秒进入互动。主视频永不循环：有 choice loop 就切换，无则停在尾帧。
+  // 只对选择节点提前冻结可见尾帧；结局节点必须完整播放完再展示结局，避免文案提前出现。
   const revealChoicesAtTailFrame = useCallback((video: HTMLVideoElement) => {
-    if (!Number.isFinite(video.duration) || video.duration <= 0.15) return;
-    if (video.currentTime < Math.max(0, video.duration - 0.15)) return;
+    if (currentChoices.length === 0 || !Number.isFinite(video.duration) || video.duration <= 0.35) return;
+    if (video.currentTime < Math.max(0, video.duration - 0.35)) return;
     video.pause();
     setVideoEnded(true);
-  }, []);
+  }, [currentChoices.length]);
 
-  const measureVideoCover = useCallback((video: HTMLVideoElement) => {
+  const measureVideoFrame = useCallback((video: HTMLVideoElement) => {
     const bounds = video.getBoundingClientRect();
-    const point = mediaAnchorToCoverPoint(
+    const positioningBounds = video.offsetParent instanceof HTMLElement
+      ? video.offsetParent.getBoundingClientRect()
+      : { left: 0, top: 0 };
+    const toFramePoint = fillLiveFrame ? mediaAnchorToCoverPoint : mediaAnchorToContainPoint;
+    const point = toFramePoint(
       { x: 0, y: 0 },
       { width: bounds.width, height: bounds.height },
       { width: video.videoWidth, height: video.videoHeight },
     );
-    const opposite = mediaAnchorToCoverPoint(
+    const opposite = toFramePoint(
       { x: 1, y: 1 },
       { width: bounds.width, height: bounds.height },
       { width: video.videoWidth, height: video.videoHeight },
@@ -118,8 +147,9 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
       return;
     }
     const next = {
-      left: bounds.left + point.x,
-      top: bounds.top + point.y,
+      // 锚点按钮与 video 共用定位容器；播放器嵌入工作台后要换算为容器内坐标。
+      left: bounds.left - positioningBounds.left + point.x,
+      top: bounds.top - positioningBounds.top + point.y,
       width: opposite.x - point.x,
       height: opposite.y - point.y,
     };
@@ -132,7 +162,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
         ? previous
         : next
     ));
-  }, []);
+  }, [fillLiveFrame]);
 
   // 选择后的语义反馈独立于视频：先给玩家一小段阅读时间，再沿原有节点跳转。
   const handleChoiceCommit = useCallback((index: number) => {
@@ -175,19 +205,27 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   // 每次切片段重置「播完」状态,重新隐藏选项。
   useEffect(() => {
     setVideoEnded(false);
-  }, [currentClipUrl, currentNodeId]);
+    setVideoPaused(false);
+    setChoiceLoopReady(false);
+    setMediaAspectRatio(16 / 9);
+  }, [currentClipUrl, currentNodeId, playbackRevision]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) video.playbackRate = playbackRate;
+  }, [activeVideoUrl, playbackRate]);
 
   useEffect(() => {
     if (resumeAvailable || phase !== 'playing' || currentChoices.length > 0) return;
     if (videoEnded || !resolvedUrl) advanceAutomatic();
   }, [advanceAutomatic, currentChoices.length, phase, resolvedUrl, resumeAvailable, videoEnded]);
 
-  // 锚点属于原始视频画幅；播放器使用 cover 时必须把裁切偏移计入坐标。
+  // 锚点属于原始视频画幅；播放器按 contain 完整展示横/竖屏时，要把留白偏移计入坐标。
   useEffect(() => {
     setMediaRenderRect(null);
     const video = videoRef.current;
     if (!video) return;
-    const update = () => measureVideoCover(video);
+    const update = () => measureVideoFrame(video);
     update();
     window.addEventListener('resize', update);
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
@@ -196,7 +234,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
       window.removeEventListener('resize', update);
       observer?.disconnect();
     };
-  }, [activeVideoUrl, measureVideoCover]);
+  }, [activeVideoUrl, measureVideoFrame]);
 
   // 黑场过渡:有片段 → 先盖黑(遮缓冲),新视频 onCanPlay 或超时兜底再淡入;无片段(结局)直接清。
   useEffect(() => {
@@ -244,7 +282,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
     mode === 'play' && phase !== 'error' && showChoices && currentChoices.length > 0;
   const { stage, selectedIndex, fraction, select } = useChoicePointMachine({
     active: choicesActive,
-    resetKey: currentNodeId ?? currentClipUrl,
+    resetKey: `${currentNodeId ?? currentClipUrl}:${playbackRevision}`,
     seconds: currentChoiceTimeSec,
     defaultIndex: currentDefaultChoiceIndex,
     firstIndex: currentChoices[0]?.index ?? 0,
@@ -254,34 +292,204 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   const choiceExiting = stage === 'hide' || stage === 'timeout';
   const showCountdown = stage === 'select' && currentChoiceTimeSec != null;
 
-  // 续玩:存档失效时 resumeSaved 返回 false(已自动从头开始),提示玩家。
-  const handleResume = useCallback(() => {
+  // 娱乐模式直接恢复剧情存档；失效存档由 runtime 清理并回到起点。
+  useEffect(() => {
+    if (mode !== 'play' || playKind !== 'entertainment' || !resumeAvailable) return;
     setBranchTransition('fade');
     if (!resumeSaved()) toast(t('canvas.story.resume.invalid'));
-  }, [resumeSaved, t]);
-  const handleStartFresh = useCallback(() => {
-    setBranchTransition('fade');
-    startFresh();
-  }, [startFresh]);
+  }, [mode, playKind, resumeAvailable, resumeSaved, t]);
+  const startPlayback = useCallback((kind: 'entertainment' | 'live', entryNodeId?: string) => {
+    if (!groupId) return;
+    const { nodes, edges } = useCanvasStore.getState();
+    try {
+      const compiled = compileStoryGroup(groupId, nodes, edges, entryNodeId ? { entryNodeId } : {});
+      const saveKey = kind === 'entertainment'
+        ? storySaveKey(readUrl().canvas ?? 'default', groupId)
+        : undefined;
+      setStatsOpen(false);
+      setMapOpen(false);
+      setBranchTransition('cut');
+      if (outcomeFeedbackTimerRef.current !== null) window.clearTimeout(outcomeFeedbackTimerRef.current);
+      outcomeFeedbackTimerRef.current = null;
+      outcomeFeedbackPendingRef.current = false;
+      setOutcomeFeedback(null);
+      setPlaybackRevision((value) => value + 1);
+      enterPlay(compiled, { saveKey, groupId, playKind: kind });
+    } catch (err) {
+      toast.error(err instanceof StoryCompileError ? err.message : t('canvas.story.error'));
+    }
+  }, [enterPlay, groupId, t]);
+
   const handleRestart = useCallback(() => {
     setBranchTransition('fade');
+    if (playKind === 'live') {
+      startPlayback('live');
+      return;
+    }
+    setPlaybackRevision((value) => value + 1);
     restart();
-  }, [restart]);
+  }, [playKind, restart, startPlayback]);
+
+  const handleEditCurrentNode = useCallback(() => {
+    if (!currentNodeId) return;
+    const canvas = useCanvasStore.getState();
+    canvas.setSelectedNode(currentNodeId);
+    canvas.setStoryEditNode(currentNodeId);
+    canvas.requestFocusNode(currentNodeId);
+    exitPlay();
+  }, [currentNodeId, exitPlay]);
+
+  const handleAddNode = useCallback(() => {
+    if (!groupId) return;
+    const nodeId = useCanvasStore.getState().addStorySegment(groupId);
+    if (nodeId) exitPlay();
+  }, [exitPlay, groupId]);
+
+  const toggleAutoPlay = useCallback(() => {
+    const video = videoRef.current;
+    setAutoPlayEnabled((enabled) => {
+      const next = !enabled;
+      if (next) void video?.play().catch(() => setVideoPaused(true));
+      else video?.pause();
+      setVideoPaused(!next);
+      return next;
+    });
+  }, []);
+
+  const cyclePlaybackRate = useCallback(() => {
+    const rates = [0.5, 1, 1.5, 2];
+    setPlaybackRate((current) => rates[(rates.indexOf(current) + 1) % rates.length]);
+  }, []);
+
+  const handleModeChange = useCallback((kind: 'entertainment' | 'live') => {
+    if (kind === playKind) return;
+    startPlayback(kind, kind === 'live' ? currentNodeId ?? undefined : undefined);
+  }, [currentNodeId, playKind, startPlayback]);
 
   if (mode !== 'play') return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[220] flex items-center justify-center bg-black">
-      <button
-        onClick={exitPlay}
-        className="absolute right-5 top-5 z-40 rounded-full border border-white/15 bg-black/50 p-2 text-white/80 backdrop-blur transition-colors hover:text-white"
-        aria-label={t('common.close')}
-      >
-        <X className="h-5 w-5" />
-      </button>
+    <div className="fixed inset-0 z-[220] flex flex-col bg-[#090909] text-[#e2e2e3]">
+      <header className="grid h-14 shrink-0 grid-cols-[16rem_1fr_16rem] items-center border-b border-white/[0.08] bg-[#090909] px-4">
+        <button
+          type="button"
+          onClick={exitPlay}
+          className="flex h-9 w-fit items-center gap-1 rounded-lg px-3 text-sm font-medium text-[#8f9099] transition-colors hover:bg-[#1a1c23] hover:text-[#e2e2e3]"
+        >
+          <ChevronLeft className="size-4" />
+          {t('canvas.story.playMode.backToCanvas')}
+        </button>
+        {groupId && (
+          <div className="mx-auto flex items-center rounded-lg border border-white/[0.08] bg-[#111218] p-1">
+            <button
+              type="button"
+              onClick={() => handleModeChange('entertainment')}
+              aria-pressed={playKind === 'entertainment'}
+              className={`flex h-8 items-center gap-2 rounded-md border px-4 text-sm font-medium transition-colors ${
+                playKind === 'entertainment'
+                  ? 'border-white/[0.08] bg-[#1e212b] text-[#e2e2e3]'
+                  : 'border-transparent text-[#8f9099] hover:text-[#e2e2e3]'
+              }`}
+            >
+              <CirclePlay className="size-4" />
+              {t('canvas.story.playMode.entertainment')}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleModeChange('live')}
+              aria-pressed={playKind === 'live'}
+              className={`flex h-8 items-center gap-2 rounded-md border px-4 text-sm font-medium transition-colors ${
+                playKind === 'live'
+                  ? 'border-[oklch(0.72_0.145_205/0.2)] bg-[oklch(0.72_0.145_205/0.1)] text-[oklch(0.72_0.145_205)]'
+                  : 'border-transparent text-[#8f9099] hover:text-[#e2e2e3]'
+              }`}
+            >
+              <Sparkles className="size-4" />
+              {t('canvas.story.playMode.live')}
+            </button>
+          </div>
+        )}
+        <div aria-hidden />
+      </header>
+
+      <div className="flex min-h-0 flex-1">
+        {playKind === 'live' && groupId && (
+          <StoryPlaytestTree
+            groupId={groupId}
+            selectedNodeId={currentNodeId}
+            onSelectNode={(nodeId) => startPlayback('live', nodeId)}
+            onAddNode={handleAddNode}
+          />
+        )}
+        <main className={`min-w-0 flex-1 overflow-hidden ${playKind === 'live' ? 'flex flex-col bg-[#090909] p-6' : 'relative bg-black'}`}>
+          {playKind === 'live' && (
+            <div className="z-50 mb-4 flex h-14 shrink-0 items-center justify-between gap-4 rounded-xl border border-white/[0.08] bg-[#111218]/80 px-4">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-[#e2e2e3]">
+                  {currentNodeLabel || t('canvas.story.playMode.noSelection')}
+                </p>
+                <p className="truncate text-xs text-[#8f9099]">
+                  {t('canvas.story.playMode.liveHint')}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={toggleAutoPlay}
+                  aria-pressed={autoPlayEnabled}
+                  className={`flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors ${autoPlayEnabled
+                    ? 'border-[oklch(0.72_0.145_205/0.25)] bg-[oklch(0.72_0.145_205/0.1)] text-[oklch(0.72_0.145_205)]'
+                    : 'border-white/[0.08] text-[#8f9099] hover:bg-[#1a1c23] hover:text-[#e2e2e3]'}`}
+                  title={t('canvas.story.playMode.autoPlay')}
+                >
+                  {autoPlayEnabled ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+                  {t('canvas.story.playMode.autoPlayShort')}
+                </button>
+                <button
+                  type="button"
+                  onClick={cyclePlaybackRate}
+                  className="flex h-8 min-w-14 items-center justify-center gap-1.5 rounded-md border border-white/[0.08] px-2 text-xs tabular-nums text-[#e2e2e3] transition-colors hover:bg-[#1a1c23]"
+                  aria-label={t('canvas.story.playMode.playbackRate', { value: playbackRate })}
+                  title={t('canvas.story.playMode.playbackRate', { value: playbackRate })}
+                >
+                  <Gauge className="size-3.5 text-[#8f9099]" />
+                  {playbackRate}×
+                </button>
+                <button
+                  type="button"
+                  onClick={handleEditCurrentNode}
+                  disabled={!currentNodeId}
+                  className="flex h-8 items-center gap-1.5 rounded-md border border-white/[0.08] px-2.5 text-xs text-[#e2e2e3] transition-colors hover:bg-[#1a1c23] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <PencilLine className="size-3.5" />
+                  {t('canvas.story.playMode.editStructure')}
+                </button>
+                <button
+                  type="button"
+                  disabled
+                  title={t('canvas.story.playMode.generateFromHereComingSoon')}
+                  className="flex h-9 shrink-0 cursor-not-allowed items-center gap-2 rounded-lg bg-[oklch(0.72_0.145_205)] px-4 text-sm font-semibold text-[#090909] shadow-[0_8px_24px_oklch(0.72_0.145_205/0.2)]"
+                >
+                  <Sparkles className="size-4" />
+                  {t('canvas.story.playMode.generateFromHere')}
+                </button>
+              </div>
+            </div>
+          )}
+          <div
+            className={playKind === 'live'
+              ? `relative overflow-hidden rounded-xl bg-black ${fillLiveFrame ? 'min-h-0 w-full flex-1' : 'my-auto max-w-full self-center'}`
+              : 'absolute inset-0 overflow-hidden'}
+            style={playKind === 'live' && !fillLiveFrame
+              ? {
+                  aspectRatio: String(mediaAspectRatio),
+                  width: `min(100%, calc((100dvh - 11rem) * ${mediaAspectRatio}))`,
+                }
+              : undefined}
+          >
 
       {/* 路径回顾图入口:有故事组上下文(画布试玩)时可用;叠加统计画「走了多少、还有什么没看」。 */}
-      {phase !== 'error' && groupId && (
+      {phase !== 'error' && groupId && playKind === 'entertainment' && (
         <button
           onClick={() => {
             setMapOpen((v) => !v);
@@ -299,7 +507,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
       )}
 
       {/* 试玩统计入口:仅在本次试玩持久化(有 statsKey)时可用;创作者据此看选择分布/结局达成率。 */}
-      {phase !== 'error' && statsKey && (
+      {phase !== 'error' && statsKey && playKind === 'entertainment' && (
         <button
           onClick={() => {
             setStatsOpen((v) => !v);
@@ -324,29 +532,6 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
         <StoryPathMap groupId={groupId} statsKey={statsKey} onClose={() => setMapOpen(false)} />
       )}
 
-      {/* 续玩提示:检测到存档,等玩家决定继续还是从头(在视频/选项之前)。 */}
-      {resumeAvailable && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6 bg-black/60 px-6 text-center backdrop-blur-sm">
-          <h2 className="max-w-xl text-2xl font-semibold text-white [text-shadow:0_2px_16px_rgba(0,0,0,0.8)]">
-            {t('canvas.story.resume.title')}
-          </h2>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleResume}
-              className="rounded-full border border-white/30 bg-white/10 px-8 py-2.5 text-base font-medium text-white/95 backdrop-blur-sm transition-colors hover:bg-white/20"
-            >
-              {t('canvas.story.resume.continue')}
-            </button>
-            <button
-              onClick={handleStartFresh}
-              className="rounded-full border border-white/25 bg-transparent px-8 py-2.5 text-base font-medium text-white/80 transition-colors hover:bg-white/10"
-            >
-              {t('canvas.story.resume.fresh')}
-            </button>
-          </div>
-        </div>
-      )}
-
       {phase === 'error' && (
         <div className="max-w-md px-6 text-center text-white/90">
           <p className="mb-4">{error ?? t('canvas.story.error')}</p>
@@ -359,21 +544,38 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
       {phase !== 'error' && activeVideoUrl && (
         <video
           ref={videoRef}
-          key={activeVideoUrl}
+          key={`${currentNodeId}:${playbackRevision}:${activeVideoUrl}`}
           src={activeVideoUrl}
-          autoPlay
+          autoPlay={shouldAutoPlay}
           playsInline
           controls={false}
           loop={choiceLoopActive}
-          className="absolute inset-0 h-full w-full object-cover"
-          onLoadedMetadata={(event) => measureVideoCover(event.currentTarget)}
-          onCanPlay={(event) => {
-            measureVideoCover(event.currentTarget);
-            setCoverOpacity(0);
+          className={`absolute inset-0 h-full w-full ${fillLiveFrame ? 'object-cover' : 'object-contain'}`}
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            video.playbackRate = playbackRate;
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
+              setMediaAspectRatio(video.videoWidth / video.videoHeight);
+              measureVideoFrame(video);
+              window.requestAnimationFrame(() => measureVideoFrame(video));
+            }
           }}
+          onCanPlay={(event) => {
+            measureVideoFrame(event.currentTarget);
+            setCoverOpacity(0);
+            if (!shouldAutoPlay) {
+              event.currentTarget.pause();
+              setVideoPaused(true);
+            }
+          }}
+          onPlay={() => setVideoPaused(false)}
+          onPause={() => setVideoPaused(true)}
           onEnded={(event) => {
             if (choiceLoopActive) return;
-            event.currentTarget.pause();
+            if (currentChoices.length > 0 && Number.isFinite(event.currentTarget.duration)) {
+              event.currentTarget.currentTime = Math.max(0, event.currentTarget.duration - 0.35);
+              event.currentTarget.pause();
+            }
             setVideoEnded(true);
           }}
           onTimeUpdate={(event) => {
@@ -383,6 +585,17 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
             if (!choiceLoopActive) revealChoicesAtTailFrame(event.currentTarget);
           }}
         />
+      )}
+
+      {phase !== 'error' && activeVideoUrl && !shouldAutoPlay && videoPaused && !showChoices && (
+        <button
+          type="button"
+          onClick={() => void videoRef.current?.play().catch(() => setVideoPaused(true))}
+          className="absolute left-1/2 top-1/2 z-20 flex size-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white/25 bg-black/55 text-white shadow-[0_10px_28px_rgba(0,0,0,0.45)] transition-colors hover:bg-black/75"
+          aria-label={t('canvas.story.playMode.playCurrent')}
+        >
+          <Play className="ml-0.5 size-6" />
+        </button>
       )}
 
       {/* 黑场过渡覆盖层(遮换片/缓冲);pointer-events-none 不挡选项。 */}
@@ -437,7 +650,18 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
       {/* 下一跳分支预取(隐藏、不播,仅缓冲):当前选项的后继片段先就绪,点选即切、无断裂。 */}
       <div aria-hidden className="hidden">
         {preloadUrls.map((u) => (
-          <video key={u} src={u} preload="auto" muted />
+          <video
+            key={u}
+            src={u}
+            preload="auto"
+            muted
+            onCanPlay={() => {
+              if (u === resolvedChoiceLoopUrl) setChoiceLoopReady(true);
+            }}
+            onError={() => {
+              if (u === resolvedChoiceLoopUrl) setChoiceLoopReady(false);
+            }}
+          />
         ))}
       </div>
 
@@ -601,6 +825,9 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
           </button>
         </div>
       )}
+          </div>
+        </main>
+      </div>
     </div>,
     document.body,
   );

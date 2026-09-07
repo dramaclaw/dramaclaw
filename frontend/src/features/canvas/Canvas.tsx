@@ -158,6 +158,7 @@ import {
 import { computeAutoLayout } from './application/autoLayout';
 import { migratePastedNodeAssets } from './application/crossProjectAssets';
 import { StoryPlayerOverlay } from '@/components/canvas/StoryPlayerOverlay';
+import { StoryGroupToolbar } from './ui/StoryGroupToolbar';
 import { StoryVariablesPanel } from '@/components/canvas/StoryVariablesPanel';
 import { StoryLintPanel } from '@/components/canvas/StoryLintPanel';
 import { StoryBatchGenPanel } from '@/components/canvas/StoryBatchGenPanel';
@@ -5224,6 +5225,9 @@ export function Canvas({
 
       {/* 快捷操作条 z-[41] 高于故事板 overlay(z-30)，挂起时必须隐藏；
           右侧 z-30 的缩放/小地图/FPS 控件与故事板同级、按 DOM 顺序被盖住，无需处理。 */}
+      {!taskPanelOpen && !suspended && (
+        <StoryGroupToolbar />
+      )}
       {!taskPanelOpen && !suspended && (
         <CanvasQuickActionBar
           placement={controlsPlacement}

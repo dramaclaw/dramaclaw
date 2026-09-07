@@ -2,6 +2,7 @@ import { type CanvasEdge, type CanvasNode } from '@/features/canvas/domain/canva
 import { STORY_CHOICE_EDGE_TYPE, type StoryConditionExpr, type StoryFlag, type StoryVariable } from './storyTypes';
 import { conditionLeaves, isFlagCondition, isVisitCondition } from './conditionExpr';
 import { resolveStartNodeId } from './resolveStart';
+import { analyzeStoryPaths, type StoryPathFindingCode } from './pathAnalysis';
 
 export type StoryIssueSeverity = 'error' | 'warning' | 'info';
 export type StoryIssueCode =
@@ -15,7 +16,8 @@ export type StoryIssueCode =
   | 'leaf_no_ending'
   | 'needs_review'
   | 'automatic_no_fallback'
-  | 'automatic_fallback_order';
+  | 'automatic_fallback_order'
+  | StoryPathFindingCode;
 
 export interface StoryIssue {
   severity: StoryIssueSeverity;
@@ -152,6 +154,19 @@ export function lintStory(
       if (index !== automatic.length - 1 || fallbackIndexes.length > 1 || visibleCount > 0) {
         issues.push({ severity: 'error', code: 'automatic_fallback_order', edgeId: edge.id });
       }
+    }
+  }
+
+  const blocksPathAnalysis = issues.some((issue) =>
+    ['no_start', 'undefined_variable', 'undefined_flag', 'dangling_edge', 'dangling_visit'].includes(issue.code),
+  );
+  if (startId && !blocksPathAnalysis) {
+    const validStoryEdges = storyEdges.filter((edge) => memberIds.has(edge.target));
+    for (const finding of analyzeStoryPaths(memberIds, validStoryEdges, startId, variables, flags)) {
+      issues.push({
+        severity: finding.code === 'automatic_cycle' || finding.code === 'variable_out_of_bounds' ? 'error' : 'warning',
+        ...finding,
+      });
     }
   }
 

@@ -183,6 +183,8 @@ export interface StoryVariable {
   label: string;
   /** 初始值(整数)。 */
   initial: number;
+  minimum?: number | null;
+  maximum?: number | null;
 }
 
 /** 真/假剧情状态，如“已拿到钥匙”。 */

@@ -22,6 +22,8 @@ export interface StoryChoiceView {
 
 interface StoryRuntimeState {
   mode: 'edit' | 'play';
+  /** 娱乐模式从起点完整试玩；live 是创作者从任意节点开始的无存档调试。 */
+  playKind: 'entertainment' | 'live';
   story: InkStory | null;
   clipByNodeId: Record<string, string>;
   /** 选择源节点 id → 独立互动循环片段 URL。 */
@@ -63,7 +65,11 @@ interface StoryRuntimeState {
   /** 进入时检测到存档,等玩家决定「继续 / 从头」;true 期间不自动 advance。 */
   resumeAvailable: boolean;
 
-  enterPlay: (compiled: CompiledStory, opts?: { saveKey?: string; groupId?: string }) => void;
+  enterPlay: (compiled: CompiledStory, opts?: {
+    saveKey?: string;
+    groupId?: string;
+    playKind?: 'entertainment' | 'live';
+  }) => void;
   /** 续玩:把存档灌回 story 并定位。返回 true=成功;false=存档损坏,已清档并回到起点。 */
   resumeSaved: () => boolean;
   /** 忽略存档,从头开始并覆盖存档为新起点。 */
@@ -208,6 +214,7 @@ function persist(saveKey: string | null, story: InkStory): void {
 }
 
 const INITIAL_RUNTIME = {
+  playKind: 'entertainment' as const,
   story: null as InkStory | null,
   clipByNodeId: {} as Record<string, string>,
   choiceLoopClipByNodeId: {} as Record<string, string>,
@@ -244,6 +251,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       const saveKey = opts?.saveKey ?? null;
       const statsKey = statsKeyFromSaveKey(saveKey);
       const groupId = opts?.groupId ?? null;
+      const playKind = opts?.playKind ?? 'entertainment';
       const tables = {
         clipByNodeId: compiled.clipByNodeId,
         choiceLoopClipByNodeId: compiled.choiceLoopClipByNodeId,
@@ -259,6 +267,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       if (saveKey && readStorySave(saveKey) !== null) {
         set({
           mode: 'play',
+          playKind,
           story,
           ...tables,
           error: null,
@@ -281,6 +290,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       // 无存档:照旧直接进入起点,并写入初始存档。
       set({
         mode: 'play',
+        playKind,
         story,
         ...tables,
         error: null,
