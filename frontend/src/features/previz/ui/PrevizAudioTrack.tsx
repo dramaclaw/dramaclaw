@@ -267,7 +267,32 @@ function AudioWave({
   );
 }
 
-/** 峰值里截出这一段，画成中线对称的柱子。 */
+/**
+ * 片段每一列像素画多高的柱子：整段峰值里按 `offsetMs` 起、`clipMs` 长截一窗，
+ * 再重采样到画布宽度。单独拆出来是因为它是这块唯一有算术的地方，
+ * 而 canvas 那套在 jsdom 里根本跑不起来，混在绘制里就没法验。
+ */
+export function peakBarHeights(
+  peaks: Float32Array,
+  offsetMs: number,
+  clipMs: number,
+  width: number,
+  height: number,
+): number[] {
+  const first = Math.floor((offsetMs / 1000) * PEAK_BUCKETS_PER_SEC);
+  // 这一窗跨了多少桶，不取整：取样时那一步 floor 已经把列号落到桶上了，先取一次没有区别。
+  // 不足一桶时 span 小于 1，每一列都落回 first 那一桶——短片段画成平的一条，正是想要的。
+  const span = (clipMs / 1000) * PEAK_BUCKETS_PER_SEC;
+  const bars: number[] = [];
+  for (let x = 0; x < width; x += 1) {
+    const bucket = first + Math.floor((x / width) * span);
+    // 片段比素材长时读到 undefined，按静音算；静音也留 1px，波形不至于断成一截一截。
+    bars.push(Math.max(1, (peaks[bucket] ?? 0) * height));
+  }
+  return bars;
+}
+
+/** 把柱子画成中线对称的一条波形。 */
 function drawPeaks(
   canvas: HTMLCanvasElement | null,
   peaks: Float32Array,
@@ -281,15 +306,10 @@ function drawPeaks(
   canvas.height = height;
   const context = canvas.getContext('2d');
   if (!context) return;
-  const first = Math.floor((offsetMs / 1000) * PEAK_BUCKETS_PER_SEC);
-  const count = Math.max(1, Math.floor((clipMs / 1000) * PEAK_BUCKETS_PER_SEC));
   context.clearRect(0, 0, width, height);
   context.fillStyle = 'rgba(255,255,255,0.55)';
   const middle = height / 2;
-  for (let x = 0; x < width; x += 1) {
-    const bucket = first + Math.floor((x / width) * count);
-    const peak = peaks[bucket] ?? 0;
-    const bar = Math.max(1, peak * height);
+  peakBarHeights(peaks, offsetMs, clipMs, width, height).forEach((bar, x) => {
     context.fillRect(x, middle - bar / 2, 1, bar);
-  }
+  });
 }
