@@ -869,9 +869,12 @@ describe('PrevizRenderer 接场景图', () => {
     // 不带 `previzPlaceholder`，换模型时清不到它头上，所以是两个子节点。
     expect(node?.children).toHaveLength(2);
     expect(node?.children.some((child) => child.userData.previzRig)).toBe(true);
-    // 加载的是仓库里那份共享角色模型。路径写字面量：从被测模块 import 回来的常量
-    // 改一处两边一起变。
-    expect(loadedUrls).toEqual(['/viewer-kit/quaternius/ual2/UAL2_Standard.glb']);
+    // 加载的是仓库里那份共享角色模型，外加补齐蹲坐走跑等姿势的 UAL1 动画库。
+    // 路径写字面量：从被测模块 import 回来的常量改一处两边一起变。
+    expect(loadedUrls).toEqual([
+      '/viewer-kit/quaternius/ual2/UAL2_Standard.glb',
+      '/viewer-kit/quaternius/ual1/UAL1_Standard.glb',
+    ]);
 
     // 模型到位时按需重绘的循环早就静下来了。不把 requestRender 接上，人物要等到
     // 用户下一次动鼠标才出现在画面上。
