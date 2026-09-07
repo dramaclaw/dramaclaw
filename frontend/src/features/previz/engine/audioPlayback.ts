@@ -56,6 +56,9 @@ export function createAudioPlayback(deps: AudioPlaybackDeps): PrevizAudioPlaybac
   let live: AudioBufferSourceLike[] = [];
   // 每次 play/stop +1；load 期间又来了一次 stop 或 play，旧的那次拿到 buffer 后什么都不做。
   let generation = 0;
+  // dispose() 之后置真。StrictMode 会把 effect 的清理函数跑两遍，第二次调用的
+  // play()/load() 不该再碰 AudioContext——它随时可能已经被关掉。
+  let disposed = false;
 
   function loadOne(url: string): Promise<void> {
     if (buffers.has(url) || failedUrls.has(url)) return Promise.resolve();
@@ -63,7 +66,9 @@ export function createAudioPlayback(deps: AudioPlaybackDeps): PrevizAudioPlaybac
     if (pending) return pending;
     const task = fetchBuffer(url)
       .then((buffer) => {
-        buffers.set(url, buffer);
+        // dispose() 之后才解码完的素材不进缓存：引擎已经交还资源，留着它只是给
+        // 下一个不相关的实例（如果还有人重新 load 同一个 url）埋一份幽灵缓存。
+        if (!disposed) buffers.set(url, buffer);
       })
       .catch((error: unknown) => {
         failedUrls.add(url);
@@ -77,6 +82,7 @@ export function createAudioPlayback(deps: AudioPlaybackDeps): PrevizAudioPlaybac
   }
 
   function loadAll(clips: readonly PrevizAudioClip[]): Promise<void> {
+    if (disposed) return Promise.resolve();
     const urls = [...new Set(clips.map((clip) => clip.audioUrl))];
     return Promise.all(urls.map(loadOne)).then(() => {});
   }
@@ -100,6 +106,7 @@ export function createAudioPlayback(deps: AudioPlaybackDeps): PrevizAudioPlaybac
     rate: number,
     destination?: AudioNode,
   ): Promise<void> {
+    if (disposed) return;
     stop();
     const mine = generation;
     await loadAll(clips);
@@ -112,7 +119,11 @@ export function createAudioPlayback(deps: AudioPlaybackDeps): PrevizAudioPlaybac
     const now = context.currentTime;
     const target = destination ?? context.destination;
     for (const clip of clips) {
-      if (clip.endFrame <= fromFrame) continue;
+      // 用 Math.max 兜底：正常片段里这就是 endFrame <= fromFrame（已播完跳过）；
+      // 但万一上游数据坏了给出 startFrame > endFrame，下面的 else 分支会拿负时长
+      // 喂给 start()，抛 RangeError——而 play() 是 void 调用，那就是一条未捕获的
+      // 拒绝。一次比较把两种情况都挡掉。
+      if (clip.endFrame <= Math.max(fromFrame, clip.startFrame)) continue;
       const buffer = buffers.get(clip.audioUrl);
       if (!buffer) continue;
       const source = context.createBufferSource();
@@ -141,7 +152,11 @@ export function createAudioPlayback(deps: AudioPlaybackDeps): PrevizAudioPlaybac
     stop,
     dispose() {
       stop();
-      void context.close();
+      disposed = true;
+      // 第二次 dispose()（StrictMode 的清理函数会跑两遍）会把已经关掉的 context
+      // 再关一次，close() 在那种状态下返回被拒绝的 promise；吞掉它，不然就是一条
+      // 没人处理的 unhandled rejection。
+      void context.close().catch(() => {});
       buffers.clear();
       loading.clear();
     },
