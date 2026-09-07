@@ -8,7 +8,9 @@ import {
 } from '@/features/previz/domain/closeup';
 import { evaluateSceneAt } from '@/features/previz/domain/evaluate';
 import { createPrevizObject } from '@/features/previz/domain/objects';
+import { PREVIZ_POSE_CLIPS, type PrevizPoseId } from '@/features/previz/domain/poses';
 import {
+  PREVIZ_FPS,
   createDefaultScene,
   type PrevizCamera,
   type PrevizCharacter,
@@ -23,6 +25,11 @@ function sceneWithCharacter(): { scene: PrevizScene; character: PrevizCharacter 
   character.transform.position = [5, 0, 5];
   character.transform.rotation = [0, 45, 0];
   return { scene: { ...createDefaultScene(), objects: [character] }, character };
+}
+
+/** 人物静止时定格在候选表挑好的那一秒。 */
+function stillTimeOf(character: PrevizCharacter): number {
+  return PREVIZ_POSE_CLIPS[character.basePoseId as PrevizPoseId].sampleTime;
 }
 
 function clipFor(startFrame: number, endFrame: number): PrevizPathClip {
@@ -52,8 +59,57 @@ describe('evaluateSceneAt', () => {
     scene.objects.push(camera);
     const frame = evaluateSceneAt(scene, 0);
     expect(frame.get(character.id)?.poseId).toBe(character.basePoseId);
-    expect(frame.get(character.id)?.poseTime).toBe(0);
+    // 静止的人物定格在候选表挑好的那一秒——定格在 0 常常是绑定姿势，看起来像没摆。
+    expect(frame.get(character.id)?.poseTime).toBe(stillTimeOf(character));
     expect(frame.get(camera.id)?.poseId).toBeNull();
+  });
+
+  it('plays the walk cycle while a path clip carries the character', () => {
+    const { scene, character } = sceneWithCharacter();
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: character.id, clips: [clipFor(30, 150)] }],
+    };
+    const state = evaluateSceneAt(scene, 60).get(character.id);
+    // 位置在变而脚不动，看着是整个人被平移过去的。姿势内的时间从片段首帧起算、单位秒，
+    // 引擎直接拿它推动画。
+    expect(state?.poseId).toBe('walking');
+    expect(state?.poseTime).toBeCloseTo(30 / PREVIZ_FPS, 10);
+  });
+
+  it('keeps a running character running along the path', () => {
+    const { scene, character } = sceneWithCharacter();
+    character.basePoseId = 'running';
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: character.id, clips: [clipFor(0, 120)] }],
+    };
+    expect(evaluateSceneAt(scene, 60).get(character.id)?.poseId).toBe('running');
+  });
+
+  it('returns to the base pose outside the clip and on a single-point path', () => {
+    const { scene, character } = sceneWithCharacter();
+    const clip = clipFor(60, 120);
+    const pinned: PrevizPathClip = { ...clip, points: clip.points.slice(0, 1) };
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: character.id, clips: [pinned] }],
+    };
+    const still = { poseId: character.basePoseId, poseTime: stillTimeOf(character) };
+    // 片段之外人回到静态姿势；只有一个点的路径没有位移，原地迈腿是在踏步。
+    expect(evaluateSceneAt(scene, 10).get(character.id)).toMatchObject(still);
+    expect(evaluateSceneAt(scene, 90).get(character.id)).toMatchObject(still);
+  });
+
+  it('never gives a camera a pose, even on a path', () => {
+    const { scene } = sceneWithCharacter();
+    const camera = createPrevizObject('camera', scene.objects);
+    scene.objects.push(camera);
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: camera.id, clips: [clipFor(0, 120)] }],
+    };
+    expect(evaluateSceneAt(scene, 60).get(camera.id)?.poseId).toBeNull();
   });
 
   it('lets a covering path clip override position and rotation', () => {

@@ -67,6 +67,7 @@ let boxIsEmpty = false;
 
 const setTime = vi.fn();
 const play = vi.fn();
+const stopAllAction = vi.fn();
 /** 每次 `clipAction(clip)` 收到的那条 clip，用来断言挑中的是哪一条。 */
 let clipActions: Array<{ name: string }> = [];
 /** 每个 AnimationMixer 是挂在谁身上建的：必须是克隆体，不是共享的源场景。 */
@@ -105,6 +106,7 @@ function fakeThree() {
         return { play };
       }
       setTime = setTime;
+      stopAllAction = stopAllAction;
     },
   } as unknown as typeof import('three');
 }
@@ -177,6 +179,7 @@ beforeEach(() => {
   mixerRoots = [];
   setTime.mockClear();
   play.mockClear();
+  stopAllAction.mockClear();
 });
 
 describe('CharacterRigFactory', () => {
@@ -563,5 +566,68 @@ describe('CharacterRigFactory.applyCharacter', () => {
     // 缩放照常生效——姿势解不出来不该连身高一起放弃。
     expect(clipActions).toHaveLength(0);
     expect(viewOf(rig).scale.y).toBeCloseTo(1, 6);
+  });
+});
+
+describe('CharacterRigFactory.applyPose', () => {
+  it('advances the walk cycle to the requested second', async () => {
+    const factory = factoryWith(['Idle_Loop', 'Walk_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+    clipActions = [];
+    setTime.mockClear();
+    stopAllAction.mockClear();
+
+    factory.applyPose(rig!, 'walking', 1.5);
+
+    // 沿路径走位时每帧推一次。不停掉上一条 action 的话，站姿和走姿两条权重都是 1，
+    // 骨骼被拧到两者之和上。
+    expect(stopAllAction).toHaveBeenCalledTimes(1);
+    expect(clipActions.map((clip) => clip.name)).toEqual(['Walk_Loop']);
+    expect(setTime).toHaveBeenCalledWith(1.5);
+  });
+
+  it('keeps one mixer per rig and only moves the clock between frames', async () => {
+    const factory = factoryWith(['Idle_Loop', 'Walk_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+    factory.applyPose(rig!, 'walking', 0.1);
+    mixerRoots = [];
+    clipActions = [];
+    stopAllAction.mockClear();
+    setTime.mockClear();
+
+    factory.applyPose(rig!, 'walking', 0.2);
+    factory.applyPose(rig!, 'walking', 0.3);
+
+    // 每帧新建一个 mixer、重新 play 一次的话，clipAction 要把几十根骨骼的绑定重新解一遍，
+    // 那是播放时每一帧都要付的钱。
+    expect(mixerRoots).toHaveLength(0);
+    expect(clipActions).toHaveLength(0);
+    expect(stopAllAction).not.toHaveBeenCalled();
+    expect(setTime.mock.calls).toEqual([[0.2], [0.3]]);
+  });
+
+  it('does nothing when the pose and the time are both unchanged', async () => {
+    const factory = factoryWith(['Idle_Loop', 'Walk_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+    factory.applyPose(rig!, 'walking', 0.5);
+    setTime.mockClear();
+
+    factory.applyPose(rig!, 'walking', 0.5);
+
+    // 暂停时每次 sync 都会把同一帧重放一遍，不早退就是白推一遍骨架。
+    expect(setTime).not.toHaveBeenCalled();
+  });
+
+  it('keeps the current clip when the requested pose resolves to nothing', async () => {
+    const factory = factoryWith(['Idle_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+    clipActions = [];
+    stopAllAction.mockClear();
+
+    factory.applyPose(rig!, 'moonwalk', 1);
+
+    // 对不上就保持现有姿势：绝不拿别的 clip 顶上，也不把正在播的停掉留下一副绑定姿势。
+    expect(clipActions).toHaveLength(0);
+    expect(stopAllAction).not.toHaveBeenCalled();
   });
 });

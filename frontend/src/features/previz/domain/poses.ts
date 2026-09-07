@@ -111,3 +111,20 @@ export function resolvePoseClipName(
   const config = isPrevizPoseId(pose) ? PREVIZ_POSE_CLIPS[pose] : undefined;
   return config?.names.find((name) => available.has(name)) ?? null;
 }
+
+/**
+ * 静止的人物定格在候选表挑好的那一秒。收 `string` 的理由同 `resolvePoseClipName`。
+ * 表里没有的 id 给 0：这种 id 本来就解不出 clip，引擎不会拿这个值去采样，
+ * 它只是让求值结果的形状保持完整。
+ */
+export function poseSampleTime(pose: string): number {
+  return isPrevizPoseId(pose) ? PREVIZ_POSE_CLIPS[pose].sampleTime : 0;
+}
+
+/**
+ * 沿路径走位时该放哪个循环。基础姿势是奔跑的就跑，其余一律走——坐着的人被拽上路径
+ * 也该站起来走，而不是坐着滑过去。
+ */
+export function locomotionPoseFor(basePoseId: string): PrevizPoseId {
+  return basePoseId === 'running' ? 'running' : 'walking';
+}

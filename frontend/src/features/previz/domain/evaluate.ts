@@ -8,16 +8,17 @@ import {
   rigCameraPosition,
 } from './closeup';
 import { samplePathPosition, samplePathRotation } from './pathCurve';
-import type { PrevizObject, PrevizScene, Vec3 } from './scene';
+import { locomotionPoseFor, poseSampleTime } from './poses';
+import { PREVIZ_FPS, type PrevizObject, type PrevizScene, type Vec3 } from './scene';
 import { frameToU, pathClipAt, rigClipAt } from './timeline';
 
 /** 某一帧上单个对象的解算结果。 */
 export interface EvaluatedObject {
   position: Vec3;
   rotation: Vec3;
-  /** 人物用；其余对象恒为 null。 */
+  /** 人物用；其余对象恒为 null。静止时是基础姿势，沿路径走位时是走 / 跑的循环。 */
   poseId: string | null;
-  /** 姿势内的时间，单位秒。动作片段（P4）才会给出非零值。 */
+  /** 姿势内的时间，单位秒。静止时是候选表里定格的那一秒，走位时从片段首帧起算。 */
   poseTime: number;
 }
 
@@ -32,7 +33,8 @@ export type EvaluatedFrame = Map<string, EvaluatedObject>;
  * 走位与朝向分三轮：特写机位的位置是从锚点**这一帧解算完的**位置反推的，「看向」又是
  * 从看的人与被看的人**都解算完**的位置反推的。塞进同一轮里的话，跟不跟得上取决于两条
  * 轨道在数组里的先后——那种 bug 只在某几个场景里出现。
- * action（姿势与姿势内时间）仍未实现。
+ * 姿势跟着走位一起解：静止是基础姿势定格的那一秒，沿路径走位换成走 / 跑的循环并给出
+ * 片段内时间，引擎按它推动画。动作片段（P4）还没有。
  */
 export function evaluateSceneAt(scene: PrevizScene, frame: number): EvaluatedFrame {
   const result: EvaluatedFrame = new Map();
@@ -44,7 +46,7 @@ export function evaluateSceneAt(scene: PrevizScene, frame: number): EvaluatedFra
       position: [...object.transform.position],
       rotation: [...object.transform.rotation],
       poseId: object.kind === 'character' ? object.basePoseId : null,
-      poseTime: 0,
+      poseTime: object.kind === 'character' ? poseSampleTime(object.basePoseId) : 0,
     });
   }
 
@@ -60,6 +62,13 @@ export function evaluateSceneAt(scene: PrevizScene, frame: number): EvaluatedFra
     const u = frameToU(clip, frame);
     target.position = samplePathPosition(clip.points, u);
     target.rotation = samplePathRotation(clip.points, u);
+    // 位置在变而脚不动，看着是整个人被平移过去的：沿路径走位的人物换成走 / 跑的循环，
+    // 时间从片段首帧起算。只有人物有姿势（其余对象 poseId 恒为 null）；只有一个点的
+    // 路径没有位移，原地迈腿是在踏步，所以保持静止姿势。
+    if (target.poseId !== null && clip.points.length >= 2) {
+      target.poseId = locomotionPoseFor(target.poseId);
+      target.poseTime = (frame - clip.startFrame) / PREVIZ_FPS;
+    }
   }
 
   const objectsById = lazyIndex(scene);

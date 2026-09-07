@@ -137,6 +137,18 @@ export class PrevizSceneGraph {
     return this.nodes.get(objectId);
   }
 
+  /**
+   * 把某一帧的姿势推到人物的模型上。求值器每帧给出姿势与姿势内时间，沿路径走位的人物
+   * 靠它真的迈腿。模型还没到（还是占位胶囊）或者没接工厂时无事可做：模型到位那一刻
+   * 渲染器会把当前帧重放一遍。
+   */
+  applyPose(objectId: string, poseId: string, poseTime: number): void {
+    const rig = this.characterRig;
+    const model = this.nodes.get(objectId)?.children.find((child) => child.userData.previzRig);
+    if (!rig || !model) return;
+    rig.applyPose(model, poseId, poseTime);
+  }
+
   /** 把当前场景同步进对象树。可以每帧调，代价是一次 Map 查表加几次赋值。 */
   sync(scene: PrevizScene): void {
     const mode = scene.settings.displayMode;

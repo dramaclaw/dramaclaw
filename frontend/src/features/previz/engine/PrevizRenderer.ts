@@ -227,7 +227,10 @@ export class PrevizRenderer {
       }),
       // 模型是异步到的，到了之后必须主动请求一帧：按需重绘的循环这时早就静下来了。
       // 顺手补一次描边 / 名牌：这条路径不经过 setScene，少了它后到的 GLB 一直没有描边。
+      // 也把当前帧重放一遍：`build()` 摆的是静态姿势，播放头这时可能已经在路径中间，
+      // 不重放的话后到的模型会一直站着滑，直到播放头下一次移动。
       () => {
+        instance.applyEvaluatedFrame();
         instance.syncOverlays();
         instance.requestRender();
       },
@@ -466,16 +469,16 @@ export class PrevizRenderer {
   }
 
   /**
-   * 把当前帧的解算结果写进各个节点。
-   *
-   * 只写位置与旋转：姿势（`poseId`）在 P3 里恒等于人物的 `basePoseId`，场景图每次 sync
-   * 已经刷过了，这里再刷一遍是重复的一份真相；P4 的动作片段会让它随帧变化，那时再接。
+   * 把当前帧的解算结果写进各个节点：位置、旋转，以及人物这一帧的姿势与姿势内时间——
+   * 沿路径走位的人物靠后者真的迈腿，而不是端着一副定格的姿势被平移过去。
    */
   private applyEvaluatedFrame(): void {
     const scene = this.currentScene;
     if (!scene) return;
     const evaluated = evaluateSceneAt(scene, this.currentFrame);
     for (const [objectId, state] of evaluated) {
+      // 姿势不归手摆管：拖动一个正在走的人物改的是他站在哪，不是把他的腿定住。
+      if (state.poseId !== null) this.graph.applyPose(objectId, state.poseId, state.poseTime);
       // 刚被手摆过的对象让位给那一次摆放，等播放头再动时才交还给时间轴。
       if (this.handPlaced.has(objectId)) continue;
       const node = this.graph.nodeFor(objectId);

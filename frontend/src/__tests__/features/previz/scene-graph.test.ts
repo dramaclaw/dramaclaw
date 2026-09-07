@@ -198,6 +198,7 @@ function fakeThree() {
       return { play: () => {} };
     }
     setTime(_time: number) {}
+    stopAllAction() {}
   }
 
   return {
@@ -980,6 +981,36 @@ describe('PrevizSceneGraph', () => {
     // 而且是重新摆姿势，不是重新下一个模型。
     expect(loadGltf).toHaveBeenCalledTimes(ACTOR_FILE_COUNT);
     expect(rigOf(graph, character.id)).toBe(rig);
+  });
+
+  it('advances a loaded rig to the pose the playhead asks for', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { factory } = rigFactory(three, ['Idle_Loop', 'Walk_Loop']);
+    graph.attachCharacterRig(factory, vi.fn());
+    const scene = characterScene({ basePoseId: 'standing' });
+    const character = scene.objects[0]!;
+    graph.sync(scene);
+    await flush();
+
+    graph.applyPose(character.id, 'walking', 0.5);
+
+    // 求值器每帧给出姿势与姿势内时间，沿路径走位的人物靠这条真的迈腿。
+    const rig = rigOf(graph, character.id);
+    expect(rig?.userData.previzPoseId).toBe('walking');
+    expect(rig?.userData.previzPoseTime).toBe(0.5);
+  });
+
+  it('ignores a per-frame pose while the character is still a placeholder', () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+    const scene = characterScene();
+    graph.sync(scene);
+
+    // 模型还在路上：占位胶囊没有骨架可推。模型到位那一刻渲染器会把当前帧重放一遍。
+    expect(() => graph.applyPose(scene.objects[0]!.id, 'walking', 0.5)).not.toThrow();
   });
 
   it('re-applies pose adjust to the loaded rig', async () => {
