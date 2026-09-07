@@ -59,6 +59,39 @@ def create_request(
     )
 
 
+def test_video_prompt_round_trip_and_patch_preserve_story_and_media(
+    service: InteractiveStoryService, story: StoryDraftV2,
+) -> None:
+    segment = story.segments[0]
+    segment.video_prompt = "主角推门未开，中景停留。"
+    segment.media = StoryMediaRef(source="imported", status="ready", url="/media/door.mp4")
+    service.create(create_request(story))
+    saved = canvas_store.read_canvas(service.project_dir, "default")
+    node = next(n for n in saved["nodes"] if n["data"].get("storySegmentId") == segment.id)
+    assert node["data"]["prompt"] == segment.video_prompt
+    request = GetInteractiveStoryRequest(canvas_id="default", story_id=story.story_id)
+    assert service.get(request).story.segments[0].video_prompt == segment.video_prompt
+
+    # Updating just narrative must preserve the independent production prompt.
+    for revision, changes in enumerate([
+        {"script": "更新剧情，不重做视频。"},
+        {"video_prompt": "镜头缓慢推进，停留在木门。"},
+        {"video_prompt": ""},
+    ], start=1):
+        service.patch(StoryPatchV2.model_validate({
+            "canvas_id": "default", "story_id": story.story_id,
+            "base_revision": revision, "idempotency_key": f"prompt-patch-{revision}",
+            "operations": [{"op": "update_segment", "segment_id": segment.id, "changes": changes}],
+        }))
+        restored = service.get(request).story
+        actual = restored.segments[0]
+        assert actual.video_prompt == changes.get("video_prompt", segment.video_prompt)
+        assert actual.script == "更新剧情，不重做视频。"
+        assert actual.production_notes == segment.production_notes
+        assert actual.media == segment.media
+        assert restored.choices == story.choices
+
+
 def test_mapper_round_trip_preserves_domain_ids_conditions_and_effects(
     story: StoryDraftV2,
 ) -> None:

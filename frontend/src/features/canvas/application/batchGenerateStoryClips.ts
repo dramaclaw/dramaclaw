@@ -32,7 +32,7 @@ export interface BatchGenSummary {
 }
 
 /**
- * 批量为某故事组的缺失片段生成视频:旁白作提示词,限并发 3,逐片段提交→await→回写
+ * 批量为某故事组的缺失片段生成视频:使用独立视频提示词,限并发 3,逐片段提交→await→回写
  * `videoUrl`。每片段进度复用节点自身的生成遮罩(经 `isGenerating`/任务句柄)。
  */
 export async function batchGenerateStoryClips(

@@ -3544,7 +3544,7 @@
         "open": "Generate missing",
         "title": "Generate missing clips",
         "missingCount": "{{count}} missing clip(s)",
-        "skippedHint": "{{count}} clip(s) without narration will be skipped",
+        "skippedHint": "{{count}} clip(s) without video prompts will be skipped; ask the Agent to prepare them or fill them in on the nodes",
         "resolution": "Resolution",
         "duration": "Duration (s)",
         "generate": "Generate {{count}}",

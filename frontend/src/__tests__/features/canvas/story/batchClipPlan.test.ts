@@ -14,23 +14,32 @@ function vnode(
 }
 
 describe('collectMissingStoryClips', () => {
-  it('无视频+有旁白 → generable(prompt=旁白);无视频+无旁白 → skipped', () => {
+  it('仅准备好独立视频提示词的缺失片段可生成', () => {
     const nodes = [
       { id: 'g', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { storyGroup: true } },
-      vnode('a', { videoUrl: null, narration: '深夜寝殿' }),
-      vnode('b', { videoUrl: null, narration: '  ' }), // 空白旁白 → skipped
-      vnode('c', { videoUrl: null }), // 无旁白 → skipped
+      vnode('a', { videoUrl: null, narration: '玩家选择寻找钥匙或离开', prompt: '  深夜寝殿，主角推门未开，中景停留  ' }),
+      vnode('b', { videoUrl: null, narration: '有剧情但没有制作提示词', prompt: '  ' }),
+      vnode('c', { videoUrl: null, storyProductionNotes: '结尾停留' }),
     ] as CanvasNode[];
     const plan = collectMissingStoryClips(nodes, 'g');
-    expect(plan.generable).toEqual([{ id: 'a', prompt: '深夜寝殿' }]);
+    expect(plan.generable).toEqual([{ id: 'a', prompt: '深夜寝殿，主角推门未开，中景停留' }]);
     expect(plan.skipped.sort()).toEqual(['b', 'c']);
+  });
+
+  it('无需旁白也可以生成；忽略损坏的提示词类型', () => {
+    const plan = collectMissingStoryClips([
+      vnode('a', { prompt: '雨滴落在木门上' }),
+      vnode('b', { prompt: 123, narration: '不能回退为此内容' }),
+    ], 'g');
+    expect(plan.generable).toEqual([{ id: 'a', prompt: '雨滴落在木门上' }]);
+    expect(plan.skipped).toEqual(['b']);
   });
 
   it('有视频 / 生成中 / 非组成员 / 非视频 → 都不收', () => {
     const nodes = [
-      vnode('hasVideo', { videoUrl: 'x.mp4', narration: '有' }),
-      vnode('busy', { videoUrl: null, narration: '生成中', isGenerating: true }),
-      vnode('other', { videoUrl: null, narration: '别组' }, 'other-group'),
+      vnode('hasVideo', { videoUrl: 'x.mp4', prompt: '有' }),
+      vnode('busy', { videoUrl: null, prompt: '生成中', isGenerating: true }),
+      vnode('other', { videoUrl: null, prompt: '别组' }, 'other-group'),
       { id: 'img', type: CANVAS_NODE_TYPES.imageGen, parentId: 'g', position: { x: 0, y: 0 }, data: { imageUrl: null } },
     ] as CanvasNode[];
     const plan = collectMissingStoryClips(nodes, 'g');

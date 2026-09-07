@@ -98,6 +98,7 @@ class StorySegment(StoryContractModel):
     character_ids: list[EntityId] = Field(default_factory=list, max_length=64)
     choice_time_limit_sec: int | None = Field(default=None, gt=0, le=300)
     production_notes: str = Field(default="", max_length=8_000)
+    video_prompt: str = Field(default="", max_length=20_000)
     media: StoryMediaRef = Field(default_factory=StoryMediaRef)
     choice_loop: StoryChoiceLoop | None = None
 
@@ -374,6 +375,7 @@ class StorySegmentChanges(StoryContractModel):
     character_ids: list[EntityId] | None = Field(default=None, max_length=64)
     choice_time_limit_sec: int | None = Field(default=None, gt=0, le=300)
     production_notes: str | None = Field(default=None, max_length=8_000)
+    video_prompt: str | None = Field(default=None, max_length=20_000)
     media: StoryMediaRef | None = None
     choice_loop: StoryChoiceLoop | None = None
 

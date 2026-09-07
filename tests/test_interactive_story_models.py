@@ -33,6 +33,16 @@ def example_payload() -> dict:
     return json.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
 
 
+def test_video_prompt_is_independent_and_bounded(example_payload: dict) -> None:
+    example_payload["segments"][0]["video_prompt"] = "  主角推门未开，中景停留。  "
+    segment = StoryDraftV2.model_validate(example_payload).segments[0]
+    assert segment.video_prompt == "主角推门未开，中景停留。"
+    assert segment.script == example_payload["segments"][0]["script"]
+    example_payload["segments"][0]["video_prompt"] = "x" * 20_001
+    with pytest.raises(ValidationError):
+        StoryDraftV2.model_validate(example_payload)
+
+
 def test_example_story_round_trips_and_expresses_four_decision_points_two_endings(
     example_payload: dict,
 ) -> None:

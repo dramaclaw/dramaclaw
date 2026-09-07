@@ -3544,7 +3544,7 @@
         "open": "生成缺失片段",
         "title": "批量生成缺失片段",
         "missingCount": "缺 {{count}} 个片段",
-        "skippedHint": "{{count}} 个无旁白片段将跳过",
+        "skippedHint": "{{count}} 个片段尚未准备视频提示词，将跳过；可让 Agent 补充或在节点中填写",
         "resolution": "清晰度",
         "duration": "时长(秒)",
         "generate": "生成 {{count}} 个",

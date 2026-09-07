@@ -2,20 +2,20 @@ import { isVideoNode, type CanvasNode } from '@/features/canvas/domain/canvasNod
 
 export interface MissingClip {
   id: string;
-  /** 文生视频提示词 = 节点旁白。 */
+  /** 已准备好的视频提示词，不以剧情内容或制作备注代替。 */
   prompt: string;
 }
 
 export interface MissingClipPlan {
-  /** 可生成的缺失片段(有旁白)。 */
+  /** 可生成的缺失片段(有视频提示词)。 */
   generable: MissingClip[];
-  /** 跳过的缺失片段 id(无旁白,无可用提示词)。 */
+  /** 跳过的缺失片段 id(无可用视频提示词)。 */
   skipped: string[];
 }
 
 /**
  * 收集某故事组的缺失片段:组内、视频类型、无 `videoUrl`、且未在生成中的节点。
- * 有非空 `narration` → generable(prompt=旁白);否则 → skipped。
+ * 有非空 `prompt` → generable；否则 → skipped，避免把分支逻辑交给视频模型。
  */
 export function collectMissingStoryClips(
   nodes: CanvasNode[],
@@ -25,10 +25,10 @@ export function collectMissingStoryClips(
   const skipped: string[] = [];
   for (const node of nodes) {
     if (node.parentId !== groupId || !isVideoNode(node)) continue;
-    const data = node.data as { videoUrl?: string | null; narration?: string; isGenerating?: boolean };
+    const data = node.data as { videoUrl?: string | null; prompt?: unknown; isGenerating?: boolean };
     if (data.videoUrl) continue;
     if (data.isGenerating) continue;
-    const prompt = (data.narration ?? '').trim();
+    const prompt = typeof data.prompt === 'string' ? data.prompt.trim() : '';
     if (prompt) generable.push({ id: node.id, prompt });
     else skipped.push(node.id);
   }

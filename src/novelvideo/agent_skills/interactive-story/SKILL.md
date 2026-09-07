@@ -39,6 +39,29 @@ When the user has no preference, default to about seven story segments, two majo
 
 `remove_segment` cascades to directly connected Choices. When removing the start segment, set a new start in the same Patch. When removing an entity referenced by a condition, update that condition in the same Patch.
 
+## Prepare video production
+
+When asked to prepare or generate story videos, Get the current story first. Keep
+`script` as narrative, use `production_notes` for the production brief, and write
+the final model-facing description into `video_prompt` through `update_segment`.
+Do not merely copy narrative into the prompt. In the brief, describe the scene,
+participating characters and their stable appearance, visible action, camera,
+dialogue/sound intent, opening/ending composition, and continuity with adjacent
+segments. Ask only about missing choices that materially affect production.
+For converging branches, use an opening that works for all incoming paths rather
+than assuming one predecessor. Describe only the current segment's visible action;
+keep conditions, flags, player choices and outcome routing out of the video prompt.
+Default choice buttons and countdowns are rendered by the player, not baked into
+the video. End choice-point clips on a composition suitable for freezing.
+Use the confirmed visual style and character descriptions consistently; do not
+invent reference asset URLs. Resolution, duration, aspect ratio and audio support
+remain generation settings, not guarantees established by prompt text.
+Preserve existing media and branching rules when preparing prompts. Preparing a
+prompt does not submit a generation task, spend generation credits, or produce a
+video; report these states separately. Missing prompts are skipped by batch video
+generation. Do not prepare all prompts during ordinary placeholder story creation
+unless the user has requested video preparation.
+
 ## Read and Failure Handling
 
 - Use Get before explaining an existing story. Use Validate alone for read-only validation.

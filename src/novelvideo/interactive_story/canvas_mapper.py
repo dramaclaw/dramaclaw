@@ -132,6 +132,7 @@ def project_story_to_canvas(
                 "storySegmentId": segment.id,
                 "storyCharacterIds": list(segment.character_ids),
                 "storyProductionNotes": segment.production_notes,
+                "prompt": segment.video_prompt,
                 "storyMedia": segment.media.model_dump(exclude_none=True),
             }
         )
@@ -286,6 +287,7 @@ def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV2:
                 character_ids=_string_list(data.get("storyCharacterIds")),
                 choice_time_limit_sec=_positive_int(data.get("choiceTimeLimitSec")),
                 production_notes=str(data.get("storyProductionNotes") or ""),
+                video_prompt=str(data.get("prompt") or ""),
                 media=media,
                 choice_loop=_choice_loop_from_canvas(data),
             )
