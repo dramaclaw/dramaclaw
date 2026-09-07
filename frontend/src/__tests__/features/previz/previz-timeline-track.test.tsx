@@ -5,9 +5,11 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
+  PrevizActionClip,
+  PrevizAudioClip,
+  PrevizCutClip,
   PrevizPathClip,
   PrevizRigClip,
-  PrevizCutClip,
   PrevizTrack,
 } from '@/features/previz/domain/scene';
 import { ClipBar, PrevizTimelineTrack } from '@/features/previz/ui/PrevizTimelineTrack';
@@ -25,6 +27,26 @@ const cut: PrevizCutClip = {
 };
 
 const path: PrevizPathClip = { id: 'c1', kind: 'path', startFrame: 10, endFrame: 40, points: [] };
+
+const action: PrevizActionClip = {
+  id: 'c1',
+  kind: 'action',
+  startFrame: 10,
+  endFrame: 40,
+  poseId: 'walk',
+};
+
+const audio: PrevizAudioClip = {
+  id: 'c1',
+  kind: 'audio',
+  startFrame: 10,
+  endFrame: 40,
+  audioUrl: 'https://example.test/a.mp3',
+  sourceName: 'a.mp3',
+  durationMs: 1000,
+  offsetMs: 0,
+  sourceNodeId: null,
+};
 
 const rig: PrevizRigClip = {
   id: 'c1',
@@ -138,12 +160,22 @@ describe('ClipBar default tone and label', () => {
     expect(renderBar({ clip: cut }).className).toContain('bg-[#b8801f]');
   });
 
+  /*
+    动作与音频这两行查表没有别的用例经过：动作必须仍旧当轨迹画（这是这次改配色表
+    的兼容承诺），音频得是青的，否则音频轨那个提交会带着一条画错色的行静悄悄发出去。
+  */
+  it('keeps action clips on the path colours and paints audio clips teal', () => {
+    expect(renderBar({ clip: action }).className).toContain('bg-[#3560ba]');
+    expect(renderBar({ clip: action })).toHaveTextContent('previz.timeline.clipLabel');
+    expect(renderBar({ clip: audio }).className).toContain('bg-[#2a8c7a]');
+  });
+
   it('labels each kind from its own key, and never calls a cut a path clip', () => {
     expect(renderBar()).toHaveTextContent('previz.timeline.clipLabel');
     expect(renderBar({ clip: rig })).toHaveTextContent('previz.timeline.closeupLabel');
     const bar = renderBar({ clip: cut });
     expect(bar).not.toHaveTextContent('previz.timeline.clipLabel');
-    expect(bar).toHaveTextContent('10~40');
+    expect(bar).toHaveTextContent('10-40');
   });
 });
 
@@ -179,6 +211,15 @@ describe('PrevizTimelineTrack camera header', () => {
     rerender(
       <ul>
         <PrevizTimelineTrack {...trackProps({ live: false })} />
+      </ul>,
+    );
+    expect(screen.queryByTestId('previz-track-live')).toBeNull();
+  });
+
+  it('keeps the live badge off non-camera tracks', () => {
+    render(
+      <ul>
+        <PrevizTimelineTrack {...trackProps({ kind: 'character', live: true })} />
       </ul>,
     );
     expect(screen.queryByTestId('previz-track-live')).toBeNull();

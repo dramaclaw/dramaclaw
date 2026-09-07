@@ -473,7 +473,7 @@ export function ClipBar({
         {label ??
           (labelKey
             ? t(labelKey, { start: clip.startFrame, end: clip.endFrame })
-            : `${clip.startFrame}~${clip.endFrame}`)}
+            : `${clip.startFrame}-${clip.endFrame}`)}
       </span>
       <span
         role="slider"
