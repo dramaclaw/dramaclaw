@@ -296,7 +296,10 @@ export class PrevizRenderer {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.needsRender = true;
+    // 当场画，不是标 needsRender 等下一帧：ResizeObserver 回调在同一帧里排在 rAF 之后、
+    // 绘制之前，而 setSize 一改画布属性位图就被清空。只标记的话这一帧合成出去的是一块
+    // 空画布，拖时间轴高度这种每次 pointermove 都改一次尺寸的操作就会一路闪。
+    this.renderFrame();
   }
 
   /**
@@ -1014,14 +1017,17 @@ export class PrevizRenderer {
       if (this.disposed) return;
       // update() 返回 true 表示相机确实动了（阻尼余速也算）。静止时跳过 render，
       // 否则一个只有网格和两盏灯的静态场景会在全屏里 60fps 空烧 GPU。
-      if (this.controls.update() || this.needsRender) {
-        this.needsRender = false;
-        this.renderer.render(this.scene, this.camera);
-        this.renderMonitor();
-      }
+      if (this.controls.update() || this.needsRender) this.renderFrame();
       this.rafHandle = window.requestAnimationFrame(tick);
     };
     this.rafHandle = window.requestAnimationFrame(tick);
+  }
+
+  /** 主视图加监看框画一遍，顺手把待绘标记清掉。tick 与 resize() 共用。 */
+  private renderFrame(): void {
+    this.needsRender = false;
+    this.renderer.render(this.scene, this.camera);
+    this.renderMonitor();
   }
 
   dispose(): void {
