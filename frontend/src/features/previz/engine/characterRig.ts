@@ -4,7 +4,7 @@ import type * as THREE from 'three';
 
 import { clampToRange, DEG_TO_RAD } from '../domain/camera';
 import { PREVIZ_HEIGHT_CM_RANGE } from '../domain/objects';
-import { PREVIZ_POSE_CLIPS, resolvePoseClipName, type PrevizPoseId } from '../domain/poses';
+import { poseSampleTime, resolvePoseClipName } from '../domain/poses';
 import { PREVIZ_POSE_ADJUST_RANGE, type BodyType, type PrevizCharacter } from '../domain/scene';
 import type { ThreeModule } from './sceneGraph';
 
@@ -32,11 +32,6 @@ const BODY_WIDTH_SCALE: Record<BodyType, number> = {
   heavy: 1.15,
 };
 
-/** 一个姿势定格在动画的第几秒。从姿势表里投影出来，别再手抄一遍。 */
-const PREVIZ_POSE_SAMPLE_TIME: Record<PrevizPoseId, number> = Object.fromEntries(
-  Object.entries(PREVIZ_POSE_CLIPS).map(([pose, entry]) => [pose, entry.sampleTime]),
-) as Record<PrevizPoseId, number>;
-
 /** 模型自身净高（米）量出来之后记在 rig 上的键。缩放为 1 时量一次，之后只读缓存。 */
 const NATIVE_HEIGHT_KEY = 'previzRigNativeHeightM';
 
@@ -45,6 +40,9 @@ const NATIVE_HEIGHT_KEY = 'previzRigNativeHeightM';
  * AnimationMixer 把整副骨架重推一遍——那是拖身高滑杆时每一帧都要付的钱。
  */
 const APPLIED_POSE_KEY = 'previzPoseId';
+
+/** 当前姿势推到了第几秒，记在 rig 上。沿路径走位时每帧都变；暂停时每次 sync 都是同一个值。 */
+const APPLIED_TIME_KEY = 'previzPoseTime';
 
 /**
  * 摆姿势时用的是第几版 clip 列表，记在 rig 上。列表会变：动画库第一次没下下来、
@@ -56,6 +54,12 @@ const APPLIED_SOURCE_KEY = 'previzPoseSourceSerial';
 export interface PrevizGltf {
   scene: THREE.Object3D;
   animations: THREE.AnimationClip[];
+}
+
+/** 一个 rig 自己的 mixer 和它正在播的那条 clip。 */
+interface RigMixer {
+  mixer: THREE.AnimationMixer;
+  clip: THREE.AnimationClip | null;
 }
 
 export interface CharacterRigDeps {
@@ -93,6 +97,12 @@ export class CharacterRigFactory {
   private sourceKey = '';
   /** `source` 重合过几次。rig 上记的是摆姿势时的值，对不上就重摆。 */
   private sourceSerial = 0;
+  /**
+   * 每个 rig 一个 mixer，第一次真的摆出姿势时才建。沿路径走位时每帧都要推一次骨架，
+   * 每次新建一个 mixer 的话 `clipAction` 要把几十根骨骼的绑定重新解一遍——那是播放时
+   * 每一帧都要付的钱。按 rig 弱引用，rig 被场景图丢掉之后 mixer 跟着走。
+   */
+  private readonly mixers = new WeakMap<THREE.Object3D, RigMixer>();
 
   constructor(private readonly deps: CharacterRigDeps) {}
 
@@ -218,21 +228,23 @@ export class CharacterRigFactory {
    * 拖满俯仰，视口里人还站得笔直，而新建的人物又是对的，看起来像随机失灵。
    */
   applyCharacter(model: THREE.Object3D, character: PrevizCharacter): void {
-    this.applyPose(model, character.basePoseId as PrevizPoseId);
+    this.applyPose(model, character.basePoseId, poseSampleTime(character.basePoseId));
     this.applyBodyScale(model, character);
     this.applyPoseAdjust(model, character);
   }
 
   /**
-   * 用 AnimationMixer 把某条 clip 定格在某一时刻当静态姿势。定格在 0 常常是
-   * 绑定姿势或者动作的起手，看起来像没摆；姿势表里的 sampleTime 是挑过的。
+   * 用 AnimationMixer 把某个姿势的 clip 推到某一秒。静止的姿势定格在候选表挑好的那一秒
+   * （定格在 0 常常是绑定姿势或者动作的起手，看起来像没摆）；沿路径走位时渲染器每帧
+   * 都带着片段内时间来一次，时间一路往前，人物就真的在迈腿。
    *
-   * 姿势没变、clip 列表也没变就直接早退：这条路径每次 sync 都会走到，而重摆一次
-   * 姿势要建一个 mixer 并把整副骨架重推一遍。
+   * 姿势、时刻、clip 列表都没变就直接早退：这条路径每次 sync 与每一帧都会走到，
+   * 而推一次骨架要把整副骨骼重写一遍——暂停时每次编辑都是同一帧。
    */
-  private applyPose(model: THREE.Object3D, poseId: PrevizPoseId): void {
+  applyPose(model: THREE.Object3D, poseId: string, time: number): void {
     if (
       model.userData[APPLIED_POSE_KEY] === poseId &&
+      model.userData[APPLIED_TIME_KEY] === time &&
       model.userData[APPLIED_SOURCE_KEY] === this.sourceSerial
     ) {
       return;
@@ -250,16 +262,26 @@ export class CharacterRigFactory {
     // `sourceSerial` 就对不上，标记自然失效。
     const clip = clipName ? animations.find((entry) => entry.name === clipName) : undefined;
     model.userData[APPLIED_POSE_KEY] = poseId;
+    model.userData[APPLIED_TIME_KEY] = time;
     model.userData[APPLIED_SOURCE_KEY] = this.sourceSerial;
     if (!clip) return;
 
     // mixer 挂在这个人物自己的 rig 上（骨骼按名字往子树里搜，隔一层 Group 照样搜得到）。
     // 挂在共享的源场景上，一个人物摆姿势会把所有人物一起摆过去。
-    const mixer = new this.deps.three.AnimationMixer(model);
-    mixer.clipAction(clip).play();
-    // setTime 把骨架推进到该时刻并写进变换；之后 mixer 就可以扔了——
-    // P1 是静态预演，没有播放，不需要每帧 update。
-    mixer.setTime(PREVIZ_POSE_SAMPLE_TIME[poseId]);
+    let playing = this.mixers.get(model);
+    if (!playing) {
+      playing = { mixer: new this.deps.three.AnimationMixer(model), clip: null };
+      this.mixers.set(model, playing);
+    }
+    if (playing.clip !== clip) {
+      // 上一条 action 不停掉会和新的一条叠着播：两条权重都是 1，骨骼被拧到两者之和上。
+      playing.mixer.stopAllAction();
+      playing.mixer.clipAction(clip).play();
+      playing.clip = clip;
+    }
+    // setTime 先把所有 action 归零再推进到该时刻并写进变换，所以任何一帧都能直接跳到；
+    // 循环 clip 超过自身时长自动绕圈。没有播放循环，不需要每帧 update。
+    playing.mixer.setTime(time);
   }
 
   /**

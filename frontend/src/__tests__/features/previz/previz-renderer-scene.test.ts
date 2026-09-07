@@ -1094,6 +1094,41 @@ describe('PrevizRenderer timeline', () => {
     };
   }
 
+  /** 节点下面那个模型根（`build()` 在它身上留了 `previzRig`）。 */
+  function rigOf(instance: PrevizRenderer, objectId: string) {
+    return instance.nodeFor(objectId)?.children.find((child) => child.userData.previzRig);
+  }
+
+  it('poses the actor for the playhead frame', async () => {
+    const { instance } = await createRenderer();
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    const scene = sceneWithWalk();
+    instance.setScene(scene);
+    await flush();
+
+    instance.setFrame(60);
+
+    // 走位中的人物换成走的循环，姿势内时间从片段首帧起算：60 帧就是 2 秒。
+    // 位置在变而脚不动，看着是整个人被平移过去的。
+    const rig = rigOf(instance, scene.objects[0]!.id);
+    expect(rig?.userData.previzPoseId).toBe('walking');
+    expect(rig?.userData.previzPoseTime).toBe(2);
+  });
+
+  it('poses a model that arrives after the playhead moved', async () => {
+    const { instance } = await createRenderer();
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    const scene = sceneWithWalk();
+    instance.setScene(scene);
+    instance.setFrame(60);
+
+    await flush();
+
+    // build() 摆的是静态姿势；模型到位时播放头已经在路径中间。不把当前帧重放一遍，
+    // 后到的模型会一直站着滑，直到播放头下一次移动。
+    expect(rigOf(instance, scene.objects[0]!.id)?.userData.previzPoseId).toBe('walking');
+  });
+
   it('moves the object to where the playhead says it is', async () => {
     const { instance } = await createRenderer();
     const scene = sceneWithWalk();

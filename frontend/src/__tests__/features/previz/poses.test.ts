@@ -16,6 +16,8 @@ import {
   PREVIZ_POSE_CLIPS,
   PREVIZ_POSE_LABEL_KEYS,
   isPrevizPoseId,
+  locomotionPoseFor,
+  poseSampleTime,
   resolvePoseClipName,
 } from "@/features/previz/domain/poses";
 
@@ -104,5 +106,22 @@ describe("previz pose catalogue", () => {
   it("recognises only known pose ids", () => {
     expect(isPrevizPoseId("standing")).toBe(true);
     expect(isPrevizPoseId("moonwalk")).toBe(false);
+  });
+
+  // 静止的人物定格在候选表挑好的那一秒。表里没有的 id 给 0：这种 id 本来就解不出 clip，
+  // 引擎不会拿这个值去采样，它只是让求值结果的形状保持完整。原型键同上面那条一样要挡住。
+  it("reports the catalogued still-frame time for a pose", () => {
+    expect(poseSampleTime("walking")).toBe(PREVIZ_POSE_CLIPS.walking.sampleTime);
+    expect(poseSampleTime("moonwalk")).toBe(0);
+    expect(poseSampleTime("constructor")).toBe(0);
+  });
+
+  // 沿路径走位时人物要真的迈腿。基础姿势是奔跑的就跑，其余一律走——坐着的人被拽上路径
+  // 也该站起来走，而不是坐着滑过去。
+  it("picks the walk cycle for a moving character unless it is already running", () => {
+    expect(locomotionPoseFor("standing")).toBe("walking");
+    expect(locomotionPoseFor("sitting")).toBe("walking");
+    expect(locomotionPoseFor("walking")).toBe("walking");
+    expect(locomotionPoseFor("running")).toBe("running");
   });
 });
