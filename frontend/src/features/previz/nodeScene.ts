@@ -44,7 +44,11 @@ export function buildNodeScenePatch(scene: PrevizScene): NodeSceneFlush {
     ok: true,
     patch: {
       scene,
-      summary: { objectCount: scene.objects.length, durationFrames: scene.settings.durationFrames },
+      summary: {
+        objectCount: scene.objects.length,
+        durationFrames: scene.settings.durationFrames,
+        audioClipCount: scene.timeline.audio.length,
+      },
     },
   };
 }

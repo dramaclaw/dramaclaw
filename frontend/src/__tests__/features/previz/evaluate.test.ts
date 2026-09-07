@@ -58,7 +58,7 @@ describe('evaluateSceneAt', () => {
 
   it('lets a covering path clip override position and rotation', () => {
     const { scene, character } = sceneWithCharacter();
-    scene.timeline = { tracks: [{ id: 't', objectId: character.id, clips: [clipFor(0, 120)] }] };
+    scene.timeline = { ...scene.timeline, tracks: [{ id: 't', objectId: character.id, clips: [clipFor(0, 120)] }] };
     const mid = evaluateSceneAt(scene, 60).get(character.id);
     expect(mid?.position[0]).toBeCloseTo(5, 10);
     expect(mid?.rotation[1]).toBeCloseTo(45, 10);
@@ -66,7 +66,7 @@ describe('evaluateSceneAt', () => {
 
   it('leaves the static transform alone outside the clip range', () => {
     const { scene, character } = sceneWithCharacter();
-    scene.timeline = { tracks: [{ id: 't', objectId: character.id, clips: [clipFor(60, 120)] }] };
+    scene.timeline = { ...scene.timeline, tracks: [{ id: 't', objectId: character.id, clips: [clipFor(60, 120)] }] };
     // 片段之外对象回到自己的静态位置，而不是钉在片段首帧上。
     expect(evaluateSceneAt(scene, 10).get(character.id)?.position).toEqual([5, 0, 5]);
   });
@@ -74,14 +74,14 @@ describe('evaluateSceneAt', () => {
   it('ignores a clip with no points', () => {
     const { scene, character } = sceneWithCharacter();
     const empty: PrevizPathClip = { ...clipFor(0, 120), points: [] };
-    scene.timeline = { tracks: [{ id: 't', objectId: character.id, clips: [empty] }] };
+    scene.timeline = { ...scene.timeline, tracks: [{ id: 't', objectId: character.id, clips: [empty] }] };
     // 「片段建好了还没画」是常态（末尾新建片段就是这样），不能把对象拽到原点。
     expect(evaluateSceneAt(scene, 60).get(character.id)?.position).toEqual([5, 0, 5]);
   });
 
   it('skips a track whose object is gone', () => {
     const { scene } = sceneWithCharacter();
-    scene.timeline = { tracks: [{ id: 't', objectId: 'ghost', clips: [clipFor(0, 120)] }] };
+    scene.timeline = { ...scene.timeline, tracks: [{ id: 't', objectId: 'ghost', clips: [clipFor(0, 120)] }] };
     // parseScene 已经丢掉悬空轨道，这条兜的是运行时脏值（JS 调用方、旧快照）。
     expect(() => evaluateSceneAt(scene, 60)).not.toThrow();
     expect(evaluateSceneAt(scene, 60).has('ghost')).toBe(false);
@@ -126,7 +126,7 @@ function sceneWithCloseup(
     scene: {
       ...createDefaultScene(),
       objects: [character, camera],
-      timeline: { tracks: [{ id: 'rt', objectId: camera.id, clips: [clip] }] },
+      timeline: { ...createDefaultScene().timeline, tracks: [{ id: 'rt', objectId: camera.id, clips: [clip] }] },
     },
     character,
     camera,
@@ -221,7 +221,7 @@ function sceneWithAim(
     scene: {
       ...createDefaultScene(),
       objects: [character, mover],
-      timeline: { tracks: [{ id: 'at', objectId: mover.id, clips: [clip] }] },
+      timeline: { ...createDefaultScene().timeline, tracks: [{ id: 'at', objectId: mover.id, clips: [clip] }] },
     },
     mover,
     character,

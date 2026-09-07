@@ -16,6 +16,8 @@ export const PREVIZ_FPS = 30;
 export const PREVIZ_MIN_DURATION_FRAMES = 1;
 export const PREVIZ_MAX_DURATION_FRAMES = 360;
 export const PREVIZ_DEFAULT_DURATION_FRAMES = 120;
+/** 片段最短长度（帧）。0 长片段的 `frameToU` 无解，时间轴上也点不中。 */
+export const PREVIZ_MIN_CLIP_FRAMES = 1;
 
 /**
  * 灯光强度区间，属性面板的滑杆与 parseScene 的夹取共用同一份边界。强度必须非负：
@@ -201,7 +203,40 @@ export interface PrevizRigClip {
   motion: RigMotion;
 }
 
-export type PrevizClip = PrevizPathClip | PrevizActionClip | PrevizRigClip;
+/** 镜头轨的一段：这段帧区间内监看与全局录制看 `cameraId`。 */
+export interface PrevizCutClip {
+  id: string;
+  kind: 'cut';
+  /** 含。 */
+  startFrame: number;
+  /** 不含，与其它片段一致。 */
+  endFrame: number;
+  cameraId: string;
+}
+
+/** 音频轨的一段。`audioUrl` 固化在场景里，上游节点之后删了不影响它。 */
+export interface PrevizAudioClip {
+  id: string;
+  kind: 'audio';
+  startFrame: number;
+  endFrame: number;
+  audioUrl: string;
+  /** 文件名或上游节点显示名，轨道与面板上给人看的。 */
+  sourceName: string;
+  /** 素材总时长。 */
+  durationMs: number;
+  /** 片段起点对应素材内的偏移。 */
+  offsetMs: number;
+  /** 来自上游节点时记节点 id，本地上传为 null。 */
+  sourceNodeId: string | null;
+}
+
+export type PrevizClip =
+  | PrevizPathClip
+  | PrevizActionClip
+  | PrevizRigClip
+  | PrevizCutClip
+  | PrevizAudioClip;
 
 export interface PrevizTrack {
   id: string;
@@ -221,13 +256,22 @@ export interface PrevizScene {
   schemaVersion: typeof PREVIZ_SCHEMA_VERSION;
   settings: PrevizSceneSettings;
   objects: PrevizObject[];
-  timeline: { tracks: PrevizTrack[] };
+  timeline: {
+    /** 对象轨道。 */
+    tracks: PrevizTrack[];
+    /** 镜头轨：按 startFrame 升序、互不重叠。 */
+    program: PrevizCutClip[];
+    /** 音频轨：按 startFrame 升序、互不重叠。 */
+    audio: PrevizAudioClip[];
+  };
 }
 
 /** 卡片上不打开编辑器就能看到规模的摘要，随场景一起写回 node.data。 */
 export interface PrevizNodeSummary {
   objectCount: number;
   durationFrames: number;
+  /** 老节点没写过这个字段，读的时候按 0 算。 */
+  audioClipCount?: number;
 }
 
 export function createDefaultScene(): PrevizScene {
@@ -240,7 +284,7 @@ export function createDefaultScene(): PrevizScene {
       outputAspect: '16:9',
     },
     objects: [],
-    timeline: { tracks: [] },
+    timeline: { tracks: [], program: [], audio: [] },
   };
 }
 
@@ -460,6 +504,83 @@ function parseTracks(raw: unknown, objectIds: ReadonlySet<string>): PrevizTrack[
   return tracks;
 }
 
+/** 起止帧都得是有限数、起点不为负、至少一帧，否则整段不要。 */
+function parseClipRange(source: {
+  startFrame?: unknown;
+  endFrame?: unknown;
+}): { startFrame: number; endFrame: number } | null {
+  if (typeof source.startFrame !== 'number' || typeof source.endFrame !== 'number') return null;
+  if (!Number.isFinite(source.startFrame) || !Number.isFinite(source.endFrame)) return null;
+  const startFrame = Math.max(0, Math.round(source.startFrame));
+  const endFrame = Math.round(source.endFrame);
+  if (endFrame - startFrame < PREVIZ_MIN_CLIP_FRAMES) return null;
+  return { startFrame, endFrame };
+}
+
+/**
+ * 按起点排序并丢掉与前一段重叠的。镜头轨与音频轨的一切操作都建立在「有序、不重叠」
+ * 上（邻居夹取按下标找前后段），脏数据在这里不收口，后面每个函数都得自己防。
+ */
+function withoutOverlaps<T extends { startFrame: number; endFrame: number }>(clips: T[]): T[] {
+  const sorted = [...clips].sort((left, right) => left.startFrame - right.startFrame);
+  const kept: T[] = [];
+  for (const clip of sorted) {
+    const last = kept[kept.length - 1];
+    if (last && clip.startFrame < last.endFrame) continue;
+    kept.push(clip);
+  }
+  return kept;
+}
+
+function parseProgram(raw: unknown, objects: readonly PrevizObject[]): PrevizCutClip[] {
+  if (!Array.isArray(raw)) return [];
+  const cameraIds = new Set(
+    objects.filter((object) => object.kind === 'camera').map((object) => object.id),
+  );
+  const cuts: PrevizCutClip[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const source = entry as Partial<PrevizCutClip>;
+    if (typeof source.id !== 'string' || typeof source.cameraId !== 'string') continue;
+    // 指向已删对象或非机位对象的切片直接丢：监看切过去只会是一片黑。
+    if (!cameraIds.has(source.cameraId)) continue;
+    const range = parseClipRange(source);
+    if (!range) continue;
+    cuts.push({ id: source.id, kind: 'cut', ...range, cameraId: source.cameraId });
+  }
+  return withoutOverlaps(cuts);
+}
+
+function parseAudio(raw: unknown): PrevizAudioClip[] {
+  if (!Array.isArray(raw)) return [];
+  const clips: PrevizAudioClip[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const source = entry as Partial<PrevizAudioClip>;
+    if (typeof source.id !== 'string') continue;
+    if (typeof source.audioUrl !== 'string' || source.audioUrl === '') continue;
+    if (
+      typeof source.durationMs !== 'number' ||
+      !Number.isFinite(source.durationMs) ||
+      !(source.durationMs > 0)
+    )
+      continue;
+    const range = parseClipRange(source);
+    if (!range) continue;
+    clips.push({
+      id: source.id,
+      kind: 'audio',
+      ...range,
+      audioUrl: source.audioUrl,
+      sourceName: typeof source.sourceName === 'string' ? source.sourceName : '',
+      durationMs: source.durationMs,
+      offsetMs: Math.max(0, num(source.offsetMs, 0)),
+      sourceNodeId: typeof source.sourceNodeId === 'string' ? source.sourceNodeId : null,
+    });
+  }
+  return withoutOverlaps(clips);
+}
+
 /**
  * 把 node.data.scene 这类不可信 JSON 读成 PrevizScene：缺字段或非法枚举回落默认值，
  * 版本过新抛 PrevizSceneVersionError。对象逐条校验（见 parseObject），认不出 kind 或
@@ -500,6 +621,10 @@ export function parseScene(raw: unknown): PrevizScene {
         : fallback.settings.outputAspect,
     },
     objects,
-    timeline: { tracks: parseTracks(source.timeline?.tracks, objectIds) },
+    timeline: {
+      tracks: parseTracks(source.timeline?.tracks, objectIds),
+      program: parseProgram(source.timeline?.program, objects),
+      audio: parseAudio(source.timeline?.audio),
+    },
   };
 }

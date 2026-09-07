@@ -334,7 +334,7 @@ describe("previz store object editing", () => {
     const id = usePrevizStore.getState().addObject("prop")!;
     usePrevizStore.getState().applyScene({
       ...usePrevizStore.getState().scene,
-      timeline: { tracks: [{ id: "t1", objectId: id, clips: [] }] },
+      timeline: { ...usePrevizStore.getState().scene.timeline, tracks: [{ id: "t1", objectId: id, clips: [] }] },
     });
 
     usePrevizStore.getState().removeObject(id);
@@ -352,6 +352,7 @@ describe("previz store object editing", () => {
     usePrevizStore.getState().applyScene({
       ...usePrevizStore.getState().scene,
       timeline: {
+        ...usePrevizStore.getState().scene.timeline,
         tracks: [
           { id: "t1", objectId: removed, clips: [] },
           { id: "t2", objectId: kept, clips: [] },

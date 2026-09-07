@@ -40,7 +40,7 @@ function stage(): { scene: PrevizScene; characterId: string; cameraId: string } 
     scene: {
       ...createDefaultScene(),
       objects: [character, camera],
-      timeline: { tracks: [{ id: 'wt', objectId: character.id, clips: [walk] }] },
+      timeline: { ...createDefaultScene().timeline, tracks: [{ id: 'wt', objectId: character.id, clips: [walk] }] },
     },
     characterId: character.id,
     cameraId: camera.id,
@@ -59,7 +59,7 @@ describe('closeupTargets', () => {
 
   it('spans the whole timeline for an object with no track yet', () => {
     const { scene, cameraId } = stage();
-    scene.timeline = { tracks: [] };
+    scene.timeline = { ...scene.timeline, tracks: [] };
     // 还没画轨迹的人物照样能跟：特写不要求对方先有一条路径。
     expect(closeupTargets(scene, cameraId)[0]).toMatchObject({
       startFrame: 0,

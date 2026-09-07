@@ -404,3 +404,176 @@ describe("parseScene field hygiene", () => {
     ]);
   });
 });
+
+describe("parseScene program and audio tables", () => {
+  const camera = { id: "cam-1", kind: "camera", name: "机位 1" };
+  const cut = (id: string, startFrame: number, endFrame: number, cameraId = "cam-1") => ({
+    id,
+    kind: "cut",
+    startFrame,
+    endFrame,
+    cameraId,
+  });
+  const audio = (id: string, startFrame: number, endFrame: number, extra: object = {}) => ({
+    id,
+    kind: "audio",
+    startFrame,
+    endFrame,
+    audioUrl: "/static/a.mp3",
+    sourceName: "a.mp3",
+    durationMs: 4000,
+    offsetMs: 0,
+    sourceNodeId: null,
+    ...extra,
+  });
+
+  it("defaults both tables to empty for old scenes", () => {
+    const parsed = parseScene({ schemaVersion: 1, objects: [], timeline: { tracks: [] } });
+    expect(parsed.timeline.program).toEqual([]);
+    expect(parsed.timeline.audio).toEqual([]);
+  });
+
+  it("drops cuts whose camera is missing or is not a camera", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [camera, { id: "man", kind: "character", name: "人" }],
+      timeline: {
+        tracks: [],
+        program: [cut("c1", 0, 10), cut("c2", 10, 20, "gone"), cut("c3", 20, 30, "man")],
+      },
+    });
+    expect(parsed.timeline.program.map((entry) => entry.id)).toEqual(["c1"]);
+  });
+
+  it("sorts cuts by start and drops the ones overlapping their predecessor", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [camera],
+      timeline: {
+        tracks: [],
+        program: [cut("late", 40, 60), cut("early", 0, 30), cut("overlap", 20, 50)],
+      },
+    });
+    expect(parsed.timeline.program.map((entry) => entry.id)).toEqual(["early", "late"]);
+  });
+
+  it("drops cuts with a non-positive span or non-numeric frames", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [camera],
+      timeline: {
+        tracks: [],
+        program: [cut("zero", 10, 10), cut("flip", 20, 5), { ...cut("nan", 0, 5), endFrame: "5" }],
+      },
+    });
+    expect(parsed.timeline.program).toEqual([]);
+  });
+
+  it("drops audio clips with an empty url or a non-positive duration", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [],
+      timeline: {
+        tracks: [],
+        audio: [
+          audio("ok", 0, 30),
+          audio("nourl", 40, 50, { audioUrl: "" }),
+          audio("zero", 60, 70, { durationMs: 0 }),
+        ],
+      },
+    });
+    expect(parsed.timeline.audio.map((entry) => entry.id)).toEqual(["ok"]);
+    expect(parsed.timeline.audio[0]).toEqual({
+      id: "ok",
+      kind: "audio",
+      startFrame: 0,
+      endFrame: 30,
+      audioUrl: "/static/a.mp3",
+      sourceName: "a.mp3",
+      durationMs: 4000,
+      offsetMs: 0,
+      sourceNodeId: null,
+    });
+  });
+
+  it("repairs a negative offset and a non-string source node id", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [],
+      timeline: {
+        tracks: [],
+        audio: [audio("a", 0, 30, { offsetMs: -5, sourceNodeId: 7, sourceName: undefined })],
+      },
+    });
+    expect(parsed.timeline.audio[0]).toMatchObject({ offsetMs: 0, sourceNodeId: null, sourceName: "" });
+  });
+
+  it("sorts audio clips and drops overlaps", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [],
+      timeline: { tracks: [], audio: [audio("b", 30, 60), audio("a", 0, 40), audio("c", 60, 90)] },
+    });
+    expect(parsed.timeline.audio.map((entry) => entry.id)).toEqual(["a", "c"]);
+  });
+
+  it("creates the default scene with all three tables", () => {
+    expect(createDefaultScene().timeline).toEqual({ tracks: [], program: [], audio: [] });
+  });
+
+  it("treats a non-array program or audio table as empty", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [camera],
+      timeline: { tracks: [], program: {}, audio: "x" },
+    });
+    expect(parsed.timeline.program).toEqual([]);
+    expect(parsed.timeline.audio).toEqual([]);
+  });
+
+  it("skips null and non-object entries inside the program array", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [camera],
+      timeline: { tracks: [], program: [null, "cut", cut("ok", 0, 10)] },
+    });
+    expect(parsed.timeline.program.map((entry) => entry.id)).toEqual(["ok"]);
+  });
+
+  it("rounds fractional frames", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [camera],
+      timeline: { tracks: [], program: [cut("f", 10.6, 20.4)] },
+    });
+    expect(parsed.timeline.program[0]).toMatchObject({ startFrame: 11, endFrame: 20 });
+  });
+
+  it("clamps a negative start to 0 and drops a clip that ends before 0", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [camera],
+      timeline: { tracks: [], program: [cut("n", -10, 5), cut("gone", -10, -5)] },
+    });
+    expect(parsed.timeline.program.map((entry) => entry.id)).toEqual(["n"]);
+    expect(parsed.timeline.program[0]).toMatchObject({ startFrame: 0, endFrame: 5 });
+  });
+
+  it("drops an audio clip with an Infinity duration and repairs an Infinity or missing offset to 0", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [],
+      timeline: {
+        tracks: [],
+        audio: [
+          audio("bad", 0, 30, { durationMs: Infinity }),
+          audio("inf-offset", 40, 70, { offsetMs: Infinity }),
+          audio("undef-offset", 80, 110, { offsetMs: undefined }),
+        ],
+      },
+    });
+    expect(parsed.timeline.audio.map((entry) => entry.id)).toEqual(["inf-offset", "undef-offset"]);
+    expect(parsed.timeline.audio[0]).toMatchObject({ offsetMs: 0 });
+    expect(parsed.timeline.audio[1]).toMatchObject({ offsetMs: 0 });
+  });
+});
