@@ -156,6 +156,14 @@ describe('monitor follow', () => {
     expect(usePrevizStore.getState().monitorFollowsProgram).toBe(true);
     expect(monitorCameraId(usePrevizStore.getState())).toBe(camB);
   });
+
+  it('leaves the follow flag alone when the removed object is not the active camera', () => {
+    const camB = addCamera();
+    usePrevizStore.getState().setActiveCamera(camB);
+    const lightId = usePrevizStore.getState().addObject('light')!;
+    usePrevizStore.getState().removeObject(lightId);
+    expect(usePrevizStore.getState().monitorFollowsProgram).toBe(false);
+  });
 });
 
 describe('audio clips', () => {
@@ -201,9 +209,12 @@ describe('audio clips', () => {
 
   it('ignores relocate when the id names a program cut, not an audio clip', () => {
     const cam = addCamera();
+    // 切在 60 帧起，留出前面的空当：切片顶在 0 帧起会被 moveClip 天然夹死在原地，
+    // 关掉 found.table !== 'audio' 的判断这条用例也会绿，测不出这条判断的作用。
+    usePrevizStore.getState().setTimelineFrame(60);
     usePrevizStore.getState().cutToCamera(cam);
     const cutId = usePrevizStore.getState().scene.timeline.program[0]!.id;
-    usePrevizStore.getState().setTimelineFrame(30);
+    usePrevizStore.getState().setTimelineFrame(10);
     const pastBefore = usePrevizStore.getState().past.length;
     const programBefore = usePrevizStore.getState().scene.timeline.program;
     usePrevizStore.getState().relocateAudioClipToPlayhead(cutId);
@@ -243,6 +254,15 @@ describe('seekSerial', () => {
     expect(usePrevizStore.getState().seekSerial).toBe(start + 1);
     usePrevizStore.getState().stopPlayback();
     expect(usePrevizStore.getState().seekSerial).toBe(start + 2);
+  });
+
+  it('does not bump when playback runs off the end and stops itself', () => {
+    usePrevizStore.getState().setTimelineFrame(118);
+    usePrevizStore.getState().setTimelinePlaying(true);
+    const start = usePrevizStore.getState().seekSerial;
+    usePrevizStore.getState().tickPlayback(1);
+    expect(usePrevizStore.getState().timelinePlaying).toBe(false);
+    expect(usePrevizStore.getState().seekSerial).toBe(start);
   });
 
   it('bumps when shortening the duration pulls the playhead back', () => {
