@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
+import type { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { ChevronLeft, ChevronRight, Circle, Monitor, Square, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -130,6 +131,18 @@ export function PrevizEditor({
    * 倒是不会，但重画已有轨迹时播放头一动高度就变，同一笔的前后段落在两个平面上。
    */
   const strokeHeight = useRef(0);
+  /**
+   * 正在逐点打的那条轨迹：给哪个对象打、落进了哪条片段、点投在多高的平面上。null 表示
+   * 还没打第一个点。
+   *
+   * 片段 id 记在这里而不是每次按播放头找：片段随着点越打越长、播放头却停在原地，很快就
+   * 落到片段外面，那时按播放头找会另起一条，把一次打点拆成两条轨迹。高度同 `strokeHeight`
+   * 的道理，打第一个点时定死——第一个点一落，对象就被轨迹牵到了新位置，第二个点要是按
+   * 当时的高度取平面，两个点就落在两个平面上。
+   */
+  const marking = useRef<{ objectId: string; clipId: string | null; height: number } | null>(
+    null,
+  );
   const [capturing, setCapturing] = useState(false);
   /**
    * 右侧那两块面板（图层 + 属性）是否展开。收起来的是整条侧栏而不是各收各的：
@@ -371,6 +384,12 @@ export function PrevizEditor({
   useEffect(() => {
     renderer?.setDrawing(tool === "draw");
   }, [renderer, tool]);
+
+  // 切走标记工具就是这一轮打完了；再切回来是重新起手（改播放头下的那条轨迹），不是接着
+  // 上一轮往后加。
+  useEffect(() => {
+    if (tool !== "mark") marking.current = null;
+  }, [tool]);
 
   useEffect(() => {
     if (!renderer) return undefined;
@@ -650,11 +669,24 @@ export function PrevizEditor({
   }, [open]);
 
   const handleOpenChange = useCallback(
-    (next: boolean) => {
+    (next: boolean, details?: DialogPrimitive.Root.ChangeEventDetails) => {
+      /*
+        打点时 Esc 是「打完了」，不是「关掉预演台」：弹窗默认的 Esc 关闭得让位，不然打到
+        一半一按整个编辑器没了。
+
+        工具也在这里切回选择，而不是放进下面那个 window keydown：base-ui 的 useDismiss
+        在 document 上接到 Escape、问过 onOpenChange 之后会 stopPropagation，window 上
+        的监听根本收不到这一下。弹窗是唯一听得见 Esc 的地方。
+      */
+      if (!next && details?.reason === "escape-key" && tool === "mark") {
+        details.cancel();
+        setTool("select");
+        return;
+      }
       if (!next) onFlush(usePrevizStore.getState().scene);
       onOpenChange(next);
     },
-    [onFlush, onOpenChange],
+    [onFlush, onOpenChange, tool],
   );
 
   useEffect(() => {
@@ -835,6 +867,31 @@ export function PrevizEditor({
                   if (tool === "navigate") return;
                   // 轨道拖拽也会经过 pointerdown/up；位移超过阈值就是在转视角。
                   if (Math.hypot(event.clientX - down.x, event.clientY - down.y) > CLICK_SLOP_PX) {
+                    return;
+                  }
+                  if (tool === "mark") {
+                    const store = usePrevizStore.getState();
+                    const targetId = store.selectedObjectId;
+                    // 没选对象时这个点没有归属，同画笔：不建无主轨迹。
+                    if (!targetId) return;
+                    // 换了对象就是另一条轨迹，不能把第二个人的点接到第一个人的轨迹后面。
+                    const session =
+                      marking.current?.objectId === targetId
+                        ? marking.current
+                        : {
+                            objectId: targetId,
+                            clipId: null,
+                            height: drawPlaneHeight(store.scene, targetId, store.timelineFrame),
+                          };
+                    const point = renderer.planePointAt(
+                      event.clientX,
+                      event.clientY,
+                      session.height,
+                    );
+                    // 射线与平面平行时打不到点，这一下当没点。
+                    if (!point) return;
+                    session.clipId = store.markPathPoint(targetId, point, session.clipId);
+                    marking.current = session;
                     return;
                   }
                   // 轨迹点优先于对象：球是画在被它牵着走的那个对象身上的，让对象先接

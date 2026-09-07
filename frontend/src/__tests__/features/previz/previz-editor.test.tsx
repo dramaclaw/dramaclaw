@@ -6,7 +6,11 @@ import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createPrevizObject } from "@/features/previz/domain/objects";
-import { createDefaultScene, type Vec3 } from "@/features/previz/domain/scene";
+import {
+  createDefaultScene,
+  type PrevizPathClip,
+  type Vec3,
+} from "@/features/previz/domain/scene";
 import { PrevizRenderer } from "@/features/previz/engine/PrevizRenderer";
 import { PrevizEditor } from "@/features/previz/PrevizEditor";
 import { usePrevizStore } from "@/features/previz/store";
@@ -1388,5 +1392,164 @@ describe("PrevizEditor timeline", () => {
     fireEvent.keyDown(window, { key: (focusKey as string).toLowerCase() });
 
     expect(focusObject).toHaveBeenCalledWith(selected);
+  });
+});
+
+describe("PrevizEditor mark tool", () => {
+  const MARK = "previz.toolbar.tool.mark";
+
+  function click(canvas: HTMLElement, x: number, y: number) {
+    fireEvent.pointerDown(canvas, { clientX: x, clientY: y });
+    fireEvent.pointerUp(canvas, { clientX: x, clientY: y });
+  }
+
+  function pathClips(): PrevizPathClip[] {
+    return usePrevizStore
+      .getState()
+      .scene.timeline.tracks.flatMap((track) => track.clips)
+      .filter((clip): clip is PrevizPathClip => clip.kind === "path");
+  }
+
+  async function markingEditor() {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("character")!;
+    act(() => usePrevizStore.getState().selectObject(objectId));
+    await user.click(screen.getByRole("button", { name: MARK }));
+    renderer.planePointAt.mockClear();
+    return { user, renderer, objectId, canvas: screen.getByTestId("previz-canvas") };
+  }
+
+  it("places a point on every click and keeps the tool armed", async () => {
+    const { renderer, canvas } = await markingEditor();
+    renderer.planePointAt.mockReturnValueOnce([1, 0, 0]).mockReturnValueOnce([1, 0, 3]);
+
+    click(canvas, 10, 10);
+    click(canvas, 60, 10);
+
+    const clips = pathClips();
+    expect(clips).toHaveLength(1);
+    expect(clips[0].points.map((point) => point.position)).toEqual([
+      [1, 0, 0],
+      [1, 0, 3],
+    ]);
+    // 打点不像画笔那样一笔画完就切回选择：用户要连着点好几下，每下都切回去就没法用了。
+    expect(screen.getByRole("button", { name: MARK })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("keeps the plane height of the first click for the whole session", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("camera")!;
+    act(() => {
+      usePrevizStore.getState().selectObject(objectId);
+      usePrevizStore.getState().updateObject(objectId, {
+        transform: { position: [0, 4, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      });
+    });
+    await user.click(screen.getByRole("button", { name: MARK }));
+    const canvas = screen.getByTestId("previz-canvas");
+    renderer.planePointAt.mockClear();
+    // 第一下打完机位就被轨迹牵到 9 米高；第二下要是重新按当前高度取平面，两个点会落在
+    // 两个平面上，整条轨迹在自己造成的移动上滑坡。
+    renderer.planePointAt.mockReturnValue([1, 9, 0]);
+
+    click(canvas, 10, 10);
+    click(canvas, 60, 10);
+
+    expect(renderer.planePointAt.mock.calls.map((call) => call[2])).toEqual([4, 4]);
+  });
+
+  it("leaves the left button on the orbit, so a drag places nothing", async () => {
+    const { renderer, canvas } = await markingEditor();
+    renderer.planePointAt.mockReturnValue([1, 0, 0]);
+
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(canvas, { clientX: 60, clientY: 10 });
+
+    // 打点靠单击，拖拽仍然是转视角：只有画笔才把左键从环绕上摘下来。
+    expect(pathClips()).toHaveLength(0);
+    expect(renderer.setDrawing).toHaveBeenLastCalledWith(false);
+  });
+
+  it("leaves the mark tool on Escape without closing the editor", async () => {
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor({ onOpenChange });
+    const objectId = usePrevizStore.getState().addObject("character")!;
+    act(() => usePrevizStore.getState().selectObject(objectId));
+    await user.click(screen.getByRole("button", { name: MARK }));
+    const canvas = screen.getByTestId("previz-canvas");
+    renderer.planePointAt.mockReturnValue([1, 0, 0]);
+    click(canvas, 10, 10);
+    renderer.pickAt.mockClear();
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+
+    // Esc 是「打完了」，不是「关掉预演台」：弹窗默认的 Esc 关闭得让位，不然打到一半
+    // 一按整个编辑器没了。
+    expect(screen.getByRole("button", { name: "previz.toolbar.tool.select" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    // 退出之后同一个点击回到拾取。
+    click(canvas, 10, 10);
+    expect(renderer.pickAt).toHaveBeenCalledTimes(1);
+  });
+
+  it("still closes the editor on Escape when nothing is being marked", async () => {
+    const onOpenChange = vi.fn();
+    await renderEditor({ onOpenChange });
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("starts a fresh path when the selection moves to another object", async () => {
+    const { renderer, canvas } = await markingEditor();
+    renderer.planePointAt.mockReturnValue([1, 0, 0]);
+    click(canvas, 10, 10);
+    const other = usePrevizStore.getState().addObject("character")!;
+    act(() => usePrevizStore.getState().selectObject(other));
+
+    click(canvas, 60, 10);
+
+    // 换了对象就是另一条轨迹，不能把第二个人的点接到第一个人的轨迹后面。
+    const clips = pathClips();
+    expect(clips).toHaveLength(2);
+    expect(clips.every((clip) => clip.points.length === 1)).toBe(true);
+  });
+
+  it("marks into the clip under the playhead again after the tool was switched away", async () => {
+    const { user, renderer, canvas } = await markingEditor();
+    renderer.planePointAt.mockReturnValueOnce([1, 0, 0]).mockReturnValueOnce([1, 0, 3]);
+    click(canvas, 10, 10);
+    click(canvas, 60, 10);
+
+    fireEvent.keyDown(window, { key: "w" });
+    await user.click(screen.getByRole("button", { name: MARK }));
+    renderer.planePointAt.mockReturnValue([5, 0, 5]);
+    click(canvas, 80, 10);
+
+    // 切走再切回来是重新起手：改播放头下那条轨迹，而不是接着上一轮往后加。
+    const clips = pathClips();
+    expect(clips).toHaveLength(1);
+    expect(clips[0].points.map((point) => point.position)).toEqual([[5, 0, 5]]);
+  });
+
+  it("places nothing without a selected object", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    act(() => usePrevizStore.getState().selectObject(null));
+    await user.click(screen.getByRole("button", { name: MARK }));
+    const canvas = screen.getByTestId("previz-canvas");
+    renderer.planePointAt.mockReturnValue([1, 0, 0]);
+
+    click(canvas, 10, 10);
+
+    expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(0);
   });
 });

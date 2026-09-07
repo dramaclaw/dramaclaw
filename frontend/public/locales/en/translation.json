@@ -7528,7 +7528,8 @@
       "tool": {
         "select": "Select",
         "navigate": "Navigate",
-        "draw": "Draw path"
+        "draw": "Draw path",
+        "mark": "Mark path"
       },
       "gizmo": {
         "translate": "Move",
@@ -7541,7 +7542,8 @@
         "gizmo": "Gizmo"
       },
       "collapseTimeline": "Collapse timeline panel",
-      "expandTimeline": "Expand timeline panel"
+      "expandTimeline": "Expand timeline panel",
+      "markHint": "Mark path: click in the viewport to place points one by one, each joined to the last (Esc to finish)"
     },
     "viewport": {
       "undo": "Undo",

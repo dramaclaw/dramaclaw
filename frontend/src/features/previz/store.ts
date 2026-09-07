@@ -17,6 +17,7 @@ import {
   type PrevizObjectPatch,
 } from './domain/objects';
 import {
+  appendPathPoint,
   drawSeedRotation,
   pathPointSeeds,
   PREVIZ_PATH_SPACING_M,
@@ -36,6 +37,7 @@ import {
   type PrevizObject,
   type PrevizObjectKind,
   type PrevizPathClip,
+  type PrevizPathPoint,
   type PrevizScene,
   type Vec3,
 } from './domain/scene';
@@ -93,6 +95,48 @@ export const PREVIZ_PLAYBACK_RATES = [0.25, 0.5, 1, 1.5, 2] as const;
  */
 function normalizeObject(object: PrevizObject): PrevizObject {
   return parseObject(object) ?? object;
+}
+
+/**
+ * 把一组轨迹点落成 `objectId` 的一条轨迹片段：`existing` 给了就改它，没给就新建。绘制
+ * 与逐点打点共用——两者只在「点从哪来」上不同，落片段的规则得是同一套。
+ *
+ * 片段有多长由轨迹长度和画笔速度定（见 [strokeDurationFrames]），不再一律铺满时间轴。
+ * 铺满的老做法等于「画多长都是 4 秒」，长轨迹只是走得更快，而用户画得更长想要的正是走得
+ * 更久。
+ *
+ * 重画沿用原来的起点、只重新定终点：那条片段可能已经被挪到时间轴中段、跟别的片段排好了
+ * 先后，把它甩回 0 帧等于把编排推翻重来。
+ *
+ * 片段伸到时间轴外面就把时间轴撑长，不然这一笔后半段既播不到也剪不着。只撑不缩：时间轴
+ * 是整个场景共用的，为了一条短轨迹把它裁短，别的对象的片段就跟着被裁了。
+ */
+function placePathClip(
+  scene: PrevizScene,
+  objectId: string,
+  existing: PrevizPathClip | undefined,
+  points: PrevizPathPoint[],
+  speedMps: number,
+): { scene: PrevizScene; clipId: string } {
+  const startFrame = existing?.startFrame ?? 0;
+  const positions = points.map((point) => point.position);
+  const endFrame = Math.min(
+    PREVIZ_MAX_DURATION_FRAMES,
+    startFrame + strokeDurationFrames(positions, speedMps),
+  );
+  const clip: PrevizPathClip = existing
+    ? { ...existing, endFrame, points }
+    : { id: uuidv4(), kind: 'path', startFrame, endFrame, points };
+
+  const withClip = upsertClip(scene, objectId, clip);
+  const durationFrames = Math.max(withClip.settings.durationFrames, clip.endFrame);
+  return {
+    scene:
+      durationFrames === withClip.settings.durationFrames
+        ? withClip
+        : { ...withClip, settings: { ...withClip.settings, durationFrames } },
+    clipId: clip.id,
+  };
 }
 
 interface PrevizStoreState {
@@ -156,6 +200,12 @@ interface PrevizStoreState {
   setPathSpeed: (metresPerSecond: number) => void;
   /** 把一笔世界坐标笔画变成选中对象的轨迹。对象还没有轨道时顺手建一条。 */
   drawPath: (objectId: string, stroke: Vec3[]) => void;
+  /**
+   * 逐点打点：把一个世界坐标点追加到 `clipId` 那条轨迹末尾；`clipId` 为 null（或已不在）
+   * 时从播放头下的片段重新起一条。交回落进的片段 id，调用方下一次打点拿它接着追加；对象
+   * 不在或坐标不是有限值时什么都不做、交 null。
+   */
+  markPathPoint: (objectId: string, position: Vec3, clipId: string | null) => string | null;
   /** 给对象建一条空轨道与一个铺满时间轴的空片段（时间轴上的「+ 添加对象」）。 */
   addObjectToTimeline: (objectId: string) => void;
   insertKeyframe: (clipId: string) => void;
@@ -451,35 +501,39 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     // 重画是改播放头下的那条轨迹，不是叠一条新的——叠起来两条同时覆盖同一帧，
     // 谁生效全靠 `pathClipAt` 的取舍，用户看到的是随机结果。
     const existing = track ? pathClipAt(track, timelineFrame) : undefined;
-    /*
-      片段有多长由这一笔的长度和画笔速度定（见 [strokeDurationFrames]），不再一律铺满
-      时间轴。铺满的老做法等于「画多长都是 4 秒」，长轨迹只是走得更快，而用户画得更长
-      想要的正是走得更久。
+    const placed = placePathClip(scene, objectId, existing, points, pathSpeedMps);
+    applyScene(placed.scene);
+    set({ selectedClipId: placed.clipId, selectedPointId: null });
+  },
 
-      重画沿用原来的起点、只重新定终点：那条片段可能已经被挪到时间轴中段、跟别的片段
-      排好了先后，把它甩回 0 帧等于把编排推翻重来。
-    */
-    const startFrame = existing?.startFrame ?? 0;
-    const endFrame = Math.min(
-      PREVIZ_MAX_DURATION_FRAMES,
-      startFrame + strokeDurationFrames(positions, pathSpeedMps),
-    );
-    const clip: PrevizPathClip = existing
-      ? { ...existing, endFrame, points }
-      : { id: uuidv4(), kind: 'path', startFrame, endFrame, points };
+  markPathPoint: (objectId, position, clipId) => {
+    const { scene, applyScene, pathSpeedMps, timelineFrame } = get();
+    if (!scene.objects.some((object) => object.id === objectId)) return null;
+    // 视口打不到地面时引擎交 null，调用方已经挡掉；这里挡的是 NaN/Infinity 混进坐标——
+    // 进了 JSON 一整条轨迹就解析不回来。
+    if (!position.every(Number.isFinite)) return null;
 
+    const track = trackFor(scene, objectId);
     /*
-      片段伸到时间轴外面就把时间轴撑长，不然这一笔后半段既播不到也剪不着。只撑不缩：
-      时间轴是整个场景共用的，为了一条短轨迹把它裁短，别的对象的片段就跟着被裁了。
+      正在打的那条片段按 id 找，不按播放头：片段随着点越打越长、播放头却停在原地，很快就
+      落到片段外面，那时按播放头找会另起一条，把一次打点拆成两条轨迹。id 已经不在（撤销
+      或删除掉了）就当作重新起手，沿用绘制的规则改播放头下的那条。
     */
-    const withClip = upsertClip(scene, objectId, clip);
-    const durationFrames = Math.max(withClip.settings.durationFrames, clip.endFrame);
-    applyScene(
-      durationFrames === withClip.settings.durationFrames
-        ? withClip
-        : { ...withClip, settings: { ...withClip.settings, durationFrames } },
-    );
-    set({ selectedClipId: clip.id, selectedPointId: null });
+    const session =
+      clipId && track
+        ? track.clips.find(
+            (clip): clip is PrevizPathClip => clip.id === clipId && clip.kind === 'path',
+          )
+        : undefined;
+    const seed = drawSeedRotation(scene, objectId, timelineFrame);
+    const existing = session ?? (track ? pathClipAt(track, timelineFrame) : undefined);
+    const points = session
+      ? appendPathPoint(session.points, position, seed)
+      : pathPointSeeds([position], seed);
+    const placed = placePathClip(scene, objectId, existing, points, pathSpeedMps);
+    applyScene(placed.scene);
+    set({ selectedClipId: placed.clipId, selectedPointId: null });
+    return placed.clipId;
   },
 
   addObjectToTimeline: (objectId) => {

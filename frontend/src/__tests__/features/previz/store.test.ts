@@ -9,6 +9,7 @@ import {
   createPrevizObject,
 } from "@/features/previz/domain/objects";
 import {
+  PREVIZ_MIN_DURATION_FRAMES,
   createDefaultScene,
   type PrevizPathClip,
   type PrevizScene,
@@ -975,6 +976,145 @@ describe("previz store object editing", () => {
     expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(0);
     // 对象本身还在——删轨道不是删人。
     expect(usePrevizStore.getState().scene.objects).toHaveLength(1);
+  });
+
+  describe("markPathPoint", () => {
+    function markedPoints() {
+      const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
+      return clip.points;
+    }
+
+    it("starts a one-point clip on the first mark and selects it", () => {
+      const id = addCharacter();
+
+      const clipId = usePrevizStore.getState().markPathPoint(id, [1, 0, 2], null);
+
+      const track = usePrevizStore.getState().scene.timeline.tracks[0];
+      expect(track.objectId).toBe(id);
+      const clip = track.clips[0] as PrevizPathClip;
+      expect(clip.id).toBe(clipId);
+      expect(clip.points.map((point) => point.position)).toEqual([[1, 0, 2]]);
+      // 一个点没有长度，片段取最短时长：0 帧的片段 frameToU 无解、时间轴上也点不中。
+      expect([clip.startFrame, clip.endFrame]).toEqual([0, PREVIZ_MIN_DURATION_FRAMES]);
+      expect(usePrevizStore.getState().selectedClipId).toBe(clipId);
+    });
+
+    it("appends later marks to the same clip and re-times it by length", () => {
+      const id = addCharacter();
+      usePrevizStore.getState().setPathSpeed(1);
+
+      const first = usePrevizStore.getState().markPathPoint(id, [0, 0, 0], null);
+      const second = usePrevizStore.getState().markPathPoint(id, [3, 0, 0], first);
+      const third = usePrevizStore.getState().markPathPoint(id, [3, 0, 4], second);
+
+      expect(second).toBe(first);
+      expect(third).toBe(first);
+      const track = usePrevizStore.getState().scene.timeline.tracks[0];
+      expect(track.clips).toHaveLength(1);
+      const clip = track.clips[0] as PrevizPathClip;
+      expect(clip.points.map((point) => point.position)).toEqual([
+        [0, 0, 0],
+        [3, 0, 0],
+        [3, 0, 4],
+      ]);
+      // 3 m + 4 m，1 m/s = 7 秒 = 210 帧；时间轴跟着撑到 210。
+      expect([clip.startFrame, clip.endFrame]).toEqual([0, 210]);
+      expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(210);
+    });
+
+    it("keeps the earlier points' ids while re-spacing them", () => {
+      const id = addCharacter();
+      const clipId = usePrevizStore.getState().markPathPoint(id, [0, 0, 0], null);
+      const firstId = markedPoints()[0].id;
+
+      usePrevizStore.getState().markPathPoint(id, [2, 0, 0], clipId);
+      usePrevizStore.getState().markPathPoint(id, [2, 0, 6], clipId);
+
+      expect(markedPoints()[0].id).toBe(firstId);
+      expect(markedPoints().map((point) => point.u)).toEqual([0, 0.25, 1]);
+    });
+
+    it("undoes one mark at a time", () => {
+      const id = addCharacter();
+      const clipId = usePrevizStore.getState().markPathPoint(id, [0, 0, 0], null);
+      usePrevizStore.getState().markPathPoint(id, [3, 0, 0], clipId);
+      usePrevizStore.getState().markPathPoint(id, [3, 0, 4], clipId);
+
+      usePrevizStore.getState().undo();
+
+      // 每一下都是一步：撤销退掉的是最后那个点，不是整条轨迹。
+      expect(markedPoints().map((point) => point.position)).toEqual([
+        [0, 0, 0],
+        [3, 0, 0],
+      ]);
+    });
+
+    it("starts over in the clip under the playhead when the clip id is stale", () => {
+      const id = addCharacter();
+      usePrevizStore.getState().setPathSpeed(1);
+      usePrevizStore.getState().drawPath(id, [
+        [0, 0, 0],
+        [3, 0, 0],
+      ]);
+      const drawn = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
+      usePrevizStore.getState().moveClipBy(drawn, 30);
+      usePrevizStore.getState().setTimelineFrame(60);
+
+      const clipId = usePrevizStore.getState().markPathPoint(id, [5, 0, 5], "gone");
+
+      // 重打是改播放头下的那条轨迹，不是叠一条新的；沿用原来的起点、只重新定终点。
+      expect(clipId).toBe(drawn);
+      const track = usePrevizStore.getState().scene.timeline.tracks[0];
+      expect(track.clips).toHaveLength(1);
+      const clip = track.clips[0] as PrevizPathClip;
+      expect(clip.points.map((point) => point.position)).toEqual([[5, 0, 5]]);
+      expect([clip.startFrame, clip.endFrame]).toEqual([30, 30 + PREVIZ_MIN_DURATION_FRAMES]);
+    });
+
+    it("appends to the session clip even after the playhead has left it", () => {
+      const id = addCharacter();
+      usePrevizStore.getState().setPathSpeed(1);
+      const clipId = usePrevizStore.getState().markPathPoint(id, [0, 0, 0], null);
+      usePrevizStore.getState().markPathPoint(id, [3, 0, 0], clipId);
+      usePrevizStore.getState().setTimelineFrame(110);
+
+      usePrevizStore.getState().markPathPoint(id, [3, 0, 4], clipId);
+
+      // 打点跟着片段 id 走，不跟播放头：片段随着点越打越长，播放头却停在原地，很快就落到
+      // 片段外面——那时按播放头找会另起一条，把一次打点拆成两条轨迹。
+      const track = usePrevizStore.getState().scene.timeline.tracks[0];
+      expect(track.clips).toHaveLength(1);
+      expect(track.clips[0].endFrame).toBe(210);
+    });
+
+    it("keeps a camera's framing while it follows the marked path", () => {
+      const id = usePrevizStore.getState().addObject("camera");
+      if (!id) throw new Error("expected the camera to be created");
+      usePrevizStore.getState().updateObject(id, {
+        transform: { position: [0, 4, 0], rotation: [-20, 45, 0], scale: [1, 1, 1] },
+      });
+
+      const clipId = usePrevizStore.getState().markPathPoint(id, [0, 4, 0], null);
+      usePrevizStore.getState().markPathPoint(id, [2, 4, 0], clipId);
+      usePrevizStore.getState().markPathPoint(id, [2, 4, -6], clipId);
+
+      // 俯角原样留住；yaw 相对行进方向偏多少就一直偏多少：第二段相对首段转了 +90°。
+      expect(markedPoints().map((point) => point.rotation[0])).toEqual([-20, -20, -20]);
+      expect(markedPoints()[0].rotation[1]).toBeCloseTo(45, 10);
+      expect(markedPoints()[1].rotation[1]).toBeCloseTo(135, 10);
+    });
+
+    it("rejects an unknown object and a non-finite point without touching the scene", () => {
+      const id = addCharacter();
+      const before = usePrevizStore.getState().scene;
+      const pastBefore = usePrevizStore.getState().past.length;
+
+      expect(usePrevizStore.getState().markPathPoint("nobody", [0, 0, 0], null)).toBeNull();
+      expect(usePrevizStore.getState().markPathPoint(id, [Number.NaN, 0, 0], null)).toBeNull();
+
+      expect(usePrevizStore.getState().scene).toBe(before);
+      expect(usePrevizStore.getState().past).toHaveLength(pastBefore);
+    });
   });
 });
 

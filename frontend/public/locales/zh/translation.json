@@ -7528,7 +7528,8 @@
       "tool": {
         "select": "选择",
         "navigate": "导航",
-        "draw": "绘制轨迹"
+        "draw": "绘制轨迹",
+        "mark": "标记轨迹"
       },
       "gizmo": {
         "translate": "移动",
@@ -7541,7 +7542,8 @@
         "gizmo": "手柄"
       },
       "collapseTimeline": "收起轨迹面板",
-      "expandTimeline": "展开轨迹面板"
+      "expandTimeline": "展开轨迹面板",
+      "markHint": "标记轨迹：在视口逐点单击放点，自动与前一点连线（Esc 退出）"
     },
     "viewport": {
       "undo": "撤销",
