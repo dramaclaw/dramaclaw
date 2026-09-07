@@ -609,7 +609,8 @@ export function PrevizEditor({
             durationFrames,
             fps: PREVIZ_RECORD_FPS,
             drawFrame: (frame) => {
-              pass.drawFrame(frame);
+              // 镜头轨还没接进来，全局录制先一律走导演视角。
+              pass.drawFrame(frame, null);
               // 顺手把播放头推到同一帧：时间轴与视口跟着走，录制期间就是预览。
               usePrevizStore.getState().setTimelineFrame(frame);
             },

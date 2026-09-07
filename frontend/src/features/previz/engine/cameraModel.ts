@@ -38,6 +38,23 @@ export const PREVIZ_CAMERA_COLOR = {
   frustum: 0xd69a24,
 } as const;
 
+/** 镜头轨正在直播的机位，视锥涂成红色——导播台的 tally 灯就是这个颜色。 */
+export const PREVIZ_LIVE_FRUSTUM_COLOR = 0xff4d4f;
+
+/**
+ * 切换视锥的直播色。同时改 `previzPlaceholderColor`：`applyDisplayMode` 切显示模式时
+ * 会拿这个字段把颜色写回去，不改它的话切一次模式就掉回橙色。
+ */
+export function setFrustumLive(model: THREE.Object3D, live: boolean): void {
+  const color = live ? PREVIZ_LIVE_FRUSTUM_COLOR : PREVIZ_CAMERA_COLOR.frustum;
+  model.traverse((child) => {
+    if (!child.userData.previzCameraFrustum) return;
+    child.userData.previzPlaceholderColor = color;
+    const material = (child as { material?: { color?: { set(value: number): unknown } } }).material;
+    material?.color?.set(color);
+  });
+}
+
 /** 机身各件的尺寸与站位，单位米。整台约 0.51 m 长，与真实电影机同量级。 */
 const HOOD_LENGTH = 0.06;
 const BARREL_LENGTH = 0.11;

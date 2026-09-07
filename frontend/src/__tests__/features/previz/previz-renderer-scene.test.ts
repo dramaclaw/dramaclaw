@@ -7,6 +7,10 @@ import { createCameraDraft } from '@/features/previz/domain/cameraDraft';
 import { createPrevizObject } from '@/features/previz/domain/objects';
 import { createDefaultScene, type PrevizScene, type Vec3 } from '@/features/previz/domain/scene';
 import { PREVIZ_DEFAULT_VIEW } from '@/features/previz/domain/view';
+import {
+  PREVIZ_CAMERA_COLOR,
+  PREVIZ_LIVE_FRUSTUM_COLOR,
+} from '@/features/previz/engine/cameraModel';
 import { PrevizRenderer } from '@/features/previz/engine/PrevizRenderer';
 
 /**
@@ -1265,5 +1269,94 @@ describe('PrevizRenderer timeline', () => {
 
     expect(() => instance.setFrame(60)).not.toThrow();
     expect(instance.planePointAt(100, 100, 0)).toBeNull();
+  });
+});
+
+describe('live camera highlight', () => {
+  /** 机位模型里那根视锥线框记的本色。直播色就落在这个字段上。 */
+  function frustumColorOf(instance: PrevizRenderer, objectId: string): unknown {
+    let color: unknown;
+    instance.nodeFor(objectId)?.traverse((child) => {
+      if (child.userData.previzCameraFrustum) color = child.userData.previzPlaceholderColor;
+    });
+    return color;
+  }
+
+  it('recolours the live camera frustum and restores the previous one', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const camA = createPrevizObject('camera', scene.objects);
+    const camB = createPrevizObject('camera', [camA]);
+    instance.setScene({ ...scene, objects: [camA, camB] });
+
+    instance.setLiveCamera(camA.id);
+    expect(frustumColorOf(instance, camA.id)).toBe(PREVIZ_LIVE_FRUSTUM_COLOR);
+
+    // 切机位：上一台的 tally 灯要灭，否则视口里同时亮着两盏。
+    instance.setLiveCamera(camB.id);
+    expect(frustumColorOf(instance, camA.id)).toBe(PREVIZ_CAMERA_COLOR.frustum);
+    expect(frustumColorOf(instance, camB.id)).toBe(PREVIZ_LIVE_FRUSTUM_COLOR);
+
+    instance.setLiveCamera(null);
+    expect(frustumColorOf(instance, camB.id)).toBe(PREVIZ_CAMERA_COLOR.frustum);
+  });
+
+  it('keeps the highlight across setScene', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const camA = createPrevizObject('camera', scene.objects);
+    instance.setScene({ ...scene, objects: [camA] });
+    instance.setLiveCamera(camA.id);
+
+    // 场景每次 store 变化都会重灌一遍，sync 可能重建机位模型——直播色不能跟着丢。
+    instance.setScene({ ...scene, objects: [{ ...camA, name: 'renamed' }] });
+
+    expect(frustumColorOf(instance, camA.id)).toBe(PREVIZ_LIVE_FRUSTUM_COLOR);
+  });
+
+  it('hides the live camera from its own frame and shows it in the director view', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const cam = createPrevizObject('camera', scene.objects);
+    instance.setScene({ ...scene, objects: [cam] });
+    const node = instance.nodeFor(cam.id)!;
+    const monitor = (instance as unknown as { monitorCamera: unknown }).monitorCamera;
+
+    // jsdom 交不出 2D 上下文，出片拿不到它会当场抛错——塞一个够用的假上下文让录制真的画。
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation((contextId: string) =>
+        contextId === '2d'
+          ? ({
+              createImageData: (width: number, height: number) => ({
+                data: new Uint8ClampedArray(width * height * 4),
+                width,
+                height,
+              }),
+              putImageData: () => {},
+            } as unknown as CanvasRenderingContext2D)
+          : null,
+      );
+    // 机位模型藏没藏住只在 render() 发生的那一刻才看得出来，画完就还回去了。
+    const seen: Array<{ camera: unknown; visible: boolean }> = [];
+    const record = (_scene: unknown, camera: unknown) => {
+      seen.push({ camera, visible: node.visible });
+    };
+    render.mockImplementationOnce(record).mockImplementationOnce(record);
+
+    const pass = instance.startRecording('global', null)!;
+    pass.drawFrame(0, cam.id);
+    pass.drawFrame(1, null);
+    pass.end();
+    getContext.mockRestore();
+
+    expect(seen).toHaveLength(2);
+    // 直播机位那一帧从监看相机出片，而它自己的模型不能出现在自己拍的画面里。
+    expect(seen[0]?.camera).toBe(monitor);
+    expect(seen[0]?.visible).toBe(false);
+    // 镜头轨没指定机位就回到导演视角，这时机位模型是场景的一部分，要露出来。
+    expect(seen[1]?.camera).not.toBe(monitor);
+    expect(seen[1]?.visible).toBe(true);
+    expect(node.visible).toBe(true);
   });
 });

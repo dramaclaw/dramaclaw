@@ -21,6 +21,7 @@ const resize = vi.fn();
 const setScene = vi.fn();
 const setSelection = vi.fn();
 const setActiveCamera = vi.fn();
+const setLiveCamera = vi.fn();
 const setGizmoMode = vi.fn();
 const applyViewDirection = vi.fn();
 const focusObject = vi.fn();
@@ -59,6 +60,7 @@ function fakeRenderer() {
     setScene,
     setSelection,
     setActiveCamera,
+    setLiveCamera,
     setGizmoMode,
     applyViewDirection,
     focusObject,
