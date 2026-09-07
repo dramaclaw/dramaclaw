@@ -29,7 +29,7 @@ export function DerivedMediaNode({ id, data, selected, type }: NodeProps) {
       className={`rounded-xl border bg-surface-panel text-text-primary overflow-hidden ${selected ? 'border-primary' : 'border-border'}`}
       style={{ width: 360 }}
     >
-      <Handle type="target" position={Position.Left} />
+      <Handle id="target" type="target" position={Position.Left} />
       <div className="px-3 py-2 text-sm">
         {gif ? '动态图 · GIF' : '矢量图 · SVG'}
       </div>
@@ -69,7 +69,7 @@ export function DerivedMediaNode({ id, data, selected, type }: NodeProps) {
         </button>
         <button onClick={() => store.deleteNode(id)}>删除</button>
       </div>
-      <Handle type="source" position={Position.Right} />
+      <Handle id="source" type="source" position={Position.Right} />
     </div>
   );
 }
