@@ -83,6 +83,7 @@ const AUDIO_KEYS = [
   'noRoom',
   'limit',
   'uploadFailed',
+  'noProject',
 ] as const;
 
 const POINT_KEYS = [
