@@ -62,7 +62,6 @@ export function PrevizProgramTrack({
       className="flex h-8 items-stretch border-b border-[#1c202a]"
     >
       <div
-        title={disabledHint}
         className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-[#15181f] pl-1 pr-2"
         style={{ width: PREVIZ_TRACK_HEADER_PX }}
       >
@@ -75,25 +74,28 @@ export function PrevizProgramTrack({
         <span className="min-w-0 flex-1 truncate text-xs text-[#c7cedb]">
           {t('previz.program.title')}
         </span>
-        <select
-          aria-label={t('previz.program.cutTo')}
-          value=""
-          disabled={noCamera || full}
-          className={CUT_PICKER}
-          onChange={(event) => {
-            if (event.target.value) onCut(event.target.value);
-          }}
-        >
-          {/* 占位项只是下拉收起时的标题，disabled hidden 让它不出现在可选项里。 */}
-          <option value="" disabled hidden>
-            {t('previz.program.cutTo')}
-          </option>
-          {cameras.map((camera) => (
-            <option key={camera.id} value={camera.id}>
-              {camera.name}
+        {/* title 只裹住下拉本身：挂在整条表头上，鼠标划过图标与行名也会弹，读起来像在说这一行。 */}
+        <span title={disabledHint} className="flex shrink-0">
+          <select
+            aria-label={t('previz.program.cutTo')}
+            value=""
+            disabled={noCamera || full}
+            className={CUT_PICKER}
+            onChange={(event) => {
+              if (event.target.value) onCut(event.target.value);
+            }}
+          >
+            {/* 占位项只是下拉收起时的标题，disabled hidden 让它不出现在可选项里。 */}
+            <option value="" disabled hidden>
+              {t('previz.program.cutTo')}
             </option>
-          ))}
-        </select>
+            {cameras.map((camera) => (
+              <option key={camera.id} value={camera.id}>
+                {camera.name}
+              </option>
+            ))}
+          </select>
+        </span>
       </div>
 
       <div className="relative shrink-0" style={{ width: laneWidthPx }}>

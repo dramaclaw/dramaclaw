@@ -7767,7 +7767,7 @@
       "empty": "Press 1–9 or use “Cut to this camera” on a camera track",
       "noRoom": "No room at the end of the timeline",
       "limit": "The program track holds at most 60 cuts",
-      "noCamera": "No camera in the scene yet"
+      "noCamera": "No cameras in the scene yet"
     },
     "audio": {
       "title": "Audio",
