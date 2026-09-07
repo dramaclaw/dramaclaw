@@ -6,6 +6,7 @@ import { createPrevizObject } from '@/features/previz/domain/objects';
 import {
   PREVIZ_PATH_SPACING_M,
   PREVIZ_PATH_SPEED_MPS,
+  appendPathPoint,
   drawPlaneHeight,
   drawSeedRotation,
   pathPointSeeds,
@@ -18,6 +19,7 @@ import {
 import {
   createDefaultScene,
   type PrevizPathClip,
+  type PrevizPathPoint,
   type PrevizScene,
   type Vec3,
 } from '@/features/previz/domain/scene';
@@ -396,5 +398,107 @@ describe('drawPlaneHeight', () => {
     // 重画一条已有的轨迹是常事。读静态 transform 的话，机位明明在 10 米高飞着，
     // 重画一笔就掉回它出生时的 4 米——而那个高度用户早就不记得了。
     expect(drawPlaneHeight(withTrack, objectId, 50)).toBe(10);
+  });
+});
+
+describe('appendPathPoint', () => {
+  /** 沿 +X 走两米的两个点：首点朝 +X（yaw -90），末点沿用上一段。 */
+  const walked = (): PrevizPathPoint[] =>
+    pathPointSeeds([
+      [0, 0, 0],
+      [2, 0, 0],
+    ]);
+
+  it('seeds a single point when there is nothing to append to', () => {
+    const points = appendPathPoint([], [1, 0, 1], null);
+    expect(points).toHaveLength(1);
+    expect(points[0].position).toEqual([1, 0, 1]);
+    expect(points[0].u).toBe(0);
+  });
+
+  it('keeps the ids of the points already there', () => {
+    const before = walked();
+    const after = appendPathPoint(before, [2, 0, -6]);
+    // id 换了，检查器里正选着的点当场失去选中。
+    expect(after.slice(0, 2).map((point) => point.id)).toEqual(before.map((point) => point.id));
+    expect(new Set(after.map((point) => point.id)).size).toBe(3);
+  });
+
+  it('re-spaces u by arc length over the whole path', () => {
+    const after = appendPathPoint(walked(), [2, 0, -6]);
+    // 2 m 之后再接 6 m：原来的末点从 u=1 退到 0.25。
+    expect(after.map((point) => point.u)).toEqual([0, 0.25, 1]);
+  });
+
+  it('turns the former last point toward the new segment', () => {
+    const before = walked();
+    expect(before[1].rotation[1]).toBeCloseTo(-90, 10);
+
+    const after = appendPathPoint(before, [2, 0, -6]);
+
+    // 末点之前没有下一段，朝向沿用上一段（+X）；现在有了，改按新切线（-Z，yaw 0）。
+    expect(after[1].rotation[1]).toBeCloseTo(0, 10);
+    expect(after[2].rotation[1]).toBeCloseTo(0, 10);
+  });
+
+  it('keeps a hand-set rotation and its flag, but re-derives the rest', () => {
+    const before = walked();
+    before[0] = { ...before[0], rotation: [10, 20, 30], rotationEdited: true };
+
+    const after = appendPathPoint(before, [2, 0, -6]);
+
+    // 手调过的朝向被自动朝向盖掉，等于把用户的活儿白做。
+    expect(after[0].rotation).toEqual([10, 20, 30]);
+    expect(after[0].rotationEdited).toBe(true);
+    // 各拿一份拷贝：共享数组的话，在检查器里调一个点会让另一个点跟着转。
+    expect(after[0].rotation).not.toBe(before[0].rotation);
+    expect(after[1].rotationEdited).toBeFalsy();
+    expect(after[1].rotation[1]).toBeCloseTo(0, 10);
+  });
+
+  it('measures a camera path against its first point, not the seed handed in', () => {
+    const before = pathPointSeeds(
+      [
+        [0, 0, 0],
+        [2, 0, 0],
+      ],
+      [15, 45, 0],
+    );
+
+    const after = appendPathPoint(before, [2, 0, -6], [15, 200, 0]);
+
+    // 机位的起手朝向存在首点里。播放头挪到片段外时调用方解算出来的朝向退回了静态
+    // transform，拿它当 seed 会让整条轨迹的 yaw 整体偏一次。
+    expect(after[0].rotation).toEqual([15, 45, 0]);
+    // 第二段相对首段转了 +90°（-90 → 0），机位 yaw 跟着转：45 + 90。俯角原样留住。
+    expect(after[1].rotation[1]).toBeCloseTo(135, 10);
+    expect(after[1].rotation[0]).toBe(15);
+  });
+
+  it('uses the seed only while the path is still empty', () => {
+    const [only] = appendPathPoint([], [0, 0, 0], [15, 45, 0]);
+    expect(only.rotation).toEqual([15, 45, 0]);
+  });
+
+  it('does not mutate the points it was given', () => {
+    const before = walked();
+    const snapshot = structuredClone(before);
+
+    appendPathPoint(before, [2, 0, -6]);
+
+    expect(before).toEqual(snapshot);
+  });
+
+  it('sorts a path that arrived out of order before appending', () => {
+    const before = walked().reverse();
+
+    const after = appendPathPoint(before, [2, 0, -6]);
+
+    // 脏 JSON 进得来；不先收敛，新点会接在乱序的末尾。
+    expect(after.map((point) => point.position)).toEqual([
+      [0, 0, 0],
+      [2, 0, 0],
+      [2, 0, -6],
+    ]);
   });
 });

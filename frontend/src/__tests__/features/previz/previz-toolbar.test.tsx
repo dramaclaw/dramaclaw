@@ -30,7 +30,7 @@ const KINDS = [
 ] as const;
 
 /** 三组枚举与六个方向都写成字面量，理由同上。 */
-const TOOLS = ["select", "navigate", "draw"] as const;
+const TOOLS = ["select", "navigate", "draw", "mark"] as const;
 const GIZMO_MODES = ["translate", "rotate", "scale"] as const;
 const VIEW_DIRECTIONS = ["front", "back", "left", "right", "top", "bottom"] as const;
 
@@ -254,19 +254,21 @@ describe("PrevizToolbar", () => {
 
   // 同 KINDS 那条的理由：这一条竖栏上的控件全都只有图标，没有可见文字。图标画错、
   // tooltip 丢了，鼠标用户就再也读不出这个按钮是干什么的，而 aria-label 只服务读屏。
+  // 标记轨迹的提示不是名字本身而是用法：光一个「标记轨迹」看不出要逐点单击、按 Esc 收手。
   it.each([
-    ["previz.toolbar.tool.select", "lucide-mouse-pointer-2"],
-    ["previz.toolbar.tool.navigate", "lucide-orbit"],
-    ["previz.toolbar.tool.draw", "lucide-pen-line"],
-    ["previz.toolbar.gizmo.translate", "lucide-move-3d"],
-    ["previz.toolbar.gizmo.rotate", "lucide-rotate-3d"],
-    ["previz.toolbar.gizmo.scale", "lucide-scaling"],
-  ])("labels the %s button with its own icon and tooltip", async (name, icon) => {
+    ["previz.toolbar.tool.select", "lucide-mouse-pointer-2", "previz.toolbar.tool.select"],
+    ["previz.toolbar.tool.navigate", "lucide-orbit", "previz.toolbar.tool.navigate"],
+    ["previz.toolbar.tool.draw", "lucide-pen-line", "previz.toolbar.tool.draw"],
+    ["previz.toolbar.tool.mark", "lucide-waypoints", "previz.toolbar.markHint"],
+    ["previz.toolbar.gizmo.translate", "lucide-move-3d", "previz.toolbar.gizmo.translate"],
+    ["previz.toolbar.gizmo.rotate", "lucide-rotate-3d", "previz.toolbar.gizmo.rotate"],
+    ["previz.toolbar.gizmo.scale", "lucide-scaling", "previz.toolbar.gizmo.scale"],
+  ])("labels the %s button with its own icon and tooltip", async (name, icon, tip) => {
     const user = userEvent.setup();
     setup();
 
     const control = button(name);
-    expect(await tooltipOf(user, control)).toBe(name);
+    expect(await tooltipOf(user, control)).toBe(tip);
     expect(control.querySelector("svg")).toHaveClass(icon);
   });
 
@@ -314,6 +316,7 @@ describe("PrevizToolbar", () => {
       "previz.toolbar.tool.select",
       "previz.toolbar.tool.navigate",
       "previz.toolbar.tool.draw",
+      "previz.toolbar.tool.mark",
     ]);
   });
 
@@ -323,6 +326,7 @@ describe("PrevizToolbar", () => {
     expect(button("previz.toolbar.tool.select")).toHaveAttribute("aria-pressed", "true");
     expect(button("previz.toolbar.tool.navigate")).toHaveAttribute("aria-pressed", "false");
     expect(button("previz.toolbar.tool.draw")).toHaveAttribute("aria-pressed", "false");
+    expect(button("previz.toolbar.tool.mark")).toHaveAttribute("aria-pressed", "false");
   });
 
   it.each(TOOLS)("switches to the %s tool", async (option) => {
@@ -399,11 +403,11 @@ describe("PrevizToolbar", () => {
     expect(badge.tagName).toBe("KBD");
   });
 
-  // 绘制没有键位：不该无中生有画一个角标出来。
-  it("draws no shortcut badge on the draw tool button", () => {
+  // 绘制与标记没有键位：不该无中生有画一个角标出来。
+  it.each(["draw", "mark"])("draws no shortcut badge on the %s tool button", (option) => {
     setup();
 
-    const control = button("previz.toolbar.tool.draw");
+    const control = button(`previz.toolbar.tool.${option}`);
     expect(control).not.toHaveAttribute("aria-keyshortcuts");
     expect(control.querySelector("kbd")).toBeNull();
   });

@@ -15,6 +15,7 @@ import {
   Scaling,
   Upload,
   User,
+  Waypoints,
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -42,9 +43,10 @@ type PrevizGizmoMode = "translate" | "rotate" | "scale";
 
 /**
  * 视口里的鼠标工具。选择是默认；导航模式下左键拖拽只环绕视口，点击不改选中（给没有
- * 中键的触控板用）；绘制是按住左键在地面上拖出一条轨迹。
+ * 中键的触控板用）；绘制是按住左键在地面上拖出一条轨迹；标记是逐点单击放点、自动与前一点
+ * 连线（Esc 退出）。
  */
-export const PREVIZ_TOOLS = ["select", "navigate", "draw"] as const;
+export const PREVIZ_TOOLS = ["select", "navigate", "draw", "mark"] as const;
 export type PrevizTool = (typeof PREVIZ_TOOLS)[number];
 
 /**
@@ -63,6 +65,7 @@ const TOOL_ICON: Record<PrevizTool, LucideIcon> = {
   select: MousePointer2,
   navigate: Orbit,
   draw: PenLine,
+  mark: Waypoints,
 };
 
 const GIZMO_ICON: Record<PrevizGizmoMode, LucideIcon> = {
@@ -82,6 +85,17 @@ const TOOL_KEY: Record<PrevizTool, string | undefined> = {
   select: "W",
   navigate: "Q",
   draw: undefined, // 绘制没有键位
+  mark: undefined, // 标记也没有
+};
+/**
+ * 悬停提示用哪条文案；不给就用工具名。标记轨迹的用法光看名字看不出来（逐点单击、Esc
+ * 收手），所以单独一条。同样写成完整的 Record，新增工具时逼着这里表态。
+ */
+const TOOL_TIP_KEY: Record<PrevizTool, string | undefined> = {
+  select: undefined,
+  navigate: undefined,
+  draw: undefined,
+  mark: "previz.toolbar.markHint",
 };
 const GIZMO_KEY: Record<PrevizGizmoMode, string> = { translate: "G", rotate: "R", scale: "S" };
 
@@ -288,6 +302,7 @@ export function PrevizToolbar({
                 key={option}
                 icon={TOOL_ICON[option]}
                 label={t(`previz.toolbar.tool.${option}`)}
+                tip={TOOL_TIP_KEY[option] && t(TOOL_TIP_KEY[option])}
                 on={option === tool}
                 shortcut={TOOL_KEY[option]}
                 aria-pressed={option === tool}

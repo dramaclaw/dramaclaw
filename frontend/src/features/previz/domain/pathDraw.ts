@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { clampToRange, RAD_TO_DEG, type PrevizRange } from './camera';
 import { evaluateSceneAt } from './evaluate';
+import { sortedPathPoints } from './pathCurve';
 import {
   PREVIZ_FPS,
   PREVIZ_MAX_DURATION_FRAMES,
@@ -267,6 +268,41 @@ export function pathPointSeeds(
       u: total > 0 ? cumulative[index] / total : 0,
       position: [...position] as Vec3,
       rotation,
+    };
+  });
+}
+
+/**
+ * 「逐点打点」：把一个世界坐标点接到轨迹末尾。
+ *
+ * 不是简单 push 一个点：`u` 是归一化弧长，多接一段之后前面所有点的 `u` 都要往前缩；原来
+ * 的末点没有下一段可求切线、沿用的是上一段的朝向，现在有了新段就该改朝新段。所以整条
+ * 轨迹重新过一遍 [pathPointSeeds]，再把不该变的东西接回去：
+ * - 原有点保留 id，检查器里正选着的点不会因为打了下一个点就失去选中；
+ * - 手调过的朝向（`rotationEdited`）原样保留，只有自动朝向才重新推导。
+ *
+ * 机位轨迹的起手朝向取首点存着的朝向，而不是每次都用调用方此刻解算出来的：片段随着打点
+ * 越拉越长、播放头却停在原地，很快就落到片段外面，那时解算值退回静态 transform，拿它当
+ * seed 会让整条轨迹的 yaw 整体偏一次。只有轨迹还空着时才用传进来的 seed。
+ */
+export function appendPathPoint(
+  points: readonly PrevizPathPoint[],
+  position: Vec3,
+  seedRotation?: Vec3 | null,
+): PrevizPathPoint[] {
+  // 存进来的点本该有序，但脏 JSON 进得来；不先收敛，追加的点会插在乱序的末尾。
+  const sorted = sortedPathPoints(points);
+  const seed = sorted.length > 0 && seedRotation ? sorted[0].rotation : seedRotation;
+  const seeds = pathPointSeeds([...sorted.map((point) => point.position), position], seed);
+  return seeds.map((fresh, index) => {
+    const previous = sorted[index];
+    if (!previous) return fresh;
+    if (!previous.rotationEdited) return { ...fresh, id: previous.id };
+    return {
+      ...fresh,
+      id: previous.id,
+      rotation: [...previous.rotation] as Vec3,
+      rotationEdited: true,
     };
   });
 }
