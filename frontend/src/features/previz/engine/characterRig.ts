@@ -11,9 +11,19 @@ import type { ThreeModule } from './sceneGraph';
 /**
  * 通用角色模型。仓库里已有（PlayCanvas 那套 viewer-kit 也在用同一份），
  * CC0，`License.txt` 在同目录。**不要换成别的模型**：`domain/poses.ts` 的
- * clip 名候选表是对着这一份调出来的。
+ * clip 名候选表是对着这一份加上下面的动画库调出来的。
  */
 export const PREVIZ_ACTOR_MODEL_URL = '/viewer-kit/quaternius/ual2/UAL2_Standard.glb';
+
+/**
+ * 只当动画库用的 GLB：UAL2 自己没有蹲、坐、走、跑、瞄准这些 clip，全在 UAL1 里。
+ * 两份是同一副骨架，clip 里的轨道按骨骼名绑定，所以能直接套到 UAL2 的克隆体上。
+ * 少了这份，候选表就静默往后落——「蹲伏」没有 clip 保持上一姿势，「坐下」变靠栏杆，
+ * 「奔跑」变持盾冲刺，「行走」和「持物」同一条——下拉框选什么和画面对不上。
+ */
+export const PREVIZ_ACTOR_ANIMATION_URLS = [
+  '/viewer-kit/quaternius/ual1/UAL1_Standard.glb',
+] as const;
 
 /** 体型只改水平方向的缩放：连 Y 一起放大等于又把身高改了。 */
 const BODY_WIDTH_SCALE: Record<BodyType, number> = {
@@ -78,7 +88,7 @@ export class CharacterRigFactory {
   async build(character: PrevizCharacter): Promise<THREE.Object3D | null> {
     let source: PrevizGltf;
     try {
-      this.loading ??= this.deps.loadGltf(PREVIZ_ACTOR_MODEL_URL);
+      this.loading ??= this.loadSource();
       source = await this.loading;
     } catch (error) {
       // 失败的 Promise 缓存住会让后续每个人物都拿到同一个错误，重试永远不发生。
@@ -98,6 +108,34 @@ export class CharacterRigFactory {
     // 会把源模型一起还掉，之后新建的每一个人物都拿到已经 dispose 的几何体。
     model.userData.previzSharedModel = true;
     return model;
+  }
+
+  /**
+   * 模型和动画库并行下载，合成一份 clip 列表。同名 clip 以模型自己那条为准（两份都带
+   * A_TPose 这类），库里的只补模型没有的。库下不下来只掉姿势不掉人：模型照常建，
+   * 姿势按模型自带的候选落，控制台留一条 warn 说明原因；模型本身失败还是走上面的
+   * null 路径。
+   */
+  private async loadSource(): Promise<PrevizGltf> {
+    const [model, ...libraries] = await Promise.all([
+      this.deps.loadGltf(PREVIZ_ACTOR_MODEL_URL),
+      ...PREVIZ_ACTOR_ANIMATION_URLS.map((url) =>
+        this.deps.loadGltf(url).catch((error: unknown) => {
+          console.warn('[previz] failed to load the actor animation library', url, error);
+          return null;
+        }),
+      ),
+    ]);
+    const animations = [...model.animations];
+    const known = new Set(animations.map((clip) => clip.name));
+    for (const library of libraries) {
+      for (const clip of library?.animations ?? []) {
+        if (known.has(clip.name)) continue;
+        known.add(clip.name);
+        animations.push(clip);
+      }
+    }
+    return { scene: model.scene, animations };
   }
 
   /**

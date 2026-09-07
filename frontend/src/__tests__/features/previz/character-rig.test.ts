@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createPrevizObject } from '@/features/previz/domain/objects';
+import { PREVIZ_POSE_CLIPS } from '@/features/previz/domain/poses';
 import type { PrevizCharacter } from '@/features/previz/domain/scene';
 import {
   CharacterRigFactory,
+  PREVIZ_ACTOR_ANIMATION_URLS,
   PREVIZ_ACTOR_MODEL_URL,
   type CharacterRigDeps,
   type PrevizGltf,
@@ -133,6 +135,19 @@ function viewOf(rig: unknown): RigView {
  */
 const freshClone = (() => new FakeObject3D()) as unknown as CharacterRigDeps['clone'];
 
+/**
+ * 直接从 public/ 里的 GLB 读 clip 名。GLB 头 12 字节之后是第一个 chunk（JSON）的长度与
+ * 类型，再往后就是 glTF 的 JSON 本体——不用拉起 three 的加载器就能看到 `animations[].name`。
+ */
+function shippedClipNames(url: string): string[] {
+  const file = readFileSync(resolve(process.cwd(), `public${url}`));
+  const jsonLength = file.readUInt32LE(12);
+  const json = JSON.parse(file.subarray(20, 20 + jsonLength).toString('utf8')) as {
+    animations?: Array<{ name: string }>;
+  };
+  return (json.animations ?? []).map((clip) => clip.name);
+}
+
 function factoryWith(clipNames: string[]): CharacterRigFactory {
   return new CharacterRigFactory({
     three: fakeThree(),
@@ -155,10 +170,27 @@ describe('CharacterRigFactory', () => {
     // 期望值刻意写字面量，从被测模块 import 回来的常量改一处两边一起变。
     expect(PREVIZ_ACTOR_MODEL_URL).toBe('/viewer-kit/quaternius/ual2/UAL2_Standard.glb');
     expect(existsSync(resolve(process.cwd(), `public${PREVIZ_ACTOR_MODEL_URL}`))).toBe(true);
+    expect(PREVIZ_ACTOR_ANIMATION_URLS).toEqual(['/viewer-kit/quaternius/ual1/UAL1_Standard.glb']);
+    for (const url of PREVIZ_ACTOR_ANIMATION_URLS) {
+      expect(existsSync(resolve(process.cwd(), `public${url}`))).toBe(true);
+    }
   });
 
-  it('loads the shared model once and clones it per character', async () => {
-    const loadGltf = vi.fn(async () => gltf(['Idle_Loop']));
+  it('ships the first-choice clip of every pose in the model or its animation library', () => {
+    // 候选表是对着 UAL2 + UAL1 两份文件挑的。只加载其中一份时候选会静默往后落：
+    // 「蹲伏」两条都没有就保持上一姿势，「坐下」落到靠栏杆，「奔跑」落到持盾冲刺，
+    // 「行走」和「持物」都落到同一条 Walk_Carry_Loop——下拉框选什么和画面对不上。
+    // 这条盯的是首选而不是「随便哪条候选在」：后备候选本来就是将就用的。
+    const shipped = new Set(
+      [PREVIZ_ACTOR_MODEL_URL, ...PREVIZ_ACTOR_ANIMATION_URLS].flatMap(shippedClipNames),
+    );
+    for (const [pose, config] of Object.entries(PREVIZ_POSE_CLIPS)) {
+      expect(shipped.has(config.names[0]!), `${pose} → ${config.names[0]}`).toBe(true);
+    }
+  });
+
+  it('loads the shared model and its animation library once, cloning per character', async () => {
+    const loadGltf = vi.fn(async (_url: string) => gltf(['Idle_Loop']));
     const clone = vi.fn((object: unknown) => object);
     const factory = new CharacterRigFactory({
       three: fakeThree(),
@@ -169,9 +201,11 @@ describe('CharacterRigFactory', () => {
     await factory.build(character());
     await factory.build(character());
 
-    // 每个人物各下一次 8 MB 的 GLB 会把 50 人的场景变成 400 MB 流量。
-    expect(loadGltf).toHaveBeenCalledTimes(1);
-    expect(loadGltf).toHaveBeenCalledWith('/viewer-kit/quaternius/ual2/UAL2_Standard.glb');
+    // 每个人物各下一次 8 MB 的 GLB 会把 50 人的场景变成 400 MB 流量——模型和动画库都是。
+    expect(loadGltf.mock.calls.map(([url]) => url)).toEqual([
+      '/viewer-kit/quaternius/ual2/UAL2_Standard.glb',
+      '/viewer-kit/quaternius/ual1/UAL1_Standard.glb',
+    ]);
     // 直接把共享的那份 scene 挂进场景的话，第二个人物一出现，第一个就从原地消失
     // （同一个 Object3D 只能有一个父节点）。
     expect(clone).toHaveBeenCalledTimes(2);
@@ -193,6 +227,51 @@ describe('CharacterRigFactory', () => {
     // 会把所有人物一起摆过去。
     expect(mixerRoots).toHaveLength(1);
     expect(mixerRoots[0]).toBe(rig);
+  });
+
+  it('resolves a pose from the animation library when the model lacks the clip', async () => {
+    // UAL2 自己没有任何蹲姿 clip；「蹲伏」只能靠 UAL1 里的 Crouch_Idle_Loop。
+    const loadGltf = vi.fn(async (url: string) =>
+      url === PREVIZ_ACTOR_MODEL_URL ? gltf(['Idle_No_Loop']) : gltf(['Crouch_Idle_Loop']),
+    );
+    const factory = new CharacterRigFactory({ three: fakeThree(), loadGltf, clone: freshClone });
+
+    const rig = await factory.build(character({ basePoseId: 'crouching' }));
+
+    expect(rig).not.toBeNull();
+    expect(clipActions.map((clip) => clip.name)).toEqual(['Crouch_Idle_Loop']);
+    expect(setTime).toHaveBeenCalledWith(0.25);
+  });
+
+  it("prefers the model's own clip when the library repeats a name", async () => {
+    const own = gltf(['Idle_Loop']);
+    const library = gltf(['Idle_Loop']);
+    const loadGltf = vi.fn(async (url: string) => (url === PREVIZ_ACTOR_MODEL_URL ? own : library));
+    const factory = new CharacterRigFactory({ three: fakeThree(), loadGltf, clone: freshClone });
+
+    await factory.build(character({ basePoseId: 'standing' }));
+
+    // 两份文件都带 A_TPose 这类同名 clip：模型自己那条是对着自己的骨架导出的，以它为准。
+    expect(clipActions).toHaveLength(1);
+    expect(clipActions[0]).toBe(own.animations[0]);
+  });
+
+  it('still builds and poses from the model when the animation library fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const loadGltf = vi.fn(async (url: string) => {
+      if (url !== PREVIZ_ACTOR_MODEL_URL) throw new Error('404');
+      return gltf(['Idle_No_Loop']);
+    });
+    const factory = new CharacterRigFactory({ three: fakeThree(), loadGltf, clone: freshClone });
+
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+
+    // 动画库下不下来只掉姿势不掉人：模型自带的候选照常用，控制台留一条 warn 说明原因。
+    expect(rig).not.toBeNull();
+    expect(clipActions.map((clip) => clip.name)).toEqual(['Idle_No_Loop']);
+    expect(warn).toHaveBeenCalled();
+
+    warn.mockRestore();
   });
 
   it('scales the model to the requested height', async () => {
@@ -292,7 +371,8 @@ describe('CharacterRigFactory', () => {
 
   it('returns null instead of throwing when the model cannot be loaded', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const loadGltf = vi.fn(async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const loadGltf = vi.fn(async (_url: string) => {
       throw new Error('404');
     });
     const factory = new CharacterRigFactory({
@@ -308,8 +388,10 @@ describe('CharacterRigFactory', () => {
 
     // 失败的 Promise 缓存住会让后续每个人物都拿到同一个错误，重试永远不发生。
     await expect(factory.build(character())).resolves.toBeNull();
-    expect(loadGltf).toHaveBeenCalledTimes(2);
+    const modelRequests = loadGltf.mock.calls.filter(([url]) => url === PREVIZ_ACTOR_MODEL_URL);
+    expect(modelRequests).toHaveLength(2);
 
+    warn.mockRestore();
     error.mockRestore();
   });
 

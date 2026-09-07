@@ -15,7 +15,11 @@ import {
   type PrevizProp,
   type PrevizScene,
 } from '@/features/previz/domain/scene';
-import { CharacterRigFactory } from '@/features/previz/engine/characterRig';
+import {
+  CharacterRigFactory,
+  PREVIZ_ACTOR_ANIMATION_URLS,
+  PREVIZ_ACTOR_MODEL_URL,
+} from '@/features/previz/engine/characterRig';
 import { PropLoader } from '@/features/previz/engine/propLoader';
 import { PrevizSceneGraph } from '@/features/previz/engine/sceneGraph';
 
@@ -271,6 +275,9 @@ function capsuleHeight(mesh: FakeMeshView): number {
  * `clone` 每次交出一个新的模型根，下面再挂一个带材质的 Mesh——显示模式要刷到模型的
  * 每份材质上，模型根自己是没有材质的。
  */
+/** 人物模型自己一份，外加每个动画库一份：rig 工厂首次 build 就该下这么多、之后不再下。 */
+const ACTOR_FILE_COUNT = 1 + PREVIZ_ACTOR_ANIMATION_URLS.length;
+
 function rigFactory(three: typeof import('three'), clipNames: string[] = ['Idle_Loop']) {
   const loadGltf = vi.fn(async () => ({
     scene: new three.Object3D(),
@@ -898,7 +905,7 @@ describe('PrevizSceneGraph', () => {
     graph.sync(scene);
     graph.sync(scene);
     await flush();
-    expect(loadGltf).toHaveBeenCalledTimes(1);
+    expect(loadGltf).toHaveBeenCalledTimes(ACTOR_FILE_COUNT);
     expect(node?.children).toHaveLength(2);
   });
 
@@ -925,7 +932,7 @@ describe('PrevizSceneGraph', () => {
     expect(rig?.scale.y).toBeCloseTo(1, 6);
     expect(rig?.scale.x).toBeCloseTo(1.15, 6);
     // 而且是重新缩放，不是重新下一个模型。
-    expect(loadGltf).toHaveBeenCalledTimes(1);
+    expect(loadGltf).toHaveBeenCalledTimes(ACTOR_FILE_COUNT);
     expect(graph.nodeFor(character.id)?.children).toHaveLength(2);
     expect(rigOf(graph, character.id)).toBe(rig);
   });
@@ -950,7 +957,7 @@ describe('PrevizSceneGraph', () => {
     // 「基础姿势」下拉框对已加载的人物完全失效——改成行走，人还站着。
     expect(rig?.userData.previzPoseId).toBe('walking');
     // 而且是重新摆姿势，不是重新下一个模型。
-    expect(loadGltf).toHaveBeenCalledTimes(1);
+    expect(loadGltf).toHaveBeenCalledTimes(ACTOR_FILE_COUNT);
     expect(rigOf(graph, character.id)).toBe(rig);
   });
 
@@ -1023,11 +1030,12 @@ describe('PrevizSceneGraph', () => {
 
   it('keeps the placeholder capsule when the model cannot be loaded, and retries later', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const three = fakeThree();
     const root = new three.Group();
     const graph = new PrevizSceneGraph(three, root);
     const onReady = vi.fn();
-    const loadGltf = vi.fn(async () => {
+    const loadGltf = vi.fn(async (_url: string) => {
       throw new Error('404');
     });
     graph.attachCharacterRig(
@@ -1050,8 +1058,11 @@ describe('PrevizSceneGraph', () => {
     // 否则一次网络抖动就把这个人物永久钉死在占位胶囊上。
     graph.sync(scene);
     await flush();
-    expect(loadGltf).toHaveBeenCalledTimes(2);
+    // 模型和动画库一起失败：只数模型这份，每轮 sync 各请求一次。
+    const modelRequests = loadGltf.mock.calls.filter(([url]) => url === PREVIZ_ACTOR_MODEL_URL);
+    expect(modelRequests).toHaveLength(2);
 
+    warn.mockRestore();
     error.mockRestore();
   });
 
