@@ -8,10 +8,10 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
-import { GripVertical, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { safeLocalStorageSet } from "@/lib/localStorageQuota";
+import { PikoEntryMedia } from "./PikoEntryMedia";
 import {
   clampFloatingEntryPosition,
   normalizeFloatingEntryPosition,
@@ -21,9 +21,9 @@ import {
   type NormalizedFloatingEntryPosition,
 } from "./floating-entry-position";
 
-const STORAGE_KEY = "dramaclaw.piko-world-entry-position.v1";
-const DEFAULT_RIGHT_PX = 24;
-const DEFAULT_BOTTOM_PX = 52;
+const STORAGE_KEY = "dramaclaw.piko-world-entry-position.v2";
+const DEFAULT_RIGHT_PX = 0;
+const DEFAULT_BOTTOM_PX = 42;
 const DRAG_THRESHOLD_PX = 4;
 
 function readStoredPosition(): NormalizedFloatingEntryPosition | null {
@@ -54,6 +54,8 @@ export function PikoWorldFloatingEntry() {
   const [storedPosition, setStoredPosition] = useState(readStoredPosition);
   const [dragPosition, setDragPosition] = useState<FloatingEntryPosition | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [viewportSize, setViewportSize] = useState(readViewportSize);
 
   useEffect(() => {
@@ -147,14 +149,25 @@ export function PikoWorldFloatingEntry() {
     <button
       ref={entryRef}
       type="button"
-      onFocus={preloadWorld}
-      onPointerEnter={preloadWorld}
+      onFocus={() => {
+        setFocused(true);
+        preloadWorld();
+      }}
+      onBlur={() => setFocused(false)}
+      onPointerEnter={(event) => {
+        if (event.pointerType !== "touch") setHovered(true);
+        preloadWorld();
+      }}
+      onPointerLeave={() => {
+        setHovered(false);
+        setFocused(false);
+      }}
       onPointerDown={handlePointerDown}
       onClick={() => {
         if (suppressClickRef.current) return;
         navigate({ to: "/piko-world" });
       }}
-      className="backdrop-blur-tap fixed z-30 inline-flex h-10 cursor-grab touch-none select-none items-center gap-2 rounded-full border border-border bg-card/90 px-3 text-sm font-medium text-foreground shadow-lg shadow-black/20 transition-[background-color,border-color] duration-[var(--duration-fast)] hover:border-foreground/20 hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 active:cursor-grabbing"
+      className="fixed z-30 block aspect-[4/3] w-[158.4px] max-w-[calc(100vw-32px)] cursor-grab touch-none select-none border-0 bg-transparent p-0 transition-[filter] duration-[var(--duration-fast)] ease-[var(--ease-out-quint)] hover:brightness-110 sm:w-[172.8px] focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 active:cursor-grabbing motion-reduce:transition-none"
       style={
         resolvedPosition
           ? { left: resolvedPosition.left, top: resolvedPosition.top }
@@ -162,11 +175,8 @@ export function PikoWorldFloatingEntry() {
       }
       data-dragging={isDragging || undefined}
       aria-label={t("project.pikoWorldEntry")}
-      title={t("project.pikoWorldEntryDragHint")}
     >
-      <GripVertical className="size-3.5 text-muted-foreground" aria-hidden="true" />
-      <Sparkles className="size-4 text-primary" aria-hidden="true" />
-      <span>{t("project.pikoWorldEntry")}</span>
+      <PikoEntryMedia active={(hovered || focused) && !isDragging} />
     </button>
   );
 }
