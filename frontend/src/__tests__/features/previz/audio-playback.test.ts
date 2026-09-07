@@ -166,4 +166,62 @@ describe('createAudioPlayback', () => {
     await playback.play([clip('a', 0, 30)], Number.NaN, 1);
     expect(sources).toHaveLength(0);
   });
+
+  it('schedules a future clip trimmed at its own material offset', async () => {
+    const { playback, sources } = setup();
+    await playback.play([clip('a', 60, 90, 500)], 30, 1);
+    // 素材偏移 0.5 s；播放头还没到，30 帧 = 1 s 后开始，整段 30 帧 = 1 s 素材。
+    expect(sources[0]!.start).toHaveBeenCalledWith(101, 0.5, 1);
+  });
+
+  it('schedules nothing when the playhead sits exactly on the clip end', async () => {
+    const { playback, sources } = setup();
+    await playback.play([clip('a', 0, 30)], 30, 1);
+    expect(sources).toHaveLength(0);
+  });
+
+  it('skips a clip whose startFrame is after its endFrame, without throwing', async () => {
+    const { playback, sources } = setup();
+    // 上游数据坏了才会出现 startFrame > endFrame；不该让 start() 拿负时长炸出
+    // RangeError（play() 是 void 调用，那样就是一条没人接的 unhandled rejection）。
+    await expect(playback.play([clip('a', 50, 30)], 10, 1)).resolves.toBeUndefined();
+    expect(sources).toHaveLength(0);
+  });
+
+  it('dedupes an in-flight decode across simultaneous load calls', async () => {
+    const { context } = fakeContext();
+    let releaseFetch: (() => void) | undefined;
+    const fetchBuffer = vi.fn(
+      (url: string) =>
+        new Promise<AudioBuffer>((resolve) => {
+          releaseFetch = () => resolve({ url } as unknown as AudioBuffer);
+        }),
+    );
+    const playback = createAudioPlayback({ context, fetchBuffer });
+    const target = clip('a', 0, 30);
+    const first = playback.load([target]);
+    const second = playback.load([target]);
+    releaseFetch?.();
+    await Promise.all([first, second]);
+    expect(fetchBuffer).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops and disconnects every live source on dispose', async () => {
+    const { playback, sources } = setup();
+    await playback.play([clip('a', 0, 30), clip('b', 40, 60)], 0, 1);
+    playback.dispose();
+    for (const source of sources) {
+      expect(source.stop).toHaveBeenCalled();
+      expect(source.disconnect).toHaveBeenCalled();
+    }
+  });
+
+  it('ignores play and load calls once disposed', async () => {
+    const { playback, sources, fetchBuffer } = setup();
+    playback.dispose();
+    await playback.load([clip('a', 0, 30)]);
+    await playback.play([clip('a', 0, 30)], 0, 1);
+    expect(fetchBuffer).not.toHaveBeenCalled();
+    expect(sources).toHaveLength(0);
+  });
 });
