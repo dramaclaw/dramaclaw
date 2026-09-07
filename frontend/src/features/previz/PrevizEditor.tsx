@@ -644,7 +644,8 @@ export function PrevizEditor({
             target.mode === "track"
               ? t("previz.editor.record.trackNodeName", { index: target.index, quality })
               : t("previz.editor.record.globalNodeName", { quality }),
-          // 先按时间轴总长估算；提前停止时会偏长，等录制回报实际画出的帧数后再换。
+          // 先按时间轴总长估算，两个方向都不准：录满会比它长（录制在末帧后多留了一小段
+          // 尾巴），提前停止又比它短。等录制回报实际画出的帧数后再换成准确值。
           durationMs: Math.round((durationFrames / PREVIZ_RECORD_FPS) * 1000),
           uploadVideo: (targetProject, file, filename) =>
             uploadFreezoneVideo(targetProject, file, filename),

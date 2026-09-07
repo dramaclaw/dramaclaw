@@ -876,7 +876,8 @@ describe("PrevizEditor", () => {
       "/static/take.mp4",
       "16:9",
       "previz.editor.record.trackNodeName",
-      expect.any(Number),
+      // 时间轴只有 1 帧，30fps 下就是 33ms：顺手把单位钉成毫秒。
+      33,
     );
     // 光有节点不算接出来：画布上得有一条从预演台连过去的边。
     expect(addEdge).toHaveBeenCalledWith("previz-1", "video-1");
