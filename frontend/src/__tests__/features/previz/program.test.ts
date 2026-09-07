@@ -126,4 +126,77 @@ describe('insertCut', () => {
     insertCut(scene, 10, camA);
     expect(JSON.stringify(scene)).toBe(before);
   });
+
+  it('never mutates the input scene when splitting a covered cut', () => {
+    const { scene, camA, camB } = seed();
+    const staged = { ...scene, timeline: { ...scene.timeline, program: [cut('c1', 0, 60, camA)] } };
+    const before = JSON.stringify(staged);
+    insertCut(staged, 20, camB);
+    expect(JSON.stringify(staged)).toBe(before);
+  });
+
+  it('never mutates the input scene when retargeting a cut at its start', () => {
+    const { scene, camA, camB } = seed();
+    const staged = { ...scene, timeline: { ...scene.timeline, program: [cut('c1', 20, 60, camA)] } };
+    const before = JSON.stringify(staged);
+    insertCut(staged, 20, camB);
+    expect(JSON.stringify(staged)).toBe(before);
+  });
+
+  it('case 2: rejects a split once the program holds PREVIZ_MAX_CUTS cuts', () => {
+    const { scene, camA, camB } = seed();
+    // 每段 2 帧、正好排满 0..120：60 段撑到 PREVIZ_MAX_CUTS 上限，且每段都有可切的内部帧。
+    const program = Array.from({ length: PREVIZ_MAX_CUTS }, (_, index) =>
+      cut(`c${index}`, index * 2, index * 2 + 2, index % 2 ? camA : camB),
+    );
+    const staged = { ...scene, timeline: { ...scene.timeline, program } };
+    // 第 0 段（0..2）是 camB，帧 1 落在段内部，换成 camA 会触发 split 而不是 retarget。
+    expect(insertCut(staged, 1, camA)).toEqual({ ok: false, reason: 'limit' });
+  });
+
+  it('case 1: retargeting a cut succeeds even when the program is at PREVIZ_MAX_CUTS', () => {
+    const { scene, camA, camB } = seed();
+    const program = Array.from({ length: PREVIZ_MAX_CUTS }, (_, index) =>
+      cut(`c${index}`, index * 2, index * 2 + 2, index % 2 ? camA : camB),
+    );
+    const staged = { ...scene, timeline: { ...scene.timeline, program } };
+    const result = insertCut(staged, 0, camA);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.scene.timeline.program).toHaveLength(PREVIZ_MAX_CUTS);
+    expect(result.scene.timeline.program[0]).toMatchObject({
+      startFrame: 0,
+      endFrame: 2,
+      cameraId: camA,
+    });
+  });
+
+  it('case 3: inserts into a gap between two existing cuts', () => {
+    const { scene, camA, camB } = seed();
+    const staged = {
+      ...scene,
+      timeline: { ...scene.timeline, program: [cut('c1', 0, 20, camA), cut('c2', 50, 80, camB)] },
+    };
+    const result = insertCut(staged, 30, camA);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.scene.timeline.program.map((c) => [c.startFrame, c.endFrame, c.cameraId])).toEqual([
+      [0, 20, camA],
+      [30, 50, camA],
+      [50, 80, camB],
+    ]);
+  });
+
+  it('case 4: rejects when the gap to the end of a shortened timeline is zero frames', () => {
+    const { scene, camA } = seed();
+    const shortened = { ...scene, settings: { ...scene.settings, durationFrames: 30 } };
+    const staged = {
+      ...shortened,
+      timeline: { ...shortened.timeline, program: [cut('c1', 0, 30, camA)] },
+    };
+    expect(insertCut(staged, 30, camA)).toEqual({ ok: false, reason: 'no-room' });
+  });
+
+  it('rejects a non-finite frame instead of producing a NaN cut', () => {
+    const { scene, camA } = seed();
+    expect(insertCut(scene, Number.NaN, camA)).toEqual({ ok: false, reason: 'no-room' });
+  });
 });
