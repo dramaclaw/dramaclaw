@@ -69,7 +69,7 @@ const CUT_KEYS = ['camera'] as const;
 
 const AUDIO_CLIP_KEYS = ['source', 'offset', 'relocate'] as const;
 
-const PROGRAM_KEYS = ['title', 'cutTo', 'empty', 'noRoom', 'limit'] as const;
+const PROGRAM_KEYS = ['title', 'cutTo', 'empty', 'noRoom', 'limit', 'noCamera'] as const;
 
 const AUDIO_KEYS = [
   'title',
