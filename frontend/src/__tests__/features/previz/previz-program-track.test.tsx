@@ -141,6 +141,27 @@ describe('useCutToCamera', () => {
     expect(toast.error).toHaveBeenCalledWith('previz.program.noRoom');
   });
 
+  it('toasts when the program is already at the cut limit', () => {
+    const camA = usePrevizStore.getState().addObject('camera')!;
+    const camB = usePrevizStore.getState().addObject('camera')!;
+    const { result } = renderHook(() => useCutToCamera());
+    /*
+      逐帧交替切镜把上限逼出来：每切一次都落在当前段内部，段被截成两半，段数正好 +1。
+      两台机位轮流是必须的——连切同一台会被 same-camera 挡掉，段数永远涨不上去。
+    */
+    for (let frame = 0; frame < PREVIZ_MAX_CUTS; frame += 1) {
+      usePrevizStore.getState().setTimelineFrame(frame);
+      result.current(frame % 2 === 0 ? camA : camB);
+    }
+    expect(usePrevizStore.getState().scene.timeline.program).toHaveLength(PREVIZ_MAX_CUTS);
+    expect(toast.error).not.toHaveBeenCalled();
+
+    usePrevizStore.getState().setTimelineFrame(PREVIZ_MAX_CUTS);
+    result.current(camA);
+    expect(toast.error).toHaveBeenCalledWith('previz.program.limit');
+    expect(usePrevizStore.getState().scene.timeline.program).toHaveLength(PREVIZ_MAX_CUTS);
+  });
+
   it('stays quiet when the same camera is already live', () => {
     const cam = usePrevizStore.getState().addObject('camera')!;
     const { result } = renderHook(() => useCutToCamera());
