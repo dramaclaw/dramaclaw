@@ -2502,6 +2502,15 @@ export async function uploadFreezoneVideo(
   return await uploadFreezoneImage(project, file, filename);
 }
 
+/** 与图片、视频同一个端点——后端把上传当通用 blob 存，扩展名由文件名带过去。 */
+export async function uploadFreezoneAudio(
+  project: string,
+  file: File | Blob,
+  filename?: string,
+): Promise<FreezoneUploadResult> {
+  return await uploadFreezoneImage(project, file, filename);
+}
+
 function dataUrlToBlob(dataUrl: string): Blob {
   const [meta, payload = ""] = dataUrl.split(",", 2);
   const mimeMatch = /data:([^;]+)/.exec(meta);
