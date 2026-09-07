@@ -227,9 +227,12 @@ export class PrevizSceneGraph {
     else for (const node of pending) this.applyDisplayMode(node);
   }
 
-  /** 新挂进来的模型（GLB）也要吃到当前显示模式，加载完调这个。 */
-  refreshDisplayMode(): void {
-    this.applyDisplayMode(this.root);
+  /**
+   * 把当前显示模式刷到 `target` 子树上，默认整棵树。新挂进来的模型（GLB）加载完要吃一次；
+   * 直播机位熄灯后也要吃一次——它的材质刚被涂回本色，而本色未必是当前模式该显示的色。
+   */
+  refreshDisplayMode(target: THREE.Object3D = this.root): void {
+    this.applyDisplayMode(target);
   }
 
   dispose(): void {

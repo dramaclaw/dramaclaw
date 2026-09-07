@@ -1282,6 +1282,26 @@ describe('live camera highlight', () => {
     return color;
   }
 
+  /** 机位某一件占位体的材质最后一次被涂成什么色：视锥线框，或随便一件机身。 */
+  function lastColourOf(
+    instance: PrevizRenderer,
+    objectId: string,
+    part: 'frustum' | 'body',
+  ): unknown {
+    let found = false;
+    let colour: unknown;
+    instance.nodeFor(objectId)?.traverse((child) => {
+      const { material } = child as unknown as {
+        material?: { color: { set: ReturnType<typeof vi.fn> } };
+      };
+      if (found || !material || !child.userData.previzPlaceholder) return;
+      if (Boolean(child.userData.previzCameraFrustum) !== (part === 'frustum')) return;
+      found = true;
+      colour = material.color.set.mock.lastCall?.[0];
+    });
+    return colour;
+  }
+
   it('recolours the live camera frustum and restores the previous one', async () => {
     const { instance } = await createRenderer();
     const scene = createDefaultScene();
@@ -1301,17 +1321,55 @@ describe('live camera highlight', () => {
     expect(frustumColorOf(instance, camB.id)).toBe(PREVIZ_CAMERA_COLOR.frustum);
   });
 
-  it('keeps the highlight across setScene', async () => {
+  it('relights the live camera when its node is rebuilt', async () => {
     const { instance } = await createRenderer();
     const scene = createDefaultScene();
     const camA = createPrevizObject('camera', scene.objects);
     instance.setScene({ ...scene, objects: [camA] });
     instance.setLiveCamera(camA.id);
 
-    // 场景每次 store 变化都会重灌一遍，sync 可能重建机位模型——直播色不能跟着丢。
-    instance.setScene({ ...scene, objects: [{ ...camA, name: 'renamed' }] });
+    // 删掉再撤销：sync 把节点连模型一起重建，新模型是按本色建出来的，直播色得补回去。
+    instance.setScene({ ...scene, objects: [] });
+    instance.setScene({ ...scene, objects: [camA] });
 
     expect(frustumColorOf(instance, camA.id)).toBe(PREVIZ_LIVE_FRUSTUM_COLOR);
+  });
+
+  it('lights a camera that only arrives after setLiveCamera', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const camA = createPrevizObject('camera', scene.objects);
+
+    // 编辑器里两路订阅谁先到并无保证：镜头轨可能先说 A 在直播，场景才灌进来。
+    instance.setLiveCamera(camA.id);
+    instance.setScene({ ...scene, objects: [camA] });
+
+    expect(frustumColorOf(instance, camA.id)).toBe(PREVIZ_LIVE_FRUSTUM_COLOR);
+  });
+
+  it('lets clay mode repaint a camera that stops being live', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const camA = createPrevizObject('camera', scene.objects);
+    const camB = createPrevizObject('camera', [camA]);
+    instance.setScene({
+      ...scene,
+      settings: { ...scene.settings, displayMode: 'clay' },
+      objects: [camA, camB],
+    });
+    // 机身没被直播色碰过，它此刻的颜色就是全灰模式那个灰——不用把常量抄过来。
+    const clay = lastColourOf(instance, camA.id, 'body');
+    expect(typeof clay).toBe('number');
+    expect(clay).not.toBe(PREVIZ_CAMERA_COLOR.frustum);
+
+    instance.setLiveCamera(camA.id);
+    instance.setLiveCamera(camB.id);
+
+    // 全灰只在切模式时整树刷一遍。熄灯若直接涂回橙色，一片灰里就多出一具橙视锥；
+    // 而 tally 是逐帧切的，最后每台直播过的机位都是橙的。
+    expect(lastColourOf(instance, camA.id, 'frustum')).toBe(clay);
+    // 离开全灰时靠的是这个字段，它得记着本色而不是灰。
+    expect(frustumColorOf(instance, camA.id)).toBe(PREVIZ_CAMERA_COLOR.frustum);
   });
 
   it('hides the live camera from its own frame and shows it in the director view', async () => {
@@ -1344,19 +1402,23 @@ describe('live camera highlight', () => {
     };
     render.mockImplementationOnce(record).mockImplementationOnce(record);
 
-    const pass = instance.startRecording('global', null)!;
-    pass.drawFrame(0, cam.id);
-    pass.drawFrame(1, null);
-    pass.end();
-    getContext.mockRestore();
+    // 假上下文必须还回去，哪怕中途炸了：漏到后面的用例里就是一串莫名其妙的绿。
+    try {
+      const pass = instance.startRecording('global', null)!;
+      pass.drawFrame(0, cam.id);
+      pass.drawFrame(1, null);
+      pass.end();
 
-    expect(seen).toHaveLength(2);
-    // 直播机位那一帧从监看相机出片，而它自己的模型不能出现在自己拍的画面里。
-    expect(seen[0]?.camera).toBe(monitor);
-    expect(seen[0]?.visible).toBe(false);
-    // 镜头轨没指定机位就回到导演视角，这时机位模型是场景的一部分，要露出来。
-    expect(seen[1]?.camera).not.toBe(monitor);
-    expect(seen[1]?.visible).toBe(true);
-    expect(node.visible).toBe(true);
+      expect(seen).toHaveLength(2);
+      // 直播机位那一帧从监看相机出片，而它自己的模型不能出现在自己拍的画面里。
+      expect(seen[0]?.camera).toBe(monitor);
+      expect(seen[0]?.visible).toBe(false);
+      // 镜头轨没指定机位就回到导演视角，这时机位模型是场景的一部分，要露出来。
+      expect(seen[1]?.camera).not.toBe(monitor);
+      expect(seen[1]?.visible).toBe(true);
+      expect(node.visible).toBe(true);
+    } finally {
+      getContext.mockRestore();
+    }
   });
 });
