@@ -280,8 +280,12 @@ export function peakBarHeights(
   height: number,
 ): number[] {
   const first = Math.floor((offsetMs / 1000) * PEAK_BUCKETS_PER_SEC);
-  // 这一窗跨了多少桶，不取整：取样时那一步 floor 已经把列号落到桶上了，先取一次没有区别。
-  // 不足一桶时 span 小于 1，每一列都落回 first 那一桶——短片段画成平的一条，正是想要的。
+  /*
+    这一窗跨了多少桶，不取整。clipMs 是帧数换算来的浮点数，(clipMs / 1000) * 120 常常
+    差在末位：fps=30、13 帧的片段整整 52 桶，算出来却是 51.99999999999999，先 floor
+    一下就少画最后一桶——30fps 下大半的帧数都撞得上。落到哪一桶由取样那一步的 floor 定。
+    不足一桶时 span 小于 1，每一列都落回 first 那一桶——短片段画成平的一条，正是想要的。
+  */
   const span = (clipMs / 1000) * PEAK_BUCKETS_PER_SEC;
   const bars: number[] = [];
   for (let x = 0; x < width; x += 1) {
