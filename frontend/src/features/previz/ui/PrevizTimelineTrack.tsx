@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useCallback, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useRef, useState } from 'react';
 import {
   Box,
   ChevronDown,
@@ -11,6 +11,7 @@ import {
   Link2,
   Pin,
   Scissors,
+  SwitchCamera,
   Trash2,
   User,
   Video,
@@ -26,6 +27,10 @@ export const PREVIZ_TRACK_HEADER_PX = 240;
 
 const ICON_BUTTON =
   'flex h-6 w-6 shrink-0 items-center justify-center rounded text-[#8b93a3] hover:bg-[#2a2f3a] hover:text-[#c7cedb] disabled:opacity-30 disabled:hover:bg-transparent';
+
+/** 「直播」小红标。抽成常量只是为了这一行 class 不超长，样式与内联写法一致。 */
+const LIVE_BADGE =
+  'rounded-sm bg-[#ff4d4f] px-1 text-[9px] font-semibold uppercase leading-4 text-white';
 
 const KIND_ICON: Record<PrevizObjectKind, typeof Video> = {
   camera: Video,
@@ -59,6 +64,10 @@ export interface PrevizTimelineTrackProps {
   /** 这台机位可以跟谁。非机位轨道传空数组——特写是机位的属性。 */
   closeupTargets: CloseupTarget[];
   onAddCloseup: (target: CloseupTarget) => void;
+  /** 机位轨才有：把播放头处切到这台机位。 */
+  onCut?: () => void;
+  /** 镜头轨此刻正播这台机位；表头亮「直播」。 */
+  live?: boolean;
 }
 
 /** 播放头压着的那个片段。剃刀、插入关键帧、清空轨迹都作用在它身上。 */
@@ -97,6 +106,8 @@ export function PrevizTimelineTrack({
   onSeek,
   closeupTargets,
   onAddCloseup,
+  onCut,
+  live = false,
 }: PrevizTimelineTrackProps) {
   const { t } = useTranslation();
   /** 「跟谁」的选单开着没有。开在行内而不是弹一个对话框：挑的只是一个名字。 */
@@ -152,7 +163,25 @@ export function PrevizTimelineTrack({
           </button>
           <KindIcon className="h-3.5 w-3.5 shrink-0 text-[#6d7585]" />
           <span className="min-w-0 flex-1 truncate text-xs text-[#c7cedb]">{name}</span>
-
+          {live && (
+            <span
+              data-testid="previz-track-live"
+              className={LIVE_BADGE}
+            >
+              {t('previz.timeline.live')}
+            </span>
+          )}
+          {kind === 'camera' && onCut && (
+            <button
+              type="button"
+              className={ICON_BUTTON}
+              aria-label={t('previz.timeline.cutHere')}
+              title={t('previz.timeline.cutHere')}
+              onClick={onCut}
+            >
+              <SwitchCamera className="h-3.5 w-3.5" />
+            </button>
+          )}
           {kind === 'camera' && (
             <button
               type="button"
@@ -307,21 +336,41 @@ export function PrevizTimelineTrack({
   );
 }
 
-function ClipBar({
+/** 片段条的配色：对象轨道两种（蓝=轨迹、紫=特写），固定行两种（橙=切片、青=音频）。 */
+const TONE_CLASS = {
+  path: { idle: 'bg-[#3560ba]', selected: 'bg-[#4a7de0] ring-1 ring-[#a8c4ff]' },
+  closeup: { idle: 'bg-[#6c43ae]', selected: 'bg-[#8a5cd6] ring-1 ring-[#d5bcff]' },
+  cut: { idle: 'bg-[#b8801f]', selected: 'bg-[#d69a24] ring-1 ring-[#ffd27a]' },
+  audio: { idle: 'bg-[#2a8c7a]', selected: 'bg-[#37b39c] ring-1 ring-[#9ff0dc]' },
+} as const;
+
+export type ClipBarTone = keyof typeof TONE_CLASS;
+
+export function ClipBar({
   clip,
   pxPerFrame,
   selected,
   onSelect,
   onTrim,
+  label,
+  tone,
+  children,
 }: {
   clip: PrevizClip;
   pxPerFrame: number;
   selected: boolean;
   onSelect: () => void;
   onTrim: (edge: 'start' | 'end', frame: number) => void;
+  /** 不给就按帧区间写「片段 a~b」/「特写 a~b」。 */
+  label?: string;
+  /** 不给就按片段种类：特写紫、其它蓝。 */
+  tone?: ClipBarTone;
+  /** 画在标签底下的内容（音频波形）。 */
+  children?: ReactNode;
 }) {
   const { t } = useTranslation();
   const closeup = isRigClip(clip);
+  const paint = TONE_CLASS[tone ?? (closeup ? 'closeup' : 'path')];
   const drag = useRef<{ x: number; frame: number; edge: 'start' | 'end' } | null>(null);
 
   const startTrim = useCallback(
@@ -364,23 +413,18 @@ function ClipBar({
         if (event.key === 'Enter' || event.key === ' ') onSelect();
       }}
       /*
-        两种片段两种颜色：路径是蓝的，特写是紫的。同色的话，一条机位轨道上「自己走位」
+        一种片段一种颜色：路径蓝、特写紫、切片橙、音频青。同色的话，一条机位轨道上「自己走位」
         与「跟着人走」两段看起来一模一样，而它们的改法完全不同。
       */
       className={`absolute top-1 flex h-6 items-center overflow-hidden rounded ${
-        closeup
-          ? selected
-            ? 'bg-[#8a5cd6] ring-1 ring-[#d5bcff]'
-            : 'bg-[#6c43ae]'
-          : selected
-            ? 'bg-[#4a7de0] ring-1 ring-[#a8c4ff]'
-            : 'bg-[#3560ba]'
+        selected ? paint.selected : paint.idle
       }`}
       style={{
         left: clip.startFrame * pxPerFrame,
         width: (clip.endFrame - clip.startFrame) * pxPerFrame,
       }}
     >
+      {children}
       <span
         role="slider"
         tabIndex={0}
@@ -394,10 +438,11 @@ function ClipBar({
         }}
       />
       <span className="pointer-events-none truncate px-3 text-[11px] text-white/90">
-        {t(closeup ? 'previz.timeline.closeupLabel' : 'previz.timeline.clipLabel', {
-          start: clip.startFrame,
-          end: clip.endFrame,
-        })}
+        {label ??
+          t(closeup ? 'previz.timeline.closeupLabel' : 'previz.timeline.clipLabel', {
+            start: clip.startFrame,
+            end: clip.endFrame,
+          })}
       </span>
       <span
         role="slider"
