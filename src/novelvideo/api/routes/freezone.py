@@ -100,6 +100,7 @@ from novelvideo.director_world.staging_prop_ai import generate_ai_staging_prop
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.asset_copy import (
     AssetCopyError,
+    allocate_target_path,
     copy_project_file,
     parse_project_asset_url,
     resolve_source_file,
@@ -4620,17 +4621,19 @@ async def freezone_copy_assets_from_project(
         if isinstance(source, str):
             failed.append({"source": raw_url, "reason": source})
             continue
+        # 准备阶段（定位源文件、给目标起名）的任何异常都只算这一条失败，别拖垮整批。
         try:
             source_path = resolve_source_file(Path(source.output_dir), rel)
+            job = jobs.get(source_path)
+            if job is None:
+                job = jobs[source_path] = (allocate_target_path(target_dir, source_path.name), [])
         except AssetCopyError as exc:
             failed.append({"source": raw_url, "reason": exc.reason})
             continue
-        job = jobs.get(source_path)
-        if job is None:
-            target = target_dir / safe_upload_filename(source_path.name)
-            while target.exists():
-                target = target_dir / safe_upload_filename(source_path.name)
-            job = jobs[source_path] = (target, [])
+        except (OSError, ValueError) as exc:
+            logger.warning("cross-project asset prepare failed for %s: %s", raw_url, exc)
+            failed.append({"source": raw_url, "reason": "copy_failed"})
+            continue
         job[1].append(raw_url)
 
     # 第二遍：有限并发地拷，失败的把半成品清掉。

@@ -210,6 +210,33 @@ def _head_last_modified_ts(head_result) -> float | None:
         return None
 
 
+def object_matches_local(key: str, local_path: str | Path) -> bool:
+    """远端对象是否就是本地文件的当前版本：大小一致，且 Last-Modified 不早于本地 mtime。
+
+    ossfs 写回有延迟：本地文件刚被原地覆盖时，OSS 上可能还是旧版本，连大小都可能
+    一样。拿不到 head、字段缺失或对不上，一律按「不确定」返回 False，由调用方回退。
+    """
+    bucket = get_bucket()
+    if bucket is None:
+        return False
+    head_object = getattr(bucket, "head_object", None)
+    if not callable(head_object):
+        return False
+    try:
+        local_stat = Path(local_path).stat()
+        head = head_object(key)
+    except Exception as exc:
+        logger.debug("OSS head_object failed key=%s: %s", key, exc)
+        return False
+    remote_size = _head_content_length(head)
+    remote_mtime = _head_last_modified_ts(head)
+    if remote_size is None or remote_mtime is None:
+        return False
+    if remote_size != int(local_stat.st_size):
+        return False
+    return remote_mtime + 2.0 >= float(local_stat.st_mtime)
+
+
 def _static_object_ready(local_path: str | Path, key: str, version_key: int) -> bool:
     from novelvideo import config
 

@@ -5,8 +5,8 @@ fetch 下来再 POST 到目标项目的 upload 接口，字节走两遍；这里
 
 1. 生产环境 `OUTPUT_DIR` 是 ossfs 挂载，优先让 OSS 在服务端 CopyObject，字节不
    经过 pod；
-2. OSS 不可用、源对象还没写回、单对象超过 CopyObject 上限、拷完在挂载点上
-   看不见——都回退成普通文件系统拷贝，正确性不依赖 OSS。
+2. OSS 不可用、源对象还没写回（或还是旧版本）、单对象超过 CopyObject 上限、拷完
+   在挂载点上看不见——都回退成普通文件系统拷贝，正确性不依赖 OSS。
 
 URL 解析只认 `/static/projects/<pid>/<rel>` 与 `/api/v1/projects/<pid>/media/<rel>`
 两种同源 canonical 形式；`/static/<user>/<project>/...` 这类老式路径拿不到项目 id，
@@ -21,12 +21,18 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote, urlsplit
 
+from novelvideo.freezone.paths import safe_upload_filename
 from novelvideo.utils import oss_client
 
 logger = logging.getLogger("novelvideo.freezone.asset_copy")
 
 MAX_SOURCES_PER_REQUEST = 200
 MAX_SOURCE_URL_LENGTH = 2048
+
+# 目标文件名 = 时间戳前缀(23) + 源文件名；源文件名再长也截到这个数，免得撞上文件系统
+# 单段 255 字节的上限——`safe_upload_filename` 把非 ASCII 全换成 `_`，字符数即字节数。
+_MAX_TARGET_BASENAME = 120
+_MAX_KEPT_EXTENSION = 16
 
 # OSS 单次 CopyObject 只支持 1 GB 以内的对象；更大的走 UploadPartCopy，这里不做。
 _OSS_COPY_OBJECT_LIMIT_BYTES = 1024 * 1024 * 1024
@@ -73,18 +79,56 @@ def parse_project_asset_url(url: str) -> tuple[str, str] | None:
         return None
     if not rel or "\\" in rel:
         return None
+    # 解码后冒出来的控制字符（`%00` 等）不是文件名，Path 也会在 resolve 时炸掉。
+    if _has_control_chars(project_id) or _has_control_chars(rel):
+        return None
     return project_id, rel
+
+
+def _has_control_chars(value: str) -> bool:
+    return any(ord(ch) < 32 or ch == "\x7f" for ch in value)
 
 
 def resolve_source_file(project_dir: Path, rel: str) -> Path:
     """把项目内相对路径落成真实文件；越界或不是普通文件都按失败处理。"""
-    root = project_dir.resolve()
-    candidate = (project_dir / rel).resolve()
+    try:
+        root = project_dir.resolve()
+        candidate = (project_dir / rel).resolve()
+    except (OSError, ValueError, RuntimeError) as exc:
+        # 空字节、超长路径、符号链接环……都是这一条源坏了，不是整批坏了。
+        raise AssetCopyError("invalid_source", f"unresolvable path {rel!r}: {exc}") from exc
     if candidate == root or not candidate.is_relative_to(root):
         raise AssetCopyError("invalid_source", f"path escapes project: {rel!r}")
-    if not candidate.is_file():
+    try:
+        is_file = candidate.is_file()
+    except OSError as exc:
+        raise AssetCopyError("not_found", f"cannot stat {rel!r}: {exc}") from exc
+    if not is_file:
         raise AssetCopyError("not_found", f"not a regular file: {rel!r}")
     return candidate
+
+
+def bounded_upload_basename(name: str, limit: int = _MAX_TARGET_BASENAME) -> str:
+    """把源文件名截到 `limit` 个字符以内，尽量保住扩展名。"""
+    base = (name or "").split("/")[-1].split("\\")[-1] or "upload"
+    if len(base) <= limit:
+        return base
+    stem, dot, ext = base.rpartition(".")
+    if not dot or not stem or len(ext) > _MAX_KEPT_EXTENSION:
+        return base[:limit]
+    return f"{stem[: limit - len(ext) - 1]}.{ext}"
+
+
+def allocate_target_path(target_dir: Path, source_name: str) -> Path:
+    """在目标 `_uploads/` 下给源文件挑一个还不存在的新名字。"""
+    base = bounded_upload_basename(source_name)
+    try:
+        target = target_dir / safe_upload_filename(base)
+        while target.exists():
+            target = target_dir / safe_upload_filename(base)
+    except OSError as exc:
+        raise AssetCopyError("copy_failed", f"cannot allocate target for {source_name!r}: {exc}") from exc
+    return target
 
 
 def _copy_via_oss(source: Path, target: Path) -> bool:
@@ -101,8 +145,10 @@ def _copy_via_oss(source: Path, target: Path) -> bool:
         return False
     if size > _OSS_COPY_OBJECT_LIMIT_BYTES:
         return False
-    # ossfs 写回有延迟：刚落盘的源文件可能还没成为 OSS 对象，此时 CopyObject 会 404。
-    if not oss_client.object_exists(source_key):
+    # ossfs 写回有延迟：刚落盘的源文件可能还没成为 OSS 对象（CopyObject 会 404），
+    # 原地覆盖过的文件则可能 OSS 上还是旧版本、大小都一样——只有确认远端就是本地
+    # 这个版本才敢让 OSS 拷，否则旧内容会被当成功结果永久留在目标项目里。
+    if not oss_client.object_matches_local(source_key, source):
         return False
     try:
         bucket.copy_object(bucket.bucket_name, source_key, target_key)

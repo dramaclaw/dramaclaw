@@ -13,7 +13,9 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -57,6 +59,9 @@ def test_parse_project_asset_url_accepts_canonical_same_origin_forms(url, expect
         "/static/projects/proj_a",
         "/static/projects/proj_a/",
         "/static/projects/proj_a/dir\\x.png",
+        "/static/projects/proj_a/freezone/_uploads/bad%00.png",
+        "/static/projects/proj%00a/freezone/_uploads/x.png",
+        "/static/projects/proj_a/freezone/_uploads/x%0a.png",
         "/api/v1/projects/proj_a/files/x.png",
         "data:image/png;base64,AAAA",
         "blob:https://app.example/abc",
@@ -96,34 +101,110 @@ def test_resolve_source_file_rejects_missing_or_non_regular_files(tmp_path: Path
     assert directory.value.reason == "not_found"
 
 
+def test_resolve_source_file_turns_path_errors_into_per_source_failures(tmp_path: Path):
+    """空字节、超长文件名这类 Path 层面的异常也只算这一条失败，不能往上炸。"""
+    project_dir = tmp_path / "output" / "alice" / "demo"
+    (project_dir / "freezone").mkdir(parents=True)
+
+    with pytest.raises(asset_copy.AssetCopyError) as null_byte:
+        asset_copy.resolve_source_file(project_dir, "freezone/bad\x00.png")
+    assert null_byte.value.reason == "invalid_source"
+
+    with pytest.raises(asset_copy.AssetCopyError) as too_long:
+        asset_copy.resolve_source_file(project_dir, "freezone/" + "x" * 300 + ".png")
+    assert too_long.value.reason in {"invalid_source", "not_found"}
+
+
+# ---------------------------------------------------------------------------
+# 目标命名
+# ---------------------------------------------------------------------------
+
+
+def test_allocate_target_path_bounds_the_filename_length(tmp_path: Path):
+    """234 字节的源文件名本身合法，加上时间戳前缀就超 255 了；截短而不是让 exists() 炸。"""
+    long_name = "x" * 230 + ".png"
+    target = asset_copy.allocate_target_path(tmp_path, long_name)
+
+    assert target.parent == tmp_path
+    assert not target.exists()
+    assert target.name.endswith(".png")
+    assert len(target.name.encode()) <= 255
+    # 时间戳前缀之后紧跟被截短的原名。
+    assert target.name.split("_", 3)[3].startswith("xxxxxxxx")
+
+
+def test_allocate_target_path_keeps_short_names_intact(tmp_path: Path):
+    target = asset_copy.allocate_target_path(tmp_path, "clip.mp4")
+    assert target.name.endswith("_clip.mp4")
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("a.png", "a.png"),
+        ("x" * 124 + ".png", "x" * 116 + ".png"),
+        ("x" * 200, "x" * 120),
+        ("x" * 200 + "." + "y" * 40, "x" * 120),
+        ("", "upload"),
+    ],
+)
+def test_bounded_upload_basename(name, expected):
+    assert asset_copy.bounded_upload_basename(name) == expected
+
+
 # ---------------------------------------------------------------------------
 # 拷贝：OSS 直拷优先，文件系统回退
 # ---------------------------------------------------------------------------
 
 
 class _FakeBucket:
-    """够用的 oss2.Bucket 替身：CopyObject 后（可选）在挂载点上「显形」目标文件。"""
+    """够用的 oss2.Bucket 替身：CopyObject 后（可选）在挂载点上「显形」目标文件。
+
+    `remote` 指定 OSS 上真正存着的字节（默认与挂载点上的源文件一致），`remote_mtime`
+    指定对象的 Last-Modified（默认「现在」，即已写回）。
+    """
 
     bucket_name = "bkt"
 
-    def __init__(self, *, materialize: bool = True, exists: bool = True):
+    def __init__(
+        self,
+        *,
+        materialize: bool = True,
+        exists: bool = True,
+        remote: bytes | None = None,
+        remote_mtime: float | None = None,
+    ):
         self.copies: list[tuple[str, str, str]] = []
+        self.heads: list[str] = []
         self.materialize = materialize
         self.exists = exists
+        self.remote = remote
+        self.remote_mtime = remote_mtime
 
-    def object_exists(self, key: str) -> bool:
-        return self.exists
+    @staticmethod
+    def _local(key: str) -> Path:
+        prefix = str(config.OSS_OBJECT_PREFIX).strip("/") + "/"
+        return Path(config.OUTPUT_DIR) / key[len(prefix) :]
+
+    def _remote_bytes(self, key: str) -> bytes:
+        return self.remote if self.remote is not None else self._local(key).read_bytes()
+
+    def head_object(self, key: str):
+        self.heads.append(key)
+        if not self.exists:
+            raise RuntimeError("NoSuchKey")
+        return SimpleNamespace(
+            content_length=len(self._remote_bytes(key)),
+            last_modified=self.remote_mtime if self.remote_mtime is not None else time.time(),
+        )
 
     def copy_object(self, source_bucket_name, source_key, target_key, headers=None, params=None):
         self.copies.append((source_bucket_name, source_key, target_key))
         if not self.materialize:
             return
-        prefix = str(config.OSS_OBJECT_PREFIX).strip("/") + "/"
-        root = Path(config.OUTPUT_DIR)
-        source = root / source_key[len(prefix) :]
-        target = root / target_key[len(prefix) :]
+        target = self._local(target_key)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(source.read_bytes())
+        target.write_bytes(self._remote_bytes(source_key))
 
 
 def _two_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
@@ -165,6 +246,52 @@ def test_copy_project_file_falls_back_when_the_source_is_not_in_oss_yet(tmp_path
     """ossfs 写回有延迟：刚上传的源文件可能还没到 OSS，此时不能 CopyObject。"""
     source, target = _two_files(tmp_path, monkeypatch)
     bucket = _FakeBucket(exists=False)
+    monkeypatch.setattr(oss_client, "get_bucket", lambda: bucket)
+
+    assert asset_copy.copy_project_file(source, target) == "filesystem"
+    assert bucket.copies == []
+    assert target.read_bytes() == b"png-bytes"
+
+
+def test_copy_project_file_falls_back_when_the_oss_object_is_a_stale_same_size_version(
+    tmp_path, monkeypatch
+):
+    """源文件被原地覆盖、ossfs 还没写回：OSS 上是旧版本且大小相同。只看「对象存在 +
+    目标大小对得上」会把旧内容当成功结果永久留在目标项目里，必须回退文件系统拷贝。"""
+    source, target = _two_files(tmp_path, monkeypatch)
+    source.write_bytes(b"NEW!")
+    bucket = _FakeBucket(remote=b"OLD!", remote_mtime=source.stat().st_mtime - 600)
+    monkeypatch.setattr(oss_client, "get_bucket", lambda: bucket)
+
+    assert asset_copy.copy_project_file(source, target) == "filesystem"
+    assert bucket.copies == []
+    assert target.read_bytes() == b"NEW!"
+
+
+def test_copy_project_file_falls_back_when_the_oss_object_size_differs(tmp_path, monkeypatch):
+    source, target = _two_files(tmp_path, monkeypatch)
+    bucket = _FakeBucket(remote=b"png-bytes-but-longer")
+    monkeypatch.setattr(oss_client, "get_bucket", lambda: bucket)
+
+    assert asset_copy.copy_project_file(source, target) == "filesystem"
+    assert bucket.copies == []
+    assert target.read_bytes() == b"png-bytes"
+
+
+def test_copy_project_file_falls_back_when_the_bucket_cannot_confirm_the_version(
+    tmp_path, monkeypatch
+):
+    """拿不到 head（老 SDK / 替身没实现）就当不确定：宁可多走一次文件系统拷贝。"""
+    source, target = _two_files(tmp_path, monkeypatch)
+
+    class _NoHead:
+        bucket_name = "bkt"
+        copies: list = []
+
+        def copy_object(self, *args, **kwargs):
+            self.copies.append(args)
+
+    bucket = _NoHead()
     monkeypatch.setattr(oss_client, "get_bucket", lambda: bucket)
 
     assert asset_copy.copy_project_file(source, target) == "filesystem"
@@ -324,6 +451,41 @@ async def test_copy_route_reports_per_source_failures_without_failing_the_batch(
     # 失败的源不能在目标项目留下半成品：目录里只有那一个成功拷过来的文件。
     uploads = list((target_ctx.output_dir / "freezone" / "_uploads").iterdir())
     assert [p.read_bytes() for p in uploads] == [b"ok"]
+
+
+async def test_copy_route_isolates_preparation_failures_to_the_single_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """准备阶段（解析 URL、定位源文件、给目标起名）炸了也只算那一条失败。
+
+    之前 `bad%00.png` 在 resolve 时抛 ValueError、234 字节的合法文件名加上时间戳前缀后
+    `exists()` 抛 OSError，都会在任何拷贝开始前终止整批，同批 good.png 也迁不过去。
+    """
+    monkeypatch.setattr(oss_client, "get_bucket", lambda: None)
+    source_ctx = _ctx(tmp_path, "proj_src", owner="alice", name="rigeng", role="viewer")
+    target_ctx = _ctx(tmp_path, "proj_dst", owner="bob", name="vlog", role="editor")
+    target_ctx.output_dir.mkdir(parents=True)
+    _patch_projects(monkeypatch, {"proj_src": source_ctx, "proj_dst": target_ctx})
+    good = _source_asset(source_ctx, "freezone/_uploads/good.png", b"ok")
+    long_name = "x" * 230 + ".png"
+    assert len(long_name) == 234
+    long_asset = _source_asset(source_ctx, f"freezone/_uploads/{long_name}", b"long")
+    null_byte = f"/static/projects/{source_ctx.project_id}/freezone/_uploads/bad%00.png"
+
+    result = await freezone_routes.freezone_copy_assets_from_project(
+        project="proj_dst",
+        body=FreezoneAssetCopyRequest(sources=[null_byte, long_asset, good]),
+        user=USER,
+    )
+
+    data = result["data"]
+    assert set(data["mapping"]) == {good, long_asset}
+    assert data["failed"] == [{"source": null_byte, "reason": "invalid_source"}]
+    uploads = {p.read_bytes(): p.name for p in (target_ctx.output_dir / "freezone" / "_uploads").iterdir()}
+    assert set(uploads) == {b"ok", b"long"}
+    assert len(uploads[b"long"].encode()) <= 255
+    assert uploads[b"long"].endswith(".png")
+    assert uploads[b"long"] in data["mapping"][long_asset]
 
 
 async def test_copy_route_requires_editor_on_the_target_project(
