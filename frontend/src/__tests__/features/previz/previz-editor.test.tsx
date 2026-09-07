@@ -889,7 +889,9 @@ describe("PrevizEditor", () => {
   it("moves the playhead only every few frames while recording", async () => {
     const user = userEvent.setup();
     const scene = createDefaultScene();
-    scene.settings.durationFrames = 12;
+    // 13 而不是 12：12 是步长 3 的整数倍，末帧会被常规节流顺手推到，那个「末帧必推」
+    // 的兜底就白写了也测不出来。13 只能靠它。
+    scene.settings.durationFrames = 13;
     scene.objects.push(createPrevizObject("camera", scene.objects));
     const cameraId = scene.objects[0]!.id;
     await renderEditor({ initialScene: scene });
@@ -925,18 +927,20 @@ describe("PrevizEditor", () => {
 
     const drawn = recordDrawFrame.mock.calls.map(([frame]) => frame as number);
     expect(drawn[0]).toBe(0);
-    expect(drawn[drawn.length - 1]).toBe(12);
+    expect(drawn[drawn.length - 1]).toBe(13);
     // 每画一帧都推播放头的话，整棵编辑器每帧重渲一遍、再把这一帧重新解算一遍，
     // 30fps 下这占掉每帧预算的一大块。播放头只要看得出在走就够了，但末帧必须推到。
     expect(pushed.length).toBeLessThan(drawn.length);
-    expect(pushed).toEqual([0, 3, 6, 9, 12]);
+    expect(pushed).toEqual([0, 3, 6, 9, 12, 13]);
   });
 
   it("steps the recording progress in coarse jumps, but finishes at 100%", async () => {
     const user = userEvent.setup();
     const scene = createDefaultScene();
-    // 够长才测得出来：120 帧下每帧只推进 0.83%，比 2% 那一档细，节流才有事可做。
-    scene.settings.durationFrames = 120;
+    // 够长才测得出来：121 帧下每帧只推进 0.83%，比 2% 那一档细，节流才有事可做。
+    // 取 121 而不是 120：末帧的比例得**不是**恰好落在 2% 的档口上，那个「ratio 为 1
+    // 必推」的兜底才是唯一能把进度条送到 100% 的东西。
+    scene.settings.durationFrames = 121;
     scene.objects.push(createPrevizObject("camera", scene.objects));
     const cameraId = scene.objects[0]!.id;
     await renderEditor({ initialScene: scene });

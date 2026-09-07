@@ -532,7 +532,8 @@ export function PrevizEditor({
   );
 
   const handleCapture = useCallback(async () => {
-    if (!renderer || capturing) return;
+    // 录制期间不出图：capture() 的 finally 同样会把录制正藏着的辅助物还成可见。
+    if (!renderer || capturing || recording) return;
     const project = readUrl().project;
     if (!project) {
       toast.error(t("previz.editor.noProject"));
@@ -558,7 +559,7 @@ export function PrevizEditor({
     } finally {
       setCapturing(false);
     }
-  }, [addDerivedUploadNode, addEdge, capturing, nodeId, renderer, t]);
+  }, [addDerivedUploadNode, addEdge, capturing, nodeId, recording, renderer, t]);
 
   const handleRecord = useCallback(
     async (mode: PrevizRecordMode) => {
@@ -610,9 +611,9 @@ export function PrevizEditor({
         let lastPushed = Number.NEGATIVE_INFINITY;
         // 进度同理：每报一次都是一次 setState，整棵编辑器重渲一遍，而录制期间它是每帧
         // 都报的。按 2% 一档攒着报——进度条上写的是整数百分比，比这更细的变化根本显示
-        // 不出来。开头那个 0 与末尾的 1 必须原样报到：进度条要从头开始、也要真的走满，
-        // 差之毫厘就会停在 99%。中途叫停时最后显示的仍是真报过的那一档。
-        let lastProgress = Number.NEGATIVE_INFINITY;
+        // 不出来。末尾那个 1 必须原样报到，否则最后一档差之毫厘，进度条就停在 99%。
+        // 中途叫停时最后显示的仍是真报过的那一档。
+        let lastProgress = 0;
         let blob: Blob;
         try {
           blob = await recordTimeline({
