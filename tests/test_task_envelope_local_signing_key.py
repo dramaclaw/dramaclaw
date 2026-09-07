@@ -1,7 +1,7 @@
 """CE-only local signing keyring: zero-config boot without weakening EE.
 
 CE ships as a public image whose compose file declares ``.env`` optional
-(``docker-compose.release.yml``), so a fail-closed signing config would make
+(``docker-compose.yml``), so a fail-closed signing config would make
 every out-of-the-box CE install crash at bootstrap. CE therefore generates and
 persists its own keyring, exactly like Rails' ``secret_key_base`` in
 development/test. EE keeps failing closed: the gate is the edition, never

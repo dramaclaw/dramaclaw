@@ -41,6 +41,7 @@ from novelvideo.api.schemas import (
     CreateIdentityAssetRequest,
     FreezoneAnalyzeShotsRequest,
     FreezoneAnalyzeVideoStoryRequest,
+    FreezoneAssetCopyRequest,
     FreezoneAssetLibraryFolderPatchRequest,
     FreezoneAssetLibraryFolderRequest,
     FreezoneAssetLibraryItemPatchRequest,
@@ -97,6 +98,13 @@ from novelvideo.config import (
 from novelvideo.director_world import DirectorWorldService
 from novelvideo.director_world.staging_prop_ai import generate_ai_staging_prop
 from novelvideo.freezone import canvas_store
+from novelvideo.freezone.asset_copy import (
+    AssetCopyError,
+    allocate_target_path,
+    copy_project_file,
+    parse_project_asset_url,
+    resolve_source_file,
+)
 from novelvideo.i18n_message import log_lines_text
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
@@ -4554,6 +4562,117 @@ async def freezone_reference_file_upload(
         user,
         max_bytes=REFERENCE_FILE_MAX_BYTES,
     )
+
+
+_ASSET_COPY_CONCURRENCY = 4
+
+
+@router.post("/projects/{project}/freezone/assets/copy", tags=[TAG_FREEZONE_MEDIA])
+async def freezone_copy_assets_from_project(
+    project: str,
+    body: FreezoneAssetCopyRequest,
+    user: dict = Depends(get_api_user),
+):
+    """跨项目粘贴：把源项目的素材拷进本项目的 `freezone/_uploads/`。
+
+    前端只报「这些 URL 要拷到当前项目」，字节不再经过浏览器：OSS 可用时在服务端
+    CopyObject，否则文件系统拷贝。目标项目要 editor，每个源项目要 viewer；单条失败
+    只记进 `failed`（reason 为 invalid_source / not_found / forbidden / unavailable /
+    copy_failed），不影响同批其它文件。本来就属于目标项目的 URL 原样跳过。
+    """
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    target_dir = uploads_dir(project_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    mapping: dict[str, str] = {}
+    failed: list[dict[str, str]] = []
+    source_projects: dict[str, ProjectContext | str] = {}
+
+    async def _source_project(project_id: str) -> ProjectContext | str:
+        cached = source_projects.get(project_id)
+        if cached is not None:
+            return cached
+        try:
+            src_ctx, *_ = await _resolve_freezone_project(project_id, user, required_role="viewer")
+            result: ProjectContext | str = src_ctx
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                result = "forbidden"
+            elif exc.status_code == 404:
+                result = "not_found"
+            else:
+                result = "unavailable"
+        source_projects[project_id] = result
+        return result
+
+    # 第一遍：解析 + 授权 + 定位源文件，同一个源文件只排一次拷贝。
+    jobs: dict[Path, tuple[Path, list[str]]] = {}
+    for raw_url in dict.fromkeys(body.sources):
+        parsed = parse_project_asset_url(raw_url)
+        if parsed is None:
+            failed.append({"source": raw_url, "reason": "invalid_source"})
+            continue
+        source_project_id, rel = parsed
+        if source_project_id == ctx.project_id:
+            continue
+        source = await _source_project(source_project_id)
+        if isinstance(source, str):
+            failed.append({"source": raw_url, "reason": source})
+            continue
+        # 准备阶段（定位源文件、给目标起名）的任何异常都只算这一条失败，别拖垮整批。
+        try:
+            source_path = resolve_source_file(Path(source.output_dir), rel)
+            job = jobs.get(source_path)
+            if job is None:
+                job = jobs[source_path] = (allocate_target_path(target_dir, source_path.name), [])
+        except AssetCopyError as exc:
+            failed.append({"source": raw_url, "reason": exc.reason})
+            continue
+        except (OSError, ValueError) as exc:
+            logger.warning("cross-project asset prepare failed for %s: %s", raw_url, exc)
+            failed.append({"source": raw_url, "reason": "copy_failed"})
+            continue
+        job[1].append(raw_url)
+
+    # 第二遍：有限并发地拷，失败的把半成品清掉。
+    semaphore = asyncio.Semaphore(_ASSET_COPY_CONCURRENCY)
+
+    async def _copy_one(source_path: Path, target: Path) -> str | None:
+        async with semaphore:
+            try:
+                method = await asyncio.to_thread(copy_project_file, source_path, target)
+            except OSError as exc:
+                logger.warning(
+                    "cross-project asset copy failed %s -> %s: %s", source_path, target, exc
+                )
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return None
+        logger.info(
+            "cross-project asset copied via %s: %s -> %s/%s",
+            method,
+            source_path.name,
+            ctx.project_id,
+            target.name,
+        )
+        new_rel = target.relative_to(project_dir).as_posix()
+        return make_static_url_for_context(ctx, new_rel, local_path=target)
+
+    results = await asyncio.gather(
+        *(_copy_one(source_path, target) for source_path, (target, _urls) in jobs.items())
+    )
+    for (_target, urls), new_url in zip(jobs.values(), results):
+        for raw_url in urls:
+            if new_url is None:
+                failed.append({"source": raw_url, "reason": "copy_failed"})
+            else:
+                mapping[raw_url] = new_url
+
+    return {"ok": True, "data": {"mapping": mapping, "failed": failed}}
 
 
 @router.post("/projects/{project}/freezone/three-d-viewer/screenshot", tags=[TAG_FREEZONE_MEDIA])

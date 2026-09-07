@@ -259,8 +259,9 @@ def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
         and _opts_out_of_the_guard(call)
     }
 
-    # 取证口径（`TCP-P60`）：freezone 79 条路由全过同一个解析器，画布只占 14 条。
-    assert router_decorators == 79
+    # 取证口径（`TCP-P60`）：freezone 79 条路由全过同一个解析器，画布只占 14 条；
+    # 之后新增的跨项目素材拷贝路由（assets/copy）也走守卫，计 80。
+    assert router_decorators == 80
     assert len(canvas_routes) == 14
 
     # 正向：14 条画布路由必须全部、且每一处调用都 opt-out。

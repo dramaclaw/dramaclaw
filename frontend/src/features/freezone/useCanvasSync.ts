@@ -39,6 +39,10 @@ import {
 } from "./shotMetadataStore";
 import { setFreezoneCanvasMetadata } from "./canvasMetadataContext";
 import {
+  isCanvasAutosaveHeld,
+  subscribeCanvasAutosaveRelease,
+} from "./canvasAutosaveHold";
+import {
   consumeQueuedLocalFreezoneProjections,
   registerFreezoneCanvasRuntime,
 } from "./canvasSyncRuntime";
@@ -1390,6 +1394,9 @@ export function useCanvasSync(
   // Save fires when the persisted canvas shape (nodes/edges) or the
   // shotMetadata changes — never on pure view-state churn.
   useEffect(() => {
+    // 跨项目粘贴期间（canvasAutosaveHold）攒下的保存：草稿照写，PUT 等素材拷进本项目、
+    // URL 改写完再发，源项目的 URL 就不会先落库一次。
+    let saveDeferredByHold = false;
     const triggerSave = () => {
       if (!hydratedRef.current || switchingRef.current) return;
       scheduleDraftWrite();
@@ -1398,6 +1405,11 @@ export function useCanvasSync(
       }
       if (debounceTimerRef.current != null) {
         window.clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      if (isCanvasAutosaveHeld(project)) {
+        saveDeferredByHold = true;
+        return;
       }
       debounceTimerRef.current = window.setTimeout(() => {
         lastSavedViewportRef.current =
@@ -1405,6 +1417,11 @@ export function useCanvasSync(
         void requestSave();
       }, DEBOUNCE_MS);
     };
+    const unsubscribeHold = subscribeCanvasAutosaveRelease((released) => {
+      if (released !== project || !saveDeferredByHold) return;
+      saveDeferredByHold = false;
+      triggerSave();
+    });
     // Only react to changes that alter the persisted nodes/edges shape. View
     // state (viewport, selection, dialogs, image viewer) lives in the same
     // store but is filtered out by the content-signature comparison.
@@ -1435,6 +1452,7 @@ export function useCanvasSync(
     // there is save-worthy.
     const unsubscribeShot = useShotMetadataStore.subscribe(triggerSave);
     return () => {
+      unsubscribeHold();
       unsubscribeCanvas();
       unsubscribeShot();
       if (draftTimerRef.current != null) {

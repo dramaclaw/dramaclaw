@@ -22,6 +22,7 @@ import {
   queueLocalFreezoneProjection,
   removeLocalFreezoneProjection,
 } from "@/features/freezone/canvasSyncRuntime";
+import { holdCanvasAutosave } from "@/features/freezone/canvasAutosaveHold";
 import { projectionScopedId } from "@/features/freezone/projectionGraphIds";
 import { useShotMetadataStore } from "@/features/freezone/shotMetadataStore";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
@@ -2145,6 +2146,83 @@ describe("useCanvasSync hydrate lifecycle", () => {
     expect(vi.mocked(putFreezoneCanvas).mock.calls[0][2].metadata).toMatchObject({
       projections: {},
     });
+
+    hook.unmount();
+  });
+
+  // 跨项目粘贴：节点先带着源项目的媒体 URL 进 store，后端拷完素材才改写成目标项目
+  // 的地址。hold 期间只写草稿不发 PUT，release 后补一次保存——源项目 URL 不会先入库。
+  it("holds the content PUT while the project's autosave is held and saves once released", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 3,
+    } as unknown as Awaited<ReturnType<typeof getFreezoneCanvas>>);
+
+    const hook = renderHook(() => useCanvasSync("project-a", "hold_user_eric"));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const release = holdCanvasAutosave("project-a");
+    useCanvasStore
+      .getState()
+      .addNode(
+        CANVAS_NODE_TYPES.upload,
+        { x: 10, y: 10 },
+        { imageUrl: "/static/projects/project-b/freezone/_uploads/a.png" },
+      );
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putFreezoneCanvas).not.toHaveBeenCalled();
+
+    // The copy lands and the URL is rewritten before the hold is released.
+    const pastedId = useCanvasStore.getState().nodes[0].id;
+    useCanvasStore.getState().updateNodeData(pastedId, {
+      imageUrl: "/static/projects/project-a/freezone/_uploads/copied_a.png",
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putFreezoneCanvas).not.toHaveBeenCalled();
+
+    release();
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putFreezoneCanvas).toHaveBeenCalledTimes(1);
+    const payload = JSON.stringify(vi.mocked(putFreezoneCanvas).mock.calls[0][2]);
+    expect(payload).toContain("/static/projects/project-a/freezone/_uploads/copied_a.png");
+    expect(payload).not.toContain("project-b");
+
+    hook.unmount();
+  });
+
+  it("does not save on release when nothing changed during the hold", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 3,
+    } as unknown as Awaited<ReturnType<typeof getFreezoneCanvas>>);
+
+    const hook = renderHook(() => useCanvasSync("project-a", "hold_idle_user_eric"));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const release = holdCanvasAutosave("project-a");
+    release();
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putFreezoneCanvas).not.toHaveBeenCalled();
 
     hook.unmount();
   });

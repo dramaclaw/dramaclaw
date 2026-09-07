@@ -38,6 +38,7 @@ import {
 } from '@/features/canvas/application/canvasLod';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { ReferencePickNodeOverlay } from '@/features/canvas/ui/ReferencePickNodeOverlay';
+import { AssetMigrationNodeOverlay } from '@/features/canvas/ui/AssetMigrationNodeOverlay';
 import {
   getLodStill,
   requestLodStill,
@@ -245,7 +246,7 @@ export function withLodShell(
       return requestShellUpgrade(() => setHeldShell(false));
     }, [heldShell, wantShell]);
 
-    // 参考拾取遮罩挂在每个节点上（shell 档也要有，低缩放下照样能选）：
+    // 跨项目粘贴的素材占位遮罩、参考拾取遮罩都挂在每个节点上（shell 档也要有）：
     // `.react-flow__node` 本身是定位元素，遮罩用 inset-0 就精确贴合这个节点的盒子，
     // 不必在画布层重算 positionAbsolute × zoom。不在拾取态时它渲染 null。
     if (heldShell) {
@@ -259,6 +260,7 @@ export function withLodShell(
             width={props.width}
             height={props.height}
           />
+          <AssetMigrationNodeOverlay nodeId={props.id} data={props.data} />
           <ReferencePickNodeOverlay nodeId={props.id} />
         </>
       );
@@ -266,6 +268,7 @@ export function withLodShell(
     return (
       <>
         <Component {...props} />
+        <AssetMigrationNodeOverlay nodeId={props.id} data={props.data} />
         <ReferencePickNodeOverlay nodeId={props.id} />
       </>
     );
