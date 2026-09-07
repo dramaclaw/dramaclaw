@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { OUTPUT_PIXEL_SIZE, aspectRatio } from '@/features/previz/domain/camera';
 import { createCameraDraft } from '@/features/previz/domain/cameraDraft';
 import { createPrevizObject } from '@/features/previz/domain/objects';
 import { createDefaultScene, type PrevizScene, type Vec3 } from '@/features/previz/domain/scene';
@@ -38,10 +39,14 @@ const materials: FakeMaterial[] = [];
 /** 建出来的假 WebGLRenderer。监看 pass 借了视口 / 剪刀 / autoClear，断言它有没有还回去。 */
 interface FakeWebGLRenderer {
   autoClear: boolean;
+  setPixelRatio: ReturnType<typeof vi.fn>;
+  setSize: ReturnType<typeof vi.fn>;
   setViewport: ReturnType<typeof vi.fn>;
   setScissor: ReturnType<typeof vi.fn>;
   setScissorTest: ReturnType<typeof vi.fn>;
   clearDepth: ReturnType<typeof vi.fn>;
+  setRenderTarget: ReturnType<typeof vi.fn>;
+  readRenderTargetPixels: ReturnType<typeof vi.fn>;
 }
 const webglRenderers: FakeWebGLRenderer[] = [];
 
@@ -359,6 +364,7 @@ class FakeTarget {
 }
 
 class FakeControls {
+  enabled = true;
   enableDamping = false;
   // create() 里会把 MIDDLE 从默认值改写成 MOUSE.ROTATE；这里得有这张表才接得住那次赋值。
   mouseButtons: Record<string, number | null> = { LEFT: 0, MIDDLE: 1, RIGHT: 2 };
@@ -1379,22 +1385,8 @@ describe('live camera highlight', () => {
     instance.setScene({ ...scene, objects: [cam] });
     const node = instance.nodeFor(cam.id)!;
     const monitor = (instance as unknown as { monitorCamera: unknown }).monitorCamera;
+    const gl = webglRenderers[webglRenderers.length - 1]!;
 
-    // jsdom 交不出 2D 上下文，出片拿不到它会当场抛错——塞一个够用的假上下文让录制真的画。
-    const getContext = vi
-      .spyOn(HTMLCanvasElement.prototype, 'getContext')
-      .mockImplementation((contextId: string) =>
-        contextId === '2d'
-          ? ({
-              createImageData: (width: number, height: number) => ({
-                data: new Uint8ClampedArray(width * height * 4),
-                width,
-                height,
-              }),
-              putImageData: () => {},
-            } as unknown as CanvasRenderingContext2D)
-          : null,
-      );
     // 机位模型藏没藏住只在 render() 发生的那一刻才看得出来，画完就还回去了。
     const seen: Array<{ camera: unknown; visible: boolean }> = [];
     const record = (_scene: unknown, camera: unknown) => {
@@ -1402,23 +1394,182 @@ describe('live camera highlight', () => {
     };
     render.mockImplementationOnce(record).mockImplementationOnce(record);
 
-    // 假上下文必须还回去，哪怕中途炸了：漏到后面的用例里就是一串莫名其妙的绿。
-    try {
-      const pass = instance.startRecording('global', null)!;
-      pass.drawFrame(0, cam.id);
-      pass.drawFrame(1, null);
-      pass.end();
+    const pass = instance.startRecording('global', null)!;
+    pass.drawFrame(0, cam.id);
+    pass.drawFrame(1, null);
+    pass.end();
 
-      expect(seen).toHaveLength(2);
-      // 直播机位那一帧从监看相机出片，而它自己的模型不能出现在自己拍的画面里。
-      expect(seen[0]?.camera).toBe(monitor);
-      expect(seen[0]?.visible).toBe(false);
-      // 镜头轨没指定机位就回到导演视角，这时机位模型是场景的一部分，要露出来。
-      expect(seen[1]?.camera).not.toBe(monitor);
-      expect(seen[1]?.visible).toBe(true);
-      expect(node.visible).toBe(true);
+    expect(seen).toHaveLength(2);
+    // 直播机位那一帧从监看相机出片，而它自己的模型不能出现在自己拍的画面里。
+    expect(seen[0]?.camera).toBe(monitor);
+    expect(seen[0]?.visible).toBe(false);
+    // 镜头轨没指定机位就回到导演视角，这时机位模型是场景的一部分，要露出来。
+    expect(seen[1]?.camera).not.toBe(monitor);
+    expect(seen[1]?.visible).toBe(true);
+    expect(node.visible).toBe(true);
+    // 录制直接画在视口画布上：没有离屏目标，也没有那次把每帧卡住 50 多毫秒的像素读回。
+    for (const call of gl.setRenderTarget.mock.calls) expect(call[0]).toBeNull();
+    expect(gl.readRenderTargetPixels).not.toHaveBeenCalled();
+  });
+});
+
+describe('PrevizRenderer recording', () => {
+  /** 带一台机位的场景。监看那趟 pass 录制期间必须停掉，得有机位才测得出来。 */
+  function sceneWithCamera() {
+    const scene = createDefaultScene();
+    const cam = createPrevizObject('camera', scene.objects);
+    return { scene: { ...scene, objects: [cam] }, cam };
+  }
+
+  function lastGl(): FakeWebGLRenderer {
+    return webglRenderers[webglRenderers.length - 1]!;
+  }
+
+  it('pins the drawing buffer to the output size and hands over the viewport canvas', async () => {
+    const { canvas, instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene } = sceneWithCamera();
+    instance.setScene({ ...scene, settings: { ...scene.settings, outputAspect: '9:16' } });
+    step();
+    const gl = lastGl();
+    gl.setPixelRatio.mockClear();
+    gl.setSize.mockClear();
+    // object-fit 必须赶在 setSize 之前落下：位图一改尺寸，下一次合成就按 CSS 盒子拉伸。
+    let fitAtResize = '';
+    gl.setSize.mockImplementationOnce(() => {
+      fitAtResize = canvas.style.objectFit;
+    });
+
+    const pass = instance.startRecording('global', null)!;
+    try {
+      const { width, height } = OUTPUT_PIXEL_SIZE['9:16'];
+      expect(pass.width).toBe(width);
+      expect(pass.height).toBe(height);
+      // 编码器接的就是视口那块 DOM 画布：没有第二块画布，也没有像素读回。
+      expect(pass.canvas).toBe(canvas);
+      // DPR 钉成 1：位图尺寸就是出片尺寸，不是出片尺寸再乘 DPR。
+      expect(gl.setPixelRatio).toHaveBeenCalledWith(1);
+      expect(gl.setSize).toHaveBeenCalledWith(width, height, false);
+      expect(canvas.style.objectFit).toBe('contain');
+      expect(fitAtResize).toBe('contain');
+      // 轨道控制停掉：录制中拖一下视口会改导演视角，而那正是全局录制的出片相机。
+      expect(controls.enabled).toBe(false);
     } finally {
-      getContext.mockRestore();
+      pass.end();
     }
+  });
+
+  it('renders each recorded frame once, straight into the default framebuffer', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene({ ...scene, settings: { ...scene.settings, outputAspect: '9:16' } });
+    instance.setActiveCamera(cam.id);
+    step();
+    const gl = lastGl();
+    const internals = instance as unknown as {
+      monitorCamera: unknown;
+      camera: { aspect: number };
+    };
+    // 相机的 aspect 画完就还回去了，只能在 render() 那一刻取样。
+    const seen: Array<{ camera: unknown; aspect: number }> = [];
+    render.mockImplementation((_scene: unknown, camera: unknown) => {
+      seen.push({ camera, aspect: (camera as { aspect: number }).aspect });
+    });
+
+    const pass = instance.startRecording('global', null)!;
+    render.mockClear();
+    try {
+      pass.drawFrame(0, cam.id);
+      expect(render).toHaveBeenCalledTimes(1);
+      expect(seen[0]?.camera).toBe(internals.monitorCamera);
+
+      pass.drawFrame(1, null);
+      expect(render).toHaveBeenCalledTimes(2);
+      expect(seen[1]?.camera).toBe(internals.camera);
+      // 导演视角借来出片要按出片画幅取景，不是视口的 16:9；画完立刻还回去。
+      expect(seen[1]?.aspect).toBeCloseTo(aspectRatio('9:16'));
+      expect(internals.camera.aspect).toBeCloseTo(800 / 450);
+
+      for (const call of gl.setRenderTarget.mock.calls) expect(call[0]).toBeNull();
+      expect(gl.readRenderTargetPixels).not.toHaveBeenCalled();
+    } finally {
+      render.mockReset();
+      pass.end();
+    }
+  });
+
+  it('keeps the editor view and the monitor inset off the canvas until the pass ends', async () => {
+    const { canvas, instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene(scene);
+    instance.setActiveCamera(cam.id);
+    step();
+    const gl = lastGl();
+
+    const pass = instance.startRecording('global', null)!;
+    pass.drawFrame(0, cam.id);
+    render.mockClear();
+    gl.setSize.mockClear();
+    gl.setPixelRatio.mockClear();
+
+    // setFrame 顺手标了 needsRender。录制期间那条 rAF 循环不许把编辑视图或监看框画到
+    // 画布上盖掉刚出的那一帧：captureStream 采的就是画布此刻的内容。
+    instance.setFrame(3);
+    instance.requestRender();
+    step();
+    expect(render).not.toHaveBeenCalled();
+    // 循环本身要活着，pass 结束后不必重新起。
+    expect(frames).toHaveLength(1);
+
+    // 视口尺寸变了也不动位图：它此刻钉在出片分辨率上，新尺寸留到 end() 再落。
+    setClientSize(canvas, 640, 360);
+    instance.resize();
+    expect(gl.setSize).not.toHaveBeenCalled();
+    expect(render).not.toHaveBeenCalled();
+
+    pass.end();
+    expect(canvas.style.objectFit).toBe('');
+    expect(controls.enabled).toBe(true);
+    expect(gl.setPixelRatio).toHaveBeenLastCalledWith(Math.min(window.devicePixelRatio, 2));
+    expect(gl.setSize).toHaveBeenLastCalledWith(640, 360, false);
+    // 录制中攒下的那次尺寸变化在这里落地，并当场画一帧，别让画布空着等下一次 rAF。
+    expect(render).toHaveBeenCalled();
+  });
+
+  it('ends once, and hands the helpers and the live camera back', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene(scene);
+    step();
+    const node = instance.nodeFor(cam.id)!;
+    const gl = lastGl();
+
+    type Traversable = {
+      traverse(
+        callback: (object: { userData: Record<string, unknown>; visible: boolean }) => void,
+      ): void;
+    };
+    const helpersSeen: boolean[] = [];
+    render.mockImplementation((target: unknown) => {
+      (target as Traversable).traverse((object) => {
+        if (object.userData.previzEditorOnly) helpersSeen.push(object.visible);
+      });
+    });
+
+    const pass = instance.startRecording('track', cam.id)!;
+    // 单轨录制开录就把机位藏起来，整段都藏着。
+    expect(node.visible).toBe(false);
+    pass.drawFrame(0, null);
+    expect(helpersSeen).toEqual([false]);
+
+    gl.setSize.mockClear();
+    pass.end();
+    pass.end();
+    render.mockReset();
+
+    expect(node.visible).toBe(true);
+    // end() 里那次 resize() 当场画的一帧：辅助物已经还回来了。
+    expect(helpersSeen.slice(1)).toEqual([true]);
+    // 第二次 end() 不再重设尺寸、也不再画。
+    expect(gl.setSize).toHaveBeenCalledTimes(1);
   });
 });

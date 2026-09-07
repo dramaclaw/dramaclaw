@@ -883,6 +883,52 @@ describe("PrevizEditor", () => {
     expect(addEdge).toHaveBeenCalledWith("previz-1", "video-1");
   });
 
+  it("moves the playhead only every few frames while recording", async () => {
+    const user = userEvent.setup();
+    const scene = createDefaultScene();
+    scene.settings.durationFrames = 12;
+    scene.objects.push(createPrevizObject("camera", scene.objects));
+    const cameraId = scene.objects[0]!.id;
+    await renderEditor({ initialScene: scene });
+    act(() => {
+      usePrevizStore.getState().selectObject(cameraId);
+      // 先把播放头挪开：开录第一帧推回 0 的那一下也得数进去。
+      usePrevizStore.getState().setTimelineFrame(5);
+    });
+    const pushed: number[] = [];
+    const unsubscribe = usePrevizStore.subscribe((state, previous) => {
+      if (state.timelineFrame !== previous.timelineFrame) pushed.push(state.timelineFrame);
+    });
+
+    // 假时钟只罩住录制循环：`renderEditor` 里的 `create()` 是真异步的。录制按墙上时钟
+    // 换算帧号，假 rAF 每 16ms 一拍、30fps 每 33ms 一帧，于是 0..12 帧一帧不落地画到。
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance", "Date"],
+    });
+    try {
+      await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+      await user.click(
+        screen.getByRole("menuitem", { name: "previz.editor.record.mode.track" }),
+      );
+      // 12 帧是 400ms，末尾再留 250ms 尾巴；多推一些，把收工那一拍也跑掉。
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      await vi.waitFor(() => expect(recordEnd).toHaveBeenCalled());
+    } finally {
+      vi.useRealTimers();
+      unsubscribe();
+    }
+
+    const drawn = recordDrawFrame.mock.calls.map(([frame]) => frame as number);
+    expect(drawn[0]).toBe(0);
+    expect(drawn[drawn.length - 1]).toBe(12);
+    // 每画一帧都推播放头的话，整棵编辑器每帧重渲一遍、再把这一帧重新解算一遍，
+    // 30fps 下这占掉每帧预算的一大块。播放头只要看得出在走就够了，但末帧必须推到。
+    expect(pushed.length).toBeLessThan(drawn.length);
+    expect(pushed).toEqual([0, 3, 6, 9, 12]);
+  });
+
   it("refuses a track recording with no camera to follow", async () => {
     const user = userEvent.setup();
     render(

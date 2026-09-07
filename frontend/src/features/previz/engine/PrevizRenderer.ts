@@ -4,7 +4,7 @@ import type * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import type { PrevizRecordMode } from '../capture/recordTarget';
-import { createDomCaptureCanvas, createFramePainter, renderCapture } from '../capture/renderCapture';
+import { createDomCaptureCanvas, renderCapture } from '../capture/renderCapture';
 import { OUTPUT_PIXEL_SIZE, aspectRatio, coverFovDeg, DEG_TO_RAD } from '../domain/camera';
 import type { PrevizCameraDraft } from '../domain/cameraDraft';
 import { evaluateSceneAt } from '../domain/evaluate';
@@ -46,8 +46,9 @@ const MAX_PIXEL_RATIO = 2;
 const EDITOR_FOV_DEG = 50;
 
 /**
- * 一次录制的句柄。`canvas` 是接给编码器的那块离屏画布，尺寸恒等于出片分辨率。
- * 用完必须 `end()`：辅助物的可见性与渲染目标都攥在它手里。
+ * 一次录制的句柄。`canvas` 就是视口那块 DOM 画布：录制期间它的位图被钉在出片分辨率上
+ * （CSS 盒子不变，画面按 object-fit: contain 留白显示），编码器直接从它上面采样。
+ * 用完必须 `end()`：位图尺寸、轨道控制与辅助物的可见性都攥在它手里。
  */
 export interface PrevizRecordingPass {
   readonly canvas: HTMLCanvasElement;
@@ -97,6 +98,8 @@ export class PrevizRenderer {
   private rafHandle = 0;
   private disposed = false;
   private needsRender = true;
+  /** 录制进行中：位图钉在出片分辨率上，rAF 循环与 resize() 都让路，见 `startRecording`。 */
+  private recording = false;
   /** 懒建：从不点画布的会话不需要它。Raycaster 没有 dispose()，纯数学对象，不用还。 */
   private raycaster: THREE.Raycaster | null = null;
   private currentScene: PrevizScene | null = null;
@@ -290,6 +293,9 @@ export class PrevizRenderer {
   /** 跟随容器尺寸重设画布与相机宽高比；ResizeObserver 回调直接调它。 */
   resize(): void {
     if (this.disposed) return;
+    // 录制期间位图钉在出片分辨率上，容器尺寸变了也不能动它——编码器正从这块画布采样。
+    // end() 会再调一次 resize()，这次被压下的尺寸到那时落地。
+    if (this.recording) return;
     // `|| 1`：容器尚未布局时 clientWidth 为 0，0/0 会把 aspect 变成 NaN，
     // 进而毒掉整个投影矩阵。别顺手精简掉。
     const width = this.canvas.clientWidth || 1;
@@ -590,10 +596,16 @@ export class PrevizRenderer {
   }
 
   /**
-   * 开一次录制：交出一块与出片同分辨率的画布，以及「把第 N 帧画上去」的手柄。
+   * 开一次录制：把视口画布的位图钉到出片分辨率，交出这块画布和「把第 N 帧画上去」的手柄。
    *
-   * 和 `capture()` 走同一套离屏渲染，区别只在渲染目标与读回缓冲留着不还——录制要按
-   * 30fps 反复画，每帧新建一个 8 MB 缓冲会把 GC 压成卡顿。
+   * 每帧直接画进屏幕上这块 WebGL 画布，编码器用 `captureStream` 从它上面采样，而不是像
+   * `capture()` 那样走离屏目标再把像素读回来。读回是同步的，要等 GPU 把整条流水线排空，
+   * 再加上 8 MB 的 CPU 翻行与 `putImageData`，每帧要卡 50 多毫秒——用户 1080p 的录制
+   * 因此只剩 18fps 左右。画在屏幕上则一帧只渲染一次，没有任何读回。
+   *
+   * 代价是录制期间视口显示的就是出片画面本身（object-fit 留白），不再是编辑视图：位图
+   * 尺寸与 CSS 盒子不再一致，rAF 循环与 resize() 也都停掉（见 `tick` / `resize`），免得
+   * 把编辑视图或监看框画上去盖掉刚出的那一帧。`end()` 一次性把这些都还回去。
    *
    * `mode` 为 `track` 时必须给出机位；机位不在（被删了、或压根没选）时返回 null，
    * 由调用方提示，而不是在这里悄悄退回导演视角录出一段用户没要的画面。
@@ -615,34 +627,34 @@ export class PrevizRenderer {
     const monitor = this.monitorCamera;
 
     // 手柄、轨迹辅助物、描边名牌、以及出片机位自己的锥体，都不该进画面。录制期间一直
-    // 藏着：逐帧开关的话，屏幕上那条 rAF 渲染循环会随机撞在「开」的那一半上。
+    // 藏着而不是逐帧开关：每一帧都只从 drawFrame 出，藏一次、end() 时还一次就够了。
     this.gizmo?.setHelperVisible(false);
     this.setEditorHelpersVisible(false);
     this.overlays?.setSuppressed(true);
     if (cameraNode) cameraNode.visible = false;
-    this.requestRender();
 
     const { width, height } = OUTPUT_PIXEL_SIZE[aspect];
-    const painter = createFramePainter(
-      {
-        three: this.three,
-        renderer: this.renderer,
-        scene: this.scene,
-        createCanvas: createDomCaptureCanvas,
-      },
-      width,
-      height,
-    );
+    this.recording = true;
+    // 先定 object-fit 再改尺寸：位图一改尺寸，下一次合成就按 CSS 盒子拉伸。先把 contain
+    // 落下，屏幕上一帧拉伸的画面都不会出现——出片画幅与视口不同时留白，而不是变形。
+    this.canvas.style.objectFit = 'contain';
+    // DPR 钉成 1：位图就是出片尺寸，不是出片尺寸再乘 DPR。编码器采的是位图像素。
+    this.renderer.setPixelRatio(1);
+    // updateStyle=false：CSS 盒子不动，只改位图；上面那行 object-fit 负责把它摆进盒子。
+    this.renderer.setSize(width, height, false);
+    // 录制中拖一下视口会改导演视角，而那正是全局录制的出片相机。
+    const controlsWereEnabled = this.controls.enabled;
+    this.controls.enabled = false;
 
     let ended = false;
     return {
-      canvas: painter.canvas as unknown as HTMLCanvasElement,
+      canvas: this.canvas,
       width,
       height,
       drawFrame: (frame, liveId) => {
         if (ended || this.disposed) return;
-        // 先解算再渲染：setFrame 把这一帧的走位写进节点，顺手也把屏幕上那份刷新了，
-        // 于是录制期间视口就是进度条。
+        // 先解算再渲染：setFrame 把这一帧的走位写进节点。它顺手标的 needsRender 在录制
+        // 期间被 tick 忽略，视口上看到的就是下面画出的出片画面本身。
         this.setFrame(frame);
         // 单轨录制锁死在指定机位；全局录制每帧看镜头轨说该看谁。镜头轨指的机位已被
         // 删掉、或压根不是机位时，这一帧走导演视角，别让整段录制断在这里。
@@ -661,19 +673,19 @@ export class PrevizRenderer {
           shotNode.visible = false;
           try {
             syncMonitorCamera(monitor, shotNode, shot, aspect);
-            painter.paint(monitor);
+            this.renderer.render(this.scene, monitor);
           } finally {
             shotNode.visible = wasVisible;
           }
           return;
         }
-        // 导演视角的 aspect 跟着视口走，和出片画幅无关。借用它出片得先改，画完立刻
-        // 还回去——留着不还的话，接下来一整段录制里屏幕上的画面都是拉伸的。
+        // 导演视角的 aspect 跟着视口走，和出片画幅无关。借用它出片得先改，画完立刻还回去：
+        // 录制中别的读编辑相机的路径（取景、拾取）不该拿到出片画幅。
         const editorAspect = this.camera.aspect;
         this.camera.aspect = aspectRatio(aspect);
         this.camera.updateProjectionMatrix();
         try {
-          painter.paint(this.camera);
+          this.renderer.render(this.scene, this.camera);
         } finally {
           this.camera.aspect = editorAspect;
           this.camera.updateProjectionMatrix();
@@ -682,12 +694,16 @@ export class PrevizRenderer {
       end: () => {
         if (ended) return;
         ended = true;
-        painter.dispose();
+        this.recording = false;
+        this.controls.enabled = controlsWereEnabled;
+        this.canvas.style.objectFit = '';
         if (cameraNode) cameraNode.visible = true;
         this.overlays?.setSuppressed(false);
         this.setEditorHelpersVisible(true);
         this.gizmo?.setHelperVisible(true);
-        this.requestRender();
+        // resize() 而不是 requestRender()：位图要从出片分辨率回到容器尺寸乘 DPR，录制中
+        // 被压下的那次视口尺寸变化也在这里落地；而且它当场画一帧，画布不会空着等 rAF。
+        this.resize();
       },
     };
   }
@@ -1067,7 +1083,9 @@ export class PrevizRenderer {
       if (this.disposed) return;
       // update() 返回 true 表示相机确实动了（阻尼余速也算）。静止时跳过 render，
       // 否则一个只有网格和两盏灯的静态场景会在全屏里 60fps 空烧 GPU。
-      if (this.controls.update() || this.needsRender) this.renderFrame();
+      // 录制期间整个跳过：画布上此刻是 drawFrame 刚出的那一帧，captureStream 采的就是
+      // 它，这里再画一遍编辑视图或监看框就把出片画面盖掉了，还白白多渲染两次。
+      if (!this.recording && (this.controls.update() || this.needsRender)) this.renderFrame();
       this.rafHandle = window.requestAnimationFrame(tick);
     };
     this.rafHandle = window.requestAnimationFrame(tick);

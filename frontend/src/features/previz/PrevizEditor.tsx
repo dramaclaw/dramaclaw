@@ -603,6 +603,11 @@ export function PrevizEditor({
       setRecording(mode);
 
       try {
+        // 播放头只按约 10Hz 推进：每推一次整棵编辑器都要重渲一遍，再经 timelineFrame 那个
+        // effect 把这一帧重新解算一次，30fps 下这占掉了每帧预算的一大块；录制是模态的，
+        // 播放头只要看得出在走就够了。首帧与末帧必推：开录播放头要跳回开头（那一帧画在
+        // 计时开始之前，不占预算），录完时间轴得停在结尾。
+        let lastPushed = Number.NEGATIVE_INFINITY;
         let blob: Blob;
         try {
           blob = await recordTimeline({
@@ -611,8 +616,11 @@ export function PrevizEditor({
             drawFrame: (frame) => {
               // 镜头轨还没接进来，全局录制先一律走导演视角。
               pass.drawFrame(frame, null);
-              // 顺手把播放头推到同一帧：时间轴与视口跟着走，录制期间就是预览。
-              usePrevizStore.getState().setTimelineFrame(frame);
+              // 顺手把播放头推到同一帧，时间轴跟着走。
+              if (frame - lastPushed >= 3 || frame >= durationFrames) {
+                lastPushed = frame;
+                usePrevizStore.getState().setTimelineFrame(frame);
+              }
             },
             recorder: createCanvasRecorder(pass.canvas, { fps: PREVIZ_RECORD_FPS, mimeType }),
             now: () => performance.now(),
