@@ -18,11 +18,16 @@ import { useTranslation } from 'react-i18next';
 
 import { closeupTargets } from '../domain/closeupClip';
 import type { PrevizRange } from '../domain/camera';
+import { liveCameraAt } from '../domain/program';
 import type { PrevizObjectKind } from '../domain/scene';
 import { PREVIZ_FPS } from '../domain/scene';
 import { PREVIZ_PLAYBACK_RATES, usePrevizStore } from '../store';
+import { PrevizAudioTrack } from './PrevizAudioTrack';
+import { PrevizProgramTrack } from './PrevizProgramTrack';
 import { PrevizTimeRuler } from './PrevizTimeRuler';
 import { PREVIZ_TRACK_HEADER_PX, PrevizTimelineTrack } from './PrevizTimelineTrack';
+import { useAudioImport, type PrevizUpstreamAudio } from './useAudioImport';
+import { useCutToCamera } from './useCutToCamera';
 
 /** 传输条上每个图标按钮的样式。 */
 const BUTTON_CLASS =
@@ -42,6 +47,9 @@ export const PREVIZ_TIMELINE_HEIGHT: PrevizRange = { min: 96, max: 560, default:
 /** 键盘每按一下调多少像素。 */
 const RESIZE_STEP_PX = 24;
 
+/** 默认值写成常量而不是行内 `[]`：行内的话每次渲染都是新数组，白白掀掉下游的 memo。 */
+const NO_UPSTREAM: readonly PrevizUpstreamAudio[] = [];
+
 /**
  * 把拖出来的高度夹回合法区间。
  *
@@ -60,12 +68,18 @@ export function clampTimelineHeight(px: number, viewportPx: number): number {
 
 export function PrevizTimeline({
   onCreateObject,
+  nodeId = 'previz',
+  upstreamAudio = NO_UPSTREAM,
 }: {
   /**
    * 空态里的「创建人物 / 创建机位」走这里。不直接调 store 的 addObject：
    * 机位在编辑器里要先过创建对话框，绕过去就少了取景那一步。没传时退回直接建。
    */
   onCreateObject?: (kind: PrevizObjectKind) => void;
+  /** 上传音频的文件名要带节点 id，同一项目里两个预演台才不会互相覆盖。 */
+  nodeId?: string;
+  /** 连进预演台的音频节点，给「添加音频」菜单列出来。 */
+  upstreamAudio?: readonly PrevizUpstreamAudio[];
 } = {}) {
   const { t } = useTranslation();
   const durationFrames = usePrevizStore((state) => state.scene.settings.durationFrames);
@@ -97,6 +111,9 @@ export function PrevizTimeline({
   const clearPath = usePrevizStore((state) => state.clearPath);
   const addObject = usePrevizStore((state) => state.addObject);
   const addCloseup = usePrevizStore((state) => state.addCloseup);
+  const cutToCamera = useCutToCamera();
+  const audioImport = useAudioImport(nodeId);
+  const liveCameraId = liveCameraAt(scene, frame);
 
   /** 折叠过的轨道。没记过的默认展开——建完轨迹马上要看关键帧。 */
   const [collapsed, setCollapsed] = useState<Record<string, true>>({});
@@ -395,49 +412,63 @@ export function PrevizTimeline({
             </div>
           </div>
 
+          <PrevizProgramTrack
+            scene={scene}
+            pxPerFrame={pxPerFrame}
+            laneWidthPx={laneWidthPx}
+            selectedClipId={selectedClipId}
+            onSelect={selectClip}
+            onTrim={setClipEdge}
+            onCut={cutToCamera}
+          />
+
           <ul>
-            {tracks.map((track) => (
-              <PrevizTimelineTrack
-                key={track.id}
-                track={track}
-                name={nameOf(track.objectId)}
-                kind={kindOf(track.objectId)}
-                pxPerFrame={pxPerFrame}
-                laneWidthPx={laneWidthPx}
-                frame={frame}
-                expanded={!collapsed[track.id]}
-                selectedClipId={selectedClipId}
-                selectedPointId={selectedPointId}
-                onToggleExpand={() =>
-                  setCollapsed((current) => {
-                    const next = { ...current };
-                    if (next[track.id]) delete next[track.id];
-                    else next[track.id] = true;
-                    return next;
-                  })
-                }
-                onSelectClip={selectClip}
-                onSelectPoint={(clipId, pointId, at) => {
-                  selectClip(clipId);
-                  selectPathPoint(pointId);
-                  // 播放头跟着跳过去：不跳的话属性面板改的那个点在视口里根本看不见。
-                  setTimelineFrame(at);
-                }}
-                onTrimClip={setClipEdge}
-                onSplit={splitClipAtPlayhead}
-                onAppend={() => appendClip(track.objectId)}
-                onPin={() => pinTrackToTop(track.objectId)}
-                onRemove={() => removeTrackFor(track.objectId)}
-                onInsertKeyframe={insertKeyframe}
-                onClearPath={clearPath}
-                onSeek={setTimelineFrame}
-                // 只有机位跟得了别人。其余轨道拿到空列表，那颗按钮根本不出现。
-                closeupTargets={
-                  kindOf(track.objectId) === 'camera' ? closeupTargets(scene, track.objectId) : []
-                }
-                onAddCloseup={(target) => addCloseup(track.objectId, target)}
-              />
-            ))}
+            {tracks.map((track) => {
+              const isCamera = kindOf(track.objectId) === 'camera';
+              return (
+                <PrevizTimelineTrack
+                  key={track.id}
+                  track={track}
+                  name={nameOf(track.objectId)}
+                  kind={kindOf(track.objectId)}
+                  pxPerFrame={pxPerFrame}
+                  laneWidthPx={laneWidthPx}
+                  frame={frame}
+                  expanded={!collapsed[track.id]}
+                  selectedClipId={selectedClipId}
+                  selectedPointId={selectedPointId}
+                  onToggleExpand={() =>
+                    setCollapsed((current) => {
+                      const next = { ...current };
+                      if (next[track.id]) delete next[track.id];
+                      else next[track.id] = true;
+                      return next;
+                    })
+                  }
+                  onSelectClip={selectClip}
+                  onSelectPoint={(clipId, pointId, at) => {
+                    selectClip(clipId);
+                    selectPathPoint(pointId);
+                    // 播放头跟着跳过去：不跳的话属性面板改的那个点在视口里根本看不见。
+                    setTimelineFrame(at);
+                  }}
+                  onTrimClip={setClipEdge}
+                  onSplit={splitClipAtPlayhead}
+                  onAppend={() => appendClip(track.objectId)}
+                  onPin={() => pinTrackToTop(track.objectId)}
+                  onRemove={() => removeTrackFor(track.objectId)}
+                  onInsertKeyframe={insertKeyframe}
+                  onClearPath={clearPath}
+                  onSeek={setTimelineFrame}
+                  // 只有机位跟得了别人。其余轨道拿到空列表，那颗按钮根本不出现。
+                  closeupTargets={isCamera ? closeupTargets(scene, track.objectId) : []}
+                  onAddCloseup={(target) => addCloseup(track.objectId, target)}
+                  // 非机位不给：切到一个人物身上是没有意义的调用，别指望轨道那边替我们挡。
+                  onCut={isCamera ? () => cutToCamera(track.objectId) : undefined}
+                  live={liveCameraId === track.objectId}
+                />
+              );
+            })}
           </ul>
 
           {tracks.length === 0 && (
@@ -473,6 +504,19 @@ export function PrevizTimeline({
               )}
             </div>
           )}
+
+          <PrevizAudioTrack
+            scene={scene}
+            pxPerFrame={pxPerFrame}
+            laneWidthPx={laneWidthPx}
+            selectedClipId={selectedClipId}
+            onSelect={selectClip}
+            onTrim={setClipEdge}
+            upstreamAudio={upstreamAudio}
+            pending={audioImport.pending}
+            onAddFile={(file) => void audioImport.addFile(file)}
+            onAddUpstream={(source) => void audioImport.addUpstream(source)}
+          />
 
           {/* 播放头：一条贯穿所有轨道的竖线，压在头列下面（头列 z 更高）。 */}
           <div
