@@ -5,7 +5,7 @@
 
 > Set up the runtime environment for DramaClaw CE on macOS / Windows / Linux. If you just want the fastest path to running it, go straight to [Quickstart](quickstart.md); this guide covers per-platform prerequisites and the two installation methods (Docker and local development).
 
-DramaClaw CE is a single-machine service that needs **no PostgreSQL / Redis**. By default Docker brings up `api` + `web`, and models are served through the DramaClaw official gateway RelayClaw; nothing runs models on your machine, so an ordinary machine is enough. If you want to self-host a fully local gateway, use `docker-compose.selfhosted.yml`.
+DramaClaw CE is a single-machine service that needs **no PostgreSQL / Redis**. Docker brings up `api` + the bundled `newapi` gateway + `web`; models are served through the DramaClaw official gateway RelayClaw by default, or through the bundled gateway once you switch to Custom mode in Settings. Nothing runs models on your machine, so an ordinary machine is enough.
 
 ## Pick one of two installation methods
 
@@ -26,15 +26,17 @@ Prerequisites: Docker + `docker compose`.
 |---|---|
 | **macOS** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) (works on both Apple Silicon and Intel) |
 | **Windows** | Docker Desktop with the **WSL2** backend enabled (Settings → General → Use WSL2) |
-| **Linux** | Docker Engine + `docker-compose-plugin` (from your distro's package manager) |
+| **Linux** | Docker Engine + `docker-compose-plugin` (from your distro's package manager) — Docker Compose **≥ 2.24** (`docker compose version`; the compose file uses the `env_file` long syntax) |
 
 Once installed:
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
+git clone https://github.com/dramaclaw/dramaclaw-gateway.git   # bundled gateway, built from ../dramaclaw-gateway
 cd dramaclaw
 cp .env.example .env        # at minimum, change PROMPT_EXPORT_PASSWORD to a non-default value
-docker compose up -d --build   # brings up the api / web services
+docker compose up -d --build    # builds api, web and the gateway from the two checkouts
+# no build? docker compose -f docker-compose.release.yml up -d   # pulls published images, no gateway clone needed
 ```
 
 After it's up, open **`http://localhost:8080`** in your browser (the app UI); the REST API is at `http://localhost:8780`. Go to Settings → Model Configuration → Official Channel, paste your DC key, save, and you're ready. For the full walkthrough see [Quickstart](quickstart.md); for start/stop/backup see the [Self-Hosting Handbook](../guides/self-hosting.md).
@@ -75,6 +77,19 @@ CE defaults to `ST_EDITION=ce`, no-login single local user, and in-process inlin
 curl http://localhost:8780/api/v1/config   # a 200 response means it's working
 ```
 
+### 4. Gateway (only for Custom / Local + Official Hybrid mode)
+
+Official mode needs nothing else. For the other two modes the API expects a gateway on `127.0.0.1:3000` (the `NEWAPI_ADMIN_BASE_URL` default in `.env`) whose SQLite file is `./state/newapi/one-api.db`, which is what **Initialize** in Settings writes to. Run the published image with that directory mounted:
+
+```bash
+mkdir -p state/newapi
+docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
+  -v "$PWD/state/newapi:/data" \
+  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.1
+```
+
+or build and run the gateway from the sibling `dramaclaw-gateway` checkout with `SQLITE_PATH` pointing at that file. See [Configuring Models](configuring-models.md) for the mode setup.
+
 ---
 
 ## Optional: world features (3DGS / SHARP depth)
@@ -86,7 +101,7 @@ uv sync --extra world                       # installs torch / ml-sharp / da2 an
 npm install -g @playcanvas/splat-transform  # PLY→SOG compression tool
 ```
 
-On the Docker side, build with `--build-arg INSTALL_WORLD=1`. The slim base is CPU-only; GPU acceleration needs a CUDA base + nvidia runtime. Model weights are downloaded automatically at runtime, not baked into the image.
+Docker: `INSTALL_WORLD=1 docker compose up -d --build`. The slim base is CPU-only; GPU acceleration needs a CUDA base + nvidia runtime. Model weights are downloaded automatically at runtime, not baked into the image.
 
 > If you're not doing any 3D/voxel workflows, you can ignore this section; plain text→finished video doesn't need it.
 

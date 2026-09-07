@@ -1,64 +1,43 @@
-# DramaClaw CE — 默认 compose:官方 DC key 路径。
-# 裸 `docker compose up` 即此版:api + web 两个服务,模型走「官方网关」。
-# 配置方式(任一):
-#   1) 启动后开 http://localhost:8080 → 设置 → 模型配置 → 官方渠道 → 粘贴 DC key 保存即用;
-#   2) 或在 .env 填 NEWAPI_BASE_URL / NEWAPI_API_KEY(无头/CI 用)。
-# 想要纯本地自建网关(内置 newapi,无需 DC key):改用
-#   docker compose -f docker-compose.selfhosted.yml up
+# DramaClaw CE — 源码构建（默认入口）：api、web 用本地 checkout 构建，网关用旁边的 dramaclaw-gateway checkout 构建，三件全部本地产出。
+#   git clone https://github.com/dramaclaw/dramaclaw-gateway.git ../dramaclaw-gateway
+#   cp .env.example .env && docker compose up -d --build
+# 运行定义（env / 端口 / 卷 / 健康检查）全部 extends 自 docker-compose.release.yml，这里只加 build 与本地镜像名。
+# 只想拉已发布镜像：docker compose -f docker-compose.release.yml up -d
+# 网关源码默认取 ../dramaclaw-gateway（与本仓并排的 clone，改代码直接改那里）；放在别处或想让 Docker 直接从 git 拉：
+#   .env 设 DRAMACLAW_GATEWAY_SRC=<路径> 或 DRAMACLAW_GATEWAY_SRC=https://github.com/dramaclaw/dramaclaw-gateway.git#main
+# 本地构建的镜像命名为 dramaclaw-local/*，不会覆盖本机缓存里的 claymorelab/* 发布镜像。
 services:
   api:
+    extends:
+      file: docker-compose.release.yml
+      service: api
+    image: dramaclaw-local/api
     build:
       context: .
       dockerfile: Dockerfile
-      # 默认精简镜像。要 3DGS/SHARP「world」特性(torch/gsplat/sharp/da2 + SOG 工具):
-      #   INSTALL_WORLD=1 docker compose up --build
-      # 注:权重运行时下载不入镜像;slim base 为 CPU,GPU 加速需 CUDA base;Mac Docker 无 GPU。
+      # 默认精简镜像。要 3DGS/SHARP「world」特性（torch/gsplat/sharp/da2 + SOG 工具）：
+      #   INSTALL_WORLD=1 docker compose up -d --build
+      # 注：权重运行时下载不入镜像；slim base 为 CPU，GPU 加速需 CUDA base；Mac Docker 无 GPU。
       args:
         INSTALL_WORLD: "${INSTALL_WORLD:-0}"
-    # 运行时从宿主 .env 注入 model/LLM key（.env 不进镜像，由 .dockerignore 排除）。
-    # environment: 块仍覆盖此处同名变量，保持 CE inline 模式强制不变。
-    env_file:
-      - .env
-    environment:
-      ST_EDITION: ce
-      ST_CONTROL_PLANE_DSN: ""
-      ST_REDIS_URL: ""
-      ST_CELERY_BROKER_URL: ""
-      ST_CELERY_RESULT_BACKEND: ""
-      NOVELVIDEO_DATA_ROOT: /data
-      NOVELVIDEO_OUTPUT_DIR: /data/output
-      NOVELVIDEO_STATE_DIR: /data/state
-      NOVELVIDEO_RUNTIME_DIR: /data/runtime
-      DRAMACLAW_CHAT_BACKEND: hermes
-      HERMES_CLI_PATH: /root/.local/bin/hermes
-      # 默认「官方 DC key」路径:模型网关地址/密钥来自 .env(NEWAPI_BASE_URL / NEWAPI_API_KEY),
-      # 或启动后到网页「设置 → 模型配置 → 官方渠道」粘贴 DC key 保存即用。
-      # 不在此处硬写 NEWAPI_BASE_URL —— 留给 .env / 网页设置驱动,避免覆盖用户配置。
-      # provisioner 开放,网页设置页才能保存官方 key(官方模式不需 newapi 数据库)。
-      NEWAPI_PROVISIONER_ENABLED: "true"
-    # 宿主发布端口可配，便于一机多套（每套换 ST_API_PORT + 换 -p 项目名）。
-    # 冒号右侧 8780 是容器内端口，固定不变（web 经内部网络访问它）。
-    ports:
-      - "${ST_API_PORT:-8780}:8780"
-    volumes:
-      - ce-data:/data
-
-  # SPA served by nginx, reverse-proxying /api + /static to the api service.
-  # The Dockerfile's BACKEND_HOST/PORT defaults target the EE/Helm deploy; here
-  # they are overridden to the compose `api` service (internal port 8780). Open
-  # the app at http://localhost:8080 — the browser only ever talks to web.
+  newapi:
+    extends:
+      file: docker-compose.release.yml
+      service: newapi
+    image: dramaclaw-local/gateway
+    build:
+      context: ${DRAMACLAW_GATEWAY_SRC:-../dramaclaw-gateway}
+      dockerfile: Dockerfile
   web:
+    extends:
+      file: docker-compose.release.yml
+      service: web
+    image: dramaclaw-local/web
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    environment:
-      BACKEND_HOST: api
-      BACKEND_PORT: "8780"
-    # 浏览器打开的就是这个端口（默认 8080）。一机多套时换 ST_WEB_PORT。
-    ports:
-      - "${ST_WEB_PORT:-8080}:80"
-    depends_on:
-      - api
 
+# extends 不带顶层 volumes，需在此重申（名字与 release 文件一致，数据卷共用）。
 volumes:
   ce-data:
+  newapi-data:
