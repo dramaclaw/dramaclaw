@@ -118,6 +118,35 @@ describe('PrevizAudioTrack', () => {
     });
   });
 
+  it('paints the bars the clip window predicts', async () => {
+    /*
+      别的用例把 2D 上下文桩成 null，验的是「拿不到就安静跳过」。这一条反过来给一个
+      最小上下文，把 offsetMs / clipMs 真的传到了 drawPeaks 一路钉死——依赖数组里对、
+      传参时写成 0 或对调，前面那些用例一个都发现不了。
+    */
+    const fillRect = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      clearRect: vi.fn(),
+      fillRect,
+      fillStyle: '',
+    } as unknown as CanvasRenderingContext2D);
+    // 每桶一个不同的值，窗口挪一格或首尾对调都画得不一样。
+    const peaks = Float32Array.from({ length: 720 }, (_, i) => i / 1000);
+    loadAudioPeaks.mockResolvedValue(peaks);
+
+    const clip = audio('a', 0, 60);
+    render(<PrevizAudioTrack {...props(sceneWith([clip]))} />);
+    await waitFor(() => {
+      expect(fillRect).toHaveBeenCalled();
+    });
+
+    // 长度 2000ms（60 帧 @30fps）直接写死，不借生产代码的换算，免得两边一起错。
+    // jsdom 不排版，clientWidth/clientHeight 都是 0，落到 canvas 默认的 300×150。
+    const bars = peakBarHeights(peaks, clip.offsetMs, 2000, 300, 150);
+    expect(fillRect).toHaveBeenCalledTimes(300);
+    expect(fillRect.mock.calls.map((call) => call[3])).toEqual(bars);
+  });
+
   it('paints the clips in the audio tone', () => {
     render(<PrevizAudioTrack {...props(sceneWith([audio('a', 0, 60)]))} />);
     expect(screen.getByTestId('previz-clip-a').className).toContain('bg-[#2a8c7a]');
