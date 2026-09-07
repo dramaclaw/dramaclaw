@@ -191,7 +191,7 @@ describe("PrevizRenderer 按需重绘", () => {
     const canvas = document.createElement("canvas");
     const instance = await PrevizRenderer.create(canvas);
 
-    // create() 里的 resize() 置了 needsRender，先把首帧跑掉。
+    // create() 里的 resize() 已经同步画过首帧；先跑一帧、清掉计数，下面只看 change。
     step();
     render.mockClear();
 
@@ -203,6 +203,27 @@ describe("PrevizRenderer 按需重绘", () => {
     // 只留下一个 change 事件。tick 里再调 update() 只会拿到 false —— 不听 change
     // 的话相机动了却永远不重绘，缩放在屏幕上完全没反应。
     controls.emit("change");
+    step();
+    expect(render).toHaveBeenCalledTimes(1);
+
+    instance.dispose();
+  });
+});
+
+describe("PrevizRenderer 尺寸变化", () => {
+  it("resize() 当场重绘，不等下一帧", async () => {
+    const canvas = document.createElement("canvas");
+    const instance = await PrevizRenderer.create(canvas);
+    step();
+    render.mockClear();
+
+    // 拖时间轴高度时每次 pointermove 都让 ResizeObserver 回调走到这里。同一帧里
+    // ResizeObserver 排在 rAF 之后、绘制之前：setSize 一改画布属性，位图就被清空——
+    // 这时只标 needsRender 等下一帧，合成出去的就是一块空画布，连着拖就一路闪。
+    instance.resize();
+    expect(render).toHaveBeenCalledTimes(1);
+
+    // 已经画过了，下一帧不该再画一遍。
     step();
     expect(render).toHaveBeenCalledTimes(1);
 
