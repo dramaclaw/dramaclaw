@@ -30,7 +30,7 @@ const KINDS = [
 ] as const;
 
 /** 三组枚举与六个方向都写成字面量，理由同上。 */
-const TOOLS = ["select", "draw"] as const;
+const TOOLS = ["select", "navigate", "draw"] as const;
 const GIZMO_MODES = ["translate", "rotate", "scale"] as const;
 const VIEW_DIRECTIONS = ["front", "back", "left", "right", "top", "bottom"] as const;
 
@@ -72,7 +72,7 @@ function makeProps(overrides: ToolbarOverrides, handlers: Handlers): ToolbarProp
   return {
     canAdd: { character: true, camera: true, light: true, prop: true },
     gizmoMode: "scale",
-    tool: "draw",
+    tool: "navigate",
     timelineOpen: true,
     ...overrides,
     ...handlers,
@@ -256,6 +256,7 @@ describe("PrevizToolbar", () => {
   // tooltip 丢了，鼠标用户就再也读不出这个按钮是干什么的，而 aria-label 只服务读屏。
   it.each([
     ["previz.toolbar.tool.select", "lucide-mouse-pointer-2"],
+    ["previz.toolbar.tool.navigate", "lucide-orbit"],
     ["previz.toolbar.tool.draw", "lucide-pen-line"],
     ["previz.toolbar.gizmo.translate", "lucide-move-3d"],
     ["previz.toolbar.gizmo.rotate", "lucide-rotate-3d"],
@@ -311,6 +312,7 @@ describe("PrevizToolbar", () => {
 
     expectInOrder(groupNamed("previz.toolbar.group.tool"), "button", [
       "previz.toolbar.tool.select",
+      "previz.toolbar.tool.navigate",
       "previz.toolbar.tool.draw",
     ]);
   });
@@ -319,6 +321,7 @@ describe("PrevizToolbar", () => {
     setup({ tool: "select" });
 
     expect(button("previz.toolbar.tool.select")).toHaveAttribute("aria-pressed", "true");
+    expect(button("previz.toolbar.tool.navigate")).toHaveAttribute("aria-pressed", "false");
     expect(button("previz.toolbar.tool.draw")).toHaveAttribute("aria-pressed", "false");
   });
 

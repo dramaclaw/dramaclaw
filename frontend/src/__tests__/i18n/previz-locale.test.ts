@@ -184,7 +184,7 @@ describe('previz P3 locale keys', () => {
     it(`${name} carries every toolbar group and mode key`, () => {
       const toolbar = bundle.previz.toolbar;
       expect(Object.keys(toolbar.group).sort()).toEqual(['create', 'tool', 'gizmo'].sort());
-      expect(Object.keys(toolbar.tool).sort()).toEqual(['draw', 'select']);
+      expect(Object.keys(toolbar.tool).sort()).toEqual(['draw', 'navigate', 'select']);
       expect(Object.keys(toolbar.gizmo).sort()).toEqual(['rotate', 'scale', 'translate']);
       for (const key of ['collapseTimeline', 'expandTimeline'] as const) {
         expect(toolbar[key], key).toBeTruthy();

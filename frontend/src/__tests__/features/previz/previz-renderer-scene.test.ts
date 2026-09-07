@@ -185,6 +185,8 @@ vi.mock('three', () => {
     PlaneGeometry: FakeGeometry,
     ShaderMaterial: FakeMaterialImpl,
     DoubleSide: 2,
+    // create() 现在会把中键从默认的推拉改成环绕，读的就是这个常量。
+    MOUSE: { LEFT: 0, MIDDLE: 1, RIGHT: 2, ROTATE: 0, DOLLY: 1, PAN: 2 },
     AmbientLight: class extends Object3D {},
     DirectionalLight: class extends Object3D {},
     CapsuleGeometry: FakeGeometry,
@@ -354,6 +356,8 @@ class FakeTarget {
 
 class FakeControls {
   enableDamping = false;
+  // create() 里会把 MIDDLE 从默认值改写成 MOUSE.ROTATE；这里得有这张表才接得住那次赋值。
+  mouseButtons: Record<string, number | null> = { LEFT: 0, MIDDLE: 1, RIGHT: 2 };
   target = new FakeTarget();
   // 恒为 false：本文件测的都是「显式调了 requestRender 吗」，让 update() 自己报
   // 「相机动了」会把这条路径盖掉。

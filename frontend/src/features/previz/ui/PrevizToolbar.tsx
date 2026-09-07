@@ -7,6 +7,7 @@ import {
   Lightbulb,
   Move3d,
   MousePointer2,
+  Orbit,
   PanelBottomClose,
   PanelBottomOpen,
   PenLine,
@@ -38,8 +39,11 @@ import { cn } from "@/lib/utils";
  */
 type PrevizGizmoMode = "translate" | "rotate" | "scale";
 
-/** 视口里的鼠标工具。选择是默认；绘制是按住左键在地面上拖出一条轨迹。 */
-export const PREVIZ_TOOLS = ["select", "draw"] as const;
+/**
+ * 视口里的鼠标工具。选择是默认；导航模式下左键拖拽只环绕视口，点击不改选中（给没有
+ * 中键的触控板用）；绘制是按住左键在地面上拖出一条轨迹。
+ */
+export const PREVIZ_TOOLS = ["select", "navigate", "draw"] as const;
 export type PrevizTool = (typeof PREVIZ_TOOLS)[number];
 
 /**
@@ -56,6 +60,7 @@ const KIND_ICON: Record<PrevizObjectKind, LucideIcon> = {
 
 const TOOL_ICON: Record<PrevizTool, LucideIcon> = {
   select: MousePointer2,
+  navigate: Orbit,
   draw: PenLine,
 };
 

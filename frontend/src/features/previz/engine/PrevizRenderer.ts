@@ -188,6 +188,9 @@ export class PrevizRenderer {
     scene.add(objectRoot);
 
     const controls = new controlsModule.OrbitControls(camera, canvas);
+    // 中键拖环绕、右键拖平移，任何工具下都可用：滚轮已经负责推拉，中键再推拉是
+    // 重复的；中键环绕是 Blender 等 DCC 的通用习惯。
+    controls.mouseButtons.MIDDLE = three.MOUSE.ROTATE;
     controls.enableDamping = true;
     // 轨道中心抬到地面之上 1 米，给后续落在网格上的主体留出视觉空间；
     // 代价是网格中心从画面正中下移到约 60% 高度处。
@@ -397,8 +400,8 @@ export class PrevizRenderer {
    * 不摘的话用户每划一笔，整个空间跟着一起转；而落点是拿**当前**相机打射线求出来的，
    * 视角边转边画，画出来的轨迹和手划过的形状根本对不上。
    *
-   * 只摘左键，不是 `controls.enabled = false`：滚轮缩放、中键推拉、右键平移在绘制途中
-   * 照样要用——画一条长轨迹常常得一路推着看——全关掉等于逼用户在「看」和「画」之间
+   * 只摘左键，不是 `controls.enabled = false`：滚轮缩放、中键环绕、右键平移在绘制途中
+   * 照样要用——画一条长轨迹常常得一路转着看——全关掉等于逼用户在「看」和「画」之间
    * 反复切工具。
    */
   setDrawing(active: boolean): void {

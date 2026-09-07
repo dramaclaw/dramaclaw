@@ -689,13 +689,24 @@ export function PrevizEditor({
         case "h":
           renderer.resetView();
           break;
+        // 工具与手柄键位对齐 Blender：W/Q 选工具，G/R/S 选手柄。
         case "w":
+          // 笔画画到一半换工具会让视口在笔下转起来，画完再说。
+          if (stroke.current) break;
+          setTool("select");
+          break;
+        case "q":
+          // 笔画画到一半换工具会让视口在笔下转起来，画完再说。
+          if (stroke.current) break;
+          setTool("navigate");
+          break;
+        case "g":
           setGizmoMode("translate");
           break;
-        case "e":
+        case "r":
           setGizmoMode("rotate");
           break;
-        case "r":
+        case "s":
           setGizmoMode("scale");
           break;
         case " ":
@@ -820,6 +831,8 @@ export function PrevizEditor({
                   const down = pointerDownAt.current;
                   pointerDownAt.current = null;
                   if (!renderer || !down) return;
+                  // 导航工具只负责转视角：点一下不选也不清选中，转到一半误点不会把面板换掉。
+                  if (tool === "navigate") return;
                   // 轨道拖拽也会经过 pointerdown/up；位移超过阈值就是在转视角。
                   if (Math.hypot(event.clientX - down.x, event.clientY - down.y) > CLICK_SLOP_PX) {
                     return;
