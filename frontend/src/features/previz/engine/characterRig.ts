@@ -46,6 +46,12 @@ const NATIVE_HEIGHT_KEY = 'previzRigNativeHeightM';
  */
 const APPLIED_POSE_KEY = 'previzPoseId';
 
+/**
+ * 摆姿势时用的是第几版 clip 列表，记在 rig 上。列表会变：动画库第一次没下下来、
+ * 后来某次 build 补到了，早先按残缺列表落的候选就过时了，得按新列表重摆一遍。
+ */
+const APPLIED_SOURCE_KEY = 'previzPoseSourceSerial';
+
 /** GLTFLoader 结果里本模块真正用到的那两块。 */
 export interface PrevizGltf {
   scene: THREE.Object3D;
@@ -70,14 +76,23 @@ export interface CharacterRigDeps {
  * WebGL 上下文，且任何一处静态 `import 'three'` 都会把 three 从懒加载 chunk 里拽出来。
  */
 export class CharacterRigFactory {
-  /** 共享的加载 Promise：50 个人物各下一次 8 MB 就是 400 MB 流量。 */
-  private loading: Promise<PrevizGltf> | null = null;
+  /** 共享的模型加载 Promise：模型和动画库各 8 MB，50 个人物各下一次就是 800 MB 流量。 */
+  private modelLoading: Promise<PrevizGltf> | null = null;
   /**
-   * 已经解出来的源模型。姿势要在 rig 建好之后还能改（属性面板的「基础姿势」下拉框），
+   * 每份动画库各自的加载 Promise，按 url 记。和模型分开记的原因是失败要分开重试：
+   * 库 404 只掉姿势不掉人，下一次 build 该再试一次库，但已经到手的模型不该再下。
+   */
+  private readonly libraryLoading = new Map<string, Promise<PrevizGltf | null>>();
+  /**
+   * 已经合成的源模型。姿势要在 rig 建好之后还能改（属性面板的「基础姿势」下拉框），
    * 而重新摆姿势要的是那份 clip 列表——只留 Promise 的话，改姿势这条同步路径就得
    * 再 await 一次，把一次纯属性编辑变成异步的。
    */
   private source: PrevizGltf | null = null;
+  /** `source` 是用哪几份动画库合成的。同一组库合出来的结果一样，不必重合。 */
+  private sourceKey = '';
+  /** `source` 重合过几次。rig 上记的是摆姿势时的值，对不上就重摆。 */
+  private sourceSerial = 0;
 
   constructor(private readonly deps: CharacterRigDeps) {}
 
@@ -88,17 +103,12 @@ export class CharacterRigFactory {
   async build(character: PrevizCharacter): Promise<THREE.Object3D | null> {
     let source: PrevizGltf;
     try {
-      this.loading ??= this.loadSource();
-      source = await this.loading;
+      source = await this.resolveSource();
     } catch (error) {
-      // 失败的 Promise 缓存住会让后续每个人物都拿到同一个错误，重试永远不发生。
-      // 清掉之后，用户改一次属性触发的下一次 sync 就等于一次重试。
-      this.loading = null;
       console.error('[previz] failed to load the actor model', error);
       return null;
     }
 
-    this.source = source;
     const model = this.deps.clone(source.scene);
     this.applyCharacter(model, character);
     // 场景图靠这个标记在节点的子节点里认出「已经换过模型了」。
@@ -113,19 +123,20 @@ export class CharacterRigFactory {
   /**
    * 模型和动画库并行下载，合成一份 clip 列表。同名 clip 以模型自己那条为准（两份都带
    * A_TPose 这类），库里的只补模型没有的。库下不下来只掉姿势不掉人：模型照常建，
-   * 姿势按模型自带的候选落，控制台留一条 warn 说明原因；模型本身失败还是走上面的
-   * null 路径。
+   * 姿势按模型自带的候选落，控制台留一条 warn 说明原因；模型本身失败还是走 `build()`
+   * 的 null 路径。
+   *
+   * 两边都命中缓存时直接复用上一次的合成结果——每次 build 都当成新的一份，会让每加
+   * 一个人物就把场上所有人物重摆一遍姿势。
    */
-  private async loadSource(): Promise<PrevizGltf> {
+  private async resolveSource(): Promise<PrevizGltf> {
     const [model, ...libraries] = await Promise.all([
-      this.deps.loadGltf(PREVIZ_ACTOR_MODEL_URL),
-      ...PREVIZ_ACTOR_ANIMATION_URLS.map((url) =>
-        this.deps.loadGltf(url).catch((error: unknown) => {
-          console.warn('[previz] failed to load the actor animation library', url, error);
-          return null;
-        }),
-      ),
+      this.loadModel(),
+      ...PREVIZ_ACTOR_ANIMATION_URLS.map((url) => this.loadLibrary(url)),
     ]);
+    const key = PREVIZ_ACTOR_ANIMATION_URLS.filter((_url, index) => libraries[index]).join(' ');
+    if (this.source && this.sourceKey === key) return this.source;
+
     const animations = [...model.animations];
     const known = new Set(animations.map((clip) => clip.name));
     for (const library of libraries) {
@@ -135,7 +146,43 @@ export class CharacterRigFactory {
         animations.push(clip);
       }
     }
-    return { scene: model.scene, animations };
+    this.source = { scene: model.scene, animations };
+    this.sourceKey = key;
+    // 列表变了（通常是上次没到的动画库这次到了）：已经建好的 rig 摆的是按旧列表落的
+    // 候选，下一次 sync 要重查一遍。
+    this.sourceSerial += 1;
+    return this.source;
+  }
+
+  private loadModel(): Promise<PrevizGltf> {
+    const cached = this.modelLoading;
+    if (cached) return cached;
+    const attempt: Promise<PrevizGltf> = this.deps
+      .loadGltf(PREVIZ_ACTOR_MODEL_URL)
+      .catch((error: unknown) => {
+        // 失败的 Promise 缓存住会让后续每个人物都拿到同一个错误，重试永远不发生。
+        // 清掉之后，用户改一次属性触发的下一次 sync 就等于一次重试。只清自己这一条：
+        // 并发的下一次尝试可能已经把新的 Promise 放进去了。
+        if (this.modelLoading === attempt) this.modelLoading = null;
+        throw error;
+      });
+    this.modelLoading = attempt;
+    return attempt;
+  }
+
+  /** 失败解析成 null 而不是 reject：库缺了模型照常建。失败的条目同样不缓存。 */
+  private loadLibrary(url: string): Promise<PrevizGltf | null> {
+    const cached = this.libraryLoading.get(url);
+    if (cached) return cached;
+    const attempt: Promise<PrevizGltf | null> = this.deps
+      .loadGltf(url)
+      .catch((error: unknown) => {
+        if (this.libraryLoading.get(url) === attempt) this.libraryLoading.delete(url);
+        console.warn('[previz] failed to load the actor animation library', url, error);
+        return null;
+      });
+    this.libraryLoading.set(url, attempt);
+    return attempt;
   }
 
   /**
@@ -173,12 +220,17 @@ export class CharacterRigFactory {
    * 用 AnimationMixer 把某条 clip 定格在某一时刻当静态姿势。定格在 0 常常是
    * 绑定姿势或者动作的起手，看起来像没摆；姿势表里的 sampleTime 是挑过的。
    *
-   * 姿势没变就直接早退：这条路径每次 sync 都会走到，而重摆一次姿势要建一个 mixer
-   * 并把整副骨架重推一遍。
+   * 姿势没变、clip 列表也没变就直接早退：这条路径每次 sync 都会走到，而重摆一次
+   * 姿势要建一个 mixer 并把整副骨架重推一遍。
    */
   private applyPose(model: THREE.Object3D, poseId: PrevizPoseId): void {
-    if (model.userData[APPLIED_POSE_KEY] === poseId) return;
-    // 模型还没解出来时无事可做。走不到这里——`build()` 里先缓存 source 再摆姿势，
+    if (
+      model.userData[APPLIED_POSE_KEY] === poseId &&
+      model.userData[APPLIED_SOURCE_KEY] === this.sourceSerial
+    ) {
+      return;
+    }
+    // 模型还没解出来时无事可做。走不到这里——`resolveSource()` 先缓存 source 再摆姿势，
     // 而外部调用方手里的 rig 本来就是 `build()` 交出来的。
     const animations = this.source?.animations;
     if (!animations) return;
@@ -187,9 +239,11 @@ export class CharacterRigFactory {
     const clipName = resolvePoseClipName(poseId, available);
     // 对不上就保持现有姿势（新建的人物就是模型自带的绑定姿势），比整个人物消失强；
     // 也绝不拿别的 clip 顶上，那会摆出一个跟属性面板完全对不上的姿势。
-    // 标记照样落下：clip 列表不会再变，下一次 sync 重查一遍也是同一个结果。
+    // 标记照样落下：同一版 clip 列表下一次 sync 重查一遍也是同一个结果；列表换了版
+    // `sourceSerial` 就对不上，标记自然失效。
     const clip = clipName ? animations.find((entry) => entry.name === clipName) : undefined;
     model.userData[APPLIED_POSE_KEY] = poseId;
+    model.userData[APPLIED_SOURCE_KEY] = this.sourceSerial;
     if (!clip) return;
 
     // mixer 挂在这个人物自己的克隆体上。挂在共享的源场景上，一个人物摆姿势会把

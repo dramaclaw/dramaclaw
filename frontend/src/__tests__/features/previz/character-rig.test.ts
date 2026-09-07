@@ -148,6 +148,20 @@ function shippedClipNames(url: string): string[] {
   return (json.animations ?? []).map((clip) => clip.name);
 }
 
+/**
+ * 模型每次都成功，动画库第一次 404、之后成功——模拟「网络抖了一下」。
+ * 两份都成功的版本用 `factoryWith` 就够了。
+ */
+function flakyLibrary(modelClips: string[], libraryClips: string[]) {
+  let libraryAttempts = 0;
+  return async (url: string) => {
+    if (url === PREVIZ_ACTOR_MODEL_URL) return gltf(modelClips);
+    libraryAttempts += 1;
+    if (libraryAttempts === 1) throw new Error('503');
+    return gltf(libraryClips);
+  };
+}
+
 function factoryWith(clipNames: string[]): CharacterRigFactory {
   return new CharacterRigFactory({
     three: fakeThree(),
@@ -270,6 +284,27 @@ describe('CharacterRigFactory', () => {
     expect(rig).not.toBeNull();
     expect(clipActions.map((clip) => clip.name)).toEqual(['Idle_No_Loop']);
     expect(warn).toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
+
+  it('retries a failed animation library on the next build, keeping the model', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const loadGltf = vi.fn(flakyLibrary(['Idle_No_Loop'], ['Crouch_Idle_Loop']));
+    const factory = new CharacterRigFactory({ three: fakeThree(), loadGltf, clone: freshClone });
+
+    await factory.build(character({ basePoseId: 'crouching' }));
+    // 库没到：蹲伏在模型自带的 clip 里没有候选，人保持绑定姿势。
+    expect(clipActions).toHaveLength(0);
+
+    await factory.build(character({ basePoseId: 'crouching' }));
+
+    // 库下不下来往往只是网络抖一下，不该让整个会话的蹲、坐、走、跑永远对不上；
+    // 但 8 MB 的模型已经在手里，重试只该再下库那一份。
+    const urls = loadGltf.mock.calls.map(([url]) => url);
+    expect(urls.filter((url) => url === PREVIZ_ACTOR_MODEL_URL)).toHaveLength(1);
+    expect(urls.filter((url) => url !== PREVIZ_ACTOR_MODEL_URL)).toHaveLength(2);
+    expect(clipActions.map((clip) => clip.name)).toEqual(['Crouch_Idle_Loop']);
 
     warn.mockRestore();
   });
@@ -464,6 +499,41 @@ describe('CharacterRigFactory.applyCharacter', () => {
     expect(mixerRoots).toHaveLength(0);
     expect(clipActions).toHaveLength(0);
     expect(viewOf(rig).scale.y).toBeCloseTo(1, 6);
+  });
+
+  it('re-poses a rig built before the animation library arrived', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const loadGltf = vi.fn(flakyLibrary(['Idle_No_Loop'], ['Crouch_Idle_Loop']));
+    const factory = new CharacterRigFactory({ three: fakeThree(), loadGltf, clone: freshClone });
+    const early = await factory.build(character({ basePoseId: 'crouching' }));
+    await factory.build(character({ basePoseId: 'standing' }));
+    clipActions = [];
+    mixerRoots = [];
+
+    factory.applyCharacter(early!, character({ basePoseId: 'crouching' }));
+
+    // 库补到之后，早先按残缺列表落的候选就过时了：下一次 sync 得按新列表重摆，
+    // 不然先建的人物永远蹲不下去、后建的能蹲——看着像随机失灵。
+    expect(clipActions.map((clip) => clip.name)).toEqual(['Crouch_Idle_Loop']);
+    expect(mixerRoots).toEqual([early]);
+
+    // 重摆只做一次：之后的 sync 又回到「姿势没变就早退」。
+    factory.applyCharacter(early!, character({ basePoseId: 'crouching' }));
+    expect(mixerRoots).toHaveLength(1);
+
+    warn.mockRestore();
+  });
+
+  it('does not re-pose a rig when a later build finds the same clip list', async () => {
+    const factory = factoryWith(['Idle_Loop']);
+    const first = await factory.build(character({ basePoseId: 'standing' }));
+    await factory.build(character({ basePoseId: 'standing' }));
+    mixerRoots = [];
+
+    factory.applyCharacter(first!, character({ basePoseId: 'standing' }));
+
+    // 每次 build 都把合成结果当新的，会让每加一个人物就把场上所有人物重摆一遍。
+    expect(mixerRoots).toHaveLength(0);
   });
 
   it('keeps the rig posed when the new pose resolves to nothing', async () => {
