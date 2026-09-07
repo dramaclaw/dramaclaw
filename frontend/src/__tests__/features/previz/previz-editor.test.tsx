@@ -143,8 +143,11 @@ beforeEach(() => {
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, options?: Record<string, unknown>) =>
-      options && "frames" in options ? `${key}:${options.frames}` : key,
+    t: (key: string, options?: Record<string, unknown>) => {
+      // 进度那句只有把 percent 插进来才看得见，「进度条走了几档」在 DOM 上就是它。
+      if (options && "percent" in options) return `${key}:${options.percent}`;
+      return options && "frames" in options ? `${key}:${options.frames}` : key;
+    },
   }),
 }));
 
@@ -927,6 +930,57 @@ describe("PrevizEditor", () => {
     // 30fps 下这占掉每帧预算的一大块。播放头只要看得出在走就够了，但末帧必须推到。
     expect(pushed.length).toBeLessThan(drawn.length);
     expect(pushed).toEqual([0, 3, 6, 9, 12]);
+  });
+
+  it("steps the recording progress in coarse jumps, but finishes at 100%", async () => {
+    const user = userEvent.setup();
+    const scene = createDefaultScene();
+    // 够长才测得出来：120 帧下每帧只推进 0.83%，比 2% 那一档细，节流才有事可做。
+    scene.settings.durationFrames = 120;
+    scene.objects.push(createPrevizObject("camera", scene.objects));
+    const cameraId = scene.objects[0]!.id;
+    await renderEditor({ initialScene: scene });
+    act(() => usePrevizStore.getState().selectObject(cameraId));
+
+    const shown: number[] = [];
+    /** 录制中那颗按钮上写着百分比；每报一次进度就重渲一次，这里逐拍取样。 */
+    const sample = (button: HTMLElement) => {
+      const match = /stopWithProgress:(\d+)/.exec(button.textContent ?? "");
+      if (!match) return;
+      const percent = Number(match[1]);
+      if (shown[shown.length - 1] !== percent) shown.push(percent);
+    };
+
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance", "Date"],
+    });
+    try {
+      await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+      await user.click(
+        screen.getByRole("menuitem", { name: "previz.editor.record.mode.track" }),
+      );
+      // 按钮那个 DOM 节点跨重渲是同一个，抓一次就够，逐拍读它的文字。
+      const button = screen.getByRole("button", { name: "previz.editor.record.stop" });
+      sample(button);
+      // 120 帧是 4 秒，末尾再留 250ms 尾巴；按假 rAF 的节拍一拍一拍推，别一口气跳过去。
+      for (let tick = 0; tick < 300; tick += 1) {
+        act(() => {
+          vi.advanceTimersByTime(16);
+        });
+        sample(button);
+      }
+      await vi.waitFor(() => expect(recordEnd).toHaveBeenCalled());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const drawn = recordDrawFrame.mock.calls.length;
+    expect(drawn).toBeGreaterThan(100);
+    // 每帧都 setState 的话进度条会走满 101 档，每一档都是一次整棵编辑器的重渲。
+    expect(shown.length).toBeLessThan(drawn / 2);
+    // 进度条得从 0 开始、也得真的走满：2% 一档的取整不能把它卡在 99%。
+    expect(shown[0]).toBe(0);
+    expect(shown[shown.length - 1]).toBe(100);
   });
 
   it("refuses a track recording with no camera to follow", async () => {

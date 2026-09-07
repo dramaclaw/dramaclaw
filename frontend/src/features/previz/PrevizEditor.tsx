@@ -608,6 +608,11 @@ export function PrevizEditor({
         // 播放头只要看得出在走就够了。首帧与末帧必推：开录播放头要跳回开头（那一帧画在
         // 计时开始之前，不占预算），录完时间轴得停在结尾。
         let lastPushed = Number.NEGATIVE_INFINITY;
+        // 进度同理：每报一次都是一次 setState，整棵编辑器重渲一遍，而录制期间它是每帧
+        // 都报的。按 2% 一档攒着报——进度条上写的是整数百分比，比这更细的变化根本显示
+        // 不出来。开头那个 0 与末尾的 1 必须原样报到：进度条要从头开始、也要真的走满，
+        // 差之毫厘就会停在 99%。中途叫停时最后显示的仍是真报过的那一档。
+        let lastProgress = Number.NEGATIVE_INFINITY;
         let blob: Blob;
         try {
           blob = await recordTimeline({
@@ -627,7 +632,11 @@ export function PrevizEditor({
             schedule: (callback) => {
               window.requestAnimationFrame(callback);
             },
-            onProgress: setRecordProgress,
+            onProgress: (ratio) => {
+              if (ratio - lastProgress < 0.02 && ratio < 1) return;
+              lastProgress = ratio;
+              setRecordProgress(ratio);
+            },
             shouldStop: () => recordStopped.current,
           });
         } finally {
