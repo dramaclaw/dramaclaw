@@ -168,6 +168,7 @@ interface NodeActionToolbarProps {
   node: CanvasNode;
   onOpenMultiAngleEditor: (nodeId: string) => void;
   onOpenLightEditor: (nodeId: string) => void;
+  onOpenDerivedMedia: (nodeId: string, kind: "svg" | "gif") => void;
   onOpenScene360: (nodeId: string) => void;
   onOpenUpscale: (nodeId: string) => void;
   onOpenOutpaint: (nodeId: string) => void;
@@ -480,6 +481,7 @@ export const NodeActionToolbar = memo(
     onOpenMultiAngleEditor,
     onOpenLightEditor,
     onOpenScene360,
+    onOpenDerivedMedia,
     onOpenUpscale,
     onOpenOutpaint,
     onSpawnGridActionNode,
@@ -1489,7 +1491,7 @@ export const NodeActionToolbar = memo(
                 {t("canvas.nodeToolbar.beatContext")}
               </UiChipButton>
             )}
-            {canHandleImage && <ImageDerivedActions node={node} />}
+            {canHandleImage && <ImageDerivedActions node={node} onOpen={onOpenDerivedMedia} />}
             {(node.type === "vectorSvgNode" || node.type === "animatedGifNode") && <DerivedMediaActions node={node} />}
             {/* AI 改图按钮暂时隐藏（保留代码，等需求恢复时取消注释）
         {!isImageEdit && canHandleImage && (

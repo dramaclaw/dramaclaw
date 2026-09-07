@@ -4,17 +4,17 @@ import { CreditCostInline } from "@/components/credit-cost-inline";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 import { UiChipButton } from "@/components/ui";
+import { TOOLBAR_TEXT_BUTTON_CLASS } from "./nodeToolbarStyles";
+import { NodeToolbar, Position } from "@xyflow/react";
+import { ZoomScaledToolbar } from "./ZoomScaledToolbar";
+import { NODE_TOOLBAR_CLASS } from "./nodeToolbarConfig";
+import { CANVAS_NODE_TOOLBAR_PILL_CLASS } from "./nodeFrameStyles";
 import {
-  TOOLBAR_TEXT_BUTTON_CLASS,
-  TOOLBAR_MENU_CONTENT_CLASS,
-} from "./nodeToolbarStyles";
-import { useState } from "react";
-import {
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-} from "@/components/ui/popover";
-import { Film, Shapes } from "lucide-react";
+  NODE_GENERATE_BUTTON_BASE_CLASS,
+  NODE_GENERATE_BUTTON_DISABLED_CLASS,
+  NODE_GENERATE_BUTTON_ENABLED_CLASS,
+} from "./nodeControlStyles";
+import { ArrowUp, X, Film, Shapes } from "lucide-react";
 import {
   type CanvasNode,
   resolveNodeSourceImageUrl,
@@ -49,9 +49,42 @@ export function useDerivedVideoCost() {
   return { cost, available: Boolean(model) };
 }
 
-export function ImageDerivedActions({ node }: { node: CanvasNode }) {
+export function ImageDerivedActions({
+  node,
+  onOpen,
+}: {
+  node: CanvasNode;
+  onOpen: (id: string, kind: DerivedMediaKind) => void;
+}) {
+  if (!resolveNodeSourceImageUrl(node)) return null;
+  return (
+    <>
+      {(["svg", "gif"] as const).map((kind) => (
+        <UiChipButton
+          key={kind}
+          className={TOOLBAR_TEXT_BUTTON_CLASS}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen(node.id, kind);
+          }}
+        >
+          {kind === "svg" ? <Shapes size={14} /> : <Film size={14} />}
+          {kind === "svg" ? "矢量图" : "动态图"}
+        </UiChipButton>
+      ))}
+    </>
+  );
+}
+export function ImageDerivedOverlay({
+  node,
+  kind,
+  onClose,
+}: {
+  node: CanvasNode;
+  kind: DerivedMediaKind;
+  onClose: () => void;
+}) {
   const { cost, available } = useDerivedVideoCost();
-  const [kind, setKind] = useState<DerivedMediaKind | null>(null);
   const store = useCanvasStore();
   if (
     !["uploadNode", "imageNode", "imageGenNode", "exportImageNode"].includes(
@@ -79,7 +112,7 @@ export function ImageDerivedActions({ node }: { node: CanvasNode }) {
     );
     store.addEdge(node.id, id);
     store.setSelectedNode(id);
-    setKind(null);
+    onClose();
     void generateDerivedMedia(
       project,
       id,
@@ -90,66 +123,79 @@ export function ImageDerivedActions({ node }: { node: CanvasNode }) {
       (patch) => store.updateNodeData(id, patch),
     );
   };
+  const disabled =
+    kind === "gif" && (!available || cost.isLoading || Boolean(cost.error));
+  const message =
+    kind === "svg"
+      ? "本地转换 SVG，复杂图片可能损失细节。"
+      : !available
+        ? "视频模型暂不可用"
+        : cost.error
+          ? cost.error instanceof BillingRuleNotConfiguredError
+            ? "计费规则未配置，请联系管理员。"
+            : "暂时无法获取积分报价，请稍后重试。"
+          : cost.isLoading
+            ? "正在获取积分报价…"
+            : "首帧锁定 · 4 秒 · 720P · 无音频";
   return (
-    <>
-      {(["svg", "gif"] as const).map((operation) => (
-        <Popover
-          key={operation}
-          open={kind === operation}
-          onOpenChange={(open) => setKind(open ? operation : null)}
+    <NodeToolbar
+      nodeId={node.id}
+      isVisible
+      position={Position.Bottom}
+      align="center"
+      offset={12}
+      className={NODE_TOOLBAR_CLASS}
+    >
+      <ZoomScaledToolbar origin="top center">
+        <div
+          className={`flex min-w-[420px] items-center gap-2 ${CANVAS_NODE_TOOLBAR_PILL_CLASS}`}
+          onClick={(event) => event.stopPropagation()}
         >
-          <PopoverTrigger
-            render={<UiChipButton className={TOOLBAR_TEXT_BUTTON_CLASS} />}
-            onClick={(event) => event.stopPropagation()}
+          <button
+            type="button"
+            aria-label="关闭"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-bg-dark/70 text-text-muted transition-colors hover:bg-bg-dark hover:text-text-dark"
+            onClick={onClose}
           >
-            {operation === "svg" ? <Shapes size={14} /> : <Film size={14} />}
-            {operation === "svg" ? "矢量图" : "动态图"}
-          </PopoverTrigger>
-          <PopoverContent
-            side="top"
-            align="center"
-            className={`nodrag w-72 space-y-3 ${TOOLBAR_MENU_CONTENT_CLASS}`}
-            onClick={(event) => event.stopPropagation()}
+            <X className="h-4 w-4" />
+          </button>
+          <div
+            title={message}
+            className="flex min-w-0 flex-1 items-center gap-1.5 px-2 text-xs text-text-dark"
           >
-            <p className="text-sm font-medium">
-              {operation === "svg" ? "生成 SVG 矢量图" : "生成 GIF 动态图"}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {operation === "svg"
-                ? "本地转换 SVG，复杂图片可能损失细节。"
-                : "首帧锁定 · 4 秒 · 720P · 无音频"}
-            </p>
-            {operation === "gif" && Boolean(cost.error) && (
-              <p role="alert" className="text-xs text-destructive">
-                {cost.error instanceof BillingRuleNotConfiguredError
-                  ? "计费规则未配置，请联系管理员。"
-                  : "暂时无法获取积分报价，请稍后重试。"}
-              </p>
+            {kind === "svg" ? (
+              <Shapes className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+            ) : (
+              <Film className="h-3.5 w-3.5 shrink-0 text-text-muted" />
             )}
-            {operation === "gif" && !available && (
-              <p className="text-xs text-text-muted">视频模型暂不可用</p>
-            )}
-            {operation === "gif" && cost.isLoading && (
-              <p className="text-xs text-text-muted">正在获取积分报价…</p>
-            )}
-            <div className="flex items-center justify-between">
-              <CreditCostInline
-                display={operation === "svg" ? "免费" : cost.data?.data.display}
-              />
-              <UiChipButton
-                disabled={
-                  operation === "gif" &&
-                  (!available || cost.isLoading || Boolean(cost.error))
-                }
-                onClick={submit}
-                className="rounded-full bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-40"
+            <span className="truncate font-medium">
+              {kind === "svg" ? "矢量图" : "动态图"}
+            </span>
+            {disabled && (
+              <span
+                role={cost.error ? "alert" : "status"}
+                className="text-text-muted"
               >
-                生成
-              </UiChipButton>
-            </div>
-          </PopoverContent>
-        </Popover>
-      ))}
-    </>
+                {message}
+              </span>
+            )}
+          </div>
+          <CreditCostInline
+            display={kind === "svg" ? "免费" : cost.data?.data.display}
+            promotion={kind === "gif" ? cost.data?.data.promotion : undefined}
+          />
+          <button
+            type="button"
+            aria-label="生成"
+            title={disabled ? message : "生成"}
+            disabled={disabled}
+            className={`${NODE_GENERATE_BUTTON_BASE_CLASS} shrink-0 ${disabled ? NODE_GENERATE_BUTTON_DISABLED_CLASS : NODE_GENERATE_BUTTON_ENABLED_CLASS}`}
+            onClick={submit}
+          >
+            <ArrowUp className="h-4 w-4" />
+          </button>
+        </div>
+      </ZoomScaledToolbar>
+    </NodeToolbar>
   );
 }
