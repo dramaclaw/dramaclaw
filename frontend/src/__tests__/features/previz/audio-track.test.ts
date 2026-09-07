@@ -56,6 +56,12 @@ describe('conversions', () => {
     expect(framesToMs(30, 30)).toBe(1000);
     expect(framesToMs(1, 30)).toBeCloseTo(33.333, 3);
   });
+
+  it('does not lose a frame when offsetMs is a repeating decimal from framesToMs', () => {
+    for (let k = 1; k < 30; k += 1) {
+      expect(audioFramesAvailable(2000, framesToMs(k, 30), 30)).toBe(60 - k);
+    }
+  });
 });
 
 describe('insertAudioClip', () => {
@@ -80,7 +86,9 @@ describe('insertAudioClip', () => {
   it('is cut short by the next audio clip', () => {
     const result = insertAudioClip(sceneWith([audio('b', 40, 80)]), 10, source);
     if (!result.ok) throw new Error(result.reason);
-    expect(result.scene.timeline.audio.map((c) => [c.id === 'b' ? 'b' : 'new', c.startFrame, c.endFrame])).toEqual([
+    expect(
+      result.scene.timeline.audio.map((c) => [c.id === 'b' ? 'b' : 'new', c.startFrame, c.endFrame]),
+    ).toEqual([
       ['new', 10, 40],
       ['b', 40, 80],
     ]);
@@ -135,6 +143,47 @@ describe('insertAudioClip', () => {
     });
   });
 
+  it('rejects a NaN material duration instead of producing a NaN clip', () => {
+    expect(insertAudioClip(createDefaultScene(), 0, { ...source, durationMs: Number.NaN })).toEqual({
+      ok: false,
+      reason: 'no-room',
+    });
+  });
+
+  it('rejects an infinite material duration instead of stretching to the timeline end', () => {
+    expect(
+      insertAudioClip(createDefaultScene(), 0, { ...source, durationMs: Number.POSITIVE_INFINITY }),
+    ).toEqual({ ok: false, reason: 'no-room' });
+  });
+
+  it('rejects a zero material duration', () => {
+    expect(insertAudioClip(createDefaultScene(), 0, { ...source, durationMs: 0 })).toEqual({
+      ok: false,
+      reason: 'no-room',
+    });
+  });
+
+  it('clamps a negative playhead to frame 0', () => {
+    const result = insertAudioClip(createDefaultScene(), -5, source);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.scene.timeline.audio[0]).toMatchObject({ startFrame: 0, endFrame: 60 });
+  });
+
+  it('refuses a negative playhead when a clip already starts at 0', () => {
+    expect(insertAudioClip(sceneWith([audio('a', 0, 30)]), -5, source)).toEqual({
+      ok: false,
+      reason: 'no-room',
+    });
+  });
+
+  it('keeps the track sorted when inserting into a gap between two clips', () => {
+    const scene = sceneWith([audio('a', 0, 20), audio('c', 60, 90)]);
+    const result = insertAudioClip(scene, 30, source);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.scene.timeline.audio.map((c) => c.startFrame)).toEqual([0, 30, 60]);
+    expect(result.scene.timeline.audio[1]?.endFrame).toBe(60); // 被 c 截断
+  });
+
   it('does not mutate the scene it is given', () => {
     const scene = sceneWith([audio('b', 40, 80)]);
     const before = JSON.stringify(scene);
@@ -156,5 +205,8 @@ describe('file validation', () => {
     expect(isAcceptedAudioFile('a.ogg', 1024)).toBe('ok');
     expect(isAcceptedAudioFile('a.flac', 1024)).toBe('extension');
     expect(isAcceptedAudioFile('a.mp3', PREVIZ_MAX_AUDIO_BYTES + 1)).toBe('size');
+    expect(isAcceptedAudioFile('a.mp3', PREVIZ_MAX_AUDIO_BYTES)).toBe('ok');
+    expect(isAcceptedAudioFile('a.flac', PREVIZ_MAX_AUDIO_BYTES + 1)).toBe('extension');
+    expect(isAcceptedAudioFile('Take 1.MP3', 1024)).toBe('ok');
   });
 });
