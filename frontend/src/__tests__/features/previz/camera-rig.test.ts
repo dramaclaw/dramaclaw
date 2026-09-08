@@ -4,7 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createPrevizObject } from "@/features/previz/domain/objects";
 import type { PrevizCamera } from "@/features/previz/domain/scene";
-import { monitorViewportRect, syncMonitorCamera } from "@/features/previz/engine/cameraRig";
+import {
+  monitorViewportRect,
+  PREVIZ_MONITOR_TOP_RESERVE,
+  syncMonitorCamera,
+} from "@/features/previz/engine/cameraRig";
 
 function camera(overrides: Partial<PrevizCamera> = {}): PrevizCamera {
   return { ...(createPrevizObject("camera", []) as PrevizCamera), ...overrides };
@@ -71,6 +75,14 @@ describe("syncMonitorCamera", () => {
   });
 });
 
+/**
+ * 右上角那排视口控件的底边离画布顶边多远，CSS 像素。这里自己按
+ * `PrevizViewportControls` 的类名重算一遍，而不是从实现里 import：外层 `top-4` 是 16，
+ * 一簇控件是 `p-1`（4）加 1 px 边框裹着 `h-7`（28）的按钮，纵向 38。这样改坏实现里
+ * 那个常量时这条断言才会响。
+ */
+const CONTROLS_BOTTOM_PX = 16 + (28 + 4 * 2 + 1 * 2);
+
 describe("monitorViewportRect", () => {
   it("puts the monitor in the bottom-right corner at the output aspect", () => {
     const rect = monitorViewportRect(1600, 900, "16:9");
@@ -88,6 +100,37 @@ describe("monitorViewportRect", () => {
     // 竖幅监看在小画布上按宽度算会比画布还高，必须按高度回推宽度。
     expect(rect.height).toBeLessThanOrEqual(300 - 32);
     expect(rect.width / rect.height).toBeCloseTo(9 / 16, 2);
+  });
+
+  it("leaves room for the viewport controls in the top-right corner", () => {
+    // 竖幅出片 + 矮视口（时间轴拉高时就是这样）：按宽度算出来的高会超出可用高度，
+    // 走「按高度回推宽度」那条分支，正是把监看顶到右上角那排控件背后的那组参数。
+    // 两档都试：放大档更宽，只会更早撞上同一条上限。
+    for (const size of ["normal", "large"] as const) {
+      const rect = monitorViewportRect(1840, 560, "9:16", size);
+
+      // 原点在左下角，所以顶边是 y + height。准绳取独立推出来的控件底边，不取
+      // PREVIZ_MONITOR_TOP_RESERVE：拿常量自己比是恒真的，把它改成 0 也照样绿。
+      expect(rect.y + rect.height).toBeLessThanOrEqual(560 - CONTROLS_BOTTOM_PX);
+      // 而且要正好长到那条线为止。只写「不超过」的话，顺手多扣一份留白也是绿的，
+      // 监看白缩一圈——缩掉的是画面，屏幕上看不出是谁干的。
+      expect(rect.y + rect.height).toBe(560 - PREVIZ_MONITOR_TOP_RESERVE);
+    }
+
+    // 光是不重叠还不够，得留一道看得见的缝——两排控件贴着脸也算「被遮挡了」。
+    expect(PREVIZ_MONITOR_TOP_RESERVE).toBeGreaterThan(CONTROLS_BOTTOM_PX);
+  });
+
+  it("still fills the height it is given when the controls are not in the way", () => {
+    // 同一块画布上 16:9 本来就够矮，顶边够不到那排控件——给控件让位这件事在这里
+    // 必须一个像素都不生效。写成逐字比对而不是「小于等于」：后者对缩水是恒真的，
+    // 把上限调狠一倍也照样绿。
+    expect(monitorViewportRect(1840, 560, "16:9")).toEqual({
+      x: 1346,
+      y: 16,
+      width: 478,
+      height: 269,
+    });
   });
 
   it("grows the monitor on the enlarged step", () => {
