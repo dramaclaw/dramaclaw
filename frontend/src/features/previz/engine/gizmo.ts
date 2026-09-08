@@ -4,6 +4,8 @@ import type * as THREE from 'three';
 
 import { RAD_TO_DEG } from '../domain/camera';
 import type { PrevizTransform } from '../domain/scene';
+import { emphasizeTranslateHandles } from './gizmoEmphasis';
+import type { ThreeModule } from './sceneGraph';
 
 export type GizmoMode = 'translate' | 'rotate' | 'scale';
 
@@ -34,6 +36,14 @@ export interface PrevizGizmoDeps {
   onCommit: (objectId: string, transform: PrevizTransform) => void;
   /** 每次 objectChange 都调，用来请求重绘。 */
   onChange: () => void;
+  /**
+   * three 命名空间本体，只用来重建手柄的几何体与材质（见 [emphasizeTranslateHandles]）。
+   *
+   * 刻意是**可选**的：jsdom 里那一堆塞假控件的用例关心的是拖拽状态机，跟手柄长什么样
+   * 无关，不传就整段跳过——否则它们全都得先手搭一棵 three 内部结构的假树才跑得起来，
+   * 而那棵树一旦抄错，红的会是一批跟外观毫无关系的用例。
+   */
+  three?: ThreeModule;
 }
 
 /**
@@ -68,6 +78,9 @@ export class PrevizGizmo {
   constructor(private readonly deps: PrevizGizmoDeps) {
     // 手柄本体不是 Object3D：加错了不会报错，只是永远看不见。
     deps.root.add(deps.controls.getHelper());
+    // 必须在 add 之后：改造要 traverse helper 树去找手柄，而不是碰控件本身。
+    // three 只在这里造一次手柄，所以改造也只需要跑这一次。
+    if (deps.three) emphasizeTranslateHandles(deps.controls.getHelper(), deps.three);
     deps.controls.setSpace('world');
 
     deps.controls.addEventListener('dragging-changed', (event) => {
