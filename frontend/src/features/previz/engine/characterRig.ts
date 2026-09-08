@@ -81,6 +81,11 @@ export function disposeRigMaterials(rig: THREE.Object3D): void {
   const tints = rig.userData[TINT_TARGETS_KEY] as RigTint[] | undefined;
   if (!tints) return;
   for (const tint of tints) tint.material.dispose();
+  // 还完就把这张表连同颜色账一起销掉。这是个导出函数，签名上没说「一棵子树只能调一次」，
+  // 而重复 dispose 同一批材质在 three 里是会真的重复解绑 GPU 资源的。销掉之后再调是空操作，
+  // 调用方那边就不必再论证「这条路一定只走一遍」。
+  delete rig.userData[TINT_TARGETS_KEY];
+  delete rig.userData[APPLIED_TINT_KEY];
 }
 
 /**

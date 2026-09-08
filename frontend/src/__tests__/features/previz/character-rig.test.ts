@@ -3,6 +3,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import * as THREE from 'three';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createPrevizObject } from '@/features/previz/domain/objects';
@@ -122,7 +123,8 @@ class FakeMaterial {
 }
 
 class FakeMesh extends FakeObject3D {
-  constructor(public material: FakeMaterial) {
+  /** 数组形态是真事：一个网格挂多份材质在 glTF 里靠 groups 分段，`ownMaterials` 得认。 */
+  constructor(public material: FakeMaterial | FakeMaterial[]) {
     super();
   }
 }
@@ -193,7 +195,8 @@ function materialsOf(object: unknown): FakeMaterial[] {
   const found: FakeMaterial[] = [];
   (object as FakeObject3D).traverse((child) => {
     const material = (child as FakeMesh).material;
-    if (material) found.push(material);
+    if (!material) return;
+    found.push(...(Array.isArray(material) ? material : [material]));
   });
   return found;
 }
@@ -875,8 +878,74 @@ describe('CharacterRigFactory tinting', () => {
     expect(coloursOf(rig)).toEqual([0xff0000]);
   });
 
+  it('clones every slot of a mesh that carries a material array', async () => {
+    // 一个网格挂多份材质（glTF 里靠 groups 分段）是导出工具的常态。只认单份的话，
+    // 这种网格整个跳过染色：人物身上一大块还留着模型的原色。
+    const joint = new FakeMaterial(SOURCE_JOINT_COLOR);
+    const main = new FakeMaterial(SOURCE_MAIN_COLOR);
+    const scene = new FakeObject3D();
+    scene.add(new FakeMesh([joint, main]));
+
+    const rig = await factoryForScene(scene).build(character({ color: '#ff0000' }));
+
+    expect(coloursOf(rig)[1]).toBe(0xff0000);
+    expect(coloursOf(rig)[0]).not.toBe(SOURCE_JOINT_COLOR);
+    // 源模型那两份仍旧一份没被碰：数组分支同样得走克隆。
+    expect(joint.color.getHex()).toBe(SOURCE_JOINT_COLOR);
+    expect(main.color.getHex()).toBe(SOURCE_MAIN_COLOR);
+  });
+
+  it('is a no-op the second time the same rig is disposed', async () => {
+    const { factory } = factoryWithSource(['Idle_Loop']);
+    const rig = await factory.build(character());
+    const owned = materialsOf(rig);
+
+    disposeRigMaterials(rig!);
+    disposeRigMaterials(rig!);
+
+    // 这是个导出函数，签名上没说「一棵子树只能调一次」。调两遍就 dispose 两遍同一批
+    // 材质，而调用方那边要不要论证「这条路只走一遍」，取决于这里幂等不幂等。
+    for (const material of owned) expect(material.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it('does nothing on a subtree that owns no materials', () => {
     // 物件的 GLB 走的是同一条 `disposeSubtree` 分支，它身上没有这批账。
     expect(() => disposeRigMaterials(new FakeObject3D() as never)).not.toThrow();
+  });
+});
+
+/**
+ * 钉在真 three 上的一条。上面那些用例的 `FakeColor` 把 sRGB 字节直接当通道用，而
+ * `GLTFLoader` 塞进 `material.color` 的是 `baseColorFactor` 的**线性**值——两者差着一次
+ * gamma：同样是仓库里那两个槽，假替身量出的压暗量是 0.706，真 three 是 0.499，差四成。
+ *
+ * 而且不只是精度：`#0000ff` 与 `#404040` 这两槽谁更亮，在两个空间里的答案是相反的，
+ * 而「哪一槽最亮」正是 `ownMaterials` 里唯一承重的决策。假替身量的是我们自己的算术，
+ * 这条量的是生产里真会发生的数。
+ */
+describe('CharacterRigFactory tinting on real three', () => {
+  it("grades the shipped model's two slots by their linear luminance", async () => {
+    // 灌法照抄 `GLTFLoader`：`baseColorFactor` 原样 setRGB 进线性空间，不做 sRGB 解码。
+    const slot = (r: number, g: number, b: number) => {
+      const material = new THREE.MeshStandardMaterial();
+      material.color.setRGB(r, g, b, THREE.LinearSRGBColorSpace);
+      return new THREE.Mesh(new THREE.BufferGeometry(), material);
+    };
+    // 值取自 public/viewer-kit/quaternius/ual2/UAL2_Standard.glb 的那两个 baseColorFactor。
+    const scene = new THREE.Group();
+    scene.add(slot(0.4003796577, 0.1315960139, 0.7071905136));
+    scene.add(slot(0.8007264733, 0.4029893279, 0.0429254025));
+
+    const factory = factoryForScene(scene as unknown as FakeObject3D);
+    const rig = await factory.build(character({ color: '#ff0000' }));
+    const [joint, main] = materialsOf(rig) as unknown as THREE.MeshStandardMaterial[];
+
+    // 最亮那一槽（主体）拿到纯正的辨识色：线性空间里 `#ff0000` 就是 (1, 0, 0)。
+    expect(main!.color.getHex()).toBe(0xff0000);
+    // 关节槽按两槽的 Rec.709 明度之比压暗：0.2303 / 0.4616 = 0.499。系数整体放大缩小、
+    // 或者改到 sRGB 空间去量（会算成 0.712），视口里就是关节整体偏浅或偏深一大截。
+    expect(joint!.color.r).toBeCloseTo(0.499, 3);
+    expect(joint!.color.g).toBe(0);
+    expect(joint!.color.b).toBe(0);
   });
 });

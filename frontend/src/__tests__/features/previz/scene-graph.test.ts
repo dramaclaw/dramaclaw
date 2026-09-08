@@ -1172,6 +1172,29 @@ describe('PrevizSceneGraph', () => {
     expect(mesh.material.color.getHex()).toBe(0x00ff00);
   });
 
+  it('never lets the placeholder record clay grey as its own colour', () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+
+    const scene = characterScene({ color: '#ff0000' });
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    const clay = { ...scene, settings: { ...scene.settings, displayMode: 'clay' as const } };
+    graph.sync(clay);
+    const placeholder = placeholderOf(graph, character.id);
+    const clayColour = placeholder.material.color.getHex();
+
+    graph.sync({ ...clay, objects: [{ ...character, color: '#00ff00' }] });
+
+    // 改色这条路故意不碰占位体的材质，所以它**不能**照 rig 那边的手法把这笔账作废：
+    // 一删，`applyDisplayMode` 马上把眼下这颗水泥灰当本色记进去，而那才是真的坏账。
+    expect(placeholder.material.userData.previzOriginalColor).not.toBe(clayColour);
+
+    graph.sync({ ...scene, objects: [{ ...character, color: '#00ff00' }] });
+    // 回程读的是 `previzPlaceholderColor`，与上面那笔账无关。
+    expect(lastColour(placeholder)).toBe('#00ff00');
+  });
+
   it("paints the placeholder capsule in the character's own colour", () => {
     const three = fakeThree();
     const graph = new PrevizSceneGraph(three, new three.Group());
