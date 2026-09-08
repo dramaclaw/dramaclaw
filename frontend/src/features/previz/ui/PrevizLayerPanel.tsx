@@ -46,12 +46,15 @@ export interface PrevizLayerPanelProps {
   selectedId: string | null;
   /**
    * 亮蓝灯的那台：此刻监看真正在看的机位，跟随时由镜头轨给出，用户可能从没点过它。
-   * 与 `pinnedCameraId` 分成两个 prop，是因为「亮谁」和「点下去切换谁」在跟随中不是
-   * 同一台：合成一个的话，点亮着的那台会被当成「再点一次关掉监看」，于是想钉住直播
-   * 机位的那一下反而把监看整个关了。
+   * 它是指示灯，不是按钮状态——两者分成两个 prop，是因为跟随中它俩不是同一台。
    */
   monitorCameraId: string | null;
-  /** 用户手选钉住的那台；null 表示还在跟随镜头轨。开关的判据是它。 */
+  /**
+   * 监看此刻钉在哪台上；null 表示没钉住（跟随镜头轨，或干脆关着监看）。
+   * 这一颗 toggle 的按下态就是它：`aria-pressed` 对读屏承诺的是「按下去会抬起」，所以
+   * 报按下的必须是真能被抬起的那台。拿「正在看的是谁」当按下态的话，跟随中亮着的那台
+   * 会报 pressed 却怎么点都抬不掉，而暗着的那台点下去反倒把监看关了——两头都说反。
+   */
   pinnedCameraId: string | null;
   onSelect: (id: string) => void;
   onToggleVisible: (id: string) => void;
@@ -152,6 +155,7 @@ export function PrevizLayerPanel({
               {group.map((object) => {
                 const selected = object.id === selectedId;
                 const monitoring = object.id === monitorCameraId;
+                const pinned = object.id === pinnedCameraId;
 
                 return (
                   <div
@@ -200,13 +204,17 @@ export function PrevizLayerPanel({
                       <LayerRowButton
                         icon={Monitor}
                         label={t("previz.layers.setActiveCamera")}
-                        pressed={monitoring}
-                        className={monitoring ? "text-sky-300 hover:text-sky-200" : undefined}
-                        // 判的是「已经钉在这台了吗」而不是 `monitoring`：跟随中点亮着的
-                        // 那台，意思是把它从镜头轨手里钉下来，不是关掉监看。
-                        onActivate={() =>
-                          onSetActiveCamera(object.id === pinnedCameraId ? null : object.id)
-                        }
+                        pressed={pinned}
+                        className={cn(
+                          // 蓝字是「现在看的是这台」的指示灯，底色是「监看钉在这台」的
+                          // 按下态。两态必须长得不一样：跟随中直播的那台也是蓝的，若与
+                          // 钉住态同一个样子，用户就无从判断点下去是钉住还是关掉。
+                          monitoring && "text-sky-300 hover:text-sky-200",
+                          pinned && "bg-sky-400/20",
+                        )}
+                        // 抬起是关监看，不是退回跟随：`setActiveCamera(null)` 会把跟随
+                        // 一并关掉（见 store），用户要跟随得去按画中画上那颗「跟随」。
+                        onActivate={() => onSetActiveCamera(pinned ? null : object.id)}
                       />
                     )}
 

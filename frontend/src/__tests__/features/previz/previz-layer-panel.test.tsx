@@ -256,10 +256,25 @@ describe("PrevizLayerPanel", () => {
     const { onSetActiveCamera } = setup({ objects, monitorCameraId: live, pinnedCameraId: null });
     const monitor = "previz.layers.setActiveCamera";
 
-    expect(button(row(live), monitor)).toHaveAttribute("aria-pressed", "true");
+    // 两根轴分开看：蓝色说「现在看的是这台」，按下与否说「监看钉在这台了吗」。
+    expect(button(row(live), monitor)).toHaveClass("text-sky-300");
+    expect(button(row(live), monitor)).toHaveAttribute("aria-pressed", "false");
 
     await user.click(button(row(live), monitor));
     expect(onSetActiveCamera).toHaveBeenCalledWith(live);
+  });
+
+  // 按下态得有自己的样子，不然「这台正在播」和「我把监看钉在这台」长得一模一样，
+  // 用户没法从画面上猜出点下去会发生什么。
+  it("marks the pinned camera apart from the merely monitored one", () => {
+    const objects = build();
+    objects.push(createPrevizObject("camera", objects));
+    const pinned = objects[1]!.id;
+    const monitor = "previz.layers.setActiveCamera";
+    setup({ objects, monitorCameraId: pinned, pinnedCameraId: pinned });
+
+    expect(button(row(pinned), monitor)).toHaveClass("text-sky-300", "bg-sky-400/20");
+    expect(button(row(objects[4]!.id), monitor)).not.toHaveClass("bg-sky-400/20");
   });
 
   it("selects from the keyboard, but a row button's own key press stays its own", async () => {
