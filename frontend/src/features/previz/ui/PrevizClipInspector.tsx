@@ -544,8 +544,7 @@ export function PrevizClipInspector() {
   const setClipAim = usePrevizStore((state) => state.setClipAim);
 
   const found = selectedClipId ? clipById(scene, selectedClipId) : undefined;
-  const clip = found?.clip;
-  if (!clip || !found) {
+  if (!found) {
     return (
       <div className="border-t border-white/10 px-3 py-3 text-[12px] text-white/45">
         {t('previz.clip.empty')}
@@ -554,9 +553,11 @@ export function PrevizClipInspector() {
   }
 
   // 固定行的两种片段各有各的面板，也顺手把 `found` 收窄成对象轨那一支：下面读的
-  // `found.track` 只有 `table === 'tracks'` 时才存在。
+  // `found.track` 只有 `table === 'tracks'` 时才存在。片段本身要等收窄之后再取，
+  // 提前解构出来的话既拿不到这层收窄，还得多挡一次它其实不可能为空的判空。
   if (found.table === 'program') return <CutPanel clip={found.clip} />;
   if (found.table === 'audio') return <AudioPanel clip={found.clip} />;
+  const clip = found.clip;
 
   const point: PrevizPathPoint | undefined = isPathClip(clip)
     ? clip.points.find((entry) => entry.id === selectedPointId)
