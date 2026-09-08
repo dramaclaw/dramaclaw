@@ -29,9 +29,24 @@ const KINDS = [
   { kind: "prop", limit: 20, icon: "lucide-box" },
 ] as const;
 
-/** 三组枚举与六个方向都写成字面量，理由同上。 */
-const TOOLS = ["select", "navigate", "draw", "mark"] as const;
-const GIZMO_MODES = ["translate", "rotate", "scale"] as const;
+/** 两段工具与六个方向都写成字面量，理由同上。 */
+const POINTER_TOOLS = ["select", "navigate", "draw", "mark"] as const;
+const TRANSFORM_TOOLS = ["translate", "rotate", "scale"] as const;
+/** 栏上从上到下的实际顺序；互斥性的断言要拿整条列表去比，不能只比其中一段。 */
+const TOOLS = [...POINTER_TOOLS, ...TRANSFORM_TOOLS] as const;
+/**
+ * 工具名到可访问名字的映射写死在这里。前四个在 `tool.` 下、后三个仍在 `gizmo.` 下：
+ * 七颗按钮合成一条互斥列表这件事不动任何一条 i18n 键，这份字面量把这一点也钉住。
+ */
+const TOOL_LABELS: Record<(typeof TOOLS)[number], string> = {
+  select: "previz.toolbar.tool.select",
+  navigate: "previz.toolbar.tool.navigate",
+  draw: "previz.toolbar.tool.draw",
+  mark: "previz.toolbar.tool.mark",
+  translate: "previz.toolbar.gizmo.translate",
+  rotate: "previz.toolbar.gizmo.rotate",
+  scale: "previz.toolbar.gizmo.scale",
+};
 const VIEW_DIRECTIONS = ["front", "back", "left", "right", "top", "bottom"] as const;
 
 function canAddExcept(atLimit: string): ToolbarProps["canAdd"] {
@@ -48,15 +63,12 @@ function canAddExcept(atLimit: string): ToolbarProps["canAdd"] {
  * `Mock | ((...) => void)`，之后取 `.mock` / `.mockClear()` 就过不了类型检查。只让状态类
  * prop 可覆盖，mock 原样返回，类型就保得住。
  */
-type ToolbarOverrides = Partial<
-  Pick<ToolbarProps, "canAdd" | "gizmoMode" | "tool" | "timelineOpen">
->;
+type ToolbarOverrides = Partial<Pick<ToolbarProps, "canAdd" | "tool" | "timelineOpen">>;
 
 function makeHandlers() {
   return {
     onAdd: vi.fn<ToolbarProps["onAdd"]>(),
     onImportProp: vi.fn<ToolbarProps["onImportProp"]>(),
-    onGizmoMode: vi.fn<ToolbarProps["onGizmoMode"]>(),
     onTool: vi.fn<ToolbarProps["onTool"]>(),
     onTimelineOpen: vi.fn<ToolbarProps["onTimelineOpen"]>(),
   };
@@ -65,13 +77,12 @@ function makeHandlers() {
 type Handlers = ReturnType<typeof makeHandlers>;
 
 /**
- * 两个枚举的默认值刻意落在不同的序号上——tool 取第 2 个、gizmoMode 取第 3 个。若某一组
- * 的选中态读串了另一组的 prop，取值相同的夹具会让这类交叉读取全程隐形。
+ * 默认工具刻意不落在两段的头一个上（取的是第二段之外的 navigate）：夹具要是恰好落在
+ * 某段的首项，「按下态读串了另一段」这类错法会被一个碰巧相同的取值遮住。
  */
 function makeProps(overrides: ToolbarOverrides, handlers: Handlers): ToolbarProps {
   return {
     canAdd: { character: true, camera: true, light: true, prop: true },
-    gizmoMode: "scale",
     tool: "navigate",
     timelineOpen: true,
     ...overrides,
@@ -320,13 +331,25 @@ describe("PrevizToolbar", () => {
     ]);
   });
 
-  it("reads the tool group's pressed state off its own prop", () => {
-    setup({ tool: "select" });
+  /*
+    栏上原先在显示两个互不相干的 state（工具一份、手柄模式一份），各算各的按下态，
+    于是 W 和 R 永远同时亮着。七颗按钮现在是一条互斥列表：逐个取值走一遍，每一遍都
+    要求「这一颗亮、另外六颗灭」，并且整条栏子上按下的按钮总数恰好是 1。
 
-    expect(button("previz.toolbar.tool.select")).toHaveAttribute("aria-pressed", "true");
-    expect(button("previz.toolbar.tool.navigate")).toHaveAttribute("aria-pressed", "false");
-    expect(button("previz.toolbar.tool.draw")).toHaveAttribute("aria-pressed", "false");
-    expect(button("previz.toolbar.tool.mark")).toHaveAttribute("aria-pressed", "false");
+    最后那句 `pressed: true` 的计数不能省：只逐颗比 aria-pressed 的话，把某一段重新
+    接回一份独立的 state 仍然可能让这七条各自全绿，而多亮出来的那颗恰恰在别处。
+  */
+  it.each(TOOLS)("lights %s alone across the whole rail", (current) => {
+    setup({ tool: current });
+
+    for (const candidate of TOOLS) {
+      const why = `${candidate} while ${current} is active`;
+      expect(button(TOOL_LABELS[candidate]), why).toHaveAttribute(
+        "aria-pressed",
+        candidate === current ? "true" : "false",
+      );
+    }
+    expect(screen.queryAllByRole("button", { pressed: true })).toHaveLength(1);
   });
 
   it.each(TOOLS)("switches to the %s tool", async (option) => {
@@ -334,37 +357,20 @@ describe("PrevizToolbar", () => {
     // 每条都从另一个工具出发，免得「点了当前项」这种无操作也算通过。
     const handlers = setup({ tool: option === "select" ? "draw" : "select" });
 
-    await user.click(button(`previz.toolbar.tool.${option}`));
+    await user.click(button(TOOL_LABELS[option]));
 
+    // G/R/S 现在交出去的也是 onTool：手柄模式不再是工具栏认识的概念，栏上只有一条
+    // 工具列表，`onGizmoMode` 这个 prop 已经整个不存在了。
+    expect(handlers.onTool).toHaveBeenCalledTimes(1);
     expect(handlers.onTool).toHaveBeenCalledWith(option);
     expectOnly(handlers, "onTool");
   });
 
-  it.each(GIZMO_MODES)("asks for the %s gizmo when that chip is clicked", async (mode) => {
-    const user = userEvent.setup();
-    const handlers = setup();
-
-    await user.click(button(`previz.toolbar.gizmo.${mode}`));
-
-    expect(handlers.onGizmoMode).toHaveBeenCalledTimes(1);
-    expect(handlers.onGizmoMode).toHaveBeenCalledWith(mode);
-    expectOnly(handlers, "onGizmoMode");
-  });
-
-  it.each(GIZMO_MODES)("marks %s as current and the other gizmo chips as not", (mode) => {
-    setup({ gizmoMode: mode });
-
-    for (const candidate of GIZMO_MODES) {
-      expect(button(`previz.toolbar.gizmo.${candidate}`)).toHaveAttribute(
-        "aria-pressed",
-        candidate === mode ? "true" : "false",
-      );
-    }
-  });
-
   // 段里「有哪几个、按什么顺序」是用户直接看到的东西，跟画幅下拉一样得整段钉死：
-  // 只逐个断言「每个都在」的话，多长一个按钮或换个先后顺序都是全绿。
-  it("lists exactly the three gizmo modes in order", () => {
+  // 只逐个断言「每个都在」的话，多长一个按钮或换个先后顺序都是全绿。合并成一条互斥
+  // 列表之后分段与分隔线照旧：变换那三颗跟指针工具混排的话，用户再也认不出「按了它
+  // 视口里会多出一副手柄」这条界。
+  it("lists exactly the three transform tools in order", () => {
     setup();
 
     expectInOrder(groupNamed("previz.toolbar.group.gizmo"), "button", [
@@ -372,16 +378,6 @@ describe("PrevizToolbar", () => {
       "previz.toolbar.gizmo.rotate",
       "previz.toolbar.gizmo.scale",
     ]);
-  });
-
-  // 两组按钮的选中态各读各的 prop：手柄模式取第 3 个、工具取第 1 个，任何一边读了
-  // 另一边的 state，这里都会看到一个本该 true 的 false。
-  it("reads each toggle group's pressed state off its own prop", () => {
-    setup({ gizmoMode: "scale", tool: "select" });
-
-    expect(button("previz.toolbar.gizmo.scale")).toHaveAttribute("aria-pressed", "true");
-    expect(button("previz.toolbar.gizmo.translate")).toHaveAttribute("aria-pressed", "false");
-    expect(button("previz.toolbar.tool.select")).toHaveAttribute("aria-pressed", "true");
   });
 
   // 悬停提示曾是唯一念出 W/Q/G/R/S 的地方，鼠标不划过去就看不见。角标要把这五个键位

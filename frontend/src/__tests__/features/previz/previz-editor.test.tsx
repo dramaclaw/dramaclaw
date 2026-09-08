@@ -1086,6 +1086,16 @@ describe("PrevizEditor", () => {
   });
 });
 
+/**
+ * 左栏两段工具里按下态的那几颗。整屏去数是不行的：视口自己那一角还有显示模式那组
+ * 按钮，它们也有 aria-pressed，跟「当前工具」毫无关系。
+ */
+function pressedRailButtons(): HTMLElement[] {
+  return ["previz.toolbar.group.tool", "previz.toolbar.group.gizmo"].flatMap((label) =>
+    within(screen.getByRole("group", { name: label })).queryAllByRole("button", { pressed: true }),
+  );
+}
+
 /** 上面每条用例都手抄一遍的那五个 prop。新加的用例只改 `open`，其余给默认。 */
 function editorProps(overrides: Partial<ComponentProps<typeof PrevizEditor>> = {}) {
   return {
@@ -1113,6 +1123,7 @@ async function renderEditor(overrides: Partial<ComponentProps<typeof PrevizEdito
       planePointAt,
       setStroke,
       setDrawing,
+      setGizmoMode,
       pickAt,
       pickPathPointAt,
     },
@@ -1249,12 +1260,13 @@ describe("PrevizEditor timeline", () => {
     expect(lengths[lengths.length - 1]).toBeNull();
   });
 
-  it("returns to the select tool after a stroke", async () => {
+  it("returns to the default move tool after a stroke", async () => {
     const user = userEvent.setup();
     const { renderer } = await renderEditor();
     const objectId = usePrevizStore.getState().addObject("character");
     act(() => usePrevizStore.getState().selectObject(objectId!));
     await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+    renderer.setGizmoMode.mockClear();
 
     const canvas = screen.getByTestId("previz-canvas");
     renderer.planePointAt.mockReturnValue([1, 0, 0]);
@@ -1262,11 +1274,14 @@ describe("PrevizEditor timeline", () => {
     fireEvent.pointerMove(canvas, { clientX: 40, clientY: 10 });
     fireEvent.pointerUp(canvas, { clientX: 40, clientY: 10 });
 
-    // 实测参照实现：画完一笔自动切回选择，否则下一次想选个对象反而又画了一条。
-    expect(screen.getByRole("button", { name: "previz.toolbar.tool.select" })).toHaveAttribute(
+    // 画完得离开画笔，否则下一次想选个对象反而又画了一条。落在「移动」而不是「选择」：
+    // 两者对这条回落的要求是一样的（只要不是 draw），而移动让用户画完立刻能拖。
+    expect(screen.getByRole("button", { name: "previz.toolbar.gizmo.translate" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+    // 手柄也得跟着回来——工具亮着却没有手柄的话，这条回落等于把用户丢在一个空档里。
+    expect(renderer.setGizmoMode).toHaveBeenLastCalledWith("translate");
   });
 
   /*
@@ -1449,36 +1464,98 @@ describe("PrevizEditor timeline", () => {
 
     fireEvent.pointerUp(canvas, { clientX: 10, clientY: 10 });
 
-    // 松手照常收笔、自动切回选择——快捷键拦截只挡笔画中途，不影响画完的既有行为。
-    expect(screen.getByRole("button", { name: "previz.toolbar.tool.select" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-  });
-
-  it("switches the gizmo mode with the G, R and S keys, matching Blender", async () => {
-    await renderEditor();
-
-    fireEvent.keyDown(window, { key: "r" });
-    expect(screen.getByRole("button", { name: "previz.toolbar.gizmo.rotate" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-
-    fireEvent.keyDown(window, { key: "s" });
-    expect(screen.getByRole("button", { name: "previz.toolbar.gizmo.scale" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-
-    fireEvent.keyDown(window, { key: "g" });
+    // 松手照常收笔、回落到默认工具——快捷键拦截只挡笔画中途，不影响画完的既有行为。
     expect(screen.getByRole("button", { name: "previz.toolbar.gizmo.translate" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
   });
 
-  it("no longer treats E as a gizmo shortcut", async () => {
+  /*
+    W 和 R 曾经同时亮着：栏上画的是两份互不相干的 state（工具一份、手柄模式一份），
+    各算各的按下态。合并之后整条栏子任何时刻只有一颗亮，开局那一颗是移动。
+  */
+  it("opens on the move tool alone, with its gizmo already up", async () => {
+    const { renderer } = await renderEditor();
+
+    expect(screen.getByRole("button", { name: "previz.toolbar.gizmo.translate" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // 只数左栏那两段：视口自己那一角（显示模式）也有按下态的按钮，跟工具无关。
+    expect(pressedRailButtons()).toHaveLength(1);
+    expect(renderer.setGizmoMode).toHaveBeenLastCalledWith("translate");
+  });
+
+  it("switches the transform tool with the G, R and S keys, matching Blender", async () => {
+    const { renderer } = await renderEditor();
+
+    for (const [key, mode] of [
+      ["r", "rotate"],
+      ["s", "scale"],
+      ["g", "translate"],
+    ] as const) {
+      fireEvent.keyDown(window, { key });
+
+      expect(
+        screen.getByRole("button", { name: `previz.toolbar.gizmo.${mode}` }),
+      ).toHaveAttribute("aria-pressed", "true");
+      // 手柄模式现在是从工具派生出来的，不再是第二份 state：按键改的是工具，
+      // 视口里那副手柄跟着换。
+      expect(renderer.setGizmoMode).toHaveBeenLastCalledWith(mode);
+    }
+  });
+
+  /*
+    W / Q / 绘制 / 标记这四颗下视口里不该有手柄——这正是「一条互斥列表」的另一半：
+    七颗按钮只有一颗亮，而亮着的那颗是不是变换工具，决定了手柄在不在。
+
+    传 null 而不是「随便留着上一次的模式再把 helper 藏起来」：手柄不光是看得见的箭头，
+    它还在接指针事件，留着它用户会在一片空白里莫名其妙地拖动物体（见 PrevizGizmo）。
+  */
+  it.each([
+    ["w", "previz.toolbar.tool.select"],
+    ["q", "previz.toolbar.tool.navigate"],
+  ])("clears the gizmo when %s selects a pointer tool", async (key, label) => {
+    const { renderer } = await renderEditor();
+
+    // 先落在一颗变换工具上：默认就是移动，不先离开的话下面这一步在实现退化成
+    // 「永远传 translate」时照样绿。
+    fireEvent.keyDown(window, { key: "r" });
+    expect(renderer.setGizmoMode).toHaveBeenLastCalledWith("rotate");
+
+    fireEvent.keyDown(window, { key });
+
+    expect(screen.getByRole("button", { name: label })).toHaveAttribute("aria-pressed", "true");
+    expect(renderer.setGizmoMode).toHaveBeenLastCalledWith(null);
+  });
+
+  /*
+    G/R/S 原来只改手柄模式，笔画中途按下去是无害的，所以没有守卫。合并之后它们会
+    把工具从 draw 切走，和 W/Q 掉进同一个坑：setDrawing 的效果会把左键重新挂回轨道
+    旋转，视口就在笔下转起来了。
+  */
+  it("ignores G mid-stroke, so the camera does not orbit under a live pen", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("character");
+    act(() => usePrevizStore.getState().selectObject(objectId!));
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+
+    const canvas = screen.getByTestId("previz-canvas");
+    renderer.planePointAt.mockReturnValue([1, 0, 0]);
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+
+    fireEvent.keyDown(window, { key: "g" });
+
+    expect(screen.getByRole("button", { name: "previz.toolbar.tool.draw" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(renderer.setDrawing).toHaveBeenLastCalledWith(true);
+  });
+
+  it("no longer treats E as a transform-tool shortcut", async () => {
     await renderEditor();
     // 先切到旋转以外的手柄：E 以前正是旋转的键位，如果它没被摘干净，这里会悄悄切回去。
     fireEvent.keyDown(window, { key: "s" });
@@ -1495,16 +1572,16 @@ describe("PrevizEditor timeline", () => {
   // 的字母喂回真正的 keydown 处理器，两边才不会静悄悄地对不上——角标改了字母而没人
   // 跟着改这里的键位绑定，或者反过来，都会在这里变红。
   //
-  // 次序不是随手写的：初始状态就是 select / translate，如果把它们摆在最前面，那一步
-  // 断言在 case "w" / case "g" 被删掉之后依然是「本来就 true」，全程不会变红。每一条
-  // 都得先离开那颗按钮的选中态，再靠对应的键把它按回来，断言才是真的在验证这颗键。
+  // 次序不是随手写的：初始工具就是 translate，如果把它摆在最前面，那一步断言在
+  // case "g" 被删掉之后依然是「本来就 true」，全程不会变红。每一条都得先离开那颗
+  // 按钮的选中态，再靠对应的键把它按回来，断言才是真的在验证这颗键。
   it("every badged key activates the button it is drawn on", async () => {
     await renderEditor();
 
     const badged = [
-      "previz.toolbar.tool.navigate", // 默认是 select，先按 Q 才看得出 W 有没有生效
+      "previz.toolbar.tool.navigate", // 默认是 translate，这一步顺带离开它
       "previz.toolbar.tool.select",
-      "previz.toolbar.gizmo.rotate", // 默认是 translate，同理
+      "previz.toolbar.gizmo.rotate",
       "previz.toolbar.gizmo.scale",
       "previz.toolbar.gizmo.translate",
     ];

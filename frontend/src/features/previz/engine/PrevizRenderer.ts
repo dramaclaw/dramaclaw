@@ -527,7 +527,8 @@ export class PrevizRenderer {
     }
   }
 
-  setGizmoMode(mode: GizmoMode): void {
+  /** 换手柄模式；`null` 表示当前工具不要手柄（见 [PrevizGizmo.setMode]）。 */
+  setGizmoMode(mode: GizmoMode | null): void {
     this.gizmo?.setMode(mode);
     this.requestRender();
   }
