@@ -301,10 +301,30 @@ function lastColour(mesh: FakeMeshView): number | undefined {
   return calls.length === 0 ? undefined : (calls[calls.length - 1]![0] as number);
 }
 
-/** 胶囊总高：中段柱体高度加上两端各一个半球。 */
+/** 胶囊本体的总高：中段柱体高度加上两端各一个半球。不含露在它之上那截球头。 */
 function capsuleHeight(mesh: FakeMeshView): number {
   const [radius, middle] = mesh.geometry.args;
   return middle! + radius! * 2;
+}
+
+/** 胶囊顶，在人物节点的坐标里。 */
+function capsuleTop(capsule: FakeMeshView): number {
+  return capsule.position.y + capsuleHeight(capsule) / 2;
+}
+
+/** 球心，同一套坐标。球是胶囊这个 Mesh 的子节点，两级 position 要一起算。 */
+function headCentre(capsule: FakeMeshView): number {
+  return capsule.position.y + headOf(capsule).position.y;
+}
+
+/**
+ * 整件占位体的轮廓顶，也就是这个人物在画面上的身高：最高的那一件是球头。
+ *
+ * 下面那些身高断言一律走这个，而不是直接量胶囊：胶囊本身比身高矮一截，矮出来的
+ * 正好是露在外面那截球头。拿胶囊总高当身高断言，等于把「球头白长」写进期望值。
+ */
+function placeholderHeight(capsule: FakeMeshView): number {
+  return headCentre(capsule) + headOf(capsule).geometry.args[0]!;
 }
 
 /** 人物模型自己一份，外加每个动画库一份：rig 工厂首次 build 就该下这么多、之后不再下。 */
@@ -370,6 +390,14 @@ function markerOf(graph: PrevizSceneGraph, objectId: string): THREE.Object3D | u
 /** 节点下面那个模型根（`build()` 在它身上留了 `previzRig`）。 */
 function rigOf(graph: PrevizSceneGraph, objectId: string): THREE.Object3D | undefined {
   return graph.nodeFor(objectId)?.children.find((child) => child.userData.previzRig);
+}
+
+/**
+ * rig 为了上辨识色从源材质克隆出来的那几份。它们是 rig 独有的，源模型那份不是——
+ * 「该还哪一批、不该还哪一批」正是这组用例要分开的两件事。
+ */
+function tintsOf(sourceMaterial: FakeMaterialView): FakeMaterialView[] {
+  return sourceMaterial.clone.mock.results.map((result) => result.value as FakeMaterialView);
 }
 
 /**
@@ -641,12 +669,12 @@ describe('PrevizSceneGraph', () => {
     // 半径同样写字面量：它是 `PrevizRenderer` 的聚焦包围盒也在用的那条尺寸约束
     // （见 `PREVIZ_PLACEHOLDER_RADIUS` 的注释），从被测模块 import 回来就锁不住了。
     expect(mesh.geometry.args[0]).toBeCloseTo(0.22, 6);
-    // 断言的是性质而不是实现里那个式子：CapsuleGeometry(radius, height, …) 的第二参数
-    // 是两个半球之间那段柱体的高度（three 0.185 的形参名就叫 height），胶囊总高是它
-    // 加上两个半径——总高必须正好是身高，1.8 是这条用例自己给的输入，不是算出来的。
-    expect(capsuleHeight(mesh)).toBeCloseTo(1.8, 6);
-    // 胶囊自身以原点为中心，抬高半个身高才让脚底落在 y=0 的地面网格上。
-    expect(mesh.position.y).toBeCloseTo(0.9, 6);
+    // 断言的是性质而不是实现里那个式子：整件占位体的轮廓顶必须正好落在身高线上，
+    // 1.8 是这条用例自己给的输入，不是算出来的。
+    expect(placeholderHeight(mesh)).toBeCloseTo(1.8, 6);
+    // 而脚底要落在 y=0 的地面网格上。写成「胶囊中心减半个胶囊高」而不是一个常数：
+    // 胶囊自己多高由球头埋多深决定，写死常数就是把那份推导抄第二遍。
+    expect(mesh.position.y - capsuleHeight(mesh) / 2).toBeCloseTo(0, 6);
   });
 
   it('clamps heightCm so the capsule never degenerates', () => {
@@ -669,8 +697,8 @@ describe('PrevizSceneGraph', () => {
 
     const tallMesh = placeholderOf(graph, tall.id);
     const tinyMesh = placeholderOf(graph, tiny.id);
-    expect(capsuleHeight(tallMesh)).toBeCloseTo(PREVIZ_MAX_HEIGHT_CM / 100, 6);
-    expect(capsuleHeight(tinyMesh)).toBeCloseTo(PREVIZ_MIN_HEIGHT_CM / 100, 6);
+    expect(placeholderHeight(tallMesh)).toBeCloseTo(PREVIZ_MAX_HEIGHT_CM / 100, 6);
+    expect(placeholderHeight(tinyMesh)).toBeCloseTo(PREVIZ_MIN_HEIGHT_CM / 100, 6);
     // 夹到下界之后中段柱体仍然为正，`createPlaceholder` 不必再自己兜一次 Math.max(0, …)。
     expect(tinyMesh.geometry.args[1]).toBeGreaterThan(0);
   });
@@ -686,7 +714,7 @@ describe('PrevizSceneGraph', () => {
     graph.sync({ ...scene, objects: [{ ...character, heightCm: 150 }] });
     const node = graph.nodeFor(character.id);
     const before = placeholderOf(graph, character.id);
-    expect(capsuleHeight(before)).toBeCloseTo(1.5, 6);
+    expect(placeholderHeight(before)).toBeCloseTo(1.5, 6);
 
     graph.sync({ ...scene, objects: [{ ...character, heightCm: 200 }] });
 
@@ -694,9 +722,9 @@ describe('PrevizSceneGraph', () => {
     // 几何体建好就不会自己跟着变：少了重建，拖完滑杆得到的是一个还停在旧身高的胶囊，
     // 而且它不会在下一次 sync 时自愈——只有整个节点被拆掉才会。
     const after = placeholderOf(graph, character.id);
-    expect(capsuleHeight(after)).toBeCloseTo(2, 6);
+    expect(placeholderHeight(after)).toBeCloseTo(2, 6);
     // 站位跟着一起改，否则那个尺寸错的胶囊还悬空或者陷进地里。
-    expect(after.position.y).toBeCloseTo(1, 6);
+    expect(after.position.y - capsuleHeight(after) / 2).toBeCloseTo(0, 6);
     // 换的是占位体不是整个节点：节点上挂着 Task 8 加载好的 GLB，重建等于白下一次。
     expect(root.children).toHaveLength(1);
     expect(graph.nodeFor(character.id)).toBe(node);
@@ -737,7 +765,7 @@ describe('PrevizSceneGraph', () => {
     // 比的是夹取之后的身高：两个都超上界的值算出来是同一个胶囊，不该拆了重建。
     graph.sync({ ...scene, objects: [{ ...posed, heightCm: 1e9 }] });
     const clamped = placeholderOf(graph, character.id);
-    expect(capsuleHeight(clamped)).toBeCloseTo(PREVIZ_MAX_HEIGHT_CM / 100, 6);
+    expect(placeholderHeight(clamped)).toBeCloseTo(PREVIZ_MAX_HEIGHT_CM / 100, 6);
     graph.sync({ ...scene, objects: [{ ...posed, heightCm: 1e10 }] });
     expect(placeholderOf(graph, character.id)).toBe(clamped);
   });
@@ -1287,7 +1315,7 @@ describe('PrevizSceneGraph', () => {
     const root = new three.Group();
     const graph = new PrevizSceneGraph(three, root);
     const onReady = vi.fn();
-    const { factory } = rigFactory(three);
+    const { factory, sourceMaterial } = rigFactory(three);
     graph.attachCharacterRig(factory, onReady);
 
     const scene = characterScene();
@@ -1302,6 +1330,10 @@ describe('PrevizSceneGraph', () => {
     expect(node?.children).toHaveLength(2);
     expect(node?.children[0]?.userData.previzPlaceholder).toBe(true);
     expect(onReady).not.toHaveBeenCalled();
+    // 「够不着」是这条路唯一的问题，所以这份模型自己那批克隆材质得在这里还掉：
+    // `dispose()` 已经走完了，之后不会再有第二次机会。
+    expect(tintsOf(sourceMaterial)).toHaveLength(1);
+    expect(tintsOf(sourceMaterial)[0]!.dispose).toHaveBeenCalled();
   });
 
   it('requests the model again for an object that came back after being removed', async () => {
@@ -1340,8 +1372,8 @@ describe('PrevizSceneGraph', () => {
     await flush();
 
     // 「简化圆柱体」不是一档胖瘦，是「这个人物不要 GLB」。分叉必须在**请求之前**：
-    // 下完再丢掉的话，场上二十个人照样把模型和三份动画库都拉一遍，而这一档存在的
-    // 全部理由就是别付这笔钱。
+    // 排在后面的话，一场全是简化圆柱体的戏照样要把演员模型和那份动画库拉下来，每个
+    // 人物还各付一次克隆，建完就扔——而这一档存在的理由就是别付这笔钱。
     expect(loadGltf).not.toHaveBeenCalled();
     expect(clone).not.toHaveBeenCalled();
     expect(rigOf(graph, id)).toBeUndefined();
@@ -1352,7 +1384,7 @@ describe('PrevizSceneGraph', () => {
     const three = fakeThree();
     const root = new three.Group();
     const graph = new PrevizSceneGraph(three, root);
-    const { factory } = rigFactory(three);
+    const { factory, sourceMaterial } = rigFactory(three);
     graph.attachCharacterRig(factory, vi.fn());
 
     const scene = characterScene();
@@ -1369,6 +1401,41 @@ describe('PrevizSceneGraph', () => {
     expect(rigOf(graph, character.id)).toBeUndefined();
     expect(placeholderOf(graph, character.id).geometry.shape).toBe('capsule');
     expect(graph.nodeFor(character.id)?.children).toHaveLength(2);
+
+    // 摘下来还要还：rig 为了上辨识色克隆过一批自己的材质，只解父子关系就是每切一次
+    // 体型漏一批，而画面上一点征兆都没有。
+    expect(tintsOf(sourceMaterial)).toHaveLength(1);
+    expect(tintsOf(sourceMaterial)[0]!.dispose).toHaveBeenCalled();
+    // 而源材质是所有人物共用的，还掉它等于把之后每一个人物一起废了。
+    expect(sourceMaterial.dispose).not.toHaveBeenCalled();
+  });
+
+  it('keeps the capsule it already has while the character stays a capsule', () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene({ bodyType: 'capsule' });
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+    const placeholder = placeholderOf(graph, character.id);
+
+    graph.sync({
+      ...scene,
+      objects: [
+        { ...character, transform: { position: [1, 0, 2], rotation: [0, 0, 0], scale: [1, 1, 1] } },
+      ],
+    });
+
+    // 退回占位体这条路每一帧都要走一次（这一档的人物永远走它），补占位体因此必须先
+    // 看有没有。无条件补的话，就是每帧往同一个节点上再叠一根胶囊：几秒之后那里是
+    // 几百根重合的胶囊，画面上仍然只是一个人，而「形状是胶囊」这类断言一条都不会红。
+    expect(placeholderOf(graph, character.id)).toBe(placeholder);
+    expect(graph.nodeFor(character.id)?.children).toHaveLength(2);
+    expect(placeholder.geometry.dispose).not.toHaveBeenCalled();
   });
 
   it('gives the capsule that replaced a rig the display mode already in force', async () => {
@@ -1459,6 +1526,36 @@ describe('PrevizSceneGraph', () => {
     expect(placeholderOf(graph, character.id).geometry.shape).toBe('capsule');
   });
 
+  it('returns the resources of a rig that lost the race to the capsule', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { factory, sourceMaterial } = rigFactory(three, ['Idle_Loop'], gate);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+    await flush();
+
+    graph.sync({ ...scene, objects: [{ ...character, bodyType: 'capsule' }] });
+    release();
+    await flush();
+
+    // 丢掉这份模型不等于不用还它：`build` 已经给它克隆了一批上辨识色用的材质，而它
+    // 从没进过树——删对象和 `dispose()` 那两条回收路径都够不着。认出号作废就直接
+    // return 的话，用户每在加载途中切一次体型就漏一批，画面上一点征兆都没有。
+    expect(tintsOf(sourceMaterial)).toHaveLength(1);
+    expect(tintsOf(sourceMaterial)[0]!.dispose).toHaveBeenCalled();
+    // 源材质仍然是所有人物共用的那一份，不能跟着一起还。
+    expect(sourceMaterial.dispose).not.toHaveBeenCalled();
+  });
+
   it('keeps a single rig when the capsule build is left and re-entered mid-load', async () => {
     const three = fakeThree();
     const root = new three.Group();
@@ -1508,10 +1605,19 @@ describe('PrevizSceneGraph', () => {
     expect(headRadius).toBeGreaterThan(0);
     expect(headRadius).toBeLessThan(capsule.geometry.args[0]!);
 
-    // 断言的是性质：球顶正好落在身高线上。球是胶囊这个 Mesh 的**子节点**，两级
-    // position 要一起算——顶出去就等于给这个人凭空加了一截身高，聚焦时的包围盒
-    // （`view.ts` 的取景距离读的就是它）跟着一起错。1.8 是这条用例自己给的输入。
-    expect(capsule.position.y + head.position.y + headRadius).toBeCloseTo(1.8, 6);
+    // 第一条：整件占位体的轮廓顶正好落在身高线上。顶出去就等于给这个人凭空加了一截
+    // 身高，聚焦时的包围盒（`view.ts` 的取景距离读的就是它）跟着一起错。1.8 是这条
+    // 用例自己给的输入。
+    expect(placeholderHeight(capsule)).toBeCloseTo(1.8, 6);
+    // 第二条才是「这颗球看不看得见」，而且是这两条里承重的那条：球心必须高过胶囊顶。
+    // 第一条对球的位置毫无约束——球顶钉死在身高线上，球心也就钉死了，能动的只有胶囊；
+    // 胶囊一路长到与身高等高，球就整个陷进胶囊里，露出零像素，而第一条照样绿。
+    // 没有第二条，这个 bug 会被同一套测试再放过一次。
+    expect(headCentre(capsule)).toBeGreaterThan(capsuleTop(capsule));
+    // 露出多少也钉住，不然球头半径悄悄减半仍然全绿，而画面上那颗头缩成一个疙瘩。
+    // 0.198 = 0.22 × 0.9；露出的是 (2 − 0.5) × 0.198 = 0.297 m，与身高无关。
+    expect(headRadius).toBeCloseTo(0.198, 6);
+    expect(placeholderHeight(capsule) - capsuleTop(capsule)).toBeCloseTo(0.297, 6);
   });
 
   it('moves the head with the capsule when heightCm changes', () => {
@@ -1529,8 +1635,9 @@ describe('PrevizSceneGraph', () => {
     // 拖身高滑杆时头要跟着走。把球头的高度写成一个与身高无关的常量，上面那条用例
     // 照样绿——它只喂了一个身高。
     const capsule = placeholderOf(graph, character.id);
-    const head = headOf(capsule);
-    expect(capsule.position.y + head.position.y + head.geometry.args[0]!).toBeCloseTo(1.9, 6);
+    expect(placeholderHeight(capsule)).toBeCloseTo(1.9, 6);
+    // 同上，轮廓顶对了不代表看得见：球心还得在胶囊顶之上。
+    expect(headCentre(capsule)).toBeGreaterThan(capsuleTop(capsule));
     // 而且旧的那颗球要还资源，不是留在树上按帧漏。
     expect(shortHead.geometry.dispose).toHaveBeenCalled();
     expect(shortHead.material.dispose).toHaveBeenCalled();
