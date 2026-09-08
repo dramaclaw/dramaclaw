@@ -142,7 +142,7 @@ describe("recharge checkout", () => {
           return HttpResponse.json({
             ok: true,
             data: {
-              link: { subject_type: "org_generic", expires_at: null },
+              link: { subject_type: "personal_user", expires_at: null },
               items: [],
             },
           });

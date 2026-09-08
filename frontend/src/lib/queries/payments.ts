@@ -9,7 +9,6 @@ import type { OkResponse } from "@/types/api";
 export type RechargePaymentMethod = "alipay" | "wxpay";
 export type RechargeOrderType =
   | "personal_recharge"
-  | "org_pool_purchase"
   | "org_member_recharge";
 
 export interface RechargePackage {
@@ -75,7 +74,7 @@ type CreateRechargeOrderResponse = {
   checkout: EpayCheckout | null;
 };
 
-export type RechargeLinkSubject = "personal_user" | "org_generic" | "org_member";
+export type RechargeLinkSubject = "personal_user";
 
 type RechargeLinkPackagesResponse = {
   link: { subject_type: RechargeLinkSubject; expires_at: string | null };
