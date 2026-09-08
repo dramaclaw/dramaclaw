@@ -74,15 +74,25 @@ export function AnnouncementCard({
   );
 }
 
+// `Intl` knows far more locales than the UI ships translations for, so pass the
+// resolved language straight through instead of collapsing everything that is
+// not Chinese into English. A malformed tag throws, so fall back rather than
+// take the notification list down with it.
+function relativeTimeFormat(locale: string): Intl.RelativeTimeFormat {
+  try {
+    return new Intl.RelativeTimeFormat(locale || "en", { numeric: "auto" });
+  } catch {
+    return new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  }
+}
+
 function formatRelativeTime(value: string | null | undefined, locale: string): string | undefined {
   if (!value) return undefined;
   const published = new Date(value);
   if (Number.isNaN(published.getTime())) return undefined;
   const diffMs = published.getTime() - Date.now();
   const absMs = Math.abs(diffMs);
-  const rtf = new Intl.RelativeTimeFormat(locale.startsWith("zh") ? "zh" : "en", {
-    numeric: "auto",
-  });
+  const rtf = relativeTimeFormat(locale);
   if (absMs < 60 * 60 * 1000) {
     return rtf.format(Math.round(diffMs / (60 * 1000)), "minute");
   }
