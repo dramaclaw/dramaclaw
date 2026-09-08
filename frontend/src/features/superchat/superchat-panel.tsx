@@ -5518,7 +5518,7 @@ export function buildAssistantClarificationResponseForTest(
 export function buildAssistantClarificationToolResultForTest(
   event: AssistantClarificationUiEvent,
   answers: AssistantClarificationAnswers,
-  options: { skillStudioRevision?: boolean } = {},
+  options: { skillStudioRevision?: boolean; projectId?: string; canvasId?: string; agentId?: string } = {},
 ) {
   const safeAnswers = Object.fromEntries(
     Object.entries(answers).filter(([key]) => !key.startsWith("__")),
@@ -5541,9 +5541,9 @@ export function buildAssistantClarificationToolResultForTest(
     turn_id: event.turn_id ?? undefined,
     anchor_text_prefix: event.anchor_text_prefix ?? undefined,
     bridge_key: event.bridge_key ?? "",
-    project_id: event.project_id ?? undefined,
-    canvas_id: event.canvas_id ?? undefined,
-    agent_id: event.agent_id ?? undefined,
+    project_id: event.project_id || options.projectId || undefined,
+    canvas_id: event.canvas_id || options.canvasId || undefined,
+    agent_id: event.agent_id || options.agentId || undefined,
     tool_call_status: "completed" as const,
     clarification_status: "answered",
     ok: true,
@@ -14135,7 +14135,7 @@ export function SuperChatPanel({
           : "submit";
       const skillStudioRevision = activeAssistantClarificationIsSkillStudioRevision(visibleMessages, event);
 	      const payload = {
-	        ...buildAssistantClarificationToolResultForTest(event, answers, { skillStudioRevision }),
+	        ...buildAssistantClarificationToolResultForTest(event, answers, { skillStudioRevision, projectId: params.project || undefined, canvasId: effectiveFreezoneCanvasId || undefined, agentId: effectiveFreezoneAgentId || undefined }),
 	        action,
 	        clarification_status: action === "submit" ? "answered" : action,
 	        skipped: action === "skip",
@@ -14188,7 +14188,7 @@ export function SuperChatPanel({
       toast.error("提交补充信息失败，请重试");
       return false;
     }
-	  }, [chat, persistSkillStudioUiEvent, updateChatUiEvent, visibleMessages]);
+	  }, [chat, params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId, persistSkillStudioUiEvent, updateChatUiEvent, visibleMessages]);
 
   const submitSkillStudioDraftResponse = useCallback(async (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,

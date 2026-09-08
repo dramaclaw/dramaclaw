@@ -5223,13 +5223,14 @@ def _build_codex_env(
         env["DRAMACLAW_AGENT_TOKEN_FILE"] = str(agent_token_file)
     env["DRAMACLAW_TOOL_MODE"] = str(tool_mode or "default").strip() or "default"
     if str(tool_mode or "").strip() == "freezone_canvas":
-        # Keep Codex MCP on the same per-user/per-profile bridge directory as
-        # Hermes. Without this, the MCP process writes pending commands into a
-        # generic /tmp directory that the Freezone frontend never polls.
+        # Keep Codex MCP on the authoritative project/profile bridge used by
+        # Hermes and the browser command and receipt routes.
         from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
         from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
 
-        hermes_home = ensure_user_hermes_workspace(username, profile="freezone")
+        hermes_home = ensure_user_hermes_workspace(
+            username, profile="freezone", project_state_dir=project_state_dir
+        )
         env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"] = str(
             canvas_bridge_dir_for_profile(hermes_home, profile)
         )

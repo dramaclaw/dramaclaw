@@ -2235,6 +2235,15 @@ describe("Assistant clarification response", () => {
     expect(text).toContain("这个 skill 的使用范围是？\n用户级（推荐）");
   });
 
+  it("keeps clarification replies in the current project when tool metadata omits scope", () => {
+    const payload = buildAssistantClarificationToolResultForTest(
+      { type: "assistant.clarification.request", clarification_id: "c", bridge_key: "key", questions: [] },
+      {},
+      { projectId: "project-a", canvasId: "canvas-a", agentId: "main" },
+    );
+    expect(payload).toMatchObject({project_id: "project-a", canvas_id: "canvas-a", agent_id: "main"});
+  });
+
   it("builds a generic bridge tool result payload", () => {
     const payload = buildAssistantClarificationToolResultForTest(
       {
