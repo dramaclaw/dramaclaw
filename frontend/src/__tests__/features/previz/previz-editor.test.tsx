@@ -2162,6 +2162,48 @@ describe("audio playback and mix", () => {
       1,
       audioDestination,
     );
+    // 单例超时抬到 10s：录制本身墙钟约 2.5s，而 vitest 的默认 5000 会先把用例杀掉，
+    // 真挂起时拿到的就只是一句「Test timed out」，而不是上面那条信息量大得多的断言错误。
+  }, 10000);
+
+  it("refuses a second recording while the first is still decoding its audio", async () => {
+    const user = userEvent.setup();
+    // 开录之前要先解码音频，那期间组件的 `recording` 还是 null、顶栏按钮上还写着
+    // 「开始录制」、选单照样打得开——界面上没有半点「正在忙」的迹象，而解码是一次网络取样
+    // 加 decodeAudioData，首次录制轻松几百毫秒到几秒。「按钮没反应就再点一下」是本能动作，
+    // 第二路录制会和第一路抢同一块画布：第一路的 `pass.end()` 会在第二路还在录的时候把
+    // 辅助物还回去，手柄、轨迹、机位锥就被烤进第二路的成片里。守卫因此必须是同步的，
+    // 不能等 `recording` 这个 state 渲染出来。
+    let release = () => {};
+    audioPlayback.load.mockImplementationOnce(
+      async () =>
+        new Promise<void>((resolve) => {
+          release = () => resolve();
+        }),
+    );
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().addAudioClip(source, 0);
+    });
+
+    const openRecord = () =>
+      user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+    const pickGlobal = () =>
+      user.click(screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }));
+    await openRecord();
+    await pickGlobal();
+    // 解码仍挂着，按钮的可访问名字还是「开始录制」——拿得到它本身就是这条用例的前提。
+    await openRecord();
+    await pickGlobal();
+
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 3000 });
+    expect(startRecording).toHaveBeenCalledTimes(1);
+    expect(addDerivedVideoNode).toHaveBeenCalledTimes(1);
   });
 
   it("hands the helper visibility back when the MediaRecorder refuses the container", async () => {
