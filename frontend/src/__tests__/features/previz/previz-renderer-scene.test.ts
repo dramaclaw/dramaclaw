@@ -72,6 +72,14 @@ let boxIsEmpty = false;
 let boxMinYOffset = 0;
 
 /**
+ * 假盒水平中心相对对象原点的偏移，同上一条的道理换到 x/z 上：默认盒子以对象原点为
+ * 水平中心，那种形状下「盒中心」和「对象原点」是同一个数，起点取哪个都测不出来。
+ * 枢轴不在几何水平中心的资产（壁挂搁板、以世界原点导出的 obj）真会踩到这个差别：
+ * 按原点起射会从对象轮廓**之外**往下打，落到枢轴底下那块表面上而不是对象底下的。
+ */
+let boxCentreOffset = 0;
+
+/**
  * 地面取点时射线打在 y=0 平面上的位置。null 表示射线与地面平行（相机平视时的真实
  * 情况），`Ray.intersectPlane` 这时返回 null——被测代码必须扛得住。
  */
@@ -164,14 +172,17 @@ vi.mock('three', () => {
     setFromObject(object: Object3D) {
       if (boxIsEmpty) return this;
       const origin = object.getWorldPosition(new Vector3());
-      this.min.set(origin.x - 1, origin.y + boxMinYOffset, origin.z - 1);
-      this.max.set(origin.x + 1, origin.y + 2 + boxMinYOffset, origin.z + 1);
+      const cx = origin.x + boxCentreOffset;
+      const cz = origin.z + boxCentreOffset;
+      this.min.set(cx - 1, origin.y + boxMinYOffset, cz - 1);
+      this.max.set(cx + 1, origin.y + 2 + boxMinYOffset, cz + 1);
       return this;
     }
     isEmpty() {
       return this.max.x < this.min.x || this.max.y < this.min.y || this.max.z < this.min.z;
     }
-    /** 照抄 three 0.185 `math/Box3.js:224`：两端中点写进 target 再交回来。 */
+    /** 取两端中点写进 target 再交回来，同 three 0.185 `math/Box3.js:224`。真身在
+     * `:227` 还有一条空盒走 `set(0,0,0)` 的分支，这里没抄——调用点先判了 `isEmpty()`。 */
     getCenter(target: Vector3) {
       return target.set(
         (this.min.x + this.max.x) / 2,
@@ -498,6 +509,7 @@ beforeEach(() => {
   webglRenderers.length = 0;
   boxIsEmpty = false;
   boxMinYOffset = 0;
+  boxCentreOffset = 0;
   groundHit = [0, 0, 0];
   lastPlane = null;
   render.mockClear();
@@ -623,6 +635,12 @@ describe('PrevizRenderer 接场景图', () => {
     expect(objectRoot).toBeInstanceOf(THREE.Group);
     expect(objectRoot).not.toBeInstanceOf(THREE.Scene);
     expect(objectRoot?.parent).toBeInstanceOf(THREE.Scene);
+    // 对象根自己必须是恒等变换。松手落地（`dropToSurface`）拿包围盒算的是世界坐标，
+    // 却把结果写回节点的**局部** y——中间这一层一旦有偏移或缩放，落地会静默按错误
+    // 倍数下沉，画面上只是「东西没落准」，没有任何别的东西会红。真要给它加变换，
+    // 那边就得先把世界坐标换算回局部。
+    expect(objectRoot?.position.y).toBe(0);
+    expect(objectRoot?.scale.y).toBe(1);
 
     instance.dispose();
   });
@@ -1924,19 +1942,27 @@ describe('PrevizRenderer 松手落地', () => {
 
   it('aims the ray straight down from just above the top of the box', async () => {
     const { instance } = await createRenderer();
+    // 枢轴既不在几何水平中心、对象也不在世界原点：三个数（0、对象原点、盒中心）
+    // 两两不等，起点取错哪一个都会被下面三条抓住。
+    boxCentreOffset = 0.75;
     const scene = dropScene(2, [4, 0, 0]);
+    scene.objects[0].transform.position = [3, 2, -5];
     instance.setScene(scene);
     intersections = [];
 
     instance.dropToSurface(scene.objects[0].id);
 
+    const node = instance.nodeFor(scene.objects[0].id)!;
     const [origin, direction] = raySet.mock.calls[0] as [
       { x: number; y: number; z: number },
       { x: number; y: number; z: number },
     ];
-    // 盒子是 [-1,2,-1]..[1,4,1]：水平取中心，竖直取顶面再抬一个 epsilon。
-    expect(origin.x).toBe(0);
-    expect(origin.z).toBe(0);
+    // 盒子是 [2.75,2,-5.25]..[4.75,4,-3.25]：水平取盒中心（不是对象原点），
+    // 竖直取顶面再抬一个 epsilon。
+    expect(origin.x).toBe(3.75);
+    expect(origin.z).toBe(-4.25);
+    expect(origin.x).not.toBe(node.position.x);
+    expect(origin.z).not.toBe(node.position.z);
     expect(origin.y).toBe(dropRayOriginY(4));
     // 朝上打的话对象会被吸到头顶那块天花板上，而画面上只是「它自己飞起来了」。
     expect([direction.x, direction.y, direction.z]).toEqual([0, -1, 0]);

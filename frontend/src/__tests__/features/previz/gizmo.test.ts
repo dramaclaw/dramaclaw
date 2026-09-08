@@ -500,6 +500,31 @@ describe("PrevizGizmo 松手落地", () => {
     expect(dropToSurface).toHaveBeenCalledWith("a");
   });
 
+  // 拖到一半按 R 换工具。那次切换是**挂起**的：`setMode` 见 dragging 为真只记下
+  // pendingMode，到 finally 里、落地跑完之后才 `applyMode`。所以手上这一次仍旧是平移，
+  // 该落地。把 mode 记在 `setMode` 而不是 `applyMode` 里的话，松手时它已经是 'rotate'，
+  // 这一拖静默地不落地了——而用户按 R 的本意是给**下一次**操作换工具，不是撤销手上这次。
+  it("still drops when the user switches tools midway through the drag", () => {
+    const dropToSurface = vi.fn(() => 7);
+    const { controls, gizmo } = setup({ dropToSurface });
+    const node = fakeNode("a");
+    gizmo.attach(node);
+    gizmo.setMode("translate");
+
+    // 这里不能用 dragWith：整条序列的中间要塞一次切换。
+    controls.axis = "XYZ";
+    controls.emit("dragging-changed", { value: true });
+    gizmo.setMode("rotate");
+    controls.emit("objectChange");
+    controls.emit("dragging-changed", { value: false });
+    controls.axis = null;
+
+    expect(dropToSurface).toHaveBeenCalledWith("a");
+    expect((node as unknown as { position: { y: number } }).position.y).toBe(7);
+    // 挂起的那次切换照常在落地之后放出去，下一次拖拽才是旋转。
+    expect(controls.setMode).toHaveBeenLastCalledWith("rotate");
+  });
+
   // 返回 null 是「这次不该落地」（机位、灯、还没有几何体的模型），不是「落到 0」。
   // 当成 0 用的话，一个正在加载的模型松手就被拍到地面上。
   it("commits the untouched y when the drop declines", () => {
