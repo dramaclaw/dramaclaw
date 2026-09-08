@@ -114,9 +114,12 @@ export function CheckoutPage() {
       : undefined;
   const summary = summaryQuery.data?.data;
   const org = creditOrgOf(summary);
+  const customOrgMember = draft?.kind === "custom" && creditScopeOf(summary) === "org_member";
   const targetOrderType =
-    existingOrder?.order_type ?? packageItem?.order_type ?? "personal_recharge";
-  const effectiveOrgId = existingOrder?.org_id ?? packageItem?.effective_org_id ?? null;
+    existingOrder?.order_type ?? packageItem?.order_type ??
+    (customOrgMember ? "org_member_recharge" : "personal_recharge");
+  const effectiveOrgId = existingOrder?.org_id ?? packageItem?.effective_org_id ??
+    (customOrgMember ? org?.org_id ?? null : null);
   const isOrgScope = targetOrderType === "org_member_recharge" && Boolean(effectiveOrgId);
   const targetOrganizationName = org?.org_id === effectiveOrgId ? org.name : effectiveOrgId;
   const subjectMatches = Boolean(
@@ -148,7 +151,6 @@ export function CheckoutPage() {
   const customReady = Boolean(
     draft?.kind === "custom" &&
       customRecharge?.enabled &&
-      !isOrgScope &&
       draft.credits >= customRecharge.min_credits &&
       draft.credits <= customRecharge.max_credits,
   );
