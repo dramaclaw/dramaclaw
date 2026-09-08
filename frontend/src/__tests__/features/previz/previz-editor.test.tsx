@@ -2763,3 +2763,33 @@ describe("PrevizEditor initial scene", () => {
     expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(300);
   });
 });
+
+/*
+  写回抛异常时不许谎报「已保存」。`flushIfDirty` 里 `onFlush()` 在前、`markSaved()`
+  在后，就是为了这一下：顺序反过来一样能过前面所有用例，但异常一抛 `dirty` 已经是
+  false，关窗那条兜底也就被判据挡掉，这笔改动神不知鬼不觉地没了。
+*/
+describe("PrevizEditor autosave failure", () => {
+  it("stays dirty when the write back throws", async () => {
+    const onFlush = vi.fn(() => {
+      throw new Error("node is gone");
+    });
+    await renderEditor({ onFlush });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      act(() => {
+        usePrevizStore.getState().setDurationFrames(200);
+      });
+      expect(() =>
+        act(() => {
+          vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS);
+        }),
+      ).toThrow("node is gone");
+
+      expect(onFlush).toHaveBeenCalledTimes(1);
+      expect(usePrevizStore.getState().dirty).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
