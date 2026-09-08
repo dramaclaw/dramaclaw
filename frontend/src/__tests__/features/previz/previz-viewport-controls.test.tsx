@@ -70,8 +70,6 @@ function dotAt(direction: (typeof VIEW_DIRECTIONS)[number]): { left: string; top
 type Overrides = Partial<
   Pick<
     ControlsProps,
-    | "canUndo"
-    | "canRedo"
     | "displayMode"
     | "pathSpacingM"
     | "pathSpeedMps"
@@ -83,8 +81,6 @@ type Overrides = Partial<
 
 function makeHandlers() {
   return {
-    onUndo: vi.fn<ControlsProps["onUndo"]>(),
-    onRedo: vi.fn<ControlsProps["onRedo"]>(),
     onDisplayMode: vi.fn<ControlsProps["onDisplayMode"]>(),
     onResetView: vi.fn<ControlsProps["onResetView"]>(),
     onPathSpacing: vi.fn<ControlsProps["onPathSpacing"]>(),
@@ -101,8 +97,6 @@ function setup(overrides: Overrides = {}): Handlers {
   const handlers = makeHandlers();
   render(
     <PrevizViewportControls
-      canUndo
-      canRedo
       displayMode="translucent"
       pathSpacingM={0.5}
       pathSpeedMps={1.4}
@@ -164,32 +158,31 @@ describe("PrevizViewportControls", () => {
 
   // 这几样从左侧菜单列搬到视口两角，就是为了让「按一下、当场看画面」不用把视线拽走。
   // 各簇自己定位、中间不铺东西：铺一条横跨顶边的容器会把视口顶部的拾取和绘制吃掉。
-  it("splits the controls into history, axis, view, draw and display clusters", () => {
+  // 撤销重做不在这里——它们跟着截图 / 录制 / 关闭进了顶栏，这条断言顺带钉住这一点。
+  it("splits the controls into axis, view, draw and display clusters", () => {
     setup();
 
     const groups = screen.getAllByRole("group");
     expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
-      "previz.viewport.group.history",
       "previz.viewport.group.axis",
       "previz.viewport.group.view",
       "previz.viewport.group.draw",
       "previz.viewport.group.display",
     ]);
 
-    expect(within(groups[0]).getAllByRole("button")).toHaveLength(2);
     // 六个半轴各一颗球。
-    expect(within(groups[1]).getAllByRole("button")).toHaveLength(6);
+    expect(within(groups[0]).getAllByRole("button")).toHaveLength(6);
     // 聚焦 + 四视图。
-    expect(within(groups[2]).getAllByRole("button")).toHaveLength(2);
+    expect(within(groups[1]).getAllByRole("button")).toHaveLength(2);
     // 绘制那簇是间距与速度两个数字框，一颗按钮都不该有——跑错簇的按钮在这里现形。
-    expect(within(groups[3]).queryAllByRole("button")).toHaveLength(0);
+    expect(within(groups[2]).queryAllByRole("button")).toHaveLength(0);
     expect(
-      within(groups[3])
+      within(groups[2])
         .getAllByRole("spinbutton")
         .map((field) => (field as HTMLInputElement).value),
     ).toEqual(["0.5", "1.4"]);
     // 三个显示模式 + 重置视角。
-    expect(within(groups[4]).getAllByRole("button")).toHaveLength(4);
+    expect(within(groups[3]).getAllByRole("button")).toHaveLength(4);
   });
 
   /*
@@ -236,8 +229,6 @@ describe("PrevizViewportControls", () => {
     // 上层把 9 夹回了 5，交回来的 prop 和用户打的不是一回事。
     render(
       <PrevizViewportControls
-        canUndo
-        canRedo
         displayMode="translucent"
         pathSpacingM={5}
         pathSpeedMps={1.4}
@@ -276,47 +267,8 @@ describe("PrevizViewportControls", () => {
     expectOnly(handlers, "onPathSpeed");
   });
 
-  it("undoes without disturbing the rest", async () => {
-    const user = userEvent.setup();
-    const handlers = setup({ canUndo: true, canRedo: false });
-
-    expect(button("previz.viewport.redo")).toBeDisabled();
-    const undo = button("previz.viewport.undo");
-    expect(undo).toBeEnabled();
-    await user.click(undo);
-
-    expect(handlers.onUndo).toHaveBeenCalledTimes(1);
-    expectOnly(handlers, "onUndo");
-  });
-
-  it("redoes without disturbing the rest", async () => {
-    const user = userEvent.setup();
-    const handlers = setup({ canUndo: false, canRedo: true });
-
-    expect(button("previz.viewport.undo")).toBeDisabled();
-    const redo = button("previz.viewport.redo");
-    expect(redo).toBeEnabled();
-    await user.click(redo);
-
-    expect(handlers.onRedo).toHaveBeenCalledTimes(1);
-    expectOnly(handlers, "onRedo");
-  });
-
-  it("does not fire undo while there is nothing to undo", async () => {
-    const user = userEvent.setup();
-    const handlers = setup({ canUndo: false, canRedo: false });
-
-    await user.click(button("previz.viewport.undo"));
-    await user.click(button("previz.viewport.redo"));
-
-    expect(handlers.onUndo).not.toHaveBeenCalled();
-    expect(handlers.onRedo).not.toHaveBeenCalled();
-  });
-
   // 图标是这些按钮对鼠标用户的全部身份，提示是唯一的文字解释——两样都得逐个锁住。
   it.each([
-    ["previz.viewport.undo", "lucide-undo-2"],
-    ["previz.viewport.redo", "lucide-redo-2"],
     ["previz.viewport.display.solid", "lucide-cuboid"],
     ["previz.viewport.display.translucent", "lucide-blend"],
     ["previz.viewport.display.clay", "lucide-shapes"],
@@ -328,17 +280,6 @@ describe("PrevizViewportControls", () => {
     const control = button(name);
     expect(await tooltipOf(user, control)).toBe(name);
     expect(control.querySelector("svg")).toHaveClass(icon);
-  });
-
-  // 撤销到底之后按钮是灰的，而「为什么灰」只写在提示里——禁用的按钮浏览器不再派发
-  // hover，提示得由外面那层包装触发。少了那层，用户面前只剩一颗没有解释的灰按钮。
-  it("still explains the undo button while it is disabled", async () => {
-    const user = userEvent.setup();
-    setup({ canUndo: false });
-
-    const undo = button("previz.viewport.undo");
-    expect(undo).toBeDisabled();
-    expect(await tooltipOf(user, undo)).toBe("previz.viewport.undo");
   });
 
   it.each(DISPLAY_MODES)("asks for the %s display mode when that chip is clicked", async (mode) => {
@@ -396,16 +337,6 @@ describe("PrevizViewportControls", () => {
     const reset = button("previz.viewport.resetView");
     expect(reset).toHaveAttribute("aria-keyshortcuts", "H");
     expect(within(reset).getByText("H").tagName).toBe("KBD");
-  });
-
-  // 显示模式与重置视角跟撤销栈无关，不该被顺手一起禁掉。
-  it("keeps the display cluster usable with an empty undo stack", () => {
-    setup({ canUndo: false, canRedo: false });
-
-    for (const mode of DISPLAY_MODES) {
-      expect(button(`previz.viewport.display.${mode}`)).toBeEnabled();
-    }
-    expect(button("previz.viewport.resetView")).toBeEnabled();
   });
 
   // 六颗球是六个真按钮：键盘要 Tab 得过去，读屏要念得出「顶视图」。画成 SVG 图形的话
