@@ -1438,7 +1438,16 @@ describe("PrevizEditor timeline", () => {
     );
   });
 
-  it("ignores W and Q mid-stroke, so the camera does not orbit under a live pen", async () => {
+  /*
+    两颗键各来一遍。这条用例的标题原先就写着 W 和 Q，函数体却只按了 Q——`case "w"` 的
+    守卫因此一直零测试，删掉它 1373 条全绿。而 W 恰恰是最容易按到的那一颗：画到一半
+    想「先选个东西」顺手一按，setDrawing 的效果就把左键重新挂回轨道旋转，剩下半笔全
+    变成在笔下转视角，画了一半的路径作废。
+  */
+  it.each([
+    ["w", "previz.toolbar.tool.select"],
+    ["q", "previz.toolbar.tool.navigate"],
+  ])("ignores %s mid-stroke, so the camera does not orbit under a live pen", async (key, label) => {
     const user = userEvent.setup();
     const { renderer } = await renderEditor();
     const objectId = usePrevizStore.getState().addObject("character");
@@ -1449,18 +1458,15 @@ describe("PrevizEditor timeline", () => {
     renderer.planePointAt.mockReturnValue([1, 0, 0]);
     fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
 
-    fireEvent.keyDown(window, { key: "q" });
+    fireEvent.keyDown(window, { key });
 
-    // 笔画还按着：Q 不该把工具切成导航，否则 setDrawing 的效果会重挂左键、
+    // 笔画还按着：这一下不该把工具切走，否则 setDrawing 的效果会重挂左键、
     // 让视口在笔下转起来。
     expect(screen.getByRole("button", { name: "previz.toolbar.tool.draw" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    expect(screen.getByRole("button", { name: "previz.toolbar.tool.navigate" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
+    expect(screen.getByRole("button", { name: label })).toHaveAttribute("aria-pressed", "false");
 
     fireEvent.pointerUp(canvas, { clientX: 10, clientY: 10 });
 
