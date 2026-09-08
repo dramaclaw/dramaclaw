@@ -14,8 +14,8 @@ import {
 } from "@/features/previz/domain/topDownMap";
 import { PREVIZ_CAMERA_COLOR } from "@/features/previz/engine/cameraModel";
 import { PREVIZ_GRID_CELL_SIZE } from "@/features/previz/engine/grid";
+import { KIND_COLOR } from "@/features/previz/engine/sceneGraph";
 import {
-  KIND_DOT_COLOR,
   PREVIZ_TOP_DOWN_KEY_STEP_M,
   PREVIZ_TOP_DOWN_PICKER_SIZE,
   PrevizTopDownPicker,
@@ -162,6 +162,11 @@ function last<T>(items: T[]): T {
   const item = items[items.length - 1];
   if (item === undefined) throw new Error("expected at least one entry");
   return item;
+}
+
+/** `0xrrggbb` → canvas 要的 CSS 串。与组件内部那个 `hex()` 同款，两边都从源头常量算。 */
+function cssHex(value: number): string {
+  return `#${value.toString(16).padStart(6, "0")}`;
 }
 
 /** 能让按钮收缩包裹住画布的 tailwind 宽度类，命中任意一个都算，别把实现钉死在某一个上。 */
@@ -432,31 +437,32 @@ describe("PrevizTopDownPicker", () => {
   it("draws one reference dot per object, characters in their own colour", () => {
     const { arcs } = captureDraw();
     const character = { ...objectAt("character", 2, -4), color: "#ff00ff" } as PrevizObject;
-    const objects = [character, objectAt("prop", -3, 1), objectAt("light", 0, 5)];
+    const objects = [
+      character,
+      objectAt("prop", -3, 1),
+      objectAt("light", 0, 5),
+      objectAt("camera", 5, 5),
+    ];
     render(<PrevizTopDownPicker objects={objects} value={null} onPick={vi.fn()} />);
 
     // 没有落点就没有高亮环：圆的条数正好是对象数。
-    expect(arcs).toHaveLength(3);
+    expect(arcs).toHaveLength(4);
     const view = viewFor(objects);
     const [px, py] = worldToCanvas(view, [2, -4]);
     expect(arcs[0].x).toBeCloseTo(px, 9);
     expect(arcs[0].y).toBeCloseTo(py, 9);
-    // 逐个钉死而不是只断言「三个互不相同」：`domain/objects.ts` 给新灯的默认 color 是
-    // 白色，与这里的人物紫、道具绿本来就不同，光断言互异的话，把灯改成「用它自己的
-    // color」照样全绿——而那正是这三个色值要防的事（灯的色温是白/暖白，画成点会跟
-    // 网格线和高亮环糊在一起）。
-    expect(arcs.map((arc) => arc.fillStyle)).toEqual(["#ff00ff", "#9ad0a0", "#fff3b0"]);
-  });
-
-  it("keeps the kind colours in step with the same objects in 3D", () => {
-    // 机位色从源头 import：`engine/cameraModel.ts` 那边一改，这条当场红。
-    expect(KIND_DOT_COLOR.camera).toBe(
-      `#${PREVIZ_CAMERA_COLOR.body.toString(16).padStart(6, "0")}`,
-    );
-    // 灯与物件是硬抄 `engine/sceneGraph.ts` 那份模块私有的 `KIND_COLOR`，没有源头可
-    // import。字面量钉在这里，改色时至少会红一次，提醒改的人回去看另一处。
-    expect(KIND_DOT_COLOR.light).toBe("#fff3b0");
-    expect(KIND_DOT_COLOR.prop).toBe("#9ad0a0");
+    // 期望值从源头常量算，不抄字面量：`KIND_DOT_COLOR` 现在就是 import 来的同一批数，
+    // 再抄一遍只会变成「改源头就红」的噪音。这条钉的是**路由**——哪个 kind 取哪一格，
+    // 以及人物走自己的 `color` 而不是分类色。四种颜色互不相同也一并钉住了：把 light
+    // 那一格改成 prop 的色、或让灯用它自己的 color（`domain/objects.ts` 给的默认是白），
+    // 这条都会红，而那正是这批色值要防的事——灯的色温是白/暖白，画成点会跟网格线和
+    // 高亮环糊在一起。
+    expect(arcs.map((arc) => arc.fillStyle)).toEqual([
+      "#ff00ff",
+      cssHex(KIND_COLOR.prop),
+      cssHex(KIND_COLOR.light),
+      cssHex(PREVIZ_CAMERA_COLOR.body),
+    ]);
   });
 
   it("rings the picked spot on top of the reference dots", () => {

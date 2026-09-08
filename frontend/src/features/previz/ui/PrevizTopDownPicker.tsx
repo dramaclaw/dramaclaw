@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { PREVIZ_CAMERA_COLOR } from "@/features/previz/engine/cameraModel";
 import { PREVIZ_GRID_CELL_COLOR, PREVIZ_GRID_CELL_SIZE } from "@/features/previz/engine/grid";
+import { KIND_COLOR } from "@/features/previz/engine/sceneGraph";
 import type { PrevizObject, PrevizObjectKind } from "@/features/previz/domain/scene";
 import {
   canvasToWorld,
@@ -67,25 +68,26 @@ const AXIS_Z_LINE = "#60a5fa";
 const PICK_RING = "#ffd166";
 
 /**
- * 非人物对象的参照点颜色，抄的是 3D 里同一件东西的本色：灯与物件取 `engine/sceneGraph.ts`
- * 的 `KIND_COLOR`（0xfff3b0 / 0x9ad0a0），机位取 `engine/cameraModel.ts` 的
- * `PREVIZ_CAMERA_COLOR.body`（0x3f6fb4）。
+ * 非人物对象的参照点颜色，取的就是 3D 里同一件东西的本色：灯与物件来自
+ * `engine/sceneGraph.ts` 的 `KIND_COLOR`，机位来自 `engine/cameraModel.ts` 的
+ * `PREVIZ_CAMERA_COLOR.body`。三种全部从源头 import，只在这里 `hex()` 成 canvas 要的
+ * CSS 字符串——本文件不再持有第二份色值，源头改色时俯视图跟着一起变，改名或删项则
+ * 当场编译不过。两侧在结构上已经没法分叉，也就不该再写一条「断言两份相等」的用例：
+ * 那种用例两边读的是同一个常量，改常量两边一起动，它永远绿。
  *
- * 机位那个从源头 import，漂了会当场编译不过。灯与物件只能硬抄：`KIND_COLOR` 是
- * `sceneGraph.ts` 的模块私有 const，没有导出（`engine/` 下的模块本身 import 得起——
- * 三个模块的 three 都是 `import type`，运行时一个字节都不带，本文件顶部 import 的
- * `engine/grid` 也是同一形状）。硬抄的这两个改起来得两处一起改，`KIND_DOT_COLOR` 的
- * 单测里钉了字面量，至少会在改色时红给人看。
+ * import 这两个模块不会把 three 拖进这张 2D 画布：它们、以及 `sceneGraph` 转手 import
+ * 的 `characterRig` / `propLoader`，三处的 three 全是 `import type`，运行时一个字节
+ * 都不带；本文件顶部 import 的 `engine/grid` 也是同一形状。
  *
  * 人物不在表里——人物用自己的 `color`，一颗固定的分类色会让四个人物在俯视图上变成
  * 四个一模一样的点，而认人正是这些参照点存在的全部意义。灯也不用它自己的 `color`：
  * 那是灯的色温，常是白或暖白，画成点会跟网格线、跟 `PICK_RING` 的高亮环糊在一起，
  * 四盏不同色温的灯在俯视图上几乎分不开。
  */
-export const KIND_DOT_COLOR: Record<Exclude<PrevizObjectKind, "character">, string> = {
+const KIND_DOT_COLOR: Record<Exclude<PrevizObjectKind, "character">, string> = {
   camera: hex(PREVIZ_CAMERA_COLOR.body),
-  light: "#fff3b0",
-  prop: "#9ad0a0",
+  light: hex(KIND_COLOR.light),
+  prop: hex(KIND_COLOR.prop),
 };
 
 /** 参照点与高亮环的半径，CSS 像素。环大一圈，两者重合时还分得出选中的是哪个。 */
