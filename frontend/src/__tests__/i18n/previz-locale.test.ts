@@ -219,7 +219,7 @@ describe('previz P3 locale keys', () => {
     it(`${name} carries every viewport control key`, () => {
       const viewport = bundle.previz.viewport;
       expect(Object.keys(viewport.group).sort()).toEqual(
-        ['axis', 'display', 'draw', 'history', 'view'].sort(),
+        ['axis', 'display', 'draw', 'view'].sort(),
       );
       expect(Object.keys(viewport.display).sort()).toEqual(['clay', 'solid', 'translucent']);
       // 六个方向是坐标轴小球那六颗球的名字，少一个就是一颗点不出名字的球。
@@ -228,8 +228,6 @@ describe('previz P3 locale keys', () => {
       );
       expect(Object.keys(viewport.quad).sort()).toEqual(['camera', 'side', 'top']);
       for (const key of [
-        'undo',
-        'redo',
         'resetView',
         'pathSpacing',
         'pathSpeed',
@@ -262,6 +260,11 @@ describe('previz program and audio locale', () => {
       expect(bundle.previz.monitor).toHaveProperty('following');
       expect(bundle.previz.node).toHaveProperty('audioSummary');
       expect(bundle.previz.editor.record).toHaveProperty('noAudioMix');
+      // 撤销重做从视口两角搬进了顶栏，键也跟着搬；漏搬的表现是顶栏上两颗按钮的
+      // 无障碍名字变成原始 key。
+      for (const key of ['undo', 'redo'] as const) {
+        expect(bundle.previz.editor[key], key).toBeTruthy();
+      }
       // 上传失败要把后端原话带出来，占位符不能丢。
       expect(bundle.previz.audio.uploadFailed).toContain('{{message}}');
       expect(bundle.previz.node.audioSummary).toContain('{{count}}');

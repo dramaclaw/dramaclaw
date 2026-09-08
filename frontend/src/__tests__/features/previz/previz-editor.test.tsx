@@ -794,16 +794,16 @@ describe("PrevizEditor", () => {
 
     await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
     // 刚打开的场景没有可撤销的步骤。
-    expect(screen.getByRole("button", { name: "previz.viewport.undo" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "previz.editor.undo" })).toBeDisabled();
 
     act(() => {
       usePrevizStore.getState().addObject("character");
     });
     const added = usePrevizStore.getState().scene.objects.length;
-    await user.click(screen.getByRole("button", { name: "previz.viewport.undo" }));
+    await user.click(screen.getByRole("button", { name: "previz.editor.undo" }));
     expect(usePrevizStore.getState().scene.objects).toHaveLength(added - 1);
 
-    await user.click(screen.getByRole("button", { name: "previz.viewport.redo" }));
+    await user.click(screen.getByRole("button", { name: "previz.editor.redo" }));
     expect(usePrevizStore.getState().scene.objects).toHaveLength(added);
 
     await user.click(screen.getByRole("button", { name: "previz.viewport.display.clay" }));

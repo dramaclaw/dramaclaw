@@ -7478,6 +7478,8 @@
     },
     "editor": {
       "title": "预演台",
+      "undo": "撤销",
+      "redo": "重做",
       "description": "在 3D 空间中搭建场景、布置机位并进行多视角截图",
       "close": "关闭预演台",
       "duration": "时长 {{frames}} 帧",
@@ -7548,8 +7550,6 @@
       "markHint": "标记轨迹：在视口逐点单击放点，自动与前一点连线（Esc 退出）"
     },
     "viewport": {
-      "undo": "撤销",
-      "redo": "重做",
       "resetView": "重置视角",
       "display": {
         "solid": "实体",
@@ -7559,7 +7559,6 @@
       "pathSpacing": "轨迹点间距（米）",
       "pathSpeed": "画笔速度（米/秒）",
       "group": {
-        "history": "历史",
         "display": "显示",
         "draw": "绘制",
         "view": "视角",

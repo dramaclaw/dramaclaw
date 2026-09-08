@@ -3,10 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
-import { ChevronLeft, ChevronRight, Circle, Monitor, Square, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Monitor } from "lucide-react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Dialog,
@@ -17,7 +16,6 @@ import {
 } from "@/components/ui/dialog";
 import { useViewerImmersiveBody } from "@/features/viewer-kit/useViewerImmersiveBody";
 import { readUrl } from "@/lib/url-params";
-import { cn } from "@/lib/utils";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { uploadFreezoneImage, uploadFreezoneVideo } from "@/api/ops";
 
@@ -47,6 +45,7 @@ import { uploadPrevizProp } from "./propAsset";
 import { usePrevizStore } from "./store";
 import { PrevizCameraCreateDialog } from "./ui/PrevizCameraCreateDialog";
 import { PrevizClipInspector } from "./ui/PrevizClipInspector";
+import { PrevizHeaderBar } from "./ui/PrevizHeaderBar";
 import { PrevizInspector } from "./ui/PrevizInspector";
 import { PrevizLayerPanel } from "./ui/PrevizLayerPanel";
 import { PrevizMonitorFrame } from "./ui/PrevizMonitorFrame";
@@ -70,9 +69,6 @@ interface PrevizEditorProps {
   /** 关闭时把当前场景交回节点落盘；编辑期不逐帧写 node.data。 */
   onFlush: (scene: PrevizScene) => void;
 }
-
-/** 录制选单里的两项，顺序就是屏幕上的顺序。 */
-const RECORD_MODES: readonly PrevizRecordMode[] = ["global", "track"];
 
 /** 按下与抬起之间超过这个像素就算在转视角，不是在点选。 */
 const CLICK_SLOP_PX = 4;
@@ -160,8 +156,6 @@ export function PrevizEditor({
    * 大部分时间只看透视那一块。
    */
   const [quadView, setQuadView] = useState(false);
-  /** 录制模式选单开着没有。只在没录的时候能开。 */
-  const [recordMenuOpen, setRecordMenuOpen] = useState(false);
   /** 正在录的那一路；null 就是没在录。 */
   const [recording, setRecording] = useState<PrevizRecordMode | null>(null);
   /** 录制进度 0..1，只喂按钮上的读数。 */
@@ -808,6 +802,25 @@ export function PrevizEditor({
           退出网格流，尺寸只认 DialogContent 的 h-dvh。
         */}
         <div className="absolute inset-0 flex flex-col bg-[#101216]">
+          <PrevizHeaderBar
+            canUndo={canUndo}
+            canRedo={canRedo}
+            capturing={capturing}
+            recording={recording}
+            recordProgress={recordProgress}
+            recordPublishing={recordPublishing}
+            onUndo={undo}
+            onRedo={redo}
+            onCapture={() => void handleCapture()}
+            onRecord={(mode) => void handleRecord(mode)}
+            // 停止走 ref 而不是 state：录制循环在闭包里跑，读 state 读到的永远是开录
+            // 那一刻的 false。
+            onStopRecord={() => {
+              recordStopped.current = true;
+            }}
+            onClose={() => handleOpenChange(false)}
+          />
+
           <div className="flex min-h-0 flex-1">
           <PrevizToolbar
             canAdd={canAdd}
@@ -996,103 +1009,13 @@ export function PrevizEditor({
                 </PrevizHoverTip>
               </span>
 
-              {/*
-                选单开着时铺一层透明背板：点视口任何地方都收起来。靠 onBlur 收的话，
-                点选单里的按钮会先触发 blur、把自己卸掉，那一下就永远点不中。
-              */}
-              {recordMenuOpen && (
-                <div
-                  className="absolute inset-0 z-10"
-                  onPointerDown={() => setRecordMenuOpen(false)}
-                />
-              )}
-
-              <div className="absolute left-4 top-4 z-30 flex items-center gap-2">
-                <div className="relative">
-                  <Button
-                    variant="ghost"
-                    aria-label={
-                      recording ? t("previz.editor.record.stop") : t("previz.editor.record.open")
-                    }
-                    disabled={capturing || recordPublishing}
-                    className="h-8 rounded-lg bg-white/10 px-3 text-[12px] text-white/85 hover:bg-white/20"
-                    onClick={() => {
-                      if (recording) {
-                        recordStopped.current = true;
-                        return;
-                      }
-                      setRecordMenuOpen((next) => !next);
-                    }}
-                  >
-                    {recording ? (
-                      <>
-                        <Square className="mr-1 h-3 w-3 fill-current text-red-400" />
-                        {t("previz.editor.record.stopWithProgress", {
-                          percent: Math.round(recordProgress * 100),
-                        })}
-                      </>
-                    ) : (
-                      <>
-                        <Circle
-                          className={cn(
-                            "mr-1 h-3 w-3 fill-current",
-                            recordPublishing ? "text-white/40" : "text-red-400",
-                          )}
-                        />
-                        {recordPublishing
-                          ? t("previz.editor.record.publishing")
-                          : t("previz.editor.record.open")}
-                      </>
-                    )}
-                  </Button>
-
-                  {recordMenuOpen && !recording && (
-                    <div
-                      role="menu"
-                      aria-label={t("previz.editor.record.open")}
-                      aria-orientation="horizontal"
-                      className="absolute left-full top-0 ml-2 flex items-center gap-1 rounded-lg border border-white/10 bg-[#181b20] p-1 whitespace-nowrap shadow-lg shadow-black/60"
-                    >
-                      {RECORD_MODES.map((mode) => (
-                        <button
-                          key={mode}
-                          type="button"
-                          role="menuitem"
-                          className="rounded-md px-3 py-1.5 text-[12px] text-white/85 transition hover:bg-white/10 hover:text-white"
-                          onClick={() => {
-                            setRecordMenuOpen(false);
-                            void handleRecord(mode);
-                          }}
-                        >
-                          {t(`previz.editor.record.mode.${mode}`)}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <Button
-                  variant="ghost"
-                  aria-label={t("previz.editor.capture")}
-                  disabled={capturing || Boolean(recording) || recordPublishing}
-                  className="h-8 rounded-lg bg-white/10 px-3 text-[12px] text-white/85 hover:bg-white/20"
-                  onClick={() => void handleCapture()}
-                >
-                  {capturing ? t("previz.editor.capturing") : t("previz.editor.capture")}
-                </Button>
-              </div>
-
               <PrevizViewportControls
-                canUndo={canUndo}
-                canRedo={canRedo}
                 displayMode={scene.settings.displayMode}
                 pathSpacingM={pathSpacingM}
                 pathSpeedMps={pathSpeedMps}
                 view={viewSource}
                 hasSelection={Boolean(selectedObjectId)}
                 quadView={quadView}
-                onUndo={undo}
-                onRedo={redo}
                 onDisplayMode={setDisplayMode}
                 onResetView={() => renderer?.resetView()}
                 onPathSpacing={setPathSpacing}
@@ -1103,20 +1026,6 @@ export function PrevizEditor({
                 }}
                 onQuadView={setQuadView}
               />
-
-              <span className="absolute right-4 top-4 z-20">
-                <PrevizHoverTip label={t("previz.editor.close")} side="bottom">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={t("previz.editor.close")}
-                    className="text-white/80 hover:text-white"
-                    onClick={() => handleOpenChange(false)}
-                  >
-                    <X className="h-5 w-5" />
-                  </Button>
-                </PrevizHoverTip>
-              </span>
 
               {/*
                 铺在视口上而不是再套一层 base-ui Dialog：编辑器本身已经是个全屏 Dialog，

@@ -7478,6 +7478,8 @@
     },
     "editor": {
       "title": "Previz Stage",
+      "undo": "Undo",
+      "redo": "Redo",
       "description": "Block out a scene in 3D, place cameras, and capture multiple angles",
       "close": "Close Previz Stage",
       "duration": "Duration {{frames}} frames",
@@ -7548,8 +7550,6 @@
       "markHint": "Mark path: click in the viewport to place points one by one, each joined to the last (Esc to finish)"
     },
     "viewport": {
-      "undo": "Undo",
-      "redo": "Redo",
       "resetView": "Reset view",
       "display": {
         "solid": "Solid",
@@ -7559,7 +7559,6 @@
       "pathSpacing": "Point spacing (m)",
       "pathSpeed": "Draw speed (m/s)",
       "group": {
-        "history": "History",
         "display": "Display",
         "draw": "Draw",
         "view": "View",

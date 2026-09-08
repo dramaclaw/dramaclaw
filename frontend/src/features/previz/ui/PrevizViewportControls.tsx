@@ -6,10 +6,8 @@ import {
   Crosshair,
   Cuboid,
   Grid2x2,
-  Redo2,
   RotateCcw,
   Shapes,
-  Undo2,
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -37,8 +35,6 @@ const DISPLAY_ICON: Record<DisplayMode, LucideIcon> = {
 const DISPLAY_MODES = Object.keys(DISPLAY_ICON) as DisplayMode[];
 
 export interface PrevizViewportControlsProps {
-  canUndo: boolean;
-  canRedo: boolean;
   displayMode: DisplayMode;
   /** 画笔一笔画出来每隔多少米落一个轨迹点。 */
   pathSpacingM: number;
@@ -50,8 +46,6 @@ export interface PrevizViewportControlsProps {
   hasSelection: boolean;
   /** 四视图（右侧那两块俯视 / 侧视预览）是否开着。 */
   quadView: boolean;
-  onUndo: () => void;
-  onRedo: () => void;
   onDisplayMode: (mode: DisplayMode) => void;
   onResetView: () => void;
   onPathSpacing: (metres: number) => void;
@@ -133,28 +127,29 @@ function ControlButton({
 }
 
 /**
- * 浮在视口自己两个上角的一组控件：左上角撤销/重做，右上角显示模式与重置视角。
+ * 浮在视口自己两个上角的一组控件：左上角坐标轴小球与聚焦 / 四视图，右上角显示模式、
+ * 重置视角与轨迹点间距。
  *
  * 这几样原先挂在左侧菜单列上。挪出来是因为它们和栏上那些不是一类动作：建对象、选工具
- * 是「去拿一件工具」，眼睛本来就要离开画面；而撤销和显示模式是「对着画面调画面」——
- * 按下去要立刻看画面变成什么样。放在 56px 宽的栏子最下面，等于每调一次都要把视线从
- * 构图上拽到左边角落再拽回来。贴着视口的角就没有这个来回。
+ * 是「去拿一件工具」，眼睛本来就要离开画面；而这几样是「对着画面调画面」——按下去要
+ * 立刻看画面变成什么样。放在 56px 宽的栏子最下面，等于每调一次都要把视线从构图上拽到
+ * 左边角落再拽回来。贴着视口的角就没有这个来回。
  *
- * 左右分家也是按这个分的：撤销重做是编辑历史，跟着 Ctrl+Z 的肌肉记忆待在左上，坐标轴
- * 小球与聚焦 / 四视图接在它下面（这三样是「站到哪儿看」）；显示模式、重置视角与轨迹点
- * 间距是「怎么看这幅画面、往里画什么」，待在右上，与下方的监看画中画同一侧。
+ * 反过来，撤销重做、截图、录制、关闭都**不是**对着画面调画面，所以它们不在这里，而在
+ * 顶上那条横栏里（见 [PrevizHeaderBar]）。这条界线就是这个文件的收录标准：浮在画面上的
+ * 每一块都得是「看着画面才按得下去」的，否则它在抢构图的地方。
+ *
+ * 左右分家也是按这个分的：坐标轴小球与聚焦 / 四视图是「站到哪儿看」，待在左上；显示
+ * 模式、重置视角与轨迹点间距是「怎么看这幅画面、往里画什么」，待在右上，与下方的监看
+ * 画中画同一侧。
  */
 export function PrevizViewportControls({
-  canUndo,
-  canRedo,
   displayMode,
   pathSpacingM,
   pathSpeedMps,
   view,
   hasSelection,
   quadView,
-  onUndo,
-  onRedo,
   onDisplayMode,
   onResetView,
   onPathSpacing,
@@ -175,27 +170,8 @@ export function PrevizViewportControls({
         左上与右上各自定位，中间那段画面不铺任何东西：外面套一个横跨整条顶边的容器的话，
         那条透明带会把视口顶部的拾取与轨迹绘制全吃掉。
       */}
-      <div
-        role="group"
-        aria-label={t("previz.viewport.group.history")}
-        className={cn(CLUSTER, "absolute left-4 top-4 z-20")}
-      >
-        <ControlButton
-          icon={Undo2}
-          label={t("previz.viewport.undo")}
-          disabled={!canUndo}
-          onClick={onUndo}
-        />
-        <ControlButton
-          icon={Redo2}
-          label={t("previz.viewport.redo")}
-          disabled={!canRedo}
-          onClick={onRedo}
-        />
-      </div>
-
       {/*
-        坐标轴小球与它下面那两颗按钮，跟撤销重做叠成左侧一列。
+        坐标轴小球与它下面那两颗按钮，叠成左侧一列。
 
         这三样原先在左侧菜单列上（一层「正交视角」浮层 + 一颗聚焦）。搬过来是因为它们
         全是「先看画面、再决定按哪一下」：小球本身就在报告当前朝向，看着它才知道该点哪
@@ -205,7 +181,7 @@ export function PrevizViewportControls({
         外面这层不吃指针事件、宽度只到内容为止：绝对定位的容器铺开一片透明区，视口的
         拾取与轨迹绘制就在这一片里失灵。
       */}
-      <div className="pointer-events-none absolute left-4 top-16 z-20 flex w-24 flex-col items-start gap-2">
+      <div className="pointer-events-none absolute left-4 top-4 z-20 flex w-24 flex-col items-start gap-2">
         <div
           role="group"
           aria-label={t("previz.viewport.group.axis")}
@@ -253,14 +229,11 @@ export function PrevizViewportControls({
       </div>
 
       {/*
-        顶上那条留给关闭键（右）与录制/截帧（左），这两簇往下让一格，不去挤它们。录制
-        选单也是横着从录制键右边展开、留在同一条带子里，就是为了别落到这两簇头上。
-
         外面这层只是把两簇排成一行，自己不吃指针事件也不铺满顶边：绝对定位的 flex 容器
         宽度只到内容为止，加上 `pointer-events-none`，两簇之间与右侧那片画面照样能拾取
         和画轨迹。
       */}
-      <div className="pointer-events-none absolute right-4 top-16 z-20 flex items-center gap-2">
+      <div className="pointer-events-none absolute right-4 top-4 z-20 flex items-center gap-2">
         {/*
           间距与速度决定一笔画出来落几个轨迹点、这一笔在时间轴上占多久，所以它们跟着
           落点走，摆在画面这一侧而不是左栏：两者都得跟着场景尺度改（室内走位 0.3 米
