@@ -10,7 +10,7 @@ import {
 import { samplePathPosition, samplePathRotation } from './pathCurve';
 import { locomotionPoseFor, poseSampleTime } from './poses';
 import { PREVIZ_FPS, type PrevizObject, type PrevizScene, type Vec3 } from './scene';
-import { frameToU, pathClipAt, rigClipAt } from './timeline';
+import { frameToU, lastEndedPathClip, pathClipAt, rigClipAt } from './timeline';
 
 /** 某一帧上单个对象的解算结果。 */
 export interface EvaluatedObject {
@@ -55,9 +55,13 @@ export function evaluateSceneAt(scene: PrevizScene, frame: number): EvaluatedFra
     // 悬空轨道 parseScene 已经丢过一轮，这里兜的是运行时脏值。
     if (!target) continue;
 
-    const clip = pathClipAt(track, frame);
-    // 「片段建好了还没画」是常态（末尾新建片段就是这样），这时不覆盖静态变换。
-    if (!clip || clip.points.length === 0) continue;
+    // 「片段建好了还没画」是常态（末尾新建片段就是这样），空片段不算覆盖这一帧。
+    const covering = pathClipAt(track, frame);
+    const walking = covering && covering.points.length > 0 ? covering : undefined;
+    // 走完之后停在终点，而不是弹回摆放位置——`frameToU` 会把片段之外的帧夹到 1，
+    // 所以停住这件事不需要另写一套采样，还是同一条曲线的末端。
+    const clip = walking ?? lastEndedPathClip(track, frame);
+    if (!clip) continue;
 
     const u = frameToU(clip, frame);
     target.position = samplePathPosition(clip.points, u);
@@ -65,7 +69,8 @@ export function evaluateSceneAt(scene: PrevizScene, frame: number): EvaluatedFra
     // 位置在变而脚不动，看着是整个人被平移过去的：沿路径走位的人物换成走 / 跑的循环，
     // 时间从片段首帧起算。只有人物有姿势（其余对象 poseId 恒为 null）；只有一个点的
     // 路径没有位移，原地迈腿是在踏步，所以保持静止姿势。
-    if (target.poseId !== null && clip.points.length >= 2) {
+    // 停住的那几帧不进这个分支：人已经站定了，脚不该还在迈。
+    if (walking && target.poseId !== null && clip.points.length >= 2) {
       target.poseId = locomotionPoseFor(target.poseId);
       target.poseTime = (frame - clip.startFrame) / PREVIZ_FPS;
     }
