@@ -438,6 +438,78 @@ describe("renderCharacterPreview 并发", () => {
     expect(harness.eye()?.[1]).toBeCloseTo(195 / 100 / 2, 6);
   });
 
+  it("catches the fallback capsule up too, not just the skeleton", async () => {
+    const pending: Array<(value: FakeObject3D | null) => void> = [];
+    const harness = setup();
+    harness.build.mockImplementation(
+      () => new Promise<FakeObject3D | null>((resolve) => pending.push(resolve)),
+    );
+
+    const base = draftOf({ bodyType: "average", heightCm: 170, color: "#111111" });
+    const first = renderCharacterPreview(harness.deps, base);
+    const second = renderCharacterPreview(harness.deps, {
+      ...base,
+      heightCm: 195,
+      color: "#ff0000",
+    });
+    // 模型没下下来，这一具兜底成占位胶囊——而胶囊的尺寸与颜色是烤死的，没有「补刷」
+    // 那条路可走，只能按最新那份现搭一根。
+    pending[0]?.(null);
+    await Promise.all([first, second]);
+
+    const capsule = harness.mannequin()[0] as unknown as FakeMesh;
+    const wanted = createCharacterPlaceholder(harness.three, {
+      heightCm: 195,
+      color: "#ff0000",
+    });
+    expect(shapeOf(capsule)).toEqual(shapeOf(wanted));
+    expect(capsule.material.params.color).toBe("#ff0000");
+    // 取景与身上那具必须是同一份，否则是一具 170 的胶囊按 195 的距离取的景。
+    expect(harness.eye()?.[1]).toBeCloseTo(195 / 100 / 2, 6);
+  });
+
+  it("holds a draft snapshot the caller cannot reach back into", async () => {
+    const pending: Array<(value: FakeObject3D | null) => void> = [];
+    const harness = setup();
+    harness.build.mockImplementation(
+      () => new Promise<FakeObject3D | null>((resolve) => pending.push(resolve)),
+    );
+
+    const draft = draftOf({ bodyType: "average", poseAdjust: { pitch: 12, turn: 0, lean: 0 } });
+    const painting = renderCharacterPreview(harness.deps, draft);
+    // 记下来那份要留到下一次调用，也就是要在调用方这一帧之外继续有效。
+    draft.poseAdjust.pitch = -45;
+    pending[0]?.(fakeRig());
+    await painting;
+
+    expect(harness.applyCharacter).toHaveBeenLastCalledWith(
+      harness.mannequin()[0],
+      expect.objectContaining({ poseAdjust: { pitch: 12, turn: 0, lean: 0 } }),
+    );
+  });
+
+  it("does not let a stale build take the slot back when the key came full circle", async () => {
+    const pending: Array<(value: FakeObject3D | null) => void> = [];
+    const harness = setup();
+    harness.build.mockImplementation(
+      () => new Promise<FakeObject3D | null>((resolve) => pending.push(resolve)),
+    );
+
+    // 真模型 → 简化圆柱体 → 真模型。第一次与第三次重建的判据都是 `'rig'`，光比判据的
+    // 话第一次醒来会以为位置还是自己的。
+    const first = renderCharacterPreview(harness.deps, draftOf({ bodyType: "average" }));
+    const second = renderCharacterPreview(harness.deps, draftOf({ bodyType: "capsule" }));
+    const third = renderCharacterPreview(harness.deps, draftOf({ bodyType: "average" }));
+    // 第三次成功，第一次因为一次瞬时失败兜到了胶囊（`resolveSource` 不缓存失败，所以
+    // 这两件事真的可以同时发生）。
+    pending[1]?.(fakeRig());
+    pending[0]?.(null);
+    await Promise.all([first, second, third]);
+
+    expect(harness.mannequin()).toHaveLength(1);
+    expect(harness.mannequin()[0]?.userData.previzRig).toBe(true);
+  });
+
   it("throws nothing away and paints nothing when the stage died mid-build", async () => {
     const pending: Array<(value: FakeObject3D) => void> = [];
     let alive = true;
@@ -458,5 +530,14 @@ describe("renderCharacterPreview 并发", () => {
     expect(harness.targets).toHaveLength(0);
     expect(harness.renderer.setRenderTarget).not.toHaveBeenCalled();
     expect(harness.mannequin()).toHaveLength(0);
+
+    // 判据要还回去：位置上并没有木偶，留着的话这套东西万一又活过来（`alive` 是按通用
+    // 谓词写进文档的，唯一那处接线只是碰巧不回摆）就再也不会重建了。
+    alive = true;
+    const retry = renderCharacterPreview(harness.deps, draftOf({ bodyType: "average" }));
+    pending[1]?.(fakeRig());
+    await retry;
+    expect(harness.build).toHaveBeenCalledTimes(2);
+    expect(harness.mannequin()).toHaveLength(1);
   });
 });
