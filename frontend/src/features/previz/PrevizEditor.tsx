@@ -82,17 +82,21 @@ interface PrevizEditorProps {
 const CLICK_SLOP_PX = 4;
 
 /**
- * 哪颗工具支起哪种手柄；`undefined` 表示这颗工具下视口里不该有手柄。
+ * 哪颗工具支起哪种手柄；`null` 表示这颗工具下视口里不该有手柄。
+ *
+ * 值域直接写成 `GizmoMode | null` 而不是 `| undefined` 再在取值处补个 `?? null`：
+ * `setGizmoMode` 收的本来就是 `GizmoMode | null`，多绕一道会让「这里少写一行」既能是
+ * 编译期错误、也能是运行期悄悄补上的 null，白白削掉下面那条 Record 的保护。
  *
  * 写成完整的 `Record` 而不是 `Partial`：将来往工具列表里加一颗，这里少写一行是编译期
  * 错误，逼着作者当场表态「它要不要手柄」，而不是默默落进「没有手柄」——那种漏法只有
  * 用户点了半天发现拖不动才发现得了。
  */
-const TOOL_GIZMO_MODE: Record<PrevizTool, GizmoMode | undefined> = {
-  select: undefined,
-  navigate: undefined,
-  draw: undefined,
-  mark: undefined,
+const TOOL_GIZMO_MODE: Record<PrevizTool, GizmoMode | null> = {
+  select: null,
+  navigate: null,
+  draw: null,
+  mark: null,
   translate: "translate",
   rotate: "rotate",
   scale: "scale",
@@ -149,7 +153,7 @@ export function PrevizEditor({
    * 同时亮着；现在七颗按钮是一条互斥列表，手柄在不在只由「亮着的那颗是不是变换工具」
    * 决定，两份 state 不可能再对不上。
    */
-  const gizmoMode = TOOL_GIZMO_MODE[tool] ?? null;
+  const gizmoMode = TOOL_GIZMO_MODE[tool];
   /** 正在画的那一笔，世界坐标。null 表示画笔没按下。 */
   const stroke = useRef<Vec3[] | null>(null);
   /**

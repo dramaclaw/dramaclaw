@@ -46,7 +46,7 @@ export class PrevizGizmo {
   private attachedId: string | null = null;
   private movedDuringDrag = false;
   /**
-   * 手柄该不该看得见，两个互不相干的理由各记一份，画的时候取与。
+   * 手柄该不该看得见，互不相干的理由各记一份，画的时候取与（见 [applyVisibility]）。
    *
    * 合成一个裸开关就会出这个 bug：工具切到「选择」（不该有手柄）时用户按下截图，
    * 截图前后是 `setHelperVisible(false)` / `setHelperVisible(true)` 一对，收尾那句会
@@ -80,19 +80,26 @@ export class PrevizGizmo {
         this.movedDuringDrag = false;
         return;
       }
-      // 下面三个条件原先是三条 early return。改成嵌套的 if 是为了让收尾那两句一定跑得到：
-      // 「点一下不拖」（!movedDuringDrag）是用户每天做几十次的事，从那条路径上溜走的话
-      // dragging 永远停在 true，之后所有的工具切换都会被当成「还在拖」挂起，手柄再也换不动。
-      if (this.movedDuringDrag && this.attachedId) {
-        // 拖到一半对象被删了（撤销、另一个窗口）时 object 会是 null。照着它读变换会抛，
-        // 而这条处理链一断，上面那句 `orbit.enabled = true` 之后的收尾全没了。
-        const node = deps.controls.object as THREE.Object3D | null;
-        if (node) deps.onCommit(this.attachedId, readTransform(node));
-      }
-      this.dragging = false;
-      if (this.pendingMode !== undefined) {
-        this.applyMode(this.pendingMode);
+      // 提交那段原先是三个条件、两条 early return。改成嵌套的 if 再套一层 finally，为的是
+      // 让收尾那几句一定跑得到：
+      //   * 「点一下不拖」（!movedDuringDrag）是用户每天做几十次的事，早退的话
+      //     dragging 永远停在 true，之后所有的工具切换都被当成「还在拖」挂起，手柄再也换不动；
+      //   * onCommit 抛出（store 校验不过、对象刚被别处删掉）走的是 return 挡不住的那条路，
+      //     所以光靠嵌套 if 不够，得用 finally。用户看到的只是「按 W 没反应」，
+      //     根本联想不到几步之前那次拖拽。
+      try {
+        if (this.movedDuringDrag && this.attachedId) {
+          // 拖到一半对象被删了（撤销、另一个窗口）时 object 会是 null。照着它读变换会抛，
+          // 而这条处理链一断，上面那句 `orbit.enabled = true` 之后的收尾全没了。
+          const node = deps.controls.object as THREE.Object3D | null;
+          if (node) deps.onCommit(this.attachedId, readTransform(node));
+        }
+      } finally {
+        this.dragging = false;
+        // 先清再放：applyMode 里万一又抛，挂起的这一次也不会留到下一次拖拽结束再放一遍。
+        const pending = this.pendingMode;
         this.pendingMode = undefined;
+        if (pending !== undefined) this.applyMode(pending);
       }
     });
 
@@ -102,16 +109,25 @@ export class PrevizGizmo {
     });
   }
 
-  /** 挂到某个对象节点上。传 null 或锁定对象都等于摘掉手柄。 */
+  /**
+   * 挂到某个对象节点上。传 null 或锁定对象都等于摘掉手柄。
+   *
+   * 两条分支末尾都要重算一次可见性：three 的 `attach()` 内部会写死 `_root.visible = true`
+   * （`detach()` 写死 false），它并不知道当前工具要不要手柄、也不知道正在截图。少了这一句，
+   * 「W 工具下点另一个物体」和「录制途中换选中项」都会把本不该在的手柄放回画面——前者是
+   * 个接不到指针事件的鬼影，后者直接烤进成片。
+   */
   attach(node: THREE.Object3D | null): void {
     const objectId = node?.userData?.previzObjectId;
     if (!node || node.userData?.previzLocked === true || typeof objectId !== 'string') {
       this.attachedId = null;
       this.deps.controls.detach();
+      this.applyVisibility();
       return;
     }
     this.attachedId = objectId;
     this.deps.controls.attach(node);
+    this.applyVisibility();
   }
 
   /**
@@ -145,8 +161,16 @@ export class PrevizGizmo {
     this.applyVisibility();
   }
 
+  /**
+   * 三个理由取与，是可见性唯一的落笔处。
+   *
+   * `attachedId` 也要参与：没挂上对象时手柄拖不动任何东西，让它亮着只是在画面正中留一副
+   * 谁也用不了的箭头。three 自己是靠 attach/detach 管这半件事的，我们既然接管了另外两个
+   * 理由，就得把这一个也算进来——否则 `setMode` 会替一个空控件开灯。
+   */
   private applyVisibility(): void {
-    this.deps.controls.getHelper().visible = this.modeVisible && this.captureVisible;
+    this.deps.controls.getHelper().visible =
+      this.attachedId !== null && this.modeVisible && this.captureVisible;
   }
 
   dispose(): void {

@@ -48,11 +48,15 @@ export const PREVIZ_TOOLS = [...PREVIZ_POINTER_TOOLS, ...PREVIZ_TRANSFORM_TOOLS]
 export type PrevizTool = (typeof PREVIZ_TOOLS)[number];
 
 /**
- * 没有别的理由时该落在哪一颗工具上：编辑器的初始状态，以及画完一笔之后的回落。
+ * 没有别的理由时该落在哪一颗工具上。三处使用点：编辑器的初始状态、画完一笔之后的回落、
+ * 以及 Esc 退出标记工具之后的回落。
  *
- * 回落那处只要求「别让下一次点击又画出一条」，任何非 draw 的工具都满足；落在移动上是因为
- * 用户选中物体就直接能拖，比落回「选择」少一次按键。放在这里而不是各写各的字面量：两处
- * 分头改会让「画完一笔」和「刚打开」停在不同的工具上，而这两个时刻用户的意图是一样的。
+ * 两处回落各自只有一条硬约束——画完一笔要求「不是 draw」，否则下一次点击又画出一条；
+ * Esc 退出标记要求「不是 mark」，否则那一下 Esc 等于没按。落在移动上是这条约束之外的选择：
+ * 用户收完尾选中物体就直接能拖，比落回「选择」少按一次键。
+ *
+ * 放在这里而不是各写各的字面量：三处分头改会让「刚打开」「画完一笔」「Esc 完」停在不同的
+ * 工具上，用户读不出这里面有什么道理，只会觉得手柄时有时无。
  */
 export const PREVIZ_DEFAULT_TOOL: PrevizTool = "translate";
 
@@ -175,7 +179,11 @@ function RailButton({
   label: string;
   /** 提示文案；只在与无障碍名字不同（比如解释禁用原因）时才给。 */
   tip?: string;
-  /** 当前是否是选中态。 */
+  /**
+   * 当前是否是选中态。高亮的类和 `aria-pressed` 都从它派生，不接受调用方另传一份：
+   * 两处各写各的表达式，改坏其中一处的话，要么读屏说「按下」而画面没亮，要么反过来，
+   * 而工具栏的用例正是靠 `aria-pressed` 断言的——高亮丢了它也照样绿。
+   */
   on?: boolean;
   /** 快捷键字母；给了就在右上角画一个小键帽，并写进 aria-keyshortcuts。 */
   shortcut?: string;
@@ -189,6 +197,7 @@ function RailButton({
         className={cn(RAIL_BUTTON, on && RAIL_ON, className)}
         aria-label={label}
         aria-keyshortcuts={shortcut}
+        aria-pressed={on}
         {...props}
       >
         <Icon className="h-4 w-4" />
@@ -259,7 +268,6 @@ export function PrevizToolbar({
       tip={TOOL_TIP_KEY[option] && t(TOOL_TIP_KEY[option])}
       on={option === tool}
       shortcut={TOOL_KEY[option]}
-      aria-pressed={option === tool}
       onClick={() => onTool(option)}
     />
   );
