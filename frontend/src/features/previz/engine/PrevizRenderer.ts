@@ -1343,8 +1343,9 @@ export class PrevizRenderer {
     this.pathPreview?.dispose();
     this.strokePreview?.dispose();
     // 木偶预览那套场景不在 `this.scene` 底下，下面那次 traverse 扫不到它。清完把字段
-    // 也放掉：它指的那些东西已经还给 GPU 了，「非空就是能用」在这之后是假的，而且留
-    // 着还会一直钉住整棵预览场景树不让回收。
+    // 也放掉：`disposeCharacterPreviewStage` 摘的是场景的孩子，留下的是一个空 `Scene`
+    // 加一台相机，「字段非空就是能用」在这之后是假的。今天走不到——`renderCharacter-
+    // Preview` 进门就被 `disposed` 挡了——纯粹是不留一个已经作废的句柄在手上。
     if (this.characterStage) disposeCharacterPreviewStage(this.characterStage);
     this.characterStage = null;
     this.scene.traverse((object) => {

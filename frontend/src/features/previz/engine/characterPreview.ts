@@ -37,9 +37,14 @@ export interface CharacterPreviewDeps {
   /**
    * 这套家伙什还活着吗。`rig.build()` 可以挂上几秒，这期间用户完全可能关掉预演台：
    * 那时渲染器已经 `dispose()` 加 `forceContextLoss()`，场景的几何体也还回去了，而
-   * 这次调用还停在 await 上。醒来之后照画会在一个没有上下文的渲染器上开 render
-   * target、读像素，控制台一串 WebGL 报错，最后抛出一个没人接的 rejection——这个
-   * 函数的文档写着「可以不等」，也就确实没人接。
+   * 这次调用还停在 await 上。
+   *
+   * 醒来照画不会炸——three 0.185 的 `WebGLRenderer.render` 开头就是
+   * `if (_isContextLost === true) return;`，而这里用的是**同步版**
+   * `readRenderTargetPixels`，它读不到东西时只 `error(...)` 加 `return`（会 throw 的是
+   * `readRenderTargetPixelsAsync`，不在这条路上）。真实症状是：白白分配一块 render
+   * target，把一帧黑画到一块已经没人看得见的画布上，外加一串 console 噪声。挡住它是
+   * 为了省这些，不是为了接住什么异常。
    *
    * 不传就是「一直活着」，给不关心生命周期的调用方（测试、一次性截图）留的。
    */
@@ -72,10 +77,19 @@ const PREVIEW_FILL = 0.86;
 /**
  * 相机从人物正面绕开多少度。
  *
- * 「前倾」是 `applyPoseAdjust` 打在 rig 根 `rotation.x` 上的，转轴是世界 X。方位角取 0
- * 时相机站在 -Z、视线朝 +Z，转轴恰好横在画面里、与视线垂直——绕这样一根轴转，人在
- * 画面上只是前后缩短，表现为「矮了一截」，看不出他往哪边弯。绕开 30° 让转轴斜过去，
- * 前倾就有了左右分量；侧倾（世界 Z）同理。这个角度也正是人像里的四分之三侧，脸还在。
+ * `applyPoseAdjust` 是 `rotation.set(pitch, turn, lean)`，所以前倾绕世界 X、侧倾绕世界
+ * Z。方位角取 0 时相机站在 -Z 朝 +Z 看：前倾的转轴横在画面里、与视线垂直，绕它转只把
+ * 人前后缩短，表现为「矮了一截」，看不出往哪边弯；侧倾的转轴则与视线平行，那是纯粹的
+ * 画面内滚转，反倒是最显眼的一档。把头顶点投过这台相机实测的横向位移（身高 1.7 m，
+ * 前倾 45° / 侧倾 35°，NDC）：
+ *
+ *     方位角      0°       15°      30°      45°
+ *     前倾     0.0000   0.1347   0.2668   0.3932
+ *     侧倾     0.5549   0.5017   0.4245   0.3306
+ *
+ * 所以这 30° 是**专为前倾买的**：把它从「一点看不出来」抬到能读，代价是侧倾少两成三。
+ * 这笔买卖划算，因为侧倾在 0° 就已经过量，而前倾在 0° 是零。30° 同时也正是人像里的四
+ * 分之三侧，脸还在。
  */
 const PREVIEW_AZIMUTH_DEG = 30;
 
@@ -92,8 +106,20 @@ const PREVIEW_FAR_M = 200;
 const PREVIEW_ROOT_KEY = 'previzCharacterPreviewRoot';
 /** 当前这具木偶是按哪份判据建出来的，记在容器上。见 `mannequinKey`。 */
 const PREVIEW_BUILD_KEY = 'previzCharacterPreviewBuild';
-/** 最后一次调用要画的那份人物。在途的 build 醒来后按它补刷，见 `renderCharacterPreview`。 */
+/**
+ * 最后一次调用要画的那份人物。在途的 build 醒来后按它补刷，见 `renderCharacterPreview`。
+ * 跟着容器走，所以 `disposeCharacterPreviewStage` 把容器摘掉时它自然一起没，不用清。
+ */
 const PREVIEW_LATEST = 'previzCharacterPreviewLatest';
+/**
+ * 第几次重建占着「往容器里挂」这个位置。醒来时它不是自己那一号，说明后面还有一次重建
+ * 在跑，这一具就该丢掉。
+ *
+ * 不能拿 `PREVIEW_BUILD_KEY` 当这个用：key 是**按内容算**的，「真模型」那一档所有身高
+ * 姿势颜色都是同一个 `'rig'`。真模型 → 胶囊 → 真模型这么切一轮，第一次与第三次重建的
+ * key 一模一样，第一次醒来会以为位置还是自己的，把第三次刚建好的那具替掉。
+ */
+const PREVIEW_CLAIM = 'previzCharacterPreviewClaim';
 
 /**
  * 建一套预览用的场景与相机。
@@ -140,13 +166,14 @@ export function disposeCharacterPreviewStage(stage: CharacterPreviewStage): void
  *
  * 重叠调用是安全的，但「安全」分两种，别只记住一种：
  *
- * - **key 变了**（体型在「简化圆柱体」与真模型之间切）：先发那次醒来时发现 key 已经
- *   不是自己占的那个，把手里这具丢掉走人，场上只留后发那具。
- * - **key 没变**（真模型下载期间用户又改了身高 / 姿势 / 颜色）：后发那几次走的是就地
+ * - **又起了一次重建**（体型在「简化圆柱体」与真模型之间切）：先发那次醒来发现挂载的
+ *   位置已经不是自己那一号（`PREVIEW_CLAIM`），把手里这具丢掉走人，场上只留最后那具。
+ * - **没起新重建**（真模型下载期间用户改了身高 / 姿势 / 颜色）：后发那几次走的是就地
  *   刷新那条路，而那时木偶**还没挂上**，刷了个空——所以最新那份草稿要记在
- *   `PREVIEW_LATEST` 上，由先发那次在挂载前补刷一遍，并按它取景。少了这一步，木偶会
- *   停在**第一次**那份草稿上，直到用户再动一次任何字段；而对话框默认体型就是真模型，
- *   第一次打开必然要等模型落地，这个窗口里的每一次编辑都命中它。
+ *   `PREVIEW_LATEST` 上，由先发那次在挂载前按它收尾：骨架补刷一遍，兜底的占位胶囊按
+ *   它现搭（尺寸与颜色烤死在几何体和材质里，改不动），相机也按它取景。少了这一步，
+ *   木偶会停在**第一次**那份草稿上，直到用户再动一次任何字段；而对话框默认体型就是真
+ *   模型，第一次打开必然要等模型落地，这个窗口里的每一次编辑都命中它。
  */
 export async function renderCharacterPreview(
   deps: CharacterPreviewDeps,
@@ -164,32 +191,40 @@ export async function renderCharacterPreview(
     // `current` 为空说明先发那次还在 await，上面记的那笔就是留给它的。
     if (current?.userData.previzRig) deps.rig.applyCharacter(current, character);
   } else {
-    // 先占住 key 再 await：`rig.build()` 是异步的，把体型下拉框一路拖过去时两次调用
-    // 会重叠，不占的话两次都判成「要重建」，白克隆一副骨架。
+    // 先占住位置再 await：`rig.build()` 是异步的，把体型下拉框一路拖过去时两次调用会
+    // 重叠。key 不占的话两次都判成「要重建」，白克隆一副骨架；号不占的话见
+    // `PREVIEW_CLAIM`。
     root.userData[PREVIEW_BUILD_KEY] = key;
+    const claim = ((root.userData[PREVIEW_CLAIM] as number | undefined) ?? 0) + 1;
+    root.userData[PREVIEW_CLAIM] = claim;
     const built = await buildMannequin(deps, character);
     if (!(deps.alive?.() ?? true)) {
-      // 等它的这段时间里整套家伙什被拆了，见 `CharacterPreviewDeps.alive`。
-      disposeSubtree(built.node);
+      // 等它的这段时间里整套家伙什被拆了，见 `CharacterPreviewDeps.alive`。判据要还
+      // 回去：位置上并没有木偶，留着的话这套东西万一又活过来就再也不会重建了。
+      if (root.userData[PREVIEW_BUILD_KEY] === key) root.userData[PREVIEW_BUILD_KEY] = undefined;
+      if (built.node) disposeSubtree(built.node);
       return;
     }
-    if (root.userData[PREVIEW_BUILD_KEY] !== key) {
-      // 等它的这段时间里草稿换成了另一具木偶，这一具已经过时。挂进去会和新的那具叠在
-      // 一起。（草稿只是改了参数、key 没变的那种，走的是下面的补刷，不是丢弃。）
-      disposeSubtree(built.node);
+    if (root.userData[PREVIEW_CLAIM] !== claim) {
+      // 等它的这段时间里又起了一次重建，这一具已经过时。挂进去会把那一具替掉，或者和
+      // 它叠在一起。（草稿只是改了参数、没起新重建的那种，走的是下面的补刷。）
+      if (built.node) disposeSubtree(built.node);
       return;
     }
-    // 模型没到手，现在挂着的是兜底的胶囊：把判据抹掉，下一次编辑就等于一次重试。
-    // 不抹的话这个对话框在这次会话里永远停在胶囊上，而用户什么提示都没有。
-    if (!built.complete) root.userData[PREVIEW_BUILD_KEY] = undefined;
-    // 按等待期间最后一份草稿补刷并取景，见函数头那两种「安全」。
+    // 按等待期间最后一份草稿收尾，见函数头那两种「安全」。
     character = root.userData[PREVIEW_LATEST] as PrevizCharacter;
-    if (built.node.userData.previzRig) deps.rig.applyCharacter(built.node, character);
+    // 占位胶囊拖到这里才建：尺寸烤在 `CapsuleGeometry` 里、辨识色烤在材质里，等待开始
+    // 时那份草稿建出来的那一根改不动，只能按最新这份现搭。
+    const node = built.node ?? createCharacterPlaceholder(deps.three, character);
+    if (node.userData.previzRig) deps.rig.applyCharacter(node, character);
+    // 模型没到手，挂上去的是兜底的胶囊：把判据抹掉，下一次编辑就等于一次重试。不抹的
+    // 话这个对话框在这次会话里永远停在胶囊上，而用户什么提示都没有。
+    if (!built.complete) root.userData[PREVIEW_BUILD_KEY] = undefined;
     for (const child of [...root.children]) {
       root.remove(child);
       disposeSubtree(child);
     }
-    root.add(built.node);
+    root.add(node);
   }
 
   const width = Math.max(1, Math.floor(deps.canvas.width));
@@ -220,9 +255,11 @@ function mannequinKey(character: PrevizCharacter): string {
   return 'rig';
 }
 
-/** 建好的一具木偶。`complete` 为假表示要的是真模型、但只兜到了胶囊。 */
+/** 建好的一具木偶。 */
 interface BuiltMannequin {
-  node: THREE.Object3D;
+  /** 那具骨架；`null` 表示这一具要用占位胶囊，由调用方按最新那份草稿现搭。 */
+  node: THREE.Object3D | null;
+  /** 为假表示要的是真模型、但只兜到了胶囊。 */
   complete: boolean;
 }
 
@@ -239,12 +276,9 @@ async function buildMannequin(
   deps: CharacterPreviewDeps,
   character: PrevizCharacter,
 ): Promise<BuiltMannequin> {
-  if (character.bodyType === 'capsule') {
-    return { node: createCharacterPlaceholder(deps.three, character), complete: true };
-  }
+  if (character.bodyType === 'capsule') return { node: null, complete: true };
   const rig = await deps.rig.build(character);
-  if (rig) return { node: rig, complete: true };
-  return { node: createCharacterPlaceholder(deps.three, character), complete: false };
+  return { node: rig, complete: rig !== null };
 }
 
 /** 预览场景里那个常驻的木偶容器，没有就建一个。 */
@@ -282,7 +316,11 @@ function previewCharacter(draft: PrevizCharacterDraft): PrevizCharacter {
     heightPolicy: draft.heightPolicy,
     planeY: 0,
     basePoseId: draft.basePoseId,
-    poseAdjust: draft.poseAdjust,
+    // 摊平一份。建出来的这个 `PrevizCharacter` 会作为 `PREVIEW_LATEST` 挂在容器上留到
+    // 下一次调用，也就是说它要在**调用方的这一帧之外**继续有效；共用引用的话它就跟着
+    // 调用方那个对象走，谁原地改一下都会追溯改掉这份「等待期间的最后一份草稿」。今天
+    // 的调用方是换新对象的 React state，碰巧不会——这份拷贝是为了不必依赖那个碰巧。
+    poseAdjust: { ...draft.poseAdjust },
   };
 }
 

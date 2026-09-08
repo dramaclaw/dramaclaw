@@ -145,6 +145,20 @@ describe("characterDraftOverrides", () => {
     expect(overrides.poseAdjust?.pitch).toBe(45);
   });
 
+  it("never lets the created character share the dialog's own pose object", () => {
+    const draft = placed({ poseAdjust: { pitch: 10, turn: 20, lean: 5 } });
+
+    const overrides = characterDraftOverrides(draft);
+    const made = createPrevizObject("character", [], overrides);
+
+    // `createPrevizObject` 结尾是 `Object.assign(created, withoutUndefined(overrides))`，
+    // 递出去的是引用。让它和草稿共用一个对象的话，对话框关掉之前再拖一下滑杆就改动了
+    // 一个已经建好的人物——没有 store 事务，撤销栈上什么都没有，画面却变了。
+    expect(overrides.poseAdjust).not.toBe(draft.poseAdjust);
+    expect(made.poseAdjust).not.toBe(draft.poseAdjust);
+    expect(made.poseAdjust).toEqual({ pitch: 10, turn: 20, lean: 5 });
+  });
+
   it("drops a blank name so the factory's 人物 N still wins", () => {
     const overrides = characterDraftOverrides(placed({ name: "   " }));
 
