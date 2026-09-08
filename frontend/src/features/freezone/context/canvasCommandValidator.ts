@@ -1,4 +1,4 @@
-import type { CanvasEdge, CanvasNode } from "@/features/canvas/domain/canvasNodes";
+import type { CanvasEdge, CanvasNode, VideoGenMode } from "@/features/canvas/domain/canvasNodes";
 import { CANVAS_NODE_TYPES, type CanvasNodeData } from "@/features/canvas/domain/canvasNodes";
 import {
   isPresetManagedNode,
@@ -82,20 +82,24 @@ function makeVirtualNode(command: {
   } as CanvasNode;
 }
 
-function validateModelEnumField(
+function validateModelAndModeFields(
   issues: CanvasCommandValidationIssue[],
   path: string,
   node: CanvasNode,
   data: Partial<CanvasNodeData>,
 ): void {
   const schema = buildCanvasNodeActionCatalog(node).editable_schema;
-  for (const [field, value] of Object.entries(data)) {
-    if (field !== "model") continue;
+  const values = { ...data } as Record<string, unknown>;
+  if (node.type === CANVAS_NODE_TYPES.video && ("model" in data || "genMode" in data)) {
+    values.genMode = (node.data as { genMode?: unknown }).genMode ?? "textToVideo";
+  }
+  for (const [field, value] of Object.entries(values)) {
+    if (field !== "model" && field !== "genMode") continue;
     if (value === undefined || value === null || value === "") continue;
     const fieldSchema = schema[field];
     if (fieldSchema?.type !== "enum") continue;
     const options = fieldSchema.options ?? [];
-    if (options.length === 0) continue;
+    if (options.length === 0 && field === "model") continue;
     if (options.some((option) => Object.is(option, value))) continue;
     addIssue(
       issues,
@@ -211,7 +215,7 @@ export function validateCanvasChatCommandEnvelopes(
           if (reserved.length > 0) {
             addIssue(issues, path, `reserved data fields are not allowed: ${reserved.join(", ")}`);
           }
-          validateModelEnumField(
+          validateModelAndModeFields(
             issues,
             path,
             virtualNode ?? ({
@@ -263,7 +267,7 @@ export function validateCanvasChatCommandEnvelopes(
             addIssue(issues, path, `reserved data fields are not allowed: ${reserved.join(", ")}`);
           }
           if (nodeType) {
-            validateModelEnumField(
+            validateModelAndModeFields(
               issues,
               path,
               {
@@ -311,12 +315,13 @@ export function validateCanvasChatCommandEnvelopes(
             if (invalid.length > 0) {
               addIssue(issues, path, `fields are not editable on this node: ${invalid.join(", ")}`);
             }
-            validateModelEnumField(
+            validateModelAndModeFields(
               issues,
               path,
               { ...target, data: { ...target.data, ...data } as CanvasNodeData },
               data,
             );
+            nodeById.set(target.id, { ...target, data: { ...target.data, ...data } as CanvasNodeData });
           }
           break;
         }
@@ -431,6 +436,11 @@ export function validateCanvasChatCommandEnvelopes(
           if (!target) {
             addIssue(issues, path, `node not found: ${command.node_id}`);
             break;
+          }
+          if (target.type === CANVAS_NODE_TYPES.video && command.action === "generate_video") {
+            validateModelAndModeFields(issues, path, target, {
+              genMode: (target.data as { genMode?: VideoGenMode }).genMode ?? "textToVideo",
+            });
           }
           const action = buildCanvasNodeActionCatalog(target, { nodes, edges }).actions.find(
             (item) => item.action === command.action,

@@ -6002,6 +6002,8 @@
     },
     "videoModel": {
       "reason": {
+        "imageUnsupported": "This model does not support image inputs. Remove the images or choose a model that supports them.",
+        "modeUnsupported": "This model does not support the selected generation mode. Choose a supported mode for this node.",
         "videoUnsupported": "This model doesn’t accept video assets",
         "audioUnsupported": "This model doesn’t accept audio assets",
         "singleImageOnly": "This model accepts only 1 image per run",
