@@ -45,12 +45,18 @@ import {
   type PrevizCameraDraft,
   type PrevizCameraPlacement,
 } from "./domain/cameraDraft";
+import {
+  characterDraftOverrides,
+  type PrevizCharacterDraft,
+  type PrevizPlacedCharacterDraft,
+} from "./domain/characterDraft";
 import { canAddObject } from "./domain/limits";
 import { drawPlaneHeight } from "./domain/pathDraw";
 import { liveCameraAt } from "./domain/program";
 import { uploadPrevizProp } from "./propAsset";
 import { monitorCameraId, usePrevizStore } from "./store";
 import { PrevizCameraCreateDialog } from "./ui/PrevizCameraCreateDialog";
+import { PrevizCharacterCreateDialog } from "./ui/PrevizCharacterCreateDialog";
 import { PrevizClipInspector } from "./ui/PrevizClipInspector";
 import { PrevizHeaderBar } from "./ui/PrevizHeaderBar";
 import { PrevizInspector } from "./ui/PrevizInspector";
@@ -232,6 +238,11 @@ export function PrevizEditor({
    * 视口仍能被轨道拖动（预览渲染本身就会重画视口），现取的话用户拖一下取景就飘了。
    */
   const [cameraPose, setCameraPose] = useState<PrevizCameraPlacement | null>(null);
+  /**
+   * 人物创建对话框开着没有。不像机位那样存一份视角：人物的站位是在对话框里的俯视图上
+   * 点出来的，跟导演视角无关，一个布尔就够。
+   */
+  const [characterCreateOpen, setCharacterCreateOpen] = useState(false);
   const pointerDownAt = useRef<{ x: number; y: number } | null>(null);
   /**
    * Web Audio 上下文按需建、整个编辑器共用一份：浏览器对 AudioContext 数量有上限，
@@ -655,6 +666,16 @@ export function PrevizEditor({
         setCameraPose(renderer?.viewPose() ?? PREVIZ_DEFAULT_VIEW);
         return;
       }
+      // 人物同理：直接建的话人会落在世界原点，两个人建出来就叠在一起，而用户还没说
+      // 谁站哪。上限同样在开框前查。
+      if (kind === "character") {
+        if (!canAddObject(usePrevizStore.getState().scene, "character")) {
+          toast.error(t("previz.editor.limitReached"));
+          return;
+        }
+        setCharacterCreateOpen(true);
+        return;
+      }
       const id = addObject(kind);
       if (!id) toast.error(t("previz.editor.limitReached"));
     },
@@ -673,6 +694,29 @@ export function PrevizEditor({
       setActiveCamera(id);
     },
     [addObject, setActiveCamera, t],
+  );
+
+  const handleCreateCharacter = useCallback(
+    (draft: PrevizPlacedCharacterDraft) => {
+      setCharacterCreateOpen(false);
+      // `addObject` 建完就选中（见 store），所以这里不用再 `setSelection` 一次：
+      // 用户刚定完这个人的属性，接着要改的多半还是他。
+      const id = addObject("character", characterDraftOverrides(draft));
+      if (!id) toast.error(t("previz.editor.limitReached"));
+    },
+    [addObject, t],
+  );
+
+  /**
+   * 引用要稳：对话框把它当重画木偶那个 effect 的依赖，每渲染一次换一个新函数的话，
+   * 编辑器那边任何一次无关重渲染都会让离屏 pass 重跑一遍。
+   */
+  const handleRenderCharacterPreview = useCallback(
+    (previewCanvas: CameraPreviewCanvas, draft: PrevizCharacterDraft) => {
+      // 返回的 Promise 故意不等：画好会自己 blit 到画布上，对话框这边没有后续动作。
+      void renderer?.renderCharacterPreview(previewCanvas, draft);
+    },
+    [renderer],
   );
 
   const handleImportProp = useCallback(
@@ -1420,6 +1464,14 @@ export function PrevizEditor({
                 }}
                 onCreate={handleCreateCamera}
                 onClose={() => setCameraPose(null)}
+              />
+
+              <PrevizCharacterCreateDialog
+                open={characterCreateOpen}
+                objects={scene.objects}
+                onRenderPreview={handleRenderCharacterPreview}
+                onCreate={handleCreateCharacter}
+                onClose={() => setCharacterCreateOpen(false)}
               />
             </div>
           </TooltipProvider>
