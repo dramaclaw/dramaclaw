@@ -16,7 +16,7 @@ import {
   type Vec3,
 } from '../domain/scene';
 import { buildCameraModel, syncCameraFrustum } from './cameraModel';
-import type { CharacterRigFactory } from './characterRig';
+import { disposeRigMaterials, type CharacterRigFactory } from './characterRig';
 import type { PropLoader } from './propLoader';
 
 /** three 命名空间本体。以构造参数传入，绝不在本文件里 import —— 见类注释。 */
@@ -46,11 +46,12 @@ export const PREVIZ_PLACEHOLDER_RADIUS = 0.22;
 const CLAY_COLOR = 0xb9bec8;
 
 /**
- * 单件占位体的分类色。机位不在表里——它是 `cameraModel.ts` 建的一台多色摄影机，
- * 颜色由那边管；在这里留一个用不到的 `camera` 项只会让人以为改它能改出效果。
+ * 单件占位体的分类色。机位与人物都不在表里，理由是同一条：颜色由别处管，
+ * 在这里留一个用不到的项只会让人以为改它能改出效果。机位是 `cameraModel.ts` 建的
+ * 一台多色摄影机；人物用的是自己那个辨识色（`PrevizCharacter.color`）——一颗固定的
+ * 分类蓝会让模型没到位的那几秒里四个人物长得一模一样。
  */
-const KIND_COLOR: Record<Exclude<PrevizObject['kind'], 'camera'>, number> = {
-  character: 0x6ea8fe,
+const KIND_COLOR: Record<Exclude<PrevizObject['kind'], 'camera' | 'character'>, number> = {
   light: 0xfff3b0,
   prop: 0x9ad0a0,
 };
@@ -199,6 +200,10 @@ export class PrevizSceneGraph {
       if (object.kind === 'character' && this.resizePlaceholder(node, object)) {
         pending.push(node);
       }
+      // 辨识色也是能在属性面板上改的，而占位胶囊只在身高变了时才重建。
+      if (object.kind === 'character' && this.recolorPlaceholder(node, object)) {
+        pending.push(node);
+      }
       if (object.kind === 'character') this.syncMarker(node, object);
       // 机位的视锥同理：焦距、传感器、出片画幅都是能在属性面板上改的，几何体建好
       // 不会自己跟着变。这里不进 `pending`——重画只换几何体，材质原封不动。
@@ -229,7 +234,11 @@ export class PrevizSceneGraph {
       );
 
       const rig = this.characterRig;
-      if (object.kind === 'character' && rig) this.syncCharacterRig(rig, node, object);
+      if (object.kind === 'character' && rig && this.syncCharacterRig(rig, node, object)) {
+        // 辨识色刚重染过：材质的颜色是本色，而当前显示模式未必要本色（全灰要盖回
+        // 水泥灰）。少了这一步，全灰模式下改一次颜色就跳出一个染了色的人。
+        pending.push(node);
+      }
       const loader = this.propLoader;
       if (object.kind === 'prop' && loader) this.syncPropModel(loader, node, object);
     }
@@ -279,17 +288,18 @@ export class PrevizSceneGraph {
     rig: CharacterRigFactory,
     node: THREE.Object3D,
     character: PrevizCharacter,
-  ): void {
+  ): boolean {
     const model = node.children.find((child) => child.userData.previzRig);
     if (model) {
-      // 姿势、身高体型、姿态微调一起刷。只刷缩放的话，属性面板的「基础姿势」下拉框与
-      // 「姿态微调」三根滑杆对已加载的人物完全失效。
-      rig.applyCharacter(model, character);
-      return;
+      // 姿势、身高体型、姿态微调、辨识色一起刷。只刷缩放的话，属性面板的「基础姿势」
+      // 下拉框与「姿态微调」三根滑杆对已加载的人物完全失效。
+      // 返回的是「辨识色这一次重染过没有」——重染过就要补一次显示模式。
+      return rig.applyCharacter(model, character);
     }
-    if (node.userData.previzRigRequested) return;
+    if (node.userData.previzRigRequested) return false;
     node.userData.previzRigRequested = true;
     void this.swapInCharacterModel(rig, node, character);
+    return false;
   }
 
   private async swapInCharacterModel(
@@ -433,6 +443,22 @@ export class PrevizSceneGraph {
   }
 
   /**
+   * 辨识色变了就把占位胶囊重新记一次色，返回是否真的变过——变过的话调用方要给它补一次
+   * 显示模式，颜色由那条路径落到材质上。这里只改账不直接改材质：全灰模式下直接染的话，
+   * 改一次颜色就跳出一个染了色的胶囊，而全灰恰恰是要把所有人抹平。
+   *
+   * 找不到占位体时什么都不做：模型已经到位了，颜色归 rig 的染色管。反过来，模型一直
+   * 到不了的人物（加载失败）会永远停在胶囊上——那时这条路是辨识色唯一的出口。
+   */
+  private recolorPlaceholder(node: THREE.Object3D, character: PrevizCharacter): boolean {
+    const placeholder = node.children.find((child) => child.userData.previzPlaceholder);
+    if (!placeholder) return false;
+    if (placeholder.userData.previzPlaceholderColor === character.color) return false;
+    placeholder.userData.previzPlaceholderColor = character.color;
+    return true;
+  }
+
+  /**
    * 身高变了就把人物占位胶囊换一个。返回是否真的换过，换过的话调用方要给它补一次显示模式
    * ——新材质是按「实心」建出来的。
    *
@@ -473,6 +499,9 @@ export class PrevizSceneGraph {
     const three = this.three;
     if (object.kind === 'camera') return buildCameraModel(three, object, this.outputAspect);
     let geometry: THREE.BufferGeometry;
+    // 人物是本人的辨识色，其余按分类色。类型上也分得开：`KIND_COLOR` 里已经没有
+    // `character` 这一项，改回去会被 TS 挡下来。
+    let color: number | string;
     let yOffset = 0;
     let heightCm: number | undefined;
 
@@ -486,18 +515,21 @@ export class PrevizSceneGraph {
         geometry = new three.CapsuleGeometry(radius, height - radius * 2, 4, 12);
         // 胶囊自身以原点为中心，抬高半个身高才让脚底落在 y=0 的地面网格上。
         yOffset = height / 2;
+        color = object.color;
         break;
       }
       case 'light':
         geometry = new three.SphereGeometry(0.14, 16, 12);
+        color = KIND_COLOR.light;
         break;
       case 'prop':
         geometry = new three.BoxGeometry(0.6, 0.6, 0.6);
+        color = KIND_COLOR.prop;
         break;
     }
 
     const material = new three.MeshStandardMaterial({
-      color: KIND_COLOR[object.kind],
+      color,
       roughness: 0.7,
       metalness: 0.05,
     });
@@ -509,7 +541,7 @@ export class PrevizSceneGraph {
     // Task 8 / Task 9 把模型嵌进来时正要打破它；顺带那条写法还要一次 `any` 断言，
     // 因为 three 的 `userData` 是 `Record<string, any>`，拿它当 `KIND_COLOR` 的键会被
     // TS7053 挡下来。
-    mesh.userData.previzPlaceholderColor = KIND_COLOR[object.kind];
+    mesh.userData.previzPlaceholderColor = color;
     // 建这个胶囊时用的是哪个身高。`resizePlaceholder` 靠它判断要不要重建。
     if (heightCm !== undefined) mesh.userData.previzPlaceholderHeightCm = heightCm;
     return mesh;
@@ -591,7 +623,12 @@ const SHARED_MODEL_KEY = 'previzSharedModel';
  * 手写递归而不是 `traverse`：`traverse` 无条件往下走，没法在某个节点上剪枝。
  */
 function disposeSubtree(root: THREE.Object3D): void {
-  if (root.userData[SHARED_MODEL_KEY]) return;
+  if (root.userData[SHARED_MODEL_KEY]) {
+    // 共享的几何体与材质整棵跳过，但人物 rig 为了上辨识色给自己克隆的那批材质是独有的，
+    // 谁都不会替它还——每删一个人物漏一批，而画面上什么都看不出来。
+    disposeRigMaterials(root);
+    return;
+  }
   // 叠加层什么都不持有：几何体借自源网格，材质是全局共用的。照着还会把源模型一起还掉。
   if (root.userData[PREVIZ_OVERLAY_KEY]) return;
   const mesh = root as THREE.Mesh;

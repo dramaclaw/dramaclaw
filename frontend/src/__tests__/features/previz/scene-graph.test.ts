@@ -156,12 +156,31 @@ function fakeThree() {
    * 假实现要能测出来的东西。
    */
   class FakeColor {
-    constructor(private hex: number) {}
+    r = 1;
+    g = 1;
+    b = 1;
     set = vi.fn((value: number | string) => {
-      this.hex = typeof value === 'number' ? value : Number.parseInt(value.slice(1), 16);
+      const hex = typeof value === 'number' ? value : Number.parseInt(value.slice(1), 16);
+      this.r = ((hex >> 16) & 0xff) / 255;
+      this.g = ((hex >> 8) & 0xff) / 255;
+      this.b = (hex & 0xff) / 255;
       return this;
     });
-    getHex = () => this.hex;
+    constructor(value: number | string) {
+      this.set(value);
+      this.set.mockClear();
+    }
+    /** 辨识色按材质自己的明度分级染上去，压暗走的就是这一条。 */
+    multiplyScalar(scalar: number) {
+      this.r *= scalar;
+      this.g *= scalar;
+      this.b *= scalar;
+      return this;
+    }
+    getHex = () => {
+      const byte = (channel: number) => Math.max(0, Math.min(255, Math.round(channel * 255)));
+      return (byte(this.r) << 16) | (byte(this.g) << 8) | byte(this.b);
+    };
   }
   class FakeMaterial {
     opacity = 1;
@@ -170,8 +189,15 @@ function fakeThree() {
     color: FakeColor;
     userData: Record<string, unknown> = {};
     dispose = vi.fn();
+    /** 人物 rig 要给自己克隆一份材质，才不会把共享的源模型一起染了。 */
+    clone = vi.fn(
+      (): FakeMaterial => new FakeMaterial({ ...this.params, color: this.color.getHex() }),
+    );
     constructor(public params: Record<string, unknown> = {}) {
-      this.color = new FakeColor(typeof params.color === 'number' ? params.color : 0xffffff);
+      const color = params.color;
+      this.color = new FakeColor(
+        typeof color === 'number' || typeof color === 'string' ? color : 0xffffff,
+      );
     }
   }
   /**
@@ -231,18 +257,22 @@ function fakeThree() {
 }
 
 /** 断言用的最小结构视图：假 three 的 Mesh 是 `any` 之外唯一能看清内部的入口。 */
+interface FakeMaterialView {
+  opacity: number;
+  transparent: boolean;
+  needsUpdate: boolean;
+  color: { set: ReturnType<typeof vi.fn>; getHex: () => number };
+  userData: Record<string, unknown>;
+  dispose: ReturnType<typeof vi.fn>;
+  clone: ReturnType<typeof vi.fn>;
+  // 辨识标记与人物占位体的颜色是 `#rrggbb` 字符串（人物自己那一份），其余是数字常量。
+  params: { color?: number | string; side?: number };
+}
+
 interface FakeMeshView {
   geometry: { shape: string; args: number[]; dispose: ReturnType<typeof vi.fn> };
-  material: {
-    opacity: number;
-    transparent: boolean;
-    needsUpdate: boolean;
-    color: { set: ReturnType<typeof vi.fn>; getHex: () => number };
-    userData: Record<string, unknown>;
-    dispose: ReturnType<typeof vi.fn>;
-    // 辨识标记的颜色是 `#rrggbb` 字符串（人物自己那一份），占位体的是数字常量。
-    params: { color?: number | string; side?: number };
-  };
+  material: FakeMaterialView;
+  userData: Record<string, unknown>;
   position: { x: number; y: number; z: number };
   rotation: { x: number; y: number; z: number };
 }
@@ -284,19 +314,29 @@ function rigFactory(three: typeof import('three'), clipNames: string[] = ['Idle_
     scene: new three.Object3D(),
     animations: clipNames.map((name) => ({ name })) as unknown as THREE.AnimationClip[],
   }));
+  // 给模型材质一个明确的本色：默认白跟「原色没记住、还原成了 undefined」在断言里
+  // 分不开，全灰的回程正是要区分这两者。
+  const sourceMaterial = new three.MeshStandardMaterial({
+    color: 0x8844ff,
+  }) as unknown as FakeMaterialView;
   const clone = vi.fn(() => {
     const model = new three.Object3D();
-    // 给模型材质一个明确的本色：默认白跟「原色没记住、还原成了 undefined」在断言里
-    // 分不开，全灰的回程正是要区分这两者。
+    // 克隆体的网格是新的，材质仍指向源模型那一份——`SkeletonUtils.clone` 就是这样的
+    // 浅克隆，而这一点正是「染一个人物会不会把所有人物连同源模型一起染了」的要害。
     model.add(
       new three.Mesh(
         new three.BoxGeometry(1, 1, 1),
-        new three.MeshStandardMaterial({ color: 0x8844ff }),
+        sourceMaterial as unknown as THREE.Material,
       ),
     );
     return model;
   });
-  return { factory: new CharacterRigFactory({ three, loadGltf, clone }), loadGltf, clone };
+  return {
+    factory: new CharacterRigFactory({ three, loadGltf, clone }),
+    loadGltf,
+    clone,
+    sourceMaterial,
+  };
 }
 
 /** 排空微任务队列：模型换入走的是一条纯 Promise 链，没有定时器。 */
@@ -1080,6 +1120,87 @@ describe('PrevizSceneGraph', () => {
     expect(mesh.material.color.getHex()).toBe(ownColour);
   });
 
+  it("paints the loaded model in the character's own colour, and repaints it", async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { factory, sourceMaterial } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene({ color: '#ff0000' });
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+    await flush();
+    const mesh = rigMeshOf(graph, character.id);
+
+    // 所有人共用同一份角色模型：模型一到位，四个人物长得一模一样，脚下那圈环是
+    // 当时唯一的辨认线索。辨识色得落到人身上。
+    expect(mesh.material.color.getHex()).toBe(0xff0000);
+
+    graph.sync({ ...scene, objects: [{ ...character, color: '#00ff00' }] });
+
+    // 属性面板上换一次辨识色，视口里的人也得跟着换。
+    expect(mesh.material.color.getHex()).toBe(0x00ff00);
+    // 而共享的源材质一次都不该被碰：染的是它，四个人物瞬间同色。
+    expect(sourceMaterial.color.getHex()).toBe(0x8844ff);
+  });
+
+  it('gives the loaded model its new colour back on the way out of clay mode', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene({ color: '#ff0000' });
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    const clay = { ...scene, settings: { ...scene.settings, displayMode: 'clay' as const } };
+    graph.sync(clay);
+    await flush();
+    const mesh = rigMeshOf(graph, character.id);
+    const clayColour = mesh.material.color.getHex();
+    expect(clayColour).not.toBe(0xff0000);
+
+    graph.sync({ ...clay, objects: [{ ...character, color: '#00ff00' }] });
+    // 全灰模式下换辨识色，画面上不该跳出一个绿人——全灰就是要把所有人抹平。
+    expect(mesh.material.color.getHex()).toBe(clayColour);
+
+    graph.sync({ ...scene, objects: [{ ...character, color: '#00ff00' }] });
+
+    // 回程读的是染灰之前记下的那份本色。染色这条路不把那笔账作废的话，切回实体
+    // 拿到的是**改色之前**的旧辨识色——用户唯一的补救办法是再改一次颜色。
+    expect(mesh.material.color.getHex()).toBe(0x00ff00);
+  });
+
+  it("paints the placeholder capsule in the character's own colour", () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+
+    const scene = characterScene({ color: '#ff0000' });
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+
+    // 分类色是固定的一颗蓝：模型没到位的那几秒（加载失败时是一直），四个人物是
+    // 四颗一模一样的蓝胶囊，谁是谁完全看不出来。
+    const placeholder = placeholderOf(graph, character.id);
+    expect(placeholder.material.params.color).toBe('#ff0000');
+    // 本色也要记对：`applyDisplayMode` 从全灰切回来时读的就是它。
+    expect(placeholder.userData.previzPlaceholderColor).toBe('#ff0000');
+
+    graph.sync({ ...scene, objects: [{ ...character, color: '#00ff00' }] });
+
+    // 模型还在路上时改辨识色（加载失败的人物一直停在胶囊上），胶囊也得跟着换。
+    expect(lastColour(placeholder)).toBe('#00ff00');
+    expect(placeholder.userData.previzPlaceholderColor).toBe('#00ff00');
+
+    placeholder.material.color.set.mockClear();
+    graph.sync({ ...scene, objects: [{ ...character, color: '#00ff00' }] });
+
+    // 颜色没变就别重刷：sync 每帧都跑，而重刷一次要把整棵子树的显示模式再走一遍。
+    expect(placeholder.material.color.set).not.toHaveBeenCalled();
+  });
+
   it('keeps the placeholder capsule when the model cannot be loaded, and retries later', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1265,7 +1386,7 @@ describe('PrevizSceneGraph', () => {
   it('does not dispose the shared actor model when a character is removed', async () => {
     const three = fakeThree();
     const graph = new PrevizSceneGraph(three, new three.Group());
-    const { factory } = rigFactory(three);
+    const { factory, sourceMaterial } = rigFactory(three);
     graph.attachCharacterRig(factory, vi.fn());
 
     const scene = characterScene();
@@ -1277,15 +1398,37 @@ describe('PrevizSceneGraph', () => {
     // 删除走的是 sync 的清理分支，dispose() 走的是另一条——两条都得跳过共享模型。
     graph.sync({ ...scene, objects: [] });
     expect(rigMesh.geometry.dispose).not.toHaveBeenCalled();
-    expect(rigMesh.material.dispose).not.toHaveBeenCalled();
+    expect(sourceMaterial.dispose).not.toHaveBeenCalled();
 
     graph.sync(scene);
     await flush();
     const second = rigMeshOf(graph, id);
     graph.dispose();
     expect(second.geometry.dispose).not.toHaveBeenCalled();
-    expect(second.material.dispose).not.toHaveBeenCalled();
+    expect(sourceMaterial.dispose).not.toHaveBeenCalled();
   });
+
+  it('disposes the per-rig materials that the shared-model branch skips over', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { factory, sourceMaterial } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    graph.sync(scene);
+    await flush();
+    // 辨识色是染在这个 rig 自己克隆的那份材质上的，不是共享的那份。
+    const owned = rigMeshOf(graph, scene.objects[0]!.id).material;
+    expect(owned).not.toBe(sourceMaterial);
+
+    graph.sync({ ...scene, objects: [] });
+
+    // `previzSharedModel` 让 `disposeSubtree` 整棵跳过，克隆材质就得走一条定向回收——
+    // 少了它，每删一个人物漏一批材质，而画面上什么都看不出来。
+    expect(owned.dispose).toHaveBeenCalledTimes(1);
+    expect(sourceMaterial.dispose).not.toHaveBeenCalled();
+  });
+
   it("marks each character's feet with a ring in that character's own colour", () => {
     const three = fakeThree();
     const graph = new PrevizSceneGraph(three, new three.Group());
