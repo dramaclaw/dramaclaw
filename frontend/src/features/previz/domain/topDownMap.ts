@@ -42,13 +42,19 @@ export const PREVIZ_TOP_DOWN_DEFAULT_BOUNDS: PrevizTopDownBounds = {
 /**
  * 把已有对象框进去之后，四条边各外扩多少米。
  *
- * 按**米**留而不是按场景尺寸的比例留，因为这圈边要办的两件事都是绝对长度：一是让站在
- * 极值上的那个人物整个画得进画面（画出来的是个有半径的圆点，不是数学上的点），二是
- * 留出「把新人物摆在现有这群人旁边」的位置，而「旁边」对人来说就是几步路。按比例留的
- * 话，两个人挨在一起的场景几乎留不出边，而一个横跨百米的外景会白白空出二十米的空地。
+ * 按**米**留而不是按场景尺寸的比例留，为的是留出「把新人物摆在现有这群人旁边」的位置，
+ * 而「旁边」对人来说是几步路——一个绝对长度。按比例留的话，两个人挨在一起的场景几乎
+ * 留不出边，而一个横跨百米的外景会白白空出二十米的空地。
  *
- * 2 m 是主视口网格的两格（`engine/grid.ts` 的 `PREVIZ_GRID_CELL_SIZE` = 1 m），
- * 两件事都够。
+ * 2 m 是主视口网格的两格（`engine/grid.ts` 的 `PREVIZ_GRID_CELL_SIZE` = 1 m）。
+ *
+ * **别指望这圈边能让「站在极值上的人物整个画得进画面」**，那件事这里办不到：参照点画
+ * 出来是个有**像素**半径的圆点，而这里不知道画布有多大。固定米数折成像素会随场景变大
+ * 而变小——320 px 画布上，场景跨 12 m 时这 2 m 是 40 px，跨 100 m 时只剩 6.2 px（比
+ * `PrevizTopDownPicker` 的 `RING_RADIUS_PX` 9 还小，选中环被切），跨 200 m 时只剩
+ * 3.1 px（比 `DOT_RADIUS_PX` 4 还小，圆点本身被剪掉）。真要恒定的像素边距只能按比例留
+ * 边（k 比例下边距恒为 `k * 画布边长`，与场景无关），但那会毁掉上面那条真正的依据。
+ * 所以「圆点别被切」归画布层：绘制时按半径把可用区往里缩。
  */
 export const PREVIZ_TOP_DOWN_PADDING_M = 2;
 
@@ -59,18 +65,19 @@ export const PREVIZ_TOP_DOWN_PADDING_M = 2;
  * `2 * PREVIZ_TOP_DOWN_PADDING_M` = 4 m——「加了个人，能点的地方反而变小了」，
  * 而这恰好是用户开局连着做的两步。撑开是两头对称加的，所以现有对象仍然在正中。
  *
- * 顺带也把「所有对象重合在同一点」兜住了：那时跨度是 0，不撑开的话
- * `topDownView` 会算出 Infinity 的比例。
+ * 顺带也把「所有对象重合在同一点」兜住了：那时留边后的跨度是 `2 * padding`，虽然不为 0
+ * 但小得离谱；而如果连 padding 也没有，跨度就是 0，`topDownView` 会算出 Infinity 的比例。
  */
 const MIN_SPAN_M = DEFAULT_HALF_M * 2;
 
 /**
  * 单个方向上退化跨度的兜底，米。
  *
- * `sceneTopDownBounds` 出来的地块最少也有 `MIN_SPAN_M` 宽，走不到这里；这条只服务
- * 调用方自己拼的 bounds（Task 6 之后可能会有「按选中对象取景」之类的入口）。取 1 m
- * 与 `domain/view.ts` 的 `MIN_FRAMING_DISTANCE` 同源：空场景也得是一块看得见东西的
- * 窗口，而不是一个点。
+ * 正常场景走不到：`sceneTopDownBounds` 出来的地块最少也有 `MIN_SPAN_M` 宽。走得到的有
+ * 两种——调用方自己拼的 bounds（将来可能有「按选中对象取景」之类的入口），以及端点各自
+ * 有限、相减却溢出成 Infinity 的极端坐标（两个对象分别在 ±1e308，`expandToMinSpan` 见
+ * deficit 为 -Infinity 原样放行，跨度就是 Infinity）。取 1 m 与 `domain/view.ts` 的
+ * `MIN_FRAMING_DISTANCE` 同源：空场景也得是一块看得见东西的窗口，而不是一个点。
  */
 const MIN_VIEW_SPAN_M = 1;
 
@@ -90,6 +97,10 @@ function expandToMinSpan(min: number, max: number, minSpan: number): [number, nu
  * 把场景里已有对象都框进去，四边留一圈，再撑到最小尺度。
  *
  * 只读 x / z：y 是高度，俯视图上看不见。
+ *
+ * **框哪些对象由调用方决定**：这里收下什么就框什么，四种 `PrevizObject` 一视同仁。
+ * 一台退到 z = 60 的摄影机会把整块地撑到六十米开外，人物于是全挤在画面一角——想只按
+ * 人物取景，调用方先 filter 再传进来。
  *
  * 坐标非有限的对象整个跳过，而不是让它污染 min/max。`parseScene` 读盘时会把非有限的
  * 坐标回落成 0（`scene.ts` 的 `num` / `vec3`），但 store 的 `loadScene` / `applyScene`
@@ -161,7 +172,12 @@ function safePixels(value: number): number {
   return Math.max(1, Math.floor(value));
 }
 
-/** 跨度非有限或不为正时回到 [MIN_VIEW_SPAN_M]——两者都会让比例算成 Infinity 或 NaN。 */
+/**
+ * 跨度非有限或不为正时回到 [MIN_VIEW_SPAN_M]。四种退化坏法各不相同，别记成一种：
+ * 跨度 0 → `w / 0` 是 Infinity；跨度**为负** → `300 / -10` 是 -30，一个**有限的负数**，
+ * 画面整个镜像过去（这一种最阴，不查也不报错）；跨度 Infinity → 比例是 0，所有点压到
+ * 同一像素；跨度 NaN → 比例 NaN。
+ */
 function safeSpan(min: number, max: number): number {
   const span = max - min;
   return Number.isFinite(span) && span > 0 ? span : MIN_VIEW_SPAN_M;
@@ -216,7 +232,10 @@ export function topDownView(
  * 注意 y 轴方向上世界与画布是**同向**的（都往下增），所以这里两个分量的公式一模一样，
  * 没有别处 2D 映射常见的那个 `height - …` 翻转。
  */
-export function worldToCanvas(view: PrevizTopDownView, point: [number, number]): [number, number] {
+export function worldToCanvas(
+  view: PrevizTopDownView,
+  point: readonly [number, number],
+): [number, number] {
   return [
     view.width / 2 + (point[0] - view.centerX) * view.pixelsPerMeter,
     view.height / 2 + (point[1] - view.centerZ) * view.pixelsPerMeter,
@@ -226,14 +245,19 @@ export function worldToCanvas(view: PrevizTopDownView, point: [number, number]):
 /**
  * 画布像素 → 世界地面坐标，[worldToCanvas] 的逆。
  *
- * 往返不保证逐位相等：`(a * ppm) / ppm` 在 IEEE754 下常有 1 ulp 的舍入（随机扫下来
- * 约四成的点回不到原值，偏差在 1e-13 米量级）。这个量级对选位没有任何影响——一个
- * 像素本身就是几厘米——但断言得按容差写，不能按逐位相等写。
+ * 往返不保证逐位相等：`(a * ppm) / ppm` 在 IEEE754 下会有舍入。失配比例**跟视图走**，
+ * 不是一个普适常数——各扫 50 万点，`pixelsPerMeter` 是 30 或 32（二的幂的因子）时一个
+ * 都不失配，是 9.6 / 26.67 / 3.08 时则有四到五成。但绝对偏差始终极小：本模块会产生的
+ * 视图里最大只有 1.4e-14 m，比一个像素（几厘米）小十二个数量级，对选位没有任何影响。
+ * 结论是断言得按容差写，不能按逐位相等写。
  *
  * 不夹回地块范围：画布上确实可能点到地块之外（窄边等比留下的那圈富余就在地块外），
  * 而那里也是合法的站位。要不要拦是对话框的事，不是映射的事。
  */
-export function canvasToWorld(view: PrevizTopDownView, pixel: [number, number]): [number, number] {
+export function canvasToWorld(
+  view: PrevizTopDownView,
+  pixel: readonly [number, number],
+): [number, number] {
   return [
     view.centerX + (pixel[0] - view.width / 2) / view.pixelsPerMeter,
     view.centerZ + (pixel[1] - view.height / 2) / view.pixelsPerMeter,
