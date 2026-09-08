@@ -7,6 +7,7 @@ import type { PrevizRecordMode } from '../capture/recordTarget';
 import { createDomCaptureCanvas, renderCapture } from '../capture/renderCapture';
 import { OUTPUT_PIXEL_SIZE, aspectRatio, coverFovDeg, DEG_TO_RAD } from '../domain/camera';
 import type { PrevizCameraDraft } from '../domain/cameraDraft';
+import type { PrevizCharacterDraft } from '../domain/characterDraft';
 import { dropPositionY, dropRayOriginY } from '../domain/drop';
 import { evaluateSceneAt } from '../domain/evaluate';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
@@ -30,6 +31,12 @@ import {
   renderCameraPreview,
   type CameraPreviewCanvas,
 } from './cameraPreview';
+import {
+  createCharacterPreviewStage,
+  disposeCharacterPreviewStage,
+  renderCharacterPreview,
+  type CharacterPreviewStage,
+} from './characterPreview';
 import { renderOrthoPreview } from './orthoPreview';
 import { CharacterRigFactory } from './characterRig';
 import { PrevizPathPreview } from './pathPreview';
@@ -115,6 +122,13 @@ export class PrevizRenderer {
   private previewCamera: THREE.PerspectiveCamera | null = null;
   /** 四视图那两块正交预览共用的相机，第一次画时建。 */
   private orthoCamera: THREE.OrthographicCamera | null = null;
+  /**
+   * 人物骨架工厂。场景图那边也拿着同一个（`create` 里 attach 进去的就是它）：预览与
+   * 视口共用一份已下好的 GLB 与动画库，开对话框不会再拉一次几 MB。
+   */
+  private characterRig: CharacterRigFactory | null = null;
+  /** 创建人物对话框那块木偶预览的专用场景与相机，第一次画预览时建，之后一直留着。 */
+  private characterStage: CharacterPreviewStage | null = null;
   /** 右下角监看当前看的是哪个机位。null 就是不画监看。 */
   private activeCameraId: string | null = null;
   /** 镜头轨当前直播的机位；视锥涂红。与 `activeCameraId`（监看/操作对象）无关。 */
@@ -225,14 +239,15 @@ export class PrevizRenderer {
     });
 
     const gltfLoader = new gltfModule.GLTFLoader();
+    instance.characterRig = new CharacterRigFactory({
+      three,
+      loadGltf: (url) => gltfLoader.loadAsync(url),
+      // 必须是 SkeletonUtils 的 clone，不是 Object3D.clone()：后者复制 SkinnedMesh 时
+      // 仍指向原骨架，第二个人物一摆姿势第一个也跟着动。
+      clone: skeletonUtils.clone,
+    });
     instance.graph.attachCharacterRig(
-      new CharacterRigFactory({
-        three,
-        loadGltf: (url) => gltfLoader.loadAsync(url),
-        // 必须是 SkeletonUtils 的 clone，不是 Object3D.clone()：后者复制 SkinnedMesh 时
-        // 仍指向原骨架，第二个人物一摆姿势第一个也跟着动。
-        clone: skeletonUtils.clone,
-      }),
+      instance.characterRig,
       // 模型是异步到的，到了之后必须主动请求一帧：按需重绘的循环这时早就静下来了。
       // 顺手补一次描边 / 名牌：这条路径不经过 setScene，少了它后到的 GLB 一直没有描边。
       // 也把当前帧重放一遍：`build()` 摆的是静态姿势，播放头这时可能已经在路径中间，
@@ -548,21 +563,42 @@ export class PrevizRenderer {
    * 只在某个原点不在脚底的资产上看得出来（见 `domain/drop.ts` 的模块头）。
    *
    * 只认 `ground` 这一档。`plane` 是同一个枚举的另一档，在 `domain/evaluate.ts` 里纯算
-   * 出来，一条射线都不用打；`follow` 就是「写多少是多少」。这个 `continue` 也是性能闸：
-   * 每人每帧一条射线加一次 `Box3.setFromObject`（后者要遍历整棵子树）是播放与录制期间
-   * 的固定开销，而绝大多数场景一个贴地的人物都没有，那些场景一条射线都不该打。
+   * 出来，一条射线都不用打；`follow` 就是「写多少是多少」。这个 `continue` 也是性能闸，
+   * 而且这道闸挡的量比看上去大：开销**不是**由人数决定的，是由脚下那片可命中几何的
+   * 三角面数决定的——three 没有 BVH，`Mesh.raycast` 会把包围球被射线穿过的整个网格逐
+   * 三角遍历一遍。真 three 0.185 在 node 里实测（20 个贴地人物）：地板 2 面片 0.05 ms/帧，
+   * 换成 2 万面片 13.5 ms/帧（60fps 预算的 81%），20 万面片 135 ms/帧；5 个人踩在 2 万
+   * 面片的布景上就已经 3.3 ms。同一批 `Box3.setFromObject` 在这三组里没变过，可以忽略。
+   * 缓解因素是这笔开销**是 opt-in 的**：`domain/objects.ts` 新建人物默认 `follow`，
+   * 没人选贴地的场景一条射线都不打。真要优化，方向是给布景网格加 BVH 或缩小候选集，
+   * 不是按人数设阈值。
    *
    * 不缓存。缓存要按「脚下那片几何体这一帧变了没有」失效，而那正是这条射线要回答的
    * 问题本身：道具会被走位推着走、模型异步换入、人物自己也在移动——能便宜地判出这些
-   * 变化，就不必打射线了。真要省只能按人数省，而那个阈值没有实测数据，不猜。
+   * 变化，就不必打射线了。
    *
-   * **已知的缝：改完 y 之后，锁在这个人物身上的特写机位与「看向」不会重解。** 这两轮
-   * （`evaluate.ts` 的 `applyCloseups` / `applyPathAims`）在求值层内部就跑完了，拿的是
-   * 落地**之前**的 y。缝宽恰好等于这一帧落地挪动的距离，用例
-   * 「solves a closeup from the height the character had before the drop」把它量了出来：
-   * 人物本来就站在地上（走位画在 y=0 平面、脚下是空地）时位移是 0，机位分毫不差；他
-   * 一脚踏上 0.8 米高的台子，脸部特写就低 0.8 米——那个景别的取景半径不到一米，等于
-   * 整颗头出画。
+   * 已知的缝有四条，一并列在这里——这段就是这个特性的缺陷清单，只写一条会让人以为
+   * 清单是完的：
+   *
+   * 1. **特写机位与「看向」不会跟着重解。** 这两轮（`evaluate.ts` 的 `applyCloseups` /
+   *    `applyPathAims`）在求值层内部就跑完了，拿的是落地**之前**的 y。机位**位置**的
+   *    误差恰好等于这一帧落地挪动的距离（纯 y 平移），用例「solves a closeup from the
+   *    height the character had before the drop」把它量了出来：人物本来就站在地上（走位
+   *    画在 y=0 平面、脚下是空地）时位移是 0，机位分毫不差；他一脚踏上 0.8 米高的台子，
+   *    脸部特写就低 0.8 米——那个景别的取景半径不到一米，等于整颗头出画。「看向」解出的
+   *    是**角度**，误差是 atan 出来的量，不等于那个位移，别把上面那个数套过去。
+   * 2. **射线会把人抬到压在他中轴上的桌沿 / 栏杆上，而且撤不掉。** 见 `dropToSurface`
+   *    那段取舍的末尾：一次性吸附下这只是一次可撤销的误吸，每帧调用下它是持续的。
+   * 3. **落地只改 three 节点，不回灌 store。** 于是 `ground` 人物的 store y 与屏幕上的 y
+   *    会常态性不一致：用 Y 轴手柄（`PrevizGizmo` 只在贴地那几根手柄上吸附）或检查器的
+   *    Y 输入框把他抬到 5，数字进了 store、下一次 `setScene` 落地又把节点拉回地面，
+   *    没有任何提示；之后把策略切回 `follow`，人会瞬间跳到那个从没被确认过的 5。语义是
+   *    有意的（`ground` 的高度不归手改，见上面），缺的是 UI 反馈——该在检查器里把 Y 置灰。
+   * 4. **人踩人按 `scene.objects` 的顺序解，上层的人慢一帧**：A 站在 B 头上而 A 排在
+   *    B 前面时，A 落的是 B 这一帧还没落地的头顶。更要留意的是 `domain/drop.ts` 里
+   *    `PREVIZ_DROP_EPSILON` 记的那条退化——起点进到 DoubleSide 导入模型内部会贴到它的
+   *    **底面**上。一次性吸附下那是一次误吸，每帧调用下两个人可以互相垫着变成一部没有
+   *    上限的电梯。真出现了，别在这里加钳位，去修候选集。
    *
    * 明知有缝还留着，是因为另外两条路这一层都走不通：在渲染器里重解一遍要照抄
    * `applyCloseups` / `applyPathAims`（`evaluate.ts` 只导出 `evaluateSceneAt`，那两个
@@ -574,11 +610,15 @@ export class PrevizRenderer {
   private standGroundCharacters(scene: PrevizScene): void {
     for (const object of scene.objects) {
       if (object.kind !== 'character' || object.heightPolicy !== 'ground') continue;
-      // 返回 null 表示这一次落不了地：包围盒是空的，模型还在下载或者下载失败了。
-      // 保持求值给的高度，不要拿 0 兜底——那等于在模型到达之前先把人物瞬移到地面上。
+      // 返回 null 表示这一次落不了地。最常见的是包围盒还空着（模型在下载，或者下载
+      // 失败了）；渲染器已 dispose、节点取不到也走这条——`applyEvaluatedFrame` 会被
+      // GLB 到达的异步回调触发，那两条在这个调用点是够得着的。保持求值给的高度，不要
+      // 拿 0 兜底：那等于在模型到达之前先把人物瞬移到地面上。
       const dropped = this.dropToSurface(object.id);
       if (dropped === null) continue;
       const node = this.graph.nodeFor(object.id);
+      // `if (node)` 只为类型存在：`dropped !== null` 已经蕴含 `dropToSurface` 内部那次
+      // `nodeFor` 拿到了节点，两次查表在同一个同步 tick 里，不可能一次有一次没有。
       // 只改 y：x/z 与旋转是走位说了算的，落地只回答「多高」。
       if (node) node.position.y = dropped;
     }
@@ -597,7 +637,8 @@ export class PrevizRenderer {
   /**
    * 把对象落到它正下方的表面上，返回落地后的**局部** y；这一次不该落地时返回 null。
    *
-   * 局部 y 直接可用是因为对象节点全是 `objectRoot` 的直接子节点（`sceneGraph.ts:193`），
+   * 局部 y 直接可用是因为对象节点全是 `objectRoot` 的直接子节点（`PrevizSceneGraph.sync`
+   * 里那句 `this.root.add(node)`；这里不写行号，那个文件在动），
    * 而 `objectRoot` 是 `create()` 里裸建的一个 Group、从头到尾没被摆过位置也没被缩放。
    * 留给哪天要给它加变换的那个人：这里加的是 `surfaceY - box.min.y`，一个**世界位移**，
    * 而平移保位移，所以纯 y 偏移**是无害的**——它在这个减法里整个约掉了。真正会打烂
@@ -615,7 +656,14 @@ export class PrevizRenderer {
    *     结果；
    *   * 比对象**高**的东西够不着：起点在盒顶，顶面在起点之上的几何体整个在射线背后，
    *     所以钻到桌子底下的小道具不会被吸到桌面上；
-   *   * 真吸错了，撤销一步就回来，而且这几根手柄之外（Y 轴、两个竖直面）全程不吸附。
+   *   * 手柄那条路径上真吸错了，撤销一步就回来，而且这几根手柄之外（Y 轴、两个竖直面）
+   *     全程不吸附。
+   *
+   * **但最后这条只对手柄成立。** `standGroundCharacters` 每帧调这个方法，那里没有「一次
+   * 操作」可撤销：一个 `ground` 人物的走位穿过桌子的水平投影时，包围盒中心一进桌面
+   * footprint，射线从盒顶向下第一个命中就是桌面，人被抬上桌；下一帧盒顶跟着抬高，仍然
+   * 命中同一张桌面，于是他**站在桌面上走完全程**，并被原样烤进录制出片。用户撤不掉
+   * （每帧由策略重算），也没有逐对象的排除开关，唯一的出路是把策略改回 `follow`。
    */
   dropToSurface(objectId: string): number | null {
     if (this.disposed) return null;
@@ -940,6 +988,51 @@ export class PrevizRenderer {
   }
 
   /**
+   * 把一份人物草稿的木偶画到创建对话框那块预览画布上。
+   *
+   * 与 [renderCameraPreview] 的区别只在场景：机位预览要的就是「这台机器在这场戏里看到
+   * 什么」，所以借视口那个场景；木偶预览要的是「这个人长什么样」，借过来就成了一张缩
+   * 小的视口。所以另起一套只装这一具木偶与一块地的场景（`createCharacterPreviewStage`）。
+   *
+   * 返回 Promise 是因为真模型要 await 骨架克隆。调用方可以不等——不等就是「这一帧先不
+   * 管，画好了自然会出现」，而连着调用是安全的：重建判据在 `characterPreview.ts` 里，
+   * 后发的那次会把先发的那具当作过时的丢掉。
+   */
+  async renderCharacterPreview(
+    canvas: CameraPreviewCanvas,
+    draft: PrevizCharacterDraft,
+  ): Promise<void> {
+    // 录制期间不画，同 `renderCameraPreview`：下面 finally 里那次「还」成可见会把手柄
+    // 的 helper 送进正在录的那一帧里。
+    if (this.disposed || this.recording) return;
+    // 骨架工厂是 `create()` 里建的，走 `new PrevizRenderer()` 之外的路进不来；没有它
+    // 就没有木偶可建。
+    if (!this.characterRig) return;
+    if (!this.characterStage) this.characterStage = createCharacterPreviewStage(this.three);
+
+    // 预览场景里没有手柄，但离屏 pass 结束时要 requestRender 视口那一帧，而 helper 的
+    // 可见性是全局的：一并按 `renderCameraPreview` 那套来，两条路径不要各走各的。
+    this.gizmo?.setHelperVisible(false);
+    try {
+      await renderCharacterPreview(
+        {
+          three: this.three,
+          renderer: this.renderer,
+          scene: this.characterStage.scene,
+          camera: this.characterStage.camera,
+          canvas,
+          rig: this.characterRig,
+        },
+        draft,
+      );
+    } finally {
+      this.gizmo?.setHelperVisible(true);
+      // 离屏 pass 把 render target 换过一轮，屏幕上那一帧要重画。
+      this.requestRender();
+    }
+  }
+
+  /**
    * 把整个场景的某个正交视角画到四视图那块画布上。
    *
    * 框的是全场景而不是 [currentBounds]：俯视和侧视是「这场戏摆成什么样」的参照图，
@@ -1245,6 +1338,8 @@ export class PrevizRenderer {
     this.graph.dispose();
     this.pathPreview?.dispose();
     this.strokePreview?.dispose();
+    // 木偶预览那套场景不在 `this.scene` 底下，下面那次 traverse 扫不到它。
+    if (this.characterStage) disposeCharacterPreviewStage(this.characterStage);
     this.scene.traverse((object) => {
       const mesh = object as THREE.Mesh;
       mesh.geometry?.dispose();

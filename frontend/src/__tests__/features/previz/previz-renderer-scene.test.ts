@@ -2110,8 +2110,9 @@ describe('PrevizRenderer 贴合地面', () => {
   it('drops a ground-policy character to the floor where nothing is under them', async () => {
     const { instance } = await createRenderer();
     boxMinYOffset = FOOT_BELOW_ORIGIN;
-    // 空地上什么都命中不了，而这正是常态：地面网格被 `grid.ts:167` 摘掉了 raycast
-    // （铺满视野的它会吃掉每一次空点），y=0 那层地面只存在于落地代码自己的兜底里。
+    // 空地上什么都命中不了，而这正是常态：`grid.ts` 的 `createInfiniteGrid` 把网格的
+    // `raycast` 摘成了空函数（铺满视野的它会吃掉每一次空点），y=0 那层地面于是只存在于
+    // 落地代码自己的兜底里。
     intersections = [];
     const scene = standScene('ground', 5);
 
@@ -2165,6 +2166,31 @@ describe('PrevizRenderer 贴合地面', () => {
     expect(intersectObjects).toHaveBeenCalledTimes(1);
   });
 
+  // 上面那条只有一个贴地人物，`toHaveBeenCalledTimes(1)` 同时兼容「循环写对了」和
+  // 「只处理了第一个」。循环体里插一句 `return`（或把循环重构成 `find`）会让第二个
+  // 及以后的贴地人物全部悬空，而门禁全绿——这条就是来堵那个口子的。
+  it('stands every ground-policy character, not just the first one', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    intersections = [];
+    const scene = standScene('ground', 3);
+    scene.objects.push(
+      createPrevizObject('character', scene.objects, {
+        heightPolicy: 'ground',
+        transform: { position: [4, 5, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      }),
+    );
+    intersectObjects.mockClear();
+
+    instance.setScene(scene);
+
+    // 起始高度不同（3 和 5），落完都该站在地上——期望值相同不等于用例分不开它们：
+    // 只落第一个的话第二个停在 5。
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
+    expect(instance.nodeFor(scene.objects[1].id)?.position.y).toBeCloseTo(0.5, 12);
+    expect(intersectObjects).toHaveBeenCalledTimes(2);
+  });
+
   it('rays against the props as they stand this frame, not last frame', async () => {
     const { instance } = await createRenderer();
     intersections = [];
@@ -2210,14 +2236,22 @@ describe('PrevizRenderer 贴合地面', () => {
     instance.setScene(scene);
     const pass = instance.startRecording('global', null)!;
 
+    // 光看 drawFrame 返回后的 y 分不出「渲染前落的地」和「渲染后落的地」，而后者出片
+    // 会整帧差一拍。趁这一帧真正被画出去的那一刻把 y 记下来。
+    let yAtRender = Number.NaN;
+    render.mockImplementationOnce(() => {
+      yAtRender = instance.nodeFor(scene.objects[0].id)!.position.y;
+    });
+
     try {
       pass.drawFrame(0, null);
     } finally {
       pass.end();
     }
 
-    // 录制期间照落。`drawFrame` 每帧走 `setFrame`，贴地跟着它跑；这道闸要是关上，
-    // 出片里贴地的人物全都悬在半空——而视口里他们是站着的，谁都不会发现。
+    // 录制期间照落。`drawFrame` 每帧第一句就是 `setFrame`，贴地跟着它跑；这道闸要是
+    // 关上，出片里贴地的人物全都悬在半空——而视口里他们是站着的，谁都不会发现。
+    expect(yAtRender).toBeCloseTo(0.5, 12);
     expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
   });
 
@@ -2235,7 +2269,8 @@ describe('PrevizRenderer 贴合地面', () => {
     expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(5, 12);
   });
 
-  // 人物的 GLB 骨架是异步挂上去的**子节点**（`sceneGraph.ts:333` 的 `node.add(model)`）。
+  // 人物的 GLB 骨架是异步挂上去的**子节点**（`PrevizSceneGraph.swapInCharacterModel`
+  // 里那句 `node.add(model)`；不写行号，那个文件在动）。
   // 剔候选剔的是人物那个根节点，`intersectObjects` 从剩下的根往下递归，所以骨架跟着
   // 一起不在候选里——这里断言的是「整棵子树」而不只是根：只剔根、把子节点放回去的话，
   // 从盒顶往下第一个命中的就是他自己的头，人物每帧被自己顶高一个身位。
