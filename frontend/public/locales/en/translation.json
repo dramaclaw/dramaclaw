@@ -721,7 +721,7 @@
       "title": "Script Format Check",
       "close": "Close",
       "viewDetails": "View details",
-      "recommended": "Standard script example:\nEpisode 1\n1-1 City Cafe DAY INT\nCharacters: Lin Xia, Chen Mo\n△ Afternoon light crosses the window as Lin Xia places a letter on the table.\nLin Xia: The answer you wanted is right here.",
+      "recommended": "Standard script example:\nEPISODE 1\nINT. City Cafe - DAY\nCharacters: Lin Xia, Chen Mo\n△ Afternoon light crosses the window as Lin Xia places a letter on the table.\nLin Xia: The answer you wanted is right here.",
       "lineLabel": "Line {{line}}",
       "noIssues": "No specific issues found"
     },
@@ -2544,7 +2544,7 @@
         },
         "missingSceneHeaders": {
           "message": "No scene headings were recognized, so the system cannot tell where each scene begins.",
-          "fix": "Follow the standard format: start every episode with “Episode N”, give each scene its own “scene number, location, time, INT/EXT” heading, then list characters, action, and dialogue. For example: Episode 1 / 1-1 City Cafe DAY INT."
+          "fix": "Follow the standard format: start every episode with “EPISODE N”, give each scene its own “INT./EXT. location - TIME” heading, then list characters, action, and dialogue. For example: EPISODE 1 / INT. City Cafe - DAY."
         },
         "nonstandardSceneHeaders": {
           "message": "Scene boundaries were recognized, but some scene metadata is incomplete.",
@@ -2552,7 +2552,7 @@
         },
         "sceneHeadersMissingTime": {
           "message": "Some scene headings have no explicit time anchor, so time_of_day and scene variant inheritance may be unstable.",
-          "fix": "Add an explicit time to the scene heading, such as DAY, NIGHT, or LATE NIGHT. Scene boundaries are kept either way and normalized later."
+          "fix": "Add an explicit time to the scene heading. Only DAY, NIGHT, MORNING, AFTERNOON, EVENING, DAWN and DUSK are recognized. Scene boundaries are kept either way and normalized later."
         },
         "missingInteriorExterior": {
           "message": "The scene heading has no INT/EXT marker.",
