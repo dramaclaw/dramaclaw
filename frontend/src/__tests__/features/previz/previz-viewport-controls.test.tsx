@@ -477,8 +477,17 @@ describe("PrevizViewportControls", () => {
       .parentElement as HTMLElement;
     expect(row.classList.contains("top-4")).toBe(true);
     // 不换行是承重的：单行 flex 只会横向压缩或溢出，一旦允许换行这排就会往下长，
-    // 70 px 立刻不够。
-    expect(row.classList.contains("flex-wrap")).toBe(false);
+    // 70 px 立刻不够。而「给窄视口加个响应式换行免得控件溢出」正是最可能真发生的
+    // 那种改动，这条得能拦住它的各种写法。
+    //
+    // 这一条**故意**用宽松的子串匹配，和上面那些 `classList.contains` 不是一回事——
+    // 两个方向对精度的要求正好相反，不是笔误，别顺手统一：
+    //   · 正向要精确 token，否则 `border-white/10` 会把 `border` 蒙混过去、`p-1.5`
+    //     会把 `p-1` 蒙混过去，断言看着绿其实什么都没保证；
+    //   · 负向要宽松，否则 `md:flex-wrap`（variant 前缀）、`flex-wrap!` / `!flex-wrap`
+    //     （important 后缀 / 前缀）、`flex-wrap-reverse` 都不是 `flex-wrap` 这个 token，
+    //     classList 一个都认不出来，四种都能让整排换行而断言照样绿。
+    expect(row.className).not.toMatch(/flex-wrap/);
 
     // 簇里最高的那个是 h-7 的按钮与输入框（分隔线只有 h-5）。
     expect(button("previz.viewport.resetView").classList.contains("h-7")).toBe(true);
