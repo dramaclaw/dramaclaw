@@ -2235,13 +2235,18 @@ describe('PrevizRenderer 贴合地面', () => {
   it('keeps standing a ground-policy character while recording', async () => {
     const { instance } = await createRenderer();
     boxMinYOffset = FOOT_BELOW_ORIGIN;
+    // 开录前脚下是空地，人物落在 0.5。
     intersections = [];
     const scene = standScene('ground', 5);
     instance.setScene(scene);
     const pass = instance.startRecording('global', null)!;
 
-    // 光看 drawFrame 返回后的 y 分不出「渲染前落的地」和「渲染后落的地」，而后者出片
-    // 会整帧差一拍。趁这一帧真正被画出去的那一刻把 y 记下来。
+    // 要录的这一帧脚下多了个 0.8 的台面，落完该到 1.3。高度必须跟开录前不同，
+    // 否则「渲染前落的地」和「渲染后落的地」读出来是一个数，什么也钉不住。
+    intersections = [{ object: {}, point: { x: 0, y: 0.8, z: 0 } }];
+
+    // 趁这一帧真正被画出去的那一刻把 y 记下来：落地要是排到 `render()` 之后，
+    // 画面里就是上一帧的高度，出片整个差一拍。
     let yAtRender = Number.NaN;
     render.mockImplementationOnce(() => {
       yAtRender = instance.nodeFor(scene.objects[0].id)!.position.y;
@@ -2255,8 +2260,8 @@ describe('PrevizRenderer 贴合地面', () => {
 
     // 录制期间照落。`drawFrame` 每帧第一句就是 `setFrame`，贴地跟着它跑；这道闸要是
     // 关上，出片里贴地的人物全都悬在半空——而视口里他们是站着的，谁都不会发现。
-    expect(yAtRender).toBeCloseTo(0.5, 12);
-    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
+    expect(yAtRender).toBeCloseTo(1.3, 12);
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(1.3, 12);
   });
 
   it('leaves a ground-policy character alone while their model is still loading', async () => {
