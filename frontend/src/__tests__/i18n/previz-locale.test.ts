@@ -166,6 +166,34 @@ const CAMERA_CREATE_KEYS = [
   'submit',
 ] as const;
 
+/**
+ * 创建人物对话框。字段标签（体型、身高、基础姿势、姿态微调）刻意不在这张表里：
+ * 那几栏与属性面板问的是同一件事，复用 `previz.inspector.*`——同一个字段在两处叫
+ * 两个名字，用户会以为它们是两回事。
+ */
+const CHARACTER_CREATE_KEYS = [
+  'title',
+  'pickHint',
+  'pickHintAgain',
+  'preview',
+  'name',
+  'color',
+  'spot',
+  'spotLabel',
+  'create',
+  'cancel',
+] as const;
+
+/**
+ * 属性面板里两张按联合类型排的小表。逐条写死而不是从 `BodyType` / `HeightPolicy` 取：
+ * 跟着被测对象一起变的期望值等于没有期望值，而少一条的表现是下拉框里那一项显示成
+ * 原始 key——选得中，读不出是什么。
+ */
+const INSPECTOR_BODY_TYPES = ['capsule', 'slim', 'average', 'heavy', 'tall'] as const;
+const INSPECTOR_HEIGHT_POLICIES = ['follow', 'ground', 'plane'] as const;
+/** Y 被策略接管时那行说明，两档各一句：`follow` 档不置灰，所以没有第三条。 */
+const INSPECTOR_HEIGHT_NOTES = ['ground', 'plane'] as const;
+
 /** 这四张表的键各自等于一个联合类型：少一个的表现是界面上直接蹦出原始 key。 */
 const CAMERA_CREATE_TABLES = {
   bodies: ['cine', 'virtual', 'handheld'],
@@ -201,6 +229,24 @@ describe('previz P3 locale keys', () => {
       expect(Object.keys(lenses).sort()).toEqual([...CAMERA_CREATE_TABLES.lenses].sort());
       expect(Object.keys(focalClasses).sort()).toEqual([...CAMERA_CREATE_TABLES.focalClasses].sort());
       expect(Object.keys(depthOfField).sort()).toEqual([...CAMERA_CREATE_TABLES.depthOfField].sort());
+    });
+
+    it(`${name} carries every character create key`, () => {
+      expect(Object.keys(bundle.previz.characterCreate).sort()).toEqual(
+        [...CHARACTER_CREATE_KEYS].sort(),
+      );
+    });
+
+    it(`${name} carries every body type and height policy label`, () => {
+      const inspector = bundle.previz.inspector;
+      expect(Object.keys(inspector.bodyTypes).sort()).toEqual([...INSPECTOR_BODY_TYPES].sort());
+      expect(Object.keys(inspector.heightPolicies).sort()).toEqual(
+        [...INSPECTOR_HEIGHT_POLICIES].sort(),
+      );
+      expect(Object.keys(inspector.heightNote).sort()).toEqual([...INSPECTOR_HEIGHT_NOTES].sort());
+      for (const key of ['heightPolicy', 'planeY'] as const) {
+        expect(inspector[key], key).toBeTruthy();
+      }
     });
 
     // 视口顶上那条 HUD 已经拆开：摆场景的工具进了左侧菜单列（`previz.toolbar`），

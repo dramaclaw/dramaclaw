@@ -7654,6 +7654,18 @@
       "footerHint": "位置与旋转取自当前导演视角；焦距和画幅共同决定视场角",
       "submit": "从当前视角创建机位"
     },
+    "characterCreate": {
+      "title": "创建人物",
+      "pickHint": "在俯视图上点一下决定站位",
+      "pickHintAgain": "再点一下换个站位",
+      "preview": "人物预览",
+      "name": "名称",
+      "color": "辨识颜色",
+      "spot": "站位（米）",
+      "spotLabel": "已选站位 X / Z",
+      "create": "创建",
+      "cancel": "取消"
+    },
     "inspector": {
       "empty": "选中一个对象后在这里编辑",
       "name": "名称",
@@ -7690,6 +7702,17 @@
         "pitch": "俯仰",
         "turn": "转身",
         "lean": "倾斜"
+      },
+      "heightPolicy": "高度策略",
+      "heightPolicies": {
+        "follow": "跟随轨迹",
+        "ground": "贴合地面",
+        "plane": "锁定平面"
+      },
+      "planeY": "锁定高度（米）",
+      "heightNote": {
+        "ground": "贴合地面时 Y 由落地射线逐帧算出，这里改不动",
+        "plane": "锁定平面时 Y 恒等于下面的锁定高度"
       },
       "focalMm": "焦距（毫米）",
       "aperture": "光圈",
