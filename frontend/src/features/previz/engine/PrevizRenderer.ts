@@ -528,6 +528,60 @@ export class PrevizRenderer {
         state.rotation[2] * DEG_TO_RAD,
       );
     }
+    this.standGroundCharacters(scene);
+  }
+
+  /**
+   * 高度策略 `ground`：把人物的脚底压到他正下方那个面上，每帧一次。
+   *
+   * 必须排在上面那趟写节点位置之后，而且是**整趟**之后，不能揉进那个循环里：
+   *   * 揉进去的话人物自己的位置还没写，射线从上一帧的包围盒起射——而紧接着那句
+   *     `node.position.set()` 又会把刚落好的 y 整个盖掉，等于没落；
+   *   * 就算只挪到每个对象的写入之后，排在人物**后面**的道具这一帧还停在上一帧的位置。
+   *     人站在挂了走位的移动平台上时，射线打的是平台的旧位置，人于是永远慢一帧、
+   *     看着在平台上滑。
+   *
+   * 手摆过的人物（上面那句 `handPlaced` 的 `continue`）这里不放过：`ground` 的高度是
+   * 算出来的，手柄和检查器改的是他站在哪（x/z），不是他浮多高。
+   *
+   * 复用 `dropToSurface`，不另写一条射线：两处落地各算各的高度是一类极难查的 bug，
+   * 只在某个原点不在脚底的资产上看得出来（见 `domain/drop.ts` 的模块头）。
+   *
+   * 只认 `ground` 这一档。`plane` 是同一个枚举的另一档，在 `domain/evaluate.ts` 里纯算
+   * 出来，一条射线都不用打；`follow` 就是「写多少是多少」。这个 `continue` 也是性能闸：
+   * 每人每帧一条射线加一次 `Box3.setFromObject`（后者要遍历整棵子树）是播放与录制期间
+   * 的固定开销，而绝大多数场景一个贴地的人物都没有，那些场景一条射线都不该打。
+   *
+   * 不缓存。缓存要按「脚下那片几何体这一帧变了没有」失效，而那正是这条射线要回答的
+   * 问题本身：道具会被走位推着走、模型异步换入、人物自己也在移动——能便宜地判出这些
+   * 变化，就不必打射线了。真要省只能按人数省，而那个阈值没有实测数据，不猜。
+   *
+   * **已知的缝：改完 y 之后，锁在这个人物身上的特写机位与「看向」不会重解。** 这两轮
+   * （`evaluate.ts` 的 `applyCloseups` / `applyPathAims`）在求值层内部就跑完了，拿的是
+   * 落地**之前**的 y。缝宽恰好等于这一帧落地挪动的距离，用例
+   * 「solves a closeup from the height the character had before the drop」把它量了出来：
+   * 人物本来就站在地上（走位画在 y=0 平面、脚下是空地）时位移是 0，机位分毫不差；他
+   * 一脚踏上 0.8 米高的台子，脸部特写就低 0.8 米——那个景别的取景半径不到一米，等于
+   * 整颗头出画。
+   *
+   * 明知有缝还留着，是因为另外两条路这一层都走不通：在渲染器里重解一遍要照抄
+   * `applyCloseups` / `applyPathAims`（`evaluate.ts` 只导出 `evaluateSceneAt`，那两个
+   * 函数是私有的），等于把整个机位解算做出第二份实现——`domain/drop.ts` 开头警告的那种
+   * 漂移，一个数尚且难查，一整套公式更难；把射线结果回灌给求值层再解一次才是对的修法，
+   * 但那要给 `evaluateSceneAt` 开一个高度覆盖入口、并把落地排进它现有的三段顺序里，
+   * 是求值层的改动，不是这里能顺手做的。
+   */
+  private standGroundCharacters(scene: PrevizScene): void {
+    for (const object of scene.objects) {
+      if (object.kind !== 'character' || object.heightPolicy !== 'ground') continue;
+      // 返回 null 表示这一次落不了地：包围盒是空的，模型还在下载或者下载失败了。
+      // 保持求值给的高度，不要拿 0 兜底——那等于在模型到达之前先把人物瞬移到地面上。
+      const dropped = this.dropToSurface(object.id);
+      if (dropped === null) continue;
+      const node = this.graph.nodeFor(object.id);
+      // 只改 y：x/z 与旋转是走位说了算的，落地只回答「多高」。
+      if (node) node.position.y = dropped;
+    }
   }
 
   /** 换手柄模式；`null` 表示当前工具不要手柄（见 [PrevizGizmo.setMode]）。 */

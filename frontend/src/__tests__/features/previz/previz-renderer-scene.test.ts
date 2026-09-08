@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OUTPUT_PIXEL_SIZE, aspectRatio } from '@/features/previz/domain/camera';
 import { createCameraDraft } from '@/features/previz/domain/cameraDraft';
 import { createPrevizObject } from '@/features/previz/domain/objects';
-import { createDefaultScene, type PrevizScene, type Vec3 } from '@/features/previz/domain/scene';
+import {
+  createDefaultScene,
+  type HeightPolicy,
+  type PrevizScene,
+  type Vec3,
+} from '@/features/previz/domain/scene';
 import { dropRayOriginY } from '@/features/previz/domain/drop';
 import { PREVIZ_DEFAULT_VIEW } from '@/features/previz/domain/view';
 import {
@@ -2066,6 +2071,243 @@ describe('PrevizRenderer 松手落地', () => {
     transformControls.emit('objectChange');
     transformControls.emit('dragging-changed', { value: false });
 
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
+  });
+});
+
+describe('PrevizRenderer 贴合地面', () => {
+  // 同上面松手落地那一组：假 Box3 默认盒底就在对象原点上，那种形状下「按位移挪」和
+  // 「y = 命中高度」算出来一模一样，这一层分不开这两件事。把盒底挪到原点下方 0.5 米
+  // （导入的 obj 原点常在几何中心），下面每条断言的期望值才两两不同。
+  const FOOT_BELOW_ORIGIN = -0.5;
+
+  /** 一个人物，站在给定高度、用给定的高度策略。 */
+  function standScene(policy: HeightPolicy, y: number): PrevizScene {
+    const scene = createDefaultScene();
+    scene.objects.push(
+      createPrevizObject('character', scene.objects, {
+        heightPolicy: policy,
+        transform: { position: [0, y, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      }),
+    );
+    return scene;
+  }
+
+  it('stands a ground-policy character on the prop under their feet', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    // 命中要赶在 setScene 之前摆好：贴地是跟着求值走的，setScene 当场就打这条射线。
+    intersections = [{ object: {}, point: { x: 0, y: 0.8, z: 0 } }];
+    const scene = standScene('ground', 3);
+
+    instance.setScene(scene);
+
+    // 台面在 0.8。人物原点在 3、盒底在 2.5，落完盒底该压在 0.8 上，即原点在 1.3。
+    // 直接把 y 赋成 0.8 的话人物半截埋进台子里。
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(1.3, 12);
+  });
+
+  it('drops a ground-policy character to the floor where nothing is under them', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    // 空地上什么都命中不了，而这正是常态：地面网格被 `grid.ts:167` 摘掉了 raycast
+    // （铺满视野的它会吃掉每一次空点），y=0 那层地面只存在于落地代码自己的兜底里。
+    intersections = [];
+    const scene = standScene('ground', 5);
+
+    instance.setScene(scene);
+
+    // 盒底 4.5 压到 0 上，原点随之落到 0.5——脚底正好贴地。
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
+  });
+
+  it('leaves a follow-policy character exactly where the evaluator put them', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    intersections = [{ object: {}, point: { x: 0, y: 0.8, z: 0 } }];
+    const scene = standScene('follow', 3);
+
+    instance.setScene(scene);
+
+    // `follow` 就是「写多少是多少」，脚下有没有台面都不该动它——会飞的、坐在桌上的、
+    // 站在没建模的楼板上的人物全靠这一档。
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(3, 12);
+  });
+
+  it('does not raycast at all when no character asks for the ground', async () => {
+    const { instance } = await createRenderer();
+    const scene = standScene('follow', 3);
+    scene.objects.push(createPrevizObject('prop', scene.objects));
+    intersectObjects.mockClear();
+
+    instance.setScene(scene);
+
+    // 每人每帧一条射线加一次 `Box3.setFromObject`（后者要遍历整棵子树）是播放期间的
+    // 固定开销。绝大多数场景一个贴地的人物都没有，那些场景一条都不该打。
+    expect(intersectObjects).not.toHaveBeenCalled();
+  });
+
+  it('rays once per ground-policy character and skips everyone else', async () => {
+    const { instance } = await createRenderer();
+    intersections = [];
+    const scene = standScene('ground', 3);
+    scene.objects.push(
+      createPrevizObject('character', scene.objects, { heightPolicy: 'plane' }),
+      createPrevizObject('character', scene.objects, { heightPolicy: 'follow' }),
+      createPrevizObject('prop', scene.objects),
+    );
+    intersectObjects.mockClear();
+
+    instance.setScene(scene);
+
+    // `plane` 那一档在 `domain/evaluate.ts` 里纯算出来，一条射线都不用打；这里多打
+    // 一条就说明分支写成了「不是 follow 就落地」。
+    expect(intersectObjects).toHaveBeenCalledTimes(1);
+  });
+
+  it('rays against the props as they stand this frame, not last frame', async () => {
+    const { instance } = await createRenderer();
+    intersections = [];
+    const scene = standScene('ground', 3);
+    const platform = createPrevizObject('prop', scene.objects);
+    scene.objects.push(platform);
+    scene.timeline.tracks.push({
+      id: 'track',
+      objectId: platform.id,
+      clips: [
+        {
+          id: 'clip',
+          kind: 'path' as const,
+          startFrame: 0,
+          endFrame: 120,
+          points: [
+            { id: 'p0', u: 0, position: [0, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+            { id: 'p1', u: 1, position: [10, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+          ],
+        },
+      ],
+    });
+    instance.setScene(scene);
+    const platformNode = instance.nodeFor(platform.id)!;
+    let platformXAtRayTime = Number.NaN;
+    intersectObjects.mockImplementationOnce(() => {
+      platformXAtRayTime = platformNode.position.x;
+      return intersections;
+    });
+
+    instance.setFrame(120);
+
+    // 人物排在道具**前面**，所以「边解算边落地」会让他拿平台上一帧的位置打射线：
+    // 站在移动平台上的人于是永远慢一帧，看着在平台上滑。射线必须等整帧解算写完再打。
+    expect(platformXAtRayTime).toBeCloseTo(10, 12);
+  });
+
+  it('keeps standing a ground-policy character while recording', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    intersections = [];
+    const scene = standScene('ground', 5);
+    instance.setScene(scene);
+    const pass = instance.startRecording('global', null)!;
+
+    try {
+      pass.drawFrame(0, null);
+    } finally {
+      pass.end();
+    }
+
+    // 录制期间照落。`drawFrame` 每帧走 `setFrame`，贴地跟着它跑；这道闸要是关上，
+    // 出片里贴地的人物全都悬在半空——而视口里他们是站着的，谁都不会发现。
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
+  });
+
+  it('leaves a ground-policy character alone while their model is still loading', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    boxIsEmpty = true;
+    intersections = [];
+    const scene = standScene('ground', 5);
+
+    instance.setScene(scene);
+
+    // 空包围盒算不出脚底在哪。保持求值给的高度，别拿 0 兜底——那等于在模型到达之前
+    // 先把人物瞬移到地面上，模型一到又跳回来。
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(5, 12);
+  });
+
+  /**
+   * 一个贴着某个高度策略站在 `characterY` 的人物，加一台锁在他脸上的特写机位。
+   * 交出人物落定后的 y 与机位解出来的 y。
+   */
+  async function closeupHeights(policy: HeightPolicy, characterY: number) {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const hero = createPrevizObject('character', scene.objects, {
+      heightPolicy: policy,
+      transform: { position: [0, characterY, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    });
+    const cam = createPrevizObject('camera', [hero]);
+    scene.objects.push(hero, cam);
+    scene.timeline.tracks.push({
+      id: 'rig',
+      objectId: cam.id,
+      clips: [
+        {
+          id: 'clip',
+          kind: 'rig' as const,
+          startFrame: 0,
+          endFrame: 120,
+          anchorObjectId: hero.id,
+          anchorPart: 'face' as const,
+          aimObjectId: hero.id,
+          azimuth: 0,
+          elevation: 0,
+          distance: 3,
+          height: 0,
+          bearing: 'custom' as const,
+          motion: 'static' as const,
+        },
+      ],
+    });
+    instance.setScene(scene);
+    return {
+      character: instance.nodeFor(hero.id)!.position.y,
+      camera: instance.nodeFor(cam.id)!.position.y,
+    };
+  }
+
+  // 量出「落地不重算机位」这道缝有多宽，把它钉在这里而不是留一句含糊的「有已知误差」。
+  // 缝的宽度**恰好等于这一帧落地挪动的距离**：求值层是拿人物落地**之前**的 y 反推机位
+  // 与俯仰的（`evaluate.ts` 的 `applyCloseups` / `applyPathAims`），渲染层事后改 y
+  // 不会让它们重解一遍。人物本来就站在地上（走位画在 y=0 平面上、脚下是空地）时这个
+  // 距离是 0，机位分毫不差；他一脚踏上 0.8 米高的台子，特写就低 0.8 米——脸部特写的
+  // 取景半径不到一米，那是整颗头出画。修法见 `standGroundCharacters` 的注释。
+  it('solves a closeup from the height the character had before the drop', async () => {
+    intersections = [{ object: {}, point: { x: 0, y: 0.8, z: 0 } }];
+    const stepped = await closeupHeights('ground', 0);
+    expect(stepped.character).toBeCloseTo(0.8, 12);
+
+    intersections = [];
+    const settled = await closeupHeights('follow', 0.8);
+    expect(settled.character).toBeCloseTo(0.8, 12);
+
+    // 两边人物站的高度一模一样，机位却差了整整一个落地位移。
+    expect(settled.camera - stepped.camera).toBeCloseTo(0.8, 12);
+  });
+
+  it('overrides a height the user placed by hand', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    intersections = [];
+    const scene = standScene('ground', 0.5);
+    instance.setScene(scene);
+    const lifted = structuredClone(scene);
+    lifted.objects[0]!.transform.position = [0, 5, 0];
+
+    instance.setScene(lifted);
+
+    // 改静态 transform 会把对象记成「手摆过」，求值那一趟于是让位给它。贴地不让：
+    // `ground` 的高度是算出来的，手摆的是他站在哪（x/z），不是他浮多高。
     expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
   });
 });
