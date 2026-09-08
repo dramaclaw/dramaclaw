@@ -31,6 +31,12 @@ import {
   recordTimeline,
 } from "./capture/recordTimeline";
 import { PrevizRenderer } from "./engine/PrevizRenderer";
+import {
+  createAudioContext,
+  createAudioPlayback,
+  fetchAudioBuffer,
+  type PrevizAudioPlayback,
+} from "./engine/audioPlayback";
 import type { CameraPreviewCanvas } from "./engine/cameraPreview";
 import { monitorViewportRect, type MonitorSize } from "./engine/cameraRig";
 import type { GizmoMode } from "./engine/gizmo";
@@ -175,6 +181,22 @@ export function PrevizEditor({
    */
   const [cameraPose, setCameraPose] = useState<PrevizCameraPlacement | null>(null);
   const pointerDownAt = useRef<{ x: number; y: number } | null>(null);
+  /**
+   * Web Audio 上下文按需建、整个编辑器共用一份：浏览器对 AudioContext 数量有上限，
+   * 每次播放都新建的话开关几次就静音了。首次真正需要（播放/录制且轨上有片段）才建，
+   * 空音频轨的场景根本不碰它。
+   */
+  const audioPlaybackRef = useRef<PrevizAudioPlayback | null>(null);
+  const ensureAudioPlayback = useCallback((): PrevizAudioPlayback | null => {
+    if (audioPlaybackRef.current) return audioPlaybackRef.current;
+    const context = createAudioContext();
+    if (!context) return null;
+    audioPlaybackRef.current = createAudioPlayback({
+      context,
+      fetchBuffer: (url) => fetchAudioBuffer(context, url),
+    });
+    return audioPlaybackRef.current;
+  }, []);
 
   const scene = usePrevizStore((state) => state.scene);
   const selectedObjectId = usePrevizStore((state) => state.selectedObjectId);
@@ -208,6 +230,8 @@ export function PrevizEditor({
   const setPathSpeed = usePrevizStore((state) => state.setPathSpeed);
   const timelineFrame = usePrevizStore((state) => state.timelineFrame);
   const timelinePlaying = usePrevizStore((state) => state.timelinePlaying);
+  const timelineRate = usePrevizStore((state) => state.timelineRate);
+  const seekSerial = usePrevizStore((state) => state.seekSerial);
   const selectedClipId = usePrevizStore((state) => state.selectedClipId);
   const selectedPointId = usePrevizStore((state) => state.selectedPointId);
   const addDerivedUploadNode = useCanvasStore((state) => state.addDerivedUploadNode);
@@ -471,6 +495,34 @@ export function PrevizEditor({
     return () => window.cancelAnimationFrame(handle);
   }, [open, timelinePlaying]);
 
+  // 时间轴一播就把音频对上；seekSerial 一变（拖播放头 / 停下来）就从新位置重排。
+  // 片段与当前帧从 getState 读而不进依赖：播放中每帧都在变，跟着重排会卡成一片。
+  useEffect(() => {
+    if (!open || !timelinePlaying || recording) return undefined;
+    const store = usePrevizStore.getState();
+    const clips = store.scene.timeline.audio;
+    if (clips.length === 0) return undefined;
+    const playback = ensureAudioPlayback();
+    if (!playback) return undefined;
+    void playback.play(clips, store.timelineFrame, timelineRate);
+    return () => playback.stop();
+  }, [open, timelinePlaying, timelineRate, seekSerial, recording, ensureAudioPlayback]);
+
+  // 关编辑器就把上下文关掉；卸载同理。
+  useEffect(() => {
+    if (open) return undefined;
+    audioPlaybackRef.current?.dispose();
+    audioPlaybackRef.current = null;
+    return undefined;
+  }, [open]);
+  useEffect(
+    () => () => {
+      audioPlaybackRef.current?.dispose();
+      audioPlaybackRef.current = null;
+    },
+    [],
+  );
+
   // 关掉编辑器时把播放停下来：循环虽然随 effect 一起卸了，但 `timelinePlaying`
   // 还留在 true 上，下次打开会从半路自动播起来。
   useEffect(() => {
@@ -604,7 +656,19 @@ export function PrevizEditor({
         return;
       }
 
-      const mimeType = pickRecordMimeType();
+      const audioClips = store.scene.timeline.audio;
+      // 轨上有音频才混；混不了（没有 AudioContext / 没有带音轨的 mimeType）就退回无声，
+      // 但要说一声，别让人以为音频丢了。
+      // 这里拿「轨上有片段」当「流里有音轨」用：`createMediaStreamDestination()` 出来的
+      // 节点恒带且只带一条音轨，两者在浏览器里不会分叉，空流只存在于测试的假引擎里。
+      let playback: PrevizAudioPlayback | null =
+        audioClips.length > 0 ? ensureAudioPlayback() : null;
+      let mimeType = playback ? pickRecordMimeType(undefined, true) : null;
+      if (audioClips.length > 0 && (!playback || !mimeType)) {
+        toast.warning(t("previz.editor.record.noAudioMix"));
+        playback = null;
+      }
+      if (!mimeType) mimeType = pickRecordMimeType();
       if (!mimeType) {
         toast.error(t("previz.editor.record.unsupported"));
         return;
@@ -626,6 +690,35 @@ export function PrevizEditor({
       setRecording(mode);
 
       try {
+        // 录制按真正走到的那一帧算时长，不拿设置里的总长充数：中途叫停的成片只有画出来
+        // 的那一段。存的是帧号而不是画了几帧——第 0 帧落在 0 秒上，所以帧号本身就是成片
+        // 的跨度（画了 0..N 共 N+1 帧，片长是 N 帧）。
+        let drawn = 0;
+        // 逐帧要问「这一帧谁在播」，问的是开录那一刻的场景：录制自己在推播放头，
+        // 每帧重读 store 只会把中途的编辑读进成片。
+        const programScene = store.scene;
+        const destination = playback ? playback.context.createMediaStreamDestination() : null;
+        if (playback) await playback.load(audioClips);
+        const canvasRecorder = createCanvasRecorder(pass.canvas, {
+          fps: PREVIZ_RECORD_FPS,
+          mimeType,
+          audioStream: destination?.stream,
+        });
+        // 混音时录制器一开就把音频从第 0 帧、1 倍速排进混音节点；停就一起停。
+        const mixed = playback;
+        const recorder =
+          mixed && destination
+            ? {
+                start: () => {
+                  canvasRecorder.start();
+                  void mixed.play(audioClips, 0, 1, destination);
+                },
+                stop: () => {
+                  mixed.stop();
+                  return canvasRecorder.stop();
+                },
+              }
+            : canvasRecorder;
         // 播放头只按约 10Hz 推进：每推一次整棵编辑器都要重渲一遍，再经 timelineFrame 那个
         // effect 把这一帧重新解算一次，30fps 下这占掉了每帧预算的一大块；录制是模态的，
         // 播放头只要看得出在走就够了。首帧与末帧必推：开录播放头要跳回开头（那一帧画在
@@ -642,15 +735,19 @@ export function PrevizEditor({
             durationFrames,
             fps: PREVIZ_RECORD_FPS,
             drawFrame: (frame) => {
-              // 镜头轨还没接进来，全局录制先一律走导演视角。
-              pass.drawFrame(frame, null);
+              // 全局录制按镜头轨逐帧换机位；轨道录制固定一台，传 null 让 pass 用自己那台。
+              pass.drawFrame(
+                frame,
+                target.mode === "global" ? liveCameraAt(programScene, frame) : null,
+              );
+              drawn = frame;
               // 顺手把播放头推到同一帧，时间轴跟着走。
               if (frame - lastPushed >= 3 || frame >= durationFrames) {
                 lastPushed = frame;
                 usePrevizStore.getState().setTimelineFrame(frame);
               }
             },
-            recorder: createCanvasRecorder(pass.canvas, { fps: PREVIZ_RECORD_FPS, mimeType }),
+            recorder,
             now: () => performance.now(),
             schedule: (callback) => {
               window.requestAnimationFrame(callback);
@@ -684,9 +781,9 @@ export function PrevizEditor({
             target.mode === "track"
               ? t("previz.editor.record.trackNodeName", { index: target.index, quality })
               : t("previz.editor.record.globalNodeName", { quality }),
-          // 先按时间轴总长估算，两个方向都不准：录满会比它长（录制在末帧后多留了一小段
-          // 尾巴），提前停止又比它短。等录制回报实际画出的帧数后再换成准确值。
-          durationMs: Math.round((durationFrames / PREVIZ_RECORD_FPS) * 1000),
+          // 按真正画出的帧数算，而不是设置里的总长：中途叫停的成片比总长短，末帧后
+          // 那截采样尾巴又让它比总长长，两个方向都得靠 `drawn` 才对得上。
+          durationMs: Math.round((drawn / PREVIZ_RECORD_FPS) * 1000),
           uploadVideo: (targetProject, file, filename) =>
             uploadFreezoneVideo(targetProject, file, filename),
           addDerivedVideoNode,
@@ -704,7 +801,16 @@ export function PrevizEditor({
         setRecordProgress(0);
       }
     },
-    [addDerivedVideoNode, addEdge, capturing, nodeId, recording, renderer, t],
+    [
+      addDerivedVideoNode,
+      addEdge,
+      capturing,
+      ensureAudioPlayback,
+      nodeId,
+      recording,
+      renderer,
+      t,
+    ],
   );
 
   // 编辑器关掉时把录制叫停：循环握着渲染器，弹窗一关渲染器就 dispose 了。
