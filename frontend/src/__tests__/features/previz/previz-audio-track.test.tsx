@@ -80,7 +80,10 @@ function stubCanvas2D() {
   return fillRect;
 }
 
-/** jsdom 不排版，clientHeight 恒为 0；给个高度，绘制才走真分支而不是兜底常量。 */
+/*
+  jsdom 不排版，clientHeight 恒为 0，绘制永远落在兜底高度上——那一支就等于没验。
+  给个高度让它走真分支，值特意取得和兜底的 24 不一样，读错了地方立刻算不对。
+*/
 function stubClientHeight(px: number): void {
   Object.defineProperty(HTMLCanvasElement.prototype, 'clientHeight', {
     configurable: true,
@@ -134,7 +137,7 @@ describe('PrevizAudioTrack', () => {
       用例一条都发现不了。
     */
     const fillRect = stubCanvas2D();
-    stubClientHeight(24);
+    stubClientHeight(20);
     // 每桶一个不同的值，窗口挪一格或首尾对调都画得不一样。
     const peaks = Float32Array.from({ length: 720 }, (_, i) => i / 1000);
     loadAudioPeaks.mockResolvedValue(peaks);
@@ -145,15 +148,15 @@ describe('PrevizAudioTrack', () => {
       expect(fillRect).toHaveBeenCalled();
     });
 
-    // 120px 宽（60 帧 × 2px/帧）、2000ms 长（60 帧 @30fps）、24px 高，
+    // 120px 宽（60 帧 × 2px/帧）、2000ms 长（60 帧 @30fps）、20px 高，
     // 三个数都直接写死，不借生产代码的换算，免得两边一起错。
-    const bars = peakBarHeights(peaks, clip.offsetMs, 2000, 120, 24);
-    expect(fillRect.mock.calls).toEqual(bars.map((bar, x) => [x, 12 - bar / 2, 1, bar]));
+    const bars = peakBarHeights(peaks, clip.offsetMs, 2000, 120, 20);
+    expect(fillRect.mock.calls).toEqual(bars.map((bar, x) => [x, 10 - bar / 2, 1, bar]));
   });
 
   it('redraws the moved window without decoding the source again', async () => {
     const fillRect = stubCanvas2D();
-    stubClientHeight(24);
+    stubClientHeight(20);
     const peaks = Float32Array.from({ length: 720 }, (_, i) => i / 1000);
     loadAudioPeaks.mockResolvedValue(peaks);
 
@@ -170,7 +173,7 @@ describe('PrevizAudioTrack', () => {
     fillRect.mockClear();
     rerender(<PrevizAudioTrack {...props(sceneWith([{ ...clip, offsetMs: 1500 }]))} />);
     expect(fillRect.mock.calls.map((call) => call[3])).toEqual(
-      peakBarHeights(peaks, 1500, 2000, 120, 24),
+      peakBarHeights(peaks, 1500, 2000, 120, 20),
     );
 
     fillRect.mockClear();
@@ -178,7 +181,7 @@ describe('PrevizAudioTrack', () => {
       <PrevizAudioTrack {...props(sceneWith([{ ...clip, offsetMs: 1500, endFrame: 90 }]))} />,
     );
     expect(fillRect.mock.calls.map((call) => call[3])).toEqual(
-      peakBarHeights(peaks, 1500, 3000, 180, 24),
+      peakBarHeights(peaks, 1500, 3000, 180, 20),
     );
 
     // 峰值是整段素材的，与片段怎么裁无关：窗口一动就重解一次码，等于白建那层缓存。
@@ -187,7 +190,7 @@ describe('PrevizAudioTrack', () => {
 
   it('redraws at the new resolution when the timeline zooms', async () => {
     const fillRect = stubCanvas2D();
-    stubClientHeight(24);
+    stubClientHeight(20);
     const clip = audio('a', 0, 60);
     const { rerender } = render(<PrevizAudioTrack {...props(sceneWith([clip]))} />);
     const canvas = screen.getByTestId('previz-audio-wave-a') as HTMLCanvasElement;
