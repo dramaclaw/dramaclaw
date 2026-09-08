@@ -101,6 +101,9 @@ function applyHeightPolicies(scene: PrevizScene, result: EvaluatedFrame): void {
   for (const object of scene.objects) {
     if (object.kind !== 'character' || object.heightPolicy !== 'plane') continue;
     const state = result.get(object.id);
+    // 这一行是类型上的必需，不是运行时的兜底：`result` 照着同一个 `scene.objects` 建，
+    // `get` 必然有值。和走位那一轮同款的判断不是一回事——那边的键来自轨道，指得到一个
+    // 已经不存在的对象。
     if (!state) continue;
     // `planeY` 原样用，不校验有限性：这一层对数值一律不设防（路径点与静态 transform
     // 的 y 同样直通），单给它补一道校验只会让「哪些数被洗过」变得说不清。
