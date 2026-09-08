@@ -76,10 +76,36 @@ export function evaluateSceneAt(scene: PrevizScene, frame: number): EvaluatedFra
     }
   }
 
+  applyHeightPolicies(scene, result);
+
   const objectsById = lazyIndex(scene);
   applyCloseups(scene, frame, result, objectsById);
   applyPathAims(scene, frame, result, objectsById);
   return result;
+}
+
+/**
+ * 高度策略里能纯算的那一半：锁定平面。
+ *
+ * 夹在走位与特写 /「看向」之间，三边都是硬约束：
+ * 排在走位之前，`samplePathPosition` 转头就把曲线上的 y 原样写回来，压平等于没压；
+ * 排在特写之后，`applyCloseups` 是拿 `anchorState.position` 反推机位的，机位会停在
+ * 人物根本不在的那一层；排在「看向」之后，`applyPathAims` 是拿 `aimState.position`
+ * 反推俯仰的，镜头会盯着二楼的人低头看一楼。
+ *
+ * 「贴合地面」不在这里：它要往场景几何体上打射线，而本模块是纯计算、拿不到 three
+ * 的场景——那一半在 `PrevizRenderer` 里。这里顺手压到 `planeY` 上，是拿「锁定平面」
+ * 的答案冒充落地高度。
+ */
+function applyHeightPolicies(scene: PrevizScene, result: EvaluatedFrame): void {
+  for (const object of scene.objects) {
+    if (object.kind !== 'character' || object.heightPolicy !== 'plane') continue;
+    const state = result.get(object.id);
+    if (!state) continue;
+    // `planeY` 原样用，不校验有限性：这一层对数值一律不设防（路径点与静态 transform
+    // 的 y 同样直通），单给它补一道校验只会让「哪些数被洗过」变得说不清。
+    state.position = [state.position[0], object.planeY, state.position[2]];
+  }
 }
 
 /**

@@ -375,3 +375,88 @@ describe('evaluateSceneAt path aims', () => {
     expect(evaluateSceneAt(scene, 120).get(mover.id)?.rotation[1]).toBeCloseTo(90, 6);
   });
 });
+
+/** 一条爬升的轨迹：终点比起点高 9 米——「跟随轨迹」和「锁定平面」在这条线上才分得开。 */
+function climbingClip(): PrevizPathClip {
+  return {
+    ...clipFor(0, 120),
+    points: [
+      { id: 'a', u: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+      { id: 'b', u: 1, position: [4, 9, 4], rotation: [0, 0, 0] },
+    ],
+  };
+}
+
+/** 把人物挂上那条爬升轨迹，取半程（曲线正好在中点，y = 4.5）那一帧。 */
+function climbHalfway(character: PrevizCharacter, scene: PrevizScene) {
+  scene.timeline = {
+    ...scene.timeline,
+    tracks: [{ id: 't', objectId: character.id, clips: [climbingClip()] }],
+  };
+  return evaluateSceneAt(scene, 60).get(character.id);
+}
+
+describe('evaluateSceneAt height policies', () => {
+  it('keeps a plane-locked character on their storey while they walk', () => {
+    const { scene, character } = sceneWithCharacter();
+    character.heightPolicy = 'plane';
+    character.planeY = 3;
+    const state = climbHalfway(character, scene);
+
+    // 曲线在这一帧给的是 4.5，锁定平面把它压回 3。
+    expect(state?.position[1]).toBe(3);
+    // 策略管的是高度，不是走位：XZ 照旧跟着曲线跑。
+    expect(state?.position[0]).toBeCloseTo(2, 10);
+    expect(state?.position[2]).toBeCloseTo(2, 10);
+  });
+
+  it('leaves a follow-policy character on the height the path says', () => {
+    const { scene, character } = sceneWithCharacter();
+    // 默认档。压平要是漏了判断策略，这条会掉到 planeY 的 0 上。
+    expect(character.heightPolicy).toBe('follow');
+    expect(climbHalfway(character, scene)?.position[1]).toBeCloseTo(4.5, 10);
+  });
+
+  it('leaves the ground policy to the renderer', () => {
+    const { scene, character } = sceneWithCharacter();
+    character.heightPolicy = 'ground';
+    character.planeY = 3;
+    // 贴合地面要往场景几何体上打射线，本模块拿不到 three 的场景。在这里顺手压到
+    // planeY 上，等于拿「锁定平面」的答案冒充落地高度。
+    expect(climbHalfway(character, scene)?.position[1]).toBeCloseTo(4.5, 10);
+  });
+
+  it('locks a standing character to the plane with no path at all', () => {
+    const { scene, character } = sceneWithCharacter();
+    character.heightPolicy = 'plane';
+    character.planeY = -2;
+    // 只对走动的人生效的话，「锁定平面」在摆放阶段就是个不动的开关。
+    expect(evaluateSceneAt(scene, 0).get(character.id)?.position).toEqual([5, -2, 5]);
+  });
+
+  it('parks a closeup on the plane its subject is locked to', () => {
+    const { scene, character, camera } = sceneWithCloseup();
+    character.heightPolicy = 'plane';
+    character.planeY = 3;
+    // 机位是从锚点**这一帧**的位置反推的：压平排在特写之后，机位就停在人物不在的那一层。
+    const faceY = 3 + 1.8 * PREVIZ_RIG_ANCHOR_FRACTION.face;
+    expect(evaluateSceneAt(scene, 0).get(camera.id)?.position[1]).toBeCloseTo(faceY, 6);
+  });
+
+  it('aims at the plane its subject is locked to', () => {
+    const pitchOf = (built: ReturnType<typeof sceneWithAim>) =>
+      evaluateSceneAt(built.scene, 0).get(built.mover.id)!.rotation[0];
+
+    const locked = sceneWithAim('self');
+    locked.character.heightPolicy = 'plane';
+    locked.character.planeY = 2;
+    const lifted = sceneWithAim('self');
+    lifted.character.transform.position = [0, 2, -5];
+
+    // 「看向」也是从被看的人这一帧的位置反推的：锁在 2 米上的人，和干脆摆在 2 米高的
+    // 人，机位该抬同样的头。
+    expect(pitchOf(locked)).toBeCloseTo(pitchOf(lifted), 10);
+    // 再和站在地面的人比一次——否则上一条在「压平压根没生效」时也照样成立。
+    expect(pitchOf(locked)).toBeGreaterThan(pitchOf(sceneWithAim('self')));
+  });
+});
