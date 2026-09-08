@@ -81,8 +81,6 @@ export type BodyType = 'capsule' | 'slim' | 'average' | 'heavy' | 'tall';
  * `PrevizRenderer.dropToSurface` 已经定过了——`hits[0]?.point.y ?? 0`，理由（网格拾取不到，
  * 但它确实铺在 y=0）就写在那一行上面。`ground` 复用那条射线，不要再决定一次：两处落地
  * 各算各的高度是一类极难查的 bug，`domain/drop.ts` 的模块注释整段都在讲这个。
- *
- * 这个字段目前还没有消费者——求值与渲染是后面的事，这里只负责让它原样活过一次读写。
  */
 export type HeightPolicy = 'follow' | 'ground' | 'plane';
 export type DisplayMode = 'solid' | 'translucent' | 'clay';

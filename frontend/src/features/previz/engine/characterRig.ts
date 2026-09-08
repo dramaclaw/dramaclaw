@@ -31,8 +31,9 @@ export const PREVIZ_ACTOR_ANIMATION_URLS = [
  * `capsule`（简化圆柱体）不是一档胖瘦，是「这个人物不要 GLB」。可那层语义归场景图管
  * （谁被换成占位体、谁被送到这里，是 `sceneGraph.syncCharacterRig` 的事），这张表只按
  * 体型查宽度，不认识它，也不该认识——所以这一档在这里必须查得出值：本模块的单测就
- * 直接 `build({ bodyType: 'capsule' })` 走过来。取 1 是「不加宽也不减窄」，它一旦走到
- * 这里，缩放和 `average` 逐位相同，上游那条路由怎么改都不会有一次视觉跳变。
+ * 直接 `build({ bodyType: 'capsule' })` 走过来。取 1 是「不加宽也不减窄」：它一旦走到
+ * 这里，缩放和 `average` 逐位相同——上游那条路由怎么改，**这张表**都不会给它添一次
+ * 宽度跳变。（选这一档时观感本来就该变，那是路由的事，不归这张表管。）
  * 列在表里还为了让 `Record<BodyType, …>` 保持穷尽：将来再多一档体型，编译器会在这里
  * 拦住，而不是让 `BODY_WIDTH_SCALE[bodyType]` 查出 undefined、乘完变 NaN 再喂进
  * `scale.set`（见下面那行三个乘法），把整棵子树的世界矩阵一起烂掉。
