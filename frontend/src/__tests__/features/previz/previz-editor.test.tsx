@@ -183,13 +183,15 @@ vi.mock("sonner", () => ({
 // store 也是模块级单例：新加的用例读它的真实状态，不重置就会串。
 // `clearAllMocks()` 只抹调用记录，既不还原实现，也不清 `mockReturnValueOnce` /
 // `mockImplementationOnce` 排下的队。哪条用例排了一次「返回 null」却没走到那一步，
-// 这个 once 就会原封不动留给下一条用例，红在一个跟它毫无关系的地方。这三个桩子都被
-// 用例按 once 改过，逐个 reset 回默认实现。
+// 这个 once 就会原封不动留给下一条用例，红在一个跟它毫无关系的地方。这四个桩子都被
+// 用例按 once 改过，逐个 reset 回默认实现。`load` 尤其要命：排给它的那个 promise 攥在
+// 某条用例的局部变量里，漏到下一条要解码音频的用例头上，就是一次永不 resolve 的 await。
 beforeEach(() => {
   vi.clearAllMocks();
   createAudioContext.mockReset().mockImplementation(() => audioContext);
   pickRecordMimeType.mockReset().mockImplementation(defaultRecordMimeType);
   createCanvasRecorder.mockReset().mockImplementation(defaultCanvasRecorder);
+  audioPlayback.load.mockReset().mockImplementation(async () => {});
   usePrevizStore.getState().loadScene(createDefaultScene());
 });
 
@@ -2204,6 +2206,60 @@ describe("audio playback and mix", () => {
     await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 3000 });
     expect(startRecording).toHaveBeenCalledTimes(1);
     expect(addDerivedVideoNode).toHaveBeenCalledTimes(1);
+  });
+
+  it("unlocks the recorder after an attempt that never got off the ground", async () => {
+    const user = userEvent.setup();
+    // 入口锁是同步 ref，`finally` 是唯一还锁的地方。它要是不跑，这个组件实例的余生里录制
+    // 就永久死掉：按钮照样写着「开始录制」，点了没反应、不报错、连个转圈都没有——比重入
+    // 本身更难被发现。四条早退路径（没项目 / 没机位 / 没容器 / 内层抛出）共用这一个
+    // `finally`，钉住最好造的那条就够了。
+    pickRecordMimeType.mockImplementation(() => null);
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }),
+    );
+    expect(toast.error).toHaveBeenCalledWith("previz.editor.record.unsupported");
+    expect(startRecording).not.toHaveBeenCalled();
+
+    // 换台能录的浏览器再来一次：这一次必须录得成。
+    pickRecordMimeType.mockImplementation(defaultRecordMimeType);
+    await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }),
+    );
+    await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 3000 });
+    expect(startRecording).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the helper visibility back when the mix destination cannot be opened", async () => {
+    const user = userEvent.setup();
+    // 混音出口也在那个 try 里面。今天没有可达的抛出路径（`dispose()` 关掉 context 的同时
+    // 就把 ref 置了空，关编辑器时渲染器先一步同步 dispose、`startRecording()` 会先返回
+    // null），但这条用例是唯一挡得住「重构时又把它挪回 try 外」的东西——挪出去，
+    // `pass.end()` 就再也不跑了。
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().addAudioClip(source, 0);
+    });
+    const openDestination = audioContext.createMediaStreamDestination;
+    audioContext.createMediaStreamDestination = () => {
+      throw new Error("audio context is closed");
+    };
+    try {
+      await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+      await user.click(
+        screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }),
+      );
+      await vi.waitFor(() => expect(recordEnd).toHaveBeenCalled(), { timeout: 3000 });
+    } finally {
+      audioContext.createMediaStreamDestination = openDestination;
+    }
+    expect(toast.error).toHaveBeenCalledWith("previz.editor.record.failed");
+    expect(addDerivedVideoNode).not.toHaveBeenCalled();
   });
 
   it("hands the helper visibility back when the MediaRecorder refuses the container", async () => {
