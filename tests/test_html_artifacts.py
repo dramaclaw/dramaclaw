@@ -102,16 +102,13 @@ def test_preview_embeds_local_media_and_blocks_external(tmp_path):
     assert preview['warnings']
 
 
-def test_transaction_failure_rolls_back_insert(tmp_path, monkeypatch):
+def test_metadata_publish_failure_keeps_previous_revision(tmp_path, monkeypatch):
     store = ArtifactStore(tmp_path)
     first = store.create(title='First', html='first')
-    insert = store._insert
-
-    def failing_insert(*args, **kwargs):
-        insert(*args, **kwargs)
+    def failing_publish(*args, **kwargs):
         raise OSError('simulated write failure')
 
-    monkeypatch.setattr(store, '_insert', failing_insert)
+    monkeypatch.setattr('novelvideo.freezone.html_artifacts.os.replace', failing_publish)
     with pytest.raises(OSError):
         store.update(first['id'], title='Next', html='next', base_version=1)
     assert ArtifactStore(tmp_path).get(first['id']) == first
@@ -134,8 +131,8 @@ def test_export_refuses_unparsed_css_resource(tmp_path):
     with pytest.raises(ValueError):
         store.export(artifact['id'])
 
-@pytest.mark.parametrize('component', ['directory', 'database'])
-def test_storage_refuses_symlinked_peer_database(tmp_path, component):
+@pytest.mark.parametrize('component', ['directory', 'artifact'])
+def test_storage_refuses_symlinked_peer_files(tmp_path, component):
     own, peer = tmp_path / 'own', tmp_path / 'peer'
     own.mkdir()
     peer.mkdir()
@@ -146,12 +143,12 @@ def test_storage_refuses_symlinked_peer_database(tmp_path, component):
         target.symlink_to(peer / 'freezone' / '_html_artifacts')
     else:
         target.mkdir()
-        (target / 'artifacts.sqlite3').symlink_to(peer / 'freezone' / '_html_artifacts' / 'artifacts.sqlite3')
+        (target / secret['id']).symlink_to(peer / 'freezone' / '_html_artifacts' / secret['id'])
     with pytest.raises(ValueError):
         ArtifactStore(own).get(secret['id'])
 
 
-def test_storage_scope_binding_refuses_copied_peer_database(tmp_path):
+def test_storage_scope_binding_refuses_copied_peer_files(tmp_path):
     import shutil
     own, peer = tmp_path / 'own', tmp_path / 'peer'
     own.mkdir()
@@ -159,7 +156,7 @@ def test_storage_scope_binding_refuses_copied_peer_database(tmp_path):
     secret = ArtifactStore(peer).create(title='secret', html='private')
     target = own / 'freezone' / '_html_artifacts'
     target.mkdir(parents=True)
-    shutil.copyfile(peer / 'freezone' / '_html_artifacts' / 'artifacts.sqlite3', target / 'artifacts.sqlite3')
+    shutil.copytree(peer / 'freezone' / '_html_artifacts' / secret['id'], target / secret['id'])
     with pytest.raises(ValueError, match='scope'):
         ArtifactStore(own).get(secret['id'])
 
@@ -214,3 +211,130 @@ def test_navigation_blocks_unsafe_schemes(tmp_path, url):
     assert store.preview(item['id'])['warnings']
     with pytest.raises(ValueError):
         store.export(item['id'])
+
+
+def test_revisions_are_files_without_database(tmp_path):
+    item = ArtifactStore(tmp_path).create(title='page', html='<h1>hello</h1>')
+    root = tmp_path / 'freezone' / '_html_artifacts'
+    assert not (root / 'artifacts.sqlite3').exists()
+    files = list((root / item['id']).glob('*.html'))
+    assert len(files) == 1
+    assert files[0].read_text() == item['html']
+
+
+def test_failed_commit_can_retry_without_publishing_orphan(tmp_path, monkeypatch):
+    import novelvideo.freezone.html_artifacts as module
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='First', html='first')
+    original = module.os.replace
+    with monkeypatch.context() as patch:
+        patch.setattr(module.os, 'replace', lambda *_: (_ for _ in ()).throw(OSError('failure')))
+        with pytest.raises(OSError):
+            store.update(first['id'], title='bad', html='orphan', base_version=1)
+    second = store.update(first['id'], title='Good', html='valid', base_version=1)
+    assert second['version'] == 2
+    assert store.get(first['id'])['html'] == 'valid'
+    assert len(store.versions(first['id'])) == 2
+    assert module.os.replace is original
+
+
+def test_metadata_cannot_reference_outside_artifact(tmp_path):
+    import json
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='First', html='first')
+    metadata = store.root / first['id'] / '1.json'
+    row = json.loads(metadata.read_text())
+    row['file'] = '../private.html'
+    metadata.write_text(json.dumps(row))
+    with pytest.raises(ValueError):
+        store.get(first['id'])
+
+
+def test_revision_refuses_symlinked_html(tmp_path):
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='First', html='first')
+    file = next((store.root / first['id']).glob('*.html'))
+    private = tmp_path / 'private.html'
+    private.write_text('private')
+    file.unlink()
+    file.symlink_to(private)
+    with pytest.raises(ValueError):
+        store.get(first['id'])
+
+
+def test_lost_writer_lease_does_not_publish(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from novelvideo.ports.canvas_mutex import CanvasLeaseLost
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='First', html='first')
+
+    class Guard:
+        def reassert(self):
+            raise CanvasLeaseLost('html_artifacts')
+
+    class Mutex:
+        @contextmanager
+        def write_mutex(self, project_dir, canvas_id):
+            assert project_dir == store.project_dir
+            assert canvas_id == 'html_artifacts'
+            yield Guard()
+
+    with monkeypatch.context() as patch:
+        patch.setattr('novelvideo.ports.get_canvas_write_mutex', lambda: Mutex())
+        with pytest.raises(CanvasLeaseLost):
+            store.update(first['id'], title='lost', html='lost', base_version=1)
+    assert store.get(first['id']) == first
+
+
+@pytest.mark.parametrize('payload', ['[]', '{"version": 1}', '{"file": null}', '{'])
+def test_corrupt_revision_metadata_is_value_error(tmp_path, payload):
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='First', html='first')
+    (store.root / first['id'] / '1.json').write_text(payload)
+    with pytest.raises(ValueError):
+        store.get(first['id'])
+
+
+def test_read_refuses_symlink_swap_after_metadata_check(tmp_path, monkeypatch):
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='First', html='first')
+    target = next((store.root / first['id']).glob('*.html'))
+    peer = tmp_path / 'private.html'
+    peer.write_text('first')
+    original = store._regular
+
+    def swap(path):
+        original(path)
+        if path == target and not path.is_symlink():
+            path.unlink()
+            path.symlink_to(peer)
+
+    monkeypatch.setattr(store, '_regular', swap)
+    with pytest.raises(ValueError):
+        store.get(first['id'])
+
+
+def test_export_file_is_cached_per_version(tmp_path):
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='One', html='<h1>One</h1>')
+    path = store.export_file(first['id'], 1)
+    assert path.is_relative_to(tmp_path)
+    assert path.name == 'v1.zip'
+    original = path.read_bytes()
+    store.update(first['id'], title='Two', html='<h1>Two</h1>', base_version=1)
+    second = store.export_file(first['id'], 2)
+    assert second != path and path.read_bytes() == original
+    with zipfile.ZipFile(second) as archive:
+        assert archive.read('index.html') == b'<h1>Two</h1>'
+    assert store.export_file(first['id'], 1) == path
+
+
+def test_cached_export_preserves_media_snapshot(tmp_path):
+    (tmp_path / 'photo.png').write_bytes(b'original')
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Media', html='<img src="photo.png">')
+    path = store.export_file(item['id'], 1)
+    (tmp_path / 'photo.png').unlink()
+    assert store.export_file(item['id'], 1) == path
+    with zipfile.ZipFile(path) as archive:
+        assert archive.read(next(n for n in archive.namelist() if n.endswith('.png'))) == b'original'

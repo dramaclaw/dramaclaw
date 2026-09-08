@@ -44,7 +44,9 @@ def test_api_lifecycle(client):
     assert len(api.get(url + '/versions').json()['data']['versions']) == 2
     assert api.post(url + '/restore', json={'version': 1, 'base_version': 2}).json()['data']['version'] == 3
     assert api.get(url + '/preview').json()['data']['html'] == '<h1>One</h1>'
-    assert api.get(url + '/export').headers['content-type'] == 'application/zip'
+    download = api.get(url + '/export').json()['data']['download_url']
+    assert download.startswith('/api/v1/projects/demo/files/freezone/_html_artifacts/')
+    assert download.endswith('/exports/v3.zip')
     assert api.get(url + '?version=999').status_code == 404
     assert api.put(url, json={'title': 'Bad', 'html': 'bad'}).status_code == 422
 
@@ -63,3 +65,50 @@ def test_acl_and_home_node_on_reads_and_writes(client):
     for suffix in ['', '/versions', '/preview', '/export']:
         assert api.get(url + suffix).status_code == 409
     assert api.get(BASE).status_code == 409
+
+
+def test_preview_project_media_uses_manifest_instead_of_base64(client):
+    api, _ = client
+    from novelvideo.api.routes import html_artifacts as routes
+    import asyncio
+    store = asyncio.run(routes._store('demo', {'username': 'alice'}, 'editor'))
+    (store.project_dir / 'clip.mp4').write_bytes(b'video')
+    artifact = api.post(BASE, json={'title': 'Video', 'html': '<video src="clip.mp4"></video>'}).json()['data']
+    preview = api.get(BASE + '/' + artifact['id'] + '/preview').json()['data']
+    assert preview['warnings'] == []
+    assert preview['resources'][0]['path'] == '/api/v1/projects/demo/media/clip.mp4'
+    assert 'base64' not in preview['html']
+
+
+def test_node_history_tracks_saved_versions(client, tmp_path):
+    import json
+    api, role = client
+    scope = {'canvas_id': 'canvas-1', 'node_id': 'node-1'}
+    first = api.post(BASE, json={'title': 'One', 'html': 'one', **scope}).json()['data']
+    url = BASE + '/' + first['id']
+    assert api.put(url, json={'title': 'Two', 'html': 'two', 'base_version': 1, **scope}).status_code == 200
+    rows = [json.loads(line) for line in (tmp_path / 'freezone/_generation_history/canvas-1/node-1.jsonl').read_text().splitlines()]
+    assert [row['result']['version'] for row in rows] == [1, 2]
+    assert all(row['media_type'] == 'html' for row in rows)
+    assert rows[0]['result']['artifact_id'] == first['id']
+    role['value'] = 'viewer'
+    assert api.post(url + '/node-history', json={'version': 1, **scope}).status_code == 403
+
+
+def test_history_scope_rejects_partial_and_traversal(client):
+    api, _ = client
+    for scope in [{'node_id': 'node'}, {'canvas_id': '../peer', 'node_id': 'node'}, {'canvas_id': 'canvas', 'node_id': '../node'}]:
+        assert api.post(BASE, json={'title': 'One', 'html': 'one', **scope}).status_code == 422
+
+
+def test_history_failure_does_not_lose_saved_source(client, monkeypatch):
+    from novelvideo.api.routes import html_artifacts as routes
+    api, _ = client
+    def fail(**kwargs):
+        raise OSError('disk error')
+    monkeypatch.setattr(routes, 'append_generation_history', fail)
+    response = api.post(BASE, json={'title': 'Saved', 'html': 'source', 'canvas_id': 'canvas', 'node_id': 'node'})
+    assert response.status_code == 200
+    artifact = response.json()['data']
+    assert artifact['warnings']
+    assert api.get(BASE + '/' + artifact['id']).json()['data']['html'] == 'source'

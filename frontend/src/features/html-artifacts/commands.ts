@@ -1,5 +1,5 @@
 import {captureFreezoneCanvasScope} from '@/features/freezone/canvasSyncRuntime';
-import { createHtmlArtifact, saveHtmlArtifact, restoreHtmlVersion, announceHtmlArtifact } from './api';
+import { createHtmlArtifact, saveHtmlArtifact, restoreHtmlVersion, announceHtmlArtifact, recordHtmlNodeHistory } from './api';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { nodeHasSourceHandle } from '@/features/canvas/domain/nodeRegistry';
 
@@ -61,7 +61,16 @@ export async function executeHtmlArtifactCommand(command: HtmlArtifactCommand, p
   if (nodeId) for (const source of references) {
     if (!useCanvasStore.getState().addEdgeWithData(source,nodeId,{edgeKind:'data',link_type:'derived_from'})) missingReferences.push(source);
   }
-  announceHtmlArtifact(projectId,artifact);
+  const historyWarnings = [...(artifact.warnings ?? [])];
+  for (const targetId of createdNodeId ? [createdNodeId] : existing.map(node => node.id)) {
+    try {
+      const recorded = await recordHtmlNodeHistory(projectId,artifact.id,artifact.version,{canvas_id:canvasId,node_id:targetId});
+      historyWarnings.push(...(recorded.warnings ?? []));
+    } catch {
+      historyWarnings.push('网页已保存，但节点历史记录失败，请稍后重试。');
+    }
+  }
+  announceHtmlArtifact(projectId,artifact,nodeId);
   // Persist identity and revision, never a duplicate source document in chat.
-  return {createdNodeId,nodeId,output:{...output,canvas_attached:Boolean(nodeId),...(missingReferences.length ? {warnings:[`Saved HTML, but could not link reference nodes: ${missingReferences.join(', ')}`]} : {})}};
+  return {createdNodeId,nodeId,output:{...output,canvas_attached:Boolean(nodeId),...((missingReferences.length || historyWarnings.length) ? {warnings:[...historyWarnings,...(missingReferences.length ? [`Saved HTML, but could not link reference nodes: ${missingReferences.join(', ')}`] : [])]} : {})}};
 }

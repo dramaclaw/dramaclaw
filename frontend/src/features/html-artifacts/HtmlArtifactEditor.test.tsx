@@ -4,7 +4,7 @@ import { HtmlArtifactEditor } from './HtmlArtifactEditor';
 import * as api from './api';
 vi.mock('./api', async () => ({...await vi.importActual('./api'), readHtmlArtifact:vi.fn(),readHtmlPreview:vi.fn(),listHtmlVersions:vi.fn(),saveHtmlArtifact:vi.fn(),announceHtmlArtifact:vi.fn()}));
 const artifact={id:'a',title:'Brand',version:1,html:'<h1>Original</h1>',created_at:'now',updated_at:'now'};
-beforeEach(()=>{vi.clearAllMocks();vi.mocked(api.readHtmlArtifact).mockResolvedValue(artifact);vi.mocked(api.readHtmlPreview).mockResolvedValue({html:artifact.html});vi.mocked(api.listHtmlVersions).mockResolvedValue({versions:[{version:1,title:'Brand',created_at:'now'}]});});
+beforeEach(()=>{vi.clearAllMocks();vi.mocked(api.readHtmlArtifact).mockResolvedValue(artifact);vi.mocked(api.readHtmlPreview).mockResolvedValue({html:artifact.html,warnings:[],media:[],release:vi.fn()});vi.mocked(api.listHtmlVersions).mockResolvedValue({versions:[{version:1,title:'Brand',created_at:'now'}]});});
 it('retains unsaved source on a version conflict and uses the version read as base',async()=>{
   vi.mocked(api.saveHtmlArtifact).mockRejectedValue(new Error('Version conflict'));
   render(<HtmlArtifactEditor projectId="p" artifactId="a" onClose={()=>{}} />);
@@ -14,7 +14,7 @@ it('retains unsaved source on a version conflict and uses the version read as ba
   fireEvent.click(screen.getByRole('button',{name:'保存'}));
   await screen.findByText('Version conflict');
   expect(screen.getByLabelText('HTML 源码')).toHaveValue('<h1>Edited</h1>');
-  expect(api.saveHtmlArtifact).toHaveBeenCalledWith('p','a','Brand','<h1>Edited</h1>',1);
+  expect(api.saveHtmlArtifact).toHaveBeenCalledWith('p','a','Brand','<h1>Edited</h1>',1,undefined);
 });
 it('uses opaque-origin script sandbox and does not silently close a dirty editor',async()=>{
   const onClose=vi.fn(); const confirm=vi.spyOn(window,'confirm').mockReturnValue(false);
@@ -67,10 +67,54 @@ it('requires a fresh interactive opt-in after a saved revision changes',async()=
   await screen.findByDisplayValue('Brand');
   fireEvent.click(screen.getByRole('button',{name:'运行网页脚本'}));
   vi.mocked(api.readHtmlArtifact).mockResolvedValue({...artifact,version:2,html:'<h1>Second</h1>'});
-  vi.mocked(api.readHtmlPreview).mockResolvedValue({html:'<h1>Second</h1>'});
+  vi.mocked(api.readHtmlPreview).mockResolvedValue({html:'<h1>Second</h1>',warnings:[],media:[],release:vi.fn()});
   window.dispatchEvent(new CustomEvent(api.HTML_ARTIFACT_UPDATED_EVENT,{detail:{projectId:'revision',artifact:{...artifact,version:2}}}));
   await screen.findByText('v2');
   expect(container.querySelector('iframe')).not.toHaveAttribute('credentialless');
   expect(container.querySelector('iframe')?.srcdoc).not.toContain("script-src 'unsafe-inline'");
  }finally{delete (HTMLIFrameElement.prototype as unknown as Record<string,unknown>).credentialless;}
+});
+
+it('opens the requested historical version and saves against the head observed at load',async()=>{
+  vi.mocked(api.listHtmlVersions).mockResolvedValue({versions:[{version:3,title:'New',created_at:'now'},{version:1,title:'Brand',created_at:'now'}]});
+  vi.mocked(api.saveHtmlArtifact).mockRejectedValue(new Error('Version conflict'));
+  render(<HtmlArtifactEditor projectId="historical" artifactId="a" version={1} nodeId="n" onClose={()=>{}} />);
+  await screen.findByDisplayValue('Brand');
+  expect(api.readHtmlArtifact).toHaveBeenCalledWith('historical','a',1);
+  fireEvent.change(screen.getByLabelText('网页名称'),{target:{value:'Based on old version'}});
+  fireEvent.click(screen.getByRole('button',{name:'保存'}));
+  await screen.findByText('Version conflict');
+  expect(api.saveHtmlArtifact).toHaveBeenCalledWith('historical','a','Based on old version',artifact.html,3,undefined);
+});
+it('using a historical version only switches the selected node reference',async()=>{
+  render(<HtmlArtifactEditor projectId="select-history" artifactId="a" version={1} nodeId="node" onClose={()=>{}} />);
+  await screen.findByDisplayValue('Brand');
+  fireEvent.click(screen.getByRole('button',{name:'恢复此版本'}));
+  expect(api.announceHtmlArtifact).toHaveBeenCalledWith('select-history',artifact,'node');
+  expect(api.saveHtmlArtifact).not.toHaveBeenCalled();
+});
+it('does not advance a saved draft conflict base when reopened after another edit',async()=>{
+  vi.mocked(api.listHtmlVersions).mockResolvedValue({versions:[{version:2,title:'New',created_at:'now'}]});
+  const first=render(<HtmlArtifactEditor projectId="stale-draft" artifactId="a" version={1} onClose={()=>{}} />);
+  await screen.findByDisplayValue('Brand');
+  fireEvent.change(screen.getByLabelText('网页名称'),{target:{value:'Draft'}});
+  first.unmount();
+  vi.mocked(api.listHtmlVersions).mockResolvedValue({versions:[{version:3,title:'Newer',created_at:'now'}]});
+  vi.mocked(api.saveHtmlArtifact).mockRejectedValue(new Error('Version conflict'));
+  render(<HtmlArtifactEditor projectId="stale-draft" artifactId="a" version={1} onClose={()=>{}} />);
+  await screen.findByDisplayValue('Draft');
+  fireEvent.click(screen.getByRole('button',{name:'保存'}));
+  await screen.findByText('Version conflict');
+  expect(api.saveHtmlArtifact).toHaveBeenCalledWith('stale-draft','a','Draft',artifact.html,2,undefined);
+});
+it('sends preview media blobs into the opaque iframe after load',async()=>{
+  const media=[{placeholder:'html-artifact-resource-0',blob:new Blob(['image'],{type:'image/png'})}];
+  vi.mocked(api.readHtmlPreview).mockResolvedValue({html:artifact.html,media,warnings:[],release:vi.fn()});
+  const {container}=render(<HtmlArtifactEditor projectId="media-bridge" artifactId="a" onClose={()=>{}} />);
+  await screen.findByDisplayValue('Brand');
+  const iframe=container.querySelector('iframe')!;
+  const post=vi.spyOn(iframe.contentWindow!,'postMessage');
+  fireEvent.load(iframe);
+  expect(post).toHaveBeenCalledWith({type:'html-artifact-media',token:expect.any(String),media},'*');
+  expect(iframe).toHaveAttribute('sandbox','allow-scripts');
 });

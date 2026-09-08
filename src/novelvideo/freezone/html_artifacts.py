@@ -1,7 +1,7 @@
 """Project-local HTML revisions and portable, strictly local media exports.
 
-SQLite transactions are the cross-process writer lock and atomic commit boundary:
-there is no mutable head file that can disagree with immutable revision rows.
+Immutable HTML files are published by revision metadata committed last.
+The canvas mutex port provides deployment-specific writer serialization.
 """
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ from html import escape
 from html.parser import HTMLParser
 import hashlib
 import io
+import json
 from pathlib import Path
 import re
-import sqlite3
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 import uuid
 import zipfile
 
@@ -39,43 +39,55 @@ class ArtifactStore:
         self.project_id = project_id
         self.owner_username = owner_username
         self.project_name = project_name
-        self.path = self.project_dir / 'freezone' / '_html_artifacts' / 'artifacts.sqlite3'
+        self.root = self.project_dir / 'freezone' / '_html_artifacts'
+
+    @property
+    def _scope(self) -> str:
+        return hashlib.sha256((self.project_id or str(self.project_dir)).encode()).hexdigest()
+
+    def _regular(self, path: Path) -> None:
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError('Artifact storage must use regular files')
 
     @contextmanager
-    def _db(self, *, write: bool = False):
-        # Refuse symlinked storage, including SQLite journal sidecars.
-        for directory in (self.project_dir / 'freezone', self.path.parent):
+    def _directory_fd(self, directory: Path):
+        descriptors = []
+        try:
+            fd = os.open(self.project_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            descriptors.append(fd)
+            for part in directory.relative_to(self.project_dir).parts:
+                fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                descriptors.append(fd)
+            yield fd
+        except OSError as exc:
+            raise ValueError('Artifact storage is missing, unreadable, or contains a symlink') from exc
+        finally:
+            for fd in reversed(descriptors):
+                os.close(fd)
+
+    def _read_text(self, path: Path, limit: int) -> str:
+        self._regular(path)
+        with self._directory_fd(path.parent) as directory:
+            fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            with os.fdopen(fd, 'rb') as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+                    raise ValueError('Invalid artifact file type or size')
+                content = stream.read(limit + 1)
+                if len(content) > limit:
+                    raise ValueError('Artifact file exceeds size limit')
+                return content.decode('utf-8')
+
+    @contextmanager
+    def _locked(self):
+        from novelvideo.ports import get_canvas_write_mutex
+        self.project_dir.mkdir(parents=True, exist_ok=True)
+        for directory in (self.project_dir / 'freezone', self.root):
             if directory.is_symlink():
                 raise ValueError('Artifact storage contains a symlink')
             directory.mkdir(exist_ok=True)
-        for suffix in ('', '-journal', '-wal', '-shm'):
-            entry = Path(str(self.path) + suffix)
-            if entry.is_symlink() or (entry.exists() and not entry.is_file()):
-                raise ValueError('Artifact storage must use regular files')
-        db = sqlite3.connect(self.path, timeout=5)
-        db.row_factory = sqlite3.Row
-        try:
-            db.execute('PRAGMA synchronous=FULL')
-            db.execute('BEGIN IMMEDIATE')
-            scope = hashlib.sha256((self.project_id or str(self.project_dir)).encode()).hexdigest()
-            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if tables:
-                if 'artifact_scope' not in tables:
-                    raise ValueError('Artifact storage scope missing')
-                bound = db.execute('SELECT scope FROM artifact_scope').fetchone()
-                if bound is None or bound[0] != scope:
-                    raise ValueError('Artifact storage scope mismatch')
-            else:
-                db.execute('CREATE TABLE artifact_scope (scope TEXT NOT NULL)')
-                db.execute('INSERT INTO artifact_scope VALUES (?)', (scope,))
-            db.execute('CREATE TABLE IF NOT EXISTS revisions (id TEXT NOT NULL, title TEXT NOT NULL, version INTEGER NOT NULL, html TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(id, version))')
-            yield db
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        with get_canvas_write_mutex().write_mutex(self.project_dir, 'html_artifacts') as guard:
+            yield guard
 
     @staticmethod
     def _validate_id(artifact_id: str):
@@ -89,60 +101,151 @@ class ArtifactStore:
         if len(html.encode('utf-8')) > MAX_HTML_BYTES:
             raise ValueError('HTML exceeds 2 MiB')
 
-    def _get(self, db, artifact_id: str, version: int | None = None) -> dict:
+    def _directory(self, artifact_id: str) -> Path:
         self._validate_id(artifact_id)
+        directory = self.root / artifact_id
+        if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+            raise ValueError('Artifact storage contains a symlink or invalid directory')
+        return directory
+
+    def _rows(self, artifact_id: str) -> list[dict]:
+        directory = self._directory(artifact_id)
+        rows = []
+        for entry in directory.glob('*.json'):
+            self._regular(entry)
+            row = json.loads(self._read_text(entry, 16384))
+            required = ('id', 'title', 'created_at', 'updated_at', 'file', 'sha256', 'scope')
+            if not isinstance(row, dict) or any(not isinstance(row.get(key), str) for key in required):
+                raise ValueError('Invalid artifact revision metadata')
+            if row.get('scope') != self._scope:
+                raise ValueError('Artifact storage scope mismatch')
+            if row.get('id') != artifact_id or not isinstance(row.get('version'), int) or row['version'] < 1 or entry.name != str(row['version']) + '.json':
+                raise ValueError('Invalid artifact revision metadata')
+            self._validate_id(row.get('file', '').removesuffix('.html'))
+            if not row['file'].endswith('.html'):
+                raise ValueError('Invalid artifact revision file')
+            rows.append(row)
+        return sorted(rows, key=lambda row: row['version'], reverse=True)
+
+    def _get(self, artifact_id: str, version: int | None = None) -> dict:
         if version is not None and version < 1:
             raise ValueError('Version must be positive')
-        row = db.execute('SELECT * FROM revisions WHERE id=?' + (' AND version=?' if version is not None else '') + ' ORDER BY version DESC LIMIT 1', (artifact_id, version) if version is not None else (artifact_id,)).fetchone()
-        if row is None:
+        rows = [row for row in self._rows(artifact_id) if version is None or row['version'] == version]
+        if not rows:
             raise FileNotFoundError('Artifact or revision not found')
+        row = dict(rows[0])
+        file = self._directory(artifact_id) / row.pop('file')
+        self._regular(file)
+        html = self._read_text(file, MAX_HTML_BYTES)
+        if hashlib.sha256(html.encode()).hexdigest() != row.pop('sha256'):
+            raise ValueError('Artifact revision content mismatch')
+        row.pop('scope')
+        return dict(row, html=html)
+
+    def _publish(self, row: dict, guard) -> dict:
+        self._validate(row['title'], row['html'])
+        directory = self._directory(row['id'])
+        directory.mkdir(exist_ok=True)
+        file = directory / (uuid.uuid4().hex + '.html')
+        metadata = directory / (str(row['version']) + '.json')
+        self._regular(metadata)
+        if metadata.exists():
+            raise ArtifactConflict('Artifact revision already exists')
+        temporary = directory / ('.' + uuid.uuid4().hex + '.tmp')
+        try:
+            with file.open('x', encoding='utf-8') as stream:
+                stream.write(row['html'])
+                stream.flush()
+                os.fsync(stream.fileno())
+            payload = {key: value for key, value in row.items() if key != 'html'}
+            payload.update(scope=self._scope, file=file.name, sha256=hashlib.sha256(row['html'].encode()).hexdigest())
+            with temporary.open('x', encoding='utf-8') as stream:
+                json.dump(payload, stream, ensure_ascii=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+            guard.reassert()
+            os.replace(temporary, metadata)
+        finally:
+            temporary.unlink(missing_ok=True)
         return dict(row)
 
-    def _insert(self, db, artifact_id: str, title: str, html: str, version: int, created_at: str) -> dict:
-        self._validate(title, html)
-        now = datetime.now(timezone.utc).isoformat()
-        db.execute('INSERT INTO revisions VALUES (?, ?, ?, ?, ?, ?)', (artifact_id, title.strip(), version, html, created_at, now))
-        return self._get(db, artifact_id, version)
-
     def create(self, *, title: str, html: str) -> dict:
-        with self._db(write=True) as db:
-            return self._insert(db, uuid.uuid4().hex, title, html, 1, datetime.now(timezone.utc).isoformat())
+        with self._locked() as guard:
+            now = datetime.now(timezone.utc).isoformat()
+            return self._publish(dict(id=uuid.uuid4().hex, title=title.strip(), html=html, version=1, created_at=now, updated_at=now), guard)
 
     def get(self, artifact_id: str, version: int | None = None) -> dict:
         self._validate_id(artifact_id)
-        with self._db() as db:
-            return self._get(db, artifact_id, version)
+        with self._locked():
+            return self._get(artifact_id, version)
 
     def list(self) -> list[dict]:
-        with self._db() as db:
-            return [dict(row) for row in db.execute('SELECT id,title,version,created_at,updated_at FROM revisions r WHERE version=(SELECT MAX(version) FROM revisions WHERE id=r.id) ORDER BY updated_at DESC')]
+        with self._locked():
+            rows = []
+            for directory in self.root.iterdir():
+                if directory.is_dir():
+                    revisions = self._rows(directory.name)
+                    if revisions:
+                        rows.append({key: revisions[0][key] for key in ('id', 'title', 'version', 'created_at', 'updated_at')})
+            return sorted(rows, key=lambda row: row['updated_at'], reverse=True)
 
     def versions(self, artifact_id: str) -> list[dict]:
-        with self._db() as db:
-            self._get(db, artifact_id)
-            return [dict(row) for row in db.execute('SELECT version,title,updated_at AS created_at FROM revisions WHERE id=? ORDER BY version DESC', (artifact_id,))]
+        with self._locked():
+            self._get(artifact_id)
+            return [dict(version=row['version'], title=row['title'], created_at=row['updated_at']) for row in self._rows(artifact_id)]
 
     def update(self, artifact_id: str, *, title: str, html: str, base_version: int) -> dict:
-        with self._db(write=True) as db:
-            current = self._get(db, artifact_id)
+        with self._locked() as guard:
+            current = self._get(artifact_id)
             if current['version'] != base_version:
                 raise ArtifactConflict('Artifact changed; reload the latest revision before saving')
-            return self._insert(db, artifact_id, title, html, base_version + 1, current['created_at'])
+            return self._publish(dict(current, title=title.strip(), html=html, version=base_version + 1, updated_at=datetime.now(timezone.utc).isoformat()), guard)
 
     def restore(self, artifact_id: str, *, version: int, base_version: int) -> dict:
-        with self._db(write=True) as db:
-            current = self._get(db, artifact_id)
+        with self._locked() as guard:
+            current = self._get(artifact_id)
             if current['version'] != base_version:
                 raise ArtifactConflict('Artifact changed; reload the latest revision before restoring')
-            old = self._get(db, artifact_id, version)
-            return self._insert(db, artifact_id, old['title'], old['html'], base_version + 1, current['created_at'])
+            old = self._get(artifact_id, version)
+            return self._publish(dict(current, title=old['title'], html=old['html'], version=base_version + 1, updated_at=datetime.now(timezone.utc).isoformat()), guard)
 
     def preview(self, artifact_id: str, version: int | None = None) -> dict:
         artifact = self.get(artifact_id, version)
         parser = _PreviewHTML(self)
         parser.feed(artifact['html'])
         parser.close()
-        return {'html': ''.join(parser.output), 'warnings': parser.warnings}
+        return {'html': ''.join(parser.output), 'warnings': parser.warnings, 'resources': parser.manifest}
+
+    def export_file(self, artifact_id: str, version: int | None = None) -> Path:
+        artifact = self.get(artifact_id, version)
+        directory = self._directory(artifact_id) / 'exports'
+        def cached():
+            if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+                raise ValueError('Invalid export directory')
+            target = directory / f"v{artifact['version']}.zip"
+            self._regular(target)
+            return target
+        with self._locked():
+            target = cached()
+            if target.exists():
+                return target
+        content = self.export(artifact_id, artifact['version'])
+        with self._locked() as guard:
+            target = cached()
+            if target.exists():
+                return target
+            directory.mkdir(exist_ok=True)
+            temporary = directory / ('.' + uuid.uuid4().hex + '.tmp')
+            try:
+                with temporary.open('xb') as stream:
+                    stream.write(content)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                guard.reassert()
+                os.replace(temporary, target)
+            finally:
+                temporary.unlink(missing_ok=True)
+            return target
 
     def export(self, artifact_id: str, version: int | None = None) -> bytes:
         artifact = self.get(artifact_id, version)
@@ -171,28 +274,7 @@ class _PortableHTML(HTMLParser):
         value = value.strip()
         if value.startswith('#') or value.startswith(('data:image/png;', 'data:image/jpeg;', 'data:image/webp;', 'data:image/gif;')):
             return value
-        parts = urlsplit(value)
-        if not value or parts.scheme or parts.netloc or '\\' in value:
-            raise ValueError('不支持的媒体资源（仅支持当前项目媒体或内嵌图片）：' + value)
-        path = unquote(parts.path)
-        if path.startswith('/api/v1/projects/'):
-            prefix = f'/api/v1/projects/{self.store.project_id}/media/'
-            if not self.store.project_id or not path.startswith(prefix):
-                raise ValueError('Media belongs to a different project')
-            path = path[len(prefix):]
-        elif path.startswith('/static/'):
-            prefixes = [f'/static/projects/{self.store.project_id}/'] if self.store.project_id else []
-            if self.store.owner_username and self.store.project_name:
-                prefixes.append(f'/static/{self.store.owner_username}/{self.store.project_name}/')
-            prefix = next((p for p in prefixes if path.startswith(p)), None)
-            if prefix is None:
-                raise ValueError('Media belongs to a different project')
-            path = path[len(prefix):]
-        candidate = self.store.project_dir / path.lstrip('/')
-        if '..' in Path(path).parts or '\\' in path or not candidate.resolve().is_relative_to(self.store.project_dir):
-            raise ValueError('Unsafe media path')
-        if candidate.suffix.lower() not in _MEDIA or not candidate.is_file():
-            raise ValueError('Missing or unsupported media resource')
+        candidate, parts = self.media_path(value)
         key = str(candidate.resolve())
         if key not in self.resources:
             # Resolve each component through directory descriptors. O_NOFOLLOW
@@ -225,6 +307,31 @@ class _PortableHTML(HTMLParser):
             name = 'assets/' + hashlib.sha256(key.encode()).hexdigest()[:24] + candidate.suffix.lower()
             self.resources[key] = (name, content)
         return self.resources[key][0] + ('#' + parts.fragment if parts.fragment else '')
+
+    def media_path(self, value: str):
+        parts = urlsplit(value)
+        if not value or parts.scheme or parts.netloc or '\\' in value:
+            raise ValueError('不支持的媒体资源（仅支持当前项目媒体或内嵌图片）：' + value)
+        path = unquote(parts.path)
+        if path.startswith('/api/v1/projects/'):
+            prefix = f'/api/v1/projects/{self.store.project_id}/media/'
+            if not self.store.project_id or not path.startswith(prefix):
+                raise ValueError('Media belongs to a different project')
+            path = path[len(prefix):]
+        elif path.startswith('/static/'):
+            prefixes = [f'/static/projects/{self.store.project_id}/'] if self.store.project_id else []
+            if self.store.owner_username and self.store.project_name:
+                prefixes.append(f'/static/{self.store.owner_username}/{self.store.project_name}/')
+            prefix = next((p for p in prefixes if path.startswith(p)), None)
+            if prefix is None:
+                raise ValueError('Media belongs to a different project')
+            path = path[len(prefix):]
+        candidate = self.store.project_dir / path.lstrip('/')
+        if '..' in Path(path).parts or '\\' in path or not candidate.resolve().is_relative_to(self.store.project_dir):
+            raise ValueError('Unsafe media path')
+        if candidate.suffix.lower() not in _MEDIA or not candidate.is_file():
+            raise ValueError('Missing or unsupported media resource')
+        return candidate, parts
 
     def css(self, value: str) -> str:
         value = re.sub(r'/\*.*?\*/', '', value, flags=re.S)
@@ -310,9 +417,21 @@ class _PreviewHTML(_PortableHTML):
         self.warnings: list[str] = []
         self.output = _PreviewOutput()
         self.embedded_bytes = 0
+        self.manifest: list[dict[str, str]] = []
 
     def resource(self, value: str) -> str:
         try:
+            if self.store.project_id and not value.strip().startswith(('#', 'data:')):
+                candidate, parts = self.media_path(value.strip())
+                relative = candidate.relative_to(self.store.project_dir)
+                if any(part.is_symlink() for part in [candidate, *candidate.parents] if part != self.store.project_dir.parent):
+                    raise ValueError('Media path contains a symlink')
+                path = '/api/v1/projects/' + quote(self.store.project_id, safe='') + '/media/' + quote(relative.as_posix(), safe='/')
+                placeholder = 'html-media-' + hashlib.sha256(path.encode()).hexdigest()
+                entry = {'placeholder': placeholder, 'path': path}
+                if entry not in self.manifest:
+                    self.manifest.append(entry)
+                return placeholder + ('#' + parts.fragment if parts.fragment else '')
             rewritten = super().resource(value)
             if rewritten.startswith(('#', 'data:')):
                 return rewritten
