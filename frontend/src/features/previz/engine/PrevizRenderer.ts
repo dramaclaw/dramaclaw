@@ -694,9 +694,9 @@ export class PrevizRenderer {
     // `:198` 那句 sort 是单数版 `intersectObject` 的，别顺着它去核）。射线朝下，距离
     // 升序此时恰好等价于 y 降序，第 0 个就是最高的那个面，这里不必也不该再排一次。
     //
-    // 没命中就用 0：地面网格是不可拾取的（`grid.ts:167` 把它的 raycast 摘掉了，否则
-    // 铺满视野的它会吃掉每一次空点），而它确实铺在 y=0。退回 null 的话在空地上拖东西
-    // 永远不落地，正是最常见的那种拖法。
+    // 没命中就用 0：地面网格是不可拾取的（`createInfiniteGrid` 给它的 `raycast` 赋了
+    // 空函数，否则铺满视野的它会吃掉每一次空点），而它确实铺在 y=0。退回 null 的话在
+    // 空地上拖东西永远不落地，正是最常见的那种拖法。
     const surfaceY = hits[0]?.point.y ?? 0;
     return dropPositionY(node.position.y, box.min.y, surfaceY);
   }
@@ -995,8 +995,9 @@ export class PrevizRenderer {
    * 小的视口。所以另起一套只装这一具木偶与一块地的场景（`createCharacterPreviewStage`）。
    *
    * 返回 Promise 是因为真模型要 await 骨架克隆。调用方可以不等——不等就是「这一帧先不
-   * 管，画好了自然会出现」，而连着调用是安全的：重建判据在 `characterPreview.ts` 里，
-   * 后发的那次会把先发的那具当作过时的丢掉。
+   * 管，画好了自然会出现」；连着调用也是安全的，但两种情形的收场不一样，见
+   * `renderCharacterPreview`（`characterPreview.ts`）的函数头：换木偶的那种是后发赢、
+   * 先发把手里那具丢掉；只改参数的那种是先发赢，它挂载前会按最后一份草稿补刷。
    */
   async renderCharacterPreview(
     canvas: CameraPreviewCanvas,
@@ -1022,6 +1023,9 @@ export class PrevizRenderer {
           camera: this.characterStage.camera,
           canvas,
           rig: this.characterRig,
+          // 上面那个 `disposed` 只挡了进门那一刻；模型下载几秒钟，用户完全来得及在这
+          // 期间关掉预演台。醒来还照画的话，渲染器已经 `forceContextLoss()` 过了。
+          alive: () => !this.disposed,
         },
         draft,
       );
@@ -1338,8 +1342,11 @@ export class PrevizRenderer {
     this.graph.dispose();
     this.pathPreview?.dispose();
     this.strokePreview?.dispose();
-    // 木偶预览那套场景不在 `this.scene` 底下，下面那次 traverse 扫不到它。
+    // 木偶预览那套场景不在 `this.scene` 底下，下面那次 traverse 扫不到它。清完把字段
+    // 也放掉：它指的那些东西已经还给 GPU 了，「非空就是能用」在这之后是假的，而且留
+    // 着还会一直钉住整棵预览场景树不让回收。
     if (this.characterStage) disposeCharacterPreviewStage(this.characterStage);
+    this.characterStage = null;
     this.scene.traverse((object) => {
       const mesh = object as THREE.Mesh;
       mesh.geometry?.dispose();
