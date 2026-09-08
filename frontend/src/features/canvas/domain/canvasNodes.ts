@@ -68,6 +68,12 @@ export interface NodeDisplayData {
    * 老画布里的节点没有这个字段（加字段之前存的），读的时候要当 undefined 处理。
    */
   createdAt?: number | null;
+  /**
+   * 跨项目粘贴带进来的节点在素材拷进本项目之前 / 失败之后的标记（见
+   * application/crossProjectAssets）。`'copying'` 期间媒体字段一律为 null——源项目的
+   * URL 不会出现在 store 或落库数据里；填回目标项目地址后字段即摘除。
+   */
+  assetMigration?: 'copying' | 'failed';
   [key: string]: unknown;
 }
 

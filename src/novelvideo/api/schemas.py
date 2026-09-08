@@ -1,11 +1,12 @@
 """API 请求/响应 Pydantic 模型。"""
 
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from fastapi import HTTPException
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from novelvideo.models import SceneRef
+from novelvideo.freezone.asset_copy import MAX_SOURCE_URL_LENGTH, MAX_SOURCES_PER_REQUEST
 from novelvideo.freezone.slots import PushTarget
 
 ProjectStatus = Literal["active", "archived", "deleted"]
@@ -582,6 +583,19 @@ class FreezoneThreeDViewerScreenshotRequest(BaseModel):
     data_url: str = Field(description="canvas.toDataURL('image/png') 得到的 data URL")
     node_id: Optional[str] = Field(default=None, description="来源 3D 世界节点 id")
     label: Optional[str] = Field(default=None, description="可选显示名")
+
+
+class FreezoneAssetCopyRequest(BaseModel):
+    """跨项目粘贴：把别的项目里的素材拷进当前项目。"""
+
+    sources: list[Annotated[str, Field(max_length=MAX_SOURCE_URL_LENGTH)]] = Field(
+        min_length=1,
+        max_length=MAX_SOURCES_PER_REQUEST,
+        description=(
+            "源素材的同源 URL 列表（`/static/projects/<pid>/...` 或 "
+            "`/api/v1/projects/<pid>/media/...`）；带查询串也行，映射按原字符串返回"
+        ),
+    )
 
 
 class ViewerBeatContextManifest(BaseModel):

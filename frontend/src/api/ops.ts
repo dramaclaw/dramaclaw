@@ -2462,6 +2462,34 @@ export async function uploadFreezoneReferenceFile(
   return resp.data;
 }
 
+// /freezone/assets/copy ---------------------------------------------------- //
+
+export interface FreezoneAssetCopyFailure {
+  source: string;
+  /** invalid_source / not_found / forbidden / unavailable / copy_failed */
+  reason: string;
+}
+
+export interface FreezoneAssetCopyResult {
+  /** 源 URL（原字符串）→ 目标项目里的新 URL。 */
+  mapping: Record<string, string>;
+  failed: FreezoneAssetCopyFailure[];
+}
+
+/**
+ * 跨项目粘贴：让后端把 `sources`（源项目的同源素材 URL）拷进 `project`。
+ * 字节不经过浏览器；OSS 部署下是服务端 CopyObject。单条失败只体现在 `failed` 里。
+ */
+export async function copyFreezoneAssets(
+  project: string,
+  sources: string[],
+): Promise<FreezoneAssetCopyResult> {
+  return apiCall<FreezoneAssetCopyResult>(
+    `projects/${encodeURIComponent(project)}/freezone/assets/copy`,
+    { method: "POST", json: { sources }, timeout: false },
+  );
+}
+
 /** Same endpoint as image upload — backend treats the upload as a generic blob. */
 export async function uploadFreezoneVideo(
   project: string,
