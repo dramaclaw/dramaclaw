@@ -60,6 +60,18 @@ describe('sceneTopDownBounds', () => {
     expect(bounds).toEqual(PREVIZ_TOP_DOWN_DEFAULT_BOUNDS);
   });
 
+  it('frames a lone off-origin character instead of falling back to the default ground', () => {
+    // 只断言「跨度 > 0」是不够的：把空场景那条判断从 `minX > maxX` 写成 `>=`，单个对象
+    // 也会被当成「什么都没累加进来」而回落成以世界原点为中心的默认地块——用户打开对话框
+    // 看到的是一块空地，唯一那个人物在画面外几十米。
+    expect(sceneTopDownBounds([objectAt(20, 1, 20)])).toEqual({
+      minX: 14,
+      maxX: 26,
+      minZ: 14,
+      maxZ: 26,
+    });
+  });
+
   it('centres the minimum-sized ground on the objects rather than on the world origin', () => {
     const bounds = sceneTopDownBounds([objectAt(20, 1, 0), objectAt(21, 1, 0)]);
     expect((bounds.minX + bounds.maxX) / 2).toBe(20.5);
@@ -153,6 +165,13 @@ describe('topDownView', () => {
     expect(world[1]).toBeCloseTo(-1.25, 9);
   });
 
+  it('floors a fractional canvas size the way the DOM does', () => {
+    // `clientWidth` 在缩放或分数 DPR 下是小数，而 `canvas.width` 收到 300.7 存的是 300。
+    // 这里若 ceil / round 成 301，映射原点就是 150.5，跟画布真实中心 150 差半个像素。
+    const view = topDownView({ minX: -5, maxX: 5, minZ: -5, maxZ: 5 }, 300.7, 200.9);
+    expect([view.width, view.height]).toEqual([300, 200]);
+  });
+
   it('survives a canvas whose size is not a number yet', () => {
     const view = topDownView({ minX: -5, maxX: 5, minZ: -5, maxZ: 5 }, NaN, NaN);
     expect(view.width).toBeGreaterThanOrEqual(1);
@@ -191,8 +210,9 @@ describe('worldToCanvas / canvasToWorld', () => {
 
   it('round-trips a world point through the canvas and back', () => {
     // 这一组数逐位相等不是巧合：ppm 是 30、原点是 150、两个坐标都是二进制有限小数，
-    // 乘完再除回来没有舍入。一般情形下**不成立**——同样的公式扫 50 万个随机点，
-    // 有四成回不到原值（实测最大偏差 5e-13），所以下面那条扫描用的是容差比较。
+    // 乘完再除回来没有舍入。实测在这个视图上扫 50 万点，失配数是 0。但它**不能推广**：
+    // 换成 ppm = 9.6 的视图，同样的公式有近五成的点回不到原值，所以下面那些扫描
+    // 一律按容差比。
     const point: [number, number] = [2.5, -1.25];
     expect(canvasToWorld(SQUARE, worldToCanvas(SQUARE, point))).toEqual(point);
   });
@@ -208,7 +228,7 @@ describe('worldToCanvas / canvasToWorld', () => {
       [17, 12],
       [7, 8],
     ] as const) {
-      const back = canvasToWorld(view, worldToCanvas(view, [point[0], point[1]]));
+      const back = canvasToWorld(view, worldToCanvas(view, point));
       expect(back[0]).toBeCloseTo(point[0], 9);
       expect(back[1]).toBeCloseTo(point[1], 9);
     }
@@ -218,16 +238,16 @@ describe('worldToCanvas / canvasToWorld', () => {
       [0, 360],
       [640, 360],
     ] as const) {
-      const back = worldToCanvas(view, canvasToWorld(view, [pixel[0], pixel[1]]));
+      const back = worldToCanvas(view, canvasToWorld(view, pixel));
       expect(back[0]).toBeCloseTo(pixel[0], 6);
       expect(back[1]).toBeCloseTo(pixel[1], 6);
     }
   });
 
   it('round-trips a spread of points on a non-square canvas', () => {
-    // 容差取 1e-9 米：比上面实测的浮点极限（5e-13）宽三个数量级，比任何真 bug
-    // 窄得多——符号写反差着好几米，少一次居中偏移差着半块地，
-    // 就算只错一个像素，在这个视图上也有 0.05 m。
+    // 容差取 1e-9 米：实测本模块会产生的各种视图里，往返的绝对偏差最大 1.4e-14 m，
+    // 这里宽出四个数量级；而比任何真 bug 都窄得多——符号写反差着好几米，少一次居中
+    // 偏移差着半块地，就算只错一个像素，在这个视图上也有 0.05 m。
     const view = topDownView({ minX: -12, maxX: 8, minZ: -4, maxZ: 26 }, 512, 288);
     const next = lcg(20260908);
     for (let i = 0; i < 2000; i++) {
