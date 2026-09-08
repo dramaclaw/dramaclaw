@@ -95,6 +95,10 @@ export class PrevizGizmo {
    * 初值取 `'translate'` 而不是 null：three 的 `TransformControls` 里 `mode` 的默认值
    * 就是 translate，打开编辑器到第一次 `setMode` 之间手柄真的在平移。记成 null 的话
    * 这一段两边说法不一致——控件在平移，我们却当它没有模式。
+   *
+   * **只在 `applyMode` 里写，不要挪进 `setMode`。** 拖动中的切换是挂起的，`applyMode`
+   * 要等到松手、且 [dropOnRelease] 跑完之后才执行；写在 `setMode` 里的话，拖到一半按 R
+   * 就会让这一次**平移**拖拽按 rotate 结算、静默地不落地。
    */
   private mode: GizmoMode | null = 'translate';
 

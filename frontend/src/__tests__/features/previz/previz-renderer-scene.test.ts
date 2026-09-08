@@ -182,7 +182,7 @@ vi.mock('three', () => {
       return this.max.x < this.min.x || this.max.y < this.min.y || this.max.z < this.min.z;
     }
     /** 取两端中点写进 target 再交回来，同 three 0.185 `math/Box3.js:224`。真身在
-     * `:227` 还有一条空盒走 `set(0,0,0)` 的分支，这里没抄——调用点先判了 `isEmpty()`。 */
+     * `:226` 还有一条空盒走 `set(0,0,0)` 的分支，这里没抄——调用点先判了 `isEmpty()`。 */
     getCenter(target: Vector3) {
       return target.set(
         (this.min.x + this.max.x) / 2,
@@ -635,12 +635,25 @@ describe('PrevizRenderer 接场景图', () => {
     expect(objectRoot).toBeInstanceOf(THREE.Group);
     expect(objectRoot).not.toBeInstanceOf(THREE.Scene);
     expect(objectRoot?.parent).toBeInstanceOf(THREE.Scene);
-    // 对象根自己必须是恒等变换。松手落地（`dropToSurface`）拿包围盒算的是世界坐标，
-    // 却把结果写回节点的**局部** y——中间这一层一旦有偏移或缩放，落地会静默按错误
-    // 倍数下沉，画面上只是「东西没落准」，没有任何别的东西会红。真要给它加变换，
-    // 那边就得先把世界坐标换算回局部。
-    expect(objectRoot?.position.y).toBe(0);
+    // 对象根必须是恒等变换，两个理由各管一半：
+    //
+    // 缩放和旋转是松手落地（`dropToSurface`）的承重前提。它拿世界坐标的包围盒算出位移，
+    // 却把结果加到节点的**局部** y 上：非 1 的缩放让世界位移是局部的 s 倍，旋转让局部
+    // y 轴不再竖直、对象被推着往斜里走。两种都是静默失败——画面上只是「没落准」。
+    // （纯 y 偏移在这条公式里是无害的，平移保位移，它在减法里约掉了；下面那句锁的是
+    // 另一件事。）
+    expect(objectRoot?.scale.x).toBe(1);
     expect(objectRoot?.scale.y).toBe(1);
+    expect(objectRoot?.scale.z).toBe(1);
+    expect(objectRoot?.rotation.x).toBe(0);
+    expect(objectRoot?.rotation.y).toBe(0);
+    expect(objectRoot?.rotation.z).toBe(0);
+    // 偏移这一句管的是坐标系本身：store 里存的就是节点的局部 transform（`onCommit` 读
+    // 什么就存什么），对象根一旦偏移，场景数据里的坐标和用户在视口里看到的世界坐标
+    // 就对不上了——保存出去的位置全体错一个常量。
+    expect(objectRoot?.position.x).toBe(0);
+    expect(objectRoot?.position.y).toBe(0);
+    expect(objectRoot?.position.z).toBe(0);
 
     instance.dispose();
   });
@@ -1911,6 +1924,25 @@ describe('PrevizRenderer 松手落地', () => {
     // 桌面在 0.75。人物原点在 3、盒底在 2.5，落完盒底该在 0.75，即原点在 1.25。
     // 直接把 y 赋成 0.75 的话人物半截埋进桌子里。
     intersections = [{ object: {}, point: { x: 0, y: 0.75, z: 0 } }];
+
+    expect(instance.dropToSurface(scene.objects[0].id)).toBeCloseTo(1.25, 12);
+  });
+
+  // 「取最近的那个命中」正是这个特性存在的理由：桌面和地板同时在射线上，落到桌面上
+  // 还是穿过桌子落到地板上，全看取哪一个。three 的 `intersectObjects` 交出来时已经按
+  // 距离升序排过（`Raycaster.js:222`），射线朝下时距离升序恰好就是 y 降序，所以第 0 个
+  // 是最高的那个面——这里的假件照着那个次序给，用例钉的是「取第 0 个」。
+  it('lands on the nearest surface under it, not the farthest', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    const scene = dropScene(3, [0, 0, 0]);
+    instance.setScene(scene);
+    // 桌面 0.75 在前、地板 0 在后。人物原点在 3、盒底在 2.5：落到桌面上原点该在 1.25，
+    // 取成最远那个（地板）会得到 0.5——那正是「穿过桌子掉到地上」。
+    intersections = [
+      { object: {}, point: { x: 0, y: 0.75, z: 0 } },
+      { object: {}, point: { x: 0, y: 0, z: 0 } },
+    ];
 
     expect(instance.dropToSurface(scene.objects[0].id)).toBeCloseTo(1.25, 12);
   });
