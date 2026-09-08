@@ -203,6 +203,11 @@ vi.mock('three', () => {
     RingGeometry: FakeGeometry,
     SphereGeometry: FakeGeometry,
     CylinderGeometry: FakeGeometry,
+    // 手柄改造要新建它（`gizmoEmphasis.ts`）。今天走不到——这份替身的 `getHelper()`
+    // 交出的 helper `traverse` 是空实现，改造找不到手柄就早退了。留着是因为下一个把
+    // 那个 traverse 补忠实的人不该撞上一句 `new undefined()`：报错点在 gizmoEmphasis 里，
+    // 和他改的那一行隔着两层，找起来费时间而收获为零。
+    OctahedronGeometry: FakeGeometry,
     BufferGeometry: class extends FakeGeometry {
       drawRange = { start: 0, count: Infinity };
       setFromPoints = vi.fn(() => this);

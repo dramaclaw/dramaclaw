@@ -77,10 +77,10 @@ export class PrevizGizmo {
 
   constructor(private readonly deps: PrevizGizmoDeps) {
     // 手柄本体不是 Object3D：加错了不会报错，只是永远看不见。
-    deps.root.add(deps.controls.getHelper());
-    // 必须在 add 之后：改造要 traverse helper 树去找手柄，而不是碰控件本身。
-    // three 只在这里造一次手柄，所以改造也只需要跑这一次。
-    if (deps.three) emphasizeTranslateHandles(deps.controls.getHelper(), deps.three);
+    const helper = deps.controls.getHelper();
+    deps.root.add(helper);
+    // three 只在 TransformControls 构造里造一次手柄，所以改造也只需要跑这一次。
+    if (deps.three) emphasizeTranslateHandles(helper, deps.three);
     deps.controls.setSpace('world');
 
     deps.controls.addEventListener('dragging-changed', (event) => {

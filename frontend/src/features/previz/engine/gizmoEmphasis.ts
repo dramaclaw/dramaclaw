@@ -16,9 +16,18 @@ import type { ThreeModule } from './sceneGraph';
 const CENTRE_GIZMO_RADIUS = 0.14;
 
 /**
- * 中心手柄的拾取半径（官方 0.2）。必须比 [CENTRE_GIZMO_RADIUS] 大：判定区比看得见的
- * 手柄小的话，用户会看着它点上去却抓不住，而且只会怪自己没点准，永远想不到是判定
- * 区的问题。留一圈余量比精确贴合更好用。
+ * 中心手柄的拾取半径（官方 0.2）。
+ *
+ * 下界：必须比 [CENTRE_GIZMO_RADIUS] 大。判定区比看得见的手柄小的话，用户会看着它点
+ * 上去却抓不住，而且只会怪自己没点准，永远想不到是判定区的问题。
+ *
+ * 上界：它会从三块平面拾取体嘴里抢判定区。平面 picker 是烘在 (0.15, 0.15) 的
+ * `BoxGeometry(0.2, 0.2, 0.01)`，射线取最近的那个面，重叠处这颗立体八面体通常赢。
+ * 0.2 → 0.26 把被抢走的内角从大约 (0.10, 0.10) 推到 (0.13, 0.13)，而平面手柄**看得见**
+ * 的方块从 0.075 就开始——被抢的那一角仍在可见方块的内侧，用户瞄的是方块中心，够不
+ * 着的只是它贴着原点那个角。这是刻意付的代价：中心手柄是本次改造要救的那一个，
+ * 三块平面本来就没人找得到。再往上走就会啃进方块中心，那时得先给平面 picker 也
+ * 挪位置，不能光调这个数。
  */
 const CENTRE_PICKER_RADIUS = 0.26;
 
@@ -108,11 +117,19 @@ export function emphasizeTranslateHandles(helper: THREE.Object3D, three: ThreeMo
 }
 
 /**
- * 手柄材质的公共设定，逐项照抄 three 的 `gizmoMaterial`。
+ * 手柄材质的公共设定，逐项照抄 three 的 `gizmoMaterial`（`TransformControls.js:1200-1206`）。
  *
  * `depthTest: false` 是这里唯一不能改的一项：手柄画在物体中心，开了深度测试就会
  * 被人物身体挡住——改大改亮全白做。`toneMapped: false` 同理，走了色调映射的话
  * 我们定的这几个值到屏幕上就不是这几个值了。
+ *
+ * **被顶替下来的旧材质刻意不 dispose**，尽管它就此没人引用了。translate 的中心球与
+ * 三块平面用的是 three 内部共享的材质实例：中心那颗 `matWhiteTransparent` 同时是
+ * scale 手柄中心方块的材质，三块平面的 `mat{Red,Green,Blue}Transparent` 同时是 scale
+ * 三块平面的材质、并且挂在 `materialLib.{x,y,z}AxisTransparent` 上被 `setColors()` 直接
+ * 写入。dispose 掉的是别人还在用的东西。眼下恰好无害（改造跑在首帧之前，那时材质
+ * 还没有任何 GPU 资源，`dispose()` 只是空放一个事件），但那是巧合不是保证——调用点
+ * 往后挪一步就变成每次开预演台都白扔一遍 scale 手柄的着色器程序。
  */
 function createHandleMaterial(three: ThreeModule, color: number, opacity: number) {
   return new three.MeshBasicMaterial({
@@ -127,16 +144,11 @@ function createHandleMaterial(three: ThreeModule, color: number, opacity: number
 }
 
 /**
- * 换几何体并销毁旧的。几何体是安全的：`setupGizmo` 给每颗手柄 clone 了一份专属的，
- * 没有第二个人引用它。
+ * 换几何体并销毁旧的。
  *
- * **材质刻意不销毁**，尽管它同样是被换下来的。translate 的中心球与三块平面用的是
- * three 内部共享的材质实例：中心那颗 `matWhiteTransparent` 同时是 scale 手柄中心
- * 方块的材质，三块平面的 `mat{Red,Green,Blue}Transparent` 同时是 scale 三块平面的
- * 材质、并且挂在 `materialLib.{x,y,z}AxisTransparent` 上被 `setColors()` 直接写入。
- * dispose 掉的是别人还在用的东西。眼下恰好无害（改造跑在首帧之前，那时材质还没有
- * 任何 GPU 资源，`dispose()` 只是空放一个事件），但那是巧合不是保证——调用点往后
- * 挪一步就变成每次开预演台都白扔一遍 scale 手柄的着色器程序。
+ * 几何体和材质在「能不能销毁」上刚好相反，所以这里销毁得起：`setupGizmo` 给每颗手柄
+ * clone 了一份专属的几何体（`tempGeometry = object.geometry.clone()`），没有第二个人
+ * 引用它。材质那一侧为什么不能照做，见 [createHandleMaterial]。
  */
 function replaceGeometry(handle: GizmoHandle, geometry: THREE.BufferGeometry): void {
   const previous = handle.geometry;

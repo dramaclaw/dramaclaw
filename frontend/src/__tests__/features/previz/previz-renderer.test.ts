@@ -177,21 +177,32 @@ let transformGizmo: ReturnType<typeof fakeTransformGizmo>;
 vi.mock("three/examples/jsm/controls/TransformControls.js", () => ({
   TransformControls: class {
     enabled = true;
-    object = null;
-    attach = vi.fn();
-    detach = vi.fn();
+    object: unknown = null;
+    // attach/detach 照抄 three 0.185 的副作用：`_root.visible` 跟着开关，初值是 false
+    // （`TransformControlsRoot` 构造里就写死了）。替身在这个属性上偏离真身，「手柄
+    // 该不该在」这一类回归在集成层就永远观测不到；`gizmo.test.ts` 与
+    // `previz-renderer-scene.test.ts` 的两份替身都是忠实的，这份分家只会让三份互相
+    // 打架，比干脆没有覆盖更能骗人。
+    attach = vi.fn((object: unknown) => {
+      this.object = object;
+      this.helper.visible = true;
+    });
+    detach = vi.fn(() => {
+      this.object = null;
+      this.helper.visible = false;
+    });
     setMode = vi.fn();
     setSpace = vi.fn();
     dispose = vi.fn();
     // 真手柄是个 Object3D，挂在 scene 下面。谁扫一遍 scene 的子节点都会碰到它，
     // 少了 userData 就是一句和被测行为毫无关系的 TypeError。
     //
-    // helper 只建一次并一直交同一个对象，跟真身一样：three 在构造里造一次手柄，
-    // 之后每次 getHelper() 拿到的都是它。每次新建一个的话，`applyVisibility()` 写的
-    // visible 会落在一个转头就被扔掉的对象上，藏手柄那条路在这里就永远测不出来。
+    // 每次都交同一份，而不是新建一个字面量：`applyVisibility()` 改的就是它的 visible，
+    // 每次换一份的话那次赋值写完就丢，「手柄藏没藏住」在这里根本观测不到；
+    // gizmo dispose 里那次 `root.remove(getHelper())` 同理，删的得是当初加进去的那个。
     helper = {
       traverse: (visit: (node: unknown) => void) => visit(transformGizmo),
-      visible: true,
+      visible: false,
       userData: {},
     };
     getHelper = vi.fn(() => this.helper);
