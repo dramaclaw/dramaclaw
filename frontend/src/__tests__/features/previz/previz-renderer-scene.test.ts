@@ -1593,6 +1593,9 @@ describe('PrevizRenderer recording', () => {
     const { instance } = await createRenderer({ width: 800, height: 450 });
     const { scene, cam } = sceneWithCamera();
     instance.setScene(scene);
+    // 得先选中点什么：手柄没挂在对象上的时候本来就该是隐藏的，不选的话末尾那条
+    // 「录完要还回来」全程都是 false，守卫删了也绿。
+    instance.setSelection(cam.id);
     step();
     const gl = lastGl();
 

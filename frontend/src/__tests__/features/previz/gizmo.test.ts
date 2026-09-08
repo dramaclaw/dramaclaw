@@ -8,14 +8,22 @@ class FakeTransformControls implements TransformControlsLike {
   enabled = true;
   object: unknown = null;
   private readonly listeners: Record<string, Array<(event: { value?: boolean }) => void>> = {};
-  readonly helper = { name: "gizmo-helper", visible: true };
+  /**
+   * 初始不可见，attach 打开、detach 关掉——照抄 three 0.185：`TransformControlsRoot`
+   * 构造里就是 `this.visible = false`，`attach()` 里 `_root.visible = true`，`detach()` 里
+   * 置回 false。替身要是在被测的这个属性上偏离真身，「换一次选中项会不会把本不该有的
+   * 手柄放出来」这条路在 jsdom 里就永远看不见——恰好是最需要它设防的地方。
+   */
+  readonly helper = { name: "gizmo-helper", visible: false };
 
   attach = vi.fn((object: unknown) => {
     this.object = object;
+    this.helper.visible = true;
     return this;
   });
   detach = vi.fn(() => {
     this.object = null;
+    this.helper.visible = false;
     return this;
   });
   setMode = vi.fn();
@@ -166,6 +174,8 @@ describe("PrevizGizmo", () => {
   // 手柄的箭头进了截图就毁了整张参考图。
   it("can hide its helper for a capture", () => {
     const { gizmo, controls } = setup();
+    // 没挂上对象的话手柄本来就不该在，下面那对开关全程都是 false，用例会退化成同义反复。
+    gizmo.attach(fakeNode("a"));
 
     // 断言读 controls.helper 而不是 getHelper() 的返回值：假控件把它声明成 never
     // 好塞进 THREE.Object3D 的位置，取属性过不了 tsc。两者本来就是同一个对象。
@@ -192,6 +202,7 @@ describe("PrevizGizmo", () => {
   // 控件还在接指针事件，用户会在一片看不见任何东西的画面里莫名其妙地把物体拖走。
   it("hides the helper and stops taking pointer events when the mode goes null", () => {
     const { controls, gizmo } = setup();
+    gizmo.attach(fakeNode("a"));
 
     gizmo.setMode(null);
 
@@ -204,6 +215,7 @@ describe("PrevizGizmo", () => {
   // 放回来——渲染器里这样的成对调用有 10 处，任何一处都够把它放出来。
   it("keeps the helper hidden when a capture ends while the mode is null", () => {
     const { controls, gizmo } = setup();
+    gizmo.attach(fakeNode("a"));
 
     gizmo.setMode(null);
     gizmo.setHelperVisible(false);
@@ -217,6 +229,7 @@ describe("PrevizGizmo", () => {
   // 手柄就没了，只能切一次工具才能拖回来。
   it("brings the helper back after a capture taken under a transform mode", () => {
     const { controls, gizmo } = setup();
+    gizmo.attach(fakeNode("a"));
 
     gizmo.setMode("rotate");
     gizmo.setHelperVisible(false);
@@ -249,9 +262,11 @@ describe("PrevizGizmo", () => {
   });
 
   // 拖拽中连按两次快捷键：生效的该是最后那一次，而不是第一次（先来的把后来的挡掉）
-  // 也不是两次都放。这条同时走的是收尾里 `!this.attachedId` 那条 early return。
+  // 也不是两次都放。
   it("applies only the last mode asked for during a drag", () => {
     const { controls, gizmo } = setup();
+    // 末尾要断言手柄回到可见，没挂上对象的话它本来就不该在，那一条就成了同义反复。
+    gizmo.attach(fakeNode("a"));
 
     controls.emit("dragging-changed", { value: true });
     gizmo.setMode(null);
@@ -263,7 +278,7 @@ describe("PrevizGizmo", () => {
     expect(controls.helper.visible).toBe(true);
   });
 
-  // 「点一下不拖」走的是收尾里 `!this.movedDuringDrag` 那条 early return。dragging 不在
+  // 「点一下不拖」走的是收尾里 `movedDuringDrag` 不成立的那条分支。dragging 不在
   // 那条路径上解开的话，之后所有的工具切换都会被当成「还在拖」永远挂起——而点一下
   // 手柄不拖是用户每天都会做几十次的事。
   it("still switches modes after a click that dragged nothing", () => {
@@ -279,7 +294,8 @@ describe("PrevizGizmo", () => {
     expect(controls.helper.visible).toBe(false);
   });
 
-  // 第三条 early return：拖到一半对象被删了（撤销、另一个窗口），controls.object 是 null。
+  // 收尾里的第二条判断（内层的 `if (node)`）：拖到一半对象被删了（撤销、另一个窗口），
+  // controls.object 是 null。
   it("still switches modes after the attached object vanished mid-drag", () => {
     const { controls, gizmo } = setup();
     gizmo.attach(fakeNode("a"));
@@ -288,6 +304,87 @@ describe("PrevizGizmo", () => {
     controls.emit("objectChange");
     controls.object = null;
     controls.emit("dragging-changed", { value: false });
+
+    gizmo.setMode(null);
+
+    expect(controls.enabled).toBe(false);
+    expect(controls.helper.visible).toBe(false);
+  });
+
+  // 换一次选中项就把手柄放回来了：three 的 `attach()` 内部会写 `_root.visible = true`，
+  // 而可见性只在 setMode / setHelperVisible 里算的话，W 工具下点另一个物体手柄就凭空
+  // 冒出来——它还接不到指针事件（enabled 是 false），是个拖不动也关不掉的鬼影。
+  it("keeps the helper hidden when the selection changes while the mode is null", () => {
+    const { controls, gizmo } = setup();
+
+    gizmo.setMode(null);
+    gizmo.attach(fakeNode("a"));
+
+    expect(controls.helper.visible).toBe(false);
+  });
+
+  // 截图/录制途中换选中项是同一个洞：那条路上手柄本来藏着，attach 一句就把它放回画面，
+  // 直接烤进成片。录制期间画面是每帧重绘的，选中项一变就中招。
+  it("keeps the helper hidden when the selection changes during a capture", () => {
+    const { controls, gizmo } = setup();
+
+    gizmo.setMode("translate");
+    gizmo.attach(fakeNode("a"));
+    gizmo.setHelperVisible(false);
+    gizmo.attach(fakeNode("b"));
+
+    expect(controls.helper.visible).toBe(false);
+  });
+
+  // 反过来这一半也得成立：什么都没选中的时候手柄不该在。three 那边 attach 之前 root 就是
+  // 隐藏的，而只看模式的话 setMode 会替它开灯——画面正中多出一副没挂在任何东西上的手柄。
+  it("keeps the helper down until something is actually selected", () => {
+    const { controls, gizmo } = setup();
+
+    gizmo.setMode("translate");
+    expect(controls.helper.visible).toBe(false);
+
+    gizmo.attach(fakeNode("a"));
+    expect(controls.helper.visible).toBe(true);
+
+    gizmo.attach(null);
+    expect(controls.helper.visible).toBe(false);
+  });
+
+  // 挂起的切换生效之后要清掉。留在那儿的话下一次拖拽结束会把它再放一遍：用户明明已经
+  // 换过工具，拖完一下手柄自己跳回上一次挂起的那种模式，工具栏上亮的却还是新的那颗。
+  it("forgets a pending mode once it has been applied", () => {
+    const { controls, gizmo } = setup();
+    gizmo.attach(fakeNode("a"));
+
+    controls.emit("dragging-changed", { value: true });
+    gizmo.setMode("scale");
+    controls.emit("dragging-changed", { value: false });
+    expect(controls.setMode).toHaveBeenLastCalledWith("scale");
+
+    // 这一次的切换是在没拖拽的时候发的，走的是立即生效那条路；紧接着来一次普通拖拽，
+    // 收尾不该再冒出一次谁都没要的 scale。
+    gizmo.setMode("translate");
+    controls.emit("dragging-changed", { value: true });
+    controls.emit("objectChange");
+    controls.emit("dragging-changed", { value: false });
+
+    expect(controls.setMode).toHaveBeenLastCalledWith("translate");
+  });
+
+  // 提交回调抛了（store 里的校验、或者另一个窗口刚把对象删掉）也得把 dragging 解开。
+  // 不解开的话之后每一次工具切换都被当成「还在拖」永远挂起，手柄再也换不动，而用户
+  // 看到的只是「按 W 没反应」，根本联想不到几步之前那次拖拽。
+  it("keeps switching modes even when the commit throws", () => {
+    const { controls, gizmo, onCommit } = setup();
+    onCommit.mockImplementation(() => {
+      throw new Error("store rejected the transform");
+    });
+    gizmo.attach(fakeNode("a"));
+
+    controls.emit("dragging-changed", { value: true });
+    controls.emit("objectChange");
+    expect(() => controls.emit("dragging-changed", { value: false })).toThrow();
 
     gizmo.setMode(null);
 

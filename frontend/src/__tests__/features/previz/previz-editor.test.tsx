@@ -1534,26 +1534,32 @@ describe("PrevizEditor timeline", () => {
     G/R/S 原来只改手柄模式，笔画中途按下去是无害的，所以没有守卫。合并之后它们会
     把工具从 draw 切走，和 W/Q 掉进同一个坑：setDrawing 的效果会把左键重新挂回轨道
     旋转，视口就在笔下转起来了。
+
+    三颗键各来一遍而不是只验 G：守卫是三条各写各的 `if (stroke.current) break;`，
+    只钉住一条的话，删掉另外两条里的任何一条都没人报。
   */
-  it("ignores G mid-stroke, so the camera does not orbit under a live pen", async () => {
-    const user = userEvent.setup();
-    const { renderer } = await renderEditor();
-    const objectId = usePrevizStore.getState().addObject("character");
-    act(() => usePrevizStore.getState().selectObject(objectId!));
-    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+  it.each([["g"], ["r"], ["s"]])(
+    "ignores %s mid-stroke, so the camera does not orbit under a live pen",
+    async (key) => {
+      const user = userEvent.setup();
+      const { renderer } = await renderEditor();
+      const objectId = usePrevizStore.getState().addObject("character");
+      act(() => usePrevizStore.getState().selectObject(objectId!));
+      await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
 
-    const canvas = screen.getByTestId("previz-canvas");
-    renderer.planePointAt.mockReturnValue([1, 0, 0]);
-    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+      const canvas = screen.getByTestId("previz-canvas");
+      renderer.planePointAt.mockReturnValue([1, 0, 0]);
+      fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
 
-    fireEvent.keyDown(window, { key: "g" });
+      fireEvent.keyDown(window, { key });
 
-    expect(screen.getByRole("button", { name: "previz.toolbar.tool.draw" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    expect(renderer.setDrawing).toHaveBeenLastCalledWith(true);
-  });
+      expect(screen.getByRole("button", { name: "previz.toolbar.tool.draw" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      expect(renderer.setDrawing).toHaveBeenLastCalledWith(true);
+    },
+  );
 
   it("no longer treats E as a transform-tool shortcut", async () => {
     await renderEditor();
