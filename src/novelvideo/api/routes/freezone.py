@@ -5072,6 +5072,27 @@ async def _record_recipe_compile_product_evidence(
                 },
             )
         return
+    if compiled.prompt.strip() and compiled.mode in {
+        "timeout_fallback",
+        "memory_cache",
+        "persistent_cache",
+        "deterministic",
+    }:
+        # The request can use this prompt, but no fresh model product was
+        # delivered. Cancel only the billable operation and retain the reason.
+        await asyncio.to_thread(
+            finish_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+            outcome="cancelled",
+            expected_task_id=str(operation.get("task_id") or ""),
+            result_ref={
+                "kind": "recipe_nonbillable",
+                "id": operation_id,
+                "reason": compiled.mode,
+            },
+        )
+        return
     await asyncio.to_thread(
         finish_agent_product_operation,
         project_dir=state_dir,
@@ -14021,6 +14042,10 @@ async def complete_agent_product_operation(
         raise HTTPException(404, "agent product operation not found")
     if str(current.get("task_id") or "") != str(body.get("task_id") or ""):
         raise HTTPException(400, "agent product operation task identity mismatch")
+    if result_ref.get("kind") == "recipe_nonbillable":
+        raise HTTPException(
+            400, "Recipe reuse receipts are recorded only by the server compiler"
+        )
     if outcome == "delivered":
         product_kind = str(current.get("product_kind") or "")
         if product_kind not in {"workflow_generate", "recipe_generate"}:

@@ -83,6 +83,20 @@ async def _run_freezone_agent_product_async(
                 "model_evidence": evidence,
                 "result_ref": result_ref,
             }
+        if status == "cancelled" and product_kind == "recipe_result":
+            from novelvideo.freezone.agent_product_operations import (
+                AgentProductNotBillable,
+            )
+
+            receipt = operation.get("result_ref") or {}
+            reason = receipt.get("reason")
+            if (
+                receipt.get("kind") == "recipe_nonbillable"
+                and receipt.get("id") == operation_id
+                and isinstance(reason, str)
+                and reason in AgentProductNotBillable.MESSAGES
+            ):
+                raise AgentProductNotBillable(operation_id=operation_id, reason=reason)
         if status in {"failed", "cancelled"}:
             raise RuntimeError(
                 f"agent product generation ended without delivery: {status}"

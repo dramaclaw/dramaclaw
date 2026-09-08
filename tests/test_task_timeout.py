@@ -260,6 +260,84 @@ def test_agent_product_pending_timeout_is_reviewed_without_refund(monkeypatch):
     assert observed_metrics == ["agent_product_awaiting_reconciliation"]
 
 
+@pytest.mark.parametrize("refund_fails", [False, True])
+def test_recipe_fallback_completes_without_confirming_credits(
+    monkeypatch, refund_fails
+):
+    from novelvideo.freezone.agent_product_operations import (
+        AgentProductNotBillable,
+    )
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+
+    events: list[tuple[str, str]] = []
+
+    class UsageMeter:
+        async def resolve_feature_credit_reservation(self, _identity):
+            from novelvideo.ports.usage import FeatureSettlementResolution
+
+            return FeatureSettlementResolution(
+                outcome="resolved",
+                reservation_id="reservation_1",
+                feature_key="freezone.agent.recipe_result",
+                model_call_credit_policy="feature_included",
+            )
+
+        async def settle_cancelled_feature_credit_reservation(self, *_args, **_kwargs):
+            events.append(("refund", "reservation_1"))
+            if refund_fails:
+                raise RuntimeError("ledger temporarily unavailable")
+
+        async def settle_feature_credit_reservation(self, *_args, **_kwargs):
+            events.append(("confirm", "unexpected"))
+
+    def pending_runner(_envelope, _ctx):
+        raise AgentProductNotBillable(
+            operation_id="agent_product_test", reason="timeout_fallback"
+        )
+
+    async def not_cancelled(**_kwargs):
+        return False
+
+    async def no_metrics(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "is_cancel_requested", not_cancelled)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(run_core, "_emit_project_task_metrics", no_metrics)
+    monkeypatch.setattr(
+        run_core, "_set_project_task_metrics_context", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
+    register_project_task_runner(
+        "freezone_agent_recipe_result", pending_runner, requires_home_node=True
+    )
+
+    manager = _FakeTaskManager()
+    result = run_core.run_project_task_core_sync(
+        _verified_delivery(
+            task_type="freezone_agent_recipe_result",
+            billing_metadata={"feature_credit_reservation_id": "reservation_1"},
+        ),
+        SimpleNamespace(
+            project_id="proj_timeout", requester_user_id="usr_1", is_home_node=True
+        ),
+        manager,
+        run_task_id="task_1",
+    )
+
+    assert result["delivery_status"] == "nonbillable"
+    assert result["settlement_status"] == (
+        "pending" if refund_fails else "refund_requested"
+    )
+    assert events == [("refund", "reservation_1")]
+    assert manager.failed == []
+    assert len(manager.completed) == 1
+    assert "备用提示词" in manager.completed[0]["current_task"]
+    assert "不计费" in manager.completed[0]["current_task"]
+
+
 def test_run_project_task_core_rejects_raw_dict_before_side_effects():
     from novelvideo.task_backend import run_core
 
