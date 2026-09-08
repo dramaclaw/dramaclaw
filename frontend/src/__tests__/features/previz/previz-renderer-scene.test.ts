@@ -2235,6 +2235,28 @@ describe('PrevizRenderer 贴合地面', () => {
     expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(5, 12);
   });
 
+  // 人物的 GLB 骨架是异步挂上去的**子节点**（`sceneGraph.ts:333` 的 `node.add(model)`）。
+  // 剔候选剔的是人物那个根节点，`intersectObjects` 从剩下的根往下递归，所以骨架跟着
+  // 一起不在候选里——这里断言的是「整棵子树」而不只是根：只剔根、把子节点放回去的话，
+  // 从盒顶往下第一个命中的就是他自己的头，人物每帧被自己顶高一个身位。
+  it('keeps the character rig out of the candidates once the model arrives', async () => {
+    const { instance } = await createRenderer();
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    intersections = [];
+    const scene = standScene('ground', 3);
+    instance.setScene(scene);
+    await flush();
+    intersectObjects.mockClear();
+
+    instance.setFrame(1);
+
+    const node = instance.nodeFor(scene.objects[0].id)!;
+    // 骨架真的到了才测得出东西来——没到的话下面那条空数组是白给的。
+    expect(node.children.some((child) => child.userData.previzRig)).toBe(true);
+    // 场景里只有他一个对象，剔掉自己这一整棵之后一个候选都不剩。
+    expect(intersectObjects.mock.calls[0]![0]).toEqual([]);
+  });
+
   /**
    * 一个贴着某个高度策略站在 `characterY` 的人物，加一台锁在他脸上的特写机位。
    * 交出人物落定后的 y 与机位解出来的 y。
