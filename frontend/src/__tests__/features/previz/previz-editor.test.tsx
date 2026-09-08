@@ -1768,6 +1768,11 @@ describe("program follow", () => {
     dialog.remove();
   });
 
+  function monitorButton(cameraId: string): HTMLElement {
+    const row = screen.getByTestId(`previz-layer-${cameraId}`);
+    return within(row).getByRole("button", { name: "previz.layers.setActiveCamera" });
+  }
+
   /** 两段镜头轨：0–24 是 camA，24 往后是 camB。跟随的正片就是播放头越过切点这一下。 */
   function twoCuts(camA: string, camB: string): void {
     act(() => {
@@ -1840,6 +1845,33 @@ describe("program follow", () => {
     );
   });
 
+  it("re-pins the remembered camera while the program is live on another", async () => {
+    const user = userEvent.setup();
+    const { camA, camB } = renderWithCameras();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      const store = usePrevizStore.getState();
+      // 钉过 camA 又回到跟随：activeCameraId 还留着 camA，但监看此刻归镜头轨管。
+      store.setActiveCamera(camA);
+      store.followProgram();
+      store.cutToCamera(camB);
+    });
+
+    const buttonA = monitorButton(camA);
+    // 跟随中谁都没被按下：camA 只是空隙里的兜底，报 pressed 就是在说监看钉在它身上。
+    expect(buttonA).toHaveAttribute("aria-pressed", "false");
+    expect(monitorButton(camB)).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(buttonA);
+
+    // 点一颗没按下的按钮只会是「回到这台」，不该是「关掉监看」。
+    expect(usePrevizStore.getState().activeCameraId).toBe(camA);
+    expect(usePrevizStore.getState().monitorFollowsProgram).toBe(false);
+    expect(setActiveCamera).toHaveBeenLastCalledWith(camA);
+    expect(screen.getByTestId("previz-monitor-frame")).toBeInTheDocument();
+    expect(monitorButton(camA)).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("pins the live camera when its layer row monitor button is clicked", async () => {
     const user = userEvent.setup();
     const { camB } = renderWithCameras();
@@ -1848,8 +1880,9 @@ describe("program follow", () => {
       usePrevizStore.getState().cutToCamera(camB);
     });
 
-    const row = screen.getByTestId(`previz-layer-${camB}`);
-    await user.click(within(row).getByRole("button", { name: "previz.layers.setActiveCamera" }));
+    // 亮着但没按下：镜头轨把它送上监看，用户还没把监看钉在它身上。
+    expect(monitorButton(camB)).toHaveAttribute("aria-pressed", "false");
+    await user.click(monitorButton(camB));
 
     // 亮着的那台是镜头轨给的、用户从没点过的：点它是「就盯住这台」，不是关掉监看。
     expect(usePrevizStore.getState().activeCameraId).toBe(camB);

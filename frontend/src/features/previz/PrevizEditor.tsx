@@ -178,11 +178,16 @@ export function PrevizEditor({
 
   const scene = usePrevizStore((state) => state.scene);
   const selectedObjectId = usePrevizStore((state) => state.selectedObjectId);
-  /** 用户手选钉住的那台；null 表示监看还跟着镜头轨走。图层面板的开关判据是它。 */
   const activeCameraId = usePrevizStore((state) => state.activeCameraId);
   /** 监看此刻看的机位：跟随时是镜头轨的直播机位，手选后是 activeCameraId。 */
   const monitorId = usePrevizStore(monitorCameraId);
   const monitorFollowsProgram = usePrevizStore((state) => state.monitorFollowsProgram);
+  /**
+   * 监看钉在哪台上。跟随中一台都没钉住：`activeCameraId` 这时只是镜头轨空隙里的兜底
+   * 值，用户并没有把监看交给它。原样传给图层面板的话，那台会报 `aria-pressed="true"`
+   * 却不在监看里，点它拿到的是「关掉监看」——而用户点一颗暗按钮想要的是「回到这台」。
+   */
+  const pinnedCameraId = monitorFollowsProgram ? null : activeCameraId;
   const followProgram = usePrevizStore((state) => state.followProgram);
   const cutToCamera = useCutToCamera();
   const canUndo = usePrevizStore((state) => state.past.length > 0);
@@ -388,6 +393,8 @@ export function PrevizEditor({
   // 拖一下物件也重算一遍。
   useEffect(() => {
     renderer?.setLiveCamera(liveCameraAt(scene, timelineFrame));
+    // （`program` 换了引用不等于真的换了内容：删对象会顺手重建 timeline，于是这条
+    // effect 白跑一次。`setLiveCamera` 首行同 id 就 return，白跑不要钱。）
   }, [renderer, scene.timeline.program, timelineFrame]);
 
   useEffect(() => {
@@ -730,16 +737,20 @@ export function PrevizEditor({
     if (!open || !renderer) return undefined;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      // instanceof 而不是 as：window.dispatchEvent 的 target 是 window，既没有 tagName
-      // 也没有 closest，断言成 HTMLElement 只是让下面两处守卫读到 undefined 而已。
-      const target = event.target instanceof HTMLElement ? event.target : null;
+      // instanceof 而不是 as：`window.dispatchEvent` 的 target 是 window，`tagName` 与
+      // `closest` 一个都没有，断言成元素只会让下面两道守卫静静读到 undefined。收到
+      // `Element` 而不是 `HTMLElement`：`closest` 定义在 `Element` 上，SVG 目标也该受
+      // 弹窗守卫管——这里排除掉的只是「压根不是元素」的 target，不含 SVG。
+      const target = event.target instanceof Element ? event.target : null;
       // 焦点在输入框里时 F 是在打字，不是快捷键。
+      // `isContentEditable` 只长在 HTMLElement 上，所以单独收窄这一项，别为它把整个
+      // target 降格成 HTMLElement（那会连带让弹窗守卫看不见 SVG 目标）。
       if (
         target &&
         (target.tagName === "INPUT" ||
           target.tagName === "TEXTAREA" ||
           target.tagName === "SELECT" ||
-          target.isContentEditable)
+          (target instanceof HTMLElement && target.isContentEditable))
       ) {
         return;
       }
@@ -1119,7 +1130,7 @@ export function PrevizEditor({
                 objects={scene.objects}
                 selectedId={selectedObjectId}
                 monitorCameraId={monitorId}
-                pinnedCameraId={activeCameraId}
+                pinnedCameraId={pinnedCameraId}
                 onSelect={selectObject}
                 onToggleVisible={(id) => {
                   const object = scene.objects.find((entry) => entry.id === id);
