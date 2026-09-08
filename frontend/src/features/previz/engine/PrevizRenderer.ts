@@ -261,6 +261,7 @@ export class PrevizRenderer {
     instance.gizmo = new PrevizGizmo({
       controls: transformControls as unknown as TransformControlsLike,
       orbit: controls,
+      three,
       // helper 挂在 scene 而不是 objectRoot 下：objectRoot 是拾取与聚焦的取值范围，
       // 手柄挂进去会被射线命中，也会被算进「框全场景」的包围盒里。
       root: scene,
