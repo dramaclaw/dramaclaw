@@ -191,3 +191,24 @@ def test_preview_budget_reserves_media_inside_single_style(tmp_path, monkeypatch
     with pytest.raises(ValueError,match='Preview'):
         store.preview(item['id'])
     assert len(calls)<4
+
+
+@pytest.mark.parametrize('url', ['mailto:hello@shiguang.coffee', 'tel:+8612345', 'https://example.com/contact', 'http://example.com', '#contact'])
+def test_navigation_links_are_not_packaged_as_media(tmp_path, url):
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Coffee', html=f'<a href="{url}">Contact</a>')
+    preview = store.preview(item['id'])
+    assert preview['warnings'] == []
+    assert f'href="{url}"' in preview['html']
+    with zipfile.ZipFile(io.BytesIO(store.export(item['id']))) as archive:
+        assert archive.namelist() == ['index.html']
+        assert f'href="{url}"' in archive.read('index.html').decode()
+
+
+@pytest.mark.parametrize('url', ['javascript:alert(1)', 'java&#10;script:alert(1)', 'data:text/html,bad', 'file:///etc/passwd'])
+def test_navigation_blocks_unsafe_schemes(tmp_path, url):
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Unsafe', html=f'<a href="{url}">Contact</a>')
+    assert store.preview(item['id'])['warnings']
+    with pytest.raises(ValueError):
+        store.export(item['id'])

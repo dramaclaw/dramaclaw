@@ -16,6 +16,7 @@ export function HtmlArtifactEditor({projectId,artifactId,version,onClose}:Props)
   const setInteractive=(enabled:boolean)=>setInteractiveVersion(enabled&&artifact?`${artifactId}:${artifact.version}`:null);
   const canRunScripts=typeof HTMLIFrameElement!=='undefined'&&'credentialless' in HTMLIFrameElement.prototype;
   const [code,setCode]=useState(false); const [mobile,setMobile]=useState(false); const [selecting,setSelecting]=useState(false);
+  const [warnings,setWarnings]=useState<string[]>([]);
   const [error,setError]=useState(''); const [busy,setBusy]=useState(false); const [remoteUpdate,setRemoteUpdate]=useState(false);
   const frame=useRef<HTMLIFrameElement>(null); const sequence=useRef(0);
   const dirty=!!artifact&&(html!==artifact.html||title!==artifact.title);
@@ -34,14 +35,14 @@ export function HtmlArtifactEditor({projectId,artifactId,version,onClose}:Props)
     window.dispatchEvent(new CustomEvent(HTML_ARTIFACT_REFERENCE_EVENT,{detail:{projectId,artifactId,version:artifact.version,title:artifact.title,...selection}}));
   };
   const load=async(requestedVersion?:number)=>{
-    const current=++sequence.current; setBusy(true);setError('');
+    const current=++sequence.current; setBusy(true);setError('');setWarnings([]);
     try {
       const draft=readHtmlDraft(projectId,artifactId);
       const next=await readHtmlArtifact(projectId,artifactId,draft?.version ?? requestedVersion);
       const [rendered,history]=await Promise.all([readHtmlPreview(projectId,artifactId,next.version),listHtmlVersions(projectId,artifactId)]);
       if(current!==sequence.current)return;
       setArtifact(next);setTitle(draft?.title??next.title);setHtml(draft?.html??next.html);setPreview(rendered.html);setVersions(history.versions);setRemoteUpdate(Boolean(draft&&history.versions.some(v=>v.version>draft.version)));
-      if(rendered.warnings?.length)setError(rendered.warnings.join('\n'));
+      setWarnings(rendered.warnings ?? []);
     }catch(err){if(current===sequence.current)setError(err instanceof Error?err.message:String(err));}
     finally{if(current===sequence.current)setBusy(false);}
   };
@@ -69,7 +70,7 @@ export function HtmlArtifactEditor({projectId,artifactId,version,onClose}:Props)
   },[selecting,token,artifact,projectId,artifactId]);
   const mayDiscard=()=>{const allowed=!dirty||window.confirm(t('htmlArtifact.discard'));if(allowed)keepHtmlDraft(projectId,artifactId,null);return allowed;};
   const mutate=async(restore?:number)=>{
-    if(!artifact)return;setBusy(true);setError('');
+    if(!artifact)return;setBusy(true);setError('');setWarnings([]);
     try {
       const next=restore===undefined?await saveHtmlArtifact(projectId,artifactId,title,html,artifact.version):await restoreHtmlVersion(projectId,artifactId,restore,artifact.version);
       setArtifact(next);setTitle(next.title);setHtml(next.html);dirtyRef.current=false;
@@ -102,6 +103,7 @@ export function HtmlArtifactEditor({projectId,artifactId,version,onClose}:Props)
       }}>{t('htmlArtifact.restore')}</button>}
     </div>
     <p className="px-3 py-1 text-xs text-muted-foreground">{t(canRunScripts?'htmlArtifact.scriptNotice':'htmlArtifact.scriptUnsupported')}</p>
+    {warnings.length>0&&<p role="status" className="whitespace-pre-wrap border-b border-border px-3 py-2 text-sm text-muted-foreground">{warnings.join('\n')}</p>}
     {error&&<p role="alert" className="whitespace-pre-wrap border-b border-border px-3 py-2 text-sm text-destructive">{error}</p>}
     {remoteUpdate&&<p role="status" className="px-3 py-2 text-sm">{t('htmlArtifact.conflict')} <button className={button} onClick={()=>{if(mayDiscard())void load();}}>{t('htmlArtifact.reload')}</button></p>}
     {dirty&&!code&&<p className="px-3 py-2 text-xs text-muted-foreground">{t('htmlArtifact.savedPreview')}</p>}

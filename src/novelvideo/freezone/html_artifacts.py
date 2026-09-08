@@ -173,7 +173,7 @@ class _PortableHTML(HTMLParser):
             return value
         parts = urlsplit(value)
         if not value or parts.scheme or parts.netloc or '\\' in value:
-            raise ValueError('Export supports only project-local media and embedded raster images')
+            raise ValueError('不支持的媒体资源（仅支持当前项目媒体或内嵌图片）：' + value)
         path = unquote(parts.path)
         if path.startswith('/api/v1/projects/'):
             prefix = f'/api/v1/projects/{self.store.project_id}/media/'
@@ -235,6 +235,14 @@ class _PortableHTML(HTMLParser):
             raise ValueError('Unsupported unterminated CSS URL')
         return re.sub(r'url\(\s*([\'"]?)(.*?)\1\s*\)', lambda m: 'url("' + self.resource(m[2]) + '")', value, flags=re.I | re.S)
 
+    def navigation(self, value: str) -> str:
+        value = value.strip()
+        if any(ord(char) < 32 or ord(char) == 127 for char in value) or '\\' in value:
+            raise ValueError('链接包含不支持的控制字符')
+        if value.startswith('#') or urlsplit(value).scheme.lower() in {'http', 'https', 'mailto', 'tel'}:
+            return value
+        raise ValueError('不支持的跳转链接：' + value)
+
     def handle_starttag(self, tag, attrs):
         if tag in {'base', 'iframe', 'object', 'embed', 'link'}:
             raise ValueError(f'Unsupported export element: {tag}')
@@ -245,7 +253,7 @@ class _PortableHTML(HTMLParser):
             if value is not None and key in {'src', 'poster', 'href', 'xlink:href', 'action', 'formaction'}:
                 if tag == 'script' or key in {'action', 'formaction'}:
                     raise ValueError('Export requires inline scripts and no form endpoints')
-                value = self.resource(value)
+                value = self.navigation(value) if tag in {'a', 'area'} and key == 'href' else self.resource(value)
             elif key == 'style' and value is not None:
                 value = self.css(value)
             result.append(key if value is None else f'{key}="{escape(value, quote=True)}"')
