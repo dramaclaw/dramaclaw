@@ -14,13 +14,17 @@ import { createCharacterPlaceholder, disposeSubtree, type ThreeModule } from './
 /**
  * 「创建人物」对话框那块木偶预览。
  *
- * 借视口那台 `WebGLRenderer`（浏览器对同时存活的 WebGL 上下文有个位数的上限，为一个
- * 对话框再开一个是在拿整个编辑器冒险），但**不借视口那个 scene**：预览里只该有这一具
- * 木偶和一块地，把整场戏画进去等于给用户看一张缩略的视口——他正要看的是「这个人长
- * 什么样」，而不是「他会站在谁旁边」（那是左边俯视图那一栏的事）。
+ * 借视口那台 `WebGLRenderer`（浏览器并发的 WebGL 上下文上限约 16 个，为一个对话框再开
+ * 一个是在拿整个编辑器冒险），但**不借视口那个 scene**：预览里只该有这一具木偶和一块
+ * 地，把整场戏画进去等于给用户看一张缩略的视口——他正要看的是「这个人长什么样」，
+ * 而不是「他会站在谁旁边」（那是左边俯视图那一栏的事）。
  *
  * 木偶本身仍由 `CharacterRigFactory` 建：共用工厂就共用了那份已经下好的 GLB 与动画库，
  * 预览不会再拉一次几 MB，姿势也保证跟视口里同一套。
+ *
+ * 画布尺寸不在这里定：取景直接读 `deps.canvas` 的宽高（木偶不受出片画幅约束，铺满就行，
+ * 也就不需要 `previewFitRect` 那套留边）。对话框那边请用 `PREVIZ_PREVIEW_SIZE`——机位
+ * 预览已经用的是它，两块预览各写各的尺寸会在同一个对话框里显出两种清晰度。
  */
 export interface CharacterPreviewDeps {
   three: ThreeModule;
@@ -30,6 +34,16 @@ export interface CharacterPreviewDeps {
   /** 预览专用，构造一次留着（见 `createCharacterPreviewStage`）。 */
   scene: THREE.Scene;
   rig: CharacterRigFactory;
+  /**
+   * 这套家伙什还活着吗。`rig.build()` 可以挂上几秒，这期间用户完全可能关掉预演台：
+   * 那时渲染器已经 `dispose()` 加 `forceContextLoss()`，场景的几何体也还回去了，而
+   * 这次调用还停在 await 上。醒来之后照画会在一个没有上下文的渲染器上开 render
+   * target、读像素，控制台一串 WebGL 报错，最后抛出一个没人接的 rejection——这个
+   * 函数的文档写着「可以不等」，也就确实没人接。
+   *
+   * 不传就是「一直活着」，给不关心生命周期的调用方（测试、一次性截图）留的。
+   */
+  alive?: () => boolean;
 }
 
 /** 预览场景与它那台相机。两样都是构造一次、整个会话留着。 */
@@ -58,17 +72,19 @@ const PREVIEW_FILL = 0.86;
 /**
  * 相机从人物正面绕开多少度。
  *
- * 0（正对着脸）时「前倾」那根滑杆的旋转轴正好指着镜头，拖满 45° 在画面上主要表现为
- * 人矮了一截，看不出他往哪边弯。绕开 30° 是人像里的四分之三侧——脸还在，前倾与侧倾
- * 也都读得出来。
+ * 「前倾」是 `applyPoseAdjust` 打在 rig 根 `rotation.x` 上的，转轴是世界 X。方位角取 0
+ * 时相机站在 -Z、视线朝 +Z，转轴恰好横在画面里、与视线垂直——绕这样一根轴转，人在
+ * 画面上只是前后缩短，表现为「矮了一截」，看不出他往哪边弯。绕开 30° 让转轴斜过去，
+ * 前倾就有了左右分量；侧倾（世界 Z）同理。这个角度也正是人像里的四分之三侧，脸还在。
  */
 const PREVIEW_AZIMUTH_DEG = 30;
 
 /** 预览相机的近 / 远裁剪面，米。近平面与视口那台同值，两处的裁切表现因此一致。 */
 const PREVIEW_NEAR_M = 0.1;
 /**
- * 远平面要装得下地面网格：它跟着相机走，铺开的半径至少是 `PREVIZ_GRID_FADE_MIN`（40 m）
- * 的 2.2 倍。裁在那之内的话，地面会在画面深处露出一条直边。
+ * 远平面要装得下地面网格：它跟着相机走，铺开的那块平面**边长**至少是
+ * `PREVIZ_GRID_FADE_MIN`（40 m）的 2.2 倍，即 88 m——半边 44 m，最远的角约 62 m。
+ * 裁在那之内的话，地面会在画面深处露出一条直边。
  */
 const PREVIEW_FAR_M = 200;
 
@@ -76,6 +92,8 @@ const PREVIEW_FAR_M = 200;
 const PREVIEW_ROOT_KEY = 'previzCharacterPreviewRoot';
 /** 当前这具木偶是按哪份判据建出来的，记在容器上。见 `mannequinKey`。 */
 const PREVIEW_BUILD_KEY = 'previzCharacterPreviewBuild';
+/** 最后一次调用要画的那份人物。在途的 build 醒来后按它补刷，见 `renderCharacterPreview`。 */
+const PREVIEW_LATEST = 'previzCharacterPreviewLatest';
 
 /**
  * 建一套预览用的场景与相机。
@@ -119,32 +137,54 @@ export function disposeCharacterPreviewStage(stage: CharacterPreviewStage): void
  *
  * 只在**换一具木偶**时才重建（见 `mannequinKey`）；姿态微调那三根滑杆、辨识色、体型
  * 宽窄都走 `applyCharacter` 刷到现有那具身上——每拖一像素克隆一副骨架，滑杆会卡死。
+ *
+ * 重叠调用是安全的，但「安全」分两种，别只记住一种：
+ *
+ * - **key 变了**（体型在「简化圆柱体」与真模型之间切）：先发那次醒来时发现 key 已经
+ *   不是自己占的那个，把手里这具丢掉走人，场上只留后发那具。
+ * - **key 没变**（真模型下载期间用户又改了身高 / 姿势 / 颜色）：后发那几次走的是就地
+ *   刷新那条路，而那时木偶**还没挂上**，刷了个空——所以最新那份草稿要记在
+ *   `PREVIEW_LATEST` 上，由先发那次在挂载前补刷一遍，并按它取景。少了这一步，木偶会
+ *   停在**第一次**那份草稿上，直到用户再动一次任何字段；而对话框默认体型就是真模型，
+ *   第一次打开必然要等模型落地，这个窗口里的每一次编辑都命中它。
  */
 export async function renderCharacterPreview(
   deps: CharacterPreviewDeps,
   draft: PrevizCharacterDraft,
 ): Promise<void> {
   const root = mannequinRoot(deps);
-  const character = previewCharacter(draft);
+  let character = previewCharacter(draft);
+  // 每次调用都记一笔，包括还没轮到自己挂木偶的那几次：在途的那次 build 醒来要按它补刷。
+  root.userData[PREVIEW_LATEST] = character;
   const key = mannequinKey(character);
 
   if (root.userData[PREVIEW_BUILD_KEY] === key) {
     const current = root.children[0];
     // 占位胶囊那一档没有可刷的东西：它的身高与颜色都在 key 里，变了就已经重建过了。
+    // `current` 为空说明先发那次还在 await，上面记的那笔就是留给它的。
     if (current?.userData.previzRig) deps.rig.applyCharacter(current, character);
   } else {
     // 先占住 key 再 await：`rig.build()` 是异步的，把体型下拉框一路拖过去时两次调用
     // 会重叠，不占的话两次都判成「要重建」，白克隆一副骨架。
     root.userData[PREVIEW_BUILD_KEY] = key;
     const built = await buildMannequin(deps, character);
+    if (!(deps.alive?.() ?? true)) {
+      // 等它的这段时间里整套家伙什被拆了，见 `CharacterPreviewDeps.alive`。
+      disposeSubtree(built.node);
+      return;
+    }
     if (root.userData[PREVIEW_BUILD_KEY] !== key) {
-      // 等它的这段时间里草稿又换了，这一具已经过时。挂进去会和新的那具叠在一起。
+      // 等它的这段时间里草稿换成了另一具木偶，这一具已经过时。挂进去会和新的那具叠在
+      // 一起。（草稿只是改了参数、key 没变的那种，走的是下面的补刷，不是丢弃。）
       disposeSubtree(built.node);
       return;
     }
     // 模型没到手，现在挂着的是兜底的胶囊：把判据抹掉，下一次编辑就等于一次重试。
     // 不抹的话这个对话框在这次会话里永远停在胶囊上，而用户什么提示都没有。
     if (!built.complete) root.userData[PREVIEW_BUILD_KEY] = undefined;
+    // 按等待期间最后一份草稿补刷并取景，见函数头那两种「安全」。
+    character = root.userData[PREVIEW_LATEST] as PrevizCharacter;
+    if (built.node.userData.previzRig) deps.rig.applyCharacter(built.node, character);
     for (const child of [...root.children]) {
       root.remove(child);
       disposeSubtree(child);

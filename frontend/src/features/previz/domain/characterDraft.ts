@@ -124,6 +124,8 @@ export function characterDraftOverrides(
   draft: PrevizPlacedCharacterDraft,
 ): PrevizObjectOverrides<'character'> {
   const safe = clampCharacterDraft(draft);
+  // 落点读 `draft` 而不是 `safe`：`clampCharacterDraft` 的返回类型是可以没落点的
+  // `PrevizCharacterDraft`，过一趟就把这个参数类型带来的「一定有落点」丢了。
   const [x, z] = draft.spot;
   const name = safe.name.trim();
   return {
@@ -132,9 +134,10 @@ export function characterDraftOverrides(
     bodyType: safe.bodyType,
     heightCm: safe.heightCm,
     basePoseId: safe.basePoseId,
-    // 摊平一份而不是把草稿里那个对象直接递出去：它是 React state 里的同一个引用，
-    // 交出去之后对话框再改一次滑杆就把已经建好的人物一起改了。
-    poseAdjust: { ...safe.poseAdjust },
+    // 这个引用是 `clampCharacterDraft` 现搭的字面量，不是对话框 React state 里的那一
+    // 个——这条得成立，否则建好的人物会跟着滑杆一起动，且绕过 store 无迹可循。所以
+    // 那边即使三根滑杆都在界内也照样重搭 `poseAdjust`，别改成「界内就原样返回」。
+    poseAdjust: safe.poseAdjust,
     heightPolicy: safe.heightPolicy,
     planeY: PREVIZ_CHARACTER_SPAWN_Y,
     transform: {

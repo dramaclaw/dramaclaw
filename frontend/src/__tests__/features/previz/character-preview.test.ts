@@ -409,4 +409,54 @@ describe("renderCharacterPreview 并发", () => {
     expect(harness.mannequin()).toHaveLength(1);
     expect(harness.mannequin()[0]?.userData.previzPlaceholder).toBe(true);
   });
+
+  it("catches up to the newest draft when the edits landed mid-build", async () => {
+    const pending: Array<(value: FakeObject3D) => void> = [];
+    const harness = setup();
+    harness.build.mockImplementation(
+      () => new Promise<FakeObject3D>((resolve) => pending.push(resolve)),
+    );
+
+    // 对话框默认体型就是真模型，第一次打开必然要等它落地；这个窗口里的每一次编辑都
+    // 落在同一份 key 上，走的是「刷现有那具」那条路，而那时木偶还没挂上。
+    const first = renderCharacterPreview(harness.deps, draftOf({ bodyType: "average" }));
+    const second = renderCharacterPreview(harness.deps, {
+      ...draftOf({ bodyType: "average" }),
+      heightCm: 195,
+      poseAdjust: { pitch: 0, turn: 40, lean: 0 },
+    });
+    pending[0]?.(fakeRig());
+    await Promise.all([first, second]);
+
+    expect(harness.build).toHaveBeenCalledTimes(1);
+    // 少了挂载前那一次补刷，木偶会停在第一份草稿上，直到用户再动一次任何字段。
+    expect(harness.applyCharacter).toHaveBeenLastCalledWith(
+      harness.mannequin()[0],
+      expect.objectContaining({ heightCm: 195, poseAdjust: { pitch: 0, turn: 40, lean: 0 } }),
+    );
+    // 取景也得跟着最新那份走，否则画面上是一具 195 的人按 170 的距离取的景。
+    expect(harness.eye()?.[1]).toBeCloseTo(195 / 100 / 2, 6);
+  });
+
+  it("throws nothing away and paints nothing when the stage died mid-build", async () => {
+    const pending: Array<(value: FakeObject3D) => void> = [];
+    let alive = true;
+    const harness = setup();
+    harness.build.mockImplementation(
+      () => new Promise<FakeObject3D>((resolve) => pending.push(resolve)),
+    );
+    (harness.deps as { alive?: () => boolean }).alive = () => alive;
+
+    const painting = renderCharacterPreview(harness.deps, draftOf({ bodyType: "average" }));
+    // 模型要下几秒，用户完全来得及在这期间关掉预演台。
+    alive = false;
+    pending[0]?.(fakeRig());
+    await painting;
+
+    // 渲染器那时已经 `forceContextLoss()` 过了：再开 render target 读像素是一串 WebGL
+    // 报错加一个没人接的 rejection（这个函数的文档写着「可以不等」）。
+    expect(harness.targets).toHaveLength(0);
+    expect(harness.renderer.setRenderTarget).not.toHaveBeenCalled();
+    expect(harness.mannequin()).toHaveLength(0);
+  });
 });
