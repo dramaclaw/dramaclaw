@@ -7,6 +7,7 @@ import { OUTPUT_PIXEL_SIZE, aspectRatio } from '@/features/previz/domain/camera'
 import { createCameraDraft } from '@/features/previz/domain/cameraDraft';
 import { createPrevizObject } from '@/features/previz/domain/objects';
 import { createDefaultScene, type PrevizScene, type Vec3 } from '@/features/previz/domain/scene';
+import { dropRayOriginY } from '@/features/previz/domain/drop';
 import { PREVIZ_DEFAULT_VIEW } from '@/features/previz/domain/view';
 import {
   PREVIZ_CAMERA_COLOR,
@@ -27,8 +28,14 @@ import { PrevizRenderer } from '@/features/previz/engine/PrevizRenderer';
 
 const render = vi.fn();
 const setFromCamera = vi.fn();
-let intersections: Array<{ object: unknown }> = [];
+let intersections: Array<{ object: unknown; point?: { x: number; y: number; z: number } }> = [];
 const intersectObjects = vi.fn((_objects: unknown[], _recursive?: boolean) => intersections);
+/**
+ * `Raycaster.set(origin, direction)`：拾取走的是 `setFromCamera`，落地走的是这一条。
+ * 记下来才断言得了「射线是从盒顶往**下**打的」——方向翻个个儿在假实现里照样有命中，
+ * 屏幕上则是对象被吸到头顶那个天花板上。
+ */
+const raySet = vi.fn();
 
 /** 建出来的材质只在「dispose 了几次」这一件事上被断言，所以只记这一个方法。 */
 interface FakeMaterial {
@@ -52,6 +59,17 @@ const webglRenderers: FakeWebGLRenderer[] = [];
 
 /** 打开后所有 `setFromObject()` 都交出空盒，模拟「节点下面还没有任何几何体」。 */
 let boxIsEmpty = false;
+
+/**
+ * 假包围盒的盒底相对对象原点的偏移，默认 0（脚底就在原点上）。
+ *
+ * 默认值下 `boxMinY === currentY` 恒成立，于是落地公式里的位移
+ * `currentY + (surfaceY - boxMinY)` 与错误的 `y = surfaceY` **算出来一模一样**，
+ * 这一层根本分不开这两件事（偏移方向本身在 `drop.test.ts` 里测）。要在渲染器这一层
+ * 也压住它的用例，把这个偏移调成非 0：原点不在脚底的模型（导入的 obj 常在几何中心）
+ * 就是这样的。
+ */
+let boxMinYOffset = 0;
 
 /**
  * 地面取点时射线打在 y=0 平面上的位置。null 表示射线与地面平行（相机平视时的真实
@@ -146,12 +164,20 @@ vi.mock('three', () => {
     setFromObject(object: Object3D) {
       if (boxIsEmpty) return this;
       const origin = object.getWorldPosition(new Vector3());
-      this.min.set(origin.x - 1, origin.y, origin.z - 1);
-      this.max.set(origin.x + 1, origin.y + 2, origin.z + 1);
+      this.min.set(origin.x - 1, origin.y + boxMinYOffset, origin.z - 1);
+      this.max.set(origin.x + 1, origin.y + 2 + boxMinYOffset, origin.z + 1);
       return this;
     }
     isEmpty() {
       return this.max.x < this.min.x || this.max.y < this.min.y || this.max.z < this.min.z;
+    }
+    /** 照抄 three 0.185 `math/Box3.js:224`：两端中点写进 target 再交回来。 */
+    getCenter(target: Vector3) {
+      return target.set(
+        (this.min.x + this.max.x) / 2,
+        (this.min.y + this.max.y) / 2,
+        (this.min.z + this.max.z) / 2,
+      );
     }
   }
   class FakeGeometry {
@@ -277,6 +303,7 @@ vi.mock('three', () => {
     },
     Raycaster: class {
       setFromCamera = setFromCamera;
+      set = raySet;
       intersectObjects = intersectObjects;
       ray = { intersectPlane: (plane: unknown, target: Vector3) => rayPlaneHit(plane, target) };
     },
@@ -332,6 +359,16 @@ const loadedUrls: string[] = [];
 /** 最近一次建出来的那个手柄 helper，见下面 mock 里的 `getHelper`。 */
 let gizmoHelper: { traverse: () => void; visible: boolean; userData: Record<string, unknown> };
 
+/**
+ * 最近一次建出来的那个 TransformControls 替身。松手落地是「渲染器把算法接给手柄」，
+ * 只有从这里把 `dragging-changed` 真的敲一遍，才验得到那根线接没接上。
+ */
+let transformControls: {
+  object: unknown;
+  axis: string | null;
+  emit: (type: string, event?: { value?: boolean }) => void;
+};
+
 vi.mock('three/examples/jsm/controls/TransformControls.js', () => ({
   TransformControls: class {
     enabled = true;
@@ -357,10 +394,23 @@ vi.mock('three/examples/jsm/controls/TransformControls.js', () => ({
     // 每次换一份的话那次赋值写完就丢，「手柄藏没藏住」在这里根本观测不到；
     // gizmo dispose 里那次 `root.remove(getHelper())` 同理，删的得是当初加进去的那个。
     getHelper = vi.fn(() => gizmoHelper);
+    /**
+     * 正在被拖的那根手柄的名字。真身在 `pointerUp` 里先 `this.dragging = false`
+     * （这一句才派发 `dragging-changed`），下一句才 `this.axis = null`
+     * （three 0.185 `TransformControls.js:784-785`）——所以收尾事件跑的时候它还在。
+     */
+    axis: string | null = null;
+    private readonly listeners: Record<string, Array<(event: { value?: boolean }) => void>> = {};
+    addEventListener = vi.fn((type: string, handler: (event: { value?: boolean }) => void) => {
+      (this.listeners[type] ??= []).push(handler);
+    });
     constructor() {
       gizmoHelper = { traverse() {}, visible: false, userData: {} };
+      transformControls = this as unknown as typeof transformControls;
     }
-    addEventListener = vi.fn();
+    emit(type: string, event: { value?: boolean } = {}) {
+      for (const handler of this.listeners[type] ?? []) handler(event);
+    }
   },
 }));
 
@@ -445,11 +495,13 @@ beforeEach(() => {
   materials.length = 0;
   webglRenderers.length = 0;
   boxIsEmpty = false;
+  boxMinYOffset = 0;
   groundHit = [0, 0, 0];
   lastPlane = null;
   render.mockClear();
   setFromCamera.mockClear();
   intersectObjects.mockClear();
+  raySet.mockClear();
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
     frames.push(cb);
     return frames.length;
@@ -1804,5 +1856,156 @@ describe('PrevizRenderer recording', () => {
     expect(helpersSeen.slice(1)).toEqual([true]);
     // 第二次 end() 不再重设尺寸、也不再画。
     expect(gl.setSize).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PrevizRenderer 松手落地', () => {
+  /** 一个人物加若干道具，各自摆在给定位置上。 */
+  function dropScene(characterY: number, ...propPositions: Vec3[]): PrevizScene {
+    const scene = createDefaultScene();
+    scene.objects.push(
+      createPrevizObject('character', scene.objects, {
+        transform: { position: [0, characterY, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      }),
+    );
+    for (const position of propPositions) {
+      scene.objects.push(
+        createPrevizObject('prop', scene.objects, {
+          transform: { position, rotation: [0, 0, 0], scale: [1, 1, 1] },
+        }),
+      );
+    }
+    return scene;
+  }
+
+  // 原点不在脚底：假 Box3 默认盒底恰好等于对象原点，那种形状下「按位移挪」和
+  // 「y = 命中高度」算出来一模一样，这一层压根分不开这两件事。把盒底挪到原点下方
+  // 0.5 米（导入的 obj 原点常在几何中心），两者才有区别。
+  const FOOT_BELOW_ORIGIN = -0.5;
+
+  it('drops a character onto the surface it hit, moving by the offset not onto it', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    const scene = dropScene(3, [0, 0, 0]);
+    instance.setScene(scene);
+    // 桌面在 0.75。人物原点在 3、盒底在 2.5，落完盒底该在 0.75，即原点在 1.25。
+    // 直接把 y 赋成 0.75 的话人物半截埋进桌子里。
+    intersections = [{ object: {}, point: { x: 0, y: 0.75, z: 0 } }];
+
+    expect(instance.dropToSurface(scene.objects[0].id)).toBeCloseTo(1.25, 12);
+  });
+
+  // 场景里没有可命中的地面：`grid.ts` 把地面的 raycast 整个摘掉了（铺满视野的话每次
+  // 空点都会命中它）。所以「没命中」不是异常，是绝大多数落地的正常情形，必须当成
+  // y=0 那块地面——退回 null 的话在平地上拖东西永远不会落地。
+  it('falls to the ground plane when the ray hits nothing', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    const scene = dropScene(5);
+    instance.setScene(scene);
+    intersections = [];
+
+    expect(instance.dropToSurface(scene.objects[0].id)).toBeCloseTo(0.5, 12);
+  });
+
+  // 反方向也得成立，而且这一条才证明射线是从盒**顶**往下打的：从盒底往下打的话，
+  // 沉在地板以下的对象只会继续往下找，永远浮不回来。
+  it('lifts a character that sank below the ground back onto it', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    const scene = dropScene(-3);
+    instance.setScene(scene);
+    intersections = [];
+
+    expect(instance.dropToSurface(scene.objects[0].id)).toBeCloseTo(0.5, 12);
+  });
+
+  it('aims the ray straight down from just above the top of the box', async () => {
+    const { instance } = await createRenderer();
+    const scene = dropScene(2, [4, 0, 0]);
+    instance.setScene(scene);
+    intersections = [];
+
+    instance.dropToSurface(scene.objects[0].id);
+
+    const [origin, direction] = raySet.mock.calls[0] as [
+      { x: number; y: number; z: number },
+      { x: number; y: number; z: number },
+    ];
+    // 盒子是 [-1,2,-1]..[1,4,1]：水平取中心，竖直取顶面再抬一个 epsilon。
+    expect(origin.x).toBe(0);
+    expect(origin.z).toBe(0);
+    expect(origin.y).toBe(dropRayOriginY(4));
+    // 朝上打的话对象会被吸到头顶那块天花板上，而画面上只是「它自己飞起来了」。
+    expect([direction.x, direction.y, direction.z]).toEqual([0, -1, 0]);
+  });
+
+  // 不剔掉自己的话，从盒顶往下打第一个命中的永远是对象自身的顶面，落地变成
+  // 「把盒底抬到盒顶」——每松一次手对象就往上跳一个身位。
+  it('keeps the object itself out of the candidates it rays against', async () => {
+    const { instance } = await createRenderer();
+    const scene = dropScene(2, [4, 0, 0]);
+    instance.setScene(scene);
+    intersections = [];
+
+    instance.dropToSurface(scene.objects[0].id);
+
+    const candidates = intersectObjects.mock.calls[0][0] as unknown[];
+    expect(candidates).not.toContain(instance.nodeFor(scene.objects[0].id));
+    expect(candidates).toContain(instance.nodeFor(scene.objects[1].id));
+    // 递归：对象节点自己是个空 Group，几何体全在它下面那层占位体 / 模型里。
+    expect(intersectObjects.mock.calls[0][1]).toBe(true);
+  });
+
+  // 机位与灯本来就该浮在空中。把一台俯拍机吸到地板上，取景当场毁掉，而用户只是
+  // 拖了一下位置。
+  it('refuses to drop a camera or a light', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    for (const kind of ['camera', 'light'] as const) {
+      scene.objects.push(
+        createPrevizObject(kind, scene.objects, {
+          transform: { position: [0, 5, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        }),
+      );
+    }
+    instance.setScene(scene);
+    intersections = [];
+
+    expect(instance.dropToSurface(scene.objects[0].id)).toBeNull();
+    expect(instance.dropToSurface(scene.objects[1].id)).toBeNull();
+  });
+
+  // 模型还在下载 / 下载失败时节点下面一个几何体都没有，包围盒是空的。这里必须自己
+  // `new Box3().setFromObject()` 再判 `isEmpty()`，不能图省事复用 `boundsOf()`——那个
+  // 函数会把空盒换成一个人体尺寸的**占位盒**（那是给聚焦用的产品行为），拿它落地
+  // 等于按一个假盒子把对象瞬移走，而且完全看不出发生过什么。
+  it('declines while the object still has no geometry', async () => {
+    const { instance } = await createRenderer();
+    const scene = dropScene(5);
+    instance.setScene(scene);
+    boxIsEmpty = true;
+    intersections = [];
+
+    expect(instance.dropToSurface(scene.objects[0].id)).toBeNull();
+  });
+
+  // 端到端：渲染器有没有真的把这套算法接到手柄上。上面那些用例全是直接调方法的，
+  // 接线那一行删掉它们一条都不红——而少了那一行，松手就是彻底不落地。
+  it('drops the object when a free-move drag ends in the viewport', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    const scene = dropScene(5);
+    instance.setScene(scene);
+    instance.setGizmoMode('translate');
+    instance.setSelection(scene.objects[0].id);
+    intersections = [];
+
+    transformControls.axis = 'XYZ';
+    transformControls.emit('dragging-changed', { value: true });
+    transformControls.emit('objectChange');
+    transformControls.emit('dragging-changed', { value: false });
+
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
   });
 });

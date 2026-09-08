@@ -31,6 +31,14 @@ describe('dropPositionY', () => {
     expect(y).not.toBe(0);
   });
 
+  it('lowers a model whose origin sits below its geometry', () => {
+    // 反方向的 pivot 真实存在：壁挂搁板、吊灯、以世界原点导出的 obj——原点在地面，
+    // 几何体整个悬在 2 米高。落到地面上正确答案是 -2，是个**负数**。
+    // 别的用例的 currentY 全都在盒底之上，期望值全是非负，于是任何一句
+    // 「别掉到地板下面」式的下限钳制（`Math.max(0, …)`）都能安然混过去。
+    expect(dropPositionY(0, 2, 0)).toBe(-2);
+  });
+
   it('is idempotent once the object has been seated', () => {
     // 第二次落地时包围盒跟着对象一起位移过了，再落一次不该有任何变化。
     // 不成立的话每帧贴地的人物会逐帧漂移。
@@ -67,10 +75,14 @@ describe('dropRayOriginY', () => {
     expect(dropRayOriginY(2)).toBe(2 + PREVIZ_DROP_EPSILON);
   });
 
-  it('uses a lift that is positive but invisible at previz scale', () => {
-    // 必须大于 0，否则贴合的表面起射打不中；又必须远小于一格网格，
-    // 否则抬高本身就成了可见误差。
-    expect(PREVIZ_DROP_EPSILON).toBeGreaterThan(0);
+  it('lifts by more than intersection round-off yet far less than the clearance above', () => {
+    // 下界：抬高要压过几何求交的浮点误差才挡得住共面。three 的 position 是 float32，
+    // 十米量级上一个 ulp 就有 1e-6 米——`toBeGreaterThan(0)` 放得过 1e-9，那种抬高
+    // 淹在舍入里，共面自相交会原样回来而这条照绿。
+    expect(PREVIZ_DROP_EPSILON).toBeGreaterThan(1e-5);
+    // 上界不是「肉眼看不见」：抬高只改射线起点，表面高度取自命中点，抬多少都不进
+    // 输出。它管的是别把起点抬过压在对象上方的那个邻居，否则对象被顶到邻居身上。
+    // 所以这里只夹数量级，不钉具体值——毫米量级上下都远在余隙之内。
     expect(PREVIZ_DROP_EPSILON).toBeLessThan(0.01);
   });
 

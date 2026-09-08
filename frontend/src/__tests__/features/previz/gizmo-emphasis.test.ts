@@ -408,6 +408,8 @@ describe('PrevizGizmo wiring', () => {
     return {
       enabled: true,
       object: null,
+      // 本文件不碰拖拽，但接口上它是必填的：真身松手那一刻靠它分辨拖的是哪根手柄。
+      axis: null,
       attach: vi.fn(),
       detach: vi.fn(),
       setMode: vi.fn(),

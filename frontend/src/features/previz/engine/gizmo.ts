@@ -23,6 +23,13 @@ export interface TransformControlsLike {
   dispose(): void;
   /** three 0.185 起 TransformControls 继承 Controls，可见的手柄要从这里拿。 */
   getHelper(): THREE.Object3D;
+  /**
+   * 正在被拖的那根手柄的名字（`'X'` / `'XYZ'` / `'XZ'`…），没在拖时是 null。
+   *
+   * 三套手柄（平移 / 旋转 / 缩放）共用这批名字，所以光看它分不出用户在干什么，
+   * 还得配上当前模式——见 [PrevizGizmo.dropOnRelease]。
+   */
+  readonly axis: string | null;
   addEventListener(type: string, handler: (event: { value?: boolean }) => void): void;
 }
 
@@ -44,6 +51,14 @@ export interface PrevizGizmoDeps {
    * 而那棵树一旦抄错，红的会是一批跟外观毫无关系的用例。
    */
   three?: ThreeModule;
+  /**
+   * 松手吸附：把对象落到它正下方的表面上，返回落地后的**局部** y；返回 null 表示
+   * 这一次不该落地（机位与灯本来就该浮在空中，还没有几何体的模型也没法算包围盒）。
+   *
+   * 和 `three` 一样刻意是**可选**的：这里只认「谁来算」，算法整个在渲染器里（要
+   * 包围盒和射线）。不接这根线时行为与接线之前逐字一致，塞假控件的那批用例照跑。
+   */
+  dropToSurface?: (objectId: string) => number | null;
 }
 
 /**
@@ -74,6 +89,14 @@ export class PrevizGizmo {
    * 不要手柄」），所以不能拿 null 当哨兵。
    */
   private pendingMode: GizmoMode | null | undefined = undefined;
+  /**
+   * 手柄当前是哪种模式，自己记一份。
+   *
+   * 初值取 `'translate'` 而不是 null：three 的 `TransformControls` 里 `mode` 的默认值
+   * 就是 translate，打开编辑器到第一次 `setMode` 之间手柄真的在平移。记成 null 的话
+   * 这一段两边说法不一致——控件在平移，我们却当它没有模式。
+   */
+  private mode: GizmoMode | null = 'translate';
 
   constructor(private readonly deps: PrevizGizmoDeps) {
     // 手柄本体不是 Object3D：加错了不会报错，只是永远看不见。
@@ -105,7 +128,13 @@ export class PrevizGizmo {
           // 拖到一半对象被删了（撤销、另一个窗口）时 object 会是 null。照着它读变换会抛，
           // 而这条处理链一断，上面那句 `orbit.enabled = true` 之后的收尾全没了。
           const node = deps.controls.object as THREE.Object3D | null;
-          if (node) deps.onCommit(this.attachedId, readTransform(node));
+          if (node) {
+            // 落地必须赶在读变换之前。反过来的话提交回 store 的是半空中那个位置，
+            // 而节点上已经是落地后的 y，下一帧引擎按 store 又把它写回去——画面上是
+            // 物体落下去又弹回原处，撤销一步也退不回来（历史里压根没记下落地）。
+            this.dropOnRelease(this.attachedId, node);
+            deps.onCommit(this.attachedId, readTransform(node));
+          }
         }
       } finally {
         this.dragging = false;
@@ -165,7 +194,33 @@ export class PrevizGizmo {
     this.applyVisibility();
   }
 
+  /**
+   * 松手吸附：把对象落到它正下方的表面上。
+   *
+   * 只认自由移动（`XYZ`）和水平面（`XZ`）这两根手柄。拖 Y 轴、拖 `XY` / `YZ` 这两个
+   * 竖直面，用户都是**刻意**在调高度，落一次就把他刚调好的高度抹掉，这几根手柄等于
+   * 失灵；单轴的 X / Z 同理，他要的就是「只动这一根」。
+   *
+   * 还得看模式：三套手柄共用同一批名字，旋转和缩放的中心那颗也叫 `XYZ`。只看 axis
+   * 的话原地转一个物体就会把它吸到地上——转的时候谁都没打算挪它。
+   *
+   * `axis` 必须在这一刻读。three 的 `pointerUp` 是先 `this.dragging = false`（这一句
+   * 经由 defineProperty 派发的正是我们所在的这个事件），**下一句**才 `this.axis = null`
+   * （0.185 `TransformControls.js:784-785`）。挪到别处读拿到的一定是 null，整个吸附
+   * 一次都不会发生，而且不报任何错。
+   */
+  private dropOnRelease(objectId: string, node: THREE.Object3D): void {
+    if (this.mode !== 'translate') return;
+    const axis = this.deps.controls.axis;
+    if (axis !== 'XYZ' && axis !== 'XZ') return;
+    const y = this.deps.dropToSurface?.(objectId);
+    // null 是「这次不该落地」，不是「落到 0」：当成 0 用的话，一个还在加载的模型
+    // 松手就被拍到地面上。
+    if (typeof y === 'number') node.position.y = y;
+  }
+
   private applyMode(mode: GizmoMode | null): void {
+    this.mode = mode;
     this.modeVisible = mode !== null;
     // 只藏 helper 是不够的：控件还在接指针事件，用户会在一片看不见任何东西的画面里
     // 莫名其妙地把选中的物体拖走，而且完全找不到是什么把它拖动的。
