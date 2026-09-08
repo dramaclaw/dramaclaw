@@ -232,6 +232,11 @@ export function PrevizEditor({
   const timelinePlaying = usePrevizStore((state) => state.timelinePlaying);
   const timelineRate = usePrevizStore((state) => state.timelineRate);
   const seekSerial = usePrevizStore((state) => state.seekSerial);
+  // 音频片段进依赖而不是每次从 getState 现读：store 对 `timeline.audio` 是结构共享的，
+  // 拖对象、改机位、剪镜头轨都只换 `objects`/`tracks`/`program`，音频那个数组引用原样传下去，
+  // 只有真编辑音频轨才换新的。所以这条依赖恰好等于「音频轨被改了」，播放中的其他编辑不会
+  // 白白重排一次音频。
+  const audioClips = usePrevizStore((state) => state.scene.timeline.audio);
   const selectedClipId = usePrevizStore((state) => state.selectedClipId);
   const selectedPointId = usePrevizStore((state) => state.selectedPointId);
   const addDerivedUploadNode = useCanvasStore((state) => state.addDerivedUploadNode);
@@ -496,17 +501,24 @@ export function PrevizEditor({
   }, [open, timelinePlaying]);
 
   // 时间轴一播就把音频对上；seekSerial 一变（拖播放头 / 停下来）就从新位置重排。
-  // 片段与当前帧从 getState 读而不进依赖：播放中每帧都在变，跟着重排会卡成一片。
+  // 起播帧从 getState 读而不进依赖：播放中它每帧都在变，进了依赖就是每帧重排一次音频，
+  // 声音会碎成一片咔哒。要的是「起播那一刻在哪」，seekSerial 已经替我们盯住了跳转。
   useEffect(() => {
     if (!open || !timelinePlaying || recording) return undefined;
-    const store = usePrevizStore.getState();
-    const clips = store.scene.timeline.audio;
-    if (clips.length === 0) return undefined;
+    if (audioClips.length === 0) return undefined;
     const playback = ensureAudioPlayback();
     if (!playback) return undefined;
-    void playback.play(clips, store.timelineFrame, timelineRate);
+    void playback.play(audioClips, usePrevizStore.getState().timelineFrame, timelineRate);
     return () => playback.stop();
-  }, [open, timelinePlaying, timelineRate, seekSerial, recording, ensureAudioPlayback]);
+  }, [
+    open,
+    timelinePlaying,
+    timelineRate,
+    seekSerial,
+    recording,
+    audioClips,
+    ensureAudioPlayback,
+  ]);
 
   // 关编辑器就把上下文关掉；卸载同理。
   useEffect(() => {
@@ -674,6 +686,11 @@ export function PrevizEditor({
         return;
       }
 
+      // 解码赶在开录之前：`startRecording()` 一调辅助物就藏了、视口也切到了输出分辨率，
+      // 这期间界面看着像卡死，几百毫秒的解码不该塞进这个窗口。`load()` 自己吞掉失败
+      // （失败的 url 记进 failedUrls，播的时候跳过），所以这里不必接错。
+      if (playback) await playback.load(audioClips);
+
       const pass = renderer.startRecording(target.mode, target.cameraId);
       // 机位在解算与开录之间被删掉了；提示一句，别把导演视角录成「轨道录制」。
       if (!pass) {
@@ -697,28 +714,11 @@ export function PrevizEditor({
         // 逐帧要问「这一帧谁在播」，问的是开录那一刻的场景：录制自己在推播放头，
         // 每帧重读 store 只会把中途的编辑读进成片。
         const programScene = store.scene;
-        const destination = playback ? playback.context.createMediaStreamDestination() : null;
-        if (playback) await playback.load(audioClips);
-        const canvasRecorder = createCanvasRecorder(pass.canvas, {
-          fps: PREVIZ_RECORD_FPS,
-          mimeType,
-          audioStream: destination?.stream,
-        });
-        // 混音时录制器一开就把音频从第 0 帧、1 倍速排进混音节点；停就一起停。
         const mixed = playback;
-        const recorder =
-          mixed && destination
-            ? {
-                start: () => {
-                  canvasRecorder.start();
-                  void mixed.play(audioClips, 0, 1, destination);
-                },
-                stop: () => {
-                  mixed.stop();
-                  return canvasRecorder.stop();
-                },
-              }
-            : canvasRecorder;
+        // 每次录制都新开一个混音出口，不复用：`createCanvasRecorder` 收工时会把并进画布流
+        // 的那条音轨一起 stop 掉，而停掉的轨道不会再复活——复用同一个 destination 的话，
+        // 第二次录出来就是默片。
+        const destination = mixed ? mixed.context.createMediaStreamDestination() : null;
         // 播放头只按约 10Hz 推进：每推一次整棵编辑器都要重渲一遍，再经 timelineFrame 那个
         // effect 把这一帧重新解算一次，30fps 下这占掉了每帧预算的一大块；录制是模态的，
         // 播放头只要看得出在走就够了。首帧与末帧必推：开录播放头要跳回开头（那一帧画在
@@ -731,6 +731,31 @@ export function PrevizEditor({
         let lastProgress = 0;
         let blob: Blob;
         try {
+          // 建录制器和跑录制都在这个 try 里：`new MediaRecorder()` 会因为容器谈不拢当场抛，
+          // 混音那条候选里还有裸 `video/mp4`/`video/webm`（Safari 需要），谈崩的概率不低。
+          // 一旦漏到 try 外面，`pass.end()` 就不会跑，辅助物、手柄、机位锥全留在隐藏状态，
+          // 视口也卡在输出分辨率上不再跟随窗口——只能重开编辑器才能救回来。
+          const canvasRecorder = createCanvasRecorder(pass.canvas, {
+            fps: PREVIZ_RECORD_FPS,
+            mimeType,
+            audioStream: destination?.stream,
+          });
+          // 混音时录制器一开就把音频从第 0 帧、1 倍速排进混音节点；停就一起停。
+          // 这里的 1 倍速是刻意的：成片是按 30fps 逐帧画出来的实速素材，跟着时间轴当前的
+          // 播放倍速排音频只会让成片音画对不上。
+          const recorder =
+            mixed && destination
+              ? {
+                  start: () => {
+                    canvasRecorder.start();
+                    void mixed.play(audioClips, 0, 1, destination);
+                  },
+                  stop: () => {
+                    mixed.stop();
+                    return canvasRecorder.stop();
+                  },
+                }
+              : canvasRecorder;
           blob = await recordTimeline({
             durationFrames,
             fps: PREVIZ_RECORD_FPS,
