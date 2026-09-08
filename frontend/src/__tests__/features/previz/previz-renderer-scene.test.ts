@@ -232,7 +232,9 @@ vi.mock('three', () => {
     // 手柄改造要新建它（`gizmoEmphasis.ts`）。今天走不到——这份替身的 `getHelper()`
     // 交出的 helper `traverse` 是空实现，改造找不到手柄就早退了。留着是因为下一个把
     // 那个 traverse 补忠实的人不该撞上一句 `new undefined()`：报错点在 gizmoEmphasis 里，
-    // 和他改的那一行隔着两层，找起来费时间而收获为零。
+    // 和他改的那一行隔着两层，找起来费时间而收获为零。补忠实的人还得留意：
+    // `FakeMaterialImpl` 的构造会 `materials.push(this)`，而改造要新建 1 份中心材质加
+    // 3 份平面材质——「每份材质只 dispose 一次」那条会凭空多出 4 笔进账本。
     OctahedronGeometry: FakeGeometry,
     BufferGeometry: class extends FakeGeometry {
       drawRange = { start: 0, count: Infinity };
