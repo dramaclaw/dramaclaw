@@ -1,3 +1,4 @@
+import i18n from "i18next";
 import {captureFreezoneCanvasScope} from '@/features/freezone/canvasSyncRuntime';
 import { createHtmlArtifact, saveHtmlArtifact, restoreHtmlVersion, announceHtmlArtifact, recordHtmlNodeHistory } from './api';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -67,7 +68,7 @@ export async function executeHtmlArtifactCommand(command: HtmlArtifactCommand, p
       const recorded = await recordHtmlNodeHistory(projectId,artifact.id,artifact.version,{canvas_id:canvasId,node_id:targetId});
       historyWarnings.push(...(recorded.warnings ?? []));
     } catch {
-      historyWarnings.push('网页已保存，但节点历史记录失败，请稍后重试。');
+      historyWarnings.push(i18n.t('htmlArtifact.historyRecordFailed'));
     }
   }
   announceHtmlArtifact(projectId,artifact,nodeId);
