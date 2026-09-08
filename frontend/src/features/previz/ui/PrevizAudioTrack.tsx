@@ -104,7 +104,11 @@ export function PrevizAudioTrack({
           图标与标题会比它上面的每一条轨道都往左错开一截。
         */}
         <span aria-hidden="true" className="h-6 w-6 shrink-0" />
-        {menuOpen && (
+        {/*
+          禁用条件也管着菜单：加号只在自己身上拦得住新片段，菜单开着时状态从外部翻过去
+          （撤销恢复出一个装满的场景、或者另一段开始上传），条目还挂在那儿点得动。
+        */}
+        {menuOpen && !full && pending === null && (
           <div role="menu" aria-label={t('previz.audio.add')} className={MENU}>
             <button
               type="button"
@@ -170,6 +174,8 @@ export function PrevizAudioTrack({
             type="button"
             className={ICON_BUTTON}
             aria-label={t('previz.audio.add')}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
             // 上传中也关掉：占位条还没落地，这时再加一段会挤掉它算好的空隙。
             disabled={full || pending !== null}
             onClick={() => setMenuOpen((open) => !open)}
@@ -196,6 +202,8 @@ export function PrevizAudioTrack({
               audioUrl={clip.audioUrl}
               offsetMs={clip.offsetMs}
               clipMs={framesToMs(clip.endFrame - clip.startFrame, fps)}
+              // 与 ClipBar 给自己算的宽度同一个式子：波形铺满整条片段。
+              widthPx={(clip.endFrame - clip.startFrame) * pxPerFrame}
             />
           </ClipBar>
         ))}
@@ -220,6 +228,9 @@ export function PrevizAudioTrack({
 
 type WaveState = 'loading' | 'ready' | 'failed';
 
+/** 波形高度的兜底：ClipBar 是 h-6。没排版时（jsdom、display:none）clientHeight 读到 0。 */
+const WAVE_HEIGHT_PX = 24;
+
 /**
  * 片段底下的波形。峰值按 120 桶/秒缓存在 audioPeaks 里，这里只按片段的偏移与长度取一段
  * 画到 canvas 上。灰=还在读，红=读不出来（多半是解不了码，播放也会静音）。
@@ -229,22 +240,28 @@ function AudioWave({
   audioUrl,
   offsetMs,
   clipMs,
+  widthPx,
 }: {
   clipId: string;
   audioUrl: string;
   offsetMs: number;
   clipMs: number;
+  widthPx: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [peaks, setPeaks] = useState<Float32Array | null>(null);
   const [state, setState] = useState<WaveState>('loading');
 
+  // 解码只认素材本身：整段峰值与片段裁在哪、时间线缩放到几倍都无关。
+  // 跟着窗口一起重跑的话，每拖一下都要再解一次码，那层模块级缓存就白建了。
   useEffect(() => {
     let cancelled = false;
     setState('loading');
+    setPeaks(null);
     loadAudioPeaks(audioUrl)
-      .then((peaks) => {
+      .then((loaded) => {
         if (cancelled) return;
-        drawPeaks(canvasRef.current, peaks, offsetMs, clipMs);
+        setPeaks(loaded);
         setState('ready');
       })
       .catch(() => {
@@ -253,7 +270,17 @@ function AudioWave({
     return () => {
       cancelled = true;
     };
-  }, [audioUrl, offsetMs, clipMs]);
+  }, [audioUrl]);
+
+  /*
+    画是另一件事，得跟着窗口和宽度重来。widthPx 不在依赖里的话，时间线一缩放，留在
+    canvas 上的还是上一档分辨率的位图，浏览器直接拉伸：放大四倍，1px 的柱子糊成一片；
+    缩小四倍，四根柱子挤成一根。
+  */
+  useEffect(() => {
+    if (!peaks) return;
+    drawPeaks(canvasRef.current, peaks, offsetMs, clipMs, widthPx);
+  }, [peaks, offsetMs, clipMs, widthPx]);
 
   return (
     <canvas
@@ -279,19 +306,32 @@ export function peakBarHeights(
   width: number,
   height: number,
 ): number[] {
-  const first = Math.floor((offsetMs / 1000) * PEAK_BUCKETS_PER_SEC);
+  const first = (offsetMs / 1000) * PEAK_BUCKETS_PER_SEC;
   /*
     这一窗跨了多少桶，不取整。clipMs 是帧数换算来的浮点数，(clipMs / 1000) * 120 常常
     差在末位：fps=30、13 帧的片段整整 52 桶，算出来却是 51.99999999999999，先 floor
-    一下就少画最后一桶——30fps 下大半的帧数都撞得上。落到哪一桶由取样那一步的 floor 定。
-    不足一桶时 span 小于 1，每一列都落回 first 那一桶——短片段画成平的一条，正是想要的。
+    一下就少画最后一桶——30fps 下大半的帧数都撞得上。
   */
   const span = (clipMs / 1000) * PEAK_BUCKETS_PER_SEC;
   const bars: number[] = [];
   for (let x = 0; x < width; x += 1) {
-    const bucket = first + Math.floor((x / width) * span);
-    // 片段比素材长时读到 undefined，按静音算；静音也留 1px，波形不至于断成一截一截。
-    bars.push(Math.max(1, (peaks[bucket] ?? 0) * height));
+    const from = first + (x / width) * span;
+    const to = first + ((x + 1) / width) * span;
+    /*
+      一列跨到的桶取最大值，不是挑其中一个采样。computePeaks 每桶存的本来就是那一段的
+      峰值，这里再点采样一次等于把它扔了：2 秒的片段有 240 桶，画在 120px 上一半看不见，
+      缩小到 30px 只剩八分之一——一句安静的台词里那一下爆音正好被丢掉，而那恰恰是摆音频
+      时要找的东西。不足一桶时 to 与 from 同落一桶，下面的下界保证至少读一桶：短片段
+      画成平的一条，正是想要的。
+    */
+    let peak = 0;
+    for (let b = Math.floor(from); b < Math.max(Math.floor(from) + 1, Math.ceil(to)); b += 1) {
+      // 片段比素材长时读到 undefined，按静音算。
+      const value = peaks[b] ?? 0;
+      if (value > peak) peak = value;
+    }
+    // 静音也留 1px，波形不至于断成一截一截。
+    bars.push(Math.max(1, peak * height));
   }
   return bars;
 }
@@ -302,14 +342,23 @@ function drawPeaks(
   peaks: Float32Array,
   offsetMs: number,
   clipMs: number,
+  widthPx: number,
 ): void {
   if (!canvas) return;
-  const width = Math.max(1, Math.floor(canvas.clientWidth || canvas.width || 1));
-  const height = Math.max(1, Math.floor(canvas.clientHeight || canvas.height || 1));
-  canvas.width = width;
-  canvas.height = height;
+  // 宽度用算好的片段宽度，不读 clientWidth：那是布局量，缩放当帧未必已经量准。
+  const width = Math.max(1, Math.round(widthPx));
+  const height = Math.max(1, Math.round(canvas.clientHeight || WAVE_HEIGHT_PX));
+  /*
+    位图按设备像素铺，坐标系再缩回 CSS 像素来画：不这么做，2x 屏上每根 1px 的柱子都是
+    浏览器放大出来的，整条波形发虚。倍数压到 2 封顶——3x 手机上不值那三倍显存。
+  */
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
   const context = canvas.getContext('2d');
   if (!context) return;
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // 改 width 已经清空了画布，这里再清一次，免得押在「尺寸没变时也重置」这条实现细节上。
   context.clearRect(0, 0, width, height);
   context.fillStyle = 'rgba(255,255,255,0.55)';
   const middle = height / 2;

@@ -68,6 +68,26 @@ function props(
 
 const addButton = () => screen.getByRole('button', { name: 'previz.audio.add' });
 
+/** 最小 2D 上下文：只记 fillRect，其余调用吞掉。返回 fillRect 的 mock。 */
+function stubCanvas2D() {
+  const fillRect = vi.fn();
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    clearRect: vi.fn(),
+    setTransform: vi.fn(),
+    fillRect,
+    fillStyle: '',
+  } as unknown as CanvasRenderingContext2D);
+  return fillRect;
+}
+
+/** jsdom 不排版，clientHeight 恒为 0；给个高度，绘制才走真分支而不是兜底常量。 */
+function stubClientHeight(px: number): void {
+  Object.defineProperty(HTMLCanvasElement.prototype, 'clientHeight', {
+    configurable: true,
+    get: () => px,
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   loadAudioPeaks.mockImplementation(async () => new Float32Array(240).fill(0.5));
@@ -76,8 +96,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // 别把打了桩的 getContext 留给别的测试文件——它挂在全局原型上。
+  // 别把桩留给别的测试文件——两样都挂在全局原型上。
   vi.restoreAllMocks();
+  // 删掉自己定义的那一层，clientHeight 就落回 Element.prototype 上原来的取值器。
+  delete (HTMLCanvasElement.prototype as unknown as Record<string, unknown>).clientHeight;
 });
 
 describe('PrevizAudioTrack', () => {
@@ -104,37 +126,15 @@ describe('PrevizAudioTrack', () => {
     expect(loadAudioPeaks).toHaveBeenCalledTimes(1);
   });
 
-  it('reloads the peaks when the clip offset or length moves', async () => {
-    const clip = audio('a', 0, 60);
-    const { rerender } = render(<PrevizAudioTrack {...props(sceneWith([clip]))} />);
-    expect(loadAudioPeaks).toHaveBeenCalledTimes(1);
-    /*
-      波形取的那一窗由片段的偏移与长度定。这两个值得真的从片段接到 AudioWave 上——
-      写死成 0 一样画得出东西，只有在片段挪动时才露馅：窗口没跟着变，重取也不会发生。
-    */
-    rerender(<PrevizAudioTrack {...props(sceneWith([{ ...clip, offsetMs: 1500 }]))} />);
-    expect(loadAudioPeaks).toHaveBeenCalledTimes(2);
-    rerender(
-      <PrevizAudioTrack {...props(sceneWith([{ ...clip, offsetMs: 1500, endFrame: 90 }]))} />,
-    );
-    expect(loadAudioPeaks).toHaveBeenCalledTimes(3);
-    await waitFor(() => {
-      expect(screen.getByTestId('previz-audio-wave-a')).toHaveAttribute('data-state', 'ready');
-    });
-  });
-
-  it('paints the bars the clip window predicts', async () => {
+  it('paints the bars the clip window predicts, centred on the midline', async () => {
     /*
       别的用例把 2D 上下文桩成 null，验的是「拿不到就安静跳过」。这一条反过来给一个
-      最小上下文，把 offsetMs / clipMs 真的传到了 drawPeaks 一路钉死——依赖数组里对、
-      传参时写成 0 或对调，前面那些用例一个都发现不了。
+      最小上下文，把每一根柱子的四个参数都钉死：offsetMs / clipMs 写成 0 或对调、
+      x 恒取 0（整条波形挤成一列）、y 忘了减半个柱高（柱子挂在中线下面），前面那些
+      用例一条都发现不了。
     */
-    const fillRect = vi.fn();
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
-      clearRect: vi.fn(),
-      fillRect,
-      fillStyle: '',
-    } as unknown as CanvasRenderingContext2D);
+    const fillRect = stubCanvas2D();
+    stubClientHeight(24);
     // 每桶一个不同的值，窗口挪一格或首尾对调都画得不一样。
     const peaks = Float32Array.from({ length: 720 }, (_, i) => i / 1000);
     loadAudioPeaks.mockResolvedValue(peaks);
@@ -145,11 +145,66 @@ describe('PrevizAudioTrack', () => {
       expect(fillRect).toHaveBeenCalled();
     });
 
-    // 长度 2000ms（60 帧 @30fps）直接写死，不借生产代码的换算，免得两边一起错。
-    // jsdom 不排版，clientWidth/clientHeight 都是 0，落到 canvas 默认的 300×150。
-    const bars = peakBarHeights(peaks, clip.offsetMs, 2000, 300, 150);
-    expect(fillRect).toHaveBeenCalledTimes(300);
-    expect(fillRect.mock.calls.map((call) => call[3])).toEqual(bars);
+    // 120px 宽（60 帧 × 2px/帧）、2000ms 长（60 帧 @30fps）、24px 高，
+    // 三个数都直接写死，不借生产代码的换算，免得两边一起错。
+    const bars = peakBarHeights(peaks, clip.offsetMs, 2000, 120, 24);
+    expect(fillRect.mock.calls).toEqual(bars.map((bar, x) => [x, 12 - bar / 2, 1, bar]));
+  });
+
+  it('redraws the moved window without decoding the source again', async () => {
+    const fillRect = stubCanvas2D();
+    stubClientHeight(24);
+    const peaks = Float32Array.from({ length: 720 }, (_, i) => i / 1000);
+    loadAudioPeaks.mockResolvedValue(peaks);
+
+    const clip = audio('a', 0, 60);
+    const { rerender } = render(<PrevizAudioTrack {...props(sceneWith([clip]))} />);
+    await waitFor(() => {
+      expect(fillRect).toHaveBeenCalled();
+    });
+
+    /*
+      波形取的那一窗由片段的偏移与长度定，这两个值得真的从片段接到绘制里——写死成 0
+      一样画得出东西，只有在片段挪动、裁剪时才露馅：窗口没跟着变，画出来还是老样子。
+    */
+    fillRect.mockClear();
+    rerender(<PrevizAudioTrack {...props(sceneWith([{ ...clip, offsetMs: 1500 }]))} />);
+    expect(fillRect.mock.calls.map((call) => call[3])).toEqual(
+      peakBarHeights(peaks, 1500, 2000, 120, 24),
+    );
+
+    fillRect.mockClear();
+    rerender(
+      <PrevizAudioTrack {...props(sceneWith([{ ...clip, offsetMs: 1500, endFrame: 90 }]))} />,
+    );
+    expect(fillRect.mock.calls.map((call) => call[3])).toEqual(
+      peakBarHeights(peaks, 1500, 3000, 180, 24),
+    );
+
+    // 峰值是整段素材的，与片段怎么裁无关：窗口一动就重解一次码，等于白建那层缓存。
+    expect(loadAudioPeaks).toHaveBeenCalledTimes(1);
+  });
+
+  it('redraws at the new resolution when the timeline zooms', async () => {
+    const fillRect = stubCanvas2D();
+    stubClientHeight(24);
+    const clip = audio('a', 0, 60);
+    const { rerender } = render(<PrevizAudioTrack {...props(sceneWith([clip]))} />);
+    const canvas = screen.getByTestId('previz-audio-wave-a') as HTMLCanvasElement;
+    await waitFor(() => {
+      expect(fillRect).toHaveBeenCalled();
+    });
+    expect(canvas.width).toBe(120); // 60 帧 × 2px/帧
+
+    /*
+      时间线能放大缩小。位图不跟着重画的话，浏览器就把上一档分辨率的图拉伸到新宽度：
+      放大四倍，1px 的柱子糊成 4px 一片；缩小四倍，四根柱子挤成一根。
+    */
+    fillRect.mockClear();
+    rerender(<PrevizAudioTrack {...props(sceneWith([clip]), { pxPerFrame: 4 })} />);
+    expect(canvas.width).toBe(240);
+    expect(fillRect).toHaveBeenCalledTimes(240);
+    expect(loadAudioPeaks).toHaveBeenCalledTimes(1);
   });
 
   it('paints the clips in the audio tone', () => {
@@ -234,6 +289,37 @@ describe('PrevizAudioTrack', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
+  it('takes the menu away when the add button goes dead under it', async () => {
+    const user = userEvent.setup();
+    /*
+      disabled 只拦得住加号本身。菜单开着时状态从外部翻过去——撤销恢复出一个装满的
+      场景、或者另一段开始上传——菜单还挂在那儿，里头的条目照样点得动，绕开了那道闸。
+    */
+    const clips = Array.from({ length: PREVIZ_MAX_AUDIO_CLIPS }, (_, i) =>
+      audio(`a${i}`, i, i + 1),
+    );
+    const filled = render(<PrevizAudioTrack {...props(sceneWith([]))} />);
+    await user.click(addButton());
+    filled.rerender(<PrevizAudioTrack {...props(sceneWith(clips))} />);
+    expect(screen.queryByRole('menu')).toBeNull();
+    filled.unmount();
+
+    const uploading = render(<PrevizAudioTrack {...props(sceneWith([]))} />);
+    await user.click(addButton());
+    const pending = { startFrame: 0, endFrame: 10, name: 'take.mp3' };
+    uploading.rerender(<PrevizAudioTrack {...props(sceneWith([]), { pending })} />);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('tells assistive tech that the add button opens a menu', async () => {
+    const user = userEvent.setup();
+    render(<PrevizAudioTrack {...props(sceneWith([]))} />);
+    expect(addButton()).toHaveAttribute('aria-haspopup', 'menu');
+    expect(addButton()).toHaveAttribute('aria-expanded', 'false');
+    await user.click(addButton());
+    expect(addButton()).toHaveAttribute('aria-expanded', 'true');
+  });
+
   it('says on the wrapper span why the add button is dead', () => {
     /*
       三种状态的说明都挂在包着按钮的 span 上：禁用的表单控件不派发鼠标事件，
@@ -293,15 +379,17 @@ describe('peakBarHeights', () => {
   });
 
   it('spreads one bucket over several columns when the window is narrow', () => {
-    // 20ms ≈ 2 桶，铺到 4 列上，每桶占两列。
-    expect(peakBarHeights(new Float32Array([0.25, 1]), 0, 20, 4, 8)).toEqual([2, 2, 8, 8]);
+    // 25ms 整 3 桶，铺到 6 列上，每桶占两列。取值都在二进制里存得下，免得 Float32 差末位。
+    const peaks = new Float32Array([0.25, 1, 0.5]);
+    expect(peakBarHeights(peaks, 0, 25, 6, 8)).toEqual([2, 2, 8, 8, 4, 4]);
   });
 
-  it('drops buckets when the window is wider than the canvas', () => {
+  it('keeps a transient when the window is wider than the canvas', () => {
     const peaks = new Float32Array(240).fill(0.5);
-    peaks[0] = 0.25; // 第 0 列的取样点。取二进制里存得下的数，免得 Float32 差在末位
-    peaks[239] = 1; // 落在两列的取样点之间，画不出来
-    expect(peakBarHeights(peaks, 0, 2000, 2, 10)).toEqual([2.5, 5]);
+    // 一句安静的台词里就一下爆音，落在最后一桶——正是看波形要找的东西。
+    // 每列只挑一个取样点的话，它落在两个取样点之间，整条波形画成平的。
+    peaks[239] = 1;
+    expect(peakBarHeights(peaks, 0, 2000, 2, 10)).toEqual([5, 10]);
   });
 
   it('flattens a clip shorter than one bucket onto that one bucket', () => {
