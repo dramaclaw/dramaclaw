@@ -45,10 +45,11 @@ const STATE_PRESENTATION: Record<
 export function PaymentReturnPage() {
   const { t } = useTranslation();
   const expectedOrderNo = sessionStorage.getItem(PAYMENT_RETURN_ORDER_KEY)?.trim() || null;
-  const expectedOrderId =
-    sessionStorage.getItem(PAYMENT_RETURN_ORDER_ID_KEY)?.trim() || null;
   const providerOrderNo = paymentOrderNumberFromSearch(window.location.search);
-  const merchantOrderNo = expectedOrderNo ?? providerOrderNo;
+  const merchantOrderNo = providerOrderNo ?? expectedOrderNo;
+  const expectedOrderId = !providerOrderNo || providerOrderNo === expectedOrderNo
+    ? sessionStorage.getItem(PAYMENT_RETURN_ORDER_ID_KEY)?.trim() || null
+    : null;
   const orderQuery = useRechargeOrder(expectedOrderId);
   const ordersQuery = useRechargeOrders({ poll: true, enabled: !expectedOrderId });
   const order =

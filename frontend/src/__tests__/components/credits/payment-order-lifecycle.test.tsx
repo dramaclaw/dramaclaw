@@ -4,7 +4,6 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CreditCenterDialog } from "@/components/credits/CreditCenterDialog";
-import { RechargePanel } from "@/components/credits/RechargePanel";
 import { PaymentReturnPage } from "@/routes/_app/payment-return";
 import {
   CHECKOUT_DRAFT_KEY,
@@ -15,9 +14,10 @@ import {
 } from "@/lib/payment-navigation";
 import type { RechargeOrder, RechargePackage } from "@/lib/queries/payments";
 
-const { ordersQuery, packagesQuery } = vi.hoisted(() => ({
+const { ordersQuery, packagesQuery, orderQuery } = vi.hoisted(() => ({
   ordersQuery: vi.fn(),
   packagesQuery: vi.fn(),
+  orderQuery: vi.fn(),
 }));
 
 vi.mock("react-i18next", () => ({
@@ -41,7 +41,7 @@ vi.mock("@/lib/queries/payments", () => ({
   useRechargePackages: packagesQuery,
   useCustomRechargeConfig: () => ({ data: undefined, isPending: false }),
   useRechargeOrders: ordersQuery,
-  useRechargeOrder: () => ({ data: undefined, isError: false }),
+  useRechargeOrder: orderQuery,
   useCreateRechargeOrder: () => ({ isPending: false }),
 }));
 
@@ -82,6 +82,7 @@ const rechargePackage: RechargePackage = {
 describe("closed order presentation and repurchase", () => {
   beforeEach(() => {
     sessionStorage.clear();
+    orderQuery.mockReturnValue({ data: undefined, isError: false });
     ordersQuery.mockReturnValue({ data: { data: { items: [closedOrder] } }, isPending: false });
     packagesQuery.mockReturnValue({ data: { data: { items: [rechargePackage] } }, isPending: false });
   });
@@ -94,10 +95,18 @@ describe("closed order presentation and repurchase", () => {
     expect(screen.queryByText("paymentReturn.states.fulfillment_failed.title")).not.toBeInTheDocument();
   });
 
-  it.each(["dialog", "panel"])("shows closed instead of credit failure in the %s billing history", (surface) => {
-    render(surface === "dialog"
-      ? <CreditCenterDialog open onOpenChange={vi.fn()} initialTab="orders" paymentAvailable />
-      : <RechargePanel />);
+  it("does not show another cached order as paid when opening a historical return link", () => {
+    rememberPaymentOrder({ order_id: "newer-order", merchant_order_no: "DC-NEWER" });
+    vi.stubGlobal("location", { ...window.location, search: "?merchant_order_no=DC-CLOSED&state=2" });
+    render(<PaymentReturnPage />);
+    expect(orderQuery).toHaveBeenCalledWith(null);
+    expect(ordersQuery).toHaveBeenCalledWith({ poll: true, enabled: true });
+    expect(screen.getByRole("heading", { name: "paymentReturn.states.closed.title" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "paymentReturn.states.credited.title" })).not.toBeInTheDocument();
+  });
+
+  it("shows closed instead of credit failure in the billing history", () => {
+    render(<CreditCenterDialog open onOpenChange={vi.fn()} initialTab="orders" paymentAvailable />);
     expect(screen.getByText("credits.recharge.status.closed")).toBeInTheDocument();
     expect(screen.queryByText("credits.recharge.status.creditFailed")).not.toBeInTheDocument();
   });

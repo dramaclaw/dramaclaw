@@ -135,6 +135,12 @@ describe("payment return navigation", () => {
     expect(safePaymentReturnPath("https://evil.example")).toBe("/");
     expect(safePaymentReturnPath("//evil.example")).toBe("/");
     expect(safePaymentReturnPath("/payment-return?state=2")).toBe("/");
+    expect(safePaymentReturnPath("/credits?mchOrderNo=DC1")).toBe("/");
+    expect(safePaymentReturnPath("/credits/")).toBe("/");
+    expect(safePaymentReturnPath("/checkout?package=1")).toBe("/");
+    expect(safePaymentReturnPath("/\\evil.example")).toBe("/");
+    expect(safePaymentReturnPath("/\n/evil.example")).toBe("/");
+    expect(safePaymentReturnPath("/\n/[invalid-host")).toBe("/");
   });
 
   it("reuses an idempotency key for the same payment draft", () => {

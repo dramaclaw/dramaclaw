@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CreditCenterDialog } from "@/components/credits/CreditCenterDialog";
 
 const rechargeOrdersQuery = vi.hoisted(() => vi.fn());
+const creditState = vi.hoisted(() => ({ summary: undefined as Record<string, unknown> | undefined }));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -27,7 +28,7 @@ vi.mock("@/components/ui/dialog", () => ({
 }));
 
 vi.mock("@/lib/queries/credits", () => ({
-  useCreditSummary: () => ({ data: undefined }),
+  useCreditSummary: () => ({ data: creditState.summary ? { data: creditState.summary } : undefined }),
   useCreditPromotions: () => ({ data: undefined, isPending: false }),
   useCreditFilterOptions: () => ({ data: undefined }),
   useCreditTransactions: () => ({ data: undefined, isPending: false }),
@@ -55,6 +56,7 @@ function renderDialog(
 
 describe("CreditCenterDialog payment visibility", () => {
   beforeEach(() => {
+    creditState.summary = undefined;
     rechargeOrdersQuery.mockReset();
     rechargeOrdersQuery.mockReturnValue({ data: undefined, isPending: false });
   });
@@ -87,5 +89,17 @@ describe("CreditCenterDialog payment visibility", () => {
     expect(screen.getAllByRole("button", { name: "credits.centerModal.tabs.custom" })).not.toHaveLength(0);
     expect(screen.getAllByRole("button", { name: "credits.centerModal.tabs.orders" })).not.toHaveLength(0);
     expect(rechargeOrdersQuery).toHaveBeenCalledWith({ enabled: true });
+  });
+
+  it.each(["personal", "org_member"])("shows the current %s account balance, not a dormant wallet", (scope) => {
+    creditState.summary = {
+      scope, balance: 3999, earned: 5000, spent: 1001, refunded: 0,
+      dormant_personal_balance: scope === "org_member" ? 12345 : null,
+      organization: scope === "org_member" ? { org_id: "org-a", name: "Organization A" } : null,
+    };
+    renderDialog(false, "orders");
+    expect(screen.getAllByText("3,999").length).toBeGreaterThan(0);
+    expect(screen.queryByText("12,345")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "credits.centerModal.tabs.usage" })).toBeInTheDocument();
   });
 });

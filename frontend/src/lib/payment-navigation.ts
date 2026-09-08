@@ -52,8 +52,18 @@ export function clearPaymentAttempt(): void {
 
 export function safePaymentReturnPath(value: string | null): string {
   if (!value || !value.startsWith("/") || value.startsWith("//")) return "/";
-  if (value === "/checkout" || value.startsWith("/payment-return")) return "/";
-  return value;
+  if (value.includes("\\")) return "/";
+  const base = "https://dramaclaw.invalid";
+  let destination: URL;
+  try {
+    destination = new URL(value, base);
+  } catch {
+    return "/";
+  }
+  if (destination.origin !== base) return "/";
+  const pathname = destination.pathname.replace(/\/+$/, "");
+  if (["/checkout", "/payment-return", "/credits"].includes(pathname)) return "/";
+  return destination.pathname + destination.search + destination.hash;
 }
 
 export function paymentOrderNumberFromSearch(search: string): string | null {
