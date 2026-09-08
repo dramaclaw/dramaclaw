@@ -473,8 +473,10 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("node_kind", ["image", "text"])
 async def test_recipe_compile_binds_only_fresh_model_evidence(
     workflow_run_client: TestClient,
+    node_kind: str,
 ) -> None:
     from novelvideo.api.routes import freezone
     from novelvideo.api.schemas import FreezoneRecipeCompileRequest
@@ -503,7 +505,7 @@ async def test_recipe_compile_binds_only_fresh_model_evidence(
             project_id="proj_demo",
             product_operation_id=operation_id,
             recipe_id="product-image",
-            node_kind="image",
+            node_kind=node_kind,
         )
 
     model_operation = admit("model-compile")
@@ -517,12 +519,22 @@ async def test_recipe_compile_binds_only_fresh_model_evidence(
             executed_at=1.0,
         ),
         user={"id": "u-alice", "username": "alice"},
+        deliver_text=node_kind == "text",
     )
     stored_model = read_agent_product_operation(
         project_dir=workflow_run_client.state_dir,
         operation_id=model_operation["operation_id"],
     )
     assert stored_model["model_evidence"]["compile_mode"] == "model"
+    if node_kind == "text":
+        assert stored_model["status"] == "delivered"
+        assert stored_model["result_ref"] == {
+            "kind": "recipe_text_result",
+            "id": model_operation["operation_id"],
+            "content": "compiled",
+        }
+    else:
+        assert stored_model["status"] == "reserved"
 
     cached_operation = admit("cached-compile")
     await freezone._record_recipe_compile_product_evidence(
@@ -533,6 +545,7 @@ async def test_recipe_compile_binds_only_fresh_model_evidence(
             ("product-image",),
         ),
         user={"id": "u-alice", "username": "alice"},
+        deliver_text=node_kind == "text",
     )
     stored_cached = read_agent_product_operation(
         project_dir=workflow_run_client.state_dir,

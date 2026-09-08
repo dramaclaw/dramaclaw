@@ -4846,9 +4846,13 @@ def _workflow_node_capability_blockers(
             {
                 "path": f"runtime.models.{node_id}.{field}",
                 "message": (
-                    f"{field} value {value!r} is not supported by model {model_id}"
+                    f"{field} value {value!r} is not supported by model {model_id}. "
+                    + (f"Supported values: {options!r}." if options else
+                       "This model does not accept this parameter; omit it.")
                 ),
                 "code": "model_capability_unsupported",
+                "allowed_values": options,
+                "recovery": "choose_supported_value" if options else "omit_parameter",
             }
         )
     if node_type == "videoNode" and isinstance(data.get("durationSec"), (int, float)):
@@ -4867,8 +4871,11 @@ def _workflow_node_capability_blockers(
                     "message": (
                         f"durationSec value {data['durationSec']!r} is not supported "
                         f"by model {model_id}"
+                        f"; supported duration range: {minimum!r} to {maximum!r} seconds"
                     ),
                     "code": "model_capability_unsupported",
+                    "minimum": minimum,
+                    "maximum": maximum,
                 }
             )
     if (
@@ -4968,8 +4975,27 @@ def _workflow_runtime_preflight(
             blockers.extend(
                 {
                     "path": "runtime.models",
-                    "message": f"configured model is unavailable: {model}",
-                    "code": "model_unavailable",
+                    "message": (
+                        f"{model!r} is a model preference, not a catalog id. "
+                        "Select a concrete model from available_models matching the user's "
+                        "parameters; do not assume the first model is cheapest."
+                        if model.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+                        else f"configured model is unavailable: {model}"
+                    ),
+                    "code": (
+                        "model_selection_required"
+                        if model.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+                        else "model_unavailable"
+                    ),
+                    "available_models": [
+                        {"id": model_id, **{
+                            key: entry[key] for key in (
+                                "ratioOptions", "resolutionOptions", "qualityOptions",
+                                "minDuration", "maxDuration", "supportsGenerateAudio",
+                            ) if key in entry
+                        }}
+                        for model_id, entry in catalog_by_id.items()
+                    ],
                 }
                 for model in missing
             )
@@ -6498,6 +6524,52 @@ def _success_contract(name: str) -> dict[str, Any]:
             "required": list(_SKILL_STUDIO_FRONTEND_REQUIRED),
         }
     if name in _WORKFLOW_RESULT_TOOLS:
+        if name == "freezone_confirm_workflow_draft":
+            # Confirmation returns the executor's receipt after the draft was
+            # committed. It need not repeat the planning/run identifiers.
+            receipt = {
+                "required": ["project_id", "canvas_id", "applied", "canvas_apply_status"],
+                "properties": {
+                    "project_id": {"type": "string", "minLength": 1},
+                    "canvas_id": {"type": "string", "minLength": 1},
+                    "applied": {"const": True},
+                    "cancelled": {"const": False},
+                    "errors": {"type": "array", "maxItems": 0},
+                    "tool_call_status": {"const": "completed"},
+                },
+                "anyOf": [
+                    {
+                        "required": ["bridge_key"],
+                        "properties": {
+                            "bridge_key": {"type": "string", "minLength": 1},
+                            "canvas_apply_status": {"enum": ["applied", "accepted"]},
+                        },
+                    },
+                    {
+                        "required": ["revision"],
+                        "properties": {
+                            "revision": {"type": "integer", "minimum": 0},
+                            "canvas_apply_status": {"const": "direct_applied"},
+                        },
+                    },
+                ],
+            }
+            return {
+                "if": {"anyOf": [
+                    {"required": ["bridge_key"]},
+                    {
+                        "required": ["canvas_apply_status"],
+                        "properties": {"canvas_apply_status": {"const": "direct_applied"}},
+                    },
+                ]},
+                "then": receipt,
+                "else": {"anyOf": [
+                    {"required": ["draft_id"]},
+                    {"required": ["operation_id"]},
+                    {"required": ["workflow_instance_id"]},
+                    {"required": ["run_id"]},
+                ]},
+            }
         return {
             "anyOf": [
                 {"required": ["draft_id"]},
@@ -6537,6 +6609,24 @@ def _success_contract(name: str) -> dict[str, Any]:
     if required is None:
         raise RuntimeError(f"missing successful output contract for {name}")
     return {"required": list(required)}
+
+
+_CANVAS_CONTEXT_RESPONSE_TYPES = {
+    "freezone_get_canvas_ontology": "canvas_ontology",
+    "freezone_summarize_canvas": "canvas_summary",
+    "freezone_get_canvas_action_catalog": "canvas_action_catalog",
+    "freezone_get_canvas_command_catalog": "canvas_command_catalog",
+    "freezone_get_link_type_catalog": "link_type_catalog",
+    "freezone_get_selection": "selection_detail",
+    "freezone_get_node_detail": "node_detail",
+    "freezone_get_neighbor_graph": "neighbor_graph",
+    "freezone_get_node_action_catalog": "node_action_catalog",
+    "freezone_get_node_create_schema": "node_create_schema",
+    "freezone_get_audio_voice_options": "audio_voice_options",
+    "freezone_get_slot_candidates": "slot_candidates",
+    "freezone_get_mainline_projection_assets": "mainline_projection_assets",
+    "freezone_validate_canvas_commands": "validate_canvas_commands",
+}
 
 
 def _output_schema(name: str) -> dict[str, Any]:
@@ -6584,6 +6674,44 @@ def _output_schema(name: str) -> dict[str, Any]:
                 "then": {"required": ["draft_id", "revision", "preview"]},
             }
         )
+    response_type = _CANVAS_CONTEXT_RESPONSE_TYPES.get(name)
+    if response_type:
+        # The frontend bridge returns typed responses, not the legacy flattened
+        # fields. Preserve that wire contract without fabricating empty catalogs.
+        data_types = ["object", "array"]
+        if response_type in {"selection_detail", "node_detail", "neighbor_graph"}:
+            # These reads legitimately return null for an empty selection or a
+            # node that no longer exists; catalogs and creation schemas do not.
+            data_types.append("null")
+        response = {
+            "type": "object",
+            "properties": {
+                "type": {"const": response_type},
+                "data": {"type": data_types},
+            },
+            "required": ["type", "data"],
+        }
+        properties.update({
+            "responses": {"type": "array", "items": {"type": "object"}},
+            "errors": {"type": "array"},
+            "canvas_context_status": {"type": "string"},
+            "tool_call_status": {"type": "string"},
+            "bridge_key": {"type": "string"},
+            "canvas_id": {"type": "string"},
+            "project_id": {"type": "string"},
+        })
+        schema["allOf"][0]["then"] = {
+            "anyOf": [
+                _success_contract(name),
+                {
+                    "required": ["responses", "canvas_context_status"],
+                    "properties": {
+                        "canvas_context_status": {"const": "resolved"},
+                        "responses": {"contains": response, "minItems": 1},
+                    },
+                },
+            ]
+        }
     return schema
 
 
@@ -8260,6 +8388,11 @@ TOOLS = (
             "freezone_prepare_workflow_draft",
             (
                 "Compile a structured intent and persist its deterministic preview. "
+                "Before choosing generation parameters, read freezone_get_node_create_schema "
+                "for imageGenNode/videoNode and use its live model ids and supported options. "
+                "Do not invent low/medium quality or a recommended model id. On preflight "
+                "failure, fix all returned blockers together using allowed_values or "
+                "available_models. Ask the user before changing an explicit requirement. "
                 "Do not pass draft_id, do not pass intent as a string, and "
                 "do not use execute_code. Use freezone_patch_workflow_draft for an existing draft."
             ),

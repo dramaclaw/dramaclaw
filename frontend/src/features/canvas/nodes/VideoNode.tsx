@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
 import {
   memo,
   useCallback,
@@ -2109,12 +2110,28 @@ export const VideoNode = memo(
       const userPrompt = [upstreamTextJoined, trimmedPrompt]
         .filter((s) => s.length > 0)
         .join("\n\n");
-      const composedPrompt = fragment
+      const fallbackPrompt = fragment
         ? userPrompt
           ? `${fragment}，${userPrompt}`
           : fragment
         : userPrompt;
       try {
+        const composedPrompt = await compileWorkflowNodePrompt({
+          nodeId: id,
+          nodeData: data,
+          nodeKind: "video",
+          nodePrompt: trimmedPrompt,
+          upstreamText: upstreamTextJoined,
+          upstreamContents,
+          fallbackPrompt,
+          onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => updateNodeData(id, {
+            workflowRecipeCompileMode: mode,
+            workflowRecipeCompiledAt: new Date().toISOString(),
+            workflowRecipeCompiledPrompt: compiledPrompt,
+            prompt: compiledPrompt,
+            workflowRecipeIds: recipeIds,
+          }),
+        });
         // Walk the current edges/nodes once — used by every non-textToVideo
         // branch to collect upstream resources. 必须与 UI 编号侧（useUpstreamNodes）
         // 同源：按连线顺序收集。曾按 state.nodes 顺序（节点创建顺序）收集，先创建
@@ -2769,6 +2786,7 @@ export const VideoNode = memo(
       t,
       updateNodeData,
       upstreamTextJoined,
+      upstreamContents,
     ]);
 
     useEffect(() => {

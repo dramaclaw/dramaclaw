@@ -31,6 +31,7 @@ from novelvideo.freezone.agent_workflows.registry import (
     search_catalog,
 )
 from novelvideo.freezone.workflow_schema import (
+    normalize_workflow_tool_arguments,
     workflow_intent_json_schema,
     workflow_plan_json_schema,
 )
@@ -432,9 +433,22 @@ async def list_tools() -> list[types.Tool]:
     ]
 
 
-@SERVER.call_tool()
+@SERVER.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
-    args = dict(arguments or {})
+    args = normalize_workflow_tool_arguments(name, dict(arguments or {}))
+    tool = next((tool for tool in await list_tools() if tool.name == name), None)
+    if tool is None:
+        raise ValueError(f"unknown workflow tool: {name}")
+    errors = list(Draft202012Validator(tool.inputSchema).iter_errors(args))
+    if errors:
+        return _result(name, {
+            "ok": False,
+            "status": "tool_arguments_invalid",
+            "error": "; ".join(
+                f"{'.'.join(map(str, error.absolute_path)) or 'arguments'}: {error.message}"
+                for error in errors
+            ),
+        })
     if name == "workflow_catalog_search":
         kind = str(args.get("kind") or "")
         if kind not in {"skills", "recipes"}:

@@ -225,6 +225,11 @@ def _normalize_structured_result(
             structured[key] = nested[key]
 
     tool_name = str(schema.get("x-dramaclaw-tool") or "")
+    if "canvas_context_status" in properties and not ok:
+        # Some bridge cancellations have no message. Keep the original failure
+        # state, but provide a valid diagnostic instead of a second schema error.
+        if not any(structured.get(key) for key in ("code", "error", "message", "errors")):
+            structured["message"] = "Canvas context request failed without error details."
     if tool_name in {
         "dramaclaw_get",
         "dramaclaw_post",
@@ -506,9 +511,13 @@ async def read_resource(uri: Any) -> str:
         raise ValueError("skill resource is unavailable") from exc
 
 
-@SERVER.call_tool(validate_input=True)
+@SERVER.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
-    arguments = arguments or {}
+    # Validate below, after narrowly scoped serialization repair. The SDK's
+    # pre-validation would reject recoverable inputs before this boundary.
+    from novelvideo.freezone.workflow_schema import normalize_workflow_tool_arguments
+
+    arguments = normalize_workflow_tool_arguments(name, arguments or {})
     call_started = time.monotonic()
     logger.info(
         "mcp.call.start scope=%s tool=%s arg_keys=%s",
@@ -584,6 +593,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 "error": "tool_arguments_invalid",
                 "tool_name": name,
                 "message": getattr(exc, "message", str(exc)),
+                "path": ".".join(str(part) for part in getattr(exc, "absolute_path", ())),
                 "status": (
                     "workflow_validation_failed"
                     if name

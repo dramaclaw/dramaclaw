@@ -5007,6 +5007,7 @@ async def _record_recipe_compile_product_evidence(
     body: FreezoneRecipeCompileRequest,
     compiled: RecipeCompileResult,
     user: dict,
+    deliver_text: bool = False,
 ) -> None:
     """Settle Recipe-product evidence from the compiler's trusted return value."""
     operation_id = str(body.product_operation_id or "").strip()
@@ -5050,6 +5051,26 @@ async def _record_recipe_compile_product_evidence(
             source="server_recipe_compiler",
             compile_mode="model",
         )
+        if deliver_text:
+            # Synchronous text generation has no separate media task. Persist
+            # the actual server-produced text in the operation's immutable
+            # result receipt, rather than waiting for a nonexistent task key.
+            # finish_agent_product_operation atomically stores this receipt and
+            # transitions to delivered; the existing worker handles settlement.
+            if body.node_kind != "text" or not compiled.prompt.strip():
+                raise ValueError("text delivery requires a non-empty text result")
+            await asyncio.to_thread(
+                finish_agent_product_operation,
+                project_dir=state_dir,
+                operation_id=operation_id,
+                outcome="delivered",
+                expected_task_id=str(operation.get("task_id") or ""),
+                result_ref={
+                    "kind": "recipe_text_result",
+                    "id": operation_id,
+                    "content": compiled.prompt,
+                },
+            )
         return
     await asyncio.to_thread(
         finish_agent_product_operation,
@@ -5300,6 +5321,7 @@ async def generate_freezone_recipe_text(
                 executed_at=time.time(),
             ),
             user=user,
+            deliver_text=True,
         )
     except RecipeRuntimeError as exc:
         await _fail_recipe_product_operation(body=body, user=user)

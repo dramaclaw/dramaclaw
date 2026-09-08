@@ -296,7 +296,10 @@ def test_failed_action_persists_normalized_error_diagnostics(tmp_path: Path) -> 
     assert "user_error" not in completed_action
 
 
-def test_task_reconciliation_completes_run_with_existing_artifact(tmp_path: Path) -> None:
+@pytest.mark.parametrize("initial_status", ["running", "completed"])
+def test_task_reconciliation_completes_run_with_existing_artifact(
+    tmp_path: Path, initial_status: str
+) -> None:
     output_path = tmp_path / "freezone" / "_outputs" / "image.png"
     output_path.parent.mkdir(parents=True)
     output_path.write_bytes(b"image")
@@ -314,7 +317,7 @@ def test_task_reconciliation_completes_run_with_existing_artifact(tmp_path: Path
             {
                 "node_id": "one",
                 "action": "generate_image",
-                "status": "running",
+                "status": initial_status,
                 "task_key": "task:image-one",
             }
         ],

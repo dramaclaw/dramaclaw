@@ -1412,9 +1412,30 @@ def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
     )
 
 
+@pytest.mark.parametrize("container", ["structured", "structuredContent", "text"])
+@pytest.mark.parametrize("outcome", ["answered", "failed", "cancelled", "submitted", "transport_error"])
+def test_codex_clarification_requires_successful_answer(container, outcome):
+    payload = {"ok": True, "clarification_status": "answered", "action": "submit"}
+    if outcome == "failed":
+        payload["ok"] = False
+    elif outcome == "cancelled":
+        payload["clarification_status"] = "cancelled"
+    elif outcome == "submitted":
+        payload.pop("clarification_status")
+    event = SimpleNamespace(
+        name="dramaclaw.freezone_request_user_clarification",
+        status="completed", error="connection lost" if outcome == "transport_error" else None,
+        structured=payload if container == "structured" else None,
+        output={"structuredContent": payload} if container == "structuredContent" else {
+            "content": [{"type": "text", "text": json.dumps(payload)}]
+        } if container == "text" else None,
+    )
+    assert chat_service._codex_freezone_clarification_answered(event) is (outcome == "answered")
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "tool_outcome", ["missing", "success", "failure", "blocked", "draft_ready"]
+    "tool_outcome", ["missing", "success", "failure", "blocked", "draft_ready", "clarification_answered"]
 )
 async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     monkeypatch,
@@ -1468,6 +1489,18 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     },
                     error=None,
                     structured=None,
+                )
+            elif tool_outcome == "clarification_answered":
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_request_user_clarification",
+                    name="dramaclaw.freezone_request_user_clarification",
+                    call_id="call-clarification",
+                    status="completed",
+                    input={},
+                    output={"content": [{"type": "text", "text": "{}"}]},
+                    structured={"ok": True, "clarification_status": "answered"},
+                    error=None,
                 )
             elif tool_outcome not in {"missing", "blocked"}:
                 result_payload = (
@@ -1565,7 +1598,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "draft_ready":
         assert result["content"] == (
-            "画布操作未完成：工作流草稿已准备完成，但本轮未提交确认创建，请重试。"
+            "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
+        )
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "clarification_answered":
+        assert result["content"] == (
+            "画布操作未完成：参数已确认，但工作流草稿尚未生成；本轮未写入画布，请重试。"
         )
         assert assistant_deltas == [result["content"]]
     else:

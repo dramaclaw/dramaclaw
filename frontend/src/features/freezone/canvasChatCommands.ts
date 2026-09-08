@@ -3358,6 +3358,7 @@ async function executeQueuedNodeActions(
               action: action.action,
               status: "running",
               phase: "syncing_result",
+              ...workflowTaskReference(actionResult.output),
             }]);
             await requestAnimationFrameOrTimeout();
             const hasRequiredOutput = actionResult.status === "error"

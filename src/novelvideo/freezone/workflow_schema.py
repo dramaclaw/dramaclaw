@@ -9,10 +9,45 @@ additional ``data`` properties.
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 from typing import Any
 
 WORKFLOW_PLAN_SCHEMA_VERSION = "freezone_workflow_plan.v1"
 WORKFLOW_INTENT_SCHEMA_VERSION = "freezone_workflow_intent.v1"
+
+
+def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Repair only lossless intent serialization mistakes before strict validation.
+
+    Never fill missing items, merge conflicting forms, coerce values, or remove
+    arbitrary nulls: those may change the user's requested workflow.
+    """
+    if name not in {"workflow_intent_compile", "freezone_prepare_workflow_draft"}:
+        return arguments
+    if not isinstance(arguments.get("intent"), dict):
+        return arguments
+    result = deepcopy(arguments)
+    intent = result["intent"]
+    indexed = {
+        int(match.group(1)): key
+        for key in intent
+        if (match := re.fullmatch(r"items\[(0|[1-9][0-9]*)\]", key))
+    }
+    if (
+        indexed
+        and "items" not in intent
+        and len(indexed) <= 24
+        and sorted(indexed) == list(range(len(indexed)))
+    ):
+        intent["items"] = [intent.pop(indexed[i]) for i in range(len(indexed))]
+    planner = intent.get("planner")
+    units = planner.get("units") if isinstance(planner, dict) else None
+    for entries in (intent.get("items"), units):
+        if isinstance(entries, list):
+            for item in entries:
+                if isinstance(item, dict) and item.get("duration_seconds") is None:
+                    item.pop("duration_seconds", None)
+    return result
 
 NODE_TYPE_VALUES = [
     "textAnnotationNode",

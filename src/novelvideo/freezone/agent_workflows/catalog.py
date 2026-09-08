@@ -1360,7 +1360,9 @@ def _compile_dynamic_recipe_items_intent(
             for node_id, node_type in node_types.items()
             if node_type in {"videoNode", "audioNode"}
         ]
-        if any(node_types.get(node_id) == "videoNode" for node_id in compose_sources):
+        if len(compose_sources) >= 2 and any(
+            node_types.get(node_id) == "videoNode" for node_id in compose_sources
+        ):
             compose_id = "final_compose"
             nodes.append(
                 {

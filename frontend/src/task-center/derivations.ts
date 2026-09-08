@@ -41,6 +41,22 @@ export const displayLabel = (t: TaskState, tFn: TFn): string => {
   if (t.display_name && t.display_name_localizable === false) return t.display_name;
 
   const typeLabel = taskTypeLabel(t, tFn);
+  if (t.task_type === "freezone_workflow_confirm") {
+    // The draft id in scope is an internal coordination key; never expose it
+    // as the task title. Keep it available in task details for diagnostics.
+    return typeLabel;
+  }
+  if (t.task_type === "freezone_video_gen") {
+    // scope is the opaque generation job id (for example 043a1944...); it is
+    // useful in details but not meaningful as a task title.
+    return typeLabel;
+  }
+  if (t.task_type === "freezone_agent_workflow_result" || t.task_type === "freezone_agent_recipe_result") {
+    const name = metaString(t, t.task_type === "freezone_agent_workflow_result" ? "workflow_name" : "recipe_name");
+    // The scope is an internal operation ID, not a user-facing workflow name.
+    // Keep it in task details; never change the task identity for presentation.
+    return name ? `${typeLabel} · ${name}` : typeLabel;
+  }
   const sceneName = metaString(t, "scene_name");
 
   if (t.task_type === "stage_asset") {

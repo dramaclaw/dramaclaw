@@ -897,6 +897,14 @@ class TaskStateManager:
         if queue_kind is not None:
             predicates.append("queue_kind = ?")
             params.append(normalize_queue_kind(queue_kind))
+            # These tasks only wait for externally produced delivery receipts.
+            # Counting them as generation slots makes a workflow block itself
+            # before the node that produces those receipts can start.
+            predicates.append(
+                "task_type NOT IN ('freezone_agent_workflow_result', "
+                "'freezone_agent_recipe_result', 'freezone_agent_workflow_generate', "
+                "'freezone_agent_recipe_generate')"
+            )
         if requester_user_id is not None:
             predicates.append("requester_user_id = ?")
             params.append(requester_user_id)

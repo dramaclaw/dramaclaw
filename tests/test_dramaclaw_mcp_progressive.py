@@ -18,6 +18,130 @@ from novelvideo.chat import dramaclaw_mcp
 CE_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _confirmed_canvas_receipt():
+    return {
+        "ok": True, "status": "completed", "project_id": "project-a",
+        "canvas_id": "canvas-a", "bridge_key": "bridge-a",
+        "tool_call_status": "completed", "canvas_apply_status": "applied",
+        "applied": True, "cancelled": False, "errors": [],
+        "message": "Frontend executor reported the canvas command result.",
+    }
+
+
+@pytest.mark.parametrize("direct", [False, True])
+def test_workflow_confirmation_receipt_survives_mcp_and_chat_postcondition(monkeypatch, direct):
+    from types import SimpleNamespace
+    from novelvideo.chat.service import _codex_freezone_write_result_succeeded
+
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    payload = _confirmed_canvas_receipt()
+    if direct:
+        payload.pop("bridge_key")
+        payload.update(canvas_apply_status="direct_applied", revision=3)
+    result = dramaclaw_mcp._structured_tool_result(
+        "freezone_confirm_workflow_draft", json.dumps(payload)
+    )
+    assert result.isError is False
+    assert result.structuredContent["applied"] is True
+    event = SimpleNamespace(name="dramaclaw.freezone_confirm_workflow_draft",
+                            status="completed", error=None,
+                            structured=result.structuredContent,
+                            output=result.model_dump())
+    assert _codex_freezone_write_result_succeeded(event)
+
+
+@pytest.mark.parametrize("change", [
+    {"bridge_key": ""}, {"project_id": ""}, {"canvas_id": ""},
+    {"applied": False}, {"cancelled": True}, {"errors": ["write failed"]},
+    {"canvas_apply_status": "pending"},
+    {"canvas_apply_status": "direct_applied", "revision": True},
+])
+def test_confirmation_rejects_incomplete_or_contradictory_receipts(monkeypatch, change):
+    from jsonschema.exceptions import ValidationError
+
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    payload = {**_confirmed_canvas_receipt(), **change, "draft_id": "draft-a"}
+    with pytest.raises(ValidationError):
+        dramaclaw_mcp._structured_tool_result("freezone_confirm_workflow_draft", json.dumps(payload))
+
+
+@pytest.mark.parametrize("status", ["failed", "cancelled", "timeout"])
+def test_confirmation_failure_remains_a_tool_error(monkeypatch, status):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    result = dramaclaw_mcp._structured_tool_result("freezone_confirm_workflow_draft", json.dumps({
+        "ok": False, "status": status, "error": "Canvas write did not complete",
+    }))
+    assert result.isError is True
+
+
+@pytest.mark.parametrize("tool_name,response_type,data,arguments", [
+    ("freezone_get_canvas_ontology", "canvas_ontology", {
+        "schema_version": "canvas_ontology_context.v1", "objects": [],
+        "links": [], "slots": [], "current_selection": [],
+        "summary": {"object_count": 0, "link_count": 0},
+    }, {}),
+    ("freezone_get_node_create_schema", "node_create_schema", {
+        "node_type": "imageGenNode", "fields": [{"key": "model", "options": []}],
+    }, {"node_type": "imageGenNode"}),
+    ("freezone_get_canvas_command_catalog", "canvas_command_catalog", {
+        "schema_version": "canvas_command_catalog.v1", "commands": [{"type": "create_node"}],
+    }, {}),
+    ("freezone_get_link_type_catalog", "link_type_catalog", [{"id": "reference"}], {}),
+])
+@pytest.mark.asyncio
+async def test_real_canvas_bridge_handler_preserves_typed_response(
+    monkeypatch, tool_name, response_type, data, arguments
+):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    plugin = dramaclaw_mcp._plugin("freezone")
+    response = {"type": response_type, "data": data}
+    payload = {"ok": True, "tool_call_status": "completed",
+               "canvas_context_status": "resolved", "responses": [response],
+               "errors": [], "message": "Frontend returned requested canvas context."}
+    monkeypatch.setattr(plugin, "canvas_context_bridge_key", lambda **kwargs: "bridge-a")
+    monkeypatch.setattr(plugin, "put_pending_canvas_context", lambda **kwargs: None)
+    monkeypatch.setattr(plugin, "wait_canvas_context_result", lambda *args, **kwargs: payload)
+    result = await dramaclaw_mcp.call_tool(tool_name, arguments)
+    assert result.isError is False
+    assert result.structuredContent["responses"] == [response]
+    assert json.loads(result.content[0].text)["responses"] == [response]
+    Draft202012Validator(dramaclaw_mcp._output_schema_for_tool(tool_name)).validate(
+        result.structuredContent
+    )
+
+
+@pytest.mark.parametrize("responses", [[], [{"type": "wrong", "data": {}}],
+                                      [{"type": "canvas_ontology", "data": None}],
+                                      [{"type": "canvas_ontology", "data": "invalid"}],
+                                      [{"type": "canvas_ontology"}]])
+def test_canvas_bridge_rejects_empty_wrong_or_missing_response(monkeypatch, responses):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    from jsonschema.exceptions import ValidationError
+    with pytest.raises(ValidationError):
+        dramaclaw_mcp._structured_tool_result("freezone_get_canvas_ontology", json.dumps({
+            "ok": True, "canvas_context_status": "resolved", "responses": responses,
+        }))
+
+
+@pytest.mark.parametrize("payload", [
+    {"ok": False, "canvas_context_status": "timeout", "errors": ["Timed out"]},
+    {"ok": False, "status": "failed"},
+])
+def test_canvas_bridge_failures_stay_errors_with_diagnostics(monkeypatch, payload):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    result = dramaclaw_mcp._structured_tool_result(
+        "freezone_get_canvas_ontology", json.dumps(payload)
+    )
+    assert result.isError is True
+    assert result.structuredContent.get("errors") or result.structuredContent.get("message")
+
+
 def test_external_mcp_ready_draft_honors_explicit_create_without_changing_plugin():
     original = {
         "ok": True,

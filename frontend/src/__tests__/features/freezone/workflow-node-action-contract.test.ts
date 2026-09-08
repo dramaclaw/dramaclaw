@@ -60,6 +60,7 @@ describe("dynamic workflow node action contract", () => {
     ["image generation", "src/features/canvas/nodes/shared/useImageGenerationForm.ts", "prompt"],
     ["image edit", "src/features/canvas/nodes/ImageEditNode.tsx", "prompt"],
     ["video generation", "src/features/canvas/nodes/shared/useVideoGenerationForm.ts", "prompt"],
+    ["canvas video generation", "src/features/canvas/nodes/VideoNode.tsx", "prompt"],
     ["audio generation", "src/features/canvas/nodes/useAudioGeneration.ts", "text"],
   ])("persists compiled workflow prompts back to %s node prompts", (_label, path, field) => {
     const source = readSource(path);
