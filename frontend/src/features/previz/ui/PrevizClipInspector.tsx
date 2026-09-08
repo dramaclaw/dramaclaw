@@ -10,6 +10,8 @@ import {
   PREVIZ_RIG_HEIGHT_RANGE,
 } from '../domain/closeup';
 import type {
+  PrevizAudioClip,
+  PrevizCutClip,
   PrevizPathClip,
   PrevizPathPoint,
   PrevizRigClip,
@@ -429,6 +431,100 @@ function PointCard({ clip, point }: { clip: PrevizPathClip; point: PrevizPathPoi
 }
 
 /**
+ * 镜头轨切片的面板。没有「看向」「插点」这些：切片身上只有一台机位和一段帧区间，
+ * 走位和朝向是那台机位自己在对象轨上的事。
+ */
+function CutPanel({ clip }: { clip: PrevizCutClip }) {
+  const { t } = useTranslation();
+  const objects = usePrevizStore((state) => state.scene.objects);
+  const moveClipBy = usePrevizStore((state) => state.moveClipBy);
+  const setClipEnd = usePrevizStore((state) => state.setClipEnd);
+  const setCutCamera = usePrevizStore((state) => state.setCutCamera);
+  const removeClipById = usePrevizStore((state) => state.removeClipById);
+  const cameras = objects.filter((object) => object.kind === 'camera');
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-white/10 p-3">
+      <SelectField
+        label={t('previz.clip.cut.camera')}
+        value={clip.cameraId}
+        options={cameras.map((camera) => ({ value: camera.id, label: camera.name }))}
+        onCommit={(cameraId) => setCutCamera(clip.id, cameraId)}
+      />
+      <NumberField
+        label={t('previz.clip.startFrame')}
+        value={clip.startFrame}
+        step={1}
+        // 与对象片段同一套取舍：改起点是整条平移，不是把左边拉长，见下面主面板的说明。
+        onCommit={(next) => moveClipBy(clip.id, Math.round(next) - clip.startFrame)}
+      />
+      <NumberField
+        label={t('previz.clip.endFrame')}
+        value={clip.endFrame}
+        step={1}
+        onCommit={(next) => setClipEnd(clip.id, next)}
+      />
+      <button type="button" className={DANGER} onClick={() => removeClipById(clip.id)}>
+        {t('previz.clip.remove')}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * 音频片段的面板。
+ *
+ * 素材偏移只读：它是 `trimClip` 裁起点时从帧差换算出来的，手敲一个数进去，波形窗口和
+ * 真正播出去的那段声音就对不上了。要换素材内的入点，去时间轴上拉片段左沿。
+ *
+ * 「重新定位到播放头」跟在起始帧框里敲播放头的帧号是同一件事（两边都走 `moveClip`
+ * 整条平移，偏移和长度都不变），只是免去自己读一遍播放头在第几帧。
+ */
+function AudioPanel({ clip }: { clip: PrevizAudioClip }) {
+  const { t } = useTranslation();
+  const moveClipBy = usePrevizStore((state) => state.moveClipBy);
+  const setClipEnd = usePrevizStore((state) => state.setClipEnd);
+  const relocateAudioClipToPlayhead = usePrevizStore((state) => state.relocateAudioClipToPlayhead);
+  const removeClipById = usePrevizStore((state) => state.removeClipById);
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-white/10 p-3">
+      <Row label={t('previz.clip.audio.source')}>
+        <span className="min-w-0 flex-1 truncate text-[12px] text-white/80" title={clip.sourceName}>
+          {clip.sourceName}
+        </span>
+      </Row>
+      <NumberField
+        label={t('previz.clip.startFrame')}
+        value={clip.startFrame}
+        step={1}
+        onCommit={(next) => moveClipBy(clip.id, Math.round(next) - clip.startFrame)}
+      />
+      <NumberField
+        label={t('previz.clip.endFrame')}
+        value={clip.endFrame}
+        step={1}
+        onCommit={(next) => setClipEnd(clip.id, next)}
+      />
+      <Row label={t('previz.clip.audio.offset')}>
+        <input
+          aria-label={t('previz.clip.audio.offset')}
+          className={FIELD}
+          value={String(Math.round(clip.offsetMs))}
+          readOnly
+        />
+      </Row>
+      <button type="button" className={ACTION} onClick={() => relocateAudioClipToPlayhead(clip.id)}>
+        {t('previz.clip.audio.relocate')}
+      </button>
+      <button type="button" className={DANGER} onClick={() => removeClipById(clip.id)}>
+        {t('previz.clip.remove')}
+      </button>
+    </div>
+  );
+}
+
+/**
  * 片段与轨迹点属性面板。挂在右侧属性面板下方，只在选中片段时出现。
  *
  * 所有编辑都走数值输入框与按钮，而不是在时间轴条上拖：jsdom 没有布局，拖拽的命中
@@ -449,14 +545,18 @@ export function PrevizClipInspector() {
 
   const found = selectedClipId ? clipById(scene, selectedClipId) : undefined;
   const clip = found?.clip;
-  // 切片、音频片段还没有自己的检查器（Task 15 补），先跟未选中一样显示空状态。
-  if (!clip || !found || found.table !== 'tracks') {
+  if (!clip || !found) {
     return (
       <div className="border-t border-white/10 px-3 py-3 text-[12px] text-white/45">
         {t('previz.clip.empty')}
       </div>
     );
   }
+
+  // 固定行的两种片段各有各的面板，也顺手把 `found` 收窄成对象轨那一支：下面读的
+  // `found.track` 只有 `table === 'tracks'` 时才存在。
+  if (found.table === 'program') return <CutPanel clip={found.clip} />;
+  if (found.table === 'audio') return <AudioPanel clip={found.clip} />;
 
   const point: PrevizPathPoint | undefined = isPathClip(clip)
     ? clip.points.find((entry) => entry.id === selectedPointId)
