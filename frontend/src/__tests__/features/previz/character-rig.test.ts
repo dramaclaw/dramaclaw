@@ -500,9 +500,10 @@ describe('CharacterRigFactory', () => {
     expect(slim.scale.x).toBeCloseTo(0.9, 6);
   });
 
-  // 「简化圆柱体」在缩放表里必须是 1：它列在表里只为让 `Record<BodyType, …>` 保持穷尽，
-  // 真正的分叉在场景图那条换模型的路上。给它一个 ≠1 的宽度，就等于给这一档偷偷加了
-  // 一层胖瘦语义——将来那条分叉一旦回落到 GLB（模型下不来），人会莫名其妙地变形。
+  // 「简化圆柱体」不是一档胖瘦，是「这个人物不要 GLB」；那层语义归 `sceneGraph` 管，
+  // 这张表只按体型查宽度。本用例就是直接把这一档送进 `build` 的——它在这里查得出值，
+  // 而且必须是 1：给它一个 ≠1 的宽度就等于偷偷加了一层胖瘦语义，上游那条路由一改
+  // （或者压根没把它分叉走），同一个人物的宽度就跳一下。
   // 注意这条断言区分不了 `capsule` 和 `average`（两者都是 1）：这一轮不需要区分。
   it('leaves the simplified-cylinder build at its natural width', async () => {
     const factory = factoryWith(['Idle_Loop']);
