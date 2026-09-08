@@ -63,7 +63,7 @@ DramaClaw 采用 <a href="../LICENSE">Elastic License 2.0</a>。自己跑、自�
 [![Release](https://img.shields.io/github/v/release/dramaclaw/dramaclaw?include_prereleases&sort=semver)](https://github.com/dramaclaw/dramaclaw/releases)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](#quick-start)
 
-[English](../README.md) &nbsp;|&nbsp; **简体中文** &nbsp;|&nbsp; [官网](https://dramaclaw.ai) &nbsp;|&nbsp; [文档](../docs/zh/README.md) &nbsp;|&nbsp; [快速开始](../docs/zh/getting-started/quickstart.md)
+[English](../README.md) &nbsp;|&nbsp; **简体中文** &nbsp;|&nbsp; [Tiếng Việt](./README_vi.md) &nbsp;|&nbsp; [ไทย](./README_th.md) &nbsp;|&nbsp; [官网](https://dramaclaw.ai) &nbsp;|&nbsp; [文档](../docs/zh/README.md) &nbsp;|&nbsp; [快速开始](../docs/zh/getting-started/quickstart.md)
 
 </div>
 

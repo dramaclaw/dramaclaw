@@ -1457,6 +1457,8 @@ frontend/vitest.config.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml agg
 license-inventory.csv,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 llms.txt,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 pyproject.toml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+readme/README_th.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+readme/README_vi.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 readme/README_zh.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 sbom.spdx.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/acceptance/api_coverage_report.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
