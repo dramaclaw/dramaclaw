@@ -47,7 +47,10 @@ export const PREVIZ_TIMELINE_HEIGHT: PrevizRange = { min: 96, max: 560, default:
 /** 键盘每按一下调多少像素。 */
 const RESIZE_STEP_PX = 24;
 
-/** 默认值写成常量而不是行内 `[]`：行内的话每次渲染都是新数组，白白掀掉下游的 memo。 */
+/**
+ * 「没有上游音频」。提成常量而不是写成行内 `[]`：常量在每次渲染之间是同一个引用，
+ * 行内那种每次都新建一个，任何按引用判等的下游都会以为上游音频换了一批。
+ */
 const NO_UPSTREAM: readonly PrevizUpstreamAudio[] = [];
 
 /**
@@ -424,13 +427,14 @@ export function PrevizTimeline({
 
           <ul>
             {tracks.map((track) => {
-              const isCamera = kindOf(track.objectId) === 'camera';
+              const kind = kindOf(track.objectId);
+              const isCamera = kind === 'camera';
               return (
                 <PrevizTimelineTrack
                   key={track.id}
                   track={track}
                   name={nameOf(track.objectId)}
-                  kind={kindOf(track.objectId)}
+                  kind={kind}
                   pxPerFrame={pxPerFrame}
                   laneWidthPx={laneWidthPx}
                   frame={frame}
@@ -463,7 +467,8 @@ export function PrevizTimeline({
                   // 只有机位跟得了别人。其余轨道拿到空列表，那颗按钮根本不出现。
                   closeupTargets={isCamera ? closeupTargets(scene, track.objectId) : []}
                   onAddCloseup={(target) => addCloseup(track.objectId, target)}
-                  // 非机位不给：切到一个人物身上是没有意义的调用，别指望轨道那边替我们挡。
+                  // 只有机位切得了镜。轨道组件里那道 kind 判断也会拦一次，这里仍然自己守住：
+                  // 传下去的每个回调都得是真能调的，不靠下游替我们筛。
                   onCut={isCamera ? () => cutToCamera(track.objectId) : undefined}
                   live={liveCameraId === track.objectId}
                 />
