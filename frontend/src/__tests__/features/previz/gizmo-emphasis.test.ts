@@ -60,9 +60,16 @@ function fakeHandle(name: string, radius: number, colorHex: number): FakeHandle 
 }
 
 /**
- * 照抄 three 0.185 `TransformControls.js` 的 translate 手柄清单：轴向 X/Y/Z 各三段
- * （两个箭头 + 一条线）、中心一颗 XYZ 八面体、三块 XY/YZ/XZ 平面。名字重复是真身
- * 就有的事——改造必须按名字扫全部子节点，不能只挑第一个同名的。
+ * 照抄 three 0.185 `TransformControls.js` 的 translate 手柄清单，两张表都按真身的
+ * 条目数搭全（`gizmoTranslate` 1310-1337、`pickerTranslate` 1339-1365）：
+ *
+ *   * gizmo：X/Y/Z 各三段（两个箭头 + 一条线）、中心一颗 XYZ 八面体、三块 XY/YZ/XZ 平面；
+ *   * picker：X/Y/Z 各两段圆锥、中心一颗 XYZ 八面体、三块 XY/YZ/XZ 平面。
+ *
+ * 条数和名字重复都得照搬。改造是按名字扫全部子节点的，只搭一个同名代表的话
+ * 「漏掉第二个同名手柄」和「把同名的全改了」在这里都看不出来；picker 那一侧少搭
+ * 几个，「除中心那颗以外一个都别碰」这条防线更是无从下手——而它守的正是轴向与
+ * 平面拖拽还能不能用。
  */
 function fakeTree() {
   const gizmoChildren = [
@@ -70,16 +77,28 @@ function fakeTree() {
     fakeHandle('X', 1, 0xff0000),
     fakeHandle('X', 1, 0xff0000),
     fakeHandle('Y', 1, 0x00ff00),
+    fakeHandle('Y', 1, 0x00ff00),
+    fakeHandle('Y', 1, 0x00ff00),
+    fakeHandle('Z', 1, 0x0000ff),
+    fakeHandle('Z', 1, 0x0000ff),
     fakeHandle('Z', 1, 0x0000ff),
     fakeHandle('XYZ', 0.1, 0xffffff),
     fakeHandle('XY', 0.15, 0x0000ff),
     fakeHandle('YZ', 0.15, 0xff0000),
     fakeHandle('XZ', 0.15, 0x00ff00),
   ];
+  // 拾取体全是 three 那份 0.15 不透明度的 matInvisible，所以颜色一律白。
   const pickerChildren = [
     fakeHandle('X', 0.2, 0xffffff),
+    fakeHandle('X', 0.2, 0xffffff),
+    fakeHandle('Y', 0.2, 0xffffff),
+    fakeHandle('Y', 0.2, 0xffffff),
+    fakeHandle('Z', 0.2, 0xffffff),
+    fakeHandle('Z', 0.2, 0xffffff),
     fakeHandle('XYZ', 0.2, 0xffffff),
     fakeHandle('XY', 0.2, 0xffffff),
+    fakeHandle('YZ', 0.2, 0xffffff),
+    fakeHandle('XZ', 0.2, 0xffffff),
   ];
   const gizmoRoot = {
     isTransformControlsGizmo: true,
@@ -224,6 +243,26 @@ describe('emphasizeTranslateHandles', () => {
     });
   });
 
+  it('leaves the axis and plane pickers untouched', () => {
+    const tree = fakeTree();
+    const before = tree.pickerChildren
+      .filter((handle) => handle.name !== 'XYZ')
+      .map((handle) => ({ handle, geometry: handle.geometry }));
+
+    run(tree);
+
+    for (const snapshot of before) {
+      // 拾取体的偏移和显示体一样是烘进几何体的：六个轴 picker 是烘了 ±0.3 的圆锥，
+      // 三个平面 picker 是烘了 (0.15, 0.15) 的方块。把它们的几何体一起换成原点上的
+      // 八面体，九个判定区会全部塌到中心——单轴拖动和平面拖动整个失效，画面上却什么
+      // 都看不出异样（拾取体本来就是隐形的），只剩自由移动还能用。
+      //
+      // 这是本模块唯一一处「改坏了看起来还正常、但功能整个没」的地方，所以 picker
+      // 这一侧必须有和 gizmo 那一侧对称的一条锁。
+      expect(snapshot.handle.geometry).toBe(snapshot.geometry);
+    }
+  });
+
   it('disposes each replaced geometry exactly once', () => {
     const tree = fakeTree();
     const oldGizmoGeometry = tree.byName(tree.gizmoChildren, 'XYZ')[0]!.geometry;
@@ -277,34 +316,35 @@ describe('emphasizeTranslateHandles', () => {
  * 这条会红。红了就说明改造已经悄悄退化成空操作：中心手柄还是那颗 0.25 不透明度的
  * 白八面体，视口里照样看不见，而这正是整个改造要解决的问题。
  */
+/** 材质上除去身份（uuid）与我们**刻意**要改的那两项之外的全部设定。 */
+function materialSwitches(material: THREE.Material) {
+  const json = material.toJSON() as unknown as Record<string, unknown>;
+  for (const key of ['uuid', 'color', 'opacity']) delete json[key];
+  return json;
+}
+
 describe('emphasizeTranslateHandles on real three', () => {
   it('reaches the handles inside a real TransformControls', () => {
     const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
     const controls = new TransformControls(camera, document.createElement('canvas'));
     const helper = controls.getHelper();
 
-    const translateHandles = () => {
+    /** 每次重新 traverse 去捞，而不是缓存：改造换的是 children 里那些 mesh 的字段，
+     * 缓存下来的引用照样能看见改动，但「捞得到吗」这件事只有真去捞才算数。 */
+    const handlesIn = (table: 'gizmo' | 'picker') => {
       let group: THREE.Object3D | undefined;
       helper.traverse((node) => {
-        const gizmo = node as unknown as {
+        const found = node as unknown as {
           isTransformControlsGizmo?: boolean;
           gizmo?: Record<string, THREE.Object3D>;
-        };
-        if (gizmo.isTransformControlsGizmo === true) group = gizmo.gizmo?.translate;
-      });
-      return (group?.children ?? []) as THREE.Mesh[];
-    };
-    const pickerHandles = () => {
-      let group: THREE.Object3D | undefined;
-      helper.traverse((node) => {
-        const gizmo = node as unknown as {
-          isTransformControlsGizmo?: boolean;
           picker?: Record<string, THREE.Object3D>;
         };
-        if (gizmo.isTransformControlsGizmo === true) group = gizmo.picker?.translate;
+        if (found.isTransformControlsGizmo === true) group = found[table]?.translate;
       });
       return (group?.children ?? []) as THREE.Mesh[];
     };
+    const translateHandles = () => handlesIn('gizmo');
+    const pickerHandles = () => handlesIn('picker');
     /** 半径改到几何体上才算数——`mesh.scale` 每帧被 three 重写，量它等于什么都没量。 */
     const radiusOf = (mesh: THREE.Mesh) => {
       mesh.geometry.computeBoundingSphere();
@@ -323,6 +363,7 @@ describe('emphasizeTranslateHandles on real three', () => {
     const pickerRadiusBefore = radiusOf(pickerBefore);
     const planeGeometry = planeBefore.geometry;
     const pickerMaterial = pickerBefore.material;
+    const stockCentreMaterial = centreBefore.material as THREE.MeshBasicMaterial;
     // 前置条件：官方那颗中心手柄确实是「看不见」的那一颗。这句要是红了，说明
     // three 已经自己把它做亮了，整个改造该重新评估而不是继续套用。
     expect((centreBefore.material as THREE.MeshBasicMaterial).opacity).toBeLessThan(0.5);
@@ -338,6 +379,11 @@ describe('emphasizeTranslateHandles on real three', () => {
     expect(centreMaterial.depthTest).toBe(false);
     expect(centreMaterial.fog).toBe(false);
     expect(centreMaterial.toneMapped).toBe(false);
+    // 再和官方那份 `gizmoMaterial` 整体比一遍：我们只该在 color 与 opacity 上与它不同。
+    // 上面那几条单项断言守的是今天已知的开关；three 往 gizmoMaterial 上加过好几次新
+    // 开关，再加一次的话我们这份就会缺一项，画到屏幕上和官方手柄的差别不止亮度，而
+    // 没有任何一条单项断言会红。这条把那一整类一次覆盖掉。
+    expect(materialSwitches(centreMaterial)).toEqual(materialSwitches(stockCentreMaterial));
 
     const pickerAfter = named(pickerHandles(), 'XYZ');
     expect(radiusOf(pickerAfter)).toBeGreaterThan(pickerRadiusBefore);
@@ -352,7 +398,6 @@ describe('emphasizeTranslateHandles on real three', () => {
     controls.dispose();
   });
 });
-
 
 /**
  * 接线那一头。改造走 `PrevizGizmoDeps` 上一个**可选**的 `three` 字段：jsdom 里那些
