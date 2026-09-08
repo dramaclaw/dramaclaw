@@ -32,11 +32,18 @@ beforeEach(() => {
 
 describe('PrevizTimeline fixed rows', () => {
   it('mounts the program row above the tracks and the audio row below', () => {
+    addCameraTrack();
     render(<PrevizTimeline />);
     const program = screen.getByTestId('previz-program-track');
+    const track = screen.getByRole('listitem');
     const audio = screen.getByTestId('previz-audio-track');
-    // compareDocumentPosition 的 FOLLOWING 位：镜头轨在前，音频轨在后。
-    expect(program.compareDocumentPosition(audio) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    /*
+      两条固定行是夹着对象轨道的，所以中间必须真有一条轨道来夹——只比两条固定行的
+      先后，把音频轨挪到 <ul> 上面也照样过。compareDocumentPosition 的 FOLLOWING 位
+      表示参数在调用者之后。
+    */
+    expect(program.compareDocumentPosition(track) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(track.compareDocumentPosition(audio) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('cuts to a camera from its track header and marks it live', async () => {
@@ -69,11 +76,32 @@ describe('PrevizTimeline fixed rows', () => {
     expect(usePrevizStore.getState().selectedClipId).toBe(cutId);
   });
 
-  it('shows no live badge on a camera the program is not on', () => {
+  it('marks only the live camera and cuts from the track header that was clicked', async () => {
+    const user = userEvent.setup();
     const first = addCameraTrack();
-    addCameraTrack();
+    const second = addCameraTrack();
     usePrevizStore.getState().cutToCamera(first);
     render(<PrevizTimeline />);
     expect(screen.getAllByTestId('previz-track-live')).toHaveLength(1);
+    // 每颗切镜按钮认自己那条轨道。都指向第一条也能让上面那句过，所以这里点第二台。
+    await user.click(screen.getAllByRole('button', { name: 'previz.timeline.cutHere' })[1]!);
+    expect(usePrevizStore.getState().scene.timeline.program[0]!.cameraId).toBe(second);
+  });
+
+  it('imports an upstream audio source into the track', async () => {
+    const user = userEvent.setup();
+    const source = {
+      nodeId: 'n1',
+      displayName: 'bgm',
+      audioUrl: 'https://x/bgm.mp3',
+      durationMs: 4000,
+    };
+    render(<PrevizTimeline upstreamAudio={[source]} />);
+    await user.click(screen.getByRole('button', { name: 'previz.audio.add' }));
+    await user.click(screen.getByRole('menuitem', { name: 'bgm' }));
+    // 时长已知，走的是同步那一支：不必等上传，也不必探时长。
+    expect(usePrevizStore.getState().scene.timeline.audio).toMatchObject([
+      { sourceName: 'bgm', sourceNodeId: 'n1', startFrame: 0 },
+    ]);
   });
 });
