@@ -58,7 +58,7 @@ import { PrevizLayerPanel } from "./ui/PrevizLayerPanel";
 import { PrevizMonitorFrame } from "./ui/PrevizMonitorFrame";
 import { PrevizQuadPreview } from "./ui/PrevizQuadPreview";
 import { PrevizTimeline } from "./ui/PrevizTimeline";
-import { PrevizToolbar } from "./ui/PrevizToolbar";
+import { PREVIZ_DEFAULT_TOOL, PrevizToolbar } from "./ui/PrevizToolbar";
 import type { PrevizTool } from "./ui/PrevizToolbar";
 import { useCutToCamera } from "./ui/useCutToCamera";
 import { PrevizHoverTip } from "./ui/PrevizHoverTip";
@@ -80,6 +80,23 @@ interface PrevizEditorProps {
 
 /** 按下与抬起之间超过这个像素就算在转视角，不是在点选。 */
 const CLICK_SLOP_PX = 4;
+
+/**
+ * 哪颗工具支起哪种手柄；`undefined` 表示这颗工具下视口里不该有手柄。
+ *
+ * 写成完整的 `Record` 而不是 `Partial`：将来往工具列表里加一颗，这里少写一行是编译期
+ * 错误，逼着作者当场表态「它要不要手柄」，而不是默默落进「没有手柄」——那种漏法只有
+ * 用户点了半天发现拖不动才发现得了。
+ */
+const TOOL_GIZMO_MODE: Record<PrevizTool, GizmoMode | undefined> = {
+  select: undefined,
+  navigate: undefined,
+  draw: undefined,
+  mark: undefined,
+  translate: "translate",
+  rotate: "rotate",
+  scale: "scale",
+};
 
 /**
  * 把后续的指针事件锁在画布上，这样一笔画到视口外面也不会中途断掉。
@@ -116,16 +133,23 @@ export function PrevizEditor({
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   // 渲染器也进 state 而不是 ref：面板的回调要在它就绪后重新绑定，ref 变化不会触发重渲染。
   const [renderer, setRenderer] = useState<PrevizRenderer | null>(null);
-  const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
   /**
    * 监看的三个开关。放在编辑器本地而不是场景设置里：它们只改「怎么看」，一个像素都不
-   * 进出片，跟 `gizmoMode` / `tool` 是同一类东西。落进 `settings` 的话，切一次描边会
-   * 进撤销栈、还会把节点数据标脏——用户会莫名其妙地被问「要不要保存」。
+   * 进出片，跟 `tool` 是同一类东西。落进 `settings` 的话，切一次描边会进撤销栈、还会把
+   * 节点数据标脏——用户会莫名其妙地被问「要不要保存」。
    */
   const [monitorSize, setMonitorSize] = useState<MonitorSize>("normal");
   const [showOutline, setShowOutline] = useState(true);
   const [showNamePlate, setShowNamePlate] = useState(true);
-  const [tool, setTool] = useState<PrevizTool>("select");
+  const [tool, setTool] = useState<PrevizTool>(PREVIZ_DEFAULT_TOOL);
+  /**
+   * 视口里支哪种手柄，从**工具**派生，不再是第二份 state。
+   *
+   * 原先工具和手柄模式是两个互不相干的 state，工具栏各算各的按下态，于是 W 和 R 永远
+   * 同时亮着；现在七颗按钮是一条互斥列表，手柄在不在只由「亮着的那颗是不是变换工具」
+   * 决定，两份 state 不可能再对不上。
+   */
+  const gizmoMode = TOOL_GIZMO_MODE[tool] ?? null;
   /** 正在画的那一笔，世界坐标。null 表示画笔没按下。 */
   const stroke = useRef<Vec3[] | null>(null);
   /**
@@ -941,25 +965,31 @@ export function PrevizEditor({
         case "h":
           renderer.resetView();
           break;
-        // 工具与手柄键位对齐 Blender：W/Q 选工具，G/R/S 选手柄。
+        // 键位对齐 Blender：W/Q 选指针工具，G/R/S 选变换工具。五颗都在同一条互斥
+        // 列表上，所以五条分支做的是同一件事——换 `tool`。
+        //
+        // 每一条都要挡笔画：换工具会让 `setDrawing` 把左键重新挂回轨道旋转，视口就在
+        // 笔下转起来了。G/R/S 原先只改手柄模式，中途按下去是无害的，合并之后它们和
+        // W/Q 掉进同一个坑，守卫一条都不能少。
         case "w":
-          // 笔画画到一半换工具会让视口在笔下转起来，画完再说。
           if (stroke.current) break;
           setTool("select");
           break;
         case "q":
-          // 笔画画到一半换工具会让视口在笔下转起来，画完再说。
           if (stroke.current) break;
           setTool("navigate");
           break;
         case "g":
-          setGizmoMode("translate");
+          if (stroke.current) break;
+          setTool("translate");
           break;
         case "r":
-          setGizmoMode("rotate");
+          if (stroke.current) break;
+          setTool("rotate");
           break;
         case "s":
-          setGizmoMode("scale");
+          if (stroke.current) break;
+          setTool("scale");
           break;
         case " ":
           // 空格是播放/暂停。上面已经挡掉了输入框里的按键，这里不会抢走打字的空格。
@@ -1029,12 +1059,10 @@ export function PrevizEditor({
           <div className="flex min-h-0 flex-1">
           <PrevizToolbar
             canAdd={canAdd}
-            gizmoMode={gizmoMode}
             tool={tool}
             timelineOpen={timelineOpen}
             onAdd={handleAdd}
             onImportProp={(file) => void handleImportProp(file)}
-            onGizmoMode={setGizmoMode}
             onTool={setTool}
             onTimelineOpen={setTimelineOpen}
           />
@@ -1094,9 +1122,10 @@ export function PrevizEditor({
                     // 没选对象时这一笔没有归属，直接丢——建一条无主轨迹只会在时间轴上
                     // 多一行删不掉的东西。
                     if (targetId) usePrevizStore.getState().drawPath(targetId, points);
-                    // 画完自动切回选择：实测参照实现就是这样，否则下一次想选个对象
-                    // 反而又画了一条。
-                    setTool("select");
+                    // 画完得离开画笔，否则下一次想选个对象反而又画了一条。这一步只
+                    // 要求「不是 draw」，任何工具都满足；落在移动上，用户画完选中物体
+                    // 就直接能拖，比落回「选择」少按一次键。
+                    setTool(PREVIZ_DEFAULT_TOOL);
                     return;
                   }
 

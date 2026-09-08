@@ -187,4 +187,111 @@ describe("PrevizGizmo", () => {
     // helper 留在场景里的话，渲染器 dispose 之后手柄还挂在那棵树上。
     expect(removed).toEqual([controls.helper]);
   });
+
+  // W / Q / 绘制 / 标记这四颗工具下视口里不该有手柄。光把 helper 藏起来是不够的：
+  // 控件还在接指针事件，用户会在一片看不见任何东西的画面里莫名其妙地把物体拖走。
+  it("hides the helper and stops taking pointer events when the mode goes null", () => {
+    const { controls, gizmo } = setup();
+
+    gizmo.setMode(null);
+
+    expect(controls.helper.visible).toBe(false);
+    expect(controls.enabled).toBe(false);
+  });
+
+  // 「当前工具不要手柄」和「截图/录制期间不要手柄」是两个互不相干的理由。共用一个
+  // 裸开关的话，截图收尾那句 setHelperVisible(true) 会把 W 工具下本来就不该有的手柄
+  // 放回来——渲染器里这样的成对调用有 10 处，任何一处都够把它放出来。
+  it("keeps the helper hidden when a capture ends while the mode is null", () => {
+    const { controls, gizmo } = setup();
+
+    gizmo.setMode(null);
+    gizmo.setHelperVisible(false);
+    gizmo.setHelperVisible(true);
+
+    expect(controls.helper.visible).toBe(false);
+    expect(controls.enabled).toBe(false);
+  });
+
+  // 反过来也得成立：真在用手柄的时候截一张图，收尾必须把它还回来，否则用户截完图
+  // 手柄就没了，只能切一次工具才能拖回来。
+  it("brings the helper back after a capture taken under a transform mode", () => {
+    const { controls, gizmo } = setup();
+
+    gizmo.setMode("rotate");
+    gizmo.setHelperVisible(false);
+    expect(controls.helper.visible).toBe(false);
+
+    gizmo.setHelperVisible(true);
+    expect(controls.helper.visible).toBe(true);
+  });
+
+  // three 的 TransformControls 每个指针处理器都以 `if (this.enabled === false) return;`
+  // 开头。拖到一半把 enabled 置 false，它内部的 dragging 会永远停在 true，我们
+  // dragging-changed 收尾里那句 orbit.enabled = true 也就永远不跑——轨道相机就此死掉，
+  // 用户只能重开编辑器。所以拖拽中的切换必须一直压到松手。
+  it("defers a mode switch made mid-drag until the pointer is released", () => {
+    const { controls, gizmo, orbit } = setup();
+    gizmo.attach(fakeNode("a"));
+
+    controls.emit("dragging-changed", { value: true });
+    gizmo.setMode(null);
+
+    expect(controls.enabled).toBe(true);
+    expect(controls.helper.visible).toBe(true);
+
+    controls.emit("objectChange");
+    controls.emit("dragging-changed", { value: false });
+
+    expect(controls.enabled).toBe(false);
+    expect(controls.helper.visible).toBe(false);
+    expect(orbit.enabled).toBe(true);
+  });
+
+  // 拖拽中连按两次快捷键：生效的该是最后那一次，而不是第一次（先来的把后来的挡掉）
+  // 也不是两次都放。这条同时走的是收尾里 `!this.attachedId` 那条 early return。
+  it("applies only the last mode asked for during a drag", () => {
+    const { controls, gizmo } = setup();
+
+    controls.emit("dragging-changed", { value: true });
+    gizmo.setMode(null);
+    gizmo.setMode("scale");
+    controls.emit("dragging-changed", { value: false });
+
+    expect(controls.setMode).toHaveBeenLastCalledWith("scale");
+    expect(controls.enabled).toBe(true);
+    expect(controls.helper.visible).toBe(true);
+  });
+
+  // 「点一下不拖」走的是收尾里 `!this.movedDuringDrag` 那条 early return。dragging 不在
+  // 那条路径上解开的话，之后所有的工具切换都会被当成「还在拖」永远挂起——而点一下
+  // 手柄不拖是用户每天都会做几十次的事。
+  it("still switches modes after a click that dragged nothing", () => {
+    const { controls, gizmo } = setup();
+    gizmo.attach(fakeNode("a"));
+
+    controls.emit("dragging-changed", { value: true });
+    controls.emit("dragging-changed", { value: false });
+
+    gizmo.setMode(null);
+
+    expect(controls.enabled).toBe(false);
+    expect(controls.helper.visible).toBe(false);
+  });
+
+  // 第三条 early return：拖到一半对象被删了（撤销、另一个窗口），controls.object 是 null。
+  it("still switches modes after the attached object vanished mid-drag", () => {
+    const { controls, gizmo } = setup();
+    gizmo.attach(fakeNode("a"));
+
+    controls.emit("dragging-changed", { value: true });
+    controls.emit("objectChange");
+    controls.object = null;
+    controls.emit("dragging-changed", { value: false });
+
+    gizmo.setMode(null);
+
+    expect(controls.enabled).toBe(false);
+    expect(controls.helper.visible).toBe(false);
+  });
 });

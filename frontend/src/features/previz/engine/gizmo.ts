@@ -45,6 +45,25 @@ export interface PrevizGizmoDeps {
 export class PrevizGizmo {
   private attachedId: string | null = null;
   private movedDuringDrag = false;
+  /**
+   * 手柄该不该看得见，两个互不相干的理由各记一份，画的时候取与。
+   *
+   * 合成一个裸开关就会出这个 bug：工具切到「选择」（不该有手柄）时用户按下截图，
+   * 截图前后是 `setHelperVisible(false)` / `setHelperVisible(true)` 一对，收尾那句会
+   * 把本来就不该在的手柄放回来。渲染器里这样的成对调用有 10 处（截图、机位预览、
+   * 四视图、录制…），任何一处都够把它放出来，而这条路径没人会手测。
+   */
+  private modeVisible = true;
+  private captureVisible = true;
+  /**
+   * 手柄正在被拖。切换要压到松手才生效，见 [setMode]。
+   */
+  private dragging = false;
+  /**
+   * 待生效的切换。`undefined` = 没有待生效的；`null` 本身是合法待生效值（「这颗工具
+   * 不要手柄」），所以不能拿 null 当哨兵。
+   */
+  private pendingMode: GizmoMode | null | undefined = undefined;
 
   constructor(private readonly deps: PrevizGizmoDeps) {
     // 手柄本体不是 Object3D：加错了不会报错，只是永远看不见。
@@ -55,17 +74,26 @@ export class PrevizGizmo {
       // 不关掉轨道控制的话，一次拖拽会同时转相机和移物体。
       deps.orbit.enabled = event.value !== true;
       if (event.value === true) {
+        this.dragging = true;
         // 开始时清标记，而不是提交后清：留着上一次的 true，下一次「点一下不拖」
         // 也会提交一步什么都没改的历史。
         this.movedDuringDrag = false;
         return;
       }
-      if (!this.movedDuringDrag || !this.attachedId) return;
-      // 拖到一半对象被删了（撤销、另一个窗口）时 object 会是 null。照着它读变换会抛，
-      // 而这条处理链一断，上面那句 `orbit.enabled = true` 之后的收尾全没了。
-      const node = deps.controls.object as THREE.Object3D | null;
-      if (!node) return;
-      deps.onCommit(this.attachedId, readTransform(node));
+      // 下面三个条件原先是三条 early return。改成嵌套的 if 是为了让收尾那两句一定跑得到：
+      // 「点一下不拖」（!movedDuringDrag）是用户每天做几十次的事，从那条路径上溜走的话
+      // dragging 永远停在 true，之后所有的工具切换都会被当成「还在拖」挂起，手柄再也换不动。
+      if (this.movedDuringDrag && this.attachedId) {
+        // 拖到一半对象被删了（撤销、另一个窗口）时 object 会是 null。照着它读变换会抛，
+        // 而这条处理链一断，上面那句 `orbit.enabled = true` 之后的收尾全没了。
+        const node = deps.controls.object as THREE.Object3D | null;
+        if (node) deps.onCommit(this.attachedId, readTransform(node));
+      }
+      this.dragging = false;
+      if (this.pendingMode !== undefined) {
+        this.applyMode(this.pendingMode);
+        this.pendingMode = undefined;
+      }
     });
 
     deps.controls.addEventListener('objectChange', () => {
@@ -86,13 +114,39 @@ export class PrevizGizmo {
     this.deps.controls.attach(node);
   }
 
-  setMode(mode: GizmoMode): void {
-    this.deps.controls.setMode(mode);
+  /**
+   * 换手柄模式；`null` 表示当前工具（选择/导航/绘制/标记）压根不要手柄。
+   *
+   * 拖拽中的切换必须压到松手：three 的 `TransformControls` 每个指针处理器都以
+   * `if ( this.enabled === false ) return;` 开头，拖到一半把 enabled 置 false，它内部的
+   * `dragging` 会永远停在 true，`dragging-changed` 的收尾再也不来，上面那句
+   * `orbit.enabled = true` 就永远不跑——轨道相机就此死掉，用户只能重开编辑器。
+   */
+  setMode(mode: GizmoMode | null): void {
+    if (this.dragging) {
+      this.pendingMode = mode;
+      return;
+    }
+    this.applyMode(mode);
   }
 
   /** 截图前把手柄藏掉——箭头进了截图就毁了整张参考图。 */
   setHelperVisible(visible: boolean): void {
-    this.deps.controls.getHelper().visible = visible;
+    this.captureVisible = visible;
+    this.applyVisibility();
+  }
+
+  private applyMode(mode: GizmoMode | null): void {
+    this.modeVisible = mode !== null;
+    // 只藏 helper 是不够的：控件还在接指针事件，用户会在一片看不见任何东西的画面里
+    // 莫名其妙地把选中的物体拖走，而且完全找不到是什么把它拖动的。
+    this.deps.controls.enabled = mode !== null;
+    if (mode) this.deps.controls.setMode(mode);
+    this.applyVisibility();
+  }
+
+  private applyVisibility(): void {
+    this.deps.controls.getHelper().visible = this.modeVisible && this.captureVisible;
   }
 
   dispose(): void {

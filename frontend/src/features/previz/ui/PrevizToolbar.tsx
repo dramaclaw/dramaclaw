@@ -29,30 +29,38 @@ import { PrevizKeyCap } from "@/features/previz/ui/PrevizKeyCap";
 import { cn } from "@/lib/utils";
 
 /**
- * **临时定义，`GizmoMode` 落进 `domain/scene.ts` 时必须整块删掉**，把下面两个使用点
- * （`GIZMO_ICON` 的类型参数、props 里的 `gizmoMode` 与 `onGizmoMode`）改成 import。
+ * 视口里的工具，照 Blender 的模型做成**一条互斥列表**：任意时刻只有一颗亮。
  *
- * 计划书让这个类型从 `engine/gizmo.ts` 来，但那个模块还没落地，而工具栏只是把用户选的
- * 模式原样交出去、不需要 three。这里刻意**不导出**：结构相同的两个联合类型互相可赋值，
- * 真身建起来之后这份副本继续留着也**一个编译错误都不会有**，而下面 `Record<…, LucideIcon>`
- * 的穷尽性守卫会安安静静地守着这份过时的定义——给手柄加第四种模式时真身那边全绿、
- * 工具栏这边静默少一个按钮。不导出至少保证它长不出第二个消费者，删除永远是单文件改动。
- * 外部要引用这几个 prop 的类型，走 `PrevizToolbarProps["gizmoMode"]`。
+ * 这条栏原先在显示两份互不相干的 state——工具（选择/导航/绘制/标记）一份、手柄模式
+ * （移动/旋转/缩放）一份，各算各的按下态，于是 W 和 R 永远同时亮着，用户根本读不出
+ * 「现在到底在什么模式里」。合并之后按下态只有一个来源，同时亮两颗在结构上就不可能了。
+ *
+ * 前四颗是指针工具：选择是拾取；导航下左键拖拽只环绕视口、点击不改选中（给没有中键的
+ * 触控板用）；绘制是按住左键在地面上拖出一条轨迹；标记是逐点单击放点、自动与前一点连线
+ * （Esc 退出）。这四颗底下视口里**没有**变换手柄。后三颗按下才在选中物体上支起对应的手柄。
+ *
+ * 拆成两个常量而不是一个七元数组：左栏中间那条分隔线正照着这个界把按钮分成两段，两段
+ * 各有各的 `role="group"` 名字。`PREVIZ_TOOLS` 由它们拼出来，分界线只有一处真相。
  */
-type PrevizGizmoMode = "translate" | "rotate" | "scale";
-
-/**
- * 视口里的鼠标工具。选择是默认；导航模式下左键拖拽只环绕视口，点击不改选中（给没有
- * 中键的触控板用）；绘制是按住左键在地面上拖出一条轨迹；标记是逐点单击放点、自动与前一点
- * 连线（Esc 退出）。
- */
-export const PREVIZ_TOOLS = ["select", "navigate", "draw", "mark"] as const;
+export const PREVIZ_POINTER_TOOLS = ["select", "navigate", "draw", "mark"] as const;
+export const PREVIZ_TRANSFORM_TOOLS = ["translate", "rotate", "scale"] as const;
+export const PREVIZ_TOOLS = [...PREVIZ_POINTER_TOOLS, ...PREVIZ_TRANSFORM_TOOLS] as const;
 export type PrevizTool = (typeof PREVIZ_TOOLS)[number];
 
 /**
- * 三张 Record 而不是数组字面量：新增一种取值时这里编译期报错，不会静默塌成一个通用
- * 图标、或者干脆少一个按钮。`Object.keys` 对非整数字符串键保持书写顺序，所以键序就是
- * 按钮从上到下的顺序。
+ * 没有别的理由时该落在哪一颗工具上：编辑器的初始状态，以及画完一笔之后的回落。
+ *
+ * 回落那处只要求「别让下一次点击又画出一条」，任何非 draw 的工具都满足；落在移动上是因为
+ * 用户选中物体就直接能拖，比落回「选择」少一次按键。放在这里而不是各写各的字面量：两处
+ * 分头改会让「画完一笔」和「刚打开」停在不同的工具上，而这两个时刻用户的意图是一样的。
+ */
+export const PREVIZ_DEFAULT_TOOL: PrevizTool = "translate";
+
+/**
+ * 图标写成 Record 而不是数组字面量：新增一种取值时这里编译期报错，不会静默塌成一个
+ * 通用图标、或者干脆少一个按钮。对象类型那张还兼着排序——`Object.keys` 对非整数字符串
+ * 键保持书写顺序，所以键序就是按钮从上到下的顺序；工具的顺序另有 `PREVIZ_*_TOOLS`
+ * 两条列表说了算，那里还要分段，靠不了一张表的键序。
  */
 const KIND_ICON: Record<PrevizObjectKind, LucideIcon> = {
   character: User,
@@ -66,19 +74,32 @@ const TOOL_ICON: Record<PrevizTool, LucideIcon> = {
   navigate: Orbit,
   draw: PenLine,
   mark: Waypoints,
-};
-
-const GIZMO_ICON: Record<PrevizGizmoMode, LucideIcon> = {
   translate: Move3d,
   rotate: Rotate3d,
   scale: Scaling,
 };
 
 /**
- * 工具与手柄的快捷键，画成按钮角上的小键帽。键位本身在 PrevizEditor 的 keydown 里绑定；
+ * 每颗按钮的文案键。后三颗留在 `previz.toolbar.gizmo.*` 下而不是跟着搬进 `tool.*`：
+ * 合并的是「按下态怎么算」，不是文案；改键要动两份 locale、i18n 用例和翻译记忆，
+ * 换来的只是键名好看一点。用一张显式的表把这层不对齐写明白，比让读者去猜哪几颗
+ * 走哪个前缀强。
+ */
+const TOOL_LABEL_KEY: Record<PrevizTool, string> = {
+  select: "previz.toolbar.tool.select",
+  navigate: "previz.toolbar.tool.navigate",
+  draw: "previz.toolbar.tool.draw",
+  mark: "previz.toolbar.tool.mark",
+  translate: "previz.toolbar.gizmo.translate",
+  rotate: "previz.toolbar.gizmo.rotate",
+  scale: "previz.toolbar.gizmo.scale",
+};
+
+/**
+ * 工具的快捷键，画成按钮角上的小键帽。键位本身在 PrevizEditor 的 keydown 里绑定；
  * 这里只负责把它显示出来——没有角标的话用户根本不知道有快捷键。
  *
- * 写成 `Record<PrevizTool, string | undefined>` 而不是 `Partial<...>`：新增第四种工具
+ * 写成 `Record<PrevizTool, string | undefined>` 而不是 `Partial<...>`：新增一种工具
  * 时少写一行会在这里编译期报错，而不是悄悄漏掉一个角标（同 `TOOL_ICON` 那份注释）。
  */
 const TOOL_KEY: Record<PrevizTool, string | undefined> = {
@@ -86,6 +107,9 @@ const TOOL_KEY: Record<PrevizTool, string | undefined> = {
   navigate: "Q",
   draw: undefined, // 绘制没有键位
   mark: undefined, // 标记也没有
+  translate: "G",
+  rotate: "R",
+  scale: "S",
 };
 /**
  * 悬停提示用哪条文案；不给就用工具名。标记轨迹的用法光看名字看不出来（逐点单击、Esc
@@ -96,27 +120,26 @@ const TOOL_TIP_KEY: Record<PrevizTool, string | undefined> = {
   navigate: undefined,
   draw: undefined,
   mark: "previz.toolbar.markHint",
+  translate: undefined,
+  rotate: undefined,
+  scale: undefined,
 };
-const GIZMO_KEY: Record<PrevizGizmoMode, string> = { translate: "G", rotate: "R", scale: "S" };
 
 function inOrder<T extends string>(icons: Record<T, LucideIcon>): readonly T[] {
   return Object.keys(icons) as T[];
 }
 
 const KINDS = inOrder(KIND_ICON);
-const TOOLS = inOrder(TOOL_ICON);
-const GIZMO_MODES = inOrder(GIZMO_ICON);
 
 
 export interface PrevizToolbarProps {
   /** 每种对象是否还能再加（数量上限）。false 时按钮禁用而不是点了没反应。 */
   canAdd: Record<PrevizObjectKind, boolean>;
-  gizmoMode: PrevizGizmoMode;
+  /** 当前工具，七颗按钮共用的**唯一**按下态来源。 */
   tool: PrevizTool;
   timelineOpen: boolean;
   onAdd: (kind: PrevizObjectKind) => void;
   onImportProp: (file: File) => void;
-  onGizmoMode: (mode: PrevizGizmoMode) => void;
   onTool: (tool: PrevizTool) => void;
   onTimelineOpen: (open: boolean) => void;
 }
@@ -197,7 +220,7 @@ function RailDivider() {
 }
 
 /**
- * 编辑器的左侧菜单列：建对象、鼠标工具、手柄，最后是收起/展开轨迹面板。
+ * 编辑器的左侧菜单列：建对象、指针工具、变换工具，最后是收起/展开轨迹面板。
  *
  * 这条栏只收「摆场景用的工具」。撤销重做、显示模式、重置视角不在这里——那三样是
  * 「对着画面调画面」的动作，手和眼都在视口里，跑到左边角落去按一下再跑回来看效果，
@@ -213,17 +236,33 @@ function RailDivider() {
  */
 export function PrevizToolbar({
   canAdd,
-  gizmoMode,
   tool,
   timelineOpen,
   onAdd,
   onImportProp,
-  onGizmoMode,
   onTool,
   onTimelineOpen,
 }: PrevizToolbarProps) {
   const { t } = useTranslation();
   const fileInputId = useId();
+
+  /*
+    两段按钮走同一个渲染函数，按下态一律拿同一个 `tool` 去比——互斥性是这么保证的，
+    不是靠哪条断言。各段自己算一遍按下态（原来就是那样：一段读 tool、一段读 gizmoMode）
+    的话，两颗同时亮又会长回来，而且这次连「有两个 state」这个显眼的线索都没有了。
+  */
+  const toolButton = (option: PrevizTool) => (
+    <RailButton
+      key={option}
+      icon={TOOL_ICON[option]}
+      label={t(TOOL_LABEL_KEY[option])}
+      tip={TOOL_TIP_KEY[option] && t(TOOL_TIP_KEY[option])}
+      on={option === tool}
+      shortcut={TOOL_KEY[option]}
+      aria-pressed={option === tool}
+      onClick={() => onTool(option)}
+    />
+  );
 
   const timelineLabel = t(
     timelineOpen ? "previz.toolbar.collapseTimeline" : "previz.toolbar.expandTimeline",
@@ -297,34 +336,17 @@ export function PrevizToolbar({
           <RailDivider />
 
           <RailGroup label={t("previz.toolbar.group.tool")}>
-            {TOOLS.map((option) => (
-              <RailButton
-                key={option}
-                icon={TOOL_ICON[option]}
-                label={t(`previz.toolbar.tool.${option}`)}
-                tip={TOOL_TIP_KEY[option] && t(TOOL_TIP_KEY[option])}
-                on={option === tool}
-                shortcut={TOOL_KEY[option]}
-                aria-pressed={option === tool}
-                onClick={() => onTool(option)}
-              />
-            ))}
+            {PREVIZ_POINTER_TOOLS.map(toolButton)}
           </RailGroup>
 
+          {/*
+            分隔线和两个分组留着，虽然七颗按钮现在是一条互斥列表：「按下它视口里会多出
+            一副手柄」是用户唯一需要提前知道的区别，混排的话这条界就只能靠图标去猜了。
+          */}
           <RailDivider />
 
           <RailGroup label={t("previz.toolbar.group.gizmo")}>
-            {GIZMO_MODES.map((mode) => (
-              <RailButton
-                key={mode}
-                icon={GIZMO_ICON[mode]}
-                label={t(`previz.toolbar.gizmo.${mode}`)}
-                on={mode === gizmoMode}
-                shortcut={GIZMO_KEY[mode]}
-                aria-pressed={mode === gizmoMode}
-                onClick={() => onGizmoMode(mode)}
-              />
-            ))}
+            {PREVIZ_TRANSFORM_TOOLS.map(toolButton)}
           </RailGroup>
         </div>
 
