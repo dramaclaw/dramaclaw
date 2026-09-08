@@ -283,6 +283,24 @@ describe("renderCharacterPreview 简化圆柱体", () => {
     expect(first.material.dispose).toHaveBeenCalled();
   });
 
+  it("rebuilds the capsule when the identification colour changes", async () => {
+    const harness = setup();
+    const draft = draftOf({ bodyType: "capsule", heightCm: 170, color: "#ff0000" });
+
+    await renderCharacterPreview(harness.deps, draft);
+    const first = harness.mannequin()[0] as unknown as FakeMesh;
+
+    await renderCharacterPreview(harness.deps, { ...draft, color: "#00ff00" });
+    const second = harness.mannequin()[0] as unknown as FakeMesh;
+
+    // 辨识色是烤进材质的，`applyTint` 那条路只对真模型成立。不重建的话，用户在色板上
+    // 点一下，右边那具木偶纹丝不动——他会以为这个颜色没生效。
+    expect(second).not.toBe(first);
+    expect(second.material.params.color).toBe("#00ff00");
+    expect((second.children[0] as unknown as FakeMesh).material.params.color).toBe("#00ff00");
+    expect(first.material.dispose).toHaveBeenCalled();
+  });
+
   it("does not rebuild the capsule while nothing about it changed", async () => {
     const harness = setup();
     const draft = draftOf({ bodyType: "capsule", heightCm: 150 });

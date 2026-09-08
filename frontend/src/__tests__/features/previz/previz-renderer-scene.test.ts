@@ -303,6 +303,9 @@ vi.mock('three', () => {
     PerspectiveCamera: class extends Object3D {
       aspect = 1;
       fov: number;
+      // 木偶预览要 `lookAt`（视口相机的朝向由 OrbitControls 管，从来不调它）。正交那
+      // 台早就补过同一个，见下面。
+      lookAt = vi.fn();
       updateProjectionMatrix = vi.fn();
       constructor(fov = 50) {
         super();
@@ -1752,6 +1755,27 @@ describe('PrevizRenderer recording', () => {
 
     pass.end();
     expect(helpersHidden()).toBe(false);
+    expect(gizmoHelper.visible).toBe(true);
+  });
+
+  it('画完木偶预览把手柄的可见性还回去', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene(scene);
+    // 手柄没挂在对象上时本来就是隐藏的，不选的话末尾那条断言全程都是 true。
+    instance.setSelection(cam.id);
+    step();
+    expect(gizmoHelper.visible).toBe(true);
+
+    // 用「简化圆柱体」那一档：真模型要 await 一次 GLB 加载，而这份 fixture 里的加载器
+    // 不会决议，这条用例会挂在超时上——它要盯的是 finally，不是加载。
+    await instance.renderCharacterPreview(
+      { width: 320, height: 180, getContext: () => null },
+      { ...createCharacterDraft(scene.objects), bodyType: 'capsule' },
+    );
+
+    // 离屏那一趟要先把手柄藏起来（它不该出现在预览里），画完必须还回去——不还的话，
+    // 用户开一次创建人物对话框，视口里的手柄就再也不出现了，而对象照样选中着。
     expect(gizmoHelper.visible).toBe(true);
   });
 
