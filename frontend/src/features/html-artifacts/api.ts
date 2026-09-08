@@ -1,3 +1,4 @@
+import i18n from "i18next";
 import { downloadUrlAsFile } from '@/lib/browserDownload';
 import { apiCall, apiClient } from '@/api/client';
 export type HtmlNodeScope = {canvas_id:string;node_id:string};
@@ -22,7 +23,7 @@ export async function readHtmlPreview(project: string, id: string, version?: num
         media.push({placeholder:resource.placeholder,blob});
       } catch {
         html = html.split(resource.placeholder).join('about:blank');
-        warnings.push(`素材加载失败：${relative}`);
+        warnings.push(i18n.t('htmlArtifact.mediaLoadFailed', {path:relative}));
       }
     }
     return {html, warnings, release, media};

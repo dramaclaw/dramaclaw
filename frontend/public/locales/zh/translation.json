@@ -984,7 +984,8 @@
         "audio": "音频",
         "script": "脚本",
         "world": "3D / 全景",
-        "skill": "技能"
+        "skill": "技能",
+        "webpage": "网页"
       }
     },
     "projections": {
@@ -7919,6 +7920,8 @@
     "stopScripts": "停止网页脚本",
     "scriptNotice": "默认预览不会执行网页脚本。开启交互模式后，代码可能向外部站点发送页面内容。",
     "scriptUnsupported": "当前浏览器不支持隔离凭据的交互模式；仍可预览、选择元素和编辑源码。",
-    "saveCommand": "保存网页"
+    "saveCommand": "保存网页",
+    "mediaLoadFailed": "素材加载失败：{{path}}",
+    "historyRecordFailed": "网页已保存，但节点历史记录失败，请稍后重试。"
   }
 }

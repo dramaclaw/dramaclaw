@@ -62,6 +62,7 @@ import type { CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 export const SHELL_FALLBACK_SIZES: Partial<Record<string, { width: number; height: number }>> = {
   vectorSvgNode: { width: 360, height: 192 },
   animatedGifNode: { width: 360, height: 192 },
+  htmlArtifactNode: { width: 384, height: 226 },
   uploadNode: { width: 320, height: 350 },
   imageNode: { width: 580, height: 360 },
   imageGenNode: { width: 580, height: 360 },

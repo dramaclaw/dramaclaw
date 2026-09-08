@@ -266,7 +266,8 @@ export type CanvasOutlineFilterKey =
   | "audio"
   | "script"
   | "world"
-  | "skill";
+  | "skill"
+  | "webpage";
 
 /**
  * 类型筛选按「用户眼里的东西」分档，不是逐个节点类型列出来——
@@ -309,6 +310,7 @@ export const CANVAS_OUTLINE_FILTERS: ReadonlyArray<{
   { key: "script", types: [CANVAS_NODE_TYPES.script] },
   { key: "world", types: [CANVAS_NODE_TYPES.pano360Viewer, CANVAS_NODE_TYPES.threeDWorld] },
   { key: "skill", types: [CANVAS_NODE_TYPES.skill] },
+  { key: "webpage", types: [CANVAS_NODE_TYPES.htmlArtifact] },
 ];
 
 export function outlineFilterTypes(key: CanvasOutlineFilterKey): readonly CanvasNodeType[] {

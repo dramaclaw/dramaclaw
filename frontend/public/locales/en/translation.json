@@ -984,7 +984,8 @@
         "audio": "Audio",
         "script": "Script",
         "world": "3D / Pano",
-        "skill": "Skill"
+        "skill": "Skill",
+        "webpage": "Webpage"
       }
     },
     "projections": {
@@ -7919,6 +7920,8 @@
     "stopScripts": "Stop page scripts",
     "scriptNotice": "Page scripts are off by default. Interactive code may send page contents to external sites.",
     "scriptUnsupported": "This browser cannot isolate credentials for interactive mode. Preview, element selection and source editing remain available.",
-    "saveCommand": "Save webpage"
+    "saveCommand": "Save webpage",
+    "mediaLoadFailed": "Failed to load media: {{path}}",
+    "historyRecordFailed": "Webpage saved, but node history could not be recorded. Please try again later."
   }
 }
