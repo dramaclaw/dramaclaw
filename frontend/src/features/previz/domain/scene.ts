@@ -61,9 +61,11 @@ export const PREVIZ_POSE_ADJUST_RANGE: Readonly<
 
 /**
  * 体型。五项与 upstream 的创建对话框一一对应。
- * `capsule`（简化圆柱体）不是一档胖瘦，而是「不要 GLB，就用占位胶囊」——场景里人一多，
- * 每副骨架每帧都要走一遍姿势解算，比几何体本身贵得多，upstream 留这一档就是为了让人
- * 先把走位摆出来。它该在场景图那条换模型的路上分叉，不在 `BODY_WIDTH_SCALE` 里加宽减窄。
+ * `capsule`（简化圆柱体）不是一档胖瘦，而是「不要 GLB，就用占位胶囊」。省下的先是下载：
+ * 这一档的分叉排在发请求之前，每个人物少拉一具骨架加一段动画，人一多就是成倍的量；
+ * 其次才是运行时——播放或拖播放头时，每副骨架每帧都要重摆一次姿势，比几何体本身贵得多。
+ * upstream 留这一档就是为了让人先把走位摆出来。它该在场景图那条换模型的路上分叉，
+ * 不在 `BODY_WIDTH_SCALE` 里加宽减窄。
  */
 export type BodyType = 'capsule' | 'slim' | 'average' | 'heavy' | 'tall';
 
