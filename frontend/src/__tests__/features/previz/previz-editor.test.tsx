@@ -1768,6 +1768,23 @@ describe("program follow", () => {
     dialog.remove();
   });
 
+  it("ignores digit keys aimed at an svg inside a nested dialog", async () => {
+    renderWithCameras();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    dialog.appendChild(svg);
+    document.body.appendChild(dialog);
+    // SVG 元素不是 HTMLElement，但 `closest` 长在 Element 上：守卫按 Element 收窄，
+    // 弹窗里一个图标拿到焦点也照样挡得住。
+    act(() => {
+      svg.dispatchEvent(new KeyboardEvent("keydown", { key: "1", bubbles: true }));
+    });
+    expect(usePrevizStore.getState().scene.timeline.program).toEqual([]);
+    dialog.remove();
+  });
+
   function monitorButton(cameraId: string): HTMLElement {
     const row = screen.getByTestId(`previz-layer-${cameraId}`);
     return within(row).getByRole("button", { name: "previz.layers.setActiveCamera" });
