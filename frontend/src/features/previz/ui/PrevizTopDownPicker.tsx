@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, type KeyboardEvent, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
-import { PREVIZ_GRID_CELL_SIZE } from "@/features/previz/engine/grid";
+import { PREVIZ_CAMERA_COLOR } from "@/features/previz/engine/cameraModel";
+import { PREVIZ_GRID_CELL_COLOR, PREVIZ_GRID_CELL_SIZE } from "@/features/previz/engine/grid";
 import type { PrevizObject, PrevizObjectKind } from "@/features/previz/domain/scene";
 import {
   canvasToWorld,
@@ -42,10 +43,15 @@ export const PREVIZ_TOP_DOWN_KEY_STEP_M = 0.5;
 /** 位图缩放的上限，与 `PrevizAudioTrack` / `PrevizRenderer` 同一个封顶。 */
 const MAX_PIXEL_RATIO = 2;
 
+/** three 的 `0xrrggbb` 转 canvas 要的 CSS 字符串。 */
+function hex(value: number): string {
+  return `#${value.toString(16).padStart(6, "0")}`;
+}
+
 /** 底色。比对话框面板（#14161b）再深一档，让这块画布读起来是「一片场地」而不是留白。 */
 const BACKGROUND = "#0b0d12";
-/** 米格线，取自主视口网格的 `PREVIZ_GRID_CELL_COLOR`（0x5d6574），两处看到的是同一张网。 */
-const GRID_LINE = "#5d6574";
+/** 米格线用主视口网格的本色，两块画面上看到的是同一张网。 */
+const GRID_LINE = hex(PREVIZ_GRID_CELL_COLOR);
 
 /**
  * 世界原点那个十字用轴色画：横线是 X 轴、竖线是 Z 轴。
@@ -65,14 +71,19 @@ const PICK_RING = "#ffd166";
  * 的 `KIND_COLOR`（0xfff3b0 / 0x9ad0a0），机位取 `engine/cameraModel.ts` 的
  * `PREVIZ_CAMERA_COLOR.body`（0x3f6fb4）。
  *
- * 不 import 那两份常量有两个理由：一是它们一个是模块私有、一个挂在会 import three 的
- * 模块上，为三个色值把 three 拖进这张 2D 画布不划算；二是那边是 three 要的 number，
- * 这边是 canvas 要的 CSS 字符串，无论如何都要转一次。人物不在表里——人物用自己的
- * `color`，一颗固定的分类色会让四个人物在俯视图上变成四个一模一样的点，而认人正是
- * 这些参照点存在的全部意义。
+ * 机位那个从源头 import，漂了会当场编译不过。灯与物件只能硬抄：`KIND_COLOR` 是
+ * `sceneGraph.ts` 的模块私有 const，没有导出（`engine/` 下的模块本身 import 得起——
+ * 三个模块的 three 都是 `import type`，运行时一个字节都不带，本文件第 6 行 import 的
+ * `engine/grid` 就是同一形状）。硬抄的这两个改起来得两处一起改，`KIND_DOT_COLOR` 的
+ * 单测里钉了字面量，至少会在改色时红给人看。
+ *
+ * 人物不在表里——人物用自己的 `color`，一颗固定的分类色会让四个人物在俯视图上变成
+ * 四个一模一样的点，而认人正是这些参照点存在的全部意义。灯也不用它自己的 `color`：
+ * 那是灯的色温，常是白或暖白，画成点会跟网格线、跟 `PICK_RING` 的高亮环糊在一起，
+ * 四盏不同色温的灯在俯视图上几乎分不开。
  */
-const KIND_DOT_COLOR: Record<Exclude<PrevizObjectKind, "character">, string> = {
-  camera: "#3f6fb4",
+export const KIND_DOT_COLOR: Record<Exclude<PrevizObjectKind, "character">, string> = {
+  camera: hex(PREVIZ_CAMERA_COLOR.body),
   light: "#fff3b0",
   prop: "#9ad0a0",
 };
@@ -87,13 +98,21 @@ const MIN_GRID_SPACING_PX = 8;
 const TAU = Math.PI * 2;
 
 /**
- * `p-0` 不是样式偏好：按钮默认自带内边距，那圈内边距上的点击照样触发 onClick，而落点
- * 是按画布的 rect 换算的，于是映射出画布之外——用户点在看得见的场地外面，人却真的
- * 放到了那儿。把内边距去掉，可点区域与画布就是同一块。
+ * 两处不是样式偏好：
+ *
+ * `p-0` —— 按钮默认自带内边距，那圈内边距上的点击照样触发 onClick，而落点是按画布的
+ * rect 换算的，于是被夹到取景框的边上：用户点在场地外面，人却贴着边放下去了。去掉之后
+ * 可点区域与画布是同一块。
+ *
+ * 描边用 `ring`（box-shadow）而不是 `border` —— `index.css` 的 tailwind preflight 把
+ * 全局 `box-sizing` 设成了 `border-box`，一圈 1px 的 border 会从画布的 CSS 尺寸里
+ * **吃掉 2 px**：CSS 上是 318，位图仍按 320 铺，浏览器于是把 320 重采样到 318，
+ * 而按设备像素铺位图的全部意义就是别让这种重采样发生。box-shadow 不占布局，画布的
+ * CSS 尺寸与位图尺寸因此是整倍数关系。
  */
 const PICKER_CLASS = [
-  "block cursor-crosshair rounded-md border border-white/10 p-0",
-  "focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40",
+  "block cursor-crosshair rounded-md p-0 ring-1 ring-white/10",
+  "focus:outline-none focus-visible:ring-white/40",
 ].join(" ");
 
 /** 方向键 → 世界 XZ 上的方向。「下」是 +Z：俯视图里 +Z 朝画布下方（见 topDownMap）。 */
@@ -137,10 +156,26 @@ function pickerPixelRatio(): number {
  * 要转上千圈。乘 2 的幂是为了让格子始终是整米数（1、2、4…），格线读起来仍然是尺子；
  * 用 `阈值 / ppm` 直接当步长的话会出现 2.7 m 一格，那张网就没法数了。
  */
-function gridStepM(pixelsPerMeter: number, minSpacingPx: number): number {
+export function gridStepM(pixelsPerMeter: number, minSpacingPx: number): number {
   const needed = minSpacingPx / (pixelsPerMeter * PREVIZ_GRID_CELL_SIZE);
   const factor = needed <= 1 ? 1 : 2 ** Math.ceil(Math.log2(needed));
   return PREVIZ_GRID_CELL_SIZE * factor;
+}
+
+/**
+ * 把落点夹进位图里。
+ *
+ * 夹的是**画布**不是地块——这两件事别混：地块只是按已有对象自动框出来的取景范围，
+ * 边框都没画出来，夹住它会让人落到手指以外；而画布是用户真的点中的那块东西，真实
+ * 指针点击本来就落在里面（顶多在边缘差个亚像素），所以这一夹对正常点击是恒等的。
+ *
+ * 它挡的是另一种：`detail >= 1` 却带着 (0, 0) 坐标的合成点击。那时 `clientX - rect.left`
+ * 是个负数，落点被映射到画面外一大截——高亮环压根不在画布上，用户点了一下什么都没
+ * 发生，也没有任何报错。夹住之后最坏也只是落在取景框的边角上，看得见、再点一下就改
+ * 得掉，损害是有界的。
+ */
+function clampToCanvas(pixel: number, size: number): number {
+  return Math.min(Math.max(pixel, 0), size);
 }
 
 function dotColor(object: PrevizObject): string {
@@ -214,7 +249,7 @@ function drawTopDown(
   }
 
   if (!value) return;
-  const [px, py] = worldToCanvas(view, [value[0], value[1]]);
+  const [px, py] = worldToCanvas(view, value);
   context.strokeStyle = PICK_RING;
   context.lineWidth = 2 * ratio;
   context.beginPath();
@@ -264,8 +299,8 @@ export function PrevizTopDownPicker({ objects, value, onPick }: PrevizTopDownPic
     // 落点就跟着偏。
     onPick(
       canvasToWorld(view, [
-        (event.clientX - rect.left) * (view.width / rect.width),
-        (event.clientY - rect.top) * (view.height / rect.height),
+        clampToCanvas((event.clientX - rect.left) * (view.width / rect.width), view.width),
+        clampToCanvas((event.clientY - rect.top) * (view.height / rect.height), view.height),
       ]),
     );
   };
@@ -295,9 +330,12 @@ export function PrevizTopDownPicker({ objects, value, onPick }: PrevizTopDownPic
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={PICKER_CLASS}
-      style={PREVIZ_TOP_DOWN_PICKER_SIZE}
     >
       {/*
+        CSS 尺寸挂在画布自己身上，让按钮去包住它，而不是反过来给按钮定尺寸让画布
+        `h-full`：按钮上任何一点内边距或边框都会从中间克扣，画布的 CSS 尺寸就不再是
+        整整 320。挂在这里，`view.width / rect.width` 恰好等于设备像素倍数。
+
         位图尺寸走 JSX 属性，不在 `drawTopDown` 里赋值：拿不到 2D 上下文时那个函数会
         提前 return，尺寸若跟在它后面就停在 canvas 默认的 300×150，而点击换算除的正是
         这个宽度——画面全空的同时每一次落点都是错的。
@@ -307,7 +345,8 @@ export function PrevizTopDownPicker({ objects, value, onPick }: PrevizTopDownPic
         data-testid="top-down-picker"
         width={view.width}
         height={view.height}
-        className="block h-full w-full rounded-md"
+        style={PREVIZ_TOP_DOWN_PICKER_SIZE}
+        className="block rounded-md"
       />
     </button>
   );
