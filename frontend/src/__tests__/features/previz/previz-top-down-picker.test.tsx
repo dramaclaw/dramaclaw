@@ -12,10 +12,14 @@ import {
   topDownView,
   worldToCanvas,
 } from "@/features/previz/domain/topDownMap";
+import { PREVIZ_CAMERA_COLOR } from "@/features/previz/engine/cameraModel";
+import { PREVIZ_GRID_CELL_SIZE } from "@/features/previz/engine/grid";
 import {
+  KIND_DOT_COLOR,
   PREVIZ_TOP_DOWN_KEY_STEP_M,
   PREVIZ_TOP_DOWN_PICKER_SIZE,
   PrevizTopDownPicker,
+  gridStepM,
 } from "@/features/previz/ui/PrevizTopDownPicker";
 
 // 回显 key，与 previz-camera-create-dialog.test.tsx 同一个做法。这里必须 mock 而不是
@@ -81,6 +85,14 @@ interface ArcCall {
   strokeStyle: string;
 }
 
+interface LineCall {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  strokeStyle: string;
+}
+
 /**
  * 记账用的假 2D 上下文。
  *
@@ -88,12 +100,16 @@ interface ArcCall {
  * 测试里一行都不会跑——参照点循环整个删掉都不会有用例变红。塞个假的进来之后，
  * 「每个对象画一个点、点在哪、什么颜色」才钉得住。
  *
- * 只记圆：底色和网格是装饰，画错了没有正确答案可断言；而圆的位置直接就是
- * `worldToCanvas` 的输出，是这个组件唯一一处「画面必须和数据对上」的地方。
+ * 圆和线都记。圆的位置直接就是 `worldToCanvas` 的输出；线里混着网格和那个原点十字，
+ * 而十字的两根线各自是哪个颜色不是装饰——X 红 Z 蓝是建模软件的通行约定，对调之后
+ * 用户在俯视图上读到的坐标轴与主视口的轴向小部件互相打架。
  */
 function fakeContext() {
   const arcs: ArcCall[] = [];
-  let pending: { x: number; y: number; radius: number } | null = null;
+  const lines: LineCall[] = [];
+  let pendingArc: { x: number; y: number; radius: number } | null = null;
+  let pendingLine: { x0: number; y0: number } | null = null;
+  let tip: { x: number; y: number } | null = null;
   const context = {
     fillStyle: "",
     strokeStyle: "",
@@ -101,33 +117,51 @@ function fakeContext() {
     clearRect: vi.fn(),
     fillRect: vi.fn(),
     beginPath: vi.fn(() => {
-      pending = null;
+      pendingArc = null;
+      pendingLine = null;
+      tip = null;
     }),
-    moveTo: vi.fn(),
-    lineTo: vi.fn(),
+    moveTo: vi.fn((x: number, y: number) => {
+      pendingLine = { x0: x, y0: y };
+    }),
+    lineTo: vi.fn((x: number, y: number) => {
+      tip = { x, y };
+    }),
     arc: vi.fn((x: number, y: number, radius: number) => {
-      pending = { x, y, radius };
+      pendingArc = { x, y, radius };
     }),
     fill: vi.fn(() => {
-      if (pending) arcs.push({ ...pending, ...styles() });
-      pending = null;
+      if (pendingArc) arcs.push({ ...pendingArc, ...styles() });
+      pendingArc = null;
     }),
     stroke: vi.fn(() => {
-      if (pending) arcs.push({ ...pending, ...styles() });
-      pending = null;
+      if (pendingArc) arcs.push({ ...pendingArc, ...styles() });
+      if (pendingLine && tip) {
+        lines.push({ ...pendingLine, x1: tip.x, y1: tip.y, strokeStyle: context.strokeStyle });
+      }
+      pendingArc = null;
+      pendingLine = null;
+      tip = null;
     }),
   };
   const styles = () => ({ fillStyle: context.fillStyle, strokeStyle: context.strokeStyle });
-  return { context, arcs };
+  return { context, arcs, lines };
 }
 
-/** 让画布交出假上下文。返回记下来的圆，随后断言直接读它。 */
-function captureArcs(): ArcCall[] {
-  const { context, arcs } = fakeContext();
+/** 让画布交出假上下文。返回记下来的圆与线，随后断言直接读它们。 */
+function captureDraw() {
+  const { context, arcs, lines } = fakeContext();
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     context as unknown as CanvasRenderingContext2D,
   );
-  return arcs;
+  return { arcs, lines };
+}
+
+/** 取最后一条。仓库的 tsc target 还没到 es2022，用不了 `Array.prototype.at`。 */
+function last<T>(items: T[]): T {
+  const item = items[items.length - 1];
+  if (item === undefined) throw new Error("expected at least one entry");
+  return item;
 }
 
 function picker() {
@@ -220,6 +254,44 @@ describe("PrevizTopDownPicker", () => {
     Object.defineProperty(window, "devicePixelRatio", { value: 1, configurable: true });
   });
 
+  it("caps the bitmap at twice the css size on a 3x screen", () => {
+    Object.defineProperty(window, "devicePixelRatio", { value: 3, configurable: true });
+    render(<PrevizTopDownPicker objects={[]} value={null} onPick={vi.fn()} />);
+
+    // 封顶 2：3× 手机上那第三倍显存换不来看得出来的清晰度，与 PrevizRenderer 的
+    // MAX_PIXEL_RATIO、PrevizAudioTrack 的 Math.min(2, …) 是同一个取舍。
+    expect(canvasOf().width).toBe(PREVIZ_TOP_DOWN_PICKER_SIZE.width * 2);
+    Object.defineProperty(window, "devicePixelRatio", { value: 1, configurable: true });
+  });
+
+  it("sizes the canvas itself so its css box is an exact multiple of the bitmap", () => {
+    render(<PrevizTopDownPicker objects={[]} value={null} onPick={vi.fn()} />);
+
+    // CSS 尺寸挂在画布上、不挂在按钮上：tailwind preflight 把全局 box-sizing 设成了
+    // border-box，按钮上任何一圈边框都会从画布的 CSS 尺寸里克扣（320 变 318），
+    // 位图仍按 320 铺，浏览器于是重采样——而按设备像素铺位图正是为了别让它发生。
+    expect(canvasOf().style.width).toBe(`${PREVIZ_TOP_DOWN_PICKER_SIZE.width}px`);
+    expect(canvasOf().style.height).toBe(`${PREVIZ_TOP_DOWN_PICKER_SIZE.height}px`);
+    expect(picker().style.width).toBe("");
+  });
+
+  it("pins a coordinate-carrying click that lands outside the canvas to its edge", () => {
+    const onPick = vi.fn();
+    render(<PrevizTopDownPicker objects={[]} value={null} onPick={onPick} />);
+    const view = viewFor([]);
+    stubRect(canvasOf(), { left: 500, top: 400, width: view.width, height: view.height });
+
+    // detail >= 1 却带着 (0, 0) 的合成点击：减完 rect 偏移是个大负数，不夹的话落点被
+    // 映射到画面外一大截——环压根不在画布上，用户点了一下什么都没发生，也不报错。
+    fireEvent.click(picker(), { clientX: 0, clientY: 0, detail: 1 });
+
+    // 夹到画布左上角，也就是取景框的左上角：看得见、再点一下就改得掉。
+    const [x, z] = onPick.mock.calls[0][0] as [number, number];
+    const [cornerX, cornerZ] = canvasToWorld(view, [0, 0]);
+    expect(x).toBeCloseTo(cornerX, 9);
+    expect(z).toBeCloseTo(cornerZ, 9);
+  });
+
   it("refuses a click it cannot measure instead of picking a NaN spot", () => {
     const onPick = vi.fn();
     render(<PrevizTopDownPicker objects={[]} value={null} onPick={onPick} />);
@@ -272,14 +344,34 @@ describe("PrevizTopDownPicker", () => {
     expect(onPick.mock.calls[0][0]).toEqual([0, 0]);
   });
 
+  it("keeps the spot already picked when activated without coordinates", async () => {
+    const user = userEvent.setup();
+    const onPick = vi.fn();
+    render(<PrevizTopDownPicker objects={[]} value={[5, 5]} onPick={onPick} />);
+    picker().focus();
+
+    // 已经把人放在 (5, 5) 了，焦点还在按钮上，误按一下回车 / 空格（或读屏软件重新激活
+    // 一次）不能把落点静默拽回取景中心——那比「永远落在左上角」更隐蔽，一眼看不出来。
+    await user.keyboard("{Enter}");
+    await user.keyboard(" ");
+
+    expect(onPick).toHaveBeenCalledTimes(2);
+    expect(onPick.mock.calls[0][0]).toEqual([5, 5]);
+    expect(onPick.mock.calls[1][0]).toEqual([5, 5]);
+  });
+
   it("nudges the spot with the arrow keys so a keyboard user can aim", () => {
     const onPick = vi.fn();
     render(<PrevizTopDownPicker objects={[]} value={[1, 1]} onPick={onPick} />);
 
     // 俯视图里 +X 朝右、+Z 朝下（topDownMap 的约定，源头是 domain/view.ts 顶视图的
     // up = [0, 0, -1]）。所以「下」键必须往 +Z 走，反了的话画面上的光标会往上跑。
+    // 第一步的期望值写成字面量：拿 PREVIZ_TOP_DOWN_KEY_STEP_M 去拼期望，常量改成 1 m
+    // 时两边一起变，等于没有期望值。半米这个档是选出来的（对手戏两人隔一米上下，
+    // 1 m 一档中间一个可选值都没有），值得单独钉一次。
     expect(fireEvent.keyDown(picker(), { key: "ArrowRight" })).toBe(false);
-    expect(onPick).toHaveBeenLastCalledWith([1 + PREVIZ_TOP_DOWN_KEY_STEP_M, 1]);
+    expect(onPick).toHaveBeenLastCalledWith([1.5, 1]);
+    expect(PREVIZ_TOP_DOWN_KEY_STEP_M).toBe(0.5);
     fireEvent.keyDown(picker(), { key: "ArrowDown" });
     expect(onPick).toHaveBeenLastCalledWith([1, 1 + PREVIZ_TOP_DOWN_KEY_STEP_M]);
     fireEvent.keyDown(picker(), { key: "ArrowLeft" });
@@ -324,7 +416,7 @@ describe("PrevizTopDownPicker", () => {
   });
 
   it("draws one reference dot per object, characters in their own colour", () => {
-    const arcs = captureArcs();
+    const { arcs } = captureDraw();
     const character = { ...objectAt("character", 2, -4), color: "#ff00ff" } as PrevizObject;
     const objects = [character, objectAt("prop", -3, 1), objectAt("light", 0, 5)];
     render(<PrevizTopDownPicker objects={objects} value={null} onPick={vi.fn()} />);
@@ -335,23 +427,88 @@ describe("PrevizTopDownPicker", () => {
     const [px, py] = worldToCanvas(view, [2, -4]);
     expect(arcs[0].x).toBeCloseTo(px, 9);
     expect(arcs[0].y).toBeCloseTo(py, 9);
-    // 所有人物共用同一副模型，辨识色是唯一能在俯视图上认出「哪个点是谁」的东西。
-    expect(arcs[0].fillStyle).toBe("#ff00ff");
-    // 其余按分类色，三种 kind 互不相同——否则场上的灯和道具在俯视图上分不开。
-    expect(new Set(arcs.map((arc) => arc.fillStyle)).size).toBe(3);
+    // 逐个钉死而不是只断言「三个互不相同」：`domain/objects.ts` 给新灯的默认 color 是
+    // 白色，与这里的人物紫、道具绿本来就不同，光断言互异的话，把灯改成「用它自己的
+    // color」照样全绿——而那正是这三个色值要防的事（灯的色温是白/暖白，画成点会跟
+    // 网格线和高亮环糊在一起）。
+    expect(arcs.map((arc) => arc.fillStyle)).toEqual(["#ff00ff", "#9ad0a0", "#fff3b0"]);
+  });
+
+  it("keeps the kind colours in step with the same objects in 3D", () => {
+    // 机位色从源头 import：`engine/cameraModel.ts` 那边一改，这条当场红。
+    expect(KIND_DOT_COLOR.camera).toBe(
+      `#${PREVIZ_CAMERA_COLOR.body.toString(16).padStart(6, "0")}`,
+    );
+    // 灯与物件是硬抄 `engine/sceneGraph.ts` 那份模块私有的 `KIND_COLOR`，没有源头可
+    // import。字面量钉在这里，改色时至少会红一次，提醒改的人回去看另一处。
+    expect(KIND_DOT_COLOR.light).toBe("#fff3b0");
+    expect(KIND_DOT_COLOR.prop).toBe("#9ad0a0");
   });
 
   it("rings the picked spot on top of the reference dots", () => {
-    const arcs = captureArcs();
+    const { arcs } = captureDraw();
     const objects = [objectAt("character", 2, -4)];
-    render(<PrevizTopDownPicker objects={objects} value={[-3, 3]} onPick={vi.fn()} />);
+    const view = viewFor(objects);
+    const { rerender } = render(
+      <PrevizTopDownPicker objects={objects} value={[-3, 3]} onPick={vi.fn()} />,
+    );
 
     expect(arcs).toHaveLength(2);
-    const view = viewFor(objects);
     const [px, py] = worldToCanvas(view, [-3, 3]);
     expect(arcs[1].x).toBeCloseTo(px, 9);
     expect(arcs[1].y).toBeCloseTo(py, 9);
     // 环比参照点大：两者重合时（把人放在已有人物脚下）还得看得出来选中的是哪一个。
     expect(arcs[1].radius).toBeGreaterThan(arcs[0].radius);
+
+    // 光在 mount 时画对不够：组件是受控的，落点变了必须跟着重画。少了这一步，用户点
+    // 第二下、第三下时 `objects` 没变，环就永远停在第一次画的地方，而中间那个 3D 木偶
+    // 预览是跟着走的——左栏和中栏说两件事。
+    rerender(<PrevizTopDownPicker objects={objects} value={[4, -1]} onPick={vi.fn()} />);
+
+    expect(arcs).toHaveLength(4);
+    const [movedX, movedY] = worldToCanvas(view, [4, -1]);
+    expect(arcs[3].x).toBeCloseTo(movedX, 9);
+    expect(arcs[3].y).toBeCloseTo(movedY, 9);
+  });
+
+  it("paints the origin cross in the axis colours, X across and Z down", () => {
+    const { lines } = captureDraw();
+    render(<PrevizTopDownPicker objects={[]} value={null} onPick={vi.fn()} />);
+    const view = viewFor([]);
+    const [originX, originZ] = worldToCanvas(view, [0, 0]);
+
+    // X 红、Z 蓝是建模软件的通行约定，主视口的轴向小部件用的就是这两个色。对调之后
+    // 两块画面上的轴互相打架，而画面本身看着仍然「像那么回事」。
+    // 十字压在网格之后画，所以过原点的那两条线里，最后一条才是十字本身。
+    const across = last(lines.filter((l) => l.y0 === l.y1 && l.y0 === originZ));
+    const down = last(lines.filter((l) => l.x0 === l.x1 && l.x0 === originX));
+    expect(across.strokeStyle).toBe("#f87171");
+    expect(down.strokeStyle).toBe("#60a5fa");
+    // X 轴那条是横着跨满整幅画的（世界 x 变、z 恒为 0）。
+    expect(across).toMatchObject({ x0: 0, x1: view.width });
+    expect(down).toMatchObject({ y0: 0, y1: view.height });
+  });
+});
+
+describe("gridStepM", () => {
+  // 这三档钉的是同一条契约：格子间距不小于阈值，且始终是整米格的 2 的幂倍。
+  // 恒返回 1 m 的话，宽场景里一格只剩一两个像素，两百多条线糊成一片灰。
+  it("keeps the metre grid when there is room for it", () => {
+    expect(gridStepM(26.67, 8)).toBe(PREVIZ_GRID_CELL_SIZE);
+  });
+
+  it("doubles the step until the lines are far enough apart", () => {
+    // 4 px/m：1 m 一格只有 4 px，翻一倍到 2 m 才够 8 px。
+    expect(gridStepM(4, 8)).toBe(2 * PREVIZ_GRID_CELL_SIZE);
+    // 0.5 px/m（跨度几百米的外景）：要 16 m 一格。
+    expect(gridStepM(0.5, 8)).toBe(16 * PREVIZ_GRID_CELL_SIZE);
+  });
+
+  it("stays on whole-metre steps even at absurd scales", () => {
+    // 直接用 `阈值 / ppm` 当步长会算出 2.7 m 一格，那张网就没法当尺子数了。
+    const step = gridStepM(0.003, 8);
+    expect(step).toBe(4096 * PREVIZ_GRID_CELL_SIZE);
+    expect(Math.log2(step / PREVIZ_GRID_CELL_SIZE) % 1).toBe(0);
+    expect(step * 0.003).toBeGreaterThanOrEqual(8);
   });
 });
