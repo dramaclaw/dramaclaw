@@ -349,6 +349,121 @@ describe("PrevizInspector", () => {
     expect(onChange).toHaveBeenLastCalledWith({ bodyType: "heavy" });
   });
 
+  // 三档逐个写死，理由同上面那张体型表。少一档的表现同样是「存得进去、选不出来」。
+  it("offers every height policy in the dropdown", () => {
+    renderInspector(createPrevizObject("character", []));
+
+    const options = Array.from(
+      screen.getByLabelText("previz.inspector.heightPolicy").querySelectorAll("option"),
+    );
+    expect(options.map((option) => option.value)).toEqual(["follow", "ground", "plane"]);
+  });
+
+  it("edits the height policy", async () => {
+    const user = userEvent.setup();
+    const onChange = renderInspector(createPrevizObject("character", []));
+
+    await user.selectOptions(screen.getByLabelText("previz.inspector.heightPolicy"), "ground");
+
+    expect(onChange).toHaveBeenLastCalledWith({ heightPolicy: "ground" });
+  });
+
+  /**
+   * 切到「锁定平面」要把 `planeY` 锁在他现在站的那一层，而不是留在工厂给的 0：
+   * 站在二楼的人一改策略就会掉到地面上，用户看到的是「选了个策略人就掉下去了」。
+   *
+   * 夹具的 y 必须非零——用 0 的话「读了当前高度」与「压根没读、留在 0」两种实现
+   * 都绿，是一条空跑的断言。
+   */
+  it("locks the plane height to where the character already stands", async () => {
+    const user = userEvent.setup();
+    const character = createPrevizObject("character", []);
+    const onChange = renderInspector({
+      ...character,
+      transform: { ...character.transform, position: [1, 3.5, -2] },
+    });
+
+    await user.selectOptions(screen.getByLabelText("previz.inspector.heightPolicy"), "plane");
+
+    expect(onChange).toHaveBeenLastCalledWith({ heightPolicy: "plane", planeY: 3.5 });
+  });
+
+  it("edits the plane height once the policy locks it", () => {
+    const character = createPrevizObject("character", []);
+    const onChange = renderInspector({ ...character, heightPolicy: "plane", planeY: 3.5 });
+
+    const input = screen.getByLabelText("previz.inspector.planeY");
+    expect(input).toHaveValue(3.5);
+
+    setValue(input, "-2.25");
+    expect(onChange).toHaveBeenLastCalledWith({ planeY: -2.25 });
+  });
+
+  // 只有「锁定平面」那一档读得到这个数，其余两档摆一个改不出效果的输入框在那里，
+  // 用户会以为自己改的高度没生效。
+  it("hides the plane height under the other policies", () => {
+    renderInspector(createPrevizObject("character", []));
+
+    expect(screen.queryByLabelText("previz.inspector.planeY")).toBeNull();
+  });
+
+  /**
+   * 非有限值不算一次修改。放行的话 store 的 `normalizeObject`（走 `parseObject` 的
+   * `num(source.planeY, 0)`）会把它**静默洗成 0**——人物瞬间掉到地面，而输入框里
+   * 用户敲的东西还在，没有任何地方说这次编辑被改写了。理由与 `readNumber` 同源。
+   */
+  it("ignores a non-finite plane height", () => {
+    const character = createPrevizObject("character", []);
+    const onChange = renderInspector({ ...character, heightPolicy: "plane", planeY: 3.5 });
+
+    const input = screen.getByLabelText("previz.inspector.planeY");
+    setValue(input, "");
+    setValue(input, "NaN");
+    setValue(input, "Infinity");
+    setValue(input, "-Infinity");
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 「贴合地面」的 y 是渲染器每帧打射线算出来的（`PrevizRenderer.standGroundCharacters`
+   * 直接写 `node.position.y`），「锁定平面」的 y 由求值层压成 `planeY`
+   * （`evaluate.ts` 的 `applyHeightPolicies`）。两档下 Y 输入框改了都不会有任何反应，
+   * 不置灰就是一个看起来坏了的控件；那条 note 是唯一说明「为什么改不动」的地方。
+   */
+  it("disables the Y entry while the height is computed", async () => {
+    const user = userEvent.setup();
+    const character = createPrevizObject("character", []);
+    renderInspector(character);
+
+    const y = screen.getByLabelText("previz.inspector.position.y");
+    expect(y).toBeEnabled();
+    expect(screen.queryByTestId("previz-inspector-height-note")).toBeNull();
+
+    await user.selectOptions(screen.getByLabelText("previz.inspector.heightPolicy"), "ground");
+
+    expect(screen.getByLabelText("previz.inspector.position.y")).toBeDisabled();
+    expect(screen.getByTestId("previz-inspector-height-note")).toHaveTextContent(
+      "previz.inspector.heightNote.ground",
+    );
+
+    await user.selectOptions(screen.getByLabelText("previz.inspector.heightPolicy"), "plane");
+
+    expect(screen.getByLabelText("previz.inspector.position.y")).toBeDisabled();
+    expect(screen.getByTestId("previz-inspector-height-note")).toHaveTextContent(
+      "previz.inspector.heightNote.plane",
+    );
+  });
+
+  // 置灰的只有 Y：X 与 Z 归走位管，任何一档策略都碰不到它们。
+  it("leaves X and Z editable under every height policy", () => {
+    const character = createPrevizObject("character", []);
+    renderInspector({ ...character, heightPolicy: "ground" });
+
+    expect(screen.getByLabelText("previz.inspector.position.x")).toBeEnabled();
+    expect(screen.getByLabelText("previz.inspector.position.z")).toBeEnabled();
+  });
+
   it("clamps the height into the supported range", () => {
     const onChange = renderInspector(createPrevizObject("character", []));
 
