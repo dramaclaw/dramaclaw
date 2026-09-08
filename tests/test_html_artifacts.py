@@ -137,7 +137,8 @@ def test_export_refuses_unparsed_css_resource(tmp_path):
 @pytest.mark.parametrize('component', ['directory', 'database'])
 def test_storage_refuses_symlinked_peer_database(tmp_path, component):
     own, peer = tmp_path / 'own', tmp_path / 'peer'
-    own.mkdir(); peer.mkdir()
+    own.mkdir()
+    peer.mkdir()
     secret = ArtifactStore(peer).create(title='secret', html='private')
     target = own / 'freezone' / '_html_artifacts'
     target.parent.mkdir(parents=True)
@@ -153,7 +154,8 @@ def test_storage_refuses_symlinked_peer_database(tmp_path, component):
 def test_storage_scope_binding_refuses_copied_peer_database(tmp_path):
     import shutil
     own, peer = tmp_path / 'own', tmp_path / 'peer'
-    own.mkdir(); peer.mkdir()
+    own.mkdir()
+    peer.mkdir()
     secret = ArtifactStore(peer).create(title='secret', html='private')
     target = own / 'freezone' / '_html_artifacts'
     target.mkdir(parents=True)
