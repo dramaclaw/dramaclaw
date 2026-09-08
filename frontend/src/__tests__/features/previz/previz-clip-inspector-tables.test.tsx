@@ -21,10 +21,12 @@ function twoCameras(): [string, string] {
 }
 
 /**
- * 在 `at` 处切一刀，切片从那里铺到时间轴末尾。`at` 默认 0 时片段长度正好等于时间轴
- * 总长，`moveClip` 的 `maxFrame - span` 会把它钉死在 0——要测平移得往后挪一挪。
+ * 在 `at` 处切一刀，切片从那里铺到时间轴末尾，默认 40..120。
+ *
+ * 默认值特意不是 0：那样片段长度正好等于时间轴总长，`moveClip` 的 `maxFrame - span`
+ * 会把它钉死在 0，平移类的断言会在没动过的片段上「通过」。要那条退化的片段就显式传 0。
  */
-function seedCut(at = 0): { cutId: string; camA: string; camB: string } {
+function seedCut(at = 40): { cutId: string; camA: string; camB: string } {
   const [camA, camB] = twoCameras();
   usePrevizStore.getState().setTimelineFrame(at);
   usePrevizStore.getState().cutToCamera(camA);
@@ -141,6 +143,31 @@ describe('PrevizClipInspector audio panel', () => {
       endFrame: 55,
       offsetMs: 0,
     });
+  });
+
+  it('shortens the clip when the end frame is edited', async () => {
+    const user = userEvent.setup();
+    seedAudio();
+    render(<PrevizClipInspector />);
+    const end = screen.getByRole('spinbutton', { name: 'previz.clip.endFrame' });
+    await user.clear(end);
+    await user.type(end, '30');
+    await user.tab();
+    // 10..40 收到 10..30。起点不动才说明改的是长度：这是这个框和上面那个的分工。
+    expect(usePrevizStore.getState().scene.timeline.audio[0]).toMatchObject({
+      startFrame: 10,
+      endFrame: 30,
+    });
+  });
+
+  it('reads the offset off the clip', async () => {
+    const clipId = seedAudio();
+    usePrevizStore.getState().setTimelineFrame(25);
+    // 每条新片段的偏移都是 0（`insertAudioClip` 写死的），只断言 0 分不出框里是接了
+    // 线还是印了个常量。裁一次起点把 15 帧折算成 500 毫秒，这才是那条注释说的事。
+    usePrevizStore.getState().trimClipToPlayhead(clipId, 'start');
+    render(<PrevizClipInspector />);
+    expect(screen.getByLabelText('previz.clip.audio.offset')).toHaveValue('500');
   });
 
   it('removes the audio clip', async () => {
