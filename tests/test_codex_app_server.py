@@ -470,7 +470,7 @@ async def test_app_server_native_tool_search_preserves_gateway_event_chain(
     discovered_tool = next(
         tool for tool in discovered_namespace["tools"] if tool.get("name") == tool_name
     )
-    expected_schema = dramaclaw_mcp.TOOLS[tool_name][0]
+    expected_schema = dramaclaw_mcp._agent_tools()[tool_name][0]
     assert discovered_tool["name"] == tool_name
     assert discovered_tool["parameters"] == expected_schema["parameters"]
     assert discovered_tool["defer_loading"] is True

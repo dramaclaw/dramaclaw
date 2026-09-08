@@ -13,6 +13,7 @@ from novelvideo.egress_context import (
     TrustedEgressContext,
     TrustedRunnerEnvelope,
 )
+from novelvideo.ports import get_usage_meter
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import (
     TaskCancelled,
@@ -1267,34 +1268,116 @@ async def _run_freezone_text_generate_async(
         "generate_freezone_text",
         prompt=prompt,
     )
-    data = {"generated_text": generated_text, "model": model}
-    out = outputs_dir(project_dir, "freezone_text_generate") / f"{job_id}.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    import json
+    from novelvideo.utils.document_parsers import count_billable_text_chars
 
-    out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    rel = out.relative_to(project_dir).as_posix()
-    result = {
-        "job_id": job_id,
-        "output_format": "json",
-        "output_path": str(out),
-        "output_url": make_static_url_for_context(ctx, rel),
-        **data,
+    billable_chars = count_billable_text_chars(generated_text)
+    data = {
+        "generated_text": generated_text,
+        "model": model,
+        "billing": {
+            "operation": "text_generate",
+            "billable_chars": billable_chars,
+            "pricing_quantity": billable_chars,
+            "quantity_source": "generated_text",
+        },
     }
-    history_record = _append_node_history(
-        ctx=ctx,
-        project_dir=project_dir,
-        payload=payload,
-        task_type="freezone_text_generate",
-        job_id=job_id,
-        media_type="text",
-        input_preview=prompt[:240],
-        prompt=prompt,
-        model=model,
-        result=result,
+    billing_metadata = (
+        envelope.get("billing_metadata")
+        if isinstance(envelope.get("billing_metadata"), dict)
+        else {}
     )
-    if history_record:
-        result["generation_history_record"] = history_record
+    feature_key = str(billing_metadata.get("feature_key") or "").strip()
+    run_task_id = str(envelope.get("__run_task_id") or "").strip()
+    result_billing_ack = billing_metadata.get("result_billing_version_ack")
+    existing_reservation_id = str(
+        billing_metadata.get("feature_credit_reservation_id")
+        or billing_metadata.get("feature_credit_charge_id")
+        or ""
+    ).strip()
+    reservation_id = ""
+    # The runner owns the output-priced reservation only after EE explicitly
+    # acknowledges protocol v2.  With old EE, the legacy estimate was already
+    # reserved at enqueue time; reserving again here would double-charge.
+    if (
+        feature_key
+        and run_task_id
+        and type(result_billing_ack) is int
+        and result_billing_ack == 2
+        and not existing_reservation_id
+    ):
+        reservation = await get_usage_meter().reserve_feature_start_credits(
+            user_id=ctx.requester_user_id,
+            feature_key=feature_key,
+            product_surface="freezone",
+            project_id=ctx.project_id,
+            resource_kind="script",
+            task_id=run_task_id,
+            task_type="freezone_text_generate",
+            quantity=billable_chars,
+            idempotency_key=(
+                f"task_result:{ctx.requester_user_id}:{feature_key}:{run_task_id}"
+            ),
+            require_price_rule=True,
+            require_positive_cost=True,
+            params={
+                "operation": "text_generate",
+                "billable_chars": billable_chars,
+                "pricing_quantity": billable_chars,
+                "pricing_metrics": {
+                    "call_count": 1,
+                    "item_count": 1,
+                    "billable_chars": billable_chars,
+                },
+            },
+            metadata={
+                "source": "trusted_task_result",
+                "quantity_source": "generated_text",
+            },
+        )
+        reservation_id = str(reservation.get("id") or "").strip()
+        if not reservation_id:
+            raise RuntimeError("text result billing did not return a reservation ID")
+    # Full text becomes user-readable through both static output and history.
+    # Neither may be published until the output-priced reservation succeeds.
+    try:
+        out = outputs_dir(project_dir, "freezone_text_generate") / f"{job_id}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        import json
+
+        out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        rel = out.relative_to(project_dir).as_posix()
+        result = {
+            "job_id": job_id,
+            "output_format": "json",
+            "output_path": str(out),
+            "output_url": make_static_url_for_context(ctx, rel),
+            **data,
+        }
+        history_record = _append_node_history(
+            ctx=ctx,
+            project_dir=project_dir,
+            payload=payload,
+            task_type="freezone_text_generate",
+            job_id=job_id,
+            media_type="text",
+            input_preview=prompt[:240],
+            prompt=prompt,
+            model=model,
+            result=result,
+        )
+        if history_record:
+            result["generation_history_record"] = history_record
+    except BaseException:
+        if reservation_id:
+            # Publication may have partially succeeded. Preserve the hold for
+            # reconciliation instead of refunding potentially readable output.
+            await get_usage_meter().mark_feature_credit_settlement_for_review(
+                reservation_id,
+                metadata={"source": "text_result_publication_failed"},
+            )
+        raise
+    if reservation_id:
+        result["__feature_credit_reservation_id"] = reservation_id
     return result
 
 

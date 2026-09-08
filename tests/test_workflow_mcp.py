@@ -386,7 +386,7 @@ async def test_skill_reference_rejects_path_traversal():
     )
     payload = _result_payload(result)
     assert payload["ok"] is False
-    assert payload["status"] == "workflow_reference_not_found"
+    assert payload["status"] == "tool_arguments_invalid"
 
 
 def test_catalog_search_is_compact_and_progressive(monkeypatch):

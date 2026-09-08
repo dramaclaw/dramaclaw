@@ -19,7 +19,7 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 `freezone_*` 工具不在工具列表里，统一用 `tool_call(name="<工具名>", arguments={...})` 调用；JSON 里先写 `name` 再写 `arguments`（arguments 很大时后写的 `name` 容易被漏掉，缺 `name` 会直接报错）；`arguments` 必须传 JSON 对象——不要传转义后的 JSON 字符串，大型嵌套 intent 会因转义损坏而反复失败。**不要先跑 `tool_search` 或 `tool_describe`**——`tool_call` 不依赖它们。**顺序固定：读规划包 → 生成结构化 intent → 编译草稿 → 用户确认 → 创建**。`deliverable`、Recipe、字段枚举都来自规划包，跳过它自造字段会被校验反复打回。所需参数如下：
 
 - 读规划包：`tool_call(name="freezone_get_workflow_skill", arguments={"skill_id": ..., "inputs": {...}})`
-- 生成准入：`tool_call(name="freezone_begin_agent_product_generation", arguments={"product_kind": "workflow_result", "generation_session_id": ..., "normalized_inputs": {...}})`
+- 生成准入：`tool_call(name="freezone_begin_agent_product_generation", arguments={"product_kind": "workflow_result", "generation_session_id": ..., "artifact_id": "<skill_id>@<skill_version>", "skill_id": ..., "skill_version": ..., "normalized_inputs": {...}})`；`artifact_id`、`skill_id` 必须与随后提交的 `compiled.skill_id` 一致。
 - 规划草稿：`tool_call(name="freezone_prepare_workflow_draft", arguments={"canvas_id": ..., "operation_id": ..., "intent": {...}})`
 - 自定义拓扑草稿：`tool_call(name="freezone_prepare_workflow_plan_draft", arguments={"canvas_id": ..., "plan": {...}})`；返回精确预览而不直接写画布
 - 修改草稿：`freezone_patch_workflow_draft`，arguments `{"draft_id": ..., "expected_revision": ..., "changes": {...}}`

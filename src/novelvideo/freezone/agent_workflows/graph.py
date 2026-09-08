@@ -74,20 +74,20 @@ MODEL_ALIASES_BY_NODE_TYPE = {
         "openai/gpt-image-2": "newapi_gpt_image2",
     },
     "videoNode": {
-        # Workflow/canvas plans use the public model ids exposed by the node
-        # schema. Provider routing prefixes belong to the backend generation
-        # request and must never leak into canvas node data.
-        "omni-flash": "seedance-2.0-fast",
-        "omni_flash": "seedance-2.0-fast",
-        "seedance_2_0_fast": "seedance-2.0-fast",
-        "newapi_seedance-2.0-fast": "seedance-2.0-fast",
-        "newapi_seedance-2.0": "seedance-2.0",
-        "newapi_seedance-1.5-pro": "seedance-1.5-pro",
-        "newapi_seedance-1.0-pro-fast": "seedance-1.0-pro-fast",
-        "huimeng_seedance-2.0-fast": "seedance-2.0-fast",
-        "huimeng_seedance-2.0": "seedance-2.0",
-        "huimeng_seedance-1.5-pro": "seedance-1.5-pro",
-        "huimeng_seedance-1.0-pro-fast": "seedance-1.0-pro-fast",
+        # Canvas model selection IDs include the newapi_ prefix. Do not strip
+        # it into a transport/pricing model name. Keep this alias list explicit:
+        # unknown/custom IDs must survive for authoritative live enum validation.
+        "omni-flash": "newapi_seedance-2.0-fast",
+        "omni_flash": "newapi_seedance-2.0-fast",
+        "seedance_2_0_fast": "newapi_seedance-2.0-fast",
+        "seedance-2.0-fast": "newapi_seedance-2.0-fast",
+        "seedance-2.0": "newapi_seedance-2.0",
+        "seedance-1.5-pro": "newapi_seedance-1.5-pro",
+        "seedance-1.0-pro-fast": "newapi_seedance-1.0-pro-fast",
+        "huimeng_seedance-2.0-fast": "newapi_seedance-2.0-fast",
+        "huimeng_seedance-2.0": "newapi_seedance-2.0",
+        "huimeng_seedance-1.5-pro": "newapi_seedance-1.5-pro",
+        "huimeng_seedance-1.0-pro-fast": "newapi_seedance-1.0-pro-fast",
     },
 }
 

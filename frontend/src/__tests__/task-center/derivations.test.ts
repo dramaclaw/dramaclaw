@@ -47,6 +47,45 @@ describe("ageMs", () => {
 });
 
 describe("displayLabel", () => {
+  it.each([
+    ["freezone_agent_workflow_result", "创建工作流", "Create workflow"],
+    ["freezone_agent_recipe_result", "生成 Recipe", "Generate Recipe"],
+    ["freezone_workflow_confirm", "确认工作流", "Confirm workflow"],
+  ])("labels %s without exposing the operation scope", (task_type, zh, en) => {
+    const task = sampleTask({ task_type, episode: 0, scope: "agent_product_123" });
+    expect(displayLabel(task, zhT)).toBe(zh);
+    expect(displayLabel(task, enT)).toBe(en);
+    expect(task.scope).toBe("agent_product_123");
+  });
+
+  it("hides the internal workflow draft scope", () => {
+    const task = sampleTask({
+      task_type: "freezone_workflow_confirm",
+      episode: 0,
+      scope: "user_admin_en845w:workflow_draft_abc:1",
+    });
+    expect(displayLabel(task, zhT)).toBe("确认工作流");
+    expect(displayLabel(task, enT)).toBe("Confirm workflow");
+  });
+
+  it("hides the opaque video job id from freezone video titles", () => {
+    const task = sampleTask({
+      task_type: "freezone_video_gen",
+      episode: 0,
+      scope: "043a194450664f66",
+    });
+    expect(displayLabel(task, zhT)).toBe("生成自由区视频");
+    expect(displayLabel(task, enT)).toBe("Generate Freezone video");
+  });
+
+  it("preserves a supplied workflow name without inventing one from its ID", () => {
+    const task = sampleTask({
+      task_type: "freezone_agent_workflow_result", episode: 0,
+      scope: "agent_product_123", metadata: { workflow_name: "雨夜机器人" },
+    });
+    expect(displayLabel(task, zhT)).toBe("创建工作流 · 雨夜机器人");
+  });
+
   // 用真词条表跑：后端那份中文 display_name 只是兜底，界面要显示的是词条里的那条。
   const t = zhT as unknown as (k: string, opts?: Record<string, unknown>) => string;
 

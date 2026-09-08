@@ -82,6 +82,40 @@ def _load_plugin_module():
     return module
 
 
+@pytest.mark.parametrize("external_mcp", [False, True])
+@pytest.mark.parametrize(
+    "product_kind",
+    ["workflow_result", "recipe_result", "workflow_generate", "recipe_generate"],
+)
+def test_product_admission_preserves_generic_result_routing(
+    monkeypatch, external_mcp, product_kind
+):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1" if external_mcp else "0")
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    requests = []
+
+    def request(method, path, *, body):
+        requests.append(body)
+        return {"ok": True, "data": {
+            "operation_id": "op-1", "product_kind": product_kind,
+            "task_id": "task-1", "generation_session_id": "session-1",
+        }}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_begin_agent_product_generation({
+        "product_kind": product_kind, "generation_session_id": "session-1",
+        "normalized_inputs": {"prompt": "example"},
+    })
+    assert len(requests) == 1
+    assert requests[0]["product_kind"] == product_kind
+    assert result["operation_id"] == "op-1"
+    assert result["next_action"] == "generate_product_result"
+    assert "required_next_tool" not in result
+    assert "freezone_prepare_workflow_draft" not in result["agent_instruction"]
+    assert "matching persisted result tool" in result["agent_instruction"]
+
+
 def _assert_real_mcp_output(plugin, tool_name, result):
     """Validate one real handler result through the production MCP envelope."""
     from novelvideo.chat import dramaclaw_mcp
@@ -1577,8 +1611,38 @@ def test_workflow_runtime_preflight_blocks_unavailable_model(monkeypatch):
             "path": "runtime.models",
             "message": "configured model is unavailable: missing-image-model",
             "code": "model_unavailable",
+            "available_models": [{"id": "available-image-model"}],
         }
     ]
+
+
+def test_workflow_runtime_preflight_recommended_returns_live_choices(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_available", lambda: True)
+    entry = {"id": "image-a", "resolutionOptions": ["2K"], "qualityOptions": []}
+    monkeypatch.setattr(plugin, "_request", lambda *args, **kwargs: {
+        "ok": True, "data": [entry] if args[1].endswith("/models") else {},
+    })
+    result = plugin._workflow_runtime_preflight({"plan": {"nodes": [{
+        "id": "image", "node_type": "imageGenNode", "data": {"model": "recommended"},
+    }]}}, project_id="project-a")
+    blocker = result["blockers"][0]
+    assert blocker["code"] == "model_selection_required"
+    assert blocker["available_models"] == [entry]
+    assert "cheapest" in blocker["message"]
+
+
+def test_workflow_capability_errors_explain_all_supported_values_and_omission():
+    plugin = _load_plugin_module()
+    blockers = plugin._workflow_node_capability_blockers({
+        "id": "image", "node_type": "imageGenNode",
+        "data": {"model": "image-a", "size": "1K", "quality": "low"},
+    }, {"resolutionOptions": ["2K", "4K"]})
+    assert len(blockers) == 2
+    assert blockers[0]["allowed_values"] == ["2K", "4K"]
+    assert blockers[1]["allowed_values"] == []
+    assert blockers[1]["recovery"] == "omit_parameter"
+    assert "omit" in blockers[1]["message"]
 
 
 def test_workflow_runtime_preflight_blocks_unavailable_live_model_catalog(

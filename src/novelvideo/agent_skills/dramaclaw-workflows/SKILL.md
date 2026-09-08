@@ -127,7 +127,9 @@ including `480P` whenever the schema lists it.
    `freezone_get_workflow_skill` when the standalone server is unavailable. Use only
    the returned Recipe summaries and input contract.
 3. Call `freezone_begin_agent_product_generation` with `product_kind="workflow_result"`, a stable
-   generation session, and the normalized inputs before authoring the result.
+   generation session, `skill_id`, `skill_version`, `artifact_id="<skill_id>@<skill_version>"`,
+   and the normalized inputs before authoring the result. These Skill identities must match the
+   later compiled result.
 4. For a normal workflow, submit one compact `freezone_workflow_intent.v1` and the admitted
    `operation_id` to `freezone_prepare_workflow_draft`.
 5. Present the returned preview. Adjust it only with `freezone_patch_workflow_draft`.

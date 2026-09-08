@@ -493,6 +493,26 @@ describe("canvas chat commands", () => {
     ]);
   });
 
+  it.each([
+    "newapi_seedance-2.0-fast",
+    "newapi_seedance-2.0",
+    "newapi_seedance-1.5-pro",
+    "newapi_seedance-1.0-pro-fast",
+  ])("accepts the workflow compiler's canonical video model %s", (model) => {
+    const envelopes = extractCanvasChatCommandEnvelopes([{
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{
+        type: "create_node",
+        node_type: CANVAS_NODE_TYPES.video,
+        data: { displayName: "测试视频", prompt: "雨夜撑伞", model },
+      }],
+    }]);
+    const result = applyCanvasChatCommands(envelopes);
+    expect(result.errors).toEqual([]);
+    expect(result.applied).toBe(1);
+    expect(useCanvasStore.getState().nodes[0]?.data.model).toBe(model);
+  });
+
   it("rejects invented image model ids before creating image nodes", () => {
     const envelopes = extractCanvasChatCommandEnvelopes([
       {

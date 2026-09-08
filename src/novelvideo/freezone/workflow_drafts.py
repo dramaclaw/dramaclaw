@@ -571,6 +571,16 @@ def finish_workflow_draft_confirmation(
         bound_task_id = str(payload.get("task_id") or "")
         if expected_task_id and expected_task_id != bound_task_id:
             raise ValueError("workflow draft confirmation task changed")
+        current_status = str(payload.get("status") or "")
+        # Browser delivery and task settlement race independently. Once the
+        # browser has confirmed delivery, a late timeout/submitted callback
+        # from the task runner must not move the presentation state backward.
+        if current_status == "confirmed":
+            return deepcopy(payload)
+        # A submitted operation may still reconcile to confirmed. Returning it
+        # to ready would incorrectly invite a duplicate confirmation attempt.
+        if current_status == "submitted" and outcome == "ready":
+            return deepcopy(payload)
         now = time.time()
         payload["status"] = outcome
         payload["updated_at"] = now

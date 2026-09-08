@@ -181,6 +181,23 @@ def test_completion_notice_appends_without_replacing_existing_reply():
     assert notice in merged
 
 
+def test_workflow_planning_reply_rejects_large_unmetered_text():
+    oversized = "正文" * 2_001
+
+    rejected = chat_service._bounded_workflow_planning_reply(
+        oversized,
+        draft_ready=True,
+    )
+
+    assert "已拒绝直接交付" in rejected
+    assert "text Recipe" in rejected
+    assert oversized not in rejected
+    assert (
+        chat_service._bounded_workflow_planning_reply(oversized, draft_ready=False)
+        == oversized
+    )
+
+
 def test_canvas_context_tool_result_infers_missing_status():
     payload = chat_routes.CanvasContextToolResultIn.model_validate(
         {
@@ -1183,7 +1200,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
             in captured["prompt"]
         )
         developer_instructions = chat_service._codex_developer_instructions(tool_mode)
-        assert "native Responses Tool Search" in developer_instructions
+        assert "scope-filtered concrete operations" in developer_instructions
         assert "call the selected tool directly" in developer_instructions
         assert "custom-topology reference" in developer_instructions
         assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
@@ -1200,7 +1217,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "run_after_create=true" in developer_instructions
     else:
         assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
-        assert "native Responses Tool Search" in (
+        assert "scope-filtered concrete MCP tools" in (
             chat_service._codex_developer_instructions(tool_mode)
         )
     assert [event["type"] for event in events] == [
@@ -1395,9 +1412,30 @@ def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
     )
 
 
+@pytest.mark.parametrize("container", ["structured", "structuredContent", "text"])
+@pytest.mark.parametrize("outcome", ["answered", "failed", "cancelled", "submitted", "transport_error"])
+def test_codex_clarification_requires_successful_answer(container, outcome):
+    payload = {"ok": True, "clarification_status": "answered", "action": "submit"}
+    if outcome == "failed":
+        payload["ok"] = False
+    elif outcome == "cancelled":
+        payload["clarification_status"] = "cancelled"
+    elif outcome == "submitted":
+        payload.pop("clarification_status")
+    event = SimpleNamespace(
+        name="dramaclaw.freezone_request_user_clarification",
+        status="completed", error="connection lost" if outcome == "transport_error" else None,
+        structured=payload if container == "structured" else None,
+        output={"structuredContent": payload} if container == "structuredContent" else {
+            "content": [{"type": "text", "text": json.dumps(payload)}]
+        } if container == "text" else None,
+    )
+    assert chat_service._codex_freezone_clarification_answered(event) is (outcome == "answered")
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "tool_outcome", ["missing", "success", "failure", "blocked", "draft_ready"]
+    "tool_outcome", ["missing", "success", "failure", "blocked", "draft_ready", "clarification_answered"]
 )
 async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     monkeypatch,
@@ -1451,6 +1489,18 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     },
                     error=None,
                     structured=None,
+                )
+            elif tool_outcome == "clarification_answered":
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_request_user_clarification",
+                    name="dramaclaw.freezone_request_user_clarification",
+                    call_id="call-clarification",
+                    status="completed",
+                    input={},
+                    output={"content": [{"type": "text", "text": "{}"}]},
+                    structured={"ok": True, "clarification_status": "answered"},
+                    error=None,
                 )
             elif tool_outcome not in {"missing", "blocked"}:
                 result_payload = (
@@ -1548,7 +1598,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "draft_ready":
         assert result["content"] == (
-            "画布操作未完成：工作流草稿已准备完成，但本轮未提交确认创建，请重试。"
+            "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
+        )
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "clarification_answered":
+        assert result["content"] == (
+            "画布操作未完成：参数已确认，但工作流草稿尚未生成；本轮未写入画布，请重试。"
         )
         assert assistant_deltas == [result["content"]]
     else:
@@ -5544,7 +5599,7 @@ def test_append_tool_ui_specs_does_not_duplicate_existing_ui_spec():
 def test_dramaclaw_get_sketch_candidates_displays_pool_candidates(monkeypatch):
     from novelvideo.chat import dramaclaw_mcp
 
-    plugin = dramaclaw_mcp.PLUGIN
+    plugin = dramaclaw_mcp._plugin("dramaclaw")
 
     def fake_request(method, path, **kwargs):
         assert method == "GET"
@@ -5589,7 +5644,7 @@ def test_dramaclaw_get_sketch_candidates_displays_pool_candidates(monkeypatch):
 def test_dramaclaw_get_sketches_does_not_use_pool_candidates(monkeypatch, tmp_path):
     from novelvideo.chat import dramaclaw_mcp
 
-    plugin = dramaclaw_mcp.PLUGIN
+    plugin = dramaclaw_mcp._plugin("dramaclaw")
     project_dir = tmp_path / "project"
     sketch_dir = project_dir / "grids" / "ep001" / "sketch"
     sketch_dir.mkdir(parents=True)

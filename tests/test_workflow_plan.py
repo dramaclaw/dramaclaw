@@ -952,15 +952,14 @@ def test_compact_dynamic_intent_compiles_recipe_items_to_valid_plan(monkeypatch)
     )
 
     assert compiled["ok"] is True
-    assert compiled["node_count"] == 5
+    assert compiled["node_count"] == 4
     plan = compiled["plan"]
     assert plan["mode"] == "tool_compiled_dynamic"
     node_catalog = plan["nodes"][1]["data"]["workflowCatalog"]
     assert node_catalog["recipeId"] == "ad-ip-character-anchor"
     assert node_catalog["skillVersion"] == plan["skill"]["version"]
     assert node_catalog["confirmedInputs"]["aspect_ratio"] == "9:16"
-    assert plan["nodes"][-1]["node_type"] == "videoComposeNode"
-    assert plan["nodes"][-1]["data"]["compositionInputOrder"] == ["video_clip"]
+    assert not any(node["node_type"] == "videoComposeNode" for node in plan["nodes"])
     assert catalog.validate_agent_workflow_plan(plan)["ok"] is True
 
 
@@ -1337,7 +1336,8 @@ def test_compiler_maps_explicit_text_reference_to_prompt_input(monkeypatch):
     }
 
 
-def test_compiler_replaces_recipe_backed_final_compose_with_compose_node(monkeypatch):
+@pytest.mark.parametrize("clip_count", [1, 2])
+def test_compiler_replaces_recipe_backed_final_compose_with_compose_node(monkeypatch, clip_count):
     catalog = _load_catalog_module()
     monkeypatch.setattr(catalog, "list_user_agent_config_items", None)
 
@@ -1346,12 +1346,12 @@ def test_compiler_replaces_recipe_backed_final_compose_with_compose_node(monkeyp
             "skill_id": "video-tutorial",
             "user_goal": "制作教程并合成成片",
             "items": [
-                {
-                    "id": "clip",
+                *[{
+                    "id": "clip" if index == 0 else "clip-two",
                     "title": "教程镜头",
                     "prompt": "展示操作",
                     "recipe_id": "general-video",
-                },
+                } for index in range(clip_count)],
                 {
                     "id": "final-compose",
                     "title": "最终合成",
@@ -1366,7 +1366,9 @@ def test_compiler_replaces_recipe_backed_final_compose_with_compose_node(monkeyp
     assert compiled["ok"] is True
     plan = compiled["plan"]
     assert not any(node["id"] == "final-compose" for node in plan["nodes"])
-    assert sum(node["node_type"] == "videoComposeNode" for node in plan["nodes"]) == 1
+    assert sum(node["node_type"] == "videoComposeNode" for node in plan["nodes"]) == (
+        1 if clip_count > 1 else 0
+    )
 
 
 def test_compiler_respects_explicit_audio_kind_for_ambiguous_general_audio(monkeypatch):
@@ -1568,6 +1570,39 @@ def test_workflow_plan_rejects_invalid_runtime_catalog_shapes_before_canvas_appl
     assert errors[f"{catalog_path}.inputStrategy"] == "must be an object"
     assert errors[f"{catalog_path}.promptBuilder"] == "must be an object"
     assert errors[f"{catalog_path}.promptStrategy"].startswith("must be one of:")
+
+
+def test_workflow_plan_rejects_large_text_hidden_in_mcp_plan_fields():
+    plan = _dynamic_plan()
+    plan["nodes"][0]["data"]["content"] = "正文" * 2_001
+
+    result = validate_workflow_plan(plan)
+
+    assert result["ok"] is False
+    assert any(
+        error["path"] == "nodes[0].data.content"
+        and "deliver large text through a text Recipe" in error["message"]
+        for error in result["errors"]
+    )
+
+
+def test_workflow_plan_rejects_large_text_split_across_small_fields():
+    plan = _dynamic_plan(image_count=3)
+    plan["nodes"][0]["data"].update(
+        {
+            "content": "甲" * 1_500,
+            "text": "乙" * 1_500,
+            "description": "丙" * 1_500,
+        }
+    )
+
+    result = validate_workflow_plan(plan)
+
+    assert result["ok"] is False
+    assert any(
+        issue["path"] == "$" and "aggregate workflow planning text" in issue["message"]
+        for issue in result["errors"]
+    )
 
 
 def test_workflow_plan_rejects_recipe_backed_user_input_node():
@@ -1792,10 +1827,20 @@ def _video_compose_plan() -> dict:
 @pytest.mark.parametrize(
     ("requested_model", "canvas_model"),
     [
-        ("seedance-2.0-fast", "seedance-2.0-fast"),
-        ("newapi_seedance-2.0-fast", "seedance-2.0-fast"),
-        ("newapi_seedance-2.0", "seedance-2.0"),
-        ("huimeng_seedance-1.5-pro", "seedance-1.5-pro"),
+        ("seedance-2.0-fast", "newapi_seedance-2.0-fast"),
+        ("seedance-2.0", "newapi_seedance-2.0"),
+        ("seedance-1.5-pro", "newapi_seedance-1.5-pro"),
+        ("seedance-1.0-pro-fast", "newapi_seedance-1.0-pro-fast"),
+        ("newapi_seedance-2.0-fast", "newapi_seedance-2.0-fast"),
+        ("newapi_seedance-2.0", "newapi_seedance-2.0"),
+        ("newapi_seedance-1.5-pro", "newapi_seedance-1.5-pro"),
+        ("newapi_seedance-1.0-pro-fast", "newapi_seedance-1.0-pro-fast"),
+        ("huimeng_seedance-1.5-pro", "newapi_seedance-1.5-pro"),
+        ("huimeng_seedance-1.0-pro-fast", "newapi_seedance-1.0-pro-fast"),
+        ("01M1N6KNNEQKPZCSKYSK02DPV1", "01M1N6KNNEQKPZCSKYSK02DPV1"),
+        ("unknown-model", "unknown-model"),
+        ("seedance-2.0-mini", "seedance-2.0-mini"),
+        ("recommended", "recommended"),
     ],
 )
 def test_workflow_graph_normalizes_video_provider_names_to_canvas_model_ids(

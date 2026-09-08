@@ -220,7 +220,9 @@ export const TextAnnotationNode = memo(({
       ? t('common.billingRuleNotConfiguredShort')
       : null);
   const textGeneratePrompt = instruction;
-  const textGenerateBillableChars = countBillableTextChars(textGeneratePrompt);
+  // Quote is only an estimate for the confirmation UI. The backend reserves and
+  // settles from the trusted generated_text length after successful generation.
+  const textGenerateEstimatedChars = countBillableTextChars(textGeneratePrompt);
   const textGenerateCost = useGenerationCreditCost(
     'feature',
     (mode === 'writing' || mode === 'textToVideo') && selected
@@ -228,11 +230,11 @@ export const TextAnnotationNode = memo(({
       : null,
     {
       surface: 'canvas',
-      quantity: textGenerateBillableChars,
+      quantity: textGenerateEstimatedChars,
       params: {
         operation: 'text_generate',
-        billable_chars: textGenerateBillableChars,
-        pricing_quantity: textGenerateBillableChars,
+        billable_chars: textGenerateEstimatedChars,
+        pricing_quantity: textGenerateEstimatedChars,
       },
     },
   );

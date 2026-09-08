@@ -34,8 +34,10 @@ from novelvideo.chat.backend_sdk import (
     interrupt_live_claude_client,
     interrupt_live_codex_turn,
 )
+from novelvideo.freezone.workflow_plan import MAX_WORKFLOW_PLANNING_TEXT_CHARS
 from novelvideo.ports import get_auth_session_port
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
+from novelvideo.utils.document_parsers import count_billable_text_chars
 from novelvideo.utils.error_redaction import redact_secrets
 from novelvideo.utils.static_urls import project_static_url
 
@@ -102,6 +104,15 @@ _CODEX_DEVELOPER_INSTRUCTIONS = (
 )
 _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant inside the Xi画/Freezone canvas. "
+    "A successful freezone_begin_agent_product_generation is admission, not delivery. "
+    "For product_kind=workflow_result, continue authoring the complete intent or plan and "
+    "submit it through the matching freezone_prepare_workflow_draft or "
+    "freezone_prepare_workflow_plan_draft tool using the admitted operation_id and scope. "
+    "Do not stop at admission or request a second admission for the same attempt. "
+    "For recipe_result, workflow_generate, and recipe_generate, follow their own matching "
+    "result tools; never redirect them into workflow draft preparation. "
+    "Preparing a draft is not canvas delivery. Preserve the workflow's user approval boundary "
+    "and only claim a canvas write after its successful apply receipt. "
     "If the user asks you to write or return text, copy, a screenplay, or Beats but does not "
     "explicitly ask to create/add/land nodes or a workflow on the canvas, answer in chat. Do not "
     "search Workflow Skills and do not call a canvas write tool merely because the requested "
@@ -211,8 +222,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # when it was created. Bump the relevant value whenever MCP discovery or the
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
-_CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v1"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v17"
+_CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v18"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -679,13 +690,32 @@ def _codex_freezone_write_result_error(event: Any) -> str:
     return ""
 
 
+def _codex_freezone_clarification_answered(event: Any) -> bool:
+    """Recognize a successful answer, not merely a submitted or failed tool call."""
+    if _codex_freezone_tool_name(event) != "freezone_request_user_clarification":
+        return False
+    if getattr(event, "error", None) or str(
+        getattr(event, "status", "") or ""
+    ).lower() not in {"completed", "success", "succeeded"}:
+        return False
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            if (
+                payload.get("ok") is True
+                and not payload.get("errors")
+                and payload.get("clarification_status") == "answered"
+            ):
+                return True
+    return False
+
+
 def _codex_freezone_ready_workflow_draft(event: Any) -> dict[str, Any] | None:
     """Return a successfully prepared workflow draft carried by a Codex event."""
 
     if _codex_freezone_tool_name(event) != "freezone_prepare_workflow_draft":
         return None
     status = str(getattr(event, "status", "") or "").strip().lower()
-    if status not in {"completed", "success", "succeeded"}:
+    if status not in {"completed", "success", "succeeded"} or getattr(event, "error", None):
         return None
     for value in (getattr(event, "structured", None), getattr(event, "output", None)):
         for payload in _json_objects_from_codex_tool_value(value):
@@ -815,6 +845,9 @@ async def _bind_server_observed_agent_product_execution(
                 tool_call_id=tool_call_id,
             )
         except ValueError:
+            from novelvideo.chat import evidence_metrics
+
+            evidence_metrics.observe("agent_product_binding_failed")
             logger.warning(
                 "could not bind observed Agent product execution operation=%s",
                 operation_id,
@@ -2183,6 +2216,16 @@ def _completion_text_or_existing(event_text: object, existing: str) -> str:
             return existing
         return f"{existing.rstrip()}\n\n{final_text}"
     return final_text
+
+
+def _bounded_workflow_planning_reply(text: str, *, draft_ready: bool) -> str:
+    """Do not deliver a large unmetered text artifact as a planning reply."""
+    if not draft_ready or count_billable_text_chars(text) <= MAX_WORKFLOW_PLANNING_TEXT_CHARS:
+        return text
+    return (
+        "工作流草稿已准备完成，但规划回复包含大段正文，已拒绝直接交付。"
+        "请把正文改为 text Recipe 节点生成，以便按实际输出字符计量。"
+    )
 
 
 def _is_completion_notice(text: str) -> bool:
@@ -6774,6 +6817,8 @@ async def _stream_assistant_reply_codex(
     canvas_write_succeeded = False
     canvas_write_failure = ""
     ready_workflow_draft: dict[str, Any] | None = None
+    clarification_answered = False
+    workflow_draft_attempted = False
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
         username=username,
@@ -6960,6 +7005,14 @@ async def _stream_assistant_reply_codex(
                     project_state_dir=project_state_dir,
                 )
                 if event.type == "tool_updated":
+                    tool_name = _codex_freezone_tool_name(event)
+                    if _codex_freezone_clarification_answered(event):
+                        clarification_answered = True
+                    if tool_name in {
+                        "freezone_prepare_workflow_draft",
+                        "freezone_prepare_workflow_plan_draft",
+                    }:
+                        workflow_draft_attempted = True
                     prepared_draft = _codex_freezone_ready_workflow_draft(event)
                     if prepared_draft is not None:
                         ready_workflow_draft = prepared_draft
@@ -7065,14 +7118,28 @@ async def _stream_assistant_reply_codex(
             failure_detail = (
                 canvas_write_failure or "没有收到成功的画布写入回执，请重试。"
             )
+        elif ready_workflow_draft is not None:
+            # Preparing a draft explicitly requires a subsequent user approval.
+            # It is neither a failed write nor proof that nodes already exist.
+            failure_detail = ""
+        elif clarification_answered and not workflow_draft_attempted:
+            failure_detail = (
+                "参数已确认，但工作流草稿尚未生成；本轮未写入画布，请重试。"
+            )
         elif _FREEZONE_CANVAS_NO_WRITE_FAILURE_RE.search(assistant_text):
             failure_detail = assistant_text.strip()
-        elif ready_workflow_draft is not None:
-            failure_detail = "工作流草稿已准备完成，但本轮未提交确认创建，请重试。"
         else:
             failure_detail = "本轮没有执行画布写入，请重试。"
-        assistant_text = "画布操作未完成：" + failure_detail
+        assistant_text = (
+            "画布操作未完成：" + failure_detail
+            if failure_detail
+            else "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
+        )
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
+    assistant_text = _bounded_workflow_planning_reply(
+        assistant_text,
+        draft_ready=ready_workflow_draft is not None,
+    )
     assistant_text = _normalize_json_render_reply(assistant_text)
     if requires_canvas_write_receipt:
         await on_event(

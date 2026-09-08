@@ -1050,10 +1050,11 @@ def reconcile_workflow_runs_with_tasks(
             actions = actions if isinstance(actions, list) else []
             changed = False
             for item in actions:
-                if not isinstance(item, dict) or item.get("status") in {
-                    "completed",
-                    "skipped",
-                }:
+                if not isinstance(item, dict) or item.get("status") == "skipped":
+                    continue
+                # Frontend completion is not a durable artifact validation.
+                # Reconcile completed actions too when their proof is pending.
+                if item.get("status") == "completed" and item.get("artifact_status") == "valid":
                     continue
                 task_key = str(item.get("task_key") or "").strip()
                 task = tasks_by_key.get(task_key) if task_key else None

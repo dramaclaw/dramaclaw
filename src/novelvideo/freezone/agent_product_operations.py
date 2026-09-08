@@ -246,6 +246,25 @@ def read_agent_product_operation(
     return _payload(row) if row is not None else None
 
 
+def list_agent_product_operations_for_session(
+    *, project_dir: Path, generation_session_id: str
+) -> list[dict[str, Any]]:
+    """Return the durable operations admitted for one generation session."""
+    session_id = str(generation_session_id or "").strip()
+    if not session_id:
+        raise ValueError("generation_session_id is required")
+    with _connect(project_dir) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM freezone_agent_product_operations
+             WHERE generation_session_id = ?
+             ORDER BY created_at ASC, operation_id ASC
+            """,
+            (session_id,),
+        ).fetchall()
+    return [_payload(row) for row in rows]
+
+
 def bind_agent_product_task(
     *, project_dir: Path, operation_id: str, task_id: str, root_task_id: str
 ) -> dict[str, Any]:
