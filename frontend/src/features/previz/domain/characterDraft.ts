@@ -58,8 +58,9 @@ export function isPlacedCharacterDraft(
  * 新建的人物脚底落在哪一层，单位米。
  *
  * 0 是地面网格所在的那一层，而对象节点的原点就在**脚底**：占位胶囊自身以中心为原点，
- * 靠 `yOffset = height / 2` 抬起来（见 `sceneGraph.createCharacterPlaceholder`），人物
- * GLB 的原点同样在脚下。所以「站在地上」就是 y = 0，不需要按身高算任何偏移。
+ * 由 `sceneGraph.createCharacterPlaceholder` 抬高半个**胶囊**高（胶囊比身高矮一截，矮出
+ * 来的那截归露在外面的球头），人物 GLB 的原点同样在脚下。所以「站在地上」就是 y = 0，
+ * 不需要按身高算任何偏移。
  *
  * 单开一个常量而不是在下面写两个 0：`transform.position[1]` 与 `planeY` 必须是同一个数
  * ——用户建完人就切「锁定平面」时，锁的应该是他刚才建人的那一层。

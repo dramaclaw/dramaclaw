@@ -95,8 +95,8 @@ describe("characterDraftOverrides", () => {
   it("stands the character on the picked spot with its feet on the grid", () => {
     const overrides = characterDraftOverrides(placed({ spot: [2, -3] }));
 
-    // 对象节点的原点就在脚底：占位胶囊自己以中心为原点，靠 `yOffset = height / 2`
-    // 抬起来（见 `sceneGraph.createCharacterPlaceholder`）。所以 y 取 0 是「站在地面上」，
+    // 对象节点的原点就在脚底：占位胶囊自己以中心为原点，由
+    // `sceneGraph.createCharacterPlaceholder` 抬高半个胶囊高。所以 y 取 0 是「站在地面上」，
     // 不是「腰埋在地里」。
     expect(overrides.transform?.position).toEqual([2, 0, -3]);
     expect(overrides.transform?.rotation).toEqual([0, 0, 0]);
