@@ -35,9 +35,11 @@ export const PREVIZ_ACTOR_ANIMATION_URLS = [
  * 这里，缩放和 `average` 逐位相同——上游那条路由怎么改，**这张表**都不会给它添一次
  * 宽度跳变。（选这一档时观感本来就该变，那是路由的事，不归这张表管。）
  * 列在表里还为了让 `Record<BodyType, …>` 保持穷尽：将来再多一档体型，编译器会在这里
- * 拦住，而不是让 `BODY_WIDTH_SCALE[bodyType]` 查出 undefined：`applyBodyScale` 里横向
- * 那两个分量会乘成 NaN 喂进 `scale.set`（y 分量没乘 width，仍是有限值，所以人不会
- * 整个消失得那么干脆），缩放矩阵沾上 NaN，整棵子树的世界矩阵跟着烂掉。
+ * 拦住，而不是让 `BODY_WIDTH_SCALE[bodyType]` 查出 undefined，在 `applyBodyScale` 里
+ * 乘成 NaN 喂进 `scale.set`。别指望 y 分量没乘 width 就还剩个有限值救场：`Matrix4.compose`
+ * 给 3×3 那块每一格都乘一次缩放分量，`0 * NaN` 还是 NaN，模型底下每个网格的 `matrixWorld`
+ * 十六格全变 NaN，顶点三个分量都算不出来。整条路还一声不响——NaN 比较恒 false，
+ * 视锥剔除不拒绝它，照样提交去画：人就这么整个不见，没有任何一条报错。
  *
  * `tall: 0.84` 没有推导，是照 upstream 的观感取的值：同样的身高下比「偏瘦」再窄一档，
  * 这套模型能表达「高挑」的手段只有横向变窄（身高是另一根滑杆，这一档不该去碰它）。
