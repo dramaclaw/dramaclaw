@@ -471,9 +471,10 @@ export function ClipBar({
         }}
       />
       {/*
-        relative 不是为了挪位置，是为了压住 children：波形是 absolute，标签若是静态
-        行内元素，按 CSS 绘制顺序（行内内容第 6 步、定位元素第 8 步）波形照样画在字上，
-        排在后面也没用。两边都定位、层级同为 auto，才轮到「谁在后面谁在上」。
+        relative 不是为了挪位置，是为了压住 children：波形是 absolute。标签是 flex item，
+        会被块级化，可字仍是在流内容——按 CSS 2.1 附录 E.2 的绘制顺序，在流内容第 7 步、
+        z-index 为 auto 的定位元素第 8 步，标签不定位的话波形照样画在字上，排在后面也没用。
+        两边都定位、层级同为 auto，才轮到「谁在后面谁在上」。
       */}
       <span className="relative pointer-events-none truncate px-3 text-[11px] text-white/90">
         {label ??
