@@ -127,6 +127,52 @@ describe('evaluateSceneAt', () => {
     expect(evaluateSceneAt(scene, 10).get(character.id)?.position).toEqual([5, 0, 5]);
   });
 
+  it('holds the last path point after the clip ends', () => {
+    const { scene, character } = sceneWithCharacter();
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: character.id, clips: [clipFor(0, 60)] }],
+    };
+    // 走完不该弹回摆放时的位置：人物停在轨迹终点，朝着走到头时的朝向。
+    const held = evaluateSceneAt(scene, 90).get(character.id);
+    expect(held?.position[0]).toBeCloseTo(10, 10);
+    expect(held?.rotation[1]).toBeCloseTo(90, 10);
+    // 停下的人不该还在迈腿。
+    expect(held?.poseId).toBe(character.basePoseId);
+    expect(held?.poseTime).toBe(stillTimeOf(character));
+  });
+
+  it('holds the earlier clip through the gap before the next one starts', () => {
+    const { scene, character } = sceneWithCharacter();
+    const second: PrevizPathClip = {
+      ...clipFor(90, 150),
+      id: 'second',
+      points: [
+        { id: 'c', u: 0, position: [10, 0, 0], rotation: [0, 90, 0] },
+        { id: 'd', u: 1, position: [10, 0, 8], rotation: [0, 180, 0] },
+      ],
+    };
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: character.id, clips: [clipFor(0, 60), second] }],
+    };
+    // 两段之间的空隙停在前一段的终点，而不是回到摆放位置、再从那里瞬移到第二段起点。
+    expect(evaluateSceneAt(scene, 75).get(character.id)?.position[0]).toBeCloseTo(10, 10);
+  });
+
+  it('looks past an empty clip to the last one that actually moved the object', () => {
+    const { scene, character } = sceneWithCharacter();
+    const empty: PrevizPathClip = { ...clipFor(90, 150), id: 'empty', points: [] };
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: character.id, clips: [clipFor(0, 60), empty] }],
+    };
+    // 空片段一帧都没挪过谁，让它挡住前面那段真轨迹的终点是无中生有。
+    expect(evaluateSceneAt(scene, 200).get(character.id)?.position[0]).toBeCloseTo(10, 10);
+    // 它自己覆盖的那几帧同理：停在上一段走到的地方，而不是闪回摆放位置。
+    expect(evaluateSceneAt(scene, 120).get(character.id)?.position[0]).toBeCloseTo(10, 10);
+  });
+
   it('ignores a clip with no points', () => {
     const { scene, character } = sceneWithCharacter();
     const empty: PrevizPathClip = { ...clipFor(0, 120), points: [] };

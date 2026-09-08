@@ -78,6 +78,27 @@ export function pathClipAt(track: PrevizTrack, frame: number): PrevizPathClip | 
   return clipAt(track, frame, isPathClip);
 }
 
+/**
+ * 这一帧之前**最后一条已经结束**的路径片段。用来把走完的对象停在终点：片段之外没有
+ * 片段覆盖，`pathClipAt` 交白卷，求值器就落回静态 transform——用户看到的是人物走到头
+ * 之后瞬间闪回摆放时的位置。
+ *
+ * 只往回找已经结束的，不往前找还没开始的：对象在开始走之前就该站在你摆它的地方，那不
+ * 是「弹回」，那本来就是它的位置。两段之间的空隙同理，停在前一段的终点。
+ *
+ * 跳过没有点的片段：空片段一帧都没挪动过谁（「建好了还没画」是常态），让它挡住前面那
+ * 段真轨迹的终点等于凭空把人送回原地。
+ */
+export function lastEndedPathClip(track: PrevizTrack, frame: number): PrevizPathClip | undefined {
+  let held: PrevizPathClip | undefined;
+  for (const clip of track.clips) {
+    if (!isPathClip(clip) || clip.points.length === 0) continue;
+    if (clip.endFrame >= frame) continue;
+    if (!held || clip.endFrame > held.endFrame) held = clip;
+  }
+  return held;
+}
+
 /** 这一帧生效的特写片段。取舍与 `pathClipAt` 同一套，见那里的说明。 */
 export function rigClipAt(track: PrevizTrack, frame: number): PrevizRigClip | undefined {
   return clipAt(track, frame, isRigClip);
