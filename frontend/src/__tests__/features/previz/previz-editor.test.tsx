@@ -116,18 +116,20 @@ vi.mock("@/api/ops", () => ({
 
 // 这两个都是 vi.fn 而不是匿名箭头：混音那条线唯一的出口就是「录制器收到了什么
 // options」，桩子不记参数的话，把 `audioStream` 整句删掉测试也照样全绿。
-const createCanvasRecorder = vi.fn(
-  (_canvas: HTMLCanvasElement, _options: CanvasRecorderOptions) => ({
-    start: () => {},
-    stop: async () => new Blob(["take"], { type: "video/mp4" }),
-  }),
-);
+// 默认实现单独起名：`beforeEach` 里要把它原样装回去（见那里的注释）。
+const defaultCanvasRecorder = (
+  _canvas: HTMLCanvasElement,
+  _options: CanvasRecorderOptions,
+) => ({
+  start: () => {},
+  stop: async () => new Blob(["take"], { type: "video/mp4" }),
+});
+const createCanvasRecorder = vi.fn(defaultCanvasRecorder);
 // 按 `withAudio` 分两种容器，跟真实实现一致：一律返回同一个值的话，「有 AudioContext
 // 但没有带音轨的容器」那半边分支永远走不到。
-const pickRecordMimeType = vi.fn(
-  (_isSupported?: unknown, withAudio?: boolean): string | null =>
-    withAudio ? "video/mp4;codecs=avc1.42E01E,mp4a.40.2" : "video/mp4",
-);
+const defaultRecordMimeType = (_isSupported?: unknown, withAudio?: boolean): string | null =>
+  withAudio ? "video/mp4;codecs=avc1.42E01E,mp4a.40.2" : "video/mp4";
+const pickRecordMimeType = vi.fn(defaultRecordMimeType);
 
 // jsdom 里既没有 MediaRecorder 也没有 canvas.captureStream；只换掉碰浏览器 API 的
 // 那两个导出，驱动循环本身走真实实现——这条用例要验的正是它把录制串起来了。
@@ -179,8 +181,15 @@ vi.mock("sonner", () => ({
 // unmount、从而触发一次 dispose。不清的话第三条用例的 toHaveBeenCalledTimes(1)
 // 会数到前两条留下的调用。
 // store 也是模块级单例：新加的用例读它的真实状态，不重置就会串。
+// `clearAllMocks()` 只抹调用记录，既不还原实现，也不清 `mockReturnValueOnce` /
+// `mockImplementationOnce` 排下的队。哪条用例排了一次「返回 null」却没走到那一步，
+// 这个 once 就会原封不动留给下一条用例，红在一个跟它毫无关系的地方。这三个桩子都被
+// 用例按 once 改过，逐个 reset 回默认实现。
 beforeEach(() => {
   vi.clearAllMocks();
+  createAudioContext.mockReset().mockImplementation(() => audioContext);
+  pickRecordMimeType.mockReset().mockImplementation(defaultRecordMimeType);
+  createCanvasRecorder.mockReset().mockImplementation(defaultCanvasRecorder);
   usePrevizStore.getState().loadScene(createDefaultScene());
 });
 
@@ -1959,10 +1968,11 @@ describe("audio playback and mix", () => {
     sourceNodeId: null,
   };
 
-  function renderOneFrame(): string {
+  function renderOneFrame(durationFrames = 1): string {
     const scene = createDefaultScene();
-    // 只留一帧：录制按墙上时钟走，默认的 120 帧会让这几条用例真等四秒。
-    scene.settings.durationFrames = 1;
+    // 默认只留一帧：录制按墙上时钟走，默认的 120 帧会让这几条用例真等四秒。
+    // 要在「录制进行中」做断言的用例才把它调长，好让那个窗口宽到不吃调度抖动。
+    scene.settings.durationFrames = durationFrames;
     const camera = createPrevizObject("camera", scene.objects);
     scene.objects.push(camera);
     render(
@@ -2001,6 +2011,42 @@ describe("audio playback and mix", () => {
     expect(audioPlayback.stop).toHaveBeenCalled();
   });
 
+  it("re-arranges the audio from the new position after a scrub, on one context", async () => {
+    // 一次播放里守三件事，它们各自都是「删掉也全绿」的：
+    // 1. 拖播放头得重排音频。effect 只认 seekSerial——播放头本身每帧都在变，进不了依赖。
+    // 2. 起播位置与倍速要照实传下去，否则声音从头开始、或者按 1 倍速播。
+    // 3. 整个编辑器只建一个 AudioContext。浏览器对它的数量有硬上限，
+    //    每次重排都新建的话开关几次就彻底静音了。
+    renderOneFrame(120);
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().addAudioClip(source, 0);
+      usePrevizStore.getState().setTimelinePlaying(true);
+    });
+    expect(audioPlayback.play).toHaveBeenLastCalledWith(expect.anything(), 0, 1);
+
+    // 先只拖播放头，倍速不动：这一步唯一能让 effect 察觉的就是 seekSerial，
+    // 它不在依赖里的话音频会继续从第 0 帧那次排程往下走，跟画面对不上。
+    act(() => usePrevizStore.getState().setTimelineFrame(12));
+    expect(audioPlayback.play).toHaveBeenLastCalledWith(expect.anything(), 12, 1);
+    // 再单独改倍速：起播帧不变，倍速要照实传下去。
+    act(() => usePrevizStore.getState().setTimelineRate(2));
+    expect(audioPlayback.play).toHaveBeenLastCalledWith(expect.anything(), 12, 2);
+
+    // 播放中往轨上再加一段，也得当场重排：`timeline.audio` 这个数组引用进了 effect 的
+    // 依赖，而 store 对它是结构共享的——拖对象、改机位、剪镜头轨都不换它，只有真编辑
+    // 音频轨才换。所以这条依赖恰好等于「音频轨被改了」，白重排不会发生。
+    act(() => {
+      usePrevizStore.getState().addAudioClip({ ...source, audioUrl: "/static/sfx.mp3" }, 60);
+    });
+    expect(audioPlayback.play).toHaveBeenLastCalledWith(
+      usePrevizStore.getState().scene.timeline.audio,
+      12,
+      2,
+    );
+    expect(createAudioContext).toHaveBeenCalledTimes(1);
+  });
+
   it("does not touch the audio engine when the track is empty", async () => {
     renderOneFrame();
     await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
@@ -2014,17 +2060,26 @@ describe("audio playback and mix", () => {
     await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
     act(() => {
       usePrevizStore.getState().addAudioClip(source, 0);
+      // 时间轴调到 2 倍速：混音那一路必须仍按 1 倍速排。成片是按 30fps 逐帧实速画出来
+      // 的，跟着时间轴当前倍速排音频就是画面 1×、声音 2×，音画当场分家。
+      usePrevizStore.getState().setTimelineRate(2);
     });
     const clips = usePrevizStore.getState().scene.timeline.audio;
     await recordGlobal(user);
     expect(audioPlayback.load).toHaveBeenCalledWith(clips);
     expect(audioPlayback.play).toHaveBeenCalledWith(clips, 0, 1, audioDestination);
     expect(audioPlayback.stop).toHaveBeenCalled();
+    // 容器得是**带音轨**的那一种：`pickRecordMimeType()` 不传 withAudio 谈回来的是纯视频
+    // 容器，音轨并进流里也编不进文件。第一次问就得带着 withAudio 问。
+    expect(pickRecordMimeType).toHaveBeenNthCalledWith(1, undefined, true);
     // 混音节点得真的交到录制器手里：整条链上只有这一句把声音塞进文件，
     // 少了它录出来的仍是一段无声视频，而上面几条断言一条都不会红。
     expect(createCanvasRecorder).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ audioStream: audioDestination.stream }),
+      expect.objectContaining({
+        audioStream: audioDestination.stream,
+        mimeType: "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+      }),
     );
     expect(toast.warning).not.toHaveBeenCalled();
     // 一帧 @ 30fps ≈ 33ms：时长来自真正画出的帧数，不是设置里的总长。
@@ -2071,7 +2126,10 @@ describe("audio playback and mix", () => {
 
   it("keeps the speakers quiet while a recording is running", async () => {
     const user = userEvent.setup();
-    renderOneFrame();
+    // 这条要在「录制还没结束」的窗口里做断言，所以把片长撑到 60 帧（2 秒 + 250ms 尾巴）。
+    // 一帧的话窗口只有 ~280ms，机器上任何一次几百毫秒的停顿都会让录制先跑完，
+    // 断言就变成在录完之后做的，这条用例会毫无理由地红一次。
+    renderOneFrame(60);
     await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
     act(() => {
       usePrevizStore.getState().addAudioClip(source, 0);
@@ -2097,13 +2155,77 @@ describe("audio playback and mix", () => {
 
     // 收尾：停掉播放再等录制走完，免得录完那一下播放又接上、扰乱最后一条断言。
     act(() => usePrevizStore.getState().setTimelinePlaying(false));
-    await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 3000 });
+    await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 8000 });
     expect(audioPlayback.play).toHaveBeenLastCalledWith(
       expect.anything(),
       0,
       1,
       audioDestination,
     );
+  });
+
+  it("hands the helper visibility back when the MediaRecorder refuses the container", async () => {
+    const user = userEvent.setup();
+    // `new MediaRecorder()` 谈不拢容器就当场抛，而混音的候选里就有裸 video/mp4 与
+    // video/webm（Safari 要它们），谈崩不是罕见路径。抛在「建录制器」这一步时，
+    // `pass.end()` 必须照样跑到：辅助物的可见性攥在那个句柄里，不还回去的话手柄、
+    // 轨迹、机位锥全留在隐藏状态，视口也卡在输出分辨率上不再跟随窗口——只能重开编辑器。
+    createCanvasRecorder.mockImplementationOnce(() => {
+      throw new Error("mimeType not supported");
+    });
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().addAudioClip(source, 0);
+    });
+    await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }),
+    );
+    await vi.waitFor(() => expect(recordEnd).toHaveBeenCalled(), { timeout: 3000 });
+    expect(toast.error).toHaveBeenCalledWith("previz.editor.record.failed");
+    // 排进混音节点的那些源也得停，否则它们一直挂在 AudioContext 上。
+    expect(audioPlayback.stop).toHaveBeenCalled();
+    expect(addDerivedVideoNode).not.toHaveBeenCalled();
+  });
+
+  it("stamps the duration from the frames actually drawn when stopped early", async () => {
+    const user = userEvent.setup();
+    // 之前几条录制用例都是 1 帧跑到底，那里「画到的帧号」和「设置里的总长」恰好都是 1，
+    // 两种算法给的时长一模一样。只有中途叫停才把它们分开：60 帧的片子按总长算是 2000ms，
+    // 按真画到的帧算要短得多。
+    const cameraId = renderOneFrame(60);
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => usePrevizStore.getState().selectObject(cameraId));
+
+    // 假时钟只罩住录制循环：`renderOneFrame` 之后的初始化是真异步的。假 rAF 每 16ms
+    // 一拍、30fps 每 33ms 一帧，推 300ms 大约画到第 9 帧，然后按停。
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance", "Date"],
+    });
+    try {
+      await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+      await user.click(
+        screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }),
+      );
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      await user.click(screen.getByRole("button", { name: "previz.editor.record.stop" }));
+      // 叫停是下一拍才被 `shouldStop` 看到的，再多推一些把收工那段跑完。
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const lastCall = addDerivedVideoNode.mock.lastCall as unknown as unknown[];
+    const durationMs = lastCall[4] as number;
+    expect(durationMs).toBeGreaterThan(0);
+    // 拿设置里的总长充数就是 2000ms；成片其实只有开头那一小段。
+    expect(durationMs).toBeLessThan((60 / 30) * 1000);
   });
 
   it("paints the live camera frame by frame in a global recording", async () => {
