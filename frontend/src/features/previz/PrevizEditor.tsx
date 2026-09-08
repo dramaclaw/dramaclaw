@@ -762,6 +762,9 @@ export function PrevizEditor({
         } finally {
           // 辅助物的可见性攥在这个句柄里，不还回去的话手柄与轨迹会一直不见。
           pass.end();
+          // 正常收工时 `recorder.stop()` 已经停过一次，这里兜的是抛出去的那条路：
+          // 排进混音节点的源没人停，就一直挂在 AudioContext 上。stop() 可重入。
+          mixed?.stop();
         }
 
         if (blob.size === 0) {
