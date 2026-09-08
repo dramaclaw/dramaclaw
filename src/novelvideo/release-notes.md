@@ -1,35 +1,33 @@
 ---
-version: 2.0.2
+version: 2.0.3
 attention: medium
 ---
-# v2.0.2
+# v2.0.3
 
 ## User-facing Highlights (zh)
 
-- **视频参考能力进一步扩展**: 视频节点新增文件和网页链接参考，并支持从画布选择图片或视频作为参考素材、在提示词中替换引用素材；CE 推荐模型列表新增 Seedance 2.5。
-- **英文创作流程更加完整**: 完善前后端英文文案、英文剧本场景识别和 Fountain 格式指引，并确保英文剧本生成的资产继续使用原始语言。
-- **虾画创作效率提升**: 优化画布切换、节点对齐、历史资产、资产库管理和虾导消息体验，减少切换画布时的整页加载和重复操作。
-- **视频任务更稳定透明**: 在排队前检查缺失的提示词和参考素材，保留安全的上游错误原因，并确保已提交任务在组织 Key 轮换后仍能完成。
-- **账号与项目管理更方便**: 新增用户自助修改密码入口，并将项目名称长度上限统一为 64 个字符。
+- **自部署组合更加完整**: Docker 源码版会同时构建 DramaClaw、虾画前端和同级目录中的 dramaclaw-gateway；镜像版继续提供直接拉取已发布镜像的独立入口，社区用户可以更清楚地选择开发或稳定部署方式。
+- **自定义模型配置补齐角色构建**: 自定义模式现在可以正确映射 DC-character-builder-LLM，使用自定义模型网关时角色提取不再因缺少模型映射而失败。
+- **跨项目复制素材更可靠**: 在虾画中跨项目粘贴节点时，图片和视频素材由后端完成复制，并在迁移结束前暂停自动保存，减少引用丢失或保存到旧地址的问题。
+- **失败原因更容易定位**: 项目分享会明确提示用户不存在、已加入或邀请冲突等原因；角色提取重试耗尽时，日志会保留真正的失败原因，方便排查模型输出问题。
+- **社区文档覆盖更多语言**: README 新增越南语和泰语版本，并重新梳理源码开发、镜像部署、模型网关和许可证说明。
 
 ## User-facing Highlights (en)
 
-- **More flexible video references**: Video nodes now accept file and public web-link references, support picking image or video references directly from the canvas, and can replace referenced materials in prompts. Seedance 2.5 is included in the CE recommended model catalog.
-- **A more complete English workflow**: Frontend and backend English coverage, English screenplay scene parsing, and Fountain-format guidance have been improved, while generated assets preserve the screenplay's source language.
-- **Faster Canvas workflows**: Canvas switching, node alignment, generation history, asset management, and Xia Director messages have been refined to reduce full-page loading and repeated actions.
-- **More reliable and transparent video tasks**: Missing prompts and references are checked before queueing, safe upstream rejection details are retained, and accepted jobs can finish after an organization key rotation.
-- **Easier account and project management**: Users can now change their own password, and project names consistently support up to 64 characters.
+- **A more complete self-hosted stack**: The source Docker entry point now builds DramaClaw, the XiaHua frontend, and a sibling dramaclaw-gateway checkout together, while the release entry point remains dedicated to published images. Community users can choose development or stable deployment more clearly.
+- **Character building works in Custom mode**: Custom model configurations can now map DC-character-builder-LLM, preventing character extraction failures caused by a missing model mapping when using a custom gateway.
+- **More reliable cross-project asset copying**: When nodes are pasted across XiaHua projects, image and video assets are copied by the backend and autosave pauses until migration finishes, reducing broken or stale references.
+- **Clearer failure details**: Project sharing now distinguishes missing users, existing members, and invitation conflicts. Character extraction logs also preserve the actual cause after output retries are exhausted.
+- **More accessible community documentation**: Vietnamese and Thai READMEs are now available, with clearer guidance for source development, image-based deployment, model gateways, and licensing.
 
 ## Fixes
 
-- 修复视频任务缺少必要提示词或素材时仍进入队列的问题，并完善上游明确拒绝的错误分类 (#413, #454, #464).
-- 修复组织 Gateway Key 轮换后，已被上游接受的视频任务无法继续查询的问题 (#422).
-- 修复英文剧本场景标记识别、生成资产语言继承和任务进度翻译问题 (#441, #462, #463, #469).
-- 修复部分同步工作阻塞 API 事件循环，以及上传取消和并发锁处理问题 (#444).
+- 修复自定义模式无法映射角色构建模型的问题 (#491).
+- 修复角色提取重试耗尽后只记录通用错误、无法定位真实原因的问题 (#492).
+- 修复项目分享失败时提示不明确的问题 (#479).
 
 ## Improvements
 
-- 增加视频文件/链接参考、画布素材选择和提示词素材替换能力 (#419, #424).
-- 优化画布切换、节点对齐、历史资产、资产库和虾导交互体验 (#409, #412, #417, #435).
-- 完善英文界面覆盖、Fountain 剧本格式说明，并增加中英文硬编码检查 (#447, #448).
-- 新增 Seedance 2.5 推荐配置、自助修改密码和项目名称长度统一限制 (#450, #453, #458).
+- 跨项目粘贴改由后端复制素材，并在迁移期间暂停自动保存 (#493).
+- 将源码开发和镜像部署拆分为清晰的 Docker Compose 入口，并默认集成同级 dramaclaw-gateway (#476, #482).
+- 重构 README 的产品、部署、网关和许可证说明，新增越南语与泰语文档 (#481, #483, #484, #486, #495).
