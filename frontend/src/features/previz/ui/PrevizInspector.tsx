@@ -20,6 +20,7 @@ import {
   PREVIZ_INTENSITY_RANGE,
   PREVIZ_POSE_ADJUST_RANGE,
   type BodyType,
+  type HeightPolicy,
   type PrevizCharacter,
   type PrevizObject,
   type PrevizTransform,
@@ -64,6 +65,11 @@ const POSE_ADJUST_AXES = Object.keys({
   turn: true,
   lean: true,
 } satisfies Record<PoseAdjustAxis, true>) as readonly PoseAdjustAxis[];
+const HEIGHT_POLICIES = Object.keys({
+  follow: true,
+  ground: true,
+  plane: true,
+} satisfies Record<HeightPolicy, true>) as readonly HeightPolicy[];
 
 /** 三根轴的书写顺序就是 `Vec3` 的下标顺序，`patchTransform` 靠这个把 index 当轴用。 */
 const AXES = ["x", "y", "z"] as const;
@@ -138,6 +144,30 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
     onChange({ poseAdjust: next });
   };
 
+  /**
+   * 切到「锁定平面」时把 `planeY` 一起锁在他现在站的那一层。不带这一笔的话，站在二楼
+   * 的人一改策略就会掉到工厂给的 0 上——用户看到的是「选了个策略人就掉下去了」，
+   * 而他并没有改过任何高度。另外两档不带 `planeY`：那个数在它们下面读不到，顺手写一笔
+   * 只会在切回「锁定平面」时冒出一个来路不明的高度。
+   */
+  const patchHeightPolicy = (source: PrevizCharacter, next: HeightPolicy) => {
+    if (next !== "plane") {
+      onChange({ heightPolicy: next });
+      return;
+    }
+    onChange({ heightPolicy: next, planeY: source.transform.position[1] });
+  };
+
+  /**
+   * 「跟随轨迹」以外的两档，位置 Y 不再是用户写进去的那个数：「贴合地面」由渲染器
+   * 每帧打落地射线算出来（`PrevizRenderer.standGroundCharacters` 直接写
+   * `node.position.y`），「锁定平面」由求值层压成 `planeY`（`evaluate.ts` 的
+   * `applyHeightPolicies`）。这两档下 Y 输入框改了不会有任何反应，不置灰就是一个
+   * 看起来坏了的控件，所以顺带给出一行说明——只置灰不说原因，用户只会以为是 bug。
+   */
+  const computedHeight =
+    character && character.heightPolicy !== "follow" ? character.heightPolicy : null;
+
   return (
     <div className="flex flex-col gap-3 p-3">
       <div>
@@ -163,11 +193,21 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
                 type="number"
                 step={channel === "rotation" ? 1 : 0.1}
                 aria-label={t(`previz.inspector.${channel}.${axis}`)}
+                // 只锁 Y：X 与 Z 归走位管，任何一档高度策略都碰不到它们。
+                disabled={channel === "position" && index === 1 && computedHeight !== null}
                 value={selected.transform[channel][index]}
                 onChange={(event) => patchTransform(channel, index as 0 | 1 | 2, event.target.value)}
               />
             ))}
           </div>
+          {channel === "position" && computedHeight && (
+            <p
+              data-testid="previz-inspector-height-note"
+              className="mt-1 text-[11px] text-white/35"
+            >
+              {t(`previz.inspector.heightNote.${computedHeight}`)}
+            </p>
+          )}
         </div>
       ))}
 
@@ -269,6 +309,49 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
               );
             })}
           </div>
+          <div>
+            <label className={LABEL} htmlFor={`${prefix}-height-policy`}>
+              {t("previz.inspector.heightPolicy")}
+            </label>
+            <select
+              id={`${prefix}-height-policy`}
+              className={FIELD}
+              value={character.heightPolicy}
+              onChange={(event) =>
+                patchHeightPolicy(character, event.target.value as HeightPolicy)
+              }
+            >
+              {HEIGHT_POLICIES.map((policy) => (
+                <option key={policy} value={policy}>
+                  {t(`previz.inspector.heightPolicies.${policy}`)}
+                </option>
+              ))}
+            </select>
+          </div>
+          {/* 只有「锁定平面」读得到这个数。另外两档也摆一个改不出效果的输入框在那里，
+              用户会以为自己改的高度没生效。 */}
+          {character.heightPolicy === "plane" && (
+            <div>
+              <label className={LABEL} htmlFor={`${prefix}-plane-y`}>
+                {t("previz.inspector.planeY")}
+              </label>
+              <input
+                id={`${prefix}-plane-y`}
+                className={FIELD}
+                type="number"
+                step={0.1}
+                value={character.planeY}
+                onChange={(event) => {
+                  // 非有限值不算一次修改：放行的话 store 的 `normalizeObject`
+                  // （`parseObject` 里的 `num(source.planeY, 0)`）会把它静默洗成 0，
+                  // 人物瞬间掉到地面，而输入框里用户敲的东西还在。
+                  const value = readNumber(event.target.value);
+                  if (value === null) return;
+                  onChange({ planeY: value });
+                }}
+              />
+            </div>
+          )}
         </>
       )}
 
