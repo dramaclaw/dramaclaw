@@ -9,7 +9,10 @@ import { readUrl } from '@/lib/url-params';
 import { usePrevizStore } from '@/features/previz/store';
 import { useAudioImport } from '@/features/previz/ui/useAudioImport';
 
-const uploadFreezoneAudio = vi.fn(async () => ({ url: '/static/take.mp3' }));
+/** 写出参数类型，下面那条「两次不同名」才读得到第三个参数——上传用的文件名。 */
+const uploadFreezoneAudio = vi.fn<
+  (project: string, file: File, name: string) => Promise<{ url: string }>
+>(async () => ({ url: '/static/take.mp3' }));
 const probeAudioDuration = vi.fn(async () => 2000);
 
 vi.mock('react-i18next', () => ({
@@ -21,7 +24,8 @@ vi.mock('react-i18next', () => ({
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }));
 vi.mock('@/lib/url-params', () => ({ readUrl: vi.fn(() => ({ project: 'demo' })) }));
 vi.mock('@/api/ops', () => ({
-  uploadFreezoneAudio: (...args: unknown[]) => uploadFreezoneAudio(...(args as [])),
+  uploadFreezoneAudio: (...args: unknown[]) =>
+    uploadFreezoneAudio(...(args as [string, File, string])),
 }));
 vi.mock('@/features/previz/engine/audioProbe', () => ({
   probeAudioDuration: (...args: unknown[]) => probeAudioDuration(...(args as [])),
@@ -81,7 +85,8 @@ describe('useAudioImport local file', () => {
     expect(uploadFreezoneAudio).toHaveBeenCalledWith(
       'demo',
       expect.any(File),
-      'previz-audio-previz-1.mp3',
+      // 尾巴上那串时间戳的值不钉死，它归下面那条「两次导入不同名」管。
+      expect.stringMatching(/^previz-audio-previz-1-\d+\.mp3$/),
     );
 
     // 上传期间播放头挪走了，片段仍落在点「添加」时的位置。
@@ -256,6 +261,26 @@ describe('useAudioImport local file', () => {
     await act(() => result.current.addFile(file('take.mp3')));
     expect(toast.error).toHaveBeenCalledWith('previz.audio.noRoom');
     expect(uploadFreezoneAudio).not.toHaveBeenCalled();
+  });
+
+  it('never uploads two imports under the same name', async () => {
+    const { result } = renderHook(() => useAudioImport('previz-1'));
+    // Date.now() 只精确到毫秒，两次导入在测试里完全可能落进同一毫秒。把钟握在手里，
+    // 验的才是「时间走了名字就得换」，而不是这台机器这一趟跑得多快。
+    let clock = 1_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => (clock += 1_000));
+    try {
+      await act(() => result.current.addFile(file('take.mp3')));
+      // 第一段占了 0~60 帧，播放头不挪开的话第二次会被「放不下」挡在上传之前。
+      act(() => usePrevizStore.getState().setTimelineFrame(60));
+      await act(() => result.current.addFile(file('take.mp3')));
+    } finally {
+      now.mockRestore();
+    }
+    const [first, second] = uploadFreezoneAudio.mock.calls.map((call) => call[2]);
+    expect(second).toBeDefined();
+    // 同名就是覆盖：第一段的 audioUrl 已经存进场景，它从此播的是第二段的声音。
+    expect(first).not.toBe(second);
   });
 });
 

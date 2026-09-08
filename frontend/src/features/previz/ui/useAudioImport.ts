@@ -126,9 +126,16 @@ export function useAudioImport(nodeId: string): AudioImport {
       const settle = beginPending(file.name, frame);
       try {
         const extension = audioFileExtension(file.name);
+        /*
+          名字里要带时间戳。只按 `previz-audio-${nodeId}` 命名的话，同一个预演台里
+          导入第二段音频会以同名覆盖掉第一段的文件；而第一段的 audioUrl 早就落进
+          场景存了盘，从此它播出来的是第二段的声音——不报错，刷新也回不来。
+          与 ThreeDWorldNode 那边的 `director-world-…-${stamp}` 是同一套办法。
+        */
+        const stamp = Date.now();
         const [durationMs, upload] = await Promise.all([
           probeAudioDuration(file),
-          uploadFreezoneAudio(project, file, `previz-audio-${nodeId}.${extension}`),
+          uploadFreezoneAudio(project, file, `previz-audio-${nodeId}-${stamp}.${extension}`),
         ]);
         place(
           { audioUrl: upload.url, sourceName: file.name, durationMs, sourceNodeId: null },
