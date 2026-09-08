@@ -47,10 +47,12 @@ vi.mock("react-i18next", () => ({
 // 应付「存不下」的重复失败是节点自己的事，用不着把真编辑器拖进来。
 // 用 `vi.hoisted`：`vi.mock` 的工厂会被提升到 import 之前，直接引模块级的 let
 // 会撞 TDZ。
-const editorStub = vi.hoisted(() => ({ flush: null as ((scene: never) => void) | null }));
+const editorStub = vi.hoisted(() => ({
+  flush: null as ((scene: never) => boolean) | null,
+}));
 
 vi.mock("@/features/previz/PrevizEditor", () => ({
-  PrevizEditor: ({ open, onFlush }: { open: boolean; onFlush: (scene: never) => void }) => {
+  PrevizEditor: ({ open, onFlush }: { open: boolean; onFlush: (scene: never) => boolean }) => {
     editorStub.flush = onFlush;
     return open ? <div data-testid="previz-editor-open" /> : null;
   },
@@ -154,10 +156,14 @@ describe("PrevizNode", () => {
     // 界面才做得了。
     const before = useCanvasStore.getState().nodes[0]?.data;
     const flush = editorStub.flush!;
-    act(() => flush(tooLargeScene() as never));
-    act(() => flush(tooLargeScene() as never));
-    act(() => flush(tooLargeScene() as never));
+    const reported: boolean[] = [];
+    act(() => void reported.push(flush(tooLargeScene() as never)));
+    act(() => void reported.push(flush(tooLargeScene() as never)));
+    act(() => void reported.push(flush(tooLargeScene() as never)));
 
+    // 闸只管住嘴，不管住实情：每一发都得如实告诉编辑器「没存下」。谎报一次编辑器
+    // 就把场景标成干净，此后停手也好关窗也好都不再写回，用户一路空转到刷新页面。
+    expect(reported).toEqual([false, false, false]);
     expect(toast.error).toHaveBeenCalledTimes(1);
     expect(toast.error).toHaveBeenCalledWith("previz.editor.sceneTooLarge");
     // 闭嘴不等于偷偷存下去：超限载荷进了整画布 PUT，canvasSync 收到 413 会永久停掉
@@ -176,7 +182,9 @@ describe("PrevizNode", () => {
     act(() => flush(tooLargeScene() as never));
     // 删掉几个对象、存下去了：闸就该复位。否则用户瘦身成功之后再撑爆一次，
     // 这个节点从此再也不吭声，界面上看起来一切正常，实际上什么都没存。
-    act(() => flush(createDefaultScene() as never));
+    let storedOk = false;
+    act(() => void (storedOk = flush(createDefaultScene() as never)));
+    expect(storedOk).toBe(true);
     act(() => flush(tooLargeScene() as never));
 
     expect(toast.error).toHaveBeenCalledTimes(2);

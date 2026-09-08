@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { useCallback, useMemo, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
 import { createPrevizObject } from "@/features/previz/domain/objects";
 import {
+  PREVIZ_DEFAULT_DURATION_FRAMES,
   createDefaultScene,
   type PrevizPathClip,
   type PrevizScene,
@@ -521,7 +522,7 @@ describe("PrevizEditor", () => {
 
   it("flushes the current scene when closed", async () => {
     const user = userEvent.setup();
-    const onFlush = vi.fn();
+    const onFlush = vi.fn((_scene: PrevizScene) => true);
     const onOpenChange = vi.fn();
 
     render(
@@ -1111,7 +1112,9 @@ function editorProps(overrides: Partial<ComponentProps<typeof PrevizEditor>> = {
     nodeId: "previz-1",
     initialScene: createDefaultScene(),
     onOpenChange: vi.fn(),
-    onFlush: vi.fn(),
+    // 返回 true = 「节点收下了」。桩成 `vi.fn()` 会返回 undefined，编辑器会当成拒收、
+    // 把场景一直记作未保存，跟着就冒出第二次写回。
+    onFlush: vi.fn(() => true),
     ...overrides,
   } satisfies ComponentProps<typeof PrevizEditor>;
 }
@@ -2501,7 +2504,7 @@ describe("audio playback and mix", () => {
 */
 describe("PrevizEditor autosave", () => {
   it("writes the scene back without waiting for the editor to close", async () => {
-    const onFlush = vi.fn();
+    const onFlush = vi.fn((_scene: PrevizScene) => true);
     await renderEditor({ onFlush });
     // 只假造定时器本身。渲染器那次 `create()` 是真异步的，所以假时钟必须等
     // `renderEditor` 之后再换；`toFake` 也不碰 rAF / performance，免得连带停掉
@@ -2532,7 +2535,7 @@ describe("PrevizEditor autosave", () => {
   });
 
   it("collapses a burst of edits into one write", async () => {
-    const onFlush = vi.fn();
+    const onFlush = vi.fn((_scene: PrevizScene) => true);
     await renderEditor({ onFlush });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
@@ -2569,7 +2572,7 @@ describe("PrevizEditor autosave", () => {
   });
 
   it("does not write anything back while the user only browses", async () => {
-    const onFlush = vi.fn();
+    const onFlush = vi.fn((_scene: PrevizScene) => true);
     const scene = createDefaultScene();
     scene.objects.push(createPrevizObject("camera", scene.objects));
     await renderEditor({ onFlush, initialScene: scene });
@@ -2603,7 +2606,7 @@ describe("PrevizEditor autosave", () => {
   });
 
   it("still writes the last edit back when the editor closes mid-debounce", async () => {
-    const onFlush = vi.fn();
+    const onFlush = vi.fn((_scene: PrevizScene) => true);
     await renderEditor({ onFlush });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
@@ -2629,7 +2632,7 @@ describe("PrevizEditor autosave", () => {
   });
 
   it("drops the pending write when the editor unmounts", async () => {
-    const onFlush = vi.fn();
+    const onFlush = vi.fn((_scene: PrevizScene) => true);
     const { unmount } = await renderEditor({ onFlush });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
@@ -2659,19 +2662,31 @@ describe("PrevizEditor autosave", () => {
  * 不这么接就测不出 M1 那个 bug：把 `onFlush` 桩成 `vi.fn()` 的用例只看得见
  * 「写回被调了几次」，看不见写回**反过来**把编辑器自己重置了。
  */
-function AutosaveHost({ onStored }: { onStored: (scene: PrevizScene) => void }) {
+function AutosaveHost({
+  onStored,
+  onInitialScene,
+}: {
+  onStored: (scene: PrevizScene) => void;
+  onInitialScene?: (scene: PrevizScene) => void;
+}) {
   const [stored, setStored] = useState<unknown>(undefined);
   const loaded = useMemo(() => loadNodeScene(stored), [stored]);
   const initialScene = useMemo(
     () => (loaded.ok ? loaded.scene : createDefaultScene()),
     [loaded],
   );
+  // 每换一次 `initialScene` 引用就报一次。写回**反过来**换掉编辑器的入参，正是
+  // M1 那条回路的第一环；不数这一下，「会话没被重置」有可能只是回路根本没接通。
+  useEffect(() => {
+    onInitialScene?.(initialScene);
+  }, [initialScene, onInitialScene]);
   const onFlush = useCallback(
     (scene: PrevizScene) => {
       const result = buildNodeScenePatch(scene);
-      if (!result.ok) return;
+      if (!result.ok) return false;
       onStored(result.patch.scene);
       setStored(result.patch.scene);
+      return true;
     },
     [onStored],
   );
@@ -2689,7 +2704,8 @@ function AutosaveHost({ onStored }: { onStored: (scene: PrevizScene) => void }) 
 describe("PrevizEditor autosave round trip", () => {
   it("keeps the editing session alive when an autosave lands", async () => {
     const onStored = vi.fn();
-    render(<AutosaveHost onStored={onStored} />);
+    const onInitialScene = vi.fn();
+    render(<AutosaveHost onStored={onStored} onInitialScene={onInitialScene} />);
     await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
 
     // 假时钟必须在编辑**之前**换上：防抖那一发是编辑当场排下的，用真 setTimeout
@@ -2716,6 +2732,8 @@ describe("PrevizEditor autosave round trip", () => {
       // 先确认这一发自动保存真的落地了，否则下面那串「什么都没变」是空欢喜。
       expect(onStored).toHaveBeenCalledTimes(1);
       expect(usePrevizStore.getState().dirty).toBe(false);
+      // 而且它确实把编辑器的入参换掉了——回路是通的，只是没再叫醒灌场景那条 effect。
+      expect(onInitialScene).toHaveBeenCalledTimes(2);
 
       /*
         写回 node.data 会换掉 `data.scene` 的引用，节点重算 `loadNodeScene`，
@@ -2734,6 +2752,12 @@ describe("PrevizEditor autosave round trip", () => {
       expect(after.selectedObjectId).toBe(objectId);
       expect(after.timelineZoom).toBe(before.timelineZoom);
       expect(after.scene.objects).toHaveLength(1);
+
+      // 再等三个窗口：写回换了 `initialScene` 引用，但不该把自己再点着一次。
+      act(() => {
+        vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS * 3);
+      });
+      expect(onStored).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
@@ -2750,26 +2774,73 @@ describe("PrevizEditor initial scene", () => {
     const { rerender } = render(
       <PrevizEditor {...editorProps({ open: false, initialScene: first })} />,
     );
-    // 关着的时候一个字节都不该灌进 store。
-    expect(usePrevizStore.getState().scene.settings.durationFrames).not.toBe(200);
+    // 关着的时候一个字节都不该灌进 store：这里必须还是 beforeEach 灌的那份默认场景。
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(
+      PREVIZ_DEFAULT_DURATION_FRAMES,
+    );
 
     rerender(<PrevizEditor {...editorProps({ open: true, initialScene: second })} />);
     await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
 
     // 灌进来的必须是**打开这一刻**节点手里的那一份，不是挂载那一刻的那一份。
-    // `initialScene` 走了 ref（免得自动保存写回换引用时把编辑会话重置掉），ref 就
-    // 必须在渲染期同步最新值；只在 useRef 里存第一次的入参会静静地灌回旧场景，
-    // 用户重开一看，刚才存下的改动全不见了。
+    //
+    // 今天的 `PrevizNode` 是条件挂载，关窗就卸载、重开是重新挂载，`useRef` 的初值
+    // 天然是当下那一份——所以这条用例钉的是**面向未来**的不变量：`initialScene` 走
+    // 了 ref（免得自动保存写回换引用时把编辑会话重置掉），那么 ref 就必须在渲染期
+    // 跟着最新 prop 走。谁把编辑器改成常驻挂载、拿 `open` 开关，这行断言就是他会先
+    // 撞上的那道墙；少了它，改完之后重开会静静地灌回旧场景。
     expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(300);
   });
 });
 
 /*
-  写回抛异常时不许谎报「已保存」。`flushIfDirty` 里 `onFlush()` 在前、`markSaved()`
-  在后，就是为了这一下：顺序反过来一样能过前面所有用例，但异常一抛 `dirty` 已经是
-  false，关窗那条兜底也就被判据挡掉，这笔改动神不知鬼不觉地没了。
+  写回没落地时不许谎报「已保存」。谎报一次的后果是：`dirty` 变 false，此后停手也好、
+  关窗兜底也好，全被判据挡掉，编辑器一路空转到用户刷新页面——而节点那边「存不下」的
+  toast 一辈子只弹一次，界面上没有任何异样。
+
+  两条失败路径分开钉：**拒收**（`onFlush` 返回 false）是今天真会发生的那条——场景撑爆
+  体积上限，`buildNodeScenePatch` 失败、一个字节都没存；**抛异常**今天没有生产来源
+  （`handleFlush` 失败是 return，`updateNodeData` 是 zustand set），钉的是「将来写回改
+  成会抛的实现」时 `onFlush()` 在前、`markSaved()` 在后这个顺序。
 */
 describe("PrevizEditor autosave failure", () => {
+  it("keeps the scene unsaved when the node refuses to store it", async () => {
+    const onFlush = vi.fn((_scene: PrevizScene) => false);
+    await renderEditor({ onFlush });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      act(() => {
+        usePrevizStore.getState().setDurationFrames(200);
+      });
+      act(() => {
+        vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS);
+      });
+      expect(onFlush).toHaveBeenCalledTimes(1);
+      // 拒收 = 没存下。记成「已保存」就等于把这一份连同后面所有改动一起放弃了。
+      expect(usePrevizStore.getState().dirty).toBe(true);
+
+      // 但也不许变成「每 600ms 重试一次」的空转：定时器开完火不会自己续命，用户
+      // 不动手就没有第二次尝试。
+      act(() => {
+        vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS * 5);
+      });
+      expect(onFlush).toHaveBeenCalledTimes(1);
+
+      // 而下一次真编辑（比如删掉几个对象瘦身）必须把整份场景重新试一遍——这是超限
+      // 之后唯一的复原路径。
+      act(() => {
+        usePrevizStore.getState().setDurationFrames(240);
+      });
+      act(() => {
+        vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS);
+      });
+      expect(onFlush).toHaveBeenCalledTimes(2);
+      expect(onFlush.mock.calls[1]![0].settings.durationFrames).toBe(240);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stays dirty when the write back throws", async () => {
     const onFlush = vi.fn(() => {
       throw new Error("node is gone");
