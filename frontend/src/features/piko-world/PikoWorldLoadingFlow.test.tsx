@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PikoWorldShell } from "./PikoWorldShell";
-vi.mock("./piko-audio", () => ({ playPikoUiSound: vi.fn() }));
+vi.mock("./piko-audio", () => ({ playPikoUiSound: vi.fn(), unlockPikoNotifications: vi.fn() }));
 
 const map = vi.hoisted(() => ({ report: (_state: "loading" | "ready" | "error") => {}, mounts: 0 }));
 vi.mock("./PikoWorldCanvas", () => ({

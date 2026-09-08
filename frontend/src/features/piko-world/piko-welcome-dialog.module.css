@@ -53,12 +53,8 @@
 .close.close {
   position: absolute; top: -12px; right: -24px; width: 32px; height: 32px;
   padding: 0; border: 0; background: none; cursor: pointer;
-  transition: filter var(--duration-fast), transform var(--duration-fast);
 }
 .close img { width: 100%; height: 100%; object-fit: contain; }
-.close:hover, .close:focus-visible { filter: brightness(1.15); transform: translateY(-2px) scale(1.05); }
-.close:active { transform: scale(0.96); }
-.close:focus-visible { outline: 2px solid #71532c; outline-offset: 3px; }
 @media (max-width: 640px) {
   .dialog.dialog { flex-direction: column; align-items: center; }
   .mayor { width: min(44%, 180px); align-self: flex-start; margin: 0 0 -12px 4%; }

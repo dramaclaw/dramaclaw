@@ -1,0 +1,19 @@
+/* Shared input and textarea skin for Piko forms and chat. */
+.input {
+  width: 100%;
+  border: 1px solid rgb(120 83 37 / 25%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 60%);
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--color-amber-950);
+  outline: none;
+  box-shadow: none;
+}
+.input:focus, .input:focus-visible {
+  outline: none;
+  border-color: #b49951;
+  box-shadow: 0 0 0 1px rgb(180 153 81 / 18%);
+}
+

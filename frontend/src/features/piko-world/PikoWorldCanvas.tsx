@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useRef, useState } from "react";
+import { PikoSpeechBubble } from "./PikoSpeechBubble";
+import type { PikoSpeech } from "./piko-public-chat";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Application, Assets, Container, Sprite, type Texture } from "pixi.js";
 import { useTranslation } from "react-i18next";
 
@@ -9,35 +11,60 @@ import { containWorldInViewport, type PikoSize } from "./runtime/viewport-fit";
 import { PikoMayor } from "./PikoMayor";
 import { PIKO_MAYOR_IDLE_SRC, PIKO_MAYOR_POSITION } from "./runtime/mayor-idle";
 import { createMayorActor } from "./runtime/mayor-actor";
-import { createResidentActor, RESIDENT_MOTION_SRC } from "./runtime/resident-actor";
-import { canTalkTo } from "./runtime/character-movement";
+import { createResidentActor } from "./runtime/resident-actor";
+import { PikoResidentInteraction } from "./PikoResidentInteraction";
 import { PikoWelcomeDialog } from "./PikoWelcomeDialog";
 import { addCharacterPresentation } from "./runtime/character-presentation";
+import { PIKO_PLAYABLE_RESIDENTS, type PlayablePikoResidentId } from "./piko-residents";
+import { PIKO_SIMULATED_RESIDENT } from "./piko-simulated-resident";
 import { playPikoUiSound } from "./piko-audio";
 
 export type PikoMapLoadState = "loading" | "ready" | "error";
 
 type PikoWorldCanvasProps = {
   mapId: string;
+  nickname: string;
+  speech?: PikoSpeech | null;
+  residentId?: PlayablePikoResidentId;
   showMayorHint?: boolean;
   mayorHintVisible?: boolean;
   movementBlocked?: boolean;
   onLoadStateChange?: (loadState: PikoMapLoadState) => void;
 };
 
-export function PikoWorldCanvas({ mapId, onLoadStateChange, showMayorHint = false, mayorHintVisible = showMayorHint, movementBlocked = false }: PikoWorldCanvasProps) {
+export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", onLoadStateChange, showMayorHint = false, mayorHintVisible = showMayorHint, movementBlocked = false }: PikoWorldCanvasProps) {
   const { t } = useTranslation();
   const hostRef = useRef<HTMLDivElement>(null);
   const mayorActiveRef = useRef(showMayorHint);
   const [welcomeOpen, setWelcomeOpen] = useState(false);
   const [welcomed, setWelcomed] = useState(false);
-  const [tooFar, setTooFar] = useState(false);
   const blockedRef = useRef(movementBlocked);
+  const socialBusyRef = useRef(false);
+  const stopPlayerRef = useRef(() => {});
+  const simulatedHoverRef = useRef<(hovered: boolean) => void>(() => {});
+  const [playerPosition, setPlayerPosition] = useState({ x: 1190, y: 485 });
+  const [simulatedPosition, setSimulatedPosition] = useState<{ x: number; y: number }>(PIKO_SIMULATED_RESIDENT.position);
+  const onSocialBusyChange = useCallback((busy: boolean) => {
+    socialBusyRef.current = busy;
+    if (busy) stopPlayerRef.current();
+  }, []);
+  const onSimulatedHover = useCallback((hovered: boolean) => simulatedHoverRef.current(hovered), []);
   const welcomeOpenRef = useRef(false);
-  const interactRef = useRef<(fromClick?:boolean)=>void>(()=>{});
+  const interactRef = useRef<()=>void>(()=>{});
+  const nicknameRef = useRef(nickname);
+  const residentIdRef = useRef(residentId);
+  const changeResidentRef = useRef<(id: PlayablePikoResidentId) => void>(() => {});
+  useEffect(() => {
+    residentIdRef.current = residentId;
+    changeResidentRef.current(residentId);
+  }, [residentId]);
+  const residentPresentationRef = useRef<ReturnType<typeof addCharacterPresentation> | null>(null);
+  useEffect(() => {
+    nicknameRef.current = nickname;
+    residentPresentationRef.current?.setName(nickname);
+  }, [nickname]);
   const mayorHoverRef = useRef<(hovered:boolean)=>void>(()=>{});
   useEffect(()=>{blockedRef.current=movementBlocked;},[movementBlocked]);
-  useEffect(()=>{if(!tooFar)return;const timer=window.setTimeout(()=>setTooFar(false),2500);return()=>window.clearTimeout(timer);},[tooFar]);
   useEffect(() => { mayorActiveRef.current = showMayorHint; }, [showMayorHint]);
   useEffect(() => {
     if (showMayorHint && !blockedRef.current) hostRef.current?.focus({preventScroll:true});
@@ -59,10 +86,12 @@ export function PikoWorldCanvas({ mapId, onLoadStateChange, showMayorHint = fals
     let baseTextureUrl: string | null = null;
     let baseTextureLoaded = false;
     let mayorTextureLoaded = false;
-    let residentTextureLoaded = false;
+    const residentTextures = new Map<PlayablePikoResidentId, Texture>();
+    let simulatedActor: ReturnType<typeof createResidentActor> | null = null;
     let residentActor: ReturnType<typeof createResidentActor> | null = null;
     let mayorActor: ReturnType<typeof createMayorActor> | null = null;
     let disposed = false;
+    let disconnectPosition = () => {};
     let disconnectResizeObserver = () => undefined;
 
     async function mountMap() {
@@ -117,22 +146,51 @@ export function PikoWorldCanvas({ mapId, onLoadStateChange, showMayorHint = fals
           world.addChild(mayorActor.container);
           const navigation = await loadPikoMapNavigation(mapId,manifest.data.navigation,abortController.signal);
           if(disposed)return;
-          const residentTexture = await Assets.load<Texture>(RESIDENT_MOTION_SRC);
-          if (disposed) { void Assets.unload(RESIDENT_MOTION_SRC); return; }
-          residentTextureLoaded = true;
-          interactRef.current = (fromClick = false) => {
+          for (const id of Object.keys(PIKO_PLAYABLE_RESIDENTS) as PlayablePikoResidentId[]) {
+            const src = PIKO_PLAYABLE_RESIDENTS[id];
+            const residentTexture = await Assets.load<Texture>(src);
+            if (disposed) { void Assets.unload(src); return; }
+            residentTextures.set(id, residentTexture);
+          }
+          interactRef.current = () => {
             if(!residentActor || !mayorActiveRef.current || blockedRef.current || welcomeOpenRef.current)return;
             residentActor.stop();
-            if(!fromClick && !canTalkTo(residentActor.container.position,PIKO_MAYOR_POSITION,navigation)){setTooFar(true);return;}
             playPikoUiSound("open");
-            setTooFar(false); welcomeOpenRef.current=true; setWelcomeOpen(true);
+            welcomeOpenRef.current=true; setWelcomeOpen(true);
           };
-          residentActor = createResidentActor(residentTexture, nextApp.ticker,
-            () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current,
-            {host,navigation,onInteract:()=>interactRef.current()});
+          residentActor = createResidentActor(residentTextures.get(residentIdRef.current)!, nextApp.ticker,
+            () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current && !socialBusyRef.current,
+            {host,navigation});
+          stopPlayerRef.current = () => residentActor?.stop();
           residentActor.container.zIndex = residentActor.container.y;
-          addCharacterPresentation(residentActor.container, "居民 · 你");
+          residentPresentationRef.current = addCharacterPresentation(residentActor.container, nicknameRef.current);
           world.addChild(residentActor.container);
+          changeResidentRef.current = id => {
+            residentActor?.stop();
+            residentActor?.setSheet(residentTextures.get(id)!);
+          };
+          simulatedActor = createResidentActor(residentTextures.get(PIKO_SIMULATED_RESIDENT.residentId)!, nextApp.ticker,
+            () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current && !socialBusyRef.current,
+            { host, navigation, label: PIKO_SIMULATED_RESIDENT.id,
+              position: PIKO_SIMULATED_RESIDENT.position, simulatedInput: () => ({ x: 0, y: 0 }) });
+          simulatedHoverRef.current = addCharacterPresentation(simulatedActor.container, PIKO_SIMULATED_RESIDENT.nickname);
+          let lastX = simulatedActor.container.x, lastY = simulatedActor.container.y;
+          setSimulatedPosition({ x: lastX, y: lastY });
+          let playerX = residentActor.container.x, playerY = residentActor.container.y;
+          const syncPosition = () => {
+            if (residentActor && (residentActor.container.x !== playerX || residentActor.container.y !== playerY)) {
+              playerX = residentActor.container.x; playerY = residentActor.container.y;
+              setPlayerPosition({ x: playerX, y: playerY });
+            }
+            if (!simulatedActor) return;
+            const { x, y } = simulatedActor.container;
+            if (x === lastX && y === lastY) return;
+            lastX = x; lastY = y;
+            setSimulatedPosition({ x, y });
+          };
+          nextApp.ticker.add(syncPosition);
+          disconnectPosition = () => nextApp.ticker.remove(syncPosition);
+          world.addChild(simulatedActor.container);
         }
 
         const worldSize: PikoSize = manifest.size;
@@ -166,13 +224,19 @@ export function PikoWorldCanvas({ mapId, onLoadStateChange, showMayorHint = fals
       disposed = true;
       abortController.abort();
       disconnectResizeObserver();
+      disconnectPosition();
+      stopPlayerRef.current = () => {};
+      simulatedHoverRef.current = () => {};
       mayorActor?.destroy();
       residentActor?.destroy();
+      simulatedActor?.destroy();
+      changeResidentRef.current = () => {};
+      residentPresentationRef.current = null;
       interactRef.current=()=>{};
       mayorHoverRef.current=()=>{};
       if (app) app.destroy(true, { children: true });
       if (mayorTextureLoaded) void Assets.unload(PIKO_MAYOR_IDLE_SRC);
-      if (residentTextureLoaded) void Assets.unload(RESIDENT_MOTION_SRC);
+      for (const id of residentTextures.keys()) void Assets.unload(PIKO_PLAYABLE_RESIDENTS[id]);
       if (baseTextureUrl && baseTextureLoaded) void Assets.unload(baseTextureUrl);
     };
   }, [mapId]);
@@ -186,16 +250,17 @@ export function PikoWorldCanvas({ mapId, onLoadStateChange, showMayorHint = fals
         className="absolute inset-0 focus-visible:outline-none"
         role="group"
         aria-label={t("pikoWorld.mapAriaLabel")}
-        aria-describedby={showMayorHint && mapId === "welcome-courtyard" ? "piko-movement-help" : undefined}
       />
       {loadState === "ready" && mapId === "welcome-courtyard" && (
         <PikoMayor fit={worldFit} showHint={mayorHintVisible && !welcomed && !welcomeOpen}
           onHover={hovered=>mayorHoverRef.current(hovered)}
-          onInteract={showMayorHint && !movementBlocked ? ()=>interactRef.current(true) : undefined} />
+          onInteract={showMayorHint && !movementBlocked ? ()=>interactRef.current() : undefined} />
       )}
-      {showMayorHint && mapId === "welcome-courtyard" && <p id="piko-movement-help" className="pointer-events-none absolute bottom-3 right-3 m-0 max-w-[calc(100%-1.5rem)] rounded-full bg-background/45 px-3 py-1 text-right text-[11px] leading-4 text-foreground/60 backdrop-blur-[4px]">
-        <span role="status">{t(tooFar?"pikoWorld.mayorTooFar":"pikoWorld.movementHelp")}</span>
-      </p>}
+      {loadState === "ready" && mapId === "welcome-courtyard" && showMayorHint && !movementBlocked && !welcomeOpen && (
+        <PikoResidentInteraction key={PIKO_SIMULATED_RESIDENT.id} target={PIKO_SIMULATED_RESIDENT}
+          position={simulatedPosition} fit={worldFit} onBusyChange={onSocialBusyChange} onHover={onSimulatedHover} />
+      )}
+      {loadState === "ready" && showMayorHint && speech && <PikoSpeechBubble body={speech.body} position={playerPosition} fit={worldFit} />}
       <PikoWelcomeDialog open={welcomeOpen} onOpenChange={open=>{welcomeOpenRef.current=open;setWelcomeOpen(open);}}
         onComplete={()=>setWelcomed(true)} />
       {loadState !== "ready" ? (

@@ -2,7 +2,7 @@
 import type { Texture, Ticker } from "pixi.js";
 import { createCharacterActor } from "./character-actor";
 import type { PikoNavigation } from "./map-package-schema";
-import { FACINGS, facingFor, moveCharacter, type Facing } from "./character-movement";
+import { FACINGS, facingFor, moveCharacter, type Facing, type Point } from "./character-movement";
 import { advanceGait, gaitColumn, crossesFootContact } from "./character-gait";
 import { createGrassFootsteps } from "./footstep-audio";
 export const RESIDENT_MOTION_SRC = "/piko/world/characters/resident-m01-idle-v1/resident-m01-motion-v8.png";
@@ -24,14 +24,19 @@ export function residentFrameAt(elapsedMs: number) {
   return 0;
 }
 export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: () => boolean,
-  controls: { host: HTMLElement; navigation: PikoNavigation; onInteract: () => void }) {
+  controls: {
+    host: HTMLElement; navigation: PikoNavigation;
+    label?: string; position?: Point;
+    simulatedInput?: () => Point;
+  }) {
   const actor = createCharacterActor(sheet, ticker, isActive, {
-    label: "piko-resident-m01", frameSize: 64, frameCount: 44, columns: 11, manual: true, pivot: { x: 32, y: 57 },
-    position: { x: 1190, y: 485 }, scale: RESIDENT_WORLD_SCALE,
+    label: controls.label ?? "piko-player", frameSize: 64, frameCount: 44, columns: 11, manual: true, pivot: { x: 32, y: 57 },
+    position: controls.position ?? { x: 1190, y: 485 }, scale: RESIDENT_WORLD_SCALE,
     shadow: { width: 24, height: 8 }, durationMs: 4800, frameAt: residentFrameAt,
   });
+  const keyboardControlled = !controls.simulatedInput;
   let facing: Facing = "south";
-  const footsteps = createGrassFootsteps();
+  const footsteps = keyboardControlled ? createGrassFootsteps() : { unlock() {}, step() {}, stop() {}, destroy() {} };
   let elapsed = 0, wasMoving = false;
   let gaitDistance = 0;
   const cycleDistance = 40 * RESIDENT_WORLD_SCALE;
@@ -40,7 +45,6 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
   const clear = () => { keys.clear(); elapsed = 0; wasMoving = false; gaitDistance = 0; footsteps.stop(); };
   const keyDown = (event: KeyboardEvent) => {
     if(!isActive() || document.activeElement !== controls.host || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
-    if(event.code === "KeyE" && !event.repeat) { event.preventDefault(); controls.onInteract(); return; }
     if(!["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(event.code)) return;
     footsteps.unlock();
     event.preventDefault(); keys.add(event.code);
@@ -48,8 +52,9 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
   const keyUp = (event: KeyboardEvent) => { keys.delete(event.code); };
   const focus = () => controls.host.focus({preventScroll:true});
   const tick = (time: Ticker) => {
-    if(!isActive() || document.hidden || document.activeElement !== controls.host) clear();
-    const input = {x:Number(keys.has("KeyD")||keys.has("ArrowRight"))-Number(keys.has("KeyA")||keys.has("ArrowLeft")),
+    if(!isActive() || document.hidden || (keyboardControlled && document.activeElement !== controls.host)) clear();
+    const canMove = isActive() && !document.hidden;
+    const input = controls.simulatedInput ? (canMove ? controls.simulatedInput() : { x: 0, y: 0 }) : {x:Number(keys.has("KeyD")||keys.has("ArrowRight"))-Number(keys.has("KeyA")||keys.has("ArrowLeft")),
       y:Number(keys.has("KeyS")||keys.has("ArrowDown"))-Number(keys.has("KeyW")||keys.has("ArrowUp"))};
     if(input.x||input.y) facing = facingFor(input);
     const before = actor.container.position;
@@ -59,7 +64,7 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     actor.container.position.set(next.x,next.y);
     actor.container.zIndex = next.y;
     if(moving!==wasMoving) elapsed=0;
-    if (crossesFootContact(gaitDistance, travelled, cycleDistance, wasMoving)) footsteps.step();
+    if (keyboardControlled && crossesFootContact(gaitDistance, travelled, cycleDistance, wasMoving)) footsteps.step();
     if (!moving && wasMoving) footsteps.stop();
     wasMoving=moving;
     gaitDistance = moving ? advanceGait(gaitDistance, travelled, cycleDistance) : 0;
@@ -67,11 +72,13 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     const column = motion?.matches ? 0 : moving ? gaitColumn(gaitDistance, cycleDistance) : residentFrameAt(elapsed);
     actor.setFrame(FACINGS.indexOf(facing)*11+column);
   };
+  if (keyboardControlled) {
   window.addEventListener("keydown",keyDown);
   window.addEventListener("keyup",keyUp);
   window.addEventListener("blur",clear);
   document.addEventListener("visibilitychange",clear);
   controls.host.addEventListener("pointerdown",focus);
+  }
   ticker.add(tick);
   return { ...actor, stop: clear, destroy() {
     footsteps.destroy();

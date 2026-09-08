@@ -28,3 +28,18 @@ describe("Piko resident selection", () => {
     expect(resolvePikoResidentId(null)).toBe(DEFAULT_PIKO_RESIDENT_ID);
   });
 });
+
+import { PIKO_PLAYABLE_RESIDENTS, isPlayablePikoResident, resolvePlayablePikoResident } from "./piko-residents";
+import { PIKO_SIMULATED_RESIDENT } from "./piko-simulated-resident";
+import { canStand } from "./runtime/character-movement";
+import { PikoNavigationSchema } from "./runtime/map-package-schema";
+import navigation from "../../../public/piko/world/maps/welcome-courtyard/data/navigation.json";
+
+it("offers only complete motion atlases and places the simulation on walkable ground", () => {
+  expect(Object.keys(PIKO_PLAYABLE_RESIDENTS)).toEqual(["m01", "f01"]);
+  for (const src of Object.values(PIKO_PLAYABLE_RESIDENTS)) expect(existsSync(`public${src}`)).toBe(true);
+  expect(isPlayablePikoResident("f01")).toBe(true);
+  expect(isPlayablePikoResident("f05")).toBe(false);
+  expect(resolvePlayablePikoResident("f05")).toBe("m01");
+  expect(canStand(PIKO_SIMULATED_RESIDENT.position, PikoNavigationSchema.parse(navigation))).toBe(true);
+});

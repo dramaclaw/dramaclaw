@@ -22,7 +22,7 @@ export function createCharacterActor(sheet: Texture, ticker: Ticker, isActive: (
   }
   sheet.source.scaleMode = "nearest";
   const shadowTexture = createContactShadow(profile.shadow);
-  const frames = Array.from({ length: profile.frameCount }, (_, index) => new Texture({
+  let frames = Array.from({ length: profile.frameCount }, (_, index) => new Texture({
     source: sheet.source,
     frame: new Rectangle((index % columns) * profile.frameSize, Math.floor(index / columns) * profile.frameSize, profile.frameSize, profile.frameSize),
   }));
@@ -54,7 +54,21 @@ export function createCharacterActor(sheet: Texture, ticker: Ticker, isActive: (
     container,
     setFrame(index: number) {
       if (!Number.isInteger(index) || !frames[index]) throw new Error("Invalid character frame");
+      frame = index;
       body.texture = frames[index];
+    },
+    setSheet(nextSheet: Texture) {
+      if (nextSheet.width !== columns * profile.frameSize || nextSheet.height !== Math.ceil(profile.frameCount / columns) * profile.frameSize) {
+        throw new Error("Invalid character motion sheet dimensions");
+      }
+      nextSheet.source.scaleMode = "nearest";
+      const previous = frames;
+      frames = Array.from({ length: profile.frameCount }, (_, index) => new Texture({
+        source: nextSheet.source,
+        frame: new Rectangle((index % columns) * profile.frameSize, Math.floor(index / columns) * profile.frameSize, profile.frameSize, profile.frameSize),
+      }));
+      body.texture = frames[frame];
+      previous.forEach(texture => texture.destroy(false));
     },
     destroy() {
       ticker.remove(tick);

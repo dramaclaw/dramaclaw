@@ -40,10 +40,3 @@ export function moveCharacter(position: Point, input: Point, deltaMs: number, na
 export function facingFor(input: Point): Facing {
   return Math.abs(input.x)>Math.abs(input.y) ? (input.x<0?"west":"east") : (input.y<0?"north":"south");
 }
-export function canTalkTo(position: Point, npc: Point, navigation: PikoNavigation) {
-  const distance = Math.hypot(position.x-npc.x,position.y-npc.y);
-  if(distance>100) return false;
-  const steps=Math.max(1,Math.ceil(distance/4));
-  return Array.from({length:steps+1},(_,i)=>({x:position.x+(npc.x-position.x)*i/steps,y:position.y+(npc.y-position.y)*i/steps}))
-    .every(p=>canStand(p,navigation,0));
-}

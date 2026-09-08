@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { PikoLoadingScreen } from "./PikoLoadingScreen";
-vi.mock("./piko-audio", () => ({ playPikoUiSound: vi.fn() }));
+vi.mock("./piko-audio", () => ({ playPikoUiSound: vi.fn(), unlockPikoNotifications: vi.fn() }));
 import { loadingDisplayProgress, PIKO_LOADING_SCENES, PIKO_LOADING_BACKGROUNDS, PIKO_LOADING_CONTROLS, preloadLoadingImages } from "./piko-loading";
 
 vi.mock("./piko-loading", async (original) => ({

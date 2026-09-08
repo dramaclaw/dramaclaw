@@ -33,3 +33,16 @@ export function readSelectedPikoResidentId(): PikoResidentId {
     return DEFAULT_PIKO_RESIDENT_ID;
   }
 }
+
+
+export const PIKO_PLAYABLE_RESIDENTS = {
+  m01: "/piko/world/characters/resident-m01-idle-v1/resident-m01-motion-v8.png",
+  f01: "/piko/world/characters/resident-f01-idle-v1/resident-f01-motion-v2.png",
+} as const;
+export type PlayablePikoResidentId = keyof typeof PIKO_PLAYABLE_RESIDENTS;
+export function isPlayablePikoResident(id: PikoResidentId): id is PlayablePikoResidentId {
+  return id in PIKO_PLAYABLE_RESIDENTS;
+}
+export function resolvePlayablePikoResident(id: PikoResidentId): PlayablePikoResidentId {
+  return isPlayablePikoResident(id) ? id : "m01";
+}

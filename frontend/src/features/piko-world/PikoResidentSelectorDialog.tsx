@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { playPikoUiSound } from "./piko-audio";
+import popupStyles from "./piko-popup.module.css";
+import iconStyles from "./piko-icon-button.module.css";
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -11,7 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { PIKO_RESIDENT_OPTIONS, type PikoResidentId } from "./piko-residents";
+import { PIKO_RESIDENT_OPTIONS, isPlayablePikoResident, type PikoResidentId } from "./piko-residents";
 import { PikoThreeSlicePanelSkin } from "./PikoThreeSlicePanelSkin";
 
 const CLOSE_CONTROL_SRC = "/piko/world/ui/piko-world-close-icon-v1.png";
@@ -58,7 +61,12 @@ export function PikoResidentSelectorDialog({
       PIKO_RESIDENT_OPTIONS.length - 1,
       Math.max(0, currentIndex + direction),
     );
-    const nextResident = PIKO_RESIDENT_OPTIONS[nextIndex];
+    let candidateIndex = nextIndex;
+    const step = direction > 0 ? 1 : -1;
+    while (candidateIndex >= 0 && candidateIndex < PIKO_RESIDENT_OPTIONS.length && !isPlayablePikoResident(PIKO_RESIDENT_OPTIONS[candidateIndex].id)) candidateIndex += step;
+    const nextResident = PIKO_RESIDENT_OPTIONS[candidateIndex];
+    if (!nextResident) return;
+    if (nextResident.id !== draftResidentId) playPikoUiSound("open");
     setDraftResidentId(nextResident.id);
     event.currentTarget
       .querySelector<HTMLButtonElement>(`[data-resident-id="${nextResident.id}"]`)
@@ -71,7 +79,7 @@ export function PikoResidentSelectorDialog({
         id="piko-world-resident-selector"
         showCloseButton={false}
         overlayClassName="bg-black/25 backdrop-blur-none duration-[var(--duration-slow)] data-open:fade-in-0 data-closed:fade-out-0"
-        className="dark h-[min(34rem,calc(100dvh-3rem))] w-[min(45rem,calc(100vw-3rem))] max-w-[calc(100%-3rem)] gap-0 overflow-visible border-0 bg-transparent p-0 shadow-none ring-0 duration-[var(--duration-slow)] ease-[var(--ease-out-quint)] sm:max-w-[45rem] data-open:fade-in-0 data-open:zoom-in-95 data-closed:fade-out-0 data-closed:zoom-out-95"
+        className="dark h-[min(34rem,calc(100dvh-7rem))] w-[min(45rem,calc(100vw-6rem))] max-w-[calc(100%-6rem)] gap-0 overflow-visible border-0 bg-transparent p-0 shadow-none ring-0 duration-[var(--duration-slow)] ease-[var(--ease-out-quint)] sm:max-w-[45rem] data-open:fade-in-0 data-open:zoom-in-95 data-closed:fade-out-0 data-closed:zoom-out-95"
       >
         <PikoThreeSlicePanelSkin
           topSrc={PANEL_TOP_SRC}
@@ -96,19 +104,22 @@ export function PikoResidentSelectorDialog({
             onKeyDown={handleGridKeyDown}
           >
             {PIKO_RESIDENT_OPTIONS.map((resident, index) => {
+              const playable = isPlayablePikoResident(resident.id);
               const selected = resident.id === draftResidentId;
-              const label = t("pikoWorld.residentOptionLabel", { number: index + 1 });
+              const label = playable ? t(`pikoWorld.playableResident_${resident.id}`) : t("pikoWorld.residentOptionLabel", { number: index + 1 });
               return (
                 <button
                   key={resident.id}
                   type="button"
                   role="radio"
                   aria-checked={selected}
+                  disabled={!playable}
+                  title={!playable ? t("pikoWorld.residentComingSoon") : undefined}
                   aria-label={label}
                   tabIndex={selected ? 0 : -1}
                   data-resident-id={resident.id}
-                  className="group/resident relative flex min-h-0 flex-col items-center px-1 pb-1 focus-visible:outline-none"
-                  onClick={() => setDraftResidentId(resident.id)}
+                  className="group/resident relative flex min-h-0 flex-col items-center px-1 pb-1 focus-visible:outline-none disabled:opacity-35 disabled:cursor-not-allowed"
+                  onClick={() => { if (resident.id !== draftResidentId) playPikoUiSound("open"); setDraftResidentId(resident.id); }}
                 >
                   {selected && (
                     <>
@@ -145,11 +156,12 @@ export function PikoResidentSelectorDialog({
             })}
           </div>
 
-          <footer className="mt-3 flex shrink-0 translate-y-4 justify-center">
+          <footer className="mt-3 flex shrink-0 translate-y-2 justify-center">
             <button
               type="button"
-              className="h-9 rounded-[10px] border border-amber-950/25 bg-amber-200/85 px-4 text-xs font-semibold text-amber-950 transition-[background-color,transform] duration-[var(--duration-fast)] hover:-translate-y-0.5 hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800/25"
+              className={`${iconStyles.button} h-9 rounded-[10px] border border-amber-950/25 bg-amber-200/85 px-4 text-xs font-semibold text-amber-950`}
               onClick={() => {
+                if (!isPlayablePikoResident(draftResidentId)) return;
                 onConfirm(draftResidentId);
                 onOpenChange(false);
               }}
@@ -163,7 +175,7 @@ export function PikoResidentSelectorDialog({
           render={
             <button
               type="button"
-              className="absolute -right-6 -top-4 z-20 inline-flex size-8 items-center justify-center transition-[filter,transform] duration-[var(--duration-fast)] hover:-translate-y-0.5 hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800/25"
+              className={`${popupStyles.close} ${iconStyles.button}`}
               aria-label={t("pikoWorld.residentSelectorClose")}
             />
           }

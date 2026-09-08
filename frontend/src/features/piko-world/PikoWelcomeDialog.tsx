@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog, DialogClose, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import iconStyles from "./piko-icon-button.module.css";
 import styles from "./piko-welcome-dialog.module.css";
 import { playPikoUiSound } from "./piko-audio";
 
@@ -27,7 +28,7 @@ export function PikoWelcomeDialog({open,onOpenChange,onComplete}: {
         </button>
       </div>
       </div>
-      <DialogClose render={<button type="button" className={styles.close} aria-label={t("common.close")} />}>
+      <DialogClose render={<button type="button" className={`${styles.close} ${iconStyles.button}`} aria-label={t("common.close")} />}>
         <img src="/piko/world/ui/piko-world-close-icon-v1.png" alt="" draggable={false} />
       </DialogClose>
     </DialogContent>

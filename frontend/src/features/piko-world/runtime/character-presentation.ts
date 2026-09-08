@@ -6,11 +6,11 @@ export function addCharacterPresentation(container: Container, name?: string) {
   const body = container.children[1] as Sprite;
   const label = new Text({ text: name ?? "", style: {
     fontFamily: "Arial, PingFang SC, sans-serif", fontSize: 12,
-    fill: "#fff5d9", stroke: { color: "#263020", width: 2 },
+    fill: "#fff8df", stroke: { color: "#24301e", width: 2.5 },
   }, resolution: 2 });
   label.anchor.set(0.5, 1);
   label.position.set(0, -body.anchor.y * body.height - 4);
-  label.alpha = 0.8;
+  label.alpha = 0.95;
   label.eventMode = "none";
   label.visible = Boolean(name);
   container.addChild(label);
@@ -28,10 +28,15 @@ export function addCharacterPresentation(container: Container, name?: string) {
   container.addChild(highlight);
   const setHovered = (hovered: boolean) => {
     highlight.visible = hovered;
-    label.alpha = hovered ? 1 : 0.8;
+    label.alpha = hovered ? 1 : 0.95;
   };
   body.eventMode = "static";
   body.on("pointerover", () => setHovered(true));
   body.on("pointerout", () => setHovered(false));
-  return setHovered;
+  return Object.assign(setHovered, {
+    setName(name: string) {
+      label.text = name;
+      label.visible = Boolean(name);
+    },
+  });
 }

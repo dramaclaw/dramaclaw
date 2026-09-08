@@ -2,7 +2,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { PikoWelcomeDialog } from "./PikoWelcomeDialog";
-vi.mock("./piko-audio", () => ({ playPikoUiSound: vi.fn() }));
+vi.mock("./piko-audio", () => ({ playPikoUiSound: vi.fn(), unlockPikoNotifications: vi.fn() }));
 it("does not open automatically and completes only after all three pages",async()=>{
   const onComplete=vi.fn(), onOpenChange=vi.fn();
   const {rerender}=render(<PikoWelcomeDialog open={false} onOpenChange={onOpenChange} onComplete={onComplete}/>);

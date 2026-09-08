@@ -57,9 +57,9 @@ describe("Piko World 项目中心入口", () => {
     expect(worldShell).toContain('className="absolute right-4 top-4 z-20"');
     expect(worldShell).toContain("<PikoResidentSelectorDialog");
     expect(worldShell).toContain("safeLocalStorageSet(PIKO_RESIDENT_STORAGE_KEY, residentId)");
-    expect(worldShell).toContain("piko-world-chat-panel-top-v1.png");
-    expect(worldShell).toContain("piko-world-chat-panel-middle-v1.png");
-    expect(worldShell).toContain("piko-world-chat-panel-bottom-v1.png");
+    expect(worldShell).toContain("piko-world-public-chat-panel-top-v3.png");
+    expect(worldShell).toContain("piko-world-public-chat-panel-middle-v2.png");
+    expect(worldShell).toContain("piko-world-public-chat-panel-bottom-v2.png");
     expect(worldShell).not.toContain("piko-world-chat-panel-skin-v1.png");
     expect(worldShell).toContain("<PikoThreeSlicePanelSkin");
     expect(worldShell).not.toContain("function ChatInputSkin()");
@@ -123,7 +123,6 @@ describe("Piko World 项目中心入口", () => {
     expect(worldShell).not.toContain("backdrop-blur-tap pointer-events-none");
     expect(worldShell).toContain("mx-4 h-16 -translate-y-1.25 shrink-0");
     expect(worldShell).toContain("rounded-[min(var(--radius-sm),10px)]");
-    expect(worldShell).toContain("px-9 pb-14 pt-[5.5rem]");
     expect(worldShell).toContain("py-2.5 !text-xs");
     expect(worldShell).toContain("value={chatDraft}");
     expect(worldShell).toContain("setChatDraft(event.target.value)");
@@ -179,7 +178,7 @@ describe("Piko World 项目中心入口", () => {
     expect(zh.pikoWorld.chatComposerPlaceholder).toBe("和小镇的大家说点什么吧…");
     expect(zh.pikoWorld.chatMockMayorName).toBe("Piko 镇长");
     expect(zh.pikoWorld.chatMockMayorWelcome).toContain("初遇庭院");
-    expect(zh.pikoWorld.mapAriaLabel).toBe("初遇庭院地图预览");
+    expect(zh.pikoWorld.mapAriaLabel).toBe("初遇庭院，可使用方向键移动");
     expect(zh.pikoWorld.openResidentSelector).toBe("选择居民角色");
     expect(zh.pikoWorld.residentSelectorTitle).toBe("选择你的居民");
     expect(zh.pikoWorld.residentSelectorConfirm).toBe("选好了");

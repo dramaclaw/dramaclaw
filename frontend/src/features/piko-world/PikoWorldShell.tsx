@@ -1,5 +1,9 @@
+import { PikoPrivateChat } from "./PikoPrivateChat";
+import { usePikoPublicChat, PIKO_CHAT_MAX_LENGTH } from "./piko-public-chat";
+import popupStyles from "./piko-popup.module.css";
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import iconStyles from "./piko-icon-button.module.css";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
@@ -11,6 +15,10 @@ import { Link } from "@tanstack/react-router";
 import { Leaf } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { useAuthStore } from "@/stores/auth-store";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { PikoProfileDialog } from "./PikoProfileDialog";
+import { usePikoProfile } from "./piko-profile";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { safeLocalStorageSet } from "@/lib/localStorageQuota";
@@ -18,11 +26,13 @@ import { PikoWorldCanvas } from "./PikoWorldCanvas";
 import { PikoMapTransition } from "./PikoMapTransition";
 import { PikoLoadingScreen } from "./PikoLoadingScreen";
 import { PikoResidentSelectorDialog } from "./PikoResidentSelectorDialog";
+import { useCourtyardMusic } from "./piko-bgm";
 import { playPikoUiSound } from "./piko-audio";
 import { PikoThreeSlicePanelSkin } from "./PikoThreeSlicePanelSkin";
 import {
   PIKO_RESIDENT_STORAGE_KEY,
   readSelectedPikoResidentId,
+  resolvePlayablePikoResident,
 } from "./piko-residents";
 import {
   PIKO_WORLD_OVERLAY_TRANSITION_CLASS,
@@ -39,9 +49,9 @@ const CHAT_CONTROL_LABEL_SRC =
 const SETTINGS_CONTROL_LABEL_SRC =
   "/piko/world/ui/control-labels/piko-world-control-label-settings-v1.png";
 const CLOSE_CONTROL_SRC = "/piko/world/ui/piko-world-close-icon-v1.png";
-const CHAT_PANEL_TOP_SRC = "/piko/world/ui/chat/piko-world-chat-panel-top-v1.png";
-const CHAT_PANEL_MIDDLE_SRC = "/piko/world/ui/chat/piko-world-chat-panel-middle-v1.png";
-const CHAT_PANEL_BOTTOM_SRC = "/piko/world/ui/chat/piko-world-chat-panel-bottom-v1.png";
+const CHAT_PANEL_TOP_SRC = "/piko/world/ui/chat/piko-world-public-chat-panel-top-v3.png";
+const CHAT_PANEL_MIDDLE_SRC = "/piko/world/ui/chat/piko-world-public-chat-panel-middle-v2.png";
+const CHAT_PANEL_BOTTOM_SRC = "/piko/world/ui/chat/piko-world-public-chat-panel-bottom-v2.png";
 const DAY_PAGE_BACKGROUND_SRC =
   "/piko/world/ui/backgrounds/piko-world-page-background-day-v1.png";
 const CURRENT_MAP_ID = "welcome-courtyard" as const;
@@ -91,7 +101,14 @@ function currentChatTime(): string {
 }
 
 export function PikoWorldShell() {
+  useCourtyardMusic();
   const { t } = useTranslation();
+  const username = useAuthStore(state => state.username);
+  const { profile, saveProfile } = usePikoProfile(username);
+  const nickname = profile.nickname || t("pikoWorld.defaultNickname");
+  const [privateOpen, setPrivateOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [entered, setEntered] = useState(false);
   const [mapTitleComplete, setMapTitleComplete] = useState(false);
@@ -102,7 +119,9 @@ export function PikoWorldShell() {
     "loading",
   );
   const [residentSelectorOpen, setResidentSelectorOpen] = useState(false);
-  const [selectedResidentId, setSelectedResidentId] = useState(readSelectedPikoResidentId);
+  const [selectedResidentId, setSelectedResidentId] = useState(() => resolvePlayablePikoResident(readSelectedPikoResidentId()));
+  const publicChat = usePikoPublicChat(username);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => [
     ...CHAT_MOCK_MESSAGES,
@@ -163,8 +182,13 @@ export function PikoWorldShell() {
   }, [chatMessages.length, chatOpen]);
 
   const submitChatDraft = () => {
-    const body = chatDraft.trim();
-    if (!body) return;
+    const result = publicChat.send(chatDraft);
+    if (!result.ok) {
+      setChatError(result.reason === "length" ? t("pikoWorld.chatTooLong") : null);
+      return;
+    }
+    const body = result.body;
+    setChatError(null);
     setChatMessages((messages) => [
       ...messages,
       {
@@ -231,12 +255,18 @@ export function PikoWorldShell() {
         <PikoWorldCanvas
           key={loadAttempt}
           mapId={CURRENT_MAP_ID}
+          nickname={nickname}
+          speech={publicChat.speech}
+          residentId={selectedResidentId}
           showMayorHint={mapTitleComplete && entered && mapLoadState === "ready"}
           mayorHintVisible={entered && mapLoadState === "ready"}
-          movementBlocked={chatOpen || residentSelectorOpen || entryFade !== "done"}
+          movementBlocked={privateOpen || chatOpen || settingsOpen || profileOpen || residentSelectorOpen || entryFade !== "done"}
           onLoadStateChange={handleMapLoadStateChange}
         />
 
+        <PikoPrivateChat key={username ?? "guest"} ownNickname={nickname}
+          active={entered && entryFade === "done" && mapTitleComplete && mapLoadState === "ready" && !settingsOpen && !profileOpen && !residentSelectorOpen}
+          onOpenChange={setPrivateOpen} />
         <nav
           className="absolute left-4 top-4 z-20 flex items-center gap-5"
           aria-label={t("pikoWorld.worldControls")}
@@ -244,7 +274,7 @@ export function PikoWorldShell() {
           <div className="flex w-9 flex-col items-center gap-0.5">
             <Link
               to="/"
-              className="inline-flex size-9 items-center justify-center transition-[filter,transform] duration-[var(--duration-fast)] hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className={`inline-flex size-9 items-center justify-center ${iconStyles.button}`}
               aria-label={t("pikoWorld.returnToWorkbench")}
               onClick={() => playPikoUiSound("close")}
             >
@@ -268,7 +298,7 @@ export function PikoWorldShell() {
               ref={chatButtonRef}
               type="button"
               className={cn(
-                "relative inline-flex size-9 items-center justify-center overflow-visible transition-[filter,transform] duration-[var(--duration-fast)] hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                `relative inline-flex size-9 items-center justify-center overflow-visible ${iconStyles.button}`,
                 chatOpen && "brightness-110",
               )}
               aria-label={
@@ -307,26 +337,32 @@ export function PikoWorldShell() {
 
         <div className="absolute right-4 top-4 z-20">
           <div className="flex w-9 flex-col items-center gap-0.5">
-            <button
-              ref={settingsButtonRef}
-              type="button"
-              className="inline-flex size-9 items-center justify-center transition-[filter,transform] duration-[var(--duration-fast)] hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label={t("pikoWorld.openResidentSelector")}
-              aria-controls="piko-world-resident-selector"
-              aria-expanded={residentSelectorOpen}
-              onClick={() => {
-                setChatOpen(false);
-                setResidentSelectorOpen(true);
-                playPikoUiSound("open");
-              }}
-            >
-              <img
-                src={SETTINGS_CONTROL_SRC}
-                alt=""
-                className="size-9 object-contain"
-                draggable={false}
-              />
-            </button>
+            <DropdownMenu open={settingsOpen} onOpenChange={open => {
+              setSettingsOpen(open);
+              if (open) setChatOpen(false);
+              playPikoUiSound(open ? "open" : "close");
+            }}>
+              <DropdownMenuTrigger render={<button
+                id="piko-world-settings"
+                ref={settingsButtonRef}
+                type="button"
+                className={`inline-flex size-9 items-center justify-center ${iconStyles.button}`}
+                aria-label={t("pikoWorld.settings")}
+              />}>
+                <img src={SETTINGS_CONTROL_SRC} alt="" className="size-9 object-contain" draggable={false} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" sideOffset={8}
+                className={`${popupStyles.surface} min-w-40 p-1`}>
+                <DropdownMenuItem className={popupStyles.item}
+                  onClick={() => { setSettingsOpen(false); setProfileOpen(true); playPikoUiSound("open"); }}>
+                  {t("pikoWorld.editProfile")}
+                </DropdownMenuItem>
+                <DropdownMenuItem className={popupStyles.item}
+                  onClick={() => { setSettingsOpen(false); handleResidentSelectorOpenChange(true); }}>
+                  {t("pikoWorld.changeResident")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <img
               src={SETTINGS_CONTROL_LABEL_SRC}
               alt=""
@@ -337,12 +373,20 @@ export function PikoWorldShell() {
           </div>
         </div>
 
+        <PikoProfileDialog
+          key={username ?? "guest"}
+          open={profileOpen}
+          profile={profile}
+          onSave={saveProfile}
+          onOpenChange={open => { setProfileOpen(open); playPikoUiSound(open ? "open" : "close"); }}
+        />
+
         <PikoResidentSelectorDialog
           open={residentSelectorOpen}
           selectedResidentId={selectedResidentId}
           onOpenChange={handleResidentSelectorOpenChange}
           onConfirm={(residentId) => {
-            setSelectedResidentId(residentId);
+            setSelectedResidentId(resolvePlayablePikoResident(residentId));
             safeLocalStorageSet(PIKO_RESIDENT_STORAGE_KEY, residentId);
           }}
         />
@@ -350,10 +394,11 @@ export function PikoWorldShell() {
         <aside
           id="piko-world-chat-panel"
           className={cn(
-            "dark absolute bottom-4 left-4 top-16 z-10 isolate flex w-[min(22rem,calc(100%_-_2rem))] min-h-0 origin-top-left flex-col overflow-visible px-9 pb-14 pt-[5.5rem]",
+            "dark absolute bottom-4 left-4 top-16 z-10 isolate flex w-[min(29.333333rem,calc(100%_-_4rem))] min-h-0 origin-top-left flex-col overflow-visible px-0 pb-0 pt-0",
             PIKO_WORLD_OVERLAY_TRANSITION_CLASS,
             pikoWorldOverlayVisibilityClass(chatOpen),
           )}
+          style={{ paddingLeft: "min(2.95rem, 8.3vw)", paddingRight: "min(3.45rem, 9.7vw)", paddingTop: "min(7.15rem, 24vw)", paddingBottom: "min(4.6rem, 16vw)" }}
           aria-label={t("pikoWorld.chatTitle")}
           aria-hidden={!chatOpen}
           data-state={chatOpen ? "open" : "closed"}
@@ -367,7 +412,7 @@ export function PikoWorldShell() {
 
           <button
             type="button"
-            className="absolute -right-9 top-5 z-20 inline-flex size-8 items-center justify-center transition-[filter,transform] duration-[var(--duration-fast)] hover:-translate-y-0.5 hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800/25"
+            className={`${popupStyles.close} ${iconStyles.button}`}
             aria-label={t("pikoWorld.chatClose")}
             onClick={() => {
               setChatOpen(false);
@@ -414,15 +459,15 @@ export function PikoWorldShell() {
                     message.mine ? "self-end items-end" : "self-start items-start",
                   )}
                 >
-                  <div className="flex items-center gap-2 px-1 text-xs text-primary-foreground/55">
+                  <div className="flex items-center gap-2 px-1 text-[10px] leading-4 text-primary-foreground/55">
                     <span className="font-medium text-primary-foreground/70">
-                      {t(message.authorKey)}
+                      {message.mine ? nickname : t(message.authorKey)}
                     </span>
                     <time>{message.time}</time>
                   </div>
                   <p
                     className={cn(
-                      "rounded-[min(var(--radius-sm),8px)] border px-2.5 py-1.5 text-xs leading-4 text-primary-foreground/80",
+                      "whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[min(var(--radius-sm),8px)] border px-2.5 py-1.5 text-xs leading-4 text-primary-foreground/80",
                       message.mine
                         ? "border-amber-900/15 bg-amber-100/55"
                         : "border-amber-950/10 bg-white/55",
@@ -439,12 +484,17 @@ export function PikoWorldShell() {
             <Textarea
               rows={2}
               value={chatDraft}
-              onChange={(event) => setChatDraft(event.target.value)}
+              onChange={(event) => { setChatDraft(event.target.value); setChatError(null); }}
               onKeyDown={handleChatDraftKeyDown}
               className="relative z-10 h-full min-h-0 resize-none border-0 !bg-transparent px-3 py-2.5 !text-xs text-primary-foreground shadow-none placeholder:text-primary-foreground/45 focus-visible:ring-0 dark:!bg-transparent"
               placeholder={t("pikoWorld.chatComposerPlaceholder")}
               aria-label={t("pikoWorld.chatComposerPlaceholder")}
             />
+          </div>
+          <div className="relative z-10 mx-4 mt-1 flex items-center justify-between gap-2 text-[10px] leading-4 text-amber-950/45">
+            <span role="status">{chatError ?? (publicChat.remaining > 0 ? t("pikoWorld.chatCooldown", { seconds: publicChat.remaining }) : t("pikoWorld.chatSendHint"))}</span>
+            <span>{Array.from(chatDraft.trim()).length}/{PIKO_CHAT_MAX_LENGTH}</span>
+
           </div>
         </aside>
         </div>

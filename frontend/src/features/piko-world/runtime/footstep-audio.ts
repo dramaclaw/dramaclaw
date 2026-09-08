@@ -30,10 +30,14 @@ export function createGrassFootsteps() {
     playing.forEach(source => { try { source.stop(); } catch { /* Already ended. */ } });
     playing.clear();
   };
+  const unlock = () => {
+    if (!disposed && context && context.state !== "running" && context.state !== "closed") void context.resume().catch(() => {});
+  };
+  document.addEventListener("pointerdown", unlock, true);
+  document.addEventListener("keydown", unlock, true);
+  document.addEventListener("touchend", unlock, true);
   return {
-    unlock() {
-      if (!disposed && context?.state === "suspended") void context.resume().catch(() => {});
-    },
+    unlock,
     step() {
       if (disposed || context?.state !== "running" || !buffers.length) return;
       // Choose a different recording each contact without changing pitch.
@@ -44,7 +48,7 @@ export function createGrassFootsteps() {
         const source = context.createBufferSource();
         const gain = context.createGain();
         source.buffer = buffers[index];
-        gain.gain.value = 0.7;
+        gain.gain.value = 1.2;
         source.connect(gain).connect(context.destination);
         playing.add(source);
         source.onended = () => { playing.delete(source); source.disconnect(); gain.disconnect(); };
@@ -54,6 +58,9 @@ export function createGrassFootsteps() {
     stop,
     destroy() {
       disposed = true;
+      document.removeEventListener("pointerdown", unlock, true);
+      document.removeEventListener("keydown", unlock, true);
+      document.removeEventListener("touchend", unlock, true);
       abort.abort();
       stop();
       buffers.length = 0;

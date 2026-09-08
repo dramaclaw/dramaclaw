@@ -14,9 +14,9 @@ it("moves only with map focus, stops on pause/blur, retains facing and cleans li
   const host=document.createElement("div");host.tabIndex=0;document.body.append(host);host.focus();
   const motion={matches:false};vi.stubGlobal("matchMedia",()=>motion);
   const nav={walkableAreas:[{id:"ground",points:[{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}]}],colliders:[]} as unknown as PikoNavigation;
-  const ticker={add:vi.fn(),remove:vi.fn()}, onInteract=vi.fn();
+  const ticker={add:vi.fn(),remove:vi.fn()};
   let active=false;
-  const actor=createResidentActor({} as Texture,ticker as unknown as Ticker,()=>active,{host,navigation:nav,onInteract});
+  const actor=createResidentActor({} as Texture,ticker as unknown as Ticker,()=>active,{host,navigation:nav});
   const tick=ticker.add.mock.calls[0][0];
   const key=(code:string)=>window.dispatchEvent(new KeyboardEvent("keydown",{code,bubbles:true,cancelable:true}));
   key("KeyD");tick({deltaMS:16});expect(actor.container.position.x).toBe(1190);
@@ -24,7 +24,8 @@ it("moves only with map focus, stops on pause/blur, retains facing and cleans li
   expect(mock.setFrame).toHaveBeenLastCalledWith(25);
   expect(mock.step).toHaveBeenCalledOnce();
   expect(mock.unlock).toHaveBeenCalledOnce();
-  key("KeyE");expect(onInteract).toHaveBeenCalledOnce();
+  const interaction = new KeyboardEvent("keydown", {code:"KeyE",cancelable:true});
+  window.dispatchEvent(interaction);expect(interaction.defaultPrevented).toBe(false);
   active=false;tick({deltaMS:16});const stopped=actor.container.position.x;
   active=true;tick({deltaMS:16});expect(actor.container.position.x).toBe(stopped);
   expect(mock.setFrame).toHaveBeenLastCalledWith(22);
@@ -37,5 +38,29 @@ it("moves only with map focus, stops on pause/blur, retains facing and cleans li
   const typing=actor.container.position.x;tick({deltaMS:16});expect(actor.container.position.x).toBe(typing);
   actor.destroy();expect(ticker.remove).toHaveBeenCalledWith(tick);expect(mock.destroy).toHaveBeenCalledOnce();
   expect(mock.audioDestroy).toHaveBeenCalledOnce();
-  host.focus();key("KeyE");expect(onInteract).toHaveBeenCalledOnce();
+  host.focus();key("KeyD");expect(mock.unlock).toHaveBeenCalledTimes(3);
+});
+
+it("drives a simulated resident independently of the player's keyboard and pauses it safely", () => {
+  const host = document.createElement("div"); host.tabIndex = 0; document.body.append(host); host.focus();
+  const navigation = { walkableAreas: [{ id: "ground", points: [{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}] }], colliders: [] } as unknown as PikoNavigation;
+  const ticker = { add: vi.fn(), remove: vi.fn() };
+  let input = { x: 0, y: 0 }, active = true;
+  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => active,
+    { host, navigation, simulatedInput: () => input });
+  const tick = ticker.add.mock.calls[0][0];
+  window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD" }));
+  tick({ deltaMS: 16 });
+  expect(actor.container.position.x).toBe(1190);
+  input = { x: 1, y: 0 };
+  tick({ deltaMS: 16 });
+  expect(actor.container.position.x).toBeGreaterThan(1190);
+  expect(mock.setFrame).toHaveBeenLastCalledWith(25);
+  const stopped = actor.container.position.x;
+  active = false; tick({ deltaMS: 16 });
+  expect(actor.container.position.x).toBe(stopped);
+  expect(mock.unlock).not.toHaveBeenCalled();
+  expect(mock.step).not.toHaveBeenCalled();
+  actor.destroy();
+  expect(ticker.remove).toHaveBeenCalledWith(tick);
 });

@@ -1,0 +1,37 @@
+/* Shared skin for Piko resident menus, settings menus and profile popups. */
+.surface {
+  border: 1px solid #c5a12d;
+  border-radius: var(--radius-md);
+  background: var(--color-amber-100);
+  color: var(--color-amber-950);
+  box-shadow: 0 5px 16px rgb(43 36 15 / 18%);
+  outline: none;
+}
+.item {
+  cursor: pointer;
+  border-radius: max(2px, calc(var(--radius-md) - 5px));
+  padding: 8px 12px;
+  color: inherit;
+}
+.item[data-highlighted], .item:focus-visible {
+  background: var(--color-amber-200);
+  color: var(--color-amber-950);
+}
+.close {
+  position: absolute;
+  right: -28px;
+  top: -28px;
+  z-index: 20;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.close img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}

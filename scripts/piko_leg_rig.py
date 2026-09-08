@@ -13,8 +13,16 @@ RIGS = {
 }
 
 
-def paint_walk(master, direction, phase):
-    rig = RIGS[direction]
+FEMALE_RIGS = {
+    "south": {"hem": 52, "hips": ((28, 51), (36, 51))},
+    "west": {"hem": 52, "hips": ((32, 51), (33, 51))},
+    "east": {"hem": 52, "hips": ((31, 51), (32, 51))},
+    "north": {"hem": 52, "hips": ((28, 51), (36, 51))},
+}
+
+
+def paint_walk(master, direction, phase, character="m01"):
+    rig = (FEMALE_RIGS if character == "f01" else RIGS)[direction]
     pose = POSES[phase % len(POSES)]
     torso = body_pose(direction, phase)
     frame = Image.new("RGBA", master.size)
@@ -24,9 +32,9 @@ def paint_walk(master, direction, phase):
     def nearest(rgb):
         return min(colors, key=lambda c: sum((a-b)**2 for a,b in zip(c[:3],rgb)))
     outline = nearest((17,21,35))
-    trouser = nearest((42,43,44))
-    far_trouser = nearest((29,30,33))
-    shoe = nearest((35,36,36))
+    trouser = nearest((239,177,104) if character == "f01" else (42,43,44))
+    far_trouser = nearest((182,112,58) if character == "f01" else (29,30,33))
+    shoe = nearest((77,46,24) if character == "f01" else (35,36,36))
     sole = nearest((183,168,118))
     trim = nearest((181,132,46))
     side = direction in ("west", "east")
@@ -49,5 +57,5 @@ def paint_walk(master, direction, phase):
         draw.line((ax-1,ay,ax+1,ay),fill=trim,width=1)
         draw.line((ax-1,ay+1,ax+1,ay+1),fill=shoe,width=1)
         draw.line((left+1,bottom-1,right-1,bottom-1),fill=sole if leg==1 else shoe)
-    frame.alpha_composite(pose_upper(master, direction, pose, torso, rig["hem"]),(0,0))
+    frame.alpha_composite(pose_upper(master, direction, pose, torso, rig["hem"], character),(0,0))
     return frame

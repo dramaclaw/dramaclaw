@@ -14,12 +14,23 @@ ARM_MASKS = {
 }
 
 
-def pose_upper(master, direction, pose, body_pose, hem):
+FEMALE_ARM_MASKS = {
+    "south": [([(21,32),(25,33),(25,43),(20,44),(19,38)],32),
+              ([(39,32),(43,32),(45,42),(40,44),(39,38)],32)],
+    "north": [([(21,32),(25,32),(25,43),(20,44)],32),
+              ([(39,32),(43,32),(45,43),(40,44)],32)],
+    "west": [([(30,31),(35,31),(35,43),(30,44)],31)],
+    "east": [([(29,31),(34,31),(34,44),(29,44)],31)],
+}
+
+
+def pose_upper(master, direction, pose, body_pose, hem, character="m01"):
+    masks = FEMALE_ARM_MASKS if character == "f01" else ARM_MASKS
     body = Image.new("RGBA", master.size)
     body.paste(master.crop((0, 0, 64, hem)), (0, 0))
     side = direction in ("west", "east")
     layers = []
-    for index, (polygon, shoulder_y) in enumerate(ARM_MASKS[direction]):
+    for index, (polygon, shoulder_y) in enumerate(masks[direction]):
         mask = Image.new("L", master.size)
         ImageDraw.Draw(mask).polygon(polygon, fill=255)
         arm = Image.new("RGBA", master.size)

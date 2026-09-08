@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { Container } from "pixi.js";
 import { PikoNavigationSchema } from "./map-package-schema";
-import { canStand, canTalkTo, facingFor, moveCharacter } from "./character-movement";
+import { canStand, facingFor, moveCharacter } from "./character-movement";
 const nav=PikoNavigationSchema.parse(JSON.parse(readFileSync("public/piko/world/maps/welcome-courtyard/data/navigation.json","utf8")));
 it("preserves real Pixi ObservablePoint coordinates while idle and moving",()=>{
   const actor=new Container();
@@ -38,12 +38,6 @@ it("does not walk through the fountain and stops safely",()=>{
   expect(point.x).toBeGreaterThan(1180);
   expect(canStand(point,nav)).toBe(true);
   expect(moveCharacter(point,{x:0,y:0},16,nav)).toEqual(point);
-});
-it("requires proximity and an unobstructed line to the mayor",()=>{
-  const mayor={x:1060,y:450};
-  expect(canTalkTo({x:1120,y:420},mayor,nav)).toBe(true);
-  expect(canTalkTo({x:1190,y:485},mayor,nav)).toBe(false);
-  expect(canTalkTo({x:1060,y:530},mayor,nav)).toBe(false);
 });
 it("resolves all four facings",()=>{
   expect([{x:0,y:1},{x:-1,y:0},{x:1,y:0},{x:0,y:-1}].map(facingFor)).toEqual(["south","west","east","north"]);
