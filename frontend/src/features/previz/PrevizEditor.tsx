@@ -178,6 +178,8 @@ export function PrevizEditor({
 
   const scene = usePrevizStore((state) => state.scene);
   const selectedObjectId = usePrevizStore((state) => state.selectedObjectId);
+  /** 用户手选钉住的那台；null 表示监看还跟着镜头轨走。图层面板的开关判据是它。 */
+  const activeCameraId = usePrevizStore((state) => state.activeCameraId);
   /** 监看此刻看的机位：跟随时是镜头轨的直播机位，手选后是 activeCameraId。 */
   const monitorId = usePrevizStore(monitorCameraId);
   const monitorFollowsProgram = usePrevizStore((state) => state.monitorFollowsProgram);
@@ -214,6 +216,8 @@ export function PrevizEditor({
 
   // 关掉监看时记住关的是哪一台：右下角那个开关重新打开的必须是同一台机位，
   // 否则机位不止一台的场景里「关掉再打开」会顺手换成第一台。
+  // 记的是「上一次显示的」而不是「用户上一次选的」：跟随中这台可能由镜头轨给出、用户
+  // 从没点过它。重开监看要接上的正是关掉前眼前那块画面，所以按显示过的算。
   const lastMonitoredCameraId = useRef<string | null>(null);
   if (monitorId) lastMonitoredCameraId.current = monitorId;
   // 这里不套 useMemo：它读的是一个 ref，而 ref 变了不会让 memo 失效，缓存下来的
@@ -287,8 +291,11 @@ export function PrevizEditor({
   /**
    * 四视图里机位那一格看的是哪台机位：优先右下角监看的那台，没设监看就用场景里的第一台。
    *
-   * 不跟监看绑死：那一格答的是「镜头里是什么样」，而建完机位的下一件事就是想看它拍到
-   * 什么。要求先去图层面板设一次监看才肯出画，等于让用户对着一格黑画面猜自己漏了哪步。
+   * 「监看的那台」既可能是用户手选的，也可能是跟随中镜头轨切过去的——这一格跟着监看
+   * 走，切镜时它和右下角画中画换成同一台。
+   *
+   * 但不跟监看绑死：那一格答的是「镜头里是什么样」，而建完机位的下一件事就是想看它拍到
+   * 什么。要求先设一次监看（手选或切一刀）才肯出画，等于让用户对着一格黑画面猜漏了哪步。
    */
   const quadCamera = useMemo(() => {
     const cameras = scene.objects.filter((object) => object.kind === "camera");
@@ -375,10 +382,13 @@ export function PrevizEditor({
     renderer?.setActiveCamera(monitorId);
   }, [renderer, monitorId]);
 
-  // 直播机位的红框：跟着播放头走，切片一换就换。
+  // 视口里那圈直播红框标的是「此刻正在播的是谁」，所以它认镜头轨与播放头，而不是监看：
+  // 手选脱离跟随之后，监看看的是 A、正在播的仍是 B，两者本来就该各画各的。
+  // 依赖只列 `scene.timeline.program`：`liveCameraAt` 就读这一条，挂整个 `scene` 会让
+  // 拖一下物件也重算一遍。
   useEffect(() => {
     renderer?.setLiveCamera(liveCameraAt(scene, timelineFrame));
-  }, [renderer, scene, timelineFrame]);
+  }, [renderer, scene.timeline.program, timelineFrame]);
 
   useEffect(() => {
     renderer?.setGizmoMode(gizmoMode);
@@ -720,7 +730,9 @@ export function PrevizEditor({
     if (!open || !renderer) return undefined;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
+      // instanceof 而不是 as：window.dispatchEvent 的 target 是 window，既没有 tagName
+      // 也没有 closest，断言成 HTMLElement 只是让下面两处守卫读到 undefined 而已。
+      const target = event.target instanceof HTMLElement ? event.target : null;
       // 焦点在输入框里时 F 是在打字，不是快捷键。
       if (
         target &&
@@ -732,9 +744,14 @@ export function PrevizEditor({
         return;
       }
 
-      // 机位创建对话框之类的嵌套弹窗开着时，按键是给它的。编辑器自己的 DialogContent
-      // 带 data-previz-editor，只放行落在它里面（而不是更里层 dialog 里）的按键。
-      const dialog = (event.target as Element | null)?.closest?.('[role="dialog"]');
+      // 机位创建对话框之类的嵌套弹窗开着时，按键是给它的。这道守卫落在 store 之前，
+      // 收严的是**全部**快捷键（F/H/W/Q/G/R/S/空格/方向键/Delete/Cmd+Z），不只数字键：
+      // 弹窗开着时按 Delete 删掉背后场景里的对象，和数字键切镜一样不是用户要的。
+      //
+      // 用 data- 属性白名单而不是 `contains()`/ref：没有元素获得焦点时 keydown 的 target
+      // 是 body，body 不在 DialogContent 里，`contains()` 会把最常见的那种情况整个挡掉、
+      // 所有快捷键当场失效。白名单反过来只挡「落在**别的** dialog 里」的按键，默认放行。
+      const dialog = target?.closest('[role="dialog"]');
       if (dialog && !dialog.hasAttribute("data-previz-editor")) return;
 
       const store = usePrevizStore.getState();
@@ -986,6 +1003,11 @@ export function PrevizEditor({
                   onShowNamePlate={setShowNamePlate}
                   following={monitorFollowsProgram}
                   onFollow={followProgram}
+                  /*
+                    关监看顺带退出跟随（`setActiveCamera` 一并置 false）：关掉之后播放头
+                    再越过切点也不该把画中画自己弹回来——那是用户刚亲手关掉的东西。代价是
+                    重开之后要再按一下「跟随」，这一步换的是「关掉就是真的关掉」。
+                  */
                   onClose={() => setActiveCamera(null)}
                 />
               )}
@@ -1096,7 +1118,8 @@ export function PrevizEditor({
               <PrevizLayerPanel
                 objects={scene.objects}
                 selectedId={selectedObjectId}
-                activeCameraId={monitorId}
+                monitorCameraId={monitorId}
+                pinnedCameraId={activeCameraId}
                 onSelect={selectObject}
                 onToggleVisible={(id) => {
                   const object = scene.objects.find((entry) => entry.id === id);

@@ -44,7 +44,15 @@ const KIND_ORDER = Object.keys(KIND_ICON) as PrevizObjectKind[];
 export interface PrevizLayerPanelProps {
   objects: readonly PrevizObject[];
   selectedId: string | null;
-  activeCameraId: string | null;
+  /**
+   * 亮蓝灯的那台：此刻监看真正在看的机位，跟随时由镜头轨给出，用户可能从没点过它。
+   * 与 `pinnedCameraId` 分成两个 prop，是因为「亮谁」和「点下去切换谁」在跟随中不是
+   * 同一台：合成一个的话，点亮着的那台会被当成「再点一次关掉监看」，于是想钉住直播
+   * 机位的那一下反而把监看整个关了。
+   */
+  monitorCameraId: string | null;
+  /** 用户手选钉住的那台；null 表示还在跟随镜头轨。开关的判据是它。 */
+  pinnedCameraId: string | null;
   onSelect: (id: string) => void;
   onToggleVisible: (id: string) => void;
   onToggleLocked: (id: string) => void;
@@ -94,7 +102,8 @@ function LayerRowButton({
 export function PrevizLayerPanel({
   objects,
   selectedId,
-  activeCameraId,
+  monitorCameraId,
+  pinnedCameraId,
   onSelect,
   onToggleVisible,
   onToggleLocked,
@@ -142,7 +151,7 @@ export function PrevizLayerPanel({
 
               {group.map((object) => {
                 const selected = object.id === selectedId;
-                const monitoring = object.id === activeCameraId;
+                const monitoring = object.id === monitorCameraId;
 
                 return (
                   <div
@@ -193,7 +202,11 @@ export function PrevizLayerPanel({
                         label={t("previz.layers.setActiveCamera")}
                         pressed={monitoring}
                         className={monitoring ? "text-sky-300 hover:text-sky-200" : undefined}
-                        onActivate={() => onSetActiveCamera(monitoring ? null : object.id)}
+                        // 判的是「已经钉在这台了吗」而不是 `monitoring`：跟随中点亮着的
+                        // 那台，意思是把它从镜头轨手里钉下来，不是关掉监看。
+                        onActivate={() =>
+                          onSetActiveCamera(object.id === pinnedCameraId ? null : object.id)
+                        }
                       />
                     )}
 
