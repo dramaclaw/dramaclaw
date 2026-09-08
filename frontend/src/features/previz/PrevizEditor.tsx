@@ -74,8 +74,13 @@ interface PrevizEditorProps {
   nodeId: string;
   initialScene: PrevizScene;
   onOpenChange: (open: boolean) => void;
-  /** 关闭时把当前场景交回节点落盘；编辑期不逐帧写 node.data。 */
-  onFlush: (scene: PrevizScene) => void;
+  /**
+   * 把当前场景交回节点落盘：停手 `PREVIZ_AUTOSAVE_MS` 之后一次，关窗时再兜一次。
+   *
+   * 返回值是「这一份到底存下没有」。`false` 表示节点拒收，编辑器就继续把场景记作
+   * 未保存；今天唯一的拒收理由是场景撑爆了体积上限，取舍见 `flushIfDirty`。
+   */
+  onFlush: (scene: PrevizScene) => boolean;
 }
 
 /** 按下与抬起之间超过这个像素就算在转视角，不是在点选。 */
@@ -413,14 +418,33 @@ export function PrevizEditor({
     马上就卸载了，没人看得见 `data.scene` 变没变。
 
     代价是「编辑器开着时外部改 node.data.scene 能同步进来」这条通道**故意关掉了**。
-    核过：现实中没有这种写入方。写 previz 节点 `scene` 的只有本编辑器的 `onFlush`；
-    画布级 Ctrl+Z 走 `Canvas.tsx` 那个 keydown，开头就被 `isImmersiveViewerActive()`
-    挡掉（本组件的 `useViewerImmersiveBody(open)` 正是把这个开关按下的），右键菜单
-    那条 undo 藏在全屏弹窗底下点不到；`setCanvasData` 只在 hydrate / 换画布时调，
-    而那要先关掉这个全屏弹窗。所以这条通道唯一的使用者就是编辑器自己。
+    核过：常规写入方只有编辑器自己。写 previz 节点 `scene` 的只有本编辑器的 `onFlush`
+    （`nodeRegistry` 里那个 `scene: null` 是建节点时的初值）；画布级 Ctrl+Z 走
+    `Canvas.tsx` 那个 keydown，开头就被 `isImmersiveViewerActive()` 挡掉（本组件的
+    `useViewerImmersiveBody(open)` 正是把这个开关按下的），右键菜单那条 undo 藏在全屏
+    弹窗底下点不到；协作、多标签页、本地草稿都没有第二条写回路径。
 
-    `initialScene` 走 ref 而不是直接进依赖：ref 在渲染期同步最新值，重开时读到的
-    一定是当下那一份，而它换引用不会把这条 effect 叫醒。
+    但**有一条中途替换的路**：BeatContextNode 的「同步到主线」会走
+    `restoreCurrentMainlinePresetCanvas`，它串五次网络往返之后落一次 `setCanvasData`，
+    这期间用户完全来得及点开某个预演台。那一下把整张画布换掉，同 id 的节点按远端那份
+    重建，`data.scene` 就被换了；React Flow 按 id 复用，`PrevizNode` 不卸载，编辑器也
+    不重挂。有了上面这条 ref，编辑器会**保留用户手上的会话**，并在下一次自动保存时把
+    自己这份写回去、盖掉远端那份。这是有意选的：用户正编到一半，把他的场景连同撤销栈
+    一起换成远端版本，比「他自己那份赢」更糟——何况远端那份多半就是他刚才存上去的。
+
+    `initialScene` 走 ref 而不是直接进依赖：ref 在渲染期同步最新值，读到的一定是当下
+    那一份，而它换引用不会把这条 effect 叫醒。
+
+    下面那行渲染期赋值今天在生产上不起作用：`PrevizNode` 是条件挂载
+    （`isEditorOpen && <PrevizEditor …/>`），关窗整棵子树就卸载，重开是重新挂载，
+    `useRef(initialScene)` 的初值本来就是当下那一份。它是留给将来的：谁要把编辑器改成
+    常驻挂载、拿 `open` 开关，那时这行就是「ref 必须跟着最新 prop」的唯一保证，测试里
+    那条 `loads whatever scene the node holds…` 钉的也是这条不变量，不是今天的症状。
+
+    也正因为挂载期 `open` / `nodeId` / `loadScene` 三项恒定、这条 effect 每次挂载只跑
+    一次且跑在任何重渲染之前，渲染期写 ref 在 React 19 并发下才是安全的（被丢弃的渲染
+    留下的值会被随后以当前 props 的重跑收敛掉）。改成常驻挂载会同时打破这个前提，届时
+    要重新想一遍。同理，依赖里的 `nodeId` / `loadScene` 今天都是常量，留着是为了那一天。
   */
   const initialSceneRef = useRef(initialScene);
   initialSceneRef.current = initialScene;
@@ -925,19 +949,34 @@ export function PrevizEditor({
   }, [open]);
 
   /**
-   * 把当前场景写回节点，但只在真有改动时写。
+   * 把当前场景写回节点，但只在真有改动、且节点真收下了的时候才记作「已保存」。
    *
    * 判据用 store 的 `dirty` 而不是自己比场景引用：播放头、时间轴缩放、选中项都刻意
    * 不在 `PrevizScene` 里（store 里那段注释讲了为什么），只有 `applyScene` /
    * `undo` / `redo` 会置脏。所以「打开看一眼再关掉」不会白写一次 `node.data`——
    * 白写一次画布就 `trackEdit` 一次，紧接着把整张画布推去落盘，用户其实什么都没改。
    *
-   * `markSaved()` 从上线起就没人调过，这套基建正是为这里留的。
+   * `markSaved()` 挂在 `onFlush` 的返回值上，是因为节点会拒收：场景撑爆体积上限时
+   * `buildNodeScenePatch` 失败，`handleFlush` 直接返回、**一个字节都没存**。以前这里
+   * 无条件 `markSaved()`，于是编辑器把一次拒收记成了保存成功——而节点那边「存不下」
+   * 的 toast 一辈子只弹一次。合起来就是：用户吃一条提示，接着干一小时，此后每一次
+   * 停手都在空转，`dirty` 一直读 false，关窗兜底也被判据挡掉，界面上毫无异样。
+   *
+   * 取舍：超限是**粘性失败**（场景就是那么大），所以拒收之后 `dirty` 会一直挂着。这
+   * 不会变成「每 600ms 重试一次」的空转——下面那条 effect 挂在 `scene` 引用上，定时器
+   * 开完火不会自己续命，用户不动手就不会有第二次尝试。等他删掉几个对象，那次编辑既
+   * 换了 `scene` 引用又置了脏，下一个防抖窗口自然把整份场景重新试一遍，成功即复位。
+   * 代价只有关窗时多试一次（一轮 JSON 序列化）。真正救不回来的是「超限状态下直接关
+   * 窗」：装不下就是装不下，那条 toast 是唯一的信号。
+   *
+   * `onFlush()` 在前、`markSaved()` 在后还多防一层：将来写回改成会抛的实现时，异常
+   * 同样落不到 `markSaved()`。今天 `handleFlush` 不抛（失败是 return，`updateNodeData`
+   * 是 zustand set），而且真抛了还有别的后果——见 `handleOpenChange` 那条兜底。
    */
   const flushIfDirty = useCallback(() => {
     const state = usePrevizStore.getState();
     if (!state.dirty) return;
-    onFlush(state.scene);
+    if (!onFlush(state.scene)) return;
     state.markSaved();
   }, [onFlush]);
 
@@ -957,9 +996,12 @@ export function PrevizEditor({
    * 不存在「存一次又排一次」的自激。
    */
   useEffect(() => {
+    // `open` 在挂载期恒为 true（`PrevizNode` 条件挂载），这道早退今天不会命中，
+    // 是留给「改成常驻挂载」那一天的。
     if (!open) return undefined;
     // `scene` 是依赖但不是判据：`loadScene` 也换 `scene` 引用，而它同时把 `dirty`
-    // 清成 false，于是「刚打开编辑器」这一下不会立刻排一次没必要的写回。
+    // 清成 false，于是「刚打开编辑器」这一下不会立刻排一次没必要的写回。这道预检
+    // 省的是一次空定时器，不是行为差异——真到点了 `flushIfDirty` 还会再看一次。
     if (!usePrevizStore.getState().dirty) return undefined;
     const timer = window.setTimeout(flushIfDirty, PREVIZ_AUTOSAVE_MS);
     // 卸载/关窗时必须清掉：定时器攥着 `onFlush`，而 `onFlush` 攥着节点 id，编辑器都
@@ -989,6 +1031,8 @@ export function PrevizEditor({
       }
       // 关窗仍然兜一次底：改完立刻关是最常见的路径，等不到防抖到点。上面那个
       // effect 的清理会顺手把待发的定时器清掉，`dirty` 判据保证这里和它不会重复写。
+      // 这里是同步调用：`onFlush` 将来若改成会抛的实现，异常会从这儿窜出去，
+      // 下面那行 `onOpenChange(next)` 就跑不到——弹窗关不掉。到那天要先包住它。
       if (!next) flushIfDirty();
       onOpenChange(next);
     },

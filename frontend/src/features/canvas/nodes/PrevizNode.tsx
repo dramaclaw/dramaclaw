@@ -69,6 +69,10 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
    */
   const complainedTooLarge = useRef(false);
 
+  /**
+   * 返回值是给编辑器看的：`false` = 这一份没存下。少了它编辑器会把拒收记成保存成功，
+   * 把场景标成干净，此后每一次自动保存都在空转——而这道 toast 闸保证它不会再吭声。
+   */
   const handleFlush = useCallback(
     (scene: PrevizScene) => {
       const result = buildNodeScenePatch(scene);
@@ -78,10 +82,11 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
           complainedTooLarge.current = true;
           toast.error(t("previz.editor.sceneTooLarge"));
         }
-        return;
+        return false;
       }
       complainedTooLarge.current = false;
       updateNodeData(id, result.patch);
+      return true;
     },
     [id, t, updateNodeData],
   );
