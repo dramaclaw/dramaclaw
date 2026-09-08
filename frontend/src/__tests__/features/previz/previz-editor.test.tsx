@@ -1727,15 +1727,44 @@ describe("PrevizEditor mark tool", () => {
 
     // Esc 是「打完了」，不是「关掉预演台」：弹窗默认的 Esc 关闭得让位，不然打到一半
     // 一按整个编辑器没了。
-    expect(screen.getByRole("button", { name: "previz.toolbar.tool.select" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.getByRole("button", { name: MARK })).toHaveAttribute("aria-pressed", "false");
     expect(onOpenChange).not.toHaveBeenCalled();
 
     // 退出之后同一个点击回到拾取。
     click(canvas, 10, 10);
     expect(renderer.pickAt).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+    Esc 收手和画完一笔是同一件事，落点也该一样。两处各写各的字面量的话，用起来就是
+    「画完一笔能直接拖、Esc 收手完不能」——用户读不出这里面有什么道理，只会觉得手柄
+    时有时无。
+
+    断言的是「手柄已经支在那里、可以直接拖」这个用户看得见的结果，不是把
+    PREVIZ_DEFAULT_TOOL 搬过来跟自己比：那样写的话，常量改成一颗不带手柄的工具，两处
+    一起变成「Esc 完拖不动」，这条用例照样全绿。
+  */
+  it("leaves the viewport ready to drag after Escape, like a finished stroke does", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("character")!;
+    act(() => usePrevizStore.getState().selectObject(objectId));
+    await user.click(screen.getByRole("button", { name: MARK }));
+    const canvas = screen.getByTestId("previz-canvas");
+    renderer.planePointAt.mockReturnValue([1, 0, 0]);
+    click(canvas, 10, 10);
+    // 标记工具下手柄是收着的。不先钉住这一步的话，下面那条在「Esc 压根没换工具」时
+    // 也会因为「开局本来就是移动」而全绿。
+    expect(renderer.setGizmoMode).toHaveBeenLastCalledWith(null);
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+
+    expect(renderer.setGizmoMode).toHaveBeenLastCalledWith("translate");
+    expect(screen.getByRole("button", { name: "previz.toolbar.gizmo.translate" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(pressedRailButtons()).toHaveLength(1);
   });
 
   it("still closes the editor on Escape when nothing is being marked", async () => {

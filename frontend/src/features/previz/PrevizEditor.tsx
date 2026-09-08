@@ -891,13 +891,18 @@ export function PrevizEditor({
         打点时 Esc 是「打完了」，不是「关掉预演台」：弹窗默认的 Esc 关闭得让位，不然打到
         一半一按整个编辑器没了。
 
-        工具也在这里切回选择，而不是放进下面那个 window keydown：base-ui 的 useDismiss
+        工具也在这里回落，而不是放进下面那个 window keydown：base-ui 的 useDismiss
         在 document 上接到 Escape、问过 onOpenChange 之后会 stopPropagation，window 上
         的监听根本收不到这一下。弹窗是唯一听得见 Esc 的地方。
+
+        回落到哪一颗跟画完一笔那处走同一个常量：两处是同一件事——「这一轮收手了，别让
+        下一次点击又接着放点/画线」，任何非绘制非标记的工具都满足。各写各的字面量就会
+        变成「画完能直接拖、Esc 完不能」，用户读不出这里面有什么道理，只会觉得手柄时
+        有时无。
       */
       if (!next && details?.reason === "escape-key" && tool === "mark") {
         details.cancel();
-        setTool("select");
+        setTool(PREVIZ_DEFAULT_TOOL);
         return;
       }
       if (!next) onFlush(usePrevizStore.getState().scene);
