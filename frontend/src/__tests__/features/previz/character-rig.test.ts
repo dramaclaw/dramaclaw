@@ -10,6 +10,7 @@ import { PREVIZ_POSE_CLIPS } from '@/features/previz/domain/poses';
 import type { PrevizCharacter } from '@/features/previz/domain/scene';
 import {
   CharacterRigFactory,
+  disposeRigMaterials,
   PREVIZ_ACTOR_ANIMATION_URLS,
   PREVIZ_ACTOR_MODEL_URL,
   type CharacterRigDeps,
@@ -59,6 +60,70 @@ class FakeVector3 {
     this.y = y;
     this.z = z;
     return this;
+  }
+}
+
+/**
+ * 源模型的两个材质槽，照着仓库里那份 UAL2：一槽主体、一槽关节，两槽明暗不同。
+ * 值取的是那两份 `baseColorFactor` 换算过来的颜色，好让「亮暗关系」这条断言测的
+ * 是真模型的量级，而不是随手编的两个数。
+ */
+const SOURCE_MAIN_COLOR = 0xeaab3a;
+const SOURCE_JOINT_COLOR = 0xaa65dd;
+
+/**
+ * 颜色不能只是一个 `set` 桩：辨识色要按材质自己的明度分级染上去，读不到通道就
+ * 「主体和关节染成同一个色」和「关节按明度压暗」在断言里分不开——而那正是这组
+ * 用例要测的东西。通道按 sRGB 字节直接摊开，不做 gamma：这份假实现要能锁住的是
+ * 「哪一槽拿到纯正的辨识色、哪一槽被压暗」，不是 three 的色彩空间换算。
+ */
+class FakeColor {
+  r = 1;
+  g = 1;
+  b = 1;
+  /** 记成 spy：颜色没变时那条早退路径靠「一次都没写」才看得出来。 */
+  set = vi.fn((value: number | string) => {
+    const hex = typeof value === 'number' ? value : Number.parseInt(value.slice(1), 16);
+    this.r = ((hex >> 16) & 0xff) / 255;
+    this.g = ((hex >> 8) & 0xff) / 255;
+    this.b = (hex & 0xff) / 255;
+    return this;
+  });
+
+  constructor(hex: number) {
+    this.set(hex);
+    this.set.mockClear();
+  }
+
+  multiplyScalar(scalar: number) {
+    this.r *= scalar;
+    this.g *= scalar;
+    this.b *= scalar;
+    return this;
+  }
+
+  /** 与真 `Color.getHex()` 一样把通道夹回 0..1 再取整：越界的通道会溢进相邻字节。 */
+  getHex() {
+    const byte = (channel: number) => Math.max(0, Math.min(255, Math.round(channel * 255)));
+    return (byte(this.r) << 16) | (byte(this.g) << 8) | byte(this.b);
+  }
+}
+
+class FakeMaterial {
+  color: FakeColor;
+  userData: Record<string, unknown> = {};
+  dispose = vi.fn();
+  /** 按实例记 spy：一个 rig 该只克隆一次，每次 sync 重克隆是按帧漏显存。 */
+  clone = vi.fn((): FakeMaterial => new FakeMaterial(this.color.getHex()));
+
+  constructor(hex: number) {
+    this.color = new FakeColor(hex);
+  }
+}
+
+class FakeMesh extends FakeObject3D {
+  constructor(public material: FakeMaterial) {
+    super();
   }
 }
 
@@ -112,10 +177,30 @@ function fakeThree() {
 }
 
 function gltf(clipNames: string[]): PrevizGltf {
+  const scene = new FakeObject3D();
+  // 暗的那一槽刻意排在前面：「拿遇到的第一份材质当基准」这种写法会把亮暗关系倒过来，
+  // 而模型里材质槽的先后本来就是导出工具定的，谁都不该依赖它。
+  scene.add(new FakeMesh(new FakeMaterial(SOURCE_JOINT_COLOR)));
+  scene.add(new FakeMesh(new FakeMaterial(SOURCE_MAIN_COLOR)));
   return {
-    scene: new FakeObject3D() as unknown as PrevizGltf['scene'],
+    scene: scene as unknown as PrevizGltf['scene'],
     animations: clipNames.map((name) => ({ name })) as unknown as PrevizGltf['animations'],
   };
+}
+
+/** 一棵子树里的材质，按遍历顺序。源模型是 [关节, 主体]，克隆体同序。 */
+function materialsOf(object: unknown): FakeMaterial[] {
+  const found: FakeMaterial[] = [];
+  (object as FakeObject3D).traverse((child) => {
+    const material = (child as FakeMesh).material;
+    if (material) found.push(material);
+  });
+  return found;
+}
+
+/** 一个 rig 上每份材质当前的颜色，按 [关节, 主体] 的顺序。 */
+function coloursOf(rig: unknown): number[] {
+  return materialsOf(rig).map((material) => material.color.getHex());
 }
 
 /** 断言用的最小结构视图：`THREE.Object3D` 上的 scale/rotation 在假 three 里就是这个形状。 */
@@ -136,7 +221,20 @@ function viewOf(rig: unknown): RigView {
  * 人物共用一个 rig，后一个的缩放把前一个的断言盖掉——而生产里 `SkeletonUtils.clone`
  * 本来就必须交出新对象，否则第二个人物一出现第一个就从原地消失。
  */
-const freshClone = (() => new FakeObject3D()) as unknown as CharacterRigDeps['clone'];
+const freshClone = ((object: FakeObject3D) => shallowClone(object)) as unknown as
+  CharacterRigDeps['clone'];
+
+/**
+ * 结构上是新的一棵树，材质仍指向源模型那几份——`SkeletonUtils.clone` 就是这样的浅克隆，
+ * 而这一点正是「染一个人物会不会把所有人物连同源模型一起染了」的全部要害。
+ * 材质也一起新建的假克隆会让那个 bug 完全测不出来。
+ */
+function shallowClone(object: FakeObject3D): FakeObject3D {
+  const material = (object as FakeMesh).material;
+  const copy = material ? new FakeMesh(material) : new FakeObject3D();
+  for (const child of object.children) copy.add(shallowClone(child));
+  return copy;
+}
 
 /**
  * 直接从 public/ 里的 GLB 读 clip 名。GLB 头 12 字节之后是第一个 chunk（JSON）的长度与
@@ -169,6 +267,30 @@ function factoryWith(clipNames: string[]): CharacterRigFactory {
   return new CharacterRigFactory({
     three: fakeThree(),
     loadGltf: async () => gltf(clipNames),
+    clone: freshClone,
+  });
+}
+
+/** 同 `factoryWith`，但把那份共享源模型也交出来：染色这组用例要盯着它有没有被碰。 */
+function factoryWithSource(clipNames: string[]) {
+  const source = gltf(clipNames);
+  const factory = new CharacterRigFactory({
+    three: fakeThree(),
+    loadGltf: async () => source,
+    clone: freshClone,
+  });
+  return { factory, source, materials: materialsOf(source.scene) };
+}
+
+/**
+ * 照给定的那几个材质槽建一份源模型的工厂。染色这组里有两个用例要的不是仓库那份
+ * UAL2 的槽位，而是特定的明暗组合。
+ */
+function factoryForScene(scene: FakeObject3D): CharacterRigFactory {
+  return new CharacterRigFactory({
+    three: fakeThree(),
+    loadGltf: async () =>
+      ({ scene, animations: [{ name: 'Idle_Loop' }] }) as unknown as PrevizGltf,
     clone: freshClone,
   });
 }
@@ -629,5 +751,132 @@ describe('CharacterRigFactory.applyPose', () => {
     // 对不上就保持现有姿势：绝不拿别的 clip 顶上，也不把正在播的停掉留下一副绑定姿势。
     expect(clipActions).toHaveLength(0);
     expect(stopAllAction).not.toHaveBeenCalled();
+  });
+});
+
+describe('CharacterRigFactory tinting', () => {
+  it('paints every rig in its own colour without touching the shared source model', async () => {
+    const { factory, materials } = factoryWithSource(['Idle_Loop']);
+
+    const red = await factory.build(character({ color: '#ff0000' }));
+    const green = await factory.build(character({ color: '#00ff00' }));
+
+    // 直接改材质的颜色，改的是源模型那一份——所有人物共用它，四个人瞬间同色，
+    // 而且之后新建的每一个人物都从已经被染过的源上克隆下来。
+    expect(coloursOf(red)[1]).toBe(0xff0000);
+    expect(coloursOf(green)[1]).toBe(0x00ff00);
+    expect(materials.map((material) => material.color.getHex())).toEqual([
+      SOURCE_JOINT_COLOR,
+      SOURCE_MAIN_COLOR,
+    ]);
+  });
+
+  it("keeps the model's own light and shade instead of flattening it", async () => {
+    const { factory } = factoryWithSource(['Idle_Loop']);
+
+    const [joint, main] = coloursOf(await factory.build(character({ color: '#ff0000' })));
+
+    // 最亮的那一槽拿到纯正的辨识色：属性面板上的色块和视口里的人物必须是同一个颜色，
+    // 否则「按颜色认人」这件事在两处对不上。
+    expect(main).toBe(0xff0000);
+    // 其余各槽按自己在源模型里的明度压暗。整个模型刷成同一颗纯色的话，两槽之间的
+    // 明暗关系没了——人物看起来是一个色块而不是一个人。
+    expect(joint).not.toBe(main);
+    const red = ((joint ?? 0) >> 16) & 0xff;
+    expect(red).toBeGreaterThan(0);
+    expect(red).toBeLessThan(0xff);
+    // 压暗只动明度不动色相：关节槽在源模型里是紫的，染完不该还留着紫。
+    expect((joint ?? 0) & 0x00ffff).toBe(0);
+  });
+
+  it('re-tints the materials it already cloned instead of cloning a fresh batch', async () => {
+    const { factory, materials } = factoryWithSource(['Idle_Loop']);
+    const rig = await factory.build(character({ color: '#ff0000' }));
+    const owned = materialsOf(rig);
+
+    factory.applyCharacter(rig!, character({ color: '#0000ff' }));
+
+    // 属性面板的色板一点就是一次 sync。每次都重克隆一批材质，等于每换一次颜色
+    // 漏一批 GPU 资源，而画面上什么都看不出来。
+    expect(materialsOf(rig)[0]).toBe(owned[0]);
+    expect(materialsOf(rig)[1]).toBe(owned[1]);
+    for (const material of materials) expect(material.clone).toHaveBeenCalledTimes(1);
+    expect(coloursOf(rig)[1]).toBe(0x0000ff);
+  });
+
+  it('leaves the materials alone when the colour has not changed', async () => {
+    const { factory } = factoryWithSource(['Idle_Loop']);
+    const rig = await factory.build(character({ color: '#ff0000' }));
+    for (const material of materialsOf(rig)) material.color.set.mockClear();
+
+    factory.applyCharacter(rig!, character({ color: '#ff0000', heightCm: 200 }));
+
+    // sync 每帧都跑。颜色没变还重染一遍，场景图那边就会跟着每帧重刷一次显示模式——
+    // 而那要遍历整棵模型子树。
+    for (const material of materialsOf(rig)) {
+      expect(material.color.set).not.toHaveBeenCalled();
+    }
+  });
+
+  it('disposes the materials it cloned, and only those', async () => {
+    const { factory, materials } = factoryWithSource(['Idle_Loop']);
+    const rig = await factory.build(character());
+    const owned = materialsOf(rig);
+
+    disposeRigMaterials(rig!);
+
+    // `previzSharedModel` 让 `disposeSubtree` 整棵跳过，所以每 rig 独有的这几份克隆
+    // 材质没有别人替它还——少了这条定向回收，每删一个人物漏一批材质。
+    for (const material of owned) expect(material.dispose).toHaveBeenCalledTimes(1);
+    // 源模型那批是所有人物共用的：还掉之后新建的人物拿到的是已经 dispose 的材质。
+    for (const material of materials) expect(material.dispose).not.toHaveBeenCalled();
+  });
+
+  it('clones one material per source slot, not one per mesh', async () => {
+    // 一份材质挂在多个网格上是导出工具的常态（同一份皮肤拆成好几个 primitive）。
+    const shared = new FakeMaterial(SOURCE_MAIN_COLOR);
+    const scene = new FakeObject3D();
+    scene.add(new FakeMesh(shared));
+    scene.add(new FakeMesh(shared));
+
+    const rig = await factoryForScene(scene).build(character({ color: '#ff0000' }));
+
+    // 一槽克隆一份就够。一网格一份既白占显存，又只有最后那一份进得了染色名单——
+    // 同一块皮肤于是半边染上了辨识色、半边还是模型的原色。
+    expect(shared.clone).toHaveBeenCalledTimes(1);
+    const [first, second] = materialsOf(rig);
+    expect(first).toBe(second);
+    expect(coloursOf(rig)).toEqual([0xff0000, 0xff0000]);
+  });
+
+  it('ranks the slots by brightness rather than by a single channel', async () => {
+    // 一槽暗红、一槽亮绿。按红通道分级会把这两槽的明暗判反：最显眼的那一槽拿不到
+    // 纯正的辨识色，反而被压到全黑——那是拿色相当亮度使。
+    const scene = new FakeObject3D();
+    scene.add(new FakeMesh(new FakeMaterial(0xff0000)));
+    scene.add(new FakeMesh(new FakeMaterial(0x00ff00)));
+
+    const rig = await factoryForScene(scene).build(character({ color: '#ffffff' }));
+
+    const [dim, bright] = coloursOf(rig);
+    expect(bright).toBe(0xffffff);
+    expect((dim ?? 0) >> 16).toBeGreaterThan(0);
+    expect(dim).not.toBe(bright);
+  });
+
+  it('still paints a model whose slots are all black', async () => {
+    const scene = new FakeObject3D();
+    scene.add(new FakeMesh(new FakeMaterial(0x000000)));
+
+    const rig = await factoryForScene(scene).build(character({ color: '#ff0000' }));
+
+    // 一片全黑的模型除下去是 0/0。按 0 算的话每一槽都被压成全黑，人物在视口里
+    // 是一团看不出形状的黑影；按 1 算至少每一槽都是纯正的辨识色。
+    expect(coloursOf(rig)).toEqual([0xff0000]);
+  });
+
+  it('does nothing on a subtree that owns no materials', () => {
+    // 物件的 GLB 走的是同一条 `disposeSubtree` 分支，它身上没有这批账。
+    expect(() => disposeRigMaterials(new FakeObject3D() as never)).not.toThrow();
   });
 });

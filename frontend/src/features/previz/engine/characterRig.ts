@@ -50,6 +50,50 @@ const APPLIED_TIME_KEY = 'previzPoseTime';
  */
 const APPLIED_SOURCE_KEY = 'previzPoseSourceSerial';
 
+/**
+ * 这个 rig 自己那批克隆材质与它们的明度，记在 rig 根上。见 `ownMaterials`。
+ */
+const TINT_TARGETS_KEY = 'previzRigTintTargets';
+
+/** 当前染的是哪个辨识色，记在 rig 上。颜色没变就整条早退——sync 每帧都会走到这里。 */
+const APPLIED_TINT_KEY = 'previzRigTintColor';
+
+/**
+ * 一份这个 rig 独有的材质，以及它在源模型里相对最亮那一槽的明度（0..1）。
+ *
+ * 断言成 `MeshStandardMaterial` 只是为了够到 `color`：真材质是哪一个子类由 GLB 说了算，
+ * 这与 `sceneGraph.ts` 的 `applyDisplayMode` 做的是同一处断言。
+ */
+interface RigTint {
+  material: THREE.MeshStandardMaterial;
+  shade: number;
+}
+
+/**
+ * 还掉一个 rig 自己克隆的那批材质。
+ *
+ * `build()` 在 rig 上留了 `previzSharedModel`，`sceneGraph.ts` 的 `disposeSubtree` 见到它
+ * 整棵跳过——不跳的话，删掉一个人物就把所有人物共用的那份源模型的几何体一起还了。
+ * 跳过的代价是这几份克隆材质谁都不管，每删一个人物漏一批，所以要有这条定向回收；
+ * 子树里其余东西（几何体、骨架、贴图）仍然是共享的，一样都不能碰。
+ */
+export function disposeRigMaterials(rig: THREE.Object3D): void {
+  const tints = rig.userData[TINT_TARGETS_KEY] as RigTint[] | undefined;
+  if (!tints) return;
+  for (const tint of tints) tint.material.dispose();
+}
+
+/**
+ * Rec.709 相对明度。three 的 `Color` 通道是线性的，直接加权就是这份材质有多亮。
+ *
+ * 用明度而不是某个通道：源模型的两槽一橙一紫，按红通道分级会把紫的关节判成暗、
+ * 换一份绿模型又反过来——那是拿色相当亮度使。
+ */
+function luminance(color: THREE.Color | undefined): number {
+  if (!color) return 0;
+  return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+}
+
 /** GLTFLoader 结果里本模块真正用到的那两块。 */
 export interface PrevizGltf {
   scene: THREE.Object3D;
@@ -127,6 +171,10 @@ export class CharacterRigFactory {
     model.rotation.y = Math.PI;
     const rig = new this.deps.three.Group();
     rig.add(model);
+    // 辨识色要染在这个人物自己的材质上。`SkeletonUtils.clone` 是浅克隆，克隆体和缓存里
+    // 那份源模型共用同一批材质：直接 `color.set` 等于把场上所有人物连同源模型一起染了
+    // ——四个人瞬间同色，而且之后新建的每一个人物都从已经被染过的源上克隆下来。
+    rig.userData[TINT_TARGETS_KEY] = this.ownMaterials(model);
     this.applyCharacter(rig, character);
     // 场景图靠这个标记在节点的子节点里认出「已经换过模型了」。
     rig.userData.previzRig = true;
@@ -221,16 +269,83 @@ export class CharacterRigFactory {
   }
 
   /**
-   * 把一个人物的全部外观属性刷到一个已经建好的 rig 上：姿势、身高体型、姿态微调。
+   * 把一个人物的全部外观属性刷到一个已经建好的 rig 上：姿势、身高体型、姿态微调、辨识色。
    *
    * 场景图每次 sync 都调它。少了姿势与姿态微调这两步（早先只刷了缩放），属性面板的
    * 「基础姿势」下拉框和「姿态微调」三根滑杆对**已加载的人物**完全失效——改成抱臂、
    * 拖满俯仰，视口里人还站得笔直，而新建的人物又是对的，看起来像随机失灵。
+   *
+   * 返回辨识色这一次有没有真的重染过：见 `applyTint`。
    */
-  applyCharacter(model: THREE.Object3D, character: PrevizCharacter): void {
+  applyCharacter(model: THREE.Object3D, character: PrevizCharacter): boolean {
     this.applyPose(model, character.basePoseId, poseSampleTime(character.basePoseId));
     this.applyBodyScale(model, character);
     this.applyPoseAdjust(model, character);
+    return this.applyTint(model, character);
+  }
+
+  /**
+   * 把辨识色染到这个 rig 自己那批材质上。返回这一次有没有真的重染过——重染刚刚改写了
+   * 材质的颜色，而当前显示模式未必是本色（全灰要盖回水泥灰），调用方得把模式补回去。
+   *
+   * 颜色没变就整条早退：`sync` 每帧都会走到这里，而重染一次就要让调用方跟着把整棵
+   * 模型子树的显示模式重刷一遍。
+   *
+   * 染法是「按材质自己的明度分级」而不是整体刷成一颗纯色：源模型两个材质槽一亮一暗
+   * （主体与关节），全刷成同一颗饱和色之后两槽的明暗关系就没了，人物看着是一个色块
+   * 而不是一个人。最亮那一槽拿到纯正的辨识色，好让属性面板上的色块与视口里的人物
+   * 是同一个颜色——「按颜色认人」这件事在两处对不上就白做了。
+   */
+  private applyTint(rig: THREE.Object3D, character: PrevizCharacter): boolean {
+    if (rig.userData[APPLIED_TINT_KEY] === character.color) return false;
+    rig.userData[APPLIED_TINT_KEY] = character.color;
+    const tints = (rig.userData[TINT_TARGETS_KEY] as RigTint[] | undefined) ?? [];
+    for (const { material, shade } of tints) {
+      material.color?.set(character.color);
+      // 压暗在线性空间里做（three 的 Color 通道就是线性的），与布光是同一个量纲。
+      material.color?.multiplyScalar(shade);
+      // `sceneGraph.ts` 的 `applyDisplayMode` 在染灰之前把本色记在这个键上，切回实体
+      // 时照它还原。本色刚刚变了，这笔账就作废了——留着的话，在全灰模式下改一次
+      // 辨识色，切回实体拿到的是**改色之前**的旧颜色。清掉之后下一次染灰会重记一份。
+      delete material.userData.previzOriginalColor;
+    }
+    return true;
+  }
+
+  /**
+   * 把 rig 子树里每份材质换成本 rig 独有的克隆，并量下它相对最亮那一槽的明度。
+   *
+   * 按源材质去重：同一份材质挂在多个网格上时克隆一份就够，一网格一份既多占显存，
+   * 又会让同一槽被染两遍。
+   */
+  private ownMaterials(model: THREE.Object3D): RigTint[] {
+    const clones = new Map<THREE.Material, THREE.MeshStandardMaterial>();
+    const own = (source: THREE.Material): THREE.Material => {
+      const existing = clones.get(source);
+      if (existing) return existing;
+      // `Material.clone()` 只复制参数，贴图仍是同一批引用——而 three 的 `dispose()`
+      // 本来就不碰贴图，所以还掉克隆不会把源模型的贴图一起还了。
+      const copy = source.clone() as THREE.MeshStandardMaterial;
+      clones.set(source, copy);
+      return copy;
+    };
+    model.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      const material = mesh.material;
+      if (!material) return;
+      mesh.material = Array.isArray(material) ? material.map(own) : own(material);
+    });
+
+    const measured = [...clones.values()].map((material) => ({
+      material,
+      lit: luminance(material.color),
+    }));
+    const brightest = measured.reduce((max, entry) => Math.max(max, entry.lit), 0);
+    // 一片全黑的模型除下去是 0/0：一律按 1 算，每一槽都拿纯正的辨识色。
+    return measured.map(({ material, lit }) => ({
+      material,
+      shade: brightest > 0 ? lit / brightest : 1,
+    }));
   }
 
   /**
