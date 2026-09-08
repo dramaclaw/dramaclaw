@@ -330,9 +330,18 @@ let gizmoHelper: { traverse: () => void; visible: boolean; userData: Record<stri
 vi.mock('three/examples/jsm/controls/TransformControls.js', () => ({
   TransformControls: class {
     enabled = true;
-    object = null;
-    attach = vi.fn();
-    detach = vi.fn();
+    object: unknown = null;
+    // attach/detach 照抄 three 0.185 的副作用：`_root.visible` 跟着开关（`TransformControlsRoot`
+    // 构造里初值就是 false）。替身在这个属性上偏离真身的话，「手柄该不该在」这一类回归
+    // 在集成层就永远观测不到——而单测那份替身已经是忠实的，两份互相打架更糟。
+    attach = vi.fn((object: unknown) => {
+      this.object = object;
+      gizmoHelper.visible = true;
+    });
+    detach = vi.fn(() => {
+      this.object = null;
+      gizmoHelper.visible = false;
+    });
     setMode = vi.fn();
     setSpace = vi.fn();
     dispose = vi.fn();
@@ -344,7 +353,7 @@ vi.mock('three/examples/jsm/controls/TransformControls.js', () => ({
     // gizmo dispose 里那次 `root.remove(getHelper())` 同理，删的得是当初加进去的那个。
     getHelper = vi.fn(() => gizmoHelper);
     constructor() {
-      gizmoHelper = { traverse() {}, visible: true, userData: {} };
+      gizmoHelper = { traverse() {}, visible: false, userData: {} };
     }
     addEventListener = vi.fn();
   },

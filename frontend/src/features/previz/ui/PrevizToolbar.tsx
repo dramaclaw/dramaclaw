@@ -197,8 +197,10 @@ function RailButton({
         className={cn(RAIL_BUTTON, on && RAIL_ON, className)}
         aria-label={label}
         aria-keyshortcuts={shortcut}
-        aria-pressed={on}
         {...props}
+        // 放在 spread 之后：调用方再传一份 aria-pressed 也盖不掉。写在前面的话
+        // 「按下态只算一次」就只是句注释里的约定，而高亮和读屏各说各话是没人手测的那种坏法。
+        aria-pressed={on}
       >
         <Icon className="h-4 w-4" />
         {shortcut && <PrevizKeyCap className="absolute -right-1 -top-1">{shortcut}</PrevizKeyCap>}
