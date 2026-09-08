@@ -35,8 +35,9 @@ export const PREVIZ_ACTOR_ANIMATION_URLS = [
  * 这里，缩放和 `average` 逐位相同——上游那条路由怎么改，**这张表**都不会给它添一次
  * 宽度跳变。（选这一档时观感本来就该变，那是路由的事，不归这张表管。）
  * 列在表里还为了让 `Record<BodyType, …>` 保持穷尽：将来再多一档体型，编译器会在这里
- * 拦住，而不是让 `BODY_WIDTH_SCALE[bodyType]` 查出 undefined、乘完变 NaN 再喂进
- * `scale.set`（见下面那行三个乘法），把整棵子树的世界矩阵一起烂掉。
+ * 拦住，而不是让 `BODY_WIDTH_SCALE[bodyType]` 查出 undefined：`applyBodyScale` 里横向
+ * 那两个分量会乘成 NaN 喂进 `scale.set`（y 分量没乘 width，仍是有限值，所以人不会
+ * 整个消失得那么干脆），缩放矩阵沾上 NaN，整棵子树的世界矩阵跟着烂掉。
  *
  * `tall: 0.84` 没有推导，是照 upstream 的观感取的值：同样的身高下比「偏瘦」再窄一档，
  * 这套模型能表达「高挑」的手段只有横向变窄（身高是另一根滑杆，这一档不该去碰它）。
@@ -277,8 +278,9 @@ export class CharacterRigFactory {
    * `PrevizSceneGraph.resizePlaceholder` 从此直接早退——身高体型改由这条路生效，
    * 少了它属性面板的身高滑杆对已加载的人物完全失效。
    *
-   * 每次 sync 都无条件重算，而不是拿上一次的值比对：三次乘法比一份挂在 userData 上的
-   * 影子状态便宜得多，也不会有「比的是原始值还是夹取后的值」这种对不上的隐患。
+   * 每次 sync 都无条件重算，而不是拿上一次的值比对：两次除法加两次乘法比一份挂在
+   * userData 上的影子状态便宜得多，也不会有「比的是原始值还是夹取后的值」这种
+   * 对不上的隐患。
    */
   applyBodyScale(model: THREE.Object3D, character: PrevizCharacter): void {
     // 与占位胶囊夹的是同一个区间：两边不一致的话，模型一到位人物的身高就跳一下。
