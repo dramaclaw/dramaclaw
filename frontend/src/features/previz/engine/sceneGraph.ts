@@ -35,8 +35,9 @@ export const PREVIZ_TRANSLUCENT_OPACITY = 0.35;
  * 人物占位胶囊的半径，单位米。0.22 m 是成年人肩宽的一半上下，粗到一眼看得出是个人、
  * 细到不至于把相邻的两个人物粘在一起。
  *
- * 它同时是一条尺寸约束：胶囊中段长度是「身高 − 2 × 半径」，必须为正。身高先夹进
- * `PREVIZ_HEIGHT_CM_RANGE` 再相减，具体余量归 `domain/objects.ts` 的下界管，这里不复述。
+ * 它同时是一条尺寸约束：胶囊中段长度是「身高 − 1.5 × 球头半径 − 2 × 胶囊半径」，必须为正
+ * ——球头要露在胶囊之上，胶囊本身就得比身高矮一截，见 `PLACEHOLDER_NECK_RATIO`。身高先
+ * 夹进 `PREVIZ_HEIGHT_CM_RANGE` 再相减，具体余量归 `domain/objects.ts` 的下界管，这里不复述。
  * 改大这个半径前先跑 scene-graph 测试里的「clamps heightCm so the capsule never degenerates」，
  * 那条用例锁的就是这条不变式。
  */
@@ -46,10 +47,40 @@ export const PREVIZ_PLACEHOLDER_RADIUS = 0.22;
  * 占位体那颗球头的半径，占胶囊半径的几成。0.9 没有推导，是照 upstream 的观感取的：
  * 比肩宽窄一档，大到远看认得出是个头，小到不至于把胶囊顶成一个葫芦。
  *
- * 它必须小于 1：球心落在「头顶往下一个球半径」处，取 1 的话球心正好在胶囊那颗上半球的
- * 球心上，球被整个吞进胶囊里——画面上又是一根光胶囊，而所有尺寸断言照样绿。
+ * 硬约束只有一条：胶囊中段长度是「身高 − 1.5 × 球头半径 − 2 × 胶囊半径」，必须为正。
+ * 身高取下界 1.2 m 时这个比例开到 2 都还是正的（1.2 − 0.66 − 0.44 = 0.1），所以先绊住你的
+ * 一定是观感而不是它。球露出多少由 `PLACEHOLDER_NECK_RATIO` 管，不是这里。
  */
 const PLACEHOLDER_HEAD_RADIUS_RATIO = 0.9;
+
+/**
+ * 球头往胶囊里埋多深，按球头半径计。0.5 就是埋进去半个球半径。
+ *
+ * 两头都不能碰：
+ * 取 0，球底与胶囊顶只在一个点上相切。两件都是低分段多面体（胶囊 capSegments=4，
+ * 球 heightSegments=12），面全部塌在理想曲面内侧，相切点两侧当场裂开一条缝——画面上是
+ * 一颗浮在杆子上的球，不是一个人。
+ * 取到 2，球被整个吞回胶囊里：球心的高度由「轮廓顶 = 身高」定死，能动的只有胶囊，
+ * 埋深到了 2 倍球半径胶囊正好长到与球内切，露出 0 —— 这次整改之前那份代码等价的就是 2，
+ * 而当时那两条尺寸断言一条都没红，因为它们锁的是轮廓顶，不是「看不看得见」。
+ *
+ * 露出的高度是「(2 − 这个比例) × 球半径」，与身高无关：取 0.5 就是 1.5 × 0.198 = 0.297 m。
+ */
+const PLACEHOLDER_NECK_RATIO = 0.5;
+
+/** 球头半径，米。只由上面两个比例决定，与身高无关。 */
+const PLACEHOLDER_HEAD_RADIUS = PREVIZ_PLACEHOLDER_RADIUS * PLACEHOLDER_HEAD_RADIUS_RATIO;
+
+/** 球头埋进胶囊的深度，米。 */
+const PLACEHOLDER_NECK = PLACEHOLDER_HEAD_RADIUS * PLACEHOLDER_NECK_RATIO;
+
+/**
+ * 胶囊本体的总高，米。比身高矮「球头直径 − 脖子」那么多：矮出来的这一截正好是球头
+ * 露在胶囊之上的部分，两件加起来轮廓顶仍然落在身高线上。
+ */
+function placeholderBodyHeight(height: number): number {
+  return height - PLACEHOLDER_HEAD_RADIUS * 2 + PLACEHOLDER_NECK;
+}
 
 /** 全灰模式的统一颜色。 */
 const CLAY_COLOR = 0xb9bec8;
@@ -92,14 +123,16 @@ export function createCharacterPlaceholder(
   const heightCm = clampToRange(character.heightCm, PREVIZ_HEIGHT_CM_RANGE);
   const height = heightCm / 100;
   const radius = PREVIZ_PLACEHOLDER_RADIUS;
+  // 胶囊只占身高的一部分，剩下的归露在外面那截球头（见 `placeholderBodyHeight`）。
+  const body = placeholderBodyHeight(height);
   // CapsuleGeometry(radius, height, …)：第二参数是两个半球之间那段柱体的高度
   // （three 0.185 的形参名就叫 height），胶囊总高是它加上两个半径，所以先减掉。
   const capsule = new three.Mesh(
-    new three.CapsuleGeometry(radius, height - radius * 2, 4, 12),
+    new three.CapsuleGeometry(radius, body - radius * 2, 4, 12),
     placeholderMaterial(three, character.color),
   );
-  // 胶囊自身以原点为中心，抬高半个身高才让脚底落在 y=0 的地面网格上。
-  capsule.position.set(0, height / 2, 0);
+  // 胶囊自身以原点为中心，抬高半个**胶囊**高才让脚底落在 y=0 的地面网格上。
+  capsule.position.set(0, body / 2, 0);
   capsule.userData.previzPlaceholder = true;
   // 占位体自己记住本色，`applyDisplayMode` 从全灰切回来时就地读它。
   capsule.userData.previzPlaceholderColor = character.color;
@@ -114,21 +147,26 @@ export function createCharacterPlaceholder(
  * 与 `swapInCharacterModel` 都只扫对象节点的**直接**子节点找 `previzPlaceholder`，做成
  * 兄弟就得在两处各补一次；挂进胶囊里，重建与换模型都自动连它一起走。
  *
- * 于是这里的 y 是在**胶囊自己的局部坐标**里算的，不是对象节点的。要守住的不变式是
- * 「整件占位体的轮廓顶正好落在身高线上」：`PrevizRenderer` 聚焦时量的是节点的世界
- * 包围盒，球顶出去一截等于给这个人凭空加了身高，取景距离会跟着一起错。
+ * 于是这里的 y 是在**胶囊自己的局部坐标**里算的，不是对象节点的。要同时守住两条：
+ * ① 整件占位体的轮廓顶正好落在身高线上——`PrevizRenderer` 聚焦时量的是节点的世界
+ *   包围盒，球顶出去一截等于给这个人凭空加了身高，取景距离会跟着一起错；
+ * ② 球心必须高过胶囊顶，也就是这颗球至少有半个露在外面。只守①是不够的：①对「球在
+ *   哪」根本没有约束（球顶固定在身高线上，球心也就固定了，剩下能动的只有胶囊），
+ *   把胶囊拉到与身高等高，球整个陷进去，①照样成立而画面上是一根光胶囊。
  */
 function createPlaceholderHead(
   three: ThreeModule,
   height: number,
   color: number | string,
 ): THREE.Object3D {
-  const radius = PREVIZ_PLACEHOLDER_RADIUS * PLACEHOLDER_HEAD_RADIUS_RATIO;
   const head = new three.Mesh(
-    new three.SphereGeometry(radius, 16, 12),
+    new three.SphereGeometry(PLACEHOLDER_HEAD_RADIUS, 16, 12),
     placeholderMaterial(three, color),
   );
-  head.position.set(0, height / 2 - radius, 0);
+  // 球心的世界高度由不变式①定死：球心 = 身高 − 球半径。减掉胶囊自己那份抬升就换算
+  // 成了胶囊的局部坐标。化简下来是 (身高 − 脖子) / 2，写成这样是为了看得出它从哪来。
+  const centre = height - PLACEHOLDER_HEAD_RADIUS - placeholderBodyHeight(height) / 2;
+  head.position.set(0, centre, 0);
   head.userData.previzPlaceholderHead = true;
   // 球头也算一份占位体。少了这个标记，`applyDisplayMode` 回色时走不到占位体那一支，
   // 这颗球就再也不会被回色，永远停在建出来时的那个颜色上——改过辨识色之后，场上站着
@@ -389,8 +427,9 @@ export class PrevizSceneGraph {
   ): boolean {
     // 「简化圆柱体」不是一档胖瘦，是「这个人物不要 GLB」：场上人一多，几十副骨架每帧的
     // 姿势解算比几何体本身贵得多，这一档就是让人先把走位摆出来。所以分叉排在发请求
-    // **之前**——下完再丢掉的话，二十个人照样把模型和三份动画库都拉一遍，这一档存在的
-    // 全部理由就没了。
+    // **之前**——排在后面的话，一场全是简化圆柱体的戏照样要把演员模型和那份动画库拉
+    // 下来（工厂自带缓存，只拉一次，可一次也是白拉），而且每个人物还各付一次
+    // `SkeletonUtils.clone` 加一批克隆材质，建完就扔。这一档存在的理由就没了。
     if (character.bodyType === 'capsule') return this.revertToPlaceholder(node, character);
     const model = node.children.find((child) => child.userData.previzRig);
     if (model) {
@@ -415,10 +454,13 @@ export class PrevizSceneGraph {
    */
   private revertToPlaceholder(node: THREE.Object3D, character: PrevizCharacter): boolean {
     let changed = false;
-    for (const child of [...node.children]) {
-      if (!child.userData.previzRig) continue;
-      node.remove(child);
-      disposeSubtree(child);
+    // 与 `syncCharacterRig` 认 rig 的写法保持一致：一个节点上最多只会有一副。
+    const model = node.children.find((child) => child.userData.previzRig);
+    if (model) {
+      node.remove(model);
+      // 摘下来要还：rig 为了上辨识色克隆过一批自己的材质，`disposeSubtree` 会照
+      // `previzSharedModel` 跳过共享的几何体与源材质，只还那一批（见 `disposeRigMaterials`）。
+      disposeSubtree(model);
       changed = true;
     }
     // 销掉这个节点上当前有效的请求号。两件事都靠它：一是用户切回标准体型时
@@ -444,7 +486,13 @@ export class PrevizSceneGraph {
     // 切回来、已经另发了一次请求。前者照挂会把用户刚要的胶囊换成木偶，用户什么都没动
     // 画面自己跳一下；后者会让同一个节点上叠两副骨架，因为下面那段只删占位体、
     // 不删已经挂上的 rig——两副同时解算，而画面上只是稍微「厚」了一点，看不出来。
-    if (node.userData.previzRigToken !== token) return;
+    if (node.userData.previzRigToken !== token) {
+      // 这份模型没人接手了，得亲手还掉：`build` 已经给它克隆了一批上色用的材质，
+      // 而它从没进过树，`dispose()` 与删除对象那两条回收路径都够不着它。直接 return
+      // 就是用户每在加载途中切一次体型漏一批材质，画面上一点征兆都没有。
+      if (model) disposeSubtree(model);
+      return;
+    }
     if (!model) {
       // 加载失败：占位胶囊留着，并且把号销掉——用户改一次属性触发的下一次 sync
       // 就等于一次重试，否则一次网络抖动能把这个人物永久钉死在胶囊上。
@@ -453,7 +501,11 @@ export class PrevizSceneGraph {
     }
     // 加载期间对象可能已经被删了，或者渲染器整个 dispose 了：那时节点已经从对象根上
     // 摘掉、资源也还过了，往它身上挂一个 GLB 就是一份谁都够不着、也不会再被 dispose 的副本。
-    if (node.parent !== this.root) return;
+    // 所以和上面那条一样，模型自己那批克隆材质要在这里还掉。
+    if (node.parent !== this.root) {
+      disposeSubtree(model);
+      return;
+    }
 
     // 只扫直接子节点，与 `resizePlaceholder` 一致。要把占位体或模型嵌进一层中间 Group，
     // 两处得一起改，否则换模型时占位体删不掉，会和 GLB 叠在一起。
