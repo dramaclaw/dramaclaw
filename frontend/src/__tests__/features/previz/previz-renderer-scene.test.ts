@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { OUTPUT_PIXEL_SIZE, aspectRatio } from '@/features/previz/domain/camera';
 import { createCameraDraft } from '@/features/previz/domain/cameraDraft';
+import { createCharacterDraft } from '@/features/previz/domain/characterDraft';
 import { createPrevizObject } from '@/features/previz/domain/objects';
 import {
   createDefaultScene,
@@ -1736,13 +1737,16 @@ describe('PrevizRenderer recording', () => {
     instance.renderCameraView(previewCanvas, cam.id);
     const draft = createCameraDraft(instance.viewPose());
     instance.renderCameraPreview(previewCanvas, draft);
+    // 创建人物对话框那块木偶预览走的是同一条 finally，也得一起站下来。它是异步的，
+    // 但守卫在第一个 await 之前就早退了，await 它不会把这条用例拖成竞态。
+    await instance.renderCharacterPreview(previewCanvas, createCharacterDraft(scene.objects));
 
-    // 一笔都没画：这三条路各自都是几趟离屏 pass 加同步读回，正是这次改动要删掉的开销。
+    // 一笔都没画：这四条路各自都是几趟离屏 pass 加同步读回，正是这次改动要删掉的开销。
     expect(render).not.toHaveBeenCalled();
     expect(gl.readRenderTargetPixels).not.toHaveBeenCalled();
     // 更要紧的是它们的 finally 会把可见性「还」成可见：还回去之后，手柄与轨迹就被烤进
-    // 后面每一帧成片里。三块预览都还手柄，只有 `renderCameraView` 连轨迹描边一起还，
-    // 所以两样都要断言，少一样就有两块预览的守卫删掉也没人报。
+    // 后面每一帧成片里。四块预览都还手柄，只有 `renderCameraView` 连轨迹描边一起还，
+    // 所以两样都要断言，少一样就有几块预览的守卫删掉也没人报。
     expect(gizmoHelper.visible).toBe(false);
     expect(helpersHidden()).toBe(true);
 

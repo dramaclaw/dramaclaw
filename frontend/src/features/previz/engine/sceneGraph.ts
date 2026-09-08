@@ -66,6 +66,79 @@ const KIND_COLOR: Record<Exclude<PrevizObject['kind'], 'camera' | 'character'>, 
 };
 
 /**
+ * 占位体那份材质。三处占位体（人物胶囊、人物球头、灯球 / 方块）用的是同一组参数，
+ * 抠出来是为了让「哪一处的粗糙度写得不一样」这种事没法发生——它渲染出来只是某一件
+ * 占位体看着比别的亮一点，没人会去查。
+ */
+function placeholderMaterial(three: ThreeModule, color: number | string): THREE.Material {
+  return new three.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.05 });
+}
+
+/**
+ * 人物的占位体：一根胶囊加头顶那颗球，脚底落在自身原点（也就是对象节点的原点）上。
+ *
+ * 是「胶囊 + 球头」而不是一根光胶囊：胶囊上下对称，光看它认不出头在哪一头，而
+ * 「简化圆柱体」这一档人物是要一直停在占位体上的（不加载 GLB），不是只撑那几秒。
+ *
+ * 做成模块级函数而不是留在 `PrevizSceneGraph` 里：创建人物对话框那块木偶预览要画的是
+ * 同一件东西（`engine/characterPreview.ts`），而它手里没有场景图。尺寸只有这一份，
+ * 两边就不会漂——身高、半径、球头比例任何一处对不上，都表现为「对话框里预览的人和
+ * 建出来的人不一样高」。
+ */
+export function createCharacterPlaceholder(
+  three: ThreeModule,
+  character: Pick<PrevizCharacter, 'heightCm' | 'color'>,
+): THREE.Object3D {
+  const heightCm = clampToRange(character.heightCm, PREVIZ_HEIGHT_CM_RANGE);
+  const height = heightCm / 100;
+  const radius = PREVIZ_PLACEHOLDER_RADIUS;
+  // CapsuleGeometry(radius, height, …)：第二参数是两个半球之间那段柱体的高度
+  // （three 0.185 的形参名就叫 height），胶囊总高是它加上两个半径，所以先减掉。
+  const capsule = new three.Mesh(
+    new three.CapsuleGeometry(radius, height - radius * 2, 4, 12),
+    placeholderMaterial(three, character.color),
+  );
+  // 胶囊自身以原点为中心，抬高半个身高才让脚底落在 y=0 的地面网格上。
+  capsule.position.set(0, height / 2, 0);
+  capsule.userData.previzPlaceholder = true;
+  // 占位体自己记住本色，`applyDisplayMode` 从全灰切回来时就地读它。
+  capsule.userData.previzPlaceholderColor = character.color;
+  // 建这个胶囊时用的是哪个身高。`resizePlaceholder` 靠它判断要不要重建。
+  capsule.userData.previzPlaceholderHeightCm = heightCm;
+  capsule.add(createPlaceholderHead(three, height, character.color));
+  return capsule;
+}
+
+/**
+ * 占位胶囊头顶那颗球。挂在**胶囊这个 Mesh 底下**，而不是做它的兄弟：`resizePlaceholder`
+ * 与 `swapInCharacterModel` 都只扫对象节点的**直接**子节点找 `previzPlaceholder`，做成
+ * 兄弟就得在两处各补一次；挂进胶囊里，重建与换模型都自动连它一起走。
+ *
+ * 于是这里的 y 是在**胶囊自己的局部坐标**里算的，不是对象节点的。要守住的不变式是
+ * 「整件占位体的轮廓顶正好落在身高线上」：`PrevizRenderer` 聚焦时量的是节点的世界
+ * 包围盒，球顶出去一截等于给这个人凭空加了身高，取景距离会跟着一起错。
+ */
+function createPlaceholderHead(
+  three: ThreeModule,
+  height: number,
+  color: number | string,
+): THREE.Object3D {
+  const radius = PREVIZ_PLACEHOLDER_RADIUS * PLACEHOLDER_HEAD_RADIUS_RATIO;
+  const head = new three.Mesh(
+    new three.SphereGeometry(radius, 16, 12),
+    placeholderMaterial(three, color),
+  );
+  head.position.set(0, height / 2 - radius, 0);
+  head.userData.previzPlaceholderHead = true;
+  // 球头也算一份占位体。少了这个标记，`applyDisplayMode` 回色时走不到占位体那一支，
+  // 这颗球就再也不会被回色，永远停在建出来时的那个颜色上——改过辨识色之后，场上站着
+  // 一个换了身子没换头的两色人。
+  head.userData.previzPlaceholder = true;
+  head.userData.previzPlaceholderColor = color;
+  return head;
+}
+
+/**
  * 人物脚下那圈辨识环的内外半径，单位米。外径比占位胶囊的半径（0.22）大一圈，
  * 站位重叠时两个人的环仍然分得开；内径留空是为了别把脚整个盖住。
  */
@@ -575,25 +648,15 @@ export class PrevizSceneGraph {
     const three = this.three;
     if (object.kind === 'camera') return buildCameraModel(three, object, this.outputAspect);
     let geometry: THREE.BufferGeometry;
-    // 人物是本人的辨识色，其余按分类色。类型上也分得开：`KIND_COLOR` 里已经没有
-    // `character` 这一项，改回去会被 TS 挡下来。
-    let color: number | string;
-    let yOffset = 0;
-    let heightCm: number | undefined;
+    // 分类色。人物不走这条尾巴，所以 `KIND_COLOR` 里没有 `character` 这一项。
+    let color: number;
 
     switch (object.kind) {
-      case 'character': {
-        heightCm = clampToRange(object.heightCm, PREVIZ_HEIGHT_CM_RANGE);
-        const height = heightCm / 100;
-        // CapsuleGeometry(radius, height, …)：第二参数是两个半球之间那段柱体的高度
-        // （three 0.185 的形参名就叫 height），胶囊总高是它加上两个半径，所以先减掉。
-        const radius = PREVIZ_PLACEHOLDER_RADIUS;
-        geometry = new three.CapsuleGeometry(radius, height - radius * 2, 4, 12);
-        // 胶囊自身以原点为中心，抬高半个身高才让脚底落在 y=0 的地面网格上。
-        yOffset = height / 2;
-        color = object.color;
-        break;
-      }
+      // 人物整件由 `createCharacterPlaceholder` 建：那一件是「胶囊 + 球头」两个 Mesh，
+      // 而这里往下的公共尾巴只装得下一件几何体。创建人物对话框的木偶预览也要同一件，
+      // 抽出去两边才共用同一套尺寸。
+      case 'character':
+        return createCharacterPlaceholder(three, object);
       case 'light':
         geometry = new three.SphereGeometry(0.14, 16, 12);
         color = KIND_COLOR.light;
@@ -604,13 +667,9 @@ export class PrevizSceneGraph {
         break;
     }
 
-    const material = new three.MeshStandardMaterial({
-      color,
-      roughness: 0.7,
-      metalness: 0.05,
-    });
+    const material = placeholderMaterial(three, color);
     const mesh = new three.Mesh(geometry, material);
-    mesh.position.set(0, yOffset, 0);
+    mesh.position.set(0, 0, 0);
     mesh.userData.previzPlaceholder = true;
     // 占位体自己记住本色，`applyDisplayMode` 从全灰切回来时就地读它。反过来往父节点上
     // 找 kind 的写法会把「占位体永远是对象组的直接子节点」写死进显示模式逻辑，而
@@ -618,45 +677,7 @@ export class PrevizSceneGraph {
     // 因为 three 的 `userData` 是 `Record<string, any>`，拿它当 `KIND_COLOR` 的键会被
     // TS7053 挡下来。
     mesh.userData.previzPlaceholderColor = color;
-    // 建这个胶囊时用的是哪个身高。`resizePlaceholder` 靠它判断要不要重建。
-    if (heightCm !== undefined) mesh.userData.previzPlaceholderHeightCm = heightCm;
-    // 人物的占位体是「胶囊 + 球头」而不是一根光胶囊：胶囊上下对称，光看它认不出头在
-    // 哪一头，而「简化圆柱体」这一档人物是要一直停在占位体上的（不加载 GLB），不是
-    // 只撑那几秒。灯球与物件方块不需要，它们本来就没有头脚之分。
-    if (object.kind === 'character') mesh.add(this.createPlaceholderHead(object, color));
     return mesh;
-  }
-
-  /**
-   * 占位胶囊头顶那颗球。挂在**胶囊这个 Mesh 底下**，而不是做它的兄弟：`resizePlaceholder`
-   * 与 `swapInCharacterModel` 都只扫对象节点的**直接**子节点找 `previzPlaceholder`
-   * （两处的注释都写死了这一点），做成兄弟就得在两处各补一次；挂进胶囊里，重建与换模型
-   * 都自动连它一起走。
-   *
-   * 于是这里的 y 是在**胶囊自己的局部坐标**里算的，不是对象节点的：胶囊以自身原点为
-   * 中心、总高正好是身高，头顶落在 y = height / 2。球心从那里往下挪一个球半径，球顶
-   * 就贴着身高线——顶出去等于给这个人凭空加了一截身高，而 `PrevizRenderer` 聚焦时量的
-   * 是节点的世界包围盒，取景距离会跟着一起错。
-   */
-  private createPlaceholderHead(
-    character: PrevizCharacter,
-    color: number | string,
-  ): THREE.Object3D {
-    const three = this.three;
-    const height = clampToRange(character.heightCm, PREVIZ_HEIGHT_CM_RANGE) / 100;
-    const radius = PREVIZ_PLACEHOLDER_RADIUS * PLACEHOLDER_HEAD_RADIUS_RATIO;
-    const head = new three.Mesh(
-      new three.SphereGeometry(radius, 16, 12),
-      new three.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.05 }),
-    );
-    head.position.set(0, height / 2 - radius, 0);
-    head.userData.previzPlaceholderHead = true;
-    // 球头也算一份占位体。少了这个标记，`applyDisplayMode` 回色时走不到占位体那一支，
-    // 转而去读材质上那笔 `previzOriginalColor` 的账——改过辨识色之后那笔账记的还是
-    // 建出来时的旧颜色，于是场上站着一个换了身子没换头的两色人。
-    head.userData.previzPlaceholder = true;
-    head.userData.previzPlaceholderColor = color;
-    return head;
   }
 
   /**
@@ -736,8 +757,12 @@ const SHARED_MODEL_KEY = 'previzSharedModel';
  * 还掉一棵子树的 GPU 资源，共享模型的子树整棵跳过（见 `SHARED_MODEL_KEY`）。
  *
  * 手写递归而不是 `traverse`：`traverse` 无条件往下走，没法在某个节点上剪枝。
+ *
+ * 导出是给 `characterPreview.ts` 用的：对话框那块木偶预览换下来的胶囊与骨架，
+ * 该跳过谁、该还谁，判据与场景图这边逐字相同。两处各写一份的话，其中一份漏掉
+ * `SHARED_MODEL_KEY` 那条剪枝，就会把所有人物共用的那份源模型一起还掉。
  */
-function disposeSubtree(root: THREE.Object3D): void {
+export function disposeSubtree(root: THREE.Object3D): void {
   if (root.userData[SHARED_MODEL_KEY]) {
     // 共享的几何体与材质整棵跳过，但人物 rig 为了上辨识色给自己克隆的那批材质是独有的，
     // 谁都不会替它还——每删一个人物漏一批，而画面上什么都看不出来。
