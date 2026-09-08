@@ -929,7 +929,9 @@ export function FreezoneShell({
       const value = (event as CustomEvent).detail;
       if (!active || value?.projectId !== projectId || !value.artifact) return;
       const store = useCanvasStore.getState();
-      for (const patch of htmlArtifactNodePatches(store.nodes, value.artifact)) store.updateNodeData(patch.id, patch.data);
+      for (const patch of htmlArtifactNodePatches(store.nodes, value.artifact)) {
+        if (!value.nodeId || patch.id === value.nodeId) store.updateNodeData(patch.id, patch.data);
+      }
     };
     window.addEventListener(HTML_ARTIFACT_UPDATED_EVENT, updated);
     window.addEventListener(HTML_ARTIFACT_OPEN_EVENT, open);

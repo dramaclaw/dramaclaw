@@ -1,15 +1,17 @@
+import { readUrl } from '@/lib/url-params';
 import { readHtmlDraft, keepHtmlDraft } from './drafts';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, Code2, Download, Eye, MousePointer2, Save } from 'lucide-react';
-import { setActiveHtmlArtifact, announceHtmlArtifact, exportHtmlArtifact, HTML_ARTIFACT_REFERENCE_EVENT, HTML_ARTIFACT_UPDATED_EVENT, listHtmlVersions, readHtmlArtifact, readHtmlPreview, restoreHtmlVersion, saveHtmlArtifact, type HtmlArtifact, type HtmlVersion } from './api';
+import { setActiveHtmlArtifact, announceHtmlArtifact, exportHtmlArtifact, HTML_ARTIFACT_REFERENCE_EVENT, HTML_ARTIFACT_UPDATED_EVENT, listHtmlVersions, readHtmlArtifact, readHtmlPreview, saveHtmlArtifact, type HtmlArtifact, type HtmlVersion } from './api';
 import { buildHtmlPreview, isHtmlSelectionMessage } from './preview';
 
-type Props = { projectId:string; artifactId:string; version?:number; onClose:()=>void };
-export function HtmlArtifactEditor({projectId,artifactId,version,onClose}:Props) {
+type Props = { projectId:string; artifactId:string; version?:number; nodeId?:string; onClose:()=>void };
+export function HtmlArtifactEditor({projectId,artifactId,version,nodeId,onClose}:Props) {
   const {t}=useTranslation();
   const [artifact,setArtifact]=useState<HtmlArtifact|null>(null);
   const [title,setTitle]=useState(''); const [html,setHtml]=useState('');
+  const [media,setMedia]=useState<Array<{placeholder:string;blob:Blob}>>([]);
   const [preview,setPreview]=useState(''); const [versions,setVersions]=useState<HtmlVersion[]>([]);
   const [interactiveVersion,setInteractiveVersion]=useState<string|null>(null);
   const interactive=Boolean(artifact&&interactiveVersion===`${artifactId}:${artifact.version}`);
@@ -18,6 +20,8 @@ export function HtmlArtifactEditor({projectId,artifactId,version,onClose}:Props)
   const [code,setCode]=useState(false); const [mobile,setMobile]=useState(false); const [selecting,setSelecting]=useState(false);
   const [warnings,setWarnings]=useState<string[]>([]);
   const [error,setError]=useState(''); const [busy,setBusy]=useState(false); const [remoteUpdate,setRemoteUpdate]=useState(false);
+  const previewRelease=useRef<(()=>void)|undefined>(undefined);
+  const baseVersion=useRef<number>(0);
   const frame=useRef<HTMLIFrameElement>(null); const sequence=useRef(0);
   const dirty=!!artifact&&(html!==artifact.html||title!==artifact.title);
   useEffect(()=>{
@@ -25,7 +29,7 @@ export function HtmlArtifactEditor({projectId,artifactId,version,onClose}:Props)
     return()=>setActiveHtmlArtifact(null);
   },[artifact,projectId,artifactId,dirty]);
   useEffect(()=>{
-    if(artifact) keepHtmlDraft(projectId,artifactId,dirty?{html,title,version:artifact.version}:null);
+    if(artifact) keepHtmlDraft(projectId,artifactId,dirty?{html,title,version:artifact.version,baseVersion:baseVersion.current}:null);
   },[artifact,dirty,html,title,projectId,artifactId]);
   const dirtyRef=useRef(dirty); dirtyRef.current=dirty;
   const token=useMemo(()=>crypto.randomUUID(),[artifact?.version,selecting,preview]);
@@ -37,26 +41,31 @@ export function HtmlArtifactEditor({projectId,artifactId,version,onClose}:Props)
   const load=async(requestedVersion?:number)=>{
     const current=++sequence.current; setBusy(true);setError('');setWarnings([]);
     try {
-      const draft=readHtmlDraft(projectId,artifactId);
+      const storedDraft=readHtmlDraft(projectId,artifactId);
+      const draft=requestedVersion===undefined||storedDraft?.version===requestedVersion?storedDraft:undefined;
       const next=await readHtmlArtifact(projectId,artifactId,draft?.version ?? requestedVersion);
       const [rendered,history]=await Promise.all([readHtmlPreview(projectId,artifactId,next.version),listHtmlVersions(projectId,artifactId)]);
-      if(current!==sequence.current)return;
-      setArtifact(next);setTitle(draft?.title??next.title);setHtml(draft?.html??next.html);setPreview(rendered.html);setVersions(history.versions);setRemoteUpdate(Boolean(draft&&history.versions.some(v=>v.version>draft.version)));
+      if(current!==sequence.current){rendered.release?.();return;}
+      previewRelease.current?.();previewRelease.current=rendered.release;
+      baseVersion.current=draft?.baseVersion??(draft?draft.version:Math.max(next.version,...history.versions.map(v=>v.version)));
+      setArtifact(next);setTitle(draft?.title??next.title);setHtml(draft?.html??next.html);setPreview(rendered.html);setMedia(rendered.media??[]);setVersions(history.versions);setRemoteUpdate(Boolean(draft&&history.versions.some(v=>v.version>draft.version)));
       setWarnings(rendered.warnings ?? []);
     }catch(err){if(current===sequence.current)setError(err instanceof Error?err.message:String(err));}
     finally{if(current===sequence.current)setBusy(false);}
   };
-  useEffect(()=>{void load(version);return()=>{sequence.current++;};},[projectId,artifactId,version]);
+  useEffect(()=>{void load(version);return()=>{sequence.current++;previewRelease.current?.();previewRelease.current=undefined;};},[projectId,artifactId,version]);
   useEffect(()=>{
     const changed=(event:Event)=>{
-      const detail=(event as CustomEvent<{projectId:string;artifact:HtmlArtifact}>).detail;
+      const detail=(event as CustomEvent<{projectId:string;artifact:HtmlArtifact;nodeId?:string}>).detail;
       if(detail?.projectId!==projectId||detail.artifact?.id!==artifactId)return;
       if(dirtyRef.current){setRemoteUpdate(true);return;}
-      void load();
+      if(detail.nodeId&&detail.nodeId===nodeId)void load(detail.artifact.version);
+      else if(version===undefined&&!nodeId)void load();
+      else setRemoteUpdate(true);
     };
     window.addEventListener(HTML_ARTIFACT_UPDATED_EVENT,changed);
     return()=>window.removeEventListener(HTML_ARTIFACT_UPDATED_EVENT,changed);
-  },[projectId,artifactId]);
+  },[projectId,artifactId,nodeId,version]);
   useEffect(()=>{
     const guard=(event:BeforeUnloadEvent)=>{if(dirtyRef.current){event.preventDefault();event.returnValue='';}};
     window.addEventListener('beforeunload',guard);return()=>window.removeEventListener('beforeunload',guard);
@@ -69,13 +78,16 @@ export function HtmlArtifactEditor({projectId,artifactId,version,onClose}:Props)
     window.addEventListener('message',selected);return()=>window.removeEventListener('message',selected);
   },[selecting,token,artifact,projectId,artifactId]);
   const mayDiscard=()=>{const allowed=!dirty||window.confirm(t('htmlArtifact.discard'));if(allowed)keepHtmlDraft(projectId,artifactId,null);return allowed;};
-  const mutate=async(restore?:number)=>{
+  const mutate=async()=>{
     if(!artifact)return;setBusy(true);setError('');setWarnings([]);
     try {
-      const next=restore===undefined?await saveHtmlArtifact(projectId,artifactId,title,html,artifact.version):await restoreHtmlVersion(projectId,artifactId,restore,artifact.version);
+      const canvasId=readUrl().canvas;
+      const next=await saveHtmlArtifact(projectId,artifactId,title,html,baseVersion.current,canvasId&&nodeId?{canvas_id:canvasId,node_id:nodeId}:undefined);
       setArtifact(next);setTitle(next.title);setHtml(next.html);dirtyRef.current=false;
       keepHtmlDraft(projectId,artifactId,null);
-      announceHtmlArtifact(projectId,next);
+      announceHtmlArtifact(projectId,next,nodeId);
+      await load(next.version);
+      if(next.warnings?.length)setWarnings(current=>[...current,...next.warnings!]);
     }catch(err){setError(err instanceof Error?err.message:String(err));}finally{setBusy(false);}
   };
   const button='inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs hover:bg-accent disabled:opacity-40';
@@ -98,9 +110,7 @@ export function HtmlArtifactEditor({projectId,artifactId,version,onClose}:Props)
       <select className="ml-auto rounded border border-border bg-background p-1.5" aria-label={t('htmlArtifact.versions')} value={artifact?.version??''} disabled={busy||!artifact} onChange={e=>{if(mayDiscard())void load(Number(e.target.value));}}>
         {versions.map(v=><option key={v.version} value={v.version}>v{v.version} · {v.title}</option>)}
       </select>
-      {artifact&&versions.length>0&&artifact.version!==Math.max(...versions.map(v=>v.version))&&<button className={button} disabled={busy||dirty} onClick={async()=>{
-        setBusy(true);try{const latest=await readHtmlArtifact(projectId,artifactId);const next=await restoreHtmlVersion(projectId,artifactId,artifact.version,latest.version);announceHtmlArtifact(projectId,next);}catch(err){setError(String(err));}finally{setBusy(false);}
-      }}>{t('htmlArtifact.restore')}</button>}
+      {artifact&&nodeId&&<button className={button} disabled={busy||dirty} onClick={()=>announceHtmlArtifact(projectId,artifact,nodeId)}>{t('htmlArtifact.restore')}</button>}
     </div>
     <p className="px-3 py-1 text-xs text-muted-foreground">{t(canRunScripts?'htmlArtifact.scriptNotice':'htmlArtifact.scriptUnsupported')}</p>
     {warnings.length>0&&<p role="status" className="whitespace-pre-wrap border-b border-border px-3 py-2 text-sm text-muted-foreground">{warnings.join('\n')}</p>}
@@ -109,7 +119,7 @@ export function HtmlArtifactEditor({projectId,artifactId,version,onClose}:Props)
     {dirty&&!code&&<p className="px-3 py-2 text-xs text-muted-foreground">{t('htmlArtifact.savedPreview')}</p>}
     {busy&&<p role="status" className="px-3 py-1 text-xs text-muted-foreground">{t('htmlArtifact.loading')}</p>}
     <div className="relative min-h-0 flex-1 overflow-auto bg-muted/30 p-4">
-      {code?<textarea aria-label={t('htmlArtifact.source')} className="h-full w-full resize-none rounded-lg border border-border bg-background p-4 font-mono text-xs outline-none focus:border-primary" spellCheck={false} value={html} disabled={!artifact||busy} onChange={e=>setHtml(e.target.value)}/>:artifact&&<iframe key={`${artifactId}:${artifact.version}:${interactive}`} {...(interactive?{credentialless:""}:{})} ref={frame} title={t('htmlArtifact.preview')} sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={srcDoc} className="mx-auto h-full min-h-96 max-w-full rounded-lg border border-border bg-white" style={{width:mobile?390:'100%'}}/>}
+      {code?<textarea aria-label={t('htmlArtifact.source')} className="h-full w-full resize-none rounded-lg border border-border bg-background p-4 font-mono text-xs outline-none focus:border-primary" spellCheck={false} value={html} disabled={!artifact||busy} onChange={e=>setHtml(e.target.value)}/>:artifact&&<iframe key={`${artifactId}:${artifact.version}:${interactive}`} {...(interactive?{credentialless:""}:{})} ref={frame} onLoad={event=>event.currentTarget.contentWindow?.postMessage({type:'html-artifact-media',token,media},'*')} title={t('htmlArtifact.preview')} sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={srcDoc} className="mx-auto h-full min-h-96 max-w-full rounded-lg border border-border bg-white" style={{width:mobile?390:'100%'}}/>}
     </div>
   </section>;
 }

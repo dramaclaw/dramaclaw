@@ -1483,6 +1483,7 @@ frontend/src/features/html-artifacts/chatReference.ts,Elastic-2.0,2026 SuperTale
 frontend/src/features/html-artifacts/commands.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/html-artifacts/commands.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/html-artifacts/drafts.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/html-artifacts/mediaPreview.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/html-artifacts/nodeMetadata.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/html-artifacts/nodeMetadata.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/html-artifacts/nodeReference.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

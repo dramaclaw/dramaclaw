@@ -2553,7 +2553,7 @@ export const NodeActionToolbar = memo(
               <UiChipButton className={TOOLBAR_TEXT_BUTTON_CLASS} disabled={!node.data.artifactId} onClick={(event) => {
                 event.stopPropagation();
                 const projectId = readUrl().project;
-                if (projectId && typeof node.data.artifactId === "string") openHtmlArtifact({projectId, artifactId: node.data.artifactId});
+                if (projectId && typeof node.data.artifactId === "string") openHtmlArtifact({projectId, artifactId: node.data.artifactId, version: typeof node.data.artifactVersion === "number" && node.data.artifactVersion > 0 ? node.data.artifactVersion : undefined, nodeId: node.id});
               }}><Globe2 className="h-3.5 w-3.5"/>{t("htmlArtifact.open")}</UiChipButton>
               <UiChipButton className={TOOLBAR_TEXT_BUTTON_CLASS} disabled={!node.data.artifactId} onClick={async (event) => {
                 event.stopPropagation();
@@ -2561,7 +2561,7 @@ export const NodeActionToolbar = memo(
                 const artifactId = node.data.artifactId;
                 if (!projectId || typeof artifactId !== "string") return;
                 try {
-                  const artifact = await readHtmlArtifact(projectId, artifactId);
+                  const artifact = await readHtmlArtifact(projectId, artifactId, typeof node.data.artifactVersion === "number" && node.data.artifactVersion > 0 ? node.data.artifactVersion : undefined);
                   await exportHtmlArtifact(projectId, artifactId, artifact.version);
                 } catch (error) { toast.error(String(error)); }
               }}><Download className="h-3.5 w-3.5"/>{t("htmlArtifact.export")}</UiChipButton>

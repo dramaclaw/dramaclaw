@@ -3,11 +3,11 @@ import {beforeEach,describe,expect,it,vi} from 'vitest';
 import {useCanvasStore} from '@/stores/canvasStore';
 import {applyCanvasChatCommandsAsync,extractCanvasChatCommandEnvelopes,partitionCanvasChatCommandEnvelopes} from '@/features/freezone/canvasChatCommands';
 import * as api from './api';
-vi.mock('./api',()=>({createHtmlArtifact:vi.fn(),saveHtmlArtifact:vi.fn(),restoreHtmlVersion:vi.fn(),announceHtmlArtifact:vi.fn()}));
+vi.mock('./api',()=>({createHtmlArtifact:vi.fn(),saveHtmlArtifact:vi.fn(),restoreHtmlVersion:vi.fn(),announceHtmlArtifact:vi.fn(),recordHtmlNodeHistory:vi.fn()}));
 const artifact = {id:'a1',title:'Hello',html:'<h1>Hello</h1>',version:1,created_at:'now',updated_at:'now'};
 const envelope=(command:unknown)=>({schema_version:'canvas_chat_commands.v1',project_id:'p',canvas_id:'c',commands:[command]});
 describe('director HTML commands',()=>{
- beforeEach(()=>{vi.clearAllMocks();registerFreezoneCanvasRuntime("p","c",()=>{});useCanvasStore.setState({nodes:[],edges:[]});});
+ beforeEach(()=>{vi.clearAllMocks();vi.mocked(api.recordHtmlNodeHistory).mockResolvedValue(artifact);registerFreezoneCanvasRuntime("p","c",()=>{});useCanvasStore.setState({nodes:[],edges:[]});});
  it('requires approval and creates artifact and node only on execution',async()=>{
   const envelopes=extractCanvasChatCommandEnvelopes([envelope({type:'html_artifact',action:'create',title:'Hello',html:artifact.html})]);
   expect(envelopes).toHaveLength(1);
@@ -17,6 +17,7 @@ describe('director HTML commands',()=>{
   const result=await applyCanvasChatCommandsAsync(envelopes,{projectId:'p',canvasId:'c'});
   expect(result.errors).toEqual([]);
   expect(useCanvasStore.getState().nodes[0].data).toMatchObject({artifactId:'a1',artifactVersion:1});
+  expect(api.recordHtmlNodeHistory).toHaveBeenCalledWith('p','a1',1,{canvas_id:'c',node_id:useCanvasStore.getState().nodes[0].id});
   expect(result.commandResults[0].output).toMatchObject({project_id:'p',html_artifact:{id:'a1',version:1}});
  });
  it('updates the same node and leaves it intact on a stale write',async()=>{
