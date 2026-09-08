@@ -587,8 +587,9 @@ export class PrevizRenderer {
     const targets = this.visibleNodes().filter((candidate) => candidate !== node);
     // 递归：对象节点本身是空 Group，几何体在它下面那层占位体 / 模型里。
     const hits = this.raycaster.intersectObjects(targets, true);
-    // three 的 `intersectObjects` 出手前已经按距离升序排过（0.185 `Raycaster.js:198`），
-    // 射线朝下，所以第 0 个就是最高的那个面，这里不必也不该再排一次。
+    // three 的 `intersectObjects` 出手前已经按距离升序排过（0.185 `Raycaster.js:222`；
+    // `:198` 那句 sort 是单数版 `intersectObject` 的，别顺着它去核）。射线朝下，距离
+    // 升序此时恰好等价于 y 降序，第 0 个就是最高的那个面，这里不必也不该再排一次。
     //
     // 没命中就用 0：地面网格是不可拾取的（`grid.ts:167` 把它的 raycast 摘掉了，否则
     // 铺满视野的它会吃掉每一次空点），而它确实铺在 y=0。退回 null 的话在空地上拖东西
