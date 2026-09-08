@@ -1415,9 +1415,18 @@ describe('PrevizSceneGraph', () => {
     graph.sync({ ...scene, objects: [{ ...character, bodyType: 'average' }] });
     await flush();
 
-    // 退回占位体时那本「已经请求过了」的账要一起销掉：不销的话，用户切回标准体型
-    // 之后这个人物永远停在胶囊上，而属性面板明明显示的是标准。
+    // 一开始就是简化圆柱体的人物，从来没发过请求，切回标准体型时得发出第一次。
     expect(rigOf(graph, character.id)).toBeDefined();
+
+    graph.sync({ ...scene, objects: [{ ...character, bodyType: 'capsule' }] });
+    graph.sync({ ...scene, objects: [{ ...character, bodyType: 'average' }] });
+    await flush();
+
+    // 再走一遍，这一次退回占位体的是一个**已经加载完**的人物：退回时那本「已经请求
+    // 过了」的账要跟着销掉，不销的话用户切回标准体型之后这个人物永远停在胶囊上，
+    // 而属性面板明明显示的是标准。
+    expect(rigOf(graph, character.id)).toBeDefined();
+    expect(graph.nodeFor(character.id)?.children).toHaveLength(2);
   });
 
   it('drops a rig that arrives after the character became a capsule', async () => {
