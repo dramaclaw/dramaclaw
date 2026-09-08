@@ -61,7 +61,7 @@ function fakeHandle(name: string, radius: number, colorHex: number): FakeHandle 
 
 /**
  * 照抄 three 0.185 `TransformControls.js` 的 translate 手柄清单，两张表都按真身的
- * 条目数搭全（`gizmoTranslate` 1310-1337、`pickerTranslate` 1339-1365）：
+ * 条目数搭全（`gizmoTranslate` 1310-1337、`pickerTranslate` 1339-1364）：
  *
  *   * gizmo：X/Y/Z 各三段（两个箭头 + 一条线）、中心一颗 XYZ 八面体、三块 XY/YZ/XZ 平面；
  *   * picker：X/Y/Z 各两段圆锥、中心一颗 XYZ 八面体、三块 XY/YZ/XZ 平面。
@@ -181,8 +181,10 @@ describe('emphasizeTranslateHandles', () => {
     const after = tree.byName(tree.pickerChildren, 'XYZ')[0]!;
     expect(after.geometry).not.toBe(oldGeometry);
     expect(after.geometry.radius).toBeGreaterThan(oldGeometry.radius);
-    // 拾取体的可见性归官方那份 0.15 的透明材质管，换掉它等于把不该看见的拾取
-    // 八面体画到画面上——那是一坨盖住中心手柄的白雾。
+    // 不动材质的理由不是「换了会画出来」：picker 三棵子树的 `visible` 被
+    // `TransformControls.js:1575-1577` 永久关掉，`WebGLRenderer.js:1832` 见 false 就
+    // 不递归，换成什么颜色都上不了屏。真正的理由是那份 `matInvisible` 由 translate /
+    // rotate / scale 三组 picker 共用（同一个实例），换掉纯亏——改坏别人还搭不上自己。
     expect(after.material).toBe(oldMaterial);
   });
 
@@ -234,12 +236,14 @@ describe('emphasizeTranslateHandles', () => {
 
     axes.forEach((name, index) => {
       const after = tree.byName(tree.gizmoChildren, name);
-      expect(after.map((handle) => handle.geometry)).toEqual(
-        before[index]!.map((snapshot) => snapshot.geometry),
-      );
-      expect(after.map((handle) => handle.material)).toEqual(
-        before[index]!.map((snapshot) => snapshot.material),
-      );
+      const snapshots = before[index]!;
+      expect(after).toHaveLength(snapshots.length);
+      // 逐个比引用，和隔壁 picker 那两条统一：`toEqual` 认的是结构，共用同一个 dispose
+      // 替身的克隆体它照样放行——量的是「长得一样吗」，这里要的是「还是同一份吗」。
+      after.forEach((handle, slot) => {
+        expect(handle.geometry).toBe(snapshots[slot]!.geometry);
+        expect(handle.material).toBe(snapshots[slot]!.material);
+      });
     });
   });
 
@@ -247,7 +251,7 @@ describe('emphasizeTranslateHandles', () => {
     const tree = fakeTree();
     const before = tree.pickerChildren
       .filter((handle) => handle.name !== 'XYZ')
-      .map((handle) => ({ handle, geometry: handle.geometry }));
+      .map((handle) => ({ handle, geometry: handle.geometry, material: handle.material }));
 
     run(tree);
 
@@ -260,6 +264,10 @@ describe('emphasizeTranslateHandles', () => {
       // 这是本模块唯一一处「改坏了看起来还正常、但功能整个没」的地方，所以 picker
       // 这一侧必须有和 gizmo 那一侧对称的一条锁。
       expect(snapshot.handle.geometry).toBe(snapshot.geometry);
+      // 材质这道锁只锁了中心那颗，另外九个是空的——和上面几何体那条不对称。后果没有
+      // 几何体那侧严重（picker 常关，画不出来），但换掉它们等于把 three 三组 picker
+      // 共用的那份 `matInvisible` 拆散，代价白付。
+      expect(snapshot.handle.material).toBe(snapshot.material);
     }
   });
 
@@ -308,6 +316,13 @@ describe('emphasizeTranslateHandles', () => {
   });
 });
 
+/** 材质上除去身份（uuid）与我们**刻意**要改的那两项之外的全部设定。 */
+function materialSwitches(material: THREE.Material) {
+  const json = material.toJSON() as unknown as Record<string, unknown>;
+  for (const key of ['uuid', 'color', 'opacity']) delete json[key];
+  return json;
+}
+
 /**
  * 钉在真 `TransformControls` 上的一条。上面那些假树全是照着 three 0.185 的源码手抄的，
  * 抄错了或者 three 改了内部结构（`isTransformControlsGizmo` 标记、`gizmo`/`picker` 两张
@@ -316,13 +331,6 @@ describe('emphasizeTranslateHandles', () => {
  * 这条会红。红了就说明改造已经悄悄退化成空操作：中心手柄还是那颗 0.25 不透明度的
  * 白八面体，视口里照样看不见，而这正是整个改造要解决的问题。
  */
-/** 材质上除去身份（uuid）与我们**刻意**要改的那两项之外的全部设定。 */
-function materialSwitches(material: THREE.Material) {
-  const json = material.toJSON() as unknown as Record<string, unknown>;
-  for (const key of ['uuid', 'color', 'opacity']) delete json[key];
-  return json;
-}
-
 describe('emphasizeTranslateHandles on real three', () => {
   it('reaches the handles inside a real TransformControls', () => {
     const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
