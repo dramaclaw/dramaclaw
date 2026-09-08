@@ -7678,9 +7678,11 @@
       "heightCm": "Height (cm)",
       "bodyType": "Build",
       "bodyTypes": {
+        "capsule": "Simplified cylinder",
         "slim": "Slim",
         "average": "Average",
-        "heavy": "Heavy"
+        "heavy": "Heavy",
+        "tall": "Tall"
       },
       "basePose": "Base pose",
       "poseAdjust": {

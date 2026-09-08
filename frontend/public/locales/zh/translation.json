@@ -7678,9 +7678,11 @@
       "heightCm": "身高（厘米）",
       "bodyType": "体型",
       "bodyTypes": {
+        "capsule": "简化圆柱体",
         "slim": "偏瘦",
         "average": "标准",
-        "heavy": "偏壮"
+        "heavy": "偏壮",
+        "tall": "高挑"
       },
       "basePose": "基础姿势",
       "poseAdjust": {

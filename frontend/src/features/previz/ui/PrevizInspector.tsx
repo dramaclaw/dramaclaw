@@ -50,10 +50,14 @@ const CHANNELS = Object.keys({
   rotation: true,
   scale: true,
 } satisfies Record<keyof PrevizTransform, true>) as readonly (keyof PrevizTransform)[];
+// 顺序照抄 `BodyType` 的书写顺序，免得同一份枚举在类型里和屏幕上各排各的。
+// `capsule` 排在最前是「简化圆柱体」——它不是一档胖瘦，选它是不加载 GLB（见 scene.ts）。
 const BODY_TYPES = Object.keys({
+  capsule: true,
   slim: true,
   average: true,
   heavy: true,
+  tall: true,
 } satisfies Record<BodyType, true>) as readonly BodyType[];
 const POSE_ADJUST_AXES = Object.keys({
   pitch: true,

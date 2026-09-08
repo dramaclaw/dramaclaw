@@ -59,7 +59,30 @@ export const PREVIZ_POSE_ADJUST_RANGE: Readonly<
   lean: { min: -35, max: 35, default: 0 },
 };
 
-export type BodyType = 'slim' | 'average' | 'heavy';
+/**
+ * 体型。五项与 upstream 的创建对话框一一对应。
+ * `capsule`（简化圆柱体）不是一档胖瘦，而是「不要 GLB，就用占位胶囊」——场景里人一多，
+ * 每副骨架每帧都要走一遍姿势解算，比几何体本身贵得多，upstream 留这一档就是为了让人
+ * 先把走位摆出来。它该在场景图那条换模型的路上分叉，不在 `BODY_WIDTH_SCALE` 里加宽减窄。
+ */
+export type BodyType = 'capsule' | 'slim' | 'average' | 'heavy' | 'tall';
+
+/**
+ * 高度策略：这个人物的 y 由谁说了算。
+ * - `follow` 跟随轨迹：加这个字段之前的唯一行为，y 就是 transform / 路径点上写着的那个数。
+ * - `ground` 贴合地面：往下打一条射线，脚底贴住底下最高的那个可命中面。上坡下坡的走位
+ *   不必逐点去调高度——那是把「人踩在地上」这件事手工重算一遍。
+ * - `plane`  锁定平面：y 恒等于 `planeY`。二楼、桥面、台阶上的戏靠它，路径点在 XZ 上
+ *   怎么画都不会把人拽下来。
+ *
+ * 三项一律可选，不按「场里有没有可踩的东西」置灰。注意编辑期那张地面网格**打不到**：
+ * `engine/grid.ts` 给它设了 `grid.raycast = () => {}`（否则每一次空点都会命中它，永远点不到
+ * 空白）。所以 `ground` 射线能命中的只有场景里的物件，什么都没命中时回落到哪个高度，
+ * 得由求值那一步自己显式写出来，没有任何东西替它兜底。
+ *
+ * 这个字段目前还没有消费者——求值与渲染是后面的事，这里只负责让它原样活过一次读写。
+ */
+export type HeightPolicy = 'follow' | 'ground' | 'plane';
 export type DisplayMode = 'solid' | 'translucent' | 'clay';
 export type OutputAspect = '16:9' | '9:16' | '1:1' | '4:3';
 export type RigMotion = 'static' | 'orbit' | 'push' | 'pull';
@@ -100,6 +123,9 @@ export interface PrevizCharacter extends PrevizObjectBase {
   color: string;
   bodyType: BodyType;
   heightCm: number;
+  heightPolicy: HeightPolicy;
+  /** `plane` 策略锁在哪个高度，单位米。其余策略下这个值留着不用——切回来时还是原来那层。 */
+  planeY: number;
   /**
    * 刻意留成 string 而不是 PrevizPoseId：新版客户端存进来的姿势要原样活过一次
    * 读写，静默改写成默认姿势是无声的数据损坏。认不出的 id 现在没有任何消费者——
@@ -325,7 +351,14 @@ const OBJECT_KINDS: Record<PrevizObjectKind, true> = {
   light: true,
   prop: true,
 };
-const BODY_TYPES: Record<BodyType, true> = { slim: true, average: true, heavy: true };
+const BODY_TYPES: Record<BodyType, true> = {
+  capsule: true,
+  slim: true,
+  average: true,
+  heavy: true,
+  tall: true,
+};
+const HEIGHT_POLICIES: Record<HeightPolicy, true> = { follow: true, ground: true, plane: true };
 const LIGHT_TYPES: Record<PrevizLight['lightType'], true> = { key: true, point: true, spot: true };
 const SENSORS: Record<PrevizCamera['sensor'], true> = { ff: true, s35: true };
 const CAMERA_BODIES: Record<PrevizCamera['cameraBody'], true> = {
@@ -452,6 +485,11 @@ export function parseObject(raw: unknown): PrevizObject | null {
         color: hexColor(source.color, PREVIZ_CHARACTER_COLORS[0]),
         bodyType: isMember(BODY_TYPES, source.bodyType) ? source.bodyType : 'average',
         heightCm: clampRange(source.heightCm, PREVIZ_HEIGHT_CM_RANGE),
+        heightPolicy: isMember(HEIGHT_POLICIES, source.heightPolicy)
+          ? source.heightPolicy
+          : 'follow',
+        // 老场景没有这个字段，回落 0：与「跟随轨迹」一起看就是「什么都没变」。
+        planeY: num(source.planeY, 0),
         basePoseId:
           typeof source.basePoseId === 'string' ? source.basePoseId : PREVIZ_DEFAULT_POSE_ID,
         poseAdjust: parsePoseAdjust(source.poseAdjust),

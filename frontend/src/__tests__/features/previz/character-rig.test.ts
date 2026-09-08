@@ -480,6 +480,34 @@ describe('CharacterRigFactory', () => {
     expect(slim.scale.z).toBeCloseTo(0.9, 6);
   });
 
+  it('narrows a tall build past a slim one', async () => {
+    const factory = factoryWith(['Idle_Loop']);
+
+    const tall = viewOf(await factory.build(character({ heightCm: 180, bodyType: 'tall' })));
+    const slim = viewOf(await factory.build(character({ heightCm: 180, bodyType: 'slim' })));
+
+    // 「高挑」在这套模型里只有一个可用的表达手段：同样的身高下把人削得比「偏瘦」更窄。
+    // 身高本身是另一根滑杆，体型这一档不该去碰它——两者一起动，用户拖身高时会发现
+    // 换个体型身高也跟着变，两个控件互相打架。
+    expect(tall.scale.x).toBeLessThan(slim.scale.x);
+    expect(tall.scale.y).toBeCloseTo(slim.scale.y, 6);
+    expect(tall.scale.z).toBeCloseTo(tall.scale.x, 6);
+  });
+
+  // 「简化圆柱体」在缩放表里必须是 1：它列在表里只为让 `Record<BodyType, …>` 保持穷尽，
+  // 真正的分叉在场景图那条换模型的路上。给它一个 ≠1 的宽度，就等于给这一档偷偷加了
+  // 一层胖瘦语义——将来那条分叉一旦回落到 GLB（模型下不来），人会莫名其妙地变形。
+  // 注意这条断言区分不了 `capsule` 和 `average`（两者都是 1）：这一轮不需要区分。
+  it('leaves the simplified-cylinder build at its natural width', async () => {
+    const factory = factoryWith(['Idle_Loop']);
+
+    const rig = viewOf(await factory.build(character({ heightCm: 200, bodyType: 'capsule' })));
+
+    expect(rig.scale.y).toBeCloseTo(1, 6);
+    expect(rig.scale.x).toBeCloseTo(1, 6);
+    expect(rig.scale.z).toBeCloseTo(1, 6);
+  });
+
   it('keeps the scale finite when the model has no geometry to measure', async () => {
     boxIsEmpty = true;
     const factory = factoryWith(['Idle_Loop']);
