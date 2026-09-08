@@ -164,6 +164,9 @@ function last<T>(items: T[]): T {
   return item;
 }
 
+/** 能让按钮收缩包裹住画布的 tailwind 宽度类，命中任意一个都算，别把实现钉死在某一个上。 */
+const SHRINK_WRAP_WIDTHS = ["w-fit", "w-max", "inline-block", "inline-flex"];
+
 function picker() {
   return screen.getByRole("button");
 }
@@ -273,6 +276,17 @@ describe("PrevizTopDownPicker", () => {
     expect(canvasOf().style.width).toBe(`${PREVIZ_TOP_DOWN_PICKER_SIZE.width}px`);
     expect(canvasOf().style.height).toBe(`${PREVIZ_TOP_DOWN_PICKER_SIZE.height}px`);
     expect(picker().style.width).toBe("");
+  });
+
+  it("shrink-wraps the button around the canvas so no click can land off the map", () => {
+    render(<PrevizTopDownPicker objects={[]} value={null} onPick={vi.fn()} />);
+
+    // jsdom 没有排版引擎：tailwind 的 class 不产生样式，盒宽也量不到（getBoundingClientRect
+    // 四个数恒为 0）。所以这条只能断言 class 串里确实带了个收缩包裹的宽度约束。它挡的是：
+    // 按钮是 block、宽度 auto，嵌进面板后会撑满一栏，画布仍是 320，右边空出来的那条空白
+    // 照样触发 onClick，再被 clampToCanvas 静默夹到画布右缘——点在空白处，人却挪了。
+    const classes = picker().className.split(/\s+/);
+    expect(classes.filter((name) => SHRINK_WRAP_WIDTHS.includes(name))).not.toHaveLength(0);
   });
 
   it("pins a coordinate-carrying click that lands outside the canvas to its edge", () => {
