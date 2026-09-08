@@ -8,6 +8,12 @@ import { toast } from "sonner";
 
 import { createPrevizObject } from "@/features/previz/domain/objects";
 import {
+  canvasToWorld,
+  sceneTopDownBounds,
+  topDownView,
+} from "@/features/previz/domain/topDownMap";
+import { PREVIZ_TOP_DOWN_PICKER_SIZE } from "@/features/previz/ui/PrevizTopDownPicker";
+import {
   PREVIZ_DEFAULT_DURATION_FRAMES,
   createDefaultScene,
   type PrevizPathClip,
@@ -43,6 +49,11 @@ const setStroke = vi.fn((_points: readonly Vec3[] | null) => {});
 const setDrawing = vi.fn((_active: boolean) => {});
 const viewPose = vi.fn(() => ({ position: [6, 4, 8] as Vec3, target: [0, 1, 0] as Vec3 }));
 const renderCameraPreview = vi.fn();
+// 真实现返回 Promise，桩也得返回一个：编辑器把它接在 void 上下文里，返回 undefined
+// 时任何 `.catch` 都会当场炸成 TypeError。
+// 形参要写出来：`vi.fn(async () => {})` 的 `mock.calls` 是 `[]` 元组，读 `[0]`/`[1]`
+// 在 tsc 下直接报「长度 0 的元组没有下标 0」。
+const renderCharacterPreview = vi.fn(async (_canvas: unknown, _draft: unknown) => {});
 const renderQuadPreview = vi.fn();
 const renderCameraView = vi.fn();
 const setViewOverlays = vi.fn();
@@ -80,6 +91,7 @@ function fakeRenderer() {
     setDrawing,
     viewPose,
     renderCameraPreview,
+    renderCharacterPreview,
     renderQuadPreview,
     renderCameraView,
     setViewOverlays,
@@ -91,6 +103,38 @@ function fakeRenderer() {
     onViewChange: null as ((pose: { position: Vec3; target: Vec3 }) => void) | null,
     onTransformDrag: null as (() => void) | null,
   };
+}
+
+/**
+ * 在创建人物对话框的俯视选位图上点一下，返回这一下按 domain 映射应该得到的世界 XZ。
+ *
+ * jsdom 不排版，`getBoundingClientRect()` 四个数全是 0，而选位图按 rect 换算落点，
+ * 所以要先塞一个真尺寸进去；`detail: 1` 才走坐标那条路（0 是键盘 / 合成点击，选位图
+ * 会回落到取景中心）。期望值走同一份 domain 函数复算，不抄组件的算式。
+ */
+function pickTopDownSpot(clientX: number, clientY: number): readonly [number, number] {
+  const canvas = screen.getByTestId("top-down-picker");
+  canvas.getBoundingClientRect = () =>
+    ({
+      left: 0,
+      top: 0,
+      width: PREVIZ_TOP_DOWN_PICKER_SIZE.width,
+      height: PREVIZ_TOP_DOWN_PICKER_SIZE.height,
+      right: PREVIZ_TOP_DOWN_PICKER_SIZE.width,
+      bottom: PREVIZ_TOP_DOWN_PICKER_SIZE.height,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  fireEvent.click(canvas.parentElement!, { detail: 1, clientX, clientY });
+  return canvasToWorld(
+    topDownView(
+      sceneTopDownBounds(usePrevizStore.getState().scene.objects),
+      PREVIZ_TOP_DOWN_PICKER_SIZE.width,
+      PREVIZ_TOP_DOWN_PICKER_SIZE.height,
+    ),
+    [clientX, clientY],
+  );
 }
 
 // WebGL 在 jsdom 里不存在；编辑器只需要知道自己正确地建了、也正确地拆了渲染器。
@@ -645,6 +689,98 @@ describe("PrevizEditor", () => {
 
     expect(screen.queryByRole("dialog", { name: "previz.cameraCreate.title" })).toBeNull();
     expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+  });
+
+  it("opens the character dialog instead of dropping one at the origin", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn(() => true)}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.character" }));
+
+    expect(
+      screen.getByRole("dialog", { name: "previz.characterCreate.title" }),
+    ).toBeInTheDocument();
+    // 点一下工具栏就建人的老行为会让这条挂：人已经在场上了，而用户还没说站哪。
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+  });
+
+  it("creates the character where the top-down map was clicked", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn(() => true)}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.character" }));
+    // 刻意不点画布中心：空场景的取景中心就是世界原点，而原点也正是「落点没接上」时
+    // 人物会站的地方——中心点上两种实现同值，是一条谁都能过的空绿。
+    const spot = pickTopDownSpot(96, 208);
+    await user.click(screen.getByRole("button", { name: "previz.characterCreate.create" }));
+
+    const state = usePrevizStore.getState();
+    expect(state.scene.objects).toHaveLength(1);
+    const created = state.scene.objects[0]!;
+    expect(created.kind).toBe("character");
+    // 选点 → 草稿的 spot → transform.position 这条链，断在哪一节表现都一样：
+    // 人站在原点，没有任何报错。
+    expect(created.transform.position[0]).toBeCloseTo(spot[0], 6);
+    expect(created.transform.position[2]).toBeCloseTo(spot[1], 6);
+    // 新建即选中：否则用户建完还得自己去右边点一下才能改属性。
+    expect(state.selectedObjectId).toBe(created.id);
+    // 对话框关掉了，不会挡着刚建好的人。
+    expect(screen.queryByRole("dialog", { name: "previz.characterCreate.title" })).toBeNull();
+  });
+
+  it("closes the character dialog without creating anything", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn(() => true)}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.character" }));
+    await user.click(screen.getByRole("button", { name: "previz.characterCreate.cancel" }));
+
+    expect(screen.queryByRole("dialog", { name: "previz.characterCreate.title" })).toBeNull();
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+  });
+
+  it("draws the mannequin preview through the renderer", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn(() => true)}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.character" }));
+
+    await vi.waitFor(() => expect(renderCharacterPreview).toHaveBeenCalled());
+    const [canvas, draft] = renderCharacterPreview.mock.calls[0]!;
+    expect(canvas).toBeInstanceOf(HTMLCanvasElement);
+    expect(draft).toMatchObject({ bodyType: "average", heightPolicy: "follow" });
   });
 
   it("draws the create dialog preview through the renderer", async () => {
