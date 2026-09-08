@@ -112,6 +112,21 @@ function run(tree: ReturnType<typeof fakeTree>) {
   emphasizeTranslateHandles(tree.helper as never, fakeThree());
 }
 
+/**
+ * 手柄材质里那三项「别让场景插手」的开关，三个手柄共用一套断言。
+ *
+ * 它们坏掉的表现是同一个：我们把不透明度调到 0.95 / 0.8，屏幕上却不是这个亮度。
+ *   * `depthTest` 一开，手柄就钻进人物身体里被挡住——改大改亮全白做；
+ *   * `fog` 一开，手柄离相机稍远就被雾冲淡，而预演台的视口是能一路推远的；
+ *   * `toneMapped` 一开，亮度先过一遍色调映射再上屏，我们定死的值就不作数了。
+ * three 自己的 `gizmoMaterial` 把这三项原样关掉，照抄它。
+ */
+function expectUnlitByScene(options: Record<string, unknown>) {
+  expect(options.depthTest).toBe(false);
+  expect(options.fog).toBe(false);
+  expect(options.toneMapped).toBe(false);
+}
+
 describe('emphasizeTranslateHandles', () => {
   it('grows and brightens the centre translate handle', () => {
     const tree = fakeTree();
@@ -128,10 +143,12 @@ describe('emphasizeTranslateHandles', () => {
     const options = after.material.options ?? {};
     expect(options.opacity as number).toBeGreaterThanOrEqual(0.9);
     expect(options.transparent).toBe(true);
-    // depthTest 必须留在 false（官方原材质就是这么设的）：一旦开了深度测试，手柄会
-    // 钻进人物身体里被挡住，我们把它改大改亮的这一整件事就白做了。
+    // 中心手柄是「不限方向」的那一颗，颜色刻意不落在任何一根轴的红/绿/蓝上——
+    // 染成轴色的话它看起来就成了第四根轴，用户会去找它对应哪个方向。
+    expect(options.color).toBe(0xffffff);
     expect(options.depthTest).toBe(false);
     expect(options.depthWrite).toBe(false);
+    expectUnlitByScene(options);
   });
 
   it('grows the centre picker geometry but leaves its material alone', () => {
@@ -179,21 +196,32 @@ describe('emphasizeTranslateHandles', () => {
       expect(after.material.options?.opacity as number).toBeGreaterThan(0.5);
       // 三块平面靠颜色区分对应哪两根轴，换材质时颜色必须原样带过来。
       expect(after.material.color.getHex()).toBe(snapshot.colorHex);
-      expect(after.material.options?.depthTest).toBe(false);
+      expectUnlitByScene(after.material.options ?? {});
     }
   });
 
   it('leaves the axis arrows untouched', () => {
     const tree = fakeTree();
-    const before = tree
-      .byName(tree.gizmoChildren, 'X')
-      .map((handle) => ({ geometry: handle.geometry, material: handle.material }));
+    // 三根轴一起查：X 那组有三个同名子节点，够覆盖「同名的全都别动」这个形状，
+    // 但标题说的是复数的 axis arrows，body 只查一根就配不上它。
+    const axes = ['X', 'Y', 'Z'];
+    const before = axes.map((name) =>
+      tree
+        .byName(tree.gizmoChildren, name)
+        .map((handle) => ({ geometry: handle.geometry, material: handle.material })),
+    );
 
     run(tree);
 
-    const after = tree.byName(tree.gizmoChildren, 'X');
-    expect(after.map((handle) => handle.geometry)).toEqual(before.map((s) => s.geometry));
-    expect(after.map((handle) => handle.material)).toEqual(before.map((s) => s.material));
+    axes.forEach((name, index) => {
+      const after = tree.byName(tree.gizmoChildren, name);
+      expect(after.map((handle) => handle.geometry)).toEqual(
+        before[index]!.map((snapshot) => snapshot.geometry),
+      );
+      expect(after.map((handle) => handle.material)).toEqual(
+        before[index]!.map((snapshot) => snapshot.material),
+      );
+    });
   });
 
   it('disposes each replaced geometry exactly once', () => {
@@ -305,8 +333,11 @@ describe('emphasizeTranslateHandles on real three', () => {
     expect(radiusOf(centreAfter)).toBeGreaterThan(centreRadiusBefore);
     const centreMaterial = centreAfter.material as THREE.MeshBasicMaterial;
     expect(centreMaterial.opacity).toBeGreaterThanOrEqual(0.9);
-    expect(centreMaterial.depthTest).toBe(false);
     expect(centreMaterial.transparent).toBe(true);
+    expect(centreMaterial.color.getHex()).toBe(0xffffff);
+    expect(centreMaterial.depthTest).toBe(false);
+    expect(centreMaterial.fog).toBe(false);
+    expect(centreMaterial.toneMapped).toBe(false);
 
     const pickerAfter = named(pickerHandles(), 'XYZ');
     expect(radiusOf(pickerAfter)).toBeGreaterThan(pickerRadiusBefore);
