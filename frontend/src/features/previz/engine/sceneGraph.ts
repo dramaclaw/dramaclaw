@@ -286,7 +286,7 @@ export class PrevizSceneGraph {
    *
    * 只走对象节点的直接子节点，不 traverse 整棵树：标记与机身建出来就挂在这一层
    * （见 `createNode` / `createPlaceholder`），再往下是人物 GLB 那具骨架的
-   * 六十来个节点（`UAL1_Standard.glb`：`nodes` 67 个、蒙皮 65 根骨头），白走。
+   * 六十来个节点（`PREVIZ_ACTOR_MODEL_URL` 那份：`nodes` 67 个、蒙皮 65 根骨头），白走。
    */
   setFurnitureVisible(visible: boolean): void {
     for (const node of this.root.children) {
