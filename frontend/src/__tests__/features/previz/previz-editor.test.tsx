@@ -2739,3 +2739,27 @@ describe("PrevizEditor autosave round trip", () => {
     }
   });
 });
+
+describe("PrevizEditor initial scene", () => {
+  it("loads whatever scene the node holds at the moment it reopens", async () => {
+    const first = createDefaultScene();
+    first.settings.durationFrames = 200;
+    const second = createDefaultScene();
+    second.settings.durationFrames = 300;
+
+    const { rerender } = render(
+      <PrevizEditor {...editorProps({ open: false, initialScene: first })} />,
+    );
+    // 关着的时候一个字节都不该灌进 store。
+    expect(usePrevizStore.getState().scene.settings.durationFrames).not.toBe(200);
+
+    rerender(<PrevizEditor {...editorProps({ open: true, initialScene: second })} />);
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+
+    // 灌进来的必须是**打开这一刻**节点手里的那一份，不是挂载那一刻的那一份。
+    // `initialScene` 走了 ref（免得自动保存写回换引用时把编辑会话重置掉），ref 就
+    // 必须在渲染期同步最新值；只在 useRef 里存第一次的入参会静静地灌回旧场景，
+    // 用户重开一看，刚才存下的改动全不见了。
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(300);
+  });
+});
