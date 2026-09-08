@@ -1007,7 +1007,7 @@ export function PrevizEditor({
                 />
               )}
 
-              <div className="absolute right-14 top-4 z-30 flex items-center gap-2">
+              <div className="absolute left-4 top-4 z-30 flex items-center gap-2">
                 <div className="relative">
                   <Button
                     variant="ghost"
@@ -1050,14 +1050,15 @@ export function PrevizEditor({
                     <div
                       role="menu"
                       aria-label={t("previz.editor.record.open")}
-                      className="absolute right-0 top-9 w-44 overflow-hidden rounded-lg border border-white/10 bg-black/85 p-1 backdrop-blur-sm"
+                      aria-orientation="horizontal"
+                      className="absolute left-full top-0 ml-2 flex items-center gap-1 rounded-lg border border-white/10 bg-[#181b20] p-1 whitespace-nowrap shadow-lg shadow-black/60"
                     >
                       {RECORD_MODES.map((mode) => (
                         <button
                           key={mode}
                           type="button"
                           role="menuitem"
-                          className="block w-full rounded-md px-3 py-2 text-left text-[12px] text-white/85 transition hover:bg-white/10 hover:text-white"
+                          className="rounded-md px-3 py-1.5 text-[12px] text-white/85 transition hover:bg-white/10 hover:text-white"
                           onClick={() => {
                             setRecordMenuOpen(false);
                             void handleRecord(mode);
