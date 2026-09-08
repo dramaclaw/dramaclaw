@@ -5557,7 +5557,8 @@
       "placeholderAudio": "Audio",
       "placeholderScript": "Script",
       "betaTag": "Beta",
-      "videoCompose": "Video Compose"
+      "videoCompose": "Video Compose",
+      "htmlArtifact": "Webpage"
     },
     "imageNode": {
       "title": "Image Node",
@@ -6235,7 +6236,8 @@
       "pano360ViewerNode": "360° panorama viewer",
       "threeDWorldNode": "3D world",
       "skillNode": "Skill",
-      "styleNode": "Style"
+      "styleNode": "Style",
+      "htmlArtifactNode": "Webpage"
     },
     "exportResult": {
       "generic": "Result image",
@@ -7888,5 +7890,35 @@
         "unsupported": "Unsupported"
       }
     }
+  },
+  "htmlArtifact": {
+    "editor": "Webpage editor",
+    "back": "Back to canvas",
+    "title": "Webpage name",
+    "preview": "Preview",
+    "code": "Code",
+    "save": "Save",
+    "export": "Export",
+    "desktop": "Desktop",
+    "mobile": "Mobile",
+    "select": "Select element",
+    "ask": "Edit with director",
+    "versions": "Version history",
+    "restore": "Restore this version",
+    "conflict": "A newer version is available. Your unsaved changes are retained. Copy your edits before loading the latest version.",
+    "reload": "Reload",
+    "savedPreview": "Preview shows the saved version. Save to refresh.",
+    "loading": "Working…",
+    "source": "HTML source",
+    "webpage": "Webpage",
+    "thumbnail": "Webpage thumbnail",
+    "empty": "Ask the director to create a webpage",
+    "open": "Open webpage",
+    "discard": "Discard unsaved changes?",
+    "runScripts": "Run page scripts",
+    "stopScripts": "Stop page scripts",
+    "scriptNotice": "Page scripts are off by default. Interactive code may send page contents to external sites.",
+    "scriptUnsupported": "This browser cannot isolate credentials for interactive mode. Preview, element selection and source editing remain available.",
+    "saveCommand": "Save webpage"
   }
 }

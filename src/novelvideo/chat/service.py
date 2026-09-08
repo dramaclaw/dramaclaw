@@ -621,6 +621,7 @@ _FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
     {
         "freezone_create_node",
         "freezone_add_next_node",
+        "freezone_html_artifact",
         "freezone_emit_canvas_command",
         "freezone_update_node_data",
         "freezone_delete_nodes",

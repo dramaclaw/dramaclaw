@@ -1,3 +1,4 @@
+import {htmlArtifactCommandError} from '@/features/html-artifacts/commands';
 import type { CanvasEdge, CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { CANVAS_NODE_TYPES, type CanvasNodeData } from "@/features/canvas/domain/canvasNodes";
 import {
@@ -190,6 +191,12 @@ export function validateCanvasChatCommandEnvelopes(
     envelope.commands.forEach((command, commandIndex) => {
       const path = commandPath(envelopeIndex, commandIndex);
       switch (command.type) {
+        case "html_artifact": {
+          const error = htmlArtifactCommandError(command);
+          if (error) addIssue(issues,path,error);
+          for (const id of command.reference_node_ids ?? []) if (!nodeById.has(id)) addIssue(issues,path,`HTML reference node is unavailable: ${id}`);
+          break;
+        }
         case "clear_canvas":
           // The executor resolves the current canvas contents at approval
           // time, so there are no ids to validate in the command payload.

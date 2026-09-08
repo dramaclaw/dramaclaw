@@ -22,6 +22,7 @@ import {
 export const DEFAULT_NODE_DISPLAY_NAME: Record<CanvasNodeType, string> = {
   vectorSvgNode: '矢量图 · SVG',
   animatedGifNode: '动态图 · GIF',
+  [CANVAS_NODE_TYPES.htmlArtifact]: '网页',
   [CANVAS_NODE_TYPES.upload]: '上传资源',
   [CANVAS_NODE_TYPES.imageEdit]: 'AI 图片',
   [CANVAS_NODE_TYPES.imageGen]: '图片节点',

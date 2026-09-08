@@ -4688,7 +4688,7 @@ def test_canvas_command_tools_expose_discriminated_minimal_schema():
     assert set(emit["properties"]) == {"project_id", "canvas_id", "commands"}
 
     variants = emit["properties"]["commands"]["items"]["oneOf"]
-    assert len(variants) == 17
+    assert len(variants) == 18
     by_type = {}
     for variant in variants:
         by_type.setdefault(variant["properties"]["type"]["enum"][0], []).append(variant)

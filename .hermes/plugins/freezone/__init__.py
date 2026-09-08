@@ -2635,6 +2635,7 @@ _FORBIDDEN_EDGE_FIELDS = (
 )
 
 _COMMAND_TYPES = {
+    "html_artifact",
     "create_node",
     "add_next_node",
     "update_node_data",
@@ -3292,6 +3293,7 @@ def _approval_required_for_commands(commands: list[Any]) -> tuple[bool, list[str
     ]
     destructive = {"delete_nodes", "delete_edges"}
     mutating = {
+        "html_artifact",
         "create_node",
         "add_next_node",
         "update_node_data",
@@ -3317,7 +3319,7 @@ def _approval_required_for_commands(commands: list[Any]) -> tuple[bool, list[str
 
 
 def _requires_frontend_canvas_executor(commands: list[Any]) -> bool:
-    frontend_types = {"run_node_action", "run_workflow", "open_mainline_projection"}
+    frontend_types = {"html_artifact", "run_node_action", "run_workflow", "open_mainline_projection"}
     return any(
         isinstance(command, dict)
         and str(command.get("type") or "").strip() in frontend_types
@@ -4255,6 +4257,8 @@ def _emit_canvas_commands(
                 slim_result=slim_result,
                 reasons=approval_reasons,
             )
+        if _requires_frontend_canvas_executor(commands):
+            return _dispatch_mcp_approved_frontend_commands(project=project, canvas=canvas, commands=commands, slim_result=slim_result)
         return _direct_apply_canvas_commands(
             project,
             canvas,
@@ -4341,6 +4345,42 @@ def _summarize_canvas_command_result(
         "message": resolved.get("message") or "Canvas command finished.",
         "agent_instruction": agent_instruction,
     }
+
+
+def _handle_html_artifact(args: dict[str, Any], **_: Any) -> str:
+    """HTML writes must run in the authenticated, confirmed browser executor."""
+    try:
+        project = _project_from_args(args)
+        action = args.get("action")
+        if action not in {"create", "read", "update", "list", "history", "restore"}:
+            raise ValueError("action must be create, read, update, list, history, or restore")
+        artifact_id = args.get("artifact_id")
+        if action not in {"create", "list"} and not artifact_id:
+            raise ValueError("artifact_id is required")
+        for field in (("base_version",) if action == "update" else ("base_version", "version") if action == "restore" else ()):
+            if type(args.get(field)) is not int or args[field] < 1:
+                raise ValueError(f"{field} must be an explicit positive integer; read the saved source first")
+        if action in {"create", "update"}:
+            if not isinstance(args.get("title"), str) or not args["title"].strip():
+                raise ValueError("title is required")
+            if not isinstance(args.get("html"), str) or not args["html"]:
+                raise ValueError("html is required")
+        if action in {"create", "update", "restore"}:
+            command = {"type": "html_artifact", "action": action}
+            for key in ("artifact_id", "title", "html", "base_version", "version", "position", "reference_node_ids"):
+                if key in args:
+                    command[key] = args[key]
+            return _emit_canvas_commands(project, args.get("canvas_id") or _default_canvas_id() or None, [command])
+        path = f"/api/v1/projects/{quote(project, safe='')}/freezone/html-artifacts"
+        if action != "list":
+            path += f"/{quote(str(artifact_id), safe='')}"
+        if action == "history":
+            path += "/versions"
+        query = {"version": args["version"]} if action == "read" and args.get("version") is not None else None
+        response = _request("GET", path, query=query)
+        return _structured_tool_result(response, tool_name="freezone_html_artifact")
+    except (ValueError, TypeError) as exc:
+        return tool_error(str(exc))
 
 
 def _handle_emit_canvas_command(args: dict[str, Any], **_: Any) -> str:
@@ -7649,6 +7689,20 @@ _OTHER_AGENT_CREATABLE_NODE_TYPE_VALUES = [
 _CANVAS_COMMAND_ITEM_SCHEMA = {
     "oneOf": [
         _command_variant(
+            "html_artifact",
+            {
+                "action": {"type": "string", "enum": ["create", "update", "restore"]},
+                "artifact_id": _NON_EMPTY_STRING,
+                "title": {"type": "string", "maxLength": 200},
+                "html": {"type": "string"},
+                "base_version": {"type": "integer", "minimum": 1},
+                "version": {"type": "integer", "minimum": 1},
+                "position": _POSITION_SCHEMA,
+                "reference_node_ids": {"type": "array", "items": _NON_EMPTY_STRING},
+            },
+            ["action"],
+        ),
+        _command_variant(
             "create_node",
             {
                 "client_id": _NON_EMPTY_STRING,
@@ -7817,6 +7871,26 @@ TOOLS = (
             "import_id": {"type": "string", "minLength": 1},
         }, ["import_id"]),
         _handle_get_skill_import,
+    ),
+    (
+        "freezone_html_artifact",
+        _schema(
+            "freezone_html_artifact",
+            "Create/read/update/list/history/restore a saved project HTML webpage. Writes require the existing canvas confirmation. Create saves the HTML and places a canvas node; ordinary update/restore keep the same artifact and node. ALWAYS read the saved source before update and pass its base_version; on 409 re-read and reconcile. Supply self-contained single-page HTML with inline CSS/JS and project media; no backend/npm/external scripts. reference_node_ids links existing source nodes. Use create only for an explicit new alternative. Read with version returns immutable historical source.",
+            {
+                **_CANVAS_COMMAND_TOOL_SCOPE_PROPS,
+                "action": {"type": "string", "enum": ["create", "read", "update", "list", "history", "restore"]},
+                "artifact_id": {"type": "string"},
+                "title": {"type": "string", "maxLength": 200},
+                "html": {"type": "string"},
+                "base_version": {"type": "integer", "minimum": 1},
+                "version": {"type": "integer", "minimum": 1},
+                "position": _POSITION_SCHEMA,
+                "reference_node_ids": {"type": "array", "items": {"type": "string"}},
+            },
+            ["action"],
+        ),
+        _handle_html_artifact,
     ),
     # 读全局画布上下文。
     (

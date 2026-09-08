@@ -1,3 +1,6 @@
+import { type HtmlArtifactReference, parseHtmlArtifactReference, appendHtmlArtifactTransportContext } from '@/features/html-artifacts/chatReference';
+import { HtmlArtifactResultCard } from '@/features/html-artifacts/HtmlArtifactResultCard';
+import { activeHtmlArtifactContext, HTML_ARTIFACT_REFERENCE_EVENT } from '@/features/html-artifacts/api';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import {
@@ -3775,7 +3778,7 @@ function CanvasCommandFeedbackCard({
   const mutedFailure = failed && visualTone === "muted";
   const warningFailure = failed && visualTone === "warning";
   const initiallyCompact = failed && successfulCount === 0;
-  const collapseSuccessfulDetails = !failed && steps.length > 2;
+  const collapseSuccessfulDetails = !failed && steps.length > 2 && !steps.some(step => step.output?.html_artifact);
   const compactTitle = canvasCommandFeedbackCompactTitle(feedback);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
   const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
@@ -3862,6 +3865,7 @@ function CanvasCommandFeedbackCard({
               {ok ? <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-400" /> : <AlertCircle className={cn("mt-0.5 size-3.5 shrink-0", mutedFailure ? "text-muted-foreground" : invalidCommand || warningFailure ? "text-amber-300" : "text-destructive")} />}
               <div className="min-w-0 flex-1">
                 <div className={cn("font-medium", ok ? "text-foreground/90" : mutedFailure ? "text-muted-foreground" : invalidCommand || warningFailure ? "text-amber-300" : "text-destructive")}>{step.label}</div>
+                {ok && <HtmlArtifactResultCard output={step.output}/>}
                 {(step.createdNodeId || step.nodeId || step.action || step.error) && (
                   <div className="mt-0.5 space-y-0.5 break-words text-[11px] text-muted-foreground">
                     {step.createdNodeId && <div>新节点：{step.createdNodeId}</div>}
@@ -5102,6 +5106,7 @@ function SkillStudioListField({
   value: string[];
 }) {
   const [draft, setDraft] = useState("");
+
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingDraft, setEditingDraft] = useState("");
@@ -9616,6 +9621,7 @@ export function canvasCommandCandidateValues(message: ChatMessage): unknown[] {
         ? String((result as Record<string, unknown>).text)
         : "";
   const toolName = typeof raw?.name === "string" ? raw.name : "";
+  if (toolName === "freezone_html_artifact") return values;
   const isCanvasContextTool =
     toolName === "freezone_get_canvas_ontology" ||
     toolName === "freezone_summarize_canvas" ||
@@ -10129,6 +10135,7 @@ type CanvasCommandFeedbackStep = {
   action?: string;
   createdNodeId?: string;
   error?: string;
+  output?: Record<string,unknown>;
 };
 
 type CanvasCommandFeedback = Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors"> & {
@@ -10856,6 +10863,7 @@ function canvasCommandFeedbackDedupeKey(feedback: CanvasCommandFeedback): string
       label: step.label,
       nodeId: step.nodeId,
       action: step.action,
+      output: step.output,
       error: step.error,
     })),
     plans: feedback.plans,
@@ -11570,6 +11578,17 @@ export function SuperChatPanel({
   const username = useAuthStore((s) => s.username);
   const isFreezoneLayout = variant === "freezone";
   const [draft, setDraft] = useState("");
+  const [selectedHtmlReference, setSelectedHtmlReference] = useState<HtmlArtifactReference | null>(null);
+  useEffect(() => {
+    setSelectedHtmlReference(null);
+    const reference = (event: Event) => {
+      if (variant !== "freezone") return;
+      const value = parseHtmlArtifactReference((event as CustomEvent).detail, params.project);
+      if (value) setSelectedHtmlReference(value);
+    };
+    window.addEventListener(HTML_ARTIFACT_REFERENCE_EVENT, reference);
+    return () => window.removeEventListener(HTML_ARTIFACT_REFERENCE_EVENT, reference);
+  }, [variant, params.project]);
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [agentBillingOpen, setAgentBillingOpen] = useState(false);
@@ -13499,6 +13518,13 @@ export function SuperChatPanel({
   const sendWithIngestAutomation = useCallback(
     async (text: string, messageAttachments: ChatAttachment[]): Promise<boolean> => {
       let nextText = text;
+      const htmlReference = variant === "freezone" ? selectedHtmlReference : null;
+      const sendPreparedMessage = async (displayText:string, attachments:ChatAttachment[], transportText:string):Promise<boolean> => {
+        const activeHtml = variant === "freezone" ? activeHtmlArtifactContext(params.project) : null;
+        const sent = await chat.send(displayText,attachments,appendHtmlArtifactTransportContext(transportText,params.project,activeHtml,htmlReference));
+        if (sent && htmlReference) setSelectedHtmlReference(current => current === htmlReference ? null : current);
+        return sent;
+      };
       const safeMessageAttachments =
         variant === "freezone"
           ? pruneCanvasNodeReferenceAttachments(messageAttachments, existingCanvasNodeIds)
@@ -13528,7 +13554,7 @@ export function SuperChatPanel({
           if (!isOverwriteChoice(text)) {
             const pending = reingestConfirmation;
             setReingestConfirmation(null);
-            return chat.send(
+            return sendPreparedMessage(
               text,
               [],
               appendAttachmentAnalysisContext(text, buildReingestCancelledContext(pending)),
@@ -13540,7 +13566,7 @@ export function SuperChatPanel({
             stage: "confirm_clear" as const,
           };
           setReingestConfirmation(nextPending);
-          return chat.send(
+          return sendPreparedMessage(
             text,
             [],
             appendAttachmentAnalysisContext(text, buildReingestConfirmationContext(nextPending)),
@@ -13550,7 +13576,7 @@ export function SuperChatPanel({
         if (!isFinalOverwriteConfirmation(text)) {
           const pending = reingestConfirmation;
           setReingestConfirmation(null);
-          return chat.send(
+          return sendPreparedMessage(
             text,
             [],
             appendAttachmentAnalysisContext(text, buildReingestCancelledContext(pending)),
@@ -13573,7 +13599,7 @@ export function SuperChatPanel({
           });
           toast.success(t("aiAssistant.ingestAutomationStarted", { filename: reingestConfirmation.filename }));
           setReingestConfirmation(null);
-          return chat.send(text, canvasReferenceAttachments, nextText);
+          return sendPreparedMessage(text, canvasReferenceAttachments, nextText);
         } catch (error) {
           const message = backendErrorToastMessage(error, t);
           toast.error(t("aiAssistant.ingestAutomationFailed", { message }));
@@ -13615,7 +13641,7 @@ export function SuperChatPanel({
               text,
               buildReingestConfirmationContext(pending),
             );
-            return chat.send(text, transportAttachments, nextText);
+            return sendPreparedMessage(text, transportAttachments, nextText);
           }
           const started = await startNovelIngest(project, uploaded.filename);
           nextText = appendIngestAutomationContext(text, {
@@ -13654,7 +13680,7 @@ export function SuperChatPanel({
               text,
               buildReingestConfirmationContext(pending),
             );
-            return chat.send(text, [], nextText);
+            return sendPreparedMessage(text, [], nextText);
           }
           const started = await startNovelIngest(project, uploaded.filename);
           nextText = appendIngestAutomationContext(text, {
@@ -13745,7 +13771,7 @@ export function SuperChatPanel({
           const voicePolicy = selectedVoicePolicy ?? state.voicePolicy;
           if (state.voiceChoiceRequired && !voicePolicy) {
             nextText = directorAutoVoiceChoiceTransportText(nextText);
-            return chat.send(text, transportAttachments, nextText);
+            return sendPreparedMessage(text, transportAttachments, nextText);
           }
           if (!project) return false;
           try {
@@ -13767,10 +13793,11 @@ export function SuperChatPanel({
         }
       }
 
-      return chat.send(text, transportAttachments, nextText);
+      return sendPreparedMessage(text, transportAttachments, nextText);
     },
     [
       chat,
+      selectedHtmlReference,
       currentCanvasOntologyContext,
       existingCanvasNodeIds,
       params.project,
@@ -15114,6 +15141,13 @@ export function SuperChatPanel({
                     />
                   ))}
                 </div>
+              </div>
+            )}
+            {isFreezoneLayout && selectedHtmlReference && (
+              <div className="mb-2 flex max-w-full items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-foreground">
+                <span className="shrink-0 font-medium">{t('htmlArtifact.webpage')}</span>
+                <span className="min-w-0 flex-1 truncate">{selectedHtmlReference.title}{selectedHtmlReference.text ? ` · ${selectedHtmlReference.text.slice(0,100)}` : ''}</span>
+                <button type="button" className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={t('aiAssistant.removeAttachment')} onClick={()=>setSelectedHtmlReference(null)}><X className="size-3.5"/></button>
               </div>
             )}
             {!hasActiveComposerPrompt && (

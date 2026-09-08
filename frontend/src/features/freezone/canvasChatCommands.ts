@@ -1,3 +1,5 @@
+import i18next from "i18next";
+import { type HtmlArtifactCommand, parseHtmlArtifactCommand, executeHtmlArtifactCommand } from '@/features/html-artifacts/commands';
 import {
   CANVAS_NODE_TYPES,
   DEFAULT_NODE_WIDTH,
@@ -85,6 +87,7 @@ const VIDEO_COMPOSE_MIN_UPSTREAM_VIDEOS = 1;
 const VIDEO_COMPOSE_MIN_UPSTREAM_MEDIA = 2;
 
 export type CanvasChatCommand =
+  | HtmlArtifactCommand
   | {
       type: "create_node";
       client_id?: string;
@@ -858,6 +861,7 @@ function parseMainlineProjectionRequest(value: JsonRecord): MainlineProjectionRe
 function parseCommand(value: unknown): CanvasChatCommand | null {
   if (!isRecord(value) || typeof value.type !== "string") return null;
   switch (value.type) {
+    case "html_artifact": return parseHtmlArtifactCommand(value);
     case "create_node": {
       const rawNodeType =
         value.node_type ??
@@ -1106,6 +1110,7 @@ export function extractCanvasChatCommandEnvelopes(values: unknown[]): CanvasChat
 }
 
 function commandRequiresApproval(command: CanvasChatCommand): boolean {
+  if (command.type === "html_artifact") return true;
   // Creating a node changes the user's canvas and can trigger generation or
   // billing once the node is run. Keep it behind the same confirmation card
   // as other mutating workflow operations. Legacy envelopes may still contain
@@ -3536,6 +3541,7 @@ async function executePendingMainlineProjections(
 
 function commandLabel(command: CanvasChatCommand): string {
   switch (command.type) {
+    case "html_artifact": return i18next.t("htmlArtifact.saveCommand");
     case "create_node":
       return "创建节点";
     case "add_next_node":
@@ -3797,6 +3803,7 @@ function applyCanvasChatCommandsInternal(
     errors: [],
     commandResults: [],
   };
+  const pendingHtmlArtifacts: Array<{command:HtmlArtifactCommand;commandIndex:number;projectId:string}> = [];
   const pendingNodeActions: PendingNodeAction[] = [];
   const pendingMainlineProjections: PendingMainlineProjection[] = [];
   const queuedNodeActionKeys = new Set<string>();
@@ -3852,6 +3859,13 @@ function applyCanvasChatCommandsInternal(
       commandIndex += 1;
       try {
         switch (command.type) {
+          case "html_artifact": {
+            if (!options.queueNodeActions) throw new Error("HTML artifacts require the authenticated async executor");
+            const projectId = options.projectId;
+            if (!projectId || (envelope.project_id && envelope.project_id !== projectId) || !options.canvasId || (envelope.canvas_id && envelope.canvas_id !== options.canvasId)) throw new Error("HTML artifact project/canvas scope does not match the active canvas");
+            pendingHtmlArtifacts.push({command,commandIndex:currentCommandIndex,projectId});
+            break;
+          }
           case "create_node": {
             const existingWorkflowNode = existingWorkflowNodeForCommand(command);
             if (existingWorkflowNode) {
@@ -4337,6 +4351,19 @@ function applyCanvasChatCommandsInternal(
 
   if (options.queueNodeActions) {
     return (async () => {
+      for (const pending of pendingHtmlArtifacts) {
+        try {
+          const saved = await executeHtmlArtifactCommand(pending.command,pending.projectId,options.canvasId!);
+          if (saved.output.warnings) result.errors.push(...saved.output.warnings);
+          result.applied += 1;
+          if (saved.createdNodeId) result.createdNodeIds.push(saved.createdNodeId);
+          result.commandResults.push({commandIndex:pending.commandIndex,type:'html_artifact',status:'success',label:commandLabel(pending.command),...saved});
+        } catch (error) {
+          const message = errorMessage(error);
+          result.errors.push(message);
+          result.commandResults.push({commandIndex:pending.commandIndex,type:'html_artifact',status:'error',label:commandLabel(pending.command),error:message});
+        }
+      }
       await executePendingMainlineProjections(pendingMainlineProjections, result);
       await executeQueuedNodeActions(pendingNodeActions, result, options);
       result.errors = dedupeGenerationErrors(result.errors);
