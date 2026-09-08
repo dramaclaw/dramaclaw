@@ -1371,6 +1371,34 @@ describe('PrevizSceneGraph', () => {
     expect(graph.nodeFor(character.id)?.children).toHaveLength(2);
   });
 
+  it('gives the capsule that replaced a rig the display mode already in force', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    const translucent: PrevizScene = {
+      ...scene,
+      settings: { ...scene.settings, displayMode: 'translucent' },
+    };
+    graph.sync(translucent);
+    await flush();
+
+    graph.sync({ ...translucent, objects: [{ ...character, bodyType: 'capsule' }] });
+
+    // 退回来的占位体是这一帧现建的，材质按「实心」出厂，而显示模式这一帧并没有变——
+    // 不给这个节点单独补一次，半透明场景里切成简化圆柱体的人物会是唯一一个实心的。
+    const placeholder = placeholderOf(graph, character.id);
+    expect(placeholder.material.transparent).toBe(true);
+    expect(placeholder.material.opacity).toBeCloseTo(0.35, 6);
+    // 球头是新建的另一份材质，同样要吃到。
+    expect(headOf(placeholder).material.transparent).toBe(true);
+  });
+
   it('loads the rig again after leaving the capsule build', async () => {
     const three = fakeThree();
     const root = new three.Group();
