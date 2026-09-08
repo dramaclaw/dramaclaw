@@ -264,9 +264,9 @@ describe('emphasizeTranslateHandles', () => {
       // 这是本模块唯一一处「改坏了看起来还正常、但功能整个没」的地方，所以 picker
       // 这一侧必须有和 gizmo 那一侧对称的一条锁。
       expect(snapshot.handle.geometry).toBe(snapshot.geometry);
-      // 材质这道锁只锁了中心那颗，另外九个是空的——和上面几何体那条不对称。后果没有
-      // 几何体那侧严重（picker 常关，画不出来），但换掉它们等于把 three 三组 picker
-      // 共用的那份 `matInvisible` 拆散，代价白付。
+      // 材质这一侧原先只锁了中心那颗，这条把另外九个补齐，和上面几何体那条对称。
+      // 后果没有几何体那侧严重（picker 常关，换成什么都画不出来），但换掉它们等于把
+      // three 三组 picker 共用的那份 `matInvisible` 拆散，代价纯是白付。
       expect(snapshot.handle.material).toBe(snapshot.material);
     }
   });

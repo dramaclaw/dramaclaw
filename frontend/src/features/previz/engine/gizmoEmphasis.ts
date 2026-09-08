@@ -108,18 +108,19 @@ export function emphasizeTranslateHandles(helper: THREE.Object3D, three: ThreeMo
 
   for (const handle of root.picker?.translate?.children ?? []) {
     // 拾取体只放大几何体，**材质一个字都不动**：`matInvisible`（`:1219`）是 translate
-    // / rotate / scale 三组 picker 共用的同一个实例（`:1341-1362`、`:1416-1425`、
-    // `:1461-1482` 指的都是它），换掉就是再踩一次下面 `createHandleMaterial` 注释里
-    // 写明的共享实例陷阱，而且一无所得。
+    // / rotate / scale 三组 picker 共用的同一个实例（`:1341-1362`、`:1413-1425`、
+    // `:1461-1482` 这三段里每一条都指向它），换掉就是再踩一次下面 `createHandleMaterial`
+    // 注释里写明的共享实例陷阱，而且一无所得。
     //
     // 那 0.15 的不透明度不是拾取体隐形的那道闸——`:1575-1577`（注释原话 `Pickers
     // should be hidden always`）把三棵 picker 子树的 `visible` 永久关掉，
-    // `updateMatrixWorld` 只把 `gizmo` / `helper` 两组按 mode 翻回来，从不碰 picker；
-    // 而 `WebGLRenderer.js:1832` 的 `projectObject` 撞见 `visible === false` 直接 return、
-    // 不再往下递归。所以 picker 整棵子树根本没有上屏的机会，材质换成纯白也画不出来。
+    // `updateMatrixWorld` 只把 `gizmo` / `helper` 两组的 `visible` 按 mode 翻回来，从不碰
+    // picker 那三组的 `visible`；而 `WebGLRenderer.js:1832` 的 `projectObject` 撞见
+    // `visible === false` 直接 return、不再往下递归。所以 picker 整棵子树根本没有上屏的机会，材质换成纯白也画不出来。
     // 拾取仍然灵是因为射线绕开了渲染这条路：`Raycaster.js` 全文一处都不测 `visible`，
     // `intersectObjectWithRay`（`:1072-1084`）只看命中对象**自身**那一份，而每个 picker
-    // 子节点的 `visible` 在 `:1609` 每帧被设回 true。
+    // 子节点的 `visible` 在 `:1611` 每帧被设回 true（它们由 `:1601` 一起 concat 进
+    // 那张待更新的 `handles` 表）。
     if (handle.name === CENTRE_NAME) {
       replaceGeometry(handle, new three.OctahedronGeometry(CENTRE_PICKER_RADIUS, 0));
     }
