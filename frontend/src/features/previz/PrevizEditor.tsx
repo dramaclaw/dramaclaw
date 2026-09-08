@@ -400,10 +400,35 @@ export function PrevizEditor({
   // 全屏时独占键盘，让画布的 Delete / 复制粘贴快捷键让位。
   useViewerImmersiveBody(open);
 
+  /*
+    灌初始场景：每次「打开」只做一次，跟着 `open` / `nodeId` 走，**不**跟着
+    `initialScene` 的引用走。
+
+    以前依赖里挂着 `initialScene`，自动保存上线之后那就成了一条自噬回路：写回
+    `node.data.scene` → 节点重算 `loadNodeScene`，而 `parseScene` 永远吐一个全新
+    对象 → `initialScene` 换引用 → 这条 effect 重跑 → `loadScene` 把 past / future
+    / 选中对象 / 监看机位 / 播放头 / 播放状态 / 时间轴缩放**一起清零**。用户看到
+    的是：手停 0.6 秒，播放头啪一下跳回第 0 帧、预览画面整个变了、右边检查器收起、
+    Ctrl+Z 从此撤不动。以前这条回路不存在，因为写回只在关窗那一下发生，那时编辑器
+    马上就卸载了，没人看得见 `data.scene` 变没变。
+
+    代价是「编辑器开着时外部改 node.data.scene 能同步进来」这条通道**故意关掉了**。
+    核过：现实中没有这种写入方。写 previz 节点 `scene` 的只有本编辑器的 `onFlush`；
+    画布级 Ctrl+Z 走 `Canvas.tsx` 那个 keydown，开头就被 `isImmersiveViewerActive()`
+    挡掉（本组件的 `useViewerImmersiveBody(open)` 正是把这个开关按下的），右键菜单
+    那条 undo 藏在全屏弹窗底下点不到；`setCanvasData` 只在 hydrate / 换画布时调，
+    而那要先关掉这个全屏弹窗。所以这条通道唯一的使用者就是编辑器自己。
+
+    `initialScene` 走 ref 而不是直接进依赖：ref 在渲染期同步最新值，重开时读到的
+    一定是当下那一份，而它换引用不会把这条 effect 叫醒。
+  */
+  const initialSceneRef = useRef(initialScene);
+  initialSceneRef.current = initialScene;
+
   useEffect(() => {
     if (!open) return;
-    loadScene(initialScene);
-  }, [open, initialScene, loadScene]);
+    loadScene(initialSceneRef.current);
+  }, [open, nodeId, loadScene]);
 
   useEffect(() => {
     if (!open || !canvas) return undefined;
@@ -922,9 +947,10 @@ export function PrevizEditor({
    * 防的是这个丢数据：以前 `onFlush` 只在关对话框那一下触发，用户导入 obj、摆完位置、
    * 不关对话框直接刷新页面，这一场戏从没进过 `node.data`，刷完就空了。
    *
-   * 依赖挂 `scene` 而不是 `dirty`：`dirty` 是布尔，一串连续编辑里它一直是 true，
-   * effect 不会重跑，定时器也就永远不会被推后——那是「每 600ms 写一次」的节流，拖一次
-   * 滑杆要写十几遍。挂在 `scene` 引用上才是真防抖：每一次 `applyScene` 都换一个新场景
+   * 依赖挂 `scene` 而不是 `dirty`：`dirty` 是布尔，在一个还没写回过的爆发窗口里它
+   * 一直是 true，effect 不会重跑，定时器也就不会被推后（写回之后 `markSaved()` 把它
+   * 翻回 false，下一次编辑才叫得醒它）——那是「每 600ms 写一次」的节流，拖一次滑杆
+   * 要写十几遍。挂在 `scene` 引用上才是真防抖：每一次 `applyScene` 都换一个新场景
    * 对象，effect 重跑、清掉上一个定时器、重新计时。
    *
    * `markSaved()` 只动 `dirty`、不动 `scene` 引用，所以写回之后 effect 不会被自己叫醒，

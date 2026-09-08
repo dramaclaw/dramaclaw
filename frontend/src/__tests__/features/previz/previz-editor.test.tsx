@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import type { ComponentProps } from "react";
+import { useCallback, useMemo, useState, type ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
@@ -10,8 +10,10 @@ import { createPrevizObject } from "@/features/previz/domain/objects";
 import {
   createDefaultScene,
   type PrevizPathClip,
+  type PrevizScene,
   type Vec3,
 } from "@/features/previz/domain/scene";
+import { buildNodeScenePatch, loadNodeScene } from "@/features/previz/nodeScene";
 import type { CanvasRecorderOptions } from "@/features/previz/capture/recordTimeline";
 import { PrevizRenderer } from "@/features/previz/engine/PrevizRenderer";
 import { PREVIZ_AUTOSAVE_MS, PrevizEditor } from "@/features/previz/PrevizEditor";
@@ -2643,6 +2645,95 @@ describe("PrevizEditor autosave", () => {
         vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS * 2);
       });
       expect(onFlush).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+/**
+ * 把编辑器和节点接成真实回路的宿主：逐字复刻 `PrevizNode` 里那三步推导
+ * （`loadNodeScene` → `initialScene` memo → `handleFlush` 写回），其余全用本文件
+ * 既有的渲染器桩。
+ *
+ * 不这么接就测不出 M1 那个 bug：把 `onFlush` 桩成 `vi.fn()` 的用例只看得见
+ * 「写回被调了几次」，看不见写回**反过来**把编辑器自己重置了。
+ */
+function AutosaveHost({ onStored }: { onStored: (scene: PrevizScene) => void }) {
+  const [stored, setStored] = useState<unknown>(undefined);
+  const loaded = useMemo(() => loadNodeScene(stored), [stored]);
+  const initialScene = useMemo(
+    () => (loaded.ok ? loaded.scene : createDefaultScene()),
+    [loaded],
+  );
+  const onFlush = useCallback(
+    (scene: PrevizScene) => {
+      const result = buildNodeScenePatch(scene);
+      if (!result.ok) return;
+      onStored(result.patch.scene);
+      setStored(result.patch.scene);
+    },
+    [onStored],
+  );
+  return (
+    <PrevizEditor
+      open
+      nodeId="previz-1"
+      initialScene={initialScene}
+      onOpenChange={vi.fn()}
+      onFlush={onFlush}
+    />
+  );
+}
+
+describe("PrevizEditor autosave round trip", () => {
+  it("keeps the editing session alive when an autosave lands", async () => {
+    const onStored = vi.fn();
+    render(<AutosaveHost onStored={onStored} />);
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+
+    // 假时钟必须在编辑**之前**换上：防抖那一发是编辑当场排下的，用真 setTimeout
+    // 排出去的定时器，后面 `advanceTimersByTime` 一辈子也推不到它。
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      // 造一份「用户正干到一半」的会话态：撤销栈里有一步、选中了一个对象、
+      // 播放头停在第 42 帧、时间轴放大过一档。
+      let objectId: string | null = null;
+      act(() => {
+        const store = usePrevizStore.getState();
+        objectId = store.addObject("character");
+        store.setTimelineFrame(42);
+        store.zoomTimelineBy(2);
+      });
+      const before = usePrevizStore.getState();
+      expect(before.past.length).toBe(1);
+      expect(before.selectedObjectId).toBe(objectId);
+
+      act(() => {
+        vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS);
+      });
+
+      // 先确认这一发自动保存真的落地了，否则下面那串「什么都没变」是空欢喜。
+      expect(onStored).toHaveBeenCalledTimes(1);
+      expect(usePrevizStore.getState().dirty).toBe(false);
+
+      /*
+        写回 node.data 会换掉 `data.scene` 的引用，节点重算 `loadNodeScene`，
+        而 `parseScene` 永远吐一个全新对象，于是 `initialScene` 也换引用——编辑器
+        那条 `useEffect(…, [open, initialScene])` 就会重跑 `loadScene`，把 past /
+        future / 选中 / 播放头 / 时间轴缩放**全部清零**。
+
+        用户看到的是：手停 0.6 秒，播放头啪一下跳回第 0 帧、预览画面整个变了、
+        右边检查器收起、Ctrl+Z 从此撤不动。场景数据没丢，但等于每停手一次就把他
+        的工作状态砸一次。这一条把那条回路钉死。
+      */
+      const after = usePrevizStore.getState();
+      expect(after.timelineFrame).toBe(42);
+      expect(after.past.length).toBe(1);
+      expect(after.future.length).toBe(0);
+      expect(after.selectedObjectId).toBe(objectId);
+      expect(after.timelineZoom).toBe(before.timelineZoom);
+      expect(after.scene.objects).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
