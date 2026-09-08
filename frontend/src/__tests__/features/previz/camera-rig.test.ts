@@ -98,16 +98,24 @@ describe("monitorViewportRect", () => {
     const rect = monitorViewportRect(400, 300, "9:16");
 
     // 竖幅监看在小画布上按宽度算会比画布还高，必须按高度回推宽度。
-    expect(rect.height).toBeLessThanOrEqual(300 - 32);
+    // 上界照实写成「底边留白 + 顶边预留」，不再是写死的 32：顶边早就不是一份留白了。
+    expect(rect.height).toBeLessThanOrEqual(300 - 16 - PREVIZ_MONITOR_TOP_RESERVE);
     expect(rect.width / rect.height).toBeCloseTo(9 / 16, 2);
   });
 
   it("leaves room for the viewport controls in the top-right corner", () => {
-    // 竖幅出片 + 矮视口（时间轴拉高时就是这样）：按宽度算出来的高会超出可用高度，
-    // 走「按高度回推宽度」那条分支，正是把监看顶到右上角那排控件背后的那组参数。
-    // 两档都试：放大档更宽，只会更早撞上同一条上限。
-    for (const size of ["normal", "large"] as const) {
-      const rect = monitorViewportRect(1840, 560, "9:16", size);
+    // 矮视口（时间轴拉高时就是这样）：按宽度算出来的高会超出可用高度，走「按高度
+    // 回推宽度」那条分支，正是把监看顶到右上角那排控件背后的那组参数。
+    //
+    // 16:9 放大档必须一起过：这个洞不是竖幅专有的，1840×560 下它修复前的顶边同样
+    // 压在 16 px 处。而竖幅两档在这块画布上会被夹成逐字节相同的矩形（宽度比整个被
+    // 高度回推消掉了），只跑竖幅的话第二次迭代等于什么都没测。
+    for (const [aspect, size] of [
+      ["9:16", "normal"],
+      ["9:16", "large"],
+      ["16:9", "large"],
+    ] as const) {
+      const rect = monitorViewportRect(1840, 560, aspect, size);
 
       // 原点在左下角，所以顶边是 y + height。准绳取独立推出来的控件底边，不取
       // PREVIZ_MONITOR_TOP_RESERVE：拿常量自己比是恒真的，把它改成 0 也照样绿。
@@ -118,13 +126,16 @@ describe("monitorViewportRect", () => {
     }
 
     // 光是不重叠还不够，得留一道看得见的缝——两排控件贴着脸也算「被遮挡了」。
-    expect(PREVIZ_MONITOR_TOP_RESERVE).toBeGreaterThan(CONTROLS_BOTTOM_PX);
+    // 写成等式而不是 `toBeGreaterThan`：后者把 55 到 ∞ 全放绿，削到 55 就退回用户
+    // 最初抱怨的那个贴脸状态，调到 120 又白吞 50 px 监看，两头都没有信号。
+    // 那个 16 就是 `MONITOR_MARGIN`（模块私有，不为了测试把它导出去）。
+    expect(PREVIZ_MONITOR_TOP_RESERVE).toBe(CONTROLS_BOTTOM_PX + 16);
   });
 
   it("still fills the height it is given when the controls are not in the way", () => {
-    // 同一块画布上 16:9 本来就够矮，顶边够不到那排控件——给控件让位这件事在这里
-    // 必须一个像素都不生效。写成逐字比对而不是「小于等于」：后者对缩水是恒真的，
-    // 把上限调狠一倍也照样绿。
+    // 同一块画布上 16:9 **常规档**本来就够矮（放大档不是，见上一条），顶边够不到
+    // 那排控件——给控件让位这件事在这里必须一个像素都不生效。写成逐字比对而不是
+    // 「小于等于」：后者对缩水是恒真的，把上限调狠一倍也照样绿。
     expect(monitorViewportRect(1840, 560, "16:9")).toEqual({
       x: 1346,
       y: 16,
@@ -148,7 +159,7 @@ describe("monitorViewportRect", () => {
     // 又矮又宽：按 55% 宽度算出来的高会顶出画布，得按高度回推宽度。
     const rect = monitorViewportRect(1600, 260, "16:9", "large");
 
-    expect(rect.height).toBeLessThanOrEqual(260 - 32);
+    expect(rect.height).toBeLessThanOrEqual(260 - 16 - PREVIZ_MONITOR_TOP_RESERVE);
     expect(rect.width).toBeLessThanOrEqual(1600 - 32);
     expect(rect.width / rect.height).toBeCloseTo(16 / 9, 2);
   });

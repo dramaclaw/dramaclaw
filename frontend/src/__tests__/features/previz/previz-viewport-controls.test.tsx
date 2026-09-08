@@ -449,6 +449,43 @@ describe("PrevizViewportControls", () => {
     expect(button("previz.viewport.view.top")).toBeEnabled();
   });
 
+  /**
+   * `PREVIZ_MONITOR_TOP_RESERVE`（cameraRig.ts）那个 70 是按这排控件的类名手算出来的：
+   * `top-4`(16) + 一簇 `p-1`(4) 加 1 px 边框裹着 `h-7`(28) 的控件 = 底边落在 54，再加
+   * 一份画布留白。那份推导跨了文件，编译器连不上——把 `h-7` 改成 `h-9`、`top-4` 改成
+   * `top-8`，控件底边就掉到监看新顶边下面，这个 commit 修的遮挡当场原样回来，而
+   * camera-rig 那边的算术测试一条都不会响。这里就是那条缺掉的锁。
+   *
+   * 用 classList 按 token 比而不是 `className.includes`：子串比对分不清 `border` 和
+   * `border-white/10`，也会把将来某个 `p-1.5` 之类的读成命中。
+   *
+   * 不做运行时 DOM 测量：监看是 rAF 循环里画的，没有 React 入口，真要量得把
+   * ResizeObserver 的回调穿过 PrevizEditor 和 PrevizRenderer，再在渲染路径上加一次
+   * layout read——为守一个常量付这个代价不值。
+   */
+  it("keeps the class tokens that PREVIZ_MONITOR_TOP_RESERVE was derived from", () => {
+    setup();
+
+    // 两簇都查：那一行的高度是两簇里最高的那个，绘制簇的输入框长高一样会把行撑开。
+    for (const name of ["previz.viewport.group.draw", "previz.viewport.group.display"]) {
+      const cluster = screen.getByRole("group", { name });
+      expect(cluster.classList.contains("p-1"), `${name} p-1`).toBe(true);
+      expect(cluster.classList.contains("border"), `${name} border`).toBe(true);
+    }
+
+    const row = screen.getByRole("group", { name: "previz.viewport.group.display" })
+      .parentElement as HTMLElement;
+    expect(row.classList.contains("top-4")).toBe(true);
+    // 不换行是承重的：单行 flex 只会横向压缩或溢出，一旦允许换行这排就会往下长，
+    // 70 px 立刻不够。
+    expect(row.classList.contains("flex-wrap")).toBe(false);
+
+    // 簇里最高的那个是 h-7 的按钮与输入框（分隔线只有 h-5）。
+    expect(button("previz.viewport.resetView").classList.contains("h-7")).toBe(true);
+    const spacing = screen.getByRole("spinbutton", { name: "previz.viewport.pathSpacing" });
+    expect(spacing.classList.contains("h-7")).toBe(true);
+  });
+
   // 同一颗按钮既开也关。两个方向都得测：只测「开」的话，把关那半接成空函数照样绿，
   // 而那正好是「开出来之后再也关不掉」这个最难受的坏法。
   it.each([
