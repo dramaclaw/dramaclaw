@@ -68,16 +68,24 @@ function props(
 
 const addButton = () => screen.getByRole('button', { name: 'previz.audio.add' });
 
-/** 最小 2D 上下文：只记 fillRect，其余调用吞掉。返回 fillRect 的 mock。 */
+/** 最小 2D 上下文：只记下调用，什么也不画。 */
 function stubCanvas2D() {
-  const fillRect = vi.fn();
-  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
-    clearRect: vi.fn(),
-    setTransform: vi.fn(),
-    fillRect,
-    fillStyle: '',
-  } as unknown as CanvasRenderingContext2D);
-  return fillRect;
+  const context = { clearRect: vi.fn(), setTransform: vi.fn(), fillRect: vi.fn(), fillStyle: '' };
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+    context as unknown as CanvasRenderingContext2D,
+  );
+  return context;
+}
+
+let dprBackup: { descriptor: PropertyDescriptor | undefined } | null = null;
+
+/*
+  jsdom 的 devicePixelRatio 恒为 1，乘上去和不乘一模一样——高分屏那一支就等于没验。
+  和 clientHeight 撞上兜底值是同一类坑：环境里的常数正好等于生产的默认值。
+*/
+function stubDevicePixelRatio(ratio: number): void {
+  dprBackup ??= { descriptor: Object.getOwnPropertyDescriptor(window, 'devicePixelRatio') };
+  Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: ratio });
 }
 
 /*
@@ -103,6 +111,12 @@ afterEach(() => {
   vi.restoreAllMocks();
   // 删掉自己定义的那一层，clientHeight 就落回 Element.prototype 上原来的取值器。
   delete (HTMLCanvasElement.prototype as unknown as Record<string, unknown>).clientHeight;
+  if (dprBackup) {
+    const { descriptor } = dprBackup;
+    if (descriptor) Object.defineProperty(window, 'devicePixelRatio', descriptor);
+    else delete (window as unknown as Record<string, unknown>).devicePixelRatio;
+    dprBackup = null;
+  }
 });
 
 describe('PrevizAudioTrack', () => {
@@ -136,7 +150,7 @@ describe('PrevizAudioTrack', () => {
       x 恒取 0（整条波形挤成一列）、y 忘了减半个柱高（柱子挂在中线下面），前面那些
       用例一条都发现不了。
     */
-    const fillRect = stubCanvas2D();
+    const { fillRect } = stubCanvas2D();
     stubClientHeight(20);
     // 每桶一个不同的值，窗口挪一格或首尾对调都画得不一样。
     const peaks = Float32Array.from({ length: 720 }, (_, i) => i / 1000);
@@ -155,7 +169,7 @@ describe('PrevizAudioTrack', () => {
   });
 
   it('redraws the moved window without decoding the source again', async () => {
-    const fillRect = stubCanvas2D();
+    const { fillRect } = stubCanvas2D();
     stubClientHeight(20);
     const peaks = Float32Array.from({ length: 720 }, (_, i) => i / 1000);
     loadAudioPeaks.mockResolvedValue(peaks);
@@ -188,8 +202,26 @@ describe('PrevizAudioTrack', () => {
     expect(loadAudioPeaks).toHaveBeenCalledTimes(1);
   });
 
+  it('backs the canvas with device pixels and keeps drawing in CSS ones', async () => {
+    const { fillRect, setTransform } = stubCanvas2D();
+    stubClientHeight(20);
+    stubDevicePixelRatio(2);
+
+    render(<PrevizAudioTrack {...props(sceneWith([audio('a', 0, 60)]))} />);
+    const canvas = screen.getByTestId('previz-audio-wave-a') as HTMLCanvasElement;
+    await waitFor(() => {
+      expect(fillRect).toHaveBeenCalled();
+    });
+
+    // CSS 盒子是 120×20（60 帧 × 2px/帧，桩出来的行高 20），位图按 2 倍铺。
+    expect([canvas.width, canvas.height]).toEqual([240, 40]);
+    expect(setTransform).toHaveBeenCalledWith(2, 0, 0, 2, 0, 0);
+    // 坐标系缩回去了，画的还是 120 根柱子——少了这一步就是照着设备像素画，等于放大两遍。
+    expect(fillRect).toHaveBeenCalledTimes(120);
+  });
+
   it('redraws at the new resolution when the timeline zooms', async () => {
-    const fillRect = stubCanvas2D();
+    const { fillRect } = stubCanvas2D();
     stubClientHeight(20);
     const clip = audio('a', 0, 60);
     const { rerender } = render(<PrevizAudioTrack {...props(sceneWith([clip]))} />);
