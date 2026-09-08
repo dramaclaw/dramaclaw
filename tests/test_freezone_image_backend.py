@@ -3990,6 +3990,88 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["insufficient", "missing_id", "publication", None])
+async def test_text_result_billing_gates_publication(tmp_path, monkeypatch, failure):
+    from novelvideo.freezone.history import read_generation_history
+    from novelvideo.freezone.paths import outputs_dir
+    from novelvideo.task_backend.runners import freezone as runner
+
+    ctx = _project_ctx(tmp_path)
+    out = outputs_dir(ctx.output_dir, "freezone_text_generate") / "paid_text.json"
+
+    def history():
+        return read_generation_history(
+            project_dir=ctx.output_dir, canvas_id="canvas_a", node_id="node_text"
+        )
+
+    async def generate(*, prompt):
+        return "text-model", "Generated paid text"
+
+    reviews = []
+
+    class Meter:
+        async def reserve_feature_start_credits(self, **kwargs):
+            assert not out.exists()
+            assert history() == []
+            assert kwargs["quantity"] > 0
+            if failure == "insufficient":
+                raise ValueError("insufficient credits")
+            return {} if failure == "missing_id" else {"id": "text_reservation"}
+
+        async def mark_feature_credit_settlement_for_review(
+            self, reservation_id, **kwargs
+        ):
+            reviews.append(reservation_id)
+
+    monkeypatch.setattr(
+        "novelvideo.freezone.text_node.generate_freezone_text", generate
+    )
+    monkeypatch.setattr(runner, "_update", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "get_usage_meter", lambda: Meter())
+    if failure == "publication":
+
+        def fail_history(**kwargs):
+            raise OSError("history storage unavailable")
+
+        monkeypatch.setattr(runner, "_append_node_history", fail_history)
+
+    envelope = {
+        "payload": {
+            "job_id": "paid_text",
+            "prompt": "Write text",
+            "canvas_id": "canvas_a",
+            "node_id": "node_text",
+        },
+        "billing_metadata": {
+            "feature_key": "freezone.text_generate",
+            "result_billing_version_ack": 2,
+        },
+        "__run_task_id": "paid_text_task",
+    }
+    if failure:
+        expected = {
+            "insufficient": (ValueError, "insufficient credits"),
+            "missing_id": (RuntimeError, "reservation ID"),
+            "publication": (OSError, "history storage unavailable"),
+        }[failure]
+        with pytest.raises(expected[0], match=expected[1]):
+            await runner._run_freezone_text_generate_async(envelope, ctx)
+        assert history() == []
+        if failure == "publication":
+            assert reviews == ["text_reservation"]
+        else:
+            assert not out.exists()
+            assert reviews == []
+    else:
+        result = await runner._run_freezone_text_generate_async(envelope, ctx)
+        assert json.loads(out.read_text())["generated_text"] == "Generated paid text"
+        assert history()[-1]["result"]["generated_text"] == "Generated paid text"
+        assert result["__feature_credit_reservation_id"] == "text_reservation"
+        assert "__feature_credit_reservation_id" not in history()[-1]["result"]
+        assert reviews == []
+
+
+@pytest.mark.asyncio
 async def test_freezone_image_to_3gs_task_includes_fixed_feature_billing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
