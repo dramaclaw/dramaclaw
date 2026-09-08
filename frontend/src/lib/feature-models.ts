@@ -140,7 +140,10 @@ export const FEATURE_MODEL_PRODUCT_GROUPS: readonly FeatureModelGroup[] = [
     key: "xialiao",
     features: [productFeature("CONTENT_REWRITER"), productFeature("SCREENPLAY_NORMALIZER")],
   },
-  { key: "xiatan", features: [productFeature("SCENE_BUILD")] },
+  {
+    key: "xiatan",
+    features: [productFeature("CHARACTER_BUILD"), productFeature("SCENE_BUILD")],
+  },
   {
     key: "xiajing",
     features: [
