@@ -234,7 +234,11 @@ export class PrevizSceneGraph {
       );
 
       const rig = this.characterRig;
-      if (object.kind === 'character' && rig && this.syncCharacterRig(rig, node, object)) {
+      // 拿名字接住这个返回值：`syncCharacterRig(...)` 直接写在 if 里，读起来像
+      // 「sync 成功没有」，而它答的是「辨识色这一次重染了没有」。
+      const retinted =
+        object.kind === 'character' && rig && this.syncCharacterRig(rig, node, object);
+      if (retinted) {
         // 辨识色刚重染过：材质的颜色是本色，而当前显示模式未必要本色（全灰要盖回
         // 水泥灰）。少了这一步，全灰模式下改一次颜色就跳出一个染了色的人。
         pending.push(node);
@@ -455,6 +459,11 @@ export class PrevizSceneGraph {
     if (!placeholder) return false;
     if (placeholder.userData.previzPlaceholderColor === character.color) return false;
     placeholder.userData.previzPlaceholderColor = character.color;
+    // 这里**不**照 `applyTint` 的手法把 `previzOriginalColor` 那笔账 delete 掉：那边改完
+    // 材质里就是新本色，重记一份记到的还是本色；这边故意不碰材质（全灰下直接染会跳出
+    // 一个染了色的胶囊），删掉之后 `applyDisplayMode` 立刻会把**水泥灰**当本色记进去，
+    // 那才是真的坏账。占位体的回程读的是上面这个 `previzPlaceholderColor`，那笔账在
+    // 占位体身上从头到尾没人读。
     return true;
   }
 
@@ -582,8 +591,11 @@ export class PrevizSceneGraph {
         }
         standard.opacity = transparent ? PREVIZ_TRANSLUCENT_OPACITY : 1;
         if (mode === 'clay') {
-          // 只在第一次染灰时记账。这里读到的一定是本色：颜色只有这个函数会改，而这份
-          // 材质还没被它碰过。重复记账会把水泥灰当成本色记下来，那时回程就是个空操作。
+          // 只在第一次染灰时记账。这里读到的一定是本色：改这批颜色的只有两处——这个
+          // 函数，以及 `characterRig.ts` 的 `applyTint`，而后者改完会把这笔账 delete
+          // 掉，逼这里重记一份。那个 delete 是这条不变量的另一半，不是多余防御：少了
+          // 它，全灰模式下改一次辨识色，切回实体拿到的是改色之前的旧颜色。
+          // 重复记账会把水泥灰当成本色记下来，那时回程就是个空操作。
           if (standard.userData.previzOriginalColor === undefined) {
             standard.userData.previzOriginalColor = standard.color?.getHex();
           }
