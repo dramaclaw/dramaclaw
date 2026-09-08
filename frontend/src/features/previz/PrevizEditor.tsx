@@ -425,12 +425,18 @@ export function PrevizEditor({
     弹窗底下点不到；协作、多标签页、本地草稿都没有第二条写回路径。
 
     但**有一条中途替换的路**：BeatContextNode 的「同步到主线」会走
-    `restoreCurrentMainlinePresetCanvas`，它串五次网络往返之后落一次 `setCanvasData`，
-    这期间用户完全来得及点开某个预演台。那一下把整张画布换掉，同 id 的节点按远端那份
-    重建，`data.scene` 就被换了；React Flow 按 id 复用，`PrevizNode` 不卸载，编辑器也
-    不重挂。有了上面这条 ref，编辑器会**保留用户手上的会话**，并在下一次自动保存时把
-    自己这份写回去、盖掉远端那份。这是有意选的：用户正编到一半，把他的场景连同撤销栈
-    一起换成远端版本，比「他自己那份赢」更糟——何况远端那份多半就是他刚才存上去的。
+    `restoreCurrentMainlinePresetCanvas`，它保底串三次网络往返（读基线、按 preset 重建、
+    再读一次远端；前面那次 `flushFreezoneCanvasRuntime` 有待存改动时还要多一次）才落一次
+    `setCanvasData`，这期间用户完全来得及点开某个预演台。
+
+    换进来的是哪一份，看这个节点在不在远端那张画布里。那边的合并吐的是
+    `[...remoteNodes, ...preservedNodes]`：id 在远端的按远端那份重建；不在的（用户自建的
+    预演台多半属于这一类，preset 重建不出它）从 `localNodes` 保留下来——而那份快照是
+    **几次 await 之前**抓的，于是 `data.scene` 被换回一个旧值。两条路都是中途替换掉
+    `data.scene`。React Flow 按 id 复用，`PrevizNode` 不卸载，编辑器也不重挂。有了上面
+    这条 ref，编辑器会**保留用户手上的会话**，并在下一次自动保存时把自己这份写回去、盖掉
+    换进来的那份。这是有意选的：用户正编到一半，把他的场景连同撤销栈一起换成另一份，比
+    「他自己那份赢」更糟——何况另一份要么是他刚存上去的，要么干脆就是几秒前的旧快照。
 
     `initialScene` 走 ref 而不是直接进依赖：ref 在渲染期同步最新值，读到的一定是当下
     那一份，而它换引用不会把这条 effect 叫醒。

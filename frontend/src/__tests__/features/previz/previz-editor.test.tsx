@@ -232,7 +232,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -268,7 +268,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -296,7 +296,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -315,7 +315,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
     act(() => {
@@ -350,7 +350,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
     act(() => {
@@ -382,7 +382,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
     act(() => {
@@ -414,7 +414,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -443,7 +443,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -477,7 +477,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -512,7 +512,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -568,7 +568,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -587,7 +587,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -602,7 +602,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -636,7 +636,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -655,7 +655,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -674,7 +674,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -695,7 +695,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -727,7 +727,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -764,7 +764,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -816,7 +816,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -851,7 +851,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -892,7 +892,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -917,7 +917,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -1058,7 +1058,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -1084,7 +1084,7 @@ describe("PrevizEditor", () => {
         nodeId="previz-1"
         initialScene={createDefaultScene()}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
 
@@ -1857,7 +1857,7 @@ describe("program follow", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
     return { camA: camA.id, camB: camB.id };
@@ -2112,7 +2112,7 @@ describe("audio playback and mix", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
     return camera.id;
@@ -2474,7 +2474,7 @@ describe("audio playback and mix", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
     await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
@@ -2489,7 +2489,7 @@ describe("audio playback and mix", () => {
         nodeId="previz-1"
         initialScene={scene}
         onOpenChange={vi.fn()}
-        onFlush={vi.fn()}
+        onFlush={vi.fn(() => true)}
       />,
     );
     expect(audioPlayback.dispose).toHaveBeenCalled();
@@ -2839,6 +2839,29 @@ describe("PrevizEditor autosave failure", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps the scene unsaved when the close time write back is refused", async () => {
+    const onFlush = vi.fn((_scene: PrevizScene) => false);
+    const onOpenChange = vi.fn();
+    await renderEditor({ onFlush, onOpenChange });
+
+    act(() => {
+      usePrevizStore.getState().setDurationFrames(200);
+    });
+    // 不等防抖到点就关窗，走的是兜底那条路。
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "previz.editor.close" }));
+    });
+
+    expect(onFlush).toHaveBeenCalledTimes(1);
+    // 兜底这一发同样可能被拒收（场景撑爆体积上限），同样不许记成「已保存」。今天关窗
+    // 之后编辑器立刻卸载、下次挂载又会 `loadScene` 清脏，所以这一条暂时观测不到——它
+    // 钉的是「常驻挂载」那一天：那时谎报一次，这一整段编辑就再也没有第二次机会了。
+    expect(usePrevizStore.getState().dirty).toBe(true);
+    // 而且拒收不能把弹窗卡住：`flushIfDirty` 是同步调的，它要是拦下 `onOpenChange`，
+    // 用户就关不掉编辑器了。
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("stays dirty when the write back throws", async () => {
