@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>镇长逐帧待机 · v1 验收</title>
+<style>
+  :root { color-scheme: dark; font: 16px/1.6 system-ui, sans-serif; background: #18221d; color: #f2eee2; }
+  body { max-width: 960px; margin: 32px auto; padding: 0 24px; }
+  h1 { font-size: 24px; }
+  .samples { display: flex; flex-wrap: wrap; align-items: end; gap: 32px; padding: 24px; background: #303a35; }
+  figure { margin: 0; text-align: center; }
+  .sprite { width: 64px; height: 64px; background-image: url('mayor-idle-sheet.png'); image-rendering: pixelated; }
+  .two { width: 128px; height: 128px; background-size: 896px 128px; }
+  .four { width: 256px; height: 256px; background-size: 1792px 256px; }
+  button { font: inherit; padding: 6px 16px; margin: 12px 8px 12px 0; cursor: pointer; }
+  button:focus-visible { outline: 2px solid #ffe289; outline-offset: 3px; }
+  .atlas { max-width: 100%; image-rendering: pixelated; }
+  .note { color: #c6cabc; }
+</style>
+<h1>镇长逐帧待机 · v1 验收</h1>
+<p>7 张姿态帧 · 64×64 · 约 5.3 秒循环。此页只切换帧图，不拉伸、倾斜或插值。</p>
+<div class="samples">
+  <figure><div class="sprite" data-scale="1" role="img" aria-label="原始尺寸镇长待机"></div><figcaption>1× 原始尺寸</figcaption></figure>
+  <figure><div class="sprite two" data-scale="2" role="img" aria-label="两倍尺寸镇长待机"></div><figcaption>2×</figcaption></figure>
+  <figure><div class="sprite four" data-scale="4" role="img" aria-label="四倍尺寸镇长待机"></div><figcaption>4× 检查细节</figcaption></figure>
+</div>
+<button id="play" type="button">暂停</button><button id="next" type="button">查看下一姿态帧</button>
+<p id="status"></p>
+<p class="note">重点看：尺寸缩小后是否仍易辨认；呼吸是否自然；叶片是否连续；眨眼是否短促；脚底是否稳定。问号和接触阴影不烘焙进帧图。尚未替换地图角色。</p>
+<img class="atlas" src="frames-preview-4x.png" alt="7 张姿态帧，从左到右依次为基础站姿、吸气叶片滞后、吸气、叶片回落、呼气叶片滞后、半闭眼、闭眼">
+<script src="preview-data.js"></script>
+<script>
+  const { frames, timeline } = window.mayorIdle;
+  const playButton = document.getElementById('play');
+  const status = document.getElementById('status');
+  const sprites = document.querySelectorAll('.sprite');
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
+  let playing = !motion.matches, step = 0, current = 0, timer;
+  function show(index) {
+    current = index;
+    for (const sprite of sprites) sprite.style.backgroundPosition = `${-64 * index * Number(sprite.dataset.scale)}px 0`;
+    status.textContent = `姿态 ${index + 1} / ${frames.length}：${frames[index].name}`;
+  }
+  function tick() {
+    clearTimeout(timer);
+    show(timeline[step].frame);
+    if (playing && !document.hidden) timer = setTimeout(() => { step = (step + 1) % timeline.length; tick(); }, timeline[step].durationMs);
+  }
+  function setPlaying(value) {
+    playing = value;
+    playButton.textContent = playing ? '暂停' : '播放';
+    clearTimeout(timer);
+    if (playing) tick();
+  }
+  playButton.onclick = () => setPlaying(!playing);
+  document.getElementById('next').onclick = () => { setPlaying(false); show((current + 1) % frames.length); step = timeline.findIndex(item => item.frame === current); };
+  document.addEventListener('visibilitychange', () => { clearTimeout(timer); if (playing && !document.hidden) tick(); });
+  motion.addEventListener('change', event => { if (event.matches) setPlaying(false); });
+  show(0);
+  setPlaying(playing);
+</script>
+</html>

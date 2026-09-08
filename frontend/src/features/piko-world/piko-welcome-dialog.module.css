@@ -1,0 +1,73 @@
+/* Artwork supplies the frame and portrait; CSS only lays out live dialogue. */
+.dialog.dialog {
+  top: 50%;
+  bottom: auto;
+  width: min(780px, calc(100vw - 48px));
+  max-width: none;
+  max-height: 90dvh;
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  translate: -50% -50%;
+  color: #382c1d;
+}
+.mayor {
+  width: 34%;
+  height: auto;
+  flex-shrink: 0;
+  align-self: flex-end;
+  margin-right: -2%;
+  margin-bottom: 2%;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+.mayor { pointer-events: auto; transition: filter var(--duration-fast); }
+.mayor:hover { filter: brightness(1.06); }
+.panel { position: relative; width: 68%; aspect-ratio: 1860 / 845; }
+.art { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; image-rendering: pixelated; }
+.name.name {
+  position: absolute; left: 9%; top: 6%; width: 16%; height: 10%;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0; color: #fff5d9; font-size: clamp(12px, 1.4vw, 14px); white-space: nowrap;
+}
+.text.text {
+  position: absolute; left: 8%; right: 8%; top: 25%; bottom: 34%;
+  margin: 0; overflow-y: auto; overscroll-behavior: contain;
+  color: #382c1d; font-size: 14px; line-height: 1.8;
+}
+.footer {
+  position: absolute; left: 8%; right: 10%; bottom: 16%;
+  display: flex; justify-content: flex-end; align-items: center;
+  font-size: 12px;
+}
+.next { padding: 6px 0 6px 12px; min-height: 36px; color: inherit; font: inherit; font-size: 14px; font-weight: 600; background: none; border: 0; cursor: pointer; }
+.next:hover { text-decoration: underline; text-underline-offset: 4px; }
+.next:focus-visible { outline: 2px solid #71532c; outline-offset: 3px; }
+/* Keep the scrollable description keyboard accessible without an inner frame. */
+.text:focus { outline: none; }
+.close.close {
+  position: absolute; top: -12px; right: -24px; width: 32px; height: 32px;
+  padding: 0; border: 0; background: none; cursor: pointer;
+  transition: filter var(--duration-fast), transform var(--duration-fast);
+}
+.close img { width: 100%; height: 100%; object-fit: contain; }
+.close:hover, .close:focus-visible { filter: brightness(1.15); transform: translateY(-2px) scale(1.05); }
+.close:active { transform: scale(0.96); }
+.close:focus-visible { outline: 2px solid #71532c; outline-offset: 3px; }
+@media (max-width: 640px) {
+  .dialog.dialog { flex-direction: column; align-items: center; }
+  .mayor { width: min(44%, 180px); align-self: flex-start; margin: 0 0 -12px 4%; }
+  .panel { width: 100%; }
+  .text.text { font-size: 14px; line-height: 1.6; }
+  .close.close { top: -12px; right: -16px; }
+}
+@media (max-height: 500px) {
+  .dialog.dialog { flex-direction: row; }
+  .mayor { width: 26%; margin: 0; }
+  .panel { width: 74%; }
+}

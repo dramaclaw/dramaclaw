@@ -1918,6 +1918,48 @@
     }
   },
   "pikoWorld": {
+    "loadingScenes": {
+      "welcome-courtyard": {
+        "title": "Welcome Courtyard",
+        "line": "Morning light dances in the fountain; the town awaits your first hello."
+      },
+      "whispering-meadow": {
+        "title": "Whispering Meadow",
+        "line": "The wind rolls over green hills, bringing the distant world a little closer."
+      },
+      "whalesong-skyport": {
+        "title": "Whalesong Skyport",
+        "line": "A whale sails the sea of clouds, its song drifting past the sails."
+      },
+      "boundless-sea": {
+        "title": "Boundless Sea",
+        "line": "Raise the sail and follow the sunlight to where the sea meets the sky."
+      },
+      "amber-wilds": {
+        "title": "Amber Wilds",
+        "line": "Sunset spills through an old stone arch, turning the fields to amber."
+      },
+      "startrace-coast": {
+        "title": "Startrace Coast",
+        "line": "Hold a shell to your ear and hear the tide trade secrets with the evening sky."
+      },
+      "starlight-dock": {
+        "title": "Starlight Dock",
+        "line": "Lanterns sway upon the water; greetings from afar are coming ashore."
+      },
+      "whispering-forest": {
+        "title": "Whispering Forest",
+        "line": "A flute sings between the trees, and even the resting wind steps softly."
+      }
+    },
+    "loadingTitle": "Travel to Piko Town",
+    "loadingPreparing": "Preparing the town, please wait…",
+    "loadingReady": "The town is ready. Let's go!",
+    "loadingFailed": "Loading did not finish. Check your connection and retry.",
+    "loadingProgress": "Illustrative town loading progress",
+    "loadingEnter": "Enter Piko Town",
+    "loadingBack": "Back to workbench",
+    "loadingRetry": "Reload",
     "worldControls": "Piko Piko World controls",
     "returnToWorkbench": "Back to workbench",
     "chatToggle": "Open or collapse world chat",
@@ -1940,7 +1982,16 @@
     "chatMockMayorWelcome": "Welcome to the courtyard. The breeze feels lovely today.",
     "chatMockResidentLantern": "A new message lantern just lit up beside the fountain.",
     "chatMockVisitorReply": "I'll come take a look in a moment!",
-    "mapAriaLabel": "Welcome Courtyard map preview",
+    "mapAriaLabel": "Welcome Courtyard, use arrow keys to move",
+    "movementHelp": "WASD / ↑↓←→ Move · Click / E Talk",
+    "talkToMayor": "Talk to the mayor",
+    "mayorTooFar": "Come a little closer. The mayor is waiting to say hello.",
+    "welcomeTitle": "Mayor · Piko",
+    "welcomePage1": "Welcome to Piko Town! I'm the mayor. Take a breath after your journey and listen to the breeze passing through the courtyard.",
+    "welcomePage2": "This is a little place beyond your workbench. Take a walk as a resident, enjoy the scenery, or leave a thought in the chat panel. We'll get to know more places together in time.",
+    "welcomePage3": "Start your visit with this resident. For a different look, check the settings at the top right. Come close and click me to talk, or use the top-left control to return to your workbench.",
+    "welcomeNext": "Tell me more",
+    "welcomeDone": "Explore the courtyard",
     "mapLoading": "Loading Welcome Courtyard…",
     "mapLoadError": "Welcome Courtyard failed to load",
     "mapTransitionAnnouncement": "Entering {{mapName}}"

@@ -1918,6 +1918,48 @@
     }
   },
   "pikoWorld": {
+    "loadingScenes": {
+      "welcome-courtyard": {
+        "title": "初遇庭院",
+        "line": "喷泉捧起晨光，小镇正等着与你初次相逢。"
+      },
+      "whispering-meadow": {
+        "title": "低语草甸",
+        "line": "风翻过青绿的山丘，把远方轻轻送到眼前。"
+      },
+      "whalesong-skyport": {
+        "title": "鲸歌空港",
+        "line": "云海托起远航的鲸，一声长歌掠过船帆。"
+      },
+      "boundless-sea": {
+        "title": "无垠海域",
+        "line": "扬起帆，让阳光与海风陪你驶向水天之间。"
+      },
+      "amber-wilds": {
+        "title": "琥珀原野",
+        "line": "夕阳漫过旧石拱门，把整片原野染成琥珀。"
+      },
+      "startrace-coast": {
+        "title": "星痕海岸",
+        "line": "把贝壳贴近耳边，听晚霞与潮汐交换秘密。"
+      },
+      "starlight-dock": {
+        "title": "星灯码头",
+        "line": "灯火在水面摇晃，远行的问候正靠岸。"
+      },
+      "whispering-forest": {
+        "title": "低语森林",
+        "line": "笛声穿过树隙，连午睡的风也放轻了脚步。"
+      }
+    },
+    "loadingTitle": "前往 Piko 小镇",
+    "loadingPreparing": "正在准备小镇，请稍候…",
+    "loadingReady": "小镇准备好了，出发吧！",
+    "loadingFailed": "加载未完成，请检查网络后重试。",
+    "loadingProgress": "小镇加载进度示意",
+    "loadingEnter": "进入 Piko 小镇",
+    "loadingBack": "返回工作台",
+    "loadingRetry": "重新加载",
     "worldControls": "Piko Piko 世界控制",
     "returnToWorkbench": "回到工作台",
     "chatToggle": "打开或收起世界聊天",
@@ -1940,7 +1982,16 @@
     "chatMockMayorWelcome": "欢迎来到初遇庭院，今天的风很舒服。",
     "chatMockResidentLantern": "喷泉旁边刚刚亮起了新的留言灯。",
     "chatMockVisitorReply": "我一会儿过去看看！",
-    "mapAriaLabel": "初遇庭院地图预览",
+    "mapAriaLabel": "初遇庭院，可使用方向键移动",
+    "movementHelp": "WASD / ↑↓←→ 移动 · 点击 / E 交谈",
+    "talkToMayor": "与镇长交谈",
+    "mayorTooFar": "再走近一点吧，镇长正等着和你打招呼。",
+    "welcomeTitle": "镇长 · Piko",
+    "welcomePage1": "欢迎来到 Piko 小镇！我是这里的镇长。一路辛苦了，不妨先放慢脚步，听听风经过庭院的声音。",
+    "welcomePage2": "这里是工作台之外的一处小天地。你可以用居民的身份散散步，看看风景，也可以在聊天面板里留下今天的心情。更多地方，我们会慢慢一起认识。",
+    "welcomePage3": "初来小镇，就先用现在这位居民开启旅程吧。想换个模样，可以去右上角设置里看看。找我聊天时，走近再点我就好；左上角可以返回工作台。",
+    "welcomeNext": "继续听听",
+    "welcomeDone": "去庭院逛逛",
     "mapLoading": "正在加载初遇庭院…",
     "mapLoadError": "初遇庭院加载失败",
     "mapTransitionAnnouncement": "正在进入{{mapName}}"

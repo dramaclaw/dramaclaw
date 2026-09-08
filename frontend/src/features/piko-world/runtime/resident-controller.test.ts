@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: Elastic-2.0
+import type { Texture, Ticker } from "pixi.js";
+import { afterEach, expect, it, vi } from "vitest";
+import { createResidentActor } from "./resident-actor";
+import type { PikoNavigation } from "./map-package-schema";
+const mock=vi.hoisted(()=>({setFrame:vi.fn(),destroy:vi.fn(),step:vi.fn(),stop:vi.fn(),unlock:vi.fn(),audioDestroy:vi.fn()}));
+vi.mock("./footstep-audio",()=>({createGrassFootsteps:()=>({step:mock.step,stop:mock.stop,unlock:mock.unlock,destroy:mock.audioDestroy})}));
+vi.mock("./character-actor",()=>({createCharacterActor:()=>({
+  container:{position:{x:1190,y:485,set(x:number,y:number){this.x=x;this.y=y;}},zIndex:485},
+  setFrame:mock.setFrame,destroy:mock.destroy,
+})}));
+afterEach(()=>{document.body.innerHTML="";vi.restoreAllMocks();vi.unstubAllGlobals();vi.clearAllMocks();});
+it("moves only with map focus, stops on pause/blur, retains facing and cleans listeners",()=>{
+  const host=document.createElement("div");host.tabIndex=0;document.body.append(host);host.focus();
+  const motion={matches:false};vi.stubGlobal("matchMedia",()=>motion);
+  const nav={walkableAreas:[{id:"ground",points:[{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}]}],colliders:[]} as unknown as PikoNavigation;
+  const ticker={add:vi.fn(),remove:vi.fn()}, onInteract=vi.fn();
+  let active=false;
+  const actor=createResidentActor({} as Texture,ticker as unknown as Ticker,()=>active,{host,navigation:nav,onInteract});
+  const tick=ticker.add.mock.calls[0][0];
+  const key=(code:string)=>window.dispatchEvent(new KeyboardEvent("keydown",{code,bubbles:true,cancelable:true}));
+  key("KeyD");tick({deltaMS:16});expect(actor.container.position.x).toBe(1190);
+  active=true;key("KeyD");tick({deltaMS:16});expect(actor.container.position.x).toBeGreaterThan(1190);
+  expect(mock.setFrame).toHaveBeenLastCalledWith(25);
+  expect(mock.step).toHaveBeenCalledOnce();
+  expect(mock.unlock).toHaveBeenCalledOnce();
+  key("KeyE");expect(onInteract).toHaveBeenCalledOnce();
+  active=false;tick({deltaMS:16});const stopped=actor.container.position.x;
+  active=true;tick({deltaMS:16});expect(actor.container.position.x).toBe(stopped);
+  expect(mock.setFrame).toHaveBeenLastCalledWith(22);
+  expect(mock.step).toHaveBeenCalledOnce();
+  expect(mock.stop).toHaveBeenCalled();
+  key("KeyD");window.dispatchEvent(new Event("blur"));tick({deltaMS:16});expect(actor.container.position.x).toBe(stopped);
+  motion.matches=true;key("KeyD");tick({deltaMS:16});expect(actor.container.position.x).toBeGreaterThan(stopped);
+  expect(mock.setFrame).toHaveBeenLastCalledWith(22);
+  const input=document.createElement("input");document.body.append(input);input.focus();key("KeyA");tick({deltaMS:16});
+  const typing=actor.container.position.x;tick({deltaMS:16});expect(actor.container.position.x).toBe(typing);
+  actor.destroy();expect(ticker.remove).toHaveBeenCalledWith(tick);expect(mock.destroy).toHaveBeenCalledOnce();
+  expect(mock.audioDestroy).toHaveBeenCalledOnce();
+  host.focus();key("KeyE");expect(onInteract).toHaveBeenCalledOnce();
+});

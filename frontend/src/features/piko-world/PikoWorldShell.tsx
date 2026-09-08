@@ -16,7 +16,9 @@ import { cn } from "@/lib/utils";
 import { safeLocalStorageSet } from "@/lib/localStorageQuota";
 import { PikoWorldCanvas } from "./PikoWorldCanvas";
 import { PikoMapTransition } from "./PikoMapTransition";
+import { PikoLoadingScreen } from "./PikoLoadingScreen";
 import { PikoResidentSelectorDialog } from "./PikoResidentSelectorDialog";
+import { playPikoUiSound } from "./piko-audio";
 import { PikoThreeSlicePanelSkin } from "./PikoThreeSlicePanelSkin";
 import {
   PIKO_RESIDENT_STORAGE_KEY,
@@ -91,6 +93,11 @@ function currentChatTime(): string {
 export function PikoWorldShell() {
   const { t } = useTranslation();
   const [chatOpen, setChatOpen] = useState(false);
+  const [entered, setEntered] = useState(false);
+  const [mapTitleComplete, setMapTitleComplete] = useState(false);
+  const handleMapTitleComplete = useCallback(() => setMapTitleComplete(true), []);
+  const [entryFade, setEntryFade] = useState<"idle" | "out" | "black" | "in" | "done">("idle");
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [mapLoadState, setMapLoadState] = useState<"loading" | "ready" | "error">(
     "loading",
   );
@@ -113,9 +120,34 @@ export function PikoWorldShell() {
   );
 
   useEffect(() => {
+    if (entryFade === "idle" || entryFade === "done") return;
+    if (mapLoadState === "error") {
+      setEntered(false);
+      setEntryFade("idle");
+      return;
+    }
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const delay = entryFade === "black" ? 100 : reduceMotion ? 0 : entryFade === "out" ? 250 : 350;
+    const timer = window.setTimeout(() => {
+      if (entryFade === "out") {
+        // Swap scenes only while the full viewport is covered.
+        setEntered(true);
+        setEntryFade("black");
+      } else if (entryFade === "black") {
+        setEntryFade("in");
+      } else {
+        setEntryFade("done");
+        document.getElementById("main-content")?.focus();
+      }
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [entryFade, mapLoadState]);
+
+  useEffect(() => {
     if (!chatOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      playPikoUiSound("close");
       setChatOpen(false);
       chatButtonRef.current?.focus();
     };
@@ -155,6 +187,7 @@ export function PikoWorldShell() {
   };
 
   const handleChatToggle = () => {
+    playPikoUiSound(chatOpen ? "close" : "open");
     if (chatOpen) {
       setChatOpen(false);
       return;
@@ -172,6 +205,7 @@ export function PikoWorldShell() {
   };
 
   const handleResidentSelectorOpenChange = (open: boolean) => {
+    if (open !== residentSelectorOpen) playPikoUiSound(open ? "open" : "close");
     setResidentSelectorOpen(open);
     if (!open) window.requestAnimationFrame(() => settingsButtonRef.current?.focus());
   };
@@ -193,8 +227,13 @@ export function PikoWorldShell() {
       </div>
 
       <section className="relative z-10 aspect-video w-full max-w-[calc(177.7778dvh-7.1111rem)] overflow-hidden rounded-xl bg-background">
+        <div className="absolute inset-0" inert={!entered || entryFade !== "done"} aria-hidden={!entered || entryFade !== "done"}>
         <PikoWorldCanvas
+          key={loadAttempt}
           mapId={CURRENT_MAP_ID}
+          showMayorHint={mapTitleComplete && entered && mapLoadState === "ready"}
+          mayorHintVisible={entered && mapLoadState === "ready"}
+          movementBlocked={chatOpen || residentSelectorOpen || entryFade !== "done"}
           onLoadStateChange={handleMapLoadStateChange}
         />
 
@@ -207,6 +246,7 @@ export function PikoWorldShell() {
               to="/"
               className="inline-flex size-9 items-center justify-center transition-[filter,transform] duration-[var(--duration-fast)] hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={t("pikoWorld.returnToWorkbench")}
+              onClick={() => playPikoUiSound("close")}
             >
               <img
                 src={RETURN_CONTROL_SRC}
@@ -277,6 +317,7 @@ export function PikoWorldShell() {
               onClick={() => {
                 setChatOpen(false);
                 setResidentSelectorOpen(true);
+                playPikoUiSound("open");
               }}
             >
               <img
@@ -331,6 +372,7 @@ export function PikoWorldShell() {
             onClick={() => {
               setChatOpen(false);
               chatButtonRef.current?.focus();
+              playPikoUiSound("close");
             }}
           >
             <img
@@ -405,9 +447,35 @@ export function PikoWorldShell() {
             />
           </div>
         </aside>
-
+        </div>
       </section>
-      <PikoMapTransition mapId={CURRENT_MAP_ID} loadState={mapLoadState} />
+      {entered && <PikoMapTransition mapId={CURRENT_MAP_ID} loadState={mapLoadState} onComplete={handleMapTitleComplete} />}
+      {!entered && (
+          <PikoLoadingScreen
+            key={loadAttempt}
+            loadState={mapLoadState}
+            onEnter={() => {
+              setEntryFade("out");
+            }}
+            onRetry={() => {
+              setMapTitleComplete(false);
+              setEntryFade("idle");
+              setMapLoadState("loading");
+              setLoadAttempt((attempt) => attempt + 1);
+            }}
+          />
+      )}
+      <div
+        aria-hidden="true"
+        data-testid="piko-entry-blackout"
+        data-phase={entryFade}
+        className={cn(
+          "fixed inset-0 z-[60] bg-black transition-opacity ease-linear motion-reduce:transition-none",
+          entryFade === "out" || entryFade === "black" ? "opacity-100" : "opacity-0",
+          entryFade === "idle" || entryFade === "done" ? "pointer-events-none" : "pointer-events-auto",
+        )}
+        style={{ transitionDuration: entryFade === "in" ? "350ms" : "250ms" }}
+      />
     </main>
   );
 }

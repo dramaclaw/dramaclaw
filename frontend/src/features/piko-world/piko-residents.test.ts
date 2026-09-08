@@ -22,6 +22,7 @@ describe("Piko resident selection", () => {
   });
 
   it("restores only known resident ids", () => {
+    expect(DEFAULT_PIKO_RESIDENT_ID).toBe("m01");
     expect(resolvePikoResidentId("f05")).toBe("f05");
     expect(resolvePikoResidentId("unknown")).toBe(DEFAULT_PIKO_RESIDENT_ID);
     expect(resolvePikoResidentId(null)).toBe(DEFAULT_PIKO_RESIDENT_ID);

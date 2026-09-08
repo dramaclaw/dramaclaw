@@ -1,0 +1,27 @@
+{
+  "frameSize": 64,
+  "columns": 7,
+  "rows": [
+    "south",
+    "west",
+    "east",
+    "north"
+  ],
+  "pivot": {
+    "x": 32,
+    "y": 57
+  },
+  "idleColumns": [
+    0,
+    1,
+    2
+  ],
+  "walkColumns": [
+    3,
+    4,
+    5,
+    6
+  ],
+  "walkFrameDurationMs": 125,
+  "rig": "layered-two-arm-counter-swing-v4"
+}

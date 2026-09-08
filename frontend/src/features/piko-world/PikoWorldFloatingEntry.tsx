@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 
 import { safeLocalStorageSet } from "@/lib/localStorageQuota";
 import { PikoEntryMedia } from "./PikoEntryMedia";
+import { playPikoUiSound } from "./piko-audio";
 import {
   clampFloatingEntryPosition,
   normalizeFloatingEntryPosition,
@@ -22,7 +23,7 @@ import {
 } from "./floating-entry-position";
 
 const STORAGE_KEY = "dramaclaw.piko-world-entry-position.v2";
-const DEFAULT_RIGHT_PX = 0;
+const DEFAULT_RIGHT_PX = 10;
 const DEFAULT_BOTTOM_PX = 42;
 const DRAG_THRESHOLD_PX = 4;
 
@@ -165,9 +166,10 @@ export function PikoWorldFloatingEntry() {
       onPointerDown={handlePointerDown}
       onClick={() => {
         if (suppressClickRef.current) return;
+        playPikoUiSound("open");
         navigate({ to: "/piko-world" });
       }}
-      className="fixed z-30 block aspect-[4/3] w-[158.4px] max-w-[calc(100vw-32px)] cursor-grab touch-none select-none border-0 bg-transparent p-0 transition-[filter] duration-[var(--duration-fast)] ease-[var(--ease-out-quint)] hover:brightness-110 sm:w-[172.8px] focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 active:cursor-grabbing motion-reduce:transition-none"
+      className="fixed z-30 block aspect-[4/3] w-[142.56px] max-w-[calc(100vw-32px)] cursor-grab touch-none select-none border-0 bg-transparent p-0 transition-[filter] duration-[var(--duration-fast)] ease-[var(--ease-out-quint)] hover:brightness-110 sm:w-[155.52px] focus-visible:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 active:cursor-grabbing motion-reduce:transition-none"
       style={
         resolvedPosition
           ? { left: resolvedPosition.left, top: resolvedPosition.top }

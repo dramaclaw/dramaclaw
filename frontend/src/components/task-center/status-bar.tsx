@@ -173,12 +173,10 @@ export function TaskStatusBar({ onOpenPikoStation }: TaskStatusBarProps) {
             </span>
           </span>
         ) : null}
-      </div>
-      <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
         {onOpenPikoStation ? (
           <button
             type="button"
-            className="group inline-flex h-8 items-center px-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-200/55 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="group ml-3 inline-flex h-8 shrink-0 items-center px-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-200/55 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             title={t("pikoMiniGame.statusTooltip")}
             aria-label={t("pikoMiniGame.statusTooltip")}
             onClick={(event) => {
@@ -198,6 +196,8 @@ export function TaskStatusBar({ onOpenPikoStation }: TaskStatusBarProps) {
             />
           </button>
         ) : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
         <span className="ml-1.5 flex items-center gap-1">
           <Circle className={cn("size-1 fill-current", HEALTH_COLOR[health])} />
           <span className="sr-only" aria-live="polite">

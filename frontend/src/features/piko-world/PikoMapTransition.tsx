@@ -100,7 +100,7 @@ export function PikoMapTransition({
         fetchPriority="high"
         draggable={false}
         className={cn(
-          "w-[min(62vw,42rem)] max-h-[30vh] max-w-[72vw] scale-100 object-contain blur-0 drop-shadow-[0_14px_28px_rgba(0,0,0,0.35)] transition-[opacity,transform,filter] duration-[1200ms] ease-[var(--ease-out-quint)] sm:w-[min(48vw,42rem)] lg:w-[min(42vw,42rem)] motion-reduce:transition-none",
+          "w-[min(49.6vw,33.6rem)] max-h-[24vh] max-w-[57.6vw] scale-100 object-contain blur-0 drop-shadow-[0_14px_28px_rgba(0,0,0,0.35)] transition-[opacity,transform,filter] duration-[1200ms] ease-[var(--ease-out-quint)] sm:w-[min(38.4vw,33.6rem)] lg:w-[min(33.6vw,33.6rem)] motion-reduce:transition-none",
           phase === "covered" && "scale-[0.965] opacity-0 blur-[3px]",
           phase === "showing" && "opacity-100",
           phase === "revealing" && "opacity-0",

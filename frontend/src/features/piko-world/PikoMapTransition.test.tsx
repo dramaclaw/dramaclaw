@@ -40,8 +40,8 @@ describe("<PikoMapTransition />", () => {
     expect(transition).toHaveClass("fixed", "inset-0", "backdrop-blur-md");
     expect(transition).toHaveClass("bg-[#17281e]/80");
     expect(container.querySelector("img")).toHaveClass(
-      "max-h-[30vh]",
-      "lg:w-[min(42vw,42rem)]",
+      "max-h-[24vh]",
+      "lg:w-[min(33.6vw,33.6rem)]",
     );
 
     rerender(

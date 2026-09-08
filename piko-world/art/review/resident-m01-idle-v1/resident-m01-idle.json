@@ -1,0 +1,44 @@
+{
+  "frameSize": 64,
+  "frameCount": 3,
+  "pivot": {
+    "x": 32,
+    "y": 57
+  },
+  "direction": "SOUTH",
+  "shadow": {
+    "width": 24,
+    "height": 8
+  },
+  "sourceSha256": "d249164499102c8a5eda4b07cce99acb3770e709d31ab88924c2afdfe409f4f7",
+  "timeline": [
+    {
+      "frame": 0,
+      "durationMs": 1100
+    },
+    {
+      "frame": 1,
+      "durationMs": 450
+    },
+    {
+      "frame": 0,
+      "durationMs": 900
+    },
+    {
+      "frame": 2,
+      "durationMs": 120
+    },
+    {
+      "frame": 0,
+      "durationMs": 1100
+    },
+    {
+      "frame": 1,
+      "durationMs": 450
+    },
+    {
+      "frame": 0,
+      "durationMs": 680
+    }
+  ]
+}
