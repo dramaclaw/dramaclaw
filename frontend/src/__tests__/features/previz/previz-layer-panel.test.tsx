@@ -29,7 +29,9 @@ function build(): PrevizObject[] {
  * 回调不走 overrides：从 setup 里原样返回才保得住 `Mock` 类型（`...Partial<Props>` 展开
  * 之后每个回调都会被推成 `Mock | ((id) => void)`，`mockClear` 之类就调不动了）。
  */
-type PanelOverrides = Partial<Pick<PrevizLayerPanelProps, "objects" | "selectedId" | "activeCameraId">>;
+type PanelOverrides = Partial<
+  Pick<PrevizLayerPanelProps, "objects" | "selectedId" | "monitorCameraId" | "pinnedCameraId">
+>;
 
 function setup(overrides: PanelOverrides = {}) {
   const objects = overrides.objects ?? build();
@@ -42,7 +44,8 @@ function setup(overrides: PanelOverrides = {}) {
   };
   const props: PrevizLayerPanelProps = {
     selectedId: null,
-    activeCameraId: null,
+    monitorCameraId: null,
+    pinnedCameraId: null,
     ...overrides,
     ...handlers,
     objects,
@@ -226,7 +229,12 @@ describe("PrevizLayerPanel", () => {
     const user = userEvent.setup();
     const objects = build();
     objects.push(createPrevizObject("camera", objects));
-    const { onSetActiveCamera } = setup({ objects, activeCameraId: objects[1]!.id });
+    const active = objects[1]!.id;
+    const { onSetActiveCamera } = setup({
+      objects,
+      monitorCameraId: active,
+      pinnedCameraId: active,
+    });
     const monitor = "previz.layers.setActiveCamera";
 
     expect(button(row(objects[1]!.id), monitor)).toHaveAttribute("aria-pressed", "true");
@@ -238,6 +246,20 @@ describe("PrevizLayerPanel", () => {
     onSetActiveCamera.mockClear();
     await user.click(button(row(objects[1]!.id), monitor));
     expect(onSetActiveCamera).toHaveBeenCalledWith(null);
+  });
+
+  // 跟随镜头轨时亮着的那台并不是用户选的，点它是「把它钉下来」，不是「再点一次关掉」。
+  it("pins the monitored camera when nothing is pinned yet", async () => {
+    const user = userEvent.setup();
+    const objects = build();
+    const live = objects[1]!.id;
+    const { onSetActiveCamera } = setup({ objects, monitorCameraId: live, pinnedCameraId: null });
+    const monitor = "previz.layers.setActiveCamera";
+
+    expect(button(row(live), monitor)).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(button(row(live), monitor));
+    expect(onSetActiveCamera).toHaveBeenCalledWith(live);
   });
 
   it("selects from the keyboard, but a row button's own key press stays its own", async () => {

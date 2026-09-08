@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1717,13 +1717,17 @@ describe("program follow", () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "2", bubbles: true }));
     });
     expect(usePrevizStore.getState().scene.timeline.program).toMatchObject([{ cameraId: camB }]);
-    // 没有第九台机位：什么都不发生，也不报错。
+    // 没有第九台机位：什么都不发生，也不报错。监听器里抛出的异常被 jsdom 吞成 window 的
+    // error 事件，不会让哪条断言变红，所以「不报错」得自己订一份来钉住。
+    const onError = vi.fn();
+    window.addEventListener("error", onError);
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "9", bubbles: true }));
     });
+    window.removeEventListener("error", onError);
+    expect(onError).not.toHaveBeenCalled();
     expect(usePrevizStore.getState().scene.timeline.program).toHaveLength(1);
   });
-
 
   it("still cuts from a digit key pressed inside the editor dialog", async () => {
     const { camA } = renderWithCameras();
@@ -1762,5 +1766,94 @@ describe("program follow", () => {
     });
     expect(usePrevizStore.getState().scene.timeline.program).toEqual([]);
     dialog.remove();
+  });
+
+  /** 两段镜头轨：0–24 是 camA，24 往后是 camB。跟随的正片就是播放头越过切点这一下。 */
+  function twoCuts(camA: string, camB: string): void {
+    act(() => {
+      const store = usePrevizStore.getState();
+      store.cutToCamera(camA);
+      store.setTimelineFrame(24);
+      store.cutToCamera(camB);
+      store.setTimelineFrame(0);
+    });
+  }
+
+  it("swings the monitor to the live camera when the playhead crosses a cut", async () => {
+    const { camA, camB } = renderWithCameras();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    twoCuts(camA, camB);
+    expect(setActiveCamera).toHaveBeenLastCalledWith(camA);
+    expect(setLiveCamera).toHaveBeenLastCalledWith(camA);
+
+    act(() => {
+      usePrevizStore.getState().setTimelineFrame(24);
+    });
+
+    // 用户一帧都没手选过：换机位的全部理由就是播放头进了下一段。
+    expect(usePrevizStore.getState().activeCameraId).toBeNull();
+    expect(setActiveCamera).toHaveBeenLastCalledWith(camB);
+    expect(setLiveCamera).toHaveBeenLastCalledWith(camB);
+  });
+
+  it("falls back to the hand-picked camera on a frame no cut covers", async () => {
+    const { camA, camB } = renderWithCameras();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      const store = usePrevizStore.getState();
+      // 先钉住 camA 再回到跟随：手选的那台留着，正好当空隙里的兜底。
+      store.setActiveCamera(camA);
+      store.followProgram();
+      store.setTimelineFrame(24);
+      store.cutToCamera(camB);
+    });
+    expect(setActiveCamera).toHaveBeenLastCalledWith(camB);
+
+    act(() => {
+      usePrevizStore.getState().setTimelineFrame(0);
+    });
+
+    // 0–24 没有切片覆盖，监看退回手选那台，而不是空成导演视角。
+    expect(setActiveCamera).toHaveBeenLastCalledWith(camA);
+    expect(setLiveCamera).toHaveBeenLastCalledWith(null);
+    expect(screen.getByTestId("previz-monitor-frame")).toBeInTheDocument();
+  });
+
+  it("draws the quad view camera pane from the live camera too", async () => {
+    const user = userEvent.setup();
+    const { camA, camB } = renderWithCameras();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "previz.viewport.quadView" }));
+    await vi.waitFor(() => expect(renderCameraView).toHaveBeenCalled());
+    twoCuts(camA, camB);
+
+    act(() => {
+      usePrevizStore.getState().setTimelineFrame(24);
+    });
+
+    // 那一格答的是「监看里是什么样」，跟随中就该是镜头轨给的那台，而不是场景第一台。
+    await vi.waitFor(() =>
+      expect(renderCameraView).toHaveBeenLastCalledWith(
+        screen.getByTestId("previz-quad-camera"),
+        camB,
+      ),
+    );
+  });
+
+  it("pins the live camera when its layer row monitor button is clicked", async () => {
+    const user = userEvent.setup();
+    const { camB } = renderWithCameras();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().cutToCamera(camB);
+    });
+
+    const row = screen.getByTestId(`previz-layer-${camB}`);
+    await user.click(within(row).getByRole("button", { name: "previz.layers.setActiveCamera" }));
+
+    // 亮着的那台是镜头轨给的、用户从没点过的：点它是「就盯住这台」，不是关掉监看。
+    expect(usePrevizStore.getState().activeCameraId).toBe(camB);
+    expect(usePrevizStore.getState().monitorFollowsProgram).toBe(false);
+    expect(screen.getByTestId("previz-monitor-frame")).toBeInTheDocument();
   });
 });
