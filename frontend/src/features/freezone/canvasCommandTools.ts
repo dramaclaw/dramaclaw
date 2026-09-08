@@ -1,4 +1,5 @@
 export const FREEZONE_CANVAS_WRITE_TOOL_NAMES = [
+  "freezone_html_artifact",
   "freezone_emit_canvas_command",
   "freezone_confirm_workflow_draft",
   "freezone_create_node",

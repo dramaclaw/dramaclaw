@@ -47,6 +47,9 @@ function dataIoRole(data: unknown): CanvasNodeIoRole | null {
 }
 
 const CANVAS_NODE_SEMANTICS: Partial<Record<CanvasNodeType, CanvasNodeSemanticSpec>> = {
+  [CANVAS_NODE_TYPES.htmlArtifact]: {
+    nodeType: CANVAS_NODE_TYPES.htmlArtifact, role: "viewer", shortDescription: "Versioned HTML webpage artifact. Use HTML artifact tools to read/edit its source; canvas data contains only its identity.",
+  },
   [CANVAS_NODE_TYPES.textAnnotation]: {
     nodeType: CANVAS_NODE_TYPES.textAnnotation,
     role: "semantic_source",

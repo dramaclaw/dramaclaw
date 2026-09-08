@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { DerivedMediaNode } from './DerivedMediaNode';
+import { HtmlArtifactNode } from '@/features/html-artifacts/HtmlArtifactNode';
 import type { NodeTypes } from '@xyflow/react';
 
 import { withLodShell } from './LodShellNode';
@@ -28,6 +29,7 @@ import { VideoStoryNode } from './VideoStoryNode';
 export const nodeTypes: NodeTypes = {
   vectorSvgNode: DerivedMediaNode,
   animatedGifNode: DerivedMediaNode,
+  htmlArtifactNode: HtmlArtifactNode,
   audioNode: withLodShell('audioNode', AudioNode),
   beatContextNode: withLodShell('beatContextNode', BeatContextNode),
   exportImageNode: withLodShell('exportImageNode', ImageNode),

@@ -11,6 +11,7 @@ import type { KeyElementCategory } from './keyElements';
 export const CANVAS_NODE_TYPES = {
   vectorSvg: 'vectorSvgNode',
   animatedGif: 'animatedGifNode',
+  htmlArtifact: 'htmlArtifactNode',
   upload: 'uploadNode',
   imageEdit: 'imageNode',
   imageGen: 'imageGenNode',

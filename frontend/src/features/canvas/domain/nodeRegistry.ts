@@ -655,6 +655,12 @@ const derivedMediaDefinition = (type: CanvasNodeType): CanvasNodeDefinition => (
 export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition> = {
   vectorSvgNode: derivedMediaDefinition(CANVAS_NODE_TYPES.vectorSvg),
   animatedGifNode: derivedMediaDefinition(CANVAS_NODE_TYPES.animatedGif),
+  [CANVAS_NODE_TYPES.htmlArtifact]: {
+    type: CANVAS_NODE_TYPES.htmlArtifact, menuLabelKey: 'node.menu.htmlArtifact', menuIcon: 'layout', visibleInMenu: false,
+    capabilities: { toolbar: false, promptInput: false },
+    connectivity: { sourceHandle: true, targetHandle: true, connectMenu: { fromSource: false, fromTarget: false } },
+    createDefaultData: () => ({ displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.htmlArtifact], artifactId: '', artifactVersion: 0 }),
+  },
   [CANVAS_NODE_TYPES.upload]: uploadNodeDefinition,
   [CANVAS_NODE_TYPES.imageEdit]: imageEditNodeDefinition,
   [CANVAS_NODE_TYPES.imageGen]: imageGenNodeDefinition,

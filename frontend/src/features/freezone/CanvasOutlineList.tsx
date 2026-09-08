@@ -87,6 +87,7 @@ const NODE_TYPE_ICON: Record<CanvasNodeType, LucideIcon> = {
   [CANVAS_NODE_TYPES.imageGen]: ImageIcon,
   [CANVAS_NODE_TYPES.exportImage]: ImageIcon,
   [CANVAS_NODE_TYPES.beatContext]: Clapperboard,
+  [CANVAS_NODE_TYPES.htmlArtifact]: FileText,
   [CANVAS_NODE_TYPES.textAnnotation]: FileText,
   [CANVAS_NODE_TYPES.group]: Folder,
   [CANVAS_NODE_TYPES.storyboardSplit]: LayoutGrid,
