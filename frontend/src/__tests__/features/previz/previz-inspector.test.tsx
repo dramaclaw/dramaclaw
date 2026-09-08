@@ -323,6 +323,23 @@ describe("PrevizInspector", () => {
     expect(options[14]?.textContent).toBe("viewer.threeD.poses.sword");
   });
 
+  // 五个值逐个写死，不从 `BodyType` 取：漏掉一档下拉框里就没有那一项，用户永远选不到，
+  // 而落盘的场景里那一档照样合法——存进去是「高挑」，界面上显示成空选中，没有任何报错。
+  it("offers every build in the dropdown", () => {
+    renderInspector(createPrevizObject("character", []));
+
+    const options = Array.from(
+      screen.getByLabelText("previz.inspector.bodyType").querySelectorAll("option"),
+    );
+    expect(options.map((option) => option.value)).toEqual([
+      "capsule",
+      "slim",
+      "average",
+      "heavy",
+      "tall",
+    ]);
+  });
+
   it("edits the body type", async () => {
     const user = userEvent.setup();
     const onChange = renderInspector(createPrevizObject("character", []));

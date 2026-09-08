@@ -162,6 +162,9 @@ function withDefaults(
         color: nextCharacterColor(objects),
         bodyType: 'average',
         heightCm: PREVIZ_DEFAULT_HEIGHT_CM,
+        // 新建的人物跟随轨迹：另外两档都会去改 y，而用户此刻还没表达过任何高度意图。
+        heightPolicy: 'follow',
+        planeY: 0,
         basePoseId: PREVIZ_DEFAULT_POSE_ID,
         poseAdjust: { pitch: 0, turn: 0, lean: 0 },
       };

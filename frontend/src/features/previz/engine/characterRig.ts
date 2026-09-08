@@ -25,11 +25,23 @@ export const PREVIZ_ACTOR_ANIMATION_URLS = [
   '/viewer-kit/quaternius/ual1/UAL1_Standard.glb',
 ] as const;
 
-/** 体型只改水平方向的缩放：连 Y 一起放大等于又把身高改了。 */
+/**
+ * 体型只改水平方向的缩放：连 Y 一起放大等于又把身高改了。
+ *
+ * `capsule`（简化圆柱体）走不到这里——那一档根本不加载 GLB，分叉在场景图那条换模型的
+ * 路上。它列在表里只是为了让 `Record<BodyType, …>` 保持穷尽：将来再多一档体型，编译器
+ * 会在这里拦住，而不是让 `BODY_WIDTH_SCALE[bodyType]` 查出 undefined 喂进 `scale.set`。
+ * 取 1 是「不加宽也不减窄」，免得万一模型下不来又回落到 GLB 时人凭空变形。
+ *
+ * `tall: 0.84` 没有推导，是照 upstream 的观感取的值：同样的身高下比「偏瘦」再窄一档，
+ * 这套模型能表达「高挑」的手段只有横向变窄（身高是另一根滑杆，这一档不该去碰它）。
+ */
 const BODY_WIDTH_SCALE: Record<BodyType, number> = {
+  capsule: 1,
   slim: 0.9,
   average: 1,
   heavy: 1.15,
+  tall: 0.84,
 };
 
 /** 模型自身净高（米）量出来之后记在 rig 上的键。缩放为 1 时量一次，之后只读缓存。 */

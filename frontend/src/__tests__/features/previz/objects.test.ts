@@ -74,6 +74,16 @@ describe("createPrevizObject", () => {
     expect(character.transform.position).toEqual([0, 0, 0]);
   });
 
+  // 新建的人物必须落在「跟随轨迹」上：另外两档都会去改 y。默认成「贴合地面」的话，
+  // 用户在俯视图里点的那个站位一落地就被射线拽到别的高度上；默认成「锁定平面」则是
+  // 把人钉死在 planeY，路径点写的高度全部失效——两种都是「我没设过的东西替我做主」。
+  it("starts a new character on the follow-the-path height policy", () => {
+    const character = createPrevizObject("character", []);
+
+    expect(character.heightPolicy).toBe("follow");
+    expect(character.planeY).toBe(0);
+  });
+
   it("puts a new camera at eye height looking down -Z", () => {
     const camera = createPrevizObject("camera", []);
 

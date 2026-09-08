@@ -254,6 +254,70 @@ describe("parseScene field hygiene", () => {
     expect(heightOf("tall")).toBe(PREVIZ_DEFAULT_HEIGHT_CM);
   });
 
+  // 五个值逐个写死在这里，不从 `BODY_TYPES` 取：跟着实现一起变的列表等于没有列表。
+  // 少认一个体型不会报错，只会把用户在创建对话框里选的那一档静默改回「标准」——
+  // 存进去是「高挑」，下次打开变成「标准」，中间没有任何提示。
+  it("keeps every body type the dialog can produce", () => {
+    for (const bodyType of ["capsule", "slim", "average", "heavy", "tall"] as const) {
+      const parsed = parseScene({ objects: [{ id: "a", kind: "character", bodyType }] });
+
+      expect(parsed.objects[0]).toMatchObject({ kind: "character", bodyType });
+    }
+  });
+
+  // 认不出的体型必须落回「标准」而不是原样透出去：`BODY_WIDTH_SCALE` 是按体型查表的，
+  // 查不到给的是 undefined，`model.scale.set` 拿到 undefined 之后整棵子树的世界矩阵烂掉。
+  it("falls back to average for a body type this build does not know", () => {
+    const parsed = parseScene({ objects: [{ id: "a", kind: "character", bodyType: "buff" }] });
+
+    expect(parsed.objects[0]).toMatchObject({ kind: "character", bodyType: "average" });
+  });
+
+  // 高度策略是后加的字段，老场景里根本没有。回落必须是「跟随轨迹」+ planeY 0：
+  // 这两个值合起来正好等于加这个字段之前的行为，老场景打开时一个人都不该动位置。
+  it("keeps a character saved before height policies existed on the default policy", () => {
+    const parsed = parseScene({ objects: [{ id: "a", kind: "character" }] });
+
+    expect(parsed.objects[0]).toMatchObject({ heightPolicy: "follow", planeY: 0 });
+  });
+
+  it("keeps the three height policies and rejects anything else", () => {
+    const policyOf = (heightPolicy: unknown) => {
+      const parsed = parseScene({ objects: [{ id: "a", kind: "character", heightPolicy }] });
+      const character = parsed.objects[0];
+      if (character?.kind !== "character") throw new Error("expected a character");
+      return character.heightPolicy;
+    };
+
+    expect(policyOf("follow")).toBe("follow");
+    expect(policyOf("ground")).toBe("ground");
+    expect(policyOf("plane")).toBe("plane");
+    // 认不出的策略落回「跟随轨迹」，而不是「贴合地面」或「锁定平面」：后两者会去改
+    // 人物的 y，一份读不懂的旧数据不该有权把人从二楼挪到地面上。
+    expect(policyOf("magnet")).toBe("follow");
+    expect(policyOf("valueOf")).toBe("follow");
+    expect(policyOf(undefined)).toBe("follow");
+  });
+
+  // planeY 是「锁定平面」那一档唯一的高度来源，非有限值透过去就是把人物钉在 NaN 上——
+  // 世界矩阵烂掉，人凭空消失，而病因离故障点隔着好几个文件。
+  it("falls back to the ground plane for a non-finite locked height", () => {
+    const planeYOf = (planeY: unknown) => {
+      const parsed = parseScene({ objects: [{ id: "a", kind: "character", planeY }] });
+      const character = parsed.objects[0];
+      if (character?.kind !== "character") throw new Error("expected a character");
+      return character.planeY;
+    };
+
+    expect(planeYOf(3.5)).toBe(3.5);
+    // 负数照收：地下室、地坑的戏就在 y<0。
+    expect(planeYOf(-2)).toBe(-2);
+    expect(planeYOf(NaN)).toBe(0);
+    expect(planeYOf(Infinity)).toBe(0);
+    expect(planeYOf(-Infinity)).toBe(0);
+    expect(planeYOf("3.5")).toBe(0);
+  });
+
   // focalMm 为 0 会让水平视场角变成 180°，three 的投影矩阵直接算出 NaN，整个画面消失。
   it("clamps a camera's focal length and aperture", () => {
     const cameraFrom = (focalMm: unknown, aperture: unknown) => {
