@@ -173,6 +173,15 @@ export function PrevizEditor({
    * 开录那一刻的 false。
    */
   const recordStopped = useRef(false);
+  /**
+   * 「这一次录制已经受理了」。必须是 ref 而不是 `recording` 那个 state：`handleRecord`
+   * 在开录之前要先 await 音频解码，那期间 `recording` 还是 null、按钮上还写着「开始录制」，
+   * 而解码是网络取样再 decodeAudioData，首次录制轻松几百毫秒到几秒。用户按惯例再点一下，
+   * 第二路录制就在同一块画布上跑起来了——第一路的 `pass.end()` 会在第二路录制中途把辅助物
+   * 还回去，手柄、轨迹、机位锥就被烤进第二路的成片里；两个 MediaRecorder 抢同一块画布、
+   * 都在推播放头，第二路的排程还会把第一路的音频 stop 掉。ref 是同步写的，不等渲染。
+   */
+  const recordBusy = useRef(false);
   /** 录完之后的上传与建节点阶段。与 `recording` 分开：按钮上写的字不一样。 */
   const [recordPublishing, setRecordPublishing] = useState(false);
   /**
@@ -649,184 +658,190 @@ export function PrevizEditor({
 
   const handleRecord = useCallback(
     async (mode: PrevizRecordMode) => {
-      if (!renderer || recording || capturing) return;
-      const project = readUrl().project;
-      if (!project) {
-        toast.error(t("previz.editor.noProject"));
-        return;
-      }
-
-      const store = usePrevizStore.getState();
-      const target = resolveRecordTarget(
-        store.scene,
-        mode,
-        store.selectedObjectId,
-        store.activeCameraId,
-      );
-      if (!target) {
-        toast.error(t("previz.editor.record.noCamera"));
-        return;
-      }
-
-      const audioClips = store.scene.timeline.audio;
-      // 轨上有音频才混；混不了（没有 AudioContext / 没有带音轨的 mimeType）就退回无声，
-      // 但要说一声，别让人以为音频丢了。
-      // 这里拿「轨上有片段」当「流里有音轨」用：`createMediaStreamDestination()` 出来的
-      // 节点恒带且只带一条音轨，两者在浏览器里不会分叉，空流只存在于测试的假引擎里。
-      let playback: PrevizAudioPlayback | null =
-        audioClips.length > 0 ? ensureAudioPlayback() : null;
-      let mimeType = playback ? pickRecordMimeType(undefined, true) : null;
-      if (audioClips.length > 0 && (!playback || !mimeType)) {
-        toast.warning(t("previz.editor.record.noAudioMix"));
-        playback = null;
-      }
-      if (!mimeType) mimeType = pickRecordMimeType();
-      if (!mimeType) {
-        toast.error(t("previz.editor.record.unsupported"));
-        return;
-      }
-
-      // 解码赶在开录之前：`startRecording()` 一调辅助物就藏了、视口也切到了输出分辨率，
-      // 这期间界面看着像卡死，几百毫秒的解码不该塞进这个窗口。`load()` 自己吞掉失败
-      // （失败的 url 记进 failedUrls，播的时候跳过），所以这里不必接错。
-      if (playback) await playback.load(audioClips);
-
-      const pass = renderer.startRecording(target.mode, target.cameraId);
-      // 机位在解算与开录之间被删掉了；提示一句，别把导演视角录成「轨道录制」。
-      if (!pass) {
-        toast.error(t("previz.editor.record.noCamera"));
-        return;
-      }
-
-      const aspect = store.scene.settings.outputAspect;
-      const durationFrames = store.scene.settings.durationFrames;
-      // 录制自己驱动播放头，不能让播放循环同时也在推：两边一起推的话帧号会跳着走。
-      store.setTimelinePlaying(false);
-      recordStopped.current = false;
-      setRecordProgress(0);
-      setRecording(mode);
-
+      if (!renderer || recording || capturing || recordBusy.current) return;
+      // 受理即上锁，同步的。下面第一件事就是 await（解码音频），锁必须在那之前立住。
+      recordBusy.current = true;
       try {
-        // 录制按真正走到的那一帧算时长，不拿设置里的总长充数：中途叫停的成片只有画出来
-        // 的那一段。存的是帧号而不是画了几帧——第 0 帧落在 0 秒上，所以帧号本身就是成片
-        // 的跨度（画了 0..N 共 N+1 帧，片长是 N 帧）。
-        let drawn = 0;
-        // 逐帧要问「这一帧谁在播」，问的是开录那一刻的场景：录制自己在推播放头，
-        // 每帧重读 store 只会把中途的编辑读进成片。
-        const programScene = store.scene;
-        const mixed = playback;
-        // 每次录制都新开一个混音出口，不复用：`createCanvasRecorder` 收工时会把并进画布流
-        // 的那条音轨一起 stop 掉，而停掉的轨道不会再复活——复用同一个 destination 的话，
-        // 第二次录出来就是默片。
-        const destination = mixed ? mixed.context.createMediaStreamDestination() : null;
-        // 播放头只按约 10Hz 推进：每推一次整棵编辑器都要重渲一遍，再经 timelineFrame 那个
-        // effect 把这一帧重新解算一次，30fps 下这占掉了每帧预算的一大块；录制是模态的，
-        // 播放头只要看得出在走就够了。首帧与末帧必推：开录播放头要跳回开头（那一帧画在
-        // 计时开始之前，不占预算），录完时间轴得停在结尾。
-        let lastPushed = Number.NEGATIVE_INFINITY;
-        // 进度同理：每报一次都是一次 setState，整棵编辑器重渲一遍，而录制期间它是每帧
-        // 都报的。按 2% 一档攒着报——进度条上写的是整数百分比，比这更细的变化根本显示
-        // 不出来。末尾那个 1 必须原样报到，否则最后一档差之毫厘，进度条就停在 99%。
-        // 中途叫停时最后显示的仍是真报过的那一档。
-        let lastProgress = 0;
-        let blob: Blob;
-        try {
-          // 建录制器和跑录制都在这个 try 里：`new MediaRecorder()` 会因为容器谈不拢当场抛，
-          // 混音那条候选里还有裸 `video/mp4`/`video/webm`（Safari 需要），谈崩的概率不低。
-          // 一旦漏到 try 外面，`pass.end()` 就不会跑，辅助物、手柄、机位锥全留在隐藏状态，
-          // 视口也卡在输出分辨率上不再跟随窗口——只能重开编辑器才能救回来。
-          const canvasRecorder = createCanvasRecorder(pass.canvas, {
-            fps: PREVIZ_RECORD_FPS,
-            mimeType,
-            audioStream: destination?.stream,
-          });
-          // 混音时录制器一开就把音频从第 0 帧、1 倍速排进混音节点；停就一起停。
-          // 这里的 1 倍速是刻意的：成片是按 30fps 逐帧画出来的实速素材，跟着时间轴当前的
-          // 播放倍速排音频只会让成片音画对不上。
-          const recorder =
-            mixed && destination
-              ? {
-                  start: () => {
-                    canvasRecorder.start();
-                    void mixed.play(audioClips, 0, 1, destination);
-                  },
-                  stop: () => {
-                    mixed.stop();
-                    return canvasRecorder.stop();
-                  },
-                }
-              : canvasRecorder;
-          blob = await recordTimeline({
-            durationFrames,
-            fps: PREVIZ_RECORD_FPS,
-            drawFrame: (frame) => {
-              // 全局录制按镜头轨逐帧换机位；轨道录制固定一台，传 null 让 pass 用自己那台。
-              pass.drawFrame(
-                frame,
-                target.mode === "global" ? liveCameraAt(programScene, frame) : null,
-              );
-              drawn = frame;
-              // 顺手把播放头推到同一帧，时间轴跟着走。
-              if (frame - lastPushed >= 3 || frame >= durationFrames) {
-                lastPushed = frame;
-                usePrevizStore.getState().setTimelineFrame(frame);
-              }
-            },
-            recorder,
-            now: () => performance.now(),
-            schedule: (callback) => {
-              window.requestAnimationFrame(callback);
-            },
-            onProgress: (ratio) => {
-              if (ratio - lastProgress < 0.02 && ratio < 1) return;
-              lastProgress = ratio;
-              setRecordProgress(ratio);
-            },
-            shouldStop: () => recordStopped.current,
-          });
-        } finally {
-          // 辅助物的可见性攥在这个句柄里，不还回去的话手柄与轨迹会一直不见。
-          pass.end();
-          // 正常收工时 `recorder.stop()` 已经停过一次，这里兜的是抛出去的那条路：
-          // 排进混音节点的源没人停，就一直挂在 AudioContext 上。stop() 可重入。
-          mixed?.stop();
-        }
-
-        if (blob.size === 0) {
-          toast.error(t("previz.editor.record.failed"));
+        const project = readUrl().project;
+        if (!project) {
+          toast.error(t("previz.editor.noProject"));
           return;
         }
 
-        setRecordPublishing(true);
-        const quality = recordQualityLabel(aspect);
-        const result = await publishRecording({
-          project,
-          sourceNodeId: nodeId,
-          aspect,
-          blob,
-          filename: recordFilename(Date.now(), mimeType),
-          displayName:
-            target.mode === "track"
-              ? t("previz.editor.record.trackNodeName", { index: target.index, quality })
-              : t("previz.editor.record.globalNodeName", { quality }),
-          // 按真正画出的帧数算，而不是设置里的总长：中途叫停的成片比总长短，末帧后
-          // 那截采样尾巴又让它比总长长，两个方向都得靠 `drawn` 才对得上。
-          durationMs: Math.round((drawn / PREVIZ_RECORD_FPS) * 1000),
-          uploadVideo: (targetProject, file, filename) =>
-            uploadFreezoneVideo(targetProject, file, filename),
-          addDerivedVideoNode,
-          addEdge,
-        });
-        if (result.ok) toast.success(t("previz.editor.record.done"));
-        else if (result.reason === "node") toast.error(t("previz.editor.record.noNode"));
-        else toast.error(t("previz.editor.record.uploadFailed"));
-      } catch (error) {
-        console.error("[previz] record failed", error);
-        toast.error(t("previz.editor.record.failed"));
-      } finally {
-        setRecording(null);
-        setRecordPublishing(false);
+        const store = usePrevizStore.getState();
+        const target = resolveRecordTarget(
+          store.scene,
+          mode,
+          store.selectedObjectId,
+          store.activeCameraId,
+        );
+        if (!target) {
+          toast.error(t("previz.editor.record.noCamera"));
+          return;
+        }
+
+        const audioClips = store.scene.timeline.audio;
+        // 轨上有音频才混；混不了（没有 AudioContext / 没有带音轨的 mimeType）就退回无声，
+        // 但要说一声，别让人以为音频丢了。
+        // 这里拿「轨上有片段」当「流里有音轨」用：`createMediaStreamDestination()` 出来的
+        // 节点恒带且只带一条音轨，两者在浏览器里不会分叉，空流只存在于测试的假引擎里。
+        let playback: PrevizAudioPlayback | null =
+          audioClips.length > 0 ? ensureAudioPlayback() : null;
+        let mimeType = playback ? pickRecordMimeType(undefined, true) : null;
+        if (audioClips.length > 0 && (!playback || !mimeType)) {
+          toast.warning(t("previz.editor.record.noAudioMix"));
+          playback = null;
+        }
+        if (!mimeType) mimeType = pickRecordMimeType();
+        if (!mimeType) {
+          toast.error(t("previz.editor.record.unsupported"));
+          return;
+        }
+
+        // 解码赶在开录之前：`startRecording()` 一调辅助物就藏了、视口也切到了输出分辨率，
+        // 这期间界面看着像卡死，几百毫秒的解码不该塞进这个窗口。`load()` 自己吞掉失败
+        // （失败的 url 记进 failedUrls，播的时候跳过），所以这里不必接错。
+        if (playback) await playback.load(audioClips);
+
+        const pass = renderer.startRecording(target.mode, target.cameraId);
+        // 机位在解算与开录之间被删掉了；提示一句，别把导演视角录成「轨道录制」。
+        if (!pass) {
+          toast.error(t("previz.editor.record.noCamera"));
+          return;
+        }
+
+        const aspect = store.scene.settings.outputAspect;
+        const durationFrames = store.scene.settings.durationFrames;
+        // 录制自己驱动播放头，不能让播放循环同时也在推：两边一起推的话帧号会跳着走。
+        store.setTimelinePlaying(false);
+        recordStopped.current = false;
         setRecordProgress(0);
+        setRecording(mode);
+
+        try {
+          // 录制按真正走到的那一帧算时长，不拿设置里的总长充数：中途叫停的成片只有画出来
+          // 的那一段。存的是帧号而不是画了几帧——第 0 帧落在 0 秒上，所以帧号本身就是成片
+          // 的跨度（画了 0..N 共 N+1 帧，片长是 N 帧）。
+          let drawn = 0;
+          // 逐帧要问「这一帧谁在播」，问的是开录那一刻的场景：录制自己在推播放头，
+          // 每帧重读 store 只会把中途的编辑读进成片。
+          const programScene = store.scene;
+          const mixed = playback;
+          // 播放头只按约 10Hz 推进：每推一次整棵编辑器都要重渲一遍，再经 timelineFrame 那个
+          // effect 把这一帧重新解算一次，30fps 下这占掉了每帧预算的一大块；录制是模态的，
+          // 播放头只要看得出在走就够了。首帧与末帧必推：开录播放头要跳回开头（那一帧画在
+          // 计时开始之前，不占预算），录完时间轴得停在结尾。
+          let lastPushed = Number.NEGATIVE_INFINITY;
+          // 进度同理：每报一次都是一次 setState，整棵编辑器重渲一遍，而录制期间它是每帧
+          // 都报的。按 2% 一档攒着报——进度条上写的是整数百分比，比这更细的变化根本显示
+          // 不出来。末尾那个 1 必须原样报到，否则最后一档差之毫厘，进度条就停在 99%。
+          // 中途叫停时最后显示的仍是真报过的那一档。
+          let lastProgress = 0;
+          let blob: Blob;
+          try {
+            // 从这里往下都在 try 里，一句都不许漏出去：`new MediaRecorder()` 会因为容器谈不
+            // 拢当场抛（混音那条候选里还有裸 `video/mp4`/`video/webm`，Safari 需要它们，谈崩
+            // 的概率不低），`createMediaStreamDestination()` 理论上也能抛。漏出去的话
+            // `pass.end()` 就不会跑，辅助物、手柄、机位锥全留在隐藏状态，视口也卡在输出分辨
+            // 率上不再跟随窗口——只能重开编辑器才能救回来。
+            // 混音出口每次录制都新开一个，不复用：`createCanvasRecorder` 收工时会把并进画布
+            // 流的那条音轨一起 stop 掉，而停掉的轨道不会再复活，复用就是一部默片。
+            const destination = mixed ? mixed.context.createMediaStreamDestination() : null;
+            const canvasRecorder = createCanvasRecorder(pass.canvas, {
+              fps: PREVIZ_RECORD_FPS,
+              mimeType,
+              audioStream: destination?.stream,
+            });
+            // 混音时录制器一开就把音频从第 0 帧、1 倍速排进混音节点；停就一起停。
+            // 这里的 1 倍速是刻意的：成片是按 30fps 逐帧画出来的实速素材，跟着时间轴当前的
+            // 播放倍速排音频只会让成片音画对不上。
+            const recorder =
+              mixed && destination
+                ? {
+                    start: () => {
+                      canvasRecorder.start();
+                      void mixed.play(audioClips, 0, 1, destination);
+                    },
+                    stop: () => {
+                      mixed.stop();
+                      return canvasRecorder.stop();
+                    },
+                  }
+                : canvasRecorder;
+            blob = await recordTimeline({
+              durationFrames,
+              fps: PREVIZ_RECORD_FPS,
+              drawFrame: (frame) => {
+                // 全局录制按镜头轨逐帧换机位；轨道录制固定一台，传 null 让 pass 用自己那台。
+                pass.drawFrame(
+                  frame,
+                  target.mode === "global" ? liveCameraAt(programScene, frame) : null,
+                );
+                drawn = frame;
+                // 顺手把播放头推到同一帧，时间轴跟着走。
+                if (frame - lastPushed >= 3 || frame >= durationFrames) {
+                  lastPushed = frame;
+                  usePrevizStore.getState().setTimelineFrame(frame);
+                }
+              },
+              recorder,
+              now: () => performance.now(),
+              schedule: (callback) => {
+                window.requestAnimationFrame(callback);
+              },
+              onProgress: (ratio) => {
+                if (ratio - lastProgress < 0.02 && ratio < 1) return;
+                lastProgress = ratio;
+                setRecordProgress(ratio);
+              },
+              shouldStop: () => recordStopped.current,
+            });
+          } finally {
+            // 辅助物的可见性攥在这个句柄里，不还回去的话手柄与轨迹会一直不见。
+            pass.end();
+            // 正常收工时 `recorder.stop()` 已经停过一次，这里兜的是抛出去的那条路：
+            // 排进混音节点的源没人停，就一直挂在 AudioContext 上。stop() 可重入。
+            mixed?.stop();
+          }
+
+          if (blob.size === 0) {
+            toast.error(t("previz.editor.record.failed"));
+            return;
+          }
+
+          setRecordPublishing(true);
+          const quality = recordQualityLabel(aspect);
+          const result = await publishRecording({
+            project,
+            sourceNodeId: nodeId,
+            aspect,
+            blob,
+            filename: recordFilename(Date.now(), mimeType),
+            displayName:
+              target.mode === "track"
+                ? t("previz.editor.record.trackNodeName", { index: target.index, quality })
+                : t("previz.editor.record.globalNodeName", { quality }),
+            // 按真正画出的帧数算，而不是设置里的总长：中途叫停的成片比总长短，末帧后
+            // 那截采样尾巴又让它比总长长，两个方向都得靠 `drawn` 才对得上。
+            durationMs: Math.round((drawn / PREVIZ_RECORD_FPS) * 1000),
+            uploadVideo: (targetProject, file, filename) =>
+              uploadFreezoneVideo(targetProject, file, filename),
+            addDerivedVideoNode,
+            addEdge,
+          });
+          if (result.ok) toast.success(t("previz.editor.record.done"));
+          else if (result.reason === "node") toast.error(t("previz.editor.record.noNode"));
+          else toast.error(t("previz.editor.record.uploadFailed"));
+        } catch (error) {
+          console.error("[previz] record failed", error);
+          toast.error(t("previz.editor.record.failed"));
+        } finally {
+          setRecording(null);
+          setRecordPublishing(false);
+          setRecordProgress(0);
+        }
+      } finally {
+        recordBusy.current = false;
       }
     },
     [
