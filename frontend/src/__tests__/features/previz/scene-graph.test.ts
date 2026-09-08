@@ -21,7 +21,7 @@ import {
   PREVIZ_ACTOR_MODEL_URL,
 } from '@/features/previz/engine/characterRig';
 import { PropLoader } from '@/features/previz/engine/propLoader';
-import { PrevizSceneGraph } from '@/features/previz/engine/sceneGraph';
+import { KIND_COLOR, PrevizSceneGraph } from '@/features/previz/engine/sceneGraph';
 
 /**
  * 一份够用的假 three。真 three 在 jsdom 里连 WebGLRenderer 都建不出来，而这个
@@ -655,6 +655,25 @@ describe('PrevizSceneGraph', () => {
     expect(new Set(colours).size).toBe(3);
   });
 
+  it('paints the light and the prop the colours KIND_COLOR names', () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+
+    const scene = sceneWith('light', 'prop');
+    graph.sync(scene);
+    const [light, prop] = scene.objects.map((object) => placeholderOf(graph, object.id));
+
+    // 读回材质上真正染成的颜色，比的是导出的那份常量：两头各挪一步都会红——常量改了
+    // 值，或者染色那条尾巴把 kind 接串了。写成「KIND_COLOR.light 等于 0xfff3b0」就只是
+    // 把字面量抄第二遍，两边一起改照样全绿。
+    //
+    // 这张表值得上网，是因为它有第二个消费方：2D 俯视图那块选择器画的是同一批物件，
+    // 而它那边只锁得住自己那份颜色。源头这边此前双向零覆盖，改成任意值整个 previz 套件
+    // 都不会红，唯一的暴露方式是用户发现小地图和 3D 视口里同一个道具不是一个颜色。
+    expect(light!.material.color.getHex()).toBe(KIND_COLOR.light);
+    expect(prop!.material.color.getHex()).toBe(KIND_COLOR.prop);
+  });
+
   it('sizes the character capsule from heightCm and stands it on the ground', () => {
     const three = fakeThree();
     const root = new three.Group();
@@ -699,6 +718,12 @@ describe('PrevizSceneGraph', () => {
     const tinyMesh = placeholderOf(graph, tiny.id);
     expect(placeholderHeight(tallMesh)).toBeCloseTo(PREVIZ_MAX_HEIGHT_CM / 100, 6);
     expect(placeholderHeight(tinyMesh)).toBeCloseTo(PREVIZ_MIN_HEIGHT_CM / 100, 6);
+    // 上面两条只量到球顶，它们成立的前提是「最高的那一件是球头」，而那个前提只在别处的
+    // 180 / 190 cm 上断言过。两个夹取边界上也得各断一次：把 `placeholderBodyHeight` 冻死
+    // 成一个常数（胶囊完全不跟身高走），下界 1.2 m 的球头会整颗埋回胶囊里、轮廓顶虚高到
+    // 1.5 m，而上面那两条一条都不会红——测试锁住 bug 的老路，换个身高区间又走了一遍。
+    expect(headCentre(tallMesh)).toBeGreaterThan(capsuleTop(tallMesh));
+    expect(headCentre(tinyMesh)).toBeGreaterThan(capsuleTop(tinyMesh));
     // 夹到下界之后中段柱体仍然为正，`createPlaceholder` 不必再自己兜一次 Math.max(0, …)。
     expect(tinyMesh.geometry.args[1]).toBeGreaterThan(0);
   });
@@ -723,6 +748,11 @@ describe('PrevizSceneGraph', () => {
     // 而且它不会在下一次 sync 时自愈——只有整个节点被拆掉才会。
     const after = placeholderOf(graph, character.id);
     expect(placeholderHeight(after)).toBeCloseTo(2, 6);
+    // 跟着变的必须是胶囊本身，而且是等量的：胶囊只比身高矮一个常数（球头露出的那一截），
+    // 所以身高涨 0.5 m，胶囊总高也涨 0.5 m。只断言轮廓顶的话，把胶囊高冻成常数、让球头
+    // 一个人跟着身高跑，画面上是一颗越飘越高的球，而上面那条照样绿。
+    expect(capsuleHeight(after) - capsuleHeight(before)).toBeCloseTo(0.5, 6);
+    expect(headCentre(before)).toBeGreaterThan(capsuleTop(before));
     // 站位跟着一起改，否则那个尺寸错的胶囊还悬空或者陷进地里。
     expect(after.position.y - capsuleHeight(after) / 2).toBeCloseTo(0, 6);
     // 换的是占位体不是整个节点：节点上挂着 Task 8 加载好的 GLB，重建等于白下一次。

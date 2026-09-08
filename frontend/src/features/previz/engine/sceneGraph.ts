@@ -35,7 +35,8 @@ export const PREVIZ_TRANSLUCENT_OPACITY = 0.35;
  * 人物占位胶囊的半径，单位米。0.22 m 是成年人肩宽的一半上下，粗到一眼看得出是个人、
  * 细到不至于把相邻的两个人物粘在一起。
  *
- * 它同时是一条尺寸约束：胶囊中段长度是「身高 − 1.5 × 球头半径 − 2 × 胶囊半径」，必须为正
+ * 它同时是一条尺寸约束：胶囊中段长度是「身高 − (2 − `PLACEHOLDER_NECK_RATIO`) × 球头半径
+ * − 2 × 胶囊半径」，必须为正
  * ——球头要露在胶囊之上，胶囊本身就得比身高矮一截，见 `PLACEHOLDER_NECK_RATIO`。身高先
  * 夹进 `PREVIZ_HEIGHT_CM_RANGE` 再相减，具体余量归 `domain/objects.ts` 的下界管，这里不复述。
  * 改大这个半径前先跑 scene-graph 测试里的「clamps heightCm so the capsule never degenerates」，
@@ -47,9 +48,15 @@ export const PREVIZ_PLACEHOLDER_RADIUS = 0.22;
  * 占位体那颗球头的半径，占胶囊半径的几成。0.9 没有推导，是照 upstream 的观感取的：
  * 比肩宽窄一档，大到远看认得出是个头，小到不至于把胶囊顶成一个葫芦。
  *
- * 硬约束只有一条：胶囊中段长度是「身高 − 1.5 × 球头半径 − 2 × 胶囊半径」，必须为正。
- * 身高取下界 1.2 m 时这个比例开到 2 都还是正的（1.2 − 0.66 − 0.44 = 0.1），所以先绊住你的
- * 一定是观感而不是它。球露出多少由 `PLACEHOLDER_NECK_RATIO` 管，不是这里。
+ * 球露出胶囊多少米由两个比例合起来决定，这一个也是线性的一半：露出 =
+ * (2 − `PLACEHOLDER_NECK_RATIO`) × 球头半径，而球头半径 = `PREVIZ_PLACEHOLDER_RADIUS` ×
+ * 这个比例。0.9 是 0.297 m，减到 0.5 就只剩 0.165 m——头缩成一个疙瘩，不是「只是小一点」。
+ *
+ * 两条硬边界，都有 scene-graph 的头部用例兜着，别当成纯观感参数随手调：
+ * ① 球头半径必须小于胶囊半径，否则顶上去的是一把伞不是一个头；
+ * ② 胶囊中段长度「身高 − (2 − `PLACEHOLDER_NECK_RATIO`) × 球头半径 − 2 × 胶囊半径」必须为正。
+ * ②在下界身高 1.2 m 上把这个比例开到 2 都还是正的（1.2 − 0.66 − 0.44 = 0.1），所以先把你
+ * 拦下来的是①那条红测试。
  */
 const PLACEHOLDER_HEAD_RADIUS_RATIO = 0.9;
 
@@ -91,7 +98,7 @@ const CLAY_COLOR = 0xb9bec8;
  * 一台多色摄影机；人物用的是自己那个辨识色（`PrevizCharacter.color`）——一颗固定的
  * 分类蓝会让模型没到位的那几秒里四个人物长得一模一样。
  */
-const KIND_COLOR: Record<Exclude<PrevizObject['kind'], 'camera' | 'character'>, number> = {
+export const KIND_COLOR: Record<Exclude<PrevizObject['kind'], 'camera' | 'character'>, number> = {
   light: 0xfff3b0,
   prop: 0x9ad0a0,
 };
@@ -143,9 +150,11 @@ export function createCharacterPlaceholder(
 }
 
 /**
- * 占位胶囊头顶那颗球。挂在**胶囊这个 Mesh 底下**，而不是做它的兄弟：`resizePlaceholder`
- * 与 `swapInCharacterModel` 都只扫对象节点的**直接**子节点找 `previzPlaceholder`，做成
- * 兄弟就得在两处各补一次；挂进胶囊里，重建与换模型都自动连它一起走。
+ * 占位胶囊头顶那颗球。挂在**胶囊这个 Mesh 底下**，而不是做它的兄弟：做成兄弟，凡是把
+ * 「占位体」当成对象节点下**一个**直接子节点来找、来加的地方都得改成复数——
+ * `resizePlaceholder` 的 `find` + 单次 `remove`、`revertToPlaceholder` 那道 `some` 守卫、
+ * 以及 `createPlaceholder` 的单次 `add`。（`swapInCharacterModel` 是例外，它删的是**所有**
+ * 带标记的直接子节点。）挂进胶囊里，这些地方一处都不用动。
  *
  * 于是这里的 y 是在**胶囊自己的局部坐标**里算的，不是对象节点的。要同时守住两条：
  * ① 整件占位体的轮廓顶正好落在身高线上——`PrevizRenderer` 聚焦时量的是节点的世界
@@ -177,16 +186,16 @@ function createPlaceholderHead(
 }
 
 /**
- * 人物脚下那圈辨识环的内外半径，单位米。外径比占位胶囊的半径（0.22）大一圈，
- * 站位重叠时两个人的环仍然分得开；内径留空是为了别把脚整个盖住。
- */
-/**
  * 视图叠加层（描边、名牌）的标记。它们的资源由 `viewOverlays.ts` 独家持有：染色要跳过
  * 它们（描边是纯色轮廓，染成水泥灰就没有轮廓可言），回收也要跳过（几何体是跟源网格
  * 借的，材质是全局共用的）。
  */
 export const PREVIZ_OVERLAY_KEY = 'previzOverlay';
 
+/**
+ * 人物脚下那圈辨识环的内外半径，单位米。外径比占位胶囊的半径（0.22）大一圈，
+ * 站位重叠时两个人的环仍然分得开；内径留空是为了别把脚整个盖住。
+ */
 const MARKER_INNER_RADIUS = 0.3;
 const MARKER_OUTER_RADIUS = 0.36;
 
@@ -276,7 +285,8 @@ export class PrevizSceneGraph {
    * 成片里就有一圈蓝环和满屏的机位锥体线：录制那条路以为自己已经把辅助物藏干净了。
    *
    * 只走对象节点的直接子节点，不 traverse 整棵树：标记与机身建出来就挂在这一层
-   * （见 `createNode` / `createPlaceholder`），再往下是人物 GLB 的几百根骨头，白走。
+   * （见 `createNode` / `createPlaceholder`），再往下是人物 GLB 那具骨架的
+   * 六十来个节点（`UAL1_Standard.glb`：`nodes` 67 个、蒙皮 65 根骨头），白走。
    */
   setFurnitureVisible(visible: boolean): void {
     for (const node of this.root.children) {
@@ -693,8 +703,9 @@ export class PrevizSceneGraph {
   /**
    * 占位几何体。人物胶囊、灯球、物件方块——形状不同是为了一眼分得清。
    *
-   * 机位是唯一一个不止一件几何体的：它是一台摄影机加一具取景视锥，整组由
-   * `cameraModel.ts` 建，所以这里的返回类型是 `Object3D` 而不是 `Mesh`。
+   * 机位与人物都不止一件几何体——机位是一台摄影机加一具取景视锥（`cameraModel.ts` 建），
+   * 人物是胶囊加球头（`createCharacterPlaceholder` 建）——所以这里的返回类型是 `Object3D`
+   * 而不是 `Mesh`，而这两支都在下面那条公共尾巴之前就 return 掉了。
    */
   private createPlaceholder(object: PrevizObject): THREE.Object3D {
     const three = this.three;
