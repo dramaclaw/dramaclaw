@@ -266,7 +266,8 @@ describe("parseScene field hygiene", () => {
   });
 
   // 认不出的体型必须落回「标准」而不是原样透出去：`BODY_WIDTH_SCALE` 是按体型查表的，
-  // 查不到给的是 undefined，`model.scale.set` 拿到 undefined 之后整棵子树的世界矩阵烂掉。
+  // 查不到给的是 undefined，先参与乘法变成 NaN，再喂进 `model.scale.set`——
+  // 整棵子树的世界矩阵跟着烂掉，人物凭空消失。
   it("falls back to average for a body type this build does not know", () => {
     const parsed = parseScene({ objects: [{ id: "a", kind: "character", bodyType: "buff" }] });
 
