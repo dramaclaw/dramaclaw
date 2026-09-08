@@ -273,6 +273,7 @@ interface FakeMeshView {
   geometry: { shape: string; args: number[]; dispose: ReturnType<typeof vi.fn> };
   material: FakeMaterialView;
   userData: Record<string, unknown>;
+  children: FakeMeshView[];
   position: { x: number; y: number; z: number };
   rotation: { x: number; y: number; z: number };
 }
@@ -285,6 +286,13 @@ function placeholderOf(graph: PrevizSceneGraph, objectId: string): FakeMeshView 
   const placeholder = node.children.find((child) => child.userData.previzPlaceholder);
   if (!placeholder) throw new Error(`no placeholder for ${objectId}`);
   return placeholder as unknown as FakeMeshView;
+}
+
+/** 占位胶囊头顶那颗球。 */
+function headOf(placeholder: FakeMeshView): FakeMeshView {
+  const head = placeholder.children.find((child) => child.userData.previzPlaceholderHead);
+  if (!head) throw new Error('no placeholder head');
+  return head;
 }
 
 /** 材质最后一次被染上的颜色。`Array.prototype.at` 不在本仓的 lib 里，只能按下标取。 */
@@ -308,12 +316,22 @@ const ACTOR_FILE_COUNT = 1 + PREVIZ_ACTOR_ANIMATION_URLS.length;
  *
  * `clone` 每次交出一个新的模型根，下面再挂一个带材质的 Mesh——显示模式要刷到模型的
  * 每份材质上，模型根自己是没有材质的。
+ *
+ * `gate` 是给「模型还在路上」那几条用例用的闸：不传就照旧一个微任务回来，传了就一直
+ * 悬着，直到用例自己放行。请求在途中被作废这件事只有摁住这个中间态才测得出来。
  */
-function rigFactory(three: typeof import('three'), clipNames: string[] = ['Idle_Loop']) {
-  const loadGltf = vi.fn(async () => ({
-    scene: new three.Object3D(),
-    animations: clipNames.map((name) => ({ name })) as unknown as THREE.AnimationClip[],
-  }));
+function rigFactory(
+  three: typeof import('three'),
+  clipNames: string[] = ['Idle_Loop'],
+  gate?: Promise<unknown>,
+) {
+  const loadGltf = vi.fn(async () => {
+    if (gate) await gate;
+    return {
+      scene: new three.Object3D(),
+      animations: clipNames.map((name) => ({ name })) as unknown as THREE.AnimationClip[],
+    };
+  });
   // 给模型材质一个明确的本色：默认白跟「原色没记住、还原成了 undefined」在断言里
   // 分不开，全灰的回程正是要区分这两者。
   const sourceMaterial = new three.MeshStandardMaterial({
@@ -832,7 +850,9 @@ describe('PrevizSceneGraph', () => {
       }
     });
 
-    expect(materials).toHaveLength(2);
+    // 人物的胶囊、胶囊头顶那颗球、物件的方块，各一份材质。数死这个数是为了让下面
+    // 那个循环不会空转：漏掉整棵子树的话循环一次都不跑，每条断言都「通过」。
+    expect(materials).toHaveLength(3);
     for (const material of materials) {
       expect(material.transparent).toBe(true);
       // 字面量而不是从被测模块 import 的那个常量：0.35 是设计文档「显示模式」一节
@@ -1306,6 +1326,198 @@ describe('PrevizSceneGraph', () => {
     expect(rigOf(graph, id)).toBeDefined();
     expect(clone).toHaveBeenCalledTimes(2);
   });
+
+  it('never asks for a rig while the character is a plain capsule', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const { factory, loadGltf, clone } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene({ bodyType: 'capsule' });
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+    await flush();
+
+    // 「简化圆柱体」不是一档胖瘦，是「这个人物不要 GLB」。分叉必须在**请求之前**：
+    // 下完再丢掉的话，场上二十个人照样把模型和三份动画库都拉一遍，而这一档存在的
+    // 全部理由就是别付这笔钱。
+    expect(loadGltf).not.toHaveBeenCalled();
+    expect(clone).not.toHaveBeenCalled();
+    expect(rigOf(graph, id)).toBeUndefined();
+    expect(placeholderOf(graph, id).geometry.shape).toBe('capsule');
+  });
+
+  it('drops the loaded rig when the character is switched to a capsule', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+    await flush();
+    expect(rigOf(graph, character.id)).toBeDefined();
+
+    graph.sync({ ...scene, objects: [{ ...character, bodyType: 'capsule' }] });
+
+    // rig 摘掉、占位体回来。少了摘那一步，视口里是「胶囊套在木偶身上」两层叠着；
+    // 少了补那一步，这个人物直接从画面上消失，只剩脚下一圈辨识环。
+    expect(rigOf(graph, character.id)).toBeUndefined();
+    expect(placeholderOf(graph, character.id).geometry.shape).toBe('capsule');
+    expect(graph.nodeFor(character.id)?.children).toHaveLength(2);
+  });
+
+  it('loads the rig again after leaving the capsule build', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene({ bodyType: 'capsule' });
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+    await flush();
+
+    graph.sync({ ...scene, objects: [{ ...character, bodyType: 'average' }] });
+    await flush();
+
+    // 退回占位体时那本「已经请求过了」的账要一起销掉：不销的话，用户切回标准体型
+    // 之后这个人物永远停在胶囊上，而属性面板明明显示的是标准。
+    expect(rigOf(graph, character.id)).toBeDefined();
+  });
+
+  it('drops a rig that arrives after the character became a capsule', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { factory } = rigFactory(three, ['Idle_Loop'], gate);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+    await flush();
+    // 模型还悬在闸后面：这一刻画面上是占位体，请求在飞。
+    expect(rigOf(graph, character.id)).toBeUndefined();
+
+    graph.sync({ ...scene, objects: [{ ...character, bodyType: 'capsule' }] });
+    release();
+    await flush();
+
+    // 在途的那份模型必须自己丢掉。只在发请求那一刻分叉是不够的：模型回来时只认
+    // 「节点还在树上吗」的话，它会把用户刚要的胶囊换成木偶——而用户什么都没再动，
+    // 画面自己跳了一下。
+    expect(rigOf(graph, character.id)).toBeUndefined();
+    expect(placeholderOf(graph, character.id).geometry.shape).toBe('capsule');
+  });
+
+  it('keeps a single rig when the capsule build is left and re-entered mid-load', async () => {
+    const three = fakeThree();
+    const root = new three.Group();
+    const graph = new PrevizSceneGraph(three, root);
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { factory } = rigFactory(three, ['Idle_Loop'], gate);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+    graph.sync({ ...scene, objects: [{ ...character, bodyType: 'capsule' }] });
+    graph.sync({ ...scene, objects: [{ ...character, bodyType: 'average' }] });
+    release();
+    await flush();
+
+    // 用户在加载途中切出去又切回来，于是同一个节点上有两次请求先后回来。换模型那段
+    // 只删占位体、不删已经挂上的 rig，所以第二份会直接叠上去——两副骨架同时在场，
+    // 每帧解算两遍，而画面上只是稍微「厚」了一点，看不出来。
+    const rigs = graph.nodeFor(character.id)?.children.filter((child) => child.userData.previzRig);
+    expect(rigs).toHaveLength(1);
+    expect(graph.nodeFor(character.id)?.children).toHaveLength(2);
+  });
+
+  it('gives the placeholder a head so it reads as a person and not a pill', () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+
+    const scene = characterScene({ bodyType: 'capsule', heightCm: 180 });
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+
+    const capsule = placeholderOf(graph, character.id);
+    const head = headOf(capsule);
+    expect(head.geometry.shape).toBe('sphere');
+    // 够圆：SphereGeometry(radius, widthSegments, heightSegments) 的段数掉到个位数
+    // 就是个多面体疙瘩，而下面那些尺寸断言照样绿。
+    expect(head.geometry.args[1]).toBeGreaterThanOrEqual(8);
+    expect(head.geometry.args[2]).toBeGreaterThanOrEqual(6);
+    // 头比肩窄。反过来就成了个顶着大球的葫芦。
+    const headRadius = head.geometry.args[0]!;
+    expect(headRadius).toBeGreaterThan(0);
+    expect(headRadius).toBeLessThan(capsule.geometry.args[0]!);
+
+    // 断言的是性质：球顶正好落在身高线上。球是胶囊这个 Mesh 的**子节点**，两级
+    // position 要一起算——顶出去就等于给这个人凭空加了一截身高，聚焦时的包围盒
+    // （`view.ts` 的取景距离读的就是它）跟着一起错。1.8 是这条用例自己给的输入。
+    expect(capsule.position.y + head.position.y + headRadius).toBeCloseTo(1.8, 6);
+  });
+
+  it('moves the head with the capsule when heightCm changes', () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+
+    const scene = characterScene({ bodyType: 'capsule', heightCm: 150 });
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+    const shortHead = headOf(placeholderOf(graph, character.id));
+
+    graph.sync({ ...scene, objects: [{ ...character, heightCm: 190 }] });
+
+    // 拖身高滑杆时头要跟着走。把球头的高度写成一个与身高无关的常量，上面那条用例
+    // 照样绿——它只喂了一个身高。
+    const capsule = placeholderOf(graph, character.id);
+    const head = headOf(capsule);
+    expect(capsule.position.y + head.position.y + head.geometry.args[0]!).toBeCloseTo(1.9, 6);
+    // 而且旧的那颗球要还资源，不是留在树上按帧漏。
+    expect(shortHead.geometry.dispose).toHaveBeenCalled();
+    expect(shortHead.material.dispose).toHaveBeenCalled();
+  });
+
+  it("paints the placeholder head in the character's own colour too", () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+
+    const scene = characterScene({ bodyType: 'capsule', color: '#ff0000' });
+    const character = scene.objects[0]!;
+    if (character.kind !== 'character') throw new Error('expected a character');
+    graph.sync(scene);
+    const head = headOf(placeholderOf(graph, character.id));
+    expect(head.material.params.color).toBe('#ff0000');
+
+    graph.sync({ ...scene, objects: [{ ...character, color: '#00ff00' }] });
+
+    // 回色是**逐网格**读各自那份 `previzPlaceholderColor` 的，只把新颜色记到胶囊
+    // 身上的话，改完色场上站的是一个绿身子顶着红脑袋的人。
+    expect(head.userData.previzPlaceholderColor).toBe('#00ff00');
+    expect(head.material.color.getHex()).toBe(0x00ff00);
+  });
+
   it('swaps the placeholder box for the loaded prop model', async () => {
     const three = fakeThree();
     const root = new three.Group();

@@ -42,6 +42,15 @@ export const PREVIZ_TRANSLUCENT_OPACITY = 0.35;
  */
 export const PREVIZ_PLACEHOLDER_RADIUS = 0.22;
 
+/**
+ * 占位体那颗球头的半径，占胶囊半径的几成。0.9 没有推导，是照 upstream 的观感取的：
+ * 比肩宽窄一档，大到远看认得出是个头，小到不至于把胶囊顶成一个葫芦。
+ *
+ * 它必须小于 1：球心落在「头顶往下一个球半径」处，取 1 的话球心正好在胶囊那颗上半球的
+ * 球心上，球被整个吞进胶囊里——画面上又是一根光胶囊，而所有尺寸断言照样绿。
+ */
+const PLACEHOLDER_HEAD_RADIUS_RATIO = 0.9;
+
 /** 全灰模式的统一颜色。 */
 const CLAY_COLOR = 0xb9bec8;
 
@@ -112,6 +121,15 @@ export class PrevizSceneGraph {
   /** 由 `PrevizRenderer.create()` 注入；没注入时人物一直用占位胶囊。 */
   private characterRig: CharacterRigFactory | null = null;
   private onModelReady: (() => void) | null = null;
+  /**
+   * 人物模型请求的流水号发号器。每发一次请求就给那个节点记一个新号，模型回来时号对
+   * 不上就整份丢掉（见 `swapInCharacterModel`）。
+   *
+   * 它替掉了原来那个「请求过没有」的布尔，而不是与之并存：作废一次在途请求和允许下一次
+   * 重发本来就是同一件事，拆成两份状态迟早有一处忘了同步，而忘一处的代价是人物永久停在
+   * 胶囊上，或者同一个节点上叠两副骨架。
+   */
+  private rigToken = 0;
   /** 由 `PrevizRenderer.create()` 注入；没注入时物件一直用占位方块。 */
   private propLoader: PropLoader | null = null;
 
@@ -235,12 +253,14 @@ export class PrevizSceneGraph {
 
       const rig = this.characterRig;
       // 拿名字接住这个返回值：`syncCharacterRig(...)` 直接写在 if 里，读起来像
-      // 「sync 成功没有」，而它答的是「辨识色这一次重染了没有」。
-      const retinted =
+      // 「sync 成功没有」，而它答的是「这个节点这一帧要不要补一次显示模式」。
+      const needsDisplayPass =
         object.kind === 'character' && rig && this.syncCharacterRig(rig, node, object);
-      if (retinted) {
-        // 辨识色刚重染过：材质的颜色是本色，而当前显示模式未必要本色（全灰要盖回
-        // 水泥灰）。少了这一步，全灰模式下改一次颜色就跳出一个染了色的人。
+      if (needsDisplayPass) {
+        // 两种情形共用这一条路：辨识色刚重染过——材质里是本色，而当前显示模式未必要
+        // 本色（全灰要盖回水泥灰）；或者刚退回占位体——新材质是按「实心」建出来的，
+        // 半透明场景里它会一直停在实心态。少了这一步，全灰模式下改一次颜色就跳出
+        // 一个染了色的人。
         pending.push(node);
       }
       const loader = this.propLoader;
@@ -280,10 +300,11 @@ export class PrevizSceneGraph {
 
   /**
    * 人物的真模型是异步来的：第一次见到这个节点时发一次请求，回来再把占位胶囊换掉。
+   * 返回的是「这个节点这一帧要不要补一次显示模式」。
    *
-   * 「已经请求过了」这个标记记在**节点**上，而不是记在一张按对象 id 的表里：撤销一次
-   * 删除会让同一个 id 带着一个全新的节点回来，按 id 记的话那个人物就永远停在占位胶囊上。
-   * 请求失败时标记会被清掉（见 `swapInCharacterModel`），下一次 sync 就是一次重试。
+   * 「当前有效的那一次请求」这个流水号记在**节点**上，而不是记在一张按对象 id 的表里：
+   * 撤销一次删除会让同一个 id 带着一个全新的节点回来，按 id 记的话那个人物就永远停在
+   * 占位胶囊上。请求失败时号会被销掉（见 `swapInCharacterModel`），下一次 sync 就是一次重试。
    *
    * 模型到位之后 `resizePlaceholder` 就再也帮不上忙了——占位体已经被删掉，它直接早退——
    * 身高与体型改由 rig 的缩放接手；少了这一条，属性面板的身高滑杆对已加载的人物完全失效。
@@ -293,6 +314,11 @@ export class PrevizSceneGraph {
     node: THREE.Object3D,
     character: PrevizCharacter,
   ): boolean {
+    // 「简化圆柱体」不是一档胖瘦，是「这个人物不要 GLB」：场上人一多，几十副骨架每帧的
+    // 姿势解算比几何体本身贵得多，这一档就是让人先把走位摆出来。所以分叉排在发请求
+    // **之前**——下完再丢掉的话，二十个人照样把模型和三份动画库都拉一遍，这一档存在的
+    // 全部理由就没了。
+    if (character.bodyType === 'capsule') return this.revertToPlaceholder(node, character);
     const model = node.children.find((child) => child.userData.previzRig);
     if (model) {
       // 姿势、身高体型、姿态微调、辨识色一起刷。只刷缩放的话，属性面板的「基础姿势」
@@ -300,22 +326,56 @@ export class PrevizSceneGraph {
       // 返回的是「辨识色这一次重染过没有」——重染过就要补一次显示模式。
       return rig.applyCharacter(model, character);
     }
-    if (node.userData.previzRigRequested) return false;
-    node.userData.previzRigRequested = true;
-    void this.swapInCharacterModel(rig, node, character);
+    if (node.userData.previzRigToken !== undefined) return false;
+    const token = ++this.rigToken;
+    node.userData.previzRigToken = token;
+    void this.swapInCharacterModel(rig, node, character, token);
     return false;
+  }
+
+  /**
+   * 把人物退回占位形态：摘掉已经挂上的 rig，缺占位体就补一个。返回是否真的动过树
+   * ——动过的话调用方要给这个节点补一次显示模式，新建的占位材质是按「实心」出厂的。
+   *
+   * 摘 rig 与补占位体缺一不可：只摘不补，这个人物直接从画面上消失，只剩脚下一圈辨识环；
+   * 只补不摘，胶囊套在木偶身上两层叠着。
+   */
+  private revertToPlaceholder(node: THREE.Object3D, character: PrevizCharacter): boolean {
+    let changed = false;
+    for (const child of [...node.children]) {
+      if (!child.userData.previzRig) continue;
+      node.remove(child);
+      disposeSubtree(child);
+      changed = true;
+    }
+    // 销掉这个节点上当前有效的请求号。两件事都靠它：一是用户切回标准体型时
+    // `syncCharacterRig` 要能重新发一次请求（不销的话那个人物永远停在胶囊上，而属性
+    // 面板明明显示的是标准）；二是切成胶囊那一刻**正在飞**的那次请求回来之后会认出
+    // 自己已经作废——见 `swapInCharacterModel` 里那道对号。
+    node.userData.previzRigToken = undefined;
+    if (!node.children.some((child) => child.userData.previzPlaceholder)) {
+      node.add(this.createPlaceholder(character));
+      changed = true;
+    }
+    return changed;
   }
 
   private async swapInCharacterModel(
     rig: CharacterRigFactory,
     node: THREE.Object3D,
     character: PrevizCharacter,
+    token: number,
   ): Promise<void> {
     const model = await rig.build(character);
+    // 号对不上说明这一次请求在途中作废了：用户把体型切成了简化圆柱体，或者切出去又
+    // 切回来、已经另发了一次请求。前者照挂会把用户刚要的胶囊换成木偶，用户什么都没动
+    // 画面自己跳一下；后者会让同一个节点上叠两副骨架，因为下面那段只删占位体、
+    // 不删已经挂上的 rig——两副同时解算，而画面上只是稍微「厚」了一点，看不出来。
+    if (node.userData.previzRigToken !== token) return;
     if (!model) {
-      // 加载失败：占位胶囊留着，并且把标记清掉——用户改一次属性触发的下一次 sync
+      // 加载失败：占位胶囊留着，并且把号销掉——用户改一次属性触发的下一次 sync
       // 就等于一次重试，否则一次网络抖动能把这个人物永久钉死在胶囊上。
-      node.userData.previzRigRequested = false;
+      node.userData.previzRigToken = undefined;
       return;
     }
     // 加载期间对象可能已经被删了，或者渲染器整个 dispose 了：那时节点已经从对象根上
@@ -458,7 +518,14 @@ export class PrevizSceneGraph {
     const placeholder = node.children.find((child) => child.userData.previzPlaceholder);
     if (!placeholder) return false;
     if (placeholder.userData.previzPlaceholderColor === character.color) return false;
-    placeholder.userData.previzPlaceholderColor = character.color;
+    // 走整棵占位子树而不是只改根上那一份：球头是胶囊的子节点，自带一份材质，而
+    // `applyDisplayMode` 是**逐网格**读各自那份 `previzPlaceholderColor` 回色的。
+    // 只改胶囊的话，改完色场上站的是一个换了身子没换头的两色人。
+    placeholder.traverse((child) => {
+      if (child.userData.previzPlaceholder) {
+        child.userData.previzPlaceholderColor = character.color;
+      }
+    });
     // 这里**不**照 `applyTint` 的手法把 `previzOriginalColor` 那笔账 delete 掉：那边改完
     // 材质里就是新本色，重记一份记到的还是本色；这边故意不碰材质（全灰下直接染会跳出
     // 一个染了色的胶囊），删掉之后 `applyDisplayMode` 立刻会把**水泥灰**当本色记进去，
@@ -553,7 +620,43 @@ export class PrevizSceneGraph {
     mesh.userData.previzPlaceholderColor = color;
     // 建这个胶囊时用的是哪个身高。`resizePlaceholder` 靠它判断要不要重建。
     if (heightCm !== undefined) mesh.userData.previzPlaceholderHeightCm = heightCm;
+    // 人物的占位体是「胶囊 + 球头」而不是一根光胶囊：胶囊上下对称，光看它认不出头在
+    // 哪一头，而「简化圆柱体」这一档人物是要一直停在占位体上的（不加载 GLB），不是
+    // 只撑那几秒。灯球与物件方块不需要，它们本来就没有头脚之分。
+    if (object.kind === 'character') mesh.add(this.createPlaceholderHead(object, color));
     return mesh;
+  }
+
+  /**
+   * 占位胶囊头顶那颗球。挂在**胶囊这个 Mesh 底下**，而不是做它的兄弟：`resizePlaceholder`
+   * 与 `swapInCharacterModel` 都只扫对象节点的**直接**子节点找 `previzPlaceholder`
+   * （两处的注释都写死了这一点），做成兄弟就得在两处各补一次；挂进胶囊里，重建与换模型
+   * 都自动连它一起走。
+   *
+   * 于是这里的 y 是在**胶囊自己的局部坐标**里算的，不是对象节点的：胶囊以自身原点为
+   * 中心、总高正好是身高，头顶落在 y = height / 2。球心从那里往下挪一个球半径，球顶
+   * 就贴着身高线——顶出去等于给这个人凭空加了一截身高，而 `PrevizRenderer` 聚焦时量的
+   * 是节点的世界包围盒，取景距离会跟着一起错。
+   */
+  private createPlaceholderHead(
+    character: PrevizCharacter,
+    color: number | string,
+  ): THREE.Object3D {
+    const three = this.three;
+    const height = clampToRange(character.heightCm, PREVIZ_HEIGHT_CM_RANGE) / 100;
+    const radius = PREVIZ_PLACEHOLDER_RADIUS * PLACEHOLDER_HEAD_RADIUS_RATIO;
+    const head = new three.Mesh(
+      new three.SphereGeometry(radius, 16, 12),
+      new three.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.05 }),
+    );
+    head.position.set(0, height / 2 - radius, 0);
+    head.userData.previzPlaceholderHead = true;
+    // 球头也算一份占位体。少了这个标记，`applyDisplayMode` 回色时走不到占位体那一支，
+    // 转而去读材质上那笔 `previzOriginalColor` 的账——改过辨识色之后那笔账记的还是
+    // 建出来时的旧颜色，于是场上站着一个换了身子没换头的两色人。
+    head.userData.previzPlaceholder = true;
+    head.userData.previzPlaceholderColor = color;
+    return head;
   }
 
   /**
