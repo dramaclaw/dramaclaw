@@ -127,6 +127,11 @@ from novelvideo.freezone.audio_node import (
     resolve_user_audio_voice,
 )
 from novelvideo.freezone.canvas_lock import CanvasLockBusy
+from novelvideo.freezone.canvas_media_scope import (
+    CanvasMediaScopeError,
+    reject_new_foreign_media_refs,
+    scan_foreign_media_refs,
+)
 from novelvideo.freezone.canvas_static_urls import (
     migrate_canvas_static_urls_in_memory,
     sanitize_project_local_paths_in_memory,
@@ -12508,6 +12513,11 @@ async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_
     )
     if editing_by:
         response["editing_by"] = editing_by
+    # 历史遗留的外项目引用不拦保存,只在读取期报出来:前端据此把节点显示成
+    # 「素材属于其他项目」并给修复入口,不再只给一片裂图。同样挂在 `data` 之外。
+    foreign_media = scan_foreign_media_refs(response["data"], project_id=ctx.project_id)
+    if foreign_media:
+        response["foreign_media"] = [ref.as_dict() for ref in foreign_media]
     return response
 
 
@@ -12767,6 +12777,11 @@ async def put_canvas(
             user=user,
         )
         _stamp_canvas_mainline_context_project_id(prepared, project)
+        # 静态资源按 URL 里的项目 id 独立鉴权:画布存下别的项目的媒体地址,源项目成员
+        # 看着一切正常,换个同样合法的本项目成员打开就是整片 403(SuperTale#192)。
+        # 只拦本次新引入的,库里已有的历史脏引用照常放行——否则一个脏节点就能把整张
+        # 老画布永久锁死,而那些画布正是本守卫要解决的问题的受害者。
+        reject_new_foreign_media_refs(prepared, existing=existing, project_id=ctx.project_id)
         return prepared
 
     try:
@@ -12785,6 +12800,16 @@ async def put_canvas(
             save_source=body.save_source,
             allow_empty_overwrite=body.allow_empty_overwrite,
         )
+    except CanvasMediaScopeError as exc:
+        # 前端据此调 assets/copy 把素材拷进本项目,改写节点后重试保存(自愈)。
+        raise HTTPException(
+            422,
+            {
+                "code": "canvas_media_scope_mismatch",
+                "project_id": ctx.project_id,
+                "refs": [ref.as_dict() for ref in exc.refs],
+            },
+        ) from exc
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
     payload = saved_canvas.payload

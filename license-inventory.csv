@@ -1614,6 +1614,7 @@ src/novelvideo/freezone/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUS
 src/novelvideo/freezone/asset_copy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/audio_node.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_lock.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/canvas_media_scope.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_static_urls.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_store.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/history.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1988,6 +1989,7 @@ tests/test_billing_identity_error.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_block_world_node_unavailable.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_build_style_gallery.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_bump_compose_default.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_canvas_media_scope.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_scene_refs_override.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ce_allowlist.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ce_imports_lint.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
