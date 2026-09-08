@@ -138,6 +138,27 @@ export class PrevizSceneGraph {
   }
 
   /**
+   * 挂在对象节点下面的那批「画在场景里的界面」在镜头里的开关：人物脚下的辨识环与
+   * 朝向箭头、机位的机身与视锥。
+   *
+   * 它们和 scene 上那批 `previzEditorOnly` 是同一件事，却够不着同一个循环——那个循环
+   * 扫的是 scene 的**直接**子节点，而这两样都隔着一层对象节点。少了这一趟，用户拿到的
+   * 成片里就有一圈蓝环和满屏的机位锥体线：录制那条路以为自己已经把辅助物藏干净了。
+   *
+   * 只走对象节点的直接子节点，不 traverse 整棵树：标记与机身建出来就挂在这一层
+   * （见 `createNode` / `createPlaceholder`），再往下是人物 GLB 的几百根骨头，白走。
+   */
+  setFurnitureVisible(visible: boolean): void {
+    for (const node of this.root.children) {
+      for (const child of node.children) {
+        if (child.userData.previzMarker || child.userData.previzCameraModel) {
+          child.visible = visible;
+        }
+      }
+    }
+  }
+
+  /**
    * 把某一帧的姿势推到人物的模型上。求值器每帧给出姿势与姿势内时间，沿路径走位的人物
    * 靠它真的迈腿。模型还没到（还是占位胶囊）或者没接工厂时无事可做：模型到位那一刻
    * 渲染器会把当前帧重放一遍。

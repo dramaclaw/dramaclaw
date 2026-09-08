@@ -160,15 +160,18 @@ export function createInfiniteGrid(three: ThreeModule): THREE.Mesh {
   grid.rotation.x = -Math.PI / 2;
   grid.renderOrder = -1;
   grid.userData.previzGrid = true;
+  // 地面是编辑期的空间参照，不是布景：镜头里不该有它。打上这个标记，出片、录制与
+  // 监看那几趟 pass 就会连同轨迹曲线一起把它藏掉（见 `setEditorHelpersVisible`）。
+  grid.userData.previzEditorOnly = true;
   // 地面铺满整个视野，留着默认的射线检测会让每一次空点都命中它，于是永远点不到「空白」。
   grid.raycast = () => {};
   // 平面每趟都要挪到当时那台相机脚下，视锥剔除按的却是挪之前的位置；关掉它，
   // 免得网格在自己被摆正之前就被判成「在画面外」而整片消失。
   grid.frustumCulled = false;
 
-  // 跟随挂在 onBeforeRender 上，而不是在每个渲染调用点手动同步：视口、右下角监看、
-  // 出片截图、机位对话框的取景预览，四趟各用各的相机，逐个接线迟早会漏掉一处，
-  // 而漏掉的那一趟画面里地面会整片消失（网格还停在别的相机脚下）。
+  // 跟随挂在 onBeforeRender 上，而不是在每个渲染调用点手动同步：视口与四视图那三块
+  // 正交预览各用各的相机，逐个接线迟早会漏掉一处，而漏掉的那一趟画面里地面会整片
+  // 消失（网格还停在别的相机脚下）。透镜里的那几趟（出片、录制、监看）压根不画地面。
   const eye = new three.Vector3();
   grid.onBeforeRender = (_renderer, _scene, camera) => {
     // 取世界坐标而不是 camera.position：机位监看那台相机的位姿是从场景节点抄来的，
