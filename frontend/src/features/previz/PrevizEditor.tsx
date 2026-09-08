@@ -41,8 +41,9 @@ import {
 } from "./domain/cameraDraft";
 import { canAddObject } from "./domain/limits";
 import { drawPlaneHeight } from "./domain/pathDraw";
+import { liveCameraAt } from "./domain/program";
 import { uploadPrevizProp } from "./propAsset";
-import { usePrevizStore } from "./store";
+import { monitorCameraId, usePrevizStore } from "./store";
 import { PrevizCameraCreateDialog } from "./ui/PrevizCameraCreateDialog";
 import { PrevizClipInspector } from "./ui/PrevizClipInspector";
 import { PrevizHeaderBar } from "./ui/PrevizHeaderBar";
@@ -53,6 +54,7 @@ import { PrevizQuadPreview } from "./ui/PrevizQuadPreview";
 import { PrevizTimeline } from "./ui/PrevizTimeline";
 import { PrevizToolbar } from "./ui/PrevizToolbar";
 import type { PrevizTool } from "./ui/PrevizToolbar";
+import { useCutToCamera } from "./ui/useCutToCamera";
 import { PrevizHoverTip } from "./ui/PrevizHoverTip";
 import { PrevizViewportControls } from "./ui/PrevizViewportControls";
 import type { PrevizViewSource } from "./ui/PrevizAxisGizmo";
@@ -176,7 +178,11 @@ export function PrevizEditor({
 
   const scene = usePrevizStore((state) => state.scene);
   const selectedObjectId = usePrevizStore((state) => state.selectedObjectId);
-  const activeCameraId = usePrevizStore((state) => state.activeCameraId);
+  /** 监看此刻看的机位：跟随时是镜头轨的直播机位，手选后是 activeCameraId。 */
+  const monitorId = usePrevizStore(monitorCameraId);
+  const monitorFollowsProgram = usePrevizStore((state) => state.monitorFollowsProgram);
+  const followProgram = usePrevizStore((state) => state.followProgram);
+  const cutToCamera = useCutToCamera();
   const canUndo = usePrevizStore((state) => state.past.length > 0);
   const canRedo = usePrevizStore((state) => state.future.length > 0);
   const loadScene = usePrevizStore((state) => state.loadScene);
@@ -209,7 +215,7 @@ export function PrevizEditor({
   // 关掉监看时记住关的是哪一台：右下角那个开关重新打开的必须是同一台机位，
   // 否则机位不止一台的场景里「关掉再打开」会顺手换成第一台。
   const lastMonitoredCameraId = useRef<string | null>(null);
-  if (activeCameraId) lastMonitoredCameraId.current = activeCameraId;
+  if (monitorId) lastMonitoredCameraId.current = monitorId;
   // 这里不套 useMemo：它读的是一个 ref，而 ref 变了不会让 memo 失效，缓存下来的
   // 会一直是首帧那台（那时还没人监看过，也就是第一台）。逐帧过一遍几个对象而已。
   const restorableCameraId = (() => {
@@ -235,9 +241,9 @@ export function PrevizEditor({
 
   /** 监看字幕要读机位自己的焦距与传感器，所以取的是对象而不只是 id。 */
   const monitoredCamera = useMemo(() => {
-    const object = scene.objects.find((entry) => entry.id === activeCameraId);
+    const object = scene.objects.find((entry) => entry.id === monitorId);
     return object?.kind === "camera" ? object : null;
-  }, [scene.objects, activeCameraId]);
+  }, [scene.objects, monitorId]);
 
   /**
    * 坐标轴小球读的视角。存在 ref 里、由订阅推给那一颗组件，而不是做成 state：轨道
@@ -286,8 +292,8 @@ export function PrevizEditor({
    */
   const quadCamera = useMemo(() => {
     const cameras = scene.objects.filter((object) => object.kind === "camera");
-    return cameras.find((object) => object.id === activeCameraId) ?? cameras[0];
-  }, [scene.objects, activeCameraId]);
+    return cameras.find((object) => object.id === monitorId) ?? cameras[0];
+  }, [scene.objects, monitorId]);
   const quadCameraId = quadCamera?.id ?? null;
 
   const canAdd = useMemo(
@@ -366,8 +372,13 @@ export function PrevizEditor({
   }, [renderer, selectedObjectId]);
 
   useEffect(() => {
-    renderer?.setActiveCamera(activeCameraId);
-  }, [renderer, activeCameraId]);
+    renderer?.setActiveCamera(monitorId);
+  }, [renderer, monitorId]);
+
+  // 直播机位的红框：跟着播放头走，切片一换就换。
+  useEffect(() => {
+    renderer?.setLiveCamera(liveCameraAt(scene, timelineFrame));
+  }, [renderer, scene, timelineFrame]);
 
   useEffect(() => {
     renderer?.setGizmoMode(gizmoMode);
@@ -721,6 +732,11 @@ export function PrevizEditor({
         return;
       }
 
+      // 机位创建对话框之类的嵌套弹窗开着时，按键是给它的。编辑器自己的 DialogContent
+      // 带 data-previz-editor，只放行落在它里面（而不是更里层 dialog 里）的按键。
+      const dialog = (event.target as Element | null)?.closest?.('[role="dialog"]');
+      if (dialog && !dialog.hasAttribute("data-previz-editor")) return;
+
       const store = usePrevizStore.getState();
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
@@ -729,6 +745,17 @@ export function PrevizEditor({
         return;
       }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      // 1–9 按机位在对象列表里的顺序切镜；没有那一台就当没按。
+      if (/^[1-9]$/.test(event.key)) {
+        const cameras = store.scene.objects.filter((object) => object.kind === "camera");
+        const camera = cameras[Number(event.key) - 1];
+        if (camera) {
+          event.preventDefault();
+          cutToCamera(camera.id);
+        }
+        return;
+      }
 
       switch (event.key.toLowerCase()) {
         case "f":
@@ -779,7 +806,7 @@ export function PrevizEditor({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, renderer]);
+  }, [open, renderer, cutToCamera]);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -787,6 +814,7 @@ export function PrevizEditor({
         className="inset-0 left-0 top-0 h-dvh w-dvw max-w-none translate-x-0 translate-y-0 overflow-hidden rounded-none border-0 p-0 ring-0 sm:max-w-none"
         overlayClassName="bg-black/55 supports-backdrop-filter:backdrop-blur-none"
         showCloseButton={false}
+        data-previz-editor=""
       >
         <DialogHeader className="sr-only">
           <DialogTitle>{t("previz.editor.title")}</DialogTitle>
@@ -956,11 +984,13 @@ export function PrevizEditor({
                   onSize={setMonitorSize}
                   onShowOutline={setShowOutline}
                   onShowNamePlate={setShowNamePlate}
+                  following={monitorFollowsProgram}
+                  onFollow={followProgram}
                   onClose={() => setActiveCamera(null)}
                 />
               )}
 
-              {!activeCameraId && restorableCameraId && (
+              {!monitorId && restorableCameraId && (
                 /*
                   监看关掉之后留在原地的开关。没有画中画可以贴，就贴画布自己的右下角。
                   和上面那个叉是同一个位置量级，于是「关」和「开」在视觉上是同一颗按钮。
@@ -1066,7 +1096,7 @@ export function PrevizEditor({
               <PrevizLayerPanel
                 objects={scene.objects}
                 selectedId={selectedObjectId}
-                activeCameraId={activeCameraId}
+                activeCameraId={monitorId}
                 onSelect={selectObject}
                 onToggleVisible={(id) => {
                   const object = scene.objects.find((entry) => entry.id === id);

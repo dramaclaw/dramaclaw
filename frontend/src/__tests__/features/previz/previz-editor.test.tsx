@@ -1661,3 +1661,106 @@ describe("PrevizEditor mark tool", () => {
     expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(0);
   });
 });
+
+describe("program follow", () => {
+  function renderWithCameras(): { camA: string; camB: string } {
+    const scene = createDefaultScene();
+    const camA = createPrevizObject("camera", scene.objects);
+    const camB = createPrevizObject("camera", [camA]);
+    scene.objects.push(camA, camB);
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+    return { camA: camA.id, camB: camB.id };
+  }
+
+  it("moves the monitor to the camera the program cuts to", async () => {
+    const { camB } = renderWithCameras();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().cutToCamera(camB);
+    });
+    expect(setActiveCamera).toHaveBeenLastCalledWith(camB);
+    expect(setLiveCamera).toHaveBeenLastCalledWith(camB);
+    expect(screen.getByTestId("previz-monitor-frame")).toBeInTheDocument();
+  });
+
+  it("stops following on a hand-picked camera and resumes from the follow button", async () => {
+    const user = userEvent.setup();
+    const { camA, camB } = renderWithCameras();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().cutToCamera(camB);
+      usePrevizStore.getState().setActiveCamera(camA);
+    });
+    expect(setActiveCamera).toHaveBeenLastCalledWith(camA);
+    const follow = screen.getByTestId("previz-monitor-follow");
+    expect(follow).toHaveAccessibleName("previz.monitor.follow");
+    await user.click(follow);
+    expect(usePrevizStore.getState().monitorFollowsProgram).toBe(true);
+    expect(setActiveCamera).toHaveBeenLastCalledWith(camB);
+    const following = screen.getByTestId("previz-monitor-follow");
+    expect(following).toBeDisabled();
+    expect(following).toHaveAccessibleName("previz.monitor.following");
+  });
+
+  it("cuts to the nth camera on a digit key", async () => {
+    const { camB } = renderWithCameras();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "2", bubbles: true }));
+    });
+    expect(usePrevizStore.getState().scene.timeline.program).toMatchObject([{ cameraId: camB }]);
+    // 没有第九台机位：什么都不发生，也不报错。
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "9", bubbles: true }));
+    });
+    expect(usePrevizStore.getState().scene.timeline.program).toHaveLength(1);
+  });
+
+
+  it("still cuts from a digit key pressed inside the editor dialog", async () => {
+    const { camA } = renderWithCameras();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    // 编辑器自己也是个 role="dialog"，嵌套弹窗守卫不能顺手把它自己的按键一起挡掉。
+    act(() => {
+      screen
+        .getByTestId("previz-canvas")
+        .dispatchEvent(new KeyboardEvent("keydown", { key: "1", bubbles: true }));
+    });
+    expect(usePrevizStore.getState().scene.timeline.program).toMatchObject([{ cameraId: camA }]);
+  });
+
+  it("ignores digit keys typed into an input", async () => {
+    renderWithCameras();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "1", bubbles: true }));
+    });
+    expect(usePrevizStore.getState().scene.timeline.program).toEqual([]);
+    input.remove();
+  });
+
+  it("ignores digit keys inside a nested dialog", async () => {
+    renderWithCameras();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    const inner = document.createElement("button");
+    dialog.appendChild(inner);
+    document.body.appendChild(dialog);
+    act(() => {
+      inner.dispatchEvent(new KeyboardEvent("keydown", { key: "1", bubbles: true }));
+    });
+    expect(usePrevizStore.getState().scene.timeline.program).toEqual([]);
+    dialog.remove();
+  });
+});

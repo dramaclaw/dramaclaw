@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useId } from "react";
-import { Maximize2, Minimize2, Square, Tag, X } from "lucide-react";
+import { Maximize2, Minimize2, Radio, Square, Tag, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import type { MonitorRect, MonitorSize } from "@/features/previz/engine/cameraRig";
@@ -25,6 +25,10 @@ export interface PrevizMonitorFrameProps {
   onSize: (size: MonitorSize) => void;
   onShowOutline: (show: boolean) => void;
   onShowNamePlate: (show: boolean) => void;
+  /** 监看正跟着镜头轨走；按钮变成灰的「跟随中」。 */
+  following: boolean;
+  /** 手选过机位之后点它回到跟随。 */
+  onFollow: () => void;
   onClose: () => void;
 }
 
@@ -54,6 +58,8 @@ export function PrevizMonitorFrame({
   onSize,
   onShowOutline,
   onShowNamePlate,
+  following,
+  onFollow,
   onClose,
 }: PrevizMonitorFrameProps) {
   const { t } = useTranslation();
@@ -61,6 +67,7 @@ export function PrevizMonitorFrame({
 
   const enlarged = size === "large";
   const sizeLabel = t(enlarged ? "previz.monitor.restore" : "previz.monitor.enlarge");
+  const followLabel = t(following ? "previz.monitor.following" : "previz.monitor.follow");
 
   return (
     <div
@@ -141,6 +148,22 @@ export function PrevizMonitorFrame({
               ) : (
                 <Maximize2 className="h-3.5 w-3.5" />
               )}
+            </button>
+          </PrevizHoverTip>
+          {/*
+            跟随中就把按钮禁掉：它此刻是个状态灯而不是开关，按下去也只会把已经是 true 的
+            跟随再设一遍。要脱离跟随得去点某台机位——那才是「我要看这一台」的真实意图。
+          */}
+          <PrevizHoverTip label={followLabel}>
+            <button
+              type="button"
+              data-testid="previz-monitor-follow"
+              aria-label={followLabel}
+              className={cn(CHIP, following && CHIP_ON)}
+              disabled={following}
+              onClick={onFollow}
+            >
+              <Radio className="h-3.5 w-3.5" />
             </button>
           </PrevizHoverTip>
           <PrevizHoverTip label={t("previz.editor.hideMonitor")}>
