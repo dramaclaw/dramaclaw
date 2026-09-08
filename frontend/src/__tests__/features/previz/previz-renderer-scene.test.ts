@@ -994,13 +994,20 @@ describe('PrevizRenderer 接场景图', () => {
     type Traversable = {
       traverse(callback: (object: { userData: Record<string, unknown>; visible: boolean }) => void): void;
     };
-    let seen: boolean[] = [];
+    let seen: boolean[][] = [];
     render.mockImplementation((target: unknown) => {
+      const pass: boolean[] = [];
       (target as Traversable).traverse((object) => {
-        if (object.userData.previzEditorOnly) seen.push(object.visible);
+        if (object.userData.previzEditorOnly) pass.push(object.visible);
       });
+      seen.push(pass);
     });
-    const helperVisibility = () => seen;
+    /**
+     * 每趟 pass 收一格：这一趟里的辅助物是不是全都看得见。一个都没扫到记 `null`——
+     * 空数组的 `every` 是 true，不区分的话「标记全丢了」会伪装成「全都看得见」。
+     */
+    const helperVisibility = () =>
+      seen.map((pass) => (pass.length === 0 ? null : pass.every(Boolean)));
 
     seen = [];
     instance.requestRender();
@@ -1667,6 +1674,79 @@ describe('PrevizRenderer recording', () => {
     expect(helpersHidden()).toBe(false);
   });
 
+  /** 出片画面里不该出现的三样东西各自的标记。 */
+  const FURNITURE = ['previzGrid', 'previzMarker', 'previzCameraModel'] as const;
+  type FurnitureNode = {
+    userData: Record<string, unknown>;
+    visible: boolean;
+    children?: FurnitureNode[];
+  };
+  type Tally = Record<(typeof FURNITURE)[number], { found: number; drawn: number }>;
+
+  /**
+   * 数一遍这棵树上的辅助物：找到几个、其中几个真画得出来。
+   *
+   * 看的是**有效**可见性，自己走一趟而不是用 three 的 `traverse`：只要有一级祖先关了
+   * three 就整棵不画，而辨识环是整组藏起来的，环与箭头自己那面开关一直没动过——只看
+   * 节点自己的 `visible`，藏得好好的东西会报成露在画面里。
+   */
+  function tallyFurniture(root: FurnitureNode): Tally {
+    const tally = Object.fromEntries(
+      FURNITURE.map((key) => [key, { found: 0, drawn: 0 }]),
+    ) as Tally;
+    const walk = (node: FurnitureNode, inherited: boolean) => {
+      const drawn = inherited && node.visible;
+      for (const key of FURNITURE) {
+        if (!node.userData[key]) continue;
+        tally[key].found += 1;
+        if (drawn) tally[key].drawn += 1;
+      }
+      for (const child of node.children ?? []) walk(child, drawn);
+    };
+    walk(root, true);
+    return tally;
+  }
+
+  it('keeps the ground, the markers and the camera models out of recorded frames', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const scene = createDefaultScene();
+    const hero = createPrevizObject('character', scene.objects);
+    const cam = createPrevizObject('camera', [hero]);
+    instance.setScene({ ...scene, objects: [hero, cam] });
+    step();
+
+    /*
+      成片里只该有布景与演员。地面网格是编辑期的空间参照，人物脚下那圈辨识环是画在
+      场景里的界面，机位的机身与视锥是器材——三样都不是镜头里的东西，用户拿到的 9:16
+      成片里却三样俱全（环与锥体尤其扎眼，锥体的线糊满整幅画）。
+
+      必须在 `render()` 被调用的**那一刻**取样：藏起来是借的，pass 结束就还回去了，
+      事后翻 mock.calls 里那个场景对象，读到的永远是还完之后的状态。
+    */
+    let tally: Tally | null = null;
+    render.mockImplementation((target: unknown) => {
+      tally = tallyFurniture(target as FurnitureNode);
+    });
+
+    const pass = instance.startRecording('global', null)!;
+    pass.drawFrame(0, null);
+
+    for (const key of FURNITURE) {
+      // 先确认真找着了：找不到的话「一个都没画」是空欢喜，标记改名就悄悄失效。
+      expect(tally![key].found, key).toBeGreaterThan(0);
+      expect(tally![key].drawn, key).toBe(0);
+    }
+
+    // 借出去要还：留在隐藏状态，录完一次编辑视图就永久少了地面、辨识环与机位。
+    pass.end();
+    const restored = tallyFurniture(
+      (instance as unknown as { scene: FurnitureNode }).scene,
+    );
+    for (const key of FURNITURE) {
+      expect(restored[key].drawn, key).toBe(restored[key].found);
+    }
+  });
+
   it('ends once, and hands the helpers and the live camera back', async () => {
     const { instance } = await createRenderer({ width: 800, height: 450 });
     const { scene, cam } = sceneWithCamera();
@@ -1680,11 +1760,15 @@ describe('PrevizRenderer recording', () => {
         callback: (object: { userData: Record<string, unknown>; visible: boolean }) => void,
       ): void;
     };
-    const helpersSeen: boolean[] = [];
+    // 每趟 pass 收一格：这一趟里的辅助物是不是全都看得见。地面与轨迹预览都挂着这个
+    // 标记，一趟里不止一个，逐个收进同一个平数组的话「几趟」和「几个」就分不开了。
+    const helpersSeen: (boolean | null)[] = [];
     render.mockImplementation((target: unknown) => {
+      const seen: boolean[] = [];
       (target as Traversable).traverse((object) => {
-        if (object.userData.previzEditorOnly) helpersSeen.push(object.visible);
+        if (object.userData.previzEditorOnly) seen.push(object.visible);
       });
+      helpersSeen.push(seen.length === 0 ? null : seen.every(Boolean));
     });
 
     const pass = instance.startRecording('track', cam.id)!;

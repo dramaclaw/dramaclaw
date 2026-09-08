@@ -1077,18 +1077,21 @@ export class PrevizRenderer {
   }
 
   /**
-   * 编辑器自己的辅助物（当下是轨迹曲线与轨迹点）在镜头里的开关。
+   * 编辑器自己的辅助物在镜头里的总开关：地面网格、轨迹曲线与轨迹点、人物脚下的辨识
+   * 环与朝向箭头、机位的机身与视锥。
    *
    * 它们属于编辑视图，不属于镜头：机位停在自己的轨迹上是「机位走位」的常规用法，
    * 而那时轨迹点小球就贴在镜头原点上，监看框与成片都会被一团白糊满。
    *
-   * 按 `previzEditorOnly` 标记扫 scene 的直接子节点，而不是记一份句柄：之后再往
-   * scene 上挂别的辅助物（标尺、安全框），打上标记就自动跟着一起藏。
+   * 分两趟是因为它们挂在两个层级上。scene 的直接子节点按 `previzEditorOnly` 标记扫，
+   * 而不是记一份句柄：之后再往 scene 上挂别的辅助物（标尺、安全框），打上标记就自动
+   * 跟着一起藏。标记与机身则挂在对象节点下面，隔了一层，由场景图自己那趟负责。
    */
   private setEditorHelpersVisible(visible: boolean): void {
     for (const child of this.scene.children) {
       if (child.userData.previzEditorOnly) child.visible = visible;
     }
+    this.graph.setFurnitureVisible(visible);
   }
 
   private start(): void {
