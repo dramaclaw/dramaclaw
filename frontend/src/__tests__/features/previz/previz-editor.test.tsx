@@ -12,6 +12,7 @@ import {
   type PrevizPathClip,
   type Vec3,
 } from "@/features/previz/domain/scene";
+import type { CanvasRecorderOptions } from "@/features/previz/capture/recordTimeline";
 import { PrevizRenderer } from "@/features/previz/engine/PrevizRenderer";
 import { PrevizEditor } from "@/features/previz/PrevizEditor";
 import { usePrevizStore } from "@/features/previz/store";
@@ -113,15 +114,29 @@ vi.mock("@/api/ops", () => ({
   uploadFreezoneAudio: vi.fn(async () => ({ url: "/static/take.mp3" })),
 }));
 
+// 这两个都是 vi.fn 而不是匿名箭头：混音那条线唯一的出口就是「录制器收到了什么
+// options」，桩子不记参数的话，把 `audioStream` 整句删掉测试也照样全绿。
+const createCanvasRecorder = vi.fn(
+  (_canvas: HTMLCanvasElement, _options: CanvasRecorderOptions) => ({
+    start: () => {},
+    stop: async () => new Blob(["take"], { type: "video/mp4" }),
+  }),
+);
+// 按 `withAudio` 分两种容器，跟真实实现一致：一律返回同一个值的话，「有 AudioContext
+// 但没有带音轨的容器」那半边分支永远走不到。
+const pickRecordMimeType = vi.fn(
+  (_isSupported?: unknown, withAudio?: boolean): string | null =>
+    withAudio ? "video/mp4;codecs=avc1.42E01E,mp4a.40.2" : "video/mp4",
+);
+
 // jsdom 里既没有 MediaRecorder 也没有 canvas.captureStream；只换掉碰浏览器 API 的
 // 那两个导出，驱动循环本身走真实实现——这条用例要验的正是它把录制串起来了。
 vi.mock("@/features/previz/capture/recordTimeline", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/features/previz/capture/recordTimeline")>()),
-  pickRecordMimeType: () => "video/mp4",
-  createCanvasRecorder: () => ({
-    start: () => {},
-    stop: async () => new Blob(["take"], { type: "video/mp4" }),
-  }),
+  pickRecordMimeType: (...args: Parameters<typeof pickRecordMimeType>) =>
+    pickRecordMimeType(...args),
+  createCanvasRecorder: (...args: Parameters<typeof createCanvasRecorder>) =>
+    createCanvasRecorder(...args),
 }));
 
 // jsdom 没有 AudioContext，编辑器又只经这三个导出碰它；假一份就够，播放引擎自己的
@@ -130,8 +145,12 @@ const audioDestination = { stream: { getAudioTracks: () => [] } };
 const audioContext = { createMediaStreamDestination: () => audioDestination };
 const audioPlayback = {
   context: audioContext,
-  load: vi.fn(async () => {}),
-  play: vi.fn(async () => {}),
+  load: vi.fn(async (_clips: unknown) => {}),
+  // 形参写全是为了 `mock.calls` 有长度可数：扬声器那一路是三参数、混音那一路带
+  // destination，用例正是靠这个长度把两者分开。
+  play: vi.fn(
+    async (_clips: unknown, _fromFrame: number, _rate: number, _destination?: unknown) => {},
+  ),
   stop: vi.fn(),
   dispose: vi.fn(),
   failedUrls: new Set<string>(),
@@ -2001,6 +2020,12 @@ describe("audio playback and mix", () => {
     expect(audioPlayback.load).toHaveBeenCalledWith(clips);
     expect(audioPlayback.play).toHaveBeenCalledWith(clips, 0, 1, audioDestination);
     expect(audioPlayback.stop).toHaveBeenCalled();
+    // 混音节点得真的交到录制器手里：整条链上只有这一句把声音塞进文件，
+    // 少了它录出来的仍是一段无声视频，而上面几条断言一条都不会红。
+    expect(createCanvasRecorder).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ audioStream: audioDestination.stream }),
+    );
     expect(toast.warning).not.toHaveBeenCalled();
     // 一帧 @ 30fps ≈ 33ms：时长来自真正画出的帧数，不是设置里的总长。
     expect(addDerivedVideoNode).toHaveBeenLastCalledWith(
@@ -2024,6 +2049,61 @@ describe("audio playback and mix", () => {
     expect(toast.warning).toHaveBeenCalledWith("previz.editor.record.noAudioMix");
     expect(audioPlayback.play).not.toHaveBeenCalled();
     expect(addDerivedVideoNode).toHaveBeenCalled();
+  });
+
+  it("records silent video with a warning when no container carries audio", async () => {
+    const user = userEvent.setup();
+    // noAudioMix 的另一半：AudioContext 建得出来，浏览器却没有一种带音轨的容器能编。
+    // 上一条走的是「压根没有 AudioContext」，两半各有各的判断，得分开守。
+    pickRecordMimeType.mockImplementationOnce(() => null);
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().addAudioClip(source, 0);
+    });
+    await recordGlobal(user);
+    expect(toast.warning).toHaveBeenCalledWith("previz.editor.record.noAudioMix");
+    // 退回无声容器接着录，而不是把整次录制取消掉：画面比声音重要得多。
+    expect(pickRecordMimeType).toHaveBeenLastCalledWith();
+    expect(audioPlayback.play).not.toHaveBeenCalled();
+    expect(addDerivedVideoNode).toHaveBeenCalled();
+  });
+
+  it("keeps the speakers quiet while a recording is running", async () => {
+    const user = userEvent.setup();
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().addAudioClip(source, 0);
+      usePrevizStore.getState().setTimelinePlaying(true);
+    });
+    /** 扬声器那一路：三个参数、不带混音节点。混音那一路是四个。 */
+    const speakerCalls = () =>
+      audioPlayback.play.mock.calls.filter((call) => call.length === 3).length;
+    expect(speakerCalls()).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }),
+    );
+    // 还在录：头部只禁了截图与录制入口，时间轴的播放键这时照样点得动。
+    expect(
+      screen.getByRole("button", { name: "previz.editor.record.stop" }),
+    ).toBeInTheDocument();
+    act(() => usePrevizStore.getState().setTimelinePlaying(true));
+    // 录制期间扬声器那一路一次都不该再起：它与混音节点是两套排程，同时响就是双份
+    // 声音，而且用户听到的和成片里录进去的还对不上。
+    expect(speakerCalls()).toBe(1);
+
+    // 收尾：停掉播放再等录制走完，免得录完那一下播放又接上、扰乱最后一条断言。
+    act(() => usePrevizStore.getState().setTimelinePlaying(false));
+    await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 3000 });
+    expect(audioPlayback.play).toHaveBeenLastCalledWith(
+      expect.anything(),
+      0,
+      1,
+      audioDestination,
+    );
   });
 
   it("paints the live camera frame by frame in a global recording", async () => {
