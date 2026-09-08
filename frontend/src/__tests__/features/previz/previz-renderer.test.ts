@@ -89,6 +89,23 @@ vi.mock("three", () => {
         public material: unknown,
       ) {}
     },
+    // 手柄改造要新建这两样（见 `gizmoEmphasis.ts`）。只记入参：本文件问的是
+    // 「渲染器有没有把 three 递给手柄」，不问几何运算。
+    OctahedronGeometry: class {
+      dispose = vi.fn();
+      constructor(
+        public radius: number,
+        public detail: number,
+      ) {}
+    },
+    MeshBasicMaterial: class {
+      dispose = vi.fn();
+      color: { getHex(): number };
+      constructor(public options: Record<string, unknown>) {
+        const hex = typeof options.color === "number" ? options.color : 0;
+        this.color = { getHex: () => hex };
+      }
+    },
     AmbientLight: class {},
     DirectionalLight: class {
       position = { set: vi.fn() };
@@ -129,6 +146,34 @@ vi.mock("three/examples/jsm/controls/OrbitControls.js", () => ({
 
 // create() 现在还会动态 import 这两个 three 扩展来建人物模型工厂。本文件不碰场景内容，
 // 桩到能被 new 出来就够；不桩的话跑的是真模块，而真模块 import 的是上面那份残缺的假 three。
+/** 手柄内部的一颗 mesh。改造只读 name / geometry / material 三样，替身也就只有这三样。 */
+function fakeGizmoHandle(name: string, radius: number, colorHex: number) {
+  return {
+    name,
+    geometry: { radius, dispose: vi.fn() } as { radius: number; dispose: unknown },
+    material: { color: { getHex: () => colorHex }, dispose: vi.fn() },
+  };
+}
+
+/**
+ * 真 `TransformControlsGizmo` 内部结构的最小替身，照抄 three 0.185：`isTransformControlsGizmo`
+ * 标记 + `gizmo` / `picker` 两张表，各含一个 `translate` 组。只搭到改造够得着的那一层——
+ * 本文件不测改造改得对不对（那是 `gizmo-emphasis.test.ts` 的事），只测渲染器有没有让它跑起来。
+ */
+function fakeTransformGizmo() {
+  const centre = fakeGizmoHandle("XYZ", 0.1, 0xffffff);
+  const pickerCentre = fakeGizmoHandle("XYZ", 0.2, 0xffffff);
+  return {
+    isTransformControlsGizmo: true,
+    gizmo: { translate: { children: [centre] } },
+    picker: { translate: { children: [pickerCentre] } },
+    centre,
+    pickerCentre,
+  };
+}
+
+let transformGizmo: ReturnType<typeof fakeTransformGizmo>;
+
 vi.mock("three/examples/jsm/controls/TransformControls.js", () => ({
   TransformControls: class {
     enabled = true;
@@ -140,7 +185,16 @@ vi.mock("three/examples/jsm/controls/TransformControls.js", () => ({
     dispose = vi.fn();
     // 真手柄是个 Object3D，挂在 scene 下面。谁扫一遍 scene 的子节点都会碰到它，
     // 少了 userData 就是一句和被测行为毫无关系的 TypeError。
-    getHelper = vi.fn(() => ({ traverse() {}, visible: true, userData: {} }));
+    //
+    // helper 只建一次并一直交同一个对象，跟真身一样：three 在构造里造一次手柄，
+    // 之后每次 getHelper() 拿到的都是它。每次新建一个的话，`applyVisibility()` 写的
+    // visible 会落在一个转头就被扔掉的对象上，藏手柄那条路在这里就永远测不出来。
+    helper = {
+      traverse: (visit: (node: unknown) => void) => visit(transformGizmo),
+      visible: true,
+      userData: {},
+    };
+    getHelper = vi.fn(() => this.helper);
     addEventListener = vi.fn();
   },
 }));
@@ -174,6 +228,7 @@ function step() {
 
 beforeEach(() => {
   frames = [];
+  transformGizmo = fakeTransformGizmo();
   render.mockClear();
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
     frames.push(cb);
@@ -263,6 +318,28 @@ describe("PrevizRenderer 绘制态", () => {
     instance.setDrawing(false);
     expect(controls.mouseButtons.LEFT).toBe(0);
     expect(controls.touches.ONE).toBe(0);
+
+    instance.dispose();
+  });
+});
+
+describe("PrevizRenderer 手柄改造", () => {
+  it("建手柄时把 three 递下去，中心那颗当场被改大", async () => {
+    const canvas = document.createElement("canvas");
+    const stock = transformGizmo.centre.geometry;
+    const stockPicker = transformGizmo.pickerCentre.geometry;
+
+    const instance = await PrevizRenderer.create(canvas);
+
+    // 钉的是 create() 里 `new PrevizGizmo({ ... })` 那一行 `three,`。它是整个手柄改造
+    // 的总开关，而且是个**可选**字段——漏掉不会有任何类型错误：PrevizGizmo 收到的
+    // deps.three 是 undefined，改造整段跳过，中心手柄退回官方那颗 0.25 不透明度的白
+    // 八面体，视口里照样看不见。`gizmo-emphasis.test.ts` 里那两条 wiring 用例测的是
+    // PrevizGizmo 拿到 / 拿不到这个字段时的反应，测不到渲染器到底有没有传，删掉那
+    // 一行它们全绿——这条是唯一会红的。
+    expect(transformGizmo.centre.geometry).not.toBe(stock);
+    expect(transformGizmo.centre.geometry.radius).toBeGreaterThan(stock.radius);
+    expect(transformGizmo.pickerCentre.geometry.radius).toBeGreaterThan(stockPicker.radius);
 
     instance.dispose();
   });
