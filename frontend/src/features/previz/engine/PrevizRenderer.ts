@@ -7,6 +7,7 @@ import type { PrevizRecordMode } from '../capture/recordTarget';
 import { createDomCaptureCanvas, renderCapture } from '../capture/renderCapture';
 import { OUTPUT_PIXEL_SIZE, aspectRatio, coverFovDeg, DEG_TO_RAD } from '../domain/camera';
 import type { PrevizCameraDraft } from '../domain/cameraDraft';
+import { dropPositionY, dropRayOriginY } from '../domain/drop';
 import { evaluateSceneAt } from '../domain/evaluate';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
 import type { PrevizScene, PrevizTransform, Vec3 } from '../domain/scene';
@@ -262,6 +263,7 @@ export class PrevizRenderer {
       controls: transformControls as unknown as TransformControlsLike,
       orbit: controls,
       three,
+      dropToSurface: (objectId) => instance.dropToSurface(objectId),
       // helper 挂在 scene 而不是 objectRoot 下：objectRoot 是拾取与聚焦的取值范围，
       // 手柄挂进去会被射线命中，也会被算进「框全场景」的包围盒里。
       root: scene,
@@ -536,6 +538,63 @@ export class PrevizRenderer {
 
   nodeFor(objectId: string): THREE.Object3D | undefined {
     return this.graph.nodeFor(objectId);
+  }
+
+  /**
+   * 把对象落到它正下方的表面上，返回落地后的**局部** y；这一次不该落地时返回 null。
+   *
+   * 局部 y 直接可用是因为对象节点全是 `objectRoot` 的直接子节点（`sceneGraph.ts:193`），
+   * 而 `objectRoot` 是 `create()` 里裸建的一个 Group、从头到尾没被摆过位置也没被缩放，
+   * 世界坐标与局部坐标只差一个零。哪天有人给它加了 y 偏移或缩放，`surfaceY - box.min.y`
+   * 这个**世界**位移就得先换算到局部才能加到 `node.position.y` 上，否则对象会按错误的
+   * 倍数往下沉——这一句是留给那个人的。
+   *
+   * 射线策略是「从盒**顶**往下打，取最近命中」，这里有一个真实存在、且无法两全的取舍：
+   * 起点在盒顶意味着射线会穿过对象自己占的整个高度区间，凡是与对象**中轴**相交的东西
+   * （桌沿、栏杆、门框）都会赶在地板之前被命中，对象于是被顶到那上面去。想靠「只接受
+   * 低于盒底的命中」把它挡掉的话，会连「已经沉进桌子里/地板下的对象重新浮上来」一起
+   * 挡掉——而后者正是选顶面起射唯一要救的场景（见 `domain/drop.ts` 里 `dropRayOriginY`
+   * 的说明）。两个需求要的是同一种输入：一个高于盒底的表面。这里显式选了后者：
+   *   * 射线只在包围盒水平中心那一条线上，擦着对象边上过的桌沿命中不了，真被顶上去的
+   *     前提是那个面确实压在对象正中央——这种情形下「站到桌面上」本来也是更像人话的
+   *     结果；
+   *   * 比对象**高**的东西够不着：起点在盒顶，顶面在起点之上的几何体整个在射线背后，
+   *     所以钻到桌子底下的小道具不会被吸到桌面上；
+   *   * 真吸错了，撤销一步就回来，而且这几根手柄之外（Y 轴、两个竖直面）全程不吸附。
+   */
+  dropToSurface(objectId: string): number | null {
+    if (this.disposed) return null;
+    const object = this.currentScene?.objects.find((entry) => entry.id === objectId);
+    if (!object) return null;
+    // 机位与灯本来就该浮在空中：把一台俯拍机吸到地板上，取景当场毁掉。
+    if (object.kind !== 'character' && object.kind !== 'prop') return null;
+    const node = this.graph.nodeFor(objectId);
+    if (!node) return null;
+
+    // 不能复用 `boundsOf()`：它会把空盒换成一个人体尺寸的**占位盒**（给聚焦用的产品
+    // 行为，见那个函数的注释）。拿它落地，一个还在下载的模型会按一个假盒子被瞬移走。
+    const box = new this.three.Box3().setFromObject(node);
+    if (box.isEmpty()) return null;
+
+    const centre = box.getCenter(new this.three.Vector3());
+    if (!this.raycaster) this.raycaster = new this.three.Raycaster();
+    this.raycaster.set(
+      new this.three.Vector3(centre.x, dropRayOriginY(box.max.y), centre.z),
+      new this.three.Vector3(0, -1, 0),
+    );
+    // 剔掉自己。`visibleNodes()` 给的是每个对象最上层那个节点，滤掉自己这一个，
+    // 自己的子孙也就一起不在候选里了——不滤的话第一个命中的永远是自身的顶面。
+    const targets = this.visibleNodes().filter((candidate) => candidate !== node);
+    // 递归：对象节点本身是空 Group，几何体在它下面那层占位体 / 模型里。
+    const hits = this.raycaster.intersectObjects(targets, true);
+    // three 的 `intersectObjects` 出手前已经按距离升序排过（0.185 `Raycaster.js:198`），
+    // 射线朝下，所以第 0 个就是最高的那个面，这里不必也不该再排一次。
+    //
+    // 没命中就用 0：地面网格是不可拾取的（`grid.ts:167` 把它的 raycast 摘掉了，否则
+    // 铺满视野的它会吃掉每一次空点），而它确实铺在 y=0。退回 null 的话在空地上拖东西
+    // 永远不落地，正是最常见的那种拖法。
+    const surfaceY = hits[0]?.point.y ?? 0;
+    return dropPositionY(node.position.y, box.min.y, surfaceY);
   }
 
   /**

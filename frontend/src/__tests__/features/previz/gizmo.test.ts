@@ -7,6 +7,13 @@ import { PrevizGizmo, type TransformControlsLike } from "@/features/previz/engin
 class FakeTransformControls implements TransformControlsLike {
   enabled = true;
   object: unknown = null;
+  /**
+   * 正在被拖的那根手柄的名字。真身在 `pointerUp` 里是先 `this.dragging = false`
+   * （这一句才是 `dragging-changed` 的来源），**下一句**才 `this.axis = null`
+   * （three 0.185 `TransformControls.js:784-785`）。所以收尾事件跑的时候 axis 还在，
+   * 替身也就在 emit 之后才清——两边顺序一致，落地那段读得到的东西才是同一个。
+   */
+  axis: string | null = null;
   private readonly listeners: Record<string, Array<(event: { value?: boolean }) => void>> = {};
   /**
    * 初始不可见，attach 打开、detach 关掉——照抄 three 0.185：`TransformControlsRoot`
@@ -47,7 +54,7 @@ function fakeNode(id: string) {
   } as never;
 }
 
-function setup() {
+function setup(deps: { dropToSurface?: (objectId: string) => number | null } = {}) {
   const controls = new FakeTransformControls();
   const added: unknown[] = [];
   const removed: unknown[] = [];
@@ -63,8 +70,21 @@ function setup() {
     } as never,
     onCommit,
     onChange,
+    ...deps,
   });
   return { controls, gizmo, added, removed, orbit, onCommit, onChange };
+}
+
+/**
+ * 拖着某根手柄走一趟完整的拖拽再松手。`axis` 在松手事件**之后**才清，照的是真身
+ * `pointerUp` 里那两句的顺序。
+ */
+function dragWith(controls: FakeTransformControls, axis: string) {
+  controls.axis = axis;
+  controls.emit("dragging-changed", { value: true });
+  controls.emit("objectChange");
+  controls.emit("dragging-changed", { value: false });
+  controls.axis = null;
 }
 
 describe("PrevizGizmo", () => {
@@ -390,5 +410,130 @@ describe("PrevizGizmo", () => {
 
     expect(controls.enabled).toBe(false);
     expect(controls.helper.visible).toBe(false);
+  });
+});
+
+describe("PrevizGizmo 松手落地", () => {
+  // 自由移动那颗手柄拖完就该落地，而且提交回 store 的必须是**落地后**的 y。
+  // 顺序反过来（先读变换再落地）的话，提交上去的是半空中那个位置，下一帧引擎又把它
+  // 写回节点——用户看到的是物体落下去、又弹回原处，而且撤销一步都退不回来。
+  it("drops the object before it commits, so the committed y is the landed one", () => {
+    const dropToSurface = vi.fn(() => 7);
+    const { controls, gizmo, onCommit } = setup({ dropToSurface });
+    const node = fakeNode("a");
+    gizmo.attach(node);
+    gizmo.setMode("translate");
+
+    dragWith(controls, "XYZ");
+
+    expect(dropToSurface).toHaveBeenCalledWith("a");
+    expect((node as unknown as { position: { y: number } }).position.y).toBe(7);
+    expect(onCommit).toHaveBeenCalledWith("a", {
+      position: [1, 7, 3],
+      rotation: [0, 90, 0],
+      scale: [2, 2, 2],
+    });
+  });
+
+  // 水平面那颗（XZ）同样是「只在平地上挪」，落地不会跟用户抢任何他自己调过的量。
+  it("also drops after a drag on the horizontal plane handle", () => {
+    const dropToSurface = vi.fn(() => 4);
+    const { controls, gizmo } = setup({ dropToSurface });
+    const node = fakeNode("a");
+    gizmo.attach(node);
+    gizmo.setMode("translate");
+
+    dragWith(controls, "XZ");
+
+    expect(dropToSurface).toHaveBeenCalledWith("a");
+    expect((node as unknown as { position: { y: number } }).position.y).toBe(4);
+  });
+
+  // 整套吸附规则的核心：拖 Y 轴、拖 XY / YZ 这两个竖直面，用户都是**刻意**在调高度，
+  // 吸附会当场把他刚调好的高度抹掉，这几根手柄等于失灵。单轴的 X / Z 同理——他要的
+  // 就是「只动这一根」。
+  it("never drops after a drag the user constrained to a single axis or a vertical plane", () => {
+    for (const axis of ["Y", "XY", "YZ", "X", "Z"]) {
+      const dropToSurface = vi.fn(() => 7);
+      const { controls, gizmo, onCommit } = setup({ dropToSurface });
+      const node = fakeNode("a");
+      gizmo.attach(node);
+      gizmo.setMode("translate");
+
+      dragWith(controls, axis);
+
+      expect(dropToSurface, `axis ${axis}`).not.toHaveBeenCalled();
+      expect((node as unknown as { position: { y: number } }).position.y, `axis ${axis}`).toBe(2);
+      expect(onCommit).toHaveBeenCalledWith("a", {
+        position: [1, 2, 3],
+        rotation: [0, 90, 0],
+        scale: [2, 2, 2],
+      });
+    }
+  });
+
+  // 旋转 / 缩放模式下手柄中心那颗也叫 XYZ（three 三套手柄共用这批名字），只看 axis
+  // 的话原地转一个物体就会把它吸到地上——转的时候谁都没打算挪它。
+  it("does not drop when the gizmo is rotating rather than translating", () => {
+    const dropToSurface = vi.fn(() => 7);
+    const { controls, gizmo } = setup({ dropToSurface });
+    const node = fakeNode("a");
+    gizmo.attach(node);
+    gizmo.setMode("rotate");
+
+    dragWith(controls, "XYZ");
+
+    expect(dropToSurface).not.toHaveBeenCalled();
+    expect((node as unknown as { position: { y: number } }).position.y).toBe(2);
+  });
+
+  // 没设过模式就拖：three 的 TransformControls 默认就是 translate（`mode` 的
+  // defineProperty 默认值），我们这份影子状态要跟它对齐，否则「打开编辑器第一下拖拽」
+  // 这一段两边说法不一致——手柄真的在平移，我们却以为不知道它在干什么。
+  it("treats the gizmo as translating before any mode has been set", () => {
+    const dropToSurface = vi.fn(() => 7);
+    const { controls, gizmo } = setup({ dropToSurface });
+    gizmo.attach(fakeNode("a"));
+
+    dragWith(controls, "XYZ");
+
+    expect(dropToSurface).toHaveBeenCalledWith("a");
+  });
+
+  // 返回 null 是「这次不该落地」（机位、灯、还没有几何体的模型），不是「落到 0」。
+  // 当成 0 用的话，一个正在加载的模型松手就被拍到地面上。
+  it("commits the untouched y when the drop declines", () => {
+    const dropToSurface = vi.fn(() => null);
+    const { controls, gizmo, onCommit } = setup({ dropToSurface });
+    const node = fakeNode("a");
+    gizmo.attach(node);
+    gizmo.setMode("translate");
+
+    dragWith(controls, "XYZ");
+
+    expect((node as unknown as { position: { y: number } }).position.y).toBe(2);
+    expect(onCommit).toHaveBeenCalledWith("a", {
+      position: [1, 2, 3],
+      rotation: [0, 90, 0],
+      scale: [2, 2, 2],
+    });
+  });
+
+  // 依赖是可选的：渲染器之外还有别的调用点（以及这个文件里另外 22 条用例）根本不给它。
+  // 不给就该完全是改动之前那套行为，而不是在收尾里抛一句 undefined is not a function。
+  it("behaves exactly as before when no dropToSurface dependency is wired", () => {
+    const { controls, gizmo, onCommit } = setup();
+    const node = fakeNode("a");
+    gizmo.attach(node);
+    gizmo.setMode("translate");
+
+    dragWith(controls, "XYZ");
+
+    expect((node as unknown as { position: { y: number } }).position.y).toBe(2);
+    expect(onCommit).toHaveBeenCalledWith("a", {
+      position: [1, 2, 3],
+      rotation: [0, 90, 0],
+      scale: [2, 2, 2],
+    });
   });
 });
