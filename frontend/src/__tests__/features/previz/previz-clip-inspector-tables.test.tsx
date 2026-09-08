@@ -20,8 +20,13 @@ function twoCameras(): [string, string] {
   return [camA, camB];
 }
 
-function seedCut(): { cutId: string; camA: string; camB: string } {
+/**
+ * 在 `at` 处切一刀，切片从那里铺到时间轴末尾。`at` 默认 0 时片段长度正好等于时间轴
+ * 总长，`moveClip` 的 `maxFrame - span` 会把它钉死在 0——要测平移得往后挪一挪。
+ */
+function seedCut(at = 0): { cutId: string; camA: string; camB: string } {
   const [camA, camB] = twoCameras();
+  usePrevizStore.getState().setTimelineFrame(at);
   usePrevizStore.getState().cutToCamera(camA);
   const cutId = usePrevizStore.getState().scene.timeline.program[0]!.id;
   usePrevizStore.getState().selectClip(cutId);
@@ -76,6 +81,23 @@ describe('PrevizClipInspector cut panel', () => {
     });
     await user.click(screen.getByRole('button', { name: 'previz.clip.remove' }));
     expect(usePrevizStore.getState().scene.timeline.program).toEqual([]);
+  });
+
+  it('translates the whole cut when the start frame is edited', async () => {
+    const user = userEvent.setup();
+    // 40..120 往前挪 30 帧。留出的空隙与 span 都不贴着 120，夹取不会替平移把 endFrame
+    // 定下来；帧号也和音频那条用例不同，抄错了不会碰巧过。
+    seedCut(40);
+    render(<PrevizClipInspector />);
+    const start = screen.getByRole('spinbutton', { name: 'previz.clip.startFrame' });
+    await user.clear(start);
+    await user.type(start, '10');
+    await user.tab();
+    // 切片身上没有素材偏移，长度不变是平移唯一看得见的证据：拉左沿只动 startFrame。
+    expect(usePrevizStore.getState().scene.timeline.program[0]).toMatchObject({
+      startFrame: 10,
+      endFrame: 90,
+    });
   });
 
   it('does not offer the object-clip controls on a cut', () => {
