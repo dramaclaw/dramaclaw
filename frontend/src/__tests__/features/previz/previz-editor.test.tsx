@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 
 import { createPrevizObject } from "@/features/previz/domain/objects";
 import {
@@ -109,6 +110,7 @@ vi.mock("@/lib/url-params", () => ({
 vi.mock("@/api/ops", () => ({
   uploadFreezoneImage: vi.fn(async () => ({ url: "/static/shot.png" })),
   uploadFreezoneVideo: () => uploadFreezoneVideo(),
+  uploadFreezoneAudio: vi.fn(async () => ({ url: "/static/take.mp3" })),
 }));
 
 // jsdom 里既没有 MediaRecorder 也没有 canvas.captureStream；只换掉碰浏览器 API 的
@@ -122,6 +124,26 @@ vi.mock("@/features/previz/capture/recordTimeline", async (importOriginal) => ({
   }),
 }));
 
+// jsdom 没有 AudioContext，编辑器又只经这三个导出碰它；假一份就够，播放引擎自己的
+// 行为归 audio-playback 那组用例管。
+const audioDestination = { stream: { getAudioTracks: () => [] } };
+const audioContext = { createMediaStreamDestination: () => audioDestination };
+const audioPlayback = {
+  context: audioContext,
+  load: vi.fn(async () => {}),
+  play: vi.fn(async () => {}),
+  stop: vi.fn(),
+  dispose: vi.fn(),
+  failedUrls: new Set<string>(),
+};
+const createAudioContext = vi.fn(() => audioContext);
+
+vi.mock("@/features/previz/engine/audioPlayback", () => ({
+  createAudioContext: () => createAudioContext(),
+  fetchAudioBuffer: vi.fn(),
+  createAudioPlayback: () => audioPlayback,
+}));
+
 vi.mock("@/stores/canvasStore", () => ({
   useCanvasStore: Object.assign(
     (selector: (state: unknown) => unknown) =>
@@ -130,7 +152,9 @@ vi.mock("@/stores/canvasStore", () => ({
   ),
 }));
 
-vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
+}));
 
 // dispose / resize 是模块级共享的，而 testing-library 每个用例结束都会自动
 // unmount、从而触发一次 dispose。不清的话第三条用例的 toHaveBeenCalledTimes(1)
@@ -1905,5 +1929,140 @@ describe("program follow", () => {
     expect(usePrevizStore.getState().activeCameraId).toBe(camB);
     expect(usePrevizStore.getState().monitorFollowsProgram).toBe(false);
     expect(screen.getByTestId("previz-monitor-frame")).toBeInTheDocument();
+  });
+});
+
+describe("audio playback and mix", () => {
+  const source = {
+    audioUrl: "/static/vo.mp3",
+    sourceName: "vo.mp3",
+    durationMs: 2000,
+    sourceNodeId: null,
+  };
+
+  function renderOneFrame(): string {
+    const scene = createDefaultScene();
+    // 只留一帧：录制按墙上时钟走，默认的 120 帧会让这几条用例真等四秒。
+    scene.settings.durationFrames = 1;
+    const camera = createPrevizObject("camera", scene.objects);
+    scene.objects.push(camera);
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+    return camera.id;
+  }
+
+  async function recordGlobal(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }),
+    );
+    await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 3000 });
+  }
+
+  it("plays the audio track while the timeline plays and stops with it", async () => {
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().addAudioClip(source, 0);
+      usePrevizStore.getState().setTimelinePlaying(true);
+    });
+    expect(audioPlayback.play).toHaveBeenCalledWith(
+      usePrevizStore.getState().scene.timeline.audio,
+      0,
+      1,
+    );
+    act(() => usePrevizStore.getState().setTimelinePlaying(false));
+    expect(audioPlayback.stop).toHaveBeenCalled();
+  });
+
+  it("does not touch the audio engine when the track is empty", async () => {
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => usePrevizStore.getState().setTimelinePlaying(true));
+    expect(createAudioContext).not.toHaveBeenCalled();
+  });
+
+  it("mixes the audio track into a recording and stamps the duration", async () => {
+    const user = userEvent.setup();
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().addAudioClip(source, 0);
+    });
+    const clips = usePrevizStore.getState().scene.timeline.audio;
+    await recordGlobal(user);
+    expect(audioPlayback.load).toHaveBeenCalledWith(clips);
+    expect(audioPlayback.play).toHaveBeenCalledWith(clips, 0, 1, audioDestination);
+    expect(audioPlayback.stop).toHaveBeenCalled();
+    expect(toast.warning).not.toHaveBeenCalled();
+    // 一帧 @ 30fps ≈ 33ms：时长来自真正画出的帧数，不是设置里的总长。
+    expect(addDerivedVideoNode).toHaveBeenLastCalledWith(
+      "previz-1",
+      "/static/take.mp4",
+      "16:9",
+      "previz.editor.record.globalNodeName",
+      33,
+    );
+  });
+
+  it("records silent video with a warning when the browser cannot mix", async () => {
+    const user = userEvent.setup();
+    createAudioContext.mockReturnValueOnce(null as unknown as typeof audioContext);
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().addAudioClip(source, 0);
+    });
+    await recordGlobal(user);
+    expect(toast.warning).toHaveBeenCalledWith("previz.editor.record.noAudioMix");
+    expect(audioPlayback.play).not.toHaveBeenCalled();
+    expect(addDerivedVideoNode).toHaveBeenCalled();
+  });
+
+  it("paints the live camera frame by frame in a global recording", async () => {
+    const user = userEvent.setup();
+    const cameraId = renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().cutToCamera(cameraId);
+    });
+    await recordGlobal(user);
+    expect(recordDrawFrame).toHaveBeenCalledWith(0, cameraId);
+  });
+
+  it("disposes the audio engine when the editor closes", async () => {
+    const scene = createDefaultScene();
+    const { rerender } = render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().addAudioClip(source, 0);
+      usePrevizStore.getState().setTimelinePlaying(true);
+    });
+    expect(audioPlayback.play).toHaveBeenCalled();
+    rerender(
+      <PrevizEditor
+        open={false}
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn()}
+      />,
+    );
+    expect(audioPlayback.dispose).toHaveBeenCalled();
   });
 });
