@@ -265,16 +265,23 @@ describe("PrevizLayerPanel", () => {
   });
 
   // 按下态得有自己的样子，不然「这台正在播」和「我把监看钉在这台」长得一模一样，
-  // 用户没法从画面上猜出点下去会发生什么。
-  it("marks the pinned camera apart from the merely monitored one", () => {
+  // 用户没法从画面上猜出点下去会发生什么。悬停类一并断言：少了它，鼠标一放上去
+  // 基础的 `hover:bg-white/10` 就把底色盖掉，按下态在最该看清的那一刻消失。
+  // （对照组那台既没被监看也没被钉住，两种底色都不该有。）
+  it("gives the pinned camera a background no other camera has", () => {
     const objects = build();
     objects.push(createPrevizObject("camera", objects));
     const pinned = objects[1]!.id;
     const monitor = "previz.layers.setActiveCamera";
     setup({ objects, monitorCameraId: pinned, pinnedCameraId: pinned });
 
-    expect(button(row(pinned), monitor)).toHaveClass("text-sky-300", "bg-sky-400/20");
-    expect(button(row(objects[4]!.id), monitor)).not.toHaveClass("bg-sky-400/20");
+    expect(button(row(pinned), monitor)).toHaveClass(
+      "text-sky-300",
+      "bg-sky-400/20",
+      "hover:bg-sky-400/30",
+    );
+    const other = objects[objects.length - 1]!.id;
+    expect(button(row(other), monitor)).not.toHaveClass("bg-sky-400/20");
   });
 
   it("selects from the keyboard, but a row button's own key press stays its own", async () => {

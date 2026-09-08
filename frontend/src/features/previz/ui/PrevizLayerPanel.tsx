@@ -210,7 +210,11 @@ export function PrevizLayerPanel({
                           // 按下态。两态必须长得不一样：跟随中直播的那台也是蓝的，若与
                           // 钉住态同一个样子，用户就无从判断点下去是钉住还是关掉。
                           monitoring && "text-sky-300 hover:text-sky-200",
-                          pinned && "bg-sky-400/20",
+                          // 悬停底色要一起改写：基础样式里的 `hover:bg-white/10` 带伪类，
+                          // 优先级比裸的 `bg-sky-400/20` 高，鼠标一放上去按下态就被抹平，
+                          // 恰好在用户要点之前分不清钉住没钉住。twMerge 认同组，后写的
+                          // `hover:bg-sky-400/30` 会把基础那条替掉。
+                          pinned && "bg-sky-400/20 hover:bg-sky-400/30",
                         )}
                         // 抬起是关监看，不是退回跟随：`setActiveCamera(null)` 会把跟随
                         // 一并关掉（见 store），用户要跟随得去按画中画上那颗「跟随」。
