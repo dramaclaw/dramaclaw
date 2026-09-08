@@ -73,8 +73,8 @@ const PICK_RING = "#ffd166";
  *
  * 机位那个从源头 import，漂了会当场编译不过。灯与物件只能硬抄：`KIND_COLOR` 是
  * `sceneGraph.ts` 的模块私有 const，没有导出（`engine/` 下的模块本身 import 得起——
- * 三个模块的 three 都是 `import type`，运行时一个字节都不带，本文件第 6 行 import 的
- * `engine/grid` 就是同一形状）。硬抄的这两个改起来得两处一起改，`KIND_DOT_COLOR` 的
+ * 三个模块的 three 都是 `import type`，运行时一个字节都不带，本文件顶部 import 的
+ * `engine/grid` 也是同一形状）。硬抄的这两个改起来得两处一起改，`KIND_DOT_COLOR` 的
  * 单测里钉了字面量，至少会在改色时红给人看。
  *
  * 人物不在表里——人物用自己的 `color`，一颗固定的分类色会让四个人物在俯视图上变成
@@ -98,20 +98,25 @@ const MIN_GRID_SPACING_PX = 8;
 const TAU = Math.PI * 2;
 
 /**
- * 两处不是样式偏好：
+ * 三处不是样式偏好，都是为了让按钮的盒子恰好就是画布的盒子——不然按钮上存在一圈
+ * 「点得着、却不在画布上」的地方，那儿的点击照样触发 onClick，再被 `clampToCanvas`
+ * 静默夹到取景框边缘：用户点在场地外面，人却贴着边放下去了，全程无提示。
  *
- * `p-0` —— 按钮默认自带内边距，那圈内边距上的点击照样触发 onClick，而落点是按画布的
- * rect 换算的，于是被夹到取景框的边上：用户点在场地外面，人却贴着边放下去了。去掉之后
- * 可点区域与画布是同一块。
+ * `p-0` —— 按钮默认自带内边距，那就是这样一圈。
+ *
+ * `w-fit` —— 去掉内边距还不够。按钮是 `block`，宽度 `auto` 会撑满父容器；这块要嵌进
+ * 创建对话框的一栏里，面板多宽按钮就多宽，而画布始终 320，右边空出来的那条又是这样
+ * 一圈。收缩包裹之后按钮才真的贴着画布。
  *
  * 描边用 `ring`（box-shadow）而不是 `border` —— `index.css` 的 tailwind preflight 把
- * 全局 `box-sizing` 设成了 `border-box`，一圈 1px 的 border 会从画布的 CSS 尺寸里
- * **吃掉 2 px**：CSS 上是 318，位图仍按 320 铺，浏览器于是把 320 重采样到 318，
- * 而按设备像素铺位图的全部意义就是别让这种重采样发生。box-shadow 不占布局，画布的
- * CSS 尺寸与位图尺寸因此是整倍数关系。
+ * 全局 `box-sizing` 设成了 `border-box`。若像最初那样把尺寸定在按钮上、画布 `w-full`
+ * 跟着走，一圈 1px 的 border 会从按钮的内容盒里吃掉 2 px：**被压到 318 的是画布**
+ * （按钮仍是整整 320），位图却按 320 铺，浏览器于是把 320 重采样到 318——而按设备
+ * 像素铺位图的全部意义就是别让这种重采样发生。现在尺寸挂在画布自己身上、按钮收缩
+ * 包裹，box-shadow 又不占布局盒，画布的 CSS 尺寸与位图尺寸因此严格成整倍数。
  */
 const PICKER_CLASS = [
-  "block cursor-crosshair rounded-md p-0 ring-1 ring-white/10",
+  "block w-fit cursor-crosshair rounded-md p-0 ring-1 ring-white/10",
   "focus:outline-none focus-visible:ring-white/40",
 ].join(" ");
 
