@@ -436,6 +436,7 @@
       "selectLanguage": "Select language",
       "languageChinese": "中文",
       "languageEnglish": "English",
+      "languageVietnamese": "Tiếng Việt",
       "passwordDialog": {
         "title": "Change password",
         "description": "Changing your password signs you out on every device. Sign in again with the new password.",
