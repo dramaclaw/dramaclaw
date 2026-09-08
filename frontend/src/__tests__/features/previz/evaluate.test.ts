@@ -397,17 +397,32 @@ function climbHalfway(character: PrevizCharacter, scene: PrevizScene) {
 }
 
 describe('evaluateSceneAt height policies', () => {
-  it('keeps a plane-locked character on their storey while they walk', () => {
+  it('keeps every plane-locked character on their own storey while they walk', () => {
     const { scene, character } = sceneWithCharacter();
     character.heightPolicy = 'plane';
     character.planeY = 3;
-    const state = climbHalfway(character, scene);
+    // 第二个人锁在另一层。只压住列表里第一个 plane 人物的实现（循环体末尾一句
+    // `return`）在单人场景里量不出来，一层楼只站得下一个人才是真正会被看见的样子。
+    const upstairs = createPrevizObject('character', scene.objects, {
+      heightPolicy: 'plane',
+      planeY: 7,
+    });
+    scene.objects.push(upstairs);
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [
+        { id: 't', objectId: character.id, clips: [climbingClip()] },
+        { id: 'u', objectId: upstairs.id, clips: [climbingClip()] },
+      ],
+    };
+    const frame = evaluateSceneAt(scene, 60);
 
-    // 曲线在这一帧给的是 4.5，锁定平面把它压回 3。
-    expect(state?.position[1]).toBe(3);
+    // 两个人走的是同一条曲线，这一帧都在 4.5 上；锁定平面把他们分别压回自己那一层。
+    expect(frame.get(character.id)?.position[1]).toBe(3);
+    expect(frame.get(upstairs.id)?.position[1]).toBe(7);
     // 策略管的是高度，不是走位：XZ 照旧跟着曲线跑。
-    expect(state?.position[0]).toBeCloseTo(2, 10);
-    expect(state?.position[2]).toBeCloseTo(2, 10);
+    expect(frame.get(character.id)?.position[0]).toBeCloseTo(2, 10);
+    expect(frame.get(character.id)?.position[2]).toBeCloseTo(2, 10);
   });
 
   it('leaves a follow-policy character on the height the path says', () => {
@@ -456,7 +471,8 @@ describe('evaluateSceneAt height policies', () => {
     // 「看向」也是从被看的人这一帧的位置反推的：锁在 2 米上的人，和干脆摆在 2 米高的
     // 人，机位该抬同样的头。
     expect(pitchOf(locked)).toBeCloseTo(pitchOf(lifted), 10);
-    // 再和站在地面的人比一次——否则上一条在「压平压根没生效」时也照样成立。
+    // 上一条是两个场景之间的等式，两边一起退化时它也成立：把 `lookAtEulerDeg` 的俯仰
+    // 钉成常数，只剩上一条的话这个用例照样绿。所以再对一次绝对量。
     expect(pitchOf(locked)).toBeGreaterThan(pitchOf(sceneWithAim('self')));
   });
 });
