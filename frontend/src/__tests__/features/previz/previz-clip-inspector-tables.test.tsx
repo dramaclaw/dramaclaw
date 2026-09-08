@@ -93,11 +93,31 @@ describe('PrevizClipInspector audio panel', () => {
     usePrevizStore.getState().setTimelineFrame(40);
     render(<PrevizClipInspector />);
     expect(screen.getByText('vo.mp3')).toBeInTheDocument();
-    expect(screen.getByLabelText('previz.clip.audio.offset')).toHaveValue('0');
+    const offset = screen.getByLabelText('previz.clip.audio.offset');
+    expect(offset).toHaveValue('0');
+    // 只读不是装饰：偏移是裁起点算出来的，能敲进去就等于允许波形和声音错位。
+    expect(offset).toHaveAttribute('readonly');
     await user.click(screen.getByRole('button', { name: 'previz.clip.audio.relocate' }));
     expect(usePrevizStore.getState().scene.timeline.audio[0]).toMatchObject({
       id: clipId,
       startFrame: 40,
+    });
+  });
+
+  it('translates the whole clip when the start frame is edited', async () => {
+    const user = userEvent.setup();
+    seedAudio();
+    render(<PrevizClipInspector />);
+    const start = screen.getByRole('spinbutton', { name: 'previz.clip.startFrame' });
+    await user.clear(start);
+    await user.type(start, '25');
+    await user.tab();
+    // 10..40 整条右移 15 帧。`endFrame` 跟着走说明这是平移而不是把左沿拉过去，
+    // `offsetMs` 还是 0 说明素材入点没被动过——拉左沿会把这 15 帧折算进偏移里。
+    expect(usePrevizStore.getState().scene.timeline.audio[0]).toMatchObject({
+      startFrame: 25,
+      endFrame: 55,
+      offsetMs: 0,
     });
   });
 
