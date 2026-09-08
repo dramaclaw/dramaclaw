@@ -14,7 +14,7 @@ import {
 } from "@/features/previz/domain/scene";
 import type { CanvasRecorderOptions } from "@/features/previz/capture/recordTimeline";
 import { PrevizRenderer } from "@/features/previz/engine/PrevizRenderer";
-import { PrevizEditor } from "@/features/previz/PrevizEditor";
+import { PREVIZ_AUTOSAVE_MS, PrevizEditor } from "@/features/previz/PrevizEditor";
 import { usePrevizStore } from "@/features/previz/store";
 import { readUrl } from "@/lib/url-params";
 
@@ -531,6 +531,12 @@ describe("PrevizEditor", () => {
         onFlush={onFlush}
       />,
     );
+
+    // 得先真改一笔。关窗兜底如今看 `dirty`——没改过就关，一个字节都不该写回，
+    // 否则「打开看一眼再关掉」也会让画布记一次编辑、把整张画布推去落盘。
+    act(() => {
+      usePrevizStore.getState().setDurationFrames(200);
+    });
 
     await user.click(screen.getByRole("button", { name: "previz.editor.close" }));
 
@@ -2482,5 +2488,163 @@ describe("audio playback and mix", () => {
       />,
     );
     expect(audioPlayback.dispose).toHaveBeenCalled();
+  });
+});
+
+/*
+  自动保存。防的是一个很具体的丢数据：以前 `onFlush` 只在关对话框那一下触发，
+  用户在预演台里导入 obj、摆完位置，不关对话框直接刷新页面——这一场戏从没进过
+  `node.data`，刷完就空了。画布那一层其实早就全自动（`updateNodeData` 每次都
+  `trackEdit`，`useCanvasSync` 防抖 800ms 落盘），缺口只在预演台这一层。
+*/
+describe("PrevizEditor autosave", () => {
+  it("writes the scene back without waiting for the editor to close", async () => {
+    const onFlush = vi.fn();
+    await renderEditor({ onFlush });
+    // 只假造定时器本身。渲染器那次 `create()` 是真异步的，所以假时钟必须等
+    // `renderEditor` 之后再换；`toFake` 也不碰 rAF / performance，免得连带停掉
+    // 播放循环和 React 的调度。
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      act(() => {
+        usePrevizStore.getState().setDurationFrames(200);
+      });
+
+      // 差一毫秒都不许写：这一条锁的是「确实等满了一个防抖窗口」。少了它，把
+      // PREVIZ_AUTOSAVE_MS 改成 0（等于每次编辑都同步写回）也照样绿。
+      act(() => {
+        vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS - 1);
+      });
+      expect(onFlush).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(onFlush).toHaveBeenCalledTimes(1);
+      expect(onFlush).toHaveBeenCalledWith(usePrevizStore.getState().scene);
+      // 写完就不脏了，否则关窗那条兜底会把同一份场景再写一遍。
+      expect(usePrevizStore.getState().dirty).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("collapses a burst of edits into one write", async () => {
+    const onFlush = vi.fn();
+    await renderEditor({ onFlush });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      // 拖一根滑杆会连发几十次 `applyScene`。这里把三次改动摆在同一个窗口内、
+      // 但彼此隔开，逼出「每次改动都要把窗口往后推」——只按 `dirty` 起一次定时器
+      // 的实现是节流不是防抖，拖一次滑杆会写十几遍，每遍都过一整轮 JSON 序列化
+      // 加整画布落盘。那种实现会在下面第二次推进时就把 onFlush 打出来。
+      act(() => {
+        usePrevizStore.getState().setDurationFrames(200);
+      });
+      act(() => {
+        vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS - 100);
+      });
+      act(() => {
+        usePrevizStore.getState().setDurationFrames(280);
+      });
+      act(() => {
+        vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS - 100);
+      });
+      act(() => {
+        usePrevizStore.getState().setDurationFrames(330);
+      });
+      expect(onFlush).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS);
+      });
+      expect(onFlush).toHaveBeenCalledTimes(1);
+      // 写回去的必须是最后那一版，不是窗口开头那一版。
+      expect(onFlush.mock.calls[0]![0].settings.durationFrames).toBe(330);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not write anything back while the user only browses", async () => {
+    const onFlush = vi.fn();
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject("camera", scene.objects));
+    await renderEditor({ onFlush, initialScene: scene });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      // 播放头、时间轴缩放、选中项都刻意不在 `PrevizScene` 里（store 里那段注释
+      // 讲了为什么），所以纯浏览一遍不该置脏、也就一个字节都不该写回。写回一次
+      // 就等于让画布 `trackEdit` 一次、把整张画布推去落盘，而用户什么都没改。
+      act(() => {
+        const store = usePrevizStore.getState();
+        store.setTimelineFrame(42);
+        store.zoomTimelineBy(2);
+        store.selectObject(scene.objects[0]!.id);
+        store.setActiveCamera(scene.objects[0]!.id);
+        store.selectClip(null);
+      });
+      act(() => {
+        vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS * 3);
+      });
+      expect(onFlush).not.toHaveBeenCalled();
+
+      // 关窗那条兜底同样要看 `dirty`。少了这一半断言，「无条件写」的实现能全绿：
+      // 定时器那条路本来就只在场景变过时才排。
+      act(() => {
+        fireEvent.click(screen.getByRole("button", { name: "previz.editor.close" }));
+      });
+      expect(onFlush).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still writes the last edit back when the editor closes mid-debounce", async () => {
+    const onFlush = vi.fn();
+    await renderEditor({ onFlush });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      act(() => {
+        usePrevizStore.getState().setDurationFrames(200);
+      });
+      // 不等防抖到点就关窗。兜底那一次必须把这笔改动接住，否则「改完立刻关」
+      // 这条最常见的路径反而丢数据——比没有自动保存还糟。
+      act(() => {
+        fireEvent.click(screen.getByRole("button", { name: "previz.editor.close" }));
+      });
+      expect(onFlush).toHaveBeenCalledTimes(1);
+      expect(onFlush.mock.calls[0]![0].settings.durationFrames).toBe(200);
+
+      // 防抖那一发随后还是会到点，但场景已经不脏了，不许再写第二遍。
+      act(() => {
+        vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS * 2);
+      });
+      expect(onFlush).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops the pending write when the editor unmounts", async () => {
+    const onFlush = vi.fn();
+    const { unmount } = await renderEditor({ onFlush });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      act(() => {
+        usePrevizStore.getState().setDurationFrames(200);
+      });
+      act(() => {
+        unmount();
+      });
+      // 定时器攥着 `onFlush`，而 `onFlush` 攥着节点 id。编辑器都没了还开火，
+      // 写的可能是一个刚被删掉的节点；卸载时必须把它清掉。
+      act(() => {
+        vi.advanceTimersByTime(PREVIZ_AUTOSAVE_MS * 2);
+      });
+      expect(onFlush).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

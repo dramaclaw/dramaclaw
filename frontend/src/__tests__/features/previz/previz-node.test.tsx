@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 
 import { CANVAS_NODE_TYPES, type PrevizNodeData } from "@/features/canvas/domain/canvasNodes";
 import {
@@ -11,8 +12,17 @@ import {
 } from "@/features/canvas/domain/nodeRegistry";
 import { PrevizNode } from "@/features/canvas/nodes/PrevizNode";
 import { nodeTypes } from "@/features/canvas/nodes";
-import { PREVIZ_SCHEMA_VERSION, createDefaultScene } from "@/features/previz/domain/scene";
+import { createPrevizObject } from "@/features/previz/domain/objects";
+import {
+  PREVIZ_SCHEMA_VERSION,
+  createDefaultScene,
+  type PrevizScene,
+} from "@/features/previz/domain/scene";
 import { useCanvasStore } from "@/stores/canvasStore";
+
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
+}));
 
 vi.mock("@xyflow/react", () => ({
   Handle: () => null,
@@ -33,9 +43,17 @@ vi.mock("react-i18next", () => ({
 }));
 
 // 编辑器是 lazy 的且会拉 three；节点测试只关心卡片和开关接线。
+// `onFlush` 借这个桩子交回测试：自动保存之后它每停手一次就来一发，这一层怎么
+// 应付「存不下」的重复失败是节点自己的事，用不着把真编辑器拖进来。
+// 用 `vi.hoisted`：`vi.mock` 的工厂会被提升到 import 之前，直接引模块级的 let
+// 会撞 TDZ。
+const editorStub = vi.hoisted(() => ({ flush: null as ((scene: never) => void) | null }));
+
 vi.mock("@/features/previz/PrevizEditor", () => ({
-  PrevizEditor: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="previz-editor-open" /> : null,
+  PrevizEditor: ({ open, onFlush }: { open: boolean; onFlush: (scene: never) => void }) => {
+    editorStub.flush = onFlush;
+    return open ? <div data-testid="previz-editor-open" /> : null;
+  },
 }));
 
 beforeAll(() => {
@@ -78,6 +96,8 @@ function renderNode(data: Partial<PrevizNodeData> = {}) {
 
 describe("PrevizNode", () => {
   beforeEach(() => {
+    // toast 是模块级的桩子，不清的话第二条计数用例会把上一条留下的调用一起数进来。
+    vi.clearAllMocks();
     useCanvasStore.getState().setCanvasData([], []);
   });
 
@@ -121,7 +141,57 @@ describe("PrevizNode", () => {
       ?.data as PrevizNodeData;
     expect(stored.scene?.settings.durationFrames).toBe(300);
   });
+
+  it("complains once, not once per autosave, when the scene is too big to store", async () => {
+    const user = userEvent.setup();
+    renderNode();
+    await user.click(screen.getByRole("button", { name: "previz.node.open" }));
+    expect(await screen.findByTestId("previz-editor-open")).toBeInTheDocument();
+
+    // 超限是个粘性状态：一旦存不下，之后每一次自动保存都会失败。自动保存把
+    // `onFlush` 变成「每停手一次来一发」，不加闸的话用户每动一下就吃一条错误
+    // toast，堆起来糊满屏幕、还挡住工具栏——而他要做的（删对象）恰恰得看得见
+    // 界面才做得了。
+    const before = useCanvasStore.getState().nodes[0]?.data;
+    const flush = editorStub.flush!;
+    act(() => flush(tooLargeScene() as never));
+    act(() => flush(tooLargeScene() as never));
+    act(() => flush(tooLargeScene() as never));
+
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenCalledWith("previz.editor.sceneTooLarge");
+    // 闭嘴不等于偷偷存下去：超限载荷进了整画布 PUT，canvasSync 收到 413 会永久停掉
+    // 自动保存，炸的是整张画布而不只是这个节点。`updateNodeData` 每次都换新对象，
+    // 引用没动就是一次都没写。
+    expect(useCanvasStore.getState().nodes[0]?.data).toBe(before);
+  });
+
+  it("complains again after a save has succeeded in between", async () => {
+    const user = userEvent.setup();
+    renderNode();
+    await user.click(screen.getByRole("button", { name: "previz.node.open" }));
+    expect(await screen.findByTestId("previz-editor-open")).toBeInTheDocument();
+
+    const flush = editorStub.flush!;
+    act(() => flush(tooLargeScene() as never));
+    // 删掉几个对象、存下去了：闸就该复位。否则用户瘦身成功之后再撑爆一次，
+    // 这个节点从此再也不吭声，界面上看起来一切正常，实际上什么都没存。
+    act(() => flush(createDefaultScene() as never));
+    act(() => flush(tooLargeScene() as never));
+
+    expect(toast.error).toHaveBeenCalledTimes(2);
+  });
 });
+
+/** 造一个必然过 1 MB 转存阈值的场景：40 个对象、每个名字 30 KB。 */
+function tooLargeScene(): PrevizScene {
+  const scene = createDefaultScene();
+  for (let index = 0; index < 40; index += 1) {
+    const object = createPrevizObject("character", scene.objects);
+    scene.objects.push({ ...object, name: "x".repeat(30_000) });
+  }
+  return scene;
+}
 
 // `nodeTypes` 的类型是 `Record<string, ComponentType>` 而不是
 // `Record<CanvasNodeType, …>`，所以少挂一个节点组件 tsc 永远不会报——注册表里能拖出

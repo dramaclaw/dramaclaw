@@ -82,6 +82,16 @@ interface PrevizEditorProps {
 const CLICK_SLOP_PX = 4;
 
 /**
+ * 停手多久之后把场景写回节点。
+ *
+ * 取 600：写回只是把场景交给画布，画布自己还要再等 `useCanvasSync` 的
+ * `DEBOUNCE_MS = 800` 才真落盘，两级串起来最坏约 1.4 秒。再往上加就到了「手停下
+ * 来还要等两秒才敢刷新」的边上；再往下减，一次滑杆拖动中间的自然停顿就会被切成
+ * 好几次写回，而每一次写回都是一整轮 JSON 序列化加一次整画布落盘。
+ */
+export const PREVIZ_AUTOSAVE_MS = 600;
+
+/**
  * 哪颗工具支起哪种手柄；`null` 表示这颗工具下视口里不该有手柄。
  *
  * 值域直接写成 `GizmoMode | null` 而不是 `| undefined` 再在取值处补个 `?? null`：
@@ -889,6 +899,48 @@ export function PrevizEditor({
     if (!open) recordStopped.current = true;
   }, [open]);
 
+  /**
+   * 把当前场景写回节点，但只在真有改动时写。
+   *
+   * 判据用 store 的 `dirty` 而不是自己比场景引用：播放头、时间轴缩放、选中项都刻意
+   * 不在 `PrevizScene` 里（store 里那段注释讲了为什么），只有 `applyScene` /
+   * `undo` / `redo` 会置脏。所以「打开看一眼再关掉」不会白写一次 `node.data`——
+   * 白写一次画布就 `trackEdit` 一次，紧接着把整张画布推去落盘，用户其实什么都没改。
+   *
+   * `markSaved()` 从上线起就没人调过，这套基建正是为这里留的。
+   */
+  const flushIfDirty = useCallback(() => {
+    const state = usePrevizStore.getState();
+    if (!state.dirty) return;
+    onFlush(state.scene);
+    state.markSaved();
+  }, [onFlush]);
+
+  /**
+   * 自动保存：场景一变就起一个防抖窗口，停手 `PREVIZ_AUTOSAVE_MS` 之后写回节点。
+   *
+   * 防的是这个丢数据：以前 `onFlush` 只在关对话框那一下触发，用户导入 obj、摆完位置、
+   * 不关对话框直接刷新页面，这一场戏从没进过 `node.data`，刷完就空了。
+   *
+   * 依赖挂 `scene` 而不是 `dirty`：`dirty` 是布尔，一串连续编辑里它一直是 true，
+   * effect 不会重跑，定时器也就永远不会被推后——那是「每 600ms 写一次」的节流，拖一次
+   * 滑杆要写十几遍。挂在 `scene` 引用上才是真防抖：每一次 `applyScene` 都换一个新场景
+   * 对象，effect 重跑、清掉上一个定时器、重新计时。
+   *
+   * `markSaved()` 只动 `dirty`、不动 `scene` 引用，所以写回之后 effect 不会被自己叫醒，
+   * 不存在「存一次又排一次」的自激。
+   */
+  useEffect(() => {
+    if (!open) return undefined;
+    // `scene` 是依赖但不是判据：`loadScene` 也换 `scene` 引用，而它同时把 `dirty`
+    // 清成 false，于是「刚打开编辑器」这一下不会立刻排一次没必要的写回。
+    if (!usePrevizStore.getState().dirty) return undefined;
+    const timer = window.setTimeout(flushIfDirty, PREVIZ_AUTOSAVE_MS);
+    // 卸载/关窗时必须清掉：定时器攥着 `onFlush`，而 `onFlush` 攥着节点 id，编辑器都
+    // 没了还开火，写的可能是一个刚被删掉的节点；关窗那条兜底也已经写过一次了。
+    return () => window.clearTimeout(timer);
+  }, [open, scene, flushIfDirty]);
+
   const handleOpenChange = useCallback(
     (next: boolean, details?: DialogPrimitive.Root.ChangeEventDetails) => {
       /*
@@ -909,10 +961,12 @@ export function PrevizEditor({
         setTool(PREVIZ_DEFAULT_TOOL);
         return;
       }
-      if (!next) onFlush(usePrevizStore.getState().scene);
+      // 关窗仍然兜一次底：改完立刻关是最常见的路径，等不到防抖到点。上面那个
+      // effect 的清理会顺手把待发的定时器清掉，`dirty` 判据保证这里和它不会重复写。
+      if (!next) flushIfDirty();
       onOpenChange(next);
     },
-    [onFlush, onOpenChange, tool],
+    [flushIfDirty, onOpenChange, tool],
   );
 
   useEffect(() => {

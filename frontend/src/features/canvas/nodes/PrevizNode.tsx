@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { Suspense, lazy, memo, useCallback, useMemo, useState } from "react";
+import { Suspense, lazy, memo, useCallback, useMemo, useRef, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Camera } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -55,14 +55,32 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
     [loaded],
   );
 
+  /**
+   * 「存不下」这句话只说一次。自动保存把 `handleFlush` 变成了「用户每停手一次就来
+   * 一发」，而超限是个粘性状态：一旦超了，之后每一发都会失败。不加这道闸，用户每动
+   * 一下就吃一条错误 toast，堆起来糊满屏幕、还挡住工具栏——而他要做的（删掉几个对象）
+   * 恰恰得看得见界面才做得了。
+   *
+   * 放在节点而不是编辑器里：闸只有和「这次到底存没存下」贴在一起才关得准，而只有这里
+   * 知道 `buildNodeScenePatch` 的结论。放这儿还顺带跨了编辑器的开关——关掉再打开不会
+   * 重新弹一遍同一句话，用户第一次就已经读到了。存成功一次就复位，下次再撑爆会重新提醒；
+   * 少了这一步，用户瘦身成功之后再撑爆，这个节点从此再也不吭声，界面看着一切正常、
+   * 实际什么都没存。
+   */
+  const complainedTooLarge = useRef(false);
+
   const handleFlush = useCallback(
     (scene: PrevizScene) => {
       const result = buildNodeScenePatch(scene);
       if (!result.ok) {
         // 超限载荷一旦进整画布 PUT，canvasSync 收到 413 会永久停掉自动保存。
-        toast.error(t("previz.editor.sceneTooLarge"));
+        if (!complainedTooLarge.current) {
+          complainedTooLarge.current = true;
+          toast.error(t("previz.editor.sceneTooLarge"));
+        }
         return;
       }
+      complainedTooLarge.current = false;
       updateNodeData(id, result.patch);
     },
     [id, t, updateNodeData],
