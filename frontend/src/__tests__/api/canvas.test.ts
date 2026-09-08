@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { apiCall } from "@/api/client";
+import { apiCall, apiCallEnvelope } from "@/api/client";
 import {
   buildProjectionFromPreset,
   createBlankFreezoneCanvas,
@@ -13,26 +13,32 @@ import {
 
 vi.mock("@/api/client", () => ({
   apiCall: vi.fn(),
+  // 画布详情走整信封:`foreign_media` 挂在 `data` 同级,只解一层的 apiCall 会丢掉它。
+  apiCallEnvelope: vi.fn(),
 }));
 
 describe("canvas projection api", () => {
   beforeEach(() => {
     vi.mocked(apiCall).mockReset();
+    vi.mocked(apiCallEnvelope).mockReset();
   });
 
   it("passes abort signals through canvas detail GETs", async () => {
     const controller = new AbortController();
-    vi.mocked(apiCall).mockResolvedValueOnce({
-      nodes: [],
-      edges: [],
-      revision: 4,
+    vi.mocked(apiCallEnvelope).mockResolvedValueOnce({
+      ok: true,
+      data: {
+        nodes: [],
+        edges: [],
+        revision: 4,
+      },
     });
 
     await getFreezoneCanvas("project-a", "user_eric", {
       signal: controller.signal,
     });
 
-    expect(apiCall).toHaveBeenCalledWith(
+    expect(apiCallEnvelope).toHaveBeenCalledWith(
       "projects/project-a/freezone/canvases/user_eric",
       { signal: controller.signal },
     );

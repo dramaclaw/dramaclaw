@@ -1319,7 +1319,8 @@
       "notRestorablePreset": "当前画布不是可恢复的主线 preset",
       "payloadTooLarge": "画布数据量超出后端上限",
       "revisionConflict": "画布已被其他窗口或用户修改",
-      "unsavedConflictBeforeSync": "当前画布还有未保存冲突，处理后再同步主线视图"
+      "unsavedConflictBeforeSync": "当前画布还有未保存冲突，处理后再同步主线视图",
+      "mediaScopeMismatch": "画布里有属于其他项目的素材，自动复制未成功，请删除这些节点后重新添加"
     },
     "directorCommit": {
       "layerFetchFailed": "读取导演图层失败：{{status}}",
@@ -4205,7 +4206,9 @@
       "partialFailure": "有 {{count}} 个媒体资产复制失败，相关节点已标记，请删除后重新粘贴",
       "copying": "素材复制中…",
       "failedPlaceholder": "素材复制失败，请删除后重新粘贴",
-      "removeNode": "移除节点"
+      "removeNode": "移除节点",
+      "foreignMedia": "素材属于其他项目",
+      "copyIntoProject": "复制到本项目"
     },
     "emptyHintChips": {
       "textToVideo": "文字生视频",

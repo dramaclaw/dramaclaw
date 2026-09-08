@@ -1319,7 +1319,8 @@
       "notRestorablePreset": "This canvas is not a restorable mainline preset.",
       "payloadTooLarge": "Canvas data exceeds the backend limit.",
       "revisionConflict": "This canvas was modified by another window or user.",
-      "unsavedConflictBeforeSync": "This canvas still has unsaved conflicts. Resolve them before syncing the mainline view."
+      "unsavedConflictBeforeSync": "This canvas still has unsaved conflicts. Resolve them before syncing the mainline view.",
+      "mediaScopeMismatch": "This canvas references media from another project and it could not be copied automatically — remove those nodes and add the media again."
     },
     "directorCommit": {
       "layerFetchFailed": "Failed to read the director layer: {{status}}",
@@ -4205,7 +4206,9 @@
       "partialFailure": "{{count}} media asset(s) failed to copy; the affected nodes are marked, delete them and paste again",
       "copying": "Copying assets…",
       "failedPlaceholder": "Asset copy failed. Delete this node and paste again.",
-      "removeNode": "Remove node"
+      "removeNode": "Remove node",
+      "foreignMedia": "Media belongs to another project",
+      "copyIntoProject": "Copy into this project"
     },
     "emptyHintChips": {
       "textToVideo": "Text to Video",

@@ -11,6 +11,11 @@ import {
   type CanvasNode,
 } from "@/stores/canvasStore";
 import {
+  applyForeignMediaRepairToNodes,
+  publishForeignMediaRefs,
+  repairForeignMediaRefs,
+} from "@/features/canvas/application/canvasMediaScope";
+import {
   createCanvasFromPreset,
   generateClientSaveId,
   getFreezoneCanvas,
@@ -1010,6 +1015,9 @@ export function useCanvasSync(
       revisionRef.current = remoteRevision;
       setRevision(remoteRevision);
       canvasEnvelopeRef.current = canvasEnvelopeFromRemote(remote);
+      // 读取期诊断:后端报的历史外项目引用交给节点遮罩显示 + 一键修复。整表替换,
+      // 上一张画布的诊断绝不能留到这一张(干净画布不带这个字段 = 全清)。
+      publishForeignMediaRefs(project, remote.foreign_media ?? []);
       lastSignatureRef.current = nextSignature;
       lastRemoteNodeCountRef.current = remoteNodes.length;
       pendingClientSaveIdRef.current = null;
@@ -1141,6 +1149,9 @@ export function useCanvasSync(
         revisionRef.current = remoteRevision;
         setRevision(remoteRevision);
         canvasEnvelopeRef.current = canvasEnvelopeFromRemote(remote);
+        // 读取期诊断:后端报的历史外项目引用交给节点遮罩显示 + 一键修复。整表替换,
+        // 上一张画布的诊断绝不能留到这一张(干净画布不带这个字段 = 全清)。
+        publishForeignMediaRefs(project, remote.foreign_media ?? []);
         const nodes = (remote.nodes ?? []) as Parameters<typeof setCanvasData>[0];
         const edges = (remote.edges ?? []) as Parameters<typeof setCanvasData>[1];
         const meta = (remote.metadata ?? null) as
@@ -1865,6 +1876,8 @@ async function performSave(
    * new canvas's state.
    */
   dispatchGeneration: number,
+  /** 已经为「外项目媒体引用」自愈过几轮。只允许一轮,见 handleSaveError。 */
+  mediaScopeAttempt = 0,
 ): Promise<boolean> {
   const payload = buildSavePayload({
     canvasId: args.canvasId,
@@ -1943,6 +1956,7 @@ async function performSave(
       clientSaveId,
       attempt,
       dispatchGeneration,
+      mediaScopeAttempt,
     );
   }
 }
@@ -2007,6 +2021,7 @@ async function handleSaveError(
   clientSaveId: string,
   attempt: number,
   dispatchGeneration: number,
+  mediaScopeAttempt: number,
 ): Promise<boolean> {
   const { status, body } = saveErrorStatusAndBody(err);
   const fallback = err instanceof Error ? err.message : String(err);
@@ -2084,6 +2099,57 @@ async function handleSaveError(
       args.setError(null);
       args.setStatus("ready");
       return true;
+    }
+    case "media_scope": {
+      // 后端拦下了本次新引入的外项目媒体引用(静态资源按 URL 里的项目 id 独立鉴权,
+      // 存下去就是给其他成员一片 403)。可以自愈:把素材拷进本项目、改掉引用再重试。
+      // 只自愈一轮——第二次还被拒说明拷贝或改写没生效,再转一圈就是死循环。
+      if (mediaScopeAttempt > 0) {
+        dropPendingId();
+        args.setError(args.t("freezone.canvasSync.mediaScopeMismatch"));
+        args.setStatus("error");
+        return false;
+      }
+      const repair = await repairForeignMediaRefs({
+        refs: outcome.refs,
+        targetProject: args.project,
+        getLiveNodeData: (id) =>
+          (useCanvasStore.getState().nodes.find((node) => node.id === id)?.data ??
+            null) as never,
+        updateNodeData: (id, patch) => {
+          // 这是修复既有数据,不是用户操作:不进撤销栈。
+          useCanvasStore
+            .getState()
+            .updateNodeData(id, patch, { recordHistory: false });
+        },
+      });
+      if (args.canvasGenerationRef.current !== dispatchGeneration) {
+        return false;
+      }
+      const repairedNodes = applyForeignMediaRepairToNodes(
+        args.nodes as Array<{ id: string; data?: unknown }>,
+        outcome.refs,
+        repair,
+      );
+      if (repairedNodes === (args.nodes as unknown)) {
+        // 一处都没改到(节点已删 / 字段被用户换过 / 路径对不上):重试也一样会被拒。
+        dropPendingId();
+        args.setError(args.t("freezone.canvasSync.mediaScopeMismatch"));
+        args.setStatus("error");
+        return false;
+      }
+      // 载荷变了就必须换 client_save_id:沿用旧的会撞上后端的幂等记录,回 409。
+      const retryClientSaveId = generateClientSaveId();
+      args.pendingClientSaveIdRef.current = retryClientSaveId;
+      args.pendingClientSaveIdSignatureRef.current = null;
+      return await performSave(
+        { ...args, nodes: repairedNodes },
+        decision,
+        retryClientSaveId,
+        attempt,
+        dispatchGeneration,
+        mediaScopeAttempt + 1,
+      );
     }
     case "fatal": {
       // 422 / 413 (payload too large), 500 (canvas_needs_migration /

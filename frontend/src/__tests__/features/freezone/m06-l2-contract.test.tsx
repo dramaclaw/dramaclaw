@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { server } from "@/__mocks__/msw/server";
-import { apiCall } from "@/api/client";
+import { apiCall, apiCallEnvelope } from "@/api/client";
 import {
   getFreezoneCanvas,
   listFreezoneCanvases,
@@ -32,6 +32,8 @@ vi.mock("@/api/client", async (importOriginal) => {
   return {
     ...actual,
     apiCall: vi.fn(),
+    // 画布详情走整信封:`foreign_media` 挂在 `data` 同级,只解一层的 apiCall 会丢掉它。
+    apiCallEnvelope: vi.fn(),
   };
 });
 
@@ -97,6 +99,7 @@ describe("M06 frontend L2 contract", () => {
     MockEventSource.instances.length = 0;
     vi.stubGlobal("EventSource", MockEventSource);
     vi.mocked(apiCall).mockReset();
+    vi.mocked(apiCallEnvelope).mockReset();
     useAuthStore.setState({ username: "local", role: "owner" });
   });
 
@@ -274,14 +277,6 @@ describe("M06 frontend L2 contract", () => {
         },
       ])
       .mockResolvedValueOnce({
-        schema_version: 2,
-        canvas_id: "default",
-        revision: 4,
-        nodes: [{ id: "n1", type: "freezoneImageNode" }],
-        edges: [],
-        viewport: { x: 0, y: 0, zoom: 1 },
-      })
-      .mockResolvedValueOnce({
         saved: true,
         revision: 5,
         client_save_id: "save-1",
@@ -302,6 +297,18 @@ describe("M06 frontend L2 contract", () => {
         stale_marked: 1,
         affected_count: 1,
       });
+
+    vi.mocked(apiCallEnvelope).mockResolvedValueOnce({
+      ok: true,
+      data: {
+        schema_version: 2,
+        canvas_id: "default",
+        revision: 4,
+        nodes: [{ id: "n1", type: "freezoneImageNode" }],
+        edges: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+      },
+    });
 
     const canvases = await listFreezoneCanvases("demo");
     const canvas = await getFreezoneCanvas("demo", "default");
@@ -347,7 +354,6 @@ describe("M06 frontend L2 contract", () => {
 
     expect(vi.mocked(apiCall).mock.calls).toEqual([
       ["projects/demo/freezone/canvases", undefined],
-      ["projects/demo/freezone/canvases/default", undefined],
       [
         "projects/demo/freezone/canvases/default",
         {
@@ -384,6 +390,10 @@ describe("M06 frontend L2 contract", () => {
           },
         },
       ],
+    ]);
+    // 画布详情单独走整信封,不在 apiCall 的调用序列里。
+    expect(vi.mocked(apiCallEnvelope).mock.calls).toEqual([
+      ["projects/demo/freezone/canvases/default", undefined],
     ]);
   });
 });

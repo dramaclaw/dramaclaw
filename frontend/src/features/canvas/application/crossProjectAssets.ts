@@ -163,7 +163,7 @@ export function withholdForeignAssetUrls(
   return { data: stripped as unknown as CanvasNodeData, withheld };
 }
 
-function readAtPath(root: unknown, path: Array<string | number>): unknown {
+export function readAtPath(root: unknown, path: Array<string | number>): unknown {
   let cursor: unknown = root;
   for (const segment of path) {
     if (!cursor || typeof cursor !== 'object') {
@@ -175,7 +175,7 @@ function readAtPath(root: unknown, path: Array<string | number>): unknown {
 }
 
 /** 纯函数：在 `root` 的 `path` 处写入 `value`，沿途容器浅拷贝，返回新根。 */
-function writeAtPath(root: unknown, path: Array<string | number>, value: unknown): unknown {
+export function writeAtPath(root: unknown, path: Array<string | number>, value: unknown): unknown {
   if (path.length === 0) {
     return value;
   }
@@ -239,7 +239,7 @@ function chunk<T>(items: T[], size: number): T[][] {
  * 分批让后端拷贝，返回 归一化路径 → 新 URL 的映射，以及失败的归一化路径集合。
  * 一批整体失败（网络 / 5xx）时，这一批的所有路径都算失败，其它批不受影响。
  */
-async function copyAssetsInBatches(
+export async function copyAssetsInBatches(
   targetProject: string,
   sources: string[],
 ): Promise<{ mapping: Map<string, string>; failed: Set<string> }> {

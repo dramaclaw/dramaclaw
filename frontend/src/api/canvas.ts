@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { apiCall } from "./client";
+import { apiCall, apiCallEnvelope } from "./client";
 
 // SuperTale-side canvas storage (`/api/v1/projects/<project_id>/freezone/canvases/*`).
 // The wire format is intentionally generic: `{nodes, edges, viewport}`. The
@@ -33,7 +33,21 @@ export type CanvasSaveSource =
 
 export type CanvasBackupStatus = "disabled" | "synced" | "pending" | "failed";
 
+/** 后端在 GET 里报出的一处外项目媒体引用（见 canvasMediaScope）。 */
+export interface CanvasForeignMediaRef {
+  node_id: string;
+  field: string;
+  url: string;
+  source_project_id: string;
+}
+
 export interface FreezoneCanvasPayload {
+  /**
+   * 读取期诊断：这张画布里仍然指向别的项目的媒体引用。后端把它挂在信封里 `data` 的
+   * **同级**（画布契约一个字节不变），这里合进返回对象只是图调用方好拿；它不是画布
+   * 内容，`canvasEnvelopeFromRemote` 按字段显式挑选，不会被写回服务端。
+   */
+  foreign_media?: CanvasForeignMediaRef[];
   schema_version?: 2;
   canvas_id?: string;
   project_id?: string;
@@ -157,10 +171,27 @@ export async function getFreezoneCanvas(
   canvasId: string,
   options?: { signal?: AbortSignal },
 ): Promise<FreezoneCanvasPayload> {
-  return await apiCall<FreezoneCanvasPayload>(
+  // 收整个信封:`foreign_media` 挂在 `data` 同级,只解一层的 apiCall 会把它丢掉。
+  const envelope = await apiCallEnvelope<FreezoneCanvasPayload>(
     `projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(canvasId)}`,
     options?.signal ? { signal: options.signal } : undefined,
   );
+  const payload = (envelope.data ?? {}) as FreezoneCanvasPayload;
+  const foreignMedia = envelope.foreign_media;
+  // 同级字段没有静态类型,运行时判定——跨仓库契约上的类型断言是纯粹的谎言。
+  if (!Array.isArray(foreignMedia)) {
+    return payload;
+  }
+  const refs = foreignMedia.filter(
+    (ref): ref is CanvasForeignMediaRef =>
+      Boolean(ref) &&
+      typeof ref === "object" &&
+      typeof (ref as CanvasForeignMediaRef).node_id === "string" &&
+      typeof (ref as CanvasForeignMediaRef).field === "string" &&
+      typeof (ref as CanvasForeignMediaRef).url === "string" &&
+      typeof (ref as CanvasForeignMediaRef).source_project_id === "string",
+  );
+  return refs.length > 0 ? { ...payload, foreign_media: refs } : payload;
 }
 
 export async function putFreezoneCanvas(
