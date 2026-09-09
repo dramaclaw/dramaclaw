@@ -666,7 +666,7 @@ async def save_official_gateway_config(body: OfficialGatewayBody) -> dict[str, A
 async def save_custom_brainclaw_config(
     body: BrainClawGatewayBody,
 ) -> dict[str, Any]:
-    """Save the RelayClaw key and activate mixed custom-media/BrainClaw LLM."""
+    """Save the BrainClaw endpoint for Custom mode (does not switch the active mode)."""
     try:
         require_ce_gateway_management()
     except PermissionError as exc:
@@ -697,7 +697,6 @@ async def save_custom_brainclaw_config(
     save_relayclaw_brainclaw_key(
         api_key=api_key,
         base_url=base_url,
-        activate=True,
     )
     runtime = refresh_model_gateway_runtime()
     return {
