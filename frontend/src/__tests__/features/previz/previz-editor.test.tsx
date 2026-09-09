@@ -11,6 +11,7 @@ import {
   canvasToWorld,
   sceneTopDownBounds,
   topDownView,
+  type PrevizTopDownFootprint,
 } from "@/features/previz/domain/topDownMap";
 import { PREVIZ_TOP_DOWN_PICKER_SIZE } from "@/features/previz/ui/PrevizTopDownPicker";
 import {
@@ -48,6 +49,7 @@ const planePointAt = vi.fn(
 const setStroke = vi.fn((_points: readonly Vec3[] | null) => {});
 const setDrawing = vi.fn((_active: boolean) => {});
 const viewPose = vi.fn(() => ({ position: [6, 4, 8] as Vec3, target: [0, 1, 0] as Vec3 }));
+const propFootprints = vi.fn((): PrevizTopDownFootprint[] => []);
 const renderCameraPreview = vi.fn();
 // 真实现返回 Promise，桩也得返回一个：编辑器把它接在 void 上下文里，返回 undefined
 // 时任何 `.catch` 都会当场炸成 TypeError。
@@ -90,6 +92,7 @@ function fakeRenderer() {
     setStroke,
     setDrawing,
     viewPose,
+    propFootprints,
     renderCameraPreview,
     renderCharacterPreview,
     renderQuadPreview,
@@ -761,6 +764,40 @@ describe("PrevizEditor", () => {
 
     expect(screen.queryByRole("dialog", { name: "previz.characterCreate.title" })).toBeNull();
     expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+  });
+
+  it("measures the props once when the character dialog opens", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn(() => true)}
+      />,
+    );
+
+    // 关着的时候一次都不量：量一件道具要对它整棵子树跑 `Box3.setFromObject`，而这块
+    // 数据只有那张选位图用得上。
+    expect(propFootprints).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.character" }));
+
+    expect(propFootprints).toHaveBeenCalledTimes(1);
+
+    // 对话框是模态的，开着的时候场景不会变，所以量一次就够。每渲染一次量一遍的话，
+    // 整个布景的包围盒会被反复重算；交出来的数组还每次换一个新引用，选位图的
+    // useMemo / useEffect 于是跟着重算取景、整张图重画。这里借加一台机位逼编辑器
+    // 重渲一轮——真实里对着对话框敲键盘、拖时间轴都会走到同一处。
+    act(() => {
+      usePrevizStore.getState().addObject("camera");
+    });
+
+    expect(propFootprints).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole("dialog", { name: "previz.characterCreate.title" }),
+    ).toBeInTheDocument();
   });
 
   it("draws the mannequin preview through the renderer", async () => {

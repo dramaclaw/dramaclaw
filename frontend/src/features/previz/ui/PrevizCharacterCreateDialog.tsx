@@ -22,6 +22,7 @@ import {
   PREVIZ_PREVIEW_SIZE,
   type CameraPreviewCanvas,
 } from "@/features/previz/engine/cameraPreview";
+import type { PrevizTopDownFootprint } from "@/features/previz/domain/topDownMap";
 import { PrevizTopDownPicker } from "@/features/previz/ui/PrevizTopDownPicker";
 
 export interface PrevizCharacterCreateDialogProps {
@@ -34,6 +35,13 @@ export interface PrevizCharacterCreateDialogProps {
    * 一次换一个新数组的话，取景与整张图会跟着重算重画。
    */
   objects: readonly PrevizObject[];
+  /**
+   * 道具在地面上占的那几块地，原样转给左栏的选位图（画出来，并算进取景范围）。
+   *
+   * 本组件不碰它的内容，只负责别把引用弄丢——理由同 `objects`：选位图拿它当 `useMemo`
+   * / `useEffect` 的依赖，每渲染一次换一个新数组的话，取景与整张图会跟着重算重画。
+   */
+  footprints?: readonly PrevizTopDownFootprint[];
   /** 把草稿画到木偶预览画布上。接线交给编辑器，本组件只吃 props，好用纯 props 测。 */
   onRenderPreview: (canvas: CameraPreviewCanvas, draft: PrevizCharacterDraft) => void;
   /** 收窄成「已选位」的草稿：没点过俯视图的草稿在这里编译期就递不出去。 */
@@ -94,6 +102,7 @@ export function PrevizCharacterCreateDialog(props: PrevizCharacterCreateDialogPr
 
 function CharacterCreatePanel({
   objects,
+  footprints,
   onRenderPreview,
   onCreate,
   onClose,
@@ -143,7 +152,12 @@ function CharacterCreatePanel({
 
         <div className="flex gap-4">
           <div className="w-[320px] shrink-0">
-            <PrevizTopDownPicker objects={objects} value={draft.spot} onPick={handlePick} />
+            <PrevizTopDownPicker
+              objects={objects}
+              footprints={footprints}
+              value={draft.spot}
+              onPick={handlePick}
+            />
             <div className="mt-2 flex items-center gap-2">
               <span className="shrink-0 text-[11px] text-white/45">
                 {t("previz.characterCreate.spot")}

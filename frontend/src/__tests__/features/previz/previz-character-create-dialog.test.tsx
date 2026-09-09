@@ -13,6 +13,7 @@ import {
   sceneTopDownBounds,
   topDownView,
   worldToCanvas,
+  type PrevizTopDownFootprint,
 } from "@/features/previz/domain/topDownMap";
 import { PREVIZ_TOP_DOWN_PICKER_SIZE } from "@/features/previz/ui/PrevizTopDownPicker";
 import { PrevizCharacterCreateDialog } from "@/features/previz/ui/PrevizCharacterCreateDialog";
@@ -81,9 +82,12 @@ function stubPickerRect(): void {
  * 「对话框有没有把选位图接对」，映射本身对不对由 top-down-map.test.ts 管。
  * jsdom 的 devicePixelRatio 是 1，所以位图尺寸就是 CSS 尺寸。
  */
-function viewFor(objects: readonly PrevizObject[]) {
+function viewFor(
+  objects: readonly PrevizObject[],
+  footprints: readonly PrevizTopDownFootprint[] = [],
+) {
   return topDownView(
-    sceneTopDownBounds(objects),
+    sceneTopDownBounds(objects, footprints),
     PREVIZ_TOP_DOWN_PICKER_SIZE.width,
     PREVIZ_TOP_DOWN_PICKER_SIZE.height,
   );
@@ -94,6 +98,7 @@ function pickAt(
   objects: readonly PrevizObject[],
   clientX: number,
   clientY: number,
+  footprints: readonly PrevizTopDownFootprint[] = [],
 ): readonly [number, number] {
   stubPickerRect();
   fireEvent.click(screen.getByRole("button", { name: /previz\.characterCreate\.pickHint/ }), {
@@ -102,7 +107,7 @@ function pickAt(
     clientX,
     clientY,
   });
-  return canvasToWorld(viewFor(objects), [clientX, clientY]);
+  return canvasToWorld(viewFor(objects, footprints), [clientX, clientY]);
 }
 
 function createButton(): HTMLElement {
@@ -203,6 +208,25 @@ describe("PrevizCharacterCreateDialog", () => {
       y: expect.closeTo(py, 6),
       fillStyle: "#ff0000",
     });
+  });
+
+  it("hands the footprints straight through to the picker", async () => {
+    const user = userEvent.setup();
+    // 一件原点在 (0, 0)、向 +X 铺开 10 m 的布景。轮廓传不下去的话取景框就是默认那块
+    // ±6 m 的地，同一下点击落在完全不同的世界坐标上——差的正好是这半间布景。
+    const objects: PrevizObject[] = [{ ...createPrevizObject("prop", []), id: "set" }];
+    const footprints = [{ id: "set", minX: 0, maxX: 10, minZ: -1, maxZ: 1 }];
+    const { onCreate } = setup({ objects, footprints });
+
+    const spot = pickAt(objects, 100, 60, footprints);
+    await user.click(createButton());
+
+    expect(created(onCreate).spot).not.toBeNull();
+    expect(created(onCreate).spot?.[0]).toBeCloseTo(spot[0], 6);
+    expect(created(onCreate).spot?.[1]).toBeCloseTo(spot[1], 6);
+    // 与「没接上」那条实现区分开：不传轮廓时同一下点击落在别处。
+    const [plainX] = canvasToWorld(viewFor(objects), [100, 60]);
+    expect(spot[0]).not.toBeCloseTo(plainX, 3);
   });
 
   it("names the new character 人物 N by default", async () => {
