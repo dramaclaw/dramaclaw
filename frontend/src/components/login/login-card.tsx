@@ -58,6 +58,12 @@ export function LoginCard() {
     try {
       clearErrors();
       await login(data.username, data.password);
+      const paymentRedirect = sessionStorage.getItem("supertale-payment-login-redirect");
+      if (paymentRedirect === "/recharge") {
+        sessionStorage.removeItem("supertale-payment-login-redirect");
+        window.location.replace(paymentRedirect);
+        return;
+      }
       navigate({ to: "/", replace: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : t("auth.loginFailed");

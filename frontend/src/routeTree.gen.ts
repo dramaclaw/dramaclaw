@@ -11,10 +11,13 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as RechargeRouteImport } from './routes/recharge'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as CheckoutRouteImport } from './routes/checkout'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as WatchWorkRouteImport } from './routes/watch.$work'
+import { Route as AppPaymentReturnRouteImport } from './routes/_app/payment-return'
 import { Route as AppCreditsRouteImport } from './routes/_app/credits'
 import { Route as AppAccessUnavailableRouteImport } from './routes/_app/access-unavailable'
 import { Route as AppProjectsProjectTasksRouteImport } from './routes/_app/projects.$project/tasks'
@@ -58,9 +61,19 @@ const DownloadLazyRoute = DownloadLazyRouteImport.update({
   path: '/download',
   getParentRoute: () => rootRouteImport,
 } as any).lazy(() => import('./routes/download.lazy').then((d) => d.Route))
+const RechargeRoute = RechargeRouteImport.update({
+  id: '/recharge',
+  path: '/recharge',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CheckoutRoute = CheckoutRouteImport.update({
+  id: '/checkout',
+  path: '/checkout',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppRoute = AppRouteImport.update({
@@ -76,6 +89,11 @@ const WatchWorkRoute = WatchWorkRouteImport.update({
   id: '/watch/$work',
   path: '/watch/$work',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AppPaymentReturnRoute = AppPaymentReturnRouteImport.update({
+  id: '/payment-return',
+  path: '/payment-return',
+  getParentRoute: () => AppRoute,
 } as any)
 const AppCreditsRoute = AppCreditsRouteImport.update({
   id: '/credits',
@@ -219,10 +237,13 @@ const AppProjectsProjectEpisodesEpisodeAudioLazyRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
+  '/checkout': typeof CheckoutRoute
   '/login': typeof LoginRoute
+  '/recharge': typeof RechargeRoute
   '/download': typeof DownloadLazyRoute
   '/access-unavailable': typeof AppAccessUnavailableRoute
   '/credits': typeof AppCreditsRoute
+  '/payment-return': typeof AppPaymentReturnRoute
   '/watch/$work': typeof WatchWorkRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
@@ -241,10 +262,13 @@ export interface FileRoutesByFullPath {
   '/projects/$project/episodes/$episode/': typeof AppProjectsProjectEpisodesEpisodeIndexLazyRoute
 }
 export interface FileRoutesByTo {
+  '/checkout': typeof CheckoutRoute
   '/login': typeof LoginRoute
+  '/recharge': typeof RechargeRoute
   '/download': typeof DownloadLazyRoute
   '/access-unavailable': typeof AppAccessUnavailableRoute
   '/credits': typeof AppCreditsRoute
+  '/payment-return': typeof AppPaymentReturnRoute
   '/watch/$work': typeof WatchWorkRoute
   '/': typeof AppIndexRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
@@ -266,10 +290,13 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
+  '/checkout': typeof CheckoutRoute
   '/login': typeof LoginRoute
+  '/recharge': typeof RechargeRoute
   '/download': typeof DownloadLazyRoute
   '/_app/access-unavailable': typeof AppAccessUnavailableRoute
   '/_app/credits': typeof AppCreditsRoute
+  '/_app/payment-return': typeof AppPaymentReturnRoute
   '/watch/$work': typeof WatchWorkRoute
   '/_app/': typeof AppIndexRoute
   '/_app/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
@@ -292,10 +319,13 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/checkout'
     | '/login'
+    | '/recharge'
     | '/download'
     | '/access-unavailable'
     | '/credits'
+    | '/payment-return'
     | '/watch/$work'
     | '/projects/$project/assistant'
     | '/projects/$project/episodes'
@@ -314,10 +344,13 @@ export interface FileRouteTypes {
     | '/projects/$project/episodes/$episode/'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/checkout'
     | '/login'
+    | '/recharge'
     | '/download'
     | '/access-unavailable'
     | '/credits'
+    | '/payment-return'
     | '/watch/$work'
     | '/'
     | '/projects/$project/assistant'
@@ -338,10 +371,13 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_app'
+    | '/checkout'
     | '/login'
+    | '/recharge'
     | '/download'
     | '/_app/access-unavailable'
     | '/_app/credits'
+    | '/_app/payment-return'
     | '/watch/$work'
     | '/_app/'
     | '/_app/projects/$project/assistant'
@@ -363,7 +399,9 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
+  CheckoutRoute: typeof CheckoutRoute
   LoginRoute: typeof LoginRoute
+  RechargeRoute: typeof RechargeRoute
   DownloadLazyRoute: typeof DownloadLazyRoute
   WatchWorkRoute: typeof WatchWorkRoute
 }
@@ -377,11 +415,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DownloadLazyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/recharge': {
+      id: '/recharge'
+      path: '/recharge'
+      fullPath: '/recharge'
+      preLoaderRoute: typeof RechargeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/checkout': {
+      id: '/checkout'
+      path: '/checkout'
+      fullPath: '/checkout'
+      preLoaderRoute: typeof CheckoutRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app': {
@@ -404,6 +456,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/watch/$work'
       preLoaderRoute: typeof WatchWorkRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_app/payment-return': {
+      id: '/_app/payment-return'
+      path: '/payment-return'
+      fullPath: '/payment-return'
+      preLoaderRoute: typeof AppPaymentReturnRouteImport
+      parentRoute: typeof AppRoute
     }
     '/_app/credits': {
       id: '/_app/credits'
@@ -566,6 +625,7 @@ const AppProjectsProjectEpisodesRouteWithChildren =
 interface AppRouteChildren {
   AppAccessUnavailableRoute: typeof AppAccessUnavailableRoute
   AppCreditsRoute: typeof AppCreditsRoute
+  AppPaymentReturnRoute: typeof AppPaymentReturnRoute
   AppIndexRoute: typeof AppIndexRoute
   AppProjectsProjectAssistantRoute: typeof AppProjectsProjectAssistantRoute
   AppProjectsProjectEpisodesRoute: typeof AppProjectsProjectEpisodesRouteWithChildren
@@ -579,6 +639,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppAccessUnavailableRoute: AppAccessUnavailableRoute,
   AppCreditsRoute: AppCreditsRoute,
+  AppPaymentReturnRoute: AppPaymentReturnRoute,
   AppIndexRoute: AppIndexRoute,
   AppProjectsProjectAssistantRoute: AppProjectsProjectAssistantRoute,
   AppProjectsProjectEpisodesRoute: AppProjectsProjectEpisodesRouteWithChildren,
@@ -593,7 +654,9 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
+  CheckoutRoute: CheckoutRoute,
   LoginRoute: LoginRoute,
+  RechargeRoute: RechargeRoute,
   DownloadLazyRoute: DownloadLazyRoute,
   WatchWorkRoute: WatchWorkRoute,
 }
