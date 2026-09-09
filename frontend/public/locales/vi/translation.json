@@ -453,12 +453,12 @@
         "partialSuccess": "Đã đổi mật khẩu. Hãy đăng nhập lại; một số phiên vẫn đang được đăng xuất.",
         "error": "Không đổi được mật khẩu. Vui lòng thử lại.",
         "initializeTitle": "Đặt mật khẩu đăng nhập",
-        "initializeDescription": "Sau khi đặt mật khẩu, bạn có thể đăng nhập bằng số điện thoại và mật khẩu. Bạn cần đăng nhập lại sau khi hoàn tất.",
-        "initializeRequirement": "Sử dụng ít nhất 8 ký tự. Bạn phải đã đăng nhập bằng OTP trong 10 phút gần đây.",
+        "initializeDescription": "Sau khi đặt mật khẩu, bạn có thể đăng nhập bằng số điện thoại và mật khẩu. Bạn sẽ cần đăng nhập lại sau khi hoàn tất.",
+        "initializeRequirement": "Dùng ít nhất 8 ký tự. Bạn phải đăng nhập bằng mã xác minh trong vòng 10 phút gần đây.",
         "initializeSubmit": "Đặt mật khẩu",
         "initializeSuccess": "Đã đặt mật khẩu. Hãy đăng nhập lại bằng số điện thoại và mật khẩu mới.",
         "initializePartialSuccess": "Đã đặt mật khẩu. Hãy đăng nhập lại; một số phiên vẫn đang được đăng xuất.",
-        "initializeExpired": "Lần đăng nhập OTP này đã quá lâu. Hãy đăng nhập bằng mã mới rồi thử lại."
+        "initializeExpired": "Lần đăng nhập bằng mã xác minh này đã quá lâu. Hãy đăng nhập bằng mã mới rồi thử lại."
       },
       "avatarDialog": {
         "title": "Đổi ảnh đại diện",
@@ -1991,7 +1991,7 @@
       "showcaseMeta": "Dây chuyền đang chạy",
       "showcaseTitle": "Trí tưởng tượng chạy hết công suất",
       "showcaseDescription": "Nhân vật, storyboard, âm thanh và cú máy cùng tiến trên một dây chuyền",
-      "otpRegistration": "Lần đăng nhập bằng số điện thoại được xác minh đầu tiên sẽ tự động tạo tài khoản"
+      "otpRegistration": "Lần đầu đăng nhập bằng số điện thoại đã xác minh sẽ tự động tạo tài khoản"
     },
     "privacy": "Quyền riêng tư",
     "terms": "Điều khoản",
@@ -2095,7 +2095,7 @@
     "accountOrPhone": "Tài khoản hoặc số điện thoại",
     "accountOrPhonePlaceholder": "Nhập tài khoản hoặc số điện thoại",
     "passwordTab": "Mật khẩu",
-    "loginMethod": "Chọn cách đăng nhập",
+    "loginMethod": "Chọn phương thức đăng nhập",
     "otp": {
       "tab": "Mã xác minh",
       "phone": "Số điện thoại",
@@ -2110,12 +2110,12 @@
       "sent": "Đã gửi mã đến {{phone}}",
       "loginButton": "Xác minh và đăng nhập",
       "verifying": "Đang xác minh…",
-      "autoRegisterHint": "Số điện thoại đã xác minh chưa có tài khoản sẽ được đăng ký tự động.",
+      "autoRegisterHint": "Số điện thoại đã xác minh nhưng chưa có tài khoản sẽ được đăng ký tự động.",
       "accountCreated": "Đã tạo tài khoản. Bạn có thể đặt mật khẩu trong menu tài khoản.",
       "passwordNotSet": "Tài khoản này chưa có mật khẩu. Bạn có thể đặt mật khẩu trong menu tài khoản.",
-      "invalidPhone": "Vui lòng nhập số điện thoại hợp lệ.",
+      "invalidPhone": "Hãy nhập số điện thoại hợp lệ.",
       "invalidCode": "Mã không đúng hoặc đã hết hạn. Hãy yêu cầu mã mới.",
-      "rateLimited": "Quá nhiều lần thử. Vui lòng thử lại sau.",
+      "rateLimited": "Bạn đã thử quá nhiều lần. Vui lòng thử lại sau.",
       "unavailable": "Dịch vụ SMS tạm thời không khả dụng. Vui lòng thử lại sau.",
       "requestFailed": "Không thể gửi mã xác minh. Vui lòng thử lại.",
       "verifyFailed": "Không thể đăng nhập bằng mã này. Vui lòng thử lại."
