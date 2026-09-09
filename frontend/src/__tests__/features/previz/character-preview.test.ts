@@ -488,6 +488,37 @@ describe("renderCharacterPreview 并发", () => {
     );
   });
 
+  it("leaves someone else's in-flight rebuild alone when it bows out", async () => {
+    const pending: Array<(value: FakeObject3D | null) => void> = [];
+    let alive = true;
+    const harness = setup();
+    harness.build.mockImplementation(
+      () => new Promise<FakeObject3D | null>((resolve) => pending.push(resolve)),
+    );
+    (harness.deps as { alive?: () => boolean }).alive = () => alive;
+
+    const first = renderCharacterPreview(harness.deps, draftOf({ bodyType: "average" }));
+    // 中间夹一次简化圆柱体，好让第三次是一次**新的**重建而不是就地刷新；它不等模型，
+    // 先让它落地，免得跟着下面那次「拆了」一起早退。
+    await renderCharacterPreview(harness.deps, draftOf({ bodyType: "capsule" }));
+    const third = renderCharacterPreview(harness.deps, draftOf({ bodyType: "average" }));
+
+    // 第一次醒来时这套东西已经拆了，而第三次还在飞——它退它的，别动人家占着的判据。
+    alive = false;
+    pending[0]?.(fakeRig());
+    await first;
+    alive = true;
+    pending[1]?.(fakeRig());
+    await third;
+
+    const fourth = renderCharacterPreview(harness.deps, draftOf({ bodyType: "average" }));
+    // 判据要是被第一次顺手抹了，这一次就判成「要重建」，白克隆一副骨架。
+    expect(harness.build).toHaveBeenCalledTimes(2);
+    // 万一真的又建了一次，别把那个 promise 吊在这儿。
+    pending[2]?.(fakeRig());
+    await fourth;
+  });
+
   it("does not let a stale build take the slot back when the key came full circle", async () => {
     const pending: Array<(value: FakeObject3D | null) => void> = [];
     const harness = setup();
