@@ -7922,6 +7922,17 @@
     "scriptUnsupported": "当前浏览器不支持隔离凭据的交互模式；仍可预览、选择元素和编辑源码。",
     "saveCommand": "保存网页",
     "mediaLoadFailed": "素材加载失败：{{path}}",
-    "historyRecordFailed": "网页已保存，但节点历史记录失败，请稍后重试。"
+    "historyRecordFailed": "网页已保存，但节点历史记录失败，请稍后重试。",
+    "textTools": "文字编辑",
+    "textContent": "文字内容",
+    "fontFamily": "字体",
+    "fontSize": "字号",
+    "textColor": "文字颜色",
+    "bold": "加粗",
+    "regular": "常规",
+    "alignleft": "左对齐",
+    "aligncenter": "居中",
+    "alignright": "右对齐",
+    "selectLeaf": "请选择最内层文字元素修改内容，避免覆盖内部排版。"
   }
 }

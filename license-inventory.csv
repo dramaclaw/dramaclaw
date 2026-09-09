@@ -1489,6 +1489,8 @@ frontend/src/features/html-artifacts/nodeMetadata.ts,Elastic-2.0,2026 SuperTale 
 frontend/src/features/html-artifacts/nodeReference.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/html-artifacts/preview.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/html-artifacts/preview.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/html-artifacts/textEditing.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/html-artifacts/textEditing.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/piko-mini-game/PikoBreakoutGame.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/piko-mini-game/PikoFlyingGame.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/piko-mini-game/PikoGameChrome.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

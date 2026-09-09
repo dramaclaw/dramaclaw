@@ -7922,6 +7922,17 @@
     "scriptUnsupported": "This browser cannot isolate credentials for interactive mode. Preview, element selection and source editing remain available.",
     "saveCommand": "Save webpage",
     "mediaLoadFailed": "Failed to load media: {{path}}",
-    "historyRecordFailed": "Webpage saved, but node history could not be recorded. Please try again later."
+    "historyRecordFailed": "Webpage saved, but node history could not be recorded. Please try again later.",
+    "textTools": "Text editing",
+    "textContent": "Text content",
+    "fontFamily": "Font family",
+    "fontSize": "Font size",
+    "textColor": "Text color",
+    "bold": "Bold",
+    "regular": "Regular",
+    "alignleft": "Align left",
+    "aligncenter": "Center",
+    "alignright": "Align right",
+    "selectLeaf": "Select the innermost text element to preserve nested formatting."
   }
 }
