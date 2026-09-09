@@ -211,7 +211,13 @@ async def test_enqueue_attaches_the_projection_for_the_control_sketch(monkeypatc
             return {
                 "task_type": task_type,
                 "projection_version": 1,
-                "fields": {"beats": [], "visual_style": "ink_wash"},
+                "fields": {
+                    "beats": [],
+                    "visual_style": "ink_wash",
+                    "characters": [],
+                    "sketch_colors": {},
+                    "sketch_image_selection": "newapi_gpt_image2",
+                },
             }
 
     async def fake_store(ctx):

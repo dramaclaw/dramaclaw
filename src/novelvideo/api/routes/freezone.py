@@ -1175,6 +1175,101 @@ def _skill_background_reference_mode(parameters: dict[str, object]) -> str:
     return "material_only"
 
 
+def _mainline_image_task_billing(config: dict, *, is_sketch: bool) -> dict:
+    """Price the same selection, mode and quality that the task runner consumes."""
+    from novelvideo.config import (
+        DEFAULT_RENDER_IMAGE_SELECTION,
+        DEFAULT_SKETCH_IMAGE_SELECTION,
+        get_render_generation_config,
+        get_sketch_generation_config,
+        normalize_image_generation_selection,
+    )
+
+    selection = normalize_image_generation_selection(
+        config.get("image_generation_selection"),
+        fallback=(
+            DEFAULT_SKETCH_IMAGE_SELECTION
+            if is_sketch
+            else DEFAULT_RENDER_IMAGE_SELECTION
+        ),
+    )
+    generation_config = (
+        get_sketch_generation_config(selection_override=selection)
+        if is_sketch
+        else get_render_generation_config(selection_override=selection)
+    )
+    image_quality = str(config.get("image_quality") or "").strip().lower()
+    if image_quality in {"low", "medium", "high"}:
+        generation_config["openai_image_quality"] = image_quality
+        generation_config["huimeng_image_quality"] = image_quality
+    return _mainline_generator_billing(
+        "mainline.sketch_regen" if is_sketch else "mainline.render_regen",
+        generation_config,
+        config["mode_key"],
+        is_sketch=is_sketch,
+    )
+
+
+def _mainline_generator_billing(
+    feature_key: str, generation_config: dict, mode_key: str, *, is_sketch: bool
+) -> dict:
+    from novelvideo.api.routes.model_credits import _image_billing_params
+    from novelvideo.generators.nanobanana_grid import (
+        REGEN_MODE_CONFIGS,
+        normalize_image_size,
+    )
+
+    provider = generation_config["provider"]
+    # generate_grid takes size from mode_key, even for director conversion.
+    size = normalize_image_size(REGEN_MODE_CONFIGS[mode_key]["image_size"], provider)
+    quality_key = (
+        "huimeng_image_quality"
+        if provider == "huimeng"
+        else "openai_sketch_image_quality" if is_sketch else "openai_image_quality"
+    )
+    return {
+        "feature_key": feature_key,
+        "pricing_kind": "image",
+        "pricing_model": generation_config["model"],
+        "pricing_params": _image_billing_params(
+            model=generation_config["model"],
+            image_size=size,
+            quality=generation_config.get(
+                quality_key, "low" if is_sketch else "medium"
+            ),
+        ),
+    }
+
+
+def _director_sketch_task_billing(
+    *,
+    username: str,
+    project_name: str,
+    mode_key: str,
+    projection_payload: dict | None = None,
+) -> dict:
+    from novelvideo.director_world.control_frame_to_sketch import (
+        get_director_sketch_generation_config,
+    )
+    from novelvideo.project_config import load_project_config_file
+    from novelvideo.task_backend.projection import read_projection
+
+    projection = read_projection(projection_payload or {})
+    selection = (
+        projection.require("sketch_image_selection")
+        if projection is not None
+        else load_project_config_file(username, project_name).get(
+            "sketch_image_selection"
+        )
+    )
+    return _mainline_generator_billing(
+        "mainline.director_control_to_sketch",
+        get_director_sketch_generation_config(selection),
+        mode_key,
+        is_sketch=True,
+    )
+
+
 async def _mainline_single_beat_config(
     *,
     ctx: ProjectContext,
@@ -1437,7 +1532,7 @@ async def _start_or_enqueue_mainline_sketch_from_context_job(
                 "config": config,
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
-                "billing": {"feature_key": "mainline.sketch_regen"},
+                "billing": _mainline_image_task_billing(config, is_sketch=True),
                 **display_payload,
                 **projection_payload,
             },
@@ -1633,7 +1728,7 @@ async def _start_or_enqueue_mainline_frame_from_context_job(
                 "config": config,
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
-                "billing": {"feature_key": "mainline.render_regen"},
+                "billing": _mainline_image_task_billing(config, is_sketch=False),
                 **display_payload,
                 **projection_payload,
             },
@@ -1876,6 +1971,7 @@ async def _start_or_enqueue_standalone_frame_from_context_job(
                 "output_dir": str(project_dir),
                 "mode_key": mode_key,
                 "config": config,
+                "billing": _mainline_image_task_billing(config, is_sketch=False),
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
                 **display_payload,
@@ -1996,7 +2092,11 @@ async def _start_or_enqueue_mainline_director_control_sketch_job(
             "aspect_ratio": _normalize_mainline_skill_aspect_ratio(aspect_ratio),
             "canvas_id": canvas_id or "",
             "node_id": node_id or "",
-            "billing": {"feature_key": "mainline.director_control_to_sketch"},
+            "billing": _director_sketch_task_billing(
+                username=ctx.owner_username, project_name=ctx.project_name,
+                mode_key=_mainline_mode_key_for_aspect(aspect_ratio, is_sketch=True),
+                projection_payload=projection_payload,
+            ),
             "task_family": "mainline_skill",
             "task_label": "导演合成图转草图",
             "display_name": f"导演合成图转草图 · EP{episode} / Beat {beat}",
@@ -2057,7 +2157,7 @@ async def _start_or_enqueue_mainline_beat_sketch_task(
             "config": config,
             "canvas_id": canvas_id or "",
             "node_id": node_id or "",
-            "billing": {"feature_key": "mainline.sketch_regen"},
+            "billing": _mainline_image_task_billing(config, is_sketch=True),
             "task_family": "mainline_skill",
             "task_label": "生成草图",
             "display_name": f"生成草图 · EP{episode} / Beat {beat}",
