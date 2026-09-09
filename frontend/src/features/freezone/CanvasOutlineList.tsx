@@ -285,6 +285,8 @@ export const CANVAS_OUTLINE_FILTERS: ReadonlyArray<{
       CANVAS_NODE_TYPES.imageEdit,
       CANVAS_NODE_TYPES.imageGen,
       CANVAS_NODE_TYPES.exportImage,
+      CANVAS_NODE_TYPES.vectorSvg,
+      CANVAS_NODE_TYPES.animatedGif,
       // 风格节点不独立存在，它是图片节点所选风格的投影，跟着图片一起筛。
       CANVAS_NODE_TYPES.style,
     ],

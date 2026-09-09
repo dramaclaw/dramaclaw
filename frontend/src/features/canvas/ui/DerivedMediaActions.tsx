@@ -119,7 +119,7 @@ export function DerivedMediaActions({ node }: { node: CanvasNode }) {
           </p>
         )}
         <div className="flex items-center justify-between">
-          <CreditCostInline display={cost.data?.data.display} />
+          <CreditCostInline display={cost.data?.data.display} promotion={cost.data?.data.promotion} />
           <UiChipButton
             disabled={!available || cost.isLoading || Boolean(cost.error)}
             onClick={retry}
