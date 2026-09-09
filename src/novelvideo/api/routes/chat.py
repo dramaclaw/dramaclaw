@@ -1529,7 +1529,11 @@ async def resolve_skill_studio_tool_result(
     )
     # Saving is persistence only. Generation charges are admitted before the
     # model call and settled by the corresponding durable product operation.
-    resolved = _resolve_skill_studio_tool_result_payload(payload, username=username)
+    resolved = _resolve_skill_studio_tool_result_payload(
+        payload,
+        username=username,
+        project_state_dir=await _bridge_project_state_dir(user, payload),
+    )
     logger.info(
         "resolved skill_studio.result via http bridge_key=%s action=%s status=%s ok=%s saved=%s",
         payload.bridge_key,
@@ -2161,8 +2165,7 @@ async def list_pending_canvas_commands(
         str(value).strip() for value in payload.agent_ids if str(value).strip()
     ]
     if not requested_agent_ids:
-        project_state_dir = await _bridge_project_state_dir(user, payload)
-    requested_agent_ids = [str(payload.agent_id or "main").strip() or "main"]
+        requested_agent_ids = [str(payload.agent_id or "main").strip() or "main"]
     agent_ids = list(dict.fromkeys(requested_agent_ids))[:50]
     seen_keys = {str(key) for key in payload.seen_keys if str(key).strip()}
     frames: list[dict[str, Any]] = []

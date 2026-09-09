@@ -64,7 +64,7 @@ def test_html_tool_receipts_get_canvas_timeout_and_success_classification():
     from novelvideo.chat import hermes_sdk, service
     from types import SimpleNamespace
     assert hermes_sdk._is_freezone_canvas_write_tool('freezone_html_artifact')
-    event = SimpleNamespace(name='freezone_html_artifact',status='completed',error=None,structured={'ok':True,'canvas_apply_status':'applied'},output=None)
+    event = SimpleNamespace(name='freezone_html_artifact',status='completed',error=None,structured={'ok':True,'canvas_apply_status':'applied','applied':True,'project_id':'p','canvas_id':'c','bridge_key':'b'},output=None)
     assert service._codex_freezone_write_result_succeeded(event)
     event.structured = {'ok':True,'data':{'id':'a1','html':'hello'}}
     assert not service._codex_freezone_write_result_succeeded(event)

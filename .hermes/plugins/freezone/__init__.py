@@ -4378,6 +4378,7 @@ def _handle_html_artifact(args: dict[str, Any], **_: Any) -> str:
             path += "/versions"
         query = {"version": args["version"]} if action == "read" and args.get("version") is not None else None
         response = _request("GET", path, query=query)
+        response = {**response, "status": "html_artifact_result" if response.get("ok") else "error"}
         return _structured_tool_result(response, tool_name="freezone_html_artifact")
     except (ValueError, TypeError) as exc:
         return tool_error(str(exc))
@@ -6213,6 +6214,7 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "freezone_get_workflow_capabilities": ("schema_version", "capabilities"),
     "freezone_import_external_skill": ("batch_id", "imports", "agent_instruction"),
     "freezone_get_skill_import": ("import_result", "agent_instruction"),
+    "freezone_html_artifact": (*_CANVAS_RESULT_FIELDS, "data"),
     "freezone_begin_agent_product_generation": (
         "operation_id",
         "product_kind",
@@ -6557,6 +6559,8 @@ def _success_contract(name: str) -> dict[str, Any]:
         return {"required": ["batch_id", "imports"]}
     if name == "freezone_get_skill_import":
         return {"required": ["import_result"]}
+    if name == "freezone_html_artifact":
+        return {"anyOf": [{"required": ["data"]}, _success_contract("freezone_emit_canvas_command")]}
     if name == "freezone_request_user_clarification":
         return {
             "properties": {"status": {"const": "clarification_frontend_result"}},
