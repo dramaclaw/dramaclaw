@@ -621,7 +621,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
       />,
     );
 
-    const copyButton = screen.getByLabelText("Copy");
+    const copyButton = screen.getByRole("button", { name: "aiAssistant.actions.copy" });
     // 工具条靠 top-full + mt-1 悬浮在气泡下方的消息间距里，容器不再用 hover:pb-10
     // 给它预留高度——hover 改高度会触发消息列表的 ResizeObserver，贴底时整条列表
     // 会往上抖（见「消除虾导消息 hover 时列表跳动」）。
@@ -780,7 +780,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     );
 
     expect(screen.queryByLabelText("上下文用量")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Copy")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "aiAssistant.actions.copy" })).not.toBeInTheDocument();
   });
 
   it("keeps the thinking placeholder visible when only usage metadata has arrived", () => {
