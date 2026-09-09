@@ -323,9 +323,11 @@ def test_canvas_command_tool_result_accepts_background_workflow(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("task_status", ["running", "completed", "reclaimed"])
 async def test_late_canvas_result_completes_durable_workflow_draft(
     monkeypatch,
     tmp_path,
+    task_status,
 ) -> None:
     from novelvideo.freezone.workflow_drafts import (
         bind_workflow_draft_task,
@@ -346,11 +348,15 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
             "plan": {"nodes": [], "edges": [], "phases": []},
         },
     )
-    claim_workflow_draft_confirmation(
+    claimed, claim_error = claim_workflow_draft_confirmation(
         project_dir=tmp_path,
         canvas_id="canvas-a",
         draft_id=draft["draft_id"],
         revision=1,
+    )
+    assert claim_error is None
+    expected_scope = (
+        f"canvas-a:{draft['draft_id']}:1:{claimed['confirmation_started_at']}"
     )
     bind_workflow_draft_task(
         project_dir=tmp_path,
@@ -359,12 +365,13 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
         task_id="task-1",
         root_task_id="task-1",
     )
-    finish_workflow_draft_confirmation(
-        project_dir=tmp_path,
-        canvas_id="canvas-a",
-        draft_id=draft["draft_id"],
-        outcome="submitted",
-    )
+    if task_status != "reclaimed":
+        finish_workflow_draft_confirmation(
+            project_dir=tmp_path,
+            canvas_id="canvas-a",
+            draft_id=draft["draft_id"],
+            outcome="submitted",
+        )
 
     async def project_context(_user, _scope):
         return SimpleNamespace(state_dir=tmp_path)
@@ -372,13 +379,34 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
     monkeypatch.setattr(chat_route, "_project_context_for_scope", project_context)
     from novelvideo import task_state
 
+    queried_scopes = []
+
+    def get_task(*_args, **kwargs):
+        queried_scopes.append(kwargs["scope"])
+        if kwargs["scope"] != expected_scope:
+            return None
+        if task_status == "reclaimed":
+            # A retry wins between reading the draft and recording the receipt.
+            finish_workflow_draft_confirmation(
+                project_dir=tmp_path, canvas_id="canvas-a", draft_id=draft["draft_id"],
+                outcome="ready", expected_task_id="task-1",
+            )
+            claim_workflow_draft_confirmation(
+                project_dir=tmp_path, canvas_id="canvas-a", draft_id=draft["draft_id"],
+                revision=1, now=claimed["confirmation_started_at"] + 1,
+            )
+            bind_workflow_draft_task(
+                project_dir=tmp_path, canvas_id="canvas-a", draft_id=draft["draft_id"],
+                task_id="task-2", root_task_id="task-2",
+            )
+            return SimpleNamespace(task_id="task-1", status="running")
+        return SimpleNamespace(task_id="task-1", status=task_status)
+
     monkeypatch.setattr(
         task_state,
         "get_task_manager",
         lambda: SimpleNamespace(
-            get_task_for_project=lambda *_args, **_kwargs: SimpleNamespace(
-                task_id="task-1", status="running"
-            )
+            get_task_for_project=get_task,
         ),
     )
     payload = chat_route.CanvasCommandToolResultIn(
@@ -404,7 +432,13 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
 
     assert error is None
     assert stored is not None
-    assert stored["status"] == "confirmed"
+    assert queried_scopes == [expected_scope]
+    assert stored["status"] == {
+        "running": "confirmed", "completed": "submitted", "reclaimed": "confirming",
+    }[task_status]
+    if task_status == "reclaimed":
+        assert stored["task_id"] == "task-2"
+        assert stored["confirmation_started_at"] == claimed["confirmation_started_at"] + 1
 
 
 def test_pending_canvas_result_recovers_workflow_draft_identity(
