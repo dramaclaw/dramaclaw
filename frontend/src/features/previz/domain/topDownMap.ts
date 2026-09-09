@@ -165,14 +165,8 @@ export function sceneTopDownBounds(
     // 空 `Box3` 的初值就是 ±Infinity。渲染器那边已经筛过一道，这里再筛一道：这个函数
     // 是导出的纯函数，调用方不止一个；一条 Infinity 混进来，跨度就是 Infinity，
     // `topDownView` 算出的 pixelsPerMeter 是 0，整张图缩成一个像素点。
-    if (
-      !Number.isFinite(footprint.minX) ||
-      !Number.isFinite(footprint.maxX) ||
-      !Number.isFinite(footprint.minZ) ||
-      !Number.isFinite(footprint.maxZ)
-    ) {
-      continue;
-    }
+    const edges = [footprint.minX, footprint.maxX, footprint.minZ, footprint.maxZ];
+    if (!edges.every(Number.isFinite)) continue;
     minX = Math.min(minX, footprint.minX);
     maxX = Math.max(maxX, footprint.maxX);
     minZ = Math.min(minZ, footprint.minZ);

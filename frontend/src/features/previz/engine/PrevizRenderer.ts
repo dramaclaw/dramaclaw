@@ -12,6 +12,7 @@ import { dropPositionY, dropRayOriginY } from '../domain/drop';
 import { evaluateSceneAt } from '../domain/evaluate';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
 import type { PrevizScene, PrevizTransform, Vec3 } from '../domain/scene';
+import type { PrevizTopDownFootprint } from '../domain/topDownMap';
 import {
   PREVIZ_DEFAULT_VIEW,
   boundsCenter,
@@ -699,6 +700,48 @@ export class PrevizRenderer {
     // 空地上拖东西永远不落地，正是最常见的那种拖法。
     const surfaceY = hits[0]?.point.y ?? 0;
     return dropPositionY(node.position.y, box.min.y, surfaceY);
+  }
+
+  /**
+   * 每件看得见的道具在地面上占的那块地，世界 XZ、米。给创建人物对话框那张俯视选位图用。
+   *
+   * 这道测量只能由渲染器做：道具是用户自备的 GLB / OBJ，`PropLoader` 刻意不做归一化
+   * 缩放，尺寸因此只活在 three 的场景图里，`domain/scene.ts` 的 `PrevizProp` 一个字段
+   * 都说不出它多大。量完交出去的是四个纯数字，选位图那条链上再没有 three。
+   *
+   * 取的是世界**轴对齐**包围盒的 XZ 投影，不是真实剪影：一张转了 30° 的长桌会画成把它
+   * 整个裹住的那个正矩形，比真形大一圈。这是有意的——求真剪影要对投影后的顶点求凸包，
+   * 代价随三角面数走，而目标只是一张 320 px 的缩略图。
+   *
+   * **不复用 `boundsOf()`**：那个函数空盒时换成一个人体尺寸的占位盒，答的是「用户点了
+   * 聚焦、可对象没有几何体，画面上该看到什么」。这里空盒的正确答案是「没有轮廓」——
+   * 照搬会给一件模型还没下完的道具画出一块人体大小的假地面，比什么都不画更误导。
+   *
+   * 只量道具：人物的轮廓是个 0.4 m 的圆，在这张图上和一颗参照点几乎一样大；机位的
+   * 包围盒含取景视锥，一台 35mm 机位的锥体能盖住半个场地，画上去会把整张图淹掉。
+   */
+  propFootprints(): PrevizTopDownFootprint[] {
+    const footprints: PrevizTopDownFootprint[] = [];
+    for (const object of this.currentScene?.objects ?? []) {
+      if (object.kind !== 'prop' || !object.visible) continue;
+      const node = this.graph.nodeFor(object.id);
+      if (!node) continue;
+      const box = new this.three.Box3().setFromObject(node);
+      // 空盒（`Box3.makeEmpty()` 的初值 min=+∞ / max=-∞）跳过，不兜底。
+      if (box.isEmpty()) continue;
+      // `isEmpty()` 判的是 max < min，两端同时是 +∞ 或同时是 NaN 都过得去它。真出现的话
+      // 下游 `sceneTopDownBounds` 的跨度会变成 Infinity / NaN，整张选位图缩成一个点或者
+      // 每一次点击都映射成 NaN——人放不下去，画面上却没有任何提示。
+      if (![box.min.x, box.max.x, box.min.z, box.max.z].every(Number.isFinite)) continue;
+      footprints.push({
+        id: object.id,
+        minX: box.min.x,
+        maxX: box.max.x,
+        minZ: box.min.z,
+        maxZ: box.max.z,
+      });
+    }
+    return footprints;
   }
 
   /**

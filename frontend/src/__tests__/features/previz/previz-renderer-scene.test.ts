@@ -67,6 +67,13 @@ const webglRenderers: FakeWebGLRenderer[] = [];
 let boxIsEmpty = false;
 
 /**
+ * 打开后所有 `setFromObject()` 都交出一个 x 两端为 NaN 的盒子，模拟几何体里混进了
+ * NaN 顶点的资产（导坏的 GLB 真会这样）。这种盒子**过得了 `isEmpty()`**——那句判的是
+ * `max.x < min.x`，而 NaN 的比较恒为 false，所以想挡住它只能另外查有限性。
+ */
+let boxHasNaN = false;
+
+/**
  * 假包围盒的盒底相对对象原点的偏移，默认 0（脚底就在原点上）。
  *
  * 默认值下 `boxMinY === currentY` 恒成立，于是落地公式里的位移
@@ -177,6 +184,11 @@ vi.mock('three', () => {
     /** 非空时给一个 2×2×2、脚底贴地、跟着对象位置走的盒子。 */
     setFromObject(object: Object3D) {
       if (boxIsEmpty) return this;
+      if (boxHasNaN) {
+        this.min.set(NaN, 0, -1);
+        this.max.set(NaN, 2, 1);
+        return this;
+      }
       const origin = object.getWorldPosition(new Vector3());
       const cx = origin.x + boxCentreOffset;
       const cz = origin.z + boxCentreOffset;
@@ -517,6 +529,7 @@ beforeEach(() => {
   materials.length = 0;
   webglRenderers.length = 0;
   boxIsEmpty = false;
+  boxHasNaN = false;
   boxMinYOffset = 0;
   boxCentreOffset = 0;
   groundHit = [0, 0, 0];
@@ -2399,5 +2412,90 @@ describe('PrevizRenderer 贴合地面', () => {
     // 改静态 transform 会把对象记成「手摆过」，求值那一趟于是让位给它。贴地不让：
     // `ground` 的高度是算出来的，手摆的是他站在哪（x/z），不是他浮多高。
     expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
+  });
+});
+
+describe('PrevizRenderer 量道具的落地范围', () => {
+  /** 一件道具，摆在给定位置上；`visible` 留给用例改。 */
+  function propScene(...positions: Vec3[]): PrevizScene {
+    const scene = createDefaultScene();
+    for (const position of positions) {
+      scene.objects.push(
+        createPrevizObject('prop', scene.objects, {
+          transform: { position, rotation: [0, 0, 0], scale: [1, 1, 1] },
+        }),
+      );
+    }
+    return scene;
+  }
+
+  it("measures each prop's ground footprint in world space", async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([3, 0, -2], [-5, 1, 4]);
+
+    instance.setScene(scene);
+
+    // 假 Box3 给的是一个以对象水平中心为心、半边长 1 m 的盒子。量的是**包围盒**而不是
+    // 对象的 position：后者只是一个点，一间铺开十米的布景在图上还是一颗点。
+    expect(instance.propFootprints()).toEqual([
+      { id: scene.objects[0]!.id, minX: 2, maxX: 4, minZ: -3, maxZ: -1 },
+      { id: scene.objects[1]!.id, minX: -6, maxX: -4, minZ: 3, maxZ: 5 },
+    ]);
+  });
+
+  it('leaves out a prop whose model has not landed yet', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([0, 0, 0]);
+    instance.setScene(scene);
+    // 空 Box3（min=+∞ / max=-∞）就是「这个节点下面还没有任何几何体」：模型还在下载，
+    // 或者下载失败了。
+    boxIsEmpty = true;
+
+    // 这里**不能**照搬 `boundsOf()` 那条兜底。那个函数空盒时换成一个人体尺寸的占位盒，
+    // 答的是「用户点了聚焦、可对象没有几何体，画面上该看到什么」；搬到这里就是给一件
+    // 根本没有几何体的道具画出一块人体大小的假地面，比什么都不画更误导人。
+    expect(instance.propFootprints()).toEqual([]);
+  });
+
+  it('measures only props', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    for (const kind of ['character', 'camera', 'light', 'prop'] as const) {
+      scene.objects.push(
+        createPrevizObject(kind, scene.objects, {
+          transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        }),
+      );
+    }
+
+    instance.setScene(scene);
+
+    // 人物的轮廓是个 0.4 m 的圆，在一张 320 px 的缩略图上和现在那颗点几乎一样大，画了
+    // 等于没画；机位的包围盒含取景视锥，一台 35mm 机位的锥体能盖住半个场地，画上去
+    // 会把整张图淹掉。
+    expect(instance.propFootprints().map((entry) => entry.id)).toEqual([scene.objects[3]!.id]);
+  });
+
+  it('leaves out a prop whose bounding box is not finite', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([0, 0, 0]);
+    instance.setScene(scene);
+    boxHasNaN = true;
+
+    // NaN 顶点的资产量出来的盒子过得了 `isEmpty()`（NaN 的比较恒为 false）。放它出去，
+    // `sceneTopDownBounds` 的跨度就是 NaN，选位图上每一次点击都映射成 NaN——人放不
+    // 下去，画面上却没有任何报错。
+    expect(instance.propFootprints()).toEqual([]);
+  });
+
+  it('leaves out a hidden prop', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([0, 0, 0]);
+    scene.objects[0]!.visible = false;
+
+    instance.setScene(scene);
+
+    // 看不见的东西不该在选位图上占一块地：用户会照着一块画面上根本不存在的家具让位。
+    expect(instance.propFootprints()).toEqual([]);
   });
 });
