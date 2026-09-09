@@ -7097,8 +7097,8 @@
         "title": "BrainClaw by RelayClaw (Recommended)",
         "description": "BrainClaw handles text understanding, generation, structured output, tool calling, and vision tasks without per-feature mappings. It connects to RelayClaw by default; development setups may point it at a NewAPI-compatible endpoint that exposes BrainClaw. Image, video, audio, and Embedding still use the Local NewAPI settings below.",
         "model": "Fixed model",
-        "save": "Save & Enable BrainClaw",
-        "enabled": "RelayClaw BrainClaw is enabled.",
+        "save": "Save and use BrainClaw",
+        "enabled": "BrainClaw selected; it applies while Custom mode is active.",
         "missingEndpoint": "Enter the BrainClaw NewAPI URL.",
         "advancedEnabled": "Advanced custom LLM is enabled."
       },

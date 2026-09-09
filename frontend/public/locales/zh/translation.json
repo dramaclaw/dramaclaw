@@ -7097,8 +7097,8 @@
         "title": "虾脑 BrainClaw（推荐）",
         "description": "虾脑 BrainClaw 会统一处理文本理解、内容生成、结构化输出、工具调用和视觉理解请求，无需逐项维护模型映射。默认连接虾驿；开发联调时也可填写承载虾脑的 NewAPI 兼容地址和端口。图片、视频、音频和 Embedding 仍使用下方本地 NewAPI 配置。",
         "model": "固定模型",
-        "save": "保存并启用 BrainClaw",
-        "enabled": "已启用虾驿 BrainClaw。",
+        "save": "保存并选用 BrainClaw",
+        "enabled": "已选用虾驿 BrainClaw，自定义模式下生效。",
         "missingEndpoint": "请填写 BrainClaw NewAPI 地址。",
         "advancedEnabled": "已切换为高级自定义 LLM。"
       },

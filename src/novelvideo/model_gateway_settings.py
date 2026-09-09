@@ -236,22 +236,25 @@ def set_model_gateway_mode(mode: str) -> None:
 
 
 def set_custom_llm_mode(mode: str) -> None:
-    normalized = normalize_custom_llm_mode(mode)
-    _write_many(
-        {
-            "custom_llm_mode": normalized,
-            "model_gateway_mode": MODE_CUSTOM,
-        }
-    )
+    """Choose how Custom mode routes LLM traffic.
+
+    This is a setting *inside* Custom mode: it only matters while
+    ``model_gateway_mode`` is ``custom``, and choosing it never activates
+    Custom mode. Official and Hybrid always use BrainClaw and ignore it.
+    """
+    _write_many({"custom_llm_mode": normalize_custom_llm_mode(mode)})
 
 
 def save_relayclaw_brainclaw_key(
     *,
     api_key: str = "",
     base_url: str = "",
-    activate: bool = True,
 ) -> None:
-    """Persist the BrainClaw LLM endpoint without changing official credentials."""
+    """Persist the BrainClaw LLM endpoint and select BrainClaw for Custom mode.
+
+    Like :func:`set_custom_llm_mode`, this does not change the active gateway
+    mode; activating Custom stays with the explicit enable action.
+    """
     values = {"custom_llm_mode": CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW}
     clean_api_key = str(api_key or "").strip()
     clean_base_url = normalize_relay_base_url(base_url)
@@ -259,8 +262,6 @@ def save_relayclaw_brainclaw_key(
         values["brainclaw_newapi_api_key"] = clean_api_key
     if clean_base_url:
         values["brainclaw_newapi_base_url"] = clean_base_url
-    if activate:
-        values["model_gateway_mode"] = MODE_CUSTOM
     _write_many(values)
 
 
