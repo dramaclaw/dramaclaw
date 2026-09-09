@@ -8,6 +8,19 @@ from novelvideo.cognee.screenplay_normalizer import (
 )
 
 
+@pytest.fixture
+def per_scene_enrichment(monkeypatch):
+    from novelvideo.cognee import pipeline
+
+    # These normalization tests supply per-scene enrichment below. An empty
+    # batch selects that fallback without creating a real model client.
+    monkeypatch.setattr(
+        pipeline,
+        "_create_scene_build_agent",
+        lambda *args, **kwargs: _FakeAgent(pipeline.SceneEnrichmentList(scenes=[])),
+    )
+
+
 def test_normalize_time_of_day_maps_classical_terms_to_closed_choices():
     assert normalize_time_of_day("亥时") == "夜晚"
     assert normalize_time_of_day("三更") == "夜晚"
@@ -378,6 +391,7 @@ async def test_headings_the_parser_cannot_resolve_go_to_the_model_in_one_batch()
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("per_scene_enrichment")
 async def test_extract_scenes_from_script_prefers_ai_normalized_blocks(monkeypatch):
     from novelvideo.cognee import pipeline
     from novelvideo.models import NovelScene
@@ -442,6 +456,7 @@ async def test_extract_scenes_from_script_prefers_ai_normalized_blocks(monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("per_scene_enrichment")
 async def test_extract_scenes_from_script_falls_back_when_ai_returns_partial_blocks(
     monkeypatch,
 ):
@@ -498,6 +513,7 @@ async def test_extract_scenes_from_script_falls_back_when_ai_returns_partial_blo
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("per_scene_enrichment")
 async def test_extract_scenes_from_script_falls_back_when_ai_returns_empty(monkeypatch):
     from novelvideo.cognee import pipeline
     from novelvideo.models import NovelScene
@@ -530,6 +546,7 @@ async def test_extract_scenes_from_script_falls_back_when_ai_returns_empty(monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("per_scene_enrichment")
 async def test_extract_scenes_from_script_falls_back_when_ai_merges_distinct_locations(
     monkeypatch,
 ):

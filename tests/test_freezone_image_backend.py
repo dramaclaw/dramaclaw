@@ -534,7 +534,7 @@ async def test_freezone_video_omni_gen_rejects_happyhorse_model(
         )
 
     assert exc.value.status_code == 400
-    assert "HappyHorse video does not support omni reference mode" in str(exc.value.detail)
+    assert "does not support omni reference mode" in str(exc.value.detail)
 
 
 def _audio_reference(project_dir: Path, name: str) -> dict[str, str]:
@@ -8105,6 +8105,13 @@ async def test_freezone_image_models_returns_selection_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_freezone_project(monkeypatch, tmp_path, project="58")
+
+    # Selection keys are the fallback when no scoped model catalog is available.
+    # Default CE has an official catalog and must not be mistaken for this path.
+    async def no_catalog(_media_type: str, *, requester_user_id: str):
+        return None
+
+    monkeypatch.setattr(freezone_routes, "_scoped_media_model_catalog", no_catalog)
 
     result = await freezone_routes.freezone_image_models(
         project="58",

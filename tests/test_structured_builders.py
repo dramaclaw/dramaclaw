@@ -489,8 +489,23 @@ async def test_extraction_is_bounded_but_not_serial():
 
 
 @pytest.fixture
-async def structured_store(tmp_path):
+async def structured_store(tmp_path, monkeypatch):
     from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo import structured_extraction
+
+    # Build/replay tests exercise extraction evidence and persistence. Optional
+    # appearance enrichment must not construct a real credentialed model.
+    class EmptyAppearanceAgent:
+        async def run(self, _prompt):
+            return SimpleNamespace(
+                output=structured_extraction.CharacterAppearanceList(characters=[])
+            )
+
+    monkeypatch.setattr(
+        structured_extraction,
+        "_create_character_appearance_agent",
+        lambda agent=None: agent if agent is not None else EmptyAppearanceAgent(),
+    )
 
     state_dir = tmp_path / "user" / "structured"
     state_dir.mkdir(parents=True)
@@ -2801,4 +2816,3 @@ def test_describe_output_failure_includes_retry_prompts():
     assert "Exceeded maximum output retries (2)" in text
     assert "final_result" in text
     assert "Field required" in text
-

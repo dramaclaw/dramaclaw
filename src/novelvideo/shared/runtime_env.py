@@ -17,8 +17,16 @@ def task_backend() -> str:
 
 
 def edition() -> str:
+    """Resolve CE by default; a control-plane DSN selects EE when unspecified.
+
+    Preserve explicit values so bootstrap can reject conflicting or invalid
+    configuration instead of silently falling back to a different edition.
+    """
     _load_env()
-    return os.environ.get("ST_EDITION", "").strip().lower()
+    configured = os.environ.get("ST_EDITION", "").strip().lower()
+    if configured:
+        return configured
+    return "ee" if os.environ.get("ST_CONTROL_PLANE_DSN", "").strip() else "ce"
 
 
 def is_ce() -> bool:
