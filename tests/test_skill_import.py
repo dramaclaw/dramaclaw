@@ -54,7 +54,7 @@ async def test_conversion_repairs_and_checkpoints(tmp_path, monkeypatch):
     import json
     from novelvideo.freezone import skill_import as module
     from test_freezone_agent_bundle import _bundle_payload
-    from test_skill_import_quality import design_fixture, review_fixture, blocker_fixture
+    from test_skill_import_quality import design_fixture, review_fixture
     monkeypatch.setattr('novelvideo.freezone.agent_config_store.list_user_agent_config_items', lambda *args: [])
     record = module.create_record(tmp_path, 'alice', read_source('x.md', base64.b64encode(b'Check citations').decode()), 'batch')
     responses = [design_fixture(), {}, _bundle_payload(), review_fixture()]
@@ -77,7 +77,7 @@ async def test_unsupported_skill_needs_review(tmp_path, monkeypatch):
     import json
     from novelvideo.freezone import skill_import as module
     from test_freezone_agent_bundle import _bundle_payload
-    from test_skill_import_quality import design_fixture, review_fixture, blocker_fixture
+    from test_skill_import_quality import design_fixture, blocker_fixture
     monkeypatch.setattr('novelvideo.freezone.agent_config_store.list_user_agent_config_items', lambda *args: [])
     record = module.create_record(tmp_path, 'alice', read_source('x.md', base64.b64encode(b'Check citations').decode()), 'batch')
     responses = [design_fixture(), _bundle_payload(), blocker_fixture(), _bundle_payload(), blocker_fixture(), _bundle_payload(), blocker_fixture()]

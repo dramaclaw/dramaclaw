@@ -1,3 +1,6 @@
+import i18n from 'i18next';
+import zh from '../../../public/locales/zh/translation.json';
+import en from '../../../public/locales/en/translation.json';
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('@/api/client', () => ({ apiCall: vi.fn() }));
 import { apiCall } from '@/api/client';
@@ -28,10 +31,16 @@ describe('external skill imports', () => {
     const bundle = { schema_version: 'dramaclaw.skill-bundle.v1', skill: { id: 'ad' }, recipes: [] };
     expect(parseCandidateBundle(JSON.stringify(bundle))).toEqual(bundle);
   });
-  it('hands off a native candidate without asking chat to run the canvas', () => {
+  it('hands off a native candidate without asking chat to run the canvas', async () => {
+    await i18n.init({ lng: 'zh', resources: { zh: { translation: zh }, en: { translation: en } } });
     const prompt = skillImportStudioPrompt({ skill: { id: 'ad' }, recipes: [] });
     expect(prompt).toContain('Skill Studio');
     expect(prompt).toContain('"id": "ad"');
     expect(prompt).toContain('不要创建或运行画布节点');
+    await i18n.changeLanguage('en');
+    const english = skillImportStudioPrompt({ skill: { id: 'ad' }, recipes: [] });
+    expect(english).toContain('Do not create or run canvas nodes');
+    expect(english).not.toMatch(/[\u4e00-\u9fff]/);
+    await i18n.changeLanguage('zh');
   });
 });

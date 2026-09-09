@@ -86,8 +86,10 @@ async def test_advisory_review_is_installable_with_warning():
 
 def test_blocking_review_needs_source_and_bundle_evidence():
     issue = blocker_fixture()
-    with pytest.raises(ValueError): validate_bundle_review(issue, 'Other source', {'recipes': [{'system_prompt': 'text'}]})
-    with pytest.raises(ValueError): validate_bundle_review(issue, 'Check citations', {})
+    with pytest.raises(ValueError):
+        validate_bundle_review(issue, 'Other source', {'recipes': [{'system_prompt': 'text'}]})
+    with pytest.raises(ValueError):
+        validate_bundle_review(issue, 'Check citations', {})
     assert validate_bundle_review(issue, 'Check citations', {'recipes': [{'system_prompt': 'text'}]})
 
 
@@ -120,7 +122,8 @@ async def test_invalid_response_repair_is_logged_privately_and_includes_previous
 def test_diagnostics_redact_and_bound_payloads():
     from novelvideo.freezone.skill_import_quality import append_diagnostic
     record = {'id': 'd' * 32}
-    for _ in range(30): append_diagnostic(record, 'response', response='api_key=private-value ' + 'x' * 100_000)
+    for _ in range(30):
+        append_diagnostic(record, 'response', response='api_key=private-value ' + 'x' * 100_000)
     encoded = json.dumps(record['diagnostics'], ensure_ascii=False).encode()
     assert b'private-value' not in encoded
     assert len(encoded) <= 2_000_000 and record['diagnostics_dropped'] > 0
@@ -130,7 +133,8 @@ def test_diagnostics_redact_and_bound_payloads():
 async def test_model_exception_is_logged_without_secrets():
     record = record_fixture()
     async def generate(prompt): raise RuntimeError('api_key=private-value connection failed')
-    with pytest.raises(RuntimeError): await run_quality_pipeline(record, 'alice', generate, lambda: None, lambda *a: None)
+    with pytest.raises(RuntimeError):
+        await run_quality_pipeline(record, 'alice', generate, lambda: None, lambda *a: None)
     failure = next(e for e in record['diagnostics'] if e['event'] == 'model_failed')
     assert failure['error_type'] == 'RuntimeError' and 'private-value' not in failure['error']
 
