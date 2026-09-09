@@ -276,7 +276,7 @@ export function BatchBar({
     <div className="flex h-full w-full items-center px-3">
       <div
         role="toolbar"
-        aria-label={t("episode.workbench.batch.toolbar", "生成工具栏")}
+        aria-label={t("episode.workbench.batch.toolbar")}
         className="flex w-full min-w-0 flex-wrap items-center justify-center gap-x-7 gap-y-1.5"
       >
         <div className="flex min-w-0 flex-wrap items-center gap-5">

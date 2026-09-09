@@ -79,6 +79,114 @@ def test_stage_asset_task_display_name_includes_scene_and_step():
     assert payload["display_name"] == "场景资产 · 咖啡馆 · Master 生成全景"
 
 
+def test_backend_authored_display_name_stays_localizable():
+    """freezone / scripts 传的 display_name 是系统写死的中文，不是业务内容。
+
+    review #447：这里一度写成「metadata 里有 display_name 就 localizable=False」，
+    于是 "生成草图 · EP1 / Beat 3" 被当成用户自定义名，前端 displayLabel 原样透出，
+    英文界面的任务中心、完成通知和伙伴气泡继续显示中文。
+    """
+    from novelvideo.api.routes.tasks import _serialize_task
+    from novelvideo.task_state import TaskState
+
+    task = TaskState(
+        task_id="task-1",
+        task_type="sketch_regen",
+        project_id="proj_123",
+        episode=1,
+        beat_num=3,
+        status="queued",
+        # freezone.py:2053 的真实形状
+        metadata={
+            "task_family": "mainline_skill",
+            "task_label": "生成草图",
+            "display_name": "生成草图 · EP1 / Beat 3",
+        },
+    )
+
+    payload = _serialize_task(task)
+
+    assert payload["display_name"] == "生成草图 · EP1 / Beat 3"
+    assert payload["display_name_localizable"] is True
+
+
+def test_user_authored_display_name_opts_out_of_localization():
+    """真正的用户自定义名称由生产者显式标记退出本地化，翻译它反而是错的。"""
+    from novelvideo.api.routes.tasks import _serialize_task
+    from novelvideo.task_state import TaskState
+
+    task = TaskState(
+        task_id="task-2",
+        task_type="freezone_gen",
+        project_id="proj_123",
+        episode=0,
+        status="queued",
+        metadata={"display_name": "雨夜巷口 · 第二版", "display_name_user_content": True},
+    )
+
+    payload = _serialize_task(task)
+
+    assert payload["display_name"] == "雨夜巷口 · 第二版"
+    assert payload["display_name_localizable"] is False
+
+
+def test_user_content_flag_survives_the_real_enqueue_projection():
+    """走真实链路：display_metadata_for_task → TaskState → _serialize_task。
+
+    review #447 复审：opt-out 标记只在 _serialize_task 里读是不够的，入队时
+    display_metadata_for_task 的投影白名单会把它丢掉，标记等于形同虚设。
+    """
+    from novelvideo.api.routes.tasks import _serialize_task
+    from novelvideo.ports.tasks import display_metadata_for_task
+    from novelvideo.task_state import TaskState
+
+    payload = {
+        "display_name": "雨夜巷口 · 第二版",
+        "display_name_user_content": True,
+        "task_label": "自由生成图片",
+    }
+    metadata = display_metadata_for_task("freezone_gen", payload)
+
+    assert metadata["display_name_user_content"] is True
+
+    payload_out = _serialize_task(
+        TaskState(
+            task_id="task-3",
+            task_type="freezone_gen",
+            project_id="proj_123",
+            episode=0,
+            status="queued",
+            metadata=metadata,
+        )
+    )
+    assert payload_out["display_name_localizable"] is False
+
+
+def test_user_content_flag_is_not_coerced_through_the_string_loop():
+    """标记必须是布尔投影：str(False) == "False" 是真值，会把判断整个反过来。"""
+    from novelvideo.api.routes.tasks import _serialize_task
+    from novelvideo.ports.tasks import display_metadata_for_task
+    from novelvideo.task_state import TaskState
+
+    for falsy in (False, None, "", 0):
+        metadata = display_metadata_for_task(
+            "freezone_gen",
+            {"display_name": "生成草图 · EP1 / Beat 3", "display_name_user_content": falsy},
+        )
+        assert "display_name_user_content" not in metadata, falsy
+        payload = _serialize_task(
+            TaskState(
+                task_id="task-4",
+                task_type="freezone_gen",
+                project_id="proj_123",
+                episode=1,
+                status="queued",
+                metadata=metadata,
+            )
+        )
+        assert payload["display_name_localizable"] is True, falsy
+
+
 def test_serialize_task_rewrites_internal_result_paths_to_project_static_urls(tmp_path):
     from novelvideo.api.routes.tasks import _serialize_task
     from novelvideo.task_state import TaskState
@@ -223,3 +331,62 @@ async def test_project_task_stream_includes_logs(tmp_path, monkeypatch):
 
     payload = json.loads(first["data"])
     assert payload["logs"] == ["start", "step"]
+
+
+@pytest.mark.asyncio
+async def test_project_task_stream_keeps_logs_as_strings(tmp_path, monkeypatch):
+    """SSE 的 `logs` 也必须守住 `string[]` 契约。
+
+    结构化条目从存储层出来时是 `{text, code, params}`，原样推给还没升级的前端
+    （滚动发布期间、或用户手上那张缓存的旧页面），日志面板就变成一串
+    `[object Object]`。带 code 的那份走 `logs_i18n`。
+    """
+    from novelvideo.task_state import TaskState
+
+    ctx = _ctx(tmp_path)
+    _install_fake_project_context(monkeypatch, ctx)
+    _install_fake_task_manager(
+        monkeypatch,
+        task=TaskState(
+            task_id="t1",
+            task_type="ingest_fast",
+            username="admin",
+            project="demo",
+            project_id=ctx.project_id,
+            episode=0,
+            status="running",
+            progress=0.5,
+            current_task="正在切分章节...",
+            logs=[
+                "任务已开始",
+                {
+                    "text": "已切分 3 段",
+                    "code": "tasks.log.ingest.chunked",
+                    "params": {"chunkCount": 3},
+                },
+            ],
+        ),
+    )
+
+    from novelvideo.api.routes.tasks import stream_project_task
+
+    resp = await stream_project_task(
+        project=ctx.project_id,
+        task_type="ingest_fast",
+        episode=0,
+        request=None,  # type: ignore[arg-type]
+        interval=0.5,
+        user={"username": "admin", "role": "admin"},
+    )
+
+    gen = resp.body_iterator
+    try:
+        first = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
+    finally:
+        aclose = getattr(gen, "aclose", None)
+        if aclose is not None:
+            await aclose()
+
+    payload = json.loads(first["data"])
+    assert payload["logs"] == ["任务已开始", "已切分 3 段"]
+    assert payload["logs_i18n"][1]["code"] == "tasks.log.ingest.chunked"

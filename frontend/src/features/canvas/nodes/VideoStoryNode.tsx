@@ -9,6 +9,7 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import { AlertTriangle, Expand, FileVideo2, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import {
   CANVAS_NODE_TYPES,
@@ -16,7 +17,7 @@ import {
   type VideoStoryRow,
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
-import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import {
   NodeHeader,
   NODE_HEADER_FLOATING_POSITION_CLASS,
@@ -42,32 +43,33 @@ const MAX_HEIGHT = 1200;
 
 interface ColumnDef {
   key: keyof VideoStoryRow;
-  label: string;
+  labelKey: string;
   /** Tailwind min-width class for the table cell. */
   widthClass: string;
   /** True for narrative-style long text columns. */
   wide?: boolean;
 }
 
-const COLUMNS: ColumnDef[] = [
-  { key: 'shotNumber', label: '镜号', widthClass: 'min-w-[60px]' },
-  { key: 'startTime', label: '开始时间', widthClass: 'min-w-[90px]' },
-  { key: 'endTime', label: '结束时间', widthClass: 'min-w-[90px]' },
-  { key: 'duration', label: '时长', widthClass: 'min-w-[70px]' },
-  { key: 'visualDescription', label: '画面描述', widthClass: 'min-w-[220px]', wide: true },
-  { key: 'narrative', label: '叙事内容', widthClass: 'min-w-[220px]', wide: true },
-  { key: 'shotSize', label: '景别', widthClass: 'min-w-[80px]' },
-  { key: 'cameraAngle', label: '摄影机角度', widthClass: 'min-w-[100px]' },
-  { key: 'cameraMovement', label: '摄影机运动', widthClass: 'min-w-[120px]' },
-  { key: 'focalAndDof', label: '焦距与景深', widthClass: 'min-w-[120px]' },
-  { key: 'lighting', label: '光线', widthClass: 'min-w-[120px]' },
-  { key: 'backgroundMusic', label: '背景音乐', widthClass: 'min-w-[140px]' },
-  { key: 'voiceAndSfx', label: '人声/音效', widthClass: 'min-w-[140px]' },
-  { key: 'imagePrompt', label: '图像生成提示词', widthClass: 'min-w-[260px]', wide: true },
-  { key: 'videoMotionPrompt', label: '视频运动提示词', widthClass: 'min-w-[240px]', wide: true },
-  { key: 'keyframeUrl', label: '关键帧', widthClass: 'min-w-[120px]' },
-];
+const V = 'node.videoStory';
 
+const COLUMNS: ColumnDef[] = [
+  { key: 'shotNumber', labelKey: `${V}.columns.shotNumber`, widthClass: 'min-w-[60px]' },
+  { key: 'startTime', labelKey: `${V}.columns.startTime`, widthClass: 'min-w-[90px]' },
+  { key: 'endTime', labelKey: `${V}.columns.endTime`, widthClass: 'min-w-[90px]' },
+  { key: 'duration', labelKey: `${V}.columns.duration`, widthClass: 'min-w-[70px]' },
+  { key: 'visualDescription', labelKey: `${V}.columns.visualDescription`, widthClass: 'min-w-[220px]', wide: true },
+  { key: 'narrative', labelKey: `${V}.columns.narrative`, widthClass: 'min-w-[220px]', wide: true },
+  { key: 'shotSize', labelKey: `${V}.columns.shotSize`, widthClass: 'min-w-[80px]' },
+  { key: 'cameraAngle', labelKey: `${V}.columns.cameraAngle`, widthClass: 'min-w-[100px]' },
+  { key: 'cameraMovement', labelKey: `${V}.columns.cameraMovement`, widthClass: 'min-w-[120px]' },
+  { key: 'focalAndDof', labelKey: `${V}.columns.focalAndDof`, widthClass: 'min-w-[120px]' },
+  { key: 'lighting', labelKey: `${V}.columns.lighting`, widthClass: 'min-w-[120px]' },
+  { key: 'backgroundMusic', labelKey: `${V}.columns.backgroundMusic`, widthClass: 'min-w-[140px]' },
+  { key: 'voiceAndSfx', labelKey: `${V}.columns.voiceAndSfx`, widthClass: 'min-w-[140px]' },
+  { key: 'imagePrompt', labelKey: `${V}.columns.imagePrompt`, widthClass: 'min-w-[260px]', wide: true },
+  { key: 'videoMotionPrompt', labelKey: `${V}.columns.videoMotionPrompt`, widthClass: 'min-w-[240px]', wide: true },
+  { key: 'keyframeUrl', labelKey: `${V}.columns.keyframeUrl`, widthClass: 'min-w-[120px]' },
+];
 interface StoryCellProps {
   row: VideoStoryRow;
   col: ColumnDef;
@@ -118,6 +120,8 @@ interface StoryTableProps {
 }
 
 function StoryTable({ rows, compact, onCellCommit }: StoryTableProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="ui-scrollbar h-full w-full overflow-auto rounded border border-[rgba(255,255,255,0.08)]">
       <table className="min-w-full border-collapse text-left text-[12px] text-text-dark">
@@ -128,7 +132,7 @@ function StoryTable({ rows, compact, onCellCommit }: StoryTableProps) {
                 key={col.key as string}
                 className={`${col.widthClass} border-b border-[rgba(255,255,255,0.1)] px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-text-muted`}
               >
-                {col.label}
+                {t(col.labelKey)}
               </th>
             ))}
           </tr>
@@ -164,19 +168,21 @@ function StoryTable({ rows, compact, onCellCommit }: StoryTableProps) {
 }
 
 function EmptyStoryState({ rawResult }: { rawResult?: Record<string, unknown> | null }) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex h-full w-full items-center justify-center p-6">
       <div className="flex max-w-[460px] flex-col items-center gap-3 text-center">
-        <div className="text-sm font-medium text-text-dark">未识别出分镜</div>
+        <div className="text-sm font-medium text-text-dark">{t(`${V}.emptyTitle`)}</div>
         <div className="text-[12px] leading-5 text-text-muted/80">
-          返回内容中没有可用分镜行。原始返回已保留为辅助信息，可用于排查接口结果。
+          {t(`${V}.emptyDetail`)}
         </div>
         <details className="w-full rounded-md border border-white/[0.08] bg-bg-dark/45 text-left">
           <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-medium text-text-dark/82 transition-colors hover:text-text-dark">
-            查看原始返回
+            {t(`${V}.viewRaw`)}
           </summary>
           <pre className="ui-scrollbar max-h-[120px] overflow-auto border-t border-white/[0.06] p-3 text-[11px] leading-5 text-text-muted/86">
-{rawResult ? JSON.stringify(rawResult, null, 2) : '(空)'}
+{rawResult ? JSON.stringify(rawResult, null, 2) : t(`${V}.rawEmpty`)}
           </pre>
         </details>
       </div>
@@ -185,11 +191,13 @@ function EmptyStoryState({ rawResult }: { rawResult?: Record<string, unknown> | 
 }
 
 function ErrorStoryState({ message }: { message: string }) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex h-full w-full items-center justify-center p-6">
       <div className="flex max-w-[420px] flex-col items-center gap-3 text-center">
         <AlertTriangle className="h-7 w-7 text-red-300/90" />
-        <div className="text-sm font-medium text-red-200">解析失败</div>
+        <div className="text-sm font-medium text-red-200">{t(`${V}.parseFailed`)}</div>
         <div className="max-h-[88px] overflow-auto break-words text-[12px] leading-5 text-red-200/82 [overflow-wrap:anywhere]">
           {message}
         </div>
@@ -199,14 +207,15 @@ function ErrorStoryState({ message }: { message: string }) {
 }
 
 export const VideoStoryNode = memo(({ id, data, selected, width, height }: VideoStoryNodeProps) => {
+  const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const resolvedTitle = useMemo(
-    () => resolveNodeDisplayName(CANVAS_NODE_TYPES.videoStory, data),
-    [data],
+    () => localizeNodeDisplayName(CANVAS_NODE_TYPES.videoStory, data, t),
+    [data, t],
   );
   const resolvedWidth = Math.max(MIN_WIDTH, Math.round(width ?? DEFAULT_WIDTH));
   const resolvedHeight = Math.max(MIN_HEIGHT, Math.round(height ?? DEFAULT_HEIGHT));
@@ -283,13 +292,13 @@ export const VideoStoryNode = memo(({ id, data, selected, width, height }: Video
         <div className="flex items-center justify-between border-b border-[rgba(255,255,255,0.08)] px-3 py-2">
           <div className="flex items-center gap-2 text-[12px] text-text-muted">
             {isAnalyzing ? (
-              <span>解析中…</span>
+              <span>{t(`${V}.parsing`)}</span>
             ) : hasError ? (
-              <span className="text-red-300">解析失败</span>
+              <span className="text-red-300">{t(`${V}.parseFailed`)}</span>
             ) : hasRows ? (
-              <span>{rows.length} 条分镜</span>
+              <span>{t(`${V}.rowCount`, { count: rows.length })}</span>
             ) : (
-              <span>未识别出分镜</span>
+              <span>{t(`${V}.emptyTitle`)}</span>
             )}
           </div>
           <button
@@ -302,14 +311,14 @@ export const VideoStoryNode = memo(({ id, data, selected, width, height }: Video
             disabled={!hasRows}
           >
             <Expand className="h-3 w-3" />
-            全屏
+            {t(`${V}.fullscreen`)}
           </button>
         </div>
         <div className="flex-1 overflow-hidden p-2">
           {isAnalyzing ? (
             <div className="h-full w-full" />
           ) : hasError ? (
-            <ErrorStoryState message={data.analysisError ?? '未知错误'} />
+            <ErrorStoryState message={data.analysisError ?? t(`${V}.unknownError`)} />
           ) : hasRows ? (
             <StoryTable rows={rows} compact onCellCommit={handleCellCommit} />
           ) : (
@@ -336,7 +345,7 @@ export const VideoStoryNode = memo(({ id, data, selected, width, height }: Video
             <div className="flex items-center gap-3">
               <FileVideo2 className="h-5 w-5" />
               <span className="text-base font-medium">{resolvedTitle}</span>
-              <span className="text-sm text-text-muted">共 {rows.length} 条分镜</span>
+              <span className="text-sm text-text-muted">{t(`${V}.rowCountTotal`, { count: rows.length })}</span>
             </div>
             <button
               type="button"
@@ -344,7 +353,7 @@ export const VideoStoryNode = memo(({ id, data, selected, width, height }: Video
               onClick={() => setIsFullscreen(false)}
             >
               <X className="h-4 w-4" />
-              关闭
+              {t(`${V}.close`)}
             </button>
           </div>
           <div className="flex-1 overflow-hidden rounded-lg border border-[rgba(255,255,255,0.12)] bg-surface-dark/95">

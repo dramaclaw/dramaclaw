@@ -61,6 +61,7 @@ import { queryKeys } from "@/lib/query-keys";
 import { sceneNameToRef, sceneRefToName } from "@/lib/scene-ref";
 import { parseColorValue } from "@/lib/sketch-colors";
 import { timeOfDayLabel, timeOfDayOptions } from "@/lib/time-of-day";
+import type { TFn } from "@/lib/i18n-types";
 import { readUrl } from "@/lib/url-params";
 import { UiSelect } from "@/components/ui";
 
@@ -266,7 +267,8 @@ function standaloneBeatContextPatchFromCurrentData(
     ...patch,
     schema: stringValue(currentBeatContext.schema) ?? "beat_context.v1",
     source: "standalone",
-    title: stringValue(currentBeatContext.title) ?? "自定义镜头上下文",
+    // 写进节点 data 的规范标题，界面上显示的那一份由下面的 standaloneTitle 词条给。
+    title: stringValue(currentBeatContext.title) ?? "自定义镜头上下文", // i18n-exempt
   };
   const snapshot = {
     ...(data.snapshot ?? {}),
@@ -346,6 +348,7 @@ function presetRequestFromMetadata(
 
 async function restoreCurrentMainlinePresetCanvas(
   projectId: string,
+  t: TFn,
 ): Promise<boolean> {
   const canvasId = readUrl().canvas ?? "default";
   const metadata = getFreezoneCanvasMetadata();
@@ -355,7 +358,7 @@ async function restoreCurrentMainlinePresetCanvas(
   }
   const flushed = await flushFreezoneCanvasRuntime(projectId, canvasId);
   if (flushed === false) {
-    throw new Error("当前画布还有未保存冲突，处理后再同步主线视图");
+    throw new Error(t("freezone.canvasSync.unsavedConflictBeforeSync"));
   }
   const localStateBeforeRestore = useCanvasStore.getState();
   const localNodes = localStateBeforeRestore.nodes;
@@ -552,7 +555,7 @@ function resolveBeatContextTitle(data: BeatContextNodeData): string {
     ) {
       return customTitle;
     }
-    return "自定义镜头上下文";
+    return "自定义镜头上下文"; // i18n-exempt —— 规范值，渲染时会被 standaloneTitle 词条顶掉
   }
   if (customTitle && customTitle !== "Beat Context") {
     return customTitle;
@@ -602,7 +605,10 @@ export const BeatContextNode = memo(
     const titleFromData = resolveBeatContextTitle(data);
     const title =
       isStandaloneContext &&
+      // 历史上写进过节点 data 的几种规范标题，认出来就换成当前语言的那一份。
+      // i18n-exempt-start
       ["自定义 Beat Context", "自定义 Beat 上下文", "Beat Context", "自定义镜头上下文"].includes(titleFromData)
+      // i18n-exempt-end
         ? t("node.beatContextNode.standaloneTitle", { defaultValue: "自定义镜头上下文" })
         : titleFromData;
     const episode =
@@ -741,13 +747,13 @@ export const BeatContextNode = memo(
           {
             kind: "identity" as const,
             id: "identity-template",
-            label: "人物",
+            label: t("node.beatContextNode.mention.identity"),
             token: "{{}}",
           },
           {
             kind: "prop" as const,
             id: "prop-template",
-            label: "道具",
+            label: t("node.beatContextNode.mention.prop"),
             token: "[[]]",
           },
         ];
@@ -819,7 +825,7 @@ export const BeatContextNode = memo(
       ) {
         updateNodeData(id, {
           syncStatus: "error",
-          errorMessage: "缺少 project/episode/beat，无法同步到主线",
+          errorMessage: t("node.beatContextNode.status.missingTargetForSync"),
         });
         return;
       }
@@ -862,7 +868,7 @@ export const BeatContextNode = memo(
           stringList(refreshPatch.snapshot?.detectedIdentities),
           stringList(refreshPatch.snapshot?.detectedProps),
         );
-        await restoreCurrentMainlinePresetCanvas(projectId);
+        await restoreCurrentMainlinePresetCanvas(projectId, t);
         setEditVersion((v) => v + 1);
       } catch (error) {
         updateNodeData(id, {
@@ -885,7 +891,7 @@ export const BeatContextNode = memo(
         ) {
           updateNodeData(id, {
             syncStatus: "error",
-            errorMessage: "缺少 project/episode/beat，无法更新本地上下文",
+            errorMessage: t("node.beatContextNode.status.missingTargetForLocal"),
           });
           return;
         }
@@ -1346,11 +1352,11 @@ export const BeatContextNode = memo(
                       }}
                     >
                       <option value={NONE_SENTINEL}>
-                        {timeOfDayLabel("")}
+                        {timeOfDayLabel("", t)}
                       </option>
                       {timeOptions.map((timeOfDay) => (
                         <option key={timeOfDay} value={timeOfDay}>
-                          {timeOfDayLabel(timeOfDay)}
+                          {timeOfDayLabel(timeOfDay, t)}
                         </option>
                       ))}
                     </UiSelect>

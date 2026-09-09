@@ -162,7 +162,12 @@ export function normalizeCanvasCommandNodeData(
           next.text = text;
         }
       }
-      deleteFields(next, ["prompt", "content", "body", "description", "script", "narration"]);
+      // Audio generation resolves its provider from audioKind and the
+      // frontend audio pipeline.  `model` belongs to image/video nodes and
+      // is not editable on an audio node; discard it during normalization so
+      // a workflow-wide model hint cannot make the whole command fail before
+      // the approval card is shown.
+      deleteFields(next, ["prompt", "content", "body", "description", "script", "narration", "model"]);
       break;
     case CANVAS_NODE_TYPES.beatContext:
       if (!hasNonEmptyStringField(next, "content")) {
@@ -208,10 +213,8 @@ export function normalizeCanvasCommandNodeData(
 /**
  * Apply defaults that belong specifically to assistant-created canvas nodes.
  *
- * Ordinary audio nodes intentionally keep the stable project/character voice
- * behavior. The assistant can create ready-to-run speech nodes without a
- * reference recording, so its create boundary defaults omitted speech fields
- * to the preset system voice instead of changing the global node definition.
+ * Freezone speech nodes are custom-voice only. A node without a selected
+ * reference remains valid, but its generation action is skipped.
  */
 export function normalizeCanvasCommandCreateNodeData(
   nodeType: CanvasNodeType | undefined,
@@ -222,11 +225,7 @@ export function normalizeCanvasCommandCreateNodeData(
     return next;
   }
   if (next.speechMode === undefined) {
-    next.speechMode = "preset";
-  }
-  if (next.speechMode === "preset") {
-    next.presetModel ??= "edge-tts";
-    next.presetVoice ??= "Serena";
+    next.speechMode = "clone";
   }
   return next;
 }

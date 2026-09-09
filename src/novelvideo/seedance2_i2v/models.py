@@ -9,6 +9,11 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 
+SEEDANCE2_PROMPT_GUIDANCE_TEMPLATE_KEYS = frozenset(
+    {"subject", "scene", "lighting", "camera", "style", "no_subtitle"}
+)
+
+
 class Seedance2I2VMode(str, Enum):
     TEXT_TO_VIDEO = "text_to_video"
     FIRST_FRAME = "first_frame"
@@ -22,6 +27,7 @@ class Seedance2VideoConfig(BaseModel):
     mode: Seedance2I2VMode = Seedance2I2VMode.MULTIMODAL_REFERENCE
     final_prompt: str = ""
     prompt_guidance: str = ""
+    prompt_guidance_template_keys: list[str] = Field(default_factory=list)
     prompt_source: str = ""
     prompt_inputs_hash: str = ""
     prompt_updated_at: str = ""
@@ -62,6 +68,17 @@ class Seedance2VideoConfig(BaseModel):
         except (TypeError, ValueError):
             duration = 4
         return max(1, duration)
+
+    @field_validator("prompt_guidance_template_keys", mode="before")
+    @classmethod
+    def _normalize_guidance_template_keys(cls, value: Any) -> list[str]:
+        values = value if isinstance(value, (list, tuple)) else []
+        normalized: list[str] = []
+        for item in values:
+            key = str(item or "").strip()
+            if key in SEEDANCE2_PROMPT_GUIDANCE_TEMPLATE_KEYS and key not in normalized:
+                normalized.append(key)
+        return normalized
 
 
 def parse_seedance2_config(value: Any) -> Seedance2VideoConfig:

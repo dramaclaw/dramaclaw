@@ -22,10 +22,6 @@ dependency evidence is in docs/compliance/python-dependency-licenses.csv,
 docs/compliance/npm-dependency-licenses.csv, and docs/compliance/system-deps.csv.
 
 Selected runtime dependencies requiring attribution:
-- OpenAI Codex (modified runtime based on commit
-  025a88adbd7ae4d448fc938b28d0446eb1753317): Apache-2.0. Copyright 2025
-  OpenAI. Includes code derived from Ratatui under MIT; Copyright 2016-2022
-  Florian Dehau and 2023-2025 The Ratatui Developers.
 - certifi 2026.6.17: MPL-2.0
 - cognee 1.0.5: Apache-2.0
 - da2 0.1.0: Apache-2.0

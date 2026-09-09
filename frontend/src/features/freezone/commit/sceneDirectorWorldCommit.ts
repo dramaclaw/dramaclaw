@@ -10,6 +10,7 @@ import {
 import { directorSourceIdentityUrl } from "@/features/canvas/domain/directorWorldSources";
 import type { ThreeDSceneSnapshot } from "@/features/viewer-kit/three-d/engine/viewerApp";
 import type { DirectorWorldSource } from "@/features/viewer-kit/three-d/directorManifest";
+import type { TFn } from "@/lib/i18n-types";
 
 type SceneDirectorWorldTarget = Extract<PushTarget, { kind: "scene_director_world" }>;
 type DirectorWorldSourceSlotTarget = Extract<PushTarget, {
@@ -94,6 +95,7 @@ function sourcePatchForCommittedSlot(
   target: DirectorWorldSourceSlotTarget,
   targetUrl: string,
   sourceId: string,
+  t: TFn,
 ): DirectorWorldSource {
   const sourceType: DirectorWorldSource["source_type"] =
     target.kind === "scene_director_pano_360" ? "pano360" : "sog";
@@ -101,7 +103,7 @@ function sourcePatchForCommittedSlot(
     id: sourceId,
     source_type: sourceType,
     source_kind: SOURCE_KIND_BY_SLOT[target.kind],
-    label: sourceLabelForSlot(target.kind),
+    label: sourceLabelForSlot(target.kind, t),
     url: targetUrl,
     ...(sourceType === "pano360"
       ? { pano_url: targetUrl, slot_kind: "scene_director_pano_360" as const }
@@ -110,12 +112,12 @@ function sourcePatchForCommittedSlot(
   };
 }
 
-function sourceLabelForSlot(kind: DirectorWorldSourceSlotTarget["kind"]): string {
-  if (kind === "scene_3gs_master_ply") return "正面世界";
-  if (kind === "scene_3gs_reverse_ply") return "背面世界";
-  if (kind === "scene_3gs_pano_ply") return "360世界";
-  if (kind === "scene_3gs_custom_scene") return "自定义世界";
-  return "360图";
+function sourceLabelForSlot(kind: DirectorWorldSourceSlotTarget["kind"], t: TFn): string {
+  if (kind === "scene_3gs_master_ply") return t("freezone.commit.worldSource.front");
+  if (kind === "scene_3gs_reverse_ply") return t("freezone.commit.worldSource.back");
+  if (kind === "scene_3gs_pano_ply") return t("freezone.commit.worldSource.pano");
+  if (kind === "scene_3gs_custom_scene") return t("freezone.commit.worldSource.custom");
+  return t("freezone.commit.worldSource.pano360Image");
 }
 
 function sourceFilename(result: Pick<PushResult, "target_path" | "target_url">): string {
@@ -188,6 +190,7 @@ function sourcePayloadForMainlineCommit(
   nodeData: Record<string, unknown>,
   sources: DirectorWorldSource[],
   localSourceId: string,
+  t: TFn,
 ): Record<string, unknown> | undefined {
   const source = sources.find((item) => item.id === localSourceId);
   const committedSlot = committedSourceSlotFromNodeData(nodeData);
@@ -195,7 +198,12 @@ function sourcePayloadForMainlineCommit(
   if (committedSlot && activeSourceId && localSourceId === activeSourceId) {
     return {
       ...source,
-      ...sourcePatchForCommittedSlot(committedSlot.target, committedSlot.targetUrl, committedSlot.sourceId),
+      ...sourcePatchForCommittedSlot(
+        committedSlot.target,
+        committedSlot.targetUrl,
+        committedSlot.sourceId,
+        t,
+      ),
       ...(source?.transform ? { transform: source.transform } : {}),
     } as Record<string, unknown>;
   }
@@ -251,6 +259,7 @@ export function nodeDataAfterDirectorWorldSourceSlotCommit(
   nodeData: Record<string, unknown>,
   target: DirectorWorldSourceSlotTarget,
   result: Pick<PushResult, "target_path" | "target_url">,
+  t: TFn,
   projectId?: string,
 ): Record<string, unknown> {
   const targetUrl = stringValue(result.target_url);
@@ -286,7 +295,7 @@ export function nodeDataAfterDirectorWorldSourceSlotCommit(
         source_kind: sources.find((source) => source.id === activeSourceId)?.source_kind ?? "custom",
         ...candidateSourcePatch,
       } satisfies DirectorWorldSource
-    : sourcePatchForCommittedSlot(target, targetUrl, activeSourceId);
+    : sourcePatchForCommittedSlot(target, targetUrl, activeSourceId, t);
   const nextSources = isCandidate
     ? [sourcePatch]
     : sources.length > 0
@@ -313,7 +322,7 @@ export function nodeDataAfterDirectorWorldSourceSlotCommit(
   if (nextSnapshot) {
     nextScenesBySourceId[activeSourceId] = nextSnapshot;
   }
-  const sourceLabel = sourceLabelForSlot(target.kind);
+  const sourceLabel = sourceLabelForSlot(target.kind, t);
   const displayName = `${target.scene_id} / ${sourceLabel}`;
   const effectiveProjectId = projectIdFromNodeData(nodeData, projectId);
   const mainlineContext = effectiveProjectId
@@ -339,7 +348,9 @@ export function nodeDataAfterDirectorWorldSourceSlotCommit(
   return {
     ...nodeData,
     activeSourceId,
-    displayName: isCandidate ? `已提交 · ${displayName}` : displayName,
+    displayName: isCandidate
+      ? t("freezone.commit.committedNodeLabel", { label: displayName })
+      : displayName,
     sourceFileName: sourceFilename(result),
     slot_target: target,
     committed_slot_url: targetUrl,
@@ -377,6 +388,7 @@ export async function commitSceneDirectorWorldFromCanvasNode(
   project: string,
   target: SceneDirectorWorldTarget,
   nodeData: Record<string, unknown>,
+  t: TFn,
   options: SceneDirectorWorldCommitOptions = {},
 ): Promise<PushResult> {
   const sources = Array.isArray(nodeData.sources)
@@ -409,13 +421,13 @@ export async function commitSceneDirectorWorldFromCanvasNode(
   }
 
   if (entries.size === 0) {
-    throw new Error("当前导演世界没有可提交的场景状态");
+    throw new Error(t("freezone.commit.errors.noDirectorWorldState"));
   }
 
   for (const sourceId of entries.keys()) {
     const source = sources.find((item) => item.id === sourceId);
     if (isUncommittedDirectorWorldSource(source)) {
-      throw new Error("先把当前世界来源提交到主线槽位，再提交导演世界状态");
+      throw new Error(t("freezone.commit.errors.commitWorldSourceFirst"));
     }
   }
 
@@ -438,7 +450,7 @@ export async function commitSceneDirectorWorldFromCanvasNode(
   });
   const nextSourceIds = new Set(saveEntries.map((entry) => entry.mainlineSourceId));
   for (const entry of saveEntries) {
-    const activeSource = sourcePayloadForMainlineCommit(nodeData, sources, entry.localSourceId);
+    const activeSource = sourcePayloadForMainlineCommit(nodeData, sources, entry.localSourceId, t);
     if (options.pruneStale === false) {
       await saveSceneDirectorWorldSource(project, target.scene_id, {
         source_id: entry.mainlineSourceId,

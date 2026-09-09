@@ -7,8 +7,8 @@
 - 那一行（集成线上已漂到 `:331`，在 `_resolve_freezone_project` 内）
   **不是画布路由的守卫，是 freezone 全部路由的守卫** —— 本文件
   `test_only_canvas_routes_opt_out_of_the_home_node_guard` 现场点数：
-  `@router.` 当前共 98 条，其中 `tags=[TAG_FREEZONE_CANVAS]` 只有 24 条。
-- 删那一行 ＝ 一次性放开另外 76 条读写 `Path(ctx.output_dir)` 本地项目文件、
+  `@router.` 当前共 107 条，其中 `tags=[TAG_FREEZONE_CANVAS]` 只有 29 条。
+- 删那一行 ＝ 一次性放开另外 78 条读写 `Path(ctx.output_dir)` 本地项目文件、
   **既没有租约也没有共享存储交代**的路由，与 §6.3 的「逐个撤、不批量撤」直接冲突。
 
 故落地形态是给 `_resolve_freezone_project` 加一个**带默认值 `True` 的关键字参数**
@@ -25,7 +25,7 @@ SQLite 的 workflow draft/run 路由不在白名单中，必须保留默认 Home
    在非 home node 上**过得了这道守卫**。只断言这一件：真正落盘还依赖共享存储，
    那是 `dispatch-and-branching.md` §11 第 4 行的交接项，不在本 EU 内。
 3. `test_non_canvas_freezone_routes_are_still_blocked_on_a_non_home_node` ——
-   另外 76 条挑 3 条，**仍然被拦**且错误体逐字相同。
+   另外 78 条挑 3 条，**仍然被拦**且错误体逐字相同。
 4. `test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard` —— AST 静态护栏
    （双向）：传 `require_home_node=False` 的调用点必须且只能位于明确白名单。
    形制照同目录 `tests/test_freezone_canvas_route_to_thread.py:180` 的 AST 不变量。
@@ -238,9 +238,9 @@ PLACEMENT_FREE_CANVAS_ROUTES = {
     "get_canvas_revision",
     "get_canvas",
     "list_canvas_history",
-    "quote_freezone_agent_capability",
     "restore_canvas_history",
     "get_node_generation_history",
+    "delete_node_generation_history_record",
     "get_canvas_generation_history",
     "delete_node_generation_history_record",
     "put_canvas",
@@ -288,9 +288,9 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
         and _opts_out_of_the_guard(call)
     }
 
-    # 取证口径（`TCP-P60`）：整合互动故事路由后共有 99 条，其中 25 条画布路由。
-    assert router_decorators == 99
-    assert len(canvas_routes) == 25
+    # 整合 staging 新路由与互动故事路由后的数量。
+    assert router_decorators == 107
+    assert len(canvas_routes) == 29
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES
 

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 
 import {
   claimOwnership,
@@ -17,6 +18,7 @@ import {
 import { useTaskStream } from "@/hooks/use-task-stream";
 import { useCancelTask, useTasks } from "@/lib/queries/tasks";
 import { mergeTaskLogs } from "@/lib/script-feedback";
+import { currentTaskText, taskLogLinesOf } from "@/task-center/derivations";
 import { taskBeatNumbers } from "@/lib/task-types";
 
 /**
@@ -92,6 +94,7 @@ export function useTaskController(
   // below and also as a runtime guard against stray uses.
   const registry = useTaskRegistry();
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const instanceId = useInstanceId();
 
   // Serialize the key so dependency arrays are stable strings rather than
@@ -163,6 +166,21 @@ export function useTaskController(
     episode: key.episode,
   });
 
+  // `coversBeat` 把「跟哪一条 run」从任务行的 beat_num 列换成它的 beat 名单：
+  // selection-scoped 的 sketch_regen / selected_regen 行 beat_num 恒为 null,
+  // 名单落在 metadata.beat_numbers 里(见 ports/tasks.display_metadata_for_task)。
+  // 没名单的行是「覆盖范围未知」,按 covers() 一样的口径当作命中,宁可多显示进度
+  // 也不要把真在跑的 beat 藏掉。
+  const coversBeat = key.coversBeat;
+  const matchesCoverage = useCallback(
+    (task: { beat_num?: number | null; metadata?: Record<string, unknown> | null }) => {
+      if (coversBeat === undefined) return true;
+      const beats = taskBeatNumbers(task);
+      return beats === null || beats.includes(coversBeat);
+    },
+    [coversBeat],
+  );
+
   const logsRef = useRef<string[]>([]);
   const [, forceRerender] = useState(0);
   const appendLogs = useCallback((incoming: readonly string[] | null | undefined) => {
@@ -205,6 +223,7 @@ export function useTaskController(
           candidates.includes(t.task_type) &&
           (key.beatNum === undefined || t.beat_num === key.beatNum) &&
           (key.scope === undefined || (t.scope ?? null) === (key.scope ?? null)) &&
+          matchesCoverage(t) &&
           isActiveStatus(t.status),
       );
     if (match) {
@@ -242,6 +261,7 @@ export function useTaskController(
     key.beatNum,
     key.scope,
     alsoReconcile,
+    matchesCoverage,
   ]);
 
   // ─── Stream (owner-only) ─────────────────────────────────────────────────
@@ -268,6 +288,7 @@ export function useTaskController(
         (key.beatNum === undefined || t.beat_num === key.beatNum) &&
         ((snapshot.activeScope ?? key.scope) === undefined ||
           (t.scope ?? null) === ((snapshot.activeScope ?? key.scope) ?? null)) &&
+        matchesCoverage(t) &&
         TERMINAL_STATUSES.has(t.status),
     );
     if (!match) return;
@@ -280,10 +301,14 @@ export function useTaskController(
       streamState: {
         status: match.status,
         progress: match.progress ?? current.streamState.progress,
-        currentTask: match.current_task ?? current.streamState.currentTask,
+        currentTask: match.current_task
+          ? currentTaskText(match, t)
+          : current.streamState.currentTask,
         result: match.result ?? null,
         error: match.error ?? null,
-        logs: Array.isArray(match.logs) ? match.logs : current.streamState.logs,
+        logs: Array.isArray(match.logs)
+          ? taskLogLinesOf(match, t)
+          : current.streamState.logs,
       },
     });
 
@@ -313,6 +338,7 @@ export function useTaskController(
     alsoReconcile,
     invalidateKeys,
     queryClient,
+    matchesCoverage,
   ]);
 
   const ownerStream = useTaskStream({
@@ -396,10 +422,12 @@ export function useTaskController(
         candidates.includes(t.task_type) &&
         (key.beatNum === undefined || t.beat_num === key.beatNum) &&
         (key.scope === undefined || (t.scope ?? null) === (key.scope ?? null)) &&
+        matchesCoverage(t) &&
         isActiveStatus(t.status),
     );
-    appendLogs(match?.logs);
+    appendLogs(match ? taskLogLinesOf(match, t) : undefined);
   }, [
+    t,
     isOwner,
     tasksRes,
     key.taskType,
@@ -407,6 +435,7 @@ export function useTaskController(
     key.scope,
     alsoReconcile,
     appendLogs,
+    matchesCoverage,
   ]);
 
   useEffect(() => {
@@ -429,6 +458,7 @@ export function useTaskController(
         (!snapshot.activeTaskId || t.task_id === snapshot.activeTaskId) &&
         (key.beatNum === undefined || t.beat_num === key.beatNum) &&
         (activeScope === null || (t.scope ?? null) === activeScope) &&
+        matchesCoverage(t) &&
         !isActiveStatus(t.status),
     );
     if (!match) return;
@@ -440,10 +470,10 @@ export function useTaskController(
       streamState: {
         status: match.status,
         progress: match.progress ?? 1,
-        currentTask: match.current_task ?? "",
+        currentTask: currentTaskText(match, t),
         result: match.result ?? null,
         error: match.error ?? null,
-        logs: Array.isArray(match.logs) ? match.logs.filter((x) => typeof x === "string") : [],
+        logs: taskLogLinesOf(match, t),
       },
     });
     if (invalidateKeys) {
@@ -468,6 +498,7 @@ export function useTaskController(
     entry,
     invalidateKeys,
     queryClient,
+    matchesCoverage,
   ]);
 
   useEffect(() => {

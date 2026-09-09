@@ -497,7 +497,7 @@ function ScriptTabContent() {
         <div className="inline-flex h-7 items-center gap-2 text-muted-foreground">
           <span className="text-[11px]">{t("episode.script.modeLabel")}</span>
           <span className="text-[11px] text-foreground/68">
-            {t("episode.script.modeLiteral").replace(/^模式[：:]\s*/, "")}
+            {t("episode.script.modeLiteral")}
           </span>
         </div>
 

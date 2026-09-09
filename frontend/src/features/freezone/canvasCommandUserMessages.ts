@@ -16,6 +16,9 @@ export function canvasCommandUserMessageFromResult(
 ): string {
   const text = rawText(errors, commandResults);
   if (!text.trim()) return "画布操作没有完成，我会换一种方式再试。";
+  if (/Recipe\s*文本生成超时|Recipe text generation.*(?:timed out|timeout)|Request timed out/i.test(text)) { // i18n-exempt -- backend error matching
+    return "Recipe 文本生成超时：模型在规定时间内未返回结果，请稍后重试。本轮未继续执行下游节点。"; // i18n-exempt -- transport fallback
+  }
   if (/cancel|取消|超时/i.test(text)) return "画布操作已取消，没有应用到画布。";
   if (/field model value|not a valid option.*model|模型|model/i.test(text) && /not a valid option|不可用|invalid/i.test(text)) {
     return "当前选择的生成模型不可用，我会改用当前画布支持的模型。";

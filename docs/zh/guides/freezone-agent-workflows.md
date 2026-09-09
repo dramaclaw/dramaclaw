@@ -23,7 +23,7 @@ Hermes / Agent
   |  1. 识别意图，检索 Skill / Recipe catalog
   |  2. 选择 workflow skill 或让用户在多个命中项中选择
   v
-freezone_create_workflow_graph / freezone_emit_canvas_command / freezone_run_node_action
+freezone_prepare_workflow_plan_draft / freezone_confirm_workflow_draft / freezone_run_node_action
   |
   v
 画布命令桥接层
@@ -174,7 +174,7 @@ list_user_agent_config_items(username, kind)
 
 1. Agent 根据用户意图检索 catalog。
 2. 如果命中多个 skill，先让用户选择。
-3. 选中后调用 `freezone_create_workflow_graph`。
+3. 选中后调用 `freezone_prepare_workflow_plan_draft`，展示精确预览并在用户确认后调用 `freezone_confirm_workflow_draft`。
 4. 工具读取 skill 的 `workflow_templates`，展开为节点、连线、分组。
 5. 前端弹出画布操作审批。
 6. 用户确认后，画布创建节点和连线。

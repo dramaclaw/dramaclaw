@@ -637,7 +637,6 @@ export function BatchPanel({
       toast.warning(
         t("episode.workbench.batch.sketchGroupSkippedRunning", {
           count: skippedLocked,
-          defaultValue: `已跳过 ${skippedLocked} 个正在运行的草图组`,
         }),
       );
     }
@@ -778,13 +777,10 @@ export function BatchPanel({
                   {t("episode.sketchPlan.title", {
                     beats: count,
                     grids: sketchPlanItems.length,
-                    defaultValue: `草图计划（${count} beats → ${sketchPlanItems.length} 个网格）`,
                   })}
                 </AlertDialogTitle>
                 <AlertDialogDescription>
-                  {t("episode.sketchPlan.subtitle", {
-                    defaultValue: "系统已根据场景自动分组。确认后会直接发配草图任务。",
-                  })}
+                  {t("episode.sketchPlan.subtitle")}
                 </AlertDialogDescription>
               </AlertDialogHeader>
 
@@ -842,7 +838,6 @@ export function BatchPanel({
                 >
                   {t("episode.sketchPlan.confirm", {
                     grids: sketchPlanItems.length,
-                    defaultValue: `确认草图 ${sketchPlanItems.length} 个网格`,
                   })}
                   <CreditCostInline
                     display={sketchPlanCostDisplay}

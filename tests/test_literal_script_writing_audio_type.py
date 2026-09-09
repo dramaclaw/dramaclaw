@@ -384,6 +384,82 @@ def _valid_literal_output(visual_description: str) -> LiteralBeatMetaOutput:
 
 
 @pytest.mark.asyncio
+async def test_english_literal_workflow_requires_english_visual_descriptions(
+    monkeypatch,
+):
+    store = _LiteralRunStore()
+    agent = _SequencedLiteralAgent(
+        [
+            _valid_literal_output("Maya stands alone on the empty platform."),
+        ]
+    )
+    monkeypatch.setattr(
+        LiteralScriptWritingWorkflow,
+        "agent",
+        property(lambda _workflow: agent),
+    )
+    workflow = LiteralScriptWritingWorkflow(cognee_store=store, sqlite_store=store)
+
+    await workflow.run(
+        episode_num=1,
+        source_text=(
+            "SCENE 1 - THE EMPTY PLATFORM\n"
+            "Location: Seoul Subway Station\n"
+            "Maya stands alone on the empty platform."
+        ),
+    )
+
+    assert "Write every user-visible prose field in English" in agent.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_english_literal_workflow_uses_english_retry_fallback(monkeypatch):
+    store = _LiteralRunStore()
+    agent = _SequencedLiteralAgent(
+        [
+            UnexpectedModelBehavior("Exceeded maximum output retries (2)"),
+            UnexpectedModelBehavior("Exceeded maximum output retries (2)"),
+        ]
+    )
+    monkeypatch.setattr(
+        LiteralScriptWritingWorkflow,
+        "agent",
+        property(lambda _workflow: agent),
+    )
+    workflow = LiteralScriptWritingWorkflow(cognee_store=store, sqlite_store=store)
+
+    script = await workflow.run(
+        episode_num=1,
+        source_text="SCENE 1 - ROOM\nLocation: Room\nMAYA: Go now.",
+    )
+
+    assert script.beats[0].visual_description == "MAYA speaks."
+
+
+@pytest.mark.asyncio
+async def test_english_literal_workflow_uses_english_content_filter_placeholder(
+    monkeypatch,
+):
+    store = _LiteralRunStore()
+    agent = _SequencedLiteralAgent([ContentFilterError("Content filter triggered")])
+    monkeypatch.setattr(
+        LiteralScriptWritingWorkflow,
+        "agent",
+        property(lambda _workflow: agent),
+    )
+    workflow = LiteralScriptWritingWorkflow(cognee_store=store, sqlite_store=store)
+
+    script = await workflow.run(
+        episode_num=1,
+        source_text="SCENE 1 - ROOM\nLocation: Room\nMaya grips a knife.",
+    )
+
+    assert script.beats[0].visual_description == (
+        "This line could not be generated; please complete it manually."
+    )
+
+
+@pytest.mark.asyncio
 async def test_literal_workflow_retries_one_line_with_a_fresh_model_call(monkeypatch):
     store = _LiteralRunStore()
     agent = _SequencedLiteralAgent(

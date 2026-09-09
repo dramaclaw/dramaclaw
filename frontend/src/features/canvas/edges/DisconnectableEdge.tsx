@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -71,6 +72,7 @@ export const DisconnectableEdge = memo(function DisconnectableEdge(props: EdgePr
     style,
     data,
   } = props;
+  const { t } = useTranslation();
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const canvasEdgeRoutingMode = useSettingsStore((state) => state.canvasEdgeRoutingMode);
@@ -392,7 +394,7 @@ export const DisconnectableEdge = memo(function DisconnectableEdge(props: EdgePr
                 event.stopPropagation();
                 deleteEdge(id);
               }}
-              aria-label="断开连线"
+              aria-label={t('canvas.edge.disconnect')}
             >
               <Scissors className="h-6 w-6 stroke-[2.35]" />
             </button>

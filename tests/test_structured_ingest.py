@@ -167,7 +167,7 @@ async def structured_project(tmp_path):
 
 async def test_structured_import_records_run_and_chunks(structured_project, tmp_path):
     from novelvideo.structured_ingest import (
-        STRUCTURED_PIPELINE_VERSION,
+        STRUCTURED_ANALYSIS_VERSION,
         STRUCTURED_SCHEMA_VERSION,
         ingest_source_text_structured,
     )
@@ -188,7 +188,7 @@ async def test_structured_import_records_run_and_chunks(structured_project, tmp_
     run = await store.get_reusable_analysis_run(
         source_sha256=source_sha256(NARRATED_LONG),
         schema_version=STRUCTURED_SCHEMA_VERSION,
-        pipeline_version=STRUCTURED_PIPELINE_VERSION,
+        pipeline_version=STRUCTURED_ANALYSIS_VERSION,
         spine_template="narrated",
     )
     assert run is not None and run["run_id"] == result["run_id"]
@@ -265,6 +265,44 @@ async def test_reimporting_identical_text_reuses_the_run(structured_project, tmp
     done = [chunk for chunk in after if chunk["status"] == "done"]
     assert len(done) == 1
     assert json.loads(done[0]["result_json"]) == {"characters": ["林默"]}
+
+
+async def test_pre_language_analysis_run_is_retained_but_not_reused(
+    structured_project, tmp_path
+):
+    from novelvideo.structured_ingest import (
+        STRUCTURED_SCHEMA_VERSION,
+        ingest_source_text_structured,
+    )
+
+    store, _ = structured_project
+    chunks = chunk_source_text(NARRATED_LONG, "narrated")
+    digest = source_sha256(NARRATED_LONG)
+    await store.start_analysis_run(
+        run_id="pre-language-contract",
+        pipeline_version="structured_v1",
+        schema_version=STRUCTURED_SCHEMA_VERSION,
+        spine_template="narrated",
+        source_sha256=digest,
+        source_length=len(NARRATED_LONG),
+        chunks=chunks,
+    )
+    novel = tmp_path / "novel.txt"
+    novel.write_text(NARRATED_LONG, encoding="utf-8")
+
+    result = await ingest_source_text_structured(
+        store, str(novel), spine_template="narrated"
+    )
+
+    assert result["pipeline"] == "structured_v1"
+    assert result["run_id"] != "pre-language-contract"
+    old = await store.get_reusable_analysis_run(
+        source_sha256=digest,
+        schema_version=STRUCTURED_SCHEMA_VERSION,
+        pipeline_version="structured_v1",
+        spine_template="narrated",
+    )
+    assert old is not None and old["run_id"] == "pre-language-contract"
 
 
 async def test_changing_the_text_starts_a_new_run(structured_project, tmp_path):

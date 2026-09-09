@@ -5,6 +5,7 @@ import { useReactFlow } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 
 import { DEFAULT_NODE_WIDTH } from '@/features/canvas/domain/canvasNodes';
+import { useViewportReturnStore } from '@/features/canvas/application/viewportReturnStore';
 import { useCanvasStore } from '@/stores/canvasStore';
 
 /** 「回到节点」时的固定缩放比例（10%）。 */
@@ -35,6 +36,9 @@ function nodeFallbackSize(node: {
 export function BackToNodesHint() {
   const { t } = useTranslation();
   const reactFlow = useReactFlow();
+
+  // 「返回节点」也占着底部居中那个位置，两条同时在时本条上移一格，别叠成一坨。
+  const returnHintVisible = useViewportReturnStore((state) => state.request !== null);
 
   const anyNodeVisible = useCanvasStore((state) => {
     const { width, height } = state.canvasViewportSize;
@@ -84,7 +88,11 @@ export function BackToNodesHint() {
   if (anyNodeVisible) return null;
 
   return (
-    <div className="pointer-events-none absolute bottom-6 left-1/2 z-[130] -translate-x-1/2">
+    <div
+      className={`pointer-events-none absolute left-1/2 z-[130] -translate-x-1/2 ${
+        returnHintVisible ? 'bottom-[4.25rem]' : 'bottom-6'
+      }`}
+    >
       <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-white/10 bg-[#1f1f1f]/95 py-1.5 pl-4 pr-1.5 text-xs text-white/85 shadow-lg shadow-black/40 backdrop-blur">
         <span className="whitespace-nowrap">{t('canvas.backToNodes.hint')}</span>
         <button

@@ -145,13 +145,13 @@ export function VideoViewerModal({
     >
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between px-6 py-5 text-white">
         <div className="rounded-full border border-white/10 bg-black/35 px-3 py-1.5 text-sm font-medium text-white/85 backdrop-blur-xl">
-          {title ?? t('viewer.videoTitleFallback', '视频')}
+          {title ?? t('viewer.videoTitleFallback')}
         </div>
         <button
           type="button"
           className={`pointer-events-auto ${MEDIA_VIEWER_CLOSE_BUTTON_CLASS}`}
           onClick={onClose}
-          title={t('common.close', '关闭')}
+          title={t('common.close')}
         >
           <X className={MEDIA_VIEWER_CLOSE_ICON_CLASS} />
         </button>
@@ -192,7 +192,7 @@ export function VideoViewerModal({
           type="button"
           onClick={togglePlayback}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white/88 transition hover:bg-white/10 hover:text-white"
-          aria-label={isPlaying ? t('common.pause', '暂停') : t('common.play', '播放')}
+          aria-label={isPlaying ? t('common.pause') : t('common.play')}
         >
           {isPlaying ? <Pause className="h-[18px] w-[18px]" /> : <Play className="h-[18px] w-[18px]" />}
         </button>
@@ -210,13 +210,13 @@ export function VideoViewerModal({
           style={{
             background: `linear-gradient(to right, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.92) ${progress}%, rgba(255,255,255,0.18) ${progress}%, rgba(255,255,255,0.18) 100%)`,
           }}
-          aria-label={t('viewer.videoSeek', '视频进度')}
+          aria-label={t('viewer.videoSeek')}
         />
         <button
           type="button"
           onClick={toggleMuted}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white/78 transition hover:bg-white/10 hover:text-white"
-          aria-label={muted ? t('viewer.unmute', '取消静音') : t('viewer.mute', '静音')}
+          aria-label={muted ? t('viewer.unmute') : t('viewer.mute')}
         >
           {muted ? <VolumeX className="h-[18px] w-[18px]" /> : <Volume2 className="h-[18px] w-[18px]" />}
         </button>
@@ -224,7 +224,7 @@ export function VideoViewerModal({
           type="button"
           onClick={enterFullscreen}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white/78 transition hover:bg-white/10 hover:text-white"
-          aria-label={t('viewer.fullscreen', '全屏')}
+          aria-label={t('viewer.fullscreen')}
         >
           <Maximize2 className="h-[18px] w-[18px]" />
         </button>

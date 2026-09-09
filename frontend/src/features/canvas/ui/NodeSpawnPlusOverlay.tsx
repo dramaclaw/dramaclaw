@@ -79,6 +79,7 @@ function PlusButton({
   onHoverStart,
   onHoverEnd,
 }: PlusButtonProps) {
+  const { t } = useTranslation();
   const dragStartRef = useRef<PlusDragStart | null>(null);
   const dragStartedRef = useRef(false);
   const suppressClickRef = useRef(false);
@@ -277,7 +278,11 @@ function PlusButton({
       <button
         ref={buttonRef}
         type="button"
-        aria-label={direction === 'right' ? '引用该节点生成' : '连入该节点'}
+        aria-label={
+          direction === 'right'
+            ? t('canvas.spawnPlus.referenceThisNode')
+            : t('canvas.spawnPlus.connectIntoThisNode')
+        }
         // 缩放原点放在贴近节点的一侧，放大时朝远离节点的方向生长，不会盖回节点本体。
         style={{ transformOrigin: direction === 'right' ? 'left center' : 'right center' }}
         className="canvas-spawn-plus-magnetic-button nodrag relative z-10 flex h-8 w-8 items-center justify-center rounded-full border border-white/40 bg-surface-dark/95 text-white/85 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_6px_18px_rgba(0,0,0,0.32)] transition-[border-color,color,box-shadow] duration-150 will-change-transform hover:border-white/85 hover:text-white hover:shadow-[0_0_0_1px_rgba(255,255,255,0.42),0_0_18px_rgba(255,255,255,0.22)]"

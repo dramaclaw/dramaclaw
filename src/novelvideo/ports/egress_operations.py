@@ -202,6 +202,9 @@ class EgressOperationPort(Protocol):
         # 本来就没有上游作业号可填。这与 OI-48 谴责的「用可选参数当身份载体」不是
         # 一回事——那里 None 意味着信息丢失，这里 None 是一个被约束校验的声明。
         provider_job_id: str | None,
+        requester_user_id: str | None = None,
+        membership_id: str | None = None,
+        authz_version: int | None = None,
     ) -> OperationSnapshot: ...
 
     async def mark_completed(

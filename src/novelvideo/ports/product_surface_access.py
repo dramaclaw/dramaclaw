@@ -38,6 +38,7 @@ SURFACE_DEFINITIONS: Final[tuple[dict[str, Any], ...]] = (
 PRODUCT_SURFACE_CODES: Final[frozenset[str]] = frozenset(
     str(item["surface_code"]) for item in SURFACE_DEFINITIONS
 )
+
 _ASSISTANT_SURFACE_CODES: Final[frozenset[str]] = frozenset(
     {"assistant", "freezone_assistant"}
 )
@@ -64,7 +65,7 @@ class LocalProductSurfaceAccess:
                 "available": bool(item["default_available"])
                 or (
                     assistant_surfaces_enabled
-                    and str(item["surface_code"]) in _ASSISTANT_SURFACE_CODES
+                    and item["surface_code"] in _ASSISTANT_SURFACE_CODES
                 ),
                 "unavailable_message": str(item["default_unavailable_message"]),
             }

@@ -39,6 +39,7 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 import { currentCanvasParam } from "@/lib/app-router";
 import { rememberLastCanvas, writeUrl } from "@/lib/url-params";
 import { cn } from "@/lib/utils";
+import type { TFn } from "@/lib/i18n-types";
 import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
 import { api } from "@/lib/api";
 import {
@@ -152,6 +153,7 @@ import {
 import {
   buildCanvasNodeReferenceAttachment,
   buildCanvasContextRequestResponses,
+  canvasSelectionAttachmentDeliveryKey,
   extractCanvasContextRequestEnvelopes,
 } from "@/features/freezone/chatNodeReferences";
 import {
@@ -590,23 +592,24 @@ export function startProjectionStatusRefresh(
   return stop;
 }
 
-function renderCommitSuccessMessage(target: PushTarget, result: PushResult): string {
+function renderCommitSuccessMessage(target: PushTarget, result: PushResult, t: TFn): string {
   if (target.kind === "director_render") {
-    return `已提交导演合成资产：${result.target_path}（含纯背景和元数据）`;
+    return t("freezone.commit.success.directorRender", { path: result.target_path });
   }
   if (target.kind === "scene_director_world") {
-    return `已提交导演世界：${result.target_path}`;
+    return t("freezone.commit.success.directorWorld", { path: result.target_path });
   }
-  return `已提交到 ${result.target_path}`;
+  return t("freezone.commit.success.default", { path: result.target_path });
 }
 
 function sceneDirectorWorldDataForManifest(
   nodeData: Record<string, unknown>,
   target: PushTarget,
   result: PushResult,
-  projectId?: string,
+  projectId: string | undefined,
+  t: TFn,
 ): Record<string, unknown> | null {
-  const manifestNodeData = nodeDataPatchAfterCommittedSourceSlot(nodeData, target, result, projectId);
+  const manifestNodeData = nodeDataPatchAfterCommittedSourceSlot(nodeData, target, result, projectId, t);
   return hasDirectorWorldSceneState(manifestNodeData) ? manifestNodeData : null;
 }
 
@@ -614,20 +617,22 @@ export function nodeDataPatchAfterCommittedSourceSlot(
   nodeData: Record<string, unknown>,
   target: PushTarget,
   result: PushResult,
-  projectId?: string,
+  projectId: string | undefined,
+  t: TFn,
 ): Record<string, unknown> | null {
   if (!isDirectorWorldSourceSlotTarget(target)) return null;
-  return nodeDataAfterCommittedSlot(nodeData, target, result, projectId);
+  return nodeDataAfterCommittedSlot(nodeData, target, result, projectId, t);
 }
 
 export function nodeDataPatchAfterCommittedTarget(
   nodeData: Record<string, unknown>,
   target: PushTarget,
   result: PushResult,
-  projectId?: string,
+  projectId: string | undefined,
+  t: TFn,
 ): Record<string, unknown> | null {
   if (isDirectorWorldSourceSlotTarget(target)) return null;
-  return nodeDataAfterCommittedSlot(nodeData, target, result, projectId);
+  return nodeDataAfterCommittedSlot(nodeData, target, result, projectId, t);
 }
 
 function latestCanvasNodeData(nodeId: string): Record<string, unknown> | null {
@@ -899,6 +904,13 @@ export function FreezoneShell({
   const [chatOpen, setChatOpen] = useState(loadChatOpen);
   const [pendingChatAttachments, setPendingChatAttachments] = useState<ChatAttachment[]>([]);
   const [pendingChatNodeMentions, setPendingChatNodeMentions] = useState<string[]>([]);
+  const deliveredSelectionAttachmentKeyRef = useRef<string | null>(null);
+  const handlePendingChatAttachmentsConsumed = useCallback(() => {
+    setPendingChatAttachments([]);
+  }, []);
+  const handlePendingChatNodeMentionsConsumed = useCallback(() => {
+    setPendingChatNodeMentions([]);
+  }, []);
   const productSurfaces = useProductSurfaces();
   const showChatDock = Boolean(
     surfaceAccess(productSurfaces.data, "freezone_assistant")?.available,
@@ -1027,6 +1039,14 @@ export function FreezoneShell({
     }
     return canvasNodes.filter((node) => expandedIds.has(node.id));
   }, [canvasNodes, visibleSelectedCanvasNodes]);
+  const currentCanvasSelectionAttachmentKey = useMemo(
+    () =>
+      canvasSelectionAttachmentDeliveryKey(
+        visibleSelectedCanvasNodes,
+        chatReferenceCanvasNodes,
+      ),
+    [chatReferenceCanvasNodes, visibleSelectedCanvasNodes],
+  );
   const currentCanvasSelection = useMemo<CurrentCanvasSelectionItem[]>(
     () =>
       visibleSelectedCanvasNodes.map((node) => ({
@@ -1049,10 +1069,13 @@ export function FreezoneShell({
     [canvasEdges, canvasId, canvasNodes, chatReferenceCanvasNodes, projectId, visibleSelectedCanvasNodes],
   );
   const attachCurrentSelectionToChat = useCallback(() => {
-    if (!currentCanvasSelectionAttachment) return false;
+    if (!currentCanvasSelectionAttachment || !currentCanvasSelectionAttachmentKey) {
+      return false;
+    }
+    deliveredSelectionAttachmentKeyRef.current = currentCanvasSelectionAttachmentKey;
     setPendingChatAttachments([currentCanvasSelectionAttachment]);
     return true;
-  }, [currentCanvasSelectionAttachment]);
+  }, [currentCanvasSelectionAttachment, currentCanvasSelectionAttachmentKey]);
   const handleChatOpenChange = useCallback(
     (nextOpen: boolean) => {
       if (nextOpen) {
@@ -1071,9 +1094,29 @@ export function FreezoneShell({
     [canvasEdges, canvasId, canvasNodes, chatReferenceCanvasNodes],
   );
   useEffect(() => {
-    if (!chatOpen || !currentCanvasSelectionAttachment) return;
+    if (
+      !chatOpen ||
+      !currentCanvasSelectionAttachment ||
+      !currentCanvasSelectionAttachmentKey
+    ) {
+      deliveredSelectionAttachmentKeyRef.current = null;
+      return;
+    }
+    // React Flow updates node geometry repeatedly while a large approved graph
+    // mounts. The attachment payload includes positions, so rebuilding it on
+    // every measurement used to make this effect publish again while
+    // SuperChatPanel consumed the previous value. Parent and child then kept
+    // setting state until React raised "Maximum update depth exceeded".
+    // Delivery identity follows the semantic selection/topology instead of
+    // transient node geometry.
+    if (
+      deliveredSelectionAttachmentKeyRef.current === currentCanvasSelectionAttachmentKey
+    ) {
+      return;
+    }
+    deliveredSelectionAttachmentKeyRef.current = currentCanvasSelectionAttachmentKey;
     setPendingChatAttachments([currentCanvasSelectionAttachment]);
-  }, [chatOpen, currentCanvasSelectionAttachment]);
+  }, [chatOpen, currentCanvasSelectionAttachment, currentCanvasSelectionAttachmentKey]);
   // 开合状态落盘：刷新/重进画布后由 useState(loadChatOpen) 恢复。所有开关路径
   // （手动按钮、命令自动展开、空白点击）都经由 chatOpen，故一个 effect 全覆盖。
   useEffect(() => {
@@ -1376,13 +1419,13 @@ export function FreezoneShell({
     return canvasEventBus.subscribe("freezone/commit-node", ({ nodeId, auto, successMessage }) => {
       const node = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
       if (!node) {
-        setToast("当前节点没有可提交的内容");
+        setToast(t("freezone.shell.nodeNoCommittable"));
         return;
       }
       // 泛化:不再只认 imageUrl,而是按节点类型推断媒体 url(图像/视频/音频/3GS)。
       const info = deriveNodeDropInfo(node);
       if (!info?.sourceUrl) {
-        setToast("当前节点没有可提交的内容");
+        setToast(t("freezone.shell.nodeNoCommittable"));
         return;
       }
       const sourceUrl = info.sourceUrl;
@@ -1406,17 +1449,17 @@ export function FreezoneShell({
             if (savedOpenScene) {
               const flushed = await sync.flush();
               if (!flushed) {
-                throw new Error("当前画布未保存成功，处理冲突后再提交");
+                throw new Error(t("freezone.shell.canvasSaveBlocked"));
               }
             }
             const latestNode = useCanvasStore.getState().nodes.find((candidate) => candidate.id === nodeId);
             if (!latestNode) {
-              setToast("当前节点没有可提交的内容");
+              setToast(t("freezone.shell.nodeNoCommittable"));
               return;
             }
             const latestInfo = deriveNodeDropInfo(latestNode);
             if (!latestInfo?.sourceUrl) {
-              setToast("当前节点没有可提交的内容");
+              setToast(t("freezone.shell.nodeNoCommittable"));
               return;
             }
             const latestData = (latestNode.data ?? {}) as Record<string, unknown>;
@@ -1448,15 +1491,15 @@ export function FreezoneShell({
         return;
       }
       if (!defaultTarget) {
-        setToast("当前节点没有可自动提交的主线目标");
+        setToast(t("freezone.shell.noAutoCommitTarget"));
         return;
       }
       void (async () => {
-        setToast("正在写入当前背景…");
+        setToast(t("freezone.shell.writingBackground"));
         try {
           const flushed = await sync.flush();
           if (!flushed) {
-            throw new Error("当前画布未保存成功，处理冲突后再提交");
+            throw new Error(t("freezone.shell.canvasSaveBlocked"));
           }
           const latestData = resolveSubmitNodeData(latestCanvasNodeData(nodeId), data) ?? data;
           const latestSourceUrl =
@@ -1473,22 +1516,22 @@ export function FreezoneShell({
                 label: typeof latestData.displayName === "string" ? latestData.displayName : undefined,
               })
             : target.kind === "scene_director_world"
-              ? await commitSceneDirectorWorldFromCanvasNode(projectId, target, latestData)
+              ? await commitSceneDirectorWorldFromCanvasNode(projectId, target, latestData, t)
               : await promoteToAsset(projectId, latestSourceUrl, target, {
                 mark_stale: false,
               });
-          const nodeDataPatch = nodeDataPatchAfterCommittedTarget(latestData, target, result, projectId);
+          const nodeDataPatch = nodeDataPatchAfterCommittedTarget(latestData, target, result, projectId, t);
           if (nodeDataPatch) {
             useCanvasStore.getState().updateNodeData(nodeId, nodeDataPatch);
           }
           const manifestNodeData = nodeDataPatch && hasDirectorWorldSceneState(nodeDataPatch)
             ? nodeDataPatch
-            : sceneDirectorWorldDataForManifest(latestData, target, result, projectId);
+            : sceneDirectorWorldDataForManifest(latestData, target, result, projectId, t);
           if (manifestNodeData && isDirectorWorldSourceSlotTarget(target)) {
             await commitSceneDirectorWorldFromCanvasNode(projectId, {
               kind: "scene_director_world",
               scene_id: target.scene_id,
-            }, manifestNodeData, { pruneStale: false });
+            }, manifestNodeData, t, { pruneStale: false });
           }
           refreshCommittedTargetNodes(target, result);
           invalidateCommittedTargetQueries(target);
@@ -1496,8 +1539,8 @@ export function FreezoneShell({
           setAssetLibraryReloadToken((token) => token + 1);
           setToast(
             successMessage ??
-              `${renderCommitSuccessMessage(target, result)}${
-                manifestNodeData ? "；已同步导演世界状态" : ""
+              `${renderCommitSuccessMessage(target, result, t)}${
+                manifestNodeData ? t("freezone.commit.success.directorWorldSynced") : ""
               }`,
           );
           void sync.flush();
@@ -1506,7 +1549,7 @@ export function FreezoneShell({
         }
       })();
     });
-  }, [projectId, sync]);
+  }, [projectId, sync, t]);
 
   useEffect(() => {
     const unsubscribeSync = canvasEventBus.subscribe(
@@ -1594,11 +1637,24 @@ export function FreezoneShell({
       const envelopes = extractCanvasChatCommandEnvelopes(candidates)
         .filter((envelope) => canvasCommandEnvelopeMatchesCanvas(envelope, canvasId));
 
+      console.info("[freezone-canvas-command] frame received", {
+        bridgeKey,
+        turnId,
+        externalMcpCommand: isExternalMcpCommand,
+        candidateCount: candidates.length,
+        envelopeCount: envelopes.length,
+      });
+
       if (envelopes.length === 0) {
         const errors = [
           "画布命令格式无效或不属于当前画布，前端未执行。",
           "无法解析 canvas_chat_commands.v1 命令；请检查 command 字段是否在正确层级。",
         ];
+        console.warn("[freezone-canvas-command] frame rejected: no valid envelope", {
+          bridgeKey,
+          turnId,
+          candidateCount: candidates.length,
+        });
         emitCanvasContextActivity({
           turnId,
           anchorTextPrefix: detail?.anchorTextPrefix ?? null,
@@ -1689,6 +1745,13 @@ export function FreezoneShell({
           "画布命令预校验失败，前端未展示确认卡，也未执行。",
           ...validation.issues.map((issue) => `${issue.path}: ${issue.message}`),
         ];
+        console.warn("[freezone-canvas-command] validation failed", {
+          bridgeKey,
+          turnId,
+          envelopeCount: normalizedEnvelopes.length,
+          issueCount: validation.issues.length,
+          issues: validation.issues.slice(0, 12).map((issue) => `${issue.path}: ${issue.message}`),
+        });
         emitCanvasContextActivity({
           turnId,
           anchorTextPrefix: detail?.anchorTextPrefix ?? null,
@@ -1783,6 +1846,13 @@ export function FreezoneShell({
         bridgeKey,
         externalMcpCommand: isExternalMcpCommand,
       });
+      console.info("[freezone-canvas-command] approval emitted", {
+        bridgeKey,
+        turnId,
+        envelopeCount: normalizedEnvelopes.length,
+        commandCount: normalizedEnvelopes.reduce((sum, envelope) => sum + envelope.commands.length, 0),
+        externalMcpCommand: isExternalMcpCommand,
+      });
       setChatOpen(true);
       window.setTimeout(() => emitCanvasCommandApproval({
         canvasId,
@@ -1823,6 +1893,17 @@ export function FreezoneShell({
           agentIds,
           seenKeys,
         });
+        if (frames.length > 0) {
+          console.info("[freezone-canvas-command] pending frames polled", {
+            count: frames.length,
+            bridgeKeys: frames
+              .map((frame) => {
+                const record = frame as Record<string, unknown>;
+                return typeof record.bridge_key === "string" ? record.bridge_key : null;
+              })
+              .filter((key): key is string => Boolean(key)),
+          });
+        }
         const now = Date.now();
         frames.forEach((frame, index) => {
           const frameRecord = frame as Record<string, unknown>;
@@ -2001,7 +2082,7 @@ export function FreezoneShell({
         sourceFileName: `${baseLabel}-mask`,
       } as Record<string, unknown>,
     );
-    setToast(`Mask edit 完成 — 新图已入画布`);
+    setToast(t("freezone.shell.maskEditDone"));
     void DEFAULT_NODE_WIDTH; // unused but keep import alive
   };
 
@@ -2076,7 +2157,7 @@ export function FreezoneShell({
             onRestoreMainlineDefault={async () => {
               try {
                 await sync.restoreMainlineDefault();
-                setToast("已按当前主流程事实同步主线视图");
+                setToast(t("freezone.shell.mainlineRestored"));
               } catch (err) {
                 setToast(err instanceof Error ? err.message : String(err));
               }
@@ -2165,9 +2246,9 @@ export function FreezoneShell({
             currentCanvasSelection={currentCanvasSelection}
             currentCanvasOntologyContext={currentCanvasOntologyContext}
             pendingAttachments={pendingChatAttachments}
-            onPendingAttachmentsConsumed={() => setPendingChatAttachments([])}
+            onPendingAttachmentsConsumed={handlePendingChatAttachmentsConsumed}
             pendingNodeMentions={pendingChatNodeMentions}
-            onPendingNodeMentionsConsumed={() => setPendingChatNodeMentions([])}
+            onPendingNodeMentionsConsumed={handlePendingChatNodeMentionsConsumed}
             open={chatOpen}
             onOpenChange={handleChatOpenChange}
             // 抽屉会往 <html> 上广播 --freezone-dock-width，顶栏 / 任务状态条 / 任务
@@ -2936,7 +3017,9 @@ function formatAgentHistoryTime(timestamp: number): string {
  * localStorage 清扫误删；这只是个 UI 位置偏好，跨区域保留没问题。
  */
 const CHAT_LAUNCHER_POS_STORAGE_KEY = "st.freezone.chatLauncherPos";
-const CHAT_LAUNCHER_SIZE = 58;
+const CHAT_LAUNCHER_VISUAL_WIDTH = 96;
+const CHAT_LAUNCHER_VISUAL_HEIGHT = 35;
+const CHAT_LAUNCHER_HIT_HEIGHT = 44;
 const CHAT_LAUNCHER_MARGIN = 8;
 /** 默认抬到 MiniMap（约 150px 高 + 15px 边距）上方，避免挡住画布缩略图。 */
 const CHAT_LAUNCHER_DEFAULT_POS = { right: 16, bottom: 180 };
@@ -2967,7 +3050,6 @@ function FreezoneChatToggleButton({
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
-  const [motionActive, setMotionActive] = useState(false);
   const [entered, setEntered] = useState(false);
   const [pos, setPos] = useState(loadChatLauncherPos);
   // 拖拽后抑制紧随 pointerup 的 click，避免拖完顺手把面板打开。
@@ -2984,8 +3066,14 @@ function FreezoneChatToggleButton({
     const parent = buttonRef.current?.offsetParent as HTMLElement | null;
     if (!parent) return;
     const rect = parent.getBoundingClientRect();
-    const maxRight = rect.width - CHAT_LAUNCHER_SIZE - CHAT_LAUNCHER_MARGIN;
-    const maxBottom = rect.height - CHAT_LAUNCHER_SIZE - CHAT_LAUNCHER_MARGIN;
+    const maxRight = Math.max(
+      CHAT_LAUNCHER_MARGIN,
+      rect.width - CHAT_LAUNCHER_VISUAL_WIDTH - CHAT_LAUNCHER_MARGIN,
+    );
+    const maxBottom = Math.max(
+      CHAT_LAUNCHER_MARGIN,
+      rect.height - CHAT_LAUNCHER_HIT_HEIGHT - CHAT_LAUNCHER_MARGIN,
+    );
     setPos((current) => {
       const clamped = {
         right: Math.min(Math.max(current.right, CHAT_LAUNCHER_MARGIN), maxRight),
@@ -3020,10 +3108,16 @@ function FreezoneChatToggleButton({
         if (!dragged && Math.hypot(dx, dy) < CHAT_LAUNCHER_DRAG_THRESHOLD) return;
         dragged = true;
         const maxRight = parentRect
-          ? parentRect.width - CHAT_LAUNCHER_SIZE - CHAT_LAUNCHER_MARGIN
+          ? Math.max(
+              CHAT_LAUNCHER_MARGIN,
+              parentRect.width - CHAT_LAUNCHER_VISUAL_WIDTH - CHAT_LAUNCHER_MARGIN,
+            )
           : Number.MAX_SAFE_INTEGER;
         const maxBottom = parentRect
-          ? parentRect.height - CHAT_LAUNCHER_SIZE - CHAT_LAUNCHER_MARGIN
+          ? Math.max(
+              CHAT_LAUNCHER_MARGIN,
+              parentRect.height - CHAT_LAUNCHER_HIT_HEIGHT - CHAT_LAUNCHER_MARGIN,
+            )
           : Number.MAX_SAFE_INTEGER;
         latest = {
           right: clamp(start.right - dx, maxRight),
@@ -3062,7 +3156,6 @@ function FreezoneChatToggleButton({
 
   const playMotion = useCallback(() => {
     const video = videoRef.current;
-    setMotionActive(true);
     if (!video) return;
     video.currentTime = 0;
     void video.play().catch(() => undefined);
@@ -3070,7 +3163,6 @@ function FreezoneChatToggleButton({
 
   const stopMotion = useCallback(() => {
     const video = videoRef.current;
-    setMotionActive(false);
     if (video) {
       video.pause();
       video.currentTime = 0;
@@ -3084,10 +3176,15 @@ function FreezoneChatToggleButton({
       size="icon-lg"
       variant="secondary"
       className={cn(
-        "absolute z-50 size-[58px] cursor-grab touch-none overflow-hidden rounded-full border-0 bg-transparent p-0 shadow-lg brightness-110 transition-[opacity,transform] duration-200 ease-out hover:scale-[1.03] active:cursor-grabbing",
+        "group/xia-dao absolute z-50 cursor-grab touch-none overflow-visible border-0 bg-transparent p-0 transition-opacity duration-200 ease-out hover:bg-transparent active:cursor-grabbing",
         entered ? "opacity-100" : "opacity-0",
       )}
-      style={{ right: pos.right, bottom: pos.bottom }}
+      style={{
+        right: pos.right,
+        bottom: pos.bottom,
+        width: CHAT_LAUNCHER_VISUAL_WIDTH,
+        height: CHAT_LAUNCHER_HIT_HEIGHT,
+      }}
       aria-label={label}
       aria-expanded={expanded}
       onMouseEnter={playMotion}
@@ -3097,26 +3194,15 @@ function FreezoneChatToggleButton({
       onPointerDown={handlePointerDown}
       onClick={handleClick}
     >
-      <img
-        src="/images/avatar-claw.png"
-        alt=""
-        className={cn(
-          "absolute inset-0 size-full rounded-full object-cover transition-opacity duration-[350ms] ease-out",
-          motionActive ? "opacity-0" : "opacity-100",
-        )}
-        aria-hidden="true"
-      />
       <video
         ref={videoRef}
-        src="/images/avatar-motion.mp4"
+        src="/images/xia-dao-launcher.mp4"
         muted
         loop
         playsInline
-        preload="metadata"
-        className={cn(
-          "absolute inset-0 size-full rounded-full object-cover brightness-90 saturate-95 transition-opacity duration-[350ms] ease-out",
-          motionActive ? "opacity-100" : "opacity-0",
-        )}
+        preload="auto"
+        className="pointer-events-none absolute left-0 top-1/2 w-full -translate-y-1/2 rounded-[6px] object-cover brightness-[1.08] saturate-[1.02] shadow-[0_4px_10px_rgba(0,0,0,0.2)] transition-[filter] duration-200 ease-out group-hover/xia-dao:brightness-[1.16] group-focus-visible/xia-dao:brightness-[1.16]"
+        style={{ height: CHAT_LAUNCHER_VISUAL_HEIGHT }}
         aria-hidden="true"
       />
     </Button>
@@ -3314,13 +3400,13 @@ function CanvasConflictOverlay({
   return (
     <div className="absolute inset-0 z-50 bg-bg-dark/60 flex items-center justify-center">
       <div className="px-4 py-3 rounded-lg bg-surface border border-amber-400/50 text-sm text-amber-100 max-w-md flex flex-col gap-3">
-        <div className="font-medium">画布保存冲突</div>
+        <div className="font-medium">{t("freezone.shell.conflict.title")}</div>
         <div className="text-text-muted">
-          {error ?? "画布已被其他窗口或用户修改。刷新会丢弃当前本地未保存修改，另存为副本会保留当前画布。"}
+          {error ?? t("freezone.shell.conflict.detail")}
         </div>
         {snapshot && (
           <div className="text-[11px] text-text-muted/80">
-            本地未保存修改已暂存到浏览器，可下载备份后再决定是否刷新。
+            {t("freezone.shell.conflict.snapshotHint")}
           </div>
         )}
         <div className="flex flex-wrap gap-2">
@@ -3329,7 +3415,7 @@ function CanvasConflictOverlay({
             onClick={onRefresh}
             className="px-3 py-1 rounded-md border border-amber-400/40 text-amber-100 hover:bg-amber-400/10 transition-colors"
           >
-            刷新
+            {t("freezone.shell.conflict.refresh")}
           </button>
           <button
             type="button"
@@ -3346,16 +3432,16 @@ function CanvasConflictOverlay({
             className="px-3 py-1 rounded-md border border-cyan-300/45 bg-cyan-400/18 text-cyan-50 shadow-[0_0_18px_rgba(34,211,238,0.12)] transition-colors hover:border-cyan-200/70 hover:bg-cyan-400/28 disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-white/30 disabled:shadow-none"
             title={snapshot ? undefined : t("freezone.canvases.noConflictSnapshot")}
           >
-            {savingCopy ? "保存中..." : "另存为副本"}
+            {savingCopy ? t("freezone.shell.conflict.savingCopy") : t("freezone.shell.conflict.saveCopy")}
           </button>
           {snapshot && (
             <button
               type="button"
               onClick={handleDownload}
               className="px-3 py-1 rounded-md border border-[var(--ui-border-soft)] text-text hover:bg-bg-dark/50 transition-colors"
-              title={`下载本地修改快照（${snapshot.nodes.length} 节点 · ${snapshot.edges.length} 连线）`}
+              title={t("freezone.shell.conflict.downloadTitle", { nodes: snapshot.nodes.length, edges: snapshot.edges.length })}
             >
-              下载本地 JSON
+              {t("freezone.shell.conflict.download")}
             </button>
           )}
         </div>
@@ -3384,14 +3470,15 @@ function BackupStatusIndicator({
 }: {
   status: import("@/api/canvas").CanvasBackupStatus | null;
 }) {
+  const { t } = useTranslation();
   if (status !== "pending" && status !== "failed") {
     return null;
   }
   const isFailed = status === "failed";
-  const label = isFailed ? "云端备份失败" : "云端备份中";
+  const label = isFailed ? t("freezone.shell.backup.failedLabel") : t("freezone.shell.backup.pendingLabel");
   const detail = isFailed
-    ? "本地修改已保存，但云端备份未完成。请保留页面，稍后会自动重试。"
-    : "本地修改已保存，云端备份还在同步中。可以继续编辑。";
+    ? t("freezone.shell.backup.failedDetail")
+    : t("freezone.shell.backup.pendingDetail");
   const palette = isFailed
     ? "border-red-500/45 bg-red-500/10 text-red-200"
     : "border-amber-300/40 bg-amber-300/10 text-amber-100";
@@ -3417,9 +3504,10 @@ function BackupStatusIndicator({
  * 落到它身上的操作都会被随后的 setCanvasData 盖掉。
  */
 function CanvasLoadingScreen() {
+  const { t } = useTranslation();
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-bg-dark cursor-wait text-text-muted text-sm">
-      正在加载画布...
+      {t("freezone.shell.loading")}
     </div>
   );
 }
@@ -3442,10 +3530,11 @@ function CanvasErrorOverlay({
   error: string | null;
   onRetry: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-bg-dark/45 px-6">
       <div className="flex w-full max-w-2xl flex-col gap-3 rounded-xl border border-red-400/25 bg-red-950/[0.14] px-4 py-3 text-sm shadow-[0_18px_60px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-        <div className="font-medium text-red-200">画布同步失败</div>
+        <div className="font-medium text-red-200">{t("freezone.shell.syncFailed")}</div>
         <div className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2 text-xs leading-5 text-red-100/75">
           {error}
         </div>
@@ -3454,7 +3543,7 @@ function CanvasErrorOverlay({
           onClick={onRetry}
           className="self-start rounded-lg border border-red-300/25 bg-red-950/20 px-3 py-1.5 text-xs font-medium text-red-100/80 transition-colors hover:border-red-200/40 hover:bg-red-500/10 hover:text-red-50"
         >
-          重试
+          {t("freezone.shell.retry")}
         </button>
       </div>
     </div>

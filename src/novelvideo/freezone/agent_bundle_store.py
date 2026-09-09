@@ -92,6 +92,9 @@ def export_agent_bundle(
         "skill": _strip_catalog_metadata(skill),
         "recipes": [_strip_catalog_metadata(recipe) for recipe in recipes],
     }
+    legal = _bundle_meta_legal(skill, bundle_meta)
+    if legal is not None:
+        bundle["legal"] = legal
     return validate_agent_bundle(bundle, username=username)["bundle"]
 
 
@@ -216,6 +219,9 @@ def _bundle_metadata_for_storage(bundle: dict[str, Any]) -> dict[str, Any]:
         clean_tags = [item.strip() for item in tags if isinstance(item, str) and item.strip()]
         if clean_tags:
             metadata["_catalog_bundle_tags"] = clean_tags
+    legal = bundle.get("legal")
+    if isinstance(legal, dict):
+        metadata["_catalog_bundle_legal"] = deepcopy(legal)
     return metadata
 
 
@@ -239,6 +245,16 @@ def _bundle_meta_tags(skill: dict[str, Any], bundle_meta: dict[str, Any]) -> lis
     if isinstance(incoming_tags, list):
         return [item.strip() for item in incoming_tags if isinstance(item, str) and item.strip()]
     return []
+
+
+def _bundle_meta_legal(skill: dict[str, Any], bundle_meta: dict[str, Any]) -> dict[str, Any] | None:
+    stored = skill.get("_catalog_bundle_legal")
+    if isinstance(stored, dict):
+        return deepcopy(stored)
+    incoming = bundle_meta.get("legal")
+    if isinstance(incoming, dict):
+        return deepcopy(incoming)
+    return None
 
 
 def _default_bundle_author(skill: dict[str, Any], *, username: str) -> str:

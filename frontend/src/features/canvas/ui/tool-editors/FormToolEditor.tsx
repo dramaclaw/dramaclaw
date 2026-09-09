@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import type { ToolFieldSchema, ToolOptions } from '@/features/canvas/tools';
 import { UiInput, UiSelect } from '@/components/ui';
@@ -17,6 +18,7 @@ function readNumberOption(options: ToolOptions, key: string): number {
 }
 
 export function FormToolEditor({ fields, options, onOptionsChange }: FormToolEditorProps) {
+  const { t } = useTranslation();
   const updateOption = useCallback(
     (key: string, value: string | number) => {
       onOptionsChange({
@@ -72,20 +74,20 @@ export function FormToolEditor({ fields, options, onOptionsChange }: FormToolEdi
         >
           {field.options.map((option) => (
             <option key={option.value} value={option.value}>
-              {option.label}
+              {option.labelKey ? t(option.labelKey) : option.label}
             </option>
           ))}
         </UiSelect>
       );
     },
-    [options, updateOption]
+    [options, t, updateOption]
   );
 
   return (
     <div className="space-y-4">
       {fields.map((field) => (
         <div key={field.key}>
-          <label className="mb-1 block text-xs text-text-muted">{field.label}</label>
+          <label className="mb-1 block text-xs text-text-muted">{t(field.labelKey)}</label>
           {renderField(field)}
         </div>
       ))}

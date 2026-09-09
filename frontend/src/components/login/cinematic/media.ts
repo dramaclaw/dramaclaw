@@ -5,6 +5,8 @@ export const cdn = (path: string) => encodeURI(`${CDN_BASE}/${path}`);
 
 export const businessWechatQrUrl = cdn("contact/wechat.png");
 
+// i18n-exempt-start —— 下面是被展示作品自己的片名和一句话简介（源自作品本身），
+// 不是界面文案；翻译掉就不是这部作品了。
 export const cinematicVideoLibrary = [
   {
     id: "luban",
@@ -71,6 +73,7 @@ export const cinematicVideoLibrary = [
     video: cdn("dongtai-dadou/dongtai-dadou.mp4"),
   },
 ] as const;
+// i18n-exempt-end
 
 /** 登录弹窗左侧主视觉使用独立成片，不影响落地页作品库。 */
 export const loginModalShowcaseVideo = cdn("login/login20260826-174426.mp4");

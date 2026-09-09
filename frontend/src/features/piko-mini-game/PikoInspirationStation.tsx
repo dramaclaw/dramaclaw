@@ -38,6 +38,7 @@ const ENERGY_MAX = 100;
 const ENERGY_NEAR_READY = 90;
 const ENERGY_HIT_GAIN = 1;
 const ENERGY_POWER_UP_GAIN = 2;
+const HOVER_VIDEO_FIRST_FRAME = 0.001;
 
 type FallingKind = "spark" | "crystal" | "combo" | "burst";
 type GamePhase = "warmup" | "flow" | "rush";
@@ -107,38 +108,45 @@ type PikoGameLibraryItem = {
   id: PikoGameId;
   titleKey: string;
   posterSrc: string;
+  videoSrc: string;
 };
 
 const PIKO_GAME_LIBRARY = [
   {
     id: "inspiration-station",
     titleKey: "pikoMiniGame.title",
-    posterSrc: "/piko/games/posters/spark-shots.avif",
+    posterSrc: "/piko/games/posters/spark-shots-hover-frame.jpg",
+    videoSrc: "/piko/games/previews/spark-shots-hover.mp4",
   },
   {
     id: "memory-match",
     titleKey: "pikoMiniGame.memory.title",
-    posterSrc: "/piko/games/posters/find-a-pair.avif",
+    posterSrc: "/piko/games/posters/find-a-pair-hover-frame.jpg",
+    videoSrc: "/piko/games/previews/find-a-pair-hover.mp4",
   },
   {
     id: "breakout",
     titleKey: "pikoMiniGame.breakout.title",
-    posterSrc: "/piko/games/posters/bricks-begone.avif",
+    posterSrc: "/piko/games/posters/bricks-begone-hover-frame.jpg",
+    videoSrc: "/piko/games/previews/bricks-begone-hover.mp4",
   },
   {
     id: "stack-up",
     titleKey: "pikoMiniGame.stackGame.title",
-    posterSrc: "/piko/games/posters/stack-dont-panic.avif",
+    posterSrc: "/piko/games/posters/stack-dont-panic-hover-frame.jpg",
+    videoSrc: "/piko/games/previews/stack-dont-panic-hover.mp4",
   },
   {
     id: "flying",
     titleKey: "pikoMiniGame.flying.title",
-    posterSrc: "/piko/games/posters/dont-crash.avif",
+    posterSrc: "/piko/games/posters/dont-crash-hover-frame.jpg",
+    videoSrc: "/piko/games/previews/dont-crash-hover.mp4",
   },
   {
     id: "leap",
     titleKey: "pikoMiniGame.leap.title",
-    posterSrc: "/piko/games/posters/stick-the-landing.avif",
+    posterSrc: "/piko/games/posters/stick-the-landing-hover-frame.jpg",
+    videoSrc: "/piko/games/previews/stick-the-landing-hover.mp4",
   },
 ] as const satisfies readonly PikoGameLibraryItem[];
 
@@ -151,17 +159,96 @@ function PikoGamePosterCard({
   title: string;
   onSelect: () => void;
 }) {
+  const hoverVideoRef = useRef<HTMLVideoElement>(null);
+  const hoverPreviewRequestedRef = useRef(false);
+  const hoverVideoPreparedRef = useRef(false);
+  const hoverVideoLoadStartedRef = useRef(false);
+
+  useEffect(
+    () => () => {
+      hoverVideoRef.current?.pause();
+    },
+    [],
+  );
+
+  const playHoverPreview = () => {
+    const video = hoverVideoRef.current;
+    if (!video) return;
+    hoverPreviewRequestedRef.current = true;
+    if (!hoverVideoPreparedRef.current) {
+      // preload="none" 下首帧要等这次 load()。同一张卡反复进出只 load 一次——
+      // 重复调用会把正在进行的加载打断重来，鼠标来回蹭就永远备不好首帧。
+      if (!hoverVideoLoadStartedRef.current) {
+        hoverVideoLoadStartedRef.current = true;
+        video.load();
+      }
+      return;
+    }
+    void video.play().catch(() => undefined);
+  };
+
+  const stopHoverPreview = () => {
+    const video = hoverVideoRef.current;
+    if (!video) return;
+    hoverPreviewRequestedRef.current = false;
+    video.pause();
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      video.currentTime = HOVER_VIDEO_FIRST_FRAME;
+    }
+  };
+
   return (
     <button
       type="button"
-      className="group relative aspect-[3/2] min-h-0 overflow-hidden rounded-[18px] border border-white/[0.1] bg-[#11151a] text-left shadow-[0_14px_34px_rgba(0,0,0,0.22)] transition-[border-color,box-shadow] duration-300 ease-out hover:border-cyan-100/40 hover:shadow-[0_20px_44px_rgba(0,0,0,0.34),0_0_24px_rgba(103,232,249,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b0d10]"
+      className="group relative aspect-[4/3] min-h-0 overflow-hidden rounded-[18px] border border-white/[0.1] bg-[#11151a] text-left shadow-[0_14px_34px_rgba(0,0,0,0.22)] transition-[border-color,box-shadow] duration-300 ease-out hover:border-cyan-100/40 hover:shadow-[0_20px_44px_rgba(0,0,0,0.34),0_0_24px_rgba(103,232,249,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b0d10]"
       aria-label={title}
       onClick={onSelect}
+      onPointerEnter={playHoverPreview}
+      onPointerLeave={stopHoverPreview}
+      onFocus={playHoverPreview}
+      onBlur={stopHoverPreview}
     >
-      <img
-        src={game.posterSrc}
-        alt=""
-        className="absolute inset-0 size-full origin-top object-cover transition-transform duration-300 ease-out will-change-transform group-hover:scale-[1.02] group-focus-visible:scale-[1.02]"
+      <video
+        ref={hoverVideoRef}
+        src={game.videoSrc}
+        poster={game.posterSrc}
+        aria-hidden
+        tabIndex={-1}
+        muted
+        loop
+        playsInline
+        // 六张卡在打开游戏库时一起挂载，激进的 preload 会让浏览器立刻预取约
+        // 5.9MiB 视频——用户一次都没 hover 也照付。首帧封面已由 poster 承担，
+        // 真正的加载推迟到 playHoverPreview 里显式 load()。
+        preload="none"
+        onError={(event) => {
+          // 这次加载已经终止，守卫必须放行，否则这张卡后续所有 hover 都会跳过
+          // load()，只能靠关掉弹窗重新挂载才能恢复。
+          //
+          // 只挂 error，不挂 abort/emptied：preload="none" 下元素停在
+          // NETWORK_IDLE，我们自己调 load() 就会先排一个 abort 任务，挂上去等于
+          // 在加载刚开始时把守卫清掉，退回到「鼠标来回蹭就反复打断」的老问题。
+          hoverVideoLoadStartedRef.current = false;
+          hoverVideoPreparedRef.current = false;
+          // 首帧已经不可用了，把封面装回去，别留一块黑图。
+          event.currentTarget.setAttribute("poster", game.posterSrc);
+        }}
+        onLoadedData={(event) => {
+          const video = event.currentTarget;
+          video.pause();
+          video.currentTime = HOVER_VIDEO_FIRST_FRAME;
+        }}
+        onSeeked={(event) => {
+          const video = event.currentTarget;
+          if (!hoverVideoPreparedRef.current) {
+            hoverVideoPreparedRef.current = true;
+            video.removeAttribute("poster");
+          }
+          if (hoverPreviewRequestedRef.current) {
+            void video.play().catch(() => undefined);
+          }
+        }}
+        className="pointer-events-none absolute inset-0 size-full object-cover transition-[filter] duration-300 ease-out group-hover:brightness-[1.04] group-hover:saturate-[1.04] group-focus-visible:brightness-[1.04] group-focus-visible:saturate-[1.04]"
       />
 
       <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/36 via-transparent to-white/[0.04] opacity-70 transition-opacity duration-300 group-hover:opacity-100" />
@@ -1700,7 +1787,7 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
         >
           {stationView === "library" ? (
             <div className="max-h-[min(72vh,620px)] overflow-y-auto pr-1 [scrollbar-gutter:stable]">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3 lg:gap-6">
                 {PIKO_GAME_LIBRARY.map((game) => (
                   <PikoGamePosterCard
                     key={game.id}

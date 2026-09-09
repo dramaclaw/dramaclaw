@@ -2,6 +2,10 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from "i18next";
 
 import type { PanoViewerManifest } from "@/features/viewer-kit/pano/panoManifest";
 import type { DirectorStageManifest } from "@/features/viewer-kit/three-d/directorManifest";
@@ -10,6 +14,7 @@ import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
 import { invalidateAssetReferences } from "@/lib/queries/asset-references";
+import { seedance2BeatStatusKey } from "@/lib/queries/video";
 import type { ApiResponse, ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { Beat } from "@/types/episode";
 import type { RejectedDispatch } from "@/types/render-plan";
@@ -404,7 +409,7 @@ export function usePoolSelect(project: string, episode: number) {
         )
         .json<PoolSelectResponse>();
       if (!res.ok) {
-        const msg = res.error ?? "选择失败";
+        const msg = res.error ?? i18n.t("episode.sketches.selectFailed");
         if (res.stale) throw new StalePoolSelectError(msg);
         throw new Error(msg);
       }
@@ -446,6 +451,14 @@ export function usePoolSelect(project: string, episode: number) {
             };
           },
         );
+        // The canonical frame file this rewrites also backs the "current
+        // render" asset in the video pane's Reference details, which reads
+        // seedance2 beat status. Without this the panel keeps the pre-switch
+        // thumbnail (staleTime is 30s and window-focus refetch is off).
+        // Scoped to this beat so we don't refetch status for the whole episode.
+        qc.invalidateQueries({
+          queryKey: seedance2BeatStatusKey(project, episode, beatNum),
+        });
       }
       if (patched?.sketch_url) {
         qc.invalidateQueries({

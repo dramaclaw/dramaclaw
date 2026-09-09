@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { DerivedMediaNode } from './DerivedMediaNode';
 import type { NodeTypes } from '@xyflow/react';
 
 import { withLodShell } from './LodShellNode';
@@ -25,6 +26,8 @@ import { VideoStoryNode } from './VideoStoryNode';
 // 全部经 withLodShell 包装：低缩放档渲染轻量外壳（豁免类型在包装器内部判断，
 // 保持这张表均质）。包装发生在模块加载期，引用稳定，不会造成节点重挂。
 export const nodeTypes: NodeTypes = {
+  vectorSvgNode: DerivedMediaNode,
+  animatedGifNode: DerivedMediaNode,
   audioNode: withLodShell('audioNode', AudioNode),
   beatContextNode: withLodShell('beatContextNode', BeatContextNode),
   exportImageNode: withLodShell('exportImageNode', ImageNode),

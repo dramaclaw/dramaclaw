@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Copy,
   Download,
+  Ellipsis,
   File,
   Gauge,
   Image,
@@ -76,8 +77,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { apiCall } from "@/api/client";
@@ -99,8 +102,8 @@ import {
   SUPERCHAT_CANVAS_CONTEXT_REQUEST_EVENT,
   useSuperChat,
 } from "@/features/superchat/use-superchat";
-import { useAiAvatarUrl } from "@/features/superchat/ai-avatar";
 import { buildChatTaskLabel } from "@/features/superchat/task-notification-label";
+import { resolveMessagePresentation } from "@/features/superchat/message-presentation";
 import {
   buildChatTaskBatchNotification,
   resolveChatTaskBatchSummary,
@@ -151,6 +154,7 @@ import type { CanvasOntologyContext } from "@/features/canvas/ontology/canvasOnt
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import { useCanvasStore, type CanvasNode } from "@/stores/canvasStore";
 import type {
+  AudioVoiceRef,
   CanvasEdge,
   CanvasNodeType,
   VideoGenQuality,
@@ -163,6 +167,7 @@ import {
 } from "@/features/canvas/application/videoUpscale";
 import { useFreezoneImageModels } from "@/features/canvas/hooks/useFreezoneImageModels";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
+import { VoiceSelectionModal } from "@/features/canvas/nodes/VoiceSelectionModal";
 import type {
   CanvasChatCommand,
   CanvasChatCommandApplyStep,
@@ -764,6 +769,9 @@ const ASSISTANT_ERROR_TEXT_PATTERNS: RegExp[] = [
   /请先根据返回的错误/u,
   /content filter triggered/i,
   /finish reason:\s*['"]?content_filter/i,
+  /returned no content/i,
+  /未返回(?:任何)?内容/u,
+  /failed[:：]/i,
 ];
 
 function isAssistantErrorReply(message: ChatMessage): boolean {
@@ -849,56 +857,6 @@ function DotsIndicator({ label, dotClassName = "size-1.5" }: { label?: string; d
         <span className={cn(dotClassName, "rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:300ms]")} />
       </span>
       {label && <span className="sr-only">{label}</span>}
-    </div>
-  );
-}
-
-function ChatAvatarFrame({
-  role,
-  label,
-  streaming: _streaming = false,
-}: {
-  role: ChatMessage["role"];
-  label?: string;
-  streaming?: boolean;
-}) {
-  const isAssistant = role === "assistant";
-  const isTool = role === "tool";
-  const initial = label?.trim().charAt(0).toUpperCase() || (isAssistant ? "虾" : isTool ? "" : "U");
-  // Shared, fetch-once avatar source (see ai-avatar.ts) — null until ready so we
-  // don't kick off a raw-path request from every avatar before the blob lands.
-  const avatarUrl = useAiAvatarUrl();
-
-  return (
-    <div
-      className={cn(
-        "relative flex shrink-0 select-none items-center justify-center overflow-hidden rounded-full border text-xs font-medium shadow-sm",
-        isAssistant ? "size-11" : "size-10",
-        isAssistant
-          ? "border-transparent bg-transparent text-muted-foreground shadow-none"
-          : isTool
-            ? "border-amber-500/30 bg-amber-500/10 text-amber-500"
-            : "border-primary/20 bg-primary text-primary-foreground",
-      )}
-      aria-hidden="true"
-    >
-      {isAssistant ? (
-        avatarUrl && (
-          <video
-            className="size-full object-cover"
-            src={avatarUrl}
-            autoPlay
-            loop
-            muted
-            playsInline
-            aria-hidden="true"
-          />
-        )
-      ) : isTool ? (
-        <Wrench className="size-4" />
-      ) : (
-        initial
-      )}
     </div>
   );
 }
@@ -1245,7 +1203,7 @@ function UnifiedMediaCard({
 
   return (
     <>
-      <div className="st-unified-media-card">
+      <div className="st-ai-media-card st-unified-media-card">
         <div className="relative h-full w-full overflow-hidden rounded-2xl bg-white/5 p-[1.5px]">
           <div className="relative z-10 h-full w-full overflow-hidden rounded-[14px] bg-zinc-950">
             {item.kind === "audio" ? (
@@ -2753,13 +2711,17 @@ function audioApprovalInitialParams(
       nodeId,
       nodeIds: [nodeId],
       audioKind,
-      speechMode: nodeData.speechMode === "clone" ? "clone" : "preset",
+      speechMode: "clone",
       presetVoice: typeof nodeData.presetVoice === "string" && nodeData.presetVoice.trim()
         ? nodeData.presetVoice.trim()
         : "Serena",
       voiceLabel: typeof nodeData.voiceLabel === "string" && nodeData.voiceLabel.trim()
         ? nodeData.voiceLabel.trim()
         : "项目默认声线",
+      voiceRef: nodeData.voiceRef && typeof nodeData.voiceRef === "object"
+        ? nodeData.voiceRef as AudioVoiceRef
+        : null,
+      voiceAvailable: nodeData.voiceAvailable === true,
       emotionPrompt: typeof nodeData.emotionPrompt === "string" ? nodeData.emotionPrompt : "",
       musicLengthSec: Math.max(3, Math.round(
         typeof nodeData.musicLengthMs === "number" ? nodeData.musicLengthMs / 1000 : 30,
@@ -2772,6 +2734,8 @@ function audioApprovalInitialParams(
       speechMode: params.speechMode,
       presetVoice: params.presetVoice,
       voiceLabel: params.voiceLabel,
+      voiceRef: params.voiceRef,
+      voiceAvailable: params.voiceAvailable,
       emotionPrompt: params.emotionPrompt,
       musicLengthSec: params.musicLengthSec,
       forceInstrumental: params.forceInstrumental,
@@ -2830,6 +2794,22 @@ function canvasApprovalRequiresHumanReviewConfirmation(
   return canvasApprovalHumanReviewNodeIds(approval, canvasNodes, canvasEdges).length > 0;
 }
 
+function canvasApprovalRequiresAudioVoiceChoice(
+  _approval: PendingCanvasCommandApproval,
+  _canvasNodes: CanvasNode[],
+): boolean {
+  // Missing custom voice is an intentional skip, not an approval blocker.
+  return false;
+}
+
+function canvasApprovalRequiresManualUiAction(
+  approval: PendingCanvasCommandApproval,
+): boolean {
+  return approval.envelopes.some((envelope) => envelope.commands.some((command) => (
+    command.type === "run_node_action" && command.action === "open_voice_picker"
+  )));
+}
+
 function amendCanvasApprovalWithGenerationData(
   approval: PendingCanvasCommandApproval,
   nodeIds: string[],
@@ -2838,9 +2818,30 @@ function amendCanvasApprovalWithGenerationData(
 ): PendingCanvasCommandApproval {
   const remaining = new Set(nodeIds);
   if (remaining.size === 0) return approval;
-  return {
+  const withCreatedNodeData: PendingCanvasCommandApproval = {
     ...approval,
     envelopes: approval.envelopes.map((envelope) => ({
+      ...envelope,
+      commands: envelope.commands.map((command) => {
+        if (
+          command.type === "create_node"
+          && command.client_id
+          && remaining.has(command.client_id)
+        ) {
+          remaining.delete(command.client_id);
+          return {
+            ...command,
+            data: { ...(command.data ?? {}), ...data },
+          };
+        }
+        return command;
+      }),
+    })),
+  };
+  if (remaining.size === 0) return withCreatedNodeData;
+  return {
+    ...withCreatedNodeData,
+    envelopes: withCreatedNodeData.envelopes.map((envelope) => ({
       ...envelope,
       commands: envelope.commands.flatMap((command) => {
         const isExecutionCommand = command.type === "run_workflow" || (
@@ -2918,10 +2919,21 @@ function amendCanvasApprovalWithAudioParams(
     }
     : {
       audioKind: "speech",
-      speechMode: params.speechMode,
-      presetModel: "edge-tts",
-      presetVoice: params.presetVoice,
+      speechMode: "clone",
+      voicePolicyConfirmed: true,
       emotionPrompt: params.emotionPrompt,
+      ...(params.voiceRef
+        ? {
+          voiceRef: params.voiceRef,
+          voiceAvailable: params.voiceAvailable === true,
+          voiceLabel: params.voiceLabel,
+        }
+        : {
+          voiceRef: null,
+          voiceAvailable: false,
+          voiceLabel: "未选择自定义声线", // i18n-exempt -- node data payload
+          voiceLanguage: "",
+        }),
     };
   return amendCanvasApprovalWithGenerationData(
     approval,
@@ -3011,6 +3023,10 @@ export const audioApprovalInitialParamsForTest = audioApprovalInitialParams;
 export const amendCanvasApprovalWithHumanReviewForTest = amendCanvasApprovalWithHumanReview;
 export const canvasApprovalRequiresHumanReviewConfirmationForTest =
   canvasApprovalRequiresHumanReviewConfirmation;
+export const canvasApprovalRequiresAudioVoiceChoiceForTest =
+  canvasApprovalRequiresAudioVoiceChoice;
+export const canvasApprovalRequiresManualUiActionForTest =
+  canvasApprovalRequiresManualUiAction;
 
 function CanvasApprovalImageParamSelect({
   ariaLabel,
@@ -3232,6 +3248,7 @@ function CanvasCommandApprovalCard({
     reason?: CanvasCommandApprovalCancelReason,
   ) => void;
 }) {
+  const { t } = useTranslation();
   const [now, setNow] = useState(() => Date.now());
   const params = useParams({ strict: false }) as { project?: string };
   const imageModels = useFreezoneImageModels(params.project);
@@ -3258,11 +3275,17 @@ function CanvasCommandApprovalCard({
     () => videoUpscaleApprovalInitialParams(approval, canvasNodes),
     [approval, canvasNodes],
   );
+  const initialAudioParams = useMemo(
+    () => audioApprovalInitialParams(approval, canvasNodes),
+    [approval, canvasNodes],
+  );
   const [imageParams, setImageParams] = useState<CanvasApprovalImageParams[]>(() => initialImageParams);
   const [videoParams, setVideoParams] = useState<CanvasApprovalVideoParams[]>(() => initialVideoParams);
   const [videoUpscaleParams, setVideoUpscaleParams] = useState<CanvasApprovalVideoUpscaleParams | null>(
     () => initialVideoUpscaleParams,
   );
+  const [audioParams, setAudioParams] = useState<CanvasApprovalAudioParams[]>(() => initialAudioParams);
+  const [voicePickerAudioIndex, setVoicePickerAudioIndex] = useState<number | null>(null);
   const humanReviewNodeIds = useMemo(
     () => canvasApprovalHumanReviewNodeIds(approval, canvasNodes, canvasEdges),
     [approval, canvasEdges, canvasNodes],
@@ -3284,6 +3307,10 @@ function CanvasCommandApprovalCard({
   useEffect(() => {
     setVideoUpscaleParams(initialVideoUpscaleParams);
   }, [initialVideoUpscaleParams]);
+
+  useEffect(() => {
+    setAudioParams(initialAudioParams);
+  }, [initialAudioParams]);
 
   useEffect(() => {
     setHumanReviewEnabled(true);
@@ -3315,12 +3342,16 @@ function CanvasCommandApprovalCard({
       withVideoParams,
       videoUpscaleParams,
     );
-    return amendCanvasApprovalWithHumanReview(
+    const withAudioParams = audioParams.reduce(
+      (current, params) => amendCanvasApprovalWithAudioParams(current, params),
       withVideoUpscaleParams,
+    );
+    return amendCanvasApprovalWithHumanReview(
+      withAudioParams,
       humanReviewNodeIds,
       humanReviewEnabled,
     );
-  }, [approval, humanReviewEnabled, humanReviewNodeIds, imageParams, videoParams, videoUpscaleParams]);
+  }, [approval, audioParams, humanReviewEnabled, humanReviewNodeIds, imageParams, videoParams, videoUpscaleParams]);
   const imageModelOptionsFor = useCallback((params: CanvasApprovalImageParams) => {
     const options = imageModels.models.map((model) => ({ value: model.id, label: model.label ?? model.id }));
     if (params.model && !options.some((option) => option.value === params.model)) {
@@ -3365,18 +3396,36 @@ function CanvasCommandApprovalCard({
       };
     });
   }, []);
+  const updateAudioParams = useCallback((index: number, patch: Partial<CanvasApprovalAudioParams>) => {
+    setAudioParams((current) => current.map((params, paramsIndex) => (
+      paramsIndex === index ? { ...params, ...patch } : params
+    )));
+  }, []);
+  const voicePickerAudioParams = voicePickerAudioIndex == null
+    ? null
+    : audioParams[voicePickerAudioIndex] ?? null;
   return (
     <div className="mt-3 w-full min-w-0 overflow-hidden rounded-xl border border-amber-400/25 bg-background/95 text-xs text-muted-foreground shadow-lg backdrop-blur-sm">
       <div className="flex items-start gap-2 border-b border-amber-400/15 px-3 py-2">
         <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-foreground">待确认的画布操作</div>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">Agent 计划执行 {approval.commandCount} 个操作，确认后才会应用到画布。</p>
+          <div className="text-sm font-medium text-foreground">
+            {approval.requiresUserChoice
+              ? t("freezone.chat.audioApproval.chooseVoiceTitle", { defaultValue: "请选择旁白声线" })
+              : "待确认的画布操作"}
+          </div>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {approval.requiresUserChoice
+              ? t("freezone.chat.audioApproval.chooseVoiceDescription", {
+                  defaultValue: "请选择自定义声线；如果暂不选择，本次将跳过旁白生成。",
+                })
+              : `Agent 计划执行 ${approval.commandCount} 个操作，确认后才会应用到画布。`}
+          </p>
         </div>
         <Badge variant="outline" className="rounded-md uppercase">{isExecuting ? "执行中" : "确认"}</Badge>
       </div>
       <CanvasCommandPlanList plans={approval.plans} />
-      {(imageParams.length > 0 || videoParams.length > 0) && (
+      {(imageParams.length > 0 || videoParams.length > 0 || audioParams.length > 0) && (
         <div className="flex items-center gap-2 border-t border-amber-400/10 bg-white/[0.025] px-3 py-1.5 text-[11px] font-medium text-foreground/90">
           <SlidersHorizontal className="size-3.5 text-muted-foreground" />
           生成设置
@@ -3537,6 +3586,57 @@ function CanvasCommandApprovalCard({
           </div>
         </div>
       )}
+      {audioParams.map((audioParam, audioParamIndex) => (
+        <div key={`${audioParam.nodeId}:${audioParam.audioKind}`} className="border-t border-amber-400/10 px-3 py-1.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground">
+              <Volume2 className="size-3" />
+              {audioParam.audioKind === "music"
+                ? t("freezone.chat.audioApproval.music", { defaultValue: "音乐" })
+                : t("freezone.chat.audioApproval.narration", { defaultValue: "旁白" })}
+              {(audioParam.nodeIds?.length ?? 1) > 1 ? ` ×${audioParam.nodeIds?.length}` : ""}
+            </span>
+            <span className="h-4 w-px bg-white/[0.12]" />
+            {audioParam.audioKind === "speech" ? (
+              <>
+                <button
+                  type="button"
+                  disabled={isExecuting}
+                  onClick={() => setVoicePickerAudioIndex(audioParamIndex)}
+                  className="inline-flex h-7 items-center rounded-full border border-white/[0.16] bg-white/[0.065] px-2.5 text-[11px] font-medium text-foreground hover:border-white/30 hover:bg-white/[0.1] disabled:opacity-60"
+                >
+                  {audioParam.voiceAvailable === true
+                    ? t("freezone.chat.audioApproval.changeVoice", { defaultValue: "更换自定义声线" })
+                    : t("freezone.chat.audioApproval.chooseVoice", { defaultValue: "选择自定义声线" })}
+                </button>
+                <span className="text-[10px] text-muted-foreground">
+                  {audioParam.voiceAvailable === true
+                    ? t("freezone.chat.audioApproval.selectedVoice", {
+                        defaultValue: "已选择：{{voice}}",
+                        voice: audioParam.voiceLabel.trim() || t(
+                          "freezone.chat.audioApproval.customVoice",
+                          { defaultValue: "自定义声线" },
+                        ),
+                      })
+                    : t("freezone.chat.audioApproval.noVoiceSkip", {
+                        defaultValue: "未选择，本次将跳过旁白生成",
+                      })}
+                </span>
+              </>
+            ) : (
+              <span className="text-[10px] text-muted-foreground">
+                {t("freezone.chat.audioApproval.musicSummary", {
+                  defaultValue: "{{seconds}} 秒 · {{mode}}",
+                  seconds: audioParam.musicLengthSec,
+                  mode: audioParam.forceInstrumental
+                    ? t("freezone.chat.audioApproval.instrumental", { defaultValue: "纯音乐" })
+                    : t("freezone.chat.audioApproval.vocalsAllowed", { defaultValue: "允许人声" }),
+                })}
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-amber-400/15 px-3 py-2.5">
         {remaining !== null && !isExecuting ? (
           <span className="mr-auto text-[11px] leading-4 text-amber-500">
@@ -3544,8 +3644,37 @@ function CanvasCommandApprovalCard({
           </span>
         ) : null}
         <Button size="xs" variant="outline" disabled={isExecuting} onClick={() => onCancel(approval)}>取消</Button>
-        <Button size="xs" disabled={isExecuting} onClick={() => onApply(amendedApproval)}>{isExecuting ? "执行中..." : "确认执行"}</Button>
+        <Button
+          size="xs"
+          disabled={isExecuting}
+          onClick={() => onApply(amendedApproval)}
+        >
+          {isExecuting
+            ? t("freezone.chat.canvasExecuting", { defaultValue: "执行中..." })
+            : approval.requiresUserChoice
+              ? t("freezone.chat.audioApproval.continue", { defaultValue: "使用所选声线继续" })
+              : t("freezone.chat.canvasConfirmExecution", { defaultValue: "确认执行" })}
+        </Button>
       </div>
+      {voicePickerAudioParams && (
+        <VoiceSelectionModal
+          open
+          initialTab="mine"
+          currentRef={voicePickerAudioParams.voiceRef ?? { scope: "project_narrator" }}
+          onClose={() => setVoicePickerAudioIndex(null)}
+          onPick={({ ref, label }) => {
+            if (voicePickerAudioIndex != null) {
+              updateAudioParams(voicePickerAudioIndex, {
+                speechMode: "clone",
+                voiceRef: ref,
+                voiceAvailable: true,
+                voiceLabel: label,
+              });
+            }
+            setVoicePickerAudioIndex(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -3633,7 +3762,10 @@ function CanvasCommandFeedbackCard({
   feedback: CanvasCommandFeedback;
   onRetry?: (feedback: CanvasCommandFeedback) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const { t } = useTranslation();
+  // Expired approvals contain the actionable recovery button. Keep them open
+  // so the user can see and retry the operation without an extra click.
+  const [expanded, setExpanded] = useState(() => canvasCommandFeedbackIsTimeoutCancelled(feedback));
   const steps = feedback.commandResults ?? [];
   const successfulCount = feedback.applied + feedback.openedUiActions;
   if (steps.length === 0 && successfulCount === 0 && feedback.errors.length === 0) return null;
@@ -3646,8 +3778,17 @@ function CanvasCommandFeedbackCard({
   const collapseSuccessfulDetails = !failed && steps.length > 2;
   const compactTitle = canvasCommandFeedbackCompactTitle(feedback);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
+  const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
+    ? t("freezone.chat.canvasTimeoutCancelled", {
+        defaultValue: "画布操作因等待超时已取消，没有应用到画布。",
+      })
+    : canvasCommandFeedbackIsUserCancelled(feedback)
+      ? t("freezone.chat.canvasManuallyCancelled", {
+          defaultValue: "画布操作已手动取消，没有应用到画布。",
+        })
+      : null;
   const userFailureMessage = failed
-    ? canvasCommandUserMessageFromResult(
+    ? cancellationMessage ?? canvasCommandUserMessageFromResult(
         feedback.errors,
         feedback.commandResults.map((step) => ({ error: step.error })),
       )
@@ -3745,8 +3886,13 @@ function CanvasCommandFeedbackCard({
       </div>
       {canRetry && onRetry ? (
         <div className="flex items-center justify-end border-t border-white/[0.06] px-3 py-2.5">
-          <Button size="xs" variant="outline" onClick={() => onRetry(feedback)}>
-            <RefreshCw className="mr-1.5 size-3.5" />
+          <Button
+            size="xs"
+            variant="outline"
+            className="border-amber-400/50 text-amber-200 hover:bg-amber-400/10 hover:text-amber-100"
+            onClick={() => onRetry(feedback)}
+          >
+            <RefreshCw className="mr-1.5 size-3.5 text-amber-300" />
             重新执行
           </Button>
         </div>
@@ -7212,7 +7358,7 @@ function SkillStudioEventCard({
   );
 }
 
-const MessageBubble = memo(function MessageBubble({
+export const MessageBubble = memo(function MessageBubble({
   message,
   variant = "default",
   onOpenDetail,
@@ -7295,6 +7441,12 @@ const MessageBubble = memo(function MessageBubble({
   const freezoneToolActivity = isTool ? freezoneToolDisplay(message) : null;
   const isErrorReply = isAssistantErrorReply(message);
   const isCompletionNotice = isAssistantCompletionNotice(message);
+  const presentation = resolveMessagePresentation({
+    role: message.role,
+    tool: isTool,
+    error: isErrorReply,
+    streaming,
+  });
   const { t } = useTranslation();
   const shouldWaitForStructuredRender =
     deferStructuredRender && !isUser && !isTool && looksLikeStructuredRenderText(message.text);
@@ -7392,12 +7544,13 @@ const MessageBubble = memo(function MessageBubble({
     if (ok) toast.success("已复制");
     else toast.error("复制失败");
   };
+  const canSpeak = typeof window !== "undefined" && "speechSynthesis" in window;
   const speak = () => {
-    if (!("speechSynthesis" in window)) return;
+    if (!canSpeak) return;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(message.text));
   };
-  const actions = (
+  const userActions = (
     <div
       className={cn(
         "pointer-events-none absolute top-full z-10 mt-1 flex items-center gap-0.5 whitespace-nowrap rounded-full border border-border/70 bg-background/85 px-1 py-0.5 text-foreground/75 opacity-0 shadow-sm backdrop-blur transition-opacity after:absolute after:-top-2 after:left-0 after:h-2 after:w-full after:content-[''] group-hover/message-actions:pointer-events-auto group-hover/message-actions:opacity-100 group-focus-within/message-actions:pointer-events-auto group-focus-within/message-actions:opacity-100",
@@ -7412,7 +7565,7 @@ const MessageBubble = memo(function MessageBubble({
                 <button
                   type="button"
                   className="flex size-6 items-center justify-center rounded-full text-muted-foreground/80 hover:bg-white/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
-                  aria-label="上下文用量"
+                  aria-label={assistantUsageSummary.label}
                   title={assistantUsageSummary.title}
                 />
               }
@@ -7425,7 +7578,7 @@ const MessageBubble = memo(function MessageBubble({
               showArrow={false}
               className="max-w-[18rem] flex-col items-start gap-1 border border-white/10 bg-background/95 text-foreground shadow-none"
             >
-              <div className="text-xs font-medium">上下文用量</div>
+              <div className="text-xs font-medium">{assistantUsageSummary.label}</div>
               <div className="space-y-0.5 text-[11px] leading-4 text-muted-foreground">
                 {assistantUsageSummary.entries.map(([key, value]) => (
                   <div key={key}>
@@ -7442,7 +7595,8 @@ const MessageBubble = memo(function MessageBubble({
         size="icon-xs"
         className="opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100"
         onClick={copyText}
-        aria-label="Copy"
+        aria-label={t("aiAssistant.actions.copy")}
+        title={t("aiAssistant.actions.copy")}
       >
         <Copy className="size-3" />
       </Button>
@@ -7451,7 +7605,9 @@ const MessageBubble = memo(function MessageBubble({
         size="icon-xs"
         className="opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100"
         onClick={speak}
-        aria-label="Speak"
+        disabled={!canSpeak}
+        aria-label={t("aiAssistant.actions.readAloud")}
+        title={t("aiAssistant.actions.readAloud")}
       >
         <Volume2 className="size-3" />
       </Button>
@@ -7460,7 +7616,8 @@ const MessageBubble = memo(function MessageBubble({
         size="icon-xs"
         className="opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100"
         onClick={() => onOpenDetail(message)}
-        aria-label="Details"
+        aria-label={t("aiAssistant.actions.details")}
+        title={t("aiAssistant.actions.details")}
       >
         <Maximize2 className="size-3" />
       </Button>
@@ -7469,7 +7626,7 @@ const MessageBubble = memo(function MessageBubble({
         size="icon-xs"
         className="opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100"
         onClick={() => onTogglePin(message.id)}
-        aria-label={pinned ? "Unpin" : "Pin"}
+        aria-label={t(pinned ? "aiAssistant.actions.unpin" : "aiAssistant.actions.pin")}
       >
         {pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
       </Button>
@@ -7478,21 +7635,103 @@ const MessageBubble = memo(function MessageBubble({
         size="icon-xs"
         className="opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100"
         onClick={() => onDelete(message.id)}
-        aria-label="Delete"
+        aria-label={t("aiAssistant.actions.delete")}
+        title={t("aiAssistant.actions.delete")}
       >
         <X className="size-3" />
       </Button>
+    </div>
+  );
+  const assistantActions = presentation.showAssistantActions && (
+    <div
+      className="-ml-1 mt-1.5 flex h-7 items-center gap-0.5 text-muted-foreground"
+      role="group"
+      aria-label={t("aiAssistant.actions.label")}
+    >
+      {assistantUsageSummary && (
+        <TooltipProvider delay={80}>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="flex size-6 items-center justify-center rounded-full text-muted-foreground/80 hover:bg-white/[0.06] hover:text-foreground"
+                  aria-label={assistantUsageSummary.label}
+                  title={assistantUsageSummary.title}
+                />
+              }
+            >
+              <Gauge className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent side="top" align="start" showArrow={false}>
+              <div className="space-y-0.5 text-[11px] leading-4">
+                {assistantUsageSummary.entries.map(([key, value]) => (
+                  <div key={key}>
+                    <span>{key}</span>: <span>{value}</span>
+                  </div>
+                ))}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className="size-7 rounded-md opacity-80 hover:bg-white/[0.06] hover:text-foreground"
+        onClick={copyText}
+        aria-label={t("aiAssistant.actions.copy")}
+        title={t("aiAssistant.actions.copy")}
+      >
+        <Copy className="size-3.5" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className="size-7 rounded-md opacity-80 hover:bg-white/[0.06] hover:text-foreground"
+        onClick={speak}
+        disabled={!canSpeak}
+        aria-label={t("aiAssistant.actions.readAloud")}
+        title={t("aiAssistant.actions.readAloud")}
+      >
+        <Volume2 className="size-3.5" />
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="size-7 rounded-md opacity-80 hover:bg-white/[0.06] hover:text-foreground"
+              aria-label={t("aiAssistant.actions.more")}
+              title={t("aiAssistant.actions.more")}
+            />
+          }
+        >
+          <Ellipsis className="size-3.5" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" sideOffset={4}>
+          <DropdownMenuItem onSelect={() => onOpenDetail(message)}>
+            <Maximize2 />
+            {t("aiAssistant.actions.details")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onTogglePin(message.id)}>
+            {pinned ? <PinOff /> : <Pin />}
+            {t(pinned ? "aiAssistant.actions.unpin" : "aiAssistant.actions.pin")}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => onDelete(message.id)}>
+            <X />
+            {t("aiAssistant.actions.delete")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 
   if (freezoneToolActivity && !hasCanvasCommandSurface) {
     return (
       <div className="flex items-start gap-3 justify-start">
-        <ChatAvatarFrame
-          role={message.role}
-          label={message.displayName || t("aiAssistant.title")}
-          streaming={freezoneToolStatus(message) === "running"}
-        />
         <div className="flex min-w-0 flex-1 justify-start">
           <AgentToolActivityCard message={message} />
         </div>
@@ -7508,7 +7747,7 @@ const MessageBubble = memo(function MessageBubble({
         <div className="flex justify-end">
           <article className={cn("max-w-[72%]", isFreezoneLayout && "max-w-[82%]")}>
             <div className="group/message-actions relative z-0 hover:z-30 focus-within:z-30">
-              <div className="rounded-[14px] border-0 bg-white/[0.12] px-3 py-2.5 text-sm leading-6 text-foreground shadow-none">
+              <div className="rounded-[14px] border-0 bg-white/[0.07] px-3 py-2.5 text-sm leading-6 text-foreground shadow-none">
                 <AttachmentList attachments={message.attachments} align="start" compact />
                 {displayText && (
                   isFreezoneLayout ? (
@@ -7519,7 +7758,7 @@ const MessageBubble = memo(function MessageBubble({
                 )}
                 <StructuredRenderer blocks={visibleBlocks} />
               </div>
-              {actions}
+              {userActions}
             </div>
           </article>
         </div>
@@ -7530,7 +7769,7 @@ const MessageBubble = memo(function MessageBubble({
       <div className="flex justify-end">
         <article className={cn("max-w-[72%]", isFreezoneLayout && "max-w-[82%]")}>
           <div className="group/message-actions relative z-0 hover:z-30 focus-within:z-30">
-            <div className="rounded-[14px] border-0 bg-white/[0.12] px-4 py-2.5 text-sm leading-6 text-foreground shadow-none">
+            <div className="rounded-[14px] border-0 bg-white/[0.07] px-4 py-2.5 text-sm leading-6 text-foreground shadow-none">
               <AttachmentList attachments={message.attachments} align="end" />
               {displayText && (
                 isFreezoneLayout ? (
@@ -7541,7 +7780,7 @@ const MessageBubble = memo(function MessageBubble({
               )}
               <StructuredRenderer blocks={visibleBlocks} />
             </div>
-            {actions}
+            {userActions}
           </div>
         </article>
       </div>
@@ -7550,13 +7789,6 @@ const MessageBubble = memo(function MessageBubble({
 
   return (
     <div className={cn("flex items-start gap-3", isUser ? "justify-end" : "justify-start")}>
-      {!isUser && (
-        <ChatAvatarFrame
-          role={message.role}
-          label={message.displayName || t("aiAssistant.title")}
-          streaming={streaming}
-        />
-      )}
       <div className={cn("flex min-w-0 flex-1", isUser ? "justify-end" : "justify-start")}>
         <div
           className={cn(
@@ -7572,9 +7804,13 @@ const MessageBubble = memo(function MessageBubble({
               (visibleBlocks.length > 0 || assistantPrefersWideLayout) && !isTool
                 ? "w-full min-w-0 overflow-visible"
                 : "w-fit overflow-hidden",
-              isTool
+              presentation.surface === "tool"
                 ? "max-w-[86%] rounded-[14px] border border-amber-500/20 bg-amber-500/8 px-4 pb-3 pt-2 text-card-foreground"
-                : "max-w-full rounded-[14px] border border-white/[0.08] bg-transparent px-4 pb-3 pt-2 text-foreground",
+                : presentation.surface === "system"
+                  ? "max-w-[86%] rounded-[12px] border border-border/70 bg-muted/25 px-3 py-2 text-muted-foreground"
+                  : presentation.surface === "error"
+                    ? "max-w-full rounded-[12px] border border-red-400/20 bg-red-400/[0.06] px-3 py-2.5 text-foreground"
+                    : "max-w-full text-foreground",
             )}
           >
           {(isTool || message.displayName) && (
@@ -7783,15 +8019,9 @@ const MessageBubble = memo(function MessageBubble({
           </>
         )}
           </article>
-          {actions}
+          {assistantActions}
         </div>
       </div>
-      {isUser && (
-        <ChatAvatarFrame
-          role="user"
-          label={message.displayName}
-        />
-      )}
     </div>
   );
 });
@@ -8439,7 +8669,7 @@ function SearchBar({
   }, []);
 
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-4 py-2">
+    <div role="search" className="pointer-events-auto flex h-10 w-full items-center gap-2 rounded-xl border border-border/70 bg-background/90 px-2.5 shadow-lg backdrop-blur-xl">
       <Search className="size-4 shrink-0 text-muted-foreground" />
       <Input
         ref={inputRef}
@@ -8449,14 +8679,10 @@ function SearchBar({
           if (event.key === "Escape") onClose();
         }}
         placeholder={t("aiAssistant.search")}
-        className="h-7 border-0 bg-transparent text-sm shadow-none focus-visible:ring-0"
+        aria-label={t("aiAssistant.search")}
+        className="h-8 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
       />
-      {query && (
-        <Button variant="ghost" size="icon" className="size-6" onClick={() => onChange("")}>
-          <X className="size-3" />
-        </Button>
-      )}
-      <Button variant="ghost" size="icon" className="size-6" onClick={onClose}>
+      <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={onClose} aria-label={t("aiAssistant.closeSearch")}>
         <X className="size-4" />
       </Button>
     </div>
@@ -9953,6 +10179,7 @@ type PendingCanvasCommandApproval = {
   commandCount: number;
   plans: CanvasCommandPlan[];
   externalMcpCommand?: boolean;
+  requiresUserChoice?: boolean;
 };
 
 type CanvasApprovalImageParams = {
@@ -9996,6 +10223,8 @@ type CanvasApprovalAudioParams = {
   speechMode: "preset" | "clone";
   presetVoice: string;
   voiceLabel: string;
+  voiceRef?: AudioVoiceRef | null;
+  voiceAvailable?: boolean;
   emotionPrompt: string;
   musicLengthSec: number;
   forceInstrumental: boolean;
@@ -11405,6 +11634,9 @@ export function SuperChatPanel({
   const composerBeamRef = useRef<BorderBeamController | null>(null);
   const skillStudioDraftPersistTimerRef = useRef<number | null>(null);
   const onFreezoneUserMessageRef = useRef(onFreezoneUserMessage);
+  const onConnectionStateChangeRef = useRef(onConnectionStateChange);
+  const consumedPendingAttachmentsKeyRef = useRef<string | null>(null);
+  const consumedPendingNodeMentionsKeyRef = useRef<string | null>(null);
   const notifiedTaskKeysRef = useRef<Set<string>>(new Set());
   const directorAutoTerminalTaskIdsRef = useRef<Set<string>>(new Set());
   const taskEventBus = useEventBus();
@@ -11442,12 +11674,16 @@ export function SuperChatPanel({
   }, [onFreezoneUserMessage]);
 
   useEffect(() => {
-    onConnectionStateChange?.({
+    onConnectionStateChangeRef.current = onConnectionStateChange;
+  }, [onConnectionStateChange]);
+
+  useEffect(() => {
+    onConnectionStateChangeRef.current?.({
       busy: chat.busy,
       connected: chat.connected,
       connecting: chat.connecting,
     });
-  }, [chat.busy, chat.connected, chat.connecting, onConnectionStateChange]);
+  }, [chat.busy, chat.connected, chat.connecting]);
 
   const setDraftInputElement = useCallback((element: HTMLElement | null) => {
     draftInputRef.current = element;
@@ -12058,6 +12294,7 @@ export function SuperChatPanel({
       commandCount,
       plans: canvasCommandPlansFromEnvelopes(detail.envelopes),
       externalMcpCommand: detail.externalMcpCommand === true,
+      requiresUserChoice: detail.requiresUserChoice === true,
     };
   }, [activeMessages, effectiveFreezoneCanvasId, freezoneAgentMatches, latestAssistantMessageId, variant]);
 
@@ -12760,6 +12997,11 @@ export function SuperChatPanel({
   useEffect(() => {
     if (canvasCommandExecutionMode !== "auto_execute") return;
     for (const approval of pendingCanvasCommandApprovals) {
+      if (approval.requiresUserChoice) continue;
+      // manual_ui 动作必须由用户主动确认。自动模式不能把“重试生成”擅自
+      // 解释成“打开声线选择并改用自定义声线”。
+      if (canvasApprovalRequiresManualUiAction(approval)) continue;
+      if (canvasApprovalRequiresAudioVoiceChoice(approval, canvasNodes)) continue;
       if (
         canvasApprovalRequiresHumanReviewConfirmation(
           approval,
@@ -13161,7 +13403,26 @@ export function SuperChatPanel({
   }, [chatScopeKey, params.project]);
 
   useEffect(() => {
-    if (pendingAttachments.length === 0) return;
+    if (pendingAttachments.length === 0) {
+      consumedPendingAttachmentsKeyRef.current = null;
+      return;
+    }
+    const pendingAttachmentsKey = JSON.stringify(
+      pendingAttachments.map((attachment) => [
+        attachment.id,
+        attachment.type,
+        attachment.kind,
+        attachment.mimeType,
+        attachment.fileName,
+        attachment.fileSize,
+        attachment.content,
+        attachment.url,
+        attachment.path,
+        attachment.label,
+      ]),
+    );
+    if (consumedPendingAttachmentsKeyRef.current === pendingAttachmentsKey) return;
+    consumedPendingAttachmentsKeyRef.current = pendingAttachmentsKey;
     setAttachments((current) => {
       const pendingCanvasReferenceIds = new Set(
         pendingAttachments
@@ -13195,7 +13456,13 @@ export function SuperChatPanel({
   // 「添加到对话」：把待处理的 nodeId drain 成 draft 里的行内 mention chip，
   // 标题从画布节点解析（与 @ 菜单同源）。挂载后 pendingNodeMentions 已就位即抽干。
   useEffect(() => {
-    if (pendingNodeMentions.length === 0) return;
+    if (pendingNodeMentions.length === 0) {
+      consumedPendingNodeMentionsKeyRef.current = null;
+      return;
+    }
+    const pendingNodeMentionsKey = JSON.stringify(pendingNodeMentions);
+    if (consumedPendingNodeMentionsKeyRef.current === pendingNodeMentionsKey) return;
+    consumedPendingNodeMentionsKeyRef.current = pendingNodeMentionsKey;
     const titleLookup = new Map(
       buildFreezoneNodeSuggestions(buildAssetBoard(canvasNodes, canvasEdges)).map(
         (suggestion) => [suggestion.nodeId, suggestion.title] as const,
@@ -14374,11 +14641,18 @@ export function SuperChatPanel({
         />
 
         {searchOpen && (
-          <SearchBar
-            query={search}
-            onChange={setSearch}
-            onClose={() => setSearchOpen(false)}
-          />
+          <div className="relative z-40 flex h-0 justify-center">
+            <div className="absolute top-2 w-[min(420px,calc(100%-32px))]">
+              <SearchBar
+                query={search}
+                onChange={setSearch}
+                onClose={() => {
+                  setSearch("");
+                  setSearchOpen(false);
+                }}
+              />
+            </div>
+          </div>
         )}
 
         <div className="relative min-h-0 flex-1">

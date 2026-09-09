@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+// 这三件套（contextMatching / contextPromptCompiler / contextOperations）目前没有任何
+// 界面引用，reason / label 也直接拼进 contextPromptCompiler 那份锁中文的提示词。
+// 等它真被挂到某个面板上时，这些串要一起入词条；在那之前整份免检。
+// i18n-exempt-start
 import type { MainlineContext } from "./mainlineContext";
 
 export interface ContextMatch {
@@ -186,3 +190,4 @@ export function matchForFrameGeneration(contexts: MainlineContext[]): ContextMat
     artifacts: [sketch],
   };
 }
+// i18n-exempt-end

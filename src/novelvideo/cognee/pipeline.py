@@ -14,11 +14,17 @@ import re
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Protocol, TypeVar
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from novelvideo.i18n_message import MessageLike, lmsg
 from novelvideo.shared.env_guard import preserve_st_env
 from novelvideo.config import get_newapi_structured_output_litellm_kwargs
 from novelvideo.utils.bounded_concurrency import (
     default_llm_concurrency,
     map_bounded,
+)
+from novelvideo.utils.source_language import (
+    AssetLanguage,
+    asset_language_instruction,
+    detect_asset_language,
 )
 from novelvideo.models import (
     CharacterIdentity,
@@ -324,11 +330,11 @@ async def extract_characters_from_graph(
         from cognee.api.v1.search import SearchType
         from cognee.infrastructure.llm.LLMGateway import LLMGateway
 
-    def report(progress: float, task: str):
+    def report(progress: float, task: MessageLike):
         if on_progress:
             on_progress(progress, task)
 
-    def log(message: str):
+    def log(message: MessageLike):
         print(f"[extract_characters] {message}")
 
     # Step 1: 通过 cognee.search 获取图谱上下文
@@ -504,7 +510,7 @@ async def extract_episodes_with_characters(
         from cognee.infrastructure.llm.LLMGateway import LLMGateway
         from cognee.modules.engine.operations.setup import setup
 
-    def log(message: str):
+    def log(message: MessageLike):
         # 只打印到控制台，不调用 on_log（由 store.py 统一管理日志回调）
         print(f"[extract_episodes] {message}")
 
@@ -657,7 +663,7 @@ environment_prompt 规则：
 - 描述中性默认状态；不要把临时剧情动作、天气、人物情绪当成固定环境。
 - 不含人物，不含临时剧情道具，不含镜头调度。
 - 总长度约 220-320 字，可超过 200 字以保证四向完整。
-5. description: 场景叙述性描述（中文，50字以内）"""
+5. description: 场景叙述性描述（使用本次指定的输出语言，简短，不超过约 50 字）"""
 
 
 # Every heading the contract may carry, in the order they must appear.
@@ -675,6 +681,11 @@ _SCENE_HEADING_RE = re.compile(
 # The first line of the generated fallback. Distinctive enough to recognise a
 # prompt the system wrote when it could not use the model's.
 SCENE_FALLBACK_FINGERPRINT = "最能代表地点身份的主入口、主墙面、主装置或主要活动面作为正面"
+SCENE_FALLBACK_FINGERPRINT_EN = "Use the main entrance, main wall, main fixture, or primary activity area"
+SCENE_FALLBACK_FINGERPRINTS = (
+    SCENE_FALLBACK_FINGERPRINT,
+    SCENE_FALLBACK_FINGERPRINT_EN,
+)
 
 
 def parse_scene_environment_sections(prompt: str) -> list[tuple[str, str]]:
@@ -749,9 +760,9 @@ def should_repair_scene_placeholder(existing_prompt: str, new_prompt: str) -> bo
     """
     existing = str(existing_prompt or "")
     replacement = str(new_prompt or "")
-    if SCENE_FALLBACK_FINGERPRINT not in existing:
+    if not any(fingerprint in existing for fingerprint in SCENE_FALLBACK_FINGERPRINTS):
         return False
-    if SCENE_FALLBACK_FINGERPRINT in replacement:
+    if any(fingerprint in replacement for fingerprint in SCENE_FALLBACK_FINGERPRINTS):
         return False
     return _has_required_scene_environment_headings(replacement)
 
@@ -774,19 +785,35 @@ def _ensure_directional_environment_prompt(
     scene_type: str,
     time_of_day: str,
     context_lines: list[str],
+    output_language: AssetLanguage = "zh",
 ) -> str:
     """Ensure graph-built scene prompts are usable as a 360 spatial contract."""
     text = str(prompt or "").strip()
     if _has_required_scene_environment_headings(text):
         return normalize_scene_environment_prompt(text)
-
     # Evidence comes from the script, never from the prompt that just failed
     # validation. Quoting a rejected description back as "原文证据" produced a
     # self-referential contract that cited itself as its own source.
     evidence = _compact_scene_context(context_lines)
     if not evidence:
-        evidence = f"{scene_name}，{scene_type or 'interior'} 场景"
+        evidence = (
+            f"{scene_name}, {scene_type or 'interior'} scene"
+            if output_language == "en"
+            else f"{scene_name}，{scene_type or 'interior'} 场景"
+        )
     type_label = scene_type or "interior"
+    if output_language == "en":
+        return "\n".join(
+            [
+                f"正面：Use the main entrance, main wall, main fixture, or primary activity area that best identifies \"{scene_name}\" as the front view; use the source evidence \"{evidence}\" to define fixed structures and visual anchors.",
+                f"左侧：From the front-facing view, extend left into side walls, passages, doors, windows, fixed furnishings, or exterior boundaries appropriate to \"{scene_name}\"; keep materials, scale, and depth continuous with the front and include no people.",
+                "右侧：From the front-facing view, extend right into the opposing side space, wall corners, corridors, streets, adjoining rooms, or fixed facilities; maintain spatial continuity without duplicating the front subject.",
+                "背面：Show the rear half of the location when facing away from the front, such as the reverse side of an entrance, a corridor end, courtyard, rear wall, windows, street continuation, or secondary functional area; close the full 360-degree space consistently.",
+                "光源：Use stable, neutral environmental lighting from fixed lamps, windows, skylight, or ceiling fixtures; do not bake a temporary story time or mood into the reusable environment.",
+                f"材质/风格：Keep the fixed architectural style, surfaces, door and window structure, furnishing materials, and wear level appropriate to an {type_label} scene; describe only the reusable environment and no character actions.",
+                "禁止元素：No people, temporary story props, subtitles, watermarks, UI, or historical, modern, or science-fiction elements that conflict with the location name and source evidence.",
+            ]
+        )
     return "\n".join(
         [
             f"正面：以“{scene_name}”最能代表地点身份的主入口、主墙面、主装置或主要活动面作为正面；根据原文证据“{evidence}”确定固定结构和主要视觉锚点。",
@@ -839,6 +866,7 @@ async def enrich_scene_environment_from_context(
     aliases: list[str] | None = None,
     synopsis: str = "",
     enrichment_agent: Any | None = None,
+    output_language: AssetLanguage | None = None,
 ) -> NovelScene:
     """Generate the canonical 360 environment prompt for one scene.
 
@@ -855,6 +883,9 @@ async def enrich_scene_environment_from_context(
     scene_type = str(
         scene_type or ("interior" if interior else "exterior") or "interior"
     )
+    language = output_language or detect_asset_language(
+        "\n".join([scene_name, *context_lines, synopsis])
+    )
 
     agent = enrichment_agent or _create_scene_build_agent(
         SCENE_ENRICHMENT_SYSTEM_PROMPT,
@@ -863,7 +894,9 @@ async def enrich_scene_environment_from_context(
     )
     context = "\n".join(context_lines[:50])
     synopsis_section = f"\n\n【故事梗概与人物设定】\n{synopsis}" if synopsis else ""
-    user_text = f"""场景名称：{scene_name}
+    user_text = f"""{asset_language_instruction(language)}
+
+场景名称：{scene_name}
 出现时间线索：{time_of_day or "无"}（只用于理解剧情出现时段，不要把白天、夜晚、黄昏、月光等时段光照烘焙进基础场景）
 室内外：{"内" if interior else "外"}
 出现集数：{episodes}
@@ -887,6 +920,7 @@ async def enrich_scene_environment_from_context(
                     scene_type=resolved_type,
                     time_of_day="",
                     context_lines=context_lines,
+                    output_language=language,
                 ),
                 description=enriched.description,
             )
@@ -905,6 +939,7 @@ async def enrich_scene_environment_from_context(
             scene_type=scene_type,
             time_of_day="",
             context_lines=context_lines,
+            output_language=language,
         ),
     )
 
@@ -954,13 +989,13 @@ _ENRICHMENT_BATCH_SIZE = 5
 # Bump whenever the enrichment prompt, the contract validator, or the way a
 # model answer is turned into a NovelScene changes.  It is part of every cache
 # key, so a bump retires every stored result rather than mixing contracts.
-SCENE_ENRICHMENT_CACHE_VERSION = 1
+SCENE_ENRICHMENT_CACHE_VERSION = 2
 
 SCENE_ENRICHMENT_CACHE_TYPE = "scene_environment"
 
 # Bump alongside the screenplay normalizer or the way its blocks are folded
 # into candidates.
-SCENE_BLOCKS_CACHE_VERSION = 1
+SCENE_BLOCKS_CACHE_VERSION = 2
 
 SCENE_BLOCKS_CACHE_TYPE = "scene_blocks"
 
@@ -1025,7 +1060,7 @@ def is_cacheable_scene_prompt(prompt: str) -> bool:
     and every later rebuild would replay it instead of retrying the model.
     """
     text = str(prompt or "")
-    if SCENE_FALLBACK_FINGERPRINT in text:
+    if any(fingerprint in text for fingerprint in SCENE_FALLBACK_FINGERPRINTS):
         return False
     return _has_required_scene_environment_headings(text)
 
@@ -1062,6 +1097,7 @@ async def enrich_scene_environments_batched(
     enrichment_agent: Any | None = None,
     on_scene: Optional[Any] = None,
     cache: Optional[SceneBuildCache] = None,
+    output_language: AssetLanguage | None = None,
 ) -> list[NovelScene]:
     """Generate environment prompts for several scenes per request.
 
@@ -1079,6 +1115,21 @@ async def enrich_scene_environments_batched(
     """
     if not candidates:
         return []
+    language = output_language or detect_asset_language(
+        "\n".join(
+            [
+                synopsis,
+                *(
+                    str(value)
+                    for candidate in candidates
+                    for value in [
+                        candidate.get("name") or "",
+                        *(candidate.get("context_lines") or []),
+                    ]
+                ),
+            ]
+        )
+    )
 
     keys = {
         id(candidate): scene_enrichment_cache_key(candidate, synopsis)
@@ -1123,7 +1174,8 @@ async def enrich_scene_environments_batched(
 
     async def run_batch(batch: list[dict[str, Any]]) -> list[NovelScene]:
         prompt = (
-            "请为下面每一个场景分别生成 environment_prompt，"
+            asset_language_instruction(language)
+            + "\n\n请为下面每一个场景分别生成 environment_prompt，"
             "name 必须与给出的场景名完全一致，不要合并或遗漏：\n\n"
             + "\n\n".join(describe(candidate) for candidate in batch)
             + synopsis_section
@@ -1153,6 +1205,7 @@ async def enrich_scene_environments_batched(
                         scene_type=scene_type,
                         time_of_day="",
                         context_lines=list(candidate.get("context_lines") or []),
+                        output_language=language,
                     ),
                     description=item.description,
                 )
@@ -1161,7 +1214,7 @@ async def enrich_scene_environments_batched(
 
             logging.warning("批量场景描述生成失败，逐个重试: %s", exc)
 
-        scenes: list[NovelScene] = []
+        answered: list[tuple[dict[str, Any], NovelScene]] = []
         for candidate in batch:
             scene = produced.get(candidate["name"])
             if scene is None:
@@ -1176,11 +1229,14 @@ async def enrich_scene_environments_batched(
                     context_lines=candidate.get("context_lines") or [],
                     synopsis=synopsis,
                     enrichment_agent=agent,
+                    output_language=language,
                 )
+            if not str(scene.environment_prompt or "").strip():
+                continue
             if on_scene:
                 on_scene(candidate, scene)
-            scenes.append(scene)
-        if cache is not None and scenes:
+            answered.append((candidate, scene))
+        if cache is not None and answered:
             # Written per batch, not once at the end: a build killed halfway
             # must keep everything it already paid for.  Only real answers are
             # stored — a generated fallback would otherwise become permanent.
@@ -1188,11 +1244,11 @@ async def enrich_scene_environments_batched(
                 SCENE_ENRICHMENT_CACHE_TYPE,
                 {
                     keys[id(candidate)]: scene_to_cache_payload(scene)
-                    for candidate, scene in zip(batch, scenes)
+                    for candidate, scene in answered
                     if is_cacheable_scene_prompt(scene.environment_prompt)
                 },
             )
-        return scenes
+        return [scene for _, scene in answered]
 
     batches = [
         pending[start : start + _ENRICHMENT_BATCH_SIZE]
@@ -1319,11 +1375,11 @@ async def extract_scenes_from_graph(
         from cognee.api.v1.search import SearchType
         from cognee.infrastructure.llm.LLMGateway import LLMGateway
 
-    def report(progress: float, task: str) -> None:
+    def report(progress: float, task: MessageLike) -> None:
         if on_progress:
             on_progress(progress, task)
 
-    def log(message: str) -> None:
+    def log(message: MessageLike) -> None:
         print(f"[extract_scenes] {message}")
         if on_log:
             on_log(message)
@@ -1596,27 +1652,36 @@ async def extract_scenes_from_script(
     """
     from .script_parser import parse_scenes, extract_synopsis
 
-    def report(progress: float, task: str):
+    def report(progress: float, task: MessageLike):
         if on_progress:
             on_progress(progress, task)
 
-    def log(message: str):
+    def log(message: MessageLike):
         print(f"[extract_scenes] {message}")
 
     synopsis = extract_synopsis(novel_text)
+    output_language = detect_asset_language(novel_text)
     if synopsis:
         log(f"提取梗概+人物设定: {len(synopsis)} 字符")
 
     legacy_candidates = parse_scenes(novel_text)
     log(
-        "程序召回 sanity check 得到 "
-        f"{len(legacy_candidates)} 个场景块: {[c.name for c in legacy_candidates]}"
+        lmsg(
+            "tasks.log.pipeline.legacyRecall",
+            "程序召回 sanity check 得到 "
+            f"{len(legacy_candidates)} 个场景块: {[c.name for c in legacy_candidates]}",
+            sceneCount=len(legacy_candidates),
+            sceneNames=str([c.name for c in legacy_candidates]),
+        )
     )
 
     normalized_scene_candidates: list[dict[str, Any]] = []
     fallback_reason = ""
 
-    report(0.1, "AI 规范化剧本场景块...")
+    report(
+        0.1,
+        lmsg("tasks.progress.pipeline.normalizingScenes", "AI 规范化剧本场景块..."),
+    )
     try:
         normalized_scene_candidates = await _normalized_scene_blocks_cached(
             novel_text, cache
@@ -1753,6 +1818,7 @@ async def extract_scenes_from_script(
                 enrichment_agent=enrichment_agent,
                 cache=cache,
                 on_scene=note_progress,
+                output_language=output_language,
             )
         )
     else:
@@ -1825,11 +1891,11 @@ async def extract_props_from_graph(
         from cognee.api.v1.search import SearchType
         from cognee.infrastructure.llm.LLMGateway import LLMGateway
 
-    def report(progress: float, task: str):
+    def report(progress: float, task: MessageLike):
         if on_progress:
             on_progress(progress, task)
 
-    def log(message: str):
+    def log(message: MessageLike):
         print(f"[extract_props] {message}")
 
     report(0.1, "通过图谱检索道具信息...")

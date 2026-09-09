@@ -181,6 +181,23 @@ def test_completion_notice_appends_without_replacing_existing_reply():
     assert notice in merged
 
 
+def test_workflow_planning_reply_rejects_large_unmetered_text():
+    oversized = "正文" * 2_001
+
+    rejected = chat_service._bounded_workflow_planning_reply(
+        oversized,
+        draft_ready=True,
+    )
+
+    assert "已拒绝直接交付" in rejected
+    assert "text Recipe" in rejected
+    assert oversized not in rejected
+    assert (
+        chat_service._bounded_workflow_planning_reply(oversized, draft_ready=False)
+        == oversized
+    )
+
+
 def test_canvas_context_tool_result_infers_missing_status():
     payload = chat_routes.CanvasContextToolResultIn.model_validate(
         {
@@ -773,7 +790,9 @@ def test_codex_sessions_are_project_scoped_and_backend_independent(
     assert state_file.exists()
     home_state_file = tmp_path / "state" / "admin" / "codex_sessions.json"
     assert json.loads(home_state_file.read_text(encoding="utf-8")) == {
-        "home": "codex-home-thread",
+        f'["main","home",null,"{chat_service._CODEX_THREAD_PROTOCOL_VERSION}"]': (
+            "codex-home-thread"
+        ),
     }
     for project, thread_id in (
         ("project-a", "codex-thread-1"),
@@ -789,7 +808,8 @@ def test_codex_sessions_are_project_scoped_and_backend_independent(
             / "sessions.json"
         )
         assert json.loads(project_state_file.read_text(encoding="utf-8")) == {
-            f"project:{project}": thread_id,
+            f'["main","project","{project}",'
+            f'"{chat_service._CODEX_THREAD_PROTOCOL_VERSION}"]': thread_id,
         }
 
 
@@ -895,13 +915,37 @@ def test_codex_freezone_protocol_upgrade_does_not_resume_legacy_thread(
     )
 
 
-def test_codex_main_thread_key_stays_backward_compatible():
-    assert chat_service._codex_scope_key("project-a") == "project:project-a"
+def test_codex_main_thread_key_is_discovery_protocol_scoped():
+    protocol = chat_service._CODEX_THREAD_PROTOCOL_VERSION
+    assert chat_service._codex_scope_key("project-a") == (
+        f'["main","project","project-a","{protocol}"]'
+    )
     assert (
         chat_service._codex_scope_key("project-a", canvas_id="ignored-canvas")
-        == "project:project-a"
+        == f'["main","project","project-a","{protocol}"]'
     )
-    assert chat_service._codex_scope_key("") == "home"
+    assert chat_service._codex_scope_key("") == f'["main","home",null,"{protocol}"]'
+
+
+def test_codex_discovery_upgrade_does_not_resume_legacy_main_thread(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    state_file = (
+        tmp_path
+        / "state"
+        / "admin"
+        / "project-a"
+        / "agents"
+        / "codex"
+        / "sessions.json"
+    )
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text(
+        json.dumps({"project:project-a": "legacy-thread"}), encoding="utf-8"
+    )
+
+    assert chat_service._get_codex_thread_id("admin", "project-a") is None
 
 
 @pytest.mark.anyio
@@ -1147,17 +1191,22 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "[FREEZONE_CANVAS_ASSISTANT]" in captured["prompt"]
         assert "[FREEZONE_CANVAS_CONTEXT]" in captured["prompt"]
         assert "canvas_id: canvas-a" in captured["prompt"]
+        assert "generation_parameter_round: business-turn" in captured["prompt"]
+        assert "Historical clarification answers" in captured["prompt"]
+        assert "they never count as confirmation for this round" in captured["prompt"]
         assert "references/custom-topology.md" in captured["prompt"]
         assert (
             "Do not use freezone_emit_canvas_command for a workflow"
             in captured["prompt"]
         )
         developer_instructions = chat_service._codex_developer_instructions(tool_mode)
-        assert "concrete tools currently listed" in developer_instructions
-        assert "dramaclaw_tool_search/describe/call" in developer_instructions
-        assert "do not look for" in developer_instructions
+        assert "scope-filtered concrete operations" in developer_instructions
+        assert "call the selected tool directly" in developer_instructions
         assert "custom-topology reference" in developer_instructions
-        assert "freezone_create_workflow_graph once" in developer_instructions
+        assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
+        assert "expected_node_count" in developer_instructions
+        assert "placeholder graph such as A/B" in developer_instructions
+        assert "short-drama production Skill" in developer_instructions
         assert "not a Workflow catalog skill_id" in developer_instructions
         assert (
             "never pass dramaclaw-workflows to workflow_skill_get"
@@ -1168,9 +1217,8 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "run_after_create=true" in developer_instructions
     else:
         assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
-        assert (
-            "search with dramaclaw_tool_search"
-            in chat_service._codex_developer_instructions(tool_mode)
+        assert "scope-filtered concrete MCP tools" in (
+            chat_service._codex_developer_instructions(tool_mode)
         )
     assert [event["type"] for event in events] == [
         "thread_started",
@@ -1237,6 +1285,86 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
         )
         is False
     )
+    assert chat_service._freezone_canvas_write_requested("生成一张图片") is True
+    assert (
+        chat_service._freezone_canvas_write_requested("生成一张赛博朋克风格的图片")
+        is True
+    )
+    assert chat_service._freezone_canvas_write_requested("生成一段视频") is True
+    assert (
+        chat_service._freezone_canvas_write_requested("做一个女总裁复仇短视频") is True
+    )
+    assert chat_service._freezone_canvas_write_requested("生成一个视频脚本") is False
+    assert (
+        chat_service._freezone_canvas_write_requested("generate a video script")
+        is False
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested("create an image prompt") is False
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested("生成这个工作流的文案") is False
+    )
+    assert chat_service._freezone_canvas_write_requested("生成一张带文案的图片") is True
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "create an image from this prompt"
+        )
+        is True
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "Create an image showing a sunset"
+        )
+        is True
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "Generate a video showing our product"
+        )
+        is True
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested("根据这个提示词生成视频") is True
+    )
+    assert chat_service._freezone_canvas_write_requested("用这段描述生成一张图") is True
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "请生成本集完整剧本。输出 20—25 个视觉 Beat，并描述旧图片与视频质感。"
+        )
+        is False
+    )
+
+
+def test_codex_freezone_write_receipt_accepts_durable_browser_result():
+    event = SimpleNamespace(
+        name="freezone_confirm_workflow_draft",
+        status="completed",
+        error=None,
+        structured={
+            "ok": True,
+            "applied": True,
+            "canvas_apply_status": "applied",
+            "bridge_key": "bridge-a",
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+        },
+        output=None,
+    )
+
+    assert chat_service._codex_freezone_write_result_succeeded(event) is True
+
+
+def test_codex_freezone_write_receipt_rejects_counts_without_durable_identity():
+    event = SimpleNamespace(
+        name="freezone_confirm_workflow_draft",
+        status="completed",
+        error=None,
+        structured={"ok": True, "created_node_count": 3, "status": "completed"},
+        output=None,
+    )
+
+    assert chat_service._codex_freezone_write_result_succeeded(event) is False
 
 
 def test_codex_freezone_instructions_forbid_invented_resource_uris():
@@ -1257,7 +1385,7 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
 
 def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
     event = SimpleNamespace(
-        name="dramaclaw.freezone_create_workflow_graph",
+        name="dramaclaw.freezone_confirm_workflow_draft",
         output={
             "content": [
                 {
@@ -1284,8 +1412,31 @@ def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
     )
 
 
+@pytest.mark.parametrize("container", ["structured", "structuredContent", "text"])
+@pytest.mark.parametrize("outcome", ["answered", "failed", "cancelled", "submitted", "transport_error"])
+def test_codex_clarification_requires_successful_answer(container, outcome):
+    payload = {"ok": True, "clarification_status": "answered", "action": "submit"}
+    if outcome == "failed":
+        payload["ok"] = False
+    elif outcome == "cancelled":
+        payload["clarification_status"] = "cancelled"
+    elif outcome == "submitted":
+        payload.pop("clarification_status")
+    event = SimpleNamespace(
+        name="dramaclaw.freezone_request_user_clarification",
+        status="completed", error="connection lost" if outcome == "transport_error" else None,
+        structured=payload if container == "structured" else None,
+        output={"structuredContent": payload} if container == "structuredContent" else {
+            "content": [{"type": "text", "text": json.dumps(payload)}]
+        } if container == "text" else None,
+    )
+    assert chat_service._codex_freezone_clarification_answered(event) is (outcome == "answered")
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize("tool_outcome", ["missing", "success", "failure", "blocked"])
+@pytest.mark.parametrize(
+    "tool_outcome", ["missing", "success", "failure", "blocked", "draft_ready", "clarification_answered"]
+)
 async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     monkeypatch,
     tmp_path,
@@ -1313,9 +1464,54 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 thread_id="codex-thread",
                 turn_id="codex-turn",
             )
-            if tool_outcome not in {"missing", "blocked"}:
+            if tool_outcome == "draft_ready":
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_prepare_workflow_draft",
+                    name="dramaclaw.freezone_prepare_workflow_draft",
+                    call_id="call-draft",
+                    status="completed",
+                    input={"intent": {"skill_id": "video-ad"}},
+                    output={
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(
+                                    {
+                                        "ok": True,
+                                        "status": "workflow_draft_ready",
+                                        "draft_id": "draft-a",
+                                        "revision": 1,
+                                    }
+                                ),
+                            }
+                        ]
+                    },
+                    error=None,
+                    structured=None,
+                )
+            elif tool_outcome == "clarification_answered":
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_request_user_clarification",
+                    name="dramaclaw.freezone_request_user_clarification",
+                    call_id="call-clarification",
+                    status="completed",
+                    input={},
+                    output={"content": [{"type": "text", "text": "{}"}]},
+                    structured={"ok": True, "clarification_status": "answered"},
+                    error=None,
+                )
+            elif tool_outcome not in {"missing", "blocked"}:
                 result_payload = (
-                    {"ok": True, "canvas_apply_status": "applied"}
+                    {
+                        "ok": True,
+                        "canvas_apply_status": "applied",
+                        "applied": True,
+                        "bridge_key": "bridge-call-1",
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                    }
                     if tool_outcome == "success"
                     else {
                         "ok": False,
@@ -1399,6 +1595,16 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     elif tool_outcome == "missing":
         assert "已创建" not in result["content"]
         assert result["content"] == "画布操作未完成：本轮没有执行画布写入，请重试。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "draft_ready":
+        assert result["content"] == (
+            "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
+        )
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "clarification_answered":
+        assert result["content"] == (
+            "画布操作未完成：参数已确认，但工作流草稿尚未生成；本轮未写入画布，请重试。"
+        )
         assert assistant_deltas == [result["content"]]
     else:
         assert result["content"] == (
@@ -1922,7 +2128,16 @@ def test_codex_client_keeps_gateway_credentials_in_turn_metadata(tmp_path):
     assert "turn-capability" not in "\n".join(thread._config_overrides)
 
 
-def test_codex_gateway_overrides_use_responses_without_embedding_secret():
+def test_codex_gateway_overrides_use_responses_without_embedding_secret(
+    monkeypatch,
+):
+    catalog_path = (
+        Path(chat_service.__file__).resolve().parents[3]
+        / "deploy"
+        / "codex"
+        / "dramaclaw-model-catalog-chat-compat.json"
+    )
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(catalog_path))
     overrides = chat_service._codex_gateway_config_overrides(
         "https://gateway.example/v1/"
     )
@@ -1947,7 +2162,62 @@ def test_codex_gateway_overrides_use_responses_without_embedding_secret():
     assert "memories.use_memories=false" in overrides
     assert 'model_reasoning_effort="medium"' in overrides
     assert 'web_search="disabled"' in overrides
+    catalog_override = next(
+        item for item in overrides if item.startswith("model_catalog_json=")
+    )
+    configured_catalog_path = Path(json.loads(catalog_override.split("=", 1)[1]))
+    catalog = json.loads(configured_catalog_path.read_text(encoding="utf-8"))
+    model = next(
+        item for item in catalog["models"] if item["slug"] == "DC-codex-agent-LLM"
+    )
+    assert model["supports_search_tool"] is False
+    assert model["base_instructions"]
+    assert model["truncation_policy"] == {"mode": "tokens", "limit": 10000}
     assert "secret-value" not in rendered
+
+
+def test_codex_gateway_fails_closed_for_incomplete_model_catalog(monkeypatch, tmp_path):
+    catalog_path = tmp_path / "models.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "slug": "DC-codex-agent-LLM",
+                        "supports_search_tool": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(catalog_path))
+
+    with pytest.raises(RuntimeError, match="no complete entry"):
+        chat_service._codex_gateway_config_overrides("https://gateway.example/v1")
+
+
+def test_codex_gateway_accepts_disabled_tool_search_for_chat_compat(monkeypatch, tmp_path):
+    bundled = (
+        Path(chat_service.__file__).resolve().parents[3]
+        / "deploy"
+        / "codex"
+        / "dramaclaw-model-catalog.json"
+    )
+    catalog = json.loads(bundled.read_text(encoding="utf-8"))
+    catalog["models"][0]["supports_search_tool"] = False
+    catalog_path = tmp_path / "models.json"
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(catalog_path))
+
+    overrides = chat_service._codex_gateway_config_overrides(
+        "https://gateway.example/v1"
+    )
+
+    catalog_override = next(
+        item for item in overrides if item.startswith("model_catalog_json=")
+    )
+    assert Path(json.loads(catalog_override.split("=", 1)[1])) == catalog_path
 
 
 def test_codex_gateway_reasoning_effort_is_configurable(monkeypatch):
@@ -2430,12 +2700,14 @@ def test_chat_run_lock_uses_named_agent_locks_dir(monkeypatch, tmp_path):
     assert lock_path.name.endswith(".lock")
 
 
-def test_chat_run_lock_file_expires_after_ten_minutes(monkeypatch, tmp_path):
+def test_chat_run_lock_file_expires_after_two_minutes(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    assert chat_service._CHAT_RUN_LOCK_TTL_SECONDS == 10 * 60
+    assert chat_service._CHAT_RUN_LOCK_TTL_SECONDS == 2 * 60
 
     lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    stale_started_at = datetime.now(timezone.utc) - timedelta(seconds=10 * 60 + 1)
+    stale_started_at = datetime.now(timezone.utc) - timedelta(
+        seconds=chat_service._CHAT_RUN_LOCK_TTL_SECONDS + 1
+    )
     lock_path.write_text(
         json.dumps(
             {
@@ -2476,6 +2748,32 @@ def test_chat_run_lock_uses_updated_at_for_idle_timeout(monkeypatch, tmp_path):
     assert chat_service.chat_run_lock_is_active("admin", "project-a") is True
     with pytest.raises(RuntimeError, match="当前用户已有 AI 对话"):
         chat_service._acquire_chat_run_lock("admin", "project-a")
+
+
+def test_chat_run_lock_trusts_fresh_heartbeat_from_another_pod(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(chat_service.socket, "gethostname", lambda: "new-pod")
+    monkeypatch.setattr(chat_service, "_pid_is_alive", lambda pid: False)
+
+    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
+    now = datetime.now(timezone.utc).isoformat()
+    lock_path.write_text(
+        json.dumps(
+            {
+                "lock_id": "old-pod-lock",
+                "owner_id": "old-pod:3912",
+                "owner_pid": 3912,
+                "started_at": now,
+                "updated_at": now,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert chat_service.chat_run_lock_is_active("admin", "project-a") is True
+    with pytest.raises(RuntimeError, match="当前用户已有 AI 对话"):
+        chat_service._acquire_chat_run_lock("admin", "project-a")
+    assert json.loads(lock_path.read_text(encoding="utf-8"))["lock_id"] == "old-pod-lock"
 
 
 def test_chat_run_lock_still_has_max_runtime(monkeypatch, tmp_path):
@@ -2520,7 +2818,7 @@ def test_chat_run_lock_heartbeat_refreshes_updated_at(monkeypatch, tmp_path):
     lock_id = chat_service._acquire_chat_run_lock("admin", "project-a")
     lock_path = chat_service._chat_run_lock_path("admin", "project-a")
     try:
-        _current_lock_id, _owner_pid, started_at, updated_at = (
+        _current_lock_id, _owner_id, _owner_pid, started_at, updated_at = (
             chat_service._read_chat_run_lock_file(lock_path)
         )
         assert started_at is not None
@@ -2544,9 +2842,13 @@ def test_chat_run_lock_heartbeat_refreshes_updated_at(monkeypatch, tmp_path):
         assert len(atomic_writes) == 1
         assert atomic_writes[0][0] == lock_path
         assert json.loads(atomic_writes[0][1])["lock_id"] == lock_id
-        refreshed_lock_id, _owner_pid, refreshed_started_at, refreshed_updated_at = (
-            chat_service._read_chat_run_lock_file(lock_path)
-        )
+        (
+            refreshed_lock_id,
+            _owner_id,
+            _owner_pid,
+            refreshed_started_at,
+            refreshed_updated_at,
+        ) = chat_service._read_chat_run_lock_file(lock_path)
         assert refreshed_lock_id == lock_id
         assert refreshed_started_at == started_at
         assert refreshed_updated_at is not None
@@ -2759,6 +3061,12 @@ def test_freezone_prompt_allows_creative_ideation_canvas_framework_without_mainl
     )
 
     assert "creative ideas into working canvas material" in prompt
+    assert "answer in chat" in chat_service._CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS
+    assert (
+        "do not call a canvas write tool merely because"
+        in chat_service._CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS
+    )
+    assert "answer in chat" not in chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS
     assert "command catalog" in prompt
     assert "node create schema" in prompt
     assert "link type catalog" in prompt
@@ -2770,7 +3078,7 @@ def test_freezone_prompt_allows_creative_ideation_canvas_framework_without_mainl
     assert "successful same-turn frontend write result" in prompt
     assert "Validate" in prompt
     assert "batch only for several ordinary non-workflow" in prompt
-    assert "freezone_create_workflow_graph once" in prompt
+    assert "freezone_prepare_workflow_plan_draft once" in prompt
     assert "not a Workflow catalog `skill_id`" in prompt
     assert "Do not ask for a second “创建并运行” confirmation" in prompt
     assert "the write tool creates it" in prompt
@@ -2824,6 +3132,34 @@ def test_freezone_prompt_injects_auto_execute_parameter_policy(monkeypatch, tmp_
     assert "frontend auto-applies it" in prompt
     assert "without asking for another create/run confirmation" in prompt
     assert "never built-in request_user_input" in prompt
+
+
+def test_codex_freezone_prompt_requires_fresh_parameter_selection_for_each_turn(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+
+    prompt = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "继续生成视频",
+        tool_mode="freezone_canvas",
+        surface_context={
+            "freezone_canvas_id": "canvas-a",
+            "canvas_command_execution_mode": "manual_confirm",
+        },
+        turn_id="turn-current-123",
+        require_generation_parameter_preflight=True,
+    )
+
+    assert "generation_parameter_round: turn-current-123" in prompt
+    assert "For every new request in this round" in prompt
+    assert "Historical clarification answers" in prompt
+    assert "they never count as confirmation for this round" in prompt
+    assert "never add a system-voice/custom-voice choice" in prompt
+    assert "do not ask the user to choose system voice versus custom voice" in prompt
+    assert "The normal approval card is still shown" in prompt
+    assert "Do not ask a preliminary image/video parameter clarification" not in prompt
 
 
 def test_freezone_prompt_omits_skill_studio_contract_for_normal_canvas_requests(
@@ -5266,7 +5602,7 @@ def test_append_tool_ui_specs_does_not_duplicate_existing_ui_spec():
 def test_dramaclaw_get_sketch_candidates_displays_pool_candidates(monkeypatch):
     from novelvideo.chat import dramaclaw_mcp
 
-    plugin = dramaclaw_mcp.PLUGIN
+    plugin = dramaclaw_mcp._plugin("dramaclaw")
 
     def fake_request(method, path, **kwargs):
         assert method == "GET"
@@ -5311,7 +5647,7 @@ def test_dramaclaw_get_sketch_candidates_displays_pool_candidates(monkeypatch):
 def test_dramaclaw_get_sketches_does_not_use_pool_candidates(monkeypatch, tmp_path):
     from novelvideo.chat import dramaclaw_mcp
 
-    plugin = dramaclaw_mcp.PLUGIN
+    plugin = dramaclaw_mcp._plugin("dramaclaw")
     project_dir = tmp_path / "project"
     sketch_dir = project_dir / "grids" / "ep001" / "sketch"
     sketch_dir.mkdir(parents=True)

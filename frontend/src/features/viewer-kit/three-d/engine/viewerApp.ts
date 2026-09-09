@@ -26,12 +26,22 @@ import {
 } from '../sourceTransform';
 
 export type { PoseName } from './poses';
-export { isPoseName, POSES, POSE_LABELS, requirePoseName } from './poses';
+export { isPoseName, POSES, POSE_LABEL_KEYS, requirePoseName } from './poses';
 export { SHAPE_HINT_NAMES, type ShapeHintName } from './shapeHints';
+
+/**
+ * 引擎不依赖 react-i18next：状态文案只在这里落成 key，由调用方把 t 传进来解析。
+ * 不传时原样回显 key —— 单测和脱离 React 的调用点仍然能跑。
+ */
+export type ViewerStatusTranslate = (
+  key: string,
+  params?: Record<string, string | number>,
+) => string;
 
 export interface ViewerAppOptions {
   canvas: HTMLCanvasElement;
   fov?: number;
+  translate?: ViewerStatusTranslate;
 }
 
 export interface CaptureScreenshotOptions {
@@ -270,18 +280,18 @@ export interface SplatLoadProgress {
 }
 
 /**
- * 把底层 loader 的原始报错翻成用户能看懂的话(技术细节仍保留在 console / Error)。
+ * 把底层 loader 的原始报错归类成一条用户能看懂的文案 key(技术细节仍保留在 console / Error)。
  * 典型场景:URL 指向后端本地路径/已过期 → 拉到 404 HTML → SogBundleParser 当 zip 解 →
  * "EOCDR not found"。
  */
-export function friendlySplatError(raw: string): string {
+export function splatErrorMessageKey(raw: string): string {
   const lower = raw.toLowerCase();
   if (
     lower.includes('eocdr') ||
     lower.includes('zip') ||
     lower.includes('central directory')
   ) {
-    return '3D 世界文件无法解析(.sog 包损坏,或资源地址返回了非文件内容)。请确认地址可访问、文件完整后重试。';
+    return 'viewer.threeD.statusMessages.engine.splatCorrupt';
   }
   if (
     lower.includes('404') ||
@@ -290,12 +300,12 @@ export function friendlySplatError(raw: string): string {
     lower.includes('network') ||
     lower.includes('403')
   ) {
-    return '3D 世界资源加载失败(地址不可达或已过期)。请刷新或重新生成后重试。';
+    return 'viewer.threeD.statusMessages.engine.splatUnreachable';
   }
   if (lower.includes('decode') || lower.includes('parse') || lower.includes('invalid')) {
-    return '3D 世界文件解码失败(格式不支持或文件损坏)。';
+    return 'viewer.threeD.statusMessages.engine.splatDecode';
   }
-  return '3D 世界加载失败,请重试。';
+  return 'viewer.threeD.statusMessages.engine.splatGeneric';
 }
 
 export interface ViewerApp {
@@ -446,6 +456,7 @@ export function sampleActorAnimationPoseFrame(
 
 export async function createViewerApp(options: ViewerAppOptions): Promise<ViewerApp> {
   const { canvas, fov = DEFAULT_FOV } = options;
+  const tr: ViewerStatusTranslate = options.translate ?? ((key) => key);
   let statusText = '';
   const statusListeners = new Set<(status: string) => void>();
   const setStatus = (next: string) => {
@@ -526,7 +537,7 @@ export async function createViewerApp(options: ViewerAppOptions): Promise<Viewer
   };
   app.on('update', updateHandler);
   app.start();
-  setStatus('PlayCanvas ready。等待 3D 世界...');
+  setStatus(tr('viewer.threeD.statusMessages.engine.ready'));
 
   let splatPivotEntity: pc.Entity | null = null;
   let splatEntity: pc.Entity | null = null;
@@ -615,7 +626,7 @@ export async function createViewerApp(options: ViewerAppOptions): Promise<Viewer
   function clearWorldSource(): void {
     clearSplat();
     clearPanoEnvironment();
-    setStatus('空白导演世界 · 可在水平地板上摆放');
+    setStatus(tr('viewer.threeD.statusMessages.engine.emptyWorld'));
     emitSplatProgress({
       phase: 'ready',
       percent: 100,
@@ -755,7 +766,7 @@ export async function createViewerApp(options: ViewerAppOptions): Promise<Viewer
           message = JSON.stringify(err);
         }
         app.assets.remove(asset);
-        reject(new Error(`asset 加载失败 (${type}): ${url}\n${message}`));
+        reject(new Error(`asset load failed (${type}): ${url}\n${message}`));
       });
       app.assets.add(asset);
       app.assets.load(asset);
@@ -770,14 +781,14 @@ export async function createViewerApp(options: ViewerAppOptions): Promise<Viewer
 
   async function loadSplat(url: string, options: LoadSplatOptions = {}) {
     if (!url) {
-      setStatus('未提供 3D 世界资源。');
+      setStatus(tr('viewer.threeD.statusMessages.engine.noWorldSource'));
       return;
     }
     clearPanoEnvironment();
     clearSplat();
     activeSplatUrl = url;
     sourceTransform = normalizeDirectorWorldSourceTransform(options.sourceTransform);
-    setStatus('加载 3D 世界...');
+    setStatus(tr('viewer.threeD.statusMessages.engine.loadingWorld'));
     emitSplatProgress({
       phase: 'loading',
       percent: null,
@@ -791,7 +802,8 @@ export async function createViewerApp(options: ViewerAppOptions): Promise<Viewer
       asset = await loadAsset(url, 'gsplat', (loaded, total) => {
         const percent =
           total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : null;
-        if (percent !== null) setStatus(`加载 3D 世界... ${percent}%`);
+        if (percent !== null)
+          setStatus(tr('viewer.threeD.statusMessages.engine.loadingWorldPercent', { percent }));
         emitSplatProgress({
           phase: 'loading',
           percent,
@@ -804,7 +816,7 @@ export async function createViewerApp(options: ViewerAppOptions): Promise<Viewer
     } catch (error) {
       if (destroyed) return;
       const raw = error instanceof Error ? error.message : String(error);
-      const friendly = friendlySplatError(raw);
+      const friendly = tr(splatErrorMessageKey(raw));
       setStatus(friendly);
       emitSplatProgress({
         phase: 'error',
@@ -846,8 +858,10 @@ export async function createViewerApp(options: ViewerAppOptions): Promise<Viewer
     const gaussians = readSplatCount(asset);
     setStatus(
       gaussians != null
-        ? `已加载 3D 世界 · ${gaussians.toLocaleString()} 高斯`
-        : '已加载 3D 世界',
+        ? tr('viewer.threeD.statusMessages.engine.worldLoadedGaussians', {
+            count: gaussians.toLocaleString(),
+          })
+        : tr('viewer.threeD.statusMessages.engine.worldLoaded'),
     );
     emitSplatProgress({
       phase: 'ready',
@@ -864,17 +878,17 @@ export async function createViewerApp(options: ViewerAppOptions): Promise<Viewer
     clearPanoEnvironment();
     sourceTransform = constrainSourceTransformForType(options.sourceTransform, 'pano360');
     if (!url) {
-      setStatus('已清除 360 环境。');
+      setStatus(tr('viewer.threeD.statusMessages.engine.panoCleared'));
       return;
     }
-    setStatus('加载 360 环境...');
+    setStatus(tr('viewer.threeD.statusMessages.engine.panoLoading'));
     let asset: pc.Asset;
     try {
       asset = await loadAsset(url, 'texture');
     } catch (error) {
       if (destroyed) return;
       const raw = error instanceof Error ? error.message : String(error);
-      setStatus(`360 环境加载失败：${raw}`);
+      setStatus(tr('viewer.threeD.statusMessages.engine.panoFailed', { message: raw }));
       throw error instanceof Error ? error : new Error(raw);
     }
 
@@ -916,7 +930,7 @@ export async function createViewerApp(options: ViewerAppOptions): Promise<Viewer
       camera.camera.farClip = radius * 4;
     }
     fly.resetToInitial();
-    setStatus('已加载 360 环境 · 可在球内导演摆放');
+    setStatus(tr('viewer.threeD.statusMessages.engine.panoLoaded'));
   }
 
   // ---------- Collision 物理表面 ----------
@@ -959,14 +973,18 @@ export async function createViewerApp(options: ViewerAppOptions): Promise<Viewer
     }
     collisionMeshInstances = [];
     if (!url) return;
-    setStatus(`加载 collision GLB: ${url}`);
+    setStatus(tr('viewer.threeD.statusMessages.engine.collisionLoading', { url }));
     let asset: pc.Asset;
     try {
       asset = await loadAsset(url, 'container');
     } catch (error) {
       if (destroyed) return;
       console.warn('[viewer] collision load failed (fallback to y=0 plane):', error);
-      setStatus(`collision 加载失败，已降级到 y=0：${(error as Error)?.message ?? error}`);
+      setStatus(
+        tr('viewer.threeD.statusMessages.engine.collisionFailed', {
+          message: String((error as Error)?.message ?? error),
+        }),
+      );
       return;
     }
     if (destroyed) {
@@ -976,7 +994,7 @@ export async function createViewerApp(options: ViewerAppOptions): Promise<Viewer
     type ContainerResource = { instantiateRenderEntity?: (opts?: { castShadows?: boolean }) => pc.Entity };
     const resource = asset.resource as ContainerResource | null;
     if (!resource?.instantiateRenderEntity) {
-      setStatus('collision 资源缺少 instantiateRenderEntity，跳过');
+      setStatus(tr('viewer.threeD.statusMessages.engine.collisionMissingApi'));
       return;
     }
     collisionEntity = resource.instantiateRenderEntity({ castShadows: false });
@@ -987,7 +1005,11 @@ export async function createViewerApp(options: ViewerAppOptions): Promise<Viewer
     collisionMeshInstances = (collisionEntity.findComponents('render') as pc.RenderComponent[])
       .flatMap((render) => Array.from(render.meshInstances ?? []));
     applyCollisionMaterials();
-    setStatus(`已加载 collision GLB（调试线框），meshInstances=${collisionMeshInstances.length}`);
+    setStatus(
+      tr('viewer.threeD.statusMessages.engine.collisionLoaded', {
+        count: collisionMeshInstances.length,
+      }),
+    );
   }
 
   // ---------- 占位放置 / 截图 ----------

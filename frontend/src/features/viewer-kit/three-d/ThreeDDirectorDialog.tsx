@@ -55,7 +55,7 @@ import {
 import { ThreeDStageCanvas } from "./ThreeDStageCanvas";
 import {
   POSES,
-  POSE_LABELS,
+  POSE_LABEL_KEYS,
   requirePoseName,
   SHAPE_HINT_NAMES,
   type PoseName,
@@ -845,7 +845,7 @@ function ThreeDDirectorSurface({
   const [error, setError] = useState<string | null>(null);
   const [sceneBusy, setSceneBusy] = useState(false);
   const [sceneStatus, setSceneStatus] = useState<string | null>(
-    initialScene ? "已恢复上次保存的场景" : null,
+    initialScene ? t("viewer.threeD.sceneRestored") : null,
   );
   const lastRestoredSourceIdRef = useRef<string | null>(null);
   const initialSceneRef = useRef(initialScene);
@@ -1919,7 +1919,7 @@ function ThreeDDirectorSurface({
   const selectedKindLabel = selectedKind
     ? t(`viewer.threeD.markerKinds.${selectedKind}`, { defaultValue: selectedKind })
     : null;
-  const selectedPoseLabel = selection?.pose ? POSE_LABELS[selection.pose] : "";
+  const selectedPoseLabel = selection?.pose ? t(POSE_LABEL_KEYS[selection.pose]) : "";
   const selectedPositionLabel = selection
     ? `(${selection.position.map((value) => value.toFixed(2)).join(", ")})`
     : "";
@@ -2116,7 +2116,12 @@ function ThreeDDirectorSurface({
         <aside className="min-h-0 overflow-y-auto border-r border-white/[0.08] bg-[#191a1f]/94 px-4 pb-4 pt-0 text-[12px] backdrop-blur-sm">
           <div className="sticky top-0 z-20 -mx-4 mb-2 flex items-center justify-between gap-3 bg-[#191a1f]/58 px-4 pb-3 pt-5 backdrop-blur-xl">
             <div className="min-w-0">
-              <div className="truncate text-[15px] font-semibold leading-5 text-white">{t("viewer.threeD.directorWorld")}</div>
+              <div
+                data-testid="director-world-panel-title"
+                className="truncate text-[15px] font-semibold leading-5 text-white"
+              >
+                {t("viewer.threeD.directorWorld")}
+              </div>
             </div>
             <Button
               type="button"
@@ -2310,7 +2315,7 @@ function ThreeDDirectorSurface({
               >
                 {POSES.map((pose) => (
                   <option key={pose} value={pose}>
-                    {POSE_LABELS[pose]}
+                    {t(POSE_LABEL_KEYS[pose])}
                   </option>
                 ))}
               </SelectField>

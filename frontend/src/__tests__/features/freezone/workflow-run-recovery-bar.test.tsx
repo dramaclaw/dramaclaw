@@ -100,6 +100,25 @@ describe("WorkflowRunRecoveryBar", () => {
     )).toEqual(["video-1"]);
   });
 
+  it("does not expose blocked downstream generation as another retry target", () => {
+    const runWithBlockedGeneration: FreezoneWorkflowRun = {
+      ...failedRun,
+      actions: [
+        { node_id: "video-1", action: "generate_video", status: "failed" },
+        {
+          node_id: "compose-1",
+          action: "auto_compose_video",
+          status: "blocked",
+          error: "跳过 auto_compose_video：上游节点 video-1 未成功完成。",
+        },
+      ],
+    };
+    expect(recoverableWorkflowNodeIds(
+      runWithBlockedGeneration,
+      new Set(["video-1", "compose-1"]),
+    )).toEqual(["video-1"]);
+  });
+
   it("hides recovery records whose nodes were deleted from the canvas", async () => {
     useCanvasStore.getState().setCanvasData([], []);
 

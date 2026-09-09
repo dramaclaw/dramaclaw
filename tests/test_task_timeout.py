@@ -179,6 +179,87 @@ def test_run_project_task_core_injects_deadline_for_runner(monkeypatch):
     assert isinstance(captured["__deadline_monotonic"], float)
 
 
+def test_agent_product_pending_timeout_is_reviewed_without_refund(monkeypatch):
+    from novelvideo.chat import evidence_metrics
+    from novelvideo.freezone.agent_product_operations import (
+        AgentProductSettlementPending,
+    )
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+
+    events: list[tuple[str, str]] = []
+    observed_metrics: list[str] = []
+    monkeypatch.setattr(evidence_metrics, "observe", observed_metrics.append)
+
+    class UsageMeter:
+        async def resolve_feature_credit_reservation(self, _identity):
+            from novelvideo.ports.usage import FeatureSettlementResolution
+
+            return FeatureSettlementResolution(
+                outcome="resolved",
+                reservation_id="reservation_1",
+                feature_key="freezone.agent.recipe_result",
+                model_call_credit_policy="feature_included",
+            )
+
+        async def mark_feature_credit_settlement_for_review(
+            self, reservation_id, *, metadata=None
+        ):
+            events.append(("review", reservation_id))
+            assert metadata["operation_status"] == "submitted"
+            return {"status": "awaiting"}
+
+        async def settle_cancelled_feature_credit_reservation(self, *_args, **_kwargs):
+            events.append(("refund", "unexpected"))
+
+        async def settle_feature_credit_reservation(self, *_args, **_kwargs):
+            events.append(("confirm", "unexpected"))
+
+    def pending_runner(_envelope, _ctx):
+        raise AgentProductSettlementPending(
+            operation_id="agent_product_test", status="submitted"
+        )
+
+    async def not_cancelled(**_kwargs):
+        return False
+
+    async def no_metrics(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "is_cancel_requested", not_cancelled)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(run_core, "_emit_project_task_metrics", no_metrics)
+    monkeypatch.setattr(
+        run_core, "_set_project_task_metrics_context", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
+    register_project_task_runner(
+        "freezone_agent_recipe_result", pending_runner, requires_home_node=True
+    )
+
+    manager = _FakeTaskManager()
+    result = run_core.run_project_task_core_sync(
+        _verified_delivery(
+            task_type="freezone_agent_recipe_result",
+            billing_metadata={"feature_credit_reservation_id": "reservation_1"},
+        ),
+        SimpleNamespace(
+            project_id="proj_timeout", requester_user_id="usr_1", is_home_node=True
+        ),
+        manager,
+        run_task_id="task_1",
+    )
+
+    assert result["pending"] is True
+    assert result["settlement_status"] == "awaiting_reconciliation"
+    assert events == [("review", "reservation_1")]
+    assert manager.failed[0]["metadata"]["error_code"] == (
+        "AGENT_PRODUCT_SETTLEMENT_PENDING"
+    )
+    assert observed_metrics == ["agent_product_awaiting_reconciliation"]
+
+
 def test_run_project_task_core_rejects_raw_dict_before_side_effects():
     from novelvideo.task_backend import run_core
 
@@ -304,6 +385,9 @@ def test_run_project_task_core_confirms_delivered_result_when_task_state_write_f
     async def fake_is_cancel_requested(**_kwargs):
         return False
 
+    async def fake_emit_project_task_metrics(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
     monkeypatch.setattr(run_core, "is_cancel_requested", fake_is_cancel_requested)
     monkeypatch.setattr(run_core, "get_usage_meter", lambda: UsageMeter())
@@ -335,6 +419,89 @@ def test_run_project_task_core_confirms_delivered_result_when_task_state_write_f
             {
                 "source": "task_completed",
                 "business_outcome": "delivered",
+            },
+        )
+    ]
+
+
+def test_text_generation_settlement_uses_actual_delivered_output_chars(monkeypatch):
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+
+    settlements: list[tuple[str, dict]] = []
+
+    class UsageMeter:
+        async def resolve_feature_credit_reservation(self, _identity):
+            from novelvideo.ports.usage import FeatureSettlementResolution
+
+            return FeatureSettlementResolution(
+                outcome="not_applicable",
+                feature_key="freezone.text_generate",
+                model_call_credit_policy="separate",
+            )
+
+        async def settle_feature_credit_reservation(
+            self, reservation_id, *, action, metadata=None
+        ):
+            assert action == "confirm"
+            settlements.append((reservation_id, metadata or {}))
+            return {"decision": action}
+
+    def fake_runner(_envelope, _ctx):
+        return {
+            "generated_text": " 雨 夜\n重逢 ",
+            "__feature_credit_reservation_id": "reservation_actual_text",
+        }
+
+    async def fake_is_cancel_requested(**_kwargs):
+        return False
+
+    async def fake_emit_project_task_metrics(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "is_cancel_requested", fake_is_cancel_requested)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(
+        run_core, "_emit_project_task_metrics", fake_emit_project_task_metrics
+    )
+    monkeypatch.setattr(
+        run_core, "_set_project_task_metrics_context", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
+    register_project_task_runner("freezone_text_generate", fake_runner)
+
+    result = run_core.run_project_task_core_sync(
+        _verified_delivery(
+            task_type="freezone_text_generate",
+            project_id="proj_text",
+            billing_metadata=None,
+        ),
+        SimpleNamespace(
+            project_id="proj_text", requester_user_id="usr_1", is_home_node=True
+        ),
+        _FakeTaskManager(),
+        run_task_id="task_1",
+    )
+
+    assert result == {"generated_text": " 雨 夜\n重逢 "}
+    assert settlements == [
+        (
+            "reservation_actual_text",
+            {
+            "source": "task_completed",
+            "business_outcome": "delivered",
+            "actual_billing": {
+                "operation": "text_generate",
+                "billable_chars": 4,
+                "pricing_quantity": 4,
+                "pricing_metrics": {
+                    "call_count": 1,
+                    "item_count": 1,
+                    "billable_chars": 4,
+                },
+                "quantity_source": "trusted_runner_result",
+            },
             },
         )
     ]

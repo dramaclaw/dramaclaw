@@ -6,7 +6,7 @@
 
 [mcp_servers.dramaclaw]
 command = "/path/to/dramaclaw-ce/.venv/bin/python"
-args = ["-m", "novelvideo.chat.agent_mcp"]
+args = ["/path/to/dramaclaw-ce/agent-kit/scripts/launch_mcp.py", "tools"]
 cwd = "/path/to/dramaclaw-ce"
 
 [mcp_servers.dramaclaw.env]
@@ -25,3 +25,11 @@ DRAMACLAW_USER = "local"
 # Headless fallback only. Set this to "1" if you intentionally want MCP to
 # write canvas payloads directly without the Freezone frontend bridge.
 # DRAMACLAW_MCP_DIRECT_CANVAS_APPLY = "1"
+
+[mcp_servers.dramaclaw_workflows]
+command = "/path/to/dramaclaw-ce/.venv/bin/python"
+args = ["/path/to/dramaclaw-ce/agent-kit/scripts/launch_mcp.py", "workflows"]
+cwd = "/path/to/dramaclaw-ce"
+
+[mcp_servers.dramaclaw_workflows.env]
+DRAMACLAW_USERNAME = "local"

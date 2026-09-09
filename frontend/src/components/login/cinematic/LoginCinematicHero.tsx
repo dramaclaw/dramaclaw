@@ -268,7 +268,7 @@ export function LoginCinematicHero({
               className={`${styles.heroPrimary} ${layout.heroPrimary}`}
               onClick={onStart}
             >
-              让灵感发生
+              {t("loginCinematic.hero.headline")}
             </button>
             <a
               className={`${styles.heroSecondary} ${layout.heroSecondary}`}
@@ -290,7 +290,7 @@ export function LoginCinematicHero({
         >
           <div className={layout.scrollCueInner}>
             <Mouse className={layout.scrollMouseIcon} />
-            <span>向下滑动</span>
+            <span>{t("loginCinematic.hero.scrollHint")}</span>
             <ChevronDown className={layout.scrollArrowIcon} />
           </div>
         </div>

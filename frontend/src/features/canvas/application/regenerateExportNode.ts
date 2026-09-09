@@ -5,6 +5,11 @@ import {
   submitFreezoneRedraw,
   type FreezoneRedrawAspectRatio,
 } from '@/api/ops';
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from 'i18next';
+
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -48,7 +53,7 @@ async function regenerateFreezoneRedrawNode(
   const store = useCanvasStore.getState();
   const project = readUrl().project;
   if (!project) {
-    store.updateNodeData(nodeId, { generationError: '当前 URL 没有 project，无法重试' });
+    store.updateNodeData(nodeId, { generationError: i18n.t('canvas.generation.missingProjectRetry') });
     return;
   }
 
@@ -161,7 +166,7 @@ export async function regenerateExportImageNode(nodeId: string): Promise<void> {
       ...generationTaskDescriptor(ref),
     });
   } catch (error) {
-    const resolved = resolveErrorContent(error, '图像生成失败');
+    const resolved = resolveErrorContent(error, i18n.t('canvas.resumeGeneration.imageFailed'));
     store.updateNodeData(nodeId, {
       isGenerating: false,
       generationStartedAt: null,

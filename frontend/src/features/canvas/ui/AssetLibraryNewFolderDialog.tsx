@@ -9,6 +9,7 @@
 // 字段名和长度上限，各自传进来即可。
 import { useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { Loader2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,8 @@ export interface AssetLibraryNewFolderDialogProps {
   z?: number;
   /** 重命名复用同一个弹窗，只换标题与初始值。 */
   title?: string;
+  /** 新建还是改名——只影响标题下那句说明，默认按新建。 */
+  mode?: 'create' | 'rename';
   initialName?: string;
   /** 输入框上方的字段名。改素材名时传「资产名称」。 */
   fieldLabel?: string;
@@ -36,12 +39,14 @@ export function AssetLibraryNewFolderDialog({
   onClose,
   onSubmit,
   z = 320,
-  title = '新建文件夹',
+  title,
+  mode = 'create',
   initialName = '',
-  fieldLabel = '文件夹名称',
-  placeholder = '请输入文件夹名称',
+  fieldLabel,
+  placeholder,
   maxLength = FOLDER_NAME_MAX_LEN,
 }: AssetLibraryNewFolderDialogProps) {
+  const { t } = useTranslation();
   // 素材改名弹窗和文件夹弹窗可能同时挂在树上，写死 id 会重复。
   const inputId = useId();
   const errorId = useId();
@@ -104,18 +109,20 @@ export function AssetLibraryNewFolderDialog({
       <div className="relative w-[min(420px,90vw)] overflow-hidden rounded-xl border border-[var(--ui-border-strong)] bg-[var(--ui-surface-modal)] shadow-[0_18px_48px_rgba(0,0,0,0.5)]">
         <div className="flex items-start justify-between gap-4 px-5 pb-2 pt-5">
           <div>
-            <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+            <h3 className="text-lg font-semibold text-foreground">
+              {title ?? t('canvas.assetLibrary.newFolder')}
+            </h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              {title === '新建文件夹'
-                ? '创建后可立即用于归档和上传资产'
-                : '修改后会同步更新资产库中的显示名称'}
+              {mode === 'create'
+                ? t('canvas.assetLibrary.folderDialog.createHint')
+                : t('canvas.assetLibrary.folderDialog.renameHint')}
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            title="关闭"
-            aria-label="关闭"
+            title={t('common.close')}
+            aria-label={t('common.close')}
             disabled={submitting}
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-[rgba(var(--bg-rgb)/0.5)] hover:text-foreground disabled:opacity-40"
           >
@@ -129,7 +136,8 @@ export function AssetLibraryNewFolderDialog({
               htmlFor={inputId}
               className="text-xs font-medium text-foreground"
             >
-              {fieldLabel} <span className="text-destructive">*</span>
+              {fieldLabel ?? t('canvas.assetLibrary.folderDialog.fieldLabel')}{' '}
+              <span className="text-destructive">*</span>
             </label>
             <span className="text-xs text-muted-foreground">
               {name.length}/{maxLength}
@@ -141,7 +149,9 @@ export function AssetLibraryNewFolderDialog({
               value={name}
               autoFocus
               maxLength={maxLength}
-              placeholder={placeholder}
+              placeholder={
+                placeholder ?? t('canvas.assetLibrary.folderDialog.placeholder')
+              }
               onChange={(event) => setName(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') void handleSubmit();
@@ -169,7 +179,7 @@ export function AssetLibraryNewFolderDialog({
             className="px-4 text-muted-foreground hover:text-foreground"
             onClick={onClose}
           >
-            取消
+            {t('common.cancel')}
           </Button>
           <Button
             size="sm"
@@ -178,7 +188,7 @@ export function AssetLibraryNewFolderDialog({
             onClick={() => void handleSubmit()}
           >
             {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-            保存
+            {t('common.save')}
           </Button>
         </div>
       </div>

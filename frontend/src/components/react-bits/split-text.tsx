@@ -122,6 +122,11 @@ export default function SplitText({
         reduceWhiteSpace: false,
         onSplit: (self) => {
           assignTargets(self);
+          // 拆分完成后每个字自带一份 background-clip:text 的绘制，父元素那份就成了
+          // 多余的第二层；而父元素这时只剩词与词之间的空白文本节点，它的文字遮罩会
+          // 在标题左上角糊出一块笔画碎片（英文标题换行数与中文不同时尤其明显）。
+          // 打个标记让样式表能把父元素那层关掉——拆分没跑成时标记不在，渐变照旧。
+          el.dataset.rbsplit = "done";
           if (initiallyHidden) {
             el.style.visibility = "visible";
           }
@@ -167,6 +172,7 @@ export default function SplitText({
         } catch {
           /* noop */
         }
+        delete el.dataset.rbsplit;
         el._rbsplitInstance = null;
       };
     },

@@ -29,7 +29,7 @@ function hasToolableImage(node: CanvasNode): boolean {
 
 export const cropToolPlugin: CanvasToolPlugin = {
   type: NODE_TOOL_TYPES.crop,
-  label: '裁剪',
+  labelKey: 'canvas.tools.crop',
   icon: 'crop',
   editor: 'crop',
   supportsNode: (node) => hasToolableImage(node),
@@ -40,10 +40,10 @@ export const cropToolPlugin: CanvasToolPlugin = {
   fields: [
     {
       key: 'aspectRatio',
-      label: '目标比例',
+      labelKey: 'canvas.cropTool.targetRatio',
       type: 'select',
       options: [
-        { label: '自由', value: 'free' },
+        { labelKey: 'canvas.cropTool.ratioFree', value: 'free' },
         { label: '1:1', value: '1:1' },
         { label: '16:9', value: '16:9' },
         { label: '9:16', value: '9:16' },
@@ -58,7 +58,7 @@ export const cropToolPlugin: CanvasToolPlugin = {
 
 export const annotateToolPlugin: CanvasToolPlugin = {
   type: NODE_TOOL_TYPES.annotate,
-  label: '标注',
+  labelKey: 'canvas.tools.annotate',
   icon: 'annotate',
   editor: 'annotate',
   supportsNode: (node) => hasToolableImage(node),
@@ -75,7 +75,7 @@ export const annotateToolPlugin: CanvasToolPlugin = {
 
 export const splitStoryboardToolPlugin: CanvasToolPlugin = {
   type: NODE_TOOL_TYPES.splitStoryboard,
-  label: '分格抽取',
+  labelKey: 'canvas.tools.splitStoryboard',
   icon: 'split',
   editor: 'split',
   supportsNode: (node) => hasToolableImage(node),

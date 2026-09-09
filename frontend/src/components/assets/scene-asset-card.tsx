@@ -259,7 +259,7 @@ export function SceneAssetCard({
               <div className="flex shrink-0 flex-wrap items-center gap-1">
                 {scene.scene_type && (
                   <span className={ASSET_CARD_META_BADGE_CLASS}>
-                    {sceneTypeLabel(scene.scene_type)}
+                    {sceneTypeLabel(scene.scene_type, t)}
                   </span>
                 )}
                 {derivedBase && (

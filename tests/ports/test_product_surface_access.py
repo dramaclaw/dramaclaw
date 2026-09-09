@@ -8,7 +8,7 @@ from novelvideo.ports.product_surface_access import (
 
 
 @pytest.mark.asyncio
-async def test_ce_surface_defaults_keep_assistants_hidden(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_ce_surface_defaults_keep_assistants_hidden(monkeypatch) -> None:
     monkeypatch.delenv("ST_CE_ENABLE_ASSISTANT_SURFACES", raising=False)
     access = LocalProductSurfaceAccess()
     items = await access.get_effective_access("local-user")
@@ -21,9 +21,7 @@ async def test_ce_surface_defaults_keep_assistants_hidden(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
-async def test_ce_surface_local_override_enables_assistants(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_ce_surface_local_override_enables_assistants(monkeypatch) -> None:
     monkeypatch.setenv("ST_CE_ENABLE_ASSISTANT_SURFACES", "true")
     access = LocalProductSurfaceAccess()
     items = await access.get_effective_access("local-user")

@@ -34,9 +34,15 @@ import {
   type CanvasNode,
   type GroupNodeData,
 } from '@/features/canvas/domain/canvasNodes';
-import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
-import { computeSnapAlign } from '@/features/canvas/snap-align/computeSnapAlign';
-import { useSnapAlignStore } from '@/features/canvas/snap-align/snapAlignStore';
+import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
+import {
+  computeSnapAlign,
+  SNAP_ALIGN_SCREEN_THRESHOLD,
+} from '@/features/canvas/snap-align/computeSnapAlign';
+import {
+  useSnapAlignStore,
+  type SnapAlignGuides,
+} from '@/features/canvas/snap-align/snapAlignStore';
 import {
   STORYBOARD_CELL_GAP,
   STORYBOARD_HEADER_PADDING,
@@ -289,7 +295,7 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
     const rawTop = fromRect.y + (drag.cur.y - drag.start.y) / zoom;
     let left = rawLeft;
     let top = rawTop;
-    let guides = { vertical: [] as number[], horizontal: [] as number[] };
+    let guides: SnapAlignGuides = { vertical: [], horizontal: [] };
 
     if (snapEnabled) {
       const draggedFlow = { x: groupPosition.x + rawLeft, y: groupPosition.y + rawTop };
@@ -311,7 +317,9 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
           height: board.cellHeight,
         } as unknown as CanvasNode);
       }
-      const snap = computeSnapAlign(pseudo, draggedFlow, others);
+      const snap = computeSnapAlign(pseudo, draggedFlow, others, {
+        threshold: SNAP_ALIGN_SCREEN_THRESHOLD / zoom,
+      });
       left = snap.position.x - groupPosition.x;
       top = snap.position.y - groupPosition.y;
       guides = snap.guides;
@@ -369,12 +377,19 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
     if (isStoryboard || isInteracting) {
       return;
     }
-    fitGroupToChildren(id);
+    // A workflow approval can mount dozens of freshly-created children in one
+    // commit. React Flow then reports their measurements in rapid succession.
+    // Writing the whole canvas store synchronously from every effect pass can
+    // nest those measurement commits until React trips its maximum-update-depth
+    // guard. Coalesce geometry reconciliation to the next animation frame; a
+    // newer measurement cancels the stale request through the effect cleanup.
+    const frameId = window.requestAnimationFrame(() => fitGroupToChildren(id));
+    return () => window.cancelAnimationFrame(frameId);
   }, [childGeometrySignature, isStoryboard, isInteracting, fitGroupToChildren, id]);
 
   const resolvedTitle = useMemo(
-    () => resolveNodeDisplayName(CANVAS_NODE_TYPES.group, data),
-    [data]
+    () => localizeNodeDisplayName(CANVAS_NODE_TYPES.group, data, t),
+    [data, t]
   );
   const headerTitle = isStoryboard
     ? t('canvas.storyboardGroup.headerCount', { count: childCount })

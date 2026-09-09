@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 import { buildChatTaskLabel } from "@/features/superchat/task-notification-label";
 import type { TaskState } from "@/task-center/types";
 
-const t = (key: string) => key;
+import { zhT } from "../../helpers/i18n-fixtures";
+
+// 真词条表：key 写错、词条漏了都会当场抛，不会静悄悄回显 key。
+const t = zhT as unknown as (key: string, options?: Record<string, unknown>) => string;
 
 function task(overrides: Partial<TaskState>): TaskState {
   return {

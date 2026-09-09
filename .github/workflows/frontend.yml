@@ -8,10 +8,12 @@ on:
   push:
     paths:
       - "frontend/**"
+      - "scripts/check_frontend_i18n.py"
       - ".github/workflows/frontend.yml"
   pull_request:
     paths:
       - "frontend/**"
+      - "scripts/check_frontend_i18n.py"
       - ".github/workflows/frontend.yml"
 
 permissions:
@@ -22,6 +24,22 @@ defaults:
     working-directory: frontend
 
 jobs:
+  # 硬编码中文棘轮。存量已清零，所以没有 allowlist 文件（缺文件等于空 allowlist），
+  # 任何新命中都直接失败。确需保留中文的行加 `// i18n-exempt`，整块协议值表用
+  # `// i18n-exempt-start` / `// i18n-exempt-end`。
+  i18n-hardcoded-copy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check for hardcoded Chinese copy in frontend/src
+        run: python3 scripts/check_frontend_i18n.py
+
   build-test:
     runs-on: ubuntu-latest
     steps:

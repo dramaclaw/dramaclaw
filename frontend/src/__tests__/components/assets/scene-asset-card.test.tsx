@@ -8,68 +8,15 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { SceneAssetCard } from "@/components/assets/scene-asset-card";
 import type { SceneAsset } from "@/types/scene";
 
+import { zhTranslation } from "../../helpers/i18n-fixtures";
+
 const i18n = i18next.createInstance();
 
 beforeAll(async () => {
   await i18n.use(initReactI18next).init({
     lng: "zh",
     fallbackLng: "zh",
-    resources: {
-      zh: {
-        translation: {
-          common: {
-            cancel: "取消",
-          },
-          assets: {
-            common: {
-              edit: "编辑",
-              delete: "删除",
-              generated: "已生成",
-              missing: "未生成",
-            },
-            scenes: {
-              master: "源图",
-              pano: "360 全景",
-              uploadMaster: "上传/替换源图",
-              generateMaster: "生成源图",
-              regenerateMaster: "重生源图",
-              deleteMaster: "删除源图",
-              reverse: "reverse",
-              generateReverse: "生成 reverse",
-              regenerateReverse: "重生 reverse",
-              uploadPano: "上传/替换 360",
-              generatePanoFromText: "生成 360",
-              generatePanoFromMaster: "生成 360",
-              generatePanoFromMasterReverse: "生成 360",
-              deletePano: "删除 360",
-              openPanoViewer: "打开360查看器",
-              noMaster: "未生成 master.png",
-              noReverse: "未生成 reverse_master.png",
-              noPano: "未生成 pano_360.png",
-              stage: {
-                title: "导演世界",
-                customWorld: "自定义导演世界 ✅",
-                masterWorld: "正面导演世界 ✅",
-                reverseWorld: "背面导演世界 ✅",
-                panoWorld: "360 导演世界 ✅",
-                uploadCustom: "上传/替换 custom 包",
-                deleteCustom: "删除 custom 包",
-                masterToPly: "master→导演世界",
-                reverseToPly: "reverse→导演世界",
-                panoToPly: "360→导演世界",
-                singleFaceFeature: "场景单面转 SOG",
-                panoFeature: "场景全景转 SOG",
-                confirmTitle: "确认启动转换",
-                confirmDescription: "{{feature}}，确认后将立即启动任务。",
-                confirmAction: "确认并启动",
-                openWorld: "打开导演世界",
-                worldNotReady: "导演世界（片场未就绪）",
-              },
-            },
-          },
-        },
-      },
-    },
+    resources: { zh: { translation: zhTranslation } },
     interpolation: { escapeValue: false },
   });
 });
@@ -160,11 +107,11 @@ describe("SceneAssetCard", () => {
 
     expect(screen.getByText("皇宫大殿")).toBeInTheDocument();
     expect(screen.getByText("源图")).toBeInTheDocument();
-    expect(screen.getByText("reverse")).toBeInTheDocument();
+    expect(screen.getByText("背面")).toBeInTheDocument();
     expect(screen.getByText("360 全景")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "上传/替换源图" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "上传源图" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重生源图" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "重生 reverse" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重生 背面" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上传/替换 360" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "生成 360" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "删除 360" })).toBeInTheDocument();
@@ -176,15 +123,15 @@ describe("SceneAssetCard", () => {
     expect(screen.getByText("正面导演世界 ✅")).toBeInTheDocument();
     expect(screen.getByText("360 导演世界 ✅")).toBeInTheDocument();
     expect(screen.queryByText("/tmp/director_worlds/hall/v1")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "上传/替换 custom 包" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "删除 custom 包" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "master→导演世界" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "reverse→导演世界" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "上传/替换 自定义 包" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "删除 自定义 包" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "正面→导演世界" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "背面→导演世界" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "360→导演世界" })).toBeInTheDocument();
     expect(screen.queryByText(/voxel/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/DirectorStage/i)).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "重生 reverse" }));
+    fireEvent.click(screen.getByRole("button", { name: "重生 背面" }));
     expect(handlers.onGenerateReverse).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("button", { name: "生成 360" }));
@@ -199,7 +146,7 @@ describe("SceneAssetCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "打开导演世界" }));
     expect(handlers.onOpenStageViewer).toHaveBeenCalledOnce();
 
-    fireEvent.click(screen.getByRole("button", { name: "master→导演世界" }));
+    fireEvent.click(screen.getByRole("button", { name: "正面→导演世界" }));
     expect(handlers.onGenerateStagePly).not.toHaveBeenCalled();
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
       "场景单面转 SOG，确认后将立即启动任务。",
@@ -238,8 +185,8 @@ describe("SceneAssetCard", () => {
       },
     );
 
-    expect(screen.getByRole("button", { name: "master→导演世界" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "reverse→导演世界" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "正面→导演世界" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "背面→导演世界" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "360→导演世界" })).toBeDisabled();
   });
 
@@ -253,9 +200,9 @@ describe("SceneAssetCard", () => {
       notes: "",
     });
 
-    expect(screen.getByText("未生成 master.png")).toBeInTheDocument();
-    expect(screen.getByText("未生成 reverse_master.png")).toBeInTheDocument();
-    expect(screen.getByText("未生成 pano_360.png")).toBeInTheDocument();
+    expect(screen.getByText("未生成 正面图")).toBeInTheDocument();
+    expect(screen.getByText("未生成 背面图")).toBeInTheDocument();
+    expect(screen.getByText("未生成 360 全景图")).toBeInTheDocument();
     const generate = screen.getByRole("button", { name: "生成 360" });
     fireEvent.click(generate);
     expect(handlers.onGeneratePano).toHaveBeenCalledWith("text");

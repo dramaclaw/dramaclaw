@@ -896,6 +896,37 @@ async def _run_freezone_video_gen_async(
         "output_path": str(out_path),
         "output_url": make_static_url_for_context(ctx, rel),
     }
+    if bool(payload.get("image_animate_gif")):
+        from novelvideo.task_backend.client import enqueue_project_task
+
+        gif_job_id = f"{job_id}-gif"
+        try:
+            queued = await enqueue_project_task(
+                ctx,
+                task_type="freezone_image_animate_gif",
+                product_surface="freezone",
+                queue_kind="ffmpeg",
+                episode=0,
+                scope=gif_job_id,
+                payload={
+                    "job_id": gif_job_id,
+                    "project_dir": str(project_dir),
+                    "video_path": str(out_path),
+                },
+            )
+            result.update(
+                {
+                    "gif_task_type": "freezone_image_animate_gif",
+                    "gif_job_id": gif_job_id,
+                    "gif_task_key": project_task_state_key(
+                        "freezone_image_animate_gif", ctx.project_id, 0, scope=gif_job_id
+                    ),
+                    "gif_queue": queued.queue,
+                }
+            )
+        except Exception:
+            # Preserve the paid video so the canvas can retry only local conversion.
+            result["gif_enqueue_error"] = "GIF 转换任务未能启动，请重试转换。"
     history_record = _append_freezone_video_node_history(
         ctx=ctx,
         project_dir=project_dir,

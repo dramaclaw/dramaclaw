@@ -10,6 +10,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { CreditCostInline } from "@/components/credit-cost-inline";
@@ -40,6 +41,7 @@ import {
 } from "@/lib/queries/props";
 import { useCharacterIdentities } from "@/lib/queries/characters";
 import { cn } from "@/lib/utils";
+import { ageGroupLabel } from "@/lib/age-group";
 import type { ErrorResponse } from "@/types/api";
 import type { Character } from "@/types/character";
 import type { EpisodePropMenuItem, EpisodeSceneMenuItem } from "@/types/episode";
@@ -456,6 +458,7 @@ function CharacterIdentityBadges({
   defaultLabel: string;
   onSetDefault?: (characterName: string, identityId: string) => void;
 }) {
+  const { t } = useTranslation();
   const { data: identitiesRes } = useCharacterIdentities(project, character.name);
   const selected = (identitiesRes?.data ?? []).filter((identity) =>
     selectedIdentitySet.has(identity.identity_id),
@@ -482,6 +485,12 @@ function CharacterIdentityBadges({
               )}
             >
               <span className="truncate">{identity.identity_name}</span>
+              {/* 身份名是生成内容（角色自己的叫法），不翻；年龄段是 code，跟着界面语言走。 */}
+              {identity.age_group ? (
+                <span className="shrink-0 rounded-[4px] border border-white/10 px-1 text-[10px] leading-4 text-muted-foreground/80">
+                  {ageGroupLabel(identity.age_group, t)}
+                </span>
+              ) : null}
               {/* Inline default picker — same affordance as the identity dialog. */}
               <label
                 className={cn(

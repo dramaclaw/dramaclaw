@@ -22,4 +22,5 @@ jobs:
       - name: Check DCO sign-off
         run: |
           python3 scripts/check_dco.py \
-            "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+            "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
+            --not origin/main

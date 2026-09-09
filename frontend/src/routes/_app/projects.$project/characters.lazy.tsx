@@ -96,6 +96,7 @@ import {
   AssetHeaderActionsSlotProvider,
   AssetHeaderActionsTarget,
 } from "@/components/assets/asset-header-actions-slot";
+import { identityPeriodLabel } from "@/lib/identity-period";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { queryKeys } from "@/lib/query-keys";
 import { getProjectCover } from "@/lib/project-cover";
@@ -173,6 +174,8 @@ const AGE_GROUP_OPTIONS = [
   { value: "elder", labelKey: "characters.ageGroups.elder" },
 ] as const;
 
+// value 是存进角色档案、后端和提示词都认的原值，只有 labelKey 跟界面语言走。
+// i18n-exempt-start
 const GENDER_OPTIONS = [
   { value: "男", labelKey: "characters.genders.male" },
   { value: "女", labelKey: "characters.genders.female" },
@@ -183,6 +186,7 @@ const ROLE_OPTIONS = [
   { value: "配角", labelKey: "characters.roles.supporting" },
   { value: "反派", labelKey: "characters.roles.villain" },
 ] as const;
+// i18n-exempt-end
 
 const ATTEMPT_WARN_THRESHOLD = 3;
 const CHARACTER_SELECT_CONTENT_CLASS =
@@ -676,9 +680,10 @@ function CharacterListItem({
 }) {
   const { t } = useTranslation();
   const ageKey = labelKeyFor(AGE_GROUP_OPTIONS, character.age_group);
+  const genderKey = labelKeyFor(GENDER_OPTIONS, character.gender);
   const metaParts = [
     ageKey ? t(ageKey) : undefined,
-    character.gender || undefined,
+    genderKey ? t(genderKey) : character.gender || undefined,
     character.body_type || undefined,
   ].filter(Boolean);
 
@@ -813,12 +818,15 @@ function CharacterHeaderRow({
   return (
     <div className="flex items-start gap-2">
       <div className="min-w-0 flex-1 flex flex-wrap items-center gap-2">
+        {/* 比的是档案里存的原值，见 GENDER_OPTIONS。 */}
+        {/* i18n-exempt-start */}
         {character.gender === "男" && (
           <Mars className="size-4 text-sky-400" aria-hidden />
         )}
         {character.gender === "女" && (
           <Venus className="size-4 text-pink-400" aria-hidden />
         )}
+        {/* i18n-exempt-end */}
         <h2 className="truncate text-[19px] font-semibold tracking-tight text-foreground">
           {character.name}
         </h2>
@@ -1601,7 +1609,7 @@ function IdentityCard({
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 flex flex-wrap items-center gap-1.5">
           <h4 className="truncate text-sm font-semibold text-foreground">
-            {identity.identity_name}
+            {identityPeriodLabel(identity.identity_name, t)}
           </h4>
           <code className="truncate rounded-[5px] bg-white/[0.04] px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
             {identity.identity_id}
@@ -3205,6 +3213,7 @@ function CharactersPageContent() {
     projectConfig?.narration_style === "first_person";
   const mainCopy = characterMainCopyForSpineTemplate(
     projectConfig?.spine_template,
+    t,
   );
   const filteredCharacters = useMemo(
     () => filterCharacters(characters, searchQuery),

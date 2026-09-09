@@ -13,8 +13,11 @@ from novelvideo.egress_context import (
     TrustedEgressContext,
     TrustedRunnerEnvelope,
 )
+from novelvideo.ports import get_usage_meter
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import (
+    TaskCancelled,
+    TaskTimedOut,
     await_envelope_with_cancel_watch,
     await_with_cancel_watch as _await_with_cancel_watch,
 )
@@ -23,6 +26,238 @@ from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 from novelvideo.task_backend.projection import read_projection
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_state import get_task_manager
+
+
+async def _run_image_output(envelope: dict[str, Any], ctx: ProjectContext, *, vectorize: bool) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.image_outputs import transcode_gif, vectorize_image
+    from novelvideo.freezone.paths import output_path_for_job
+
+    payload = envelope.get("payload") or {}
+    project_dir = Path(ctx.output_dir).resolve()
+    source = Path(str(payload["source_path" if vectorize else "video_path"])).resolve()
+    if not source.is_relative_to(project_dir):
+        raise ValueError("素材不属于当前项目。")
+    job_id = str(payload["job_id"])
+    if not job_id or Path(job_id).name != job_id or job_id in {".", ".."}:
+        raise ValueError("Invalid job id")
+    task_type = "freezone_image_vectorize" if vectorize else "freezone_image_animate_gif"
+    output = output_path_for_job(project_dir, task_type, job_id).with_suffix(".svg" if vectorize else ".gif")
+    await (vectorize_image(source, output) if vectorize else transcode_gif(source, output))
+    url = make_static_url_for_context(ctx, output.relative_to(project_dir).as_posix(), local_path=output)
+    return {"job_id": job_id, "svg_url" if vectorize else "gif_url": url, "output_url": url, "url": url}
+
+
+async def _run_freezone_image_animate_gif_async(envelope, ctx):
+    return await _run_image_output(envelope, ctx, vectorize=False)
+
+
+def run_freezone_image_animate_gif(envelope, ctx):
+    return _run_cancellable(envelope, _run_freezone_image_animate_gif_async(envelope, ctx))
+
+
+def run_freezone_image_vectorize(envelope, ctx):
+    return _run_cancellable(envelope, _run_image_output(envelope, ctx, vectorize=True))
+
+
+AGENT_PRODUCT_TASK_TYPES = (
+    "freezone_agent_workflow_result",
+    "freezone_agent_recipe_result",
+    "freezone_agent_workflow_generate",
+    "freezone_agent_recipe_generate",
+)
+
+
+async def _run_freezone_agent_product_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    """Wait for a trusted, persisted product result before EE settlement."""
+    from novelvideo.freezone.agent_product_operations import (
+        PENDING_STATUSES,
+        read_agent_product_operation,
+    )
+
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
+    operation_id = str(payload.get("operation_id") or "").strip()
+    product_kind = str(payload.get("product_kind") or "").strip()
+    run_task_id = str(envelope.get("__run_task_id") or "").strip()
+    if not operation_id or not product_kind or not run_task_id:
+        raise ValueError("agent product task payload is incomplete")
+    while True:
+        operation = await asyncio.to_thread(
+            read_agent_product_operation,
+            project_dir=Path(ctx.state_dir),
+            operation_id=operation_id,
+        )
+        if operation is None:
+            raise RuntimeError("agent product operation disappeared")
+        if operation["product_kind"] != product_kind:
+            raise RuntimeError("agent product operation kind changed")
+        bound_task_id = str(operation.get("task_id") or "")
+        if bound_task_id and bound_task_id != run_task_id:
+            raise RuntimeError("agent product operation is bound to another task")
+        status = str(operation.get("status") or "")
+        if status == "delivered":
+            evidence = operation.get("model_evidence") or {}
+            result_ref = operation.get("result_ref") or {}
+            if not evidence.get("model_call_id") or not result_ref.get("id"):
+                raise RuntimeError(
+                    "agent product result lacks trusted delivery evidence"
+                )
+            return {
+                "ok": True,
+                "operation_id": operation_id,
+                "product_kind": product_kind,
+                "delivery_status": "delivered",
+                "model_evidence": evidence,
+                "result_ref": result_ref,
+            }
+        if status in {"failed", "cancelled"}:
+            raise RuntimeError(
+                f"agent product generation ended without delivery: {status}"
+            )
+        if status not in PENDING_STATUSES:
+            raise RuntimeError(f"invalid agent product operation status: {status}")
+        await asyncio.sleep(0.2)
+
+
+def run_freezone_agent_product(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    try:
+        return _run_cancellable(
+            envelope,
+            _run_freezone_agent_product_async(envelope, ctx),
+            task_type=str(envelope.get("task_type") or ""),
+        )
+    except (TaskTimedOut, TaskCancelled) as exc:
+        # A product result can arrive after the local worker deadline. Preserve
+        # the reservation for the authenticated result path to reconcile; an
+        # ordinary timeout must never turn an unknown provider outcome into a
+        # refund.
+        from novelvideo.freezone.agent_product_operations import (
+            AgentProductSettlementPending,
+            PENDING_STATUSES,
+            read_agent_product_operation,
+        )
+
+        payload = (
+            envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+        )
+        operation_id = str(payload.get("operation_id") or "").strip()
+        operation = (
+            read_agent_product_operation(
+                project_dir=Path(ctx.state_dir), operation_id=operation_id
+            )
+            if operation_id
+            else None
+        )
+        status = str((operation or {}).get("status") or "")
+        preserve_statuses = (
+            PENDING_STATUSES
+            if isinstance(exc, TaskTimedOut)
+            else {"running", "accepted", "submitted"}
+        )
+        if status in preserve_statuses:
+            raise AgentProductSettlementPending(
+                operation_id=operation_id, status=status
+            ) from exc
+        raise
+
+
+async def _run_freezone_workflow_confirm_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    """Wait for the browser's durable canvas outcome before task settlement."""
+    from novelvideo.freezone.workflow_drafts import read_workflow_draft
+
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
+    canvas_id = str(payload.get("canvas_id") or "").strip()
+    draft_id = str(payload.get("draft_id") or "").strip()
+    revision = int(payload.get("revision") or 0)
+    plan_digest = str(payload.get("plan_digest") or "").strip()
+    run_task_id = str(envelope.get("__run_task_id") or "").strip()
+    if (
+        not canvas_id
+        or not draft_id
+        or revision <= 0
+        or not plan_digest
+        or not run_task_id
+    ):
+        raise ValueError("workflow confirmation task payload is incomplete")
+
+    try:
+        while True:
+            draft, error = await asyncio.to_thread(
+                read_workflow_draft,
+                project_dir=Path(ctx.state_dir),
+                canvas_id=canvas_id,
+                draft_id=draft_id,
+            )
+            if draft is None:
+                raise RuntimeError(error or "workflow confirmation draft disappeared")
+            if int(draft.get("revision") or 0) != revision:
+                raise RuntimeError("workflow confirmation draft revision changed")
+            if str(draft.get("plan_digest") or "") != plan_digest:
+                raise RuntimeError("workflow confirmation plan changed")
+            bound_task_id = str(draft.get("task_id") or "")
+            if bound_task_id and bound_task_id != run_task_id:
+                raise RuntimeError(
+                    "workflow confirmation draft is bound to another task"
+                )
+
+            status = str(draft.get("status") or "")
+            if status == "confirmed":
+                return {
+                    "ok": True,
+                    "draft_id": draft_id,
+                    "canvas_id": canvas_id,
+                    "revision": revision,
+                    "plan_digest": plan_digest,
+                    "delivery_status": "canvas_applied",
+                }
+            if status == "ready":
+                raise RuntimeError("workflow canvas operation was not delivered")
+            if status not in {"confirming", "submitted"}:
+                raise RuntimeError(f"invalid workflow confirmation status: {status}")
+            await asyncio.sleep(0.2)
+    except BaseException:
+        from novelvideo.freezone.workflow_drafts import (
+            finish_workflow_draft_confirmation,
+        )
+
+        try:
+            await asyncio.to_thread(
+                finish_workflow_draft_confirmation,
+                project_dir=Path(ctx.state_dir),
+                canvas_id=canvas_id,
+                draft_id=draft_id,
+                outcome="ready",
+                expected_task_id=run_task_id,
+            )
+        except ValueError:
+            # A newer confirmation task owns the draft; the old task may fail,
+            # but must not roll back the newer presentation state.
+            pass
+        raise
+
+
+def run_freezone_workflow_confirm(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    return _run_cancellable(
+        envelope,
+        _run_freezone_workflow_confirm_async(envelope, ctx),
+        task_type="freezone_workflow_confirm",
+    )
 
 
 def _run_cancellable(
@@ -1065,34 +1300,116 @@ async def _run_freezone_text_generate_async(
         "generate_freezone_text",
         prompt=prompt,
     )
-    data = {"generated_text": generated_text, "model": model}
-    out = outputs_dir(project_dir, "freezone_text_generate") / f"{job_id}.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    import json
+    from novelvideo.utils.document_parsers import count_billable_text_chars
 
-    out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    rel = out.relative_to(project_dir).as_posix()
-    result = {
-        "job_id": job_id,
-        "output_format": "json",
-        "output_path": str(out),
-        "output_url": make_static_url_for_context(ctx, rel),
-        **data,
+    billable_chars = count_billable_text_chars(generated_text)
+    data = {
+        "generated_text": generated_text,
+        "model": model,
+        "billing": {
+            "operation": "text_generate",
+            "billable_chars": billable_chars,
+            "pricing_quantity": billable_chars,
+            "quantity_source": "generated_text",
+        },
     }
-    history_record = _append_node_history(
-        ctx=ctx,
-        project_dir=project_dir,
-        payload=payload,
-        task_type="freezone_text_generate",
-        job_id=job_id,
-        media_type="text",
-        input_preview=prompt[:240],
-        prompt=prompt,
-        model=model,
-        result=result,
+    billing_metadata = (
+        envelope.get("billing_metadata")
+        if isinstance(envelope.get("billing_metadata"), dict)
+        else {}
     )
-    if history_record:
-        result["generation_history_record"] = history_record
+    feature_key = str(billing_metadata.get("feature_key") or "").strip()
+    run_task_id = str(envelope.get("__run_task_id") or "").strip()
+    result_billing_ack = billing_metadata.get("result_billing_version_ack")
+    existing_reservation_id = str(
+        billing_metadata.get("feature_credit_reservation_id")
+        or billing_metadata.get("feature_credit_charge_id")
+        or ""
+    ).strip()
+    reservation_id = ""
+    # The runner owns the output-priced reservation only after EE explicitly
+    # acknowledges protocol v2.  With old EE, the legacy estimate was already
+    # reserved at enqueue time; reserving again here would double-charge.
+    if (
+        feature_key
+        and run_task_id
+        and type(result_billing_ack) is int
+        and result_billing_ack == 2
+        and not existing_reservation_id
+    ):
+        reservation = await get_usage_meter().reserve_feature_start_credits(
+            user_id=ctx.requester_user_id,
+            feature_key=feature_key,
+            product_surface="freezone",
+            project_id=ctx.project_id,
+            resource_kind="script",
+            task_id=run_task_id,
+            task_type="freezone_text_generate",
+            quantity=billable_chars,
+            idempotency_key=(
+                f"task_result:{ctx.requester_user_id}:{feature_key}:{run_task_id}"
+            ),
+            require_price_rule=True,
+            require_positive_cost=True,
+            params={
+                "operation": "text_generate",
+                "billable_chars": billable_chars,
+                "pricing_quantity": billable_chars,
+                "pricing_metrics": {
+                    "call_count": 1,
+                    "item_count": 1,
+                    "billable_chars": billable_chars,
+                },
+            },
+            metadata={
+                "source": "trusted_task_result",
+                "quantity_source": "generated_text",
+            },
+        )
+        reservation_id = str(reservation.get("id") or "").strip()
+        if not reservation_id:
+            raise RuntimeError("text result billing did not return a reservation ID")
+    # Full text becomes user-readable through both static output and history.
+    # Neither may be published until the output-priced reservation succeeds.
+    try:
+        out = outputs_dir(project_dir, "freezone_text_generate") / f"{job_id}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        import json
+
+        out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        rel = out.relative_to(project_dir).as_posix()
+        result = {
+            "job_id": job_id,
+            "output_format": "json",
+            "output_path": str(out),
+            "output_url": make_static_url_for_context(ctx, rel),
+            **data,
+        }
+        history_record = _append_node_history(
+            ctx=ctx,
+            project_dir=project_dir,
+            payload=payload,
+            task_type="freezone_text_generate",
+            job_id=job_id,
+            media_type="text",
+            input_preview=prompt[:240],
+            prompt=prompt,
+            model=model,
+            result=result,
+        )
+        if history_record:
+            result["generation_history_record"] = history_record
+    except BaseException:
+        if reservation_id:
+            # Publication may have partially succeeded. Preserve the hold for
+            # reconciliation instead of refunding potentially readable output.
+            await get_usage_meter().mark_feature_credit_settlement_for_review(
+                reservation_id,
+                metadata={"source": "text_result_publication_failed"},
+            )
+        raise
+    if reservation_id:
+        result["__feature_credit_reservation_id"] = reservation_id
     return result
 
 
@@ -1426,7 +1743,9 @@ def run_freezone_audio_eleven_music(
 
 
 register_project_task_runner("freezone_gen", run_freezone_gen, requires_home_node=False)
-register_project_task_runner("freezone_edit", run_freezone_edit, requires_home_node=False)
+register_project_task_runner(
+    "freezone_edit", run_freezone_edit, requires_home_node=False
+)
 register_project_task_runner(
     "mainline_sketch_from_context",
     run_mainline_sketch_from_context,
@@ -1481,6 +1800,11 @@ register_project_task_runner(
     requires_home_node=False,
 )
 register_project_task_runner(
+    "freezone_image_animate_gif",
+    run_freezone_image_animate_gif,
+    lane="ffmpeg",
+)
+register_project_task_runner(
     "freezone_audio_speech",
     run_freezone_audio_speech,
     requires_home_node=False,
@@ -1490,3 +1814,16 @@ register_project_task_runner(
     run_freezone_audio_eleven_music,
     requires_home_node=False,
 )
+register_project_task_runner(
+    "freezone_workflow_confirm",
+    run_freezone_workflow_confirm,
+    requires_home_node=True,
+)
+for _agent_product_task_type in AGENT_PRODUCT_TASK_TYPES:
+    register_project_task_runner(
+        _agent_product_task_type,
+        run_freezone_agent_product,
+        requires_home_node=True,
+    )
+
+register_project_task_runner("freezone_image_vectorize", run_freezone_image_vectorize, lane="ffmpeg")

@@ -295,7 +295,19 @@ export function validateCanvasChatCommandEnvelopes(
           }
           if (target) {
             const editable = new Set(buildCanvasNodeActionCatalog(target).editable_fields);
-            const invalid = Object.keys(data).filter((key) => !editable.has(key));
+            // These values are written by the frontend generation-approval card. They are
+            // intentionally omitted from the public Agent edit schema, but the approved batch
+            // must be able to persist the user's system/custom voice decision before generation.
+            const audioApprovalFields = new Set([
+              "voicePolicyConfirmed",
+              "presetModel",
+              "presetVoice",
+              "voiceAvailable",
+            ]);
+            const invalid = Object.keys(data).filter((key) => (
+              !editable.has(key)
+              && !(target.type === CANVAS_NODE_TYPES.audio && audioApprovalFields.has(key))
+            ));
             if (invalid.length > 0) {
               addIssue(issues, path, `fields are not editable on this node: ${invalid.join(", ")}`);
             }

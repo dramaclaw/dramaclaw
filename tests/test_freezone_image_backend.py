@@ -3919,11 +3919,19 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
         def update_progress_for_project(self, *_args, **_kwargs):
             return None
 
+    reservations: list[dict] = []
+
+    class FakeUsageMeter:
+        async def reserve_feature_start_credits(self, **kwargs):
+            reservations.append(kwargs)
+            return {"id": "reservation_actual_text"}
+
     monkeypatch.setattr(
         "novelvideo.freezone.text_node.generate_freezone_text",
         fake_generate_freezone_text,
     )
     monkeypatch.setattr(freezone_runner, "get_task_manager", lambda: FakeTaskManager())
+    monkeypatch.setattr(freezone_runner, "get_usage_meter", lambda: FakeUsageMeter())
 
     result = await freezone_runner._run_freezone_text_generate_async(
         {
@@ -3933,7 +3941,12 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
                 "prompt": "写一段雨夜重逢",
                 "canvas_id": "canvas_a",
                 "node_id": "node_text",
-            }
+            },
+            "billing_metadata": {
+                "feature_key": "freezone.text_generate",
+                "result_billing_version_ack": 2,
+            },
+            "__run_task_id": "task_text_generate",
         },
         ctx,
     )
@@ -3944,8 +3957,118 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
         node_id="node_text",
     )
     assert result["generated_text"] == "雨夜里，他们在旧站台重逢。"
+    assert result["billing"] == {
+        "operation": "text_generate",
+        "billable_chars": 13,
+        "pricing_quantity": 13,
+        "quantity_source": "generated_text",
+    }
+    assert result["__feature_credit_reservation_id"] == "reservation_actual_text"
+    assert reservations[0]["quantity"] == 13
+    assert reservations[0]["params"]["pricing_metrics"]["billable_chars"] == 13
     assert history[-1]["task_type"] == "freezone_text_generate"
     assert history[-1]["model"] == "DC-freezone-text-writer-LLM"
+
+    reservations.clear()
+    legacy_result = await freezone_runner._run_freezone_text_generate_async(
+        {
+            "payload": {
+                "job_id": "job_text_generate_legacy",
+                "project_dir": str(project_dir),
+                "prompt": "写一段雨夜重逢",
+            },
+            "billing_metadata": {
+                "feature_key": "freezone.text_generate",
+                "feature_credit_reservation_id": "legacy_reservation",
+            },
+            "__run_task_id": "task_text_generate_legacy",
+        },
+        ctx,
+    )
+    assert reservations == []
+    assert "__feature_credit_reservation_id" not in legacy_result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["insufficient", "missing_id", "publication", None])
+async def test_text_result_billing_gates_publication(tmp_path, monkeypatch, failure):
+    from novelvideo.freezone.history import read_generation_history
+    from novelvideo.freezone.paths import outputs_dir
+    from novelvideo.task_backend.runners import freezone as runner
+
+    ctx = _project_ctx(tmp_path)
+    out = outputs_dir(ctx.output_dir, "freezone_text_generate") / "paid_text.json"
+
+    def history():
+        return read_generation_history(
+            project_dir=ctx.output_dir, canvas_id="canvas_a", node_id="node_text"
+        )
+
+    async def generate(*, prompt):
+        return "text-model", "Generated paid text"
+
+    reviews = []
+
+    class Meter:
+        async def reserve_feature_start_credits(self, **kwargs):
+            assert not out.exists()
+            assert history() == []
+            assert kwargs["quantity"] > 0
+            if failure == "insufficient":
+                raise ValueError("insufficient credits")
+            return {} if failure == "missing_id" else {"id": "text_reservation"}
+
+        async def mark_feature_credit_settlement_for_review(
+            self, reservation_id, **kwargs
+        ):
+            reviews.append(reservation_id)
+
+    monkeypatch.setattr(
+        "novelvideo.freezone.text_node.generate_freezone_text", generate
+    )
+    monkeypatch.setattr(runner, "_update", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "get_usage_meter", lambda: Meter())
+    if failure == "publication":
+
+        def fail_history(**kwargs):
+            raise OSError("history storage unavailable")
+
+        monkeypatch.setattr(runner, "_append_node_history", fail_history)
+
+    envelope = {
+        "payload": {
+            "job_id": "paid_text",
+            "prompt": "Write text",
+            "canvas_id": "canvas_a",
+            "node_id": "node_text",
+        },
+        "billing_metadata": {
+            "feature_key": "freezone.text_generate",
+            "result_billing_version_ack": 2,
+        },
+        "__run_task_id": "paid_text_task",
+    }
+    if failure:
+        expected = {
+            "insufficient": (ValueError, "insufficient credits"),
+            "missing_id": (RuntimeError, "reservation ID"),
+            "publication": (OSError, "history storage unavailable"),
+        }[failure]
+        with pytest.raises(expected[0], match=expected[1]):
+            await runner._run_freezone_text_generate_async(envelope, ctx)
+        assert history() == []
+        if failure == "publication":
+            assert reviews == ["text_reservation"]
+        else:
+            assert not out.exists()
+            assert reviews == []
+    else:
+        result = await runner._run_freezone_text_generate_async(envelope, ctx)
+        assert json.loads(out.read_text())["generated_text"] == "Generated paid text"
+        assert history()[-1]["result"]["generated_text"] == "Generated paid text"
+        assert result["__feature_credit_reservation_id"] == "text_reservation"
+        assert "__feature_credit_reservation_id" not in history()[-1]["result"]
+        assert reviews == []
 
 
 @pytest.mark.asyncio
@@ -4178,7 +4301,7 @@ async def test_freezone_text_job_preserves_canvas_node_context_in_celery_payload
 
 
 @pytest.mark.asyncio
-async def test_freezone_text_generate_job_uses_visible_chars_for_billing(
+async def test_freezone_text_generate_job_defers_quantity_to_trusted_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4214,8 +4337,10 @@ async def test_freezone_text_generate_job_uses_visible_chars_for_billing(
     assert captured["payload"]["canvas_id"] == "canvas_a"
     assert captured["payload"]["node_id"] == "node_text"
     assert captured["payload"]["billing"] == {
-        "billable_chars": 7,
         "operation": "text_generate",
+        "quantity_source": "trusted_runner_result",
+        "billable_chars": 7,
+        "result_billing_version": 2,
     }
 
 

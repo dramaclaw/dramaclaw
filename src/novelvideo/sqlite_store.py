@@ -22,6 +22,7 @@ from rich.console import Console
 
 from novelvideo.freezone.workflow_drafts import WORKFLOW_DRAFT_SCHEMA_SQL
 from novelvideo.freezone.workflow_runs import WORKFLOW_RUN_SCHEMA_SQL
+from novelvideo.i18n_message import MessageLike, lmsg
 from novelvideo.models import (
     BeatAssetRefRow,
     build_prop_menu,
@@ -1816,20 +1817,26 @@ class SQLiteStore:
         """
         from novelvideo.cognee.chapter_detector import ChapterDetector
 
-        def report(progress: float, task: str):
+        def report(progress: float, task: MessageLike):
             if on_progress:
                 on_progress(progress, task)
 
-        def log(message: str):
+        def log(message: MessageLike):
             if on_log:
                 on_log(message)
             console.print(f"[dim]{message}[/dim]")
 
         # 获取小说原文
         if novel_text is None:
-            log("从文件加载原文...")
+            log(lmsg("tasks.log.source.loading", "从文件加载原文..."))
             novel_text = require_imported_novel(self.project_dir)
-            log(f"原文加载完成: {len(novel_text)} 字符")
+            log(
+                lmsg(
+                    "tasks.log.source.loaded",
+                    f"原文加载完成: {len(novel_text)} 字符",
+                    charCount=len(novel_text),
+                )
+            )
 
         # Everything below computes; nothing is written until the publish at
         # the end. This used to clear every episode's raw_content and commit

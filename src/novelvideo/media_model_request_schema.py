@@ -50,6 +50,7 @@ STRING_LIST_CONFIG_FIELDS = {
     "ratioOptions",
     "qualityOptions",
     "sceneOptimizeOptions",
+    "referenceFileTypes",
 }
 RESERVED_CATALOG_CONFIG_FIELDS = {
     "id",
@@ -116,6 +117,15 @@ def normalize_media_model_catalog_config(config: object) -> dict[str, Any]:
             seen_ratios.add(identity)
             canonical_ratios.append(value)
         normalized["ratioOptions"] = canonical_ratios
+    file_types = normalized.get("referenceFileTypes")
+    if isinstance(file_types, list):
+        normalized["referenceFileTypes"] = list(
+            dict.fromkeys(
+                str(item or "").strip().lower().lstrip(".")
+                for item in file_types
+                if str(item or "").strip().lstrip(".")
+            )
+        )
     return normalized
 
 
@@ -396,6 +406,9 @@ def validate_media_model_catalog_config(
             "supportedModes",
             "referenceVideoMax",
             "referenceAudioMax",
+            "referenceFileMax",
+            "referenceLinkMax",
+            "referenceFileTypes",
             "referenceAudioMinSeconds",
             "referenceAudioMaxSeconds",
             "referenceAudioTotalMinSeconds",
@@ -451,10 +464,29 @@ def validate_media_model_catalog_config(
     if minimum is not None and maximum is not None and minimum > maximum:
         raise MediaModelSchemaError("minDuration cannot exceed maxDuration")
 
-    for field in ("referenceImageMax", "referenceVideoMax", "referenceAudioMax"):
+    for field in (
+        "referenceImageMax",
+        "referenceVideoMax",
+        "referenceAudioMax",
+        "referenceFileMax",
+        "referenceLinkMax",
+    ):
         value = config.get(field)
         if value is not None and (type(value) is not int or value < 0):
             raise MediaModelSchemaError(f"{field} must be a non-negative integer")
+    for field in ("referenceFileMax", "referenceLinkMax"):
+        value = config.get(field)
+        if type(value) is int and value > 1:
+            raise MediaModelSchemaError(f"{field} cannot exceed 1")
+
+    reference_file_types = config.get("referenceFileTypes")
+    if reference_file_types is not None and any(
+        not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,15}", item)
+        for item in reference_file_types
+    ):
+        raise MediaModelSchemaError(
+            "referenceFileTypes must use lowercase extensions without dots"
+        )
 
     duration_fields = (
         "referenceAudioMinSeconds",
@@ -500,6 +532,17 @@ def validate_media_model_catalog_config(
         ):
             raise MediaModelSchemaError(
                 "referenceVideoMax requires all_reference or video_edit mode"
+            )
+        for field in ("referenceFileMax", "referenceLinkMax"):
+            limit = config.get(field)
+            if type(limit) is int and limit > 0 and "all_reference" not in configured_modes:
+                raise MediaModelSchemaError(f"{field} requires all_reference mode")
+        if reference_file_types and not (
+            type(config.get("referenceFileMax")) is int
+            and config["referenceFileMax"] > 0
+        ):
+            raise MediaModelSchemaError(
+                "referenceFileTypes requires a positive referenceFileMax"
             )
 
     min_pixels = config.get("minPixels")

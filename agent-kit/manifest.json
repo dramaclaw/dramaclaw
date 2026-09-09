@@ -11,7 +11,7 @@
       "minimum_contract_version": 1,
       "required_capabilities": [
         "agent-token-file-rotation.v1",
-        "dramaclaw-mcp-progressive-tools.v1",
+        "dramaclaw-mcp-native-tools.v1",
         "freezone-canvas-approval-bridge.v1",
         "local-agent-trust.v1",
         "workflow-mcp-read-compile.v1"

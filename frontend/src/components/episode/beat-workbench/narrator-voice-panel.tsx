@@ -276,7 +276,9 @@ export function NarratorVoicePanel({
       {/* Header: title + status */}
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-foreground">
-          {status?.heading || t("episode.workbench.video.narratorVoice")}
+          {status?.heading_code
+            ? t(status.heading_code, { defaultValue: status.heading })
+            : status?.heading || t("episode.workbench.video.narratorVoice")}
         </h3>
         <div className="flex items-center gap-3">
           {pending && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
@@ -304,7 +306,9 @@ export function NarratorVoicePanel({
       {/* Description */}
       {status?.explanation && (
         <p className="mt-2 text-xs leading-5 text-muted-foreground/78">
-          {status.explanation}
+          {status.explanation_code
+            ? t(status.explanation_code, { defaultValue: status.explanation })
+            : status.explanation}
         </p>
       )}
 

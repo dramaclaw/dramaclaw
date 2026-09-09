@@ -252,7 +252,7 @@ freezone_get_workflow_skill(compact=true)
   → 返回 Skill、Recipe 规划摘要、input_contract、节点能力约束
   → Hermes 生成 freezone_workflow_plan.v1
   → validate_agent_workflow_plan()
-  → freezone_create_workflow_graph(plan=...)
+  → freezone_prepare_workflow_plan_draft(plan=...) → freezone_confirm_workflow_draft(...)
   → canvas_chat_commands.v1
   → 前端确认并写入 Graph
 ```
@@ -584,7 +584,7 @@ Agent 只决定：用户目标、结构化输入、作品/镜头 PlanItems、每
 | 入口 | 现状 |
 | --- | --- |
 | `freezone_prepare/patch/confirm_workflow_draft` | **主路径**，正常规划一律走这里 |
-| `freezone_create_workflow_graph(plan=...)` | **兼容入口**，只在用户明确要求 Skill 蓝图无法表达的自定义拓扑时使用 |
+| `freezone_prepare_workflow_plan_draft(plan=...)` | **安全自定义拓扑入口**，报价并持久化预览后统一由 `freezone_confirm_workflow_draft` 创建 |
 | `freezone_build_workflow_plan` | **禁止调用**（见 `.hermes/skills/workflows/SKILL.md`） |
 
 `freezone_workflow_plan.v1` 与 `validate_agent_workflow_plan()` 继续存在，服务于兼容入口和最终结构校验；但**不要再把「让 Agent 直接生成完整 Plan」当作要实现的目标**，那条路已经降级。
@@ -1343,7 +1343,7 @@ Skill 列表：只加载 ID、名称、描述和触发词
 - Skill 要明确说明哪些主体需要统一参考，以及哪些下游节点应复用它；Hermes 据此生成参考节点与引用边，当前 Validator 只校验通用 Graph 合法性，不理解角色身份语义（§6.1）；
 - 模型支持多参考图直接生成视频时可以省略关键帧；需要锁定首帧时再动态加入关键帧节点；
 - 缺少必需素材时先创建素材锚点或询问用户；
-- 用户确认后只调用一次 `freezone_create_workflow_graph(plan=...)`；
+- 先调用一次 `freezone_prepare_workflow_plan_draft(plan=...)`，用户确认精确预览后再调用 `freezone_confirm_workflow_draft`；
 - **布局承载语义**：锚点节点排在上游左侧、分镜与生成节点居中、合成节点在右，让人一眼看出项目进展到哪一步。Graph Builder 已支持批量布局与分组，这是一条零成本的规划约定，不是新机制。同类产品把它作为明确设计原则（角色定义在左、故事板居中、成片在右），因为画布的空间位置本身就是最直观的状态显示。
 
 固定模板仅保留给已有的文生图、图生视频等简单注册工作流和旧 Skill 兼容。模板不是新社区 Skill 的默认执行方式。
@@ -1689,7 +1689,7 @@ LibTV 的 Skill 内容不在参考范围内：它闭源，其 100 多个 Skill �
 - 节点数量、阶段、依赖、并行关系和是否加入关键帧由本次目标、素材和输入决定；
 - `conduct_rules` 里描述的前置资产决策按顺序消费，**不得**展开成固定节点序列；
 - 只有用户明确选择固定模板，或旧 Skill 只有 `workflow_templates` 时，才使用 Catalog 模板展开；
-- ~~继续一次调用 `freezone_create_workflow_graph(plan=...)`，不逐节点创建，也不增加 Plan Schema。~~ 见下方状态说明，这条已被更好的方案取代。
+- ~~继续使用直接完整 Plan 写入，不逐节点创建，也不增加 Plan Schema。~~ 见下方状态说明，这条已被持久化 Plan 草稿方案取代。
 
 ##### 状态：✅ 已完成，且主路径已演进（`671cb07`）
 
@@ -1701,7 +1701,7 @@ LibTV 的 Skill 内容不在参考范围内：它闭源，其 100 多个 Skill �
 freezone_prepare_workflow_draft(intent=...)  →  patch  →  confirm
 ```
 
-Agent 只决定用户目标、结构化输入、PlanItems、每项的 Recipe、输入依赖、是否生成锚点、是否自动执行；节点数据、稳定 ID、连线类型、分组、布局与成片合成由工具完成。`freezone_create_workflow_graph(plan=...)` 降级为兼容入口，`freezone_build_workflow_plan` 被明令禁止调用。
+Agent 只决定用户目标、结构化输入、PlanItems、每项的 Recipe、输入依赖、是否生成锚点、是否自动执行；节点数据、稳定 ID、连线类型、分组、布局与成片合成由工具完成。完整 Plan 通过 `freezone_prepare_workflow_plan_draft(plan=...)` 进入与普通工作流一致的报价、预览和确认状态机，直接创建兼容入口已删除；`freezone_build_workflow_plan` 被明令禁止调用。
 
 **这个方向与主张二一致且更强**（模型可写错的面更小），完整说明见 §3.3。**接手时不要再按 `plan=` 那条路径动手，它已不是主路径。**
 

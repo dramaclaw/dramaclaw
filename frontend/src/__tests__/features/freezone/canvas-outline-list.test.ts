@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { TFunction } from "i18next";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -19,6 +20,24 @@ import {
   matchesOutlineQuery,
   outlineFilterTypes,
 } from "@/features/freezone/CanvasOutlineList";
+import {
+  DEFAULT_NODE_DISPLAY_NAME,
+  EXPORT_RESULT_DISPLAY_NAME,
+} from "@/features/canvas/domain/nodeDisplay";
+
+// 大纲的默认名现在走 i18n。这里把 key 解回中文规范默认值，好让下面的断言仍然对着
+// 用户看得见的文案写，而不是对着 key。
+const t = ((key: string) => {
+  const nodeType = key.replace("node.displayName.", "");
+  if (nodeType !== key) {
+    return DEFAULT_NODE_DISPLAY_NAME[nodeType as keyof typeof DEFAULT_NODE_DISPLAY_NAME];
+  }
+  const resultKind = key.replace("node.exportResult.", "");
+  if (resultKind !== key) {
+    return EXPORT_RESULT_DISPLAY_NAME[resultKind as keyof typeof EXPORT_RESULT_DISPLAY_NAME];
+  }
+  return key;
+}) as unknown as TFunction;
 
 function node(
   id: string,
@@ -40,7 +59,7 @@ describe("buildCanvasOutline", () => {
     const outline = buildCanvasOutline([
       node("a", CANVAS_NODE_TYPES.imageGen, { displayName: "封面" }),
       node("b", CANVAS_NODE_TYPES.video, {}),
-    ]);
+    ], t);
 
     expect(outline.map((item) => [item.id, item.kind, item.name])).toEqual([
       ["a", "node", "封面"],
@@ -54,7 +73,7 @@ describe("buildCanvasOutline", () => {
       node("m1", CANVAS_NODE_TYPES.imageGen, { displayName: "立绘" }, "g"),
       node("m2", CANVAS_NODE_TYPES.video, {}, "g"),
       node("loose", CANVAS_NODE_TYPES.audio, {}),
-    ]);
+    ], t);
 
     expect(outline).toHaveLength(2);
     expect(outline[0]).toMatchObject({ id: "g", kind: "group", name: "苏鸾" });
@@ -65,7 +84,7 @@ describe("buildCanvasOutline", () => {
   it("prefers displayName over the legacy group label", () => {
     const outline = buildCanvasOutline([
       node("g", CANVAS_NODE_TYPES.group, { label: "旧名", displayName: "新名" }),
-    ]);
+    ], t);
 
     expect(outline[0].name).toBe("新名");
   });
@@ -75,7 +94,7 @@ describe("buildCanvasOutline", () => {
       node("outer", CANVAS_NODE_TYPES.group, { label: "外层" }),
       node("inner", CANVAS_NODE_TYPES.group, { label: "内层" }, "outer"),
       node("leaf", CANVAS_NODE_TYPES.imageGen, {}, "inner"),
-    ]);
+    ], t);
 
     expect(outline).toHaveLength(1);
     expect(outline[0].children[0]).toMatchObject({ id: "inner", kind: "group" });
@@ -88,7 +107,7 @@ describe("buildCanvasOutline", () => {
       node("orphan", CANVAS_NODE_TYPES.imageGen, {}, "gone"),
       node("host", CANVAS_NODE_TYPES.imageGen, {}),
       node("child-of-non-group", CANVAS_NODE_TYPES.video, {}, "host"),
-    ]);
+    ], t);
 
     expect(outline.map((item) => item.id)).toEqual(["orphan", "host", "child-of-non-group"]);
   });
@@ -98,7 +117,7 @@ describe("buildCanvasOutline", () => {
       node("a", CANVAS_NODE_TYPES.exportImage, { imageUrl: "https://cdn/a.png" }),
       node("b", CANVAS_NODE_TYPES.video, { previewImageUrl: "https://cdn/b.jpg" }),
       node("c", CANVAS_NODE_TYPES.audio, {}),
-    ]);
+    ], t);
 
     expect(outline.map((item) => item.thumbUrl)).toEqual([
       "https://cdn/a.png",
@@ -114,7 +133,7 @@ describe("collectOutlineIds", () => {
       node("outer", CANVAS_NODE_TYPES.group, { label: "外层" }),
       node("inner", CANVAS_NODE_TYPES.group, { label: "内层" }, "outer"),
       node("leaf", CANVAS_NODE_TYPES.imageGen, {}, "inner"),
-    ]);
+    ], t);
 
     expect(collectOutlineIds(outline[0])).toEqual(["outer", "inner", "leaf"]);
   });
@@ -127,7 +146,7 @@ describe("collectOutlineDownloads", () => {
       node("img", CANVAS_NODE_TYPES.exportImage, { imageUrl: "https://cdn/a.png" }, "g"),
       node("mute", CANVAS_NODE_TYPES.audio, {}, "g"),
       node("clip", CANVAS_NODE_TYPES.video, { videoUrl: "https://cdn/c.mp4" }, "g"),
-    ]);
+    ], t);
 
     expect(collectOutlineDownloads(outline[0]).map((item) => [item.id, item.mediaUrl])).toEqual([
       ["img", "https://cdn/a.png"],
@@ -141,7 +160,7 @@ describe("collectOutlineDownloads", () => {
         videoUrl: "https://cdn/c.mp4",
         previewImageUrl: "https://cdn/c.jpg",
       }),
-    ]);
+    ], t);
 
     expect(outline[0].thumbUrl).toBe("https://cdn/c.jpg");
     expect(outline[0].mediaUrl).toBe("https://cdn/c.mp4");
@@ -155,7 +174,7 @@ describe("collectOutlineDownloads", () => {
         plyUrl: "https://cdn/scene.sog",
         previewImageUrl: "https://cdn/cover.png",
       }),
-    ]);
+    ], t);
 
     expect(outline[0].thumbUrl).toBe("https://cdn/cover.png");
     expect(outline[0].mediaUrl).toBe("https://cdn/scene.sog");
@@ -167,7 +186,7 @@ describe("collectOutlineDownloads", () => {
         resultVideoUrl: "https://cdn/final.mp4",
         previewImageUrl: "https://cdn/poster.jpg",
       }),
-    ]);
+    ], t);
 
     expect(outline[0].thumbUrl).toBe("https://cdn/poster.jpg");
     expect(outline[0].mediaUrl).toBe("https://cdn/final.mp4");
@@ -178,7 +197,7 @@ describe("collectOutlineDownloads", () => {
       node("story", CANVAS_NODE_TYPES.videoStory, {
         sourceVideoUrl: "https://cdn/source.mp4",
       }),
-    ]);
+    ], t);
 
     expect(outline[0].mediaUrl).toBe("https://cdn/source.mp4");
   });
@@ -188,7 +207,7 @@ describe("collectOutlineDownloads", () => {
       node("pano", CANVAS_NODE_TYPES.pano360Viewer, {
         imageUrl: "https://cdn/pano.jpg",
       }),
-    ]);
+    ], t);
 
     expect(outline[0].thumbUrl).toBe("https://cdn/pano.jpg");
     expect(outline[0].mediaUrl).toBe("https://cdn/pano.jpg");
@@ -202,7 +221,7 @@ describe("collectOutlineDownloads", () => {
           { imageUrl: "https://cdn/frame-1.png" },
         ],
       }),
-    ]);
+    ], t);
 
     expect(outline[0].mediaUrl).toBe("https://cdn/frame-0.png");
   });
@@ -215,7 +234,7 @@ describe("collectOutlineGroupIds", () => {
       node("inner", CANVAS_NODE_TYPES.group, { label: "内层" }, "outer"),
       node("leaf", CANVAS_NODE_TYPES.imageGen, {}, "inner"),
       node("loose", CANVAS_NODE_TYPES.audio, {}),
-    ]);
+    ], t);
 
     expect(collectOutlineGroupIds(outline)).toEqual(["outer", "inner"]);
   });
@@ -271,7 +290,7 @@ describe("filterCanvasOutline", () => {
     node("m1", CANVAS_NODE_TYPES.imageGen, { displayName: "立绘" }, "g"),
     node("m2", CANVAS_NODE_TYPES.video, { displayName: "出场镜头" }, "g"),
     node("loose", CANVAS_NODE_TYPES.audio, { displayName: "配乐" }),
-  ]);
+  ], t);
 
   it("returns the same array when nothing is filtered", () => {
     expect(filterCanvasOutline(outline, { query: "  ", types: [] })).toBe(outline);
@@ -364,7 +383,7 @@ describe("outline meta", () => {
   const CREATED_AT = new Date(2026, 7, 20, 14, 32).getTime(); // 08-20 14:32
 
   function metaOf(data: Record<string, unknown>): string | null {
-    const [item] = buildCanvasOutline([node("a", CANVAS_NODE_TYPES.video, data)]);
+    const [item] = buildCanvasOutline([node("a", CANVAS_NODE_TYPES.video, data)], t);
     return item.kind === "node" ? item.meta : null;
   }
 
@@ -399,7 +418,7 @@ describe("outline meta", () => {
         displayName: "海边的黄昏",
         createdAt: CREATED_AT + 5 * 60_000,
       }),
-    ]);
+    ], t);
     const metas = outline.map((item) => (item.kind === "node" ? item.meta : null));
 
     expect(metas[0]).not.toBe(metas[1]);

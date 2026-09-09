@@ -15,6 +15,7 @@ from pydantic_ai.output import NativeOutput
 from PIL import Image as PILImage
 
 from novelvideo.brainclaw_contract import BrainClawProfile
+from novelvideo.utils.source_language import asset_language_instruction
 
 
 class ReviewResult(BaseModel):
@@ -60,8 +61,8 @@ You are a cinematic motion director. Given sketch panels and character color map
 - ⚠️ **Temporal direction**: the sketch is video frame one. For `first_frame` mode, the prompt must describe motion that occurs AFTER the sketch frame. Do NOT describe the process of arriving at this frame.
 
 ## Prompt Requirements
-- Write in **Chinese (中文) only**, **present tense** throughout
-- Write a **single flowing paragraph** of 4–6 句（~50–90 字）
+- Write in the requested output language, **present tense** throughout
+- Write a **single flowing paragraph** of 4–6 sentences
 - ⚠️ **Every prompt MUST include a camera direction with displacement or zoom** (e.g. "The camera pushes in…", "A slow dolly follows…", "Close-up as…", "Wide shot tracking…"). Static camera words are BANNED: holds, stays, remains, static, locked, fixed. The camera must always move.
 - ⚠️ **Camera endpoint**: describe what the frame looks like when the camera motion finishes (e.g. "…ending on a tight close-up of her trembling hands"). This gives the model a clear target for the end of the clip.
 - ⚠️ **No emotion labels**: NEVER use abstract emotion words (sad, haunting, desperate, hopeful, anxious, melancholy). Instead show emotion through BODY LANGUAGE (clenched fists, averted gaze, hunched shoulders, trembling lips).
@@ -75,7 +76,7 @@ You are a cinematic motion director. Given sketch panels and character color map
 - ⚠️ **Dialogue beats**: if a Beat is marked as dialogue, describe the speaking action (lips moving, gestures while talking). The dialogue text will be appended by the system — only describe the physical action in the prompt.
 
 ## Output Format
-Output the Chinese motion prompt directly. No JSON, explanation, or markdown.
+Output the motion prompt directly in the requested language. No JSON, explanation, or markdown.
 """
 
 
@@ -177,7 +178,7 @@ def create_global_video_reviewer_agent(language: str = "en") -> Agent:
     )
 
 
-def create_global_video_optimizer_agent(language: str = "en") -> Agent:
+def create_global_video_optimizer_agent(language: str = "zh") -> Agent:
     """创建全局视频优化 Agent。"""
     from novelvideo.config import get_newapi_text_pydantic_model
 
@@ -189,7 +190,10 @@ def create_global_video_optimizer_agent(language: str = "en") -> Agent:
             brainclaw_profile=BrainClawProfile.GLOBAL_VIDEO_MOTION_PLANNING,
             capability="text.generate.agent",
         ),
-        system_prompt=GLOBAL_VIDEO_OPTIMIZER_INSTRUCTIONS_EN,
+        system_prompt=(
+            f"{GLOBAL_VIDEO_OPTIMIZER_INSTRUCTIONS_EN}\n\n"
+            f"## Output Language\n{asset_language_instruction(language)}"
+        ),
         output_type=str,
         name="Global Video Motion Director",
     )
@@ -206,7 +210,7 @@ class GlobalVideoPromptOptimizer:
         self._agents: dict[str, Agent] = {}
         self._review_agent: Optional[Agent] = None
 
-    def _get_agent(self, language: str = "en") -> Agent:
+    def _get_agent(self, language: str = "zh") -> Agent:
         if language not in self._agents:
             self._agents[language] = create_global_video_optimizer_agent(language)
         return self._agents[language]
@@ -251,7 +255,7 @@ class GlobalVideoPromptOptimizer:
         beat: dict,
         sketch_image_path: str,
         character_color_map: dict,
-        language: str = "en",
+        language: str = "zh",
         prev_beat: dict | None = None,
         next_beat: dict | None = None,
         prev_prompt: str | None = None,
@@ -343,6 +347,8 @@ class GlobalVideoPromptOptimizer:
             else:
                 position_hint += "Vary shot scale and angle from adjacent beats to create visual rhythm."
 
+        language_instruction = asset_language_instruction(language)
+        output_label = "English" if language == "en" else "Chinese"
         task = f"""Generate a first-frame motion prompt for Beat {bn}. You see the sketch frame for this beat.
 {position_hint}
 ## Character Color Mapping
@@ -355,10 +361,13 @@ class GlobalVideoPromptOptimizer:
 1. Treat the sketch frame and Start Frame as video t=0; describe only what happens after it
 2. Use Motion Prompt as the authoritative forward action chain
 3. If Motion Prompt starts with an action that contradicts the visible t=0 state, begin from the first compatible action instead
-4. Generate the motion prompt in Chinese (中文)
+4. Generate the motion prompt in {output_label}
 5. Use character appearance descriptions, never use character names
 
-Output the Chinese motion prompt directly. No JSON, explanation, or markdown."""
+## Output Language
+{language_instruction}
+
+Output the {output_label} motion prompt directly. No JSON, explanation, or markdown."""
 
         # Load and compress the sketch image
         if not os.path.exists(sketch_image_path):
@@ -392,7 +401,11 @@ Output the Chinese motion prompt directly. No JSON, explanation, or markdown."""
         if audio_type == "dialogue":
             line = beat.get("narration_segment", "")
             if line and line not in result["prompt"]:
-                result["prompt"] = f"{result['prompt']} Says: {line}"
+                dialogue_prefix = "Says:" if language == "en" else "说："
+                separator = " " if language == "en" else "，"
+                result["prompt"] = (
+                    f"{result['prompt']}{separator}{dialogue_prefix} {line}"
+                )
 
         print(
             f"[GlobalVideoOptimizer] Beat {bn}: prompt generated ({len(result['prompt'])} chars)"
@@ -404,7 +417,7 @@ Output the Chinese motion prompt directly. No JSON, explanation, or markdown."""
         sketch_image_paths: list[str],
         character_color_map: dict,
         total_beats: int,
-        language: str = "en",
+        language: str = "zh",
         beats: list[dict] | None = None,
         sketches_dir: str | None = None,
         progress_callback=None,

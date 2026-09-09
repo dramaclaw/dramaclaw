@@ -129,7 +129,7 @@ const REACT_FLOW_NODE_PROPS = {
 
 /** `MediaModelParameterChip` 的触发钮只有一个图标，用 title 定位。 */
 function paramsChip(): HTMLElement | null {
-  return document.querySelector('button[title="模型参数"]');
+  return document.querySelector('button[title="canvas.modelParams.title"]');
 }
 
 function imageGenNode(id: string, data: Record<string, unknown> = {}): CanvasNode {

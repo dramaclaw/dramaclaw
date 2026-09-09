@@ -49,6 +49,7 @@ from novelvideo.task_backend.registry import (
 from novelvideo.task_backend.projection import PROJECTION_REQUIREMENTS, read_projection
 from novelvideo.task_backend.subprocesses import project_task_subprocess_context
 from novelvideo.task_state import project_task_run_context
+from novelvideo.utils.document_parsers import count_billable_text_chars
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,13 @@ _PROJECT_TASK_RESOURCE_KINDS = {
     "indextts2_audio_generation": "tts",
     "audio_generation_indextts2": "tts",
     "system_voice_setup": "tts",
+    "freezone_agent_workflow_result": "workflow",
+    "freezone_agent_recipe_result": "recipe",
+    "freezone_agent_workflow_generate": "workflow",
+    "freezone_agent_recipe_generate": "recipe",
     "freezone_video_gen": "video",
+    "freezone_image_animate_gif": "ffmpeg",
+    "freezone_image_vectorize": "ffmpeg",
     "freezone_analyze": "video",
     "freezone_video_story": "video",
     "freezone_image_reverse_prompt": "script",
@@ -222,6 +229,39 @@ def _clean_billing_metadata(value: Any) -> dict[str, Any]:
         else:
             cleaned[clean_key] = item
     return cleaned
+
+
+def _trusted_result_billing_metadata(
+    task_type: str,
+    result: Any,
+) -> dict[str, Any]:
+    """Derive output-priced quantities only from a trusted runner result.
+
+    The signed enqueue payload is intentionally not consulted here: for text
+    generation it contains the user's instruction, while the billable product
+    is the text that was actually delivered by the runner.
+    """
+    if task_type != "freezone_text_generate" or not isinstance(result, dict):
+        return {}
+    generated_text = result.get("generated_text")
+    if not isinstance(generated_text, str):
+        return {}
+    billable_chars = count_billable_text_chars(generated_text)
+    if billable_chars <= 0:
+        return {}
+    return {
+        "actual_billing": {
+            "operation": "text_generate",
+            "billable_chars": billable_chars,
+            "pricing_quantity": billable_chars,
+            "pricing_metrics": {
+                "call_count": 1,
+                "item_count": 1,
+                "billable_chars": billable_chars,
+            },
+            "quantity_source": "trusted_runner_result",
+        }
+    }
 
 
 def _without_settlement_handles(metadata: Mapping[str, Any]) -> dict[str, Any]:
@@ -945,7 +985,74 @@ def run_project_task_core_sync(
                 # 5 个 runner 在自己函数体内另有绑定，嵌套安全（set/reset 成对）。
                 with model_gateway_scope_for_runner(envelope):
                     result = runner(envelope, ctx)
+                if task_type == "freezone_text_generate" and isinstance(result, dict):
+                    result = dict(result)
+                    result_reservation_id = str(
+                        result.pop("__feature_credit_reservation_id", "") or ""
+                    ).strip()
+                    if result_reservation_id:
+                        if (
+                            feature_reservation_id
+                            and feature_reservation_id != result_reservation_id
+                        ):
+                            raise RuntimeError(
+                                "text result produced a conflicting credit reservation"
+                            )
+                        feature_reservation_id = result_reservation_id
             except BaseException as exc:
+                from novelvideo.freezone.agent_product_operations import (
+                    AgentProductSettlementPending,
+                )
+
+                if isinstance(exc, AgentProductSettlementPending):
+                    from novelvideo.chat import evidence_metrics
+
+                    evidence_metrics.observe("agent_product_awaiting_reconciliation")
+                    if feature_reservation_id:
+                        try:
+                            asyncio.run(
+                                get_usage_meter().mark_feature_credit_settlement_for_review(
+                                    feature_reservation_id,
+                                    metadata={
+                                        "source": "agent_product_late_reconciliation",
+                                        "error_code": exc.code,
+                                        "operation_id": exc.operation_id,
+                                        "operation_status": exc.status,
+                                    },
+                                )
+                            )
+                        except Exception:  # noqa: BLE001
+                            logger.error(
+                                "failed to preserve agent product settlement",
+                                extra={"operation_id": exc.operation_id},
+                            )
+                    failure_payload = {
+                        "error_code": exc.code,
+                        "operation_id": exc.operation_id,
+                        "operation_status": exc.status,
+                        "settlement_status": "awaiting_reconciliation",
+                    }
+                    manager.fail_task_for_project(
+                        ctx,
+                        task_type,
+                        episode,
+                        beat_num=beat_num,
+                        scope=scope,
+                        error="产品结果仍在等待对账",
+                        metadata={**run_metadata, **failure_payload},
+                        expected_task_id=run_task_id,
+                    )
+                    asyncio.run(
+                        _emit_project_task_metrics(
+                            ctx,
+                            task_type,
+                            episode=episode,
+                            beat_num=beat_num,
+                            scope=scope,
+                            outcome="pending",
+                        )
+                    )
+                    return {"pending": True, **failure_payload}
                 if isinstance(exc, RunningTaskAuthorityIndeterminate):
                     logger.warning(
                         "running_task_authz_outcome_indeterminate",
@@ -1082,6 +1189,7 @@ def run_project_task_core_sync(
                     metadata={
                         "source": "task_completed",
                         "business_outcome": "delivered",
+                        **_trusted_result_billing_metadata(task_type, result),
                     },
                 )
             )

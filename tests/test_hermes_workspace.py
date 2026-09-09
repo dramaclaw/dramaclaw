@@ -86,9 +86,8 @@ def isolated_workspace(tmp_path, monkeypatch):
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("MODEL_GATEWAY_MODE", raising=False)
-    # Pin explicitly: the repo .env may opt into auto, and config loading would
-    # re-add a deleted var via load_dotenv(override=False).
-    monkeypatch.setenv("HERMES_TOOL_SEARCH_MODE", "off")
+    # Isolate the production default from a developer's repository .env.
+    monkeypatch.setenv("HERMES_TOOL_SEARCH_MODE", "auto")
     monkeypatch.delenv("ST_HERMES_SKILLS", raising=False)
     monkeypatch.delenv("HERMES_MODEL", raising=False)
     monkeypatch.delenv("HERMES_MODEL_DEFAULT", raising=False)
@@ -209,7 +208,7 @@ def test_freezone_profile_uses_isolated_workspace(
 
     parsed = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
     assert parsed["enabled_toolsets"] == ["hermes-acp", "freezone-acp", "memory"]
-    assert parsed["tools"]["tool_search"]["enabled"] == "off"
+    assert parsed["tools"]["tool_search"]["enabled"] == "auto"
     assert parsed["plugins"]["enabled"] == ["freezone"]
     assert parsed["tools"]["skill_manage"]["enabled"] == "off"
     assert parsed["agent"]["coding_context"] == "off"
@@ -416,7 +415,9 @@ def test_freezone_profile_preserves_tool_search_disable(
     isolated_workspace,
     repo_skills,
     repo_plugins,
+    monkeypatch,
 ):
+    monkeypatch.setenv("HERMES_TOOL_SEARCH_MODE", "off")
     home = hw.ensure_user_hermes_workspace("admin", profile="freezone")
     config_file = home / "config.yaml"
     parsed = yaml.safe_load(config_file.read_text(encoding="utf-8"))
@@ -455,6 +456,14 @@ def test_freezone_profile_tool_search_defaults_to_auto(
     monkeypatch,
 ):
     monkeypatch.delenv("HERMES_TOOL_SEARCH_MODE", raising=False)
+    original_root_value = hw._root_value
+
+    def isolated_root_value(*names):
+        if names == ("HERMES_TOOL_SEARCH_MODE",):
+            return ""
+        return original_root_value(*names)
+
+    monkeypatch.setattr(hw, "_root_value", isolated_root_value)
 
     home = hw.ensure_user_hermes_workspace("admin", profile="freezone")
     parsed = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
@@ -826,7 +835,7 @@ def test_hermes_stops_mainline_writes_but_not_freezone_canvas_writes():
         "freezone_emit_canvas_command",
         "freezone_emit_canvas_command",
     )
-    assert hermes_sdk._is_freezone_canvas_write_tool("freezone_create_workflow_graph")
+    assert hermes_sdk._is_freezone_canvas_write_tool("freezone_confirm_workflow_draft")
     assert not hermes_sdk._should_stop_after_write_tool(
         "freezone_emit_canvas_command",
         "dramaclaw_start_single_video",

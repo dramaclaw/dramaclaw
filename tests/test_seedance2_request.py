@@ -1274,6 +1274,45 @@ async def test_newapi_catalog_model_builds_huimeng_protocol_multimedia_reference
     }
 
 
+@pytest.mark.parametrize(
+    ("reference_type", "reference_url", "expected"),
+    [
+        (
+            "file",
+            "https://example.com/brief.pdf",
+            {"reference_file": "https://example.com/brief.pdf"},
+        ),
+        (
+            "link",
+            "https://example.com/article",
+            {"reference_link": "https://example.com/article"},
+        ),
+    ],
+)
+async def test_newapi_catalog_model_builds_file_and_link_references(
+    reference_type, reference_url, expected
+):
+    from novelvideo.generators.video_generator import NewApiVideoGenerator, ShotReference
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model="wan3.0-video",
+    )
+    metadata: dict[str, object] = {}
+
+    await generator._apply_huimeng_protocol_media_inputs(
+        metadata,
+        mode="all_reference",
+        image_path="",
+        last_frame_path=None,
+        references=[ShotReference(reference_type, reference_url, "参考素材")],
+        log=lambda _message: None,
+    )
+
+    assert metadata == expected
+
+
 async def test_newapi_video_edit_keeps_independent_audio_reference():
     from novelvideo.generators.video_generator import NewApiVideoGenerator, ShotReference
 

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { cloneElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -59,7 +60,9 @@ vi.mock("react-i18next", () => ({
       ({
         "app.logoHomeTooltip": "Home",
         "header.account.open": "Open account",
+        "header.notifications": "Announcement Center",
         "header.account.changeAvatar": "Change avatar",
+        "header.account.changePassword": "Change password",
         "header.account.selectLanguage": "Select language",
         "header.account.languageChinese": "Chinese",
         "header.account.languageEnglish": "English",
@@ -174,6 +177,99 @@ describe("Header runtime gating", () => {
     fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
 
     expect(await screen.findByText("Log out")).toBeInTheDocument();
+    expect(screen.getByText("Change password")).toBeInTheDocument();
+  });
+
+  it("moves the announcement entry from the header actions into the account panel", async () => {
+    renderHeader();
+
+    expect(screen.queryByRole("button", { name: "Announcement Center" })).not.toBeInTheDocument();
+
+    fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
+
+    expect(
+      await screen.findByRole("button", { name: "Announcement Center" }),
+    ).toBeInTheDocument();
+  });
+
+  // 回归用例：独立公告按钮被删掉后，账号头像成了公告中心的唯一入口。它当时只绑了
+  // onMouseEnter —— 触屏没有 hover、键盘也激活不了，公告中心等于对这两类用户消失。
+  it("opens the account panel on click so the announcement entry survives without hover", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+
+    const trigger = screen.getByLabelText("Open account");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(trigger);
+
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(
+      await screen.findByRole("button", { name: "Announcement Center" }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens with the keyboard, lands focus inside the panel and closes on Escape", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+
+    const trigger = screen.getByLabelText("Open account");
+    trigger.focus();
+    await user.keyboard("{Enter}");
+
+    // 面板 portal 到 body 末尾，Tab 走不进去，所以打开时必须主动把焦点送进第一项。
+    expect(await screen.findByRole("button", { name: "Announcement Center" })).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Announcement Center" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(trigger).toHaveFocus();
+  });
+
+  it("closes the pinned panel on a second click and on an outside pointer press", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+
+    const trigger = screen.getByLabelText("Open account");
+
+    await user.click(trigger);
+    await screen.findByRole("button", { name: "Announcement Center" });
+    await user.click(trigger);
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Announcement Center" }),
+      ).not.toBeInTheDocument();
+    });
+
+    await user.click(trigger);
+    await screen.findByRole("button", { name: "Announcement Center" });
+    fireEvent.pointerDown(document.body);
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Announcement Center" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps a click-opened panel open when the pointer leaves it", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+
+    const trigger = screen.getByLabelText("Open account");
+    await user.click(trigger);
+    await screen.findByRole("button", { name: "Announcement Center" });
+
+    // 悬停打开的面板移开就收；点击「钉住」的不该被 mouseleave 收走，
+    // 否则触屏点开后手指一抬内容就没了。
+    fireEvent.mouseLeave(trigger.parentElement!);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Announcement Center" })).toBeInTheDocument();
+    });
   });
 
   it("hides logout when runtime does not require auth while keeping the local identity", async () => {
@@ -187,6 +283,7 @@ describe("Header runtime gating", () => {
       expect(screen.getByText("local")).toBeInTheDocument();
     });
     expect(screen.queryByText("Log out")).not.toBeInTheDocument();
+    expect(screen.queryByText("Change password")).not.toBeInTheDocument();
   });
 
   it("purges user-scoped caches after logout so the next account can't see stale data", async () => {

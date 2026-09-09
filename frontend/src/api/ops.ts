@@ -33,6 +33,8 @@ export interface FreezoneRecipeCompileMetadata {
 }
 
 export interface FreezoneRecipeCompilePayload {
+  projectId?: string;
+  productOperationId?: string;
   recipeId: string;
   recipeVersion?: string;
   recipePipeline?: Array<{ id: string; version?: string }>;
@@ -73,6 +75,10 @@ let recipeCompileRequestSequence = 0;
 
 function recipeCompileJson(payload: FreezoneRecipeCompilePayload) {
   return {
+    ...(payload.projectId ? { project_id: payload.projectId } : {}),
+    ...(payload.productOperationId
+      ? { product_operation_id: payload.productOperationId }
+      : {}),
     recipe_id: payload.recipeId,
     recipe_version: payload.recipeVersion ?? "",
     ...(payload.recipePipeline?.length
@@ -212,6 +218,10 @@ export async function generateFreezoneRecipeText(
     // longer than the shared 30s API-client timeout.
     timeout: RECIPE_MODEL_TIMEOUT_MS,
     json: {
+      ...(payload.projectId ? { project_id: payload.projectId } : {}),
+      ...(payload.productOperationId
+        ? { product_operation_id: payload.productOperationId }
+        : {}),
       recipe_id: payload.recipeId,
       recipe_version: payload.recipeVersion ?? "",
       ...(payload.recipePipeline?.length
@@ -363,6 +373,8 @@ export interface FreezoneGenPayload extends FreezoneNodeContext {
 
 export interface FreezoneJobRef {
   task_type:
+    | "freezone_image_vectorize"
+    | "freezone_image_animate_gif"
     | "freezone_gen"
     | "freezone_edit"
     | "freezone_multi_view"
@@ -689,7 +701,7 @@ export async function submitFreezoneVideoEdit(
 
 // /freezone/video/omni-gen ------------------------------------------------ //
 
-export type FreezoneVideoReferenceType = "image" | "video" | "audio";
+export type FreezoneVideoReferenceType = "image" | "video" | "audio" | "file" | "link";
 
 export interface FreezoneVideoReferenceItem {
   type: FreezoneVideoReferenceType;
@@ -702,7 +714,7 @@ export interface FreezoneVideoOmniGenPayload extends FreezoneNodeContext {
   prompt: string;
   theme?: string;
   cameraTemplateId?: string | null;
-  /** mixed image/video/audio references. backend caps: image≤9, video≤3, audio≤3, total≤12. */
+  /** Mixed media references; file/link support and limits come from the model catalog. */
   references?: FreezoneVideoReferenceItem[];
   marks?: FreezoneVideoMark[];
   aspectRatio?: FreezoneVideoAspectRatio;
@@ -1367,6 +1379,9 @@ export interface FreezoneVideoModelInfo {
   referenceImageMax?: number | null;
   referenceVideoMax?: number | null;
   referenceAudioMax?: number | null;
+  referenceFileMax?: number | null;
+  referenceLinkMax?: number | null;
+  referenceFileTypes?: string[];
   referenceAudioMinSeconds?: number | null;
   referenceAudioMaxSeconds?: number | null;
   referenceAudioTotalMinSeconds?: number | null;
@@ -1453,6 +1468,9 @@ function videoModelEntryFromObject(
     referenceImageMax: pickNumber(entry, "referenceImageMax", "reference_image_max"),
     referenceVideoMax: pickNumber(entry, "referenceVideoMax", "reference_video_max"),
     referenceAudioMax: pickNumber(entry, "referenceAudioMax", "reference_audio_max"),
+    referenceFileMax: pickNumber(entry, "referenceFileMax", "reference_file_max"),
+    referenceLinkMax: pickNumber(entry, "referenceLinkMax", "reference_link_max"),
+    referenceFileTypes: pickStringArray(entry, "referenceFileTypes", "reference_file_types"),
     referenceAudioMinSeconds: pickNumber(
       entry,
       "referenceAudioMinSeconds",
@@ -2238,6 +2256,12 @@ export async function submitFreezoneTemplateEdit(
 // /freezone/jobs/{type}/{id}/result --------------------------------------- //
 
 export interface FreezoneJobResult {
+  gif_task_key?: string;
+  gif_job_id?: string;
+  gif_task_type?: string;
+  output_url?: string;
+  gif_url?: string;
+  svg_url?: string;
   url: string;
   size: number;
   cover_url?: string | null;
@@ -2246,6 +2270,8 @@ export interface FreezoneJobResult {
 export async function fetchFreezoneJobResult(
   project: string,
   taskType:
+    | "freezone_image_vectorize"
+    | "freezone_image_animate_gif"
     | "freezone_gen"
     | "freezone_edit"
     | "freezone_upscale"
@@ -2748,6 +2774,26 @@ export async function uploadFreezoneImage(
       method: "POST",
       body: fd,
       timeout: options?.timeoutMs ?? false,
+    },
+  ).json<{ ok: boolean; data?: FreezoneUploadResult; error?: string }>();
+  if (!resp.ok || !resp.data) {
+    throw new Error(resp.error ?? "upload failed");
+  }
+  return resp.data;
+}
+
+export async function uploadFreezoneReferenceFile(
+  project: string,
+  file: File,
+): Promise<FreezoneUploadResult> {
+  const fd = new FormData();
+  fd.append("file", file, file.name);
+  const resp = await apiClient(
+    `projects/${encodeURIComponent(project)}/freezone/reference-file-upload`,
+    {
+      method: "POST",
+      body: fd,
+      timeout: false,
     },
   ).json<{ ok: boolean; data?: FreezoneUploadResult; error?: string }>();
   if (!resp.ok || !resp.data) {

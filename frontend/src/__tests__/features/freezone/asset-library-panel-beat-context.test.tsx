@@ -595,6 +595,8 @@ describe("AssetLibraryPanel beat context", () => {
     expect(
       await screen.findByRole("button", { name: "新建文件夹" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "批量操作" })).toBeInTheDocument();
+    // 管理态的批量能力已收窄为「批量删除」，且只作用于本地上传资产——主线同步
+    // 的条目删了也会被下次同步拉回来。入口文案随之改名，这里断言新名字。
+    expect(screen.getByRole("button", { name: "批量删除" })).toBeInTheDocument();
   });
 });

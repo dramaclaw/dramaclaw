@@ -1,4 +1,5 @@
 import { ScrollVideoScene } from "./ScrollVideoScene";
+import { useTranslation } from "react-i18next";
 import { cinematicVideos } from "./media";
 
 export function ThirdScreenVideo({
@@ -14,6 +15,8 @@ export function ThirdScreenVideo({
   videoExitProgress?: number;
   videoOpacity: number;
 }) {
+  const { t } = useTranslation();
+
   return (
     <ScrollVideoScene
       align="right"
@@ -21,8 +24,8 @@ export function ThirdScreenVideo({
       copyProgress={copyProgress}
       isActive={isActive}
       kicker="CUT TO THE NEXT"
-      subtitle="导入小说、剧本或分集文本后，系统自动识别，为后续资产提取、剧集规划和镜头拆解建立基础。"
-      title="让故事成为起点"
+      subtitle={t("loginCinematic.third.subtitle")}
+      title={t("loginCinematic.third.title")}
       videoExitProgress={videoExitProgress}
       videoOpacity={videoOpacity}
       videoUrl={cinematicVideos.jqr}

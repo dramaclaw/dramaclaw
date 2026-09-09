@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { I18nextProvider } from "react-i18next";
 import i18n from "@/i18n";
 import { TaskStatusBar } from "@/components/task-center/status-bar";
@@ -10,10 +10,10 @@ import { sampleTask } from "@/__mocks__/msw/handlers/tasks";
 import enTranslation from "../../../../public/locales/en/translation.json";
 import zhTranslation from "../../../../public/locales/zh/translation.json";
 
-function renderBar() {
+function renderBar(onOpenPikoStation?: () => void) {
   return render(
     <I18nextProvider i18n={i18n}>
-      <TaskStatusBar />
+      <TaskStatusBar onOpenPikoStation={onOpenPikoStation} />
     </I18nextProvider>,
   );
 }
@@ -90,5 +90,24 @@ describe("TaskStatusBar", () => {
     // Both the sr-only and the visible label exist; we just assert at least one match.
     const matches = screen.getAllByText(/reconnecting|重新连接/i);
     expect(matches.length).toBeGreaterThan(0);
+  });
+
+  it("renders the image-based Piko launcher and preserves its action semantics", () => {
+    const onOpenPikoStation = vi.fn();
+    const { container } = renderBar(onOpenPikoStation);
+    const launcher = screen.getByRole("button", {
+      name: enTranslation.pikoMiniGame.statusTooltip,
+    });
+    const artwork = container.querySelector<HTMLImageElement>(
+      'img[src="/piko/entry/piko-game-launcher.png"]',
+    );
+
+    expect(artwork).toHaveAttribute("alt", "");
+    expect(artwork).toHaveAttribute("aria-hidden", "true");
+    expect(artwork).toHaveClass("h-[30px]");
+    expect(artwork).toHaveClass("-translate-y-px");
+    expect(artwork).toHaveClass("opacity-90");
+    fireEvent.click(launcher);
+    expect(onOpenPikoStation).toHaveBeenCalledTimes(1);
   });
 });

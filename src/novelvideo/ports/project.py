@@ -104,6 +104,12 @@ class ProjectAccess(Protocol):
         principals: list[Principal],
     ) -> str | None: ...
 
+    async def effective_project_role_by_id(
+        self,
+        project_id: str,
+        principals: list[Principal],
+    ) -> str | None: ...
+
     async def count_project_task_eligible_users(
         self,
         *,

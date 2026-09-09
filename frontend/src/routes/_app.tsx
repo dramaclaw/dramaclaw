@@ -37,6 +37,7 @@ import { AccessoryUnlockPrompt } from "@/features/rewards/AccessoryUnlockPrompt"
 import { VersionUpdateDialog } from "@/features/version-update/VersionUpdateDialog";
 import { PikoInspirationStation } from "@/features/piko-mini-game/PikoInspirationStation";
 import { ProductSurfaceUnavailable } from "@/components/product-surface-unavailable";
+import { CinematicSideRays } from "@/components/login/cinematic/CinematicSideRays";
 import {
   surfaceAccess,
   useProductSurfaces,
@@ -48,6 +49,7 @@ export function shouldRedirectMissingUsernameToLogin(): boolean {
 }
 
 function AppLayout() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   // `username` stands in for the old `apiKey` gate — the SPA is cookie-backed,
   // JS can no longer read the credential, so the login marker is username.
@@ -60,6 +62,7 @@ function AppLayout() {
   const params = useParams({ strict: false }) as { project?: string };
   const routeProject = params.project ?? null;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isProjectDashboard = pathname === "/";
   const projectSummaries = useAllProjectSummaries();
   const canonicalProject = routeProject
     ? canonicalProjectRouteParam(routeProject, projectSummaries.data)
@@ -91,7 +94,6 @@ function AppLayout() {
       : `/projects/${match[1]}/${section}`;
   })();
   const isAssistantPage = /^\/projects\/[^/]+\/assistant$/.test(pathname);
-  const { t } = useTranslation();
   const routeSwitchPending = useRouteSwitchPending();
   // 撤遮罩要认 resolvedLocation 而不是 location：后者在 beforeLoad 里就变了，
   // 那时候渲染出来的还是旧页面，照它撤等于遮罩白挂。resolvedLocation 是路由在
@@ -227,8 +229,16 @@ function AppLayout() {
     <TaskCenterProvider projectId={canonicalProject}>
       <div className="flex h-dvh flex-col overflow-hidden">
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-            <Header />
+          <div className="relative isolate flex min-w-0 flex-1 flex-col overflow-hidden">
+            {isProjectDashboard ? (
+              <div
+                className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
+                aria-hidden="true"
+              >
+                <CinematicSideRays className="absolute inset-0 opacity-[0.46]" />
+              </div>
+            ) : null}
+            <Header ambientBackground={isProjectDashboard} />
             <MyBuddyCompanion />
             <AccessoryUnlockPrompt />
             <VersionUpdateDialog />
@@ -258,11 +268,11 @@ function AppLayout() {
                 >
                   {requiredSurfaceCode && productSurfaces.error ? (
                     <ProductSurfaceUnavailable
-                      message="暂时无法确认功能开放状态，请稍后重试。"
+                      message={t("productSurface.statusUnknown")}
                       retry={() => void productSurfaces.refetch()}
                     />
                   ) : requiredSurfaceCode && !requiredSurface ? (
-                    <ProductSurfaceUnavailable message="功能开放配置不完整，请联系管理员。" />
+                    <ProductSurfaceUnavailable message={t("productSurface.misconfigured")} />
                   ) : requiredSurface && !requiredSurface.available ? (
                     <ProductSurfaceUnavailable message={requiredSurface.unavailable_message} />
                   ) : (

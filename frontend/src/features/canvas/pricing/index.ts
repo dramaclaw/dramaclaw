@@ -212,7 +212,7 @@ export function resolveModelPriceDisplay(
     displayCurrency,
     pricingSettings.usdToCnyRate
   );
-  const perRunSuffix = options.language.startsWith('zh') ? '/次' : '/run';
+  const perRunSuffix = options.language.startsWith('zh') ? '/次' : '/run'; // i18n-exempt —— 已按语言分支
   const nativeLabel =
     quote.currency === displayCurrency
       ? undefined

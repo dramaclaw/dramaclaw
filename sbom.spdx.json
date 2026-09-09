@@ -7,7 +7,7 @@
     ]
   },
   "dataLicense": "CC0-1.0",
-  "documentNamespace": "https://supertale.local/spdx/supertale-ce/00348a1ddba9b99c",
+  "documentNamespace": "https://supertale.local/spdx/supertale-ce/a90eead043aac60c",
   "name": "supertale-ce-p0b-sbom",
   "packages": [
     {
@@ -18,7 +18,7 @@
       "licenseConcluded": "Elastic-2.0",
       "licenseDeclared": "Elastic-2.0",
       "name": "supertale-ce",
-      "versionInfo": "1.3.2"
+      "versionInfo": "2.0.2"
     },
     {
       "SPDXID": "SPDXRef-Package-aiofiles",
@@ -1051,6 +1051,16 @@
       "versionInfo": "1.0.9"
     },
     {
+      "SPDXID": "SPDXRef-Package-langid",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "langid",
+      "versionInfo": "1.1.6"
+    },
+    {
       "SPDXID": "SPDXRef-Package-limits",
       "copyrightText": "NOASSERTION",
       "downloadLocation": "NOASSERTION",
@@ -1418,7 +1428,7 @@
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
       "name": "openai-codex",
-      "versionInfo": "0.147.0"
+      "versionInfo": "0.0.0.dev0"
     },
     {
       "SPDXID": "SPDXRef-Package-openai-codex-cli-bin",
@@ -1428,7 +1438,7 @@
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
       "name": "openai-codex-cli-bin",
-      "versionInfo": "0.147.0"
+      "versionInfo": "0.149.0"
     },
     {
       "SPDXID": "SPDXRef-Package-opentelemetry-api",
@@ -2381,6 +2391,16 @@
       "versionInfo": "15.0.1"
     },
     {
+      "SPDXID": "SPDXRef-Package-wordninja",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "name": "wordninja",
+      "versionInfo": "2.0.0"
+    },
+    {
       "SPDXID": "SPDXRef-Package-wrapt",
       "copyrightText": "NOASSERTION",
       "downloadLocation": "NOASSERTION",
@@ -2924,6 +2944,11 @@
     },
     {
       "relatedSpdxElement": "SPDXRef-Package-langdetect",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-supertale-ce"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-langid",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Package-supertale-ce"
     },
@@ -3589,6 +3614,11 @@
     },
     {
       "relatedSpdxElement": "SPDXRef-Package-websockets",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-supertale-ce"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-wordninja",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Package-supertale-ce"
     },

@@ -17,11 +17,13 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
+from novelvideo.i18n_message import MessageLike, lmsg
 from novelvideo.novel_source import require_imported_novel
 from novelvideo.project_config import load_project_config_file_from_state_dir
 import json
 
 from novelvideo.story_analysis import SourceChunk, chunk_source_text
+from novelvideo.utils.source_language import AssetLanguage, detect_asset_language
 
 PROP_BUILD_DEFERRED_MESSAGE = "道具将在分集规划时按需生成"
 SCENE_BUILD_DEFERRED_MESSAGE = "解说剧场景将在分集规划时按需生成"
@@ -50,24 +52,32 @@ async def build_characters_structured(
         extract_characters_from_chunks,
     )
 
-    def report(progress: float, task: str) -> None:
+    def report(progress: float, task: MessageLike) -> None:
         if on_progress:
             on_progress(progress, task)
 
-    def log(message: str) -> None:
+    def log(message: MessageLike) -> None:
         if on_log:
             on_log(message)
 
     novel_text = require_imported_novel(store.project_dir)
     template = spine_template_for(store)
+    output_language = detect_asset_language(novel_text)
 
-    report(0.1, "切分原文...")
+    report(0.1, lmsg("tasks.progress.characters.chunking", "切分原文..."))
     chunks = chunk_source_text(novel_text, template)
     if not chunks:
-        log("⚠️ 原文切分结果为空")
-        report(1.0, "无可分析内容")
+        log(lmsg("tasks.log.characters.emptyChunks", "⚠️ 原文切分结果为空"))
+        report(1.0, lmsg("tasks.progress.characters.nothingToAnalyze", "无可分析内容"))
         return []
-    log(f"确定性切分: {len(chunks)} 个片段（{chunks[0].section_type}）")
+    log(
+        lmsg(
+            "tasks.log.characters.chunked",
+            f"确定性切分: {len(chunks)} 个片段（{chunks[0].section_type}）",
+            chunkCount=len(chunks),
+            sectionType=chunks[0].section_type,
+        )
+    )
 
     run = await _current_run(store, novel_text, template)
     run_id = run["run_id"] if run else ""
@@ -98,7 +108,14 @@ async def build_characters_structured(
         replayed = {chunk.chunk_id for chunk, _ in cached}
         pending = [chunk for chunk in chunks if chunk.chunk_id not in replayed]
         if cached:
-            log(f"复用 {len(cached)} 个已完成片段，仅重算 {len(pending)} 个")
+            log(
+                lmsg(
+                    "tasks.log.characters.reusingChunks",
+                    f"复用 {len(cached)} 个已完成片段，仅重算 {len(pending)} 个",
+                    cachedCount=len(cached),
+                    pendingCount=len(pending),
+                )
+            )
 
     # A completed run replays its final cast rather than re-adjudicating. Chunk
     # caching alone still costs one adjudication call per rebuild, and a second
@@ -112,7 +129,13 @@ async def build_characters_structured(
             except ValueError:
                 payload = None
             if payload:
-                log(f"复用上次裁决结果：{len(payload)} 个角色，未调用模型")
+                log(
+                    lmsg(
+                        "tasks.log.characters.reusingAdjudication",
+                        f"复用上次裁决结果：{len(payload)} 个角色，未调用模型",
+                        characterCount=len(payload),
+                    )
+                )
                 merged = [
                     MergedCharacter(
                         name=item["name"],
@@ -124,7 +147,12 @@ async def build_characters_structured(
                     for item in payload
                 ]
                 return await _publish_characters(
-                    store, merged, run_id, report, log
+                    store,
+                    merged,
+                    run_id,
+                    report,
+                    log,
+                    output_language=output_language,
                 )
 
     async def persist_done(chunk: SourceChunk, output: ChunkCharacterOutput) -> None:
@@ -137,7 +165,7 @@ async def build_characters_structured(
         if run_id:
             await store.mark_analysis_chunk_failed(run_id, chunk.chunk_id, str(exc))
 
-    report(0.2, "逐片段抽取角色...")
+    report(0.2, lmsg("tasks.progress.characters.extracting", "逐片段抽取角色..."))
     merged, failures = await extract_characters_from_chunks(
         pending,
         on_log=log,
@@ -148,6 +176,7 @@ async def build_characters_structured(
         roster={name for chunk in chunks for name in chunk.characters},
         on_chunk_done=persist_done,
         on_chunk_failed=persist_failed,
+        output_language=output_language,
     )
     async def finish(status_error: tuple[str, str]) -> None:
         if run_id:
@@ -164,10 +193,21 @@ async def build_characters_structured(
         # next build sees a run stuck at "pending" and cannot tell whether work
         # is outstanding.
         await finish(outcome)
-        log("⚠️ 未抽取到有原文证据的角色，保留现有角色数据")
-        report(1.0, "提取无结果")
+        log(
+            lmsg(
+                "tasks.log.characters.noEvidence",
+                "⚠️ 未抽取到有原文证据的角色，保留现有角色数据",
+            )
+        )
+        report(1.0, lmsg("tasks.progress.characters.noResults", "提取无结果"))
         return []
-    log(f"归一后得到 {len(merged)} 个角色候选")
+    log(
+        lmsg(
+            "tasks.log.characters.merged",
+            f"归一后得到 {len(merged)} 个角色候选",
+            candidateCount=len(merged),
+        )
+    )
 
     # A partial run must never store its cast as the run's final result. The
     # replay guard only checks that no chunk is still pending, so once the
@@ -194,7 +234,13 @@ async def build_characters_structured(
         )
 
     return await _publish_characters(
-        store, merged, run_id, report, log, outcome
+        store,
+        merged,
+        run_id,
+        report,
+        log,
+        outcome,
+        output_language=output_language,
     )
 
 
@@ -306,6 +352,7 @@ async def _publish_characters(
     report: Callable[[float, str], None],
     log: Callable[[str], None],
     outcome: tuple[str, str] = ("completed", ""),
+    output_language: AssetLanguage | None = None,
 ) -> list[str]:
     """Publish a settled cast, whether freshly built or replayed from cache."""
     from novelvideo.cognee.pipeline import NovelCharacter, StoreAnalysisItemCache
@@ -316,17 +363,18 @@ async def _publish_characters(
     # here rather than in the build so that a run replayed from its stored cast
     # fills faces too — otherwise a project built before this stage existed
     # could never acquire one without deleting its characters first.
-    report(0.75, "补全角色形象...")
+    report(0.75, lmsg("tasks.progress.characters.enrichingAppearance", "补全角色形象..."))
     appearances = await enrich_character_appearances(
         merged,
         synopsis=_source_synopsis(store),
         cache=StoreAnalysisItemCache(store),
         on_log=log,
+        output_language=output_language,
     )
 
     _settle_narrator(store, appearances)
 
-    report(0.8, "发布角色...")
+    report(0.8, lmsg("tasks.progress.characters.publishing", "发布角色..."))
     candidates = []
     for item in merged:
         character = NovelCharacter(
@@ -338,21 +386,37 @@ async def _publish_characters(
         _apply_appearance(character, appearances.get(item.name), get_fish_voice_id)
         candidates.append(character)
     added = await store.add_characters_atomic(candidates, skip_existing=True)
-    log(f"已新增 {len(added)} 个角色，跳过已有 {len(candidates) - len(added)} 个")
+    log(
+        lmsg(
+            "tasks.log.characters.published",
+            f"已新增 {len(added)} 个角色，跳过已有 {len(candidates) - len(added)} 个",
+            addedCount=len(added),
+            skippedCount=len(candidates) - len(added),
+        )
+    )
 
     # An existing character is an asset fact and a rebuild leaves it alone —
     # except for a face prompt it never had. Characters built before this stage
     # existed carry an empty one, and the portrait runner refuses to work
     # without it, so skipping them would strand those projects forever. Only
     # empty fields are written; anything the user typed is never touched.
-    report(0.85, "补齐已有角色的空缺形象...")
+    report(
+        0.85,
+        lmsg("tasks.progress.characters.repairingAppearance", "补齐已有角色的空缺形象..."),
+    )
     repaired = await _repair_missing_appearances(
         store, set(added), appearances, get_fish_voice_id
     )
     if repaired:
-        log(f"已为 {repaired} 个已有角色补齐面部提示词")
+        log(
+            lmsg(
+                "tasks.log.characters.repaired",
+                f"已为 {repaired} 个已有角色补齐面部提示词",
+                repairedCount=repaired,
+            )
+        )
 
-    report(0.95, "记录角色证据...")
+    report(0.95, lmsg("tasks.progress.characters.recordingEvidence", "记录角色证据..."))
     if run_id:
         # Evidence is written for every merged character, not just the newly
         # added ones. Publishing characters and writing their evidence are two
@@ -374,7 +438,7 @@ async def _publish_characters(
             run_id, status=outcome[0], error=outcome[1]
         )
 
-    report(1.0, "角色提取完成")
+    report(1.0, lmsg("tasks.progress.characters.complete", "角色提取完成"))
     return added
 
 
@@ -398,11 +462,11 @@ async def build_scenes_structured(
     )
     from novelvideo.structured_extraction import adjudicate_scenes
 
-    def report(progress: float, task: str) -> None:
+    def report(progress: float, task: MessageLike) -> None:
         if on_progress:
             on_progress(progress, task)
 
-    def log(message: str) -> None:
+    def log(message: MessageLike) -> None:
         if on_log:
             on_log(message)
 
@@ -410,8 +474,8 @@ async def build_scenes_structured(
     template = spine_template_for(store)
 
     if template != "drama":
-        log(SCENE_BUILD_DEFERRED_MESSAGE)
-        report(1.0, "无需提前构建场景")
+        log(lmsg("tasks.log.scenes.deferred", SCENE_BUILD_DEFERRED_MESSAGE))
+        report(1.0, lmsg("tasks.progress.scenes.notNeeded", "无需提前构建场景"))
         return {
             "scenes": 0,
             "added_scenes": 0,
@@ -419,7 +483,7 @@ async def build_scenes_structured(
             "message": SCENE_BUILD_DEFERRED_MESSAGE,
         }
 
-    report(0.1, "从场次头提取基础场景...")
+    report(0.1, lmsg("tasks.progress.scenes.extractingFromHeadings", "从场次头提取基础场景..."))
     # Every stage below is a model call, and a screenplay has dozens of scenes.
     # Without a cache, a build that fails or is killed at scene 60 of 68 throws
     # away all sixty and the retry pays for them again.
@@ -431,11 +495,16 @@ async def build_scenes_structured(
         cache=cache,
     )
     if not scenes:
-        log("⚠️ 未从场次头提取到场景，保留现有场景数据")
-        report(1.0, "提取无结果")
+        log(
+            lmsg(
+                "tasks.log.scenes.noHeadings",
+                "⚠️ 未从场次头提取到场景，保留现有场景数据",
+            )
+        )
+        report(1.0, lmsg("tasks.progress.scenes.noResults", "提取无结果"))
         return {"scenes": 0, "added_scenes": 0, "mode": "script"}
 
-    report(0.8, "归一同一地点的不同写法...")
+    report(0.8, lmsg("tasks.progress.scenes.normalizing", "归一同一地点的不同写法..."))
     scenes = await adjudicate_scenes(
         scenes,
         occurrences=_scene_heading_counts(novel_text),
@@ -443,7 +512,7 @@ async def build_scenes_structured(
         cache=cache,
     )
 
-    report(0.85, "保存新增场景...")
+    report(0.85, lmsg("tasks.progress.scenes.saving", "保存新增场景..."))
     added = 0
     skipped = 0
     repaired = 0
@@ -472,10 +541,16 @@ async def build_scenes_structured(
             continue
         skipped += 1
     log(
-        f"已新增 {added} 个场景，修复占位描述 {repaired} 个，跳过已有 {skipped} 个"
+        lmsg(
+            "tasks.log.scenes.published",
+            f"已新增 {added} 个场景，修复占位描述 {repaired} 个，跳过已有 {skipped} 个",
+            addedCount=added,
+            repairedCount=repaired,
+            skippedCount=skipped,
+        )
     )
 
-    report(1.0, "场景提取完成")
+    report(1.0, lmsg("tasks.progress.scenes.complete", "场景提取完成"))
     return {
         "scenes": len(scenes),
         "added_scenes": added,
@@ -498,9 +573,9 @@ async def build_props_structured(
     not read "0 props" as "the analysis found nothing".
     """
     if on_log:
-        on_log(PROP_BUILD_DEFERRED_MESSAGE)
+        on_log(lmsg("tasks.log.props.deferred", PROP_BUILD_DEFERRED_MESSAGE))
     if on_progress:
-        on_progress(1.0, "道具按分集生成")
+        on_progress(1.0, lmsg("tasks.progress.props.perEpisode", "道具按分集生成"))
     return {
         "props": 0,
         "mode": "episode_on_demand",
@@ -533,13 +608,13 @@ async def _current_run(store: Any, novel_text: str, spine_template: str) -> dict
     """
     from novelvideo.story_analysis import source_sha256
     from novelvideo.structured_ingest import (
-        STRUCTURED_PIPELINE_VERSION,
+        STRUCTURED_ANALYSIS_VERSION,
         STRUCTURED_SCHEMA_VERSION,
     )
 
     return await store.get_reusable_analysis_run(
         source_sha256=source_sha256(novel_text),
         schema_version=STRUCTURED_SCHEMA_VERSION,
-        pipeline_version=STRUCTURED_PIPELINE_VERSION,
+        pipeline_version=STRUCTURED_ANALYSIS_VERSION,
         spine_template=spine_template,
     )

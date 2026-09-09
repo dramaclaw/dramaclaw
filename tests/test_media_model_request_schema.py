@@ -440,6 +440,9 @@ def test_validates_media_catalog_capabilities():
         "referenceImageMax": 4,
         "referenceVideoMax": 1,
         "referenceAudioMax": 0,
+        "referenceFileMax": 1,
+        "referenceLinkMax": 1,
+        "referenceFileTypes": ["pdf", "docx", "md"],
         "humanReview": True,
         "supportsGenerateAudio": True,
         "request": {"endpoint": "video/generations", "parameters": []},
@@ -466,6 +469,37 @@ def test_validates_media_catalog_capabilities():
             {**valid, "supportedModes": ["text_to_video"]},
             "video",
         )
+
+
+def test_validates_file_and_link_reference_capabilities():
+    base = {
+        "supportedModes": ["all_reference"],
+        "referenceFileMax": 1,
+        "referenceLinkMax": 1,
+        "referenceFileTypes": ["pdf", "docx", "md"],
+        "request": {"endpoint": "video/generations", "parameters": []},
+    }
+    assert validate_media_model_catalog_config(base, "video") is base
+
+    for field in ("referenceFileMax", "referenceLinkMax"):
+        with pytest.raises(MediaModelSchemaError, match=f"{field} cannot exceed 1"):
+            validate_media_model_catalog_config({**base, field: 2}, "video")
+
+    with pytest.raises(MediaModelSchemaError, match="referenceFileMax requires"):
+        validate_media_model_catalog_config(
+            {**base, "supportedModes": ["text_to_video"]}, "video"
+        )
+    with pytest.raises(MediaModelSchemaError, match="lowercase extensions"):
+        validate_media_model_catalog_config(
+            {**base, "referenceFileTypes": [".PDF"]}, "video"
+        )
+
+
+def test_normalizes_reference_file_extensions():
+    normalized = normalize_media_model_catalog_config(
+        {"referenceFileTypes": [".PDF", " docx ", "pdf", "MD"]}
+    )
+    assert normalized["referenceFileTypes"] == ["pdf", "docx", "md"]
 
 
 def test_validates_video_native_audio_capabilities():

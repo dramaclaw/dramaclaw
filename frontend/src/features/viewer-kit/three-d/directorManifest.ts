@@ -318,7 +318,8 @@ export function buildStandaloneWorldManifest(params: {
     mode: "scene",
     project: params.project,
     scene_id: "freezone-3gs",
-    display_name: params.displayName?.trim() || "导演世界",
+    // 写进 manifest 的规范名，跨语言要保持一致。
+    display_name: params.displayName?.trim() || "导演世界", // i18n-exempt —— 规范值
     source: {
       source_type: sourceType,
       ply_url: isPly ? url : undefined,

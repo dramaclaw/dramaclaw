@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from novelvideo.i18n_message import MessageLike
 from novelvideo.model_gateway_runtime import model_gateway_scope_for_runner
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import await_envelope_with_cancel_watch
@@ -56,7 +57,7 @@ async def _run_ingest_fast(
         )
     await store.initialize()
 
-    def update(progress: float | None, task: str) -> None:
+    def update(progress: float | None, task: MessageLike) -> None:
         """Persist a progress milestone or a log-only status update.
 
         Cognee emits log messages between the explicit ingest milestones.  A log

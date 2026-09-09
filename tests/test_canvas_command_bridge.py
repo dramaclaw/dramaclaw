@@ -71,3 +71,72 @@ def test_late_canvas_cancellation_does_not_replace_accepted_result(tmp_path) -> 
         bridge_dir / "bridge-a.result.json"
     )
     assert persisted == accepted
+
+
+def test_identical_retry_replays_durable_canvas_result(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    commands = [{"type": "create_node", "node_type": "imageGenNode"}]
+    first = canvas_command_bridge.put_pending_canvas_command(
+        key="stable-key",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={"commands": commands},
+        bridge_dir=bridge_dir,
+    )
+    assert first is None
+    accepted = canvas_command_bridge.resolve_canvas_command(
+        "stable-key",
+        {
+            "ok": True,
+            "canvas_apply_status": "accepted",
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+        },
+        bridge_dir=bridge_dir,
+    )
+
+    replayed = canvas_command_bridge.put_pending_canvas_command(
+        key="stable-key",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={"commands": commands},
+        bridge_dir=bridge_dir,
+    )
+
+    assert replayed == accepted
+    assert not (bridge_dir / "stable-key.pending.json").exists()
+
+
+def test_reused_key_with_different_payload_returns_conflict(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    original = [{"type": "create_node", "node_type": "imageGenNode"}]
+    canvas_command_bridge.put_pending_canvas_command(
+        key="stable-key",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=original,
+        envelope={"commands": original},
+        bridge_dir=bridge_dir,
+    )
+    accepted = canvas_command_bridge.resolve_canvas_command(
+        "stable-key",
+        {"ok": True, "canvas_apply_status": "accepted"},
+        bridge_dir=bridge_dir,
+    )
+
+    conflict = canvas_command_bridge.put_pending_canvas_command(
+        key="stable-key",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=[{"type": "create_node", "node_type": "videoNode"}],
+        envelope={"commands": []},
+        bridge_dir=bridge_dir,
+    )
+
+    assert conflict is not None
+    assert conflict["status"] == "canvas_command_idempotency_conflict"
+    assert canvas_command_bridge._read_json(
+        bridge_dir / "stable-key.result.json"
+    ) == accepted

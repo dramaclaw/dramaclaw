@@ -14,6 +14,7 @@ import {
   type SaveSnapshot,
 } from "@/features/freezone/canvasSyncCore";
 import type { CanvasMutationSource } from "@/stores/canvasStore";
+import { zhT } from "../../helpers/i18n-fixtures";
 
 // Helper to build a snapshot with sensible defaults; tests override only what
 // they care about so the intent of each case is obvious from the diff.
@@ -390,7 +391,7 @@ describe("buildSavePayload", () => {
 
 describe("classifySaveError", () => {
   it("maps 409 to conflict with the canonical message", () => {
-    expect(classifySaveError(409, {}, "fallback")).toMatchObject({
+    expect(classifySaveError(409, {}, "fallback", zhT)).toMatchObject({
       kind: "conflict",
       message: "画布已被其他窗口或用户修改",
     });
@@ -403,6 +404,7 @@ describe("classifySaveError", () => {
       409,
       { detail: { code: "canvas_idempotency_conflict" } },
       "fallback",
+      zhT,
     );
     expect(outcome).toMatchObject({ kind: "conflict" });
     expect((outcome as { message: string }).message).not.toBe(
@@ -416,6 +418,7 @@ describe("classifySaveError", () => {
         409,
         { detail: { code: "canvas_revision_conflict" } },
         "fallback",
+        zhT,
       ),
     ).toMatchObject({
       kind: "conflict",
@@ -428,6 +431,7 @@ describe("classifySaveError", () => {
       400,
       { detail: { code: "dangerous_empty_canvas_overwrite" } },
       "fallback",
+      zhT,
     );
     expect(outcome.kind).toBe("dangerous_empty");
   });
@@ -438,6 +442,7 @@ describe("classifySaveError", () => {
         503,
         { detail: { code: "canvas_lock_busy" } },
         "fallback",
+        zhT,
       ),
     ).toEqual({
       kind: "retry",
@@ -451,6 +456,7 @@ describe("classifySaveError", () => {
       503,
       { detail: { code: "canvas_backup_pending" } },
       "fallback",
+      zhT,
     );
     expect(outcome.kind).toBe("ok_with_warning");
     if (outcome.kind === "ok_with_warning") {
@@ -464,6 +470,7 @@ describe("classifySaveError", () => {
         422,
         { detail: { code: "canvas_payload_too_large" } },
         "fallback",
+        zhT,
       ).kind,
     ).toBe("fatal");
   });
@@ -474,19 +481,20 @@ describe("classifySaveError", () => {
         500,
         { detail: { code: "canvas_needs_migration" } },
         "fallback",
+        zhT,
       ).kind,
     ).toBe("fatal");
   });
 
   it("falls back to a generic error for unknown codes", () => {
-    expect(classifySaveError(418, {}, "I am a teapot")).toEqual({
+    expect(classifySaveError(418, {}, "I am a teapot", zhT)).toEqual({
       kind: "error",
       message: "I am a teapot",
     });
   });
 
   it("treats bare 413 as fatal payload_too_large even without detail.code", () => {
-    const outcome = classifySaveError(413, undefined, "fallback");
+    const outcome = classifySaveError(413, undefined, "fallback", zhT);
     expect(outcome.kind).toBe("fatal");
     if (outcome.kind === "fatal") {
       expect(outcome.code).toBe("canvas_payload_too_large");
@@ -498,6 +506,7 @@ describe("classifySaveError", () => {
       500,
       { detail: { code: "canvas_backup_failed" } },
       "fallback",
+      zhT,
     );
     expect(outcome.kind).toBe("fatal");
     if (outcome.kind === "fatal") {
@@ -558,7 +567,7 @@ describe("describePayloadViolation", () => {
         field: "nodes",
         actual: MAX_NODES + 5,
         limit: MAX_NODES,
-      }),
+      }, zhT),
     ).toMatch(/节点数量/);
   });
 
@@ -568,7 +577,7 @@ describe("describePayloadViolation", () => {
         field: "edges",
         actual: MAX_EDGES + 5,
         limit: MAX_EDGES,
-      }),
+      }, zhT),
     ).toMatch(/连线数量/);
   });
 
@@ -577,7 +586,7 @@ describe("describePayloadViolation", () => {
       field: "body",
       actual: 6 * 1024 * 1024,
       limit: MAX_BODY_BYTES,
-    });
+    }, zhT);
     expect(message).toMatch(/KB/);
     expect(message).toMatch(/暂停保存/);
   });

@@ -53,6 +53,8 @@ vi.mock("@/features/viewer-kit/three-d/ThreeDDirectorDialog", () => ({
 import { PropsPanel } from "@/components/assets/props-panel";
 import { ConfirmDialogHost } from "@/components/confirm-dialog-host";
 import { ScenesPanel } from "@/components/assets/scenes-panel";
+import { enTranslation } from "../../helpers/i18n-fixtures";
+
 import {
   AssetHeaderActionsSlotProvider,
   AssetHeaderActionsTarget,
@@ -64,102 +66,7 @@ beforeAll(async () => {
   await i18n.use(initReactI18next).init({
     lng: "en",
     fallbackLng: "en",
-    resources: {
-      en: {
-        translation: {
-          common: {
-            cancel: "Cancel",
-            confirm: "Confirm",
-            delete: "Delete",
-            loading: "Loading",
-            refresh: "Refresh",
-            save: "Save",
-          },
-          assets: {
-            common: {
-              delete: "Delete",
-              edit: "Edit",
-              generated: "generated",
-              missing: "missing",
-            },
-            scenes: {
-              title: "Scenes",
-              count: "{{count}} scenes",
-              build: "Build from graph",
-              buildDisabledByDerivedScenes:
-                "Derived scenes exist. Full rebuild is disabled.",
-              newScene: "New scene",
-              editScene: "Edit scene",
-              derivedFrom: "Derived from {{base}}",
-              emptyTitle: "No scenes yet",
-              emptyDescription: "Create a scene or extract scenes from the project graph.",
-              confirmDelete: "Delete scene \"{{name}}\"?",
-              deleteTitle: "Delete scene",
-              deleted: "Scene deleted",
-              master: "Master",
-              pano: "360 panorama",
-              reverse: "Reverse",
-              uploadMaster: "Upload/replace master",
-              generateMaster: "Generate master",
-              regenerateMaster: "Regenerate master",
-              deleteMaster: "Delete master",
-              generateReverse: "Generate reverse",
-              regenerateReverse: "Regenerate reverse",
-              uploadPano: "Upload/replace 360",
-              generatePanoFromText: "Generate 360",
-              generatePanoFromMaster: "Generate 360",
-              generatePanoFromMasterReverse: "Generate 360",
-              deletePano: "Delete 360",
-              openPanoViewer: "Open Director World",
-              noMaster: "master.png missing",
-              noReverse: "reverse_master.png missing",
-              noPano: "pano_360.png missing",
-              stage: {
-                openWorld: "Open Director World",
-              },
-              fields: {
-                name: "Scene name",
-                type: "Scene type",
-                nameRule:
-                  "普通独立场景只填名称；不要在这里填写变体或时间。需要状态/时间版时，在场景详情里添加变体。",
-                environmentPrompt: "Environment prompt",
-                variantPrompt: "Variant delta prompt",
-                description: "Narrative description",
-              },
-            },
-            props: {
-              title: "Props",
-              count: "{{count}} props",
-              newProp: "New prop",
-              editProp: "Edit prop",
-              emptyTitle: "No props yet",
-              emptyDescription: "Create a prop.",
-              confirmDelete: "Delete prop \"{{name}}\"?",
-              deleted: "Prop deleted",
-              reference: "Reference",
-              noReference: "Reference image missing",
-              generateReference: "Generate reference",
-              regenerateReference: "Regenerate reference",
-              owner: "Owner",
-              types: {
-                weapon: "Weapon",
-                accessory: "Accessory",
-                artifact: "Artifact",
-                document: "Document",
-                furniture: "Furniture",
-                object: "Other object",
-              },
-              fields: {
-                name: "Prop name",
-                type: "Prop type",
-                owner: "Owner",
-                visualPrompt: "Visual prompt",
-              },
-            },
-          },
-        },
-      },
-    },
+    resources: { en: { translation: enTranslation } },
     interpolation: { escapeValue: false },
   });
 });
@@ -271,7 +178,7 @@ describe("asset panel rename behavior", () => {
     nativeConfirm.mockRestore();
   });
 
-  it("shows scene naming rules and submits the selected Chinese scene type as canonical value", async () => {
+  it("shows scene naming rules and submits the selected scene type as its canonical code", async () => {
     const user = userEvent.setup();
     let postBody: unknown = null;
     server.use(
@@ -292,14 +199,14 @@ describe("asset panel rename behavior", () => {
     await user.click(await screen.findByRole("button", { name: "New scene" }));
     expect(
       screen.getByText(
-        "普通独立场景只填名称；不要在这里填写变体或时间。需要状态/时间版时，在场景详情里添加变体。",
+        "For a standalone base scene, enter only the scene name. Add state or time versions from the selected scene's variant area.",
       ),
     ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Scene name"), {
       target: { value: "Bathroom_Leak" },
     });
     await user.click(screen.getByRole("combobox", { name: "Scene type" }));
-    await user.click(await screen.findByRole("option", { name: "室外" }));
+    await user.click(await screen.findByRole("option", { name: "Exterior" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(postBody).toBeDefined());
@@ -309,7 +216,7 @@ describe("asset panel rename behavior", () => {
     });
   });
 
-  it("renders extracted scene type codes as Chinese labels in the scene list", async () => {
+  it("renders extracted scene type codes as localized labels in the scene list", async () => {
     server.use(
       http.get("http://localhost:3000/api/v1/projects/demo/scenes", () =>
         HttpResponse.json({
@@ -322,7 +229,7 @@ describe("asset panel rename behavior", () => {
     renderWithProviders(<ScenesPanel project="demo" />);
 
     expect(await screen.findAllByText("Hall")).not.toHaveLength(0);
-    expect(await screen.findByText("室内")).toBeInTheDocument();
+    expect(await screen.findByText("Interior")).toBeInTheDocument();
     expect(screen.queryByText("interior")).not.toBeInTheDocument();
   });
 
@@ -374,7 +281,7 @@ describe("asset panel rename behavior", () => {
 
     expect(await screen.findAllByText("Door")).not.toHaveLength(0);
     expect(screen.queryByText("1 个场景变体")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "选择场景 Hall" }));
+    await user.click(screen.getByRole("button", { name: "Select scene Hall" }));
     expect(screen.queryByText("2 个场景变体")).not.toBeInTheDocument();
   });
 
@@ -401,11 +308,11 @@ describe("asset panel rename behavior", () => {
 
     renderWithProviders(<ScenesPanel project="demo" />);
 
-    expect(await screen.findByRole("button", { name: "选择场景 Door" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "选择场景 Hall" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Select scene Door" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select scene Hall" })).toBeInTheDocument();
     expect(screen.queryByText("Hall_Night")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "选择场景 Hall" }));
+    await user.click(screen.getByRole("button", { name: "Select scene Hall" }));
 
     expect(screen.getByText("Hall_Night")).toBeInTheDocument();
     expect(screen.queryByText("Door_上午")).not.toBeInTheDocument();
@@ -434,15 +341,15 @@ describe("asset panel rename behavior", () => {
 
     const firstRender = renderWithProviders(<ScenesPanel project="demo" />);
 
-    await screen.findByRole("button", { name: "选择场景 Door" });
-    await user.click(screen.getByRole("button", { name: "选择场景 Hall" }));
+    await screen.findByRole("button", { name: "Select scene Door" });
+    await user.click(screen.getByRole("button", { name: "Select scene Hall" }));
     expect(screen.getByText("Hall_Night")).toBeInTheDocument();
 
     firstRender.unmount();
     renderWithProviders(<ScenesPanel project="demo" />);
 
-    await screen.findByRole("button", { name: "选择场景 Door" });
-    expect(screen.getByRole("button", { name: "选择场景 Hall" })).toHaveAttribute(
+    await screen.findByRole("button", { name: "Select scene Door" });
+    expect(screen.getByRole("button", { name: "Select scene Hall" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -496,21 +403,21 @@ describe("asset panel rename behavior", () => {
 
     renderWithProviders(<ScenesPanel project="demo" />);
 
-    await screen.findByRole("button", { name: "选择场景 Hall" });
-    await user.click(await screen.findByRole("button", { name: "添加场景变体" }));
+    await screen.findByRole("button", { name: "Select scene Hall" });
+    await user.click(await screen.findByRole("button", { name: "Add scene variant" }));
 
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("填写变体或时间后自动生成")).toBeInTheDocument();
+    expect(within(dialog).getByText("Auto-generated after variant or time is set")).toBeInTheDocument();
     expect(within(dialog).queryByDisplayValue("wide hall")).not.toBeInTheDocument();
     expect(within(dialog).queryByDisplayValue("soft skylight")).not.toBeInTheDocument();
-    fireEvent.change(within(dialog).getByLabelText("变体"), {
+    fireEvent.change(within(dialog).getByLabelText("Variant"), {
       target: { value: "漏水" },
     });
     fireEvent.change(within(dialog).getByLabelText("Variant delta prompt"), {
       target: { value: "floor water and dripping ceiling" },
     });
-    await user.click(within(dialog).getByRole("combobox", { name: "时间" }));
-    await user.click(await screen.findByRole("option", { name: "夜晚" }));
+    await user.click(within(dialog).getByRole("combobox", { name: "Time" }));
+    await user.click(await screen.findByRole("option", { name: "Night" }));
     expect(within(dialog).getByText("Hall_漏水_夜晚")).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
 

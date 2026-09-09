@@ -93,6 +93,7 @@ export function useCancelTask() {
       episode,
       beatNum,
       scope,
+      confirmed = false,
     }: {
       type: string;
       project: string;
@@ -101,6 +102,8 @@ export function useCancelTask() {
       beatNum?: number;
       /** Required for character/identity/sketch-regen scoped tasks. */
       scope?: string;
+      /** The caller already displayed its own confirmation dialog. */
+      confirmed?: boolean;
     }) => {
       const searchParams: Record<string, string> = {};
       if (beatNum !== undefined) searchParams.beat_num = String(beatNum);
@@ -117,6 +120,7 @@ export function useCancelTask() {
           .json<CancelTaskResult>();
       };
       try {
+        if (confirmed) return await send(true);
         return await send();
       } catch (error) {
         if (!(error instanceof HTTPError) || error.response.status !== 409) {
@@ -139,7 +143,7 @@ export function useCancelTask() {
             ...conflict,
             ok: false,
             continued: true,
-            message: "已继续执行任务",
+            message: i18n.t("tasks.cancelRunning.continued"),
           };
         }
         return send(true);

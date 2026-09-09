@@ -520,16 +520,16 @@ export function InsertManualShotDialog({
                   <SelectValue
                     placeholder={t("episode.workbench.insertManual.timeOfDayPlaceholder")}
                   >
-                    {timeOfDayLabel(timeOfDay)}
+                    {timeOfDayLabel(timeOfDay, t)}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE_SENTINEL}>
-                    {timeOfDayLabel("")}
+                    {timeOfDayLabel("", t)}
                   </SelectItem>
                   {timeChoices.map((tod) => (
                     <SelectItem key={tod} value={tod}>
-                      {timeOfDayLabel(tod)}
+                      {timeOfDayLabel(tod, t)}
                     </SelectItem>
                   ))}
                 </SelectContent>

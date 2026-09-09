@@ -28,6 +28,22 @@ def _catalog(*modes: str) -> dict:
     }
 
 
+def _wan_catalog() -> dict:
+    catalog = _catalog("all_reference")
+    catalog.update(
+        {
+            "referenceImageMax": 10,
+            "referenceVideoMax": 5,
+            "referenceAudioMax": 5,
+            "referenceFileMax": 1,
+            "referenceLinkMax": 1,
+            "referenceFileTypes": ["pdf", "docx", "md"],
+            "maxDuration": 30,
+        }
+    )
+    return catalog
+
+
 async def _install_route_fakes(monkeypatch, tmp_path: Path, capabilities: dict) -> dict:
     captured: dict = {}
 
@@ -129,6 +145,92 @@ async def test_video_edit_forwards_configured_independent_audio(
         },
     ]
     assert captured["validated_audio_items"] == captured["start"]["reference_items"]
+
+
+@pytest.mark.asyncio
+async def test_omni_video_forwards_document_reference(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured = await _install_route_fakes(monkeypatch, tmp_path, _wan_catalog())
+
+    await freezone_routes.freezone_video_omni_gen(
+        "project",
+        FreezoneVideoOmniGenRequest(
+            prompt="根据产品说明生成广告",
+            references=[
+                {
+                    "type": "file",
+                    "url": "https://example.com/product.PDF?download=1",
+                    "role": "产品说明",
+                }
+            ],
+            model="catalog-video",
+            duration_seconds=30,
+        ),
+        {"username": "admin"},
+    )
+
+    assert captured["request_mode"] == "allReference"
+    assert captured["start"]["duration_seconds"] == 30
+    assert captured["start"]["reference_items"] == [
+        {
+            "type": "file",
+            "path": "https://example.com/product.PDF?download=1",
+            "role": "产品说明",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_omni_video_forwards_public_link_reference(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured = await _install_route_fakes(monkeypatch, tmp_path, _wan_catalog())
+
+    await freezone_routes.freezone_video_omni_gen(
+        "project",
+        FreezoneVideoOmniGenRequest(
+            prompt="根据页面内容生成新闻短片",
+            references=[
+                {
+                    "type": "link",
+                    "url": "https://example.com/news/wan-3",
+                    "role": "网页参考",
+                }
+            ],
+            model="catalog-video",
+        ),
+        {"username": "admin"},
+    )
+
+    assert captured["start"]["reference_items"] == [
+        {
+            "type": "link",
+            "path": "https://example.com/news/wan-3",
+            "role": "网页参考",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_omni_video_rejects_file_and_link_together(
+    monkeypatch, tmp_path: Path
+) -> None:
+    await _install_route_fakes(monkeypatch, tmp_path, _wan_catalog())
+
+    with pytest.raises(HTTPException, match="mutually exclusive"):
+        await freezone_routes.freezone_video_omni_gen(
+            "project",
+            FreezoneVideoOmniGenRequest(
+                prompt="生成介绍视频",
+                references=[
+                    {"type": "file", "url": "https://example.com/brief.pdf"},
+                    {"type": "link", "url": "https://example.com/brief"},
+                ],
+                model="catalog-video",
+            ),
+            {"username": "admin"},
+        )
 
 
 @pytest.mark.asyncio

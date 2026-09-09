@@ -53,6 +53,8 @@ export const useShotMetadataStore = create<ShotMetadataState>((set) => ({
  */
 export function renderShotMetadataForPrompt(shot: ShotMetadata): string {
   const parts: string[] = [];
+  // 这些字段名直接拼进发给模型的提示词，锁中文；界面上的镜头参数标签另有词条。
+  // i18n-exempt-start
   const labelMap: Record<keyof ShotMetadata, string> = {
     shot_type: "景别",
     angle: "镜头角度",
@@ -62,6 +64,7 @@ export function renderShotMetadataForPrompt(shot: ShotMetadata): string {
     color_tone: "色调",
     extra: "",
   };
+  // i18n-exempt-end
   for (const [key, label] of Object.entries(labelMap)) {
     if (key === "extra") continue;
     const v = shot[key as keyof ShotMetadata];
@@ -75,7 +78,7 @@ export function renderShotMetadataForPrompt(shot: ShotMetadata): string {
     }
   }
   if (parts.length === 0) return "";
-  return `\n[镜头参数]\n${parts.join("\n")}`;
+  return `\n[镜头参数]\n${parts.join("\n")}`; // i18n-exempt —— 提示词里的段落头
 }
 
 /**

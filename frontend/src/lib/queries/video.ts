@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import i18n from "i18next";
 import { api, uploadApi } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
-import { useAppStore } from "@/stores/app-store";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { Beat } from "@/types/episode";
 
 export const DEFAULT_VIDEO_BACKEND = "huimeng_seedance-1.0-pro-fast";
-
-function currentPromptLanguage(): "zh" | "en" {
-  return useAppStore.getState().language?.startsWith("zh") ? "zh" : "en";
-}
 
 export interface VideoBackendOption {
   value: string;
@@ -40,8 +36,11 @@ export interface NarratorVoiceStatusData {
   reference_url?: string;
   reference_sha256?: string;
   heading: string;
+  /** 展示文案的稳定 code；前端按它查词条，heading/explanation 只作兜底。 */
+  heading_code?: string;
   detail: string;
   explanation: string;
+  explanation_code?: string;
   character_name?: string;
   identity_id?: string;
   identity_name?: string;
@@ -218,7 +217,7 @@ export function useGlobalOptimize(project: string, episode: number) {
         api.post(
           p`api/v1/projects/${project}/episodes/${episode}/optimize/video-global`,
           {
-            json: { language: currentPromptLanguage() },
+            json: {},
             throwHttpErrors: false,
           },
         ),
@@ -283,7 +282,7 @@ export function useVideoPoolSelect(project: string, episode: number) {
           { json: { pool_id: poolId } },
         )
         .json<VideoPoolSelectResponse>();
-      if (!res.ok) throw new Error(res.error ?? "切换视频失败");
+      if (!res.ok) throw new Error(res.error ?? i18n.t("episode.video.switchFailed"));
       return res;
     },
     // Mirror usePoolSelect's pattern: patch caches in place to avoid an
@@ -437,7 +436,7 @@ export type VideoInputCropTarget =
 const seedance2BeatStatusProjectKey = (project: string) =>
   ["seedance2-beat-status", project] as const;
 
-const seedance2BeatStatusKey = (
+export const seedance2BeatStatusKey = (
   project: string,
   episode: number,
   beatNum: number,
@@ -639,10 +638,12 @@ export function useGenerateSeedance2Prompt(project: string, episode: number) {
       beatNum,
       manualPromptReference,
       promptGuidance,
+      promptGuidanceTemplateKeys,
     }: {
       beatNum: number;
       manualPromptReference?: string;
       promptGuidance?: string;
+      promptGuidanceTemplateKeys?: string[];
     }) =>
       jsonWithBackendError<OkResponse<Seedance2PromptResult> | ErrorResponse>(
         api.post(
@@ -651,6 +652,7 @@ export function useGenerateSeedance2Prompt(project: string, episode: number) {
             json: {
               manual_prompt_reference: manualPromptReference ?? "",
               prompt_guidance: promptGuidance ?? "",
+              prompt_guidance_template_keys: promptGuidanceTemplateKeys ?? [],
             },
             throwHttpErrors: false,
           },
@@ -683,7 +685,7 @@ export function useGenerateBeatVideoPrompt(project: string, episode: number) {
         api.post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/video-prompt/generate`,
           {
-            json: { language: currentPromptLanguage() },
+            json: {},
             throwHttpErrors: false,
           },
         ),

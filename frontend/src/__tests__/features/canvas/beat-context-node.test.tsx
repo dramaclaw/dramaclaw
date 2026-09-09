@@ -29,17 +29,6 @@ vi.mock("@xyflow/react", async () => {
   };
 });
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string, options?: { defaultValue?: string; message?: string }) => {
-      if (key === "node.beatContextNode.status.syncError") {
-        return `同步失败：${options?.message || "未知错误"}`;
-      }
-      return options?.defaultValue ?? key;
-    },
-  }),
-}));
-
 vi.mock("@/api/projects", () => ({
   listFreezoneBeatContext: (...args: unknown[]) =>
     listFreezoneBeatContext(...args),

@@ -1,3 +1,4 @@
+import { ImageDerivedOverlay } from "./ImageDerivedActions";
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
@@ -224,6 +225,8 @@ export const SelectedNodeOverlay = memo(() => {
   const [multiAngleNodeId, setMultiAngleNodeId] = useState<string | null>(null);
   const activeLightEditorNodeId = useCanvasStore((state) => state.activeLightEditorNodeId);
   const setLightEditorNodeId = useCanvasStore((state) => state.setActiveLightEditorNodeId);
+  const [derivedMedia, setDerivedMedia] = useState<{ nodeId: string; kind: "svg" | "gif" } | null>(null);
+  const derivedMediaNode = derivedMedia ? nodes.find(node => node.id === derivedMedia.nodeId) : null;
   const [scene360NodeId, setScene360NodeId] = useState<string | null>(null);
   const [redrawNodeId, setRedrawNodeId] = useState<string | null>(null);
   const [eraseNodeId, setEraseNodeId] = useState<string | null>(null);
@@ -936,6 +939,7 @@ export const SelectedNodeOverlay = memo(() => {
   const activeOverlayNodeId =
     multiAngleNodeId
     ?? activeLightEditorNodeId
+    ?? derivedMedia?.nodeId
     ?? scene360NodeId
     ?? redrawNodeId
     ?? eraseNodeId
@@ -999,6 +1003,7 @@ export const SelectedNodeOverlay = memo(() => {
           node={selectedNode}
           onOpenMultiAngleEditor={handleOpenMultiAngleEditor}
           onOpenLightEditor={handleOpenLightEditor}
+          onOpenDerivedMedia={(nodeId, kind) => { setDerivedMedia({ nodeId, kind }); clearFlowSelection(); setSelectedNode(null); }}
           onOpenScene360={handleOpenScene360}
           onOpenUpscale={handleOpenUpscale}
           onOpenOutpaint={handleOpenOutpaint}
@@ -1032,6 +1037,7 @@ export const SelectedNodeOverlay = memo(() => {
           onClose={handleCloseErase}
         />
       )}
+      {derivedMedia && derivedMediaNode && <ImageDerivedOverlay node={derivedMediaNode} kind={derivedMedia.kind} onClose={() => setDerivedMedia(null)} />}
       {scene360Node && scene360ImageSource && (
         <Scene360Overlay
           node={scene360Node}

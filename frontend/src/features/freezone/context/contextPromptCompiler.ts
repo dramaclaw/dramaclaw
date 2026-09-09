@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+/**
+ * 这里拼的是发给图像模型的提示词，不是界面文案。改动会直接改变生成结果，
+ * 所以整份保持中文，不跟界面语言走。
+ */
+// i18n-exempt-start
 import type { ContextMatch } from "./contextMatching";
 import type { MainlineContext } from "./mainlineContext";
 
@@ -109,3 +114,4 @@ export function compileFrameGenerationContextPrompt(match: ContextMatch): string
     "输出应该是干净可用的分镜画面，不要保留草图标注、箭头、色块或文字标签。",
   ].join("\n");
 }
+// i18n-exempt-end

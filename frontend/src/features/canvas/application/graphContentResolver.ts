@@ -70,7 +70,21 @@ export function extractUpstreamContent(node: CanvasNode): UpstreamContent {
   if (isTextAnnotationNode(node)) {
     return { ...base, text: nonEmpty(node.data.content) };
   }
-  if (isUploadNode(node) || isExportImageNode(node)) {
+  if (isUploadNode(node)) {
+    // 上传节点不一定装的是图：早期版本从资产库选入的视频就是 upload 节点，地址写在
+    // data.videoUrl（口径同 VideoNode.referenceVideoUrl）。所以先看 videoUrl —— 这类
+    // 节点身上常常同时挂着 previewImageUrl（海报），只看图片字段会把一段视频当成
+    // 图片派给下游：图片节点会把它当参考图收下，「素材引用」里又找不到它。
+    const rawVideoUrl = (node.data as { videoUrl?: unknown }).videoUrl;
+    const videoUrl = typeof rawVideoUrl === 'string' ? nonEmpty(rawVideoUrl) : undefined;
+    if (videoUrl) return { ...base, videoUrl };
+    return {
+      ...base,
+      imageUrl:
+        nonEmpty(node.data.imageUrl) ?? nonEmpty(node.data.previewImageUrl ?? undefined),
+    };
+  }
+  if (isExportImageNode(node)) {
     return {
       ...base,
       imageUrl:

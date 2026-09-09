@@ -8,7 +8,8 @@ export type ToolOptions = Record<string, ToolOptionPrimitive>;
 
 interface ToolFieldBase {
   key: string;
-  label: string;
+  /** 展示名的词条 key——工具 schema 里只留 key，文案跟着界面语言走。 */
+  labelKey: string;
 }
 
 export interface ToolTextField extends ToolFieldBase {
@@ -26,8 +27,11 @@ export interface ToolNumberField extends ToolFieldBase {
 export interface ToolSelectField extends ToolFieldBase {
   type: 'select';
   options: Array<{
-    label: string;
     value: string;
+    /** 词条 key。与 `label` 二选一，两者都在时以它为准。 */
+    labelKey?: string;
+    /** 「16:9」这类跟语言无关的字面量，直接照原样显示。 */
+    label?: string;
   }>;
 }
 
@@ -54,7 +58,7 @@ export type ToolEditorKind = 'form' | 'crop' | 'annotate' | 'split';
 
 export interface CanvasToolPlugin {
   type: NodeToolType;
-  label: string;
+  labelKey: string;
   icon: ToolIconKey;
   editor: ToolEditorKind;
   supportsNode: (node: CanvasNode) => boolean;

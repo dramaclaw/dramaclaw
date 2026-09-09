@@ -228,7 +228,7 @@ class CloudinaryRelay:
 
         ext = _normalize_ext(ext)
         resource_type = str(resource_type or "image").strip().lower()
-        if resource_type not in {"image", "video"}:
+        if resource_type not in {"image", "video", "raw"}:
             raise ValueError(f"unsupported Cloudinary resource type: {resource_type}")
         filename = f"{uuid.uuid4().hex}.{ext}"
         content_type = mimetypes.types_map.get(f".{ext}", "application/octet-stream")

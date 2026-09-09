@@ -9,6 +9,8 @@ import type {
 import type { KeyElementCategory } from './keyElements';
 
 export const CANVAS_NODE_TYPES = {
+  vectorSvg: 'vectorSvgNode',
+  animatedGif: 'animatedGifNode',
   upload: 'uploadNode',
   imageEdit: 'imageNode',
   imageGen: 'imageGenNode',
@@ -205,6 +207,11 @@ export interface VideoNodeData extends NodeDisplayData {
    * (如新接入的)排在其后,按节点 y 坐标兜底。
    */
   referenceOrder?: string[];
+  /** Uploaded document reference for all-reference generation. */
+  referenceFileUrl?: string | null;
+  referenceFileName?: string | null;
+  /** Public HTTP(S) page reference for all-reference generation. */
+  referenceLink?: string | null;
   isGenerating?: boolean;
   generationStartedAt?: number | null;
   generationDurationMs?: number;

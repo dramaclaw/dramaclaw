@@ -493,6 +493,41 @@
   background: rgba(255, 255, 255, 0.14);
 }
 
+/* hover 时把缩略图换成替换按钮：@ 引用能改指向这件事，藏在双击里没人找得到。
+   音频 chip 的缩略图位置被播放键占着，替换键排在标签后面（见 buildChipElement）。 */
+.mention-chip-swap {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgb(var(--text-rgb));
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mention-chip-swap::before {
+  content: '\21C4';
+}
+
+.mention-chip-swap:hover {
+  background: rgb(var(--accent-rgb));
+  color: #fff;
+}
+
+.mention-chip:hover > img,
+.mention-chip:hover > video {
+  display: none;
+}
+
+.mention-chip:hover > .mention-chip-swap {
+  display: inline-flex;
+}
+
 /* 音频引用：可点击的 ▶ / ⏸ 播放按钮（无缩略图）。 */
 .mention-chip-audio-play {
   display: inline-flex;
@@ -622,6 +657,24 @@
    抬高优先级，避免被 .selection 等同特异性规则盖掉，与上面平移的处理一致。 */
 .react-flow .react-flow__node.dragging {
   cursor: grabbing;
+}
+
+/* 节点拖动专注模式：只隐藏临时操作 chrome，不卸载组件、不清空 selection，
+   因此输入草稿、面板展开状态和松手后的工具栏恢复都不受影响。吸附引导线不在
+   此列表中，会继续提供必要的对齐反馈。body 级选择器同时覆盖 portal 到 body 的
+   下拉面板和提示层。 */
+body.canvas-node-drag-focus .react-flow__node-toolbar,
+body.canvas-node-drag-focus .react-flow__resize-control,
+body.canvas-node-drag-focus .react-flow__handle,
+body.canvas-node-drag-focus .react-flow__nodesselection-rect,
+body.canvas-node-drag-focus .canvas-node-transient-ui,
+body.canvas-node-drag-focus [role="tooltip"],
+body.canvas-node-drag-focus [role="menu"],
+body.canvas-node-drag-focus [role="listbox"] {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transition: none !important;
 }
 
 .react-flow__node.canvas-node-placement-confirm {
@@ -1241,6 +1294,34 @@
   perspective: 800px;
 }
 
+.st-ai-media-card > div,
+.st-ai-media-card > div > div {
+  transition:
+    background-color var(--duration-fast) var(--ease-out-quint),
+    box-shadow var(--duration-fast) var(--ease-out-quint);
+}
+
+.st-ai-media-card img {
+  transition: filter var(--duration-fast) var(--ease-out-quint);
+}
+
+@media (hover: hover) {
+  .st-ai-media-card:hover > div,
+  .st-ai-media-card:focus-within > div {
+    background-color: var(--ui-border-strong);
+  }
+
+  .st-ai-media-card:hover > div > div,
+  .st-ai-media-card:focus-within > div > div {
+    box-shadow: inset 0 0 0 1px var(--ui-border-soft);
+  }
+
+  .st-ai-media-card:hover img,
+  .st-ai-media-card:focus-within img {
+    filter: brightness(1.09) saturate(1.04) contrast(1.01);
+  }
+}
+
 .st-unified-media-audio {
   height: 36px;
   color-scheme: dark;
@@ -1330,6 +1411,15 @@ button:hover .st-keyframe-video-play {
 @media (prefers-reduced-motion: reduce) {
   .canvas-spawn-plus-magnetic-button {
     transition-property: border-color, color, box-shadow;
+  }
+
+  .st-ai-media-card > div,
+  .st-ai-media-card > div > div {
+    transition: none;
+  }
+
+  .st-ai-media-card img {
+    transition: none;
   }
 }
 

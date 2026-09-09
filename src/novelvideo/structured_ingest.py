@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from novelvideo.i18n_message import MessageLike, lmsg
 from novelvideo.story_analysis import chunk_source_text, source_sha256
 from novelvideo.utils.document_parsers import load_novel_text
 
@@ -26,6 +27,7 @@ from novelvideo.utils.document_parsers import load_novel_text
 # when source text, schema version, this version and the spine template all
 # match, so a bump simply starts a fresh plan rather than corrupting an old one.
 STRUCTURED_PIPELINE_VERSION = "structured_v1"
+STRUCTURED_ANALYSIS_VERSION = "structured_analysis_v2"
 STRUCTURED_SCHEMA_VERSION = 1
 
 _PROGRESS = {
@@ -52,23 +54,29 @@ async def ingest_source_text_structured(
     analysis-run methods).
     """
 
-    def report(progress: float, task: str) -> None:
+    def report(progress: float, task: MessageLike) -> None:
         if on_progress:
             on_progress(progress, task)
 
-    def log(message: str) -> None:
+    def log(message: MessageLike) -> None:
         if on_log:
             on_log(message)
 
     if not Path(novel_path).exists():
         raise FileNotFoundError(f"文件不存在: {novel_path}")
 
-    report(_PROGRESS["read"], "读取并校验原文...")
-    log(f"读取文件: {novel_path}")
+    report(_PROGRESS["read"], lmsg("tasks.progress.ingest.reading", "读取并校验原文..."))
+    log(lmsg("tasks.log.ingest.readingFile", f"读取文件: {novel_path}", path=str(novel_path)))
     content = load_novel_text(novel_path)
     if not content.strip():
         raise ValueError("小说内容为空，无法导入")
-    log(f"文件读取完成: {len(content)} 字符")
+    log(
+        lmsg(
+            "tasks.log.ingest.readComplete",
+            f"文件读取完成: {len(content)} 字符",
+            charCount=len(content),
+        )
+    )
 
     template = str(spine_template or "").strip()
     if template == "drama":
@@ -76,47 +84,81 @@ async def ingest_source_text_structured(
 
         if assess_screenplay_scene_headers(content).status == "missing":
             raise ValueError("精品剧必须包含场景头，请补充后重新导入")
-    report(_PROGRESS["validated"], "原文校验完成")
+    report(
+        _PROGRESS["validated"],
+        lmsg("tasks.progress.ingest.validated", "原文校验完成"),
+    )
 
-    report(_PROGRESS["chunked"], "切分原文...")
+    report(
+        _PROGRESS["chunked"],
+        lmsg("tasks.progress.ingest.chunking", "切分原文..."),
+    )
     chunks = chunk_source_text(content, template)
     if not chunks:
         raise ValueError("原文切分结果为空，无法分析")
     section_type = chunks[0].section_type
-    log(f"确定性切分完成: {len(chunks)} 个片段（{section_type}）")
+    log(
+        lmsg(
+            "tasks.log.ingest.chunked",
+            f"确定性切分完成: {len(chunks)} 个片段（{section_type}）",
+            chunkCount=len(chunks),
+            sectionType=section_type,
+        )
+    )
 
-    report(_PROGRESS["planned"], "记录分析计划...")
+    report(
+        _PROGRESS["planned"],
+        lmsg("tasks.progress.ingest.planning", "记录分析计划..."),
+    )
     digest = source_sha256(content)
     reused = await store.get_reusable_analysis_run(
         source_sha256=digest,
         schema_version=STRUCTURED_SCHEMA_VERSION,
-        pipeline_version=STRUCTURED_PIPELINE_VERSION,
+        pipeline_version=STRUCTURED_ANALYSIS_VERSION,
         spine_template=template,
     )
     if reused:
         # Identical text analysed by identical code: keep the existing run so a
         # re-import resumes its completed chunks instead of discarding them.
         run_id = str(reused["run_id"])
-        log(f"复用已有分析计划: {run_id}")
+        log(
+            lmsg(
+                "tasks.log.ingest.planReused",
+                f"复用已有分析计划: {run_id}",
+                runId=run_id,
+            )
+        )
     else:
         run_id = uuid.uuid4().hex
         await store.start_analysis_run(
             run_id=run_id,
-            pipeline_version=STRUCTURED_PIPELINE_VERSION,
+            pipeline_version=STRUCTURED_ANALYSIS_VERSION,
             schema_version=STRUCTURED_SCHEMA_VERSION,
             spine_template=template,
             source_sha256=digest,
             source_length=len(content),
             chunks=chunks,
         )
-        log(f"分析计划已记录: {run_id}")
+        log(
+            lmsg(
+                "tasks.log.ingest.planRecorded",
+                f"分析计划已记录: {run_id}",
+                runId=run_id,
+            )
+        )
 
     # novel.txt is the public success marker and therefore lands last.
-    report(_PROGRESS["save"], "保存导入结果...")
+    report(
+        _PROGRESS["save"],
+        lmsg("tasks.progress.ingest.saving", "保存导入结果..."),
+    )
     store.save_novel_content(content)
-    log("原文已保存")
+    log(lmsg("tasks.log.ingest.sourceSaved", "原文已保存"))
 
-    report(_PROGRESS["complete"], "导入完成")
+    report(
+        _PROGRESS["complete"],
+        lmsg("tasks.progress.ingest.complete", "导入完成"),
+    )
     return {
         "char_count": len(content),
         "status": "source_ready",

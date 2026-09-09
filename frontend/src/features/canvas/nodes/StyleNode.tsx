@@ -3,6 +3,7 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Images, Palette } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import {
   CANVAS_NODE_TYPES,
@@ -10,8 +11,8 @@ import {
   type StyleNodeData,
 } from '@/features/canvas/domain/canvasNodes';
 import {
-  DEFAULT_NODE_DISPLAY_NAME,
-  resolveNodeDisplayName,
+  localizeDefaultNodeDisplayName,
+  localizeNodeDisplayName,
 } from '@/features/canvas/domain/nodeDisplay';
 import {
   NodeHeader,
@@ -45,15 +46,16 @@ export const STYLE_NODE_HEIGHT = 124;
 
 // 「查不到封面」有四种成因，卡片得说清是哪一种：说成「未选择风格」会让用户以为
 // 这个节点是空的，而那个 id 其实还在跟着生成请求走（ready 态不会走到这里）。
-const STYLE_NODE_PLACEHOLDER_TEXT: Record<StyleSelectionState, string> = {
-  none: '未选择风格',
+const STYLE_NODE_PLACEHOLDER_KEYS: Record<StyleSelectionState, string> = {
+  none: 'canvas.style.placeholderNone',
   ready: '',
-  loading: '加载中…',
-  failed: '风格清单加载失败，点一下重试',
-  missing: '风格已失效，点一下重选',
+  loading: 'canvas.style.placeholderLoading',
+  failed: 'canvas.style.placeholderFailed',
+  missing: 'canvas.style.placeholderMissing',
 };
 
 export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
+  const { t } = useTranslation();
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const [galleryOpen, setGalleryOpen] = useState(false);
@@ -100,15 +102,15 @@ export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
     const customTitle =
       typeof data.displayName === 'string' ? data.displayName.trim() : '';
     if (customTitle) return customTitle;
-    if (!template) return resolveNodeDisplayName(CANVAS_NODE_TYPES.style, data);
+    if (!template) return localizeNodeDisplayName(CANVAS_NODE_TYPES.style, data, t);
     return [
-      DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.style],
+      localizeDefaultNodeDisplayName(CANVAS_NODE_TYPES.style, data, t),
       template.category,
       template.label,
     ]
       .filter((part) => typeof part === 'string' && part.trim().length > 0)
       .join(' · ');
-  }, [data, template]);
+  }, [data, t, template]);
   const cardToneClass = canvasNodeFrameClass({ selected });
 
   const handleSelectStyle = useCallback(
@@ -145,7 +147,9 @@ export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
       <div
         role="button"
         tabIndex={0}
-        aria-label={template ? `风格 ${template.label}` : '选择风格'}
+        aria-label={
+          template ? t('canvas.style.thumbAria', { label: template.label }) : t('canvas.style.select')
+        }
         aria-disabled={isOrphan}
         onClick={(event) => {
           event.stopPropagation();
@@ -179,13 +183,15 @@ export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
                   : 'text-text-muted/90'
               }`}
             >
-              {STYLE_NODE_PLACEHOLDER_TEXT[selectionState]}
+              {STYLE_NODE_PLACEHOLDER_KEYS[selectionState]
+                ? t(STYLE_NODE_PLACEHOLDER_KEYS[selectionState])
+                : ''}
             </div>
           )}
         </div>
         {isOrphan && (
           <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/60 px-2 py-1 text-center text-[11px] text-text-dark/80">
-            未连接图片节点
+            {t('canvas.style.noImageUpstream')}
           </span>
         )}
       </div>
@@ -198,8 +204,8 @@ export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
       {!isOrphan && (
         <button
           type="button"
-          aria-label="更换风格"
-          title="更换风格"
+          aria-label={t('canvas.style.change')}
+          title={t('canvas.style.change')}
           onClick={(event) => {
             event.stopPropagation();
             openGallery();

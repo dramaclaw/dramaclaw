@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { PushResult, PushTarget } from "@/api/push";
 import { nodeDataAfterCommittedSlot } from "@/features/freezone/commit/committedNodePatch";
+import { zhT } from "../../helpers/i18n-fixtures";
 
 // Regression guard for the SHARED commit-node patch that the Director World
 // rework made apply to NON-director-world commits too (image/video/audio/
@@ -23,6 +24,7 @@ describe("nodeDataAfterCommittedSlot — non-director-world targets", () => {
       target,
       result("/static/proj/episodes/1/beats/2/video.mp4"),
       "proj",
+      zhT,
     );
     expect(patch).toMatchObject({
       videoUrl: "/static/proj/episodes/1/beats/2/video.mp4",
@@ -41,6 +43,7 @@ describe("nodeDataAfterCommittedSlot — non-director-world targets", () => {
       target,
       result("/static/proj/episodes/3/beats/4/audio.wav"),
       "proj",
+      zhT,
     );
     expect(patch).toMatchObject({
       audioUrl: "/static/proj/episodes/3/beats/4/audio.wav",
@@ -57,6 +60,7 @@ describe("nodeDataAfterCommittedSlot — non-director-world targets", () => {
       target,
       result("/static/proj/characters/Alice/id-1.png"),
       "proj",
+      zhT,
     );
     expect(patch).toMatchObject({
       imageUrl: "/static/proj/characters/Alice/id-1.png",
@@ -73,6 +77,7 @@ describe("nodeDataAfterCommittedSlot — non-director-world targets", () => {
       target,
       result("/static/proj/scenes/hall/master.png"),
       "proj",
+      zhT,
     );
     expect(patch).toMatchObject({
       imageUrl: "/static/proj/scenes/hall/master.png",
@@ -88,6 +93,7 @@ describe("nodeDataAfterCommittedSlot — non-director-world targets", () => {
       target,
       result("/static/proj/episodes/1/beats/1/frame.png"),
       "proj",
+      zhT,
     );
     expect(patch?.displayName).toMatch(/^已提交 ·/);
     expect(patch?.mainline_context).toBeUndefined();
@@ -96,12 +102,12 @@ describe("nodeDataAfterCommittedSlot — non-director-world targets", () => {
   it("empty target_url → no patch (null)", () => {
     const target: PushTarget = { kind: "frame", episode: 1, beat: 1 };
     expect(
-      nodeDataAfterCommittedSlot({ imageUrl: "/x.png" }, target, { target_path: "", target_url: "" }, "proj"),
+      nodeDataAfterCommittedSlot({ imageUrl: "/x.png" }, target, { target_path: "", target_url: "" }, "proj", zhT),
     ).toBeNull();
   });
 
   it("scene_director_world target → null (state commit does not patch via this path)", () => {
     const target = { kind: "scene_director_world", scene_id: "hall" } as unknown as PushTarget;
-    expect(nodeDataAfterCommittedSlot({}, target, result("/static/proj/x"), "proj")).toBeNull();
+    expect(nodeDataAfterCommittedSlot({}, target, result("/static/proj/x"), "proj", zhT)).toBeNull();
   });
 });

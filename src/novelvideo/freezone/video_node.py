@@ -538,7 +538,8 @@ def build_freezone_omni_video_prompt(
         parts.append(marks_block)
 
     parts.append(
-        "全能参考模式要求：综合文本、图像、视频和音频参考进行统一建模，优先保持主体身份、场景连续性、风格一致性和动作自然性。"
+        "全能参考模式要求：综合文本、图像、视频、音频、文件和网页链接参考进行统一建模，"
+        "优先保持主体身份、场景连续性、风格一致性和动作自然性。"
     )
     counts = summarize_omni_reference_counts(reference_items or [])
     single_video_reference_instruction = "这是视频参考生成新的视频，不是视频编辑。"
@@ -546,6 +547,8 @@ def build_freezone_omni_video_prompt(
         counts["video_count"] == 1
         and counts["image_count"] == 0
         and counts["audio_count"] == 0
+        and counts["file_count"] == 0
+        and counts["link_count"] == 0
         and single_video_reference_instruction not in "\n".join(parts)
     ):
         parts.append(single_video_reference_instruction)
@@ -559,11 +562,15 @@ def summarize_omni_reference_counts(items: list[dict[str, Any]]) -> dict[str, in
     image_count = sum(1 for item in items if str(item.get("type")) == "image")
     video_count = sum(1 for item in items if str(item.get("type")) == "video")
     audio_count = sum(1 for item in items if str(item.get("type")) == "audio")
+    file_count = sum(1 for item in items if str(item.get("type")) == "file")
+    link_count = sum(1 for item in items if str(item.get("type")) == "link")
     return {
         "image_count": image_count,
         "video_count": video_count,
         "audio_count": audio_count,
-        "total_count": image_count + video_count + audio_count,
+        "file_count": file_count,
+        "link_count": link_count,
+        "total_count": image_count + video_count + audio_count + file_count + link_count,
     }
 
 
@@ -573,6 +580,8 @@ def validate_omni_reference_limits(
     image_max: int = 9,
     video_max: int = 3,
     audio_max: int = 3,
+    file_max: int = 0,
+    link_max: int = 0,
     total_max: int = 12,
 ) -> None:
     counts = summarize_omni_reference_counts(items)
@@ -584,6 +593,12 @@ def validate_omni_reference_limits(
         raise ValueError(f"video references count must be <= {video_max}")
     if counts["audio_count"] > audio_max:
         raise ValueError(f"audio references count must be <= {audio_max}")
+    if counts["file_count"] > file_max:
+        raise ValueError(f"file references count must be <= {file_max}")
+    if counts["link_count"] > link_max:
+        raise ValueError(f"link references count must be <= {link_max}")
+    if counts["file_count"] and counts["link_count"]:
+        raise ValueError("reference_file and reference_link are mutually exclusive")
 
 
 # 火山 Seedance 对参考图的硬规则（从 400 报文里实测）：

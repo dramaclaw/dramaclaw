@@ -735,6 +735,11 @@ export function useImageGenerationForm(
     onGenerationSettled?.();
     if (completedUrls.length > 0) {
       actionOutput = {
+        ...(submittedRefs[0] ? {
+          task_key: submittedRefs[0].task_key,
+          task_type: submittedRefs[0].task_type,
+          job_id: submittedRefs[0].job_id,
+        } : {}),
         imageUrl: completedUrls[0],
         imageUrls: completedUrls,
       };

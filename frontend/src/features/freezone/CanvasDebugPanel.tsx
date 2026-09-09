@@ -15,6 +15,9 @@
  * Strictly debug-only. The panel adds no autosave hooks of its own; it reads
  * what the hook already exposes plus issues two ad-hoc API calls.
  */
+// 这个面板只在 DEV 下挂载（而且当前在 FreezoneShell 里被 `false &&` 关着），
+// 面向的是改画布同步的人，不是产品用户；文案入词条纯属浪费，整块保留中文。
+// i18n-exempt-start
 
 import { useState } from "react";
 import { ChevronDown, ChevronUp, RotateCcw, Wrench } from "lucide-react";
@@ -352,3 +355,4 @@ function formatErr(err: unknown): string {
   }
   return String(err);
 }
+// i18n-exempt-end

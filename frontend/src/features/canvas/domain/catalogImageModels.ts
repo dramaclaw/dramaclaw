@@ -13,6 +13,10 @@
  */
 
 import { useMemo } from 'react';
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from 'i18next';
 
 import type { MediaModelRequestSchema } from '@/api/ops';
 import type { ImageModelDefinition } from '@/features/canvas/models';
@@ -90,7 +94,11 @@ export function toImageModelDefinition(
       // 配置的模型对不上，后端 `_catalog_image_execution_selection` 直接 400。
       // 加前缀后拆出来正是 (openrouter, google/gemini-2.5-flash-image-preview)。
       requestModel: `${info.providerId}/${info.apiModel}`,
-      modeLabel: referenceImageCount > 0 ? '编辑' : '生成',
+      modeLabel: i18n.t(
+        referenceImageCount > 0
+          ? 'canvas.imageModel.modeEdit'
+          : 'canvas.imageModel.modeGenerate',
+      ),
     }),
   };
 }
@@ -167,5 +175,5 @@ export const EMPTY_CATALOG_IMAGE_MODEL: ImageModelDefinition = toImageModelDefin
   id: '',
   providerId: '',
   apiModel: '',
-  label: '无可用模型',
+  label: i18n.t('canvas.imageModel.noneAvailable'),
 });

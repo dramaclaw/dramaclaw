@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { TFunction } from "i18next";
+
 export type CharacterMainCopy = {
   label: string;
   makeMain: string;
@@ -8,24 +10,26 @@ export type CharacterMainCopy = {
   mainUnset: string;
 };
 
-const DRAMA_MAIN_COPY: CharacterMainCopy = {
-  label: "主角",
-  makeMain: "设为主角",
-  unsetMain: "取消主角",
-  mainSet: "已设为主角",
-  mainUnset: "已取消主角",
-};
-
-const NARRATED_MAIN_COPY: CharacterMainCopy = {
-  label: "解说主角",
-  makeMain: "设为解说主角",
-  unsetMain: "取消解说主角",
-  mainSet: "已设为解说主角",
-  mainUnset: "已取消解说主角",
-};
+/**
+ * 「主角 / 解说主角」这组文案随 spine_template 变，是界面文案不是协议值，所以这里
+ * 只存 key，由调用方带着 t 进来在渲染时解析。
+ */
+const MAIN_COPY_KEY_PREFIX = {
+  drama: "character.main.drama",
+  narrated: "character.main.narrated",
+} as const;
 
 export function characterMainCopyForSpineTemplate(
   spineTemplate: string | null | undefined,
+  t: TFunction,
 ): CharacterMainCopy {
-  return spineTemplate === "narrated" ? NARRATED_MAIN_COPY : DRAMA_MAIN_COPY;
+  const prefix =
+    spineTemplate === "narrated" ? MAIN_COPY_KEY_PREFIX.narrated : MAIN_COPY_KEY_PREFIX.drama;
+  return {
+    label: t(`${prefix}.label`),
+    makeMain: t(`${prefix}.makeMain`),
+    unsetMain: t(`${prefix}.unsetMain`),
+    mainSet: t(`${prefix}.mainSet`),
+    mainUnset: t(`${prefix}.mainUnset`),
+  };
 }

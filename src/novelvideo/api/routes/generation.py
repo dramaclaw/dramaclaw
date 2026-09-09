@@ -6,11 +6,12 @@ import logging
 import os
 import re
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from novelvideo.api.auth import get_api_user, require_scope
 from novelvideo.api.deps import (
@@ -52,6 +53,7 @@ from novelvideo.api.schemas import (
     Seedance2AssetCropRequest,
     Seedance2AssetDeleteRequest,
 )
+from novelvideo.utils.source_language import detect_episode_asset_language
 from novelvideo.api.viewer_manifests import (
     build_director_stage_manifest,
     build_pano_viewer_manifest,
@@ -90,6 +92,17 @@ from novelvideo.services.background_anchor_service import (
     select_background_anchor,
 )
 from novelvideo.utils.path_resolver import PathResolver, compute_identity_path, compute_portrait_path
+
+
+class _TemporaryFileResponse(FileResponse):
+    """Delete the response file after ASGI delivery, including failed or cancelled sends."""
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            with suppress(OSError):
+                Path(self.path).unlink(missing_ok=True)
 
 router = APIRouter()
 
@@ -1349,6 +1362,15 @@ async def _seedance2_panel_context(
     characters = store.get_all_characters()
     episode_obj = _episode_from_store_or_none(store, episode_num)
     prop_menu = await _runtime_prop_menu_with_global_props(store, episode_obj, beats)
+    language = await detect_episode_asset_language(
+        store,
+        episode_num,
+        fallback_text="\n".join(
+            str(item.get(field) or "")
+            for item in beats
+            for field in ("narration_segment", "dialogue", "visual_description")
+        ),
+    )
     return {
         "project_ctx": resolved.ctx,
         "username": username,
@@ -1360,6 +1382,7 @@ async def _seedance2_panel_context(
         "next_beat": next_beat,
         "characters": characters,
         "prop_menu": prop_menu,
+        "language": language,
     }
 
 
@@ -1385,6 +1408,7 @@ def _seedance2_status_response(
         characters=ctx["characters"],
         prop_menu=ctx["prop_menu"],
         state_dir=Path(ctx["store"].state_dir),
+        language=ctx.get("language"),
     )
     assets = state.assets
     selected_assets = [asset for asset in assets if asset.selected]
@@ -1500,17 +1524,16 @@ async def upload_seedance2_asset(
         user=user,
     )
     from novelvideo.seedance2_i2v.panel_service import (
-        save_seedance2_uploaded_asset,
+        save_seedance2_uploaded_file,
     )
 
-    content = await file.read()
-    target = await save_seedance2_uploaded_asset(
+    target = await save_seedance2_uploaded_file(
         store=ctx["store"],
         episode=episode_num,
         beat=ctx["beat"],
         project_dir=ctx["output_dir"],
         filename=file.filename or "seedance2_asset",
-        content=content,
+        upload_stream=file.file,
         content_type=file.content_type or "",
     )
     if target is None:
@@ -1546,6 +1569,7 @@ async def delete_seedance2_asset(
         store=ctx["store"],
         episode=episode_num,
         beat=ctx["beat"],
+        project_dir=ctx["output_dir"],
         media_kind=body.media_kind,
         path=body.path,
     )
@@ -2718,8 +2742,7 @@ async def global_optimize_video(
 ):
     """全局视频提示词优化（草图 → AI 自由决策每个 beat 的 i2v/k2v 模式）。
 
-    language="en" (默认) 使用 SuperPower 模式（Gemini 英文提示词，含 camera/action/audio）。
-    language="zh" 使用中文简短提示词。
+    输出语言由作者保存的当前剧本文本决定，不受界面语言影响。
     """
     resolved = await _resolve_generation_project(project, user, required_role="editor")
     ctx = resolved.ctx
@@ -2736,6 +2759,16 @@ async def global_optimize_video(
 
     if not beats:
         return {"ok": False, "error": f"No beats found for episode {episode_num}"}
+
+    language = await detect_episode_asset_language(
+        store,
+        episode_num,
+        fallback_text="\n".join(
+            str(beat.get(field) or "")
+            for beat in beats
+            for field in ("narration_segment", "dialogue", "visual_description")
+        ),
+    )
 
     # 预检和报价必须使用同一统计口径。
     billable_beat_numbers = _global_optimize_billable_beat_numbers(
@@ -2772,7 +2805,7 @@ async def global_optimize_video(
                 "beats": beats,
                 "characters": char_list,
                 "output_dir": output_dir,
-                "language": body.language,
+                "language": language,
                 "billing": {
                     "items": billable_beat_count,
                     "beat_numbers": billable_beat_numbers,
@@ -5971,11 +6004,12 @@ async def cut_grid(
 @router.post("/projects/{project}/episodes/{episode_num}/export/zip")
 async def export_zip(project: str, episode_num: int, user: dict = Depends(get_api_user)):
     """打包指定集的所有资源为 ZIP 文件下载。"""
+    import asyncio
     import zipfile
     import tempfile
 
-    from fastapi.responses import FileResponse
     from novelvideo.export.episode_export import build_srt_content
+    from novelvideo.utils.async_ops import call_blocking, wait_for_task_completion
     from novelvideo.utils.path_resolver import PathResolver
 
     resolved = await _resolve_generation_project(project, user, required_role="viewer")
@@ -6022,21 +6056,41 @@ async def export_zip(project: str, episode_num: int, user: dict = Depends(get_ap
 
     srt_content = await build_srt_content(project_dir, episode_num, beats)
 
-    # 创建临时 ZIP 文件
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-    tmp.close()
+    def build_zip_file() -> str:
+        tmp_path = ""
+        try:
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+            tmp_path = tmp.name
+            tmp.close()
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_STORED) as zf:
+                for file_path, arc_name in files_to_pack:
+                    zf.write(file_path, arc_name)
+                if srt_content:
+                    zf.writestr(
+                        f"{ep_tag}.srt",
+                        srt_content,
+                        compress_type=zipfile.ZIP_DEFLATED,
+                    )
+            return tmp_path
+        except Exception:
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
+            raise
 
-    with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file_path, arc_name in files_to_pack:
-            zf.write(file_path, arc_name)
-        if srt_content:
-            zf.writestr(f"{ep_tag}.srt", srt_content)
-
-    return FileResponse(
-        path=tmp.name,
-        filename=f"{project_name}_{ep_tag}.zip",
-        media_type="application/zip",
-    )
+    build_task = asyncio.create_task(call_blocking(build_zip_file))
+    tmp_path, cancellation = await wait_for_task_completion(build_task)
+    if cancellation is not None:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise cancellation
+    try:
+        return _TemporaryFileResponse(
+            path=tmp_path,
+            filename=f"{project_name}_{ep_tag}.zip",
+            media_type="application/zip",
+        )
+    except Exception:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
 
 
 # ---------------------------------------------------------------------------

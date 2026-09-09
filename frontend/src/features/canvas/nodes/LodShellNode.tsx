@@ -37,6 +37,7 @@ import {
   requestShellUpgrade,
 } from '@/features/canvas/application/canvasLod';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { ReferencePickNodeOverlay } from '@/features/canvas/ui/ReferencePickNodeOverlay';
 import {
   getLodStill,
   requestLodStill,
@@ -59,6 +60,8 @@ import type { CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 // 导出只为让测试上棘轮：新增节点类型要么在这里登记尺寸，要么进 LOD 豁免名单，
 // 漏了就会拿 400×300 的通用兜底，首屏低缩放下盒子明显不对。
 export const SHELL_FALLBACK_SIZES: Partial<Record<string, { width: number; height: number }>> = {
+  vectorSvgNode: { width: 360, height: 192 },
+  animatedGifNode: { width: 360, height: 192 },
   uploadNode: { width: 320, height: 350 },
   imageNode: { width: 580, height: 360 },
   imageGenNode: { width: 580, height: 360 },
@@ -244,19 +247,30 @@ export function withLodShell(
       return requestShellUpgrade(() => setHeldShell(false));
     }, [heldShell, wantShell]);
 
+    // 参考拾取遮罩挂在每个节点上（shell 档也要有，低缩放下照样能选）：
+    // `.react-flow__node` 本身是定位元素，遮罩用 inset-0 就精确贴合这个节点的盒子，
+    // 不必在画布层重算 positionAbsolute × zoom。不在拾取态时它渲染 null。
     if (heldShell) {
       return (
-        <LodShell
-          type={type}
-          id={props.id}
-          data={props.data as ShellData}
-          selected={props.selected}
-          width={props.width}
-          height={props.height}
-        />
+        <>
+          <LodShell
+            type={type}
+            id={props.id}
+            data={props.data as ShellData}
+            selected={props.selected}
+            width={props.width}
+            height={props.height}
+          />
+          <ReferencePickNodeOverlay nodeId={props.id} />
+        </>
       );
     }
-    return <Component {...props} />;
+    return (
+      <>
+        <Component {...props} />
+        <ReferencePickNodeOverlay nodeId={props.id} />
+      </>
+    );
   };
   Wrapped.displayName = `withLodShell(${type})`;
   return memo(Wrapped);

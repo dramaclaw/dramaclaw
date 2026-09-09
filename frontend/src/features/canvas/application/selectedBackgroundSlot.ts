@@ -6,6 +6,10 @@ import type {
   CanvasNode,
   CanvasNodeData,
 } from '@/features/canvas/domain/canvasNodes';
+// 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
+// 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
+// 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import i18n from 'i18next';
 import { uploadFreezoneImage } from '@/api/ops';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
@@ -51,7 +55,7 @@ function selectedBackgroundOutputPatchForNode(
 ): Partial<CanvasNodeData> {
   const nodeData = recordValue(node.data) ?? {};
   const fallbackLabel = options.label
-    ?? '当前背景';
+    ?? i18n.t('viewer.threeD.selectedBackgroundOutputLabel');
   const displayName =
     typeof nodeData.displayName === 'string' && nodeData.displayName.trim()
       ? nodeData.displayName
@@ -143,7 +147,7 @@ export function stageSelectedBackgroundOutputForSkill(
       edgeKind: 'mainline_data',
       propagates: true,
       role: 'selected_background',
-      label: '当前背景',
+      label: i18n.t('viewer.threeD.selectedBackgroundOutputLabel'),
     },
     {
       id: `edge_${options.sourceSkillNodeId}_to_${nodeId}_selected_background`,
@@ -194,7 +198,7 @@ export function stageSelectedBackgroundCandidateFromNode(
       edgeKind: 'mainline_data',
       propagates: true,
       role: 'selected_background',
-      label: '当前背景候选',
+      label: i18n.t('canvas.selectedBackground.candidateEdgeLabel'),
     },
     {
       id: `edge_${options.sourceNodeId}_to_${nodeId}_selected_background_candidate`,
@@ -213,18 +217,18 @@ export async function uploadAndAutoCommitSelectedBackgroundCandidate(
 ): Promise<{ nodeId: string; url: string }> {
   const projectId = readUrl().project;
   if (!projectId) {
-    throw new Error('缺少项目');
+    throw new Error(i18n.t('canvas.selectedBackground.missingProject'));
   }
   const uploaded = await uploadFreezoneImage(projectId, blob, filename, { timeoutMs: false });
   const nodeId = stageSelectedBackgroundCandidateFromNode(target, uploaded.url, options);
   if (!nodeId) {
-    throw new Error('无法创建当前背景候选节点');
+    throw new Error(i18n.t('canvas.selectedBackground.candidateCreateFailed'));
   }
   canvasEventBus.publish('freezone/commit-node', {
     nodeId,
     auto: true,
     successMessage: options.successMessage
-      ?? '已设置当前背景',
+      ?? i18n.t('canvas.selectedBackground.commitSuccess'),
   });
   return { nodeId, url: uploaded.url };
 }

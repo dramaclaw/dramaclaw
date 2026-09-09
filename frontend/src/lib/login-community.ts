@@ -21,6 +21,8 @@ function cdn(path: string): string {
   return encodeURI(`${CDN_BASE}/${path}`);
 }
 
+// i18n-exempt-start —— title / description 是作品自己的片名和简介（见类型上的
+// “Literal …” 注释），属于展示内容而非界面文案。
 export const loginCommunityWorks: LoginCommunityWork[] = [
   {
     id: "neon-patrol",
@@ -97,3 +99,4 @@ export const loginCommunityWorks: LoginCommunityWork[] = [
     gradient: "linear-gradient(135deg, #1f1b2e 0%, #8d3b2f 48%, #f0a23a 100%)",
   },
 ];
+// i18n-exempt-end

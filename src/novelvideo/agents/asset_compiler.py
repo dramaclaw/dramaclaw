@@ -23,6 +23,7 @@ from novelvideo.models import (
 )
 from novelvideo.sqlite_store import load_episode_planning_content
 from novelvideo.cognee.screenplay_normalizer import (
+    clean_scene_name_and_time,
     normalize_screenplay_scene_header,
     normalize_time_of_day,
 )
@@ -208,6 +209,7 @@ BASE_SCENE_RECONCILE_PROMPT = """# 你是影视项目基础场景资产校对员
 - 你必须优先复用已有基础场景及其别名；不要因为描述、时段、天气、状态变化创建新基础场景。
 - 基础场景名必须是中性的物理地点，如“公寓楼电梯间”“城市街道”“医院走廊”。
 - 不要把“雨夜/白天/黄昏/漏水/爆炸后/凌乱/雪景”等时间、天气、状态写进基础场景名；这些交给后续 plate/变体规划。
+- 英文的具体钟点和时段也不能写进基础场景名，例如 `11:47 PM`、`DAY`、`NIGHT`、`daytime`、`evening`。
 - 只有明确是可复用物理地点、且有原文证据时，才输出 create。
 - “室内”“外景”“本集主场景”“路边”等泛称一律 ignore。
 - evidence_lines 必须引用原文中的短句。
@@ -700,7 +702,7 @@ class AssetCompiler:
         for decision in output.scenes:
             if decision.action != "create":
                 continue
-            scene_name = str(decision.scene_name or "").strip()
+            scene_name, _ = clean_scene_name_and_time(decision.scene_name)
             if not scene_name or scene_name in generic_names:
                 continue
             if await self._find_existing_base_scene_by_name_or_alias(
