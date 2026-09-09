@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 
 import pytest
+
+
 import respx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -64,6 +66,36 @@ from novelvideo.newapi_provisioner import (
     update_provider_channel_credentials,
     upsert_channel,
 )
+
+
+@pytest.mark.parametrize("failures", [1, 3])
+def test_settings_initialization_retries_lock_and_closes_connections(
+    monkeypatch, tmp_path, failures
+):
+    import sqlite3
+    from novelvideo import model_gateway_settings as settings
+
+    monkeypatch.setattr(settings, "_settings_db_path", lambda: tmp_path / "settings.db")
+    configure = settings.configure_sqlite_connection
+    connections = []
+
+    def contend_on_journal_mode(conn):
+        connections.append(conn)
+        if len(connections) <= failures:
+            raise sqlite3.OperationalError("database is locked")
+        configure(conn)
+
+    monkeypatch.setattr(settings, "configure_sqlite_connection", contend_on_journal_mode)
+    if failures == 1:
+        assert settings._read_all() == {}
+        assert len(connections) == 2
+    else:
+        with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+            settings._read_all()
+        assert len(connections) == 3
+    for conn in connections:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            conn.execute("SELECT 1")
 
 
 def _newer_bundled_catalog_version(offset: int = 1) -> str:
