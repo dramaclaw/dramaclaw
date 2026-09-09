@@ -21,21 +21,19 @@ const worldOverlayMotion = readFileSync(
   "src/features/piko-world/piko-world-overlay-motion.ts",
   "utf8",
 );
-const floatingEntry = readFileSync(
-  "src/features/piko-world/PikoWorldFloatingEntry.tsx",
-  "utf8",
-);
 const zh = JSON.parse(readFileSync("public/locales/zh/translation.json", "utf8"));
 const en = JSON.parse(readFileSync("public/locales/en/translation.json", "utf8"));
 
 describe("Piko World 项目中心入口", () => {
-  it("只由项目管理中心渲染，并指向独立世界路由", () => {
-    expect(dashboard).toContain("<PikoWorldFloatingEntry />");
-    expect(appLayout).not.toContain("PikoWorldFloatingEntry");
-    expect(floatingEntry).toContain('navigate({ to: "/piko-world" })');
-    expect(floatingEntry).toContain('preloadRoute({ to: "/piko-world" })');
-    expect(floatingEntry).toContain("setDragPosition(latest)");
-    expect(floatingEntry).toContain("safeLocalStorageSet");
+  it("通过顶部统一入口进入世界，撤下项目中心悬浮入口", () => {
+    const header = readFileSync("src/components/layout/header.tsx", "utf8");
+    expect(dashboard).not.toContain("<PikoWorldFloatingEntry />");
+    expect(header).toContain("piko piko");
+    expect(header).toContain("openOnHover");
+    expect(header).toContain('navigate({ to: "/piko-world" })');
+    expect(header).toContain('t("header.pikoHub.play")');
+    expect(header).toContain('t("header.pikoHub.companion")');
+    expect(appLayout).toContain('"piko-open-station"');
   });
 
   it("世界页面独立于工作台外壳并完整适配视口", () => {

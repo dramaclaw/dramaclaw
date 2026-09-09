@@ -20,7 +20,7 @@ import occlusion from "../../../../public/piko/world/maps/welcome-courtyard/data
 describe("Piko World map package contract", () => {
   it("accepts the welcome courtyard package with draft navigation", () => {
     expect(PikoMapManifestSchema.parse(manifest).mapId).toBe("welcome-courtyard");
-    expect(PikoNavigationSchema.parse(navigation).walkableAreas).toHaveLength(3);
+    expect(PikoNavigationSchema.parse(navigation).walkableAreas).toHaveLength(1);
     expect(PikoOcclusionSchema.parse(occlusion).occluders).toEqual([]);
     expect(PikoInteractionsSchema.parse(interactions).interactions).toEqual([]);
     expect(PikoEnvironmentSchema.parse(environment).effects).toEqual([]);

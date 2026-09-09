@@ -1,0 +1,16 @@
+.launch { position:absolute; bottom:16px; left:16px; z-index:30; }
+.launch, .panel button, .panel select { background:#182229; color:#e9edef; border:1px solid #2a3942; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer; }
+.panel button:disabled { opacity:.4; cursor:default; }
+.panel button:focus-visible, .panel select:focus-visible, .launch:focus-visible { outline:2px solid #00bdcf; outline-offset:2px; }
+.panel { position:absolute; z-index:30; bottom:16px; left:16px; width:min(300px,calc(100% - 32px)); max-height:55%; overflow:auto; padding:12px; border:1px solid #2a3942; border-radius:14px; background:rgb(19 20 27 / 95%); color:#e9edef; font-size:12px; }
+.row { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
+.panel select { width:100%; }
+.panel p { margin:8px 0 0; line-height:1.5; }
+.overlay { position:absolute; z-index:20; touch-action:none; }
+.hideButton { margin-left:auto; }
+
+.editFields { border:0; padding:0; margin:0; min-width:0; }
+
+.panel .primary { background:#0e333c; border-color:#00bdcf; color:#e9edef; }
+.more summary { cursor:pointer; padding:6px 0; }
+.more[open] > * { margin-bottom:8px; }

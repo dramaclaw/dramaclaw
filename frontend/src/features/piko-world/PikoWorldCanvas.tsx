@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { PikoSpeechBubble } from "./PikoSpeechBubble";
 import type { PikoSpeech } from "./piko-public-chat";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Application, Assets, Container, Sprite, type Texture } from "pixi.js";
 import { useTranslation } from "react-i18next";
 
@@ -19,6 +19,9 @@ import { PIKO_PLAYABLE_RESIDENTS, type PlayablePikoResidentId } from "./piko-res
 import { PIKO_SIMULATED_RESIDENT } from "./piko-simulated-resident";
 import { playPikoUiSound } from "./piko-audio";
 
+import type { PikoNavigation } from "./runtime/map-package-schema";
+const NavigationEditor = lazy(() => import("./PikoNavigationEditor"));
+
 export type PikoMapLoadState = "loading" | "ready" | "error";
 
 type PikoWorldCanvasProps = {
@@ -34,6 +37,9 @@ type PikoWorldCanvasProps = {
 
 export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", onLoadStateChange, showMayorHint = false, mayorHintVisible = showMayorHint, movementBlocked = false }: PikoWorldCanvasProps) {
   const { t } = useTranslation();
+  const [debugNavigation, setDebugNavigation] = useState<PikoNavigation | null>(null);
+  const debugEditingRef = useRef(false);
+  const navigationRef = useRef<PikoNavigation | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const mayorActiveRef = useRef(showMayorHint);
   const [welcomeOpen, setWelcomeOpen] = useState(false);
@@ -146,6 +152,8 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
           world.addChild(mayorActor.container);
           const navigation = await loadPikoMapNavigation(mapId,manifest.data.navigation,abortController.signal);
           if(disposed)return;
+          navigationRef.current = navigation;
+          setDebugNavigation(structuredClone(navigation));
           for (const id of Object.keys(PIKO_PLAYABLE_RESIDENTS) as PlayablePikoResidentId[]) {
             const src = PIKO_PLAYABLE_RESIDENTS[id];
             const residentTexture = await Assets.load<Texture>(src);
@@ -159,7 +167,7 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
             welcomeOpenRef.current=true; setWelcomeOpen(true);
           };
           residentActor = createResidentActor(residentTextures.get(residentIdRef.current)!, nextApp.ticker,
-            () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current && !socialBusyRef.current,
+            () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current && !socialBusyRef.current && !debugEditingRef.current,
             {host,navigation});
           stopPlayerRef.current = () => residentActor?.stop();
           residentActor.container.zIndex = residentActor.container.y;
@@ -170,7 +178,7 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
             residentActor?.setSheet(residentTextures.get(id)!);
           };
           simulatedActor = createResidentActor(residentTextures.get(PIKO_SIMULATED_RESIDENT.residentId)!, nextApp.ticker,
-            () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current && !socialBusyRef.current,
+            () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current && !socialBusyRef.current && !debugEditingRef.current,
             { host, navigation, label: PIKO_SIMULATED_RESIDENT.id,
               position: PIKO_SIMULATED_RESIDENT.position, simulatedInput: () => ({ x: 0, y: 0 }) });
           simulatedHoverRef.current = addCharacterPresentation(simulatedActor.container, PIKO_SIMULATED_RESIDENT.nickname);
@@ -222,6 +230,8 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
     void mountMap();
     return () => {
       disposed = true;
+      navigationRef.current = null;
+      debugEditingRef.current = false;
       abortController.abort();
       disconnectResizeObserver();
       disconnectPosition();
@@ -263,6 +273,12 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
       {loadState === "ready" && showMayorHint && speech && <PikoSpeechBubble body={speech.body} position={playerPosition} fit={worldFit} />}
       <PikoWelcomeDialog open={welcomeOpen} onOpenChange={open=>{welcomeOpenRef.current=open;setWelcomeOpen(open);}}
         onComplete={()=>setWelcomed(true)} />
+      {import.meta.env.DEV && loadState === "ready" && mapId === "welcome-courtyard" && showMayorHint && debugNavigation && worldFit.scale > 0 && !movementBlocked && (
+        <Suspense fallback={null}><NavigationEditor key={mapId} navigation={debugNavigation} fit={worldFit} player={playerPosition}
+          onEditing={editing => { debugEditingRef.current = editing; if(editing) stopPlayerRef.current(); }}
+          onApply={next => { if(navigationRef.current) Object.assign(navigationRef.current, next); }}
+          onPlay={() => hostRef.current?.focus({preventScroll:true})} /></Suspense>
+      )}
       {loadState !== "ready" ? (
         <div
           className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/80 text-sm text-muted-foreground"

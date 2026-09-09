@@ -423,6 +423,7 @@
     }
   },
   "header": {
+    "pikoHub": {"play": "Piko 一下", "companion": "搭子", "world": "Piko 小镇"},
     "partyFounding105": "庆祝建党105周年",
     "settings": "设置",
     "settingsWithWarning": "设置，有未配置项",

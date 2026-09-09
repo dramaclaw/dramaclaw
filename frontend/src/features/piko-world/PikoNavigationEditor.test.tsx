@@ -1,0 +1,43 @@
+import { fireEvent, render, screen } from '@testing-library/react';
+import { expect, it, vi } from 'vitest';
+import Editor from './PikoNavigationEditor';
+import type { PikoNavigation } from './runtime/map-package-schema';
+it('applies a draft for walking, restores the original on exit, and releases editing on unmount',()=>{
+ const navigation:PikoNavigation={schemaVersion:1,mapId:'welcome-courtyard',walkableAreas:[{id:'ground',points:[{x:0,y:0},{x:2048,y:0},{x:2048,y:1152},{x:0,y:1152}]}],colliders:[],spawnPoints:[],exits:[]};
+ const onApply=vi.fn(),onEditing=vi.fn();
+ const {unmount}=render(<Editor navigation={navigation} fit={{x:0,y:0,scale:1}} player={{x:100,y:100}} onApply={onApply} onEditing={onEditing} onPlay={vi.fn()}/>);
+ fireEvent.click(screen.getByText('场景调试'));
+ fireEvent.click(screen.getByText('更多工具')); expect(onEditing).toHaveBeenLastCalledWith(true);
+ fireEvent.click(screen.getByText('新增碰撞区'));
+ fireEvent.keyDown(window,{code:'KeyD',ctrlKey:true});
+ expect(screen.getAllByRole('option')).toHaveLength(2);
+ fireEvent.keyDown(window,{key:'Delete'});
+ expect(screen.getAllByRole('option')).toHaveLength(1);
+ fireEvent.click(screen.getByText('撤销'));
+ expect(screen.getAllByRole('option')).toHaveLength(2);
+ fireEvent.click(screen.getByText('撤销'));
+ fireEvent.click(screen.getByText('应用并试走'));expect(onApply.mock.lastCall?.[0].colliders).toHaveLength(1);expect(navigation.colliders).toHaveLength(0);
+ fireEvent.click(screen.getByText('退出调试'));expect(onApply).toHaveBeenLastCalledWith(navigation);
+ unmount();expect(onEditing).toHaveBeenLastCalledWith(false);
+});
+
+it('draws a closed polygon and can undo the whole creation without changing existing regions',()=>{
+ vi.stubGlobal('PointerEvent',MouseEvent);
+ const navigation:PikoNavigation={schemaVersion:1,mapId:'welcome-courtyard',walkableAreas:[],colliders:[],spawnPoints:[],exits:[]};
+ const {unmount}=render(<Editor navigation={navigation} fit={{x:0,y:0,scale:1}} player={{x:100,y:100}} onApply={vi.fn()} onEditing={vi.fn()} onPlay={vi.fn()}/>);
+ fireEvent.click(screen.getByText('场景调试'));
+ fireEvent.click(screen.getByText('更多工具'));
+ fireEvent.click(screen.getByText('开始画区域'));
+ const svg=screen.getByLabelText('地图区域编辑层');
+ vi.spyOn(svg,'getBoundingClientRect').mockReturnValue({left:0,top:0,width:2048,height:1152,right:2048,bottom:1152,x:0,y:0,toJSON(){}});
+ for(const [x,y] of [[200,200],[300,200],[300,300]])fireEvent.pointerDown(svg,{clientX:x,clientY:y,button:0});
+ expect(screen.queryAllByRole('option')).toHaveLength(0);
+ fireEvent.pointerDown(svg,{clientX:200,clientY:200,button:0});
+ expect(screen.getAllByRole('option')).toHaveLength(1);
+ fireEvent.click(screen.getByText('撤销'));expect(screen.queryAllByRole('option')).toHaveLength(0);
+ fireEvent.click(screen.getByText('开始画区域'));
+ fireEvent.pointerDown(svg,{clientX:200,clientY:200,button:0});
+ fireEvent.keyDown(window,{key:'Delete'});expect(screen.getByText(/绘制中：0 个节点/)).toBeTruthy();
+ fireEvent.keyDown(window,{key:'Escape'});expect(screen.queryByText('取消绘制')).toBeNull();
+ unmount();vi.unstubAllGlobals();
+});

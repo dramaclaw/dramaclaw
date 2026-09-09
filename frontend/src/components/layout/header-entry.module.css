@@ -1,0 +1,115 @@
+/* Keep the trigger and SVG compositing stable in WebKit. */
+.trigger.trigger {
+  transition: color 150ms ease;
+  background-color: transparent;
+  color: #cbd5e1;
+  filter: none;
+}
+.trigger.trigger:hover, .trigger.trigger:focus-visible, .trigger.trigger[aria-expanded="true"] {
+  background-color: transparent;
+  color: #ffffff;
+}
+.trigger.trigger:active { background-color: transparent; color: #e2e8f0; }
+.trigger.trigger svg { display: block; filter: none; }
+.trigger.trigger [data-credit-value] { color: inherit; }
+.trigger.trigger [data-account-avatar] { color: inherit; }
+.trigger.trigger stop { transition: stop-color 150ms ease; }
+.trigger.trigger:hover stop:first-child,
+.trigger.trigger:focus-visible stop:first-child,
+.trigger.trigger[aria-expanded="true"] stop:first-child { stop-color: #70f1ff; }
+.trigger.trigger:hover stop:nth-child(2),
+.trigger.trigger:focus-visible stop:nth-child(2),
+.trigger.trigger[aria-expanded="true"] stop:nth-child(2) { stop-color: #7dd3fc; }
+.trigger.trigger:hover stop:last-child,
+.trigger.trigger:focus-visible stop:last-child,
+.trigger.trigger[aria-expanded="true"] stop:last-child { stop-color: #b6a1ff; }
+.hubLogo {
+  position: relative;
+  display: block;
+  width: 76px;
+  height: 24px;
+  overflow: hidden;
+}
+.hubLogo img {
+  position: absolute;
+  width: 100.7px;
+  max-width: none;
+  height: auto;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+.hubPanel.hubPanel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: min(252px, calc(100vw - 24px));
+  gap: 8px;
+  padding: 12px;
+}
+.hubItem.hubItem {
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0;
+  min-width: 0;
+  cursor: pointer;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+  transition: color 150ms ease;
+}
+.hubItem.hubItem:hover, .hubItem.hubItem[data-highlighted], .hubItem.hubItem:focus {
+  background: transparent;
+  color: #ffffff;
+}
+.hubItem.hubItem:focus-visible { outline: none; }
+.hubArt {
+  position: relative;
+  display: block;
+  width: 42px;
+  max-width: 100%;
+  height: 42px;
+  pointer-events: none;
+}
+.hubArt img {
+  position: absolute;
+  display: block;
+  max-width: none;
+  height: auto;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  image-rendering: pixelated;
+}
+/* Compensate for the transparent margins in the supplied originals. */
+.companionArt { width: 61px; }
+.playArt { width: 55px; }
+.townArt { width: 49px; }
+/* Raster counterparts to the header's color/gradient brightening.
+   Keep the filter present in both states and do not animate it in WebKit. */
+.hubLogo img, .hubArt img {
+  filter: brightness(0.94);
+  transition: none;
+}
+.trigger:hover .hubLogo img,
+.trigger:focus-visible .hubLogo img,
+.trigger[aria-expanded="true"] .hubLogo img,
+.trigger[data-reward-hit="true"] .hubLogo img,
+.hubItem:hover .hubArt img,
+.hubItem[data-highlighted] .hubArt img,
+.hubItem:focus .hubArt img {
+  filter: brightness(1.12);
+}
+.panel.panel {
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 14px;
+  background: rgb(24 26 30 / 62%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 36%);
+  color: #f1f5f9;
+}
+@media (prefers-reduced-motion: reduce) {
+  .trigger.trigger, .trigger.trigger stop, .hubItem.hubItem { transition: none; }
+}

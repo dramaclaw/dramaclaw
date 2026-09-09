@@ -423,6 +423,7 @@
     }
   },
   "header": {
+    "pikoHub": {"play": "Piko Play", "companion": "Companions", "world": "Piko Town"},
     "partyFounding105": "庆祝建党105周年",
     "settings": "Settings",
     "settingsWithWarning": "Settings, missing configuration",

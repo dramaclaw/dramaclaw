@@ -13,6 +13,8 @@ import { isCeRuntime } from "@/lib/runtime-config";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 
+import entryStyles from "./header-entry.module.css";
+
 function formatFullCredits(value: number, language: string): string {
   return new Intl.NumberFormat(language, { maximumFractionDigits: 0 }).format(value);
 }
@@ -24,6 +26,8 @@ export function CreditBalanceBadge() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pinnedRef = useRef(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const username = useAuthStore((s) => s.username);
   const { data, isLoading, isError } = useCurrentUser(Boolean(username) && !ce);
@@ -34,6 +38,7 @@ export function CreditBalanceBadge() {
 
   useEffect(
     () => () => {
+      if (openTimerRef.current) clearTimeout(openTimerRef.current);
       if (closeTimerRef.current !== null) {
         clearTimeout(closeTimerRef.current);
       }
@@ -51,20 +56,34 @@ export function CreditBalanceBadge() {
   };
 
   const openPanel = () => {
+    if (openTimerRef.current) clearTimeout(openTimerRef.current);
+    openTimerRef.current = null;
     cancelScheduledClose();
     if (!open) void summaryQuery.refetch();
     setOpen(true);
   };
 
+  const scheduleOpenPanel = () => {
+    cancelScheduledClose();
+    if (openTimerRef.current) clearTimeout(openTimerRef.current);
+    openTimerRef.current = setTimeout(openPanel, 100);
+  };
+
   const scheduleClosePanel = () => {
+    if (openTimerRef.current) clearTimeout(openTimerRef.current);
+    openTimerRef.current = null;
+    if (pinnedRef.current) return;
     cancelScheduledClose();
     closeTimerRef.current = setTimeout(() => {
       setOpen(false);
       closeTimerRef.current = null;
-    }, 160);
+    }, 180);
   };
 
   const openCredits = () => {
+    if (openTimerRef.current) clearTimeout(openTimerRef.current);
+    openTimerRef.current = null;
+    pinnedRef.current = false;
     cancelScheduledClose();
     setOpen(false);
     void navigate({ to: "/credits" });
@@ -72,8 +91,12 @@ export function CreditBalanceBadge() {
 
   return (
     <Popover
+      modal={false}
       open={open}
       onOpenChange={(nextOpen) => {
+        if (openTimerRef.current) clearTimeout(openTimerRef.current);
+        cancelScheduledClose();
+        pinnedRef.current = nextOpen;
         if (nextOpen && !open) void summaryQuery.refetch();
         setOpen(nextOpen);
       }}
@@ -82,17 +105,18 @@ export function CreditBalanceBadge() {
         render={
           <button
             type="button"
-            className="group/credits ml-1 flex h-9 min-w-0 items-center gap-1 rounded-md px-1 text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-white focus:outline-none focus:shadow-none focus:ring-0 focus-visible:outline-none focus-visible:shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            className={`${entryStyles.trigger} group/credits ml-1 flex h-9 min-w-0 items-center gap-1 rounded-md px-1 text-sm font-medium text-muted-foreground outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:shadow-none`}
             aria-label={t("credits.openPanel")}
-            onMouseEnter={openPanel}
+            onMouseEnter={scheduleOpenPanel}
             onMouseLeave={scheduleClosePanel}
           />
         }
       >
         <span className="flex shrink-0 items-center">
-          <CreditSparkIcon className="size-[17px]" withHoverMotion />
+          <CreditSparkIcon className="size-[17px]" />
         </span>
         <span
+          data-credit-value
           className={cn(
             "shrink-0 whitespace-nowrap text-[12px] leading-none tabular-nums",
             CREDIT_VALUE_CLASS,
@@ -102,9 +126,11 @@ export function CreditBalanceBadge() {
         </span>
       </PopoverTrigger>
       <PopoverContent
+        initialFocus={() => pinnedRef.current}
+        finalFocus={() => pinnedRef.current}
         align="end"
-        sideOffset={10}
-        className="w-[330px] overflow-hidden border border-white/10 bg-[#17191d] p-0 text-white shadow-2xl"
+        sideOffset={8}
+        className={`${entryStyles.panel} w-[330px] overflow-hidden p-0`}
         onMouseEnter={openPanel}
         onMouseLeave={scheduleClosePanel}
       >

@@ -17,6 +17,8 @@ import {
   KeyRound,
   X,
 } from "lucide-react";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { playPikoUiSound } from "@/features/piko-world/piko-audio";
 import { Button } from "@/components/ui/button";
 import { AvatarUploadDialog } from "@/components/account/avatar-upload-dialog";
 import { PasswordChangeDialog } from "@/components/account/password-change-dialog";
@@ -55,7 +57,8 @@ import {
   ProjectSwitcher,
   ProjectXiajiMenu,
 } from "@/components/layout/project-header-navigation";
-const ACCOUNT_PANEL_TRANSITION_MS = 350;
+import entryStyles from "./header-entry.module.css";
+const ACCOUNT_PANEL_TRANSITION_MS = 150;
 
 export function Header({ ambientBackground = false }: { ambientBackground?: boolean }) {
   const { t, i18n } = useTranslation();
@@ -74,6 +77,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
     top: 56,
     right: 16,
   });
+  const accountHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const accountCloseTimerRef = useRef<number | null>(null);
   const accountUnmountTimerRef = useRef<number | null>(null);
   const accountOpenFrameRef = useRef<number | null>(null);
@@ -141,6 +145,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
 
   useEffect(() => {
     return () => {
+      if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
       clearAccountCloseTimer();
       clearAccountUnmountTimer();
       clearAccountOpenFrame();
@@ -186,6 +191,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   };
 
   const closeAccountPanelNow = () => {
+    if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
     accountPanelPinnedRef.current = false;
     clearAccountCloseTimer();
     clearAccountOpenFrame();
@@ -195,6 +201,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   };
 
   const openAccountPanel = () => {
+    if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
     clearAccountCloseTimer();
     clearAccountUnmountTimer();
     clearAccountOpenFrame();
@@ -212,7 +219,16 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
     });
   };
 
+  const scheduleOpenAccountPanel = () => {
+    clearAccountCloseTimer();
+    clearAccountUnmountTimer();
+    if (accountPanelOpen) { openAccountPanel(); return; }
+    if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
+    accountHoverTimerRef.current = setTimeout(openAccountPanel, 100);
+  };
+
   const scheduleCloseAccountPanel = () => {
+    if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
     // 钉住的面板只由 Escape、面板外交互或选中某一项关闭 —— 鼠标掠过就收走的话,
     // 触屏和键盘用户点开后根本读不完里面的内容(公告中心现在只在这儿)。
     if (accountPanelPinnedRef.current) return;
@@ -225,7 +241,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         accountUnmountTimerRef.current = null;
       }, ACCOUNT_PANEL_TRANSITION_MS);
       accountCloseTimerRef.current = null;
-    }, 120);
+    }, 180);
   };
 
   const toggleAccountPanel = () => {
@@ -256,7 +272,8 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
       closeAccountPanelNow();
     };
     const handleFocusIn = (event: FocusEvent) => {
-      if (isInsideAccountUi(event.target)) return;
+      // Hover panels do not own focus; another popup may restore it on exit.
+      if (!accountPanelPinnedRef.current || isInsideAccountUi(event.target)) return;
       closeAccountPanelNow();
     };
     document.addEventListener("keydown", handleKeyDown);
@@ -377,22 +394,26 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               </Button>
             </div>
           ) : null}
-          <Button
-            id="mybuddy-companion-entry"
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="companion-capsule-entry -ml-0.5 -mr-0.5 size-[32px]"
-            onClick={() => setCompanionOpen(true)}
-            aria-label={t("myBuddy.companion.entry")}
-          >
-            <img
-              src="/piko/entry/companion-capsule.png"
-              alt=""
-              aria-hidden="true"
-              className="companion-capsule-entry__icon size-[22px] object-contain [image-rendering:pixelated]"
-            />
-          </Button>
+          <DropdownMenu modal={false} orientation="horizontal">
+            <DropdownMenuTrigger openOnHover delay={100} closeDelay={180}
+              render={<Button id="piko-hub-entry" variant="ghost" size="sm" className={`${entryStyles.trigger} gap-1.5 px-2 text-xs`} />}>
+              <span className={entryStyles.hubLogo}><img src="/piko/entry-hub/piko-piko.png" alt="piko piko" draggable={false} /></span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={8} className={`${entryStyles.panel} ${entryStyles.hubPanel}`}>
+              <DropdownMenuItem className={entryStyles.hubItem} id="mybuddy-companion-entry" onClick={() => setCompanionOpen(true)}>
+                <span className={entryStyles.hubArt}><img className={entryStyles.companionArt} src="/piko/entry-hub/companion.png" alt="" draggable={false} /></span>
+                <span>{t("header.pikoHub.companion")}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem className={entryStyles.hubItem} onClick={() => { playPikoUiSound("open"); void navigate({ to: "/piko-world" }); }}>
+                <span className={entryStyles.hubArt}><img className={entryStyles.townArt} src="/piko/entry-hub/town.png" alt="" draggable={false} /></span>
+                <span>{t("header.pikoHub.world")}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem className={entryStyles.hubItem} onClick={() => window.dispatchEvent(new Event("piko-open-station"))}>
+                <span className={entryStyles.hubArt}><img className={entryStyles.playArt} src="/piko/entry-hub/play.png" alt="" draggable={false} /></span>
+                <span>{t("header.pikoHub.play")}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <CreditBalanceBadge />
           <div
             id="superchat-header-controls"
@@ -401,7 +422,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
           <div
             ref={accountAnchorRef}
             className="relative ml-1 flex items-center"
-            onMouseEnter={openAccountPanel}
+            onMouseEnter={scheduleOpenAccountPanel}
             onMouseLeave={scheduleCloseAccountPanel}
           >
             <Button
@@ -409,14 +430,14 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="relative size-[28px] rounded-full p-0 hover:bg-transparent"
+              className={`${entryStyles.trigger} relative size-[28px] rounded-full p-0`}
               aria-label={t("header.account.open")}
               aria-haspopup="true"
               aria-expanded={accountPanelOpen}
               aria-controls={accountPanelOpen ? "header-account-panel" : undefined}
               onClick={toggleAccountPanel}
             >
-              <span className="flex size-[26px] items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-[11px] font-normal text-white/72">
+              <span data-account-avatar className="flex size-[26px] items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-[11px] font-normal text-white/72">
                 {avatarUrl ? (
                   <img src={avatarUrl} alt="" className="size-full object-cover" />
                 ) : (
@@ -603,14 +624,14 @@ function AccountPanel({
       ref={panelRef}
       id="header-account-panel"
       aria-label={t("header.account.open")}
-      className={`fixed z-[80] w-[216px] transition-opacity duration-[350ms] ease-[var(--ease-out-quint)] ${
+      className={`fixed z-[80] w-[216px] transition-opacity duration-150 ease-[var(--ease-out-quint)] ${
         visible ? "opacity-100" : "opacity-0"
       }`}
       style={{ top: position.top, right: position.right }}
       onMouseEnter={onEnter}
       onMouseLeave={onClose}
     >
-      <div className="rounded-[14px] border border-white/[0.08] bg-[#202020]/78 p-2.5 text-slate-100 shadow-[0_18px_50px_rgba(0,0,0,0.36)] backdrop-blur-xl">
+      <div className={`${entryStyles.panel} p-2.5`}>
         <div className="mb-2.5 flex h-[50px] items-center gap-2.5 rounded-[10px] bg-white/[0.07] px-2.5">
           <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-xs font-normal text-white/72">
             {avatarUrl ? (

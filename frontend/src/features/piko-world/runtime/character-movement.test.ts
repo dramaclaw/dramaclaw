@@ -35,7 +35,8 @@ it("normalizes diagonal speed and bounds long frames",()=>{
 it("does not walk through the fountain and stops safely",()=>{
   let point={x:1250,y:550};
   for(let i=0;i<200;i++)point=moveCharacter(point,{x:-1,y:0},16,nav);
-  expect(point.x).toBeGreaterThan(1180);
+  expect(point.x).toBeGreaterThan(1060);
+  expect(canStand({x:point.x-3,y:point.y},nav)).toBe(false);
   expect(canStand(point,nav)).toBe(true);
   expect(moveCharacter(point,{x:0,y:0},16,nav)).toEqual(point);
 });

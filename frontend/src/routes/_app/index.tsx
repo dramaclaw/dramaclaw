@@ -86,7 +86,6 @@ import {
 } from "@/stores/episode-workbench-store";
 import { useProjectNavStore } from "@/stores/project-nav-store";
 import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
-import { PikoWorldFloatingEntry } from "@/features/piko-world/PikoWorldFloatingEntry";
 
 type PendingAction =
   | { kind: "archive"; project: string; name: string }
@@ -1300,7 +1299,6 @@ function ProjectDashboard() {
 
   return (
     <div className="mx-auto w-full max-w-7xl">
-      <PikoWorldFloatingEntry />
       {/* Header strip */}
       <div className="mb-10 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>

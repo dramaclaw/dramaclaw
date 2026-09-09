@@ -53,6 +53,11 @@ function AppLayout() {
   const refreshAvatar = useAuthStore((s) => s.refreshAvatar);
   const [validated, setValidated] = useState(false);
   const [pikoStationOpen, setPikoStationOpen] = useState(false);
+  useEffect(() => {
+    const open = () => setPikoStationOpen(true);
+    window.addEventListener("piko-open-station", open);
+    return () => window.removeEventListener("piko-open-station", open);
+  }, []);
   const validatedUsernameRef = useRef<string | null>(null);
   const params = useParams({ strict: false }) as { project?: string };
   const routeProject = params.project ?? null;
@@ -265,7 +270,7 @@ function AppLayout() {
               </main>
             </div>
             <TaskPanel />
-            <TaskStatusBar onOpenPikoStation={() => setPikoStationOpen(true)} />
+            <TaskStatusBar />
           </div>
         </div>
       </div>
