@@ -39,7 +39,7 @@ export interface CharacterPreviewDeps {
    * 那时渲染器已经 `dispose()` 加 `forceContextLoss()`，场景的几何体也还回去了，而
    * 这次调用还停在 await 上。
    *
-   * 醒来照画不会炸——three 0.185 的 `WebGLRenderer.render` 开头就是
+   * 醒来照画不会炸——three 0.185 的 `WebGLRenderer.render` 挡完参数紧接着就是
    * `if (_isContextLost === true) return;`，而这里用的是**同步版**
    * `readRenderTargetPixels`，它读不到东西时只 `error(...)` 加 `return`（会 throw 的是
    * `readRenderTargetPixelsAsync`，不在这条路上）。真实症状是：白白分配一块 render
@@ -201,7 +201,11 @@ export async function renderCharacterPreview(
     if (!(deps.alive?.() ?? true)) {
       // 等它的这段时间里整套家伙什被拆了，见 `CharacterPreviewDeps.alive`。判据要还
       // 回去：位置上并没有木偶，留着的话这套东西万一又活过来就再也不会重建了。
-      if (root.userData[PREVIEW_BUILD_KEY] === key) root.userData[PREVIEW_BUILD_KEY] = undefined;
+      //
+      // 认号不认 key。key 是按内容算的，真模型那一档所有重建共用 `'rig'`——按 key 判
+      // 会把**别人**那次还在飞的重建的 key 抹掉，那次挂上木偶之后判据却是空的，下一
+      // 次渲染于是白克隆一副骨架。这跟 `PREVIEW_CLAIM` 存在的理由是同一条。
+      if (root.userData[PREVIEW_CLAIM] === claim) root.userData[PREVIEW_BUILD_KEY] = undefined;
       if (built.node) disposeSubtree(built.node);
       return;
     }
@@ -219,6 +223,10 @@ export async function renderCharacterPreview(
     if (node.userData.previzRig) deps.rig.applyCharacter(node, character);
     // 模型没到手，挂上去的是兜底的胶囊：把判据抹掉，下一次编辑就等于一次重试。不抹的
     // 话这个对话框在这次会话里永远停在胶囊上，而用户什么提示都没有。
+    //
+    // 这一处不像上面那条早退那样先核一次号：从核号那行到这里中间没有 await，位置仍是
+    // 自己的。key 此刻要么还是自己写下的那把，要么已被另一次 build 的 `alive` 早退抹
+    // 成了 `undefined`——往 `undefined` 上再写一次 `undefined` 是空操作。
     if (!built.complete) root.userData[PREVIEW_BUILD_KEY] = undefined;
     for (const child of [...root.children]) {
       root.remove(child);
