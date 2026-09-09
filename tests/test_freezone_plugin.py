@@ -4863,6 +4863,43 @@ def test_canvas_command_schema_accepts_minimal_variants_and_rejects_union_shell(
         validator.validate({"commands": [union_shell]})
 
 
+@pytest.mark.parametrize("external_mcp", [False, True])
+def test_workflow_bridge_binds_original_confirmation_attempt(monkeypatch, external_mcp):
+    plugin = _load_plugin_module()
+    pending = []
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1" if external_mcp else "0")
+    monkeypatch.setattr(plugin, "put_pending_canvas_command", lambda **kw: pending.append(kw))
+    monkeypatch.setattr(
+        plugin, "wait_canvas_command_result",
+        lambda *args, **kwargs: {"ok": True, "applied": True},
+    )
+    dispatch = (
+        plugin._dispatch_mcp_approved_frontend_commands if external_mcp
+        else plugin._dispatch_frontend_canvas_commands
+    )
+    confirmation = {
+        "draft_id": "workflow_draft_a", "task_id": "task-1", "revision": 1,
+        "confirmation_started_at": 123.0,
+    }
+    for identity in [confirmation, confirmation, {
+        **confirmation, "task_id": "task-2", "confirmation_started_at": 124.0,
+    }]:
+        dispatch(
+            project="project-a", canvas="canvas-a", slim_result=True,
+            commands=[{
+                "type": "create_node", "node_type": "textAnnotationNode",
+                "data": {"workflowInstanceId": "workflow_draft_a"},
+            }],
+            workflow_confirmation=identity,
+        )
+    assert pending[0]["workflow_confirmation"] == confirmation
+    assert pending[2]["workflow_confirmation"]["task_id"] == "task-2"
+    assert "workflow_confirmation" not in pending[0]["envelope"]
+    if external_mcp:
+        assert pending[0]["key"] == pending[1]["key"]
+        assert pending[0]["key"] != pending[2]["key"]
+
+
 def test_freezone_mcp_default_create_node_uses_frontend_bridge(monkeypatch):
     plugin = _load_plugin_module()
     pending_commands = []

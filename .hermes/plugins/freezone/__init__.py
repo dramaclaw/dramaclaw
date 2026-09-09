@@ -3431,6 +3431,7 @@ def _dispatch_mcp_approved_frontend_commands(
     canvas: str,
     commands: list[Any],
     slim_result: bool,
+    workflow_confirmation: dict[str, Any] | None = None,
 ) -> str:
     if (
         canvas_command_bridge_key is None
@@ -3479,6 +3480,10 @@ def _dispatch_mcp_approved_frontend_commands(
         key = canvas_command_bridge_key(
             project_id=project, canvas_id=canvas, commands=commands
         )
+    if workflow_confirmation:
+        key += "-" + hashlib.sha256(
+            json.dumps(workflow_confirmation, sort_keys=True).encode()
+        ).hexdigest()[:24]
     bridge_root = os.environ.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "").strip()
     # The worker launcher already gives each Hermes/Codex profile its
     # profile-scoped bridge directory (``.../freezone_freezone_main``). Do not
@@ -3493,6 +3498,7 @@ def _dispatch_mcp_approved_frontend_commands(
         commands=commands,
         envelope=envelope,
         bridge_dir=bridge_dir,
+        workflow_confirmation=workflow_confirmation,
     )
     if immediate_result is not None:
         return tool_result(
@@ -3558,6 +3564,7 @@ def _dispatch_frontend_canvas_commands(
     canvas: str,
     commands: list[Any],
     slim_result: bool,
+    workflow_confirmation: dict[str, Any] | None = None,
 ) -> str:
     if (
         canvas_command_bridge_key is None
@@ -3590,6 +3597,7 @@ def _dispatch_frontend_canvas_commands(
         canvas_id=canvas,
         commands=commands,
         envelope=envelope,
+        workflow_confirmation=workflow_confirmation,
     )
     try:
         timeout_seconds = max(
@@ -4208,6 +4216,7 @@ def _emit_canvas_commands(
     *,
     allow_dynamic_workflow_batch: bool = False,
     slim_result: bool = False,
+    workflow_confirmation: dict[str, Any] | None = None,
 ) -> str:
     if not isinstance(commands, list) or not commands:
         return _emit_command_error(
@@ -4270,12 +4279,14 @@ def _emit_canvas_commands(
             canvas=canvas,
             commands=commands,
             slim_result=slim_result,
+            workflow_confirmation=workflow_confirmation,
         )
     return _dispatch_frontend_canvas_commands(
         project=project,
         canvas=canvas,
         commands=commands,
         slim_result=slim_result,
+        workflow_confirmation=workflow_confirmation,
     )
 
 
@@ -5461,6 +5472,12 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             built.get("commands"),
             allow_dynamic_workflow_batch=True,
             slim_result=True,
+            workflow_confirmation={
+                "draft_id": draft_id,
+                "task_id": confirmation_task_id,
+                "revision": payload.get("revision"),
+                "confirmation_started_at": payload.get("confirmation_started_at"),
+            },
         )
     except Exception:
         _finish_workflow_draft(

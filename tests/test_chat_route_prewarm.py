@@ -323,7 +323,9 @@ def test_canvas_command_tool_result_accepts_background_workflow(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("task_status", ["running", "completed", "reclaimed"])
+@pytest.mark.parametrize(
+    "task_status", ["running", "completed", "reclaimed", "reclaimed_before_read"]
+)
 async def test_late_canvas_result_completes_durable_workflow_draft(
     monkeypatch,
     tmp_path,
@@ -365,7 +367,7 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
         task_id="task-1",
         root_task_id="task-1",
     )
-    if task_status != "reclaimed":
+    if task_status not in {"reclaimed", "reclaimed_before_read"}:
         finish_workflow_draft_confirmation(
             project_dir=tmp_path,
             canvas_id="canvas-a",
@@ -374,6 +376,19 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
         )
 
     async def project_context(_user, _scope):
+        if task_status == "reclaimed_before_read":
+            finish_workflow_draft_confirmation(
+                project_dir=tmp_path, canvas_id="canvas-a", draft_id=draft["draft_id"],
+                outcome="ready", expected_task_id="task-1",
+            )
+            claim_workflow_draft_confirmation(
+                project_dir=tmp_path, canvas_id="canvas-a", draft_id=draft["draft_id"],
+                revision=1, now=claimed["confirmation_started_at"] + 1,
+            )
+            bind_workflow_draft_task(
+                project_dir=tmp_path, canvas_id="canvas-a", draft_id=draft["draft_id"],
+                task_id="task-2", root_task_id="task-2",
+            )
         return SimpleNamespace(state_dir=tmp_path)
 
     monkeypatch.setattr(chat_route, "_project_context_for_scope", project_context)
@@ -383,6 +398,8 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
 
     def get_task(*_args, **kwargs):
         queried_scopes.append(kwargs["scope"])
+        if task_status == "reclaimed_before_read":
+            return SimpleNamespace(task_id="task-2", status="running")
         if kwargs["scope"] != expected_scope:
             return None
         if task_status == "reclaimed":
@@ -422,7 +439,11 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
         user={"id": "u-admin", "username": "admin"},
         payload=payload,
         draft_id=draft["draft_id"],
-        resolved={"ok": True},
+        resolved={"ok": task_status != "reclaimed_before_read"},
+        confirmation={
+            "draft_id": draft["draft_id"], "task_id": "task-1", "revision": 1,
+            "confirmation_started_at": claimed["confirmation_started_at"],
+        },
     )
     stored, error = read_workflow_draft(
         project_dir=tmp_path,
@@ -432,21 +453,31 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
 
     assert error is None
     assert stored is not None
-    assert queried_scopes == [expected_scope]
     assert stored["status"] == {
         "running": "confirmed", "completed": "submitted", "reclaimed": "confirming",
+        "reclaimed_before_read": "confirming",
     }[task_status]
-    if task_status == "reclaimed":
+    assert queried_scopes == (
+        [] if task_status == "reclaimed_before_read" else [expected_scope]
+    )
+    if task_status in {"reclaimed", "reclaimed_before_read"}:
         assert stored["task_id"] == "task-2"
         assert stored["confirmation_started_at"] == claimed["confirmation_started_at"] + 1
 
 
-def test_pending_canvas_result_recovers_workflow_draft_identity(
+@pytest.mark.anyio
+@pytest.mark.parametrize("transport", ["http", "websocket"])
+async def test_pending_canvas_result_recovers_workflow_draft_identity(
     monkeypatch,
     tmp_path,
+    transport,
 ) -> None:
     bridge_dir = tmp_path / "bridge"
     draft_id = "workflow_draft_late_result"
+    confirmation = {
+        "draft_id": draft_id, "task_id": "task-1", "revision": 1,
+        "confirmation_started_at": 123.0,
+    }
     put_pending_canvas_command(
         key="bridge-workflow",
         project_id="project-a",
@@ -468,6 +499,7 @@ def test_pending_canvas_result_recovers_workflow_draft_identity(
             ]
         },
         bridge_dir=bridge_dir,
+        workflow_confirmation=confirmation,
     )
     monkeypatch.setattr(
         chat_route,
@@ -483,6 +515,53 @@ def test_pending_canvas_result_recovers_workflow_draft_identity(
     )
 
     assert chat_route._pending_workflow_draft_id("admin", payload) == draft_id
+    assert chat_route._pending_workflow_confirmation("admin", payload) == confirmation
+    payload.canvas_id = "other-canvas"
+    assert chat_route._pending_workflow_confirmation("admin", payload) is None
+    payload.canvas_id = "canvas-a"
+    recorded = []
+
+    async def record(**kwargs):
+        recorded.append(kwargs)
+
+    def resolve(*args, **kwargs):
+        # The real resolver removes pending state. Ownership must be captured first.
+        (bridge_dir / "bridge-workflow.pending.json").unlink()
+        return {"ok": True}
+
+    monkeypatch.setattr(chat_route, "_record_workflow_draft_canvas_result", record)
+    monkeypatch.setattr(chat_route, "_resolve_canvas_command_tool_result_payload", resolve)
+    if transport == "http":
+        await chat_route.resolve_canvas_command_tool_result(payload, {"username": "admin"})
+    else:
+        class Socket:
+            async def receive_json(self):
+                if recorded:
+                    raise WebSocketDisconnect()
+                return {"type": "canvas.command.result", **payload.model_dump()}
+
+        await chat_route._receive_bridge_results_during_turn(
+            websocket=Socket(), user={"username": "admin"}, username="admin",
+        )
+    assert recorded[0]["confirmation"] == confirmation
+    assert recorded[0]["draft_id"] == draft_id
+
+
+@pytest.mark.anyio
+async def test_unbound_workflow_receipt_does_not_read_current_attempt(monkeypatch):
+    async def unexpected_read(*args):
+        pytest.fail("a legacy receipt must not borrow the current draft identity")
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", unexpected_read)
+    await chat_route._record_workflow_draft_canvas_result(
+        user={"username": "admin"},
+        payload=chat_route.CanvasCommandToolResultIn(
+            bridge_key="legacy", project_id="project-a", canvas_id="canvas-a",
+            canvas_apply_status="cancelled_by_user",
+        ),
+        draft_id="workflow_draft_legacy",
+        resolved={"ok": False},
+    )
 
 
 def test_canvas_command_tool_result_reports_open_node_action_as_opened_panel(

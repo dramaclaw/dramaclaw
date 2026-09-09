@@ -202,6 +202,7 @@ def put_pending_canvas_command(
     commands: list[Any],
     envelope: dict[str, Any],
     bridge_dir: str | Path | None = None,
+    workflow_confirmation: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Publish once, replaying a durable result for an identical stable key.
 
@@ -240,6 +241,7 @@ def put_pending_canvas_command(
                 "canvas_id": canvas_id,
                 "commands": commands,
                 "envelope": envelope,
+                "workflow_confirmation": workflow_confirmation,
                 "request_fingerprint": fingerprint,
                 "created_at": time.time(),
             },

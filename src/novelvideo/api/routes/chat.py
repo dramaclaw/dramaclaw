@@ -740,14 +740,40 @@ def _pending_workflow_draft_id(
     return identity if identity.startswith("workflow_draft_") else ""
 
 
+def _pending_workflow_confirmation(
+    username: str, payload: CanvasCommandToolResultIn,
+) -> dict[str, Any] | None:
+    """Capture server-side attempt ownership before the bridge is resolved."""
+    key = payload.bridge_key.strip()
+    if not key:
+        return None
+    directory = _bridge_dir_for_pending_key(username, payload)
+    pending = _load_pending_canvas_command(directory / f"{key}.pending.json")
+    if not isinstance(pending, dict):
+        return None
+    if (
+        pending.get("project_id") != payload.project_id
+        or pending.get("canvas_id") != payload.canvas_id
+    ):
+        return None
+    identity = pending.get("workflow_confirmation")
+    return dict(identity) if isinstance(identity, dict) else None
+
+
 async def _record_workflow_draft_canvas_result(
     *,
     user: dict[str, Any],
     payload: CanvasCommandToolResultIn,
     draft_id: str,
     resolved: dict[str, Any],
+    confirmation: dict[str, Any] | None = None,
 ) -> None:
-    if not draft_id:
+    if not draft_id or not confirmation or confirmation.get("draft_id") != draft_id:
+        return
+    task_id = str(confirmation.get("task_id") or "")
+    attempt_started_at = confirmation.get("confirmation_started_at")
+    revision = confirmation.get("revision")
+    if not task_id or attempt_started_at is None or not isinstance(revision, int):
         return
     project_id = str(payload.project_id or "").strip()
     canvas_id = str(payload.canvas_id or "").strip()
@@ -778,10 +804,11 @@ async def _record_workflow_draft_canvas_result(
         )
         if draft is None:
             return
-        task_id = str(draft.get("task_id") or "")
-        revision = int(draft.get("revision") or 0)
-        attempt_started_at = draft.get("confirmation_started_at")
-        if not task_id or attempt_started_at is None:
+        if (
+            draft.get("task_id") != task_id
+            or draft.get("confirmation_started_at") != attempt_started_at
+            or draft.get("revision") != revision
+        ):
             return
         task_state = await asyncio.to_thread(
             get_task_manager().get_task_for_project,
@@ -1416,12 +1443,14 @@ async def resolve_canvas_command_tool_result(
 ) -> dict[str, Any]:
     username = str(user["username"])
     workflow_draft_id = _pending_workflow_draft_id(username, payload)
+    confirmation = _pending_workflow_confirmation(username, payload)
     resolved = _resolve_canvas_command_tool_result_payload(payload, username=username)
     await _record_workflow_draft_canvas_result(
         user=user,
         payload=payload,
         draft_id=workflow_draft_id,
         resolved=resolved,
+        confirmation=confirmation,
     )
     if payload.cancelled or payload.canvas_apply_status == "cancelled_by_user":
         await _close_canvas_command_worker(username, payload)
@@ -1559,6 +1588,7 @@ async def _receive_bridge_results_during_turn(
         if event_type == "canvas.command.result":
             payload = CanvasCommandToolResultIn.model_validate(raw)
             workflow_draft_id = _pending_workflow_draft_id(username, payload)
+            confirmation = _pending_workflow_confirmation(username, payload)
             resolved = _resolve_canvas_command_tool_result_payload(
                 payload, username=username
             )
@@ -1567,6 +1597,7 @@ async def _receive_bridge_results_during_turn(
                 payload=payload,
                 draft_id=workflow_draft_id,
                 resolved=resolved,
+                confirmation=confirmation,
             )
             if payload.cancelled or payload.canvas_apply_status == "cancelled_by_user":
                 await _close_canvas_command_worker(username, payload)
@@ -2072,6 +2103,7 @@ def _load_pending_canvas_command(path: Any) -> dict[str, Any] | None:
         "project_id": payload.get("project_id"),
         "canvas_id": payload.get("canvas_id") or envelope.get("canvas_id"),
         "envelope": envelope,
+        "workflow_confirmation": payload.get("workflow_confirmation"),
     }
 
 
