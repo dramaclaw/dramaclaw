@@ -2401,26 +2401,58 @@ def test_codex_model_defaults_to_gateway_alias(monkeypatch):
     assert chat_service._codex_model() == "DC-codex-agent-LLM"
 
 
-def test_ce_codex_model_follows_sqlite_brainclaw_mode(monkeypatch):
+def test_ce_codex_model_sends_brainclaw_only_for_custom_brainclaw_mode(monkeypatch):
     monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: True)
     monkeypatch.setattr(
         "novelvideo.model_gateway_settings.get_effective_llm_config",
-        lambda: SimpleNamespace(is_brainclaw=True),
+        lambda: SimpleNamespace(mode="relayclaw_brainclaw", is_brainclaw=True),
     )
     monkeypatch.setenv("CODEX_MODEL", "must-not-control-ce")
 
     assert chat_service._codex_model() == "brainclaw"
 
 
-def test_ce_codex_model_keeps_dc_alias_in_sqlite_advanced_mode(monkeypatch):
+@pytest.mark.parametrize("mode", ["official", "hybrid"])
+def test_ce_codex_model_keeps_dc_alias_for_official_and_hybrid(monkeypatch, mode):
+    """Official / Hybrid send the gateway alias; RelayClaw decides what serves it."""
     monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: True)
     monkeypatch.setattr(
         "novelvideo.model_gateway_settings.get_effective_llm_config",
-        lambda: SimpleNamespace(is_brainclaw=False),
+        lambda: SimpleNamespace(mode=mode, is_brainclaw=True),
     )
     monkeypatch.setenv("CODEX_MODEL", "must-not-control-ce")
 
     assert chat_service._codex_model() == "DC-codex-agent-LLM"
+
+
+def test_ce_codex_model_keeps_dc_alias_in_sqlite_advanced_mode(monkeypatch):
+    monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: True)
+    monkeypatch.setattr(
+        "novelvideo.model_gateway_settings.get_effective_llm_config",
+        lambda: SimpleNamespace(mode="advanced", is_brainclaw=False),
+    )
+    monkeypatch.setenv("CODEX_MODEL", "must-not-control-ce")
+
+    assert chat_service._codex_model() == "DC-codex-agent-LLM"
+
+
+@pytest.mark.parametrize(
+    "catalog_name",
+    ["dramaclaw-model-catalog.json", "dramaclaw-model-catalog-chat-compat.json"],
+)
+@pytest.mark.parametrize("model", ["DC-codex-agent-LLM", "brainclaw"])
+def test_bundled_catalogs_cover_every_ce_codex_model(monkeypatch, catalog_name, model):
+    """Every model _codex_model() can return must have a complete catalog entry,
+    otherwise Codex refuses to start (the Official-mode failure behind #517)."""
+    catalog_path = (
+        Path(chat_service.__file__).resolve().parents[3] / "deploy" / "codex" / catalog_name
+    )
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(catalog_path))
+    monkeypatch.setattr(chat_service, "_codex_model", lambda: model)
+
+    overrides = chat_service._codex_gateway_config_overrides("https://gateway.example/v1")
+
+    assert any(item.startswith("model_catalog_json=") for item in overrides)
 
 
 def test_ee_codex_model_uses_environment(monkeypatch):
