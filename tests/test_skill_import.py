@@ -223,3 +223,24 @@ def test_missing_relative_resource_is_reported():
     result = read_source('SKILL.md', base64.b64encode(b'Use [rules](references/rules.md) before writing.').decode())
     assert result['resources'] == ['SKILL.md']
     assert any('references/rules.md' in warning for warning in result['warnings'])
+
+
+@pytest.mark.asyncio
+async def test_api_install_returns_conflict_without_blocking_on_busy_import(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from novelvideo.api.routes import skill_imports as routes
+    from novelvideo.freezone import skill_import as module
+    monkeypatch.setattr('novelvideo.freezone.agent_config_store.list_user_agent_config_items', lambda *args: [])
+    async def scope(project, user):
+        return SimpleNamespace(), tmp_path, user['username']
+    monkeypatch.setattr(routes, 'scope', scope)
+    record = module.create_record(tmp_path, 'alice', read_source('x.md', base64.b64encode(b'Method').decode()), 'b')
+    def busy_lock(file, flags):
+        assert flags & routes.fcntl.LOCK_NB, 'Blocking lock could deadlock the event loop'
+        raise BlockingIOError('busy')
+    monkeypatch.setattr(routes.fcntl, 'flock', busy_lock)
+    with pytest.raises(HTTPException) as exc:
+        await routes.install('p', record['id'], routes.InstallRequest(), {'username': 'alice'})
+    assert exc.value.status_code == 409
+    assert module.get_record(tmp_path, 'alice', record['id'])['status'] == record['status']

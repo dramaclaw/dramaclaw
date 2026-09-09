@@ -138,7 +138,10 @@ async def install(project: str, import_id: str, payload: InstallRequest, user: d
     path = record_path(root, username, import_id)
     read_item(root, username, import_id)
     with path.with_suffix('.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise HTTPException(409, 'Import is already being updated') from None
         record = read_item(root, username, import_id)
         if record['status'] == 'installed':
             return {'ok': True, 'data': public_record(record)}
