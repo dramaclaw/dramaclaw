@@ -400,6 +400,21 @@ export function PrevizEditor({
   }, [scene.objects, monitorId]);
   const quadCameraId = quadCamera?.id ?? null;
 
+  /**
+   * 道具在地面上占的那几块地，只在创建人物对话框开着时量。
+   *
+   * 量的时机是「打开那一刻」：对话框是模态的，开着的时候场景不会变，而每渲染一次量
+   * 一遍要对整个布景重跑 `Box3.setFromObject`（遍历每棵子树的全部几何体）。交出来的
+   * 数组还得引用稳定——一变，左栏选位图的 useMemo / useEffect 就重算取景并整张重画。
+   *
+   * 依赖里只有这两个：`renderer` 是因为首帧它还是 null（异步建出来的），关掉时回到
+   * 空数组则是顺手把这份快照丢掉，免得下次打开先闪一帧旧数据。
+   */
+  const characterFootprints = useMemo(
+    () => (characterCreateOpen ? (renderer?.propFootprints() ?? []) : []),
+    [characterCreateOpen, renderer],
+  );
+
   const canAdd = useMemo(
     () => ({
       character: canAddObject(scene, "character"),
@@ -1469,6 +1484,7 @@ export function PrevizEditor({
               <PrevizCharacterCreateDialog
                 open={characterCreateOpen}
                 objects={scene.objects}
+                footprints={characterFootprints}
                 onRenderPreview={handleRenderCharacterPreview}
                 onCreate={handleCreateCharacter}
                 onClose={() => setCharacterCreateOpen(false)}
