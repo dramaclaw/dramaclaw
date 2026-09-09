@@ -36,6 +36,7 @@ const PILL_CLASS =
 function ForeignMediaNodeOverlayImpl({ nodeId }: { nodeId: string }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const handleRepair = useCallback(
     async (event: MouseEvent) => {
@@ -47,8 +48,9 @@ function ForeignMediaNodeOverlayImpl({ nodeId }: { nodeId: string }) {
         return;
       }
       setBusy(true);
+      setFailed(false);
       try {
-        const { urlMap } = await repairForeignMediaRefs({
+        const { urlMap, failedUrls } = await repairForeignMediaRefs({
           refs,
           targetProject,
           getLiveNodeData: (id) =>
@@ -62,6 +64,9 @@ function ForeignMediaNodeOverlayImpl({ nodeId }: { nodeId: string }) {
           blankOnFailure: false,
         });
         resolveForeignMediaRefs(nodeId, urlMap.keys());
+        // 拷不动通常就是对源项目没权限。什么都不显示的话,按钮看着就是坏的,
+        // 用户只会反复点——把原因说出来,他才知道该去要权限而不是重试。
+        setFailed(failedUrls.size > 0);
       } finally {
         setBusy(false);
       }
@@ -81,6 +86,11 @@ function ForeignMediaNodeOverlayImpl({ nodeId }: { nodeId: string }) {
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-400" />
           <span>{t('canvas.crossProjectAssets.foreignMedia')}</span>
         </span>
+        {failed ? (
+          <span className="text-[11px] font-normal text-amber-300">
+            {t('canvas.crossProjectAssets.foreignMediaCopyFailed')}
+          </span>
+        ) : null}
         <button
           type="button"
           className="nodrag nopan self-end rounded bg-white/12 px-2 py-0.5 text-[11px] hover:bg-white/20 disabled:opacity-60"

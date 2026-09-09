@@ -110,4 +110,21 @@ describe('ForeignMediaNodeOverlay', () => {
 
     expect(readForeignMediaRefsForNode('n1')).toEqual([REF]);
   });
+
+  it('says why the copy failed instead of looking like a dead button', async () => {
+    // 拷贝失败最常见的原因就是对源项目没权限——正是 #192 那批画布的处境。
+    // 静默不动会让用户以为按钮坏了，一直点。
+    copyFreezoneAssets.mockResolvedValue({
+      mapping: {},
+      failed: [{ source: FOREIGN, reason: 'forbidden' }],
+    });
+    publishForeignMediaRefs('projB', [REF]);
+    render(<ForeignMediaNodeOverlay nodeId="n1" />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '复制到本项目' }));
+    });
+
+    expect(screen.getByText('复制失败，可能没有源项目的访问权限')).toBeInTheDocument();
+  });
 });

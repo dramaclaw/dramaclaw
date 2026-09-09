@@ -4208,7 +4208,8 @@
       "failedPlaceholder": "Asset copy failed. Delete this node and paste again.",
       "removeNode": "Remove node",
       "foreignMedia": "Media belongs to another project",
-      "copyIntoProject": "Copy into this project"
+      "copyIntoProject": "Copy into this project",
+      "foreignMediaCopyFailed": "Copy failed — you may not have access to the source project"
     },
     "emptyHintChips": {
       "textToVideo": "Text to Video",

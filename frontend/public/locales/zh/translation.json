@@ -4208,7 +4208,8 @@
       "failedPlaceholder": "素材复制失败，请删除后重新粘贴",
       "removeNode": "移除节点",
       "foreignMedia": "素材属于其他项目",
-      "copyIntoProject": "复制到本项目"
+      "copyIntoProject": "复制到本项目",
+      "foreignMediaCopyFailed": "复制失败，可能没有源项目的访问权限"
     },
     "emptyHintChips": {
       "textToVideo": "文字生视频",
