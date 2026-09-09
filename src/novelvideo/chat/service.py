@@ -510,7 +510,7 @@ _FREEZONE_CANVAS_WRITE_ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 _FREEZONE_CANVAS_WRITE_OBJECT_RE = re.compile(
-    r"(?:节点|画布|工作流|连线|边|合成节点|"
+    r"(?:节点|画布|工作流|连线|边|合成节点|网页|HTML|"
     r"node|canvas|workflow|edge|compose\s+node)",
     re.IGNORECASE,
 )
@@ -647,6 +647,10 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     user_text = raw_prompt.split("[SUPERTALE_", 1)[0].strip()
     if not user_text:
         return False
+    user_text = re.sub(
+        r"(?:不要|禁止|无需|不需要)(?:修改|写入|保存|创建|生成|删除)[^，。；\n]*",
+        "", user_text,
+    )
     has_action = bool(_FREEZONE_CANVAS_WRITE_ACTION_RE.search(user_text))
     has_canvas_object = bool(_FREEZONE_CANVAS_WRITE_OBJECT_RE.search(user_text))
     has_direct_media_write = bool(_FREEZONE_DIRECT_MEDIA_WRITE_RE.search(user_text))
@@ -708,6 +712,27 @@ def _json_objects_from_codex_tool_value(value: Any) -> list[dict[str, Any]]:
             return objects
         objects.extend(_json_objects_from_codex_tool_value(parsed))
     return objects
+
+
+def _codex_freezone_is_write_event(event: Any) -> bool:
+    name = _codex_freezone_tool_name(event)
+    if name not in _FREEZONE_CANVAS_WRITE_TOOLS:
+        return False
+    if name != "freezone_html_artifact":
+        return True
+    for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        action = payload.get("action")
+        if action in {"read", "list", "history"}:
+            return False
+        if action in {"create", "update", "restore"}:
+            return True
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            if payload.get("status") in {"html_artifact_read", "html_artifact_list", "html_artifact_history"}:
+                return False
+            if "canvas_apply_status" in payload or "bridge_key" in payload:
+                return True
+    return False
 
 
 def _codex_freezone_write_result_succeeded(event: Any) -> bool:
@@ -7118,7 +7143,7 @@ async def _stream_assistant_reply_codex(
                     prepared_draft = _codex_freezone_ready_workflow_draft(event)
                     if prepared_draft is not None:
                         ready_workflow_draft = prepared_draft
-                if _codex_freezone_tool_name(event) in _FREEZONE_CANVAS_WRITE_TOOLS:
+                if _codex_freezone_is_write_event(event):
                     canvas_write_attempted = True
                     if (
                         event.type == "tool_updated"
