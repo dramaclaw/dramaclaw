@@ -174,6 +174,7 @@ frontend/public/liexiaoren/skin/modal-secondary-button.png,Elastic-2.0,2026 Supe
 frontend/public/liexiaoren/skin/modal-title.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/liexiaoren/skin/poster.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/locales/en/translation.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/public/locales/vi/translation.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/locales/zh/translation.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/login-cinematic/final-mark.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/login-cinematic/fonts/DingTalk_JinBuTi_Title.woff2,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1268,6 +1269,7 @@ frontend/src/hooks/use-task-stream.ts,Elastic-2.0,2026 SuperTale contributors,RE
 frontend/src/hooks/use-transient-confirmation.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/hooks/use-view-toggles.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/i18n/index.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/i18n/languages.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/index.css,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/age-group.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/api-errors.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
