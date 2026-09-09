@@ -556,8 +556,9 @@ describe("renderCharacterPreview 并发", () => {
     pending[0]?.(fakeRig());
     await painting;
 
-    // 渲染器那时已经 `forceContextLoss()` 过了：再开 render target 读像素是一串 WebGL
-    // 报错加一个没人接的 rejection（这个函数的文档写着「可以不等」）。
+    // 渲染器那时已经 `forceContextLoss()` 过了：再开 render target 读像素不会 throw，
+    // 只是白分配一块显存、把一帧黑画到没人看得见的画布上，外加一串 console 噪声——挡
+    // 住它省的是这些，见 `CharacterPreviewDeps.alive`。
     expect(harness.targets).toHaveLength(0);
     expect(harness.renderer.setRenderTarget).not.toHaveBeenCalled();
     expect(harness.mannequin()).toHaveLength(0);
