@@ -43,7 +43,15 @@ def _load_local(**kwargs):
     return load_or_create_local_signing_config(**kwargs)
 
 
-def test_ce_generates_and_persists_a_usable_keyring(ce_env):
+@pytest.mark.parametrize("edition", [None, "", "ce"])
+def test_ce_generates_and_persists_a_usable_keyring(ce_env, monkeypatch, edition):
+    from novelvideo.shared import runtime_env
+
+    monkeypatch.setattr(runtime_env, "load_project_dotenv", lambda **kwargs: None)
+    if edition is None:
+        monkeypatch.delenv("ST_EDITION", raising=False)
+    else:
+        monkeypatch.setenv("ST_EDITION", edition)
     config = _load_local()
 
     assert config.active_key_id in config.keyring
@@ -98,8 +106,6 @@ def test_explicit_env_config_wins_over_the_generated_file(ce_env, monkeypatch):
 @pytest.mark.parametrize(
     ("edition", "dsn"),
     [
-        (None, None),
-        ("", None),
         ("ee", None),
         ("ce", "postgresql://control-plane/db"),
         (None, "postgresql://control-plane/db"),
