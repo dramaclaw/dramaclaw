@@ -151,6 +151,7 @@ async def _run_freezone_workflow_confirm_async(
     draft_id = str(payload.get("draft_id") or "").strip()
     revision = int(payload.get("revision") or 0)
     plan_digest = str(payload.get("plan_digest") or "").strip()
+    attempt_started_at = payload.get("confirmation_started_at")
     run_task_id = str(envelope.get("__run_task_id") or "").strip()
     if (
         not canvas_id
@@ -175,6 +176,10 @@ async def _run_freezone_workflow_confirm_async(
                 raise RuntimeError("workflow confirmation draft revision changed")
             if str(draft.get("plan_digest") or "") != plan_digest:
                 raise RuntimeError("workflow confirmation plan changed")
+            if attempt_started_at is not None and (
+                draft.get("confirmation_started_at") != attempt_started_at
+            ):
+                raise RuntimeError("workflow confirmation attempt changed")
             bound_task_id = str(draft.get("task_id") or "")
             if bound_task_id and bound_task_id != run_task_id:
                 raise RuntimeError(
@@ -209,6 +214,7 @@ async def _run_freezone_workflow_confirm_async(
                 draft_id=draft_id,
                 outcome="ready",
                 expected_task_id=run_task_id,
+                expected_confirmation_started_at=attempt_started_at,
             )
         except ValueError:
             # A newer confirmation task owns the draft; the old task may fail,

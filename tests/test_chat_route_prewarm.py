@@ -1626,3 +1626,41 @@ async def test_freezone_prewarm_skips_unavailable_surface(monkeypatch) -> None:
 
     assert warmed is False
     assert calls == []
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_catalog_save_error_overrides_frontend_success(monkeypatch, tmp_path, partial):
+    monkeypatch.setattr(chat_route, "_canvas_bridge_dir", lambda *a, **k: tmp_path)
+
+    def save(*, username, kind, payload):
+        if partial and kind == "recipes":
+            return payload
+        raise ValueError("injected save failure")
+
+    monkeypatch.setattr(chat_route, "save_user_agent_config_item", save)
+    payload = chat_route.SkillStudioToolResultIn(
+        bridge_key="failed-save",
+        turn_id="turn-a",
+        action="confirm_add",
+        skill_studio_status="catalog_saved",
+        saved_to_catalog=True,
+        saved_skill_ids=["invented"],
+        saved_recipe_ids=["invented"],
+        draft={"skill": {"id": "skill-a"}, "recipes": [{"id": "recipe-a"}]},
+        message="已保存为正式 Skill / Recipe，可立即使用",
+    )
+    result = chat_route._resolve_skill_studio_tool_result_payload(
+        payload, username="alice"
+    )
+    assert result["ok"] is False
+    assert result["saved_to_catalog"] is False
+    assert result["tool_call_status"] == "failed"
+    assert result["skill_studio_status"] == (
+        "catalog_partially_saved" if partial else "catalog_save_failed"
+    )
+    assert result["saved_skill_ids"] == []
+    assert result["saved_recipe_ids"] == (["recipe-a"] if partial else [])
+    assert "可立即使用" not in result["message"]
+    assert "部分" in result["message"] if partial else "未保存任何" in result["message"]
+    assert result["draft"] == payload.draft
+    assert result["errors"]

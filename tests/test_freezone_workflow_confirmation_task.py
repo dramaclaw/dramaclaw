@@ -136,3 +136,51 @@ async def test_workflow_confirmation_task_recovers_confirmed_result_after_restar
     assert stored is not None
     assert stored["status"] == "confirmed"
     assert result["draft_id"] == draft["draft_id"]
+
+
+@pytest.mark.asyncio
+async def test_old_confirmation_runner_cannot_reset_new_unbound_attempt(tmp_path):
+    draft, envelope = _claimed_task(tmp_path)
+    envelope["payload"]["confirmation_started_at"] = 1000
+    finish_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        outcome="ready",
+        expected_task_id="task-1",
+    )
+    retry, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1001,
+    )
+    assert error is None
+    assert retry["task_id"] == ""
+    with pytest.raises(RuntimeError, match="attempt changed"):
+        await freezone_runner._run_freezone_workflow_confirm_async(
+            envelope, SimpleNamespace(state_dir=tmp_path)
+        )
+    stored, _ = read_workflow_draft(
+        project_dir=tmp_path, canvas_id="default", draft_id=draft["draft_id"]
+    )
+    assert stored["status"] == "confirming"
+    with pytest.raises(ValueError, match="attempt changed"):
+        bind_workflow_draft_task(
+            project_dir=tmp_path,
+            canvas_id="default",
+            draft_id=draft["draft_id"],
+            task_id="late-old-task",
+            root_task_id="late-old-task",
+            expected_confirmation_started_at=1000,
+        )
+    bound = bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        task_id="task-2",
+        root_task_id="task-2",
+        expected_confirmation_started_at=1001,
+    )
+    assert bound["task_id"] == "task-2"

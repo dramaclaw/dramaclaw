@@ -7414,25 +7414,21 @@ _SKILL_STUDIO_RECIPE_SCHEMA = {
         "system_prompt": {
             "type": "string",
             "description": (
-                "Recipe 节点级 system_prompt 是 prompt/instruction generator，用来指导 Agent/LLM "
-                "根据用户目标、上游输出和参考素材，写出可送入对应节点的提示词/指令或 brief。"
-                "不要直接生成最终内容：text Recipe 不直接写正文成品，image/video/audio Recipe "
-                "不直接写最终图片、视频或音频描述成品，而是要求当前 LLM 输出给对应 "
-                "textGeneration/imageGeneration/videoGeneration/audioGeneration 节点使用的一条完整提示词/指令。"
-                "A Recipe system_prompt must never be the final downstream prompt itself. It must "
-                "instruct the current LLM how to transform upstream input into the downstream node "
-                "prompt/instruction, and should explicitly include: “重要：你的输出是一条提示词/指令，"
-                "将被送入下游 <node_type> 节点执行；不要自己生成最终内容。” "
+                "Recipe 节点级 system_prompt 必须按 output_kind 区分职责。"
+                "text Recipe 要求当前 LLM 直接输出最终交付文本（正文、脚本、大纲或摘要），"
+                "不能输出交给另一个 textGeneration 节点执行的二阶段指令。"
+                "image/video/audio Recipe 指导当前 LLM 根据用户目标、上游输出和参考素材，"
+                "写出送入对应节点的完整提示词/指令，而不是把固定的最终提示词作为 system_prompt。"
                 "必须包含【角色设定】、【输入来源】、【任务目标】、【输出结构要求】、"
-                "【质量标准】和【禁止事项/约束】。输出结构要求应描述下游 prompt/brief 必须包含的模块，"
-                "例如主体、场景、镜头、构图、风格、色彩、文本排版、连续性和负面约束。"
+                "【质量标准】和【禁止事项/约束】。文字 Recipe 的输出结构描述最终文本；"
+                "媒体 Recipe 的输出结构描述生成提示词中的主体、场景、构图、风格和负面约束。"
             ),
         },
         "must_have_items": {
             "type": "array",
             "description": (
                 "Required modules or sections that the Recipe output must contain. Prefer structural "
-                "items for the downstream prompt/brief, not only style adjectives."
+                "items for the final text (text Recipes) or downstream media prompt, not only style adjectives."
             ),
             "items": {"type": "string"},
         },

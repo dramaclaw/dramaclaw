@@ -998,18 +998,18 @@ Draft rules:
 - When Recipe craft conflicts with this turn's user request, confirmed inputs, or Skill constraints, use this priority order: user request > confirmed inputs > Skill constraints > Recipe craft > defaults.
 - Use snake_case Recipe fields directly: system_prompt, must_have_items, planning_prompt, result_summary, requires_source_media.
 - Do not ask the user for low-level fields such as id, category, action_keys, or system_prompt; infer them.
-- Recipe system_prompt is a prompt/instruction generator: it guides the current Agent/LLM to write
-  the prompt, brief, or instruction that will be sent to the corresponding textGeneration,
-  imageGeneration, videoGeneration, or audioGeneration node（送入对应节点）. 不要直接生成最终内容。
-  - For text Recipes, do not write the final copy/script/outline directly; instruct the current LLM
-    to produce a complete prompt/instruction for the textGeneration node that will generate that artifact.
-  - For image/video/audio Recipes, do not write the final image/video/audio prompt as the Recipe itself;
-    instruct the current LLM to transform upstream inputs into one complete downstream generation prompt.
-  - The system_prompt itself should say: output only the downstream node prompt/instruction, do not
-    execute the final content generation inside this step.
-- Recipe system_prompt must never be the final downstream prompt itself. It must instruct the current LLM how to transform upstream input into the downstream node prompt/instruction. It should explicitly include: “重要：你的输出是一条提示词/指令，将被送入下游 <node_type> 节点执行；不要自己生成最终内容。”
-- Recipe system_prompt must include concrete structured sections: 【角色设定】, 【输入来源】, 【任务目标】, 【输出结构要求】, 【质量标准】, and 【禁止事项/约束】. The output structure describes the modules that the downstream prompt/brief must contain, such as subject, scene, shot/composition, style, color, text/layout, continuity, and negative constraints.
-- Recipe must_have_items should usually be required modules/sections for the downstream prompt/brief, not only style adjectives. For an image Recipe, prefer items such as "主视觉描述", "文化元素提取", "构图与留白", "色彩与字体建议", "负面提示词/禁止事项".
+- Recipe output responsibilities depend on output_kind:
+  - For text Recipes, the current LLM must produce the final deliverable directly: the requested
+    copy, script, outline, summary, or other text. Do not generate instructions for a second LLM
+    or hand off to another textGeneration node. system_prompt describes how to produce that final text.
+  - For image/video/audio Recipes, the current LLM transforms upstream inputs into one complete
+    downstream generation prompt. The system_prompt describes how to write that prompt, not a fixed prompt.
+    Its output is a prompt for the corresponding imageGeneration, videoGeneration, or audioGeneration node.
+- Recipe system_prompt must include concrete structured sections: 【角色设定】, 【输入来源】,
+  【任务目标】, 【输出结构要求】, 【质量标准】, and 【禁止事项/约束】.
+  For text Recipes, output structure and must_have_items describe the final text itself.
+  For image/video/audio Recipes, they describe the downstream generation prompt, such as subject,
+  scene, composition, style, continuity, and negative constraints.
 - Recipe planning_prompt must be non-empty and describe this node's work in one short business sentence, usually "根据 X，生成/提取/改写 Y。". Do not explain scheduling mechanics, downstream nodes, workflow internals, or "when to schedule this Recipe" in this field.
 - Recipe result_summary must be non-empty and describe this node's business output in one short phrase or sentence, such as "3:4 竖版数码产品科技感详情图" or "家乡文化海报图片生成指令". Do not mention downstream execution, imageGeneration handoff, planner behavior, or workflow mechanics in this field.
 - For multi-step Skills, split planning/prompt-writing Recipes from terminal image/video generation Recipes when useful.

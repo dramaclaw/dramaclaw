@@ -491,3 +491,53 @@ def test_user_agent_config_delete_missing_item_is_idempotent(
     )
 
     assert deleted is False
+
+
+def test_text_skill_studio_draft_saves_final_text_recipe_and_reference(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import chat as chat_route
+
+    monkeypatch.setattr(agent_config_store, "OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        agent_config_store, "BUILTIN_AGENT_CATALOG_DIR", tmp_path / "builtins"
+    )
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *a, **k: tmp_path / "bridge"
+    )
+    monkeypatch.setattr(
+        chat_route, "sync_freezone_hermes_workflow_skills", lambda *_: None
+    )
+    recipe = _recipe_payload("chinese-condense")
+    recipe["system_prompt"] = (
+        "【角色设定】中文编辑。【输入来源】用户原文。【任务目标】直接输出一句话摘要。"
+        "【输出结构要求】仅输出最终摘要。【质量标准】保留人物、时间、地点和事件。"
+        "【禁止事项/约束】不新增事实。"
+    )
+    skill = _skill_payload("chinese-condense-skill")
+    skill["allowed_recipe_ids"] = [recipe["id"]]
+    result = chat_route._resolve_skill_studio_tool_result_payload(
+        chat_route.SkillStudioToolResultIn(
+            bridge_key="condense-save",
+            turn_id="condense-turn",
+            action="confirm_add",
+            skill_studio_status="catalog_saved",
+            saved_to_catalog=True,
+            draft={"skill": skill, "recipes": [recipe]},
+        ),
+        username="alice",
+    )
+    assert result["ok"] is True
+    assert result["saved_skill_ids"] == [skill["id"]]
+    assert result["saved_recipe_ids"] == [recipe["id"]]
+    recipes = agent_config_store.list_user_agent_config_items("alice", "recipes")
+    skills = agent_config_store.list_user_agent_config_items("alice", "skills")
+    assert any(r["id"] == recipe["id"] for r in recipes)
+    assert next(s for s in skills if s["id"] == skill["id"])["allowed_recipe_ids"] == [
+        recipe["id"]
+    ]
+    recipe["system_prompt"] = "将被送入下游 textGeneration"
+    with pytest.raises(ValueError, match="final deliverable"):
+        agent_config_store.save_user_agent_config_item(
+            username="alice", kind="recipes", payload=recipe
+        )

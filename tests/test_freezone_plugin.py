@@ -4251,10 +4251,10 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
         "description"
     ]
     assert (
-        "must never be the final downstream prompt itself"
+        "text Recipe 要求当前 LLM 直接输出最终交付文本"
         in recipe_system_prompt_description
     )
-    assert "重要：你的输出是一条提示词/指令" in recipe_system_prompt_description
+    assert "二阶段指令" in recipe_system_prompt_description
     assert recipe_item["properties"]["output_kind"]["enum"] == [
         "text",
         "image",
@@ -4276,7 +4276,7 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
     ]
     assert "节点" in system_prompt_description
     assert "提示词/指令" in system_prompt_description
-    assert "不要直接生成最终内容" in system_prompt_description
+    assert "text Recipe 不直接写正文成品" not in system_prompt_description
     assert "送入对应节点" in system_prompt_description
     assert "终端生成型" not in system_prompt_description
     assert "不要把所有 Recipe 都写成 prompt compiler" not in system_prompt_description
