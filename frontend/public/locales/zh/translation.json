@@ -436,6 +436,7 @@
       "selectLanguage": "选择语言",
       "languageChinese": "中文",
       "languageEnglish": "English",
+      "languageVietnamese": "Tiếng Việt",
       "passwordDialog": {
         "title": "修改密码",
         "description": "修改成功后会退出所有设备，需要使用新密码重新登录。",

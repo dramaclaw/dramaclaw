@@ -14,21 +14,28 @@ function collectKeys(value: unknown, prefix = ""): string[] {
   );
 }
 
+function loadLocale(language: string): unknown {
+  return JSON.parse(readFileSync(`public/locales/${language}/translation.json`, "utf8"));
+}
+
 describe("locale translation files", () => {
-  it.each(["en", "zh"])("%s translation JSON is valid", (language) => {
+  it.each(["en", "zh", "vi"])("%s translation JSON is valid", (language) => {
     const content = readFileSync(`public/locales/${language}/translation.json`, "utf8");
 
     expect(() => JSON.parse(content)).not.toThrow();
   });
 
-  it("keeps zh and en translation key sets aligned", () => {
-    const zh = JSON.parse(readFileSync("public/locales/zh/translation.json", "utf8"));
-    const en = JSON.parse(readFileSync("public/locales/en/translation.json", "utf8"));
-    const zhKeys = new Set(collectKeys(zh));
+  // `en` is the reference key set. A locale may leave a value in English on
+  // purpose — prompt fragments, domain terms and product names all stay as they
+  // are — but it may never be missing a key, or i18next renders the raw key.
+  it.each(["zh", "vi"])("keeps %s aligned with the en key set", (language) => {
+    const en = loadLocale("en");
+    const other = loadLocale(language);
     const enKeys = new Set(collectKeys(en));
+    const otherKeys = new Set(collectKeys(other));
 
-    expect([...zhKeys].filter((key) => !enKeys.has(key)).sort()).toEqual([]);
-    expect([...enKeys].filter((key) => !zhKeys.has(key)).sort()).toEqual([]);
+    expect([...enKeys].filter((key) => !otherKeys.has(key)).sort()).toEqual([]);
+    expect([...otherKeys].filter((key) => !enKeys.has(key)).sort()).toEqual([]);
   });
 
   it("defines the Niu Lai accessory name and selection feedback", () => {
