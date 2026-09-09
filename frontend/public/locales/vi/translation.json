@@ -1319,7 +1319,8 @@
       "notRestorablePreset": "Canvas này không phải preset luồng chính khôi phục được.",
       "payloadTooLarge": "Dữ liệu canvas vượt giới hạn của backend.",
       "revisionConflict": "Canvas này đã bị cửa sổ hoặc người dùng khác sửa.",
-      "unsavedConflictBeforeSync": "Canvas này còn xung đột chưa xử lý. Giải quyết xong rồi hãy đồng bộ khung nhìn luồng chính."
+      "unsavedConflictBeforeSync": "Canvas này còn xung đột chưa xử lý. Giải quyết xong rồi hãy đồng bộ khung nhìn luồng chính.",
+      "mediaScopeMismatch": "Canvas này tham chiếu media của dự án khác và không thể sao chép tự động — hãy xoá các node đó rồi thêm lại media."
     },
     "directorCommit": {
       "layerFetchFailed": "Đọc lớp đạo diễn thất bại: {{status}}",
@@ -4205,7 +4206,10 @@
       "partialFailure": "Sao chép thất bại {{count}} asset media; các node bị ảnh hưởng đã được đánh dấu — xoá rồi dán lại",
       "copying": "Đang chép asset…",
       "failedPlaceholder": "Chép asset thất bại. Xoá node này rồi dán lại.",
-      "removeNode": "Bỏ node"
+      "removeNode": "Bỏ node",
+      "foreignMedia": "Media thuộc về dự án khác",
+      "copyIntoProject": "Sao chép vào dự án này",
+      "foreignMediaCopyFailed": "Sao chép thất bại — có thể bạn không có quyền truy cập dự án nguồn"
     },
     "emptyHintChips": {
       "textToVideo": "Text to Video",
