@@ -23,8 +23,9 @@ import { createCharacterPlaceholder, disposeSubtree, type ThreeModule } from './
  * 预览不会再拉一次几 MB，姿势也保证跟视口里同一套。
  *
  * 画布尺寸不在这里定：取景直接读 `deps.canvas` 的宽高（木偶不受出片画幅约束，铺满就行，
- * 也就不需要 `previewFitRect` 那套留边）。对话框那边请用 `PREVIZ_PREVIEW_SIZE`——机位
- * 预览已经用的是它，两块预览各写各的尺寸会在同一个对话框里显出两种清晰度。
+ * 也就不需要 `previewFitRect` 那套留边）。对话框那边请用 `PREVIZ_PREVIEW_SIZE`——它是两块
+ * 预览共用的那一份分辨率，机位那块连测试一起钉住了它；对话框自己写一组数就绕开那颗钉
+ * 子，往后要调预览分辨率就得逐个对话框改，漏掉一个也没有任何东西会报。
  */
 export interface CharacterPreviewDeps {
   three: ThreeModule;
@@ -200,7 +201,9 @@ export async function renderCharacterPreview(
     const built = await buildMannequin(deps, character);
     if (!(deps.alive?.() ?? true)) {
       // 等它的这段时间里整套家伙什被拆了，见 `CharacterPreviewDeps.alive`。判据要还
-      // 回去：位置上并没有木偶，留着的话这套东西万一又活过来就再也不会重建了。
+      // 回去：位置上并没有木偶，留着就是让 userData 说假话，而下一次调用会照它跳过重
+      // 建。`alive` 是按通用谓词写进上面那个接口的，会不会由假转真是调用方的事——今天
+      // 唯一那处接线拿的是一个只置一次的 `disposed`，只是碰巧不回摆。
       //
       // 认号不认 key。key 是按内容算的，真模型那一档所有重建共用 `'rig'`——按 key 判
       // 会把**别人**那次还在飞的重建的 key 抹掉，那次挂上木偶之后判据却是空的，下一
