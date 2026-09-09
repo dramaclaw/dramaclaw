@@ -11,6 +11,7 @@ import {
   sceneTopDownBounds,
   topDownView,
   worldToCanvas,
+  type PrevizTopDownFootprint,
 } from "@/features/previz/domain/topDownMap";
 import { PREVIZ_CAMERA_COLOR } from "@/features/previz/engine/cameraModel";
 import { PREVIZ_GRID_CELL_SIZE } from "@/features/previz/engine/grid";
@@ -44,12 +45,24 @@ function objectAt(kind: PrevizObjectKind, x: number, z: number): PrevizObject {
  * 组件里那张视图的复算。断言不直接抄组件的算式，而是走同一份 domain 函数：
  * 这样测的是「组件有没有用对映射」，映射本身对不对由 top-down-map.test.ts 管。
  */
-function viewFor(objects: readonly PrevizObject[], ratio = 1) {
+function viewFor(
+  objects: readonly PrevizObject[],
+  footprints: readonly PrevizTopDownFootprint[] = [],
+  ratio = 1,
+) {
   return topDownView(
-    sceneTopDownBounds(objects),
+    sceneTopDownBounds(objects, footprints),
     PREVIZ_TOP_DOWN_PICKER_SIZE.width * ratio,
     PREVIZ_TOP_DOWN_PICKER_SIZE.height * ratio,
   );
+}
+
+/**
+ * 一件带 id 的道具。轮廓与对象是按 id 对上的，而 `createPrevizObject` 发的 id 随机，
+ * 用例里写不出期望值。
+ */
+function propWithId(id: string, x: number, z: number): PrevizObject {
+  return { ...objectAt("prop", x, z), id };
 }
 
 interface StubRect {
@@ -83,6 +96,20 @@ interface ArcCall {
   radius: number;
   fillStyle: string;
   strokeStyle: string;
+  /** 这一发在整趟绘制里的序号。画序本身是要断言的：后画的盖在先画的上面。 */
+  order: number;
+}
+
+interface RectCall {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** 铺一层还是描一圈。轮廓两样都要，且填充要半透明、描边不要。 */
+  mode: "fill" | "stroke";
+  style: string;
+  alpha: number;
+  order: number;
 }
 
 interface LineCall {
@@ -107,15 +134,34 @@ interface LineCall {
 function fakeContext() {
   const arcs: ArcCall[] = [];
   const lines: LineCall[] = [];
+  const rects: RectCall[] = [];
   let pendingArc: { x: number; y: number; radius: number } | null = null;
   let pendingLine: { x0: number; y0: number } | null = null;
   let tip: { x: number; y: number } | null = null;
+  /** 全局发号，圆与矩形共用，这样两类调用之间的先后也比得出来。 */
+  let order = 0;
+  const rect = (mode: "fill" | "stroke", style: string) => (
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ) => {
+    rects.push({ x, y, width, height, mode, style, alpha: context.globalAlpha, order: order++ });
+  };
   const context = {
     fillStyle: "",
     strokeStyle: "",
     lineWidth: 0,
+    // 真上下文的初值就是 1（不透明）。半透明那一层画完必须还原成它，不然后面每一笔
+    // 都跟着变淡，而这个假上下文如果不带这个字段，被测代码那句赋值会静默无效。
+    globalAlpha: 1,
     clearRect: vi.fn(),
-    fillRect: vi.fn(),
+    fillRect: vi.fn((x: number, y: number, width: number, height: number) => {
+      rect("fill", context.fillStyle)(x, y, width, height);
+    }),
+    strokeRect: vi.fn((x: number, y: number, width: number, height: number) => {
+      rect("stroke", context.strokeStyle)(x, y, width, height);
+    }),
     beginPath: vi.fn(() => {
       pendingArc = null;
       pendingLine = null;
@@ -131,11 +177,11 @@ function fakeContext() {
       pendingArc = { x, y, radius };
     }),
     fill: vi.fn(() => {
-      if (pendingArc) arcs.push({ ...pendingArc, ...styles() });
+      if (pendingArc) arcs.push({ ...pendingArc, ...styles(), order: order++ });
       pendingArc = null;
     }),
     stroke: vi.fn(() => {
-      if (pendingArc) arcs.push({ ...pendingArc, ...styles() });
+      if (pendingArc) arcs.push({ ...pendingArc, ...styles(), order: order++ });
       if (pendingLine && tip) {
         lines.push({ ...pendingLine, x1: tip.x, y1: tip.y, strokeStyle: context.strokeStyle });
       }
@@ -145,16 +191,26 @@ function fakeContext() {
     }),
   };
   const styles = () => ({ fillStyle: context.fillStyle, strokeStyle: context.strokeStyle });
-  return { context, arcs, lines };
+  return { context, arcs, lines, rects };
 }
 
-/** 让画布交出假上下文。返回记下来的圆与线，随后断言直接读它们。 */
+/** 让画布交出假上下文。返回记下来的圆、线与矩形，随后断言直接读它们。 */
 function captureDraw() {
-  const { context, arcs, lines } = fakeContext();
+  const { context, arcs, lines, rects } = fakeContext();
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     context as unknown as CanvasRenderingContext2D,
   );
-  return { arcs, lines };
+  return { context, arcs, lines, rects };
+}
+
+/**
+ * 底色那一发之后的矩形，也就是轮廓画的那些。
+ *
+ * 底色是 `fillRect(0, 0, 整幅)`，永远排第一发；按序号切掉它比按颜色滤更钝，也就更
+ * 不容易在实现换个色时假绿。
+ */
+function footprintRects(rects: RectCall[]): RectCall[] {
+  return rects.slice(1);
 }
 
 /** 取最后一条。仓库的 tsc target 还没到 es2022，用不了 `Array.prototype.at`。 */
@@ -489,6 +545,115 @@ describe("PrevizTopDownPicker", () => {
     const [movedX, movedY] = worldToCanvas(view, [4, -1]);
     expect(arcs[3].x).toBeCloseTo(movedX, 9);
     expect(arcs[3].y).toBeCloseTo(movedY, 9);
+  });
+
+  it("draws a prop as the patch of floor it covers", () => {
+    const { rects } = captureDraw();
+    // 一块世界 4 m × 2 m 的地，中心不在对象原点上（枢轴不在几何中心的资产很常见）：
+    // 画的必须是这块地本身，而不是围着 position 摊开的一个方块。
+    const objects = [propWithId("table", 2, -1)];
+    const footprints = [{ id: "table", minX: 0, maxX: 4, minZ: -2, maxZ: 0 }];
+    render(
+      <PrevizTopDownPicker
+        objects={objects}
+        footprints={footprints}
+        value={null}
+        onPick={vi.fn()}
+      />,
+    );
+
+    const view = viewFor(objects, footprints);
+    const [left, top] = worldToCanvas(view, [0, -2]);
+    const [right, bottom] = worldToCanvas(view, [4, 0]);
+    const patch = footprintRects(rects);
+    // 一铺一描：只铺不描的话，一块半透明的地压在网格上几乎读不出边在哪。
+    expect(patch.map((entry) => entry.mode)).toEqual(["fill", "stroke"]);
+    for (const entry of patch) {
+      expect(entry.x).toBeCloseTo(left, 6);
+      expect(entry.y).toBeCloseTo(top, 6);
+      expect(entry.width).toBeCloseTo(right - left, 6);
+      expect(entry.height).toBeCloseTo(bottom - top, 6);
+      // 世界里 2:1 的一块地，换算成像素之后还得是 2:1——两个方向各乘各的比例就会露馅。
+      expect(entry.width / entry.height).toBeCloseTo(2, 6);
+      expect(entry.style).toBe(cssHex(KIND_COLOR.prop));
+    }
+  });
+
+  it("keeps the floor patch translucent so the grid underneath still reads", () => {
+    const { context, rects } = captureDraw();
+    const objects = [propWithId("table", 0, 0)];
+    const footprints = [{ id: "table", minX: -3, maxX: 3, minZ: -3, maxZ: 3 }];
+    render(
+      <PrevizTopDownPicker
+        objects={objects}
+        footprints={footprints}
+        value={null}
+        onPick={vi.fn()}
+      />,
+    );
+
+    const patch = footprintRects(rects);
+    // 铺满不透明的话，网格被这块地整个盖掉，而网格是用户判断「这块地有多大」的唯一
+    // 尺子——盖掉之后画面上多了个色块，尺度信息反而少了。
+    const filled = patch.filter((entry) => entry.mode === "fill");
+    expect(filled).toHaveLength(1);
+    expect(filled[0].alpha).toBeGreaterThan(0);
+    expect(filled[0].alpha).toBeLessThan(1);
+    // 描边不跟着变淡，它就是那把「边在哪」的尺子。
+    expect(patch.filter((entry) => entry.mode === "stroke")[0].alpha).toBe(1);
+    // 画完还原。上下文是整趟绘制共用的一个对象，留着半透明会让随后的参照点与高亮环
+    // 一起变淡——一条不报错、只是「看着有点糊」的错。
+    expect(context.globalAlpha).toBe(1);
+  });
+
+  it("falls back to just the dot when a prop has no footprint", () => {
+    const { rects, arcs } = captureDraw();
+    // 模型还在下载、或者下载失败：渲染器量不到几何体，一条轮廓都不给。这时不能凭
+    // position 画一块猜出来的地——那是在告诉用户「这儿有张一米见方的桌子」。
+    const objects = [propWithId("table", 2, -1)];
+    render(<PrevizTopDownPicker objects={objects} value={null} onPick={vi.fn()} />);
+
+    // 只剩底色那一发。
+    expect(rects).toHaveLength(1);
+    expect(arcs).toHaveLength(1);
+  });
+
+  it("leaves out a footprint whose object is no longer in the scene", () => {
+    const { rects } = captureDraw();
+    // 轮廓是渲染器另外量的一份快照，`objects` 则是每次渲染现给的。对不上号的那条不画，
+    // 否则画面上会有一块属于早已删掉的道具的地。理由与 `sceneTopDownBounds` 那道筛
+    // 相同，两层各筛各的：这里筛的是画什么，那里筛的是框多大。
+    render(
+      <PrevizTopDownPicker
+        objects={[propWithId("table", 2, -1)]}
+        footprints={[{ id: "ghost", minX: 0, maxX: 4, minZ: -2, maxZ: 0 }]}
+        value={null}
+        onPick={vi.fn()}
+      />,
+    );
+
+    expect(rects).toHaveLength(1);
+  });
+
+  it("draws the floor patch under the dots and the pick ring, not over them", () => {
+    const { rects, arcs } = captureDraw();
+    // 一块 20 m 的地能铺满整张图。压在参照点和高亮环上面的话，用户既找不到这件道具的
+    // 原点，也读不出自己刚才把人放在哪——高亮环是他唯一的落点提示。
+    const objects = [propWithId("set", 0, 0)];
+    const footprints = [{ id: "set", minX: -10, maxX: 10, minZ: -10, maxZ: 10 }];
+    render(
+      <PrevizTopDownPicker
+        objects={objects}
+        footprints={footprints}
+        value={[3, 3]}
+        onPick={vi.fn()}
+      />,
+    );
+
+    const lastPatch = last(footprintRects(rects)).order;
+    // 参照点一发、高亮环一发，两发都在轮廓之后。
+    expect(arcs).toHaveLength(2);
+    for (const arc of arcs) expect(arc.order).toBeGreaterThan(lastPatch);
   });
 
   it("paints the origin cross in the axis colours, X across and Z down", () => {

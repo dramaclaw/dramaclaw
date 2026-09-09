@@ -12,6 +12,7 @@ import {
   sceneTopDownBounds,
   topDownView,
   worldToCanvas,
+  type PrevizTopDownFootprint,
   type PrevizTopDownView,
 } from "@/features/previz/domain/topDownMap";
 
@@ -94,6 +95,24 @@ const KIND_DOT_COLOR: Record<Exclude<PrevizObjectKind, "character">, string> = {
 const DOT_RADIUS_PX = 4;
 const RING_RADIUS_PX = 9;
 
+/**
+ * 道具轮廓那一层地的不透明度。
+ *
+ * 必须半透明：铺不透明的话，这块地下面的网格被整个盖掉，而网格是用户判断「它有多大」
+ * 的唯一尺子——画面上多了个色块，尺度信息反而少了。0.22 是照着一件铺满半张图的布景
+ * 定的，那种尺寸下再浓一点整张图就只剩这一块颜色。描边不跟着淡，边界要读得出来。
+ */
+const FOOTPRINT_FILL_ALPHA = 0.22;
+
+/**
+ * 没有轮廓时用的那个空数组。
+ *
+ * 定成模块级常量而不是写在参数默认值里：默认值那种写法每渲染一次新建一个数组，下面
+ * `view` 的 `useMemo` 与绘制的 `useEffect` 都把它当依赖，于是每渲染一次都重算取景、
+ * 整张图重画一遍——一件不报错、只是白烧 CPU 的事。
+ */
+const NO_FOOTPRINTS: readonly PrevizTopDownFootprint[] = [];
+
 /** 网格线最密到多少 CSS 像素一格。再密就是一片灰糊，还白白多画几千条线。 */
 const MIN_GRID_SPACING_PX = 8;
 
@@ -133,6 +152,14 @@ const KEY_DELTA: Record<string, readonly [number, number] | undefined> = {
 export interface PrevizTopDownPickerProps {
   /** 场里已有的对象，只用来画参照点与决定取景范围。 */
   objects: readonly PrevizObject[];
+  /**
+   * 道具在地面上占的那几块地（见 `PrevizRenderer.propFootprints`）。给了就画出来，
+   * 并且一起算进取景范围。
+   *
+   * 可选：量这份数据要 three，而这个组件在没有渲染器的地方也用得上。**引用要稳**，
+   * 理由同 `objects`：它是取景与绘制的依赖。
+   */
+  footprints?: readonly PrevizTopDownFootprint[];
   /** 已选的世界 XZ；还没选时是 null。 */
   value: readonly [number, number] | null;
   onPick: (point: [number, number]) => void;
@@ -225,10 +252,50 @@ function drawGrid(context: CanvasRenderingContext2D, view: PrevizTopDownView, ra
   line(context, originX, 0, originX, view.height);
 }
 
+/**
+ * 把道具占的那块地铺出来，再描一圈。
+ *
+ * 按 `objects` 的顺序找轮廓、而不是直接遍历 `footprints`：轮廓是渲染器另外量的一份
+ * 快照，`objects` 则是每次渲染现给的，两者对不上号时（对象已经被删了）不该画出一块
+ * 属于不存在之物的地。同样一道筛在 `sceneTopDownBounds` 里也有，两层管的不是一件事
+ * ——那里决定框多大，这里决定画什么。
+ *
+ * 画的是世界轴对齐包围盒在 XZ 上的投影，不是真实剪影：一张转了 30° 的长桌会画成把它
+ * 整个裹住的那个正矩形，比真形大一圈。这是渲染器那一侧就定下的取舍（求真剪影要对
+ * 投影后的顶点求凸包，代价随三角面数走），在这张 320 px 的缩略图上换不来什么。
+ */
+function drawFootprints(
+  context: CanvasRenderingContext2D,
+  view: PrevizTopDownView,
+  objects: readonly PrevizObject[],
+  footprints: readonly PrevizTopDownFootprint[],
+  ratio: number,
+): void {
+  if (footprints.length === 0) return;
+  const byId = new Map(footprints.map((footprint) => [footprint.id, footprint]));
+  context.fillStyle = KIND_DOT_COLOR.prop;
+  context.strokeStyle = KIND_DOT_COLOR.prop;
+  context.lineWidth = ratio;
+  for (const object of objects) {
+    const footprint = byId.get(object.id);
+    if (!footprint) continue;
+    // +Z 朝画布下方，所以 minZ 对应上边、maxZ 对应下边（见 topDownMap 的约定）。
+    const [left, top] = worldToCanvas(view, [footprint.minX, footprint.minZ]);
+    const [right, bottom] = worldToCanvas(view, [footprint.maxX, footprint.maxZ]);
+    context.globalAlpha = FOOTPRINT_FILL_ALPHA;
+    context.fillRect(left, top, right - left, bottom - top);
+    // 还原成不透明再描边，也把上下文交还给后面的参照点与高亮环：这一个上下文整趟绘制
+    // 共用，留着半透明会让后面每一笔都跟着变淡。
+    context.globalAlpha = 1;
+    context.strokeRect(left, top, right - left, bottom - top);
+  }
+}
+
 function drawTopDown(
   canvas: HTMLCanvasElement | null,
   view: PrevizTopDownView,
   objects: readonly PrevizObject[],
+  footprints: readonly PrevizTopDownFootprint[],
   value: readonly [number, number] | null,
   ratio: number,
 ): void {
@@ -243,6 +310,9 @@ function drawTopDown(
   context.fillRect(0, 0, view.width, view.height);
 
   drawGrid(context, view, ratio);
+  // 轮廓压在网格之上、参照点与高亮环之下：那两样是用户找东西和读自己落点的唯一提示，
+  // 被一块能铺满半张图的地盖住就什么都读不出来了。
+  drawFootprints(context, view, objects, footprints, ratio);
 
   for (const object of objects) {
     const [px, py] = worldToCanvas(view, [
@@ -264,7 +334,12 @@ function drawTopDown(
   context.stroke();
 }
 
-export function PrevizTopDownPicker({ objects, value, onPick }: PrevizTopDownPickerProps) {
+export function PrevizTopDownPicker({
+  objects,
+  footprints = NO_FOOTPRINTS,
+  value,
+  onPick,
+}: PrevizTopDownPickerProps) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ratio = pickerPixelRatio();
@@ -272,16 +347,16 @@ export function PrevizTopDownPicker({ objects, value, onPick }: PrevizTopDownPic
   const view = useMemo(
     () =>
       topDownView(
-        sceneTopDownBounds(objects),
+        sceneTopDownBounds(objects, footprints),
         PREVIZ_TOP_DOWN_PICKER_SIZE.width * ratio,
         PREVIZ_TOP_DOWN_PICKER_SIZE.height * ratio,
       ),
-    [objects, ratio],
+    [objects, footprints, ratio],
   );
 
   useEffect(() => {
-    drawTopDown(canvasRef.current, view, objects, value, ratio);
-  }, [view, objects, value, ratio]);
+    drawTopDown(canvasRef.current, view, objects, footprints, value, ratio);
+  }, [view, objects, footprints, value, ratio]);
 
   const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
     // `detail` 是这次 click 的连击计数。指针点出来的 click 至少是 1，而键盘回车 / 空格、
