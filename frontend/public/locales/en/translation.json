@@ -2751,7 +2751,9 @@
       "freezone_script_to_video_plan": "Script to video plan",
       "freezone_audio_speech": "Generate speech",
       "freezone_audio_eleven_music": "Generate music",
-      "freezone_image_to_3gs": "Image to 3D world"
+      "freezone_image_to_3gs": "Image to 3D world",
+      "freezone_image_vectorize": "Generate vector image",
+      "freezone_image_animate_gif": "Convert animated GIF"
     },
     "cancelRunning": {
       "title": "Stop task",
@@ -5189,6 +5191,39 @@
     },
     "assetDrop": {
       "fallbackNodeLabel": "Node"
+    },
+    "derivedMedia": {
+      "vector": "Vector image",
+      "animated": "Animated image",
+      "vectorTitle": "Vector image · SVG",
+      "animatedTitle": "Animated image · GIF",
+      "processing": "Processing",
+      "convertSvg": "Converting to SVG",
+      "convertGif": "Converting to GIF",
+      "generateVideo": "Generating video",
+      "missingGifTask": "Video generated, but GIF conversion did not start. Retry conversion.",
+      "missingOutput": "No output file available",
+      "failed": "Generation failed. Please retry.",
+      "failedSelect": "Generation failed. Select the node to retry.",
+      "selectConvert": "Select the node to start conversion",
+      "preview": "Preview",
+      "downloadFailed": "Download failed. Please retry.",
+      "download": "Download {{format}}",
+      "retryFree": "Retry conversion · Free",
+      "startFree": "Start conversion · Free",
+      "regenerateVideo": "Regenerate video",
+      "regenerateDescription": "Regenerate the video and convert it to GIF",
+      "videoBilling": "Locked first frame · 4 seconds · 720P · No audio. Video is billed at the quoted price; GIF conversion is free.",
+      "quoteUnavailable": "Credit estimate is unavailable. Please try again later.",
+      "confirm": "Confirm generation",
+      "svgDescription": "Convert locally to SVG. Complex images may lose detail.",
+      "videoUnavailable": "Video model unavailable",
+      "billingMissing": "Billing rules are not configured. Contact your administrator.",
+      "quoteLoading": "Loading credit estimate…",
+      "videoSettings": "Locked first frame · 4 seconds · 720P · No audio",
+      "close": "Close",
+      "free": "Free",
+      "generate": "Generate"
     }
   },
   "tool": {

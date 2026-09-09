@@ -643,7 +643,18 @@ const styleNodeDefinition: CanvasNodeDefinition<StyleNodeData> = {
   }),
 };
 
+const derivedMediaDefinition = (type: CanvasNodeType): CanvasNodeDefinition => ({
+  type,
+  menuLabelKey: type === CANVAS_NODE_TYPES.vectorSvg ? 'canvas.derivedMedia.vector' : 'canvas.derivedMedia.animated',
+  menuIcon: type === CANVAS_NODE_TYPES.vectorSvg ? 'upload' : 'video',
+  visibleInMenu: false,
+  capabilities: { toolbar: true, promptInput: false },
+  connectivity: { sourceHandle: true, targetHandle: true, connectMenu: { fromSource: false, fromTarget: false } },
+  createDefaultData: () => ({ imageUrl: null, aspectRatio: '16:9' }),
+});
 export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition> = {
+  vectorSvgNode: derivedMediaDefinition(CANVAS_NODE_TYPES.vectorSvg),
+  animatedGifNode: derivedMediaDefinition(CANVAS_NODE_TYPES.animatedGif),
   [CANVAS_NODE_TYPES.upload]: uploadNodeDefinition,
   [CANVAS_NODE_TYPES.imageEdit]: imageEditNodeDefinition,
   [CANVAS_NODE_TYPES.imageGen]: imageGenNodeDefinition,
