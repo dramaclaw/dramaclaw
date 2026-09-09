@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render } from '@testing-library/react';
 
 import { StoryPlayerOverlay, STORY_OUTCOME_FEEDBACK_MS } from '@/components/canvas/StoryPlayerOverlay';
+import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
+import { useCanvasStore } from '@/stores/canvasStore';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
 import { CHOICE_STAGE_TIMING } from '@/components/canvas/useChoicePointMachine';
 
@@ -56,14 +58,14 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     act(() => useStoryRuntimeStore.getState().exitPlay());
   });
 
-  it('实时生成显示同屏故事树、模式切换和预留生成入口', () => {
+  it('实时生成显示同屏故事树、模式切换和当前片段编辑入口', () => {
     seedChoicePoint({ playKind: 'live', groupId: 'story-group' });
     const { getByRole, getByText } = render(<StoryPlayerOverlay />);
 
     expect(getByText('canvas.story.tree.title')).toBeInTheDocument();
     expect(getByRole('button', { name: /canvas.story.playMode.backToCanvas/ })).toBeInTheDocument();
     expect(getByRole('button', { name: 'canvas.story.playMode.live' })).toHaveAttribute('aria-pressed', 'true');
-    expect(getByRole('button', { name: /canvas.story.playMode.generateFromHere/ })).toBeDisabled();
+    expect(getByRole('button', { name: /canvas.story.playMode.generateFromHere/ })).toBeEnabled();
 
     const autoPlay = getByRole('button', { name: 'canvas.story.playMode.autoPlayShort' });
     expect(autoPlay).toHaveAttribute('aria-pressed', 'true');
@@ -99,11 +101,43 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     expect(queryByText('canvas.story.resume.continue')).not.toBeInTheDocument();
   });
 
-  it('实时生成横屏铺满播放器，竖屏保留完整画幅', () => {
-    seedChoicePoint({ playKind: 'live', currentClipUrl: 'portrait.mp4' });
+  it('从此生成同步画布选中状态并打开当前片段编辑态', () => {
+    const previous = useCanvasStore.getState();
+    useCanvasStore.setState({ nodes: [
+      { id: 'n1', type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 }, data: {}, selected: false },
+      { id: 'other', type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 }, data: {}, selected: true },
+    ], edges: [], selectedNodeId: 'other' });
+    try {
+      seedChoicePoint({ playKind: 'live' });
+      const { getByRole } = render(<StoryPlayerOverlay />);
+      fireEvent.click(getByRole('button', { name: 'canvas.story.playMode.generateFromHere' }));
+      const canvas = useCanvasStore.getState();
+      expect(canvas.nodes.filter((node) => node.selected).map((node) => node.id)).toEqual(['n1']);
+      expect(canvas.storyEditNodeId).toBe('n1');
+      expect(canvas.pendingFocusNodeId).toBe('n1');
+      expect(useStoryRuntimeStore.getState().mode).toBe('edit');
+    } finally { useCanvasStore.setState(previous); }
+  });
+
+  it.each(['live', 'entertainment'] as const)('%s 横屏和竖屏都将选项限制在完整画幅内', (playKind) => {
+    seedChoicePoint({ playKind, currentClipUrl: 'portrait.mp4' });
     render(<StoryPlayerOverlay />);
     const video = document.body.querySelector('video')!;
-    expect(video).toHaveClass('object-cover');
+    expect(video).toHaveClass('object-contain');
+    const viewport = video.parentElement!.parentElement!;
+    Object.defineProperties(viewport, {
+      clientWidth: { configurable: true, value: 1600 },
+      clientHeight: { configurable: true, value: 700 },
+    });
+    act(() => fireEvent(window, new Event('resize')));
+    Object.defineProperties(video, {
+      videoWidth: { configurable: true, value: 1920 },
+      videoHeight: { configurable: true, value: 1080 },
+    });
+    act(() => fireEvent.loadedMetadata(video));
+    expect(video).toHaveClass('object-contain');
+    expect(video.parentElement).toHaveAttribute('data-media-fit', 'true');
+    expect(video.parentElement?.style.aspectRatio).toBe(`${1920 / 1080} / 1`);
     Object.defineProperties(video, {
       videoWidth: { configurable: true, value: 1080 },
       videoHeight: { configurable: true, value: 1920 },
@@ -111,6 +145,12 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     act(() => fireEvent.loadedMetadata(video));
     expect(video).toHaveClass('object-contain');
     expect(video.parentElement?.style.aspectRatio).toBe('0.5625 / 1');
+    expect(video.parentElement?.style.width).toBe('393.75px');
+    expect(video.parentElement?.style.height).toBe('700px');
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 400 });
+    act(() => fireEvent(window, new Event('resize')));
+    expect(video.parentElement?.style.width).toBe('225px');
+    expect(video.parentElement?.style.height).toBe('400px');
   });
 
   it('点选后进 hide、高亮所选并淡化其他,confirmMs 后 choose 推进一次', () => {
@@ -124,8 +164,8 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     const left = getByText('走左边').closest('button')!;
     const right = getByText('走右边').closest('button')!;
     expect(left.getAttribute('aria-pressed')).toBe('true');
-    expect(left.className).toContain('border-white/60');
-    expect(right.className).toContain('opacity-30');
+    expect(left.className).toContain('border-white/70');
+    expect(right.className).toContain('opacity-40');
     expect(right).toBeDisabled();
     expect(choose).not.toHaveBeenCalled();
 
@@ -266,9 +306,10 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     expect(hotspot).not.toHaveClass('min-w-32');
   });
 
-  it('完整展示视频时按原视频画幅和留白换算锚点位置', () => {
+  it.each(['live', 'entertainment'] as const)('%s 完整展示视频时按原视频画幅和留白换算锚点位置', (playKind) => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
     seedChoicePoint({
+      playKind,
       currentClipUrl: 'wide-screen.mp4',
       currentChoices: [{
         index: 0,
@@ -352,6 +393,20 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     act(() => fireEvent.timeUpdate(video));
     expect(pause).not.toHaveBeenCalled();
     pause.mockRestore();
+  });
+
+  it('有视频且无显式结局文案时保留清晰尾帧，只提供重玩', () => {
+    seedChoicePoint({ phase: 'ended', currentClipUrl: 'ending.mp4', currentChoices: [], currentEnding: { title: '' } });
+    render(<StoryPlayerOverlay />);
+    const video = document.body.querySelector('video')!;
+    act(() => fireEvent.ended(video));
+    const ending = document.body.querySelector('[data-story-ending]')!;
+    expect(ending).toBeInTheDocument();
+    expect(ending.querySelector('h2')).toBeNull();
+    expect(ending.querySelector('button')).toBeInTheDocument();
+    expect(ending.className).not.toContain('backdrop-blur');
+    expect(ending.className).not.toContain('bg-black/55');
+    expect(document.body.querySelector('video')).toBe(video);
   });
 
   it('有视频的结局等待视频播放完成后才展示结局文本', () => {

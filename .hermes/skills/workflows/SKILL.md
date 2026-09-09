@@ -14,6 +14,10 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 
 读取 Skill 规划包后，Agent 只决定用户目标、结构化输入、作品/镜头 PlanItems、每项使用的允许 Recipe、真实输入依赖、是否生成素材锚点和是否自动执行。调用 `freezone_prepare_workflow_draft` 后，节点数据、稳定 ID、连线类型、分组、布局和成片合成由工具确定性完成。用户调整方案时调用 `freezone_patch_workflow_draft`，确认后调用 `freezone_confirm_workflow_draft`。不得调用 `freezone_build_workflow_plan`，也不得用通用画布命令手写工作流。
 
+## 互动影游边界
+
+涉及分支故事、选择、结局或互动广告剧情时，先读取 `interactive-story` Skill。故事结构使用其业务工具；普通工作流只负责素材生产，不替代故事创建或修改。剧情选择线表示播放路由，不是素材输入依赖。恢复已准备的生成任务仍复用现有执行器；仅在制作备注中写了“等待尾帧”而尚未绑定真实素材或已支持的依赖时，先准备该输入，不能直接把该片段当作就绪任务运行。不要擅自为此重建整套工作流。
+
 ## 工具调用方式
 
 `freezone_*` 工具不在工具列表里，统一用 `tool_call(name="<工具名>", arguments={...})` 调用；JSON 里先写 `name` 再写 `arguments`（arguments 很大时后写的 `name` 容易被漏掉，缺 `name` 会直接报错）；`arguments` 必须传 JSON 对象——不要传转义后的 JSON 字符串，大型嵌套 intent 会因转义损坏而反复失败。**不要先跑 `tool_search` 或 `tool_describe`**——`tool_call` 不依赖它们。**顺序固定：报价 → 读规划包 → 编译**，报价 ack 后必须先读规划包再写 intent——`deliverable`、Recipe、字段枚举都来自规划包，跳过它自造字段会被校验反复打回。所需参数如下：

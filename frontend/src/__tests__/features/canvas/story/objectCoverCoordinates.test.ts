@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   coverPointToMediaAnchor,
+  containPointToMediaAnchor,
   mediaAnchorToCoverPoint,
   mediaAnchorToContainPoint,
   objectContainRenderRect,
@@ -46,4 +47,15 @@ describe('objectContainCoordinates', () => {
       { width: 900, height: 1600 },
     )).toEqual({ x: 800, y: 450 });
   });
+});
+
+it('竖屏完整显示时可反算锚点，且不在留白处创建热区', () => {
+  const container = { width: 800, height: 450 };
+  const media = { width: 1080, height: 1920 };
+  const anchor = { x: 0.3, y: 0.85 };
+  const point = mediaAnchorToContainPoint(anchor, container, media)!;
+  const result = containPointToMediaAnchor(point, container, media)!;
+  expect(result.x).toBeCloseTo(anchor.x);
+  expect(result.y).toBeCloseTo(anchor.y);
+  expect(containPointToMediaAnchor({ x: 0, y: 200 }, container, media)).toBeNull();
 });

@@ -285,9 +285,9 @@ export function compileGraphToInk(
     lines.push(`clip # clip: ${id}`);
     const choices = choicesBySource.get(id) ?? [];
     if (choices.length === 0) {
-      // 叶子 = 结局:记标题(旁白)与结局标。
-      const data = node.data as { narration?: string; endingLabel?: string };
-      const title = (data.narration ?? '').trim();
+      // 叶子 = 结局；剧情描述不是面向玩家的结局标题。
+      const data = node.data as { endingLabel?: string };
+      const title = '';
       endingByNodeId[id] = {
         title,
         ...(data.endingLabel ? { label: data.endingLabel } : {}),

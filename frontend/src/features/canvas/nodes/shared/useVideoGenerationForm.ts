@@ -29,10 +29,10 @@ import {
   joinUpstreamText,
 } from "@/features/canvas/application/graphContentResolver";
 import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
-import { useUpstreamNodes } from "@/features/canvas/application/useUpstreamGraph";
+import { useVideoReferenceNodes } from "@/features/canvas/application/useUpstreamGraph";
 import {
   sortUpstreamByReferenceOrder,
-  upstreamNodesInEdgeOrder,
+  videoReferenceNodesInEdgeOrder,
 } from "@/features/canvas/nodes/referenceOrdering";
 import {
   referenceImageUrl,
@@ -548,7 +548,7 @@ export function useVideoGenerationForm(
   const supportsHumanReview = selectedVideoModel?.humanReview === true;
   const humanReview = Boolean(data.humanReview);
   const count: VideoGenCount = (data.count ?? 1) as VideoGenCount;
-  const upstreamNodes = useUpstreamNodes(id);
+  const upstreamNodes = useVideoReferenceNodes(id);
   const videoInputBilling = useMemo(() => {
     if (genMode !== "allReference" && genMode !== "videoEdit") {
       return { present: false, ready: true, durationSeconds: 0 };
@@ -1253,7 +1253,7 @@ export function useVideoGenerationForm(
         }),
       });
       // Walk the current edges/nodes once — used by every non-textToVideo
-      // branch to collect upstream resources. 必须与 UI 编号侧（useUpstreamNodes）
+      // branch to collect upstream resources. 必须与 UI 编号侧（useVideoReferenceNodes）
       // 同源：按连线顺序收集。曾按 state.nodes 顺序（节点创建顺序）收集，先创建
       // 但后连线的节点会排到 references 前面，@图片N 在后端就指向错位的图。
       const collectUpstream = () => {
@@ -1266,7 +1266,7 @@ export function useVideoGenerationForm(
           return normalizeCanvasEdgeSemanticKind(edgeData?.link_type) !== "dependency_for";
         });
         return sortUpstreamByReferenceOrder(
-          upstreamNodesInEdgeOrder(state.nodes, inputEdges, id)
+          videoReferenceNodesInEdgeOrder(state.nodes, inputEdges, id)
             .filter((node) => !isCompositionTimelineAudioNode(node)),
           data.referenceOrder,
         );

@@ -151,7 +151,7 @@ describe('storyRuntimeStore', () => {
     expect(useStoryRuntimeStore.getState().phase).toBe('ended');
   });
 
-  it('叶子结局暴露 currentEnding(title=旁白,label=结局标);非结局为 null', () => {
+  it('叶子结局暴露 currentEnding(不把旁白当标题，保留结局标);非结局为 null', () => {
     const leaf = {
       id: 'meet',
       type: CANVAS_NODE_TYPES.video,
@@ -166,7 +166,7 @@ describe('storyRuntimeStore', () => {
     store.enterPlay(compiled);
     expect(useStoryRuntimeStore.getState().currentEnding).toBeNull(); // 起点非结局
     store.choose(0);
-    expect(useStoryRuntimeStore.getState().currentEnding).toEqual({ title: '宠冠后宫', label: 'GE' });
+    expect(useStoryRuntimeStore.getState().currentEnding).toEqual({ title: '', label: 'GE' });
   });
 
   it('restart 回到起点', () => {
@@ -295,7 +295,7 @@ describe('storyRuntimeStore', () => {
     const stats = readStoryStats(statsKeyFromSaveKey(saveKey)!);
     expect(stats.points.intro.label).toBe('开场');
     expect(stats.points.intro.options['0']).toEqual({ text: '去见面', count: 1 });
-    expect(stats.endings.meet).toEqual({ title: '皆大欢喜', label: 'GE', count: 1 });
+    expect(stats.endings.meet).toEqual({ title: '', label: 'GE', count: 1 });
     expect(stats.totalRuns).toBe(1);
   });
 

@@ -623,7 +623,8 @@ export function VideoOperationsPanel({
                 onToggle={() => onExpandedChange(!expanded)}
                 className="absolute right-2 top-2 z-20"
               />
-              <div className="flex shrink-0 items-center overflow-x-auto px-3 pb-2 pr-10 pt-3">
+              <fieldset disabled={isGenerating} className="m-0 flex min-h-0 min-w-0 flex-1 flex-col border-0 p-0">
+              <div inert={isGenerating} aria-disabled={isGenerating} className="flex shrink-0 items-center overflow-x-auto px-3 pb-2 pr-10 pt-3">
                 <div className="flex shrink-0 items-center gap-2">
                   <CameraMovementChip
                     templates={cameraTemplates}
@@ -690,6 +691,7 @@ export function VideoOperationsPanel({
               </div>
 
               <PromptMentionEditor
+                readOnly={isGenerating}
                 ref={promptEditorRef}
                 value={promptDraft}
                 onChange={(next) => {
@@ -716,7 +718,7 @@ export function VideoOperationsPanel({
                 className={`nodrag nowheel min-h-0 w-full flex-1 overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent px-3 py-2 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
               />
 
-              <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
+              <div inert={isGenerating} aria-disabled={isGenerating} className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <ProviderModelPicker
                     selectedModelId={modelId}
@@ -851,12 +853,12 @@ export function VideoOperationsPanel({
                   <CreditCostPill
                     display={totalCreditCostDisplay}
                     promotion={videoCreditCost.data?.data.promotion}
-                    disabled={submitDisabled || videoBillingRuleMissing}
+                    disabled={isGenerating || submitDisabled || videoBillingRuleMissing}
                     className={NODE_CREDIT_PILL_FLAT_CLASS}
                   />
                   <button
                     type="button"
-                    disabled={submitDisabled || videoBillingRuleMissing}
+                    disabled={isGenerating || submitDisabled || videoBillingRuleMissing}
                     title={
                       selectedModelReferenceError ?? (isGenerating
                         ? t("node.videoNode.submitBusy")
@@ -877,6 +879,7 @@ export function VideoOperationsPanel({
                   </button>
                 </div>
               </div>
+              </fieldset>
             </OperationPanelShell>
         <input
           ref={externalAssetInputRef}

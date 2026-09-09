@@ -100,3 +100,19 @@ export function coverPointToMediaAnchor(
     y: Math.min(1, Math.max(0, (point.y - rendered.top) / rendered.height)),
   };
 }
+
+/** 将完整显示媒体的容器坐标转换为媒体坐标；留白处不接受锚点或热区。 */
+export function containPointToMediaAnchor(
+  point: MediaPoint,
+  container: MediaSize,
+  media: MediaSize,
+): MediaPoint | null {
+  const rendered = objectContainRenderRect(container, media);
+  if (!rendered || point.x < rendered.left || point.y < rendered.top
+    || point.x > rendered.left + rendered.width
+    || point.y > rendered.top + rendered.height) return null;
+  return {
+    x: (point.x - rendered.left) / rendered.width,
+    y: (point.y - rendered.top) / rendered.height,
+  };
+}

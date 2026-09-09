@@ -473,6 +473,8 @@ interface CanvasState {
   ) => void;
   /** 选择点级互动呈现:同一源节点的所有选项统一使用底部/锚定/视频热区；锚点位置仍各自保留。 */
   setStoryChoicePresentation: (edgeId: string, presentation: StoryChoicePresentation) => void;
+  alignStoryChoiceAnchors: (edgeId: string) => void;
+  setStoryChoiceAppearance: (edgeId: string, patch: Partial<Pick<StoryChoiceInteraction, 'uiStyle' | 'motion'>>) => void;
   /** 限时选项:把某条选项边设为/取消默认(同源至多一条默认,设一个清同源其它)。 */
   setStoryDefaultChoice: (edgeId: string, isDefault: boolean) => void;
   /** 故事模式:把某视频节点设为唯一起点(清掉其它节点的 storyRole)。 */
@@ -4704,9 +4706,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const sourceChoice = state.edges.find(
         (candidate) => candidate.type === STORY_CHOICE_EDGE_TYPE && candidate.source === source,
       );
-      const inheritedPresentation = normalizeStoryChoiceInteraction(
+      const inheritedInteraction = normalizeStoryChoiceInteraction(
         (sourceChoice?.data as { interaction?: StoryChoiceInteraction } | undefined)?.interaction,
-      ).presentation;
+      );
+      const inheritedPresentation = inheritedInteraction.presentation;
       const edge = {
         id,
         source,
@@ -4718,7 +4721,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           choiceText,
           order,
           ...(inheritedPresentation !== 'overlay'
-            ? { interaction: { presentation: inheritedPresentation, anchor: defaultStoryChoiceAnchor(inheritedPresentation) } }
+            ? { interaction: { presentation: inheritedPresentation, uiStyle: inheritedInteraction.uiStyle, motion: inheritedInteraction.motion, anchor: defaultStoryChoiceAnchor(inheritedPresentation) } }
             : {}),
         },
       } as CanvasEdge;
@@ -4739,6 +4742,57 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         if (edge.id !== edgeId) return edge;
         changed = true;
         return { ...edge, data: { ...(edge.data as object), ...patch } } as CanvasEdge;
+      });
+      if (!changed) return {};
+      return {
+        edges,
+        history: { past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)), future: [] },
+        dragHistorySnapshot: null,
+        ...trackEdit(state),
+      };
+    });
+  },
+
+  setStoryChoiceAppearance: (edgeId, patch) => {
+    set((state) => {
+      const selected = state.edges.find((edge) => edge.id === edgeId && edge.type === STORY_CHOICE_EDGE_TYPE);
+      if (!selected) return {};
+      let changed = false;
+      const edges = state.edges.map((edge) => {
+        if (edge.type !== STORY_CHOICE_EDGE_TYPE || edge.source !== selected.source) return edge;
+        const data = edge.data as { interaction?: StoryChoiceInteraction } | undefined;
+        const current = normalizeStoryChoiceInteraction(data?.interaction);
+        if (current.presentation !== 'object-anchor') return edge;
+        const next = normalizeStoryChoiceInteraction({ ...current, ...patch });
+        if (next.uiStyle === current.uiStyle && next.motion === current.motion) return edge;
+        changed = true;
+        return { ...edge, data: { ...edge.data, interaction: next } } as CanvasEdge;
+      });
+      if (!changed) return {};
+      return {
+        edges,
+        history: { past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)), future: [] },
+        dragHistorySnapshot: null,
+        ...trackEdit(state),
+      };
+    });
+  },
+
+  alignStoryChoiceAnchors: (edgeId) => {
+    set((state) => {
+      const selected = state.edges.find((edge) => edge.id === edgeId && edge.type === STORY_CHOICE_EDGE_TYPE);
+      const selectedData = selected?.data as { interaction?: StoryChoiceInteraction; transitionMode?: string } | undefined;
+      const reference = normalizeStoryChoiceInteraction(selectedData?.interaction);
+      if (!selected || selectedData?.transitionMode === 'automatic' || reference.presentation !== 'object-anchor' || !reference.anchor) return {};
+      const y = reference.anchor.y;
+      let changed = false;
+      const edges = state.edges.map((edge) => {
+        if (edge.type !== STORY_CHOICE_EDGE_TYPE || edge.source !== selected.source) return edge;
+        const data = edge.data as { interaction?: StoryChoiceInteraction; transitionMode?: string } | undefined;
+        const interaction = normalizeStoryChoiceInteraction(data?.interaction);
+        if (data?.transitionMode === 'automatic' || interaction.presentation !== 'object-anchor' || !interaction.anchor || interaction.anchor.y === y) return edge;
+        changed = true;
+        return { ...edge, data: { ...edge.data, interaction: { ...interaction, anchor: { ...interaction.anchor, y } } } } as CanvasEdge;
       });
       if (!changed) return {};
       return {

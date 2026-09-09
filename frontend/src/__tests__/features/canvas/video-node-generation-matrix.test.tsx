@@ -223,6 +223,23 @@ beforeEach(() => {
 });
 
 describe("视频节点：genMode → 提交端点的分派", () => {
+  it("剧情选择线不进入参考栏或提交，显式素材引用仍保留", async () => {
+    const choice = (id: string) => ({ ...edge(id, "previous"), type: "storyChoiceEdge" });
+    useCanvasStore.getState().setCanvasData(
+      [videoNode({ genMode: "allReference" }),
+       upstreamVideoNode("previous", "/static/previous.mp4"),
+       upstreamVideoNode("reference", "/static/reference.mp4"),
+       uploadImageNode("character", "/static/character.png")],
+      [choice("choice-a"), choice("choice-b"), edge("explicit-video", "reference"), edge("explicit-image", "character")],
+    );
+    const result = await submitAndSettle();
+    expect(result.current.formProps.referenceMediaItems.map((entry) => entry.item.nodeId)).toEqual(["reference", "character"]);
+    expect(payloadOf(submitFreezoneVideoOmniGen)).toMatchObject({
+      references: [{ type: "video", url: "/static/reference.mp4" }, { type: "image", url: "/static/character.png" }],
+    });
+    expect(useCanvasStore.getState().edges.filter((item) => item.type === "storyChoiceEdge")).toHaveLength(2);
+  });
+
   it("文生视频 → /video/gen", async () => {
     useCanvasStore.getState().setCanvasData([videoNode({ genMode: "textToVideo" })], []);
 

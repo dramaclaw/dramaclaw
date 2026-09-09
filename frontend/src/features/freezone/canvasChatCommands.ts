@@ -1,3 +1,4 @@
+import { STORY_CHOICE_EDGE_TYPE } from "@/features/canvas/story/storyTypes";
 import {
   CANVAS_NODE_TYPES,
   DEFAULT_NODE_WIDTH,
@@ -623,6 +624,7 @@ function workflowGraphSignature(actions: PendingNodeAction[]): string {
     .map((node) => ({ id: node.id, type: node.type ?? "" }))
     .sort((left, right) => left.id.localeCompare(right.id));
   const edges = state.edges
+    .filter((edge) => edge.type !== STORY_CHOICE_EDGE_TYPE)
     .filter((edge) => actionNodeIds.has(edge.source) && actionNodeIds.has(edge.target))
     .map((edge) => ({
       source: edge.source,
@@ -1858,8 +1860,10 @@ function workflowNodeActions(
     expandedNodeIds,
     initialNodeIds,
   );
-  const composeNodeIdsToOpen = relatedSatisfiedVideoComposeNodeIds(expandedNodeIds, scopedNodeIds)
-    .filter((nodeId) => !expandedNodeIds.includes(nodeId));
+  const composeNodeIdsToOpen = command.direction === "node"
+    ? []
+    : relatedSatisfiedVideoComposeNodeIds(expandedNodeIds, scopedNodeIds)
+      .filter((nodeId) => !expandedNodeIds.includes(nodeId));
 
   return [
     ...expandedNodeIds,
@@ -2519,6 +2523,8 @@ function orderedNodeActionsByCanvasEdges(actions: PendingNodeAction[]): {
   const dependenciesByNodeId = new Map<string, Set<string>>();
   const graph = new Map<string, string[]>();
   for (const edge of state.edges) {
+    // Playback choices (including replay) do not impose generation dependencies.
+    if (edge.type === STORY_CHOICE_EDGE_TYPE) continue;
     const targets = graph.get(edge.source) ?? [];
     targets.push(edge.target);
     graph.set(edge.source, targets);

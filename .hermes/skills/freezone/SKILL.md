@@ -12,6 +12,10 @@ compatibility: Requires Freezone/虾画 chat surface with frontend-injected curr
 - 具体节点职责、连线语义、视频节点和合成节点的产品建模，读取 `references/canvas-modeling-guide.md`。
 - 只有复杂批量命令的字段不明确时，才读取 `references/canvas-command-guide.md`。删除、选择、布局等参数已经明确的单步操作禁止先读取该指南。
 
+## 互动影游边界
+
+涉及分支故事、选择、结局或互动广告剧情时，先读取 `interactive-story` Skill。故事结构使用其业务工具；普通工作流只负责素材生产，不替代故事创建或修改。剧情选择线表示播放路由，不是素材输入依赖。恢复已准备的生成任务仍复用现有执行器；仅在制作备注中写了“等待尾帧”而尚未绑定真实素材或已支持的依赖时，先准备该输入，不能直接把该片段当作就绪任务运行。不要擅自为此重建整套工作流。
+
 ## 意图判断
 
 - **解释/咨询类**：用户问"怎么 / 如何 / 什么是 / 介绍 / 说明 / 教我 / how to / what is / explain / show me how"时，只用自然语言回答；不要创建、修改、连接、布局、运行节点。

@@ -1,6 +1,5 @@
 import type { CompiledStory } from '@/features/canvas/story/storyTypes';
 import { resolveMediaUrl } from '@/lib/media-url';
-import INKJS_RUNTIME from './vendor/inkjs-runtime.umd.js?raw';
 import { PLAYER_STYLE, PLAYER_SCRIPT } from './playerAssets';
 
 export interface PlayerLabels {
@@ -11,6 +10,12 @@ export interface PlayerLabels {
   loadError: string;
   placeholderBadge: string;
   placeholderHint: string;
+  play?: string;
+  mediaError?: string;
+  retry?: string;
+  countdown?: string;
+  flagOn?: string;
+  flagOff?: string;
 }
 
 export interface BuildPlayerHtmlOptions {
@@ -28,6 +33,12 @@ const DEFAULT_LABELS: PlayerLabels = {
   loadError: '故事加载失败',
   placeholderBadge: '占位片段',
   placeholderHint: '此片段尚未生成视频,点选下方选项继续试玩',
+  play: '播放当前片段',
+  mediaError: '视频加载失败，请重试。',
+  retry: '重试播放',
+  countdown: '选择倒计时',
+  flagOn: '开启',
+  flagOff: '关闭',
 };
 
 /** HTML 文本转义（用于 <title>）。 */
@@ -59,7 +70,7 @@ function bakeClips(clipByNodeId: Record<string, string>, origin: string): Record
 }
 
 /**
- * 组装自包含单 HTML 播放器：内联 inkjs runtime + 播放器脚本，注入编译产物。
+ * 组装单 HTML：内联共享 React 播放器（包含 inkjs）与剧情，视频保持绝对链接。
  * @param compiled compileGraphToInk/compileStoryGroup 的产物
  * @param storyJson `story.ToJson()`（由调用方编译得到）
  */
@@ -83,7 +94,7 @@ export function buildPlayerHtml(
     choiceFeedback: compiled.choiceFeedbackById,
     choiceStateChanges: compiled.choiceStateChangesById,
     choiceInteraction: compiled.choiceInteractionById,
-    labels: opts.labels ?? DEFAULT_LABELS,
+    labels: { ...DEFAULT_LABELS, ...opts.labels },
     title,
   };
 
@@ -97,9 +108,8 @@ export function buildPlayerHtml(
 </head>
 <body>
 <div id="app"></div>
-<script>${INKJS_RUNTIME}</script>
 <script>window.__STORY__=${safeJson(data)};</script>
-<script>${PLAYER_SCRIPT}</script>
+<script>${PLAYER_SCRIPT.replace(/<\/script/gi, '<\\/script')}</script>
 </body>
 </html>`;
 }

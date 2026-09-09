@@ -470,7 +470,7 @@ describe('compileGraphToInk variables', () => {
     expect(result.ink).not.toContain('+ [');
   });
 
-  it('endingByNodeId 仅含叶子结局:title=旁白,label=endingLabel', () => {
+  it('endingByNodeId 仅含叶子结局:不将旁白用作标题，保留 endingLabel', () => {
     const start = {
       id: 'a',
       type: CANVAS_NODE_TYPES.video,
@@ -484,7 +484,7 @@ describe('compileGraphToInk variables', () => {
       data: { videoUrl: 'b.mp4', aspectRatio: '16:9', narration: '宠冠后宫', endingLabel: 'GE' },
     } as CanvasNode;
     const result = compileGraphToInk([start, leaf], [choiceEdge('a', 'b', '去 b', 0)]);
-    expect(result.endingByNodeId.b).toEqual({ title: '宠冠后宫', label: 'GE' });
+    expect(result.endingByNodeId.b).toEqual({ title: '', label: 'GE' });
     // 非叶子(有选项)不进结局表
     expect(result.endingByNodeId.a).toBeUndefined();
   });

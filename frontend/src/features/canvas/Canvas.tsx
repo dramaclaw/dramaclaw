@@ -126,6 +126,7 @@ import { nodeTypes as canvasNodeTypes } from './nodes';
 import { edgeTypes as canvasEdgeTypes } from './edges';
 import { NodeSelectionMenu } from './NodeSelectionMenu';
 import { isNodeStoryClip } from './story/storySelectors';
+import { storyReferenceVisibleEdges } from './story/storyReferenceVisibility';
 import { SelectedNodeOverlay } from './ui/SelectedNodeOverlay';
 import { LightEditorCanvasOverlay } from './ui/LightEditorCanvasOverlay';
 import { MultiSelectionToolbar } from './ui/MultiSelectionToolbar';
@@ -1179,12 +1180,11 @@ export function Canvas({
     });
   }, [nodes, placementConfirmNodeId]);
 
-  // 隐藏连线时给每条边补 `hidden: true`——ReactFlow 会跳过渲染但边仍在图里，
-  // 连接、reconnect、持久化都不受影响。显示时直接透传真实 edges，零额外分配。
-  const renderedEdges = useMemo(() => {
-    if (!edgesHidden) return edges;
-    return edges.map((edge) => (edge.hidden ? edge : { ...edge, hidden: true }));
-  }, [edges, edgesHidden]);
+  // 影游素材线按端点选中状态显示；隐藏仅用于渲染，不写回画布关系。
+  const renderedEdges = useMemo(
+    () => storyReferenceVisibleEdges(nodes, edges, edgesHidden),
+    [nodes, edges, edgesHidden],
+  );
 
   const clearMarqueeSelection = useCallback(() => {
     marqueeSelectionRef.current = null;
@@ -4962,7 +4962,7 @@ export function Canvas({
 
   return (
     <CreditDisplayHiddenProvider value={isCeRuntime()}>
-    <div className="flex h-full min-h-0 w-full flex-col">
+    <div className="relative flex h-full min-h-0 w-full flex-col">
       {!taskPanelOpen && !suspended && <StoryGroupToolbar />}
     <div
       ref={wrapperRef}

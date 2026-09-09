@@ -1,0 +1,44 @@
+.story-player-viewport {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  container-type: size;
+}
+/* Shared by the editor and the standalone player bundle. The stage is a size
+   container, so a narrow live preview follows the same rules as a phone. */
+.story-player {
+  flex: none;
+  width: 100%;
+  height: 100%;
+  container-type: size;
+  isolation: isolate;
+  color-scheme: dark;
+  scrollbar-color: rgba(255, 255, 255, .3) transparent;
+  scrollbar-width: thin;
+  /* Scope the project's shape/spacing tokens so host theme and offline defaults agree. */
+  --radius: 1rem;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --spacing: .25rem;
+  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.story-player [data-choice-stage] {
+  max-height: 52%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1rem max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+}
+.story-player [data-choice-stage] > button { flex-shrink: 0; overflow-wrap: anywhere; }
+.story-player [data-story-placeholder] { top: 12%; bottom: 54%; }
+.story-player [data-story-ending] { overflow-y: auto; padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+@container (max-height: 480px) and (min-width: 600px) {
+  .story-player [data-choice-stage] { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: stretch; gap: .5rem; }
+  .story-player [data-choice-stage] > button { width: calc(50% - .5rem); }
+  .story-player [data-choice-stage] > [role=timer] { flex-basis: 100%; }
+}

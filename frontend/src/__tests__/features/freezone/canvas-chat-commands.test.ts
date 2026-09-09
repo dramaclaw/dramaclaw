@@ -13,6 +13,7 @@ import { buildCanvasOntologyContext } from "@/features/canvas/ontology/canvasOnt
 import {
   applyCanvasChatCommands,
   applyCanvasChatCommandsAsync,
+  workflowGenerationTargetsForPreflight,
   type CanvasCommandApprovalEventDetail,
   canvasCommandEnvelopeMatchesCanvas,
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
@@ -4216,7 +4217,7 @@ describe("canvas chat commands", () => {
     expect(parameters.generateAudio).toBeUndefined();
   });
 
-  it("returns ordered reference media in node detail for generator prompts", async () => {
+  it.each([false, true])("returns ordered reference media in node detail (story branches: %s)", async (withStoryBranches) => {
     const store = useCanvasStore.getState();
     const storyboardId = store.addNode(
       CANVAS_NODE_TYPES.imageGen,
@@ -4246,6 +4247,16 @@ describe("canvas chat commands", () => {
     );
     store.addEdge(storyboardId, videoId);
     store.addEdge(characterId, videoId);
+    if (withStoryBranches) {
+      const previousId = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 480 }, {
+        displayName: "前置剧情", videoUrl: "/static/project/previous.mp4",
+      });
+      useCanvasStore.setState((state) => ({ edges: [
+        ...state.edges,
+        { id: "story-choice-a", type: "storyChoiceEdge", source: previousId, target: videoId },
+        { id: "story-choice-b", type: "storyChoiceEdge", source: previousId, target: videoId },
+      ] }));
+    }
     const envelopes = extractCanvasContextRequestEnvelopes([
       {
         schema_version: "canvas_context_request.v1",
@@ -6020,6 +6031,46 @@ describe("canvas chat commands", () => {
       expect(result.errors).toContain(
         "画布节点或连线已发生变化，已停止执行旧工作流的后续节点。",
       );
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it.each(["run_node_action", "run_workflow"])("ignores story replay cycles but preserves reference ordering via %s", async (entry) => {
+    const store = useCanvasStore.getState();
+    const image = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 0 }, { prompt: "参考图" });
+    const first = store.addNode(CANVAS_NODE_TYPES.video, { x: 300, y: 0 }, { prompt: "开场" });
+    const last = store.addNode(CANVAS_NODE_TYPES.video, { x: 600, y: 0 }, { prompt: "片尾" });
+    store.setCanvasData(useCanvasStore.getState().nodes, [
+      { id: "reference-first", source: image, target: first },
+      { id: "reference-last", source: image, target: last },
+      { id: "choice", source: first, target: last, type: "storyChoiceEdge" },
+      { id: "replay", source: last, target: first, type: "storyChoiceEdge" },
+    ]);
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+      if (!payload.requestId) return;
+      store.updateNodeData(payload.nodeId, payload.nodeId === image
+        ? { imageUrl: "/static/reference.png" }
+        : { videoUrl: `/static/${payload.nodeId}.mp4` });
+      canvasEventBus.publish("freezone/node-action-result", {
+        requestId: payload.requestId, nodeId: payload.nodeId,
+        action: payload.action, status: "success",
+      });
+    });
+    try {
+      const commands = entry === "run_workflow"
+        ? [{ type: "run_workflow", node_ids: [last, first, image], direction: "downstream", regenerate: false }]
+        : [last, first, image].map((id) => ({ type: "run_node_action", node_id: id,
+            action: id === image ? "generate_image" : "generate_video" }));
+      const result = await applyCanvasChatCommandsAsync(extractCanvasChatCommandEnvelopes([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION, commands,
+      }]), { canvasId: "canvas-a", actionTimeoutMs: 100 });
+      expect(result.errors).toEqual([]);
+      expect(events[0]).toBe(image);
+      expect(new Set(events)).toEqual(new Set([image, first, last]));
+      expect(useCanvasStore.getState().edges.some((edge) => edge.id === "replay")).toBe(true);
     } finally {
       unsubscribe();
     }
@@ -9365,5 +9416,19 @@ describe("canvas chat commands", () => {
         ],
       }),
     ]);
+  });
+});
+
+
+describe("explicit workflow node scope", () => {
+  it("does not enqueue adjacent composition when only missing story videos are requested", () => {
+    const store = useCanvasStore.getState();
+    const a = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, { prompt: "A" });
+    const b = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 200 }, { videoUrl: "/b.mp4" });
+    const compose = store.addNode(CANVAS_NODE_TYPES.videoCompose, { x: 400, y: 0 });
+    store.addEdgeWithData(a, compose, { link_type: "media_input_for" });
+    store.addEdgeWithData(b, compose, { link_type: "media_input_for" });
+    const targets = workflowGenerationTargetsForPreflight({ type: "run_workflow", node_ids: [a], direction: "node" });
+    expect(targets.map((target) => target.nodeId)).toEqual([a]);
   });
 });

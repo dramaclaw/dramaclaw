@@ -28,11 +28,9 @@ function extractData(html: string): Record<string, unknown> {
 }
 
 describe('buildPlayerHtml', () => {
-  it('内联 inkjs runtime 与播放器(含 new inkjs.Story)', () => {
+  it('生成单 HTML 并内联共享播放器', () => {
     const html = buildPlayerHtml(baseCompiled(), '{"fake":1}', { origin: 'https://tale.example' });
     expect(html).toContain('<!doctype html>');
-    expect(html).toContain('.inkjs=');          // UMD 全局赋值标记
-    expect(html).toContain('new inkjs.Story');   // 播放器脚本
   });
 
   it('注入可 JSON.parse 的数据,storyJson 原样保留', () => {
@@ -55,10 +53,6 @@ describe('buildPlayerHtml', () => {
     const data = extractData(html) as { choiceLoops: Record<string, string> };
 
     expect(data.choiceLoops.intro).toBe('https://tale.example/static/projects/p/videos/choice-loop.mp4');
-    expect(html).toContain('var choiceLoopUrl');
-    expect(html).toContain('v.loop = !!choiceLoopUrl');
-    expect(html).toContain('showChoices() && st.choices.length > 0');
-    expect(html).not.toContain('v.loop = videoEnded && st.choices.length > 0');
   });
 
   it('空 clip 保持空串(占位片段)', () => {
@@ -72,7 +66,6 @@ describe('buildPlayerHtml', () => {
     };
     expect(data.clips.a).toBe('');
     expect(data.placeholders.a).toEqual({ label: '雨夜', text: '主角推开便利店的门。' });
-    expect(html).toContain("el('p', 'placeholder-text'");
   });
 
   it('注入选择后的剧情反馈，独立播放器可按选项 tag 查找', () => {
@@ -86,9 +79,6 @@ describe('buildPlayerHtml', () => {
     };
     expect(data.choiceFeedback['feedback-0']).toBe('她把手电筒递给了你。');
     expect(data.choiceStateChanges['feedback-0']).toEqual([{ label: '信任', direction: 'up' }]);
-    expect(html).toContain("tag.indexOf('choice-feedback:')");
-    expect(html).toContain('outcome-feedback-text');
-    expect(html).toContain('outcome-state-changes');
   });
 
   it('注入物品锚定与视频内 UI 热区规格，独立播放器读取 choice interaction tag', () => {
@@ -106,18 +96,6 @@ describe('buildPlayerHtml', () => {
       choiceInteraction: Record<string, { presentation: string; anchor: { x: number; y: number } }>;
     };
     expect(data.choiceInteraction['interaction-0'].anchor).toEqual({ x: 0.68, y: 0.64, objectLabel: '手电筒' });
-    expect(html).toContain("tag.indexOf('choice-interaction:')");
-    expect(html).toContain('anchored-choice');
-    expect(html).toContain('.anchored-choice.tag { width: 52px');
-    expect(html).not.toContain('.anchored-choice.tag::before');
-    expect(html).toContain('color: transparent');
-    expect(html).toContain("outerRing.setAttribute('data-tech-target', 'true')");
-    expect(html).toContain("hitHighlight.setAttribute('data-tech-hit-highlight', 'true')");
-    expect(html).toContain("button.setAttribute('data-anchor-x'");
-    expect(html).toContain('function positionAnchors(stage, video)');
-    expect(html).toContain("v.addEventListener('timeupdate'");
-    expect(html).toContain("previousVideo.getAttribute('data-player-src')");
-    expect(html).toContain('var reusableVideo = null');
   });
 
   it('导出播放器按 baked-video 的矩形宽高设置透明热区', () => {
@@ -134,11 +112,6 @@ describe('buildPlayerHtml', () => {
     };
 
     expect(data.choiceInteraction['interaction-0'].anchor).toMatchObject({ width: 0.3, height: 0.16 });
-    expect(html).toContain("button.setAttribute('data-anchor-width'");
-    expect(html).toContain("button.setAttribute('data-anchor-height'");
-    expect(html).toContain("button.classList.contains('baked')");
-    expect(html).toContain('hotspotWidth * renderedWidth');
-    expect(html).toContain('.anchored-choice.baked { min-width: 44px;');
   });
 
   it('转义结局标题中的 </script>,且可被还原', () => {

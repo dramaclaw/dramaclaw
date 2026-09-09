@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { storyPlayerPlugin } from './build/storyPlayerPlugin';
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -71,6 +72,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [
+      storyPlayerPlugin(),
       TanStackRouterVite(),
       react(),
       tailwindcss(),

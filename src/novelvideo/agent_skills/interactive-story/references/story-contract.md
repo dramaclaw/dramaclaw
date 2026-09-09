@@ -13,7 +13,7 @@ The Agent produces `StoryDraftV2` and Patch data objects, not Ink source. The fr
 - `dramaclaw_patch_interactive_story`: `story_id`, `base_revision`, `idempotency_key`, and `operations`.
 - `dramaclaw_validate_interactive_story`: `story_id`.
 
-Do not call Create and Patch in the same user turn, and do not call Patch twice in one user turn.
+Combine related operations atomically per stage. Authorized later stages may Patch after Get refreshes the current revision, for example after obtaining a real tail frame. Do not repeat successful writes or replay ambiguous results.
 
 ## StoryDraftV2
 
@@ -72,7 +72,7 @@ Flags represent simple yes/no story facts. Variable and flag names share one nam
   "character_ids": ["traveler"],
   "choice_time_limit_sec": null,
   "production_notes": "镜头与连续性提示",
-  "video_prompt": "夜间站台，中景镜头缓慢推进；旅人停在站牌前，雨水沿大衣滴落，末尾保持稳定构图。不要生成互动按钮或倒计时。",
+  "video_prompt": "夜间站台，中景镜头缓慢推进；旅人停在站牌前，雨水沿大衣滴落，末尾停在旅人等待决定的画面。",
   "media": {"source":"placeholder","status":"missing","version":1},
   "choice_loop": {
     "description": "角色保持等待姿势，雨水和灯光轻微流动。",
@@ -188,4 +188,5 @@ Set `update_segment.changes.media` to `null` to clear existing media and restore
 - `error` blocks later publication.
 - `warning` identifies a production or experience issue that should be addressed.
 - `info` is non-blocking guidance.
+- Bounded condition-aware analysis also checks automatic cycles and unreachable conditional paths. Treat `path_analysis_incomplete` as incomplete coverage, not proof of correctness; test actual playback separately.
 - Common issue codes include `missing_video`, `media_url_unresolved`, `timed_choice_uses_first_default`, `unreachable`, and `leaf_no_ending`.

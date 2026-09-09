@@ -37,6 +37,7 @@ export interface MentionCandidate {
 }
 
 interface PromptMentionEditorProps {
+  readOnly?: boolean;
   value: string;
   onChange: (next: string) => void;
   candidates: MentionCandidate[];
@@ -348,6 +349,7 @@ interface HoverState {
 export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptMentionEditorProps>(
   function PromptMentionEditor(
     {
+      readOnly = false,
       value,
       onChange,
       candidates,
@@ -431,7 +433,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
     const insertTextAtCursor = useCallback(
       (text: string) => {
         const el = editorRef.current;
-        if (!el || text.length === 0) return;
+        if (readOnly || !el || text.length === 0) return;
 
         el.focus();
         const selection = window.getSelection();
@@ -446,7 +448,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
         setMention(null);
         commitChange();
       },
-      [commitChange],
+      [commitChange, readOnly],
     );
 
     useImperativeHandle(
@@ -770,7 +772,10 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
       <>
         <div
           ref={editorRef}
-          contentEditable
+          contentEditable={!readOnly}
+          role="textbox"
+          aria-readonly={readOnly}
+          tabIndex={0}
           suppressContentEditableWarning
           className={`prompt-mention-editor cursor-text ${className ?? ''}`}
           data-placeholder={placeholder ?? ''}
@@ -778,13 +783,15 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           // 让占位文案改由 ::after 接在 chip 后面同一行显示（对标 liblib）。
           {...(hasLeadingChip && value.length === 0 ? { 'data-text-empty': '' } : {})}
           spellCheck={false}
-          onInput={handleInput}
-          onPaste={handlePaste}
+          onInput={readOnly ? undefined : handleInput}
+          onPaste={readOnly ? (event) => event.preventDefault() : handlePaste}
           onCompositionStart={() => {
+            if (readOnly) return;
             isComposingRef.current = true;
             onCompositionStart?.();
           }}
           onCompositionEnd={() => {
+            if (readOnly) return;
             isComposingRef.current = false;
             commitChange();
             setMention(detectMention());
@@ -793,8 +800,8 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           }}
           onMouseDown={(event) => event.stopPropagation()}
           onClick={handleClick}
-          onDoubleClick={handleDoubleClick}
-          onKeyDown={handleKeyDown}
+          onDoubleClick={readOnly ? undefined : handleDoubleClick}
+          onKeyDown={readOnly ? (event) => { event.stopPropagation(); onKeyDown?.(event); } : handleKeyDown}
           onMouseOver={handleMouseOver}
           onMouseOut={handleMouseOut}
         />
@@ -802,7 +809,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
             内部（所以跟着文字排版、能被光标越过），React 树上它是编辑器的兄弟节点
             （所以点击/悬停不会误触编辑器自己的那几个 handler）。 */}
         {leadHost && leadingChip ? createPortal(leadingChip, leadHost) : null}
-        {(mention || replaceTarget) && popoverStyle && filtered.length > 0
+        {!readOnly && (mention || replaceTarget) && popoverStyle && filtered.length > 0
           && createPortal(
             <div
               ref={popoverRef}

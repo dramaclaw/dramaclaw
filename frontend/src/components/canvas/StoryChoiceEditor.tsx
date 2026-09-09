@@ -23,8 +23,8 @@ import {
   normalizeStoryChoiceInteraction,
 } from '@/features/canvas/story/storyTypes';
 import {
-  coverPointToMediaAnchor,
-  objectCoverRenderRect,
+  containPointToMediaAnchor,
+  objectContainRenderRect,
   type MediaPoint,
   type MediaRenderRect,
   type MediaSize,
@@ -140,15 +140,15 @@ function useCompositionSafeText(value: string, onCommit: (next: string) => void)
 
 /** 选项编辑器:编辑某条 storyChoiceEdge 的文案 / 条件 / 效果。挂在边中点上方。 */
 export const StoryChoiceEditor = memo(function StoryChoiceEditor({
-  edgeId,
+  edgeId: initialEdgeId,
   sourceNodeId,
-  choiceText,
-  feedbackText,
-  interaction,
-  condition,
-  effects,
-  transitionMode,
-  isDefault,
+  choiceText: initialChoiceText,
+  feedbackText: initialFeedbackText,
+  interaction: initialInteraction,
+  condition: initialCondition,
+  effects: initialEffects,
+  transitionMode: initialTransitionMode,
+  isDefault: initialIsDefault,
   variables,
   flags = [],
   onClose,
@@ -167,12 +167,24 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
   /** 弹窗关闭时由选项边取消选中；编辑内容均为即时保存。 */
   onClose?: () => void;
 }) {
+  const [activeChoiceId, setActiveChoiceId] = useState(initialEdgeId);
+  const activeEdge = useCanvasStore((state) => state.edges.find((edge) => edge.id === activeChoiceId));
+  const activeData = activeEdge?.data as StoryChoiceEdgeData | undefined;
+  const edgeId = activeChoiceId;
+  const choiceText = activeData?.choiceText ?? initialChoiceText;
+  const feedbackText = activeData ? activeData.feedbackText : initialFeedbackText;
+  const interaction = activeData ? activeData.interaction : initialInteraction;
+  const condition = activeData ? activeData.condition : initialCondition;
+  const effects = activeData ? activeData.effects : initialEffects;
+  const transitionMode = activeData ? activeData.transitionMode : initialTransitionMode;
+  const isDefault = activeData ? activeData.isDefault : initialIsDefault;
   const { t } = useTranslation();
   const update = useCanvasStore((s) => s.updateStoryChoiceEdgeData);
+  const setChoiceAppearance = useCanvasStore((s) => s.setStoryChoiceAppearance);
+  const alignAnchors = useCanvasStore((s) => s.alignStoryChoiceAnchors);
   const setChoicePresentation = useCanvasStore((s) => s.setStoryChoicePresentation);
   const setDefault = useCanvasStore((s) => s.setStoryDefaultChoice);
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
-  const selectEdge = useCanvasStore((s) => s.onEdgesChange);
   const sourceNode = useCanvasStore((s) => s.nodes.find((node) => node.id === sourceNodeId));
   // 一个选择点的所有出边共用同一弹窗，用左栏切换，避免逐条边打开多个浮层。
   const sourceChoiceEdges = useCanvasStore(
@@ -199,12 +211,20 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
     const first = presentations[0] ?? resolvedInteraction.presentation;
     return presentations.every((presentation) => presentation === first) ? first : undefined;
   }, [resolvedInteraction.presentation, sourceChoiceEdges]);
+  const otherAnchoredChoices = sourceChoiceEdges.flatMap((edge) => {
+    const data = edge.data as StoryChoiceEdgeData | undefined;
+    const value = normalizeStoryChoiceInteraction(data?.interaction);
+    return edge.id !== edgeId && data?.transitionMode !== 'automatic' && value.presentation === 'object-anchor' && value.anchor
+      ? [{ edge, data, value, anchor: value.anchor }]
+      : [];
+  });
   const isAnchored = resolvedInteraction.presentation !== 'overlay';
   const sourceVideoUrl = (sourceNode?.data as { videoUrl?: string | null } | undefined)?.videoUrl ?? null;
   const previewVideoUrl = sourceVideoUrl ? (resolveMediaUrl(sourceVideoUrl) ?? sourceVideoUrl) : null;
   const previewFrameRef = useRef<HTMLDivElement>(null);
   const previewMediaSizeRef = useRef<MediaSize | null>(null);
-  const [previewCoverRect, setPreviewCoverRect] = useState<MediaRenderRect | null>(null);
+  const [previewAspectRatio, setPreviewAspectRatio] = useState(16 / 9);
+  const [previewRenderRect, setPreviewRenderRect] = useState<MediaRenderRect | null>(null);
   const anchorPointerIdRef = useRef<number | null>(null);
   const hotspotGestureRef = useRef<HotspotGesture | null>(null);
   // 锚点拖动只影响弹窗内的预览；结束时才进入画布 store，避免每个 pointermove
@@ -225,35 +245,36 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
   const setPresentation = (presentation: StoryChoicePresentation) => {
     if (presentation !== choicePresentation) setChoicePresentation(edgeId, presentation);
   };
-  const measurePreviewCover = useCallback(() => {
+  const measurePreview = useCallback(() => {
     const frame = previewFrameRef.current;
     if (!frame) return;
     const bounds = frame.getBoundingClientRect();
     const container = { width: bounds.width, height: bounds.height };
     const media = previewMediaSizeRef.current;
-    setPreviewCoverRect(media
-      ? objectCoverRenderRect(container, media)
+    setPreviewRenderRect(media
+      ? objectContainRenderRect(container, media)
       : { left: 0, top: 0, ...container });
   }, []);
   useEffect(() => {
     // 切换片段时不能沿用上一支视频的宽高，否则新视频 metadata 到达前热区会短暂错位。
     previewMediaSizeRef.current = null;
-    setPreviewCoverRect(null);
+    setPreviewAspectRatio(16 / 9);
+    setPreviewRenderRect(null);
   }, [previewVideoUrl]);
   useEffect(() => {
     if (!isAnchored) return;
-    measurePreviewCover();
+    measurePreview();
     const frame = previewFrameRef.current;
     const observer = frame && typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(measurePreviewCover)
+      ? new ResizeObserver(measurePreview)
       : null;
     if (frame) observer?.observe(frame);
-    window.addEventListener('resize', measurePreviewCover);
+    window.addEventListener('resize', measurePreview);
     return () => {
       observer?.disconnect();
-      window.removeEventListener('resize', measurePreviewCover);
+      window.removeEventListener('resize', measurePreview);
     };
-  }, [isAnchored, measurePreviewCover, previewVideoUrl]);
+  }, [isAnchored, measurePreview, previewVideoUrl]);
   const mediaPointFromPointer = (event: PointerEvent<HTMLElement>): MediaPoint | null => {
     const frameRect = previewFrameRef.current?.getBoundingClientRect();
     const eventRect = event.currentTarget.getBoundingClientRect();
@@ -261,7 +282,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
     if (rect.width <= 0 || rect.height <= 0) return null;
     const containerPoint = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     return previewMediaSizeRef.current
-      ? coverPointToMediaAnchor(
+      ? containPointToMediaAnchor(
           containerPoint,
           { width: rect.width, height: rect.height },
           previewMediaSizeRef.current,
@@ -271,29 +292,48 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
           y: Math.min(1, Math.max(0, containerPoint.y / rect.height)),
         };
   };
-  const anchorFromPointer = (event: PointerEvent<HTMLElement>) => {
-    const mediaPoint = mediaPointFromPointer(event);
-    const currentAnchor = anchorDraftRef.current
-      ?? resolvedInteraction.anchor
-      ?? defaultStoryChoiceAnchor(resolvedInteraction.presentation);
-    return normalizeStoryChoiceInteraction({
-      ...resolvedInteraction,
-      anchor: {
-        ...currentAnchor,
-        x: mediaPoint?.x ?? currentAnchor.x,
-        y: mediaPoint?.y ?? currentAnchor.y,
-      },
-    }).anchor!;
-  };
+  const [horizontalGuideY, setHorizontalGuideY] = useState<number | null>(null);
+  const anchorDragRef = useRef<{ edgeId: string; interaction: StoryChoiceInteraction; start: MediaPoint; anchor: StoryChoiceAnchor; moved: boolean } | null>(null);
   const updateAnchorDraft = (event: PointerEvent<HTMLButtonElement>) => {
-    const next = anchorFromPointer(event);
+    const drag = anchorDragRef.current;
+    const point = mediaPointFromPointer(event);
+    if (!drag || !point) return;
+    const dx = point.x - drag.start.x;
+    const dy = point.y - drag.start.y;
+    if (Math.abs(dx) + Math.abs(dy) < 0.003 && !drag.moved) return;
+    drag.moved = true;
+    const next = { ...drag.anchor, x: Math.min(1, Math.max(0, drag.anchor.x + dx)), y: Math.min(1, Math.max(0, drag.anchor.y + dy)) };
+    // 阈值用屏幕像素，避免预览尺寸变化后吸附范围忽大忽小。
+    const renderedHeight = previewRenderRect?.height || previewFrameRef.current?.getBoundingClientRect().height || 0;
+    let nearestY: number | null = null;
+    let nearestDistance = 6;
+    if (renderedHeight > 0) {
+      for (const edge of sourceChoiceEdges) {
+        if (edge.id === drag.edgeId) continue;
+        const data = edge.data as StoryChoiceEdgeData | undefined;
+        const value = normalizeStoryChoiceInteraction(data?.interaction);
+        if (data?.transitionMode === 'automatic' || value.presentation !== 'object-anchor' || !value.anchor) continue;
+        const distance = Math.abs(value.anchor.y - next.y) * renderedHeight;
+        if (distance <= nearestDistance) {
+          nearestDistance = distance;
+          nearestY = value.anchor.y;
+        }
+      }
+    }
+    if (nearestY !== null) next.y = nearestY;
+    setHorizontalGuideY(nearestY);
     anchorDraftRef.current = next;
     setAnchorDraft(next);
   };
-  const startAnchorDrag = (event: PointerEvent<HTMLButtonElement>) => {
+  const startAnchorDrag = (event: PointerEvent<HTMLButtonElement>, targetId = edgeId, value = resolvedInteraction) => {
+    if (event.button !== 0) return;
+    const start = mediaPointFromPointer(event);
+    if (!start || !value.anchor) return;
+    setHorizontalGuideY(null);
+    setActiveChoiceId(targetId);
+    anchorDragRef.current = { edgeId: targetId, interaction: value, start, anchor: value.anchor, moved: false };
     anchorPointerIdRef.current = event.pointerId;
     event.currentTarget.setPointerCapture(event.pointerId);
-    updateAnchorDraft(event);
   };
   const moveAnchorDrag = (event: PointerEvent<HTMLButtonElement>) => {
     if (anchorPointerIdRef.current === event.pointerId) updateAnchorDraft(event);
@@ -301,30 +341,33 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
   const finishAnchorDrag = (event: PointerEvent<HTMLButtonElement>, commit: boolean) => {
     if (anchorPointerIdRef.current !== event.pointerId) return;
     anchorPointerIdRef.current = null;
+    setHorizontalGuideY(null);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     const anchor = anchorDraftRef.current;
     anchorDraftRef.current = undefined;
     setAnchorDraft(undefined);
-    if (commit && anchor) writeInteraction({ anchor });
+    const drag = anchorDragRef.current;
+    anchorDragRef.current = null;
+    if (commit && anchor && drag?.moved) update(drag.edgeId, { interaction: { ...drag.interaction, anchor } });
   };
   const endAnchorDrag = (event: PointerEvent<HTMLButtonElement>) => finishAnchorDrag(event, true);
   const cancelAnchorDrag = (event: PointerEvent<HTMLButtonElement>) => finishAnchorDrag(event, false);
   const displayAnchor = anchorDraft ?? resolvedInteraction.anchor;
   const previewAnchorStyle = displayAnchor
     ? {
-        left: previewCoverRect
-          ? `${previewCoverRect.left + displayAnchor.x * previewCoverRect.width}px`
+        left: previewRenderRect
+          ? `${previewRenderRect.left + displayAnchor.x * previewRenderRect.width}px`
           : `${displayAnchor.x * 100}%`,
-        top: previewCoverRect
-          ? `${previewCoverRect.top + displayAnchor.y * previewCoverRect.height}px`
+        top: previewRenderRect
+          ? `${previewRenderRect.top + displayAnchor.y * previewRenderRect.height}px`
           : `${displayAnchor.y * 100}%`,
         ...(resolvedInteraction.presentation === 'baked-video'
           ? {
-              width: previewCoverRect
-                ? `${(displayAnchor.width ?? 0) * previewCoverRect.width}px`
+              width: previewRenderRect
+                ? `${(displayAnchor.width ?? 0) * previewRenderRect.width}px`
                 : `${(displayAnchor.width ?? 0) * 100}%`,
-              height: previewCoverRect
-                ? `${(displayAnchor.height ?? 0) * previewCoverRect.height}px`
+              height: previewRenderRect
+                ? `${(displayAnchor.height ?? 0) * previewRenderRect.height}px`
                 : `${(displayAnchor.height ?? 0) * 100}%`,
             }
           : {}),
@@ -582,10 +625,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                   key={edge.id}
                   type="button"
                   aria-pressed={active}
-                  onClick={() => selectEdge([
-                    { type: 'select', id: edgeId, selected: false },
-                    { type: 'select', id: edge.id, selected: true },
-                  ])}
+                  onClick={() => setActiveChoiceId(edge.id)}
                   className={`w-full rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${
                     active
                       ? 'bg-cyan-300/15 text-cyan-50 ring-1 ring-cyan-200/25'
@@ -667,10 +707,20 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                 ? t('canvas.story.interactionBakedHint')
                 : t('canvas.story.interactionAnchorHint')}
             </p>
+            {resolvedInteraction.presentation === 'object-anchor' && otherAnchoredChoices.length > 0 && (
+              <div className="flex justify-end">
+                <button type="button" onClick={() => alignAnchors(edgeId)}
+                  title={t('canvas.story.alignAnchorsHint', '将本片段其他锚定选项对齐到当前选项的高度，保留左右位置')}
+                  className="rounded-md px-2 py-1 text-xs text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                  {t('canvas.story.alignAnchors', '横向对齐')}
+                </button>
+              </div>
+            )}
             <div
               ref={previewFrameRef}
               data-testid="story-hotspot-preview"
-              className="relative aspect-video overflow-hidden rounded-lg border border-white/10 bg-[#0b0d12]"
+              className="relative mx-auto overflow-hidden rounded-lg border border-white/10 bg-[#0b0d12]"
+              style={{ aspectRatio: previewAspectRatio, width: `min(100%, ${previewAspectRatio * 56}vh)` }}
             >
               {previewVideoUrl ? (
                 <video
@@ -683,10 +733,13 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                       width: event.currentTarget.videoWidth,
                       height: event.currentTarget.videoHeight,
                     };
-                    measurePreviewCover();
+                    if (event.currentTarget.videoWidth > 0 && event.currentTarget.videoHeight > 0) {
+                      setPreviewAspectRatio(event.currentTarget.videoWidth / event.currentTarget.videoHeight);
+                    }
+                    measurePreview();
                     seekPreviewToTailFrame(event.currentTarget);
                   }}
-                  className="h-full w-full object-cover"
+                  className="h-full w-full object-contain"
                 />
               ) : (
                 <div className="flex h-full items-center justify-center px-5 text-center text-[11px] leading-4 text-white/35">
@@ -706,28 +759,35 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                   onPointerCancel={(event) => finishHotspotGesture(event, false)}
                   className="absolute inset-0 z-[1] cursor-crosshair touch-none"
                 />
-              ) : (
-                <button
-                  type="button"
-                  aria-label={t('canvas.story.interactionPickAnchor')}
-                  onPointerDown={startAnchorDrag}
-                  onPointerMove={moveAnchorDrag}
-                  onPointerUp={endAnchorDrag}
-                  onPointerCancel={cancelAnchorDrag}
-                  className="absolute inset-0 z-[1] cursor-crosshair touch-none"
+              ) : null}
+              {horizontalGuideY !== null && (
+                <div aria-hidden="true" data-testid="story-horizontal-guide"
+                  className="pointer-events-none absolute inset-x-0 z-[4] border-t border-dashed border-accent"
+                  style={{ top: previewRenderRect ? `${previewRenderRect.top + horizontalGuideY * previewRenderRect.height}px` : `${horizontalGuideY * 100}%` }}
                 />
               )}
               {displayAnchor && (resolvedInteraction.presentation === 'object-anchor' ? (
-                <span
-                  aria-hidden
-                  className={`pointer-events-none absolute max-w-[68%] -translate-x-1/2 -translate-y-1/2 text-center text-xs font-semibold leading-snug ${
-                    resolvedInteraction.uiStyle === 'tag' ? '' : 'px-3 py-2'
-                  } ${ANCHOR_PREVIEW_STYLE_CLASS[resolvedInteraction.uiStyle]}`}
-                  style={previewAnchorStyle}
-                >
-                  {resolvedInteraction.uiStyle === 'tag' && <TechTargetRingPreview />}
-                  {resolvedInteraction.uiStyle !== 'tag' && <span>{choiceText || t('canvas.story.choicePlaceholder')}</span>}
-                </span>
+                <>
+                  {[{ edge: { id: edgeId }, data: { choiceText }, value: resolvedInteraction, anchor: displayAnchor }, ...otherAnchoredChoices]
+                    .sort((a, b) => a.edge.id.localeCompare(b.edge.id))
+                    .map(({ edge, data, value, anchor }) => (
+                    <button key={edge.id} type="button"
+                      aria-label={edge.id === edgeId ? t('canvas.story.interactionPickAnchor') : t('canvas.story.editAnchorChoice', { defaultValue: '编辑选项：{{choice}}', choice: data?.choiceText })}
+                      aria-pressed={edge.id === edgeId}
+                      onPointerDown={(event) => startAnchorDrag(event, edge.id, value)}
+                      onPointerMove={moveAnchorDrag}
+                      onPointerUp={endAnchorDrag}
+                      onPointerCancel={cancelAnchorDrag}
+                      onClick={() => setActiveChoiceId(edge.id)}
+                      className={`absolute z-[3] max-w-[68%] -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none text-center text-xs font-semibold leading-snug active:cursor-grabbing focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${edge.id === edgeId ? '' : 'opacity-55 hover:opacity-100'} ${value.uiStyle === 'tag' ? 'h-14 w-14' : 'px-3 py-2'} ${ANCHOR_PREVIEW_STYLE_CLASS[value.uiStyle]}`}
+                      style={{
+                        left: previewRenderRect ? `${previewRenderRect.left + anchor.x * previewRenderRect.width}px` : `${anchor.x * 100}%`,
+                        top: previewRenderRect ? `${previewRenderRect.top + anchor.y * previewRenderRect.height}px` : `${anchor.y * 100}%`,
+                      }}>
+                      {value.uiStyle === 'tag' ? <TechTargetRingPreview /> : data?.choiceText || t('canvas.story.choicePlaceholder')}
+                    </button>
+                  ))}
+                </>
               ) : (
                 <div
                   role="group"
@@ -772,7 +832,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
               <div className="grid grid-cols-2 gap-1.5">
                 <select
                   value={resolvedInteraction.uiStyle}
-                  onChange={(event) => writeInteraction({ uiStyle: event.target.value as StoryChoiceUiStyle })}
+                  onChange={(event) => setChoiceAppearance(edgeId, { uiStyle: event.target.value as StoryChoiceUiStyle })}
                   className={SELECT_CLASS}
                   aria-label={t('canvas.story.interactionStyle')}
                 >
@@ -782,7 +842,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                 </select>
                 <select
                   value={resolvedInteraction.motion}
-                  onChange={(event) => writeInteraction({ motion: event.target.value as StoryChoiceMotion })}
+                  onChange={(event) => setChoiceAppearance(edgeId, { motion: event.target.value as StoryChoiceMotion })}
                   className={SELECT_CLASS}
                   aria-label={t('canvas.story.interactionMotion')}
                 >

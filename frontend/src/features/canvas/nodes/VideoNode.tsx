@@ -129,10 +129,10 @@ import {
   extractUpstreamContent,
   joinUpstreamText,
 } from "@/features/canvas/application/graphContentResolver";
-import { useUpstreamNodes } from "@/features/canvas/application/useUpstreamGraph";
+import { useVideoReferenceNodes } from "@/features/canvas/application/useUpstreamGraph";
 import {
   sortUpstreamByReferenceOrder,
-  upstreamNodesInEdgeOrder,
+  videoReferenceNodesInEdgeOrder,
 } from "@/features/canvas/nodes/referenceOrdering";
 import { useReferenceMentionSync } from "@/features/canvas/nodes/useReferenceMentionSync";
 import { useNodeGenerationTaskState } from "@/features/canvas/application/useNodeGenerationTaskState";
@@ -663,7 +663,7 @@ export const VideoNode = memo(
     // Billing and submission must inspect the same one-hop inputs. Keeping the
     // subscription here also lets the displayed quote react when a source
     // video's browser-probed duration becomes available.
-    const upstreamNodes = useUpstreamNodes(id);
+    const upstreamNodes = useVideoReferenceNodes(id);
     const {
       models: availableVideoModels,
       isLoading: videoModelsLoading,
@@ -2077,13 +2077,13 @@ export const VideoNode = memo(
         : userPrompt;
       try {
         // Walk the current edges/nodes once — used by every non-textToVideo
-        // branch to collect upstream resources. 必须与 UI 编号侧（useUpstreamNodes）
+        // branch to collect upstream resources. 必须与 UI 编号侧（useVideoReferenceNodes）
         // 同源：按连线顺序收集。曾按 state.nodes 顺序（节点创建顺序）收集，先创建
         // 但后连线的节点会排到 references 前面，@图片N 在后端就指向错位的图。
         const collectUpstream = () => {
           const state = useCanvasStore.getState();
           return sortUpstreamByReferenceOrder(
-            upstreamNodesInEdgeOrder(state.nodes, state.edges, id),
+            videoReferenceNodesInEdgeOrder(state.nodes, state.edges, id),
             data.referenceOrder,
           );
         };
@@ -3012,13 +3012,13 @@ export const VideoNode = memo(
           onClick={(event) => {
             const point = storyFramePointer.current;
             storyFramePointer.current = null;
-            if (!storyPlayerMode || isGenerating || isUploading || subtitleEraseMode) return;
+            if (!storyPlayerMode || isUploading || subtitleEraseMode) return;
             if (!canOpenStoryFrameEditor(event.target as Element, event.currentTarget, Boolean(point?.dragged))) return;
             setSelectedNode(id);
             setStoryEditNode(id);
           }}
           onKeyDown={(event) => {
-            if (event.target !== event.currentTarget || !storyPlayerMode || isGenerating || isUploading || subtitleEraseMode) return;
+            if (event.target !== event.currentTarget || !storyPlayerMode || isUploading || subtitleEraseMode) return;
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault();
               event.stopPropagation();
@@ -3118,6 +3118,10 @@ export const VideoNode = memo(
             // 生成进行中，但用户点了历史记录预览：临时播放那条历史视频，新视频
             // 仍在后台生成。顶部 pill 提示「生成中」，右上「返回」回到 loading。
             <div className="relative h-full w-full">
+              <NodeGenerationOverlay
+                startedAt={data.generationStartedAt ?? null}
+                durationMs={data.generationDurationMs}
+              />
               <video
                 src={resolveImageDisplayUrl(historyPreviewUrl)}
                 className="h-full w-full object-contain"

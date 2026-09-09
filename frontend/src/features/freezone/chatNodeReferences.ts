@@ -15,6 +15,7 @@ import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import {
   sortUpstreamByReferenceOrder,
   upstreamNodesInEdgeOrder,
+  videoReferenceNodesInEdgeOrder,
 } from "@/features/canvas/nodes/referenceOrdering";
 import {
   buildCanvasNodeActionCatalog,
@@ -349,7 +350,9 @@ function nodeReferenceMedia(
     return [];
   }
   const upstream = sortUpstreamByReferenceOrder(
-    upstreamNodesInEdgeOrder(nodes, edges, node.id),
+    node.type === CANVAS_NODE_TYPES.video
+      ? videoReferenceNodesInEdgeOrder(nodes, edges, node.id)
+      : upstreamNodesInEdgeOrder(nodes, edges, node.id),
     (node.data as { referenceOrder?: string[] }).referenceOrder,
   );
   const edgeBySource = new Map(

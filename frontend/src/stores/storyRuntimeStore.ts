@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Compiler } from 'inkjs/full';
+import { Compiler, Story } from 'inkjs/full';
 import type { CompiledStory, StoryChoiceInteraction, StoryStateChange } from '@/features/canvas/story/storyTypes';
 import { readStorySave, writeStorySave, clearStorySave } from '@/features/canvas/story/storySave';
 import { recordChoice, recordEnding, statsKeyFromSaveKey } from '@/features/canvas/story/storyStats';
@@ -66,6 +66,8 @@ interface StoryRuntimeState {
   resumeAvailable: boolean;
 
   enterPlay: (compiled: CompiledStory, opts?: {
+    /** Precompiled Ink JSON for the standalone player; uses the same runtime transitions. */
+    storyJson?: string;
     saveKey?: string;
     groupId?: string;
     playKind?: 'entertainment' | 'live';
@@ -247,7 +249,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
 
   enterPlay: (compiled, opts) => {
     try {
-      const story = new Compiler(compiled.ink).Compile();
+      const story = opts?.storyJson ? new Story(opts.storyJson) : new Compiler(compiled.ink).Compile();
       const saveKey = opts?.saveKey ?? null;
       const statsKey = statsKeyFromSaveKey(saveKey);
       const groupId = opts?.groupId ?? null;

@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Download, ListTree, MoreHorizontal, Play, Plus, ShieldCheck, SlidersHorizontal, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -10,15 +10,14 @@ import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { compileStoryGroup } from '@/features/canvas/story/compileStoryGroup';
 import { StoryCompileError } from '@/features/canvas/story/compileGraphToInk';
 import { storySaveKey } from '@/features/canvas/story/storySave';
-import { buildPlayerHtml } from '@/features/canvas/story/export/buildPlayerHtml';
 import { downloadStoryHtml } from '@/features/canvas/story/export/downloadStoryHtml';
 import { readUrl } from '@/lib/url-params';
 import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from '@/features/freezone/dockOffset';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/shadcn/dropdown-menu';
 
-const ACTION_CLASS = 'flex h-9 shrink-0 items-center gap-2 rounded-lg px-3 text-sm text-text-dark transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
+const ACTION_CLASS = 'flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] px-2 text-xs text-text-dark transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
 
-/** 独立的顶部文档流区域，预留高度且不参与画布缩放或覆盖节点。 */
+/** 右上角悬浮操作组，不占据整行画布空间。 */
 export const StoryGroupToolbar = memo(function StoryGroupToolbar() {
   const group = useCanvasStore((state) => {
     const active = state.nodes.find((node) => node.id === state.selectedNodeId);
@@ -60,7 +59,13 @@ function StoryGroupActions({ id, data }: { id: string; data: GroupNodeData }) {
     }
   }, [t]);
 
-  const handleStoryGroupExport = useCallback((groupId: string) => {
+  const exportingRef = useRef(false);
+  const [exporting, setExporting] = useState(false);
+  const handleStoryGroupExport = useCallback(async (groupId: string) => {
+    if (exportingRef.current) return;
+    exportingRef.current = true;
+    setExporting(true);
+    const progressToast = toast.loading(t('canvas.story.exportPreparing'));
     const { nodes, edges } = useCanvasStore.getState();
     try {
       const compiled = compileStoryGroup(groupId, nodes, edges);
@@ -68,9 +73,16 @@ function StoryGroupActions({ id, data }: { id: string; data: GroupNodeData }) {
       const storyJson = story.ToJson();
       if (!storyJson) throw new Error(t('canvas.story.error'));
       const title = (data.displayName ?? data.label ?? '').trim();
+      const { buildPlayerHtml } = await import('@/features/canvas/story/export/buildPlayerHtml');
       const html = buildPlayerHtml(compiled, storyJson, {
         title,
         labels: {
+          play: t('canvas.story.playMode.playCurrent'),
+          mediaError: t('canvas.story.mediaError'),
+          retry: t('canvas.story.retryMedia'),
+          countdown: t('canvas.story.choiceCountdown'),
+          flagOn: t('canvas.story.flagOn'),
+          flagOff: t('canvas.story.flagOff'),
           defaultChoice: t('canvas.story.defaultChoice'),
           endingBadge: t('canvas.story.endingBadge', { label: '' }).replace(/[ ·]+$/, '').trim() || '结局',
           endingFallback: t('canvas.story.endingFallback'),
@@ -81,9 +93,12 @@ function StoryGroupActions({ id, data }: { id: string; data: GroupNodeData }) {
         },
       });
       downloadStoryHtml(html, title);
-      toast.success(t('canvas.story.exportDone'));
+      toast.success(t('canvas.story.exportDone'), { id: progressToast });
     } catch (err) {
-      toast.error(err instanceof StoryCompileError ? err.message : t('canvas.story.error'));
+      toast.error(err instanceof StoryCompileError ? err.message : t('canvas.story.exportFailed'), { id: progressToast });
+    } finally {
+      exportingRef.current = false;
+      setExporting(false);
     }
   }, [t, data]);
 
@@ -92,18 +107,18 @@ function StoryGroupActions({ id, data }: { id: string; data: GroupNodeData }) {
   return (
     <div
       data-story-toolbar-region
-      className="relative z-40 min-w-0 shrink-0 border-b border-white/10 bg-[var(--ui-surface-panel)] px-4 py-2"
+      className="pointer-events-none absolute right-4 top-1.5 z-40 max-w-[calc(100%_-_140px_-_var(--freezone-dock-width,0px))]"
       style={FREEZONE_DOCK_OFFSET_ANIMATED_STYLE}
     >
       <div
         role="toolbar"
         aria-label={t('canvas.story.toolbar')}
-        className="nodrag nopan nowheel flex w-full flex-wrap items-center gap-1 text-text-dark"
+        title={title}
+        className="nodrag nopan nowheel pointer-events-auto flex flex-wrap items-center justify-end gap-1 rounded-[10px] bg-[#262626] p-0.5 text-text-dark shadow-lg"
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => event.stopPropagation()}
         onWheel={(event) => event.stopPropagation()}
       >
-        <span className="mr-auto min-w-0 max-w-40 truncate pr-4 text-sm font-medium" title={title}>{title}</span>
         <button type="button" className={ACTION_CLASS} onClick={() => useCanvasStore.getState().addStorySegment(id)}>
           <Plus className="size-4" />{t('canvas.story.addSegment')}
         </button>
@@ -121,7 +136,7 @@ function StoryGroupActions({ id, data }: { id: string; data: GroupNodeData }) {
             <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryVariables(id)}><SlidersHorizontal className="mr-2 size-4" />{t('canvas.story.states')}</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryLint(id)}><ShieldCheck className="mr-2 size-4" />{t('canvas.story.lint.open')}</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryGen(id)}><Wand2 className="mr-2 size-4" />{t('canvas.story.gen.open')}</DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => handleStoryGroupExport(id)}><Download className="mr-2 size-4" />{t('canvas.story.export')}</DropdownMenuItem>
+            <DropdownMenuItem disabled={exporting} onSelect={() => void handleStoryGroupExport(id)}><Download className="mr-2 size-4" />{t('canvas.story.export')}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
