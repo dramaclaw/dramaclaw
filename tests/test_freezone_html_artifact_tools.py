@@ -72,3 +72,20 @@ def test_html_tool_receipts_get_canvas_timeout_and_success_classification():
     assert service._codex_freezone_write_result_succeeded(event)
     event.structured = {'ok':True,'data':{'id':'a1','html':'hello'}}
     assert not service._codex_freezone_write_result_succeeded(event)
+
+
+def test_html_read_events_do_not_require_write_receipts():
+    from types import SimpleNamespace
+    from novelvideo.chat.service import _codex_freezone_is_write_event
+    for action in ("read", "list", "history"):
+        assert not _codex_freezone_is_write_event(SimpleNamespace(name="freezone_html_artifact", input={"action": action}))
+        assert not _codex_freezone_is_write_event(SimpleNamespace(name="freezone_html_artifact", structured={"ok": True, "status": f"html_artifact_{action}"}))
+    for action in ("create", "update", "restore"):
+        assert _codex_freezone_is_write_event(SimpleNamespace(name="freezone_html_artifact", input={"action": action}))
+
+
+def test_html_read_request_with_negative_write_instruction():
+    from novelvideo.chat.service import _freezone_canvas_write_requested
+    assert not _freezone_canvas_write_requested("读取画布网页的源码和历史，不要写入。")
+    assert not _freezone_canvas_write_requested("列出项目网页，不要修改网页。")
+    assert _freezone_canvas_write_requested("创建一个网页，不要修改已有网页。")
