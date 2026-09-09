@@ -29,7 +29,7 @@ const COPY_BATCH_SIZE = 64;
 const STATIC_PROJECT_PREFIX = '/static/projects/';
 const MEDIA_PROJECT_RE = /^\/api\/v1\/projects\/([^/]+)\/media\/.+/;
 
-interface CopyableAsset {
+export interface CopyableAsset {
   /** 发给后端的同源路径（含查询串，后端按原字符串回映射）。 */
   source: string;
   /** URL 指向的项目 id（已解码）。 */
@@ -43,7 +43,7 @@ interface CopyableAsset {
  * 按当前路由项目重锚定。这里只认带项目 id 的 canonical 形式；legacy 形式后端已经
  * 410，也没法按项目授权，直接不收。
  */
-function toCopyableAsset(raw: string): CopyableAsset | null {
+export function toCopyableAsset(raw: string): CopyableAsset | null {
   const trimmed = raw.trim();
   if (!trimmed) {
     return null;
@@ -227,6 +227,14 @@ export function subscribeAssetMigrations(listener: () => void): () => void {
   };
 }
 
+/**
+ * 后端 `failed[].reason` 里哪些不代表「这个源拷不了」。
+ *
+ * `unavailable` = 解析源项目时 403/404 之外的错（5xx）；`copy_failed` = 拷贝或准备目标
+ * 文件时的 OSError。剩下的 `forbidden` / `not_found` / `invalid_source` 才是对源本身的结论。
+ */
+const RETRYABLE_COPY_REASONS = new Set(['unavailable', 'copy_failed']);
+
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let index = 0; index < items.length; index += size) {
@@ -238,8 +246,9 @@ function chunk<T>(items: T[], size: number): T[][] {
 /**
  * 分批让后端拷贝，返回 归一化路径 → 新 URL 的映射，外加两类没拷成的路径。
  *
- * `failed` 是后端明确拒了（没权限 / 源没了 / URL 不合法），重试多少次都一样；
- * `unavailable` 是这次没拷成但下次可能行（网络断了、后端 5xx、源项目暂时解析不出来）。
+ * `failed` 是后端对**源本身**下了结论（没权限 / 源没了 / URL 不合法），重试多少次都一样；
+ * `unavailable` 是这次没拷成但下次可能行 —— 网络断了、后端 5xx、源项目暂时解析不出来，
+ * 以及 `copy_failed`：那是拷贝或建目标文件时的 OSError，是存储侧出岔子，不是这个源拷不了。
  * 分开是因为调用方对这两类的处置相反：前者可以把字段清掉收敛，后者清掉就是拿一次
  * 网络抖动换用户永久丢图。一批整体失败只影响这一批。
  */
@@ -259,7 +268,7 @@ export async function copyAssetsInBatches(
         }
       }
       for (const item of result.failed ?? []) {
-        if (item.reason === 'unavailable') {
+        if (RETRYABLE_COPY_REASONS.has(item.reason)) {
           unavailable.add(item.source);
           console.warn('[cross-project-assets] copy unavailable, will not touch the field', item);
           continue;

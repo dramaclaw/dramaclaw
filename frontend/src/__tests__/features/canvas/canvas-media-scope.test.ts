@@ -176,6 +176,62 @@ describe('repairForeignMediaRefs', () => {
     expect(updateNodeData).not.toHaveBeenCalled();
   });
 
+  it('leaves every field alone when the copy failed on the storage side', async () => {
+    // copy_failed = 拷贝/建目标文件时的 OSError,是存储侧出岔子,不是这个源拷不了。
+    copyFreezoneAssets.mockResolvedValue({
+      mapping: {},
+      failed: [{ source: FOREIGN, reason: 'copy_failed' }],
+    });
+    const updateNodeData = vi.fn();
+
+    const result = await repairForeignMediaRefs({
+      refs: [ref()],
+      targetProject: 'projB',
+      getLiveNodeData: () => ({ imageUrl: FOREIGN }) as never,
+      updateNodeData,
+    });
+
+    expect(result.retryable).toBe(true);
+    expect(updateNodeData).not.toHaveBeenCalled();
+  });
+
+  it('normalizes a same-origin absolute url before asking the backend to copy it', async () => {
+    // 守卫按浏览器语义扫得到它,复制接口却只认相对 canonical 路径:不归一化就换回
+    // invalid_source,自愈反倒把引用删了。
+    const absolute = `${window.location.origin}/static/projects/projA/freezone/x/../_uploads/a.png`;
+    copyFreezoneAssets.mockResolvedValue({ mapping: { [FOREIGN]: COPIED }, failed: [] });
+    const updateNodeData = vi.fn();
+
+    const result = await repairForeignMediaRefs({
+      refs: [ref({ url: absolute })],
+      targetProject: 'projB',
+      getLiveNodeData: () => ({ imageUrl: absolute }) as never,
+      updateNodeData,
+    });
+
+    expect(copyFreezoneAssets).toHaveBeenCalledWith('projB', [FOREIGN]);
+    // 对外仍按画布里那串原 URL 作 key,调用方才改得动自己手上的快照。
+    expect(result.urlMap.get(absolute)).toBe(COPIED);
+    expect(updateNodeData).toHaveBeenCalledWith('n1', { imageUrl: COPIED });
+  });
+
+  it('does not touch an url it cannot resolve to a same-origin asset', async () => {
+    // 路径长得像项目资源的外链图:守卫会误拦,但它本来就不是本站资源,拷不了也不该删。
+    const external = 'https://cdn.example.com/static/projects/projA/a.png';
+    const updateNodeData = vi.fn();
+
+    const result = await repairForeignMediaRefs({
+      refs: [ref({ url: external })],
+      targetProject: 'projB',
+      getLiveNodeData: () => ({ imageUrl: external }) as never,
+      updateNodeData,
+    });
+
+    expect(copyFreezoneAssets).not.toHaveBeenCalled();
+    expect(result.failedUrls.size).toBe(0);
+    expect(updateNodeData).not.toHaveBeenCalled();
+  });
+
   it('still blanks what the backend definitively refused', async () => {
     // 403 是终局:留着源项目 URL 就是把 403 再存一次,后端下一轮还会拒,保存永远卡死。
     copyFreezoneAssets.mockResolvedValue({

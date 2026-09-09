@@ -3,6 +3,7 @@
 import {
   ASSET_MIGRATION_KEY,
   copyAssetsInBatches,
+  toCopyableAsset,
   readAtPath,
   writeAtPath,
 } from '@/features/canvas/application/crossProjectAssets';
@@ -125,7 +126,23 @@ export async function repairForeignMediaRefs(params: {
   const { refs, targetProject, getLiveNodeData, updateNodeData } = params;
   const blankOnFailure = params.blankOnFailure ?? true;
   const scope = foreignMediaScope;
-  const sources = [...new Set(refs.map((ref) => ref.url))];
+  // 守卫按浏览器语义扫，`ref.url` 却是画布里的原始字符串（可能是同源完整 URL、可能带 `..`）。
+  // 复制接口只认相对 canonical 路径，直接把原串发过去会换回 invalid_source，自愈反倒把
+  // 引用删了。这里先归一化成复制接口认的形式，并留住「原 URL → 规范化源」好把结果改回去。
+  const sourceByUrl = new Map<string, string>();
+  for (const ref of refs) {
+    if (sourceByUrl.has(ref.url)) {
+      continue;
+    }
+    const asset = toCopyableAsset(ref.url);
+    // 归一化不出来的（跨源、protocol-relative）：那是守卫的误拦，本来就不是本站资源，
+    // 拷不了也不该动它。整个跳过——一处都没改到时调用方会走"请删掉这些节点"那条路，
+    // 至少不会把用户一张正常的外链图删掉。
+    if (asset) {
+      sourceByUrl.set(ref.url, asset.source);
+    }
+  }
+  const sources = [...new Set(sourceByUrl.values())];
   const { mapping, failed, unavailable } = await copyAssetsInBatches(targetProject, sources);
   // 拷贝期间用户切走了画布/项目：这些 refs 说的已经不是屏幕上这张图，改谁都是错的。
   if (foreignMediaScope !== scope) {
@@ -135,11 +152,14 @@ export async function repairForeignMediaRefs(params: {
   if (unavailable.size > 0) {
     return { urlMap: new Map(), failedUrls: new Set(), retryable: true };
   }
-  // 后端按原字符串回映射；没出现在 mapping 也没出现在 failed 的（不该发生）一律算失败，
-  // 免得字段带着源项目 URL 留在原地、下一轮保存再被拒。
-  const failedUrls = new Set<string>(
-    sources.filter((source) => !mapping.has(source) || failed.has(source)),
-  );
+  // 后端按发过去的字符串回映射；没出现在 mapping 也没出现在 failed 的（不该发生）一律算
+  // 失败，免得字段带着源项目 URL 留在原地、下一轮保存再被拒。对外一律用原 URL 作 key。
+  const failedUrls = new Set<string>();
+  for (const [url, source] of sourceByUrl) {
+    if (!mapping.has(source) || failed.has(source)) {
+      failedUrls.add(url);
+    }
+  }
 
   const byNode = new Map<string, ForeignMediaRef[]>();
   for (const ref of refs) {
@@ -167,7 +187,12 @@ export async function repairForeignMediaRefs(params: {
       if (readAtPath(nextData, path) !== ref.url) {
         continue;
       }
-      const newUrl = mapping.get(ref.url);
+      const source = sourceByUrl.get(ref.url);
+      if (source === undefined) {
+        // 归一化不出来：不是本站资源，别动。
+        continue;
+      }
+      const newUrl = mapping.get(source);
       if (newUrl) {
         nextData = writeAtPath(nextData, path, newUrl);
         continue;
@@ -192,11 +217,12 @@ export async function repairForeignMediaRefs(params: {
     }
   }
 
+  // 调用方拿它改自己手上的节点快照，键必须是画布里那串原 URL。
   const urlMap = new Map<string, string>();
-  for (const source of sources) {
+  for (const [url, source] of sourceByUrl) {
     const newUrl = mapping.get(source);
     if (newUrl) {
-      urlMap.set(source, newUrl);
+      urlMap.set(url, newUrl);
     }
   }
   return { urlMap, failedUrls, retryable: false };
@@ -236,6 +262,11 @@ export function applyForeignMediaRepairToNodes<
         continue;
       }
       const newUrl = repair.urlMap.get(ref.url);
+      if (!newUrl && !repair.failedUrls.has(ref.url)) {
+        // 既没拷成也不算失败 = 修复根本没碰它（归一化不出来的非本站地址）。
+        // 这里置空会跟 store 里留着的原值对不上，还会删掉用户一张正常的外链图。
+        continue;
+      }
       data = writeAtPath(data, path, newUrl ?? null);
       nodeChanged = true;
       if (!newUrl) {
