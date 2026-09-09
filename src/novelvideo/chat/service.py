@@ -1380,11 +1380,19 @@ def _codex_model() -> str:
     if is_ce_effective():
         from novelvideo.model_gateway_settings import get_effective_llm_config
 
-        # CE is configured interactively and SQLite is authoritative. The
-        # BrainClaw choice is a direct model route; Advanced mode keeps using
-        # DramaClaw's logical Codex alias on the user-selected NewAPI gateway.
+        # CE is configured interactively and SQLite is authoritative. Only the
+        # explicit Custom + BrainClaw choice sends the literal ``brainclaw``
+        # model; Official and Hybrid send DramaClaw's logical Codex alias and
+        # let RelayClaw decide what serves it, and Advanced mode sends the same
+        # alias to the user-selected NewAPI gateway.
+        from novelvideo.model_gateway_settings import (
+            CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
+        )
+
         gateway = get_effective_llm_config()
-        return "brainclaw" if gateway.is_brainclaw else _DEFAULT_CODEX_MODEL
+        if gateway.mode == CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW:
+            return "brainclaw"
+        return _DEFAULT_CODEX_MODEL
 
     # EE/SaaS is deployment-configured. The gateway address and logical model
     # come from env, while an organization channel's key is authorized and
