@@ -160,6 +160,53 @@ describe("PrevizCharacterCreateDialog", () => {
     expect(draft.spot?.[1]).toBeCloseTo(spot[1], 6);
   });
 
+  /**
+   * 一条把右栏每个可编辑字段都走到 `onCreate` 的用例。拆成六条更好看，但这一栏的失败
+   * 模式是同一个：`onChange` 接错字段、或者接到一个空补丁上——控件在屏幕上照样能选能
+   * 改，值也照样跟着变，只有最后交出去的那份草稿还是默认值。用户建完才发现体型没生效。
+   *
+   * 不是假想：把名称 / 辨识颜色 / 体型 / 基础姿势 / 高度策略五个 `onChange` 一起换成
+   * `patch({})`，previz + i18n + stores 三路 87 文件 1612 条全绿——这一栏此前一条覆盖
+   * 都没有。`satisfies Record<T, true>` 只挡「下拉少一档」，挡不住「下拉接错线」。
+   *
+   * 每个值都刻意偏离工厂默认（average / standing / follow / 175 / 0），且两两不同：
+   * 取成默认值的话「读了控件」与「压根没读」两种实现都绿。
+   */
+  it("carries every edited field into the created draft", async () => {
+    const user = userEvent.setup();
+    const { onCreate, objects } = setup();
+
+    fireEvent.change(screen.getByLabelText("previz.characterCreate.name"), {
+      target: { value: "张三" },
+    });
+    fireEvent.change(screen.getByLabelText("previz.characterCreate.color"), {
+      target: { value: "#0a1b2c" },
+    });
+    await user.selectOptions(screen.getByLabelText("previz.inspector.bodyType"), "heavy");
+    await user.selectOptions(screen.getByLabelText("previz.inspector.basePose"), "crouching");
+    await user.selectOptions(screen.getByLabelText("previz.inspector.heightPolicy"), "plane");
+    fireEvent.change(screen.getByLabelText("previz.inspector.heightCm"), {
+      target: { value: "191" },
+    });
+    fireEvent.change(screen.getByLabelText("previz.inspector.poseAdjust.turn"), {
+      target: { value: "-21" },
+    });
+
+    pickAt(objects, 96, 208);
+    await user.click(createButton());
+
+    expect(created(onCreate)).toMatchObject({
+      name: "张三",
+      color: "#0a1b2c",
+      bodyType: "heavy",
+      basePoseId: "crouching",
+      heightPolicy: "plane",
+      heightCm: 191,
+      // 三轴整份带过去：只改一轴时另外两轴不许被抹掉。
+      poseAdjust: { pitch: 0, turn: -21, lean: 0 },
+    });
+  });
+
   // 木偶预览是这个对话框存在的理由：三根微调滑杆改的是弯腰角度，不重画一帧的话
   // 用户拖完看到的还是上一副姿势，而滑杆的数值确实变了——像是模型卡住了。
   it("redraws the mannequin when the pose adjust sliders move", () => {
