@@ -18,7 +18,9 @@ def test_read_version_uses_scoped_authenticated_request(monkeypatch):
     monkeypatch.setattr(plugin, '_request', lambda *a, **k: calls.append((a,k)) or {'ok':True, 'data': {'id':'abc','version':2,'html':'hello'}})
     result = plugin._handle_html_artifact({'action':'read','project_id':'p/q','artifact_id':'abc','version':2})
     assert calls == [(('GET','/api/v1/projects/p%2Fq/freezone/html-artifacts/abc'), {'query':{'version':2}})]
-    assert result['data']['html'] == 'hello'
+    assert result['html'] == 'hello'
+    from jsonschema import Draft202012Validator
+    Draft202012Validator(plugin._output_schema('freezone_html_artifact')).validate(result)
 
 
 def test_update_requires_explicit_base_version(monkeypatch):
@@ -35,7 +37,9 @@ def test_list_and_history_preserve_api_envelopes(monkeypatch):
     plugin._handle_html_artifact({'action':'list','project_id':'p'})
     result = plugin._handle_html_artifact({'action':'history','project_id':'p','artifact_id':'abc'})
     assert [call[0][1] for call in calls] == ['/api/v1/projects/p/freezone/html-artifacts','/api/v1/projects/p/freezone/html-artifacts/abc/versions']
-    assert result['data']['versions'] == [{'version':2}]
+    assert result['versions'] == [{'version':2}]
+    from jsonschema import Draft202012Validator
+    Draft202012Validator(plugin._output_schema('freezone_html_artifact')).validate(result)
 
 
 def test_restore_uses_new_base_version_in_same_identity(monkeypatch):
