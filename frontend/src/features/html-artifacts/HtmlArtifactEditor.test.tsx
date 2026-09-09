@@ -118,3 +118,16 @@ it('sends preview media blobs into the opaque iframe after load',async()=>{
   expect(post).toHaveBeenCalledWith({type:'html-artifact-media',token:expect.any(String),media},'*');
   expect(iframe).toHaveAttribute('sandbox','allow-scripts');
 });
+it('edits selected text into source and saves through the version API',async()=>{
+ const {container}=render(<HtmlArtifactEditor projectId="manual" artifactId="a" onClose={()=>{}}/>);
+ await screen.findByDisplayValue('Brand');
+ fireEvent.click(screen.getByRole('button',{name:'选择元素'}));
+ const iframe=container.querySelector('iframe')!;
+ const doc=new DOMParser().parseFromString(iframe.srcdoc,'text/html');
+ const token=doc.querySelector('script[nonce]')!.getAttribute('nonce');
+ fireEvent(window,new MessageEvent('message',{source:iframe.contentWindow,data:{type:'html-artifact-selection',token,selector:'body > h1:nth-of-type(1)',text:'Original'}}));
+ fireEvent.change(await screen.findByLabelText('文字内容'),{target:{value:'New heading'}});
+ expect(container.querySelector('iframe')!.srcdoc).toContain('New heading');
+ fireEvent.click(screen.getByRole('button',{name:'保存'}));
+ await waitFor(()=>expect(api.saveHtmlArtifact).toHaveBeenCalledWith('manual','a','Brand',expect.stringContaining('<h1>New heading</h1>'),1,undefined));
+});

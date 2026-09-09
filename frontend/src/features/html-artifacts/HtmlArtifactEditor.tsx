@@ -1,3 +1,4 @@
+import {editHtmlText, type TextEdit} from './textEditing';
 import { readUrl } from '@/lib/url-params';
 import { readHtmlDraft, keepHtmlDraft } from './drafts';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -18,6 +19,9 @@ export function HtmlArtifactEditor({projectId,artifactId,version,nodeId,onClose}
   const setInteractive=(enabled:boolean)=>setInteractiveVersion(enabled&&artifact?`${artifactId}:${artifact.version}`:null);
   const canRunScripts=typeof HTMLIFrameElement!=='undefined'&&'credentialless' in HTMLIFrameElement.prototype;
   const [code,setCode]=useState(false); const [mobile,setMobile]=useState(false); const [selecting,setSelecting]=useState(false);
+  const [selection,setSelection]=useState<{selector:string;text:string}|null>(null);
+  const [manualDirty,setManualDirty]=useState(false);
+  const applyText=(patch:TextEdit)=>{if(!selection)return;try{const next=editHtmlText(html,selection.selector,patch);const rendered=editHtmlText(preview,selection.selector,patch);setHtml(next);setPreview(rendered);setManualDirty(true);if(patch.text!==undefined)setSelection({...selection,text:patch.text});setError('');}catch{setError(t('htmlArtifact.selectLeaf'));}};
   const [warnings,setWarnings]=useState<string[]>([]);
   const [error,setError]=useState(''); const [busy,setBusy]=useState(false); const [remoteUpdate,setRemoteUpdate]=useState(false);
   const previewRelease=useRef<(()=>void)|undefined>(undefined);
@@ -39,6 +43,7 @@ export function HtmlArtifactEditor({projectId,artifactId,version,nodeId,onClose}
     window.dispatchEvent(new CustomEvent(HTML_ARTIFACT_REFERENCE_EVENT,{detail:{projectId,artifactId,version:artifact.version,title:artifact.title,...selection}}));
   };
   const load=async(requestedVersion?:number)=>{
+    setSelection(null);setManualDirty(false);
     const current=++sequence.current; setBusy(true);setError('');setWarnings([]);
     try {
       const storedDraft=readHtmlDraft(projectId,artifactId);
@@ -72,8 +77,8 @@ export function HtmlArtifactEditor({projectId,artifactId,version,nodeId,onClose}
   },[]);
   useEffect(()=>{
     const selected=(event:MessageEvent)=>{
-      if(dirtyRef.current||!selecting||event.source!==frame.current?.contentWindow||!isHtmlSelectionMessage(event.data,token))return;
-      reference(event.data);
+      if(!selecting||event.source!==frame.current?.contentWindow||!isHtmlSelectionMessage(event.data,token))return;
+      setSelection({selector:event.data.selector,text:event.data.text});
     };
     window.addEventListener('message',selected);return()=>window.removeEventListener('message',selected);
   },[selecting,token,artifact,projectId,artifactId]);
@@ -104,22 +109,31 @@ export function HtmlArtifactEditor({projectId,artifactId,version,nodeId,onClose}
     <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-xs">
       <button className={button} aria-pressed={!mobile} onClick={()=>setMobile(false)}>{t('htmlArtifact.desktop')}</button>
       <button className={button} aria-pressed={mobile} onClick={()=>setMobile(true)}>{t('htmlArtifact.mobile')}</button>
-      <button className={button} aria-pressed={selecting} disabled={code||dirty||!artifact} onClick={()=>setSelecting(!selecting)}><MousePointer2 size={14}/>{t('htmlArtifact.select')}</button>
-      <button className={button} disabled={!artifact||dirty} onClick={()=>reference()}>{t('htmlArtifact.ask')}</button>
+      <button className={button} aria-pressed={selecting} disabled={code||(dirty&&!manualDirty)||!artifact} onClick={()=>{setSelecting(!selecting);setInteractive(false);setSelection(null);}}><MousePointer2 size={14}/>{t('htmlArtifact.select')}</button>
+      <button className={button} disabled={!artifact||dirty} onClick={()=>reference(selection??undefined)}>{t('htmlArtifact.ask')}</button>
       <button className={button} aria-pressed={interactive} disabled={!canRunScripts||code||dirty||!artifact} onClick={()=>setInteractive(!interactive)}>{t(interactive?'htmlArtifact.stopScripts':'htmlArtifact.runScripts')}</button>
       <select className="ml-auto rounded border border-border bg-background p-1.5" aria-label={t('htmlArtifact.versions')} value={artifact?.version??''} disabled={busy||!artifact} onChange={e=>{if(mayDiscard())void load(Number(e.target.value));}}>
         {versions.map(v=><option key={v.version} value={v.version}>v{v.version} · {v.title}</option>)}
       </select>
       {artifact&&nodeId&&<button className={button} disabled={busy||dirty} onClick={()=>announceHtmlArtifact(projectId,artifact,nodeId)}>{t('htmlArtifact.restore')}</button>}
     </div>
+    {selecting&&selection&&!code&&<div role="toolbar" aria-label={t('htmlArtifact.textTools')} className="flex flex-wrap items-center gap-2 border-b border-border bg-card px-3 py-2 text-xs">
+      <input aria-label={t('htmlArtifact.textContent')} className="min-w-40 flex-1 rounded border border-border bg-background p-2" value={selection.text} disabled={busy} onChange={e=>applyText({text:e.target.value})}/>
+      <select aria-label={t('htmlArtifact.fontFamily')} defaultValue="" onChange={e=>applyText({fontFamily:e.target.value})} className="rounded border border-border bg-background p-2"><option value="" disabled>{t('htmlArtifact.fontFamily')}</option>{['sans-serif','serif','monospace'].map(v=><option key={v} value={v}>{v}</option>)}</select>
+      <input aria-label={t('htmlArtifact.fontSize')} type="number" min="1" max="300" placeholder="px" className="w-16 rounded border border-border bg-background p-2" onChange={e=>{if(e.target.value)applyText({fontSize:Number(e.target.value)});}}/>
+      <input aria-label={t('htmlArtifact.textColor')} type="color" onInput={e=>applyText({color:e.currentTarget.value})}/>
+      <button className={button} onClick={()=>applyText({fontWeight:'700'})}>{t('htmlArtifact.bold')}</button>
+      <button className={button} onClick={()=>applyText({fontWeight:'400'})}>{t('htmlArtifact.regular')}</button>
+      {(['left','center','right'] as const).map(v=><button key={v} className={button} onClick={()=>applyText({textAlign:v})}>{t(`htmlArtifact.align${v}`)}</button>)}
+    </div>}
     <p className="px-3 py-1 text-xs text-muted-foreground">{t(canRunScripts?'htmlArtifact.scriptNotice':'htmlArtifact.scriptUnsupported')}</p>
     {warnings.length>0&&<p role="status" className="whitespace-pre-wrap border-b border-border px-3 py-2 text-sm text-muted-foreground">{warnings.join('\n')}</p>}
     {error&&<p role="alert" className="whitespace-pre-wrap border-b border-border px-3 py-2 text-sm text-destructive">{error}</p>}
     {remoteUpdate&&<p role="status" className="px-3 py-2 text-sm">{t('htmlArtifact.conflict')} <button className={button} onClick={()=>{if(mayDiscard())void load();}}>{t('htmlArtifact.reload')}</button></p>}
-    {dirty&&!code&&<p className="px-3 py-2 text-xs text-muted-foreground">{t('htmlArtifact.savedPreview')}</p>}
+    {dirty&&!manualDirty&&!code&&<p className="px-3 py-2 text-xs text-muted-foreground">{t('htmlArtifact.savedPreview')}</p>}
     {busy&&<p role="status" className="px-3 py-1 text-xs text-muted-foreground">{t('htmlArtifact.loading')}</p>}
     <div className="relative min-h-0 flex-1 overflow-auto bg-muted/30 p-4">
-      {code?<textarea aria-label={t('htmlArtifact.source')} className="h-full w-full resize-none rounded-lg border border-border bg-background p-4 font-mono text-xs outline-none focus:border-primary" spellCheck={false} value={html} disabled={!artifact||busy} onChange={e=>setHtml(e.target.value)}/>:artifact&&<iframe key={`${artifactId}:${artifact.version}:${interactive}`} {...(interactive?{credentialless:""}:{})} ref={frame} onLoad={event=>event.currentTarget.contentWindow?.postMessage({type:'html-artifact-media',token,media},'*')} title={t('htmlArtifact.preview')} sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={srcDoc} className="mx-auto h-full min-h-96 max-w-full rounded-lg border border-border bg-white" style={{width:mobile?390:'100%'}}/>}
+      {code?<textarea aria-label={t('htmlArtifact.source')} className="h-full w-full resize-none rounded-lg border border-border bg-background p-4 font-mono text-xs outline-none focus:border-primary" spellCheck={false} value={html} disabled={!artifact||busy} onChange={e=>{setHtml(e.target.value);setManualDirty(false);setSelecting(false);setSelection(null);}}/>:artifact&&<iframe key={`${artifactId}:${artifact.version}:${interactive}`} {...(interactive?{credentialless:""}:{})} ref={frame} onLoad={event=>event.currentTarget.contentWindow?.postMessage({type:'html-artifact-media',token,media},'*')} title={t('htmlArtifact.preview')} sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={srcDoc} className="mx-auto h-full min-h-96 max-w-full rounded-lg border border-border bg-white" style={{width:mobile?390:'100%'}}/>}
     </div>
   </section>;
 }
