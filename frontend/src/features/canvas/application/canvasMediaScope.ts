@@ -97,6 +97,11 @@ export interface ForeignMediaRepairResult {
   urlMap: Map<string, string>;
   /** 没拷成的原 URL；对应字段已被置空。 */
   failedUrls: Set<string>;
+  /**
+   * 这次没拷成但下次可能行（网络断了 / 后端 5xx / 画布中途换了）。为真时**一个字段都没动**：
+   * 调用方该做的是把错误报给用户等他重试，而不是拿一次抖动换用户永久丢图。
+   */
+  retryable: boolean;
 }
 
 /**
@@ -119,8 +124,17 @@ export async function repairForeignMediaRefs(params: {
 }): Promise<ForeignMediaRepairResult> {
   const { refs, targetProject, getLiveNodeData, updateNodeData } = params;
   const blankOnFailure = params.blankOnFailure ?? true;
+  const scope = foreignMediaScope;
   const sources = [...new Set(refs.map((ref) => ref.url))];
-  const { mapping, failed } = await copyAssetsInBatches(targetProject, sources);
+  const { mapping, failed, unavailable } = await copyAssetsInBatches(targetProject, sources);
+  // 拷贝期间用户切走了画布/项目：这些 refs 说的已经不是屏幕上这张图，改谁都是错的。
+  if (foreignMediaScope !== scope) {
+    return { urlMap: new Map(), failedUrls: new Set(), retryable: true };
+  }
+  // 有一处只是"这次没拷成"，就整体不动手。半改半留会让重试对不上账，而置空是不可逆的。
+  if (unavailable.size > 0) {
+    return { urlMap: new Map(), failedUrls: new Set(), retryable: true };
+  }
   // 后端按原字符串回映射；没出现在 mapping 也没出现在 failed 的（不该发生）一律算失败，
   // 免得字段带着源项目 URL 留在原地、下一轮保存再被拒。
   const failedUrls = new Set<string>(
@@ -185,7 +199,7 @@ export async function repairForeignMediaRefs(params: {
       urlMap.set(source, newUrl);
     }
   }
-  return { urlMap, failedUrls };
+  return { urlMap, failedUrls, retryable: false };
 }
 
 /**
@@ -253,6 +267,9 @@ export function applyForeignMediaRepairToNodes<
 // 让一次纯粹的读取把画布标记成"有改动"。
 
 let foreignMediaProject = '';
+// 当前诊断属于哪张画布。`repairForeignMediaRefs` 在 await 前后各读一次：拷贝要几秒，
+// 期间画布/项目换了的话，手上的 refs 指的已经不是屏幕上这张图了。
+let foreignMediaScope = '';
 const foreignMediaByNode = new Map<string, ForeignMediaRef[]>();
 const foreignMediaListeners = new Set<() => void>();
 const NO_REFS: ForeignMediaRef[] = [];
@@ -266,9 +283,12 @@ function notifyForeignMedia(): void {
 /** 换画布 / 重新 hydrate 时整表替换：上一张画布的诊断绝不能留到下一张。 */
 export function publishForeignMediaRefs(
   targetProject: string,
+  canvasId: string,
   refs: readonly ForeignMediaRef[],
 ): void {
   foreignMediaProject = targetProject;
+  // 同一张画布重新 hydrate 不算换作用域，否则一次后台刷新就能把用户正在跑的修复打断。
+  foreignMediaScope = `${targetProject}:${canvasId}`;
   foreignMediaByNode.clear();
   for (const ref of refs) {
     const bucket = foreignMediaByNode.get(ref.node_id);
@@ -283,6 +303,7 @@ export function publishForeignMediaRefs(
 
 export function clearForeignMediaRefs(): void {
   foreignMediaProject = '';
+  foreignMediaScope = '';
   foreignMediaByNode.clear();
   notifyForeignMedia();
 }

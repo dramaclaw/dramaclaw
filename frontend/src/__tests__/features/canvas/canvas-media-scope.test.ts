@@ -9,10 +9,13 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 const copyFreezoneAssets = vi.hoisted(() => vi.fn());
 vi.mock('@/api/ops', () => ({ copyFreezoneAssets }));
 
-const { applyForeignMediaRepairToNodes, parseCanvasMediaScopeRefs, repairForeignMediaRefs } =
-  await import(
-    '@/features/canvas/application/canvasMediaScope'
-  );
+const {
+  applyForeignMediaRepairToNodes,
+  clearForeignMediaRefs,
+  parseCanvasMediaScopeRefs,
+  publishForeignMediaRefs,
+  repairForeignMediaRefs,
+} = await import('@/features/canvas/application/canvasMediaScope');
 
 const FOREIGN = '/static/projects/projA/freezone/_uploads/a.png';
 const COPIED = '/static/projects/projB/freezone/_uploads/a.png';
@@ -64,6 +67,7 @@ describe('parseCanvasMediaScopeRefs', () => {
 describe('repairForeignMediaRefs', () => {
   beforeEach(() => {
     copyFreezoneAssets.mockReset();
+    clearForeignMediaRefs();
   });
 
   it('copies the asset into this project and writes the new url back into the node', async () => {
@@ -137,7 +141,8 @@ describe('repairForeignMediaRefs', () => {
     expect(result.failedUrls.has(FOREIGN)).toBe(true);
   });
 
-  it('treats a request that blows up as a failure for every url in it', async () => {
+  it('leaves every field alone when the request itself did not go through', async () => {
+    // 请求没走通 ≠ 这些素材拷不了。置空是不可逆的,不能拿它换一次网络抖动。
     copyFreezoneAssets.mockRejectedValue(new Error('network down'));
     const updateNodeData = vi.fn();
 
@@ -148,11 +153,90 @@ describe('repairForeignMediaRefs', () => {
       updateNodeData,
     });
 
+    expect(result.retryable).toBe(true);
+    expect(result.failedUrls.size).toBe(0);
+    expect(updateNodeData).not.toHaveBeenCalled();
+  });
+
+  it('leaves every field alone when the backend says a source is only unavailable', async () => {
+    copyFreezoneAssets.mockResolvedValue({
+      mapping: {},
+      failed: [{ source: FOREIGN, reason: 'unavailable' }],
+    });
+    const updateNodeData = vi.fn();
+
+    const result = await repairForeignMediaRefs({
+      refs: [ref()],
+      targetProject: 'projB',
+      getLiveNodeData: () => ({ imageUrl: FOREIGN }) as never,
+      updateNodeData,
+    });
+
+    expect(result.retryable).toBe(true);
+    expect(updateNodeData).not.toHaveBeenCalled();
+  });
+
+  it('still blanks what the backend definitively refused', async () => {
+    // 403 是终局:留着源项目 URL 就是把 403 再存一次,后端下一轮还会拒,保存永远卡死。
+    copyFreezoneAssets.mockResolvedValue({
+      mapping: {},
+      failed: [{ source: FOREIGN, reason: 'forbidden' }],
+    });
+    const updateNodeData = vi.fn();
+
+    const result = await repairForeignMediaRefs({
+      refs: [ref()],
+      targetProject: 'projB',
+      getLiveNodeData: () => ({ imageUrl: FOREIGN }) as never,
+      updateNodeData,
+    });
+
+    expect(result.retryable).toBe(false);
     expect(result.failedUrls.has(FOREIGN)).toBe(true);
     expect(updateNodeData).toHaveBeenCalledWith('n1', {
       imageUrl: null,
       assetMigration: 'failed',
     });
+  });
+
+  it('writes nothing when the canvas changed while the copy was in flight', async () => {
+    // 拷贝要几秒;期间换了画布,手上的 refs 指的已经不是屏幕上这张图了。
+    publishForeignMediaRefs('projB', 'canvas-a', [ref()]);
+    const updateNodeData = vi.fn();
+    copyFreezoneAssets.mockImplementation(async () => {
+      publishForeignMediaRefs('projB', 'canvas-b', []);
+      return { mapping: { [FOREIGN]: COPIED }, failed: [] };
+    });
+
+    const result = await repairForeignMediaRefs({
+      refs: [ref()],
+      targetProject: 'projB',
+      getLiveNodeData: () => ({ imageUrl: FOREIGN }) as never,
+      updateNodeData,
+    });
+
+    expect(result.retryable).toBe(true);
+    expect(updateNodeData).not.toHaveBeenCalled();
+  });
+
+  it('keeps going when the same canvas merely re-hydrates mid-copy', async () => {
+    // 后台刷新不能把用户正在跑的修复打断。
+    publishForeignMediaRefs('projB', 'canvas-a', [ref()]);
+    const updateNodeData = vi.fn();
+    copyFreezoneAssets.mockImplementation(async () => {
+      publishForeignMediaRefs('projB', 'canvas-a', [ref()]);
+      return { mapping: { [FOREIGN]: COPIED }, failed: [] };
+    });
+
+    const result = await repairForeignMediaRefs({
+      refs: [ref()],
+      targetProject: 'projB',
+      getLiveNodeData: () => ({ imageUrl: FOREIGN }) as never,
+      updateNodeData,
+    });
+
+    expect(result.retryable).toBe(false);
+    expect(updateNodeData).toHaveBeenCalledWith('n1', { imageUrl: COPIED });
   });
 
   it('skips a node that is gone by the time the copy comes back', async () => {
@@ -195,6 +279,7 @@ describe('applyForeignMediaRepairToNodes', () => {
     const next = applyForeignMediaRepairToNodes(nodes as never, [ref()], {
       urlMap: new Map([[FOREIGN, COPIED]]),
       failedUrls: new Set<string>(),
+      retryable: false,
     });
 
     expect((next[0] as { data: { imageUrl: string; label: string } }).data).toEqual({
@@ -209,6 +294,7 @@ describe('applyForeignMediaRepairToNodes', () => {
     const next = applyForeignMediaRepairToNodes(nodes as never, [ref()], {
       urlMap: new Map<string, string>(),
       failedUrls: new Set([FOREIGN]),
+      retryable: false,
     });
 
     expect((next[0] as { data: Record<string, unknown> }).data).toMatchObject({
@@ -221,6 +307,7 @@ describe('applyForeignMediaRepairToNodes', () => {
     const next = applyForeignMediaRepairToNodes(nodes as never, [ref({ node_id: 'gone' })], {
       urlMap: new Map([[FOREIGN, COPIED]]),
       failedUrls: new Set<string>(),
+      retryable: false,
     });
 
     expect(next).toBe(nodes);

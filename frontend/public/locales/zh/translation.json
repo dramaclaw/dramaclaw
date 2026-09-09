@@ -1320,7 +1320,8 @@
       "payloadTooLarge": "画布数据量超出后端上限",
       "revisionConflict": "画布已被其他窗口或用户修改",
       "unsavedConflictBeforeSync": "当前画布还有未保存冲突，处理后再同步主线视图",
-      "mediaScopeMismatch": "画布里有属于其他项目的素材，自动复制未成功，请删除这些节点后重新添加"
+      "mediaScopeMismatch": "画布里有属于其他项目的素材，自动复制未成功，请删除这些节点后重新添加",
+      "mediaScopeRetryable": "把素材拷进本项目这一步没走通，检查网络后重新保存即可。"
     },
     "directorCommit": {
       "layerFetchFailed": "读取导演图层失败：{{status}}",
@@ -4209,7 +4210,8 @@
       "removeNode": "移除节点",
       "foreignMedia": "素材属于其他项目",
       "copyIntoProject": "复制到本项目",
-      "foreignMediaCopyFailed": "复制失败，可能没有源项目的访问权限"
+      "foreignMediaCopyFailed": "复制失败，可能没有源项目的访问权限",
+      "foreignMediaCopyRetryable": "这次没拷成，稍后再试一次"
     },
     "emptyHintChips": {
       "textToVideo": "文字生视频",

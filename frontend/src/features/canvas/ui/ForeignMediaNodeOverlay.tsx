@@ -36,7 +36,8 @@ const PILL_CLASS =
 function ForeignMediaNodeOverlayImpl({ nodeId }: { nodeId: string }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  // 失败时给出的那句解释（i18n key）；什么都不显示的话按钮看着就是坏的，用户只会反复点。
+  const [hint, setHint] = useState<string | null>(null);
 
   const handleRepair = useCallback(
     async (event: MouseEvent) => {
@@ -48,9 +49,9 @@ function ForeignMediaNodeOverlayImpl({ nodeId }: { nodeId: string }) {
         return;
       }
       setBusy(true);
-      setFailed(false);
+      setHint(null);
       try {
-        const { urlMap, failedUrls } = await repairForeignMediaRefs({
+        const { urlMap, failedUrls, retryable } = await repairForeignMediaRefs({
           refs,
           targetProject,
           getLiveNodeData: (id) =>
@@ -63,10 +64,15 @@ function ForeignMediaNodeOverlayImpl({ nodeId }: { nodeId: string }) {
           // 拷不动就原样留着:这份数据后端已经放行,修不成也不该顺手删掉用户仅剩的线索。
           blankOnFailure: false,
         });
+        if (retryable) {
+          // 这一趟根本没走通(网络/5xx),一个字段都没动。说清楚是"再试一次"而不是
+          // "没权限",否则用户会跑去要一个他其实已经有的权限。
+          setHint('canvas.crossProjectAssets.foreignMediaCopyRetryable');
+          return;
+        }
         resolveForeignMediaRefs(nodeId, urlMap.keys());
-        // 拷不动通常就是对源项目没权限。什么都不显示的话,按钮看着就是坏的,
-        // 用户只会反复点——把原因说出来,他才知道该去要权限而不是重试。
-        setFailed(failedUrls.size > 0);
+        // 拷不动通常就是对源项目没权限。把原因说出来,他才知道该去要权限而不是重试。
+        setHint(failedUrls.size > 0 ? 'canvas.crossProjectAssets.foreignMediaCopyFailed' : null);
       } finally {
         setBusy(false);
       }
@@ -86,10 +92,8 @@ function ForeignMediaNodeOverlayImpl({ nodeId }: { nodeId: string }) {
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-400" />
           <span>{t('canvas.crossProjectAssets.foreignMedia')}</span>
         </span>
-        {failed ? (
-          <span className="text-[11px] font-normal text-amber-300">
-            {t('canvas.crossProjectAssets.foreignMediaCopyFailed')}
-          </span>
+        {hint ? (
+          <span className="text-[11px] font-normal text-amber-300">{t(hint)}</span>
         ) : null}
         <button
           type="button"

@@ -1320,7 +1320,8 @@
       "payloadTooLarge": "Dữ liệu canvas vượt giới hạn của backend.",
       "revisionConflict": "Canvas này đã bị cửa sổ hoặc người dùng khác sửa.",
       "unsavedConflictBeforeSync": "Canvas này còn xung đột chưa xử lý. Giải quyết xong rồi hãy đồng bộ khung nhìn luồng chính.",
-      "mediaScopeMismatch": "Canvas này tham chiếu media của dự án khác và không thể sao chép tự động — hãy xoá các node đó rồi thêm lại media."
+      "mediaScopeMismatch": "Canvas này tham chiếu media của dự án khác và không thể sao chép tự động — hãy xoá các node đó rồi thêm lại media.",
+      "mediaScopeRetryable": "Bước sao chép media vào dự án này không thành công — hãy kiểm tra kết nối rồi lưu lại."
     },
     "directorCommit": {
       "layerFetchFailed": "Đọc lớp đạo diễn thất bại: {{status}}",
@@ -4209,7 +4210,8 @@
       "removeNode": "Bỏ node",
       "foreignMedia": "Media thuộc về dự án khác",
       "copyIntoProject": "Sao chép vào dự án này",
-      "foreignMediaCopyFailed": "Sao chép thất bại — có thể bạn không có quyền truy cập dự án nguồn"
+      "foreignMediaCopyFailed": "Sao chép thất bại — có thể bạn không có quyền truy cập dự án nguồn",
+      "foreignMediaCopyRetryable": "Lần này chưa sao chép được — hãy thử lại sau giây lát"
     },
     "emptyHintChips": {
       "textToVideo": "Text to Video",

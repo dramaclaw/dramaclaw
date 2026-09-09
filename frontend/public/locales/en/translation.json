@@ -1320,7 +1320,8 @@
       "payloadTooLarge": "Canvas data exceeds the backend limit.",
       "revisionConflict": "This canvas was modified by another window or user.",
       "unsavedConflictBeforeSync": "This canvas still has unsaved conflicts. Resolve them before syncing the mainline view.",
-      "mediaScopeMismatch": "This canvas references media from another project and it could not be copied automatically — remove those nodes and add the media again."
+      "mediaScopeMismatch": "This canvas references media from another project and it could not be copied automatically — remove those nodes and add the media again.",
+      "mediaScopeRetryable": "Copying the media into this project did not go through — check your connection and try saving again."
     },
     "directorCommit": {
       "layerFetchFailed": "Failed to read the director layer: {{status}}",
@@ -4209,7 +4210,8 @@
       "removeNode": "Remove node",
       "foreignMedia": "Media belongs to another project",
       "copyIntoProject": "Copy into this project",
-      "foreignMediaCopyFailed": "Copy failed — you may not have access to the source project"
+      "foreignMediaCopyFailed": "Copy failed — you may not have access to the source project",
+      "foreignMediaCopyRetryable": "Copy did not go through — try again in a moment"
     },
     "emptyHintChips": {
       "textToVideo": "Text to Video",

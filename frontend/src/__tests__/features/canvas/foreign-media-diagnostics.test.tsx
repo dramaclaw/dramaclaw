@@ -46,14 +46,14 @@ describe('foreign media registry', () => {
   });
 
   it('indexes the published refs by node', () => {
-    publishForeignMediaRefs('projB', [REF, { ...REF, node_id: 'n2' }]);
+    publishForeignMediaRefs('projB', 'default', [REF, { ...REF, node_id: 'n2' }]);
     expect(readForeignMediaRefsForNode('n1')).toEqual([REF]);
     expect(readForeignMediaRefsForNode('n3')).toEqual([]);
   });
 
   it('forgets everything from the previous canvas when a new one publishes', () => {
-    publishForeignMediaRefs('projB', [REF]);
-    publishForeignMediaRefs('projB', []);
+    publishForeignMediaRefs('projB', 'default', [REF]);
+    publishForeignMediaRefs('projB', 'default', []);
     expect(readForeignMediaRefsForNode('n1')).toEqual([]);
   });
 });
@@ -76,14 +76,14 @@ describe('ForeignMediaNodeOverlay', () => {
   });
 
   it('explains why the media is broken instead of leaving a bare cracked image', () => {
-    publishForeignMediaRefs('projB', [REF]);
+    publishForeignMediaRefs('projB', 'default', [REF]);
     render(<ForeignMediaNodeOverlay nodeId="n1" />);
     expect(screen.getByText('素材属于其他项目')).toBeInTheDocument();
   });
 
   it('copies the media into this project when the user asks, then clears the marker', async () => {
     copyFreezoneAssets.mockResolvedValue({ mapping: { [FOREIGN]: COPIED }, failed: [] });
-    publishForeignMediaRefs('projB', [REF]);
+    publishForeignMediaRefs('projB', 'default', [REF]);
     render(<ForeignMediaNodeOverlay nodeId="n1" />);
 
     await act(async () => {
@@ -101,7 +101,7 @@ describe('ForeignMediaNodeOverlay', () => {
       mapping: {},
       failed: [{ source: FOREIGN, reason: 'forbidden' }],
     });
-    publishForeignMediaRefs('projB', [REF]);
+    publishForeignMediaRefs('projB', 'default', [REF]);
     render(<ForeignMediaNodeOverlay nodeId="n1" />);
 
     await act(async () => {
@@ -118,7 +118,7 @@ describe('ForeignMediaNodeOverlay', () => {
       mapping: {},
       failed: [{ source: FOREIGN, reason: 'forbidden' }],
     });
-    publishForeignMediaRefs('projB', [REF]);
+    publishForeignMediaRefs('projB', 'default', [REF]);
     render(<ForeignMediaNodeOverlay nodeId="n1" />);
 
     await act(async () => {

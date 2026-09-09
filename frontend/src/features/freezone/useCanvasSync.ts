@@ -1017,7 +1017,7 @@ export function useCanvasSync(
       canvasEnvelopeRef.current = canvasEnvelopeFromRemote(remote);
       // 读取期诊断:后端报的历史外项目引用交给节点遮罩显示 + 一键修复。整表替换,
       // 上一张画布的诊断绝不能留到这一张(干净画布不带这个字段 = 全清)。
-      publishForeignMediaRefs(project, remote.foreign_media ?? []);
+      publishForeignMediaRefs(project, canvasId, remote.foreign_media ?? []);
       lastSignatureRef.current = nextSignature;
       lastRemoteNodeCountRef.current = remoteNodes.length;
       pendingClientSaveIdRef.current = null;
@@ -1151,7 +1151,7 @@ export function useCanvasSync(
         canvasEnvelopeRef.current = canvasEnvelopeFromRemote(remote);
         // 读取期诊断:后端报的历史外项目引用交给节点遮罩显示 + 一键修复。整表替换,
         // 上一张画布的诊断绝不能留到这一张(干净画布不带这个字段 = 全清)。
-        publishForeignMediaRefs(project, remote.foreign_media ?? []);
+        publishForeignMediaRefs(project, canvasId, remote.foreign_media ?? []);
         const nodes = (remote.nodes ?? []) as Parameters<typeof setCanvasData>[0];
         const edges = (remote.edges ?? []) as Parameters<typeof setCanvasData>[1];
         const meta = (remote.metadata ?? null) as
@@ -2124,6 +2124,14 @@ async function handleSaveError(
         },
       });
       if (args.canvasGenerationRef.current !== dispatchGeneration) {
+        return false;
+      }
+      if (repair.retryable) {
+        // 拷贝这一趟没走通(网络/5xx),不是"这些素材拷不了"。一个字段都没被改，
+        // 原 URL 原样留着,报个错让用户重试就行——置空是不可逆的,不能拿它换一次抖动。
+        dropPendingId();
+        args.setError(args.t("freezone.canvasSync.mediaScopeRetryable"));
+        args.setStatus("error");
         return false;
       }
       const repairedNodes = applyForeignMediaRepairToNodes(

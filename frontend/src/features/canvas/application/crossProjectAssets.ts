@@ -236,15 +236,20 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 /**
- * 分批让后端拷贝，返回 归一化路径 → 新 URL 的映射，以及失败的归一化路径集合。
- * 一批整体失败（网络 / 5xx）时，这一批的所有路径都算失败，其它批不受影响。
+ * 分批让后端拷贝，返回 归一化路径 → 新 URL 的映射，外加两类没拷成的路径。
+ *
+ * `failed` 是后端明确拒了（没权限 / 源没了 / URL 不合法），重试多少次都一样；
+ * `unavailable` 是这次没拷成但下次可能行（网络断了、后端 5xx、源项目暂时解析不出来）。
+ * 分开是因为调用方对这两类的处置相反：前者可以把字段清掉收敛，后者清掉就是拿一次
+ * 网络抖动换用户永久丢图。一批整体失败只影响这一批。
  */
 export async function copyAssetsInBatches(
   targetProject: string,
   sources: string[],
-): Promise<{ mapping: Map<string, string>; failed: Set<string> }> {
+): Promise<{ mapping: Map<string, string>; failed: Set<string>; unavailable: Set<string> }> {
   const mapping = new Map<string, string>();
   const failed = new Set<string>();
+  const unavailable = new Set<string>();
   for (const batch of chunk(sources, COPY_BATCH_SIZE)) {
     try {
       const result = await copyFreezoneAssets(targetProject, batch);
@@ -254,20 +259,26 @@ export async function copyAssetsInBatches(
         }
       }
       for (const item of result.failed ?? []) {
+        if (item.reason === 'unavailable') {
+          unavailable.add(item.source);
+          console.warn('[cross-project-assets] copy unavailable, will not touch the field', item);
+          continue;
+        }
         failed.add(item.source);
         console.warn('[cross-project-assets] copy failed, field stays empty', item);
       }
     } catch (error) {
+      // 请求本身没走通：没有任何证据说明这些源真的拷不了。
       for (const source of batch) {
-        failed.add(source);
+        unavailable.add(source);
       }
-      console.warn('[cross-project-assets] copy request failed, fields stay empty', {
+      console.warn('[cross-project-assets] copy request failed, fields left untouched', {
         count: batch.length,
         error,
       });
     }
   }
-  return { mapping, failed };
+  return { mapping, failed, unavailable };
 }
 
 export interface PastedNodeForMigration {
@@ -356,10 +367,18 @@ async function runMigration(
 
   // 2. 分批让后端拷贝，构建 原始字符串 → 新 URL 的映射。
   const sources = [...new Set(rawToSource.values())];
-  const { mapping, failed: failedSources } =
+  const copied =
     sources.length > 0
       ? await copyAssetsInBatches(targetProject, sources)
-      : { mapping: new Map<string, string>(), failed: new Set<string>() };
+      : {
+          mapping: new Map<string, string>(),
+          failed: new Set<string>(),
+          unavailable: new Set<string>(),
+        };
+  const { mapping } = copied;
+  // 粘贴链路上原 URL 早就被 `withholdForeignAssetUrls` 摘掉了，没有「保持原样」可选：
+  // 这里两类一视同仁，节点标 failed 由用户重新贴。
+  const failedSources = new Set([...copied.failed, ...copied.unavailable]);
   const urlMap = new Map<string, string>();
   for (const [raw, source] of rawToSource) {
     const newUrl = mapping.get(source);

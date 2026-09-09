@@ -201,7 +201,7 @@ describe("useCanvasSync · 读取期诊断", () => {
   });
 
   it("drops the previous canvas's diagnostics when a clean canvas loads", async () => {
-    publishForeignMediaRefs("project-a", [
+    publishForeignMediaRefs("project-a", "default", [
       { node_id: "n1", field: "imageUrl", url: FOREIGN, source_project_id: "projA" },
     ]);
     vi.mocked(getFreezoneCanvas).mockResolvedValue({
