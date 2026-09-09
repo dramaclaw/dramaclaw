@@ -16,11 +16,20 @@
 
 from __future__ import annotations
 
+import posixpath
+import re
 from dataclasses import dataclass
 from typing import Iterator
+from urllib.parse import urlsplit
 
 from novelvideo.freezone.asset_copy import parse_project_asset_url
 from novelvideo.freezone.canvas_static_urls import is_url_field_name
+
+# 浏览器取资源时既不管 scheme/host 是不是写全了，也会先把 `..` 规范化掉。`parse_project_asset_url`
+# 是 copy 接口的入口解析器，只认相对的 canonical 形式（故意的：那里不能拿外站 URL 当本地文件）。
+# 两边语义不一致，守卫就会漏：`/static/projects/target/../source/a.png` 按 target 放行，浏览器
+# 实际取的却是 source。所以扫描前先把 URL 还原成浏览器眼里的站点路径。
+_LOCAL_URL_SCHEMES = {"", "http", "https"}
 
 
 @dataclass(frozen=True)
@@ -77,8 +86,32 @@ def reject_new_foreign_media_refs(
         raise CanvasMediaScopeError(new_refs)
 
 
+def _site_path(url: str) -> str | None:
+    """把 URL 还原成浏览器实际会去取的站点路径；不是站点资源就回 `None`。
+
+    只保留 path：`data:` / `blob:` 这类不是站点文件，直接不认；带 host 的完整 URL 按 path 归类
+    （代价是外站 URL 只要路径长得跟项目资源一模一样也会被当成项目资源——宁可误拦，也不放过一个
+    浏览器会当项目资源去取的地址）。
+    """
+    try:
+        parts = urlsplit((url or "").strip())
+    except ValueError:
+        # `http://[` 这类畸形 URL：urlsplit 自己就会炸，同样不是站点资源。
+        return None
+    if parts.scheme.lower() not in _LOCAL_URL_SCHEMES or not parts.path:
+        return None
+    # `%2e%2e` 在 URL 规范里也是双点段，浏览器照样会拿它回退一层；只还原点，不整串 unquote
+    # （`%2f` 不是分隔符，整串 unquote 反而会把路径切错）。
+    return posixpath.normpath(re.sub("%2e", ".", parts.path, flags=re.IGNORECASE))
+
+
+def _parse_media_url(url: str) -> tuple[str, str] | None:
+    path = _site_path(url)
+    return parse_project_asset_url(path) if path is not None else None
+
+
 def _asset_identity(url: str) -> tuple[str, str] | str:
-    parsed = parse_project_asset_url(url)
+    parsed = _parse_media_url(url)
     return parsed if parsed is not None else url
 
 
@@ -130,7 +163,7 @@ def _iter_foreign_values(
         return
     if not isinstance(value, str) or not is_url_field_name(key):
         return
-    parsed = parse_project_asset_url(value)
+    parsed = _parse_media_url(value)
     if parsed is None:
         return
     source_project_id, _rel = parsed

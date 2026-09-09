@@ -89,6 +89,36 @@ def test_scan_ignores_everything_that_is_not_a_project_asset_url() -> None:
     assert scan_foreign_media_refs(payload, project_id="proj_dst") == []
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        # 浏览器先归一化点段再发请求，守卫按字面量看就会把它当本项目资源放行。
+        "/static/projects/proj_dst/../proj_src/a.png",
+        "/static/projects/proj_dst/nested/../../proj_src/a.png",
+        # `%2e%2e` 在 URL 规范里同样是双点段。
+        "/static/projects/proj_dst/%2e%2e/proj_src/a.png",
+        # 写成绝对形式的同一张图，浏览器取的还是同一个受保护路径。
+        "https://app.example.test/static/projects/proj_src/a.png",
+        "//app.example.test/static/projects/proj_src/a.png",
+    ],
+)
+def test_scan_sees_through_url_forms_that_resolve_to_another_project(url: str) -> None:
+    """判定必须跟浏览器实际会取哪个地址一致，否则守卫就是可以绕过去的。"""
+    payload = {"nodes": [_node("n1", {"imageUrl": url})]}
+
+    refs = scan_foreign_media_refs(payload, project_id="proj_dst")
+
+    assert [(r.url, r.source_project_id) for r in refs] == [(url, "proj_src")]
+
+
+def test_scan_still_accepts_the_absolute_form_of_the_canvas_own_media() -> None:
+    payload = {
+        "nodes": [_node("n1", {"imageUrl": "https://app.example.test/static/projects/proj_dst/a.png"})]
+    }
+
+    assert scan_foreign_media_refs(payload, project_id="proj_dst") == []
+
+
 def test_scan_walks_nested_node_data() -> None:
     """叠卡画册 / 分镜帧把 URL 藏在数组和子对象里，字段白名单靠不住。"""
     payload = {
