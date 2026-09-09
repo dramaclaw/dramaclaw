@@ -378,6 +378,101 @@ async def test_put_canvas_still_saves_a_canvas_that_already_carried_a_foreign_re
     assert result["data"]["saved"] is True
 
 
+async def test_restore_rejects_a_foreign_reference_that_only_exists_in_the_old_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """回滚也是一次写入：已经清干净的画布不能靠「恢复历史」把外项目引用重新写回去。"""
+    ctx = _ctx(tmp_path, "proj_dst")
+    _patch_project(monkeypatch, ctx)
+    state_dir = Path(ctx.state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    # 旧版本带脏引用(守卫上线前存下的)，直接落库绕过 PUT。
+    canvas_store.save_canvas(
+        state_dir,
+        "default",
+        base_revision=None,
+        build_payload=lambda existing: {
+            "schema_version": 2,
+            "canvas_id": "default",
+            "project_id": "proj_dst",
+            "revision": 1,
+            "nodes": _node_payload(FOREIGN),
+            "edges": [],
+        },
+    )
+    # 用户把它清干净：脏节点换成本项目素材，旧版本进历史。
+    saved = await freezone_routes.put_canvas(
+        project="proj_dst",
+        canvas_id="default",
+        body=CanvasPayload(nodes=_node_payload(LOCAL), base_revision=1),
+        user=USER,
+    )
+    revision = saved["data"]["revision"]
+    history = canvas_store.list_canvas_history(state_dir, "default")
+    dirty = next(
+        entry for entry in history if entry.get("revision") == 1
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        await freezone_routes.restore_canvas_history(
+            project="proj_dst",
+            canvas_id="default",
+            body={"history_id": dirty["history_id"], "base_revision": revision},
+            user=USER,
+        )
+
+    assert excinfo.value.status_code == 422
+    assert excinfo.value.detail["code"] == "canvas_media_scope_mismatch"
+    assert [ref["url"] for ref in excinfo.value.detail["refs"]] == [FOREIGN]
+    # 拦下就不能落库。
+    stored = canvas_store.read_canvas(state_dir, "default")
+    assert stored["revision"] == revision
+    assert stored["nodes"][0]["data"]["imageUrl"] == LOCAL
+
+
+async def test_restore_still_allows_rolling_back_a_canvas_that_already_carries_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """当前版本本来就带着同一处脏引用时，回滚照常——判据跟 PUT 一致，只拦新引入的。"""
+    ctx = _ctx(tmp_path, "proj_dst")
+    _patch_project(monkeypatch, ctx)
+    state_dir = Path(ctx.state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    canvas_store.save_canvas(
+        state_dir,
+        "default",
+        base_revision=None,
+        build_payload=lambda existing: {
+            "schema_version": 2,
+            "canvas_id": "default",
+            "project_id": "proj_dst",
+            "revision": 1,
+            "nodes": _node_payload(FOREIGN),
+            "edges": [],
+        },
+    )
+    saved = await freezone_routes.put_canvas(
+        project="proj_dst",
+        canvas_id="default",
+        body=CanvasPayload(
+            nodes=_node_payload(FOREIGN) + _node_payload(LOCAL, node_id="n2"),
+            base_revision=1,
+        ),
+        user=USER,
+    )
+    history = canvas_store.list_canvas_history(state_dir, "default")
+    dirty = next(entry for entry in history if entry.get("revision") == 1)
+
+    result = await freezone_routes.restore_canvas_history(
+        project="proj_dst",
+        canvas_id="default",
+        body={"history_id": dirty["history_id"], "base_revision": saved["data"]["revision"]},
+        user=USER,
+    )
+
+    assert result["data"]["restored"] is True
+
+
 async def test_get_canvas_reports_the_foreign_media_references_it_serves(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

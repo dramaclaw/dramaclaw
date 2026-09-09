@@ -12576,6 +12576,9 @@ async def restore_canvas_history(
             user=user,
         )
         _stamp_canvas_mainline_context_project_id(prepared, project)
+        # 回滚也是一次写入：旧版本里的外项目引用不能借着「恢复历史」重新落库(SuperTale#192)。
+        # 与 PUT 同一条判据——只拦相对当前版本新引入的，当前版本已有的照常放行。
+        reject_new_foreign_media_refs(prepared, existing=existing, project_id=ctx.project_id)
         return prepared
 
     try:
@@ -12586,6 +12589,15 @@ async def restore_canvas_history(
             base_revision=base_revision,
             build_payload=build_payload,
         )
+    except CanvasMediaScopeError as exc:
+        raise HTTPException(
+            422,
+            {
+                "code": "canvas_media_scope_mismatch",
+                "project_id": ctx.project_id,
+                "refs": [ref.as_dict() for ref in exc.refs],
+            },
+        ) from exc
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
     payload = restored_canvas.payload
