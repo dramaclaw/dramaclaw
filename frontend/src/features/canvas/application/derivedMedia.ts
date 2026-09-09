@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
+import i18n from 'i18next';
 import { apiCall } from '@/api/client';
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
 import { fetchFreezoneJobResult, type FreezoneJobRef } from '@/api/ops';
@@ -32,7 +33,7 @@ export async function completeDerivedMedia(
         sourceVideoUrl: result.output_url || result.video_url || result.url,
       });
       if (!result.gif_task_key || !result.gif_job_id)
-        throw new Error('视频已生成，但 GIF 转换任务未创建，请重试转换');
+        throw new Error(i18n.t('canvas.derivedMedia.missingGifTask'));
       ref = {
         task_type: 'freezone_image_animate_gif',
         task_key: String(result.gif_task_key),
@@ -40,7 +41,7 @@ export async function completeDerivedMedia(
       };
       update({
         ...generationTaskDescriptor(ref),
-        generationStage: '正在转换 GIF',
+        generationStage: i18n.t('canvas.derivedMedia.convertGif'),
       });
       continue;
     }
@@ -50,7 +51,7 @@ export async function completeDerivedMedia(
       result.output_url ||
       result.url ||
       (await fetchFreezoneJobResult(project, ref.task_type, ref.job_id)).url;
-    if (typeof url !== 'string' || !url) throw new Error('没有可用的输出文件');
+    if (typeof url !== 'string' || !url) throw new Error(i18n.t('canvas.derivedMedia.missingOutput'));
     update({
       ...CLEARED_GENERATION_TASK_FIELDS,
       imageUrl: url,
@@ -75,10 +76,10 @@ export async function generateDerivedMedia(
     generationError: null,
     generationStage:
       kind === 'svg'
-        ? '正在转换 SVG'
+        ? i18n.t('canvas.derivedMedia.convertSvg')
         : videoUrl
-          ? '正在转换 GIF'
-          : '正在生成视频',
+          ? i18n.t('canvas.derivedMedia.convertGif')
+          : i18n.t('canvas.derivedMedia.generateVideo'),
   });
   try {
     const operation =
@@ -103,7 +104,7 @@ export async function generateDerivedMedia(
       generationError:
         providerErrorMessage(
           error instanceof Error ? error.message : String(error),
-        ) || '生成失败，请重试',
+        ) || i18n.t('canvas.derivedMedia.failed'),
     });
   }
 }

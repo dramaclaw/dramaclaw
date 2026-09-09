@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
+import { useTranslation } from 'react-i18next';
 import { useFreezoneVideoModels } from "../hooks/useFreezoneVideoModels";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
@@ -56,6 +57,7 @@ export function ImageDerivedActions({
   node: CanvasNode;
   onOpen: (id: string, kind: DerivedMediaKind) => void;
 }) {
+  const { t } = useTranslation();
   if (!resolveNodeSourceImageUrl(node)) return null;
   return (
     <>
@@ -69,7 +71,7 @@ export function ImageDerivedActions({
           }}
         >
           {kind === "svg" ? <Shapes size={14} /> : <Film size={14} />}
-          {kind === "svg" ? "矢量图" : "动态图"}
+          {kind === "svg" ? t('canvas.derivedMedia.vector') : t('canvas.derivedMedia.animated')}
         </UiChipButton>
       ))}
     </>
@@ -84,6 +86,7 @@ export function ImageDerivedOverlay({
   kind: DerivedMediaKind;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const { cost, available } = useDerivedVideoCost();
   const store = useCanvasStore();
   if (
@@ -127,16 +130,16 @@ export function ImageDerivedOverlay({
     kind === "gif" && (!available || cost.isLoading || Boolean(cost.error));
   const message =
     kind === "svg"
-      ? "本地转换 SVG，复杂图片可能损失细节。"
+      ? t('canvas.derivedMedia.svgDescription')
       : !available
-        ? "视频模型暂不可用"
+        ? t('canvas.derivedMedia.videoUnavailable')
         : cost.error
           ? cost.error instanceof BillingRuleNotConfiguredError
-            ? "计费规则未配置，请联系管理员。"
-            : "暂时无法获取积分报价，请稍后重试。"
+            ? t('canvas.derivedMedia.billingMissing')
+            : t('canvas.derivedMedia.quoteUnavailable')
           : cost.isLoading
-            ? "正在获取积分报价…"
-            : "首帧锁定 · 4 秒 · 720P · 无音频";
+            ? t('canvas.derivedMedia.quoteLoading')
+            : t('canvas.derivedMedia.videoSettings');
   return (
     <NodeToolbar
       nodeId={node.id}
@@ -153,7 +156,7 @@ export function ImageDerivedOverlay({
         >
           <button
             type="button"
-            aria-label="关闭"
+            aria-label={t('canvas.derivedMedia.close')}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-bg-dark/70 text-text-muted transition-colors hover:bg-bg-dark hover:text-text-dark"
             onClick={onClose}
           >
@@ -169,7 +172,7 @@ export function ImageDerivedOverlay({
               <Film className="h-3.5 w-3.5 shrink-0 text-text-muted" />
             )}
             <span className="truncate font-medium">
-              {kind === "svg" ? "矢量图" : "动态图"}
+              {kind === "svg" ? t('canvas.derivedMedia.vector') : t('canvas.derivedMedia.animated')}
             </span>
             {disabled && (
               <span
@@ -181,13 +184,13 @@ export function ImageDerivedOverlay({
             )}
           </div>
           <CreditCostInline
-            display={kind === "svg" ? "免费" : cost.data?.data.display}
+            display={kind === "svg" ? t('canvas.derivedMedia.free') : cost.data?.data.display}
             promotion={kind === "gif" ? cost.data?.data.promotion : undefined}
           />
           <button
             type="button"
-            aria-label="生成"
-            title={disabled ? message : "生成"}
+            aria-label={t('canvas.derivedMedia.generate')}
+            title={disabled ? message : t('canvas.derivedMedia.generate')}
             disabled={disabled}
             className={`${NODE_GENERATE_BUTTON_BASE_CLASS} shrink-0 ${disabled ? NODE_GENERATE_BUTTON_DISABLED_CLASS : NODE_GENERATE_BUTTON_ENABLED_CLASS}`}
             onClick={submit}

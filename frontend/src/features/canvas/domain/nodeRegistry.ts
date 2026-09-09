@@ -645,7 +645,7 @@ const styleNodeDefinition: CanvasNodeDefinition<StyleNodeData> = {
 
 const derivedMediaDefinition = (type: CanvasNodeType): CanvasNodeDefinition => ({
   type,
-  menuLabelKey: type === CANVAS_NODE_TYPES.vectorSvg ? '矢量图' : '动态图',
+  menuLabelKey: type === CANVAS_NODE_TYPES.vectorSvg ? 'canvas.derivedMedia.vector' : 'canvas.derivedMedia.animated',
   menuIcon: type === CANVAS_NODE_TYPES.vectorSvg ? 'upload' : 'video',
   visibleInMenu: false,
   capabilities: { toolbar: true, promptInput: false },

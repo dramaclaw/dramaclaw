@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
+import { useTranslation } from 'react-i18next';
 import { Film, Shapes } from "lucide-react";
 import { CanvasNodeImage } from "../ui/CanvasNodeImage";
 import {
@@ -13,6 +14,7 @@ import {
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useCanvasStore } from "@/stores/canvasStore";
 export function DerivedMediaNode({ id, data, selected, type }: NodeProps) {
+  const { t } = useTranslation();
   const store = useCanvasStore();
   const gif = type === "animatedGifNode";
   const url = typeof data.imageUrl === "string" ? data.imageUrl : "";
@@ -28,7 +30,7 @@ export function DerivedMediaNode({ id, data, selected, type }: NodeProps) {
         className={NODE_HEADER_FLOATING_POSITION_CLASS}
         icon={gif ? <Film /> : <Shapes />}
         titleText={String(
-          data.displayName || (gif ? "动态图 · GIF" : "矢量图 · SVG"),
+          data.displayName || (gif ? t('canvas.derivedMedia.animatedTitle') : t('canvas.derivedMedia.vectorTitle')),
         )}
         editable
         onTitleChange={(displayName) =>
@@ -39,7 +41,7 @@ export function DerivedMediaNode({ id, data, selected, type }: NodeProps) {
         {url ? (
           <CanvasNodeImage
             src={url}
-            alt={gif ? "动态图" : "矢量图"}
+            alt={gif ? t('canvas.derivedMedia.animated') : t('canvas.derivedMedia.vector')}
             className="block w-full object-contain"
           />
         ) : (
@@ -47,8 +49,8 @@ export function DerivedMediaNode({ id, data, selected, type }: NodeProps) {
             {busy
               ? ""
               : data.generationError
-                ? "生成失败，选中节点后可重试"
-                : "选中节点开始转换"}
+                ? t('canvas.derivedMedia.failedSelect')
+                : t('canvas.derivedMedia.selectConvert')}
           </div>
         )}
         {busy && (
@@ -64,7 +66,7 @@ export function DerivedMediaNode({ id, data, selected, type }: NodeProps) {
               className="absolute inset-x-0 bottom-3 text-center text-xs text-text-muted"
               role="status"
             >
-              {String(data.generationStage || "正在处理")}
+              {String(data.generationStage || t('canvas.derivedMedia.processing'))}
             </p>
           </>
         )}

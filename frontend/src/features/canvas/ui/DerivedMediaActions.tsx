@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
+import { useTranslation } from 'react-i18next';
 import { useState } from "react";
 import { Download, Expand, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -21,6 +22,7 @@ import {
 } from "./nodeToolbarStyles";
 
 export function DerivedMediaActions({ node }: { node: CanvasNode }) {
+  const { t } = useTranslation();
   const store = useCanvasStore();
   const { cost, available } = useDerivedVideoCost();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -53,7 +55,7 @@ export function DerivedMediaActions({ node }: { node: CanvasNode }) {
         className="flex h-9 items-center gap-2 px-3 text-text-muted"
       >
         <Loader2 className="animate-spin" />
-        {String(node.data.generationStage || "正在处理")}
+        {String(node.data.generationStage || t('canvas.derivedMedia.processing'))}
       </span>
     );
   if (url)
@@ -64,7 +66,7 @@ export function DerivedMediaActions({ node }: { node: CanvasNode }) {
           onClick={() => store.openImageViewer(url, [url])}
         >
           <Expand />
-          预览
+          {t('canvas.derivedMedia.preview')}
         </UiChipButton>
         <UiChipButton
           className={TOOLBAR_TEXT_BUTTON_CLASS}
@@ -77,14 +79,14 @@ export function DerivedMediaActions({ node }: { node: CanvasNode }) {
                 gif ? "animation.gif" : "vector.svg",
               );
             } catch {
-              toast.error("下载失败，请重试");
+              toast.error(t('canvas.derivedMedia.downloadFailed'));
             } finally {
               setDownloading(false);
             }
           }}
         >
           {downloading ? <Loader2 className="animate-spin" /> : <Download />}
-          下载 {gif ? "GIF" : "SVG"}
+          {t('canvas.derivedMedia.download', { format: gif ? 'GIF' : 'SVG' })}
         </UiChipButton>
       </>
     );
@@ -92,7 +94,7 @@ export function DerivedMediaActions({ node }: { node: CanvasNode }) {
     return (
       <UiChipButton className={TOOLBAR_TEXT_BUTTON_CLASS} onClick={retry}>
         <RefreshCw />
-        {node.data.generationError ? "重试转换" : "开始转换"} · 免费
+        {t(node.data.generationError ? 'canvas.derivedMedia.retryFree' : 'canvas.derivedMedia.startFree')}
       </UiChipButton>
     );
   return (
@@ -101,19 +103,19 @@ export function DerivedMediaActions({ node }: { node: CanvasNode }) {
         render={<UiChipButton className={TOOLBAR_TEXT_BUTTON_CLASS} />}
       >
         <RefreshCw />
-        重新生成视频
+        {t('canvas.derivedMedia.regenerateVideo')}
       </PopoverTrigger>
       <PopoverContent
         side="top"
         className={`nodrag space-y-3 ${TOOLBAR_MENU_CONTENT_CLASS}`}
       >
-        <p className="text-sm">重新生成视频后转换为 GIF</p>
+        <p className="text-sm">{t('canvas.derivedMedia.regenerateDescription')}</p>
         <p className="text-xs text-text-muted">
-          首帧锁定 · 4 秒 · 720P · 无音频，视频按报价计费，GIF 转换免费。
+          {t('canvas.derivedMedia.videoBilling')}
         </p>
         {cost.error && (
           <p role="alert" className="text-xs text-destructive">
-            暂时无法获取积分报价，请稍后重试。
+            {t('canvas.derivedMedia.quoteUnavailable')}
           </p>
         )}
         <div className="flex items-center justify-between">
@@ -122,7 +124,7 @@ export function DerivedMediaActions({ node }: { node: CanvasNode }) {
             disabled={!available || cost.isLoading || Boolean(cost.error)}
             onClick={retry}
           >
-            确认生成
+            {t('canvas.derivedMedia.confirm')}
           </UiChipButton>
         </div>
       </PopoverContent>

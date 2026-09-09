@@ -98,7 +98,7 @@ async def test_animate_uses_locked_frame_and_requests_gif(monkeypatch, tmp_path)
 
 
 def test_local_conversion_queue_placement():
-    from novelvideo.task_backend.runners import freezone
+    from novelvideo.task_backend.runners import freezone  # noqa: F401 -- registers conversion runners
     from novelvideo.task_backend.registry import (
         project_task_lane,
         project_task_requires_home_node,
