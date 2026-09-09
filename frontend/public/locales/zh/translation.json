@@ -2753,7 +2753,8 @@
       "freezone_audio_eleven_music": "生成音乐",
       "freezone_image_to_3gs": "图片转世界",
       "freezone_image_vectorize": "生成矢量图",
-      "freezone_image_animate_gif": "转换动态图 GIF"
+      "freezone_image_animate_gif": "转换动态图 GIF",
+      "freezone_skill_import": "外部 Skill 转换"
     },
     "cancelRunning": {
       "title": "终止任务",
@@ -7804,5 +7805,87 @@
     "reload": "重新加载",
     "statusUnknown": "暂时无法确认功能开放状态，请稍后重试。",
     "unavailableTitle": "功能未开放"
+  },
+  "skillImport": {
+    "conversionNotes": "转换说明",
+    "collapseResult": "收起转换结果",
+    "recordCount": "共 {{count}} 条记录",
+    "issueCount": "{{count}} 条提示",
+    "historyTitle": "转换记录",
+    "historyHint": "每次上传会生成一条独立记录",
+    "recordRunning": "正在后台转换，关闭窗口后仍会继续。",
+    "recordInstalled": "已加入你的技能库，可在创作中使用。",
+    "recordFailed": "转换中断。可展开问题详情，排查后重新转换。",
+    "recordLegacy": "这是较早生成的草稿，需要补做最新检查。打开结果后可提交验证。",
+    "recordReady": "检查已通过，审核内容后即可加入技能库。",
+    "recordBlocked": "部分要求尚未解决。请打开结果，查看需要补充或调整的内容。",
+    "recordLegacyBadge": "待补充验证",
+    "recordDetails": "问题与记录详情",
+    "selectProjectTitle": "先打开一个项目",
+    "backToSettings": "返回设置",
+    "acknowledgeWarnings": "我已检查转换提示，并完成必要的修改。",
+    "title": "导入外部 Skill",
+    "description": "导入 Markdown 技能包，转换并审核后加入技能库。",
+    "projectRequired": "进入任一项目后，再从设置中提交转换任务。",
+    "chooseFiles": "选择 Markdown 或 ZIP 文件",
+    "upload": "上传 MD / ZIP",
+    "retryFailed": "重试失败项",
+    "retry": "重新转换",
+    "limits": "每批最多 20 个文件，每个不超过 2 MB，总计不超过 10 MB；每个文件或 ZIP 包含一个技能。",
+    "submitted": "已提交。关闭窗口后仍会在后台继续，可在任务中心查看进度。",
+    "loading": "加载中…",
+    "empty": "上传技能开始转换。原生 JSON 包仍可通过原有入口导入。",
+    "review": "查看转换结果",
+    "candidate": "转换草稿",
+    "reviewHint": "检查方法、输入输出和 Recipes 是否准确保留；安装前可修改并重新检查。",
+    "bundleLabel": "原生 Skill Bundle",
+    "install": "安装",
+    "installed": "已安装到你的技能库。",
+    "copyToChat": "复制到 Skill Studio 修改",
+    "copied": "已复制，请粘贴到虾画对话中，继续通过 Skill Studio 修改。",
+    "download": "下载 JSON",
+    "results": "转换结果",
+    "status": {
+      "queued": "排队中",
+      "running": "转换中",
+      "ready": "待检查安装",
+      "needs_review": "有待处理项",
+      "failed": "失败",
+      "installed": "已安装"
+    },
+    "stage": {
+      "queued": "排队",
+      "reading": "读取来源",
+      "analyzing": "分析方法",
+      "matching": "匹配 Recipe",
+      "generating": "生成配置",
+      "validating": "校验结果",
+      "done": "完成",
+      "adapting": "适配能力",
+      "reviewing": "检查方法覆盖",
+      "planning": "验证执行规划"
+    },
+    "validateDraft": "验证修改后的草稿",
+    "validationSubmitted": "已提交验证，完成后请检查新的结果。",
+    "revalidationRequired": "需要重新验证。请先验证此草稿，再安装。",
+    "draftChanged": "草稿已修改，上方报告仅适用于修改前的版本。请验证修改后再安装。",
+    "quality": {
+      "structure": "结构校验",
+      "coverage": "方法覆盖",
+      "planning": "规划验证",
+      "blockers": "安装阻塞项",
+      "adaptations": "能力映射",
+      "status": {
+        "passed": "通过",
+        "failed": "未通过",
+        "not_run": "未运行"
+      },
+      "adaptation": {
+        "direct": "直接支持",
+        "composed": "通过现有能力组合实现",
+        "decision_required": "需要决策",
+        "unsupported": "不支持"
+      }
+    }
   }
 }

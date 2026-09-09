@@ -5106,3 +5106,32 @@ def test_freezone_plugin_register_call_exposes_node_tools_on_hermes_acp():
     assert by_name["freezone_create_node"]["toolset"] == "hermes-acp"
     assert by_name["freezone_emit_canvas_command"]["toolset"] == "hermes-acp"
     assert len(calls) == len(plugin.TOOLS)
+
+
+def test_external_skill_import_submits_background_task_without_canvas_write(monkeypatch):
+    import base64
+    module = _load_plugin_module()
+    monkeypatch.setenv('DRAMACLAW_PROJECT', 'project')
+    calls = []
+    monkeypatch.setattr(module, '_request', lambda method, path, **kwargs: calls.append((method, path, kwargs)) or {'ok': True, 'data': {'batch_id': 'b', 'items': []}})
+    result = module._handle_import_external_skill({'project_id': 'p/a', 'name': 'SKILL.md', 'markdown': '# 文案'})
+    if isinstance(result, str):
+        result = json.loads(result)
+    assert calls[0][0:2] == ('POST', '/projects/p%2Fa/freezone/skill-imports')
+    assert base64.b64decode(calls[0][2]['body']['files'][0]['content_base64']).decode() == '# 文案'
+    assert result['status'] == 'skill_import_submitted'
+    assert result['batch_id'] == 'b'
+    schema = next(schema for name, schema, _handler in module.TOOLS if name == 'freezone_import_external_skill')
+    Draft202012Validator(schema['output_schema']).validate(result)
+
+
+def test_external_skill_import_result_is_available_for_skill_studio(monkeypatch):
+    module = _load_plugin_module()
+    monkeypatch.setattr(module, '_request', lambda *args, **kwargs: {'ok': True, 'data': {'id': 'i', 'status': 'ready', 'bundle': {'skill': {'id': 'ad'}, 'recipes': []}}})
+    result = module._handle_get_skill_import({'project_id': 'p', 'import_id': 'i'})
+    if isinstance(result, str):
+        result = json.loads(result)
+    assert result['import_result']['bundle']['skill']['id'] == 'ad'
+    assert 'Skill Studio' in result['agent_instruction']
+    schema = next(schema for name, schema, _handler in module.TOOLS if name == 'freezone_get_skill_import')
+    Draft202012Validator(schema['output_schema']).validate(result)
