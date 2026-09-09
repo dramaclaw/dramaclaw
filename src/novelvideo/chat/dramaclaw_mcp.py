@@ -125,6 +125,7 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
 
     raw = str(value or "")
     if name not in {
+        "freezone_prepare_workflow",
         "freezone_prepare_workflow_draft",
         "freezone_prepare_workflow_plan_draft",
     }:

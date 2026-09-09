@@ -6,6 +6,9 @@
     "dramaclaw-mcp-native-tools.v1",
     "freezone-canvas-approval-bridge.v1",
     "local-agent-trust.v1",
-    "workflow-mcp-read-compile.v1"
+    "workflow-mcp-read-compile.v1",
+    "workflow-operations.v1",
+    "workflow-runtime-preflight.v1",
+    "workflow-observation.v1"
   ]
 }

@@ -4783,9 +4783,28 @@ async def delete_freezone_agent_config_item(
     return {"ok": True, "data": {"deleted": deleted}}
 
 
-def _workflow_draft_api_data(draft: dict[str, Any]) -> dict[str, Any]:
-    """Expose the non-monetary draft state owned by CE."""
-    return dict(draft)
+def _workflow_draft_api_data(
+    draft: dict[str, Any], *, summary: bool = False
+) -> dict[str, Any]:
+    """Expose compact control state without echoing the full graph by default to tools."""
+    if not summary:
+        return dict(draft)
+    from novelvideo.freezone.agent_workflows.drafts import public_workflow_draft
+
+    result = public_workflow_draft(draft)
+    state = draft.get("status")
+    result.update(
+        status="workflow_draft_" + str(state),
+        task_id=draft.get("task_id"),
+        next_action={
+            "ready": "review_and_confirm",
+            "confirming": "wait_for_canvas_receipt",
+            "submitted": "wait_for_canvas_receipt",
+            "confirmed": "inspect_workflow_run",
+        }.get(state, "inspect_draft"),
+        message="草稿与画布确认状态；不代表媒体生成已完成。",
+    )
+    return result
 
 
 def _validate_agent_generation_session_payload(
@@ -13696,6 +13715,133 @@ async def list_canvas_history(
         _raise_canvas_store_http(exc)
 
 
+@router.get(
+    "/projects/{project}/freezone/workflow-capabilities", tags=[TAG_FREEZONE_CANVAS]
+)
+async def get_workflow_capabilities(project: str, user: dict = Depends(get_api_user)):
+    await _resolve_freezone_project(project, user, required_role="viewer")
+    from novelvideo.freezone.workflow_transactions import CONTRACT_VERSION
+
+    return {
+        "ok": True,
+        "data": {
+            "ok": True,
+            "status": "workflow_capabilities",
+            "schema_version": CONTRACT_VERSION,
+            "capabilities": {
+                "server_runtime_preflight": True,
+                "run_observation": True,
+                "server_prepare": True,
+                "server_revise": True,
+                "compact_status": True,
+                "input_bindings": True,
+                "confirmation_adapter": "canvas_approval_bridge",
+                "headless_execution": False,
+            },
+        },
+    }
+
+
+async def _check_workflow_runtime(compiled: dict, *, project: str, user: dict) -> dict:
+    """Resolve catalogs with request identity; never trust caller preflight evidence."""
+    from novelvideo.freezone.workflow_preflight import evaluate_workflow_preflight
+    from novelvideo.api.routes.tasks import get_project_task_limits
+
+    nodes = (compiled.get("plan") or {}).get("nodes") or []
+    loaders = {
+        "imageGenNode": freezone_image_models,
+        "videoNode": freezone_video_models,
+    }
+    requested = [
+        kind
+        for kind in loaders
+        if any(
+            node.get("node_type") == kind and (node.get("data") or {}).get("model")
+            for node in nodes
+            if isinstance(node, dict)
+        )
+    ]
+
+    async def safe_load(loader):
+        try:
+            return await loader(project=project, user=user)
+        except Exception:
+            return {"ok": False}
+
+    results = await asyncio.gather(
+        *(safe_load(loaders[kind]) for kind in requested),
+        safe_load(get_project_task_limits),
+    )
+    preflight = evaluate_workflow_preflight(
+        compiled,
+        model_responses=dict(zip(requested, results[:-1])),
+        limits=results[-1],
+    )
+    if preflight["blockers"]:
+        raise HTTPException(
+            400,
+            {
+                "ok": False,
+                "status": "workflow_preflight_failed",
+                "error": preflight["blockers"][0]["message"],
+                "preflight": preflight,
+                "retryable": False,
+                "next_action": "resolve_preflight_blockers",
+            },
+        )
+    return preflight
+
+
+async def _prepare_workflow_source(body: dict, user: dict) -> dict:
+    from novelvideo.freezone.workflow_transactions import (
+        WorkflowOperationError,
+        prepare_workflow_source,
+    )
+
+    try:
+        return await asyncio.to_thread(
+            prepare_workflow_source, body, username=str(user.get("username") or "")
+        )
+    except WorkflowOperationError as exc:
+        raise HTTPException(400, exc.result) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+async def _validate_workflow_draft_submission(body: dict, user: dict) -> dict:
+    """Rebuild validation evidence at the HTTP boundary, not in the agent."""
+    from novelvideo.freezone.agent_workflows.catalog import validate_agent_workflow_plan
+    from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
+
+    compiled = body.get("compiled")
+    plan = compiled.get("plan") if isinstance(compiled, dict) else None
+    intent = body.get("intent")
+    if isinstance(intent, dict) and "plan" in intent and intent["plan"] != plan:
+        raise HTTPException(400, "workflow intent and compiled plan differ")
+    if "run_after_create" in body and not isinstance(body["run_after_create"], bool):
+        raise HTTPException(400, "run_after_create must be a boolean")
+    try:
+        validated = await asyncio.to_thread(
+            validate_agent_workflow_plan, plan, username=str(user.get("username") or "")
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not validated.get("ok"):
+        raise HTTPException(400, validated)
+    if compiled.get("skill_id") != validated.get("skill_id"):
+        raise HTTPException(400, "compiled Skill does not match the validated plan")
+    built = build_workflow_graph_commands({"plan": validated["plan"]})
+    if not built.get("ok") or built.get("skipped_edges"):
+        raise HTTPException(
+            400,
+            {
+                "code": "invalid_workflow_commands",
+                "errors": built.get("errors") or built.get("skipped_edges"),
+            },
+        )
+    return validated
+
+
 @router.post(
     "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts",
     tags=[TAG_FREEZONE_CANVAS],
@@ -13732,7 +13878,13 @@ async def create_canvas_workflow_draft(
         raise HTTPException(400, "workflow result operation is unavailable")
     if operation is not None:
         compiled = body.get("compiled") if isinstance(body.get("compiled"), dict) else {}
-        compiled_skill_id = str(compiled.get("skill_id") or "").strip()
+        intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+        plan = body.get("plan", intent.get("plan", compiled.get("plan")))
+        skill = plan.get("skill") if isinstance(plan, dict) else {}
+        skill = skill if isinstance(skill, dict) else {}
+        compiled_skill_id = str(
+            compiled.get("skill_id") or intent.get("skill_id") or skill.get("id") or ""
+        ).strip()
         operation_skill_id = str(
             (operation.get("metadata") or {}).get("skill_id") or ""
         ).strip()
@@ -13761,7 +13913,12 @@ async def create_canvas_workflow_draft(
         )
         if existing is not None:
             await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
-            return {"ok": True, "data": _workflow_draft_api_data(existing)}
+            return {
+                "ok": True,
+                "data": _workflow_draft_api_data(
+                    existing, summary=body.get("response_view") == "summary"
+                ),
+            }
         raise HTTPException(409, error or "delivered workflow result is missing")
     if operation and operation.get("status") not in {
         "reserved",
@@ -13776,6 +13933,15 @@ async def create_canvas_workflow_draft(
             409,
             "workflow result has no server-observed model execution evidence",
         )
+    prepared = await _prepare_workflow_source(body, user)
+    validated = prepared["compiled"]
+    validated["preflight"] = await _check_workflow_runtime(
+        validated, project=project, user=user
+    )
+    if operation is not None and validated.get("skill_id") != compiled_skill_id:
+        raise HTTPException(
+            400, "workflow result operation does not match compiled Skill"
+        )
     try:
         await asyncio.to_thread(
             prune_expired_workflow_drafts,
@@ -13787,8 +13953,8 @@ async def create_canvas_workflow_draft(
             project_dir=state_dir,
             project_id=ctx.project_id,
             canvas_id=canvas_id,
-            intent=body.get("intent"),
-            compiled=body.get("compiled"),
+            intent=prepared["intent"],
+            compiled=validated,
             run_after_create=bool(body.get("run_after_create")),
             operation_id=operation_id,
         )
@@ -13817,7 +13983,12 @@ async def create_canvas_workflow_draft(
             },
         )
         await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
-    return {"ok": True, "data": _workflow_draft_api_data(draft)}
+    return {
+        "ok": True,
+        "data": _workflow_draft_api_data(
+            draft, summary=body.get("response_view") == "summary"
+        ),
+    }
 
 
 @router.get(
@@ -13829,6 +14000,7 @@ async def get_canvas_workflow_draft(
     canvas_id: str,
     draft_id: str,
     user: dict = Depends(get_api_user),
+    view: str = Query("full"),
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
@@ -13851,7 +14023,10 @@ async def get_canvas_workflow_draft(
             "status": "workflow_draft_unavailable",
             "error": error or "workflow draft not found",
         }
-    return {"ok": True, "data": _workflow_draft_api_data(draft)}
+    return {
+        "ok": True,
+        "data": _workflow_draft_api_data(draft, summary=view == "summary"),
+    }
 
 
 @router.patch(
@@ -13870,11 +14045,57 @@ async def patch_canvas_workflow_draft(
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user)
     )
+    if type(body.get("expected_revision")) is not int:
+        raise HTTPException(400, "expected_revision must be an integer")
     try:
         expected_revision = int(body.get("expected_revision"))
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, "expected_revision must be an integer") from exc
     state_dir = _canvas_state_project_dir(ctx, project_dir)
+    if "run_after_create" in body and not isinstance(body["run_after_create"], bool):
+        raise HTTPException(400, "run_after_create must be boolean")
+    if "changes" in body:
+        from novelvideo.freezone.workflow_transactions import (
+            WorkflowOperationError,
+            revise_workflow_source,
+        )
+
+        if any(key in body for key in ("plan", "intent", "compiled", "last_changes")):
+            raise HTTPException(400, "changes cannot be mixed with replacement source")
+        current, error = await asyncio.to_thread(
+            read_workflow_draft,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+        )
+        if current is None:
+            raise HTTPException(404, error or "workflow draft not found")
+        if current["revision"] != expected_revision:
+            return {
+                "ok": False,
+                "status": "workflow_draft_revision_conflict",
+                "current_revision": current["revision"],
+                "retryable": False,
+                "next_action": "read_current_draft",
+            }
+        try:
+            prepared = await asyncio.to_thread(
+                revise_workflow_source,
+                current,
+                body["changes"],
+                username=str(user.get("username") or ""),
+            )
+        except WorkflowOperationError as exc:
+            raise HTTPException(400, exc.result) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        body = {**body, **prepared}
+    else:
+        prepared = await _prepare_workflow_source(body, user)
+    validated = prepared["compiled"]
+    validated["preflight"] = await _check_workflow_runtime(
+        validated, project=project, user=user
+    )
     try:
         draft, error = await asyncio.to_thread(
             patch_workflow_draft,
@@ -13882,8 +14103,8 @@ async def patch_canvas_workflow_draft(
             canvas_id=canvas_id,
             draft_id=draft_id,
             expected_revision=expected_revision,
-            intent=body.get("intent"),
-            compiled=body.get("compiled"),
+            intent=prepared["intent"],
+            compiled=validated,
             last_changes=(
                 body.get("last_changes")
                 if isinstance(body.get("last_changes"), dict)
@@ -13899,7 +14120,12 @@ async def patch_canvas_workflow_draft(
         raise HTTPException(400, str(exc)) from exc
     if draft is None:
         return error
-    return {"ok": True, "data": _workflow_draft_api_data(draft)}
+    return {
+        "ok": True,
+        "data": _workflow_draft_api_data(
+            draft, summary=body.get("response_view") == "summary"
+        ),
+    }
 
 
 @router.post(
@@ -14248,6 +14474,15 @@ async def claim_canvas_workflow_draft(
             "status": "workflow_draft_unavailable",
             "error": current_error or "workflow draft not found",
         }
+    if current_draft["revision"] != revision:
+        return {
+            "ok": False,
+            "status": "workflow_draft_revision_conflict",
+            "current_revision": current_draft["revision"],
+        }
+    # Revalidate old drafts and catalog revocations before admitting a task.
+    validated = await _validate_workflow_draft_submission(current_draft, user)
+    await _check_workflow_runtime(validated, project=project, user=user)
     try:
         draft, error = await asyncio.to_thread(
             claim_workflow_draft_confirmation,
@@ -14315,14 +14550,26 @@ async def finish_canvas_workflow_draft(
         await _resolve_freezone_project(project, user)
     )
     state_dir = _canvas_state_project_dir(ctx, project_dir)
+    outcome = str(body.get("outcome") or "")
+    if outcome == "confirmed":
+        raise HTTPException(
+            403, "workflow completion requires an authoritative canvas receipt"
+        )
+    task_id = str(body.get("task_id") or "").strip()
+    if not task_id:
+        raise HTTPException(400, "workflow confirmation task_id is required")
+    revision = body.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision <= 0:
+        raise HTTPException(400, "workflow confirmation revision is required")
     try:
         draft = await asyncio.to_thread(
             finish_workflow_draft_confirmation,
             project_dir=state_dir,
             canvas_id=canvas_id,
             draft_id=draft_id,
-            outcome=str(body.get("outcome") or ""),
-            expected_task_id=str(body.get("task_id") or ""),
+            outcome=outcome,
+            expected_task_id=task_id,
+            expected_revision=revision,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -14672,24 +14919,44 @@ async def get_canvas_workflow_run(
     canvas_id: str,
     run_id: str,
     user: dict = Depends(get_api_user),
+    view: str = Query("full"),
+    wait_seconds: int = Query(0, ge=0, le=20),
+    after: str = Query("", max_length=64),
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user, required_role="viewer")
     )
-    try:
+    from novelvideo.freezone.workflow_observation import summarize_workflow_run
+    from novelvideo.freezone.workflow_runs import RUN_ID_RE
+
+    if not RUN_ID_RE.fullmatch(run_id):
+        raise HTTPException(400, "invalid workflow run id")
+    deadline = asyncio.get_running_loop().time() + wait_seconds
+    token = after
+    while True:
+        # Reuse the same task, artifact and canvas reconciliation as the canvas run list.
+        await get_canvas_workflow_runs(
+            project=project, canvas_id=canvas_id, limit=200, user=user
+        )
         run = await asyncio.to_thread(
             read_workflow_run,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=canvas_id,
             run_id=run_id,
         )
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    if run is None:
-        raise HTTPException(404, "workflow run not found")
-    return {"ok": True, "data": run}
+        if run is None:
+            raise HTTPException(404, "workflow run not found")
+        summary = summarize_workflow_run(run)
+        changed = bool(token and summary["observation_token"] != token)
+        remaining = deadline - asyncio.get_running_loop().time()
+        if not wait_seconds or summary["terminal"] or changed or remaining <= 0:
+            if view == "summary":
+                return {"ok": True, "data": {**summary, "changed": changed}}
+            return {"ok": True, "data": run}
+        token = summary["observation_token"]
+        await asyncio.sleep(min(2, remaining))
 
 
 @router.patch(

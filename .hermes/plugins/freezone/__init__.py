@@ -4208,6 +4208,7 @@ def _emit_canvas_commands(
     *,
     allow_dynamic_workflow_batch: bool = False,
     slim_result: bool = False,
+    require_canvas_receipt: bool = False,
 ) -> str:
     if not isinstance(commands, list) or not commands:
         return _emit_command_error(
@@ -4243,7 +4244,7 @@ def _emit_canvas_commands(
         return tool_result(generation_preflight)
     if _external_mcp_agent_enabled():
         _use_frontend_default_for_recommended_models(commands)
-    if _mcp_direct_canvas_apply_enabled():
+    if _mcp_direct_canvas_apply_enabled() and not require_canvas_receipt:
         needs_approval, approval_reasons = _approval_required_for_commands(commands)
         if _mcp_canvas_approval_enabled() and needs_approval:
             return _create_mcp_canvas_approval(
@@ -4765,6 +4766,7 @@ def _finish_workflow_draft(
     *,
     outcome: str,
     task_id: str = "",
+    revision: int | None = None,
 ) -> None:
     _request(
         "POST",
@@ -4774,317 +4776,181 @@ def _finish_workflow_draft(
             draft_id,
             "finish",
         ),
-        body={"outcome": outcome, **({"task_id": task_id} if task_id else {})},
+        body={"outcome": outcome, "task_id": task_id, "revision": revision},
     )
 
 
-def _catalog_string_options(entry: dict[str, Any], key: str) -> list[str]:
-    values = entry.get(key)
-    if not isinstance(values, list):
-        return []
-    return [str(value).strip() for value in values if str(value).strip()]
-
-
-def _catalog_option_supported(
-    value: Any,
-    options: list[str],
-    *,
-    case_insensitive: bool = False,
-) -> bool:
-    requested = str(value or "").strip()
-    if not requested:
-        return True
-    if case_insensitive:
-        requested = requested.casefold()
-        return any(requested == option.casefold() for option in options)
-    return requested in options
-
-
-def _workflow_node_capability_blockers(
-    node: dict[str, Any],
-    catalog_entry: dict[str, Any],
-) -> list[dict[str, Any]]:
-    node_type = str(node.get("node_type") or "").strip()
-    data = node.get("data") if isinstance(node.get("data"), dict) else {}
-    node_id = str(node.get("id") or node_type).strip()
-    model_id = str(data.get("model") or "").strip()
-    field_options = (
-        {
-            "aspectRatio": ("ratioOptions", False),
-            "size": ("resolutionOptions", True),
-            "quality": ("qualityOptions", True),
-        }
-        if node_type == "imageGenNode"
-        else (
-            {
-                "aspectRatio": ("ratioOptions", False),
-                "quality": ("resolutionOptions", True),
-            }
-            if node_type == "videoNode"
-            else {}
-        )
+def _workflow_node_capability_blockers(node, catalog_entry):
+    from novelvideo.freezone.workflow_preflight import (
+        _workflow_node_capability_blockers as check,
     )
-    blockers: list[dict[str, Any]] = []
-    for field, (catalog_key, case_insensitive) in field_options.items():
-        value = data.get(field)
-        if value is None or (isinstance(value, str) and not value.strip()):
-            continue
-        options = _catalog_string_options(catalog_entry, catalog_key)
-        if not options:
-            # Missing ratio/resolution declarations use the canvas fallback. Quality
-            # deliberately has no fallback: an absent qualityOptions means the model
-            # does not accept the quality parameter.
-            if catalog_key != "qualityOptions":
-                continue
-        if _catalog_option_supported(
-            value,
-            options,
-            case_insensitive=case_insensitive,
-        ):
-            continue
-        blockers.append(
-            {
-                "path": f"runtime.models.{node_id}.{field}",
-                "message": (
-                    f"{field} value {value!r} is not supported by model {model_id}. "
-                    + (f"Supported values: {options!r}." if options else
-                       "This model does not accept this parameter; omit it.")
-                ),
-                "code": "model_capability_unsupported",
-                "allowed_values": options,
-                "recovery": "choose_supported_value" if options else "omit_parameter",
-            }
-        )
-    if node_type == "videoNode" and isinstance(data.get("durationSec"), (int, float)):
-        duration = float(data["durationSec"])
-        minimum = catalog_entry.get("minDuration")
-        maximum = catalog_entry.get("maxDuration")
-        if (
-            isinstance(minimum, (int, float))
-            and duration < float(minimum)
-            or isinstance(maximum, (int, float))
-            and duration > float(maximum)
-        ):
-            blockers.append(
-                {
-                    "path": f"runtime.models.{node_id}.durationSec",
-                    "message": (
-                        f"durationSec value {data['durationSec']!r} is not supported "
-                        f"by model {model_id}"
-                        f"; supported duration range: {minimum!r} to {maximum!r} seconds"
-                    ),
-                    "code": "model_capability_unsupported",
-                    "minimum": minimum,
-                    "maximum": maximum,
-                }
-            )
-    if (
-        node_type == "videoNode"
-        and data.get("generateAudio") is True
-        and catalog_entry.get("supportsGenerateAudio") is False
-    ):
-        blockers.append(
-            {
-                "path": f"runtime.models.{node_id}.generateAudio",
-                "message": f"generateAudio is not supported by model {model_id}",
-                "code": "model_capability_unsupported",
-            }
-        )
-    return blockers
+
+    return check(node, catalog_entry)
 
 
 def _workflow_runtime_preflight(
-    compiled: dict[str, Any],
-    *,
-    project_id: str,
+    compiled: dict[str, Any], *, project_id: str
 ) -> dict[str, Any]:
-    base = deepcopy(compiled.get("preflight") or {})
-    blockers = list(base.get("blockers") or [])
-    warnings = list(base.get("warnings") or [])
-    checks: dict[str, Any] = {}
-    plan = compiled.get("plan") if isinstance(compiled.get("plan"), dict) else {}
-    nodes = plan.get("nodes") if isinstance(plan.get("nodes"), list) else []
-    if not project_id or not _available():
-        checks["runtime"] = "unavailable"
-        warnings.append(
-            {
-                "path": "runtime",
-                "message": "runtime model and queue availability could not be checked",
-            }
-        )
-    else:
-        model_endpoints = {
-            "imageGenNode": f"/projects/{quote(project_id, safe='')}/freezone/image/models",
-            "videoNode": f"/projects/{quote(project_id, safe='')}/freezone/video/models",
-        }
-        for node_type, endpoint in model_endpoints.items():
-            typed_nodes = [
-                node
-                for node in nodes
-                if isinstance(node, dict)
+    from novelvideo.freezone.workflow_preflight import evaluate_workflow_preflight
+
+    available = bool(project_id and _available())
+    responses = {}
+    limits = {"ok": False}
+    if available:
+        nodes = (compiled.get("plan") or {}).get("nodes") or []
+        for node_type, media in (("imageGenNode", "image"), ("videoNode", "video")):
+            if any(
+                isinstance(node, dict)
                 and node.get("node_type") == node_type
-                and isinstance(node.get("data"), dict)
-                and str((node.get("data") or {}).get("model") or "").strip()
-            ]
-            requested = {
-                str((node.get("data") or {}).get("model") or "").strip()
-                for node in typed_nodes
-            }
-            if not requested:
-                continue
-            response = _request("GET", endpoint)
-            if response.get("ok") is False:
-                checks[f"{node_type}.models"] = "unavailable"
-                blockers.append(
-                    {
-                        "path": "runtime.models",
-                        "message": (
-                            f"could not verify {node_type} capabilities because the "
-                            "live model catalog is unavailable"
-                        ),
-                        "code": "model_catalog_unavailable",
-                    }
+                and (node.get("data") or {}).get("model")
+                for node in nodes
+            ):
+                responses[node_type] = _request(
+                    "GET",
+                    f"/projects/{quote(project_id, safe='')}/freezone/{media}/models",
                 )
-                continue
-            raw_models = response.get("data")
-            catalog_by_id = (
-                {
-                    str(
-                        item.get("id")
-                        or item.get("apiModel")
-                        or item.get("api_model")
-                        or ""
-                    ).strip(): item
-                    for item in raw_models
-                    if isinstance(item, dict)
-                    and str(
-                        item.get("id")
-                        or item.get("apiModel")
-                        or item.get("api_model")
-                        or ""
-                    ).strip()
-                }
-                if isinstance(raw_models, list)
-                else {}
-            )
-            missing = sorted(requested - set(catalog_by_id))
-            checks[f"{node_type}.models"] = {
-                "requested": sorted(requested),
-                "available": not missing,
-            }
-            blockers.extend(
-                {
-                    "path": "runtime.models",
-                    "message": (
-                        f"{model!r} is a model preference, not a catalog id. "
-                        "Select a concrete model from available_models matching the user's "
-                        "parameters; do not assume the first model is cheapest."
-                        if model.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
-                        else f"configured model is unavailable: {model}"
-                    ),
-                    "code": (
-                        "model_selection_required"
-                        if model.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
-                        else "model_unavailable"
-                    ),
-                    "available_models": [
-                        {"id": model_id, **{
-                            key: entry[key] for key in (
-                                "ratioOptions", "resolutionOptions", "qualityOptions",
-                                "minDuration", "maxDuration", "supportsGenerateAudio",
-                            ) if key in entry
-                        }}
-                        for model_id, entry in catalog_by_id.items()
-                    ],
-                }
-                for model in missing
-            )
-            for node in typed_nodes:
-                model = str((node.get("data") or {}).get("model") or "").strip()
-                catalog_entry = catalog_by_id.get(model)
-                if catalog_entry is not None:
-                    blockers.extend(
-                        _workflow_node_capability_blockers(node, catalog_entry)
-                    )
         limits = _request(
-            "GET",
-            f"/api/v1/projects/{quote(project_id, safe='')}/tasks/limits",
+            "GET", f"/api/v1/projects/{quote(project_id, safe='')}/tasks/limits"
         )
-        lane_demand = {
-            "default": sum(
-                1
-                for node in nodes
-                if isinstance(node, dict)
-                and (
-                    node.get("node_type") in {"imageGenNode", "audioNode"}
-                    or (
-                        node.get("node_type")
-                        in {"textAnnotationNode", "scriptNode", "beatContextNode"}
-                        and isinstance(
-                            (node.get("data") or {}).get("workflowCatalog"), dict
-                        )
-                        and str(
-                            ((node.get("data") or {}).get("workflowCatalog") or {}).get(
-                                "recipeId"
-                            )
-                            or ""
-                        ).strip()
-                    )
-                )
-            ),
-            "video": sum(
-                1
-                for node in nodes
-                if isinstance(node, dict) and node.get("node_type") == "videoNode"
-            ),
-            "ffmpeg": sum(
-                1
-                for node in nodes
-                if isinstance(node, dict)
-                and node.get("node_type") == "videoComposeNode"
-            ),
-        }
-        if limits.get("ok") is False or not isinstance(limits.get("data"), dict):
-            checks["queue_capacity"] = "unavailable"
-            warnings.append(
-                {
-                    "path": "runtime.queue_capacity",
-                    "message": "task queue capacity could not be checked",
-                }
-            )
+    return evaluate_workflow_preflight(
+        compiled, model_responses=responses, limits=limits, runtime_available=available
+    )
+
+
+def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
+    """Thin authenticated adapter: compile and patch only on the server."""
+    project_id, canvas_id, error = _workflow_draft_scope(args)
+    if error:
+        return tool_result(error)
+    if action == "capabilities":
+        response = _request(
+            "GET", f"/projects/{project_id}/freezone/workflow-capabilities"
+        )
+        payload, error = _workflow_draft_response(response)
+        return tool_result(payload if payload is not None else error)
+    draft_id = str(args.get("draft_id") or "").strip()
+    if action == "prepare" and draft_id:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "wrong_workflow_draft_tool",
+                "error": "Use freezone_revise_workflow for an existing draft",
+                "retryable": False,
+            }
+        )
+    if action != "prepare" and not draft_id:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_draft_id_required",
+                "error": "draft_id is required",
+                "retryable": False,
+            }
+        )
+    path = _workflow_draft_api_path(project_id, canvas_id, draft_id)
+    try:
+        if action == "get":
+            response = _request("GET", path + "?view=summary")
         else:
-            capacity = limits["data"]
-            checks["queue_capacity"] = capacity
-            for lane, demand in lane_demand.items():
-                if demand <= 0:
-                    continue
-                lane_state = capacity.get(lane)
-                if not isinstance(lane_state, dict):
-                    continue
-                limit = lane_state.get("limit")
-                remaining = lane_state.get("remaining")
-                if isinstance(limit, int) and limit <= 0:
-                    blockers.append(
-                        {
-                            "path": f"runtime.queue_capacity.{lane}",
-                            "message": f"{lane} generation queue is disabled",
-                            "code": "queue_disabled",
-                        }
-                    )
-                elif isinstance(remaining, int) and remaining <= 0:
-                    warnings.append(
-                        {
-                            "path": f"runtime.queue_capacity.{lane}",
-                            "message": f"{lane} generation queue is currently full; tasks will wait",
-                        }
-                    )
-    return {
-        **base,
-        "status": "blocked" if blockers else "ready",
-        "blockers": blockers,
-        "warnings": warnings,
-        "runtime_checks": checks,
-    }
+            keys = (
+                ("intent", "plan", "bindings", "operation_id", "run_after_create")
+                if action == "prepare"
+                else ("expected_revision", "changes", "run_after_create")
+            )
+            body = {key: args[key] for key in keys if key in args}
+            body["response_view"] = "summary"
+            response = _request(
+                "POST" if action == "prepare" else "PATCH", path, body=body
+            )
+    except TimeoutError:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_operation_outcome_unknown",
+                "error": "Request timed out; inspect persisted state before retrying",
+                "draft_id": draft_id,
+                "retryable": False,
+                "next_action": (
+                    "read_current_draft"
+                    if draft_id
+                    else "inspect_operation_before_retry"
+                ),
+            }
+        )
+    payload, error = _workflow_draft_response(response)
+    if error:
+        detail = (
+            (error.get("data") or {}).get("detail")
+            if isinstance(error.get("data"), dict)
+            else None
+        )
+        if isinstance(detail, dict):
+            error = {**error, **detail, "ok": False}
+        if action in {"revise", "get"}:
+            error.setdefault("draft_id", draft_id)
+        error.setdefault("retryable", False)
+        error.setdefault(
+            "next_action",
+            "read_current_draft" if draft_id else "inspect_operation_before_retry",
+        )
+    return tool_result(payload if payload is not None else error)
+
+
+def _handle_observe_workflow_run(args: dict[str, Any], **_: Any) -> str:
+    project_id, canvas_id, error = _workflow_draft_scope(args)
+    if error:
+        return tool_result(error)
+    run_id = str(args.get("run_id") or "").strip()
+    wait_seconds = args.get("wait_seconds", 0)
+    if not run_id or type(wait_seconds) is not int or not 0 <= wait_seconds <= 20:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "invalid_workflow_observation",
+                "error": "run_id and integer wait_seconds from 0 to 20 required",
+                "retryable": False,
+            }
+        )
+    path = f"/projects/{quote(project_id, safe='')}/freezone/canvases/{quote(canvas_id, safe='')}/workflow-runs/{quote(run_id, safe='')}"
+    try:
+        response = _request(
+            "GET",
+            path,
+            query={
+                "view": "summary",
+                "wait_seconds": wait_seconds,
+                "after": str(args.get("after") or ""),
+            },
+        )
+    except TimeoutError:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_observation_unavailable",
+                "run_id": run_id,
+                "error": "Status query timed out",
+                "retryable": True,
+                "next_action": "observe_same_run",
+            }
+        )
+    payload, error = _workflow_draft_response(response)
+    return tool_result(payload if payload is not None else error)
+
+
+def _handle_get_workflow_capabilities(args: dict[str, Any], **_: Any) -> str:
+    return _handle_workflow_operation(args, action="capabilities")
+
+
+def _handle_prepare_workflow(args: dict[str, Any], **_: Any) -> str:
+    return _handle_workflow_operation(args, action="prepare")
+
+
+def _handle_revise_workflow(args: dict[str, Any], **_: Any) -> str:
+    return _handle_workflow_operation(args, action="revise")
+
+
+def _handle_get_workflow(args: dict[str, Any], **_: Any) -> str:
+    return _handle_workflow_operation(args, action="get")
 
 
 def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
@@ -5345,6 +5211,17 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 "current_revision": current_payload.get("revision"),
             }
         )
+    if "run_after_create" in args and (
+        not isinstance(args["run_after_create"], bool)
+        or args["run_after_create"] != bool(current_payload.get("run_after_create"))
+    ):
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_draft_execution_policy_changed",
+                "error": "Patch the draft and confirm its new revision to change run_after_create.",
+            }
+        )
     payload, claim_result = _workflow_draft_response(
         _request(
             "POST",
@@ -5355,6 +5232,14 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     if payload is None:
         return tool_result(claim_result)
     confirmation_task_id = str(payload.get("task_id") or "").strip()
+    if not confirmation_task_id:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_confirmation_task_missing",
+                "error": "The claimed draft has no durable task identity; no canvas commands were emitted.",
+            }
+        )
     explicit_project = str(args.get("project_id") or "").strip()
     explicit_canvas = str(args.get("canvas_id") or "").strip()
     stored_project = str(payload.get("project_id") or "").strip()
@@ -5366,6 +5251,7 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             draft_id,
             outcome="ready",
             task_id=confirmation_task_id,
+            revision=revision,
         )
         return tool_result(
             {
@@ -5381,6 +5267,7 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             draft_id,
             outcome="ready",
             task_id=confirmation_task_id,
+            revision=revision,
         )
         return tool_result(
             {
@@ -5389,9 +5276,7 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 "error": "workflow draft belongs to a different canvas",
             }
         )
-    run_after_create = _run_after_create_arg(args)
-    if run_after_create is None:
-        run_after_create = bool(payload.get("run_after_create"))
+    run_after_create = bool(payload.get("run_after_create"))
     compiled = (
         payload.get("compiled") if isinstance(payload.get("compiled"), dict) else {}
     )
@@ -5406,6 +5291,7 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             draft_id,
             outcome="ready",
             task_id=confirmation_task_id,
+            revision=revision,
         )
         return tool_result(
             {
@@ -5430,6 +5316,7 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             draft_id,
             outcome="ready",
             task_id=confirmation_task_id,
+            revision=revision,
         )
         return tool_result(built)
     if isinstance(built.get("skipped_edges"), list) and built["skipped_edges"]:
@@ -5439,6 +5326,7 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             draft_id,
             outcome="ready",
             task_id=confirmation_task_id,
+            revision=revision,
         )
         return tool_result(
             {
@@ -5455,12 +5343,17 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             }
         )
     try:
+        for command in built.get("commands") or []:
+            if command.get("type") == "create_node":
+                command.setdefault("data", {})["workflowDraftRevision"] = revision
+                command["data"]["workflowConfirmationTaskId"] = confirmation_task_id
         result = _emit_canvas_commands(
             explicit_project or stored_project or _default_project_id() or None,
             explicit_canvas or stored_canvas or _default_canvas_id() or None,
             built.get("commands"),
             allow_dynamic_workflow_batch=True,
             slim_result=True,
+            require_canvas_receipt=True,
         )
     except Exception:
         _finish_workflow_draft(
@@ -5469,6 +5362,7 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             draft_id,
             outcome="ready",
             task_id=confirmation_task_id,
+            revision=revision,
         )
         raise
     result_payload = _tool_result_payload(result)
@@ -5481,15 +5375,19 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             draft_id,
             outcome="submitted",
             task_id=confirmation_task_id,
+            revision=revision,
         )
     elif result_payload and result_payload.get("ok"):
-        outcome = "confirmed"
+        # Only the server's browser-receipt handler may confirm delivery.
+        # Its callback may race this update; confirmed state is monotonic.
+        outcome = "submitted"
         _finish_workflow_draft(
             project_id,
             canvas_id,
             draft_id,
             outcome=outcome,
             task_id=confirmation_task_id,
+            revision=revision,
         )
     else:
         _finish_workflow_draft(
@@ -5498,6 +5396,7 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             draft_id,
             outcome="ready",
             task_id=confirmation_task_id,
+            revision=revision,
         )
     return result
 
@@ -6063,6 +5962,8 @@ _WORKFLOW_RESULT_FIELDS = (
 
 _RESULT_ARRAY_FIELDS = frozenset(
     {
+        "progress",
+        "problems",
         "actions",
         "assets",
         "available_ids",
@@ -6086,6 +5987,9 @@ _RESULT_ARRAY_FIELDS = frozenset(
 )
 _RESULT_BOOLEAN_FIELDS = frozenset(
     {
+        "terminal",
+        "automatic_retry",
+        "changed",
         "allow_recommended",
         "allow_skip",
         "applied",
@@ -6117,6 +6021,7 @@ _RESULT_INTEGER_FIELDS = frozenset(
 )
 _RESULT_OBJECT_FIELDS = frozenset(
     {
+        "counts",
         "answers",
         "client_debug",
         "operations",
@@ -6125,6 +6030,8 @@ _RESULT_OBJECT_FIELDS = frozenset(
 )
 _RESULT_STRING_FIELDS = frozenset(
     {
+        "run_status",
+        "observation_token",
         "action",
         "approval_id",
         "bridge_key",
@@ -6199,6 +6106,19 @@ def _result_field_schema(field: str) -> dict[str, Any]:
 
 
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    "freezone_observe_workflow_run": (
+        "run_id",
+        "run_status",
+        "terminal",
+        "counts",
+        "total_count",
+        "progress",
+        "problems",
+        "observation_token",
+        "automatic_retry",
+        "changed",
+    ),
+    "freezone_get_workflow_capabilities": ("schema_version", "capabilities"),
     "freezone_begin_agent_product_generation": (
         "operation_id",
         "product_kind",
@@ -6366,6 +6286,27 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "freezone_get_saved_skill": ("id", "kind", "item", "available_ids"),
     "freezone_get_saved_recipe": ("id", "kind", "item", "available_ids"),
     "freezone_get_workflow_skill": ("schema_version", "skill", "recipes", "inputs"),
+    "freezone_prepare_workflow": (
+        *_WORKFLOW_RESULT_FIELDS,
+        "draft_status",
+        "last_changes",
+        "expires_at",
+        "task_id",
+    ),
+    "freezone_revise_workflow": (
+        *_WORKFLOW_RESULT_FIELDS,
+        "draft_status",
+        "last_changes",
+        "expires_at",
+        "task_id",
+    ),
+    "freezone_get_workflow": (
+        *_WORKFLOW_RESULT_FIELDS,
+        "draft_status",
+        "last_changes",
+        "expires_at",
+        "task_id",
+    ),
     "freezone_prepare_workflow_draft": _WORKFLOW_RESULT_FIELDS,
     "freezone_patch_workflow_draft": (
         *_WORKFLOW_RESULT_FIELDS,
@@ -6428,6 +6369,13 @@ _SKILL_STUDIO_FRONTEND_REQUIRED = (
 )
 
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
+    "freezone_observe_workflow_run": (
+        "run_id",
+        "run_status",
+        "terminal",
+        "observation_token",
+    ),
+    "freezone_get_workflow_capabilities": ("schema_version", "capabilities"),
     "freezone_begin_agent_product_generation": (
         "operation_id",
         "product_kind",
@@ -6468,6 +6416,9 @@ _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
 }
 
 _WORKFLOW_RESULT_TOOLS = {
+    "freezone_get_workflow",
+    "freezone_revise_workflow",
+    "freezone_prepare_workflow",
     "freezone_prepare_workflow_draft",
     "freezone_patch_workflow_draft",
     "freezone_confirm_workflow_draft",
@@ -6729,6 +6680,8 @@ def _schema(
         "required": required or [],
     }
     parameters["additionalProperties"] = not reject_unknown
+    if name == "freezone_prepare_workflow":
+        parameters["oneOf"] = [{"required": ["intent"]}, {"required": ["plan"]}]
     return {
         "name": name,
         "description": description,
@@ -7070,6 +7023,29 @@ if workflow_plan_json_schema is not None:
     _WORKFLOW_PLAN_OBJECT_SCHEMA = workflow_plan_json_schema()
 if workflow_intent_json_schema is not None:
     _WORKFLOW_INTENT_OBJECT_SCHEMA = workflow_intent_json_schema()
+
+_WORKFLOW_BINDINGS_SCHEMA = {
+    "type": "array",
+    "maxItems": 200,
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["source", "target", "usage"],
+        "properties": {
+            "source": {"type": "string"},
+            "target": {"type": "string"},
+            "usage": {
+                "type": "string",
+                "enum": ["prompt", "context", "reference", "dependency", "composition"],
+            },
+            "prompt": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Actual prompt for a planning/context bridge; never invent or overwrite the source role.",
+            },
+        },
+    },
+}
 
 _SKILL_STUDIO_OPTION_SCHEMA = {
     "type": "object",
@@ -8383,6 +8359,79 @@ TOOLS = (
         _handle_get_workflow_skill,
     ),
     (
+        "freezone_observe_workflow_run",
+        _schema(
+            "freezone_observe_workflow_run",
+            "Reconcile and observe the same persisted workflow run. Returns compact progress and recovery decisions. Optional bounded wait replaces repeated agent polling; pass the previous observation_token as after. This tool never submits or retries media generation.",
+            {
+                **_SCOPE_PROPS,
+                "run_id": {"type": "string"},
+                "wait_seconds": {"type": "integer", "minimum": 0, "maximum": 20},
+                "after": {"type": "string", "maxLength": 64},
+            },
+            ["run_id"],
+            reject_unknown=True,
+        ),
+        _handle_observe_workflow_run,
+    ),
+    (
+        "freezone_get_workflow_capabilities",
+        _schema(
+            "freezone_get_workflow_capabilities",
+            "Discover backend workflow operations and confirmation adapter before third-party integration. Headless execution is not supported by the current canvas adapter.",
+            {**_SCOPE_PROPS},
+            [],
+            reject_unknown=True,
+        ),
+        _handle_get_workflow_capabilities,
+    ),
+    (
+        "freezone_prepare_workflow",
+        _schema(
+            "freezone_prepare_workflow",
+            "Prepare a persisted workflow using server-owned compilation. Provide exactly one of intent or plan; optional bindings declare prompt/context/reference/dependency/composition usage. A planning-to-generator prompt binding requires actual prompt text and preserves the original planning role. Returns compact preview; does not create canvas nodes or execute. Follow normal product admission and confirm the returned revision via freezone_confirm_workflow_draft.",
+            {
+                **_SCOPE_PROPS,
+                "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
+                "plan": _WORKFLOW_PLAN_OBJECT_SCHEMA,
+                "bindings": _WORKFLOW_BINDINGS_SCHEMA,
+                "operation_id": {"type": "string"},
+                **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
+            },
+            ["operation_id"],
+            reject_unknown=True,
+        ),
+        _handle_prepare_workflow,
+    ),
+    (
+        "freezone_revise_workflow",
+        _schema(
+            "freezone_revise_workflow",
+            "Revise a persisted draft with one server request. Send draft_id, expected_revision and only changes. Compact drafts accept changed intent fields. Exact plans accept step_updates [{node_id,prompt?,settings?}] or bindings. Never silently adopt a conflicting revision; query and review it first. No canvas execution.",
+            {
+                **_SCOPE_PROPS,
+                "draft_id": {"type": "string"},
+                "expected_revision": {"type": "integer"},
+                "changes": {"type": "object"},
+                **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
+            },
+            ["draft_id", "expected_revision", "changes"],
+            reject_unknown=True,
+        ),
+        _handle_revise_workflow,
+    ),
+    (
+        "freezone_get_workflow",
+        _schema(
+            "freezone_get_workflow",
+            "Read compact persisted draft status and preview after preparation, revision, or confirmation timeout. Confirmed refers to canvas receipt, not completed media generation. Keep the same draft identity; do not repeat creation or confirmation while submitted/confirming.",
+            {**_SCOPE_PROPS, "draft_id": {"type": "string"}},
+            ["draft_id"],
+            reject_unknown=True,
+        ),
+        _handle_get_workflow,
+    ),
+    (
         "freezone_prepare_workflow_draft",
         _schema(
             "freezone_prepare_workflow_draft",
@@ -8449,7 +8498,8 @@ TOOLS = (
             (
                 "Create the exact persisted workflow draft after the user confirms its preview. "
                 "Requires the shown revision, prevents duplicate confirmation, and delegates "
-                "node creation, approval, and optional execution to the deterministic canvas path."
+                "node creation, approval, and optional execution to the deterministic canvas path. "
+                "Execution policy is frozen in the draft; patch it before confirming a policy change."
             ),
             {
                 **_SCOPE_PROPS,

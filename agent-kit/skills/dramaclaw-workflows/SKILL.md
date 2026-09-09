@@ -131,8 +131,10 @@ including `480P` whenever the schema lists it.
    and the normalized inputs before authoring the result. These Skill identities must match the
    later compiled result.
 4. For a normal workflow, submit one compact `freezone_workflow_intent.v1` and the admitted
-   `operation_id` to `freezone_prepare_workflow_draft`.
-5. Present the returned preview. Adjust it only with `freezone_patch_workflow_draft`.
+   `operation_id` to `freezone_prepare_workflow`. The backend compiles and validates it; do not
+   run a separate compile first.
+5. Present the returned preview. Adjust it with `freezone_revise_workflow`, sending the same
+   `draft_id`, `expected_revision`, and only changed fields.
 6. After explicit user confirmation, call `freezone_confirm_workflow_draft` once with the exact
    `draft_id` and `revision`.
 
@@ -145,11 +147,25 @@ also matches. For error recovery, read
 When packaging this Skill for another agent host, read
 [references/integration.md](references/integration.md).
 
+## Server-owned workflow operations
+
+On third-party hosts, call `freezone_get_workflow_capabilities` once before using the write path.
+The `workflow-operations.v1` capability provides prepare, revise, input binding, and compact query.
+Use `freezone_prepare_workflow(plan=...)` for an exact topology; preserve its complete graph and
+constraints. Use `freezone_get_workflow(draft_id=...)` to inspect a timeout or pending confirmation.
+See [references/workflow-operations.md](references/workflow-operations.md) for binding and patch fields.
+Legacy adapters may use `freezone_prepare_workflow_draft`, `freezone_prepare_workflow_plan_draft`,
+and `freezone_patch_workflow_draft`; do not fall back to another write after an ambiguous timeout.
+
 ## Execution and completion
 
 - When graph creation or draft confirmation uses `run_after_create=true`, its approved batch already
   contains the only `run_workflow` request. Do not call `freezone_run_workflow` again in the same
   turn. Start another run only after a terminal failure and a later explicit user retry.
+- Observe an existing run with `freezone_observe_workflow_run(run_id=..., wait_seconds=20)`;
+  reuse the returned `observation_token` as `after` for a later bounded wait. The backend reconciles
+  tasks and artifacts and returns compact progress and recovery decisions. A query timeout permits
+  another read of the same run, not resubmission of generation.
 - To continue or resume an existing workflow, call `freezone_run_workflow`; do not traverse and run
   nodes individually.
 - Freezone speech uses custom/reference voices only; never select or generate with a preset/system

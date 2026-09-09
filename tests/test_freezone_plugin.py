@@ -188,6 +188,7 @@ def _install_minimal_builtin_catalog(monkeypatch, catalog) -> None:
 
 def _install_workflow_draft_api(monkeypatch, plugin, project_dir: Path) -> None:
     from novelvideo.freezone.workflow_drafts import (
+        bind_workflow_draft_task,
         claim_workflow_draft_confirmation,
         create_workflow_draft,
         finish_workflow_draft_confirmation,
@@ -264,6 +265,14 @@ def _install_workflow_draft_api(monkeypatch, plugin, project_dir: Path) -> None:
                 draft_id=draft_id,
                 revision=int(body["revision"]),
             )
+            if draft is not None:
+                draft = bind_workflow_draft_task(
+                    project_dir=project_dir,
+                    canvas_id=canvas_id,
+                    draft_id=draft_id,
+                    task_id=f"task-{draft_id}-{body['revision']}",
+                    root_task_id=f"task-{draft_id}-{body['revision']}",
+                )
             return {"ok": True, "data": draft} if draft is not None else error
         if method == "POST" and suffix == "finish":
             draft = finish_workflow_draft_confirmation(
@@ -271,6 +280,8 @@ def _install_workflow_draft_api(monkeypatch, plugin, project_dir: Path) -> None:
                 canvas_id=canvas_id,
                 draft_id=draft_id,
                 outcome=body["outcome"],
+                expected_task_id=body.get("task_id", ""),
+                expected_revision=body.get("revision"),
             )
             return {"ok": True, "data": draft}
         raise AssertionError((method, path, body))
@@ -1142,7 +1153,7 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
     assert confirmed["ok"] is True
     assert len(emitted) == 1
     assert emitted[0][0:2] == ("project-a", "canvas-a")
-    assert repeated["status"] == "workflow_draft_already_confirmed"
+    assert repeated["status"] == "workflow_draft_confirmation_in_progress"
     stale_output = _assert_real_mcp_output(
         plugin, "freezone_patch_workflow_draft", stale_patch
     )
@@ -5106,3 +5117,215 @@ def test_freezone_plugin_register_call_exposes_node_tools_on_hermes_acp():
     assert by_name["freezone_create_node"]["toolset"] == "hermes-acp"
     assert by_name["freezone_emit_canvas_command"]["toolset"] == "hermes-acp"
     assert len(calls) == len(plugin.TOOLS)
+
+
+@pytest.mark.parametrize("requested", [True, "false", 1])
+def test_confirm_draft_cannot_expand_execution_policy(monkeypatch, requested):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_workflow_draft_dependencies_available", lambda: True)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append(method)
+        assert method == "GET", "Policy mismatch must fail before claim or dispatch"
+        return {"ok": True, "data": {"revision": 1, "run_after_create": False}}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_confirm_workflow_draft(
+        {
+            "draft_id": "workflow_draft_example",
+            "revision": 1,
+            "run_after_create": requested,
+        }
+    )
+    assert result["status"] == "workflow_draft_execution_policy_changed"
+    assert calls == ["GET"]
+
+
+def test_workflow_requires_browser_receipt_even_in_direct_apply_mode(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin, "_resolve_canvas_scope_for_write", lambda *_: ("p", "c", None)
+    )
+    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_: None)
+    monkeypatch.setattr(
+        plugin, "_external_generation_parameter_preflight", lambda *_: None
+    )
+    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: True)
+    monkeypatch.setattr(plugin, "_external_mcp_agent_enabled", lambda: True)
+    monkeypatch.setattr(
+        plugin, "_use_frontend_default_for_recommended_models", lambda *_: None
+    )
+    monkeypatch.setattr(
+        plugin, "_dispatch_mcp_approved_frontend_commands", lambda **_: "browser"
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_direct_apply_canvas_commands",
+        lambda *_, **__: pytest.fail("direct write"),
+    )
+    result = plugin._emit_canvas_commands(
+        "p",
+        "c",
+        [{"type": "create_node"}],
+        require_canvas_receipt=True,
+    )
+    assert result == "browser"
+
+
+@pytest.mark.parametrize(
+    "action,args,method",
+    [
+        ("prepare", {"intent": {"skill_id": "sample"}, "operation_id": "op"}, "POST"),
+        (
+            "revise",
+            {
+                "draft_id": "draft_a",
+                "expected_revision": 2,
+                "changes": {"title": "new"},
+            },
+            "PATCH",
+        ),
+        ("get", {"draft_id": "draft_a"}, "GET"),
+    ],
+)
+def test_server_workflow_adapter_makes_one_request(monkeypatch, action, args, method):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "tool_result", lambda value: json.dumps(value))
+    calls = []
+    monkeypatch.setattr(
+        plugin, "_workflow_draft_scope", lambda _: ("proj_demo", "canvas_demo", None)
+    )
+
+    def request(verb, path, **kwargs):
+        calls.append((verb, path, kwargs))
+        return {
+            "ok": True,
+            "data": {
+                "ok": True,
+                "status": "workflow_draft_ready",
+                "draft_id": "draft_a",
+                "revision": 2,
+                "preview": {},
+            },
+        }
+
+    monkeypatch.setattr(plugin, "_request", request)
+    monkeypatch.setattr(
+        plugin,
+        "compile_workflow_intent",
+        lambda _: pytest.fail("adapter must not compile"),
+    )
+    result = json.loads(plugin._handle_workflow_operation(args, action=action))
+    assert result["ok"]
+    assert len(calls) == 1
+    assert calls[0][0] == method
+    if action != "get":
+        assert calls[0][2]["body"]["response_view"] == "summary"
+        assert "compiled" not in calls[0][2]["body"]
+    name = {
+        "prepare": "freezone_prepare_workflow",
+        "revise": "freezone_revise_workflow",
+        "get": "freezone_get_workflow",
+    }[action]
+    Draft202012Validator(plugin._output_schema(name)).validate(result)
+
+
+def test_workflow_adapter_preserves_structured_validation_error(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "tool_result", lambda value: json.dumps(value))
+    monkeypatch.setattr(
+        plugin, "_workflow_draft_scope", lambda _: ("proj_demo", "canvas_demo", None)
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_a, **_kw: {
+            "ok": False,
+            "status_code": 400,
+            "data": {
+                "detail": {
+                    "status": "invalid_workflow_change",
+                    "error": "invalid edge",
+                    "retryable": False,
+                    "errors": [{"path": "edges[0]"}],
+                    "next_action": "correct_reported_fields",
+                }
+            },
+        },
+    )
+    result = json.loads(
+        plugin._handle_revise_workflow(
+            {"draft_id": "draft_a", "expected_revision": 1, "changes": {}}
+        )
+    )
+    assert result["retryable"] is False
+    assert result["next_action"] == "correct_reported_fields"
+    assert result["errors"][0]["path"] == "edges[0]"
+
+
+def test_workflow_timeout_requires_query_instead_of_blind_retry(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "tool_result", lambda value: value)
+    monkeypatch.setattr(
+        plugin, "_workflow_draft_scope", lambda _: ("proj_demo", "canvas_demo", None)
+    )
+
+    def timeout(*_args, **_kwargs):
+        raise TimeoutError()
+
+    monkeypatch.setattr(plugin, "_request", timeout)
+    result = plugin._handle_revise_workflow(
+        {"draft_id": "draft_a", "expected_revision": 1, "changes": {"title": "new"}}
+    )
+    assert result["status"] == "workflow_operation_outcome_unknown"
+    assert result["retryable"] is False
+    assert result["next_action"] == "read_current_draft"
+    assert result["draft_id"] == "draft_a"
+
+
+def test_observe_run_uses_one_read_and_matches_mcp_contract(monkeypatch):
+    from novelvideo.freezone.workflow_observation import summarize_workflow_run
+
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "tool_result", lambda value: value)
+    monkeypatch.setattr(
+        plugin, "_workflow_draft_scope", lambda _: ("proj_demo", "default", None)
+    )
+    calls = []
+    data = summarize_workflow_run(
+        {"run_id": "run_1", "status": "running", "actions": []}
+    )
+    data["changed"] = False
+
+    def request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return {"ok": True, "data": data}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_observe_workflow_run(
+        {"run_id": "run_1", "wait_seconds": 20, "after": "old-token"}
+    )
+    assert len(calls) == 1
+    assert calls[0][0] == "GET"
+    assert calls[0][2]["query"]["after"] == "old-token"
+    Draft202012Validator(
+        plugin._output_schema("freezone_observe_workflow_run")
+    ).validate(result)
+
+
+def test_observation_timeout_only_retries_read(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "tool_result", lambda value: value)
+    monkeypatch.setattr(
+        plugin, "_workflow_draft_scope", lambda _: ("proj_demo", "default", None)
+    )
+
+    def timeout(*_args, **_kwargs):
+        raise TimeoutError()
+
+    monkeypatch.setattr(plugin, "_request", timeout)
+    result = plugin._handle_observe_workflow_run({"run_id": "run_1"})
+    assert result["next_action"] == "observe_same_run"
+    assert result["retryable"] is True

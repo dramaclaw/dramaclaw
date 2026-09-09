@@ -709,14 +709,14 @@ def _bridge_dir_for_pending_key(username: str, payload: Any) -> Any:
     return candidates[0]
 
 
-def _pending_workflow_draft_id(
+def _pending_workflow_draft_receipt(
     username: str,
     payload: CanvasCommandToolResultIn,
-) -> str:
-    """Read the draft identity before resolving (and removing) its pending bridge file."""
+) -> dict[str, Any] | None:
+    """Recover task/version binding from the pending command, never the callback body."""
     key = payload.bridge_key.strip()
     if not key:
-        return ""
+        return None
     directory = _bridge_dir_for_pending_key(username, payload)
     pending = _load_pending_canvas_command(directory / f"{key}.pending.json")
     commands = (
@@ -725,30 +725,44 @@ def _pending_workflow_draft_id(
         else None
     )
     if not isinstance(commands, list):
-        return ""
-    identities = {
-        str(command.get("data", {}).get("workflowInstanceId") or "").strip()
-        for command in commands
-        if isinstance(command, dict)
-        and command.get("type") == "create_node"
-        and isinstance(command.get("data"), dict)
-    }
-    identities.discard("")
+        return None
+    identities = set()
+    for command in commands:
+        if not isinstance(command, dict) or command.get("type") != "create_node":
+            continue
+        data = command.get("data")
+        if not isinstance(data, dict):
+            return None
+        draft_id = data.get("workflowInstanceId")
+        revision = data.get("workflowDraftRevision")
+        task_id = data.get("workflowConfirmationTaskId")
+        if (
+            not isinstance(draft_id, str)
+            or not draft_id.startswith("workflow_draft_")
+            or isinstance(revision, bool)
+            or not isinstance(revision, int)
+            or revision <= 0
+            or not isinstance(task_id, str)
+            or not task_id.strip()
+        ):
+            return None
+        identities.add((draft_id, revision, task_id))
     if len(identities) != 1:
-        return ""
-    identity = next(iter(identities))
-    return identity if identity.startswith("workflow_draft_") else ""
+        return None
+    draft_id, revision, task_id = identities.pop()
+    return {"draft_id": draft_id, "revision": revision, "task_id": task_id}
 
 
 async def _record_workflow_draft_canvas_result(
     *,
     user: dict[str, Any],
     payload: CanvasCommandToolResultIn,
-    draft_id: str,
+    draft_receipt: dict[str, Any] | None,
     resolved: dict[str, Any],
 ) -> None:
-    if not draft_id:
+    if not draft_receipt:
         return
+    draft_id = draft_receipt["draft_id"]
     project_id = str(payload.project_id or "").strip()
     canvas_id = str(payload.canvas_id or "").strip()
     if not project_id or not canvas_id:
@@ -780,6 +794,8 @@ async def _record_workflow_draft_canvas_result(
             return
         task_id = str(draft.get("task_id") or "")
         revision = int(draft.get("revision") or 0)
+        if task_id != draft_receipt["task_id"] or revision != draft_receipt["revision"]:
+            return
         task_state = await asyncio.to_thread(
             get_task_manager().get_task_for_project,
             project_ctx,
@@ -805,6 +821,7 @@ async def _record_workflow_draft_canvas_result(
             draft_id=draft_id,
             outcome="confirmed" if resolved.get("ok") else "ready",
             expected_task_id=task_id,
+            expected_revision=revision,
         )
     except Exception:
         logger.exception(
@@ -1384,13 +1401,17 @@ async def resolve_canvas_command_tool_result(
     payload: CanvasCommandToolResultIn,
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
+    if user.get("credential_kind") == "agent_session":
+        raise HTTPException(
+            403, "canvas execution receipts must come from the browser session"
+        )
     username = str(user["username"])
-    workflow_draft_id = _pending_workflow_draft_id(username, payload)
+    workflow_draft_receipt = _pending_workflow_draft_receipt(username, payload)
     resolved = _resolve_canvas_command_tool_result_payload(payload, username=username)
     await _record_workflow_draft_canvas_result(
         user=user,
         payload=payload,
-        draft_id=workflow_draft_id,
+        draft_receipt=workflow_draft_receipt,
         resolved=resolved,
     )
     if payload.cancelled or payload.canvas_apply_status == "cancelled_by_user":
@@ -1528,18 +1549,7 @@ async def _receive_bridge_results_during_turn(
         event_type = str(raw.get("type") or "")
         if event_type == "canvas.command.result":
             payload = CanvasCommandToolResultIn.model_validate(raw)
-            workflow_draft_id = _pending_workflow_draft_id(username, payload)
-            resolved = _resolve_canvas_command_tool_result_payload(
-                payload, username=username
-            )
-            await _record_workflow_draft_canvas_result(
-                user=user,
-                payload=payload,
-                draft_id=workflow_draft_id,
-                resolved=resolved,
-            )
-            if payload.cancelled or payload.canvas_apply_status == "cancelled_by_user":
-                await _close_canvas_command_worker(username, payload)
+            await resolve_canvas_command_tool_result(payload, user)
             continue
 
         if event_type == "canvas.context.result":
@@ -3833,12 +3843,7 @@ async def chat_ws(websocket: WebSocket) -> None:
 
             if event_type == "canvas.command.result":
                 payload = CanvasCommandToolResultIn.model_validate(raw)
-                _resolve_canvas_command_tool_result_payload(payload, username=username)
-                if (
-                    payload.cancelled
-                    or payload.canvas_apply_status == "cancelled_by_user"
-                ):
-                    await _close_canvas_command_worker(username, payload)
+                await resolve_canvas_command_tool_result(payload, user)
                 continue
 
             if event_type == "canvas.context.result":
