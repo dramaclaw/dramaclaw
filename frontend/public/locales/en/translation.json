@@ -2751,7 +2751,9 @@
       "freezone_script_to_video_plan": "Script to video plan",
       "freezone_audio_speech": "Generate speech",
       "freezone_audio_eleven_music": "Generate music",
-      "freezone_image_to_3gs": "Image to 3D world"
+      "freezone_image_to_3gs": "Image to 3D world",
+      "freezone_image_vectorize": "Generate vector image",
+      "freezone_image_animate_gif": "Convert animated GIF"
     },
     "cancelRunning": {
       "title": "Stop task",

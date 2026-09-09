@@ -2751,7 +2751,9 @@
       "freezone_script_to_video_plan": "脚本转视频计划",
       "freezone_audio_speech": "生成语音",
       "freezone_audio_eleven_music": "生成音乐",
-      "freezone_image_to_3gs": "图片转世界"
+      "freezone_image_to_3gs": "图片转世界",
+      "freezone_image_vectorize": "生成矢量图",
+      "freezone_image_animate_gif": "转换动态图 GIF"
     },
     "cancelRunning": {
       "title": "终止任务",
