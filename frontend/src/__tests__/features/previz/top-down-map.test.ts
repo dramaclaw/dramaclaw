@@ -19,6 +19,14 @@ function objectAt(x: number, y: number, z: number): PrevizObject {
   return { ...created, transform: { ...created.transform, position: [x, y, z] } };
 }
 
+/**
+ * 带一个说得出口的 id 的对象。轮廓与对象是按 id 对上的，而 `createPrevizObject` 发的 id
+ * 随机，测试里写不出期望值。
+ */
+function objectWithId(id: string, x: number, z: number): PrevizObject {
+  return { ...objectAt(x, 1, z), id };
+}
+
 /** 默认地块的边长（12 m），下面好几条用例要拿它算「最小尺度」。 */
 const DEFAULT_SPAN =
   PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.maxX - PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.minX;
@@ -97,6 +105,44 @@ describe('sceneTopDownBounds', () => {
   it('falls back to the default ground when every object is unusable', () => {
     expect(sceneTopDownBounds([objectAt(NaN, 1, 0), objectAt(0, 1, Infinity)])).toEqual(
       PREVIZ_TOP_DOWN_DEFAULT_BOUNDS,
+    );
+  });
+
+  it("frames the whole footprint, not just the object's origin", () => {
+    // 一件原点在 (0, 0)、却向 +X 铺开 10 m 的布景。只看原点的话取景框就是默认那块
+    // ±6 m 的地，布景的右半边整个在画面外——「地图上看不出道具在哪」的另一半。
+    const bounds = sceneTopDownBounds(
+      [objectWithId('set', 0, 0)],
+      [{ id: 'set', minX: 0, maxX: 10, minZ: -1, maxZ: 1 }],
+    );
+
+    // x 上框的是 [0, 10] 再各留 2 m；z 上轮廓只有 2 m 宽，留边后仍不足 12 m 的最小
+    // 尺度，两头对称撑开回 ±6。
+    expect(bounds).toEqual({ minX: -2, maxX: 12, minZ: -6, maxZ: 6 });
+  });
+
+  it('ignores a footprint whose object is not in the scene', () => {
+    // 轮廓是渲染器另外量的一份快照，对象可能已经被删了。多出来的那条不该把取景框撑大：
+    // 那会让画面缩到看不清，而撑大它的那件东西根本画不出来。
+    const objects = [objectWithId('a', 0, 0)];
+    expect(
+      sceneTopDownBounds(objects, [{ id: 'ghost', minX: 0, maxX: 100, minZ: 0, maxZ: 100 }]),
+    ).toEqual(sceneTopDownBounds(objects));
+  });
+
+  it('ignores a footprint with a non-finite edge', () => {
+    // 空 Box3 的初值就是 ±Infinity。渲染器那边已经筛过一道，这里再筛一道：一条
+    // Infinity 进了取景计算，`topDownView` 的 pixelsPerMeter 会算成 0，整张图缩成一点。
+    const objects = [objectWithId('a', 0, 0)];
+    expect(
+      sceneTopDownBounds(objects, [{ id: 'a', minX: 0, maxX: Infinity, minZ: 0, maxZ: 1 }]),
+    ).toEqual(sceneTopDownBounds(objects));
+  });
+
+  it('still frames a scene when no footprints are given at all', () => {
+    // 老调用方只传一个参数，行为必须逐字不变。
+    expect(sceneTopDownBounds([objectAt(3, 1, 4)])).toEqual(
+      sceneTopDownBounds([objectAt(3, 1, 4)], []),
     );
   });
 });

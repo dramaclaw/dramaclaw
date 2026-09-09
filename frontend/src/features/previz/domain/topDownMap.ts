@@ -21,6 +21,25 @@ export interface PrevizTopDownBounds {
   readonly maxZ: number;
 }
 
+/**
+ * 一件东西在地面上占的那块地，世界坐标、米。
+ *
+ * 由渲染器量出来（见 `PrevizRenderer.propFootprints`），因为道具的尺寸只活在 three 里：
+ * `PropLoader` 刻意不做归一化缩放（替用户猜「一把椅子该多大」会把按米建模的家具缩成
+ * 模型玩具），`domain/scene.ts` 的 `PrevizProp` 因此没有任何一个字段说得出它多大。这个
+ * 类型就是那份测量结果穿过 domain 层时的形状——本模块不认识 three，只认这四个数。
+ *
+ * 四条边取的是世界**轴对齐**包围盒在 XZ 上的投影，不是真实剪影：一张转了 30° 的长桌
+ * 会被记成把它整个裹住的那个正矩形，比真形大一圈。这是有意的放大，别把它当精确轮廓。
+ */
+export interface PrevizTopDownFootprint {
+  readonly id: string;
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minZ: number;
+  readonly maxZ: number;
+}
+
 /** 默认地块的半边长，米。 */
 const DEFAULT_HALF_M = 6;
 
@@ -98,6 +117,9 @@ function expandToMinSpan(min: number, max: number, minSpan: number): [number, nu
  *
  * 只读 x / z：y 是高度，俯视图上看不见。
  *
+ * `footprints` 是可选的第二份输入（见 [PrevizTopDownFootprint]），给了就连同那几块地
+ * 一起框。默认空数组，只传一个参数的老调用点行为逐字不变。
+ *
  * **框哪些对象由调用方决定**：这里收下什么就框什么，四种 `PrevizObject` 一视同仁。
  * 一台退到 z = 60 的摄影机会把整块地撑到六十米开外，人物于是全挤在画面一角——想只按
  * 人物取景，调用方先 filter 再传进来。
@@ -112,7 +134,10 @@ function expandToMinSpan(min: number, max: number, minSpan: number): [number, nu
  * 一个能用的对象都没有时回到默认地块。这条分支是必需的，不是形式主义：min/max 的初值
  * 是 ±Infinity，留边之后仍然是 ±Infinity，中心 `(Infinity + -Infinity) / 2` 是 NaN。
  */
-export function sceneTopDownBounds(objects: readonly PrevizObject[]): PrevizTopDownBounds {
+export function sceneTopDownBounds(
+  objects: readonly PrevizObject[],
+  footprints: readonly PrevizTopDownFootprint[] = [],
+): PrevizTopDownBounds {
   let minX = Infinity;
   let maxX = -Infinity;
   let minZ = Infinity;
@@ -126,6 +151,32 @@ export function sceneTopDownBounds(objects: readonly PrevizObject[]): PrevizTopD
     maxX = Math.max(maxX, x);
     minZ = Math.min(minZ, z);
     maxZ = Math.max(maxZ, z);
+  }
+
+  // 轮廓另算一轮，因为它跟位置回答的不是同一件事：位置只贡献一个点，而一间 12 m 的
+  // 布景真正占的是它铺开的那一整块。不把这块地累加进来，取景框就框不住它——那正是
+  // 「地图上看不出道具在哪」的另一半。
+  const ids = new Set(objects.map((object) => object.id));
+  for (const footprint of footprints) {
+    // 轮廓是渲染器另外量的一份快照，与这里收到的 `objects` 不保证同一时刻：对象可能
+    // 已经被删了。让一条对不上号的轮廓撑大取景，画面会缩到看不清，而撑大它的那件
+    // 东西一笔都画不出来——用户只看到整张图莫名其妙变小了。
+    if (!ids.has(footprint.id)) continue;
+    // 空 `Box3` 的初值就是 ±Infinity。渲染器那边已经筛过一道，这里再筛一道：这个函数
+    // 是导出的纯函数，调用方不止一个；一条 Infinity 混进来，跨度就是 Infinity，
+    // `topDownView` 算出的 pixelsPerMeter 是 0，整张图缩成一个像素点。
+    if (
+      !Number.isFinite(footprint.minX) ||
+      !Number.isFinite(footprint.maxX) ||
+      !Number.isFinite(footprint.minZ) ||
+      !Number.isFinite(footprint.maxZ)
+    ) {
+      continue;
+    }
+    minX = Math.min(minX, footprint.minX);
+    maxX = Math.max(maxX, footprint.maxX);
+    minZ = Math.min(minZ, footprint.minZ);
+    maxZ = Math.max(maxZ, footprint.maxZ);
   }
 
   // 一次比较就能认出「什么都没累加进来」：只有初值那一对满足 min > max。
