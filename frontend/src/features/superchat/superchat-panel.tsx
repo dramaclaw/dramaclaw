@@ -2499,7 +2499,7 @@ export function SuperChatPanel({
 }: SuperChatPanelProps = {}) {
   const { t } = useTranslation();
   const params = useParams({ strict: false }) as { project?: string };
-  const username = useAuthStore((s) => s.username);
+  const displayName = useAuthStore((s) => s.displayName);
   const [draft, setDraft] = useState("");
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -2538,7 +2538,7 @@ export function SuperChatPanel({
   const taskEventBus = useEventBus();
   const chat = useSuperChat({
     project: params.project,
-    displayName: username || "SuperTale",
+    displayName: displayName || "SuperTale",
   });
   const isChatInitializing = !chat.historyReady && chat.messages.length === 0 && (chat.connecting || chat.connected);
 

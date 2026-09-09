@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 
 import pytest
+
+
 import respx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -66,6 +68,36 @@ from novelvideo.newapi_provisioner import (
 )
 
 
+@pytest.mark.parametrize("failures", [1, 3])
+def test_settings_initialization_retries_lock_and_closes_connections(
+    monkeypatch, tmp_path, failures
+):
+    import sqlite3
+    from novelvideo import model_gateway_settings as settings
+
+    monkeypatch.setattr(settings, "_settings_db_path", lambda: tmp_path / "settings.db")
+    configure = settings.configure_sqlite_connection
+    connections = []
+
+    def contend_on_journal_mode(conn):
+        connections.append(conn)
+        if len(connections) <= failures:
+            raise sqlite3.OperationalError("database is locked")
+        configure(conn)
+
+    monkeypatch.setattr(settings, "configure_sqlite_connection", contend_on_journal_mode)
+    if failures == 1:
+        assert settings._read_all() == {}
+        assert len(connections) == 2
+    else:
+        with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+            settings._read_all()
+        assert len(connections) == 3
+    for conn in connections:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            conn.execute("SELECT 1")
+
+
 def _newer_bundled_catalog_version(offset: int = 1) -> str:
     bundled = json.loads(
         Path(model_gateway_settings.__file__)
@@ -75,6 +107,31 @@ def _newer_bundled_catalog_version(offset: int = 1) -> str:
     parts = str(bundled["catalogVersion"]).split(".")
     parts[-1] = str(int(parts[-1]) + offset)
     return ".".join(parts)
+
+
+def test_bundled_catalog_includes_seedance_25_capabilities():
+    bundled = json.loads(
+        Path(model_gateway_settings.__file__)
+        .with_name("official_media_models.json")
+        .read_text(encoding="utf-8")
+    )
+
+    model = bundled["mediaModels"]["seedance-2.5"]
+    assert model["upstreamModel"] == "seedance-2.5"
+    assert model["mediaType"] == "video"
+    assert model["config"]["supportedModes"] == [
+        "text_to_video",
+        "image_reference",
+        "all_reference",
+        "video_edit",
+        "first_last_frame",
+    ]
+    assert model["config"]["referenceImageMax"] == 30
+    assert model["config"]["referenceVideoMax"] == 10
+    assert model["config"]["referenceAudioMax"] == 10
+    assert model["config"]["maxDuration"] == 30
+    assert model["config"]["referenceVideoTotalMaxSeconds"] == 30
+    assert model["config"]["referenceAudioTotalMaxSeconds"] == 30
 
 
 def test_generic_comfyui_i2v_defaults_to_widescreen():
@@ -3324,7 +3381,7 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     videos = get_official_media_model_catalog("video")
 
     assert len(images) == 6
-    assert len(videos) == 10
+    assert len(videos) == 11
     assert [entry["id"] for entry in videos[:2]] == [
         "wan3.0-video-prime",
         "wan3.0-video",
@@ -3333,6 +3390,10 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     assert wan["referenceFileMax"] == 1
     assert wan["referenceLinkMax"] == 1
     assert "pdf" in wan["referenceFileTypes"]
+    seedance_25 = next(entry for entry in videos if entry["id"] == "seedance-2.5")
+    assert seedance_25["apiModel"] == "newapi_seedance-2.5"
+    assert seedance_25["resolutionOptions"] == ["480p", "720p", "1080p"]
+    assert seedance_25["ratioOptions"][-1] == "auto"
     seedream = next(entry for entry in images if entry["id"] == "seedream-5.0-pro")
     assert seedream["gatewayModel"] == "seedream-5.0-pro"
     assert seedream["resolutionOptions"] == ["1k", "2k"]

@@ -11,6 +11,11 @@ import { Header } from "@/components/layout/header";
 const runtimeState = vi.hoisted(() => ({ authRequired: true, isCe: false }));
 const authState = vi.hoisted(() => ({ username: "local", logout: vi.fn() }));
 const resetUserSessionStateMock = vi.hoisted(() => vi.fn());
+const securityState = vi.hoisted(() => ({
+  data: undefined as
+    | undefined
+    | { password_configured: boolean; phone: string | null; phone_masked: string | null },
+}));
 const brandingState = vi.hoisted(() => ({
   enabled: null as boolean | null,
   data: undefined as undefined | {
@@ -31,6 +36,10 @@ vi.mock("@/lib/runtime-config", () => ({
 
 vi.mock("@/lib/queries/model-gateway", () => ({
   useModelGatewayConfig: () => ({ data: undefined }),
+}));
+
+vi.mock("@/lib/queries/auth", () => ({
+  useAccountSecurity: () => securityState,
 }));
 
 vi.mock("@/lib/queries/org-branding", () => ({
@@ -63,6 +72,7 @@ vi.mock("react-i18next", () => ({
         "header.notifications": "Announcement Center",
         "header.account.changeAvatar": "Change avatar",
         "header.account.changePassword": "Change password",
+        "header.account.setPassword": "Set password",
         "header.account.selectLanguage": "Select language",
         "header.account.languageChinese": "Chinese",
         "header.account.languageEnglish": "English",
@@ -142,6 +152,7 @@ describe("Header runtime gating", () => {
     resetUserSessionStateMock.mockReset();
     brandingState.enabled = null;
     brandingState.data = undefined;
+    securityState.data = undefined;
   });
 
   it("reads branding only for an authenticated EE session and renders it in the home link", () => {
@@ -178,6 +189,20 @@ describe("Header runtime gating", () => {
 
     expect(await screen.findByText("Log out")).toBeInTheDocument();
     expect(screen.getByText("Change password")).toBeInTheDocument();
+  });
+
+  it("shows a masked phone and first-password action for a passwordless account", async () => {
+    securityState.data = {
+      password_configured: false,
+      phone: "+8613800138000",
+      phone_masked: "138****8000",
+    };
+    renderHeader();
+
+    fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
+
+    expect(await screen.findByText("138****8000")).toBeInTheDocument();
+    expect(screen.getByText("Set password")).toBeInTheDocument();
   });
 
   it("moves the announcement entry from the header actions into the account panel", async () => {

@@ -377,6 +377,7 @@ class FakeAgent:
         self.by_label = by_label
         self.fail_labels = set(fail_labels)
         self.seen = []
+        self.prompts = []
 
     async def run(self, prompt: str):
         label = next(
@@ -384,6 +385,7 @@ class FakeAgent:
             "",
         )
         self.seen.append(label)
+        self.prompts.append(prompt)
         if label in self.fail_labels:
             raise RuntimeError("boom")
         return SimpleNamespace(
@@ -405,6 +407,34 @@ async def test_extraction_runs_over_every_chunk():
     )
     merged, _ = await extract_characters_from_chunks(chunks, agent=agent, adjudicate=False)
     assert {item.name for item in merged} == {"林默", "苏晴"}
+
+
+async def test_english_extraction_requests_english_descriptions():
+    chunk = _chunk("Maya opens the library door.")
+    agent = FakeAgent(
+        {
+            "第一章": ChunkCharacterOutput(
+                characters=[
+                    _candidate(
+                        "Maya",
+                        description="A cautious librarian",
+                        quotes=["Maya opens the library door."],
+                    )
+                ]
+            )
+        }
+    )
+
+    merged, _ = await extract_characters_from_chunks(
+        [chunk],
+        agent=agent,
+        source_text=chunk.text,
+        adjudicate=False,
+    )
+
+    assert [item.name for item in merged] == ["Maya"]
+    assert merged[0].description == "A cautious librarian"
+    assert "Write every user-visible prose field in English" in agent.prompts[0]
 
 
 async def test_one_failing_chunk_does_not_discard_the_others():
@@ -459,8 +489,23 @@ async def test_extraction_is_bounded_but_not_serial():
 
 
 @pytest.fixture
-async def structured_store(tmp_path):
+async def structured_store(tmp_path, monkeypatch):
     from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo import structured_extraction
+
+    # Build/replay tests exercise extraction evidence and persistence. Optional
+    # appearance enrichment must not construct a real credentialed model.
+    class EmptyAppearanceAgent:
+        async def run(self, _prompt):
+            return SimpleNamespace(
+                output=structured_extraction.CharacterAppearanceList(characters=[])
+            )
+
+    monkeypatch.setattr(
+        structured_extraction,
+        "_create_character_appearance_agent",
+        lambda agent=None: agent if agent is not None else EmptyAppearanceAgent(),
+    )
 
     state_dir = tmp_path / "user" / "structured"
     state_dir.mkdir(parents=True)
@@ -547,6 +592,37 @@ async def test_prop_build_reports_deferral_rather_than_a_silent_zero(structured_
     assert result["props"] == 0
     assert result["mode"] == "episode_on_demand"
     assert result["message"]
+
+
+async def test_character_build_propagates_the_full_source_language(
+    structured_store, monkeypatch
+):
+    from novelvideo import structured_builders
+
+    store, state_dir = structured_store
+    (state_dir / "novel.txt").write_text(
+        "Chapter One\n\nMaya opens the library door and walks inside.",
+        encoding="utf-8",
+    )
+    captured = {}
+
+    async def fake_extract(*args, **kwargs):
+        captured["extraction"] = kwargs.get("output_language")
+        return [_cast_member("Maya", quotes=("Maya opens the library door.",))], []
+
+    async def fake_publish(*args, **kwargs):
+        captured["appearance"] = kwargs.get("output_language")
+        return ["Maya"]
+
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction.extract_characters_from_chunks",
+        fake_extract,
+    )
+    monkeypatch.setattr(structured_builders, "_publish_characters", fake_publish)
+
+    await structured_builders.build_characters_structured(store)
+
+    assert captured == {"extraction": "en", "appearance": "en"}
 
 
 async def test_character_build_publishes_and_records_evidence(
@@ -709,14 +785,14 @@ async def test_a_failed_chunk_leaves_the_run_partial(structured_store, monkeypat
     assert failed, "the failing chunk was not recorded"
     from novelvideo.story_analysis import source_sha256
     from novelvideo.structured_ingest import (
-        STRUCTURED_PIPELINE_VERSION,
+        STRUCTURED_ANALYSIS_VERSION,
         STRUCTURED_SCHEMA_VERSION,
     )
 
     stored = await store.get_reusable_analysis_run(
         source_sha256=source_sha256(NARRATED_MULTI),
         schema_version=STRUCTURED_SCHEMA_VERSION,
-        pipeline_version=STRUCTURED_PIPELINE_VERSION,
+        pipeline_version=STRUCTURED_ANALYSIS_VERSION,
         spine_template="narrated",
     )
     assert stored["status"] == "partial"
@@ -895,7 +971,7 @@ async def test_a_run_with_no_characters_is_still_closed_out(
     from novelvideo.story_analysis import source_sha256
     from novelvideo.structured_extraction import extract_characters_from_chunks
     from novelvideo.structured_ingest import (
-        STRUCTURED_PIPELINE_VERSION,
+        STRUCTURED_ANALYSIS_VERSION,
         STRUCTURED_SCHEMA_VERSION,
         ingest_source_text_structured,
     )
@@ -921,7 +997,7 @@ async def test_a_run_with_no_characters_is_still_closed_out(
     stored = await store.get_reusable_analysis_run(
         source_sha256=source_sha256(NARRATED_MULTI),
         schema_version=STRUCTURED_SCHEMA_VERSION,
-        pipeline_version=STRUCTURED_PIPELINE_VERSION,
+        pipeline_version=STRUCTURED_ANALYSIS_VERSION,
         spine_template="narrated",
     )
     assert stored["status"] == "completed"
@@ -1898,6 +1974,48 @@ async def test_appearance_stage_fills_the_fields_extraction_cannot_quote():
     assert result["郑家悦"].body_type == "纤细高挑"
 
 
+async def test_english_appearance_requests_english_prose_and_keeps_the_source_name():
+    from novelvideo.structured_extraction import enrich_character_appearances
+
+    agent = FakeAppearanceAgent(
+        {
+            "Maya": _appearance(
+                "Maya",
+                face="woman, late twenties, dark wavy hair, brown eyes",
+                role="librarian",
+                body_type="slender",
+                age_group="youth",
+            )
+        }
+    )
+
+    result = await enrich_character_appearances(
+        [
+            _cast_member(
+                "Maya",
+                description="A cautious librarian",
+                quotes=("Maya opens the library door.",),
+            )
+        ],
+        agent=agent,
+    )
+
+    assert result["Maya"].name == "Maya"
+    assert result["Maya"].role == "librarian"
+    assert "Write every user-visible prose field in English" in agent.prompts[0]
+
+
+async def test_pre_language_contract_appearance_cache_keys_are_retired(monkeypatch):
+    from novelvideo import structured_extraction
+    from novelvideo.structured_extraction import character_appearance_cache_key
+
+    current = character_appearance_cache_key(_cast_member("Maya"))
+    monkeypatch.setattr(structured_extraction, "CHARACTER_APPEARANCE_CACHE_VERSION", 2)
+    old = character_appearance_cache_key(_cast_member("Maya"))
+
+    assert current != old
+
+
 async def test_an_answer_without_a_face_is_dropped_rather_than_published():
     """An empty face prompt is a visible gap; boilerplate would be an invisible one."""
     from novelvideo.structured_extraction import enrich_character_appearances
@@ -2631,3 +2749,70 @@ async def test_a_resumed_build_keeps_the_narrator_the_first_attempt_nominated(
 
     assert set(second) == {"郑家悦", "林某"}
     assert [n for n, a in second.items() if a.is_main] == ["郑家悦"]
+
+
+# ── structured output failures: diagnostics ────────────────────────────────
+
+
+class ExplodingAgent:
+    """Raises PydanticAI's output-retry error, optionally with a cause."""
+
+    def __init__(self, cause: BaseException | None = None):
+        self.cause = cause
+        self.calls = 0
+
+    async def run(self, prompt: str):
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        self.calls += 1
+        exc = UnexpectedModelBehavior("Exceeded maximum output retries (2)")
+        if self.cause is not None:
+            raise exc from self.cause
+        raise exc
+
+
+async def test_failure_log_names_the_underlying_cause():
+    """'Exceeded maximum output retries' alone is useless; the cause must be logged."""
+    chunk = _chunk("林默走进屋子。")
+    primary = ExplodingAgent(cause=ValueError("characters.0.evidence: Field required"))
+    logs: list[str] = []
+
+    merged, failures = await extract_characters_from_chunks(
+        [chunk], agent=primary, source_text=chunk.text, on_log=logs.append, adjudicate=False
+    )
+
+    assert merged == [] and len(failures) == 1
+    assert any("characters.0.evidence: Field required" in line for line in logs)
+    assert any("Exceeded maximum output retries" in line for line in logs)
+
+
+def test_describe_output_failure_includes_retry_prompts():
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.messages import ModelRequest, RetryPromptPart
+
+    from novelvideo.structured_extraction import describe_output_failure
+
+    messages = [
+        ModelRequest(parts=[RetryPromptPart(content="Please call the final_result tool")]),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    content=[
+                        {
+                            "type": "missing",
+                            "loc": ("characters", 0, "evidence"),
+                            "msg": "Field required",
+                            "input": {},
+                        }
+                    ]
+                )
+            ]
+        ),
+    ]
+    exc = UnexpectedModelBehavior("Exceeded maximum output retries (2)")
+
+    text = describe_output_failure(exc, messages)
+
+    assert "Exceeded maximum output retries (2)" in text
+    assert "final_result" in text
+    assert "Field required" in text

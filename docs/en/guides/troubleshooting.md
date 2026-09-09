@@ -20,6 +20,7 @@
 |---|---|
 | **Every model call errors** | Under Settings → Model Configuration, confirm the active channel is configured. Check the DC key for the official channel, or the service, runtime token, and upstream channels for Local NewAPI. |
 | **A stage reports "model does not exist"** | Local NewAPI is missing the corresponding logical model mapping, or the target channel is disabled. See [Configuring model providers](../getting-started/configuring-models.md). |
+| **Structured steps fail with `Exceeded maximum output retries`** (character extraction, script planning…) while plain text works | The upstream did not return a function/tool call. The task log (v2.0.3+) shows the retry prompt and cause. Relays that convert Chat Completions themselves (Codex2API and similar Codex-backed proxies) are known to drop `tool_calls` on `/v1/chat/completions`: in the bundled NewAPI admin, enable **ChatCompletions → Responses Compatibility** (`chat_completions_to_responses_policy`) for that channel so NewAPI sends `/v1/responses` upstream. See #490. |
 | **Text model times out** | Increase `NEWAPI_TEXT_TIMEOUT_SECONDS` (default 120); if a system proxy is intercepting an internal gateway, set `NEWAPI_TEXT_TRUST_ENV=false`. |
 | **Reference-image feature unavailable** | Requires `OSS_RELAY_AK/SK`; the plain text→video pipeline can run without it. |
 
@@ -36,7 +37,8 @@
 | Symptom | Diagnosis |
 |---|---|
 | **Data gone after a rebuild** | Data lives in the named volume `ce-data` (`/data` inside the container). `docker compose down` keeps the volume—**do not add `-v`** (it deletes the volume). For backups see the [self-hosting handbook](self-hosting.md#5-where-the-data-lives--backups). |
-| **Config error after an upgrade** | Currently built from source: after `git pull`, run `docker compose up -d --build`; compare against the new `.env.example` and add any newly introduced variables. |
+| **`unable to prepare context: path ".../dramaclaw-gateway" not found`** | The source build expects the gateway checkout next to this repo. `git clone https://github.com/dramaclaw/dramaclaw-gateway.git ../dramaclaw-gateway`, or set `DRAMACLAW_GATEWAY_SRC` in `.env` to your clone's path or to `https://github.com/dramaclaw/dramaclaw-gateway.git#main`. |
+| **Config error after an upgrade** | Source build (`docker-compose.yml`): `git -C ../dramaclaw-gateway pull && git pull && docker compose up -d --build`. Prebuilt images (`docker-compose.release.yml`): `docker compose -f docker-compose.release.yml pull && docker compose -f docker-compose.release.yml up -d` (bump `DRAMACLAW_VERSION` / `DRAMACLAW_GATEWAY_VERSION` in `.env` if you pin them). See the self-hosting guide §6. |
 
 ## world features (3DGS/SHARP)
 

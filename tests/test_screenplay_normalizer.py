@@ -8,6 +8,19 @@ from novelvideo.cognee.screenplay_normalizer import (
 )
 
 
+@pytest.fixture
+def per_scene_enrichment(monkeypatch):
+    from novelvideo.cognee import pipeline
+
+    # These normalization tests supply per-scene enrichment below. An empty
+    # batch selects that fallback without creating a real model client.
+    monkeypatch.setattr(
+        pipeline,
+        "_create_scene_build_agent",
+        lambda *args, **kwargs: _FakeAgent(pipeline.SceneEnrichmentList(scenes=[])),
+    )
+
+
 def test_normalize_time_of_day_maps_classical_terms_to_closed_choices():
     assert normalize_time_of_day("亥时") == "夜晚"
     assert normalize_time_of_day("三更") == "夜晚"
@@ -242,6 +255,66 @@ class _FakeAgent:
 
 
 @pytest.mark.asyncio
+async def test_single_normalizer_keeps_a_parsed_english_location_verbatim():
+    from novelvideo.cognee.screenplay_normalizer import (
+        NormalizedSceneHeader,
+        normalize_screenplay_scene_header,
+    )
+
+    agent = _FakeAgent(
+        NormalizedSceneHeader(
+            episode_number=1,
+            scene_no="1",
+            location="中央图书馆",
+            time_of_day="白天",
+            interior_exterior="内",
+        )
+    )
+
+    result = await normalize_screenplay_scene_header(
+        "1-1 Central Library - DAY",
+        location_hint="Central Library",
+        context_lines=["MAYA walks between the shelves."],
+        agent=agent,
+    )
+
+    assert result is not None and result.location == "Central Library"
+    assert "English" in agent.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_batch_normalizer_keeps_each_parsed_english_location_verbatim():
+    from novelvideo.cognee.screenplay_normalizer import (
+        BatchSceneHeaderItem,
+        NormalizedSceneHeaderBatch,
+    )
+
+    agent = _FakeAgent(
+        NormalizedSceneHeaderBatch(
+            scenes=[
+                BatchSceneHeaderItem(
+                    index=0,
+                    episode_number=1,
+                    scene_no="1",
+                    location="中央图书馆",
+                    time_of_day="白天",
+                    interior_exterior="内",
+                )
+            ]
+        )
+    )
+
+    scenes = await normalize_screenplay_scenes(
+        "INT./EXT. CENTRAL LIBRARY - DAY\n"
+        "MAYA walks between the shelves and opens a book.",
+        agent=agent,
+    )
+
+    assert [scene.location for scene in scenes] == ["CENTRAL LIBRARY"]
+    assert "English" in agent.prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_standard_headings_are_normalized_without_a_model_call():
     """A standard heading already states location, time and interior/exterior.
 
@@ -318,6 +391,7 @@ async def test_headings_the_parser_cannot_resolve_go_to_the_model_in_one_batch()
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("per_scene_enrichment")
 async def test_extract_scenes_from_script_prefers_ai_normalized_blocks(monkeypatch):
     from novelvideo.cognee import pipeline
     from novelvideo.models import NovelScene
@@ -382,6 +456,7 @@ async def test_extract_scenes_from_script_prefers_ai_normalized_blocks(monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("per_scene_enrichment")
 async def test_extract_scenes_from_script_falls_back_when_ai_returns_partial_blocks(
     monkeypatch,
 ):
@@ -438,6 +513,7 @@ async def test_extract_scenes_from_script_falls_back_when_ai_returns_partial_blo
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("per_scene_enrichment")
 async def test_extract_scenes_from_script_falls_back_when_ai_returns_empty(monkeypatch):
     from novelvideo.cognee import pipeline
     from novelvideo.models import NovelScene
@@ -470,6 +546,7 @@ async def test_extract_scenes_from_script_falls_back_when_ai_returns_empty(monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("per_scene_enrichment")
 async def test_extract_scenes_from_script_falls_back_when_ai_merges_distinct_locations(
     monkeypatch,
 ):

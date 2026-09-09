@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import type { TaskState, TaskStatus } from "./types";
+import type { TaskLogEntry, TaskState, TaskStatus } from "./types";
 import { stageForTaskType } from "@/lib/episode-stage-registry";
 import type { TFn } from "@/lib/i18n-types";
 
@@ -68,7 +68,12 @@ export const displayLabel = (t: TaskState, tFn: TFn): string => {
 const TERMINAL_CURRENT_TASK_SENTINELS = new Set(["完成", "completed", "done"]); // i18n-exempt —— 后端哨兵值
 
 export const currentTaskText = (
-  t: { status: TaskStatus; current_task?: string | null },
+  t: {
+    status: TaskStatus;
+    current_task?: string | null;
+    current_task_code?: string | null;
+    current_task_params?: Record<string, unknown> | null;
+  },
   tFn: TFn,
 ): string => {
   const raw = String(t.current_task ?? "").trim();
@@ -78,7 +83,54 @@ export const currentTaskText = (
   if (terminal && TERMINAL_CURRENT_TASK_SENTINELS.has(raw.toLowerCase())) {
     return tFn(`taskCenter.status.${t.status}`);
   }
+  // 后端给了 code 就按词条翻；没给的（历史任务、还没迁移的调用点）照旧回显
+  // 后端那句中文，所以迁移可以一处一处来，不用一次改完所有 415 处。
+  if (t.current_task_code) {
+    return tFn(t.current_task_code, {
+      defaultValue: raw,
+      ...(t.current_task_params ?? {}),
+    });
+  }
   return raw;
+};
+
+/**
+ * 把一批日志压成已翻译的字符串数组。
+ *
+ * 结构化条目只在「后端 → 前端入口」这一层存在：解析响应时立刻翻成字符串，
+ * 下游所有消费点（join、逐行比较、滚动 buffer）继续按 string[] 处理，不用
+ * 跟着改。代价是切语言时已经拿到手的旧日志不会重译 —— 进度日志本来就是流式
+ * 的，切完语言后新来的行就是新语言，任务中心也会重新拉取。
+ */
+export const taskLogLines = (logs: unknown, tFn: TFn): string[] =>
+  Array.isArray(logs)
+    ? logs
+        .filter((x): x is TaskLogEntry => typeof x === "string" || !!x)
+        .map((entry) => taskLogText(entry, tFn))
+    : [];
+
+/**
+ * 任务日志的读取入口：优先结构化的 `logs_i18n`，没有再回落到 `logs`。
+ *
+ * `logs` 的公开契约一直是 `string[]`（老前端直接 `logs.join("\n")`），所以后端
+ * 不能把 `{text, code, params}` 塞回那个字段——滚动发布期间新后端配老前端就会
+ * 显示成 `[object Object]`。带 code 的那份走 `logs_i18n`，只有认识它的前端才读。
+ * 反过来，老后端不发 `logs_i18n`，这里就直接用 `logs` 里的中文，同样不用原子部署。
+ */
+export const taskLogLinesOf = (
+  source: { logs?: unknown; logs_i18n?: unknown } | null | undefined,
+  tFn: TFn,
+): string[] =>
+  taskLogLines(
+    Array.isArray(source?.logs_i18n) ? source.logs_i18n : source?.logs,
+    tFn,
+  );
+
+export const taskLogText = (entry: TaskLogEntry, tFn: TFn): string => {
+  if (typeof entry === "string") return entry;
+  const text = String(entry?.text ?? "");
+  if (!entry?.code) return text;
+  return tFn(entry.code, { defaultValue: text, ...(entry.params ?? {}) });
 };
 
 export interface OriginDeepLink {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -273,11 +274,14 @@ async def test_seedance2_narrator_trim_writes_only_store_state_dir(
     source = project_dir / "audio" / "source.wav"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_bytes(b"source")
-    monkeypatch.setattr(
-        panel_service,
-        "trim_voice_sample_content",
-        lambda *_args, **_kwargs: (b"trimmed", "voice.mp3"),
-    )
+    event_loop_thread_id = threading.get_ident()
+    worker_thread_ids: list[int] = []
+
+    def fake_trim(*_args, **_kwargs):
+        worker_thread_ids.append(threading.get_ident())
+        return b"trimmed", "voice.mp3"
+
+    monkeypatch.setattr(panel_service, "trim_voice_sample_content", fake_trim)
     monkeypatch.setattr(project_config, "OUTPUT_DIR", state_root)
     store = SimpleNamespace(state_dir=str(state_dir))
 
@@ -291,6 +295,8 @@ async def test_seedance2_narrator_trim_writes_only_store_state_dir(
     )
 
     assert target is not None
+    assert worker_thread_ids
+    assert event_loop_thread_id not in worker_thread_ids
     assert project_config.load_narrator_reference_audio_from_state_dir(state_dir)["path"]
     assert not (state_root / "alice" / "demo" / "project_config.json").exists()
 

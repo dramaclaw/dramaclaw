@@ -12,6 +12,7 @@ from pydantic_ai import Agent, BinaryContent
 from PIL import Image as PILImage
 
 from novelvideo.utils.logging import log_agent_start, log_agent_end
+from novelvideo.utils.source_language import asset_language_instruction
 
 # 首尾帧过渡提示词生成器指令（英文版 SuperPower）
 KEYFRAME_PROMPT_BUILDER_INSTRUCTIONS_EN = """# Cinematic Transition Director (SuperPower)
@@ -27,8 +28,8 @@ You craft 5-second transitions between two keyframes. The AI video model interpo
 [Camera Movement with displacement] + [Character/Object Transition] + [Audio Layer]
 
 ## MUST
-✓ Write in **Chinese (中文) only**, **present tense** throughout
-✓ 4–6 句（~50–90 字）
+✓ Write in the requested output language, **present tense** throughout
+✓ 4–6 sentences, with length appropriate for the requested language
 ✓ Describe the *journey* between frames, not just start/end
 ✓ Use visible elements from both frames as anchors
 
@@ -59,11 +60,11 @@ The clip is ~5 seconds. Describe a **chain of 2–3 connected actions** that bri
 ⚠️ **UNIDIRECTIONAL motion only**: every action must move in ONE direction — forward, never back. If the primary action is short, extend it with follow-through motion in the SAME direction.
 
 ## Output
-Output ONLY the transition prompt in Chinese. 4–6 句, ~50–90 字.
+Output ONLY the transition prompt in the requested language.
 """
 
 
-def create_keyframe_prompt_builder_agent(language: str = "en") -> Agent:
+def create_keyframe_prompt_builder_agent(language: str = "zh") -> Agent:
     """创建首尾帧过渡提示词生成 Agent。"""
     from novelvideo.config import get_newapi_text_pydantic_model
     from novelvideo.official_defaults import DEFAULT_VIDEO_PROMPT_OPTIMIZER_MODEL
@@ -75,7 +76,10 @@ def create_keyframe_prompt_builder_agent(language: str = "en") -> Agent:
     )
     return Agent(
         model,
-        system_prompt=KEYFRAME_PROMPT_BUILDER_INSTRUCTIONS_EN,
+        system_prompt=(
+            f"{KEYFRAME_PROMPT_BUILDER_INSTRUCTIONS_EN}\n\n"
+            f"## Output Language\n{asset_language_instruction(language)}"
+        ),
         output_type=str,
         name="Keyframe Prompt Builder",
     )
@@ -105,7 +109,7 @@ class KeyframePromptBuilder:
         """返回上一次生成提示词时使用的上下文。"""
         return self._last_context
 
-    def _get_agent(self, language: str = "en") -> Agent:
+    def _get_agent(self, language: str = "zh") -> Agent:
         """获取指定语言的 Agent（懒加载）。"""
         if language not in self._agents:
             self._agents[language] = create_keyframe_prompt_builder_agent(language)
@@ -147,7 +151,7 @@ class KeyframePromptBuilder:
         last_frame_path: str,
         narration: str,
         next_narration: str = "",
-        language: str = "en",
+        language: str = "zh",
         color_map_text: str = "",
         visual_description: str = "",
         next_visual_description: str = "",
@@ -188,9 +192,17 @@ class KeyframePromptBuilder:
             dialogue_hint = f"\n⚠️ This Beat is DIALOGUE — speaking is the primary motion. Describe lips moving, gestures while talking. Dialogue text is appended by the system; only describe physical action.\n"
 
         # 构建任务提示
+        if language == "en":
+            output_label = "English"
+            length_target = "4-6 sentences, ~50-90 words"
+        else:
+            output_label = "Chinese (中文)"
+            length_target = "4-6 句, ~50-90 字"
+        language_instruction = asset_language_instruction(language)
+
         if color_map_text:
             # English + color map mode (SuperPower)
-            task = f"""Craft a 5-second transition between these two sketches in Chinese (4-6 句, ~50-90 字).
+            task = f"""Craft a 5-second transition between these two sketches in {output_label} ({length_target}).
 
 ## Images
 - Image 1: First sketch (starting point)
@@ -215,11 +227,14 @@ class KeyframePromptBuilder:
 - Camera must have displacement/zoom, describe camera endpoint
 - NO emotion labels → use body language
 - Include ambient audio layer
-- 4-6 句, ~50-90 字
+- {length_target}
 
-Output the transition prompt in Chinese directly."""
+## Output Language
+{language_instruction}
+
+Output the transition prompt in {output_label} directly."""
         else:
-            task = f"""Craft an imaginative 5-second transition between these two frames in Chinese (4-6 句, ~50-90 字).
+            task = f"""Craft an imaginative 5-second transition between these two frames in {output_label} ({length_target}).
 
 ## Images
 - Image 1: First frame (starting point)
@@ -237,11 +252,14 @@ Output the transition prompt in Chinese directly."""
 - NO character names → use visual features
 - NO emotion labels → use body language
 - Include ambient audio layer
-- 4-6 句, ~50-90 字
+- {length_target}
 
-Output the transition prompt in Chinese directly."""
+## Output Language
+{language_instruction}
 
-        lang_hint = "中文"
+Output the transition prompt in {output_label} directly."""
+
+        lang_hint = output_label
         log_agent_start("首尾帧过渡提示词生成师", f"生成过渡描述 ({lang_hint})")
 
         # 存储上下文供调试
@@ -273,7 +291,10 @@ Output the transition prompt in Chinese directly."""
             )
             # dialogue beat：追加台词内容
             if audio_type == "dialogue" and dialogue_line:
-                result = f"{result}，说：{dialogue_line}"
+                if language == "en":
+                    result = f'{result} Says: "{dialogue_line}"'
+                else:
+                    result = f"{result}，说：{dialogue_line}"
             return result
 
         except Exception as e:
@@ -283,9 +304,14 @@ Output the transition prompt in Chinese directly."""
 
     def _fallback_build(
         self,
-        language: str = "en",
+        language: str = "zh",
     ) -> str:
         """回退方案：生成默认过渡提示词。"""
+        if language == "en":
+            return (
+                "The character adjusts their posture naturally as the camera "
+                "tracks the movement into a smooth transition."
+            )
         return "角色姿态自然调整，身体轻微移动，镜头平稳跟随，场景渐变过渡。"
 
 

@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { act, renderHook } from "@testing-library/react";
+import i18next from "i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { sampleTask } from "@/__mocks__/msw/handlers/tasks";
 import { useTaskCenterStore } from "@/task-center/store";
 import { useTaskActivity } from "@/task-center/use-task-activity";
 import type { TaskState } from "@/task-center/types";
+
+import { enTranslation } from "../helpers/i18n-fixtures";
 
 const buildScenes = (overrides: Partial<TaskState> = {}): TaskState =>
   sampleTask({
@@ -77,6 +80,39 @@ describe("useTaskActivity", () => {
     expect(result.current.progress).toBe(0.4);
     expect(result.current.currentTask).toBe("抽取场景…");
     expect(result.current.task?.task_type).toBe("build_scenes");
+  });
+
+  it("步骤文案按 current_task_code 本地化，不透出后端的中文兜底", async () => {
+    // review #462：场景构建页直接渲染这一串，之前返回的是 task.current_task，
+    // 于是英文界面运行构建任务时会一路显示中文进度。
+    i18next.addResourceBundle("en", "translation", enTranslation, true, true);
+    await act(async () => {
+      await i18next.changeLanguage("en");
+    });
+    try {
+      const { result } = render();
+      hydrateWith([
+        buildScenes({
+          current_task: "从场次头提取基础场景...",
+          current_task_code: "tasks.progress.scenes.extractingFromHeadings",
+        }),
+      ]);
+
+      expect(result.current.currentTask).toBe(
+        "Extracting base scenes from scene headings…",
+      );
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage("zh");
+      });
+    }
+  });
+
+  it("后端还没带 code 时照旧回显那句中文，不显示裸 key", () => {
+    const { result } = render();
+    hydrateWith([buildScenes({ current_task: "抽取场景…" })]);
+
+    expect(result.current.currentTask).toBe("抽取场景…");
   });
 
   it("忽略别的类型和别的 episode 的任务", () => {

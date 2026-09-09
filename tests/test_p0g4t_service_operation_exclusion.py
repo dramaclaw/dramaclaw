@@ -24,7 +24,9 @@ from novelvideo.service_operation_gate import (
         ("ce", "", True),
         ("ee", "postgresql://organization-dsn-canary", False),
         ("ce", "postgresql://contradictory-dsn-canary", False),
-        ("", "", False),
+        ("", "", True),
+        ("ee", "", False),
+        ("", "postgresql://organization-dsn-canary", False),
     ],
 )
 def test_service_operation_gate_allows_only_effective_ce_local(

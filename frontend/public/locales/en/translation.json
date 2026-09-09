@@ -433,23 +433,32 @@
       "open": "Open account menu",
       "changeAvatar": "Change avatar",
       "changePassword": "Change password",
+      "setPassword": "Set password",
       "selectLanguage": "Select language",
       "languageChinese": "中文",
       "languageEnglish": "English",
+      "languageVietnamese": "Tiếng Việt",
       "passwordDialog": {
         "title": "Change password",
         "description": "Changing your password signs you out on every device. Sign in again with the new password.",
+        "initializeTitle": "Set a sign-in password",
+        "initializeDescription": "After setting a password, you can sign in with your phone and password. You will need to sign in again when finished.",
         "current": "Current password",
         "new": "New password",
         "confirm": "Confirm new password",
         "requirement": "Use at least 8 characters and choose a password different from the current one.",
+        "initializeRequirement": "Use at least 8 characters. This requires an OTP sign-in from the last 10 minutes.",
         "mismatch": "The new passwords do not match.",
         "unchanged": "The new password must differ from the current password.",
         "currentIncorrect": "The current password is incorrect.",
         "submit": "Change password",
+        "initializeSubmit": "Set password",
         "saving": "Changing…",
         "success": "Password changed. Sign in again with your new password.",
         "partialSuccess": "Password changed. Sign in again; some sessions are still being signed out.",
+        "initializeSuccess": "Password set. Sign in again with your phone and new password.",
+        "initializePartialSuccess": "Password set. Sign in again; some sessions are still being signed out.",
+        "initializeExpired": "This OTP sign-in is no longer recent enough. Sign in with a new code and try again.",
         "error": "Could not change the password. Try again."
       },
       "avatarDialog": {
@@ -721,7 +730,7 @@
       "title": "Script Format Check",
       "close": "Close",
       "viewDetails": "View details",
-      "recommended": "Standard script example:\nEpisode 1\n1-1 City Cafe DAY INT\nCharacters: Lin Xia, Chen Mo\n△ Afternoon light crosses the window as Lin Xia places a letter on the table.\nLin Xia: The answer you wanted is right here.",
+      "recommended": "Standard script example:\nEPISODE 1\nINT. City Cafe - DAY\nCharacters: Lin Xia, Chen Mo\n△ Afternoon light crosses the window as Lin Xia places a letter on the table.\nLin Xia: The answer you wanted is right here.",
       "lineLabel": "Line {{line}}",
       "noIssues": "No specific issues found"
     },
@@ -1318,7 +1327,9 @@
       "notRestorablePreset": "This canvas is not a restorable mainline preset.",
       "payloadTooLarge": "Canvas data exceeds the backend limit.",
       "revisionConflict": "This canvas was modified by another window or user.",
-      "unsavedConflictBeforeSync": "This canvas still has unsaved conflicts. Resolve them before syncing the mainline view."
+      "unsavedConflictBeforeSync": "This canvas still has unsaved conflicts. Resolve them before syncing the mainline view.",
+      "mediaScopeMismatch": "This canvas references media from another project and it could not be copied automatically — remove those nodes and add the media again.",
+      "mediaScopeRetryable": "Copying the media into this project did not go through — check your connection and try saving again."
     },
     "directorCommit": {
       "layerFetchFailed": "Failed to read the director layer: {{status}}",
@@ -2042,7 +2053,13 @@
     "login": "Login",
     "logout": "Logout",
     "username": "Username",
+    "account": "Account",
+    "accountPlaceholder": "Enter account",
+    "accountOrPhone": "Account or phone",
+    "accountOrPhonePlaceholder": "Enter account or phone number",
     "password": "Password",
+    "passwordTab": "Password",
+    "loginMethod": "Choose sign-in method",
     "loginButton": "Sign in",
     "loginFailed": "Invalid username or password",
     "welcomeBack": "Welcome back",
@@ -2068,11 +2085,36 @@
       "subtitle": "Continue your stories, assets, and shots",
       "noAccount": "Need an account?",
       "applyAccount": "Request access",
+      "otpRegistration": "Your first verified phone sign-in creates an account automatically",
       "showcaseLabel": "DramaClaw showcase",
       "showcaseEyebrow": "MADE WITH DRAMACLAW",
       "showcaseMeta": "Production in motion",
       "showcaseTitle": "Imagination, rolling at full speed",
       "showcaseDescription": "Characters, storyboards, sound, and shots move forward in one production line"
+    },
+    "otp": {
+      "tab": "Verification code",
+      "phone": "Phone number",
+      "phonePlaceholder": "Enter phone number",
+      "changePhone": "Change phone",
+      "code": "Verification code",
+      "codePlaceholder": "6-digit code",
+      "send": "Send code",
+      "sending": "Sending…",
+      "resend": "Send again",
+      "resendIn": "Retry in {{seconds}}s",
+      "sent": "Code sent to {{phone}}",
+      "loginButton": "Verify and sign in",
+      "verifying": "Verifying…",
+      "autoRegisterHint": "A verified phone number without an account will be registered automatically.",
+      "accountCreated": "Account created. You can set a password from the account menu.",
+      "passwordNotSet": "This account has no password yet. You can set one from the account menu.",
+      "invalidPhone": "Enter a valid phone number.",
+      "invalidCode": "The code is incorrect or expired. Request a new one.",
+      "rateLimited": "Too many attempts. Try again later.",
+      "unavailable": "SMS is temporarily unavailable. Try again later.",
+      "requestFailed": "Could not send the verification code. Try again.",
+      "verifyFailed": "Could not sign in with this code. Try again."
     },
     "privacy": "Privacy",
     "terms": "Terms",
@@ -2180,6 +2222,7 @@
     "namePlaceholder": "Enter your project name",
     "clearName": "Clear project name",
     "nameNoChinese": "Project name cannot contain Chinese characters.",
+    "nameTooLong": "Project name must be at most 64 characters long.",
     "nameInvalid": "Project name can only contain letters, numbers, and underscores.",
     "nameExistsActive": "A project with this name already exists. Choose another name.",
     "nameExistsArchived": "An archived project already uses this name. Unarchive it or choose another name.",
@@ -2319,6 +2362,7 @@
       "searchPlaceholder": "Search username",
       "alreadyInProject": "Already in project",
       "limitTitle": "Share limit reached",
+      "noShareableUser": "No shareable user found. This user may be outside this project's sharing scope.",
       "quotaUnknownTitle": "Member count not available yet",
       "quotaUnknown": "The member list is still loading. Try again once it finishes.",
       "limitReached": "A project can be shared with at most {{limit}} people",
@@ -2336,6 +2380,8 @@
       "roleAdmin": "Can manage shared members",
       "toastMemberUpdated": "Shared member updated",
       "toastShareFailed": "Share failed. Confirm the user exists and you have permission.",
+      "toastUserOutOfScope": "This user is outside this project's sharing scope.",
+      "toastUserNotFound": "User not found",
       "toastLinkCopied": "Project link copied",
       "toastCopyFailed": "Copy failed",
       "toastPermissionUpdated": "Permission updated",
@@ -2795,7 +2841,7 @@
         },
         "missingSceneHeaders": {
           "message": "No scene headings were recognized, so the system cannot tell where each scene begins.",
-          "fix": "Follow the standard format: start every episode with “Episode N”, give each scene its own “scene number, location, time, INT/EXT” heading, then list characters, action, and dialogue. For example: Episode 1 / 1-1 City Cafe DAY INT."
+          "fix": "Follow the standard format: start every episode with “EPISODE N”, give each scene its own “INT./EXT. location - TIME” heading, then list characters, action, and dialogue. For example: EPISODE 1 / INT. City Cafe - DAY."
         },
         "nonstandardSceneHeaders": {
           "message": "Scene boundaries were recognized, but some scene metadata is incomplete.",
@@ -2803,7 +2849,7 @@
         },
         "sceneHeadersMissingTime": {
           "message": "Some scene headings have no explicit time anchor, so time_of_day and scene variant inheritance may be unstable.",
-          "fix": "Add an explicit time to the scene heading, such as DAY, NIGHT, or LATE NIGHT. Scene boundaries are kept either way and normalized later."
+          "fix": "Add an explicit time to the scene heading. Only DAY, NIGHT, MORNING, AFTERNOON, EVENING, DAWN and DUSK are recognized. Scene boundaries are kept either way and normalized later."
         },
         "missingInteriorExterior": {
           "message": "The scene heading has no INT/EXT marker.",
@@ -2998,6 +3044,88 @@
       "unknownCharacter": "Character",
       "withEpisodeBeat": "{{label}} (Ep {{episode}}, Beat {{beat}})",
       "withEpisode": "{{label}} (Ep {{episode}})"
+    },
+    "progress": {
+      "ingest": {
+        "reading": "Reading and validating source text...",
+        "validated": "Source text validated",
+        "chunking": "Splitting source text...",
+        "planning": "Recording analysis plan...",
+        "saving": "Saving import result...",
+        "complete": "Import complete"
+      },
+      "pipeline": {
+        "normalizingScenes": "Normalizing screenplay scene blocks with AI..."
+      },
+      "script": {
+        "start": "Generating script...",
+        "beatVideoPromptStart": "Generating video prompt for beat {{beatNum}}",
+        "beatVideoPromptSaved": "Saved video prompt for beat {{beatNum}}"
+      },
+      "submitting": "Submitting task…",
+      "queued": "Task queued",
+      "characters": {
+        "chunking": "Splitting the source text…",
+        "nothingToAnalyze": "Nothing to analyze",
+        "extracting": "Extracting characters chunk by chunk…",
+        "noResults": "No results extracted",
+        "enrichingAppearance": "Filling in character appearances…",
+        "publishing": "Publishing characters…",
+        "repairingAppearance": "Filling gaps in existing character appearances…",
+        "recordingEvidence": "Recording character evidence…",
+        "complete": "Character extraction complete"
+      },
+      "scenes": {
+        "notNeeded": "No scenes need building up front",
+        "extractingFromHeadings": "Extracting base scenes from scene headings…",
+        "noResults": "No results extracted",
+        "normalizing": "Normalizing variant spellings of the same location…",
+        "saving": "Saving new scenes…",
+        "complete": "Scene extraction complete"
+      },
+      "props": {
+        "perEpisode": "Props are generated per episode"
+      },
+      "started": "Task started",
+      "cancelled": "Task cancelled"
+    },
+    "log": {
+      "ingest": {
+        "readingFile": "Reading file: {{path}}",
+        "readComplete": "File read: {{charCount}} characters",
+        "chunked": "Deterministic split complete: {{chunkCount}} segments ({{sectionType}})",
+        "planReused": "Reusing existing analysis plan: {{runId}}",
+        "planRecorded": "Analysis plan recorded: {{runId}}",
+        "sourceSaved": "Source text saved"
+      },
+      "source": {
+        "loading": "Loading source text from file...",
+        "loaded": "Source text loaded: {{charCount}} characters"
+      },
+      "pipeline": {
+        "legacyRecall": "Rule-based recall sanity check found {{sceneCount}} scene blocks: {{sceneNames}}"
+      },
+      "characters": {
+        "emptyChunks": "⚠️ The source text produced no chunks",
+        "chunked": "Deterministic split: {{chunkCount}} chunks ({{sectionType}})",
+        "reusingChunks": "Reusing {{cachedCount}} finished chunks, recomputing only {{pendingCount}}",
+        "reusingAdjudication": "Reusing the previous adjudication: {{characterCount}} characters, no model call",
+        "noEvidence": "⚠️ No characters with source evidence were extracted; existing character data kept",
+        "merged": "Merged into {{candidateCount}} character candidates",
+        "published": "Added {{addedCount}} characters, skipped {{skippedCount}} existing",
+        "repaired": "Filled in face prompts for {{repairedCount}} existing characters"
+      },
+      "scenes": {
+        "deferred": "Narrated-project scenes are generated on demand during episode planning",
+        "noHeadings": "⚠️ No scenes were extracted from scene headings; existing scene data kept",
+        "published": "Added {{addedCount}} scenes, repaired {{repairedCount}} placeholder descriptions, skipped {{skippedCount}} existing"
+      },
+      "props": {
+        "deferred": "Props are generated on demand during episode planning"
+      }
+    },
+    "toast": {
+      "scenesBuildQueued": "Scene build task queued"
     }
   },
   "taskCenter": {
@@ -3658,6 +3786,12 @@
         "seedance2GuidanceCamera": "Camera",
         "seedance2GuidanceStyle": "Style",
         "seedance2GuidanceNoSubtitle": "No subtitle",
+        "seedance2GuidanceSubjectTemplate": "Subject: Define the primary character or object, its current action and state, and avoid competing focal subjects.",
+        "seedance2GuidanceSceneTemplate": "Scene: Describe the spatial background, location relationships, key props, and environmental materials while staying consistent with the references.",
+        "seedance2GuidanceLightingTemplate": "Lighting: Describe the key light, tonal layers, color temperature, and atmosphere while avoiding unintended flicker.",
+        "seedance2GuidanceCameraTemplate": "Camera: Specify shot size, viewpoint, movement speed, and direction so the camera move is clear and executable.",
+        "seedance2GuidanceStyleTemplate": "Style: Define visual texture, period, color direction, and realism to prevent style drift.",
+        "seedance2GuidanceNoSubtitleTemplate": "No subtitles: Do not generate any text or subtitles; keep the frame visually clean.",
         "seedance2SceneOptimizeLabels": {
           "anime": "Anime",
           "realistic": "Realistic"
@@ -4364,7 +4498,14 @@
     },
     "crossProjectAssets": {
       "success": "Copied {{count}} media asset(s) into this project",
-      "partialFailure": "{{count}} media asset(s) failed to copy; original links kept"
+      "partialFailure": "{{count}} media asset(s) failed to copy; the affected nodes are marked, delete them and paste again",
+      "copying": "Copying assets…",
+      "failedPlaceholder": "Asset copy failed. Delete this node and paste again.",
+      "removeNode": "Remove node",
+      "foreignMedia": "Media belongs to another project",
+      "copyIntoProject": "Copy into this project",
+      "foreignMediaCopyFailed": "Copy failed — you may not have access to the source project",
+      "foreignMediaCopyRetryable": "Copy did not go through — try again in a moment"
     },
     "emptyHintChips": {
       "textToVideo": "Text to Video",
@@ -7038,6 +7179,7 @@
           "LITERAL_BEAT_META": "Split and annotate shots line by line",
           "EPISODE_SCENE_PLANNER": "Plan episode scenes",
           "EPISODE_PROP_PLANNER": "Plan episode props",
+          "CHARACTER_BUILD": "Extract and adjudicate characters from the source text",
           "SCENE_BUILD": "Analyze and enrich scene descriptions",
           "FREEZONE_TRANSLATION": "Prompt zh/en translation",
           "FREEZONE_TEXT_WRITER": "AI text generation",

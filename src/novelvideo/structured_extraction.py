@@ -36,6 +36,11 @@ from novelvideo.utils.bounded_concurrency import (
     default_llm_concurrency,
     map_bounded,
 )
+from novelvideo.utils.source_language import (
+    AssetLanguage,
+    asset_language_instruction,
+    detect_asset_language,
+)
 
 # Titles and kinship terms refer to whoever is on stage at the time. The same
 # word in two chapters is routinely two different people, so they never merge
@@ -136,6 +141,37 @@ class MergedCharacter:
     ambiguous_with: set[str] = field(default_factory=set)
 
 
+def describe_output_failure(exc: BaseException, messages: list[Any]) -> str:
+    """One line a task log can show for a failed structured run.
+
+    PydanticAI raises ``Exceeded maximum output retries (N)`` for both "the
+    model never called the output tool" and "the arguments failed validation",
+    and keeps the reason in the retry prompts it sent and in ``__cause__``.
+    Surface both; without them the log line is undiagnosable.
+    """
+    from pydantic_ai.messages import ModelRequest, RetryPromptPart
+
+    parts = [str(exc)]
+    cause = exc.__cause__
+    if cause is not None and str(cause) and str(cause) != str(exc):
+        parts.append(f"cause: {type(cause).__name__}: {cause}")
+    retries: list[str] = []
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if isinstance(part, RetryPromptPart):
+                text = " ".join(part.model_response().split())
+                retries.append(text[:400])
+    if retries:
+        parts.append("retry prompts: " + " | ".join(retries[-2:]))
+    return "; ".join(parts)
+
+
+class StructuredOutputFailure(RuntimeError):
+    """A structured run failed; ``str()`` carries the diagnosis."""
+
+
 def _create_character_extraction_agent(agent: Any = None):
     if agent is not None:
         return agent
@@ -146,6 +182,7 @@ def _create_character_extraction_agent(agent: Any = None):
         get_newapi_structured_output_model_settings,
         get_newapi_text_pydantic_model,
     )
+    from novelvideo.model_gateway_runtime import model_gateway_output_retries
 
     return Agent(
         get_newapi_text_pydantic_model(
@@ -156,8 +193,23 @@ def _create_character_extraction_agent(agent: Any = None):
         system_prompt=CHARACTER_EXTRACTION_SYSTEM_PROMPT,
         model_settings=get_newapi_structured_output_model_settings(),
         output_type=ChunkCharacterOutput,
+        retries={"output": model_gateway_output_retries(2)},
         name="Structured Character Extractor",
     )
+
+
+async def _run_structured(agent: Any, prompt: str) -> Any:
+    """Run ``agent`` and turn an exhausted output retry into a diagnosable error."""
+    from pydantic_ai import capture_run_messages
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    with capture_run_messages() as messages:
+        try:
+            return (await agent.run(prompt)).output
+        except UnexpectedModelBehavior as exc:
+            raise StructuredOutputFailure(
+                describe_output_failure(exc, list(messages))
+            ) from exc
 
 
 def normalize_character_name(value: str) -> str:
@@ -313,6 +365,7 @@ async def extract_characters_from_chunks(
     on_log: Optional[Callable[[str], None]] = None,
     on_chunk_done: Optional[Callable[[SourceChunk, ChunkCharacterOutput], Any]] = None,
     on_chunk_failed: Optional[Callable[[SourceChunk, BaseException], Any]] = None,
+    output_language: AssetLanguage | None = None,
 ) -> tuple[list[MergedCharacter], list[tuple[SourceChunk, BaseException]]]:
     """Extract and merge characters across chunks.
 
@@ -326,6 +379,15 @@ async def extract_characters_from_chunks(
             on_log(message)
 
     replayed = list(cached_outcomes or [])
+    language = output_language or detect_asset_language(
+        source_text
+        or "\n".join(
+            [
+                *(chunk.text for chunk in chunks),
+                *(chunk.text for chunk, _ in replayed),
+            ]
+        )
+    )
     if not chunks:
         # Everything was replayed from a previous run; merging still has to run,
         # because merging is what turns per-chunk candidates into characters.
@@ -340,10 +402,11 @@ async def extract_characters_from_chunks(
     runner = _create_character_extraction_agent(agent)
 
     async def analyse(chunk: SourceChunk) -> tuple[SourceChunk, ChunkCharacterOutput]:
-        result = await runner.run(
-            f"【片段 {chunk.section_label}】\n{chunk.text}"
+        output = await _run_structured(
+            runner,
+            f"{asset_language_instruction(language)}\n\n"
+            f"【片段 {chunk.section_label}】\n{chunk.text}",
         )
-        output = result.output
         if on_chunk_done:
             await _maybe_await(on_chunk_done(chunk, output))
         return chunk, output
@@ -955,6 +1018,7 @@ class CharacterAppearanceList(BaseModel):
 CHARACTER_APPEARANCE_SYSTEM_PROMPT = """你是角色形象设定师。输入是一部作品中已经确认的角色，以及原文中关于他们的片段。
 
 为每个角色补全形象设定。这一步允许合理推断，但推断必须与给出的原文片段一致，不要与原文冲突。
+role、body_type、face_prompt 必须使用用户消息指定的输出语言。
 
 对每个角色给出：
 1. name: 必须与输入给出的角色名逐字一致，不要改写、翻译或合并。
@@ -1000,7 +1064,7 @@ def _create_character_appearance_agent(agent: Any = None):
 # retires stored results rather than mixing two contracts.
 #
 # 2: ``is_main`` left the payload for the cast-level key below.
-CHARACTER_APPEARANCE_CACHE_VERSION = 2
+CHARACTER_APPEARANCE_CACHE_VERSION = 3
 
 CHARACTER_APPEARANCE_CACHE_TYPE = "character_appearance"
 
@@ -1024,7 +1088,11 @@ def normalize_age_group(value: str) -> str:
     return cleaned if cleaned in AGE_GROUPS else "youth"
 
 
-def character_appearance_cache_key(item: "MergedCharacter", synopsis: str = "") -> str:
+def character_appearance_cache_key(
+    item: "MergedCharacter",
+    synopsis: str = "",
+    output_language: AssetLanguage | None = None,
+) -> str:
     """Hash the exact input one character's appearance call is made from.
 
     Every field the model sees, plus the contract version.  Quotes are included
@@ -1034,8 +1102,20 @@ def character_appearance_cache_key(item: "MergedCharacter", synopsis: str = "") 
     every stored appearance — which is right, since that block is what most of
     them were written from.
     """
+    language = output_language or detect_asset_language(
+        "\n".join(
+            [
+                item.name,
+                item.description,
+                *sorted(item.aliases),
+                *_appearance_quotes(item),
+                str(synopsis or ""),
+            ]
+        )
+    )
     payload = {
         "v": CHARACTER_APPEARANCE_CACHE_VERSION,
+        "language": language,
         "name": item.name,
         "aliases": sorted(item.aliases),
         "gender": item.gender,
@@ -1279,6 +1359,7 @@ async def enrich_character_appearances(
     cache: Any = None,
     on_log: Optional[Callable[[str], None]] = None,
     concurrency: Optional[int] = None,
+    output_language: AssetLanguage | None = None,
 ) -> dict[str, CharacterAppearance]:
     """Write the creative half of a character: face, role, build, age band.
 
@@ -1299,9 +1380,27 @@ async def enrich_character_appearances(
     if not merged:
         return {}
 
+    language = output_language or detect_asset_language(
+        "\n".join(
+            [
+                str(synopsis or ""),
+                *(
+                    value
+                    for item in merged
+                    for value in [
+                        item.name,
+                        item.description,
+                        *sorted(item.aliases),
+                        *_appearance_quotes(item),
+                    ]
+                ),
+            ]
+        )
+    )
     order = [item.name for item in merged]
     keys = {
-        item.name: character_appearance_cache_key(item, synopsis) for item in merged
+        item.name: character_appearance_cache_key(item, synopsis, language)
+        for item in merged
     }
     results: dict[str, CharacterAppearance] = {}
 
@@ -1344,7 +1443,8 @@ async def enrich_character_appearances(
 
     async def run_batch(batch: list["MergedCharacter"]) -> dict[str, CharacterAppearance]:
         prompt = (
-            "请为下面每一个角色补全形象设定，"
+            asset_language_instruction(language)
+            + "\n\n请为下面每一个角色补全形象设定，"
             "name 必须与给出的角色名完全一致，不要合并或遗漏：\n\n"
             + "\n\n".join(describe(item) for item in batch)
             + synopsis_section

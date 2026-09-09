@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -683,6 +684,31 @@ def test_seedance2_prompt_hash_ignores_request_only_video_params():
     assert base_hash != changed_hash
 
 
+def test_seedance2_prompt_hash_canonicalizes_structured_guidance_language():
+    from novelvideo.seedance2_i2v.models import Seedance2I2VMode
+    from novelvideo.seedance2_i2v.prompt import compute_seedance2_prompt_inputs_hash
+
+    common = {
+        "mode": Seedance2I2VMode.MULTIMODAL_REFERENCE,
+        "beat": {"visual_description": "Maya opens the door."},
+        "assets": [],
+        "text_overlay": {},
+        "prompt_guidance_template_keys": ["camera"],
+        "language": "en",
+    }
+
+    chinese_ui_hash = compute_seedance2_prompt_inputs_hash(
+        **common,
+        prompt_guidance="镜头：说明景别、视角、运镜速度和运动方向，保持镜头运动清晰可执行。",
+    )
+    english_ui_hash = compute_seedance2_prompt_inputs_hash(
+        **common,
+        prompt_guidance="Camera: Specify shot size, viewpoint, movement speed, and direction so the camera move is clear and executable.",
+    )
+
+    assert chinese_ui_hash == english_ui_hash
+
+
 async def test_generate_seedance2_prompt_uses_ai_composer_before_fallback():
     from novelvideo.seedance2_i2v.assets import Seedance2ResolvedAsset
     from novelvideo.seedance2_i2v.models import Seedance2I2VMode
@@ -738,7 +764,7 @@ async def test_seedance2_prompt_composer_accepts_plain_text_output(monkeypatch):
     monkeypatch.setattr(
         prompt_module,
         "create_seedance2_prompt_composer_agent",
-        lambda: FakeAgent(),
+        lambda language="zh": FakeAgent(),
     )
 
     result = await prompt_module.compose_seedance2_prompt_with_agent(
@@ -751,3 +777,323 @@ async def test_seedance2_prompt_composer_accepts_plain_text_output(monkeypatch):
     )
 
     assert result == "根据图片1生成一段电影感视频。"
+
+
+def test_seedance2_english_draft_uses_english_prose_and_keeps_reference_tokens():
+    from novelvideo.seedance2_i2v.assets import Seedance2ResolvedAsset
+    from novelvideo.seedance2_i2v.models import Seedance2I2VMode
+    from novelvideo.seedance2_i2v.prompt import build_seedance2_prompt_draft
+
+    prompt = build_seedance2_prompt_draft(
+        mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
+        beat={
+            "visual_description": "Ji-won walks through the subway corridor.",
+            "scene_description": "Seoul Subway Station",
+        },
+        assets=[
+            Seedance2ResolvedAsset(
+                key="first_frame",
+                label="Current render · Beat 1",
+                media_type="image",
+                path=Path("frame.png"),
+                exists=True,
+                selected=True,
+                request_field="reference_images",
+                reference_label="图片1",
+                image_number=1,
+            )
+        ],
+        text_overlay={},
+        language="en",
+    )
+
+    assert prompt.startswith("Use 图片1 as the starting state")
+    assert "The scene shows Ji-won walks through the subway corridor." in prompt
+    assert "The environment is Seoul Subway Station." in prompt
+    assert "画面呈现" not in prompt
+
+
+@pytest.mark.parametrize(
+    ("beat", "expected"),
+    [
+        (
+            {
+                "visual_description": "Ji-won walks through the subway corridor.",
+                "narration_segment": "She raises her phone.",
+                "video_prompt": "遗留的中文视频提示词不应改变语言。",
+            },
+            "en",
+        ),
+        ({"visual_description": "知薇穿过长廊。"}, "zh"),
+        ({"visual_description": "美咲は廊下を歩く。"}, "zh"),
+    ],
+)
+def test_seedance2_language_uses_script_fields_and_ignores_generated_prompt(
+    beat, expected
+):
+    import novelvideo.seedance2_i2v.prompt as prompt_module
+
+    assert prompt_module.detect_seedance2_prompt_language(beat) == expected
+
+
+async def test_seedance2_english_generation_keeps_english_fallback():
+    from novelvideo.seedance2_i2v.models import Seedance2I2VMode
+    from novelvideo.seedance2_i2v.prompt import generate_seedance2_prompt
+
+    async def failing_composer(**_kwargs):
+        raise RuntimeError("composer unavailable")
+
+    result = await generate_seedance2_prompt(
+        mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
+        beat={"visual_description": "Ji-won raises her phone."},
+        assets=[],
+        text_overlay={},
+        prompt_guidance="",
+        composer=failing_composer,
+        language="en",
+    )
+
+    assert result.used_ai is False
+    assert "The scene shows Ji-won raises her phone." in result.prompt
+    assert "画面呈现" not in result.prompt
+
+
+async def test_seedance2_english_fallback_omits_chinese_freeform_guidance():
+    from novelvideo.seedance2_i2v.models import Seedance2I2VMode
+    from novelvideo.seedance2_i2v.prompt import generate_seedance2_prompt
+
+    async def failing_composer(**_kwargs):
+        raise RuntimeError("composer unavailable")
+
+    result = await generate_seedance2_prompt(
+        mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
+        beat={"visual_description": "Maya opens the door."},
+        assets=[],
+        text_overlay={},
+        prompt_guidance="镜头：缓慢推进。",
+        composer=failing_composer,
+        language="en",
+    )
+
+    assert result.used_ai is False
+    assert "The scene shows Maya opens the door." in result.prompt
+    assert "镜头" not in result.prompt
+
+
+async def test_seedance2_english_fallback_localizes_structured_guidance():
+    from novelvideo.seedance2_i2v.models import Seedance2I2VMode
+    from novelvideo.seedance2_i2v.prompt import generate_seedance2_prompt
+
+    async def failing_composer(**_kwargs):
+        raise RuntimeError("composer unavailable")
+
+    result = await generate_seedance2_prompt(
+        mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
+        beat={"visual_description": "Maya opens the door."},
+        assets=[],
+        text_overlay={},
+        prompt_guidance="镜头：说明景别、视角、运镜速度和运动方向，保持镜头运动清晰可执行。",
+        prompt_guidance_template_keys=["camera"],
+        composer=failing_composer,
+        language="en",
+    )
+
+    assert result.used_ai is False
+    assert (
+        "Camera: Specify shot size, viewpoint, movement speed, and direction "
+        "so the camera move is clear and executable."
+    ) in result.prompt
+    assert "镜头" not in result.prompt
+
+
+async def test_seedance2_english_composer_receives_english_language_contract(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    import novelvideo.seedance2_i2v.prompt as prompt_module
+    from novelvideo.seedance2_i2v.models import Seedance2I2VMode
+
+    seen = {}
+
+    class FakeAgent:
+        async def run(self, task):
+            seen["task"] = task
+            return SimpleNamespace(output="Use 图片1 as the first-frame reference.")
+
+    monkeypatch.setattr(
+        prompt_module,
+        "create_seedance2_prompt_composer_agent",
+        lambda language="zh": FakeAgent(),
+    )
+
+    result = await prompt_module.compose_seedance2_prompt_with_agent(
+        mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
+        beat={"visual_description": "Ji-won raises her phone."},
+        assets=[],
+        text_overlay={},
+        prompt_guidance="",
+        draft_prompt="The scene shows Ji-won raises her phone.",
+        language="en",
+    )
+
+    assert result == "Use 图片1 as the first-frame reference."
+    assert "Write every user-visible prose field in English" in seen["task"]
+    assert "最终 prompt 使用中文" not in seen["task"]
+
+
+async def test_seedance2_panel_detects_english_before_calling_generator(
+    monkeypatch, tmp_path
+):
+    from novelvideo.seedance2_i2v import panel_service
+    from novelvideo.seedance2_i2v.prompt import Seedance2PromptGeneration
+
+    seen = {}
+
+    class Store:
+        async def update_beat_asset(self, **_kwargs):
+            return None
+
+    async def fake_generate(**kwargs):
+        seen.update(kwargs)
+        return Seedance2PromptGeneration(
+            prompt="Use 图片1 as the starting state.",
+            used_ai=True,
+            draft_prompt="Use 图片1 as the starting state.",
+        )
+
+    monkeypatch.setattr(panel_service, "build_seedance2_project_assets", lambda **_kwargs: [])
+    monkeypatch.setattr(panel_service, "generate_seedance2_prompt", fake_generate)
+
+    await panel_service.generate_seedance2_prompt_for_panel(
+        store=Store(),
+        state_dir=tmp_path / "state",
+        episode=1,
+        beat={
+            "beat_number": 1,
+            "visual_description": "Ji-won raises her phone in the corridor.",
+            "narration_segment": "She starts speaking.",
+        },
+        project_dir=tmp_path,
+    )
+
+    assert seen["language"] == "en"
+
+
+async def test_seedance2_panel_passes_structured_guidance_keys(monkeypatch, tmp_path):
+    from novelvideo.seedance2_i2v import panel_service
+    from novelvideo.seedance2_i2v.prompt import Seedance2PromptGeneration
+
+    seen = {}
+
+    class Store:
+        async def update_beat_asset(self, **_kwargs):
+            return None
+
+    async def fake_generate(**kwargs):
+        seen.update(kwargs)
+        return Seedance2PromptGeneration(
+            prompt="Camera: move slowly forward.",
+            used_ai=False,
+            draft_prompt="Camera: move slowly forward.",
+        )
+
+    monkeypatch.setattr(panel_service, "build_seedance2_project_assets", lambda **_kwargs: [])
+    monkeypatch.setattr(panel_service, "generate_seedance2_prompt", fake_generate)
+
+    await panel_service.generate_seedance2_prompt_for_panel(
+        store=Store(),
+        state_dir=tmp_path / "state",
+        episode=1,
+        beat={
+            "beat_number": 1,
+            "visual_description": "Maya opens the door.",
+            "seedance2_config_json": json.dumps(
+                {
+                    "prompt_guidance": "镜头：缓慢推进。",
+                    "prompt_guidance_template_keys": ["camera"],
+                }
+            ),
+        },
+        project_dir=tmp_path,
+        language="en",
+    )
+
+    assert seen.get("prompt_guidance_template_keys") == ["camera"]
+
+
+async def test_seedance2_panel_uses_authoritative_screenplay_language(
+    monkeypatch, tmp_path
+):
+    from novelvideo.seedance2_i2v import panel_service
+    from novelvideo.seedance2_i2v.prompt import Seedance2PromptGeneration
+
+    seen = {}
+
+    class Store:
+        async def update_beat_asset(self, **_kwargs):
+            return None
+
+    async def fake_generate(**kwargs):
+        seen.update(kwargs)
+        return Seedance2PromptGeneration(
+            prompt="The camera moves slowly forward.",
+            used_ai=True,
+            draft_prompt="The camera moves slowly forward.",
+        )
+
+    monkeypatch.setattr(panel_service, "build_seedance2_project_assets", lambda **_kwargs: [])
+    monkeypatch.setattr(panel_service, "generate_seedance2_prompt", fake_generate)
+
+    await panel_service.generate_seedance2_prompt_for_panel(
+        store=Store(),
+        state_dir=tmp_path / "state",
+        episode=1,
+        beat={
+            "beat_number": 1,
+            "visual_description": "修复前遗留的中文画面描述。",
+            "narration_segment": "修复前遗留的中文旁白。",
+        },
+        project_dir=tmp_path,
+        language="en",
+    )
+
+    assert seen["language"] == "en"
+
+
+def test_seedance2_panel_state_uses_authoritative_language_for_freshness(
+    monkeypatch, tmp_path
+):
+    from novelvideo.seedance2_i2v import panel_service
+
+    seen = {}
+    monkeypatch.setattr(
+        panel_service, "build_seedance2_project_assets", lambda **_kwargs: []
+    )
+    monkeypatch.setattr(
+        panel_service,
+        "_seedance2_default_prompt",
+        lambda **kwargs: seen.setdefault("fallback_language", kwargs["language"])
+        or "fallback",
+    )
+
+    def fake_hash(**kwargs):
+        seen["hash_language"] = kwargs["language"]
+        return "current-hash"
+
+    monkeypatch.setattr(panel_service, "_seedance2_prompt_inputs_hash", fake_hash)
+
+    state = panel_service.build_seedance2_video_panel_state(
+        project_dir=tmp_path,
+        episode=1,
+        beat={
+            "beat_number": 1,
+            "visual_description": "修复前遗留的中文画面描述。",
+            "video_prompt": "修复前遗留的中文视频提示词。",
+        },
+        state_dir=tmp_path / "state",
+        language="en",
+    )
+
+    assert state.current_prompt_inputs_hash == "current-hash"
+    assert seen == {"fallback_language": "en", "hash_language": "en"}

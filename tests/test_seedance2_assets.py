@@ -765,10 +765,10 @@ async def test_crop_seedance2_asset_to_first_frame_writes_video_input_override(
     source = paths.frame(2)
     _write_png(source)
 
-    async def fake_crop_image_to_path(_source, *, output_path, **_kwargs):
+    def fake_crop_image_to_path(_source, *, output_path, **_kwargs):
         _write_png(Path(output_path), width=720, height=1280)
 
-    monkeypatch.setattr(panel_service, "crop_image_to_path", fake_crop_image_to_path)
+    monkeypatch.setattr(panel_service, "_crop_image_to_path_sync", fake_crop_image_to_path)
     monkeypatch.setattr(panel_service, "validate_seedance2_reference_image", lambda _path: "")
 
     class Store:

@@ -9,9 +9,11 @@ import {
   currentTaskText,
   displayLabel,
   originDeepLink,
+  taskLogLines,
+  taskLogLinesOf,
 } from "@/task-center/derivations";
 
-import { zhT } from "../helpers/i18n-fixtures";
+import { enT, zhT } from "../helpers/i18n-fixtures";
 
 describe("isTerminal", () => {
   it("returns true for completed", () => expect(isTerminal(sampleTask({ status: "completed" }))).toBe(true));
@@ -186,6 +188,87 @@ describe("currentTaskText", () => {
   });
   it("returns empty for a blank current task", () => {
     expect(currentTaskText(sampleTask({ status: "running", current_task: "" }), t)).toBe("");
+  });
+  it("translates via the backend code when one is present", () => {
+    const task = sampleTask({
+      status: "running",
+      current_task: "读取并校验原文...",
+      current_task_code: "tasks.progress.ingest.reading",
+    });
+    expect(currentTaskText(task, enT as unknown as typeof t)).toBe(
+      "Reading and validating source text...",
+    );
+    expect(currentTaskText(task, t)).toBe("读取并校验原文...");
+  });
+  it("falls back to the backend text when the code has no catalog entry", () => {
+    // 后端先发新 code、前端词条还没跟上时，用户看到的是中文，不是裸 key。
+    const task = sampleTask({
+      status: "running",
+      current_task: "某个还没翻译的进度",
+      current_task_code: "tasks.progress.ingest.notYetTranslated",
+    });
+    expect(currentTaskText(task, enT as unknown as typeof t)).toBe("某个还没翻译的进度");
+  });
+});
+
+describe("taskLogLines", () => {
+  const t = zhT as unknown as (k: string, opts?: Record<string, unknown>) => string;
+
+  it("translates structured entries and interpolates their params", () => {
+    expect(
+      taskLogLines(
+        [
+          {
+            text: "文件读取完成: 1234 字符",
+            code: "tasks.log.ingest.readComplete",
+            params: { charCount: 1234 },
+          },
+        ],
+        enT as unknown as typeof t,
+      ),
+    ).toEqual(["File read: 1234 characters"]);
+  });
+  it("passes plain strings through untouched", () => {
+    // 还没迁移的后端调用点直接发中文字符串，不能被丢掉。
+    expect(taskLogLines(["原文已保存", "任务已开始"], t)).toEqual(["原文已保存", "任务已开始"]);
+  });
+  it("keeps structured and plain entries side by side", () => {
+    expect(
+      taskLogLines(
+        [{ text: "原文已保存", code: "tasks.log.ingest.sourceSaved" }, "任务已开始"],
+        enT as unknown as typeof t,
+      ),
+    ).toEqual(["Source text saved", "任务已开始"]);
+  });
+  it("returns an empty array for a missing logs field", () => {
+    expect(taskLogLines(undefined, t)).toEqual([]);
+  });
+});
+
+describe("taskLogLinesOf", () => {
+  const t = zhT as unknown as (k: string, opts?: Record<string, unknown>) => string;
+
+  it("prefers the structured logs_i18n field", () => {
+    expect(
+      taskLogLinesOf(
+        {
+          logs: ["原文已保存"],
+          logs_i18n: [{ text: "原文已保存", code: "tasks.log.ingest.sourceSaved" }],
+        },
+        enT as unknown as typeof t,
+      ),
+    ).toEqual(["Source text saved"]);
+  });
+  it("falls back to logs when the backend predates logs_i18n", () => {
+    // 滚动发布的另一半：老后端只发 `logs`，新前端照样得显示出来。
+    expect(taskLogLinesOf({ logs: ["原文已保存", "任务已开始"] }, t)).toEqual([
+      "原文已保存",
+      "任务已开始",
+    ]);
+  });
+  it("returns an empty array when neither field is present", () => {
+    expect(taskLogLinesOf({}, t)).toEqual([]);
+    expect(taskLogLinesOf(undefined, t)).toEqual([]);
   });
 });
 

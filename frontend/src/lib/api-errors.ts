@@ -17,6 +17,25 @@ export function backendErrorCodeToastMessage(
   return null;
 }
 
+/**
+ * 排队接口成功时的 toast 文案。
+ *
+ * 后端给了 message_code 就按词条翻，没给的（还没迁移的接口）照旧回显 message
+ * 里那句中文 —— 和进度/日志走同一套约定，接口可以一个一个迁。
+ */
+export function taskResponseToastMessage(
+  response: {
+    message?: string | null;
+    message_code?: string | null;
+    message_params?: Record<string, unknown> | null;
+  },
+  t: TFunction,
+): string {
+  const text = String(response.message ?? "");
+  if (!response.message_code) return text;
+  return t(response.message_code, { defaultValue: text, ...(response.message_params ?? {}) });
+}
+
 export function backendErrorResponseToastMessage(
   response: Pick<ErrorResponse, "code" | "error">,
   t: TFunction,

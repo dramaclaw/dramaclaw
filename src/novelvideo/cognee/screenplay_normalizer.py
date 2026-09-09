@@ -11,6 +11,10 @@ from novelvideo.utils.bounded_concurrency import (
     map_bounded,
 )
 from novelvideo.utils.screenplay_scene_parser import TIME_TOKEN_RE, parse_scene_blocks
+from novelvideo.utils.source_language import (
+    asset_language_instruction,
+    detect_asset_language,
+)
 
 SceneType = Literal["interior", "exterior", "nature"]
 InteriorExterior = Literal["内", "外", "无"]
@@ -328,7 +332,12 @@ async def normalize_screenplay_scene_header(
     )
 
     runner = agent or _create_screenplay_normalizer_agent()
-    prompt = f"""请按系统规则规范化下面这一个场景块的场景元数据。
+    language = detect_asset_language(
+        "\n".join([header, str(location_hint or ""), context])
+    )
+    prompt = f"""{asset_language_instruction(language)}
+
+请按系统规则规范化下面这一个场景块的场景元数据。
 
 程序解析提示只用于补充多行场景头中已被程序识别的字段，不包含场景正文：
 - episode_number: {int(episode_number_hint or 0)}
@@ -350,7 +359,7 @@ async def normalize_screenplay_scene_header(
     values = output.model_dump()
     values["episode_number"] = int(output.episode_number or episode_number_hint or 0)
     values["scene_no"] = str(output.scene_no or scene_no_hint or "").strip()
-    values["location"] = str(output.location or location_hint or "").strip()
+    values["location"] = str(location_hint or output.location or "").strip()
     values["time_of_day"] = str(output.time_of_day or time_of_day_hint or "无").strip()
     values["interior_exterior"] = str(
         output.interior_exterior or interior_exterior_hint or "无"
@@ -373,6 +382,7 @@ async def normalize_screenplay_scenes(
     source = str(text or "").strip()
     if not source:
         return []
+    language_instruction = asset_language_instruction(detect_asset_language(source))
 
     blocks = [block for block in parse_scene_blocks(source) if block.header_line]
     if not blocks:
@@ -422,7 +432,8 @@ async def normalize_screenplay_scenes(
                     f"     正文片段：{context or '（无）'}"
                 )
             result = await runner.run(
-                "请规范化以下每一个场景头，index 用方括号里的序号：\n"
+                language_instruction
+                + "\n\n请规范化以下每一个场景头，index 用方括号里的序号：\n"
                 + "\n".join(lines)
             )
             produced: list[tuple[int, NormalizedSceneBlock]] = []
@@ -436,7 +447,7 @@ async def normalize_screenplay_scenes(
                     item.episode_number or block.episode or 0
                 )
                 values["scene_no"] = str(item.scene_no or block.scene_no or "").strip()
-                values["location"] = str(item.location or block.location or "").strip()
+                values["location"] = str(block.location or item.location or "").strip()
                 values["time_of_day"] = str(
                     item.time_of_day or block.time_of_day or "无"
                 ).strip()

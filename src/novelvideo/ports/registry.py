@@ -6,6 +6,8 @@ import os
 from importlib.metadata import entry_points
 from typing import Any
 
+from novelvideo.shared import runtime_env
+
 
 class PortNotRegistered(RuntimeError):
     def __init__(self, name: str) -> None:
@@ -57,8 +59,10 @@ def ensure_bootstrap() -> None:
     global _BOOTSTRAPPED
     if _BOOTSTRAPPED:
         return
+    edition = runtime_env.edition()
     dsn = os.environ.get("ST_CONTROL_PLANE_DSN", "").strip()
-    edition = os.environ.get("ST_EDITION", "").strip().lower()
+    if edition not in {"ce", "ee"}:
+        raise RuntimeError("ST_EDITION 无效：仅支持 ce 或 ee")
     if dsn and edition == "ce":
         raise RuntimeError(
             "ST_CONTROL_PLANE_DSN 与 ST_EDITION=ce 同时设置(矛盾配置):"
@@ -82,4 +86,4 @@ def ensure_bootstrap() -> None:
         register_local_ports()
         _BOOTSTRAPPED = True
         return
-    raise RuntimeError("缺 ST_CONTROL_PLANE_DSN 且未显式 ST_EDITION=ce，拒绝启动")
+    raise RuntimeError("ST_EDITION=ee 但缺 ST_CONTROL_PLANE_DSN，拒绝启动")

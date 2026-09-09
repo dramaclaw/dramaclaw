@@ -51,6 +51,201 @@ from novelvideo.task_backend.limits import ProjectUserTaskLimitExceeded
 from novelvideo.task_state import get_task_manager
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "entry", ["frame", "standalone_frame", "sketch", "beat_sketch", "director"]
+)
+@pytest.mark.parametrize(
+    "selection,model",
+    [
+        ("newapi_gpt_image2", "LingShan-G2"),
+        ("newapi_nanobanana2", "LingShan-NB-2"),
+    ],
+)
+@pytest.mark.parametrize("quality", ["low", "medium", "high"])
+@pytest.mark.parametrize("aspect", ["2:3", "16:9"])
+async def test_mainline_canvas_enqueue_carries_effective_feature_price(
+    tmp_path,
+    monkeypatch,
+    entry,
+    selection,
+    model,
+    quality,
+    aspect,
+):
+    from novelvideo import config as image_config, project_config
+    from novelvideo.ports.local.projection import NoOpTaskProjection
+    from novelvideo.ports.registry import register_port
+
+    register_port("task_projection", NoOpTaskProjection())
+    monkeypatch.setattr(
+        project_config,
+        "load_project_config",
+        lambda *_: {
+            "render_image_selection": selection,
+            "sketch_image_selection": selection,
+        },
+    )
+    monkeypatch.setattr(
+        project_config,
+        "load_project_config_file",
+        lambda *_: {
+            "sketch_image_selection": selection,
+        },
+    )
+    monkeypatch.setattr(image_config, "OPENAI_SKETCH_IMAGE_QUALITY", quality)
+    monkeypatch.setenv("DIRECTOR_CONTROL_SKETCH_IMAGE_QUALITY", quality)
+    monkeypatch.delenv("DIRECTOR_CONTROL_SKETCH_IMAGE_SELECTION", raising=False)
+    # This legacy setting is not a generate_grid override: mode_key wins.
+    monkeypatch.setenv("DIRECTOR_CONTROL_SKETCH_IMAGE_SIZE", "4K")
+    for key, name in [
+        ("newapi_gpt_image2", "LingShan-G2"),
+        ("newapi_nanobanana2", "LingShan-NB-2"),
+    ]:
+        monkeypatch.setitem(
+            image_config.IMAGE_GENERATION_SELECTIONS,
+            key,
+            {
+                "provider": "newapi",
+                "model": name,
+                "label": name,
+            },
+        )
+    ctx = _project_ctx(tmp_path)
+    source = ctx.output_dir / "freezone" / "source.png"
+    _write_image(source, size=(160, 90) if aspect == "16:9" else (80, 120))
+    url = "/api/v1/projects/proj_freezone/media/freezone/source.png"
+    captured = {}
+
+    async def store(_ctx):
+        return _FakeContextBeatStore()
+
+    async def enqueue(_ctx, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="billing-test"),
+            backend="celery",
+            queue="test",
+        )
+
+    monkeypatch.setattr(freezone_routes, "make_sqlite_store_for_context", store)
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=enqueue),
+    )
+    common = dict(
+        ctx=ctx, username="admin", project_name="demo", project_dir=ctx.output_dir
+    )
+    if entry == "frame":
+        await freezone_routes._start_or_enqueue_mainline_frame_from_context_job(
+            **common,
+            episode=1,
+            beat=8,
+            beat_payload=None,
+            sketch_url=url,
+            reference_urls=[],
+            quality=quality,
+        )
+    elif entry == "standalone_frame":
+        await freezone_routes._start_or_enqueue_standalone_frame_from_context_job(
+            **common,
+            beat_input=freezone_routes.ResolvedSkillInput(
+                **_standalone_skill_beat_input()
+            ),
+            sketch_url=url,
+            reference_urls=[],
+            quality=quality,
+        )
+    elif entry == "sketch":
+        await freezone_routes._start_or_enqueue_mainline_sketch_from_context_job(
+            **common,
+            episode=1,
+            beat=8,
+            beat_payload=None,
+            background_url=url,
+            aspect_ratio=aspect,
+        )
+    elif entry == "beat_sketch":
+        await freezone_routes._start_or_enqueue_mainline_beat_sketch_task(
+            **common,
+            episode=1,
+            beat=8,
+            canvas_id=None,
+            node_id=None,
+        )
+    else:
+        await freezone_routes._start_or_enqueue_mainline_director_control_sketch_job(
+            ctx=ctx,
+            project_dir=ctx.output_dir,
+            episode=1,
+            beat=8,
+            director_combined_url=url,
+            aspect_ratio=aspect,
+            canvas_id=None,
+            node_id=None,
+        )
+    feature = (
+        "render_regen"
+        if "frame" in entry
+        else "director_control_to_sketch" if entry == "director" else "sketch_regen"
+    )
+    params = {"size": "1K"}
+    if selection == "newapi_gpt_image2":
+        params["quality"] = quality
+    assert captured["payload"]["billing"] == {
+        "feature_key": f"mainline.{feature}",
+        "pricing_kind": "image",
+        "pricing_model": model,
+        "pricing_params": params,
+    }
+    if entry != "director":
+        assert captured["payload"]["config"]["image_generation_selection"] == selection
+
+
+def test_director_canvas_billing_uses_projection_and_director_override(monkeypatch):
+    from novelvideo import project_config
+
+    def no_local_read(*_):
+        raise AssertionError("projected director task must use its projected model")
+
+    monkeypatch.setattr(project_config, "load_project_config_file", no_local_read)
+    monkeypatch.delenv("DIRECTOR_CONTROL_SKETCH_IMAGE_SELECTION", raising=False)
+    projection = {
+        "projection": {
+            "projection_version": 1,
+            "task_type": "mainline_director_control_sketch",
+            "fields": {
+                "sketch_image_selection": "newapi_nanobanana2",
+                "beats": [],
+                "characters": [],
+                "sketch_colors": {},
+                "visual_style": "",
+            },
+        }
+    }
+    args = dict(
+        username="admin",
+        project_name="demo",
+        mode_key="1x1_16-9_sketch",
+        projection_payload=projection,
+    )
+    billing = freezone_routes._director_sketch_task_billing(**args)
+    assert (
+        billing["pricing_model"]
+        == freezone_routes.IMAGE_GENERATION_SELECTIONS["newapi_nanobanana2"]["model"]
+    )
+    assert billing["pricing_params"] == {"size": "1K"}
+    monkeypatch.setenv("DIRECTOR_CONTROL_SKETCH_IMAGE_SELECTION", "newapi_gpt_image2")
+    monkeypatch.setenv("DIRECTOR_CONTROL_SKETCH_IMAGE_QUALITY", "high")
+    billing = freezone_routes._director_sketch_task_billing(**args)
+    assert (
+        billing["pricing_model"]
+        == freezone_routes.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"]
+    )
+    assert billing["pricing_params"] == {"size": "1K", "quality": "high"}
+
+
 def _project_ctx(tmp_path: Path) -> ProjectContext:
     return ProjectContext(
         project_id="proj_freezone",
@@ -339,7 +534,7 @@ async def test_freezone_video_omni_gen_rejects_happyhorse_model(
         )
 
     assert exc.value.status_code == 400
-    assert "HappyHorse video does not support omni reference mode" in str(exc.value.detail)
+    assert "does not support omni reference mode" in str(exc.value.detail)
 
 
 def _audio_reference(project_dir: Path, name: str) -> dict[str, str]:
@@ -5379,7 +5574,10 @@ async def test_skill_run_frame_accepts_plain_canvas_image_as_sketch_input(
     assert captured["task_type"] == "mainline_frame_from_context"
     assert captured["product_surface"] == "freezone"
     assert captured["payload"]["billing"] == {
-        "feature_key": "mainline.render_regen"
+        "feature_key": "mainline.render_regen",
+        "pricing_kind": "image",
+        "pricing_model": freezone_routes.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"],
+        "pricing_params": {"size": "1K", "quality": "medium"},
     }
     assert captured["payload"]["config"]["canvas_sketch_paths"]["8"].endswith(
         "/freezone/plain_sketch.png"
@@ -5525,7 +5723,10 @@ async def test_skill_run_normalizes_project_media_url_before_dispatch(
     assert captured["task_type"] == "mainline_sketch_from_context"
     assert captured["product_surface"] == "freezone"
     assert captured["payload"]["billing"] == {
-        "feature_key": "mainline.sketch_regen"
+        "feature_key": "mainline.sketch_regen",
+        "pricing_kind": "image",
+        "pricing_model": freezone_routes.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"],
+        "pricing_params": {"size": "1K", "quality": "low"},
     }
     assert captured["episode"] == 1
     assert captured["beat_num"] == 8
@@ -6771,7 +6972,10 @@ async def test_skill_run_sketch_accepts_director_combined_background(
     assert response.run_id == "mainline_director_control_sketch:job_director"
     assert captured["task_type"] == "mainline_director_control_sketch"
     assert captured["payload"]["billing"] == {
-        "feature_key": "mainline.director_control_to_sketch"
+        "feature_key": "mainline.director_control_to_sketch",
+        "pricing_kind": "image",
+        "pricing_model": freezone_routes.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"],
+        "pricing_params": {"size": "1K", "quality": "low"},
     }
     assert captured["episode"] == 1
     assert captured["beat_num"] == 8
@@ -6858,7 +7062,10 @@ async def test_skill_run_sketch_prefers_director_combined_over_background(
 
     assert captured["task_type"] == "mainline_director_control_sketch"
     assert captured["payload"]["billing"] == {
-        "feature_key": "mainline.director_control_to_sketch"
+        "feature_key": "mainline.director_control_to_sketch",
+        "pricing_kind": "image",
+        "pricing_model": freezone_routes.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"],
+        "pricing_params": {"size": "1K", "quality": "low"},
     }
     assert captured["episode"] == 1
     assert captured["beat_num"] == 8
@@ -7898,6 +8105,13 @@ async def test_freezone_image_models_returns_selection_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_freezone_project(monkeypatch, tmp_path, project="58")
+
+    # Selection keys are the fallback when no scoped model catalog is available.
+    # Default CE has an official catalog and must not be mistaken for this path.
+    async def no_catalog(_media_type: str, *, requester_user_id: str):
+        return None
+
+    monkeypatch.setattr(freezone_routes, "_scoped_media_model_catalog", no_catalog)
 
     result = await freezone_routes.freezone_image_models(
         project="58",

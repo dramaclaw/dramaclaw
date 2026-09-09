@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
-import { isActive as isActiveTask, isTerminal } from "./derivations";
+import { currentTaskText, isActive as isActiveTask, isTerminal } from "./derivations";
 import { useTaskCenterStore } from "./store";
 import type { TaskState } from "./types";
 
@@ -52,7 +53,12 @@ export interface TaskActivity {
   isRestoring: boolean;
   /** 0~1。 */
   progress: number;
-  /** 后端回报的当前步骤文案。 */
+  /**
+   * 当前步骤文案，已按 `current_task_code` 本地化。
+   *
+   * 展示层直接渲染这一串，不要回头去读 `task.current_task`——那是后端的中文兜底，
+   * 英文界面下渲染它就是一处漏译（场景构建页曾经这么干过）。
+   */
   currentTask: string;
   /**
    * 入队接口成功返回后调用，用于兜住任务进任务中心前的空窗。
@@ -74,6 +80,7 @@ export function useTaskActivity(
   options: { episode?: number } = {},
 ): TaskActivity {
   const task = useActiveTaskOfType(taskType, options);
+  const { t } = useTranslation();
   // provider 在开始补水前就会 setProject，所以 projectId 非空即代表「有人在管，
   // 补水一定会到」；为空则说明压根没挂 provider，不能靠这个标志禁按钮。
   const isRestoring = useTaskCenterStore(
@@ -147,7 +154,7 @@ export function useTaskActivity(
     isActive: task != null || startedAt != null,
     isRestoring,
     progress: task?.progress ?? 0,
-    currentTask: task?.current_task ?? "",
+    currentTask: task ? currentTaskText(task, t) : "",
     markStarted,
   };
 }

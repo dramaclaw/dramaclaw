@@ -6,7 +6,7 @@ import { Link } from "@tanstack/react-router";
 import { Copy, Download, ExternalLink, XCircle } from "lucide-react";
 
 import { useCancelTask } from "@/lib/queries/tasks";
-import { isActive, originDeepLink } from "@/task-center/derivations";
+import { isActive, originDeepLink, taskLogLinesOf } from "@/task-center/derivations";
 import type { TaskState } from "@/task-center/types";
 import { Button } from "@/components/ui/button";
 
@@ -49,7 +49,9 @@ export function TaskActions({ task }: { task: TaskState }) {
   };
 
   const onDownloadLogs = () => {
-    const blob = new Blob([task.logs.join("\n")], { type: "text/plain" });
+    const blob = new Blob([taskLogLinesOf(task, t).join("\n")], {
+      type: "text/plain",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

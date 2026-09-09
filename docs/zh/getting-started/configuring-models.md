@@ -57,10 +57,10 @@ DramaClaw CE 通过 NewAPI 兼容网关调用文本、视觉理解、Embedding�
 
 ### 1. 启动本地服务
 
-推荐使用仓库提供的自托管编排：
+使用仓库的 compose 文件（内置 NewAPI 始终包含在内）：
 
 ```bash
-docker compose -f docker-compose.selfhosted.yml up -d --build
+docker compose up -d
 ```
 
 它会启动 DramaClaw API、Web 和内置 NewAPI。默认情况下 DramaClaw 在容器网络中访问 NewAPI；浏览器访问的宿主机端口可以不同，不需要把内部地址改成浏览器地址。
@@ -160,12 +160,13 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 
 #### 业务模型
 
-DramaClaw 使用稳定的内部逻辑模型名，例如 `DC-scene-builder-LLM` 和 `DC-freezone-vision-LLM`。自定义模式下，应保留这些内部名称，在 NewAPI 渠道中把它们映射到真实上游模型。
+DramaClaw 使用稳定的内部逻辑模型名，例如 `DC-character-builder-LLM`、`DC-scene-builder-LLM` 和 `DC-freezone-vision-LLM`。自定义模式下，应保留这些内部名称，在 NewAPI 渠道中把它们映射到真实上游模型。
 
 - 文本理解与生成可以选择普通文本模型。
 - 视觉理解功能会发送图片或视频，必须选择支持相应输入的多模态模型。
 - 批量填充只修改页面草稿，仍需点击保存映射。
 - Hermes 可以使用独立模型；其他 `DC-*-LLM` 可以按需要统一映射或单独覆盖。
+- 升级后如果新增了功能行（例如 v2.0.3 新增的 `DC-character-builder-LLM`），新行默认为空，不会写入 NewAPI；需要选好模型后点「保存映射」，或重新应用一次快捷配置。在此之前该功能会报 `No available channel for model DC-...`。
 
 #### Embedding
 
@@ -263,6 +264,7 @@ Bucket 无需公开读；DramaClaw 使用临时签名 URL 授权上游读取。
 | 保存 Key 后高级配置仍没有“已保存”标记 | Key 可能只存在于页面草稿。重新保存对应渠道或重新应用完整配置，并确认使用的是包含最新代码的镜像。 |
 | 添加媒体模型时提示缺少供应商 Key | 对应供应商渠道尚未真正写入 NewAPI；先保存/更新渠道，再保存媒体模型。 |
 | NewAPI 报 `No available channel for model ...` | 检查逻辑模型映射、渠道是否启用、上游模型名及分组。 |
+| 走 Codex 类中转站（Codex2API 等）时结构化环节报 `Exceeded maximum output retries` | 中转站在 `/v1/chat/completions` 上丢掉了 `tool_calls`。到 NewAPI 后台给该渠道开启 **ChatCompletions → Responses Compatibility**。详见[排错指南](../guides/troubleshooting.md#模型--网关类)。 |
 | 本地 NewAPI 初始化失败 | 检查 NewAPI 服务、SQLite 挂载、目录权限和 `NEWAPI_PROVISIONER_ENABLED`。 |
 | 虾画没有显示新增模型 | 确认模型已启用、媒体类型正确、已保存全部配置并刷新页面。 |
 | 模型控件与实际能力不一致 | 检查媒体模型的 `config`，尤其是分辨率、比例、模式和参考素材上限。 |
@@ -276,7 +278,6 @@ Bucket 无需公开读；DramaClaw 使用临时签名 URL 授权上游读取。
 
 - `src/novelvideo/official_media_models.json`：CE 官方媒体模型与能力。
 - `.env.example`：环境变量参考。
-- `docker-compose.yml`：官方模式部署。
-- `docker-compose.selfhosted.yml`：内置 NewAPI 自托管部署。
+- `docker-compose.yml`（源码构建）/ `docker-compose.release.yml`（镜像）：部署文件（api + 内置 NewAPI + web），网关模式在设置页选择。
 - [自托管手册](../guides/self-hosting.md)
 - [环境变量参考](../reference/environment-variables.md)

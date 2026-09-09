@@ -30,6 +30,7 @@ from novelvideo.api.schemas import (
 from novelvideo.models import sync_beat_asset_refs
 from novelvideo.ports import get_task_backend, get_usage_meter
 from novelvideo.task_identity import project_task_state_key
+from novelvideo.utils.source_language import detect_episode_asset_language
 from novelvideo.video_prompt_prerequisite import (
     VideoPromptPrerequisiteError,
     video_prompt_prerequisite_response,
@@ -497,6 +498,15 @@ async def generate_beat_video_prompt(
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
+    language = await detect_episode_asset_language(
+        store,
+        episode_num,
+        fallback_text="\n".join(
+            str(target.get(field) or "")
+            for field in ("narration_segment", "dialogue", "visual_description")
+        ),
+    )
+
     if resolved.ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             resolved.ctx,
@@ -509,7 +519,7 @@ async def generate_beat_video_prompt(
                 "episode": episode_num,
                 "beat_num": beat_num,
                 "field": field,
-                "language": body.language,
+                "language": language,
                 "output_dir": str(resolved.output_dir),
                 "display_name": f"生成提示词 · EP{episode_num} / Beat {beat_num}",
             },
@@ -536,7 +546,7 @@ async def generate_beat_video_prompt(
             project_name=resolved.project_name,
             episode_num=episode_num,
             beat_num=beat_num,
-            language=body.language,
+            language=language,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -584,6 +594,14 @@ async def generate_seedance2_prompt(
     next_beat = next(
         (beat for beat in beats if int(beat.get("beat_number") or 0) == beat_num + 1),
         None,
+    )
+    language = await detect_episode_asset_language(
+        store,
+        episode_num,
+        fallback_text="\n".join(
+            str(target.get(field) or "")
+            for field in ("narration_segment", "dialogue", "visual_description")
+        ),
     )
 
     from novelvideo.seedance2_i2v.models import parse_seedance2_config
@@ -646,6 +664,8 @@ async def generate_seedance2_prompt(
             next_beat=next_beat,
             manual_prompt_reference=body.manual_prompt_reference,
             prompt_guidance=body.prompt_guidance,
+            prompt_guidance_template_keys=body.prompt_guidance_template_keys,
+            language=language,
             prop_menu=list(script_data.get("prop_menu") or []),
         )
     except ValueError as exc:

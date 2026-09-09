@@ -57,10 +57,10 @@ To obtain a DC Key, visit <https://relayclaw.cdnfg.com>.
 
 ### 1. Start the local stack
 
-Use the repository’s self-hosted stack:
+Use the repository compose file (the bundled NewAPI is always part of it):
 
 ```bash
-docker compose -f docker-compose.selfhosted.yml up -d --build
+docker compose up -d
 ```
 
 It starts the DramaClaw API, web frontend, and bundled NewAPI. DramaClaw normally reaches NewAPI through the container network. The browser-facing host port may differ and does not need to replace the internal URL.
@@ -160,12 +160,13 @@ After a profile is saved, a channel key should show “Saved” and a masked pre
 
 #### Feature models
 
-DramaClaw uses stable logical names such as `DC-scene-builder-LLM` and `DC-freezone-vision-LLM`. In Custom mode, keep those internal names and map them to real upstream models in NewAPI.
+DramaClaw uses stable logical names such as `DC-character-builder-LLM`, `DC-scene-builder-LLM` and `DC-freezone-vision-LLM`. In Custom mode, keep those internal names and map them to real upstream models in NewAPI.
 
 - Text features can use text-only models.
 - Vision features send images or video and require a suitable multimodal model.
 - Bulk fill changes drafts only; click Save Mapping afterward.
 - Hermes may use a separate model. Other `DC-*-LLM` mappings can share one upstream model or be overridden individually.
+- After an upgrade that adds a feature row (for example `DC-character-builder-LLM` in v2.0.3), the new row starts empty and is not written to NewAPI until you pick a model and click Save Mapping, or re-apply a quick profile. Until then that feature fails with `No available channel for model DC-...`.
 
 #### Embedding
 
@@ -263,6 +264,7 @@ Enter Cloud name, API Key, API Secret, and an optional folder. Find them under *
 | No “Saved” badge after saving a key | The value may still be a browser draft. Save/update that channel or reapply the complete profile, and ensure the running image contains the latest code. |
 | Adding a media model says its provider key is missing | The provider channel was not persisted to NewAPI. Save/update the channel before saving media models. |
 | NewAPI reports `No available channel for model ...` | Check the logical mapping, channel status, upstream model name, and group. |
+| Structured steps fail with `Exceeded maximum output retries` behind a Codex-backed relay (Codex2API etc.) | The relay drops `tool_calls` on `/v1/chat/completions`. Enable **ChatCompletions → Responses Compatibility** for that channel in the NewAPI admin. See the [troubleshooting guide](../guides/troubleshooting.md#model--gateway). |
 | Local NewAPI initialization fails | Check the NewAPI service, SQLite mount, directory permissions, and `NEWAPI_PROVISIONER_ENABLED`. |
 | A new model is absent from XiaHua | Verify it is enabled, has the correct media type, the complete configuration was saved, and the page was refreshed. |
 | Controls do not match model capabilities | Check the media model `config`, especially resolutions, ratios, modes, and reference limits. |
@@ -276,7 +278,6 @@ Enter Cloud name, API Key, API Secret, and an optional folder. Find them under *
 
 - `src/novelvideo/official_media_models.json`: CE official media models and capabilities.
 - `.env.example`: environment variable reference.
-- `docker-compose.yml`: official-mode deployment.
-- `docker-compose.selfhosted.yml`: bundled NewAPI deployment.
+- `docker-compose.yml` (source build) / `docker-compose.release.yml` (images): the deployment files (api + bundled NewAPI + web); the gateway mode is chosen in Settings.
 - [Self-Hosting Handbook](../guides/self-hosting.md)
 - [Environment Variable Reference](../reference/environment-variables.md)

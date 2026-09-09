@@ -55,6 +55,7 @@ export function CanvasesTab({
 }: CanvasesTabProps) {
   const { t } = useTranslation();
   const username = useAuthStore((state) => state.username);
+  const displayName = useAuthStore((state) => state.displayName);
   const canvasesQuery = useFreezoneCanvases(project);
   const [deletedCanvasIds, setDeletedCanvasIds] = useState<Set<string>>(() => new Set());
   const items = (canvasesQuery.data ?? []).filter((item) => !deletedCanvasIds.has(item.id));
@@ -147,7 +148,12 @@ export function CanvasesTab({
     setShowCreateForm(true);
   };
 
-  const sections = buildCanvasBrowserSections(items, currentCanvasId, username);
+  const sections = buildCanvasBrowserSections(
+    items,
+    currentCanvasId,
+    username,
+    displayName,
+  );
   // 下拉里的一条列表：我的画布在最前，其余按最近修改排在后面。
   const canvasOptions = flattenCanvasBrowserSections(sections);
   const showRestoreMainlineAction = currentCanvasId !== "default" && hasPresetLabel;
@@ -513,6 +519,7 @@ export function buildCanvasBrowserSections(
   items: FreezoneCanvasSummary[],
   _currentCanvasId: string,
   username?: string | null,
+  displayName?: string | null,
 ): CanvasBrowserSections {
   const personalCanvasId = username ? personalCanvasIdForUsername(username) : null;
   const existingPersonal = personalCanvasId
@@ -522,7 +529,7 @@ export function buildCanvasBrowserSections(
     username && personalCanvasId
       ? {
           ...(existingPersonal ?? { id: personalCanvasId, modified_at: "", size: 0 }),
-          displayName: username,
+          displayName: displayName ?? username,
           displayKind: "personal",
         }
       : items.find((it) => canvasKindFromSummary(it) === "default") ?? {
