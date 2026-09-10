@@ -41,6 +41,24 @@ _NODE_SETTINGS = {
     },
     "audioNode": {"voice_ref"},
 }
+_VOICE_REF_FIELDS = {
+    "scope": "scope",
+    "character_name": "characterName",
+    "characterName": "characterName",
+    "identity_id": "identityId",
+    "identityId": "identityId",
+    "slot": "slot",
+    "voice_id": "voiceId",
+    "voiceId": "voiceId",
+}
+_VOICE_REF_REQUIRED_FIELDS = {
+    "project_narrator": (),
+    "user_custom": ("voiceId",),
+    "character_default": ("characterName",),
+    "character_age_group": ("characterName", "slot"),
+    "identity": ("characterName", "identityId"),
+    "identity_resolved": ("characterName", "identityId"),
+}
 
 
 class WorkflowOperationError(ValueError):
@@ -90,6 +108,35 @@ def _add_edge(plan: dict, source: str, target: str, kind: str) -> None:
     edge = {"source": source, "target": target, "link_type": kind}
     if edge not in edges:
         edges.append(edge)
+
+
+def _normalize_voice_ref(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise WorkflowOperationError("voice_ref must be an object")
+    unknown = set(value) - set(_VOICE_REF_FIELDS)
+    if unknown:
+        raise WorkflowOperationError("voice_ref contains unsupported fields")
+    normalized: dict[str, str] = {}
+    for source, target in _VOICE_REF_FIELDS.items():
+        if source not in value:
+            continue
+        raw = value[source]
+        if not isinstance(raw, str) or not raw.strip():
+            raise WorkflowOperationError(f"voice_ref.{source} must be non-empty text")
+        clean = raw.strip()
+        if target in normalized and normalized[target] != clean:
+            raise WorkflowOperationError(f"voice_ref.{target} values conflict")
+        normalized[target] = clean
+    scope = normalized.get("scope")
+    required = _VOICE_REF_REQUIRED_FIELDS.get(scope or "")
+    if required is None:
+        raise WorkflowOperationError("voice_ref.scope is unsupported")
+    missing = [field for field in required if not normalized.get(field)]
+    if missing:
+        raise WorkflowOperationError(
+            f"voice_ref requires {', '.join(missing)} for scope {scope}"
+        )
+    return normalized
 
 
 def bind_workflow_inputs(plan: dict, bindings: Any) -> dict:
@@ -245,8 +292,9 @@ def update_workflow_steps(plan: dict, updates: Any) -> dict:
                 "voice_ref",
             } and (not isinstance(value, str) or not value.strip()):
                 raise WorkflowOperationError(f"setting {key} must be non-empty text")
-            if key == "voice_ref" and not isinstance(value, dict):
-                raise WorkflowOperationError("voice_ref must be an object")
+            if key == "voice_ref":
+                value = _normalize_voice_ref(value)
+                data["voiceAvailable"] = True
             field = (
                 ("size" if node_type == "imageGenNode" else "quality")
                 if key == "resolution"

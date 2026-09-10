@@ -84,6 +84,64 @@ def test_step_patch_only_changes_requested_node():
     assert plan["nodes"][1]["data"] == {"prompt": "Original"}
 
 
+def test_step_patch_marks_valid_custom_voice_available():
+    plan = _plan()
+    plan["nodes"].append(
+        {
+            "id": "speech",
+            "node_type": "audioNode",
+            "data": {
+                "audioKind": "speech",
+                "speechMode": "clone",
+                "voiceAvailable": False,
+            },
+        }
+    )
+
+    result = update_workflow_steps(
+        plan,
+        [
+            {
+                "node_id": "speech",
+                "settings": {
+                    "voice_ref": {"scope": "user_custom", "voice_id": "fv_viewer"}
+                },
+            }
+        ],
+    )
+
+    assert result["nodes"][2]["data"]["voiceRef"] == {
+        "scope": "user_custom",
+        "voiceId": "fv_viewer",
+    }
+    assert result["nodes"][2]["data"]["voiceAvailable"] is True
+    assert plan["nodes"][2]["data"]["voiceAvailable"] is False
+
+
+@pytest.mark.parametrize(
+    "voice_ref",
+    [
+        {},
+        {"scope": "user_custom"},
+        {"scope": "unknown"},
+        {"scope": "project_narrator", "path": "/tmp/untrusted.wav"},
+    ],
+)
+def test_step_patch_rejects_invalid_voice_ref(voice_ref):
+    plan = _plan()
+    plan["nodes"].append(
+        {"id": "speech", "node_type": "audioNode", "data": {"voiceAvailable": False}}
+    )
+
+    with pytest.raises(WorkflowOperationError, match="voice_ref"):
+        update_workflow_steps(
+            plan,
+            [{"node_id": "speech", "settings": {"voice_ref": voice_ref}}],
+        )
+
+    assert plan["nodes"][2]["data"] == {"voiceAvailable": False}
+
+
 @pytest.mark.parametrize(
     "settings",
     [{"variants": True}, {"model": []}, {"semanticOutputRole": "input_text"}],
