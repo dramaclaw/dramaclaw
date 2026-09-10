@@ -1355,6 +1355,11 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
         ("创建一个 Skill，不要废话，直接运行它", True),
         ("创建一个 Skill，但不删除画布节点", False),
         ("创建一个 Skill，不修改画布", False),
+        ("创建一个用于清空画布的 Skill", False),
+        ("创建一个删除画布旧节点的 Skill", False),
+        ("创建一个 Skill，用于更新画布节点", False),
+        ("创建一个 Skill，然后生成一份使用说明", False),
+        ("创建一个 Skill，保存后创建一份说明文档", False),
         ("用刚保存的 Skill 生成图片", True),
         ("Create an image cleanup Skill, but do not run it", False),
         ("Create a Skill and then run it", True),
@@ -1364,6 +1369,9 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
         ("Create a Skill, but do not delete the old canvas node", False),
         ("Create a Skill, without confirmation, add it to canvas", True),
         ("Create a Skill, but not delete the canvas node", False),
+        ("Create a Skill for clearing the canvas", False),
+        ("Create a Skill that deletes canvas nodes", False),
+        ("Create a Skill, then write its documentation", False),
     ],
 )
 def test_codex_freezone_write_request_separates_skill_authoring_from_runtime(

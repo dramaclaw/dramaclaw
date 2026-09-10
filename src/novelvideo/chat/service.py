@@ -569,23 +569,40 @@ _FREEZONE_INDEPENDENT_CANVAS_WRITE_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+_FREEZONE_SKILL_CAPABILITY_RE = re.compile(
+    r"(?:"
+    r"(?:用于|用来|功能是|作用是|可以|能够|可)\s*"
+    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|布局|选择|打开|"
+    r"运行|执行)"
+    r"[^。！？!?，,；;\n]{0,24}(?:节点|画布|连线|边)"
+    r"|(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|布局|选择|"
+    r"打开|运行|执行)"
+    r"[^。！？!?，,；;\n]{0,24}(?:节点|画布|连线|边)"
+    r"[^。！？!?，,；;\n]{0,12}的\s*(?:Skill|Recipe|技能|配方)"
+    r"|(?:Skill|Recipe)\s+(?:for|that|which)\s+"
+    r"(?:creat(?:e|es|ing)|add(?:s|ing)?|insert(?:s|ing)?|delet(?:e|es|ing)|"
+    r"remov(?:e|es|ing)|clear(?:s|ing)?|updat(?:e|es|ing)|connect(?:s|ing)?|"
+    r"mov(?:e|es|ing)|layout|select(?:s|ing)?|open(?:s|ing)?|run(?:s|ning)?|execut(?:e|es|ing))"
+    r"[^。！？!?，,；;\n]{0,24}(?:node|canvas|edge)s?"
+    r")",
+    re.IGNORECASE,
+)
 _FREEZONE_SKILL_RUNTIME_REQUEST_RE = re.compile(
     r"(?:"
-    r"(?:用|使用|应用|运行|执行|use|apply|run|execute)"
+    r"(?:用(?!于|来)|使用|应用|运行|执行|use|apply|run|execute)"
     r"[^。！？!?\n]{0,24}"
     r"(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
     r"|(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
     r"[^。！？!?\n]{0,40}"
     r"(?:并|然后|再|随后|接着|同时|完成后|保存后|确认后|后|and\s+then|then)"
     r"[^。！？!?\n]{0,24}"
-    r"(?:运行|执行|应用|生成|制作|创建|写入|添加|"
-    r"run|execute|apply|generate|make|create|write|add)"
+    r"(?:运行|执行|应用|run|execute|apply)"
     r"|(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
     r"[^。！？!?\n]{0,24}"
     r"(?:添加到|放到|写入|加入|add\s+to|put\s+(?:it\s+)?on)"
     r"[^。！？!?\n]{0,12}"
     r"(?:画布|节点|canvas|node)"
-    r"|(?:运行|执行|应用|使用)\s*(?:它|这个|该(?:Skill|Recipe|技能|配方)?)"
+    r"|(?:运行|执行|应用|使用|用)\s*(?:它|这个|该(?:Skill|Recipe|技能|配方)?)"
     r"|(?:run|execute|apply|use)\s+(?:it|this(?:\s+(?:skill|recipe))?)"
     r")",
     re.IGNORECASE,
@@ -633,9 +650,10 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     # perform another independent canvas mutation.
     if _FREEZONE_SKILL_STUDIO_TRIGGER_RE.search(user_text):
         runtime_text = _FREEZONE_SKILL_RUNTIME_NEGATION_RE.sub("", user_text)
+        canvas_text = _FREEZONE_SKILL_CAPABILITY_RE.sub("", runtime_text)
         return bool(
             _FREEZONE_SKILL_RUNTIME_REQUEST_RE.search(runtime_text)
-            or _FREEZONE_INDEPENDENT_CANVAS_WRITE_RE.search(runtime_text)
+            or _FREEZONE_INDEPENDENT_CANVAS_WRITE_RE.search(canvas_text)
         )
     # A text artifact request such as “生成一个视频脚本” or “create an image
     # prompt” must remain a chat response unless the user explicitly names a
