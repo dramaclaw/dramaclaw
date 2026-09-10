@@ -405,11 +405,18 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
     monkeypatch.setattr(
         chat_route,
         "_pending_workflow_draft_receipt",
-        lambda *_: {
+        lambda *_, **__: {
             "draft_id": draft["draft_id"],
             "revision": receipt_revision,
             "task_id": receipt_task,
         },
+    )
+
+    async def bridge_project_state_dir(*_args, **_kwargs):
+        return tmp_path
+
+    monkeypatch.setattr(
+        chat_route, "_bridge_project_state_dir", bridge_project_state_dir
     )
     monkeypatch.setattr(
         chat_route,
