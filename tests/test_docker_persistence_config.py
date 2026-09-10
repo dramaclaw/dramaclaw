@@ -45,14 +45,19 @@ def test_gateway_is_the_dramaclaw_fork_pinned_by_variable() -> None:
 
 
 def test_ce_images_share_one_version_variable() -> None:
+    # The default moves with every release (the packaging workflow opens a PR that bumps it),
+    # so assert the shape and that api and web move together — never the literal version.
     services = _compose()["services"]
-    assert services["api"]["image"] == IMAGE_PREFIX + "dramaclaw:${DRAMACLAW_VERSION:-2.0.2}"
-    assert services["web"]["image"] == (
-        IMAGE_PREFIX + "dramaclaw-frontend:${DRAMACLAW_VERSION:-2.0.2}"
-    )
-    for name in ("api", "web"):
-        match = re.search(r"DRAMACLAW_VERSION:-(\d+\.\d+\.\d+)\}$", services[name]["image"])
-        assert match, services[name]["image"]
+    versions = set()
+    for name, repository in (("api", "dramaclaw"), ("web", "dramaclaw-frontend")):
+        image = services[name]["image"]
+        match = re.fullmatch(
+            re.escape(IMAGE_PREFIX + repository) + r":\$\{DRAMACLAW_VERSION:-(\d+\.\d+\.\d+)\}",
+            image,
+        )
+        assert match, image
+        versions.add(match.group(1))
+    assert len(versions) == 1, versions
 
 
 def test_api_persists_generated_media_in_ce_data_volume() -> None:

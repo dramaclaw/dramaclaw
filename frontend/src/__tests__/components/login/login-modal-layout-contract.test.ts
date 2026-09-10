@@ -52,11 +52,12 @@ describe("login modal layout contract", () => {
     expect(css).toMatch(/\.loginPanel\s*\{[\s\S]*?background:\s*transparent/);
   });
 
-  it("provides a keyboard-reachable account application popover", () => {
-    expect(modal).toContain('className={styles.loginApplyTrigger}');
-    expect(modal).toContain('role="tooltip"');
-    expect(modal).toContain("businessWechatQrUrl");
-    expect(css).toContain(".loginApplyAccount:focus-within .loginApplyPopover");
+  it("explains that OTP login creates an account without a separate application", () => {
+    expect(modal).toContain('t("auth.modal.otpRegistration")');
+    expect(modal).toContain("phoneOtpEntryVisible()");
+    expect(modal).toMatch(/otpEntryVisible\s*\?\s*\([\s\S]*?loginApplyRow/);
+    expect(modal).not.toContain("businessWechatQrUrl");
+    expect(modal).not.toContain('role="tooltip"');
   });
 
   it("removes the media panel on narrow mobile screens", () => {

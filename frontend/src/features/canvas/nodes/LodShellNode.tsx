@@ -39,6 +39,7 @@ import {
 import { useCanvasStore } from '@/stores/canvasStore';
 import { ReferencePickNodeOverlay } from '@/features/canvas/ui/ReferencePickNodeOverlay';
 import { AssetMigrationNodeOverlay } from '@/features/canvas/ui/AssetMigrationNodeOverlay';
+import { ForeignMediaNodeOverlay } from '@/features/canvas/ui/ForeignMediaNodeOverlay';
 import {
   getLodStill,
   requestLodStill,
@@ -261,6 +262,7 @@ export function withLodShell(
             height={props.height}
           />
           <AssetMigrationNodeOverlay nodeId={props.id} data={props.data} />
+          <ForeignMediaNodeOverlay nodeId={props.id} />
           <ReferencePickNodeOverlay nodeId={props.id} />
         </>
       );
@@ -269,6 +271,7 @@ export function withLodShell(
       <>
         <Component {...props} />
         <AssetMigrationNodeOverlay nodeId={props.id} data={props.data} />
+        <ForeignMediaNodeOverlay nodeId={props.id} />
         <ReferencePickNodeOverlay nodeId={props.id} />
       </>
     );

@@ -1365,6 +1365,9 @@
 
 .card {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   width: 100%;
   padding: 0;
   border: 0;
@@ -1372,6 +1375,41 @@
   background: transparent;
   box-shadow: none;
   overflow: visible;
+}
+
+.loginModes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.loginMode {
+  appearance: none;
+  height: 36px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: rgba(246, 248, 255, 0.58);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 560;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.loginMode:hover {
+  color: rgba(246, 248, 255, 0.86);
+}
+
+.loginMode[data-active="true"] {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.96);
 }
 
 .form {
@@ -1397,6 +1435,23 @@
   font-weight: 520;
   color: rgba(235, 238, 247, 0.58);
   letter-spacing: 0;
+}
+
+.fieldAction {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(150, 245, 252, 0.88);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.fieldAction:hover,
+.fieldAction:focus-visible {
+  color: rgba(180, 250, 255, 1);
 }
 
 .inputWrap {
@@ -1445,6 +1500,11 @@
   opacity: 1;
 }
 
+.input:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
 .input:-webkit-autofill,
 .input:-webkit-autofill:hover,
 .input:-webkit-autofill:focus {
@@ -1458,6 +1518,56 @@
 
 .inputWithEye {
   padding-right: 40px;
+}
+
+.codeInput {
+  padding-right: 126px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sendCodeButton {
+  position: absolute;
+  right: 7px;
+  min-width: 106px;
+  height: 34px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(150, 245, 252, 0.9);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.sendCodeButton:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.11);
+  color: rgba(180, 250, 255, 1);
+}
+
+.sendCodeButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.otpHint,
+.formError {
+  min-height: 18px;
+  margin: -4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.otpHint {
+  color: rgba(246, 248, 255, 0.62);
+}
+
+.formError {
+  color: rgba(255, 155, 150, 0.96);
 }
 
 .eyeBtn {
@@ -1523,7 +1633,7 @@
   justify-content: center;
   gap: 5px;
   margin-top: 20px;
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(255, 255, 255, 0.62);
   font-size: 12px;
   line-height: 1.4;
 }

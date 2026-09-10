@@ -26,6 +26,26 @@ from novelvideo.sqlite_store import SQLiteStore
 from novelvideo.utils.path_resolver import PathResolver, compute_scoped_grid_filename
 
 
+def get_director_sketch_generation_config(image_selection: str | None) -> dict:
+    """Resolve the existing director overrides for both execution and pricing."""
+    selection = (
+        os.environ.get("DIRECTOR_CONTROL_SKETCH_IMAGE_SELECTION") or image_selection
+    )
+    config = get_sketch_generation_config(selection_override=selection)
+    config["image_size"] = os.environ.get(
+        "DIRECTOR_CONTROL_SKETCH_IMAGE_SIZE", config.get("image_size") or "1K"
+    )
+    quality = os.environ.get("DIRECTOR_CONTROL_SKETCH_IMAGE_QUALITY", "low")
+    for key in (
+        "openai_image_quality",
+        "openai_sketch_image_quality",
+        "huimeng_image_quality",
+        "quality",
+    ):
+        config[key] = quality
+    return config
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
@@ -544,21 +564,7 @@ async def convert_control_frame_to_sketch(
         scene_menu = list(script.get("scene_menu") or [])
         prop_menu = list(script.get("prop_menu") or [])
 
-        director_selection = (
-            os.environ.get("DIRECTOR_CONTROL_SKETCH_IMAGE_SELECTION") or projected_image_selection
-        )
-        generator_config = get_sketch_generation_config(
-            selection_override=director_selection,
-        )
-        generator_config["image_size"] = os.environ.get(
-            "DIRECTOR_CONTROL_SKETCH_IMAGE_SIZE",
-            generator_config.get("image_size") or "1K",
-        )
-        sketch_quality = os.environ.get("DIRECTOR_CONTROL_SKETCH_IMAGE_QUALITY", "low")
-        generator_config["openai_image_quality"] = sketch_quality
-        generator_config["openai_sketch_image_quality"] = sketch_quality
-        generator_config["huimeng_image_quality"] = sketch_quality
-        generator_config["quality"] = sketch_quality
+        generator_config = get_director_sketch_generation_config(projected_image_selection)
         generator = NanoBananaGridGenerator(config=generator_config)
         if generator.provider not in {"openai", "huimeng", "openrouter", "google", "newapi"}:
             raise RuntimeError(

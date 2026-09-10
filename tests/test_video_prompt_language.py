@@ -37,10 +37,8 @@ def test_global_video_optimizer_applies_language_to_system_and_task(
 
     monkeypatch.setattr(module, "Agent", FactoryAgent)
     monkeypatch.setattr(
-        module,
-        "get_newapi_text_pydantic_model",
+        "novelvideo.config.get_newapi_text_pydantic_model",
         lambda *_args, **_kwargs: object(),
-        raising=False,
     )
 
     # The factory's system instruction must agree with the per-request task.

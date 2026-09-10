@@ -46,7 +46,9 @@ import { authRequired, isCeRuntime } from "@/lib/runtime-config";
 import { resetUserSessionState } from "@/lib/reset-region-state";
 import { useModelGatewayConfig } from "@/lib/queries/model-gateway";
 import { useOrgBranding } from "@/lib/queries/org-branding";
+import { useAccountSecurity } from "@/lib/queries/auth";
 import { useReleaseNotifications } from "@/lib/queries/release-notifications";
+import { normalize, SUPPORTED, type Supported } from "@/i18n/languages";
 import {
   useAnnouncementReadState,
   useAnnouncements,
@@ -90,7 +92,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   // 面板由点击/键盘打开时「钉住」：此时鼠标移开不再收走它。悬停打开的面板不钉。
   const accountPanelPinnedRef = useRef(false);
   const settingsAnchorRef = useRef<HTMLDivElement | null>(null);
-  const { username, logout } = useAuthStore();
+  const { username, displayName: storedDisplayName, logout } = useAuthStore();
   const queryClient = useQueryClient();
   // 退出登录是 SPA 内部跳转（不刷新页面），必须一并清掉 React Query 缓存和
   // 用户级 zustand/localStorage 状态，否则换账号登录后 projectSummaries 等
@@ -115,11 +117,11 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   const homeLinkLabel = brandName
     ? `${t("app.logoHomeTooltip")} — ${brandName}`
     : t("app.logoHomeTooltip");
-  const displayName = username ?? "User";
+  const accountSecurity = useAccountSecurity(!ceRuntime && showLogout && Boolean(username));
+  const passwordConfigured = accountSecurity.data?.password_configured ?? true;
+  const displayName = accountSecurity.data?.phone_masked ?? storedDisplayName ?? username ?? "User";
   const avatarInitial = displayName.slice(0, 1).toUpperCase();
-  const activeLanguage = (i18n.resolvedLanguage ?? i18n.language).startsWith("zh")
-    ? "zh"
-    : "en";
+  const activeLanguage = normalize(i18n.resolvedLanguage ?? i18n.language);
   const modelGatewayConfig = useModelGatewayConfig(ceRuntime);
   const releaseNotifications = useReleaseNotifications(i18n.resolvedLanguage ?? i18n.language);
   const releaseFeed = releaseNotifications.data?.data;
@@ -299,7 +301,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
       ?.focus();
   }, [accountPanelOpen]);
 
-  const switchLanguage = (lang: "zh" | "en") => {
+  const switchLanguage = (lang: Supported) => {
     void i18n.changeLanguage(lang);
     setLanguage(lang);
   };
@@ -474,6 +476,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               onEnter={openAccountPanel}
               onLogout={showLogout ? () => void handleLogout() : undefined}
               panelRef={accountPanelRef}
+              passwordConfigured={passwordConfigured}
               position={accountPanelPosition}
               visible={accountPanelVisible}
               t={t}
@@ -505,6 +508,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         open={passwordDialogOpen}
         onOpenChange={setPasswordDialogOpen}
         onPasswordChanged={handlePasswordChanged}
+        passwordConfigured={passwordConfigured}
       />
       {ceRuntime ? <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} /> : null}
       {settingsWarningBubble
@@ -582,6 +586,14 @@ function useFloatingBubblePosition(
   return position;
 }
 
+// The account menu renders one row per entry in `SUPPORTED`, so adding a
+// locale means adding it there plus its label key here — no JSX to touch.
+const LANGUAGE_LABEL_KEYS: Record<Supported, string> = {
+  zh: "header.account.languageChinese",
+  en: "header.account.languageEnglish",
+  vi: "header.account.languageVietnamese",
+};
+
 function AccountPanel({
   activeLanguage,
   avatarInitial,
@@ -596,31 +608,31 @@ function AccountPanel({
   onEnter,
   onLogout,
   panelRef,
+  passwordConfigured,
   position,
   visible,
   t,
 }: {
-  activeLanguage: "zh" | "en";
+  activeLanguage: Supported;
   avatarInitial: string;
   avatarUrl: string | null;
   displayName: string;
   hasUnreadNotification: boolean;
   onChangeAvatar: () => void;
   onChangePassword?: () => void;
-  onLanguageChange: (lang: "zh" | "en") => void;
+  onLanguageChange: (lang: Supported) => void;
   onNotifications: () => void;
   onClose: () => void;
   onEnter: () => void;
   onLogout?: () => void;
   panelRef: RefObject<HTMLDivElement | null>;
+  passwordConfigured: boolean;
   position: { top: number; right: number };
   visible: boolean;
   t: (key: string) => string;
 }) {
   const [languageOpen, setLanguageOpen] = useState(false);
-  const activeLanguageLabel = activeLanguage === "zh"
-    ? t("header.account.languageChinese")
-    : t("header.account.languageEnglish");
+  const activeLanguageLabel = t(LANGUAGE_LABEL_KEYS[activeLanguage]);
 
   return (
     <div
@@ -662,7 +674,11 @@ function AccountPanel({
           {onChangePassword ? (
             <HeaderMenuRow
               icon={<KeyRound className="size-3.5" />}
-              label={t("header.account.changePassword")}
+              label={t(
+                passwordConfigured
+                  ? "header.account.changePassword"
+                  : "header.account.setPassword",
+              )}
               onClick={onChangePassword}
             />
           ) : null}
@@ -675,16 +691,14 @@ function AccountPanel({
           />
           {languageOpen ? (
             <div className="ml-[30px] mr-1 space-y-0.5 pb-1">
-              <PreferenceOption
-                active={activeLanguage === "zh"}
-                label={t("header.account.languageChinese")}
-                onClick={() => onLanguageChange("zh")}
-              />
-              <PreferenceOption
-                active={activeLanguage === "en"}
-                label={t("header.account.languageEnglish")}
-                onClick={() => onLanguageChange("en")}
-              />
+              {SUPPORTED.map((language) => (
+                <PreferenceOption
+                  key={language}
+                  active={activeLanguage === language}
+                  label={t(LANGUAGE_LABEL_KEYS[language])}
+                  onClick={() => onLanguageChange(language)}
+                />
+              ))}
             </div>
           ) : null}
           {onLogout ? (

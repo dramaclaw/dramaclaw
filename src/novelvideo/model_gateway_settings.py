@@ -13,6 +13,7 @@ import os
 import sqlite3
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -135,18 +136,39 @@ def _settings_db_path() -> Path:
 def _connect() -> sqlite3.Connection:
     path = _settings_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), timeout=10, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    configure_sqlite_connection(conn)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS runtime_settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """)
-    conn.commit()
-    return conn
+    for attempt in range(3):
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(str(path), timeout=10, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            configure_sqlite_connection(conn)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS runtime_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """)
+            conn.commit()
+            return conn
+        except sqlite3.OperationalError as exc:
+            if conn is not None:
+                conn.close()
+            retryable = any(
+                marker in str(exc).lower()
+                for marker in (
+                    "database is locked",
+                    "database is busy",
+                )
+            )
+            if not retryable or attempt == 2:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+        except Exception:
+            if conn is not None:
+                conn.close()
+            raise
+    raise RuntimeError("failed to open model gateway settings database")
 
 
 def _read_all() -> dict[str, str]:

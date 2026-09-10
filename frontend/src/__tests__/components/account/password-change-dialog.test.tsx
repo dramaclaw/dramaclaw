@@ -141,4 +141,49 @@ describe("PasswordChangeDialog", () => {
       "header.account.passwordDialog.partialSuccess",
     );
   });
+
+  it("initializes a password without asking for a current password", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          data: { sessions_revoked: 1, agent_sessions_revoked: 0 },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const onPasswordChanged = vi.fn();
+    render(
+      <PasswordChangeDialog
+        open
+        passwordConfigured={false}
+        onOpenChange={vi.fn()}
+        onPasswordChanged={onPasswordChanged}
+      />,
+    );
+
+    expect(
+      screen.queryByLabelText("header.account.passwordDialog.current"),
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("header.account.passwordDialog.new"), {
+      target: { value: "first-password" },
+    });
+    fireEvent.change(screen.getByLabelText("header.account.passwordDialog.confirm"), {
+      target: { value: "first-password" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "header.account.passwordDialog.initializeSubmit" }),
+    );
+
+    await waitFor(() => expect(onPasswordChanged).toHaveBeenCalledOnce());
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/account/password/initialize",
+      expect.objectContaining({
+        body: JSON.stringify({ new_password: "first-password" }),
+      }),
+    );
+    expect(toast.success).toHaveBeenCalledWith(
+      "header.account.passwordDialog.initializeSuccess",
+    );
+  });
 });

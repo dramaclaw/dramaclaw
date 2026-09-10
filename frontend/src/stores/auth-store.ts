@@ -5,6 +5,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { quotaSafeStateStorage } from "@/lib/localStorageQuota";
 import { regionAbortController } from "@/lib/region-abort";
 import type { OkResponse } from "@/types/api";
+import { verifyOtp, type OtpLoginResult } from "@/lib/auth-api";
 
 export interface CurrentUser {
   username: string;
@@ -26,9 +27,16 @@ interface CurrentUserFetchResult {
 
 export interface AuthState {
   username: string | null;
+  displayName: string | null;
   role: string | null;
   avatarUrl: string | null;
   login: (username: string, password: string) => Promise<void>;
+  loginWithOtp: (
+    phone: string,
+    verificationId: string,
+    code: string,
+    idempotencyKey: string,
+  ) => Promise<OtpLoginResult>;
   logout: () => Promise<void>;
   validateSession: () => Promise<boolean>;
   getCurrentUser: (options?: GetCurrentUserOptions) => Promise<CurrentUser | null>;
@@ -49,15 +57,38 @@ let lastSuccessfulValidationAt = 0;
 // is now cookie-backed so we deliberately ignore that field even if legacy
 // clients have one sitting in localStorage — letting the cookie drive auth
 // avoids two sources of truth disagreeing.
-function sanitizePersisted(raw: unknown): Pick<AuthState, "username" | "role"> {
-  const empty = { username: null, role: null };
+function sanitizePersisted(raw: unknown): Pick<AuthState, "username" | "displayName" | "role"> {
+  const empty = { username: null, displayName: null, role: null };
   if (!raw || typeof raw !== "object") return empty;
   const r = raw as Record<string, unknown>;
   const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
+  const username = str(r.username);
   return {
-    username: str(r.username),
+    username,
+    displayName: str(r.displayName) ?? username,
     role: str(r.role),
   };
+}
+
+const GENERATED_PHONE_USERNAME = /^u_[0-9A-HJKMNP-TV-Z]{26}$/;
+
+async function resolveDisplayName(
+  user: CurrentUser,
+  previousDisplayName: string | null = null,
+): Promise<string> {
+  if (!GENERATED_PHONE_USERNAME.test(user.username)) return user.username;
+  const fallback = previousDisplayName || "User";
+  try {
+    const response = await fetch("/api/v1/account/security", {
+      credentials: "include",
+      signal: regionAbortController().signal,
+    });
+    if (!response.ok) return fallback;
+    const body = (await response.json()) as OkResponse<{ phone_masked?: string | null }>;
+    return body.data.phone_masked || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function clearCurrentUserCache(): void {
@@ -70,6 +101,7 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       username: null,
+      displayName: null,
       role: null,
       avatarUrl: null,
       login: async (username: string, password: string) => {
@@ -91,15 +123,42 @@ export const useAuthStore = create<AuthState>()(
           throw new Error(err.error || err.detail || "Login failed");
         }
         const data = await res.json();
+        const displayName = await resolveDisplayName(data.data);
         // The response body carries identity only; the HttpOnly cookie is the credential.
         cachedCurrentUser = data.data;
         lastSuccessfulValidationAt = Date.now();
         set({
           username: data.data.username,
+          displayName,
           role: data.data.role,
         });
         // Avatar is an EE-only feature served by its own endpoint, not /auth/me.
         void useAuthStore.getState().refreshAvatar();
+      },
+      loginWithOtp: async (
+        phone: string,
+        verificationId: string,
+        code: string,
+        idempotencyKey: string,
+      ) => {
+        const result = await verifyOtp(
+          { phone, verificationId, code },
+          idempotencyKey,
+        );
+        cachedCurrentUser = {
+          username: result.username,
+          role: result.role,
+          credit_balance: 0,
+          credential_kind: "browser_session",
+        };
+        lastSuccessfulValidationAt = Date.now();
+        set({
+          username: result.username,
+          displayName: result.phone_masked,
+          role: result.role,
+        });
+        void useAuthStore.getState().refreshAvatar();
+        return result;
       },
       logout: async () => {
         // Ask the BE to clear the HttpOnly cookie. If the network call fails
@@ -115,7 +174,7 @@ export const useAuthStore = create<AuthState>()(
           /* ignore — local logout proceeds regardless */
         }
         clearCurrentUserCache();
-        set({ username: null, role: null, avatarUrl: null });
+        set({ username: null, displayName: null, role: null, avatarUrl: null });
       },
       getCurrentUser: async (options: GetCurrentUserOptions = {}) => {
         // The cookie isn't visible to JS (HttpOnly), so we can't pre-check
@@ -150,10 +209,15 @@ export const useAuthStore = create<AuthState>()(
                 return { user: null, authFailure: false, networkFailure: false };
               }
               const body = (await res.json()) as OkResponse<CurrentUser>;
+              const current = useAuthStore.getState();
+              const previousDisplayName =
+                current.username === body.data.username ? current.displayName : null;
+              const displayName = await resolveDisplayName(body.data, previousDisplayName);
               cachedCurrentUser = body.data;
               lastSuccessfulValidationAt = Date.now();
               set({
                 username: body.data.username,
+                displayName,
                 role: body.data.role,
               });
               // NB: avatar is refreshed independently (login() + the App-root
@@ -174,7 +238,7 @@ export const useAuthStore = create<AuthState>()(
             // not bounce between "/" and "/login". Lightweight consumers such as
             // the credit badge can opt out for transient network failures.
             clearCurrentUserCache();
-            set({ username: null, role: null, avatarUrl: null });
+            set({ username: null, displayName: null, role: null, avatarUrl: null });
           }
           return result.user;
         } finally {
@@ -205,7 +269,7 @@ export const useAuthStore = create<AuthState>()(
       },
       reset: () => {
         clearCurrentUserCache();
-        set({ username: null, role: null, avatarUrl: null });
+        set({ username: null, displayName: null, role: null, avatarUrl: null });
       },
     }),
     {
@@ -213,6 +277,7 @@ export const useAuthStore = create<AuthState>()(
       storage: createJSONStorage(() => quotaSafeStateStorage),
       partialize: (state) => ({
         username: state.username,
+        displayName: state.displayName,
         role: state.role,
       }),
       merge: (persisted, current) => ({
