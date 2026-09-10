@@ -238,9 +238,8 @@ export function shouldShowCancelAll(
   run: FreezoneWorkflowRun | null,
   resuming: boolean,
 ): boolean {
-  return !resuming && (
-    activeStandaloneTaskCount > 0 || run?.status === "running"
-  );
+  if (resuming && run?.status !== "running") return false;
+  return activeStandaloneTaskCount > 0 || run?.status === "running";
 }
 
 export function resolveWorkflowRunDisplayCompletion(
@@ -809,7 +808,7 @@ export function ChatTaskStatusBar({
     }
   };
   const cancelAll = async () => {
-    if (resuming) return;
+    if (resuming && workflowRun?.status !== "running") return;
     const workflowActive = workflowRun?.status === "running";
     const count = activeStandaloneTasks.length + (workflowActive ? 1 : 0);
     if (count === 0 || cancelling) return;

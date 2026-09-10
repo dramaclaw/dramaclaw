@@ -361,6 +361,7 @@ describe("shouldShowCancelAll", () => {
 
     expect(workflowRunDisplayStatus(interrupted, true)).toBe("running");
     expect(shouldShowCancelAll(0, interrupted, true)).toBe(false);
+    expect(shouldShowCancelAll(0, workflowRun(), true)).toBe(true);
     expect(shouldShowCancelAll(0, workflowRun(), false)).toBe(true);
   });
 });
