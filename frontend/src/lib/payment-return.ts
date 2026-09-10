@@ -19,6 +19,7 @@ export type RechargeOrderStatus =
   | "manualReview";
 
 export function resolveRechargeOrderStatus(order: RechargeOrder): RechargeOrderStatus {
+  if (order.manual_review_required) return "manualReview";
   if (order.payment_status === "refunded" && order.fulfillment_status === "reversed") {
     return "refunded";
   }
@@ -31,6 +32,10 @@ export function resolveRechargeOrderStatus(order: RechargeOrder): RechargeOrderS
   // Closing an unpaid order can also fail fulfillment; it does not imply payment.
   if (order.payment_status === "paid" && order.fulfillment_status === "failed") {
     return "creditFailed";
+  }
+  if (order.payment_status === "pending" && order.payment_method === "dodo"
+    && order.failure_code === "DODO_PAYMENT_ATTEMPT_FAILED") {
+    return "failed";
   }
   return order.payment_status;
 }

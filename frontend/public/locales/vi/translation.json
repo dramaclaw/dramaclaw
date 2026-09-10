@@ -1454,7 +1454,8 @@
       "paymentMethod": "Phương thức thanh toán",
       "methods": {
         "alipay": "Alipay",
-        "wxpay": "WeChat Pay"
+        "wxpay": "WeChat Pay",
+        "dodo": "Dodo Payments"
       },
       "pay": "Thanh toán ngay",
       "creating": "Đang tạo đơn…",
@@ -1468,7 +1469,9 @@
         "accountUnavailable": "Tài khoản này không đủ điều kiện cho gói nạp đã chọn.",
         "linkUnavailable": "Liên kết nạp đã hết hạn, bị tắt hoặc không thuộc tài khoản này.",
         "requestChanged": "Cấu hình nạp đã thay đổi. Hãy tải lại và gửi đơn lần nữa.",
-        "serviceUnavailable": "Dịch vụ thanh toán tạm thời không khả dụng. Vui lòng thử lại sau."
+        "serviceUnavailable": "Dịch vụ thanh toán tạm thời không khả dụng. Vui lòng thử lại sau.",
+        "checkoutUnknown": "Đang xác minh việc tạo trang thanh toán. Hãy kiểm tra lịch sử hóa đơn trước khi tạo đơn khác.",
+        "quoteChanged": "Báo giá đã thay đổi. Hãy kiểm tra số tiền mới và xác nhận thanh toán lại."
       },
       "orderAlreadyCreated": "Đơn này đã tồn tại. Kiểm tra trạng thái trong lịch sử nạp.",
       "history": "Lịch sử nạp",
@@ -7647,7 +7650,9 @@
     "leaveTitle": "Rời trang thanh toán hay tiếp tục?",
     "leaveDescription": "Bạn sẽ quay lại trung tâm điểm và lựa chọn hiện tại sẽ được giữ lại.",
     "leave": "Rời trang",
-    "stay": "Tiếp tục"
+    "stay": "Tiếp tục",
+    "dodoTax": "Thuế áp dụng sẽ được hiển thị tại trang thanh toán Dodo trước khi trả tiền.",
+    "retryQuote": "Làm mới báo giá"
   },
   "paymentReturn": {
     "back": "Quay lại DramaClaw",
@@ -7704,7 +7709,8 @@
     "credits": "{{count}} điểm",
     "methods": {
       "alipay": "Alipay",
-      "wxpay": "WeChat Pay"
+      "wxpay": "WeChat Pay",
+      "dodo": "Dodo Payments"
     },
     "pay": "Thanh toán ngay",
     "creating": "Đang tạo đơn…",

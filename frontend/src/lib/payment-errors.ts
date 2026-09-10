@@ -6,6 +6,9 @@ import { HTTPError } from "ky";
 import { BackendStatusError, errorFromBackendBody } from "@/lib/api-errors";
 
 const PAYMENT_ERROR_KEYS: Record<string, string> = {
+  PAYMENT_QUOTE_REQUIRED: "credits.recharge.errors.quoteChanged",
+  PAYMENT_QUOTE_CHANGED: "credits.recharge.errors.quoteChanged",
+  DODO_CREATE_UNCONFIRMED: "credits.recharge.errors.checkoutUnknown",
   PAYMENT_TOO_MANY_PENDING: "credits.recharge.errors.tooManyPending",
   PAYMENT_PACKAGE_UNAVAILABLE: "credits.recharge.errors.packageUnavailable",
   PAYMENT_PACKAGE_NOT_FOUND: "credits.recharge.errors.packageUnavailable",
@@ -22,11 +25,7 @@ const PAYMENT_ERROR_KEYS: Record<string, string> = {
   PAYMENT_CUSTOM_RECHARGE_VERSION_CONFLICT: "credits.recharge.errors.requestChanged",
 };
 
-export function paymentErrorToastMessage(
-  error: unknown,
-  t: TFunction,
-  fallbackKey: string,
-): string {
+function normalizePaymentError(error: unknown): unknown {
   const cause =
     error && typeof error === "object" && "cause" in error
       ? (error as { cause?: unknown }).cause
@@ -37,6 +36,21 @@ export function paymentErrorToastMessage(
       errorFromBackendBody(paymentError.response.status, paymentError.data, paymentError.message) ??
       new BackendStatusError(paymentError.message, paymentError.response.status);
   }
+  return paymentError;
+}
+
+export function paymentQuoteNeedsRefresh(error: unknown): boolean {
+  const paymentError = normalizePaymentError(error);
+  return paymentError instanceof Error &&
+    ["PAYMENT_QUOTE_REQUIRED", "PAYMENT_QUOTE_CHANGED"].includes(paymentError.message.trim());
+}
+
+export function paymentErrorToastMessage(
+  error: unknown,
+  t: TFunction,
+  fallbackKey: string,
+): string {
+  const paymentError = normalizePaymentError(error);
   const code = paymentError instanceof Error ? paymentError.message.trim() : "";
   const translationKey = PAYMENT_ERROR_KEYS[code];
   if (translationKey) return t(translationKey);

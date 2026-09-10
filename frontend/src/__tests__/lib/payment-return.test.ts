@@ -44,6 +44,15 @@ function order(overrides: Partial<RechargeOrder> = {}): RechargeOrder {
 }
 
 describe("payment return state", () => {
+  it("shows a declined Dodo attempt without treating the order as closed", () => {
+    const declined = order({ payment_method: "dodo", failure_code: "DODO_PAYMENT_ATTEMPT_FAILED" });
+    expect(resolveRechargeOrderStatus(declined)).toBe("failed");
+    expect(resolvePaymentReturnState(declined, false)).toBe("failed");
+    expect(declined.payment_status).toBe("pending");
+    expect(resolvePaymentReturnState({ ...declined, manual_review_required: true }, false)).toBe("manual_review");
+    expect(resolvePaymentReturnState({ ...declined, payment_status: "paid", fulfillment_status: "credited" }, false)).toBe("credited");
+    expect(resolvePaymentReturnState({ ...declined, payment_method: "alipay" }, false)).toBe("confirming");
+  });
   it("only reports success after server-side fulfillment", () => {
     expect(resolvePaymentReturnState(order(), false)).toBe("confirming");
     expect(

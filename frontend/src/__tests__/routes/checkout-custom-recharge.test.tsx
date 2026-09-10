@@ -40,6 +40,7 @@ vi.mock("@/lib/queries/credits", async (original) => ({
   }),
 }));
 vi.mock("@/lib/queries/payments", () => ({
+  usePaymentQuote: () => ({ data: undefined, isFetching: false, isError: false }),
   useRechargePackages: () => ({ data: { data: { items: state.packages } }, isPending: false }),
   useCustomRechargeConfig: () => ({ data: { data: {
     enabled: state.enabled, credits_per_cny: 30, min_credits: 510,
@@ -48,7 +49,7 @@ vi.mock("@/lib/queries/payments", () => ({
   useRechargeOrder: () => ({ data: undefined }),
   useCreateCustomRechargeOrder: () => ({ mutateAsync: state.createCustom, isPending: false }),
   useCreateRechargeOrder: () => ({ mutateAsync: state.createPackage, isPending: false }),
-  submitEpayCheckout: state.submit,
+  submitPaymentCheckout: state.submit,
 }));
 
 describe("custom recharge checkout identity", () => {

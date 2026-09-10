@@ -1454,7 +1454,8 @@
       "paymentMethod": "支付方式",
       "methods": {
         "alipay": "支付宝",
-        "wxpay": "微信支付"
+        "wxpay": "微信支付",
+        "dodo": "Dodo Payments"
       },
       "pay": "立即支付",
       "creating": "正在创建订单…",
@@ -1468,7 +1469,9 @@
         "accountUnavailable": "当前账号不符合该充值方式的使用条件",
         "linkUnavailable": "充值链接已过期、被停用或不属于当前账号",
         "requestChanged": "充值配置已更新，请刷新后重新提交订单",
-        "serviceUnavailable": "支付服务暂时不可用，请稍后重试"
+        "serviceUnavailable": "支付服务暂时不可用，请稍后重试",
+        "checkoutUnknown": "收银台创建结果正在核实，请查看账单记录，勿重复创建订单。",
+        "quoteChanged": "报价已变化，请核对新金额后再次确认支付。"
       },
       "orderAlreadyCreated": "该订单已经创建，请在充值记录中查看状态",
       "history": "充值记录",
@@ -1634,7 +1637,9 @@
     "leaveTitle": "你要离开吗，还是继续流程？",
     "leaveDescription": "离开后会返回积分中心，当前选择将为你保留。",
     "leave": "离开",
-    "stay": "继续"
+    "stay": "继续",
+    "dodoTax": "如需支付税费，将在 Dodo 收银台付款前显示。",
+    "retryQuote": "刷新报价"
   },
   "paymentReturn": {
     "back": "返回 DramaClaw",
@@ -1691,7 +1696,8 @@
     "credits": "到账 {{count}} 积分",
     "methods": {
       "alipay": "支付宝",
-      "wxpay": "微信支付"
+      "wxpay": "微信支付",
+      "dodo": "Dodo Payments"
     },
     "pay": "立即支付",
     "creating": "正在创建订单…",

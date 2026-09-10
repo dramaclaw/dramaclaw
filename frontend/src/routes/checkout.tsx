@@ -22,10 +22,11 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { creditOrgOf, creditScopeOf, useCreditSummary } from "@/lib/queries/credits";
 import {
   type RechargePaymentMethod,
-  submitEpayCheckout,
+  submitPaymentCheckout,
   useCreateCustomRechargeOrder,
   useCreateRechargeOrder,
   useCustomRechargeConfig,
+  usePaymentQuote,
   useRechargeOrder,
   useRechargePackages,
 } from "@/lib/queries/payments";
@@ -42,7 +43,7 @@ import {
   rememberPaymentOrder,
   safePaymentReturnPath,
 } from "@/lib/payment-navigation";
-import { paymentErrorToastMessage } from "@/lib/payment-errors";
+import { paymentErrorToastMessage, paymentQuoteNeedsRefresh } from "@/lib/payment-errors";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -77,10 +78,10 @@ function readCheckoutDraft(): CheckoutDraft | null {
   return null;
 }
 
-function money(cents: number, language: string): string {
+function money(cents: number, language: string, currency: string): string {
   return new Intl.NumberFormat(language, {
     style: "currency",
-    currency: "CNY",
+    currency,
     minimumFractionDigits: 2,
   }).format(cents / 100);
 }
@@ -144,10 +145,15 @@ export function CheckoutPage() {
     draft?.kind === "custom"
       ? draft.credits
       : (packageItem?.base_credits ?? 0) + (packageItem?.gift_credits ?? 0);
-  const amountCents =
+  const baseAmountCents =
     draft?.kind === "custom" && customRecharge
       ? Math.ceil((draft.credits * 100) / customRecharge.credits_per_cny)
       : (packageItem?.amount_cents ?? 0);
+  const quoteQuery = usePaymentQuote(baseAmountCents, selectedPaymentMethod === "dodo" && !existingOrder);
+  const quote = quoteQuery.data?.data;
+  const currency = existingOrder?.currency ?? (selectedPaymentMethod === "dodo" ? "USD" : "CNY");
+  const amountCents = existingOrder?.amount_cents ?? (selectedPaymentMethod === "dodo" ? quote?.payment_amount_cents : baseAmountCents);
+  const quoteReady = Boolean(existingOrder) || selectedPaymentMethod !== "dodo" || (Boolean(quote) && !quoteQuery.isFetching && !quoteQuery.isError);
   const customReady = Boolean(
     draft?.kind === "custom" &&
       customRecharge?.enabled &&
@@ -188,7 +194,7 @@ export function CheckoutPage() {
   };
 
   const continuePayment = async () => {
-    if (!draft || !ready || !selectedPaymentMethod || creating) return;
+    if (!draft || !ready || !quoteReady || !selectedPaymentMethod || creating) return;
     try {
       const fingerprint = JSON.stringify({
         draft,
@@ -196,6 +202,7 @@ export function CheckoutPage() {
         orderType: targetOrderType,
         effectiveOrgId,
         amountCents,
+        quote: selectedPaymentMethod === "dodo" ? quote : undefined,
         credits,
         configVersion: draft.kind === "custom" ? customRecharge?.version : undefined,
       });
@@ -206,19 +213,22 @@ export function CheckoutPage() {
             configVersion: customRecharge!.version,
             paymentMethod: selectedPaymentMethod,
             idempotencyKey,
+            quote: selectedPaymentMethod === "dodo" ? quote : undefined,
           })
         : await createOrder.mutateAsync({
             packageId: draft.packageId,
             paymentMethod: selectedPaymentMethod,
             idempotencyKey,
+            quote: selectedPaymentMethod === "dodo" ? quote : undefined,
           });
       rememberPaymentOrder(response.data.order);
       if (!response.data.checkout) {
         window.location.assign("/payment-return");
         return;
       }
-      submitEpayCheckout(response.data.checkout);
+      submitPaymentCheckout(response.data.checkout);
     } catch (error) {
+      if (selectedPaymentMethod === "dodo" && paymentQuoteNeedsRefresh(error)) void quoteQuery.refetch();
       toast.error(paymentErrorToastMessage(error, t, "credits.recharge.createFailed"));
     }
   };
@@ -286,8 +296,10 @@ export function CheckoutPage() {
           <div className="mx-auto my-auto w-full max-w-lg py-10">
             <div className="text-xs text-white/38">{t("checkout.amountDue")}</div>
             <div className="mt-2 text-4xl font-semibold tabular-nums">
-              {money(amountCents, language)}
+              {amountCents === undefined ? "—" : money(amountCents, language, currency)}
             </div>
+            {quoteQuery.isError && selectedPaymentMethod === "dodo" ? <button type="button" onClick={() => void quoteQuery.refetch()} className="mt-3 text-sm text-primary">{t("checkout.retryQuote")}</button> : null}
+            {currency === "USD" ? <p className="mt-3 text-sm text-white/55">{t("checkout.dodoTax")}</p> : null}
 
             <div className="mt-10">
               <h1 className="text-base font-semibold">{t("checkout.orderSummary")}</h1>
@@ -303,7 +315,7 @@ export function CheckoutPage() {
                       {t("checkout.quantity", { count: 1 })}
                     </div>
                   </div>
-                  <span className="font-medium tabular-nums">{money(amountCents, language)}</span>
+                  <span className="font-medium tabular-nums">{amountCents === undefined ? "—" : money(amountCents, language, currency)}</span>
                 </div>
                 <dl className="mt-5 space-y-3 border-t border-white/8 pt-4 text-sm">
                   {draft.kind === "package" ? (
@@ -377,7 +389,7 @@ export function CheckoutPage() {
                     )}
                   >
                     <span className={cn("flex size-9 items-center justify-center rounded-md", method === "alipay" ? "bg-[#1677ff] text-white" : "bg-[#07c160] text-white")}>
-                      {method === "alipay" ? <WalletCards className="size-4" /> : <QrCode className="size-4" />}
+                      {method === "dodo" ? <CreditCard className="size-4" /> : method === "alipay" ? <WalletCards className="size-4" /> : <QrCode className="size-4" />}
                     </span>
                     <span className="text-sm font-medium">{t(`credits.recharge.methods.${method}`)}</span>
                     <span className={cn("ml-auto size-4 rounded-full border", effectivePaymentMethod === method ? "border-[5px] border-primary" : "border-white/25")} />
@@ -413,7 +425,7 @@ export function CheckoutPage() {
 
             <button
               type="button"
-              disabled={creating}
+              disabled={creating || !quoteReady}
               onClick={handlePrimaryAction}
               className="mt-8 inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-wait disabled:opacity-55"
             >

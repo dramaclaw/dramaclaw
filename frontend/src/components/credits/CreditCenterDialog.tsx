@@ -73,10 +73,10 @@ function formatNumber(value: number, language: string): string {
   return new Intl.NumberFormat(language, { maximumFractionDigits: 0 }).format(value);
 }
 
-function formatMoney(cents: number, language: string): string {
+function formatMoney(cents: number, language: string, currency = "CNY"): string {
   return new Intl.NumberFormat(language, {
     style: "currency",
-    currency: "CNY",
+    currency,
     minimumFractionDigits: 0,
   }).format(cents / 100);
 }
@@ -711,7 +711,7 @@ function OrdersTab({ orders, loading, language }: { orders: RechargeOrder[]; loa
                   </div>
                 </td>
                 <td className="px-4 py-3 font-medium tabular-nums">
-                  {formatMoney(order.amount_cents, language)}
+                  {formatMoney(order.provider_total_cents ?? order.amount_cents, language, order.currency)}
                 </td>
                 <td className="px-4 py-3">
                   <span

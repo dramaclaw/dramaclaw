@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { createFileRoute } from "@tanstack/react-router";
-import { Check, LogIn, QrCode, WalletCards } from "lucide-react";
+import { Check, CreditCard, LogIn, QrCode, WalletCards } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import {
   type RechargePaymentMethod,
-  submitEpayCheckout,
+  submitPaymentCheckout,
   useCreateRechargeLinkOrder,
   useRechargeLinkPackages,
+  usePaymentQuote,
 } from "@/lib/queries/payments";
 import { useAuthStore } from "@/stores/auth-store";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,7 @@ import {
   paymentIdempotencyKey,
   rememberPaymentOrder,
 } from "@/lib/payment-navigation";
-import { paymentErrorToastMessage } from "@/lib/payment-errors";
+import { paymentErrorToastMessage, paymentQuoteNeedsRefresh } from "@/lib/payment-errors";
 
 const TOKEN_STORAGE_KEY = "supertale-recharge-token";
 
@@ -32,10 +33,10 @@ function initialToken(): string {
   return sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "";
 }
 
-function money(cents: number, language: string): string {
+function money(cents: number, language: string, currency: string): string {
   return new Intl.NumberFormat(language, {
     style: "currency",
-    currency: "CNY",
+    currency,
     minimumFractionDigits: 2,
   }).format(cents / 100);
 }
@@ -58,6 +59,9 @@ function RechargePage() {
   const selectedPaymentMethod = availablePaymentMethods.includes(paymentMethod)
     ? paymentMethod
     : availablePaymentMethods[0];
+  const quoteQuery = usePaymentQuote(selectedPackageItem?.amount_cents ?? 0, authenticated && selectedPaymentMethod === "dodo");
+  const quote = quoteQuery.data?.data;
+  const quoteReady = selectedPaymentMethod !== "dodo" || (Boolean(quote) && !quoteQuery.isFetching && !quoteQuery.isError);
   const language = i18n.resolvedLanguage ?? i18n.language ?? "zh";
 
   useEffect(() => {
@@ -86,14 +90,15 @@ function RechargePage() {
   }, [token, validateSession]);
 
   const pay = async () => {
-    if (!selectedPackage || !selectedPaymentMethod || createOrder.isPending) return;
+    if (!selectedPackage || !selectedPaymentMethod || !quoteReady || createOrder.isPending) return;
     try {
       const response = await createOrder.mutateAsync({
         packageId: selectedPackage,
+        quote: selectedPaymentMethod === "dodo" ? quote : undefined,
         paymentMethod: selectedPaymentMethod,
         idempotencyKey: paymentIdempotencyKey(
           "link",
-          JSON.stringify({ token, packageId: selectedPackage, paymentMethod: selectedPaymentMethod }),
+          JSON.stringify({ token, packageId: selectedPackage, paymentMethod: selectedPaymentMethod, quote: selectedPaymentMethod === "dodo" ? quote : undefined }),
         ),
       });
       rememberPaymentOrder(response.data.order);
@@ -101,8 +106,9 @@ function RechargePage() {
         window.location.assign("/payment-return");
         return;
       }
-      submitEpayCheckout(response.data.checkout);
+      submitPaymentCheckout(response.data.checkout);
     } catch (error) {
+      if (selectedPaymentMethod === "dodo" && paymentQuoteNeedsRefresh(error)) void quoteQuery.refetch();
       toast.error(paymentErrorToastMessage(error, t, "rechargeLink.createFailed"));
     }
   };
@@ -159,7 +165,7 @@ function RechargePage() {
                 {selected ? <Check className="absolute right-3 top-3 size-4 text-primary" /> : null}
                 <div className="pr-6 text-sm font-medium">{item.name}</div>
                 <div className="mt-3 text-xl font-semibold tabular-nums">
-                  {money(item.amount_cents, language)}
+                  {money(item.amount_cents, language, item.currency)}
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
                   {t("rechargeLink.credits", { count: item.base_credits + item.gift_credits })}
@@ -168,6 +174,11 @@ function RechargePage() {
             );
           })}
         </div>
+        {selectedPaymentMethod === "dodo" ? <div className="mt-5 space-y-2">
+          <p className="text-lg font-semibold">{quote ? money(quote.payment_amount_cents, language, "USD") : "—"}</p>
+          <p className="text-sm text-muted-foreground">{t("checkout.dodoTax")}</p>
+          {quoteQuery.isError ? <button type="button" onClick={() => void quoteQuery.refetch()}>{t("checkout.retryQuote")}</button> : null}
+        </div> : null}
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-foreground/12 pt-5">
           <div className="inline-flex rounded-md border border-foreground/12 bg-foreground/8 p-1">
             {availablePaymentMethods.map((method) => (
@@ -183,14 +194,14 @@ function RechargePage() {
                 )}
                 onClick={() => setPaymentMethod(method)}
               >
-                {method === "alipay" ? <WalletCards className="size-3.5" /> : <QrCode className="size-3.5" />}
+                {method === "dodo" ? <CreditCard className="size-3.5" /> : method === "alipay" ? <WalletCards className="size-3.5" /> : <QrCode className="size-3.5" />}
                 {t(`rechargeLink.methods.${method}`)}
               </button>
             ))}
           </div>
           <button
             type="button"
-            disabled={!selectedPackage || !selectedPaymentMethod || createOrder.isPending}
+            disabled={!selectedPackage || !selectedPaymentMethod || !quoteReady || createOrder.isPending}
             className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"
             onClick={() => void pay()}
           >

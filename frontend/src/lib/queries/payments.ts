@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 import type { OkResponse } from "@/types/api";
 
-export type RechargePaymentMethod = "alipay" | "wxpay";
+export type RechargePaymentMethod = "alipay" | "wxpay" | "dodo";
 export type RechargeOrderType =
   | "personal_recharge"
   | "org_member_recharge";
@@ -43,6 +43,9 @@ export interface CustomRechargeConfig {
 }
 
 export interface RechargeOrder {
+  provider_total_cents?: number | null;
+  provider_tax_cents?: number | null;
+  manual_review_required?: boolean;
   order_id: string;
   merchant_order_no: string;
   order_type: RechargeOrderType;
@@ -51,7 +54,7 @@ export interface RechargeOrder {
   amount_cents: number;
   base_credits: number;
   gift_credits: number;
-  currency: "CNY";
+  currency: "CNY" | "USD";
   payment_method: RechargePaymentMethod;
   payment_status: "pending" | "paid" | "failed" | "expired" | "closed" | "refunded";
   fulfillment_status: "pending" | "reserved" | "processing" | "credited" | "failed" | "reversed";
@@ -71,8 +74,10 @@ export interface EpayCheckout {
 
 type CreateRechargeOrderResponse = {
   order: RechargeOrder;
-  checkout: EpayCheckout | null;
+  checkout: PaymentCheckout | null;
 };
+
+export type PaymentCheckout = EpayCheckout | { kind: "redirect"; url: string };
 
 export type RechargeLinkSubject = "personal_user";
 
@@ -105,6 +110,26 @@ export function useCustomRechargeConfig(enabled = true) {
     enabled,
     staleTime: 30_000,
     refetchOnWindowFocus: true,
+    retry: false,
+  });
+}
+
+export interface PaymentQuote {
+  base_amount_cents: number;
+  payment_amount_cents: number;
+  currency: "USD";
+  cny_per_usd: string;
+}
+
+export function usePaymentQuote(baseAmountCents: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ["payments", "quote", "dodo", baseAmountCents],
+    queryFn: ({ signal }) => api.post("api/v1/payments/quote", {
+      signal, retry: 0, json: { base_amount_cents: baseAmountCents, payment_method: "dodo" },
+    }).json<OkResponse<PaymentQuote>>(),
+    enabled: enabled && Number.isInteger(baseAmountCents) && baseAmountCents > 0,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
     retry: false,
   });
 }
@@ -166,15 +191,17 @@ export function useCreateRechargeOrder() {
       packageId,
       paymentMethod,
       idempotencyKey,
+      quote,
     }: {
       packageId: string;
       paymentMethod: RechargePaymentMethod;
       idempotencyKey: string;
+      quote?: PaymentQuote;
     }) =>
       api
         .post("api/v1/payments/orders", {
           headers: { "Idempotency-Key": idempotencyKey },
-          json: { package_id: packageId, payment_method: paymentMethod },
+          json: { package_id: packageId, payment_method: paymentMethod, ...(quote ? { quote } : {}) },
           retry: 0,
         })
         .json<OkResponse<CreateRechargeOrderResponse>>(),
@@ -197,11 +224,13 @@ export function useCreateCustomRechargeOrder() {
       configVersion,
       paymentMethod,
       idempotencyKey,
+      quote,
     }: {
       credits: number;
       configVersion: number;
       paymentMethod: RechargePaymentMethod;
       idempotencyKey: string;
+      quote?: PaymentQuote;
     }) =>
       api
         .post("api/v1/payments/custom-orders", {
@@ -209,6 +238,7 @@ export function useCreateCustomRechargeOrder() {
           json: {
             credits,
             config_version: configVersion,
+            ...(quote ? { quote } : {}),
             payment_method: paymentMethod,
           },
           retry: 0,
@@ -248,10 +278,12 @@ export function useCreateRechargeLinkOrder(token: string) {
       packageId,
       paymentMethod,
       idempotencyKey,
+      quote,
     }: {
       packageId: string;
       paymentMethod: RechargePaymentMethod;
       idempotencyKey: string;
+      quote?: PaymentQuote;
     }) =>
       api
         .post("api/v1/payments/recharge-link/orders", {
@@ -259,7 +291,7 @@ export function useCreateRechargeLinkOrder(token: string) {
             "X-Recharge-Token": token,
             "Idempotency-Key": idempotencyKey,
           },
-          json: { package_id: packageId, payment_method: paymentMethod },
+          json: { package_id: packageId, payment_method: paymentMethod, ...(quote ? { quote } : {}) },
           retry: 0,
         })
         .json<OkResponse<CreateRechargeOrderResponse>>(),
@@ -274,7 +306,17 @@ export function useCreateRechargeLinkOrder(token: string) {
   });
 }
 
-export function submitEpayCheckout(checkout: EpayCheckout): void {
+export function submitPaymentCheckout(checkout: PaymentCheckout): void {
+  if ("kind" in checkout && checkout.kind === "redirect") {
+    const url = new URL(checkout.url);
+    if (url.protocol !== "https:" || url.username || url.password || url.port ||
+        url.hash || !["checkout.dodopayments.com", "test.checkout.dodopayments.com"].includes(url.hostname)) {
+      throw new Error("unsafe checkout URL");
+    }
+    window.location.assign(url.href);
+    return;
+  }
+  if (!("action" in checkout)) throw new Error("unknown checkout type");
   const action = new URL(checkout.action, window.location.origin);
   const localHttp =
     action.protocol === "http:" &&

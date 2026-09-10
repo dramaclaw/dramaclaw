@@ -14,13 +14,15 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import {
-  submitEpayCheckout,
+  submitPaymentCheckout,
   useCreateRechargeOrder,
   useCreateRechargeLinkOrder,
   useRechargeLinkPackages,
+  useCustomRechargeConfig,
+  usePaymentQuote,
 } from "@/lib/queries/payments";
 import { BackendStatusError } from "@/lib/api-errors";
-import { paymentErrorToastMessage } from "@/lib/payment-errors";
+import { paymentErrorToastMessage, paymentQuoteNeedsRefresh } from "@/lib/payment-errors";
 
 const server = setupServer();
 
@@ -39,6 +41,54 @@ function wrapper(queryClient: QueryClient) {
 }
 
 describe("recharge checkout", () => {
+  it.each([
+    ["PAYMENT_QUOTE_CHANGED", true],
+    ["PAYMENT_QUOTE_REQUIRED", true],
+    ["DODO_CREATE_UNCONFIRMED", false],
+    ["Failed to fetch", false],
+  ])("refreshes quotes only after a definite quote rejection: %s", (code, refresh) => {
+    expect(paymentQuoteNeedsRefresh(new BackendStatusError(code, 409))).toBe(refresh);
+  });
+  it.each([
+    "http://checkout.dodopayments.com/session/test",
+    "https://checkout.dodopayments.com.attacker.test/session/test",
+    "https://attacker.test/session/test",
+    "https://secret@checkout.dodopayments.com/session/test",
+    "https://checkout.dodopayments.com:8443/session/test",
+    "https://checkout.dodopayments.com/session/test#fragment",
+  ])("rejects an unsafe Dodo redirect: %s", (url) => {
+    expect(() => submitPaymentCheckout({ kind: "redirect", url })).toThrow("unsafe checkout URL");
+    expect(document.querySelector("form")).toBeNull();
+  });
+
+  it("loads one CNY custom recharge rule without a currency selector", async () => {
+    server.use(http.get("http://localhost:3000/api/v1/payments/custom-recharge", ({ request }) => {
+      expect(new URL(request.url).searchParams.has("currency")).toBe(false);
+      return HttpResponse.json({ ok: true, data: { credits_per_cny: 100 } });
+    }));
+    const client = new QueryClient();
+    const { result, unmount } = renderHook(() => useCustomRechargeConfig(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.data?.data.credits_per_cny).toBe(100));
+    unmount();
+    client.clear();
+  });
+
+  it("quotes USD from the CNY amount and refreshes explicitly", async () => {
+    let amount = 1389;
+    server.use(http.post("http://localhost:3000/api/v1/payments/quote", async ({ request }) => {
+      expect(await request.clone().json()).toEqual({ base_amount_cents: 10000, payment_method: "dodo" });
+      return HttpResponse.json({ ok: true, data: { base_amount_cents: 10000, payment_amount_cents: amount, currency: "USD", cny_per_usd: "7.2" } });
+    }));
+    const client = new QueryClient();
+    const { result, unmount } = renderHook(() => usePaymentQuote(10000, true), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.data?.data.payment_amount_cents).toBe(1389));
+    amount = 1250;
+    await act(async () => { await result.current.refetch(); });
+    await waitFor(() => expect(result.current.data?.data.payment_amount_cents).toBe(1250));
+    unmount();
+    client.clear();
+  });
+
   it.each([
     [409, { detail: "PAYMENT_ORG_CREDITS_INSUFFICIENT" }, "credits.recharge.errors.orgCreditsInsufficient"],
     [409, { ok: false, error: "PAYMENT_ORG_CREDITS_INSUFFICIENT" }, "credits.recharge.errors.orgCreditsInsufficient"],
@@ -206,7 +256,7 @@ describe("recharge checkout", () => {
       .spyOn(HTMLFormElement.prototype, "submit")
       .mockImplementation(() => undefined);
 
-    submitEpayCheckout({
+    submitPaymentCheckout({
       action: "https://pay.example.test/submit.php",
       method: "POST",
       fields: { pid: "pid-1", money: "1.00", sign: "signed-value" },
@@ -228,7 +278,7 @@ describe("recharge checkout", () => {
 
   it("rejects a public plaintext checkout before creating a form", () => {
     expect(() =>
-      submitEpayCheckout({
+      submitPaymentCheckout({
         action: "http://pay.example.test/submit.php",
         method: "POST",
         fields: { pid: "pid-1" },

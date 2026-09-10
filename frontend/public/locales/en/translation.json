@@ -1454,7 +1454,8 @@
       "paymentMethod": "Payment method",
       "methods": {
         "alipay": "Alipay",
-        "wxpay": "WeChat Pay"
+        "wxpay": "WeChat Pay",
+        "dodo": "Dodo Payments"
       },
       "pay": "Pay now",
       "creating": "Creating order…",
@@ -1468,7 +1469,9 @@
         "accountUnavailable": "This account is not eligible for the selected recharge.",
         "linkUnavailable": "This recharge link is expired, disabled, or does not belong to this account.",
         "requestChanged": "The recharge configuration changed. Refresh and submit the order again.",
-        "serviceUnavailable": "The payment service is temporarily unavailable. Try again later."
+        "serviceUnavailable": "The payment service is temporarily unavailable. Try again later.",
+        "checkoutUnknown": "Checkout creation is being verified. Check your billing records before trying another order.",
+        "quoteChanged": "The quote has changed. Review the updated amount and confirm payment again."
       },
       "orderAlreadyCreated": "This order already exists. Check its status in recharge history.",
       "history": "Recharge history",
@@ -1634,7 +1637,9 @@
     "leaveTitle": "Leave checkout or continue?",
     "leaveDescription": "You will return to the credit center and your current selection will be preserved.",
     "leave": "Leave",
-    "stay": "Continue"
+    "stay": "Continue",
+    "dodoTax": "Any applicable tax is shown in the Dodo checkout before payment.",
+    "retryQuote": "Refresh quote"
   },
   "paymentReturn": {
     "back": "Back to DramaClaw",
@@ -1691,7 +1696,8 @@
     "credits": "{{count}} credits",
     "methods": {
       "alipay": "Alipay",
-      "wxpay": "WeChat Pay"
+      "wxpay": "WeChat Pay",
+      "dodo": "Dodo Payments"
     },
     "pay": "Pay now",
     "creating": "Creating order…",
