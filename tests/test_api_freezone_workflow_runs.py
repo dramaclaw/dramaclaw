@@ -474,9 +474,16 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("node_kind", ["image", "text"])
+@pytest.mark.parametrize("usable_prompt", [True, False])
+@pytest.mark.parametrize(
+    "reuse_mode",
+    ["memory_cache", "persistent_cache", "deterministic", "timeout_fallback"],
+)
 async def test_recipe_compile_binds_only_fresh_model_evidence(
     workflow_run_client: TestClient,
     node_kind: str,
+    reuse_mode: str,
+    usable_prompt: bool,
 ) -> None:
     from novelvideo.api.routes import freezone
     from novelvideo.api.schemas import FreezoneRecipeCompileRequest
@@ -540,8 +547,8 @@ async def test_recipe_compile_binds_only_fresh_model_evidence(
     await freezone._record_recipe_compile_product_evidence(
         body=request(cached_operation["operation_id"]),
         compiled=RecipeCompileResult(
-            "cached",
-            "memory_cache",
+            "cached" if usable_prompt else "   ",
+            reuse_mode,
             ("product-image",),
         ),
         user={"id": "u-alice", "username": "alice"},
@@ -551,7 +558,33 @@ async def test_recipe_compile_binds_only_fresh_model_evidence(
         project_dir=workflow_run_client.state_dir,
         operation_id=cached_operation["operation_id"],
     )
-    assert stored_cached["status"] == "failed"
+    if not usable_prompt:
+        assert stored_cached["status"] == "failed"
+        assert stored_cached["model_evidence"] == {}
+        return
+    assert stored_cached["status"] == "cancelled"
+    assert stored_cached["result_ref"] == {
+        "kind": "recipe_nonbillable",
+        "id": cached_operation["operation_id"],
+        "reason": reuse_mode,
+    }
+    from novelvideo.freezone.agent_product_operations import AgentProductNotBillable
+    from novelvideo.task_backend.runners.freezone import (
+        _run_freezone_agent_product_async,
+    )
+
+    with pytest.raises(AgentProductNotBillable) as exc:
+        await _run_freezone_agent_product_async(
+            {
+                "__run_task_id": stored_cached["task_id"],
+                "payload": {
+                    "operation_id": cached_operation["operation_id"],
+                    "product_kind": "recipe_result",
+                },
+            },
+            SimpleNamespace(state_dir=workflow_run_client.state_dir),
+        )
+    assert exc.value.reason == reuse_mode
     assert stored_cached["model_evidence"] == {}
 
 
@@ -1065,3 +1098,42 @@ def test_workflow_run_list_cancels_orphaned_failed_record(
     assert listed["status"] == "cancelled"
     assert listed["resumable"] is False
     assert listed["metadata"]["cancel_reason"] == "workflow_nodes_deleted"
+
+
+def test_client_cannot_forge_nonbillable_recipe_receipt(workflow_run_client):
+    from novelvideo.freezone.agent_product_operations import (
+        read_agent_product_operation,
+    )
+
+    client = workflow_run_client
+    response = client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations",
+        json={
+            "product_kind": "recipe_result",
+            "generation_session_id": "forged-reuse",
+            "canvas_id": "default",
+            "artifact_id": "image-1",
+            "normalized_inputs_hash": "forged-reuse",
+        },
+    )
+    assert response.status_code == 200
+    operation = response.json()["data"]
+    operation_id = operation["operation_id"]
+    response = client.post(
+        f"/api/v1/projects/proj_demo/freezone/agent-product-operations/{operation_id}/finish",
+        json={
+            "task_id": operation["task_id"],
+            "outcome": "cancelled",
+            "result_ref": {
+                "kind": "recipe_nonbillable",
+                "id": operation_id,
+                "reason": "timeout_fallback",
+            },
+        },
+    )
+    assert response.status_code == 400
+    stored = read_agent_product_operation(
+        project_dir=client.state_dir, operation_id=operation_id
+    )
+    assert stored["status"] == operation["status"]
+    assert stored["result_ref"] == {}

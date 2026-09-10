@@ -46,6 +46,22 @@ TERMINAL_STATUSES = {"delivered", "failed", "cancelled"}
 OPERATION_ID_RE = re.compile(r"^agent_product_[a-zA-Z0-9_-]{1,96}$")
 
 
+class AgentProductNotBillable(RuntimeError):
+    """A Recipe used a fallback or reused text, without a fresh model delivery."""
+
+    MESSAGES = {
+        "timeout_fallback": "Recipe 提示词优化超时，已使用备用提示词；本次 Recipe 不计费",
+        "memory_cache": "Recipe 已复用缓存提示词；本次 Recipe 不计费",
+        "persistent_cache": "Recipe 已复用缓存提示词；本次 Recipe 不计费",
+        "deterministic": "Recipe 已使用模板提示词；本次 Recipe 不计费",
+    }
+
+    def __init__(self, *, operation_id: str, reason: str) -> None:
+        self.operation_id = operation_id
+        self.reason = reason
+        super().__init__(self.MESSAGES[reason])
+
+
 class AgentProductSettlementPending(RuntimeError):
     """The product may still arrive, so its credit reservation must stay open."""
 
