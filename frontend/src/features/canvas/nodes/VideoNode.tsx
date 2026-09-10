@@ -1538,7 +1538,7 @@ export const VideoNode = memo(
       } else {
         target = "textToVideo";
       }
-      if (genMode !== target) {
+      if (genMode !== target && isVideoModeSupportedByModel(target, selectedVideoModel)) {
         updateNodeData(id, { genMode: target });
       }
     }, [

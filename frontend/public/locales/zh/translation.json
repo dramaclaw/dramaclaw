@@ -6038,6 +6038,8 @@
     },
     "videoModel": {
       "reason": {
+        "imageUnsupported": "当前模型不支持图片输入，请移除图片或选择支持图片的模型。",
+        "modeUnsupported": "当前模型不支持此生成模式，请选择该节点支持的模式。",
         "videoUnsupported": "该模型不支持视频素材",
         "audioUnsupported": "该模型不支持音频素材",
         "singleImageOnly": "该模型单次仅支持 1 张图片",

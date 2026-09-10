@@ -307,10 +307,10 @@ describe("videoSubmitMediaRejectionReason — 提交前素材守卫 (P1/P2)", ()
 
   it("Seedance 1.x：单图 / 纯文本 → 放行", () => {
     expect(
-      videoSubmitMediaRejectionReason("imageToVideo", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
+      videoSubmitMediaRejectionReason("firstFrame", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
     ).toBeNull();
     expect(
-      videoSubmitMediaRejectionReason("imageReference", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
+      videoSubmitMediaRejectionReason("firstFrame", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
     ).toBeNull();
     expect(videoSubmitMediaRejectionReason("textToVideo", SEEDANCE10_PRO_FAST, none)).toBeNull();
   });
@@ -529,7 +529,7 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
       const counts = { ...none, images };
       const pickerBlocked = videoModelReferenceDisabledReason(SEEDANCE15_PRO, counts) != null;
       const submitBlocked =
-        videoSubmitMediaRejectionReason("imageToVideo", SEEDANCE15_PRO, counts) != null;
+        videoSubmitMediaRejectionReason("firstFrame", SEEDANCE15_PRO, counts) != null;
       expect(pickerBlocked).toBe(submitBlocked);
     }
   });
@@ -1284,5 +1284,21 @@ describe("VideoNode 接线：素材撤空 → 文生视频", () => {
     expect(source).not.toContain(
       "videoModeRequiresPrompt(genMode)\n        ? !hasPromptText\n        : !hasRequiredMediaForMode",
     );
+  });
+});
+
+
+describe("node-specific video modes", () => {
+  const textOnly = { id: "text-only", supportedModes: ["text_to_video"] };
+  it("rejects unsupported modes even when a single image is present", () => {
+    expect(videoSubmitMediaRejectionReason("imageToVideo", textOnly,
+      { images: 1, videos: 0, audios: 0 })).toBe("node.videoModel.reason.modeUnsupported");
+  });
+  it("does not infer or silently discard image input for a text-only model", () => {
+    expect(videoUpstreamImageDefaultMode(textOnly)).toBeNull();
+    expect(videoSubmitMediaRejectionReason("textToVideo", textOnly,
+      { images: 1, videos: 0, audios: 0 })).toBe("node.videoModel.reason.imageUnsupported");
+    expect(videoSubmitMediaRejectionReason("textToVideo", textOnly,
+      { images: 0, videos: 0, audios: 0 })).toBeNull();
   });
 });
