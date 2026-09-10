@@ -1101,9 +1101,9 @@ export class PrevizRenderer {
   /**
    * 把一份人物草稿的木偶画到创建对话框那块预览画布上。
    *
-   * 与 [renderCameraPreview] 的区别只在场景：机位预览要的就是「这台机器在这场戏里看到
-   * 什么」，所以借视口那个场景；木偶预览要的是「这个人长什么样」，借过来就成了一张缩
-   * 小的视口。所以另起一套只装这一具木偶与一块地的场景（`createCharacterPreviewStage`）。
+   * 与 [renderCameraPreview] 一样借视口那个场景：这个人建出来会站在戏里，用户在这块预览
+   * 上要看的正是「他站在那儿是什么样」。木偶只在离屏那一趟里挂进场景，画完立刻摘掉，
+   * 视口那边一帧都撞不见它（见 `renderCharacterPreview`）。
    *
    * 返回 Promise 是因为真模型要 await 骨架克隆。调用方可以不等——不等就是「这一帧先不
    * 管，画好了自然会出现」；连着调用也是安全的，但两种情形的收场不一样，见
@@ -1130,7 +1130,8 @@ export class PrevizRenderer {
         {
           three: this.three,
           renderer: this.renderer,
-          scene: this.characterStage.scene,
+          worldScene: this.scene,
+          holder: this.characterStage.holder,
           camera: this.characterStage.camera,
           canvas,
           rig: this.characterRig,
@@ -1519,10 +1520,11 @@ export class PrevizRenderer {
     this.graph.dispose();
     this.pathPreview?.dispose();
     this.strokePreview?.dispose();
-    // 木偶预览那套场景不在 `this.scene` 底下，下面那次 traverse 扫不到它。清完把字段
-    // 也放掉：`disposeCharacterPreviewStage` 摘的是场景的孩子，留下的是一个空 `Scene`
-    // 加一台相机，「字段非空就是能用」在这之后是假的。今天走不到——`renderCharacter-
-    // Preview` 进门就被 `disposed` 挡了——纯粹是不留一个已经作废的句柄在手上。
+    // 木偶待在一个游离的 `holder` 下面、不在 `this.scene` 底下，下面那次 traverse 扫不
+    // 到它。清完把字段也放掉：`disposeCharacterPreviewStage` 摘的是 `holder` 的孩子，
+    // 留下的是一个空容器加一台相机，「字段非空就是能用」在这之后是假的。今天走不到
+    // ——`renderCharacterPreview` 进门就被 `disposed` 挡了——纯粹是不留一个已经作废的
+    // 句柄在手上。
     if (this.characterStage) disposeCharacterPreviewStage(this.characterStage);
     this.characterStage = null;
     this.scene.traverse((object) => {

@@ -3,22 +3,46 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createCharacterDraft } from "@/features/previz/domain/characterDraft";
+import { PREVIZ_HEIGHT_CM_RANGE } from "@/features/previz/domain/objects";
 import type { PrevizCharacterDraft } from "@/features/previz/domain/characterDraft";
 import {
+  PREVIZ_CHARACTER_PREVIEW_SIZE,
+  createCharacterPreviewStage,
   renderCharacterPreview,
   type CharacterPreviewDeps,
 } from "@/features/previz/engine/characterPreview";
+import { PREVIZ_PREVIEW_SIZE } from "@/features/previz/engine/cameraPreview";
 import { createCharacterPlaceholder } from "@/features/previz/engine/sceneGraph";
 
 /**
- * 这份用例盯的是「什么时候重建木偶」与「相机按身高摆在哪」，不是 three 本身。
- * jsdom 里建不出 WebGL 上下文，所以 three 换成一份只忠实到被测代码用得到那几处的假实现。
+ * 这份用例盯的是「什么时候重建木偶」「相机按身高与落点摆在哪」「木偶什么时候挂在世界
+ * 场景里」，不是 three 本身。jsdom 里建不出 WebGL 上下文，所以 three 换成一份只忠实到
+ * 被测代码用得到那几处的假实现。
  */
+
+/**
+ * 一个真的会被写进去的位置。木偶站在哪是这一份用例要读的东西之一，而 `shapeOf` 还要
+ * 读那串 `set` 调用——两样都要，所以 `set` 既是 spy 又真的落值。
+ */
+function fakeVec3() {
+  const vec = {
+    x: 0,
+    y: 0,
+    z: 0,
+    set: vi.fn((x: number, y: number, z: number) => {
+      vec.x = x;
+      vec.y = y;
+      vec.z = z;
+    }),
+  };
+  return vec;
+}
+
 class FakeObject3D {
   children: FakeObject3D[] = [];
   userData: Record<string, unknown> = {};
   visible = true;
-  position = { x: 0, y: 0, z: 0, set: vi.fn() };
+  position = fakeVec3();
   add(child: FakeObject3D) {
     this.children.push(child);
   }
@@ -123,7 +147,10 @@ function setup(options: { build?: () => FakeObject3D | null } = {}) {
     }),
   };
 
-  const scene = new FakeObject3D();
+  /** 视口那个场景。木偶只在渲染的那一刻挂进去。 */
+  const worldScene = new FakeObject3D();
+  /** 木偶不在场上时的家。 */
+  const holder = new FakeObject3D();
   const build = vi.fn(async () => (options.build ?? fakeRig)());
   const applyCharacter = vi.fn(() => true);
   const rig = { build, applyCharacter };
@@ -133,12 +160,15 @@ function setup(options: { build?: () => FakeObject3D | null } = {}) {
     renderer,
     camera,
     canvas,
-    scene,
+    worldScene,
+    holder,
     rig,
   } as unknown as CharacterPreviewDeps;
 
-  /** 预览场景里那个常驻的木偶容器；它的唯一子节点就是当前这具木偶。 */
-  const mannequin = () => scene.children[0]?.children ?? [];
+  /** 那个常驻的木偶容器，渲染之外的时间都待在 `holder` 里。 */
+  const root = () => holder.children[0];
+  /** 容器里当前这具木偶。 */
+  const mannequin = () => root()?.children ?? [];
   /** 最后一次摆相机用的 [x, y, z]。 */
   const eye = () => {
     const calls = camera.position.set.mock.calls;
@@ -146,7 +176,8 @@ function setup(options: { build?: () => FakeObject3D | null } = {}) {
   };
 
   return {
-    deps, three, renderer, camera, canvas, scene, build, applyCharacter, targets, mannequin, eye,
+    deps, three, renderer, camera, canvas, worldScene, holder,
+    build, applyCharacter, targets, root, mannequin, eye,
   };
 }
 
@@ -384,7 +415,7 @@ describe("renderCharacterPreview 取景", () => {
     expect(harness.camera.aspect).toBeCloseTo(320 / 180, 6);
     expect(harness.camera.updateProjectionMatrix).toHaveBeenCalled();
     // 借的是视口那台 renderer：为一个对话框再开一个 WebGL 上下文是拿整个编辑器冒险。
-    expect(harness.renderer.render).toHaveBeenCalledWith(harness.scene, harness.camera);
+    expect(harness.renderer.render).toHaveBeenCalledWith(harness.worldScene, harness.camera);
     // 离屏缓冲用完要还，屏幕上原来挂着的 target 也要还回去。
     expect(harness.targets[0]?.disposed).toBe(true);
     expect(harness.renderer.setRenderTarget).toHaveBeenLastCalledWith(null);
@@ -571,5 +602,130 @@ describe("renderCharacterPreview 并发", () => {
     await retry;
     expect(harness.build).toHaveBeenCalledTimes(2);
     expect(harness.mannequin()).toHaveLength(1);
+  });
+});
+
+/** 一份已经在俯视图上点过位的草稿。体型取胶囊，免得这几条用例还要等一次骨架克隆。 */
+function placedDraft(spot: readonly [number, number]): PrevizCharacterDraft {
+  return draftOf({ bodyType: "capsule", spot });
+}
+
+describe("木偶站在真实场景里", () => {
+  it("renders the viewport's own scene instead of a private preview scene", async () => {
+    const harness = setup();
+
+    await renderCharacterPreview(harness.deps, placedDraft([3, 2]));
+
+    // 「他会站在谁旁边」正是这块预览要回答的问题；另起一个空场景答不了。
+    expect(harness.renderer.render).toHaveBeenCalledWith(harness.worldScene, harness.camera);
+  });
+
+  it("attaches the mannequin only for the blit and takes it back out", async () => {
+    const harness = setup();
+    const inScene = () =>
+      harness.worldScene.children.some((child) => child.userData.previzCharacterPreviewRoot);
+    // 挂着不摘的话，视口下一次重绘就会多出一具凭空站着的木偶——而它不在场景数据里，
+    // 用户既选不中也删不掉。
+    const attachedAtRender: boolean[] = [];
+    harness.renderer.render.mockImplementation(() => {
+      attachedAtRender.push(inScene());
+    });
+
+    await renderCharacterPreview(harness.deps, placedDraft([3, 2]));
+
+    expect(attachedAtRender).toEqual([true]);
+    expect(inScene()).toBe(false);
+    // 摘回来的地方是 `holder`，不是随手一丢：下一次调用要在那里找到同一具木偶。
+    expect(harness.root()?.userData.previzCharacterPreviewRoot).toBe(true);
+  });
+
+  it("puts the mannequin back even when the blit throws", async () => {
+    const harness = setup();
+    harness.renderer.render.mockImplementation(() => {
+      throw new Error("context lost");
+    });
+
+    await expect(renderCharacterPreview(harness.deps, placedDraft([3, 2]))).rejects.toThrow(
+      "context lost",
+    );
+
+    // 少了 `finally`，一次异常之后视口里就永久多一具木偶，而且再也不会被摘掉。
+    expect(harness.worldScene.children).toHaveLength(0);
+    expect(harness.root()?.userData.previzCharacterPreviewRoot).toBe(true);
+  });
+
+  it("stands the mannequin on the spot the user picked, not on the origin", async () => {
+    const harness = setup();
+
+    await renderCharacterPreview(harness.deps, placedDraft([3, 2]));
+
+    expect(harness.root()!.position.x).toBeCloseTo(3, 6);
+    expect(harness.root()!.position.z).toBeCloseTo(2, 6);
+    // 脚底那一层与 `characterDraftOverrides` 落进场景的是同一个数，否则预览里的人浮着
+    // 或者陷进地里，而建出来的人是好的。
+    expect(harness.root()!.position.y).toBeCloseTo(0, 6);
+  });
+
+  it("frames the spot the mannequin stands on", async () => {
+    const harness = setup();
+
+    await renderCharacterPreview(harness.deps, placedDraft([3, 2]));
+    const [x, y, z] = harness.eye()!;
+
+    // 相机整体跟着落点平移：还按原点取景的话，点到远处的人直接不在画面里，而画面上
+    // 只表现为「预览是空的」。
+    expect(Math.hypot(x - 3, z - 2)).toBeCloseTo(
+      PREVIZ_HEIGHT_CM_RANGE.default / 100 / (2 * 0.86 * Math.tan((30 / 2) * (Math.PI / 180))),
+      3,
+    );
+    expect(harness.camera.lookAt).toHaveBeenLastCalledWith(3, y, 2);
+  });
+
+  it("stands on the origin while the user has not picked a spot yet", async () => {
+    const harness = setup();
+
+    // 对话框一打开就画一帧，而那时 `spot` 还是 null。这一档不该炸，也不该跳过渲染。
+    await renderCharacterPreview(harness.deps, draftOf({ bodyType: "capsule" }));
+
+    expect(harness.root()!.position.x).toBeCloseTo(0, 6);
+    expect(harness.root()!.position.z).toBeCloseTo(0, 6);
+    expect(harness.renderer.render).toHaveBeenCalledTimes(1);
+  });
+
+  it("no longer carries its own lights and grid", () => {
+    const stage = createCharacterPreviewStage(fakeStageThree());
+
+    // 视口那个场景里已经有同一组灯与同一块无限网格了（预览原来那一份就是照抄它们的
+    // 同一组数），再带一份就是二次曝光。
+    expect((stage as { scene?: unknown }).scene).toBeUndefined();
+    expect(stage.holder.children).toHaveLength(0);
+  });
+});
+
+/** `createCharacterPreviewStage` 用得到的那两样。 */
+function fakeStageThree(): CharacterPreviewDeps["three"] {
+  return {
+    Group: FakeObject3D,
+    PerspectiveCamera: class extends FakeObject3D {
+      constructor(
+        readonly fov: number,
+        readonly aspect: number,
+        readonly near: number,
+        readonly far: number,
+      ) {
+        super();
+      }
+    },
+  } as unknown as CharacterPreviewDeps["three"];
+}
+
+describe("PREVIZ_CHARACTER_PREVIEW_SIZE", () => {
+  it("is portrait and unrelated to the camera preview's size", () => {
+    // 一个站着的人塞进 16:9 里两边全是空。
+    expect(PREVIZ_CHARACTER_PREVIEW_SIZE.height).toBeGreaterThan(
+      PREVIZ_CHARACTER_PREVIEW_SIZE.width,
+    );
+    // 两块预览不再共用一份分辨率：取景预览必须跟着出片画幅走，人物预览不必。
+    expect(PREVIZ_CHARACTER_PREVIEW_SIZE).not.toEqual(PREVIZ_PREVIEW_SIZE);
   });
 });
