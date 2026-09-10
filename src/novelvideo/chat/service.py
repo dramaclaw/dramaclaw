@@ -579,7 +579,7 @@ _FREEZONE_SKILL_CAPABILITY_RE = re.compile(
     r"打开|运行|执行)"
     r"[^。！？!?，,；;\n]{0,24}(?:节点|画布|连线|边)"
     r"[^。！？!?，,；;\n]{0,12}的\s*(?:Skill|Recipe|技能|配方)"
-    r"|(?:Skill|Recipe)\s+(?:for|that|which)\s+"
+    r"|(?:Skill|Recipe)\s+(?:for|to|that|which|capable\s+of)\s+"
     r"(?:creat(?:e|es|ing)|add(?:s|ing)?|insert(?:s|ing)?|delet(?:e|es|ing)|"
     r"remov(?:e|es|ing)|clear(?:s|ing)?|updat(?:e|es|ing)|connect(?:s|ing)?|"
     r"mov(?:e|es|ing)|layout|select(?:s|ing)?|open(?:s|ing)?|run(?:s|ning)?|execut(?:e|es|ing))"
@@ -603,7 +603,11 @@ _FREEZONE_SKILL_RUNTIME_REQUEST_RE = re.compile(
     r"[^。！？!?\n]{0,12}"
     r"(?:画布|节点|canvas|node)"
     r"|(?:运行|执行|应用|使用|用)\s*(?:它|这个|该(?:Skill|Recipe|技能|配方)?)"
+    r"|(?:让|由)\s*(?:它|这个|该(?:Skill|Recipe|技能|配方)?)\s*(?:来)?\s*"
+    r"(?:运行|执行|应用|生成|制作|创建)"
     r"|(?:run|execute|apply|use)\s+(?:it|this(?:\s+(?:skill|recipe))?)"
+    r"|(?:generate|make|create)\s+[^。！？!?，,；;\n]{0,32}\s+with\s+it"
+    r"|have\s+it\s+(?:run|execute|apply|generate|make|create)"
     r")",
     re.IGNORECASE,
 )
