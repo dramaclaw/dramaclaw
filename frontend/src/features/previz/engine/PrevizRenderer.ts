@@ -13,7 +13,12 @@ import { evaluateSceneAt } from '../domain/evaluate';
 import type { PrevizPropExtent } from '../domain/moveAssist';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
 import type { PrevizObject, PrevizScene, PrevizTransform, Vec3 } from '../domain/scene';
-import type { PrevizTopDownFootprint } from '../domain/topDownMap';
+import {
+  PREVIZ_TOP_DOWN_DEFAULT_BOUNDS,
+  topDownView,
+  type PrevizTopDownFootprint,
+  type PrevizTopDownView,
+} from '../domain/topDownMap';
 import {
   PREVIZ_DEFAULT_VIEW,
   boundsCenter,
@@ -51,6 +56,19 @@ import { PrevizViewOverlays, type PrevizViewOverlayOptions } from './viewOverlay
 
 // 上限 2：3x DPR 设备按原生比例渲染是 9 倍像素，收益远小于开销。
 const MAX_PIXEL_RATIO = 2;
+
+/**
+ * 空场景时俯视底图框的那块地，`domain/topDownMap.ts` 的默认地块（12 m 见方）换成三维
+ * 写法，y 压成 0：这张图只回答 xz 上的站位，高度方向没有东西可框。
+ *
+ * 不能照搬 [sceneBounds] 那条兜底。它给的是一个人体尺寸的占位盒，`orthoPlacement`
+ * 按包围球开窗之后画面只有两米出头——用户开局第一件事就是在空场景里点个站位，那时
+ * 整张图上一格网格都放不下，也没有任何东西告诉他画面为什么这么近。
+ */
+const TOP_DOWN_EMPTY_BOUNDS: PrevizBounds = {
+  min: [PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.minX, 0, PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.minZ],
+  max: [PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.maxX, 0, PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.maxZ],
+};
 
 /** 编辑视角的视场角。刻意与机位的 focalMm 无关：这是自由飞行相机，不是取景器。 */
 const EDITOR_FOV_DEG = 50;
@@ -1168,6 +1186,72 @@ export class PrevizRenderer {
       this.gizmo?.setHelperVisible(true);
       this.requestRender();
     }
+  }
+
+  /**
+   * 把整场戏从上往下画进一块画布，并回传它实际用的取景框；画不了就回 `null`。
+   *
+   * 创建人物对话框左栏那张选位图用的就是它。走的是四视图那条现成的路
+   * （`orthoPlacement(…, 'top', …)` + `renderOrthoPreview`），所以左栏这张图与四视图的
+   * 俯视图是同一台相机、同一套取景——用户在两处看到的是同一个场景的同一个样子。
+   *
+   * **回传取景框是这个方法存在的理由**：选位图的世界↔画布换算必须与真正画出来的那一帧
+   * 一致。两边各算各的话（那边按 `sceneTopDownBounds` 框、这边按包围球开窗），用户点在
+   * 画面上某处、人却落在别处，而这种错位在一张静态图上一点都看不出来。
+   *
+   * 取景框转成 [PrevizTopDownView] 走的是 `topDownView()` 而不是自己写公式：正交窗口的
+   * 半宽半高就是「画布中心 ± 多少米」，与那个纯函数吃的地块是同一件东西，让它去算，
+   * 退化输入（空场景、0 尺寸画布）的兜底也一并共用。窗口的宽高比与画布的宽高比在
+   * `orthoPlacement` 把画幅比夹进 `FRAMING_ASPECT` 时会分家，那时两个方向的比例不再
+   * 相等，`topDownView` 取小的那个——画面在另一个方向上会比换算以为的更宽。选位图是
+   * 正方形的，够不着那条夹取。
+   */
+  renderTopDownMap(canvas: CameraPreviewCanvas): PrevizTopDownView | null {
+    // 同 `renderQuadPreview`：dispose 之后与录制期间不画。回 `null` 而不是画一块黑，
+    // 调用方那边有一张 2D 示意图可以回落，那比空白有用。
+    if (this.disposed || this.recording) return null;
+
+    // 与四视图共用那台常驻的临时相机：两处不会同时在画（都是同步的），而每次新建一台
+    // 会在用户拖着改站位时一秒钟丢几十个对象。
+    if (!this.orthoCamera) this.orthoCamera = new this.three.OrthographicCamera();
+
+    const width = Math.max(1, Math.floor(canvas.width));
+    const height = Math.max(1, Math.floor(canvas.height));
+    // 不走 [sceneBounds]：它空场景时回落成一个人体尺寸的占位盒，见 TOP_DOWN_EMPTY_BOUNDS。
+    const bounds =
+      unionBounds(this.visibleNodes().map((node) => this.boundsOf(node))) ?? TOP_DOWN_EMPTY_BOUNDS;
+    const placement = orthoPlacement('top', bounds, width / height);
+
+    // 手柄的 helper 贴着屏幕大小画，在这张缩略图里会糊满整块画布。理由与四视图那条
+    // 一模一样，两处的取舍不要分家。
+    this.gizmo?.setHelperVisible(false);
+    try {
+      renderOrthoPreview(
+        {
+          three: this.three,
+          renderer: this.renderer,
+          scene: this.scene,
+          camera: this.orthoCamera,
+          canvas,
+        },
+        placement,
+      );
+    } finally {
+      this.gizmo?.setHelperVisible(true);
+      this.requestRender();
+    }
+
+    // 相机站在注视点正上方，所以取景框的中心就是注视点的 xz。
+    return topDownView(
+      {
+        minX: placement.target[0] - placement.halfWidth,
+        maxX: placement.target[0] + placement.halfWidth,
+        minZ: placement.target[2] - placement.halfHeight,
+        maxZ: placement.target[2] + placement.halfHeight,
+      },
+      width,
+      height,
+    );
   }
 
   /**

@@ -22,7 +22,10 @@ import {
   PREVIZ_PREVIEW_SIZE,
   type CameraPreviewCanvas,
 } from "@/features/previz/engine/cameraPreview";
-import type { PrevizTopDownFootprint } from "@/features/previz/domain/topDownMap";
+import type {
+  PrevizTopDownFootprint,
+  PrevizTopDownView,
+} from "@/features/previz/domain/topDownMap";
 import { PrevizTopDownPicker } from "@/features/previz/ui/PrevizTopDownPicker";
 
 export interface PrevizCharacterCreateDialogProps {
@@ -36,12 +39,17 @@ export interface PrevizCharacterCreateDialogProps {
    */
   objects: readonly PrevizObject[];
   /**
-   * 道具在地面上占的那几块地，原样转给左栏的选位图（画出来，并算进取景范围）。
+   * 道具在地面上占的那几块地，原样转给左栏的选位图（只用来算取景范围）。
    *
    * 本组件不碰它的内容，只负责别把引用弄丢——理由同 `objects`：选位图拿它当 `useMemo`
    * / `useEffect` 的依赖，每渲染一次换一个新数组的话，取景与整张图会跟着重算重画。
    */
   footprints?: readonly PrevizTopDownFootprint[];
+  /**
+   * 把真几何体从上往下画进左栏那块画布，并回传它用的取景框；画不了就回 `null`，
+   * 选位图自己回落到 2D 示意图。同样**引用要稳**（选位图拿它当 effect 的依赖）。
+   */
+  onRenderTopDown?: (canvas: HTMLCanvasElement) => PrevizTopDownView | null;
   /** 把草稿画到木偶预览画布上。接线交给编辑器，本组件只吃 props，好用纯 props 测。 */
   onRenderPreview: (canvas: CameraPreviewCanvas, draft: PrevizCharacterDraft) => void;
   /** 收窄成「已选位」的草稿：没点过俯视图的草稿在这里编译期就递不出去。 */
@@ -103,6 +111,7 @@ export function PrevizCharacterCreateDialog(props: PrevizCharacterCreateDialogPr
 function CharacterCreatePanel({
   objects,
   footprints,
+  onRenderTopDown,
   onRenderPreview,
   onCreate,
   onClose,
@@ -155,6 +164,7 @@ function CharacterCreatePanel({
             <PrevizTopDownPicker
               objects={objects}
               footprints={footprints}
+              renderTopDown={onRenderTopDown}
               value={draft.spot}
               onPick={handlePick}
             />

@@ -203,16 +203,6 @@ function captureDraw() {
   return { context, arcs, lines, rects };
 }
 
-/**
- * 底色那一发之后的矩形，也就是轮廓画的那些。
- *
- * 底色是 `fillRect(0, 0, 整幅)`，永远排第一发；按序号切掉它比按颜色滤更钝，也就更
- * 不容易在实现换个色时假绿。
- */
-function footprintRects(rects: RectCall[]): RectCall[] {
-  return rects.slice(1);
-}
-
 /** 取最后一条。仓库的 tsc target 还没到 es2022，用不了 `Array.prototype.at`。 */
 function last<T>(items: T[]): T {
   const item = items[items.length - 1];
@@ -227,6 +217,12 @@ function cssHex(value: number): string {
 
 /** 能让按钮收缩包裹住画布的 tailwind 宽度类，命中任意一个都算，别把实现钉死在某一个上。 */
 const SHRINK_WRAP_WIDTHS = ["w-fit", "w-max", "inline-block", "inline-flex"];
+
+/** 画布位图的边长，px。新用例里的 dpr 是 1（前面改过它的用例都自己还原成 1）。 */
+const PICKER_PX = PREVIZ_TOP_DOWN_PICKER_SIZE.width;
+
+/** 一块 40 m 见方的取景，用来冒充渲染器按真实布景框出来的那一块。 */
+const WIDE_BOUNDS = { minX: -20, maxX: 20, minZ: -20, maxZ: 20 };
 
 function picker() {
   return screen.getByRole("button");
@@ -547,113 +543,104 @@ describe("PrevizTopDownPicker", () => {
     expect(arcs[3].y).toBeCloseTo(movedY, 9);
   });
 
-  it("draws a prop as the patch of floor it covers", () => {
-    const { rects } = captureDraw();
-    // 一块世界 4 m × 2 m 的地，中心不在对象原点上（枢轴不在几何中心的资产很常见）：
-    // 画的必须是这块地本身，而不是围着 position 摊开的一个方块。
-    const objects = [propWithId("table", 2, -1)];
-    const footprints = [{ id: "table", minX: 0, maxX: 4, minZ: -2, maxZ: 0 }];
+  it("draws the real set as the backdrop and reads clicks through its framing", () => {
+    captureDraw();
+    // 回传的取景框比 `sceneTopDownBounds` 按对象自动框出来的那块地宽得多：换算若还走
+    // 老路，点出来的世界坐标会差三倍以上，这条就红。
+    const view = topDownView(WIDE_BOUNDS, PICKER_PX, PICKER_PX);
+    // 形参写出类型，`mock.calls[0][0]` 才有得读——推断出来的 `vi.fn(() => …)` 是零元的。
+    const renderTopDown = vi.fn((_canvas: HTMLCanvasElement) => view);
+    const onPick = vi.fn();
+    render(
+      <PrevizTopDownPicker
+        objects={[]}
+        value={null}
+        onPick={onPick}
+        renderTopDown={renderTopDown}
+      />,
+    );
+
+    // 画的是这块画布本身，不是另开一块再贴过来：贴过来那一路要多一次重采样，320 的
+    // 位图缩到 320 也会糊。
+    expect(renderTopDown).toHaveBeenCalledTimes(1);
+    expect(renderTopDown.mock.calls[0][0]).toBe(canvasOf());
+
+    stubRect(canvasOf(), { left: 0, top: 0, width: view.width, height: view.height });
+    fireEvent.click(picker(), {
+      clientX: view.width / 2 + 80,
+      clientY: view.height / 2,
+      detail: 1,
+    });
+
+    // 40 m 的取景铺在 320 px 上是 8 px/m，中心往右 80 px 就是世界的 +10 m。
+    const [x, z] = onPick.mock.calls[0][0] as [number, number];
+    expect(x).toBeCloseTo(10, 9);
+    expect(z).toBeCloseTo(0, 9);
+    // 顺手钉住两条路真的不同：空场景的默认地块只有 12 m，同一个像素在那儿是 +3 m。
+    // 少了这一条，实现忘了换取景框也可能碰巧对上。
+    expect(canvasToWorld(viewFor([]), [view.width / 2 + 80, view.height / 2])[0]).toBeCloseTo(3, 6);
+  });
+
+  it("leaves the rendered backdrop alone and draws only the dots and the ring on top", () => {
+    const { rects, lines, arcs } = captureDraw();
+    render(
+      <PrevizTopDownPicker
+        objects={[propWithId("table", 3, 2)]}
+        footprints={[{ id: "table", minX: 2, maxX: 4, minZ: 1, maxZ: 3 }]}
+        value={[0, 0]}
+        onPick={vi.fn()}
+        renderTopDown={() => topDownView(WIDE_BOUNDS, PICKER_PX, PICKER_PX)}
+      />,
+    );
+
+    // 底色、网格、原点十字、道具那块地——四样在 3D 那一帧里都有了，再画一遍只会把它
+    // 盖掉。底色是唯一用 fillRect 画的东西，网格与十字是唯一用 stroke 画的线。
+    expect(rects).toHaveLength(0);
+    expect(lines).toHaveLength(0);
+    // 参照点和落点环还得画：那两样 3D 里没有。
+    expect(arcs).toHaveLength(2);
+  });
+
+  it("falls back to the schematic map when the renderer cannot draw", () => {
+    const { rects, lines } = captureDraw();
+    const onPick = vi.fn();
+    // 渲染器还没建出来（首帧）、或者已经 dispose 了。这时整块画布没人画，示意图这条
+    // 路必须还在——不然左栏是一片空白，而选位是创建人物的第一步。
+    render(
+      <PrevizTopDownPicker objects={[]} value={null} onPick={onPick} renderTopDown={() => null} />,
+    );
+
+    expect(rects).toHaveLength(1);
+    expect(lines.length).toBeGreaterThan(0);
+    const view = viewFor([]);
+    stubRect(canvasOf(), { left: 0, top: 0, width: view.width, height: view.height });
+    fireEvent.click(picker(), { clientX: view.width / 2, clientY: view.height / 2, detail: 1 });
+    expect(onPick.mock.calls[0][0][0]).toBeCloseTo(0, 9);
+  });
+
+  it("still frames the schematic map around the props' floor patches", () => {
+    // 轮廓不再画出来了，但它仍然要算进取景——一间铺开 40 m 的布景只贡献一个原点的话，
+    // 示意图会框在原点周围那 12 m 上，用户点不到布景的另一头。
+    const onPick = vi.fn();
+    const objects = [propWithId("set", 0, 0)];
+    const footprints = [{ id: "set", minX: -20, maxX: 20, minZ: -20, maxZ: 20 }];
     render(
       <PrevizTopDownPicker
         objects={objects}
         footprints={footprints}
         value={null}
-        onPick={vi.fn()}
+        onPick={onPick}
       />,
     );
 
     const view = viewFor(objects, footprints);
-    const [left, top] = worldToCanvas(view, [0, -2]);
-    const [right, bottom] = worldToCanvas(view, [4, 0]);
-    const patch = footprintRects(rects);
-    // 一铺一描：只铺不描的话，一块半透明的地压在网格上几乎读不出边在哪。
-    expect(patch.map((entry) => entry.mode)).toEqual(["fill", "stroke"]);
-    for (const entry of patch) {
-      expect(entry.x).toBeCloseTo(left, 6);
-      expect(entry.y).toBeCloseTo(top, 6);
-      expect(entry.width).toBeCloseTo(right - left, 6);
-      expect(entry.height).toBeCloseTo(bottom - top, 6);
-      // 世界里 2:1 的一块地，换算成像素之后还得是 2:1——两个方向各乘各的比例就会露馅。
-      expect(entry.width / entry.height).toBeCloseTo(2, 6);
-      expect(entry.style).toBe(cssHex(KIND_COLOR.prop));
-    }
-  });
+    stubRect(canvasOf(), { left: 0, top: 0, width: view.width, height: view.height });
+    fireEvent.click(picker(), { clientX: view.width, clientY: view.height / 2, detail: 1 });
 
-  it("keeps the floor patch translucent so the grid underneath still reads", () => {
-    const { context, rects } = captureDraw();
-    const objects = [propWithId("table", 0, 0)];
-    const footprints = [{ id: "table", minX: -3, maxX: 3, minZ: -3, maxZ: 3 }];
-    render(
-      <PrevizTopDownPicker
-        objects={objects}
-        footprints={footprints}
-        value={null}
-        onPick={vi.fn()}
-      />,
-    );
-
-    const patch = footprintRects(rects);
-    // 铺满不透明的话，网格被这块地整个盖掉，而网格是用户判断「这块地有多大」的唯一
-    // 尺子——盖掉之后画面上多了个色块，尺度信息反而少了。
-    const filled = patch.filter((entry) => entry.mode === "fill");
-    expect(filled).toHaveLength(1);
-    expect(filled[0].alpha).toBeGreaterThan(0);
-    expect(filled[0].alpha).toBeLessThan(1);
-    // 描边不跟着变淡，它就是那把「边在哪」的尺子。
-    expect(patch.filter((entry) => entry.mode === "stroke")[0].alpha).toBe(1);
-    // 画完还原。上下文是整趟绘制共用的一个对象，留着半透明会让随后的参照点与高亮环
-    // 一起变淡——一条不报错、只是「看着有点糊」的错。
-    expect(context.globalAlpha).toBe(1);
-  });
-
-  it("falls back to just the dot when a prop has no footprint", () => {
-    const { rects, arcs } = captureDraw();
-    // 模型还在下载、或者下载失败：渲染器量不到几何体，一条轮廓都不给。这时不能凭
-    // position 画一块猜出来的地——那是在告诉用户「这儿有张一米见方的桌子」。
-    const objects = [propWithId("table", 2, -1)];
-    render(<PrevizTopDownPicker objects={objects} value={null} onPick={vi.fn()} />);
-
-    // 只剩底色那一发。
-    expect(rects).toHaveLength(1);
-    expect(arcs).toHaveLength(1);
-  });
-
-  it("leaves out a footprint whose object is no longer in the scene", () => {
-    const { rects } = captureDraw();
-    // 轮廓是渲染器另外量的一份快照，`objects` 则是每次渲染现给的。对不上号的那条不画，
-    // 否则画面上会有一块属于早已删掉的道具的地。理由与 `sceneTopDownBounds` 那道筛
-    // 相同，两层各筛各的：这里筛的是画什么，那里筛的是框多大。
-    render(
-      <PrevizTopDownPicker
-        objects={[propWithId("table", 2, -1)]}
-        footprints={[{ id: "ghost", minX: 0, maxX: 4, minZ: -2, maxZ: 0 }]}
-        value={null}
-        onPick={vi.fn()}
-      />,
-    );
-
-    expect(rects).toHaveLength(1);
-  });
-
-  it("draws the floor patch under the dots and the pick ring, not over them", () => {
-    const { rects, arcs } = captureDraw();
-    // 一块 20 m 的地能铺满整张图。压在参照点和高亮环上面的话，用户既找不到这件道具的
-    // 原点，也读不出自己刚才把人放在哪——高亮环是他唯一的落点提示。
-    const objects = [propWithId("set", 0, 0)];
-    const footprints = [{ id: "set", minX: -10, maxX: 10, minZ: -10, maxZ: 10 }];
-    render(
-      <PrevizTopDownPicker
-        objects={objects}
-        footprints={footprints}
-        value={[3, 3]}
-        onPick={vi.fn()}
-      />,
-    );
-
-    const lastPatch = last(footprintRects(rects)).order;
-    // 参照点一发、高亮环一发，两发都在轮廓之后。
-    expect(arcs).toHaveLength(2);
-    for (const arc of arcs) expect(arc.order).toBeGreaterThan(lastPatch);
+    const [x] = onPick.mock.calls[0][0] as [number, number];
+    expect(x).toBeCloseTo(canvasToWorld(view, [view.width, view.height / 2])[0], 9);
+    // 留一圈边之后右边缘是 +22 m。只按对象位置框的话那里只有 +6 m。
+    expect(x).toBeGreaterThan(20);
   });
 
   it("paints the origin cross in the axis colours, X across and Z down", () => {

@@ -96,20 +96,11 @@ const DOT_RADIUS_PX = 4;
 const RING_RADIUS_PX = 9;
 
 /**
- * 道具轮廓那一层地的不透明度。
- *
- * 必须半透明：铺不透明的话，这块地下面的网格被整个盖掉，而网格是用户判断「它有多大」
- * 的唯一尺子——画面上多了个色块，尺度信息反而少了。0.22 是照着一件铺满半张图的布景
- * 定的，那种尺寸下再浓一点整张图就只剩这一块颜色。描边不跟着淡，边界要读得出来。
- */
-const FOOTPRINT_FILL_ALPHA = 0.22;
-
-/**
  * 没有轮廓时用的那个空数组。
  *
- * 定成模块级常量而不是写在参数默认值里：默认值那种写法每渲染一次新建一个数组，下面
- * `view` 的 `useMemo` 与绘制的 `useEffect` 都把它当依赖，于是每渲染一次都重算取景、
- * 整张图重画一遍——一件不报错、只是白烧 CPU 的事。
+ * 定成模块级常量而不是写在参数默认值里：默认值那种写法每渲染一次新建一个数组，而
+ * 取景那张 `useMemo` 把它当依赖，于是每渲染一次都重算取景、整张图重画一遍——一件
+ * 不报错、只是白烧 CPU 的事。
  */
 const NO_FOOTPRINTS: readonly PrevizTopDownFootprint[] = [];
 
@@ -153,13 +144,32 @@ export interface PrevizTopDownPickerProps {
   /** 场里已有的对象，只用来画参照点与决定取景范围。 */
   objects: readonly PrevizObject[];
   /**
-   * 道具在地面上占的那几块地（见 `PrevizRenderer.propFootprints`）。给了就画出来，
-   * 并且一起算进取景范围。
+   * 道具在地面上占的那几块地（见 `PrevizRenderer.propFootprints`），一起算进取景范围。
+   *
+   * 只管取景，不再画出来：真几何体从上往下渲染的那张底图（[renderTopDown]）里本来就
+   * 有它们，而且画的是真形，不是这里能给出的那个轴对齐外接矩形。取景仍然要它——一间
+   * 铺开 40 m 的布景只贡献一个原点坐标，不把这块地算进来，示意图会框在原点周围那
+   * 12 m 上，用户点不到布景的另一头。
    *
    * 可选：量这份数据要 three，而这个组件在没有渲染器的地方也用得上。**引用要稳**，
-   * 理由同 `objects`：它是取景与绘制的依赖。
+   * 理由同 `objects`：它是取景的依赖。
    */
   footprints?: readonly PrevizTopDownFootprint[];
+  /**
+   * 把真几何体从上往下画进这块画布，并回传它用的取景框；画不了就回 `null`。
+   *
+   * 不给这个 prop 时回落到那张 2D 示意图——这个组件在没有渲染器的地方也用得上（测试、
+   * 以及将来任何不带 three 的选位场合），那条契约不能因为有了底图就断掉。渲染器建好
+   * 之前的首帧、以及它 dispose 之后，走的也是这条回落。
+   *
+   * 回传取景框而不是让两边各算各的：底图是按场景包围**球**开的正交窗口（见
+   * `domain/view.ts` 的 `orthoPlacement`），跟这里 `sceneTopDownBounds` 算出来的那块地
+   * 不是一回事。用错一个，用户点在画面上某处、人却落在别处——静态图上完全看不出来。
+   *
+   * **引用要稳**：它进 `useEffect` 的依赖表，每渲染换一个新函数会让整块底图重画一遍
+   * （一趟离屏 render target + 读回像素）。
+   */
+  renderTopDown?: (canvas: HTMLCanvasElement) => PrevizTopDownView | null;
   /** 已选的世界 XZ；还没选时是 null。 */
   value: readonly [number, number] | null;
   onPick: (point: [number, number]) => void;
@@ -253,51 +263,19 @@ function drawGrid(context: CanvasRenderingContext2D, view: PrevizTopDownView, ra
 }
 
 /**
- * 把道具占的那块地铺出来，再描一圈。
+ * 参照点与高亮环画在什么上面。
  *
- * 按 `objects` 的顺序找轮廓、而不是直接遍历 `footprints`：轮廓是渲染器另外量的一份
- * 快照，`objects` 则是每次渲染现给的，两者对不上号时（对象已经被删了）不该画出一块
- * 属于不存在之物的地。同样一道筛在 `sceneTopDownBounds` 里也有，两层管的不是一件事
- * ——那里决定框多大，这里决定画什么。
- *
- * 画的是世界轴对齐包围盒在 XZ 上的投影，不是真实剪影：一张转了 30° 的长桌会画成把它
- * 整个裹住的那个正矩形，比真形大一圈。这是渲染器那一侧就定下的取舍（求真剪影要对
- * 投影后的顶点求凸包，代价随三角面数走），在这张 320 px 的缩略图上换不来什么。
+ * `backdrop` 为真时底图已经由 3D 那一帧铺满了整块位图（`blitCameraToCanvas` 自己会先
+ * 刷一次黑再 `putImageData`），这里连清都不清：再刷一遍底色、再画一张网格与原点十字，
+ * 就是把刚渲染出来的那张图整个盖掉。为假时反过来，那张 2D 示意图是画面上的全部内容。
  */
-function drawFootprints(
-  context: CanvasRenderingContext2D,
-  view: PrevizTopDownView,
-  objects: readonly PrevizObject[],
-  footprints: readonly PrevizTopDownFootprint[],
-  ratio: number,
-): void {
-  if (footprints.length === 0) return;
-  const byId = new Map(footprints.map((footprint) => [footprint.id, footprint]));
-  context.fillStyle = KIND_DOT_COLOR.prop;
-  context.strokeStyle = KIND_DOT_COLOR.prop;
-  context.lineWidth = ratio;
-  for (const object of objects) {
-    const footprint = byId.get(object.id);
-    if (!footprint) continue;
-    // +Z 朝画布下方，所以 minZ 对应上边、maxZ 对应下边（见 topDownMap 的约定）。
-    const [left, top] = worldToCanvas(view, [footprint.minX, footprint.minZ]);
-    const [right, bottom] = worldToCanvas(view, [footprint.maxX, footprint.maxZ]);
-    context.globalAlpha = FOOTPRINT_FILL_ALPHA;
-    context.fillRect(left, top, right - left, bottom - top);
-    // 还原成不透明再描边，也把上下文交还给后面的参照点与高亮环：这一个上下文整趟绘制
-    // 共用，留着半透明会让后面每一笔都跟着变淡。
-    context.globalAlpha = 1;
-    context.strokeRect(left, top, right - left, bottom - top);
-  }
-}
-
 function drawTopDown(
   canvas: HTMLCanvasElement | null,
   view: PrevizTopDownView,
   objects: readonly PrevizObject[],
-  footprints: readonly PrevizTopDownFootprint[],
   value: readonly [number, number] | null,
   ratio: number,
+  backdrop: boolean,
 ): void {
   if (!canvas) return;
   const context = canvas.getContext("2d");
@@ -305,14 +283,12 @@ function drawTopDown(
   // 同一个处理。左栏空着还能靠键盘选位；从这里抛出去会把整个创建对话框带走。
   if (!context) return;
 
-  context.clearRect(0, 0, view.width, view.height);
-  context.fillStyle = BACKGROUND;
-  context.fillRect(0, 0, view.width, view.height);
-
-  drawGrid(context, view, ratio);
-  // 轮廓压在网格之上、参照点与高亮环之下：那两样是用户找东西和读自己落点的唯一提示，
-  // 被一块能铺满半张图的地盖住就什么都读不出来了。
-  drawFootprints(context, view, objects, footprints, ratio);
+  if (!backdrop) {
+    context.clearRect(0, 0, view.width, view.height);
+    context.fillStyle = BACKGROUND;
+    context.fillRect(0, 0, view.width, view.height);
+    drawGrid(context, view, ratio);
+  }
 
   for (const object of objects) {
     const [px, py] = worldToCanvas(view, [
@@ -339,12 +315,14 @@ export function PrevizTopDownPicker({
   footprints = NO_FOOTPRINTS,
   value,
   onPick,
+  renderTopDown,
 }: PrevizTopDownPickerProps) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ratio = pickerPixelRatio();
 
-  const view = useMemo(
+  /** 没有底图时的取景：按已有对象与它们占的地自动框一块出来。 */
+  const schematicView = useMemo(
     () =>
       topDownView(
         sceneTopDownBounds(objects, footprints),
@@ -354,9 +332,25 @@ export function PrevizTopDownPicker({
     [objects, footprints, ratio],
   );
 
+  /**
+   * 这一帧**实际**用的取景框，落点换算读的是它。
+   *
+   * 存 ref 而不是 state：两条路给出的画布尺寸是同一个数（底图那条是照着 `canvas.width`
+   * 算的，而那个数正是这里的 `schematicView.width` 写上去的），JSX 里没有一处读它，
+   * setState 只会白白多渲染一趟。事件处理器读得到最新值——React 在把控制权交还给浏览器
+   * 之前就把 effect 冲干净了，用户不可能点在一次没画完的帧上。
+   */
+  const viewRef = useRef(schematicView);
+
   useEffect(() => {
-    drawTopDown(canvasRef.current, view, objects, footprints, value, ratio);
-  }, [view, objects, footprints, value, ratio]);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    // 底图先画：它是对整块位图的一次覆写，顺序反了参照点和高亮环会被它盖掉。
+    const rendered = renderTopDown?.(canvas) ?? null;
+    const view = rendered ?? schematicView;
+    viewRef.current = view;
+    drawTopDown(canvas, view, objects, value, ratio, rendered !== null);
+  }, [schematicView, objects, value, ratio, renderTopDown]);
 
   const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
     // `detail` 是这次 click 的连击计数。指针点出来的 click 至少是 1，而键盘回车 / 空格、
@@ -364,6 +358,7 @@ export function PrevizTopDownPicker({
     // （已在 jsdom + userEvent 上实测）。不分开的话，键盘用户每按一次回车都会把人放到
     // 取景框左上角那一点——不报错的错答案，比报错难查得多。没有坐标时回到取景中心，
     // 已经选过则维持原样。
+    const view = viewRef.current;
     if (event.detail === 0) {
       onPick(value ? [value[0], value[1]] : [view.centerX, view.centerZ]);
       return;
@@ -394,6 +389,7 @@ export function PrevizTopDownPicker({
     // 拦掉浏览器的默认滚动：对话框是可滚的，不拦的话按一下方向键，落点动了的同时
     // 右栏的属性表也跟着滚走。
     event.preventDefault();
+    const view = viewRef.current;
     const [fromX, fromZ] = value ?? [view.centerX, view.centerZ];
     onPick([
       fromX + delta[0] * PREVIZ_TOP_DOWN_KEY_STEP_M,
@@ -418,6 +414,10 @@ export function PrevizTopDownPicker({
         `h-full`：按钮上任何一点内边距或边框都会从中间克扣，画布的 CSS 尺寸就不再是
         整整 320。挂在这里，`view.width / rect.width` 恰好等于设备像素倍数。
 
+        位图尺寸取示意图那份取景而不是 `viewRef`：两份的宽高本来就是同一个数（底图那条
+        是照着这里写上去的 `canvas.width` 算的），而这里读 ref 会在首帧拿到还没画过的
+        初值，尺寸与内容差一帧。
+
         位图尺寸走 JSX 属性，不在 `drawTopDown` 里赋值：拿不到 2D 上下文时那个函数会
         提前 return，尺寸若跟在它后面就停在 canvas 默认的 300×150，而点击换算除的正是
         这个宽度——画面全空的同时每一次落点都是错的。
@@ -425,8 +425,8 @@ export function PrevizTopDownPicker({
       <canvas
         ref={canvasRef}
         data-testid="top-down-picker"
-        width={view.width}
-        height={view.height}
+        width={schematicView.width}
+        height={schematicView.height}
         style={PREVIZ_TOP_DOWN_PICKER_SIZE}
         className="block rounded-md"
       />

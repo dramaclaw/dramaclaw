@@ -16,6 +16,10 @@ import {
 import { dropRayOriginY } from '@/features/previz/domain/drop';
 import { PREVIZ_DEFAULT_VIEW } from '@/features/previz/domain/view';
 import {
+  PREVIZ_TOP_DOWN_DEFAULT_BOUNDS,
+  canvasToWorld,
+} from '@/features/previz/domain/topDownMap';
+import {
   PREVIZ_CAMERA_COLOR,
   PREVIZ_LIVE_FRUSTUM_COLOR,
 } from '@/features/previz/engine/cameraModel';
@@ -2584,5 +2588,120 @@ describe('PrevizRenderer 量道具的落地范围', () => {
     instance.nodeFor(scene.objects[0]!.id)!.scale.x = 0;
 
     expect(instance.propExtents()).toEqual([]);
+  });
+});
+
+describe('PrevizRenderer 的俯视底图', () => {
+  /**
+   * 一块真能交出 2D 上下文的画布。`blitCameraToCanvas` 拿不到上下文就直接 return，
+   * 一句 `getContext: () => null` 会让「画了一帧」那几条断言全部落空。
+   */
+  function mapCanvas(width = 320, height = 320) {
+    return {
+      width,
+      height,
+      getContext: () => ({
+        fillStyle: '',
+        fillRect: () => {},
+        createImageData: (w: number, h: number) => ({
+          data: new Uint8ClampedArray(w * h * 4),
+          width: w,
+          height: h,
+        }),
+        putImageData: () => {},
+      }),
+    } as unknown as Parameters<typeof PrevizRenderer.prototype.renderTopDownMap>[0];
+  }
+
+  /** 这一趟离屏 pass 用的那台相机。`render(scene, camera)` 的第二个参数就是它。 */
+  function cameraUsed() {
+    const call = render.mock.calls[render.mock.calls.length - 1];
+    return call?.[1] as unknown as {
+      left: number;
+      right: number;
+      top: number;
+      bottom: number;
+      position: { x: number; y: number; z: number };
+      up: { x: number; y: number; z: number };
+    };
+  }
+
+  it('renders the set from straight above and hands back the framing it used', async () => {
+    const { instance } = await createRenderer();
+    // 摆在离原点一截的地方：取景中心若被写死成世界原点，这条就红。
+    const scene = sceneWith([6, 0, -4]);
+    instance.setScene(scene);
+    step();
+    render.mockClear();
+
+    const canvas = mapCanvas();
+    const view = instance.renderTopDownMap(canvas)!;
+
+    expect(render).toHaveBeenCalledTimes(1);
+    const camera = cameraUsed();
+    // 正俯视：相机在注视点正上方，up 是世界 -Z（俯视图里 +X 朝右、+Z 朝下）。
+    expect(camera.position.x).toBeCloseTo(6, 9);
+    expect(camera.position.z).toBeCloseTo(-4, 9);
+    expect(camera.position.y).toBeGreaterThan(1);
+    expect([camera.up.x, camera.up.y, camera.up.z]).toEqual([0, 0, -1]);
+
+    // 回传的取景框必须与**画出来的那一帧**自洽，这正是这个方法要返回东西的理由：
+    // 一米在画布上占几个像素，只能是「画布宽 / 正交窗口宽」。各算各的话用户点在画面
+    // 上某处、人却落在别处，而那种错位在静态图上看不出来。
+    expect(view.width).toBe(320);
+    expect(view.height).toBe(320);
+    expect(view.pixelsPerMeter).toBeCloseTo(320 / (camera.right - camera.left), 9);
+    expect(view.pixelsPerMeter).toBeCloseTo(320 / (camera.top - camera.bottom), 9);
+    expect(view.centerX).toBeCloseTo(camera.position.x, 9);
+    expect(view.centerZ).toBeCloseTo(camera.position.z, 9);
+  });
+
+  it('still frames a whole default block when the scene is empty', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(createDefaultScene());
+    step();
+
+    const view = instance.renderTopDownMap(mapCanvas())!;
+
+    // 空场景照搬 `boundsOf()` 那条人体尺寸的占位盒兜底，画面只有两米出头——而用户开局
+    // 第一件事正是在空场景里点个站位。这里要框得下 `topDownMap` 那块 12 m 的默认地。
+    const [leftX, topZ] = canvasToWorld(view, [0, 0]);
+    const [rightX, bottomZ] = canvasToWorld(view, [view.width, view.height]);
+    expect(leftX).toBeLessThanOrEqual(PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.minX);
+    expect(rightX).toBeGreaterThanOrEqual(PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.maxX);
+    expect(topZ).toBeLessThanOrEqual(PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.minZ);
+    expect(bottomZ).toBeGreaterThanOrEqual(PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.maxZ);
+  });
+
+  it('draws nothing and hands back nothing while recording', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const base = createDefaultScene();
+    const cam = createPrevizObject('camera', base.objects);
+    const scene = { ...base, objects: [cam] };
+    instance.setScene(scene);
+    step();
+
+    const pass = instance.startRecording('track', cam.id)!;
+    pass.drawFrame(0, null);
+    render.mockClear();
+
+    // 录制期间画它就是往成片里塞一趟离屏 pass，还要连带一次同步读回。调用方拿到 null
+    // 会回落到那张 2D 示意图，选位照样能用。
+    expect(instance.renderTopDownMap(mapCanvas())).toBeNull();
+    expect(render).not.toHaveBeenCalled();
+
+    pass.end();
+    expect(instance.renderTopDownMap(mapCanvas())).not.toBeNull();
+  });
+
+  it('hands back nothing once the renderer is gone', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(createDefaultScene());
+    step();
+    instance.dispose();
+
+    // 对话框开着的时候用户能关掉整个预演台。dispose 之后 WebGL 上下文已经 forceContextLoss
+    // 过了，再画一趟是往一个死了的上下文上写。
+    expect(instance.renderTopDownMap(mapCanvas())).toBeNull();
   });
 });
