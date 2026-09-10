@@ -1,33 +1,32 @@
 ---
-version: 2.0.3
+version: 2.0.4
 attention: medium
 ---
-# v2.0.3
+# v2.0.4
 
 ## User-facing Highlights (zh)
 
-- **自部署组合更加完整**: Docker 源码版会同时构建 DramaClaw、虾画前端和同级目录中的 dramaclaw-gateway；镜像版继续提供直接拉取已发布镜像的独立入口，社区用户可以更清楚地选择开发或稳定部署方式。
-- **自定义模型配置补齐角色构建**: 自定义模式现在可以正确映射 DC-character-builder-LLM，使用自定义模型网关时角色提取不再因缺少模型映射而失败。
-- **跨项目复制素材更可靠**: 在虾画中跨项目粘贴节点时，图片和视频素材由后端完成复制，并在迁移结束前暂停自动保存，减少引用丢失或保存到旧地址的问题。
-- **失败原因更容易定位**: 项目分享会明确提示用户不存在、已加入或邀请冲突等原因；角色提取重试耗尽时，日志会保留真正的失败原因，方便排查模型输出问题。
-- **社区文档覆盖更多语言**: README 新增越南语和泰语版本，并重新梳理源码开发、镜像部署、模型网关和许可证说明。
+- **新增越南语界面**: DramaClaw 现已提供完整的越南语界面，并修正英文剧本格式指引和多语言回退逻辑，让更多社区用户可以直接使用熟悉的语言完成创作。
+- **支持可选手机号验证码登录**: 部署方启用对应入口后，用户可以通过手机号和验证码登录并设置密码；登录能力默认受开关控制，不影响现有部署。
+- **跨项目媒体引用更安全**: 虾画会识别来自其他项目的图片和视频引用，阻止无效引用继续写入，并为历史遗留引用提供复制到当前项目的一键修复入口。
+- **本地 CE 启动更省配置**: 本地启动现在默认使用社区版，不再要求额外声明版本；并发初始化配置时也会自动重试。
+- **画布任务计费参数更加准确**: 画布主线生成任务会携带完整的模型计费参数，减少预估与实际结算不一致的情况。
 
 ## User-facing Highlights (en)
 
-- **A more complete self-hosted stack**: The source Docker entry point now builds DramaClaw, the XiaHua frontend, and a sibling dramaclaw-gateway checkout together, while the release entry point remains dedicated to published images. Community users can choose development or stable deployment more clearly.
-- **Character building works in Custom mode**: Custom model configurations can now map DC-character-builder-LLM, preventing character extraction failures caused by a missing model mapping when using a custom gateway.
-- **More reliable cross-project asset copying**: When nodes are pasted across XiaHua projects, image and video assets are copied by the backend and autosave pauses until migration finishes, reducing broken or stale references.
-- **Clearer failure details**: Project sharing now distinguishes missing users, existing members, and invitation conflicts. Character extraction logs also preserve the actual cause after output retries are exhausted.
-- **More accessible community documentation**: Vietnamese and Thai READMEs are now available, with clearer guidance for source development, image-based deployment, model gateways, and licensing.
+- **Vietnamese interface support**: DramaClaw now includes a complete Vietnamese interface, along with corrected English screenplay guidance and safer language fallback behavior.
+- **Optional phone OTP sign-in**: When enabled by the deployment operator, users can sign in with a phone number and verification code and set a password. The entry remains gated and does not affect existing deployments by default.
+- **Safer cross-project media references**: XiaHua detects image and video references that belong to another project, prevents new invalid references from being saved, and offers one-click repair for legacy references by copying them into the current project.
+- **Simpler local CE startup**: Local startup now defaults to the Community Edition without requiring an explicit edition setting, with automatic retries for concurrent settings initialization.
+- **More accurate canvas task billing**: Mainline canvas generation tasks now include complete model-pricing inputs, reducing differences between estimated and settled usage.
 
 ## Fixes
 
-- 修复自定义模式无法映射角色构建模型的问题 (#491).
-- 修复角色提取重试耗尽后只记录通用错误、无法定位真实原因的问题 (#492).
-- 修复项目分享失败时提示不明确的问题 (#479).
+- 修正英文剧本格式指引、多语言回退和越南语手机号登录文案 (#500, #516).
+- 修复跨项目媒体引用可能导致素材无法访问或画布保存异常的问题 (#513).
+- 修复本地启动必须额外配置版本，以及并发初始化配置可能失败的问题 (#511).
+- 修复画布主线任务缺少模型计费参数的问题 (#497).
 
 ## Improvements
 
-- 跨项目粘贴改由后端复制素材，并在迁移期间暂停自动保存 (#493).
-- 将源码开发和镜像部署拆分为清晰的 Docker Compose 入口，并默认集成同级 dramaclaw-gateway (#476, #482).
-- 重构 README 的产品、部署、网关和许可证说明，新增越南语与泰语文档 (#481, #483, #484, #486, #495).
+- 新增受部署开关控制的手机号验证码登录和密码设置能力 (#471).
