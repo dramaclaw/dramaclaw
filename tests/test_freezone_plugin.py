@@ -4251,10 +4251,10 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
         "description"
     ]
     assert (
-        "must never be the final downstream prompt itself"
+        "text Recipe 要求当前 LLM 直接输出最终交付文本"
         in recipe_system_prompt_description
     )
-    assert "重要：你的输出是一条提示词/指令" in recipe_system_prompt_description
+    assert "二阶段指令" in recipe_system_prompt_description
     assert recipe_item["properties"]["output_kind"]["enum"] == [
         "text",
         "image",
@@ -4276,7 +4276,7 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
     ]
     assert "节点" in system_prompt_description
     assert "提示词/指令" in system_prompt_description
-    assert "不要直接生成最终内容" in system_prompt_description
+    assert "text Recipe 不直接写正文成品" not in system_prompt_description
     assert "送入对应节点" in system_prompt_description
     assert "终端生成型" not in system_prompt_description
     assert "不要把所有 Recipe 都写成 prompt compiler" not in system_prompt_description
@@ -4861,6 +4861,43 @@ def test_canvas_command_schema_accepts_minimal_variants_and_rejects_union_shell(
     }
     with pytest.raises(ValidationError):
         validator.validate({"commands": [union_shell]})
+
+
+@pytest.mark.parametrize("external_mcp", [False, True])
+def test_workflow_bridge_binds_original_confirmation_attempt(monkeypatch, external_mcp):
+    plugin = _load_plugin_module()
+    pending = []
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1" if external_mcp else "0")
+    monkeypatch.setattr(plugin, "put_pending_canvas_command", lambda **kw: pending.append(kw))
+    monkeypatch.setattr(
+        plugin, "wait_canvas_command_result",
+        lambda *args, **kwargs: {"ok": True, "applied": True},
+    )
+    dispatch = (
+        plugin._dispatch_mcp_approved_frontend_commands if external_mcp
+        else plugin._dispatch_frontend_canvas_commands
+    )
+    confirmation = {
+        "draft_id": "workflow_draft_a", "task_id": "task-1", "revision": 1,
+        "confirmation_started_at": 123.0,
+    }
+    for identity in [confirmation, confirmation, {
+        **confirmation, "task_id": "task-2", "confirmation_started_at": 124.0,
+    }]:
+        dispatch(
+            project="project-a", canvas="canvas-a", slim_result=True,
+            commands=[{
+                "type": "create_node", "node_type": "textAnnotationNode",
+                "data": {"workflowInstanceId": "workflow_draft_a"},
+            }],
+            workflow_confirmation=identity,
+        )
+    assert pending[0]["workflow_confirmation"] == confirmation
+    assert pending[2]["workflow_confirmation"]["task_id"] == "task-2"
+    assert "workflow_confirmation" not in pending[0]["envelope"]
+    if external_mcp:
+        assert pending[0]["key"] == pending[1]["key"]
+        assert pending[0]["key"] != pending[2]["key"]
 
 
 def test_freezone_mcp_default_create_node_uses_frontend_bridge(monkeypatch):

@@ -14260,6 +14260,7 @@ async def claim_canvas_workflow_draft(
         raise HTTPException(400, str(exc)) from exc
     if draft is None:
         return error
+    attempt_started_at = draft["confirmation_started_at"]
     try:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -14267,12 +14268,13 @@ async def claim_canvas_workflow_draft(
             product_surface="freezone_assistant",
             queue_kind="default",
             episode=0,
-            scope=f"{canvas_id}:{draft_id}:{revision}",
+            scope=f"{canvas_id}:{draft_id}:{revision}:{attempt_started_at}",
             payload={
                 "draft_id": draft_id,
                 "canvas_id": canvas_id,
                 "revision": revision,
-                "plan_digest": current_draft.get("plan_digest"),
+                "plan_digest": draft.get("plan_digest"),
+                "confirmation_started_at": attempt_started_at,
             },
         )
     except Exception:
@@ -14282,17 +14284,24 @@ async def claim_canvas_workflow_draft(
             canvas_id=canvas_id,
             draft_id=draft_id,
             outcome="ready",
+            expected_confirmation_started_at=attempt_started_at,
         )
         raise
     task_id = str(queued.task_state.task_id)
-    persisted = await asyncio.to_thread(
-        bind_workflow_draft_task,
-        project_dir=state_dir,
-        canvas_id=canvas_id,
-        draft_id=draft_id,
-        task_id=task_id,
-        root_task_id=task_id,
-    )
+    try:
+        persisted = await asyncio.to_thread(
+            bind_workflow_draft_task,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+            task_id=task_id,
+            root_task_id=task_id,
+            expected_confirmation_started_at=attempt_started_at,
+        )
+    except ValueError as exc:
+        # A cancelled/replaced attempt must not bind a late enqueue response.
+        # Its runner carries the same attempt identity and cannot touch the replacement.
+        raise HTTPException(409, str(exc)) from exc
     if persisted is None:
         raise RuntimeError("workflow draft disappeared after durable task enqueue")
     return {"ok": True, "data": _workflow_draft_api_data(persisted)}

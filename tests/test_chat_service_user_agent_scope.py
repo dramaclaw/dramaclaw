@@ -3330,9 +3330,11 @@ def test_freezone_prompt_includes_skill_studio_contract_only_for_catalog_intent(
     assert "Do not claim the Skill or Recipe is saved" in prompt
     assert "Do not ask whether to\n  save the current draft" in prompt
     assert "save_now/save_current/confirm_save" in prompt
-    assert "prompt/instruction generator" in prompt
-    assert "不要直接生成最终内容" in prompt
-    assert "送入对应节点" in prompt
+    assert (
+        "For text Recipes, the current LLM must produce the final deliverable directly"
+        in prompt
+    )
+    assert "For image/video/audio Recipes" in prompt
     assert (
         "planning.planning_notes must start with an executable path summary" in prompt
     )
@@ -3340,11 +3342,8 @@ def test_freezone_prompt_includes_skill_studio_contract_only_for_catalog_intent(
     assert "Do not include workflow_templates" in prompt
     assert "complete dynamic freezone_workflow_plan.v1" in prompt
     assert "dynamic dependency rules" in prompt
-    assert (
-        "Recipe system_prompt must never be the final downstream prompt itself"
-        in prompt
-    )
-    assert "重要：你的输出是一条提示词/指令" in prompt
+    assert "For text Recipes, do not write the final" not in prompt
+    assert "不要自己生成最终内容" not in prompt
     assert "终端生成型" not in prompt
     assert "不要把所有 Recipe 都写成 prompt compiler" not in prompt
     assert "must not emit Freezone canvas commands" in prompt

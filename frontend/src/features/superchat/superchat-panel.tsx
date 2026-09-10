@@ -14195,7 +14195,8 @@ export function SuperChatPanel({
       });
       if (!result.ok || !result.saved_to_catalog) {
         const errorText = result.errors?.find(Boolean) || result.message || "后端没有确认保存成功";
-        toast.error(`添加 Skill / Recipe 失败：${errorText}`);
+        const partiallySaved = Boolean(result.saved_skill_ids?.length || result.saved_recipe_ids?.length);
+        toast.error(partiallySaved && result.message ? result.message : `添加 Skill / Recipe 失败：${errorText}`);
         return false;
       }
       payload.saved_skill_ids = result.saved_skill_ids ?? payload.saved_skill_ids;

@@ -53,6 +53,7 @@ def workflow_run_client(monkeypatch, tmp_path):
     }
     client = TestClient(app)
     client.state_dir = tmp_path
+    client.enqueued_tasks = ctx.enqueued_tasks
     return client
 
 
@@ -1065,3 +1066,52 @@ def test_workflow_run_list_cancels_orphaned_failed_record(
     assert listed["status"] == "cancelled"
     assert listed["resumable"] is False
     assert listed["metadata"]["cancel_reason"] == "workflow_nodes_deleted"
+
+
+def test_workflow_confirmation_can_retry_cancelled_attempt_without_duplicate_enqueue(
+    workflow_run_client,
+):
+    client = workflow_run_client
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-drafts"
+    draft = client.post(
+        base,
+        json={
+            "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+            "compiled": {
+                "ok": True,
+                "skill_id": "video-ad",
+                "plan": {"nodes": [], "edges": [], "phases": []},
+            },
+        },
+    ).json()["data"]
+    url = f"{base}/{draft['draft_id']}"
+    first = client.post(url + "/claim", json={"revision": 1}).json()["data"]
+    assert (
+        client.post(
+            url + "/finish", json={"outcome": "ready", "task_id": first["task_id"]}
+        ).status_code
+        == 200
+    )
+    retry = client.post(url + "/claim", json={"revision": 1})
+    assert retry.status_code == 200
+    second = retry.json()["data"]
+    assert second["task_id"] != first["task_id"]
+    assert len(client.enqueued_tasks) == 2
+    assert client.enqueued_tasks[0]["scope"] != client.enqueued_tasks[1]["scope"]
+    duplicate = client.post(url + "/claim", json={"revision": 1}).json()
+    assert duplicate["status"] == "workflow_draft_confirmation_in_progress"
+    assert (
+        client.post(
+            url + "/finish", json={"outcome": "ready", "task_id": first["task_id"]}
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            url + "/finish", json={"outcome": "confirmed", "task_id": second["task_id"]}
+        ).status_code
+        == 200
+    )
+    duplicate = client.post(url + "/claim", json={"revision": 1}).json()
+    assert duplicate["status"] == "workflow_draft_already_confirmed"
+    assert len(client.enqueued_tasks) == 2
