@@ -102,7 +102,6 @@ import {
   SUPERCHAT_CANVAS_CONTEXT_REQUEST_EVENT,
   useSuperChat,
 } from "@/features/superchat/use-superchat";
-import { useAiAvatarUrl } from "@/features/superchat/ai-avatar";
 import { buildChatTaskLabel } from "@/features/superchat/task-notification-label";
 import { resolveMessagePresentation } from "@/features/superchat/message-presentation";
 import {
@@ -858,56 +857,6 @@ function DotsIndicator({ label, dotClassName = "size-1.5" }: { label?: string; d
         <span className={cn(dotClassName, "rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:300ms]")} />
       </span>
       {label && <span className="sr-only">{label}</span>}
-    </div>
-  );
-}
-
-function ChatAvatarFrame({
-  role,
-  label,
-  streaming: _streaming = false,
-}: {
-  role: ChatMessage["role"];
-  label?: string;
-  streaming?: boolean;
-}) {
-  const isAssistant = role === "assistant";
-  const isTool = role === "tool";
-  const initial = label?.trim().charAt(0).toUpperCase() || (isAssistant ? "虾" : isTool ? "" : "U");
-  // Shared, fetch-once avatar source (see ai-avatar.ts) — null until ready so we
-  // don't kick off a raw-path request from every avatar before the blob lands.
-  const avatarUrl = useAiAvatarUrl();
-
-  return (
-    <div
-      className={cn(
-        "relative flex shrink-0 select-none items-center justify-center overflow-hidden rounded-full border text-xs font-medium shadow-sm",
-        isAssistant ? "size-11" : "size-10",
-        isAssistant
-          ? "border-transparent bg-transparent text-muted-foreground shadow-none"
-          : isTool
-            ? "border-amber-500/30 bg-amber-500/10 text-amber-500"
-            : "border-primary/20 bg-primary text-primary-foreground",
-      )}
-      aria-hidden="true"
-    >
-      {isAssistant ? (
-        avatarUrl && (
-          <video
-            className="size-full object-cover"
-            src={avatarUrl}
-            autoPlay
-            loop
-            muted
-            playsInline
-            aria-hidden="true"
-          />
-        )
-      ) : isTool ? (
-        <Wrench className="size-4" />
-      ) : (
-        initial
-      )}
     </div>
   );
 }
@@ -7595,8 +7544,9 @@ export const MessageBubble = memo(function MessageBubble({
     if (ok) toast.success("已复制");
     else toast.error("复制失败");
   };
+  const canSpeak = typeof window !== "undefined" && "speechSynthesis" in window;
   const speak = () => {
-    if (!("speechSynthesis" in window)) return;
+    if (!canSpeak) return;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(message.text));
   };
@@ -7645,7 +7595,8 @@ export const MessageBubble = memo(function MessageBubble({
         size="icon-xs"
         className="opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100"
         onClick={copyText}
-        aria-label="Copy"
+        aria-label={t("aiAssistant.actions.copy")}
+        title={t("aiAssistant.actions.copy")}
       >
         <Copy className="size-3" />
       </Button>
@@ -7654,7 +7605,9 @@ export const MessageBubble = memo(function MessageBubble({
         size="icon-xs"
         className="opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100"
         onClick={speak}
-        aria-label="Speak"
+        disabled={!canSpeak}
+        aria-label={t("aiAssistant.actions.readAloud")}
+        title={t("aiAssistant.actions.readAloud")}
       >
         <Volume2 className="size-3" />
       </Button>
@@ -7663,7 +7616,8 @@ export const MessageBubble = memo(function MessageBubble({
         size="icon-xs"
         className="opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100"
         onClick={() => onOpenDetail(message)}
-        aria-label="Details"
+        aria-label={t("aiAssistant.actions.details")}
+        title={t("aiAssistant.actions.details")}
       >
         <Maximize2 className="size-3" />
       </Button>
@@ -7672,7 +7626,7 @@ export const MessageBubble = memo(function MessageBubble({
         size="icon-xs"
         className="opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100"
         onClick={() => onTogglePin(message.id)}
-        aria-label={pinned ? "Unpin" : "Pin"}
+        aria-label={t(pinned ? "aiAssistant.actions.unpin" : "aiAssistant.actions.pin")}
       >
         {pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
       </Button>
@@ -7681,7 +7635,8 @@ export const MessageBubble = memo(function MessageBubble({
         size="icon-xs"
         className="opacity-70 hover:bg-white/[0.06] hover:text-foreground hover:opacity-100"
         onClick={() => onDelete(message.id)}
-        aria-label="Delete"
+        aria-label={t("aiAssistant.actions.delete")}
+        title={t("aiAssistant.actions.delete")}
       >
         <X className="size-3" />
       </Button>
@@ -7735,6 +7690,7 @@ export const MessageBubble = memo(function MessageBubble({
         size="icon-xs"
         className="size-7 rounded-md opacity-80 hover:bg-white/[0.06] hover:text-foreground"
         onClick={speak}
+        disabled={!canSpeak}
         aria-label={t("aiAssistant.actions.readAloud")}
         title={t("aiAssistant.actions.readAloud")}
       >
@@ -7776,11 +7732,6 @@ export const MessageBubble = memo(function MessageBubble({
   if (freezoneToolActivity && !hasCanvasCommandSurface) {
     return (
       <div className="flex items-start gap-3 justify-start">
-        <ChatAvatarFrame
-          role={message.role}
-          label={message.displayName || t("aiAssistant.title")}
-          streaming={freezoneToolStatus(message) === "running"}
-        />
         <div className="flex min-w-0 flex-1 justify-start">
           <AgentToolActivityCard message={message} />
         </div>
@@ -7838,13 +7789,6 @@ export const MessageBubble = memo(function MessageBubble({
 
   return (
     <div className={cn("flex items-start gap-3", isUser ? "justify-end" : "justify-start")}>
-      {!isUser && (
-        <ChatAvatarFrame
-          role={message.role}
-          label={message.displayName || t("aiAssistant.title")}
-          streaming={streaming}
-        />
-      )}
       <div className={cn("flex min-w-0 flex-1", isUser ? "justify-end" : "justify-start")}>
         <div
           className={cn(
@@ -8078,12 +8022,6 @@ export const MessageBubble = memo(function MessageBubble({
           {assistantActions}
         </div>
       </div>
-      {isUser && (
-        <ChatAvatarFrame
-          role="user"
-          label={message.displayName}
-        />
-      )}
     </div>
   );
 });
@@ -8731,7 +8669,7 @@ function SearchBar({
   }, []);
 
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-4 py-2">
+    <div role="search" className="pointer-events-auto flex h-10 w-full items-center gap-2 rounded-xl border border-border/70 bg-background/90 px-2.5 shadow-lg backdrop-blur-xl">
       <Search className="size-4 shrink-0 text-muted-foreground" />
       <Input
         ref={inputRef}
@@ -8741,14 +8679,10 @@ function SearchBar({
           if (event.key === "Escape") onClose();
         }}
         placeholder={t("aiAssistant.search")}
-        className="h-7 border-0 bg-transparent text-sm shadow-none focus-visible:ring-0"
+        aria-label={t("aiAssistant.search")}
+        className="h-8 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
       />
-      {query && (
-        <Button variant="ghost" size="icon" className="size-6" onClick={() => onChange("")}>
-          <X className="size-3" />
-        </Button>
-      )}
-      <Button variant="ghost" size="icon" className="size-6" onClick={onClose}>
+      <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={onClose} aria-label={t("aiAssistant.closeSearch")}>
         <X className="size-4" />
       </Button>
     </div>
@@ -14707,11 +14641,18 @@ export function SuperChatPanel({
         />
 
         {searchOpen && (
-          <SearchBar
-            query={search}
-            onChange={setSearch}
-            onClose={() => setSearchOpen(false)}
-          />
+          <div className="relative z-40 flex h-0 justify-center">
+            <div className="absolute top-2 w-[min(420px,calc(100%-32px))]">
+              <SearchBar
+                query={search}
+                onChange={setSearch}
+                onClose={() => {
+                  setSearch("");
+                  setSearchOpen(false);
+                }}
+              />
+            </div>
+          </div>
         )}
 
         <div className="relative min-h-0 flex-1">

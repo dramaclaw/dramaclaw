@@ -46,7 +46,7 @@ export const displayLabel = (t: TaskState, tFn: TFn): string => {
     // as the task title. Keep it available in task details for diagnostics.
     return typeLabel;
   }
-  if (t.task_type === "freezone_video_gen") {
+  if (["freezone_video_gen", "freezone_image_vectorize", "freezone_image_animate_gif"].includes(t.task_type)) {
     // scope is the opaque generation job id (for example 043a1944...); it is
     // useful in details but not meaningful as a task title.
     return typeLabel;

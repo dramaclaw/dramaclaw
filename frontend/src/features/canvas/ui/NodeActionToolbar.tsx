@@ -1,3 +1,4 @@
+import { ImageDerivedActions } from './ImageDerivedActions';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import {
@@ -167,6 +168,7 @@ interface NodeActionToolbarProps {
   node: CanvasNode;
   onOpenMultiAngleEditor: (nodeId: string) => void;
   onOpenLightEditor: (nodeId: string) => void;
+  onOpenDerivedMedia: (nodeId: string, kind: "svg" | "gif") => void;
   onOpenScene360: (nodeId: string) => void;
   onOpenUpscale: (nodeId: string) => void;
   onOpenOutpaint: (nodeId: string) => void;
@@ -182,16 +184,8 @@ const toolIconMap: Record<ToolIconKey, typeof Crop> = {
   split: Scissors,
 };
 
-const TOOLBAR_BUTTON_RADIUS_CLASS = "rounded-[12px]";
-// 扁平菜单项：去掉独立边框与胶囊背景，融入工具栏整条；仅靠 hover 高亮区分。
-const TOOLBAR_NEUTRAL_BUTTON_CLASS =
-  "!border-transparent !bg-transparent text-text-dark hover:!bg-[rgba(255,255,255,0.075)] focus:!border-transparent focus:!bg-transparent focus:!shadow-none focus-visible:!outline-none focus-visible:!ring-0 data-[state=open]:!border-transparent data-[state=open]:!shadow-none";
-const TOOLBAR_TEXT_BUTTON_CLASS =
-  `h-9 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-3 text-sm ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`;
-const TOOLBAR_MENU_CONTENT_CLASS =
-  "z-[120] border-white/10 bg-[#242426]/50 text-text-dark shadow-none backdrop-blur-3xl";
-const TOOLBAR_MENU_ITEM_CLASS =
-  "gap-2 rounded-[10px] text-text-dark focus:bg-[rgba(255,255,255,0.075)] focus:text-text-dark";
+import { TOOLBAR_NEUTRAL_BUTTON_CLASS, TOOLBAR_BUTTON_RADIUS_CLASS, TOOLBAR_TEXT_BUTTON_CLASS, TOOLBAR_MENU_CONTENT_CLASS, TOOLBAR_MENU_ITEM_CLASS } from "./nodeToolbarStyles";
+import { DerivedMediaActions } from "./DerivedMediaActions";
 
 type BeatMainlineContext = MainlineContext & {
   projectId: string;
@@ -487,6 +481,7 @@ export const NodeActionToolbar = memo(
     onOpenMultiAngleEditor,
     onOpenLightEditor,
     onOpenScene360,
+    onOpenDerivedMedia,
     onOpenUpscale,
     onOpenOutpaint,
     onSpawnGridActionNode,
@@ -1496,6 +1491,8 @@ export const NodeActionToolbar = memo(
                 {t("canvas.nodeToolbar.beatContext")}
               </UiChipButton>
             )}
+            {canHandleImage && <ImageDerivedActions node={node} onOpen={onOpenDerivedMedia} />}
+            {(node.type === "vectorSvgNode" || node.type === "animatedGifNode") && <DerivedMediaActions node={node} />}
             {/* AI 改图按钮暂时隐藏（保留代码，等需求恢复时取消注释）
         {!isImageEdit && canHandleImage && (
           <UiChipButton

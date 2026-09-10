@@ -28,6 +28,38 @@ from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_state import get_task_manager
 
 
+async def _run_image_output(envelope: dict[str, Any], ctx: ProjectContext, *, vectorize: bool) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.image_outputs import transcode_gif, vectorize_image
+    from novelvideo.freezone.paths import output_path_for_job
+
+    payload = envelope.get("payload") or {}
+    project_dir = Path(ctx.output_dir).resolve()
+    source = Path(str(payload["source_path" if vectorize else "video_path"])).resolve()
+    if not source.is_relative_to(project_dir):
+        raise ValueError("素材不属于当前项目。")
+    job_id = str(payload["job_id"])
+    if not job_id or Path(job_id).name != job_id or job_id in {".", ".."}:
+        raise ValueError("Invalid job id")
+    task_type = "freezone_image_vectorize" if vectorize else "freezone_image_animate_gif"
+    output = output_path_for_job(project_dir, task_type, job_id).with_suffix(".svg" if vectorize else ".gif")
+    await (vectorize_image(source, output) if vectorize else transcode_gif(source, output))
+    url = make_static_url_for_context(ctx, output.relative_to(project_dir).as_posix(), local_path=output)
+    return {"job_id": job_id, "svg_url" if vectorize else "gif_url": url, "output_url": url, "url": url}
+
+
+async def _run_freezone_image_animate_gif_async(envelope, ctx):
+    return await _run_image_output(envelope, ctx, vectorize=False)
+
+
+def run_freezone_image_animate_gif(envelope, ctx):
+    return _run_cancellable(envelope, _run_freezone_image_animate_gif_async(envelope, ctx))
+
+
+def run_freezone_image_vectorize(envelope, ctx):
+    return _run_cancellable(envelope, _run_image_output(envelope, ctx, vectorize=True))
+
+
 AGENT_PRODUCT_TASK_TYPES = (
     "freezone_agent_workflow_result",
     "freezone_agent_recipe_result",
@@ -1782,6 +1814,11 @@ register_project_task_runner(
     requires_home_node=False,
 )
 register_project_task_runner(
+    "freezone_image_animate_gif",
+    run_freezone_image_animate_gif,
+    lane="ffmpeg",
+)
+register_project_task_runner(
     "freezone_audio_speech",
     run_freezone_audio_speech,
     requires_home_node=False,
@@ -1802,3 +1839,5 @@ for _agent_product_task_type in AGENT_PRODUCT_TASK_TYPES:
         run_freezone_agent_product,
         requires_home_node=True,
     )
+
+register_project_task_runner("freezone_image_vectorize", run_freezone_image_vectorize, lane="ffmpeg")

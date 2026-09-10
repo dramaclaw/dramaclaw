@@ -102,6 +102,8 @@ _PROJECT_TASK_RESOURCE_KINDS = {
     "freezone_agent_workflow_generate": "workflow",
     "freezone_agent_recipe_generate": "recipe",
     "freezone_video_gen": "video",
+    "freezone_image_animate_gif": "ffmpeg",
+    "freezone_image_vectorize": "ffmpeg",
     "freezone_analyze": "video",
     "freezone_video_story": "video",
     "freezone_image_reverse_prompt": "script",

@@ -47,6 +47,9 @@ from novelvideo.api.deps import (
     sqlite_store_for_context_scope,
 )
 from novelvideo.api.schemas import (
+    FreezoneImageAnimateRequest,
+    FreezoneImageVectorizeRequest,
+    FreezoneImageAnimateGifRequest,
     CanvasPayload,
     CreateIdentityAssetRequest,
     FreezoneAnalyzeShotsRequest,
@@ -476,6 +479,7 @@ async def _start_or_enqueue_freezone_video_gen(
     model_params: dict[str, Any] | None = None,
     request_schema: dict[str, Any] | None = None,
     capabilities: dict[str, Any] | None = None,
+    image_animate_gif: bool = False,
 ) -> dict:
     from novelvideo.api.routes.model_credits import (
         freezone_video_generate_task_billing,
@@ -624,6 +628,7 @@ async def _start_or_enqueue_freezone_video_gen(
         "billing": billing,
         "model_params": model_params or {},
         "request_schema": request_schema or {},
+        "image_animate_gif": image_animate_gif,
     }
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
@@ -9671,6 +9676,128 @@ async def freezone_video_gen(
         ) from exc
 
 
+def _image_output_source(project_dir, ctx, username, project_name, url) -> str:
+    path = unquote(urlsplit(url).path)
+    prefixes = (
+        f"/static/projects/{ctx.project_id}/",
+        f"/api/v1/projects/{ctx.project_id}/media/",
+        f"/static/{username}/{project_name}/",
+    )
+    if not path.startswith(prefixes) or ".." in Path(path).parts:
+        raise HTTPException(400, "素材必须属于当前项目")
+    try:
+        paths = _resolve_url_list(project_dir, [url])
+    except ValueError as exc:
+        raise HTTPException(400, "素材必须是当前项目内的有效路径") from exc
+    if len(paths) != 1:
+        raise HTTPException(400, "素材不存在")
+    source = Path(paths[0]).resolve()
+    if not source.is_relative_to(project_dir.resolve()) or not source.is_file():
+        raise HTTPException(400, "素材不存在或不属于当前项目")
+    return str(source)
+
+
+@router.post("/projects/{project}/freezone/image/animate", tags=[TAG_FREEZONE_VIDEO])
+async def freezone_image_animate(
+    project: str,
+    body: FreezoneImageAnimateRequest,
+    user: dict = Depends(get_api_user),
+):
+    """将当前项目的画布图片作为锁定首帧，生成固定规格的动态图。"""
+    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    source_paths = [_image_output_source(project_dir, ctx, username, project_name, body.image_url)]
+
+    model = "newapi_seedance-2.0-fast"
+    try:
+        backend = await _resolve_catalog_video_backend(
+            model,
+            requester_user_id=ctx.requester_user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    request_schema, model_params, capabilities = await _resolve_catalog_request(
+        "video", model, {}, mode="firstLastFrame", requester_user_id=ctx.requester_user_id
+    )
+    _require_catalog_video_mode(capabilities, "firstLastFrame")
+
+    try:
+        return await _start_or_enqueue_freezone_video_gen(
+            ctx=ctx,
+            username=username,
+            project=project_name,
+            project_dir=project_dir,
+            output_dir=output_dir,
+            job_id=_new_job_id(),
+            prompt="保持首帧的主体、构图、画风与背景稳定，仅添加自然轻微的循环动作。镜头固定，无切换，无新增元素。",
+            reference_items=[{"type": "image", "path": source_paths[0], "role": "首帧"}],
+            aspect_ratio="auto",
+            resolution=normalize_video_resolution_for_backend(
+                backend, "720p", _catalog_resolution_options(capabilities)
+            ),
+            duration_seconds=normalize_video_duration_for_backend(
+                backend, 4, *_catalog_duration_bounds(capabilities)
+            ),
+            generate_audio=False,
+            human_review=False,
+            scene_optimize=None,
+            backend=backend,
+            canvas_id=body.canvas_id,
+            node_id=body.node_id,
+            model_id=model,
+            catalog_id=_catalog_entry_id(capabilities) or None,
+            # 当前模型目录的关键帧能力统一为 first_last_frame；仅提供首帧
+            # 是该模式的合法子集，不走已废弃的单独 first_frame 模式。
+            gen_mode="first_last_frame",
+            requested_gen_mode="firstLastFrame",
+            model_params=model_params,
+            request_schema=request_schema,
+            capabilities=capabilities,
+            image_animate_gif=True,
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error("failed to start image animate task", exc)
+        raise HTTPException(503, f"failed to start image animate task: {exc}") from exc
+
+
+@router.post("/projects/{project}/freezone/image/vectorize", tags=[TAG_FREEZONE_IMAGE])
+async def freezone_image_vectorize(
+    project: str,
+    body: FreezoneImageVectorizeRequest,
+    user: dict = Depends(get_api_user),
+):
+    """将当前项目的图片节点异步转换为 SVG。"""
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="editor"
+    )
+    source_paths = [_image_output_source(project_dir, ctx, username, project_name, body.image_url)]
+
+    return await _enqueue_freezone_background_job(
+        ctx=ctx,
+        project_dir=project_dir,
+        task_type="freezone_image_vectorize",
+        job_id=_new_job_id(),
+        payload={
+            "source_path": str(source_paths[0]),
+            "canvas_id": body.canvas_id,
+            "node_id": body.node_id,
+        },
+        queue_kind="ffmpeg",
+    )
+
+
+@router.post("/projects/{project}/freezone/image/animate-gif", tags=[TAG_FREEZONE_VIDEO])
+async def freezone_image_animate_gif(project: str, body: FreezoneImageAnimateGifRequest, user: dict = Depends(get_api_user)):
+    ctx, username, project_name, project_dir, _ = await _resolve_freezone_project(project, user)
+    source = _image_output_source(project_dir, ctx, username, project_name, body.video_url)
+    return await _enqueue_freezone_background_job(
+        ctx=ctx, project_dir=project_dir, task_type="freezone_image_animate_gif",
+        job_id=_new_job_id(), queue_kind="ffmpeg",
+        payload={"video_path": source, "canvas_id": body.canvas_id, "node_id": body.node_id},
+    )
+
+
 @router.post("/projects/{project}/freezone/video/i2v", tags=[TAG_FREEZONE_VIDEO])
 async def freezone_video_i2v(
     project: str,
@@ -10892,6 +11019,8 @@ async def freezone_job_result(
         "freezone_video_compose",
         "freezone_image_reverse_prompt",
         "freezone_image_to_3gs",
+        "freezone_image_vectorize",
+        "freezone_image_animate_gif",
         "freezone_text_generate",
         "freezone_text_translate",
         "freezone_story_script",
@@ -11001,6 +11130,8 @@ async def freezone_job_result(
         return {"ok": False, "info": "job result not yet on disk", "status": "unknown"}
 
     out = output_path_for_job(project_dir, task_type, job_id)
+    if task_type in {"freezone_image_vectorize", "freezone_image_animate_gif"}:
+        out = out.with_suffix(".svg" if task_type == "freezone_image_vectorize" else ".gif")
     if task_type == "freezone_image_reverse_prompt":
         out = _image_reverse_prompt_output_path(project_dir, job_id)
     if task_type == "freezone_video_erase":
@@ -11131,6 +11262,9 @@ async def freezone_job_result(
     task_result = getattr(task, "result", None) if task is not None else None
     push_metadata = {}
     if isinstance(task_result, dict):
+        for key in ("gif_task_type", "gif_job_id", "gif_task_key", "gif_queue", "gif_enqueue_error", "gif_url", "svg_url", "output_url"):
+            if key in task_result:
+                push_metadata[key] = task_result[key]
         if task_result.get("pushable"):
             push_metadata["pushable"] = True
         if isinstance(task_result.get("slot_target"), dict):

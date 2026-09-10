@@ -51,6 +51,7 @@ from novelvideo.api.routes import (  # noqa: E402
     episodes,
     files,
     freezone,
+    skill_imports,
     generation,
     ingest,
     model_gateway,
@@ -118,6 +119,7 @@ api_router.include_router(pipeline.router, tags=["pipeline"])
 api_router.include_router(model_gateway.router, tags=["model-gateway"])
 api_router.include_router(model_credits.router, tags=["model-credits"])
 api_router.include_router(freezone.router)
+api_router.include_router(skill_imports.router)
 api_router.include_router(release_notifications.router, tags=["release-notifications"])
 _verification_routes_registered = False
 

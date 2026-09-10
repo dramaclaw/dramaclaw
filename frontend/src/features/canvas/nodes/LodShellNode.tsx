@@ -60,6 +60,8 @@ import type { CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 // 导出只为让测试上棘轮：新增节点类型要么在这里登记尺寸，要么进 LOD 豁免名单，
 // 漏了就会拿 400×300 的通用兜底，首屏低缩放下盒子明显不对。
 export const SHELL_FALLBACK_SIZES: Partial<Record<string, { width: number; height: number }>> = {
+  vectorSvgNode: { width: 360, height: 192 },
+  animatedGifNode: { width: 360, height: 192 },
   uploadNode: { width: 320, height: 350 },
   imageNode: { width: 580, height: 360 },
   imageGenNode: { width: 580, height: 360 },
