@@ -167,6 +167,9 @@ function withDefaults(
         planeY: 0,
         basePoseId: PREVIZ_DEFAULT_POSE_ID,
         poseAdjust: { pitch: 0, turn: 0, lean: 0 },
+        // 两个移动辅助默认关，与 `createCharacterDraft` 逐字对齐。
+        avoidCollision: false,
+        stayInBounds: false,
       };
     case 'camera':
       return {

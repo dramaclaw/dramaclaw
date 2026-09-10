@@ -84,6 +84,15 @@ describe("createPrevizObject", () => {
     expect(character.planeY).toBe(0);
   });
 
+  // 两个移动辅助都不勾：勾上会让人在播放时被推开、被夹住，而新建的人物还没有任何走位，
+  // 用户也没表达过「让引擎替我改轨迹」。默认关也让老场景与新场景在这一条上完全一致。
+  it("starts a new character with both movement-assist switches off", () => {
+    const character = createPrevizObject("character", []);
+
+    expect(character.avoidCollision).toBe(false);
+    expect(character.stayInBounds).toBe(false);
+  });
+
   it("puts a new camera at eye height looking down -Z", () => {
     const camera = createPrevizObject("camera", []);
 

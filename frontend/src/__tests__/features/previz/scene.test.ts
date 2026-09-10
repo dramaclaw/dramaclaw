@@ -300,6 +300,31 @@ describe("parseScene field hygiene", () => {
     expect(policyOf(undefined)).toBe("follow");
   });
 
+  // 移动辅助这两个开关会改变人走出来的轨迹。缺字段的老场景必须读成两个 false：默认打开
+  // 等于无声地改掉用户已经调好的走位，而画面上看起来只是「人不知怎么绕了一下」。
+  it("keeps a character saved before movement assist existed with both switches off", () => {
+    const parsed = parseScene({ objects: [{ id: "a", kind: "character" }] });
+
+    expect(parsed.objects[0]).toMatchObject({ avoidCollision: false, stayInBounds: false });
+  });
+
+  it("round-trips both movement-assist switches and reads anything non-boolean as off", () => {
+    const assistOf = (avoidCollision: unknown, stayInBounds: unknown) => {
+      const parsed = parseScene({
+        objects: [{ id: "a", kind: "character", avoidCollision, stayInBounds }],
+      });
+      const character = parsed.objects[0];
+      if (character?.kind !== "character") throw new Error("expected a character");
+      return [character.avoidCollision, character.stayInBounds];
+    };
+
+    expect(assistOf(true, true)).toEqual([true, true]);
+    expect(assistOf(false, false)).toEqual([false, false]);
+    // 存进来一个 "false" 字符串是最容易踩的一脚：取真值会把它当成勾上了。数字 1 同理。
+    expect(assistOf("false", 1)).toEqual([false, false]);
+    expect(assistOf(undefined, null)).toEqual([false, false]);
+  });
+
   // planeY 是「锁定平面」那一档唯一的高度来源，非有限值透过去就是把人物钉在 NaN 上——
   // 世界矩阵烂掉，人凭空消失，而病因离故障点隔着好几个文件。
   it("falls back to the ground plane for a non-finite locked height", () => {

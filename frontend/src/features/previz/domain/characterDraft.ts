@@ -33,6 +33,9 @@ export interface PrevizCharacterDraft {
   basePoseId: string;
   poseAdjust: PrevizCharacter['poseAdjust'];
   heightPolicy: HeightPolicy;
+  /** 移动辅助，语义见 `PrevizCharacter` 上的同名字段。 */
+  avoidCollision: boolean;
+  stayInBounds: boolean;
   /** 俯视图点出来的 XZ，单位米。**没点过就是 null**，「创建」按钮按它禁用。 */
   spot: readonly [number, number] | null;
 }
@@ -84,6 +87,9 @@ export function createCharacterDraft(objects: readonly PrevizObject[]): PrevizCh
     poseAdjust: { pitch: 0, turn: 0, lean: 0 },
     // 新建的人物跟随轨迹：另外两档都会去改 y，而用户此刻还没表达过任何高度意图。
     heightPolicy: 'follow',
+    // 两个移动辅助默认关：新建的人还没有任何走位，用户也没表达过「让引擎替我改轨迹」。
+    avoidCollision: false,
+    stayInBounds: false,
     // 没点过俯视图。兜一个 [0, 0] 出来会让「不选位直接创建」悄悄成立。
     spot: null,
   };
@@ -140,6 +146,8 @@ export function characterDraftOverrides(
     // 那边即使三根滑杆都在界内也照样重搭 `poseAdjust`，别改成「界内就原样返回」。
     poseAdjust: safe.poseAdjust,
     heightPolicy: safe.heightPolicy,
+    avoidCollision: safe.avoidCollision,
+    stayInBounds: safe.stayInBounds,
     planeY: PREVIZ_CHARACTER_SPAWN_Y,
     transform: {
       position: [x, PREVIZ_CHARACTER_SPAWN_Y, z],

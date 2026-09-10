@@ -7,10 +7,25 @@ import {
   rigAnchorPoint,
   rigCameraPosition,
 } from './closeup';
+import {
+  PREVIZ_CHARACTER_RADIUS_M,
+  clampToBounds,
+  propWorldBox,
+  pushOutOfBoxes,
+  type PrevizPropExtent,
+  type PrevizXZBox,
+} from './moveAssist';
 import { samplePathPosition, samplePathRotation } from './pathCurve';
 import { locomotionPoseFor, poseSampleTime } from './poses';
-import { PREVIZ_FPS, type PrevizObject, type PrevizScene, type Vec3 } from './scene';
+import {
+  PREVIZ_FPS,
+  type PrevizCharacter,
+  type PrevizObject,
+  type PrevizScene,
+  type Vec3,
+} from './scene';
 import { frameToU, lastEndedPathClip, pathClipAt, rigClipAt } from './timeline';
+import { sceneTopDownBounds, type PrevizTopDownFootprint } from './topDownMap';
 
 /** 某一帧上单个对象的解算结果。 */
 export interface EvaluatedObject {
@@ -36,7 +51,19 @@ export type EvaluatedFrame = Map<string, EvaluatedObject>;
  * 姿势跟着走位一起解：静止是基础姿势定格的那一秒，沿路径走位换成走 / 跑的循环并给出
  * 片段内时间，引擎按它推动画。动作片段（P4）还没有。
  */
-export function evaluateSceneAt(scene: PrevizScene, frame: number): EvaluatedFrame {
+export function evaluateSceneAt(
+  scene: PrevizScene,
+  frame: number,
+  /**
+   * 每件道具在本地坐标下的 XZ 半尺寸，由 `PrevizRenderer.propExtents()` 量出来。
+   *
+   * 可选：本模块是纯计算、拿不到 three，量不出这份数据；而模型还在下载的那几帧、以及
+   * 没有渲染器的调用点（测试、将来的服务端求值）本来就没有它。不给就等于场上一件道具
+   * 都没有——移动辅助那一轮**照跑**，只是没有盒子可推，「限制在场景范围」仍然按默认
+   * 地块夹。这比「没有尺寸表就整轮跳过」好：后者会让人在模型下完的那一刻突然跳一下。
+   */
+  extents: readonly PrevizPropExtent[] = [],
+): EvaluatedFrame {
   const result: EvaluatedFrame = new Map();
 
   for (const object of scene.objects) {
@@ -76,6 +103,12 @@ export function evaluateSceneAt(scene: PrevizScene, frame: number): EvaluatedFra
     }
   }
 
+  // 排在走位之后：`samplePathPosition` 转头就把曲线上的 XZ 原样写回来，推开排在它之前
+  // 等于没推。排在特写与「看向」之前：那两轮都是拿人这一帧解算完的位置反推机位的，排在
+  // 它们后面的话，机位会一直盯着人被推开**之前**的地方——而那个地方在道具肚子里。
+  // 与 `applyHeightPolicies` 的先后无所谓：那一轮只动 y，这一轮只动 XZ。
+  applyMoveAssist(scene, result, extents);
+
   applyHeightPolicies(scene, result);
 
   const objectsById = lazyIndex(scene);
@@ -108,6 +141,69 @@ function applyHeightPolicies(scene: PrevizScene, result: EvaluatedFrame): void {
     // `planeY` 原样用，不校验有限性：这一层对数值一律不设防（路径点与静态 transform
     // 的 y 同样直通），单给它补一道校验只会让「哪些数被洗过」变得说不清。
     state.position = [state.position[0], object.planeY, state.position[2]];
+  }
+}
+
+/**
+ * 移动辅助那一轮：把勾了开关的人物在地面上推开、夹住。
+ *
+ * 「静止摆位不受影响」不需要在这里特判——这一轮跑在**求值**里，而求值的结果只在播放
+ * 与预览时写进节点；用户手摆的那份 `transform` 是场景数据，本模块从头到尾没写过它。
+ *
+ * 两个开关都勾时先推后夹：范围是硬边界，推开可以把人推出界，反过来不行。
+ */
+function applyMoveAssist(
+  scene: PrevizScene,
+  result: EvaluatedFrame,
+  extents: readonly PrevizPropExtent[],
+): void {
+  const assisted: PrevizCharacter[] = [];
+  for (const object of scene.objects) {
+    if (object.kind !== 'character') continue;
+    if (object.avoidCollision || object.stayInBounds) assisted.push(object);
+  }
+  // 绝大多数场景两个开关都没勾。下面那两张表白建一遍是每帧一次的开销，同 `lazyIndex`。
+  if (assisted.length === 0) return;
+
+  const objectsById = new Map(scene.objects.map((object) => [object.id, object]));
+
+  // 推开用的盒子按**这一帧解算出的**道具位置算：挂着走位的道具（会动的平台、被推开的
+  // 门）走到哪，人就从哪儿被推开。
+  const boxes: PrevizXZBox[] = [];
+  // 夹取用的那块地按道具的**静止摆位**算，刻意与前者不同：这块地就是创建人物对话框
+  // 左栏画出来的那块（同一个 `sceneTopDownBounds`、同样的入参），用户勾「限制在场景
+  // 范围」时看到的是它。跟着走位一起呼吸的话，一件开走的道具会把围栏拖着走，被夹住的
+  // 人跟着滑——而画面上没有任何东西解释他为什么在动。
+  const restingFootprints: PrevizTopDownFootprint[] = [];
+
+  for (const extent of extents) {
+    const object = objectsById.get(extent.id);
+    const state = result.get(extent.id);
+    // 尺寸表是渲染器另外量的一份快照，与这里的 `scene` 不保证同一时刻：道具可能已经
+    // 被删了。同 `sceneTopDownBounds` 对轮廓做的那道筛。
+    if (!object || !state) continue;
+    boxes.push(propWorldBox(extent, state.position, object.transform.scale));
+    restingFootprints.push({
+      id: extent.id,
+      ...propWorldBox(extent, object.transform.position, object.transform.scale),
+    });
+  }
+
+  const bounds = sceneTopDownBounds(scene.objects, restingFootprints);
+
+  for (const character of assisted) {
+    const state = result.get(character.id);
+    // 类型上的必需，不是运行时兜底：`result` 照着同一个 `scene.objects` 建，同
+    // `applyHeightPolicies` 里的那一行。
+    if (!state) continue;
+    let point: [number, number] = [state.position[0], state.position[2]];
+    if (character.avoidCollision) {
+      point = pushOutOfBoxes(point, PREVIZ_CHARACTER_RADIUS_M, boxes);
+    }
+    if (character.stayInBounds) {
+      point = clampToBounds(point, PREVIZ_CHARACTER_RADIUS_M, bounds);
+    }
+    state.position = [point[0], state.position[1], point[1]];
   }
 }
 

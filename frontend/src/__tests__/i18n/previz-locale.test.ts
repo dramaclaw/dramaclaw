@@ -244,7 +244,16 @@ describe('previz P3 locale keys', () => {
         [...INSPECTOR_HEIGHT_POLICIES].sort(),
       );
       expect(Object.keys(inspector.heightNote).sort()).toEqual([...INSPECTOR_HEIGHT_NOTES].sort());
-      for (const key of ['heightPolicy', 'planeY'] as const) {
+      // 移动辅助那两个开关的文案挂在 `previz.inspector` 下：创建对话框与属性面板两处
+      // 都要用，同一个开关在两处叫两个名字，用户会以为它们是两回事。
+      for (const key of [
+        'heightPolicy',
+        'planeY',
+        'moveAssist',
+        'moveAssistNote',
+        'avoidCollision',
+        'stayInBounds',
+      ] as const) {
         expect(inspector[key], key).toBeTruthy();
       }
     });

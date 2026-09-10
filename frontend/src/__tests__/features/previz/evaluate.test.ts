@@ -7,6 +7,7 @@ import {
   PREVIZ_RIG_ORBIT_DEG,
 } from '@/features/previz/domain/closeup';
 import { evaluateSceneAt } from '@/features/previz/domain/evaluate';
+import { PREVIZ_CHARACTER_RADIUS_M } from '@/features/previz/domain/moveAssist';
 import { createPrevizObject } from '@/features/previz/domain/objects';
 import { PREVIZ_POSE_CLIPS, type PrevizPoseId } from '@/features/previz/domain/poses';
 import {
@@ -235,6 +236,159 @@ function sceneWithCloseup(
     clip,
   };
 }
+
+/**
+ * 一个人从 (-3, 0, 0) 直走到 (3, 0, 0)，正中间的原点上摆一件 2×2 m 的道具。
+ *
+ * 片段正中那一帧，走位会把人放在原点上——也就是道具正中央。移动辅助不生效时那正是
+ * 该发生的事（这一层不管穿模），生效时人必须被推出去。
+ */
+function walkThroughProp(flags: { avoidCollision: boolean; stayInBounds: boolean }): {
+  scene: PrevizScene;
+  character: PrevizCharacter;
+  prop: PrevizObject;
+} {
+  const character = createPrevizObject('character', [], flags) as PrevizCharacter;
+  const prop = createPrevizObject('prop', [character]);
+  prop.transform.position = [0, 0, 0];
+  const clip: PrevizPathClip = {
+    id: 'walk',
+    kind: 'path',
+    startFrame: 0,
+    endFrame: 120,
+    points: [
+      { id: 'a', u: 0, position: [-3, 0, 0], rotation: [0, 0, 0] },
+      { id: 'b', u: 1, position: [3, 0, 0], rotation: [0, 0, 0] },
+    ],
+  };
+  const base = createDefaultScene();
+  return {
+    scene: {
+      ...base,
+      objects: [character, prop],
+      timeline: { ...base.timeline, tracks: [{ id: 'wt', objectId: character.id, clips: [clip] }] },
+    },
+    character,
+    prop,
+  };
+}
+
+/** 上面那件道具量出来的本地半尺寸：1 m 见方的一半。 */
+function extentsFor(prop: PrevizObject): { id: string; halfX: number; halfZ: number }[] {
+  return [{ id: prop.id, halfX: 1, halfZ: 1 }];
+}
+
+describe('evaluateSceneAt movement assist', () => {
+  // 两个开关都不勾时，这一轮必须一步都不让：不然「打开预演台发现人跟上次走得不一样」
+  // 这种事会落在每一份存量场景上，而画面上只是「人不知怎么绕了一下」。
+  it('walks a character straight through a prop when neither switch is on', () => {
+    const { scene, character, prop } = walkThroughProp({
+      avoidCollision: false,
+      stayInBounds: false,
+    });
+
+    const state = evaluateSceneAt(scene, 60, extentsFor(prop)).get(character.id);
+
+    expect(state?.position[0]).toBeCloseTo(0, 6);
+    expect(state?.position[2]).toBeCloseTo(0, 6);
+  });
+
+  it('pushes a colliding character clear of the prop', () => {
+    const { scene, character, prop } = walkThroughProp({
+      avoidCollision: true,
+      stayInBounds: false,
+    });
+
+    const [x, , z] = evaluateSceneAt(scene, 60, extentsFor(prop)).get(character.id)!.position;
+
+    // 出了那个 1 m 半宽的盒子，还差一个身体半径。
+    expect(Math.max(Math.abs(x), Math.abs(z))).toBeCloseTo(1 + PREVIZ_CHARACTER_RADIUS_M, 6);
+  });
+
+  // 模型还在下载的那几帧、以及没有渲染器的调用点（测试、将来的服务端求值）都没有尺寸表。
+  // 那时该老老实实不推，而不是抛错或者拿一个猜出来的尺寸推。
+  it('has nothing to push against without a prop extent table', () => {
+    const { scene, character } = walkThroughProp({ avoidCollision: true, stayInBounds: false });
+
+    expect(evaluateSceneAt(scene, 60).get(character.id)?.position[0]).toBeCloseTo(0, 6);
+  });
+
+  // 这一轮只动 XZ。y 归高度策略——两边都改 y 的话，「人物突然沉进地里」要在两个模块
+  // 之间来回找。
+  it('leaves the vertical axis to the height policy', () => {
+    const { scene, character, prop } = walkThroughProp({
+      avoidCollision: true,
+      stayInBounds: false,
+    });
+    character.heightPolicy = 'plane';
+    character.planeY = 3;
+
+    expect(evaluateSceneAt(scene, 60, extentsFor(prop)).get(character.id)?.position[1]).toBe(3);
+  });
+
+  // 这一条是「移动辅助必须排在特写之前」的全部理由：排在后面的话，机位会一直盯着人被
+  // 推开**之前**的那个位置，而那个位置在道具肚子里。
+  it('lets a closeup track the pushed position, not the raw path point', () => {
+    const { scene, character, prop } = walkThroughProp({
+      avoidCollision: true,
+      stayInBounds: false,
+    });
+    const camera = createPrevizObject('camera', scene.objects) as PrevizCamera;
+    const rig: PrevizRigClip = {
+      id: 'rig',
+      kind: 'rig',
+      startFrame: 0,
+      endFrame: 120,
+      anchorObjectId: character.id,
+      anchorPart: 'face',
+      aimObjectId: character.id,
+      azimuth: 0,
+      elevation: 0,
+      distance: 3,
+      height: 0,
+      bearing: 'custom',
+      motion: 'static',
+    };
+    scene.objects.push(camera);
+    scene.timeline.tracks.push({ id: 'rt', objectId: camera.id, clips: [rig] });
+
+    const frame = evaluateSceneAt(scene, 60, extentsFor(prop));
+    const person = frame.get(character.id)!.position;
+    const lens = frame.get(camera.id)!.position;
+
+    // 人确实被推开了（否则下面那条等式在「两边都没动」时也成立）。
+    expect(Math.hypot(person[0], person[2])).toBeGreaterThan(1);
+    // 机位与人的水平距离就是片段设的那 3 m，而不是「机位到原点」的距离。
+    expect(Math.hypot(lens[0] - person[0], lens[2] - person[2])).toBeCloseTo(3, 6);
+  });
+
+  it('pulls a character who walks off the edge back inside the block', () => {
+    const character = createPrevizObject('character', [], {
+      avoidCollision: false,
+      stayInBounds: true,
+    }) as PrevizCharacter;
+    const clip: PrevizPathClip = {
+      id: 'far',
+      kind: 'path',
+      startFrame: 0,
+      endFrame: 120,
+      points: [
+        { id: 'a', u: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+        { id: 'b', u: 1, position: [100, 0, 0], rotation: [0, 0, 0] },
+      ],
+    };
+    const base = createDefaultScene();
+    const scene: PrevizScene = {
+      ...base,
+      objects: [character],
+      timeline: { ...base.timeline, tracks: [{ id: 'ft', objectId: character.id, clips: [clip] }] },
+    };
+
+    // 空场景的默认地块是 ±6 m（`PREVIZ_TOP_DOWN_DEFAULT_BOUNDS`），再收一个身体半径。
+    const x = evaluateSceneAt(scene, 120, []).get(character.id)!.position[0];
+    expect(x).toBeCloseTo(6 - PREVIZ_CHARACTER_RADIUS_M, 6);
+  });
+});
 
 describe('evaluateSceneAt closeup clips', () => {
   it('parks the camera in front of the tracked face and points it there', () => {

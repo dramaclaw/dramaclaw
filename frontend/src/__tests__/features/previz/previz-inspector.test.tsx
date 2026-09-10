@@ -204,6 +204,29 @@ describe("PrevizInspector", () => {
     expect(onChange).toHaveBeenLastCalledWith({ color: "#ff00aa" });
   });
 
+  /**
+   * 移动辅助两个开关，与创建对话框里那一节是同一对。建完之后改主意的人只会来属性
+   * 面板找它——只在创建对话框里给，勾错了就再也改不回来。
+   */
+  it("toggles a character's movement assist switches", async () => {
+    const user = userEvent.setup();
+    const onChange = renderInspector(createPrevizObject("character", []));
+
+    const avoid = screen.getByRole("checkbox", { name: "previz.inspector.avoidCollision" });
+    expect(avoid).not.toBeChecked();
+
+    await user.click(avoid);
+    expect(onChange).toHaveBeenLastCalledWith({ avoidCollision: true });
+
+    await user.click(screen.getByRole("checkbox", { name: "previz.inspector.stayInBounds" }));
+    expect(onChange).toHaveBeenLastCalledWith({ stayInBounds: true });
+
+    // 勾上之后回读得到：受控框接的若是常量 false，点一下的补丁照样发得出去，
+    // 但那个勾会立刻弹回来。
+    expect(screen.getByRole("checkbox", { name: "previz.inspector.avoidCollision" }))
+      .toBeChecked();
+  });
+
   it("shows only the character fields for a character", () => {
     renderInspector(createPrevizObject("character", []));
 

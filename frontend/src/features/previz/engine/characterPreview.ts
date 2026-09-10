@@ -326,6 +326,10 @@ function previewCharacter(draft: PrevizCharacterDraft): PrevizCharacter {
     heightCm: clampToRange(draft.heightCm, PREVIZ_HEIGHT_CM_RANGE),
     heightPolicy: draft.heightPolicy,
     planeY: 0,
+    // 预览里的木偶不走求值，两个移动辅助在这里没有消费者；照抄草稿而不是写死 false，
+    // 是为了别在这具木偶身上留下一份和用户勾选对不上的副本。
+    avoidCollision: draft.avoidCollision,
+    stayInBounds: draft.stayInBounds,
     basePoseId: draft.basePoseId,
     // 摊平一份。建出来的这个 `PrevizCharacter` 会作为 `PREVIEW_LATEST` 挂在容器上留到
     // 下一次调用，也就是说它要在**调用方的这一帧之外**继续有效；共用引用的话它就跟着
