@@ -13,6 +13,8 @@ import {
   selectChatTaskItems,
   selectChatWorkflowRun,
   selectWorkflowActivityLabels,
+  shouldShowCancelAll,
+  workflowRunDisplayStatus,
   workflowRunStatusPollMs,
   workflowSettledCount,
   workflowStatusCounts,
@@ -317,6 +319,49 @@ describe("workflowRunStatusPollMs", () => {
       }),
     ])).toBe(60_000);
     expect(workflowRunStatusPollMs([])).toBe(60_000);
+  });
+
+  it("polls actively while an interrupted workflow is resuming", () => {
+    const interrupted = workflowRun({
+      status: "interrupted",
+      resumable: true,
+    });
+
+    expect(workflowRunStatusPollMs([interrupted], true)).toBe(5_000);
+  });
+});
+
+describe("workflowRunDisplayStatus", () => {
+  it("presents a resumable interrupted workflow as running during recovery", () => {
+    const interrupted = workflowRun({
+      status: "interrupted",
+      resumable: true,
+    });
+
+    expect(workflowRunDisplayStatus(interrupted, true)).toBe("running");
+    expect(workflowRunDisplayStatus(interrupted, false)).toBe("interrupted");
+  });
+
+  it("does not mask a terminal result that arrives while recovery is pending", () => {
+    const completed = workflowRun({
+      status: "completed",
+      resumable: false,
+    });
+
+    expect(workflowRunDisplayStatus(completed, true)).toBe("completed");
+  });
+});
+
+describe("shouldShowCancelAll", () => {
+  it("waits for a resumed workflow to become genuinely cancellable", () => {
+    const interrupted = workflowRun({
+      status: "interrupted",
+      resumable: true,
+    });
+
+    expect(workflowRunDisplayStatus(interrupted, true)).toBe("running");
+    expect(shouldShowCancelAll(0, interrupted, true)).toBe(false);
+    expect(shouldShowCancelAll(0, workflowRun(), false)).toBe(true);
   });
 });
 
