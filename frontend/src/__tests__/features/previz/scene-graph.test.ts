@@ -438,7 +438,10 @@ function propLoaderWith(three: typeof import('three')) {
   const loadGltf = vi.fn(async () => ({ scene: source }));
   const loadObj = vi.fn(async () => source);
   return {
-    loader: new PropLoader({ loadGltf, loadObj }),
+    // 这里的 three 是假的，`SkeletonUtils.clone` 走不通；本组用例要的只是「克隆体与源
+    // 模型共享几何体和材质」。真正注入 `SkeletonUtils.clone` 那条线由
+    // `prop-footprint-attach.test.ts` 用真 three 盯着。
+    loader: new PropLoader({ loadGltf, loadObj, clone: (object) => object.clone() }),
     loadGltf,
     loadObj,
     sourceMesh: sourceMesh as unknown as FakeMeshView,
