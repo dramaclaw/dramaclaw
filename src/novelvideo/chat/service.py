@@ -540,6 +540,83 @@ _FREEZONE_TEXT_ONLY_REQUEST_RE = re.compile(
     r"\s*[。！？!?．.]?\s*$",
     re.IGNORECASE,
 )
+_FREEZONE_SKILL_RUNTIME_NEGATION_RE = re.compile(
+    r"(?:"
+    r"(?:暂不|暂时不|先不|不要|无需|不用|不再|不会|不)\s*"
+    r"(?:直接|立即|马上|继续|再)?\s*"
+    r"(?:运行|执行|应用|使用|用|生成|制作|创建|写入|添加|删除|移除|清空|修改|更新|"
+    r"连接|连线|移动|布局|选择|打开)"
+    r"|(?:do\s+not|don't|not|without)\s+"
+    r"(?:(?:directly|immediately|then)\s+)?"
+    r"(?:run|execute|apply|use|generate|make|create|write|add|delete|remove|clear|"
+    r"update|connect|move|layout|select|open)"
+    r")",
+    re.IGNORECASE,
+)
+_FREEZONE_INDEPENDENT_CANVAS_WRITE_RE = re.compile(
+    r"(?:"
+    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|向[上下左右]移|"
+    r"再移|布局|选择|打开|运行|执行|"
+    r"create|add|insert|delete|remove|clear|update|connect|move|layout|select|open|"
+    r"run|execute)"
+    r"(?:(?!(?:Skill|Recipe|技能|配方))[^。！？!?，,；;\n]){0,32}"
+    r"(?:节点|画布|连线|边|node|canvas|edge)"
+    r"|(?:节点|画布|连线|边|node|canvas|edge)"
+    r"(?:(?!(?:Skill|Recipe|技能|配方))[^。！？!?，,；;\n]){0,32}"
+    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|布局|选择|打开|"
+    r"运行|执行|create|add|insert|delete|remove|clear|update|connect|move|layout|"
+    r"select|open|run|execute)"
+    r")",
+    re.IGNORECASE,
+)
+_FREEZONE_SKILL_CAPABILITY_RE = re.compile(
+    r"(?:"
+    r"(?:用于|用来|功能是|作用是|设计为|会|可以|能够|可)\s*"
+    r"(?:使用|用|创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|布局|选择|打开|"
+    r"运行|执行)"
+    r"[^。！？!?，,；;\n]{0,24}(?:节点|画布|连线|边|Skill|Recipe|技能|配方)"
+    r"|(?:使用|用|创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|布局|选择|"
+    r"打开|运行|执行)"
+    r"[^。！？!?，,；;\n]{0,24}(?:节点|画布|连线|边|Skill|Recipe|技能|配方)"
+    r"[^。！？!?，,；;\n]{0,12}的\s*(?:Skill|Recipe|技能|配方)"
+    r"|(?:Skill|Recipe)\s+"
+    r"(?:for|to|capable\s+of|(?:that|which)(?:\s+can)?|"
+    r"(?:designed|built|intended|meant|created|able)\s+to)\s+"
+    r"(?:us(?:e|es|ing)|creat(?:e|es|ing)|add(?:s|ing)?|insert(?:s|ing)?|delet(?:e|es|ing)|"
+    r"remov(?:e|es|ing)|clear(?:s|ing)?|updat(?:e|es|ing)|connect(?:s|ing)?|"
+    r"mov(?:e|es|ing)|layout|select(?:s|ing)?|open(?:s|ing)?|run(?:s|ning)?|execut(?:e|es|ing))"
+    r"[^。！？!?，,；;\n]{0,24}(?:node|canvas|edge|skill|recipe)s?"
+    r")",
+    re.IGNORECASE,
+)
+_FREEZONE_SKILL_RUNTIME_REQUEST_RE = re.compile(
+    r"(?:"
+    r"(?:用(?!于|来)|使用|应用|运行|执行|use|apply|run|execute)"
+    r"[^。！？!?\n]{0,24}"
+    r"(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
+    r"|(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
+    r"[^。！？!?\n]{0,40}"
+    r"(?:并|然后|再|随后|接着|同时|完成后|保存后|确认后|后|and\s+then|then)"
+    r"[^。！？!?\n]{0,24}"
+    r"(?:运行|执行|应用|run|execute|apply)"
+    r"|(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
+    r"[^。！？!?\n]{0,24}"
+    r"(?:添加到|放到|写入|加入|add\s+to|put\s+(?:it\s+)?on)"
+    r"[^。！？!?\n]{0,12}"
+    r"(?:画布|节点|canvas|node)"
+    r"|(?:运行|执行|应用|使用|用)\s*(?:它|这个|该(?:Skill|Recipe|技能|配方)?)"
+    r"|(?:让|由|请)\s*(?:它|这个\s*(?:Skill|Recipe|技能|配方)?|"
+    r"该\s*(?:Skill|Recipe|技能|配方)?)"
+    r"\s*(?:来)?\s*"
+    r"(?:运行|执行|应用|生成|制作|创建)"
+    r"|(?:run|execute|apply|use)\s+(?:it|this(?:\s+(?:skill|recipe))?)"
+    r"|(?:generate|make|create)\s+[^。！？!?，,；;\n]{0,32}\s+"
+    r"(?:with|using)\s+(?:it|this\s+(?:skill|recipe))"
+    r"|(?:have|let|ask|make)\s+(?:it|this\s+(?:skill|recipe))\s+(?:to\s+)?"
+    r"(?:run|execute|apply|generate|make|create)"
+    r")",
+    re.IGNORECASE,
+)
 _FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
     {
         "freezone_create_node",
@@ -576,6 +653,18 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     standalone_clear = bool(re.search(r"(?:清空|clear)", user_text, re.IGNORECASE))
     if _FREEZONE_CANVAS_KNOWLEDGE_QUESTION_RE.search(user_text):
         return False
+    # Skill Studio authors catalog configuration. Media words inside a Skill
+    # description (for example, “创建图片转线稿 Skill”) do not authorize or
+    # require a canvas mutation. Keep the canvas receipt guard only when the
+    # same request explicitly asks to use/run the Skill, add it to canvas, or
+    # perform another independent canvas mutation.
+    if _FREEZONE_SKILL_STUDIO_TRIGGER_RE.search(user_text):
+        runtime_text = _FREEZONE_SKILL_RUNTIME_NEGATION_RE.sub("", user_text)
+        intent_text = _FREEZONE_SKILL_CAPABILITY_RE.sub("", runtime_text)
+        return bool(
+            _FREEZONE_SKILL_RUNTIME_REQUEST_RE.search(intent_text)
+            or _FREEZONE_INDEPENDENT_CANVAS_WRITE_RE.search(intent_text)
+        )
     # A text artifact request such as “生成一个视频脚本” or “create an image
     # prompt” must remain a chat response unless the user explicitly names a
     # canvas/node mutation. Otherwise the post-turn adapter may replace the
@@ -857,10 +946,12 @@ async def _bind_server_observed_agent_product_execution(
 
 _FREEZONE_SKILL_STUDIO_TRIGGER_RE = re.compile(
     r"(?:"
-    r"(?:创建|新建|新增|生成|做|制作|编辑|修改|更新|保存|沉淀|整理|总结|抽成|转成|变成)"
+    r"(?:创建|新建|新增|生成|做|制作|编辑|修改|更新|保存|沉淀|整理|总结|抽成|转成|变成|"
+    r"\b(?:create|add|generate|make|edit|modify|update|save|distill|summarize|turn)\b)"
     r"[\s\S]{0,24}(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
     r"|(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
-    r"[\s\S]{0,24}(?:创建|新建|新增|生成|编辑|修改|更新|保存|沉淀|整理|总结)"
+    r"[\s\S]{0,24}(?:创建|新建|新增|生成|编辑|修改|更新|保存|沉淀|整理|总结|"
+    r"\b(?:create|add|generate|make|edit|modify|update|save|distill|summarize|turn)\b)"
     r"|(?:保存|沉淀|整理|总结|抽成|转成|变成)[\s\S]{0,18}(?:模板|可复用能力|复用能力)"
     r")",
     re.IGNORECASE,

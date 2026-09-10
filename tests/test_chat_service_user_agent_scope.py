@@ -1336,6 +1336,74 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
     )
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("创建图片转黑白线稿 Skill，先展示草稿，确认后保存，暂不运行", False),
+        ("帮我生成一个图片转黑白线稿 Skill", False),
+        ("修改这个 Skill，添加画幅选项，保存但不要创建画布节点", False),
+        ("创建一个工作流 Skill", False),
+        ("创建图片转线稿 Skill，然后用它生成一张图片", True),
+        ("保存 Skill 后运行工作流", True),
+        ("创建 Skill 并添加到画布", True),
+        ("创建一个 Skill，然后删除画布上的旧节点", True),
+        ("创建一个 Skill，同时更新画布节点", True),
+        ("创建一个 Skill，然后清空画布", True),
+        ("创建一个 Skill，再连接画布上的两个节点", True),
+        ("创建一个 Skill，并创建一个文本节点", True),
+        ("创建一个 Skill，不用确认，直接添加到画布", True),
+        ("创建一个 Skill，不要废话，直接运行它", True),
+        ("创建一个 Skill，但不删除画布节点", False),
+        ("创建一个 Skill，不修改画布", False),
+        ("创建一个 Skill，但不要使用它", False),
+        ("创建一个 Skill，暂时不用这个 Skill", False),
+        ("创建一个用于清空画布的 Skill", False),
+        ("创建一个删除画布旧节点的 Skill", False),
+        ("创建一个 Skill，用于更新画布节点", False),
+        ("创建一个 Skill，然后生成一份使用说明", False),
+        ("创建一个 Skill，保存后创建一份说明文档", False),
+        ("创建一个 Skill，然后让它生成一张图片", True),
+        ("创建一个 Skill，然后由它生成一张图片", True),
+        ("创建一个 Skill，然后让这个 Skill 生成一张图片", True),
+        ("创建一个会使用图片清理 Skill 的 Skill", False),
+        ("创建一个设计为使用现有 Skill 的 Skill", False),
+        ("用刚保存的 Skill 生成图片", True),
+        ("Create an image cleanup Skill, but do not run it", False),
+        ("Create a Skill and then run it", True),
+        ("Create a Skill, then delete the old canvas node", True),
+        ("Create a Skill and update a canvas node", True),
+        ("Create a Skill, then clear the canvas", True),
+        ("Create a Skill, but do not delete the old canvas node", False),
+        ("Create a Skill, without confirmation, add it to canvas", True),
+        ("Create a Skill, but not delete the canvas node", False),
+        ("Create a Skill, but do not use it", False),
+        ("Create a Skill for clearing the canvas", False),
+        ("Create a Skill that deletes canvas nodes", False),
+        ("Create a Skill to clear the canvas", False),
+        ("Create a Skill capable of clearing canvas nodes", False),
+        ("Create a Skill that can clear canvas nodes", False),
+        ("Create a Skill which can update the canvas", False),
+        ("Create a Skill designed to clear the canvas", False),
+        ("Create a Skill built to update canvas nodes", False),
+        ("Create a Skill designed to use the image cleanup Skill", False),
+        ("Create a Skill that can use another Skill", False),
+        ("Create a Skill able to use another Skill", False),
+        ("Create a Skill, then write its documentation", False),
+        ("Create a Skill, then generate an image with it", True),
+        ("Create a Skill, then have it generate an image", True),
+        ("Create a Skill, then let it generate an image", True),
+        ("Create a Skill, then generate an image using it", True),
+        ("Create a Skill, then generate an image with this Skill", True),
+        ("Create a Skill, then ask it to generate an image", True),
+    ],
+)
+def test_codex_freezone_write_request_separates_skill_authoring_from_runtime(
+    prompt,
+    expected,
+):
+    assert chat_service._freezone_canvas_write_requested(prompt) is expected
+
+
 def test_codex_freezone_write_receipt_accepts_durable_browser_result():
     event = SimpleNamespace(
         name="freezone_confirm_workflow_draft",
@@ -1435,7 +1503,16 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "tool_outcome", ["missing", "success", "failure", "blocked", "draft_ready", "clarification_answered"]
+    "tool_outcome",
+    [
+        "missing",
+        "success",
+        "failure",
+        "blocked",
+        "draft_ready",
+        "clarification_answered",
+        "skill_saved",
+    ],
 )
 async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     monkeypatch,
@@ -1502,6 +1579,29 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     structured={"ok": True, "clarification_status": "answered"},
                     error=None,
                 )
+            elif tool_outcome == "skill_saved":
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_request_user_clarification",
+                    name="dramaclaw.freezone_request_user_clarification",
+                    call_id="call-clarification",
+                    status="completed",
+                    input={},
+                    output={"content": [{"type": "text", "text": "{}"}]},
+                    structured={"ok": True, "clarification_status": "answered"},
+                    error=None,
+                )
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_finish_agent_catalog_draft",
+                    name="dramaclaw.freezone_finish_agent_catalog_draft",
+                    call_id="call-finish-skill",
+                    status="completed",
+                    input={},
+                    output={"content": [{"type": "text", "text": "{}"}]},
+                    structured={"ok": True, "status": "saved", "skill_id": "line-art"},
+                    error=None,
+                )
             elif tool_outcome not in {"missing", "blocked"}:
                 result_payload = (
                     {
@@ -1540,7 +1640,11 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
             assistant_reply = (
                 "未能创建工作流：找不到匹配的 Workflow Skill。"
                 if tool_outcome == "blocked"
-                else "好的，已创建一个图片节点。"
+                else (
+                    "图片转黑白线稿 Skill 已保存，当前没有运行或写入画布。"
+                    if tool_outcome == "skill_saved"
+                    else "好的，已创建一个图片节点。"
+                )
             )
             yield SimpleNamespace(type="assistant_delta", text=assistant_reply)
             yield SimpleNamespace(
@@ -1570,17 +1674,22 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         agent_id="main",
         state_dir=str(tmp_path / "state" / "admin" / "project-a"),
     )
+    request_prompt = (
+        "创建图片转黑白线稿 Skill，确认后保存，暂不运行"
+        if tool_outcome == "skill_saved"
+        else "创建一个图片节点"
+    )
     result = await chat_service._stream_assistant_reply_codex(
         "admin",
         "project-a",
-        "创建一个图片节点",
+        request_prompt,
         collect_event,
         project_state_dir=tmp_path / "state" / "admin" / "project-a",
         tool_mode="freezone_canvas",
         surface_context={"freezone_canvas_id": "canvas-a"},
         store_scope=scope,
         turn_id="business-turn",
-        route_prompt="创建一个图片节点",
+        route_prompt=request_prompt,
     )
 
     assistant_deltas = [
@@ -1604,6 +1713,11 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     elif tool_outcome == "clarification_answered":
         assert result["content"] == (
             "画布操作未完成：参数已确认，但工作流草稿尚未生成；本轮未写入画布，请重试。"
+        )
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "skill_saved":
+        assert result["content"] == (
+            "图片转黑白线稿 Skill 已保存，当前没有运行或写入画布。"
         )
         assert assistant_deltas == [result["content"]]
     else:
