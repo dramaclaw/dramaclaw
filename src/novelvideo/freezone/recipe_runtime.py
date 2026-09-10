@@ -41,6 +41,8 @@ _MAX_NODE_PROMPT_CHARS = 12_000
 _MAX_UPSTREAM_CHARS = 16_000
 _MAX_CONFIRMED_INPUTS_CHARS = 8_000
 _MAX_SKILL_CONSTRAINTS_CHARS = 12_000
+_DEFAULT_RECIPE_COMPILER_REASONING_EFFORT = "low"
+_RECIPE_COMPILER_REASONING_EFFORTS = frozenset({"low", "high", "max"})
 _prompt_cache: OrderedDict[str, str] = OrderedDict()
 _prompt_inflight: dict[str, asyncio.Task["RecipeModelCompilation"]] = {}
 
@@ -83,6 +85,23 @@ class RecipeModelCompilation:
     prompt: str
     model_call_id: str
     executed_at: float
+
+
+def _recipe_compiler_reasoning_effort() -> str:
+    value = (
+        os.environ.get(
+            "FREEZONE_RECIPE_COMPILER_REASONING_EFFORT",
+            _DEFAULT_RECIPE_COMPILER_REASONING_EFFORT,
+        ).strip()
+        or _DEFAULT_RECIPE_COMPILER_REASONING_EFFORT
+    ).lower()
+    if value not in _RECIPE_COMPILER_REASONING_EFFORTS:
+        supported = ", ".join(sorted(_RECIPE_COMPILER_REASONING_EFFORTS))
+        raise RecipeRuntimeError(
+            "unsupported FREEZONE_RECIPE_COMPILER_REASONING_EFFORT="
+            f"{value!r}; expected one of: {supported}"
+        )
+    return value
 
 
 def _model_compilation(value: RecipeModelCompilation | str) -> RecipeModelCompilation:
@@ -297,9 +316,11 @@ async def _run_recipe_compiler(task: str) -> RecipeModelCompilation:
     )
     response = await agent.run(
         task,
-        # Recipe compilation is a bounded text transformation. Keep reasoning
-        # disabled without depending on the removed legacy text-settings helper.
-        model_settings={"openai_reasoning_effort": "none"},
+        # The compiler route uses an always-reasoning model. Keep this at the
+        # lowest supported effort by default because compilation is bounded.
+        model_settings={
+            "openai_reasoning_effort": _recipe_compiler_reasoning_effort()
+        },
     )
     compiled = str(response.output or "").strip()
     if not compiled:
