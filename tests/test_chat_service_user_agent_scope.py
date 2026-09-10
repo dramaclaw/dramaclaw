@@ -1346,9 +1346,18 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
         ("创建图片转线稿 Skill，然后用它生成一张图片", True),
         ("保存 Skill 后运行工作流", True),
         ("创建 Skill 并添加到画布", True),
+        ("创建一个 Skill，然后删除画布上的旧节点", True),
+        ("创建一个 Skill，同时更新画布节点", True),
+        ("创建一个 Skill，然后清空画布", True),
+        ("创建一个 Skill，再连接画布上的两个节点", True),
+        ("创建一个 Skill，并创建一个文本节点", True),
         ("用刚保存的 Skill 生成图片", True),
         ("Create an image cleanup Skill, but do not run it", False),
         ("Create a Skill and then run it", True),
+        ("Create a Skill, then delete the old canvas node", True),
+        ("Create a Skill and update a canvas node", True),
+        ("Create a Skill, then clear the canvas", True),
+        ("Create a Skill, but do not delete the old canvas node", False),
     ],
 )
 def test_codex_freezone_write_request_separates_skill_authoring_from_runtime(

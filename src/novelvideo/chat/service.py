@@ -544,8 +544,26 @@ _FREEZONE_SKILL_RUNTIME_NEGATION_RE = re.compile(
     r"(?:暂不|暂时不|先不|不要|无需|不用|不再|不会|"
     r"do\s+not|don't|without)"
     r"[^。！？!?\n]{0,24}"
-    r"(?:运行|执行|应用|生成|制作|创建|写入|添加|"
-    r"run|execute|apply|generate|make|create|write|add)",
+    r"(?:运行|执行|应用|生成|制作|创建|写入|添加|删除|移除|清空|修改|更新|"
+    r"连接|连线|移动|布局|选择|打开|"
+    r"run|execute|apply|generate|make|create|write|add|delete|remove|clear|"
+    r"update|connect|move|layout|select|open)",
+    re.IGNORECASE,
+)
+_FREEZONE_INDEPENDENT_CANVAS_WRITE_RE = re.compile(
+    r"(?:"
+    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|向[上下左右]移|"
+    r"再移|布局|选择|打开|运行|执行|"
+    r"create|add|insert|delete|remove|clear|update|connect|move|layout|select|open|"
+    r"run|execute)"
+    r"(?:(?!(?:Skill|Recipe|技能|配方))[^。！？!?，,；;\n]){0,32}"
+    r"(?:节点|画布|连线|边|node|canvas|edge)"
+    r"|(?:节点|画布|连线|边|node|canvas|edge)"
+    r"(?:(?!(?:Skill|Recipe|技能|配方))[^。！？!?，,；;\n]){0,32}"
+    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|布局|选择|打开|"
+    r"运行|执行|create|add|insert|delete|remove|clear|update|connect|move|layout|"
+    r"select|open|run|execute)"
+    r")",
     re.IGNORECASE,
 )
 _FREEZONE_SKILL_RUNTIME_REQUEST_RE = re.compile(
@@ -606,10 +624,14 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     # Skill Studio authors catalog configuration. Media words inside a Skill
     # description (for example, “创建图片转线稿 Skill”) do not authorize or
     # require a canvas mutation. Keep the canvas receipt guard only when the
-    # same request explicitly asks to use/run the Skill or add it to canvas.
+    # same request explicitly asks to use/run the Skill, add it to canvas, or
+    # perform another independent canvas mutation.
     if _FREEZONE_SKILL_STUDIO_TRIGGER_RE.search(user_text):
         runtime_text = _FREEZONE_SKILL_RUNTIME_NEGATION_RE.sub("", user_text)
-        return bool(_FREEZONE_SKILL_RUNTIME_REQUEST_RE.search(runtime_text))
+        return bool(
+            _FREEZONE_SKILL_RUNTIME_REQUEST_RE.search(runtime_text)
+            or _FREEZONE_INDEPENDENT_CANVAS_WRITE_RE.search(runtime_text)
+        )
     # A text artifact request such as “生成一个视频脚本” or “create an image
     # prompt” must remain a chat response unless the user explicitly names a
     # canvas/node mutation. Otherwise the post-turn adapter may replace the
