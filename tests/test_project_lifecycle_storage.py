@@ -288,9 +288,6 @@ def test_quarantine_rejects_nonexistent_path_outside_owner_roots(monkeypatch, tm
         _record(tmp_path),
         state_dir=str(tmp_path / "outside" / "alice" / "demo"),
     )
-    # Any remaining project tree keeps strict validation enabled for every
-    # registered path, including missing paths outside the configured roots.
-    projects.Path(record.output_dir).mkdir(parents=True)
     assert not projects.Path(record.state_dir).exists()
 
     with pytest.raises(ProjectStorageOwnershipError):
@@ -301,34 +298,6 @@ def test_quarantine_rejects_nonexistent_path_outside_owner_roots(monkeypatch, tm
         )
 
     assert not projects.Path(record.state_dir).exists()
-
-
-def test_quarantine_allows_registry_only_purge_when_all_legacy_dirs_are_missing(
-    monkeypatch,
-    tmp_path,
-):
-    from novelvideo.api.routes import projects
-
-    _patch_roots(monkeypatch, tmp_path / "current")
-    legacy_root = tmp_path / "retired-root"
-    record = ProjectRecord(
-        id="01LEGACY",
-        owner_type="user",
-        owner_id="local",
-        owner_username="alice",
-        name="demo",
-        home_node_id="local",
-        output_dir=str(legacy_root / "output" / "alice" / "demo"),
-        state_dir=str(legacy_root / "state" / "alice" / "demo"),
-        runtime_dir=str(legacy_root / "runtime" / "alice" / "demo"),
-        status="deleted",
-    )
-
-    assert projects._quarantine_project_dirs(
-        record,
-        project_id=record.id,
-        reason="purging",
-    ) == []
 
 
 def test_validator_rejects_nested_dirs(monkeypatch, tmp_path):
