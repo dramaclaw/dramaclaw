@@ -540,6 +540,33 @@ _FREEZONE_TEXT_ONLY_REQUEST_RE = re.compile(
     r"\s*[。！？!?．.]?\s*$",
     re.IGNORECASE,
 )
+_FREEZONE_SKILL_RUNTIME_NEGATION_RE = re.compile(
+    r"(?:暂不|暂时不|先不|不要|无需|不用|不再|不会|"
+    r"do\s+not|don't|without)"
+    r"[^。！？!?\n]{0,24}"
+    r"(?:运行|执行|应用|生成|制作|创建|写入|添加|"
+    r"run|execute|apply|generate|make|create|write|add)",
+    re.IGNORECASE,
+)
+_FREEZONE_SKILL_RUNTIME_REQUEST_RE = re.compile(
+    r"(?:"
+    r"(?:用|使用|应用|运行|执行|use|apply|run|execute)"
+    r"[^。！？!?\n]{0,24}"
+    r"(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
+    r"|(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
+    r"[^。！？!?\n]{0,40}"
+    r"(?:并|然后|再|随后|接着|同时|完成后|保存后|确认后|后|and\s+then|then)"
+    r"[^。！？!?\n]{0,24}"
+    r"(?:运行|执行|应用|生成|制作|创建|写入|添加|"
+    r"run|execute|apply|generate|make|create|write|add)"
+    r"|(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
+    r"[^。！？!?\n]{0,24}"
+    r"(?:添加到|放到|写入|加入|add\s+to|put\s+(?:it\s+)?on)"
+    r"[^。！？!?\n]{0,12}"
+    r"(?:画布|节点|canvas|node)"
+    r")",
+    re.IGNORECASE,
+)
 _FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
     {
         "freezone_create_node",
@@ -576,6 +603,13 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     standalone_clear = bool(re.search(r"(?:清空|clear)", user_text, re.IGNORECASE))
     if _FREEZONE_CANVAS_KNOWLEDGE_QUESTION_RE.search(user_text):
         return False
+    # Skill Studio authors catalog configuration. Media words inside a Skill
+    # description (for example, “创建图片转线稿 Skill”) do not authorize or
+    # require a canvas mutation. Keep the canvas receipt guard only when the
+    # same request explicitly asks to use/run the Skill or add it to canvas.
+    if _FREEZONE_SKILL_STUDIO_TRIGGER_RE.search(user_text):
+        runtime_text = _FREEZONE_SKILL_RUNTIME_NEGATION_RE.sub("", user_text)
+        return bool(_FREEZONE_SKILL_RUNTIME_REQUEST_RE.search(runtime_text))
     # A text artifact request such as “生成一个视频脚本” or “create an image
     # prompt” must remain a chat response unless the user explicitly names a
     # canvas/node mutation. Otherwise the post-turn adapter may replace the
@@ -857,10 +891,12 @@ async def _bind_server_observed_agent_product_execution(
 
 _FREEZONE_SKILL_STUDIO_TRIGGER_RE = re.compile(
     r"(?:"
-    r"(?:创建|新建|新增|生成|做|制作|编辑|修改|更新|保存|沉淀|整理|总结|抽成|转成|变成)"
+    r"(?:创建|新建|新增|生成|做|制作|编辑|修改|更新|保存|沉淀|整理|总结|抽成|转成|变成|"
+    r"\b(?:create|add|generate|make|edit|modify|update|save|distill|summarize|turn)\b)"
     r"[\s\S]{0,24}(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
     r"|(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
-    r"[\s\S]{0,24}(?:创建|新建|新增|生成|编辑|修改|更新|保存|沉淀|整理|总结)"
+    r"[\s\S]{0,24}(?:创建|新建|新增|生成|编辑|修改|更新|保存|沉淀|整理|总结|"
+    r"\b(?:create|add|generate|make|edit|modify|update|save|distill|summarize|turn)\b)"
     r"|(?:保存|沉淀|整理|总结|抽成|转成|变成)[\s\S]{0,18}(?:模板|可复用能力|复用能力)"
     r")",
     re.IGNORECASE,
