@@ -43,6 +43,8 @@ import {
 } from "@/lib/queries/freezone-agent-config";
 import { validateFreezoneAgentConfigPayload } from "@/lib/freezone-agent-config-schema";
 import { cn } from "@/lib/utils";
+import { SkillImportDialog } from "@/features/skill-imports/SkillImportDialog";
+import { useTaskCenterStore } from "@/task-center/store";
 
 type FreezoneCatalogKind = "skills" | "recipes";
 type RecipeGenerationType = "image" | "video" | "audio" | "text";
@@ -142,6 +144,8 @@ export function FreezoneSkillRecipeSettings({
 }: FreezoneSkillRecipeSettingsProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
+  const [externalImportOpen, setExternalImportOpen] = useState(false);
+  const importProject = useTaskCenterStore((state) => state.projectId);
   const [addingSkill, setAddingSkill] = useState(false);
   const [addingRecipe, setAddingRecipe] = useState(false);
   const [editingSkill, setEditingSkill] = useState<FreezoneAgentConfigPayload | null>(null);
@@ -442,7 +446,13 @@ export function FreezoneSkillRecipeSettings({
               )}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {isSkills && <>
+              <Button type="button" variant="outline" size="sm" onClick={() => setExternalImportOpen(true)}>
+                <Download className="size-3.5" />{t("skillImport.title", { defaultValue: "Convert external skills" })}
+              </Button>
+              <SkillImportDialog open={externalImportOpen} onOpenChange={setExternalImportOpen} project={importProject ?? ""} />
+            </>}
             {isSkills && onOpenRecipes ? (
               <Button
                 type="button"
