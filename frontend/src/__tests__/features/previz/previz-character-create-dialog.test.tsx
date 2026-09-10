@@ -5,7 +5,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createPrevizObject } from "@/features/previz/domain/objects";
+import {
+  createPrevizObject,
+  PREVIZ_CHARACTER_COLORS,
+} from "@/features/previz/domain/objects";
 import type { PrevizCharacterDraft } from "@/features/previz/domain/characterDraft";
 import type { PrevizObject } from "@/features/previz/domain/scene";
 import {
@@ -19,9 +22,13 @@ import { PREVIZ_TOP_DOWN_PICKER_SIZE } from "@/features/previz/ui/PrevizTopDownP
 import { PrevizCharacterCreateDialog } from "@/features/previz/ui/PrevizCharacterCreateDialog";
 
 // 回显 key，与 previz-camera-create-dialog.test.tsx 同一个做法：断言里出现的是 key
-// 本身，改一句中文文案不该让这个文件变红。
+// 本身，改一句中文文案不该让这个文件变红。带插值的 key 把参数一起回显：三根姿态轴的
+// 数值框共用一个 key，只回显 key 的话它们重名，`getByRole` 一抓抓到三个。
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, options?: Record<string, unknown>) =>
+      options ? `${key}:${Object.values(options).join(",")}` : key,
+  }),
 }));
 
 afterEach(() => {
@@ -114,6 +121,13 @@ function createButton(): HTMLElement {
   return screen.getByRole("button", { name: "previz.characterCreate.create" });
 }
 
+/** 姿态某一轴的数值框。名字里的冒号来自文件顶上那个会回显插值参数的 `t` 桩。 */
+function poseBox(axis: "pitch" | "turn" | "lean"): HTMLElement {
+  return screen.getByRole("spinbutton", {
+    name: `previz.characterCreate.poseValue:previz.inspector.poseAdjust.${axis}`,
+  });
+}
+
 /** 最后一次 onCreate 收到的草稿。 */
 function created(onCreate: ReturnType<typeof vi.fn>): PrevizCharacterDraft {
   return onCreate.mock.calls[onCreate.mock.calls.length - 1]?.[0] as PrevizCharacterDraft;
@@ -176,10 +190,13 @@ describe("PrevizCharacterCreateDialog", () => {
     const user = userEvent.setup();
     const { onCreate, objects } = setup();
 
+    // 先选位：属性那一栏在选位之前是一块占位提示，字段还没挂上去。
+    pickAt(objects, 96, 208);
+
     fireEvent.change(screen.getByLabelText("previz.characterCreate.name"), {
       target: { value: "张三" },
     });
-    fireEvent.change(screen.getByLabelText("previz.characterCreate.color"), {
+    fireEvent.change(screen.getByLabelText("previz.characterCreate.customColor"), {
       target: { value: "#0a1b2c" },
     });
     await user.selectOptions(screen.getByLabelText("previz.inspector.bodyType"), "heavy");
@@ -192,7 +209,6 @@ describe("PrevizCharacterCreateDialog", () => {
       target: { value: "-21" },
     });
 
-    pickAt(objects, 96, 208);
     await user.click(createButton());
 
     expect(created(onCreate)).toMatchObject({
@@ -210,8 +226,10 @@ describe("PrevizCharacterCreateDialog", () => {
   // 木偶预览是这个对话框存在的理由：三根微调滑杆改的是弯腰角度，不重画一帧的话
   // 用户拖完看到的还是上一副姿势，而滑杆的数值确实变了——像是模型卡住了。
   it("redraws the mannequin when the pose adjust sliders move", () => {
-    const { onRenderPreview } = setup();
+    const { onRenderPreview, objects } = setup();
 
+    // 木偶那块画布也是选位之后才挂上去的，在那之前没有东西可画。
+    pickAt(objects, 96, 208);
     expect(previewed(onRenderPreview).poseAdjust.pitch).toBe(0);
 
     fireEvent.change(screen.getByLabelText("previz.inspector.poseAdjust.pitch"), {
@@ -281,9 +299,9 @@ describe("PrevizCharacterCreateDialog", () => {
     const objects = [characterAt(3, -2, "#ff0000")];
     const { onCreate } = setup({ objects });
 
+    pickAt(objects, 100, 60);
     expect(screen.getByLabelText("previz.characterCreate.name")).toHaveValue("人物 2");
 
-    pickAt(objects, 100, 60);
     await user.click(createButton());
 
     expect(created(onCreate).name).toBe("人物 2");
@@ -316,11 +334,151 @@ describe("PrevizCharacterCreateDialog", () => {
   // 身高框是受控的，逐键夹取会让「先删空再重输」输不进去：敲 `1` 立刻变成下界 120。
   // 夹取只在 `characterDraftOverrides` 那个出口做，对话框自己不碰。
   it("lets the height be typed through without clamping each key", () => {
-    setup();
+    const { objects } = setup();
 
+    pickAt(objects, 96, 208);
     const input = screen.getByLabelText("previz.inspector.heightCm");
     fireEvent.change(input, { target: { value: "1" } });
 
     expect(input).toHaveValue(1);
+  });
+});
+
+/**
+ * 辨识色改成一排色点。上游那一排是这个对话框里唯一「一眼扫过去就选完」的控件——
+ * 用系统取色器选一个跟场上别人撞色的颜色，要点开面板、拖色环、再回来对一眼。
+ */
+describe("PrevizCharacterCreateDialog 的辨识色", () => {
+  it("puts the eight presets on screen as one radio group", () => {
+    const { objects } = setup();
+    pickAt(objects, 96, 208);
+
+    const swatches = screen.getAllByRole("radio");
+    expect(swatches).toHaveLength(PREVIZ_CHARACTER_COLORS.length);
+    // 有且只有一个选中：默认色也得是这排里的一个，否则用户开局看到八个都没选。
+    expect(swatches.filter((swatch) => swatch.getAttribute("aria-checked") === "true"))
+      .toHaveLength(1);
+  });
+
+  it("carries the picked swatch into the created draft", async () => {
+    const user = userEvent.setup();
+    const { onCreate, objects } = setup();
+    pickAt(objects, 96, 208);
+
+    // 第四个：工厂给空场景发的是第一个，取默认色的话「点了色点」与「压根没接线」同值。
+    await user.click(screen.getAllByRole("radio")[3]!);
+    await user.click(createButton());
+
+    expect(created(onCreate).color).toBe(PREVIZ_CHARACTER_COLORS[3]);
+  });
+
+  it("still lets a colour outside the eight in through the custom picker", async () => {
+    const user = userEvent.setup();
+    const { onCreate, objects } = setup();
+    pickAt(objects, 96, 208);
+
+    // 八个是快捷方式，不是白名单：`hexColor` 收任何合法十六进制色，第九个人也得有得挑。
+    fireEvent.change(screen.getByLabelText("previz.characterCreate.customColor"), {
+      target: { value: "#123456" },
+    });
+    await user.click(createButton());
+
+    expect(created(onCreate).color).toBe("#123456");
+  });
+});
+
+/**
+ * 三根微调滑杆各配一个数值框。滑杆调得动但报不出数：用户想要「正好 15 度」时只能
+ * 拖着试，而这三个数最后是要落到人物身上的。
+ */
+describe("PrevizCharacterCreateDialog 的姿态数值框", () => {
+  it("moves the number box when the slider moves", () => {
+    const { objects } = setup();
+    pickAt(objects, 96, 208);
+
+    fireEvent.change(screen.getByLabelText("previz.inspector.poseAdjust.pitch"), {
+      target: { value: "12" },
+    });
+
+    expect(poseBox("pitch")).toHaveValue(12);
+  });
+
+  it("moves the slider when the number box is typed into", async () => {
+    const user = userEvent.setup();
+    const { onCreate, objects } = setup();
+    pickAt(objects, 96, 208);
+
+    fireEvent.change(poseBox("pitch"), { target: { value: "-8" } });
+    await user.click(createButton());
+
+    expect(screen.getByLabelText("previz.inspector.poseAdjust.pitch")).toHaveValue("-8");
+    // 只改一轴，另外两轴不许被抹掉——`poseAdjust` 是整份替换的。
+    expect(created(onCreate).poseAdjust).toEqual({ pitch: -8, turn: 0, lean: 0 });
+  });
+
+  it("does not clamp the number box on every key", () => {
+    // 逐键夹的话「-8」的那个负号会当场变成下界，第二个字符再也接不上去。
+    const { objects } = setup();
+    pickAt(objects, 96, 208);
+
+    const box = poseBox("turn");
+    fireEvent.change(box, { target: { value: "" } });
+
+    expect(box).toHaveValue(null);
+  });
+});
+
+/**
+ * 没选位之前，中右两栏是占位提示。上游这么排是有道理的：人物的身高、姿态、朝向都
+ * 只有落在场里的某一处才谈得上，先摆一整栏能改却改不出效果的字段，用户会以为自己
+ * 已经建好了一个人。
+ */
+describe("PrevizCharacterCreateDialog 未选位时", () => {
+  it("shows placeholders instead of the preview and the fields", () => {
+    setup();
+
+    expect(screen.getByText("previz.characterCreate.awaitPreview")).toBeInTheDocument();
+    expect(screen.getByText("previz.characterCreate.awaitFields")).toBeInTheDocument();
+    expect(screen.queryByLabelText("previz.characterCreate.name")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("character-create-preview")).not.toBeInTheDocument();
+  });
+
+  it("swaps in the preview and the fields once a spot is picked", () => {
+    const { objects } = setup();
+
+    pickAt(objects, 96, 208);
+
+    expect(screen.queryByText("previz.characterCreate.awaitPreview")).not.toBeInTheDocument();
+    expect(screen.queryByText("previz.characterCreate.awaitFields")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("previz.characterCreate.name")).toBeInTheDocument();
+    expect(screen.getByTestId("character-create-preview")).toBeInTheDocument();
+  });
+});
+
+/** 移动辅助那一节。两个开关只在播放时管用，静止摆位不受影响，所以默认都不勾。 */
+describe("PrevizCharacterCreateDialog 的移动辅助", () => {
+  it("starts both switches off and carries them into the draft", async () => {
+    const user = userEvent.setup();
+    const { onCreate, objects } = setup();
+    pickAt(objects, 96, 208);
+
+    const avoid = screen.getByRole("checkbox", { name: "previz.inspector.avoidCollision" });
+    const stay = screen.getByRole("checkbox", { name: "previz.inspector.stayInBounds" });
+    expect(avoid).not.toBeChecked();
+    expect(stay).not.toBeChecked();
+
+    await user.click(avoid);
+    await user.click(stay);
+    await user.click(createButton());
+
+    expect(created(onCreate)).toMatchObject({ avoidCollision: true, stayInBounds: true });
+  });
+
+  it("says on screen that the two switches only bite during playback", () => {
+    const { objects } = setup();
+    pickAt(objects, 96, 208);
+
+    // 不写这句的话，用户会以为勾上就能把人从墙里推出来——而摆位时它一动不动。
+    expect(screen.getByText("previz.inspector.moveAssistNote")).toBeInTheDocument();
   });
 });

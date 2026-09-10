@@ -818,6 +818,8 @@ describe("PrevizEditor", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "previz.toolbar.add.character" }));
+    // 木偶那块画布是选位之后才挂上去的：站位没定之前，中栏是一块占位提示。
+    pickTopDownSpot(96, 208);
 
     await vi.waitFor(() => expect(renderCharacterPreview).toHaveBeenCalled());
     const [canvas, draft] = renderCharacterPreview.mock.calls[0]!;
