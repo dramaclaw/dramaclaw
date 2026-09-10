@@ -3,8 +3,12 @@
 import {
   PikoMapManifestSchema,
   PikoNavigationSchema,
+  PikoOcclusionSchema,
+  PikoEnvironmentSchema,
+  type PikoEnvironment,
   type PikoMapManifest,
   type PikoNavigation,
+  type PikoOcclusion,
 } from "./map-package-schema";
 
 export const PIKO_WORLD_MAP_ROOT = "/piko/world/maps";
@@ -56,4 +60,29 @@ export async function loadPikoMapNavigation(
   const navigation = PikoNavigationSchema.parse(await response.json());
   assertRequestedMapId(mapId, navigation.mapId);
   return navigation;
+}
+
+export async function loadPikoMapOcclusion(
+  mapId: string,
+  relativePath: string,
+  signal?: AbortSignal,
+): Promise<PikoOcclusion> {
+  const response = await fetch(resolvePikoMapAssetUrl(mapId, relativePath), {
+    cache: "no-cache",
+    signal,
+  });
+  if (!response.ok) throw new Error(`Piko occlusion request failed: ${response.status}`);
+  const occlusion = PikoOcclusionSchema.parse(await response.json());
+  assertRequestedMapId(mapId, occlusion.mapId);
+  return occlusion;
+}
+
+export async function loadPikoMapEnvironment(
+  mapId: string, relativePath: string, signal?: AbortSignal,
+): Promise<PikoEnvironment> {
+  const response = await fetch(resolvePikoMapAssetUrl(mapId, relativePath), { cache: "no-cache", signal });
+  if (!response.ok) throw new Error(`Piko environment request failed: ${response.status}`);
+  const environment = PikoEnvironmentSchema.parse(await response.json());
+  assertRequestedMapId(mapId, environment.mapId);
+  return environment;
 }

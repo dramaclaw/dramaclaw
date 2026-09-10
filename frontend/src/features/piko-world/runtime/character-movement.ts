@@ -3,6 +3,7 @@ import type { PikoNavigation } from "./map-package-schema";
 export type Point = { x: number; y: number };
 export type Facing = "south" | "west" | "east" | "north";
 export const FACINGS: Facing[] = ["south", "west", "east", "north"];
+export const CHARACTER_SPEED = 150;
 
 export function inside(point: Point, polygon: Point[]) {
   let hit = false;
@@ -26,7 +27,7 @@ export function moveCharacter(position: Point, input: Point, deltaMs: number, na
   const length = Math.hypot(input.x,input.y);
   // Pixi ObservablePoint exposes x/y through accessors, not enumerable fields.
   if (!length || !Number.isFinite(deltaMs)) return {x:position.x,y:position.y};
-  const distance = 150 * Math.max(0,Math.min(deltaMs,50)) / 1000;
+  const distance = CHARACTER_SPEED * Math.max(0,Math.min(deltaMs,50)) / 1000;
   const dx = input.x/length*distance, dy = input.y/length*distance;
   const result = {x:position.x,y:position.y};
   // Small swept steps avoid tunnelling; axis separation allows sliding along obstacles.

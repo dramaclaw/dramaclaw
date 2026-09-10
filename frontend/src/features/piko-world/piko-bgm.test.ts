@@ -10,13 +10,13 @@ it("retries denied playback, fades in and releases on exit", async () => {
  document.dispatchEvent(new Event("pointerdown"));
  await Promise.resolve();
  vi.advanceTimersByTime(2000);
- expect(audio.volume).toBe(0.4);
+ expect(audio.volume).toBe(0.16);
  expect(audio.loop).toBe(true);
  document.dispatchEvent(new Event("piko-notification-sound"));
  vi.advanceTimersByTime(150);
- expect(audio.volume).toBe(0.18);
+ expect(audio.volume).toBe(0.07);
  vi.advanceTimersByTime(1800);
- expect(audio.volume).toBe(0.4);
+ expect(audio.volume).toBe(0.16);
  stop();
  vi.advanceTimersByTime(800);
  expect(audio.volume).toBe(0);
@@ -39,7 +39,7 @@ it("ignores a stale play result after returning from the background", async () =
  resolvers[0](); await Promise.resolve();
  expect(audio.pause).toHaveBeenCalledTimes(pauses);
  vi.advanceTimersByTime(2000);
- expect(audio.volume).toBe(0.4);
+ expect(audio.volume).toBe(0.16);
  stop(); vi.advanceTimersByTime(800);
  visibility.mockRestore();
 });

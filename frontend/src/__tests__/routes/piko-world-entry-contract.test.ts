@@ -28,7 +28,7 @@ describe("Piko World 项目中心入口", () => {
   it("通过顶部统一入口进入世界，撤下项目中心悬浮入口", () => {
     const header = readFileSync("src/components/layout/header.tsx", "utf8");
     expect(dashboard).not.toContain("<PikoWorldFloatingEntry />");
-    expect(header).toContain("piko piko");
+    expect(header).toContain("Piko Piko");
     expect(header).toContain("openOnHover");
     expect(header).toContain('navigate({ to: "/piko-world" })');
     expect(header).toContain('t("header.pikoHub.play")');

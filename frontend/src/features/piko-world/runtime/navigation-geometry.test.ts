@@ -31,7 +31,7 @@ describe("welcome courtyard navigation", () => {
     expect(navigationIssues(navigation)).toEqual([]);
     expect(canStand({x:1190,y:485},navigation)).toBe(true);
     expect(navigation.walkableAreas).toHaveLength(1);
-    expect(navigation.colliders).toHaveLength(30);
+    expect(navigation.colliders).toHaveLength(37);
     expect(navigation.spawnPoints).toHaveLength(3);
     expect(navigation.exits).toHaveLength(4);
 

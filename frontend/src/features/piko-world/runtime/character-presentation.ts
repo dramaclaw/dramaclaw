@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { Container, Sprite, Text } from "pixi.js";
+import { PIKO_CHARACTER_CURSOR } from "../piko-cursors";
 
 /** Shared, non-transforming feedback keeps feet and contact shadows anchored. */
-export function addCharacterPresentation(container: Container, name?: string) {
+export function addCharacterPresentation(container: Container, name?: string, interactive = true) {
   const body = container.children[1] as Sprite;
   const label = new Text({ text: name ?? "", style: {
     fontFamily: "Arial, PingFang SC, sans-serif", fontSize: 12,
@@ -30,9 +31,12 @@ export function addCharacterPresentation(container: Container, name?: string) {
     highlight.visible = hovered;
     label.alpha = hovered ? 1 : 0.95;
   };
-  body.eventMode = "static";
-  body.on("pointerover", () => setHovered(true));
-  body.on("pointerout", () => setHovered(false));
+  body.eventMode = interactive ? "static" : "none";
+  if (interactive) {
+    body.cursor = PIKO_CHARACTER_CURSOR;
+    body.on("pointerover", () => setHovered(true));
+    body.on("pointerout", () => setHovered(false));
+  }
   return Object.assign(setHovered, {
     setName(name: string) {
       label.text = name;

@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import manifest from "../../../../public/piko/world/maps/welcome-courtyard/manifest.json";
 import navigation from "../../../../public/piko/world/maps/welcome-courtyard/data/navigation.json";
-import { loadPikoMapManifest, loadPikoMapNavigation } from "./map-package-loader";
+import { loadPikoMapManifest, loadPikoMapNavigation, loadPikoMapOcclusion } from "./map-package-loader";
+import occlusion from "../../../../public/piko/world/maps/welcome-courtyard/data/occlusion.json";
 
 function mockJsonResponse(value: unknown) {
   vi.stubGlobal(
@@ -34,5 +35,20 @@ describe("Piko World map package loader", () => {
     await expect(
       loadPikoMapNavigation("artisan-market", "data/navigation.json"),
     ).rejects.toThrow("requested artisan-market, received welcome-courtyard");
+  });
+
+  it("loads occlusion with cancellation and rejects another map's silhouettes", async () => {
+    mockJsonResponse(occlusion);
+    const controller = new AbortController();
+    expect((await loadPikoMapOcclusion("welcome-courtyard", "data/occlusion.json", controller.signal)).occluders).toHaveLength(30);
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/welcome-courtyard/data/occlusion.json"), {
+      cache: "no-cache", signal: controller.signal,
+    });
+    await expect(loadPikoMapOcclusion("artisan-market", "data/occlusion.json")).rejects.toThrow("requested artisan-market");
+  });
+
+  it("reports missing occlusion instead of silently allowing characters through scenery", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+    await expect(loadPikoMapOcclusion("welcome-courtyard", "data/occlusion.json")).rejects.toThrow("404");
   });
 });

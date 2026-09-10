@@ -6,15 +6,22 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { Application, Assets, Container, Sprite, type Texture } from "pixi.js";
 import { useTranslation } from "react-i18next";
 
-import { loadPikoMapManifest, loadPikoMapNavigation, resolvePikoMapAssetUrl } from "./runtime/map-package-loader";
+import { loadPikoMapEnvironment, loadPikoMapManifest, loadPikoMapNavigation, loadPikoMapOcclusion, resolvePikoMapAssetUrl } from "./runtime/map-package-loader";
+import { createMapOccluder, createBakedActorOcclusion, isBakedOccluder, isResidentHeadOccluded } from "./runtime/map-occlusion";
+import { createEnvironmentSprite } from "./runtime/environment-sprite";
+import { createTreeCanopyBreeze } from "./runtime/tree-canopy-breeze";
+import { createEnvironmentAudio } from "./runtime/environment-audio";
+import { createResidentOcclusionSilhouette } from "./runtime/resident-occlusion-silhouette";
 import { containWorldInViewport, type PikoSize } from "./runtime/viewport-fit";
 import { PikoMayor } from "./PikoMayor";
 import { PIKO_MAYOR_IDLE_SRC, PIKO_MAYOR_POSITION } from "./runtime/mayor-idle";
 import { createMayorActor } from "./runtime/mayor-actor";
-import { createResidentActor } from "./runtime/resident-actor";
+import { createResidentActor, RESIDENT_WORLD_SCALE } from "./runtime/resident-actor";
 import { PikoResidentInteraction } from "./PikoResidentInteraction";
 import { PikoWelcomeDialog } from "./PikoWelcomeDialog";
 import { addCharacterPresentation } from "./runtime/character-presentation";
+import { PIKO_DEFAULT_CURSOR } from "./piko-cursors";
+import { createClickFeedback } from "./runtime/click-feedback";
 import { PIKO_PLAYABLE_RESIDENTS, type PlayablePikoResidentId } from "./piko-residents";
 import { PIKO_SIMULATED_RESIDENT } from "./piko-simulated-resident";
 import { playPikoUiSound } from "./piko-audio";
@@ -49,6 +56,7 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
   const stopPlayerRef = useRef(() => {});
   const simulatedHoverRef = useRef<(hovered: boolean) => void>(() => {});
   const [playerPosition, setPlayerPosition] = useState({ x: 1190, y: 485 });
+  const [playerHeadOccluded, setPlayerHeadOccluded] = useState(false);
   const [simulatedPosition, setSimulatedPosition] = useState<{ x: number; y: number }>(PIKO_SIMULATED_RESIDENT.position);
   const onSocialBusyChange = useCallback((busy: boolean) => {
     socialBusyRef.current = busy;
@@ -93,12 +101,53 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
     let baseTextureLoaded = false;
     let mayorTextureLoaded = false;
     const residentTextures = new Map<PlayablePikoResidentId, Texture>();
+    const occlusionTextureUrls = new Set<string>();
+    const occluders: ReturnType<typeof createMapOccluder>[] = [];
+    const actorOcclusion: ReturnType<typeof createBakedActorOcclusion>[] = [];
+    let residentSilhouette: ReturnType<typeof createResidentOcclusionSilhouette> | null = null;
+    let clickFeedback: ReturnType<typeof createClickFeedback> | null = null;
     let simulatedActor: ReturnType<typeof createResidentActor> | null = null;
     let residentActor: ReturnType<typeof createResidentActor> | null = null;
     let mayorActor: ReturnType<typeof createMayorActor> | null = null;
+    const environmentTextureUrls = new Set<string>();
+    const environmentEffects: ReturnType<typeof createEnvironmentSprite>[] = [];
+    let treeBreeze: ReturnType<typeof createTreeCanopyBreeze> | null = null;
+    let environmentAudio: ReturnType<typeof createEnvironmentAudio> | null = null;
     let disposed = false;
     let disconnectPosition = () => {};
     let disconnectResizeObserver = () => undefined;
+
+    function disposeMap() {
+      if (disposed) return;
+      disposed = true;
+      navigationRef.current = null;
+      debugEditingRef.current = false;
+      abortController.abort();
+      disconnectResizeObserver();
+      disconnectPosition();
+      environmentAudio?.destroy();
+      treeBreeze?.destroy();
+      stopPlayerRef.current = () => {};
+      simulatedHoverRef.current = () => {};
+      environmentEffects.forEach(effect => effect.destroy());
+      clickFeedback?.destroy();
+      residentSilhouette?.destroy();
+      actorOcclusion.forEach(item => item.destroy());
+      mayorActor?.destroy();
+      residentActor?.destroy();
+      simulatedActor?.destroy();
+      changeResidentRef.current = () => {};
+      residentPresentationRef.current = null;
+      interactRef.current=()=>{};
+      mayorHoverRef.current=()=>{};
+      occluders.forEach(occluder => occluder.destroy());
+      if (app) app.destroy(true, { children: true });
+      for (const url of environmentTextureUrls) void Assets.unload(url);
+      for (const url of occlusionTextureUrls) void Assets.unload(url);
+      if (mayorTextureLoaded) void Assets.unload(PIKO_MAYOR_IDLE_SRC);
+      for (const id of residentTextures.keys()) void Assets.unload(PIKO_PLAYABLE_RESIDENTS[id]);
+      if (baseTextureUrl && baseTextureLoaded) void Assets.unload(baseTextureUrl);
+    }
 
     async function mountMap() {
       setLoadState("loading");
@@ -120,6 +169,8 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
           return;
         }
         app = nextApp;
+        nextApp.renderer.events.cursorStyles.default = PIKO_DEFAULT_CURSOR;
+        nextApp.canvas.style.cursor = PIKO_DEFAULT_CURSOR;
         nextApp.canvas.setAttribute("aria-hidden", "true");
         nextApp.canvas.style.display = "block";
         host.appendChild(nextApp.canvas);
@@ -136,8 +187,86 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
 
         const world = new Container();
         world.sortableChildren = true;
-        world.addChild(new Sprite(texture));
+        clickFeedback = createClickFeedback(nextApp.ticker);
+        world.addChild(clickFeedback.marker);
+        const ground = new Sprite(texture);
+        ground.eventMode = "static";
+        ground.on("pointertap", event => {
+          if (event.button !== 0 || event.pointerType !== "mouse") return;
+          const target = world.toLocal(event.global);
+          if (residentActor?.walkTo(target)) clickFeedback?.show(target);
+        });
+        ground.zIndex = -Infinity;
+        world.addChild(ground);
         nextApp.stage.addChild(world);
+
+        const occlusion = await loadPikoMapOcclusion(mapId, manifest.data.occlusion, abortController.signal);
+        if (disposed) return;
+        const animatedTree = mapId === "welcome-courtyard"
+          ? occlusion.occluders.find(item => item.id === "east-canopy-tree") : undefined;
+        if (animatedTree) {
+          const url = resolvePikoMapAssetUrl(mapId, "effects/east-tree-clean-plate-v1.png");
+          const cleanPlate = await Assets.load<Texture>(url);
+          if (disposed) { void Assets.unload(url); return; }
+          environmentTextureUrls.add(url);
+          cleanPlate.source.scaleMode = "nearest";
+          const atlasUrl = resolvePikoMapAssetUrl(mapId, "effects/east-tree-canopy-atlas-v2.png");
+          const atlas = await Assets.load<Texture>(atlasUrl);
+          if (disposed) { void Assets.unload(atlasUrl); return; }
+          environmentTextureUrls.add(atlasUrl);
+          atlas.source.scaleMode = "nearest";
+          treeBreeze = createTreeCanopyBreeze(texture, cleanPlate, atlas, animatedTree, nextApp.ticker, manifest.size);
+          world.addChild(treeBreeze.background, treeBreeze.container);
+        }
+        const bakedOccluders = occlusion.occluders.filter(item => item !== animatedTree
+          && isBakedOccluder(item, manifest.baseTexture.src));
+        for (const definition of occlusion.occluders) {
+          if (isBakedOccluder(definition, manifest.baseTexture.src)) continue;
+          const url = resolvePikoMapAssetUrl(mapId, definition.src);
+          const source = url === baseTextureUrl ? texture : await Assets.load<Texture>(url);
+          if (disposed) {
+            if (url !== baseTextureUrl) void Assets.unload(url);
+            return;
+          }
+          if (url !== baseTextureUrl) occlusionTextureUrls.add(url);
+          source.source.scaleMode = manifest.baseTexture.sampling;
+          const occluder = createMapOccluder(source, definition);
+          occluders.push(occluder);
+          world.addChild(occluder.container);
+        }
+        const environment = await loadPikoMapEnvironment(mapId, manifest.data.environment, abortController.signal);
+        if (disposed) return;
+        environmentAudio = createEnvironmentAudio(environment.audioZones, src => resolvePikoMapAssetUrl(mapId, src));
+        for (const definition of environment.effects) {
+          if (definition.kind !== "sprite" || !definition.region || !definition.src) continue;
+          // Static foreground reuses original map pixels above water, below residents.
+          if (!definition.animation && definition.src === manifest.baseTexture.src) {
+            const points = definition.region.points;
+            const x = Math.min(...points.map(point => point.x));
+            const y = Math.min(...points.map(point => point.y));
+            const foreground = createMapOccluder(texture, {
+              id: definition.id, src: definition.src, position: { x, y }, depthY: -0.5,
+              frame: { x, y, width: Math.max(...points.map(point => point.x)) - x,
+                height: Math.max(...points.map(point => point.y)) - y },
+              outline: points.map(point => ({ x: point.x - x, y: point.y - y })),
+            });
+            occluders.push(foreground);
+            world.addChild(foreground.container);
+            continue;
+          }
+          if (!definition.animation) continue;
+          const url = resolvePikoMapAssetUrl(mapId, definition.src);
+          const atlas = await Assets.load<Texture>(url);
+          if (disposed) { void Assets.unload(url); return; }
+          environmentTextureUrls.add(url);
+          atlas.source.scaleMode = "nearest";
+          const effect = createEnvironmentSprite(atlas, definition.region.points, definition.animation, nextApp.ticker);
+          effect.container.zIndex = definition.layer === "front-scenery" ? -0.25
+            : definition.layer === "behind-scenery" ? -0.75 : -1;
+          environmentEffects.push(effect);
+          world.addChild(effect.container, effect.mask);
+        }
+        setPlayerHeadOccluded(false);
 
         if (mapId === "welcome-courtyard") {
           const mayorTexture = await Assets.load<Texture>(PIKO_MAYOR_IDLE_SRC);
@@ -171,7 +300,7 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
             {host,navigation});
           stopPlayerRef.current = () => residentActor?.stop();
           residentActor.container.zIndex = residentActor.container.y;
-          residentPresentationRef.current = addCharacterPresentation(residentActor.container, nicknameRef.current);
+          residentPresentationRef.current = addCharacterPresentation(residentActor.container, nicknameRef.current, false);
           world.addChild(residentActor.container);
           changeResidentRef.current = id => {
             residentActor?.stop();
@@ -185,10 +314,26 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
           let lastX = simulatedActor.container.x, lastY = simulatedActor.container.y;
           setSimulatedPosition({ x: lastX, y: lastY });
           let playerX = residentActor.container.x, playerY = residentActor.container.y;
+          setPlayerPosition({ x: playerX, y: playerY });
+          environmentAudio?.update({ x: playerX, y: playerY });
+          setPlayerHeadOccluded(isResidentHeadOccluded(
+            { x: playerX, y: playerY }, occlusion, RESIDENT_WORLD_SCALE,
+          ));
+          let lastTreeOutline = animatedTree?.outline;
           const syncPosition = () => {
-            if (residentActor && (residentActor.container.x !== playerX || residentActor.container.y !== playerY)) {
+            actorOcclusion.forEach(item => item.update());
+            residentSilhouette?.update();
+            const playerMoved = residentActor && (residentActor.container.x !== playerX || residentActor.container.y !== playerY);
+            if (residentActor && playerMoved) {
               playerX = residentActor.container.x; playerY = residentActor.container.y;
               setPlayerPosition({ x: playerX, y: playerY });
+              environmentAudio?.update({ x: playerX, y: playerY });
+            }
+            if (playerMoved || lastTreeOutline !== animatedTree?.outline) {
+              lastTreeOutline = animatedTree?.outline;
+              setPlayerHeadOccluded(isResidentHeadOccluded(
+                { x: playerX, y: playerY }, occlusion, RESIDENT_WORLD_SCALE,
+              ));
             }
             if (!simulatedActor) return;
             const { x, y } = simulatedActor.container;
@@ -199,6 +344,14 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
           nextApp.ticker.add(syncPosition);
           disconnectPosition = () => nextApp.ticker.remove(syncPosition);
           world.addChild(simulatedActor.container);
+          for (const actor of [mayorActor, residentActor, simulatedActor]) {
+            const masked = createBakedActorOcclusion(actor.container, bakedOccluders, manifest.size);
+            actorOcclusion.push(masked);
+            world.addChild(masked.mask);
+          }
+          residentSilhouette = createResidentOcclusionSilhouette(residentActor.container, residentActor.body, occlusion.occluders,
+            animatedTree ? new Set([animatedTree.id]) : undefined);
+          world.addChild(residentSilhouette.container, residentSilhouette.mask);
         }
 
         const worldSize: PikoSize = manifest.size;
@@ -223,32 +376,13 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
         if (abortController.signal.aborted) return;
         // eslint-disable-next-line no-console
         console.error("[piko-world] map load failed", error);
+        disposeMap();
         setLoadState("error");
       }
     }
 
     void mountMap();
-    return () => {
-      disposed = true;
-      navigationRef.current = null;
-      debugEditingRef.current = false;
-      abortController.abort();
-      disconnectResizeObserver();
-      disconnectPosition();
-      stopPlayerRef.current = () => {};
-      simulatedHoverRef.current = () => {};
-      mayorActor?.destroy();
-      residentActor?.destroy();
-      simulatedActor?.destroy();
-      changeResidentRef.current = () => {};
-      residentPresentationRef.current = null;
-      interactRef.current=()=>{};
-      mayorHoverRef.current=()=>{};
-      if (app) app.destroy(true, { children: true });
-      if (mayorTextureLoaded) void Assets.unload(PIKO_MAYOR_IDLE_SRC);
-      for (const id of residentTextures.keys()) void Assets.unload(PIKO_PLAYABLE_RESIDENTS[id]);
-      if (baseTextureUrl && baseTextureLoaded) void Assets.unload(baseTextureUrl);
-    };
+    return disposeMap;
   }, [mapId]);
 
   return (
@@ -270,7 +404,7 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
         <PikoResidentInteraction key={PIKO_SIMULATED_RESIDENT.id} target={PIKO_SIMULATED_RESIDENT}
           position={simulatedPosition} fit={worldFit} onBusyChange={onSocialBusyChange} onHover={onSimulatedHover} />
       )}
-      {loadState === "ready" && showMayorHint && speech && <PikoSpeechBubble body={speech.body} position={playerPosition} fit={worldFit} />}
+      {loadState === "ready" && showMayorHint && speech && !playerHeadOccluded && <PikoSpeechBubble body={speech.body} position={playerPosition} fit={worldFit} />}
       <PikoWelcomeDialog open={welcomeOpen} onOpenChange={open=>{welcomeOpenRef.current=open;setWelcomeOpen(open);}}
         onComplete={()=>setWelcomed(true)} />
       {import.meta.env.DEV && loadState === "ready" && mapId === "welcome-courtyard" && showMayorHint && debugNavigation && worldFit.scale > 0 && !movementBlocked && (

@@ -2,9 +2,10 @@
 import type { Texture, Ticker } from "pixi.js";
 import { createCharacterActor } from "./character-actor";
 import type { PikoNavigation } from "./map-package-schema";
-import { FACINGS, facingFor, moveCharacter, type Facing, type Point } from "./character-movement";
+import { CHARACTER_SPEED, FACINGS, facingFor, moveCharacter, type Facing, type Point } from "./character-movement";
 import { advanceGait, gaitColumn, crossesFootContact } from "./character-gait";
 import { createGrassFootsteps } from "./footstep-audio";
+import { findClickPath } from "./click-path";
 export const RESIDENT_MOTION_SRC = "/piko/world/characters/resident-m01-idle-v1/resident-m01-motion-v8.png";
 export const RESIDENT_IDLE_SRC = "/piko/world/characters/resident-m01-idle-v1/resident-m01-idle-sheet.png";
 // Resident display tuning; shared actor applies it to body and contact shadow.
@@ -41,11 +42,13 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
   let gaitDistance = 0;
   const cycleDistance = 40 * RESIDENT_WORLD_SCALE;
   const keys = new Set<string>();
+  let path: Point[] = [];
   const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-  const clear = () => { keys.clear(); elapsed = 0; wasMoving = false; gaitDistance = 0; footsteps.stop(); };
+  const clear = () => { keys.clear(); path = []; elapsed = 0; wasMoving = false; gaitDistance = 0; footsteps.stop(); };
   const keyDown = (event: KeyboardEvent) => {
     if(!isActive() || document.activeElement !== controls.host || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
     if(!["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(event.code)) return;
+    path = [];
     footsteps.unlock();
     event.preventDefault(); keys.add(event.code);
   };
@@ -56,12 +59,23 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     const canMove = isActive() && !document.hidden;
     const input = controls.simulatedInput ? (canMove ? controls.simulatedInput() : { x: 0, y: 0 }) : {x:Number(keys.has("KeyD")||keys.has("ArrowRight"))-Number(keys.has("KeyA")||keys.has("ArrowLeft")),
       y:Number(keys.has("KeyS")||keys.has("ArrowDown"))-Number(keys.has("KeyW")||keys.has("ArrowUp"))};
+    const destination = path[0];
+    let deltaMs = time.deltaMS;
+    if (destination && canMove && !input.x && !input.y) {
+      input.x = destination.x - actor.container.position.x;
+      input.y = destination.y - actor.container.position.y;
+      deltaMs = Math.min(deltaMs, Math.hypot(input.x, input.y) / CHARACTER_SPEED * 1000);
+    }
     if(input.x||input.y) facing = facingFor(input);
     const before = actor.container.position;
-    const next = moveCharacter(before,input,time.deltaMS,controls.navigation);
+    const next = moveCharacter(before,input,deltaMs,controls.navigation);
     const travelled = Math.hypot(next.x-before.x,next.y-before.y);
     const moving = travelled>0.01;
     actor.container.position.set(next.x,next.y);
+    if (destination) {
+      if (Math.hypot(next.x - destination.x, next.y - destination.y) < 0.1) path.shift();
+      else if (time.deltaMS > 0 && !moving) path = [];
+    }
     actor.container.zIndex = next.y;
     if(moving!==wasMoving) elapsed=0;
     if (keyboardControlled && crossesFootContact(gaitDistance, travelled, cycleDistance, wasMoving)) footsteps.step();
@@ -80,7 +94,14 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
   controls.host.addEventListener("pointerdown",focus);
   }
   ticker.add(tick);
-  return { ...actor, stop: clear, destroy() {
+  return { ...actor, stop: clear, walkTo(target: Point) {
+    if (!keyboardControlled || !isActive() || document.hidden) return false;
+    focus();
+    keys.clear();
+    footsteps.unlock();
+    path = findClickPath({ x: actor.container.position.x, y: actor.container.position.y }, target, controls.navigation);
+    return path.length > 0;
+  }, destroy() {
     footsteps.destroy();
     ticker.remove(tick);
     window.removeEventListener("keydown",keyDown); window.removeEventListener("keyup",keyUp);

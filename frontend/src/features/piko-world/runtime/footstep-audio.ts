@@ -48,7 +48,7 @@ export function createGrassFootsteps() {
         const source = context.createBufferSource();
         const gain = context.createGain();
         source.buffer = buffers[index];
-        gain.gain.value = 1.2;
+        gain.gain.value = 1.0;
         source.connect(gain).connect(context.destination);
         playing.add(source);
         source.onended = () => { playing.delete(source); source.disconnect(); gain.disconnect(); };

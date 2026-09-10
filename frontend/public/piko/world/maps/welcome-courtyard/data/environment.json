@@ -5,6 +5,2066 @@
     "preset": "neutral-day",
     "intensity": 1
   },
-  "effects": [],
-  "audioZones": []
+  "effects": [
+    {
+      "id": "fountain-water-animation",
+      "kind": "sprite",
+      "reducedMotion": "simplify",
+      "region": {
+        "id": "fountain-water-surface",
+        "points": [
+          {
+            "x": 1034,
+            "y": 551
+          },
+          {
+            "x": 1037,
+            "y": 567
+          },
+          {
+            "x": 1032,
+            "y": 579
+          },
+          {
+            "x": 1040,
+            "y": 594
+          },
+          {
+            "x": 1055,
+            "y": 601
+          },
+          {
+            "x": 1070,
+            "y": 593
+          },
+          {
+            "x": 1078,
+            "y": 578
+          },
+          {
+            "x": 1075,
+            "y": 560
+          },
+          {
+            "x": 1080,
+            "y": 551
+          },
+          {
+            "x": 1093,
+            "y": 553
+          },
+          {
+            "x": 1104,
+            "y": 560
+          },
+          {
+            "x": 1112,
+            "y": 571
+          },
+          {
+            "x": 1116,
+            "y": 582
+          },
+          {
+            "x": 1112,
+            "y": 594
+          },
+          {
+            "x": 1103,
+            "y": 604
+          },
+          {
+            "x": 1089,
+            "y": 612
+          },
+          {
+            "x": 1072,
+            "y": 618
+          },
+          {
+            "x": 1051,
+            "y": 620
+          },
+          {
+            "x": 1031,
+            "y": 617
+          },
+          {
+            "x": 1014,
+            "y": 610
+          },
+          {
+            "x": 1002,
+            "y": 601
+          },
+          {
+            "x": 995,
+            "y": 590
+          },
+          {
+            "x": 994,
+            "y": 578
+          },
+          {
+            "x": 999,
+            "y": 566
+          },
+          {
+            "x": 1009,
+            "y": 557
+          },
+          {
+            "x": 1021,
+            "y": 552
+          }
+        ]
+      },
+      "src": "effects/fountain-water-v1.png",
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 16,
+        "fps": 3,
+        "inset": 3
+      }
+    },
+    {
+      "id": "fountain-statue-foreground",
+      "kind": "sprite",
+      "src": "base.png",
+      "region": {
+        "id": "fountain-statue-silhouette",
+        "points": [
+          {
+            "x": 1021,
+            "y": 550
+          },
+          {
+            "x": 1018,
+            "y": 535
+          },
+          {
+            "x": 1016,
+            "y": 530
+          },
+          {
+            "x": 1016,
+            "y": 511
+          },
+          {
+            "x": 1018,
+            "y": 506
+          },
+          {
+            "x": 1020,
+            "y": 499
+          },
+          {
+            "x": 1026,
+            "y": 491
+          },
+          {
+            "x": 1035,
+            "y": 498
+          },
+          {
+            "x": 1044,
+            "y": 502
+          },
+          {
+            "x": 1048,
+            "y": 490
+          },
+          {
+            "x": 1057,
+            "y": 475
+          },
+          {
+            "x": 1060,
+            "y": 472
+          },
+          {
+            "x": 1070,
+            "y": 487
+          },
+          {
+            "x": 1074,
+            "y": 496
+          },
+          {
+            "x": 1084,
+            "y": 488
+          },
+          {
+            "x": 1088,
+            "y": 489
+          },
+          {
+            "x": 1092,
+            "y": 497
+          },
+          {
+            "x": 1094,
+            "y": 506
+          },
+          {
+            "x": 1097,
+            "y": 509
+          },
+          {
+            "x": 1095,
+            "y": 518
+          },
+          {
+            "x": 1092,
+            "y": 525
+          },
+          {
+            "x": 1098,
+            "y": 526
+          },
+          {
+            "x": 1100,
+            "y": 532
+          },
+          {
+            "x": 1097,
+            "y": 544
+          },
+          {
+            "x": 1095,
+            "y": 550
+          },
+          {
+            "x": 1088,
+            "y": 551
+          },
+          {
+            "x": 1084,
+            "y": 558
+          },
+          {
+            "x": 1085,
+            "y": 566
+          },
+          {
+            "x": 1081,
+            "y": 576
+          },
+          {
+            "x": 1083,
+            "y": 583
+          },
+          {
+            "x": 1078,
+            "y": 590
+          },
+          {
+            "x": 1072,
+            "y": 594
+          },
+          {
+            "x": 1068,
+            "y": 600
+          },
+          {
+            "x": 1060,
+            "y": 604
+          },
+          {
+            "x": 1053,
+            "y": 603
+          },
+          {
+            "x": 1047,
+            "y": 599
+          },
+          {
+            "x": 1042,
+            "y": 599
+          },
+          {
+            "x": 1038,
+            "y": 594
+          },
+          {
+            "x": 1030,
+            "y": 592
+          },
+          {
+            "x": 1028,
+            "y": 586
+          },
+          {
+            "x": 1032,
+            "y": 580
+          },
+          {
+            "x": 1029,
+            "y": 574
+          },
+          {
+            "x": 1031,
+            "y": 569
+          },
+          {
+            "x": 1029,
+            "y": 562
+          },
+          {
+            "x": 1023,
+            "y": 560
+          }
+        ]
+      },
+      "reducedMotion": "keep"
+    },
+    {
+      "id": "fountain-stream-west",
+      "kind": "sprite",
+      "src": "effects/fountain-stream-v1.png",
+      "layer": "front-scenery",
+      "reducedMotion": "simplify",
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 16,
+        "fps": 3,
+        "inset": 0
+      },
+      "region": {
+        "id": "fountain-stream-west-bounds",
+        "points": [
+          {
+            "x": 1016,
+            "y": 549
+          },
+          {
+            "x": 1056,
+            "y": 549
+          },
+          {
+            "x": 1056,
+            "y": 603
+          },
+          {
+            "x": 1016,
+            "y": 603
+          }
+        ]
+      }
+    },
+    {
+      "id": "fountain-stream-east",
+      "kind": "sprite",
+      "src": "effects/fountain-stream-v1.png",
+      "layer": "front-scenery",
+      "reducedMotion": "simplify",
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 16,
+        "fps": 3,
+        "inset": 0
+      },
+      "region": {
+        "id": "fountain-stream-east-bounds",
+        "points": [
+          {
+            "x": 1062,
+            "y": 545
+          },
+          {
+            "x": 1102,
+            "y": 545
+          },
+          {
+            "x": 1102,
+            "y": 603
+          },
+          {
+            "x": 1062,
+            "y": 603
+          }
+        ]
+      }
+    },
+    {
+      "id": "fountain-stream-outer-west",
+      "kind": "sprite",
+      "src": "effects/fountain-stream-v1.png",
+      "layer": "behind-scenery",
+      "reducedMotion": "simplify",
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 16,
+        "fps": 3,
+        "inset": 0
+      },
+      "region": {
+        "id": "fountain-stream-outer-west-bounds",
+        "points": [
+          {
+            "x": 1005,
+            "y": 533
+          },
+          {
+            "x": 1035,
+            "y": 533
+          },
+          {
+            "x": 1035,
+            "y": 598
+          },
+          {
+            "x": 1005,
+            "y": 598
+          }
+        ]
+      }
+    },
+    {
+      "id": "fountain-stream-outer-east",
+      "kind": "sprite",
+      "src": "effects/fountain-stream-v1.png",
+      "layer": "behind-scenery",
+      "reducedMotion": "simplify",
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 16,
+        "fps": 3,
+        "inset": 0
+      },
+      "region": {
+        "id": "fountain-stream-outer-east-bounds",
+        "points": [
+          {
+            "x": 1079,
+            "y": 531
+          },
+          {
+            "x": 1109,
+            "y": 531
+          },
+          {
+            "x": 1109,
+            "y": 598
+          },
+          {
+            "x": 1079,
+            "y": 598
+          }
+        ]
+      }
+    },
+    {
+      "id": "river-water-bridge-sample",
+      "kind": "sprite",
+      "src": "effects/river-water-v1.png",
+      "layer": "water",
+      "region": {
+        "id": "river-water-bridge-surface",
+        "points": [
+          {
+            "x": 1928,
+            "y": 592
+          },
+          {
+            "x": 1944,
+            "y": 577
+          },
+          {
+            "x": 1966,
+            "y": 571
+          },
+          {
+            "x": 1989,
+            "y": 573
+          },
+          {
+            "x": 2012,
+            "y": 582
+          },
+          {
+            "x": 2029,
+            "y": 594
+          },
+          {
+            "x": 2038,
+            "y": 612
+          },
+          {
+            "x": 2038,
+            "y": 736
+          },
+          {
+            "x": 2029,
+            "y": 748
+          },
+          {
+            "x": 2016,
+            "y": 747
+          },
+          {
+            "x": 2005,
+            "y": 741
+          },
+          {
+            "x": 1995,
+            "y": 749
+          },
+          {
+            "x": 1981,
+            "y": 747
+          },
+          {
+            "x": 1967,
+            "y": 739
+          },
+          {
+            "x": 1953,
+            "y": 743
+          },
+          {
+            "x": 1941,
+            "y": 732
+          },
+          {
+            "x": 1928,
+            "y": 727
+          },
+          {
+            "x": 1923,
+            "y": 706
+          },
+          {
+            "x": 1927,
+            "y": 687
+          },
+          {
+            "x": 1922,
+            "y": 668
+          },
+          {
+            "x": 1927,
+            "y": 645
+          },
+          {
+            "x": 1923,
+            "y": 623
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 16,
+        "fps": 2,
+        "inset": 3
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "river-water-upstream",
+      "kind": "sprite",
+      "src": "effects/river-water-v1.png",
+      "layer": "water",
+      "region": {
+        "id": "river-water-upstream-surface",
+        "points": [
+          {
+            "x": 1975,
+            "y": 205
+          },
+          {
+            "x": 1990,
+            "y": 207
+          },
+          {
+            "x": 2003,
+            "y": 202
+          },
+          {
+            "x": 2017,
+            "y": 207
+          },
+          {
+            "x": 2030,
+            "y": 202
+          },
+          {
+            "x": 2047,
+            "y": 201
+          },
+          {
+            "x": 2047,
+            "y": 422
+          },
+          {
+            "x": 2040,
+            "y": 431
+          },
+          {
+            "x": 2038,
+            "y": 448
+          },
+          {
+            "x": 2026,
+            "y": 446
+          },
+          {
+            "x": 2022,
+            "y": 436
+          },
+          {
+            "x": 2011,
+            "y": 432
+          },
+          {
+            "x": 2014,
+            "y": 418
+          },
+          {
+            "x": 2011,
+            "y": 399
+          },
+          {
+            "x": 2010,
+            "y": 370
+          },
+          {
+            "x": 2010,
+            "y": 335
+          },
+          {
+            "x": 2008,
+            "y": 307
+          },
+          {
+            "x": 2008,
+            "y": 277
+          },
+          {
+            "x": 2005,
+            "y": 250
+          },
+          {
+            "x": 1996,
+            "y": 242
+          },
+          {
+            "x": 1987,
+            "y": 227
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 16,
+        "fps": 2,
+        "inset": 3
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "river-water-downstream",
+      "kind": "sprite",
+      "src": "effects/river-water-v1.png",
+      "layer": "water",
+      "region": {
+        "id": "river-water-downstream-surface",
+        "points": [
+          {
+            "x": 2038,
+            "y": 736
+          },
+          {
+            "x": 2038,
+            "y": 822
+          },
+          {
+            "x": 2030,
+            "y": 831
+          },
+          {
+            "x": 2021,
+            "y": 830
+          },
+          {
+            "x": 2012,
+            "y": 841
+          },
+          {
+            "x": 2004,
+            "y": 850
+          },
+          {
+            "x": 2000,
+            "y": 862
+          },
+          {
+            "x": 1989,
+            "y": 874
+          },
+          {
+            "x": 1982,
+            "y": 889
+          },
+          {
+            "x": 1975,
+            "y": 909
+          },
+          {
+            "x": 1968,
+            "y": 923
+          },
+          {
+            "x": 1960,
+            "y": 919
+          },
+          {
+            "x": 1952,
+            "y": 930
+          },
+          {
+            "x": 1946,
+            "y": 928
+          },
+          {
+            "x": 1948,
+            "y": 909
+          },
+          {
+            "x": 1955,
+            "y": 894
+          },
+          {
+            "x": 1962,
+            "y": 879
+          },
+          {
+            "x": 1966,
+            "y": 862
+          },
+          {
+            "x": 1969,
+            "y": 846
+          },
+          {
+            "x": 1972,
+            "y": 828
+          },
+          {
+            "x": 1975,
+            "y": 812
+          },
+          {
+            "x": 1971,
+            "y": 799
+          },
+          {
+            "x": 1978,
+            "y": 786
+          },
+          {
+            "x": 1977,
+            "y": 776
+          },
+          {
+            "x": 1970,
+            "y": 770
+          },
+          {
+            "x": 1977,
+            "y": 759
+          },
+          {
+            "x": 1981,
+            "y": 747
+          },
+          {
+            "x": 1995,
+            "y": 749
+          },
+          {
+            "x": 2005,
+            "y": 741
+          },
+          {
+            "x": 2016,
+            "y": 747
+          },
+          {
+            "x": 2029,
+            "y": 748
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 16,
+        "fps": 2,
+        "inset": 3
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-fountain-sample",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-fountain-patch",
+        "points": [
+          {
+            "x": 1198,
+            "y": 626
+          },
+          {
+            "x": 1294,
+            "y": 626
+          },
+          {
+            "x": 1294,
+            "y": 722
+          },
+          {
+            "x": 1198,
+            "y": 722
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 0
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-fountain-west",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-fountain-west-patch",
+        "points": [
+          {
+            "x": 820,
+            "y": 530
+          },
+          {
+            "x": 916,
+            "y": 530
+          },
+          {
+            "x": 916,
+            "y": 626
+          },
+          {
+            "x": 820,
+            "y": 626
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 2
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-east-bench",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-east-bench-patch",
+        "points": [
+          {
+            "x": 1546,
+            "y": 474
+          },
+          {
+            "x": 1642,
+            "y": 474
+          },
+          {
+            "x": 1642,
+            "y": 570
+          },
+          {
+            "x": 1546,
+            "y": 570
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 4
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-west-map-sign",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-west-map-sign-patch",
+        "points": [
+          {
+            "x": 377,
+            "y": 655
+          },
+          {
+            "x": 473,
+            "y": 655
+          },
+          {
+            "x": 473,
+            "y": 751
+          },
+          {
+            "x": 377,
+            "y": 751
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 6
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-south-entry-west",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-south-entry-west-patch",
+        "points": [
+          {
+            "x": 785,
+            "y": 979
+          },
+          {
+            "x": 881,
+            "y": 979
+          },
+          {
+            "x": 881,
+            "y": 1075
+          },
+          {
+            "x": 785,
+            "y": 1075
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 9
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-south-entry-east",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-south-entry-east-patch",
+        "points": [
+          {
+            "x": 1220,
+            "y": 976
+          },
+          {
+            "x": 1316,
+            "y": 976
+          },
+          {
+            "x": 1316,
+            "y": 1072
+          },
+          {
+            "x": 1220,
+            "y": 1072
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 11
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-northwest-edge",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-northwest-edge-patch",
+        "points": [
+          {
+            "x": 43,
+            "y": 148
+          },
+          {
+            "x": 139,
+            "y": 148
+          },
+          {
+            "x": 139,
+            "y": 244
+          },
+          {
+            "x": 43,
+            "y": 244
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 3
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-northwest-grove-east",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-northwest-grove-east-patch",
+        "points": [
+          {
+            "x": 413,
+            "y": 102
+          },
+          {
+            "x": 509,
+            "y": 102
+          },
+          {
+            "x": 509,
+            "y": 198
+          },
+          {
+            "x": 413,
+            "y": 198
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 13
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-north-hall-west",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-north-hall-west-patch",
+        "points": [
+          {
+            "x": 620,
+            "y": 0
+          },
+          {
+            "x": 716,
+            "y": 0
+          },
+          {
+            "x": 716,
+            "y": 96
+          },
+          {
+            "x": 620,
+            "y": 96
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 4
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-northeast-grove",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-northeast-grove-patch",
+        "points": [
+          {
+            "x": 1675,
+            "y": 125
+          },
+          {
+            "x": 1771,
+            "y": 125
+          },
+          {
+            "x": 1771,
+            "y": 221
+          },
+          {
+            "x": 1675,
+            "y": 221
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 0
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-northeast-grove-east",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-northeast-grove-east-patch",
+        "points": [
+          {
+            "x": 1792,
+            "y": 170
+          },
+          {
+            "x": 1888,
+            "y": 170
+          },
+          {
+            "x": 1888,
+            "y": 266
+          },
+          {
+            "x": 1792,
+            "y": 266
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 5
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-west-pavilion",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-west-pavilion-patch",
+        "points": [
+          {
+            "x": 92,
+            "y": 613
+          },
+          {
+            "x": 188,
+            "y": 613
+          },
+          {
+            "x": 188,
+            "y": 709
+          },
+          {
+            "x": 92,
+            "y": 709
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 10
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-west-garden-north",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-west-garden-north-patch",
+        "points": [
+          {
+            "x": 229,
+            "y": 463
+          },
+          {
+            "x": 325,
+            "y": 463
+          },
+          {
+            "x": 325,
+            "y": 559
+          },
+          {
+            "x": 229,
+            "y": 559
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 1
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-west-garden-south",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-west-garden-south-patch",
+        "points": [
+          {
+            "x": 170,
+            "y": 653
+          },
+          {
+            "x": 266,
+            "y": 653
+          },
+          {
+            "x": 266,
+            "y": 749
+          },
+          {
+            "x": 170,
+            "y": 749
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 6
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-west-pine-north",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-west-pine-north-patch",
+        "points": [
+          {
+            "x": 503,
+            "y": 373
+          },
+          {
+            "x": 599,
+            "y": 373
+          },
+          {
+            "x": 599,
+            "y": 469
+          },
+          {
+            "x": 503,
+            "y": 469
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 11
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-west-boulder",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-west-boulder-patch",
+        "points": [
+          {
+            "x": 774,
+            "y": 443
+          },
+          {
+            "x": 870,
+            "y": 443
+          },
+          {
+            "x": 870,
+            "y": 539
+          },
+          {
+            "x": 774,
+            "y": 539
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 2
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-west-middle-pine",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-west-middle-pine-patch",
+        "points": [
+          {
+            "x": 488,
+            "y": 635
+          },
+          {
+            "x": 584,
+            "y": 635
+          },
+          {
+            "x": 584,
+            "y": 731
+          },
+          {
+            "x": 488,
+            "y": 731
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 7
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-west-middle-grove",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-west-middle-grove-patch",
+        "points": [
+          {
+            "x": 696,
+            "y": 727
+          },
+          {
+            "x": 792,
+            "y": 727
+          },
+          {
+            "x": 792,
+            "y": 823
+          },
+          {
+            "x": 696,
+            "y": 823
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 12
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-west-inner-garden",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-west-inner-garden-patch",
+        "points": [
+          {
+            "x": 784,
+            "y": 830
+          },
+          {
+            "x": 880,
+            "y": 830
+          },
+          {
+            "x": 880,
+            "y": 926
+          },
+          {
+            "x": 784,
+            "y": 926
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 3
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-east-inner-garden",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-east-inner-garden-patch",
+        "points": [
+          {
+            "x": 1292,
+            "y": 827
+          },
+          {
+            "x": 1388,
+            "y": 827
+          },
+          {
+            "x": 1388,
+            "y": 923
+          },
+          {
+            "x": 1292,
+            "y": 923
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 8
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-east-path-pine",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-east-path-pine-patch",
+        "points": [
+          {
+            "x": 1538,
+            "y": 723
+          },
+          {
+            "x": 1634,
+            "y": 723
+          },
+          {
+            "x": 1634,
+            "y": 819
+          },
+          {
+            "x": 1538,
+            "y": 819
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 13
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-east-path-shrub",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-east-path-shrub-patch",
+        "points": [
+          {
+            "x": 1590,
+            "y": 850
+          },
+          {
+            "x": 1686,
+            "y": 850
+          },
+          {
+            "x": 1686,
+            "y": 946
+          },
+          {
+            "x": 1590,
+            "y": 946
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 4
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-east-willow-bank",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-east-willow-bank-patch",
+        "points": [
+          {
+            "x": 1807,
+            "y": 794
+          },
+          {
+            "x": 1903,
+            "y": 794
+          },
+          {
+            "x": 1903,
+            "y": 890
+          },
+          {
+            "x": 1807,
+            "y": 890
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 9
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-southeast-grove",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-southeast-grove-patch",
+        "points": [
+          {
+            "x": 1788,
+            "y": 1035
+          },
+          {
+            "x": 1884,
+            "y": 1035
+          },
+          {
+            "x": 1884,
+            "y": 1131
+          },
+          {
+            "x": 1788,
+            "y": 1131
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 0
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-southwest-edge",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-southwest-edge-patch",
+        "points": [
+          {
+            "x": 209,
+            "y": 997
+          },
+          {
+            "x": 305,
+            "y": 997
+          },
+          {
+            "x": 305,
+            "y": 1093
+          },
+          {
+            "x": 209,
+            "y": 1093
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 5
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-breeze-southwest-grove",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-breeze-southwest-grove-patch",
+        "points": [
+          {
+            "x": 460,
+            "y": 1010
+          },
+          {
+            "x": 556,
+            "y": 1010
+          },
+          {
+            "x": 556,
+            "y": 1106
+          },
+          {
+            "x": 460,
+            "y": 1106
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 4,
+        "frames": 8,
+        "fps": 3,
+        "inset": 0,
+        "playback": "ping-pong",
+        "startStep": 10
+      },
+      "reducedMotion": "simplify"
+    }
+  ],
+  "audioZones": [
+    {
+      "id": "fountain",
+      "src": "audio/fountain-v1.ogg",
+      "region": {
+        "id": "fountain-sound-zone",
+        "points": [
+          {
+            "x": 1000,
+            "y": 535
+          },
+          {
+            "x": 1125,
+            "y": 535
+          },
+          {
+            "x": 1125,
+            "y": 635
+          },
+          {
+            "x": 1000,
+            "y": 635
+          }
+        ]
+      },
+      "volume": 0.32,
+      "fadeDistance": 430,
+      "repeatDelay": 0
+    },
+    {
+      "id": "river",
+      "src": "audio/river-v1.ogg",
+      "region": {
+        "id": "river-sound-zone",
+        "points": [
+          {
+            "x": 1910,
+            "y": 200
+          },
+          {
+            "x": 2048,
+            "y": 200
+          },
+          {
+            "x": 2048,
+            "y": 940
+          },
+          {
+            "x": 1910,
+            "y": 940
+          }
+        ]
+      },
+      "volume": 0.26,
+      "fadeDistance": 470,
+      "repeatDelay": 0
+    },
+    {
+      "id": "leaves",
+      "src": "audio/wind-v1.ogg",
+      "region": {
+        "id": "leaves-sound-zone",
+        "points": [
+          {
+            "x": 300,
+            "y": 700
+          },
+          {
+            "x": 740,
+            "y": 700
+          },
+          {
+            "x": 740,
+            "y": 980
+          },
+          {
+            "x": 300,
+            "y": 980
+          }
+        ]
+      },
+      "volume": 0.14,
+      "fadeDistance": 180,
+      "repeatDelay": 0,
+      "additionalRegions": [
+        {
+          "id": "wind-northwest",
+          "points": [
+            {
+              "x": 165,
+              "y": 85
+            },
+            {
+              "x": 535,
+              "y": 85
+            },
+            {
+              "x": 575,
+              "y": 210
+            },
+            {
+              "x": 490,
+              "y": 300
+            },
+            {
+              "x": 270,
+              "y": 290
+            },
+            {
+              "x": 165,
+              "y": 205
+            }
+          ]
+        },
+        {
+          "id": "wind-northeast",
+          "points": [
+            {
+              "x": 1430,
+              "y": 60
+            },
+            {
+              "x": 1755,
+              "y": 60
+            },
+            {
+              "x": 1790,
+              "y": 250
+            },
+            {
+              "x": 1700,
+              "y": 335
+            },
+            {
+              "x": 1450,
+              "y": 310
+            }
+          ]
+        },
+        {
+          "id": "wind-southeast",
+          "points": [
+            {
+              "x": 1480,
+              "y": 770
+            },
+            {
+              "x": 1710,
+              "y": 740
+            },
+            {
+              "x": 1885,
+              "y": 790
+            },
+            {
+              "x": 1880,
+              "y": 1055
+            },
+            {
+              "x": 1730,
+              "y": 1090
+            },
+            {
+              "x": 1490,
+              "y": 1055
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "birds",
+      "src": "audio/birds-v1.ogg",
+      "region": {
+        "id": "birds-sound-zone",
+        "points": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 2048,
+            "y": 0
+          },
+          {
+            "x": 2048,
+            "y": 1152
+          },
+          {
+            "x": 0,
+            "y": 1152
+          }
+        ]
+      },
+      "volume": 0.12,
+      "fadeDistance": 900,
+      "repeatDelay": 60
+    },
+    {
+      "id": "insects",
+      "src": "audio/insects-v1.ogg",
+      "region": {
+        "id": "insects-southwest",
+        "points": [
+          {
+            "x": 490,
+            "y": 770
+          },
+          {
+            "x": 665,
+            "y": 770
+          },
+          {
+            "x": 665,
+            "y": 930
+          },
+          {
+            "x": 490,
+            "y": 930
+          }
+        ]
+      },
+      "additionalRegions": [
+        {
+          "id": "insects-northwest",
+          "points": [
+            {
+              "x": 295,
+              "y": 115
+            },
+            {
+              "x": 455,
+              "y": 115
+            },
+            {
+              "x": 455,
+              "y": 225
+            },
+            {
+              "x": 295,
+              "y": 225
+            }
+          ]
+        },
+        {
+          "id": "insects-northeast",
+          "points": [
+            {
+              "x": 1500,
+              "y": 105
+            },
+            {
+              "x": 1680,
+              "y": 105
+            },
+            {
+              "x": 1680,
+              "y": 220
+            },
+            {
+              "x": 1500,
+              "y": 220
+            }
+          ]
+        },
+        {
+          "id": "insects-southeast",
+          "points": [
+            {
+              "x": 1690,
+              "y": 860
+            },
+            {
+              "x": 1820,
+              "y": 860
+            },
+            {
+              "x": 1820,
+              "y": 1005
+            },
+            {
+              "x": 1690,
+              "y": 1005
+            }
+          ]
+        }
+      ],
+      "volume": 0.16,
+      "fadeDistance": 120,
+      "repeatDelay": 0
+    }
+  ]
 }

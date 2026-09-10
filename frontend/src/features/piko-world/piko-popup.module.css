@@ -1,5 +1,8 @@
 /* Shared skin for Piko resident menus, settings menus and profile popups. */
 .surface {
+  /* Keep primitive focus styles inside the town's warm popup palette. */
+  --accent: var(--color-amber-200);
+  --accent-foreground: var(--color-amber-950);
   border: 1px solid #c5a12d;
   border-radius: var(--radius-md);
   background: var(--color-amber-100);
@@ -13,7 +16,7 @@
   padding: 8px 12px;
   color: inherit;
 }
-.item[data-highlighted], .item:focus-visible {
+.item[data-highlighted], .item:hover, .item:focus, .item:focus-visible, .item:active {
   background: var(--color-amber-200);
   color: var(--color-amber-950);
 }

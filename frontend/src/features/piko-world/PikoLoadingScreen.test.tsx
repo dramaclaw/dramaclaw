@@ -57,7 +57,7 @@ describe("Piko loading screen", () => {
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.queryByRole("heading")).toBeNull();
-    expect(screen.getByRole("progressbar")).toHaveClass("aspect-[1365/118]", "w-[min(440px,100%)]");
+    expect(screen.getByRole("progressbar")).toHaveClass("aspect-[1365/118]", "w-[min(400px,88%)]");
     expect(screen.getByRole("progressbar").parentElement).toHaveClass("items-center");
     expect(screen.getByTestId("piko-loading-screen")).toHaveClass("fixed", "inset-0");
     act(() => vi.advanceTimersByTime(3450));

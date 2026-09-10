@@ -52,6 +52,7 @@ export function createCharacterActor(sheet: Texture, ticker: Ticker, isActive: (
   ticker.add(tick);
   return {
     container,
+    body,
     setFrame(index: number) {
       if (!Number.isInteger(index) || !frames[index]) throw new Error("Invalid character frame");
       frame = index;

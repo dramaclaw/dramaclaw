@@ -11,8 +11,8 @@ import {
 import type { PikoMapLoadState } from "./PikoWorldCanvas";
 
 export const PIKO_MAP_TRANSITION_TIMING = {
-  holdMs: 2_400,
-  exitMs: 1_400,
+  holdMs: 1_500,
+  exitMs: 1_000,
   reducedMotionHoldMs: 650,
 } as const;
 
@@ -83,9 +83,10 @@ export function PikoMapTransition({
   return (
     <div
       className={cn(
-        "fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-[#17281e]/80 backdrop-blur-md transition-[opacity,backdrop-filter] duration-[1400ms] ease-[var(--ease-in-out)] motion-reduce:backdrop-blur-none motion-reduce:transition-none",
+        "fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-[#17281e]/80 backdrop-blur-md transition-[opacity,backdrop-filter] ease-[var(--ease-in-out)] motion-reduce:backdrop-blur-none motion-reduce:transition-none",
         phase === "revealing" && "pointer-events-none opacity-0",
       )}
+      style={{ transitionDuration: `${PIKO_MAP_TRANSITION_TIMING.exitMs}ms` }}
       role="status"
       aria-live="polite"
       aria-label={t("pikoWorld.mapTransitionAnnouncement", {
@@ -95,12 +96,13 @@ export function PikoMapTransition({
       data-phase={phase}
     >
       <img
+        style={{ transitionDuration: `${phase === "revealing" ? PIKO_MAP_TRANSITION_TIMING.exitMs : 400}ms` }}
         src={definition.src}
         alt=""
         fetchPriority="high"
         draggable={false}
         className={cn(
-          "w-[min(49.6vw,33.6rem)] max-h-[24vh] max-w-[57.6vw] scale-100 object-contain blur-0 drop-shadow-[0_14px_28px_rgba(0,0,0,0.35)] transition-[opacity,transform,filter] duration-[1200ms] ease-[var(--ease-out-quint)] sm:w-[min(38.4vw,33.6rem)] lg:w-[min(33.6vw,33.6rem)] motion-reduce:transition-none",
+          "w-[min(49.6vw,33.6rem)] max-h-[24vh] max-w-[57.6vw] scale-100 object-contain blur-0 drop-shadow-[0_14px_28px_rgba(0,0,0,0.35)] transition-[opacity,transform,filter] ease-[var(--ease-out-quint)] sm:w-[min(38.4vw,33.6rem)] lg:w-[min(33.6vw,33.6rem)] motion-reduce:transition-none",
           phase === "covered" && "scale-[0.965] opacity-0 blur-[3px]",
           phase === "showing" && "opacity-100",
           phase === "revealing" && "opacity-0",

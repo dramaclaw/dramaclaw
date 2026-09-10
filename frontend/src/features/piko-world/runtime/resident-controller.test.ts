@@ -64,3 +64,29 @@ it("drives a simulated resident independently of the player's keyboard and pause
   actor.destroy();
   expect(ticker.remove).toHaveBeenCalledWith(tick);
 });
+
+
+it("walks to a click without overshoot and lets keyboard and pause cancel the route", () => {
+  const host = document.createElement("div"); host.tabIndex = 0; document.body.append(host);
+  const navigation = { walkableAreas: [{ id: "ground", points: [{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}] }], colliders: [] } as unknown as PikoNavigation;
+  const ticker = { add: vi.fn(), remove: vi.fn() };
+  let active = true;
+  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => active, { host, navigation });
+  const tick = ticker.add.mock.calls[0][0];
+  actor.walkTo({ x: 1200, y: 485 });
+  expect(document.activeElement).toBe(host);
+  for (let i = 0; i < 20; i++) tick({ deltaMS: 16 });
+  expect(actor.container.position.x).toBeCloseTo(1200);
+  actor.walkTo({ x: 1300, y: 485 });
+  window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyA" }));
+  tick({ deltaMS: 16 });
+  expect(actor.container.position.x).toBeLessThan(1200);
+  window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyA" }));
+  const stopped = actor.container.position.x;
+  tick({ deltaMS: 16 });
+  expect(actor.container.position.x).toBe(stopped);
+  actor.walkTo({ x: 1300, y: 485 });
+  active = false; tick({ deltaMS: 16 }); active = true; tick({ deltaMS: 16 });
+  expect(actor.container.position.x).toBe(stopped);
+  actor.destroy();
+});

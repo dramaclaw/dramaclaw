@@ -1,3 +1,4 @@
+import { usePikoCursors } from "./use-piko-cursors";
 import { PikoPrivateChat } from "./PikoPrivateChat";
 import { usePikoPublicChat, PIKO_CHAT_MAX_LENGTH } from "./piko-public-chat";
 import popupStyles from "./piko-popup.module.css";
@@ -101,6 +102,7 @@ function currentChatTime(): string {
 }
 
 export function PikoWorldShell() {
+  usePikoCursors();
   useCourtyardMusic();
   const { t } = useTranslation();
   const username = useAuthStore(state => state.username);

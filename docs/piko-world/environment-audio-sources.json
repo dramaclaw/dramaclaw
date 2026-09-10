@@ -1,0 +1,47 @@
+[
+  {
+    "sourceFile": "喷泉.mp3",
+    "sourceSha256": "36434474301fc5550b985609dfc0e304223cea4e0abfe627e2d32d50dc84423a",
+    "asset": "fountain-v1.ogg",
+    "assetSha256": "0f280a7080c0ea1405107443e0d2cf5a11f29932cfe0b30ddbe704a44ed96de0",
+    "provenance": "User-supplied local audio; external source and license not supplied."
+  },
+  {
+    "sourceFile": "河流.mp3",
+    "sourceSha256": "e14c656ed106f2295d79ff9ed826ebff01920a1a0955c6e4fdec092d57f70e10",
+    "asset": "river-v1.ogg",
+    "assetSha256": "bcff462459699108d1affa3dab41df53b7e25be4322de4e07b4046864897df2b",
+    "provenance": "User-supplied local audio; external source and license not supplied."
+  },
+  {
+    "sourceFile": "风吹树叶.mp3",
+    "sourceSha256": "63a882b609ac0c1ebd0c8ca952ae07baa320ba85eab6b475286a6964ab81607e",
+    "asset": "leaves-v1.ogg",
+    "assetSha256": "b4aa2dee22f8acd986e3460203e5de888675abfdab812d30e8e9d09b4b344730",
+    "provenance": "User-supplied local audio; external source and license not supplied.",
+    "status": "retired",
+    "replacedBy": "wind-v1.ogg",
+    "note": "Unused derived file removed during 2026-09-09 audit; source provenance retained."
+  },
+  {
+    "sourceFile": "鸟鸣.mp3",
+    "sourceSha256": "019ccd51d714dbd83c59e01bda825e3d4f416c88564e6798c0b3b09b60af7f34",
+    "asset": "birds-v1.ogg",
+    "assetSha256": "19688d66d20f9ba93aced0064af0ee2dd2350490052ec38d121f2ab09f0960e3",
+    "provenance": "User-supplied local audio; external source and license not supplied."
+  },
+  {
+    "sourceFile": "wind.mp3",
+    "sourceSha256": "b553529c9232508c703bea306123911a058620ab9a9b9274471ca5d446b42f22",
+    "asset": "wind-v1.ogg",
+    "assetSha256": "bf3c0323385746dc0f44695b16385a76450fd1c79efab217e04a4a216f6b804e",
+    "provenance": "User-supplied local audio; external source and license not supplied."
+  },
+  {
+    "sourceFile": "虫鸣.mp3",
+    "sourceSha256": "8e794b4573fe29ad80365ee4d7a4f2c02951cb46ab7ef9dc61c83b566e8d9a84",
+    "asset": "insects-v1.ogg",
+    "assetSha256": "efb479ce3a480b96509f41e746da223ed7a3941ed98868476ba80c99f4e6b0b8",
+    "provenance": "User-supplied local audio; external source and license not supplied."
+  }
+]

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { useEffect } from "react";
 
-const MUSIC_VOLUME = 0.4;
-const DUCKED_VOLUME = 0.18;
+const MUSIC_VOLUME = 0.16;
+const DUCKED_VOLUME = 0.07;
 
 /** A separate music channel; survives popup changes, fades out on map disposal. */
 export function startCourtyardMusic() {

@@ -2,6 +2,7 @@
 import { useEffect } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { PIKO_MAP_TRANSITION_TIMING } from "./PikoMapTransition";
 import { PikoWorldShell } from "./PikoWorldShell";
 vi.mock("./piko-audio", () => ({ playPikoUiSound: vi.fn(), unlockPikoNotifications: vi.fn() }));
 
@@ -49,7 +50,7 @@ it("keeps map inert until automatic entry and covers the viewport with the map t
   expect(container.querySelector("main > [data-map-id]")).toHaveClass("fixed", "inset-0", "z-50");
   expect(map.mounts).toBe(1);
   expect(screen.getByTestId("map-canvas")).toHaveAttribute("data-mayor-hint", "false");
-  act(() => vi.advanceTimersByTime(3349));
+  act(() => vi.advanceTimersByTime(PIKO_MAP_TRANSITION_TIMING.holdMs + PIKO_MAP_TRANSITION_TIMING.exitMs - 450 - 1));
   expect(screen.getByTestId("map-canvas")).toHaveAttribute("data-mayor-hint", "false");
   act(() => vi.advanceTimersByTime(1));
   expect(screen.getByTestId("map-canvas")).toHaveAttribute("data-mayor-hint", "true");

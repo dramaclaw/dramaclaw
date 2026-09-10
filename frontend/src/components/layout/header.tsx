@@ -12,6 +12,9 @@ import {
   Camera,
   Check,
   ChevronRight,
+  Gamepad2,
+  Map,
+  Users,
   Languages,
   LogOut,
   KeyRound,
@@ -394,25 +397,25 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               </Button>
             </div>
           ) : null}
-          <DropdownMenu modal={false} orientation="horizontal">
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger openOnHover delay={100} closeDelay={180}
-              render={<Button id="piko-hub-entry" variant="ghost" size="sm" className={`${entryStyles.trigger} gap-1.5 px-2 text-xs`} />}>
-              <span className={entryStyles.hubLogo}><img src="/piko/entry-hub/piko-piko.png" alt="piko piko" draggable={false} /></span>
+              render={<Button id="piko-hub-entry" variant="ghost" size="sm" className={`${entryStyles.trigger} px-2 text-xs font-medium`} />}>
+              Piko Piko
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" sideOffset={8} className={`${entryStyles.panel} ${entryStyles.hubPanel}`}>
-              <DropdownMenuItem className={entryStyles.hubItem} id="mybuddy-companion-entry" onClick={() => setCompanionOpen(true)}>
-                <span className={entryStyles.hubArt}><img className={entryStyles.companionArt} src="/piko/entry-hub/companion.png" alt="" draggable={false} /></span>
-                <span>{t("header.pikoHub.companion")}</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem className={entryStyles.hubItem} onClick={() => { playPikoUiSound("open"); void navigate({ to: "/piko-world" }); }}>
-                <span className={entryStyles.hubArt}><img className={entryStyles.townArt} src="/piko/entry-hub/town.png" alt="" draggable={false} /></span>
-                <span>{t("header.pikoHub.world")}</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem className={entryStyles.hubItem} onClick={() => window.dispatchEvent(new Event("piko-open-station"))}>
-                <span className={entryStyles.hubArt}><img className={entryStyles.playArt} src="/piko/entry-hub/play.png" alt="" draggable={false} /></span>
-                <span>{t("header.pikoHub.play")}</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
+            <HeaderMenuPanel dropdown compact>
+              <HeaderMenuRow menuItem id="mybuddy-companion-entry"
+                icon={<Users className="size-3.5" />}
+                label={t("header.pikoHub.companion")}
+                onClick={() => setCompanionOpen(true)} />
+              <HeaderMenuRow menuItem
+                icon={<Map className="size-3.5" />}
+                label={t("header.pikoHub.world")}
+                onClick={() => { playPikoUiSound("open"); void navigate({ to: "/piko-world" }); }} />
+              <HeaderMenuRow menuItem
+                icon={<Gamepad2 className="size-3.5" />}
+                label={t("header.pikoHub.play")}
+                onClick={() => window.dispatchEvent(new Event("piko-open-station"))} />
+            </HeaderMenuPanel>
           </DropdownMenu>
           <CreditBalanceBadge />
           <div
@@ -624,14 +627,14 @@ function AccountPanel({
       ref={panelRef}
       id="header-account-panel"
       aria-label={t("header.account.open")}
-      className={`fixed z-[80] w-[216px] transition-opacity duration-150 ease-[var(--ease-out-quint)] ${
+      className={`fixed z-[80] w-[216px] transition-opacity duration-150 ease-[var(--ease-out-quint)] motion-reduce:transition-none ${
         visible ? "opacity-100" : "opacity-0"
       }`}
       style={{ top: position.top, right: position.right }}
       onMouseEnter={onEnter}
       onMouseLeave={onClose}
     >
-      <div className={`${entryStyles.panel} p-2.5`}>
+      <HeaderMenuPanel>
         <div className="mb-2.5 flex h-[50px] items-center gap-2.5 rounded-[10px] bg-white/[0.07] px-2.5">
           <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-xs font-normal text-white/72">
             {avatarUrl ? (
@@ -645,25 +648,25 @@ function AccountPanel({
           </span>
         </div>
         <div className="space-y-0.5">
-          <AccountMenuRow
+          <HeaderMenuRow
             icon={<Bell className="size-3.5" />}
             label={t("header.notifications")}
             unread={hasUnreadNotification}
             onClick={onNotifications}
           />
-          <AccountMenuRow
+          <HeaderMenuRow
             icon={<Camera className="size-3.5" />}
             label={t("header.account.changeAvatar")}
             onClick={onChangeAvatar}
           />
           {onChangePassword ? (
-            <AccountMenuRow
+            <HeaderMenuRow
               icon={<KeyRound className="size-3.5" />}
               label={t("header.account.changePassword")}
               onClick={onChangePassword}
             />
           ) : null}
-          <AccountMenuRow
+          <HeaderMenuRow
             active={languageOpen}
             icon={<Languages className="size-3.5" />}
             label={t("header.account.selectLanguage")}
@@ -685,19 +688,34 @@ function AccountPanel({
             </div>
           ) : null}
           {onLogout ? (
-            <AccountMenuRow
+            <HeaderMenuRow
               icon={<LogOut className="size-3.5" />}
               label={t("auth.logout")}
               onClick={onLogout}
             />
           ) : null}
         </div>
-      </div>
+      </HeaderMenuPanel>
     </div>
   );
 }
 
-function AccountMenuRow({
+function HeaderMenuPanel({ children, dropdown = false, compact = false }: {
+  children: ReactNode;
+  dropdown?: boolean;
+  compact?: boolean;
+}) {
+  const className = `${entryStyles.panel} ${entryStyles.menuPanel} ${compact ? entryStyles.compactPanel : ""}`;
+  return dropdown ? (
+    <DropdownMenuContent align="end" sideOffset={8} className={className}>
+      {children}
+    </DropdownMenuContent>
+  ) : <div className={className}>{children}</div>;
+}
+
+function HeaderMenuRow({
+  menuItem = false,
+  id,
   active = false,
   icon,
   label,
@@ -705,6 +723,8 @@ function AccountMenuRow({
   unread = false,
   onClick,
 }: {
+  menuItem?: boolean;
+  id?: string;
   active?: boolean;
   icon: ReactNode;
   label: string;
@@ -714,10 +734,10 @@ function AccountMenuRow({
 }) {
   const content = (
     <>
-      <span className="ml-1 flex size-3.5 shrink-0 items-center justify-center text-slate-100/58" aria-hidden="true">
+      <span className={`${entryStyles.menuIcon} ml-1 flex size-3.5 shrink-0 items-center justify-center`} aria-hidden="true">
         {icon}
       </span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className={`${entryStyles.menuLabel} min-w-0 flex-1 truncate`}>{label}</span>
       {meta ? (
         <span className="max-w-16 truncate text-[11px] text-slate-400">{meta}</span>
       ) : null}
@@ -728,16 +748,18 @@ function AccountMenuRow({
         />
       ) : null}
       <ChevronRight
-        className={`mr-1 size-3.5 shrink-0 text-slate-100/88 transition-transform duration-150 ${
+        className={`${entryStyles.menuChevron} mr-1 size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none ${
           active ? "rotate-90" : ""
         }`}
       />
     </>
   );
-  const className =
-    "flex h-9 w-full items-center gap-2 rounded-[8px] px-1.5 text-left text-[13px] font-normal text-slate-100 transition-colors duration-150 hover:bg-white/[0.05]";
+  const className = entryStyles.menuRow;
+  if (menuItem) {
+    return <DropdownMenuItem id={id} className={className} onClick={onClick}>{content}</DropdownMenuItem>;
+  }
   return (
-    <button type="button" className={className} onClick={onClick}>
+    <button id={id} type="button" className={className} onClick={onClick}>
       {content}
     </button>
   );

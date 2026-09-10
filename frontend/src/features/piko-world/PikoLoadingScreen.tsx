@@ -80,14 +80,14 @@ export function PikoLoadingScreen({ loadState, onEnter, onRetry }: Props) {
     className="dark fixed inset-0 z-50 overflow-hidden bg-background focus:outline-none" data-testid="piko-loading-screen" data-scene={scene.id}>
     <img src={background} alt="" draggable={false} className="absolute inset-0 size-full object-cover" />
     <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_top,rgb(var(--bg-rgb)/0.95)_0%,rgb(var(--bg-rgb)/0.8)_16%,transparent_44%)]" />
-    <div className="absolute inset-x-[6%] bottom-[max(5dvh,env(safe-area-inset-bottom))] flex flex-col items-center gap-4 sm:gap-5">
-      <p role={error ? "alert" : undefined} className="max-w-3xl text-center text-sm leading-relaxed text-foreground sm:text-base">
+    <div className="absolute inset-x-[6%] bottom-[max(5dvh,env(safe-area-inset-bottom))] flex flex-col items-center gap-2 sm:gap-2.5">
+      <p role={error ? "alert" : undefined} className="max-w-3xl text-center text-xs leading-relaxed text-foreground sm:text-sm">
         {t(error ? "pikoWorld.loadingFailed" : `pikoWorld.loadingScenes.${scene.id}.line`)}
       </p>
       {!error && <div role="progressbar" aria-label={t("pikoWorld.loadingProgress")}
         aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}
         aria-valuetext={t(ready ? "pikoWorld.loadingReady" : "pikoWorld.loadingPreparing")}
-        className="relative aspect-[1365/118] w-[min(440px,100%)]">
+        className="relative aspect-[1365/118] w-[min(400px,88%)]">
         <ControlImage kind="frame" />
         <div className="absolute left-[6%] right-[6.2%] top-[21%] bottom-[22%] overflow-hidden rounded-full">
           <div className="size-full transition-[clip-path] duration-[var(--duration-base)] ease-out motion-reduce:transition-none"

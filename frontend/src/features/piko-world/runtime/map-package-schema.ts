@@ -68,17 +68,47 @@ export const PikoNavigationSchema = z.strictObject({
   ),
 });
 
+export const PikoOccluderSchema = z.strictObject({
+  id: z.string().min(1),
+  src: RelativePackagePathSchema,
+  position: PikoPointSchema,
+  depthY: z.number().finite(),
+  // Optional atlas crop and local silhouette; standalone transparent PNGs still work.
+  frame: z.strictObject({
+    x: z.number().int().nonnegative(),
+    y: z.number().int().nonnegative(),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+  }).optional(),
+  outline: z.array(PikoPointSchema).min(3).optional(),
+}).superRefine((occluder, context) => {
+  if (!occluder.outline) return;
+  const points = occluder.outline;
+  const area = points.reduce((sum, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return sum + point.x * next.y - next.x * point.y;
+  }, 0);
+  if (Math.abs(area) < 1) {
+    context.addIssue({ code: "custom", path: ["outline"], message: "遮挡轮廓不能退化" });
+  }
+  if (occluder.frame && points.some(point => point.x < 0 || point.y < 0
+    || point.x > occluder.frame!.width || point.y > occluder.frame!.height)) {
+    context.addIssue({ code: "custom", path: ["outline"], message: "遮挡轮廓必须位于切片内" });
+  }
+});
+
 export const PikoOcclusionSchema = z.strictObject({
   schemaVersion: z.literal(1),
   mapId: MapIdSchema,
-  occluders: z.array(
-    z.strictObject({
-      id: z.string().min(1),
-      src: RelativePackagePathSchema,
-      position: PikoPointSchema,
-      depthY: z.number().finite(),
-    }),
-  ),
+  occluders: z.array(PikoOccluderSchema),
+}).superRefine(({ occluders }, context) => {
+  const ids = new Set<string>();
+  occluders.forEach((occluder, index) => {
+    if (ids.has(occluder.id)) {
+      context.addIssue({ code: "custom", path: ["occluders", index, "id"], message: "遮挡对象 ID 不能重复" });
+    }
+    ids.add(occluder.id);
+  });
 });
 
 export const PikoInteractionsSchema = z.strictObject({
@@ -107,6 +137,14 @@ export const PikoEnvironmentSchema = z.strictObject({
       kind: z.enum(["sprite", "particle", "light", "weather", "filter"]),
       src: RelativePackagePathSchema.optional(),
       region: PikoPolygonSchema.optional(),
+      layer: z.enum(["water", "behind-scenery", "front-scenery"]).optional(),
+      animation: z.strictObject({
+        columns: z.number().int().positive(), rows: z.number().int().positive(),
+        frames: z.number().int().positive(), fps: z.number().positive().max(60),
+        inset: z.number().nonnegative().default(0),
+        playback: z.enum(["loop", "ping-pong"]).optional(),
+        startStep: z.number().int().nonnegative().optional(),
+      }).optional(),
       reducedMotion: z.enum(["keep", "simplify", "disable"]),
     }),
   ),
@@ -115,7 +153,10 @@ export const PikoEnvironmentSchema = z.strictObject({
       id: z.string().min(1),
       src: RelativePackagePathSchema,
       region: PikoPolygonSchema,
+      additionalRegions: z.array(PikoPolygonSchema).optional(),
       volume: z.number().min(0).max(1),
+      fadeDistance: z.number().positive().optional(),
+      repeatDelay: z.number().nonnegative().optional(),
     }),
   ),
 });
@@ -150,6 +191,7 @@ export const PikoMapPackageSchema = z
 export type PikoMapManifest = z.infer<typeof PikoMapManifestSchema>;
 export type PikoNavigation = z.infer<typeof PikoNavigationSchema>;
 export type PikoOcclusion = z.infer<typeof PikoOcclusionSchema>;
+export type PikoOccluder = z.infer<typeof PikoOccluderSchema>;
 export type PikoInteractions = z.infer<typeof PikoInteractionsSchema>;
 export type PikoEnvironment = z.infer<typeof PikoEnvironmentSchema>;
 export type PikoMapPackage = z.infer<typeof PikoMapPackageSchema>;
