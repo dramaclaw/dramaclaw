@@ -3,37 +3,53 @@
 import type * as THREE from 'three';
 
 import { DEG_TO_RAD, clampToRange } from '../domain/camera';
-import type { PrevizCharacterDraft } from '../domain/characterDraft';
+import {
+  PREVIZ_CHARACTER_SPAWN_Y,
+  type PrevizCharacterDraft,
+} from '../domain/characterDraft';
 import { PREVIZ_HEIGHT_CM_RANGE } from '../domain/objects';
 import type { PrevizCharacter } from '../domain/scene';
 import { blitCameraToCanvas, type CameraPreviewCanvas } from './cameraPreview';
 import type { CharacterRigFactory } from './characterRig';
-import { createInfiniteGrid } from './grid';
 import { createCharacterPlaceholder, disposeSubtree, type ThreeModule } from './sceneGraph';
 
 /**
  * 「创建人物」对话框那块木偶预览。
  *
  * 借视口那台 `WebGLRenderer`（浏览器并发的 WebGL 上下文上限约 16 个，为一个对话框再开
- * 一个是在拿整个编辑器冒险），但**不借视口那个 scene**：预览里只该有这一具木偶和一块
- * 地，把整场戏画进去等于给用户看一张缩略的视口——他正要看的是「这个人长什么样」，
- * 而不是「他会站在谁旁边」（那是左边俯视图那一栏的事）。
+ * 一个是在拿整个编辑器冒险），也**借视口那个 scene**：这个人建出来会站在戏里，用户在
+ * 这块预览上要看的正是「他站在那儿是什么样」——高矮跟旁边的人比、脚下那块地上有没有
+ * 东西。另起一个只装木偶和一块地的空场景答不了这个问题，而左栏那张俯视图只答得了平面
+ * 上的相对位置。
  *
  * 木偶本身仍由 `CharacterRigFactory` 建：共用工厂就共用了那份已经下好的 GLB 与动画库，
  * 预览不会再拉一次几 MB，姿势也保证跟视口里同一套。
  *
- * 画布尺寸不在这里定：取景直接读 `deps.canvas` 的宽高（木偶不受出片画幅约束，铺满就行，
- * 也就不需要 `previewFitRect` 那套留边）。对话框那边请用 `PREVIZ_PREVIEW_SIZE`——它是两块
- * 预览共用的那一份分辨率，机位那块连测试一起钉住了它；对话框自己写一组数就绕开那颗钉
- * 子，往后要调预览分辨率就得逐个对话框改，漏掉一个也没有任何东西会报。
+ * 木偶不是常驻在场景里的：它平时待在一个游离的 `holder` 下面，只在渲染的那一刻挂进
+ * 世界场景，画完立刻摘回来（见 `renderCharacterPreview` 的尾段）。留在场上的话，视口
+ * 下一次重绘就会多出一具凭空站着的人，而它不在场景数据里——用户既选不中也删不掉。
+ *
+ * 画布尺寸不在这里取景时读死：取景直接读 `deps.canvas` 的宽高。对话框那边请用
+ * `PREVIZ_CHARACTER_PREVIEW_SIZE`。
  */
 export interface CharacterPreviewDeps {
   three: ThreeModule;
   renderer: THREE.WebGLRenderer;
   camera: THREE.PerspectiveCamera;
   canvas: CameraPreviewCanvas;
-  /** 预览专用，构造一次留着（见 `createCharacterPreviewStage`）。 */
-  scene: THREE.Scene;
+  /**
+   * 视口那个真实场景。木偶在**渲染的那一刻**挂进去，渲染完立刻摘掉。
+   *
+   * 挂进去而不是另起一个预览场景，是因为「他会站在谁旁边」正是这块预览要回答的问题；
+   * 顺带白捡了视口那两盏灯与那块无限网格——预览原来自带的那一份本来就是照抄它们的
+   * 同一组数（环境光 1.2 + 主光 (4, 8, 6) 强度 1.8）。
+   */
+  worldScene: THREE.Scene;
+  /**
+   * 木偶不在场上时的家。必须是个游离的 `Object3D` 而不是 `Scene`：一个 `Object3D`
+   * 只能有一个父节点，木偶要在这两个父节点之间来回搬。
+   */
+  holder: THREE.Object3D;
   rig: CharacterRigFactory;
   /**
    * 这套家伙什还活着吗。`rig.build()` 可以挂上几秒，这期间用户完全可能关掉预演台：
@@ -52,11 +68,20 @@ export interface CharacterPreviewDeps {
   alive?: () => boolean;
 }
 
-/** 预览场景与它那台相机。两样都是构造一次、整个会话留着。 */
+/** 预览那台相机与木偶的家。两样都是构造一次、整个会话留着。 */
 export interface CharacterPreviewStage {
-  scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
+  /** 见 `CharacterPreviewDeps.holder`。 */
+  holder: THREE.Object3D;
 }
+
+/**
+ * 中栏那块预览的分辨率。**竖版**，与 upstream 一致：一个站着的人塞进 16:9 里两边全是空。
+ *
+ * 不复用 `PREVIZ_PREVIEW_SIZE`：那是机位取景预览那一份，尺寸被 `camera-preview.test.ts`
+ * 钉着，而取景预览必须跟着出片画幅走、人物预览不必。
+ */
+export const PREVIZ_CHARACTER_PREVIEW_SIZE = { width: 230, height: 415 } as const;
 
 /**
  * 木偶预览那台相机的垂直视场角，度。
@@ -123,38 +148,26 @@ const PREVIEW_LATEST = 'previzCharacterPreviewLatest';
 const PREVIEW_CLAIM = 'previzCharacterPreviewClaim';
 
 /**
- * 建一套预览用的场景与相机。
+ * 建一套预览用的家伙什：一台相机，加一个木偶不在场上时待着的容器。
  *
- * 灯光是照视口那两盏抄的（`PrevizRenderer.create` 里的环境光 1.2 + 主光 1.8 摆在
- * (4, 8, 6)）：同一个人物在对话框里和在视口里明暗对不上，用户会以为体型或颜色也变了。
- * 两处各留一份而不是共用一个对象——一个 `Object3D` 只能有一个父节点，把视口那两盏
- * 挪过来等于把视口的光关了。
- *
- * 地面用的就是视口那块无限网格（`createInfiniteGrid`）：它靠 `onBeforeRender` 自己
- * 跟着当时那台相机走，接线一步都不用，尺度也与视口逐格对应。同样得**新建一块**，
- * 理由同上。
+ * 没有场景、没有灯、没有地面网格——渲染时借的就是视口那个场景，那里这三样都已经有了。
+ * 自己再带一份的话，两组同样的灯照在同一具木偶上，预览里的人比视口里亮一倍，用户会
+ * 以为是辨识色选错了。
  */
 export function createCharacterPreviewStage(three: ThreeModule): CharacterPreviewStage {
-  const scene = new three.Scene();
-  scene.background = new three.Color(0x101216);
-  scene.add(createInfiniteGrid(three));
-  scene.add(new three.AmbientLight(0xffffff, 1.2));
-  const keyLight = new three.DirectionalLight(0xffffff, 1.8);
-  keyLight.position.set(4, 8, 6);
-  scene.add(keyLight);
-
   // 视场角、近远平面在这里定死；每帧只改站位与画布宽高比（见 `placePreviewCamera`）。
   const camera = new three.PerspectiveCamera(PREVIEW_FOV_DEG, 1, PREVIEW_NEAR_M, PREVIEW_FAR_M);
-  return { scene, camera };
+  return { camera, holder: new three.Group() };
 }
 
 /**
- * 还掉一套预览场景。木偶、地面网格各持有自己的几何体与材质，而这套场景是随编辑器
- * 一起活着的——不还的话，开一次预演台漏一份。
+ * 还掉一套预览家伙什。木偶持有自己的几何体与材质，而它挂在 `holder` 下面、不在视口那
+ * 个场景里，编辑器收尾时那次遍历整个场景的 dispose 扫不到它——不还的话，开一次预演台
+ * 漏一具。
  */
 export function disposeCharacterPreviewStage(stage: CharacterPreviewStage): void {
-  for (const child of [...stage.scene.children]) {
-    stage.scene.remove(child);
+  for (const child of [...stage.holder.children]) {
+    stage.holder.remove(child);
     disposeSubtree(child);
   }
 }
@@ -240,9 +253,38 @@ export async function renderCharacterPreview(
 
   const width = Math.max(1, Math.floor(deps.canvas.width));
   const height = Math.max(1, Math.floor(deps.canvas.height));
-  placePreviewCamera(deps, character.heightCm, width / height);
-  blitCameraToCanvas(deps, deps.camera, { x: 0, y: 0, width, height });
+  const spot = draft.spot ?? PREVIEW_DEFAULT_SPOT;
+  placePreviewCamera(deps, character.heightCm, width / height, spot);
+
+  // 挂 → 画 → 摘，三步之间一次都不 await。JS 是单线程的，中间不让出去，视口就绝不可能
+  // 撞见一个多出来的木偶；中间插一个 await 的话，那一帧的视口重绘会把它画进成片里。
+  //
+  // 两次 `remove` 写出来而不是靠 `Object3D.add` 顺手把旧父节点摘掉：那一步是隐式的，
+  // 而「木偶此刻挂在谁下面」正是这段代码唯一要说清楚的事。
+  root.position.set(spot[0], PREVIZ_CHARACTER_SPAWN_Y, spot[1]);
+  deps.holder.remove(root);
+  deps.worldScene.add(root);
+  try {
+    blitCameraToCanvas(
+      { three: deps.three, renderer: deps.renderer, scene: deps.worldScene, canvas: deps.canvas },
+      deps.camera,
+      { x: 0, y: 0, width, height },
+    );
+  } finally {
+    // `finally`：blit 抛了也得摘干净，否则一次异常之后视口里就永久多一具木偶。
+    deps.worldScene.remove(root);
+    deps.holder.add(root);
+  }
 }
+
+/**
+ * 还没在俯视图上点过位时，木偶站在哪。
+ *
+ * 对话框一打开就画一帧，而那时 `spot` 还是 null。这一帧跳过不画的话，中栏会空到用户
+ * 点下第一个落点为止——而他多半以为是模型没下下来。世界原点是场景默认取景的正中，
+ * 与左栏那张俯视图没点过位时的取景中心是同一处。
+ */
+const PREVIEW_DEFAULT_SPOT = [0, 0] as const;
 
 /**
  * 换一具木偶的判据。**只有这两件事**要重建：
@@ -292,13 +334,19 @@ async function buildMannequin(
   return { node: rig, complete: rig !== null };
 }
 
-/** 预览场景里那个常驻的木偶容器，没有就建一个。 */
+/**
+ * 那个常驻的木偶容器，没有就建一个。
+ *
+ * 只在 `holder` 里找：渲染那三步（挂 → 画 → 摘）中间一次都不 await，所以这个函数被调到
+ * 的每一刻，容器都在 `holder` 下面。往世界场景里也找一遍的话，是在给一个到不了的状态
+ * 写代码。
+ */
 function mannequinRoot(deps: CharacterPreviewDeps): THREE.Object3D {
-  const existing = deps.scene.children.find((child) => child.userData[PREVIEW_ROOT_KEY]);
+  const existing = deps.holder.children.find((child) => child.userData[PREVIEW_ROOT_KEY]);
   if (existing) return existing;
   const root = new deps.three.Group();
   root.userData[PREVIEW_ROOT_KEY] = true;
-  deps.scene.add(root);
+  deps.holder.add(root);
   return root;
 }
 
@@ -318,6 +366,8 @@ function previewCharacter(draft: PrevizCharacterDraft): PrevizCharacter {
     id: 'previz-character-preview',
     kind: 'character',
     name: draft.name,
+    // 站位不在这里：木偶的落点写在容器上（见 `renderCharacterPreview` 的尾段），
+    // 这具 `PrevizCharacter` 只是喂给 rig 工厂的那份参数表，它不读 transform。
     transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     visible: true,
     locked: false,
@@ -350,28 +400,37 @@ function previewCharacter(draft: PrevizCharacterDraft): PrevizCharacter {
  * 于是 d 与身高成正比——120 cm 与 220 cm 拿到的是同一个构图，只是尺子不一样，用户拖
  * 身高滑杆时人在画面里的大小不变，变的是脚下那圈网格的疏密（他能从那里读出高矮）。
  *
- * 只按**垂直**方向解：预览画布是 16:9 的横幅，而人是竖的，水平方向永远有富余，拿宽度
- * 去解会得到一个近得多的距离，人反而顶出画面。
+ * 只按**垂直**方向解：画布是竖版，而人也是竖的，水平方向永远有富余（230×415 上，人占
+ * 掉画面高度的 86% 时两侧还各剩三成多），拿宽度去解会得到一个近得多的距离，人反而顶
+ * 出画面。
  *
- * 视线抬到半身高、看向 `(0, h/2, 0)`：贴着地面平视的话人在画面上半截，而俯视会把身高
+ * 视线抬到半身高、看向脚下那个落点：贴着地面平视的话人在画面上半截，而俯视会把身高
  * 压短——这块预览恰恰是用来比较身高的。
+ *
+ * 整台相机跟着落点在 XZ 上平移。还按世界原点取景的话，点到远处的人直接不在画面里，
+ * 而画面上只表现为「预览是空的」。
  */
 function placePreviewCamera(
   deps: CharacterPreviewDeps,
   heightCm: number,
   aspect: number,
+  spot: readonly [number, number],
 ): void {
   const height = heightCm / 100;
   const distance = height / (2 * PREVIEW_FILL * Math.tan((PREVIEW_FOV_DEG / 2) * DEG_TO_RAD));
   const azimuth = PREVIEW_AZIMUTH_DEG * DEG_TO_RAD;
-  const eyeY = height / 2;
+  const eyeY = PREVIZ_CHARACTER_SPAWN_Y + height / 2;
   // 人物零旋转时朝 -Z（`characterRig.build` 把克隆体转了半圈就为这条约定），所以正面
   // 在 -Z 那侧；站到 +Z 去看的是后脑勺。
-  deps.camera.position.set(distance * Math.sin(azimuth), eyeY, -distance * Math.cos(azimuth));
+  deps.camera.position.set(
+    spot[0] + distance * Math.sin(azimuth),
+    eyeY,
+    spot[1] - distance * Math.cos(azimuth),
+  );
   // 视场角每帧写一次而不是只在建相机时写：上面那个距离是按它解出来的，两者必须是同一
   // 个数。分开写的话，谁改了一处构图就整个错位，而画面上只表现为「人怎么变小了」。
   deps.camera.fov = PREVIEW_FOV_DEG;
   deps.camera.aspect = aspect;
   deps.camera.updateProjectionMatrix();
-  deps.camera.lookAt(0, eyeY, 0);
+  deps.camera.lookAt(spot[0], eyeY, spot[1]);
 }

@@ -67,8 +67,12 @@ export function isPlacedCharacterDraft(
  *
  * 单开一个常量而不是在下面写两个 0：`transform.position[1]` 与 `planeY` 必须是同一个数
  * ——用户建完人就切「锁定平面」时，锁的应该是他刚才建人的那一层。
+ *
+ * 导出是给中栏那块预览用的（`engine/characterPreview.ts`）：预览里的木偶站在哪一层，
+ * 必须与按下「创建」之后落进场景的那一层是同一个数，否则预览里的人浮着或者陷进地里，
+ * 而建出来的人是好的——这种对不上没有任何东西会报。
  */
-const PREVIZ_CHARACTER_SPAWN_Y = 0;
+export const PREVIZ_CHARACTER_SPAWN_Y = 0;
 
 /**
  * 一份全新的人物草稿。默认值不是在这里另写一遍，而是从 `createPrevizObject` 的人物
