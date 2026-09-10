@@ -120,7 +120,13 @@ async def retry(project: str, import_id: str, user: dict = Depends(get_api_user)
         if record['status'] not in {'failed', 'needs_review', 'ready'}:
             raise HTTPException(409, 'Only failed or needs-review conversions can be retried')
         structure_failed = (record.get('quality_report') or {}).get('structure', {}).get('status') == 'failed'
-        if record['status'] in {'needs_review', 'ready'} and not structure_failed and not record.get('error'):
+        if structure_failed:
+            # Invalid candidates must not be replayed on an explicit retry.
+            record['checkpoints'] = {
+                name: checkpoint for name, checkpoint in record.get('checkpoints', {}).items()
+                if name == 'analyzing'
+            }
+        elif record['status'] in {'needs_review', 'ready'} and not record.get('error'):
             # Explicit regeneration revisits semantic choices; transport failures resume checkpoints.
             record['checkpoints'] = {}
         record.pop('validation_candidate', None)

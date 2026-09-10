@@ -244,3 +244,39 @@ async def test_api_install_returns_conflict_without_blocking_on_busy_import(tmp_
         await routes.install('p', record['id'], routes.InstallRequest(), {'username': 'alice'})
     assert exc.value.status_code == 409
     assert module.get_record(tmp_path, 'alice', record['id'])['status'] == record['status']
+
+
+@pytest.mark.asyncio
+async def test_retry_after_exhausted_structure_failures_generates_fresh_candidate(tmp_path, monkeypatch):
+    import copy
+    import json
+    from types import SimpleNamespace
+    from novelvideo.api.routes import skill_imports as routes
+    from novelvideo.freezone import skill_import as module
+    from test_freezone_agent_bundle import _bundle_payload
+    from test_skill_import_quality import design_fixture, review_fixture
+    monkeypatch.setattr('novelvideo.freezone.agent_config_store.list_user_agent_config_items', lambda *args: [])
+    async def scope(project, user):
+        return SimpleNamespace(), tmp_path, user['username']
+    monkeypatch.setattr(routes, 'scope', scope)
+    async def enqueue(ctx, root, username, record):
+        return module.public_record(record)
+    monkeypatch.setattr(routes, 'enqueue', enqueue)
+    record = module.create_record(tmp_path, 'alice', read_source('x.md', base64.b64encode(b'Check citations').decode()), 'b')
+    invalid = _bundle_payload()
+    invalid['skill']['planning']['prompt_guide'] = ''
+    responses = [design_fixture(), invalid, invalid, invalid]
+    async def generate(prompt):
+        return json.dumps(responses.pop(0))
+    await module.convert_record(tmp_path, 'alice', record['id'], generate)
+    failed = module.get_record(tmp_path, 'alice', record['id'])
+    assert failed['quality_report']['structure']['status'] == 'failed'
+    analysis = copy.deepcopy(failed['checkpoints']['analyzing'])
+    assert all(f'generating:{i}' in failed['checkpoints'] for i in range(3))
+    await routes.retry('p', record['id'], {'username': 'alice'})
+    queued = module.get_record(tmp_path, 'alice', record['id'])
+    assert queued['checkpoints'] == {'analyzing': analysis}
+    responses.extend([_bundle_payload(), review_fixture()])
+    result = await module.convert_record(tmp_path, 'alice', record['id'], generate)
+    assert not responses
+    assert result['status'] == 'ready'
