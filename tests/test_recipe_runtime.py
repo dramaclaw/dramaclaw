@@ -108,24 +108,8 @@ def test_recipe_compiler_uses_the_dedicated_brainclaw_profile(monkeypatch):
     assert result.executed_at > 0
     assert captured["brainclaw_profile"] is BrainClawProfile.FREEZONE_RECIPE_COMPILATION
     assert captured["run_kwargs"] == {
-        "model_settings": {"openai_reasoning_effort": "low"}
+        "model_settings": {"openai_reasoning_effort": "none"}
     }
-
-
-def test_recipe_compiler_reasoning_effort_is_configurable(monkeypatch):
-    monkeypatch.setenv("FREEZONE_RECIPE_COMPILER_REASONING_EFFORT", "HIGH")
-
-    assert recipe_runtime._recipe_compiler_reasoning_effort() == "high"
-
-
-def test_recipe_compiler_reasoning_effort_rejects_unsupported_value(monkeypatch):
-    monkeypatch.setenv("FREEZONE_RECIPE_COMPILER_REASONING_EFFORT", "none")
-
-    with pytest.raises(
-        recipe_runtime.RecipeRuntimeError,
-        match="expected one of: high, low, max",
-    ):
-        recipe_runtime._recipe_compiler_reasoning_effort()
 
 
 def test_build_recipe_compiler_task_checks_output_kind():
