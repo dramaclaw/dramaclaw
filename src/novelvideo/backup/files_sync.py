@@ -114,6 +114,7 @@ def build_sync_cmd(
         "--backup-dir",
         history_dst,
         "--fast-list",
+        "--checksum",
         "--transfers",
         "8",
         "--skip-links",
