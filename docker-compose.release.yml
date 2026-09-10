@@ -8,7 +8,7 @@
 # 默认模式是官方，此时内置网关只是常驻待命；.env 写 NEWAPI_PROVISIONER_ENABLED=false 可禁用一键初始化。
 services:
   api:
-    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw:${DRAMACLAW_VERSION:-2.0.3}
+    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw:${DRAMACLAW_VERSION:-2.0.4}
     restart: unless-stopped
     # 运行时从宿主 .env 注入 model/LLM key；镜像版允许没有 .env（首启后再补也行）。
     # environment: 块仍覆盖此处同名变量，保持 CE inline 模式强制不变。
@@ -77,7 +77,7 @@ services:
   # they are overridden to the compose `api` service (internal port 8780). Open
   # the app at http://localhost:8080 — the browser only ever talks to web.
   web:
-    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw-frontend:${DRAMACLAW_VERSION:-2.0.3}
+    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw-frontend:${DRAMACLAW_VERSION:-2.0.4}
     restart: unless-stopped
     environment:
       BACKEND_HOST: api
