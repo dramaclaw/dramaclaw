@@ -541,13 +541,16 @@ _FREEZONE_TEXT_ONLY_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 _FREEZONE_SKILL_RUNTIME_NEGATION_RE = re.compile(
-    r"(?:暂不|暂时不|先不|不要|无需|不用|不再|不会|"
-    r"do\s+not|don't|without)"
-    r"[^。！？!?\n]{0,24}"
+    r"(?:"
+    r"(?:暂不|暂时不|先不|不要|无需|不用|不再|不会|不)\s*"
+    r"(?:直接|立即|马上|继续|再)?\s*"
     r"(?:运行|执行|应用|生成|制作|创建|写入|添加|删除|移除|清空|修改|更新|"
-    r"连接|连线|移动|布局|选择|打开|"
-    r"run|execute|apply|generate|make|create|write|add|delete|remove|clear|"
-    r"update|connect|move|layout|select|open)",
+    r"连接|连线|移动|布局|选择|打开)"
+    r"|(?:do\s+not|don't|not|without)\s+"
+    r"(?:(?:directly|immediately|then)\s+)?"
+    r"(?:run|execute|apply|generate|make|create|write|add|delete|remove|clear|"
+    r"update|connect|move|layout|select|open)"
+    r")",
     re.IGNORECASE,
 )
 _FREEZONE_INDEPENDENT_CANVAS_WRITE_RE = re.compile(
@@ -582,6 +585,8 @@ _FREEZONE_SKILL_RUNTIME_REQUEST_RE = re.compile(
     r"(?:添加到|放到|写入|加入|add\s+to|put\s+(?:it\s+)?on)"
     r"[^。！？!?\n]{0,12}"
     r"(?:画布|节点|canvas|node)"
+    r"|(?:运行|执行|应用|使用)\s*(?:它|这个|该(?:Skill|Recipe|技能|配方)?)"
+    r"|(?:run|execute|apply|use)\s+(?:it|this(?:\s+(?:skill|recipe))?)"
     r")",
     re.IGNORECASE,
 )
