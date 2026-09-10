@@ -265,6 +265,7 @@ export class PrevizRenderer {
       new PropLoader({
         loadGltf: (url) => gltfLoader.loadAsync(url),
         loadObj: (url) => objLoader.loadAsync(url),
+        clone: skeletonUtils.clone,
       }),
     );
 
