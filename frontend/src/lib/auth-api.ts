@@ -50,6 +50,27 @@ export function newAuthIdempotencyKey(): string {
   return `web:${crypto.randomUUID()}`;
 }
 
+export async function bindAccountPhone(
+  action: "request" | "verify",
+  input: {
+    phone: string;
+    current_password: string;
+    verification_id?: string;
+    code?: string;
+  },
+  idempotencyKey: string,
+): Promise<OtpChallenge | { phone: string; phone_masked: string }> {
+  const response = await fetch(`/api/v1/account/phone/${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    credentials: "include",
+    body: JSON.stringify(input),
+    signal: regionAbortController().signal,
+  });
+  if (!response.ok) throw await authError(response, "Phone binding failed");
+  return (await response.json()).data;
+}
+
 export async function requestOtp(
   phone: string,
   idempotencyKey: string,

@@ -438,6 +438,15 @@
       "languageChinese": "中文",
       "languageEnglish": "English",
       "languageVietnamese": "Tiếng Việt",
+      "phoneBinding": {
+        "title": "绑定手机号",
+        "description": "验证当前密码和手机号，绑定到现有账号。绑定后支持验证码登录，不支持换绑或解绑。",
+        "submit": "确认绑定",
+        "success": "手机号已绑定，原有账号和密码仍可使用。",
+        "inUse": "该手机号已属于其他账号，无法绑定。账号不会自动合并。",
+        "alreadyBound": "当前账号已绑定手机号，请刷新页面。",
+        "error": "绑定失败，请重试。"
+      },
       "passwordDialog": {
         "title": "修改密码",
         "description": "修改成功后会退出所有设备，需要使用新密码重新登录。",
@@ -1838,6 +1847,7 @@
       "showcaseDescription": "角色、分镜、声音与镜头，在同一条制作线上持续推进"
     },
     "otp": {
+      "existingAccountHint": "已有账号？请先用账号密码登录，再在账号菜单中绑定手机号，避免创建新账号。",
       "tab": "验证码登录",
       "phone": "手机号",
       "phonePlaceholder": "输入手机号",

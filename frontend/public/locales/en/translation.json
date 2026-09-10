@@ -438,6 +438,15 @@
       "languageChinese": "中文",
       "languageEnglish": "English",
       "languageVietnamese": "Tiếng Việt",
+      "phoneBinding": {
+        "title": "Bind phone number",
+        "description": "Verify your current password and phone to link it to this account. You can then sign in by code. The phone cannot be changed or unlinked.",
+        "submit": "Confirm binding",
+        "success": "Phone linked. Your existing account and password still work.",
+        "inUse": "This phone belongs to another account and cannot be linked. Accounts are not merged automatically.",
+        "alreadyBound": "This account already has a phone. Refresh the page.",
+        "error": "Could not link the phone. Try again."
+      },
       "passwordDialog": {
         "title": "Change password",
         "description": "Changing your password signs you out on every device. Sign in again with the new password.",
@@ -1838,6 +1847,7 @@
       "showcaseDescription": "Characters, storyboards, sound, and shots move forward in one production line"
     },
     "otp": {
+      "existingAccountHint": "Already have an account? Sign in with your account and password, then link your phone in the account menu to avoid creating another account.",
       "tab": "Verification code",
       "phone": "Phone number",
       "phonePlaceholder": "Enter phone number",
