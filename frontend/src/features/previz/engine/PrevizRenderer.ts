@@ -10,8 +10,9 @@ import type { PrevizCameraDraft } from '../domain/cameraDraft';
 import type { PrevizCharacterDraft } from '../domain/characterDraft';
 import { dropPositionY, dropRayOriginY } from '../domain/drop';
 import { evaluateSceneAt } from '../domain/evaluate';
+import type { PrevizPropExtent } from '../domain/moveAssist';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
-import type { PrevizScene, PrevizTransform, Vec3 } from '../domain/scene';
+import type { PrevizObject, PrevizScene, PrevizTransform, Vec3 } from '../domain/scene';
 import type { PrevizTopDownFootprint } from '../domain/topDownMap';
 import {
   PREVIZ_DEFAULT_VIEW,
@@ -530,7 +531,7 @@ export class PrevizRenderer {
   private applyEvaluatedFrame(): void {
     const scene = this.currentScene;
     if (!scene) return;
-    const evaluated = evaluateSceneAt(scene, this.currentFrame);
+    const evaluated = evaluateSceneAt(scene, this.currentFrame, this.propExtents());
     for (const [objectId, state] of evaluated) {
       // 姿势不归手摆管：拖动一个正在走的人物改的是他站在哪，不是把他的腿定住。
       if (state.poseId !== null) this.graph.applyPose(objectId, state.poseId, state.poseTime);
@@ -723,17 +724,7 @@ export class PrevizRenderer {
    */
   propFootprints(): PrevizTopDownFootprint[] {
     const footprints: PrevizTopDownFootprint[] = [];
-    for (const object of this.currentScene?.objects ?? []) {
-      if (object.kind !== 'prop' || !object.visible) continue;
-      const node = this.graph.nodeFor(object.id);
-      if (!node) continue;
-      const box = new this.three.Box3().setFromObject(node);
-      // 空盒（`Box3.makeEmpty()` 的初值 min=+∞ / max=-∞）跳过，不兜底。
-      if (box.isEmpty()) continue;
-      // `isEmpty()` 判的是 max < min，两端同时是 +∞ 或同时是 NaN 都过得去它。真出现的话
-      // 下游 `sceneTopDownBounds` 的跨度会变成 Infinity / NaN，整张选位图缩成一个点或者
-      // 每一次点击都映射成 NaN——人放不下去，画面上却没有任何提示。
-      if (![box.min.x, box.max.x, box.min.z, box.max.z].every(Number.isFinite)) continue;
+    this.measureProps((object, box) => {
       footprints.push({
         id: object.id,
         minX: box.min.x,
@@ -741,8 +732,66 @@ export class PrevizRenderer {
         minZ: box.min.z,
         maxZ: box.max.z,
       });
-    }
+    });
     return footprints;
+  }
+
+  /**
+   * 每件看得见的道具在**本地**坐标下的 XZ 半尺寸，喂给 `evaluateSceneAt` 的移动辅助
+   * 那一轮。
+   *
+   * 与 `propFootprints()` 的分工是「本地 vs 世界」：那一份是给选位图画地用的，一次
+   * 快照就够；这一份要跟着**走位中的**道具走，所以世界盒得由求值层拿那一帧解算出的
+   * transform 现算（`domain/moveAssist.ts` 的 `propWorldBox`），这里给的数里不能含位置。
+   *
+   * 量法与筛选口径与 `propFootprints()` 逐条对齐——图上画着地的那件道具，播放时就该
+   * 推得动人；反过来，图上没有的东西不该在暗处把人挡开。两处走同一个 `measureProps`。
+   */
+  propExtents(): PrevizPropExtent[] {
+    const extents: PrevizPropExtent[] = [];
+    this.measureProps((object, box) => {
+      const node = this.graph.nodeFor(object.id);
+      if (!node) return;
+      // 节点上已经套过一次 `transform.scale`，量出来的世界盒含它。不除掉，缩放就被乘
+      // 两遍：一件放大到 3 倍的道具，人会离它九倍远。
+      const scaleX = Math.abs(node.scale.x);
+      const scaleZ = Math.abs(node.scale.z);
+      // 缩放为 0 除下去是 Infinity，`propWorldBox` 会给出一个铺满整个平面的盒子，
+      // 全场的人都被推到 NaN 上。缩放到 0 的道具在画面上本来也看不见。
+      if (!(scaleX > 0) || !(scaleZ > 0)) return;
+      extents.push({
+        id: object.id,
+        halfX: (box.max.x - box.min.x) / 2 / scaleX,
+        halfZ: (box.max.z - box.min.z) / 2 / scaleZ,
+      });
+    });
+    return extents;
+  }
+
+  /**
+   * 遍历每件**看得见的**道具，量一次世界包围盒，把过得了体检的交给回调。
+   *
+   * 空盒（`Box3.makeEmpty()` 的初值 min=+∞ / max=-∞）跳过，不兜底：那是「模型还在下载
+   * 或者下载失败了」。这里**不能**照搬 `boundsOf()` 那条兜底——那个函数空盒时换成一个
+   * 人体尺寸的占位盒，答的是「用户点了聚焦、可对象没有几何体，画面上该看到什么」。
+   *
+   * `isEmpty()` 判的是 max < min，两端同时是 +∞ 或同时是 NaN 都过得去它，所以另外查一
+   * 遍有限性。真放出去的话，下游的跨度会变成 Infinity / NaN——选位图缩成一个点、每次
+   * 点击都映射成 NaN，或者移动辅助把全场的人推到 NaN 上，而画面上没有任何提示。
+   *
+   * 只量道具：人物的轮廓是个 0.4 m 的圆，在这张图上和一颗参照点几乎一样大；机位的
+   * 包围盒含取景视锥，一台 35mm 机位的锥体能盖住半个场地，画上去会把整张图淹掉。
+   */
+  private measureProps(visit: (object: PrevizObject, box: THREE.Box3) => void): void {
+    for (const object of this.currentScene?.objects ?? []) {
+      if (object.kind !== 'prop' || !object.visible) continue;
+      const node = this.graph.nodeFor(object.id);
+      if (!node) continue;
+      const box = new this.three.Box3().setFromObject(node);
+      if (box.isEmpty()) continue;
+      if (![box.min.x, box.max.x, box.min.z, box.max.z].every(Number.isFinite)) continue;
+      visit(object, box);
+    }
   }
 
   /**

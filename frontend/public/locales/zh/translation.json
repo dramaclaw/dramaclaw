@@ -7714,6 +7714,10 @@
         "ground": "贴合地面时 Y 由落地射线逐帧算出，这里改不动",
         "plane": "锁定平面时 Y 恒等于下面的锁定高度"
       },
+      "moveAssist": "移动辅助",
+      "moveAssistNote": "播放时生效，静止摆位不受影响",
+      "avoidCollision": "自动规避碰撞",
+      "stayInBounds": "限制在场景范围",
       "focalMm": "焦距（毫米）",
       "aperture": "光圈",
       "sensor": "画幅",

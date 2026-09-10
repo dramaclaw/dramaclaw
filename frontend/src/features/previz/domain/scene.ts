@@ -139,6 +139,17 @@ export interface PrevizCharacter extends PrevizObjectBase {
    */
   basePoseId: string;
   poseAdjust: { pitch: number; turn: number; lean: number };
+  /**
+   * 移动辅助：走位求值时把这个人在地面上推开、夹住（`domain/moveAssist.ts` 与
+   * `evaluate.ts` 的 `applyMoveAssist`）。**只在播放求值时生效**，手摆的位置一个像素
+   * 都不动。
+   *
+   * 两个都默认 false，缺字段的老场景也读成 false——它们会改变人走出来的轨迹，给存量
+   * 场景默认打开等于无声地改掉用户已经调好的走位。
+   */
+  avoidCollision: boolean;
+  /** 同上：把人夹在场景范围（`sceneTopDownBounds` 那块地）之内。 */
+  stayInBounds: boolean;
 }
 
 export interface PrevizCamera extends PrevizObjectBase {
@@ -497,6 +508,10 @@ export function parseObject(raw: unknown): PrevizObject | null {
         basePoseId:
           typeof source.basePoseId === 'string' ? source.basePoseId : PREVIZ_DEFAULT_POSE_ID,
         poseAdjust: parsePoseAdjust(source.poseAdjust),
+        // `=== true` 而不是取真值：存进来一个 "false" 字符串时，真值判会把它当成勾上了。
+        // 两个都缺就是加这两个字段之前的行为，老场景打开时一个人都不该改轨迹。
+        avoidCollision: source.avoidCollision === true,
+        stayInBounds: source.stayInBounds === true,
       };
     case 'camera':
       return {

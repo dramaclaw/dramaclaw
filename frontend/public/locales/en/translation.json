@@ -7714,6 +7714,10 @@
         "ground": "Y is recomputed from a drop ray each frame while sticking to the ground",
         "plane": "Locking to a plane pins Y to the locked height below"
       },
+      "moveAssist": "Movement assist",
+      "moveAssistNote": "Applies during playback; hand placement is unaffected",
+      "avoidCollision": "Avoid collisions",
+      "stayInBounds": "Stay inside the scene",
       "focalMm": "Focal length (mm)",
       "aperture": "Aperture",
       "sensor": "Sensor",

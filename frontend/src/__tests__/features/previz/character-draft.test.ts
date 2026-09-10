@@ -38,6 +38,8 @@ describe("createCharacterDraft", () => {
     expect(draft.basePoseId).toBe(made.basePoseId);
     expect(draft.poseAdjust).toEqual(made.poseAdjust);
     expect(draft.heightPolicy).toBe(made.heightPolicy);
+    expect(draft.avoidCollision).toBe(made.avoidCollision);
+    expect(draft.stayInBounds).toBe(made.stayInBounds);
   });
 
   it("leaves the spot unpicked so the create button starts disabled", () => {
@@ -92,6 +94,15 @@ describe("clampCharacterDraft", () => {
 });
 
 describe("characterDraftOverrides", () => {
+  it("carries both movement-assist switches through to the object", () => {
+    const overrides = characterDraftOverrides(
+      placed({ avoidCollision: true, stayInBounds: true }),
+    );
+
+    expect(overrides.avoidCollision).toBe(true);
+    expect(overrides.stayInBounds).toBe(true);
+  });
+
   it("stands the character on the picked spot with its feet on the grid", () => {
     const overrides = characterDraftOverrides(placed({ spot: [2, -3] }));
 

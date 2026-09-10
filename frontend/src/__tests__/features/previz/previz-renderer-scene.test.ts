@@ -2498,4 +2498,91 @@ describe('PrevizRenderer 量道具的落地范围', () => {
     // 看不见的东西不该在选位图上占一块地：用户会照着一块画面上根本不存在的家具让位。
     expect(instance.propFootprints()).toEqual([]);
   });
+
+  // `propExtents()` 与 `propFootprints()` 是同一次测量的两种切法：轮廓是**世界**盒，
+  // 给选位图画地用；尺寸是**本地**半尺寸，给求值层的移动辅助用——那一轮要拿这一帧
+  // 解算出的道具位置现算世界盒，所以这里给的数里不能含位置。
+  it('measures each prop into local half-extents for the evaluator', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([3, 0, -2], [-5, 1, 4]);
+
+    instance.setScene(scene);
+
+    expect(instance.propExtents()).toEqual([
+      { id: scene.objects[0]!.id, halfX: 1, halfZ: 1 },
+      { id: scene.objects[1]!.id, halfX: 1, halfZ: 1 },
+    ]);
+  });
+
+  // 位置必须被除掉。留在里面的话，走位中的道具每一帧都在「变大」——人会被推到越来越
+  // 远的地方，而画面上只是「他莫名其妙绕了一个越来越大的圈」。
+  it('keeps the half-extents put when the prop moves', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([0, 0, 0]);
+    instance.setScene(scene);
+    const before = instance.propExtents();
+
+    const moved = structuredClone(scene);
+    moved.objects[0]!.transform.position = [9, 0, 9];
+    instance.setScene(moved);
+
+    expect(instance.propExtents()).toEqual(before);
+  });
+
+  // 节点上已经套过一次 `transform.scale`，量出来的世界盒含它。不除掉，缩放就被乘两遍：
+  // 一件放大到 3 倍的道具，人会离它九倍远。
+  // （假 Box3 交出的盒子不随缩放变化，所以这一条钉的是那一步除法本身。）
+  it("divides the scale back out of the node's world box", async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    scene.objects.push(
+      createPrevizObject('prop', scene.objects, {
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [2, 1, 4] },
+      }),
+    );
+
+    instance.setScene(scene);
+
+    expect(instance.propExtents()).toEqual([
+      { id: scene.objects[0]!.id, halfX: 0.5, halfZ: 0.25 },
+    ]);
+  });
+
+  it('leaves out the same props the footprints leave out', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([0, 0, 0]);
+    instance.setScene(scene);
+
+    // 两份测量的筛选口径必须一致：选位图上画着地的那件道具，播放时就该推得动人；
+    // 反过来，图上没有的东西不该在暗处把人挡开。
+    boxIsEmpty = true;
+    expect(instance.propExtents()).toEqual([]);
+    boxIsEmpty = false;
+    boxHasNaN = true;
+    expect(instance.propExtents()).toEqual([]);
+    boxHasNaN = false;
+
+    const hidden = structuredClone(scene);
+    hidden.objects[0]!.visible = false;
+    instance.setScene(hidden);
+    expect(instance.propExtents()).toEqual([]);
+  });
+
+  // 缩放为 0 除下去是 Infinity，`propWorldBox` 会给出一个从负无穷铺到正无穷的盒子，
+  // 全场的人都被推到 NaN 上。
+  //
+  // 从场景数据进不来：`PREVIZ_SCALE_RANGE.min` 是 1e-4，工厂、`parseScene` 与
+  // `sceneGraph` 写节点那一步各夹一道。走得到的是**缩放手柄拖出来的那一下**——
+  // TransformControls 直接写 `node.scale`，拖过枢轴就是 0 甚至负数，而那一帧的求值
+  // 照样会跑。所以这里也直接写节点，与手柄同一条路。
+  it('leaves out a prop whose scale gizmo has been dragged onto zero', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([0, 0, 0]);
+    instance.setScene(scene);
+    expect(instance.propExtents()).toHaveLength(1);
+
+    instance.nodeFor(scene.objects[0]!.id)!.scale.x = 0;
+
+    expect(instance.propExtents()).toEqual([]);
+  });
 });

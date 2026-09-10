@@ -352,6 +352,31 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
               />
             </div>
           )}
+          {/*
+            移动辅助只在播放时生效：求值层按这两个开关决定要不要把人从道具里推开、
+            要不要把他按在场地内。手工摆位时它们一动不动，所以那行说明必须挨着开关摆
+            ——否则勾上了却推不动，用户只会以为功能坏了。
+          */}
+          <div>
+            <span className={LABEL}>{t("previz.inspector.moveAssist")}</span>
+            <label className="mb-1 flex items-center gap-2 text-[12px] text-white/80">
+              <input
+                type="checkbox"
+                checked={character.avoidCollision}
+                onChange={(event) => onChange({ avoidCollision: event.target.checked })}
+              />
+              {t("previz.inspector.avoidCollision")}
+            </label>
+            <label className="mb-1 flex items-center gap-2 text-[12px] text-white/80">
+              <input
+                type="checkbox"
+                checked={character.stayInBounds}
+                onChange={(event) => onChange({ stayInBounds: event.target.checked })}
+              />
+              {t("previz.inspector.stayInBounds")}
+            </label>
+            <p className="text-[11px] text-white/35">{t("previz.inspector.moveAssistNote")}</p>
+          </div>
         </>
       )}
 
