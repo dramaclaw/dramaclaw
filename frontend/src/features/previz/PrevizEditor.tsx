@@ -723,6 +723,15 @@ export function PrevizEditor({
   );
 
   /**
+   * 把真布景从上往下画进选位图那块画布。渲染器没就绪、或正在录制时回 `null`，
+   * 选位图自己回落到那张 2D 示意图。引用要稳的理由同下面那个预览回调。
+   */
+  const handleRenderCharacterTopDown = useCallback(
+    (mapCanvas: HTMLCanvasElement) => renderer?.renderTopDownMap(mapCanvas) ?? null,
+    [renderer],
+  );
+
+  /**
    * 引用要稳：对话框把它当重画木偶那个 effect 的依赖，每渲染一次换一个新函数的话，
    * 编辑器那边任何一次无关重渲染都会让离屏 pass 重跑一遍。
    */
@@ -1485,6 +1494,7 @@ export function PrevizEditor({
                 open={characterCreateOpen}
                 objects={scene.objects}
                 footprints={characterFootprints}
+                onRenderTopDown={handleRenderCharacterTopDown}
                 onRenderPreview={handleRenderCharacterPreview}
                 onCreate={handleCreateCharacter}
                 onClose={() => setCharacterCreateOpen(false)}

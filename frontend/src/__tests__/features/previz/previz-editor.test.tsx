@@ -12,6 +12,7 @@ import {
   sceneTopDownBounds,
   topDownView,
   type PrevizTopDownFootprint,
+  type PrevizTopDownView,
 } from "@/features/previz/domain/topDownMap";
 import { PREVIZ_TOP_DOWN_PICKER_SIZE } from "@/features/previz/ui/PrevizTopDownPicker";
 import {
@@ -56,6 +57,9 @@ const renderCameraPreview = vi.fn();
 // 形参要写出来：`vi.fn(async () => {})` 的 `mock.calls` 是 `[]` 元组，读 `[0]`/`[1]`
 // 在 tsc 下直接报「长度 0 的元组没有下标 0」。
 const renderCharacterPreview = vi.fn(async (_canvas: unknown, _draft: unknown) => {});
+// 回 `null`（渲染器画不了底图）：选位图于是回落到那张 2D 示意图，下面按米算落点的
+// 用例读的还是示意图那套取景。形参写出来的理由同上。
+const renderTopDownMap = vi.fn((_canvas: HTMLCanvasElement): PrevizTopDownView | null => null);
 const renderQuadPreview = vi.fn();
 const renderCameraView = vi.fn();
 const setViewOverlays = vi.fn();
@@ -95,6 +99,7 @@ function fakeRenderer() {
     propFootprints,
     renderCameraPreview,
     renderCharacterPreview,
+    renderTopDownMap,
     renderQuadPreview,
     renderCameraView,
     setViewOverlays,
@@ -818,6 +823,26 @@ describe("PrevizEditor", () => {
     const [canvas, draft] = renderCharacterPreview.mock.calls[0]!;
     expect(canvas).toBeInstanceOf(HTMLCanvasElement);
     expect(draft).toMatchObject({ bodyType: "average", heightPolicy: "follow" });
+  });
+
+  it("draws the real set on the character placement map", async () => {
+    const user = userEvent.setup();
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn(() => true)}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.character" }));
+
+    // 选位图的底图走的是渲染器那趟正俯视离屏 pass，画的是真几何体——不是那张只有
+    // 圆点的示意图。这里桩回 `null`，正好也把「画不了就回落」那条路一起走了。
+    await vi.waitFor(() => expect(renderTopDownMap).toHaveBeenCalled());
+    expect(renderTopDownMap.mock.calls[0]![0]).toBeInstanceOf(HTMLCanvasElement);
   });
 
   it("draws the create dialog preview through the renderer", async () => {
