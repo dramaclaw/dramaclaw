@@ -323,9 +323,20 @@ def test_canvas_command_tool_result_accepts_background_workflow(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "receipt_revision,receipt_task,expected_status",
+    [
+        (1, "task-1", "confirmed"),
+        (2, "task-1", "submitted"),
+        (1, "old-task", "submitted"),
+    ],
+)
 async def test_late_canvas_result_completes_durable_workflow_draft(
     monkeypatch,
     tmp_path,
+    receipt_revision,
+    receipt_task,
+    expected_status,
 ) -> None:
     from novelvideo.freezone.workflow_drafts import (
         bind_workflow_draft_task,
@@ -364,6 +375,7 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
         canvas_id="canvas-a",
         draft_id=draft["draft_id"],
         outcome="submitted",
+        expected_task_id="task-1",
     )
 
     async def project_context(_user, _scope):
@@ -390,11 +402,23 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
         applied=True,
     )
 
-    await chat_route._record_workflow_draft_canvas_result(
-        user={"id": "u-admin", "username": "admin"},
-        payload=payload,
-        draft_id=draft["draft_id"],
-        resolved={"ok": True},
+    monkeypatch.setattr(
+        chat_route,
+        "_pending_workflow_draft_receipt",
+        lambda *_: {
+            "draft_id": draft["draft_id"],
+            "revision": receipt_revision,
+            "task_id": receipt_task,
+        },
+    )
+    monkeypatch.setattr(
+        chat_route,
+        "_resolve_canvas_command_tool_result_payload",
+        lambda *_, **__: {"ok": True},
+    )
+    await chat_route.resolve_canvas_command_tool_result(
+        payload,
+        {"id": "u-admin", "username": "admin"},
     )
     stored, error = read_workflow_draft(
         project_dir=tmp_path,
@@ -404,7 +428,7 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
 
     assert error is None
     assert stored is not None
-    assert stored["status"] == "confirmed"
+    assert stored["status"] == expected_status
 
 
 def test_pending_canvas_result_recovers_workflow_draft_identity(
@@ -421,7 +445,11 @@ def test_pending_canvas_result_recovers_workflow_draft_identity(
             {
                 "type": "create_node",
                 "node_type": "textAnnotationNode",
-                "data": {"workflowInstanceId": draft_id},
+                "data": {
+                    "workflowInstanceId": draft_id,
+                    "workflowDraftRevision": 1,
+                    "workflowConfirmationTaskId": "task-1",
+                },
             }
         ],
         envelope={
@@ -429,7 +457,11 @@ def test_pending_canvas_result_recovers_workflow_draft_identity(
                 {
                     "type": "create_node",
                     "node_type": "textAnnotationNode",
-                    "data": {"workflowInstanceId": draft_id},
+                    "data": {
+                        "workflowInstanceId": draft_id,
+                        "workflowDraftRevision": 1,
+                        "workflowConfirmationTaskId": "task-1",
+                    },
                 }
             ]
         },
@@ -448,7 +480,11 @@ def test_pending_canvas_result_recovers_workflow_draft_identity(
         applied=True,
     )
 
-    assert chat_route._pending_workflow_draft_id("admin", payload) == draft_id
+    assert chat_route._pending_workflow_draft_receipt("admin", payload) == {
+        "draft_id": draft_id,
+        "revision": 1,
+        "task_id": "task-1",
+    }
 
 
 def test_canvas_command_tool_result_reports_open_node_action_as_opened_panel(
@@ -1626,3 +1662,30 @@ async def test_freezone_prewarm_skips_unavailable_surface(monkeypatch) -> None:
 
     assert warmed is False
     assert calls == []
+
+
+@pytest.mark.anyio
+async def test_agent_session_cannot_forge_canvas_receipt(monkeypatch):
+    from fastapi import HTTPException
+
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-workflow",
+        project_id="p",
+        canvas_id="c",
+        tool_call_status="completed",
+        canvas_apply_status="applied",
+        applied=True,
+    )
+    monkeypatch.setattr(
+        chat_route,
+        "_pending_workflow_draft_receipt",
+        lambda *_: pytest.fail(
+            "Agent receipt must be rejected before reading pending commands"
+        ),
+    )
+    with pytest.raises(HTTPException) as error:
+        await chat_route.resolve_canvas_command_tool_result(
+            payload,
+            {"username": "alice", "credential_kind": "agent_session"},
+        )
+    assert error.value.status_code == 403

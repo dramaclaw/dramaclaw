@@ -48,8 +48,6 @@ GENERATION_ACTIONS = {
     "auto_compose_video",
 }
 NON_RETRYABLE_ERROR_MARKERS = {
-    "401",
-    "403",
     "invalid token",
     "model_not_found",
     "sensitivecontent",
@@ -58,11 +56,6 @@ NON_RETRYABLE_ERROR_MARKERS = {
     "quota has been exhausted",
 }
 RETRYABLE_ERROR_MARKERS = {
-    "408",
-    "429",
-    "502",
-    "503",
-    "504",
     "timed out",
     "timeout",
     "econnreset",
@@ -169,7 +162,14 @@ def classify_workflow_error(error: str | None) -> tuple[str, bool]:
         or "parameter video total duration" in normalized
     ):
         return "invalid_request", False
-    if any(marker in normalized for marker in NON_RETRYABLE_ERROR_MARKERS):
+    status_match = re.search(
+        r"(?:\bhttp(?:/\d(?:\.\d)?)?\s*|\bstatus(?:[_ ]code)?\s*[:=]?\s*|^)([45]\d{2})\b",
+        normalized,
+    )
+    status_code = int(status_match.group(1)) if status_match else None
+    if status_code in {401, 403} or any(
+        marker in normalized for marker in NON_RETRYABLE_ERROR_MARKERS
+    ):
         if "sensitivecontent" in normalized or "privacyinformation" in normalized:
             return "content_policy", False
         if "model_not_found" in normalized:
@@ -179,7 +179,9 @@ def classify_workflow_error(error: str | None) -> tuple[str, bool]:
         if "audio_url is required" in normalized:
             return "invalid_request", False
         return "authentication", False
-    if any(marker in normalized for marker in RETRYABLE_ERROR_MARKERS):
+    if status_code in {408, 429, 502, 503, 504} or any(
+        marker in normalized for marker in RETRYABLE_ERROR_MARKERS
+    ):
         return "transient_upstream", True
     if "产物" in normalized and ("不存在" in normalized or "缺失" in normalized):
         return "artifact_missing", False

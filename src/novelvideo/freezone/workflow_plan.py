@@ -10,6 +10,7 @@ from novelvideo.freezone.workflow_schema import (
     NODE_TYPE_VALUES,
     WORKFLOW_PLAN_SCHEMA_VERSION,
 )
+from novelvideo.freezone.workflow_semantics import text_edge_error
 
 MAX_WORKFLOW_NODES = 200
 MAX_WORKFLOW_EDGES = 400
@@ -292,6 +293,14 @@ def validate_workflow_plan(
             if edge_key in seen_edges:
                 errors.append(_issue(path, "duplicate edge"))
             seen_edges.add(edge_key)
+            role_error = text_edge_error(
+                link_type,
+                node_types[source],
+                node_values[source].get("data"),
+                node_types[target],
+            )
+            if role_error:
+                errors.append(_issue(path, role_error))
             if not _link_allowed(link_type, node_types[source], node_types[target]):
                 errors.append(
                     _issue(

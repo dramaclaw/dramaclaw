@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,29 @@ except Exception:  # pragma: no cover - Hermes can run before app imports are av
     validate_workflow_plan = None
     ALLOWED_LINK_TYPES = set()
     ALLOWED_NODE_TYPES = set()
+
+_REQUEST_CATALOG: ContextVar[dict[str, list[dict[str, Any]]] | None] = ContextVar(
+    "workflow_request_catalog", default=None
+)
+
+
+@contextmanager
+def workflow_catalog_scope(username: str):
+    """Use one authenticated catalog snapshot without changing process environment."""
+    if not username.strip() or list_user_agent_config_items is None:
+        raise ValueError("workflow catalog identity is unavailable")
+    snapshot = {
+        kind: _normalize_agent_config_items(
+            kind, list_user_agent_config_items(username, kind)
+        )
+        for kind in ("skills", "recipes")
+    }
+    token = _REQUEST_CATALOG.set(snapshot)
+    try:
+        yield
+    finally:
+        _REQUEST_CATALOG.reset(token)
+
 
 PLAN_SCHEMA_VERSION = WORKFLOW_PLAN_SCHEMA_VERSION
 
@@ -2063,7 +2088,9 @@ def _dedupe_intent_edges(edges: list[dict[str, str]]) -> list[dict[str, str]]:
     return result
 
 
-def validate_agent_workflow_plan(plan: Any) -> dict[str, Any]:
+def validate_agent_workflow_plan(
+    plan: Any, *, username: str | None = None
+) -> dict[str, Any]:
     """Strictly validate an agent-authored plan against the live catalog."""
     if validate_workflow_plan is None:
         return {
@@ -2071,14 +2098,28 @@ def validate_agent_workflow_plan(plan: Any) -> dict[str, Any]:
             "status": "workflow_plan_validation_unavailable",
             "error": "workflow plan validation is unavailable",
         }
+    if username is not None:
+        # HTTP callers must supply the authenticated catalog owner explicitly.
+        # Never fall back to process-wide agent environment or another catalog.
+        if not username.strip() or list_user_agent_config_items is None:
+            raise ValueError("workflow catalog identity is unavailable")
+        skill_items = list_user_agent_config_items(username, "skills")
+        recipe_items = _normalize_agent_config_items(
+            "recipes", list_user_agent_config_items(username, "recipes")
+        )
+    else:
+        skill_items = _load_skills()
+        recipe_items = _load_agent_config_items("recipes", _RECIPES_DIR)
     skills = {
         _text(skill.get("id")): skill
-        for skill in _load_skills()
-        if _text(skill.get("id")) and skill.get("_disabled") is not True
+        for skill in skill_items
+        if _text(skill.get("id"))
+        and skill.get("_disabled") is not True
+        and skill.get("enabled") is not False
     }
     recipes = {
         _text(recipe.get("id")): recipe
-        for recipe in _load_agent_config_items("recipes", _RECIPES_DIR)
+        for recipe in recipe_items
         if _text(recipe.get("id")) and recipe.get("enabled") is not False
     }
     validated = validate_workflow_plan(
@@ -2363,6 +2404,9 @@ def _without_private_fields(value: Any) -> Any:
 def _load_agent_config_items(
     kind: str, fallback_dir: Path, project_dir: Path | None = None
 ) -> list[dict[str, Any]]:
+    snapshot = _REQUEST_CATALOG.get()
+    if snapshot is not None:
+        return deepcopy(snapshot[kind])
     if list_user_agent_config_items is not None:
         username = _catalog_username()
         if username:

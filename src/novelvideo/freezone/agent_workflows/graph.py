@@ -11,6 +11,7 @@ from novelvideo.freezone.workflow_schema import (
     LINK_TYPE_VALUES as PORTABLE_LINK_TYPE_VALUES,
     NODE_TYPE_VALUES,
 )
+from novelvideo.freezone.workflow_semantics import text_edge_error
 
 CANVAS_CHAT_COMMANDS_SCHEMA_VERSION = "canvas_chat_commands.v1"
 
@@ -185,8 +186,6 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
         }
 
     edge_records: list[dict[str, Any]] = []
-    prompt_source_plan_ids: set[str] = set()
-    context_source_plan_ids: set[str] = set()
     audio_prompt_target_plan_ids: set[str] = set()
     for edge_index, edge in enumerate(_edge_pairs(payload.get("edges"))):
         source_ref, target_ref, requested_link_type = edge
@@ -244,10 +243,6 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             "link_type": link_type,
         }
         edge_records.append(record)
-        if link_type == "prompt_for" and source["node_type"] in TEXTUAL_NODE_TYPES:
-            prompt_source_plan_ids.add(source["plan_id"])
-        if link_type == "context_for" and source["node_type"] in TEXTUAL_NODE_TYPES:
-            context_source_plan_ids.add(source["plan_id"])
         if (
             link_type == "prompt_for"
             and source["node_type"] in TEXTUAL_NODE_TYPES
@@ -265,12 +260,8 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
         raw_stage = str(raw_node.get("stage") or "").strip().lower()
         if node["node_type"] in TEXTUAL_NODE_TYPES and raw_stage in USER_INPUT_STAGES:
             data.setdefault("workflowCatalogRole", "user_input")
-        if (
-            node["plan_id"] in prompt_source_plan_ids
-            and node["plan_id"] not in context_source_plan_ids
-            and node["node_type"] in TEXTUAL_NODE_TYPES
-        ):
-            data.setdefault("semanticOutputRole", "input_text")
+        # Plain text with no role is inferred per edge, as in the frontend.
+        # Do not rewrite explicit roles (including the legacy ioRole alias).
         data.setdefault("workflowInstanceId", workflow_instance_id)
         data.setdefault("workflowPlanNodeId", node["plan_id"])
         # The graph approval is the single parameter confirmation point for a
@@ -614,6 +605,7 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
 
     errors: list[dict[str, str]] = []
     created_ids: set[str] = set()
+    created_nodes: dict[str, dict[str, Any]] = {}
     for index, command in enumerate(commands):
         path = f"commands[{index}]"
         if not isinstance(command, dict):
@@ -644,6 +636,7 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
             )
         else:
             created_ids.add(client_id)
+            created_nodes[client_id] = command
         node_type = command.get("node_type")
         if node_type not in ALLOWED_NODE_TYPES:
             errors.append(
@@ -683,6 +676,17 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
         path = f"commands[{index}]"
         command_type = command.get("type")
         if command_type == "create_edge":
+            source = created_nodes.get(str(command.get("source") or ""))
+            target = created_nodes.get(str(command.get("target") or ""))
+            if source and target:
+                role_error = text_edge_error(
+                    str(command.get("link_type") or ""),
+                    source["node_type"],
+                    source.get("data"),
+                    target["node_type"],
+                )
+                if role_error:
+                    errors.append({"path": path, "message": role_error})
             for field in ("source", "target"):
                 value = command.get(field)
                 if not isinstance(value, str) or value not in created_ids:

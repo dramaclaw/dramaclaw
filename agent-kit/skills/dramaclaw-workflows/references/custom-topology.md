@@ -56,13 +56,13 @@ production Skill does not turn an exact topology request into the normal draft f
    Every edge endpoint must match an `id` in the same `nodes` array. Never invent a source such as
    `source` or `input` unless that exact node is present; remove an optional edge rather than
    leaving a dangling reference.
-7. Call `freezone_prepare_workflow_plan_draft` once. It strictly validates the complete Plan,
+7. Call `freezone_prepare_workflow(plan=...)` once. It strictly validates the complete Plan,
    obtains an operation-bound planning quote and server receipt, then persists an exact preview
    without writing canvas nodes. After the user reviews that preview, call
    `freezone_confirm_workflow_draft` with its exact `draft_id` and `revision`. Do not call
    `workflow_graph_compile` as a routine preflight before preparing the first draft. Use the read-only compiler
    only to diagnose and correct a validation failure. After a recovery compile succeeds, immediately
-   prepare that exact corrected Plan with `freezone_prepare_workflow_plan_draft`; do not stop after
+   prepare that exact corrected Plan with `freezone_prepare_workflow(plan=...)`; do not stop after
    reporting that compilation passed.
 
 The user's imperative does not replace an exact billing confirmation receipt. Follow the quote

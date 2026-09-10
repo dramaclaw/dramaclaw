@@ -517,6 +517,8 @@ def claim_workflow_draft_confirmation(
                 "status": "confirming",
                 "confirmation_started_at": now,
                 "updated_at": now,
+                "task_id": "",
+                "root_task_id": "",
             }
         )
         _write_draft(conn, payload)
@@ -559,6 +561,7 @@ def finish_workflow_draft_confirmation(
     draft_id: str,
     outcome: str,
     expected_task_id: str = "",
+    expected_revision: int | None = None,
 ) -> dict[str, Any] | None:
     _validate_scope(canvas_id, draft_id)
     if outcome not in CONFIRMATION_OUTCOMES:
@@ -569,9 +572,17 @@ def finish_workflow_draft_confirmation(
         if payload is None:
             return None
         bound_task_id = str(payload.get("task_id") or "")
+        if expected_revision is not None and payload["revision"] != expected_revision:
+            raise ValueError("workflow draft confirmation revision changed")
+        if bound_task_id and not expected_task_id:
+            raise ValueError("workflow draft confirmation task identity is required")
         if expected_task_id and expected_task_id != bound_task_id:
             raise ValueError("workflow draft confirmation task changed")
         current_status = str(payload.get("status") or "")
+        if current_status == "ready" and outcome != "ready":
+            raise ValueError("workflow draft confirmation has not been claimed")
+        if outcome == "confirmed" and not bound_task_id:
+            raise ValueError("workflow draft confirmation task identity is required")
         # Browser delivery and task settlement race independently. Once the
         # browser has confirmed delivery, a late timeout/submitted callback
         # from the task runner must not move the presentation state backward.
