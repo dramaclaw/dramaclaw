@@ -28,17 +28,17 @@
 - Consumes: `isCeRuntime()` inside `SettingsDialog` for page/query isolation.
 - Produces: a Header settings button that opens `SettingsDialog` in both CE and EE.
 
-- [ ] **Step 1: Write the failing EE Header regression test**
+- [x] **Step 1: Write the failing EE Header regression test**
 
 Mock `SettingsDialog` with a dialog rendered only when `open` is true, add the missing `header.settings` translation, render the Header with `runtimeState.isCe = false`, click the settings control, and assert that the dialog appears.
 
-- [ ] **Step 2: Run the regression test and verify RED**
+- [x] **Step 2: Run the regression test and verify RED**
 
-Run: `pnpm test -- src/__tests__/components/layout/header.test.tsx -t "keeps the settings entry available in EE runtime"`
+Run: `pnpm exec vitest run src/__tests__/components/layout/header.test.tsx -t "keeps the settings entry available in EE runtime" --maxWorkers=1`
 
 Expected: FAIL because the EE Header does not render a button named `header.settings`.
 
-- [ ] **Step 3: Implement the minimal Header change**
+- [x] **Step 3: Implement the minimal Header change**
 
 Remove the `ceRuntime` wrapper around the settings button and replace the conditionally mounted dialog with:
 
@@ -48,18 +48,18 @@ Remove the `ceRuntime` wrapper around the settings button and replace the condit
 
 Keep `ceRuntime` for model gateway querying and warning visibility.
 
-- [ ] **Step 4: Run focused tests and verify GREEN**
+- [x] **Step 4: Run focused tests and verify GREEN**
 
-Run: `pnpm test -- src/__tests__/components/layout/header.test.tsx src/__tests__/components/settings/settings-dialog.test.tsx`
+Run: `pnpm exec vitest run src/__tests__/components/layout/header.test.tsx src/__tests__/components/settings/settings-dialog.test.tsx --maxWorkers=1`
 
 Expected: both test files pass, including the EE Header entry and EE-only Skills page assertions.
 
-- [ ] **Step 5: Run production verification**
+- [x] **Step 5: Run production verification**
 
 Run: `pnpm build`
 
 Expected: TypeScript and Vite production build exit successfully.
 
-- [ ] **Step 6: Review and commit**
+- [x] **Step 6: Review and commit**
 
 Inspect `git diff --check`, `git diff`, and `git status --short`, then commit the implementation and tests with `fix(settings): restore freezone settings in ee`.
