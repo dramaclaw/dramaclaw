@@ -526,6 +526,169 @@ def _should_stop_after_write_tool(first_write_tool: str | None, next_tool_name: 
     return _is_dramaclaw_write_tool(first_write_tool) and _is_dramaclaw_write_tool(next_tool_name)
 
 
+def _story_tool_receipt(value: object) -> dict[str, Any]:
+    """Decode only transport envelopes, never story content or cached receipts."""
+    value = _coerce_tool_result(value)
+    if isinstance(value, list) and len(value) == 1:
+        block = value[0]
+        if isinstance(block, dict):
+            return _story_tool_receipt(block)
+    if isinstance(value, dict):
+        if value.get("type") == "text":
+            return _story_tool_receipt(value.get("text"))
+        if "ok" in value:
+            data = value.get("data")
+            if isinstance(data, dict):
+                return {**data, "ok": value["ok"]}
+            return value
+        if "content" in value:
+            return _story_tool_receipt(value["content"])
+    return {}
+
+
+class _StoryWriteContinuation:
+    """Gate same-story stages and one definite failure recovery using fresh receipts."""
+
+    def __init__(self, env: dict[str, str]) -> None:
+        self.env = env
+        self.write: ChatBackendEvent | None = None
+        self.read: ChatBackendEvent | None = None
+        self.conflict_revision: int | None = None
+        self.read_revision: int | None = None
+        self.used = False
+        self.outcome: str | None = None
+
+    def _args(self, event: ChatBackendEvent) -> dict[str, Any]:
+        args = _coerce_tool_result(event.input)
+        return args if isinstance(args, dict) else {}
+
+    def _scope(self, event: ChatBackendEvent) -> tuple[str, str]:
+        args = self._args(event)
+        return (
+            str(args.get("project_id") or self.env.get("DRAMACLAW_PROJECT_ID") or "").strip(),
+            str(args.get("canvas_id") or self.env.get("DRAMACLAW_CANVAS_ID") or "default").strip(),
+        )
+
+    def _story_id(self, event: ChatBackendEvent) -> str:
+        args = self._args(event)
+        story = args.get("story")
+        if event.name == "dramaclaw_create_interactive_story" and isinstance(story, dict):
+            return str(story.get("story_id") or "").strip()
+        return str(args.get("story_id") or "").strip()
+
+    def observe(self, event: ChatBackendEvent) -> None:
+        if event.type == "tool_started":
+            if self.write is None and event.name in {
+                "dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story",
+            }:
+                self.write = event
+            elif self.write is not None and self.outcome is not None:
+                expected_read = (
+                    "dramaclaw_get_freezone_canvas"
+                    if self.write.name == "dramaclaw_create_interactive_story" and self.outcome != "success"
+                    else "dramaclaw_get_interactive_story"
+                )
+                if event.name == expected_read:
+                    self.read = event
+                    self.read_revision = None
+            return
+        if event.type != "tool_updated" or not event.call_id or self.write is None:
+            return
+        # File-based structured results are keyed only by tool name, so they
+        # cannot prove that this call failed or that this read is fresh.
+        payload = _story_tool_receipt(event.output)
+        if event.call_id == self.write.call_id and event.name == self.write.name:
+            self.conflict_revision = None
+            self.read = None
+            self.read_revision = None
+            self.outcome = None
+            revision = payload.get("current_revision")
+            if (
+                event.status in {"completed", "failed"}
+                and payload.get("ok") is False
+                and payload.get("code") == "revision_conflict"
+                and type(revision) is int and revision >= 0
+            ):
+                self.conflict_revision = revision
+                self.outcome = "conflict"
+            elif (
+                event.status in {"completed", "failed"}
+                and payload.get("ok") is False
+                and payload.get("error") == "tool_arguments_invalid"
+                and payload.get("phase") == "tool_validation"
+            ):
+                self.outcome = "validation"
+            elif (
+                event.status == "completed" and not event.error
+                and payload.get("ok") is True
+                and payload.get("refresh_canvas") is True
+                and payload.get("story_id") == self._story_id(self.write)
+                and payload.get("canvas_id") == self._scope(self.write)[1]
+                and type(payload.get("revision")) is int and payload["revision"] >= 0
+            ):
+                self.conflict_revision = payload["revision"]
+                self.outcome = "success"
+        elif self.read is not None and event.call_id == self.read.call_id:
+            self.read_revision = None
+            if (
+                event.name != self.read.name or event.status != "completed" or event.error
+                or payload.get("ok") is not True
+                or self._scope(self.read) != self._scope(self.write)
+                or payload.get("canvas_id") != self._scope(self.write)[1]
+            ):
+                return
+            if self.read.name == "dramaclaw_get_interactive_story":
+                story = payload.get("story")
+                if (
+                    not isinstance(story, dict)
+                    or story.get("story_id") != self._story_id(self.write)
+                    or self._story_id(self.read) != self._story_id(self.write)
+                ):
+                    return
+                revision = story.get("revision")
+            else:
+                revision = payload.get("revision")
+            if (
+                type(revision) is int and revision >= 0
+                and (self.conflict_revision is None or revision >= self.conflict_revision)
+            ):
+                self.read_revision = revision
+
+    def consume(self, event: ChatBackendEvent) -> bool:
+        if self.write is None or self.read_revision is None or self.outcome is None:
+            return False
+        if self.outcome != "success" and self.used:
+            return False
+        before, after = self._args(self.write), self._args(event)
+        key = after.get("idempotency_key")
+        if (
+            (event.name != ("dramaclaw_patch_interactive_story" if self.outcome == "success" else self.write.name))
+            or not event.call_id or event.call_id == self.write.call_id
+            or not self._story_id(self.write)
+            or self._story_id(event) != self._story_id(self.write)
+            or not self._scope(self.write)[0]
+            or self._scope(event) != self._scope(self.write)
+            or type(after.get("base_revision")) is not int
+            or after["base_revision"] != self.read_revision
+            or (self.outcome == "conflict" and after["base_revision"] == before.get("base_revision"))
+            or not isinstance(key, str) or not key.strip()
+            or key == before.get("idempotency_key")
+        ):
+            return False
+        # A new key/revision alone must not turn a repeated payload into a new stage.
+        field = "story" if event.name == "dramaclaw_create_interactive_story" else "operations"
+        if self.outcome != "conflict" and event.name == self.write.name and before.get(field) == after.get(field):
+            return False
+        if self.outcome != "success":
+            self.used = True
+        self.write = event
+        self.read = None
+        self.read_revision = None
+        self.conflict_revision = None
+        self.outcome = None
+        return True
+
+
 def _is_freezone_canvas_write_tool(name: object) -> bool:
     return str(name or "").strip() in _FREEZONE_CANVAS_WRITE_TOOLS
 
@@ -654,15 +817,58 @@ def _extract_tool_update_content_text(update: dict) -> str:
     return "\n".join(part for part in (_redact_tool_detail(part) for part in parts) if part)
 
 
+def _receipt_normalized_input(name: str, value: object) -> object:
+    """Mirror scalar coercions only where the registered schema excludes strings."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        return value
+    from novelvideo.chat.dramaclaw_mcp import _plugin_tools
+
+    entry = _plugin_tools("freezone").get(name)
+    if entry is None:
+        return value
+    properties = entry[0].get("parameters", {}).get("properties", {})
+    result = dict(value)
+    for key, original in value.items():
+        expected = properties.get(key, {}).get("type")
+        types = expected if isinstance(expected, list) else [expected]
+        if not isinstance(original, str) or "string" in types:
+            continue
+        try:
+            if "integer" in types or "number" in types:
+                number = float(original)
+                if number != number or abs(number) == float("inf"):
+                    continue
+                if number == int(number):
+                    result[key] = int(number)
+                elif "number" in types:
+                    result[key] = number
+            elif "boolean" in types and original.strip().lower() in {"true", "false"}:
+                result[key] = original.strip().lower() == "true"
+        except (ValueError, OverflowError):
+            pass
+    return result
+
+
 def _load_recent_freezone_tool_result(
     result_dir: str | None,
     tool_name: str | None,
     *,
+    tool_input: object = None,
+    min_created_at: float | None = None,
     max_age_seconds: float = 300.0,
 ) -> Any | None:
     name = str(tool_name or "").strip()
     root_text = str(result_dir or "").strip()
-    if not name.startswith("freezone_") or not root_text:
+    story_tool = name in {
+        "dramaclaw_create_interactive_story",
+        "dramaclaw_patch_interactive_story",
+        "dramaclaw_get_interactive_story",
+        "dramaclaw_validate_interactive_story",
+        "dramaclaw_get_freezone_canvas",
+    }
+    if not (name.startswith("freezone_") or story_tool) or not root_text:
         return None
     root = Path(root_text)
     if not root.exists():
@@ -676,15 +882,38 @@ def _load_recent_freezone_tool_result(
         )
     except OSError:
         return None
+    if not candidates:
+        return None
+    input_hash = hashlib.sha256(
+        json.dumps(
+            _receipt_normalized_input(name, tool_input),
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
     now = time.time()
     for path in candidates[:5]:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if not isinstance(raw, dict) or raw.get("tool_name") != name:
+        if (
+            not isinstance(raw, dict)
+            or raw.get("tool_name") != name
+            or raw.get("input_hash") != input_hash
+        ):
             continue
         created_at = raw.get("created_at")
+        if (
+            min_created_at is not None
+            and (
+                not isinstance(created_at, (int, float))
+                or float(created_at) < min_created_at
+            )
+        ):
+            continue
         if isinstance(created_at, (int, float)) and now - float(created_at) > max_age_seconds:
             continue
         return raw.get("result")
@@ -838,6 +1067,7 @@ class HermesSdkThread:
         self._initialized = False
         self._tool_names_by_call_id: dict[str, str] = {}
         self._tool_inputs_by_call_id: dict[str, Any] = {}
+        self._tool_started_at_by_call_id: dict[str, float] = {}
         self._pending_permissions: dict[
             str, tuple[str | int, set[str], float, str]
         ] = {}
@@ -1197,6 +1427,7 @@ class HermesSdkThread:
             tool_name_by_call_id: dict[str, str] = {}
             first_write_failed = False
             failed_write_retry_count = 0
+            story_write_continuation = _StoryWriteContinuation(self._env)
             while True:
                 deadline = min(total_deadline, idle_deadline)
                 now = loop.time()
@@ -1333,7 +1564,12 @@ class HermesSdkThread:
                                 loop.time() + CANVAS_COMMAND_RESULT_TIMEOUT + 30.0,
                             )
                         if _should_stop_after_write_tool(first_write_tool, tool_name):
-                            if _can_retry_failed_canvas_write(
+                            if story_write_continuation.consume(ev):
+                                _log.info(
+                                    "Hermes allowing verified same-story write continuation: "
+                                    "thread=%s turn=%s tool=%s", self.id, turn_id, tool_name,
+                                )
+                            elif _can_retry_failed_canvas_write(
                                 first_write_tool,
                                 tool_name,
                                 first_write_failed=first_write_failed,
@@ -1387,6 +1623,7 @@ class HermesSdkThread:
                         )
                     ):
                         first_write_failed = True
+                    story_write_continuation.observe(ev)
                     yield ev
         finally:
             # Don't kill subprocess here — caller may want to send more prompts.
@@ -1394,6 +1631,7 @@ class HermesSdkThread:
             self._clear_pending_permissions_for_turn(turn_id)
             self._tool_names_by_call_id.clear()
             self._tool_inputs_by_call_id.clear()
+            self._tool_started_at_by_call_id.clear()
 
     def _translate_notification(
         self,
@@ -1484,6 +1722,7 @@ class HermesSdkThread:
             if call_id:
                 self._tool_names_by_call_id[call_id] = tool_name
                 self._tool_inputs_by_call_id[call_id] = tool_input
+                self._tool_started_at_by_call_id[call_id] = time.time()
             return ChatBackendEvent(
                 type="tool_started", thread_id=self.id, turn_id=turn_id,
                 text=_format_tool_call_text(update, title),
@@ -1508,6 +1747,7 @@ class HermesSdkThread:
             if not tool_name and update_title:
                 tool_name, _body = _split_tool_title(update_title)
             tool_input = self._tool_inputs_by_call_id.get(call_id or "")
+            tool_started_at = self._tool_started_at_by_call_id.get(call_id or "")
             update_input = _first_present(update, "rawInput", "raw_input")
             tool_output = _first_present(
                 update, "rawOutput", "raw_output", "result", "content"
@@ -1520,9 +1760,12 @@ class HermesSdkThread:
             }:
                 self._tool_names_by_call_id.pop(call_id, None)
                 self._tool_inputs_by_call_id.pop(call_id, None)
+                self._tool_started_at_by_call_id.pop(call_id, None)
             structured_result = _load_recent_freezone_tool_result(
                 self._env.get("DRAMACLAW_FREEZONE_TOOL_RESULT_DIR"),
                 tool_name,
+                tool_input=update_input if update_input is not None else tool_input,
+                min_created_at=tool_started_at,
             )
             return ChatBackendEvent(
                 type="tool_updated", thread_id=self.id, turn_id=turn_id,
@@ -1550,6 +1793,7 @@ class HermesSdkThread:
         self._pending_permissions.clear()
         self._tool_names_by_call_id.clear()
         self._tool_inputs_by_call_id.clear()
+        self._tool_started_at_by_call_id.clear()
         if self._closed:
             return
         self._closed = True

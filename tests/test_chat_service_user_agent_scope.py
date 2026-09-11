@@ -339,6 +339,7 @@ def test_hermes_tool_call_update_attaches_recent_freezone_structured_result(tmp_
     payload = {
         "tool_name": "freezone_get_workflow_skill",
         "created_at": datetime.now(tz=timezone.utc).timestamp(),
+        "input_hash": hermes_sdk.hashlib.sha256(b"{}").hexdigest(),
         "result": {"ok": True, "skills": [{"id": "pixar-ip-brand-ad"}]},
     }
     (result_dir / "freezone_get_workflow_skill-1-2.json").write_text(
@@ -381,6 +382,73 @@ def test_hermes_tool_call_update_attaches_recent_freezone_structured_result(tmp_
         "text": "freezone_get_workflow_skill result\n- **count:** 1"
     }
     assert result.structured == {"ok": True, "skills": [{"id": "pixar-ip-brand-ad"}]}
+
+
+def test_hermes_tool_call_update_rejects_receipt_from_different_input(tmp_path):
+    result_dir = tmp_path / "freezone-tool-results"
+    result_dir.mkdir()
+    payload = {
+        "tool_name": "freezone_get_workflow_skill",
+        "created_at": datetime.now(tz=timezone.utc).timestamp(),
+        "input_hash": hermes_sdk.hashlib.sha256(
+            b'{"skill_id":"other-skill"}'
+        ).hexdigest(),
+        "result": {"ok": True, "skill_id": "other-skill"},
+    }
+    (result_dir / "freezone_get_workflow_skill-1-2.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    thread = hermes_sdk.HermesSdkThread(
+        cli_path=tmp_path / "hermes",
+        cwd=tmp_path,
+        env={"DRAMACLAW_FREEZONE_TOOL_RESULT_DIR": str(result_dir)},
+        model=None,
+        username="local",
+        session_id="session-1",
+    )
+    thread._tool_names_by_call_id["tc-list"] = "freezone_get_workflow_skill"
+    thread._tool_inputs_by_call_id["tc-list"] = {"skill_id": "wanted-skill"}
+
+    result = thread._translate_notification(
+        {
+            "method": "session/update",
+            "params": {"update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tc-list",
+                "status": "completed",
+                "content": {"text": "summarized"},
+            }},
+        },
+        "turn-1",
+    )
+
+    assert result is not None
+    assert result.structured is None
+
+
+def test_recent_freezone_result_rejects_receipt_older_than_call(tmp_path):
+    result_dir = tmp_path / "freezone-tool-results"
+    result_dir.mkdir()
+    arguments = {"skill_id": "wanted-skill"}
+    payload = {
+        "tool_name": "freezone_get_workflow_skill",
+        "created_at": 100.0,
+        "input_hash": hermes_sdk.hashlib.sha256(
+            b'{"skill_id":"wanted-skill"}'
+        ).hexdigest(),
+        "result": {"ok": True, "skill_id": "wanted-skill"},
+    }
+    (result_dir / "freezone_get_workflow_skill-1-2.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    assert hermes_sdk._load_recent_freezone_tool_result(
+        str(result_dir),
+        "freezone_get_workflow_skill",
+        tool_input=arguments,
+        min_created_at=101.0,
+        max_age_seconds=float("inf"),
+    ) is None
 
 
 def test_anonymous_hermes_tool_call_update_is_not_user_visible():

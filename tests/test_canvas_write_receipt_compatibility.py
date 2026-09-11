@@ -22,6 +22,23 @@ def _event(payload, *, name="freezone_confirm_workflow_draft", status="completed
     )
 
 
+@pytest.mark.parametrize("name", [
+    "dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story",
+])
+def test_story_persistence_receipt_is_a_canvas_write(name):
+    payload = {"ok": True, "canvas_id": "canvas-a", "story_id": "story-a",
+               "revision": 2, "refresh_canvas": True}
+    assert _codex_freezone_write_result_succeeded(_event(payload, name=f"dramaclaw.{name}"))
+    for field in ("canvas_id", "story_id", "revision", "refresh_canvas"):
+        incomplete = {k: v for k, v in payload.items() if k != field}
+        assert not _codex_freezone_write_result_succeeded(_event(incomplete, name=name))
+    for change in ({"ok": False}, {"refresh_canvas": False}, {"revision": True}, {"revision": -1}):
+        assert not _codex_freezone_write_result_succeeded(_event({**payload, **change}, name=name))
+    assert not _codex_freezone_write_result_succeeded(_event(payload, name=name, error="cancelled"))
+    # A story receipt does not stand in for a browser-applied ordinary canvas write.
+    assert not _codex_freezone_write_result_succeeded(_event(payload))
+
+
 @pytest.mark.parametrize(
     "payload",
     [

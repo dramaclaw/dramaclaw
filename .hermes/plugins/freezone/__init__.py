@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import importlib.util
+from contextvars import ContextVar
 import os
 import re
 import sys
@@ -23,6 +25,22 @@ from urllib.request import Request, urlopen
 from tools.registry import tool_error, tool_result
 
 
+_STRUCTURED_RESULT_INPUT_HASH: ContextVar[Any] = ContextVar(
+    "freezone_structured_result_input_hash", default=None
+)
+
+
+def _tool_input_hash(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _record_structured_tool_result(tool_name: str, value: Any) -> None:
     result_dir = os.environ.get("DRAMACLAW_FREEZONE_TOOL_RESULT_DIR", "").strip()
     if not result_dir or not tool_name:
@@ -36,6 +54,7 @@ def _record_structured_tool_result(tool_name: str, value: Any) -> None:
         payload = {
             "tool_name": tool_name,
             "created_at": time.time(),
+            "input_hash": _tool_input_hash(_STRUCTURED_RESULT_INPUT_HASH.get() or {}),
             "result": value,
         }
         target = base / f"{safe_name}-{time.time_ns()}-{os.getpid()}.json"
@@ -6023,6 +6042,10 @@ _RESULT_COMMON_PROPERTIES: dict[str, Any] = {
     "code": {"type": ["string", "null"]},
     "error": {"type": ["string", "object", "array", "null"]},
     "message": {"type": ["string", "null"]},
+    "details": {"type": ["array", "object", "string", "null"]},
+    "tool_name": {"type": ["string", "null"]},
+    "path": {"type": ["string", "null"]},
+    "phase": {"type": ["string", "null"]},
     "retryable": {"type": "boolean"},
     "next_action": {"type": ["string", "null"]},
     "agent_instruction": {"type": ["string", "null"]},
@@ -6063,6 +6086,7 @@ _WORKFLOW_RESULT_FIELDS = (
 
 _RESULT_ARRAY_FIELDS = frozenset(
     {
+        "issues",
         "actions",
         "assets",
         "available_ids",
@@ -6086,6 +6110,9 @@ _RESULT_ARRAY_FIELDS = frozenset(
 )
 _RESULT_BOOLEAN_FIELDS = frozenset(
     {
+        "refresh_canvas",
+        "idempotent",
+        "valid",
         "allow_recommended",
         "allow_skip",
         "applied",
@@ -6117,6 +6144,7 @@ _RESULT_INTEGER_FIELDS = frozenset(
 )
 _RESULT_OBJECT_FIELDS = frozenset(
     {
+        "story",
         "answers",
         "client_debug",
         "operations",
@@ -6125,6 +6153,7 @@ _RESULT_OBJECT_FIELDS = frozenset(
 )
 _RESULT_STRING_FIELDS = frozenset(
     {
+        "story_id",
         "action",
         "approval_id",
         "bridge_key",
@@ -6199,6 +6228,11 @@ def _result_field_schema(field: str) -> dict[str, Any]:
 
 
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges", "revision"),
+    "dramaclaw_create_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
+    "dramaclaw_patch_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
+    "dramaclaw_get_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "story"),
+    "dramaclaw_validate_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "valid"),
     "freezone_begin_agent_product_generation": (
         "operation_id",
         "product_kind",
@@ -6428,6 +6462,11 @@ _SKILL_STUDIO_FRONTEND_REQUIRED = (
 )
 
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
+    "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges", "revision"),
+    "dramaclaw_create_interactive_story": ("canvas_id", "story_id", "revision", "refresh_canvas"),
+    "dramaclaw_patch_interactive_story": ("canvas_id", "story_id", "revision", "refresh_canvas"),
+    "dramaclaw_get_interactive_story": ("canvas_id", "story"),
+    "dramaclaw_validate_interactive_story": ("canvas_id", "story_id", "revision", "valid", "issues"),
     "freezone_begin_agent_product_generation": (
         "operation_id",
         "product_kind",
@@ -7766,7 +7805,96 @@ _CANVAS_COMMAND_TOOL_SCOPE_PROPS = {
 }
 
 
+def _bound_story_args(args: dict[str, Any]) -> dict[str, Any]:
+    """Keep story operations inside this Freezone worker's bound canvas."""
+    project, canvas = _default_project_id(), _default_canvas_id()
+    if not project or not canvas:
+        raise ValueError("interactive stories require a bound project and canvas")
+    if _project_from_args(args) != project or _canvas_from_args(args) != canvas:
+        raise ValueError("interactive stories must use the bound project and canvas")
+    return {**args, "project_id": project, "canvas_id": canvas}
+
+
+def _handle_get_story_canvas(args: dict[str, Any], **_: Any) -> Any:
+    try:
+        args = _bound_story_args(args)
+        project, canvas = args["project_id"], args["canvas_id"]
+        result = _request(
+            "GET",
+            f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}",
+        )
+        if isinstance(result.get("data"), dict):
+            result["data"].setdefault("canvas_id", canvas)
+        return _structured_tool_result(
+            result, tool_name="dramaclaw_get_freezone_canvas"
+        )
+    except Exception as exc:
+        return _structured_tool_result(
+            {"ok": False, "error": str(exc)},
+            tool_name="dramaclaw_get_freezone_canvas",
+        )
+
+
+def _load_interactive_story_tools():
+    # Resolve the repo-pinned sibling even when Hermes symlinks only Freezone
+    # into its workspace. Do not load/register the director's generic REST tools.
+    path = _PLUGIN_DIR.parent / "dramaclaw" / "interactive_story.py"
+    spec = importlib.util.spec_from_file_location("_freezone_interactive_story_tools", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load interactive-story tools from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def schema(
+        name, description, properties, required=None, *, additional_properties=False
+    ):
+        return _schema(
+            name, description, properties, required,
+            reject_unknown=not additional_properties,
+        )
+
+    def scoped_handler(name, handler):
+        def handle(args, **kwargs):
+            try:
+                result = handler(_bound_story_args(args), **kwargs)
+            except Exception as exc:
+                result = {"ok": False, "error": str(exc)}
+            return _structured_tool_result(result, tool_name=name)
+
+        return handle
+
+    entries = module.build_tools(
+        schema=schema,
+        request=lambda *args, **kwargs: _request(*args, **kwargs),
+        project_from_args=lambda args: _project_from_args(args),
+        tool_result=lambda value: value,
+        tool_error=lambda message: {"ok": False, "error": str(message)},
+    )
+    return tuple(
+        (name, schema, scoped_handler(name, handler))
+        for name, schema, handler in entries
+    )
+
+
+_INTERACTIVE_STORY_IMPORT_ERROR: Exception | None = None
+try:
+    _INTERACTIVE_STORY_TOOLS = _load_interactive_story_tools()
+except Exception as exc:
+    _INTERACTIVE_STORY_IMPORT_ERROR = exc
+    _INTERACTIVE_STORY_TOOLS = ()
+
+
 TOOLS = (
+    *_INTERACTIVE_STORY_TOOLS,
+    (
+        "dramaclaw_get_freezone_canvas",
+        _schema(
+            "dramaclaw_get_freezone_canvas",
+            "Read the bound persisted canvas, including its revision, before creating an interactive story.",
+            _CANVAS_COMMAND_TOOL_SCOPE_PROPS,
+        ),
+        _handle_get_story_canvas,
+    ),
     # 读全局画布上下文。
     (
         "freezone_get_canvas_ontology",
@@ -8879,6 +9007,23 @@ TOOLS = (
         ),
         _handle_run_node_action,
     ),
+)
+
+
+def _bind_structured_result_input(handler):
+    def bound(args, *handler_args, **handler_kwargs):
+        token = _STRUCTURED_RESULT_INPUT_HASH.set(args)
+        try:
+            return handler(args, *handler_args, **handler_kwargs)
+        finally:
+            _STRUCTURED_RESULT_INPUT_HASH.reset(token)
+
+    return bound
+
+
+TOOLS = tuple(
+    (name, schema, _bind_structured_result_input(handler))
+    for name, schema, handler in TOOLS
 )
 
 

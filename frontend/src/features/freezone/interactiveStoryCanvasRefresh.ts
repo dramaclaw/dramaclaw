@@ -40,6 +40,7 @@ export function interactiveStoryRefreshTarget(
   const payload = [frame.result_json, frame.output]
     .flatMap(nestedJsonObjects)
     .find((item) => item.ok === true && item.refresh_canvas === true);
+  if (!payload) return null;
   const scope = frame.scope as { id?: string | null; canvasId?: string | null } | undefined;
   const project = String(scope?.id ?? "").trim();
   const canvasId = String(payload?.canvas_id ?? scope?.canvasId ?? "").trim();

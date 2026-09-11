@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import shutil
 import sys
 import threading
 import types
@@ -2058,6 +2059,9 @@ def test_freezone_get_workflow_skill_records_structured_result_side_channel(
     assert len(files) == 1
     payload = json.loads(files[0].read_text(encoding="utf-8"))
     assert payload["tool_name"] == "freezone_get_workflow_skill"
+    assert payload["input_hash"] == plugin._tool_input_hash(
+        {"skill_id": "ecommerce-product"}
+    )
     assert payload["result"]["ok"] is True
     assert payload["result"]["skill_id"] == "ecommerce-product"
     assert isinstance(payload["result"]["available_recipes"], list)
@@ -5106,3 +5110,35 @@ def test_freezone_plugin_register_call_exposes_node_tools_on_hermes_acp():
     assert by_name["freezone_create_node"]["toolset"] == "hermes-acp"
     assert by_name["freezone_emit_canvas_command"]["toolset"] == "hermes-acp"
     assert len(calls) == len(plugin.TOOLS)
+
+
+def test_freezone_plugin_degrades_when_interactive_story_sibling_is_missing(
+    tmp_path,
+):
+    source = (
+        Path(__file__).resolve().parents[1]
+        / ".hermes"
+        / "plugins"
+        / "freezone"
+        / "__init__.py"
+    )
+    copied = tmp_path / "plugins" / "freezone" / "__init__.py"
+    copied.parent.mkdir(parents=True)
+    shutil.copyfile(source, copied)
+
+    tools_module = types.ModuleType("tools")
+    registry_module = types.ModuleType("tools.registry")
+    registry_module.tool_error = lambda value: value
+    registry_module.tool_result = lambda value: value
+    sys.modules["tools"] = tools_module
+    sys.modules["tools.registry"] = registry_module
+    spec = importlib.util.spec_from_file_location("test_freezone_without_story", copied)
+    assert spec is not None and spec.loader is not None
+    plugin = importlib.util.module_from_spec(spec)
+
+    spec.loader.exec_module(plugin)
+
+    names = {name for name, _schema, _handler in plugin.TOOLS}
+    assert "freezone_create_node" in names
+    assert "dramaclaw_create_interactive_story" not in names
+    assert isinstance(plugin._INTERACTIVE_STORY_IMPORT_ERROR, FileNotFoundError)

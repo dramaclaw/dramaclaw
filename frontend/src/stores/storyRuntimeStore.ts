@@ -192,9 +192,9 @@ function advanceToClip(
     currentChoices.length > 0 && typeof defaultIdx === 'number' ? defaultIdx : null;
   // 结局只在叶子(ended)有意义。
   const currentEnding = phase === 'ended' && nodeId ? (endingByNodeId[nodeId] ?? null) : null;
-  // 占位卡:仅当「有选项但无视频」时出现(结局无视频走 currentEnding);无旁白也兜底给空文案卡。
+  // 无视频片段保留占位正文，包括结局；由播放器决定展示位置。
   const currentPlaceholder =
-    phase === 'playing' && !currentClipUrl
+    !currentClipUrl
       ? (nodeId ? (placeholderByNodeId[nodeId] ?? { text: '' }) : { text: '' })
       : null;
   return {

@@ -224,6 +224,18 @@ def _normalize_structured_result(
         elif key in nested:
             structured[key] = nested[key]
 
+    # FastAPI validation failures are returned under data.detail. Preserve that
+    # diagnostic in the typed MCP result so the Agent can correct one request
+    # instead of guessing alternate payload shapes from a generic 422 message.
+    if "details" in properties and "details" not in structured:
+        if isinstance(nested, dict) and "detail" in nested:
+            detail = nested["detail"]
+            structured["details"] = [
+                {"path": ".".join(str(part) for part in (item.get("loc", [])[1:] if item.get("loc", [])[:1] == ["body"] else item.get("loc", []))),
+                 "message": str(item.get("msg", "Validation failed"))}
+                for item in detail if isinstance(item, dict)
+            ] if isinstance(detail, list) else detail
+
     tool_name = str(schema.get("x-dramaclaw-tool") or "")
     if "canvas_context_status" in properties and not ok:
         # Some bridge cancellations have no message. Keep the original failure
@@ -283,6 +295,58 @@ def _mcp_error_result(name: str, payload: dict[str, Any]) -> types.CallToolResul
     )
 
 
+def _validation_error_details(errors: list[Any]) -> list[dict[str, Any]]:
+    """Return every invalid argument path without noisy duplicate entries."""
+    grouped: dict[str, dict[str, Any]] = {}
+    expanded = []
+    def expand(error):
+        contexts = list(getattr(error, "context", ()) or ())
+        instance = getattr(error, "instance", None)
+        schema = getattr(error, "schema", {})
+        if contexts and isinstance(instance, dict):
+            variants = schema.get("oneOf", [])
+            for discriminator in ("op", "kind"):
+                if discriminator not in instance:
+                    continue
+                matches = [i for i, variant in enumerate(variants)
+                           if variant.get("properties", {}).get(discriminator, {}).get("const")
+                           == instance[discriminator]]
+                if len(matches) == 1:
+                    before = len(expanded)
+                    for child in contexts:
+                        if child.schema_path and child.schema_path[0] == matches[0]:
+                            expand(child)
+                    if len(expanded) == before:
+                        expanded.append(error)
+                    return
+        expanded.append(error)
+    for error in errors:
+        expand(error)
+    for error in expanded:
+        path = ".".join(str(part) for part in getattr(error, "absolute_path", ()))
+        detail = grouped.setdefault(path, {"path": path, "messages": []})
+        contexts = list(getattr(error, "context", ()) or ())
+        messages = [getattr(item, "message", str(item)) for item in contexts]
+        if not messages:
+            messages = [getattr(error, "message", str(error))]
+        if (
+            path.endswith(".feedback_text")
+            and getattr(error, "validator", None) == "const"
+            and getattr(error, "validator_value", None) == ""
+        ):
+            messages = [
+                "Automatic transition feedback_text must be empty. Keep effects "
+                "unchanged; automatic transitions may apply effects."
+            ]
+        for message in messages:
+            if message not in detail["messages"]:
+                detail["messages"].append(message)
+    return [
+        {"path": detail["path"], "message": "; ".join(detail.pop("messages"))}
+        for detail in grouped.values()
+    ]
+
+
 def _structured_tool_result(name: str, adapted: str) -> types.CallToolResult:
     """Preserve legacy text while exposing a validated structured result."""
     try:
@@ -290,6 +354,10 @@ def _structured_tool_result(name: str, adapted: str) -> types.CallToolResult:
     except (TypeError, json.JSONDecodeError):
         decoded = adapted
     structured = _normalize_structured_result(_output_schema_for_tool(name), decoded)
+    if name in {"dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story"}:
+        if isinstance(decoded, dict) and isinstance(decoded.get("data"), dict):
+            if "detail" in decoded["data"]:
+                adapted = json.dumps(structured, ensure_ascii=False)
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=adapted)],
         structuredContent=structured,
@@ -541,10 +609,28 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         input_schema = (
             parameters if isinstance(parameters, dict) else {"type": "object"}
         )
+        story_write = name in {
+            "dramaclaw_create_interactive_story",
+            "dramaclaw_patch_interactive_story",
+        }
+        validation_errors: list[Any] = []
         try:
             Draft202012Validator.check_schema(input_schema)
-            Draft202012Validator(input_schema).validate(arguments)
+            validator = Draft202012Validator(input_schema)
+            if story_write:
+                validation_errors = sorted(
+                    validator.iter_errors(arguments),
+                    key=lambda error: tuple(
+                        (0, part) if isinstance(part, int) else (1, str(part))
+                        for part in getattr(error, "absolute_path", ())
+                    ),
+                )
+                if validation_errors:
+                    raise validation_errors[0]
+            else:
+                validator.validate(arguments)
         except (SchemaError, ValidationError) as exc:
+            details = _validation_error_details(validation_errors or [exc])
             recovery = _workflow_schema_recovery_instruction(name)
             if workflow_started is not None:
                 logger.warning(
@@ -592,8 +678,14 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 "ok": False,
                 "error": "tool_arguments_invalid",
                 "tool_name": name,
-                "message": getattr(exc, "message", str(exc)),
+                "message": (
+                    f"{len(details)} argument validation error(s); first at "
+                    f"{details[0]['path'] or '<root>'}: {details[0]['message']}"
+                    if story_write
+                    else getattr(exc, "message", str(exc))
+                ),
                 "path": ".".join(str(part) for part in getattr(exc, "absolute_path", ())),
+                **({"details": details} if story_write else {}),
                 "status": (
                     "workflow_validation_failed"
                     if name
@@ -612,8 +704,28 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                     }
                     else "tool_validation"
                 ),
-                "retryable": name
+                "retryable": story_write
+                or name
                 in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"},
+                "next_action": (
+                    "仅修正 details.path 列出的字段，保留其他字段；读取最新 revision 后最多重试一次"
+                    if story_write
+                    else "检查错误字段后再重试"
+                ),
+                **(
+                    {
+                        "agent_instruction": (
+                            "The story write was rejected before execution. Report the "
+                            "validation paths, correct only those exact fields, and preserve all "
+                            "unreported fields including effects. Re-read the current canvas for "
+                            "Create or the story for Patch, then retry once with the latest "
+                            "revision and a new idempotency key. If that corrected call fails, "
+                            "report it and end the turn without another write."
+                        )
+                    }
+                    if story_write
+                    else {}
+                ),
                 **({"agent_instruction": recovery} if recovery else {}),
             }
             _log_mcp_call_end(

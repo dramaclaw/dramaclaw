@@ -92,6 +92,25 @@ def test_video_prompt_round_trip_and_patch_preserve_story_and_media(
         assert restored.choices == story.choices
 
 
+def test_mapper_keeps_group_display_name_in_sync_with_story_title(
+    story: StoryDraftV2,
+) -> None:
+    projection = project_story_to_canvas(story)
+    group = next(node for node in projection.nodes if node["type"] == "groupNode")
+    assert group["data"]["displayName"] == story.title
+    assert group["data"]["label"] == story.title
+
+    group["data"]["displayName"] = "分组 1"
+    renamed = story.model_copy(update={"title": "新的互动短剧标题"})
+    updated = project_story_to_canvas(
+        renamed, existing_canvas={"nodes": projection.nodes, "edges": projection.edges}
+    )
+    updated_group = next(node for node in updated.nodes if node["type"] == "groupNode")
+    assert updated_group["id"] == group["id"]
+    assert updated_group["data"]["displayName"] == renamed.title
+    assert updated_group["data"]["label"] == renamed.title
+
+
 def test_mapper_round_trip_preserves_domain_ids_conditions_and_effects(
     story: StoryDraftV2,
 ) -> None:
@@ -195,6 +214,35 @@ def test_mapper_preserves_baked_video_rectangular_hotspot(story: StoryDraftV2) -
         "width": 0.28,
         "height": 0.16,
     }
+
+
+def test_mapper_appended_clips_avoid_existing_and_each_other(story: StoryDraftV2) -> None:
+    original = project_story_to_canvas(story)
+    clips = [node for node in original.nodes if node["type"] == "videoNode"]
+    # A manually enlarged clip spans the preferred columns of appended scenes.
+    clips[0]["position"] = {"x": 0, "y": 0}
+    clips[0]["measured"] = {"width": 10000, "height": 1800}
+    previous_positions = {node["id"]: dict(node["position"]) for node in clips}
+    appended = [story.segments[0].model_copy(update={"id": f"appended-{i}"}) for i in range(2)]
+    edited = story.model_copy(update={"segments": appended + story.segments})
+    projected = project_story_to_canvas(
+        edited, existing_canvas={"nodes": original.nodes, "edges": original.edges}
+    )
+    new_clips = [node for node in projected.nodes
+                 if node.get("data", {}).get("storySegmentId", "").startswith("appended-")]
+    assert len(new_clips) == 2
+    for node in projected.nodes:
+        if node["id"] in previous_positions:
+            assert node["position"] == previous_positions[node["id"]]
+    assert all(node["position"]["y"] >= 1920 for node in new_clips)
+    assert abs(new_clips[0]["position"]["y"] - new_clips[1]["position"]["y"]) >= CLIP_HEIGHT + 120
+    group = next(node for node in projected.nodes if node["id"] == projected.group_id)
+    assert group["width"] >= 10000 + 60
+    assert group["height"] >= max(node["position"]["y"] + CLIP_HEIGHT + 60 for node in new_clips)
+    repeated = project_story_to_canvas(
+        edited, existing_canvas={"nodes": projected.nodes, "edges": projected.edges}
+    )
+    assert repeated.nodes == projected.nodes
 
 
 def test_mapper_projects_composite_story_clips_without_overlap(
@@ -509,6 +557,101 @@ def test_remove_segment_cascades_directly_connected_choices(
         choice.source_segment_id != "sample_ending"
         and choice.target_segment_id != "sample_ending"
         for choice in restored.choices
+    )
+
+
+@pytest.mark.parametrize("remove", [False, True])
+def test_patch_preserves_media_edges_except_those_touching_removed_segments(
+    service: InteractiveStoryService, story: StoryDraftV2, remove: bool,
+) -> None:
+    service.create(create_request(story))
+    canvas = canvas_store.read_canvas(service.project_dir, "default")
+    target = next(n["id"] for n in canvas["nodes"] if n["data"].get("storySegmentId") == "sample_ending")
+    surviving = next(n["id"] for n in canvas["nodes"] if n["data"].get("storySegmentId") == story.start_segment_id)
+    media_nodes = [
+        {"id": name, "type": "imageNode", "position": {"x": 0, "y": 0}, "data": {}}
+        for name in ("reference-image", "external-output")
+    ]
+    media_edges = [
+        {"id": "incoming", "source": "reference-image", "target": target},
+        {"id": "outgoing", "source": target, "target": "external-output"},
+        {"id": "surviving-reference", "source": "reference-image", "target": surviving},
+        {"id": "unrelated", "source": "reference-image", "target": "external-output"},
+    ]
+    canvas["nodes"].extend(media_nodes)
+    canvas["edges"].extend(media_edges)
+    canvas["revision"] = 2
+    canvas_store.save_canvas(
+        service.project_dir, "default", base_revision=1,
+        build_payload=lambda _: canvas, client_save_id="reference-setup-01",
+    )
+    operation = (
+        {"op": "remove_segment", "segment_id": "sample_ending"} if remove
+        else {"op": "update_story_metadata", "changes": {"title": "新版"}}
+    )
+    service.patch(StoryPatchV2.model_validate({
+        "canvas_id": "default", "story_id": story.story_id, "base_revision": 2,
+        "idempotency_key": "media-edge-patch-01", "operations": [operation],
+    }))
+    saved = canvas_store.read_canvas(service.project_dir, "default")
+    ids = {n["id"] for n in saved["nodes"]}
+    assert all(e["source"] in ids and e["target"] in ids for e in saved["edges"])
+    expected = media_edges[2:] if remove else media_edges
+    assert [e for e in saved["edges"] if e["id"] in {item["id"] for item in media_edges}] == expected
+    assert all(node in saved["nodes"] for node in media_nodes)
+
+
+def test_patch_preserves_non_story_video_nodes_inside_story_group(
+    service: InteractiveStoryService, story: StoryDraftV2,
+) -> None:
+    service.create(create_request(story))
+    canvas = canvas_store.read_canvas(service.project_dir, "default")
+    group = next(node for node in canvas["nodes"] if node["data"].get("storyGroup"))
+    start = next(
+        node["id"]
+        for node in canvas["nodes"]
+        if node["data"].get("storySegmentId") == story.start_segment_id
+    )
+    manual = {
+        "id": "manual-production-video",
+        "type": "videoNode",
+        "parentId": group["id"],
+        "position": {"x": 80, "y": 90},
+        "data": {"label": "手工制作节点", "customMarker": "keep-me"},
+    }
+    manual_edge = {
+        "id": "manual-production-edge",
+        "source": "manual-production-video",
+        "target": start,
+    }
+    canvas["nodes"].append(manual)
+    canvas["edges"].append(manual_edge)
+    canvas["revision"] = 2
+    canvas_store.save_canvas(
+        service.project_dir,
+        "default",
+        base_revision=1,
+        build_payload=lambda _: canvas,
+        client_save_id="manual-production-setup-01",
+    )
+
+    service.patch(StoryPatchV2.model_validate({
+        "canvas_id": "default",
+        "story_id": story.story_id,
+        "base_revision": 2,
+        "idempotency_key": "preserve-manual-video-01",
+        "operations": [{
+            "op": "update_story_metadata",
+            "changes": {"title": "只修改故事标题"},
+        }],
+    }))
+
+    saved = canvas_store.read_canvas(service.project_dir, "default")
+    assert manual in saved["nodes"]
+    assert manual_edge in saved["edges"]
+    assert not any(
+        node.get("data", {}).get("storySegmentId") == "manual-production-video"
+        for node in saved["nodes"]
     )
 
 

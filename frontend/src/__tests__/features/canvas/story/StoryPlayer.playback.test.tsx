@@ -4,11 +4,11 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { StoryPlayer } from '@/features/canvas/story/StoryPlayer';
 import { useStoryRuntimeStore as store } from '@/stores/storyRuntimeStore';
 
-function enter(ink: string, clips: Record<string, string>, loops: Record<string, string> = {}) {
+function enter(ink: string, clips: Record<string, string>, loops: Record<string, string> = {}, placeholders: Record<string, { text: string; label?: string }> = {}) {
   store.getState().enterPlay({
     ink, clipByNodeId: clips, choiceLoopClipByNodeId: loops, knotByNodeId: {},
     choiceTimeByNodeId: {}, defaultChoiceIndexByNodeId: {}, endingByNodeId: {},
-    placeholderByNodeId: {}, choiceFeedbackById: {}, choiceStateChangesById: {},
+    placeholderByNodeId: placeholders, choiceFeedbackById: {}, choiceStateChangesById: {},
     choiceInteractionById: {}, warnings: [], variables: [],
   });
   return render(<StrictMode><StoryPlayer t={(key) => key} /></StrictMode>);
@@ -21,6 +21,20 @@ beforeEach(() => {
 afterEach(() => { cleanup(); store.getState().exitPlay(); vi.restoreAllMocks(); });
 
 describe('shared player playback visits', () => {
+  it('shows ending narrative only when the ending has no video', async () => {
+    const ink = '-> a\n=== a ===\nclip # clip:a\n-> END';
+    const placeholders = { a: { label: '便利店的黎明', text: '你推开店门。\n天终于亮了。' } };
+    const view = enter(ink, {}, {}, placeholders);
+    await waitFor(() => expect(document.querySelector('[data-story-ending-text]')?.textContent).toBe(placeholders.a.text));
+    expect(document.querySelector('[data-story-ending] h2')?.textContent).toBe(placeholders.a.label);
+    view.unmount();
+    store.getState().exitPlay();
+    enter(ink, { a: '/ending.mp4' }, {}, placeholders);
+    fireEvent.ended(document.querySelector('video')!);
+    expect(document.querySelector('[data-story-ending-text]')).toBeNull();
+    expect(store.getState().currentPlaceholder).toBeNull();
+  });
+
   it('waits for each video in consecutive automatic transitions', async () => {
     enter(chain, { a: '/a.mp4', b: '/b.mp4', c: '/c.mp4' });
     fireEvent.ended(document.querySelector('video')!);

@@ -95,6 +95,12 @@ def project_story_to_canvas(
     group_id = str(existing_group.get("id")) if existing_group else story_group_node_id(story.story_id)
     existing_nodes = _dict_list(canvas.get("nodes"))
     existing_edges = _dict_list(canvas.get("edges"))
+    for node in existing_nodes:
+        data = node.get("data")
+        if (node.get("type") == VIDEO_NODE_TYPE and node.get("parentId") == group_id
+                and isinstance(data, dict) and isinstance(data.get("storySegmentId"), str)
+                and not data["storySegmentId"].strip()):
+            raise CanvasStoryMappingError("Story segment has an empty storySegmentId")
     current_segments = {
         str(data["storySegmentId"]): node
         for node in existing_nodes
@@ -119,6 +125,15 @@ def project_story_to_canvas(
     }
     computed_positions, computed_width, computed_height = _layout_story(story)
     nodes: list[dict[str, Any]] = []
+    # Reserve all retained children before placing any new clips, regardless of
+    # story order. Existing positions remain user-owned.
+    retained_ids = set(segment_node_by_id.values())
+    occupied = [
+        _node_layout_rect(node)
+        for node in existing_nodes
+        if node.get("parentId") == group_id
+        and (node.get("id") in retained_ids or node not in current_segments.values())
+    ]
 
     for segment in story.segments:
         current = current_segments.get(segment.id) or {}
@@ -155,22 +170,31 @@ def project_story_to_canvas(
         _set_optional(data, "storyRole", "start" if segment.id == story.start_segment_id else None)
         _set_optional(data, "choiceTimeLimitSec", segment.choice_time_limit_sec)
         _set_optional(data, "endingLabel", segment.ending_label)
+        clip_position = current.get("position")
+        if not clip_position:
+            clip_position = _vacant_clip_position(computed_positions[segment.id], occupied)
+            occupied.append((clip_position["x"], clip_position["y"], CLIP_WIDTH, CLIP_HEIGHT))
         node = {
             **current,
             "id": segment_node_by_id[segment.id],
             "type": VIDEO_NODE_TYPE,
             "parentId": group_id,
-            "position": current.get("position") or computed_positions[segment.id],
+            "position": clip_position,
             "width": current.get("width") or CLIP_WIDTH,
             "height": current.get("height") or CLIP_HEIGHT,
             "data": data,
         }
         nodes.append(node)
 
+    for x, y, width, height in occupied:
+        computed_width = max(computed_width, x + width + GROUP_PADDING)
+        computed_height = max(computed_height, y + height + GROUP_PADDING)
+
     group_data = dict((existing_group or {}).get("data") or {})
     group_data.update(
         {
             "label": story.title,
+            "displayName": story.title,
             "storyGroup": True,
             "interactiveStoryId": story.story_id,
             "interactiveStorySchemaVersion": story.schema_version,
@@ -259,6 +283,9 @@ def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV2:
         node
         for node in _dict_list(canvas.get("nodes"))
         if node.get("type") == VIDEO_NODE_TYPE and node.get("parentId") == group_id
+        and isinstance(node.get("data"), dict)
+        and isinstance(node["data"].get("storySegmentId"), str)
+        and bool(node["data"]["storySegmentId"].strip())
     ]
     if not segment_nodes:
         raise CanvasStoryMappingError(f"story {story_id!r} has no video segments")
@@ -358,6 +385,9 @@ def story_graph_ids(canvas: dict[str, Any], story_id: str) -> tuple[set[str], se
         str(node.get("id") or "")
         for node in _dict_list(canvas.get("nodes"))
         if node.get("type") == VIDEO_NODE_TYPE and node.get("parentId") == group_id
+        and isinstance(node.get("data"), dict)
+        and isinstance(node["data"].get("storySegmentId"), str)
+        and bool(node["data"]["storySegmentId"].strip())
     }
     edge_ids = {
         str(edge.get("id") or "")
@@ -366,6 +396,37 @@ def story_graph_ids(canvas: dict[str, Any], story_id: str) -> tuple[set[str], se
         and str(edge.get("source") or "") in segment_ids
     }
     return {group_id, *segment_ids}, edge_ids
+
+
+def _node_layout_rect(node: dict[str, Any]) -> tuple[float, float, float, float]:
+    position = node.get("position") or {}
+    measured = node.get("measured") or {}
+    return (
+        _number(position.get("x")),
+        _number(position.get("y")),
+        max(_number(node.get("width")), _number(measured.get("width")), CLIP_WIDTH),
+        max(_number(node.get("height")), _number(measured.get("height")), CLIP_HEIGHT),
+    )
+
+
+def _vacant_clip_position(
+    preferred: dict[str, float],
+    occupied: list[tuple[float, float, float, float]],
+) -> dict[str, float]:
+    """Keep the narrative column and move below blockers with normal spacing."""
+    x, y = preferred["x"], preferred["y"]
+    while True:
+        blockers = [
+            oy + height + ROW_GAP
+            for ox, oy, width, height in occupied
+            if x < ox + width + COLUMN_GAP
+            and x + CLIP_WIDTH + COLUMN_GAP > ox
+            and y < oy + height + ROW_GAP
+            and y + CLIP_HEIGHT + ROW_GAP > oy
+        ]
+        if not blockers:
+            return {"x": x, "y": y}
+        y = max(blockers)
 
 
 def _layout_story(story: StoryDraftV2) -> tuple[dict[str, dict[str, float]], float, float]:

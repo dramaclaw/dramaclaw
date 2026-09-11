@@ -53,6 +53,10 @@ for index, path in enumerate(sys.argv[1:]):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module._current_agent_token() == 'isolated-token'
+    names = {name for name, _, _ in module.TOOLS}
+    assert {'dramaclaw_create_interactive_story', 'dramaclaw_get_interactive_story',
+            'dramaclaw_patch_interactive_story', 'dramaclaw_validate_interactive_story',
+            'dramaclaw_get_freezone_canvas'} <= names
 assert not any(name == 'novelvideo' or name.startswith('novelvideo.') for name in sys.modules)
 """
     token_file = tmp_path / "turn.token"

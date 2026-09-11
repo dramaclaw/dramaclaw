@@ -84,6 +84,18 @@ describe("interactive story canvas refresh", () => {
     );
   });
 
+  it.each([
+    undefined,
+    { ok: false, code: "revision_conflict" },
+    { ok: true, refresh_canvas: false },
+    { ok: true },
+  ])("does not refresh a completed tool without a successful write receipt: %j", async (result_json) => {
+    const frame = { ...successfulPatchFrame, result_json };
+    expect(interactiveStoryRefreshTarget(frame)).toBeNull();
+    await expect(refreshInteractiveStoryCanvasFromToolFrame(frame)).resolves.toBe(false);
+    expect(canvasRuntime.refreshRemoteFreezoneCanvas).not.toHaveBeenCalled();
+  });
+
   it("reports a protected refresh that was blocked by genuine local edits", async () => {
     canvasRuntime.refreshRemoteFreezoneCanvas.mockResolvedValue(false);
 

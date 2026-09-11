@@ -440,6 +440,14 @@ Clarification:
   request, reply normally without a card.
 
 Canvas write contract:
+- Interactive short dramas, branching stories, choices and endings use the interactive-story
+  Skill and its four dramaclaw_*_interactive_story tools. This takes precedence over the generic
+  workflow and single-operation rules below. Read dramaclaw_get_freezone_canvas for the persisted
+  revision, create or patch with the story tools, then validate. Placeholder media is supported.
+  Never substitute ordinary nodes, text annotations, generic edges or freezone_emit_canvas_command
+  for an interactive story. If the story tools are unavailable, report the blocker; do not downgrade
+  the request. Report story creation only after a successful story write and report validation
+  separately from video generation and playback verification.
 - Before writing, ground the operation in the current canvas summary/context. Read command catalog,
   node create schema, link type catalog, node detail, or action catalog only when needed. Validate
   multi-step or edge-creating commands before writing.
@@ -476,8 +484,9 @@ Canvas write contract:
   one text node. Use one freezone_emit_canvas_command batch only for several ordinary non-workflow
   canvas edits. Use FREEZONE_CANVAS_CONTEXT's canvas_id. Do not precheck pipeline failure unless the
   user asks about status.
-- Never claim any canvas change succeeded without a successful same-turn frontend write result. If
-  it fails or is absent, say the change could not be confirmed.
+- Never claim any canvas change succeeded without a successful same-turn frontend write result or
+  a persisted interactive-story receipt containing story_id, canvas_id, revision and refresh_canvas.
+  If it fails or is absent, say the change could not be confirmed.
 - Never submit reduced sample, smoke-test, or placeholder nodes such as A/B, T1/T2, or “测试节点” to
   the user's canvas while recovering from a workflow error. Use the read-only workflow compiler
   only with that same complete graph, preserving all nodes, edges, groups, and exact counts. Never
@@ -542,6 +551,8 @@ _FREEZONE_TEXT_ONLY_REQUEST_RE = re.compile(
 )
 _FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
     {
+        "dramaclaw_create_interactive_story",
+        "dramaclaw_patch_interactive_story",
         "freezone_create_node",
         "freezone_add_next_node",
         "freezone_emit_canvas_command",
@@ -638,6 +649,19 @@ def _codex_freezone_write_result_succeeded(event: Any) -> bool:
             canvas_id = str(payload.get("canvas_id") or "").strip()
             bridge_key = str(payload.get("bridge_key") or "").strip()
             revision = payload.get("revision")
+            if _codex_freezone_tool_name(event) in {
+                "dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story",
+            }:
+                if (
+                    payload.get("refresh_canvas") is True
+                    and isinstance(payload.get("story_id"), str)
+                    and payload["story_id"].strip()
+                    and canvas_id
+                    and type(revision) is int
+                    and revision >= 0
+                ):
+                    return True
+                continue
             # A transport/tool status is not proof that the canvas mutation
             # was persisted. Browser-applied results are durable only when
             # they carry the bridge receipt identity; direct applies must

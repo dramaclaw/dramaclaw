@@ -628,21 +628,28 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
       {/* 结局页:叶子结局标题 + 重玩。续玩提示期间(idle)不显示。 */}
       {phase === 'ended' && !resumeAvailable && showChoices && currentChoices.length === 0 && (
         <div data-story-ending
-          className={`absolute inset-0 z-10 flex flex-col items-center gap-5 px-6 text-center ${currentClipUrl ? 'justify-end pb-10' : 'justify-center bg-black/55'}`}>
+          className={`absolute inset-0 z-10 flex flex-col items-center px-6 text-center ${currentClipUrl ? 'justify-end pb-10' : 'overflow-y-auto overscroll-contain py-10 bg-black/55'}`}>
+          <div className={`flex w-full shrink-0 flex-col items-center gap-5 ${currentClipUrl ? '' : 'my-auto'}`}>
           {currentEnding?.label && (
             <span className="rounded-full border border-white/25 px-3 py-1 text-sm font-medium tracking-wide text-white/80">
               {t('canvas.story.endingBadge', { label: currentEnding.label })}
             </span>
           )}
           {(currentEnding?.title?.trim() || !currentClipUrl) && <h2 className="max-w-2xl text-3xl font-semibold text-white [text-shadow:0_2px_16px_rgba(0,0,0,0.8)]">
-            {currentEnding?.title?.trim() || t('canvas.story.endingFallback')}
+            {currentEnding?.title?.trim() || (!currentClipUrl && currentPlaceholder?.label?.trim()) || t('canvas.story.endingFallback')}
           </h2>}
+          {!currentClipUrl && currentPlaceholder?.text.trim() && (
+            <p data-story-ending-text className="w-full max-w-2xl whitespace-pre-wrap break-words text-left text-base leading-8 text-white/90 sm:text-lg">
+              {currentPlaceholder.text}
+            </p>
+          )}
           <button
             onClick={handleRestart}
             className="mt-2 rounded-full border border-white/30 bg-white/5 px-8 py-2.5 text-base font-medium text-white/95 backdrop-blur-sm transition-colors hover:bg-white/15"
           >
             {t('canvas.story.restart')}
           </button>
+          </div>
         </div>
       )}
     </div>

@@ -164,6 +164,9 @@ class InteractiveStoryService:
                 updated_story, existing_canvas=existing
             )
             owned_node_ids, owned_edge_ids = story_graph_ids(existing, patch.story_id)
+            removed_node_ids = owned_node_ids - {
+                str(node.get("id") or "") for node in projection.nodes
+            }
             nodes = [
                 node
                 for node in _dict_list(existing.get("nodes"))
@@ -173,6 +176,8 @@ class InteractiveStoryService:
                 edge
                 for edge in _dict_list(existing.get("edges"))
                 if str(edge.get("id") or "") not in owned_edge_ids
+                and str(edge.get("source") or "") not in removed_node_ids
+                and str(edge.get("target") or "") not in removed_node_ids
             ]
             nodes.extend(projection.nodes)
             edges.extend(projection.edges)

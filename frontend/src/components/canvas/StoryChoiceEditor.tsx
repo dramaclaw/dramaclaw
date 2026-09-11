@@ -762,8 +762,11 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
               ) : null}
               {horizontalGuideY !== null && (
                 <div aria-hidden="true" data-testid="story-horizontal-guide"
-                  className="pointer-events-none absolute inset-x-0 z-[4] border-t border-dashed border-accent"
-                  style={{ top: previewRenderRect ? `${previewRenderRect.top + horizontalGuideY * previewRenderRect.height}px` : `${horizontalGuideY * 100}%` }}
+                  className="pointer-events-none absolute inset-x-0 z-[4] h-px"
+                  style={{
+                    top: previewRenderRect ? `${previewRenderRect.top + horizontalGuideY * previewRenderRect.height}px` : `${horizontalGuideY * 100}%`,
+                    backgroundImage: 'repeating-linear-gradient(to right, rgb(var(--accent-rgb) / 0.52) 0 4px, transparent 4px 8px)',
+                  }}
                 />
               )}
               {displayAnchor && (resolvedInteraction.presentation === 'object-anchor' ? (
@@ -801,7 +804,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                   }}
                   onPointerCancel={(event) => finishHotspotGesture(event, false)}
                   onKeyDown={moveHotspotByKeyboard}
-                  className="absolute z-[2] flex min-h-6 min-w-6 -translate-x-1/2 -translate-y-1/2 cursor-move touch-none items-center justify-center rounded-md border-2 border-accent bg-accent/15 shadow-[0_8px_24px_rgba(0,0,0,0.35)] outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  className="absolute z-[2] flex min-h-6 min-w-6 -translate-x-1/2 -translate-y-1/2 cursor-move touch-none items-center justify-center rounded-md border-2 border-[rgb(var(--accent-rgb))] bg-[rgb(var(--accent-rgb)/0.15)] shadow-[0_8px_24px_rgba(0,0,0,0.35)] outline-none focus-visible:ring-2 focus-visible:ring-white"
                   style={previewAnchorStyle}
                 >
                   <span className="pointer-events-none whitespace-nowrap rounded bg-black/75 px-1.5 py-0.5 text-[11px] font-medium text-white shadow-sm">
@@ -822,7 +825,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                       onKeyDown={(event) => resizeHotspotByKeyboard(event, corner)}
                       className={`absolute z-[3] flex h-8 w-8 touch-none items-center justify-center rounded-md bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-white ${HOTSPOT_HANDLE_POSITION[corner]}`}
                     >
-                      <span className="pointer-events-none h-2.5 w-2.5 rounded-[2px] border border-accent bg-white shadow-[0_2px_6px_rgba(0,0,0,0.45)]" />
+                      <span className="pointer-events-none h-2.5 w-2.5 rounded-[2px] border border-[rgb(var(--accent-rgb))] bg-white shadow-[0_2px_6px_rgba(0,0,0,0.45)]" />
                     </button>
                   ))}
                 </div>
