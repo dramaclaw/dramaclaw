@@ -92,6 +92,7 @@ describe("recharge checkout", () => {
   it.each([
     [409, { detail: "PAYMENT_ORG_CREDITS_INSUFFICIENT" }, "credits.recharge.errors.orgCreditsInsufficient"],
     [409, { ok: false, error: "PAYMENT_ORG_CREDITS_INSUFFICIENT" }, "credits.recharge.errors.orgCreditsInsufficient"],
+    [422, { detail: "DODO_AMOUNT_BELOW_MINIMUM" }, "credits.recharge.errors.belowMinimum"],
     [503, { detail: "payment service unavailable" }, "credits.recharge.errors.serviceUnavailable"],
     [409, { detail: "unrecognized internal error" }, "credits.recharge.createFailed"],
   ])("shows the expected message for an HTTP %s checkout failure", async (status, body, expectedKey) => {

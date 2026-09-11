@@ -6,6 +6,7 @@ import { HTTPError } from "ky";
 import { BackendStatusError, errorFromBackendBody } from "@/lib/api-errors";
 
 const PAYMENT_ERROR_KEYS: Record<string, string> = {
+  DODO_AMOUNT_BELOW_MINIMUM: "credits.recharge.errors.belowMinimum",
   PAYMENT_QUOTE_REQUIRED: "credits.recharge.errors.quoteChanged",
   PAYMENT_QUOTE_CHANGED: "credits.recharge.errors.quoteChanged",
   DODO_CREATE_UNCONFIRMED: "credits.recharge.errors.checkoutUnknown",

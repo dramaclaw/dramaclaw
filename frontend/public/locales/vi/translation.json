@@ -1471,7 +1471,8 @@
         "requestChanged": "Cấu hình nạp đã thay đổi. Hãy tải lại và gửi đơn lần nữa.",
         "serviceUnavailable": "Dịch vụ thanh toán tạm thời không khả dụng. Vui lòng thử lại sau.",
         "checkoutUnknown": "Đang xác minh việc tạo trang thanh toán. Hãy kiểm tra lịch sử hóa đơn trước khi tạo đơn khác.",
-        "quoteChanged": "Báo giá đã thay đổi. Hãy kiểm tra số tiền mới và xác nhận thanh toán lại."
+        "quoteChanged": "Báo giá đã thay đổi. Hãy kiểm tra số tiền mới và xác nhận thanh toán lại.",
+        "belowMinimum": "Số tiền thấp hơn mức tối thiểu của kênh thanh toán. Vui lòng tăng số tiền hoặc chọn phương thức thanh toán khác."
       },
       "orderAlreadyCreated": "Đơn này đã tồn tại. Kiểm tra trạng thái trong lịch sử nạp.",
       "history": "Lịch sử nạp",

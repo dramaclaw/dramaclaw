@@ -1471,7 +1471,8 @@
         "requestChanged": "The recharge configuration changed. Refresh and submit the order again.",
         "serviceUnavailable": "The payment service is temporarily unavailable. Try again later.",
         "checkoutUnknown": "Checkout creation is being verified. Check your billing records before trying another order.",
-        "quoteChanged": "The quote has changed. Review the updated amount and confirm payment again."
+        "quoteChanged": "The quote has changed. Review the updated amount and confirm payment again.",
+        "belowMinimum": "The amount is below the payment channel minimum. Choose a larger amount or another payment method."
       },
       "orderAlreadyCreated": "This order already exists. Check its status in recharge history.",
       "history": "Recharge history",

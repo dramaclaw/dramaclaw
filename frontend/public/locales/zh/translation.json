@@ -1471,7 +1471,8 @@
         "requestChanged": "充值配置已更新，请刷新后重新提交订单",
         "serviceUnavailable": "支付服务暂时不可用，请稍后重试",
         "checkoutUnknown": "收银台创建结果正在核实，请查看账单记录，勿重复创建订单。",
-        "quoteChanged": "报价已变化，请核对新金额后再次确认支付。"
+        "quoteChanged": "报价已变化，请核对新金额后再次确认支付。",
+        "belowMinimum": "充值金额低于支付渠道最低金额，请提高金额或选择其他支付方式。"
       },
       "orderAlreadyCreated": "该订单已经创建，请在充值记录中查看状态",
       "history": "充值记录",
