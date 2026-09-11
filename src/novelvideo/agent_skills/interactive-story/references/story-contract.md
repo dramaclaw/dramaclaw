@@ -94,7 +94,7 @@ Batch generation uses only non-empty video prompts, never narrative or notes as
 fallback. Existing nodes without prompts remain playable placeholders/imported
 clips but must have prompts prepared before generating missing video.
 
-`choice_loop` is optional and is valid only on a Segment with outgoing Choices. It is one dedicated short animation shared by the entire choice point, not one clip per Choice. The main Segment `media` always plays once. When choices appear, the player switches to ready `choice_loop.media`; when it is missing, the player freezes the main video's tail frame. Describe a 2–4 second seamless loop with a fixed camera, stable first and last composition, stationary props/characters used by anchors, and only subtle ambient motion. Do not bake branch logic into this clip; Choice `interaction` still owns the UI or hotspot.
+`choice_loop` is optional and is valid only on a Segment with outgoing Choices. It is one dedicated short animation shared by the entire choice point, not one clip per Choice. The main Segment `media` always plays once. When choices appear, the player switches to ready `choice_loop.media`; when it is missing, the player freezes the main video's tail frame. A 2–4 second loop with a fixed camera and subtle ambient motion is a useful default, not a required creative format. Adapt duration and motion to the scene while keeping the loop transition stable and any clickable targets usable. Do not bake branch logic into this clip; Choice `interaction` still owns the UI or hotspot.
 
 ### Choice
 
@@ -115,9 +115,24 @@ clips but must have prompts prepared before generating missing video.
 
 Choices from the same source must have unique `order` values. An ending segment must not be a Choice source.
 
-Set `mode` to `automatic` and use an empty `text` when the system should choose the path after the source clip finishes. Automatic transitions are checked by ascending `order`. Use one final automatic transition without a condition as the fallback. A source with only conditional automatic transitions and no fallback can stop when no rule matches. Do not mix an unconditional automatic fallback with visible Choices.
+Set `mode` to `automatic` and use an empty `text` when the system should choose the path after the source clip finishes. Automatic transitions are checked by ascending `order`. Use one final automatic transition without a condition as the fallback. Here, fallback means “the last unconditional automatic Choice by `order`”; it is not a timed default Choice. Every automatic Choice must use `is_default:false`, `text:""`, and `feedback_text:""`, and must use the default interaction: omit `interaction`, use `{}`, or preserve the serialized default object (`overlay`, null anchor, `glass`, `fade`, `fade`). Automatic Choices may apply `effects`; the empty feedback rule does not require moving or removing those effects. A source with only conditional automatic transitions and no fallback can stop when no rule matches. Do not mix an unconditional automatic fallback with visible Choices.
 
-`feedback_text` is an optional, short line shown immediately after a player confirms a Choice. Keep it sparse: omit it for routine Choices, and use it only for a relationship turn, information reveal, or another clearly felt state change (for example, “她的戒备似乎少了一些。”). When that Choice also has variable effects, the player sees each variable's semantic label with an ↑/↓ direction (for example, `信任 ↑`), never the numeric value. It does not generate, replace, or alter a video asset.
+```json
+{
+  "id":"merge_after_left",
+  "source_segment_id":"left_path",
+  "target_segment_id":"reunion",
+  "mode":"automatic",
+  "text":"",
+  "order":0,
+  "condition":null,
+  "effects":[],
+  "feedback_text":"",
+  "is_default":false
+}
+```
+
+`feedback_text` is an optional, short line shown immediately after a player confirms a Choice. Prefer feedback when it adds meaningful information or emotion (for example, “她的戒备似乎少了一些。”). Avoid repetitive feedback; consecutive Choices may each have feedback when the story benefits. When that Choice also has variable effects, the player sees each variable's semantic label with an ↑/↓ direction (for example, `信任 ↑`), never the numeric value. It does not generate, replace, or alter a video asset.
 
 `interaction` is optional. Omit it by default so the player sees an explicit bottom `overlay` decision. Use `object_anchor` or `baked_video` only after the user requests an in-frame interaction and the final media target position is known; do not infer precise coordinates from placeholder media or script text. `object_anchor` renders a real frontend choice at the normalized `anchor` point in the video frame; use `object_label` to name the prop or character it belongs to. `baked_video` expects visible UI to already exist in the video and creates only an accessible transparent rectangular hotspot. Its `anchor.x`/`anchor.y` are the rectangle center and `anchor.width`/`anchor.height` are required normalized dimensions; the full rectangle must stay within the source frame. Anchored interactions can use `glass`, `tag`, or `warning` UI styles, `fade`, `pop`, or `pulse` entrance motion, and `fade`, `flash`, or `cut` branch transition.
 
@@ -165,7 +180,30 @@ Set a flag:
   "story_id":"midnight_station",
   "base_revision":3,
   "idempotency_key":"patch-midnight-r3-ending",
-  "operations":[]
+  "operations":[
+    {
+      "op":"add_segment",
+      "segment":{
+        "id":"stay_until_dawn",
+        "title":"等到天亮",
+        "script":"你留在站台，第一班车终于驶入晨雾。",
+        "kind":"ending",
+        "ending_label":"等候者"
+      }
+    },
+    {
+      "op":"add_choice",
+      "choice":{
+        "id":"arrival_stay",
+        "source_segment_id":"arrival",
+        "target_segment_id":"stay_until_dawn",
+        "mode":"visible",
+        "text":"留在站台",
+        "order":1,
+        "is_default":false
+      }
+    }
+  ]
 }
 ```
 
@@ -182,6 +220,32 @@ Supported operations:
 When adding a branch, add both the target Segment and its Choice in the same Patch. Do not send the complete Story returned by Get as a Patch.
 
 Set `update_segment.changes.media` to `null` to clear existing media and restore a placeholder. Set `update_segment.changes.choice_loop` to `null` to remove the dedicated choice animation. Do not construct an empty media object manually.
+
+Every Patch operation uses the exact `{"op":"...", ...}` envelope shown above. `add_segment` wraps its value in `segment`; `add_choice` wraps it in `choice`; updates put changed fields under `changes`. Never substitute `type`, `operation`, `data`, or `value` for these names.
+
+### Omission, empty values, and null
+
+- Omit a field from `changes` to preserve its stored value.
+- Use `condition:null` to remove a Choice condition, `ending_label:null` when changing an ending to a scene, and `choice_time_limit_sec:null` to remove a timer.
+- Use `media:null` to restore placeholder media and `choice_loop:null` to remove the choice animation.
+- Use `video_prompt:""`, `production_notes:""`, `synopsis:""`, or `feedback_text:""` to clear those strings; use `effects:[]` or `character_ids:[]` to clear those lists.
+- Do not send null for `title`, `script`, `kind`, `character_ids`, `production_notes`, `video_prompt`, Choice IDs, `mode`, `text`, `order`, `effects`, `feedback_text`, `interaction`, or `is_default`. Omit them when unchanged.
+
+For example, convert a visible Choice into an automatic transition atomically so no visible-only state survives:
+
+```json
+{
+  "op":"update_choice",
+  "choice_id":"arrival_follow",
+  "changes":{
+    "mode":"automatic",
+    "text":"",
+    "feedback_text":"",
+    "interaction":{},
+    "is_default":false
+  }
+}
+```
 
 ## Validation Results
 

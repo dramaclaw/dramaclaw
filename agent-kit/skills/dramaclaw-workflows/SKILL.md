@@ -9,6 +9,7 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
 
 ## Required behavior
 
+- For interactive short dramas, branching stories, choices or multiple endings, route story structure to the `interactive-story` Skill and its dedicated tools first. This workflow Skill applies only to the requested media production. Never replace an unavailable story tool with ordinary canvas commands or a WorkflowPlan.
 - Read this Skill and its references only through the exact locator advertised by the current host.
   Never invent `project://` paths. Use a canvas summary already supplied by the host; if current
   canvas data must be refreshed, call `freezone_get_canvas_ontology` instead of inventing a

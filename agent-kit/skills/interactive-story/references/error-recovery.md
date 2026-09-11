@@ -1,0 +1,10 @@
+# Interactive story write recovery
+
+Applies only to Create/Patch failures, not media-generation retries. Read before attempting a recovery write.
+
+- `revision_conflict`: For Create, re-read the same persisted canvas with `dramaclaw_get_freezone_canvas`; for Patch, Get the same story. Preserve concurrent edits and rebuild only the still-authorized changes. Retry the same operation once with the revision returned by that successful read and a new key for the changed payload, keeping the same project, canvas and story. The prior call must have explicitly returned `revision_conflict`; timeout, cancellation, missing results and cached receipts do not authorize a retry. Stop if the conflict repeats or the new state makes the intent ambiguous.
+- `idempotency_conflict`: stop; do not hide the conflict by inventing a new key.
+- `tool_arguments_invalid` at `phase=tool_validation`: this is a deterministic pre-write rejection. Read every returned `details.path`, correct only those exact fields, and preserve all unreported fields and story semantics. Re-read the canvas for Create or Get the story for Patch, then retry once in the same turn with the current revision and a new idempotency key because the payload changed. Do not guess alternative envelopes. If the corrected call fails, report it and end the turn without another write.
+- `invalid_story`, HTTP 422, or `request_validation_error` alone do not prove that no write occurred. Report the error and read the current story; do not retry automatically or overwrite the tree. In particular, `invalid_story` may be raised after saving. Missing diagnostic paths never authorize guessing a correction.
+- For an automatic Choice whose `feedback_text` must be empty, clear only `feedback_text`. Automatic Choices may keep `effects`; do not move, remove, or rewrite effects unless a separate validation path names them or the user requests a story change.
+- After any failed Create or Patch, end the turn and report the failure unless the explicit `revision_conflict` recovery or one deterministic validation correction above applies. Do not carry a second validation retry into automatic continuation or recovery.
