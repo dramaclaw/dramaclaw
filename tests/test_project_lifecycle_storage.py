@@ -1,4 +1,5 @@
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -16,8 +17,18 @@ def _patch_roots(monkeypatch, tmp_path) -> None:
 
 
 def _record(
-    tmp_path, *, status: str = "active", owner: str = "alice"
+    tmp_path,
+    *,
+    status: str = "active",
+    owner: str = "alice",
+    storage_org_id: str | None = None,
+    storage_org_name: str | None = None,
 ) -> ProjectRecord:
+    relative = (
+        ("_orgs", storage_org_name, owner, "demo")
+        if storage_org_name
+        else (owner, "demo")
+    )
     return ProjectRecord(
         id="01PROJECT",
         owner_type="user",
@@ -25,10 +36,12 @@ def _record(
         owner_username=owner,
         name="demo",
         home_node_id="local",
-        output_dir=str(tmp_path / "output" / owner / "demo"),
-        state_dir=str(tmp_path / "state" / owner / "demo"),
-        runtime_dir=str(tmp_path / "runtime" / owner / "demo"),
+        output_dir=str(tmp_path / "output" / Path(*relative)),
+        state_dir=str(tmp_path / "state" / Path(*relative)),
+        runtime_dir=str(tmp_path / "runtime" / Path(*relative)),
         status=status,
+        storage_org_id=storage_org_id,
+        storage_org_name=storage_org_name,
     )
 
 
@@ -52,17 +65,25 @@ def _context(record: ProjectRecord) -> ProjectContext:
 
 
 @pytest.mark.asyncio
-async def test_create_project_does_not_reuse_orphaned_same_name_data(monkeypatch, tmp_path):
+@pytest.mark.parametrize("storage_org", [None, ("org_01HXYZ", "acme")])
+async def test_create_project_does_not_reuse_orphaned_same_name_data(
+    monkeypatch, tmp_path, storage_org
+):
     from novelvideo.api.routes import projects
 
     _patch_roots(monkeypatch, tmp_path)
-    record = _record(tmp_path)
-    old_canvas = tmp_path / "state" / "alice" / "demo" / "freezone" / "canvases"
+    storage_org_id, storage_org_name = storage_org or (None, None)
+    record = _record(
+        tmp_path,
+        storage_org_id=storage_org_id,
+        storage_org_name=storage_org_name,
+    )
+    old_canvas = Path(record.state_dir) / "freezone" / "canvases"
     old_canvas.mkdir(parents=True)
     (old_canvas / "default.json").write_text('{"old": true}', encoding="utf-8")
-    (tmp_path / "state" / "alice" / "demo" / "data.db").write_bytes(b"old workflow db")
-    (tmp_path / "output" / "alice" / "demo").mkdir(parents=True)
-    (tmp_path / "runtime" / "alice" / "demo").mkdir(parents=True)
+    (Path(record.state_dir) / "data.db").write_bytes(b"old workflow db")
+    Path(record.output_dir).mkdir(parents=True)
+    Path(record.runtime_dir).mkdir(parents=True)
 
     class Registry:
         async def create_project(self, **_kwargs):
@@ -141,7 +162,14 @@ async def test_purge_detaches_files_before_releasing_project_name(monkeypatch, t
     async def emit_audit(**_kwargs):
         calls.append("audit")
 
-    async def delete_codex_threads(*_args, **_kwargs):
+    async def delete_codex_threads(*_args, **kwargs):
+        assert all(
+            not projects.Path(path).exists()
+            for path in (record.output_dir, record.state_dir, record.runtime_dir)
+        )
+        isolated_state = projects.Path(kwargs["project_state_dir"])
+        assert isolated_state.exists()
+        assert isolated_state.name.startswith(".demo.purging-")
         calls.append("codex")
         return 1
 
@@ -198,6 +226,58 @@ async def test_purge_restores_files_when_registry_purge_fails(monkeypatch, tmp_p
         assert not list(path.parent.glob(".demo.purging-*"))
 
 
+@pytest.mark.asyncio
+async def test_organization_purge_restores_files_when_codex_cleanup_fails(
+    monkeypatch, tmp_path
+):
+    from novelvideo.api.routes import projects
+
+    _patch_roots(monkeypatch, tmp_path)
+    record = _record(
+        tmp_path,
+        status="deleted",
+        storage_org_id="org_01HXYZ",
+        storage_org_name="acme",
+    )
+    for raw_path in (record.output_dir, record.state_dir, record.runtime_dir):
+        path = projects.Path(raw_path)
+        path.mkdir(parents=True)
+        (path / "retained.txt").write_text("old", encoding="utf-8")
+    ctx = _context(record)
+
+    class Registry:
+        async def get_project(self, _project_id):
+            return record
+
+        async def mark_project_purged(self, _project_id):
+            raise AssertionError("registry purge must not run after Codex cleanup fails")
+
+    async def resolve_context(**_kwargs):
+        return ctx
+
+    async def delete_codex_threads(*_args, **kwargs):
+        isolated_state = projects.Path(kwargs["project_state_dir"])
+        assert isolated_state.exists()
+        assert isolated_state.name.startswith(".demo.purging-")
+        raise RuntimeError("Codex unavailable")
+
+    monkeypatch.setattr(projects, "resolve_project_context", resolve_context)
+    monkeypatch.setattr(projects, "get_project_registry", lambda: Registry())
+    monkeypatch.setattr(
+        projects.chat_service,
+        "delete_codex_project_threads",
+        delete_codex_threads,
+    )
+
+    with pytest.raises(RuntimeError, match="Codex unavailable"):
+        await projects.purge_project("01PROJECT", user={"username": "alice"})
+
+    for raw_path in (record.output_dir, record.state_dir, record.runtime_dir):
+        path = projects.Path(raw_path)
+        assert (path / "retained.txt").read_text(encoding="utf-8") == "old"
+        assert not list(path.parent.glob(".demo.purging-*"))
+
+
 # --------------------------------------------------------------------------- #
 # 存储归属校验器:用户操作必须互相隔离,绝不移动/删除他人目录                     #
 # --------------------------------------------------------------------------- #
@@ -206,6 +286,9 @@ async def test_purge_restores_files_when_registry_purge_fails(monkeypatch, tmp_p
 def _valid_dirs(tmp_path, owner="alice"):
     return dict(
         owner_username=owner,
+        project_name="demo",
+        storage_org_id=None,
+        storage_org_name=None,
         output_dir=str(tmp_path / "output" / owner / "demo"),
         state_dir=str(tmp_path / "state" / owner / "demo"),
         runtime_dir=str(tmp_path / "runtime" / owner / "demo"),
@@ -218,6 +301,139 @@ def test_validator_accepts_owned_dirs(monkeypatch, tmp_path):
     _patch_roots(monkeypatch, tmp_path)
     validated = assert_owned_project_storage(**_valid_dirs(tmp_path))
     assert validated.state_dir == (tmp_path / "state" / "alice" / "demo").resolve()
+
+
+def test_validator_rejects_personal_owner_that_collides_with_org_namespace(
+    monkeypatch, tmp_path
+):
+    from novelvideo.security import (
+        ProjectStorageOwnershipError,
+        assert_owned_project_storage,
+    )
+
+    _patch_roots(monkeypatch, tmp_path)
+
+    with pytest.raises(ProjectStorageOwnershipError):
+        assert_owned_project_storage(**_valid_dirs(tmp_path, owner="_orgs"))
+
+
+def test_validator_accepts_owned_organization_dirs(monkeypatch, tmp_path):
+    from novelvideo.security import assert_owned_project_storage
+
+    _patch_roots(monkeypatch, tmp_path)
+    args = _valid_dirs(tmp_path)
+    suffix = Path("_orgs", "acme", "alice", "demo")
+    args.update(
+        storage_org_id="org_01HXYZ",
+        storage_org_name="acme",
+        output_dir=str(tmp_path / "output" / suffix),
+        state_dir=str(tmp_path / "state" / suffix),
+        runtime_dir=str(tmp_path / "runtime" / suffix),
+    )
+
+    validated = assert_owned_project_storage(**args)
+
+    assert validated.state_dir == (tmp_path / "state" / suffix).resolve()
+
+
+@pytest.mark.parametrize(
+    ("storage_org_id", "storage_org_name"),
+    [
+        (None, "acme"),
+        ("org_01HXYZ", None),
+        ("", ""),
+        (" ", " "),
+    ],
+)
+def test_validator_rejects_incomplete_or_empty_organization_metadata(
+    monkeypatch, tmp_path, storage_org_id, storage_org_name
+):
+    from novelvideo.security import (
+        ProjectStorageOwnershipError,
+        assert_owned_project_storage,
+    )
+
+    _patch_roots(monkeypatch, tmp_path)
+    args = _valid_dirs(tmp_path)
+    args.update(
+        storage_org_id=storage_org_id,
+        storage_org_name=storage_org_name,
+    )
+
+    with pytest.raises(ProjectStorageOwnershipError):
+        assert_owned_project_storage(**args)
+
+
+def test_validator_rejects_different_organization_even_when_all_paths_match(
+    monkeypatch, tmp_path
+):
+    from novelvideo.security import (
+        ProjectStorageOwnershipError,
+        assert_owned_project_storage,
+    )
+
+    _patch_roots(monkeypatch, tmp_path)
+    args = _valid_dirs(tmp_path)
+    wrong_suffix = Path("_orgs", "other-org", "alice", "demo")
+    args.update(
+        storage_org_id="org_01HXYZ",
+        storage_org_name="acme",
+        output_dir=str(tmp_path / "output" / wrong_suffix),
+        state_dir=str(tmp_path / "state" / wrong_suffix),
+        runtime_dir=str(tmp_path / "runtime" / wrong_suffix),
+    )
+
+    with pytest.raises(ProjectStorageOwnershipError):
+        assert_owned_project_storage(**args)
+
+
+def test_validator_rejects_symlinked_organization_directory(monkeypatch, tmp_path):
+    from novelvideo.security import (
+        ProjectStorageOwnershipError,
+        assert_owned_project_storage,
+    )
+
+    _patch_roots(monkeypatch, tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    org_root = tmp_path / "state" / "_orgs"
+    org_root.mkdir(parents=True)
+    (org_root / "acme").symlink_to(outside, target_is_directory=True)
+    args = _valid_dirs(tmp_path)
+    suffix = Path("_orgs", "acme", "alice", "demo")
+    args.update(
+        storage_org_id="org_01HXYZ",
+        storage_org_name="acme",
+        output_dir=str(tmp_path / "output" / suffix),
+        state_dir=str(tmp_path / "state" / suffix),
+        runtime_dir=str(tmp_path / "runtime" / suffix),
+    )
+
+    with pytest.raises(ProjectStorageOwnershipError):
+        assert_owned_project_storage(**args)
+
+
+def test_validator_rejects_organization_owner_that_collides_with_system_namespace(
+    monkeypatch, tmp_path
+):
+    from novelvideo.security import (
+        ProjectStorageOwnershipError,
+        assert_owned_project_storage,
+    )
+
+    _patch_roots(monkeypatch, tmp_path)
+    args = _valid_dirs(tmp_path, owner="_system")
+    suffix = Path("_orgs", "acme", "_system", "demo")
+    args.update(
+        storage_org_id="org_01HXYZ",
+        storage_org_name="acme",
+        output_dir=str(tmp_path / "output" / suffix),
+        state_dir=str(tmp_path / "state" / suffix),
+        runtime_dir=str(tmp_path / "runtime" / suffix),
+    )
+
+    with pytest.raises(ProjectStorageOwnershipError):
+        assert_owned_project_storage(**args)
 
 
 def test_validator_rejects_other_users_directory(monkeypatch, tmp_path):
@@ -340,8 +556,16 @@ async def test_purge_refuses_when_record_points_at_other_user(monkeypatch, tmp_p
     async def resolve_context(**_kwargs):
         return ctx
 
+    async def delete_codex_threads(*_args, **_kwargs):
+        raise AssertionError("ownership validation must happen before Codex deletion")
+
     monkeypatch.setattr(projects, "resolve_project_context", resolve_context)
     monkeypatch.setattr(projects, "get_project_registry", lambda: Registry())
+    monkeypatch.setattr(
+        projects.chat_service,
+        "delete_codex_project_threads",
+        delete_codex_threads,
+    )
 
     with pytest.raises(projects.HTTPException) as exc_info:
         await projects.purge_project("01PROJECT", user={"username": "alice"})
