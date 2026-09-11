@@ -25,10 +25,8 @@ export const saveHtmlArtifact = (project: string, id: string, title: string, htm
 export const listHtmlVersions = (project: string, id: string) => apiCall<{versions:HtmlVersion[]}>(`${htmlArtifactPath(project,id)}/versions`);
 export const restoreHtmlVersion = (project: string,id:string,version:number,base_version:number,scope?:HtmlNodeScope) => apiCall<HtmlArtifact>(`${htmlArtifactPath(project,id)}/restore`,{method:'post',json:{version,base_version,...scope},retry:0});
 export async function exportHtmlArtifact(project:string,id:string,version:number) {
-  const result = await apiCall<{download_url:string}>(`${htmlArtifactPath(project,id)}/export`,{searchParams:{version}});
-  const prefix = `/api/v1/projects/${encodeURIComponent(project)}/files/`;
-  if (!result.download_url.startsWith(prefix)) throw new Error('Invalid export download scope');
-  await downloadUrlAsFile(result.download_url, `webpage-${id}-v${version}.zip`);
+  const url = `/api/v1/${htmlArtifactPath(project,id)}/export?version=${encodeURIComponent(version)}`;
+  await downloadUrlAsFile(url, `webpage-${id}-v${version}.zip`);
 }
 export const HTML_ARTIFACT_OPEN_EVENT = 'freezone/html-artifact-open';
 export const HTML_ARTIFACT_UPDATED_EVENT = 'freezone/html-artifact-updated';

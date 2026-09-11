@@ -17,7 +17,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from time import monotonic
+import tempfile
 from urllib.parse import quote, unquote, urlsplit
 import uuid
 import zipfile
@@ -26,13 +26,8 @@ MAX_HTML_BYTES = 2 * 1024 * 1024
 MAX_PREVIEW_BYTES = 16 * 1024 * 1024
 MAX_EXPORT_BYTES = 100 * 1024 * 1024
 EXPORT_COPY_CHUNK_BYTES = 1024 * 1024
-# The EE mutex lease lasts 60 seconds; refresh well inside that window while a
-# large archive is copied. The CE file-lock guard implements this as a no-op.
-EXPORT_LEASE_REFRESH_SECONDS = 20
-# A waiter shares the first builder's cached result. Allow enough time for the
-# full 100 MiB budget on a slow project mount before returning CanvasLockBusy.
-EXPORT_LOCK_WAIT_SECONDS = 300
 _ID = re.compile(r'[a-zA-Z0-9_-]{1,64}\Z')
+_LEGACY_EXPORT = re.compile(r'(?:v[1-9][0-9]*\.zip|\.[a-f0-9]{32}\.tmp)\Z')
 _MEDIA = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.ico', '.mp4', '.webm', '.mp3', '.wav', '.ogg', '.woff', '.woff2', '.ttf'}
 
 
@@ -93,8 +88,51 @@ class ArtifactStore:
             if directory.is_symlink():
                 raise ValueError('Artifact storage contains a symlink')
             directory.mkdir(exist_ok=True)
+        # Keep the original lock name while older workers may still be running.
+        # Switching names during a rolling deployment would let two generations
+        # publish the same numeric revision concurrently.
         with get_canvas_write_mutex().write_mutex(self.project_dir, 'html_artifacts') as guard:
             yield guard
+
+    def _remove_legacy_exports(self, artifact_id: str) -> int:
+        """Remove one artifact's cache after legacy workers have been drained."""
+        exports = self._directory(artifact_id) / 'exports'
+        if exports.is_symlink() or (exports.exists() and not exports.is_dir()):
+            raise ValueError('Invalid legacy export directory')
+        if not exports.exists():
+            return 0
+        descriptor = os.open(
+            exports,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            names = os.listdir(descriptor)
+            for name in names:
+                if not _LEGACY_EXPORT.fullmatch(name):
+                    raise ValueError('Invalid file in legacy export directory')
+                info = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError('Legacy exports must be regular files')
+            for name in names:
+                os.unlink(name, dir_fd=descriptor)
+        finally:
+            os.close(descriptor)
+        exports.rmdir()
+        return len(names)
+
+    def cleanup_legacy_exports(self) -> int:
+        """Remove old persistent ZIPs during an explicit maintenance window.
+
+        Do not run this while a pre-temporary-export worker is still serving:
+        those workers publish download URLs whose files must remain available
+        until the client opens them.
+        """
+        with self._locked():
+            return sum(
+                self._remove_legacy_exports(directory.name)
+                for directory in self.root.iterdir()
+                if directory.is_dir()
+            )
 
     @staticmethod
     def _validate_id(artifact_id: str):
@@ -115,32 +153,105 @@ class ArtifactStore:
             raise ValueError('Artifact storage contains a symlink or invalid directory')
         return directory
 
+    def _validate_row(self, artifact_id: str, version: int, row) -> dict:
+        required = ('id', 'title', 'created_at', 'updated_at', 'file', 'sha256', 'scope')
+        if not isinstance(row, dict) or any(not isinstance(row.get(key), str) for key in required):
+            raise ValueError('Invalid artifact revision metadata')
+        if row.get('scope') != self._scope:
+            raise ValueError('Artifact storage scope mismatch')
+        if row.get('id') != artifact_id or row.get('version') != version or version < 1:
+            raise ValueError('Invalid artifact revision metadata')
+        self._validate_id(row.get('file', '').removesuffix('.html'))
+        if not row['file'].endswith('.html'):
+            raise ValueError('Invalid artifact revision file')
+        return row
+
+    def _row(self, artifact_id: str, version: int) -> dict:
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+            raise ValueError('Version must be positive')
+        entry = self._directory(artifact_id) / f'{version}.json'
+        self._regular(entry)
+        if not entry.exists():
+            raise FileNotFoundError('Artifact or revision not found')
+        return self._validate_row(
+            artifact_id,
+            version,
+            json.loads(self._read_text(entry, 16384)),
+        )
+
     def _rows(self, artifact_id: str) -> list[dict]:
         directory = self._directory(artifact_id)
-        rows = []
-        for entry in directory.glob('*.json'):
-            self._regular(entry)
-            row = json.loads(self._read_text(entry, 16384))
-            required = ('id', 'title', 'created_at', 'updated_at', 'file', 'sha256', 'scope')
-            if not isinstance(row, dict) or any(not isinstance(row.get(key), str) for key in required):
-                raise ValueError('Invalid artifact revision metadata')
-            if row.get('scope') != self._scope:
-                raise ValueError('Artifact storage scope mismatch')
-            if row.get('id') != artifact_id or not isinstance(row.get('version'), int) or row['version'] < 1 or entry.name != str(row['version']) + '.json':
-                raise ValueError('Invalid artifact revision metadata')
-            self._validate_id(row.get('file', '').removesuffix('.html'))
-            if not row['file'].endswith('.html'):
-                raise ValueError('Invalid artifact revision file')
-            rows.append(row)
+        rows = [
+            self._row(artifact_id, int(entry.stem))
+            for entry in directory.glob('*.json')
+            if entry.stem.isdecimal()
+        ]
         return sorted(rows, key=lambda row: row['version'], reverse=True)
 
-    def _get(self, artifact_id: str, version: int | None = None) -> dict:
-        if version is not None and version < 1:
-            raise ValueError('Version must be positive')
-        rows = [row for row in self._rows(artifact_id) if version is None or row['version'] == version]
+    def _write_head(self, artifact_id: str, version: int, guard) -> None:
+        directory = self._directory(artifact_id)
+        head = directory / 'HEAD.json'
+        temporary = directory / ('.' + uuid.uuid4().hex + '.head.tmp')
+        try:
+            with temporary.open('x', encoding='utf-8') as stream:
+                json.dump(
+                    {'id': artifact_id, 'scope': self._scope, 'version': version},
+                    stream,
+                    ensure_ascii=False,
+                )
+                stream.flush()
+                os.fsync(stream.fileno())
+            guard.reassert()
+            os.replace(temporary, head)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _head_version(self, artifact_id: str, guard) -> int:
+        head = self._directory(artifact_id) / 'HEAD.json'
+        self._regular(head)
+        if head.exists():
+            value = json.loads(self._read_text(head, 4096))
+            if isinstance(value, dict) and value.get('scope') != self._scope:
+                raise ValueError('Artifact storage scope mismatch')
+            if (
+                not isinstance(value, dict)
+                or value.get('id') != artifact_id
+                or not isinstance(value.get('version'), int)
+                or isinstance(value.get('version'), bool)
+                or value['version'] < 1
+            ):
+                raise ValueError('Invalid artifact HEAD metadata')
+            try:
+                version = value['version']
+                self._row(artifact_id, version)
+                # A rolling deployment may still have an older writer that
+                # publishes numeric revisions without updating HEAD. Revisions
+                # are contiguous, so checking only the next filename keeps the
+                # common read O(1) while safely advancing a stale pointer.
+                while (self._directory(artifact_id) / f'{version + 1}.json').exists():
+                    version += 1
+                    self._row(artifact_id, version)
+                if version != value['version']:
+                    self._write_head(artifact_id, version, guard)
+                return version
+            except FileNotFoundError:
+                # A writer may have published the provisional pointer and then
+                # lost its lease before committing the immutable revision.
+                pass
+        rows = self._rows(artifact_id)
         if not rows:
+            head.unlink(missing_ok=True)
             raise FileNotFoundError('Artifact or revision not found')
-        row = dict(rows[0])
+        version = rows[0]['version']
+        self._write_head(artifact_id, version, guard)
+        return version
+
+    def _get(self, artifact_id: str, version: int | None = None, *, guard=None) -> dict:
+        if version is None:
+            if guard is None:
+                raise RuntimeError('Latest artifact reads require the storage guard')
+            version = self._head_version(artifact_id, guard)
+        row = dict(self._row(artifact_id, version))
         file = self._directory(artifact_id) / row.pop('file')
         self._regular(file)
         html = self._read_text(file, MAX_HTML_BYTES)
@@ -172,6 +283,10 @@ class ArtifactStore:
                 json.dump(payload, stream, ensure_ascii=False)
                 stream.flush()
                 os.fsync(stream.fileno())
+            # HEAD is provisional until the immutable revision metadata is
+            # committed. Readers share this mutex and repair an interrupted
+            # provisional pointer from the existing numeric metadata files.
+            self._write_head(row['id'], row['version'], guard)
             guard.reassert()
             os.replace(temporary, metadata)
         finally:
@@ -184,11 +299,15 @@ class ArtifactStore:
             raise ValueError('Invalid idempotency key')
         artifact_id = hashlib.sha256(f'{self._scope}:{idempotency_key}'.encode()).hexdigest() if idempotency_key else uuid.uuid4().hex
         with self._locked() as guard:
-            if idempotency_key and self._rows(artifact_id):
-                original = self._get(artifact_id, 1)
-                if original['title'] != title.strip() or original['html'] != html:
-                    raise ArtifactConflict(f'Create request already saved as artifact {artifact_id}; recover it before retrying with different content')
-                return self._get(artifact_id)
+            if idempotency_key:
+                try:
+                    original = self._get(artifact_id, 1, guard=guard)
+                except FileNotFoundError:
+                    original = None
+                if original is not None:
+                    if original['title'] != title.strip() or original['html'] != html:
+                        raise ArtifactConflict(f'Create request already saved as artifact {artifact_id}; recover it before retrying with different content')
+                    return self._get(artifact_id, guard=guard)
             now = datetime.now(timezone.utc).isoformat()
             return self._publish(dict(id=artifact_id, title=title.strip(), html=html, version=1, created_at=now, updated_at=now), guard)
 
@@ -196,28 +315,38 @@ class ArtifactStore:
         if not 1 <= len(idempotency_key) <= 256:
             raise ValueError('Invalid idempotency key')
         artifact_id = hashlib.sha256(f'{self._scope}:{idempotency_key}'.encode()).hexdigest()
-        with self._locked():
-            return self._get(artifact_id) if self._rows(artifact_id) else None
+        with self._locked() as guard:
+            try:
+                return self._get(artifact_id, guard=guard)
+            except FileNotFoundError:
+                return None
 
     def get(self, artifact_id: str, version: int | None = None) -> dict:
         self._validate_id(artifact_id)
-        with self._locked():
-            return self._get(artifact_id, version)
+        with self._locked() as guard:
+            return self._get(artifact_id, version, guard=guard)
 
     def list(self) -> list[dict]:
-        with self._locked():
+        with self._locked() as guard:
             rows = []
             for directory in self.root.iterdir():
                 if directory.is_dir():
-                    revisions = self._rows(directory.name)
-                    if revisions:
-                        rows.append({key: revisions[0][key] for key in ('id', 'title', 'version', 'created_at', 'updated_at')})
+                    try:
+                        latest = self._row(
+                            directory.name,
+                            self._head_version(directory.name, guard),
+                        )
+                    except FileNotFoundError:
+                        continue
+                    rows.append({key: latest[key] for key in ('id', 'title', 'version', 'created_at', 'updated_at')})
             return sorted(rows, key=lambda row: row['updated_at'], reverse=True)
 
     def versions(self, artifact_id: str) -> list[dict]:
         with self._locked():
-            self._get(artifact_id)
-            return [dict(version=row['version'], title=row['title'], created_at=row['updated_at']) for row in self._rows(artifact_id)]
+            rows = self._rows(artifact_id)
+            if not rows:
+                raise FileNotFoundError('Artifact or revision not found')
+            return [dict(version=row['version'], title=row['title'], created_at=row['updated_at']) for row in rows]
 
     def update(
         self,
@@ -266,8 +395,8 @@ class ArtifactStore:
                         raise ArtifactConflict(
                             'Update request was already saved with different content'
                         )
-                    return self._get(artifact_id, previous['version'])
-            current = self._get(artifact_id)
+                    return self._get(artifact_id, previous['version'], guard=guard)
+            current = self._get(artifact_id, guard=guard)
             if current['version'] != base_version:
                 raise ArtifactConflict('Artifact changed; reload the latest revision before saving')
             saved = self._publish(
@@ -288,14 +417,14 @@ class ArtifactStore:
                 ),
                 guard,
             )
-            return self._get(artifact_id, saved['version'])
+            return self._get(artifact_id, saved['version'], guard=guard)
 
     def restore(self, artifact_id: str, *, version: int, base_version: int) -> dict:
         with self._locked() as guard:
-            current = self._get(artifact_id)
+            current = self._get(artifact_id, guard=guard)
             if current['version'] != base_version:
                 raise ArtifactConflict('Artifact changed; reload the latest revision before restoring')
-            old = self._get(artifact_id, version)
+            old = self._get(artifact_id, version, guard=guard)
             return self._publish(dict(current, title=old['title'], html=old['html'], version=base_version + 1, updated_at=datetime.now(timezone.utc).isoformat()), guard)
 
     def preview(self, artifact_id: str, version: int | None = None) -> dict:
@@ -307,46 +436,29 @@ class ArtifactStore:
 
     def export_file(self, artifact_id: str, version: int | None = None) -> Path:
         artifact = self.get(artifact_id, version)
-        directory = self._directory(artifact_id) / 'exports'
+        path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode='w+b',
+                prefix='supertale-html-',
+                suffix='.zip',
+                delete=False,
+            ) as stream:
+                path = Path(stream.name)
+                self._write_export(stream, artifact)
+                stream.flush()
+                os.fsync(stream.fileno())
+            return path
+        except Exception:
+            if path is not None:
+                path.unlink(missing_ok=True)
+            raise
 
-        def cached():
-            if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
-                raise ValueError('Invalid export directory')
-            target = directory / f"v{artifact['version']}.zip"
-            self._regular(target)
-            return target
-
-        from novelvideo.ports import get_canvas_write_mutex
-        lock_id = 'html_export_' + hashlib.sha256(
-            f"{artifact_id}:{artifact['version']}".encode()
-        ).hexdigest()[:40]
-        with get_canvas_write_mutex().write_mutex(
-            self.project_dir,
-            lock_id,
-            timeout_seconds=EXPORT_LOCK_WAIT_SECONDS,
-        ) as guard:
-            target = cached()
-            if target.exists():
-                return target
-            directory.mkdir(exist_ok=True)
-            temporary = directory / ('.' + uuid.uuid4().hex + '.tmp')
-            try:
-                with temporary.open('xb') as stream:
-                    self._write_export(stream, artifact, guard.reassert)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                guard.reassert()
-                os.replace(temporary, target)
-            finally:
-                temporary.unlink(missing_ok=True)
-            return target
-
-    def _write_export(self, stream, artifact: dict, reassert) -> None:
+    def _write_export(self, stream, artifact: dict) -> None:
         parser = _PortableHTML(self)
         parser.feed(artifact['html'])
         parser.close()
         copied = 0
-        next_reassert = monotonic() + EXPORT_LEASE_REFRESH_SECONDS
         with zipfile.ZipFile(stream, 'w') as archive:
             archive.writestr(
                 'index.html',
@@ -368,9 +480,6 @@ class ArtifactStore:
                             if copied > MAX_EXPORT_BYTES:
                                 raise ValueError('Export resources exceed 100 MiB')
                             destination.write(chunk)
-                            if monotonic() >= next_reassert:
-                                reassert()
-                                next_reassert = monotonic() + EXPORT_LEASE_REFRESH_SECONDS
                     if parser.file_identity(os.fstat(source.fileno())) != expected:
                         raise ValueError('Media changed during export; retry')
 

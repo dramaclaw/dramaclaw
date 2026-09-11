@@ -1,10 +1,8 @@
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
-from itertools import count
+import json
 import os
 from pathlib import Path
-import threading
-import time
 import tracemalloc
 import zipfile
 
@@ -62,11 +60,15 @@ def test_portable_export(tmp_path):
     (tmp_path / 'photo.png').write_bytes(b'png')
     store = ArtifactStore(tmp_path, project_id='project')
     first = store.create(title='Demo', html='<style>body{background:url(photo.png)}</style><img src="/api/v1/projects/project/media/photo.png">')
-    with zipfile.ZipFile(store.export_file(first['id'])) as archive:
-        assert 'index.html' in archive.namelist()
-        assert len(archive.namelist()) == 2
-        html = archive.read('index.html').decode()
-        assert '/api/' not in html and 'assets/' in html
+    path = store.export_file(first['id'])
+    try:
+        with zipfile.ZipFile(path) as archive:
+            assert 'index.html' in archive.namelist()
+            assert len(archive.namelist()) == 2
+            html = archive.read('index.html').decode()
+            assert '/api/' not in html and 'assets/' in html
+    finally:
+        path.unlink(missing_ok=True)
 
 
 @pytest.mark.parametrize('html', [
@@ -204,9 +206,13 @@ def test_navigation_links_are_not_packaged_as_media(tmp_path, url):
     preview = store.preview(item['id'])
     assert preview['warnings'] == []
     assert f'href="{url}"' in preview['html']
-    with zipfile.ZipFile(store.export_file(item['id'])) as archive:
-        assert archive.namelist() == ['index.html']
-        assert f'href="{url}"' in archive.read('index.html').decode()
+    path = store.export_file(item['id'])
+    try:
+        with zipfile.ZipFile(path) as archive:
+            assert archive.namelist() == ['index.html']
+            assert f'href="{url}"' in archive.read('index.html').decode()
+    finally:
+        path.unlink(missing_ok=True)
 
 
 @pytest.mark.parametrize('url', ['javascript:alert(1)', 'java&#10;script:alert(1)', 'data:text/html,bad', 'file:///etc/passwd'])
@@ -225,6 +231,100 @@ def test_revisions_are_files_without_database(tmp_path):
     files = list((root / item['id']).glob('*.html'))
     assert len(files) == 1
     assert files[0].read_text() == item['html']
+
+
+def test_latest_and_explicit_version_reads_do_not_scan_revision_directory(
+    tmp_path, monkeypatch
+):
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='One', html='one')
+    store.update(first['id'], title='Two', html='two', base_version=1)
+    assert (store.root / first['id'] / 'HEAD.json').is_file()
+
+    def unexpected_scan(_artifact_id):
+        raise AssertionError('ordinary reads must not scan every revision')
+
+    monkeypatch.setattr(store, '_rows', unexpected_scan)
+    assert store.get(first['id'])['version'] == 2
+    assert store.get(first['id'], 1)['html'] == 'one'
+
+
+def test_legacy_artifact_without_head_is_repaired_on_read(tmp_path):
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='One', html='one')
+    head = store.root / first['id'] / 'HEAD.json'
+    head.unlink()
+
+    assert ArtifactStore(tmp_path).get(first['id'])['version'] == 1
+    assert head.is_file()
+
+
+def test_stale_head_advances_without_scanning_all_revisions(tmp_path, monkeypatch):
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='One', html='one')
+    store.update(first['id'], title='Two', html='two', base_version=1)
+    head = store.root / first['id'] / 'HEAD.json'
+    payload = json.loads(head.read_text())
+    head.write_text(json.dumps({**payload, 'version': 1}))
+    monkeypatch.setattr(
+        store,
+        '_rows',
+        lambda _artifact_id: (_ for _ in ()).throw(
+            AssertionError('stale contiguous HEAD must not scan all revisions')
+        ),
+    )
+
+    assert store.get(first['id'])['version'] == 2
+    assert json.loads(head.read_text())['version'] == 2
+
+
+def test_interrupted_revision_commit_repairs_head_and_can_retry(tmp_path, monkeypatch):
+    import novelvideo.freezone.html_artifacts as module
+
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='One', html='one')
+    real_replace = module.os.replace
+
+    def fail_revision(source, target):
+        if Path(target).name == '2.json':
+            raise OSError('revision publish failed')
+        return real_replace(source, target)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(module.os, 'replace', fail_revision)
+        with pytest.raises(OSError, match='revision publish failed'):
+            store.update(first['id'], title='Lost', html='lost', base_version=1)
+
+    restarted = ArtifactStore(tmp_path)
+    assert restarted.get(first['id'])['version'] == 1
+    saved = restarted.update(first['id'], title='Two', html='two', base_version=1)
+    assert saved['version'] == 2
+    assert restarted.get(first['id'])['html'] == 'two'
+
+
+def test_versions_scans_metadata_once_without_reading_html(tmp_path, monkeypatch):
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='One', html='one')
+    store.update(first['id'], title='Two', html='two', base_version=1)
+    scans = 0
+    real_rows = store._rows
+
+    def rows(artifact_id):
+        nonlocal scans
+        scans += 1
+        return real_rows(artifact_id)
+
+    monkeypatch.setattr(store, '_rows', rows)
+    monkeypatch.setattr(
+        store,
+        '_get',
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError('version listing must not read source HTML')
+        ),
+    )
+
+    assert [row['version'] for row in store.versions(first['id'])] == [2, 1]
+    assert scans == 1
 
 
 def test_failed_commit_can_retry_without_publishing_orphan(tmp_path, monkeypatch):
@@ -319,30 +419,84 @@ def test_read_refuses_symlink_swap_after_metadata_check(tmp_path, monkeypatch):
         store.get(first['id'])
 
 
-def test_export_file_is_cached_per_version(tmp_path):
+def test_export_file_is_temporary_per_request(tmp_path):
     store = ArtifactStore(tmp_path)
     first = store.create(title='One', html='<h1>One</h1>')
     path = store.export_file(first['id'], 1)
-    assert path.is_relative_to(tmp_path)
-    assert path.name == 'v1.zip'
-    original = path.read_bytes()
-    store.update(first['id'], title='Two', html='<h1>Two</h1>', base_version=1)
-    second = store.export_file(first['id'], 2)
-    assert second != path and path.read_bytes() == original
-    with zipfile.ZipFile(second) as archive:
-        assert archive.read('index.html') == b'<h1>Two</h1>'
-    assert store.export_file(first['id'], 1) == path
+    second = store.export_file(first['id'], 1)
+    try:
+        assert path != second
+        assert not (store.root / first['id'] / 'exports').exists()
+        with zipfile.ZipFile(path) as archive:
+            assert archive.read('index.html') == b'<h1>One</h1>'
+        with zipfile.ZipFile(second) as archive:
+            assert archive.read('index.html') == b'<h1>One</h1>'
+    finally:
+        path.unlink(missing_ok=True)
+        second.unlink(missing_ok=True)
 
 
-def test_cached_export_preserves_media_snapshot(tmp_path):
+def test_access_removes_legacy_persistent_export_cache(tmp_path):
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Legacy', html='<h1>Legacy</h1>')
+    exports = store.root / item['id'] / 'exports'
+    exports.mkdir()
+    (exports / 'v1.zip').write_bytes(b'zip')
+    (exports / f'.{"a" * 32}.tmp').write_bytes(b'partial')
+
+    assert store.cleanup_legacy_exports() == 2
+    assert not exports.exists()
+
+
+def test_legacy_export_cleanup_validates_every_entry_before_deleting(tmp_path):
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Legacy', html='<h1>Legacy</h1>')
+    exports = store.root / item['id'] / 'exports'
+    exports.mkdir()
+    valid = exports / 'v1.zip'
+    valid.write_bytes(b'zip')
+    (exports / 'unexpected.txt').write_text('keep')
+
+    with pytest.raises(ValueError, match='Invalid file'):
+        store.cleanup_legacy_exports()
+
+    assert valid.read_bytes() == b'zip'
+
+
+def test_legacy_export_cleanup_refuses_symlinked_directory(tmp_path):
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Legacy', html='<h1>Legacy</h1>')
+    peer = tmp_path / 'peer-exports'
+    peer.mkdir()
+    secret = peer / 'v1.zip'
+    secret.write_bytes(b'private')
+    exports = store.root / item['id'] / 'exports'
+    try:
+        exports.symlink_to(peer, target_is_directory=True)
+    except OSError:
+        pytest.skip('symlinks are unavailable')
+
+    with pytest.raises(ValueError, match='Invalid legacy export directory'):
+        store.cleanup_legacy_exports()
+
+    assert secret.read_bytes() == b'private'
+
+
+def test_each_export_reads_a_fresh_media_snapshot(tmp_path):
     (tmp_path / 'photo.png').write_bytes(b'original')
     store = ArtifactStore(tmp_path)
     item = store.create(title='Media', html='<img src="photo.png">')
     path = store.export_file(item['id'], 1)
-    (tmp_path / 'photo.png').unlink()
-    assert store.export_file(item['id'], 1) == path
-    with zipfile.ZipFile(path) as archive:
-        assert archive.read(next(n for n in archive.namelist() if n.endswith('.png'))) == b'original'
+    (tmp_path / 'photo.png').write_bytes(b'updated!')
+    second = store.export_file(item['id'], 1)
+    try:
+        with zipfile.ZipFile(path) as archive:
+            assert archive.read(next(n for n in archive.namelist() if n.endswith('.png'))) == b'original'
+        with zipfile.ZipFile(second) as archive:
+            assert archive.read(next(n for n in archive.namelist() if n.endswith('.png'))) == b'updated!'
+    finally:
+        path.unlink(missing_ok=True)
+        second.unlink(missing_ok=True)
 
 
 def test_export_file_streams_large_media_without_buffering_it_in_python(tmp_path):
@@ -361,81 +515,29 @@ def test_export_file_streams_large_media_without_buffering_it_in_python(tmp_path
         tracemalloc.stop()
 
     assert peak < 8 * 1024 * 1024
-    with zipfile.ZipFile(path) as archive:
-        video_info = next(info for info in archive.infolist() if info.filename.endswith('.mp4'))
-        assert video_info.file_size == media_size
-        assert video_info.compress_type == zipfile.ZIP_STORED
+    try:
+        with zipfile.ZipFile(path) as archive:
+            video_info = next(info for info in archive.infolist() if info.filename.endswith('.mp4'))
+            assert video_info.file_size == media_size
+            assert video_info.compress_type == zipfile.ZIP_STORED
+    finally:
+        path.unlink(missing_ok=True)
 
 
-def test_export_file_builds_one_archive_for_concurrent_same_version_requests(
-    tmp_path, monkeypatch
-):
+def test_concurrent_exports_use_independent_temporary_files(tmp_path):
     (tmp_path / 'photo.png').write_bytes(b'image')
     store = ArtifactStore(tmp_path)
     item = store.create(title='Image', html='<img src="photo.png">')
-    real_zip_file = zipfile.ZipFile
-    first_builder_started = threading.Event()
-    second_request_started = threading.Event()
-    release_builder = threading.Event()
-    build_count = 0
-    count_lock = threading.Lock()
-
-    class BlockingZipFile(real_zip_file):
-        def __init__(self, *args, **kwargs):
-            nonlocal build_count
-            with count_lock:
-                build_count += 1
-            first_builder_started.set()
-            assert release_builder.wait(timeout=5)
-            super().__init__(*args, **kwargs)
-
-    monkeypatch.setattr(zipfile, 'ZipFile', BlockingZipFile)
-
-    def second_export():
-        second_request_started.set()
-        return store.export_file(item['id'])
-
     with ThreadPoolExecutor(2) as pool:
         first = pool.submit(store.export_file, item['id'])
-        assert first_builder_started.wait(timeout=1)
-        second = pool.submit(second_export)
-        assert second_request_started.wait(timeout=1)
-        time.sleep(0.1)
-        release_builder.set()
-        assert first.result(timeout=5) == second.result(timeout=5)
-
-    assert build_count == 1
-
-
-def test_export_file_renews_the_existing_write_lease_during_long_copies(
-    tmp_path, monkeypatch
-):
-    import novelvideo.freezone.html_artifacts as module
-    import novelvideo.ports as ports
-
-    (tmp_path / 'clip.mp4').write_bytes(b'video')
-    store = ArtifactStore(tmp_path)
-    item = store.create(title='Video', html='<video src="clip.mp4"></video>')
-    reassertions = 0
-
-    class Guard:
-        def reassert(self):
-            nonlocal reassertions
-            reassertions += 1
-
-    class Mutex:
-        @contextmanager
-        def write_mutex(self, *_args, **_kwargs):
-            yield Guard()
-
-    ticks = count(0, 21)
-    monkeypatch.setattr(ports, 'get_canvas_write_mutex', lambda: Mutex())
-    monkeypatch.setattr(module, 'monotonic', lambda: next(ticks), raising=False)
-    monkeypatch.setattr(module, 'EXPORT_COPY_CHUNK_BYTES', 1)
-
-    store.export_file(item['id'])
-
-    assert reassertions > 1
+        second = pool.submit(store.export_file, item['id'])
+        paths = [first.result(timeout=5), second.result(timeout=5)]
+    try:
+        assert paths[0] != paths[1]
+        assert all(zipfile.is_zipfile(path) for path in paths)
+    finally:
+        for path in paths:
+            path.unlink(missing_ok=True)
 
 
 def test_export_file_removes_partial_archive_when_media_copy_fails(
@@ -448,6 +550,7 @@ def test_export_file_removes_partial_archive_when_media_copy_fails(
     item = store.create(title='Video', html='<video src="clip.mp4"></video>')
     real_open_resource = module._PortableHTML.open_resource
     opens = 0
+    monkeypatch.setattr(module.tempfile, 'tempdir', str(tmp_path))
 
     @contextmanager
     def fail_during_copy(parser, candidate):
@@ -463,18 +566,19 @@ def test_export_file_removes_partial_archive_when_media_copy_fails(
     with pytest.raises(OSError, match='disk read failed'):
         store.export_file(item['id'])
 
-    export_dir = store.root / item['id'] / 'exports'
-    assert not list(export_dir.glob('.*.tmp'))
-    assert not (export_dir / 'v1.zip').exists()
+    assert not list(tmp_path.glob('supertale-html-*.zip'))
 
 
 def test_export_file_preserves_archive_write_errors_and_removes_partial_file(
     tmp_path, monkeypatch
 ):
+    import novelvideo.freezone.html_artifacts as module
+
     (tmp_path / 'clip.mp4').write_bytes(b'video')
     store = ArtifactStore(tmp_path)
     item = store.create(title='Video', html='<video src="clip.mp4"></video>')
     real_zip_file = zipfile.ZipFile
+    monkeypatch.setattr(module.tempfile, 'tempdir', str(tmp_path))
 
     class FailingDestination:
         def __init__(self, destination):
@@ -508,9 +612,7 @@ def test_export_file_preserves_archive_write_errors_and_removes_partial_file(
     with pytest.raises(OSError, match='destination disk full'):
         store.export_file(item['id'])
 
-    export_dir = store.root / item['id'] / 'exports'
-    assert not list(export_dir.glob('.*.tmp'))
-    assert not (export_dir / 'v1.zip').exists()
+    assert not list(tmp_path.glob('supertale-html-*.zip'))
 
 
 def test_export_file_rejects_media_replaced_after_validation(tmp_path, monkeypatch):
@@ -522,6 +624,7 @@ def test_export_file_rejects_media_replaced_after_validation(tmp_path, monkeypat
     item = store.create(title='Video', html='<video src="clip.mp4"></video>')
     real_open_resource = module._PortableHTML.open_resource
     opens = 0
+    monkeypatch.setattr(module.tempfile, 'tempdir', str(tmp_path))
 
     @contextmanager
     def replace_before_copy(parser, candidate):
@@ -539,9 +642,7 @@ def test_export_file_rejects_media_replaced_after_validation(tmp_path, monkeypat
     with pytest.raises(ValueError, match='Media changed during export'):
         store.export_file(item['id'])
 
-    export_dir = store.root / item['id'] / 'exports'
-    assert not list(export_dir.glob('.*.tmp'))
-    assert not (export_dir / 'v1.zip').exists()
+    assert not list(tmp_path.glob('supertale-html-*.zip'))
 
 
 def test_export_file_rejects_media_modified_during_copy(tmp_path, monkeypatch):
@@ -553,6 +654,7 @@ def test_export_file_rejects_media_modified_during_copy(tmp_path, monkeypatch):
     item = store.create(title='Video', html='<video src="clip.mp4"></video>')
     real_open_resource = module._PortableHTML.open_resource
     opens = 0
+    monkeypatch.setattr(module.tempfile, 'tempdir', str(tmp_path))
 
     class MutatingStream:
         def __init__(self, stream, candidate):
@@ -591,9 +693,7 @@ def test_export_file_rejects_media_modified_during_copy(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match='Media changed during export'):
         store.export_file(item['id'])
 
-    export_dir = store.root / item['id'] / 'exports'
-    assert not list(export_dir.glob('.*.tmp'))
-    assert not (export_dir / 'v1.zip').exists()
+    assert not list(tmp_path.glob('supertale-html-*.zip'))
 
 
 def test_create_idempotency_survives_restart_and_rejects_changed_payload(tmp_path):

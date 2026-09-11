@@ -8,9 +8,12 @@ later recover completed/failed generation attempts without bloating canvas JSON.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
+import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -36,6 +39,8 @@ _DEFAULT_LIMIT = 100
 # on heavily-regenerated nodes. The frontend only needs enough to identify the
 # version, not the full multi-KB prompt.
 MAX_HISTORY_PROMPT_CHARS = 4000
+HISTORY_IDEMPOTENCY_LIMIT = 50
+HISTORY_IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
 
 
 def build_node_history_record(
@@ -98,6 +103,7 @@ def append_generation_history(
     canvas_id: str | None,
     node_id: str | None,
     record: dict[str, Any],
+    idempotency_key: str | None = None,
 ) -> dict[str, Any] | None:
     """Append one generation attempt for a canvas node.
 
@@ -116,11 +122,110 @@ def append_generation_history(
     }
     path = generation_history_path(project_dir, normalized["canvas_id"], node_id)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if idempotency_key is not None:
+        key = str(idempotency_key).strip()
+        if not key or len(key) > 512:
+            raise ValueError("invalid generation history idempotency key")
+        return _append_generation_history_once(
+            project_dir=Path(project_dir),
+            path=path,
+            node_id=node_id,
+            normalized=normalized,
+            key=key,
+        )
     with path.open("a", encoding="utf-8") as f:
         f.write(
             json.dumps(normalized, ensure_ascii=False, separators=(",", ":")) + "\n"
         )
     prewarm_history_thumbnail(project_dir, normalized)
+    return normalized
+
+
+def _history_idempotency_path(path: Path) -> Path:
+    return path.with_name(path.name + ".idempotency.json")
+
+
+def _recent_history_idempotency_entries(path: Path, now: float) -> list[dict]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+    entries = payload.get("entries") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        return []
+    fresh = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("key"), str)
+        and isinstance(entry.get("seen_at"), (int, float))
+        and now - float(entry["seen_at"]) <= HISTORY_IDEMPOTENCY_TTL_SECONDS
+    ]
+    fresh.sort(key=lambda entry: float(entry["seen_at"]), reverse=True)
+    return fresh[:HISTORY_IDEMPOTENCY_LIMIT]
+
+
+def _last_history_record_id(path: Path) -> str | None:
+    """Read only a bounded tail to recover an append-before-index crash."""
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(max(0, size - 65536))
+            lines = stream.read().splitlines()
+    except FileNotFoundError:
+        return None
+    for line in reversed(lines):
+        try:
+            value = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if isinstance(value, dict) and isinstance(value.get("id"), str):
+            return value["id"]
+    return None
+
+
+def _append_generation_history_once(
+    *,
+    project_dir: Path,
+    path: Path,
+    node_id: str,
+    normalized: dict[str, Any],
+    key: str,
+) -> dict[str, Any]:
+    from novelvideo.freezone.canvas_store import atomic_write_json
+    from novelvideo.ports import get_canvas_write_mutex
+
+    lock_id = "history_" + hashlib.sha256(
+        f"{normalized['canvas_id']}:{node_id}".encode()
+    ).hexdigest()[:40]
+    with get_canvas_write_mutex().write_mutex(project_dir, lock_id) as guard:
+        index_path = _history_idempotency_path(path)
+        now = time.time()
+        entries = _recent_history_idempotency_entries(index_path, now)
+        if any(entry["key"] == key for entry in entries):
+            return normalized
+        if _last_history_record_id(path) != key:
+            guard.reassert()
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write(
+                    json.dumps(
+                        normalized,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
+                stream.flush()
+                os.fsync(stream.fileno())
+            prewarm_history_thumbnail(project_dir, normalized)
+        entries = [entry for entry in entries if entry["key"] != key]
+        entries.insert(0, {"key": key, "seen_at": now})
+        atomic_write_json(
+            index_path,
+            {"entries": entries[:HISTORY_IDEMPOTENCY_LIMIT]},
+            fence=guard.reassert,
+        )
     return normalized
 
 

@@ -1,4 +1,6 @@
+import io
 from types import SimpleNamespace
+import zipfile
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -30,7 +32,7 @@ def client(monkeypatch, tmp_path):
     return TestClient(app), role
 
 
-def test_api_lifecycle(client):
+def test_api_lifecycle(client, tmp_path):
     api, _ = client
     first = api.post(BASE, json={'title': 'One', 'html': '<h1>One</h1>'})
     assert first.status_code == 200
@@ -44,9 +46,13 @@ def test_api_lifecycle(client):
     assert len(api.get(url + '/versions').json()['data']['versions']) == 2
     assert api.post(url + '/restore', json={'version': 1, 'base_version': 2}).json()['data']['version'] == 3
     assert api.get(url + '/preview').json()['data']['html'] == '<h1>One</h1>'
-    download = api.get(url + '/export').json()['data']['download_url']
-    assert download.startswith('/api/v1/projects/demo/files/freezone/_html_artifacts/')
-    assert download.endswith('/exports/v3.zip')
+    download = api.get(url + '/export')
+    assert download.status_code == 200
+    assert download.headers['content-type'] == 'application/zip'
+    assert 'attachment;' in download.headers['content-disposition']
+    with zipfile.ZipFile(io.BytesIO(download.content)) as archive:
+        assert archive.read('index.html') == b'<h1>One</h1>'
+    assert not list((tmp_path / 'freezone/_html_artifacts').glob('*/exports/*.zip'))
     assert api.get(url + '?version=999').status_code == 404
     assert api.put(url, json={'title': 'Bad', 'html': 'bad'}).status_code == 422
 
