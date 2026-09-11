@@ -13,7 +13,7 @@ export function HtmlArtifactEditor({projectId,artifactId,version,nodeId,onClose}
   const {t}=useTranslation();
   const [artifact,setArtifact]=useState<HtmlArtifact|null>(null);
   const [title,setTitle]=useState(''); const [html,setHtml]=useState('');
-  const [media,setMedia]=useState<Array<{placeholder:string;blob:Blob}>>([]);
+  const [media,setMedia]=useState<Array<{placeholder:string;url:string}>>([]);
   const [preview,setPreview]=useState(''); const [versions,setVersions]=useState<HtmlVersion[]>([]);
   const [interactiveVersion,setInteractiveVersion]=useState<string|null>(null);
   const interactive=Boolean(artifact&&interactiveVersion===`${artifactId}:${artifact.version}`);
@@ -38,7 +38,7 @@ export function HtmlArtifactEditor({projectId,artifactId,version,nodeId,onClose}
   },[artifact,dirty,html,title,projectId,artifactId]);
   const dirtyRef=useRef(dirty); dirtyRef.current=dirty;
   const token=useMemo(()=>crypto.randomUUID(),[artifact?.version,selecting,preview]);
-  const srcDoc=useMemo(()=>buildHtmlPreview(preview,token,selecting,interactive),[preview,token,selecting,interactive]);
+  const srcDoc=useMemo(()=>buildHtmlPreview(preview,token,selecting,interactive,media),[preview,token,selecting,interactive,media]);
   const reference=(selection?:{selector:string;text:string})=>{
     if (!artifact) return;
     window.dispatchEvent(new CustomEvent(HTML_ARTIFACT_REFERENCE_EVENT,{detail:{projectId,artifactId,version:artifact.version,title:artifact.title,...selection}}));
@@ -60,6 +60,16 @@ export function HtmlArtifactEditor({projectId,artifactId,version,nodeId,onClose}
     finally{if(current===sequence.current)setBusy(false);}
   };
   useEffect(()=>{void load(version);return()=>{sequence.current++;previewRelease.current?.();previewRelease.current=undefined;};},[projectId,artifactId,version]);
+  useEffect(()=>{
+    if(!artifact)return;
+    let alive=true;
+    const refresh=()=>void readHtmlPreview(projectId,artifactId,artifact.version).then(rendered=>{
+      if(alive)setMedia(rendered.media??[]);
+    }).catch(err=>{if(alive)setError(String(err));});
+    const timer=window.setInterval(refresh,12*60*1000);
+    window.addEventListener('focus',refresh);
+    return()=>{alive=false;window.clearInterval(timer);window.removeEventListener('focus',refresh);};
+  },[projectId,artifactId,artifact?.version]);
   useEffect(()=>{
     const changed=(event:Event)=>{
       const detail=(event as CustomEvent<{projectId:string;artifact:HtmlArtifact;nodeId?:string}>).detail;

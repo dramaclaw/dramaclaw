@@ -1,24 +1,30 @@
 /** Generated code runs in an opaque-origin iframe, never in the application DOM. */
-export function buildHtmlPreview(html: string, token: string, selecting: boolean, interactive = false): string {
+export function buildHtmlPreview(html: string, token: string, selecting: boolean, interactive = false, media: Array<{url:string}> = [], thumbnail = false): string {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   doc.querySelectorAll('base, meta[http-equiv]').forEach((element) => element.remove());
+  doc.querySelectorAll('[nonce]').forEach(element => element.removeAttribute('nonce'));
+  doc.querySelectorAll('video,audio').forEach(element => {
+    element.setAttribute('preload', thumbnail ? 'none' : 'metadata');
+    if (!interactive) element.removeAttribute('autoplay');
+  });
   const policy = doc.createElement('meta');
   policy.httpEquiv = 'Content-Security-Policy';
+  const sources = media.map(item => { const url = new URL(item.url, window.location.origin); return url.origin + url.pathname; }).join(' ');
   const scripts = interactive ? "'unsafe-inline'" : `'nonce-${token}'`;
-  policy.content = `default-src 'none'; script-src ${scripts}; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'`;
+  policy.content = `default-src 'none'; script-src ${scripts}; style-src 'unsafe-inline'; img-src data: blob: ${sources}; media-src data: blob: ${sources}; font-src data: blob: ${sources}; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'`;
   doc.head.prepend(policy);
   const bridge = doc.createElement('script');
   bridge.setAttribute('nonce',token);
   // The bridge reports untrusted descriptive context only, never commands or source changes.
   bridge.textContent = `(() => {
     const selecting = ${JSON.stringify(selecting)};
-    const mediaUrls = [];
+    const allowedUrls = new Set(${JSON.stringify(media.map(item => item.url))});
     window.addEventListener('message', event => {
       const data = event.data;
       if (event.source !== parent || data?.type !== 'html-artifact-media' || data.token !== ${JSON.stringify(token)} || !Array.isArray(data.media)) return;
       for (const item of data.media) {
-        if (!/^html-media-[a-f0-9]{64}$/.test(item.placeholder) || !(item.blob instanceof Blob)) continue;
-        const url = URL.createObjectURL(item.blob); mediaUrls.push(url);
+        if (!/^html-media-[a-f0-9]{64}$/.test(item.placeholder) || !allowedUrls.has(item.url)) continue;
+        const url = item.url;
         for (const element of document.querySelectorAll('*')) {
           for (const attr of [...element.attributes]) {
             if (['src','poster','style'].includes(attr.name) && attr.value.includes(item.placeholder)) element.setAttribute(attr.name, attr.value.split(item.placeholder).join(url));
@@ -28,7 +34,7 @@ export function buildHtmlPreview(html: string, token: string, selecting: boolean
       }
       for (const video of document.querySelectorAll('video,audio')) video.load();
     });
-    window.addEventListener('pagehide', () => mediaUrls.forEach(url => URL.revokeObjectURL(url)));
+
 
     document.addEventListener('click', (event) => {
       const el = event.target instanceof Element ? event.target : null;

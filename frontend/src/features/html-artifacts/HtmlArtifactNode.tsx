@@ -1,3 +1,4 @@
+import { useNodeBodyVariant } from '@/features/canvas/hooks/useNodeBodyVariantBudget';
 import { captureFreezoneCanvasScope } from '@/features/freezone/canvasSyncRuntime';
 import { ReferenceTextChip } from '@/features/canvas/nodes/shared/ReferenceTextChip';
 import { buildHtmlReferences, HTML_REFERENCE_PREFIXES } from './references';
@@ -135,14 +136,15 @@ export const HtmlArtifactNode=memo(function HtmlArtifactNode({id,data,selected}:
   useEffect(() => {
     if (!isGenerating) setHistoryPreviewVersion(null);
   }, [isGenerating]);
-  const [media,setMedia]=useState<Array<{placeholder:string;blob:Blob}>>([]);
+  const mediaVariant=useNodeBodyVariant({width:384,height:224});
+  const [media,setMedia]=useState<Array<{placeholder:string;url:string}>>([]);
   const [html,setHtml]=useState('');const [error,setError]=useState('');
   useEffect(()=>{
     if(!projectId||!artifactId){setHtml('');setMedia([]);setError('');return;}let alive=true;let release:(()=>void)|undefined;
-    const load=()=>void readHtmlPreview(projectId,artifactId,historyPreviewVersion ?? version).then(value=>{if(alive){release?.();release=value.release;setHtml(value.html);setMedia(value.media??[]);setError('');}else value.release?.();}).catch(err=>{if(alive)setError(String(err));});
+    const load=()=>void readHtmlPreview(projectId,artifactId,historyPreviewVersion ?? version,mediaVariant).then(value=>{if(alive){release?.();release=value.release;setHtml(value.html);setMedia(value.media??[]);setError('');}else value.release?.();}).catch(err=>{if(alive)setError(String(err));});
     const changed=(event:Event)=>{const d=(event as CustomEvent).detail;if(d?.projectId===projectId&&d.artifact?.id===artifactId)load();};
-    load();window.addEventListener(HTML_ARTIFACT_UPDATED_EVENT,changed);return()=>{alive=false;release?.();window.removeEventListener(HTML_ARTIFACT_UPDATED_EVENT,changed);};
-  },[projectId,artifactId,version,historyPreviewVersion]);
+    load();const refresh=window.setInterval(load,12*60*1000);window.addEventListener('focus',load);window.addEventListener(HTML_ARTIFACT_UPDATED_EVENT,changed);return()=>{alive=false;window.clearInterval(refresh);window.removeEventListener('focus',load);release?.();window.removeEventListener(HTML_ARTIFACT_UPDATED_EVENT,changed);};
+  },[projectId,artifactId,version,historyPreviewVersion,mediaVariant]);
   const uploadHtml = async (file: File) => {
     const scope = readUrl();
     if (!scope.project || !scope.canvas) return;
@@ -158,8 +160,8 @@ export const HtmlArtifactNode=memo(function HtmlArtifactNode({id,data,selected}:
     } catch (err) {setError(err instanceof Error ? err.message : String(err));}
     finally {setIsUploading(false);if(uploadInput.current) uploadInput.current.value='';}
   };
-  const thumbnailChannel='thumbnail';
-  const srcDoc=useMemo(()=>buildHtmlPreview(html,thumbnailChannel,false),[html]);
+  const thumbnailChannel=useMemo(()=>crypto.randomUUID(),[html,artifactId,version]);
+  const srcDoc=useMemo(()=>buildHtmlPreview(html,thumbnailChannel,false,false,media,true),[html,thumbnailChannel,media]);
   return <div className={`group relative w-96 overflow-visible rounded-[var(--node-radius)] border ${!html ? (selected ? CANVAS_NODE_INPUT_BODY_SELECTED_FRAME_CLASS : CANVAS_NODE_INPUT_BODY_FRAME_CLASS) : canvasNodeFrameClass({selected})}`} onDoubleClick={open}>
     {selected && !artifactId && <>
       <input ref={uploadInput} type="file" accept=".html,.htm,text/html" className="hidden" onChange={event => {const file=event.target.files?.[0];if(file) void uploadHtml(file);}}/>

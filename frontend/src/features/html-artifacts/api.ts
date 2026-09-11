@@ -1,33 +1,23 @@
-import i18n from "i18next";
 import { downloadUrlAsFile } from '@/lib/browserDownload';
-import { apiCall, apiClient } from '@/api/client';
+import { apiCall } from '@/api/client';
 export type HtmlNodeScope = {canvas_id:string;node_id:string};
 export type HtmlArtifact = { warnings?: string[]; id: string; title: string; version: number; html: string; created_at: string; updated_at: string };
 export type HtmlVersion = { version: number; title: string; created_at: string };
 export const htmlArtifactPath = (project: string, id?: string) => `projects/${encodeURIComponent(project)}/freezone/html-artifacts${id ? `/${encodeURIComponent(id)}` : ''}`;
 export const readHtmlArtifact = (project: string, id: string, version?: number) => apiCall<HtmlArtifact>(htmlArtifactPath(project, id), { searchParams: version ? {version} : {} });
-export async function readHtmlPreview(project: string, id: string, version?: number) {
-  const rendered = await apiCall<{html:string; warnings?:string[]; resources?:Array<{placeholder:string;path:string}>}>(`${htmlArtifactPath(project, id)}/preview`, {searchParams: version ? {version} : {}});
-  const media: Array<{placeholder:string;blob:Blob}> = [];
-  const release = () => {};
-  let html = rendered.html;
-  const warnings = [...(rendered.warnings ?? [])];
+export async function readHtmlPreview(project: string, id: string, version?: number, variant?: 'thumb' | null) {
+  const rendered = await apiCall<{html:string; warnings?:string[]; resources?:Array<{placeholder:string;path:string;url:string}>}>(`${htmlArtifactPath(project, id)}/preview`, {searchParams: {...(version ? {version} : {}), ...(variant ? {st_thumb: variant} : {})}});
   const prefix = `/api/v1/projects/${encodeURIComponent(project)}/media/`;
-  try {
-    for (const resource of rendered.resources ?? []) {
-      if (!/^html-media-[a-f0-9]{64}$/.test(resource.placeholder) || !resource.path.startsWith(prefix)) throw new Error('Invalid preview media scope');
-      const relative = decodeURIComponent(resource.path.slice(prefix.length));
-      if (!relative || relative.split('/').some(part => part === '..' || part === '.') || relative.includes('\\') || /[\x00-\x1f]/.test(relative)) throw new Error('Invalid preview media path');
-      try {
-        const blob = await apiClient(resource.path.slice('/api/v1/'.length)).blob();
-        media.push({placeholder:resource.placeholder,blob});
-      } catch {
-        html = html.split(resource.placeholder).join('about:blank');
-        warnings.push(i18n.t('htmlArtifact.mediaLoadFailed', {path:relative}));
-      }
-    }
-    return {html, warnings, release, media};
-  } catch (error) { release(); throw error; }
+  const media = (rendered.resources ?? []).map(resource => {
+    if (!/^html-media-[a-f0-9]{64}$/.test(resource.placeholder) || !resource.path.startsWith(prefix)) throw new Error('Invalid preview media scope');
+    const relative = decodeURIComponent(resource.path.slice(prefix.length));
+    if (!relative || relative.split('/').some(part => part === '..' || part === '.') || relative.includes('\\') || /[\x00-\x1f]/.test(relative)) throw new Error('Invalid preview media path');
+    const url = new URL(resource.url, window.location.origin);
+    const localPrefix = `/api/v1/projects/${encodeURIComponent(project)}/freezone/html-artifacts/${encodeURIComponent(id)}/preview-media/`;
+    if (url.origin === window.location.origin ? !url.pathname.startsWith(localPrefix) : url.protocol !== 'https:') throw new Error('Invalid preview media URL');
+    return {placeholder: resource.placeholder, url: url.href};
+  });
+  return {html: rendered.html, warnings: rendered.warnings ?? [], media, release: () => {}};
 }
 
 export const createHtmlArtifact = (project: string, title: string, html: string, idempotencyKey?: string) => apiCall<HtmlArtifact>(htmlArtifactPath(project), { method: 'post', json: {title, html, ...(idempotencyKey ? {idempotency_key:idempotencyKey} : {})}, retry:0 });

@@ -30,3 +30,14 @@ it('blocks authored scripts by default while nonce-authorizing only the selectio
 it('only enables authored scripts when interactive execution was explicitly selected',()=>{
  expect(buildHtmlPreview('<h1>Hi</h1>','a',false,true)).toContain("script-src 'unsafe-inline'");
 });
+
+it('strips authored nonces even when they match the bridge nonce', () => {
+ const doc = new DOMParser().parseFromString(buildHtmlPreview('<script nonce="thumbnail">window.bad=1</script><style nonce="thumbnail">body{}</style>', 'thumbnail', false), 'text/html');
+ expect(doc.querySelectorAll('[nonce]')).toHaveLength(1);
+ expect(doc.querySelector('script:last-of-type')?.hasAttribute('nonce')).toBe(false);
+});
+it('does not autoplay or preload videos in canvas thumbnails', () => {
+ const doc = new DOMParser().parseFromString(buildHtmlPreview('<video autoplay src="clip.mp4"></video>', 'x', false, false, [], true), 'text/html');
+ expect(doc.querySelector('video')?.getAttribute('preload')).toBe('none');
+ expect(doc.querySelector('video')?.hasAttribute('autoplay')).toBe(false);
+});

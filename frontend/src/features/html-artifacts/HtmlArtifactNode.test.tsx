@@ -19,7 +19,7 @@ beforeEach(()=>{
 });
 const mocks = vi.hoisted(() => ({run:vi.fn(), create:vi.fn(), attach:vi.fn(), update:vi.fn(), open:vi.fn(), export:vi.fn(), accepted:vi.fn(), success:vi.fn(), error:vi.fn(), handler:undefined as any}));
 vi.mock('@/features/canvas/application/useUpstreamGraph',()=>({useUpstreamNodes:()=>[{id:'copy',type:'textAnnotationNode',data:{displayName:'Coffee copy',content:'Coffee'}}]}));
-vi.mock('@xyflow/react',()=>({Handle:({id,type}:any)=><span data-testid={`handle-${type}`} data-handle-id={id}/>,Position:{Left:'left',Right:'right'}}));
+vi.mock('@xyflow/react',()=>({useStore:(selector:any)=>selector({transform:[0,0,1]}),Handle:({id,type}:any)=><span data-testid={`handle-${type}`} data-handle-id={id}/>,Position:{Left:'left',Right:'right'}}));
 vi.mock('react-i18next',()=>({useTranslation:()=>({t:(key:string)=>key})}));
 vi.mock('@/features/freezone/canvasSyncRuntime',()=>({captureFreezoneCanvasScope:()=>()=>true}));
 vi.mock('@/lib/url-params',()=>({readUrl:()=>({project:'p',canvas:'c'})}));
