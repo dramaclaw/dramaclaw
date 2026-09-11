@@ -30,6 +30,29 @@ const apiMocks = vi.hoisted(() => ({
   post: vi.fn(() => Promise.resolve()),
 }));
 
+const imageModelMocks = vi.hoisted(() => ({
+  result: {
+    models: [
+      {
+        id: "existing-model",
+        providerId: "newapi",
+        apiModel: "existing-model",
+        label: "支持画质模型",
+        qualityOptions: ["low", "medium", "high"],
+      },
+      {
+        id: "seedream-4.5",
+        providerId: "newapi",
+        apiModel: "seedream-4.5",
+        label: "Seedream 4.5",
+      },
+    ],
+    isLoading: false,
+    isFallback: false,
+    error: null,
+  },
+}));
+
 function getFreezoneComposerTextbox(): HTMLElement {
   return screen.getByRole("textbox", {
     name: "想画什么、改哪里，直接告诉虾画",
@@ -95,6 +118,11 @@ vi.mock("@/lib/api", () => ({
   api: {
     post: apiMocks.post,
   },
+}));
+
+vi.mock("@/features/canvas/hooks/useFreezoneImageModels", () => ({
+  useFreezoneImageModels: () => imageModelMocks.result,
+  getFreezoneImageModelsSnapshot: () => imageModelMocks.result,
 }));
 
 vi.mock("@/api/projects", () => ({
@@ -1036,7 +1064,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     );
   });
 
-  it("lets image generation approvals edit node image parameters before applying", async () => {
+  it("hides and omits image quality after switching to a model without that capability", async () => {
     const node = {
       id: "image-node-1",
       type: "imageGenNode",
@@ -1101,9 +1129,11 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     });
 
     expect(await screen.findByLabelText("图片模型")).toBeInTheDocument();
+    expect(screen.getByLabelText("图片画质")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("图片模型"), { target: { value: "seedream-4.5" } });
+    await waitFor(() => expect(screen.queryByLabelText("图片画质")).not.toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("图片比例"), { target: { value: "9:16" } });
     fireEvent.change(screen.getByLabelText("图片分辨率"), { target: { value: "2K" } });
-    fireEvent.change(screen.getByLabelText("图片画质"), { target: { value: "high" } });
     fireEvent.change(screen.getByLabelText("图片数量"), { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
 
@@ -1112,7 +1142,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
         json: expect.objectContaining({
           turn_id: "turn-a",
           event: expect.objectContaining({
-            type: "canvas_command_result",
+            type: "canvas_command_approval_resolution",
             bridge_key: "bridge-image",
             envelopes: [
               expect.objectContaining({
@@ -1121,10 +1151,9 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
                     type: "update_node_data",
                     node_id: node.id,
                     data: {
-                      model: "existing-model",
+                      model: "seedream-4.5",
                       aspectRatio: "9:16",
                       size: "2K",
-                      quality: "high",
                       count: 2,
                     },
                   },
@@ -1532,7 +1561,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
                   ],
                 },
               ],
-              received_at: Date.now() - 61_000,
+              received_at: Date.now() - 301_000,
             },
           ],
         },
@@ -1650,7 +1679,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     await waitFor(() => expect(screen.queryByText("待确认的画布操作")).not.toBeInTheDocument());
   });
 
-  it("retries a timed-out canvas command from its persisted result", async () => {
+  it("starts an agent recovery turn instead of replaying a timed-out command", async () => {
     const envelopes = [
       {
         schema_version: "canvas_chat_commands.v1" as const,
@@ -1726,8 +1755,10 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     fireEvent.click(screen.getByRole("button", { name: "重新执行" }));
 
     await waitFor(() => {
-      expect(useCanvasStore.getState().nodes).toHaveLength(1);
-      expect(useCanvasStore.getState().nodes[0]?.data.title).toBe("恢复创建的图片节点");
+      expect(superChatMocks.send).toHaveBeenCalledWith(
+        expect.stringContaining("先核对已有节点和运行状态"), [], "重新检查并继续未完成的画布操作",
+      );
+      expect(useCanvasStore.getState().nodes).toHaveLength(0);
     });
   });
 
@@ -1850,7 +1881,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
               ],
             },
           ],
-          receivedAt: Date.now() - 61_000,
+          receivedAt: Date.now() - 301_000,
         },
       }));
     });
@@ -1929,7 +1960,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     });
 
     expect(await screen.findByText("待确认的画布操作")).toBeInTheDocument();
-    expect(screen.getByText(/(?:59|60)s 后自动取消/)).toBeInTheDocument();
+    expect(screen.getByText(/(?:299|300)s 后自动取消/)).toBeInTheDocument();
   });
 
   it("shows a cancelled feedback when a stale canvas approval remains in message parts", () => {

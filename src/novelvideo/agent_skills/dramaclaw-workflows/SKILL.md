@@ -14,6 +14,10 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   canvas data must be refreshed, call `freezone_get_canvas_ontology` instead of inventing a
   `canvas://` resource. MCP clients must use only resource URIs returned by `resources/list` or
   `resources/templates/list`.
+- The Skill package/server display name does not determine a host's MCP registration key. Use the
+  exact `server` returned by the host. In DramaClaw's Codex adapter, filesystem-backed Skill files
+  are read from `dramaclaw`; workflow catalog resources use `dramaclaw_workflows` (underscore).
+  Never call `resources/read` with an inferred `dramaclaw-workflows` server key.
 - Use the portable `dramaclaw-workflows` MCP server for catalog discovery and deterministic
   compilation when it is available. Use the authorized DramaClaw MCP server for draft persistence,
   approval, canvas commit, and execution. Tool names are host-neutral; call them through the MCP
@@ -63,6 +67,9 @@ The image/video choices are:
 - Image: model preference, aspect ratio, resolution/quality, and variants per node.
 - Video: model or generation mode, aspect ratio, resolution, duration, sound generation, and output
   variants per node.
+- Provider thinking/reasoning level is server-managed. Never ask the user to choose
+  `thinking_level`, reasoning effort, or low/medium/high thinking options, and never add such a
+  question from a live model parameter schema.
 
 Do not include audio voice-source selection in this preliminary clarification. Never ask the user
 to choose system voice versus custom voice. A speech node uses an already selected custom

@@ -8578,6 +8578,33 @@ async def _scoped_media_model_catalog(
         raise HTTPException(503, "媒体模型目录暂不可用，请稍后重试") from None
 
 
+_SERVER_MANAGED_MEDIA_MODEL_PARAMETER_KEYS = frozenset({"thinking_level"})
+
+
+def _public_media_model_catalog(
+    catalog: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Hide provider tuning owned by the server from canvas model controls."""
+    result: list[dict[str, Any]] = []
+    for entry in catalog:
+        public_entry = dict(entry)
+        request = entry.get("request")
+        if isinstance(request, dict):
+            public_request = dict(request)
+            parameters = request.get("parameters")
+            if isinstance(parameters, list):
+                public_request["parameters"] = [
+                    dict(parameter)
+                    for parameter in parameters
+                    if isinstance(parameter, dict)
+                    and str(parameter.get("key") or "")
+                    not in _SERVER_MANAGED_MEDIA_MODEL_PARAMETER_KEYS
+                ]
+            public_entry["request"] = public_request
+        result.append(public_entry)
+    return result
+
+
 def _media_model_unavailable(
     media_type: str, catalog: list[dict[str, Any]]
 ) -> HTTPException:
@@ -8769,10 +8796,14 @@ async def _resolve_catalog_request(
         defined_keys = {
             str(parameter["key"]) for parameter in full_schema.get("parameters") or []
         }
+        server_managed_keys = (
+            defined_keys & _SERVER_MANAGED_MEDIA_MODEL_PARAMETER_KEYS
+        )
         filtered_params = {
             key: value
             for key, value in (model_params or {}).items()
-            if key in active_keys or key not in defined_keys
+            if key not in server_managed_keys
+            and (key in active_keys or key not in defined_keys)
         }
         if media_type == "image" and entry.get("qualityOptions"):
             schema = {**schema, "includeQuality": True}
@@ -8990,7 +9021,11 @@ async def freezone_video_models(
     )
     return {
         "ok": True,
-        "data": get_freezone_video_model_options() if catalog is None else catalog,
+        "data": (
+            get_freezone_video_model_options()
+            if catalog is None
+            else _public_media_model_catalog(catalog)
+        ),
     }
 
 
@@ -9008,7 +9043,7 @@ async def freezone_image_models(
         requester_user_id=ctx.requester_user_id,
     )
     if catalog is not None:
-        return {"ok": True, "data": catalog}
+        return {"ok": True, "data": _public_media_model_catalog(catalog)}
     options = image_generation_selection_options()
     data = []
     for key, label in options.items():

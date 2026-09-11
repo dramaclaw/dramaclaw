@@ -1532,10 +1532,21 @@ def test_workflow_plan_schema_rejects_extra_node_type_alias():
         Draft202012Validator(workflow_plan_json_schema()).validate(plan)
 
 
-def test_workflow_plan_schema_rejects_data_stage_compatibility_path():
+def test_workflow_plan_schema_accepts_data_stage_compatibility_path():
     plan = _dynamic_plan(image_count=1)
     input_node = plan["nodes"][0]
     input_node["data"]["stage"] = input_node.pop("stage")
+
+    Draft202012Validator(workflow_plan_json_schema()).validate(plan)
+
+    result = validate_workflow_plan(plan)
+
+    assert result["ok"] is True
+
+
+def test_workflow_plan_schema_rejects_data_stage_on_executable_node():
+    plan = _dynamic_plan(image_count=1)
+    plan["nodes"][1]["data"]["stage"] = "input"
 
     with pytest.raises(ValidationError):
         Draft202012Validator(workflow_plan_json_schema()).validate(plan)

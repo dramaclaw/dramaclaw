@@ -257,7 +257,12 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             node["node_type"],
             audio_uses_upstream_text=node["plan_id"] in audio_prompt_target_plan_ids,
         )
-        raw_stage = str(raw_node.get("stage") or "").strip().lower()
+        raw_data = raw_node.get("data")
+        raw_stage = str(
+            raw_node.get("stage")
+            or (raw_data.get("stage") if isinstance(raw_data, dict) else "")
+            or ""
+        ).strip().lower()
         if node["node_type"] in TEXTUAL_NODE_TYPES and raw_stage in USER_INPUT_STAGES:
             data.setdefault("workflowCatalogRole", "user_input")
         # Plain text with no role is inferred per edge, as in the frontend.
@@ -511,6 +516,9 @@ def _node_data(
 ) -> dict[str, Any]:
     data = node.get("data")
     result = dict(data) if isinstance(data, dict) else {}
+    # ``data.stage`` is accepted as an agent compatibility input but stage is
+    # workflow metadata, not canvas node data.
+    result.pop("stage", None)
     label = node.get("label") or node.get("title") or node.get("name")
     description = (
         node.get("description") or node.get("responsibility") or node.get("purpose")

@@ -91,7 +91,8 @@ def _node_type_value(node: dict[str, Any]) -> str:
 
 
 def _node_stage_value(node: dict[str, Any]) -> str:
-    return str(node.get("stage") or "").strip()
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    return str(node.get("stage") or data.get("stage") or "").strip()
 
 
 def _edge_link_type_value(edge: dict[str, Any]) -> str:

@@ -717,11 +717,11 @@ def _emit_clarification_event(
         timeout_seconds = max(
             1,
             int(
-                os.environ.get("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "600")
+                os.environ.get("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "240")
             ),
         )
     except ValueError:
-        timeout_seconds = 600
+        timeout_seconds = 240
     resolved = wait_clarification_result(key, timeout_seconds=timeout_seconds)
     if resolved is not None:
         return tool_result(resolved)
@@ -765,6 +765,68 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         ).strip("-")
         clarification_id = f"clarify_{safe_context or 'default'}_{uuid.uuid4().hex[:8]}"
     questions = _safe_list(args.get("questions"))
+    generation_question_aliases = {
+        "image_count": "image_variants_per_node",
+        "video_count": "video_variants_per_node",
+    }
+    generation_question_titles = {
+        "image_model": "图片模型",
+        "image_aspect_ratio": "图片比例",
+        "image_resolution": "图片分辨率",
+        "image_quality": "图片画质",
+        "image_variants_per_node": "图片生成数量",
+        "video_model": "视频模型",
+        "video_aspect_ratio": "视频比例",
+        "video_resolution": "视频分辨率",
+        "video_duration_seconds": "视频时长",
+        "video_generate_audio": "视频声音",
+        "video_variants_per_node": "视频生成数量",
+    }
+    server_managed_question_ids = {"thinking_level"}
+    questions = [
+        question
+        for question in questions
+        if not (
+            isinstance(question, dict)
+            and str(question.get("id") or "").strip().lower()
+            in server_managed_question_ids
+        )
+    ]
+    generation_option_sources = {
+        "image_model": "image_models",
+        "image_aspect_ratio": "selected_image_model_ratios",
+        "image_resolution": "selected_image_model_resolutions",
+        "image_quality": "selected_image_model_qualities",
+        "image_variants_per_node": "image_variant_counts",
+        "video_model": "video_models",
+        "video_aspect_ratio": "selected_video_model_ratios",
+        "video_resolution": "selected_video_model_resolutions",
+        "video_duration_seconds": "selected_video_model_durations",
+        "video_generate_audio": "selected_video_model_audio",
+        "video_variants_per_node": "video_variant_counts",
+    }
+    normalized_questions: list[Any] = []
+    for question in questions:
+        if not isinstance(question, dict):
+            normalized_questions.append(question)
+            continue
+        question_id = str(question.get("id") or "").strip().lower()
+        question_id = generation_question_aliases.get(question_id, question_id)
+        if question_id not in generation_option_sources:
+            normalized_questions.append(question)
+            continue
+        normalized_questions.append(
+            {
+                **question,
+                "id": question_id,
+                "title": str(question.get("title") or "").strip()
+                or generation_question_titles[question_id],
+                "options": _safe_list(question.get("options")),
+                "mode": str(question.get("mode") or "single").strip() or "single",
+                "options_source": generation_option_sources[question_id],
+            }
+        )
+    questions = normalized_questions
     if not questions:
         return tool_result(
             {
@@ -2992,6 +3054,73 @@ def _generation_parameter_value_present(field: str, value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _generation_catalog_entry(
+    project: str,
+    node_type: str,
+    model: Any,
+    cache: dict[str, list[dict[str, Any]] | None],
+) -> dict[str, Any] | None:
+    """Return the live model entry used to decide conditional parameters.
+
+    An unavailable catalog deliberately returns ``None`` so preflight keeps its
+    conservative legacy requirements. Only an authoritative matching entry may
+    remove a model-dependent field such as image quality.
+    """
+    media_type = "image" if node_type == "imageGenNode" else "video"
+    model_id = str(model or "").strip().casefold()
+    if not model_id:
+        return None
+    if media_type not in cache:
+        response = _request(
+            "GET",
+            f"/projects/{quote(project, safe='')}/freezone/{media_type}/models",
+        )
+        raw_entries = response.get("data") if response.get("ok", True) else None
+        cache[media_type] = (
+            [entry for entry in raw_entries if isinstance(entry, dict)]
+            if isinstance(raw_entries, list)
+            else None
+        )
+    for entry in cache[media_type] or []:
+        identifiers = {
+            str(entry.get(key) or "").strip().casefold()
+            for key in ("id", "apiModel", "api_model", "catalogId", "label")
+        }
+        if model_id in identifiers:
+            return entry
+    return None
+
+
+def _generation_parameter_fields_for_model(
+    project: str,
+    node_type: str,
+    data: dict[str, Any],
+    catalog_cache: dict[str, list[dict[str, Any]] | None],
+) -> tuple[str, ...] | None:
+    fields = _GENERATION_PARAMETER_FIELDS.get(node_type)
+    if fields is None:
+        return None
+    entry = _generation_catalog_entry(
+        project,
+        node_type,
+        data.get("model"),
+        catalog_cache,
+    )
+    if entry is None:
+        return fields
+    conditional_fields: set[str] = set()
+    if node_type == "imageGenNode":
+        quality_options = entry.get("qualityOptions")
+        if not (
+            isinstance(quality_options, list)
+            and any(str(value).strip() for value in quality_options)
+        ):
+            conditional_fields.add("quality")
+    elif node_type == "videoNode" and entry.get("supportsGenerateAudio") is False:
+        conditional_fields.add("generateAudio")
+    return tuple(field for field in fields if field not in conditional_fields)
+
+
 def _use_frontend_default_for_recommended_models(commands: list[Any]) -> None:
     """Resolve a symbolic recommendation through the frontend's live default.
 
@@ -3101,17 +3230,26 @@ def _generation_parameters_required_result(
             for item in missing
         }
     )
-    required_choices = {
-        "image": ["model", "aspect_ratio", "resolution", "quality", "count"],
-        "video": [
-            "model",
-            "aspect_ratio",
-            "resolution",
-            "duration_seconds",
-            "generate_audio",
-            "count",
-        ],
+    portable_fields = {
+        "model": "model",
+        "aspectRatio": "aspect_ratio",
+        "size": "resolution",
+        "quality": "quality",
+        "durationSec": "duration_seconds",
+        "generateAudio": "generate_audio",
+        "count": "count",
     }
+    required_choices: dict[str, list[str]] = {}
+    for item in missing:
+        media_type = "image" if item["node_type"] == "imageGenNode" else "video"
+        choices = required_choices.setdefault(media_type, [])
+        for field in item.get("fields") or []:
+            portable = portable_fields.get(str(field), str(field))
+            # Video stores its resolution in data.quality.
+            if media_type == "video" and field == "quality":
+                portable = "resolution"
+            if portable not in choices:
+                choices.append(portable)
     return {
         "ok": False,
         "status": "clarification_required",
@@ -3119,9 +3257,7 @@ def _generation_parameters_required_result(
         "error": "image/video generation parameters require user clarification",
         "media_types": media_types,
         "missing_parameters": missing,
-        "required_choices": {
-            media_type: required_choices[media_type] for media_type in media_types
-        },
+        "required_choices": required_choices,
         "clarification": {
             "title": "确认图片和视频生成参数",
             "allow_recommended": True,
@@ -3143,8 +3279,6 @@ def _external_generation_parameter_preflight(
     canvas: str,
     commands: list[Any],
 ) -> dict[str, Any] | None:
-    if not _external_mcp_agent_enabled():
-        return None
     execution_commands = [
         command
         for command in commands
@@ -3187,6 +3321,7 @@ def _external_generation_parameter_preflight(
     else:
         nodes, edges = {}, []
     missing_by_node: dict[str, dict[str, Any]] = {}
+    catalog_cache: dict[str, list[dict[str, Any]] | None] = {}
     for raw_command in commands:
         if not isinstance(raw_command, dict):
             continue
@@ -3230,17 +3365,17 @@ def _external_generation_parameter_preflight(
             node_type = str(node.get("type") or node.get("node_type") or "").strip()
             if expected_type is not None and node_type != expected_type:
                 continue
-            required_fields = _GENERATION_PARAMETER_FIELDS.get(node_type)
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            required_fields = _generation_parameter_fields_for_model(
+                project,
+                node_type,
+                data,
+                catalog_cache,
+            )
             if required_fields is None:
                 continue
-            data = node.get("data") if isinstance(node.get("data"), dict) else {}
-            # Workflow graph approval is the single image/video parameter
-            # confirmation point. Re-running the workflow must reuse the
-            # persisted node configuration instead of opening another
-            # clarification card. Runtime capability preflight still runs
-            # below the write boundary and can reject unsupported values.
-            if data.get("workflowConfigConfirmed") is True:
-                continue
+            # Reuse complete persisted choices, but a confirmation marker alone
+            # cannot substitute for missing generation parameters.
             if command_type == "run_workflow" and not raw_command.get("regenerate"):
                 output_key = "imageUrl" if node_type == "imageGenNode" else "videoUrl"
                 if isinstance(data.get(output_key), str) and data[output_key].strip():
@@ -3509,11 +3644,11 @@ def _dispatch_mcp_approved_frontend_commands(
         timeout_seconds = max(
             1,
             int(
-                os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "300")
+                os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "600")
             ),
         )
     except ValueError:
-        timeout_seconds = 300
+        timeout_seconds = 600
     timeout_result = {
         "ok": False,
         "tool_call_status": "failed",
@@ -3596,11 +3731,11 @@ def _dispatch_frontend_canvas_commands(
         timeout_seconds = max(
             1,
             int(
-                os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "75")
+                os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "600")
             ),
         )
     except ValueError:
-        timeout_seconds = 75
+        timeout_seconds = 600
     timeout_result = {
         "ok": False,
         "tool_call_status": "failed",
@@ -7133,7 +7268,7 @@ _SKILL_STUDIO_QUESTION_SCHEMA = {
         },
         "title": {
             "type": "string",
-            "description": "User-facing question title.",
+            "description": "User-facing question title. Optional for canonical image/video generation question ids; the server supplies a localized title.",
         },
         "description": {
             "type": "string",
@@ -7141,7 +7276,12 @@ _SKILL_STUDIO_QUESTION_SCHEMA = {
         },
         "options": {
             "type": "array",
-            "description": "2-4 selectable options.",
+            "description": (
+                "Usually 2-4 selectable options. For image_model, video_model, and other "
+                "generation-parameter questions backed by a live node schema, this may be omitted; "
+                "the frontend resolves every exact live option from options_source. If options are "
+                "provided, never shorten the catalog to a recommended subset."
+            ),
             "items": _SKILL_STUDIO_OPTION_SCHEMA,
         },
         "mode": {
@@ -7158,8 +7298,25 @@ _SKILL_STUDIO_QUESTION_SCHEMA = {
             "type": "boolean",
             "description": "Whether the frontend should allow a free-form custom answer for this question.",
         },
+        "options_source": {
+            "type": "string",
+            "enum": [
+                "image_models",
+                "selected_image_model_ratios",
+                "selected_image_model_resolutions",
+                "selected_image_model_qualities",
+                "image_variant_counts",
+                "video_models",
+                "selected_video_model_ratios",
+                "selected_video_model_resolutions",
+                "selected_video_model_durations",
+                "selected_video_model_audio",
+                "video_variant_counts",
+            ],
+            "description": "Server-managed live option source. The clarification tool adds this automatically for canonical image/video generation parameter questions.",
+        },
     },
-    "required": ["id", "title", "options"],
+    "required": ["id"],
 }
 
 _SKILL_STUDIO_DRAFT_OUTLINE_STAGE_SCHEMA = {
@@ -7859,7 +8016,7 @@ TOOLS = (
         "freezone_request_user_clarification",
         _schema(
             "freezone_request_user_clarification",
-            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers. Use for user choices before continuing the current chat or workflow, including Skill Studio setup questions. For image/video generation, never combine fields into a recommended-settings preset: use one question per missing field, inspect the live node schema, and expose exact resolution values such as 480P/720P when supported. The submitted answers only mean the user completed the choices; decide the next step from the current context. This tool does not write canvas nodes or save catalog files.",
+            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers. Use for user choices before continuing the current chat or workflow, including Skill Studio setup questions. For image/video generation, never combine fields into a recommended-settings preset: use one canonical question id per missing field. For canonical generation ids, title and options may be omitted because the server supplies localized titles and the frontend resolves the complete live catalog. The submitted answers only mean the user completed the choices; decide the next step from the current context. This tool does not write canvas nodes or save catalog files.",
             {
                 "clarification_id": {
                     "type": "string",
@@ -7879,7 +8036,7 @@ TOOLS = (
                 },
                 "questions": {
                     "type": "array",
-                    "description": "High-level user-facing questions. Ask only the questions needed for the next decision; use one focused question when the next step depends on one answer, or group closely related choices when they should be answered together. Each question should usually have 2-5 options.",
+                    "description": "High-level user-facing questions. Ask only the questions needed for the next decision; use one focused question when the next step depends on one answer, or group closely related choices when they should be answered together. Each question should usually have 2-5 options, but generation model questions must include every exact option from the live node schema.",
                     "items": _SKILL_STUDIO_QUESTION_SCHEMA,
                 },
                 "allow_recommended": {

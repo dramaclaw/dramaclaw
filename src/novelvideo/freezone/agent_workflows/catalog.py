@@ -2178,7 +2178,8 @@ def validate_agent_workflow_plan(
         recipe_pipeline = (
             (catalog.get("recipePipeline") or []) if isinstance(catalog, dict) else []
         )
-        stage = _text(node.get("stage")) if isinstance(node, dict) else ""
+        data_stage = data.get("stage") if isinstance(data, dict) else None
+        stage = _text(node.get("stage") or data_stage) if isinstance(node, dict) else ""
         requires_recipe = node_type in {
             "imageGenNode",
             "videoNode",
