@@ -38,21 +38,22 @@ _OBJECT_TYPE_BY_NODE_TYPE = {
     "videoNode": "VideoNode",
     "audioNode": "AudioNode",
     "videoComposeNode": "VideoNode",
+    "htmlArtifactNode": "HtmlNode",
 }
 
 _LINK_RULES = {
     "context_for": ({"TextNode", "ScriptNode"}, {"TextNode", "ScriptNode"}),
     "prompt_for": (
         {"TextNode", "ScriptNode"},
-        {"ImageNode", "VideoNode", "AudioNode", "ScriptNode"},
+        {"ImageNode", "VideoNode", "AudioNode", "ScriptNode", "HtmlNode"},
     ),
     "dependency_for": (
         {"TextNode", "ScriptNode", "ImageNode", "VideoNode", "AudioNode"},
-        {"TextNode", "ScriptNode", "ImageNode", "VideoNode", "AudioNode"},
+        {"TextNode", "ScriptNode", "ImageNode", "VideoNode", "AudioNode", "HtmlNode"},
     ),
     "media_input_for": (
         {"ImageNode", "VideoNode", "AudioNode"},
-        {"TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode"},
+        {"TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode", "HtmlNode"},
     ),
     "derived_from": (
         {"ImageNode", "VideoNode", "AudioNode"},
@@ -71,6 +72,7 @@ _OUTPUT_KIND_BY_NODE_TYPE = {
     "imageGenNode": "image",
     "videoNode": "video",
     "audioNode": "audio",
+    "htmlArtifactNode": "text",
 }
 
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -201,6 +203,16 @@ def validate_workflow_plan(
                 _issue(f"{path}.node_type", f"unsupported node type: {node_type}")
             )
             continue
+        if node_type == "htmlArtifactNode":
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            if not any(isinstance(value, str) and value.strip() for value in (node.get("prompt"), data.get("prompt"))):
+                errors.append(_issue(f"{path}.prompt", "HTML workflow step requires a generation prompt"))
+            catalog = data.get("workflowCatalog")
+            if not isinstance(catalog, dict) or not str(catalog.get("recipeId") or "").strip():
+                errors.append(_issue(f"{path}.data.workflowCatalog.recipeId", "HTML workflow step requires a text Recipe"))
+            for field in ("html", "content", "text", "artifactId", "artifactVersion"):
+                if field in data or field in node:
+                    errors.append(_issue(f"{path}.data.{field}", "HTML workflow source and identity must be produced by the Artifact service"))
         node_types[node_id] = node_type
         node_values[node_id] = node
         node_indexes[node_id] = index
@@ -478,6 +490,7 @@ def _build_plan_preflight(nodes: list[Any]) -> dict[str, Any]:
         "video": 0,
         "audio": 0,
         "compose": 0,
+        "html": 0,
     }
     models: set[str] = set()
     warnings: list[dict[str, str]] = []
@@ -495,6 +508,7 @@ def _build_plan_preflight(nodes: list[Any]) -> dict[str, Any]:
             "videoNode": "video",
             "audioNode": "audio",
             "videoComposeNode": "compose",
+            "htmlArtifactNode": "html",
         }.get(node_type)
         if kind:
             counts[kind] += 1
@@ -535,7 +549,7 @@ def _build_plan_preflight(nodes: list[Any]) -> dict[str, Any]:
                 )
             )
     generation_tasks = (
-        generated_text_count + counts["image"] + counts["video"] + counts["audio"]
+        generated_text_count + counts["image"] + counts["video"] + counts["audio"] + counts["html"]
     )
     return {
         "status": "ready",
@@ -681,6 +695,8 @@ def _validate_node_catalog_refs(
         or recipe.get("generation_type")
         or ""
     ).strip()
+    if recipe.get("output_format") == "html" and node_type != "htmlArtifactNode":
+        errors.append(_issue(f"{catalog_path}.recipeId", "HTML Recipe output must use htmlArtifactNode"))
     expected_kind = _OUTPUT_KIND_BY_NODE_TYPE.get(node_type)
     if output_kind and expected_kind and output_kind != expected_kind:
         errors.append(

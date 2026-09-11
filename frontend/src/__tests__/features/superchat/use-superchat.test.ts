@@ -2235,6 +2235,15 @@ describe("Assistant clarification response", () => {
     expect(text).toContain("这个 skill 的使用范围是？\n用户级（推荐）");
   });
 
+  it("keeps clarification replies in the current project when tool metadata omits scope", () => {
+    const payload = buildAssistantClarificationToolResultForTest(
+      { type: "assistant.clarification.request", clarification_id: "c", bridge_key: "key", questions: [] },
+      {},
+      { projectId: "project-a", canvasId: "canvas-a", agentId: "main" },
+    );
+    expect(payload).toMatchObject({project_id: "project-a", canvas_id: "canvas-a", agent_id: "main"});
+  });
+
   it("builds a generic bridge tool result payload", () => {
     const payload = buildAssistantClarificationToolResultForTest(
       {
@@ -2931,6 +2940,15 @@ describe("Skill Studio draft response", () => {
       cancelled: false,
       revisionPending: true,
     })).toBe("AI 调整中，请按后续问题补充修改方向");
+  });
+
+  it("preserves HTML webpage deliverables when saving an imported Skill Studio recipe", () => {
+    const recipe = {id:"campaign-page",name:"Campaign page",output_kind:"text",output_format:"html",action_keys:["campaign-page"],system_prompt:"Create a complete page",planning_prompt:"Use campaign assets",result_summary:"A finished webpage"};
+    const normalized = normalizeSkillStudioDraftForCatalogForTest({recipes:[recipe]});
+    const saved = buildSkillStudioCatalogSaveItemsForTest(normalized);
+    expect(saved[0].payload).toMatchObject({output_kind:"text",output_format:"html"});
+    const reimported = JSON.parse(JSON.stringify(saved[0].payload));
+    expect(buildSkillStudioCatalogSaveItemsForTest({recipes:[reimported]})[0].payload).toMatchObject({output_kind:"text",output_format:"html"});
   });
 
   it("normalizes the draft into catalog payloads before saving", () => {

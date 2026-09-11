@@ -405,11 +405,18 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
     monkeypatch.setattr(
         chat_route,
         "_pending_workflow_draft_receipt",
-        lambda *_: {
+        lambda *_, **__: {
             "draft_id": draft["draft_id"],
             "revision": receipt_revision,
             "task_id": receipt_task,
         },
+    )
+
+    async def bridge_project_state_dir(*_args, **_kwargs):
+        return tmp_path
+
+    monkeypatch.setattr(
+        chat_route, "_bridge_project_state_dir", bridge_project_state_dir
     )
     monkeypatch.setattr(
         chat_route,
@@ -531,6 +538,10 @@ def test_canvas_command_tool_result_reports_open_node_action_as_opened_panel(
 async def test_pending_canvas_command_poll_only_returns_external_mcp_commands(
     monkeypatch, tmp_path
 ) -> None:
+    async def project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", project_state)
     bridge_dir = tmp_path / "bridge"
     monkeypatch.setattr(
         chat_route,
@@ -1052,6 +1063,10 @@ def test_resolve_revision_skill_studio_tool_result_starts_question_flow(
 async def test_resolve_skill_studio_tool_result_persists_submitted_ui_event(
     monkeypatch, tmp_path
 ) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(
         chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
@@ -1115,6 +1130,10 @@ async def test_resolve_skill_studio_tool_result_persists_submitted_ui_event(
 async def test_resolve_skill_studio_draft_tool_result_persists_submitted_ui_event(
     monkeypatch, tmp_path
 ) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(
         chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
@@ -1178,6 +1197,10 @@ async def test_resolve_skill_studio_draft_tool_result_persists_submitted_ui_even
 async def test_receive_bridge_results_during_turn_resolves_skill_studio_result(
     monkeypatch, tmp_path
 ) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
     monkeypatch.setattr(
         chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
     )
@@ -1242,6 +1265,10 @@ async def test_receive_bridge_results_during_turn_resolves_skill_studio_result(
 async def test_receive_bridge_results_during_turn_resolves_clarification_result(
     monkeypatch, tmp_path
 ) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
     monkeypatch.setattr(
         chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
     )
@@ -1420,6 +1447,10 @@ def test_resolve_clarification_tool_result_writes_bridge_result(
 async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
     monkeypatch, tmp_path
 ) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(
         chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"

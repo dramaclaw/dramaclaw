@@ -49,6 +49,34 @@ def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> d
                     item.pop("duration_seconds", None)
     return result
 
+
+def workflow_plan_schema_diagnostics(arguments: dict[str, Any]) -> list[dict[str, str]]:
+    """Explain actionable HTML branch failures hidden by JSON Schema anyOf.
+
+    This only describes invalid arguments; it never fills values or changes a
+    node's requested deliverable type. The strict validator remains authoritative.
+    """
+    plan = arguments.get("plan")
+    if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
+        return []
+    issues: list[dict[str, str]] = []
+    for index, node in enumerate(plan["nodes"]):
+        if not isinstance(node, dict) or node.get("node_type") != "htmlArtifactNode":
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        if not any(isinstance(value, str) and value.strip() for value in (node.get("prompt"), data.get("prompt"))):
+            issues.append({
+                "path": f"plan.nodes[{index}].prompt",
+                "message": (
+                    "HTML workflow step requires a non-empty generation prompt. "
+                    f"Set plan.nodes[{index}].prompt or plan.nodes[{index}].data.prompt "
+                    "to the webpage's business requirements, not HTML source. "
+                    "Keep node_type=htmlArtifactNode and the existing Recipe and edges; "
+                    "correct this field and resubmit the same complete plan."
+                ),
+            })
+    return issues
+
 NODE_TYPE_VALUES = [
     "textAnnotationNode",
     "scriptNode",
@@ -56,6 +84,7 @@ NODE_TYPE_VALUES = [
     "imageGenNode",
     "videoNode",
     "audioNode",
+    "htmlArtifactNode",
     "videoComposeNode",
 ]
 
@@ -239,7 +268,7 @@ def _recipe_node_schema() -> dict[str, Any]:
         {
             "node_type": {
                 "type": "string",
-                "enum": NODE_TYPE_VALUES[:-1],
+                "enum": [value for value in NODE_TYPE_VALUES if value not in {"videoComposeNode", "htmlArtifactNode"}],
             },
             "data": _node_data_schema(recipe_required=True),
         }
@@ -250,6 +279,34 @@ def _recipe_node_schema() -> dict[str, Any]:
         "required": ["id", "node_type", "data"],
         "additionalProperties": False,
     }
+
+
+def _html_node_schema() -> dict[str, Any]:
+    properties = _node_common_properties()
+    for field in ("content", "text"):
+        properties.pop(field, None)
+    properties["node_type"] = {"type": "string", "enum": ["htmlArtifactNode"]}
+    properties["prompt"] = {
+        "type": "string", "minLength": 1,
+        "description": "Required here or in data.prompt: business requirements for generating the webpage. Keep HTML source in Artifact storage.",
+    }
+    properties["data"] = {
+        "type": "object",
+        "properties": {
+            "workflowCatalog": _catalog_schema(recipe_required=True),
+            "prompt": {"type": "string"},
+            "title": {"type": "string"},
+            "displayName": {"type": "string"},
+        },
+        "required": ["workflowCatalog"],
+        "additionalProperties": False,
+    }
+    return {"type": "object", "properties": properties,
+            "required": ["id", "node_type", "data"], "additionalProperties": False,
+            "anyOf": [
+                {"required": ["prompt"], "properties": {"prompt": {"type": "string", "minLength": 1}}},
+                {"properties": {"data": {"required": ["prompt"], "properties": {"prompt": {"type": "string", "minLength": 1}}}}},
+            ]}
 
 
 def _resource_text_node_schema() -> dict[str, Any]:
@@ -357,6 +414,7 @@ def workflow_plan_json_schema() -> dict[str, Any]:
                         _recipe_node_schema(),
                         _resource_text_node_schema(),
                         _compose_node_schema(),
+                        _html_node_schema(),
                     ]
                 },
             },
@@ -466,7 +524,7 @@ def workflow_intent_json_schema() -> dict[str, Any]:
                     "mode": {"type": "string", "enum": ["standard"]},
                     "deliverable": {
                         "type": "string",
-                        "enum": ["images", "video", "mixed"],
+                        "enum": ["images", "video", "mixed", "html"],
                     },
                     "item_count": {"type": "integer", "minimum": 1, "maximum": 12},
                     "total_duration_seconds": {

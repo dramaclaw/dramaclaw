@@ -1,3 +1,4 @@
+import {htmlArtifactCommandError} from '@/features/html-artifacts/commands';
 import type { CanvasEdge, CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { CANVAS_NODE_TYPES, type CanvasNodeData } from "@/features/canvas/domain/canvasNodes";
 import {
@@ -8,7 +9,7 @@ import {
   VIDEO_UPSCALE_DENOISE_OPTIONS,
   VIDEO_UPSCALE_RESOLUTIONS,
 } from "@/features/canvas/application/videoUpscale";
-import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
+import { getDownstreamSpawnTypes, nodeHasSourceHandle } from "@/features/canvas/domain/nodeRegistry";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
 import {
   isBeatContextAgentEditablePatch,
@@ -190,6 +191,20 @@ export function validateCanvasChatCommandEnvelopes(
     envelope.commands.forEach((command, commandIndex) => {
       const path = commandPath(envelopeIndex, commandIndex);
       switch (command.type) {
+        case "html_artifact": {
+          const error = htmlArtifactCommandError(command);
+          if (error) addIssue(issues,path,error);
+          for (const id of command.reference_node_ids ?? []) {
+            const source = nodeById.get(id);
+            if (!source || !nodeHasSourceHandle(source.type)) addIssue(issues,path,`HTML reference node is unavailable: ${id}`);
+          }
+          if (!error && (command.action === "create" || command.action === "prepare") && command.client_id) {
+            const virtualNode = makeVirtualNode({client_id:command.client_id,node_type:"htmlArtifactNode",data:command.workflow_data})!;
+            clientIds.add(virtualNode.id);
+            nodeById.set(virtualNode.id,virtualNode);
+          }
+          break;
+        }
         case "clear_canvas":
           // The executor resolves the current canvas contents at approval
           // time, so there are no ids to validate in the command payload.
@@ -444,6 +459,40 @@ export function validateCanvasChatCommandEnvelopes(
               ? action.blocked_reasons.join("; ")
               : `action is blocked: ${command.action}`;
             addIssue(issues, path, `action preconditions are not satisfied: ${reasons}`);
+          }
+          if (
+            target.type === CANVAS_NODE_TYPES.htmlArtifact &&
+            (command.action === "update_source" || command.action === "restore" || command.action === "select_version")
+          ) {
+            const params = command.parameters && typeof command.parameters === "object" && !Array.isArray(command.parameters)
+              ? command.parameters as Record<string, unknown>
+              : {};
+            const artifactId = typeof target.data.artifactId === "string" ? target.data.artifactId.trim() : "";
+            const positiveInteger = (value: unknown) =>
+              typeof value === "number" && Number.isInteger(value) && value > 0;
+            if (command.action === "update_source") {
+              if (typeof params.html !== "string" || !params.html) {
+                addIssue(issues, path, "update_source requires complete HTML source");
+              } else if (new TextEncoder().encode(params.html).length > 2 * 1024 * 1024) {
+                addIssue(issues, path, "update_source HTML exceeds 2 MiB");
+              }
+              if (typeof params.title === "string" && params.title.length > 200) {
+                addIssue(issues, path, "update_source title exceeds 200 characters");
+              }
+              if (artifactId && !positiveInteger(params.base_version)) {
+                addIssue(issues, path, "update_source requires positive base_version for a saved HTML node");
+              }
+            } else if (command.action === "restore") {
+              if (!artifactId) addIssue(issues, path, "restore requires a saved HTML artifact");
+              if (!positiveInteger(params.version) || !positiveInteger(params.base_version)) {
+                addIssue(issues, path, "restore requires positive version and base_version");
+              }
+            } else {
+              if (!artifactId) addIssue(issues, path, "select_version requires a saved HTML artifact");
+              if (!positiveInteger(params.version)) {
+                addIssue(issues, path, "select_version requires positive version");
+              }
+            }
           }
           if (target.type === CANVAS_NODE_TYPES.audio && command.action === "download_audio") {
             const format =

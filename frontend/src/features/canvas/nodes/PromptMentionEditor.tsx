@@ -105,12 +105,12 @@ export function mentionDisplayLabel(name: string): string {
   return name.replace(/\d+$/, '') || name;
 }
 
-// 音频 chip 展示为「音频_文件名」（图片/视频有缩略图，无需文件名）。序列化不受
-// 影响（仍走 dataset.name）。这是「完整」标签，用于 title / 候选列表。
+// 音频和文本 chip 带上文件/节点显示名（图片/视频有缩略图，无需名称辅助识别）。
+// 序列化不受影响（仍走 dataset.name）。这是「完整」标签，用于 title / 候选列表。
 export function mentionChipLabel(candidate: MentionCandidate): string {
   const base = mentionDisplayLabel(candidate.name);
   const file = candidate.displayName?.trim();
-  if (candidate.audioUrl && file) {
+  if ((candidate.audioUrl || candidate.name.startsWith('文本')) && file) { // i18n-exempt -- canonical @mention protocol token
     return `${base}_${file}`;
   }
   return base;
@@ -963,11 +963,11 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
                     />
                   ) : (
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-white/[0.06] text-[13px] text-accent">
-                      ♪
+                      {candidate.name.startsWith('文本') ? 'T' : '♪'} {/* i18n-exempt -- canonical @mention protocol token */}
                     </span>
                   )}
                   <span className="flex-1 truncate">{mentionChipLabel(candidate)}</span>
-                  <span className="text-[10px] text-text-muted/70">@{candidate.index}</span>
+                  <span className="text-[10px] text-text-muted/70">@{candidate.name}</span>
                 </button>
               ))}
             </div>,

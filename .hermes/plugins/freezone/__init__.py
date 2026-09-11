@@ -89,12 +89,14 @@ except Exception as exc:
 _JSON_WORKFLOW_CATALOG_IMPORT_ERROR: Exception | None = None
 try:
     from novelvideo.freezone.agent_workflows.catalog import (
+        _recipe_node_type,
         compile_workflow_intent,
         get_workflow_skill,
         validate_agent_workflow_plan,
     )
 except Exception as exc:
     _JSON_WORKFLOW_CATALOG_IMPORT_ERROR = exc
+    _recipe_node_type = None
     compile_workflow_intent = None
     get_workflow_skill = None
     validate_agent_workflow_plan = None
@@ -2221,6 +2223,8 @@ def _summarize_agent_catalog_item(item: dict[str, Any], *, kind: str) -> dict[st
         summary.update(
             {
                 "output_kind": str(item.get("output_kind") or ""),
+                **({"output_format": item["output_format"]} if item.get("output_format") else {}),
+                "node_type": _recipe_node_type(item) if _recipe_node_type else None,
                 "action_keys": action_keys if isinstance(action_keys, list) else [],
                 "result_summary": str(item.get("result_summary") or ""),
                 "requires_source_media": bool(item.get("requires_source_media", False)),
@@ -2283,11 +2287,15 @@ def _handle_list_agent_catalog(args: dict[str, Any], **_: Any) -> str:
         "description",
         "category",
         "output_kind",
+        "output_format",
+        "node_type",
         "action_keys",
         "allowed_recipe_ids",
         "result_summary",
     )
     items = [item for item in raw_items if isinstance(item, dict)]
+    if kind == "recipes" and _recipe_node_type:
+        items = [{**item, "node_type": _recipe_node_type(item)} for item in items]
     scored_items = [
         (_catalog_item_match_score(item, searchable_keys, query), index, item)
         for index, item in enumerate(items)
@@ -2443,16 +2451,15 @@ def _handle_node_create_schema(args: dict[str, Any], **_: Any) -> str:
                 "error": "node_type is required",
             }
         )
-    if node_type not in _AGENT_CREATABLE_NODE_TYPE_VALUES:
+    if node_type not in _NODE_CREATE_SCHEMA_TYPE_VALUES:
         return tool_result(
             {
                 "ok": False,
                 "status": "invalid_node_type",
                 "error": (
-                    "node_type must be a directly creatable Freezone node type. "
+                    "node_type must be a discoverable Freezone node type. "
                     "Use freezone_group_nodes/group_nodes for grouping existing nodes; "
-                    "do not directly create or request create schemas for node types outside the "
-                    "creatable values exposed by the command catalog."
+                    "other creation schemas use the creatable values exposed by the command catalog."
                 ),
             }
         )
@@ -2635,6 +2642,7 @@ _FORBIDDEN_EDGE_FIELDS = (
 )
 
 _COMMAND_TYPES = {
+    "html_artifact",
     "create_node",
     "add_next_node",
     "update_node_data",
@@ -2761,10 +2769,63 @@ def _looks_like_handwritten_workflow_batch(commands: list[Any]) -> bool:
     return (not has_dependency_shape) or has_workflow_hint
 
 
+def _validate_html_artifact_write(
+    command: dict[str, Any], *, allow_workflow_prepare: bool = False
+) -> None:
+    action = command.get("action")
+    if action == "prepare" and allow_workflow_prepare:
+        allowed = {"type", "action", "client_id", "position", "workflow_data"}
+        if set(command) - allowed:
+            raise ValueError("HTML prepare cannot contain saved source or artifact identity")
+        data = command.get("workflow_data")
+        data_fields = {"prompt", "displayName", "title", "workflowCatalog", "workflowInstanceId", "workflowPlanNodeId"}
+        if not isinstance(data, dict) or set(data) - data_fields:
+            raise ValueError("Invalid HTML workflow_data")
+        for field in ("prompt", "workflowInstanceId", "workflowPlanNodeId"):
+            if not isinstance(data.get(field), str) or not data[field].strip():
+                raise ValueError(f"HTML workflow_data requires {field}")
+        for field in ("displayName", "title"):
+            if field in data and not isinstance(data[field], str):
+                raise ValueError(f"HTML workflow_data {field} must be a string")
+        catalog = data.get("workflowCatalog")
+        if not isinstance(catalog, dict) or not isinstance(catalog.get("recipeId"), str) or not catalog["recipeId"].strip():
+            raise ValueError("HTML workflow_data requires a Recipe")
+        if not isinstance(command.get("client_id"), str) or not command["client_id"].strip():
+            raise ValueError("HTML prepare requires client_id")
+        return
+    if action not in {"create", "update", "restore"}:
+        raise ValueError("action must be create, update, or restore")
+    if action != "create":
+        artifact_id = command.get("artifact_id")
+        if not isinstance(artifact_id, str) or not artifact_id.strip():
+            raise ValueError("artifact_id is required")
+        for field in (("base_version", "version") if action == "restore" else ("base_version",)):
+            if type(command.get(field)) is not int or command[field] < 1:
+                raise ValueError(f"{field} must be an explicit positive integer; read the saved source first")
+    if action in {"create", "update"}:
+        if not isinstance(command.get("title"), str) or not command["title"].strip():
+            raise ValueError("title is required")
+        if not isinstance(command.get("html"), str) or not command["html"]:
+            raise ValueError("html is required")
+    if "client_id" in command:
+        if action != "create":
+            raise ValueError("client_id is only supported for action=create")
+        if not isinstance(command["client_id"], str) or not command["client_id"].strip():
+            raise ValueError("client_id must be a non-empty string")
+    if "reference_node_ids" in command:
+        references = command["reference_node_ids"]
+        if not isinstance(references, list) or any(
+            not isinstance(node_id, str) or not node_id.strip() for node_id in references
+        ):
+            raise ValueError("reference_node_ids must be an array of non-empty node IDs or earlier client_id aliases")
+
+
 def _validate_write_commands_shape(
     project: str | None,
     canvas: str | None,
     commands: list[Any],
+    *,
+    allow_workflow_prepare: bool = False,
 ) -> str | None:
     for index, command in enumerate(commands):
         if not isinstance(command, dict):
@@ -2855,6 +2916,13 @@ def _validate_write_commands_shape(
                 "invalid_command_schema",
                 f"commands[{index}] {command_type} missing required field(s): {', '.join(missing_required)}",
             )
+        if command_type == "html_artifact":
+            try:
+                _validate_html_artifact_write(command, allow_workflow_prepare=allow_workflow_prepare)
+            except ValueError as exc:
+                return _emit_command_error(
+                    project, canvas, "invalid_command_schema", f"commands[{index}] {exc}"
+                )
         if command_type == "run_workflow":
             node_ids = command.get("node_ids")
             scope = str(command.get("scope") or "").strip()
@@ -3292,6 +3360,7 @@ def _approval_required_for_commands(commands: list[Any]) -> tuple[bool, list[str
     ]
     destructive = {"delete_nodes", "delete_edges"}
     mutating = {
+        "html_artifact",
         "create_node",
         "add_next_node",
         "update_node_data",
@@ -3317,7 +3386,7 @@ def _approval_required_for_commands(commands: list[Any]) -> tuple[bool, list[str
 
 
 def _requires_frontend_canvas_executor(commands: list[Any]) -> bool:
-    frontend_types = {"run_node_action", "run_workflow", "open_mainline_projection"}
+    frontend_types = {"html_artifact", "run_node_action", "run_workflow", "open_mainline_projection"}
     return any(
         isinstance(command, dict)
         and str(command.get("type") or "").strip() in frontend_types
@@ -4233,7 +4302,14 @@ def _emit_canvas_commands(
     project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
     if scope_error:
         return scope_error
-    shape_error = _validate_write_commands_shape(project, canvas, commands)
+    shape_error = (
+        _validate_write_commands_shape(project, canvas, commands, allow_workflow_prepare=True)
+        if allow_dynamic_workflow_batch and any(
+            isinstance(command, dict) and command.get("type") == "html_artifact"
+            and command.get("action") == "prepare" for command in commands
+        )
+        else _validate_write_commands_shape(project, canvas, commands)
+    )
     if shape_error:
         return shape_error
     generation_preflight = _external_generation_parameter_preflight(
@@ -4255,6 +4331,8 @@ def _emit_canvas_commands(
                 slim_result=slim_result,
                 reasons=approval_reasons,
             )
+        if _requires_frontend_canvas_executor(commands):
+            return _dispatch_mcp_approved_frontend_commands(project=project, canvas=canvas, commands=commands, slim_result=slim_result)
         return _direct_apply_canvas_commands(
             project,
             canvas,
@@ -4637,6 +4715,46 @@ def _handle_begin_agent_product_generation(args: dict[str, Any], **_: Any) -> st
     assert project_id is not None and canvas_id is not None
     product_kind = str(args.get("product_kind") or "").strip()
     session_id = str(args.get("generation_session_id") or "").strip()
+    skill_id = str(args.get("skill_id") or "").strip()
+    skill_version = str(args.get("skill_version") or "").strip()
+    artifact_id = str(args.get("artifact_id") or "").strip()
+    if product_kind == "workflow_result":
+        missing_identity = [
+            field
+            for field, value in (
+                ("skill_id", skill_id),
+                ("skill_version", skill_version),
+            )
+            if not value
+        ]
+        if missing_identity:
+            return tool_result(
+                {
+                    "ok": False,
+                    "status": "workflow_result_skill_identity_required",
+                    "error": "workflow_result_skill_identity_required",
+                    "missing_fields": missing_identity,
+                    "agent_instruction": (
+                        "Retry once with the selected Skill's skill_id and skill_version. "
+                        "artifact_id is derived automatically as <skill_id>@<skill_version>."
+                    ),
+                }
+            )
+        expected_artifact_id = f"{skill_id}@{skill_version}"
+        if artifact_id and artifact_id != expected_artifact_id:
+            return tool_result(
+                {
+                    "ok": False,
+                    "status": "workflow_result_skill_identity_mismatch",
+                    "error": "workflow_result_skill_identity_mismatch",
+                    "artifact_id": artifact_id,
+                    "expected_artifact_id": expected_artifact_id,
+                    "agent_instruction": (
+                        f"Use artifact_id={expected_artifact_id!r} for this selected Skill."
+                    ),
+                }
+            )
+        artifact_id = expected_artifact_id
     normalized_inputs = (
         args.get("normalized_inputs")
         if isinstance(args.get("normalized_inputs"), dict)
@@ -4657,11 +4775,11 @@ def _handle_begin_agent_product_generation(args: dict[str, Any], **_: Any) -> st
             "product_kind": product_kind,
             "generation_session_id": session_id,
             "canvas_id": canvas_id,
-            "artifact_id": str(args.get("artifact_id") or "").strip(),
+            "artifact_id": artifact_id,
             "normalized_inputs_hash": digest,
             "metadata": {
-                "skill_id": str(args.get("skill_id") or "").strip(),
-                "skill_version": str(args.get("skill_version") or "").strip(),
+                "skill_id": skill_id,
+                "skill_version": skill_version,
             },
         },
     )
@@ -5747,12 +5865,34 @@ def _handle_run_node_action(args: dict[str, Any], **_: Any) -> str:
         return tool_result(
             {"ok": False, "status": "action_required", "error": "action is required"}
         )
+    parameters = args.get("parameters") or args.get("params")
+    if action in {"read_source", "history"}:
+        project = (
+            str(
+                args.get("project_id")
+                or args.get("project")
+                or _default_project_id()
+            ).strip()
+            or None
+        )
+        canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+        request: dict[str, Any] = {
+            "type": "node_action_read",
+            "node_id": node_id,
+            "action": action,
+        }
+        if isinstance(parameters, dict):
+            request["parameters"] = dict(parameters)
+        return _request_canvas_context_from_frontend(
+            project=project,
+            canvas=canvas,
+            requests=[request],
+        )
     command: dict[str, Any] = {
         "type": "run_node_action",
         "node_id": node_id,
         "action": action,
     }
-    parameters = args.get("parameters") or args.get("params")
     if isinstance(parameters, dict):
         command["parameters"] = dict(parameters)
     if bool(args.get("regenerate") or args.get("force_regenerate")):
@@ -6630,6 +6770,7 @@ _CANVAS_CONTEXT_RESPONSE_TYPES = {
     "freezone_get_node_detail": "node_detail",
     "freezone_get_neighbor_graph": "neighbor_graph",
     "freezone_get_node_action_catalog": "node_action_catalog",
+    "freezone_run_node_action": "node_action_read",
     "freezone_get_node_create_schema": "node_create_schema",
     "freezone_get_audio_voice_options": "audio_voice_options",
     "freezone_get_slot_candidates": "slot_candidates",
@@ -7162,8 +7303,19 @@ _SKILL_STUDIO_QUESTION_SCHEMA = {
     "required": ["id", "title", "options"],
 }
 
+_HTML_RECIPE_FORMAT_SCHEMA = {
+    "type": "string",
+    "enum": ["html"],
+    "description": "Set html with output_kind=text for a saved webpage executed as htmlArtifactNode; omit for ordinary text/media Recipes.",
+}
+_HTML_RECIPE_FORMAT_CONSTRAINT = {
+    "if": {"required": ["output_format"]},
+    "then": {"properties": {"output_kind": {"const": "text"}}, "required": ["output_kind"]},
+}
+
 _SKILL_STUDIO_DRAFT_OUTLINE_STAGE_SCHEMA = {
     "type": "object",
+    "allOf": [_HTML_RECIPE_FORMAT_CONSTRAINT],
     "properties": {
         "id": {
             "type": "string",
@@ -7188,6 +7340,7 @@ _SKILL_STUDIO_DRAFT_OUTLINE_STAGE_SCHEMA = {
                 "not the current Skill style, theme, brand, character, product, or case."
             ),
         },
+        "output_format": _HTML_RECIPE_FORMAT_SCHEMA,
         "output_kind": {
             "type": "string",
             "enum": ["text", "image", "video", "audio"],
@@ -7428,6 +7581,7 @@ _SKILL_STUDIO_SKILL_SCHEMA = {
 
 _SKILL_STUDIO_RECIPE_SCHEMA = {
     "type": "object",
+    "allOf": [_HTML_RECIPE_FORMAT_CONSTRAINT],
     "description": "Complete 虾画 Recipe catalog draft.",
     "properties": {
         "id": {
@@ -7435,6 +7589,7 @@ _SKILL_STUDIO_RECIPE_SCHEMA = {
             "description": "Lowercase id using letters, numbers, underscores, or hyphens.",
         },
         "name": {"type": "string", "description": "User-facing recipe name."},
+        "output_format": _HTML_RECIPE_FORMAT_SCHEMA,
         "output_kind": {
             "type": "string",
             "enum": ["text", "image", "video", "audio"],
@@ -7533,6 +7688,7 @@ _NODE_TYPE_VALUES = [
     "pano360ViewerNode",
     "threeDWorldNode",
     "skillNode",
+    "htmlArtifactNode",
 ]
 
 _AGENT_CREATABLE_NODE_TYPE_VALUES = [
@@ -7547,7 +7703,10 @@ _AGENT_CREATABLE_NODE_TYPE_VALUES = [
     "pano360ViewerNode",
     "threeDWorldNode",
     "skillNode",
+    "htmlArtifactNode",
 ]
+
+_NODE_CREATE_SCHEMA_TYPE_VALUES = [*_AGENT_CREATABLE_NODE_TYPE_VALUES]
 
 _NODE_TYPE_DESCRIPTION = (
     "Directly creatable Freezone canvas node type. Use only these values for "
@@ -7648,6 +7807,21 @@ _OTHER_AGENT_CREATABLE_NODE_TYPE_VALUES = [
 # fields valid for that command type.
 _CANVAS_COMMAND_ITEM_SCHEMA = {
     "oneOf": [
+        _command_variant(
+            "html_artifact",
+            {
+                "action": {"type": "string", "enum": ["create", "update", "restore"]},
+                "artifact_id": _NON_EMPTY_STRING,
+                "title": {"type": "string", "maxLength": 200},
+                "html": {"type": "string"},
+                "base_version": {"type": "integer", "minimum": 1},
+                "version": {"type": "integer", "minimum": 1},
+                "position": _POSITION_SCHEMA,
+                "client_id": {**_NON_EMPTY_STRING, "description": "Create-only alias for the new node; later commands may reference this client_id."},
+                "reference_node_ids": {"type": "array", "items": _NON_EMPTY_STRING, "description": "Source node IDs or client_id aliases from earlier commands in this batch."},
+            },
+            ["action"],
+        ),
         _command_variant(
             "create_node",
             {
@@ -8309,13 +8483,15 @@ TOOLS = (
         "freezone_get_node_create_schema",
         _schema(
             "freezone_get_node_create_schema",
-            "Request allowed create_node data schema for one Freezone node type from the frontend. "
+            "Request the creation schema for one Freezone node type from the frontend. "
+            "htmlArtifactNode creates an empty webpage node through generic create_node/add_next_node; "
+            "inspect its node action catalog to generate or save source. "
             "For ordinary text, briefs, copywriting, prompts, notes, or free-form scripts, "
             "request textAnnotationNode schema. Request scriptNode only when the user "
             "explicitly asks for structured script tables or a script-generation workflow.",
             {
                 **_SCOPE_PROPS,
-                "node_type": _NODE_TYPE_SCHEMA,
+                "node_type": {"type": "string", "enum": _NODE_CREATE_SCHEMA_TYPE_VALUES},
             },
             ["node_type"],
         ),
@@ -8380,9 +8556,11 @@ TOOLS = (
         "freezone_begin_agent_product_generation",
         _schema(
             "freezone_begin_agent_product_generation",
-            "Create a durable, credit-admitted product operation before producing a Workflow "
-            "result, Recipe result, Workflow Skill definition, or Recipe definition. The next "
-            "model turn must bind its result to the returned operation_id.",
+            "Create a durable, credit-admitted product operation. When executing an already "
+            "selected Workflow Skill and preparing a canvas workflow draft, always use "
+            "product_kind=workflow_result. workflow_generate is only for creating a new Workflow "
+            "Skill definition through Skill Studio and must never be passed to a workflow draft "
+            "tool. The next model turn must bind its result to the returned operation_id.",
             {
                 **_SCOPE_PROPS,
                 "product_kind": {
@@ -8393,11 +8571,28 @@ TOOLS = (
                         "workflow_generate",
                         "recipe_generate",
                     ],
+                    "description": (
+                        "Use workflow_result to run an existing selected Skill and prepare a "
+                        "canvas workflow draft. workflow_generate creates a new Skill definition; "
+                        "recipe_generate creates a new Recipe definition."
+                    ),
                 },
                 "generation_session_id": {"type": "string", "minLength": 1},
-                "artifact_id": {"type": "string"},
-                "skill_id": {"type": "string"},
-                "skill_version": {"type": "string"},
+                "artifact_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional for workflow_result; when omitted it is derived as "
+                        "<skill_id>@<skill_version>. A supplied value must match exactly."
+                    ),
+                },
+                "skill_id": {
+                    "type": "string",
+                    "description": "Required when product_kind is workflow_result.",
+                },
+                "skill_version": {
+                    "type": "string",
+                    "description": "Required when product_kind is workflow_result.",
+                },
                 "normalized_inputs": {"type": "object"},
             },
             ["product_kind", "generation_session_id", "normalized_inputs"],

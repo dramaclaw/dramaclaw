@@ -510,7 +510,7 @@ _FREEZONE_CANVAS_WRITE_ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 _FREEZONE_CANVAS_WRITE_OBJECT_RE = re.compile(
-    r"(?:节点|画布|工作流|连线|边|合成节点|"
+    r"(?:节点|画布|工作流|连线|边|合成节点|网页|HTML|"
     r"node|canvas|workflow|edge|compose\s+node)",
     re.IGNORECASE,
 )
@@ -646,6 +646,10 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     user_text = raw_prompt.split("[SUPERTALE_", 1)[0].strip()
     if not user_text:
         return False
+    user_text = re.sub(
+        r"(?:不要|禁止|无需|不需要)(?:修改|写入|保存|创建|生成|删除)[^，。；\n]*",
+        "", user_text,
+    )
     has_action = bool(_FREEZONE_CANVAS_WRITE_ACTION_RE.search(user_text))
     has_canvas_object = bool(_FREEZONE_CANVAS_WRITE_OBJECT_RE.search(user_text))
     has_direct_media_write = bool(_FREEZONE_DIRECT_MEDIA_WRITE_RE.search(user_text))
@@ -707,6 +711,21 @@ def _json_objects_from_codex_tool_value(value: Any) -> list[dict[str, Any]]:
             return objects
         objects.extend(_json_objects_from_codex_tool_value(parsed))
     return objects
+
+
+def _codex_freezone_is_write_event(event: Any) -> bool:
+    name = _codex_freezone_tool_name(event)
+    if name not in _FREEZONE_CANVAS_WRITE_TOOLS:
+        return False
+    if name == "freezone_run_node_action":
+        for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+            action = payload.get("action")
+            if action in {"read_source", "history"}:
+                return False
+            if isinstance(action, str) and action.strip():
+                return True
+        return True
+    return True
 
 
 def _codex_freezone_write_result_succeeded(event: Any) -> bool:
@@ -5194,7 +5213,11 @@ def _build_codex_env(
     project_state_dir: str | Path | None = None,
     agent_token_file: str | Path | None = None,
 ) -> dict[str, str]:
+    from novelvideo import config
+
     env = os.environ.copy()
+    # MCP subprocesses run from project workspaces, not the API data root.
+    env["NOVELVIDEO_OUTPUT_DIR"] = str(Path(config.OUTPUT_DIR).resolve())
     agent_scope = "project" if project else "user"
     env["DRAMACLAW_USERNAME"] = username
     env["DRAMACLAW_AGENT_SCOPE"] = agent_scope
@@ -5222,13 +5245,14 @@ def _build_codex_env(
         env["DRAMACLAW_AGENT_TOKEN_FILE"] = str(agent_token_file)
     env["DRAMACLAW_TOOL_MODE"] = str(tool_mode or "default").strip() or "default"
     if str(tool_mode or "").strip() == "freezone_canvas":
-        # Keep Codex MCP on the same per-user/per-profile bridge directory as
-        # Hermes. Without this, the MCP process writes pending commands into a
-        # generic /tmp directory that the Freezone frontend never polls.
+        # Keep Codex MCP on the authoritative project/profile bridge used by
+        # Hermes and the browser command and receipt routes.
         from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
         from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
 
-        hermes_home = ensure_user_hermes_workspace(username, profile="freezone")
+        hermes_home = ensure_user_hermes_workspace(
+            username, profile="freezone", project_state_dir=project_state_dir
+        )
         env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"] = str(
             canvas_bridge_dir_for_profile(hermes_home, profile)
         )
@@ -5534,6 +5558,7 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_SKILLS_DIR",
                 "DRAMACLAW_TOOL_MODE",
                 "DRAMACLAW_USERNAME",
+                "NOVELVIDEO_OUTPUT_DIR",
             ],
         }
     }
@@ -5545,7 +5570,7 @@ def _dramaclaw_mcp_servers(
             "type": "stdio",
             "command": sys.executable,
             "args": ["-m", "novelvideo.chat.workflow_mcp"],
-            "env_vars": ["DRAMACLAW_USERNAME"],
+            "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR"],
         }
     return servers
 
@@ -7116,7 +7141,7 @@ async def _stream_assistant_reply_codex(
                     prepared_draft = _codex_freezone_ready_workflow_draft(event)
                     if prepared_draft is not None:
                         ready_workflow_draft = prepared_draft
-                if _codex_freezone_tool_name(event) in _FREEZONE_CANVAS_WRITE_TOOLS:
+                if _codex_freezone_is_write_event(event):
                     canvas_write_attempted = True
                     if (
                         event.type == "tool_updated"

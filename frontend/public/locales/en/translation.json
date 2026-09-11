@@ -984,7 +984,8 @@
         "audio": "Audio",
         "script": "Script",
         "world": "3D / Pano",
-        "skill": "Skill"
+        "skill": "Skill",
+        "webpage": "Webpage"
       }
     },
     "projections": {
@@ -5557,7 +5558,8 @@
       "placeholderAudio": "Audio",
       "placeholderScript": "Script",
       "betaTag": "Beta",
-      "videoCompose": "Video Compose"
+      "videoCompose": "Video Compose",
+      "htmlArtifact": "Webpage"
     },
     "imageNode": {
       "title": "Image Node",
@@ -6235,7 +6237,8 @@
       "pano360ViewerNode": "360° panorama viewer",
       "threeDWorldNode": "3D world",
       "skillNode": "Skill",
-      "styleNode": "Style"
+      "styleNode": "Style",
+      "htmlArtifactNode": "Webpage"
     },
     "exportResult": {
       "generic": "Result image",
@@ -7015,7 +7018,8 @@
           "image": "Image",
           "video": "Video",
           "audio": "Audio",
-          "text": "Text"
+          "text": "Text",
+          "html": "HTML webpage"
         },
         "actionKeys": "Operation keys",
         "actionKeysPlaceholder": "Press Enter or comma to confirm",
@@ -7888,5 +7892,70 @@
         "unsupported": "Unsupported"
       }
     }
+  },
+  "htmlArtifact": {
+    "actionGenerate": "Generate webpage",
+    "actionSaveSource": "Save webpage source",
+    "actionSelectVersion": "Select webpage version",
+    "actionRestoreVersion": "Restore webpage version",
+    "actionOpen": "Open webpage",
+    "actionExport": "Export webpage",
+    "actionUpload": "Upload HTML",
+    "upload": "Upload HTML",
+    "invalidFile": "Choose a complete HTML document",
+    "fileTooLarge": "HTML file must not exceed 2 MiB",
+
+    "references": "Connected inputs",
+    "activeCanvasRequired": "Open a project canvas first",
+    "readyToGenerate": "Enter webpage requirements and generate, or run the workflow",
+    "generationPrompt": "Describe the webpage content, layout and style",
+    "generating": "Generating webpage",
+    "retry": "Retry generation",
+    "retrySave": "Retry saving webpage",
+    "saving": "Source generated. Saving webpage…",
+    "regenerate": "Regenerate webpage",
+    "generate": "Generate webpage",
+    "editor": "Webpage editor",
+    "back": "Back to canvas",
+    "title": "Webpage name",
+    "preview": "Preview",
+    "code": "Code",
+    "save": "Save",
+    "export": "Export",
+    "desktop": "Desktop",
+    "mobile": "Mobile",
+    "select": "Select element",
+    "ask": "Edit with director",
+    "versions": "Version history",
+    "restore": "Restore this version",
+    "useVersion": "Use this version",
+    "conflict": "A newer version is available. Your unsaved changes are retained. Copy your edits before loading the latest version.",
+    "reload": "Reload",
+    "savedPreview": "Preview shows the saved version. Save to refresh.",
+    "loading": "Working…",
+    "source": "HTML source",
+    "webpage": "Webpage",
+    "thumbnail": "Webpage thumbnail",
+    "empty": "Connect text, images or videos to build a webpage",
+    "open": "Open webpage",
+    "discard": "Discard unsaved changes?",
+    "runScripts": "Run page scripts",
+    "stopScripts": "Stop page scripts",
+    "scriptNotice": "Page scripts are off by default. Interactive code may send page contents to external sites.",
+    "scriptUnsupported": "This browser cannot isolate credentials for interactive mode. Preview, element selection and source editing remain available.",
+    "saveCommand": "Save webpage",
+    "mediaLoadFailed": "Failed to load media: {{path}}",
+    "historyRecordFailed": "Webpage saved, but node history could not be recorded. Please try again later.",
+    "textTools": "Text editing",
+    "textContent": "Text content",
+    "fontFamily": "Font family",
+    "fontSize": "Font size",
+    "textColor": "Text color",
+    "bold": "Bold",
+    "regular": "Regular",
+    "alignleft": "Align left",
+    "aligncenter": "Center",
+    "alignright": "Align right",
+    "selectLeaf": "Select the innermost text element to preserve nested formatting."
   }
 }

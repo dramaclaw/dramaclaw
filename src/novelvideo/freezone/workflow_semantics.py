@@ -24,6 +24,13 @@ ACCEPTED_INPUT_ROLES = {
     "imageGenNode": {"input_text", "context_text"},
     "videoNode": {"input_text", "context_text", "image_output"},
     "audioNode": {"input_text", "context_text"},
+    "htmlArtifactNode": {
+        "input_text",
+        "context_text",
+        "image_output",
+        "video_output",
+        "audio_output",
+    },
     "videoComposeNode": {"video_output", "audio_output"},
 }
 

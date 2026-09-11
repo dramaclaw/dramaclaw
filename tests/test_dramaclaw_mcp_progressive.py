@@ -1077,3 +1077,36 @@ async def test_native_tool_call_does_not_block_mcp_event_loop(monkeypatch):
     assert call.done() is False
     result = await call
     assert json.loads(result.content[0].text)["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_canvas_command_union_error_names_missing_type_without_echoing_html(
+    monkeypatch,
+):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    html = "<!doctype html><title>private page source</title>"
+
+    result = await dramaclaw_mcp.call_tool(
+        "freezone_emit_canvas_command",
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "commands": [
+                {
+                    "node_id": "node-a",
+                    "action": "update_source",
+                    "parameters": {"html": html, "title": "Test page"},
+                }
+            ],
+        },
+    )
+
+    payload = result.structuredContent
+    raw_payload = json.loads(result.content[0].text)
+    assert result.isError is True
+    assert payload["error"] == "tool_arguments_invalid"
+    assert raw_payload["path"] == "commands[0].type"
+    assert payload["message"] == "commands[0].type: field is required"
+    assert html not in json.dumps(raw_payload, ensure_ascii=False)

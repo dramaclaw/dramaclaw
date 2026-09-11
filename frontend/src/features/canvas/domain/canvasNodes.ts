@@ -11,6 +11,7 @@ import type { KeyElementCategory } from './keyElements';
 export const CANVAS_NODE_TYPES = {
   vectorSvg: 'vectorSvgNode',
   animatedGif: 'animatedGifNode',
+  htmlArtifact: 'htmlArtifactNode',
   upload: 'uploadNode',
   imageEdit: 'imageNode',
   imageGen: 'imageGenNode',
@@ -728,6 +729,33 @@ export interface SkillNodeData extends NodeDisplayData {
   [key: string]: unknown;
 }
 
+export interface HtmlArtifactNodeData extends NodeDisplayData {
+  artifactId?: string | null;
+  artifactVersion?: number | null;
+  prompt?: string;
+  isGenerating?: boolean;
+  generationStartedAt?: number | null;
+  generationError?: string | null;
+  generationTaskKey?: string | null;
+  generationTaskType?: string | null;
+  generationTaskJobId?: string | null;
+  htmlGenerationArtifactId?: string | null;
+  htmlGenerationBaseVersion?: number | null;
+  htmlGenerationSourceVersion?: number | null;
+  htmlGenerationTitle?: string | null;
+  htmlGenerationSelectionToken?: string | null;
+  htmlSelectionToken?: string | null;
+  htmlGenerationPhase?:
+    | 'generating'
+    | 'saving'
+    | 'save_failed'
+    | 'conflict'
+    | 'invalid_output'
+    | 'generation_failed'
+    | 'completed';
+  [key: string]: unknown;
+}
+
 /**
  * 画布上的「风格节点」：图片节点 `styleTemplateId` 在画布上的投影，本身不参与
  * 生成请求（提交时读的仍是下游图片节点的 `styleTemplateId`）。建/改/删由
@@ -755,6 +783,7 @@ export type CanvasNodeData =
   | Pano360ViewerNodeData
   | ThreeDWorldNodeData
   | SkillNodeData
+  | HtmlArtifactNodeData
   | StyleNodeData;
 
 export type CanvasNode = Node<CanvasNodeData, CanvasNodeType>;

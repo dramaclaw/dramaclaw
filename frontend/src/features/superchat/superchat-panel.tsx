@@ -1,3 +1,7 @@
+import { RECIPE_OUTPUT_CHOICES, recipeOutputChoice, recipeOutputFields, type RecipeOutputChoice } from "@/lib/recipe-output";
+import { type HtmlArtifactReference, parseHtmlArtifactReference, appendHtmlArtifactTransportContext } from '@/features/html-artifacts/chatReference';
+import { HtmlArtifactResultCard } from '@/features/html-artifacts/HtmlArtifactResultCard';
+import { activeHtmlArtifactContext, HTML_ARTIFACT_REFERENCE_EVENT } from '@/features/html-artifacts/api';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import {
@@ -3775,7 +3779,7 @@ function CanvasCommandFeedbackCard({
   const mutedFailure = failed && visualTone === "muted";
   const warningFailure = failed && visualTone === "warning";
   const initiallyCompact = failed && successfulCount === 0;
-  const collapseSuccessfulDetails = !failed && steps.length > 2;
+  const collapseSuccessfulDetails = !failed && steps.length > 2 && !steps.some(step => step.output?.html_artifact);
   const compactTitle = canvasCommandFeedbackCompactTitle(feedback);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
   const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
@@ -3862,6 +3866,7 @@ function CanvasCommandFeedbackCard({
               {ok ? <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-400" /> : <AlertCircle className={cn("mt-0.5 size-3.5 shrink-0", mutedFailure ? "text-muted-foreground" : invalidCommand || warningFailure ? "text-amber-300" : "text-destructive")} />}
               <div className="min-w-0 flex-1">
                 <div className={cn("font-medium", ok ? "text-foreground/90" : mutedFailure ? "text-muted-foreground" : invalidCommand || warningFailure ? "text-amber-300" : "text-destructive")}>{step.label}</div>
+                {ok && <HtmlArtifactResultCard output={step.output}/>}
                 {(step.createdNodeId || step.nodeId || step.action || step.error) && (
                   <div className="mt-0.5 space-y-0.5 break-words text-[11px] text-muted-foreground">
                     {step.createdNodeId && <div>新节点：{step.createdNodeId}</div>}
@@ -4869,7 +4874,7 @@ function skillStudioReferencedRecipes(
       return {
         id,
         name: textField(recipe?.name),
-        outputKind: textField(recipe?.output_kind),
+        outputKind: recipe ? recipeOutputChoice(recipe) : "",
         actionKeys: cleanStringArray(recipe?.action_keys),
         systemPrompt: textField(recipe?.system_prompt),
         mustHaveItems: cleanStringArray(recipe?.must_have_items),
@@ -5077,6 +5082,7 @@ function normalizedSkillStudioRecipePayload(recipe: Record<string, unknown>): Fr
     enabled: recipe.enabled !== false,
     name: textField(recipe.name),
     output_kind: outputKind,
+    ...(outputKind === "text" && recipe.output_format === "html" ? {output_format:"html"} : {}),
     action_keys: cleanStringArray(recipe.action_keys),
     system_prompt: textField(recipe.system_prompt),
     must_have_items: cleanStringArray(recipe.must_have_items),
@@ -5102,6 +5108,7 @@ function SkillStudioListField({
   value: string[];
 }) {
   const [draft, setDraft] = useState("");
+
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingDraft, setEditingDraft] = useState("");
@@ -5513,7 +5520,7 @@ export function buildAssistantClarificationResponseForTest(
 export function buildAssistantClarificationToolResultForTest(
   event: AssistantClarificationUiEvent,
   answers: AssistantClarificationAnswers,
-  options: { skillStudioRevision?: boolean } = {},
+  options: { skillStudioRevision?: boolean; projectId?: string; canvasId?: string; agentId?: string } = {},
 ) {
   const safeAnswers = Object.fromEntries(
     Object.entries(answers).filter(([key]) => !key.startsWith("__")),
@@ -5536,9 +5543,9 @@ export function buildAssistantClarificationToolResultForTest(
     turn_id: event.turn_id ?? undefined,
     anchor_text_prefix: event.anchor_text_prefix ?? undefined,
     bridge_key: event.bridge_key ?? "",
-    project_id: event.project_id ?? undefined,
-    canvas_id: event.canvas_id ?? undefined,
-    agent_id: event.agent_id ?? undefined,
+    project_id: event.project_id || options.projectId || undefined,
+    canvas_id: event.canvas_id || options.canvasId || undefined,
+    agent_id: event.agent_id || options.agentId || undefined,
     tool_call_status: "completed" as const,
     clarification_status: "answered",
     ok: true,
@@ -6569,7 +6576,7 @@ function SkillStudioDraftCard({
       return {
         ...current,
         recipes: currentRecipes.map((recipe, index) => index === recipeIndex
-          ? { ...getRecord(recipe), [key]: value }
+          ? { ...getRecord(recipe), ...(key === "output_kind" ? recipeOutputFields(value as RecipeOutputChoice) : {[key]: value}) }
           : recipe),
       };
     });
@@ -6942,7 +6949,7 @@ function SkillStudioDraftCard({
                         ? "border-amber-300/25 bg-amber-300/[0.08] text-amber-100/85"
                         : "border-white/[0.08] bg-white/[0.04] text-muted-foreground",
                     )}>
-                      {recipe.missing ? "未找到" : recipe.outputKind || "类型"}
+                      {recipe.missing ? "未找到" : recipe.outputKind === "html" ? "HTML 网页" : recipe.outputKind || "类型"}
                     </span>
                     <span className="min-w-0 truncate text-foreground/85">
                       {recipe.name || recipe.id}
@@ -6980,7 +6987,7 @@ function SkillStudioDraftCard({
                     <label>
                       <span className={labelClass}>{skillStudioDraftFieldLabels.recipe.output_kind}</span>
                       <Input
-                        value={recipe.outputKind}
+                        value={recipe.outputKind === "html" ? "HTML 网页" : recipe.outputKind}
                         disabled
                         readOnly
                         placeholder="未匹配到类型"
@@ -7077,7 +7084,7 @@ function SkillStudioDraftCard({
                 <span className="flex min-w-0 items-center gap-2">
                   <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
                   <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    {textField(recipe.output_kind) || "类型"}
+                    {recipeOutputChoice(recipe) === "html" ? "HTML 网页" : textField(recipe.output_kind) || "类型"}
                   </span>
                   <span className="truncate text-foreground/85">{textField(recipe.name) || textField(recipe.id) || `Recipe ${index + 1}`}</span>
                 </span>
@@ -7106,12 +7113,14 @@ function SkillStudioDraftCard({
                 <div className="grid gap-2 md:grid-cols-2">
                   <label>
                     <span className={labelClass}>{skillStudioDraftFieldLabels.recipe.output_kind}</span>
-                    <Input
-                      value={textField(recipe.output_kind)}
+                    <select
+                      value={recipeOutputChoice(recipe)}
                       disabled={readOnly}
                       onChange={(changeEvent) => updateRecipeField(index, "output_kind", changeEvent.target.value)}
                       className={fieldClass}
-                    />
+                    >
+                      {RECIPE_OUTPUT_CHOICES.map(choice => <option key={choice} value={choice}>{({image:"图片",video:"视频",audio:"音频",text:"文本",html:"HTML 网页"})[choice]}</option>)}
+                    </select>
                   </label>
                   <SkillStudioListField
                     label={skillStudioDraftFieldLabels.recipe.action_keys}
@@ -10129,6 +10138,7 @@ type CanvasCommandFeedbackStep = {
   action?: string;
   createdNodeId?: string;
   error?: string;
+  output?: Record<string,unknown>;
 };
 
 type CanvasCommandFeedback = Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors"> & {
@@ -10856,6 +10866,7 @@ function canvasCommandFeedbackDedupeKey(feedback: CanvasCommandFeedback): string
       label: step.label,
       nodeId: step.nodeId,
       action: step.action,
+      output: step.output,
       error: step.error,
     })),
     plans: feedback.plans,
@@ -11570,6 +11581,17 @@ export function SuperChatPanel({
   const username = useAuthStore((s) => s.username);
   const isFreezoneLayout = variant === "freezone";
   const [draft, setDraft] = useState("");
+  const [selectedHtmlReference, setSelectedHtmlReference] = useState<HtmlArtifactReference | null>(null);
+  useEffect(() => {
+    setSelectedHtmlReference(null);
+    const reference = (event: Event) => {
+      if (variant !== "freezone") return;
+      const value = parseHtmlArtifactReference((event as CustomEvent).detail, params.project);
+      if (value) setSelectedHtmlReference(value);
+    };
+    window.addEventListener(HTML_ARTIFACT_REFERENCE_EVENT, reference);
+    return () => window.removeEventListener(HTML_ARTIFACT_REFERENCE_EVENT, reference);
+  }, [variant, params.project]);
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [agentBillingOpen, setAgentBillingOpen] = useState(false);
@@ -13499,6 +13521,13 @@ export function SuperChatPanel({
   const sendWithIngestAutomation = useCallback(
     async (text: string, messageAttachments: ChatAttachment[]): Promise<boolean> => {
       let nextText = text;
+      const htmlReference = variant === "freezone" ? selectedHtmlReference : null;
+      const sendPreparedMessage = async (displayText:string, attachments:ChatAttachment[], transportText:string):Promise<boolean> => {
+        const activeHtml = variant === "freezone" ? activeHtmlArtifactContext(params.project) : null;
+        const sent = await chat.send(displayText,attachments,appendHtmlArtifactTransportContext(transportText,params.project,activeHtml,htmlReference));
+        if (sent && htmlReference) setSelectedHtmlReference(current => current === htmlReference ? null : current);
+        return sent;
+      };
       const safeMessageAttachments =
         variant === "freezone"
           ? pruneCanvasNodeReferenceAttachments(messageAttachments, existingCanvasNodeIds)
@@ -13528,7 +13557,7 @@ export function SuperChatPanel({
           if (!isOverwriteChoice(text)) {
             const pending = reingestConfirmation;
             setReingestConfirmation(null);
-            return chat.send(
+            return sendPreparedMessage(
               text,
               [],
               appendAttachmentAnalysisContext(text, buildReingestCancelledContext(pending)),
@@ -13540,7 +13569,7 @@ export function SuperChatPanel({
             stage: "confirm_clear" as const,
           };
           setReingestConfirmation(nextPending);
-          return chat.send(
+          return sendPreparedMessage(
             text,
             [],
             appendAttachmentAnalysisContext(text, buildReingestConfirmationContext(nextPending)),
@@ -13550,7 +13579,7 @@ export function SuperChatPanel({
         if (!isFinalOverwriteConfirmation(text)) {
           const pending = reingestConfirmation;
           setReingestConfirmation(null);
-          return chat.send(
+          return sendPreparedMessage(
             text,
             [],
             appendAttachmentAnalysisContext(text, buildReingestCancelledContext(pending)),
@@ -13573,7 +13602,7 @@ export function SuperChatPanel({
           });
           toast.success(t("aiAssistant.ingestAutomationStarted", { filename: reingestConfirmation.filename }));
           setReingestConfirmation(null);
-          return chat.send(text, canvasReferenceAttachments, nextText);
+          return sendPreparedMessage(text, canvasReferenceAttachments, nextText);
         } catch (error) {
           const message = backendErrorToastMessage(error, t);
           toast.error(t("aiAssistant.ingestAutomationFailed", { message }));
@@ -13615,7 +13644,7 @@ export function SuperChatPanel({
               text,
               buildReingestConfirmationContext(pending),
             );
-            return chat.send(text, transportAttachments, nextText);
+            return sendPreparedMessage(text, transportAttachments, nextText);
           }
           const started = await startNovelIngest(project, uploaded.filename);
           nextText = appendIngestAutomationContext(text, {
@@ -13654,7 +13683,7 @@ export function SuperChatPanel({
               text,
               buildReingestConfirmationContext(pending),
             );
-            return chat.send(text, [], nextText);
+            return sendPreparedMessage(text, [], nextText);
           }
           const started = await startNovelIngest(project, uploaded.filename);
           nextText = appendIngestAutomationContext(text, {
@@ -13745,7 +13774,7 @@ export function SuperChatPanel({
           const voicePolicy = selectedVoicePolicy ?? state.voicePolicy;
           if (state.voiceChoiceRequired && !voicePolicy) {
             nextText = directorAutoVoiceChoiceTransportText(nextText);
-            return chat.send(text, transportAttachments, nextText);
+            return sendPreparedMessage(text, transportAttachments, nextText);
           }
           if (!project) return false;
           try {
@@ -13767,10 +13796,11 @@ export function SuperChatPanel({
         }
       }
 
-      return chat.send(text, transportAttachments, nextText);
+      return sendPreparedMessage(text, transportAttachments, nextText);
     },
     [
       chat,
+      selectedHtmlReference,
       currentCanvasOntologyContext,
       existingCanvasNodeIds,
       params.project,
@@ -14108,7 +14138,7 @@ export function SuperChatPanel({
           : "submit";
       const skillStudioRevision = activeAssistantClarificationIsSkillStudioRevision(visibleMessages, event);
 	      const payload = {
-	        ...buildAssistantClarificationToolResultForTest(event, answers, { skillStudioRevision }),
+	        ...buildAssistantClarificationToolResultForTest(event, answers, { skillStudioRevision, projectId: params.project || undefined, canvasId: effectiveFreezoneCanvasId || undefined, agentId: effectiveFreezoneAgentId || undefined }),
 	        action,
 	        clarification_status: action === "submit" ? "answered" : action,
 	        skipped: action === "skip",
@@ -14161,7 +14191,7 @@ export function SuperChatPanel({
       toast.error("提交补充信息失败，请重试");
       return false;
     }
-	  }, [chat, persistSkillStudioUiEvent, updateChatUiEvent, visibleMessages]);
+	  }, [chat, params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId, persistSkillStudioUiEvent, updateChatUiEvent, visibleMessages]);
 
   const submitSkillStudioDraftResponse = useCallback(async (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
@@ -15114,6 +15144,13 @@ export function SuperChatPanel({
                     />
                   ))}
                 </div>
+              </div>
+            )}
+            {isFreezoneLayout && selectedHtmlReference && (
+              <div className="mb-2 flex max-w-full items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-foreground">
+                <span className="shrink-0 font-medium">{t('htmlArtifact.webpage')}</span>
+                <span className="min-w-0 flex-1 truncate">{selectedHtmlReference.title}{selectedHtmlReference.text ? ` · ${selectedHtmlReference.text.slice(0,100)}` : ''}</span>
+                <button type="button" className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={t('aiAssistant.removeAttachment')} onClick={()=>setSelectedHtmlReference(null)}><X className="size-3.5"/></button>
               </div>
             )}
             {!hasActiveComposerPrompt && (

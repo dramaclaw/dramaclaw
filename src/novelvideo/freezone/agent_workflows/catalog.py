@@ -83,6 +83,7 @@ _STAGE_BY_NODE_TYPE = {
     "videoNode": "video",
     "audioNode": "audio",
     "videoComposeNode": "compose",
+    "htmlArtifactNode": "html",
 }
 
 _CAPABILITY_BY_NODE_TYPE = {
@@ -93,6 +94,7 @@ _CAPABILITY_BY_NODE_TYPE = {
     "videoNode": "videoGeneration",
     "audioNode": "audioGeneration",
     "videoComposeNode": "videoCompose",
+    "htmlArtifactNode": "textGeneration",
 }
 
 _OUTPUT_KIND_BY_CAPABILITY = {
@@ -589,7 +591,12 @@ def get_workflow_skill(args: dict[str, Any]) -> dict[str, Any]:
             },
             "recipe_ids_by_output_kind": recipes_by_output_kind,
             "recipe_selection_rule": (
-                "Recipe output_kind must match the node type. For a generated source-media "
+                "Use each Recipe's node_type. output_kind=text with output_format=html produces "
+                "a saved HTML webpage through htmlArtifactNode, while ordinary text produces textAnnotationNode. "
+                "HTML steps require a non-empty generation prompt in node.prompt or node.data.prompt; "
+                "describe the webpage's business requirements, not inline HTML source. "
+                "Use reference_inputs for the copy and media consumed by the webpage. "
+                "For a generated source-media "
                 "anchor, choose a same-output Recipe listed in source_anchor_recipe_ids; "
                 "never copy a downstream text Recipe onto an image anchor."
             ),
@@ -1140,7 +1147,13 @@ def _compile_dynamic_recipe_items_intent(
     item_by_id: dict[str, dict[str, Any]] = {}
     phases: list[str] = []
     include_audio = _intent_bool(intent, "include_audio", True)
-    include_compose = _intent_bool(intent, "include_compose", True)
+    planner = intent.get("planner") if isinstance(intent.get("planner"), dict) else {}
+    html_deliverable = _text(planner.get("deliverable")) == "html" or any(
+        _recipe_node_type(recipes.get(_text(item.get("recipe_id"))) or {})
+        == "htmlArtifactNode"
+        for item in items
+    )
+    include_compose = _intent_bool(intent, "include_compose", not html_deliverable)
 
     for index, item in enumerate(items):
         item_id = _safe_id(_text(item.get("id")) or f"item_{index + 1}")
@@ -1218,7 +1231,7 @@ def _compile_dynamic_recipe_items_intent(
                 f"Recipe {source_id} conflicts with {target_id}",
                 path=f"items.{index}.recipe_pipeline",
             )
-        node_type = _NODE_TYPE_BY_OUTPUT_KIND.get(_text(recipe.get("output_kind")))
+        node_type = _recipe_node_type(recipe)
         if not node_type:
             return _intent_error(
                 f"Recipe {canonical_recipe_id} has unsupported output_kind",
@@ -2067,6 +2080,11 @@ def _intent_item_node(
             data["speechMode"] = "clone"
             data["voiceAvailable"] = False
             data["languageType"] = "Chinese"
+    if node_type == "htmlArtifactNode":
+        data = {
+            key: value for key, value in data.items()
+            if key in {"displayName", "title", "prompt", "workflowCatalog"}
+        }
     return {
         "id": item_id,
         "node_type": node_type,
@@ -2351,11 +2369,22 @@ def _recipe_matches_references(recipe: dict[str, Any], references: set[str]) -> 
     )
 
 
+def _recipe_node_type(recipe: dict[str, Any]) -> str | None:
+    output_kind = _text(
+        recipe.get("output_kind") or recipe.get("generationType") or recipe.get("generation_type")
+    )
+    if recipe.get("output_format") == "html":
+        return "htmlArtifactNode" if output_kind == "text" else None
+    return _NODE_TYPE_BY_OUTPUT_KIND.get(output_kind)
+
+
 def _recipe_planning_summary(recipe: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": _text(recipe.get("id")),
         "name": _text(recipe.get("name") or recipe.get("label")),
         "version": recipe.get("version"),
+        **({"output_format": recipe["output_format"]} if recipe.get("output_format") else {}),
+        "node_type": _recipe_node_type(recipe),
         "output_kind": _text(
             recipe.get("output_kind")
             or recipe.get("generationType")
@@ -2485,6 +2514,10 @@ def _merge_agent_config_items(
 
 
 def _catalog_username() -> str:
+    # The hosted MCP adapter binds this identity from the authenticated turn.
+    authenticated_user = os.environ.get("DRAMACLAW_USERNAME", "").strip()
+    if authenticated_user:
+        return authenticated_user
     if os.environ.get("ST_EDITION", "").strip().lower() == "ce":
         return "local"
     return (

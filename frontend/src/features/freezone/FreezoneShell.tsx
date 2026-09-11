@@ -1,3 +1,6 @@
+import { htmlArtifactNodePatches } from '@/features/html-artifacts/nodeMetadata';
+import { HtmlArtifactEditor } from '@/features/html-artifacts/HtmlArtifactEditor';
+import { HTML_ARTIFACT_OPEN_EVENT, HTML_ARTIFACT_REFERENCE_EVENT, HTML_ARTIFACT_UPDATED_EVENT, type HtmlArtifactTarget } from '@/features/html-artifacts/api';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -911,6 +914,32 @@ export function FreezoneShell({
   const handlePendingChatNodeMentionsConsumed = useCallback(() => {
     setPendingChatNodeMentions([]);
   }, []);
+  const [htmlTarget, setHtmlTarget] = useState<HtmlArtifactTarget | null>(null);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const target = (event as CustomEvent<HtmlArtifactTarget>).detail;
+      if (!active || target?.projectId !== projectId || !target.artifactId) return;
+      setHtmlTarget(target);
+      setChatOpen(true);
+    };
+    const reference = (event: Event) => {
+      if ((event as CustomEvent).detail?.projectId === projectId && active) setChatOpen(true);
+    };
+    const updated = (event: Event) => {
+      const value = (event as CustomEvent).detail;
+      if (!active || value?.projectId !== projectId || !value.artifact) return;
+      const store = useCanvasStore.getState();
+      for (const patch of htmlArtifactNodePatches(store.nodes, value.artifact)) {
+        if (!value.nodeId || patch.id === value.nodeId) store.updateNodeData(patch.id, patch.data);
+      }
+    };
+    window.addEventListener(HTML_ARTIFACT_UPDATED_EVENT, updated);
+    window.addEventListener(HTML_ARTIFACT_OPEN_EVENT, open);
+    window.addEventListener(HTML_ARTIFACT_REFERENCE_EVENT, reference);
+    return () => { window.removeEventListener(HTML_ARTIFACT_UPDATED_EVENT, updated); window.removeEventListener(HTML_ARTIFACT_OPEN_EVENT, open); window.removeEventListener(HTML_ARTIFACT_REFERENCE_EVENT, reference); };
+  }, [projectId, active]);
+  useEffect(() => { setHtmlTarget(null); }, [projectId, canvasId]);
+
   const productSurfaces = useProductSurfaces();
   const showChatDock = Boolean(
     surfaceAccess(productSurfaces.data, "freezone_assistant")?.available,
@@ -2108,7 +2137,7 @@ export function FreezoneShell({
               // 保活到虾集时也算 suspended：Canvas 的 6 处 window/document 键盘
               // 监听（含 capture 阶段）都读这个开关，否则在虾集的输入框里打字会
               // 被画布快捷键截走。
-              suspended={!active || viewMode === "board"}
+              suspended={!active || viewMode === "board" || Boolean(htmlTarget)}
             />
           )}
           {showLoadingOverlay && <CanvasLoadingOverlay />}
@@ -2177,7 +2206,7 @@ export function FreezoneShell({
               // （AssetBoardView.tsx:435），会穿透宿主容器上的 invisible ——
               // 不接这个开关，故事板视图下切到虾集，它会浮在虾集页面上。
               // 顺带也停掉它对 canvas store 的订阅和媒体播放（paused={!visible}）。
-              visible={active && viewMode === "board"}
+              visible={active && viewMode === "board" && !htmlTarget}
               onLocateNode={handleLocateNode}
             />
           )}
@@ -2192,7 +2221,7 @@ export function FreezoneShell({
               选中态样式仍对齐头部「虾画/虾集」产品切换（project-header-navigation.tsx
               的 ProjectHeaderNavigation）：手写胶囊 + 滑块，滑块宽度跟着按钮收成 44px。
               容器底色沿用硬编码 #262626（与故事板背景同色），圆角按 10px 走圆角矩形。 */}
-          {!showBlockingLoading && (
+          {!showBlockingLoading && !htmlTarget && (
             <div className="absolute left-4 top-1.5 z-40">
               <TooltipProvider delay={80}>
                 <nav
@@ -2237,6 +2266,7 @@ export function FreezoneShell({
               </TooltipProvider>
             </div>
           )}
+          {htmlTarget && active && <HtmlArtifactEditor key={htmlTarget.artifactId} {...htmlTarget} onClose={() => setHtmlTarget(null)} />}
         </main>
         {showChatDock && (
           <FreezoneChatDock
@@ -2258,7 +2288,7 @@ export function FreezoneShell({
             hostActive={active}
             // 故事板：抽屉挤占左侧内容宽度（对标 liblib）；工作流：浮在画布上，
             // 画布视口不受影响（否则每次开合聊天都会让 ReactFlow 重排一次视口）。
-            pushesContent={viewMode === "board"}
+            pushesContent={viewMode === "board" || Boolean(htmlTarget)}
             title={t("freezone.chat.title")}
             description={t("freezone.chat.description")}
             toggleLabel={t("freezone.chat.toggle")}

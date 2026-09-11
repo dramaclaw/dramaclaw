@@ -984,7 +984,8 @@
         "audio": "音频",
         "script": "脚本",
         "world": "3D / 全景",
-        "skill": "技能"
+        "skill": "技能",
+        "webpage": "网页"
       }
     },
     "projections": {
@@ -5557,7 +5558,8 @@
       "placeholderAudio": "音频",
       "placeholderScript": "脚本",
       "betaTag": "Beta",
-      "videoCompose": "视频合成"
+      "videoCompose": "视频合成",
+      "htmlArtifact": "网页"
     },
     "imageNode": {
       "title": "图片节点",
@@ -6235,7 +6237,8 @@
       "pano360ViewerNode": "360° 全景查看器",
       "threeDWorldNode": "3D 世界",
       "skillNode": "技能",
-      "styleNode": "风格"
+      "styleNode": "风格",
+      "htmlArtifactNode": "网页"
     },
     "exportResult": {
       "generic": "结果图片",
@@ -7015,7 +7018,8 @@
           "image": "图片",
           "video": "视频",
           "audio": "音频",
-          "text": "文本"
+          "text": "文本",
+          "html": "HTML 网页"
         },
         "actionKeys": "操作标识",
         "actionKeysPlaceholder": "输入后按 Enter 或逗号确认",
@@ -7888,5 +7892,70 @@
         "unsupported": "不支持"
       }
     }
+  },
+  "htmlArtifact": {
+    "actionGenerate": "生成网页",
+    "actionSaveSource": "保存网页源码",
+    "actionSelectVersion": "选择网页版本",
+    "actionRestoreVersion": "恢复网页版本",
+    "actionOpen": "打开网页",
+    "actionExport": "导出网页",
+    "actionUpload": "上传 HTML",
+    "upload": "上传 HTML",
+    "invalidFile": "请选择完整的 HTML 网页文件",
+    "fileTooLarge": "HTML 文件不能超过 2 MiB",
+
+    "references": "引用的上游节点",
+    "activeCanvasRequired": "请先打开项目画布",
+    "readyToGenerate": "填写网页要求并点击生成，或运行工作流",
+    "generationPrompt": "描述网页内容、布局和风格",
+    "generating": "正在生成网页",
+    "retry": "重试生成",
+    "retrySave": "重试保存网页",
+    "saving": "源码生成完成，正在保存网页…",
+    "regenerate": "重新生成网页",
+    "generate": "生成网页",
+    "discard": "放弃未保存的修改？",
+    "editor": "网页编辑器",
+    "back": "返回画布",
+    "title": "网页名称",
+    "preview": "预览",
+    "code": "代码",
+    "save": "保存",
+    "export": "导出",
+    "desktop": "桌面",
+    "mobile": "手机",
+    "select": "选择元素",
+    "ask": "交给虾导修改",
+    "versions": "历史版本",
+    "restore": "恢复此版本",
+    "useVersion": "使用此版本",
+    "conflict": "网页已有新版本；你的未保存修改已保留。复制修改后重新加载最新版本。",
+    "reload": "重新加载",
+    "savedPreview": "当前预览为已保存版本，保存后更新。",
+    "loading": "正在处理…",
+    "source": "HTML 源码",
+    "webpage": "网页",
+    "thumbnail": "网页缩略图",
+    "empty": "连接文案、图片或视频，制作网页",
+    "open": "打开网页",
+    "runScripts": "运行网页脚本",
+    "stopScripts": "停止网页脚本",
+    "scriptNotice": "默认预览不会执行网页脚本。开启交互模式后，代码可能向外部站点发送页面内容。",
+    "scriptUnsupported": "当前浏览器不支持隔离凭据的交互模式；仍可预览、选择元素和编辑源码。",
+    "saveCommand": "保存网页",
+    "mediaLoadFailed": "素材加载失败：{{path}}",
+    "historyRecordFailed": "网页已保存，但节点历史记录失败，请稍后重试。",
+    "textTools": "文字编辑",
+    "textContent": "文字内容",
+    "fontFamily": "字体",
+    "fontSize": "字号",
+    "textColor": "文字颜色",
+    "bold": "加粗",
+    "regular": "常规",
+    "alignleft": "左对齐",
+    "aligncenter": "居中",
+    "alignright": "右对齐",
+    "selectLeaf": "请选择最内层文字元素修改内容，避免覆盖内部排版。"
   }
 }

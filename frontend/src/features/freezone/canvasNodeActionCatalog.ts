@@ -25,13 +25,15 @@ import { resolveInputsForSkill } from "@/features/freezone/context/skillNodeInpu
 import type { SkillDefinition, SkillInputRole } from "@/features/freezone/context/skillRoles";
 import { STANDARD_TIME_OF_DAY_OPTIONS } from "@/lib/time-of-day";
 
-export type CanvasNodeActionExecution = "chat_command" | "requires_confirmation" | "manual_ui" | "frontend_node";
+export type CanvasNodeActionExecution = "chat_command" | "requires_confirmation" | "manual_ui" | "frontend_node" | "tool";
 
 export type CanvasNodeActionCatalogEntry = {
   action: string;
   execution: CanvasNodeActionExecution;
+  effect?: "read" | "write" | "ui";
   description: string;
   command_type?: string;
+  typed_tool?: string;
   can_run_now?: boolean;
   preconditions?: Array<Record<string, unknown>>;
   blocked_reasons?: string[];
@@ -717,7 +719,7 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
   switch (node.type) {
     case CANVAS_NODE_TYPES.textAnnotation:
       return {
-        displayName: { type: "string", label: "显示名称" },
+        displayName: { type: "string", label: "Display name" },
         title: { type: "string", label: "标题" },
         content: { type: "string", label: "内容" },
         text: { type: "string", label: "文本" },
@@ -887,6 +889,16 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
       return {
         displayName: { type: "string", label: "显示名称" },
         parameters: { type: "object", label: "参数" },
+      };
+    case CANVAS_NODE_TYPES.htmlArtifact:
+      return {
+        displayName: { type: "string", label: "显示名称" },
+        prompt: {
+          type: "string",
+          label: "Webpage requirements",
+          description:
+            "Webpage generation requirements. Use @ mentions for connected text, image, or video inputs. Save HTML source through node actions.",
+        },
       };
     default:
       return { displayName: { type: "string", label: "显示名称" } };
@@ -1509,6 +1521,41 @@ function addCommitAction(node: CanvasNode, actions: CanvasNodeActionCatalogEntry
   });
 }
 
+function addHtmlArtifactActions(node: CanvasNode, actions: CanvasNodeActionCatalogEntry[]): void {
+  if (node.type !== CANVAS_NODE_TYPES.htmlArtifact) return;
+  const data = node.data as Record<string, unknown>;
+  const artifactId = stringOrNull(data.artifactId);
+  if (artifactId) {
+    actions.push({action: "read_source", effect: "read", execution: "frontend_node", command_type: "run_node_action",
+      description: "Read this node's saved HTML source and current version.", parameters: {node_id: node.id, version: {type: "number", optional: true}}});
+    actions.push({action: "history", effect: "read", execution: "frontend_node", command_type: "run_node_action",
+      description: "List this node's saved HTML versions.", parameters: {node_id: node.id}});
+    actions.push({action: "select_version", effect: "write", execution: "frontend_node", command_type: "run_node_action",
+      description: "Select a saved HTML version for this canvas node without creating a new Artifact revision.", parameters: {node_id: node.id, version: {type: "number", required: true}}});
+    actions.push({action: "restore", effect: "write", execution: "frontend_node", command_type: "run_node_action",
+      description: "Restore a historical HTML version as a new version.", parameters: {node_id: node.id, version: {type: "number", required: true}, base_version: {type: "number", required: true}}});
+    actions.push({action: "open", effect: "ui", execution: "frontend_node", command_type: "run_node_action",
+      description: "Open this saved webpage in the HTML preview.", parameters: {node_id: node.id}});
+    actions.push({action: "export", effect: "ui", execution: "frontend_node", command_type: "run_node_action",
+      description: "Export and download this saved webpage at its current version.", parameters: {node_id: node.id}});
+  } else {
+    actions.push({action: "upload", effect: "ui", execution: "manual_ui", command_type: "run_node_action",
+      description: "Open the local HTML file picker for this empty webpage node.", parameters: {node_id: node.id, accept: ".html,.htm,text/html"}});
+  }
+  actions.push({action: "update_source", effect: "write", execution: "frontend_node", command_type: "run_node_action",
+    description: artifactId
+      ? "Save complete revised HTML using the version returned by read_source as base_version."
+      : "Save complete HTML source to this empty webpage node.",
+    parameters: {node_id: node.id, html: {type: "string", required: true}, title: {type: "string", optional: true},
+      ...(artifactId ? {base_version: {type: "number", required: true}} : {})},
+    instruction: "Never write source or artifact identity through update_node_data. On version conflict re-read and reconcile."});
+  actions.push({action: "generate_html", effect: "write", execution: "frontend_node", command_type: "run_node_action",
+    description: "Generate and save this webpage from its prompt, using its bound Recipe when one is configured, and completed upstream outputs.",
+    parameters: {node_id: node.id},
+    result_effect: {artifact_identity: "saved artifact ID and version", completion: "after artifact persistence"},
+  });
+}
+
 export function buildCanvasNodeActionCatalog(
   node: CanvasNode,
   context?: CanvasNodeActionCatalogContext,
@@ -1519,6 +1566,7 @@ export function buildCanvasNodeActionCatalog(
   addImageToolActions(node, actions);
   addMediaActions(node, actions);
   addCommitAction(node, actions);
+  addHtmlArtifactActions(node, actions);
 
   const skillId =
     node.type === CANVAS_NODE_TYPES.skill

@@ -24,6 +24,7 @@ import {
   Copy,
   Crop,
   Download,
+  Upload,
   Eraser,
   Expand,
   FastForward,
@@ -134,6 +135,7 @@ import { useCanvasStore } from "@/stores/canvasStore";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { analyzeVideoStory } from "@/features/canvas/application/videoAnalyzeStory";
 import { separateVideoAudio } from "@/features/canvas/application/videoSeparateAudio";
+import { openHtmlArtifact, readHtmlArtifact, exportHtmlArtifact } from "@/features/html-artifacts/api";
 import { readUrl } from "@/lib/url-params";
 import { sanitizeStoryboardText } from "@/features/canvas/application/storyboardText";
 import { buildGenerationErrorReport } from "@/features/canvas/application/generationErrorReport";
@@ -1420,6 +1422,8 @@ export const NodeActionToolbar = memo(
     const recipeCompileFellBack =
       node.data.workflowRecipeCompileMode === "timeout_fallback";
 
+    if (node.type === CANVAS_NODE_TYPES.htmlArtifact && !node.data.artifactId) return null;
+
     // 分镜组 has its own dedicated toolbar (aspect / grid / index / convert /
     // ungroup) — render it instead of the generic node toolbar.
     if (isStoryboardGroupNode(node)) {
@@ -2548,6 +2552,23 @@ export const NodeActionToolbar = memo(
                   : t("freezone.projections.sync")}
               </UiChipButton>
             )}
+            {node.type === CANVAS_NODE_TYPES.htmlArtifact && <>
+              <UiChipButton className={TOOLBAR_TEXT_BUTTON_CLASS} disabled={!node.data.artifactId} onClick={(event) => {
+                event.stopPropagation();
+                const projectId = readUrl().project;
+                if (projectId && typeof node.data.artifactId === "string") openHtmlArtifact({projectId, artifactId: node.data.artifactId, version: typeof node.data.artifactVersion === "number" && node.data.artifactVersion > 0 ? node.data.artifactVersion : undefined, nodeId: node.id});
+              }}><Globe2 className="h-3.5 w-3.5"/>{t("htmlArtifact.open")}</UiChipButton>
+              <UiChipButton className={TOOLBAR_TEXT_BUTTON_CLASS} disabled={!node.data.artifactId} onClick={async (event) => {
+                event.stopPropagation();
+                const projectId = readUrl().project;
+                const artifactId = node.data.artifactId;
+                if (!projectId || typeof artifactId !== "string") return;
+                try {
+                  const artifact = await readHtmlArtifact(projectId, artifactId, typeof node.data.artifactVersion === "number" && node.data.artifactVersion > 0 ? node.data.artifactVersion : undefined);
+                  await exportHtmlArtifact(projectId, artifactId, artifact.version);
+                } catch (error) { toast.error(String(error)); }
+              }}><Upload className="h-3.5 w-3.5"/>{t("htmlArtifact.export")}</UiChipButton>
+            </>}
             {!isImageGenNode(node) && !isVideoNode(node) && !isAudioNode(node) && (
               <UiChipButton
                 key="node-delete"
