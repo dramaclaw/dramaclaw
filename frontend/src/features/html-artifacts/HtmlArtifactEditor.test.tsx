@@ -112,8 +112,8 @@ it('does not advance a saved draft conflict base when reopened after another edi
   await screen.findByText('Version conflict');
   expect(api.saveHtmlArtifact).toHaveBeenCalledWith('stale-draft','a','Draft',artifact.html,2,undefined);
 });
-it('sends preview media blobs into the opaque iframe after load',async()=>{
-  const media=[{placeholder:'html-artifact-resource-0',blob:new Blob(['image'],{type:'image/png'})}];
+it('sends preview media URLs into the opaque iframe after load',async()=>{
+  const media=[{placeholder:'html-artifact-resource-0',url:'https://media.example/image.png'}];
   vi.mocked(api.readHtmlPreview).mockResolvedValue({html:artifact.html,media,warnings:[],release:vi.fn()});
   const {container}=render(<HtmlArtifactEditor projectId="media-bridge" artifactId="a" onClose={()=>{}} />);
   await screen.findByDisplayValue('Brand');

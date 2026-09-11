@@ -1,15 +1,19 @@
 """Authorized, home-node-only HTML artifact APIs."""
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote, unquote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from urllib.parse import quote
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from novelvideo.api.auth import get_api_user
+from novelvideo.api.routes.files import _maybe_thumbnail_response, _serve_or_redirect_to_oss
+from novelvideo.freezone import preview_media
 from novelvideo.freezone.canvas_lock import CanvasLockBusy
 from novelvideo.freezone.html_artifacts import ArtifactConflict, ArtifactStore, MAX_HTML_BYTES
 from novelvideo.freezone.history import (
@@ -17,7 +21,9 @@ from novelvideo.freezone.history import (
     build_node_history_record,
     read_generation_history,
 )
-from novelvideo.project_context import require_project_home_node, resolve_project_context
+from novelvideo.ports import get_project_registry
+from novelvideo.project_context import is_record_home_node, require_project_home_node, resolve_project_context
+from novelvideo.utils.thumbnails import fresh_thumbnail, is_thumbnailable
 
 router = APIRouter(prefix='/projects/{project}/freezone/html-artifacts', tags=['freezone-html-artifacts'])
 
@@ -157,9 +163,58 @@ async def restore(project: str, artifact_id: str, body: RestoreBody, user: dict 
 
 
 @router.get('/{artifact_id}/preview')
-async def preview(project: str, artifact_id: str, version: Annotated[int | None, Query(ge=1)] = None, user: dict = Depends(get_api_user)):
+async def preview(project: str, artifact_id: str, version: Annotated[int | None, Query(ge=1)] = None, st_thumb: Annotated[str | None, Query(pattern='^thumb$')] = None, user: dict = Depends(get_api_user)):
     store = await _store(project, user, 'viewer')
-    return _data(await _call(store.preview, artifact_id, version))
+    rendered = await _call(store.preview, artifact_id, version)
+    if rendered.get('resources'):
+        ctx = await resolve_project_context(user=user, project_id=project, required_role='viewer')
+        key = await _call(preview_media.project_key, Path(ctx.state_dir), create=True)
+        expires = int(time.time()) + preview_media.TTL
+        prefix = '/api/v1/projects/' + quote(store.project_id, safe='') + '/media/'
+        for resource in rendered['resources']:
+            relative = unquote(resource['path'][len(prefix):])
+            requested = store.project_dir / relative
+            use_thumb = bool(st_thumb and is_thumbnailable(requested))
+            cached_thumb = await _call(fresh_thumbnail, store.project_dir, requested, 'thumb') if use_thumb else None
+            response = FileResponse(cached_thumb) if cached_thumb else await _call(_serve_or_redirect_to_oss, requested, as_download=False)
+            if response.status_code == 302:
+                resource['url'] = response.headers['location']
+            else:
+                token = preview_media.signature(key, store.project_id, artifact_id, relative, expires)
+                resource['url'] = ('/api/v1/projects/' + quote(store.project_id, safe='')
+                    + '/freezone/html-artifacts/' + quote(artifact_id, safe='')
+                    + f'/preview-media/{expires}/{token}/' + quote(relative, safe='/')
+                    + ('?st_thumb=thumb' if use_thumb else ''))
+    return _data(rendered)
+
+
+@router.get('/{artifact_id}/preview-media/{expires}/{token}/{file_path:path}')
+async def preview_resource(project: str, artifact_id: str, expires: int, token: str, file_path: str, request: Request, st_thumb: str | None = None):
+    record = await get_project_registry().get_project(project)
+    if record is None or getattr(record, 'status', 'active') != 'active' or not is_record_home_node(record):
+        raise HTTPException(404, 'Preview resource unavailable')
+    try:
+        key = await run_in_threadpool(preview_media.project_key, Path(record.state_dir))
+    except (OSError, ValueError):
+        raise HTTPException(403, 'Invalid preview grant')
+    if not preview_media.verify(key, project, artifact_id, file_path, expires, token):
+        raise HTTPException(403, 'Invalid or expired preview grant')
+    root = Path(record.output_dir).resolve()
+    requested = root / file_path
+    if not requested.resolve().is_relative_to(root) or any(p.is_symlink() for p in [requested, *requested.parents] if p != root.parent):
+        raise HTTPException(403, 'Invalid preview resource path')
+    if not requested.is_file():
+        raise HTTPException(404, 'Preview resource unavailable')
+    if st_thumb not in (None, 'thumb'):
+        raise HTTPException(400, 'Unknown thumbnail variant')
+    response = await run_in_threadpool(_maybe_thumbnail_response, root, requested, st_thumb, request)
+    if response is None:
+        response = FileResponse(requested)
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Cache-Control'] = 'private, no-store'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Content-Security-Policy'] = "sandbox; default-src 'none'"
+    return response
 
 
 @router.get('/{artifact_id}/export')

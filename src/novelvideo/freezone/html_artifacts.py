@@ -512,6 +512,8 @@ class _PreviewHTML(_PortableHTML):
                 placeholder = 'html-media-' + hashlib.sha256(path.encode()).hexdigest()
                 entry = {'placeholder': placeholder, 'path': path}
                 if entry not in self.manifest:
+                    if len(self.manifest) >= 128:
+                        raise PreviewTooLarge('Preview exceeds 128 media resources')
                     self.manifest.append(entry)
                 return placeholder + ('#' + parts.fragment if parts.fragment else '')
             rewritten = super().resource(value)

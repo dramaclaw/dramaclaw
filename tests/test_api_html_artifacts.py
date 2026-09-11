@@ -16,7 +16,7 @@ def client(monkeypatch, tmp_path):
     async def resolve(*, user, project_id, required_role):
         if project_id != 'demo' or (required_role == 'editor' and role['value'] != 'editor'):
             raise HTTPException(403, 'Access denied')
-        return SimpleNamespace(output_dir=str(tmp_path), project_id='demo', owner_username='alice', project_name='demo', is_home_node=role['home'], home_node_id='other', current_node_id='local')
+        return SimpleNamespace(output_dir=str(tmp_path), state_dir=str(tmp_path / 'state'), project_id='demo', owner_username='alice', project_name='demo', is_home_node=role['home'], home_node_id='other', current_node_id='local')
 
     def home(ctx, **kwargs):
         if not ctx.is_home_node:
@@ -147,3 +147,54 @@ def test_update_idempotency_returns_the_original_saved_revision(client, tmp_path
     history = tmp_path / 'freezone/_generation_history/canvas-1/node-1.jsonl'
     assert len(history.read_text().splitlines()) == 1
     assert api.put(url, json={**body, 'html': 'changed'}).status_code == 409
+
+
+def test_preview_media_range_and_grant_rejection(client, monkeypatch):
+    import asyncio
+    from novelvideo.api.routes import html_artifacts as routes
+    api, _ = client
+    store = asyncio.run(routes._store('demo', {'username': 'alice'}, 'editor'))
+    (store.project_dir / 'clip.mp4').write_bytes(b'0123456789')
+    async def get_project(project):
+        if project != 'demo':
+            return None
+        return SimpleNamespace(output_dir=store.project_dir, state_dir=store.project_dir / 'state', home_node_id='local')
+    monkeypatch.setattr(routes, 'get_project_registry', lambda: SimpleNamespace(get_project=get_project))
+    artifact = api.post(BASE, json={'title': 'Video', 'html': '<video src="clip.mp4"></video>'}).json()['data']
+    data = api.get(BASE + '/' + artifact['id'] + '/preview').json()['data']
+    url = data['resources'][0]['url']
+    result = api.get(url, headers={'Range': 'bytes=2-4'})
+    assert result.status_code == 206
+    assert result.content == b'234'
+    assert result.headers['content-range'] == 'bytes 2-4/10'
+    assert api.get(url.replace('clip.mp4', 'other.mp4')).status_code == 403
+    assert api.get(url.replace('/demo/', '/peer/')).status_code == 404
+    monkeypatch.setattr(routes.preview_media.time, 'time', lambda: 9999999999)
+    assert api.get(url).status_code == 403
+
+
+def test_preview_reuses_oss_delivery(client, monkeypatch):
+    import asyncio
+    from fastapi.responses import RedirectResponse
+    from novelvideo.api.routes import html_artifacts as routes
+    api, _ = client
+    store = asyncio.run(routes._store('demo', {'username': 'alice'}, 'editor'))
+    (store.project_dir / 'clip.mp4').write_bytes(b'video')
+    monkeypatch.setattr(routes, '_serve_or_redirect_to_oss', lambda *args, **kwargs: RedirectResponse('https://media.example/clip.mp4?signature=test', status_code=302))
+    artifact = api.post(BASE, json={'title': 'Video', 'html': '<video src="clip.mp4"></video>'}).json()['data']
+    data = api.get(BASE + '/' + artifact['id'] + '/preview').json()['data']
+    assert data['resources'][0]['url'] == 'https://media.example/clip.mp4?signature=test'
+
+
+def test_preview_thumbnail_uses_existing_variant(client, monkeypatch):
+    import asyncio
+    from novelvideo.api.routes import html_artifacts as routes
+    api, _ = client
+    store = asyncio.run(routes._store('demo', {'username': 'alice'}, 'editor'))
+    (store.project_dir / 'image.png').write_bytes(b'image')
+    thumb = store.project_dir / 'thumb.webp'
+    thumb.write_bytes(b'thumb')
+    monkeypatch.setattr(routes, 'fresh_thumbnail', lambda *args: thumb)
+    artifact = api.post(BASE, json={'title': 'Image', 'html': '<img src="image.png">'}).json()['data']
+    data = api.get(BASE + '/' + artifact['id'] + '/preview?st_thumb=thumb').json()['data']
+    assert data['resources'][0]['url'].endswith('/image.png?st_thumb=thumb')
