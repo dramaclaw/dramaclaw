@@ -1,6 +1,11 @@
-import io
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from contextlib import contextmanager
+from itertools import count
+import os
 from pathlib import Path
+import threading
+import time
+import tracemalloc
 import zipfile
 
 import pytest
@@ -57,7 +62,7 @@ def test_portable_export(tmp_path):
     (tmp_path / 'photo.png').write_bytes(b'png')
     store = ArtifactStore(tmp_path, project_id='project')
     first = store.create(title='Demo', html='<style>body{background:url(photo.png)}</style><img src="/api/v1/projects/project/media/photo.png">')
-    with zipfile.ZipFile(io.BytesIO(store.export(first['id']))) as archive:
+    with zipfile.ZipFile(store.export_file(first['id'])) as archive:
         assert 'index.html' in archive.namelist()
         assert len(archive.namelist()) == 2
         html = archive.read('index.html').decode()
@@ -77,7 +82,7 @@ def test_export_refuses_unsafe_or_unsupported_resources(tmp_path, html):
     store = ArtifactStore(tmp_path, project_id='project')
     first = store.create(title='Demo', html=html)
     with pytest.raises(ValueError):
-        store.export(first['id'])
+        store.export_file(first['id'])
 
 
 def test_export_refuses_symlink_escape(tmp_path):
@@ -88,7 +93,7 @@ def test_export_refuses_symlink_escape(tmp_path):
     store = ArtifactStore(root)
     first = store.create(title='Demo', html='<img src="image.png">')
     with pytest.raises(ValueError):
-        store.export(first['id'])
+        store.export_file(first['id'])
 
 
 def test_preview_embeds_local_media_and_blocks_external(tmp_path):
@@ -122,14 +127,14 @@ def test_export_refuses_symlink_directory_even_if_inside_project(tmp_path):
     store = ArtifactStore(tmp_path)
     artifact = store.create(title='Test', html='<img src="linked/a.png">')
     with pytest.raises(ValueError):
-        store.export(artifact['id'])
+        store.export_file(artifact['id'])
 
 
 def test_export_refuses_unparsed_css_resource(tmp_path):
     store = ArtifactStore(tmp_path)
     artifact = store.create(title='Test', html='<style>body{background:url(\"unclosed.png)}</style>')
     with pytest.raises(ValueError):
-        store.export(artifact['id'])
+        store.export_file(artifact['id'])
 
 @pytest.mark.parametrize('component', ['directory', 'artifact'])
 def test_storage_refuses_symlinked_peer_files(tmp_path, component):
@@ -175,7 +180,7 @@ def test_export_refuses_unclosed_css_url(tmp_path):
     store=ArtifactStore(tmp_path)
     item=store.create(title='css',html='<style>body {background: url(https://example.com/a.png</style>')
     with pytest.raises(ValueError):
-        store.export(item['id'])
+        store.export_file(item['id'])
 
 
 def test_preview_budget_reserves_media_inside_single_style(tmp_path, monkeypatch):
@@ -199,7 +204,7 @@ def test_navigation_links_are_not_packaged_as_media(tmp_path, url):
     preview = store.preview(item['id'])
     assert preview['warnings'] == []
     assert f'href="{url}"' in preview['html']
-    with zipfile.ZipFile(io.BytesIO(store.export(item['id']))) as archive:
+    with zipfile.ZipFile(store.export_file(item['id'])) as archive:
         assert archive.namelist() == ['index.html']
         assert f'href="{url}"' in archive.read('index.html').decode()
 
@@ -210,7 +215,7 @@ def test_navigation_blocks_unsafe_schemes(tmp_path, url):
     item = store.create(title='Unsafe', html=f'<a href="{url}">Contact</a>')
     assert store.preview(item['id'])['warnings']
     with pytest.raises(ValueError):
-        store.export(item['id'])
+        store.export_file(item['id'])
 
 
 def test_revisions_are_files_without_database(tmp_path):
@@ -338,6 +343,257 @@ def test_cached_export_preserves_media_snapshot(tmp_path):
     assert store.export_file(item['id'], 1) == path
     with zipfile.ZipFile(path) as archive:
         assert archive.read(next(n for n in archive.namelist() if n.endswith('.png'))) == b'original'
+
+
+def test_export_file_streams_large_media_without_buffering_it_in_python(tmp_path):
+    media_size = 20 * 1024 * 1024
+    video = tmp_path / 'clip.mp4'
+    with video.open('wb') as stream:
+        stream.truncate(media_size)
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Video', html='<video src="clip.mp4"></video>')
+
+    tracemalloc.start()
+    try:
+        path = store.export_file(item['id'])
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert peak < 8 * 1024 * 1024
+    with zipfile.ZipFile(path) as archive:
+        video_info = next(info for info in archive.infolist() if info.filename.endswith('.mp4'))
+        assert video_info.file_size == media_size
+        assert video_info.compress_type == zipfile.ZIP_STORED
+
+
+def test_export_file_builds_one_archive_for_concurrent_same_version_requests(
+    tmp_path, monkeypatch
+):
+    (tmp_path / 'photo.png').write_bytes(b'image')
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Image', html='<img src="photo.png">')
+    real_zip_file = zipfile.ZipFile
+    first_builder_started = threading.Event()
+    second_request_started = threading.Event()
+    release_builder = threading.Event()
+    build_count = 0
+    count_lock = threading.Lock()
+
+    class BlockingZipFile(real_zip_file):
+        def __init__(self, *args, **kwargs):
+            nonlocal build_count
+            with count_lock:
+                build_count += 1
+            first_builder_started.set()
+            assert release_builder.wait(timeout=5)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(zipfile, 'ZipFile', BlockingZipFile)
+
+    def second_export():
+        second_request_started.set()
+        return store.export_file(item['id'])
+
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(store.export_file, item['id'])
+        assert first_builder_started.wait(timeout=1)
+        second = pool.submit(second_export)
+        assert second_request_started.wait(timeout=1)
+        time.sleep(0.1)
+        release_builder.set()
+        assert first.result(timeout=5) == second.result(timeout=5)
+
+    assert build_count == 1
+
+
+def test_export_file_renews_the_existing_write_lease_during_long_copies(
+    tmp_path, monkeypatch
+):
+    import novelvideo.freezone.html_artifacts as module
+    import novelvideo.ports as ports
+
+    (tmp_path / 'clip.mp4').write_bytes(b'video')
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Video', html='<video src="clip.mp4"></video>')
+    reassertions = 0
+
+    class Guard:
+        def reassert(self):
+            nonlocal reassertions
+            reassertions += 1
+
+    class Mutex:
+        @contextmanager
+        def write_mutex(self, *_args, **_kwargs):
+            yield Guard()
+
+    ticks = count(0, 21)
+    monkeypatch.setattr(ports, 'get_canvas_write_mutex', lambda: Mutex())
+    monkeypatch.setattr(module, 'monotonic', lambda: next(ticks), raising=False)
+    monkeypatch.setattr(module, 'EXPORT_COPY_CHUNK_BYTES', 1)
+
+    store.export_file(item['id'])
+
+    assert reassertions > 1
+
+
+def test_export_file_removes_partial_archive_when_media_copy_fails(
+    tmp_path, monkeypatch
+):
+    import novelvideo.freezone.html_artifacts as module
+
+    (tmp_path / 'clip.mp4').write_bytes(b'video')
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Video', html='<video src="clip.mp4"></video>')
+    real_open_resource = module._PortableHTML.open_resource
+    opens = 0
+
+    @contextmanager
+    def fail_during_copy(parser, candidate):
+        nonlocal opens
+        opens += 1
+        if opens == 2:
+            raise OSError('disk read failed')
+        with real_open_resource(parser, candidate) as opened:
+            yield opened
+
+    monkeypatch.setattr(module._PortableHTML, 'open_resource', fail_during_copy)
+
+    with pytest.raises(OSError, match='disk read failed'):
+        store.export_file(item['id'])
+
+    export_dir = store.root / item['id'] / 'exports'
+    assert not list(export_dir.glob('.*.tmp'))
+    assert not (export_dir / 'v1.zip').exists()
+
+
+def test_export_file_preserves_archive_write_errors_and_removes_partial_file(
+    tmp_path, monkeypatch
+):
+    (tmp_path / 'clip.mp4').write_bytes(b'video')
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Video', html='<video src="clip.mp4"></video>')
+    real_zip_file = zipfile.ZipFile
+
+    class FailingDestination:
+        def __init__(self, destination):
+            self.destination = destination
+
+        def __enter__(self):
+            self.destination.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.destination.__exit__(*args)
+
+        def write(self, _chunk):
+            raise OSError('destination disk full')
+
+    class FailingZipFile(real_zip_file):
+        def open(self, name, mode='r', pwd=None, *, force_zip64=False):
+            destination = super().open(
+                name,
+                mode=mode,
+                pwd=pwd,
+                force_zip64=force_zip64,
+            )
+            filename = name.filename if isinstance(name, zipfile.ZipInfo) else str(name)
+            if mode == 'w' and filename.startswith('assets/'):
+                return FailingDestination(destination)
+            return destination
+
+    monkeypatch.setattr(zipfile, 'ZipFile', FailingZipFile)
+
+    with pytest.raises(OSError, match='destination disk full'):
+        store.export_file(item['id'])
+
+    export_dir = store.root / item['id'] / 'exports'
+    assert not list(export_dir.glob('.*.tmp'))
+    assert not (export_dir / 'v1.zip').exists()
+
+
+def test_export_file_rejects_media_replaced_after_validation(tmp_path, monkeypatch):
+    import novelvideo.freezone.html_artifacts as module
+
+    media = tmp_path / 'clip.mp4'
+    media.write_bytes(b'video')
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Video', html='<video src="clip.mp4"></video>')
+    real_open_resource = module._PortableHTML.open_resource
+    opens = 0
+
+    @contextmanager
+    def replace_before_copy(parser, candidate):
+        nonlocal opens
+        opens += 1
+        if opens == 2:
+            replacement = candidate.with_suffix('.replacement')
+            replacement.write_bytes(b'other')
+            os.replace(replacement, candidate)
+        with real_open_resource(parser, candidate) as opened:
+            yield opened
+
+    monkeypatch.setattr(module._PortableHTML, 'open_resource', replace_before_copy)
+
+    with pytest.raises(ValueError, match='Media changed during export'):
+        store.export_file(item['id'])
+
+    export_dir = store.root / item['id'] / 'exports'
+    assert not list(export_dir.glob('.*.tmp'))
+    assert not (export_dir / 'v1.zip').exists()
+
+
+def test_export_file_rejects_media_modified_during_copy(tmp_path, monkeypatch):
+    import novelvideo.freezone.html_artifacts as module
+
+    media = tmp_path / 'clip.mp4'
+    media.write_bytes(b'video')
+    store = ArtifactStore(tmp_path)
+    item = store.create(title='Video', html='<video src="clip.mp4"></video>')
+    real_open_resource = module._PortableHTML.open_resource
+    opens = 0
+
+    class MutatingStream:
+        def __init__(self, stream, candidate):
+            self.stream = stream
+            self.candidate = candidate
+            self.mutated = False
+
+        def read(self, size):
+            chunk = self.stream.read(size)
+            if chunk and not self.mutated:
+                self.mutated = True
+                before = self.candidate.stat()
+                self.candidate.write_bytes(b'other')
+                os.utime(
+                    self.candidate,
+                    ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000),
+                )
+            return chunk
+
+        def fileno(self):
+            return self.stream.fileno()
+
+    @contextmanager
+    def mutate_during_copy(parser, candidate):
+        nonlocal opens
+        opens += 1
+        with real_open_resource(parser, candidate) as (stream, info):
+            if opens == 2:
+                yield MutatingStream(stream, candidate), info
+            else:
+                yield stream, info
+
+    monkeypatch.setattr(module._PortableHTML, 'open_resource', mutate_during_copy)
+    monkeypatch.setattr(module, 'EXPORT_COPY_CHUNK_BYTES', 1)
+
+    with pytest.raises(ValueError, match='Media changed during export'):
+        store.export_file(item['id'])
+
+    export_dir = store.root / item['id'] / 'exports'
+    assert not list(export_dir.glob('.*.tmp'))
+    assert not (export_dir / 'v1.zip').exists()
 
 
 def test_create_idempotency_survives_restart_and_rejects_changed_payload(tmp_path):

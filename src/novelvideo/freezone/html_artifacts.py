@@ -14,10 +14,10 @@ from datetime import datetime, timezone
 from html import escape
 from html.parser import HTMLParser
 import hashlib
-import io
 import json
 from pathlib import Path
 import re
+from time import monotonic
 from urllib.parse import quote, unquote, urlsplit
 import uuid
 import zipfile
@@ -25,6 +25,13 @@ import zipfile
 MAX_HTML_BYTES = 2 * 1024 * 1024
 MAX_PREVIEW_BYTES = 16 * 1024 * 1024
 MAX_EXPORT_BYTES = 100 * 1024 * 1024
+EXPORT_COPY_CHUNK_BYTES = 1024 * 1024
+# The EE mutex lease lasts 60 seconds; refresh well inside that window while a
+# large archive is copied. The CE file-lock guard implements this as a no-op.
+EXPORT_LEASE_REFRESH_SECONDS = 20
+# A waiter shares the first builder's cached result. Allow enough time for the
+# full 100 MiB budget on a slow project mount before returning CanvasLockBusy.
+EXPORT_LOCK_WAIT_SECONDS = 300
 _ID = re.compile(r'[a-zA-Z0-9_-]{1,64}\Z')
 _MEDIA = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.ico', '.mp4', '.webm', '.mp3', '.wav', '.ogg', '.woff', '.woff2', '.ttf'}
 
@@ -301,18 +308,23 @@ class ArtifactStore:
     def export_file(self, artifact_id: str, version: int | None = None) -> Path:
         artifact = self.get(artifact_id, version)
         directory = self._directory(artifact_id) / 'exports'
+
         def cached():
             if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
                 raise ValueError('Invalid export directory')
             target = directory / f"v{artifact['version']}.zip"
             self._regular(target)
             return target
-        with self._locked():
-            target = cached()
-            if target.exists():
-                return target
-        content = self.export(artifact_id, artifact['version'])
-        with self._locked() as guard:
+
+        from novelvideo.ports import get_canvas_write_mutex
+        lock_id = 'html_export_' + hashlib.sha256(
+            f"{artifact_id}:{artifact['version']}".encode()
+        ).hexdigest()[:40]
+        with get_canvas_write_mutex().write_mutex(
+            self.project_dir,
+            lock_id,
+            timeout_seconds=EXPORT_LOCK_WAIT_SECONDS,
+        ) as guard:
             target = cached()
             if target.exists():
                 return target
@@ -320,7 +332,7 @@ class ArtifactStore:
             temporary = directory / ('.' + uuid.uuid4().hex + '.tmp')
             try:
                 with temporary.open('xb') as stream:
-                    stream.write(content)
+                    self._write_export(stream, artifact, guard.reassert)
                     stream.flush()
                     os.fsync(stream.fileno())
                 guard.reassert()
@@ -329,17 +341,38 @@ class ArtifactStore:
                 temporary.unlink(missing_ok=True)
             return target
 
-    def export(self, artifact_id: str, version: int | None = None) -> bytes:
-        artifact = self.get(artifact_id, version)
+    def _write_export(self, stream, artifact: dict, reassert) -> None:
         parser = _PortableHTML(self)
         parser.feed(artifact['html'])
         parser.close()
-        out = io.BytesIO()
-        with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr('index.html', ''.join(parser.output))
-            for name, content in parser.resources.values():
-                archive.writestr(name, content)
-        return out.getvalue()
+        copied = 0
+        next_reassert = monotonic() + EXPORT_LEASE_REFRESH_SECONDS
+        with zipfile.ZipFile(stream, 'w') as archive:
+            archive.writestr(
+                'index.html',
+                ''.join(parser.output),
+                compress_type=zipfile.ZIP_DEFLATED,
+            )
+            for name, candidate, expected in parser.resources.values():
+                with parser.open_resource(candidate) as (source, info):
+                    if parser.file_identity(info) != expected:
+                        raise ValueError('Media changed during export; retry')
+                    info = zipfile.ZipInfo(name)
+                    info.compress_type = zipfile.ZIP_STORED
+                    with archive.open(info, 'w') as destination:
+                        while True:
+                            chunk = source.read(EXPORT_COPY_CHUNK_BYTES)
+                            if not chunk:
+                                break
+                            copied += len(chunk)
+                            if copied > MAX_EXPORT_BYTES:
+                                raise ValueError('Export resources exceed 100 MiB')
+                            destination.write(chunk)
+                            if monotonic() >= next_reassert:
+                                reassert()
+                                next_reassert = monotonic() + EXPORT_LEASE_REFRESH_SECONDS
+                    if parser.file_identity(os.fstat(source.fileno())) != expected:
+                        raise ValueError('Media changed during export; retry')
 
 
 class _PortableHTML(HTMLParser):
@@ -348,7 +381,7 @@ class _PortableHTML(HTMLParser):
         super().__init__(convert_charrefs=False)
         self.store = store
         self.output: list[str] = []
-        self.resources: dict[str, tuple[str, bytes]] = {}
+        self.resources: dict[str, tuple[str, Path, tuple[int, int, int, int]]] = {}
         self.in_style = False
         self.total_bytes = 0
 
@@ -359,36 +392,55 @@ class _PortableHTML(HTMLParser):
         candidate, parts = self.media_path(value)
         key = str(candidate.resolve())
         if key not in self.resources:
-            # Resolve each component through directory descriptors. O_NOFOLLOW
-            # closes symlink-swap races between validation and reading a file.
-            descriptors = []
-            try:
-                fd = os.open(self.store.project_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-                descriptors.append(fd)
-                components = candidate.relative_to(self.store.project_dir).parts
-                for component in components[:-1]:
-                    fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-                    descriptors.append(fd)
-                media_fd = os.open(components[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
-                descriptors.append(media_fd)
-                info = os.fstat(media_fd)
-                if not stat.S_ISREG(info.st_mode):
-                    raise ValueError('Media must be a regular file')
-                if info.st_size + self.total_bytes > MAX_EXPORT_BYTES:
-                    raise ValueError('Export resources exceed 100 MiB')
-                with os.fdopen(os.dup(media_fd), 'rb') as stream:
-                    content = stream.read(MAX_EXPORT_BYTES - self.total_bytes + 1)
-            except OSError as exc:
-                raise ValueError('Media path is missing, unreadable, or contains a symlink') from exc
-            finally:
-                for descriptor in reversed(descriptors):
-                    os.close(descriptor)
-            self.total_bytes += len(content)
+            with self.open_resource(candidate) as (_, info):
+                self.total_bytes += info.st_size
             if self.total_bytes > MAX_EXPORT_BYTES:
                 raise ValueError('Export resources exceed 100 MiB')
             name = 'assets/' + hashlib.sha256(key.encode()).hexdigest()[:24] + candidate.suffix.lower()
-            self.resources[key] = (name, content)
+            self.resources[key] = (name, candidate, self.file_identity(info))
         return self.resources[key][0] + ('#' + parts.fragment if parts.fragment else '')
+
+    @staticmethod
+    def file_identity(info: os.stat_result) -> tuple[int, int, int, int]:
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+    @contextmanager
+    def open_resource(self, candidate: Path):
+        """Open one project resource without following a swapped symlink."""
+        descriptors = []
+        try:
+            try:
+                fd = os.open(
+                    self.store.project_dir,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                )
+                descriptors.append(fd)
+                components = candidate.relative_to(self.store.project_dir).parts
+                for component in components[:-1]:
+                    fd = os.open(
+                        component,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=fd,
+                    )
+                    descriptors.append(fd)
+                media_fd = os.open(
+                    components[-1],
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    dir_fd=fd,
+                )
+                descriptors.append(media_fd)
+                info = os.fstat(media_fd)
+            except OSError as exc:
+                raise ValueError(
+                    'Media path is missing, unreadable, or contains a symlink'
+                ) from exc
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError('Media must be a regular file')
+            with os.fdopen(os.dup(media_fd), 'rb') as stream:
+                yield stream, info
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
 
     def media_path(self, value: str):
         parts = urlsplit(value)
@@ -520,8 +572,17 @@ class _PreviewHTML(_PortableHTML):
             if rewritten.startswith(('#', 'data:')):
                 return rewritten
             name = rewritten.split('#', 1)[0]
-            content = next(content for resource_name, content in self.resources.values() if resource_name == name)
+            candidate = next(
+                candidate
+                for resource_name, candidate, _ in self.resources.values()
+                if resource_name == name
+            )
             mime = mimetypes.guess_type(name)[0] or 'application/octet-stream'
+            with self.open_resource(candidate) as (stream, info):
+                size = ((info.st_size + 2) // 3) * 4 + 128
+                if self.embedded_bytes + size > MAX_PREVIEW_BYTES:
+                    raise PreviewTooLarge('Preview exceeds 16 MiB; reduce embedded media')
+                content = stream.read(info.st_size + 1)
             size = ((len(content) + 2) // 3) * 4 + 128
             if self.embedded_bytes + size > MAX_PREVIEW_BYTES:
                 raise PreviewTooLarge('Preview exceeds 16 MiB; reduce embedded media')
