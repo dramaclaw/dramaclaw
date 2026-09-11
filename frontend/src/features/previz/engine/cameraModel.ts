@@ -200,7 +200,8 @@ export function buildCameraModel(
 
   const frustum = new three.LineSegments(
     makeFrustum(three, camera, aspect),
-    new three.LineBasicMaterial({ color: PREVIZ_CAMERA_COLOR.frustum }),
+    // 视锥线框是画在场景里的界面，不过色调映射。同 `sceneGraph.markerMaterial`。
+    new three.LineBasicMaterial({ color: PREVIZ_CAMERA_COLOR.frustum, toneMapped: false }),
   );
   frustum.userData.previzPlaceholder = true;
   frustum.userData.previzPlaceholderColor = PREVIZ_CAMERA_COLOR.frustum;

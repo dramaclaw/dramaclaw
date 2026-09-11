@@ -75,6 +75,13 @@ vi.mock("three", () => {
       }
     },
     DoubleSide: 2,
+    // 接触阴影那一套：软阴影贴图、ACES 色调映射，和只画影子的承影材质。
+    PCFSoftShadowMap: 2,
+    ACESFilmicToneMapping: 4,
+    ShadowMaterial: class {
+      dispose = vi.fn();
+      constructor(public options: Record<string, unknown> = {}) {}
+    },
     MOUSE: { LEFT: 0, MIDDLE: 1, RIGHT: 2, ROTATE: 0, DOLLY: 1, PAN: 2 },
     TOUCH: { ROTATE: 0, PAN: 1, DOLLY_PAN: 2, DOLLY_ROTATE: 3 },
     Mesh: class {
@@ -106,9 +113,25 @@ vi.mock("three", () => {
         this.color = { getHex: () => hex };
       }
     },
-    AmbientLight: class {},
+    HemisphereLight: class {},
     DirectionalLight: class {
       position = { set: vi.fn() };
+      castShadow = false;
+      // 投影相机与深度图尺寸都要照着场景调（默认框只有 ±5 米），所以替身得把这两样
+      // 摆出来，否则 create() 当场炸在一句和本文件无关的 TypeError 上。
+      shadow = {
+        camera: {
+          left: -5,
+          right: 5,
+          top: 5,
+          bottom: -5,
+          near: 0.5,
+          far: 500,
+          updateProjectionMatrix: vi.fn(),
+        },
+        mapSize: { set: vi.fn() },
+        normalBias: 0,
+      };
     },
     PerspectiveCamera: class {
       aspect = 1;
@@ -117,6 +140,8 @@ vi.mock("three", () => {
     },
     WebGLRenderer: class {
       render = render;
+      shadowMap = { enabled: false, type: 0 };
+      toneMapping = 0;
       setPixelRatio = vi.fn();
       setSize = vi.fn();
       dispose = vi.fn();

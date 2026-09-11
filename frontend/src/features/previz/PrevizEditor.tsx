@@ -53,7 +53,7 @@ import {
 import { canAddObject } from "./domain/limits";
 import { drawPlaneHeight } from "./domain/pathDraw";
 import { liveCameraAt } from "./domain/program";
-import { uploadPrevizProp } from "./propAsset";
+import { PREVIZ_PROP_MAX_MB, propSizeMb, uploadPrevizProp } from "./propAsset";
 import { monitorCameraId, usePrevizStore } from "./store";
 import { PrevizCameraCreateDialog } from "./ui/PrevizCameraCreateDialog";
 import { PrevizCharacterCreateDialog } from "./ui/PrevizCharacterCreateDialog";
@@ -750,27 +750,69 @@ export function PrevizEditor({
         toast.error(t("previz.editor.noProject"));
         return;
       }
-      const result = await uploadPrevizProp(project, file);
+      // 上限提到了 199 MB，慢一点的上行传一趟就是几分钟。ky 走的是 fetch，拿不到上传
+      // 进度事件，所以这里只能给一个不带百分比的 pending 提示——但「有没有在动」本来就
+      // 比「走到几成」重要：在这之前，从点完导入到 toast 弹出是一段完全没有反馈的空白，
+      // 大文件时长得足以让人以为按钮坏了，于是再点一次。
+      let pending: string | number | undefined;
+      const result = await uploadPrevizProp(project, file, {
+        // 压缩与上传各说各的：压缩是本地几秒到十几秒的静默停顿，上传是几分钟的等待。
+        // 合成一句「处理中」的话，卡在哪一段完全看不出来。
+        onCompressStart: () => {
+          pending = toast.loading(t("previz.editor.propUpload.compressing", { name: file.name }));
+        },
+        onUploadStart: () => {
+          if (pending !== undefined) toast.dismiss(pending);
+          pending = toast.loading(t("previz.editor.propUpload.uploading", { name: file.name }));
+        },
+      });
+      if (pending !== undefined) toast.dismiss(pending);
       if (!result.ok) {
-        toast.error(
-          t(
-            result.reason === "format"
-              ? "previz.editor.propUpload.format"
-              : result.reason === "too-large"
-                ? "previz.editor.propUpload.tooLarge"
+        if (result.reason === "too-large") {
+          // 把「你这个多大」也说出来。只说「超了」的话，用户不知道要减到什么程度，
+          // 减完一轮再传一次还是超，是最容易让人放弃的那种反馈。
+          toast.error(
+            t("previz.editor.propUpload.tooLarge", {
+              size: propSizeMb(result.size),
+              limit: PREVIZ_PROP_MAX_MB,
+            }),
+          );
+        } else {
+          toast.error(
+            t(
+              result.reason === "format"
+                ? "previz.editor.propUpload.format"
                 : "previz.editor.propUpload.failed",
-          ),
-        );
+            ),
+          );
+        }
         return;
+      }
+      // 压出效果了就说一声。省下的是上行流量和用户的等待时间，不说的话这件事对用户
+      // 完全不可见——而下次他还是会先自己去减面。
+      if (result.bytes < result.originalBytes) {
+        toast.success(
+          t("previz.editor.propUpload.compressed", {
+            from: propSizeMb(result.originalBytes),
+            to: propSizeMb(result.bytes),
+          }),
+        );
       }
       const id = addObject("prop", {
         name: result.name,
         assetUrl: result.assetUrl,
         assetFormat: result.assetFormat,
       });
-      if (!id) toast.error(t("previz.editor.limitReached"));
+      if (!id) {
+        toast.error(t("previz.editor.limitReached"));
+        return;
+      }
+      // 预约取景，而不是当场 focusObject：这一刻节点上还挂着占位方块，模型在网上。
+      // 用户自备的模型没有单位约定，一份按厘米建的房子进来就是几百米高，不取景的话
+      // 默认机位正好在它肚子里——画面上什么都没变，只是「多了一堵白墙」。
+      renderer?.focusObjectWhenReady(id);
     },
-    [addObject, t],
+    [addObject, renderer, t],
   );
 
   const handleQuadPreview = useCallback(

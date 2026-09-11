@@ -210,6 +210,55 @@ const MARKER_LIFT = 0.001;
 const MARKER_ARROW_Z = -(MARKER_OUTER_RADIUS + 0.1);
 
 /**
+ * 超过这个尺寸的导入模型算「布景外壳」——一整间屋子、一栋房子、一块地形。
+ *
+ * 6 米：一间屋子的短边都不止这个数（用户那份 `Room.obj` 换算完是 5.7×8.9 米），
+ * 而单件家具到不了——最长的沙发 2.5 米，一张大餐桌 3 米，一辆车 5 米。挑得偏大一点
+ * 是故意的：认错方向上的代价不对称，把家具误判成外壳只是少一道影子，把屋子误判成
+ * 家具是整个地面被切成明暗两半。
+ */
+const SHELL_SIZE_M = 6;
+
+/**
+ * 让整棵子树接影；除了布景外壳，也一并投影。
+ *
+ * three 的阴影是**按对象**开关的，默认两个都关——不逐个打开的话，场景里点了多少盏
+ * 投影灯都没有影子，而画面上一点报错都没有。物件与人物的模型是异步落进树里的，
+ * 所以这件事收在「挂进节点之前」这一刻，两条路径（`swapInCharacterModel` 与
+ * `swapInPropModel`）各调一次。
+ *
+ * **外壳不投影**：主光是一盏平行光，也就是一颗太阳，而它照样会被屋子自己的天花板和
+ * 外墙挡住。于是从室内看，地板上是一条笔直的明暗分界——亮的那块是光从窗口漏进来的
+ * 位置，其余全在屋子自己的影子里。物理上没错，可预演台是**站在屋里**看的，挡光的那
+ * 面墙在镜头背后，画面上就成了地上凭空一条直线。让外壳只收不投，室内就还是均匀受光，
+ * 而人和家具的影子照旧落在它的地板上——接触阴影本来要的就是这个。
+ *
+ * 自己递归而不是用 `traverse`：`traverse` 的回调返回 false 不会跳过子树（它没有那个
+ * 约定），而辨识标记是一整棵子树——环、箭头都得一起跳过。
+ */
+function enableShadows(target: THREE.Object3D, cast: boolean): void {
+  // 辨识标记与描边名牌不参与投影：它们是画在场景里的界面，不是布景里的东西。
+  // 一圈脚下的辨识环投出一道影子，会被读成地上真的躺着一个环。
+  if (target.userData.previzMarker || target.userData[PREVIZ_OVERLAY_KEY]) return;
+  target.castShadow = cast;
+  // 接影一律开：预演台里最常见的是一间屋子加几个人，人的影子要落在屋子的地板上，
+  // 而那块地板正是另一个导入模型的一部分。只开 castShadow 的话，影子全落在编辑期那块
+  // 承影平面上——也就是穿过地板落到 y=0 去了。
+  target.receiveShadow = true;
+  for (const child of target.children) enableShadows(child, cast);
+}
+
+/**
+ * 尺寸是 `PropLoader` 在做单位换算时顺手量的（`previzModelSizeM`，换算后的米数）。
+ * 量不到就按「会投影」办：人物 rig 走的是另一条加载路径，身上没有这个数，而人的影子
+ * 正是接触阴影最该有的那一道。
+ */
+function castsShadow(model: THREE.Object3D): boolean {
+  const size = model.userData.previzModelSizeM;
+  return typeof size !== 'number' || size < SHELL_SIZE_M;
+}
+
+/**
  * 位置与旋转没有值域，只有「必须有限」这一条。非有限分量落到 0：
  * NaN 会顺着 `updateMatrixWorld` 污染整棵子树的世界矩阵，物体从画面上凭空消失，
  * 而 three 一声不吭——症状离病因隔着整个引擎层。
@@ -240,7 +289,7 @@ export class PrevizSceneGraph {
   private outputAspect: OutputAspect = '16:9';
   /** 由 `PrevizRenderer.create()` 注入；没注入时人物一直用占位胶囊。 */
   private characterRig: CharacterRigFactory | null = null;
-  private onModelReady: (() => void) | null = null;
+  private onModelReady: ((objectId: string) => void) | null = null;
   /**
    * 人物模型请求的流水号发号器。每发一次请求就给那个节点记一个新号，模型回来时号对
    * 不上就整份丢掉（见 `swapInCharacterModel`）。
@@ -259,10 +308,14 @@ export class PrevizSceneGraph {
   ) {}
 
   /**
-   * 接上人物模型工厂。`onReady` 在每个模型换入之后调一次：模型是异步到的，
-   * 按需重绘的循环这时早就静下来了，不主动请求一帧的话人物要等到用户下一次动鼠标才出现。
+   * 接上人物模型工厂。`onReady` 在每个模型换入之后调一次，带上那个对象的 id：模型是
+   * 异步到的，按需重绘的循环这时早就静下来了，不主动请求一帧的话人物要等到用户下一次
+   * 动鼠标才出现。
+   *
+   * 带 id 是因为「模型到位」是唯一能判断一个对象**真实尺寸**的时刻——在此之前节点上
+   * 挂的是占位体，量出来的是占位体的大小。导入后自动取景要等的就是这一刻。
    */
-  attachCharacterRig(factory: CharacterRigFactory, onReady: () => void): void {
+  attachCharacterRig(factory: CharacterRigFactory, onReady: (objectId: string) => void): void {
     this.characterRig = factory;
     this.onModelReady = onReady;
   }
@@ -525,10 +578,11 @@ export class PrevizSceneGraph {
         disposeSubtree(child);
       }
     }
+    enableShadows(model, castsShadow(model));
     node.add(model);
     // 模型是在任何一次 sync 之外落进树里的，显示模式得单独补一次。
     this.refreshDisplayMode();
-    this.onModelReady?.();
+    this.onModelReady?.(character.id);
   }
 
   /**
@@ -570,15 +624,20 @@ export class PrevizSceneGraph {
       node.remove(child);
       disposeSubtree(child);
     }
+    enableShadows(model, castsShadow(model));
     node.add(model);
     this.refreshDisplayMode();
-    this.onModelReady?.();
+    this.onModelReady?.(prop.id);
   }
 
   private createNode(object: PrevizObject): THREE.Object3D {
     const group = new this.three.Group();
     group.add(this.createPlaceholder(object));
     if (object.kind === 'character') group.add(this.createMarker(object));
+    // 占位体也投影。模型还在路上的那几秒里，一个不投影的胶囊看着像浮在地面上方——
+    // 而模型到位之后它突然落地，那一下会被读成位置跳了。`enableShadows` 自己跳过
+    // 辨识标记，所以这里可以整个组交给它。
+    enableShadows(group, true);
     return group;
   }
 
@@ -623,7 +682,15 @@ export class PrevizSceneGraph {
   }
 
   private markerMaterial(color: string): THREE.Material {
-    return new this.three.MeshBasicMaterial({ color, side: this.three.DoubleSide });
+    return new this.three.MeshBasicMaterial({
+      color,
+      side: this.three.DoubleSide,
+      // 不过色调映射。渲染器开了 ACES（见 `PrevizRenderer.create`），而它会把纯色往下
+      // 压、往灰里带——一个 #00ff00 的辨识环出来不再是 #00ff00。场景里的东西该被这条
+      // 曲线管着，画在场景里的**界面**不该：辨识色被改了，它就不成其为辨识色了。
+      // 本文件里每一处画界面的材质都带这一条，理由同此。
+      toneMapped: false,
+    });
   }
 
   /**

@@ -21,13 +21,17 @@ import {
 } from '../domain/topDownMap';
 import {
   PREVIZ_DEFAULT_VIEW,
+  PREVIZ_VIEW_FAR_M,
+  PREVIZ_VIEW_NEAR_M,
   boundsCenter,
   boundsRadius,
   framingDistance,
+  orbitDepthRange,
   orthoPlacement,
   unionBounds,
   viewPlacement,
   type PrevizBounds,
+  type PrevizDepthRange,
   type PrevizViewDirection,
   type PrevizViewPlacement,
 } from '../domain/view';
@@ -50,6 +54,7 @@ import { PrevizPathPreview } from './pathPreview';
 import { PrevizStrokePreview } from './strokePreview';
 import { PrevizGizmo, type GizmoMode, type TransformControlsLike } from './gizmo';
 import { createInfiniteGrid } from './grid';
+import { prepareImportedMaterials } from './importedMaterials';
 import { PropLoader } from './propLoader';
 import { PREVIZ_PLACEHOLDER_RADIUS, PrevizSceneGraph, type ThreeModule } from './sceneGraph';
 import { PrevizViewOverlays, type PrevizViewOverlayOptions } from './viewOverlays';
@@ -72,6 +77,68 @@ const TOP_DOWN_EMPTY_BOUNDS: PrevizBounds = {
 
 /** 编辑视角的视场角。刻意与机位的 focalMm 无关：这是自由飞行相机，不是取景器。 */
 const EDITOR_FOV_DEG = 50;
+
+/**
+ * 主光投影的正交框半径，单位米。整个框是以场景原点为中心的 40 m 见方。
+ *
+ * 这个数是一次取舍：框外的对象**一律不投影**（不是影子变糊，是完全没有），而框每放大
+ * 一倍，同一张深度图上每米摊到的像素就少一半、接触处的影子边缘就糊一档。40 m 能整个
+ * 装下一间屋子加周围的走位余地，2048 的深度图摊下来约 51 像素／米，接触阴影还是实的。
+ *
+ * 跟着场景包围盒动态收紧是更好的做法，代价是每次增删对象都要重算并重编译一次阴影相机，
+ * 而现在还没有哪条用例被这个固定框挡住。真被挡住时，收紧的入口在这里。
+ */
+const SHADOW_EXTENT_M = 20;
+
+/**
+ * 半球填充光的天顶色与地面色。
+ *
+ * 天顶偏冷、地面压到接近背景（#101216）那一档：地面色不是在「给地面打光」，它是物体
+ * 底面收到的回弹光，调亮了底面就浮起来，正好抵掉接触阴影想说的那件事。两个颜色拉开
+ * 差距才有方向感——同色的半球光和 `AmbientLight` 没有区别。
+ */
+const SKY_FILL_COLOR = 0xdfe6f2;
+const GROUND_FILL_COLOR = 0x1a1e26;
+
+/**
+ * 接住影子的那块地。
+ *
+ * 非要单独来一块，是因为地面网格是自定义 `ShaderMaterial`（见 grid.ts），而 three 的
+ * 阴影是在**内置材质**的着色器里拼进去的——自定义着色器不写那段代码就收不到影子。
+ * 于是站在空地上的对象会把影子投到虚无里：算了，画不出来。
+ *
+ * `ShadowMaterial` 正是为这件事存在的：除了阴影它什么都不画，所以这块平面在画面上
+ * 只剩那团影子本身。
+ */
+/** 承影平面沉到地面以下多少米。够躲开共面，又小到影子看不出偏移。 */
+const SHADOW_CATCHER_SINK_M = 0.001;
+
+function createShadowCatcher(three: ThreeModule): THREE.Object3D {
+  const material = new three.ShadowMaterial({
+    // 影子的浓度。纯黑压得太死——这块地在画面上是没有的，影子太实会读成一个黑色物体。
+    opacity: 0.28,
+    // 不写深度：它和网格地面共面，写了就是两张共面的半透明面互相争，
+    // 视角一动影子边缘整片闪。网格那边同理（grid.ts 里有同一条注释）。
+    depthWrite: false,
+  });
+  const size = SHADOW_EXTENT_M * 2;
+  const catcher = new three.Mesh(new three.PlaneGeometry(size, size), material);
+  catcher.rotation.x = -Math.PI / 2;
+  // 沉到 y=0 下面一毫米。导进来的屋子自带地板，它也接影——那时这块地和真地板共面，
+  // 同一道影子会被画两遍，暗处比该有的更暗，而且两张共面的片在远处会互相穿插。
+  // 沉下去之后有真地板的地方它被挡住（不透明的地板先画、深度更近），只在空地上露出来。
+  catcher.position.y = -SHADOW_CATCHER_SINK_M;
+  catcher.receiveShadow = true;
+  // 排在网格之后画。两者都在半透明队列里、都不写深度，谁后画谁盖在上面——影子要盖住
+  // 网格线，否则一条条亮线会从影子里穿出来。
+  catcher.renderOrder = 0;
+  // 铺满脚下的一块地，留着默认射线检测会让每一次空点都命中它。同 grid.ts。
+  catcher.raycast = () => {};
+  // 和地面网格同属编辑期的参照物：镜头里不该出现一块凭空的影子地（出片、录制、监看
+  // 那几趟会连同轨迹曲线一起把带这个标记的直接子节点藏掉，见 `setEditorHelpersVisible`）。
+  catcher.userData.previzEditorOnly = true;
+  return catcher;
+}
 
 /**
  * 一次录制的句柄。`canvas` 就是视口那块 DOM 画布：录制期间它的位图被钉在出片分辨率上
@@ -132,6 +199,13 @@ export class PrevizRenderer {
   private raycaster: THREE.Raycaster | null = null;
   private currentScene: PrevizScene | null = null;
   private selectionId: string | null = null;
+  /**
+   * 等模型到位就取景的那个对象。见 `focusObjectWhenReady`。
+   *
+   * 只记一个：连着导入两份模型时，后一次覆盖前一次——两份都取景的话相机会在两个位置
+   * 之间跳一下，而用户最后想看的本来就是后导入的那个。
+   */
+  private pendingFocusId: string | null = null;
   private gizmo: PrevizGizmo | null = null;
   private monitorCamera: THREE.PerspectiveCamera | null = null;
   /** 监看画中画的大小档位。 */
@@ -210,18 +284,60 @@ export class PrevizRenderer {
       ]);
 
     const renderer = new three.WebGLRenderer({ canvas, antialias: true });
+    // 接触阴影：物体和地面之间那道暗，是「这东西站在这儿」唯一不靠透视也读得出来的
+    // 线索。没有它，一把椅子摆在地上还是浮在半空，画面上一模一样。
+    // PCFSoft 而不是默认的 PCF：预演台里几乎全是白模，硬边阴影在白模上格外像渲染错误。
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = three.PCFSoftShadowMap;
+    // 白模在这套光下必然把高光段推到 1.0 以上。线性输出会把超出去的部分整片裁成纯白，
+    // 而那正是用户报的「模型没渲染出来」——一堵白墙上没有任何明暗，只有轮廓。
+    // ACES 把高光滚下来，墙面才留得住起伏。
+    renderer.toneMapping = three.ACESFilmicToneMapping;
 
     const scene = new three.Scene();
     scene.background = new three.Color(0x101216);
     // 地面自己跟着当前那台相机走（见 grid.ts），所以这里只管加进场景，不必接线。
     scene.add(createInfiniteGrid(three));
-    scene.add(new three.AmbientLight(0xffffff, 1.2));
+    scene.add(createShadowCatcher(three));
+    // 填充光用半球光，不用 `AmbientLight`：后者是给每个像素均匀加一层白，不带任何方向
+    // 信息，加得越多模型越平——而「一整面墙上没有明暗、只剩轮廓」正是白模最怕的样子。
+    // 半球光按法线朝上的程度在天顶色与地面色之间插值，顶面亮、底面暗、侧面居中，
+    // 于是背光面也有过渡。
+    //
+    // 也试过用 three 的 `RoomEnvironment` 烘一张 IBL 挂到 `scene.environment`：形体是
+    // 出来了，但那是一间白摄影棚，整个场景被它提亮一档，预演台原本的暗底调没了。
+    // 半球光留住了调子，方向感该有的也有。
+    scene.add(new three.HemisphereLight(SKY_FILL_COLOR, GROUND_FILL_COLOR, 0.9));
 
     const keyLight = new three.DirectionalLight(0xffffff, 1.8);
     keyLight.position.set(4, 8, 6);
+    keyLight.castShadow = true;
+    // 正交阴影相机的默认框是 ±5 米，而预演台的常见场景是一整间屋子（`Room.obj` 换算完
+    // 是 5.7×8.9 米）。框小了的表现不是「没阴影」，是**框外的东西一律不投影**，
+    // 于是半间屋子有影半间没有。往外放到 ±20，代价是同一张深度图铺的面积大了 16 倍，
+    // 所以下面把分辨率也跟着提上去。
+    const shadowCamera = keyLight.shadow.camera;
+    shadowCamera.left = -SHADOW_EXTENT_M;
+    shadowCamera.right = SHADOW_EXTENT_M;
+    shadowCamera.top = SHADOW_EXTENT_M;
+    shadowCamera.bottom = -SHADOW_EXTENT_M;
+    shadowCamera.near = 0.5;
+    shadowCamera.far = 80;
+    shadowCamera.updateProjectionMatrix();
+    keyLight.shadow.mapSize.set(2048, 2048);
+    // `normalBias` 而不是只调 `bias`：导入的模型全被改成了双面（见 `importedMaterials.ts`），
+    // 而双面材质的阴影两面都写，薄墙上会起一层自阴影的斑。normalBias 沿法线把采样点推开，
+    // 正是为这种情况准备的；纯 bias 要推到很大才压得住，那时接触点的阴影会整个飘离物体。
+    keyLight.shadow.normalBias = 0.02;
     scene.add(keyLight);
 
-    const camera = new three.PerspectiveCamera(EDITOR_FOV_DEG, 1, 0.1, 500);
+    const camera = new three.PerspectiveCamera(
+      EDITOR_FOV_DEG,
+      1,
+      PREVIZ_VIEW_NEAR_M,
+      // 只是起点：`syncDepthRange()` 每帧按轨道距离往外推。
+      PREVIZ_VIEW_FAR_M,
+    );
     camera.position.set(...PREVIZ_DEFAULT_VIEW.position);
 
     // 场景对象全部挂在这个组下面，和地面网格 / 常驻灯光分开：拾取与聚焦只看它，
@@ -272,9 +388,11 @@ export class PrevizRenderer {
       // 顺手补一次描边 / 名牌：这条路径不经过 setScene，少了它后到的 GLB 一直没有描边。
       // 也把当前帧重放一遍：`build()` 摆的是静态姿势，播放头这时可能已经在路径中间，
       // 不重放的话后到的模型会一直站着滑，直到播放头下一次移动。
-      () => {
+      (objectId) => {
         instance.applyEvaluatedFrame();
         instance.syncOverlays();
+        // 排在 requestRender 之前：取景要动相机，动完再请求那一帧，省掉一次白画。
+        instance.resolvePendingFocus(objectId);
         instance.requestRender();
       },
     );
@@ -285,6 +403,15 @@ export class PrevizRenderer {
         loadGltf: (url) => gltfLoader.loadAsync(url),
         loadObj: (url) => objLoader.loadAsync(url),
         clone: skeletonUtils.clone,
+        measure: (object) => {
+          // 每次新建一个 Box3 而不是复用一个模块级实例：加载是并发的，同一帧里可能有
+          // 两个模型先后量。`setFromObject` 会走遍整棵子树，但每个 URL 只量一次。
+          const box = new three.Box3().setFromObject(object);
+          // 空盒（没有任何几何体的模型）出来是 -Infinity..Infinity，减出来是 -Infinity。
+          // `propUnitScale` 认这个数、原样放行，不用在这里兜。
+          return Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
+        },
+        prepareMaterials: (object) => prepareImportedMaterials(three, object),
       }),
     );
 
@@ -1043,6 +1170,28 @@ export class PrevizRenderer {
     );
   }
 
+  /**
+   * 等这个对象的模型到位之后再取景。导入模型走这条路，不走 `focusObject`。
+   *
+   * 因为**这一刻还量不出它有多大**：`addObject` 返回时节点上挂的是占位方块，资产还在
+   * 网上。这时聚焦框住的是那个方块，等真模型换进来，相机早已停在按方块算出的距离上——
+   * 一份几百米的建筑于是把相机整个包在里面，画面是一片白墙（更糟的是一片黑，因为看到的
+   * 是背面）。用户看不出发生过什么，只知道「导入完什么都没有」。
+   *
+   * 对象在模型到达之前被删掉、或者加载失败，这个意向就一直挂着不生效——不设超时是有意的：
+   * 加载失败后用户改一次属性就是一次重试（见 `syncPropModel`），那次成功时取景仍然是他要的。
+   */
+  focusObjectWhenReady(objectId: string): void {
+    this.pendingFocusId = objectId;
+  }
+
+  /** 模型换入的回调里调。不是等的那个就放过——人物模型也走同一个回调。 */
+  private resolvePendingFocus(objectId: string): void {
+    if (this.pendingFocusId !== objectId) return;
+    this.pendingFocusId = null;
+    this.focusObject(objectId);
+  }
+
   resetView(): void {
     this.moveCamera([...PREVIZ_DEFAULT_VIEW.position], [...PREVIZ_DEFAULT_VIEW.target]);
   }
@@ -1502,8 +1651,35 @@ export class PrevizRenderer {
   /** 主视图加监看框画一遍，顺手把待绘标记清掉。tick 与 resize() 共用。 */
   private renderFrame(): void {
     this.needsRender = false;
+    this.syncDepthRange();
     this.renderer.render(this.scene, this.camera);
     this.renderMonitor();
+  }
+
+  /**
+   * 把视口相机的深度范围调到装得下当前轨道距离。
+   *
+   * 放在每帧开头而不是 `moveCamera` 里：OrbitControls 的滚轮推拉直接改 `camera.position`，
+   * 根本不经过 `moveCamera`——挂在那里的话，用户滚出去看大场景时远平面纹丝不动，
+   * 而那正是最需要它动的时候。
+   *
+   * 值没变就不碰投影矩阵：`updateProjectionMatrix()` 每帧调虽然便宜，但它会让相机的
+   * 投影矩阵每帧都算一遍新对象，静止画面上白白产生垃圾。
+   */
+  private syncDepthRange(): void {
+    // 手算而不是 `position.distanceTo(target)`：与 `focusObject` 里那段同一个理由——
+    // 这一层只依赖注入进来的 three 模块的**数据**形状，不依赖 Vector3 的方法表。
+    const range = orbitDepthRange(
+      Math.hypot(
+        this.camera.position.x - this.controls.target.x,
+        this.camera.position.y - this.controls.target.y,
+        this.camera.position.z - this.controls.target.z,
+      ),
+    );
+    if (this.camera.near === range.near && this.camera.far === range.far) return;
+    this.camera.near = range.near;
+    this.camera.far = range.far;
+    this.camera.updateProjectionMatrix();
   }
 
   dispose(): void {
@@ -1551,6 +1727,11 @@ export class PrevizRenderer {
   /** 测试用：确认编辑视角的视场角不随出片画幅变化。 */
   editorFovForTest(): number {
     return this.camera.fov;
+  }
+
+  /** 测试用：深度范围是每帧跟着轨道距离重算的，断言它不必去戳 three 的相机。 */
+  cameraDepthRangeForTest(): PrevizDepthRange {
+    return { near: this.camera.near, far: this.camera.far };
   }
 }
 

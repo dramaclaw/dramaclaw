@@ -78,8 +78,49 @@ export const PREVIZ_DEFAULT_VIEW = {
   target: [0, 1, 0],
 } as const;
 
-/** 正交预览的近平面。与视口相机的近平面同值，两处的裁切表现因此一致。 */
-const NEAR_PLANE_M = 0.1;
+/** 视口相机与正交预览共用的近平面，单位米。同值，两处的裁切表现因此一致。 */
+export const PREVIZ_VIEW_NEAR_M = 0.1;
+
+/**
+ * 视口相机远平面的**下界**，单位米。
+ *
+ * 它曾经是唯一的远平面，写死在渲染器的相机构造里。写死的代价是：用户自备的模型没有
+ * 单位约定，一份按厘米建的房子进来就是几百米高，聚焦它要退到七八百米开外——而那时
+ * 整个模型都落在远平面之外。画面上不是「什么都没有」，是模型被齐刷刷切掉一截、后面
+ * 的地面网格从缺口里透出来，看着像模型本身坏了，没人会想到是相机的锅。
+ *
+ * 现在它只是下界：轨道距离在 125 m 以内的场景（也就是过去能正常工作的每一个场景）
+ * 深度范围与从前逐位相同，只有大过它的才往外推。见 `orbitDepthRange`。
+ */
+export const PREVIZ_VIEW_FAR_M = 500;
+
+/**
+ * 远平面相对轨道距离的倍数。
+ *
+ * 取景一个半径 R 的包围球要退到约 3R（`framingDistance`，含 25% 留白），要让整个球
+ * 都进画，远平面至少得够到 3R + R。4 倍在这个基础上还留了富余，装得下「主体之外还
+ * 站着别的东西」这种常见情形。
+ */
+const FAR_DISTANCE_RATIO = 4;
+
+/**
+ * 远近平面比值的上限。
+ *
+ * 透视投影的深度精度是按 `near` 分配的：near 钉死在 0.1 而让 far 涨到几万，远处相邻
+ * 的两个面会落进同一个深度值，表现是墙面上一片随镜头闪烁的花纹。超过这个比值就把
+ * near 一起推远——退到那么远时，眼前 0.1 m 处本来也不该有需要正确排序的东西。
+ *
+ * 20000 是配合 24 位深度缓冲挑的：再放大一档，1 km 处的深度分辨率就掉到米级。
+ */
+const MAX_DEPTH_RATIO = 20000;
+
+/**
+ * 远平面的硬上界，单位米。
+ *
+ * 不是性能考虑，是防脏数据：轨道距离由相机位置减注视点得出，两边都可能被导入的场景
+ * 写成天文数字。没有这道闸，一次坏数据就能把投影矩阵推成实际上无穷远，画面全黑。
+ */
+const MAX_FAR_M = 5_000_000;
 
 /** 取景留白系数：包围球贴边填满画面太挤，退 25% 是常见取值。 */
 const FRAMING_PADDING = 1.25;
@@ -213,6 +254,30 @@ export function framingDistance(radius: number, verticalFovDeg: number, aspect: 
   return Math.max(MIN_FRAMING_DISTANCE, distance * FRAMING_PADDING);
 }
 
+export interface PrevizDepthRange {
+  near: number;
+  far: number;
+}
+
+/**
+ * 按相机到轨道中心的距离，算这一帧视口相机的深度范围。
+ *
+ * **挂在轨道距离上，而不是场景包围盒上。** 包围盒当然更准，但它要遍历整棵场景图逐个
+ * mesh 求世界盒，而这个值每一帧都要用；轨道距离只是一次减法加一次 hypot。更重要的是
+ * 它跟得住用户的动作：滚轮推拉、按 F 聚焦、切六视图，动的正好都是这个距离。
+ *
+ * 代价写在这里：相机贴着一栋巨大建筑站时，远平面按「贴着」算，建筑深处会被裁掉。那时
+ * 画面里本来也就是眼前这一片墙，而真要按整栋楼开远平面，深度精度会赔在这片墙上。
+ *
+ * 全函数（`domain/` 的横切约定）：距离是 NaN、负数或 Infinity 时回落到那对写死的老值。
+ * 绝不能把非有限数交给 `updateProjectionMatrix()`——three 拿到 NaN 不报错，只给一片黑。
+ */
+export function orbitDepthRange(distance: number): PrevizDepthRange {
+  const safeDistance = Number.isFinite(distance) && distance > 0 ? distance : 0;
+  const far = Math.min(MAX_FAR_M, Math.max(PREVIZ_VIEW_FAR_M, safeDistance * FAR_DISTANCE_RATIO));
+  return { near: Math.max(PREVIZ_VIEW_NEAR_M, far / MAX_DEPTH_RATIO), far };
+}
+
 /**
  * 正交取景：四视图那两块预览用的相机参数。
  *
@@ -257,7 +322,7 @@ export function orthoPlacement(
     halfHeight,
     // 近平面贴着相机、远平面兜住整个包围球：正交的深度是线性的，把范围开大不像透视
     // 那样折损深度精度。
-    near: NEAR_PLANE_M,
+    near: PREVIZ_VIEW_NEAR_M,
     far: distance + radius * 2 + MIN_FRAMING_DISTANCE,
   };
 }

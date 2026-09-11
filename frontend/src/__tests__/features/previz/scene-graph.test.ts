@@ -266,7 +266,8 @@ interface FakeMaterialView {
   dispose: ReturnType<typeof vi.fn>;
   clone: ReturnType<typeof vi.fn>;
   // 辨识标记与人物占位体的颜色是 `#rrggbb` 字符串（人物自己那一份），其余是数字常量。
-  params: { color?: number | string; side?: number };
+  // `toneMapped` 是建材质时就定死的开关，只在这份参数里读得到。
+  params: { color?: number | string; side?: number; toneMapped?: boolean };
 }
 
 interface FakeMeshView {
@@ -276,6 +277,8 @@ interface FakeMeshView {
   children: FakeMeshView[];
   position: { x: number; y: number; z: number };
   rotation: { x: number; y: number; z: number };
+  /** 模型还没到位的那几秒里，占位体也要投影。替身的 Object3D 没有这个字段，所以可选。 */
+  castShadow?: boolean;
 }
 
 function placeholderOf(graph: PrevizSceneGraph, objectId: string): FakeMeshView {
@@ -428,7 +431,7 @@ function findMesh(object: THREE.Object3D | undefined): FakeMeshView | undefined 
  * 源模型下面挂一个带几何体与材质的 Mesh——`clone()` 是浅克隆这两样，共享正是那道
  * dispose 护栏要挡的东西。
  */
-function propLoaderWith(three: typeof import('three')) {
+function propLoaderWith(three: typeof import('three'), sizeM = 1) {
   const source = new three.Object3D();
   const sourceMesh = new three.Mesh(
     new three.BoxGeometry(1, 1, 1),
@@ -441,7 +444,16 @@ function propLoaderWith(three: typeof import('three')) {
     // 这里的 three 是假的，`SkeletonUtils.clone` 走不通；本组用例要的只是「克隆体与源
     // 模型共享几何体和材质」。真正注入 `SkeletonUtils.clone` 那条线由
     // `prop-footprint-attach.test.ts` 用真 three 盯着。
-    loader: new PropLoader({ loadGltf, loadObj, clone: (object) => object.clone() }),
+    // 单位换算这条线由 `prop-unit-scale.test.ts` 和 `prop-footprint-attach.test.ts`
+    // 盯着；这里默认回一个合理尺寸，等于「不换算」，把本组用例留在接线上。尺寸还兼着
+    // 认「布景外壳」的活（见下面的投影用例），所以留成参数。
+    loader: new PropLoader({
+      loadGltf,
+      loadObj,
+      clone: (object) => object.clone(),
+      measure: () => sizeM,
+      prepareMaterials: () => {},
+    }),
     loadGltf,
     loadObj,
     sourceMesh: sourceMesh as unknown as FakeMeshView,
@@ -1719,6 +1731,111 @@ describe('PrevizSceneGraph', () => {
     // 模型是在任何一次 sync 之外落进树里的：不主动请求一帧，按需重绘的循环这时已经静了，
     // 物件要等到用户下一次动鼠标才出现。
     expect(onReady).toHaveBeenCalledTimes(1);
+  });
+
+  // three 的阴影是**按对象**开关的，默认两个都关。不逐个打开的话，场景里点了多少盏
+  // 投影灯都没有影子，而画面上一点报错都没有。
+  it('lets the loaded prop model cast and receive', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { loader } = propLoaderWith(three);
+    graph.attachPropLoader(loader);
+
+    const scene = propScene();
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+    await flush();
+
+    const model = sharedModelOf(graph, id)!;
+    expect(model.castShadow).toBe(true);
+    // 整棵子树，不只是根：真几何体挂在下面的 mesh 上，只开根节点等于一个影子都没有。
+    expect(model.children.every((child) => child.castShadow && child.receiveShadow)).toBe(true);
+    // 接影也要开：预演台里最常见的是一间屋子加几个人，人的影子得落在屋子的地板上，
+    // 而那块地板正是另一个导入模型的一部分。
+    expect(model.receiveShadow).toBe(true);
+  });
+
+  // 主光是一盏平行光，也就是一颗太阳，屋子自己的天花板和外墙照样挡得住它。于是从室内
+  // 看，地板被切成笔直的明暗两半——亮的是光从窗口漏进来的那块，其余全在屋子自己的影子
+  // 里。物理上没错，但挡光的那面墙在镜头背后，画面上就是地上凭空一条直线。
+  it('keeps a whole room from casting its own roof onto its own floor', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    // 9 米：用户那份 `Room.obj` 换算完是 5.7×8.9 米。
+    const { loader } = propLoaderWith(three, 9);
+    graph.attachPropLoader(loader);
+
+    const scene = propScene();
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+    await flush();
+
+    const model = sharedModelOf(graph, id)!;
+    expect(model.castShadow).toBe(false);
+    expect(model.children.every((child) => child.castShadow === false)).toBe(true);
+    // 接影照旧：人和家具的影子就是要落在这块地板上——接触阴影本来要的就是这个。
+    expect(model.receiveShadow).toBe(true);
+    expect(model.children.every((child) => child.receiveShadow)).toBe(true);
+  });
+
+  it('lets the loaded character model cast and receive too', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { factory } = rigFactory(three);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    const id = scene.objects[0]!.id;
+    graph.sync(scene);
+    await flush();
+
+    const rig = rigOf(graph, id)!;
+    expect(rig.castShadow).toBe(true);
+    expect(rig.receiveShadow).toBe(true);
+  });
+
+  // 模型还在路上的那几秒里，一个不投影的胶囊看着像浮在地面上方——而模型到位之后它
+  // 突然落地，那一下会被读成位置跳了。
+  it('lets the placeholder cast while the model is still on its way', () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+
+    const scene = propScene();
+    graph.sync(scene);
+
+    expect(placeholderOf(graph, scene.objects[0]!.id).castShadow).toBe(true);
+  });
+
+  // 渲染器开了 ACES 色调映射（白模的高光段不压下来就是一整片纯白）。那条曲线会把纯色
+  // 往下压、往灰里带——一个 #00ff00 的辨识环出来不再是 #00ff00。场景里的东西该被它管着，
+  // 画在场景里的**界面**不该。
+  it('keeps the identity colour out of the tone-mapping curve', () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+
+    const scene = characterScene({ color: '#00ff00' } as Partial<PrevizCharacter>);
+    graph.sync(scene);
+
+    const marker = markerOf(graph, scene.objects[0]!.id)! as unknown as FakeMeshView;
+    const ring = marker.children[0]!;
+    expect(ring.material.params.toneMapped).toBe(false);
+    expect(ring.material.color.getHex()).toBe(0x00ff00);
+  });
+
+  // 辨识标记是画在场景里的界面，不是布景里的东西：一圈脚下的辨识环投出一道影子，
+  // 会被读成地上真的躺着一个环。整棵子树都要跳过，环和箭头都是它的孩子。
+  it('keeps the identity marker out of the shadow pass', () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+
+    const scene = characterScene();
+    graph.sync(scene);
+
+    const marker = markerOf(graph, scene.objects[0]!.id)!;
+    // `toBeFalsy` 而不是 `toBe(false)`：真 three 的 `castShadow` 初值是 false，
+    // 而这份替身的 Object3D 压根没这个字段——两种「没打开」都该过。
+    expect(marker.castShadow).toBeFalsy();
+    expect(marker.children.some((child) => child.castShadow)).toBe(false);
   });
 
   it('leaves a prop without an asset url on its placeholder', async () => {

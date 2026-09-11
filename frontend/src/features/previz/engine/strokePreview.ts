@@ -106,6 +106,9 @@ export class PrevizStrokePreview {
     } else {
       const material = new this.three.LineBasicMaterial({
         color: STROKE_COLOR,
+        // 这条线是反馈，不是场景里的东西，所以也不过色调映射。
+        // 同 `sceneGraph.markerMaterial`。
+        toneMapped: false,
         // 贴地画时这条线和地面网格共面，开深度测试会争成一段一段的虚线；画到人物
         // 背后去时用户同样要看得见自己画了什么——这是反馈，不是场景里的东西。
         depthTest: false,

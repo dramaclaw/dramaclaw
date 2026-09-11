@@ -8,6 +8,7 @@ import {
   boundsCenter,
   boundsRadius,
   framingDistance,
+  orbitDepthRange,
   orthoPlacement,
   unionBounds,
   viewPlacement,
@@ -320,5 +321,44 @@ describe("orthoPlacement", () => {
     expect(placement.halfWidth).toBeGreaterThan(0);
     expect(placement.halfHeight).toBeGreaterThan(0);
     expect(Number.isFinite(placement.halfWidth * placement.halfHeight)).toBe(true);
+  });
+});
+
+describe("orbitDepthRange", () => {
+  // 这条是回归护栏，不是新行为的期望值：远平面从写死改成跟着轨道距离走之后，过去能
+  // 正常工作的每一个场景（默认机位离轨道中心 √116 ≈ 10.8 m，聚焦一屋子人也就几十米）
+  // 都必须逐位拿到从前那对参数。差一点点都算改了取景表现——z-fighting 的花纹和近处
+  // 被切掉的一角都不会有人报「远平面变了」，只会报「渲染坏了」。
+  it.each([0.5, 10, 100, 125])("keeps the historical 0.1/500 at %s m", (distance) => {
+    expect(orbitDepthRange(distance)).toEqual({ near: 0.1, far: 500 });
+  });
+
+  // 用户自备的模型没有单位约定，一份按厘米建的房子进来就是几百米高；聚焦它要退到
+  // 七八百米开外，而写死的 500 m 远平面会把整个模型切掉，地面网格从缺口里透出来。
+  it("opens the far plane to four times the orbit distance", () => {
+    expect(orbitDepthRange(1000).far).toBe(4000);
+    expect(orbitDepthRange(200).far).toBe(800);
+  });
+
+  // 远平面涨到几万而 near 还钉在 0.1，深度精度会赔在远处：相邻两个面落进同一个深度
+  // 值，墙上出现一片随镜头闪烁的花纹。
+  it("only pushes the near plane out once the depth ratio would break precision", () => {
+    // far 正好 2000（= 0.1 × 20000）是临界点，仍是老的近平面。
+    expect(orbitDepthRange(500)).toEqual({ near: 0.1, far: 2000 });
+    const far = orbitDepthRange(1000);
+    expect(far.near).toBeCloseTo(0.2, 12);
+    expect(far.far / far.near).toBeCloseTo(20000, 6);
+  });
+
+  // 轨道距离由相机位置减注视点得来，两边都可能被导入的场景写成天文数字。
+  it("caps the far plane instead of pushing the projection to infinity", () => {
+    const range = orbitDepthRange(1e12);
+    expect(range.far).toBe(5_000_000);
+    expect(range.near).toBe(250);
+  });
+
+  // three 拿到 NaN 的投影矩阵不报错，只给一片黑——症状离病因隔着整个引擎层。
+  it.each([Number.NaN, Infinity, -1, 0])("falls back to the fixed pair for %s", (distance) => {
+    expect(orbitDepthRange(distance)).toEqual({ near: 0.1, far: 500 });
   });
 });

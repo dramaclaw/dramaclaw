@@ -97,6 +97,9 @@ interface GridView {
     transparent: boolean;
     depthWrite: boolean;
     side: unknown;
+    polygonOffset?: boolean;
+    polygonOffsetFactor?: number;
+    polygonOffsetUnits?: number;
     vertexShader: string;
     fragmentShader: string;
     dispose: ReturnType<typeof vi.fn>;
@@ -185,6 +188,19 @@ describe('createInfiniteGrid', () => {
     (grid.raycast as unknown as (raycaster: unknown, intersects: unknown[]) => void)({}, hits);
     expect(hits).toHaveLength(0);
     expect(grid.userData.previzGrid).toBe(true);
+  });
+
+  // 一栋底板落在 y=0 的建筑会和地面共面。默认深度函数是 `LessEqualDepth`，相等即通过，
+  // 而地面是半透明的、被 three 排在不透明队列之后画——网格线于是一条条画在模型底板上，
+  // 看着就像模型没渲染完。把地面往远推半个深度单位，共面时它就输给模型。
+  it('loses to geometry that sits flat on the ground', () => {
+    const three = fakeThree();
+    const grid = createInfiniteGrid(three) as unknown as GridView;
+
+    expect(grid.material.polygonOffset).toBe(true);
+    // 正数是「往远离相机的方向推」。取反就把地面提到模型前面，症状反而更重。
+    expect(grid.material.polygonOffsetFactor).toBeGreaterThan(0);
+    expect(grid.material.polygonOffsetUnits).toBeGreaterThan(0);
   });
 
   it('drives the line spacing from uniforms, in metres', () => {

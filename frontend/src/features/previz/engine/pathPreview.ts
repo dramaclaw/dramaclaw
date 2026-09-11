@@ -70,6 +70,9 @@ export class PrevizPathPreview {
       const geometry = new this.three.BufferGeometry().setFromPoints(samples);
       const material = new this.three.LineBasicMaterial({
         color: selected ? CURVE_COLOR_SELECTED : CURVE_COLOR,
+        // 轨迹是画在场景里的界面，不该被渲染器那条 ACES 曲线压掉颜色。
+        // 同 `sceneGraph.markerMaterial`，那里写着完整理由。
+        toneMapped: false,
       });
       const line = new this.three.Line(geometry, material);
       line.userData.previzClipId = clip.id;
@@ -84,6 +87,7 @@ export class PrevizPathPreview {
         new this.three.SphereGeometry(pointSelected ? MARKER_RADIUS_SELECTED : MARKER_RADIUS, 8, 8),
         new this.three.MeshBasicMaterial({
           color: pointSelected ? MARKER_COLOR_SELECTED : MARKER_COLOR,
+          toneMapped: false,
         }),
       );
       marker.position.set(point.position[0], point.position[1], point.position[2]);
