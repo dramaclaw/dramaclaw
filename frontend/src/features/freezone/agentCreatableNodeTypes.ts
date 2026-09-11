@@ -15,6 +15,7 @@ export const AGENT_CREATABLE_CANVAS_NODE_TYPES = [
   CANVAS_NODE_TYPES.pano360Viewer,
   CANVAS_NODE_TYPES.threeDWorld,
   CANVAS_NODE_TYPES.skill,
+  CANVAS_NODE_TYPES.htmlArtifact,
 ] as const satisfies readonly CanvasNodeType[];
 
 const AGENT_CREATABLE_CANVAS_NODE_TYPE_SET = new Set<string>(

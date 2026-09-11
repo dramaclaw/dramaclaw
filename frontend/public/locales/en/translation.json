@@ -7018,7 +7018,8 @@
           "image": "Image",
           "video": "Video",
           "audio": "Audio",
-          "text": "Text"
+          "text": "Text",
+          "html": "HTML webpage"
         },
         "actionKeys": "Operation keys",
         "actionKeysPlaceholder": "Press Enter or comma to confirm",
@@ -7893,6 +7894,20 @@
     }
   },
   "htmlArtifact": {
+    "upload": "Upload HTML",
+    "invalidFile": "Choose a complete HTML document",
+    "fileTooLarge": "HTML file must not exceed 2 MiB",
+
+    "references": "Connected inputs",
+    "activeCanvasRequired": "Open a project canvas first",
+    "readyToGenerate": "Enter webpage requirements and generate, or run the workflow",
+    "generationPrompt": "Describe the webpage content, layout and style",
+    "generating": "Generating webpage",
+    "retry": "Retry generation",
+    "retrySave": "Retry saving webpage",
+    "saving": "Source generated. Saving webpage…",
+    "regenerate": "Regenerate webpage",
+    "generate": "Generate webpage",
     "editor": "Webpage editor",
     "back": "Back to canvas",
     "title": "Webpage name",
@@ -7906,6 +7921,7 @@
     "ask": "Edit with director",
     "versions": "Version history",
     "restore": "Restore this version",
+    "useVersion": "Use this version",
     "conflict": "A newer version is available. Your unsaved changes are retained. Copy your edits before loading the latest version.",
     "reload": "Reload",
     "savedPreview": "Preview shows the saved version. Save to refresh.",
@@ -7913,7 +7929,7 @@
     "source": "HTML source",
     "webpage": "Webpage",
     "thumbnail": "Webpage thumbnail",
-    "empty": "Ask the director to create a webpage",
+    "empty": "Connect text, images or videos to build a webpage",
     "open": "Open webpage",
     "discard": "Discard unsaved changes?",
     "runScripts": "Run page scripts",

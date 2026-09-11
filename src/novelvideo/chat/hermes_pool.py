@@ -1059,6 +1059,7 @@ class HermesPool:
             # 绝不把控制面数据库凭据传进 Hermes 子进程:worker 只经短期 agent token
             # 走 HTTP API,拿到 DSN 会让插件/依赖的任意代码执行缺陷绕开业务鉴权直连库。
             # (凭据化启动路径 build_hermes_child_env 本就不带 DSN,这里对齐旧分支。)
+            "DRAMACLAW_USERNAME": username,
             "DRAMACLAW_USER": username,
             "DRAMACLAW_AGENT_TOKEN": token.value,
             "DRAMACLAW_AGENT_TOKEN_TYPE": "Bearer",

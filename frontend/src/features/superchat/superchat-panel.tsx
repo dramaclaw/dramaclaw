@@ -1,3 +1,4 @@
+import { RECIPE_OUTPUT_CHOICES, recipeOutputChoice, recipeOutputFields, type RecipeOutputChoice } from "@/lib/recipe-output";
 import { type HtmlArtifactReference, parseHtmlArtifactReference, appendHtmlArtifactTransportContext } from '@/features/html-artifacts/chatReference';
 import { HtmlArtifactResultCard } from '@/features/html-artifacts/HtmlArtifactResultCard';
 import { activeHtmlArtifactContext, HTML_ARTIFACT_REFERENCE_EVENT } from '@/features/html-artifacts/api';
@@ -4873,7 +4874,7 @@ function skillStudioReferencedRecipes(
       return {
         id,
         name: textField(recipe?.name),
-        outputKind: textField(recipe?.output_kind),
+        outputKind: recipe ? recipeOutputChoice(recipe) : "",
         actionKeys: cleanStringArray(recipe?.action_keys),
         systemPrompt: textField(recipe?.system_prompt),
         mustHaveItems: cleanStringArray(recipe?.must_have_items),
@@ -5081,6 +5082,7 @@ function normalizedSkillStudioRecipePayload(recipe: Record<string, unknown>): Fr
     enabled: recipe.enabled !== false,
     name: textField(recipe.name),
     output_kind: outputKind,
+    ...(outputKind === "text" && recipe.output_format === "html" ? {output_format:"html"} : {}),
     action_keys: cleanStringArray(recipe.action_keys),
     system_prompt: textField(recipe.system_prompt),
     must_have_items: cleanStringArray(recipe.must_have_items),
@@ -6574,7 +6576,7 @@ function SkillStudioDraftCard({
       return {
         ...current,
         recipes: currentRecipes.map((recipe, index) => index === recipeIndex
-          ? { ...getRecord(recipe), [key]: value }
+          ? { ...getRecord(recipe), ...(key === "output_kind" ? recipeOutputFields(value as RecipeOutputChoice) : {[key]: value}) }
           : recipe),
       };
     });
@@ -6947,7 +6949,7 @@ function SkillStudioDraftCard({
                         ? "border-amber-300/25 bg-amber-300/[0.08] text-amber-100/85"
                         : "border-white/[0.08] bg-white/[0.04] text-muted-foreground",
                     )}>
-                      {recipe.missing ? "未找到" : recipe.outputKind || "类型"}
+                      {recipe.missing ? "未找到" : recipe.outputKind === "html" ? "HTML 网页" : recipe.outputKind || "类型"}
                     </span>
                     <span className="min-w-0 truncate text-foreground/85">
                       {recipe.name || recipe.id}
@@ -6985,7 +6987,7 @@ function SkillStudioDraftCard({
                     <label>
                       <span className={labelClass}>{skillStudioDraftFieldLabels.recipe.output_kind}</span>
                       <Input
-                        value={recipe.outputKind}
+                        value={recipe.outputKind === "html" ? "HTML 网页" : recipe.outputKind}
                         disabled
                         readOnly
                         placeholder="未匹配到类型"
@@ -7082,7 +7084,7 @@ function SkillStudioDraftCard({
                 <span className="flex min-w-0 items-center gap-2">
                   <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
                   <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    {textField(recipe.output_kind) || "类型"}
+                    {recipeOutputChoice(recipe) === "html" ? "HTML 网页" : textField(recipe.output_kind) || "类型"}
                   </span>
                   <span className="truncate text-foreground/85">{textField(recipe.name) || textField(recipe.id) || `Recipe ${index + 1}`}</span>
                 </span>
@@ -7111,12 +7113,14 @@ function SkillStudioDraftCard({
                 <div className="grid gap-2 md:grid-cols-2">
                   <label>
                     <span className={labelClass}>{skillStudioDraftFieldLabels.recipe.output_kind}</span>
-                    <Input
-                      value={textField(recipe.output_kind)}
+                    <select
+                      value={recipeOutputChoice(recipe)}
                       disabled={readOnly}
                       onChange={(changeEvent) => updateRecipeField(index, "output_kind", changeEvent.target.value)}
                       className={fieldClass}
-                    />
+                    >
+                      {RECIPE_OUTPUT_CHOICES.map(choice => <option key={choice} value={choice}>{({image:"图片",video:"视频",audio:"音频",text:"文本",html:"HTML 网页"})[choice]}</option>)}
+                    </select>
                   </label>
                   <SkillStudioListField
                     label={skillStudioDraftFieldLabels.recipe.action_keys}
@@ -9621,7 +9625,6 @@ export function canvasCommandCandidateValues(message: ChatMessage): unknown[] {
         ? String((result as Record<string, unknown>).text)
         : "";
   const toolName = typeof raw?.name === "string" ? raw.name : "";
-  if (toolName === "freezone_html_artifact") return values;
   const isCanvasContextTool =
     toolName === "freezone_get_canvas_ontology" ||
     toolName === "freezone_summarize_canvas" ||

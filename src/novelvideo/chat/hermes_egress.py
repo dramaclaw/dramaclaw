@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from novelvideo import config
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
 from novelvideo.ports.egress_operations import (
@@ -199,7 +200,10 @@ def build_hermes_child_env(
         "HOME": str(home),
         "HERMES_HOME": str(home),
         "TMPDIR": str(home / "tmp"),
+        "DRAMACLAW_USERNAME": username,
         "DRAMACLAW_USER": username,
+        # Resolve the private catalog from the backend root, not the worker cwd.
+        "NOVELVIDEO_OUTPUT_DIR": str(Path(config.OUTPUT_DIR).resolve()),
         "DRAMACLAW_API_URL": api_url,
         # The real key no longer travels in the environment. A worker is pooled
         # per user and serves many tenants' turns concurrently, so an

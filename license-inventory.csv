@@ -2721,3 +2721,21 @@ tests/test_workspace_holds_no_gateway_key.py,Elastic-2.0,2026 SuperTale contribu
 tests/test_wysiwyg_consistency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_wysiwyg_neo4j.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 uv.lock,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/application/workflowHtmlRuntime.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/application/workflowHtmlRuntime.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/application/generationTaskDescriptor.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/html-artifacts/compiledHtmlPlan.fixture.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_html_workflow.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/html-workflow-recipes.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/components/settings/recipe-output-roundtrip.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/lib/recipe-output.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_html_workflow_intent.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/superpowers/plans/2026-09-08-html-artifacts.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/superpowers/plans/2026-09-10-html-node-generation-routing.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/superpowers/specs/2026-09-10-html-node-generation-routing-design.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/html-artifacts/HtmlArtifactNode.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/html-artifacts/nodeActions.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/html-artifacts/nodeActions.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/html-artifacts/references.ts,Elastic-2.0,2026 ClaymoreLab,SPDX header
+frontend/src/features/html-artifacts/references.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/agent_catalog/builtins/recipes/html-page.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

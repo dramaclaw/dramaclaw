@@ -1,5 +1,7 @@
 import i18next from "i18next";
+import { executeWorkflowHtmlNode } from "@/features/canvas/application/workflowHtmlRuntime";
 import { type HtmlArtifactCommand, parseHtmlArtifactCommand, executeHtmlArtifactCommand } from '@/features/html-artifacts/commands';
+import { executeHtmlNodeWriteAction } from '@/features/html-artifacts/nodeActions';
 import {
   CANVAS_NODE_TYPES,
   DEFAULT_NODE_WIDTH,
@@ -310,6 +312,13 @@ const RUN_NODE_ACTIONS = new Set([
   "translate_text",
   "reverse_prompt",
   "generate_text",
+  "generate_html",
+  "update_source",
+  "select_version",
+  "restore",
+  "open",
+  "export",
+  "upload",
   "generate_text_video",
   "generate_story_script",
   "open_upload_picker",
@@ -378,6 +387,7 @@ const RUN_NODE_ACTIONS = new Set([
 
 const GENERATION_NODE_ACTIONS = new Set([
   "generate_text",
+  "generate_html",
   "generate_text_video",
   "generate_story_script",
   "generate_image",
@@ -679,6 +689,7 @@ function workflowRetryDelayMs(retryCount: number): number {
   return Math.min(1_000 * (2 ** Math.max(retryCount - 1, 0)), 4_000);
 }
 const WORKFLOW_GENERATE_ACTION_BY_NODE_TYPE: Partial<Record<CanvasNodeType, string[]>> = {
+  [CANVAS_NODE_TYPES.htmlArtifact]: ["generate_html"],
   [CANVAS_NODE_TYPES.script]: ["generate_story_script"],
   [CANVAS_NODE_TYPES.imageGen]: ["generate_image"],
   [CANVAS_NODE_TYPES.audio]: ["generate_audio"],
@@ -2154,6 +2165,9 @@ export function hasGeneratedResult(
   ) {
     return false;
   }
+  if (action === "generate_html") {
+    return Boolean(nonEmptyString(data.artifactId)) && Number.isInteger(data.artifactVersion) && Number(data.artifactVersion) > 0;
+  }
   if (action === "generate_text") {
     return data.workflowTextGenerated === true && Boolean(nonEmptyString(data.content));
   }
@@ -2255,6 +2269,9 @@ function generatedResultOutputFromNode(
 ): Record<string, unknown> | null {
   const data = nodeById(nodeId)?.data as Record<string, unknown> | undefined;
   if (!data) return null;
+  if (action === "generate_html") {
+    return hasGeneratedResult(nodeId, action, true) ? {html_artifact:{id:data.artifactId,version:data.artifactVersion}} : null;
+  }
   if (action === "generate_text") {
     const content = nonEmptyString(data.content);
     return content ? { content } : null;
@@ -2377,6 +2394,9 @@ function hasGeneratedResultOutput(action: string, output: unknown): boolean {
   if (!GENERATION_NODE_ACTIONS.has(action)) return true;
   if (!isRecord(output)) return false;
   if (isSubmittedGenerationOutput(output)) return true;
+  if (action === "generate_html") {
+    return isRecord(output.html_artifact) && Boolean(nonEmptyString(output.html_artifact.id)) && Number.isInteger(output.html_artifact.version) && Number(output.html_artifact.version) > 0;
+  }
   if (action === "generate_text") {
     return Boolean(nonEmptyString(output.content));
   }
@@ -3198,6 +3218,22 @@ async function executeQueuedNodeActions(
               retry_count: retryCount,
             }]);
 
+            if (action.action === "generate_html") {
+              if (!projectId || !options.canvasId) return {action,failed:"HTML generation requires an active project and canvas"};
+              markNodeActionRunning(action.nodeId, action.action);
+              try {
+                const output = await executeWorkflowHtmlNode(action.nodeId, projectId, options.canvasId);
+                return {action,failed:null,output:{...output},retryCount};
+              } catch (error) {
+                // HTML persistence can have succeeded despite a lost response;
+                // leave retries to the idempotent Artifact runtime, never replay
+                // this entire command batch automatically.
+                return {action,failed:errorMessage(error),retryCount};
+              } finally {
+                clearNodeActionRunning(action.nodeId, action.action);
+              }
+            }
+
             await ensureVideoContinuityTailFrames(action, projectId);
 
             if (action.action === "generate_audio" && !hydrateWorkflowAudioInput(action.nodeId)) {
@@ -3607,6 +3643,13 @@ function commandLabel(command: CanvasChatCommand): string {
       if (command.action === "capture_pano_2x2_views") return "截取 360 四视角";
       if (command.action === "capture_pano_4x3_views") return "截取 360 十二视角";
       if (command.action === "download_image") return "下载图片";
+      if (command.action === "generate_html") return "生成网页";
+      if (command.action === "update_source") return "保存网页源码";
+      if (command.action === "select_version") return "选择网页版本";
+      if (command.action === "restore") return "恢复网页版本";
+      if (command.action === "open") return "打开网页";
+      if (command.action === "export") return "导出网页";
+      if (command.action === "upload") return "上传 HTML";
       if (command.action === "set_pano_current_view_as_background") return "设为当前背景";
       if (command.action === "reset_pano_view") return "复位 360 视角";
       if (command.action === "sync_beat_context_to_mainline") return "同步镜头上下文";
@@ -3788,14 +3831,23 @@ function workflowEnvelopeAlreadyApplied(envelope: CanvasChatCommandEnvelope): bo
   );
   return (
     createCommands.length > 0 &&
-    createCommands.every((command) => existingWorkflowNodeForCommand(command) !== null)
+    createCommands.every((command) => existingWorkflowNodeForCommand(command) !== null) &&
+    envelope.commands.every((command) => {
+      if (command.type !== "html_artifact" || command.action !== "prepare") return true;
+      const identity = workflowNodeIdentity(command.workflow_data);
+      return identity !== null && useCanvasStore.getState().nodes.some((node) => (
+        node.type === CANVAS_NODE_TYPES.htmlArtifact &&
+        node.data.workflowInstanceId === identity.instanceId &&
+        node.data.workflowPlanNodeId === identity.planNodeId
+      ));
+    })
   );
 }
 
-function applyCanvasChatCommandsInternal(
+function* applyCanvasChatCommandsInternal(
   envelopes: CanvasChatCommandEnvelope[],
   options: ApplyCanvasChatCommandsOptions & { queueNodeActions: boolean },
-): CanvasChatCommandApplyResult | Promise<CanvasChatCommandApplyResult> {
+): Generator<Promise<void>, CanvasChatCommandApplyResult, void> {
   const result: CanvasChatCommandApplyResult = {
     applied: 0,
     openedUiActions: 0,
@@ -3803,7 +3855,6 @@ function applyCanvasChatCommandsInternal(
     errors: [],
     commandResults: [],
   };
-  const pendingHtmlArtifacts: Array<{command:HtmlArtifactCommand;commandIndex:number;projectId:string}> = [];
   const pendingNodeActions: PendingNodeAction[] = [];
   const pendingMainlineProjections: PendingMainlineProjection[] = [];
   const queuedNodeActionKeys = new Set<string>();
@@ -3863,7 +3914,20 @@ function applyCanvasChatCommandsInternal(
             if (!options.queueNodeActions) throw new Error("HTML artifacts require the authenticated async executor");
             const projectId = options.projectId;
             if (!projectId || (envelope.project_id && envelope.project_id !== projectId) || !options.canvasId || (envelope.canvas_id && envelope.canvas_id !== options.canvasId)) throw new Error("HTML artifact project/canvas scope does not match the active canvas");
-            pendingHtmlArtifacts.push({command,commandIndex:currentCommandIndex,projectId});
+            // Pause the command loop until persistence and attachment finish so
+            // later commands can resolve this create's alias in original order.
+            yield executeHtmlArtifactCommand({
+              ...command,
+              reference_node_ids: command.reference_node_ids?.map((id) => resolveNodeId(id, clientIdMap)),
+            }, projectId, options.canvasId).then((saved) => {
+              if (saved.output.warnings) result.errors.push(...saved.output.warnings);
+              result.applied += 1;
+              if (saved.createdNodeId) {
+                result.createdNodeIds.push(saved.createdNodeId);
+              }
+              if (command.client_id && saved.nodeId) clientIdMap.set(command.client_id, saved.nodeId);
+              result.commandResults.push({commandIndex:currentCommandIndex,type:'html_artifact',status:'success',label:commandLabel(command),...saved});
+            });
             break;
           }
           case "create_node": {
@@ -4122,6 +4186,35 @@ function applyCanvasChatCommandsInternal(
           case "run_node_action": {
             const targetId = resolveNodeId(command.node_id, clientIdMap);
             assertNodeActionAvailable(targetId, command.action);
+            const targetNode = nodeById(targetId);
+            if (
+              targetNode?.type === CANVAS_NODE_TYPES.htmlArtifact &&
+              (command.action === "update_source" || command.action === "restore" || command.action === "select_version")
+            ) {
+              if (!options.queueNodeActions || !options.projectId || !options.canvasId) {
+                throw new Error("HTML source actions require the authenticated async executor");
+              }
+              yield executeHtmlNodeWriteAction({
+                projectId: options.projectId,
+                canvasId: options.canvasId,
+                node: targetNode,
+                action: command.action,
+                parameters: command.parameters,
+              }).then((saved) => {
+                if (saved.output.warnings) result.errors.push(...saved.output.warnings);
+                result.applied += 1;
+                result.commandResults.push({
+                  commandIndex: currentCommandIndex,
+                  type: command.type,
+                  status: "success",
+                  label: commandLabel(command),
+                  nodeId: targetId,
+                  action: command.action,
+                  output: saved.output,
+                });
+              });
+              break;
+            }
             if (!RESULT_SPAWNING_NODE_ACTIONS.has(command.action)) {
               selectAndFocusNode(targetId);
             }
@@ -4350,24 +4443,9 @@ function applyCanvasChatCommandsInternal(
   }
 
   if (options.queueNodeActions) {
-    return (async () => {
-      for (const pending of pendingHtmlArtifacts) {
-        try {
-          const saved = await executeHtmlArtifactCommand(pending.command,pending.projectId,options.canvasId!);
-          if (saved.output.warnings) result.errors.push(...saved.output.warnings);
-          result.applied += 1;
-          if (saved.createdNodeId) result.createdNodeIds.push(saved.createdNodeId);
-          result.commandResults.push({commandIndex:pending.commandIndex,type:'html_artifact',status:'success',label:commandLabel(pending.command),...saved});
-        } catch (error) {
-          const message = errorMessage(error);
-          result.errors.push(message);
-          result.commandResults.push({commandIndex:pending.commandIndex,type:'html_artifact',status:'error',label:commandLabel(pending.command),error:message});
-        }
-      }
+    yield (async () => {
       await executePendingMainlineProjections(pendingMainlineProjections, result);
       await executeQueuedNodeActions(pendingNodeActions, result, options);
-      result.errors = dedupeGenerationErrors(result.errors);
-      return result;
     })();
   }
 
@@ -4376,15 +4454,30 @@ function applyCanvasChatCommandsInternal(
 }
 
 export function applyCanvasChatCommands(envelopes: CanvasChatCommandEnvelope[]): CanvasChatCommandApplyResult {
-  return applyCanvasChatCommandsInternal(envelopes, { queueNodeActions: false }) as CanvasChatCommandApplyResult;
+  const step = applyCanvasChatCommandsInternal(envelopes, { queueNodeActions: false }).next();
+  if (!step.done) throw new Error("Synchronous canvas execution cannot await commands");
+  return step.value;
 }
 
-export function applyCanvasChatCommandsAsync(
+export async function applyCanvasChatCommandsAsync(
   envelopes: CanvasChatCommandEnvelope[],
   options: ApplyCanvasChatCommandsOptions = {},
 ): Promise<CanvasChatCommandApplyResult> {
-  return Promise.resolve(applyCanvasChatCommandsInternal(envelopes, {
+  const execution = applyCanvasChatCommandsInternal(envelopes, {
     ...options,
     queueNodeActions: true,
-  }));
+  });
+  let step = execution.next();
+  while (!step.done) {
+    try {
+      await step.value;
+    } catch (error) {
+      // Re-enter the original command's catch to retain its error receipt and
+      // continue independent commands without replaying successful mutations.
+      step = execution.throw(error);
+      continue;
+    }
+    step = execution.next();
+  }
+  return step.value;
 }

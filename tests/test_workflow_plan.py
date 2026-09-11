@@ -1635,6 +1635,7 @@ def test_workflow_plan_reports_deterministic_preflight_summary():
         "video": 0,
         "audio": 0,
         "compose": 0,
+        "html": 0,
     }
 
 

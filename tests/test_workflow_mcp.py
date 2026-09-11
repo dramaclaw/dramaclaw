@@ -417,6 +417,7 @@ def test_catalog_search_is_compact_and_progressive(monkeypatch):
             "version": None,
             "description": "Create a video",
             "output_kind": "video",
+            "node_type": "videoNode",
             "requires_source_media": False,
             "action_keys": ["video.generate"],
         }
@@ -635,3 +636,39 @@ def test_graph_compiler_marks_portable_input_nodes_as_non_executable():
 
     assert result["ok"] is True
     assert result["commands"][0]["data"]["workflowCatalogRole"] == "user_input"
+
+
+def test_hosted_catalog_uses_bound_root_and_user_from_project_workspace(tmp_path):
+    """Both MCPs must see API-owned private catalogs, not cwd/output or peers."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    from novelvideo.chat import service, backend_sdk
+
+    root = Path(__file__).resolve().parents[1]
+    output = tmp_path / "api-output"
+    workspace = tmp_path / "project-agent-workspace"
+    workspace.mkdir()
+    base = json.loads((root / "src/novelvideo/freezone/agent_catalog/builtins/skills/text-to-image-video.json").read_text())
+    for user in ("alice", "bob"):
+        folder = output / user / "_account/freezone/agent_config/skills"
+        folder.mkdir(parents=True)
+        (folder / "private-test.json").write_text(json.dumps({**base, "id": "private-test", "name": user + " private"}))
+    overrides = service._codex_mcp_config_overrides(service._dramaclaw_mcp_servers("freezone_canvas"))
+    script = """
+import json
+from novelvideo.freezone.agent_workflows.catalog import get_workflow_skill
+result = get_workflow_skill({'skill_id':'private-test', 'username':'bob'})
+assert result['ok'], result
+print(json.dumps(result, ensure_ascii=False))
+"""
+    for user in ("alice", "bob"):
+        config = backend_sdk._codex_thread_config(overrides, {"DRAMACLAW_USERNAME": user, "NOVELVIDEO_OUTPUT_DIR": str(output)})
+        for server in ("dramaclaw", "dramaclaw_workflows"):
+            bound = config[f"mcp_servers.{server}.env"]
+            env = {**os.environ, **bound, "PYTHONPATH": str(root / "src"), "ST_EDITION": "ce"}
+            result = subprocess.run([sys.executable, "-c", script], cwd=workspace, env=env, capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, result.stderr
+            package = json.loads(result.stdout)
+            assert package['skill']['name'] == user + ' private'

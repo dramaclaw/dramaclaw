@@ -103,10 +103,13 @@ def test_product_admission_preserves_generic_result_routing(
         }}
 
     monkeypatch.setattr(plugin, "_request", request)
-    result = plugin._handle_begin_agent_product_generation({
+    args = {
         "product_kind": product_kind, "generation_session_id": "session-1",
         "normalized_inputs": {"prompt": "example"},
-    })
+    }
+    if product_kind == "workflow_result":
+        args.update({"skill_id": "html-smoke", "skill_version": "3"})
+    result = plugin._handle_begin_agent_product_generation(args)
     assert len(requests) == 1
     assert requests[0]["product_kind"] == product_kind
     assert result["operation_id"] == "op-1"
@@ -114,6 +117,64 @@ def test_product_admission_preserves_generic_result_routing(
     assert "required_next_tool" not in result
     assert "freezone_prepare_workflow_draft" not in result["agent_instruction"]
     assert "matching persisted result tool" in result["agent_instruction"]
+
+
+def test_workflow_result_admission_derives_versioned_skill_artifact_id(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    requests = []
+
+    def request(method, path, *, body):
+        requests.append(body)
+        return {
+            "ok": True,
+            "data": {
+                "operation_id": "op-1",
+                "product_kind": "workflow_result",
+                "task_id": "task-1",
+                "generation_session_id": "session-1",
+            },
+        }
+
+    monkeypatch.setattr(plugin, "_request", request)
+
+    result = plugin._handle_begin_agent_product_generation(
+        {
+            "product_kind": "workflow_result",
+            "generation_session_id": "session-1",
+            "normalized_inputs": {"prompt": "example"},
+            "skill_id": "private-html-smoke-test",
+            "skill_version": "3",
+        }
+    )
+
+    assert result["ok"] is True
+    assert requests[0]["artifact_id"] == "private-html-smoke-test@3"
+
+
+def test_workflow_result_admission_rejects_mismatched_skill_artifact_id(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: pytest.fail("invalid identity must not be admitted"),
+    )
+
+    result = plugin._handle_begin_agent_product_generation(
+        {
+            "product_kind": "workflow_result",
+            "generation_session_id": "session-1",
+            "normalized_inputs": {"prompt": "example"},
+            "skill_id": "private-html-smoke-test",
+            "skill_version": "3",
+            "artifact_id": "another-skill@1",
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "workflow_result_skill_identity_mismatch"
+    assert result["expected_artifact_id"] == "private-html-smoke-test@3"
 
 
 def _assert_real_mcp_output(plugin, tool_name, result):
@@ -2166,6 +2227,7 @@ def test_freezone_plugin_lists_agent_catalog_summaries(monkeypatch):
             "schema_version": "",
             "version": "",
             "output_kind": "image",
+            "node_type": "imageGenNode",
             "action_keys": ["character-anchor"],
             "result_summary": "角色锚点图",
             "requires_source_media": False,

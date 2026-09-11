@@ -23,6 +23,7 @@ import {
 const listTasks = vi.fn();
 const awaitTaskCompletion = vi.fn();
 const fetchFreezoneTextGenerateResult = vi.fn();
+const resumePersistedHtmlGeneration = vi.fn();
 
 vi.mock("@/api/tasks", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/tasks")>();
@@ -38,6 +39,11 @@ vi.mock("@/api/ops", () => ({
   fetchFreezoneReversePromptResult: vi.fn(),
   fetchFreezoneStoryScriptResult: vi.fn(),
   fetchFreezoneTextGenerateResult: (...args: unknown[]) => fetchFreezoneTextGenerateResult(...args),
+}));
+
+vi.mock("@/features/canvas/application/workflowHtmlRuntime", () => ({
+  resumePersistedHtmlGeneration: (...args: unknown[]) =>
+    resumePersistedHtmlGeneration(...args),
 }));
 
 const TASK_KEY = "freezone_image:job-9";
@@ -68,6 +74,23 @@ function resumableTextNode(extra: Record<string, unknown> = {}): CanvasNode {
       generationTaskKey: "freezone_text_generate:text-job-1",
       generationTaskType: "freezone_text_generate",
       generationTaskJobId: "text-job-1",
+      ...extra,
+    },
+  } as unknown as CanvasNode;
+}
+
+function resumableHtmlNode(extra: Record<string, unknown> = {}): CanvasNode {
+  return {
+    id: "html-1",
+    type: CANVAS_NODE_TYPES.htmlArtifact,
+    position: { x: 0, y: 0 },
+    data: {
+      isGenerating: true,
+      generationTaskKey: "freezone_text_generate:html-job-1",
+      generationTaskType: "freezone_text_generate",
+      generationTaskJobId: "html-job-1",
+      htmlGenerationTitle: "Landing page",
+      htmlGenerationPhase: "generating",
       ...extra,
     },
   } as unknown as CanvasNode;
@@ -185,6 +208,39 @@ describe("恢复路径：文本任务按任务类型取回结果", () => {
     expect(patch.content).toBe("雨落在旧车站的铁轨上。");
     expect(patch.model).toBe("DC-freezone-text-writer-LLM");
     expect(patch.isGenerating).toBe(false);
+  });
+});
+
+describe("恢复路径：HTML 文本任务保存为 Artifact", () => {
+  it("刷新后走 HTML 完成器，不把源码写进普通 content 字段", async () => {
+    const taskKey = "freezone_text_generate:html-job-1";
+    listTasks.mockResolvedValue([{ task_key: taskKey, status: "running" }]);
+    awaitTaskCompletion.mockResolvedValue({
+      task_key: taskKey,
+      status: "completed",
+      result: { output_format: "json" },
+    });
+    resumePersistedHtmlGeneration.mockResolvedValue(undefined);
+    const updateNodeData = vi.fn();
+
+    await resumeNodeGeneration({
+      node: resumableHtmlNode(),
+      projectId: "demo",
+      canvasId: "canvas-1",
+      updateNodeData,
+    });
+
+    expect(resumePersistedHtmlGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nodeId: "html-1",
+        projectId: "demo",
+        canvasId: "canvas-1",
+        jobId: "html-job-1",
+        taskKey,
+      }),
+    );
+    expect(fetchFreezoneTextGenerateResult).not.toHaveBeenCalled();
+    expect(updateNodeData.mock.calls.some(([, value]) => "content" in value)).toBe(false);
   });
 });
 

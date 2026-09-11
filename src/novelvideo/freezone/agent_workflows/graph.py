@@ -25,6 +25,7 @@ LINK_TYPE_VALUES = set(PORTABLE_LINK_TYPE_VALUES)
 
 WORKFLOW_GRAPH_COMMAND_TYPES = {
     "create_node",
+    "html_artifact",
     "create_edge",
     "group_nodes",
     "layout_nodes",
@@ -40,21 +41,22 @@ LINK_OBJECT_TYPE_BY_NODE_TYPE = {
     "videoNode": "VideoNode",
     "audioNode": "AudioNode",
     "videoComposeNode": "VideoNode",
+    "htmlArtifactNode": "HtmlNode",
 }
 
 LINK_TYPE_RULES = {
     "context_for": ({"TextNode", "ScriptNode"}, {"TextNode", "ScriptNode"}),
     "prompt_for": (
         {"TextNode", "ScriptNode"},
-        {"ImageNode", "VideoNode", "AudioNode", "ScriptNode"},
+        {"ImageNode", "VideoNode", "AudioNode", "ScriptNode", "HtmlNode"},
     ),
     "dependency_for": (
         {"TextNode", "ScriptNode", "ImageNode", "VideoNode", "AudioNode"},
-        {"TextNode", "ScriptNode", "ImageNode", "VideoNode", "AudioNode"},
+        {"TextNode", "ScriptNode", "ImageNode", "VideoNode", "AudioNode", "HtmlNode"},
     ),
     "media_input_for": (
         {"ImageNode", "VideoNode", "AudioNode"},
-        {"TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode"},
+        {"TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode", "HtmlNode"},
     ),
     "derived_from": (
         {"ImageNode", "VideoNode", "AudioNode"},
@@ -107,6 +109,7 @@ STAGE_ORDER = {
     "video": 5,
     "audio": 5,
     "compose": 6,
+    "html": 6,
     "quality": 7,
     "review": 7,
 }
@@ -283,6 +286,12 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             "position": _node_position(raw_node, node["stage_index"], order),
             "data": data,
         }
+        if node["node_type"] == "htmlArtifactNode":
+            command = {
+                "type": "html_artifact", "action": "prepare",
+                "client_id": node["client_id"], "position": command["position"],
+                "workflow_data": data,
+            }
         commands.append(command)
 
     for record in edge_records:
@@ -479,6 +488,7 @@ def _stage_index(node: dict[str, Any], node_type: str) -> int:
         "videoNode": 5,
         "audioNode": 5,
         "videoComposeNode": 6,
+        "htmlArtifactNode": 6,
     }.get(node_type, 0)
 
 
@@ -560,6 +570,9 @@ def _node_data(
                 if isinstance(candidate, str) and candidate.strip():
                     result["content"] = candidate.strip()
                     break
+    if node_type == "htmlArtifactNode":
+        result.pop("content", None)
+        result.pop("description", None)
     _normalize_model_alias(result, node_type)
     if node_type == "audioNode":
         result.setdefault("audioKind", "speech")
@@ -620,8 +633,12 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
                 }
             )
             continue
-        if command_type != "create_node":
+        if command_type not in {"create_node", "html_artifact"}:
             continue
+        if command_type == "html_artifact":
+            if command.get("action") != "prepare":
+                errors.append({"path": path, "message": "workflow HTML requires prepare"})
+            command = {**command, "node_type": "htmlArtifactNode", "data": command.get("workflow_data")}
         client_id = command.get("client_id")
         if not isinstance(client_id, str) or not client_id.strip():
             errors.append(

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { buildCanvasContextRequestResponses } from "@/features/freezone/chatNodeReferences";
 
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { buildCanvasActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/canvasNodeActionCatalog";
+import { AGENT_CREATABLE_CANVAS_NODE_TYPES } from "@/features/freezone/agentCreatableNodeTypes";
 
 function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["type"] }): CanvasNode {
   return {
@@ -14,6 +16,52 @@ function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["typ
 }
 
 describe("canvas action catalog", () => {
+  it("discovers HTML through the generic node creation contract", async () => {
+    const responses = await buildCanvasContextRequestResponses({project: "p", canvasId: "c", nodes: [], edges: [], ontologyContext: null,
+      envelopes: [{schema_version: "canvas_context_request.v1", requests: [
+        {type: "node_create_schema", node_type: CANVAS_NODE_TYPES.htmlArtifact}, {type: "canvas_command_catalog"},
+      ]}]});
+    expect(responses?.[0].data).toMatchObject({
+      node_type: "htmlArtifactNode",
+      create_schema: expect.objectContaining({
+        displayName: expect.objectContaining({ type: "string" }),
+        prompt: expect.objectContaining({ type: "string" }),
+      }),
+    });
+    expect(responses?.[0].data).not.toHaveProperty("creation_tool", "freezone_html_artifact");
+    const catalog = responses?.[1].data as {commands: Array<{type: string; allowed_node_types?: string[]}>};
+    expect(catalog.commands.map(command => command.type)).not.toContain("html_artifact");
+    expect(catalog.commands.find(c => c.type === "create_node")?.allowed_node_types).toContain("htmlArtifactNode");
+    expect(AGENT_CREATABLE_CANVAS_NODE_TYPES).toContain(CANVAS_NODE_TYPES.htmlArtifact);
+  });
+  it("discovers HTML source and version operations as node actions", () => {
+    const catalog = buildCanvasNodeActionCatalog(node({id: "web", type: CANVAS_NODE_TYPES.htmlArtifact,
+      data: {artifactId: "artifact", artifactVersion: 3}}));
+    for (const [action, effect] of [["read_source", "read"], ["update_source", "write"], ["history", "read"], ["select_version", "write"], ["restore", "write"]]) {
+      expect(catalog.actions).toContainEqual(expect.objectContaining({
+        action,
+        effect,
+        command_type: "run_node_action",
+      }));
+    }
+    for (const field of ["html", "artifactId", "artifactVersion"]) expect(catalog.editable_fields).not.toContain(field);
+  });
+  it("advertises HTML generation and initial source saving on an empty node", () => {
+    const draft = node({id: "web", type: CANVAS_NODE_TYPES.htmlArtifact, data: {workflowCatalog: {recipeId: "web-recipe"}}});
+    expect(buildCanvasNodeActionCatalog(draft).actions).toContainEqual(expect.objectContaining({action: "generate_html", command_type: "run_node_action"}));
+    const emptyActions = buildCanvasNodeActionCatalog({...draft, data: {}}).actions;
+    expect(emptyActions).toContainEqual(expect.objectContaining({action: "generate_html", effect: "write"}));
+    expect(emptyActions).toContainEqual(expect.objectContaining({action: "update_source", effect: "write"}));
+    expect(emptyActions.map(a => a.action)).not.toContain("read_source");
+    expect(emptyActions.map(a => a.action)).not.toContain("history");
+  });
+  it("exposes HTML preview, export and upload as UI node actions", () => {
+    const saved = buildCanvasNodeActionCatalog(node({id:"web",type:CANVAS_NODE_TYPES.htmlArtifact,data:{artifactId:"a1",artifactVersion:2}}));
+    expect(saved.actions).toContainEqual(expect.objectContaining({action:"open",effect:"ui",command_type:"run_node_action"}));
+    expect(saved.actions).toContainEqual(expect.objectContaining({action:"export",effect:"ui",command_type:"run_node_action"}));
+    const empty = buildCanvasNodeActionCatalog(node({id:"empty",type:CANVAS_NODE_TYPES.htmlArtifact,data:{}}));
+    expect(empty.actions).toContainEqual(expect.objectContaining({action:"upload",effect:"ui",execution:"manual_ui"}));
+  });
   it("lets upload nodes open the local upload picker through a manual UI action", () => {
     const upload = node({
       id: "upload-a",

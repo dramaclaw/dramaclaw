@@ -47,6 +47,7 @@ export const CANVAS_ADD_NODE_TYPES: readonly CanvasNodeType[] = [
   CANVAS_NODE_TYPES.upload,
   CANVAS_NODE_TYPES.pano360Viewer,
   CANVAS_NODE_TYPES.threeDWorld,
+  CANVAS_NODE_TYPES.htmlArtifact,
 ];
 
 export const CANVAS_MENU_ICON_CELL_CLASS =

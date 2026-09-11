@@ -2,7 +2,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { HtmlArtifactEditor } from './HtmlArtifactEditor';
 import * as api from './api';
+const canvasStore = vi.hoisted(() => ({updateNodeData: vi.fn()}));
 vi.mock('./api', async () => ({...await vi.importActual('./api'), readHtmlArtifact:vi.fn(),readHtmlPreview:vi.fn(),listHtmlVersions:vi.fn(),saveHtmlArtifact:vi.fn(),announceHtmlArtifact:vi.fn()}));
+vi.mock('@/stores/canvasStore', () => ({useCanvasStore:{getState:()=>canvasStore}}));
 const artifact={id:'a',title:'Brand',version:1,html:'<h1>Original</h1>',created_at:'now',updated_at:'now'};
 beforeEach(()=>{vi.clearAllMocks();vi.mocked(api.readHtmlArtifact).mockResolvedValue(artifact);vi.mocked(api.readHtmlPreview).mockResolvedValue({html:artifact.html,warnings:[],media:[],release:vi.fn()});vi.mocked(api.listHtmlVersions).mockResolvedValue({versions:[{version:1,title:'Brand',created_at:'now'}]});});
 it('retains unsaved source on a version conflict and uses the version read as base',async()=>{
@@ -89,7 +91,10 @@ it('opens the requested historical version and saves against the head observed a
 it('using a historical version only switches the selected node reference',async()=>{
   render(<HtmlArtifactEditor projectId="select-history" artifactId="a" version={1} nodeId="node" onClose={()=>{}} />);
   await screen.findByDisplayValue('Brand');
-  fireEvent.click(screen.getByRole('button',{name:'恢复此版本'}));
+  fireEvent.click(screen.getByRole('button',{name:'使用此版本'}));
+  expect(canvasStore.updateNodeData).toHaveBeenCalledWith('node',expect.objectContaining({
+    artifactId:'a', artifactVersion:1, displayName:'Brand', htmlSelectionToken:expect.any(String),
+  }));
   expect(api.announceHtmlArtifact).toHaveBeenCalledWith('select-history',artifact,'node');
   expect(api.saveHtmlArtifact).not.toHaveBeenCalled();
 });

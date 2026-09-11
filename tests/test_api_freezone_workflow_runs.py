@@ -347,7 +347,48 @@ def test_workflow_result_rejects_operation_for_another_compiled_skill(
     )
 
     assert response.status_code == 400
-    assert "does not match compiled Skill" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "does not match compiled Skill" in detail
+    assert "operation.skill_id='other-skill'" in detail
+    assert "operation.artifact_id='other-skill@1.0.0'" in detail
+    assert "expected skill_id='video-ad'" in detail
+
+
+def test_workflow_draft_rejects_skill_definition_operation_with_recovery_hint(
+    workflow_run_client: TestClient,
+) -> None:
+    operation = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations",
+        json={
+            "product_kind": "workflow_generate",
+            "generation_session_id": "wrong-product-kind-session",
+            "canvas_id": "default",
+            "artifact_id": "private-html-smoke-test",
+            "normalized_inputs_hash": "wrong-product-kind-inputs",
+            "metadata": {
+                "skill_id": "private-html-smoke-test",
+                "skill_version": "3",
+            },
+        },
+    ).json()["data"]
+
+    response = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-drafts",
+        json={
+            "operation_id": operation["operation_id"],
+            "intent": {"skill_id": "private-html-smoke-test", "user_goal": "咖啡网页"},
+            "compiled": {
+                "ok": True,
+                "skill_id": "private-html-smoke-test",
+                "plan": {"nodes": [], "edges": [], "phases": []},
+            },
+        },
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "product_kind='workflow_generate'" in detail
+    assert "use product_kind='workflow_result'" in detail
 
 
 def test_generation_session_validates_manifest_against_durable_operations(
@@ -1394,3 +1435,43 @@ def test_run_wait_stops_at_deadline_without_creating_a_retry(
     assert data["automatic_retry"] is False
     assert len(calls) >= 2
     assert data["progress"][0]["retry_count"] == 0
+@pytest.mark.parametrize(
+    ('reused_recipe_id', 'expected_status'),
+    [('bob-private-recipe', 200), ('alice-private-recipe', 400)],
+)
+def test_shared_project_generation_session_uses_requester_private_catalog(
+    workflow_run_client, monkeypatch, reused_recipe_id, expected_status
+):
+    from novelvideo.api.auth import get_api_user
+    from novelvideo.api.routes import freezone
+
+    # The project and durable storage remain Alice's; Bob is its authenticated editor.
+    workflow_run_client.app.dependency_overrides[get_api_user] = lambda: {
+        'id': 'u-bob', 'username': 'bob',
+    }
+    catalog_users = []
+
+    def private_catalog(username, kind):
+        catalog_users.append(username)
+        assert kind == 'recipes'
+        return [{'id': f'{username}-private-recipe', 'enabled': True}]
+
+    monkeypatch.setattr(freezone, 'list_user_agent_config_items', private_catalog)
+    session_id = f'shared-{reused_recipe_id}'
+    manifest, draft = _recipe_generation_session_payload(
+        workflow_run_client, session_id=session_id, reused_recipe_id=reused_recipe_id,
+    )
+    response = workflow_run_client.put(
+        f'/api/v1/projects/proj_demo/freezone/agent-generation-sessions/{session_id}',
+        json={'canvas_id': 'default', 'manifest': manifest, 'draft': draft},
+    )
+    assert response.status_code == expected_status, response.text
+    assert catalog_users == ['bob']
+    if expected_status == 200:
+        saved = workflow_run_client.get(
+            f'/api/v1/projects/proj_demo/freezone/agent-generation-sessions/{session_id}',
+        )
+        assert saved.status_code == 200
+        assert saved.json()['data']['manifest'] == manifest
+    else:
+        assert 'reused Recipe is unavailable' in response.json()['detail']

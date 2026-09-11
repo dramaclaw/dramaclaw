@@ -10,7 +10,8 @@ export type CanvasActionExecution =
   | "chat_command"
   | "manual_ui"
   | "requires_confirmation"
-  | "frontend_node";
+  | "frontend_node"
+  | "tool";
 
 export type CanvasActionInput = {
   role: string;
@@ -33,7 +34,9 @@ export type CanvasActionCapability = {
   id: string;
   display_name: string;
   execution: CanvasActionExecution;
+  effect?: "read" | "write" | "ui";
   command_type?: string;
+  typed_tool?: string;
   node_type?: CanvasNodeType;
   inputs: CanvasActionInput[];
   outputs: CanvasActionOutput[];
@@ -55,7 +58,9 @@ function commandCapability(
     id: `ui.${entry.action}`,
     display_name: entry.action,
     execution: entry.execution,
+    ...(entry.effect ? {effect: entry.effect} : {}),
     command_type: entry.command_type,
+    ...(entry.typed_tool ? {typed_tool: entry.typed_tool} : {}),
     node_type: node.type ?? undefined,
     inputs: [
       {

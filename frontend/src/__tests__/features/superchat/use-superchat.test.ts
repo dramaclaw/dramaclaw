@@ -2942,6 +2942,15 @@ describe("Skill Studio draft response", () => {
     })).toBe("AI 调整中，请按后续问题补充修改方向");
   });
 
+  it("preserves HTML webpage deliverables when saving an imported Skill Studio recipe", () => {
+    const recipe = {id:"campaign-page",name:"Campaign page",output_kind:"text",output_format:"html",action_keys:["campaign-page"],system_prompt:"Create a complete page",planning_prompt:"Use campaign assets",result_summary:"A finished webpage"};
+    const normalized = normalizeSkillStudioDraftForCatalogForTest({recipes:[recipe]});
+    const saved = buildSkillStudioCatalogSaveItemsForTest(normalized);
+    expect(saved[0].payload).toMatchObject({output_kind:"text",output_format:"html"});
+    const reimported = JSON.parse(JSON.stringify(saved[0].payload));
+    expect(buildSkillStudioCatalogSaveItemsForTest({recipes:[reimported]})[0].payload).toMatchObject({output_kind:"text",output_format:"html"});
+  });
+
   it("normalizes the draft into catalog payloads before saving", () => {
     const items = buildSkillStudioCatalogSaveItemsForTest({
       skill: {

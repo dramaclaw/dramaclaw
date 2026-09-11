@@ -621,7 +621,6 @@ _FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
     {
         "freezone_create_node",
         "freezone_add_next_node",
-        "freezone_html_artifact",
         "freezone_emit_canvas_command",
         "freezone_update_node_data",
         "freezone_delete_nodes",
@@ -718,21 +717,15 @@ def _codex_freezone_is_write_event(event: Any) -> bool:
     name = _codex_freezone_tool_name(event)
     if name not in _FREEZONE_CANVAS_WRITE_TOOLS:
         return False
-    if name != "freezone_html_artifact":
-        return True
-    for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
-        action = payload.get("action")
-        if action in {"read", "list", "history"}:
-            return False
-        if action in {"create", "update", "restore"}:
-            return True
-    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
-        for payload in _json_objects_from_codex_tool_value(value):
-            if payload.get("status") in {"html_artifact_read", "html_artifact_list", "html_artifact_history"}:
+    if name == "freezone_run_node_action":
+        for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+            action = payload.get("action")
+            if action in {"read_source", "history"}:
                 return False
-            if "canvas_apply_status" in payload or "bridge_key" in payload:
+            if isinstance(action, str) and action.strip():
                 return True
-    return False
+        return True
+    return True
 
 
 def _codex_freezone_write_result_succeeded(event: Any) -> bool:
@@ -5220,7 +5213,11 @@ def _build_codex_env(
     project_state_dir: str | Path | None = None,
     agent_token_file: str | Path | None = None,
 ) -> dict[str, str]:
+    from novelvideo import config
+
     env = os.environ.copy()
+    # MCP subprocesses run from project workspaces, not the API data root.
+    env["NOVELVIDEO_OUTPUT_DIR"] = str(Path(config.OUTPUT_DIR).resolve())
     agent_scope = "project" if project else "user"
     env["DRAMACLAW_USERNAME"] = username
     env["DRAMACLAW_AGENT_SCOPE"] = agent_scope
@@ -5561,6 +5558,7 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_SKILLS_DIR",
                 "DRAMACLAW_TOOL_MODE",
                 "DRAMACLAW_USERNAME",
+                "NOVELVIDEO_OUTPUT_DIR",
             ],
         }
     }
@@ -5572,7 +5570,7 @@ def _dramaclaw_mcp_servers(
             "type": "stdio",
             "command": sys.executable,
             "args": ["-m", "novelvideo.chat.workflow_mcp"],
-            "env_vars": ["DRAMACLAW_USERNAME"],
+            "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR"],
         }
     return servers
 

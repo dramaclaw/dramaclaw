@@ -13872,9 +13872,16 @@ async def create_canvas_workflow_draft(
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-    if operation_id and (
-        operation is None or operation.get("product_kind") != "workflow_result"
-    ):
+    if operation_id and operation is not None and operation.get("product_kind") != "workflow_result":
+        actual_product_kind = str(operation.get("product_kind") or "")
+        raise HTTPException(
+            400,
+            "workflow draft requires product_kind='workflow_result'; "
+            f"received product_kind={actual_product_kind!r}. "
+            "Start a new admission and use product_kind='workflow_result' with its operation_id; "
+            "workflow_generate is reserved for creating a Workflow Skill definition.",
+        )
+    if operation_id and operation is None:
         raise HTTPException(400, "workflow result operation is unavailable")
     if operation is not None:
         compiled = body.get("compiled") if isinstance(body.get("compiled"), dict) else {}
@@ -13897,7 +13904,10 @@ async def create_canvas_workflow_draft(
         ):
             raise HTTPException(
                 400,
-                "workflow result operation does not match compiled Skill",
+                "workflow result operation does not match compiled Skill: "
+                f"operation.skill_id={operation_skill_id!r}, "
+                f"operation.artifact_id={artifact_id!r}, "
+                f"expected skill_id={compiled_skill_id!r}",
             )
     if (
         operation
@@ -14314,16 +14324,18 @@ async def put_agent_generation_session(
     body: dict = Body(...),
     user: dict = Depends(get_api_user),
 ):
-    ctx, username, _project_name, project_dir, _output_dir = (
+    ctx, _owner_username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user)
     )
     state_dir = _canvas_state_project_dir(ctx, project_dir)
     manifest = body.get("manifest") if isinstance(body.get("manifest"), dict) else {}
     draft = body.get("draft") if isinstance(body.get("draft"), dict) else {}
     canvas_id = str(body.get("canvas_id") or "").strip()
+    # Private account Recipes belong to the requester, even in shared projects.
+    catalog_username = str(user.get("username") or "")
     available_recipe_ids = {
         str(item.get("id") or "").strip()
-        for item in list_user_agent_config_items(username, "recipes")
+        for item in list_user_agent_config_items(catalog_username, "recipes")
         if item.get("enabled") is not False and str(item.get("id") or "").strip()
     }
     try:

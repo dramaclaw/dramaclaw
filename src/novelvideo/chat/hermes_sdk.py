@@ -152,7 +152,6 @@ _DRAMACLAW_WRITE_TOOLS = {
 }
 
 _FREEZONE_CANVAS_WRITE_TOOLS = {
-    "freezone_html_artifact",
     "freezone_emit_canvas_command",
     "freezone_confirm_workflow_draft",
     "freezone_create_node",
