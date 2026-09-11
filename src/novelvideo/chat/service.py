@@ -798,10 +798,16 @@ def _codex_freezone_clarification_answered(event: Any) -> bool:
     return False
 
 
+_FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS = {
+    "freezone_prepare_workflow_draft",
+    "freezone_prepare_workflow_plan_draft",
+}
+
+
 def _codex_freezone_ready_workflow_draft(event: Any) -> dict[str, Any] | None:
     """Return a successfully prepared workflow draft carried by a Codex event."""
 
-    if _codex_freezone_tool_name(event) != "freezone_prepare_workflow_draft":
+    if _codex_freezone_tool_name(event) not in _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS:
         return None
     status = str(getattr(event, "status", "") or "").strip().lower()
     if status not in {"completed", "success", "succeeded"} or getattr(event, "error", None):
@@ -7108,10 +7114,7 @@ async def _stream_assistant_reply_codex(
                     tool_name = _codex_freezone_tool_name(event)
                     if _codex_freezone_clarification_answered(event):
                         clarification_answered = True
-                    if tool_name in {
-                        "freezone_prepare_workflow_draft",
-                        "freezone_prepare_workflow_plan_draft",
-                    }:
+                    if tool_name in _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS:
                         workflow_draft_attempted = True
                     prepared_draft = _codex_freezone_ready_workflow_draft(event)
                     if prepared_draft is not None:
