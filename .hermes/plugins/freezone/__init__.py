@@ -827,6 +827,9 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             }
         )
     questions = normalized_questions
+    answers = args.get("answers")
+    if not isinstance(answers, dict):
+        answers = {}
     if not questions:
         return tool_result(
             {
@@ -899,6 +902,7 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             "title": str(args.get("title") or "").strip(),
             "description": str(args.get("description") or "").strip(),
             "questions": questions,
+            "answers": answers,
             "allow_recommended": bool(args.get("allow_recommended", False)),
             "allow_skip": bool(args.get("allow_skip", True)),
         },
@@ -8038,6 +8042,29 @@ TOOLS = (
                     "type": "array",
                     "description": "High-level user-facing questions. Ask only the questions needed for the next decision; use one focused question when the next step depends on one answer, or group closely related choices when they should be answered together. Each question should usually have 2-5 options, but generation model questions must include every exact option from the live node schema.",
                     "items": _SKILL_STUDIO_QUESTION_SCHEMA,
+                },
+                "answers": {
+                    "type": "object",
+                    "description": "Previously confirmed answers used as context for dependent generation fields, such as image_model or video_model when the model question is not repeated on this card.",
+                    "additionalProperties": {
+                        "anyOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}},
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "option_ids": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                    },
+                                    "option_id": {"type": "string"},
+                                    "custom_text": {"type": "string"},
+                                    "customText": {"type": "string"},
+                                },
+                                "additionalProperties": False,
+                            },
+                        ]
+                    },
                 },
                 "allow_recommended": {
                     "type": "boolean",

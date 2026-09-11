@@ -80,6 +80,12 @@ vi.mock("react-i18next", () => ({
         "freezone.chat.currentSelection": "当前选中",
         "freezone.chat.usedThisTurn": "本轮会使用",
         "freezone.chat.canvasCommandsCancelled": "已取消画布操作",
+        "freezone.chat.canvasRetryPrompt": "请重新检查并继续刚才未完成的画布操作。先核对已有节点和运行状态，保留已完成结果；补齐生成参数后再提交新的审批。",
+        "freezone.chat.canvasRetryDisplay": "重新检查并继续未完成的画布操作",
+        "freezone.chat.generationParams.imageQuality": "图片画质",
+        "freezone.chat.generationParams.generateAudio": "生成音频",
+        "freezone.chat.generationParams.audioOn": "有声",
+        "freezone.chat.generationParams.audioOff": "静音",
       };
       const template = translations[key]
         ?? (typeof options?.defaultValue === "string" ? options.defaultValue : key);

@@ -890,8 +890,11 @@
           "high": "高画质"
         },
         "imageCount": "{{count}} 张",
+        "imageCount_other": "{{count}} 张",
         "videoCount": "{{count}} 个",
+        "videoCount_other": "{{count}} 个",
         "durationSeconds": "{{count}} 秒",
+        "durationSeconds_other": "{{count}} 秒",
         "generateAudio": "生成声音",
         "muteAudio": "不生成声音",
         "audioOn": "有声",

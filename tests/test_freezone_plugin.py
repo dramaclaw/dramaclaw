@@ -2579,6 +2579,32 @@ def test_generation_clarification_fills_titles_live_sources_and_legacy_count_ali
     assert all(question["mode"] == "single" for question in questions)
 
 
+def test_generation_clarification_preserves_confirmed_model_context(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+    captured = {}
+
+    def fake_emit(project, canvas, event):
+        captured.update({"project": project, "canvas": canvas, "event": event})
+        return "shown"
+
+    monkeypatch.setattr(plugin, "_emit_clarification_event", fake_emit)
+    result = handlers["freezone_request_user_clarification"](
+        {
+            "questions": [{"id": "image_resolution"}],
+            "answers": {"image_model": {"option_ids": ["image-a"]}},
+        }
+    )
+
+    assert result == "shown"
+    assert captured["event"]["answers"] == {"image_model": {"option_ids": ["image-a"]}}
+    answers_schema = schemas["freezone_request_user_clarification"]["parameters"][
+        "properties"
+    ]["answers"]
+    assert answers_schema["type"] == "object"
+
+
 def test_external_generation_clarification_accepts_separate_resolution_question(
     monkeypatch,
 ):
