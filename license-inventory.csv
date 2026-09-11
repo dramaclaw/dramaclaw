@@ -1562,6 +1562,7 @@ src/novelvideo/backup/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.
 src/novelvideo/backup/cli.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/backup/db_daily.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/backup/files_sync.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/backup/scope.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/backup/wal_migrator.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/backend_sdk.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1992,6 +1993,7 @@ tests/test_background_anchor_service.py,Elastic-2.0,2026 SuperTale contributors,
 tests/test_backup_db_daily.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_backup_files_sync.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_backup_restore_cli.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_backup_scope.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_backup_wal_migrator.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_batch_render_removed.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_batch_render_video_actions_removed.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
