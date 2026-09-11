@@ -33,6 +33,11 @@ vi.mock("@/lib/queries/model-gateway", () => ({
   useModelGatewayConfig: () => ({ data: undefined }),
 }));
 
+vi.mock("@/components/settings/settings-dialog", () => ({
+  SettingsDialog: ({ open }: { open: boolean }) =>
+    open ? <div role="dialog">Settings dialog</div> : null,
+}));
+
 vi.mock("@/lib/queries/org-branding", () => ({
   useOrgBranding: (enabled: boolean) => {
     brandingState.enabled = enabled;
@@ -59,6 +64,7 @@ vi.mock("react-i18next", () => ({
     t: (key: string) =>
       ({
         "app.logoHomeTooltip": "Home",
+        "header.settings": "Settings",
         "header.account.open": "Open account",
         "header.notifications": "Announcement Center",
         "header.account.changeAvatar": "Change avatar",
@@ -169,6 +175,16 @@ describe("Header runtime gating", () => {
     runtimeState.isCe = true;
     renderHeader();
     expect(brandingState.enabled).toBe(false);
+  });
+
+  it("keeps the settings entry available in EE runtime", () => {
+    runtimeState.isCe = false;
+
+    renderHeader();
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    expect(screen.getByRole("dialog")).toHaveTextContent("Settings dialog");
   });
 
   it("renders logout in the account panel when runtime requires auth", async () => {
