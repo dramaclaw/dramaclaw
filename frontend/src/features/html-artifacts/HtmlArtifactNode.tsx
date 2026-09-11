@@ -62,9 +62,9 @@ export const HtmlArtifactNode=memo(function HtmlArtifactNode({id,data,selected}:
   const updatePrompt = useCallback((prompt: string) => useCanvasStore.getState().updateNodeData(id, {prompt}), [id]);
   useReferenceMentionSync(String(data.prompt ?? ''), HTML_REFERENCE_PREFIXES.map(prefix => ({prefix, ids: references.filter(item => item.prefix === prefix).map(item => item.nodeId)})), updatePrompt);
   const candidates = references.map(item => ({key: item.nodeId, name: item.mention, index: item.index, displayName: item.name,
-    imageUrl: item.prefix === '图片' && item.url ? resolveImageDisplayUrl(item.url) : '',
-    videoUrl: item.prefix === '视频' && item.url ? resolveImageDisplayUrl(item.url) : undefined,
-    audioUrl: item.prefix === '音频' && item.url ? resolveImageDisplayUrl(item.url) : undefined}));
+    imageUrl: item.prefix === '图片' && item.url ? resolveImageDisplayUrl(item.url) : '', // i18n-exempt -- canonical @mention protocol token
+    videoUrl: item.prefix === '视频' && item.url ? resolveImageDisplayUrl(item.url) : undefined, // i18n-exempt -- canonical @mention protocol token
+    audioUrl: item.prefix === '音频' && item.url ? resolveImageDisplayUrl(item.url) : undefined})); // i18n-exempt -- canonical @mention protocol token
   const detach = (nodeId: string) => {
     const store = useCanvasStore.getState();
     store.edges.filter(edge => edge.source === nodeId && edge.target === id && !isExecutionDependencyEdge(edge)).forEach(edge => store.deleteEdge(edge.id));
@@ -176,7 +176,7 @@ export const HtmlArtifactNode=memo(function HtmlArtifactNode({id,data,selected}:
     {generationError && <p role="alert" className="px-3 py-2 text-xs text-destructive">{generationError}</p>}
     {selected && canGenerate && <div className={`nodrag nowheel absolute left-1/2 top-[calc(100%+12px)] z-[300] flex h-[288px] w-[720px] -translate-x-1/2 flex-col rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS}`} onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
       {candidates.length > 0 && <div aria-label={t('htmlArtifact.references')} className="ui-scrollbar flex shrink-0 items-center gap-2 overflow-x-auto px-3 pt-3">
-        {candidates.map(candidate => candidate.name.startsWith('文本') ? <div key={candidate.key} className="relative shrink-0">
+        {candidates.map(candidate => candidate.name.startsWith('文本') ? <div key={candidate.key} className="relative shrink-0"> {/* i18n-exempt -- canonical @mention protocol token */}
           <ReferenceTextChip nodeId={candidate.key} text={references.find(item => item.nodeId === candidate.key)?.text ?? ''} sourceLabel={candidate.displayName ?? undefined} onDetach={nodeId => {if (!isGenerating) detach(nodeId);}}/>
         </div> : <div key={candidate.key} title={candidate.displayName} className={NODE_REFERENCE_MEDIA_CHIP_CLASS}>
           {candidate.imageUrl ? <img src={candidate.imageUrl} alt="" className="h-full w-full object-cover" draggable={false}/> : candidate.videoUrl ? <video src={candidate.videoUrl} muted preload="metadata" className="h-full w-full object-cover"/> : <span className="text-xs text-text-muted">{candidate.name.replace(/\d+$/, '')}</span>}

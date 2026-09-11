@@ -110,7 +110,7 @@ export function mentionDisplayLabel(name: string): string {
 export function mentionChipLabel(candidate: MentionCandidate): string {
   const base = mentionDisplayLabel(candidate.name);
   const file = candidate.displayName?.trim();
-  if ((candidate.audioUrl || candidate.name.startsWith('文本')) && file) {
+  if ((candidate.audioUrl || candidate.name.startsWith('文本')) && file) { // i18n-exempt -- canonical @mention protocol token
     return `${base}_${file}`;
   }
   return base;
@@ -963,7 +963,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
                     />
                   ) : (
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-white/[0.06] text-[13px] text-accent">
-                      {candidate.name.startsWith('文本') ? 'T' : '♪'}
+                      {candidate.name.startsWith('文本') ? 'T' : '♪'} {/* i18n-exempt -- canonical @mention protocol token */}
                     </span>
                   )}
                   <span className="flex-1 truncate">{mentionChipLabel(candidate)}</span>
