@@ -7894,6 +7894,13 @@
     }
   },
   "htmlArtifact": {
+    "actionGenerate": "生成网页",
+    "actionSaveSource": "保存网页源码",
+    "actionSelectVersion": "选择网页版本",
+    "actionRestoreVersion": "恢复网页版本",
+    "actionOpen": "打开网页",
+    "actionExport": "导出网页",
+    "actionUpload": "上传 HTML",
     "upload": "上传 HTML",
     "invalidFile": "请选择完整的 HTML 网页文件",
     "fileTooLarge": "HTML 文件不能超过 2 MiB",

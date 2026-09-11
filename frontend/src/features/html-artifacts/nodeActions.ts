@@ -77,7 +77,7 @@ export async function executeHtmlNodeWriteAction(options: {
     ? parameters.title.trim()
     : typeof data.displayName === "string" && data.displayName.trim()
       ? data.displayName.trim()
-      : "网页";
+      : "HTML";
   if (action === 'select_version') {
     if (!artifactId) throw new Error('HTML node has no saved artifact');
     const selectedVersion = parameters.version;

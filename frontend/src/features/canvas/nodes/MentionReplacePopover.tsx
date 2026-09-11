@@ -246,7 +246,7 @@ export function MentionReplacePopover({
                   <RowThumb
                     imageUrl={candidate.imageUrl || undefined}
                     videoUrl={candidate.videoUrl}
-                    isText={candidate.name.startsWith('文本')}
+                    isText={candidate.name.startsWith('文本') /* i18n-exempt -- canonical @mention protocol token */}
                   />
                   <span className="flex-1 truncate">{mentionChipLabel(candidate)}</span>
                   <span className="text-[10px] text-text-muted/70">@{candidate.name}</span>

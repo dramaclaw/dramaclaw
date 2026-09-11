@@ -7894,6 +7894,13 @@
     }
   },
   "htmlArtifact": {
+    "actionGenerate": "Generate webpage",
+    "actionSaveSource": "Save webpage source",
+    "actionSelectVersion": "Select webpage version",
+    "actionRestoreVersion": "Restore webpage version",
+    "actionOpen": "Open webpage",
+    "actionExport": "Export webpage",
+    "actionUpload": "Upload HTML",
     "upload": "Upload HTML",
     "invalidFile": "Choose a complete HTML document",
     "fileTooLarge": "HTML file must not exceed 2 MiB",

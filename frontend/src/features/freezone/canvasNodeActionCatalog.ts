@@ -719,7 +719,7 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
   switch (node.type) {
     case CANVAS_NODE_TYPES.textAnnotation:
       return {
-        displayName: { type: "string", label: "显示名称" },
+        displayName: { type: "string", label: "Display name" },
         title: { type: "string", label: "标题" },
         content: { type: "string", label: "内容" },
         text: { type: "string", label: "文本" },
@@ -895,9 +895,9 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
         displayName: { type: "string", label: "显示名称" },
         prompt: {
           type: "string",
-          label: "网页要求",
+          label: "Webpage requirements",
           description:
-            "网页生成要求。可通过 @ 引用已连接的文字、图片或视频；HTML 源码必须通过节点 action 保存。",
+            "Webpage generation requirements. Use @ mentions for connected text, image, or video inputs. Save HTML source through node actions.",
         },
       };
     default:
