@@ -112,3 +112,35 @@ async def test_sdk_boundary_repairs_before_validation_but_keeps_required_fields(
     )))
     assert len(seen) == 1
     assert response.root.isError
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('adapter', ['workflow', 'dramaclaw'])
+async def test_html_missing_prompt_reports_repair_without_changing_node_type(monkeypatch, adapter):
+    import json
+    from novelvideo.chat import dramaclaw_mcp
+    from novelvideo.freezone.workflow_schema import workflow_plan_json_schema
+
+    plan = {'schema_version': 'freezone_workflow_plan.v1', 'skill': {'id': 'page'},
+            'nodes': [{'id': 'page', 'node_type': 'htmlArtifactNode',
+                       'data': {'workflowCatalog': {'recipeId': 'page-recipe'}}}], 'edges': []}
+    if adapter == 'workflow':
+        result = await workflow_mcp.call_tool('workflow_graph_compile', {'plan': plan})
+        payload = result.structuredContent
+    else:
+        monkeypatch.setenv('DRAMACLAW_TOOL_MODE', 'freezone_canvas')
+        monkeypatch.setenv('DRAMACLAW_PROJECT_ID', 'project-a')
+        name = 'freezone_prepare_workflow_plan_draft'
+        schema = dramaclaw_mcp._agent_tools()[name][0]
+        def must_not_run(_args):
+            raise AssertionError('Invalid HTML reached handler')
+        monkeypatch.setattr(dramaclaw_mcp, '_agent_tools', lambda: {name: ({**schema,
+            'parameters': {'type': 'object', 'properties': {'plan': workflow_plan_json_schema()}, 'required': ['plan']}}, must_not_run)})
+        result = await dramaclaw_mcp.call_tool(name, {'plan': plan})
+        payload = json.loads(result.content[0].text)
+    text = json.dumps(payload)
+    assert 'plan.nodes[0].prompt' in text
+    assert 'data.prompt' in text
+    assert 'Keep node_type=htmlArtifactNode' in text
+    assert plan['nodes'][0]['node_type'] == 'htmlArtifactNode'
+    assert 'prompt' not in plan['nodes'][0]['data']

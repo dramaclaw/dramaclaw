@@ -200,6 +200,21 @@ export function normalizeCanvasCommandNodeData(
     case CANVAS_NODE_TYPES.videoCompose:
       deleteFields(next, ["prompt", "content", "text", "body", "description"]);
       break;
+    case CANVAS_NODE_TYPES.htmlArtifact:
+      if (!hasNonEmptyStringField(next, "prompt")) {
+        const prompt = firstStringField(next, PROMPT_INPUT_ALIASES);
+        if (prompt !== undefined) next.prompt = prompt;
+      }
+      deleteFields(next, [
+        "content",
+        "text",
+        "body",
+        "description",
+        "html",
+        "artifactId",
+        "artifactVersion",
+      ]);
+      break;
     case CANVAS_NODE_TYPES.group:
       deleteFields(next, ["prompt", "content", "text", "body", "description", "title"]);
       break;

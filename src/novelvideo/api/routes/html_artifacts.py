@@ -12,7 +12,11 @@ from starlette.concurrency import run_in_threadpool
 from novelvideo.api.auth import get_api_user
 from novelvideo.freezone.canvas_lock import CanvasLockBusy
 from novelvideo.freezone.html_artifacts import ArtifactConflict, ArtifactStore, MAX_HTML_BYTES
-from novelvideo.freezone.history import append_generation_history, build_node_history_record
+from novelvideo.freezone.history import (
+    append_generation_history,
+    build_node_history_record,
+    read_generation_history,
+)
 from novelvideo.project_context import require_project_home_node, resolve_project_context
 
 router = APIRouter(prefix='/projects/{project}/freezone/html-artifacts', tags=['freezone-html-artifacts'])
@@ -38,8 +42,13 @@ class ArtifactBody(NodeScope):
     html: str = Field(max_length=MAX_HTML_BYTES)
 
 
+class CreateBody(ArtifactBody):
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=256)
+
+
 class UpdateBody(ArtifactBody):
     base_version: int = Field(ge=1, strict=True)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 class RestoreBody(NodeScope):
@@ -77,6 +86,15 @@ async def _with_history(store, artifact, scope):
             status='completed', media_type='html',
             result={'artifact_id': artifact['id'], 'version': artifact['version'], 'title': artifact['title']},
         )
+        existing = await run_in_threadpool(
+            read_generation_history,
+            project_dir=store.project_dir,
+            canvas_id=scope.canvas_id,
+            node_id=scope.node_id,
+            limit=0,
+        )
+        if any(item.get('id') == record['id'] for item in existing):
+            return artifact
         await run_in_threadpool(append_generation_history, project_dir=store.project_dir,
                                 canvas_id=scope.canvas_id, node_id=scope.node_id, record=record)
     except OSError:
@@ -90,15 +108,21 @@ def _data(value):
 
 
 @router.post('')
-async def create(project: str, body: ArtifactBody, user: dict = Depends(get_api_user)):
+async def create(project: str, body: CreateBody, user: dict = Depends(get_api_user)):
     store = await _store(project, user, 'editor')
-    return _data(await _with_history(store, await _call(store.create, title=body.title, html=body.html), body))
+    return _data(await _with_history(store, await _call(store.create, title=body.title, html=body.html, idempotency_key=body.idempotency_key), body))
 
 
 @router.get('')
 async def list_artifacts(project: str, user: dict = Depends(get_api_user)):
     store = await _store(project, user, 'viewer')
     return _data({'artifacts': await _call(store.list)})
+
+
+@router.get('/creation-lookup')
+async def find_creation(project: str, idempotency_key: Annotated[str, Query(min_length=1, max_length=256)], user: dict = Depends(get_api_user)):
+    store = await _store(project, user, 'viewer')
+    return _data({'artifact': await _call(store.find_creation, idempotency_key)})
 
 
 @router.get('/{artifact_id}')
@@ -110,7 +134,14 @@ async def get(project: str, artifact_id: str, version: Annotated[int | None, Que
 @router.put('/{artifact_id}')
 async def update(project: str, artifact_id: str, body: UpdateBody, user: dict = Depends(get_api_user)):
     store = await _store(project, user, 'editor')
-    return _data(await _with_history(store, await _call(store.update, artifact_id, title=body.title, html=body.html, base_version=body.base_version), body))
+    return _data(await _with_history(store, await _call(
+        store.update,
+        artifact_id,
+        title=body.title,
+        html=body.html,
+        base_version=body.base_version,
+        idempotency_key=body.idempotency_key,
+    ), body))
 
 
 @router.get('/{artifact_id}/versions')

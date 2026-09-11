@@ -19,6 +19,7 @@ vi.mock("@/api/ops", () => ({
 }));
 vi.mock("@/api/tasks", () => ({
   awaitTaskCompletion: mocks.awaitTask,
+  isTaskPollTimeoutError: () => false,
 }));
 vi.mock("@/features/html-artifacts/api", () => ({
   createHtmlArtifact: mocks.create,
@@ -36,6 +37,10 @@ vi.mock("@/stores/canvasStore", () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.state.updateNodeData.mockReset();
+  mocks.state.updateNodeData.mockImplementation((nodeId: string, patch: Record<string, unknown>) => {
+    const node = mocks.state.nodes.find((item) => item.id === nodeId);
+    if (node) node.data = {...node.data, ...patch};
+  });
   mocks.lookup.mockResolvedValue({ artifact: null });
   mocks.submitText.mockResolvedValue({
     task_key: "user:p:freezone_text_generate:job",
@@ -220,6 +225,96 @@ it("uses the ordinary text task for a manually created HTML node", async () => {
   );
   expect(mocks.fetchText).toHaveBeenCalledWith("p", "job");
   expect(mocks.generate).not.toHaveBeenCalled();
+  expect(mocks.create).toHaveBeenCalledWith(
+    "p",
+    "HTML",
+    expect.stringContaining("<html>"),
+    "html-generation:c:page:user:p:freezone_text_generate:job",
+  );
+  expect(mocks.state.updateNodeData).toHaveBeenCalledWith(
+    "page",
+    expect.objectContaining({
+      generationTaskKey: "user:p:freezone_text_generate:job",
+      generationTaskType: "freezone_text_generate",
+      generationTaskJobId: "job",
+      htmlGenerationPhase: "generating",
+      htmlGenerationTitle: "HTML",
+    }),
+  );
+});
+
+it("reuses a persisted HTML text task instead of submitting the model again", async () => {
+  mocks.state.nodes[0].data = {
+    prompt: "Build a page",
+    isGenerating: false,
+    generationTaskKey: "user:p:freezone_text_generate:old-job",
+    generationTaskType: "freezone_text_generate",
+    generationTaskJobId: "old-job",
+    htmlGenerationTitle: "Recovered page",
+    htmlGenerationSelectionToken: "selection-1",
+  };
+
+  await executeWorkflowHtmlNode("page", "p", "c");
+
+  expect(mocks.submitText).not.toHaveBeenCalled();
+  expect(mocks.awaitTask).toHaveBeenCalledWith(
+    "user:p:freezone_text_generate:old-job",
+    "p",
+    {taskType: "freezone_text_generate"},
+  );
+  expect(mocks.fetchText).toHaveBeenCalledWith("p", "old-job");
+  expect(mocks.create).toHaveBeenCalledTimes(1);
+});
+
+it("saves a completed result without overriding a history version selected meanwhile", async () => {
+  mocks.state.nodes[0].data = {
+    prompt: "Build a page",
+    artifactId: "existing",
+    artifactVersion: 2,
+    htmlSelectionToken: "current-v2",
+  };
+  let finishSave!: (value: unknown) => void;
+  mocks.save.mockImplementation(() => new Promise((resolve) => { finishSave = resolve; }));
+
+  const pending = executeWorkflowHtmlNode("page", "p", "c");
+  await vi.waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+  mocks.state.updateNodeData("page", {
+    artifactVersion: 1,
+    htmlSelectionToken: "selected-v1",
+  });
+  finishSave({id: "existing", version: 3, title: "Saved result"});
+  const output = await pending;
+
+  expect(mocks.state.nodes[0].data.artifactVersion).toBe(1);
+  expect(mocks.state.nodes[0].data.generationTaskKey).toBeNull();
+  expect(mocks.submitText).toHaveBeenCalledTimes(1);
+  expect(output.warnings?.join(' ')).toContain('saved to history');
+});
+
+it("retries Artifact saving with the same task and idempotency key", async () => {
+  mocks.state.nodes[0].data = {
+    prompt: "Build a page",
+    artifactId: "existing",
+    artifactVersion: 2,
+  };
+  mocks.save.mockRejectedValueOnce(new Error("storage unavailable"));
+
+  await expect(executeWorkflowHtmlNode("page", "p", "c")).rejects.toThrow("storage unavailable");
+  expect(mocks.state.nodes[0].data.htmlGenerationPhase).toBe("save_failed");
+  expect(mocks.state.nodes[0].data.generationTaskJobId).toBe("job");
+
+  mocks.save.mockResolvedValueOnce({id: "existing", version: 3, title: "HTML"});
+  await executeWorkflowHtmlNode("page", "p", "c");
+
+  expect(mocks.submitText).toHaveBeenCalledTimes(1);
+  expect(mocks.fetchText).toHaveBeenCalledTimes(2);
+  expect(mocks.save).toHaveBeenCalledTimes(2);
+  expect(mocks.save.mock.calls[0][6]).toBe(
+    "html-generation:c:page:user:p:freezone_text_generate:job",
+  );
+  expect(mocks.save.mock.calls[1][6]).toBe(mocks.save.mock.calls[0][6]);
+  expect(mocks.state.nodes[0].data.artifactVersion).toBe(3);
+  expect(mocks.state.nodes[0].data.generationTaskKey).toBeNull();
 });
 
 it("keeps explicit workflow HTML nodes on Recipe generation", async () => {

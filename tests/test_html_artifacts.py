@@ -338,3 +338,38 @@ def test_cached_export_preserves_media_snapshot(tmp_path):
     assert store.export_file(item['id'], 1) == path
     with zipfile.ZipFile(path) as archive:
         assert archive.read(next(n for n in archive.namelist() if n.endswith('.png'))) == b'original'
+
+
+def test_create_idempotency_survives_restart_and_rejects_changed_payload(tmp_path):
+    store = ArtifactStore(tmp_path, project_id='project')
+    first = store.create(title='Page', html='<html>first</html>', idempotency_key='workflow:canvas:node')
+    restarted = ArtifactStore(tmp_path, project_id='project')
+    assert restarted.create(title='Page', html='<html>first</html>', idempotency_key='workflow:canvas:node') == first
+    with pytest.raises(ArtifactConflict):
+        restarted.create(title='Page', html='<html>changed</html>', idempotency_key='workflow:canvas:node')
+    assert len(store.list()) == 1
+    other = restarted.create(title='Page', html='<html>first</html>', idempotency_key='workflow:other:node')
+    assert other['id'] != first['id']
+
+
+def test_update_idempotency_survives_restart_without_creating_another_version(tmp_path):
+    store = ArtifactStore(tmp_path)
+    first = store.create(title='Page', html='<html>first</html>')
+    updated = store.update(
+        first['id'], title='Page 2', html='<html>second</html>', base_version=1,
+        idempotency_key='html-generation:canvas:node:task-1',
+    )
+
+    restarted = ArtifactStore(tmp_path)
+    repeated = restarted.update(
+        first['id'], title='Page 2', html='<html>second</html>', base_version=1,
+        idempotency_key='html-generation:canvas:node:task-1',
+    )
+
+    assert repeated == updated
+    assert [item['version'] for item in restarted.versions(first['id'])] == [2, 1]
+    with pytest.raises(ArtifactConflict):
+        restarted.update(
+            first['id'], title='Changed', html='<html>different</html>', base_version=1,
+            idempotency_key='html-generation:canvas:node:task-1',
+        )

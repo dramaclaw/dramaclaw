@@ -30,8 +30,8 @@ export async function readHtmlPreview(project: string, id: string, version?: num
   } catch (error) { release(); throw error; }
 }
 
-export const createHtmlArtifact = (project: string, title: string, html: string) => apiCall<HtmlArtifact>(htmlArtifactPath(project), { method: 'post', json: {title, html}, retry:0 });
-export const saveHtmlArtifact = (project: string, id: string, title: string, html: string, base_version: number, scope?:HtmlNodeScope) => apiCall<HtmlArtifact>(htmlArtifactPath(project,id), {method:'put', json:{title,html,base_version,...scope}, retry:0});
+export const createHtmlArtifact = (project: string, title: string, html: string, idempotencyKey?: string) => apiCall<HtmlArtifact>(htmlArtifactPath(project), { method: 'post', json: {title, html, ...(idempotencyKey ? {idempotency_key:idempotencyKey} : {})}, retry:0 });
+export const saveHtmlArtifact = (project: string, id: string, title: string, html: string, base_version: number, scope?:HtmlNodeScope, idempotencyKey?:string) => apiCall<HtmlArtifact>(htmlArtifactPath(project,id), {method:'put', json:{title,html,base_version,...scope,...(idempotencyKey ? {idempotency_key:idempotencyKey} : {})}, retry:0});
 export const listHtmlVersions = (project: string, id: string) => apiCall<{versions:HtmlVersion[]}>(`${htmlArtifactPath(project,id)}/versions`);
 export const restoreHtmlVersion = (project: string,id:string,version:number,base_version:number,scope?:HtmlNodeScope) => apiCall<HtmlArtifact>(`${htmlArtifactPath(project,id)}/restore`,{method:'post',json:{version,base_version,...scope},retry:0});
 export async function exportHtmlArtifact(project:string,id:string,version:number) {
@@ -54,3 +54,5 @@ export function activeHtmlArtifactContext(projectId:string|undefined) {
 }
 
 export const recordHtmlNodeHistory = (project:string,id:string,version:number,scope:HtmlNodeScope) => apiCall<HtmlArtifact>(`${htmlArtifactPath(project,id)}/node-history`,{method:'post',json:{version,...scope},retry:0});
+
+export const findHtmlArtifactCreation = (project:string, idempotencyKey:string) => apiCall<{artifact:HtmlArtifact|null}>(`${htmlArtifactPath(project)}/creation-lookup`,{searchParams:{idempotency_key:idempotencyKey}});

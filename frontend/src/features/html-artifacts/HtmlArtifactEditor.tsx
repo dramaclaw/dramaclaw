@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { ArrowLeft, Code2, Download, Eye, MousePointer2, Save } from 'lucide-react';
 import { setActiveHtmlArtifact, announceHtmlArtifact, exportHtmlArtifact, HTML_ARTIFACT_REFERENCE_EVENT, HTML_ARTIFACT_UPDATED_EVENT, listHtmlVersions, readHtmlArtifact, readHtmlPreview, saveHtmlArtifact, type HtmlArtifact, type HtmlVersion } from './api';
 import { buildHtmlPreview, isHtmlSelectionMessage } from './preview';
+import { useCanvasStore } from '@/stores/canvasStore';
 
 type Props = { projectId:string; artifactId:string; version?:number; nodeId?:string; onClose:()=>void };
 export function HtmlArtifactEditor({projectId,artifactId,version,nodeId,onClose}:Props) {
@@ -95,6 +96,17 @@ export function HtmlArtifactEditor({projectId,artifactId,version,nodeId,onClose}
       if(next.warnings?.length)setWarnings(current=>[...current,...next.warnings!]);
     }catch(err){setError(err instanceof Error?err.message:String(err));}finally{setBusy(false);}
   };
+  const useCurrentVersion=()=>{
+    if(!artifact||!nodeId)return;
+    useCanvasStore.getState().updateNodeData(nodeId,{
+      artifactId:artifact.id,
+      artifactVersion:artifact.version,
+      displayName:artifact.title,
+      htmlSelectionToken:`${Date.now()}:${artifact.version}`,
+      generationError:null,
+    });
+    announceHtmlArtifact(projectId,artifact,nodeId);
+  };
   const button='inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs hover:bg-accent disabled:opacity-40';
   return <section className="absolute inset-0 z-30 flex flex-col bg-background text-foreground" aria-label={t('htmlArtifact.editor')}>
     <header className="flex flex-wrap items-center gap-1 border-b border-border bg-card p-2">
@@ -115,7 +127,7 @@ export function HtmlArtifactEditor({projectId,artifactId,version,nodeId,onClose}
       <select className="ml-auto rounded border border-border bg-background p-1.5" aria-label={t('htmlArtifact.versions')} value={artifact?.version??''} disabled={busy||!artifact} onChange={e=>{if(mayDiscard())void load(Number(e.target.value));}}>
         {versions.map(v=><option key={v.version} value={v.version}>v{v.version} · {v.title}</option>)}
       </select>
-      {artifact&&nodeId&&<button className={button} disabled={busy||dirty} onClick={()=>announceHtmlArtifact(projectId,artifact,nodeId)}>{t('htmlArtifact.restore')}</button>}
+      {artifact&&nodeId&&<button className={button} disabled={busy||dirty} onClick={useCurrentVersion}>{t('htmlArtifact.useVersion')}</button>}
     </div>
     {selecting&&selection&&!code&&<div role="toolbar" aria-label={t('htmlArtifact.textTools')} className="flex flex-wrap items-center gap-2 border-b border-border bg-card px-3 py-2 text-xs">
       <input aria-label={t('htmlArtifact.textContent')} className="min-w-40 flex-1 rounded border border-border bg-background p-2" value={selection.text} disabled={busy} onChange={e=>applyText({text:e.target.value})}/>

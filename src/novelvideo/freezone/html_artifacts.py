@@ -140,6 +140,8 @@ class ArtifactStore:
         if hashlib.sha256(html.encode()).hexdigest() != row.pop('sha256'):
             raise ValueError('Artifact revision content mismatch')
         row.pop('scope')
+        row.pop('update_idempotency_hash', None)
+        row.pop('update_request_hash', None)
         return dict(row, html=html)
 
     def _publish(self, row: dict, guard) -> dict:
@@ -169,10 +171,26 @@ class ArtifactStore:
             temporary.unlink(missing_ok=True)
         return dict(row)
 
-    def create(self, *, title: str, html: str) -> dict:
+    def create(self, *, title: str, html: str, idempotency_key: str | None = None) -> dict:
+        self._validate(title, html)
+        if idempotency_key is not None and (not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 256):
+            raise ValueError('Invalid idempotency key')
+        artifact_id = hashlib.sha256(f'{self._scope}:{idempotency_key}'.encode()).hexdigest() if idempotency_key else uuid.uuid4().hex
         with self._locked() as guard:
+            if idempotency_key and self._rows(artifact_id):
+                original = self._get(artifact_id, 1)
+                if original['title'] != title.strip() or original['html'] != html:
+                    raise ArtifactConflict(f'Create request already saved as artifact {artifact_id}; recover it before retrying with different content')
+                return self._get(artifact_id)
             now = datetime.now(timezone.utc).isoformat()
-            return self._publish(dict(id=uuid.uuid4().hex, title=title.strip(), html=html, version=1, created_at=now, updated_at=now), guard)
+            return self._publish(dict(id=artifact_id, title=title.strip(), html=html, version=1, created_at=now, updated_at=now), guard)
+
+    def find_creation(self, idempotency_key: str) -> dict | None:
+        if not 1 <= len(idempotency_key) <= 256:
+            raise ValueError('Invalid idempotency key')
+        artifact_id = hashlib.sha256(f'{self._scope}:{idempotency_key}'.encode()).hexdigest()
+        with self._locked():
+            return self._get(artifact_id) if self._rows(artifact_id) else None
 
     def get(self, artifact_id: str, version: int | None = None) -> dict:
         self._validate_id(artifact_id)
@@ -194,12 +212,76 @@ class ArtifactStore:
             self._get(artifact_id)
             return [dict(version=row['version'], title=row['title'], created_at=row['updated_at']) for row in self._rows(artifact_id)]
 
-    def update(self, artifact_id: str, *, title: str, html: str, base_version: int) -> dict:
+    def update(
+        self,
+        artifact_id: str,
+        *,
+        title: str,
+        html: str,
+        base_version: int,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        self._validate(title, html)
+        if idempotency_key is not None and (
+            not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 256
+        ):
+            raise ValueError('Invalid idempotency key')
+        key_hash = (
+            hashlib.sha256(
+                f'{self._scope}:{artifact_id}:update:{idempotency_key}'.encode()
+            ).hexdigest()
+            if idempotency_key
+            else None
+        )
+        request_hash = hashlib.sha256(
+            json.dumps(
+                {
+                    'title': title.strip(),
+                    'html': html,
+                    'base_version': base_version,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(',', ':'),
+            ).encode()
+        ).hexdigest()
         with self._locked() as guard:
+            if key_hash:
+                previous = next(
+                    (
+                        row for row in self._rows(artifact_id)
+                        if row.get('update_idempotency_hash') == key_hash
+                    ),
+                    None,
+                )
+                if previous:
+                    if previous.get('update_request_hash') != request_hash:
+                        raise ArtifactConflict(
+                            'Update request was already saved with different content'
+                        )
+                    return self._get(artifact_id, previous['version'])
             current = self._get(artifact_id)
             if current['version'] != base_version:
                 raise ArtifactConflict('Artifact changed; reload the latest revision before saving')
-            return self._publish(dict(current, title=title.strip(), html=html, version=base_version + 1, updated_at=datetime.now(timezone.utc).isoformat()), guard)
+            saved = self._publish(
+                dict(
+                    current,
+                    title=title.strip(),
+                    html=html,
+                    version=base_version + 1,
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                    **(
+                        {
+                            'update_idempotency_hash': key_hash,
+                            'update_request_hash': request_hash,
+                        }
+                        if key_hash
+                        else {}
+                    ),
+                ),
+                guard,
+            )
+            return self._get(artifact_id, saved['version'])
 
     def restore(self, artifact_id: str, *, version: int, base_version: int) -> dict:
         with self._locked() as guard:

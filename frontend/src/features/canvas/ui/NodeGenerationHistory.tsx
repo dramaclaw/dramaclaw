@@ -13,6 +13,7 @@ import {
   RotateCw,
   Box as BoxIcon,
   FileText,
+  Globe,
 } from 'lucide-react';
 
 import type { FreezoneGenerationHistoryRecord } from '@/api/ops';
@@ -40,6 +41,19 @@ export function historyRecordOutputUrl(
     if (typeof value === 'string' && value.length > 0) return value;
   }
   return null;
+}
+
+export function historyRecordHtmlIdentity(
+  record: FreezoneGenerationHistoryRecord,
+): { artifactId: string; version: number } | null {
+  if (record.media_type !== 'html') return null;
+  const result = record.result ?? {};
+  const artifactId = typeof result.artifact_id === 'string' ? result.artifact_id.trim() : '';
+  const version = result.version;
+  if (!artifactId || typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
+    return null;
+  }
+  return { artifactId, version };
 }
 
 /** 3GS 扩展名;命中即视为世界模型产物。 */
@@ -326,6 +340,7 @@ function MediaFallbackIcon({ mediaType }: { mediaType: string }) {
   if (mediaType === 'audio') return <Music className={className} />;
   if (mediaType === '3d' || mediaType === 'ply') return <BoxIcon className={className} />;
   if (mediaType === 'text') return <FileText className={className} />;
+  if (mediaType === 'html') return <Globe className={className} />;
   return <ImageIcon className={className} />;
 }
 
@@ -435,7 +450,9 @@ export function NodeGenerationHistory({
                   { variant: 'thumb' },
                 )
               : null;
-          const restorable = completed && (url || historyRecordPrompt(record));
+          const restorable = completed && Boolean(
+            url || historyRecordPrompt(record) || historyRecordHtmlIdentity(record),
+          );
           const active = completed && Boolean(isActive?.(record));
           return (
             <button

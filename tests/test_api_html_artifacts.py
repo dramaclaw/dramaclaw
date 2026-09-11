@@ -112,3 +112,38 @@ def test_history_failure_does_not_lose_saved_source(client, monkeypatch):
     artifact = response.json()['data']
     assert artifact['warnings']
     assert api.get(BASE + '/' + artifact['id']).json()['data']['html'] == 'source'
+
+
+def test_create_idempotency_and_authorized_recovery(client):
+    api, _ = client
+    params = {'idempotency_key': 'workflow:canvas:node'}
+    assert api.get(BASE + '/creation-lookup', params=params).json()['data']['artifact'] is None
+    body = {'title': 'Page', 'html': '<html>one</html>', **params}
+    first = api.post(BASE, json=body).json()['data']
+    assert api.post(BASE, json=body).json()['data']['id'] == first['id']
+    assert api.post(BASE, json={**body, 'html': 'different'}).status_code == 409
+    assert api.get(BASE + '/creation-lookup', params=params).json()['data']['artifact']['id'] == first['id']
+    assert api.get(BASE.replace('/demo/', '/peer/') + '/creation-lookup', params=params).status_code == 403
+
+
+def test_update_idempotency_returns_the_original_saved_revision(client, tmp_path):
+    api, _ = client
+    first = api.post(BASE, json={'title': 'One', 'html': 'one'}).json()['data']
+    url = BASE + '/' + first['id']
+    body = {
+        'title': 'Two',
+        'html': 'two',
+        'base_version': 1,
+        'idempotency_key': 'html-generation:canvas:node:task-1',
+        'canvas_id': 'canvas-1',
+        'node_id': 'node-1',
+    }
+    saved = api.put(url, json=body)
+    repeated = api.put(url, json=body)
+
+    assert saved.status_code == repeated.status_code == 200
+    assert saved.json()['data']['version'] == repeated.json()['data']['version'] == 2
+    assert len(api.get(url + '/versions').json()['data']['versions']) == 2
+    history = tmp_path / 'freezone/_generation_history/canvas-1/node-1.jsonl'
+    assert len(history.read_text().splitlines()) == 1
+    assert api.put(url, json={**body, 'html': 'changed'}).status_code == 409

@@ -24,6 +24,7 @@ import {
   Copy,
   Crop,
   Download,
+  Upload,
   Eraser,
   Expand,
   FastForward,
@@ -1421,6 +1422,8 @@ export const NodeActionToolbar = memo(
     const recipeCompileFellBack =
       node.data.workflowRecipeCompileMode === "timeout_fallback";
 
+    if (node.type === CANVAS_NODE_TYPES.htmlArtifact && !node.data.artifactId) return null;
+
     // 分镜组 has its own dedicated toolbar (aspect / grid / index / convert /
     // ungroup) — render it instead of the generic node toolbar.
     if (isStoryboardGroupNode(node)) {
@@ -2564,7 +2567,7 @@ export const NodeActionToolbar = memo(
                   const artifact = await readHtmlArtifact(projectId, artifactId, typeof node.data.artifactVersion === "number" && node.data.artifactVersion > 0 ? node.data.artifactVersion : undefined);
                   await exportHtmlArtifact(projectId, artifactId, artifact.version);
                 } catch (error) { toast.error(String(error)); }
-              }}><Download className="h-3.5 w-3.5"/>{t("htmlArtifact.export")}</UiChipButton>
+              }}><Upload className="h-3.5 w-3.5"/>{t("htmlArtifact.export")}</UiChipButton>
             </>}
             {!isImageGenNode(node) && !isVideoNode(node) && !isAudioNode(node) && (
               <UiChipButton

@@ -68,10 +68,12 @@ function RowThumb({
   imageUrl,
   videoUrl,
   kind,
+  isText = false,
 }: {
   imageUrl?: string;
   videoUrl?: string;
   kind?: ReferenceMediaKind;
+  isText?: boolean;
 }) {
   if (imageUrl) {
     return (
@@ -97,7 +99,9 @@ function RowThumb({
   }
   return (
     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-white/[0.06] text-[13px] text-accent">
-      {kind === 'image' ? (
+      {isText ? (
+        'T'
+      ) : kind === 'image' ? (
         <ImageIcon className="h-3.5 w-3.5" aria-hidden />
       ) : kind === 'video' ? (
         <Film className="h-3.5 w-3.5" aria-hidden />
@@ -242,9 +246,10 @@ export function MentionReplacePopover({
                   <RowThumb
                     imageUrl={candidate.imageUrl || undefined}
                     videoUrl={candidate.videoUrl}
+                    isText={candidate.name.startsWith('文本')}
                   />
                   <span className="flex-1 truncate">{mentionChipLabel(candidate)}</span>
-                  <span className="text-[10px] text-text-muted/70">@{candidate.index}</span>
+                  <span className="text-[10px] text-text-muted/70">@{candidate.name}</span>
                 </button>
               ))}
             </>
