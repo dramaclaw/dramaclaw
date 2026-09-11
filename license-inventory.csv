@@ -1770,6 +1770,7 @@ src/novelvideo/agent_skills/dramaclaw-workflows/SKILL.md,Elastic-2.0,2026 SuperT
 src/novelvideo/agent_skills/dramaclaw-workflows/references/custom-topology.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/agent_skills/dramaclaw-workflows/references/error-recovery.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/agent_skills/dramaclaw-workflows/references/integration.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/agent_skills/dramaclaw-workflows/references/skill-studio-authoring-guide.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/agent_skills/dramaclaw-workflows/references/workflow-operations.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/agents/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/agents/asset_compiler.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
