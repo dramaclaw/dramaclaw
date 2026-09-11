@@ -35,6 +35,8 @@ describe("Piko World map package contract", () => {
       "southeast-tall-pine", "southeast-path-shrub",
       "southwest-fence-lamp", "south-path-west-lamp", "south-path-east-lamp",
       "south-edge-west-grove", "south-edge-path-pine",
+      "east-willow-canopy",
+      "west-hall-pine",
     ]);
     expect(PikoInteractionsSchema.parse(interactions).interactions).toEqual([]);
     expect(PikoEnvironmentSchema.parse(environment).effects.map(effect => effect.kind)).toEqual(Array(35).fill("sprite"));

@@ -2,9 +2,11 @@
 import { Container, Graphics, Rectangle, Sprite, Texture, type Ticker } from "pixi.js";
 import type { PikoPoint } from "./navigation-geometry";
 
-type Animation = { columns: number; rows: number; frames: number; fps: number; inset: number; playback?: "loop" | "ping-pong"; startStep?: number };
+export type EnvironmentSpriteAnimation = { columns: number; rows: number; frames: number; fps: number; inset: number;
+  playback?: "loop" | "ping-pong";
+  startStep?: number; sequence?: readonly number[]; stepAt?: (timeMS: number) => number };
 
-export function environmentFrameAt(step: number, count: number, playback: Animation["playback"] = "loop") {
+export function environmentFrameAt(step: number, count: number, playback: EnvironmentSpriteAnimation["playback"] = "loop") {
   if (count <= 1) return 0;
   if (playback !== "ping-pong") return step % count;
   const phase = step % (2 * (count - 1));
@@ -12,10 +14,12 @@ export function environmentFrameAt(step: number, count: number, playback: Animat
 }
 
 /** Play authored atlas frames; mask away scenery and fully replace static water pixels. */
-export function createEnvironmentSprite(atlas: Texture, region: PikoPoint[], animation: Animation, ticker: Ticker) {
+export function createEnvironmentSprite(atlas: Texture, region: PikoPoint[], animation: EnvironmentSpriteAnimation, ticker: Ticker) {
   const { columns, rows, frames: count, fps, inset } = animation;
   const cellWidth = atlas.width / columns, cellHeight = atlas.height / rows;
-  if (count > columns * rows || cellWidth <= inset * 2 || cellHeight <= inset * 2) {
+  if (count > columns * rows || cellWidth <= inset * 2 || cellHeight <= inset * 2
+    || (animation.sequence && (animation.sequence.length === 0
+      || animation.sequence.some(frame => frame < 0 || frame >= count)))) {
     throw new Error("Invalid environment sprite atlas layout");
   }
   const frames = Array.from({ length: count }, (_, index) => new Texture({ source: atlas.source,
@@ -26,7 +30,11 @@ export function createEnvironmentSprite(atlas: Texture, region: PikoPoint[], ani
   mask.poly(region.flatMap(point => [point.x, point.y])).fill(0xffffff);
   container.mask = mask;
   const startStep = animation.startStep ?? 0;
-  const initialFrame = environmentFrameAt(startStep, count, animation.playback);
+  const frameAt = (step: number) => animation.sequence
+    ? animation.sequence[step % animation.sequence.length]
+    : environmentFrameAt(step, count, animation.playback);
+  const initialStep = animation.stepAt?.(ticker.lastTime) ?? startStep;
+  const initialFrame = frameAt(initialStep);
   const sprite = new Sprite(frames[initialFrame]);
   sprite.position.set(Math.min(...region.map(point => point.x)), Math.min(...region.map(point => point.y)));
   sprite.width = Math.max(...region.map(point => point.x)) - sprite.x;
@@ -37,7 +45,8 @@ export function createEnvironmentSprite(atlas: Texture, region: PikoPoint[], ani
   let attached = false;
   const update = (clock: Ticker) => {
     elapsed += Math.min(clock.deltaMS, 100) / 1000;
-    const next = environmentFrameAt(startStep + Math.floor(elapsed * fps), count, animation.playback);
+    const step = animation.stepAt?.(clock.lastTime) ?? startStep + Math.floor(elapsed * fps);
+    const next = frameAt(step);
     if (next !== frame) { frame = next; sprite.texture = frames[frame]; }
   };
   const sync = () => {

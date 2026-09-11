@@ -144,6 +144,14 @@ export const PikoEnvironmentSchema = z.strictObject({
         inset: z.number().nonnegative().default(0),
         playback: z.enum(["loop", "ping-pong"]).optional(),
         startStep: z.number().int().nonnegative().optional(),
+        sequence: z.array(z.number().int().nonnegative()).min(1).optional(),
+        clock: z.enum(["local", "courtyard-wind"]).optional(),
+        loopSeconds: z.number().positive().optional(),
+        phaseSeconds: z.number().finite().optional(),
+      }).superRefine((animation, context) => {
+        if (animation.sequence?.some(frame => frame >= animation.frames)) {
+          context.addIssue({ code: "custom", path: ["sequence"], message: "序列帧索引不能超出图集帧数" });
+        }
       }).optional(),
       reducedMotion: z.enum(["keep", "simplify", "disable"]),
     }),

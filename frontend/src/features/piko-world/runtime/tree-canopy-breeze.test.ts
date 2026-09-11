@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { afterEach, expect, it, vi } from "vitest";
 import { Ticker, Texture, TextureSource } from "pixi.js";
-import { clipTreeOutline, createTreeCanopyBreeze, TREE_CANOPY_FPS } from "./tree-canopy-breeze";
+import {
+  clipTreeOutline,
+  createTreeCanopyBreeze,
+  TREE_CANOPY_FPS,
+  TREE_CANOPY_LOOP_SECONDS,
+  TREE_CANOPY_SEQUENCE,
+} from "./tree-canopy-breeze";
 import { pointInPolygon } from "./navigation-geometry";
 import occlusion from "../../../../public/piko/world/maps/welcome-courtyard/data/occlusion.json";
 
@@ -58,22 +64,28 @@ it("plays matching frame masks and outlines, pauses particles and releases resou
   const decodedSource = firstTexture.source;
   for (let time = 100; time <= 500; time += 100) ticker.update(time);
   expect(effect.canopy.texture).toBe(firstTexture);
+  expect(effect.canopy.alpha).toBe(1);
   for (let time = 600; time <= 2200; time += 100) ticker.update(time);
   expect(effect.canopy.texture).not.toBe(firstTexture);
   expect(Math.abs(effect.canopy.x - initialX)).toBeLessThanOrEqual(8);
-  expect(Math.abs(effect.canopy.y - initialY)).toBeLessThanOrEqual(3);
+  expect(Math.abs(effect.canopy.y - initialY)).toBeLessThanOrEqual(8);
   expect(effect.canopy.skew.x).toBe(0); expect(effect.canopy.rotation).toBe(0);
   expect(tree.outline).not.toBe(firstOutline);
   expect(effect.canopy.mask).toBe(firstMask);
   expect(effect.canopy.height).toBe(212);
-  // Exactly one full authored sequence returns to frame zero.
+  // One restrained breeze uses three neighbouring poses without a still step.
   played.add(effect.canopy.texture);
-  for (let time = 2300; time <= 8200; time += 100) {
+  for (let time = 2300; time <= 6100; time += 100) {
     ticker.update(time); played.add(effect.canopy.texture);
   }
-  expect(played.size).toBe(7);
+  expect(TREE_CANOPY_SEQUENCE).toEqual([0, 1, 2, 1]);
+  expect(new Set(TREE_CANOPY_SEQUENCE).size).toBe(3);
+  expect(TREE_CANOPY_SEQUENCE.every((frame, index) =>
+    frame !== TREE_CANOPY_SEQUENCE[(index + 1) % TREE_CANOPY_SEQUENCE.length])).toBe(true);
+  expect(played.size).toBe(3);
   expect(effect.canopy.texture).toBe(firstTexture);
-  expect(TREE_CANOPY_FPS).toBe(7 / 8);
+  expect(TREE_CANOPY_FPS).toBeCloseTo(2 / 3);
+  expect(TREE_CANOPY_LOOP_SECONDS).toBe(6);
   expect(tree.outline).toBe(firstOutline);
   expect(effect.trunk.position.x).toBe(0); expect(effect.trunk.position.y).toBe(0);
   reduced = true; change();

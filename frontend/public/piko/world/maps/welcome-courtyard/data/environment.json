@@ -1331,43 +1331,6 @@
       "reducedMotion": "simplify"
     },
     {
-      "id": "grass-breeze-west-pine-north",
-      "kind": "sprite",
-      "src": "effects/grass-breeze-v1.png",
-      "layer": "front-scenery",
-      "region": {
-        "id": "grass-breeze-west-pine-north-patch",
-        "points": [
-          {
-            "x": 503,
-            "y": 373
-          },
-          {
-            "x": 599,
-            "y": 373
-          },
-          {
-            "x": 599,
-            "y": 469
-          },
-          {
-            "x": 503,
-            "y": 469
-          }
-        ]
-      },
-      "animation": {
-        "columns": 4,
-        "rows": 4,
-        "frames": 8,
-        "fps": 3,
-        "inset": 0,
-        "playback": "ping-pong",
-        "startStep": 11
-      },
-      "reducedMotion": "simplify"
-    },
-    {
       "id": "grass-breeze-west-boulder",
       "kind": "sprite",
       "src": "effects/grass-breeze-v1.png",
@@ -1553,43 +1516,6 @@
       "reducedMotion": "simplify"
     },
     {
-      "id": "grass-breeze-east-path-pine",
-      "kind": "sprite",
-      "src": "effects/grass-breeze-v1.png",
-      "layer": "front-scenery",
-      "region": {
-        "id": "grass-breeze-east-path-pine-patch",
-        "points": [
-          {
-            "x": 1538,
-            "y": 723
-          },
-          {
-            "x": 1634,
-            "y": 723
-          },
-          {
-            "x": 1634,
-            "y": 819
-          },
-          {
-            "x": 1538,
-            "y": 819
-          }
-        ]
-      },
-      "animation": {
-        "columns": 4,
-        "rows": 4,
-        "frames": 8,
-        "fps": 3,
-        "inset": 0,
-        "playback": "ping-pong",
-        "startStep": 13
-      },
-      "reducedMotion": "simplify"
-    },
-    {
       "id": "grass-breeze-east-path-shrub",
       "kind": "sprite",
       "src": "effects/grass-breeze-v1.png",
@@ -1623,117 +1549,6 @@
         "inset": 0,
         "playback": "ping-pong",
         "startStep": 4
-      },
-      "reducedMotion": "simplify"
-    },
-    {
-      "id": "grass-breeze-east-willow-bank",
-      "kind": "sprite",
-      "src": "effects/grass-breeze-v1.png",
-      "layer": "front-scenery",
-      "region": {
-        "id": "grass-breeze-east-willow-bank-patch",
-        "points": [
-          {
-            "x": 1807,
-            "y": 794
-          },
-          {
-            "x": 1903,
-            "y": 794
-          },
-          {
-            "x": 1903,
-            "y": 890
-          },
-          {
-            "x": 1807,
-            "y": 890
-          }
-        ]
-      },
-      "animation": {
-        "columns": 4,
-        "rows": 4,
-        "frames": 8,
-        "fps": 3,
-        "inset": 0,
-        "playback": "ping-pong",
-        "startStep": 9
-      },
-      "reducedMotion": "simplify"
-    },
-    {
-      "id": "grass-breeze-southeast-grove",
-      "kind": "sprite",
-      "src": "effects/grass-breeze-v1.png",
-      "layer": "front-scenery",
-      "region": {
-        "id": "grass-breeze-southeast-grove-patch",
-        "points": [
-          {
-            "x": 1788,
-            "y": 1035
-          },
-          {
-            "x": 1884,
-            "y": 1035
-          },
-          {
-            "x": 1884,
-            "y": 1131
-          },
-          {
-            "x": 1788,
-            "y": 1131
-          }
-        ]
-      },
-      "animation": {
-        "columns": 4,
-        "rows": 4,
-        "frames": 8,
-        "fps": 3,
-        "inset": 0,
-        "playback": "ping-pong",
-        "startStep": 0
-      },
-      "reducedMotion": "simplify"
-    },
-    {
-      "id": "grass-breeze-southwest-edge",
-      "kind": "sprite",
-      "src": "effects/grass-breeze-v1.png",
-      "layer": "front-scenery",
-      "region": {
-        "id": "grass-breeze-southwest-edge-patch",
-        "points": [
-          {
-            "x": 209,
-            "y": 997
-          },
-          {
-            "x": 305,
-            "y": 997
-          },
-          {
-            "x": 305,
-            "y": 1093
-          },
-          {
-            "x": 209,
-            "y": 1093
-          }
-        ]
-      },
-      "animation": {
-        "columns": 4,
-        "rows": 4,
-        "frames": 8,
-        "fps": 3,
-        "inset": 0,
-        "playback": "ping-pong",
-        "startStep": 5
       },
       "reducedMotion": "simplify"
     },
@@ -1773,7 +1588,22 @@
         "startStep": 10
       },
       "reducedMotion": "simplify"
-    }
+    },
+    { "id": "flower-breeze-mark-02", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-mark-02", "points": [{ "x": 1355, "y": 31 }, { "x": 1415, "y": 31 }, { "x": 1415, "y": 91 }, { "x": 1355, "y": 91 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.6, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 6.6, "phaseSeconds": 0.08 }, "reducedMotion": "simplify" },
+    { "id": "flower-breeze-mark-04", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-mark-04", "points": [{ "x": 126, "y": 141 }, { "x": 188, "y": 141 }, { "x": 188, "y": 203 }, { "x": 126, "y": 203 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.56, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 7.1, "phaseSeconds": -0.04 }, "reducedMotion": "simplify" },
+    { "id": "flower-breeze-mark-07", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-mark-07", "points": [{ "x": 1766, "y": 413 }, { "x": 1834, "y": 413 }, { "x": 1834, "y": 481 }, { "x": 1766, "y": 481 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.59, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 6.8, "phaseSeconds": 0.04 }, "reducedMotion": "simplify" },
+    { "id": "flower-breeze-mark-09", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-mark-09", "points": [{ "x": 1238, "y": 545 }, { "x": 1308, "y": 545 }, { "x": 1308, "y": 615 }, { "x": 1238, "y": 615 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.55, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 7.2, "phaseSeconds": -0.03 }, "reducedMotion": "simplify" },
+    { "id": "flower-breeze-mark-15", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-mark-15", "points": [{ "x": 1707, "y": 978 }, { "x": 1787, "y": 978 }, { "x": 1787, "y": 1058 }, { "x": 1707, "y": 1058 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.61, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 6.5, "phaseSeconds": -0.06 }, "reducedMotion": "simplify" }
   ],
   "audioZones": [
     {

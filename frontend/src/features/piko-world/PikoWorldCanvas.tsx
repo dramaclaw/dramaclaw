@@ -8,8 +8,8 @@ import { useTranslation } from "react-i18next";
 
 import { loadPikoMapEnvironment, loadPikoMapManifest, loadPikoMapNavigation, loadPikoMapOcclusion, resolvePikoMapAssetUrl } from "./runtime/map-package-loader";
 import { createMapOccluder, createBakedActorOcclusion, isBakedOccluder, isResidentHeadOccluded } from "./runtime/map-occlusion";
-import { createEnvironmentSprite } from "./runtime/environment-sprite";
-import { createTreeCanopyBreeze } from "./runtime/tree-canopy-breeze";
+import { createEnvironmentEffectRuntime } from "./runtime/environment-effect-runtime";
+import { createCourtyardFoliageRuntime } from "./runtime/courtyard-foliage-runtime";
 import { createEnvironmentAudio } from "./runtime/environment-audio";
 import { createResidentOcclusionSilhouette } from "./runtime/resident-occlusion-silhouette";
 import { containWorldInViewport, type PikoSize } from "./runtime/viewport-fit";
@@ -109,9 +109,8 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
     let simulatedActor: ReturnType<typeof createResidentActor> | null = null;
     let residentActor: ReturnType<typeof createResidentActor> | null = null;
     let mayorActor: ReturnType<typeof createMayorActor> | null = null;
-    const environmentTextureUrls = new Set<string>();
-    const environmentEffects: ReturnType<typeof createEnvironmentSprite>[] = [];
-    let treeBreeze: ReturnType<typeof createTreeCanopyBreeze> | null = null;
+    let environmentRuntime: Awaited<ReturnType<typeof createEnvironmentEffectRuntime>> = null;
+    let courtyardFoliageRuntime: Awaited<ReturnType<typeof createCourtyardFoliageRuntime>> = null;
     let environmentAudio: ReturnType<typeof createEnvironmentAudio> | null = null;
     let disposed = false;
     let disconnectPosition = () => {};
@@ -126,10 +125,10 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
       disconnectResizeObserver();
       disconnectPosition();
       environmentAudio?.destroy();
-      treeBreeze?.destroy();
+      environmentRuntime?.destroy();
+      courtyardFoliageRuntime?.destroy();
       stopPlayerRef.current = () => {};
       simulatedHoverRef.current = () => {};
-      environmentEffects.forEach(effect => effect.destroy());
       clickFeedback?.destroy();
       residentSilhouette?.destroy();
       actorOcclusion.forEach(item => item.destroy());
@@ -142,7 +141,6 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
       mayorHoverRef.current=()=>{};
       occluders.forEach(occluder => occluder.destroy());
       if (app) app.destroy(true, { children: true });
-      for (const url of environmentTextureUrls) void Assets.unload(url);
       for (const url of occlusionTextureUrls) void Assets.unload(url);
       if (mayorTextureLoaded) void Assets.unload(PIKO_MAYOR_IDLE_SRC);
       for (const id of residentTextures.keys()) void Assets.unload(PIKO_PLAYABLE_RESIDENTS[id]);
@@ -202,25 +200,24 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
 
         const occlusion = await loadPikoMapOcclusion(mapId, manifest.data.occlusion, abortController.signal);
         if (disposed) return;
-        const animatedTree = mapId === "welcome-courtyard"
-          ? occlusion.occluders.find(item => item.id === "east-canopy-tree") : undefined;
-        if (animatedTree) {
-          const url = resolvePikoMapAssetUrl(mapId, "effects/east-tree-clean-plate-v1.png");
-          const cleanPlate = await Assets.load<Texture>(url);
-          if (disposed) { void Assets.unload(url); return; }
-          environmentTextureUrls.add(url);
-          cleanPlate.source.scaleMode = "nearest";
-          const atlasUrl = resolvePikoMapAssetUrl(mapId, "effects/east-tree-canopy-atlas-v2.png");
-          const atlas = await Assets.load<Texture>(atlasUrl);
-          if (disposed) { void Assets.unload(atlasUrl); return; }
-          environmentTextureUrls.add(atlasUrl);
-          atlas.source.scaleMode = "nearest";
-          treeBreeze = createTreeCanopyBreeze(texture, cleanPlate, atlas, animatedTree, nextApp.ticker, manifest.size);
-          world.addChild(treeBreeze.background, treeBreeze.container);
+        if (mapId === "welcome-courtyard") {
+          courtyardFoliageRuntime = await createCourtyardFoliageRuntime({
+            occlusion,
+            baseTexture: texture,
+            ticker: nextApp.ticker,
+            size: manifest.size,
+            resolveAssetUrl: src => resolvePikoMapAssetUrl(mapId, src),
+            isDisposed: () => disposed,
+          });
+          if (!courtyardFoliageRuntime) return;
+          world.addChild(...courtyardFoliageRuntime.objects);
         }
-        const bakedOccluders = occlusion.occluders.filter(item => item !== animatedTree
+        const animatedTree = courtyardFoliageRuntime?.animatedTree;
+        const bakedOccluders = occlusion.occluders.filter(item =>
+          !courtyardFoliageRuntime?.bakedActorOcclusionExclusions.has(item)
           && isBakedOccluder(item, manifest.baseTexture.src));
         for (const definition of occlusion.occluders) {
+          if (courtyardFoliageRuntime?.occluderRenderExclusions.has(definition)) continue;
           if (isBakedOccluder(definition, manifest.baseTexture.src)) continue;
           const url = resolvePikoMapAssetUrl(mapId, definition.src);
           const source = url === baseTextureUrl ? texture : await Assets.load<Texture>(url);
@@ -237,35 +234,16 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
         const environment = await loadPikoMapEnvironment(mapId, manifest.data.environment, abortController.signal);
         if (disposed) return;
         environmentAudio = createEnvironmentAudio(environment.audioZones, src => resolvePikoMapAssetUrl(mapId, src));
-        for (const definition of environment.effects) {
-          if (definition.kind !== "sprite" || !definition.region || !definition.src) continue;
-          // Static foreground reuses original map pixels above water, below residents.
-          if (!definition.animation && definition.src === manifest.baseTexture.src) {
-            const points = definition.region.points;
-            const x = Math.min(...points.map(point => point.x));
-            const y = Math.min(...points.map(point => point.y));
-            const foreground = createMapOccluder(texture, {
-              id: definition.id, src: definition.src, position: { x, y }, depthY: -0.5,
-              frame: { x, y, width: Math.max(...points.map(point => point.x)) - x,
-                height: Math.max(...points.map(point => point.y)) - y },
-              outline: points.map(point => ({ x: point.x - x, y: point.y - y })),
-            });
-            occluders.push(foreground);
-            world.addChild(foreground.container);
-            continue;
-          }
-          if (!definition.animation) continue;
-          const url = resolvePikoMapAssetUrl(mapId, definition.src);
-          const atlas = await Assets.load<Texture>(url);
-          if (disposed) { void Assets.unload(url); return; }
-          environmentTextureUrls.add(url);
-          atlas.source.scaleMode = "nearest";
-          const effect = createEnvironmentSprite(atlas, definition.region.points, definition.animation, nextApp.ticker);
-          effect.container.zIndex = definition.layer === "front-scenery" ? -0.25
-            : definition.layer === "behind-scenery" ? -0.75 : -1;
-          environmentEffects.push(effect);
-          world.addChild(effect.container, effect.mask);
-        }
+        environmentRuntime = await createEnvironmentEffectRuntime({
+          definitions: environment.effects,
+          baseTexture: texture,
+          baseTextureSrc: manifest.baseTexture.src,
+          ticker: nextApp.ticker,
+          resolveAssetUrl: src => resolvePikoMapAssetUrl(mapId, src),
+          isDisposed: () => disposed,
+        });
+        if (!environmentRuntime) return;
+        world.addChild(...environmentRuntime.objects);
         setPlayerHeadOccluded(false);
 
         if (mapId === "welcome-courtyard") {

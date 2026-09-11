@@ -4,6 +4,7 @@ import type { PikoOccluder } from "./map-package-schema";
 import type { PikoPoint } from "./navigation-geometry";
 import { CANOPY_PLACEMENT, CANOPY_REGISTRATION, readCanopyAtlas } from "./canopy-atlas";
 import { createFallingLeaves } from "./falling-leaves";
+import { COURTYARD_WIND_FPS, COURTYARD_WIND_LOOP_SECONDS, courtyardWindFrameAt } from "./courtyard-wind";
 
 // Retain the original branch junction and lower foliage beneath the moving crown.
 // Cutting at 435 removed this overlap and exposed the clean plate between crown and trunk.
@@ -24,9 +25,10 @@ export function clipTreeOutline(points: PikoPoint[], upper: boolean, boundary = 
   return result;
 }
 
-// Skip the far-right pose (atlas index 2), retaining the eight-second cycle.
-export const TREE_CANOPY_SEQUENCE = [0, 1, 3, 4, 5, 6, 7] as const;
-export const TREE_CANOPY_FPS = TREE_CANOPY_SEQUENCE.length / 8;
+// Ping-pong through three neighbouring poses without inserting a still frame.
+export const TREE_CANOPY_SEQUENCE = [0, 1, 2, 1] as const;
+export const TREE_CANOPY_LOOP_SECONDS = COURTYARD_WIND_LOOP_SECONDS;
+export const TREE_CANOPY_FPS = COURTYARD_WIND_FPS;
 
 /** Replace the baked crown with authored frames; retain the original trunk and silhouette. */
 export function createTreeCanopyBreeze(source: Texture, cleanPlate: Texture, atlas: Texture, definition: PikoOccluder,
@@ -74,18 +76,17 @@ export function createTreeCanopyBreeze(source: Texture, cleanPlate: Texture, atl
     definition.outline = outlines[frame];
   };
   const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-  let elapsed = 0, attached = false;
+  let attached = false;
   const update = (clock: Ticker) => {
     const delta = Math.min(clock.deltaMS, 100) / 1000;
-    elapsed += delta;
-    apply(TREE_CANOPY_SEQUENCE[Math.floor((elapsed + 1e-8) * TREE_CANOPY_FPS) % TREE_CANOPY_SEQUENCE.length]);
+    apply(courtyardWindFrameAt(clock.lastTime, TREE_CANOPY_SEQUENCE));
     leaves.update(delta);
   };
   const sync = () => {
     const active = !media.matches && !document.hidden;
     if (active && !attached) { ticker.add(update); attached = true; }
     if (!active && attached) { ticker.remove(update); attached = false; }
-    if (media.matches) { elapsed = 0; apply(0); leaves.reset(); }
+    if (media.matches) { apply(0); leaves.reset(); }
   };
   media.addEventListener("change", sync);
   document.addEventListener("visibilitychange", sync);

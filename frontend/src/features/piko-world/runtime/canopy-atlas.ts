@@ -3,17 +3,19 @@ import { Texture } from "pixi.js";
 import { pointInPolygon, type PikoPoint } from "./navigation-geometry";
 
 export const CANOPY_PLACEMENT = { x: 1381, y: 245, width: 280, height: 212 };
-export const CANOPY_FRAME_COUNT = 8;
-// Correct generated sheet registration, keeping the rightward excursion below ~2 map pixels.
+export const CANOPY_ATLAS_SRC = "effects/east-tree-canopy-atlas-v5.png";
+export const CANOPY_ATLAS_COLUMNS = 4;
+export const CANOPY_ATLAS_ROWS = 2;
+export const CANOPY_FRAME_COUNT = CANOPY_ATLAS_COLUMNS * CANOPY_ATLAS_ROWS;
+// Keep the authored lower crown fixed while preserving the breeze at the outer leaf clusters.
 export const CANOPY_REGISTRATION = [
-  { x: 0, y: 0 }, { x: -3, y: 0 }, { x: -8, y: 0 }, { x: -4, y: 0 },
-  { x: 2, y: 3 }, { x: 2, y: 3 }, { x: 2, y: 3 }, { x: 1, y: 3 },
+  { x: 0, y: 0 }, { x: -8, y: 0 }, { x: -8, y: -1 }, { x: -4, y: 0 },
+  { x: -2, y: 8 }, { x: -3, y: 7 }, { x: -3, y: 7 }, { x: -1, y: 6 },
 ] as const;
 
-/** Exclude the chroma matte before creating transparent runtime frames. */
+/** Use the authored alpha channel for the runtime occlusion silhouette. */
 export function canopyPixelVisible(pixels: ArrayLike<number>, offset: number) {
-  const r = pixels[offset], g = pixels[offset + 1], b = pixels[offset + 2];
-  return pixels[offset + 3] >= 128 && !(r > g && b > g);
+  return pixels[offset + 3] >= 128;
 }
 
 export function canopyFrameGeometry(pixels: ArrayLike<number>, trunk: PikoPoint[], offset: PikoPoint = { x: 0, y: 0 }) {
@@ -59,13 +61,11 @@ export function readCanopyAtlas(atlas: Texture, trunk: PikoPoint[]) {
       if (!context) throw new Error("Cannot read tree canopy atlas");
       context.imageSmoothingEnabled = false;
       context.drawImage(atlas.source.resource as CanvasImageSource,
-        index % 4 * atlas.width / 4, Math.floor(index / 4) * atlas.height / 2,
-        atlas.width / 4, atlas.height / 2, 0, 0, canvas.width, canvas.height);
+        index % CANOPY_ATLAS_COLUMNS * atlas.width / CANOPY_ATLAS_COLUMNS,
+        Math.floor(index / CANOPY_ATLAS_COLUMNS) * atlas.height / CANOPY_ATLAS_ROWS,
+        atlas.width / CANOPY_ATLAS_COLUMNS, atlas.height / CANOPY_ATLAS_ROWS,
+        0, 0, canvas.width, canvas.height);
       const image = context.getImageData(0, 0, canvas.width, canvas.height);
-      for (let offset = 0; offset < image.data.length; offset += 4) {
-        if (!canopyPixelVisible(image.data, offset)) image.data.fill(0, offset, offset + 4);
-      }
-      context.putImageData(image, 0, 0);
       const geometry = canopyFrameGeometry(image.data, trunk, CANOPY_REGISTRATION[index]);
       const texture = Texture.from(canvas);
       textures.push(texture);

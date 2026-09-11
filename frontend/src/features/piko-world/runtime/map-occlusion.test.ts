@@ -84,10 +84,14 @@ describe("welcome arch occlusion", () => {
   });
 
   it("cuts only scenery ahead of the actor and restores the full actor in front", () => {
-    expect(occlusion.occluders.every(item => isBakedOccluder(item, "base.png"))).toBe(true);
+    const animatedPine = occlusion.occluders.find(item => item.id === "west-hall-pine");
+    expect(animatedPine).toBeDefined();
+    expect(isBakedOccluder(animatedPine!, "base.png")).toBe(false);
+    const bakedOccluders = occlusion.occluders.filter(item => isBakedOccluder(item, "base.png"));
+    expect(bakedOccluders).toHaveLength(30);
     const actor = new Container();
     actor.position.set(1060, 855);
-    const masked = createBakedActorOcclusion(actor, occlusion.occluders, { width: 2048, height: 1152 });
+    const masked = createBakedActorOcclusion(actor, bakedOccluders, { width: 2048, height: 1152 });
     expect(actor.mask).toBe(masked.mask);
     expect(masked.mask.containsPoint({ x: 1060, y: 770 })).toBe(false);
     expect(masked.mask.containsPoint({ x: 1060, y: 900 })).toBe(true);

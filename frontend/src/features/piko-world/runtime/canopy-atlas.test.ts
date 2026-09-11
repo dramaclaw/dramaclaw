@@ -1,14 +1,36 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { afterEach, expect, it, vi } from "vitest";
-import { CANOPY_PLACEMENT, canopyFrameGeometry, canopyPixelVisible, readCanopyAtlas } from "./canopy-atlas";
+import { readFileSync } from "node:fs";
+import {
+  CANOPY_ATLAS_COLUMNS,
+  CANOPY_ATLAS_ROWS,
+  CANOPY_ATLAS_SRC,
+  CANOPY_FRAME_COUNT,
+  CANOPY_PLACEMENT,
+  CANOPY_REGISTRATION,
+  canopyFrameGeometry,
+  canopyPixelVisible,
+  readCanopyAtlas,
+} from "./canopy-atlas";
 import { Texture, TextureSource } from "pixi.js";
 import { pointInPolygon } from "./navigation-geometry";
 
-it("excludes the matte and its pink fringe while retaining dark and sunlit foliage", () => {
-  for (const color of [[255, 0, 255, 255], [150, 65, 145, 255], [76, 65, 79, 255], [10, 80, 20, 0]]) {
-    expect(canopyPixelVisible(color, 0)).toBe(false);
-  }
-  for (const color of [[20, 48, 36, 255], [190, 200, 45, 255]]) expect(canopyPixelVisible(color, 0)).toBe(true);
+it("keeps the v5 atlas contract internally consistent", () => {
+  expect(CANOPY_ATLAS_SRC).toBe("effects/east-tree-canopy-atlas-v5.png");
+  const png = readFileSync(`public/piko/world/maps/welcome-courtyard/${CANOPY_ATLAS_SRC}`);
+  expect(png.subarray(1, 4).toString()).toBe("PNG");
+  expect(png.readUInt32BE(16)).toBe(1983);
+  expect(png.readUInt32BE(20)).toBe(793);
+  expect(png[25]).toBe(6); // PNG color type 6: RGBA.
+  expect(CANOPY_FRAME_COUNT).toBe(CANOPY_ATLAS_COLUMNS * CANOPY_ATLAS_ROWS);
+  expect(CANOPY_REGISTRATION).toHaveLength(CANOPY_FRAME_COUNT);
+});
+
+it("derives the occlusion silhouette exclusively from authored alpha", () => {
+  expect(canopyPixelVisible([255, 0, 255, 255], 0)).toBe(true);
+  expect(canopyPixelVisible([20, 48, 36, 128], 0)).toBe(true);
+  expect(canopyPixelVisible([190, 200, 45, 127], 0)).toBe(false);
+  expect(canopyPixelVisible([10, 80, 20, 0], 0)).toBe(false);
 });
 it("builds frame masks and an occlusion contour from foliage plus fixed trunk", () => {
   const { x, y, width, height } = CANOPY_PLACEMENT;

@@ -40,7 +40,7 @@ describe("Piko World map package loader", () => {
   it("loads occlusion with cancellation and rejects another map's silhouettes", async () => {
     mockJsonResponse(occlusion);
     const controller = new AbortController();
-    expect((await loadPikoMapOcclusion("welcome-courtyard", "data/occlusion.json", controller.signal)).occluders).toHaveLength(30);
+    expect((await loadPikoMapOcclusion("welcome-courtyard", "data/occlusion.json", controller.signal)).occluders).toHaveLength(32);
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/welcome-courtyard/data/occlusion.json"), {
       cache: "no-cache", signal: controller.signal,
     });

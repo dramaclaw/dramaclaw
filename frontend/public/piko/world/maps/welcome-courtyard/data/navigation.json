@@ -908,34 +908,38 @@
       "kind": "prop"
     },
     {
-      "id": "west-noticeboard-north-copy-1-copy-2",
+      "id": "west-hall-pine-root",
       "points": [
         {
-          "x": 535,
-          "y": 163
+          "x": 570,
+          "y": 396
         },
         {
-          "x": 575,
-          "y": 122
+          "x": 589,
+          "y": 396
         },
         {
-          "x": 645,
-          "y": 234
+          "x": 594,
+          "y": 403
         },
         {
-          "x": 669,
-          "y": 309
-        },
-        {
-          "x": 619,
+          "x": 592,
           "y": 411
         },
         {
-          "x": 508,
-          "y": 412
+          "x": 584,
+          "y": 415
+        },
+        {
+          "x": 572,
+          "y": 413
+        },
+        {
+          "x": 566,
+          "y": 406
         }
       ],
-      "kind": "prop"
+      "kind": "vegetation"
     },
     {
       "id": "west-noticeboard-north-copy-1-copy-2-copy-1",
