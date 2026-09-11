@@ -912,6 +912,42 @@ async def test_read_resource_remaps_stale_workspace_uri_to_current_skills_root(
 
 
 @pytest.mark.asyncio
+async def test_bundled_skill_studio_authoring_guide_is_listed_and_readable(
+    monkeypatch, tmp_path
+):
+    from novelvideo.chat import service as chat_service
+
+    skills_root = tmp_path / "workspace" / ".agents" / "skills"
+    chat_service._sync_project_skills(skills_root, agent_profile="freezone:main")
+    guide = (
+        skills_root
+        / "dramaclaw-workflows"
+        / "references"
+        / "skill-studio-authoring-guide.md"
+    )
+    hermes_guide = (
+        CE_ROOT
+        / ".hermes"
+        / "skills"
+        / "freezone"
+        / "references"
+        / "skill-studio-authoring-guide.md"
+    )
+    monkeypatch.setenv("DRAMACLAW_SKILLS_DIR", str(skills_root))
+
+    resources = await dramaclaw_mcp.list_resources()
+    content = await dramaclaw_mcp.read_resource(guide.as_uri())
+
+    assert any(
+        resource.name
+        == "dramaclaw-workflows/references/skill-studio-authoring-guide.md"
+        for resource in resources
+    )
+    assert content == hermes_guide.read_text(encoding="utf-8")
+    assert "capability modeling" in content
+
+
+@pytest.mark.asyncio
 async def test_read_resource_accepts_codex_agent_root_relative_skill_path(
     monkeypatch, tmp_path
 ):

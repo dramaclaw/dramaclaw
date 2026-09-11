@@ -39,6 +39,8 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   approval event after required image/video parameters are known.
 - Use `freezone_request_user_clarification` for structured questions. Never substitute a host's
   built-in `request_user_input`, `update_plan`, or `create_goal` for canvas work.
+- For Skill/Recipe authoring, read and follow
+  `references/skill-studio-authoring-guide.md` before asking questions or drafting.
 
 ## Route the request
 
