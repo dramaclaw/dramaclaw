@@ -697,6 +697,99 @@ def test_external_generation_preflight_accepts_confirmed_image_and_video_paramet
         "_request",
         lambda *_args, **_kwargs: {"ok": True, "data": {"nodes": [], "edges": []}},
     )
+
+
+def test_generation_preflight_does_not_require_quality_for_model_without_quality_options(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+
+    def fake_request(method, path, **_kwargs):
+        assert method == "GET"
+        assert path == "/projects/project-a/freezone/image/models"
+        return {
+            "ok": True,
+            "data": [
+                {
+                    "id": "newapi_nanobanana2",
+                    "label": "LingShan NB 2",
+                    "ratioOptions": ["16:9"],
+                    "resolutionOptions": ["1K"],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(plugin, "_request", fake_request)
+    commands = [
+        {
+            "type": "create_node",
+            "client_id": "image",
+            "node_type": "imageGenNode",
+            "data": {
+                "model": "newapi_nanobanana2",
+                "aspectRatio": "16:9",
+                "size": "1K",
+                "count": 1,
+            },
+        },
+        {
+            "type": "run_node_action",
+            "node_id": "image",
+            "action": "generate_image",
+        },
+    ]
+
+    assert (
+        plugin._external_generation_parameter_preflight(
+            "project-a", "canvas-a", commands
+        )
+        is None
+    )
+
+
+def test_generation_preflight_keeps_quality_for_model_with_quality_options(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "data": [
+                {
+                    "id": "quality-model",
+                    "qualityOptions": ["low", "medium", "high"],
+                }
+            ],
+        },
+    )
+    commands = [
+        {
+            "type": "create_node",
+            "client_id": "image",
+            "node_type": "imageGenNode",
+            "data": {
+                "model": "quality-model",
+                "aspectRatio": "16:9",
+                "size": "2K",
+                "count": 1,
+            },
+        },
+        {
+            "type": "run_node_action",
+            "node_id": "image",
+            "action": "generate_image",
+        },
+    ]
+
+    result = plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", commands
+    )
+
+    assert result is not None
+    assert result["missing_parameters"][0]["fields"] == ["quality"]
+    assert result["required_choices"] == {"image": ["quality"]}
     commands = [
         {
             "type": "create_node",
@@ -738,25 +831,17 @@ def test_external_generation_preflight_accepts_confirmed_image_and_video_paramet
     )
 
 
-def test_hermes_generation_path_does_not_enable_external_parameter_preflight(
-    monkeypatch,
-):
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_hermes_generation_checks_parameters_before_approval(monkeypatch, confirmed):
     plugin = _load_plugin_module()
     monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP", raising=False)
-    monkeypatch.setattr(
-        plugin,
-        "_request",
-        lambda *_args, **_kwargs: pytest.fail("Hermes preflight must not read canvas"),
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {
+        "ok": True, "data": {"nodes": [{"id": "image", "type": "imageGenNode", "data": {"workflowConfigConfirmed": confirmed}}], "edges": []},
+    })
+    result = plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", [{"type": "run_workflow", "scope": "canvas"}],
     )
-
-    assert (
-        plugin._external_generation_parameter_preflight(
-            "project-a",
-            "canvas-a",
-            [{"type": "run_workflow", "scope": "canvas"}],
-        )
-        is None
-    )
+    assert result["code"] == "generation_parameters_required"
 
 
 def test_dynamic_workflow_plan_is_rejected_before_canvas_bridge():
@@ -2405,11 +2490,119 @@ def test_external_generation_clarification_rejects_bundled_settings(monkeypatch)
     assert result["code"] == "generation_parameter_questions_invalid"
     assert "video_resolution" in result["required_question_ids"]["video"]
     assert "image_variants_per_node" in result["required_question_ids"]["image"]
+    assert "image_quality" in result["required_question_ids"]["image"]
     assert "video_variants_per_node" in result["required_question_ids"]["video"]
     assert "image_count" not in result["required_question_ids"]["image"]
     assert "video_count" not in result["required_question_ids"]["video"]
     assert "480P" in result["agent_instruction"]
     assert emitted == []
+
+
+def test_external_generation_clarification_filters_server_managed_thinking_question(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    emitted = []
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+
+    result = handlers["freezone_request_user_clarification"](
+        {
+            "questions": [
+                {"id": "image_model", "title": "图片模型", "options": [{"id": "m"}]},
+                {"id": "video_model", "title": "视频模型", "options": [{"id": "v"}]},
+                {"id": "image_quality", "title": "图片画质", "options": [{"id": "low"}]},
+                {"id": "thinking_level", "title": "思考等级", "options": [{"id": "low"}]},
+            ]
+        }
+    )
+
+    assert result == "shown"
+    assert [question["id"] for question in emitted[0]["questions"]] == [
+        "image_model",
+        "video_model",
+        "image_quality",
+    ]
+    assert emitted[0]["questions"][0]["options_source"] == "image_models"
+    assert emitted[0]["questions"][1]["options_source"] == "video_models"
+    assert (
+        emitted[0]["questions"][2]["options_source"]
+        == "selected_image_model_qualities"
+    )
+
+
+def test_generation_clarification_fills_titles_live_sources_and_legacy_count_aliases(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    captured = {}
+
+    def fake_emit(project, canvas, event):
+        captured.update({"project": project, "canvas": canvas, "event": event})
+        return "shown"
+
+    monkeypatch.setattr(plugin, "_emit_clarification_event", fake_emit)
+    result = handlers["freezone_request_user_clarification"](
+        {
+            "questions": [
+                {"id": "image_model"},
+                {"id": "image_quality"},
+                {"id": "image_count"},
+            ]
+        }
+    )
+
+    assert result == "shown"
+    questions = captured["event"]["questions"]
+    assert [question["id"] for question in questions] == [
+        "image_model",
+        "image_quality",
+        "image_variants_per_node",
+    ]
+    assert [question["title"] for question in questions] == [
+        "图片模型",
+        "图片画质",
+        "图片生成数量",
+    ]
+    assert [question["options_source"] for question in questions] == [
+        "image_models",
+        "selected_image_model_qualities",
+        "image_variant_counts",
+    ]
+    assert all(question["options"] == [] for question in questions)
+    assert all(question["mode"] == "single" for question in questions)
+
+
+def test_generation_clarification_preserves_confirmed_model_context(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+    captured = {}
+
+    def fake_emit(project, canvas, event):
+        captured.update({"project": project, "canvas": canvas, "event": event})
+        return "shown"
+
+    monkeypatch.setattr(plugin, "_emit_clarification_event", fake_emit)
+    result = handlers["freezone_request_user_clarification"](
+        {
+            "questions": [{"id": "image_resolution"}],
+            "answers": {"image_model": {"option_ids": ["image-a"]}},
+        }
+    )
+
+    assert result == "shown"
+    assert captured["event"]["answers"] == {"image_model": {"option_ids": ["image-a"]}}
+    answers_schema = schemas["freezone_request_user_clarification"]["parameters"][
+        "properties"
+    ]["answers"]
+    assert answers_schema["type"] == "object"
 
 
 def test_external_generation_clarification_accepts_separate_resolution_question(
@@ -4097,7 +4290,25 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
         in clarification_schema["properties"]["clarification_id"]["description"]
     )
     assert "skill_studio_session_id" in clarification_schema["properties"]
-    assert clarification_question_item["required"] == ["id", "title", "options"]
+    assert clarification_question_item["required"] == ["id"]
+    assert clarification_question_item["properties"]["options_source"]["enum"] == [
+        "image_models",
+        "selected_image_model_ratios",
+        "selected_image_model_resolutions",
+        "selected_image_model_qualities",
+        "image_variant_counts",
+        "video_models",
+        "selected_video_model_ratios",
+        "selected_video_model_resolutions",
+        "selected_video_model_durations",
+        "selected_video_model_audio",
+        "video_variant_counts",
+    ]
+    assert (
+        "every exact live option"
+        in clarification_question_item["properties"]["options"]["description"]
+    )
+    assert "title and options may be omitted" in clarification_description
     assert clarification_option_item["required"] == ["id", "label"]
     assert "Do not include Recipe drafts inside skill" in skill_schema["description"]
     patch_field_description = patch_schema["properties"]["patch"]["description"]
@@ -5118,6 +5329,34 @@ def test_freezone_plugin_register_call_exposes_node_tools_on_hermes_acp():
     assert by_name["freezone_emit_canvas_command"]["toolset"] == "hermes-acp"
     assert len(calls) == len(plugin.TOOLS)
 
+def test_external_skill_import_submits_background_task_without_canvas_write(monkeypatch):
+    import base64
+    module = _load_plugin_module()
+    monkeypatch.setenv('DRAMACLAW_PROJECT', 'project')
+    calls = []
+    monkeypatch.setattr(module, '_request', lambda method, path, **kwargs: calls.append((method, path, kwargs)) or {'ok': True, 'data': {'batch_id': 'b', 'items': []}})
+    result = module._handle_import_external_skill({'project_id': 'p/a', 'name': 'SKILL.md', 'markdown': '# 文案'})
+    if isinstance(result, str):
+        result = json.loads(result)
+    assert calls[0][0:2] == ('POST', '/projects/p%2Fa/freezone/skill-imports')
+    assert base64.b64decode(calls[0][2]['body']['files'][0]['content_base64']).decode() == '# 文案'
+    assert result['status'] == 'skill_import_submitted'
+    assert result['batch_id'] == 'b'
+    schema = next(schema for name, schema, _handler in module.TOOLS if name == 'freezone_import_external_skill')
+    Draft202012Validator(schema['output_schema']).validate(result)
+
+
+def test_external_skill_import_result_is_available_for_skill_studio(monkeypatch):
+    module = _load_plugin_module()
+    monkeypatch.setattr(module, '_request', lambda *args, **kwargs: {'ok': True, 'data': {'id': 'i', 'status': 'ready', 'bundle': {'skill': {'id': 'ad'}, 'recipes': []}}})
+    result = module._handle_get_skill_import({'project_id': 'p', 'import_id': 'i'})
+    if isinstance(result, str):
+        result = json.loads(result)
+    assert result['import_result']['bundle']['skill']['id'] == 'ad'
+    assert 'Skill Studio' in result['agent_instruction']
+    schema = next(schema for name, schema, _handler in module.TOOLS if name == 'freezone_get_skill_import')
+    Draft202012Validator(schema['output_schema']).validate(result)
+
 
 @pytest.mark.parametrize("requested", [True, "false", 1])
 def test_confirm_draft_cannot_expand_execution_policy(monkeypatch, requested):
@@ -5329,32 +5568,3 @@ def test_observation_timeout_only_retries_read(monkeypatch):
     result = plugin._handle_observe_workflow_run({"run_id": "run_1"})
     assert result["next_action"] == "observe_same_run"
     assert result["retryable"] is True
-
-
-def test_external_skill_import_submits_background_task_without_canvas_write(monkeypatch):
-    import base64
-    module = _load_plugin_module()
-    monkeypatch.setenv('DRAMACLAW_PROJECT', 'project')
-    calls = []
-    monkeypatch.setattr(module, '_request', lambda method, path, **kwargs: calls.append((method, path, kwargs)) or {'ok': True, 'data': {'batch_id': 'b', 'items': []}})
-    result = module._handle_import_external_skill({'project_id': 'p/a', 'name': 'SKILL.md', 'markdown': '# 文案'})
-    if isinstance(result, str):
-        result = json.loads(result)
-    assert calls[0][0:2] == ('POST', '/projects/p%2Fa/freezone/skill-imports')
-    assert base64.b64decode(calls[0][2]['body']['files'][0]['content_base64']).decode() == '# 文案'
-    assert result['status'] == 'skill_import_submitted'
-    assert result['batch_id'] == 'b'
-    schema = next(schema for name, schema, _handler in module.TOOLS if name == 'freezone_import_external_skill')
-    Draft202012Validator(schema['output_schema']).validate(result)
-
-
-def test_external_skill_import_result_is_available_for_skill_studio(monkeypatch):
-    module = _load_plugin_module()
-    monkeypatch.setattr(module, '_request', lambda *args, **kwargs: {'ok': True, 'data': {'id': 'i', 'status': 'ready', 'bundle': {'skill': {'id': 'ad'}, 'recipes': []}}})
-    result = module._handle_get_skill_import({'project_id': 'p', 'import_id': 'i'})
-    if isinstance(result, str):
-        result = json.loads(result)
-    assert result['import_result']['bundle']['skill']['id'] == 'ad'
-    assert 'Skill Studio' in result['agent_instruction']
-    schema = next(schema for name, schema, _handler in module.TOOLS if name == 'freezone_get_skill_import')
-    Draft202012Validator(schema['output_schema']).validate(result)

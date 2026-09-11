@@ -302,6 +302,7 @@ function nodeTextReference(
 function nodeReferenceItem(
   node: CanvasNode,
   context?: { nodes?: readonly CanvasNode[]; edges?: readonly CanvasEdge[] },
+  options: { includeActionCatalog?: boolean } = {},
 ): CanvasNodeReferenceItem {
   const textReference = nodeTextReference(node);
   return {
@@ -318,7 +319,10 @@ function nodeReferenceItem(
     candidate_origin:
       (node.data as { candidate_origin?: unknown }).candidate_origin ?? null,
     position: { x: node.position.x, y: node.position.y },
-    action_catalog: buildAgentCanvasNodeActionCatalog(node, context),
+    action_catalog:
+      options.includeActionCatalog === false
+        ? ({} as CanvasNodeActionCatalog & Record<string, unknown>)
+        : buildAgentCanvasNodeActionCatalog(node, context),
   };
 }
 
@@ -616,9 +620,9 @@ export function shouldIncludeCanvasSummary(
   text: string,
   options: { hasFocusedNodeContext?: boolean } = {},
 ): boolean {
-  void options;
   const trimmed = text.trim();
   if (!trimmed) return false;
+  if (options.hasFocusedNodeContext) return false;
   return true;
 }
 
@@ -759,7 +763,7 @@ export function buildCanvasNodeReferenceAttachment(
   nodes: CanvasNode[],
   edges: CanvasEdge[] = [],
   allNodes: CanvasNode[] = nodes,
-  options: { displayNodes?: CanvasNode[] } = {},
+  options: { displayNodes?: CanvasNode[]; includeActionCatalog?: boolean } = {},
 ): ChatAttachment | null {
   const referencedNodes = nodes.filter((node) => node.id);
   if (referencedNodes.length === 0) return null;
@@ -781,10 +785,10 @@ export function buildCanvasNodeReferenceAttachment(
     project,
     canvas_id: canvasId,
     display_nodes: displayNodes.map((node) =>
-      nodeReferenceItem(node, actionContext),
+      nodeReferenceItem(node, actionContext, options),
     ),
     nodes: referencedNodes.map((node) =>
-      nodeReferenceItem(node, actionContext),
+      nodeReferenceItem(node, actionContext, options),
     ),
     edges: referencedEdges.map((edge) => edgeReferenceItem(edge, nodeById)),
   };

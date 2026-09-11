@@ -269,6 +269,27 @@ def _quarantine_project_dirs(
     仅在 ``record`` 的三类目录全部通过归属校验后才移动;任一目录不属于
     ``record.owner_username`` 时抛出,不移动任何目录。
     """
+    recorded_dirs = (
+        Path(record.output_dir),
+        Path(record.state_dir),
+        Path(record.runtime_dir),
+    )
+    # Some migrated registry rows retain paths from a retired storage root
+    # after all three project directories have already been removed. There is
+    # no filesystem tree to move in that case, so allow the caller to purge the
+    # stale registry row. Use lstat rather than exists so broken symlinks still
+    # count as filesystem entries and continue through strict ownership checks.
+    all_missing = True
+    for recorded_dir in recorded_dirs:
+        try:
+            recorded_dir.lstat()
+        except FileNotFoundError:
+            continue
+        all_missing = False
+        break
+    if all_missing:
+        return []
+
     quarantined: list[tuple[Path, Path]] = []
     token = uuid.uuid4().hex
     try:
