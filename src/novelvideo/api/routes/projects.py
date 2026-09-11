@@ -221,6 +221,9 @@ def _validated_owned_dirs(record: ProjectRecord) -> list[Path]:
     """
     validated = assert_owned_project_storage(
         owner_username=record.owner_username,
+        project_name=record.name,
+        storage_org_id=getattr(record, "storage_org_id", None),
+        storage_org_name=getattr(record, "storage_org_name", None),
         output_dir=record.output_dir,
         state_dir=record.state_dir,
         runtime_dir=record.runtime_dir,
@@ -1117,13 +1120,6 @@ async def purge_project(
         )
     if record.purged_at:
         raise HTTPException(status_code=400, detail="Project has already been purged.")
-    # Codex rollouts live under the home-node CODEX_HOME, outside the project
-    # directories quarantined below. Delete them before releasing the project.
-    await chat_service.delete_codex_project_threads(
-        str(user["username"]),
-        ctx.project_name,
-        project_state_dir=ctx.state_dir,
-    )
     try:
         quarantined_dirs = _quarantine_project_dirs(
             record,
@@ -1137,6 +1133,27 @@ async def purge_project(
             else "Project files could not be isolated. Nothing was permanently deleted."
         )
         raise HTTPException(status_code=500, detail=detail) from exc
+    # Codex rollouts live under the home-node CODEX_HOME, outside the project
+    # directories quarantined above. Validation and isolation must complete first:
+    # an invalid project path must never delete a valid Codex session.
+    original_state_dir = Path(record.state_dir).resolve(strict=False)
+    codex_state_dir = next(
+        (
+            quarantine
+            for original, quarantine in quarantined_dirs
+            if original == original_state_dir
+        ),
+        original_state_dir,
+    )
+    try:
+        await chat_service.delete_codex_project_threads(
+            str(user["username"]),
+            ctx.project_name,
+            project_state_dir=codex_state_dir,
+        )
+    except Exception:
+        _restore_quarantined_project_dirs(quarantined_dirs)
+        raise
     try:
         record = await registry.mark_project_purged(ctx.project_id)
     except Exception:
