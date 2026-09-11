@@ -59,6 +59,8 @@ function graphWithLoader(): { graph: PrevizSceneGraph; root: THREE.Object3D } {
       loadGltf: async () => ({ scene: loadedModel() }),
       loadObj: async () => new THREE.Group(),
       clone: skeletonClone,
+      measure: largestDimension,
+      prepareMaterials: bothFaces,
     }),
   );
   return { graph, root };
@@ -68,6 +70,23 @@ function graphWithLoader(): { graph: PrevizSceneGraph; root: THREE.Object3D } {
 async function settleModelSwap(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** 照渲染器注入的那个 `prepareMaterials` 原样改。 */
+function bothFaces(node: THREE.Object3D): void {
+  node.traverse((child) => {
+    const material = (child as THREE.Mesh).material;
+    if (!material) return;
+    for (const entry of Array.isArray(material) ? material : [material]) {
+      entry.side = THREE.DoubleSide;
+    }
+  });
+}
+
+/** 照渲染器注入给 `PropLoader` 的那个 `measure` 原样量。 */
+function largestDimension(node: THREE.Object3D): number {
+  const box = new THREE.Box3().setFromObject(node);
+  return Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
 }
 
 /** 照 `propFootprints()` 的原样量：不预刷世界矩阵，空盒不兜底。 */
@@ -179,6 +198,8 @@ describe('带骨架的道具模型（真 three）', () => {
         loadGltf: async () => ({ scene: riggedModel() }),
         loadObj: async () => new THREE.Group(),
         clone: skeletonClone,
+        measure: largestDimension,
+        prepareMaterials: bothFaces,
       }),
     );
 

@@ -153,6 +153,18 @@ export function createInfiniteGrid(three: ThreeModule): THREE.Mesh {
     // 半透明的地面写进深度缓冲的话，它淡出的那一圈会把后面的对象整块挡掉。
     depthWrite: false,
     side: three.DoubleSide,
+    // 把地面往远处推半个深度单位。
+    //
+    // 没有这一条时，一个底板正好落在 y=0 的模型（建筑、地台、任何「摆在地上」的东西
+    // 都是这样导出的）会和地面共面，两边算出同一个深度值；而默认的深度函数是
+    // `LessEqualDepth`，相等就算通过——地面是 `transparent: true`，three 把它排在不透明
+    // 队列**之后**画（`renderOrder` 只在半透明队列内部排序，管不着这件事），于是网格线
+    // 被一条条画在模型底板上。看起来就像模型没渲染完、地面透过去了。
+    //
+    // 推的是地面而不是模型：模型是用户的资产，不该为了编辑期的参照物调自己的深度。
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
   });
 
   // 1×1 的平面，实际尺寸全靠 scale：跟着相机改大小时不必重建几何体。

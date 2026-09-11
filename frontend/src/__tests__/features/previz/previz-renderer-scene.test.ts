@@ -56,6 +56,8 @@ const materials: FakeMaterial[] = [];
 /** 建出来的假 WebGLRenderer。监看 pass 借了视口 / 剪刀 / autoClear，断言它有没有还回去。 */
 interface FakeWebGLRenderer {
   autoClear: boolean;
+  shadowMap: { enabled: boolean; type: number };
+  toneMapping: number;
   setPixelRatio: ReturnType<typeof vi.fn>;
   setSize: ReturnType<typeof vi.fn>;
   setViewport: ReturnType<typeof vi.fn>;
@@ -252,11 +254,40 @@ vi.mock('three', () => {
     Color: class {},
     PlaneGeometry: FakeGeometry,
     ShaderMaterial: FakeMaterialImpl,
+    // 只画影子的承影材质。走同一份材质替身，于是它也进 `materials` 账本——
+    // 「每份材质只 dispose 一次」那条照样管得着它。
+    ShadowMaterial: FakeMaterialImpl,
     DoubleSide: 2,
+    PCFSoftShadowMap: 2,
+    ACESFilmicToneMapping: 4,
     // create() 现在会把中键从默认的推拉改成环绕，读的就是这个常量。
     MOUSE: { LEFT: 0, MIDDLE: 1, RIGHT: 2, ROTATE: 0, DOLLY: 1, PAN: 2 },
-    AmbientLight: class extends Object3D {},
-    DirectionalLight: class extends Object3D {},
+    HemisphereLight: class extends Object3D {
+      constructor(
+        public sky: number,
+        public ground: number,
+        public intensity: number,
+      ) {
+        super();
+      }
+    },
+    DirectionalLight: class extends Object3D {
+      // 主光要投影：投影相机的框与深度图尺寸都得照着场景调，默认那个 ±5 米的框装不下
+      // 一间屋子。替身缺了这一坨，create() 会炸在一句和本用例无关的 TypeError 上。
+      shadow = {
+        camera: {
+          left: -5,
+          right: 5,
+          top: 5,
+          bottom: -5,
+          near: 0.5,
+          far: 500,
+          updateProjectionMatrix: vi.fn(),
+        },
+        mapSize: { set: vi.fn() },
+        normalBias: 0,
+      };
+    },
     CapsuleGeometry: FakeGeometry,
     ConeGeometry: FakeGeometry,
     RingGeometry: FakeGeometry,
@@ -347,6 +378,8 @@ vi.mock('three', () => {
     },
     WebGLRenderer: class {
       domElement = document.createElement('canvas');
+      shadowMap = { enabled: false, type: 0 };
+      toneMapping = 0;
       render = render;
       setPixelRatio = vi.fn();
       setSize = vi.fn();
@@ -1036,6 +1069,70 @@ describe('PrevizRenderer 接场景图', () => {
     // 用户下一次动鼠标才出现在画面上。
     step();
     expect(render).toHaveBeenCalledTimes(1);
+
+    instance.dispose();
+  });
+
+  // 导入模型时对象是先建、模型后到的：`addObject` 那一刻节点上还挂着占位方块，当场
+  // 聚焦框到的是那个占位盒，而真模型可能有几百米高——用户看到的正是「相机停在模型
+  // 内部」。所以聚焦要压到模型真的换进来那一刻。
+  it('推迟聚焦到模型真的换进来那一刻', async () => {
+    const { instance } = await createRenderer();
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    const scene = sceneWith([0, 0, 0], [10, 0, 0]);
+    instance.setScene(scene);
+    const parked = targetOf();
+
+    instance.focusObjectWhenReady(scene.objects[1].id);
+
+    // 排队的这一刻不能动：这时候量到的还是占位盒。
+    expect(targetOf()).toEqual(parked);
+
+    await flush();
+
+    // 两个人物都会到位，先到的那个不能把镜头抢走——聚焦认的是排队时那个 id。
+    expect(targetOf()[0]).toBeCloseTo(10, 6);
+
+    instance.dispose();
+  });
+
+  // 远平面写死 500 m 的年代，退到七八百米开外去框一栋按厘米建模的房子，模型会被
+  // 齐刷刷切掉一截、地面网格从缺口里透出来，看着像模型本身坏了。深度范围因此每帧
+  // 跟着轨道距离重算——不能只在 `moveCamera` 里算，滚轮推拉是 OrbitControls 直接
+  // 写 `camera.position` 的，根本不经过那条路。
+  it('远平面跟着轨道距离往外推', async () => {
+    const { instance } = await createRenderer();
+    // 过去能正常工作的场景（默认机位离轨道中心十来米）逐位拿到从前那对参数。
+    expect(instance.cameraDepthRangeForTest()).toEqual({ near: 0.1, far: 500 });
+
+    // 两个隔了 1 km 的对象：框住整个场景要退到远超 500 m 的地方。
+    instance.setScene(sceneWith([0, 0, 0], [1000, 0, 0]));
+    instance.applyViewDirection('front');
+    step();
+
+    const { near, far } = instance.cameraDepthRangeForTest();
+    expect(far).toBeGreaterThan(2000);
+    // 相机站在 far 以内才看得见东西——这正是从前被切掉的那一截。
+    expect(far).toBeGreaterThan(orbitOffset(instance).distance);
+    // 远近比封在 20000：near 钉死在 0.1 而 far 涨到几千，远处相邻的两个面会落进
+    // 同一个深度值，墙上出现一片随镜头闪烁的花纹。
+    expect(far / near).toBeCloseTo(20000, 6);
+
+    instance.dispose();
+  });
+
+  // 排队的对象要是被删了（或者压根没这个 id），到位回调不该把相机甩到原点去。
+  it('忽略认不出的排队 id', async () => {
+    const { instance } = await createRenderer();
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    const scene = sceneWith([10, 0, 0]);
+    instance.setScene(scene);
+    const parked = targetOf();
+
+    instance.focusObjectWhenReady('no-such-object');
+    await flush();
+
+    expect(targetOf()).toEqual(parked);
 
     instance.dispose();
   });
@@ -2703,5 +2800,122 @@ describe('PrevizRenderer 的俯视底图', () => {
     // 对话框开着的时候用户能关掉整个预演台。dispose 之后 WebGL 上下文已经 forceContextLoss
     // 过了，再画一趟是往一个死了的上下文上写。
     expect(instance.renderTopDownMap(mapCanvas())).toBeNull();
+  });
+});
+
+/**
+ * 布光与接触阴影。
+ *
+ * 用户报的症状是「导进来的模型像没渲染出来」：一整面白墙上没有任何明暗，只剩轮廓。
+ * 病因是三件事叠在一起——补光是平的、高光段被线性输出整片裁成纯白、以及没有影子，
+ * 于是物体和地面之间不存在任何分界。这一组钉的就是这三件，外加「主光真的在投影」。
+ */
+describe('PrevizRenderer 的布光', () => {
+  interface SceneChild {
+    userData: Record<string, unknown>;
+    receiveShadow?: boolean;
+    castShadow?: boolean;
+    sky?: number;
+    ground?: number;
+    intensity?: number;
+    position?: { y: number };
+    shadow?: {
+      camera: { left: number; right: number; top: number; bottom: number; far: number };
+      mapSize: { set: ReturnType<typeof vi.fn> };
+      normalBias: number;
+    };
+  }
+
+  function sceneOf(instance: PrevizRenderer) {
+    return (
+      instance as unknown as {
+        scene: { children: SceneChild[] };
+      }
+    ).scene;
+  }
+
+  function keyLightOf(instance: PrevizRenderer): SceneChild {
+    return sceneOf(instance).children.find((child) => child.shadow)!;
+  }
+
+  function gl(): FakeWebGLRenderer {
+    return webglRenderers[webglRenderers.length - 1]!;
+  }
+
+  it('turns on soft shadow maps', async () => {
+    const { instance } = await createRenderer();
+
+    expect(gl().shadowMap.enabled).toBe(true);
+    // PCFSoft 而不是默认的 PCF：预演台里几乎全是白模，硬边阴影在白模上格外像渲染错误。
+    expect(gl().shadowMap.type).toBe(2);
+
+    instance.dispose();
+  });
+
+  // 白模在这套光下必然把高光段推到 1.0 以上。线性输出会把超出去的部分整片裁成纯白，
+  // 而那正是「没渲染出来」的样子——墙面上一点起伏都留不住。
+  it('rolls the highlights off instead of clipping them', async () => {
+    const { instance } = await createRenderer();
+
+    expect(gl().toneMapping).toBe(4);
+
+    instance.dispose();
+  });
+
+  // 补光不能是平的。`AmbientLight` 给的是一个常数，每个法线方向加的是同一个值，
+  // 背光面于是整片一个颜色——形体正好读不出来。半球光按法线朝上的程度在天光与地光
+  // 之间插值，背光面也还有过渡。所以这里钉的不是「有补光」，是「天地两色不一样」。
+  it('fills with a light that still has a direction to it', async () => {
+    const { instance } = await createRenderer();
+
+    const fill = sceneOf(instance).children.find((child) => child.sky !== undefined)!;
+    expect(fill).toBeDefined();
+    expect(fill.sky).not.toBe(fill.ground);
+    expect(fill.intensity).toBeGreaterThan(0);
+
+    instance.dispose();
+  });
+
+  it('lets the key light cast', async () => {
+    const { instance } = await createRenderer();
+
+    expect(keyLightOf(instance).castShadow).toBe(true);
+
+    instance.dispose();
+  });
+
+  // 正交阴影相机的默认框是 ±5 米，而预演台的常见场景是一整间屋子（`Room.obj` 换算完
+  // 是 5.7×8.9 米）。框小了的表现不是「影子变糊」，是**框外的东西一律不投影**——
+  // 半间屋子有影半间没有，而画面上没有任何东西说明为什么。
+  it('sizes the shadow camera for a whole room, not the stock five metres', async () => {
+    const { instance } = await createRenderer();
+
+    const shadow = keyLightOf(instance).shadow!;
+    expect(shadow.camera.right).toBeGreaterThanOrEqual(10);
+    expect(shadow.camera.left).toBe(-shadow.camera.right);
+    expect(shadow.camera.top).toBe(shadow.camera.right);
+    expect(shadow.camera.bottom).toBe(-shadow.camera.right);
+    // 框放大了 16 倍面积，深度图跟着提上去，接触处的影子边缘才还是实的。
+    expect(shadow.mapSize.set).toHaveBeenCalledWith(2048, 2048);
+    // 导入的模型全被改成了双面，双面材质的阴影两面都写，薄墙上会起一层自阴影的斑。
+    expect(shadow.normalBias).toBeGreaterThan(0);
+
+    instance.dispose();
+  });
+
+  // 地面网格是自定义 ShaderMaterial，而 three 的阴影是在**内置材质**的着色器里拼进去
+  // 的——自定义着色器收不到影子。没有这块承影平面，站在空地上的对象就是把影子投进虚无。
+  it('lays down something for the shadows to land on', async () => {
+    const { instance } = await createRenderer();
+
+    const catcher = sceneOf(instance).children.find((child) => child.receiveShadow);
+    expect(catcher).toBeDefined();
+    // 和地面网格同属编辑期的参照物：镜头里不该出现一块凭空的影子地。
+    expect(catcher!.userData.previzEditorOnly).toBe(true);
+    // 沉在地平面以下：导进来的屋子自带地板，它也接影。两块共面的话同一道影子画两遍，
+    // 暗处比该有的更暗，远处两张片还会互相穿插。沉下去之后它只在空地上露出来。
+    expect(catcher!.position!.y).toBeLessThan(0);
+
+    instance.dispose();
   });
 });

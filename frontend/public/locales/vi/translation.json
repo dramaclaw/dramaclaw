@@ -5453,7 +5453,8 @@
       "placeholderAudio": "Âm thanh",
       "placeholderScript": "Kịch bản",
       "betaTag": "Beta",
-      "videoCompose": "Dựng video"
+      "videoCompose": "Dựng video",
+      "previz": "Previz Stage"
     },
     "imageNode": {
       "title": "Node ảnh",
@@ -7465,5 +7466,425 @@
     "reload": "Tải lại",
     "statusUnknown": "Chưa xác nhận được tính năng nào đang dùng được. Vui lòng thử lại sau.",
     "unavailableTitle": "Tính năng không dùng được"
+  },
+  "previz": {
+    "node": {
+      "open": "Open Previz Stage",
+      "hint": "Block out a scene in 3D and capture it from multiple angles",
+      "empty": "No scene yet",
+      "summary": "{{objects}} objects · {{frames}} frames",
+      "versionTooNew": "This scene was written by a newer version. Update before opening it.",
+      "audioSummary": "{{count}} audio clips attached"
+    },
+    "editor": {
+      "title": "Previz Stage",
+      "undo": "Undo",
+      "redo": "Redo",
+      "description": "Block out a scene in 3D, place cameras, and capture multiple angles",
+      "close": "Close Previz Stage",
+      "duration": "Duration {{frames}} frames",
+      "hideMonitor": "Hide monitor",
+      "showMonitor": "Show monitor",
+      "collapsePanels": "Collapse panels",
+      "expandPanels": "Expand panels",
+      "sceneTooLarge": "The scene is too large to save. Remove some objects and try again.",
+      "limitReached": "This object type has reached its limit",
+      "noProject": "No project in the current URL — cannot upload a model",
+      "propUpload": {
+        "format": "Only GLB / GLTF / OBJ models are supported",
+        "compressing": "Compressing {{name}}…",
+        "compressed": "Compressed: {{from}} MB → {{to}} MB",
+        "uploading": "Uploading {{name}}…",
+        "tooLarge": "The model is {{size}} MB, over the {{limit}} MB limit. Reduce its polygons or textures first.",
+        "failed": "Model upload failed. Please try again."
+      },
+      "capture": "Capture",
+      "capturing": "Capturing…",
+      "captureDone": "Capture added to the canvas",
+      "captureFailed": "Capture upload failed. Please try again.",
+      "captureNoNode": "This node is no longer on the canvas — cannot attach the capture",
+      "record": {
+        "open": "Record",
+        "stop": "Stop recording",
+        "stopWithProgress": "Stop {{percent}}%",
+        "publishing": "Uploading…",
+        "mode": {
+          "global": "Record viewport",
+          "track": "Record current track"
+        },
+        "noCamera": "No camera on the current track — select a camera first",
+        "unsupported": "This browser cannot record the viewport; use Chrome",
+        "failed": "Recording failed, please try again",
+        "uploadFailed": "Recording upload failed, please try again",
+        "noNode": "This node is no longer on the canvas, nothing to attach the recording to",
+        "done": "Recording node created",
+        "globalNodeName": "Previz viewport recording ({{quality}})",
+        "trackNodeName": "Previz track recording {{index}} ({{quality}})",
+        "noAudioMix": "This browser cannot mix audio; recorded without sound"
+      }
+    },
+    "toolbar": {
+      "add": {
+        "character": "Add character",
+        "camera": "Add camera",
+        "light": "Add light",
+        "prop": "Add prop"
+      },
+      "importProp": "Import model",
+      "limitReached": "Limit reached ({{count}})",
+      "tool": {
+        "select": "Select",
+        "navigate": "Navigate",
+        "draw": "Draw path",
+        "mark": "Mark path"
+      },
+      "gizmo": {
+        "translate": "Move",
+        "rotate": "Rotate",
+        "scale": "Scale"
+      },
+      "group": {
+        "create": "Create",
+        "tool": "Tool",
+        "gizmo": "Gizmo"
+      },
+      "collapseTimeline": "Collapse timeline panel",
+      "expandTimeline": "Expand timeline panel",
+      "markHint": "Mark path: click in the viewport to place points one by one, each joined to the last (Esc to finish)"
+    },
+    "viewport": {
+      "resetView": "Reset view",
+      "display": {
+        "solid": "Solid",
+        "translucent": "Translucent",
+        "clay": "Clay"
+      },
+      "pathSpacing": "Point spacing (m)",
+      "pathSpeed": "Draw speed (m/s)",
+      "group": {
+        "display": "Display",
+        "draw": "Draw",
+        "view": "View",
+        "axis": "Axes"
+      },
+      "view": {
+        "front": "Front view",
+        "back": "Back view",
+        "left": "Left view",
+        "right": "Right view",
+        "top": "Top view",
+        "bottom": "Bottom view"
+      },
+      "axis": "View cube",
+      "focus": "Focus",
+      "focusHint": "Select an object first",
+      "quadView": "Quad view",
+      "quadNoCamera": "No camera in the scene yet",
+      "quad": {
+        "camera": "Camera",
+        "top": "Top",
+        "side": "Side"
+      }
+    },
+    "layers": {
+      "title": "Objects",
+      "empty": "No objects yet — add one from the toolbar",
+      "kind": {
+        "character": "Character",
+        "camera": "Camera",
+        "light": "Light",
+        "prop": "Prop"
+      },
+      "toggleVisible": "Show / hide",
+      "toggleLocked": "Lock / unlock",
+      "remove": "Delete",
+      "setActiveCamera": "Use as monitor camera"
+    },
+    "cameraCreate": {
+      "title": "Create camera",
+      "close": "Close camera creation",
+      "previewLabel": "Camera framing preview",
+      "dragHint": "Drag to aim",
+      "previewCaption": "The preview frames with the current focal length and aspect; drag it to aim, and the new camera keeps that direction",
+      "properties": "Camera settings",
+      "body": "Camera body",
+      "bodies": {
+        "cine": "Digital cinema",
+        "virtual": "Virtual production",
+        "handheld": "Lightweight handheld"
+      },
+      "bodyPrev": "Previous body",
+      "bodyNext": "Next body",
+      "lens": "Lens series",
+      "lenses": {
+        "prime": "Prime lens",
+        "zoom": "Zoom lens",
+        "anamorphic": "Anamorphic"
+      },
+      "lensPrev": "Previous lens series",
+      "lensNext": "Next lens series",
+      "focal": "Focal length",
+      "focalDown": "Shorter focal length",
+      "focalUp": "Longer focal length",
+      "focalClasses": {
+        "ultrawide": "Ultra wide",
+        "wide": "Wide",
+        "standard": "Standard",
+        "teleShort": "Short tele",
+        "tele": "Telephoto"
+      },
+      "aperture": "Aperture",
+      "apertureDown": "Stop down",
+      "apertureUp": "Open up",
+      "depthOfField": {
+        "shallow": "Shallow depth of field",
+        "standard": "Standard depth of field",
+        "deep": "Deep depth of field"
+      },
+      "sensor": "Sensor format",
+      "position": "Placement",
+      "viewReadout": "Current director view",
+      "viewReadoutLabel": "View position readout",
+      "yaw": "Yaw",
+      "yawSlider": "Yaw slider",
+      "yawInput": "Yaw angle",
+      "pitch": "Pitch",
+      "pitchSlider": "Pitch slider",
+      "pitchInput": "Pitch angle",
+      "roll": "Roll",
+      "rollSlider": "Roll slider",
+      "rollInput": "Roll angle",
+      "footerHint": "Position and rotation come from the current director view; focal length and sensor format together set the angle of view",
+      "submit": "Create camera from this view"
+    },
+    "characterCreate": {
+      "title": "Create character",
+      "pickHint": "Click the top-down map to pick a spot",
+      "pickHintAgain": "Click again to move the spot",
+      "preview": "Character preview",
+      "name": "Name",
+      "color": "Marker colour",
+      "customColor": "Custom colour",
+      "poseValue": "{{axis}} (deg)",
+      "awaitPreview": "Pick a spot to preview the character",
+      "awaitFields": "Pick a spot to edit the character",
+      "spot": "Spot (m)",
+      "spotLabel": "Picked spot X / Z",
+      "create": "Create",
+      "cancel": "Cancel"
+    },
+    "inspector": {
+      "empty": "Select an object to edit it here",
+      "name": "Name",
+      "position": {
+        "label": "Position (m)",
+        "x": "Position X",
+        "y": "Position Y",
+        "z": "Position Z"
+      },
+      "rotation": {
+        "label": "Rotation (deg)",
+        "x": "Rotation X",
+        "y": "Rotation Y",
+        "z": "Rotation Z"
+      },
+      "scale": {
+        "label": "Scale",
+        "x": "Scale X",
+        "y": "Scale Y",
+        "z": "Scale Z"
+      },
+      "heightCm": "Height (cm)",
+      "bodyType": "Build",
+      "bodyTypes": {
+        "capsule": "Simplified cylinder",
+        "slim": "Slim",
+        "average": "Average",
+        "heavy": "Heavy",
+        "tall": "Tall"
+      },
+      "basePose": "Base pose",
+      "poseAdjust": {
+        "label": "Pose adjust (deg)",
+        "pitch": "Pitch",
+        "turn": "Turn",
+        "lean": "Lean"
+      },
+      "heightPolicy": "Height policy",
+      "heightPolicies": {
+        "follow": "Follow path",
+        "ground": "Stick to ground",
+        "plane": "Lock to plane"
+      },
+      "planeY": "Locked height (m)",
+      "heightNote": {
+        "ground": "Y is recomputed from a drop ray each frame while sticking to the ground",
+        "plane": "Locking to a plane pins Y to the locked height below"
+      },
+      "moveAssist": "Movement assist",
+      "moveAssistNote": "Applies during playback; hand placement is unaffected",
+      "avoidCollision": "Avoid collisions",
+      "stayInBounds": "Stay inside the scene",
+      "focalMm": "Focal length (mm)",
+      "aperture": "Aperture",
+      "sensor": "Sensor",
+      "sensors": {
+        "ff": "Full frame",
+        "s35": "Super 35"
+      },
+      "angleOfView": "Angle of view",
+      "lightType": "Light type",
+      "lightTypes": {
+        "key": "Key",
+        "point": "Point",
+        "spot": "Spot"
+      },
+      "color": "Color",
+      "markerColor": "Marker colour",
+      "intensity": "Intensity",
+      "assetUrl": "Model URL"
+    },
+    "monitor": {
+      "aspect": "Aspect ratio",
+      "outline": "Model outline",
+      "namePlate": "Character name plates",
+      "enlarge": "Enlarge monitor",
+      "restore": "Restore size",
+      "caption": "{{name}} · {{focal}}mm · {{sensor}}",
+      "follow": "Follow program",
+      "following": "Following"
+    },
+    "timeline": {
+      "play": "Play",
+      "pause": "Pause",
+      "stop": "Stop",
+      "prevFrame": "Previous frame",
+      "nextFrame": "Next frame",
+      "goToStart": "Go to start",
+      "goToEnd": "Go to end",
+      "playhead": "Playhead",
+      "rate": "Speed",
+      "duration": "Total frames",
+      "razor": "Cut at the playhead",
+      "addCloseup": "New closeup",
+      "closeupTarget": "Tracking target",
+      "pinTrack": "Pin track to top",
+      "removeTrack": "Remove track",
+      "expandTrack": "Expand track",
+      "collapseTrack": "Collapse track",
+      "motionPath": "Motion path",
+      "prevKeyframe": "Previous keyframe",
+      "insertKeyframe": "Insert a keyframe at the playhead",
+      "nextKeyframe": "Next keyframe",
+      "clearPath": "Clear the path",
+      "trimStart": "Trim the start",
+      "trimEnd": "Trim the end",
+      "clipLabel": "Path clip {{start}}-{{end}}",
+      "closeupLabel": "Closeup {{start}}-{{end}}",
+      "appendClip": "Append a clip after this one",
+      "resize": "Drag to resize the timeline panel",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "zoomFit": "Fit the timeline",
+      "addObject": "Add an object to the timeline",
+      "empty": "No tracks yet",
+      "emptyHint": "Add an object to the timeline, or just draw a path in the viewport.",
+      "emptyNoObjects": "Nothing to sequence yet",
+      "emptyNoObjectsHint": "Create a camera or a character first — they show up here automatically.",
+      "createCharacter": "Create a character",
+      "createCamera": "Create a camera",
+      "cutHere": "Cut to this camera",
+      "live": "LIVE"
+    },
+    "program": {
+      "title": "Program",
+      "cutTo": "Cut to…",
+      "empty": "Press 1–9 or use “Cut to this camera” on a camera track",
+      "noRoom": "No room at the end of the timeline",
+      "limit": "The program track holds at most 60 cuts",
+      "noCamera": "No cameras in the scene yet"
+    },
+    "audio": {
+      "title": "Audio",
+      "add": "Add audio",
+      "local": "Local file…",
+      "upstream": "Upstream audio",
+      "noUpstream": "Connect an audio node to the previz node to pick it here",
+      "uploading": "Uploading",
+      "badExtension": "Only mp3 / wav / m4a / ogg files are supported",
+      "tooLarge": "Audio files must be 20 MB or smaller",
+      "noRoom": "No room at the playhead",
+      "limit": "The audio track holds at most 20 clips",
+      "uploadFailed": "Audio upload failed: {{message}}",
+      "noProject": "This page has no project context, so audio cannot be uploaded"
+    },
+    "clip": {
+      "empty": "Select a clip to edit it here",
+      "startFrame": "Start frame",
+      "endFrame": "End frame",
+      "aim": "Look at",
+      "aimNone": "Nothing",
+      "aimHintFree": "The camera turns with the path, holding the angle to the direction of travel it was drawn with. Pick an object to keep it aimed there instead.",
+      "aimHintLocked": "The camera stays aimed at this object; the rotation on each path point no longer applies.",
+      "trimStart": "Trim head to playhead",
+      "trimEnd": "Trim tail to playhead",
+      "insertPoint": "Insert point at playhead",
+      "clearPoints": "Clear path",
+      "remove": "Delete clip",
+      "slider": "{{name}} slider",
+      "point": {
+        "section": "Path point",
+        "frame": "Frame {{frame}}",
+        "position": "Position",
+        "deselect": "Deselect this point",
+        "empty": "Pick a keyframe to edit it here",
+        "x": "Position X",
+        "y": "Position Y",
+        "z": "Position Z",
+        "pitch": "Pitch",
+        "yaw": "Yaw",
+        "roll": "Roll",
+        "reface": "Clear manual rotation",
+        "remove": "Delete point"
+      },
+      "closeup": {
+        "sectionTracking": "Tracking",
+        "sectionFraming": "Framing",
+        "sectionMotion": "Camera move",
+        "target": "Target",
+        "anchor": "Anchor",
+        "part": {
+          "pelvis": "Pelvis",
+          "body": "Body",
+          "chest": "Chest",
+          "face": "Face",
+          "head": "Head"
+        },
+        "aim": "Aim",
+        "aimTrack": "Always at the target",
+        "aimFree": "Keep its own aim",
+        "bearing": "Bearing",
+        "bearing_front": "Front",
+        "bearing_custom": "Custom",
+        "azimuth": "Azimuth°",
+        "elevation": "Elevation°",
+        "distance": "Distance",
+        "height": "Height",
+        "motion": "Move",
+        "motion_static": "Static",
+        "motion_orbit": "Orbit",
+        "motion_push": "Push in",
+        "motion_pull": "Pull out",
+        "bake": "Convert to path clip"
+      },
+      "cut": {
+        "camera": "Camera"
+      },
+      "audio": {
+        "source": "Source",
+        "offset": "Offset (ms)",
+        "relocate": "Move to playhead"
+      }
+    }
   }
 }

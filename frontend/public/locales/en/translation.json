@@ -7492,7 +7492,10 @@
       "noProject": "No project in the current URL — cannot upload a model",
       "propUpload": {
         "format": "Only GLB / GLTF / OBJ models are supported",
-        "tooLarge": "The model is over 50 MB. Reduce its polygons or textures first.",
+        "compressing": "Compressing {{name}}…",
+        "compressed": "Compressed: {{from}} MB → {{to}} MB",
+        "uploading": "Uploading {{name}}…",
+        "tooLarge": "The model is {{size}} MB, over the {{limit}} MB limit. Reduce its polygons or textures first.",
         "failed": "Model upload failed. Please try again."
       },
       "capture": "Capture",

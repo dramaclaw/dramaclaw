@@ -7492,7 +7492,10 @@
       "noProject": "当前页面没有项目上下文，无法上传模型",
       "propUpload": {
         "format": "只支持 GLB / GLTF / OBJ 模型",
-        "tooLarge": "模型超过 50 MB，请先减面或压缩贴图",
+        "compressing": "正在压缩 {{name}}…",
+        "compressed": "已压缩：{{from}} MB → {{to}} MB",
+        "uploading": "正在上传 {{name}}…",
+        "tooLarge": "模型 {{size}} MB，超过 {{limit}} MB 上限，请先减面或压缩贴图",
         "failed": "模型上传失败，请重试"
       },
       "capture": "截图出片",

@@ -159,6 +159,9 @@ export class PrevizViewOverlays {
     const material = new this.three.MeshBasicMaterial({
       color: OUTLINE_COLOR,
       side: this.three.BackSide,
+      // 描边是画在场景里的界面，不该被渲染器那条 ACES 曲线压掉颜色。
+      // 同 `sceneGraph.markerMaterial`，那里写着完整理由。
+      toneMapped: false,
     });
     material.onBeforeCompile = (shader) => {
       // 外扩放在 `begin_vertex` 之后、蒙皮之前：这时 `transformed` 还在绑定姿势下，
@@ -199,7 +202,13 @@ export class PrevizViewOverlays {
     if (!texture) return;
 
     const sprite = new this.three.Sprite(
-      new this.three.SpriteMaterial({ map: texture, transparent: true, depthTest: false }),
+      new this.three.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthTest: false,
+        // 名牌上的字是画好的像素，过一遍 ACES 只会把白字洗成灰字。同上。
+        toneMapped: false,
+      }),
     );
     const aspect = texture.image.width / texture.image.height;
     sprite.scale.set(PLATE_WORLD_HEIGHT_M * aspect, PLATE_WORLD_HEIGHT_M, 1);
