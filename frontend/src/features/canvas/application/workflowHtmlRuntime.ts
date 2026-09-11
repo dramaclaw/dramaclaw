@@ -274,10 +274,7 @@ async function saveGeneratedHtmlSource(input: {
   let artifact: HtmlArtifact;
   try {
     artifact = input.artifactId
-      ? await saveHtmlArtifact(input.projectId, input.artifactId, input.title, html, input.baseVersion!, {
-        canvas_id: input.canvasId,
-        node_id: input.nodeId,
-      }, input.taskKey
+      ? await saveHtmlArtifact(input.projectId, input.artifactId, input.title, html, input.baseVersion!, undefined, input.taskKey
         ? `html-generation:${input.canvasId}:${input.nodeId}:${input.taskKey}`
         : undefined)
       : await createHtmlArtifact(

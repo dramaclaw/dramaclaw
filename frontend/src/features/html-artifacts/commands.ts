@@ -80,12 +80,8 @@ export async function executeHtmlArtifactCommand(command: HtmlArtifactCommand, p
   const artifact = command.action === 'create'
     ? await createHtmlArtifact(projectId, command.title!, command.html!, command.node_id ? `html-node:${canvasId}:${command.node_id}` : undefined)
     : command.action === 'update'
-      ? command.node_id
-        ? await saveHtmlArtifact(projectId, command.artifact_id!, command.title!, command.html!, command.base_version!, {canvas_id:canvasId,node_id:command.node_id})
-        : await saveHtmlArtifact(projectId, command.artifact_id!, command.title!, command.html!, command.base_version!)
-      : command.node_id
-        ? await restoreHtmlVersion(projectId, command.artifact_id!, command.version!, command.base_version!, {canvas_id:canvasId,node_id:command.node_id})
-        : await restoreHtmlVersion(projectId, command.artifact_id!, command.version!, command.base_version!);
+      ? await saveHtmlArtifact(projectId, command.artifact_id!, command.title!, command.html!, command.base_version!)
+      : await restoreHtmlVersion(projectId, command.artifact_id!, command.version!, command.base_version!);
   const output = {project_id:projectId,html_artifact:{id:artifact.id,title:artifact.title,version:artifact.version}};
   if (!scopeIsCurrent()) return {createdNodeId:undefined,nodeId:undefined,output:{...output,canvas_attached:false,warnings:['HTML was saved, but the canvas changed before its node could be attached or refreshed. Open the saved artifact; do not create a duplicate.']}};
   let createdNodeId: string | undefined;

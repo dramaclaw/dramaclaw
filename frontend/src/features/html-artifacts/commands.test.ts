@@ -131,8 +131,8 @@ describe('director HTML commands',()=>{
   ]}]);
   const result=await applyCanvasChatCommandsAsync(envelopes,{projectId:'p',canvasId:'c'});
   expect(result.errors).toEqual([]);
-  expect(api.saveHtmlArtifact).toHaveBeenCalledWith('p','a1','Updated','<h1>Updated</h1>',4,{canvas_id:'c',node_id:id});
-  expect(api.restoreHtmlVersion).toHaveBeenCalledWith('p','a1',2,5,{canvas_id:'c',node_id:id});
+  expect(api.saveHtmlArtifact).toHaveBeenCalledWith('p','a1','Updated','<h1>Updated</h1>',4);
+  expect(api.restoreHtmlVersion).toHaveBeenCalledWith('p','a1',2,5);
   expect(useCanvasStore.getState().nodes[0].data.artifactVersion).toBe(6);
   expect(result.commandResults.map(receipt=>receipt.action)).toEqual(['update_source','restore']);
  });

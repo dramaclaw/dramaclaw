@@ -22,8 +22,8 @@ it('rejects unscoped local media URLs',async()=>{
  await expect(readHtmlPreview('p','a')).rejects.toThrow('URL');
 });
 
-it('downloads the prepared version through the project files endpoint',async()=>{
- mocks.apiCall.mockResolvedValue({download_url:'/api/v1/projects/p/files/freezone/_html_artifacts/a/exports/v2.zip'});
+it('downloads the requested version from the temporary export endpoint',async()=>{
  await exportHtmlArtifact('p','a',2);
- expect(mocks.download).toHaveBeenCalledWith('/api/v1/projects/p/files/freezone/_html_artifacts/a/exports/v2.zip','webpage-a-v2.zip');
+ expect(mocks.apiCall).not.toHaveBeenCalled();
+ expect(mocks.download).toHaveBeenCalledWith('/api/v1/projects/p/freezone/html-artifacts/a/export?version=2','webpage-a-v2.zip');
 });

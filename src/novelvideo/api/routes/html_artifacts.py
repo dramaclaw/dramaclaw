@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from novelvideo.api.auth import get_api_user
+from novelvideo.api.responses import TemporaryFileResponse
 from novelvideo.api.routes.files import _maybe_thumbnail_response, _serve_or_redirect_to_oss
 from novelvideo.freezone import preview_media
 from novelvideo.freezone.canvas_lock import CanvasLockBusy
@@ -19,7 +20,6 @@ from novelvideo.freezone.html_artifacts import ArtifactConflict, ArtifactStore, 
 from novelvideo.freezone.history import (
     append_generation_history,
     build_node_history_record,
-    read_generation_history,
 )
 from novelvideo.ports import get_project_registry
 from novelvideo.project_context import is_record_home_node, require_project_home_node, resolve_project_context
@@ -92,18 +92,10 @@ async def _with_history(store, artifact, scope):
             status='completed', media_type='html',
             result={'artifact_id': artifact['id'], 'version': artifact['version'], 'title': artifact['title']},
         )
-        existing = await run_in_threadpool(
-            read_generation_history,
-            project_dir=store.project_dir,
-            canvas_id=scope.canvas_id,
-            node_id=scope.node_id,
-            limit=0,
-        )
-        if any(item.get('id') == record['id'] for item in existing):
-            return artifact
         await run_in_threadpool(append_generation_history, project_dir=store.project_dir,
-                                canvas_id=scope.canvas_id, node_id=scope.node_id, record=record)
-    except OSError:
+                                canvas_id=scope.canvas_id, node_id=scope.node_id, record=record,
+                                idempotency_key=record['id'])
+    except (CanvasLockBusy, OSError):
         # Source is saved: do not invite a duplicate create/update on retry.
         return {**artifact, 'warnings': ['网页已保存，但节点历史记录失败，请稍后重试。']}
     return artifact
@@ -221,8 +213,15 @@ async def preview_resource(project: str, artifact_id: str, expires: int, token: 
 async def export(project: str, artifact_id: str, version: Annotated[int | None, Query(ge=1)] = None, user: dict = Depends(get_api_user)):
     store = await _store(project, user, 'viewer')
     path = await _call(store.export_file, artifact_id, version)
-    relative = path.relative_to(store.project_dir).as_posix()
-    return _data({'download_url': '/api/v1/projects/' + quote(store.project_id, safe='') + '/files/' + quote(relative, safe='/')})
+    try:
+        return TemporaryFileResponse(
+            path,
+            filename=f'webpage-{artifact_id}-v{version or "latest"}.zip',
+            media_type='application/zip',
+        )
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
 
 
 @router.post('/{artifact_id}/node-history')
