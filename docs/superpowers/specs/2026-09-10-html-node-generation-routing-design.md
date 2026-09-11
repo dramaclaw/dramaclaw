@@ -89,4 +89,3 @@ Focused frontend tests will prove that:
 - task failure and invalid HTML preserve the previous Artifact;
 - the existing `generate_html` action lifecycle remains compatible with both
   manual and workflow callers.
-

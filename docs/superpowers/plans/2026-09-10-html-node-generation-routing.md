@@ -159,4 +159,3 @@ Expected: exit code 0 with no TypeScript diagnostics.
 git add frontend/src/features/canvas/application/workflowHtmlRuntime.ts frontend/src/features/canvas/application/workflowHtmlRuntime.test.ts
 git commit -m "test(html): cover ordinary generation failures"
 ```
-
