@@ -1,0 +1,34 @@
+.anchor {
+  position: absolute;
+  z-index: 5;
+  width: 120px;
+  height: 120px;
+  pointer-events: none;
+  user-select: none;
+  transform-origin: center;
+}
+.name,
+.name.action {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  transform: translate(-50%, -100%);
+  color: var(--color-amber-100);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+  white-space: nowrap;
+  text-shadow: -1px -1px var(--color-amber-950), 1px -1px var(--color-amber-950),
+    -1px 1px var(--color-amber-950), 1px 1px var(--color-amber-950);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out-quint);
+}
+.anchor[data-near="true"] .name { opacity: 1; }
+.action {
+  pointer-events: auto;
+  min-height: 44px;
+  cursor: pointer;
+}
+@media (prefers-reduced-motion: reduce) {
+  .name { transition: none; }
+}

@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "mapId": "boundless-sea",
+  "walkableAreas": [
+    {
+      "id": "temporary-sea-route",
+      "points": [
+        {
+          "x": 45,
+          "y": 65
+        },
+        {
+          "x": 2000,
+          "y": 65
+        },
+        {
+          "x": 2000,
+          "y": 1090
+        },
+        {
+          "x": 285,
+          "y": 1090
+        },
+        {
+          "x": 240,
+          "y": 960
+        },
+        {
+          "x": 45,
+          "y": 760
+        }
+      ]
+    }
+  ],
+  "colliders": [
+    {
+      "id": "north-reef",
+      "points": [
+        {
+          "x": 400,
+          "y": 230
+        },
+        {
+          "x": 580,
+          "y": 210
+        },
+        {
+          "x": 670,
+          "y": 300
+        },
+        {
+          "x": 575,
+          "y": 347
+        },
+        {
+          "x": 405,
+          "y": 305
+        }
+      ],
+      "kind": "prop"
+    },
+    {
+      "id": "south-reef",
+      "points": [
+        {
+          "x": 1410,
+          "y": 923
+        },
+        {
+          "x": 1610,
+          "y": 900
+        },
+        {
+          "x": 1705,
+          "y": 985
+        },
+        {
+          "x": 1645,
+          "y": 1040
+        },
+        {
+          "x": 1430,
+          "y": 1015
+        }
+      ],
+      "kind": "prop"
+    },
+    {
+      "id": "baked-sailboat",
+      "points": [
+        {
+          "x": 875,
+          "y": 710
+        },
+        {
+          "x": 967,
+          "y": 710
+        },
+        {
+          "x": 967,
+          "y": 780
+        },
+        {
+          "x": 875,
+          "y": 780
+        }
+      ],
+      "kind": "prop"
+    },
+    {
+      "id": "sea-beacon",
+      "points": [
+        {
+          "x": 1545,
+          "y": 563
+        },
+        {
+          "x": 1585,
+          "y": 563
+        },
+        {
+          "x": 1585,
+          "y": 608
+        },
+        {
+          "x": 1545,
+          "y": 608
+        }
+      ],
+      "kind": "prop"
+    }
+  ],
+  "spawnPoints": [
+    {
+      "id": "startrace-coast-arrival",
+      "position": {
+        "x": 460,
+        "y": 820
+      },
+      "facing": "east"
+    }
+  ],
+  "exits": [
+    {
+      "id": "to-startrace-coast",
+      "trigger": {
+        "id": "to-startrace-coast-trigger",
+        "points": [
+          {
+            "x": 295,
+            "y": 858
+          },
+          {
+            "x": 355,
+            "y": 858
+          },
+          {
+            "x": 355,
+            "y": 902
+          },
+          {
+            "x": 295,
+            "y": 902
+          }
+        ]
+      },
+      "targetMapId": "startrace-coast",
+      "targetSpawnId": "boundless-sea-arrival"
+    }
+  ]
+}

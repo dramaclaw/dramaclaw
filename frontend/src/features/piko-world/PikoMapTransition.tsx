@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
@@ -11,7 +11,7 @@ import {
 import type { PikoMapLoadState } from "./PikoWorldCanvas";
 
 export const PIKO_MAP_TRANSITION_TIMING = {
-  holdMs: 1_500,
+  holdMs: 1_200,
   exitMs: 1_000,
   reducedMotionHoldMs: 650,
 } as const;
@@ -21,6 +21,7 @@ type TransitionPhase = "covered" | "showing" | "revealing" | "complete";
 type PikoMapTransitionProps = {
   mapId: PikoMapId;
   loadState: PikoMapLoadState;
+  paused?: boolean;
   onComplete?: () => void;
 };
 
@@ -32,8 +33,10 @@ export function PikoMapTransition({
   mapId,
   loadState,
   onComplete,
+  paused = false,
 }: PikoMapTransitionProps) {
   const { t } = useTranslation();
+  const completed = useRef(false);
   const [transition, setTransition] = useState<{
     mapId: PikoMapId;
     phase: TransitionPhase;
@@ -42,22 +45,26 @@ export function PikoMapTransition({
   const phase = transition.mapId === mapId ? transition.phase : "covered";
 
   useEffect(() => {
+    completed.current = false;
     setTransition({ mapId, phase: "covered" });
   }, [mapId]);
 
   useEffect(() => {
+    if (completed.current) return;
     if (loadState === "error") {
+      completed.current = true;
       setTransition({ mapId, phase: "complete" });
       onComplete?.();
       return;
     }
-    if (loadState !== "ready") return;
+    if (loadState !== "ready" || paused) return;
 
     const reducedMotion = prefersReducedMotion();
     setTransition({ mapId, phase: "showing" });
 
     if (reducedMotion) {
       const completeTimer = window.setTimeout(() => {
+        completed.current = true;
         setTransition({ mapId, phase: "complete" });
         onComplete?.();
       }, PIKO_MAP_TRANSITION_TIMING.reducedMotionHoldMs);
@@ -68,6 +75,7 @@ export function PikoMapTransition({
       setTransition({ mapId, phase: "revealing" });
     }, PIKO_MAP_TRANSITION_TIMING.holdMs);
     const completeTimer = window.setTimeout(() => {
+      completed.current = true;
       setTransition({ mapId, phase: "complete" });
       onComplete?.();
     }, PIKO_MAP_TRANSITION_TIMING.holdMs + PIKO_MAP_TRANSITION_TIMING.exitMs);
@@ -76,7 +84,7 @@ export function PikoMapTransition({
       window.clearTimeout(revealTimer);
       window.clearTimeout(completeTimer);
     };
-  }, [loadState, mapId, onComplete]);
+  }, [loadState, mapId, onComplete, paused]);
 
   if (phase === "complete") return null;
 

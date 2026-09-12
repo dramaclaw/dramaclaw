@@ -137,7 +137,7 @@ describe("Piko World 项目中心入口", () => {
     expect(worldShell).not.toContain("text-[11px]");
     expect(worldCanvas).not.toContain("onWheel");
     expect(worldCanvas).not.toContain("pointermove");
-    expect(worldCanvas).toContain('t("pikoWorld.mapLoading")');
+    expect(worldCanvas).toContain('t("pikoWorld.mapLoading", { mapName:');
     expect(worldCanvas).not.toContain("正在加载初遇庭院");
   });
 

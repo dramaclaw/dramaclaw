@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { Assets, type Container, type Texture, type Ticker } from "pixi.js";
+import { acquireSharedTexture } from "./shared-texture";
+import { type Container, type Texture, type Ticker } from "pixi.js";
 import { createEnvironmentSprite } from "./environment-sprite";
 import type { EnvironmentSpriteAnimation } from "./environment-sprite";
 import { createMapOccluder } from "./map-occlusion";
@@ -37,10 +38,11 @@ export async function createEnvironmentEffectRuntime({ definitions, baseTexture,
   const objects: Container[] = [];
   const mounted: Destroyable[] = [];
   const textures = new Map<string, Texture>();
+  const releases: (() => void)[] = [];
 
   const destroy = () => {
     mounted.splice(0).reverse().forEach(effect => effect.destroy());
-    for (const url of textures.keys()) void Assets.unload(url);
+    releases.splice(0).forEach(release => release());
     textures.clear();
     objects.length = 0;
   };
@@ -49,11 +51,13 @@ export async function createEnvironmentEffectRuntime({ definitions, baseTexture,
     const url = resolveAssetUrl(src);
     const cached = textures.get(url);
     if (cached) return cached;
-    const texture = await Assets.load<Texture>(url);
+    const lease = await acquireSharedTexture(url);
+    const texture = lease.texture;
     if (isDisposed()) {
-      void Assets.unload(url);
+      lease.release();
       return null;
     }
+    releases.push(lease.release);
     texture.source.scaleMode = "nearest";
     textures.set(url, texture);
     return texture;

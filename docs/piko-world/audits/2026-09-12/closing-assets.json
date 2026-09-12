@@ -1,0 +1,202 @@
+{
+  "maps": [
+    {
+      "id": "amber-wilds",
+      "revision": 1,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 2,
+      "spawns": 2,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 5350192
+    },
+    {
+      "id": "artisan-market",
+      "revision": 2,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 2,
+      "spawns": 2,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 5944413
+    },
+    {
+      "id": "boundless-sea",
+      "revision": 1,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 1,
+      "spawns": 1,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 4485367
+    },
+    {
+      "id": "cloudtop-slope",
+      "revision": 1,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 3,
+      "spawns": 3,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 5334288
+    },
+    {
+      "id": "crimson-canyon",
+      "revision": 2,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 2,
+      "spawns": 2,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 5845554
+    },
+    {
+      "id": "frostmoon-tundra",
+      "revision": 1,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 1,
+      "spawns": 1,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 4782615
+    },
+    {
+      "id": "lantern-canal-street",
+      "revision": 2,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 2,
+      "spawns": 2,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 5816270
+    },
+    {
+      "id": "starfall-tidal-wetland",
+      "revision": 1,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 2,
+      "spawns": 2,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 6285956
+    },
+    {
+      "id": "starlight-dock",
+      "revision": 2,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 2,
+      "spawns": 2,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 5472705
+    },
+    {
+      "id": "startrace-coast",
+      "revision": 1,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 3,
+      "spawns": 3,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 5838942
+    },
+    {
+      "id": "welcome-courtyard",
+      "revision": 55,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 4,
+      "spawns": 5,
+      "referencedPaths": 17,
+      "masterIdentical": null,
+      "packageBytes": 57621183
+    },
+    {
+      "id": "whalesong-skyport",
+      "revision": 1,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 1,
+      "spawns": 1,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 5155038
+    },
+    {
+      "id": "whispering-forest",
+      "revision": 1,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 1,
+      "spawns": 1,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 6647608
+    },
+    {
+      "id": "whispering-meadow",
+      "revision": 1,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 2,
+      "spawns": 2,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 5923832
+    },
+    {
+      "id": "wind-garden-gate",
+      "revision": 2,
+      "size": [
+        2048,
+        1152
+      ],
+      "exits": 2,
+      "spawns": 2,
+      "referencedPaths": 5,
+      "masterIdentical": true,
+      "packageBytes": 6099904
+    }
+  ],
+  "errors": [],
+  "temporaryAuditPages": [],
+  "totalDirections": 30
+}

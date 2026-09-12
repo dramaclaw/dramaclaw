@@ -31,8 +31,8 @@ describe("welcome courtyard navigation", () => {
     expect(navigationIssues(navigation)).toEqual([]);
     expect(canStand({x:1190,y:485},navigation)).toBe(true);
     expect(navigation.walkableAreas).toHaveLength(1);
-    expect(navigation.colliders).toHaveLength(37);
-    expect(navigation.spawnPoints).toHaveLength(3);
+    expect(navigation.colliders).toHaveLength(38);
+    expect(navigation.spawnPoints).toHaveLength(5);
     expect(navigation.exits).toHaveLength(4);
 
     const polygons = [
@@ -50,6 +50,13 @@ describe("welcome courtyard navigation", () => {
         expect(point.y, `${polygon.id}.y`).toBeGreaterThanOrEqual(0);
         expect(point.y, `${polygon.id}.y`).toBeLessThanOrEqual(manifestDocument.size.height);
       }
+    }
+  });
+
+  it("blocks the narrow pine fence while preserving the west path", () => {
+    for (const y of [250, 300, 350, 400, 445]) {
+      expect(canStand({ x: 511, y }, navigation)).toBe(false);
+      expect(canStand({ x: 480, y }, navigation)).toBe(true);
     }
   });
 

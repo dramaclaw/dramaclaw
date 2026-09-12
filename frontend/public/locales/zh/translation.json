@@ -1971,6 +1971,11 @@
     }
   },
   "pikoWorld": {
+    "mapTravel": {
+      "retry": "重新加载",
+      "return": "返回上一张地图",
+      "dismiss": "关闭"
+    },
     "residentComingSoon": "动作制作中",
     "playableResident_f01": "女生 · F01",
     "playableResident_m01": "男生 · M01",
@@ -2055,8 +2060,8 @@
     "welcomePage3": "初来小镇，就先用现在这位居民开启旅程吧。想换个模样或修改昵称，可以去右上角设置里看看。找我聊天时，直接点我就好；左上角可以返回工作台。",
     "welcomeNext": "继续听听",
     "welcomeDone": "去庭院逛逛",
-    "mapLoading": "正在加载初遇庭院…",
-    "mapLoadError": "初遇庭院加载失败",
+    "mapLoading": "正在加载{{mapName}}…",
+    "mapLoadError": "{{mapName}}加载失败",
     "mapTransitionAnnouncement": "正在进入{{mapName}}",
     "residentActions": "与{{nickname}}互动",
     "viewResidentInfo": "查看信息",
@@ -2080,7 +2085,13 @@
     "privateMockGreeting": "你好！很高兴在小镇遇见你。",
     "privateMockReply": "收到啦！这是{{nickname}}的模拟回复，很高兴和你聊天。",
     "privateUnread": "{{count}} 条未读消息",
-    "privateEndChat": "关闭与{{nickname}}的聊天"
+    "privateEndChat": "关闭与{{nickname}}的聊天",
+    "transport": {
+      "sail": "前往无垠海域",
+      "returnShore": "返回星痕海岸",
+      "ascend": "前往鲸歌天港",
+      "returnSlope": "返回云顶坡"
+    }
   },
   "project": {
     "create": "创建项目",

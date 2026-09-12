@@ -1,0 +1,1231 @@
+{
+  "started": "2026-09-12T06:50:37.255Z",
+  "method": "Development Vite server, isolated 1280x720 PikoWorldCanvas plus shared BGM; no screenshots",
+  "maps": [
+    {
+      "id": "welcome-courtyard",
+      "mount": {
+        "state": "ready",
+        "readyMs": 677.8999999985099,
+        "mapId": "welcome-courtyard",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 51,
+        "loadedTextures": 31,
+        "decodedTextureMiB": 265.78310775756836,
+        "trackedIntervals": 2,
+        "globalListeners": 64,
+        "audioWithSource": 13,
+        "playingAudio": [],
+        "openAudioContexts": 1,
+        "heapMiB": 71.61456871032715,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 565,
+        "Nodes": 839,
+        "JSHeapUsedSize": 47997600,
+        "JSHeapTotalSize": 49168384
+      },
+      "sample": {
+        "frames": 479,
+        "meanFrameMs": 16.665970772442588,
+        "p50FrameMs": 16.699999999999818,
+        "p95FrameMs": 16.799999999999272,
+        "p99FrameMs": 16.80000000000109,
+        "over33ms": 0,
+        "cpuP50Ms": 1,
+        "cpuP95Ms": 2.300000000745058,
+        "cpuP99Ms": 3.400000002235174,
+        "longTasks": 0,
+        "maxLongTaskMs": 0,
+        "mapId": "welcome-courtyard",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 51,
+        "loadedTextures": 31,
+        "decodedTextureMiB": 265.78310775756836,
+        "trackedIntervals": 2,
+        "globalListeners": 64,
+        "audioWithSource": 13,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          },
+          {
+            "src": "/piko/world/maps/welcome-courtyard/audio/fountain-v1.ogg",
+            "volume": 0.014366446923649741
+          },
+          {
+            "src": "/piko/world/maps/welcome-courtyard/audio/birds-v1.ogg",
+            "volume": 0.11999927464196175
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 74.79342460632324,
+        "errors": [],
+        "hidden": false
+      }
+    },
+    {
+      "id": "artisan-market",
+      "mount": {
+        "state": "ready",
+        "readyMs": 153.09999999776483,
+        "mapId": "artisan-market",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 6,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 71.9676456451416,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 795,
+        "JSHeapUsedSize": 35152512,
+        "JSHeapTotalSize": 37896192
+      },
+      "sample": {
+        "frames": 479,
+        "meanFrameMs": 16.666179540709813,
+        "p50FrameMs": 16.69999999999891,
+        "p95FrameMs": 16.799999999999272,
+        "p99FrameMs": 16.80000000000109,
+        "over33ms": 0,
+        "cpuP50Ms": 0.19999999925494194,
+        "cpuP95Ms": 0.5,
+        "cpuP99Ms": 0.7000000029802322,
+        "longTasks": 0,
+        "maxLongTaskMs": 0,
+        "mapId": "artisan-market",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 6,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 54.61166477203369,
+        "errors": [],
+        "hidden": false
+      }
+    },
+    {
+      "id": "wind-garden-gate",
+      "mount": {
+        "state": "ready",
+        "readyMs": 155.19999999925494,
+        "mapId": "wind-garden-gate",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 5,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 54.54659652709961,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 792,
+        "JSHeapUsedSize": 35403692,
+        "JSHeapTotalSize": 36847616
+      },
+      "sample": {
+        "frames": 479,
+        "meanFrameMs": 16.665970772442588,
+        "p50FrameMs": 16.69999999999709,
+        "p95FrameMs": 16.700000000000728,
+        "p99FrameMs": 16.80000000000291,
+        "over33ms": 0,
+        "cpuP50Ms": 0.19999999925494194,
+        "cpuP95Ms": 0.5,
+        "cpuP99Ms": 1,
+        "longTasks": 0,
+        "maxLongTaskMs": 0,
+        "mapId": "wind-garden-gate",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 5,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 54.2171745300293,
+        "errors": [],
+        "hidden": false
+      }
+    },
+    {
+      "id": "lantern-canal-street",
+      "mount": {
+        "state": "ready",
+        "readyMs": 102.70000000298023,
+        "mapId": "lantern-canal-street",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 6,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 54.184024810791016,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 795,
+        "JSHeapUsedSize": 35520768,
+        "JSHeapTotalSize": 37109760
+      },
+      "sample": {
+        "frames": 479,
+        "meanFrameMs": 16.66617954070981,
+        "p50FrameMs": 16.69999999999709,
+        "p95FrameMs": 16.799999999995634,
+        "p99FrameMs": 16.80000000000291,
+        "over33ms": 0,
+        "cpuP50Ms": 0.19999999925494194,
+        "cpuP95Ms": 0.5,
+        "cpuP99Ms": 0.9000000022351742,
+        "longTasks": 0,
+        "maxLongTaskMs": 0,
+        "mapId": "lantern-canal-street",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 6,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 54.88798809051514,
+        "errors": [],
+        "hidden": false
+      }
+    },
+    {
+      "id": "starlight-dock",
+      "mount": {
+        "state": "ready",
+        "readyMs": 152.60000000149012,
+        "mapId": "starlight-dock",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 5,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 55.26867389678955,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 792,
+        "JSHeapUsedSize": 35689304,
+        "JSHeapTotalSize": 37109760
+      },
+      "sample": {
+        "frames": 479,
+        "meanFrameMs": 16.665970772442588,
+        "p50FrameMs": 16.69999999999709,
+        "p95FrameMs": 16.700000000004366,
+        "p99FrameMs": 16.80000000000291,
+        "over33ms": 0,
+        "cpuP50Ms": 0.29999999701976776,
+        "cpuP95Ms": 0.6999999992549419,
+        "cpuP99Ms": 1.0999999977648258,
+        "longTasks": 0,
+        "maxLongTaskMs": 0,
+        "mapId": "starlight-dock",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 5,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 54.50180530548096,
+        "errors": [],
+        "hidden": false
+      }
+    }
+  ],
+  "travel": [
+    {
+      "cycle": 1,
+      "id": "welcome-courtyard",
+      "mount": {
+        "state": "ready",
+        "readyMs": 544.9000000022352,
+        "mapId": "welcome-courtyard",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 51,
+        "loadedTextures": 31,
+        "decodedTextureMiB": 265.78310775756836,
+        "trackedIntervals": 2,
+        "globalListeners": 64,
+        "audioWithSource": 13,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 73.27579498291016,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 565,
+        "Nodes": 839,
+        "JSHeapUsedSize": 49606000,
+        "JSHeapTotalSize": 51265536
+      }
+    },
+    {
+      "cycle": 1,
+      "id": "artisan-market",
+      "mount": {
+        "state": "ready",
+        "readyMs": 102.19999999925494,
+        "mapId": "artisan-market",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 6,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 70.8859052658081,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 795,
+        "JSHeapUsedSize": 36130000,
+        "JSHeapTotalSize": 38944768
+      }
+    },
+    {
+      "cycle": 1,
+      "id": "wind-garden-gate",
+      "mount": {
+        "state": "ready",
+        "readyMs": 103.40000000223517,
+        "mapId": "wind-garden-gate",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 5,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 55.19990634918213,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 792,
+        "JSHeapUsedSize": 36150956,
+        "JSHeapTotalSize": 37634048
+      }
+    },
+    {
+      "cycle": 1,
+      "id": "artisan-market",
+      "mount": {
+        "state": "ready",
+        "readyMs": 102.09999999776483,
+        "mapId": "artisan-market",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 6,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 55.492252349853516,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 795,
+        "JSHeapUsedSize": 36427844,
+        "JSHeapTotalSize": 37896192
+      }
+    },
+    {
+      "cycle": 1,
+      "id": "welcome-courtyard",
+      "mount": {
+        "state": "ready",
+        "readyMs": 474.30000000074506,
+        "mapId": "welcome-courtyard",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 51,
+        "loadedTextures": 31,
+        "decodedTextureMiB": 265.78310775756836,
+        "trackedIntervals": 2,
+        "globalListeners": 64,
+        "audioWithSource": 13,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 75.68473529815674,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 565,
+        "Nodes": 839,
+        "JSHeapUsedSize": 50373436,
+        "JSHeapTotalSize": 52314112
+      }
+    },
+    {
+      "cycle": 1,
+      "id": "lantern-canal-street",
+      "mount": {
+        "state": "ready",
+        "readyMs": 102.40000000223517,
+        "mapId": "lantern-canal-street",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 6,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 71.70204257965088,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 795,
+        "JSHeapUsedSize": 36677948,
+        "JSHeapTotalSize": 39731200
+      }
+    },
+    {
+      "cycle": 1,
+      "id": "starlight-dock",
+      "mount": {
+        "state": "ready",
+        "readyMs": 102.30000000074506,
+        "mapId": "starlight-dock",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 5,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 56.144558906555176,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 792,
+        "JSHeapUsedSize": 36764252,
+        "JSHeapTotalSize": 38420480
+      }
+    },
+    {
+      "cycle": 1,
+      "id": "lantern-canal-street",
+      "mount": {
+        "state": "ready",
+        "readyMs": 102.60000000149012,
+        "mapId": "lantern-canal-street",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 6,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 55.7751407623291,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 795,
+        "JSHeapUsedSize": 36780748,
+        "JSHeapTotalSize": 38420480
+      }
+    },
+    {
+      "cycle": 1,
+      "id": "welcome-courtyard",
+      "mount": {
+        "state": "ready",
+        "readyMs": 475,
+        "mapId": "welcome-courtyard",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 51,
+        "loadedTextures": 31,
+        "decodedTextureMiB": 265.78310775756836,
+        "trackedIntervals": 2,
+        "globalListeners": 64,
+        "audioWithSource": 13,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 89.26812171936035,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 565,
+        "Nodes": 839,
+        "JSHeapUsedSize": 50593040,
+        "JSHeapTotalSize": 53100544
+      }
+    },
+    {
+      "cycle": 2,
+      "id": "welcome-courtyard",
+      "mount": {
+        "state": "ready",
+        "readyMs": 451.8999999985099,
+        "mapId": "welcome-courtyard",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 51,
+        "loadedTextures": 31,
+        "decodedTextureMiB": 265.78310775756836,
+        "trackedIntervals": 2,
+        "globalListeners": 64,
+        "audioWithSource": 13,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 77.58919620513916,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 565,
+        "Nodes": 839,
+        "JSHeapUsedSize": 50849556,
+        "JSHeapTotalSize": 52314112
+      }
+    },
+    {
+      "cycle": 2,
+      "id": "artisan-market",
+      "mount": {
+        "state": "ready",
+        "readyMs": 102.89999999850988,
+        "mapId": "artisan-market",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 6,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 71.70873260498047,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 795,
+        "JSHeapUsedSize": 37157116,
+        "JSHeapTotalSize": 39993344
+      }
+    },
+    {
+      "cycle": 2,
+      "id": "wind-garden-gate",
+      "mount": {
+        "state": "ready",
+        "readyMs": 101.5,
+        "mapId": "wind-garden-gate",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 5,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 56.163994789123535,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 792,
+        "JSHeapUsedSize": 37172304,
+        "JSHeapTotalSize": 38682624
+      }
+    },
+    {
+      "cycle": 2,
+      "id": "artisan-market",
+      "mount": {
+        "state": "ready",
+        "readyMs": 101.10000000149012,
+        "mapId": "artisan-market",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 6,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 56.12319850921631,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 795,
+        "JSHeapUsedSize": 37206812,
+        "JSHeapTotalSize": 38682624
+      }
+    },
+    {
+      "cycle": 2,
+      "id": "welcome-courtyard",
+      "mount": {
+        "state": "ready",
+        "readyMs": 463.5999999977648,
+        "mapId": "welcome-courtyard",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 51,
+        "loadedTextures": 31,
+        "decodedTextureMiB": 265.78310775756836,
+        "trackedIntervals": 2,
+        "globalListeners": 64,
+        "audioWithSource": 13,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 76.6308536529541,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 565,
+        "Nodes": 839,
+        "JSHeapUsedSize": 51000972,
+        "JSHeapTotalSize": 52838400
+      }
+    },
+    {
+      "cycle": 2,
+      "id": "lantern-canal-street",
+      "mount": {
+        "state": "ready",
+        "readyMs": 103.39999999850988,
+        "mapId": "lantern-canal-street",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 6,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 72.0932731628418,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 795,
+        "JSHeapUsedSize": 37259352,
+        "JSHeapTotalSize": 39993344
+      }
+    },
+    {
+      "cycle": 2,
+      "id": "starlight-dock",
+      "mount": {
+        "state": "ready",
+        "readyMs": 105,
+        "mapId": "starlight-dock",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 5,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 56.391414642333984,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 792,
+        "JSHeapUsedSize": 37361752,
+        "JSHeapTotalSize": 39206912
+      }
+    },
+    {
+      "cycle": 2,
+      "id": "lantern-canal-street",
+      "mount": {
+        "state": "ready",
+        "readyMs": 100.69999999925494,
+        "mapId": "lantern-canal-street",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 6,
+        "loadedTextures": 4,
+        "decodedTextureMiB": 18.375,
+        "trackedIntervals": 1,
+        "globalListeners": 19,
+        "audioWithSource": 1,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 56.42199897766113,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 450,
+        "Nodes": 795,
+        "JSHeapUsedSize": 37334480,
+        "JSHeapTotalSize": 38944768
+      }
+    },
+    {
+      "cycle": 2,
+      "id": "welcome-courtyard",
+      "mount": {
+        "state": "ready",
+        "readyMs": 463.69999999925494,
+        "mapId": "welcome-courtyard",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 51,
+        "loadedTextures": 31,
+        "decodedTextureMiB": 265.78310775756836,
+        "trackedIntervals": 2,
+        "globalListeners": 64,
+        "audioWithSource": 13,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 75.86814880371094,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 565,
+        "Nodes": 839,
+        "JSHeapUsedSize": 51300464,
+        "JSHeapTotalSize": 53362688
+      }
+    }
+  ],
+  "dwell": [
+    {
+      "segment": 1,
+      "sample": {
+        "frames": 1800,
+        "meanFrameMs": 16.666055555555552,
+        "p50FrameMs": 16.69999999999709,
+        "p95FrameMs": 16.79999999998836,
+        "p99FrameMs": 16.80000000000291,
+        "over33ms": 0,
+        "cpuP50Ms": 0.9000000022351742,
+        "cpuP95Ms": 2.600000001490116,
+        "cpuP99Ms": 3.699999999254942,
+        "longTasks": 0,
+        "maxLongTaskMs": 0,
+        "mapId": "welcome-courtyard",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 51,
+        "loadedTextures": 31,
+        "decodedTextureMiB": 265.78310775756836,
+        "trackedIntervals": 2,
+        "globalListeners": 64,
+        "audioWithSource": 13,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 73.38282299041748,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 565,
+        "Nodes": 839,
+        "JSHeapUsedSize": 51810760,
+        "JSHeapTotalSize": 53362688
+      }
+    },
+    {
+      "segment": 2,
+      "sample": {
+        "frames": 1800,
+        "meanFrameMs": 16.666,
+        "p50FrameMs": 16.69999999999709,
+        "p95FrameMs": 16.70000000001164,
+        "p99FrameMs": 16.80000000000291,
+        "over33ms": 0,
+        "cpuP50Ms": 0.9000000022351742,
+        "cpuP95Ms": 2.100000001490116,
+        "cpuP99Ms": 3,
+        "longTasks": 0,
+        "maxLongTaskMs": 0,
+        "mapId": "welcome-courtyard",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 51,
+        "loadedTextures": 31,
+        "decodedTextureMiB": 265.78310775756836,
+        "trackedIntervals": 2,
+        "globalListeners": 64,
+        "audioWithSource": 13,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 78.93142986297607,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 565,
+        "Nodes": 839,
+        "JSHeapUsedSize": 51900972,
+        "JSHeapTotalSize": 54149120
+      }
+    },
+    {
+      "segment": 3,
+      "sample": {
+        "frames": 1799,
+        "meanFrameMs": 16.665981100611447,
+        "p50FrameMs": 16.699999999982538,
+        "p95FrameMs": 16.70000000001164,
+        "p99FrameMs": 16.800000000017462,
+        "over33ms": 0,
+        "cpuP50Ms": 1,
+        "cpuP95Ms": 1.9000000022351742,
+        "cpuP99Ms": 2.899999998509884,
+        "longTasks": 0,
+        "maxLongTaskMs": 0,
+        "mapId": "welcome-courtyard",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 51,
+        "loadedTextures": 31,
+        "decodedTextureMiB": 265.78310775756836,
+        "trackedIntervals": 2,
+        "globalListeners": 64,
+        "audioWithSource": 13,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 77.95535182952881,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 565,
+        "Nodes": 839,
+        "JSHeapUsedSize": 52058500,
+        "JSHeapTotalSize": 54149120
+      }
+    },
+    {
+      "segment": 4,
+      "sample": {
+        "frames": 1799,
+        "meanFrameMs": 16.665981100611454,
+        "p50FrameMs": 16.699999999982538,
+        "p95FrameMs": 16.70000000001164,
+        "p99FrameMs": 16.800000000017462,
+        "over33ms": 0,
+        "cpuP50Ms": 1,
+        "cpuP95Ms": 2.699999999254942,
+        "cpuP99Ms": 3.899999998509884,
+        "longTasks": 0,
+        "maxLongTaskMs": 0,
+        "mapId": "welcome-courtyard",
+        "liveApps": 1,
+        "canvas": 1,
+        "tickerCallbacks": 51,
+        "loadedTextures": 31,
+        "decodedTextureMiB": 265.78310775756836,
+        "trackedIntervals": 2,
+        "globalListeners": 64,
+        "audioWithSource": 13,
+        "playingAudio": [
+          {
+            "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+            "volume": 0.16
+          }
+        ],
+        "openAudioContexts": 1,
+        "heapMiB": 82.59519100189209,
+        "errors": [],
+        "hidden": false
+      },
+      "gc": {
+        "Documents": 3,
+        "JSEventListeners": 565,
+        "Nodes": 839,
+        "JSHeapUsedSize": 52106512,
+        "JSHeapTotalSize": 54149120
+      }
+    }
+  ],
+  "renderer": {
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+    "viewport": [
+      1280,
+      713
+    ],
+    "mapViewport": [
+      1280,
+      720
+    ],
+    "devicePixelRatio": 1,
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Pro, Unspecified Version)",
+    "vendor": "Google Inc. (Apple)",
+    "resolution": 1,
+    "webgl": "WebGL 2.0 (OpenGL ES 3.0 Chromium)"
+  },
+  "movement": {
+    "frames": 479,
+    "meanFrameMs": 16.666179540709823,
+    "p50FrameMs": 16.699999999982538,
+    "p95FrameMs": 16.70000000001164,
+    "p99FrameMs": 16.800000000017462,
+    "over33ms": 0,
+    "cpuP50Ms": 0.8999999985098839,
+    "cpuP95Ms": 1.2000000029802322,
+    "cpuP99Ms": 2,
+    "longTasks": 0,
+    "maxLongTaskMs": 0,
+    "mapId": "welcome-courtyard",
+    "liveApps": 1,
+    "canvas": 1,
+    "tickerCallbacks": 51,
+    "loadedTextures": 31,
+    "decodedTextureMiB": 265.78310775756836,
+    "trackedIntervals": 2,
+    "globalListeners": 64,
+    "audioWithSource": 13,
+    "playingAudio": [
+      {
+        "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+        "volume": 0.16
+      }
+    ],
+    "openAudioContexts": 1,
+    "heapMiB": 79.48731136322021,
+    "errors": [],
+    "hidden": false
+  },
+  "reducedMotion": {
+    "frames": 479,
+    "meanFrameMs": 16.665970772442588,
+    "p50FrameMs": 16.699999999982538,
+    "p95FrameMs": 16.70000000001164,
+    "p99FrameMs": 16.800000000017462,
+    "over33ms": 0,
+    "cpuP50Ms": 0.5,
+    "cpuP95Ms": 0.6999999992549419,
+    "cpuP99Ms": 0.8000000007450581,
+    "longTasks": 0,
+    "maxLongTaskMs": 0,
+    "mapId": "welcome-courtyard",
+    "liveApps": 1,
+    "canvas": 1,
+    "tickerCallbacks": 9,
+    "loadedTextures": 31,
+    "decodedTextureMiB": 265.78310775756836,
+    "trackedIntervals": 2,
+    "globalListeners": 64,
+    "audioWithSource": 13,
+    "playingAudio": [
+      {
+        "src": "/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3",
+        "volume": 0.16
+      }
+    ],
+    "openAudioContexts": 1,
+    "heapMiB": 82.02391719818115,
+    "errors": [],
+    "hidden": false
+  },
+  "cleanup": {
+    "mapId": "welcome-courtyard",
+    "liveApps": 0,
+    "canvas": 0,
+    "tickerCallbacks": 0,
+    "loadedTextures": 0,
+    "decodedTextureMiB": 0,
+    "trackedIntervals": 0,
+    "globalListeners": 1,
+    "audioWithSource": 0,
+    "playingAudio": [],
+    "openAudioContexts": 0,
+    "heapMiB": 83.51481914520264,
+    "errors": [],
+    "hidden": false,
+    "maxTextures": 31,
+    "maxDecodedTextureMiB": 265.78310775756836,
+    "remainingTextures": [],
+    "remainingListeners": [
+      {
+        "type": "selectionchange",
+        "target": "document"
+      }
+    ]
+  },
+  "cleanupGC": {
+    "Documents": 3,
+    "JSEventListeners": 423,
+    "Nodes": 780,
+    "JSHeapUsedSize": 36875836,
+    "JSHeapTotalSize": 40255488
+  },
+  "finished": "2026-09-12T06:54:01.056Z"
+}

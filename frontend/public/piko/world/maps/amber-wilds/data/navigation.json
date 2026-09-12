@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "mapId": "amber-wilds",
+  "walkableAreas": [
+    {
+      "id": "amber-field",
+      "points": [
+        {
+          "x": 100,
+          "y": 180
+        },
+        {
+          "x": 510,
+          "y": 95
+        },
+        {
+          "x": 670,
+          "y": 105
+        },
+        {
+          "x": 1110,
+          "y": 180
+        },
+        {
+          "x": 1590,
+          "y": 260
+        },
+        {
+          "x": 1960,
+          "y": 425
+        },
+        {
+          "x": 1950,
+          "y": 880
+        },
+        {
+          "x": 1640,
+          "y": 1000
+        },
+        {
+          "x": 1500,
+          "y": 1135
+        },
+        {
+          "x": 1280,
+          "y": 1135
+        },
+        {
+          "x": 1170,
+          "y": 1030
+        },
+        {
+          "x": 595,
+          "y": 1020
+        },
+        {
+          "x": 130,
+          "y": 930
+        },
+        {
+          "x": 30,
+          "y": 510
+        }
+      ]
+    }
+  ],
+  "colliders": [
+    {
+      "id": "ruin-west-wall",
+      "points": [
+        {
+          "x": 570,
+          "y": 495
+        },
+        {
+          "x": 685,
+          "y": 495
+        },
+        {
+          "x": 685,
+          "y": 557
+        },
+        {
+          "x": 570,
+          "y": 557
+        }
+      ],
+      "kind": "prop"
+    },
+    {
+      "id": "ruin-east-wall",
+      "points": [
+        {
+          "x": 758,
+          "y": 475
+        },
+        {
+          "x": 880,
+          "y": 475
+        },
+        {
+          "x": 880,
+          "y": 532
+        },
+        {
+          "x": 758,
+          "y": 532
+        }
+      ],
+      "kind": "prop"
+    },
+    {
+      "id": "north-rocks",
+      "points": [
+        {
+          "x": 215,
+          "y": 275
+        },
+        {
+          "x": 380,
+          "y": 275
+        },
+        {
+          "x": 380,
+          "y": 330
+        },
+        {
+          "x": 215,
+          "y": 330
+        }
+      ],
+      "kind": "prop"
+    },
+    {
+      "id": "east-rocks",
+      "points": [
+        {
+          "x": 1480,
+          "y": 335
+        },
+        {
+          "x": 1610,
+          "y": 335
+        },
+        {
+          "x": 1610,
+          "y": 390
+        },
+        {
+          "x": 1480,
+          "y": 390
+        }
+      ],
+      "kind": "prop"
+    }
+  ],
+  "spawnPoints": [
+    {
+      "id": "welcome-courtyard-arrival",
+      "position": {
+        "x": 735,
+        "y": 220
+      },
+      "facing": "south"
+    },
+    {
+      "id": "crimson-canyon-arrival",
+      "position": {
+        "x": 1470,
+        "y": 950
+      },
+      "facing": "north"
+    }
+  ],
+  "exits": [
+    {
+      "id": "to-welcome-courtyard",
+      "trigger": {
+        "id": "to-welcome-courtyard-trigger",
+        "points": [
+          {
+            "x": 570,
+            "y": 108
+          },
+          {
+            "x": 630,
+            "y": 108
+          },
+          {
+            "x": 630,
+            "y": 152
+          },
+          {
+            "x": 570,
+            "y": 152
+          }
+        ]
+      },
+      "targetMapId": "welcome-courtyard",
+      "targetSpawnId": "amber-wilds-arrival"
+    },
+    {
+      "id": "to-crimson-canyon",
+      "trigger": {
+        "id": "to-crimson-canyon-trigger",
+        "points": [
+          {
+            "x": 1370,
+            "y": 1078
+          },
+          {
+            "x": 1430,
+            "y": 1078
+          },
+          {
+            "x": 1430,
+            "y": 1122
+          },
+          {
+            "x": 1370,
+            "y": 1122
+          }
+        ]
+      },
+      "targetMapId": "crimson-canyon",
+      "targetSpawnId": "amber-wilds-arrival"
+    }
+  ]
+}

@@ -7,7 +7,7 @@ import styles from "./piko-welcome-dialog.module.css";
 import { playPikoUiSound } from "./piko-audio";
 
 export function PikoWelcomeDialog({open,onOpenChange,onComplete}: {
-  open:boolean; onOpenChange:(open:boolean)=>void; onComplete:()=>void;
+  open:boolean; onOpenChange:(open:boolean)=>void; onComplete?:()=>void;
 }) {
   const { t } = useTranslation();
   const [page,setPage] = useState(0);
@@ -22,7 +22,7 @@ export function PikoWelcomeDialog({open,onOpenChange,onComplete}: {
         {t(`pikoWorld.welcomePage${page+1}`)}
       </DialogDescription>
       <div className={styles.footer}>
-        <button type="button" className={styles.next} onClick={()=>{playPikoUiSound(page<2?"open":"close");if(page<2)setPage(page+1);else{setPage(0);onComplete();onOpenChange(false);}}}>
+        <button type="button" className={styles.next} onClick={()=>{playPikoUiSound(page<2?"open":"close");if(page<2)setPage(page+1);else{setPage(0);onComplete?.();onOpenChange(false);}}}>
           {t(page<2?"pikoWorld.welcomeNext":"pikoWorld.welcomeDone")}
           <span aria-hidden="true"> ▸</span>
         </button>

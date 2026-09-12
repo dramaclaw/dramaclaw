@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "mapId": "startrace-coast",
+  "revision": 1,
+  "coordinateSpace": "map-pixels-top-left",
+  "size": {
+    "width": 2048,
+    "height": 1152
+  },
+  "baseTexture": {
+    "src": "base.png",
+    "sampling": "nearest"
+  },
+  "data": {
+    "navigation": "data/navigation.json",
+    "occlusion": "data/occlusion.json",
+    "interactions": "data/interactions.json",
+    "environment": "data/environment.json"
+  }
+}

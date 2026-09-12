@@ -1,4 +1,20 @@
 {
+  "pikoWorld": {
+    "mapLoading": "Đang tải {{mapName}}…",
+    "mapLoadError": "Không thể tải {{mapName}}",
+    "mapTransitionAnnouncement": "Đang vào {{mapName}}",
+    "mapTravel": {
+      "retry": "Thử lại",
+      "return": "Quay lại bản đồ trước",
+      "dismiss": "Đóng"
+    },
+    "transport": {
+      "sail": "Khám phá biển khơi",
+      "returnShore": "Trở về Bờ biển Dấu Sao",
+      "ascend": "Đến Thiên cảng Cá Voi",
+      "returnSlope": "Trở về Đồi Đỉnh Mây"
+    }
+  },
   "app": {
     "title": "SuperTale",
     "subtitle": "Bàn làm việc tạo và commit asset của SuperTale",

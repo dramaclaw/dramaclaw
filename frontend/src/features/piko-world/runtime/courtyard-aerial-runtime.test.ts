@@ -117,7 +117,7 @@ it("pairs visible bodies with projected shadows and pauses for reduced motion", 
   expect(ticker.count).toBe(0);
   expect(remove).toHaveBeenCalled();
   expect(load).toHaveBeenCalledTimes(2);
-  expect(unload).toHaveBeenCalledTimes(2);
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(2));
   ticker.destroy();
 });
 
@@ -130,7 +130,7 @@ it("releases both aerial assets when the bird atlas is malformed", async () => {
   const ticker = new Ticker();
   await expect(createCourtyardAerialRuntime({ ticker, resolveAssetUrl: src => src,
     isDisposed: () => false })).rejects.toThrow("four square horizontal frames");
-  expect(unload).toHaveBeenCalledTimes(2);
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(2));
   expect(ticker.count).toBe(0);
   ticker.destroy(); malformed.destroy(true); cloud.destroy(true);
 });
@@ -147,7 +147,7 @@ it("releases partial aerial loads and treats a cancelled map load as cancellatio
     if (disposed) expect(await result).toBeNull();
     else await expect(result).rejects.toThrow("missing birds");
   }
-  expect(unload).toHaveBeenCalledTimes(2);
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(2));
   expect(ticker.count).toBe(0);
   ticker.destroy(); cloud.destroy(true);
 });

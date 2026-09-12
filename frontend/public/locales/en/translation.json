@@ -1971,6 +1971,11 @@
     }
   },
   "pikoWorld": {
+    "mapTravel": {
+      "retry": "Retry",
+      "return": "Return to previous map",
+      "dismiss": "Dismiss"
+    },
     "residentComingSoon": "Animation in progress",
     "playableResident_f01": "Female · F01",
     "playableResident_m01": "Male · M01",
@@ -2055,8 +2060,8 @@
     "welcomePage3": "Start your journey with this resident. Visit settings in the top right to change your look or nickname. Just click me whenever you want to chat. Return to the workbench from the top left.",
     "welcomeNext": "Tell me more",
     "welcomeDone": "Explore the courtyard",
-    "mapLoading": "Loading Welcome Courtyard…",
-    "mapLoadError": "Welcome Courtyard failed to load",
+    "mapLoading": "Loading {{mapName}}…",
+    "mapLoadError": "{{mapName}} failed to load",
     "mapTransitionAnnouncement": "Entering {{mapName}}",
     "residentActions": "Interact with {{nickname}}",
     "viewResidentInfo": "View info",
@@ -2080,7 +2085,13 @@
     "privateMockGreeting": "Hello! Nice to meet you in town.",
     "privateMockReply": "Got it! This is a simulated reply from {{nickname}}. Nice chatting with you!",
     "privateUnread": "{{count}} unread messages",
-    "privateEndChat": "Close chat with {{nickname}}"
+    "privateEndChat": "Close chat with {{nickname}}",
+    "transport": {
+      "sail": "Explore the open sea",
+      "returnShore": "Return to Startrace Coast",
+      "ascend": "Travel to Whalesong Skyport",
+      "returnSlope": "Return to Cloudtop Slope"
+    }
   },
   "project": {
     "create": "Create Project",

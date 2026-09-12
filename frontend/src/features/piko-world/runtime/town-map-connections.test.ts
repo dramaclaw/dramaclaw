@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: Elastic-2.0
+import { existsSync, readFileSync } from "node:fs";
+import { afterEach, expect, it, vi } from "vitest";
+import { MAP_EXIT_MARKERS } from "../piko-map-connections";
+import { PIKO_MAP_TRANSITIONS, type PikoMapId } from "../piko-map-transitions";
+import { PikoMapPackageSchema } from "./map-package-schema";
+import { canStand } from "./character-movement";
+import { clearWalkSegment, findClickPath } from "./click-path";
+import { pointInPolygon } from "./navigation-geometry";
+import { createExitGate, enabledMapExits, prepareMapTravel } from "./map-travel";
+
+const read = (map: string, file: string) => JSON.parse(readFileSync(`public/piko/world/maps/${map}/${file}`, "utf8"));
+const maps = Object.keys(MAP_EXIT_MARKERS) as PikoMapId[];
+const packages = new Map(maps.map(map => [map, PikoMapPackageSchema.parse({
+  manifest: read(map, "manifest.json"), navigation: read(map, "data/navigation.json"),
+  occlusion: read(map, "data/occlusion.json"), environment: read(map, "data/environment.json"),
+  interactions: read(map, "data/interactions.json"),
+})]));
+const centres: Partial<Record<PikoMapId, { x: number; y: number }>> = {
+  "welcome-courtyard": { x: 1190, y: 485 }, "artisan-market": { x: 1130, y: 650 },
+  "wind-garden-gate": { x: 1180, y: 725 }, "lantern-canal-street": { x: 1070, y: 540 },
+  "starlight-dock": { x: 900, y: 550 },
+  "whispering-meadow": { x: 1080, y: 625 }, "whispering-forest": { x: 990, y: 515 },
+  "cloudtop-slope": { x: 1000, y: 600 }, "frostmoon-tundra": { x: 1050, y: 750 },
+  "amber-wilds": { x: 1100, y: 510 }, "crimson-canyon": { x: 1030, y: 625 },
+  "starfall-tidal-wetland": { x: 1100, y: 210 }, "startrace-coast": { x: 920, y: 405 },
+  "boundless-sea": { x: 1100, y: 650 }, "whalesong-skyport": { x: 1040, y: 580 },
+};
+afterEach(() => vi.unstubAllGlobals());
+
+for (const map of maps) {
+  it(`${map}: every arrival can reach every open exit and the central path`, () => {
+    const { navigation, manifest, occlusion } = packages.get(map)!;
+    const markers = MAP_EXIT_MARKERS[map]!;
+    expect(enabledMapExits(navigation)).toHaveLength(markers.length);
+    expect(new Set(markers.map(marker => marker.exitId)).size).toBe(markers.length);
+    for (const src of [manifest.baseTexture.src, ...Object.values(manifest.data), ...occlusion.occluders.map(item => item.src)]) {
+      expect(existsSync(`public/piko/world/maps/${map}/${src}`), src).toBe(true);
+    }
+    for (const marker of markers) {
+      expect(canStand(marker.position, navigation), `${map} ${marker.exitId} marker`).toBe(true);
+      const exit = navigation.exits.find(exit => exit.id === marker.exitId)!;
+      expect(pointInPolygon(marker.position, exit.trigger.points)).toBe(true);
+      const destination = packages.get(marker.targetMapId)!;
+      const arrival = destination.navigation.spawnPoints.find(spawn => spawn.id === exit.targetSpawnId)!;
+      expect(arrival, `${map} target spawn`).toBeDefined();
+      expect(canStand(arrival.position, destination.navigation), `${map} target safe`).toBe(true);
+      expect(destination.navigation.exits.some(exit => pointInPolygon(arrival.position, exit.trigger.points))).toBe(false);
+      for (const target of [...MAP_EXIT_MARKERS[marker.targetMapId]!.map(marker => marker.position), centres[marker.targetMapId]!]) {
+        const path = findClickPath(arrival.position, target, destination.navigation);
+        expect(path.length, `${map} → ${marker.targetMapId}: ${JSON.stringify(target)}`).toBeGreaterThan(0);
+        let previous = arrival.position;
+        for (const step of path) {
+          expect(clearWalkSegment(previous, step, destination.navigation)).toBe(true);
+          previous = step;
+        }
+      }
+    }
+  });
+}
+
+it("prepares all thirty directions with the correct source fallback in maps with multiple exits", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ ok: true, json: async () => {
+    const [, map, file] = url.match(/\/maps\/([^/]+)\/(.*)/)!;
+    return read(map, file);
+  } })));
+  let directions = 0;
+  for (const map of maps) for (const exit of enabledMapExits(packages.get(map)!.navigation)) {
+    const result = await prepareMapTravel(map, exit, new AbortController().signal);
+    expect(result.destination).toEqual({ mapId: exit.targetMapId, spawnId: exit.targetSpawnId });
+    expect(result.fallback.mapId).toBe(map);
+    const back = enabledMapExits(packages.get(exit.targetMapId as PikoMapId)!.navigation).find(exit => exit.targetMapId === map)!;
+    expect(result.fallback.spawnId).toBe(back.targetSpawnId);
+    expect(canStand(packages.get(map)!.navigation.spawnPoints.find(spawn => spawn.id === result.fallback.spawnId)!.position,
+      packages.get(map)!.navigation)).toBe(true);
+    directions++;
+  }
+  expect(directions).toBe(30);
+});
+
+it("arms each courtyard exit independently", () => {
+  const navigation = packages.get("welcome-courtyard")!.navigation;
+  const gate = createExitGate(enabledMapExits(navigation));
+  for (const marker of MAP_EXIT_MARKERS["welcome-courtyard"]!) {
+    expect(gate(marker.position, false)).toBeUndefined();
+    expect(gate(marker.position, true)?.id).toBe(marker.exitId);
+    expect(gate(marker.position, true)).toBeUndefined();
+    gate(centres["welcome-courtyard"]!, true);
+    expect(gate(marker.position, true)?.id).toBe(marker.exitId);
+  }
+});
+
+it("keeps canal water, pier basin, lighthouse, bridge rails and arch supports solid", () => {
+  const blocked = {
+    "wind-garden-gate": [{ x: 901, y: 580 }, { x: 1135, y: 590 }, { x: 385, y: 365 }],
+    "lantern-canal-street": [{ x: 1060, y: 350 }, { x: 1025, y: 800 }, { x: 1060, y: 470 }, { x: 1050, y: 600 }],
+    "starlight-dock": [{ x: 1300, y: 610 }, { x: 1350, y: 520 }, { x: 1650, y: 800 }, { x: 140, y: 595 }],
+  } as const;
+  for (const [map, points] of Object.entries(blocked)) for (const point of points) {
+    expect(canStand(point, packages.get(map as PikoMapId)!.navigation), `${map} ${JSON.stringify(point)}`).toBe(false);
+  }
+  const sights = {
+    "wind-garden-gate": [{ x: 1015, y: 560 }, { x: 770, y: 440 }],
+    "lantern-canal-street": [{ x: 730, y: 620 }, { x: 1480, y: 570 }],
+    "starlight-dock": [{ x: 1200, y: 675 }, { x: 1510, y: 595 }],
+  } as const;
+  for (const [map, points] of Object.entries(sights)) for (const point of points) {
+    const navigation = packages.get(map as PikoMapId)!.navigation;
+    expect(findClickPath(navigation.spawnPoints[0].position, point, navigation).length, `${map} sight ${JSON.stringify(point)}`).toBeGreaterThan(0);
+  }
+});
+
+it("preserves all fourteen non-courtyard sealed master images byte for byte", () => {
+  for (const map of maps.filter(map => map !== "welcome-courtyard")) {
+    expect(readFileSync(`public/piko/world/maps/${map}/base.png`).equals(
+      readFileSync(`../piko-world/art/reference/piko-${map}-overview-v1.png`))).toBe(true);
+  }
+});
+
+it("connects all fifteen regions to the courtyard and closes the southern loop", () => {
+  expect([...maps].sort()).toEqual(Object.keys(PIKO_MAP_TRANSITIONS).sort());
+  const seen = new Set<PikoMapId>();
+  const visit = (map: PikoMapId) => {
+    if (seen.has(map)) return;
+    seen.add(map);
+    MAP_EXIT_MARKERS[map]!.forEach(exit => visit(exit.targetMapId));
+  };
+  visit("welcome-courtyard");
+  expect(seen.size).toBe(15);
+  const loop: PikoMapId[] = ["welcome-courtyard", "amber-wilds", "crimson-canyon", "startrace-coast",
+    "starfall-tidal-wetland", "starlight-dock", "lantern-canal-street", "welcome-courtyard"];
+  loop.slice(0, -1).forEach((map, index) => {
+    expect(MAP_EXIT_MARKERS[map]!.some(exit => exit.targetMapId === loop[index + 1])).toBe(true);
+  });
+});
+
+it("keeps water, cliffs, tree roots and sea landmarks out of the initial routes", () => {
+  const blocked: Partial<Record<PikoMapId, { x: number; y: number }[]>> = {
+    "starfall-tidal-wetland": [{ x: 1000, y: 550 }],
+    "startrace-coast": [{ x: 1100, y: 750 }, { x: 1050, y: 150 }],
+    "cloudtop-slope": [{ x: 100, y: 450 }, { x: 1180, y: 277 }],
+    "whalesong-skyport": [{ x: 1000, y: 950 }, { x: 1040, y: 745 }],
+    "whispering-forest": [{ x: 1330, y: 680 }],
+    "frostmoon-tundra": [{ x: 1100, y: 400 }],
+    "boundless-sea": [{ x: 520, y: 270 }, { x: 915, y: 750 }],
+    "crimson-canyon": [{ x: 500, y: 540 }],
+  };
+  for (const [map, points] of Object.entries(blocked)) for (const point of points) {
+    expect(canStand(point, packages.get(map as PikoMapId)!.navigation), `${map}: ${JSON.stringify(point)}`).toBe(false);
+  }
+});

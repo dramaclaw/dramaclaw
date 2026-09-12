@@ -14,7 +14,7 @@ const nav = PikoNavigationSchema.parse(navigation);
 
 describe("welcome arch occlusion", () => {
   it("keeps a continuous north/south passage with the grove roots included", () => {
-    expect(nav.colliders).toHaveLength(37);
+    expect(nav.colliders).toHaveLength(38);
     let position = { x: 1060, y: 1060 };
     for (let step = 0; step < 100; step++) {
       expect(canStand(position, nav)).toBe(true);

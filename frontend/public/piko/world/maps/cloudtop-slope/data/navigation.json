@@ -1,0 +1,391 @@
+{
+  "schemaVersion": 1,
+  "mapId": "cloudtop-slope",
+  "walkableAreas": [
+    {
+      "id": "summit-ground",
+      "points": [
+        {
+          "x": 960,
+          "y": 20
+        },
+        {
+          "x": 1200,
+          "y": 20
+        },
+        {
+          "x": 1290,
+          "y": 195
+        },
+        {
+          "x": 1450,
+          "y": 270
+        },
+        {
+          "x": 1550,
+          "y": 460
+        },
+        {
+          "x": 1640,
+          "y": 600
+        },
+        {
+          "x": 1580,
+          "y": 790
+        },
+        {
+          "x": 1420,
+          "y": 900
+        },
+        {
+          "x": 1190,
+          "y": 995
+        },
+        {
+          "x": 1080,
+          "y": 1135
+        },
+        {
+          "x": 920,
+          "y": 1135
+        },
+        {
+          "x": 900,
+          "y": 1000
+        },
+        {
+          "x": 590,
+          "y": 990
+        },
+        {
+          "x": 420,
+          "y": 900
+        },
+        {
+          "x": 265,
+          "y": 720
+        },
+        {
+          "x": 290,
+          "y": 550
+        },
+        {
+          "x": 425,
+          "y": 360
+        },
+        {
+          "x": 650,
+          "y": 245
+        },
+        {
+          "x": 855,
+          "y": 175
+        }
+      ]
+    }
+  ],
+  "colliders": [
+    {
+      "id": "telescope-base",
+      "points": [
+        {
+          "x": 1155,
+          "y": 257
+        },
+        {
+          "x": 1207,
+          "y": 257
+        },
+        {
+          "x": 1207,
+          "y": 299
+        },
+        {
+          "x": 1155,
+          "y": 299
+        }
+      ],
+      "kind": "prop"
+    },
+    {
+      "id": "west-pine",
+      "points": [
+        {
+          "x": 335,
+          "y": 601
+        },
+        {
+          "x": 400,
+          "y": 601
+        },
+        {
+          "x": 400,
+          "y": 681
+        },
+        {
+          "x": 335,
+          "y": 681
+        }
+      ],
+      "kind": "vegetation"
+    },
+    {
+      "id": "south-pine",
+      "points": [
+        {
+          "x": 595,
+          "y": 900
+        },
+        {
+          "x": 650,
+          "y": 900
+        },
+        {
+          "x": 650,
+          "y": 965
+        },
+        {
+          "x": 595,
+          "y": 965
+        }
+      ],
+      "kind": "vegetation"
+    },
+    {
+      "id": "east-pine",
+      "points": [
+        {
+          "x": 1460,
+          "y": 680
+        },
+        {
+          "x": 1520,
+          "y": 680
+        },
+        {
+          "x": 1520,
+          "y": 738
+        },
+        {
+          "x": 1460,
+          "y": 738
+        }
+      ],
+      "kind": "vegetation"
+    },
+    {
+      "id": "path-pine",
+      "points": [
+        {
+          "x": 1145,
+          "y": 745
+        },
+        {
+          "x": 1205,
+          "y": 745
+        },
+        {
+          "x": 1205,
+          "y": 800
+        },
+        {
+          "x": 1145,
+          "y": 800
+        }
+      ],
+      "kind": "vegetation"
+    },
+    {
+      "id": "north-pine",
+      "points": [
+        {
+          "x": 845,
+          "y": 210
+        },
+        {
+          "x": 890,
+          "y": 210
+        },
+        {
+          "x": 890,
+          "y": 255
+        },
+        {
+          "x": 845,
+          "y": 255
+        }
+      ],
+      "kind": "vegetation"
+    },
+    {
+      "id": "observatory-railing-west",
+      "points": [
+        {
+          "x": 1110,
+          "y": 270
+        },
+        {
+          "x": 1127,
+          "y": 274
+        },
+        {
+          "x": 1135,
+          "y": 320
+        },
+        {
+          "x": 1170,
+          "y": 335
+        },
+        {
+          "x": 1165,
+          "y": 355
+        },
+        {
+          "x": 1105,
+          "y": 329
+        }
+      ],
+      "kind": "prop"
+    },
+    {
+      "id": "observatory-railing-east",
+      "points": [
+        {
+          "x": 1270,
+          "y": 266
+        },
+        {
+          "x": 1290,
+          "y": 274
+        },
+        {
+          "x": 1297,
+          "y": 316
+        },
+        {
+          "x": 1250,
+          "y": 350
+        },
+        {
+          "x": 1220,
+          "y": 358
+        },
+        {
+          "x": 1215,
+          "y": 339
+        },
+        {
+          "x": 1265,
+          "y": 317
+        }
+      ],
+      "kind": "prop"
+    }
+  ],
+  "spawnPoints": [
+    {
+      "id": "welcome-courtyard-arrival",
+      "position": {
+        "x": 1055,
+        "y": 950
+      },
+      "facing": "north"
+    },
+    {
+      "id": "frostmoon-tundra-arrival",
+      "position": {
+        "x": 1100,
+        "y": 180
+      },
+      "facing": "south"
+    },
+    {
+      "id": "whalesong-skyport-arrival",
+      "position": {
+        "x": 1190,
+        "y": 435
+      },
+      "facing": "south"
+    }
+  ],
+  "exits": [
+    {
+      "id": "to-welcome-courtyard",
+      "trigger": {
+        "id": "to-welcome-courtyard-trigger",
+        "points": [
+          {
+            "x": 970,
+            "y": 1078
+          },
+          {
+            "x": 1030,
+            "y": 1078
+          },
+          {
+            "x": 1030,
+            "y": 1122
+          },
+          {
+            "x": 970,
+            "y": 1122
+          }
+        ]
+      },
+      "targetMapId": "welcome-courtyard",
+      "targetSpawnId": "cloudtop-slope-arrival"
+    },
+    {
+      "id": "to-frostmoon-tundra",
+      "trigger": {
+        "id": "to-frostmoon-tundra-trigger",
+        "points": [
+          {
+            "x": 1060,
+            "y": 48
+          },
+          {
+            "x": 1120,
+            "y": 48
+          },
+          {
+            "x": 1120,
+            "y": 92
+          },
+          {
+            "x": 1060,
+            "y": 92
+          }
+        ]
+      },
+      "targetMapId": "frostmoon-tundra",
+      "targetSpawnId": "cloudtop-slope-arrival"
+    },
+    {
+      "id": "to-whalesong-skyport",
+      "trigger": {
+        "id": "to-whalesong-skyport-trigger",
+        "points": [
+          {
+            "x": 1170,
+            "y": 288
+          },
+          {
+            "x": 1230,
+            "y": 288
+          },
+          {
+            "x": 1230,
+            "y": 332
+          },
+          {
+            "x": 1170,
+            "y": 332
+          }
+        ]
+      },
+      "targetMapId": "whalesong-skyport",
+      "targetSpawnId": "cloudtop-slope-arrival"
+    }
+  ]
+}

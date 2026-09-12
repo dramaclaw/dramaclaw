@@ -6,6 +6,8 @@ import { animalAtlasFrames, createCourtyardAnimalRuntime } from "./courtyard-ani
 import { ANIMAL_SHEETS } from "./courtyard-animals";
 import { PikoNavigationSchema } from "./map-package-schema";
 
+vi.mock("./character-shadow", () => ({ createContactShadow: () => new Texture({ source: new TextureSource({ width: 24, height: 8 }) }) }));
+
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 const navigation = PikoNavigationSchema.parse(JSON.parse(readFileSync(
@@ -46,6 +48,15 @@ it("shares ten sheets and a heart across nineteen depth-sorted animals and pause
   cat.motion.state.frame = 2; cat.render();
   expect(cat.heart?.visible).toBe(false);
   const dog = runtime.actors.find(actor => actor.container.label === "fountain-path-dog")!;
+  expect(dog.name?.text).toBe("罐头");
+  expect(cat.name?.text).toBe("小月亮");
+  expect(cat.name!.y).toBeLessThan(cat.heart!.y - cat.heart!.height);
+  expect(cat.name?.eventMode).toBe("none");
+  expect(runtime.actors.filter(actor => actor.name)).toHaveLength(2);
+  const sharedShadow = dog.shadow.texture;
+  expect(runtime.actors.every(actor => actor.shadow.texture === sharedShadow)).toBe(true);
+  expect(dog.shadow.anchor.x).toBe(0.5);
+  expect(dog.shadow.x).toBe(0);
   const start = dog.container.x;
   for (let time = 100; time <= 15000; time += 100) ticker.update(time);
   expect(dog.container.x).not.toBe(start);
@@ -69,9 +80,10 @@ it("shares ten sheets and a heart across nineteen depth-sorted animals and pause
   reduced = false; change();
   expect(ticker.count).toBe(1);
   runtime.destroy(); runtime.destroy();
+  expect(sharedShadow.destroyed).toBe(true);
   expect(ticker.count).toBe(0);
   expect(remove).toHaveBeenCalledTimes(1);
-  expect(unload).toHaveBeenCalledTimes(11);
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(11));
   expect(runtime.objects.every(object => object.destroyed)).toBe(true);
   ticker.destroy();
   sheets.forEach(sheet => sheet.destroy(true));
@@ -84,10 +96,10 @@ it("releases successfully loaded sheets when another sheet fails or the map unmo
   const unload = vi.spyOn(Assets, "unload").mockResolvedValue(undefined);
   const ticker = new Ticker(); ticker.autoStart = false;
   await expect(createCourtyardAnimalRuntime(options(ticker))).rejects.toThrow("missing animal sheet");
-  expect(unload).toHaveBeenCalledTimes(10);
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(10));
   unload.mockClear();
   expect(await createCourtyardAnimalRuntime({ ...options(ticker), isDisposed: () => true })).toBeNull();
-  expect(unload).toHaveBeenCalledTimes(11);
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(11));
   expect(ticker.count).toBe(0);
   ticker.destroy(); sheet.destroy(true);
 });
@@ -98,7 +110,25 @@ it("rejects malformed layouts and releases the source assets before attaching a 
   const unload = vi.spyOn(Assets, "unload").mockResolvedValue(undefined);
   const ticker = new Ticker(); ticker.autoStart = false;
   await expect(createCourtyardAnimalRuntime(options(ticker))).rejects.toThrow("four 1024-square cells");
-  expect(unload).toHaveBeenCalledTimes(11);
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(11));
   expect(ticker.count).toBe(0);
+  ticker.destroy(); sheet.destroy(true);
+});
+
+it("keeps a replacement map's animal sheets alive when the old map finishes loading after disposal", async () => {
+  vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+  const sheet = atlas();
+  const load = vi.spyOn(Assets, "load").mockResolvedValue(sheet as never);
+  const unload = vi.spyOn(Assets, "unload").mockResolvedValue(undefined);
+  const ticker = new Ticker(); ticker.autoStart = false;
+  const old = createCourtyardAnimalRuntime({ ...options(ticker), isDisposed: () => true });
+  const replacement = createCourtyardAnimalRuntime(options(ticker));
+  expect(await old).toBeNull();
+  const runtime = (await replacement)!;
+  expect(load).toHaveBeenCalledTimes(11);
+  expect(unload).not.toHaveBeenCalled();
+  expect(runtime.actors).toHaveLength(19);
+  runtime.destroy();
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(11));
   ticker.destroy(); sheet.destroy(true);
 });

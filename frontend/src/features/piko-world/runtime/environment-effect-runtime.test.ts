@@ -55,7 +55,7 @@ it("mounts data-authored sprites with one shared texture load and one owned life
   expect(windAnimation.sequence).toEqual([0, 1, 2, 3]);
   expect(windAnimation.stepAt?.(1200)).toBe(1);
   runtime!.destroy();
-  expect(unload).toHaveBeenCalledOnce();
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledOnce());
   expect(ticker.count).toBe(0);
   ticker.destroy();
   vi.unstubAllGlobals();

@@ -1,0 +1,145 @@
+[
+  {
+    "name": "bgm",
+    "path": "audio/first-meeting-courtyard-bgm-v1.mp3",
+    "gain": 0.16,
+    "seconds": 186.91,
+    "meanDbFS": -29.7,
+    "peakDbFS": -16.2,
+    "integratedLUFS": -27.9,
+    "truePeakDbFS": -16.1
+  },
+  {
+    "name": "fountain",
+    "path": "maps/welcome-courtyard/audio/fountain-v1.ogg",
+    "gain": 0.32,
+    "seconds": 21.1,
+    "meanDbFS": -38.5,
+    "peakDbFS": -13.3,
+    "integratedLUFS": -33.7,
+    "truePeakDbFS": -13.0
+  },
+  {
+    "name": "river",
+    "path": "maps/welcome-courtyard/audio/river-v1.ogg",
+    "gain": 0.26,
+    "seconds": 50.4,
+    "meanDbFS": -39.4,
+    "peakDbFS": -17.8,
+    "integratedLUFS": -35.2,
+    "truePeakDbFS": -17.6
+  },
+  {
+    "name": "leaves",
+    "path": "maps/welcome-courtyard/audio/wind-v1.ogg",
+    "gain": 0.14,
+    "seconds": 21.0,
+    "meanDbFS": -38.9,
+    "peakDbFS": -19.9,
+    "integratedLUFS": -41.6,
+    "truePeakDbFS": -19.8
+  },
+  {
+    "name": "birds",
+    "path": "maps/welcome-courtyard/audio/birds-v1.ogg",
+    "gain": 0.12,
+    "seconds": 30.2,
+    "meanDbFS": -50.4,
+    "peakDbFS": -26.5,
+    "integratedLUFS": -44.1,
+    "truePeakDbFS": -26.4
+  },
+  {
+    "name": "insects",
+    "path": "maps/welcome-courtyard/audio/insects-v1.ogg",
+    "gain": 0.16,
+    "seconds": 44.05,
+    "meanDbFS": -44.1,
+    "peakDbFS": -26.9,
+    "integratedLUFS": -37.7,
+    "truePeakDbFS": -26.9
+  },
+  {
+    "name": "hen",
+    "path": "maps/welcome-courtyard/animals/hen-call-v1.mp3",
+    "gain": 0.16,
+    "seconds": 7.03,
+    "meanDbFS": -31.9,
+    "peakDbFS": -15.8,
+    "integratedLUFS": -27.8,
+    "truePeakDbFS": -15.7
+  },
+  {
+    "name": "calf",
+    "path": "maps/welcome-courtyard/animals/calf-call-v1.mp3",
+    "gain": 0.23,
+    "seconds": 1.32,
+    "meanDbFS": -21.8,
+    "peakDbFS": -12.6,
+    "integratedLUFS": -18.3,
+    "truePeakDbFS": -12.6
+  },
+  {
+    "name": "cat",
+    "path": "maps/welcome-courtyard/animals/cat-call-v1.mp3",
+    "gain": 0.18,
+    "seconds": 0.89,
+    "meanDbFS": -33.0,
+    "peakDbFS": -19.6,
+    "integratedLUFS": -31.1,
+    "truePeakDbFS": -19.5
+  },
+  {
+    "name": "dog",
+    "path": "maps/welcome-courtyard/animals/dog-call-v1.mp3",
+    "gain": 0.22,
+    "seconds": 1.22,
+    "meanDbFS": -28.3,
+    "peakDbFS": -13.1,
+    "integratedLUFS": -25.2,
+    "truePeakDbFS": -13.1
+  },
+  {
+    "name": "footstep-1",
+    "path": "audio/grass-step-1-v1.wav",
+    "gain": 1,
+    "seconds": 0.28,
+    "meanDbFS": -44.9,
+    "peakDbFS": -29.4,
+    "integratedLUFS": null,
+    "truePeakDbFS": -29.1,
+    "note": "Short footsteps: use measured RMS and peak; do not interpret the meter floor as integrated loudness."
+  },
+  {
+    "name": "footstep-2",
+    "path": "audio/grass-step-2-v1.wav",
+    "gain": 1,
+    "seconds": 0.28,
+    "meanDbFS": -46.5,
+    "peakDbFS": -25.2,
+    "integratedLUFS": null,
+    "truePeakDbFS": -25.0,
+    "note": "Short footsteps: use measured RMS and peak; do not interpret the meter floor as integrated loudness."
+  },
+  {
+    "name": "footstep-3",
+    "path": "audio/grass-step-3-v1.wav",
+    "gain": 1,
+    "seconds": 0.28,
+    "meanDbFS": -37.5,
+    "peakDbFS": -17.3,
+    "integratedLUFS": null,
+    "truePeakDbFS": -17.3,
+    "note": "Short footsteps: use measured RMS and peak; do not interpret the meter floor as integrated loudness."
+  },
+  {
+    "name": "notification",
+    "path": "audio/private-message-notification-v1.mp3",
+    "gain": 0.45,
+    "seconds": 1.06,
+    "meanDbFS": -29.1,
+    "peakDbFS": -11.4,
+    "integratedLUFS": -25.3,
+    "truePeakDbFS": -11.4
+  }
+]

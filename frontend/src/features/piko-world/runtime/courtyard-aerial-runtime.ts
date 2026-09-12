@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { Assets, Container, Rectangle, Sprite, Texture, type Ticker } from "pixi.js";
+import { acquireSharedTexture } from "./shared-texture";
+import { Container, Rectangle, Sprite, Texture, type Ticker } from "pixi.js";
 
 export const COURTYARD_BIRD_ATLAS_SRC = "effects/flying-bird-atlas-v1.png";
 export const COURTYARD_CLOUD_SRC = "effects/thin-cloud-v1.png";
@@ -155,16 +156,19 @@ export async function createCourtyardAerialRuntime({ ticker, resolveAssetUrl, is
 }) {
   const sources = [COURTYARD_BIRD_ATLAS_SRC, COURTYARD_CLOUD_SRC] as const;
   const entries = sources.map(src => ({ src, url: resolveAssetUrl(src) }));
-  const settled = await Promise.allSettled(entries.map(({ url }) => Assets.load<Texture>(url)));
+  const releases: (() => void)[] = [];
+  const settled = await Promise.allSettled(entries.map(async ({ url }) => {
+    const lease = await acquireSharedTexture(url);
+    releases.push(lease.release);
+    return lease.texture;
+  }));
   const loaded = new Map<string, Texture>();
   settled.forEach((result, index) => {
     if (result.status !== "fulfilled") return;
     result.value.source.scaleMode = "nearest";
     loaded.set(entries[index].src, result.value);
   });
-  const unload = () => entries.forEach(({ src, url }) => {
-    if (loaded.has(src)) void Assets.unload(url);
-  });
+  const unload = () => releases.splice(0).forEach(release => release());
   const failed = settled.find(result => result.status === "rejected");
   if (failed || isDisposed()) {
     unload();

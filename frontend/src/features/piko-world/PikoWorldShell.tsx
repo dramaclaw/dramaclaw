@@ -1,9 +1,10 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import { PIKO_MAP_TRAVEL_TIMING } from "./piko-map-timing";
 import { usePikoCursors } from "./use-piko-cursors";
 import { PikoPrivateChat } from "./PikoPrivateChat";
 import { usePikoPublicChat, PIKO_CHAT_MAX_LENGTH } from "./piko-public-chat";
 import popupStyles from "./piko-popup.module.css";
-// SPDX-License-Identifier: Elastic-2.0
-// Copyright (c) 2026 ClaymoreLab
 import iconStyles from "./piko-icon-button.module.css";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -23,6 +24,8 @@ import { usePikoProfile } from "./piko-profile";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { safeLocalStorageSet } from "@/lib/localStorageQuota";
+import { PIKO_MAP_TRANSITIONS, isPikoMapId } from "./piko-map-transitions";
+import { prepareMapTravel, type MapExit, type MapLocation } from "./runtime/map-travel";
 import { PikoWorldCanvas } from "./PikoWorldCanvas";
 import { PikoMapTransition } from "./PikoMapTransition";
 import { PikoLoadingScreen } from "./PikoLoadingScreen";
@@ -55,7 +58,6 @@ const CHAT_PANEL_MIDDLE_SRC = "/piko/world/ui/chat/piko-world-public-chat-panel-
 const CHAT_PANEL_BOTTOM_SRC = "/piko/world/ui/chat/piko-world-public-chat-panel-bottom-v2.png";
 const DAY_PAGE_BACKGROUND_SRC =
   "/piko/world/ui/backgrounds/piko-world-page-background-day-v1.png";
-const CURRENT_MAP_ID = "welcome-courtyard" as const;
 
 type ChatMessage = {
   id: string;
@@ -108,6 +110,16 @@ export function PikoWorldShell() {
   const username = useAuthStore(state => state.username);
   const { profile, saveProfile } = usePikoProfile(username);
   const nickname = profile.nickname || t("pikoWorld.defaultNickname");
+  const [location, setLocation] = useState<MapLocation>({ mapId: "welcome-courtyard" });
+  const [travelFade, setTravelFade] = useState<"idle" | "out" | "black" | "loading" | "in">("idle");
+  const travelPending = travelFade !== "idle";
+  const [travelTarget, setTravelTarget] = useState(location.mapId);
+  const [preparedTravel, setPreparedTravel] = useState<MapLocation | null>(null);
+  const [slowTravel, setSlowTravel] = useState(false);
+  const [travelError, setTravelError] = useState(false);
+  const [fallback, setFallback] = useState<MapLocation | null>(null);
+  const travelRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => travelRequest.current?.abort(), []);
   const [privateOpen, setPrivateOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -139,6 +151,88 @@ export function PikoWorldShell() {
     (loadState: "loading" | "ready" | "error") => setMapLoadState(loadState),
     [],
   );
+
+  const handleExit = useCallback(async (exit: MapExit) => {
+    if (travelRequest.current || !isPikoMapId(exit.targetMapId)) return;
+    const controller = new AbortController();
+    travelRequest.current = controller;
+    setTravelTarget(exit.targetMapId);
+    setTravelFade("out");
+    setTravelError(false);
+    const timeout = window.setTimeout(() => {
+      controller.abort();
+      setTravelError(true);
+      setTravelFade("in");
+    }, PIKO_MAP_TRAVEL_TIMING.prepareTimeoutMs);
+    controller.signal.addEventListener("abort", () => window.clearTimeout(timeout), { once: true });
+    try {
+      const prepared = await prepareMapTravel(location.mapId, exit, controller.signal);
+      if (controller.signal.aborted) return;
+      setFallback(prepared.fallback);
+      setPreparedTravel(prepared.destination);
+    } catch {
+      if (!controller.signal.aborted) {
+        // A failed parallel preflight must also cancel its remaining requests.
+        controller.abort();
+        setTravelError(true);
+        setTravelFade("in");
+      }
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }, [location.mapId]);
+
+  const reloadMap = (destination: MapLocation) => {
+    if (travelRequest.current || travelPending) return;
+    travelRequest.current = new AbortController();
+    setTravelTarget(destination.mapId);
+    setTravelError(false);
+    setPreparedTravel(destination);
+    setTravelFade("out");
+  };
+  const recoverMap = () => {
+    if (fallback) reloadMap(fallback);
+  };
+
+  useEffect(() => {
+    if (!travelPending) { setSlowTravel(false); return; }
+    const timer = window.setTimeout(() => setSlowTravel(true), PIKO_MAP_TRAVEL_TIMING.loadingHintMs);
+    return () => window.clearTimeout(timer);
+  }, [travelPending]);
+
+  useEffect(() => {
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    if (travelFade === "out" || travelFade === "in") {
+      const timer = window.setTimeout(() => {
+        if (travelFade === "out") setTravelFade("black");
+        else {
+          setTravelFade("idle");
+          travelRequest.current = null;
+        }
+      }, reduced ? 0 : travelFade === "out" ? PIKO_MAP_TRAVEL_TIMING.fadeOutMs : PIKO_MAP_TRAVEL_TIMING.fadeInMs);
+      return () => window.clearTimeout(timer);
+    }
+  }, [travelFade]);
+
+  useEffect(() => {
+    if (travelFade === "black" && preparedTravel) {
+      setMapTitleComplete(false);
+      setMapLoadState("loading");
+      setChatOpen(false); setPrivateOpen(false); setSettingsOpen(false);
+      setProfileOpen(false); setResidentSelectorOpen(false);
+      setLocation(preparedTravel);
+      setLoadAttempt(attempt => attempt + 1);
+      setPreparedTravel(null);
+      setTravelFade("loading");
+    }
+    if (travelFade === "loading" && mapLoadState !== "loading") {
+      // Canvas reports ready only after its first render; failures also reveal recovery controls.
+      if (mapLoadState === "ready" && location.mapId === "whalesong-skyport") {
+        safeLocalStorageSet("piko-world:whalesong-skyport-discovered", "true");
+      }
+      setTravelFade("in");
+    }
+  }, [travelFade, preparedTravel, mapLoadState, location.mapId]);
 
   useEffect(() => {
     if (entryFade === "idle" || entryFade === "done") return;
@@ -255,19 +349,21 @@ export function PikoWorldShell() {
       <section className="relative z-10 aspect-video w-full max-w-[calc(177.7778dvh-7.1111rem)] overflow-hidden rounded-xl bg-background">
         <div className="absolute inset-0" inert={!entered || entryFade !== "done"} aria-hidden={!entered || entryFade !== "done"}>
         <PikoWorldCanvas
-          key={loadAttempt}
-          mapId={CURRENT_MAP_ID}
+          key={`${location.mapId}:${location.spawnId ?? "default"}:${loadAttempt}`}
+          mapId={location.mapId}
+          spawnId={location.spawnId}
+          onExit={handleExit}
           nickname={nickname}
           speech={publicChat.speech}
           residentId={selectedResidentId}
           showMayorHint={mapTitleComplete && entered && mapLoadState === "ready"}
           mayorHintVisible={entered && mapLoadState === "ready"}
-          movementBlocked={privateOpen || chatOpen || settingsOpen || profileOpen || residentSelectorOpen || entryFade !== "done"}
+          movementBlocked={travelPending || privateOpen || chatOpen || settingsOpen || profileOpen || residentSelectorOpen || entryFade !== "done"}
           onLoadStateChange={handleMapLoadStateChange}
         />
 
-        <PikoPrivateChat key={username ?? "guest"} ownNickname={nickname}
-          active={entered && entryFade === "done" && mapTitleComplete && mapLoadState === "ready" && !settingsOpen && !profileOpen && !residentSelectorOpen}
+        <PikoPrivateChat key={`private-chat:${username ?? "guest"}`} ownNickname={nickname}
+          active={entered && entryFade === "done" && !travelPending && mapTitleComplete && mapLoadState === "ready" && !settingsOpen && !profileOpen && !residentSelectorOpen}
           onOpenChange={setPrivateOpen} />
         <nav
           className="absolute left-4 top-4 z-20 flex items-center gap-5"
@@ -376,7 +472,7 @@ export function PikoWorldShell() {
         </div>
 
         <PikoProfileDialog
-          key={username ?? "guest"}
+          key={`profile:${username ?? "guest"}`}
           open={profileOpen}
           profile={profile}
           onSave={saveProfile}
@@ -501,7 +597,21 @@ export function PikoWorldShell() {
         </aside>
         </div>
       </section>
-      {entered && <PikoMapTransition mapId={CURRENT_MAP_ID} loadState={mapLoadState} onComplete={handleMapTitleComplete} />}
+      {entered && <PikoMapTransition key={`${location.mapId}:${loadAttempt}`} mapId={location.mapId} loadState={mapLoadState} paused={travelPending} onComplete={handleMapTitleComplete} />}
+      {entered && ((travelPending && slowTravel && travelFade !== "in") || travelError || mapLoadState === "error") && (
+        <div className={`fixed bottom-12 left-1/2 z-[65] -translate-x-1/2 px-4 py-3 text-sm ${popupStyles.surface}`} role="status">
+          {travelPending && !travelError && mapLoadState !== "error" ? t("pikoWorld.mapLoading", { mapName: PIKO_MAP_TRANSITIONS[travelTarget].title }) : t("pikoWorld.mapLoadError", { mapName: PIKO_MAP_TRANSITIONS[travelError ? travelTarget : location.mapId].title })}
+          {!travelPending && mapLoadState === "error" && <button className={popupStyles.item} onClick={() => {
+            reloadMap(location);
+          }}>{t("pikoWorld.mapTravel.retry")}</button>}
+          {!travelPending && mapLoadState === "error" && fallback && <button className={popupStyles.item} onClick={recoverMap}>
+            {t("pikoWorld.mapTravel.return")}
+          </button>}
+          {travelError && mapLoadState !== "error" && <button className={popupStyles.item} onClick={() => setTravelError(false)}>
+            {t("pikoWorld.mapTravel.dismiss")}
+          </button>}
+        </div>
+      )}
       {!entered && (
           <PikoLoadingScreen
             key={loadAttempt}
@@ -517,6 +627,17 @@ export function PikoWorldShell() {
             }}
           />
       )}
+      <div
+        aria-hidden="true"
+        data-testid="piko-travel-blackout"
+        data-phase={travelFade}
+        className={cn(
+          "fixed inset-0 z-[60] bg-black transition-opacity ease-in-out motion-reduce:transition-none",
+          ["out", "black", "loading"].includes(travelFade) ? "opacity-100" : "opacity-0",
+          travelPending ? "pointer-events-auto" : "pointer-events-none",
+        )}
+        style={{ transitionDuration: `${travelFade === "in" ? PIKO_MAP_TRAVEL_TIMING.fadeInMs : PIKO_MAP_TRAVEL_TIMING.fadeOutMs}ms` }}
+      />
       <div
         aria-hidden="true"
         data-testid="piko-entry-blackout"

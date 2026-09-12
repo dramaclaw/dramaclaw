@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { Assets, Container, Graphics, Rectangle, Sprite, Texture, type Ticker } from "pixi.js";
+import { acquireSharedTexture } from "./shared-texture";
+import { createContactShadow } from "./character-shadow";
+import { createCharacterName } from "./character-presentation";
+import { Container, Rectangle, Sprite, Texture, type Ticker } from "pixi.js";
 import type { PikoNavigation, PikoOccluder } from "./map-package-schema";
 import { createBakedActorOcclusion } from "./map-occlusion";
 import { CAT_HEART_FRAME, CAT_HEART_SRC, isAnimalPositionNavigable, ANIMAL_SHEETS, COURTYARD_ANIMALS, createAnimalMotion, type AnimalClip } from "./courtyard-animals";
@@ -28,10 +31,13 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
   const entries: { clip: AnimalClip | null; url: string }[] = (Object.keys(ANIMAL_SHEETS) as AnimalClip[])
     .map(clip => ({ clip, url: resolveAssetUrl(ANIMAL_SHEETS[clip].src) }));
   entries.push({ clip: null, url: resolveAssetUrl(CAT_HEART_SRC) });
-  const results = await Promise.allSettled(entries.map(({ url }) => Assets.load<Texture>(url)));
-  const unload = () => results.forEach((result, index) => {
-    if (result.status === "fulfilled") void Assets.unload(entries[index].url);
-  });
+  const releases: (() => void)[] = [];
+  const results = await Promise.allSettled(entries.map(async ({ url }) => {
+    const lease = await acquireSharedTexture(url);
+    releases.push(lease.release);
+    return lease.texture;
+  }));
+  const unload = () => releases.splice(0).forEach(release => release());
   const failure = results.find(result => result.status === "rejected");
   if (failure || isDisposed()) {
     unload();
@@ -40,6 +46,7 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
   }
   const clips = new Map<AnimalClip, Texture[]>();
   let heartTexture: Texture | undefined;
+  let shadowTexture: Texture;
   try {
     results.forEach((result, index) => {
       if (result.status !== "fulfilled") return;
@@ -48,6 +55,7 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
       if (clip === null) heartTexture = result.value;
       else clips.set(clip, animalAtlasFrames(result.value));
     });
+    shadowTexture = createContactShadow({ width: 24, height: 8 });
   } catch (error) {
     clips.forEach(frames => frames.forEach(frame => frame.destroy(false)));
     unload();
@@ -55,10 +63,13 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
   }
   const actors = COURTYARD_ANIMALS.map(placement => {
     const container = new Container({ label: placement.id, eventMode: "none" });
-    const shadow = new Graphics({ label: "animal-contact-shadow", eventMode: "none" });
+    const shadow = new Sprite({ texture: shadowTexture, label: "animal-contact-shadow", eventMode: "none", roundPixels: true });
+    shadow.anchor.set(0.5);
     const flying = placement.kind === "butterfly";
     const width = flying ? 3 : placement.scale * 220;
-    shadow.ellipse(0, 0, width, flying ? 1.3 : width * 0.28).fill({ color: 0x29372c, alpha: flying ? 0.12 : 0.16 });
+    shadow.width = width * 2;
+    shadow.height = (flying ? 1.3 : width * 0.28) * 2;
+    shadow.alpha = flying ? 0.45 : 1;
     const body = new Sprite({ label: "animal-body", eventMode: "none" });
     container.addChild(shadow, body);
     const heart = placement.kind === "cat" ? new Sprite({ texture: heartTexture, label: "cat-heart", eventMode: "none" }) : null;
@@ -70,6 +81,8 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
       heart.visible = false;
       container.addChild(heart);
     }
+    const name = placement.name ? createCharacterName(placement.name, -placement.scale * 900 - 4) : null;
+    if (name) container.addChild(name);
     const motion = createAnimalMotion(placement, random, point => isAnimalPositionNavigable(point, navigation));
     let previousClip: AnimalClip | undefined, previousFrame = -1;
     const render = () => {
@@ -90,7 +103,7 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
     motion.update(0);
     render();
     const occlusion = createBakedActorOcclusion(container, bakedOccluders, size);
-    return { container, body, heart, placement, motion, occlusion, render };
+    return { container, body, heart, name, shadow, placement, motion, occlusion, render };
   });
   let attached = false, destroyed = false;
   const update = (clock: Ticker) => {
@@ -124,6 +137,7 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
         actor.occlusion.destroy();
         actor.container.destroy({ children: true });
       });
+      shadowTexture.destroy(true);
       clips.forEach(frames => frames.forEach(frame => frame.destroy(false)));
       unload();
     },

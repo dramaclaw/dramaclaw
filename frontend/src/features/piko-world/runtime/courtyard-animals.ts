@@ -35,6 +35,7 @@ export type AnimalKind = "hen" | "dog" | "calf" | "rabbit" | "cat" | "squirrel" 
 export type AnimalPlacement = {
   id: string;
   kind: AnimalKind;
+  name?: string;
   position: PikoPoint;
   scale: number;
   facing?: 1 | -1;
@@ -58,14 +59,15 @@ export const COURTYARD_ANIMALS: readonly AnimalPlacement[] = [
   { id: "riverside-hen", kind: "hen", position: { x: 1740, y: 762 }, scale: 0.054,
     facing: -1, initialPauseSeconds: 5.2, animationOffsetSeconds: 1.1,
     route: [{ x: 1718, y: 754 }, { x: 1728, y: 778 }, { x: 1740, y: 762 }] },
-  { id: "fountain-path-dog", kind: "dog", position: { x: 1185, y: 684 }, scale: 0.086,
+  { id: "fountain-path-dog", kind: "dog", name: "罐头", position: { x: 1185, y: 684 }, scale: 0.086,
     // Clockwise tour: east bank, northern garden, west lane, southern promenade, fountain.
     route: [
       { x: 1500, y: 610 }, { x: 1750, y: 545 }, { x: 1910, y: 530 },
       { x: 1750, y: 545 }, { x: 1700, y: 360 }, { x: 1610, y: 185 },
       { x: 1540, y: 95 }, { x: 1330, y: 85 }, { x: 1100, y: 95 },
       { x: 780, y: 110 }, { x: 690, y: 200 }, { x: 680, y: 360 },
-      { x: 490, y: 350 }, { x: 300, y: 300 }, { x: 180, y: 220 },
+      // Pass south of the pine fence instead of crossing its footprint.
+      { x: 680, y: 490 }, { x: 480, y: 490 }, { x: 480, y: 350 }, { x: 300, y: 300 }, { x: 180, y: 220 },
       { x: 180, y: 480 }, { x: 420, y: 550 }, { x: 450, y: 780 },
       { x: 450, y: 970 }, { x: 300, y: 990 }, { x: 450, y: 1035 },
       { x: 700, y: 1060 }, { x: 1060, y: 1060 }, { x: 1650, y: 1050 },
@@ -75,7 +77,7 @@ export const COURTYARD_ANIMALS: readonly AnimalPlacement[] = [
   { id: "southwest-grove-rabbit", kind: "rabbit", position: { x: 205, y: 982 }, scale: 0.058, facing: 1 },
   { id: "southeast-flowers-rabbit", kind: "rabbit", position: { x: 1700, y: 1050 }, scale: 0.058,
     facing: -1, animationOffsetSeconds: 3.2 },
-  { id: "northwest-lawn-cat", kind: "cat", position: { x: 555, y: 108 }, scale: 0.0648, facing: -1 },
+  { id: "northwest-lawn-cat", kind: "cat", name: "小月亮", position: { x: 555, y: 108 }, scale: 0.0648, facing: -1 },
   { id: "northeast-lawn-squirrel", kind: "squirrel", position: { x: 1472, y: 111 }, scale: 0.059 },
   { id: "west-flowers-butterfly-1", kind: "butterfly", position: { x: 700, y: 826 }, scale: 0.019 },
   { id: "west-flowers-butterfly-2", kind: "butterfly", position: { x: 745, y: 860 }, scale: 0.016 },

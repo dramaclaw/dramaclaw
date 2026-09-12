@@ -27,8 +27,9 @@ export function residentFrameAt(elapsedMs: number) {
 export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: () => boolean,
   controls: {
     host: HTMLElement; navigation: PikoNavigation;
-    label?: string; position?: Point;
+    label?: string; position?: Point; facing?: Facing;
     simulatedInput?: () => Point;
+    footsteps?: boolean;
   }) {
   const actor = createCharacterActor(sheet, ticker, isActive, {
     label: controls.label ?? "piko-player", frameSize: 64, frameCount: 44, columns: 11, manual: true, pivot: { x: 32, y: 57 },
@@ -36,8 +37,9 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     shadow: { width: 24, height: 8 }, durationMs: 4800, frameAt: residentFrameAt,
   });
   const keyboardControlled = !controls.simulatedInput;
-  let facing: Facing = "south";
-  const footsteps = keyboardControlled ? createGrassFootsteps() : { unlock() {}, step() {}, stop() {}, destroy() {} };
+  let facing: Facing = controls.facing ?? "south";
+  actor.setFrame(FACINGS.indexOf(facing) * 11);
+  const footsteps = keyboardControlled && controls.footsteps !== false ? createGrassFootsteps() : { unlock() {}, step() {}, stop() {}, destroy() {} };
   let elapsed = 0, wasMoving = false;
   let gaitDistance = 0;
   const cycleDistance = 40 * RESIDENT_WORLD_SCALE;

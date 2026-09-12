@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { Assets, type Container, type Texture, type Ticker } from "pixi.js";
+import { acquireSharedTexture } from "./shared-texture";
+import { type Container, type Texture, type Ticker } from "pixi.js";
 import { CANOPY_ATLAS_SRC } from "./canopy-atlas";
 import type { PikoOccluder, PikoOcclusion } from "./map-package-schema";
 import { createTreeCanopyBreeze } from "./tree-canopy-breeze";
@@ -61,16 +62,19 @@ export async function createCourtyardFoliageRuntime({ occlusion, baseTexture, ti
   if (foliage.westGroveRearPine) sources.add(WEST_GROVE_REAR_PINE_CLEAN_PATCH_SRC).add(WEST_GROVE_REAR_PINE_ATLAS_SRC);
 
   const entries = [...sources].map(src => ({ src, url: resolveAssetUrl(src) }));
-  const settled = await Promise.allSettled(entries.map(({ url }) => Assets.load<Texture>(url)));
+  const releases: (() => void)[] = [];
+  const settled = await Promise.allSettled(entries.map(async ({ url }) => {
+    const lease = await acquireSharedTexture(url);
+    releases.push(lease.release);
+    return lease.texture;
+  }));
   const loaded = new Map<string, Texture>();
   settled.forEach((result, index) => {
     if (result.status !== "fulfilled") return;
     result.value.source.scaleMode = "nearest";
     loaded.set(entries[index].src, result.value);
   });
-  const unload = () => entries.forEach(({ src, url }) => {
-    if (loaded.has(src)) void Assets.unload(url);
-  });
+  const unload = () => releases.splice(0).forEach(release => release());
   const failed = settled.find(result => result.status === "rejected");
   if (failed || isDisposed()) {
     unload();

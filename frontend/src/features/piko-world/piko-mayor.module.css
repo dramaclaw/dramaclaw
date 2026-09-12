@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: Elastic-2.0 */
 .anchor {
-  --hint-highlight: color-mix(in srgb, var(--warning) 35%, white);
   position: absolute;
   left: 0;
   top: 0;
@@ -8,56 +7,15 @@
   pointer-events: none;
 }
 
-.hint {
+.name {
   position: absolute;
-  left: -14px;
-  top: -122px;
-  width: 28px;
-  height: 32px;
-  animation: shimmer 2.8s ease-in-out infinite;
-}
-
-.hintGraphic {
-  display: block;
-  overflow: visible;
-}
-
-/* Glow is behind the opaque silhouette, never applied to its crisp outline. */
-.hintGlow {
-  fill: var(--warning);
-  filter: blur(4px);
-  opacity: 0.8;
-}
-
-.hintOutline {
-  fill: var(--hint-highlight);
-  stroke: rgb(var(--bg-rgb));
-}
-
-.hint::before, .hint::after {
-  content: "";
-  position: absolute;
-  width: 9px;
-  height: 12px;
-  background: var(--hint-highlight);
-  clip-path: polygon(50% 0, 63% 37%, 100% 50%, 63% 63%, 50% 100%, 37% 63%, 0 50%, 37% 37%);
-  animation: sparkle 2.8s ease-in-out infinite;
-}
-
-.hint::before { left: -8px; top: 3px; }
-.hint::after { right: -7px; top: 20px; animation-delay: -1.4s; }
-
-@keyframes shimmer {
-  0%, 100% { opacity: 0.9; transform: translateY(0); }
-  50% { opacity: 1; transform: translateY(-3px); }
-}
-
-@keyframes sparkle {
-  0%, 65%, 100% { opacity: 0; transform: scale(0.4); }
-  30% { opacity: 1; transform: scale(1); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hint, .hint::before, .hint::after { animation: none; }
-  .hint::before, .hint::after { opacity: 0.7; }
+  left: 0;
+  bottom: 101px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font: 12px Arial, "PingFang SC", sans-serif;
+  color: #fff8df;
+  -webkit-text-stroke: 2.5px #24301e;
+  paint-order: stroke fill;
+  opacity: 0.95;
 }
