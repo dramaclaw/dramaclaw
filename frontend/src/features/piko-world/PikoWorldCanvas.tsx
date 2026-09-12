@@ -10,6 +10,10 @@ import { loadPikoMapEnvironment, loadPikoMapManifest, loadPikoMapNavigation, loa
 import { createMapOccluder, createBakedActorOcclusion, isBakedOccluder, isResidentHeadOccluded } from "./runtime/map-occlusion";
 import { createEnvironmentEffectRuntime } from "./runtime/environment-effect-runtime";
 import { createCourtyardFoliageRuntime } from "./runtime/courtyard-foliage-runtime";
+import { createCourtyardAerialRuntime } from "./runtime/courtyard-aerial-runtime";
+import { createCourtyardLampRuntime } from "./runtime/courtyard-lamp";
+import { createCourtyardAnimalRuntime } from "./runtime/courtyard-animal-runtime";
+import { createAnimalAudio } from "./runtime/animal-audio";
 import { createEnvironmentAudio } from "./runtime/environment-audio";
 import { createResidentOcclusionSilhouette } from "./runtime/resident-occlusion-silhouette";
 import { containWorldInViewport, type PikoSize } from "./runtime/viewport-fit";
@@ -111,6 +115,10 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
     let mayorActor: ReturnType<typeof createMayorActor> | null = null;
     let environmentRuntime: Awaited<ReturnType<typeof createEnvironmentEffectRuntime>> = null;
     let courtyardFoliageRuntime: Awaited<ReturnType<typeof createCourtyardFoliageRuntime>> = null;
+    let courtyardAerialRuntime: Awaited<ReturnType<typeof createCourtyardAerialRuntime>> = null;
+    let courtyardLamp: ReturnType<typeof createCourtyardLampRuntime> | null = null;
+    let courtyardAnimalRuntime: Awaited<ReturnType<typeof createCourtyardAnimalRuntime>> = null;
+    let animalAudio: ReturnType<typeof createAnimalAudio> | null = null;
     let environmentAudio: ReturnType<typeof createEnvironmentAudio> | null = null;
     let disposed = false;
     let disconnectPosition = () => {};
@@ -124,8 +132,12 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
       abortController.abort();
       disconnectResizeObserver();
       disconnectPosition();
-      environmentAudio?.destroy();
+      animalAudio?.destroy();
+      courtyardAnimalRuntime?.destroy();
+      courtyardAerialRuntime?.destroy();
+      courtyardLamp?.destroy();
       environmentRuntime?.destroy();
+      environmentAudio?.destroy();
       courtyardFoliageRuntime?.destroy();
       stopPlayerRef.current = () => {};
       simulatedHoverRef.current = () => {};
@@ -244,6 +256,17 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
         });
         if (!environmentRuntime) return;
         world.addChild(...environmentRuntime.objects);
+        if (mapId === "welcome-courtyard") {
+          courtyardAerialRuntime = await createCourtyardAerialRuntime({
+            ticker: nextApp.ticker,
+            resolveAssetUrl: src => resolvePikoMapAssetUrl(mapId, src),
+            isDisposed: () => disposed,
+          });
+          if (!courtyardAerialRuntime) return;
+          world.addChild(...courtyardAerialRuntime.objects);
+          courtyardLamp = createCourtyardLampRuntime(nextApp.ticker);
+          world.addChild(...courtyardLamp.containers);
+        }
         setPlayerHeadOccluded(false);
 
         if (mapId === "welcome-courtyard") {
@@ -261,6 +284,16 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
           if(disposed)return;
           navigationRef.current = navigation;
           setDebugNavigation(structuredClone(navigation));
+          courtyardAnimalRuntime = await createCourtyardAnimalRuntime({
+            ticker: nextApp.ticker, navigation, bakedOccluders, size: manifest.size,
+            resolveAssetUrl: src => resolvePikoMapAssetUrl(mapId, src),
+            isDisposed: () => disposed,
+          });
+          if (!courtyardAnimalRuntime) return;
+          world.addChild(...courtyardAnimalRuntime.objects);
+          animalAudio = createAnimalAudio(() => courtyardAnimalRuntime?.actors.map(actor => ({
+            id: actor.placement.id, kind: actor.placement.kind, ...actor.motion.state,
+          })) ?? [], src => resolvePikoMapAssetUrl(mapId, src));
           for (const id of Object.keys(PIKO_PLAYABLE_RESIDENTS) as PlayablePikoResidentId[]) {
             const src = PIKO_PLAYABLE_RESIDENTS[id];
             const residentTexture = await Assets.load<Texture>(src);
@@ -294,6 +327,7 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
           let playerX = residentActor.container.x, playerY = residentActor.container.y;
           setPlayerPosition({ x: playerX, y: playerY });
           environmentAudio?.update({ x: playerX, y: playerY });
+          animalAudio?.update({ x: playerX, y: playerY });
           setPlayerHeadOccluded(isResidentHeadOccluded(
             { x: playerX, y: playerY }, occlusion, RESIDENT_WORLD_SCALE,
           ));
@@ -306,6 +340,7 @@ export function PikoWorldCanvas({ mapId, nickname, speech, residentId = "m01", o
               playerX = residentActor.container.x; playerY = residentActor.container.y;
               setPlayerPosition({ x: playerX, y: playerY });
               environmentAudio?.update({ x: playerX, y: playerY });
+              animalAudio?.update({ x: playerX, y: playerY });
             }
             if (playerMoved || lastTreeOutline !== animatedTree?.outline) {
               lastTreeOutline = animatedTree?.outline;
