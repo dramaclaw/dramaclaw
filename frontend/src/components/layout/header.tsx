@@ -25,6 +25,7 @@ import { playPikoUiSound } from "@/features/piko-world/piko-audio";
 import { Button } from "@/components/ui/button";
 import { AvatarUploadDialog } from "@/components/account/avatar-upload-dialog";
 import { PasswordChangeDialog } from "@/components/account/password-change-dialog";
+import { PhoneBindingDialog } from "@/components/account/phone-binding-dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -42,7 +43,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/stores/auth-store";
 import { useAppStore } from "@/stores/app-store";
-import { authRequired, isCeRuntime } from "@/lib/runtime-config";
+import { authRequired, isCeRuntime, phoneOtpEntryVisible } from "@/lib/runtime-config";
 import { resetUserSessionState } from "@/lib/reset-region-state";
 import { useModelGatewayConfig } from "@/lib/queries/model-gateway";
 import { useOrgBranding } from "@/lib/queries/org-branding";
@@ -75,6 +76,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   const [releaseNotificationStateVersion, setReleaseNotificationStateVersion] = useState(0);
   const [avatarDialogOpen, setAvatarDialogOpen] = useState(false);
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [phoneBindingOpen, setPhoneBindingOpen] = useState(false);
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   const [accountPanelVisible, setAccountPanelVisible] = useState(false);
   const [settingsWarningBubbleDismissed, setSettingsWarningBubbleDismissed] = useState(false);
@@ -119,6 +121,8 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
     : t("app.logoHomeTooltip");
   const accountSecurity = useAccountSecurity(!ceRuntime && showLogout && Boolean(username));
   const passwordConfigured = accountSecurity.data?.password_configured ?? true;
+  const canBindPhone = !ceRuntime && showLogout && phoneOtpEntryVisible()
+    && accountSecurity.data?.phone === null && accountSecurity.data?.password_configured === true;
   const displayName = accountSecurity.data?.phone_masked ?? storedDisplayName ?? username ?? "User";
   const avatarInitial = displayName.slice(0, 1).toUpperCase();
   const activeLanguage = normalize(i18n.resolvedLanguage ?? i18n.language);
@@ -470,6 +474,10 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               hasUnreadNotification={hasUnreadNotification}
               onChangeAvatar={openAvatarDialog}
               onChangePassword={showLogout ? openPasswordDialog : undefined}
+              onBindPhone={canBindPhone ? () => {
+                closeAccountPanelNow();
+                setPhoneBindingOpen(true);
+              } : undefined}
               onLanguageChange={switchLanguage}
               onNotifications={openNotifications}
               onClose={scheduleCloseAccountPanel}
@@ -510,6 +518,11 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         onPasswordChanged={handlePasswordChanged}
         passwordConfigured={passwordConfigured}
       />
+      {phoneBindingOpen && canBindPhone ? <PhoneBindingDialog
+        key={username}
+        onClose={() => setPhoneBindingOpen(false)}
+        onBound={() => { void accountSecurity.refetch(); }}
+      /> : null}
       {ceRuntime ? <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} /> : null}
       {settingsWarningBubble
         ? createPortal(
@@ -602,6 +615,7 @@ function AccountPanel({
   hasUnreadNotification,
   onChangeAvatar,
   onChangePassword,
+  onBindPhone,
   onLanguageChange,
   onNotifications,
   onClose,
@@ -620,6 +634,7 @@ function AccountPanel({
   hasUnreadNotification: boolean;
   onChangeAvatar: () => void;
   onChangePassword?: () => void;
+  onBindPhone?: () => void;
   onLanguageChange: (lang: Supported) => void;
   onNotifications: () => void;
   onClose: () => void;
@@ -660,6 +675,11 @@ function AccountPanel({
           </span>
         </div>
         <div className="space-y-0.5">
+          {onBindPhone ? <HeaderMenuRow
+            icon={<KeyRound className="size-3.5" />}
+            label={t("header.account.phoneBinding.title")}
+            onClick={onBindPhone}
+          /> : null}
           <HeaderMenuRow
             icon={<Bell className="size-3.5" />}
             label={t("header.notifications")}

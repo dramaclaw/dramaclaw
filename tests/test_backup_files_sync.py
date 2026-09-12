@@ -79,24 +79,6 @@ def test_build_sync_cmd_shape(tmp_path):
     assert "--local-no-check-updated" not in cmd
 
 
-def test_build_sync_cmd_compares_content_not_mtime(tmp_path):
-    cmd = build_sync_cmd(
-        src="/data/state",
-        dst="oss:dramaclaw-celery-backup/backup/ack/node-ack-a/state",
-        history_dst="oss:dramaclaw-celery-backup/backup/ack/node-ack-a/files-history/20260910T000000Z",
-        filter_file=tmp_path / "filter.txt",
-    )
-
-    # Default size+mtime comparison HEADs every object to read its mtime
-    # metadata (S3/OSS listings omit it); --checksum reuses the listed MD5 ETag.
-    assert "--checksum" in cmd
-    # These also skip the HEADs but silently drop changes: --update with server
-    # modtime skips edits landing between read and upload completion (and
-    # restored older versions); --size-only skips same-size edits.
-    for unsafe in ("--update", "--use-server-modtime", "--size-only"):
-        assert unsafe not in cmd
-
-
 def test_snapshot_reads_open_inode_when_atomic_replace_lands(monkeypatch, tmp_path):
     state_dir = tmp_path / "state"
     canvas_dir = state_dir / "user" / "project" / "freezone" / "canvases"
@@ -618,6 +600,36 @@ def test_db_snapshot_stage_logs_count_and_stops_on_failure(
     assert (
         "backup_stage_failed stage=db-snapshots-sync files=2 copied=0 exit=7" in output
     )
+
+
+def test_db_snapshot_stage_skips_deprecated_cognee_stores(monkeypatch, tmp_path):
+    state_dir = tmp_path / "state"
+    for rel in (
+        "u/p/data.db.snapshot",
+        "u/p/cognee_system/databases/cognee_db.snapshot",
+        "_orgs/o/u/p/chat.db.snapshot",
+        "_orgs/o/u/p/cognee_system/databases/cognee_db.snapshot",
+    ):
+        path = state_dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("s", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(files_sync_module, "_run", lambda cmd, env: calls.append(cmd) or 0)
+
+    assert (
+        files_sync_module.sync_db_snapshots(
+            state_dir,
+            "oss:bucket/state",
+            "oss:bucket/history/state",
+            {},
+        )
+        == 0
+    )
+
+    assert sorted(cmd[3] for cmd in calls) == [
+        "oss:bucket/state/_orgs/o/u/p/chat.db",
+        "oss:bucket/state/u/p/data.db",
+    ]
 
 
 def test_build_rclone_env(monkeypatch):

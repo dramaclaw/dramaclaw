@@ -7,17 +7,23 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from novelvideo.backup.scope import is_deprecated_cognee_path
 from novelvideo.backup.wal_migrator import iter_sqlite_files
 
 SNAPSHOT_SUFFIX = ".snapshot"
 
 
 def snapshot_state_tree(state_dir: Path) -> tuple[int, int]:
-    """Create `<db>.snapshot` next to every SQLite database under state_dir."""
+    """Create `<db>.snapshot` next to every SQLite database under state_dir.
+
+    Deprecated Cognee stores are skipped; see novelvideo.backup.scope.
+    """
 
     ok = 0
     failed = 0
     for db_path in iter_sqlite_files(state_dir):
+        if is_deprecated_cognee_path(db_path.relative_to(state_dir)):
+            continue
         # Hermes owns its own SQLite settings; keep the top-level state.db daily
         # snapshot, but skip cache/session SQLite files in deeper subdirectories.
         if ".hermes" in db_path.parts and db_path.parent.name != ".hermes":

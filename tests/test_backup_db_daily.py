@@ -19,14 +19,14 @@ def test_snapshot_in_place_all_dbs(tmp_path):
     state = tmp_path / "state"
     data = state / "u1" / "p1" / "data.db"
     _make_db(data, rows=3)
-    cognee = state / "u1" / "p1" / "cognee_system" / "databases" / "cognee_db"
-    _make_db(cognee, rows=2)
+    chat = state / "u1" / "p1" / "chat.db"
+    _make_db(chat, rows=2)
     (state / "u1" / "p1" / "project_config.json").write_text("{}", encoding="utf-8")
 
     ok, failed = snapshot_state_tree(state)
 
     assert ok == 2 and failed == 0
-    for src, rows in ((data, 3), (cognee, 2)):
+    for src, rows in ((data, 3), (chat, 2)):
         snap = src.with_name(src.name + ".snapshot")
         assert snap.exists()
         conn = sqlite3.connect(snap)
@@ -36,19 +36,37 @@ def test_snapshot_in_place_all_dbs(tmp_path):
         assert not snap.with_name(snap.name + ".tmp").exists()
 
 
+def test_snapshot_skips_deprecated_cognee_stores(tmp_path):
+    state = tmp_path / "state"
+    data = state / "u1" / "p1" / "data.db"
+    org_data = state / "_orgs" / "o" / "u1" / "p2" / "data.db"
+    cognee = state / "u1" / "p1" / "cognee_system" / "databases" / "cognee_db"
+    org_cognee = state / "_orgs" / "o" / "u1" / "p2" / "cognee_system" / "databases" / "cognee_db"
+    for db in (data, org_data, cognee, org_cognee):
+        _make_db(db)
+
+    ok, failed = snapshot_state_tree(state)
+
+    assert (ok, failed) == (2, 0)
+    for db in (data, org_data):
+        assert db.with_name(db.name + ".snapshot").exists()
+    for db in (cognee, org_cognee):
+        assert not db.with_name(db.name + ".snapshot").exists()
+
+
 def test_rerun_replaces_snapshot_and_skips_own_output(tmp_path):
     state = tmp_path / "state"
-    cognee = state / "u1" / "p1" / "cognee_system" / "databases" / "cognee_db"
-    _make_db(cognee, rows=1)
+    db = state / "u1" / "p1" / "data.db"
+    _make_db(db, rows=1)
 
     assert snapshot_state_tree(state) == (1, 0)
-    conn = sqlite3.connect(cognee)
+    conn = sqlite3.connect(db)
     conn.execute("INSERT INTO t VALUES (99)")
     conn.commit()
     conn.close()
 
     assert snapshot_state_tree(state) == (1, 0)
-    snap = cognee.with_name("cognee_db.snapshot")
+    snap = db.with_name("data.db.snapshot")
     conn = sqlite3.connect(snap)
     assert conn.execute("SELECT count(*) FROM t").fetchone()[0] == 2
     conn.close()
@@ -56,9 +74,9 @@ def test_rerun_replaces_snapshot_and_skips_own_output(tmp_path):
 
 def test_failed_snapshot_keeps_yesterday_and_no_tmp(tmp_path):
     state = tmp_path / "state"
-    bad = state / "u1" / "p1" / "cognee_system" / "databases" / "cognee_db"
+    bad = state / "u1" / "p1" / "data.db"
     bad.parent.mkdir(parents=True, exist_ok=True)
-    yesterday = bad.with_name("cognee_db.snapshot")
+    yesterday = bad.with_name("data.db.snapshot")
     yesterday.write_bytes(b"yesterday-good")
     bad.write_bytes(b"SQLite format 3\x00" + b"garbage" * 10)
 
@@ -66,7 +84,7 @@ def test_failed_snapshot_keeps_yesterday_and_no_tmp(tmp_path):
 
     assert ok == 0 and failed == 1
     assert yesterday.read_bytes() == b"yesterday-good"
-    assert not bad.with_name("cognee_db.snapshot.tmp").exists()
+    assert not bad.with_name("data.db.snapshot.tmp").exists()
 
 
 def test_main_empty_tree_is_success(tmp_path, monkeypatch):

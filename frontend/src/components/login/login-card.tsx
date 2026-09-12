@@ -375,7 +375,7 @@ function OtpLoginForm({ needsRegion }: { needsRegion: boolean }) {
           {error}
         </p>
       ) : (
-        <p className={styles.otpHint}>{t("auth.otp.autoRegisterHint")}</p>
+        <p className={styles.otpHint}>{t("auth.otp.autoRegisterHint")} {t("auth.otp.existingAccountHint")}</p>
       )}
 
       <button

@@ -438,6 +438,15 @@
       "languageChinese": "中文",
       "languageEnglish": "English",
       "languageVietnamese": "Tiếng Việt",
+      "phoneBinding": {
+        "title": "Liên kết số điện thoại",
+        "description": "Xác minh mật khẩu hiện tại và số điện thoại để liên kết với tài khoản này. Sau đó bạn có thể đăng nhập bằng mã. Không hỗ trợ đổi hoặc hủy liên kết số điện thoại.",
+        "submit": "Xác nhận liên kết",
+        "success": "Đã liên kết số điện thoại. Tài khoản và mật khẩu hiện tại vẫn sử dụng được.",
+        "inUse": "Số điện thoại này thuộc tài khoản khác nên không thể liên kết. Các tài khoản không được tự động hợp nhất.",
+        "alreadyBound": "Tài khoản này đã có số điện thoại. Hãy tải lại trang.",
+        "error": "Không thể liên kết số điện thoại. Vui lòng thử lại."
+      },
       "passwordDialog": {
         "title": "Đổi mật khẩu",
         "description": "Đổi mật khẩu sẽ đăng xuất bạn trên mọi thiết bị. Hãy đăng nhập lại bằng mật khẩu mới.",
@@ -1838,6 +1847,7 @@
       "showcaseDescription": "Nhân vật, storyboard, âm thanh và cú máy cùng tiến trên một dây chuyền"
     },
     "otp": {
+      "existingAccountHint": "Đã có tài khoản? Hãy đăng nhập bằng tài khoản và mật khẩu, rồi liên kết số điện thoại trong menu tài khoản để tránh tạo tài khoản khác.",
       "tab": "Mã xác minh",
       "phone": "Số điện thoại",
       "phonePlaceholder": "Nhập số điện thoại",
