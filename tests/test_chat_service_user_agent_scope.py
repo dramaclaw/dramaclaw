@@ -1401,7 +1401,10 @@ def test_codex_freezone_write_request_detection_ignores_negated_actions(prompt):
     "prompt",
     [
         "不要移动已有节点但创建一个网页",
+        "不要删除旧节点但请创建一个新网页",
+        "不要修改旧网页而是帮我创建一个新网页",
         "do not delete the old node, but create a new node",
+        "do not delete the old node but please create a new node",
     ],
 )
 def test_codex_freezone_write_request_detection_keeps_followup_actions(prompt):
