@@ -799,14 +799,22 @@ async def _record_workflow_draft_canvas_result(
             return
         if attempt_started_at is None:
             return
-        task_state = await asyncio.to_thread(
-            get_task_manager().get_task_for_project,
-            project_ctx,
-            "freezone_workflow_confirm",
-            0,
-            beat_num=None,
-            scope=f"{canvas_id}:{draft_id}:{revision}:{attempt_started_at}",
-        )
+        task_manager = get_task_manager()
+        task_state = None
+        for task_scope in (
+            f"{canvas_id}:{draft_id}:{revision}:{attempt_started_at}",
+            f"{canvas_id}:{draft_id}:{revision}",
+        ):
+            task_state = await asyncio.to_thread(
+                task_manager.get_task_for_project,
+                project_ctx,
+                "freezone_workflow_confirm",
+                0,
+                beat_num=None,
+                scope=task_scope,
+            )
+            if task_state is not None:
+                break
         if (
             task_state is None
             or str(task_state.task_id) != task_id
