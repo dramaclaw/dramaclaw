@@ -483,6 +483,11 @@ let nodeActionMountQueue: Promise<void> = Promise.resolve();
 const WORKFLOW_ACTION_CONCURRENCY = 3;
 const WORKFLOW_ACTION_MAX_RETRIES = 2;
 const WORKFLOW_STOPPED_MESSAGE = "工作流已停止，未启动后续节点。";
+const WORKFLOW_LEASE_LOST_MESSAGE = "工作流执行租约已失效，已停止启动后续节点。"; // i18n-exempt
+const workflowPersistenceFailureMessage = (error: unknown) =>
+  `工作流状态保存失败，已停止启动后续节点：${errorMessage(error)}`; // i18n-exempt
+const workflowCreationFailureMessage = (error: unknown) =>
+  `无法创建持久化工作流记录，未启动节点动作：${errorMessage(error)}`; // i18n-exempt
 const TERMINAL_WORKFLOW_ACTION_STATUSES = new Set<WorkflowRunActionStatus>([
   "completed",
   "failed",
@@ -2845,8 +2850,8 @@ async function executeQueuedNodeActions(
           }).catch((error) => {
             if (error instanceof ApiError && error.status === 409) workflowLeaseLost = true;
             workflowPersistenceError = error instanceof ApiError && error.status === 409
-              ? "工作流执行租约已失效，已停止启动后续节点。"
-              : `工作流状态保存失败，已停止启动后续节点：${errorMessage(error)}`;
+              ? WORKFLOW_LEASE_LOST_MESSAGE
+              : workflowPersistenceFailureMessage(error);
           });
         }, 15_000);
       } catch (error) {
@@ -2866,7 +2871,7 @@ async function executeQueuedNodeActions(
           }
           return;
         }
-        const message = `无法创建持久化工作流记录，未启动节点动作：${errorMessage(error)}`;
+        const message = workflowCreationFailureMessage(error);
         result.errors.push(message);
         for (const action of pendingActions) {
           result.commandResults.push({
@@ -2912,8 +2917,8 @@ async function executeQueuedNodeActions(
           } catch (error) {
             if (error instanceof ApiError && error.status === 409) workflowLeaseLost = true;
             workflowPersistenceError = error instanceof ApiError && error.status === 409
-              ? "工作流执行租约已失效，已停止启动后续节点。"
-              : `工作流状态保存失败，已停止启动后续节点：${errorMessage(error)}`;
+              ? WORKFLOW_LEASE_LOST_MESSAGE
+              : workflowPersistenceFailureMessage(error);
             pendingWorkflowUpdates.clear();
             pendingWorkflowStatus = undefined;
           }
@@ -3058,7 +3063,7 @@ async function executeQueuedNodeActions(
       }
       if (workflowLeaseLost) {
         runFailed = true;
-        result.errors.push("工作流执行租约已失效，已停止启动后续节点。");
+        result.errors.push(WORKFLOW_LEASE_LOST_MESSAGE);
         break;
       }
       if (workflowPersistenceError) {
