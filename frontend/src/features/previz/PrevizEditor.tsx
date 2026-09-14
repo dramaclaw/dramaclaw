@@ -51,6 +51,7 @@ import {
   type PrevizPlacedCharacterDraft,
 } from "./domain/characterDraft";
 import { canAddObject } from "./domain/limits";
+import type { PrevizLibraryEntry } from "./domain/modelLibrary";
 import { drawPlaneHeight } from "./domain/pathDraw";
 import { liveCameraAt } from "./domain/program";
 import { PREVIZ_PROP_MAX_MB, propSizeMb, uploadPrevizProp } from "./propAsset";
@@ -61,6 +62,7 @@ import { PrevizClipInspector } from "./ui/PrevizClipInspector";
 import { PrevizHeaderBar } from "./ui/PrevizHeaderBar";
 import { PrevizInspector } from "./ui/PrevizInspector";
 import { PrevizLayerPanel } from "./ui/PrevizLayerPanel";
+import { PrevizModelLibraryDialog } from "./ui/PrevizModelLibraryDialog";
 import { PrevizMonitorFrame } from "./ui/PrevizMonitorFrame";
 import { PrevizQuadPreview } from "./ui/PrevizQuadPreview";
 import { PrevizTimeline } from "./ui/PrevizTimeline";
@@ -243,6 +245,8 @@ export function PrevizEditor({
    * 点出来的，跟导演视角无关，一个布尔就够。
    */
   const [characterCreateOpen, setCharacterCreateOpen] = useState(false);
+  /** 模型库开着没有。物件一律从这里挑：几何体、以后的素材，或者从本地导入。 */
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const pointerDownAt = useRef<{ x: number; y: number } | null>(null);
   /**
    * Web Audio 上下文按需建、整个编辑器共用一份：浏览器对 AudioContext 数量有上限，
@@ -671,6 +675,13 @@ export function PrevizEditor({
 
   const handleAdd = useCallback(
     (kind: PrevizObjectKind) => {
+      // 三个浮层（机位创建、人物创建、模型库）都是 `absolute inset-0`，跟工具栏是平级的
+      // 兄弟节点，并不盖住工具栏——某个浮层开着时工具栏照样能点。不在这里先收一遍的话，
+      // 点别的加号会在当前浮层背后（或叠在它上头）再开一层，两块浮层同时占着同一块屏幕。
+      // 互斥关系很简单：任何一次「加」都只该留下最多一个浮层，所以统统先关。
+      setCameraPose(null);
+      setCharacterCreateOpen(false);
+      setLibraryOpen(false);
       // 机位不直接建：先开创建对话框，让用户定焦距、画幅与朝向。上限在开框前就查，
       // 不然填完一屏参数再告诉人家建不了。
       if (kind === "camera") {
@@ -689,6 +700,16 @@ export function PrevizEditor({
           return;
         }
         setCharacterCreateOpen(true);
+        return;
+      }
+      // 物件先开模型库挑模型：直接建的话只会落一个空 URL 的占位方块，而那不是任何
+      // 人要的东西。上限同样在开框前查。
+      if (kind === "prop") {
+        if (!canAddObject(usePrevizStore.getState().scene, "prop")) {
+          toast.error(t("previz.editor.limitReached"));
+          return;
+        }
+        setLibraryOpen(true);
         return;
       }
       const id = addObject(kind);
@@ -810,6 +831,24 @@ export function PrevizEditor({
       // 预约取景，而不是当场 focusObject：这一刻节点上还挂着占位方块，模型在网上。
       // 用户自备的模型没有单位约定，一份按厘米建的房子进来就是几百米高，不取景的话
       // 默认机位正好在它肚子里——画面上什么都没变，只是「多了一堵白墙」。
+      renderer?.focusObjectWhenReady(id);
+    },
+    [addObject, renderer, t],
+  );
+
+  const handlePickLibraryEntry = useCallback(
+    (entry: PrevizLibraryEntry) => {
+      setLibraryOpen(false);
+      const id = addObject("prop", {
+        name: t(entry.nameKey),
+        assetUrl: entry.assetUrl,
+        assetFormat: entry.assetFormat,
+      });
+      if (!id) {
+        toast.error(t("previz.editor.limitReached"));
+        return;
+      }
+      // 与本地导入同一个理由：这一刻节点上还是占位方块，等模型换进来再取景。
       renderer?.focusObjectWhenReady(id);
     },
     [addObject, renderer, t],
@@ -1140,6 +1179,19 @@ export function PrevizEditor({
         变成「画完能直接拖、Esc 完不能」，用户读不出这里面有什么道理，只会觉得手柄时
         有时无。
       */
+      // 同一个道理往前挪一步：机位/人物创建、模型库这三层浮层是平铺在编辑器里的
+      // `<section role="dialog">`，不是嵌套的 base-ui Dialog（嵌套会把焦点陷阱和 Esc
+      // 各劫持一遍，见这几个组件文件顶上的注释），所以 Esc 只会被编辑器自己这个最外层
+      // 的 Dialog 收到。开着任意一层时先把它们关掉、吞掉这次 Esc，不然选到一半模型按
+      // 一下 Esc 会把整个预演台带走。要放在标记工具那条判断前面：两者都可能同时满足
+      // （比如浮层开着、工具还留在上一次的选择上），浮层是「最上面那层」，该它先接。
+      if (!next && details?.reason === "escape-key" && (libraryOpen || characterCreateOpen || cameraPose)) {
+        details.cancel();
+        setLibraryOpen(false);
+        setCharacterCreateOpen(false);
+        setCameraPose(null);
+        return;
+      }
       if (!next && details?.reason === "escape-key" && tool === "mark") {
         details.cancel();
         setTool(PREVIZ_DEFAULT_TOOL);
@@ -1152,7 +1204,7 @@ export function PrevizEditor({
       if (!next) flushIfDirty();
       onOpenChange(next);
     },
-    [flushIfDirty, onOpenChange, tool],
+    [flushIfDirty, onOpenChange, tool, libraryOpen, characterCreateOpen, cameraPose],
   );
 
   useEffect(() => {
@@ -1311,7 +1363,6 @@ export function PrevizEditor({
             tool={tool}
             timelineOpen={timelineOpen}
             onAdd={handleAdd}
-            onImportProp={(file) => void handleImportProp(file)}
             onTool={setTool}
             onTimelineOpen={setTimelineOpen}
           />
@@ -1540,6 +1591,16 @@ export function PrevizEditor({
                 onRenderPreview={handleRenderCharacterPreview}
                 onCreate={handleCreateCharacter}
                 onClose={() => setCharacterCreateOpen(false)}
+              />
+
+              <PrevizModelLibraryDialog
+                open={libraryOpen}
+                onPick={handlePickLibraryEntry}
+                onImportFile={(file) => {
+                  setLibraryOpen(false);
+                  void handleImportProp(file);
+                }}
+                onClose={() => setLibraryOpen(false)}
               />
             </div>
           </TooltipProvider>

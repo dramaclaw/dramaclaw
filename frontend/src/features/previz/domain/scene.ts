@@ -175,8 +175,9 @@ export interface PrevizLight extends PrevizObjectBase {
 
 export interface PrevizProp extends PrevizObjectBase {
   kind: 'prop';
+  /** `assetFormat` 为 `'primitive'` 时这里存的是形状名（见 `domain/primitives.ts`），不是 URL。 */
   assetUrl: string;
-  assetFormat: 'glb' | 'gltf' | 'obj';
+  assetFormat: 'glb' | 'gltf' | 'obj' | 'primitive';
 }
 
 export type PrevizObject = PrevizCharacter | PrevizCamera | PrevizLight | PrevizProp;
@@ -386,7 +387,12 @@ const LENS_SERIES: Record<PrevizCamera['lensSeries'], true> = {
   zoom: true,
   anamorphic: true,
 };
-const ASSET_FORMATS: Record<PrevizProp['assetFormat'], true> = { glb: true, gltf: true, obj: true };
+const ASSET_FORMATS: Record<PrevizProp['assetFormat'], true> = {
+  glb: true,
+  gltf: true,
+  obj: true,
+  primitive: true,
+};
 
 function isMember<T extends string>(table: Record<T, true>, value: unknown): value is T {
   // hasOwnProperty 而不是 `in`：`in` 会把 'constructor' 这类原型链上的键也认成合法值。

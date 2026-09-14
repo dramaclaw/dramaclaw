@@ -55,6 +55,7 @@ import { PrevizStrokePreview } from './strokePreview';
 import { PrevizGizmo, type GizmoMode, type TransformControlsLike } from './gizmo';
 import { createInfiniteGrid } from './grid';
 import { prepareImportedMaterials } from './importedMaterials';
+import { buildPrimitive } from './primitiveBuilder';
 import { PropLoader } from './propLoader';
 import { PREVIZ_PLACEHOLDER_RADIUS, PrevizSceneGraph, type ThreeModule } from './sceneGraph';
 import { PrevizViewOverlays, type PrevizViewOverlayOptions } from './viewOverlays';
@@ -412,6 +413,7 @@ export class PrevizRenderer {
           return Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
         },
         prepareMaterials: (object) => prepareImportedMaterials(three, object),
+        buildPrimitive: (shape) => buildPrimitive(three, shape),
       }),
     );
 

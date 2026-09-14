@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useId, type ComponentProps, type ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import {
   Box,
   Camera,
@@ -13,14 +13,13 @@ import {
   PenLine,
   Rotate3d,
   Scaling,
-  Upload,
   User,
   Waypoints,
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { PREVIZ_OBJECT_LIMITS } from "@/features/previz/domain/limits";
 import type { PrevizObjectKind } from "@/features/previz/domain/scene";
@@ -143,7 +142,6 @@ export interface PrevizToolbarProps {
   tool: PrevizTool;
   timelineOpen: boolean;
   onAdd: (kind: PrevizObjectKind) => void;
-  onImportProp: (file: File) => void;
   onTool: (tool: PrevizTool) => void;
   onTimelineOpen: (open: boolean) => void;
 }
@@ -250,12 +248,10 @@ export function PrevizToolbar({
   tool,
   timelineOpen,
   onAdd,
-  onImportProp,
   onTool,
   onTimelineOpen,
 }: PrevizToolbarProps) {
   const { t } = useTranslation();
-  const fileInputId = useId();
 
   /*
     两段按钮走同一个渲染函数，按下态一律拿同一个 `tool` 去比——互斥性是这么保证的，
@@ -307,40 +303,6 @@ export function PrevizToolbar({
                 />
               );
             })}
-
-            {/*
-              input 是 `sr-only` 而不是 `hidden`：display:none 的控件拿不到焦点，键盘用户就
-              再也够不着导入入口了。视觉上的按钮是它的 <label>，焦点环靠 peer-* 从 input 转过来。
-              无障碍名字只由 <label> 里的 sr-only 文本提供——再挂一份 aria-label 是两处真相，
-              改坏其中一处另一处会把问题遮住。
-              下面 label 上那三个 peer-focus-visible:* 是 buttonVariants 基类里 focus-visible:*
-              的同值翻版（Tailwind 无法给现成的变体换前缀）；设计系统改焦点环时这里要跟着改。
-            */}
-            <input
-              id={fileInputId}
-              type="file"
-              accept=".glb,.gltf,.obj"
-              className="peer sr-only"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) onImportProp(file);
-                // 清空 value：不清的话选同一个文件第二次不会触发 change。
-                event.target.value = "";
-              }}
-            />
-            <PrevizHoverTip label={t("previz.toolbar.importProp")} side="right">
-              <label
-                htmlFor={fileInputId}
-                className={cn(
-                  buttonVariants({ variant: "ghost", size: "icon" }),
-                  RAIL_ITEM,
-                  "cursor-pointer peer-focus-visible:border-ring peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50",
-                )}
-              >
-                <Upload className="h-4 w-4" />
-                <span className="sr-only">{t("previz.toolbar.importProp")}</span>
-              </label>
-            </PrevizHoverTip>
           </RailGroup>
 
           <RailDivider />

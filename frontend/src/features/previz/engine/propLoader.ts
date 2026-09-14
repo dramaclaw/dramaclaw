@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import type * as THREE from 'three';
 
+import { isPrevizPrimitiveShape, type PrevizPrimitiveShape } from '../domain/primitives';
 import { propUnitScale } from '../domain/propUnits';
 import type { PrevizProp } from '../domain/scene';
 
@@ -32,6 +33,11 @@ export interface PropLoaderDeps {
    * 不碰它的实现——保住这一点，它就还能在没有 WebGL 的环境里测。
    */
   prepareMaterials: (object: THREE.Object3D) => void;
+  /**
+   * 按形状名现造一件基础几何体（`assetFormat: 'primitive'`）。渲染器用
+   * `primitiveBuilder.ts` 实现。做成注入的理由同 `measure`：这一层只 import three 的类型。
+   */
+  buildPrimitive: (shape: PrevizPrimitiveShape) => THREE.Object3D;
 }
 
 /**
@@ -75,15 +81,28 @@ export class PropLoader {
   }
 
   private async loadOnce(prop: PrevizProp): Promise<THREE.Object3D | null> {
-    const model =
-      prop.assetFormat === 'obj'
-        ? await this.deps.loadObj(prop.assetUrl)
-        : (await this.deps.loadGltf(prop.assetUrl)).scene;
+    const model = await this.fetchModel(prop);
     this.applyUnitScale(model);
     // 和单位换算同理，烙在缓存里那份源模型上：`clone` 对材质是浅克隆，所有克隆体
     // 共用这一批材质，改一次就够。
     this.deps.prepareMaterials(model);
     return model;
+  }
+
+  private async fetchModel(prop: PrevizProp): Promise<THREE.Object3D> {
+    switch (prop.assetFormat) {
+      case 'primitive':
+        // 形状名在解析时不校验（更新的版本可能加了新形状，旧版本不该把它写坏），认不
+        // 出来就在这里按加载失败处理：`load()` 的 catch 会清缓存，占位方块留着。
+        if (!isPrevizPrimitiveShape(prop.assetUrl)) {
+          throw new Error(`unknown primitive shape: ${prop.assetUrl}`);
+        }
+        return this.deps.buildPrimitive(prop.assetUrl);
+      case 'obj':
+        return this.deps.loadObj(prop.assetUrl);
+      default:
+        return (await this.deps.loadGltf(prop.assetUrl)).scene;
+    }
   }
 
   /**

@@ -68,7 +68,6 @@ type ToolbarOverrides = Partial<Pick<ToolbarProps, "canAdd" | "tool" | "timeline
 function makeHandlers() {
   return {
     onAdd: vi.fn<ToolbarProps["onAdd"]>(),
-    onImportProp: vi.fn<ToolbarProps["onImportProp"]>(),
     onTool: vi.fn<ToolbarProps["onTool"]>(),
     onTimelineOpen: vi.fn<ToolbarProps["onTimelineOpen"]>(),
   };
@@ -283,41 +282,13 @@ describe("PrevizToolbar", () => {
     expect(control.querySelector("svg")).toHaveClass(icon);
   });
 
-  it("labels the import control with its own icon and tooltip", async () => {
-    const user = userEvent.setup();
+  // 本地导入搬进了模型库对话框底部。这里挡的是栏上又长回一份：两处入口各走各的，
+  // 很快就会一处有压缩提示、一处没有。
+  it("no longer offers a standalone import control", () => {
     setup();
 
-    // 视觉控件是 <label>，input 本身是 sr-only 的：提示要挂在看得见的那个上面。
-    const input = screen.getByLabelText<HTMLInputElement>("previz.toolbar.importProp");
-    const importControl = input.labels?.[0];
-    expect(importControl).toBeTruthy();
-    expect(importControl?.querySelector("svg")).toHaveClass("lucide-upload");
-    expect(await tooltipOf(user, importControl as HTMLElement)).toBe("previz.toolbar.importProp");
-  });
-
-  it("hands the picked file to onImportProp", async () => {
-    const user = userEvent.setup();
-    const handlers = setup();
-    const file = new File([new Uint8Array(1)], "chair.glb");
-
-    const input = screen.getByLabelText("previz.toolbar.importProp");
-    await user.upload(input, file);
-
-    expect(handlers.onImportProp).toHaveBeenCalledWith(file);
-    // toHaveBeenCalledWith 对 File 走结构化相等，换成另一个 File 照样绿。要锁住「转发的
-    // 是用户挑的那一个」，只能比引用同一性。
-    expect(handlers.onImportProp.mock.calls[0]?.[0]).toBe(file);
-    // value 必须被清空，否则用户第二次挑同一个文件浏览器不会再发 change。
-    expect(input).toHaveValue("");
-  });
-
-  it("offers the import control only for the three loadable model formats", () => {
-    setup();
-
-    expect(screen.getByLabelText("previz.toolbar.importProp")).toHaveAttribute(
-      "accept",
-      ".glb,.gltf,.obj",
-    );
+    expect(document.querySelector('input[type="file"]')).toBeNull();
+    expect(screen.queryByLabelText("previz.toolbar.importProp")).toBeNull();
   });
 
   it("lays the tool group out in order", () => {

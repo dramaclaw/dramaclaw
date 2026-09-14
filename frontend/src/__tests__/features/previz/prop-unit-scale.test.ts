@@ -82,6 +82,9 @@ describe("PropLoader unit scaling", () => {
       clone: (object) => object,
       measure: measure as never,
       prepareMaterials,
+      buildPrimitive: () => {
+        throw new Error("primitives are not part of this suite");
+      },
     });
     return { loader, measure, prepareMaterials };
   }
@@ -169,6 +172,9 @@ describe("PropLoader material preparation", () => {
       clone: (object) => object,
       measure: () => 1,
       prepareMaterials,
+      buildPrimitive: () => {
+        throw new Error("primitives are not part of this suite");
+      },
     });
     return { loader, prepareMaterials };
   }

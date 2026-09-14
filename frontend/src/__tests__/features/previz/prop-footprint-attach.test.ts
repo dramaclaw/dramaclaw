@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createPrevizObject } from '@/features/previz/domain/objects';
 import { createDefaultScene, type PrevizScene, type Vec3 } from '@/features/previz/domain/scene';
+import { buildPrimitive } from '@/features/previz/engine/primitiveBuilder';
 import { PropLoader } from '@/features/previz/engine/propLoader';
 import { PrevizSceneGraph } from '@/features/previz/engine/sceneGraph';
 
@@ -61,6 +62,7 @@ function graphWithLoader(): { graph: PrevizSceneGraph; root: THREE.Object3D } {
       clone: skeletonClone,
       measure: largestDimension,
       prepareMaterials: bothFaces,
+      buildPrimitive: (shape) => buildPrimitive(THREE, shape),
     }),
   );
   return { graph, root };
@@ -135,6 +137,49 @@ describe('道具模型挂在对象节点下面（真 three）', () => {
     expect(box.max.z).toBeCloseTo(2.5, 6);
   });
 
+  // 几何体走同一条换入路径，但模型是现造的：这里钉住它同样挂在节点下面、同样贴地，
+  // 选位图上给它画的那块地不会错位。
+  it('几何体物件的地面范围同样以道具位置为心', async () => {
+    const root = new THREE.Group();
+    const graph = new PrevizSceneGraph(THREE, root);
+    graph.attachPropLoader(
+      new PropLoader({
+        loadGltf: async () => {
+          throw new Error('几何体不该走 GLTF 加载');
+        },
+        loadObj: async () => {
+          throw new Error('几何体不该走 OBJ 加载');
+        },
+        clone: skeletonClone,
+        measure: largestDimension,
+        prepareMaterials: bothFaces,
+        buildPrimitive: (shape) => buildPrimitive(THREE, shape),
+      }),
+    );
+    const scene = createDefaultScene();
+    scene.objects.push(
+      createPrevizObject('prop', scene.objects, {
+        transform: { position: [3, 0, 2], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        assetUrl: 'cube',
+        assetFormat: 'primitive',
+      }),
+    );
+    const propId = lastOf(scene.objects).id;
+
+    graph.sync(scene);
+    await settleModelSwap();
+
+    const node = graph.nodeFor(propId)!;
+    expect(node.children.map((child) => child.userData.previzSharedModel)).toEqual([true]);
+    const box = measure(node);
+    expect(box.min.x).toBeCloseTo(2.5, 6);
+    expect(box.max.x).toBeCloseTo(3.5, 6);
+    expect(box.min.z).toBeCloseTo(1.5, 6);
+    expect(box.max.z).toBeCloseTo(2.5, 6);
+    expect(box.min.y).toBeCloseTo(0, 6);
+    expect(box.max.y).toBeCloseTo(1, 6);
+  });
+
   it('没有模型地址的物件，量到的是占位方块', async () => {
     const { graph } = graphWithLoader();
     const scene = propScene([3, 0, 2], null);
@@ -200,6 +245,7 @@ describe('带骨架的道具模型（真 three）', () => {
         clone: skeletonClone,
         measure: largestDimension,
         prepareMaterials: bothFaces,
+        buildPrimitive: (shape) => buildPrimitive(THREE, shape),
       }),
     );
 

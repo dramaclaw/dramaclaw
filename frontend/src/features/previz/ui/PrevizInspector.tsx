@@ -17,6 +17,10 @@ import {
 } from "@/features/previz/domain/objects";
 import { PREVIZ_POSES, PREVIZ_POSE_LABEL_KEYS } from "@/features/previz/domain/poses";
 import {
+  isPrevizPrimitiveShape,
+  previzPrimitiveNameKey,
+} from "@/features/previz/domain/primitives";
+import {
   PREVIZ_INTENSITY_RANGE,
   PREVIZ_POSE_ADJUST_RANGE,
   type BodyType,
@@ -503,10 +507,23 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
       {prop && (
         <div>
           <label className={LABEL} htmlFor={`${prefix}-asset`}>
-            {t("previz.inspector.assetUrl")}
+            {t(
+              prop.assetFormat === "primitive"
+                ? "previz.inspector.primitive"
+                : "previz.inspector.assetUrl",
+            )}
           </label>
-          {/* 只读：手打 URL 只会打错，换模型走工具栏的导入。 */}
-          <input id={`${prefix}-asset`} className={FIELD} readOnly value={prop.assetUrl} />
+          {/* 只读：手打 URL 只会打错，换模型走模型库。 */}
+          <input
+            id={`${prefix}-asset`}
+            className={FIELD}
+            readOnly
+            value={
+              prop.assetFormat === "primitive" && isPrevizPrimitiveShape(prop.assetUrl)
+                ? t(previzPrimitiveNameKey(prop.assetUrl))
+                : prop.assetUrl
+            }
+          />
         </div>
       )}
     </div>

@@ -197,6 +197,28 @@ describe("parseScene object validation", () => {
     });
   });
 
+  // 几何体的形状名在解析时不校验：更新的版本可能加了新形状，旧版本读到时要原样留着，
+  // 不能把它改写掉——认不出来的形状由加载阶段按失败处理，留下占位方块。
+  it("keeps primitive props and their shape names as written", () => {
+    const parsed = parseScene({
+      objects: [
+        { id: "a", kind: "prop", assetFormat: "primitive", assetUrl: "cube" },
+        { id: "b", kind: "prop", assetFormat: "primitive", assetUrl: "dodecahedron" },
+      ],
+    });
+
+    expect(parsed.objects[0]).toMatchObject({
+      kind: "prop",
+      assetFormat: "primitive",
+      assetUrl: "cube",
+    });
+    expect(parsed.objects[1]).toMatchObject({
+      kind: "prop",
+      assetFormat: "primitive",
+      assetUrl: "dodecahedron",
+    });
+  });
+
   // 机身与镜头系列在渲染上不起作用（视场角只由焦距与画幅决定），但它们是用户在创建
   // 对话框里挑过的东西。不存的话，重开面板看到的会是别人的选择，而不是自己的。
   it("keeps the camera body and lens series across a round trip", () => {
