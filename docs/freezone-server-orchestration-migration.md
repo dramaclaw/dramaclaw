@@ -19,8 +19,9 @@ orchestrator 推进。
 1. Agent 只能提出版本化 Workflow Draft，不能直接创建已批准 Run。
 2. 用户批准产生不可变的批准记录；Commit 和主线同步始终停在人工闸口。
 3. Run、Action、Task、Artifact、Product Operation 使用同一组关联 ID。
-4. Action 进入 completed 前必须有服务端核验过的 Task 终态和 Artifact 证据。
-5. 终态单向推进；迟到回执不能覆盖 failed、cancelled、expired 或 completed。
+4. Action 进入 completed 前必须满足其 `action_type` 对应的服务端证据策略；不得把
+   Task/Artifact 作为所有动作的统一前提。
+5. 终态单向推进；迟到回执不能覆盖 applied、failed、cancelled、expired 或 completed。
 6. 重试复用幂等键并增加 attempt，不重复应用 Canvas mutation 或重复扣费。
 7. Canvas 是 Run 的可重建投影，不是执行事实源。
 
@@ -65,18 +66,46 @@ Runtime Adapters (Codex / Hermes) 与 Task Runners
 - `idempotency_key`、`payload_hash`、`attempt`、`status`
 - `task_id`、`artifact_ids`、`product_operation_id`
 - `requires_user_approval`、`approval_id`
+- `evidence_policy`、`result_receipt_id`、`projection_revision`
+
+Action 的完成证据按类型定义：
+
+| Action 类型 | completed 前的必要证据 |
+|---|---|
+| 生成动作 | Task 成功终态 + 服务端核验通过的 Artifact；付费动作还需关联 Product Operation |
+| Canvas mutation / UI command | 服务端核验的 Command `applied` 回执 + 对应 Canvas projection revision；纯 UI 动作记录执行时观察到的 revision |
+| 人工主线动作 | 有权 principal 的审批记录 + 主线业务结果回执及其 revision |
+
+`evidence_policy` 由版本化 Workflow Schema 根据 `action_type` 决定，Draft 和客户端
+不能覆盖。缺少对应证据时 Action 保持 running/awaiting_evidence，不能伪造空 Task 或
+Artifact 来进入 completed。
 
 ### Command Inbox / Outbox
 
 - `command_id`、`idempotency_key`、`payload_hash`
 - principal/project/canvas/agent/turn/run/action 关联字段
-- `pending → delivered → accepted → applied`
-- 终态：`failed | cancelled | expired`
+- 正常路径：`pending → delivered → accepted → applied`
+- `applied` 是不可逆成功终态；失败终态为 `failed | cancelled | expired`
 - `consumer_id`、`lease_expires_at`、`attempt`、`available_at`
 - `result_payload`、`result_expires_at`
 
 同一 `idempotency_key` 配合不同 `payload_hash` 必须返回冲突；相同 hash 返回已有
 command。所有 compare-and-set 状态更新必须在持久化事务内完成。
+
+投递与超时规则：
+
+1. consumer 取得 command 时，以 CAS 将 pending 改为 delivered，同时写入 consumer 和
+   lease；确认接管后改为 accepted，执行期间续租。
+2. delivered 或 accepted 的 lease 到期且未到最大尝试次数时，服务端清除旧 consumer，
+   增加 attempt，并以同一 command/idempotency key 重新进入 pending；重投不得创建新的
+   业务动作或计费 Operation。
+3. 达到最大尝试次数、超过 command TTL 或 payload 不可恢复时转为 expired，并写入
+   dead-letter 记录和最后失败原因，供人工重放或审计。
+4. applied、failed、cancelled、expired 都是不可逆终态。结果处理只允许从当前有效
+   delivered/accepted lease 做 CAS；旧 consumer 的迟到 ack/result 必须返回终态快照，
+   不得覆盖终态或较新的 attempt。
+5. 重放 dead letter 必须创建新的 command_id 和显式 replay_of 关系；只有业务幂等策略
+   允许时才能复用原 idempotency key。
 
 ## 部署支持矩阵
 
@@ -166,7 +195,9 @@ hash，CI 执行“重新生成后 git diff 为空”的检查。模型 catalog�
 
 最低指标包括 pending commands、oldest age、delivery latency、lease steals、retry count、
 dead letters、artifact verification failures、projection lag。清理任务只能删除超过 TTL
-且处于终态的 result；pending/accepted 记录必须先转 expired 并留下审计原因。
+且处于终态的 result payload；command 审计记录按保留策略保存。pending、delivered、
+accepted 超过各自 TTL 或重试上限时必须先通过 CAS 转 expired、写入 dead letter 和审计
+原因，不能直接删除。delivered/accepted 的短暂 lease 超时优先按上述规则重投。
 
 日志统一携带 project_id、canvas_id、turn_id、run_id、action_id、command_id、
 task_id 和 product_operation_id，禁止记录密钥和完整敏感 payload。
@@ -177,8 +208,11 @@ task_id 和 product_operation_id，禁止记录密钥和完整敏感 payload。
 - 两个 API worker 竞争同一 lease 只有一个成功。
 - 多标签页重复 ack 不重复应用 mutation。
 - 同幂等键不同 payload 拒绝；相同 payload 返回相同结果。
-- cancelled/completed 后迟到 result 不改变终态。
-- Task completed 但 Artifact 缺失时 Action 不得 completed。
+- delivered/accepted lease 超时会以同一 command 重投，耗尽重试后进入 expired/dead letter。
+- applied/cancelled/failed/expired 后迟到 result 不改变终态。
+- 生成 Action 在 Task completed 但 Artifact 缺失时不得 completed。
+- Canvas/UI Action 无 Task/Artifact 时，可凭 applied 回执和 projection revision 完成。
+- 人工主线 Action 缺少审批或业务结果回执时不得 completed。
 - 旧 Recipe/Skill/Canvas JSON 通过迁移层恢复。
 - Codex 与 Hermes adapter 对同一 fixture 产生相同统一事件序列。
 
