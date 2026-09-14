@@ -1,6 +1,5 @@
 """Background native Skill conversion; independent from chat agent lifetime."""
 from pathlib import Path
-import asyncio
 
 from novelvideo.freezone.skill_import import convert_record, get_record, save_record
 from novelvideo.task_backend.registry import register_project_task_runner
@@ -22,8 +21,8 @@ def run_skill_import(envelope, ctx):
         save_record(root, username, record)
         from novelvideo.freezone.text_node import generate_freezone_text
         async def generate(prompt):
-            _, text = await asyncio.wait_for(_call_freezone_leaf(
-                envelope, generate_freezone_text, 'generate_freezone_text', prompt=prompt), timeout=180)
+            _, text = await _call_freezone_leaf(
+                envelope, generate_freezone_text, 'generate_freezone_text', prompt=prompt)
             return text
         return await convert_record(root, username, import_id, generate,
                                     lambda progress, stage: _update(ctx, 'freezone_skill_import', import_id, progress, stage))
