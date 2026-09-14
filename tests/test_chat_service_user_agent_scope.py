@@ -1952,6 +1952,16 @@ def test_user_agent_workspace_is_not_project_workspace(monkeypatch, tmp_path):
     assert (
         freezone_workspace / ".agents" / "skills" / "dramaclaw-workflows" / "SKILL.md"
     ).is_file()
+    authoring_guide = (
+        freezone_workspace
+        / ".agents"
+        / "skills"
+        / "dramaclaw-workflows"
+        / "references"
+        / "skill-studio-authoring-guide.md"
+    )
+    assert authoring_guide.is_file()
+    assert "capability modeling" in authoring_guide.read_text(encoding="utf-8")
     assert codex_home.is_dir()
 
     project_workspace = Path(tmp_path / "output" / "admin" / "project-a")

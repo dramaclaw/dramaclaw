@@ -48,6 +48,31 @@ def test_text_recipe_rejects_second_stage_model_instruction():
         )
 
 
+def test_authoring_guide_text_recipe_template_produces_final_deliverable():
+    guide_path = (
+        Path(__file__).resolve().parents[1]
+        / ".hermes/skills/freezone/references/skill-studio-authoring-guide.md"
+    )
+    guide = guide_path.read_text(encoding="utf-8")
+    text_recipe_section = guide.split("#### 文字 Recipe", 1)[1]
+    system_prompt = text_recipe_section.split("```text", 1)[1].split("```", 1)[0].strip()
+
+    validated = validate_agent_recipe_config(
+        {
+            "id": "guide-text-template",
+            "name": "Guide text template",
+            "output_kind": "text",
+            "action_keys": ["guide-text-template"],
+            "system_prompt": system_prompt,
+            "planning_prompt": "根据已确认输入直接生成最终文案。",
+            "result_summary": "可直接交付的最终文案。",
+        }
+    )
+
+    assert validated["output_kind"] == "text"
+    assert "直接生成可交付的最终文本" in validated["system_prompt"]
+
+
 def test_retro_skill_keeps_entry_guard_out_of_recipe_runtime_constraints():
     skill_path = (
         Path(__file__).resolve().parents[1]
