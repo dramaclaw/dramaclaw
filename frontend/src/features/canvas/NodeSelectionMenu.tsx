@@ -130,7 +130,7 @@ export function NodeSelectionMenu({
         // 就有）。这份 items 是手写的，白名单放行了但这里没写条目的类型会被静默
         // 漏掉 —— 用户从视频右侧拖线出来只看到「文本 / 视频 / 脚本」。
         key: 'videoBreakdown',
-        label: '逐帧拉片',
+        label: t('node.menu.videoBreakdown'),
         Icon: ScanSearch,
         type: allowedTypeSet.has(CANVAS_NODE_TYPES.videoBreakdown)
           ? CANVAS_NODE_TYPES.videoBreakdown

@@ -25,6 +25,8 @@ const translations: Record<string, string> = {
   "node.menu.script": "脚本",
   "node.menu.pano360Viewer": "360° 全景",
   "node.menu.threeDWorld": "3D 世界",
+  "node.menu.videoBreakdown": "逐帧拉片",
+  "canvas.nodeMenu.referenceGenerate": "引用该节点生成",
 };
 
 vi.mock("react-i18next", () => ({
