@@ -3644,14 +3644,14 @@ def test_freezone_prompt_requires_canvas_workflow_distillation_rules(
     assert "Do not derive Recipes only from node types" in prompt
 
 
-def test_tool_mode_infers_freezone_from_frontend_canvas_injection():
+def test_tool_mode_does_not_infer_freezone_from_frontend_canvas_injection():
     prompt = """加个视频节点
 
 [SUPERTALE_CANVAS_ROUTING]
 Current surface is Freezone canvas.
 [/SUPERTALE_CANVAS_ROUTING]"""
 
-    assert chat_service._tool_mode_for_surface(None, prompt=prompt) == "freezone_canvas"
+    assert chat_service._tool_mode_for_surface(None, prompt=prompt) == "default"
 
 
 def test_tool_mode_infers_freezone_from_canvas_context():

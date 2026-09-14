@@ -1851,6 +1851,7 @@ src/novelvideo/chat/codex_app_server.py,Elastic-2.0,2026 SuperTale contributors,
 src/novelvideo/chat/director_auto.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/dramaclaw_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/evidence_metrics.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/chat/execution_context.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/hermes_egress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/hermes_fork_requirement.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/hermes_operation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2331,6 +2332,7 @@ tests/sandbox_smoke.sh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggreg
 tests/support/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/support/egress_ledger.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_acceptance_run_script.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_agent_execution_context.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_agent_kit.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_agent_product_operations.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ai_identity_detector.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
