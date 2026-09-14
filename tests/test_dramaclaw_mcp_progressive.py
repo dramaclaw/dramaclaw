@@ -933,6 +933,14 @@ async def test_bundled_skill_studio_authoring_guide_is_listed_and_readable(
         / "references"
         / "skill-studio-authoring-guide.md"
     )
+    agent_kit_guide = (
+        CE_ROOT
+        / "agent-kit"
+        / "skills"
+        / "dramaclaw-workflows"
+        / "references"
+        / "skill-studio-authoring-guide.md"
+    )
     monkeypatch.setenv("DRAMACLAW_SKILLS_DIR", str(skills_root))
 
     resources = await dramaclaw_mcp.list_resources()
@@ -944,6 +952,7 @@ async def test_bundled_skill_studio_authoring_guide_is_listed_and_readable(
         for resource in resources
     )
     assert content == hermes_guide.read_text(encoding="utf-8")
+    assert content == agent_kit_guide.read_text(encoding="utf-8")
     assert "capability modeling" in content
 
 
