@@ -93,6 +93,7 @@ def workflow_run_client(monkeypatch, tmp_path):
     }
     client = TestClient(app)
     client.state_dir = tmp_path
+    client.enqueued_tasks = ctx.enqueued_tasks
     return client
 
 
@@ -731,6 +732,39 @@ def test_workflow_confirmation_enqueues_non_monetary_durable_task(
     assert payload["root_task_id"] == "workflow-task-1"
     assert "billing" not in payload
     assert "quote_id" not in payload
+
+
+def test_workflow_confirmation_retry_uses_a_new_task_scope(
+    workflow_run_client: TestClient,
+) -> None:
+    client = workflow_run_client
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-drafts"
+    draft = client.post(
+        base,
+        json={
+            "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+            "compiled": _valid_draft_compiled(),
+        },
+    ).json()["data"]
+    target = f"{base}/{draft['draft_id']}"
+
+    first = client.post(target + "/claim", json={"revision": 1}).json()["data"]
+    finished = client.post(
+        target + "/finish",
+        json={"outcome": "ready", "task_id": first["task_id"], "revision": 1},
+    )
+    assert finished.status_code == 200, finished.text
+
+    second_response = client.post(target + "/claim", json={"revision": 1})
+    assert second_response.status_code == 200, second_response.text
+    second = second_response.json()["data"]
+    assert second["task_id"] != first["task_id"]
+    assert len(client.enqueued_tasks) == 2
+    assert client.enqueued_tasks[0]["scope"] != client.enqueued_tasks[1]["scope"]
+    assert (
+        client.enqueued_tasks[0]["payload"]["confirmation_started_at"]
+        != client.enqueued_tasks[1]["payload"]["confirmation_started_at"]
+    )
 
 
 def test_workflow_run_api_rejects_invalid_action_phase(
