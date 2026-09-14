@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { claimExternalCanvasCommand } from "@/features/freezone/externalCanvasCommandDedupe";
 
 const RECEIPTS_KEY = "dramaclaw.canvas-command-receipts.v1";
