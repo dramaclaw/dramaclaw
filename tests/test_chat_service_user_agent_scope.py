@@ -1510,6 +1510,7 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "failure",
         "blocked",
         "draft_ready",
+        "plan_draft_ready",
         "clarification_answered",
         "skill_saved",
     ],
@@ -1541,11 +1542,16 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 thread_id="codex-thread",
                 turn_id="codex-turn",
             )
-            if tool_outcome == "draft_ready":
+            if tool_outcome in {"draft_ready", "plan_draft_ready"}:
+                draft_tool = (
+                    "freezone_prepare_workflow_plan_draft"
+                    if tool_outcome == "plan_draft_ready"
+                    else "freezone_prepare_workflow_draft"
+                )
                 yield SimpleNamespace(
                     type="tool_updated",
-                    text="[mcp:completed] dramaclaw.freezone_prepare_workflow_draft",
-                    name="dramaclaw.freezone_prepare_workflow_draft",
+                    text=f"[mcp:completed] dramaclaw.{draft_tool}",
+                    name=f"dramaclaw.{draft_tool}",
                     call_id="call-draft",
                     status="completed",
                     input={"intent": {"skill_id": "video-ad"}},
@@ -1705,7 +1711,7 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert "已创建" not in result["content"]
         assert result["content"] == "画布操作未完成：本轮没有执行画布写入，请重试。"
         assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "draft_ready":
+    elif tool_outcome in {"draft_ready", "plan_draft_ready"}:
         assert result["content"] == (
             "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
         )
