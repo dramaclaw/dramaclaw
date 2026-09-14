@@ -17,7 +17,7 @@ beforeEach(()=>{
  billing.quote.mockReturnValue({data:{data:{display:'6'}},error:null});
  billing.access.mockReturnValue({blocked:false,message:null});
 });
-const mocks = vi.hoisted(() => ({run:vi.fn(), create:vi.fn(), attach:vi.fn(), update:vi.fn(), open:vi.fn(), export:vi.fn(), accepted:vi.fn(), success:vi.fn(), error:vi.fn(), handler:undefined as any}));
+const mocks = vi.hoisted(() => ({run:vi.fn(), create:vi.fn(), lookup:vi.fn(), attach:vi.fn(), update:vi.fn(), open:vi.fn(), export:vi.fn(), accepted:vi.fn(), success:vi.fn(), error:vi.fn(), handler:undefined as any}));
 vi.mock('@/features/canvas/application/useUpstreamGraph',()=>({useUpstreamNodes:()=>[{id:'copy',type:'textAnnotationNode',data:{displayName:'Coffee copy',content:'Coffee'}}]}));
 vi.mock('@xyflow/react',()=>({useStore:(selector:any)=>selector({transform:[0,0,1]}),Handle:({id,type}:any)=><span data-testid={`handle-${type}`} data-handle-id={id}/>,Position:{Left:'left',Right:'right'}}));
 vi.mock('react-i18next',()=>({useTranslation:()=>({t:(key:string)=>key})}));
@@ -26,12 +26,12 @@ vi.mock('@/lib/url-params',()=>({readUrl:()=>({project:'p',canvas:'c'})}));
 vi.mock('@/stores/canvasStore',()=>({useCanvasStore:{getState:()=>({updateNodeData:mocks.update})}}));
 vi.mock('@/features/canvas/application/workflowHtmlRuntime',()=>({executeWorkflowHtmlNode:mocks.run,attachSavedArtifact:mocks.attach}));
 vi.mock('@/features/canvas/application/nodeActionResult',()=>({subscribeNodeAction:(handler:any)=>{mocks.handler=handler;return ()=>{};},publishNodeActionAccepted:mocks.accepted,publishNodeActionSuccess:mocks.success,publishNodeActionError:mocks.error}));
-vi.mock('./api',()=>({HTML_ARTIFACT_UPDATED_EVENT:'updated',createHtmlArtifact:mocks.create,readHtmlPreview:vi.fn().mockResolvedValue({html:'<html>Saved</html>'}),openHtmlArtifact:mocks.open,exportHtmlArtifact:mocks.export}));
+vi.mock('./api',()=>({HTML_ARTIFACT_UPDATED_EVENT:'updated',createHtmlArtifact:mocks.create,findHtmlArtifactCreation:mocks.lookup,readHtmlPreview:vi.fn().mockResolvedValue({html:'<html>Saved</html>'}),openHtmlArtifact:mocks.open,exportHtmlArtifact:mocks.export}));
 vi.mock('./preview',()=>({buildHtmlPreview:(html:string)=>html}));
 vi.mock('@/features/canvas/ui/NodeHeader',()=>({NodeHeader:()=>null,NODE_HEADER_FLOATING_POSITION_CLASS:''}));
 vi.mock('@/features/canvas/ui/NodeGenerationOverlay',()=>({NodeGenerationOverlay:()=> <div role="progressbar"/>}));
 const props=(data:any)=>({id:'page',data,selected:true} as any);
-beforeEach(()=>{vi.clearAllMocks();history.records=[];mocks.run.mockResolvedValue({artifact_id:'a',version:1});mocks.export.mockResolvedValue(undefined);});
+beforeEach(()=>{vi.clearAllMocks();history.records=[];mocks.run.mockResolvedValue({artifact_id:'a',version:1});mocks.lookup.mockResolvedValue({artifact:null});mocks.export.mockResolvedValue(undefined);});
 afterEach(cleanup);
 it('shows the ordinary text generation quote next to HTML generation',()=>{
  render(<HtmlArtifactNode {...props({prompt:'Build page'})}/>);
@@ -109,8 +109,21 @@ it('imports an HTML file and attaches the saved artifact to the empty node',asyn
  const file=new File(['<html><body>Hello</body></html>'],'page.html',{type:'text/html'});
  Object.defineProperty(file,'text',{value:async()=>'<html><body>Hello</body></html>'});
  await act(async()=>{fireEvent.change(container.querySelector('input[type="file"]')!,{target:{files:[file]}});});
- expect(mocks.create).toHaveBeenCalledWith('p','page','<html><body>Hello</body></html>');
+ expect(mocks.lookup).toHaveBeenCalledWith('p','html-upload:c:page');
+ expect(mocks.create).toHaveBeenCalledWith('p','page','<html><body>Hello</body></html>','html-upload:c:page');
  expect(mocks.attach).toHaveBeenCalledWith({id:'uploaded',version:1},'page','p','c',expect.any(Function));
+});
+it('recovers an uploaded artifact when the create response is lost',async()=>{
+ const recovered={id:'uploaded',version:1,title:'page'};
+ mocks.lookup.mockResolvedValueOnce({artifact:null}).mockResolvedValueOnce({artifact:recovered});
+ mocks.create.mockRejectedValueOnce(new Error('network response lost'));
+ const {container}=render(<HtmlArtifactNode {...props({})}/>);
+ const file=new File(['<html><body>Hello</body></html>'],'page.html',{type:'text/html'});
+ Object.defineProperty(file,'text',{value:async()=>'<html><body>Hello</body></html>'});
+ await act(async()=>{fireEvent.change(container.querySelector('input[type="file"]')!,{target:{files:[file]}});});
+ expect(mocks.lookup).toHaveBeenCalledTimes(2);
+ expect(mocks.attach).toHaveBeenCalledWith(recovered,'page','p','c',expect.any(Function));
+ expect(screen.queryByText('network response lost')).toBeNull();
 });
 it('rejects an invalid upload without creating an artifact',async()=>{
  const {container}=render(<HtmlArtifactNode {...props({})}/>);

@@ -1339,6 +1339,42 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
     assert chat_service._freezone_canvas_write_requested("用这段描述生成一张图") is True
     assert (
         chat_service._freezone_canvas_write_requested(
+            "不要修改已有网页只创建一个新网页"
+        )
+        is True
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "不要删除节点但创建一个网页"
+        )
+        is True
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "不要修改已有网页但是创建一个新网页"
+        )
+        is True
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "不要修改旧网页而是创建一个新网页"
+        )
+        is True
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "不要修改已有网页然后创建一个新网页"
+        )
+        is True
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "不要创建网页，只解释怎么做"
+        )
+        is False
+    )
+    assert (
+        chat_service._freezone_canvas_write_requested(
             "请生成本集完整剧本。输出 20—25 个视觉 Beat，并描述旧图片与视频质感。"
         )
         is False

@@ -12,7 +12,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { ArrowUp, Globe, Loader2, Upload } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { readUrl } from '@/lib/url-params';
-import { HTML_ARTIFACT_UPDATED_EVENT, openHtmlArtifact, readHtmlPreview, createHtmlArtifact, exportHtmlArtifact } from './api';
+import { HTML_ARTIFACT_UPDATED_EVENT, openHtmlArtifact, readHtmlPreview, createHtmlArtifact, exportHtmlArtifact, findHtmlArtifactCreation } from './api';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { canvasNodeFrameClass, CANVAS_NODE_INPUT_SURFACE_CLASS, CANVAS_NODE_INPUT_BODY_FRAME_CLASS, CANVAS_NODE_INPUT_BODY_SELECTED_FRAME_CLASS, CANVAS_NODE_OPS_PANEL_CLASS, CANVAS_NODE_INPUT_PLACEHOLDER_CLASS } from '@/features/canvas/ui/nodeFrameStyles';
 import { buildHtmlPreview } from './preview';
@@ -155,7 +155,17 @@ export const HtmlArtifactNode=memo(function HtmlArtifactNode({id,data,selected}:
       if (file.size > 2 * 1024 * 1024) throw new Error(t('htmlArtifact.fileTooLarge'));
       const source = await file.text();
       if (!/<html[\s>]/i.test(source) || !/<\/html\s*>/i.test(source)) throw new Error(t('htmlArtifact.invalidFile'));
-      const artifact = await createHtmlArtifact(scope.project, file.name.replace(/\.html?$/i,''), source);
+      const idempotencyKey = `html-upload:${scope.canvas}:${id}`;
+      let artifact = (await findHtmlArtifactCreation(scope.project, idempotencyKey)).artifact;
+      if (!artifact) {
+        try {
+          artifact = await createHtmlArtifact(scope.project, file.name.replace(/\.html?$/i,''), source, idempotencyKey);
+        } catch (createError) {
+          const recovered = await findHtmlArtifactCreation(scope.project, idempotencyKey).catch(() => ({artifact:null}));
+          if (!recovered.artifact) throw createError;
+          artifact = recovered.artifact;
+        }
+      }
       await attachSavedArtifact(artifact, id, scope.project, scope.canvas, current);
     } catch (err) {setError(err instanceof Error ? err.message : String(err));}
     finally {setIsUploading(false);if(uploadInput.current) uploadInput.current.value='';}

@@ -543,6 +543,12 @@ _FREEZONE_CANVAS_WRITE_ACTION_RE = re.compile(
     r"create|add|insert|delete|remove|clear|update|connect|move|layout|select|open|run|execute|generate)",
     re.IGNORECASE,
 )
+_FREEZONE_NEGATED_CANVAS_WRITE_RE = re.compile(
+    r"(?:不要|禁止|无需|不需要)(?:修改|写入|保存|创建|生成|删除)"
+    r"(?:(?!(?:(?:但(?:是)?|而是|只|然后)\s*"
+    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|布局|选择|打开|运行|执行|生成|制作|做)"
+    r"|[，。；\n])).)*"
+)
 _FREEZONE_CANVAS_WRITE_OBJECT_RE = re.compile(
     r"(?:节点|画布|工作流|连线|边|合成节点|网页|HTML|"
     r"node|canvas|workflow|edge|compose\s+node)",
@@ -680,10 +686,7 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     user_text = raw_prompt.split("[SUPERTALE_", 1)[0].strip()
     if not user_text:
         return False
-    user_text = re.sub(
-        r"(?:不要|禁止|无需|不需要)(?:修改|写入|保存|创建|生成|删除)[^，。；\n]*",
-        "", user_text,
-    )
+    user_text = _FREEZONE_NEGATED_CANVAS_WRITE_RE.sub("", user_text)
     has_action = bool(_FREEZONE_CANVAS_WRITE_ACTION_RE.search(user_text))
     has_canvas_object = bool(_FREEZONE_CANVAS_WRITE_OBJECT_RE.search(user_text))
     has_direct_media_write = bool(_FREEZONE_DIRECT_MEDIA_WRITE_RE.search(user_text))
