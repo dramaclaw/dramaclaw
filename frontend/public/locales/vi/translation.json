@@ -7528,9 +7528,8 @@
         "character": "Add character",
         "camera": "Add camera",
         "light": "Add light",
-        "prop": "Add prop"
+        "prop": "Model library"
       },
-      "importProp": "Import model",
       "limitReached": "Limit reached ({{count}})",
       "tool": {
         "select": "Select",
@@ -7551,6 +7550,29 @@
       "collapseTimeline": "Collapse timeline panel",
       "expandTimeline": "Expand timeline panel",
       "markHint": "Mark path: click in the viewport to place points one by one, each joined to the last (Esc to finish)"
+    },
+    "library": {
+      "title": "Model library",
+      "close": "Close model library",
+      "categories": "Categories",
+      "all": "All",
+      "category": {
+        "primitive": "Primitives"
+      },
+      "search": "Search models",
+      "empty": "No matching models",
+      "triangles": "{{count}} tris",
+      "importLocal": "Import from file",
+      "primitive": {
+        "cube": "Cube",
+        "sphere": "Sphere",
+        "cylinder": "Cylinder",
+        "cone": "Cone",
+        "plane": "Plane",
+        "capsule": "Capsule",
+        "wedge": "Wedge",
+        "torus": "Torus"
+      }
     },
     "viewport": {
       "resetView": "Reset view",
@@ -7742,7 +7764,8 @@
       "color": "Color",
       "markerColor": "Marker colour",
       "intensity": "Intensity",
-      "assetUrl": "Model URL"
+      "assetUrl": "Model URL",
+      "primitive": "Primitive"
     },
     "monitor": {
       "aspect": "Aspect ratio",

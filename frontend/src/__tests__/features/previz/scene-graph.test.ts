@@ -453,6 +453,9 @@ function propLoaderWith(three: typeof import('three'), sizeM = 1) {
       clone: (object) => object.clone(),
       measure: () => sizeM,
       prepareMaterials: () => {},
+      buildPrimitive: () => {
+        throw new Error('primitives are not part of this suite');
+      },
     }),
     loadGltf,
     loadObj,

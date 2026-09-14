@@ -759,4 +759,25 @@ describe("PrevizInspector", () => {
     // 手打 URL 只会打错；换模型走工具栏的导入。
     expect(input).toHaveAttribute("readonly");
   });
+
+  // 几何体的 assetUrl 是形状名，把「cube」当地址显示给用户没有意义。
+  it("names a primitive prop's shape instead of showing it as a URL", () => {
+    renderInspector(
+      createPrevizObject("prop", [], { assetUrl: "cube", assetFormat: "primitive" }),
+    );
+
+    const input = screen.getByLabelText("previz.inspector.primitive");
+    expect(input).toHaveValue("previz.library.primitive.cube");
+    expect(input).toHaveAttribute("readonly");
+    expect(screen.queryByLabelText("previz.inspector.assetUrl")).toBeNull();
+  });
+
+  // 更新的版本写入的新形状：认不出就原样显示，别显示一个不存在的 i18n key。
+  it("shows an unknown primitive shape name as written", () => {
+    renderInspector(
+      createPrevizObject("prop", [], { assetUrl: "dodecahedron", assetFormat: "primitive" }),
+    );
+
+    expect(screen.getByLabelText("previz.inspector.primitive")).toHaveValue("dodecahedron");
+  });
 });

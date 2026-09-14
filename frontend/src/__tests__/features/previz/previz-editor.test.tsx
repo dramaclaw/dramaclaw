@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -38,6 +38,7 @@ const setLiveCamera = vi.fn();
 const setGizmoMode = vi.fn();
 const applyViewDirection = vi.fn();
 const focusObject = vi.fn();
+const focusObjectWhenReady = vi.fn();
 const resetView = vi.fn();
 const pickAt = vi.fn(() => null as string | null);
 const pickPathPointAt = vi.fn(() => null as { clipId: string; pointId: string } | null);
@@ -86,6 +87,7 @@ function fakeRenderer() {
     setGizmoMode,
     applyViewDirection,
     focusObject,
+    focusObjectWhenReady,
     resetView,
     pickAt,
     pickPathPointAt,
@@ -229,7 +231,13 @@ vi.mock("@/stores/canvasStore", () => ({
 }));
 
 vi.mock("sonner", () => ({
-  toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+    warning: vi.fn(),
+    loading: vi.fn(() => "pending"),
+    dismiss: vi.fn(),
+  },
 }));
 
 // dispose / resize 是模块级共享的，而 testing-library 每个用例结束都会自动
@@ -2045,6 +2053,43 @@ describe("PrevizEditor mark tool", () => {
   });
 });
 
+describe("PrevizEditor overlay escape handling", () => {
+  // 跟标记工具那条 Esc（见上面 "leaves the mark tool on Escape..."）同一个道理：
+  // `handleOpenChange` 只在 `tool === "mark"` 时才拦 Esc，模型库/人物创建这类浮层开着
+  // 时它并不知道，Esc 会被 base-ui 的 useDismiss 当成「关掉整个编辑器」处理——选到一半
+  // 模型按一下 Esc，编辑器本体也跟着没了。这里跟其余 Esc 用例一样在 document.body 上
+  // fire，走的是 base-ui 真实的 Escape 派发路径，不是直接调 handleOpenChange。
+  it("closes the model library on Escape instead of the whole editor", async () => {
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    await renderEditor({ onOpenChange });
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
+    expect(screen.getByRole("dialog", { name: "previz.library.title" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: "previz.library.title" })).toBeNull();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("closes the character create dialog on Escape instead of the whole editor", async () => {
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    await renderEditor({ onOpenChange });
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.character" }));
+    expect(
+      screen.getByRole("dialog", { name: "previz.characterCreate.title" }),
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: "previz.characterCreate.title" })).toBeNull();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+});
+
 describe("program follow", () => {
   function renderWithCameras(): { camA: string; camB: string } {
     const scene = createDefaultScene();
@@ -3085,5 +3130,127 @@ describe("PrevizEditor autosave failure", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("PrevizEditor model library", () => {
+  function renderEditor() {
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={createDefaultScene()}
+        onOpenChange={vi.fn()}
+        onFlush={vi.fn(() => true)}
+      />,
+    );
+  }
+
+  it("opens the model library instead of dropping a bare placeholder", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
+
+    expect(screen.getByRole("dialog", { name: "previz.library.title" })).toBeInTheDocument();
+    // 在对话框里挑之前什么都不建：以前那颗按钮会直接落一个空 URL 的占位方块。
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+  });
+
+  it("creates the picked primitive, frames it and closes the library", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
+    await user.click(screen.getByRole("button", { name: /^previz\.library\.primitive\.cube/ }));
+
+    const objects = usePrevizStore.getState().scene.objects;
+    expect(objects).toHaveLength(1);
+    expect(objects[0]).toMatchObject({
+      kind: "prop",
+      // 名字取本地化的形状名（本文件的 i18n mock 原样返回 key）。
+      name: "previz.library.primitive.cube",
+      assetFormat: "primitive",
+      assetUrl: "cube",
+    });
+    // 与本地导入同一个取景：模型换进来之后再对准，不对着占位方块取景。
+    expect(focusObjectWhenReady).toHaveBeenCalledWith(objects[0]!.id);
+    expect(screen.queryByRole("dialog", { name: "previz.library.title" })).toBeNull();
+  });
+
+  it("closes the library without creating anything", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
+    await user.click(screen.getByRole("button", { name: "previz.library.close" }));
+
+    expect(screen.queryByRole("dialog", { name: "previz.library.title" })).toBeNull();
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+  });
+
+  // 本地导入仍走原来那条上传流程。用 .obj：它不进压缩那一步，mock 掉的
+  // `uploadFreezoneImage` 直接回 "/static/shot.png"。
+  it("hands a local file to the existing upload flow and closes the library", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
+    await user.upload(
+      screen.getByLabelText("previz.library.importLocal"),
+      new File(["o"], "chair.obj"),
+    );
+
+    expect(screen.queryByRole("dialog", { name: "previz.library.title" })).toBeNull();
+    await waitFor(() => expect(usePrevizStore.getState().scene.objects).toHaveLength(1));
+    expect(usePrevizStore.getState().scene.objects[0]).toMatchObject({
+      kind: "prop",
+      name: "chair",
+      assetFormat: "obj",
+      assetUrl: "/static/shot.png",
+    });
+  });
+
+  // 面板必须自己能接住焦点：没有 tabIndex 的 <section> 接不住 focus()，点它空白处时
+  // 焦点只会继续往上找，落到外层编辑器的 DialogContent（`data-previz-editor`）身上——
+  // 那正是编辑器全局快捷键守卫认「这是自己人」的标记，Delete 会穿透过去删掉选中的
+  // 对象。这里不模拟真实点击（jsdom 不实现「点非可聚焦元素时焦点交给最近可聚焦祖先」
+  // 那套算法），直接调 `.focus()`：面板没有 tabIndex 时这一下在 jsdom 里是空操作，
+  // `toHaveFocus()` 会先在这一步失败，钉住的正是「面板接不住焦点」这个根因。
+  it("keeps the panel itself focusable so Delete does not leak through to the scene", async () => {
+    renderEditor();
+    const objectId = usePrevizStore.getState().addObject("camera")!;
+    act(() => usePrevizStore.getState().selectObject(objectId));
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
+    const library = screen.getByRole("dialog", { name: "previz.library.title" });
+
+    act(() => library.focus());
+    expect(library).toHaveFocus();
+
+    fireEvent.keyDown(library, { key: "Delete" });
+
+    expect(usePrevizStore.getState().scene.objects.map((object) => object.id)).toContain(
+      objectId,
+    );
+  });
+
+  // 三个浮层都是 `absolute inset-0`，跟工具栏是平级的兄弟节点，不盖住工具栏——库面板开着时
+  // 工具栏按钮照样能点。不堵住的话，点「加机位」会在库面板背后（或叠在它上头）再开一个
+  // 机位创建对话框，两层浮层同时占着同一块屏幕。
+  it("closes the library when the toolbar opens another overlay on top of it", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
+    expect(screen.getByRole("dialog", { name: "previz.library.title" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.camera" }));
+
+    expect(screen.queryByRole("dialog", { name: "previz.library.title" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "previz.cameraCreate.title" })).toBeInTheDocument();
+    // 库面板被顶掉时没挑任何模型，不该顺带建出一个物件。
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
   });
 });

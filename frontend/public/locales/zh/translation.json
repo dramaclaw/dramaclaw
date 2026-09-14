@@ -7528,9 +7528,8 @@
         "character": "添加人物",
         "camera": "添加机位",
         "light": "添加灯光",
-        "prop": "添加物件"
+        "prop": "模型库"
       },
-      "importProp": "导入模型",
       "limitReached": "已达上限 {{count}} 个",
       "tool": {
         "select": "选择",
@@ -7551,6 +7550,29 @@
       "collapseTimeline": "收起轨迹面板",
       "expandTimeline": "展开轨迹面板",
       "markHint": "标记轨迹：在视口逐点单击放点，自动与前一点连线（Esc 退出）"
+    },
+    "library": {
+      "title": "模型库",
+      "close": "关闭模型库",
+      "categories": "模型分类",
+      "all": "全部",
+      "category": {
+        "primitive": "通用几何体"
+      },
+      "search": "搜索模型",
+      "empty": "没有找到匹配的模型",
+      "triangles": "{{count}} 面",
+      "importLocal": "从本地文件导入",
+      "primitive": {
+        "cube": "立方体",
+        "sphere": "球体",
+        "cylinder": "圆柱",
+        "cone": "圆锥",
+        "plane": "平面",
+        "capsule": "胶囊",
+        "wedge": "楔形",
+        "torus": "圆环"
+      }
     },
     "viewport": {
       "resetView": "重置视角",
@@ -7742,7 +7764,8 @@
       "color": "颜色",
       "markerColor": "辨识色",
       "intensity": "强度",
-      "assetUrl": "模型地址"
+      "assetUrl": "模型地址",
+      "primitive": "几何体"
     },
     "monitor": {
       "aspect": "画幅比",
