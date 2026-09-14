@@ -1412,27 +1412,11 @@ def _pipeline_continuation_instructions(prompt: str, *, tool_mode: str) -> str:
 
 
 def _chat_backend() -> str:
-    configured = (
+    preferred = (
         os.environ.get("DRAMACLAW_CHAT_BACKEND")
         or os.environ.get("SUPERTALE_CHAT_BACKEND")
-        or ""
-    ).strip().lower()
-    if not configured:
-        # Containers ship the DramaClaw-patched Codex runtime and therefore
-        # select Codex by default. A source checkout does not build that
-        # security-patched binary, but start-ce.sh does install Hermes in its
-        # isolated environment. Preserve a working local startup without ever
-        # falling back from an explicitly requested Codex backend.
-        if is_codex_backend_available():
-            return "codex"
-        if is_hermes_backend_available():
-            return "hermes"
-        raise RuntimeError(
-            "No supported chat backend is available. Configure a valid patched "
-            "Codex runtime with CODEX_BIN or install Hermes."
-        )
-
-    preferred = configured
+        or "codex"
+    ).strip().lower() or "codex"
     if preferred == "hermes":
         # Explicit "hermes" must succeed — do NOT silently fall back to
         # claude/codex. A missing hermes binary is a config error to surface.

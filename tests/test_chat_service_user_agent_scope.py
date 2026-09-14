@@ -2597,24 +2597,14 @@ def test_chat_backend_defaults_to_codex_app_server(monkeypatch):
     assert chat_service._chat_backend() == "codex"
 
 
-def test_default_backend_uses_hermes_when_safe_codex_is_unavailable(monkeypatch):
+def test_default_codex_does_not_fallback_when_unavailable(monkeypatch):
     monkeypatch.delenv("DRAMACLAW_CHAT_BACKEND", raising=False)
     monkeypatch.delenv("SUPERTALE_CHAT_BACKEND", raising=False)
     monkeypatch.setattr(chat_service, "is_codex_backend_available", lambda: False)
     monkeypatch.setattr(chat_service, "is_hermes_backend_available", lambda: True)
     monkeypatch.setattr(chat_service, "is_claude_backend_available", lambda: True)
 
-    assert chat_service._chat_backend() == "hermes"
-
-
-def test_default_backend_fails_when_codex_and_hermes_are_unavailable(monkeypatch):
-    monkeypatch.delenv("DRAMACLAW_CHAT_BACKEND", raising=False)
-    monkeypatch.delenv("SUPERTALE_CHAT_BACKEND", raising=False)
-    monkeypatch.setattr(chat_service, "is_codex_backend_available", lambda: False)
-    monkeypatch.setattr(chat_service, "is_hermes_backend_available", lambda: False)
-    monkeypatch.setattr(chat_service, "is_claude_backend_available", lambda: True)
-
-    with pytest.raises(RuntimeError, match="No supported chat backend is available"):
+    with pytest.raises(RuntimeError, match="Codex is unavailable"):
         chat_service._chat_backend()
 
 
