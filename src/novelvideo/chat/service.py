@@ -24,7 +24,6 @@ from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
 from novelvideo.chat.backend_sdk import (
-    AgentRuntimeThreadPort,
     ClaudeSdkClient,
     CodexClient,
     _codex_item_completed_trace,
@@ -35,6 +34,13 @@ from novelvideo.chat.backend_sdk import (
     interrupt_live_codex_turn,
 )
 from novelvideo.chat.execution_context import AgentExecutionContext
+from novelvideo.chat.runtime_port import AgentRuntimeThreadPort
+from novelvideo.chat.tool_policy import (
+    allows_mainline_media_ui_specs as _allows_mainline_media_ui_specs,
+    freezone_canvas_execution_mode_from_context as _freezone_canvas_execution_mode_from_context,
+    freezone_canvas_id_from_context as _freezone_canvas_id_from_context,
+    tool_mode_for_surface as _tool_mode_for_surface,
+)
 from novelvideo.freezone.workflow_plan import MAX_WORKFLOW_PLANNING_TEXT_CHARS
 from novelvideo.ports import get_auth_session_port
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
@@ -714,9 +720,7 @@ def _codex_freezone_write_result_succeeded(event: Any) -> bool:
     if _codex_freezone_tool_name(event) not in _FREEZONE_CANVAS_WRITE_TOOLS:
         return False
     status = str(getattr(event, "status", "") or "").strip().lower()
-    if status not in {"completed", "success", "succeeded"} or getattr(
-        event, "error", None
-    ):
+    if status not in {"completed", "success", "succeeded"} or getattr(event, "error", None):
         return False
     values = [getattr(event, "structured", None), getattr(event, "output", None)]
     for value in values:
@@ -805,7 +809,9 @@ def _codex_freezone_ready_workflow_draft(event: Any) -> dict[str, Any] | None:
     if _codex_freezone_tool_name(event) != "freezone_prepare_workflow_draft":
         return None
     status = str(getattr(event, "status", "") or "").strip().lower()
-    if status not in {"completed", "success", "succeeded"} or getattr(event, "error", None):
+    if status not in {"completed", "success", "succeeded"} or getattr(
+        event, "error", None
+    ):
         return None
     for value in (getattr(event, "structured", None), getattr(event, "output", None)):
         for payload in _json_objects_from_codex_tool_value(value):
@@ -1189,41 +1195,6 @@ def _freezone_skill_studio_context(username: str, prompt: str | None) -> str:
         f"{_freezone_agent_catalog_summary(username)}\n"
         "[/FREEZONE_AGENT_CATALOG_SUMMARY]"
     )
-
-
-def _surface_context_has_freezone_canvas(
-    surface_context: dict[str, Any] | None,
-) -> bool:
-    return bool(str((surface_context or {}).get("freezone_canvas_id") or "").strip())
-
-
-def _tool_mode_for_surface(
-    surface: str | None,
-    *,
-    prompt: str | None = None,
-    surface_context: dict[str, Any] | None = None,
-) -> str:
-    if str(surface or "").strip() == "freezone":
-        return "freezone_canvas"
-    if _surface_context_has_freezone_canvas(surface_context):
-        return "freezone_canvas"
-    return "default"
-
-
-def _freezone_canvas_id_from_context(surface_context: dict[str, Any] | None) -> str:
-    return (
-        str((surface_context or {}).get("freezone_canvas_id") or "default").strip()
-        or "default"
-    )
-
-
-def _freezone_canvas_execution_mode_from_context(
-    surface_context: dict[str, Any] | None,
-) -> str:
-    value = str(
-        (surface_context or {}).get("canvas_command_execution_mode") or ""
-    ).strip()
-    return "auto_execute" if value == "auto_execute" else "manual_confirm"
 
 
 def _write_hermes_tool_mode(username: str, *, mode: str) -> None:
@@ -3199,11 +3170,6 @@ def _append_tool_ui_specs(content: str, specs: list[dict[str, Any]]) -> str:
         return text
     prefix = text or "已为你展示相关媒体。"
     return f"{prefix}\n\n" + "\n\n".join(blocks)
-
-
-def _allows_mainline_media_ui_specs(tool_mode: str) -> bool:
-    """Mainline media galleries are for DramaClaw chat, not Freezone canvas replies."""
-    return str(tool_mode or "").strip() != "freezone_canvas"
 
 
 def _split_ui_specs_from_text(content: str) -> tuple[str, list[dict[str, Any]]]:

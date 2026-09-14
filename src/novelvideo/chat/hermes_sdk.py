@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from novelvideo.security import SandboxSpec, wrap_command
-from novelvideo.chat.backend_sdk import ChatBackendEvent
+from novelvideo.chat.runtime_port import ChatBackendEvent
 
 _log = logging.getLogger(__name__)
 
