@@ -153,6 +153,7 @@ docs/en/guides/troubleshooting.md,Elastic-2.0,2026 SuperTale contributors,REUSE.
 docs/en/license.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/en/reference/environment-variables.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/features/external-skill-import.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/freezone-server-orchestration-migration.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/freezone-workflow-validation-boundary.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/image-derived-outputs.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/releasing.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
