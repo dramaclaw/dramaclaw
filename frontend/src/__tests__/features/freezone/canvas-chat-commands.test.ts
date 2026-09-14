@@ -81,8 +81,16 @@ vi.mock("@/api/canvas", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/canvas")>();
   return {
     ...actual,
-    createFreezoneWorkflowRun: vi.fn(async () => ({ run_id: "run-test" })),
-    updateFreezoneWorkflowRun: vi.fn(async () => ({ run_id: "run-test" })),
+    createFreezoneWorkflowRun: vi.fn(async () => ({
+      run_id: "run-test",
+      status: "running",
+      actions: [],
+    })),
+    updateFreezoneWorkflowRun: vi.fn(async () => ({
+      run_id: "run-test",
+      status: "running",
+      actions: [],
+    })),
   };
 });
 
@@ -7700,6 +7708,72 @@ describe("canvas chat commands", () => {
       );
 
       expect(result.errors).toEqual(["当前画布已有工作流正在执行，请等待其完成后再试。"]);
+      expect(events).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("does not start node actions when the workflow run cannot be persisted", async () => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "商品主图" },
+    );
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+    });
+    vi.mocked(createFreezoneWorkflowRun).mockRejectedValueOnce(
+      new ApiError("database unavailable", 503),
+    );
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(result.errors).toEqual([
+        "无法创建持久化工作流记录，未启动节点动作：database unavailable",
+      ]);
+      expect(events).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("stops before dispatch when the persisted workflow state cannot be updated", async () => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "商品主图" },
+    );
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+    });
+    vi.mocked(updateFreezoneWorkflowRun).mockRejectedValueOnce(
+      new ApiError("database unavailable", 503),
+    );
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(result.errors).toEqual([
+        "工作流状态保存失败，已停止启动后续节点：database unavailable",
+      ]);
       expect(events).toEqual([]);
     } finally {
       unsubscribe();
