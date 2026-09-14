@@ -358,7 +358,7 @@ def _default_story_interaction_schema() -> dict[str, Any]:
 
 
 def _story_choice_schema() -> dict[str, Any]:
-    """Describe the strict choice contract before a request reaches the API."""
+    """Describe the choice contract while preserving domain-model defaults."""
 
     schema = _strict_object(
         {
@@ -378,37 +378,31 @@ def _story_choice_schema() -> dict[str, Any]:
             "id",
             "source_segment_id",
             "target_segment_id",
-            "mode",
-            "text",
             "order",
         ],
     )
     schema["allOf"] = [
-            {
-                "if": {
-                    "required": ["mode"],
-                    "properties": {"mode": {"const": "visible"}},
-                },
-                "then": {
-                    "required": ["text"],
-                    "properties": {"text": {"minLength": 1}},
-                },
+        {
+            "if": {
+                "required": ["mode"],
+                "properties": {"mode": {"const": "automatic"}},
             },
-            {
-                "if": {
-                    "required": ["mode"],
-                    "properties": {"mode": {"const": "automatic"}},
-                },
-                "then": {
-                    "properties": {
-                        "text": {"const": ""},
-                        "feedback_text": {"const": ""},
-                        "interaction": _default_story_interaction_schema(),
-                        "is_default": {"const": False},
-                    }
-                },
+            "then": {
+                "properties": {
+                    "text": {"const": ""},
+                    "feedback_text": {"const": ""},
+                    "interaction": _default_story_interaction_schema(),
+                    "is_default": {"const": False},
+                }
             },
-        ]
+            # Omitting mode uses the domain default (visible), which still
+            # requires player-facing choice text.
+            "else": {
+                "required": ["text"],
+                "properties": {"text": {"minLength": 1}},
+            },
+        },
+    ]
     return schema
 
 
@@ -494,7 +488,6 @@ def _story_segment_changes_schema() -> dict[str, Any]:
                 "properties": {"kind": {"const": "ending"}},
             },
             "then": {
-                "required": ["ending_label"],
                 "properties": {
                     "ending_label": {
                         "type": "string",
@@ -510,7 +503,6 @@ def _story_segment_changes_schema() -> dict[str, Any]:
                 "properties": {"kind": {"const": "scene"}},
             },
             "then": {
-                "required": ["ending_label"],
                 "properties": {"ending_label": {"type": "null"}},
             },
         },
@@ -541,7 +533,6 @@ def _story_choice_changes_schema() -> dict[str, Any]:
                 "properties": {"mode": {"const": "visible"}},
             },
             "then": {
-                "required": ["text"],
                 "properties": {"text": {"minLength": 1}},
             },
         },
@@ -551,7 +542,6 @@ def _story_choice_changes_schema() -> dict[str, Any]:
                 "properties": {"mode": {"const": "automatic"}},
             },
             "then": {
-                "required": ["text", "feedback_text", "interaction", "is_default"],
                 "properties": {
                     "text": {"const": ""},
                     "feedback_text": {"const": ""},

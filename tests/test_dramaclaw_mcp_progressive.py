@@ -1217,3 +1217,30 @@ async def test_story_argument_validation_returns_every_field_path(monkeypatch):
             "dramaclaw_create_interactive_story"
         )
     ).validate(result.structuredContent)
+
+
+@pytest.mark.asyncio
+async def test_synced_story_skill_loads_through_existing_mcp_resources(monkeypatch, tmp_path):
+    from novelvideo.chat import service as chat_service
+
+    root = tmp_path / ".agents" / "skills"
+    chat_service._sync_project_skills(root, agent_profile="freezone:main")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DRAMACLAW_SKILLS_DIR", str(root))
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "novelvideo.chat.dramaclaw_mcp"],
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        cwd=str(CE_ROOT),
+    )
+    source = Path(chat_service.__file__).resolve().parents[1] / "agent_skills" / "interactive-story"
+    async with stdio_client(parameters) as (reader, writer):
+        async with ClientSession(reader, writer) as session:
+            await session.initialize()
+            resources = {resource.name: resource for resource in (await session.list_resources()).resources}
+            for relative in ("SKILL.md", "references/production-planning.md", "references/story-contract.md"):
+                resource = resources[f"interactive-story/{relative}"]
+                result = await session.read_resource(resource.uri)
+                assert result.contents[0].text == (source / relative).read_text(encoding="utf-8")
+    # Discovery returns metadata, not an eagerly concatenated skill package.
+    assert resources["interactive-story/SKILL.md"].mimeType == "text/markdown"

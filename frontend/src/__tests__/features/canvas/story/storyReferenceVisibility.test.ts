@@ -24,9 +24,9 @@ describe('影游引用线按需显示', () => {
     expect(hidden(storyReferenceVisibleEdges(nodes, edges))).toEqual(['ref', 'ref2']);
     expect(hidden(edges)).toEqual([]);
   });
-  it('选中片段仅显示其引用，选中素材显示全部使用方，取消后恢复', () => {
+  it('选中片段仅显示其引用，选中素材不展开全部使用方，取消后恢复', () => {
     expect(hidden(storyReferenceVisibleEdges(select('clip'), edges))).toEqual(['ref2']);
-    expect(storyReferenceVisibleEdges(select('asset'), edges)).toBe(edges);
+    expect(hidden(storyReferenceVisibleEdges(select('asset'), edges))).toEqual(['ref', 'ref2']);
     expect(storyReferenceVisibleEdges(select('clip', 'next'), edges)).toBe(edges);
     expect(hidden(storyReferenceVisibleEdges(select('group'), edges))).toEqual(['ref', 'ref2']);
     expect(hidden(storyReferenceVisibleEdges(select(), edges))).toEqual(['ref', 'ref2']);

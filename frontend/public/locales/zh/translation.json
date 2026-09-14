@@ -4488,6 +4488,13 @@
       "narrationPlaceholder": "填写玩家在本片段看到或听到的剧情……",
       "productionNotesLabel": "制作备注",
       "productionNotesPlaceholder": "镜头、角色连续性、音效等提示……",
+      "choiceLoop": {
+        "label": "选择循环",
+        "freezeTail": "不使用循环（停在尾帧）",
+        "boundExternal": "已绑定外部视频",
+        "hint": "选择画布中已生成的视频；等待玩家选择时循环播放。",
+        "empty": "画布中暂无可绑定视频，生成后再回来选择。"
+      },
       "reviewRequired": "需检查",
       "mediaState": {
         "missing": "待制作视频",
@@ -4595,9 +4602,16 @@
         "noResults": "没有匹配的故事片段"
       },
       "lint": {
-        "open": "检查",
-        "title": "故事校验",
+        "open": "制作就绪检查",
+        "title": "制作就绪检查",
         "empty": "未发现问题",
+        "videoReady": "视频",
+        "promptReady": "提示词",
+        "loopReady": "选择循环（可选）",
+        "playDuration": "单次观看（不含选择等待）",
+        "durationRange": "{{min}}–{{max}} 秒{{suffix}}",
+        "durationIncomplete": "（部分待制作）",
+        "durationUnavailable": "暂不可计算",
         "codes": {
           "no_start": "未设故事起点(或起点不唯一)",
           "unreachable": "从起点无法到达此片段",

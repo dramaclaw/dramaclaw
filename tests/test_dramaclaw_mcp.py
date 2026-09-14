@@ -83,8 +83,6 @@ def test_patch_schema_describes_strict_operation_envelopes(monkeypatch):
         "id",
         "source_segment_id",
         "target_segment_id",
-        "mode",
-        "text",
         "order",
     ]
 
@@ -230,6 +228,47 @@ def test_story_schemas_reject_recurring_agent_payload_mistakes(monkeypatch):
         {"op": "update_segment", "segment_id": "a", "changes": {"durationSec": 12}}
     ]
     invalid_payloads.append(invalid_change_field)
+    explicitly_invalid_changes = [
+        {
+            "op": "update_choice",
+            "choice_id": "c",
+            "changes": {"mode": "visible", "text": ""},
+        },
+        {
+            "op": "update_choice",
+            "choice_id": "c",
+            "changes": {"mode": "automatic", "text": "继续"},
+        },
+        {
+            "op": "update_choice",
+            "choice_id": "c",
+            "changes": {"mode": "automatic", "feedback_text": "已选择"},
+        },
+        {
+            "op": "update_choice",
+            "choice_id": "c",
+            "changes": {"mode": "automatic", "interaction": {"motion": "pop"}},
+        },
+        {
+            "op": "update_choice",
+            "choice_id": "c",
+            "changes": {"mode": "automatic", "is_default": True},
+        },
+        {
+            "op": "update_segment",
+            "segment_id": "ending",
+            "changes": {"kind": "ending", "ending_label": None},
+        },
+        {
+            "op": "update_segment",
+            "segment_id": "scene",
+            "changes": {"kind": "scene", "ending_label": "结局"},
+        },
+    ]
+    for operation in explicitly_invalid_changes:
+        invalid = deepcopy(base)
+        invalid["operations"] = [operation]
+        invalid_payloads.append(invalid)
 
     for payload in invalid_payloads:
         with pytest.raises(ValidationError):
@@ -354,3 +393,106 @@ def test_automatic_choice_accepts_domain_defaults(monkeypatch, interaction):
         base["operations"][0]["changes"]["interaction"] = invalid
         with pytest.raises(ValidationError):
             Draft202012Validator(schema).validate(base)
+
+
+def test_automatic_choice_schema_accepts_omitted_domain_defaults(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CHAT_SURFACE", "freezone")
+    schemas = _story_tool_schemas()
+    choice = {
+        "id": "c",
+        "source_segment_id": "a",
+        "target_segment_id": "b",
+        "mode": "automatic",
+        "order": 0,
+    }
+    StoryChoice.model_validate(choice)
+
+    patch = {
+        "story_id": "s",
+        "base_revision": 1,
+        "idempotency_key": "add-choice-01",
+        "operations": [{"op": "add_choice", "choice": choice}],
+    }
+    Draft202012Validator(
+        schemas["dramaclaw_patch_interactive_story"]
+    ).validate(patch)
+
+    create = {
+        "base_revision": 0,
+        "idempotency_key": "create-story-01",
+        "story": {
+            "story_id": "s",
+            "title": "自动转场",
+            "start_segment_id": "a",
+            "segments": [
+                {"id": "a", "title": "开始", "script": "开始"},
+                {
+                    "id": "b",
+                    "title": "结束",
+                    "script": "结束",
+                    "kind": "ending",
+                    "ending_label": "结局",
+                },
+            ],
+            "choices": [choice],
+        },
+    }
+    Draft202012Validator(
+        schemas["dramaclaw_create_interactive_story"]
+    ).validate(create)
+    StoryDraftV2.model_validate(create["story"])
+
+
+def test_patch_schema_accepts_context_dependent_partial_changes(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CHAT_SURFACE", "freezone")
+    schema = _story_tool_schemas()["dramaclaw_patch_interactive_story"]
+    cases = [
+        (
+            {
+                "op": "update_choice",
+                "choice_id": "c",
+                "changes": {"mode": "automatic", "text": ""},
+            },
+            StoryChoiceChanges,
+        ),
+        (
+            {
+                "op": "update_choice",
+                "choice_id": "c",
+                "changes": {"mode": "visible"},
+            },
+            StoryChoiceChanges,
+        ),
+        (
+            {"op": "update_choice", "choice_id": "c", "changes": {"text": ""}},
+            StoryChoiceChanges,
+        ),
+        (
+            {
+                "op": "update_segment",
+                "segment_id": "ending",
+                "changes": {"kind": "ending"},
+            },
+            StorySegmentChanges,
+        ),
+        (
+            {
+                "op": "update_segment",
+                "segment_id": "scene",
+                "changes": {"kind": "scene"},
+            },
+            StorySegmentChanges,
+        ),
+    ]
+
+    for operation, changes_model in cases:
+        payload = {
+            "story_id": "s",
+            "base_revision": 1,
+            "idempotency_key": "partial-update-01",
+            "operations": [operation],
+        }
+        Draft202012Validator(schema).validate(payload)
+        changes_model.model_validate(operation["changes"])

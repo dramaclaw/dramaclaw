@@ -4488,6 +4488,13 @@
       "narrationPlaceholder": "Write what the player sees or hears in this segment…",
       "productionNotesLabel": "Production notes",
       "productionNotesPlaceholder": "Camera, continuity, sound, and other production guidance…",
+      "choiceLoop": {
+        "label": "Choice loop",
+        "freezeTail": "No loop (hold the final frame)",
+        "boundExternal": "External video attached",
+        "hint": "Choose a generated canvas video to loop while the player decides.",
+        "empty": "No attachable canvas video yet. Generate one, then select it here."
+      },
       "reviewRequired": "Review",
       "mediaState": {
         "missing": "Video not created",
@@ -4595,9 +4602,16 @@
         "noResults": "No matching story scenes"
       },
       "lint": {
-        "open": "Check",
-        "title": "Story check",
+        "open": "Production readiness",
+        "title": "Production readiness",
         "empty": "No issues found",
+        "videoReady": "Videos",
+        "promptReady": "Prompts",
+        "loopReady": "Choice loops (optional)",
+        "playDuration": "Per playthrough (excluding choice wait)",
+        "durationRange": "{{min}}–{{max}}s{{suffix}}",
+        "durationIncomplete": " (some clips pending)",
+        "durationUnavailable": "Unavailable",
         "codes": {
           "no_start": "No story start set (or start is ambiguous)",
           "unreachable": "Unreachable from the start clip",

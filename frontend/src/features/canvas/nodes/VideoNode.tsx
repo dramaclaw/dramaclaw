@@ -3516,6 +3516,7 @@ export const VideoNode = memo(
 
           {isStoryClip ? (
             <StoryClipNarrativePanel
+              nodeId={id}
               narration={typeof data.narration === 'string' ? data.narration : ''}
               productionNotes={
                 typeof data.storyProductionNotes === 'string' ? data.storyProductionNotes : ''

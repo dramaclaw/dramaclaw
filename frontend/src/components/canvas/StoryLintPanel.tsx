@@ -9,6 +9,7 @@ import { isVideoNode } from '@/features/canvas/domain/canvasNodes';
 import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
 import { selectGroupStoryFlags, selectGroupStoryVariables } from '@/features/canvas/story/storyVariableSelectors';
 import { lintStory, type StoryIssue, type StoryIssueSeverity } from '@/features/canvas/story/lintStory';
+import { storyDurationRange } from '@/features/canvas/story/storyDurationRange';
 
 const SEVERITY_ICON: Record<StoryIssueSeverity, typeof Info> = {
   error: AlertCircle,
@@ -37,16 +38,26 @@ export const StoryLintPanel = memo(function StoryLintPanel({
   const setSelectedNode = useCanvasStore((s) => s.setSelectedNode);
   const requestFocusNode = useCanvasStore((s) => s.requestFocusNode);
 
-  const { issues, members, storyEdges } = useMemo(() => {
+  const { issues, members, storyEdges, durationRange, videoReady, promptReady, loopReady, loopTotal } = useMemo(() => {
     const memberList = nodes.filter((n) => n.parentId === groupId && isVideoNode(n));
     const memberIds = new Set(memberList.map((n) => n.id));
     const edgeList = edges.filter(
       (e) => e.type === STORY_CHOICE_EDGE_TYPE && memberIds.has(e.source),
     );
+    const durationRange = storyDurationRange(memberList, edgeList);
+    const videoReady = memberList.filter((node) => Boolean((node.data as { videoUrl?: string | null }).videoUrl)).length;
+    const promptReady = memberList.filter((node) => Boolean((node.data as { prompt?: string }).prompt?.trim())).length;
+    const loopSources = memberList.filter((node) => (node.data as { storyChoiceLoop?: unknown }).storyChoiceLoop);
+    const loopReady = loopSources.filter((node) => Boolean((node.data as { choiceLoopVideoUrl?: string | null }).choiceLoopVideoUrl)).length;
     return {
       issues: lintStory(memberList, edgeList, variables, flags),
       members: memberList,
       storyEdges: edgeList,
+      durationRange,
+      videoReady,
+      promptReady,
+      loopReady,
+      loopTotal: loopSources.length,
     };
   }, [nodes, edges, flags, groupId, variables]);
 
@@ -87,6 +98,27 @@ export const StoryLintPanel = memo(function StoryLintPanel({
         <button onClick={onClose} aria-label={t('common.close')} className="text-white/60 hover:text-white">
           <X className="h-4 w-4" />
         </button>
+      </div>
+
+      <div className="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg bg-white/[0.04] px-2.5 py-2 text-[11px] text-white/60">
+        <span>{t('canvas.story.lint.videoReady')}</span>
+        <span className="text-right tabular-nums text-white/85">{videoReady}/{members.length}</span>
+        <span>{t('canvas.story.lint.promptReady')}</span>
+        <span className="text-right tabular-nums text-white/85">{promptReady}/{members.length}</span>
+        {loopTotal > 0 && <>
+          <span>{t('canvas.story.lint.loopReady')}</span>
+          <span className="text-right tabular-nums text-white/85">{loopReady}/{loopTotal}</span>
+        </>}
+        <span>{t('canvas.story.lint.playDuration')}</span>
+        <span className="text-right tabular-nums text-white/85">
+          {durationRange
+            ? t('canvas.story.lint.durationRange', {
+                min: Math.round(durationRange.minMs / 1000),
+                max: Math.round(durationRange.maxMs / 1000),
+                suffix: durationRange.complete ? '' : t('canvas.story.lint.durationIncomplete'),
+              })
+            : t('canvas.story.lint.durationUnavailable')}
+        </span>
       </div>
 
       {issues.length === 0 ? (

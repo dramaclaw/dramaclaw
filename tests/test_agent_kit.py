@@ -86,6 +86,26 @@ def test_published_skill_matches_canonical_source() -> None:
     assert "synchronized" in result.stdout
 
 
+def test_interactive_story_discovery_and_duration_contract() -> None:
+    skill = (
+        CE_ROOT / "src" / "novelvideo" / "agent_skills" / "interactive-story" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    frontmatter = skill.split("---", 2)[1]
+    for trigger in ("FMV", "剧情画布", "占位素材试玩", "互动剧片段制作准备"):
+        assert trigger in frontmatter
+
+    guidance = skill.split("## User-facing guidance", 1)[1].split(
+        "## Responsibilities", 1
+    )[0]
+    for invariant in (
+        "each playable route",
+        "mutually exclusive",
+        "decision time",
+        "Do not open a structured clarification card",
+    ):
+        assert invariant in guidance
+
+
 def test_codex_template_renders_valid_toml() -> None:
     payload = tomllib.loads(_render("codex"))
     assert set(payload["mcp_servers"]) == {"dramaclaw", "dramaclaw_workflows"}

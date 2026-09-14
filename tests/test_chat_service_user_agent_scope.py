@@ -5781,3 +5781,15 @@ def test_dramaclaw_get_sketches_does_not_use_pool_candidates(monkeypatch, tmp_pa
     assert payload["ok"] is True
     assert payload["sketches"][0]["sketch_url"] == ""
     assert payload["ui_spec"] is None
+
+
+def test_fmv_skill_guidance_is_only_appended_to_canvas_instructions():
+    guidance = chat_service._CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS
+    assert chat_service._codex_developer_instructions("freezone_canvas") == (
+        chat_service._CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS + "\n" + guidance
+    )
+    for mode in (None, "", "default"):
+        assert chat_service._codex_developer_instructions(mode) == chat_service._CODEX_DEVELOPER_INSTRUCTIONS
+    assert "list_mcp_resources" in guidance
+    assert "read_mcp_resource" in guidance
+    assert "proposal-only" not in guidance.lower()

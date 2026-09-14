@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { memo, useEffect, useState, type KeyboardEvent } from 'react';
-import { Clapperboard, FileText, Film } from 'lucide-react';
+import { memo, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { Clapperboard, FileText, Film, Repeat2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import type { VideoNodeData } from '@/features/canvas/domain/canvasNodes';
 import { STORY_CLIP_DETAILS_WIDTH_PERCENT } from '@/features/canvas/story/storyClipLayout';
+import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
+import {
+  bindChoiceLoopPatch,
+  choiceLoopVideoCandidates,
+  clearChoiceLoopMediaPatch,
+} from '@/features/canvas/story/choiceLoopBinding';
+import { useCanvasStore } from '@/stores/canvasStore';
 
 type StoryClipMediaState = 'missing' | 'uploading' | 'generating' | 'ready' | 'failed';
 
 interface StoryClipNarrativePanelProps {
+  nodeId: string;
   narration?: string;
   productionNotes?: string;
   videoHint?: string;
@@ -27,6 +35,7 @@ function blurOnCommitShortcut(event: KeyboardEvent<HTMLTextAreaElement>) {
 }
 
 export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
+  nodeId,
   narration = '',
   productionNotes = '',
   videoHint,
@@ -38,6 +47,18 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
   const { t } = useTranslation();
   const [narrationDraft, setNarrationDraft] = useState(narration);
   const [notesDraft, setNotesDraft] = useState(productionNotes);
+  const nodes = useCanvasStore((state) => state.nodes);
+  const hasOutgoingChoices = useCanvasStore((state) =>
+    state.edges.some((edge) => edge.type === STORY_CHOICE_EDGE_TYPE && edge.source === nodeId),
+  );
+  const nodeData = nodes.find((node) => node.id === nodeId)?.data as VideoNodeData | undefined;
+  const loopCandidates = useMemo(
+    () => choiceLoopVideoCandidates(nodes, nodeId),
+    [nodes, nodeId],
+  );
+  const boundCandidateId = loopCandidates.find(
+    (candidate) => candidate.url === nodeData?.choiceLoopVideoUrl,
+  )?.nodeId ?? (nodeData?.choiceLoopVideoUrl ? '__external__' : '');
 
   useEffect(() => setNarrationDraft(narration), [narration]);
   useEffect(() => setNotesDraft(productionNotes), [productionNotes]);
@@ -53,6 +74,16 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
 
   const showMediaState = mediaState === 'uploading' || mediaState === 'generating' || mediaState === 'failed';
   const mediaLabel = showMediaState ? t(`canvas.story.mediaState.${mediaState}`) : videoHint;
+
+  const handleLoopChange = (candidateId: string) => {
+    if (candidateId === '__external__') return;
+    if (!candidateId) {
+      onChange(clearChoiceLoopMediaPatch(nodeData?.storyChoiceLoop));
+      return;
+    }
+    const candidate = loopCandidates.find((item) => item.nodeId === candidateId);
+    if (candidate) onChange(bindChoiceLoopPatch(nodeData?.storyChoiceLoop, candidate));
+  };
 
   return (
     <aside
@@ -95,6 +126,36 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
             onKeyDown={blurOnCommitShortcut}
           />
         </label>
+
+        {hasOutgoingChoices && (
+          <label className="flex flex-col gap-1.5">
+            <span className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
+              <Repeat2 className="h-3.5 w-3.5" />
+              {t('canvas.story.choiceLoop.label')}
+            </span>
+            <select
+              value={boundCandidateId}
+              aria-label={t('canvas.story.choiceLoop.label')}
+              className="h-8 min-w-0 rounded-[10px] border border-transparent bg-white/[0.035] px-2 text-[11px] text-text-dark outline-none transition-colors hover:bg-white/[0.055] focus:border-accent/45 focus:bg-white/[0.06]"
+              onChange={(event) => handleLoopChange(event.target.value)}
+            >
+              <option value="">{t('canvas.story.choiceLoop.freezeTail')}</option>
+              {boundCandidateId === '__external__' && (
+                <option value="__external__" disabled>{t('canvas.story.choiceLoop.boundExternal')}</option>
+              )}
+              {loopCandidates.map((candidate) => (
+                <option key={candidate.nodeId} value={candidate.nodeId}>
+                  {candidate.label}{candidate.durationMs ? ` · ${(candidate.durationMs / 1000).toFixed(1)}s` : ''}
+                </option>
+              ))}
+            </select>
+            <span className="text-[10px] leading-4 text-text-muted/80">
+              {loopCandidates.length > 0
+                ? t('canvas.story.choiceLoop.hint')
+                : t('canvas.story.choiceLoop.empty')}
+            </span>
+          </label>
+        )}
       </div>
 
       {(mediaLabel || importNeedsReview) && (

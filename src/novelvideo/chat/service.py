@@ -218,6 +218,16 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "or other external tools."
 )
 
+_CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
+    "For interactive stories (互动短剧、互动影游、剧情画布), load the project Agent Skill "
+    "interactive-story through the existing dramaclaw MCP resources. Call list_mcp_resources "
+    "with server=dramaclaw to discover its advertised SKILL.md URI, then call "
+    "read_mcp_resource with that server and URI; tool search discovers operations, not skill "
+    "documents. Read referenced documents through read_mcp_resource only when needed. This "
+    "Agent Skill takes precedence over generic workflow planning for stories and is not a "
+    "Workflow catalog skill_id."
+)
+
 # A resumed App Server thread retains the MCP tool catalog and environment from
 # when it was created. Bump the relevant value whenever MCP discovery or the
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
@@ -228,7 +238,11 @@ _CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v18"
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
     if str(tool_mode or "").strip() == "freezone_canvas":
-        return _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS
+        return (
+            _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS
+            + "\n"
+            + _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS
+        )
     return _CODEX_DEVELOPER_INSTRUCTIONS
 
 

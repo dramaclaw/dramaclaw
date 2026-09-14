@@ -16,7 +16,10 @@ export function storyReferenceVisibleEdges(
     const storyReference = clips.has(edge.target)
       && edge.type !== STORY_CHOICE_EDGE_TYPE
       && !isExecutionDependencyEdge(edge);
-    const hide = hideAll || (storyReference && !selected.has(edge.source) && !selected.has(edge.target));
+    // Shared character/scene assets often feed many story clips. Expanding every use when the
+    // asset itself is selected creates a fan of duplicate-looking lines, so only the selected
+    // target clip reveals the references it actually consumes.
+    const hide = hideAll || (storyReference && !selected.has(edge.target));
     if (!hide || edge.hidden) return edge;
     changed = true;
     return { ...edge, hidden: true };
