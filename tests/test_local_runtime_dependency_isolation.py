@@ -21,5 +21,6 @@ def test_local_ce_keeps_hermes_out_of_application_venv():
 
     assert ".cache/hermes-venv" in start_script
     assert '$root_dir/.venv/bin/hermes' not in start_script
+    assert 'DRAMACLAW_CHAT_BACKEND="${DRAMACLAW_CHAT_BACKEND:-hermes}"' in start_script
     assert 'HERMES_PYTHON="${HERMES_PYTHON:-$HERMES_ENV_DIR/bin/python}"' in setup_script
     assert 'uv pip install --python "$HERMES_PYTHON"' in setup_script
