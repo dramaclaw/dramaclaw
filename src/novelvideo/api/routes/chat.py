@@ -795,16 +795,27 @@ async def _record_workflow_draft_canvas_result(
             return
         task_id = str(draft.get("task_id") or "")
         revision = int(draft.get("revision") or 0)
+        attempt_started_at = draft.get("confirmation_started_at")
         if task_id != draft_receipt["task_id"] or revision != draft_receipt["revision"]:
             return
-        task_state = await asyncio.to_thread(
-            get_task_manager().get_task_for_project,
-            project_ctx,
-            "freezone_workflow_confirm",
-            0,
-            beat_num=None,
-            scope=f"{canvas_id}:{draft_id}:{revision}",
-        )
+        if attempt_started_at is None:
+            return
+        task_manager = get_task_manager()
+        task_state = None
+        for task_scope in (
+            f"{canvas_id}:{draft_id}:{revision}:{attempt_started_at}",
+            f"{canvas_id}:{draft_id}:{revision}",
+        ):
+            task_state = await asyncio.to_thread(
+                task_manager.get_task_for_project,
+                project_ctx,
+                "freezone_workflow_confirm",
+                0,
+                beat_num=None,
+                scope=task_scope,
+            )
+            if task_state is not None:
+                break
         if (
             task_state is None
             or str(task_state.task_id) != task_id
@@ -823,6 +834,7 @@ async def _record_workflow_draft_canvas_result(
             outcome="confirmed" if resolved.get("ok") else "ready",
             expected_task_id=task_id,
             expected_revision=revision,
+            expected_confirmation_started_at=attempt_started_at,
         )
     except Exception:
         logger.exception(
@@ -1050,12 +1062,13 @@ def _resolve_skill_studio_tool_result_payload(
     if not key:
         raise HTTPException(status_code=400, detail="bridge_key is required")
     ok = payload.ok and payload.tool_call_status == "completed" and not payload.errors
-    draft_skill_ids, draft_recipe_ids = _skill_studio_draft_catalog_ids(payload.draft)
     saved_to_catalog = (
         payload.saved_to_catalog or payload.skill_studio_status == "catalog_saved"
     )
-    saved_skill_ids = payload.saved_skill_ids or draft_skill_ids
-    saved_recipe_ids = payload.saved_recipe_ids or draft_recipe_ids
+    save_requested = saved_to_catalog
+    saved_skill_ids: list[str] = []
+    saved_recipe_ids: list[str] = []
+    skill_studio_status = payload.skill_studio_status
     errors = list(payload.errors)
     cancelled = (
         payload.action == "cancel" or payload.skill_studio_status == "catalog_cancelled"
@@ -1084,6 +1097,17 @@ def _resolve_skill_studio_tool_result_payload(
                 logger.exception(
                     "failed to mark Freezone Hermes worker dirty after Skill Studio save"
                 )
+    if save_requested:
+        saved_to_catalog = ok
+        skill_studio_status = (
+            "catalog_saved"
+            if ok
+            else (
+                "catalog_partially_saved"
+                if saved_skill_ids or saved_recipe_ids
+                else "catalog_save_failed"
+            )
+        )
     if ok:
         if saved_to_catalog:
             agent_instruction = (
@@ -1129,11 +1153,26 @@ def _resolve_skill_studio_tool_result_payload(
                 payload.message or "Frontend returned the user's Skill Studio response."
             )
     else:
-        agent_instruction = "Do not continue the Skill Studio flow; handle the frontend error or ask the user to retry."
-        message = (
-            payload.message
-            or "Frontend reported that the Skill Studio interaction failed."
-        )
+        if save_requested:
+            message = (
+                "Skill / Recipe 仅部分保存成功，请修正失败项后重试。"
+                if saved_skill_ids or saved_recipe_ids
+                else "Skill / Recipe 保存失败，未保存任何条目，请修正错误后重试。"
+            )
+            agent_instruction = (
+                "Catalog saving did not fully succeed. Report the errors and only the IDs "
+                "in saved_skill_ids / saved_recipe_ids as saved. Do not claim the draft "
+                "is ready to use or start its workflow. Keep the draft available for correction."
+            )
+        else:
+            agent_instruction = (
+                "Do not continue the Skill Studio flow; handle the frontend error or ask "
+                "the user to retry."
+            )
+            message = (
+                payload.message
+                or "Frontend reported that the Skill Studio interaction failed."
+            )
     agent_visible_draft = (
         None if saved_to_catalog or cancelled or revision_started else payload.draft
     )
@@ -1141,8 +1180,10 @@ def _resolve_skill_studio_tool_result_payload(
         "ok": ok,
         "status": "skill_studio_frontend_result",
         "turn_id": payload.turn_id,
-        "tool_call_status": payload.tool_call_status,
-        "skill_studio_status": payload.skill_studio_status,
+        "tool_call_status": (
+            "failed" if save_requested and not ok else payload.tool_call_status
+        ),
+        "skill_studio_status": skill_studio_status,
         "action": payload.action,
         "selections": payload.selections,
         "draft": agent_visible_draft,

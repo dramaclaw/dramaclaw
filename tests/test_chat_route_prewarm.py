@@ -431,6 +431,207 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
     assert stored["status"] == expected_status
 
 
+@pytest.mark.anyio
+async def test_old_canvas_receipt_cannot_complete_a_retried_confirmation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from novelvideo.freezone.workflow_drafts import (
+        bind_workflow_draft_task,
+        claim_workflow_draft_confirmation,
+        create_workflow_draft,
+        finish_workflow_draft_confirmation,
+        read_workflow_draft,
+    )
+
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="canvas-a",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled={
+            "ok": True,
+            "skill_id": "video-ad",
+            "plan": {"nodes": [], "edges": [], "phases": []},
+        },
+    )
+    first, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1_000,
+    )
+    assert error is None
+    assert first is not None
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+
+    async def project_context(_user, _scope):
+        finish_workflow_draft_confirmation(
+            project_dir=tmp_path,
+            canvas_id="canvas-a",
+            draft_id=draft["draft_id"],
+            outcome="ready",
+            expected_task_id="task-1",
+        )
+        retried, retry_error = claim_workflow_draft_confirmation(
+            project_dir=tmp_path,
+            canvas_id="canvas-a",
+            draft_id=draft["draft_id"],
+            revision=1,
+            now=1_001,
+        )
+        assert retry_error is None
+        assert retried is not None
+        bind_workflow_draft_task(
+            project_dir=tmp_path,
+            canvas_id="canvas-a",
+            draft_id=draft["draft_id"],
+            task_id="task-2",
+            root_task_id="task-2",
+        )
+        return SimpleNamespace(state_dir=tmp_path)
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", project_context)
+    from novelvideo import task_state
+
+    monkeypatch.setattr(
+        task_state,
+        "get_task_manager",
+        lambda: pytest.fail("stale receipt must be rejected before task lookup"),
+    )
+    await chat_route._record_workflow_draft_canvas_result(
+        user={"id": "u-admin", "username": "admin"},
+        payload=chat_route.CanvasCommandToolResultIn(
+            bridge_key="bridge-workflow",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            canvas_apply_status="applied",
+            applied=True,
+        ),
+        draft_receipt={
+            "draft_id": draft["draft_id"],
+            "revision": 1,
+            "task_id": "task-1",
+        },
+        resolved={"ok": True},
+    )
+    stored, read_error = read_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+    )
+    assert read_error is None
+    assert stored is not None
+    assert stored["status"] == "confirming"
+    assert stored["task_id"] == "task-2"
+    assert stored["confirmation_started_at"] == 1_001
+
+
+@pytest.mark.anyio
+async def test_canvas_receipt_accepts_pre_upgrade_confirmation_scope(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from novelvideo.freezone.workflow_drafts import (
+        bind_workflow_draft_task,
+        claim_workflow_draft_confirmation,
+        create_workflow_draft,
+        finish_workflow_draft_confirmation,
+        read_workflow_draft,
+    )
+
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="canvas-a",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled={
+            "ok": True,
+            "skill_id": "video-ad",
+            "plan": {"nodes": [], "edges": [], "phases": []},
+        },
+    )
+    claimed, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1_000,
+    )
+    assert error is None
+    assert claimed is not None
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+    finish_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        outcome="submitted",
+        expected_task_id="task-1",
+    )
+
+    async def project_context(_user, _scope):
+        return SimpleNamespace(state_dir=tmp_path)
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", project_context)
+    from novelvideo import task_state
+
+    queried_scopes: list[str] = []
+    legacy_scope = f"canvas-a:{draft['draft_id']}:1"
+
+    def get_task(*_args, **kwargs):
+        queried_scopes.append(kwargs["scope"])
+        if kwargs["scope"] == legacy_scope:
+            return SimpleNamespace(task_id="task-1", status="running")
+        return None
+
+    monkeypatch.setattr(
+        task_state,
+        "get_task_manager",
+        lambda: SimpleNamespace(get_task_for_project=get_task),
+    )
+    await chat_route._record_workflow_draft_canvas_result(
+        user={"id": "u-admin", "username": "admin"},
+        payload=chat_route.CanvasCommandToolResultIn(
+            bridge_key="bridge-workflow",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            canvas_apply_status="applied",
+            applied=True,
+        ),
+        draft_receipt={
+            "draft_id": draft["draft_id"],
+            "revision": 1,
+            "task_id": "task-1",
+        },
+        resolved={"ok": True},
+    )
+    stored, read_error = read_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+    )
+    assert read_error is None
+    assert stored is not None
+    assert stored["status"] == "confirmed"
+    assert queried_scopes == [
+        f"{legacy_scope}:{claimed['confirmation_started_at']}",
+        legacy_scope,
+    ]
+
+
 def test_pending_canvas_result_recovers_workflow_draft_identity(
     monkeypatch,
     tmp_path,
@@ -1689,3 +1890,49 @@ async def test_agent_session_cannot_forge_canvas_receipt(monkeypatch):
             {"username": "alice", "credential_kind": "agent_session"},
         )
     assert error.value.status_code == 403
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_catalog_save_error_overrides_frontend_success(
+    monkeypatch, tmp_path, partial
+) -> None:
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path
+    )
+
+    def save(*, username, kind, payload):
+        if partial and kind == "recipes":
+            return payload
+        raise ValueError("injected save failure")
+
+    monkeypatch.setattr(chat_route, "save_user_agent_config_item", save)
+    payload = chat_route.SkillStudioToolResultIn(
+        bridge_key="failed-save",
+        turn_id="turn-a",
+        action="confirm_add",
+        skill_studio_status="catalog_saved",
+        saved_to_catalog=True,
+        saved_skill_ids=["invented"],
+        saved_recipe_ids=["invented"],
+        draft={"skill": {"id": "skill-a"}, "recipes": [{"id": "recipe-a"}]},
+        message="已保存为正式 Skill / Recipe，可立即使用",
+    )
+
+    result = chat_route._resolve_skill_studio_tool_result_payload(
+        payload, username="alice"
+    )
+
+    assert result["ok"] is False
+    assert result["saved_to_catalog"] is False
+    assert result["tool_call_status"] == "failed"
+    assert result["skill_studio_status"] == (
+        "catalog_partially_saved" if partial else "catalog_save_failed"
+    )
+    assert result["saved_skill_ids"] == []
+    assert result["saved_recipe_ids"] == (["recipe-a"] if partial else [])
+    assert "可立即使用" not in result["message"]
+    assert ("部分" in result["message"]) if partial else (
+        "未保存任何" in result["message"]
+    )
+    assert result["draft"] == payload.draft
+    assert result["errors"]

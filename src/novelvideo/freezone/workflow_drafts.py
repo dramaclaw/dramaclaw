@@ -532,6 +532,7 @@ def bind_workflow_draft_task(
     draft_id: str,
     task_id: str,
     root_task_id: str,
+    expected_confirmation_started_at: float | None = None,
 ) -> dict[str, Any] | None:
     """Project the durable task identity onto its presentation draft."""
     _validate_scope(canvas_id, draft_id)
@@ -544,6 +545,11 @@ def bind_workflow_draft_task(
         payload = _read_draft(conn, canvas_id=canvas_id, draft_id=draft_id)
         if payload is None:
             return None
+        if expected_confirmation_started_at is not None and (
+            payload.get("confirmation_started_at") != expected_confirmation_started_at
+            or payload.get("status") != "confirming"
+        ):
+            raise ValueError("workflow draft confirmation attempt changed")
         existing = str(payload.get("task_id") or "")
         if existing and existing != clean_task_id:
             raise ValueError("workflow draft is bound to a different task")
@@ -562,6 +568,7 @@ def finish_workflow_draft_confirmation(
     outcome: str,
     expected_task_id: str = "",
     expected_revision: int | None = None,
+    expected_confirmation_started_at: float | None = None,
 ) -> dict[str, Any] | None:
     _validate_scope(canvas_id, draft_id)
     if outcome not in CONFIRMATION_OUTCOMES:
@@ -571,6 +578,10 @@ def finish_workflow_draft_confirmation(
         payload = _read_draft(conn, canvas_id=canvas_id, draft_id=draft_id)
         if payload is None:
             return None
+        if expected_confirmation_started_at is not None and (
+            payload.get("confirmation_started_at") != expected_confirmation_started_at
+        ):
+            raise ValueError("workflow draft confirmation attempt changed")
         bound_task_id = str(payload.get("task_id") or "")
         if expected_revision is not None and payload["revision"] != expected_revision:
             raise ValueError("workflow draft confirmation revision changed")
