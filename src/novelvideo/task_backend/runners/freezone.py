@@ -106,6 +106,10 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "run_freezone_analyze_shots": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.NETWORK, "EG-18b"
     ),
+    # 逐帧拉片：本地 ffmpeg 抽帧/切片 + 一跳 Vision，出网点与 analyze_shots 相同。
+    "run_freezone_video_breakdown": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.NETWORK, "EG-18b"
+    ),
     "reverse_prompt_from_image": LeafEgressRule(
         "novelvideo.freezone.image_node", LeafEgress.NETWORK, "EG-18b"
     ),
@@ -567,7 +571,10 @@ async def _run_freezone_video_breakdown_async(
         _update(ctx, "freezone_video_breakdown", job_id, ratio, message)
 
     report(0.05, "开始逐帧拉片...")
-    result = await run_freezone_video_breakdown(
+    result = await _call_freezone_leaf(
+        envelope,
+        run_freezone_video_breakdown,
+        "run_freezone_video_breakdown",
         project_dir=project_dir,
         job_id=job_id,
         video_path=Path(str(payload["video_path"])),

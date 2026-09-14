@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.freezone import jobs as freezone_jobs
@@ -353,7 +354,8 @@ async def test_breakdown_retries_once_when_the_model_output_is_beyond_repair(
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"fake")
     frame = tmp_path / "frame_00001.jpg"
-    frame.write_bytes(b"\xff\xd8\xff\xd9")
+    # 送模型前要先解码压缩，得是一张真能打开的图。
+    Image.new("RGB", (8, 8), "white").save(frame, format="JPEG")
 
     monkeypatch.setattr(freezone_jobs.shutil, "which", lambda _name: "/usr/bin/ffmpeg")
     monkeypatch.setattr(

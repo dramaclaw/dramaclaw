@@ -2265,6 +2265,7 @@ async def run_freezone_video_breakdown(
     music_clip_sec: float = 15.0,
     model: Optional[str] = None,
     progress: Optional[Callable[[float, str], None]] = None,
+    egress_context: TrustedEgressContext | None = None,
 ) -> dict[str, Any]:
     """逐帧拉片：抽帧 → Vision 拆解 → 真的把分镜图 / 运镜片段 / BGM 切出来。
 
@@ -2277,11 +2278,18 @@ async def run_freezone_video_breakdown(
 
     import json
 
+    from novelvideo.freezone import vision_gateway
     from novelvideo.freezone.vision_gateway import (
         FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
-        VisionInput,
-        call_freezone_vision_model,
-        image_media_type,
+        load_compact_vision_inputs,
+        resolve_freezone_vision_model,
+    )
+
+    # 与 `run_freezone_analyze_shots` 同一口径：出网 helper 在函数体内引入。
+    from novelvideo.freezone.presets import (
+        abandon_freezone_vision_egress,
+        complete_freezone_vision_egress,
+        prepare_freezone_vision_egress,
     )
 
     if not shutil.which("ffmpeg"):
@@ -2328,22 +2336,41 @@ async def run_freezone_video_breakdown(
         duration_sec=total_duration,
         group_size=storyboard_group_size,
     )
-    images = [
-        VisionInput(data=path.read_bytes(), media_type=image_media_type(str(path)))
-        for path in frame_paths
-        if path.exists()
-    ]
+    images = await load_compact_vision_inputs(
+        [path for path in frame_paths if path.exists()]
+    )
+    if not images:
+        raise ValueError("no readable frames to analyze")
+    vision_model_name = resolve_freezone_vision_model(model)
 
     # 修不回来的输出就重来一次：拉片一趟要几分钟，宁可多花一次调用也别让用户重传视频。
     raw: dict[str, Any] = {}
     vision_model = ""
     for attempt in (1, 2):
-        vision_model, text = await call_freezone_vision_model(
+        # 每一趟都是一次独立出网：各自 claim、各自给终态。输出能不能用是出网之后
+        # 的事，模型已经答了就算 complete，重试另开一张 claim。
+        vision_egress = await prepare_freezone_vision_egress(
+            egress_context=egress_context,
+            model_name=vision_model_name,
             prompt=prompt,
-            images=images,
-            model_override=model,
+            images=[image.data for image in images],
             timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
         )
+        try:
+            vision_model, text = await vision_gateway.call_freezone_vision_model(
+                prompt=prompt,
+                images=images,
+                model_override=model,
+                timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
+                transport_context=(
+                    vision_egress.transport_context if vision_egress else None
+                ),
+            )
+        except BaseException:
+            # 帧字节在 claim 之前就读完了，claim 与提交之间没有会抛的步骤。
+            await abandon_freezone_vision_egress(vision_egress, submitted=True)
+            raise
+        await complete_freezone_vision_egress(vision_egress, result=text or "")
         try:
             if not text:
                 raise ValueError("vision model returned no text")

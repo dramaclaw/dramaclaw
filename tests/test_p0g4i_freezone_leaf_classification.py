@@ -352,6 +352,57 @@ async def test_analyze_shots_leaf_receives_the_organization_egress_context(
     assert seen[0] is not None and seen[0].is_organization
 
 
+@pytest.mark.asyncio
+async def test_video_breakdown_leaf_receives_the_organization_egress_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """逐帧拉片里有一跳 Vision，组织任务必须带着组织身份到达 leaf。
+
+    它先跑几分钟 ffmpeg 抽帧再出网——漏分类会在抽完帧之后才被拒，白烧算力。
+    """
+
+    from novelvideo.task_backend.runners import freezone
+
+    seen: list[TrustedEgressContext | None] = []
+
+    async def breakdown_leaf(
+        *,
+        project_dir,
+        job_id,
+        video_path,
+        dimensions,
+        max_frames,
+        scene_threshold,
+        duration_sec,
+        storyboard_group_size,
+        max_motion_clips,
+        motion_clip_max_sec,
+        music_clip_sec,
+        model,
+        progress,
+        egress_context=None,
+    ):
+        seen.append(egress_context)
+        return {"model": "m", "dimensions": ["storyboard"], "frame_paths": []}
+
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: _TaskManager())
+    monkeypatch.setattr(
+        "novelvideo.freezone.jobs.run_freezone_video_breakdown", breakdown_leaf
+    )
+    monkeypatch.setattr(
+        "novelvideo.freezone.jobs.ensure_freezone_dirs", lambda *_a, **_k: None
+    )
+
+    result = await freezone._run_freezone_video_breakdown_async(
+        _organization_envelope(tmp_path, task_type="freezone_video_breakdown"),
+        _project_context(tmp_path),
+    )
+
+    assert result["job_id"] == "job-1"
+    assert len(seen) == 1
+    assert seen[0] is not None and seen[0].is_organization
+
 def test_local_table_is_exactly_the_five_audited_leaves() -> None:
     """本地表严格 5 个，不得凭「看起来像本地」扩表（护栏 b）。
 
@@ -441,7 +492,7 @@ def test_classification_matches_the_real_leaf_signatures() -> None:
 
 
 def test_every_dispatch_site_names_a_classified_leaf() -> None:
-    """20 个调用点逐个对到表里；新增未分类的调用点即红。
+    """21 个调用点逐个对到表里；新增未分类的调用点即红。
 
     `leaf_name` 是必填位置参数，不是可选项——漏传是 `TypeError`，不是静默放行。
     """
@@ -469,7 +520,8 @@ def test_every_dispatch_site_names_a_classified_leaf() -> None:
 
     # 19 → 20：`origin/staging` 的 f33ac189（#279）带进来的
     # `generate_freezone_text`，正是上一条用例点名预言的那个形状。
-    assert len(named) == 20
+    # 20 → 21：逐帧拉片 `run_freezone_video_breakdown`（抽帧后一跳 Vision）。
+    assert len(named) == 21
     assert set(named) <= set(FREEZONE_LEAF_EGRESS)
 
 

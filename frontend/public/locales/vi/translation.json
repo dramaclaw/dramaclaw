@@ -5211,16 +5211,27 @@
     },
     "video": {
       "clip": "Cắt đoạn",
+      "reshoot": "Quay lại đoạn",
       "hd": "HD",
       "analyze": "Phân tích",
+      "frameAnalysis": "Phân tích từng khung hình",
+      "extend": "Viết tiếp thông minh",
       "separateAudioVideo": "Tách tiếng/hình",
+      "frameEdit": "Chỉnh sửa khung hình",
+      "frameEditSubjectRemove": "Xóa chủ thể",
+      "frameEditSubjectModify": "Sửa chủ thể",
+      "frameEditSubjectReplace": "Thay chủ thể",
+      "frameEditMatte": "Tách nền thông minh",
       "subtitleRemoval": "Xoá phụ đề",
       "subtitleRemovalTip": "Xoá phụ đề bằng AI — chỉ hỗ trợ tiếng Trung & tiếng Anh",
       "subtitleRemovalSmart": "Xoá thông minh",
       "subtitleRemovalBox": "Xoá theo vùng chọn",
       "fullscreen": "Toàn màn hình",
       "notImplementedYet": "Sắp có",
-      "requiresVideo": "Hãy tải video lên trước"
+      "requiresVideo": "Hãy tải video lên trước",
+      "reshootRequiresSeedance25": "Quay lại đoạn chỉ hỗ trợ Seedance 2.5, dự án hiện chưa bật model này",
+      "extendRequiresSeedance25": "Viết tiếp thông minh chỉ hỗ trợ Seedance 2.5, dự án hiện chưa bật model này",
+      "extendPickHint": "Hãy chọn đoạn video làm phần mở đầu để viết tiếp"
     },
     "audio": {
       "requiresAudio": "Chưa có âm thanh nào để tải về",
@@ -5453,7 +5464,8 @@
       "placeholderAudio": "Âm thanh",
       "placeholderScript": "Kịch bản",
       "betaTag": "Beta",
-      "videoCompose": "Dựng video"
+      "videoCompose": "Dựng video",
+      "videoBreakdown": "Phân tích từng khung hình"
     },
     "imageNode": {
       "title": "Node ảnh",
@@ -5473,7 +5485,10 @@
       "requestId": "Request ID",
       "copyRequestId": "Sao chép Request ID",
       "requestIdCopied": "Đã sao chép",
-      "resolution": "Độ phân giải ảnh"
+      "resolution": "Độ phân giải ảnh",
+      "replace": "Thay ảnh",
+      "replaceTypeError": "Vui lòng tải lên tệp ảnh",
+      "replaceFailed": "Thay ảnh thất bại"
     },
     "directorControlBundle": {
       "badge": "Bộ Director tổng hợp",
@@ -5709,6 +5724,7 @@
       "noVideo": "Chưa có video",
       "upload": "Tải lên",
       "clickToUpload": "Bấm hoặc kéo thả để tải video lên",
+      "replace": "Thay video",
       "resolution": "Độ phân giải video",
       "tabs": {
         "textToVideo": "Text to Video",
@@ -7208,6 +7224,38 @@
     "openRouterConfigMessage": "Model này cần OpenRouter, nhưng API key phía backend chưa được cấu hình. Vui lòng liên hệ quản trị viên.",
     "stillRunningTitle": "Vẫn đang tạo",
     "stillRunningMessage": "Lần tạo này lâu hơn bình thường. Trang đã ngừng chờ, nhưng tác vụ vẫn chạy ngầm — hãy tải lại sau để lấy kết quả, hoặc xem tiến độ trong Trung tâm tác vụ."
+  },
+  "canvasPick": {
+    "title": "Chọn tham chiếu từ canvas",
+    "hint": "Bấm vào một node video trên canvas",
+    "backToNode": "Quay lại node",
+    "cancel": "Hủy chọn",
+    "selectNode": "Chọn “{{name}}”"
+  },
+  "videoBreakdown": {
+    "sourceLabel": "Video nguồn",
+    "emptyHint": "Thêm video để bắt đầu",
+    "uploading": "Đang tải lên…",
+    "uploadFailed": "Tải video lên thất bại",
+    "uploadVideo": "Tải video lên",
+    "pickFromCanvas": "Chọn từ canvas",
+    "replace": "Thay",
+    "attached": "Đoạn đã chọn",
+    "dimensionsLabel": "Chiều phân tích",
+    "dimension": {
+      "storyboard": "Phân cảnh",
+      "motion": "Chuyển động",
+      "music": "Âm nhạc"
+    },
+    "start": "Bắt đầu phân tích",
+    "running": "Đang phân tích…",
+    "failed": "Phân tích thất bại",
+    "emptyResult": "Không tách được nội dung nào dùng được từ video này",
+    "groups": {
+      "storyboard": "Nhóm phân cảnh {{index}}",
+      "motion": "Chuyển động | tham chiếu máy quay",
+      "music": "Âm nhạc | đoạn BGM tham chiếu"
+    }
   },
   "videoCompose": {
     "title": "Dựng video",
