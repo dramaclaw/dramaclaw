@@ -188,6 +188,23 @@ describe("PrevizViewOverlays", () => {
     );
   });
 
+  it("keeps the outline thickness in world metres on a scaled model", () => {
+    const { scene } = sceneWithCharacter();
+    const { node, model } = characterNode();
+    const overlays = new PrevizViewOverlays(fakeThree());
+    overlays.setOptions({ outline: true, namePlate: false });
+    overlays.sync(scene, () => node as never);
+
+    const material = (overlayChildren(model)[0] as FakeMesh).material as FakeMaterial;
+    const shader = { vertexShader: "void main() {\n#include <begin_vertex>\n}" };
+    material.onBeforeCompile!(shader);
+
+    // 厘米模型导入时整体乘了 0.01（见 propUnits）。外扩量要是按模型自己的单位算，14 mm
+    // 就只剩 0.14 mm，远看比深度缓冲的分辨率还细，外壳和双面墙体抢深度，相机一动就闪。
+    // 所以要除以法线经过 modelMatrix 之后的长度，把外扩量折回世界里的米。
+    expect(shader.vertexShader).toMatch(/0\.0140 \/ length\(mat3\(modelMatrix\) \* \w+\)/);
+  });
+
   it("hides the overlays while a capture is running and puts them back", () => {
     const { scene } = sceneWithCharacter();
     const { node, model } = characterNode();

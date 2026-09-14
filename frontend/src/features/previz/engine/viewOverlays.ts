@@ -169,10 +169,15 @@ export class PrevizViewOverlays {
       // 推的方向是绑定姿势的法线，抬手时描边会从手臂上滑开。
       // 用的是 `normal` 属性而不是 `objectNormal`：后者只在开了蒙皮或环境贴图时才声明，
       // 而 `normal` 是 three 给每个非 Raw 着色器无条件加的默认属性。
+      // `transformed` 是模型自己的单位，外扩量得先除掉 modelMatrix 的缩放才是世界里的米：
+      // 厘米模型导入时整体乘了 0.01（`propUnits`），不除的话 14 mm 只剩 0.14 mm，远看
+      // 比深度缓冲的分辨率还细，外壳就和双面墙体的背面抢深度，相机一动整面墙都在闪。
+      // 除的是法线方向上的长度而不是整体缩放，非等比缩放的模型也按法线方向折算。
       shader.vertexShader = shader.vertexShader.replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-        transformed += normalize(normal) * ${OUTLINE_THICKNESS_M.toFixed(4)};`,
+        vec3 outlineNormal = normalize(normal);
+        transformed += outlineNormal * (${OUTLINE_THICKNESS_M.toFixed(4)} / length(mat3(modelMatrix) * outlineNormal));`,
       );
     };
     this.outlineMaterial = material;
