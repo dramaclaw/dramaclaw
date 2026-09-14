@@ -22,7 +22,8 @@ orchestrator 推进。
 4. Action 进入 completed 前必须满足其 `action_type` 对应的服务端证据策略；不得把
    Task/Artifact 作为所有动作的统一前提。
 5. 终态单向推进；迟到回执不能覆盖 applied、failed、cancelled、expired 或 completed。
-6. 重试复用幂等键并增加 attempt，不重复应用 Canvas mutation 或重复扣费。
+6. 同一 Command 的投递重试复用命令级幂等键并增加 attempt；dead-letter 重放使用新的
+   命令级幂等键，但复用业务操作级幂等键，确保不重复应用 Canvas mutation 或重复扣费。
 7. Canvas 是 Run 的可重建投影，不是执行事实源。
 
 ## 目标边界与依赖方向
@@ -63,7 +64,7 @@ Runtime Adapters (Codex / Hermes) 与 Task Runners
 ### Workflow Action
 
 - `action_id`、`run_id`、`depends_on`、`action_type`
-- `idempotency_key`、`payload_hash`、`attempt`、`status`
+- `operation_idempotency_key`、`payload_hash`、`attempt`、`status`
 - `task_id`、`artifact_ids`、`product_operation_id`
 - `requires_user_approval`、`approval_id`
 - `evidence_policy`、`result_receipt_id`、`projection_revision`
@@ -82,30 +83,39 @@ Artifact 来进入 completed。
 
 ### Command Inbox / Outbox
 
-- `command_id`、`idempotency_key`、`payload_hash`
+- `command_id`、`command_idempotency_key`、`operation_idempotency_key`
+- `replay_of`、`payload_hash`
 - principal/project/canvas/agent/turn/run/action 关联字段
 - 正常路径：`pending → delivered → accepted → applied`
 - `applied` 是不可逆成功终态；失败终态为 `failed | cancelled | expired`
 - `consumer_id`、`lease_expires_at`、`attempt`、`available_at`
 - `result_payload`、`result_expires_at`
 
-同一 `idempotency_key` 配合不同 `payload_hash` 必须返回冲突；相同 hash 返回已有
-command。所有 compare-and-set 状态更新必须在持久化事务内完成。
+命令级和业务操作级幂等键承担不同职责：
+
+- `command_idempotency_key` 标识一次命令创建意图。同一 key 配合不同
+  `payload_hash` 必须返回冲突；相同 hash 返回已有 command。
+- `operation_idempotency_key` 标识不可重复的业务副作用，在原命令及其所有重放之间
+  保持不变。Canvas mutation、Product Operation 和计费结算必须以该键去重。
+
+所有 compare-and-set 状态更新与幂等键占用必须在持久化事务内完成。
 
 投递与超时规则：
 
 1. consumer 取得 command 时，以 CAS 将 pending 改为 delivered，同时写入 consumer 和
    lease；确认接管后改为 accepted，执行期间续租。
 2. delivered 或 accepted 的 lease 到期且未到最大尝试次数时，服务端清除旧 consumer，
-   增加 attempt，并以同一 command/idempotency key 重新进入 pending；重投不得创建新的
-   业务动作或计费 Operation。
+   增加 attempt，并以同一 command_id/command_idempotency_key 重新进入 pending；重投
+   不得创建新的业务动作或计费 Operation。
 3. 达到最大尝试次数、超过 command TTL 或 payload 不可恢复时转为 expired，并写入
    dead-letter 记录和最后失败原因，供人工重放或审计。
 4. applied、failed、cancelled、expired 都是不可逆终态。结果处理只允许从当前有效
    delivered/accepted lease 做 CAS；旧 consumer 的迟到 ack/result 必须返回终态快照，
    不得覆盖终态或较新的 attempt。
-5. 重放 dead letter 必须创建新的 command_id 和显式 replay_of 关系；只有业务幂等策略
-   允许时才能复用原 idempotency key。
+5. 重放 dead letter 必须在一个事务内创建新的 command_id 和新的
+   command_idempotency_key，并通过 replay_of 指向原命令；禁止复用原命令级幂等键。
+   新命令必须继承原 operation_idempotency_key。执行前若该业务键已有 applied/settled
+   结果，重放直接复用该结果并进入 applied，不得再次修改 Canvas 或创建计费 Operation。
 
 ## 部署支持矩阵
 
@@ -207,7 +217,9 @@ task_id 和 product_operation_id，禁止记录密钥和完整敏感 payload。
 - 浏览器关闭后 server-owned Run 继续或明确暂停。
 - 两个 API worker 竞争同一 lease 只有一个成功。
 - 多标签页重复 ack 不重复应用 mutation。
-- 同幂等键不同 payload 拒绝；相同 payload 返回相同结果。
+- 同一命令级幂等键配合不同 payload 拒绝；相同 payload 返回同一 command。
+- dead-letter 重放获得新 command/key 和 replay_of，但继承业务操作级幂等键；已有
+  applied/settled 结果时不重复写 Canvas 或扣费。
 - delivered/accepted lease 超时会以同一 command 重投，耗尽重试后进入 expired/dead letter。
 - applied/cancelled/failed/expired 后迟到 result 不改变终态。
 - 生成 Action 在 Task completed 但 Artifact 缺失时不得 completed。
