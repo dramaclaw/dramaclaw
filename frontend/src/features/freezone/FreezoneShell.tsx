@@ -145,7 +145,10 @@ import {
   type FreezoneCanvasAgentState,
 } from "@/features/freezone/canvasAgents";
 import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
-import { reportCanvasCommandToolResult } from "@/features/freezone/canvasCommandToolResult";
+import {
+  replayCanvasCommandToolResult,
+  reportCanvasCommandToolResult,
+} from "@/features/freezone/canvasCommandToolResult";
 import {
   emitCanvasContextActivity,
   reportCanvasContextToolResult,
@@ -1607,7 +1610,10 @@ export function FreezoneShell({
         frame,
         detail?.externalMcpCommand === true,
       );
-      if (!claim.accepted) return;
+      if (!claim.accepted) {
+        if (claim.terminalReceipt) replayCanvasCommandToolResult(claim.terminalReceipt);
+        return;
+      }
       const isExternalMcpCommand = claim.externalMcpCommand;
       const turnId = typeof frame.turn_id === "string" ? frame.turn_id : null;
       const bridgeKey = claim.bridgeKey;

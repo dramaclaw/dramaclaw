@@ -155,6 +155,17 @@ Artifact 来进入 completed。
 - Owner：legacy Run 为 browser；新 command 的 delivery owner 为 server。
 - 退出条件：跨 API worker、断线重连、幂等冲突、迟到回执测试通过。
 
+当前实现基线：Canvas Command、Canvas Context、Skill Studio 和 Clarification 已写入桥接
+目录中的 SQLite Inbox/Outbox，API worker 通过事务 CAS 竞争投递 lease，浏览器断线后可从
+同一 Inbox 重新投递。旧 pending/result JSON 仍保留为迁移期双写适配器，但不再作为新请求
+的唯一事实源。终态结果保留 24 小时，未完成消息按类型 TTL 转为 expired；队列状态可通过
+`bridge_status_counts` 读取。
+
+该 SQLite transport 要求所有 API worker 挂载同一个桥接目录。它正式覆盖 CE 单进程和
+共享该目录的 CE 多 worker；跨主机且无共享存储的部署必须改用实现同一 CommandPort 的
+集中数据库或 Redis Stream，在该 transport 落地前不得把节点本地 SQLite 声明为多节点
+支持。文件双写只承担旧版本兼容和回滚，不改变这一部署边界。
+
 ### Phase 3：服务端 Orchestrator shadow mode
 
 - Orchestrator 读取 Run、计算下一动作，但不调度，仅与 browser 决策做差异记录。

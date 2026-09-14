@@ -765,6 +765,7 @@ async def test_pending_canvas_command_poll_only_returns_external_mcp_commands(
         },
         bridge_dir=bridge_dir,
     )
+    (bridge_dir / "approved-external-command.pending.json").unlink()
 
     result = await chat_route.list_pending_canvas_commands(
         chat_route.PendingCanvasCommandsIn(

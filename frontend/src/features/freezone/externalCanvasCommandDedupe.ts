@@ -1,9 +1,14 @@
 import type { ServerFrame } from "@/features/superchat/types";
+import {
+  readCanvasCommandReceipt,
+  type CanvasCommandToolResultPayload,
+} from "@/features/freezone/canvasCommandToolResult";
 
 type ExternalCanvasCommandClaim = {
   externalMcpCommand: boolean;
   bridgeKey: string | null;
   accepted: boolean;
+  terminalReceipt?: CanvasCommandToolResultPayload;
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -43,6 +48,11 @@ export function claimExternalCanvasCommand(
   }
   if (seenBridgeKeys.has(bridgeKey)) {
     return { externalMcpCommand, bridgeKey, accepted: false };
+  }
+  const terminalReceipt = readCanvasCommandReceipt(bridgeKey);
+  if (terminalReceipt) {
+    seenBridgeKeys.add(bridgeKey);
+    return { externalMcpCommand, bridgeKey, accepted: false, terminalReceipt };
   }
   seenBridgeKeys.add(bridgeKey);
   return { externalMcpCommand, bridgeKey, accepted: true };
