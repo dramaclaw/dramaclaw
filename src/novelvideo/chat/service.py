@@ -1415,8 +1415,8 @@ def _chat_backend() -> str:
     preferred = (
         os.environ.get("DRAMACLAW_CHAT_BACKEND")
         or os.environ.get("SUPERTALE_CHAT_BACKEND")
-        or "hermes"
-    ).strip().lower() or "hermes"
+        or "codex"
+    ).strip().lower() or "codex"
     if preferred == "hermes":
         # Explicit "hermes" must succeed — do NOT silently fall back to
         # claude/codex. A missing hermes binary is a config error to surface.
