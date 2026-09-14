@@ -553,12 +553,6 @@ _FREEZONE_CANVAS_WRITE_ACTION = (
     rf"(?:{_FREEZONE_CANVAS_WRITE_ACTION_ZH}|"
     rf"\b{_FREEZONE_CANVAS_WRITE_ACTION_EN}\b)"
 )
-_FREEZONE_FOLLOWUP_REQUEST_MODIFIER_ZH = (
-    r"(?:(?:请(?:你)?|帮我|麻烦(?:你)?)\s*){0,3}"
-)
-_FREEZONE_FOLLOWUP_REQUEST_MODIFIER_EN = (
-    r"(?:(?:please|kindly|help\s+me(?:\s+to)?)\s+){0,3}"
-)
 _FREEZONE_CANVAS_WRITE_ACTION_RE = re.compile(
     _FREEZONE_CANVAS_WRITE_ACTION,
     re.IGNORECASE,
@@ -572,10 +566,8 @@ _FREEZONE_NEGATED_CANVAS_WRITE_RE = re.compile(
     rf"{_FREEZONE_CANVAS_WRITE_ACTION_EN}"
     rf")"
     rf"(?:(?!(?:"
-    rf"(?:但(?:是)?|而是|只|然后)\s*"
-    rf"{_FREEZONE_FOLLOWUP_REQUEST_MODIFIER_ZH}{_FREEZONE_CANVAS_WRITE_ACTION}"
-    rf"|(?:but|instead|only|then)\s+"
-    rf"{_FREEZONE_FOLLOWUP_REQUEST_MODIFIER_EN}{_FREEZONE_CANVAS_WRITE_ACTION}"
+    rf"(?:但(?:是)?|而是|只|然后)"
+    rf"|\b(?:but|instead|only|then)\b"
     rf"|[，。；,.;\n]"
     rf")).)*",
     re.IGNORECASE,
