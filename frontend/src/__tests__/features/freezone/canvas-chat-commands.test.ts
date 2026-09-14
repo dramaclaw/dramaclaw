@@ -3704,7 +3704,7 @@ describe("canvas chat commands", () => {
     expect(agentCatalog.actions).toContainEqual(
       expect.objectContaining({
         action: "sync_beat_context_to_mainline",
-        execution: "frontend_node",
+        execution: "manual_ui",
         command_type: "run_node_action",
         parameters: { node_id: "context-beat" },
       }),
@@ -3717,7 +3717,7 @@ describe("canvas chat commands", () => {
     expect(agentCatalog.instruction).toContain(
       "修改这些字段时使用 update_node_data",
     );
-    expect(agentCatalog.instruction).toContain("sync_beat_context_to_mainline");
+    expect(agentCatalog.instruction).toContain("不要调用 sync_beat_context_to_mainline");
     expect(
       agentCatalog.actions.map((action: { action: string }) => action.action),
     ).not.toContain("add_next_node");

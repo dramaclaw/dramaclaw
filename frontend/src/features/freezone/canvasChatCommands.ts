@@ -369,8 +369,6 @@ const RUN_NODE_ACTIONS = new Set([
   "reset_pano_view",
   "open_video_subtitle_erase_smart",
   "open_video_subtitle_erase_box",
-  "commit_node",
-  "sync_beat_context_to_mainline",
 ]);
 
 const GENERATION_NODE_ACTIONS = new Set([

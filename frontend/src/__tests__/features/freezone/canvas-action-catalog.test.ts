@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { buildCanvasActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
+import {
+  CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+  extractCanvasChatCommandEnvelopes,
+} from "@/features/freezone/canvasChatCommands";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/canvasNodeActionCatalog";
 
 function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["type"] }): CanvasNode {
@@ -14,6 +18,62 @@ function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["typ
 }
 
 describe("canvas action catalog", () => {
+  it("keeps mainline writes manual until their approval receipt chain exists", () => {
+    const beatContext = node({
+      id: "beat-context-a",
+      type: CANVAS_NODE_TYPES.beatContext,
+      data: {
+        preset_managed: true,
+        projectId: "project-a",
+        episode: 1,
+        beat: 2,
+        mainline_context: [{ kind: "beat", projectId: "project-a", episode: 1, beat: 2 }],
+      },
+    });
+    const commitCandidate = node({
+      id: "commit-a",
+      type: CANVAS_NODE_TYPES.imageGen,
+      data: {
+        user_spawned: true,
+        imageUrl: "/static/project/image.png",
+        slot_target: { kind: "frame", episode: 1, beat: 2 },
+      },
+    });
+
+    expect(buildCanvasNodeActionCatalog(beatContext).actions).toContainEqual(
+      expect.objectContaining({
+        action: "sync_beat_context_to_mainline",
+        execution: "manual_ui",
+      }),
+    );
+    expect(buildCanvasNodeActionCatalog(commitCandidate).actions).toContainEqual(
+      expect.objectContaining({
+        action: "commit_node",
+        execution: "manual_ui",
+      }),
+    );
+
+    expect(
+      extractCanvasChatCommandEnvelopes([
+        {
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [
+            {
+              type: "run_node_action",
+              node_id: beatContext.id,
+              action: "sync_beat_context_to_mainline",
+            },
+            {
+              type: "run_node_action",
+              node_id: commitCandidate.id,
+              action: "commit_node",
+            },
+          ],
+        },
+      ]),
+    ).toEqual([]);
+  });
+
   it("lets upload nodes open the local upload picker through a manual UI action", () => {
     const upload = node({
       id: "upload-a",
