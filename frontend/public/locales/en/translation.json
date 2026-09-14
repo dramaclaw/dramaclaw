@@ -878,7 +878,36 @@
       "canvasExecuting": "Executing...",
       "canvasConfirmExecution": "Confirm execution",
       "canvasTimeoutCancelled": "The canvas operation timed out and was cancelled without being applied.",
-      "canvasManuallyCancelled": "The canvas operation was manually cancelled without being applied."
+      "canvasManuallyCancelled": "The canvas operation was manually cancelled without being applied.",
+      "canvasRetryPrompt": "Recheck and continue the unfinished canvas operation. Preserve completed results, verify existing nodes and run state, then complete generation parameters before requesting approval again.",
+      "canvasRetryDisplay": "Recheck and continue the unfinished canvas operation",
+      "generationParams": {
+        "autoRatio": "Auto ratio",
+        "imageQuality": "Image quality",
+        "quality": {
+          "low": "Low quality",
+          "medium": "Standard quality",
+          "high": "High quality"
+        },
+        "imageCount": "{{count}} image",
+        "imageCount_other": "{{count}} images",
+        "videoCount": "{{count}} video",
+        "videoCount_other": "{{count}} videos",
+        "durationSeconds": "{{count}} second",
+        "durationSeconds_other": "{{count}} seconds",
+        "generateAudio": "Generate audio",
+        "muteAudio": "Do not generate audio",
+        "audioOn": "Audio",
+        "audioOff": "Muted"
+      },
+      "clarification": {
+        "skipped": "Skipped",
+        "submitted": "Submitted",
+        "skippedQuestions": "Questions skipped",
+        "submittedAnswers": "Submitted answers · {{count}}",
+        "noAnswersSkipped": "These questions were skipped.",
+        "noAnswersSubmitted": "No specific options were submitted."
+      }
     },
     "workflowRecovery": {
       "safetyReviewFailed": "Some nodes did not pass safety review",

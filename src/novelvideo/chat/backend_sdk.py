@@ -46,6 +46,20 @@ _CODEX_LIFECYCLE_ONLY_EVENTS = {
     "egress_submitted",
 }
 
+# These MCP tools intentionally keep the App Server turn open while a durable
+# frontend card waits for the user. Their own bridge timeout reports a
+# recoverable ``pending_user_input`` result, so the generic runtime idle guard
+# must not interrupt them first.
+_CODEX_USER_INPUT_TOOL_NAMES = {
+    "freezone_request_user_clarification",
+    "freezone_finish_agent_catalog_draft",
+}
+
+
+def _codex_tool_waits_for_user_input(name: str | None) -> bool:
+    normalized = str(name or "").strip()
+    return normalized.rsplit(".", 1)[-1] in _CODEX_USER_INPUT_TOOL_NAMES
+
 
 @dataclass(slots=True)
 class ChatBackendEvent:
@@ -1830,14 +1844,22 @@ class CodexThread:
         idle_deadline = started_at + CODEX_STREAM_IDLE_TIMEOUT
         total_deadline = started_at + CODEX_STREAM_TOTAL_TIMEOUT
         saw_runtime_progress = False
+        user_input_calls: set[str] = set()
         timed_out = False
 
         try:
             while True:
-                deadline = min(
-                    total_deadline,
-                    idle_deadline if saw_runtime_progress else first_progress_deadline,
-                )
+                if user_input_calls:
+                    deadline = total_deadline
+                else:
+                    deadline = min(
+                        total_deadline,
+                        (
+                            idle_deadline
+                            if saw_runtime_progress
+                            else first_progress_deadline
+                        ),
+                    )
                 remaining = deadline - loop.time()
                 try:
                     if remaining <= 0:
@@ -1848,7 +1870,9 @@ class CodexThread:
                 except asyncio.TimeoutError:
                     timed_out = True
                     now = loop.time()
-                    if now >= total_deadline:
+                    if user_input_calls:
+                        timeout_kind = "user-input"
+                    elif now >= total_deadline:
                         timeout_kind = "total"
                     elif saw_runtime_progress:
                         timeout_kind = "idle"
@@ -1878,8 +1902,13 @@ class CodexThread:
                                 exc_info=True,
                             )
 
+                    timeout_message = (
+                        "等待用户确认超时，请重新提交确认卡。"
+                        if timeout_kind == "user-input"
+                        else "Codex App Server 响应超时，请重试。"
+                    )
                     timeout_error = {
-                        "message": "Codex App Server 响应超时，请重试。",
+                        "message": timeout_message,
                         "kind": timeout_kind,
                     }
                     yield ChatBackendEvent(
@@ -1901,7 +1930,7 @@ class CodexThread:
                         thread_id=self.id,
                         turn_id=current_turn_id,
                         disposition="timeout",
-                        text="Codex App Server 响应超时，请重试。",
+                        text=timeout_message,
                         error=timeout_error,
                     )
                     break
@@ -1914,6 +1943,19 @@ class CodexThread:
                         total_deadline,
                         loop.time() + CODEX_STREAM_IDLE_TIMEOUT,
                     )
+                if event.type == "tool_started" and _codex_tool_waits_for_user_input(
+                    event.name
+                ):
+                    user_input_calls.add(event.call_id or str(event.name))
+                elif event.type == "tool_updated":
+                    call_key = event.call_id or str(event.name)
+                    status = str(event.status or "").strip().lower()
+                    if call_key in user_input_calls and status not in {
+                        "inprogress",
+                        "pending",
+                        "running",
+                    }:
+                        user_input_calls.discard(call_key)
                 yield event
                 if event.type == "complete":
                     break

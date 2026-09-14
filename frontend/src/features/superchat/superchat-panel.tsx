@@ -2399,6 +2399,12 @@ function imageApprovalParamGroups(
   approval: PendingCanvasCommandApproval,
   canvasNodes: CanvasNode[],
   fallbackModel: string,
+  models: readonly {
+    id: string;
+    ratioOptions?: string[];
+    resolutionOptions?: string[];
+    qualityOptions?: string[];
+  }[] = [],
 ): CanvasApprovalImageParams[] {
   const nodeIds = imageGenerateCommandNodeIds(approval.envelopes);
   const textValue = (value: unknown, fallback: string) =>
@@ -2406,13 +2412,24 @@ function imageApprovalParamGroups(
   const groups = new Map<string, CanvasApprovalImageParams>();
   for (const nodeId of nodeIds) {
     const nodeData = approvalNodeData(approval, canvasNodes, nodeId);
+    const model = textValue(nodeData?.model, fallbackModel);
+    const selectedModel = models.find((item) => item.id === model);
+    const aspectOptions = clarificationCapabilityOptions(
+      selectedModel?.ratioOptions,
+      CANVAS_APPROVAL_IMAGE_ASPECT_RATIO_OPTIONS,
+    );
+    const sizeOptions = clarificationCapabilityOptions(
+      selectedModel?.resolutionOptions,
+      CANVAS_APPROVAL_IMAGE_SIZE_OPTIONS,
+    );
+    const qualityOptions = imageQualityOptionsForApproval(selectedModel);
     const params: CanvasApprovalImageParams = {
       nodeId,
       nodeIds: [nodeId],
-      model: textValue(nodeData?.model, fallbackModel),
-      aspectRatio: textValue(nodeData?.aspectRatio, "16:9"),
-      size: textValue(nodeData?.size, "2K"),
-      quality: textValue(nodeData?.quality, "medium"),
+      model,
+      aspectRatio: normalizeApprovalStringOption(nodeData?.aspectRatio, aspectOptions, "16:9"),
+      size: normalizeApprovalStringOption(nodeData?.size, sizeOptions, "2K"),
+      quality: normalizeImageQualityForApproval(nodeData?.quality, qualityOptions),
       count: typeof nodeData?.count === "number" && CANVAS_APPROVAL_IMAGE_COUNT_OPTIONS.includes(nodeData.count as 1 | 2 | 4)
         ? nodeData.count
         : 1,
@@ -2435,8 +2452,44 @@ function imageApprovalInitialParams(
   approval: PendingCanvasCommandApproval,
   canvasNodes: CanvasNode[],
   fallbackModel: string,
+  models: readonly {
+    id: string;
+    ratioOptions?: string[];
+    resolutionOptions?: string[];
+    qualityOptions?: string[];
+  }[] = [],
 ): CanvasApprovalImageParams | null {
-  return imageApprovalParamGroups(approval, canvasNodes, fallbackModel)[0] ?? null;
+  return imageApprovalParamGroups(approval, canvasNodes, fallbackModel, models)[0] ?? null;
+}
+
+function imageQualityOptionsForApproval(
+  model: { qualityOptions?: string[] } | null | undefined,
+): readonly string[] {
+  return (model?.qualityOptions ?? []).map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeImageQualityForApproval(
+  value: unknown,
+  options: readonly string[],
+): string | null {
+  if (options.length === 0) return null;
+  const requested = typeof value === "string" ? value.trim() : "";
+  return options.find((option) => option.toLowerCase() === requested.toLowerCase())
+    ?? options.find((option) => option.toLowerCase() === "medium")
+    ?? options[0]
+    ?? null;
+}
+
+function normalizeApprovalStringOption(
+  value: unknown,
+  options: readonly string[],
+  preferred: string,
+): string {
+  const requested = typeof value === "string" ? value.trim() : "";
+  return options.find((option) => option.toLowerCase() === requested.toLowerCase())
+    ?? options.find((option) => option.toLowerCase() === preferred.toLowerCase())
+    ?? options[0]
+    ?? preferred;
 }
 
 function resolutionToVideoQuality(value: string): VideoGenQuality | null {
@@ -2603,8 +2656,10 @@ function videoApprovalParamGroups(
     id: string;
     label?: string;
     resolutionOptions?: string[];
+    ratioOptions?: string[];
     minDuration?: number | null;
     maxDuration?: number | null;
+    supportsGenerateAudio?: boolean;
   }>,
   fallbackModel: string,
 ): CanvasApprovalVideoParams[] {
@@ -2620,7 +2675,10 @@ function videoApprovalParamGroups(
     const model = selectedModel?.id ?? rawModel;
     const qualityOptions = videoQualityOptionsForApproval(selectedModel);
     const durationBounds = videoDurationBoundsForApproval(selectedModel);
-    const aspectRatio = textValue(nodeData?.aspectRatio, "16:9");
+    const aspectOptions = clarificationCapabilityOptions(
+      selectedModel?.ratioOptions,
+      VIDEO_GENERATION_ASPECT_RATIOS,
+    );
     const requiresHumanReviewConfirmation = (
       isSeedance20ApprovalModel(model)
       && approvalVideoHasImageInput(approval, canvasNodes, canvasEdges, nodeId, nodeData)
@@ -2630,12 +2688,12 @@ function videoApprovalParamGroups(
       nodeId,
       nodeIds: [nodeId],
       model,
-      aspectRatio: (VIDEO_GENERATION_ASPECT_RATIOS as readonly string[]).includes(aspectRatio)
-        ? aspectRatio
-        : "16:9",
+      aspectRatio: normalizeApprovalStringOption(nodeData?.aspectRatio, aspectOptions, "16:9"),
       quality: normalizeVideoQualityForApproval(nodeData?.quality, qualityOptions),
       durationSec: clampVideoDurationForApproval(nodeData?.durationSec, durationBounds),
-      generateAudio: Boolean(nodeData?.generateAudio),
+      generateAudio: selectedModel?.supportsGenerateAudio === false
+        ? false
+        : Boolean(nodeData?.generateAudio),
       humanReview: requiresHumanReviewConfirmation || Boolean(nodeData?.humanReview),
       requiresHumanReviewConfirmation,
       count: isCanvasApprovalVideoCount(nodeData?.count) ? nodeData.count : 1,
@@ -2664,8 +2722,10 @@ function videoApprovalInitialParams(
     id: string;
     label?: string;
     resolutionOptions?: string[];
+    ratioOptions?: string[];
     minDuration?: number | null;
     maxDuration?: number | null;
+    supportsGenerateAudio?: boolean;
   }>,
   fallbackModel: string,
 ): CanvasApprovalVideoParams | null {
@@ -2871,7 +2931,7 @@ function amendCanvasApprovalWithImageParams(
     model: params.model,
     aspectRatio: params.aspectRatio,
     size: params.size,
-    quality: params.quality,
+    ...(params.quality ? { quality: params.quality } : {}),
     count: params.count,
   };
   return amendCanvasApprovalWithGenerationData(
@@ -3017,6 +3077,9 @@ export const amendCanvasApprovalWithAudioParamsForTest = amendCanvasApprovalWith
 export const imageApprovalInitialParamsForTest = imageApprovalInitialParams;
 export const videoApprovalInitialParamsForTest = videoApprovalInitialParams;
 export const imageApprovalParamGroupsForTest = imageApprovalParamGroups;
+export const imageQualityOptionsForApprovalForTest = imageQualityOptionsForApproval;
+export const normalizeImageQualityForApprovalForTest = normalizeImageQualityForApproval;
+export const clarificationQuestionsWithLiveModelCatalogsForTest = clarificationQuestionsWithLiveModelCatalogs;
 export const videoApprovalParamGroupsForTest = videoApprovalParamGroups;
 export const textApprovalInitialParamsForTest = textApprovalInitialParams;
 export const audioApprovalInitialParamsForTest = audioApprovalInitialParams;
@@ -3062,23 +3125,30 @@ function CanvasApprovalImageParamSelect({
 }
 
 function CanvasApprovalVideoConfigChip({
+  aspectOptions,
   disabled,
   durationBounds,
   onChange,
   params,
   qualityOptions,
+  supportsGenerateAudio,
 }: {
+  aspectOptions: readonly string[];
   disabled?: boolean;
   durationBounds: { min: number; max: number };
   onChange: (patch: Partial<CanvasApprovalVideoParams>) => void;
   params: CanvasApprovalVideoParams;
   qualityOptions: readonly VideoGenQuality[];
+  supportsGenerateAudio: boolean;
 }) {
+  const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({});
-  const audioLabel = params.generateAudio ? "有声" : "静音";
+  const audioLabel = params.generateAudio
+    ? t("freezone.chat.generationParams.audioOn")
+    : t("freezone.chat.generationParams.audioOff");
 
   const updatePopoverPosition = useCallback(() => {
     const rect = triggerRef.current?.getBoundingClientRect();
@@ -3148,7 +3218,7 @@ function CanvasApprovalVideoConfigChip({
         >
           <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">比例</div>
           <div className="mb-3 grid grid-cols-4 gap-1.5">
-            {VIDEO_GENERATION_ASPECT_RATIOS.map((ratio) => {
+            {aspectOptions.map((ratio) => {
               const isActive = params.aspectRatio === ratio;
               return (
                 <button
@@ -3205,28 +3275,34 @@ function CanvasApprovalVideoConfigChip({
             className="mb-3 w-full"
           />
 
-          <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">生成音频</div>
-          <div className="flex items-center justify-between rounded-md bg-white/[0.06] px-2.5 py-1.5">
-            <span className="text-xs font-medium text-foreground">{audioLabel}</span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={params.generateAudio}
-              aria-label="生成音频"
-              onClick={() => onChange({ generateAudio: !params.generateAudio })}
-              className={cn(
-                "relative h-5 w-9 rounded-full transition-colors",
-                params.generateAudio ? "bg-white/35" : "bg-white/15",
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute top-0.5 size-4 rounded-full bg-white transition-transform",
-                  params.generateAudio ? "translate-x-4" : "translate-x-0.5",
-                )}
-              />
-            </button>
-          </div>
+          {supportsGenerateAudio ? (
+            <>
+              <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">
+                {t("freezone.chat.generationParams.generateAudio")}
+              </div>
+              <div className="flex items-center justify-between rounded-md bg-white/[0.06] px-2.5 py-1.5">
+                <span className="text-xs font-medium text-foreground">{audioLabel}</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={params.generateAudio}
+                  aria-label={t("freezone.chat.generationParams.generateAudio")}
+                  onClick={() => onChange({ generateAudio: !params.generateAudio })}
+                  className={cn(
+                    "relative h-5 w-9 rounded-full transition-colors",
+                    params.generateAudio ? "bg-white/35" : "bg-white/15",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "absolute top-0.5 size-4 rounded-full bg-white transition-transform",
+                      params.generateAudio ? "translate-x-4" : "translate-x-0.5",
+                    )}
+                  />
+                </button>
+              </div>
+            </>
+          ) : null}
         </div>,
         document.body,
       )}
@@ -3258,8 +3334,13 @@ function CanvasCommandApprovalCard({
   const fallbackImageModel = imageModels.models[0]?.id ?? "";
   const fallbackVideoModel = videoModels.models[0]?.id ?? "";
   const initialImageParams = useMemo(
-    () => imageApprovalParamGroups(approval, canvasNodes, fallbackImageModel),
-    [approval, canvasNodes, fallbackImageModel],
+    () => imageApprovalParamGroups(
+      approval,
+      canvasNodes,
+      fallbackImageModel,
+      imageModels.models,
+    ),
+    [approval, canvasNodes, fallbackImageModel, imageModels.models],
   );
   const initialVideoParams = useMemo(
     () => videoApprovalParamGroups(
@@ -3360,10 +3441,29 @@ function CanvasCommandApprovalCard({
     return options;
   }, [imageModels.models]);
   const updateImageParams = useCallback((index: number, patch: Partial<CanvasApprovalImageParams>) => {
-    setImageParams((current) => current.map((params, paramsIndex) => (
-      paramsIndex === index ? { ...params, ...patch } : params
-    )));
-  }, []);
+    setImageParams((current) => current.map((params, paramsIndex) => {
+      if (paramsIndex !== index) return params;
+      const next = { ...params, ...patch };
+      const model = imageModels.models.find((item) => item.id === next.model);
+      const aspectOptions = clarificationCapabilityOptions(
+        model?.ratioOptions,
+        CANVAS_APPROVAL_IMAGE_ASPECT_RATIO_OPTIONS,
+      );
+      const sizeOptions = clarificationCapabilityOptions(
+        model?.resolutionOptions,
+        CANVAS_APPROVAL_IMAGE_SIZE_OPTIONS,
+      );
+      return {
+        ...next,
+        aspectRatio: normalizeApprovalStringOption(next.aspectRatio, aspectOptions, "16:9"),
+        size: normalizeApprovalStringOption(next.size, sizeOptions, "2K"),
+        quality: normalizeImageQualityForApproval(
+          next.quality,
+          imageQualityOptionsForApproval(model),
+        ),
+      };
+    }));
+  }, [imageModels.models]);
   const videoModelOptionsFor = useCallback((params: CanvasApprovalVideoParams) => {
     const options = videoModels.models.map((model) => ({ value: model.id, label: model.label ?? model.id }));
     if (params.model && !options.some((option) => option.value === params.model)) {
@@ -3378,10 +3478,16 @@ function CanvasCommandApprovalCard({
       const model = videoModels.models.find((item) => item.id === next.model) ?? videoModels.models[0];
       const qualityOptions = videoQualityOptionsForApproval(model);
       const durationBounds = videoDurationBoundsForApproval(model);
+      const aspectOptions = clarificationCapabilityOptions(
+        model?.ratioOptions,
+        VIDEO_GENERATION_ASPECT_RATIOS,
+      );
       return {
         ...next,
+        aspectRatio: normalizeApprovalStringOption(next.aspectRatio, aspectOptions, "16:9"),
         quality: normalizeVideoQualityForApproval(next.quality, qualityOptions),
         durationSec: clampVideoDurationForApproval(next.durationSec, durationBounds),
+        generateAudio: model?.supportsGenerateAudio === false ? false : next.generateAudio,
       };
     }));
   }, [videoModels.models]);
@@ -3461,9 +3567,22 @@ function CanvasCommandApprovalCard({
           </button>
         </div>
       )}
-      {imageParams.map((imageParam, imageParamIndex) => (
-        <div key={`${imageParam.nodeId}:${imageParam.model}`} className="border-t border-amber-400/10 px-3 py-1.5">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+      {imageParams.map((imageParam, imageParamIndex) => {
+        const selectedImageModel = imageModels.models.find(
+          (model) => model.id === imageParam.model,
+        );
+        const imageAspectOptions = clarificationCapabilityOptions(
+          selectedImageModel?.ratioOptions,
+          CANVAS_APPROVAL_IMAGE_ASPECT_RATIO_OPTIONS,
+        );
+        const imageSizeOptions = clarificationCapabilityOptions(
+          selectedImageModel?.resolutionOptions,
+          CANVAS_APPROVAL_IMAGE_SIZE_OPTIONS,
+        );
+        const imageQualityOptions = imageQualityOptionsForApproval(selectedImageModel);
+        return (
+          <div key={`${imageParam.nodeId}:${imageParam.model}`} className="border-t border-amber-400/10 px-3 py-1.5">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground">
               <Image className="size-3" />图片
               {(imageParam.nodeIds?.length ?? 1) > 1 ? ` ×${imageParam.nodeIds?.length}` : ""}
@@ -3482,7 +3601,7 @@ function CanvasCommandApprovalCard({
               disabled={isExecuting}
               value={imageParam.aspectRatio}
               onChange={(value) => updateImageParams(imageParamIndex, { aspectRatio: value })}
-              options={CANVAS_APPROVAL_IMAGE_ASPECT_RATIO_OPTIONS.map((option) => ({
+              options={imageAspectOptions.map((option) => ({
                 value: option,
                 label: option === "auto" ? "自动比例" : option,
               }))}
@@ -3493,16 +3612,20 @@ function CanvasCommandApprovalCard({
               disabled={isExecuting}
               value={imageParam.size}
               onChange={(value) => updateImageParams(imageParamIndex, { size: value })}
-              options={CANVAS_APPROVAL_IMAGE_SIZE_OPTIONS.map((option) => ({ value: option, label: option }))}
+              options={imageSizeOptions.map((option) => ({ value: option, label: option }))}
             />
-            <span className="h-4 w-px bg-white/[0.12]" />
-            <CanvasApprovalImageParamSelect
-              ariaLabel="图片画质"
-              disabled={isExecuting}
-              value={imageParam.quality}
-              onChange={(value) => updateImageParams(imageParamIndex, { quality: value })}
-              options={CANVAS_APPROVAL_IMAGE_QUALITY_OPTIONS.map((option) => ({ value: option, label: option }))}
-            />
+            {imageQualityOptions.length > 0 ? (
+              <>
+                <span className="h-4 w-px bg-white/[0.12]" />
+                <CanvasApprovalImageParamSelect
+                  ariaLabel={t("freezone.chat.generationParams.imageQuality")}
+                  disabled={isExecuting}
+                  value={imageParam.quality ?? imageQualityOptions[0]}
+                  onChange={(value) => updateImageParams(imageParamIndex, { quality: value })}
+                  options={imageQualityOptions.map((option) => ({ value: option, label: option }))}
+                />
+              </>
+            ) : null}
             <span className="h-4 w-px bg-white/[0.12]" />
             <CanvasApprovalImageParamSelect
               ariaLabel="图片数量"
@@ -3511,14 +3634,19 @@ function CanvasCommandApprovalCard({
               onChange={(value) => updateImageParams(imageParamIndex, { count: Number(value) })}
               options={CANVAS_APPROVAL_IMAGE_COUNT_OPTIONS.map((option) => ({ value: String(option), label: `${option} 张` }))}
             />
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
       {videoParams.map((videoParam, videoParamIndex) => {
         const selectedVideoModel = videoModels.models.find((model) => model.id === videoParam.model)
           ?? videoModels.models[0];
         const videoQualityOptions = videoQualityOptionsForApproval(selectedVideoModel);
         const videoDurationBounds = videoDurationBoundsForApproval(selectedVideoModel);
+        const videoAspectOptions = clarificationCapabilityOptions(
+          selectedVideoModel?.ratioOptions,
+          VIDEO_GENERATION_ASPECT_RATIOS,
+        );
         return (
         <div key={`${videoParam.nodeId}:${videoParam.model}`} className="border-t border-amber-400/10 px-3 py-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
@@ -3536,11 +3664,13 @@ function CanvasCommandApprovalCard({
             />
             <span className="h-3.5 w-px bg-white/[0.12]" />
             <CanvasApprovalVideoConfigChip
+              aspectOptions={videoAspectOptions}
               disabled={isExecuting}
               durationBounds={videoDurationBounds}
               onChange={(patch) => updateVideoParams(videoParamIndex, patch)}
               params={videoParam}
               qualityOptions={videoQualityOptions}
+              supportsGenerateAudio={selectedVideoModel?.supportsGenerateAudio !== false}
             />
             <span className="h-3.5 w-px bg-white/[0.12]" />
             <CanvasApprovalImageParamSelect
@@ -3928,9 +4058,248 @@ type SkillStudioQuestionSelections = Record<string, string | string[] | SkillStu
 
 type AssistantClarificationQuestion = SkillStudioQuestion & {
   mode?: "single" | "multiple";
+  options_source?: ClarificationOptionsSource;
 };
 
 type AssistantClarificationAnswers = SkillStudioQuestionSelections;
+
+type ClarificationCatalogModel = {
+  id: string;
+  label?: string;
+  apiModel?: string;
+  catalogId?: string;
+  resolutionOptions?: string[];
+  ratioOptions?: string[];
+  qualityOptions?: string[];
+  minDuration?: number | null;
+  maxDuration?: number | null;
+  supportsGenerateAudio?: boolean;
+};
+
+type ClarificationOptionsSource =
+  | "image_models"
+  | "selected_image_model_ratios"
+  | "selected_image_model_resolutions"
+  | "selected_image_model_qualities"
+  | "image_variant_counts"
+  | "video_models"
+  | "selected_video_model_ratios"
+  | "selected_video_model_resolutions"
+  | "selected_video_model_durations"
+  | "selected_video_model_audio"
+  | "video_variant_counts";
+
+const CLARIFICATION_SOURCE_BY_QUESTION_ID: Record<string, ClarificationOptionsSource> = {
+  image_model: "image_models",
+  image_aspect_ratio: "selected_image_model_ratios",
+  image_resolution: "selected_image_model_resolutions",
+  image_quality: "selected_image_model_qualities",
+  image_variants_per_node: "image_variant_counts",
+  video_model: "video_models",
+  video_aspect_ratio: "selected_video_model_ratios",
+  video_resolution: "selected_video_model_resolutions",
+  video_duration_seconds: "selected_video_model_durations",
+  video_generate_audio: "selected_video_model_audio",
+  video_variants_per_node: "video_variant_counts",
+};
+
+const normalizedClarificationId = (value: unknown) =>
+  String(value ?? "").trim().toLowerCase().replace(/-/g, "_");
+
+function clarificationSelectedValue(
+  questions: AssistantClarificationQuestion[],
+  answers: AssistantClarificationAnswers,
+  questionId: string,
+): string {
+  const questionIndex = questions.findIndex(
+    (question) => normalizedClarificationId(question.id) === questionId,
+  );
+  if (questionIndex < 0) {
+    const directAnswer = Object.entries(answers).find(
+      ([answerKey]) => normalizedClarificationId(answerKey) === questionId,
+    )?.[1];
+    const selection = normalizedSkillStudioQuestionSelection(directAnswer);
+    return selection.optionIds[0]?.trim() || selection.customText.trim();
+  }
+  const question = questions[questionIndex];
+  const selection = normalizedSkillStudioQuestionSelection(
+    answers[skillStudioQuestionKey(question, questionIndex)],
+  );
+  return selection.optionIds[0]?.trim() || selection.customText.trim();
+}
+
+function clarificationSelectedModel(
+  questions: AssistantClarificationQuestion[],
+  answers: AssistantClarificationAnswers,
+  questionId: "image_model" | "video_model",
+  models: readonly ClarificationCatalogModel[],
+): ClarificationCatalogModel | null {
+  const selected = clarificationSelectedValue(questions, answers, questionId).toLowerCase();
+  if (!selected) return null;
+  return models.find((model) =>
+    [model.id, model.apiModel, model.catalogId, model.label]
+      .some((identifier) => String(identifier ?? "").trim().toLowerCase() === selected),
+  ) ?? null;
+}
+
+function clarificationOptions(
+  values: readonly (string | number | boolean)[],
+  existingOptions: SkillStudioQuestionOption[],
+  labelFor: (value: string | number | boolean) => string = String,
+): SkillStudioQuestionOption[] {
+  const normalized = (value: unknown) => String(value ?? "").trim().toLowerCase();
+  return values.map((value) => {
+    const id = String(value);
+    const existing = existingOptions.find((option) =>
+      normalized(option.id) === normalized(id) || normalized(option.label) === normalized(id),
+    );
+    return {
+      id,
+      label: labelFor(value),
+      ...(existing?.description ? { description: existing.description } : {}),
+    };
+  });
+}
+
+function clarificationCapabilityOptions(
+  configured: readonly string[] | null | undefined,
+  fallback: readonly string[],
+): readonly string[] {
+  const values = (configured ?? []).map((value) => value.trim()).filter(Boolean);
+  return values.length > 0 ? values : fallback;
+}
+
+function clarificationQuestionsWithLiveModelCatalogs(
+  questions: AssistantClarificationQuestion[],
+  imageModels: readonly ClarificationCatalogModel[],
+  videoModels: readonly ClarificationCatalogModel[],
+  answers: AssistantClarificationAnswers = {},
+  t?: TFunction,
+): AssistantClarificationQuestion[] {
+  const selectedImageModel = clarificationSelectedModel(
+    questions, answers, "image_model", imageModels,
+  );
+  const selectedVideoModel = clarificationSelectedModel(
+    questions, answers, "video_model", videoModels,
+  );
+  const hasImageModelQuestion = questions.some(
+    (question) => normalizedClarificationId(question.id) === "image_model",
+  );
+  const hasVideoModelQuestion = questions.some(
+    (question) => normalizedClarificationId(question.id) === "video_model",
+  );
+  return questions.map((question) => {
+    const questionId = normalizedClarificationId(question.id);
+    const source = question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[questionId];
+    const existingOptions = question.options ?? [];
+    const normalized = (value: unknown) => String(value ?? "").trim().toLowerCase();
+    if (source === "image_models" || source === "video_models") {
+      const models = source === "image_models" ? imageModels : videoModels;
+      if (!models.length) return question;
+      return {
+        ...question,
+        options_source: source,
+        options: models.map((model) => {
+          const identifiers = [model.id, model.apiModel, model.catalogId, model.label]
+            .map(normalized)
+            .filter(Boolean);
+          const existing = existingOptions.find((option) => {
+            const optionId = normalized(option.id);
+            const optionLabel = normalized(option.label).replace(/\s*\(recommended\)\s*$/, "");
+            return identifiers.includes(optionId) || identifiers.includes(optionLabel);
+          });
+          return {
+            id: model.id,
+            label: model.label ?? model.id,
+            ...(existing?.description ? { description: existing.description } : {}),
+          };
+        }),
+      };
+    }
+    let values: readonly (string | number | boolean)[] | null = null;
+    let labelFor: (value: string | number | boolean) => string = String;
+    if (source?.startsWith("selected_image_model_") && !selectedImageModel) {
+      return hasImageModelQuestion
+        ? { ...question, options_source: source, options: [], allow_custom: false }
+        : question;
+    }
+    if (source?.startsWith("selected_video_model_") && !selectedVideoModel) {
+      return hasVideoModelQuestion
+        ? { ...question, options_source: source, options: [], allow_custom: false }
+        : question;
+    }
+    if (source === "selected_image_model_ratios") {
+      values = clarificationCapabilityOptions(
+        selectedImageModel?.ratioOptions,
+        CANVAS_APPROVAL_IMAGE_ASPECT_RATIO_OPTIONS,
+      );
+      labelFor = (value) => value === "auto"
+        ? String(t?.("freezone.chat.generationParams.autoRatio") ?? "Auto")
+        : String(value);
+    } else if (source === "selected_image_model_resolutions") {
+      values = clarificationCapabilityOptions(
+        selectedImageModel?.resolutionOptions,
+        CANVAS_APPROVAL_IMAGE_SIZE_OPTIONS,
+      );
+    } else if (source === "selected_image_model_qualities") {
+      values = selectedImageModel?.qualityOptions?.filter(Boolean) ?? [];
+      labelFor = (value) => String(t?.(
+        `freezone.chat.generationParams.quality.${String(value).toLowerCase()}`,
+        { defaultValue: String(value) },
+      ) ?? value);
+    } else if (source === "image_variant_counts") {
+      values = CANVAS_APPROVAL_IMAGE_COUNT_OPTIONS;
+      labelFor = (value) => String(t?.("freezone.chat.generationParams.imageCount", {
+        count: Number(value),
+      }) ?? `${value} images`);
+    } else if (source === "selected_video_model_ratios") {
+      values = clarificationCapabilityOptions(
+        selectedVideoModel?.ratioOptions,
+        VIDEO_GENERATION_ASPECT_RATIOS,
+      );
+      labelFor = (value) => value === "auto"
+        ? String(t?.("freezone.chat.generationParams.autoRatio") ?? "Auto")
+        : String(value);
+    } else if (source === "selected_video_model_resolutions") {
+      values = clarificationCapabilityOptions(
+        selectedVideoModel?.resolutionOptions,
+        CANVAS_APPROVAL_VIDEO_QUALITY_OPTIONS,
+      );
+    } else if (source === "selected_video_model_durations") {
+      if (selectedVideoModel) {
+        const min = Number(selectedVideoModel.minDuration);
+        const max = Number(selectedVideoModel.maxDuration);
+        const start = Number.isFinite(min) && min > 0 ? Math.ceil(min) : CANVAS_APPROVAL_VIDEO_DURATION_MIN;
+        const end = Number.isFinite(max) && max >= start ? Math.floor(max) : CANVAS_APPROVAL_VIDEO_DURATION_MAX;
+        values = Array.from({ length: end - start + 1 }, (_, index) => start + index);
+        labelFor = (value) => String(t?.("freezone.chat.generationParams.durationSeconds", {
+          count: Number(value),
+        }) ?? `${value} seconds`);
+      } else values = [];
+    } else if (source === "selected_video_model_audio") {
+      values = selectedVideoModel && selectedVideoModel.supportsGenerateAudio !== false
+        ? [true, false]
+        : [];
+      labelFor = (value) => String(t?.(
+        value === true
+          ? "freezone.chat.generationParams.generateAudio"
+          : "freezone.chat.generationParams.muteAudio",
+      ) ?? (value === true ? "Generate audio" : "Mute audio"));
+    } else if (source === "video_variant_counts") {
+      values = CANVAS_APPROVAL_VIDEO_COUNT_OPTIONS;
+      labelFor = (value) => String(t?.("freezone.chat.generationParams.videoCount", {
+        count: Number(value),
+      }) ?? `${value} videos`);
+    }
+    if (values === null) return question;
+    return {
+      ...question,
+      options_source: source,
+      options: clarificationOptions(values, existingOptions, labelFor),
+      allow_custom: false,
+    };
+  });
+}
 
 type AssistantClarificationUiEvent = {
   type: "assistant.clarification.request";
@@ -5393,9 +5762,11 @@ function selectedSkillStudioOptionLabel(
 ): string {
   const selection = normalizedSkillStudioQuestionSelection(selections[skillStudioQuestionKey(question, questionIndex)]);
   const selectedLabels = selection.optionIds
-    .map((optionId) => findSkillStudioOption(question, optionId))
-    .filter((option): option is SkillStudioQuestionOption => Boolean(option))
-    .map(formatSkillStudioOption);
+    .map((optionId) => {
+      const option = findSkillStudioOption(question, optionId);
+      return option ? formatSkillStudioOption(option) : optionId.trim();
+    })
+    .filter(Boolean);
   const customText = selection.customText.trim();
   const parts = [...selectedLabels, ...(customText ? [`补充：${customText}`] : [])];
   return parts.length > 0 ? parts.join("；") : "未选择";
@@ -5436,6 +5807,32 @@ function buildSkillStudioQuestionTimelineItems(
 }
 
 export const buildSkillStudioQuestionTimelineItemsForTest = buildSkillStudioQuestionTimelineItems;
+
+function visibleAssistantClarificationTimelineItems(
+  questions: AssistantClarificationQuestion[],
+  answers: AssistantClarificationAnswers,
+  action?: string,
+): SkillStudioQuestionTimelineItem[] {
+  if (action === "skip") return [];
+  if (action === "recommended") {
+    return buildSkillStudioQuestionTimelineItems(questions, answers, action)
+      .filter((item) => item.answered);
+  }
+  return questions
+    .map((question, index) => ({ question, index }))
+    .filter(({ question, index }) =>
+      skillStudioSelectionHasAnswer(answers[skillStudioQuestionKey(question, index)]),
+    )
+    .map(({ question, index }) => ({
+      key: skillStudioQuestionKey(question, index),
+      title: question.title || `问题 ${index + 1}`,
+      summary: selectedSkillStudioOptionLabel(question, index, answers),
+      answered: true,
+    }));
+}
+
+export const visibleAssistantClarificationTimelineItemsForTest =
+  visibleAssistantClarificationTimelineItems;
 
 export function buildSkillStudioQuestionResponseForTest(
   event: Extract<SkillStudioUiEvent, { type: "skill_studio.questions" }>,
@@ -5497,7 +5894,9 @@ export function buildAssistantClarificationResponseForTest(
 
   const answerLines = (event.questions ?? [])
     .map((question, index) => ({ question, index }))
-    .filter(({ question }) => (question.options ?? []).length > 0 || skillStudioQuestionAllowsCustom(question))
+    .filter(({ question, index }) =>
+      skillStudioSelectionHasAnswer(answers[skillStudioQuestionKey(question, index)]),
+    )
     .map(({ question, index }) =>
       `${question.title || `问题 ${index + 1}`}\n${selectedSkillStudioOptionLabel(question, index, answers)}`,
     );
@@ -6183,15 +6582,22 @@ function SkillStudioQuestionsCard({
 }
 
 function AssistantClarificationSummaryCard({ event }: { event: AssistantClarificationUiEvent }) {
+  const { t } = useTranslation();
   const questions = Array.isArray(event.questions) ? event.questions : [];
   const answers = event.answers && typeof event.answers === "object" ? event.answers : {};
-  const timelineItems = buildSkillStudioQuestionTimelineItems(questions, answers);
-  const answeredCount = timelineItems.filter((item) => item.answered).length;
+  const timelineItems = visibleAssistantClarificationTimelineItems(
+    questions,
+    answers,
+    event.action,
+  );
+  const answeredCount = timelineItems.length;
   const skipped = event.skipped === true || event.action === "skip";
-  const statusLabel = skipped ? "已跳过" : "已提交";
+  const statusLabel = skipped
+    ? t("freezone.chat.clarification.skipped")
+    : t("freezone.chat.clarification.submitted");
   const countLabel = skipped
-    ? `已跳过问题 · ${timelineItems.length} 个`
-    : `已提交回答 · ${answeredCount} / ${timelineItems.length} 个`;
+    ? t("freezone.chat.clarification.skippedQuestions")
+    : t("freezone.chat.clarification.submittedAnswers", { count: answeredCount });
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] px-3 py-3 text-sm shadow-[0_14px_40px_rgba(0,0,0,0.16)] backdrop-blur-sm">
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -6241,7 +6647,9 @@ function AssistantClarificationSummaryCard({ event }: { event: AssistantClarific
         ))}
         {timelineItems.length === 0 && (
           <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-xs text-muted-foreground">
-            已提交，未包含可展示的问题配置。
+            {skipped
+              ? t("freezone.chat.clarification.noAnswersSkipped")
+              : t("freezone.chat.clarification.noAnswersSubmitted")}
           </div>
         )}
       </div>
@@ -6256,7 +6664,11 @@ function AssistantClarificationInputCard({
   event: AssistantClarificationUiEvent;
   onSubmit?: (event: AssistantClarificationUiEvent, answers: AssistantClarificationAnswers) => Promise<boolean>;
 }) {
-  const questions = Array.isArray(event.questions) ? event.questions : [];
+  const { t } = useTranslation();
+  const params = useParams({ strict: false }) as { project?: string };
+  const imageModelCatalog = useFreezoneImageModels(params.project);
+  const videoModelCatalog = useFreezoneVideoModels(params.project);
+  const eventQuestions = Array.isArray(event.questions) ? event.questions : [];
   const eventIdentity = assistantClarificationEventIdentity(event);
   const [answers, setAnswers] = useState<AssistantClarificationAnswers>(() =>
     event.answers && typeof event.answers === "object" ? event.answers : {},
@@ -6266,6 +6678,30 @@ function AssistantClarificationInputCard({
     setAnswers(event.answers && typeof event.answers === "object" ? event.answers : {});
     setActiveQuestionPosition(0);
   }, [eventIdentity]);
+  const questions = useMemo(
+    () => clarificationQuestionsWithLiveModelCatalogs(
+      eventQuestions,
+      !imageModelCatalog.isLoading && !imageModelCatalog.isFallback
+        ? imageModelCatalog.models
+        : [],
+      !videoModelCatalog.isLoading && !videoModelCatalog.isFallback
+        ? videoModelCatalog.models
+        : [],
+      answers,
+      t,
+    ),
+    [
+      answers,
+      eventQuestions,
+      imageModelCatalog.isFallback,
+      imageModelCatalog.isLoading,
+      imageModelCatalog.models,
+      videoModelCatalog.isFallback,
+      videoModelCatalog.isLoading,
+      videoModelCatalog.models,
+      t,
+    ],
+  );
   const selectableQuestions = questions
     .map((question, index) => ({ question, index }))
     .filter(({ question }) => (question.options ?? []).length > 0 || skillStudioQuestionAllowsCustom(question));
@@ -6289,10 +6725,21 @@ function AssistantClarificationInputCard({
 	          ? currentSelection.optionIds.filter((candidate) => candidate !== optionKey)
           : [...currentSelection.optionIds, optionKey]
         : [optionKey];
-      return {
+	      const nextAnswers = {
         ...current,
 	        [questionKey]: skillStudioSelectionForMode(question, optionIds, currentSelection.customText),
 	      };
+	      const questionId = normalizedClarificationId(question.id);
+	      if (questionId === "image_model") {
+	        for (const key of ["image_aspect_ratio", "image_resolution", "image_quality"]) {
+	          delete nextAnswers[key];
+	        }
+	      } else if (questionId === "video_model") {
+	        for (const key of ["video_aspect_ratio", "video_resolution", "video_duration_seconds", "video_generate_audio"]) {
+	          delete nextAnswers[key];
+	        }
+	      }
+	      return nextAnswers;
 	    });
 	    if (selectionMode === "single" && activeQuestionPosition < selectableQuestions.length - 1) {
 	      setActiveQuestionPosition((position) => Math.min(position + 1, selectableQuestions.length - 1));
@@ -6310,8 +6757,8 @@ function AssistantClarificationInputCard({
   }, []);
   const submitAnswers = useCallback(() => {
     if (!onSubmit || !canSubmit) return;
-    void onSubmit(event, answers);
-  }, [answers, canSubmit, event, onSubmit]);
+    void onSubmit({ ...event, questions }, answers);
+  }, [answers, canSubmit, event, onSubmit, questions]);
   const activeQuestion = activeItem?.question;
   const activeQuestionIndex = activeItem?.index ?? 0;
   const activeQuestionKey = activeQuestion ? skillStudioQuestionKey(activeQuestion, activeQuestionIndex) : "";
@@ -10143,7 +10590,6 @@ type CanvasCommandFeedback = Pick<CanvasChatCommandApplyResult, "applied" | "ope
 };
 
 const CANVAS_APPROVAL_IMAGE_SIZE_OPTIONS = ["1K", "2K", "4K"] as const;
-const CANVAS_APPROVAL_IMAGE_QUALITY_OPTIONS = ["low", "medium", "high"] as const;
 const CANVAS_APPROVAL_IMAGE_ASPECT_RATIO_OPTIONS = [
   "auto",
   "1:1",
@@ -10188,7 +10634,7 @@ type CanvasApprovalImageParams = {
   model: string;
   aspectRatio: string;
   size: string;
-  quality: string;
+  quality: string | null;
   count: number;
 };
 
@@ -10279,7 +10725,7 @@ type CanvasCommandSurfaceEvent =
     };
 
 const CANVAS_COMMAND_EXECUTION_MODE_STORAGE_KEY = "freezone.canvasCommandExecutionMode";
-const CANVAS_COMMAND_APPROVAL_TIMEOUT_MS = 60_000;
+const CANVAS_COMMAND_APPROVAL_TIMEOUT_MS = 300_000;
 
 const DIRECTOR_RUN_MODE_OPTIONS: ReadonlyArray<{
   value: DirectorRunMode;
@@ -11902,7 +12348,7 @@ export function SuperChatPanel({
       selectedFreezoneNodes,
       canvasEdges,
       canvasNodes,
-      { displayNodes: selectedFreezoneNodes },
+      { displayNodes: selectedFreezoneNodes, includeActionCatalog: false },
     );
   }, [
     canvasEdges,
@@ -11930,7 +12376,7 @@ export function SuperChatPanel({
       mentioned,
       canvasEdges,
       canvasNodes,
-      { displayNodes: mentioned },
+      { displayNodes: mentioned, includeActionCatalog: false },
     );
   }, [
     canvasEdges,
@@ -12972,27 +13418,18 @@ export function SuperChatPanel({
 
   const handleRetryCanvasCommandFeedback = useCallback((
     feedback: CanvasCommandFeedback,
-    messageId: string,
-    turnId?: string,
+    _messageId: string,
+    _turnId?: string,
   ) => {
     if (!feedback.envelopes?.length) return;
-    const receivedAt = Date.now();
-    const retryKey = `retry:${feedback.key}:${receivedAt}`;
-    handleApplyCanvasCommandApproval({
-      id: retryKey,
-      key: retryKey,
-      messageId,
-      turnId: turnId ?? null,
-      bridgeKey: null,
-      agentId: effectiveFreezoneAgentId,
-      anchorTextPrefix: feedback.anchorTextPrefix ?? null,
-      surfaceOrder: receivedAt,
-      receivedAt,
-      envelopes: feedback.envelopes,
-      commandCount: feedback.envelopes.reduce((sum, envelope) => sum + envelope.commands.length, 0),
-      plans: feedback.plans ?? canvasCommandPlansFromEnvelopes(feedback.envelopes),
-    });
-  }, [effectiveFreezoneAgentId, handleApplyCanvasCommandApproval]);
+    // A settled bridge result is immutable. Start a new agent turn so retry
+    // gets a fresh tool identity, parameter preflight and an attributable receipt.
+    void chat.send(
+      t("freezone.chat.canvasRetryPrompt"),
+      [],
+      t("freezone.chat.canvasRetryDisplay"),
+    );
+  }, [chat, t]);
 
   useEffect(() => {
     if (canvasCommandExecutionMode !== "auto_execute") return;

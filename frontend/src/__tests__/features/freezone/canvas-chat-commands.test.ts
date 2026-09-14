@@ -3915,6 +3915,11 @@ describe("canvas chat commands", () => {
     expect(shouldIncludeCanvasSummary("基于当前画布搭一个流程")).toBe(true);
     expect(shouldIncludeCanvasSummary("加一个图片节点")).toBe(true);
     expect(shouldIncludeCanvasSummary("我想做个公益短片没思路")).toBe(true);
+    expect(
+      shouldIncludeCanvasSummary("重新选择图片模型", {
+        hasFocusedNodeContext: true,
+      }),
+    ).toBe(false);
   });
 
   it("keeps text node references free of legacy semantic guidance", () => {

@@ -141,6 +141,57 @@ async def test_graph_compile_accepts_canonical_plan_fields():
 
 
 @pytest.mark.asyncio
+async def test_graph_compile_normalizes_agent_resource_aliases():
+    arguments = {
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "skill": {"id": "video-tutorial", "version": 1},
+            "nodes": [
+                {
+                    "id": "input",
+                    "node_type": "textAnnotationNode",
+                    "data": {
+                        "stage": "input",
+                        "title": "用户需求",
+                        "prompt": "用户提供的固定文案",
+                        "workflowCatalog": {},
+                    },
+                },
+                {
+                    "id": "image",
+                    "node_type": "imageGenNode",
+                    "data": {
+                        "prompt": "未来城市雨夜",
+                        "workflowCatalog": {"recipeId": "general-image"},
+                    },
+                },
+            ],
+            "edges": [
+                {"source": "input", "target": "image", "link_type": "prompt_for"}
+            ],
+            "groups": [
+                {"id": "episode-1", "label": "第一集", "node_ids": ["input", "image"]}
+            ],
+        }
+    }
+    graph_tool = next(
+        tool
+        for tool in await workflow_mcp.list_tools()
+        if tool.name == "workflow_graph_compile"
+    )
+    Draft202012Validator(graph_tool.inputSchema).validate(arguments)
+
+    result = await workflow_mcp.call_tool("workflow_graph_compile", arguments)
+
+    payload = _result_payload(result)
+    assert payload["ok"] is True, payload
+    assert payload["commands"][0]["data"]["content"] == "用户提供的固定文案"
+    assert payload["commands"][0]["data"]["workflowCatalogRole"] == "user_input"
+    assert "stage" not in payload["commands"][0]["data"]
+    assert any(command["type"] == "group_nodes" for command in payload["commands"])
+
+
+@pytest.mark.asyncio
 async def test_every_workflow_tool_validates_its_real_call_result(monkeypatch):
     monkeypatch.setattr(workflow_mcp, "search_catalog", lambda **_kwargs: [])
     monkeypatch.setattr(

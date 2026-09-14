@@ -528,6 +528,7 @@ frontend/src/__tests__/features/canvas/image-gen-prompt.test.ts,Elastic-2.0,2026
 frontend/src/__tests__/features/canvas/image-gen-stale-error-banner.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-multi-angle-application.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-node-generation-matrix.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/media-model-parameter-chip.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-node-resize-min.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-outpaint-application.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-relight-application.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

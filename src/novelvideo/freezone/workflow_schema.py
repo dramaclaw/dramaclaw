@@ -178,7 +178,9 @@ def _catalog_schema(*, recipe_required: bool = False) -> dict[str, Any]:
     return schema
 
 
-def _node_data_schema(*, recipe_required: bool = False) -> dict[str, Any]:
+def _node_data_schema(
+    *, recipe_required: bool = False, resource_stage_allowed: bool = False
+) -> dict[str, Any]:
     return {
         "type": "object",
         "description": (
@@ -193,7 +195,14 @@ def _node_data_schema(*, recipe_required: bool = False) -> dict[str, Any]:
             "text": {"type": "string"},
             "prompt": {"type": "string"},
             "description": {"type": "string"},
-            "stage": False,
+            # Compatibility input for agent-authored resource text nodes. The
+            # compiler moves this to the portable top-level stage and removes
+            # it from emitted canvas node data. Executable nodes stay strict.
+            "stage": (
+                {"type": "string", "enum": ["input", "resource", "asset"]}
+                if resource_stage_allowed
+                else False
+            ),
             "model": {"type": "string"},
             "aspectRatio": {"type": "string"},
             "size": {"type": "string"},
@@ -258,12 +267,24 @@ def _resource_text_node_schema() -> dict[str, Any]:
         {
             "node_type": {"type": "string", "enum": ["textAnnotationNode"]},
             "stage": {"type": "string", "enum": ["input", "resource", "asset"]},
+            "data": _node_data_schema(resource_stage_allowed=True),
         }
     )
     return {
         "type": "object",
         "properties": properties,
-        "required": ["id", "node_type", "stage"],
+        "required": ["id", "node_type", "data"],
+        "anyOf": [
+            {"required": ["stage"]},
+            {
+                "properties": {
+                    "data": {
+                        "type": "object",
+                        "required": ["stage"],
+                    }
+                }
+            },
+        ],
         "additionalProperties": False,
     }
 
@@ -283,6 +304,9 @@ def _group_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
+            # Agent hosts often attach a logical group id. Canvas group
+            # commands do not need it, so the compiler accepts and discards it.
+            "id": {"type": "string"},
             "label": {"type": "string"},
             "node_ids": {
                 "type": "array",
