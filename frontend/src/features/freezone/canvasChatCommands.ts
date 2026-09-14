@@ -38,7 +38,10 @@ import {
 } from "@/api/tasks";
 import { ApiError } from "@/api/client";
 import { isAgentCreatableCanvasNodeType } from "@/features/freezone/agentCreatableNodeTypes";
-import { buildCanvasNodeActionCatalog } from "@/features/freezone/canvasNodeActionCatalog";
+import {
+  buildCanvasNodeActionCatalog,
+  isAgentExecutableNodeAction,
+} from "@/features/freezone/canvasNodeActionCatalog";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import {
   isBeatContextAgentEditablePatch,
@@ -1020,6 +1023,7 @@ function parseCommand(value: unknown): CanvasChatCommand | null {
     case "run_node_action":
       if (typeof value.node_id !== "string" || !value.node_id.trim()) return null;
       if (typeof value.action !== "string" || !value.action.trim()) return null;
+      if (!isAgentExecutableNodeAction(value.action.trim())) return null;
       if (!RUN_NODE_ACTIONS.has(value.action.trim())) return null;
       return {
         type: "run_node_action",
@@ -1662,6 +1666,9 @@ function selectNodes(rawNodeIds: string[], clientIdMap: Map<string, string>, foc
 }
 
 function assertNodeActionAvailable(nodeId: string, action: string): void {
+  if (!isAgentExecutableNodeAction(action)) {
+    throw new Error(`mainline write action is manual-only: ${action}`);
+  }
   const targetNode = nodeById(nodeId);
   if (!targetNode) throw new Error(`node not found: ${nodeId}`);
   const state = useCanvasStore.getState();

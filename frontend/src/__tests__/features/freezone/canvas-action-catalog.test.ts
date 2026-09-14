@@ -7,6 +7,10 @@ import {
   extractCanvasChatCommandEnvelopes,
 } from "@/features/freezone/canvasChatCommands";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/canvasNodeActionCatalog";
+import {
+  buildCanvasContextRequestResponses,
+  extractCanvasContextRequestEnvelopes,
+} from "@/features/freezone/chatNodeReferences";
 
 function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["type"] }): CanvasNode {
   return {
@@ -18,7 +22,7 @@ function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["typ
 }
 
 describe("canvas action catalog", () => {
-  it("keeps mainline writes manual until their approval receipt chain exists", () => {
+  it("keeps mainline writes in manual UI but out of Agent discovery", async () => {
     const beatContext = node({
       id: "beat-context-a",
       type: CANVAS_NODE_TYPES.beatContext,
@@ -72,6 +76,27 @@ describe("canvas action catalog", () => {
         },
       ]),
     ).toEqual([]);
+
+    const responses = await buildCanvasContextRequestResponses({
+      project: "project-a",
+      canvasId: "canvas-a",
+      nodes: [beatContext, commitCandidate],
+      edges: [],
+      ontologyContext: null,
+      envelopes: extractCanvasContextRequestEnvelopes([
+        {
+          schema_version: "canvas_context_request.v1",
+          requests: [
+            { type: "canvas_action_catalog" },
+            { type: "node_action_catalog", node_id: beatContext.id },
+            { type: "node_action_catalog", node_id: commitCandidate.id },
+          ],
+        },
+      ]),
+    });
+
+    expect(JSON.stringify(responses)).not.toContain("sync_beat_context_to_mainline");
+    expect(JSON.stringify(responses)).not.toContain("commit_node");
   });
 
   it("lets upload nodes open the local upload picker through a manual UI action", () => {

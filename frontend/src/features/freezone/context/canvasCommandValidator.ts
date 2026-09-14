@@ -10,6 +10,7 @@ import {
 } from "@/features/canvas/application/videoUpscale";
 import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
+import { isAgentExecutableNodeAction } from "@/features/freezone/canvasNodeActionCatalog";
 import {
   isBeatContextAgentEditablePatch,
   normalizeCanvasCommandCreateNodeData,
@@ -427,6 +428,10 @@ export function validateCanvasChatCommandEnvelopes(
           break;
         }
         case "run_node_action": {
+          if (!isAgentExecutableNodeAction(command.action)) {
+            addIssue(issues, path, `mainline write action is manual-only: ${command.action}`);
+            break;
+          }
           const target = nodeById.get(command.node_id);
           if (!target) {
             addIssue(issues, path, `node not found: ${command.node_id}`);
