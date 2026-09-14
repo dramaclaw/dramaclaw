@@ -31,6 +31,7 @@ from novelvideo.api.auth import (
 from novelvideo.api.deps import list_user_projects
 from novelvideo.api.egress_binding import request_egress_scope
 from novelvideo.chat import service as chat_service
+from novelvideo.chat.execution_context import AgentExecutionContext
 from novelvideo.chat.hermes_egress import EgressBoundaryError
 from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
 from novelvideo.chat.director_auto import coordinator as director_auto_coordinator
@@ -2722,6 +2723,10 @@ async def _stream_project_turn(
         raise EgressBoundaryError("ORG_CONTEXT_REQUIRED")
     project_dir = project_ctx.output_dir
     project_state_dir = project_ctx.state_dir
+    execution_context = AgentExecutionContext.from_project_scope(
+        scope=scope,
+        project=project_ctx,
+    )
     storage_scope = (
         _chat_store_scope_for_project_context(store_scope, project_ctx)
         if store_scope is not None
@@ -2751,9 +2756,7 @@ async def _stream_project_turn(
     disconnected = asyncio.Event()
     runtime_backend = chat_service.get_chat_backend_name()
     runtime_ids: dict[str, str | None] = {"thread_id": None, "turn_id": None}
-    agent_profile = (
-        _freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main"
-    )
+    agent_profile = execution_context.agent_profile
     heartbeat_task = asyncio.create_task(
         _chat_heartbeat(
             websocket,
@@ -3055,6 +3058,7 @@ async def _stream_project_turn(
                 turn_id=turn_id,
                 route_prompt=display_text,
                 backend=runtime_backend,
+                execution_context=execution_context,
             )
     finally:
         heartbeat_task.cancel()
@@ -3940,9 +3944,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                         attachments=msg.attachments,
                         turn_id=turn_id,
                         user_text=user_text,
-                        surface=(
-                            "freezone" if _is_freezone_scope(scope) else msg.surface
-                        ),
+                        surface=("freezone" if _is_freezone_scope(scope) else None),
                         surface_context=(
                             msg.context if _is_freezone_scope(scope) else None
                         ),

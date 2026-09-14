@@ -34,6 +34,7 @@ from novelvideo.chat.backend_sdk import (
     interrupt_live_claude_client,
     interrupt_live_codex_turn,
 )
+from novelvideo.chat.execution_context import AgentExecutionContext
 from novelvideo.freezone.workflow_plan import MAX_WORKFLOW_PLANNING_TEXT_CHARS
 from novelvideo.ports import get_auth_session_port
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
@@ -1190,20 +1191,6 @@ def _freezone_skill_studio_context(username: str, prompt: str | None) -> str:
     )
 
 
-_FREEZONE_CANVAS_PROMPT_MARKERS = (
-    "[SUPERTALE_CANVAS_ROUTING]",
-    "[SUPERTALE_CANVAS_CHAT_COMMANDS]",
-    "[SUPERTALE_CANVAS_ONTOLOGY_CONTEXT]",
-    "[SUPERTALE_CANVAS_ONTOLOGY_SUMMARY]",
-    "[SUPERTALE_CANVAS_NODE_REFERENCES]",
-)
-
-
-def _prompt_has_freezone_canvas_context(prompt: str | None) -> bool:
-    text = str(prompt or "")
-    return any(marker in text for marker in _FREEZONE_CANVAS_PROMPT_MARKERS)
-
-
 def _surface_context_has_freezone_canvas(
     surface_context: dict[str, Any] | None,
 ) -> bool:
@@ -1219,8 +1206,6 @@ def _tool_mode_for_surface(
     if str(surface or "").strip() == "freezone":
         return "freezone_canvas"
     if _surface_context_has_freezone_canvas(surface_context):
-        return "freezone_canvas"
-    if _prompt_has_freezone_canvas_context(prompt):
         return "freezone_canvas"
     return "default"
 
@@ -5833,12 +5818,23 @@ async def stream_assistant_reply(
     requester_user_id: str | None = None,
     egress_project_id: str | None = None,
     backend: str | None = None,
+    execution_context: AgentExecutionContext | None = None,
 ) -> dict[str, Any]:
-    tool_mode = _tool_mode_for_surface(
-        surface,
-        prompt=prompt,
-        surface_context=surface_context,
-    )
+    if execution_context is not None:
+        if project != execution_context.project_id:
+            raise ValueError("agent execution context project mismatch")
+        if requester_user_id and requester_user_id != execution_context.requester_user_id:
+            raise ValueError("agent execution context requester mismatch")
+        requester_user_id = execution_context.requester_user_id
+        egress_project_id = execution_context.project_id
+        surface = "freezone" if execution_context.surface == "freezone" else None
+        surface_context = execution_context.normalized_surface_context(surface_context)
+        tool_mode = execution_context.tool_mode
+    else:
+        tool_mode = _tool_mode_for_surface(
+            surface,
+            surface_context=surface_context,
+        )
     lock_project = _chat_run_lock_project_for_turn(
         project,
         tool_mode=tool_mode,
@@ -5879,6 +5875,16 @@ async def stream_assistant_reply(
                 store_scope=store_scope,
                 turn_id=turn_id,
                 route_prompt=route_prompt,
+                agent_profile=(
+                    execution_context.agent_profile
+                    if execution_context is not None
+                    else None
+                ),
+                canvas_id=(
+                    execution_context.canvas_id
+                    if execution_context is not None
+                    else None
+                ),
             )
         if backend == "hermes":
             return await _stream_assistant_reply_hermes(
@@ -5895,6 +5901,16 @@ async def stream_assistant_reply(
                 route_prompt=route_prompt,
                 egress_context=egress_context,
                 requester_user_id=requester_user_id,
+                agent_profile=(
+                    execution_context.agent_profile
+                    if execution_context is not None
+                    else None
+                ),
+                canvas_id=(
+                    execution_context.canvas_id
+                    if execution_context is not None
+                    else None
+                ),
             )
         if backend != "claude":
             raise RuntimeError(f"Unsupported chat backend: {backend}")
@@ -6092,6 +6108,8 @@ async def _stream_assistant_reply_hermes(
     route_prompt: str | None = None,
     egress_context=None,
     requester_user_id: str | None = None,
+    agent_profile: str | None = None,
+    canvas_id: str | None = None,
 ) -> dict[str, Any]:
     """Stream via Hermes ACP subprocess (per-user, sandboxed).
 
@@ -6109,13 +6127,13 @@ async def _stream_assistant_reply_hermes(
         prompt=prompt,
     )
     store_agent_id = str(getattr(store_scope, "agent_id", "") or "").strip()
-    agent_profile = (
+    agent_profile = str(agent_profile or "").strip() or (
         f"freezone:{store_agent_id or 'main'}"
         if tool_mode == "freezone_canvas"
         else "main"
     )
     surface = "freezone" if tool_mode == "freezone_canvas" else None
-    canvas_id = (
+    canvas_id = str(canvas_id or "").strip() or (
         _freezone_canvas_id_from_context(surface_context)
         if surface == "freezone"
         else None
@@ -6907,6 +6925,8 @@ async def _stream_assistant_reply_codex(
     store_scope: Any | None = None,
     turn_id: str | None = None,
     route_prompt: str | None = None,
+    agent_profile: str | None = None,
+    canvas_id: str | None = None,
 ) -> dict[str, Any]:
     assistant_text = ""
     tool_text = ""
@@ -6929,12 +6949,16 @@ async def _stream_assistant_reply_codex(
     turn_operation = _turn_operation_finalizer(authorization)
     turn_disposition = _DEFAULT_TURN_DISPOSITION
     store_agent_id = str(getattr(store_scope, "agent_id", "") or "").strip()
-    agent_profile = (
+    agent_profile = str(agent_profile or "").strip() or (
         f"freezone:{store_agent_id or 'main'}"
         if tool_mode == "freezone_canvas"
         else "main"
     )
-    canvas_id = str(getattr(store_scope, "canvas_id", "") or "").strip() or None
+    canvas_id = (
+        str(canvas_id or "").strip()
+        or str(getattr(store_scope, "canvas_id", "") or "").strip()
+        or None
+    )
     business_turn_id = str(turn_id or "").strip() or uuid.uuid4().hex
     evidence_identity = _evidence_identity(project, store_scope, agent_profile)
     from novelvideo.chat.hermes_sdk import _issue_turn_capability
