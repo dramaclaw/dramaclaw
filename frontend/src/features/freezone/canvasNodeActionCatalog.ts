@@ -964,9 +964,9 @@ function addChatCommandActions(node: CanvasNode, actions: CanvasNodeActionCatalo
   if (beatContextHasMainlineTarget(node)) {
     actions.push({
       action: "sync_beat_context_to_mainline",
-      execution: "frontend_node",
+      execution: "manual_ui",
       command_type: "run_node_action",
-      description: "把当前镜头上下文节点草稿同步到主线。通常先 update_node_data 修改起始画面/场景/时间，再运行这个动作。",
+      description: "把当前镜头上下文节点草稿同步到主线。该主线写入目前只能由用户在界面中手动确认，Agent 不得执行。",
       parameters: {
         node_id: node.id,
       },
@@ -1502,9 +1502,9 @@ function addCommitAction(node: CanvasNode, actions: CanvasNodeActionCatalogEntry
   if (!isCommitCandidateData(node.data)) return;
   actions.push({
     action: "commit_node",
-    execution: "requires_confirmation",
+    execution: "manual_ui",
     command_type: "run_node_action",
-    description: "Commit this node back to its mainline target slot. This requires explicit user confirmation.",
+    description: "Commit this node back to its mainline target slot through the user's manual Commit control. Agents cannot execute this mainline write.",
     parameters: { node_id: node.id },
   });
 }

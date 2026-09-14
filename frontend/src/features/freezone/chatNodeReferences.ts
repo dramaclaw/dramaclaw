@@ -226,7 +226,7 @@ function buildAgentCanvasNodeActionCatalog(
       (action) => action.action !== "add_next_node",
     ),
     instruction:
-      "这是镜头上下文节点。agent 可以修改的参数只有 node_detail.parameters 中的 visual_description、scene_ref、time_of_day；不要修改出场身份或出场道具。修改这些字段时使用 update_node_data。需要写回主线时，先更新草稿字段，再使用 run_node_action，action 必须是 sync_beat_context_to_mainline。",
+      "这是镜头上下文节点。agent 可以修改的参数只有 node_detail.parameters 中的 visual_description、scene_ref、time_of_day；不要修改出场身份或出场道具。修改这些字段时使用 update_node_data。写回主线必须由用户在界面中手动确认；不要调用 sync_beat_context_to_mainline。",
   };
 }
 
