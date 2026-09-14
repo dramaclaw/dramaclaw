@@ -1382,6 +1382,33 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
 
 
 @pytest.mark.parametrize(
+    "prompt",
+    [
+        "不要移动节点，只给我布局建议",
+        "不要运行工作流，只检查配置",
+        "无需连接节点，只说明连接方法",
+        "禁止打开网页，只检查当前配置",
+        "do not move the node, only explain the layout",
+        "don't delete the node, just explain",
+        "without updating the canvas, explain the configuration",
+    ],
+)
+def test_codex_freezone_write_request_detection_ignores_negated_actions(prompt):
+    assert chat_service._freezone_canvas_write_requested(prompt) is False
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "不要移动已有节点但创建一个网页",
+        "do not delete the old node, but create a new node",
+    ],
+)
+def test_codex_freezone_write_request_detection_keeps_followup_actions(prompt):
+    assert chat_service._freezone_canvas_write_requested(prompt) is True
+
+
+@pytest.mark.parametrize(
     ("prompt", "expected"),
     [
         ("创建图片转黑白线稿 Skill，先展示草稿，确认后保存，暂不运行", False),

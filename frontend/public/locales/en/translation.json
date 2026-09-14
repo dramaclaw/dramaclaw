@@ -7933,6 +7933,7 @@
     "upload": "Upload HTML",
     "invalidFile": "Choose a complete HTML document",
     "fileTooLarge": "HTML file must not exceed 2 MiB",
+    "uploadRecoveryConflict": "A previous upload completed for this node with different content. Re-select the original file to recover it, or create a new HTML node for this file.",
 
     "references": "Connected inputs",
     "activeCanvasRequired": "Open a project canvas first",

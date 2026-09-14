@@ -7933,6 +7933,7 @@
     "upload": "上传 HTML",
     "invalidFile": "请选择完整的 HTML 网页文件",
     "fileTooLarge": "HTML 文件不能超过 2 MiB",
+    "uploadRecoveryConflict": "该节点已有一次内容不同的上传完成。请重新选择原文件进行恢复，或新建 HTML 节点上传当前文件。",
 
     "references": "引用的上游节点",
     "activeCanvasRequired": "请先打开项目画布",

@@ -538,16 +538,39 @@ Skill Studio continuation:
   saved Skill/Recipe. Clarify underspecified changes, then present a complete edit draft.
 [/FREEZONE_CANVAS_ASSISTANT]"""
 
+_FREEZONE_CANVAS_WRITE_ACTION_ZH = (
+    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|"
+    r"向[上下左右]移|再移|布局|选择|打开|运行|执行|生成|制作|做)"
+)
+_FREEZONE_CANVAS_WRITE_ACTION_EN = (
+    r"(?:creat(?:e|es|ed|ing)|add(?:s|ed|ing)?|insert(?:s|ed|ing)?|"
+    r"delet(?:e|es|ed|ing)|remov(?:e|es|ed|ing)|clear(?:s|ed|ing)?|"
+    r"updat(?:e|es|ed|ing)|connect(?:s|ed|ing)?|mov(?:e|es|ed|ing)|"
+    r"layout|select(?:s|ed|ing)?|open(?:s|ed|ing)?|run(?:s|ning)?|"
+    r"execut(?:e|es|ed|ing)|generat(?:e|es|ed|ing))"
+)
+_FREEZONE_CANVAS_WRITE_ACTION = (
+    rf"(?:{_FREEZONE_CANVAS_WRITE_ACTION_ZH}|"
+    rf"\b{_FREEZONE_CANVAS_WRITE_ACTION_EN}\b)"
+)
 _FREEZONE_CANVAS_WRITE_ACTION_RE = re.compile(
-    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|向[上下左右]移|再移|布局|选择|打开|运行|执行|生成|制作|做|"
-    r"create|add|insert|delete|remove|clear|update|connect|move|layout|select|open|run|execute|generate)",
+    _FREEZONE_CANVAS_WRITE_ACTION,
     re.IGNORECASE,
 )
 _FREEZONE_NEGATED_CANVAS_WRITE_RE = re.compile(
-    r"(?:不要|禁止|无需|不需要)(?:修改|写入|保存|创建|生成|删除)"
-    r"(?:(?!(?:(?:但(?:是)?|而是|只|然后)\s*"
-    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|布局|选择|打开|运行|执行|生成|制作|做)"
-    r"|[，。；\n])).)*"
+    rf"(?:"
+    rf"(?:暂不|暂时不|先不|不要|禁止|无需|不需要|不用|不再)\s*"
+    rf"(?:直接|立即|马上|继续|再)?\s*{_FREEZONE_CANVAS_WRITE_ACTION_ZH}"
+    rf"|(?:do\s+not|don['’]t|not|without)\s+"
+    rf"(?:(?:directly|immediately|then)\s+)?"
+    rf"{_FREEZONE_CANVAS_WRITE_ACTION_EN}"
+    rf")"
+    rf"(?:(?!(?:"
+    rf"(?:但(?:是)?|而是|只|然后)\s*{_FREEZONE_CANVAS_WRITE_ACTION}"
+    rf"|(?:but|instead|only|then)\s+{_FREEZONE_CANVAS_WRITE_ACTION}"
+    rf"|[，。；,.;\n]"
+    rf")).)*",
+    re.IGNORECASE,
 )
 _FREEZONE_CANVAS_WRITE_OBJECT_RE = re.compile(
     r"(?:节点|画布|工作流|连线|边|合成节点|网页|HTML|"

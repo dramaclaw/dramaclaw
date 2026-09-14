@@ -114,7 +114,7 @@ it('imports an HTML file and attaches the saved artifact to the empty node',asyn
  expect(mocks.attach).toHaveBeenCalledWith({id:'uploaded',version:1},'page','p','c',expect.any(Function));
 });
 it('recovers an uploaded artifact when the create response is lost',async()=>{
- const recovered={id:'uploaded',version:1,title:'page'};
+ const recovered={id:'uploaded',version:1,title:'page',html:'<html><body>Hello</body></html>'};
  mocks.lookup.mockResolvedValueOnce({artifact:null}).mockResolvedValueOnce({artifact:recovered});
  mocks.create.mockRejectedValueOnce(new Error('network response lost'));
  const {container}=render(<HtmlArtifactNode {...props({})}/>);
@@ -124,6 +124,17 @@ it('recovers an uploaded artifact when the create response is lost',async()=>{
  expect(mocks.lookup).toHaveBeenCalledTimes(2);
  expect(mocks.attach).toHaveBeenCalledWith(recovered,'page','p','c',expect.any(Function));
  expect(screen.queryByText('network response lost')).toBeNull();
+});
+it('rejects a recovered upload when it differs from the selected file',async()=>{
+ const recovered={id:'old-upload',version:1,title:'old-page',html:'<html><body>Old</body></html>'};
+ mocks.lookup.mockResolvedValueOnce({artifact:recovered});
+ const {container}=render(<HtmlArtifactNode {...props({})}/>);
+ const file=new File(['<html><body>New</body></html>'],'new-page.html',{type:'text/html'});
+ Object.defineProperty(file,'text',{value:async()=>'<html><body>New</body></html>'});
+ await act(async()=>{fireEvent.change(container.querySelector('input[type="file"]')!,{target:{files:[file]}});});
+ expect(mocks.create).not.toHaveBeenCalled();
+ expect(mocks.attach).not.toHaveBeenCalled();
+ expect(screen.getByText('htmlArtifact.uploadRecoveryConflict')).toBeTruthy();
 });
 it('rejects an invalid upload without creating an artifact',async()=>{
  const {container}=render(<HtmlArtifactNode {...props({})}/>);

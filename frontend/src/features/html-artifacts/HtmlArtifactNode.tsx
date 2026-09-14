@@ -156,13 +156,17 @@ export const HtmlArtifactNode=memo(function HtmlArtifactNode({id,data,selected}:
       const source = await file.text();
       if (!/<html[\s>]/i.test(source) || !/<\/html\s*>/i.test(source)) throw new Error(t('htmlArtifact.invalidFile'));
       const idempotencyKey = `html-upload:${scope.canvas}:${id}`;
+      const title = file.name.replace(/\.html?$/i,'').trim();
+      const matchesUpload = (candidate: {title:string;html:string}) => candidate.title === title && candidate.html === source;
       let artifact = (await findHtmlArtifactCreation(scope.project, idempotencyKey)).artifact;
+      if (artifact && !matchesUpload(artifact)) throw new Error(t('htmlArtifact.uploadRecoveryConflict'));
       if (!artifact) {
         try {
-          artifact = await createHtmlArtifact(scope.project, file.name.replace(/\.html?$/i,''), source, idempotencyKey);
+          artifact = await createHtmlArtifact(scope.project, title, source, idempotencyKey);
         } catch (createError) {
           const recovered = await findHtmlArtifactCreation(scope.project, idempotencyKey).catch(() => ({artifact:null}));
           if (!recovered.artifact) throw createError;
+          if (!matchesUpload(recovered.artifact)) throw new Error(t('htmlArtifact.uploadRecoveryConflict'));
           artifact = recovered.artifact;
         }
       }
