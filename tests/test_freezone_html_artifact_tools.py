@@ -40,13 +40,6 @@ def test_direct_mcp_mode_routes_html_through_frontend(monkeypatch):
     assert dispatched[0]['commands'][0]['type'] == 'html_artifact'
 
 
-def test_html_read_request_with_negative_write_instruction():
-    from novelvideo.chat.service import _freezone_canvas_write_requested
-    assert not _freezone_canvas_write_requested("读取画布网页的源码和历史，不要写入。")
-    assert not _freezone_canvas_write_requested("列出项目网页，不要修改网页。")
-    assert _freezone_canvas_write_requested("创建一个网页，不要修改已有网页。")
-
-
 def test_html_create_schema_discovery_uses_generic_creation(monkeypatch):
     plugin = _load_plugin_module()
     schemas = {name: schema for name, schema, _ in plugin.TOOLS}

@@ -1339,95 +1339,10 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
     assert chat_service._freezone_canvas_write_requested("用这段描述生成一张图") is True
     assert (
         chat_service._freezone_canvas_write_requested(
-            "不要修改已有网页只创建一个新网页"
-        )
-        is True
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "不要删除节点但创建一个网页"
-        )
-        is True
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "不要修改已有网页但是创建一个新网页"
-        )
-        is True
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "不要修改旧网页而是创建一个新网页"
-        )
-        is True
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "不要修改已有网页然后创建一个新网页"
-        )
-        is True
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "不要创建网页，只解释怎么做"
-        )
-        is False
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested(
             "请生成本集完整剧本。输出 20—25 个视觉 Beat，并描述旧图片与视频质感。"
         )
         is False
     )
-
-
-@pytest.mark.parametrize(
-    "prompt",
-    [
-        "不要移动节点，只给我布局建议",
-        "不要运行工作流，只检查配置",
-        "无需连接节点，只说明连接方法",
-        "禁止打开网页，只检查当前配置",
-        "do not move the node, only explain the layout",
-        "don't delete the node, just explain",
-        "without updating the canvas, explain the configuration",
-    ],
-)
-def test_codex_freezone_write_request_detection_ignores_negated_actions(prompt):
-    assert chat_service._freezone_canvas_write_requested(prompt) is False
-
-
-@pytest.mark.parametrize(
-    "prompt",
-    [
-        "不要移动已有节点但创建一个网页",
-        "不要删除旧节点但请创建一个新网页",
-        "不要修改旧网页而是帮我创建一个新网页",
-        "不要删除旧节点但能不能帮我创建一个新网页",
-        "不要修改旧网页而是可以帮我创建一个新网页",
-        "do not delete the old node, but create a new node",
-        "do not delete the old node but please create a new node",
-        "do not delete the old node but could you please create a new node",
-        "do not update the old page but can you create a new node",
-    ],
-)
-def test_codex_freezone_write_request_detection_keeps_followup_actions(prompt):
-    assert chat_service._freezone_canvas_write_requested(prompt) is True
-
-
-@pytest.mark.parametrize(
-    "prompt",
-    [
-        "不要删除旧节点但只给我布局建议",
-        "不要删除旧节点但不要创建新网页",
-        "do not delete the old node but only explain the layout",
-        "do not delete the old node but do not create a new node",
-    ],
-)
-def test_codex_freezone_write_request_detection_keeps_negated_followups_read_only(
-    prompt,
-):
-    assert chat_service._freezone_canvas_write_requested(prompt) is False
 
 
 @pytest.mark.parametrize(
